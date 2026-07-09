@@ -305,11 +305,13 @@ class DispatchError(RuntimeError):
     session id captured), or the retry backoff window is still open.
 
     dispatch() records ``execution.last_error``/``last_error_at`` (the same
-    shape rework() writes) BEFORE raising. Raising — instead of returning —
-    matters: actd.dispatch_approved's success path wipes ``last_error`` after
-    any non-raising dispatch, while its except path keeps the requirement
-    APPROVED for the next-pass retry and re-records the same error, so the
-    dashboard's queued card keeps showing ``dispatch_error``.
+    shape rework() writes) BEFORE raising. actd.dispatch_approved's except
+    path keeps the requirement APPROVED for the next-pass retry and re-records
+    the same error, so the dashboard's queued card keeps showing
+    ``dispatch_error``. Its success-path clearing is gated on a session_id
+    being present, so a dispatch that signalled failure by RETURNING (no
+    session, error recorded) would keep its trace too — raising is the current
+    convention, not a load-bearing requirement.
     """
 
 

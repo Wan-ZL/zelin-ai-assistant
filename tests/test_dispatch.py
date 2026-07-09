@@ -28,7 +28,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import executor
+from act import actd, executor
 from act.lib import analytics, config, registry
 from act.lib.registry import Requirement, State
 
@@ -266,6 +266,80 @@ class SkipPermissionsTestCase(unittest.TestCase):
             config.CONFIG_PATH.unlink()  # never leak into other sandbox tests
         self.assertFalse(cfg.skip_permissions)
         self.assertNotIn(self.FLAG, executor._bg_base_cmd(cfg))
+
+
+# --------------------------------------------------------------------------- #
+# actd.dispatch_approved — success-path error clearing is gated on session_id
+# --------------------------------------------------------------------------- #
+class DispatchApprovedClearingTestCase(unittest.TestCase):
+    def setUp(self):
+        config.ensure_state_dirs()
+        for p in config.REGISTRY_DIR.glob("*.yaml"):
+            p.unlink()
+        self.cfg = config.Config()
+
+    def _approved(self, req_id="R-960"):
+        req = Requirement(id=req_id, title="清理条件测试",
+                          status=State.APPROVED.value)
+        registry.save(req)
+        return req
+
+    def test_success_with_session_clears_stale_error(self):
+        # the belt-and-braces branch: a real launch happened, so a stale
+        # last_error from a previous attempt must not linger on the live run
+        self._approved()
+
+        def fake_dispatch(req, cfg):
+            req.execution = {"session_id": "e88561e5",
+                             "last_error": "stale from a previous attempt",
+                             "last_error_at": "2026-07-08T00:00:00Z"}
+            req.set_status(State.EXECUTING)
+            registry.save(req)
+            return req
+
+        with mock.patch.object(actd.executor, "dispatch", fake_dispatch):
+            n = actd.dispatch_approved(self.cfg)
+        self.assertEqual(n, 1)
+        ex = registry.load("R-960").execution or {}
+        self.assertEqual(ex.get("session_id"), "e88561e5")
+        self.assertNotIn("last_error", ex)
+        self.assertNotIn("last_error_at", ex)
+
+    def test_non_raising_failure_without_session_keeps_error(self):
+        # a dispatch that signals failure by RETURNING (no session_id, error
+        # recorded) must keep its trace — the session_id gate is what frees
+        # dispatch() from having to raise to protect last_error
+        self._approved()
+
+        def fake_dispatch(req, cfg):
+            req.execution = {"last_error": "claude --bg exited 1",
+                             "last_error_at": "2026-07-08T00:00:00Z"}
+            registry.save(req)  # status untouched — stays approved
+            return req
+
+        with mock.patch.object(actd.executor, "dispatch", fake_dispatch):
+            actd.dispatch_approved(self.cfg)
+        saved = registry.load("R-960")
+        self.assertEqual(saved.status, State.APPROVED.value)
+        ex = saved.execution or {}
+        self.assertEqual(ex.get("last_error"), "claude --bg exited 1")
+        self.assertEqual(ex.get("last_error_at"), "2026-07-08T00:00:00Z")
+
+    def test_raising_failure_records_error_and_stays_approved(self):
+        # today's signaling: DispatchError -> the except path re-records the
+        # error and keeps the requirement approved for the next-pass retry
+        self._approved()
+        boom = mock.Mock(side_effect=executor.DispatchError("Invalid API key"))
+        with mock.patch.object(actd.executor, "dispatch", boom):
+            n = actd.dispatch_approved(self.cfg)
+        self.assertEqual(n, 0)
+        saved = registry.load("R-960")
+        self.assertEqual(saved.status, State.APPROVED.value)
+        ex = saved.execution or {}
+        self.assertIn("Invalid API key", ex.get("last_error", ""))
+        self.assertTrue(ex.get("last_error_at"))
+        self.assertTrue(any(e.get("event") == "dispatch_failed"
+                            for e in _events("R-960")))
 
 
 if __name__ == "__main__":
