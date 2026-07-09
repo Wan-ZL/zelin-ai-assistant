@@ -12,6 +12,7 @@
 6. Menu-bar app → Settings → paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth; the key is stored as a `0600` file in `config/secrets/`).
 7. Grant permissions in System Settings → Privacy & Security: **Screen Recording** and **Microphone** for the app; **Full Disk Access** for `/usr/sbin/cron` (click "+", press ⌘⇧G, type `/usr/sbin/cron`).
 8. Expected state: the popover header says the dashboard was generated **≤10 s ago**. Then try the "first card in 5 minutes" exercise below (⌥Space → type a small task → ✅ → a reviewable draft arrives minutes later).
+9. Anything off at any step: `bash install.sh --check` (= `python3 -m act.doctor`) re-validates the whole chain — deps, key resolution, launchd agents actually alive, cron lines, dashboard freshness — one `ok/warn/FAIL` line per check with the exact fix.
 
 No API key yet? `python3 scripts/demo_seed.py /tmp/assistant-demo` previews the entire UI with fictional data — see [docs/DEMO.md](DEMO.md).
 
@@ -22,11 +23,31 @@ No API key yet? `python3 scripts/demo_seed.py /tmp/assistant-demo` previews the 
 | macOS | **14+** | app、launchd/cron 定时、TCC 权限模型 |
 | Xcode / Swift toolchain | **6.x** | 构建 menu-bar app;`swiftc --version`。旧 toolchain 会死在 main-actor isolation 编译错(CI 同款下限,见 `.github/workflows/ci.yml` 注释) |
 | [Claude Code CLI](https://claude.com/claude-code) | 最新版 | 雷达提取、提案扩写、执行全靠它;`claude --version` |
-| Anthropic API key | — | headless 运行必需(见步骤 5) |
+| Anthropic API key | — | headless 运行必需(为什么订阅不够用,见下方[认证模型](#认证模型api-key-vs-promax-订阅)) |
 | Python | **3.9+** 与 PyYAML | actd / 雷达 / digest;`python3 -c "import yaml"` |
 | Node.js | LTS(含 `npx`) | 录制引擎经 `npx screenpipe` 自动运行,**无需单独安装 screenpipe**;`npx --version`;缺失时 `brew install node` |
 | Obsidian(可选,推荐) | — | vault 是雷达扫描源与 wiki 落点 |
 | `gh` CLI(可选) | — | draft-PR 交付 |
+
+## 认证模型(API key vs Pro/Max 订阅)
+
+claude CLI 有两套互不相通的凭据,而这个项目的不同组件用到的**不是同一套**——装完后"终端里跑得通、cron 却静默死"几乎都源于此:
+
+| 认证方式 | 是什么 | 谁能用 | 计费 |
+|---|---|---|---|
+| **OAuth(Pro/Max 订阅)** | `claude` 登录后存进 macOS Keychain 的订阅凭据 | 只有你 GUI 登录会话里的进程(交互终端等) | 计入订阅额度,不另付费 |
+| **API key(`sk-ant-…`)** | [console.anthropic.com](https://console.anthropic.com) 签发的 metered key,以文件形式存放 | 任何进程,包括 cron / launchd 的 daemon session | 按 token 计费(API 账单) |
+
+**为什么 headless 必须用 key 文件**:cron 和 launchd agents 跑在 daemon session 里,macOS 有两层沙箱把 OAuth 挡死——Keychain 只对 GUI 会话开放,而 `launchctl asuser` 也无法从 cron 的 daemon audit session 桥接过去(细节见 `ingest/process-screenpipe.sh` 顶部注释块)。因此:
+
+- **需要 key 文件**的组件(全部 headless,under cron/launchd):ingest 链(`process-screenpipe.sh`)、各 radar、每周 digest、actd 派发的 `claude --bg` 执行。
+- **订阅凭据就够**的场景:你在终端手动跑 `claude`(交互 session 读得到 Keychain)。
+
+**ingest 的 fallback 行为**(其余 headless 组件同理):按 CONTRACT §19 顺序解析 key——`config/secrets/anthropic-api-key.txt` → 旧路径 `~/.config/anthropic-key.txt`;**两个文件都没有时不会立刻失败**,而是回落到 claude CLI 自己存储的凭据试跑。在常年保持登录的 Mac(如 Mac mini)上这条兜底路经常能通(此时计入订阅额度);不通时错误只落在 `/tmp/screenpipe-auto.log`,表面症状是"radar 静默数天不出卡"。**别赌这条兜底**——贴一个 key 文件才是可靠路径。
+
+**计费预期**:key 文件存在时,所有 headless 用量按 API 计费(不消耗订阅额度)。量级参考:ingest 每 30 分钟一次 headless 调用(≈48 次/天,时长随积压素材量波动)+ 每张批准的卡一个执行 session。建议在 console.anthropic.com 设 spend limit,观察第一周的实际用量再调。
+
+**key 存哪、怎么验证**:app 设置窗口粘贴保存 → 写入 `config/secrets/anthropic-api-key.txt`(目录 0700 / 文件 0600,gitignored;CONTRACT §19)。装完随时可以跑 `bash install.sh --check`(即 `python3 -m act.doctor`)整链体检——它会用与 headless 组件**相同的凭据解析顺序**做一次廉价 live 调用,key 贴错当场可见,而不是几分钟后死在没人看的 cron log 里。
 
 ## 路线 A:.pkg 安装包
 
@@ -73,9 +94,9 @@ cp config.example.yaml config.yaml
 bash install.sh
 ```
 
-它做六件事:依赖检查 → config 模板/runtime 指针 → state 目录 → 构建并安装 Mac app → launchd agents(actd 常驻 + 雷达)→ 统一 crontab(ingest 链 + 周一 digest,CONTRACT §18)。幂等,可反复跑。
+它做七件事:依赖检查(claude / Swift toolchain 版本 / PyYAML,PEP 668 环境自动带 `--break-system-packages` 重试)→ config 模板/runtime 指针 → state 目录 → 构建并安装 Mac app → launchd agents(actd 常驻 + 雷达)→ 统一 crontab(ingest 链 + 周一 digest,CONTRACT §18)→ 收尾自动跑一遍诊断(`python -m act.doctor`)。幂等,可反复跑。
 
-> ✅ **预期状态**:输出没有 `[ERR]`;`launchctl list | grep com.zelin.aiassistant` 至少一行;`crontab -l | grep screenpipe-export` 恰一行;app 出现在 `/Applications`(或 `~/Applications`)。
+> ✅ **预期状态**:输出没有 `[ERR]`,结尾的诊断没有 `[FAIL]`(此刻还没贴 key,`anthropic key` 一行是 `[warn]` 属正常);`launchctl list | grep com.zelin.aiassistant` 至少一行;`crontab -l | grep screenpipe-export` 恰一行;app 出现在 `/Applications`(或 `~/Applications`)。之后任何时候都能用 `bash install.sh --check` 重跑诊断。
 
 ### 步骤 4 · 首次启动(Gatekeeper)
 
@@ -85,9 +106,9 @@ app 未签名,首次启动被 Gatekeeper 拦:在 `/Applications` 里**右键 →
 
 ### 步骤 5 · Anthropic API key
 
-打开 app 的设置窗口,粘贴 API key 保存——写入 `config/secrets/anthropic-api-key.txt`(目录 0700 / 文件 0600,CONTRACT §19)。cron/launchd 的 daemon session 读不了 Keychain OAuth,所以 headless claude 必须有文件形式的 key;旧路径 `~/.config/anthropic-key.txt` 仍兜底。
+打开 app 的设置窗口,粘贴 API key 保存——写入 `config/secrets/anthropic-api-key.txt`(目录 0700 / 文件 0600,CONTRACT §19)。cron/launchd 的 daemon session 读不了 Keychain OAuth,所以 headless claude 必须有文件形式的 key;旧路径 `~/.config/anthropic-key.txt` 仍兜底。只有 Pro/Max 订阅、没有 API key?哪些组件受影响、fallback 怎么走、怎么计费,见上方[认证模型](#认证模型api-key-vs-promax-订阅)。
 
-> ✅ **预期状态**:`ls -l config/secrets/anthropic-api-key.txt` 显示 `-rw-------`。
+> ✅ **预期状态**:`ls -l config/secrets/anthropic-api-key.txt` 显示 `-rw-------`;`bash install.sh --check` 里 `anthropic key` 与 `claude auth` 两行都是 `[ ok ]`(doctor 会用这个 key 做一次廉价 live 调用)。
 
 ### 步骤 6 · TCC 授权(路径逐条)
 
@@ -114,7 +135,7 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先
 4. 点 ✅ 批准 → 卡片先灰显"排队"(瞬时),随后进入**执行中**(`claude --bg` 在独立 worktree 里跑)。这样的简单任务通常 **2–10 分钟**。
 5. 完工后卡片进入**待验收**,带交付摘要(代码任务给分支/draft PR;文书任务给可直接复制的 FINAL DRAFT)。点 ✅ 验收归档,或 💬 带评论打回重做。
 
-**慢 vs 坏**的判别线:
+**慢 vs 坏**的判别线(拿不准就先跑 `bash install.sh --check`,它会把坏的一环直接指出来):
 
 - 捕获后 **>5 分钟**没有待审批卡 → actd 没在跑或 key 无效:`launchctl list | grep actd`、`tail state/actd.log`。
 - 批准后卡在"排队" **>2 分钟** → 派发失败,卡片会显示 last_error;看 `state/actd.log`。

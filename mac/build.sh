@@ -2,8 +2,9 @@
 # Build + assemble the "Zelin's AI Assistant" menu-bar app (.app bundle).
 #
 # Usage:
-#   ./build.sh            # compile + assemble the bundle under mac/build/
-#   ./build.sh --install  # also copy the bundle to /Applications (fallback ~/Applications)
+#   ./build.sh                    # compile + assemble the bundle under mac/build/
+#   ./build.sh --install          # also copy the bundle to /Applications (fallback ~/Applications)
+#   ./build.sh --check-toolchain  # only verify swiftc presence + version, then exit
 #
 # Naming (v0.4 §12 — MUST stay in sync with install.sh / glue / launchd):
 #   bundle:     Zelin's AI Assistant.app
@@ -14,6 +15,39 @@ set -euo pipefail
 
 # --- locate self (worktree-safe, handles spaces) ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- toolchain gate ---
+# The sources use Swift 6 concurrency (main-actor isolation, same floor as
+# .github/workflows/ci.yml); an older default Xcode fails MID-COMPILE with
+# confusing actor errors, so check the version up front and print the fix.
+# install.sh step 1 calls `mac/build.sh --check-toolchain` (single source).
+MIN_SWIFT="6.0"
+
+check_toolchain() {
+    if ! command -v swiftc >/dev/null 2>&1; then
+        echo "ERROR: swiftc not found. Install Xcode Command Line Tools: xcode-select --install" >&2
+        return 1
+    fi
+    local ver
+    ver="$(swiftc --version 2>/dev/null | sed -n 's/.*Swift version \([0-9][0-9.]*\).*/\1/p' | head -n1)"
+    if [ -z "$ver" ]; then
+        # unparseable banner — don't block the build on a cosmetic format change
+        echo "WARN: could not parse Swift version from: $(swiftc --version 2>/dev/null | head -n1)" >&2
+        return 0
+    fi
+    if [ "$(printf '%s\n%s\n' "$MIN_SWIFT" "$ver" | sort -V | head -n1)" != "$MIN_SWIFT" ]; then
+        echo "ERROR: Swift $ver is too old — this app needs Swift >= $MIN_SWIFT (main-actor isolation rules)." >&2
+        echo "  fix: update Xcode via the App Store (or install newer Command Line Tools), then:" >&2
+        echo "       sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+        echo "       verify with: swiftc --version" >&2
+        return 1
+    fi
+    return 0
+}
+
+if [ "${1:-}" = "--check-toolchain" ]; then
+    if check_toolchain; then exit 0; else exit 1; fi
+fi
 
 APP_NAME="Zelin's AI Assistant"
 EXEC_NAME="ZelinAIEngineer"
@@ -29,10 +63,7 @@ INSTALL=0
 [ "${1:-}" = "--install" ] && INSTALL=1
 
 # --- sanity checks ---
-if ! command -v swiftc >/dev/null 2>&1; then
-    echo "ERROR: swiftc not found. Install Xcode Command Line Tools: xcode-select --install" >&2
-    exit 1
-fi
+check_toolchain || exit 1
 if [ ! -f "$SRC_DIR/main.swift" ]; then
     echo "ERROR: Swift source not found at: $SRC_DIR/main.swift" >&2
     exit 1

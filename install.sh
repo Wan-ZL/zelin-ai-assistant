@@ -13,6 +13,7 @@
 #   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
 #      the repo's ingest/ scripts + `python -m act.radar --once`, and Monday
 #      09:07 runs `python -m act.digest --now`
+#   7. run the post-install diagnostics (python -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
 #
@@ -21,11 +22,28 @@
 #   user for), the Mac app build/install (the pkg already installed it) and
 #   the launchd agents (they need per-user config that doesn't exist yet),
 #   but still does config files, state dirs and the ingest cron chain.
+#
+# --check: run the post-install doctor (python -m act.doctor) and exit with
+#   the number of failing checks. Installs/changes nothing.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 LA_DIR="$HOME/Library/LaunchAgents"
+
+# --check: delegate to act/doctor.py — re-validates every runtime assumption
+# (deps, key resolution, launchd agents alive, cron lines, dashboard freshness)
+# symptom-first, one fix line per finding. Exit code = number of FAILs.
+if [ "${1:-}" = "--check" ]; then
+    DOCTOR_PY="$(command -v python3 || echo /usr/bin/python3)"
+    if [ -f "$REPO_ROOT/config/runtime.json" ]; then
+        # prefer the pinned daemon interpreter — it is what launchd/cron run
+        RJ_PY="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json")"
+        [ -n "$RJ_PY" ] && [ -x "$RJ_PY" ] && DOCTOR_PY="$RJ_PY"
+    fi
+    cd "$REPO_ROOT" || exit 1
+    AIASSISTANT_HOME="$REPO_ROOT" exec "$DOCTOR_PY" -m act.doctor
+fi
 
 PKG_POSTINSTALL=0
 [ "${1:-}" = "--pkg-postinstall" ] && PKG_POSTINSTALL=1
@@ -103,12 +121,13 @@ else
     exit 1
 fi
 
-# swift / swiftc (required)
-if command -v swiftc >/dev/null 2>&1; then
-    ok "swiftc found: $(command -v swiftc)"
+# swift toolchain (required to build the Mac app) — presence AND minimum
+# version. MIN_SWIFT lives in mac/build.sh (single source); on failure it
+# prints the exact fix (update Xcode, xcode-select) so we just exit.
+if bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
+    ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
 else
-    warn "swiftc not found (REQUIRED to build the Mac app)."
-    info "Install with: xcode-select --install   (then re-run this script)"
+    echo "  [ERR ] Swift toolchain check failed (see message above), then re-run this script." >&2
     exit 1
 fi
 
@@ -121,15 +140,22 @@ else
     exit 1
 fi
 
-# PyYAML (else pip install)
+# PyYAML (else pip install). Homebrew/system pythons are PEP 668 "externally
+# managed" and refuse plain --user installs — retry with --break-system-packages
+# (same fallback as .github/workflows/ci.yml). actd/radar cannot run without
+# yaml, so a final failure is a hard stop, not a warn.
 if "$PY" -c "import yaml" >/dev/null 2>&1; then
     ok "PyYAML available"
 else
-    warn "PyYAML missing; attempting: pip install pyyaml"
-    if "$PY" -m pip install --user pyyaml >/dev/null 2>&1; then
+    warn "PyYAML missing; attempting: $PY -m pip install --user pyyaml"
+    if "$PY" -m pip install --user pyyaml >/dev/null 2>&1 \
+        || "$PY" -m pip install --user --break-system-packages pyyaml >/dev/null 2>&1; then
         ok "PyYAML installed"
     else
-        warn "PyYAML install failed; install manually: $PY -m pip install pyyaml"
+        echo "  [ERR ] PyYAML install failed (REQUIRED for actd/radar)." >&2
+        info "fix: $PY -m pip install --user --break-system-packages pyyaml"
+        info "  or use a conda/miniconda python3, then re-run this script"
+        exit 1
     fi
 fi
 
@@ -198,6 +224,24 @@ if [ -n "$RUNTIME_PY" ]; then
     ok "config/runtime.json -> $RUNTIME_PY"
 else
     warn "python3 not found — skipped config/runtime.json (re-run install.sh once python3 exists)"
+fi
+
+# verify PyYAML against the DAEMON interpreter — RUNTIME_PY is what launchd
+# and cron actually run, and it can differ from the shell python3 checked in
+# step 1 (e.g. $AIASSISTANT_PYTHON override). Without yaml, actd exits on
+# spawn with no visible error.
+if [ -n "$RUNTIME_PY" ] && ! "$RUNTIME_PY" -c "import yaml" >/dev/null 2>&1; then
+    warn "PyYAML missing for the daemon python ($RUNTIME_PY); attempting install"
+    if "$RUNTIME_PY" -m pip install --user pyyaml >/dev/null 2>&1 \
+        || "$RUNTIME_PY" -m pip install --user --break-system-packages pyyaml >/dev/null 2>&1; then
+        ok "PyYAML installed for $RUNTIME_PY"
+    elif [ "$PKG_POSTINSTALL" -eq 1 ]; then
+        warn "PyYAML unavailable for $RUNTIME_PY — actd/radar will not start. fix: $RUNTIME_PY -m pip install --user --break-system-packages pyyaml"
+    else
+        echo "  [ERR ] PyYAML unavailable for the daemon python: $RUNTIME_PY" >&2
+        info "fix: $RUNTIME_PY -m pip install --user --break-system-packages pyyaml   (then re-run this script)"
+        exit 1
+    fi
 fi
 
 # home pointer (CONTRACT §19) — the GUI app launches with no env vars, so a
@@ -320,6 +364,19 @@ if [ "$NEW_CRON" != "$CURRENT_CRON" ]; then
 fi
 
 # --------------------------------------------------------------------------
+echo ""
+if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+    echo "==> 7. diagnostics — skipped (agents not loaded yet; after configuring, run: bash install.sh --check)"
+elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
+    echo "==> 7. post-install diagnostics (python -m act.doctor)"
+    if ! (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.doctor); then
+        warn "doctor reported problems above — fix them, then re-check: bash install.sh --check"
+    fi
+else
+    echo "==> 7. diagnostics — skipped (no usable python3); run later: bash install.sh --check"
+fi
+
+# --------------------------------------------------------------------------
 cat <<'EOF'
 
 ==============================================
@@ -340,5 +397,6 @@ cat <<'EOF'
         for the exact crontab line.
  4. The menu-bar app is installed; launch it from /Applications (or ~/Applications).
     It reads state/dashboard.json every 5s and writes approvals to state/inbox/.
+ 5. Anything off later? Re-run diagnostics anytime: bash install.sh --check
 ==============================================
 EOF
