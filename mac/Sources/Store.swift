@@ -45,6 +45,27 @@ struct LocalNotice: Identifiable, Equatable {
     let created: Date
 }
 
+// MARK: - Pipeline health (P1-4) — slow vs broken, told apart honestly
+
+/// Why a dead pipeline is dead — the banner turns this into actionable copy.
+/// Verdict data only (no baked strings): the view renders per current language.
+enum PipelineDeadReason: Equatable {
+    case radarsAlive   // radar_health.json still moving → actd alone is down
+    case allQuiet      // nothing in the pipeline writes anything anymore
+}
+
+/// Age tiers of state/dashboard.json (actd rewrites it every ~10 s pass):
+///  - ok:    generated_at ≤ 90 s — fresh, pipeline alive
+///  - stale: 90 s < age ≤ 10 min — slow or just stopped ("可能只是慢")
+///  - dead:  age > 10 min — actd is not coming back on its own
+///  - missing: no dashboard.json at all (fresh install / wrong home)
+enum PipelineHealth: Equatable {
+    case ok
+    case stale(minutes: Int)
+    case dead(minutes: Int, reason: PipelineDeadReason)
+    case missing
+}
+
 // MARK: - Store (@MainActor => Sendable, safe to capture in Timer block)
 
 @MainActor
@@ -81,6 +102,9 @@ final class DashboardStore: ObservableObject {
     @Published var returningLocal: [String: PendingReturn] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
+    // P1-4: dashboard freshness verdict, recomputed on every refresh tick —
+    // the file being frozen (reload short-circuit) is exactly the signal.
+    @Published var pipelineHealth: PipelineHealth = .ok
 
     // raw bytes of the last successfully-read dashboard.json — reload
     // short-circuits (no publish) when the file hasn't changed.
@@ -91,6 +115,9 @@ final class DashboardStore: ObservableObject {
         // local placeholder timeouts tick on every refresh, even when the
         // dashboard file itself is unchanged (actd down = file frozen).
         sweepTimeouts()
+        // P1-4: re-verdict on EVERY exit path, including the unchanged-bytes
+        // short-circuit below — a frozen file is what "stale" looks like.
+        defer { updateHealth() }
 
         let path = AppPaths.dashboardPath
         guard FileManager.default.fileExists(atPath: path) else {
@@ -178,8 +205,13 @@ final class DashboardStore: ObservableObject {
 
     private func sweepTimeouts() {
         let now = Date()
-        // capture placeholders: 300 s → yellow notice (analysis can be slow)
-        let expiredCaptures = capturePending.filter { now.timeIntervalSince($0.created) > 300 }
+        // capture placeholders: 300 s → yellow notice (analysis can be slow).
+        // P1-4: pipeline not ok → skip; the placeholder honestly says "queued
+        // until the pipeline runs" (Cards.processingBody) and a timeout notice
+        // would be a false alarm. updateHealth re-arms `created` on recovery.
+        let expiredCaptures = pipelineHealth == .ok
+            ? capturePending.filter { now.timeIntervalSince($0.created) > 300 }
+            : []
         // raise placeholders: 180 s → orange notice + release the sticky hide
         let expiredRaises = raisingLocal.filter { now.timeIntervalSince($0.value.created) > 180 }
         // echoes: 180 s → give up; release the sticky hide so the card returns
@@ -199,8 +231,8 @@ final class DashboardStore: ObservableObject {
                 capturePending.removeAll { $0.id == c.id }
                 notices.append(LocalNotice(
                     id: "notice-" + c.id, kind: .captureTimeout,
-                    text: L("分析比平时慢，卡片稍后会自动出现（也可能失败，留意 actd）",
-                            "Analysis is slower than usual — the card should still appear (check actd if not)"),
+                    text: L("分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log",
+                            "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log"),
                     created: now))
             }
             for (id, entry) in expiredRaises {
@@ -260,6 +292,49 @@ final class DashboardStore: ObservableObject {
             return L("退回待验收超时，卡片仍在已验收列，可重试（检查 actd 是否在运行）",
                      "Back-to-review timed out — the card is still in Delivered, try again (check that actd is running)")
         }
+    }
+
+    // MARK: pipeline health (P1-4)
+
+    private static let staleAfter: TimeInterval = 90    // popover footer 同阈值
+    private static let deadAfter: TimeInterval = 600    // actd 每 ~10s 一写；10 分钟没写不会自己好
+
+    private func updateHealth() {
+        let verdict = computeHealth()
+        guard verdict != pipelineHealth else { return }
+        let recovered = verdict == .ok && pipelineHealth != .ok
+        pipelineHealth = verdict
+        if recovered {
+            // pipeline is back: pending captures kept waiting through the
+            // outage — restart their 300 s window so sweepTimeouts doesn't
+            // fire a timeout notice the instant health returns.
+            capturePending = capturePending.map {
+                CapturePending(id: $0.id, text: $0.text, created: Date())
+            }
+        }
+    }
+
+    private func computeHealth() -> PipelineHealth {
+        guard let db = dashboard else { return missing ? .missing : .ok }
+        // legacy dashboards without generated_at: no verdict (footer degrades
+        // to the refresh stamp the same way)
+        guard let gen = FreshnessLabel.parseISO(db.generated_at) else { return .ok }
+        let age = Date().timeIntervalSince(gen)
+        if age <= Self.staleAfter { return .ok }
+        let mins = max(1, Int(age / 60))
+        if age <= Self.deadAfter { return .stale(minutes: mins) }
+        return .dead(minutes: mins,
+                     reason: Self.radarsRecentlyAlive() ? .radarsAlive : .allQuiet)
+    }
+
+    /// radar_health.json is rewritten on every gmail/slack radar attempt
+    /// (contract E) — a fresh mtime while the dashboard is old means the
+    /// scheduled half of the pipeline still runs and actd alone is down.
+    private static func radarsRecentlyAlive() -> Bool {
+        let path = AppPaths.stateRoot + "/state/radar_health.json"
+        guard let mtime = (try? FileManager.default.attributesOfItem(atPath: path))?[
+            .modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(mtime) < 40 * 60   // radars poll every ≤30 min
     }
 
     // MARK: applyAction — the ONE entry point for card-button actions (契约2)

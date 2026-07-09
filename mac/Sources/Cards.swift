@@ -350,7 +350,9 @@ fileprivate struct DodListView: View {
 
 /// One-line mono path that copies itself on click (clipboard→✓, 1.5 s reset).
 /// A Button so its tap wins over the whole-card copy gesture underneath.
-fileprivate struct CopyPathLine: View {
+/// Internal (not fileprivate like its siblings above): P1-4/P1-5 reuse it for
+/// the pipeline-health banner and the shared empty state (Freshness.swift).
+struct CopyPathLine: View {
     let label: String
     let path: String
     @State private var copied = false
@@ -477,9 +479,19 @@ struct ApprovalCardView: View {
 
     // greyed spinner placeholder while AI expands a just-raised debt (§ raise UX)
     private var processingBody: some View {
-        CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, pending: true) {
+        // P1-4 honest feedback: with the pipeline not ok, "analyzing (2-3 min)"
+        // would be a promise nothing can keep — say where the capture actually
+        // is (queued on disk) and drop the spinner until the pipeline is back.
+        let stalled = card.id.hasPrefix("capture-") && app.store.pipelineHealth != .ok
+        return CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, pending: true) {
             HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
+                if stalled {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(card.displaySummary)
                         .font(.system(size: 13))
@@ -487,7 +499,10 @@ struct ApprovalCardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     // quick-capture placeholders (id "capture-…") get honest
                     // wording + expectation; raised debts keep the research copy.
-                    Text(card.id.hasPrefix("capture-")
+                    Text(stalled
+                         ? L("已保存到队列，pipeline 启动后开始处理",
+                             "Saved to the queue — processed once the pipeline is running")
+                         : card.id.hasPrefix("capture-")
                          ? L("已提交，AI 分析中（通常 2-3 分钟）",
                              "Submitted — analyzing (usually 2-3 min)")
                          : L("AI 研究中…（补全上下文、生成提案）",

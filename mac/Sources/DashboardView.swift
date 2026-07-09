@@ -192,6 +192,9 @@ struct DashboardView: View {
                         .foregroundColor(.orange)
                 }
 
+                // P1-4: slow-vs-broken pipeline banner (shared with the kanban)
+                PipelineHealthBanner(store: store, app: app)
+
                 // placeholder-timeout notices (capture = yellow, raise = orange)
                 ForEach(store.notices) { NoticeRow(notice: $0) }
 
@@ -266,24 +269,11 @@ struct DashboardView: View {
         return .handled
     }
 
+    // P1-5: shared first-launch empty state (Freshness.swift) — same copy as
+    // the kanban, with a start command + a path into the dependency check.
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: "hourglass")
-                .font(.system(size: 22))
-                .foregroundColor(.secondary)
-            Text(L("等待 pipeline 启动", "Waiting for pipeline"))
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
-            Text(L("未找到 state/dashboard.json", "state/dashboard.json not found"))
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            Text(L("启动：在 zelin-ai-assistant 目录运行 ./actd",
-                   "Start it: run ./actd in the zelin-ai-assistant directory"))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 24)
+        PipelineEmptyStateView(app: app)
+            .padding(.vertical, 24)
     }
 
     // All section counts follow the RENDERED arrays (visible* + echoes) — the

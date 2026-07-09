@@ -53,12 +53,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // consent prompt — recording defaults to off, and this autostart only
         // runs once a mode exists (prior consent or pre-existing prefs).
         if RecordingConsent.needsPrompt {
-            // deferred a turn so launch setup finishes before the modal alert
+            // deferred a turn so launch setup finishes before the modal alert;
+            // present() runs a modal loop, so the P1-5 first-launch check below
+            // only fires after the consent choice is made.
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { RecordingConsent.present() }
+                MainActor.assumeIsolated {
+                    RecordingConsent.present()
+                    self.openDepsOnFirstLaunchIfNeeded()
+                }
             }
         } else {
             RecordingController.shared.autostartIfNeeded()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self.openDepsOnFirstLaunchIfNeeded() }
+            }
         }
 
         // item 2: global hotkey (default ⌥Space) — registration failure is
@@ -105,7 +113,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // items, install scripts) would pop it over whatever Zelin is doing —
         // including fullscreen video. A deliberate double-click on the already
         // running app lands in applicationShouldHandleReopen below, which is
-        // the one place that opens the window.
+        // the one place that opens the window — with ONE exception: the P1-5
+        // first-launch-without-dashboard walk-through (openDepsOnFirstLaunch-
+        // IfNeeded above), which fires at most once per user, ever.
+    }
+
+    // P1-5 first-launch UX: with no dashboard.json the popover is a dead end
+    // ("waiting for pipeline") — open the main window ON the Dependencies page
+    // exactly once, so the first thing a new user sees is the checklist that
+    // names what's missing. hasCompletedFirstRun is set on the first launch
+    // no matter what, so this can never turn into a nag.
+    private func openDepsOnFirstLaunchIfNeeded() {
+        guard !Prefs.bool("hasCompletedFirstRun", default: false) else { return }
+        UserDefaults.standard.set(true, forKey: "hasCompletedFirstRun")
+        guard !FileManager.default.fileExists(atPath: AppPaths.dashboardPath) else { return }
+        Analytics.log("first_launch_deps")
+        MainNav.shared.section = .deps
+        openMainWindow(nil)
     }
 
     // Double-clicking the app in Finder/Dock while it is already running
@@ -140,9 +164,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         updateStatusTitle()
     }
 
+    // last symbol pushed to the status button (P1-4 health swap) — avoids
+    // recreating the NSImage on every 5 s refresh tick.
+    private var statusSymbolShown = "checklist"
+
     private func makeMainStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
+            statusSymbolShown = "checklist"   // fresh item starts at the default
             button.image = NSImage(systemSymbolName: "checklist",
                                    accessibilityDescription: "Zelin's AI Assistant")
             button.imagePosition = .imageLeading
@@ -169,6 +198,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.title = " \(n)"
         } else {
             button.title = ""
+        }
+        // P1-4: unhealthy pipeline → warning triangle in the menu bar itself;
+        // the 10pt footer note alone was invisible until the popover opened.
+        let symbol = store.pipelineHealth == .ok ? "checklist" : "exclamationmark.triangle"
+        if symbol != statusSymbolShown {
+            statusSymbolShown = symbol
+            button.image = NSImage(systemSymbolName: symbol,
+                                   accessibilityDescription: "Zelin's AI Assistant")
         }
     }
 

@@ -236,7 +236,8 @@ struct SettingsFormView: View {
                     title: "Anthropic API key",
                     secretName: SecretsIO.anthropicFile,
                     legacyPath: "~/.config/anthropic-key.txt",
-                    links: [(L("控制台", "Console"), "https://console.anthropic.com/settings/keys")])
+                    links: [(L("控制台", "Console"), "https://console.anthropic.com/settings/keys")],
+                    validatesAnthropicKey: true)
             }
             // 契约3 frozen anchor — MainWindowView scrollTo()s here from deps
             .id("credentials")
@@ -569,15 +570,21 @@ struct SettingsFormView: View {
 // One credential row in 设置·凭证 — status dot (green = secrets file saved,
 // yellow = legacy path in use, grey = unset) + SecureField paste + save +
 // helper link buttons (http URL or repo-relative doc path).
+// P1-2: rows with validatesAnthropicKey get a 验证 button (cheap live probe
+// against api.anthropic.com/v1/models) and every save auto-verifies — an
+// invalid key is never stored silently.
 struct CredentialRowView: View {
     let title: String
     let secretName: String                       // file name under config/secrets/
     let legacyPath: String                       // tilde form ok
     let links: [(label: String, target: String)] // http(s) URL or repo-relative path
+    var validatesAnthropicKey: Bool = false
 
     @State private var input = ""
     @State private var state = 0   // 0 = unset, 1 = legacy path, 2 = saved
     @State private var note = ""
+    @State private var noteColor = Color.secondary
+    @State private var validating = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -603,10 +610,21 @@ struct CredentialRowView: View {
                 Button(L("保存", "Save")) { save() }
                     .controlSize(.small)
                     .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if validatesAnthropicKey {
+                    // P1-2: probe the pasted key (or the stored one when the
+                    // field is empty) — inline ok/fail with the reason.
+                    Button(validating ? L("验证中…", "Verifying…") : L("验证", "Verify")) {
+                        verify()
+                    }
+                    .controlSize(.small)
+                    .disabled(validating)
+                }
                 if !note.isEmpty {
                     Text(note)
                         .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(noteColor)
+                        .lineLimit(2)
+                        .help(note)
                 }
             }
             Text(SecretsIO.path(secretName))
@@ -651,11 +669,63 @@ struct CredentialRowView: View {
         do {
             try SecretsIO.save(secretName, token: token)
             input = ""
-            note = L("已保存 ✓", "Saved ✓")
             refreshState()
             Analytics.log("mw_secret_save", fields: ["name": secretName])
+            if validatesAnthropicKey {
+                // P1-2: never store an invalid key silently — probe right away
+                runProbe(token, savedFirst: true)
+            } else {
+                setNote(L("已保存 ✓", "Saved ✓"), .secondary)
+            }
         } catch {
-            note = L("保存失败: ", "Save failed: ") + error.localizedDescription
+            setNote(L("保存失败: ", "Save failed: ") + error.localizedDescription, .red)
+        }
+    }
+
+    // MARK: P1-2 key validation
+
+    private func setNote(_ text: String, _ color: Color) {
+        note = text
+        noteColor = color
+    }
+
+    /// 验证 button: probe the field content; empty field → the stored secret.
+    private func verify() {
+        let candidate = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key: String
+        if !candidate.isEmpty {
+            key = candidate
+        } else if let stored = try? String(contentsOfFile: SecretsIO.path(secretName),
+                                           encoding: .utf8)
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !stored.isEmpty {
+            key = stored
+        } else {
+            setNote(L("先粘贴（或保存）一个 key 再验证", "Paste (or save) a key first"), .orange)
+            return
+        }
+        runProbe(key, savedFirst: false)
+    }
+
+    private func runProbe(_ key: String, savedFirst: Bool) {
+        validating = true
+        setNote(savedFirst ? L("已保存，验证中…", "Saved — verifying…")
+                           : L("验证中…", "Verifying…"), .secondary)
+        KeyProbe.anthropic(key: key) { outcome in
+            validating = false
+            switch outcome {
+            case .ok:
+                setNote(savedFirst ? L("已保存 ✓ key 有效", "Saved ✓ key valid")
+                                   : L("key 有效 ✓", "Key valid ✓"), .green)
+                Analytics.log("mw_key_validate", fields: ["result": "ok"])
+            case .unauthorized(let why):
+                setNote((savedFirst ? L("已保存，但 key 无效：", "Saved, but the key is INVALID: ")
+                                    : L("key 无效：", "Invalid key: ")) + why, .red)
+                Analytics.log("mw_key_validate", fields: ["result": "unauthorized"])
+            case .failed(let why):
+                setNote(L("无法验证（网络/服务问题）：", "Couldn't verify (network/service): ") + why,
+                        .orange)
+                Analytics.log("mw_key_validate", fields: ["result": "error"])
+            }
         }
     }
 
@@ -665,5 +735,54 @@ struct CredentialRowView: View {
         } else {
             NSWorkspace.shared.open(URL(fileURLWithPath: AppPaths.stateRoot + "/" + target))
         }
+    }
+}
+
+// MARK: - P1-2 Anthropic key probe
+//
+// GET /v1/models — free (no tokens billed), fast, and it fails with 401 on a
+// bad key, which is exactly the signal we need. URLSession instead of a curl
+// subprocess so the key never appears in a process argv (`ps` would show it).
+
+enum KeyProbe {
+    enum Outcome {
+        case ok
+        case unauthorized(String)  // the key itself is bad (401/403)
+        case failed(String)        // network / service — key verdict unknown
+    }
+
+    static func anthropic(key: String, done: @escaping @MainActor (Outcome) -> Void) {
+        var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=1")!)
+        req.timeoutInterval = 10
+        req.setValue(key, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            let outcome: Outcome
+            if let err {
+                outcome = .failed(err.localizedDescription)
+            } else if let http = resp as? HTTPURLResponse {
+                if (200..<300).contains(http.statusCode) {
+                    outcome = .ok
+                } else {
+                    let detail = Self.apiErrorMessage(data) ?? "HTTP \(http.statusCode)"
+                    outcome = (http.statusCode == 401 || http.statusCode == 403)
+                        ? .unauthorized(detail) : .failed(detail)
+                }
+            } else {
+                outcome = .failed("no response")
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { done(outcome) }
+            }
+        }.resume()
+    }
+
+    /// {"error": {"type": "...", "message": "..."}} → "type: message"
+    private static func apiErrorMessage(_ data: Data?) -> String? {
+        guard let data,
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let err = obj["error"] as? [String: Any] else { return nil }
+        let parts = [err["type"] as? String, err["message"] as? String].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ": ")
     }
 }

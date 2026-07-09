@@ -4,18 +4,20 @@
 import AppKit
 import SwiftUI
 import Foundation
+import AVFoundation  // AVCaptureDevice.authorizationStatus (microphone TCC row)
 
 // MARK: §15.1 依赖检查 — "车跑之前轮子都得在"
 
 enum DepAction {
     case url(String)
     case reveal(String)
+    case grant(String)  // TCC rows: x-apple.systempreferences deep link to the pane
     case settings   // credential rows: jump to the 设置 page (App 内管理)
     case ingest     // engine row: jump to the 录制与 ingest page (start/stop there)
 
     @MainActor func perform() {
         switch self {
-        case .url(let u):
+        case .url(let u), .grant(let u):
             if let url = URL(string: u) { NSWorkspace.shared.open(url) }
         case .reveal(let p):
             let target = FileManager.default.fileExists(atPath: p)
@@ -37,6 +39,7 @@ enum DepAction {
         switch self {
         case .url: return L("下载页", "Download")
         case .reveal: return L("显示", "Reveal")
+        case .grant: return L("去授权", "Grant…")
         case .settings: return L("去设置", "Open Settings")
         case .ingest: return L("去录制页", "Open Recording")
         }
@@ -93,6 +96,8 @@ final class DepsModel: ObservableObject {
         let secretsAnthropic = SecretsIO.path(SecretsIO.anthropicFile)
         let runtimeJSON = AppPaths.stateRoot + "/config/runtime.json"
         let radarHealthPath = AppPaths.stateRoot + "/state/radar_health.json"
+        // P1-5: recording mode decides whether a missing mic grant is a blocker
+        let recMode = RecordingController.shared.mode
 
         DispatchQueue.global(qos: .userInitiated).async {
             let fm = FileManager.default
@@ -113,6 +118,30 @@ final class DepsModel: ObservableObject {
                 detail: "pgrep -f \"\(RecordingController.enginePattern)\""
                     + L("（引擎进程存活）", " (engine process alive)"),
                 action: .ingest))
+            // P1-5 TCC rows — the two most common first-launch blockers, both
+            // probeable without prompting (CGPreflight / authorizationStatus).
+            out.append(DepRowState(
+                id: "screen_tcc", name: L("屏幕录制权限", "Screen Recording permission"),
+                ok: RecordingController.hasScreenPermission(),
+                detail: L("CGPreflightScreenCaptureAccess()（未授权时引擎启动即退出、录不到任何内容）",
+                          "CGPreflightScreenCaptureAccess() (without it the engine exits instantly, capturing nothing)"),
+                action: .grant(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")))
+            let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            out.append(DepRowState(
+                id: "mic_tcc", name: L("麦克风权限", "Microphone permission"),
+                // only a blocker when the screen_audio mode actually needs it
+                ok: micGranted || recMode != "screen_audio",
+                detail: micGranted
+                    ? L("已授权（「屏幕+音频」转写可用）",
+                        "granted (Screen + Audio transcription available)")
+                    : recMode == "screen_audio"
+                    ? L("未授权——「屏幕+音频」模式录不到语音",
+                        "not granted — Screen + Audio mode can't transcribe")
+                    : L("未授权（当前模式不需要；切「屏幕+音频」前先授权）",
+                        "not granted (not needed in the current mode; grant before switching to Screen + Audio)"),
+                action: .grant(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")))
             // API-key workflow: only probe that the executable exists (GUI
             // shells often miss ~/.local/bin in PATH). Never suggests login.
             out.append(DepRowState(

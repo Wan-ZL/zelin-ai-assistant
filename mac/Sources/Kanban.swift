@@ -30,6 +30,9 @@ struct KanbanView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
             }
+            // P1-4: slow-vs-broken pipeline banner (shared with the popover)
+            PipelineHealthBanner(store: store, app: app,
+                                 horizontalPadding: 16, bottomPadding: 8)
             Divider()
             if store.dashboard == nil {
                 emptyState
@@ -59,17 +62,10 @@ struct KanbanView: View {
             // the inbox write path doesn't depend on the pipeline having run.
             KanbanComposer(app: app)
                 .frame(width: 400)
-            VStack(alignment: .leading, spacing: 6) {
-                Image(systemName: "hourglass")
-                    .font(.system(size: 22))
-                    .foregroundColor(.secondary)
-                Text(L("等待 pipeline 启动", "Waiting for pipeline"))
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-                Text(L("未找到 state/dashboard.json", "state/dashboard.json not found"))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+            // P1-5: shared first-launch empty state (Freshness.swift) — same
+            // copy as the popover, start command + dependency-check button.
+            PipelineEmptyStateView(app: app)
+                .frame(maxWidth: 400, alignment: .leading)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
