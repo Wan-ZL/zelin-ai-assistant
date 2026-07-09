@@ -4,6 +4,12 @@ actd writes this file; the Mac app reads it (never writes). The write is atomic
 (``.tmp`` then ``rename``). Running/needs_input/completed partitions come from
 joining registry ``status=executing`` items with ``claude agents --json --all``
 by ``session_id``.
+
+merge_suggestions (merge-review 契约 六) is a pure projection of the job files
+under ``state/merge/*.json`` (actd/act.merge_review write them; we only read):
+analyzing/done/failed are emitted, dismissed is not, corrupt files are skipped,
+and ``requested_at`` is converted from registry ISO to epoch int. Cards whose
+registry status is ``merged`` (契约 四 终态) enter NO column at all.
 """
 from __future__ import annotations
 
@@ -22,6 +28,14 @@ TIER_HINTS = {
     "T1": "一键可批",
     "T2": "需文字确认",
 }
+
+# merge-review job files (契约 二) — actd creates them on a merge_review inbox
+# action; act.merge_review's analysis subprocess atomically rewrites them.
+MERGE_DIR: Path = config.STATE_DIR / "merge"
+
+# Job statuses the dashboard forwards (契约 六): dismissed (and anything
+# unknown) stays local to the job file and never reaches the app.
+_MERGE_EMIT_STATUSES = ("analyzing", "done", "failed")
 
 
 # --------------------------------------------------------------------------- #
@@ -206,12 +220,70 @@ def _delivery_mode(req: Requirement) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# merge_suggestions partition (merge-review 契约 六)
+# --------------------------------------------------------------------------- #
+def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
+    """Project ``state/merge/*.json`` into the merge_suggestions partition.
+
+    Read-only and defensive: analyzing/done/failed are emitted, dismissed (and
+    unknown statuses) are not, corrupt/unreadable files are skipped one by one.
+    ``requested_at`` converts ISO -> epoch int (same convention as the other
+    partitions); ``expires_at`` is job-file bookkeeping (actd's TTL sweep) and
+    is deliberately NOT forwarded. Newest request first.
+    """
+    d = Path(merge_dir) if merge_dir is not None else MERGE_DIR
+    out: list[dict] = []
+    try:
+        files = sorted(d.glob("*.json"))
+    except OSError:
+        return out
+    for path in files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue  # 损坏文件跳过，绝不拖垮整个 dashboard pass
+        if not isinstance(data, dict):
+            continue
+        status = str(data.get("status") or "").strip().lower()
+        if status not in _MERGE_EMIT_STATUSES:
+            continue  # dismissed / 未知状态不发（契约 六）
+
+        def _opt_str(key: str) -> Optional[str]:
+            v = data.get(key)
+            return str(v) if v not in (None, "") else None
+
+        ids = data.get("ids")
+        action_plan = data.get("action_plan")
+        out.append(
+            {
+                "id": str(data.get("id") or path.stem),
+                "ids": [str(i) for i in ids] if isinstance(ids, list) else [],
+                "status": status,
+                "verdict": _opt_str("verdict"),
+                "primary": _opt_str("primary"),
+                "rationale": _opt_str("rationale"),
+                "action_plan": (
+                    [str(s) for s in action_plan]
+                    if isinstance(action_plan, list) else []
+                ),
+                "confidence": _opt_str("confidence"),
+                "error": _opt_str("error"),
+                "requested_at": _epoch(data.get("requested_at")),
+            }
+        )
+    # newest request first (stable: filename order breaks ties)
+    out.sort(key=lambda s: s.get("requested_at") or 0, reverse=True)
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
 def build_dashboard(
     reqs: Optional[list[Requirement]] = None,
     agents: Optional[list[dict]] = None,
     cfg: Optional[config.Config] = None,
+    merge_dir: Optional[Path] = None,
 ) -> dict:
     """Assemble the dashboard dict (CONTRACT §2). Pure/injectable for testing."""
     if cfg is None:
@@ -231,7 +303,10 @@ def build_dashboard(
     trash: list[dict] = []
 
     for req in reqs:
-        if req.is_merged or req.status == State.REJECTED.value:
+        # merged (契约 四 终态) is invisible everywhere, like the legacy
+        # merged_into:<id> statuses — its content lives on in the primary card.
+        if req.is_merged or req.status in (State.REJECTED.value,
+                                           State.MERGED.value):
             continue
 
         if req.status == State.CARD_SENT.value:
@@ -496,6 +571,9 @@ def build_dashboard(
         "completed": completed,
         "debt": debt,
         "trash": trash,
+        # merge-review 契约 六 — new partition; Swift reads decodeIfPresent so
+        # older apps simply ignore it.
+        "merge_suggestions": _merge_suggestions(merge_dir),
     }
 
 

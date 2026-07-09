@@ -3,6 +3,7 @@
 State machine (CONTRACT §1):
     detected -> card_sent -> approved -> executing -> review -> delivered
     branches: rejected  /  merged_into:<parent-id>
+    terminal (merge-review 契约 四): merged + merged_into=<primary>
 
 Files may be either a single YAML doc (one requirement) or a YAML list (e.g.
 the debt batch R-002..R-006). Both shapes round-trip through ``save``.
@@ -22,8 +23,10 @@ from act.lib import config
 
 
 class State(str, Enum):
-    """Canonical linear states. ``merged_into:<id>`` is stored verbatim as the
-    status string (see :meth:`Requirement.is_merged`)."""
+    """Canonical linear states. Legacy ``merged_into:<id>`` is stored verbatim
+    as the status string (see :meth:`Requirement.is_merged`); the merge-review
+    flow (契约 四) instead uses the ``merged`` terminal state below plus the
+    ``merged_into`` field."""
 
     DETECTED = "detected"
     CARD_SENT = "card_sent"
@@ -34,6 +37,10 @@ class State(str, Enum):
     DELIVERED = "delivered"
     REJECTED = "rejected"
     TRASHED = "trashed"
+    # merge-review 终态（契约 四）：副卡并入主卡。可见性语义同回收站（不进任何
+    # 看板列、purge 不删），但 merge_or_new 匹配语义同 delivered —— 参与匹配
+    # 以压住后续重述（这点与 trashed 相反，决策 6）。
+    MERGED = "merged"
 
     def __str__(self) -> str:  # so f-strings emit the bare value
         return self.value
@@ -435,6 +442,11 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
     existing = load_all()
     parent: Optional[Requirement] = None
     for r in existing:
+        # Never match: legacy merged_into:<id> statuses, rejected, trashed
+        # (决策 6: 拒绝 ≠ 已办完 — a trashed ask restated must re-card).
+        # DOES match: State.MERGED (merge-review 契约 四) — treated exactly like
+        # DELIVERED so later restatements are silently absorbed instead of
+        # producing a fresh card for work that already merged into a primary.
         if r.is_merged or r.status in (State.REJECTED.value, State.TRASHED.value):
             continue
         if _same_source_and_title(r, new_req):

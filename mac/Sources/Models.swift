@@ -228,6 +228,41 @@ struct ReviewItem: Decodable, Hashable {
     }
 }
 
+// 契约 merge-review §六: dashboard.json 的 merge_suggestions[] 分区 —
+// actd 发 analyzing/done/failed 三态（dismissed 不发）。除 id 外全部
+// decodeIfPresent 向后兼容（老 actd 不发该分区时 Dashboard 照常解码）。
+struct MergeSuggestion: Decodable, Hashable {
+    let id: String             // "MS-" + 8 位随机
+    let ids: [String]          // 被分析的卡（≥2）
+    let status: String         // "analyzing" | "done" | "failed"
+    let verdict: String?       // §三: merge | link_improvement | keep_separate | close_secondary
+    let primary: String?       // 主卡 id（merge / link_improvement 时有意义）
+    let rationale: String?
+    let action_plan: [String]  // 「接受后将执行」清单 — UI 展示全文
+    let confidence: String?    // "high" | "medium" | "low"
+    let error: String?         // failed 时的原因
+    let requested_at: Int?     // epoch seconds
+
+    private enum CodingKeys: String, CodingKey {
+        case id, ids, status, verdict, primary, rationale
+        case action_plan, confidence, error, requested_at
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        ids = (try? c.decodeIfPresent([String].self, forKey: .ids)) ?? []
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "analyzing"
+        verdict = try? c.decodeIfPresent(String.self, forKey: .verdict)
+        primary = try? c.decodeIfPresent(String.self, forKey: .primary)
+        rationale = try? c.decodeIfPresent(String.self, forKey: .rationale)
+        action_plan = (try? c.decodeIfPresent([String].self, forKey: .action_plan)) ?? []
+        confidence = try? c.decodeIfPresent(String.self, forKey: .confidence)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        requested_at = try? c.decodeIfPresent(Int.self, forKey: .requested_at)
+    }
+}
+
 struct Counts: Decodable {
     let needs_approval: Int
     let running: Int
@@ -269,9 +304,12 @@ struct Dashboard: Decodable {
     let completed: [RunningTask]
     let debt: [DebtItem]
     let trash: [TrashItem]
+    // 契约 merge-review §六 — optional 分区，缺失时解码为 []（向后兼容）。
+    let merge_suggestions: [MergeSuggestion]
 
     private enum CodingKeys: String, CodingKey {
         case generated_at, counts, needs_approval, running, needs_input, review, completed, debt, trash
+        case merge_suggestions
     }
 
     init(from decoder: Decoder) throws {
@@ -285,6 +323,8 @@ struct Dashboard: Decodable {
         completed = (try? c.decodeIfPresent([RunningTask].self, forKey: .completed)) ?? []
         debt = (try? c.decodeIfPresent([DebtItem].self, forKey: .debt)) ?? []
         trash = (try? c.decodeIfPresent([TrashItem].self, forKey: .trash)) ?? []
+        merge_suggestions = (try? c.decodeIfPresent([MergeSuggestion].self,
+                                                    forKey: .merge_suggestions)) ?? []
     }
 }
 

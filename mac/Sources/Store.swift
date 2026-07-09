@@ -38,6 +38,17 @@ struct PendingReturn {
     let created: Date
 }
 
+/// merge-review 契约七: a merge_apply / merge_dismiss pressed on a suggestion
+/// card. apply → the card greys out in place; dismiss → it disappears at once
+/// (visibleMergeSuggestions filter). Cleared on reload once the suggestion has
+/// left dashboard.merge_suggestions (actd consumed the action) — plus the
+/// standard 180 s fallback in sweepTimeouts.
+struct PendingMergeAction {
+    enum Kind { case apply, dismiss }
+    let kind: Kind
+    let created: Date
+}
+
 /// Timed-out placeholder notice (capture → yellow, raise → orange).
 /// `lane` = where the triggering action happened; the kanban renders each
 /// notice in that column (P2-4 — an abort timeout two columns away from the
@@ -106,6 +117,15 @@ final class DashboardStore: ObservableObject {
     // list AND stays hidden forever. sweepTimeouts releases the hide after
     // 180 s, mirroring the echo branch. (v0.10 restoringLocal, generalized.)
     @Published var returningLocal: [String: PendingReturn] = [:]
+    // merge-review 契约七: merge_review submitted → every involved card
+    // carries a 「合并分析中…」corner badge. Local optimistic entry (180 s
+    // fallback); reload drops it once ANY backend suggestion covers the id —
+    // from then on the suggestion card itself is the visible analyzing signal
+    // (isMergeAnalyzing unions both, so the badge survives the handoff).
+    @Published var mergeAnalyzingLocal: [String: Date] = [:]
+    // 契约七: suggestion-card accept/dismiss echoes (apply = grey in place,
+    // dismiss = instant removal), keyed by suggestion id ("MS-…").
+    @Published var pendingMergeActions: [String: PendingMergeAction] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
     // P1-4: dashboard freshness verdict, recomputed on every refresh tick —
@@ -198,6 +218,19 @@ final class DashboardStore: ObservableObject {
                 }
                 // backend confirmed permanent → local pin marker is redundant
                 pinnedLocal.subtract(db.trash.filter { $0.permanent }.map { $0.id })
+                // merge-review 契约六/七: local analyzing badges drop once the
+                // backend shows a suggestion covering the id (the suggestion
+                // card takes over as the visible signal); apply/dismiss echoes
+                // drop once their suggestion has left merge_suggestions (actd
+                // consumed the action / TTL-cleaned the job file).
+                let suggestions = db.merge_suggestions
+                mergeAnalyzingLocal = mergeAnalyzingLocal.filter { id, _ in
+                    !suggestions.contains { $0.ids.contains(id) }
+                }
+                let suggestionIDs = Set(suggestions.map { $0.id })
+                pendingMergeActions = pendingMergeActions.filter {
+                    suggestionIDs.contains($0.key)
+                }
             }
         } catch {
             // Keep the previously good dashboard rather than blanking the UI.
@@ -227,10 +260,20 @@ final class DashboardStore: ObservableObject {
         // returns (restore/abort/revert): 180 s without leaving the source
         // list → give up, release the hide
         let expiredReturns = returningLocal.filter { now.timeIntervalSince($0.value.created) > 180 }
+        // merge-review 契约七: analyzing badges / apply-dismiss echoes give up
+        // after 180 s without backend movement (suggestion never appeared /
+        // never left merge_suggestions)
+        let expiredMergeBadges = mergeAnalyzingLocal.filter {
+            now.timeIntervalSince($0.value) > 180
+        }
+        let expiredMergeActions = pendingMergeActions.filter {
+            now.timeIntervalSince($0.value.created) > 180
+        }
         // notices themselves fade after 120 s
         let expiredNotices = notices.filter { now.timeIntervalSince($0.created) > 120 }
         guard !expiredCaptures.isEmpty || !expiredRaises.isEmpty || !expiredEchoes.isEmpty
             || !expiredComments.isEmpty || !expiredReturns.isEmpty
+            || !expiredMergeBadges.isEmpty || !expiredMergeActions.isEmpty
             || !expiredNotices.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
@@ -274,6 +317,32 @@ final class DashboardStore: ObservableObject {
                     created: now))
             }
             for (id, _) in expiredComments { pendingComment.removeValue(forKey: id) }
+            // merge-review 契约七: badges of one request expire together →
+            // one grouped notice in the approval lane (where the suggestion
+            // card would have appeared).
+            if !expiredMergeBadges.isEmpty {
+                for (id, _) in expiredMergeBadges {
+                    mergeAnalyzingLocal.removeValue(forKey: id)
+                }
+                let noticeID = "notice-merge-review"
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .approval,
+                    text: L("合并分析请求超时，后台未生成建议卡，请重试（检查 actd 是否在运行）",
+                            "Merge analysis request timed out — no suggestion card appeared, try again (check that actd is running)"),
+                    created: now))
+            }
+            for (id, _) in expiredMergeActions {
+                pendingMergeActions.removeValue(forKey: id)
+                // suggestion card un-greys / reappears, operable again
+                let noticeID = "notice-merge-" + id
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .approval,
+                    text: L("合并建议操作超时，卡片已恢复可操作（检查 actd 是否在运行）",
+                            "Merge-suggestion action timed out — the card is interactive again (check that actd is running)"),
+                    created: now))
+            }
             for (id, entry) in expiredReturns {
                 returningLocal.removeValue(forKey: id)
                 hiddenSticky.removeValue(forKey: id)   // source card returns, operable again
@@ -410,6 +479,15 @@ final class DashboardStore: ObservableObject {
                 pinnedLocal.insert(id)   // no hide — badge flips in place
             case "comment":
                 pendingComment[id] = Date()   // no hide — blue in-place line
+            case "merge_apply":
+                // merge-review 契约七: 接受 — the suggestion card greys out in
+                // place until actd consumes the job. MS- ids live in
+                // merge_suggestions, not in any card list → no hide/echo.
+                pendingMergeActions[id] = PendingMergeAction(kind: .apply, created: Date())
+            case "merge_dismiss":
+                // 契约七: 取消 — the suggestion card disappears at once
+                // (visibleMergeSuggestions filters it out).
+                pendingMergeActions[id] = PendingMergeAction(kind: .dismiss, created: Date())
             default:
                 // e.g. "raise": optimistic sticky hide from wherever it lives
                 // (the raisingLocal placeholder is planted by beginRaising)
@@ -510,6 +588,17 @@ final class DashboardStore: ObservableObject {
         withAnimation(.easeOut(duration: 0.2)) {
             capturePending.append(
                 CapturePending(id: "capture-" + UUID().uuidString, text: text, created: Date()))
+        }
+    }
+
+    /// merge-review 契约七: the merge_review inbox write succeeded — badge
+    /// every involved card with 合并分析中… (local optimistic; cleared on
+    /// reload once a backend suggestion covers the id, or after 180 s).
+    /// ONLY call site: AppDelegate.submitMergeReview, after the IO succeeded.
+    func beginMergeReview(ids: [String]) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            let now = Date()
+            for id in ids { mergeAnalyzingLocal[id] = now }
         }
     }
 
@@ -655,6 +744,34 @@ final class DashboardStore: ObservableObject {
 
     var visibleCompleted: [RunningTask] {
         Self.sortCards((dashboard?.completed ?? []).filter { !isHidden($0.id) }, id: { $0.id })
+    }
+
+    // MARK: merge suggestions (merge-review 契约六/七)
+
+    /// Suggestion cards for the kanban 待审批列顶 and the popover mirror.
+    /// analyzing/done/failed all render (契约六 — dismissed never reaches the
+    /// dashboard); a dismiss-in-flight one vanishes at once, an apply-in-flight
+    /// one stays and greys out (mergeApplyPending). Backend order is kept.
+    var visibleMergeSuggestions: [MergeSuggestion] {
+        (dashboard?.merge_suggestions ?? []).filter {
+            pendingMergeActions[$0.id]?.kind != .dismiss
+        }
+    }
+
+    /// True while an accept (merge_apply) is in flight on this suggestion —
+    /// MergeSuggestionCard renders its greyed 乐观回显 off this.
+    func mergeApplyPending(_ suggestionID: String) -> Bool {
+        pendingMergeActions[suggestionID]?.kind == .apply
+    }
+
+    /// 契约七 角标: this card is part of a requested merge analysis — either
+    /// the local optimistic entry (just submitted, backend not yet visible)
+    /// or a live backend suggestion still "analyzing" that covers the id.
+    func isMergeAnalyzing(_ id: String) -> Bool {
+        if mergeAnalyzingLocal[id] != nil { return true }
+        return (dashboard?.merge_suggestions ?? []).contains {
+            $0.status == "analyzing" && $0.ids.contains(id)
+        }
     }
 }
 

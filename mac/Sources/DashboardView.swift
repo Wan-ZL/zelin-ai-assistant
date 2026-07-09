@@ -291,13 +291,31 @@ struct DashboardView: View {
         let needsInput = store.visibleNeedsInput
         let completed = store.visibleCompleted
 
-        if approvals.isEmpty {
+        // merge-review 契约七: the popover MIRRORS suggestion cards (accept /
+        // dismiss work; no multi-select here). Same slot as the kanban: after
+        // the grey processing prefix (captures + raise placeholders), before
+        // the real approval cards.
+        let suggestions = store.visibleMergeSuggestions
+
+        if approvals.isEmpty && suggestions.isEmpty {
             CompactEmptySection(title: L("待审批 · needs approval", "Needs Approval"),
                                 emptyText: L("无待审批", "Nothing awaiting approval"))
         } else {
             SectionHeader(title: L("待审批 · needs approval", "Needs Approval"),
-                          count: approvals.count)
-            ForEach(approvals, id: \.id) { card in
+                          count: approvals.count + suggestions.count)
+            let placeholderPrefix = approvals.prefix(while: { $0.processing })
+            ForEach(Array(placeholderPrefix), id: \.id) { card in
+                ApprovalCardView(card: card, app: app,
+                                 commentPending: store.pendingComment[card.id] != nil)
+            }
+            ForEach(suggestions, id: \.id) { s in
+                // dismiss-pending 已被 visibleMergeSuggestions 过滤（即时消失）；
+                // apply-pending 灰显（契约七）。
+                MergeSuggestionCard(suggestion: s, app: app,
+                                    actionPending: store.mergeApplyPending(s.id))
+            }
+            ForEach(Array(approvals.dropFirst(placeholderPrefix.count)),
+                    id: \.id) { card in
                 ApprovalCardView(card: card, app: app,
                                  commentPending: store.pendingComment[card.id] != nil)
             }
