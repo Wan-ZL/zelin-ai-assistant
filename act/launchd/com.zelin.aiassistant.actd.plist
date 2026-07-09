@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) into ~/Library/LaunchAgents — do not load this file as-is.
+
   actd — resident daemon of Zelin's AI Assistant (Act pipeline).
   Reads state/inbox/*.json, drives the requirement registry state machine,
   dispatches approved work via `claude --bg`, joins `claude agents --json`,

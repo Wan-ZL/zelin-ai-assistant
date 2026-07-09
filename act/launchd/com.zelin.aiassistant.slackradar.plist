@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) into ~/Library/LaunchAgents — do not load this file as-is.
+
   slackradar — captures Slack DMs / group DMs / watched-channel @mentions and
   turns the actionable ones into requirement cards (draft-only for comms).
 

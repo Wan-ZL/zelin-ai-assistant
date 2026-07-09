@@ -5,7 +5,7 @@
 ## 相对内部版改了什么
 
 - **移除**：运行时状态（`state/`）、真实配置（`config.yaml`、`config/runtime.json`、`config/secrets/`）、真实注册表条目（`act/registry/R-*.yaml`，留了一个虚构示例 `R-000-example.yaml`）、构建产物（`mac/build/`）、含真实工作细节的内部设计文档（`docs/design/`，留了说明）。
-- **通用化**：同事真名 → "manager"/通用称呼；公司内部项目名/频道名/Slack ID → 占位符（`<your-team-channel>`、`C01234ABCDE` 等）；绝对路径 `/Users/<user>/...` → `~`/`$HOME` 写法（launchd plist 里用 `/Users/YOURUSERNAME/` 占位，装机前需手改——plist 不展开 `~`）。
+- **通用化**：同事真名 → "manager"/通用称呼；公司内部项目名/频道名/Slack ID → 占位符（`<your-team-channel>`、`C01234ABCDE` 等）；绝对路径 `/Users/<user>/...` → `~`/`$HOME` 写法（launchd plist 里用 `/Users/YOURUSERNAME/` 占位，install.sh 装机时自动渲染成真实路径——plist 不展开 `~`）。
 - **行为等价**：feature flag `manager_pack`（内部版叫别的名字）、`[MANAGER-OWES]` 标签、`~/Projects/your-workbench` 默认落点等重命名是全局一致的，逻辑未变；manager 提及识别改为从 `config.yaml` 的 `sources.watch_people` 首项派生。
 - 文档里出现的 `~/Desktop/Keys/` 等默认凭证路径只是**本机约定示例**，推荐用 App 设置窗口把凭证写入 `config/secrets/`（见 `docs/CONTRACT.md` §19）。
 

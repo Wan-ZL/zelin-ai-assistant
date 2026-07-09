@@ -9,10 +9,28 @@ import Darwin  // Analytics v2: open/write/close raw fd (O_APPEND atomic lines)
 // MARK: - Paths
 
 enum AppPaths {
-    static var stateRoot: String {
-        let raw = ProcessInfo.processInfo.environment["AIASSISTANT_HOME"] ?? "~/Projects/zelin-ai-assistant"
-        return (raw as NSString).expandingTildeInPath
-    }
+    // Repo-root resolution (CONTRACT §19): env var AIASSISTANT_HOME → home
+    // pointer written by install.sh (supports clones outside ~/Projects) →
+    // legacy default. Resolved once per launch.
+    static let stateRoot: String = {
+        if let env = ProcessInfo.processInfo.environment["AIASSISTANT_HOME"],
+           !env.isEmpty {
+            return (env as NSString).expandingTildeInPath
+        }
+        let pointer = ("~/Library/Application Support/ZelinAIAssistant/home.txt"
+                       as NSString).expandingTildeInPath
+        if let text = try? String(contentsOfFile: pointer, encoding: .utf8) {
+            let home = (text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            if !home.isEmpty,
+               FileManager.default.fileExists(atPath: home, isDirectory: &isDir),
+               isDir.boolValue {
+                return home
+            }
+        }
+        return ("~/Projects/zelin-ai-assistant" as NSString).expandingTildeInPath
+    }()
     static var dashboardPath: String { stateRoot + "/state/dashboard.json" }
     static var inboxDir: String { stateRoot + "/state/inbox" }
     // §15: the ONLY config file the app writes; config.load_config() merges it last.

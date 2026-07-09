@@ -179,6 +179,7 @@ install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 
   3. 旧默认路径兜底（slack: `~/Desktop/Keys/slack-user-token.txt`；gmail: `~/Desktop/Keys/gmail-app-password.txt`；anthropic: `~/.config/anthropic-key.txt`）。
   行为不变式：config/secrets/ 为空时一切照旧，Zelin 现有布置不断。
 - **runtime python 指针** = `<AIASSISTANT_HOME>/config/runtime.json`，内容 `{"python": "<绝对路径>"}`。install.sh 生成（探测顺序：`$AIASSISTANT_PYTHON` env → `~/miniconda3/bin/python3`（存在且能 `import yaml`）→ `which python3`）；Swift 依赖检查用它跑 python 检查。
+- **home 指针** = `~/Library/Application Support/ZelinAIAssistant/home.txt`，内容为 repo 根绝对路径（一行）。install.sh 写入，让 clone 到任意位置的 repo 对 GUI app 可见。**Mac app 的 repo 根解析顺序**（`AppPaths.stateRoot`）：① env var `AIASSISTANT_HOME` → ② home 指针文件（其指向的目录存在时）→ ③ 旧默认 `~/Projects/zelin-ai-assistant`。Python 侧不变（env var → 旧默认）：launchd plist（install.sh 渲染时注入）与 crontab 行都显式携带 `AIASSISTANT_HOME`，daemon 不读指针。
 - app 侧只**写** secrets 文件（设置窗口粘贴保存），Python 侧只**读**；两侧不通过 secrets 之外的通道传递凭证；凭证内容永不打印/入日志。
 
 ---

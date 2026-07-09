@@ -2,11 +2,14 @@
 # One-click installer for Zelin's AI Assistant (Act pipeline + menu-bar app).
 #
 # What it does:
-#   1. dependency checks (claude/swift required; python3/PyYAML; screenpipe/obsidian/gh optional)
-#   2. config.example.yaml -> config.yaml (if absent)
+#   1. dependency checks (claude/swift required; python3/PyYAML; node+npx for
+#      the recording engine; obsidian/gh optional)
+#   2. config.example.yaml -> config.yaml (if absent) + runtime/home pointers
 #   3. create state/ and state/inbox/
 #   4. build + install the Mac app (mac/build.sh --install)
-#   5. install launchd agents (actd resident + radar periodic) and load them
+#   5. install launchd agents (actd resident + radar periodic): render the
+#      plist templates (replace /Users/YOURUSERNAME placeholders with the real
+#      python/repo/home paths), load them, then verify they actually spawn
 #   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
 #      the repo's ingest/ scripts + `python -m act.radar --once`, and Monday
 #      09:07 runs `python -m act.digest --now`
@@ -30,6 +33,51 @@ PKG_POSTINSTALL=0
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
 info() { printf "  [info] %s\n" "$1"; }
+
+# escape a value for use on the replacement side of sed s|…|…| (delimiter |)
+_sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+
+# Render a launchd plist template into place. The repo plists carry
+# /Users/YOURUSERNAME placeholders (plists don't expand ~) — substitute the
+# detected python interpreter, this repo root and $HOME before installing.
+# Kept as a function so both the interactive path and --pkg-postinstall (which
+# currently skips launchd) render identically if they ever load agents.
+render_launchd_plist() {
+    src="$1"; dest="$2"
+    py="${RUNTIME_PY:-$(command -v python3 || echo /usr/bin/python3)}"
+    pydir="$(dirname "$py")"
+    sed -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
+        -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$REPO_ROOT")|g" \
+        -e "s|/Users/YOURUSERNAME/miniconda3/bin|$(_sed_escape "$pydir")|g" \
+        -e "s|/Users/YOURUSERNAME|$(_sed_escape "$HOME")|g" \
+        "$src" > "$dest"
+}
+
+# `launchctl load` reports success even when the job crashes on spawn (e.g. a
+# bad interpreter path) — check `launchctl list` (columns: PID Status Label)
+# to prove the agent actually runs / exited cleanly.
+verify_launchd_agent() {
+    label="$1"
+    line="$(launchctl list 2>/dev/null | awk -v l="$label" '$3 == l')"
+    if [ -z "$line" ]; then
+        echo "  [ERR ] $label not registered with launchd — try: launchctl load $LA_DIR/$label.plist" >&2
+        return 1
+    fi
+    agent_pid="$(printf '%s' "$line" | awk '{print $1}')"
+    agent_status="$(printf '%s' "$line" | awk '{print $2}')"
+    if [ "$agent_pid" != "-" ]; then
+        ok "$label running (pid $agent_pid)"
+    elif [ "$agent_status" = "0" ]; then
+        ok "$label loaded (last run exited 0)"
+    else
+        echo "  [ERR ] $label loaded but its process exits with status $agent_status" >&2
+        info "fix: read $REPO_ROOT/state/${label##*.}.launchd.log — usual causes:"
+        info "  - PyYAML missing for the daemon python: ${RUNTIME_PY:-python3} -m pip install --user pyyaml"
+        info "  - Anthropic API key file missing: paste it in the app's Settings window"
+        info "then: launchctl unload $LA_DIR/$label.plist && launchctl load $LA_DIR/$label.plist"
+        return 1
+    fi
+}
 
 echo "=============================================="
 echo " Zelin's AI Assistant — installer"
@@ -85,8 +133,16 @@ else
     fi
 fi
 
+# node/npx — the recording engine is `npx screenpipe@<pin>` (canonical launch
+# path, see mac/Sources/Recording.swift): no separate screenpipe install needed,
+# but without node/npx the whole ingest side silently records nothing.
+if command -v npx >/dev/null 2>&1; then
+    ok "node/npx found: $(command -v npx) — screenpipe engine runs via npx, no separate install"
+else
+    warn "node/npx not found (needed for screen recording — the ingest source). Install: brew install node"
+fi
+
 # optional
-command -v screenpipe >/dev/null 2>&1 && ok "screenpipe found (optional)" || warn "screenpipe not found (optional — ingest source)"
 if [ -d "/Applications/Obsidian.app" ] || command -v obsidian >/dev/null 2>&1; then
     ok "obsidian found (optional)"
 else
@@ -140,6 +196,16 @@ else
     warn "python3 not found — skipped config/runtime.json (re-run install.sh once python3 exists)"
 fi
 
+# home pointer (CONTRACT §19) — the GUI app launches with no env vars, so a
+# clone outside ~/Projects/zelin-ai-assistant would be invisible to it. Persist
+# the repo root where the app can read it (env var AIASSISTANT_HOME still wins).
+POINTER_DIR="$HOME/Library/Application Support/ZelinAIAssistant"
+if mkdir -p "$POINTER_DIR" && printf '%s\n' "$REPO_ROOT" > "$POINTER_DIR/home.txt"; then
+    ok "home pointer -> $POINTER_DIR/home.txt"
+else
+    warn "could not write $POINTER_DIR/home.txt — the app will assume ~/Projects/zelin-ai-assistant"
+fi
+
 # --------------------------------------------------------------------------
 echo ""
 echo "==> 3. state directories"
@@ -178,6 +244,8 @@ if [ "$PKG_POSTINSTALL" -eq 1 ]; then
 else
     echo "==> 5. launchd agents"
     mkdir -p "$LA_DIR"
+    info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
+    LOADED_LABELS=""
     for plist in "$REPO_ROOT"/act/launchd/*.plist; do
         [ -e "$plist" ] || continue
         base="$(basename "$plist")"
@@ -185,13 +253,21 @@ else
         dest="$LA_DIR/$base"
         # unload any previous version first
         launchctl unload "$dest" >/dev/null 2>&1 || true
-        cp "$plist" "$dest"
+        render_launchd_plist "$plist" "$dest"
         if launchctl load "$dest" >/dev/null 2>&1; then
             ok "loaded $label"
+            LOADED_LABELS="$LOADED_LABELS $label"
         else
             warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
         fi
     done
+    # give launchd a moment to spawn the jobs, then verify they really run
+    if [ -n "$LOADED_LABELS" ]; then
+        sleep 2
+        for label in $LOADED_LABELS; do
+            verify_launchd_agent "$label"
+        done
+    fi
 fi
 
 # --------------------------------------------------------------------------
@@ -251,7 +327,7 @@ cat <<'EOF'
     旧路径 ~/.config/anthropic-key.txt 仍兜底可用（launchd 的 daemon session
     读不了 Keychain OAuth，所以必须有文件形式的 key）。
  3. Grant TCC / privacy permissions:
-      - actd (launchd) only touches ~/Projects/zelin-ai-assistant/state + calls claude,
+      - actd (launchd) only touches the repo's state/ + calls claude,
         so it needs NO Full Disk Access.
       - RADAR reads "~/Documents/Obsidian Vault". launchd is TCC-BLOCKED from
         ~/Documents. Recommended: run radar via crontab (crontab HAS Full Disk
