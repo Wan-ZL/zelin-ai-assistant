@@ -43,10 +43,20 @@ jobs:
           cd mac/build
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
-      - name: Create GitHub Release and upload asset
+      - name: Build .pkg installer
+        # Produces mac/build/ZelinAIAssistant-<version>.pkg (version from act/__init__.py).
+        run: bash mac/package.sh
+
+      - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
+          VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' act/__init__.py)"
+          PKG="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
+          # rename pkg to match the tag so both assets share one naming scheme
+          if [ "mac/build/ZelinAIAssistant-${VERSION}.pkg" != "$PKG" ]; then
+            mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "$PKG"
+          fi
           gh release create "$GITHUB_REF_NAME" --generate-notes --latest
-          gh release upload "$GITHUB_REF_NAME" "$ZIP"
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG"

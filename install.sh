@@ -12,11 +12,20 @@
 #      09:07 runs `python -m act.digest --now`
 #
 # Run from anywhere; it locates the repo root via its own path.
+#
+# --pkg-postinstall: non-interactive mode used by the .pkg installer's
+#   postinstall (mac/package.sh). Skips dependency checks (nothing to ask a
+#   user for), the Mac app build/install (the pkg already installed it) and
+#   the launchd agents (they need per-user config that doesn't exist yet),
+#   but still does config files, state dirs and the ingest cron chain.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 LA_DIR="$HOME/Library/LaunchAgents"
+
+PKG_POSTINSTALL=0
+[ "${1:-}" = "--pkg-postinstall" ] && PKG_POSTINSTALL=1
 
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
@@ -30,6 +39,13 @@ echo "=============================================="
 # --------------------------------------------------------------------------
 echo ""
 echo "==> 1. Dependency checks"
+
+if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+    # Non-interactive: the pkg can't stop and ask the user to install anything.
+    # claude/swiftc are only needed at runtime; python3 is best-effort here.
+    PY="$(command -v python3 || true)"
+    info "pkg postinstall mode — dependency checks skipped"
+else
 
 # claude (required)
 if command -v claude >/dev/null 2>&1; then
@@ -87,6 +103,8 @@ else
     warn "缺 Anthropic API key —— 推荐在 App 设置窗口粘贴保存（写入 config/secrets/anthropic-api-key.txt）；旧路径 ~/.config/anthropic-key.txt 仍兜底。headless claude 在 launchd 下读不了 Keychain OAuth。"
 fi
 
+fi # PKG_POSTINSTALL dependency-check skip
+
 # --------------------------------------------------------------------------
 echo ""
 echo "==> 2. config.yaml + config/runtime.json"
@@ -115,8 +133,12 @@ elif [ -x "$HOME/miniconda3/bin/python3" ] && "$HOME/miniconda3/bin/python3" -c 
 else
     RUNTIME_PY="$PY"
 fi
-printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
-ok "config/runtime.json -> $RUNTIME_PY"
+if [ -n "$RUNTIME_PY" ]; then
+    printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
+    ok "config/runtime.json -> $RUNTIME_PY"
+else
+    warn "python3 not found — skipped config/runtime.json (re-run install.sh once python3 exists)"
+fi
 
 # --------------------------------------------------------------------------
 echo ""
@@ -126,7 +148,7 @@ ok "state/ and state/inbox/ ready"
 # generate the initial dashboard from the (git-tracked) registry so the app renders
 # before the daemon's first pass. Falls back to the seed if generation fails.
 if [ ! -f "$REPO_ROOT/state/dashboard.json" ]; then
-    if (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$PY" -m act.lib.dashboard >/dev/null 2>&1); then
+    if [ -n "$PY" ] && (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$PY" -m act.lib.dashboard >/dev/null 2>&1); then
         ok "generated state/dashboard.json from registry"
     elif [ -f "$REPO_ROOT/state/dashboard.seed.json" ]; then
         cp "$REPO_ROOT/state/dashboard.seed.json" "$REPO_ROOT/state/dashboard.json"
@@ -138,31 +160,39 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 4. build + install Mac app"
-if bash "$REPO_ROOT/mac/build.sh" --install; then
-    ok "Mac app built + installed"
+if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+    echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
 else
-    warn "Mac app build failed — see output above"
+    echo "==> 4. build + install Mac app"
+    if bash "$REPO_ROOT/mac/build.sh" --install; then
+        ok "Mac app built + installed"
+    else
+        warn "Mac app build failed — see output above"
+    fi
 fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 5. launchd agents"
-mkdir -p "$LA_DIR"
-for plist in "$REPO_ROOT"/act/launchd/*.plist; do
-    [ -e "$plist" ] || continue
-    base="$(basename "$plist")"
-    label="${base%.plist}"
-    dest="$LA_DIR/$base"
-    # unload any previous version first
-    launchctl unload "$dest" >/dev/null 2>&1 || true
-    cp "$plist" "$dest"
-    if launchctl load "$dest" >/dev/null 2>&1; then
-        ok "loaded $label"
-    else
-        warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
-    fi
-done
+if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+    echo "==> 5. launchd agents — skipped (edit config.yaml first, then re-run install.sh)"
+else
+    echo "==> 5. launchd agents"
+    mkdir -p "$LA_DIR"
+    for plist in "$REPO_ROOT"/act/launchd/*.plist; do
+        [ -e "$plist" ] || continue
+        base="$(basename "$plist")"
+        label="${base%.plist}"
+        dest="$LA_DIR/$base"
+        # unload any previous version first
+        launchctl unload "$dest" >/dev/null 2>&1 || true
+        cp "$plist" "$dest"
+        if launchctl load "$dest" >/dev/null 2>&1; then
+            ok "loaded $label"
+        else
+            warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
+        fi
+    done
+fi
 
 # --------------------------------------------------------------------------
 echo ""
@@ -172,7 +202,7 @@ chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || t
 # cron runs outside the login shell; prefer the miniconda python (has PyYAML),
 # fall back to whatever python3 the installer found.
 CRON_PY="$HOME/miniconda3/bin/python3"
-[ -x "$CRON_PY" ] || CRON_PY="$PY"
+[ -x "$CRON_PY" ] || CRON_PY="${PY:-python3}"
 
 # process-screenpipe.sh exits 3 when another run holds the lock — that's a
 # skip, not a failure, so it must not break the chain (radar still runs).

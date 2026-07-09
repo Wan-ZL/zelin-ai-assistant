@@ -47,7 +47,7 @@ HANDOFF.md         # 交接书：架构地图 + 设计决策 + 血泪坑清单
 - [x] v2：SwiftUI 菜单栏 app（popover + 看板主窗口 + 快速捕获 + 回收站 + 双语）
 - [ ] v3：iOS 遥控器
 
-首次安装见 `PUBLISHING.md` 与 `install.sh`。
+首次安装见 `docs/INSTALL.md`（.pkg 安装包 / 源码两条路线）；发布背景见 `PUBLISHING.md`。
 
 ## Ingest 切换说明（暂不执行）
 
