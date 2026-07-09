@@ -136,7 +136,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 # v0.4 additions（手机端/快速捕获/Gmail/主窗口/进化）
 
 ## 12. 命名
-显示名 **Zelin's AI Assistant**（2026-07-07 /ask-me 拍板）；app bundle "Zelin's AI Assistant.app"。可执行 `ZelinAIEngineer`、bundle id `com.zelin.ai-engineer` **刻意不改**——TCC 授权与 UserDefaults 挂在 bundle id 名下，改=权限设置全部重来。launchd label 与 `AIASSISTANT_HOME` 环境变量名保持不变（兼容）。仓库目录 = `~/Projects/zelin-ai-assistant`。
+显示名 **Zelin's AI Assistant**（2026-07-07 /ask-me 拍板）；app bundle "Zelin's AI Assistant.app"。可执行 `ZelinAIEngineer`、bundle id `com.zelin.ai-engineer` **刻意不改**——TCC 授权与 UserDefaults 挂在 bundle id 名下，改=权限设置全部重来。launchd label 与 `AIASSISTANT_HOME` 环境变量名保持不变（兼容）。仓库目录默认 `~/Projects/zelin-ai-assistant`（旧默认兜底；clone 到任意位置均可，实际解析顺序见 §19 的 home 指针条目）。
 
 ## 13. Slack 手机端（self-DM = 指挥通道）
 - radar_slack 对 **自己→自己的 DM**（im channel with self）做特殊处理：自己发的消息 = 指令/快速捕获，其他 DM/群/频道逻辑不变。
@@ -148,11 +148,11 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **通道可插拔（v0.12 additive）**：本节的指令面（`批准/拒绝/打回/验收 R-xxx`、快速捕获、reaction/tapback 审批、🔔 出站镜像）不与 Slack 绑定。config `phone_channel: imessage` 时由 `act/radar_imessage.py` 在 iMessage"给自己发消息"线程上提供**同一指令面、写同一批 inbox 决策文件**（`~/Library/Messages/chat.db` 只读轮询 + osascript 发送；👍/❤️ tapback = ✅；marker = 最后 message ROWID，`state/imessage_radar.json`；出站追踪 `state/imessage_outbox.json`；文法/inbox 写入直接复用 radar_slack，两通道不可能漂移）。`phone_channel: none|slack`（含缺省）时 Slack 侧行为不变。iMessage 侧 v1 仅支持文字（图片/视频仍走 Slack 路径）。详见 `docs/IMESSAGE_SETUP.md`。
 
 ## 14. Gmail 捕获
-`act/radar_gmail.py`：imaplib SSL 轮询 INBOX 未读（只读、不改已读状态优先用 BODY.PEEK）→ LLM 三选一（需要 Zelin 处理→卡片 / FYI 跳过）。config: `sources.gmail: {address, app_password_path: "~/Desktop/Keys/gmail-app-password.txt", enabled}`；密码文件不存在则静默 no-op。launchd 每 5 分钟（纯网络，TCC 安全）。marker=最后处理的 UID（state/gmail_radar.json）。docs/GMAIL_SETUP.md 写建应用专用密码步骤。
+`act/radar_gmail.py`：imaplib SSL 轮询 INBOX 未读（只读、不改已读状态优先用 BODY.PEEK）→ LLM 三选一（需要 Zelin 处理→卡片 / FYI 跳过）。config: `sources.gmail: {address, app_password_path?, enabled}`；密码按 §19 三级顺序解析（`config/secrets/gmail-app-password.txt` → config 显式 `app_password_path` → 旧默认 `~/Desktop/Keys/gmail-app-password.txt`），任一处都没有则静默 no-op。launchd 每 5 分钟（纯网络，TCC 安全）。marker=最后处理的 UID（state/gmail_radar.json）。docs/GMAIL_SETUP.md 写建应用专用密码步骤。
 
 ## 15. 主窗口（menu bar 之外的正经窗口）
 菜单栏加"打开主窗口"；窗口可关（app 继续后台跑，accessory 不变）。四个区：
-1) **依赖检查**：逐行 screenpipe(/Applications/Screenpipe.app)、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。
+1) **依赖检查**：逐行 Node/npx 与录制引擎存活（引擎经 `npx screenpipe@<pin>` 运行，v0.11 起不再检查 /Applications/Screenpipe.app）、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。
 2) **录制与 ingest**：启动/退出 Screenpipe（open -a / osascript quit）、"立即导出"（跑 ingest/screenpipe-export.sh）、"立即 ingest"（跑 process 脚本）、显示最近一次导出/ingest 时间（读 log mtime）。
 3) **设置**：写 `state/settings_overrides.json`（app 只写这个文件；config.load_config() 最后合并 overrides，优先级最高）。字段：obsidian_raw、slack_token_path、gmail address/密码路径、成本双阈值、trash 保留天数、界面语言(zh/en，先存值)、feature flags 开关。
 4) **关于**：版本、repo 路径、`python -m act.report` 提示。

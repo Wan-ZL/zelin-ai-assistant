@@ -24,7 +24,7 @@
 
 | # | 通道 | 触发 / 频率 | 去向 | 默认 | 关闭开关 |
 |---|------|------------|------|------|----------|
-| 1 | Ingest 加工 | cron，每 30 分钟 | Anthropic | 开 | `recordingMode` off / 删 crontab 行 |
+| 1 | Ingest 加工 | cron，每 30 分钟 | Anthropic | 开（录制首启需 consent） | `recordingMode` off / 删 crontab 行 |
 | 2 | Obsidian 雷达 | 同一 cron 链，每 30 分钟 | Anthropic | 开 | `features.obsidian_radar: false` |
 | 3 | Slack 雷达 | launchd，每 3 分钟 | Anthropic | 开 | `features.slack_radar: false` / 不配 token |
 | 4 | Gmail 雷达 | launchd，每 5 分钟 | Anthropic | 开 | `features.gmail_radar: false` / 不配 app password |
@@ -189,7 +189,9 @@
 ## 你有哪些控制
 
 - **录制开关**：菜单栏随时切 `recordingMode`：`off` / `screen` / `screen_audio`。off 后
-  不再产生新数据（已在 db.sqlite/vault 里的历史数据不受影响）。
+  不再产生新数据（已在 db.sqlite/vault 里的历史数据不受影响）。fresh install 默认 off，
+  首启一次性双语 consent 弹窗（说明采集什么/去哪里/保留多久）后才可能开录
+  （CONTRACT §15 v0.11 补充）；已有 `recordingMode` 值的存量安装不受影响。
 - **Sensitive-app 排除清单**（config.yaml `recording.ignored_apps`；默认：1Password /
   Bitwarden / LastPass / KeePassXC / Keychain Access + Safari「Private Browsing」/
   Chrome「Incognito」窗口标题）。两层生效：

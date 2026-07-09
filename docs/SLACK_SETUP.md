@@ -29,7 +29,7 @@ Bot token（`xoxb-`）不行——它读不到你的私信、也不能用 search
 ## 验证
 
 ```bash
-cd ~/Projects/zelin-ai-assistant && AIASSISTANT_HOME="$PWD" python -m act.radar_slack --check
+cd "${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}" && AIASSISTANT_HOME="$PWD" python3 -m act.radar_slack --check
 # 期望输出: {"ok": true, "user": "your.name", "user_id": "U01234ABCDE", "team": "..."}
 ```
 

@@ -35,7 +35,7 @@
 ## 验证
 
 ```bash
-cd ~/Projects/zelin-ai-assistant && AIASSISTANT_HOME="$PWD" python -m act.radar_gmail --check
+cd "${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}" && AIASSISTANT_HOME="$PWD" python3 -m act.radar_gmail --check
 # 期望输出: {"ok": true, "address": "your.name@gmail.com"}
 ```
 

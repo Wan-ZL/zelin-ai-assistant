@@ -94,7 +94,7 @@ cp config.example.yaml config.yaml
 bash install.sh
 ```
 
-它做七件事:依赖检查(claude / Swift toolchain 版本 / PyYAML,PEP 668 环境自动带 `--break-system-packages` 重试)→ config 模板/runtime 指针 → state 目录 → 构建并安装 Mac app → launchd agents(actd 常驻 + 雷达)→ 统一 crontab(ingest 链 + 周一 digest,CONTRACT §18)→ 收尾自动跑一遍诊断(`python -m act.doctor`)。幂等,可反复跑。
+它做七件事:依赖检查(claude / Swift toolchain 版本 / PyYAML,PEP 668 环境自动带 `--break-system-packages` 重试)→ config 模板/runtime 指针 → state 目录 → 构建并安装 Mac app → launchd agents(actd 常驻 + 雷达)→ 统一 crontab(ingest 链 + 周一 digest,CONTRACT §18)→ 收尾自动跑一遍诊断(`python3 -m act.doctor`)。幂等,可反复跑。
 
 > ✅ **预期状态**:输出没有 `[ERR]`,结尾的诊断没有 `[FAIL]`(此刻还没贴 key,`anthropic key` 一行是 `[warn]` 属正常);`launchctl list | grep com.zelin.aiassistant` 至少一行;`crontab -l | grep screenpipe-export` 恰一行;app 出现在 `/Applications`(或 `~/Applications`)。之后任何时候都能用 `bash install.sh --check` 重跑诊断。
 

@@ -45,12 +45,12 @@
 
 6. **首次发送授权**：第一条回复发出时 macOS 会弹 "python 想要控制 Messages" 的
    自动化（Automation）授权——点允许。launchd 下弹不出来的话，手动跑一次
-   `python -m act.radar_imessage --once` 触发。
+   `python3 -m act.radar_imessage --once` 触发。
 
 ## 验证
 
 ```bash
-cd ~/Projects/zelin-ai-assistant && AIASSISTANT_HOME="$PWD" python -m act.radar_imessage --check
+cd "${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}" && AIASSISTANT_HOME="$PWD" python3 -m act.radar_imessage --check
 # 期望: phone_channel: imessage / self_handle: +1415... / self chat: [<id>]
 # "chat.db unreadable" = FDA 没授对 python；"self chat: NOT FOUND" = 先给自己发一条消息
 ```

@@ -8,7 +8,7 @@ You do **not** need screenpipe, Obsidian, or an Anthropic API key to work on thi
 
 ```bash
 # 1. Run the whole test suite — needs only python3 (3.9+) and PyYAML.
-#    ~100 tests, well under a second. The tempdir HOME is mandatory:
+#    150+ tests, well under a second. The tempdir HOME is mandatory:
 #    tests must never touch a real state/ or registry.
 AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 

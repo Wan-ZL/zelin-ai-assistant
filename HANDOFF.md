@@ -88,8 +88,9 @@
     draft 交付不 merge。
 11. **manager 泛化**：所有"重点关注某人需求"的功能（manager_pack、[MANAGER-OWES] 账本、
     雷达关键词）从 config 的 `owner_name`/`sources.watch_people` 派生，不硬编码人名。
-12. **本地脱敏**（act/lib/sanitize.py）：发往 claude 的 5 个出口统一 scrub（用户词表+内置密钥
-    正则）。默认关（打码会改变 AI 输入质量），设置里可开。
+12. **本地脱敏**（act/lib/sanitize.py）：发往 claude 的出口统一 scrub。内置密钥正则掩码
+    **默认开**（`redaction.mask_secrets`）；用户词条掩码默认关、设置里可开
+    （打码会改变 AI 输入质量）。
 13. **凭证**：`config/secrets/`（0700/0600）→ config 显式路径 → 传统位置三级 fallback；
     app 里粘贴保存；密钥永不进 git（.gitignore 有），代码里只有路径和正则。
 14. **卡片排序是纯 UI 偏好**（UserDefaults，非后端 config）：newest（默认）/oldest/deadline，
@@ -139,14 +140,14 @@
 - **契约先行**：动 dashboard.json/inbox 字段 → 先改 docs/CONTRACT.md；Swift 解码全部
   `decodeIfPresent` 向后兼容，字段只增不改不删。
 - **所有用户可见文案 `L("中文","English")` 双语**，语言可即时切换。
-- **每个改动批次**：py_compile + `python3 -m unittest discover -s tests`（当前 79 个测试）+
+- **每个改动批次**：py_compile + `python3 -m unittest discover -s tests`（当前 150+ 个测试）+
   `bash mac/build.sh` 三关全绿再合并。app 装机 = `bash mac/build.sh --install`。
 - **测试用 tempdir AIASSISTANT_HOME**，绝不碰真实 state/registry。
 - commit 信息写清楚"为什么"，运行态 registry 文件不进代码 commit。
 
 ## 5. 当前状态快照（交接时点）
 
-- 版本 v0.10.3。全链路实测可用：录屏→ingest→wiki、雷达→卡片、批准→执行→验收、
+- 版本 v0.11.0（版本号真源 `act/__init__.py`）。全链路实测可用：录屏→ingest→wiki、雷达→卡片、批准→执行→验收、
   快速捕获（popover + 看板列顶多行 composer + ⌥Space）、回收站、双语。
 - 已知小债：① TaskRow 用 accent 颜色识别"已验收"列（宜改显式参数）；② queued 灰卡上的
   停止按钮可点（合语义但视觉待观察）；③ ~~ingest 导出脚本硬编码 unprocessed 路径，
