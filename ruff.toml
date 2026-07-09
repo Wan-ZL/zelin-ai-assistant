@@ -1,0 +1,9 @@
+# Lint config for the CI gate (`ruff check .`).
+# Deliberately minimal: this codebase predates the linter, so the gate is the
+# ruff default rule set (pyflakes + pycodestyle errors) pinned explicitly, and
+# a generous line length — style-rewrite rules are out of scope.
+line-length = 120
+target-version = "py39"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

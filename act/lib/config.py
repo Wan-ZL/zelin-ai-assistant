@@ -14,7 +14,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 try:
     import yaml  # PyYAML — install if missing (see module docstring)

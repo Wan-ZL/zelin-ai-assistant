@@ -1,4 +1,5 @@
-# CI: compile check, unit tests, and macOS app build — on every pull request and push to main.
+# CI: lint gates (shellcheck + ruff), Python 3.9 floor tests, compile check,
+# unit tests, and macOS app build — on every pull request and push to main.
 name: CI
 
 on:
@@ -12,22 +13,69 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  lint:
+    name: Lint (shellcheck + ruff)
+    # Runs on ubuntu in parallel with the macOS build job — shellcheck is
+    # preinstalled on the ubuntu runner image.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: shellcheck all tracked shell scripts
+        run: |
+          shellcheck --version
+          git ls-files -z '*.sh' | xargs -0 shellcheck
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.x"
+
+      - name: Install ruff
+        # Exact pin so a ruff upgrade is a deliberate PR, not a surprise CI failure.
+        run: python3 -m pip install ruff==0.15.20
+
+      - name: ruff check
+        # Rule set lives in ruff.toml at the repo root.
+        run: ruff check .
+
+  python39:
+    name: Tests on Python 3.9 (documented floor)
+    # README/docs promise Python 3.9+. The act pipeline is pure Python + PyYAML
+    # (tests inject fake runners instead of shelling out), so the suite runs on
+    # ubuntu — no macOS needed to hold the version floor.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.9"
+
+      - name: Install PyYAML
+        run: python3 -m pip install "pyyaml>=6,<7"
+
+      - name: Compile Python sources
+        run: python3 -m compileall -q act ingest
+
+      - name: Run unit tests
+        run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
+
   ci:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Select newest Xcode
         # The Swift sources target a recent toolchain (local dev builds on Swift 6.2 /
         # macOS 26 SDK); older default Xcodes fail on main-actor isolation rules.
         run: |
-          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+          XCODE="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -V | tail -n1)"
           sudo xcode-select -s "$XCODE/Contents/Developer"
           swiftc --version
 
       - name: Install PyYAML
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
-        run: python3 -m pip install --user pyyaml || python3 -m pip install --user --break-system-packages pyyaml
+        run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
 
       - name: Compile Python sources
         run: python3 -m compileall -q act ingest

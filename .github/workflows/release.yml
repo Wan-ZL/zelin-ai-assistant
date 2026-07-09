@@ -1,4 +1,6 @@
-# Release: on push of a v* tag — run all CI gates, package the .app with ditto, publish a GitHub Release.
+# Release: on push of a v* tag — verify the tag matches the source version, run all
+# CI gates, package the .app with ditto, build the .pkg, generate SHA-256 checksums,
+# attest build provenance, and publish a GitHub Release.
 name: Release
 
 on:
@@ -10,20 +12,33 @@ jobs:
   release:
     runs-on: macos-latest
     permissions:
-      contents: write
+      contents: write # create the GitHub Release and upload assets
+      id-token: write # OIDC token for the build provenance attestation
+      attestations: write # persist the provenance attestation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Verify tag matches act.__version__
+        # Integrity gate — act/__init__.py is the version's source of truth. A tag
+        # that doesn't match it would publish an app that self-reports the wrong
+        # version (telemetry, bug reports). Fail fast, before the expensive build.
+        run: |
+          VERSION="$(python3 -c 'import act; print(act.__version__)')"
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::pushed tag ${GITHUB_REF_NAME} does not match act.__version__ (v${VERSION}) — bump act/__init__.py or re-tag"
+            exit 1
+          fi
 
       - name: Select newest Xcode
         # Match the recent toolchain the Swift sources target (see ci.yml).
         run: |
-          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+          XCODE="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' | sort -V | tail -n1)"
           sudo xcode-select -s "$XCODE/Contents/Developer"
           swiftc --version
 
       - name: Install PyYAML
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
-        run: python3 -m pip install --user pyyaml || python3 -m pip install --user --break-system-packages pyyaml
+        run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
 
       - name: Compile Python sources
         run: python3 -m compileall -q act ingest
@@ -47,16 +62,35 @@ jobs:
         # Produces mac/build/ZelinAIAssistant-<version>.pkg (version from act/__init__.py).
         run: bash mac/package.sh
 
+      - name: Stage release assets
+        # Rename the pkg to match the tag so both assets share one naming scheme
+        # (the tag gate above guarantees v$VERSION == $GITHUB_REF_NAME).
+        run: |
+          VERSION="$(python3 -c 'import act; print(act.__version__)')"
+          mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
+
+      - name: Generate SHA-256 checksums
+        # One checksums file covering both assets. Users verify a download with:
+        #   shasum -a 256 -c checksums.sha256 --ignore-missing
+        run: |
+          cd mac/build
+          shasum -a 256 "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" "ZelinAIAssistant-${GITHUB_REF_NAME}.pkg" > checksums.sha256
+          cat checksums.sha256
+
+      - name: Attest build provenance
+        # Publishes SLSA provenance tying both assets to this workflow run.
+        # Users verify with: gh attestation verify <file> --repo Wan-ZL/zelin-ai-assistant
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: |
+            mac/build/ZelinAIAssistant-*-macos.zip
+            mac/build/ZelinAIAssistant-*.pkg
+
       - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
-          VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' act/__init__.py)"
           PKG="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
-          # rename pkg to match the tag so both assets share one naming scheme
-          if [ "mac/build/ZelinAIAssistant-${VERSION}.pkg" != "$PKG" ]; then
-            mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "$PKG"
-          fi
           gh release create "$GITHUB_REF_NAME" --generate-notes --latest
-          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG"
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" mac/build/checksums.sha256

@@ -54,7 +54,7 @@ OUT_FILE="$OUT_DIR/screenpipe_${NOW}.md"
         echo ""
         echo "$AUDIO_DATA" | while IFS='|' read -r timestamp transcription device; do
             ts_clean=$(echo "$timestamp" | cut -d'.' -f1 | sed 's/Z$//')
-            time_only=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$ts_clean" | sed 's/T/ /')
+            time_only=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "${ts_clean/T/ }")
             echo "**[$time_only]** ($device)"
             echo "$transcription"
             echo ""
@@ -69,7 +69,7 @@ OUT_FILE="$OUT_DIR/screenpipe_${NOW}.md"
         echo ""
         echo "$OCR_DATA" | while IFS='|' read -r timestamp app window text; do
             ts_clean=$(echo "$timestamp" | cut -d'.' -f1 | sed 's/Z$//')
-            time_only=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$ts_clean" | sed 's/T/ /')
+            time_only=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "${ts_clean/T/ }")
             label=""
             [ -n "$app" ] && label="$app"
             [ -n "$window" ] && label="$label — $window"

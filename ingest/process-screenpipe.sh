@@ -52,6 +52,7 @@ fi
 FIND_STDERR=$(mktemp)
 FILES=$(find "$UNPROCESSED" -maxdepth 1 -type f ! -name '.*' 2>"$FIND_STDERR")
 FIND_EXIT=$?
+# shellcheck disable=SC2012  # deliberate second opinion: the diag compares `ls` vs `find` counts to expose TCC/FDA visibility gaps, so it must NOT use find
 DIR_LS_COUNT=$(ls -1 "$UNPROCESSED" 2>>"$LOGFILE" | wc -l | tr -d ' ')
 FILES_COUNT=$(printf '%s\n' "$FILES" | grep -c .)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] DIAG find_exit=$FIND_EXIT find_count=$FILES_COUNT ls_count=$DIR_LS_COUNT stderr=$(tr '\n' '|' < "$FIND_STDERR")" >> "$LOGFILE"
@@ -97,9 +98,11 @@ cd "$VAULT" || exit 1
 #      auth just fine. If claude then fails, its error lands in $LOGFILE below.
 SECRETS_KEY_FILE="${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}/config/secrets/anthropic-api-key.txt"
 if [ -s "$SECRETS_KEY_FILE" ]; then
-    export ANTHROPIC_API_KEY=$(cat "$SECRETS_KEY_FILE" 2>>"$LOGFILE")
+    ANTHROPIC_API_KEY=$(cat "$SECRETS_KEY_FILE" 2>>"$LOGFILE")
+    export ANTHROPIC_API_KEY
 elif [ -s "$HOME/.config/anthropic-key.txt" ]; then
-    export ANTHROPIC_API_KEY=$(cat "$HOME/.config/anthropic-key.txt" 2>>"$LOGFILE")
+    ANTHROPIC_API_KEY=$(cat "$HOME/.config/anthropic-key.txt" 2>>"$LOGFILE")
+    export ANTHROPIC_API_KEY
 fi
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     unset ANTHROPIC_API_KEY
