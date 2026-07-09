@@ -277,6 +277,19 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
             "Stop at draft — do not publish or share outside."
         )
 
+    # Voice profile (optional, user-maintained at state/voice-profile.md):
+    # drafts written in the owner's name must sound like the owner, not like a
+    # polished assistant — past rework feedback shows tone mismatch is the #1
+    # reason comms drafts get rejected.
+    voice = config.STATE_DIR / "voice-profile.md"
+    if voice.exists():
+        blocks.append(
+            f"\nVOICE: if this task involves drafting ANY message or document in "
+            f"the owner's name (chat replies, emails, reports), first Read "
+            f"{voice} and follow its tone rules and few-shot examples exactly. "
+            "Plain, short, direct beats polished."
+        )
+
     if delivery_mode == "chat":
         blocks.append(
             f"\nWork from the directory at {target}. "
