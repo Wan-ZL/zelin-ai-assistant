@@ -130,6 +130,12 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 
 进行中与接下来的方向,见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
+## 参与贡献
+
+不需要完整技术栈就能上手:测试套件只要 Python + PyYAML,一秒内跑完;`scripts/demo_seed.py` 用完全虚构的数据驱动整套 UI——无需 API key、screenpipe 或 Obsidian。入口见 [CONTRIBUTING.md](CONTRIBUTING.md);[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 适用于所有社区空间。
+
+提问 → [Discussions(Q&A)](https://github.com/Wan-ZL/zelin-ai-assistant/discussions) · bug → [issue 表单](https://github.com/Wan-ZL/zelin-ai-assistant/issues/new/choose)。
+
 ## License
 
 本项目以 [Functional Source License 1.1, MIT Future License (FSL-1.1-MIT)](LICENSE.md) 发布:
@@ -139,7 +145,7 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 - **未来开源**:每个版本发布满 2 年后自动转为 MIT License。
 - **贡献**:欢迎 issue、建议和 PR,见 [CONTRIBUTING.md](CONTRIBUTING.md)。(GitHub 的 license 检测器不认识 FSL,只会显示 "Other";以上方 badge 为准。)
 
-更多问题("公司内部能用吗""这算开源吗")见 [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md)。
+更多问题——公司内使用、fork、什么算竞争用途、各版本转 MIT 的具体日期——见大白话问答 [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md)。
 
 ## 文档索引
 

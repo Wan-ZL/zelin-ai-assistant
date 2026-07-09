@@ -97,6 +97,11 @@
 15. **行为埋点 analytics v2**：串行队列+O_APPEND（并发 FileHandle.seekToEnd 会自踩产生损坏行）、
     每事件带 sid/版本、动作记结果闭环（ok/fail/耗时）、radar 早退必打 radar_skip(reason)——
     **"0 新卡"和"静默坏死"必须可区分**，这条是用真实事故换来的。
+16. **首启录制 consent（v0.11，P0-11）**：fresh install 默认 `recordingMode="off"`，首启一次性
+    双语 consent alert（采集什么/去哪里/保留多久，链 PRIVACY.md）后才可能开录；任一选择持久化
+    （UserDefaults `recordingConsentShown`），已有 `recordingMode` 值的存量安装永不询问。
+    理由：trust-critical 产品不能在用户读到任何说明之前就开始录屏。细节见 CONTRACT §15 的
+    v0.11 补充。
 
 ## 3. 血泪坑清单（每条都付过学费，别再交一遍）
 

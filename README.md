@@ -130,6 +130,12 @@ This tool records your screen, can read your Slack/Gmail, and runs unattended ag
 
 What's in flight and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Contributing
+
+You don't need the full stack to hack on this: the test suite runs in under a second with just Python + PyYAML, and `scripts/demo_seed.py` drives the complete UI with fictional data — no API key, screenpipe, or Obsidian required. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies everywhere.
+
+Questions → [Discussions (Q&A)](https://github.com/Wan-ZL/zelin-ai-assistant/discussions) · bugs → [issue forms](https://github.com/Wan-ZL/zelin-ai-assistant/issues/new/choose).
+
 ## License
 
 Released under the [Functional Source License 1.1, MIT Future License (FSL-1.1-MIT)](LICENSE.md). In plain English:
@@ -139,7 +145,7 @@ Released under the [Functional Source License 1.1, MIT Future License (FSL-1.1-M
 - **Future open source**: each release automatically converts to the MIT License 2 years after it ships.
 - **Contributions** are welcome — issues, suggestions, and PRs alike; see [CONTRIBUTING.md](CONTRIBUTING.md). (GitHub shows the license as "Other" because FSL isn't in its detector; the badge above is authoritative.)
 
-More questions ("can we use this at work?", "is this open source?") are answered in [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md).
+More questions — use at work, forks, what counts as competing use, per-release MIT conversion dates — are answered in plain language in [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md).
 
 ## Documentation
 
