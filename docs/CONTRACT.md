@@ -1,6 +1,13 @@
 # 组件间数据契约（锁定 — 三层都按此实现，不得偏离）
 
-所有运行时状态在 `~/Projects/zelin-ai-assistant/state/`（gitignore）。注册表在 `act/registry/`（git 跟踪，真源）。
+> **English orientation** — This is the frozen data contract between the Python pipeline and the
+> Mac app. Three files make it up: `act/registry/<ID>.yaml` (source of truth; state machine
+> `detected → card_sent → approved → executing → review → delivered`, any state → `trashed`),
+> `state/dashboard.json` (actd writes, app reads), and `state/inbox/<uuid>.json` (app writes,
+> actd reads then deletes). Fields are **add-only** — never renamed or removed; the Swift side
+> decodes every new field with `decodeIfPresent`. Change this file *before* any code that touches
+> these shapes. **Section numbers §1–§20 are referenced from code and docs — never renumber.**
+> The Chinese body is canonical.
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
 

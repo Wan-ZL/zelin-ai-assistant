@@ -1,5 +1,14 @@
 # HANDOFF — 给接手这个项目的 Claude Code（或人类）
 
+> **English orientation** — This is the handoff book the AI assistant that built this system wrote
+> for its successor: the architecture map (§1), the reasoning behind every non-obvious design
+> decision (§2), a pitfall list paid for in real debugging time (§3), and development conventions (§4).
+> Read it together with [docs/CONTRACT.md](docs/CONTRACT.md) — data contract first, rationale second.
+> Five decisions carry most of the weight: app/pipeline decoupling over `dashboard.json` (read) +
+> `inbox/` (write); optimistic echo with backend confirmation; the `queued` intermediate state;
+> `delivery_mode: chat|repo`; and "fix it in the projection layer, don't touch the state machine".
+> The Chinese body is canonical — ask any LLM to translate the sections you need.
+
 > 本文档是原开发环境的 AI 助手写给下一任的交接书：架构地图、每个"奇怪设计"背后的理由、
 > 付过学费的坑、以及路线图。读完这份 + `docs/CONTRACT.md`，你就拥有原开发者 90% 的上下文。
 > 本文档已脱敏（人名/私有系统均为泛化表述），可随 repo 公开。
@@ -145,16 +154,10 @@
   自备 Anthropic API key。首次跑见 docs/INSTALL.md 与 install.sh；公开导出的脱敏
   说明见 docs/SANITIZATION.md。
 
-## 6. 路线图（原开发环境里排过序的想法）
+## 6. 路线图
 
-1. **打包分发**：GitHub Releases + 固定签名身份（Developer ID 签名+公证 = 用户升级不重授权；
-   或文档化"自编译+自签证书"免费路线）。进阶：.pkg 带 postinstall 铺整个管线。
-2. **iOS 遥控器**（ios/ 占位）：手机端审批/验收，推送提醒。
-3. **digest 进化建议**：analytics 累积 ≥14 天后，周报里自动提"哪些功能没人用/哪里反复出错"，
-   生成 self-improvement 卡（guard 已写好，防新装误报）。
-4. 结构化交付物清单（agent 完工写 {branch, files[]} JSON，卡上可点）。
-5. 雷达置信分流参数化（"hard 无 deadline 进欠账"当前合理，攒数据后可调）。
-6. TCC 敏感功能拆稳定 helper 二进制（更新主程序不触权限）——如果不买 Developer ID 的话。
+已迁至 **[docs/ROADMAP.md](docs/ROADMAP.md)**（按 In progress / Next / Later 分组，单一来源，
+避免双维护）。动手前先看 In progress 一节——若干条目已有工作在途，别重复开工。
 
 ## 7. 给接手者的第一小时建议
 

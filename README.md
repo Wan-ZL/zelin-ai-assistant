@@ -27,6 +27,60 @@ A personal AI chief-of-staff for macOS. It watches where work arrives (meeting n
 
 The app and the pipeline are fully decoupled: the app only reads `state/dashboard.json` and writes your actions to `state/inbox/`. That two-file contract lives in [docs/CONTRACT.md](docs/CONTRACT.md).
 
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph MAC["Your Mac — everything in this box stays local"]
+        direction TB
+
+        subgraph INGEST["Ingest pipeline (ingest/, cron)"]
+            SP["screenpipe engine<br/>screen + audio capture"] --> EXP["incremental export<br/>(markdown)"]
+            EXP --> DISTILL["headless claude<br/>ingest skill"]
+            DISTILL --> VAULT[("Obsidian vault<br/>unprocessed → raw → wiki")]
+        end
+
+        subgraph ACTP["Act pipeline (act/)"]
+            RADARS["3 radars<br/>Obsidian · Slack · Gmail"]
+            REG[("registry — YAML source of truth<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(any state → trashed)")]
+            ACTD["actd daemon (launchd, 10 s pass)<br/>inbox → dispatch → reconcile → dashboard"]
+            AGENTS["claude --bg agents<br/>isolated git worktrees + quality gate<br/>deliver: draft PR or FINAL DRAFT"]
+            RADARS -->|"merge_or_new (dedup)"| REG
+            ACTD <-->|"state transitions"| REG
+            ACTD -->|"dispatch approved"| AGENTS
+        end
+
+        VAULT --> RADARS
+
+        DASH["state/dashboard.json<br/>(projection, atomic writes)"]
+        INBOX["state/inbox/*.json<br/>(one file per user action)"]
+
+        subgraph APP["Mac app (SwiftUI menu bar)"]
+            UI["approval cards · kanban ·<br/>quick capture (⌥Space)"]
+        end
+
+        ACTD --> DASH
+        DASH -->|"read-only, 5 s poll"| UI
+        UI -->|"approve · reject · comment · capture"| INBOX
+        INBOX --> ACTD
+    end
+
+    subgraph EXT["External services"]
+        ANTH["Anthropic API"]
+        GH["GitHub"]
+        SRC["Slack · Gmail"]
+    end
+
+    DISTILL -.->|"screen/audio excerpts in prompts"| ANTH
+    RADARS -.->|"note & message text in prompts"| ANTH
+    AGENTS -.->|"task prompts + repo context"| ANTH
+    AGENTS -.->|"draft PRs via gh (repo mode)"| GH
+    SRC -.->|"messages / unread mail"| RADARS
+    ACTD -.->|"optional notification mirror (Slack self-DM)"| SRC
+```
+
+Solid arrows are local file/process flow; dashed arrows are the only network egress (the full inventory, with the switches that control each one, is in [docs/PRIVACY.md](docs/PRIVACY.md)). The app never talks to the network and never touches the registry, secrets, or `claude` — its whole world is one readable file and one writable directory.
+
 ## Quickstart
 
 ```bash
@@ -74,6 +128,8 @@ This tool records your screen, can read your Slack/Gmail, and runs unattended ag
 - [x] v2: SwiftUI menu-bar app (popover + kanban window + quick capture + recycle bin + bilingual)
 - [ ] v3: iOS remote approver (`ios/` is a placeholder)
 
+What's in flight and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md).
+
 ## License
 
 Released under the [Functional Source License 1.1, MIT Future License (FSL-1.1-MIT)](LICENSE.md). In plain English:
@@ -82,6 +138,8 @@ Released under the [Functional Source License 1.1, MIT Future License (FSL-1.1-M
 - **You can't** sell a product or service that competes with this software.
 - **Future open source**: each release automatically converts to the MIT License 2 years after it ships.
 - **Contributions** are welcome — issues, suggestions, and PRs alike; see [CONTRIBUTING.md](CONTRIBUTING.md). (GitHub shows the license as "Other" because FSL isn't in its detector; the badge above is authoritative.)
+
+More questions ("can we use this at work?", "is this open source?") are answered in [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md).
 
 ## Documentation
 
@@ -93,6 +151,10 @@ Released under the [Functional Source License 1.1, MIT Future License (FSL-1.1-M
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | symptom-first fixes for the known failure modes |
 | [docs/DEMO.md](docs/DEMO.md) | demo mode (fictional data, no keys needed) and recording guide |
 | [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | data egress inventory / vulnerability reporting |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | what's in progress, next, and later |
+| [CHANGELOG.md](CHANGELOG.md) | human-readable release history |
+| [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | how to contribute / community standards |
+| [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT in practice: company use, competing use, the 2-year MIT conversion |
 | [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) / [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md) | optional source integrations |
 | [docs/SANITIZATION.md](docs/SANITIZATION.md) | provenance: how this public export was sanitized from the private repo |
 
