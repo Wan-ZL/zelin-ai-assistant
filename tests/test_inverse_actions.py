@@ -1,8 +1,17 @@
 """Inverse inbox actions — frozen contract v0.10.2 (CONTRACT §10).
 
-done_external   : card_sent | review -> delivered; execution.accepted_at set;
-                  notes get "[done outside] Zelin 在系统外完成"; a live session
-                  is left alone (the human finished, the AI session idles out).
+done_external   : card_sent | review | approved | executing -> delivered
+                  (v0.12 widened from card_sent | review); execution.accepted_at
+                  set; notes get "[done outside] Zelin 在系统外完成".
+                  card_sent | review : a live session is left alone (the human
+                  finished, the AI session idles out).
+                  executing + session: best-effort executor.harvest_delivery
+                  first (non-empty results only are written to
+                  delivered_summary/final_draft, a failure is just logged),
+                  then best-effort executor.stop_session (clears a hanging
+                  blocked agent; failure NEVER blocks the delivery).
+                  approved (queued, undispatched): straight to delivered,
+                  no harvest/stop.
 abort_execution : approved | executing -> card_sent; live session stopped
                   best-effort via executor.stop_session (a stop failure NEVER
                   blocks the state rollback); execution.session_id archived to
@@ -67,7 +76,7 @@ class InverseActionsBase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# done_external — card_sent | review -> delivered
+# done_external — original paths: card_sent | review -> delivered
 # --------------------------------------------------------------------------- #
 class DoneExternalTestCase(InverseActionsBase):
     def test_from_card_sent_delivers_and_stamps(self):
@@ -97,9 +106,9 @@ class DoneExternalTestCase(InverseActionsBase):
         self.assertIn("[done outside]", req.notes)
 
     def test_wrong_status_is_idempotent_noop(self):
-        wrong = (State.DETECTED.value, State.APPROVED.value,
-                 State.EXECUTING.value, State.DELIVERED.value,
-                 State.TRASHED.value)
+        # v0.12: approved|executing are now ALLOWED — the no-op set shrinks.
+        wrong = (State.DETECTED.value, State.RAISING.value,
+                 State.DELIVERED.value, State.TRASHED.value)
         for i, st in enumerate(wrong):
             rid = f"R-81{i}"
             _mk_req(req_id=rid, status=st)
@@ -119,6 +128,102 @@ class DoneExternalTestCase(InverseActionsBase):
             req = self._run("done_external")
         self.assertEqual(req.status, State.DELIVERED.value)
         self.assertEqual((req.execution or {}).get("accepted_at"), first)
+
+
+# --------------------------------------------------------------------------- #
+# done_external — v0.12 extension: approved | executing -> delivered
+# （agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付的完成出口）
+# --------------------------------------------------------------------------- #
+class DoneExternalExtendedTestCase(InverseActionsBase):
+    def _run_with_executor(self, harvest, stop, req_id="R-800"):
+        with mock.patch.object(actd.executor, "harvest_delivery", harvest), \
+             mock.patch.object(actd.executor, "stop_session", stop):
+            return self._run("done_external", req_id=req_id)
+
+    def test_from_executing_harvests_stops_and_delivers(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-11", "log": "/tmp/x.log"})
+        harvest = mock.Mock(return_value={"delivered_summary": "交付小结",
+                                          "final_draft": "FINAL 全文草稿"})
+        stop = mock.Mock(return_value=True)
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_called_once_with("sess-11")   # 先收割……
+        stop.assert_called_once_with("sess-11")      # ……再清掉挂着的 agent
+        self.assertEqual(req.status, State.DELIVERED.value)
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "交付小结")
+        self.assertEqual(ex.get("final_draft"), "FINAL 全文草稿")
+        self.assertTrue(ex.get("accepted_at"))
+        self.assertEqual(ex.get("session_id"), "sess-11")  # 不归档不删除
+        self.assertEqual(ex.get("log"), "/tmp/x.log")      # 其余字段保留
+        self.assertIn("[done outside] Zelin 在系统外完成", req.notes)
+
+    def test_empty_harvest_never_overwrites_existing_fields(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-12",
+                           "delivered_summary": "旧小结",
+                           "final_draft": "旧草稿"})
+        harvest = mock.Mock(return_value={"delivered_summary": None,
+                                          "final_draft": None})
+        req = self._run_with_executor(harvest, mock.Mock(return_value=True))
+        self.assertEqual(req.status, State.DELIVERED.value)
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "旧小结")  # 非空才写
+        self.assertEqual(ex.get("final_draft"), "旧草稿")
+        self.assertTrue(ex.get("accepted_at"))
+
+    def test_harvest_failure_only_logged_stop_still_runs(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-13"})
+        harvest = mock.Mock(side_effect=RuntimeError("transcript exploded"))
+        stop = mock.Mock(return_value=True)
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_called_once_with("sess-13")   # harvest 炸了……
+        stop.assert_called_once_with("sess-13")      # ……stop 照跑
+        self.assertEqual(req.status, State.DELIVERED.value)
+        ex = req.execution or {}
+        self.assertNotIn("delivered_summary", ex)
+        self.assertNotIn("final_draft", ex)
+        self.assertTrue(ex.get("accepted_at"))
+        self.assertIn("[done outside]", req.notes)
+
+    def test_stop_failure_never_blocks_delivery(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-14"})
+        harvest = mock.Mock(return_value={"delivered_summary": "小结",
+                                          "final_draft": None})
+        stop = mock.Mock(side_effect=RuntimeError("claude stop exploded"))
+        req = self._run_with_executor(harvest, stop)
+        stop.assert_called_once_with("sess-14")      # stop 被调且失败……
+        self.assertEqual(req.status, State.DELIVERED.value)  # ……不阻塞落账
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "小结")
+        self.assertTrue(ex.get("accepted_at"))
+        self.assertIn("[done outside]", req.notes)
+
+    def test_executing_without_session_skips_harvest_and_stop(self):
+        _mk_req(status=State.EXECUTING.value, execution=None)
+        harvest, stop = mock.Mock(), mock.Mock()
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_not_called()
+        stop.assert_not_called()
+        self.assertEqual(req.status, State.DELIVERED.value)
+        self.assertTrue((req.execution or {}).get("accepted_at"))
+        self.assertIn("[done outside]", req.notes)
+
+    def test_from_approved_delivers_without_harvest_or_stop(self):
+        # 排队未派发：直接落账；即便残留 session_id 也不 harvest/stop（按状态分流）
+        _mk_req(status=State.APPROVED.value,
+                execution={"session_id": "sess-15"})
+        harvest, stop = mock.Mock(), mock.Mock()
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_not_called()
+        stop.assert_not_called()
+        self.assertEqual(req.status, State.DELIVERED.value)
+        ex = req.execution or {}
+        self.assertTrue(ex.get("accepted_at"))
+        self.assertEqual(ex.get("session_id"), "sess-15")
+        self.assertIn("[done outside] Zelin 在系统外完成", req.notes)
 
 
 # --------------------------------------------------------------------------- #
@@ -251,10 +356,20 @@ class AnalyticsCoverageTestCase(InverseActionsBase):
         _mk_req(req_id="R-842", status=State.DELIVERED.value)
         self._run("revert_review", req_id="R-842")
 
+        # v0.12：executing 上的 done_external 走同一 inbox_done_external 打点
+        _mk_req(req_id="R-843", status=State.EXECUTING.value,
+                execution={"session_id": "s2"})
+        with mock.patch.object(actd.executor, "harvest_delivery",
+                               mock.Mock(return_value={})), \
+             mock.patch.object(actd.executor, "stop_session",
+                               mock.Mock(return_value=True)):
+            self._run("done_external", req_id="R-843")
+
         events = [(e.get("event"), e.get("req")) for e in analytics.read_events()]
         self.assertIn(("inbox_done_external", "R-840"), events)
         self.assertIn(("inbox_abort_execution", "R-841"), events)
         self.assertIn(("inbox_revert_review", "R-842"), events)
+        self.assertIn(("inbox_done_external", "R-843"), events)
 
 
 # --------------------------------------------------------------------------- #

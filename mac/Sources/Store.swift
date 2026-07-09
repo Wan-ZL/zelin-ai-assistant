@@ -380,9 +380,18 @@ final class DashboardStore: ObservableObject {
                             info: L("恢复中，卡片将回到原状态列",
                                     "Restoring — the card returns to its previous lane"))
             case "done_external":
-                // v0.10.2: Zelin finished it outside the system (card_sent |
-                // review → DELIVERED) — echo straight into 已验收.
-                let src = currentList(of: id)
+                // Zelin finished it outside the system → DELIVERED; the button
+                // now also lives on running-lane rows (queued/working/blocked/
+                // needs_input/review-active), so the sticky-hide source is
+                // whichever ACTIONABLE lane shows the card right now: approval
+                // (reject dialog), review, or running (incl. needs_input —
+                // ids(in: .running) unions both). Deliberately NOT currentList:
+                // that also scans completed, and hiding from there would bury
+                // the real delivered card under its own echo.
+                let src = dashboard.flatMap { db in
+                    [ListKind.approval, .review, .running]
+                        .first { ids(in: $0, of: db).contains(id) }
+                }
                 hideSticky(id, from: src)
                 addEcho(id: id, target: .completed, source: src ?? .approval,
                         label: L("已办完", "done outside"))

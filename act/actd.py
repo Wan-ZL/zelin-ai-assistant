@@ -157,7 +157,8 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
     #   approve | reject(->trash) | comment | raise(debt->proposal)
     #   | trash(->recycle) | restore(recycle->prev) | pin(recycle->permanent)
     #   | accept(review->delivered) | rework(review->executing)
-    #   | done_external(card_sent|review->delivered)          (v0.10.2)
+    #   | done_external(card_sent|review|approved|executing->delivered)
+    #                                             (v0.10.2, 扩展 v0.12)
     #   | abort_execution(approved|executing->card_sent)      (v0.10.2)
     #   | revert_review(delivered->review)                    (v0.10.2)
     # v0.10.2 公共规则：状态不匹配的逆向动作 = 幂等 no-op + log（防连点/迟到 inbox）。
@@ -220,17 +221,43 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
     elif action == "done_external":
         # v0.10.2 已办完（系统外完成）：card_sent|review -> delivered。有活
         # session 不动它 —— 人做完了，AI 会话自然闲置。
-        if str(req.status) not in (State.CARD_SENT.value, State.REVIEW.value):
+        # v0.12 扩展：approved|executing 也允许 —— agent 停在 blocked 等输入、
+        # 但 Zelin 已在 attach 会话里拿到交付时，这是唯一的完成出口。
+        #   executing 且有 session：先 best-effort 收割交付物（非空才写
+        #   delivered_summary/final_draft，失败只 log），再 best-effort
+        #   stop_session 清掉挂着的 blocked agent（失败只 log，不阻塞落账）；
+        #   approved（排队未派发）：直接落账，无 harvest/stop。
+        allowed = (State.CARD_SENT.value, State.REVIEW.value,
+                   State.APPROVED.value, State.EXECUTING.value)
+        prev_status = str(req.status)
+        if prev_status not in allowed:
             _log(f"inbox: {req.id} done_external ignored (status={req.status}) — no-op")
             return
-        req.set_status(State.DELIVERED)
         ex = dict(req.execution or {})
+        sid = ex.get("session_id")
+        if prev_status == State.EXECUTING.value and sid and executor is not None:
+            try:
+                harvested = executor.harvest_delivery(str(sid)) or {}
+                if harvested.get("delivered_summary"):
+                    ex["delivered_summary"] = harvested["delivered_summary"]
+                if harvested.get("final_draft"):
+                    ex["final_draft"] = harvested["final_draft"]
+            except Exception as e:  # noqa: BLE001 - harvest is best-effort
+                _log(f"inbox: {req.id} done_external — "
+                     f"harvest_delivery({sid}) failed (ignored): {e}")
+            try:
+                stopped = executor.stop_session(str(sid))
+                _log(f"inbox: {req.id} done_external — stop_session({sid}) -> {stopped}")
+            except Exception as e:  # noqa: BLE001 - best-effort, never block delivery
+                _log(f"inbox: {req.id} done_external — "
+                     f"stop_session({sid}) failed (ignored): {e}")
         ex["accepted_at"] = _iso_now()
         req.execution = ex
         tag = "[done outside] Zelin 在系统外完成"
         req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        req.set_status(State.DELIVERED)
         save(req)
-        _log(f"inbox: {req.id} done_external -> delivered")
+        _log(f"inbox: {req.id} done_external ({prev_status}) -> delivered")
     elif action == "abort_execution":
         # v0.10.2 停止并退回待审批：approved|executing -> card_sent。活 session
         # 先 best-effort 停止（stop 失败只记日志，绝不阻塞状态回退）；session_id
