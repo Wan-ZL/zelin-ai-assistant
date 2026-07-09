@@ -70,6 +70,11 @@ final class DepsModel: ObservableObject {
     // nil = health file missing / unreadable / bad JSON (shown as 暂无数据)
     @Published var radar: [RadarHealthRow]? = nil
     @Published var checking = false
+    // P1-3 app-side hook: `bash install.sh --check` (= python -m act.doctor)
+    @Published var doctorOutput = ""
+    @Published var doctorRunning = false
+    // exit code = number of FAILs (doctor contract); nil = never run
+    @Published var doctorFails: Int? = nil
 
     func check() {
         guard !checking else { return }
@@ -228,6 +233,58 @@ final class DepsModel: ObservableObject {
                 skipReason: d?["skip_reason"] as? String)
         }
     }
+
+    // MARK: P1-3 diagnostics — shell out to the post-install doctor
+
+    /// `bash install.sh --check` from the repo root: 14 symptom-first checks,
+    /// one fix line per finding, exit code = number of FAILs. The full run
+    /// ends with a cheap live claude call (validates the key end-to-end), so
+    /// it can take a minute or two — never auto-run, button only.
+    func runDoctor() {
+        guard !doctorRunning else { return }
+        doctorRunning = true
+        doctorOutput = ""
+        doctorFails = nil
+        Analytics.log("mw_doctor_run")
+        let root = AppPaths.stateRoot
+        DispatchQueue.global(qos: .userInitiated).async {
+            let cmd = "cd " + Self.shellQuote(root) + " && bash install.sh --check 2>&1"
+            let (code, out) = Self.runFullOutput("/bin/zsh", ["-lc", cmd])
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.doctorRunning = false
+                    let text = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.doctorOutput = text.isEmpty
+                        ? L("诊断没有产生输出（exit \(code)）——检查 install.sh 是否存在于 repo 根目录",
+                            "Diagnostics produced no output (exit \(code)) — check that install.sh exists at the repo root")
+                        : text
+                    self.doctorFails = text.isEmpty ? nil : Int(code)
+                    Analytics.log("mw_doctor_result", fields: ["fails": Int(code)])
+                }
+            }
+        }
+    }
+
+    /// Like Shell.run but returns the FULL combined output — the doctor
+    /// report must not be truncated to Shell.run's 400-char tail.
+    nonisolated private static func runFullOutput(
+        _ launchPath: String, _ args: [String]) -> (Int32, String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: launchPath)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() } catch { return (127, error.localizedDescription) }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// Single-quote for zsh — the repo path may contain spaces (or worse).
+    nonisolated private static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
 }
 
 struct DepsView: View {
@@ -304,6 +361,57 @@ struct DepsView: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
+
+            // P1-3: post-install doctor — deep, on-demand (spends one cheap
+            // live claude call), complements the quick rows above.
+            Text(L("诊断", "Diagnostics"))
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.top, 6)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Button(model.doctorRunning ? L("诊断中…", "Running…")
+                                               : L("运行诊断", "Run diagnostics")) {
+                        model.runDoctor()
+                    }
+                    .disabled(model.doctorRunning)
+                    if model.doctorRunning {
+                        ProgressView().controlSize(.small)
+                        Text(L("最长约 1-2 分钟（含一次真实 claude 调用）",
+                               "up to ~1-2 min (includes one live claude call)"))
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    } else if let fails = model.doctorFails {
+                        Text(fails == 0
+                             ? L("全部通过 ✓", "All checks passed ✓")
+                             : L("\(fails) 项未通过——按报告里的 fix 行修复",
+                                 "\(fails) check(s) failed — apply the fix lines in the report"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(fails == 0 ? .green : .red)
+                    }
+                    Spacer()
+                }
+                Text(L("跑 bash install.sh --check（= python -m act.doctor）：逐项复验运行时假设，每条失败带一行修复命令。",
+                       "Runs bash install.sh --check (= python -m act.doctor): re-validates every runtime assumption, one fix line per finding."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                if !model.doctorOutput.isEmpty {
+                    ScrollView {
+                        Text(model.doctorOutput)
+                            .font(.system(size: 10, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(maxHeight: 260)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .onAppear { model.check() }
         // item 7: model-produced strings (detail suffixes) are baked at check
