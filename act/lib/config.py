@@ -138,7 +138,10 @@ class Config:
     # execution
     default_target_repo: str = "~/Projects/your-workbench"
     memory_inject: bool = True
-    create_github_repo: bool = True
+    # False by default: approving a card must not silently create GitHub repos
+    # / push content that originated from screen/meetings/mail. Explicit
+    # config.yaml values (either way) are honored unchanged (PRIVACY.md row 8).
+    create_github_repo: bool = False
     auto_resume: bool = True
     # claude --bg with --dangerously-skip-permissions (default, unattended);
     # False = claude's normal permission model, blocked agents -> needs_input

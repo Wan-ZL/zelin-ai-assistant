@@ -31,7 +31,7 @@
 | 5 | Quick capture | 你发 self-DM 时 | Anthropic | — | 不发即不触发 |
 | 6 | 欠账扩写 | 欠账升级为提案时 | Anthropic（+ 联网工具） | 开 | 无专用开关（不用欠账循环即不触发） |
 | 7 | 执行派发 | **你批准一张卡时** | Anthropic | — | 审批本身就是开关 |
-| 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | 开 | `execution.create_github_repo: false` |
+| 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | **关**（v0.11 起） | 默认即关；设 `execution.create_github_repo: true` 才启用 |
 | 9 | 通知镜像 | 每条 macOS 通知 | 你的 Slack self-DM | 开 | `features.slack_radar: false` / 不配 token |
 | 10 | Telemetry | 手动/cron 运行 sync 时 | 你自己的 Supabase | **关** | 默认即关（`telemetry.enabled: false`） |
 | 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
@@ -118,12 +118,14 @@
 
 ### 8. 自动建私有 GitHub repo（ensure_repo）→ GitHub
 
-- **触发**：批准的卡指向一个还不是 git repo / 没有 remote 的目标目录，且 `gh` CLI 在 PATH
-  且已登录（`act/executor.py` `ensure_repo()`）。
+- **默认关**（v0.11 起 `execution.create_github_repo` 默认 `false`）：批准一张卡不会静默
+  在你的 GitHub 账号下建 repo。config.yaml 里显式写了该 key 的存量配置（true/false）行为不变。
+- **触发**（仅当你设 `true`）：批准的卡指向一个还不是 git repo / 没有 remote 的目标目录，
+  且 `gh` CLI 在 PATH 且已登录（`act/executor.py` `ensure_repo()`）。
 - **Payload**：`gh repo create <目录名> --private` 在你的 GitHub 账号下新建**私有** repo,
   执行产出（可能源自屏幕/会议/邮件内容）会被推送为 feature 分支 + draft PR。
-- **关闭**：`execution.create_github_repo: false`——降级为仅本地 `git init` + 本地分支交付,
-  任何失败也自动留在本地（"stay local"，永不阻塞派发）。
+- **关闭时的行为**：仅本地 `git init` + 本地分支交付；任何失败也自动留在本地
+  （"stay local"，永不阻塞派发）。
 
 ### 9. 通知镜像 → 你的 Slack self-DM
 
@@ -214,7 +216,8 @@
 - **Feature flags**（CONTRACT §16,config.yaml `features:` 或 App 设置）：
   `slack_radar` / `gmail_radar` / `obsidian_radar` / `digest` / `auto_resume` / `analytics` /
   `manager_pack`——每一路雷达都能单独关死。
-- **`execution.create_github_repo: false`**：杜绝一切自动 GitHub repo 创建。
+- **`execution.create_github_repo`**：**默认 false**（v0.11 起）——无任何自动 GitHub repo
+  创建；显式设 true 才恢复"新目录卡自动建私有 repo + draft PR"。
 - **`execution.memory_inject: false`**：关掉 MEMORY.md 注入。
 - **Telemetry 默认关**,开也只去你自己的 Supabase（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
 
@@ -255,6 +258,10 @@ session 下也会被拒（详见 `ingest/process-screenpipe.sh` 头部注释与
 - 固定文件名与三级解析顺序（secrets 文件 → config 显式路径 → legacy 路径）见
   **CONTRACT §19**。推荐用 App 设置窗口粘贴保存,不要把 key 文件放在 `~/Desktop`
   （legacy 路径仅为兼容保留;Desktop 默认被 iCloud 同步,且 cron 的 TCC 授权覆盖不到那里）。
+- **legacy 路径已弃用（v0.11 起,warn-only）**：凭证经第 3 级 legacy 路径解析时,Python 侧
+  会在 stderr 打**一行** deprecation 警告,并在本地记一条 `legacy_secret_path` 事件
+  （只含凭证**文件名**,永不含凭证内容）。行为完全不变——不会 raise、不会拒读,
+  已有布置照常工作;但请尽快迁移到设置窗口粘贴（`config/secrets/`）。
 
 ## 残余风险（诚实清单)
 

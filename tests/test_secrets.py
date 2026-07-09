@@ -3,6 +3,8 @@
 Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py;
 no real key file (~/Desktop/Keys, ~/.config) is ever read or written.
 """
+import contextlib
+import io
 import os
 import stat
 import unittest
@@ -10,7 +12,7 @@ from pathlib import Path
 
 from tests import TMP_HOME
 
-from act.lib import config, secrets
+from act.lib import analytics, config, secrets
 from act import radar_gmail, radar_slack
 
 
@@ -96,6 +98,82 @@ class SecretsTestCase(unittest.TestCase):
         self.assertEqual(radar_gmail.get_app_password(cfg), "ponmlkjihgfedcba")
         (secrets.SECRETS_DIR / secrets.GMAIL_APP_PASSWORD_FILE).unlink()
         self.assertEqual(radar_gmail.get_app_password(cfg), "abcdefghijklmnop")
+
+
+class LegacyDeprecationWarnTestCase(unittest.TestCase):
+    """§19 legacy tier is warn-only deprecated: one stderr line + one analytics
+    event per credential per process; the credential VALUE never appears in
+    either; resolution behavior is unchanged and never raises."""
+
+    def setUp(self):
+        self.home = Path(TMP_HOME)
+        self.keys = self.home / "fake-keys"
+        self.keys.mkdir(parents=True, exist_ok=True)
+        if secrets.SECRETS_DIR.exists():
+            for p in secrets.SECRETS_DIR.iterdir():
+                p.unlink()
+        secrets._warned_legacy.clear()
+        self.addCleanup(secrets._warned_legacy.clear)
+
+    def _resolve_capturing_stderr(self, *args):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            val = secrets.resolve_credential(*args)
+        return val, err.getvalue()
+
+    def test_legacy_hit_warns_once_without_leaking_the_value(self):
+        legacy = self.keys / "legacy.txt"
+        legacy.write_text("legacy-tok\n", encoding="utf-8")
+        name = secrets.SLACK_TOKEN_FILE
+
+        val, err = self._resolve_capturing_stderr(name, None, legacy)
+        self.assertEqual(val, "legacy-tok")     # resolution unchanged
+        self.assertEqual(err.count("\n"), 1)    # exactly one line
+        self.assertIn("DEPRECATED", err)
+        self.assertIn(name, err)
+        self.assertNotIn("legacy-tok", err)     # §19: value never logged
+
+        # second resolution of the SAME name is silent (radars poll in a loop)
+        val, err = self._resolve_capturing_stderr(name, None, legacy)
+        self.assertEqual(val, "legacy-tok")
+        self.assertEqual(err, "")
+
+    @staticmethod
+    def _legacy_event_lines():
+        try:
+            text = analytics.EVENTS_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return []
+        return [ln for ln in text.splitlines() if "legacy_secret_path" in ln]
+
+    def test_legacy_hit_logs_analytics_event_without_the_value(self):
+        legacy = self.keys / "legacy-gmail.txt"
+        legacy.write_text("hunter2secret\n", encoding="utf-8")
+
+        before = self._legacy_event_lines()
+        self._resolve_capturing_stderr(secrets.GMAIL_APP_PASSWORD_FILE, None, legacy)
+        new = self._legacy_event_lines()[len(before):]
+
+        self.assertEqual(len(new), 1)
+        self.assertIn(secrets.GMAIL_APP_PASSWORD_FILE, new[0])
+        self.assertNotIn("hunter2secret",
+                         analytics.EVENTS_PATH.read_text(encoding="utf-8"))
+
+    def test_secrets_and_explicit_tiers_do_not_warn(self):
+        name = secrets.SLACK_TOKEN_FILE
+        legacy = self.keys / "legacy.txt"
+        legacy.write_text("legacy-tok\n", encoding="utf-8")
+        explicit = self.keys / "explicit.txt"
+        explicit.write_text("explicit-tok\n", encoding="utf-8")
+
+        val, err = self._resolve_capturing_stderr(name, explicit, legacy)
+        self.assertEqual(val, "explicit-tok")
+        self.assertEqual(err, "")
+
+        secrets.write_secret(name, "secret-tok")
+        val, err = self._resolve_capturing_stderr(name, explicit, legacy)
+        self.assertEqual(val, "secret-tok")
+        self.assertEqual(err, "")
 
 
 if __name__ == "__main__":

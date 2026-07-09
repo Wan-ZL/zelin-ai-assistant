@@ -11,11 +11,15 @@ Fixed file names (one line, just the token):
     slack-user-token.txt / gmail-app-password.txt / anthropic-api-key.txt
 
 The legacy paths stay as the final fallback so Zelin's existing setup keeps
-working unchanged — nothing breaks when config/secrets/ is empty.
+working unchanged — nothing breaks when config/secrets/ is empty. That tier is
+DEPRECATED (CONTRACT §19): resolving through it logs a one-line stderr warning
+plus a ``legacy_secret_path`` analytics event (name only, never the credential),
+because ~/Desktop is iCloud-synced on default macOS setups.
 """
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional, Union
 
@@ -68,6 +72,33 @@ def _read_path(path: Union[str, Path, None]) -> Optional[str]:
         return None
 
 
+# names already warned about in this process — radars poll in a loop, so the
+# deprecation line must fire once per credential, not once per scan.
+_warned_legacy: set = set()
+
+
+def _warn_legacy(secret_name: str, path: Union[str, Path]) -> None:
+    """One-line deprecation notice (stderr + analytics). Never raises (§19:
+    the credential VALUE must not appear in any log — only name and path)."""
+    if secret_name in _warned_legacy:
+        return
+    _warned_legacy.add(secret_name)
+    try:
+        print(
+            f"[secrets] DEPRECATED: {secret_name} resolved via legacy path "
+            f"{path} — paste the token in the app's Settings window instead "
+            "(stored under config/secrets/, see docs/CONTRACT.md §19)",
+            file=sys.stderr,
+        )
+    except Exception:  # noqa: BLE001 - warning must never break resolution
+        pass
+    try:
+        from act.lib import analytics
+        analytics.log_event("legacy_secret_path", name=secret_name)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def resolve_credential(
     secret_name: str,
     explicit_path: Union[str, Path, None] = None,
@@ -76,7 +107,8 @@ def resolve_credential(
     """Return the credential CONTENT per the §19 order (secrets → explicit → legacy).
 
     ``explicit_path`` / ``legacy_default`` are file PATHS; the return value is
-    always the file's stripped content (empty files count as missing).
+    always the file's stripped content (empty files count as missing). The
+    legacy tier still works but is deprecated — see ``_warn_legacy``.
     """
     val = read_secret(secret_name)
     if val:
@@ -84,4 +116,7 @@ def resolve_credential(
     val = _read_path(explicit_path)
     if val:
         return val
-    return _read_path(legacy_default)
+    val = _read_path(legacy_default)
+    if val:
+        _warn_legacy(secret_name, legacy_default)
+    return val

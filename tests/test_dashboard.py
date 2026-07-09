@@ -219,5 +219,62 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(len(dash["review"]), 1)
 
 
+class CompletedCapTestCase(unittest.TestCase):
+    """§2 completed cap: newest COMPLETED_CAP by accepted_at, true total in counts."""
+
+    def setUp(self):
+        self.cfg = config.Config()
+        home = tempfile.mkdtemp(prefix="dash-home-")
+        patcher = mock.patch.dict(os.environ, {"HOME": home})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _delivered(self, i, accepted_at):
+        execution = {"session_id": f"sid-{i}"}
+        if accepted_at is not None:
+            execution["accepted_at"] = accepted_at
+        return Requirement.from_dict({
+            "id": f"R-{300 + i}",
+            "title": f"已交付 {i}",
+            "status": "delivered",
+            "execution": execution,
+        })
+
+    @staticmethod
+    def _iso(i):
+        base = _dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc)
+        return (base + _dt.timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_over_cap_truncates_newest_first_but_counts_stay_total(self):
+        n = dashboard.COMPLETED_CAP + 10
+        reqs = [self._delivered(i, self._iso(i)) for i in range(n)]
+        dash = dashboard.build_dashboard(reqs=reqs, agents=[], cfg=self.cfg)
+
+        self.assertEqual(len(dash["completed"]), dashboard.COMPLETED_CAP)
+        # counts.completed = TRUE total (may exceed len(completed), §2 v0.11)
+        self.assertEqual(dash["counts"]["completed"], n)
+        # newest accepted_at first; the 10 oldest fell off the end
+        ids = [item["id"] for item in dash["completed"]]
+        self.assertEqual(ids[0], f"R-{300 + n - 1}")
+        self.assertEqual(ids[-1], "R-310")
+        self.assertNotIn("R-300", ids)
+        accepted = [item["accepted_at"] for item in dash["completed"]]
+        self.assertEqual(accepted, sorted(accepted, reverse=True))
+
+    def test_under_cap_keeps_all_missing_accepted_at_sinks_last(self):
+        reqs = [
+            self._delivered(0, self._iso(0)),
+            self._delivered(1, None),          # legacy item without accepted_at
+            self._delivered(2, self._iso(2)),
+        ]
+        dash = dashboard.build_dashboard(reqs=reqs, agents=[], cfg=self.cfg)
+
+        self.assertEqual(len(dash["completed"]), 3)
+        self.assertEqual(dash["counts"]["completed"], 3)
+        self.assertEqual([item["id"] for item in dash["completed"]],
+                         ["R-302", "R-300", "R-301"])
+        self.assertIsNone(dash["completed"][-1]["accepted_at"])
+
+
 if __name__ == "__main__":
     unittest.main()

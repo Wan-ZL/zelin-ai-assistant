@@ -94,6 +94,13 @@ def _index_agents(agents: list[dict]) -> dict[str, dict]:
     return idx
 
 
+# completed[] cap (§2): the registry never archives DELIVERED items, so without
+# a ceiling the dashboard grows forever (rebuilt every ~10s, re-decoded by the
+# app on every refresh). Keep only the most recent entries by accepted_at;
+# counts.completed stays the TRUE total.
+COMPLETED_CAP = 50
+
+
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
@@ -465,6 +472,12 @@ def build_dashboard(
                 )
         # approved surfaces as a "queued" item inside running (branch above, §2)
 
+    # §2 completed cap: newest first (missing/unparsable accepted_at sinks to
+    # the end), truncated to COMPLETED_CAP; the count keeps the real total.
+    completed_total = len(completed)
+    completed.sort(key=lambda c: c.get("accepted_at") or 0, reverse=True)
+    del completed[COMPLETED_CAP:]
+
     return {
         "generated_at": _iso_now(),
         "counts": {
@@ -472,7 +485,7 @@ def build_dashboard(
             "running": len(running),
             "needs_input": len(needs_input),
             "review": len(review),
-            "completed": len(completed),
+            "completed": completed_total,
             "debt": len(debt),
             "trash": len(trash),
         },

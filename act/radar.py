@@ -1,10 +1,11 @@
-"""Requirement radar — scan incremental sources, extract requirements.
+"""Requirement radar (Obsidian source) — scan incremental notes, extract requirements.
 
-v1 covers the Obsidian raw source only. For each ``.md`` file newer than the
-last marker (STATE/radar.marker), run headless ``claude -p`` to extract the
+This module covers the Obsidian raw source. For each ``.md`` file newer than
+the last marker (STATE/radar.marker), run headless ``claude -p`` to extract the
 manager's new requirements for Zelin as a JSON list, then reconcile each through
-``registry.merge_or_new``. Slack ingestion is a documented TODO (needs a bot
-token or a headless MCP surface).
+``registry.merge_or_new``. The other sources have their own radars:
+``act/radar_slack.py`` (DMs/mentions), ``act/radar_gmail.py`` (INBOX triage)
+and ``act/radar_imessage.py`` (self-thread commands).
 
 Run: ``python -m act.radar`` (or ``python -m act.radar --once``).
 """
@@ -331,9 +332,6 @@ def scan(runner=None, pack_runner=None) -> dict:
 
         if not halted:
             newest_done = max(newest_done, mtime)
-
-    # TODO(slack): ingest config.sources.slack_channels / slack_dms. Requires a
-    # bot token or a headless MCP Slack surface. v1 is Obsidian-only.
 
     if newest_done > marker:
         _write_marker(newest_done)

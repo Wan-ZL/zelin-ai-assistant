@@ -50,6 +50,8 @@
 - `completed[]` 加 `summary`(str) / `delivered_summary`(str) / `accepted_at`(epoch int) / `dod`([str])
 - `debt[]` 加 `sources`（同上形状）
 
+**v0.11 行为补充（add-only，字段形状不变）**：`completed[]` 只保留按 `accepted_at` **降序**（最新在前，缺失/不可解析的排最后）的最近 **50** 条（`act/lib/dashboard.py` `COMPLETED_CAP`）；`counts.completed` 仍为**真实总数**，因此可能大于 `len(completed)`。Swift 侧无需改动——列表照常解码，计数徽章一律读 `counts`。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -185,7 +187,7 @@ install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 
 - **凭证解析顺序**（Python 读取方 `act/lib/secrets.resolve_credential(secret_name, explicit_path, legacy_default)`；shell 侧 ingest/process-screenpipe.sh 同顺序）：
   1. secrets 文件存在且非空 → 用其内容；
   2. config.yaml 显式路径（如 `sources.slack_token_path`、`sources.gmail.app_password_path`）→ 读该文件内容；
-  3. 旧默认路径兜底（slack: `~/Desktop/Keys/slack-user-token.txt`；gmail: `~/Desktop/Keys/gmail-app-password.txt`；anthropic: `~/.config/anthropic-key.txt`）。
+  3. 旧默认路径兜底（slack: `~/Desktop/Keys/slack-user-token.txt`；gmail: `~/Desktop/Keys/gmail-app-password.txt`；anthropic: `~/.config/anthropic-key.txt`）——**deprecated（v0.11 起，warn-only）**：走到这一级时 Python 侧在 stderr 打一行 deprecation 警告并记一条 `legacy_secret_path` analytics 事件（只含凭证文件名，永不含内容/路径外的信息），解析结果不变、永不 raise。理由：`~/Desktop` 在默认 macOS 上被 iCloud 同步。请迁移到第 1 级（App 设置窗口粘贴）。
   行为不变式：config/secrets/ 为空时一切照旧，Zelin 现有布置不断。
 - **runtime python 指针** = `<AIASSISTANT_HOME>/config/runtime.json`，内容 `{"python": "<绝对路径>"}`。install.sh 生成（探测顺序：`$AIASSISTANT_PYTHON` env → `~/miniconda3/bin/python3`（存在且能 `import yaml`）→ `which python3`）；Swift 依赖检查用它跑 python 检查。
 - **home 指针** = `~/Library/Application Support/ZelinAIAssistant/home.txt`，内容为 repo 根绝对路径（一行）。install.sh 写入，让 clone 到任意位置的 repo 对 GUI app 可见。**Mac app 的 repo 根解析顺序**（`AppPaths.stateRoot`）：① env var `AIASSISTANT_HOME` → ② home 指针文件（其指向的目录存在时）→ ③ 旧默认 `~/Projects/zelin-ai-assistant`。Python 侧不变（env var → 旧默认）：launchd plist（install.sh 渲染时注入）与 crontab 行都显式携带 `AIASSISTANT_HOME`，daemon 不读指针。

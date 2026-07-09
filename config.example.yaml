@@ -63,7 +63,7 @@ phone_channel: none
 execution:
   dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控
   memory_inject: true                  # 注入 auto-memory program maps + 约束
-  create_github_repo: true             # target_kind=new 时建私有 GitHub repo 做 remote（draft PR 需要）；关掉则只本地 git init 交分支
+  create_github_repo: false            # 默认关（v0.11 起）：批卡不静默在你的 GitHub 建私有 repo、推送源自屏幕/会议/邮件的内容——false = 仅本地 git init + 本地分支交付；设 true 才对 target_kind=new 自动 gh repo create --private 做 remote（draft PR 需要）
   auto_resume: true                    # 执行中任务的后台 agent 死掉（睡眠/断网/崩溃）时自动 claude --resume 拉起，带退避
   # skip_permissions: true             # 后台 agent 带 --dangerously-skip-permissions 无人值守跑（默认）；改 false 走 claude 正常权限模型，被挡住的 agent 会浮到 needs_input 等你确认
   quality_gate:

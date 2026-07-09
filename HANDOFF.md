@@ -140,7 +140,7 @@
 - **契约先行**：动 dashboard.json/inbox 字段 → 先改 docs/CONTRACT.md；Swift 解码全部
   `decodeIfPresent` 向后兼容，字段只增不改不删。
 - **所有用户可见文案 `L("中文","English")` 双语**，语言可即时切换。
-- **每个改动批次**：py_compile + `python3 -m unittest discover -s tests`（当前 150+ 个测试）+
+- **每个改动批次**：py_compile + `python3 -m unittest discover -s tests`（150+ 个测试，以 CI 为准）+
   `bash mac/build.sh` 三关全绿再合并。app 装机 = `bash mac/build.sh --install`。
 - **测试用 tempdir AIASSISTANT_HOME**，绝不碰真实 state/registry。
 - commit 信息写清楚"为什么"，运行态 registry 文件不进代码 commit。
