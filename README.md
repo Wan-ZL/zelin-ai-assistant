@@ -119,7 +119,7 @@ Then open the menu-bar app's Settings and paste your Anthropic API key (headless
 
 ## Privacy & security
 
-This tool records your screen, can read your Slack/Gmail, and runs unattended agents — read what leaves your machine, when, and which switches control it in [docs/PRIVACY.md](docs/PRIVACY.md). Report vulnerabilities privately via [SECURITY.md](SECURITY.md).
+This tool records your screen, can read your Slack/Gmail, and runs unattended agents — read what leaves your machine, when, and which switches control it in [docs/PRIVACY.md](docs/PRIVACY.md). Sensitive apps are excluded from screen capture at the engine level (`recording.ignored_apps` in config.yaml — password managers, Keychain Access, and private-browsing windows by default; add your banking apps there). Report vulnerabilities privately via [SECURITY.md](SECURITY.md).
 
 ## Status
 

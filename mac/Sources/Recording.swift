@@ -6,7 +6,8 @@ import SwiftUI
 import Foundation
 import Carbon.HIToolbox  // RegisterEventHotKey (global hotkey, no TCC)
 
-// MARK: - Screenpipe launch recipe (verbatim from the Automator applet — SHARED contract)
+// MARK: - Screenpipe launch recipe (tuning verbatim from the Automator applet —
+// SHARED contract; + sensitive-app exclusion, P1-9)
 
 enum ScreenpipeRecipe {
     static let tuning =
@@ -15,6 +16,28 @@ enum ScreenpipeRecipe {
         + " --capture-scroll true --visual-check-interval-ms 0"
         + " --idle-capture-interval-ms 86400000 --min-capture-interval-ms 1000"
 
+    /// Sensitive-app capture exclusion (P1-9). The engine's --ignored-windows
+    /// (screenpipe 0.3.349, source-verified) does case-insensitive SUBSTRING
+    /// matching against both the app name and the window title, and skips
+    /// matching windows before any frame/OCR is stored. Entries pass through
+    /// verbatim, so the engine's `App::Title` scoping syntax also works.
+    /// Configurable via config.yaml `recording.ignored_apps` (absent → these
+    /// defaults; explicit [] = off). Keep in sync with DEFAULT_IGNORED_APPS
+    /// in act/lib/config.py — the export script filters already-stored frames
+    /// with the same list (drift-guarded by tests/test_capture_exclusion.py).
+    static let defaultIgnoredApps = [
+        "1Password", "Bitwarden", "LastPass", "KeePassXC", "Keychain Access",
+        "Private Browsing", "Incognito",
+    ]
+
+    /// ` --ignored-windows 'X' --ignored-windows 'Y' …`, single-quoted for zsh.
+    static func exclusionArgs() -> String {
+        let apps = SettingsIO.configList("ignored_apps") ?? defaultIgnoredApps
+        return apps.map {
+            " --ignored-windows '" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }.joined()
+    }
+
     /// Full zsh command that starts the engine detached (nohup … & → survives
     /// the app). PATH needs /opt/homebrew/bin (npx lives there). nil for "off".
     static func startCommand(mode: String) -> String? {
@@ -22,14 +45,14 @@ enum ScreenpipeRecipe {
         var prep = ""
         switch mode {
         case "screen":
-            record = "npx screenpipe@0.3.349 record --disable-audio\(tuning)"
+            record = "npx screenpipe@0.3.349 record --disable-audio\(tuning)\(exclusionArgs())"
                 + " -l chinese -l english --retention-days 1"
         case "screen_audio":
             // flip disableAudio in store.bin first (recipe verbatim)
             prep = "[ -f \"$HOME/.screenpipe/store.bin\" ] && /usr/bin/sed -i.bak"
                 + " 's/\"disableAudio\": true/\"disableAudio\": false/'"
                 + " \"$HOME/.screenpipe/store.bin\"; "
-            record = "npx screenpipe@0.3.349 record -a parakeet\(tuning)"
+            record = "npx screenpipe@0.3.349 record -a parakeet\(tuning)\(exclusionArgs())"
                 + " -l chinese -l english --retention-days 1"
         default:
             return nil

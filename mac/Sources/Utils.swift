@@ -145,6 +145,49 @@ enum SettingsIO {
         return nil
     }
 
+    /// Naive line-scan for a YAML block sequence, e.g.
+    ///
+    ///     ignored_apps:
+    ///       - 1Password
+    ///       - "Keychain Access"   # comment
+    ///
+    /// Same config.yaml → config.example.yaml fallback as configScalar; the
+    /// key must be unique in the file (nesting is not tracked). Returns nil
+    /// when the key is absent from both files (caller applies its hard
+    /// default), [] for an explicit `key: []` (deliberate opt-out).
+    static func configList(_ key: String) -> [String]? {
+        for file in [AppPaths.stateRoot + "/config.yaml",
+                     AppPaths.stateRoot + "/config.example.yaml"] {
+            guard let text = try? String(contentsOfFile: file, encoding: .utf8) else { continue }
+            var inBlock = false
+            var items: [String] = []
+            for rawLine in text.components(separatedBy: "\n") {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if !inBlock {
+                    guard line.hasPrefix(key + ":") else { continue }
+                    var rest = String(line.dropFirst(key.count + 1)).trimmingCharacters(in: .whitespaces)
+                    if let hash = rest.range(of: "#") { rest = String(rest[..<hash.lowerBound]).trimmingCharacters(in: .whitespaces) }
+                    if rest == "[]" { return [] }
+                    inBlock = true
+                    continue
+                }
+                if line.isEmpty || line.hasPrefix("#") { continue }
+                guard line.hasPrefix("- ") else { break }  // next key ends the block
+                var v = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                if v.hasPrefix("\"") || v.hasPrefix("'") {
+                    let quote = v.first!
+                    let inner = String(v.dropFirst())
+                    v = inner.firstIndex(of: quote).map { String(inner[..<$0]) } ?? inner
+                } else if let hash = v.range(of: " #") {
+                    v = String(v[..<hash.lowerBound]).trimmingCharacters(in: .whitespaces)
+                }
+                if !v.isEmpty { items.append(v) }
+            }
+            if inBlock { return items }
+        }
+        return nil
+    }
+
     /// override key → config.yaml key → hard default. Tilde-expanded.
     static func resolvedPath(overrideKey: String, configKey: String?, fallback: String?) -> String? {
         let ov = readOverrides()

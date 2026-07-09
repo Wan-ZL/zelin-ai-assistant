@@ -59,6 +59,24 @@ SETTINGS_OVERRIDES_PATH: Path = STATE_DIR / "settings_overrides.json"
 # when sources.obsidian_raw is not configured (v0.10.3 契约二).
 DEFAULT_OBSIDIAN_VAULT: str = "~/Documents/Obsidian Vault"
 
+# Sensitive-app capture exclusion (P1-9) — applied at BOTH ends of the screen
+# pipeline: the mac app passes each entry to the engine as --ignored-windows
+# (screenpipe skips matching windows BEFORE anything is stored), and
+# ingest/screenpipe-export.sh filters already-stored frames with the same list
+# (see recording_exclusion_sql). Bare terms match case-insensitive substring
+# against app name OR window title; the engine's `App::Title` scoping syntax is
+# honoured too. Keep in sync with ScreenpipeRecipe.defaultIgnoredApps in
+# mac/Sources/Recording.swift (drift-guarded by tests/test_capture_exclusion.py).
+DEFAULT_IGNORED_APPS: list = [
+    "1Password",
+    "Bitwarden",
+    "LastPass",
+    "KeePassXC",
+    "Keychain Access",
+    "Private Browsing",  # Safari private windows (window-title match)
+    "Incognito",         # Chrome/Edge incognito windows (window-title match)
+]
+
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
 DEFAULT_FEATURES: dict = {
@@ -131,6 +149,12 @@ class Config:
 
     # trash / recycle bin
     trash_retention_days: int = 60
+
+    # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
+    # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
+    recording_ignored_apps: list = field(
+        default_factory=lambda: list(DEFAULT_IGNORED_APPS)
+    )
 
     # local pre-send redaction (opt-in)
     redaction_enabled: bool = False
@@ -262,6 +286,13 @@ def load_config() -> Config:
     cfg.trash_retention_days = int(
         trash.get("retention_days", cfg.trash_retention_days)
     )
+
+    recording = data.get("recording", {}) or {}
+    apps = recording.get("ignored_apps")
+    if isinstance(apps, list):
+        cfg.recording_ignored_apps = [
+            str(a).strip() for a in apps if a is not None and str(a).strip()
+        ]
 
     tele = data.get("telemetry", {}) or {}
     cfg.telemetry_enabled = bool(tele.get("enabled", cfg.telemetry_enabled))
@@ -399,6 +430,51 @@ def _apply_settings_overrides(cfg: Config) -> None:
                 setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
         except Exception:  # noqa: BLE001 — skip just the bad entry
             continue
+
+
+# --------------------------------------------------------------------------- #
+# Capture-exclusion SQL (P1-9) — consumed by ingest/screenpipe-export.sh via a
+# one-line python call. One place builds the fragment so quoting/NULL handling
+# is testable and the shell never string-munges app names.
+# --------------------------------------------------------------------------- #
+def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
+    """WHERE-clause fragment excluding frames whose app/window matches
+    ``recording.ignored_apps``, mirroring the engine's --ignored-windows
+    semantics (screenpipe 0.3.349 window_pattern, source-verified):
+
+    - bare term        → case-insensitive substring against app name OR title
+    - ``App::Title``   → app substring AND title substring must both match
+    - ``App::`` / ``::Title`` → app-only / title-only substring
+
+    Returns one line of ``AND …`` clauses — empty string when the list is
+    empty (explicit opt-out). ``coalesce`` keeps NULL app/window rows
+    exported: ``NULL NOT LIKE`` is NULL in SQLite and would silently drop
+    them.
+    """
+    cfg = cfg or load_config()
+
+    def like(column: str, part: str) -> str:
+        return (
+            f"lower(coalesce(f.{column}, '')) LIKE"
+            " '%" + part.lower().replace("'", "''") + "%'"
+        )
+
+    clauses = []
+    for term in cfg.recording_ignored_apps:
+        if "::" in term:
+            app_part, title_part = term.split("::", 1)
+            conds = []
+            if app_part.strip():
+                conds.append(like("app_name", app_part.strip()))
+            if title_part.strip():
+                conds.append(like("window_name", title_part.strip()))
+            if conds:
+                clauses.append("AND NOT (" + " AND ".join(conds) + ")")
+        else:
+            clauses.append(
+                f"AND NOT ({like('app_name', term)} OR {like('window_name', term)})"
+            )
+    return " ".join(clauses)
 
 
 # Module-level singleton for convenience (callers may also call load_config()).

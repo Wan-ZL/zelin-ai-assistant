@@ -72,6 +72,26 @@ execution:
   training:
     system_card_per_ckpt: true         # 强制：训前设计卡 + 训后结果回填
 
+recording:                             # 屏幕采集的 sensitive-app 排除（隐私控制）
+  # 命中的窗口在采集阶段就被录制引擎跳过（screenpipe --ignored-windows）——OCR/截图
+  # 根本不会写入 ~/.screenpipe/db.sqlite；导出脚本（ingest/screenpipe-export.sh）还会
+  # 用同一清单过滤引擎重启前已存的历史 frame。匹配规则：大小写不敏感的**子串**匹配，
+  # 同时匹配 app 名和窗口标题。
+  # 加银行等敏感 app：追加一行 `- <App 名或窗口标题关键词>`，如 `- Chase`、`- 招商银行`
+  # （银行若在普通浏览器标签里打开，只有窗口标题含该关键词时才会被排除——见
+  # docs/PRIVACY.md 残余风险）。进阶：支持引擎的 `App::Title` 定点语法——
+  # `Slack::#hr` 只排除 Slack 里标题含 #hr 的窗口，`::标题` 只按窗口标题匹配。
+  # 设为 `ignored_apps: []` = 明确关闭此过滤（不推荐）。
+  # 改动后重启录制引擎生效：菜单栏切一次录制模式，或重启 App。
+  ignored_apps:
+    - 1Password
+    - Bitwarden
+    - LastPass
+    - KeePassXC
+    - Keychain Access
+    - Private Browsing                 # Safari 无痕窗口（按窗口标题匹配）
+    - Incognito                        # Chrome/Edge 无痕窗口（按窗口标题匹配）
+
 trash:
   retention_days: 60                   # 回收站保留天数；超期且未标永久的硬删。设 0 = 永不自动清
 

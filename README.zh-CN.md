@@ -119,7 +119,7 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 
 ## 隐私与安全
 
-这个工具会录屏、可读你的 Slack/Gmail、还跑无人值守 agent——什么数据、何时、经哪些开关控制着离开你的机器,见 [docs/PRIVACY.md](docs/PRIVACY.md);安全漏洞请走私密渠道上报,见 [SECURITY.md](SECURITY.md)。
+这个工具会录屏、可读你的 Slack/Gmail、还跑无人值守 agent——什么数据、何时、经哪些开关控制着离开你的机器,见 [docs/PRIVACY.md](docs/PRIVACY.md)。sensitive app 在录制引擎层就被排除采集(config.yaml `recording.ignored_apps`,默认含密码管理器、Keychain Access 与无痕窗口;银行 app 请自行加进清单);安全漏洞请走私密渠道上报,见 [SECURITY.md](SECURITY.md)。
 
 ## 运行状态
 

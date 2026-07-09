@@ -46,8 +46,10 @@
 - **Payload**：**全屏文本**（screenpipe 的 accessibility text + OCR 合并字段 `full_text`，
   含 app 名、窗口名、时间戳）与**音频转写全文**。agent 读文件入 context 即出境。
 - **注意**：这条链路是 claude 直接读文件，**词条 redaction 不经过此路径**（redaction 作用于
-  拼 prompt 的边界，见下文「Redaction」）。屏幕采集**不区分 app**——密码管理器、银行页面、
-  无痕窗口的可见文字同样会进 vault 并被加工（见「残余风险」）。
+  拼 prompt 的边界，见下文「Redaction」）。屏幕采集按 `recording.ignored_apps` 排除
+  sensitive app（默认含密码管理器与无痕窗口标题；采集 + 导出两层过滤，见下文
+  「你有哪些控制」）——但**清单外**的敏感内容（如普通浏览器标签里的银行页面）仍会进
+  vault 并被加工（见「残余风险」）。
 - **关闭**：菜单栏把录制切到 off（不再产生新数据）；或删掉 crontab 里的 ingest 链一行
   （`crontab -e`）。
 
@@ -188,6 +190,17 @@
 
 - **录制开关**：菜单栏随时切 `recordingMode`：`off` / `screen` / `screen_audio`。off 后
   不再产生新数据（已在 db.sqlite/vault 里的历史数据不受影响）。
+- **Sensitive-app 排除清单**（config.yaml `recording.ignored_apps`；默认：1Password /
+  Bitwarden / LastPass / KeePassXC / Keychain Access + Safari「Private Browsing」/
+  Chrome「Incognito」窗口标题）。两层生效：
+  - **采集阶段**：mac app 把每个词条以 `--ignored-windows` 传给录制引擎
+    （`mac/Sources/Recording.swift`）。screenpipe 0.3.349 实测：大小写不敏感的**子串**
+    匹配，同时匹配 app 名与窗口标题，命中的窗口**根本不会被截屏/OCR/写入 db.sqlite**。
+  - **导出阶段**：`ingest/screenpipe-export.sh` 用同一清单过滤 frames 查询，兜住
+    引擎重启前已存的历史 frame。
+  - 加银行等敏感 app：清单追加一行关键词（教程见 config.example.yaml 注释）；设
+    `ignored_apps: []` 明确关闭。改动后重启录制引擎生效（菜单栏切一次录制模式）。
+    目前 config-only，设置窗口暂不提供此项。
 - **Redaction（发给 AI 前的本地脱敏,`act/lib/sanitize.py`）**：
   - **内置 secret-pattern 掩码——默认开**（`redaction.mask_secrets: true`）：sk-ant- / sk- /
     xox* / AKIA / gh*_ / PEM 私钥块等高精度形状,在 prompt 出境前替换为 `[脱敏]`。
@@ -243,9 +256,13 @@ session 下也会被拒（详见 `ingest/process-screenpipe.sh` 头部注释与
 
 ## 残余风险（诚实清单)
 
-- 屏幕采集**不区分 app**：密码管理器、银行页面、无痕浏览的可见文本一样会进 vault 并出境。
-  内置 secret 掩码只能兜住 API-key 形状的 token,兜不住你屏幕上的其他敏感内容。
-  在敏感操作前把录制切 off,是目前最可靠的控制。
+- 屏幕采集的 sensitive-app 排除是**关键词子串匹配,不是语义识别**：默认清单只覆盖常见
+  密码管理器与无痕窗口标题。银行页面开在普通浏览器标签里时,只有窗口标题恰好含清单
+  关键词才会被排除;清单外 app 的可见文本一样进 vault 并出境。音频转写**不分 app**——
+  `screen_audio` 模式下,被排除 app 产生的声音仍会被转写。清单只影响之后的采集与导出;
+  此前已进 vault 的历史文本不会被追溯清除(需自行删除)。内置 secret 掩码只能兜住
+  API-key 形状的 token,兜不住你屏幕上的其他敏感内容。在敏感操作前把录制切 off,
+  仍是最可靠的控制。
 - 质量门、「不对外发消息」约束与 UNTRUSTED 围栏都是 prompt 级的,不是系统强制。
 - 执行 agent 默认绕过权限确认(见「执行权限」——可用 `execution.skip_permissions: false` 换取
   逐操作确认)。

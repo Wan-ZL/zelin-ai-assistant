@@ -9,15 +9,21 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 # script lives in so a clone outside ~/Projects still reads its own config.
 export AIASSISTANT_HOME="${AIASSISTANT_HOME:-$REPO_ROOT}"
 
-# Resolve vault paths through the config layer (sources.obsidian_*, P1-6):
-# prefer the daemon's interpreter from config/runtime.json, else PATH python3.
+# The daemon's interpreter from config/runtime.json, else PATH python3.
+runtime_python() {
+    local py
+    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
+    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    printf '%s\n' "$py"
+}
+
+# Resolve vault paths through the config layer (sources.obsidian_*, P1-6).
 # Any failure (no python, no act package, broken config) falls back to the
 # legacy hardcoded path — this script runs from cron and must never break
 # because a dependency is missing.
 resolve_config_path() {  # $1 = config key, $2 = fallback path
     local py resolved
-    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
-    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    py="$(runtime_python)"
     resolved=""
     if [ -n "$py" ]; then
         resolved="$(cd "$REPO_ROOT" 2>/dev/null && "$py" -m act.lib.config --print-path "$1" 2>/dev/null)"
@@ -38,6 +44,31 @@ mkdir -p "$OUT_DIR" "$MARKER_DIR"
 LAST_FRAME=$(cat "$MARKER_DIR/last_frame_id" 2>/dev/null || echo 0)
 LAST_AUDIO=$(cat "$MARKER_DIR/last_audio_id" 2>/dev/null || echo 0)
 
+# Sensitive-app exclusion (P1-9): skip frames whose app/window matches
+# config.yaml recording.ignored_apps (defaults include password managers —
+# see DEFAULT_IGNORED_APPS in act/lib/config.py). The engine already refuses
+# to CAPTURE these windows (--ignored-windows, mac/Sources/Recording.swift);
+# this filter additionally covers frames stored before the exclusion took
+# effect (engine started with older args / pre-existing db rows).
+RUNTIME_PY="$(runtime_python)"
+EXCLUDE_SQL=""
+PY_OK=0
+if [ -n "$RUNTIME_PY" ]; then
+    if EXCLUDE_SQL=$(cd "$REPO_ROOT" && "$RUNTIME_PY" -c \
+        'from act.lib.config import recording_exclusion_sql; print(recording_exclusion_sql())' 2>/dev/null); then
+        PY_OK=1   # empty output is valid here: ignored_apps: [] = explicit opt-out
+    fi
+fi
+if [ "$PY_OK" -ne 1 ]; then
+    # python unavailable → built-in defaults (keep in sync with
+    # DEFAULT_IGNORED_APPS in act/lib/config.py; drift-guarded by
+    # tests/test_capture_exclusion.py)
+    EXCLUDE_SQL=""
+    for term in '1password' 'bitwarden' 'lastpass' 'keepassxc' 'keychain access' 'private browsing' 'incognito'; do
+        EXCLUDE_SQL="$EXCLUDE_SQL AND lower(coalesce(f.app_name, '')) NOT LIKE '%$term%' AND lower(coalesce(f.window_name, '')) NOT LIKE '%$term%'"
+    done
+fi
+
 # Query new screen-text entries from frames.full_text
 # (full_text = accessibility_text + ocr_text merged by screenpipe;
 #  querying just ocr_text misses most frames because modern screenpipe
@@ -48,6 +79,7 @@ FROM frames f
 WHERE f.id > $LAST_FRAME
   AND f.full_text IS NOT NULL
   AND length(f.full_text) > 0
+  $EXCLUDE_SQL
 ORDER BY f.id ASC;
 " 2>/dev/null)
 
