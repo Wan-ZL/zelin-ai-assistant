@@ -475,7 +475,10 @@ struct SettingsFormView: View {
         confirmAbove = num("require_text_confirm_above_usd",
                            configKey: "require_text_confirm_above_usd", fallback: "50")
         trashDays = num("trash_retention_days", configKey: "retention_days", fallback: "60")
-        language = (ov["language"] as? String) == "en" ? "en" : "zh"
+        // P0-12: no override key → picker mirrors the same locale fallback
+        // LanguageStore resolved at launch (an explicit save still wins).
+        language = (ov["language"] as? String).map { $0 == "en" ? "en" : "zh" }
+            ?? LanguageStore.systemDefault
         let feats = ov["features"] as? [String: Any] ?? [:]
         func flag(_ key: String) -> Bool { (feats[key] as? Bool) ?? true }
         featSlackRadar = flag("slack_radar")

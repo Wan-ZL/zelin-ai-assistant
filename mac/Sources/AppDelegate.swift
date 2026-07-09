@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var shiftReturnMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // P0-12: force the language store to resolve (override → system locale)
+        // BEFORE the first L() call — the main menu below reads LanguageMirror,
+        // which only leaves its "zh" fallback once LanguageStore.shared exists.
+        _ = LanguageStore.shared
         // ⌘C/⌘V/⌘A/⌘Z dispatch through the main menu even for a menu-bar app —
         // without an Edit menu every text field is copy/paste-dead.
         installMainMenu()
@@ -44,10 +48,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // removes the global click + local key monitors.
         popover.delegate = self
 
-        // recording engine: keep the menu-bar icon in sync + autostart per mode
-        // Zelin default: opening the app keeps screen(-only) recording running.
-        // If macOS asks for screen-recording permission the system prompts.
-        RecordingController.shared.autostartIfNeeded()
+        // recording engine: keep the menu-bar icon in sync + autostart per mode.
+        // P0-11: a fresh install must not capture anything before the one-time
+        // consent prompt — recording defaults to off, and this autostart only
+        // runs once a mode exists (prior consent or pre-existing prefs).
+        if RecordingConsent.needsPrompt {
+            // deferred a turn so launch setup finishes before the modal alert
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { RecordingConsent.present() }
+            }
+        } else {
+            RecordingController.shared.autostartIfNeeded()
+        }
 
         // item 2: global hotkey (default ⌥Space) — registration failure is
         // silent here; status shows in 设置 → 快捷键.
