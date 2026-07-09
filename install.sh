@@ -148,7 +148,11 @@ if [ -d "/Applications/Obsidian.app" ] || command -v obsidian >/dev/null 2>&1; t
 else
     warn "obsidian not found (optional — radar reads the vault)"
 fi
-command -v gh >/dev/null 2>&1 && ok "gh found (optional)" || warn "gh not found (optional — draft-PR delivery)"
+if command -v gh >/dev/null 2>&1; then
+    ok "gh found (optional)"
+else
+    warn "gh not found (optional — draft-PR delivery)"
+fi
 
 # credential reminder (contract §19: actd reads key from file, not from this script)
 if [ -s "$REPO_ROOT/config/secrets/anthropic-api-key.txt" ]; then

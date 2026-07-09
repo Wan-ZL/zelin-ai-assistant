@@ -232,7 +232,7 @@ def build_digest(today: Optional[_dt.date] = None,
                    empty="- （无 —— notes 里用 [MANAGER-OWES] 标记他的承诺）")
 
     if oneonone_path is not None:
-        out += [f"## 🗓 1:1 准备页", f"- [{oneonone_path.name}]({oneonone_path})", ""]
+        out += ["## 🗓 1:1 准备页", f"- [{oneonone_path.name}]({oneonone_path})", ""]
 
     out += section("## 💡 进化建议（已作为 self-improvement 卡片进入欠账）",
                    [f"- {s}" for s in suggestions],

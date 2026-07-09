@@ -1,0 +1,10 @@
+# Keep the SHA-pinned actions in .github/workflows/ current.
+# No pip ecosystem entry: the project deliberately has no Python dependency
+# manifest (PyYAML is the only dependency, installed ad hoc with a version
+# range in CI and install.sh), so there is nothing for Dependabot to track.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

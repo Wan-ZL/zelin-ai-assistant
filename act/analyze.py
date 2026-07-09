@@ -18,7 +18,6 @@ Run standalone: ``python -m act.analyze <req_id>``.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from typing import Callable, Optional
 
