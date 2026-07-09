@@ -111,9 +111,15 @@ def _run_extract(note_text: str, runner=None) -> str:
 _JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
 
 
-def _parse_extraction(raw: str) -> list[dict]:
+def _parse_extraction(raw: str) -> Optional[list[dict]]:
+    """Parse the extraction output. ``[]`` = VALID empty (the prompt asks for
+    ``[]`` when a note has no new requirements); ``None`` = malformed (empty
+    output, prose without a JSON array, non-array JSON) — the caller must treat
+    the note as UNPROCESSED and keep the marker before it, so the next scan
+    retries instead of silently dropping whatever the note contained.
+    """
     if not raw or not raw.strip():
-        return []
+        return None
     text = raw.strip()
     # strip a ```json ... ``` fence if the model added one
     if text.startswith("```"):
@@ -124,14 +130,14 @@ def _parse_extraction(raw: str) -> list[dict]:
     except json.JSONDecodeError:
         m = _JSON_ARRAY_RE.search(text)
         if not m:
-            return []
+            return None
         try:
             data = json.loads(m.group(0))
         except json.JSONDecodeError:
-            return []
+            return None
     if isinstance(data, list):
         return [d for d in data if isinstance(d, dict)]
-    return []
+    return None
 
 
 def _to_requirement(item: dict, note: Path) -> Requirement:
@@ -251,6 +257,13 @@ def scan(runner=None, pack_runner=None) -> dict:
     ``runner`` overrides the extraction ``claude -p`` call (tests); when it is
     injected without a ``pack_runner``, the manager action-items pack is skipped
     so tests stay hermetic.
+
+    The marker is a watermark of *successfully processed* notes: a note whose
+    extraction fails (claude error, unreadable file, unparseable output) pins
+    the watermark just before itself so the next scan retries it — silently
+    losing a note is the radar's worst failure mode. Later notes are still
+    scanned this pass; the re-extraction next pass is harmless because
+    merge_or_new dedupes restatements (identical sources never re-merge).
     """
     cfg = config.load_config()
     summary = {"files_scanned": 0, "extracted": 0, "reconciled": 0, "cards": 0, "skipped": []}
@@ -269,7 +282,8 @@ def scan(runner=None, pack_runner=None) -> dict:
         return summary
 
     marker = _read_marker()
-    newest_seen = marker
+    newest_done = marker
+    halted = False  # first failed note pins the watermark just before itself
     md_files = sorted(root.glob("*.md"), key=lambda p: p.stat().st_mtime)
 
     for note in md_files:
@@ -277,10 +291,11 @@ def scan(runner=None, pack_runner=None) -> dict:
         if mtime <= marker:
             continue
         summary["files_scanned"] += 1
-        newest_seen = max(newest_seen, mtime)
         try:
             text = note.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as e:
+            summary["skipped"].append(f"unreadable note {note.name}: {e}")
+            halted = True
             continue
         try:
             raw = _run_extract(text, runner=runner)
@@ -288,8 +303,15 @@ def scan(runner=None, pack_runner=None) -> dict:
             summary["skipped"].append(
                 f"claude -p failed on {note.name}: {type(e).__name__}: {str(e)[:160]}"
             )
+            halted = True
             continue
         items = _parse_extraction(raw)
+        if items is None:
+            summary["skipped"].append(
+                f"unparseable extraction on {note.name}: {(raw or '')[:80]!r}"
+            )
+            halted = True
+            continue
         summary["extracted"] += len(items)
         for item in items:
             if not item.get("title"):
@@ -307,11 +329,14 @@ def scan(runner=None, pack_runner=None) -> dict:
         if runner is None or pack_runner is not None:
             manager_action_items(note, text, cfg, runner=pack_runner)
 
+        if not halted:
+            newest_done = max(newest_done, mtime)
+
     # TODO(slack): ingest config.sources.slack_channels / slack_dms. Requires a
     # bot token or a headless MCP Slack surface. v1 is Obsidian-only.
 
-    if newest_seen > marker:
-        _write_marker(newest_seen)
+    if newest_done > marker:
+        _write_marker(newest_done)
     analytics.log_event("radar_scan", source="obsidian",
                         files=summary.get("files_scanned"), new_cards=summary.get("cards"))
     return summary
