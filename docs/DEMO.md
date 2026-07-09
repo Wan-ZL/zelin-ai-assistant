@@ -1,4 +1,7 @@
-# Demo 数据与录屏指南
+# Demo mode (no real data needed) & recording guide
+
+**Demo 模式(无需真实数据)与录屏指南** —— 不需要 API key、screenpipe 或 Obsidian,
+就能跑起完整 UI;这也是贡献者预览界面改动的推荐方式(见 `CONTRIBUTING.md`)。
 
 `scripts/demo_seed.py` 生成一份**完全虚构**的 `state/dashboard.json`（example-bench /
 inkweld / alex.doe / sam.rivera……全是编的，绝无真实同事或公司数据），让 app 指着一个
