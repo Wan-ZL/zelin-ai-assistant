@@ -14,6 +14,8 @@ sources:                               # 需求雷达监控的增量源
   # 变更日志）→ 4 - wiki（加工后的知识库）。下面三键缺省时自动由 obsidian_raw
   # 的上级目录（vault 根）+ 标准目录名派生，通常无需填写；也可在 App 设置窗口
   # 的"Obsidian 目录"小节编辑（写入 settings_overrides，优先级最高）。
+  # ingest 脚本（screenpipe-export.sh / process-screenpipe.sh）同样遵守这些键
+  # （经 `python3 -m act.lib.config --print-path` 解析，P1-6）。
   # obsidian_unprocessed: "~/Documents/Obsidian Vault/1 - unprocessed"
   # obsidian_change_summary: "~/Documents/Obsidian Vault/3 - change-summary"
   # obsidian_wiki: "~/Documents/Obsidian Vault/4 - wiki"

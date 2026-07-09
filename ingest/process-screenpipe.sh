@@ -6,8 +6,35 @@
 # launchd-spawned bash from reading ~/Documents on macOS Sonoma+.)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VAULT="$HOME/Documents/Obsidian Vault"
-UNPROCESSED="$VAULT/1 - unprocessed"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+# Same home the daemon uses (CONTRACT §19); default to the checkout this
+# script lives in so a clone outside ~/Projects still reads its own config.
+export AIASSISTANT_HOME="${AIASSISTANT_HOME:-$REPO_ROOT}"
+
+# Resolve vault paths through the config layer (sources.obsidian_*, P1-6):
+# prefer the daemon's interpreter from config/runtime.json, else PATH python3.
+# Any failure (no python, no act package, broken config) falls back to the
+# legacy hardcoded path — this script runs from cron and must never break
+# because a dependency is missing.
+resolve_config_path() {  # $1 = config key, $2 = fallback path
+    local py resolved
+    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
+    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    resolved=""
+    if [ -n "$py" ]; then
+        resolved="$(cd "$REPO_ROOT" 2>/dev/null && "$py" -m act.lib.config --print-path "$1" 2>/dev/null)"
+    fi
+    if [ -n "$resolved" ]; then
+        printf '%s\n' "$resolved"
+    else
+        printf '%s\n' "$2"
+    fi
+}
+
+UNPROCESSED="$(resolve_config_path obsidian_unprocessed "$HOME/Documents/Obsidian Vault/1 - unprocessed")"
+# Vault root = obsidian_raw's parent — the same derivation rule the config
+# layer itself uses for the pipeline dirs (v0.10.3 契约二).
+VAULT="$(dirname "$(resolve_config_path obsidian_raw "$HOME/Documents/Obsidian Vault/2 - raw")")"
 LOCKFILE="/tmp/process-screenpipe.lock"
 LOGFILE="/tmp/screenpipe-auto.log"
 
@@ -90,13 +117,14 @@ cd "$VAULT" || exit 1
 #
 # Resolution order (CONTRACT §19, mirrors act/lib/secrets.resolve_credential):
 #   1. $AIASSISTANT_HOME/config/secrets/anthropic-api-key.txt (App 设置窗口保存;
-#      defaults to ~/Projects/zelin-ai-assistant when AIASSISTANT_HOME unset)
+#      AIASSISTANT_HOME resolved at the top of this script, defaulting to the
+#      checkout this script lives in)
 #   2. legacy ~/.config/anthropic-key.txt (single line, sk-ant-... only)
 #   3. neither file → fall back to the claude CLI's own stored credentials.
 #      The keychain caveats above are real on some machines, but not all: on an
 #      always-logged-in Mac (e.g. a Mac mini) cron can often use the CLI's own
 #      auth just fine. If claude then fails, its error lands in $LOGFILE below.
-SECRETS_KEY_FILE="${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}/config/secrets/anthropic-api-key.txt"
+SECRETS_KEY_FILE="$AIASSISTANT_HOME/config/secrets/anthropic-api-key.txt"
 if [ -s "$SECRETS_KEY_FILE" ]; then
     ANTHROPIC_API_KEY=$(cat "$SECRETS_KEY_FILE" 2>>"$LOGFILE")
     export ANTHROPIC_API_KEY
@@ -129,7 +157,7 @@ SKILL_MD="$VAULT/.claude/skills/unprocessed-ingest/SKILL.md"
 [ -f "$SKILL_MD" ] || SKILL_MD="$SCRIPT_DIR/skills/unprocessed-ingest/SKILL.md"
 
 # Run claude in headless print mode and load the /unprocessed-ingest skill directly.
-"$CLAUDE_BIN" -p "Read \"$SKILL_MD\" and execute it on all files in 1 - unprocessed/." --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1
+"$CLAUDE_BIN" -p "Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\"." --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -eq 0 ]; then

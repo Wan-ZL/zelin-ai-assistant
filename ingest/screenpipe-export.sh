@@ -3,8 +3,34 @@
 # Used by both cron (hourly) and manual trigger
 # Dedup via marker files tracking last exported IDs
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+# Same home the daemon uses (CONTRACT §19); default to the checkout this
+# script lives in so a clone outside ~/Projects still reads its own config.
+export AIASSISTANT_HOME="${AIASSISTANT_HOME:-$REPO_ROOT}"
+
+# Resolve vault paths through the config layer (sources.obsidian_*, P1-6):
+# prefer the daemon's interpreter from config/runtime.json, else PATH python3.
+# Any failure (no python, no act package, broken config) falls back to the
+# legacy hardcoded path — this script runs from cron and must never break
+# because a dependency is missing.
+resolve_config_path() {  # $1 = config key, $2 = fallback path
+    local py resolved
+    py="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json" 2>/dev/null)"
+    [ -x "$py" ] || py="$(command -v python3 2>/dev/null)"
+    resolved=""
+    if [ -n "$py" ]; then
+        resolved="$(cd "$REPO_ROOT" 2>/dev/null && "$py" -m act.lib.config --print-path "$1" 2>/dev/null)"
+    fi
+    if [ -n "$resolved" ]; then
+        printf '%s\n' "$resolved"
+    else
+        printf '%s\n' "$2"
+    fi
+}
+
 DB="$HOME/.screenpipe/db.sqlite"
-OUT_DIR="$HOME/Documents/Obsidian Vault/1 - unprocessed"
+OUT_DIR="$(resolve_config_path obsidian_unprocessed "$HOME/Documents/Obsidian Vault/1 - unprocessed")"
 MARKER_DIR="$HOME/.screenpipe/export_markers"
 mkdir -p "$OUT_DIR" "$MARKER_DIR"
 

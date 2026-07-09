@@ -144,8 +144,10 @@
 - 版本 v0.10.3。全链路实测可用：录屏→ingest→wiki、雷达→卡片、批准→执行→验收、
   快速捕获（popover + 看板列顶多行 composer + ⌥Space）、回收站、双语。
 - 已知小债：① TaskRow 用 accent 颜色识别"已验收"列（宜改显式参数）；② queued 灰卡上的
-  停止按钮可点（合语义但视觉待观察）；③ ingest 导出脚本硬编码 unprocessed 路径，
-  未接 config 的 obsidian_unprocessed；④ 排序无 memo（当前量级无碍）。
+  停止按钮可点（合语义但视觉待观察）；③ ~~ingest 导出脚本硬编码 unprocessed 路径，
+  未接 config 的 obsidian_unprocessed~~（已修，P1-6：ingest 脚本经
+  `python3 -m act.lib.config --print-path` 走 config 层解析 vault 路径，
+  python/config 不可用时回退原硬编码值，cron 不会因此断）；④ 排序无 memo（当前量级无碍）。
 - **Ingest 切换说明（暂不执行）**：原开发机的生产 crontab 仍指向 `~/Applications/*.sh` 和
   `~/.local/bin/process-screenpipe.sh`；本 repo 内是这些脚本的受版本控制副本。验证一段
   时间后，将 crontab 改指向本 repo 路径，原件归档。（新装机器不受影响——install.sh

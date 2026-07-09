@@ -7,6 +7,9 @@ Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 All paths are derived from the ``AIASSISTANT_HOME`` env var, defaulting to
 ``~/Projects/zelin-ai-assistant``. Constants are exposed as ``pathlib.Path`` objects so
 every component (executor, actd, radar, dashboard) resolves to the same files.
+
+Shell consumers (the ingest scripts) resolve vault paths through the same
+layer via ``python3 -m act.lib.config --print-path obsidian_unprocessed``.
 """
 from __future__ import annotations
 
@@ -384,3 +387,53 @@ def _apply_settings_overrides(cfg: Config) -> None:
 # Module-level singleton for convenience (callers may also call load_config()).
 def get_config() -> Config:
     return load_config()
+
+
+# --------------------------------------------------------------------------- #
+# CLI — `python3 -m act.lib.config --print-path <key>` (P1-6). Used by the
+# ingest shell scripts to resolve vault paths through the same config layer as
+# the daemon. Must never trace on a broken/missing config: cron consumers need
+# a usable path on stdout, so any load failure prints the built-in default.
+# --------------------------------------------------------------------------- #
+_CLI_PATH_KEYS: tuple = (
+    "obsidian_raw",
+    "obsidian_unprocessed",
+    "obsidian_change_summary",
+    "obsidian_wiki",
+)
+
+
+def _cli_default_path(key: str) -> str:
+    vault = Path(DEFAULT_OBSIDIAN_VAULT).expanduser()
+    if key == "obsidian_raw":
+        return str(vault / "2 - raw")
+    return str(vault / _OBSIDIAN_DIR_NAMES[key])
+
+
+def main(argv: Optional[list] = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python3 -m act.lib.config",
+        description="Print a resolved config path for shell consumers.",
+    )
+    parser.add_argument(
+        "--print-path",
+        required=True,
+        choices=_CLI_PATH_KEYS,
+        metavar="KEY",
+        help="config key to resolve: %s" % ", ".join(_CLI_PATH_KEYS),
+    )
+    args = parser.parse_args(argv)
+    try:
+        value = getattr(load_config(), args.print_path)
+    except Exception:  # noqa: BLE001 — silent-on-error: print the default
+        value = None
+    if not (value and str(value).strip()):
+        value = _cli_default_path(args.print_path)
+    print(Path(str(value)).expanduser())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
