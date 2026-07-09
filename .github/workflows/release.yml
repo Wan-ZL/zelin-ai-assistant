@@ -8,11 +8,18 @@ on:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        # Match the recent toolchain the Swift sources target (see ci.yml).
+        run: |
+          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          swiftc --version
 
       - name: Install PyYAML
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
