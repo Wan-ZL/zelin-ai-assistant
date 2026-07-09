@@ -1,0 +1,70 @@
+name: Bug report
+description: Something is broken — a reproducible problem in the daemon, radars, ingest, app, or installer.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this!
+
+        **Security issues** (secrets exposure, egress-masking bypass, executor escapes, prompt injection with impact) must **not** be filed here — use the private channel in [SECURITY.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: App / pipeline version
+      description: Shown in the menu-bar app's Settings, or run `python3 -c "import act; print(act.__version__)"` from the repo root.
+      placeholder: "0.11.0"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 15.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Where does the problem live? Pick "not sure" if you don't know — that's fine.
+      options:
+        - act daemon (actd / executor / registry)
+        - radars (Obsidian / Slack / Gmail)
+        - ingest (screenpipe → Obsidian)
+        - mac app (menu bar / kanban / quick capture)
+        - install.sh / .pkg / launchd / cron
+        - docs
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead. If a card is stuck, say which lane and for how long.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Excerpts from files under `state/` (`actd.log`, `engine.log`, radar logs). **Redact anything sensitive first — these logs can contain screen-derived text.**
+      render: shell
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I can reproduce this against a fake `AIASSISTANT_HOME` seeded with `scripts/demo_seed.py` (no real data involved — this makes the bug much faster to fix)
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md, privately)
+          required: true

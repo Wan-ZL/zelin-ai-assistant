@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & help
+    url: https://github.com/Wan-ZL/zelin-ai-assistant/discussions/categories/q-a
+    about: Setup and usage questions belong in Discussions Q&A, not the issue tracker.
+  - name: Security vulnerability (private)
+    url: https://github.com/Wan-ZL/zelin-ai-assistant/security/advisories/new
+    about: Report security problems privately — never in a public issue. See SECURITY.md.

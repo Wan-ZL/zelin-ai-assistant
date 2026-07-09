@@ -1,5 +1,8 @@
 # Functional Source License, Version 1.1, MIT Future License
 
+> Plain-language Q&A (use at work? fork? what converts to MIT, and when?):
+> [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md). Only the terms below are binding.
+
 ## Abbreviation
 
 FSL-1.1-MIT

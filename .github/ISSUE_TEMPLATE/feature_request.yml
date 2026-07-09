@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose an improvement or a new capability.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not sure yet whether it's a feature request or a question? Start in [Discussions](https://github.com/Wan-ZL/zelin-ai-assistant/discussions) — ideas are welcome there too.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that the assistant doesn't handle today? Concrete scenarios beat abstract wishes.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How you imagine it working. UI sketch, config key, card behavior — anything helps.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or other designs you rejected and why.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - act daemon (actd / executor / registry)
+        - radars (Obsidian / Slack / Gmail)
+        - ingest (screenpipe → Obsidian)
+        - mac app (menu bar / kanban / quick capture)
+        - install.sh / .pkg / launchd / cron
+        - docs
+        - not sure
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to open a PR for this (see [CONTRIBUTING.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/CONTRIBUTING.md) — you don't need the full stack to develop)
