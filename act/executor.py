@@ -265,6 +265,17 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
                 + mem
             )
 
+    # comms voice: chat 模式的产出以 Zelin 名义发出，必须像他本人。档案住 state/
+    # （真实说话样本 = 工作数据，不入 git）；文件不存在时静默跳过，行为不变。
+    if delivery_mode == "chat":
+        voice_file = config.STATE_DIR / "voice-profile.md"
+        if voice_file.exists():
+            blocks.append(
+                "\n## VOICE PROFILE — 以 Zelin 名义发出的一切文字必须过这关\n"
+                f"先 Read {voice_file} 并严格遵守：全局铁律、匹配语境桶的例句风格、"
+                "反面清单。自检标准：你的草稿放进该桶的真实例句堆里毫不违和。"
+            )
+
     blocks.append("\n## " + _quality_gate_block(cfg, remote=remote,
                                                 delivery_mode=delivery_mode))
 
