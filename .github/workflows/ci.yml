@@ -13,9 +13,17 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        # The Swift sources target a recent toolchain (local dev builds on Swift 6.2 /
+        # macOS 26 SDK); older default Xcodes fail on main-actor isolation rules.
+        run: |
+          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          swiftc --version
 
       - name: Install PyYAML
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
