@@ -6,13 +6,13 @@
 > `state/dashboard.json` (actd writes, app reads), and `state/inbox/<uuid>.json` (app writes,
 > actd reads then deletes). Fields are **add-only** — never renamed or removed; the Swift side
 > decodes every new field with `decodeIfPresent`. Change this file *before* any code that touches
-> these shapes. **Section numbers §1–§20 are referenced from code and docs — never renumber.**
+> these shapes. **Section numbers §1–§21 are referenced from code and docs — never renumber.**
 > The Chinese body is canonical.
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
 
 一条需求一个文件。状态机：
-`detected → card_sent → approved → executing → review → delivered`，旁支 `rejected` / `merged_into:<父ID>`。
+`detected → card_sent → approved → executing → review → delivered`，旁支 `rejected` / `merged_into:<父ID>`；merge-review 终态 `merged`（+ 顶层 `merged_into` 字段，语义见 §21）。
 
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
 
@@ -120,7 +120,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -215,3 +215,62 @@ install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 
 - `last_error` / `last_error_at`（str ≤300 字 / ISO）——派发失败留痕（status 停在 approved，下轮自动重试；重试成功后清除）
 
 **收割函数**：`executor.harvest_delivery(session_id) -> {"delivered_summary": str|None, "final_draft": str|None}`——解析 transcript 最后一条 assistant 文本消息；有单独一行以 `FINAL DRAFT:` 开头则其后全文为 final_draft、之前部分为 delivered_summary；任何异常返回双 None、绝不抛。actd 在 review 提升处调用，收割失败不阻塞提升。
+
+---
+
+# v0.12 additions（merge-review：多选合并建议）
+
+## 21. merge-review（多选卡片 → AI 合并建议 → 确定性执行）
+
+看板多选 ≥2 张真实卡（待审批/运行中/待验收列）→ 请求 AI 分析这批卡该如何归并 → 建议卡展示结论与"接受后将执行"清单 → 接受时由 actd **确定性**执行（AI 的 `action_plan` 仅作展示解释，不驱动执行）。
+
+**inbox 动作**（app 写，actd 消费；三个动作都不携带需求级 `id` 语义，不走 §3 的 req 查找）：
+
+```json
+{"action":"merge_review","ids":["R-xxx","R-yyy"]}     // ids ≥2；不合法（<2 / 有不存在的 id）→ actd log 后丢弃
+{"action":"merge_apply","id":"<suggestion_id>"}        // 仅 status=done 的作业可执行；其余状态幂等 no-op + log
+{"action":"merge_dismiss","id":"<suggestion_id>"}      // 作业标记 dismissed，即刻从 dashboard 消失（文件留到 TTL 清理）
+```
+
+**作业文件** `state/merge/<suggestion_id>.json`（`suggestion_id` = `"MS-"+8位随机hex`；actd 收到 merge_review 时创建为 `analyzing`；分析子进程 `python -m act.merge_review <suggestion_id>` 完成后**原子重写**——先写 .tmp 再 rename）：
+
+```json
+{
+  "id": "MS-1a2b3c4d", "ids": ["R-xxx","R-yyy"], "requested_at": "<ISO>",
+  "status": "analyzing" | "done" | "failed",
+  "verdict": "merge" | "link_improvement" | "keep_separate" | "close_secondary",
+  "primary": "R-xxx", "rationale": "…", "action_plan": ["…"],
+  "confidence": "high" | "medium" | "low",
+  "error": "…（failed 时，前 200 字）",
+  "expires_at": "<ISO>（done/failed/dismissed 时 = 落状态时刻 +24h）"
+}
+```
+
+`verdict?/primary?/rationale?/action_plan?/confidence?` 仅 done 时齐备；`merge_apply`/`merge_dismiss` 之后 status 改写为 `dismissed`（apply 成功另记 `applied_at`）——dismissed 不进 dashboard，文件留到 TTL 清理。
+
+**verdict 枚举（AI 四选一）与 apply 的确定性语义**（actd `_apply_merge_verdict` 实现；`primary` 指定主卡，ids 里其余全部是副卡；merge/link_improvement/close_secondary 的 `primary` 必须 ∈ ids，否则分析判 failed）：
+
+- `merge` = 副卡并入主卡：主卡 `sources` = 去重合并副卡 sources、`repeated_mentions` 累加、`notes` 追加 `[merged] R-yyy 并入：<副卡 delivered_summary 或 title 摘要>`；副卡活 session best-effort `executor.stop_session`（失败只记日志）；副卡状态置 **`merged`** + `merged_into=<primary>`；若主卡 `status==review` → 用 `executor.rework` 把"R-yyy 已并入，其交付物/worktree：<路径与摘要>"作为反馈注入主卡 session（主卡回 executing）；主卡其他状态 → 只落 notes（建议卡 action_plan 里如实说明）。
+- `link_improvement` = 副卡挂为主卡的改进卡（`improvement_of=<primary>`），其余（状态/execution）不动。
+- `keep_separate` = 保持独立；apply 等同 dismiss（不动任何注册表条目）。
+- `close_secondary` = 副卡关闭进回收站：`registry.trash(副卡, "merged-review: 不再需要")`（可恢复，理由入 `trash_reason`）。
+
+**`merged` 状态语义（registry 新终态，`State.MERGED`）**：可见性同回收站——不进任何看板列、purge 不删；但 `merge_or_new` **匹配语义同 delivered**——参与重述匹配以压住后续重复建卡（这点与 trashed 相反：trashed 的重述要重新出卡）。顶层 `merged_into` 字段记主卡 id。旧式 `merged_into:<父ID>` 状态字符串保留兼容，不参与本流程。
+
+**分析子进程**（`act/merge_review.py`，CLI `python -m act.merge_review <suggestion_id>`）：读作业文件 → 对每个 id 收集材料（registry YAML 全文、`execution.delivered_summary`/`final_draft`、transcript 尾部 ~30 条 assistant/user 文本（复用 executor 的 transcript 定位方式：短 id glob `~/.claude/projects`）、worktree 的 `git log --oneline -5` + `git diff --stat`（cwd 从 transcript/execution 推，失败跳过））→ 组装 prompt（材料全部经 `sanitize.scrub` + `fence_untrusted`）→ headless `claude -p` 严格 JSON（timeout 300s，无工具）→ 校验 verdict/primary 合法 → 原子重写作业文件为 done（或 failed + error 前 200 字）。**任何异常必须落 failed，绝不留 analyzing 悬挂**。
+
+**actd 侧**：收到 `merge_review` → 校验 ids ≥2（去重后）且都存在（不合法 → log 丢弃）→ 建 analyzing 作业文件 → `subprocess.Popen` 分离启动分析（不等待；stdout/err 落 `state/logs/<suggestion_id>.log`；启动失败立即置 failed）→ 打点 `merge_review_requested{n}`。每 pass 顺带（`cleanup_merge_jobs`）：`state/merge/` 里超过 `expires_at` 的 done/dismissed/failed 作业文件删除（expires_at 缺失/坏值用 requested_at 否则文件 mtime +24h 兜底；损坏文件直接删）；analyzing 超过 **20 分钟** 的置 failed(`"analysis timed out"`)。
+
+**dashboard.json 新分区 `merge_suggestions`**（§2 的兄弟分区；Swift 侧 `decodeIfPresent` 向后兼容；analyzing/done/failed 都发，dismissed 不发；`requested_at` 输出 epoch int，同其余分区）：
+
+```json
+"merge_suggestions": [{
+  "id":"MS-1a2b3c4d","ids":["R-xxx","R-yyy"],"status":"done",
+  "verdict":"merge","primary":"R-xxx","rationale":"…","action_plan":["…"],
+  "confidence":"high","error":null,"requested_at":1783367685
+}]
+```
+
+**app 侧（概要）**：看板 header「选择」进入多选态；选中 ≥2 → 底部操作条「请求合并建议 (N)」写 `merge_review`；建议卡（紫 accent，待审批列顶）analyzing=spinner、done=结论+主副卡+rationale+**"接受后将执行"动作清单全文**+confidence 徽章+「接受」(`merge_apply`)/「取消」(`merge_dismiss`)、failed=橙色+error+仅「取消」；接受/取消乐观回显 180s 兜底。popover 只镜像显示建议卡（可接受/取消），不做多选。
+
+**analytics**：`merge_review_requested{n}`（actd）、`merge_suggestion_done{verdict,confidence}`（分析子进程）；apply/dismiss 由 app 侧 `card_action` 自动覆盖。

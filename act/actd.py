@@ -5,8 +5,11 @@ Each pass:
         approve  -> status=approved
         reject   -> status=rejected
         comment  -> fold text into plan/notes, keep card_sent (re-approval)
+        merge_review / merge_apply / merge_dismiss -> merge-review 契约 一/四/五
       delete the decision file after reading it.
   (b) dispatch every status=approved requirement that has no execution yet.
+  (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
+       'analyzing' jobs older than 20 minutes.
   (c) build + atomically write dashboard.json.
   (d) diff against the previous dashboard; notify on state transitions.
 
@@ -20,6 +23,8 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import subprocess
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -49,6 +54,11 @@ try:
     from act import analyze
 except Exception:  # pragma: no cover - analyze import must not kill daemon
     analyze = None  # type: ignore
+
+try:
+    from act import merge_review
+except Exception:  # pragma: no cover - merge_review import must not kill daemon
+    merge_review = None  # type: ignore
 
 
 # --------------------------------------------------------------------------- #
@@ -92,6 +102,20 @@ def process_inbox() -> int:
         # §10 capture: no req id — the app popover's one-liner quick capture.
         if action == "capture":
             _apply_capture(decision.get("text"))
+            processed += 1
+            _safe_unlink(path)
+            continue
+
+        # merge-review actions (§21) — suggestion-level, not requirement-level:
+        # merge_review carries "ids" (>=2 R-ids); merge_apply/merge_dismiss carry
+        # id=<MS-suggestion id>. None of them go through the req lookup below.
+        if action == "merge_review":
+            _apply_merge_review(decision.get("ids"))
+            processed += 1
+            _safe_unlink(path)
+            continue
+        if action in ("merge_apply", "merge_dismiss"):
+            _apply_merge_decision(action, decision.get("id"))
             processed += 1
             _safe_unlink(path)
             continue
@@ -149,6 +173,195 @@ def _apply_capture(text: Optional[str]) -> None:
     else:
         _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
     analytics.log_event("inbox_capture", req=saved.id, status=str(saved.status))
+
+
+# --------------------------------------------------------------------------- #
+# merge-review (§21) — actd side: validate + job file + detached analysis;
+# apply is DETERMINISTIC (the AI's action_plan is display-only).
+# --------------------------------------------------------------------------- #
+def _apply_merge_review(ids) -> None:
+    """契约 五 actd 侧：校验 ids（≥2、去重、都存在）→ 建 analyzing 作业文件 →
+    subprocess.Popen 分离启动 ``python -m act.merge_review <id>``（不等待，
+    stdout/err 落 state/logs/<suggestion_id>.log）。不合法 -> log 丢弃。"""
+    if merge_review is None:
+        _log("inbox: merge_review requested but module unavailable — dropped")
+        return
+    raw = ids if isinstance(ids, list) else []
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for i in raw:
+        s = str(i or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    if len(uniq) < 2:
+        _log(f"inbox: merge_review needs >=2 distinct ids, got {raw!r} — dropped")
+        return
+    missing = [i for i in uniq if load(i) is None]
+    if missing:
+        _log(f"inbox: merge_review unknown ids {missing} — dropped")
+        return
+
+    job = merge_review.create_job(uniq)
+    sid = str(job["id"])
+    log_path = config.LOG_DIR / f"{sid}.log"
+    try:
+        with open(log_path, "ab") as fh:
+            subprocess.Popen(
+                [sys.executable, "-m", "act.merge_review", sid],
+                cwd=str(config.HOME),
+                stdin=subprocess.DEVNULL,
+                stdout=fh,
+                stderr=fh,
+                start_new_session=True,  # detached: outlives the pass, never waited on
+            )
+    except Exception as e:  # noqa: BLE001 - a failed launch must not hang 'analyzing'
+        merge_review.mark_failed(sid, f"analysis launch failed: {e}")
+        _log(f"inbox: merge_review {sid} launch FAILED: {e}")
+        return
+    _log(f"inbox: merge_review {sid} ids={uniq} — analysis subprocess started")
+    analytics.log_event("merge_review_requested", n=len(uniq), suggestion=sid)
+
+
+def _apply_merge_decision(action: str, suggestion_id) -> None:
+    """契约 一/四：merge_apply（status=done 才可执行，按 verdict 确定性落地，然后
+    作业标记 dismissed 留到 TTL 清理）；merge_dismiss（直接标记 dismissed）。
+    状态不匹配 / 未知建议 = 幂等 no-op + log（同 v0.10.2 逆向动作公共规则）。"""
+    if merge_review is None:
+        _log(f"inbox: {action} requested but merge_review unavailable — dropped")
+        return
+    sid = str(suggestion_id or "").strip()
+    job = merge_review.load_job(sid) if sid else None
+    if job is None:
+        _log(f"inbox: {action} for unknown suggestion {suggestion_id!r} — dropped")
+        return
+    status = str(job.get("status") or "")
+
+    if action == "merge_dismiss":
+        if status == "dismissed":
+            _log(f"inbox: merge_dismiss {sid} already dismissed — no-op")
+            return
+        merge_review.dismiss_job(job)
+        _log(f"inbox: merge_dismiss {sid} (was {status})")
+        return
+
+    # merge_apply — only a finished analysis is actionable (连点/迟到 -> no-op)
+    if status != "done":
+        _log(f"inbox: merge_apply {sid} ignored (status={status}) — no-op")
+        return
+    verdict = str(job.get("verdict") or "")
+    try:
+        _apply_merge_verdict(job)
+    except Exception as e:  # noqa: BLE001 - job stays 'done' so Zelin can retry/dismiss
+        _log(f"inbox: merge_apply {sid} ({verdict}) FAILED: {e}\n"
+             f"{traceback.format_exc()}")
+        return
+    merge_review.dismiss_job(job, applied=True)  # 即刻从 dashboard 消失，文件留到 TTL
+    _log(f"inbox: merge_apply {sid} ({verdict}) applied")
+
+
+def _apply_merge_verdict(job: dict) -> None:
+    """契约 四 确定性 apply 语义。keep_separate = no-op（调用方统一 dismiss）。"""
+    verdict = str(job.get("verdict") or "")
+    ids = [str(i) for i in job.get("ids") or []]
+    primary_id = str(job.get("primary") or "")
+    if verdict == "keep_separate":
+        return
+    secondaries = [i for i in ids if i != primary_id]
+    if (verdict not in ("merge", "link_improvement", "close_secondary")
+            or primary_id not in ids or not secondaries):
+        raise ValueError(
+            f"unusable job: verdict={verdict!r} primary={primary_id!r} ids={ids}")
+
+    if verdict == "link_improvement":
+        # 副卡挂为主卡的改进卡，其余（状态/execution）一律不动。
+        for rid in secondaries:
+            sec = load(rid)
+            if sec is None:
+                _log(f"merge: link_improvement {rid} not found — skipped")
+                continue
+            sec.improvement_of = primary_id
+            save(sec)
+            _log(f"merge: {rid} improvement_of={primary_id}")
+        return
+
+    if verdict == "close_secondary":
+        # 副卡关闭进回收站（可恢复），理由固定写入 trash_reason。
+        for rid in secondaries:
+            sec = load(rid)
+            if sec is None:
+                _log(f"merge: close_secondary {rid} not found — skipped")
+                continue
+            registry.trash(sec, "merged-review: 不再需要")
+            _log(f"merge: {rid} closed -> trash (merged-review)")
+        return
+
+    _merge_into_primary(primary_id, secondaries)
+
+
+def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
+    """契约 四 merge：主卡 sources 去重合并、repeated_mentions 累加、notes 留痕；
+    副卡活 session best-effort 停止、状态置 merged + merged_into；主卡 status==
+    review 时用 executor.rework 把副卡交付物/worktree 信息注入其 session（主卡
+    回 executing），其他状态只落 notes。"""
+    primary = load(primary_id)
+    if primary is None:
+        raise ValueError(f"primary {primary_id} not found in registry")
+
+    feedback_lines: list[str] = []
+    for rid in secondaries:
+        sec = load(rid)
+        if sec is None:
+            _log(f"merge: secondary {rid} not found — skipped")
+            continue
+        if str(sec.status) == State.MERGED.value:
+            _log(f"merge: {rid} already merged — skipped")
+            continue
+        sec_ex = dict(sec.execution or {})
+        # 主卡吸收
+        merged_sources, _ = registry._dedupe_sources(
+            primary.sources or [], sec.sources or [])
+        primary.sources = merged_sources
+        primary.repeated_mentions = (int(primary.repeated_mentions or 1)
+                                     + int(sec.repeated_mentions or 1))
+        summary = " ".join(
+            str(sec_ex.get("delivered_summary") or sec.title or "").split()).strip()
+        tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}"
+        primary.notes = (primary.notes + "\n" + tag).strip() if primary.notes else tag
+        # 副卡活 session best-effort 停止（失败只记日志，绝不阻塞合并落账）
+        sec_sid = sec_ex.get("session_id")
+        if sec_sid and executor is not None:
+            try:
+                stopped = executor.stop_session(str(sec_sid))
+                _log(f"merge: {sec.id} stop_session({sec_sid}) -> {stopped}")
+            except Exception as e:  # noqa: BLE001 - best-effort
+                _log(f"merge: {sec.id} stop_session({sec_sid}) failed (ignored): {e}")
+        # 副卡终态（registry State.MERGED，语义见 §21）
+        sec.set_status(State.MERGED)
+        sec.merged_into = primary.id
+        save(sec)
+        _log(f"merge: {sec.id} -> merged (into {primary.id})")
+        # 主卡待验收时注入的反馈材料：副卡交付物/worktree 路径与摘要
+        worktree = None
+        if sec_sid and executor is not None:
+            try:
+                worktree = executor._transcript_cwd(str(sec_sid))
+            except Exception:  # noqa: BLE001 - inference is best-effort
+                worktree = None
+        feedback_lines.append(
+            f"{sec.id} 已并入，其交付物/worktree：{worktree or sec.target_repo or '(无)'}；"
+            f"摘要：{summary[:300] or '(无)'}")
+
+    save(primary)
+    if not feedback_lines:
+        return
+    if str(primary.status) == State.REVIEW.value and executor is not None:
+        try:
+            ok = executor.rework(primary, "\n".join(feedback_lines))
+            _log(f"merge: {primary.id} rework injected (ok={ok})")
+        except Exception as e:  # noqa: BLE001 - injection is best-effort
+            _log(f"merge: {primary.id} rework failed (ignored): {e}")
+    # 主卡其他状态：notes 已留痕，不动其 session（契约 四）。
 
 
 def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[str]) -> None:
@@ -413,6 +626,65 @@ def purge_trash(cfg: config.Config) -> int:
         except Exception as e:  # noqa: BLE001 - one bad item must not abort the pass
             _log(f"trash: purge failed for {getattr(req, 'id', '?')}: {e}")
     return purged
+
+
+# --------------------------------------------------------------------------- #
+# (c'') merge-review job housekeeping (§21) — every pass, best-effort
+# --------------------------------------------------------------------------- #
+def _mtime_dt(path: Path) -> Optional[_dt.datetime]:
+    try:
+        return _dt.datetime.fromtimestamp(path.stat().st_mtime, tz=_dt.timezone.utc)
+    except OSError:
+        return None
+
+
+def cleanup_merge_jobs() -> int:
+    """契约 五 actd 每 pass 顺带：state/merge/ 里超过 expires_at 的 done/
+    dismissed/failed 作业文件删除；analyzing 超过 20 分钟的置 failed("analysis
+    timed out")。缺失/坏 expires_at 用 requested_at（否则文件 mtime）+24h 兜底；
+    损坏文件直接删。Returns the number of files removed."""
+    if merge_review is None:
+        return 0
+    try:
+        files = sorted(merge_review.MERGE_DIR.glob("*.json"))
+    except OSError:
+        return 0
+    now = _dt.datetime.now(_dt.timezone.utc)
+    ttl = _dt.timedelta(hours=merge_review.TTL_HOURS)
+    removed = 0
+    for path in files:
+        try:
+            try:
+                job = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                job = None
+            if not isinstance(job, dict):
+                _log(f"merge: corrupt job file {path.name} — removed")
+                _safe_unlink(path)
+                removed += 1
+                continue
+            status = str(job.get("status") or "")
+            if status == "analyzing":
+                started = _parse_iso(job.get("requested_at")) or _mtime_dt(path)
+                if started is not None and (
+                        (now - started).total_seconds()
+                        > merge_review.ANALYZING_TIMEOUT):
+                    merge_review.mark_failed(str(job.get("id") or path.stem),
+                                             "analysis timed out")
+                    _log(f"merge: {path.stem} analyzing >20min -> failed (timed out)")
+                continue
+            if status in ("done", "dismissed", "failed"):
+                expires = _parse_iso(job.get("expires_at"))
+                if expires is None:
+                    base = _parse_iso(job.get("requested_at")) or _mtime_dt(path)
+                    expires = base + ttl if base is not None else None
+                if expires is not None and now > expires:
+                    _safe_unlink(path)
+                    removed += 1
+                    _log(f"merge: {path.stem} expired ({status}) — removed")
+        except Exception as e:  # noqa: BLE001 - one bad job must not abort the pass
+            _log(f"merge: cleanup {path.name} failed: {e}")
+    return removed
 
 
 # --------------------------------------------------------------------------- #
@@ -685,6 +957,7 @@ def run_once(
     reconcile_executing(cfg, resume_notified if resume_notified is not None else set())
     process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
     purge_trash(cfg)
+    cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     dash = build_dashboard(cfg=cfg)
     write_dashboard(dash)
 

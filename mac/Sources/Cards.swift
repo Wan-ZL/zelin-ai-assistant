@@ -1,4 +1,4 @@
-// Cards.swift — 卡片与行组件：SectionHeader / EmptyRow / Badge / ApprovalCardView / TaskRow / ReviewRow / DebtRow / TrashSectionView / TrashRow
+// Cards.swift — 卡片与行组件：SectionHeader / EmptyRow / Badge / ApprovalCardView / TaskRow / ReviewRow / DebtRow / MergeSuggestionCard / TrashSectionView / TrashRow
 // Mechanically split from main.swift — zero logic changes.
 
 import AppKit
@@ -1264,6 +1264,237 @@ struct DebtRow: View {
                 Badge(text: h, color: h == "hard" ? .red : .gray)
             }
         }
+    }
+}
+
+// MARK: - MergeSuggestionCard — 契约 merge-review §七（analyzing / done / failed 三态）
+//
+// 紫色 accent 建议卡，宿主（kanban 待审批列顶 / popover 镜像）负责摆放；本视图
+// 只渲染 + 把 接受/取消 写进 inbox（merge_apply / merge_dismiss，经 app.submit
+// → card_action analytics 自动覆盖，契约 §八）。
+// actionPending: 宿主传 store 的乐观态（接受/取消已提交、等 actd 下一版
+// dashboard 把建议卡拿掉；180 s 兜底在 Store）→ 内容灰显、按钮换成 spinner 行。
+
+struct MergeSuggestionCard: View {
+    let suggestion: MergeSuggestion
+    unowned let app: AppDelegate
+    var actionPending: Bool = false
+
+    var body: some View {
+        switch suggestion.status {
+        case "done": doneBody
+        case "failed": failedBody
+        default: analyzingBody   // "analyzing"（未知状态也按分析中兜底渲染）
+        }
+    }
+
+    // MARK: analyzing — 灰卡 spinner（契约 §七）
+
+    private var analyzingBody: some View {
+        CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, pending: true) {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("合并分析中…", "Analyzing merge…"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Text(involvedLine)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let age = RelativeTime.sinceEpoch(suggestion.requested_at) {
+                        Text(L("发起于 ", "requested ") + age)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
+    // MARK: done — 结论 + 主/副卡 + rationale + 动作清单全文 + confidence + 按钮
+
+    private var doneBody: some View {
+        CardSurface(accent: .purple, padding: 10, cornerRadius: 8,
+                    pending: actionPending, actions: { doneButtons }) {
+            headline
+
+            // 主卡/副卡名（keep_separate 等无 primary 时列出全部涉及卡）
+            VStack(alignment: .leading, spacing: 1) {
+                if let p = suggestion.primary, !p.isEmpty {
+                    Text(L("主卡：", "Primary: ") + nameLine(p))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(suggestion.ids.filter { $0 != p }, id: \.self) { sid in
+                        Text(L("副卡：", "Secondary: ") + nameLine(sid))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    ForEach(suggestion.ids, id: \.self) { sid in
+                        Text("• " + nameLine(sid))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            if let r = suggestion.rationale, !r.isEmpty {
+                Text(r)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // 「接受后将执行」— 契约 §七 要求全文展示（执行是确定性的，
+            // 这份清单是 AI 对确定性语义的解释，Zelin 拍板前必须能读全）。
+            if !suggestion.action_plan.isEmpty {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L("接受后将执行：", "On accept, this will:"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    ForEach(Array(suggestion.action_plan.enumerated()), id: \.offset) { i, step in
+                        Text("\(i + 1). \(step)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var doneButtons: some View {
+        if actionPending {
+            submittedLine
+        } else {
+            Button {
+                app.submit(id: suggestion.id, action: "merge_apply", comment: nil)
+            } label: { Label(L("接受", "Accept"), systemImage: "checkmark.circle.fill") }
+                .tint(.green)
+
+            Button {
+                app.submit(id: suggestion.id, action: "merge_dismiss", comment: nil)
+            } label: { Label(L("取消", "Dismiss"), systemImage: "xmark.circle") }
+                .tint(.gray)
+        }
+        Spacer()
+    }
+
+    // MARK: failed — 橙色 + error 全文 + 仅「取消」
+
+    private var failedBody: some View {
+        CardSurface(accent: .orange, padding: 10, cornerRadius: 8,
+                    pending: actionPending, actions: { failedButtons }) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                Text(L("合并分析失败", "Merge analysis failed"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.primary)
+                Spacer(minLength: 4)
+            }
+            Text(involvedLine)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let err = suggestion.error, !err.isEmpty {
+                ErrorTextBlock(text: err)
+            }
+        }
+    }
+
+    @ViewBuilder private var failedButtons: some View {
+        if actionPending {
+            submittedLine
+        } else {
+            Button {
+                app.submit(id: suggestion.id, action: "merge_dismiss", comment: nil)
+            } label: { Label(L("取消", "Dismiss"), systemImage: "xmark.circle") }
+                .tint(.gray)
+        }
+        Spacer()
+    }
+
+    // MARK: shared bits
+
+    /// 🔀 + verdict 一句话结论 + confidence 徽章（done 态首行）。
+    private var headline: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "arrow.triangle.merge")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.purple)
+                .padding(.top, 1)
+            Text(verdictHeadline)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if let conf = suggestion.confidence, !conf.isEmpty {
+                confidenceBadge(conf)
+            }
+        }
+    }
+
+    /// verdict 本地化 —— 契约 §三 的四枚举；未知值原样透出（不吞信息）。
+    private var verdictHeadline: String {
+        switch suggestion.verdict {
+        case "merge":
+            return L("建议合并：副卡并入主卡", "Suggest merging the secondary into the primary")
+        case "link_improvement":
+            return L("建议挂为主卡的改进卡", "Suggest linking as an improvement of the primary")
+        case "keep_separate":
+            return L("建议保持独立，不合并", "Suggest keeping them separate")
+        case "close_secondary":
+            return L("建议关闭副卡（进回收站）", "Suggest closing the secondary (to trash)")
+        default:
+            return suggestion.verdict ?? L("分析完成", "Analysis complete")
+        }
+    }
+
+    @ViewBuilder private func confidenceBadge(_ conf: String) -> some View {
+        switch conf {
+        case "high":   Badge(text: L("置信度：高", "Confidence: high"), color: .green)
+        case "medium": Badge(text: L("置信度：中", "Confidence: medium"), color: .orange)
+        case "low":    Badge(text: L("置信度：低", "Confidence: low"), color: .gray)
+        default:       Badge(text: conf, color: .gray)
+        }
+    }
+
+    /// 提交后的乐观态行（占按钮位；内容灰显由 CardSurface.pending 负责）。
+    private var submittedLine: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small).scaleEffect(0.7)
+            Text(L("已提交…", "Submitted…"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    /// "R-xxx · 标题"；卡已不在 dashboard（如已并走）时只剩 id。
+    private func nameLine(_ id: String) -> String {
+        let t = cardTitle(id)
+        return t == id ? id : "\(id) · \(t)"
+    }
+
+    private var involvedLine: String {
+        suggestion.ids.map { nameLine($0) }.joined(separator: "  +  ")
+    }
+
+    /// 从当前 dashboard 解析卡片标题（多选只覆盖 待审批/运行中/待验收 三列，
+    /// completed 一并查以防状态在分析期间漂移）。
+    private func cardTitle(_ id: String) -> String {
+        guard let db = app.store.dashboard else { return id }
+        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.displaySummary }
+        if let r = db.review.first(where: { $0.id == id }) { return r.name }
+        if let t = (db.running + db.needs_input + db.completed)
+            .first(where: { $0.id == id }) { return t.name }
+        return id
     }
 }
 

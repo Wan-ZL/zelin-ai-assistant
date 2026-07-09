@@ -564,6 +564,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: inbox write
 
+    // merge-review 契约一: merge_apply / merge_dismiss flow through here
+    // unchanged — writeInbox has no action whitelist, and applyAction carries
+    // their optimistic echo (契约七). card_action analytics below covers them
+    // automatically (契约八).
     func submit(id: String, action: String, comment: String?) {
         // wave 2 (契约2): the IO write must succeed BEFORE any optimistic UI —
         // on failure the card stays put and an alert explains why.
@@ -579,13 +583,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Returns false when the inbox file could not be written; the caller must
     /// NOT apply optimistic UI in that case (the card must not disappear).
     private func writeInbox(id: String, action: String, comment: String?) -> Bool {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        var dict: [String: Any] = ["id": id, "action": action, "ts": ts]
+        dict["comment"] = comment ?? NSNull()
+        return writeInboxFile(dict)
+    }
+
+    /// merge-review 契约一/七: 多选「请求合并建议」→
+    /// {"action":"merge_review","ids":["R-xxx","R-yyy",…]} inbox file. Same
+    /// atomic-write + failure-alert path as card actions (writeInboxFile); on
+    /// success the involved cards get the 合并分析中… badge (store). The
+    /// request itself is counted python-side (merge_review_requested, 契约八)
+    /// — no Swift analytics event here.
+    func submitMergeReview(ids: [String]) -> Bool {
+        guard ids.count >= 2 else { return false }   // 契约一: ≥2 张卡
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["action": "merge_review", "ids": ids, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        store.beginMergeReview(ids: ids)   // 契约七: 涉及卡片盖角标
+        return true
+    }
+
+    /// The ONE atomic inbox write + failure alert (card actions + merge_review
+    /// share it). Contract: on false the caller must NOT apply optimistic UI.
+    private func writeInboxFile(_ dict: [String: Any]) -> Bool {
         let fm = FileManager.default
         do {
             try fm.createDirectory(atPath: AppPaths.inboxDir,
                                    withIntermediateDirectories: true)
-            let ts = ISO8601DateFormatter().string(from: Date())
-            var dict: [String: Any] = ["id": id, "action": action, "ts": ts]
-            dict["comment"] = comment ?? NSNull()
             let data = try JSONSerialization.data(withJSONObject: dict,
                                                   options: [.prettyPrinted, .sortedKeys])
             let path = AppPaths.inboxDir + "/" + UUID().uuidString + ".json"
