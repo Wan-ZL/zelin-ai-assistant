@@ -35,6 +35,7 @@ HANDOFF.md         # 交接书：架构地图 + 设计决策 + 血泪坑清单
 - 执行层复用官方设施：`claude --bg` 派发（自动 worktree 隔离）+ `claude agents --json` 状态监控
 - 质量门 = Anthropic 五层的 solo 版：可运行检查 + 只读测试 + fresh-context 审 diff + 风险分级 + draft PR 可回滚
 - Jira 集成默认关；注册表是唯一台账
+- 遥测默认关：埋点事件只留本机；可选上传到自己的 Supabase（见 `docs/TELEMETRY.md`）
 
 ## 运行状态
 

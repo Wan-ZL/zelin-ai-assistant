@@ -131,6 +131,12 @@ class Config:
     redaction_terms_file: str = "config/redaction_terms.txt"
     redaction_mask_secrets: bool = True
 
+    # telemetry upload (opt-in; docs/TELEMETRY.md) — events stay local unless
+    # enabled AND a supabase_url + service key are configured
+    telemetry_enabled: bool = False
+    telemetry_supabase_url: str = ""
+    telemetry_key_path: Optional[str] = None
+
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"
 
@@ -239,6 +245,13 @@ def load_config() -> Config:
     cfg.trash_retention_days = int(
         trash.get("retention_days", cfg.trash_retention_days)
     )
+
+    tele = data.get("telemetry", {}) or {}
+    cfg.telemetry_enabled = bool(tele.get("enabled", cfg.telemetry_enabled))
+    cfg.telemetry_supabase_url = str(
+        tele.get("supabase_url", cfg.telemetry_supabase_url) or ""
+    )
+    cfg.telemetry_key_path = tele.get("key_path", cfg.telemetry_key_path)
 
     red = data.get("redaction", {}) or {}
     cfg.redaction_enabled = bool(red.get("enabled", cfg.redaction_enabled))
