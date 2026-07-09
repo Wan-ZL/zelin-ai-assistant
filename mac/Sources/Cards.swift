@@ -883,8 +883,18 @@ struct TaskRow: View {
     // NOT on review-active rework rows and NOT in the completed lane.
     private var showsAbort: Bool { !isDelivered && task.state != "review-active" }
 
+    // 契约 done_external: 已办完 on EVERY non-delivered row (queued/working/
+    // blocked/needs_input AND review-active) — "I already got what I needed /
+    // it was finished outside the system". Same semantics + analytics event
+    // as the approval card's 已办完 (card_action, action=done_external).
+    private var showsDoneOutside: Bool { !isDelivered }
+
+    // 灰绿 (muted green): deliberately duller than the saturated .green of
+    // approve/accept — this ends a run without a reviewed delivery.
+    private static let doneOutsideTint = Color(red: 0.45, green: 0.62, blue: 0.48)
+
     var body: some View {
-        let hasButtons = showsAbort || isDelivered
+        let hasButtons = showsAbort || isDelivered || showsDoneOutside
         if hasDetailContent && hasButtons {
             CardSurface(copyText: cmd, pending: isQueued,
                         actions: { actionButtons },
@@ -909,6 +919,15 @@ struct TaskRow: View {
                 app.submit(id: task.id, action: "abort_execution", comment: nil)
             } label: { Label(L("停止并退回", "Stop & return"), systemImage: "stop.circle") }
                 .tint(.orange)
+        }
+        if showsDoneOutside {
+            // blocked agent waiting for input, but Zelin already has the
+            // deliverable (e.g. from an attach session) → mark DELIVERED;
+            // actd harvests what it can and stops the hung session.
+            Button {
+                app.submit(id: task.id, action: "done_external", comment: nil)
+            } label: { Label(L("已办完", "Done outside"), systemImage: "checkmark.circle") }
+                .tint(Self.doneOutsideTint)
         }
         if isDelivered {
             // delivered → back to REVIEW for re-acceptance
