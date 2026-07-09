@@ -461,6 +461,10 @@ struct DepsView: View {
 final class IngestModel: ObservableObject {
     @Published var exportStatus = ""
     @Published var ingestStatus = ""
+    // P2-4: full output tail of the last FAILED run (the status line truncates
+    // to 120 chars) — surfaced via .help tooltip; cleared on run start.
+    @Published var exportErrorTail = ""
+    @Published var ingestErrorTail = ""
     @Published var unprocessedLabel = "—"
     @Published var actdLogLabel = "—"
     @Published var dbLabel = L("无数据", "No data")   // ~/.screenpipe/db.sqlite mtime
@@ -527,6 +531,7 @@ final class IngestModel: ObservableObject {
     func runExport() {
         guard !exportRunning else { return }
         exportRunning = true
+        exportErrorTail = ""
         setExportStatus(L("运行中…", "Running…"))
         Analytics.log("mw_export_now")
         let t0 = Date()  // contract F: secs = click → callback
@@ -539,6 +544,7 @@ final class IngestModel: ObservableObject {
             if code == 0 {
                 self.setExportStatus(L("完成 ✓", "Done ✓"), fade: true)
             } else {
+                self.exportErrorTail = tail
                 self.setExportStatus(
                     L("失败 (exit \(code)) ", "Failed (exit \(code)) ") + tail.suffix(120))
             }
@@ -549,6 +555,7 @@ final class IngestModel: ObservableObject {
     func runIngest() {
         guard !ingestRunning else { return }
         ingestRunning = true
+        ingestErrorTail = ""
         setIngestStatus(L("运行中…", "Running…"))
         Analytics.log("mw_ingest_now")
         let t0 = Date()  // contract F: secs = click → callback
@@ -569,11 +576,22 @@ final class IngestModel: ObservableObject {
                 self.setIngestStatus(
                     L("已有 ingest 在运行，本次跳过", "Already running — skipped"), fade: true)
             } else {
+                self.ingestErrorTail = tail
                 self.setIngestStatus(
                     L("失败 (exit \(code)) ", "Failed (exit \(code)) ") + tail.suffix(120))
             }
             self.refreshLabels()
         }
+    }
+
+    /// Reveal the ingest script's own log — the claude output that a manual
+    /// run truncates (Shell.run keeps 400 chars) all lands there. Path must
+    /// match LOGFILE in ingest/process-screenpipe.sh.
+    static func revealIngestLog() {
+        let p = "/tmp/screenpipe-auto.log"
+        let target = FileManager.default.fileExists(atPath: p)
+            ? p : (p as NSString).deletingLastPathComponent
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: target)])
     }
 
     /// Launch off-main, hop back with (exit code, output tail).
@@ -705,10 +723,14 @@ struct IngestView: View {
                     Button(L("立即导出", "Export Now")) { model.runExport() }
                         .disabled(model.exportRunning)
                     if !model.exportStatus.isEmpty {
+                        // P2-4: hover shows the untruncated failure tail (the
+                        // export script has no log file — the tail is all there is)
                         Text(model.exportStatus)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
+                            .help(model.exportErrorTail.isEmpty
+                                  ? model.exportStatus : model.exportErrorTail)
                     }
                 }
                 HStack(spacing: 8) {
@@ -719,6 +741,13 @@ struct IngestView: View {
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                             .lineLimit(1)
+                            .help(model.ingestErrorTail.isEmpty
+                                  ? model.ingestStatus : model.ingestErrorTail)
+                    }
+                    if !model.ingestErrorTail.isEmpty {
+                        // full claude output lives in the script's log file
+                        Button(L("查看日志", "View log")) { IngestModel.revealIngestLog() }
+                            .controlSize(.small)
                     }
                 }
             }

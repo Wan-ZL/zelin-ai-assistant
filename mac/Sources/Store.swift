@@ -16,6 +16,7 @@ struct PendingEcho: Identifiable, Hashable {
     let sourceID: String  // original item id
     let title: String     // original item title (self-looked-up from dashboard)
     let target: ListKind  // which list renders it
+    let source: ListKind  // where the action happened (P2-4 notice routing)
     let label: String     // greyed status label (契约4)
     let created: Date
 }
@@ -33,14 +34,19 @@ struct RaisingEntry {
 struct PendingReturn {
     enum Kind { case restore, abort, revert }
     let kind: Kind
+    let source: ListKind  // lane the action was taken in (P2-4 notice routing)
     let created: Date
 }
 
 /// Timed-out placeholder notice (capture → yellow, raise → orange).
+/// `lane` = where the triggering action happened; the kanban renders each
+/// notice in that column (P2-4 — an abort timeout two columns away from the
+/// running lane was invisible), the popover keeps its single list.
 struct LocalNotice: Identifiable, Equatable {
     enum Kind { case captureTimeout, raiseTimeout }
     let id: String
     let kind: Kind
+    let lane: ListKind
     let text: String
     let created: Date
 }
@@ -230,7 +236,7 @@ final class DashboardStore: ObservableObject {
             for c in expiredCaptures {
                 capturePending.removeAll { $0.id == c.id }
                 notices.append(LocalNotice(
-                    id: "notice-" + c.id, kind: .captureTimeout,
+                    id: "notice-" + c.id, kind: .captureTimeout, lane: .approval,
                     text: L("分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log",
                             "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log"),
                     created: now))
@@ -238,8 +244,10 @@ final class DashboardStore: ObservableObject {
             for (id, entry) in expiredRaises {
                 raisingLocal.removeValue(forKey: id)
                 hiddenSticky.removeValue(forKey: id)
+                // lane .debt: 研究并提议 lives on the debt card, and that's
+                // where the card resurfaces for the suggested retry.
                 notices.append(LocalNotice(
-                    id: "notice-raise-" + id, kind: .raiseTimeout,
+                    id: "notice-raise-" + id, kind: .raiseTimeout, lane: .debt,
                     text: L("「\(String(entry.summary.prefix(20)))」研究提案超时，请重试",
                             "Research proposal for \"\(String(entry.summary.prefix(20)))\" timed out — try again"),
                     created: now))
@@ -257,6 +265,7 @@ final class DashboardStore: ObservableObject {
                 notices.append(LocalNotice(
                     id: noticeID,
                     kind: stillExists ? .captureTimeout : .raiseTimeout,
+                    lane: e.source,   // the card un-hides back in its source lane
                     text: stillExists
                         ? L("后台响应超时，卡片已恢复可操作",
                             "Backend timed out — the card is interactive again")
@@ -271,7 +280,7 @@ final class DashboardStore: ObservableObject {
                 let noticeID = "notice-return-" + id
                 notices.removeAll { $0.id == noticeID }   // replace the info notice
                 notices.append(LocalNotice(
-                    id: noticeID, kind: .raiseTimeout,
+                    id: noticeID, kind: .raiseTimeout, lane: entry.source,
                     text: Self.returnTimeoutText(entry.kind),
                     created: now))
             }
@@ -346,17 +355,21 @@ final class DashboardStore: ObservableObject {
             switch action {
             case "approve":
                 hideSticky(id, from: .approval)
-                addEcho(id: id, target: .running, label: L("启动中…", "Starting…"))
+                addEcho(id: id, target: .running, source: .approval,
+                        label: L("启动中…", "Starting…"))
             case "rework":
                 hideSticky(id, from: .review)
-                addEcho(id: id, target: .running, label: L("打回处理中…", "Sending back…"))
+                addEcho(id: id, target: .running, source: .review,
+                        label: L("打回处理中…", "Sending back…"))
             case "accept":
                 hideSticky(id, from: .review)
-                addEcho(id: id, target: .completed, label: L("验收确认中…", "Accepting…"))
+                addEcho(id: id, target: .completed, source: .review,
+                        label: L("验收确认中…", "Accepting…"))
             case "reject", "trash":
-                hideSticky(id, from: currentList(of: id))
+                let src = currentList(of: id)
+                hideSticky(id, from: src)
                 // trash echo counts (visibleTrashCount) but renders no card
-                addEcho(id: id, target: .trash, label: "")
+                addEcho(id: id, target: .trash, source: src ?? .approval, label: "")
             case "restore":
                 // no echo: the card may return to ANY lane (its previous
                 // state), so a fixed-target placeholder would often be wrong.
@@ -369,8 +382,10 @@ final class DashboardStore: ObservableObject {
             case "done_external":
                 // v0.10.2: Zelin finished it outside the system (card_sent |
                 // review → DELIVERED) — echo straight into 已验收.
-                hideSticky(id, from: currentList(of: id))
-                addEcho(id: id, target: .completed, label: L("已办完", "done outside"))
+                let src = currentList(of: id)
+                hideSticky(id, from: src)
+                addEcho(id: id, target: .completed, source: src ?? .approval,
+                        label: L("已办完", "done outside"))
             case "abort_execution":
                 // v0.10.2: stop the run, card returns to 待审批 (CARD_SENT) —
                 // same pending+timeout mechanism as restore (契约: 信息条).
@@ -414,18 +429,19 @@ final class DashboardStore: ObservableObject {
     private func beginReturn(_ id: String, from source: ListKind,
                              kind: PendingReturn.Kind, info: String) {
         hideSticky(id, from: source)
-        returningLocal[id] = PendingReturn(kind: kind, created: Date())
+        returningLocal[id] = PendingReturn(kind: kind, source: source, created: Date())
         let noticeID = "notice-return-" + id
         notices.removeAll { $0.id == noticeID }
         notices.append(LocalNotice(
-            id: noticeID, kind: .captureTimeout, text: info, created: Date()))
+            id: noticeID, kind: .captureTimeout, lane: source, text: info,
+            created: Date()))
     }
 
-    private func addEcho(id: String, target: ListKind, label: String) {
+    private func addEcho(id: String, target: ListKind, source: ListKind, label: String) {
         pendingEchoes.removeAll { $0.sourceID == id }
         pendingEchoes.append(PendingEcho(
             id: "echo-" + id, sourceID: id, title: title(of: id),
-            target: target, label: label, created: Date()))
+            target: target, source: source, label: label, created: Date()))
     }
 
     /// Which list currently holds this id (self-lookup for source recording).

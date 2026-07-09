@@ -88,6 +88,15 @@ struct KanbanView: View {
             let runningEchoes = store.echoes(for: .running)
             let completedEchoes = store.echoes(for: .completed)
             let debtEchoes = store.echoes(for: .debt)
+            // P2-4: notices render in the lane where the action happened —
+            // an abort timeout belongs next to the running column, not two
+            // columns away. Trash isn't a board column → its notices (restore
+            // timeouts) surface in the approval lane. Popover keeps one list.
+            let approvalNotices = laneNotices(.approval, .trash)
+            let runningNotices = laneNotices(.running)
+            let reviewNotices = laneNotices(.review)
+            let debtNotices = laneNotices(.debt)
+            let completedNotices = laneNotices(.completed)
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
                     // isEmpty: false — the resident composer means this lane
@@ -99,11 +108,10 @@ struct KanbanView: View {
                            isEmpty: false) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
-                        if approvals.isEmpty && store.notices.isEmpty {
+                        if approvals.isEmpty && approvalNotices.isEmpty {
                             lanePlaceholder(L("无待审批", "Nothing awaiting approval"))
                         }
-                        // placeholder-timeout notices live in this lane
-                        ForEach(store.notices) { NoticeRow(notice: $0) }
+                        ForEach(approvalNotices) { NoticeRow(notice: $0) }
                         ForEach(approvals, id: \.id) { card in
                             ApprovalCardView(card: card, app: app,
                                              commentPending: store.pendingComment[card.id] != nil)
@@ -115,22 +123,24 @@ struct KanbanView: View {
                            count: running.count + needsInput.count + runningEchoes.count,
                            emptyText: L("无运行中任务", "No running tasks"),
                            isEmpty: running.isEmpty && needsInput.isEmpty
-                               && runningEchoes.isEmpty) {
+                               && runningEchoes.isEmpty && runningNotices.isEmpty) {
+                        ForEach(runningNotices) { NoticeRow(notice: $0) }
                         ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
                         ForEach(needsInput, id: \.id) { t in
-                            TaskRow(task: t, app: app, accent: .orange, showsInputBadge: true)
+                            TaskRow(task: t, app: app, lane: .needsInput)
                         }
                         if !needsInput.isEmpty && !running.isEmpty {
                             Divider().opacity(0.5)
                         }
                         ForEach(running, id: \.id) { t in
-                            TaskRow(task: t, app: app, accent: .blue)
+                            TaskRow(task: t, app: app, lane: .running)
                         }
                     }
                     column(title: L("待验收 · review", "Review"),
                            count: reviews.count,
                            emptyText: L("无待验收草稿", "No drafts to review"),
-                           isEmpty: reviews.isEmpty) {
+                           isEmpty: reviews.isEmpty && reviewNotices.isEmpty) {
+                        ForEach(reviewNotices) { NoticeRow(notice: $0) }
                         ForEach(reviews, id: \.id) { r in
                             ReviewRow(item: r, app: app)
                         }
@@ -138,7 +148,9 @@ struct KanbanView: View {
                     column(title: L("欠账 · debt", "Debt"),
                            count: debt.count + debtEchoes.count,
                            emptyText: L("无欠账", "No debt items"),
-                           isEmpty: debt.isEmpty && debtEchoes.isEmpty) {
+                           isEmpty: debt.isEmpty && debtEchoes.isEmpty
+                               && debtNotices.isEmpty) {
+                        ForEach(debtNotices) { NoticeRow(notice: $0) }
                         ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
                         ForEach(debt, id: \.id) { d in
                             DebtRow(item: d, app: app)
@@ -147,16 +159,23 @@ struct KanbanView: View {
                     column(title: L("已验收 · delivered", "Delivered"),
                            count: completed.count + completedEchoes.count,
                            emptyText: L("无已验收任务", "No delivered tasks"),
-                           isEmpty: completed.isEmpty && completedEchoes.isEmpty) {
+                           isEmpty: completed.isEmpty && completedEchoes.isEmpty
+                               && completedNotices.isEmpty) {
+                        ForEach(completedNotices) { NoticeRow(notice: $0) }
                         ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
                         ForEach(completed, id: \.id) { t in
-                            TaskRow(task: t, app: app, accent: .green)
+                            TaskRow(task: t, app: app, lane: .completed)
                         }
                     }
                 }
                 .padding(16)
             }
         }
+    }
+
+    /// Notices whose action happened in one of these lanes (P2-4 routing).
+    private func laneNotices(_ lanes: ListKind...) -> [LocalNotice] {
+        store.notices.filter { lanes.contains($0.lane) }
     }
 
     // one lane: fixed 400pt so cards keep their popover size; header on top,

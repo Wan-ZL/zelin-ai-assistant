@@ -53,9 +53,10 @@ struct Badge: View {
 //
 // Background/stroke/padding/corner + optional whole-card click-to-copy
 // (clipboard→✓ trailing icon, hover tint, pointing-hand cursor) + pending
-// (greyed, no interaction, no stroke). The actions slot gets the unified
-// button styling (font 11 / .bordered / .small); callers only supply
-// Button + .tint.
+// (content greyed, no card tap, no stroke — the actions row keeps full
+// opacity: a queued card's live buttons must not look disabled, P2-2).
+// The actions slot gets the unified button styling (font 11 / .bordered /
+// .small); callers only supply Button + .tint.
 //
 // v0.10: optional detail slot — pass `detail:` and the surface renders the
 // unified 展开详情/收起 toggle at the end of the actions row; the expanded
@@ -70,7 +71,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
     let stroked: Bool               // primary.opacity(0.12) stroke; suppressed when pending
     let copyText: String?           // non-nil: whole-card tap copies + trailing clipboard→✓
     let trailingIcon: (name: String, color: Color)?  // ignored when copyText != nil
-    let pending: Bool               // opacity 0.75 + no tap + no stroke
+    let pending: Bool               // content at 0.75 + no tap + no stroke (actions stay full)
     let expandedBinding: Binding<Bool>?   // nil → internal @State drives the detail slot
     private let detail: (() -> Detail)?  // nil → no expandable detail
     private let actions: () -> Actions
@@ -147,26 +148,31 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if copyText != nil || trailingIcon != nil {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 8) { content() }
-                    Spacer(minLength: 4)
-                    if copyText != nil {
-                        Image(systemName: copied ? "checkmark" : "doc.on.clipboard")
-                            .font(.system(size: 10))
-                            .foregroundColor(copied ? .green : .secondary)
-                    } else if let icon = trailingIcon {
-                        Image(systemName: icon.name)
-                            .font(.system(size: 10))
-                            .foregroundColor(icon.color)
+            // pending dims the content only — the actions row below stays at
+            // full opacity so a queued card's escape hatch reads as tappable.
+            Group {
+                if copyText != nil || trailingIcon != nil {
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 8) { content() }
+                        Spacer(minLength: 4)
+                        if copyText != nil {
+                            Image(systemName: copied ? "checkmark" : "doc.on.clipboard")
+                                .font(.system(size: 10))
+                                .foregroundColor(copied ? .green : .secondary)
+                        } else if let icon = trailingIcon {
+                            Image(systemName: icon.name)
+                                .font(.system(size: 10))
+                                .foregroundColor(icon.color)
+                        }
                     }
+                } else {
+                    content()
                 }
-            } else {
-                content()
+                if let detail, isExpanded {
+                    detail()
+                }
             }
-            if let detail, isExpanded {
-                detail()
-            }
+            .opacity(pending ? 0.75 : 1)
             if hasActions || hasDetail {
                 HStack(spacing: 8) {
                     actions()
@@ -196,7 +202,6 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .opacity(pending ? 0.75 : 1)
     }
 
     private var backgroundColor: Color {
@@ -376,6 +381,48 @@ struct CopyPathLine: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Full error text in a red block + a copy button (P2-4). A Button so its tap
+/// wins over the whole-card copy gesture (CopyPathLine 先例); .textSelection
+/// stays off in these cards — the button IS the copy path.
+fileprivate struct ErrorTextBlock: View {
+    let text: String
+    @State private var copied = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(L("错误全文", "Full error"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.red)
+                Button {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(text, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.clipboard")
+                            .font(.system(size: 9))
+                        Text(copied ? L("已复制", "Copied") : L("复制", "Copy"))
+                            .font(.system(size: 9))
+                    }
+                    .foregroundColor(copied ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+            }
+            Text(text)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -769,6 +816,14 @@ struct ApprovalCardView: View {
     }
 }
 
+/// Which lane a TaskRow renders in — passed explicitly by both call sites
+/// (popover sections + kanban columns). Behavior (delivered buttons, input
+/// badge) derives from this, never from the accent color (P2-2: the old
+/// `accent == .green` discriminator was a correctness trap dressed as style).
+enum TaskLane {
+    case running, needsInput, completed
+}
+
 // NOTE: no .textSelection here on purpose — the whole card copies on click
 // (CardSurface.copyText); textSelection would fight the tap gesture.
 // Keyboard accessibility of the former Button wrapper is traded away —
@@ -776,9 +831,22 @@ struct ApprovalCardView: View {
 struct TaskRow: View {
     let task: RunningTask
     unowned let app: AppDelegate
-    let accent: Color
-    // kanban 运行中 lane: needs_input rows always show the orange badge
-    var showsInputBadge: Bool = false
+    let lane: TaskLane
+
+    // accent is purely visual now, derived from the lane — no call site can
+    // drift a color away from its semantics again.
+    private var accent: Color {
+        switch lane {
+        case .running: return .blue
+        case .needsInput: return .orange
+        case .completed: return .green
+        }
+    }
+
+    // kanban merges needs_input into the 运行中 column, where this badge is
+    // the only lane signal; the popover's 需输入 section shows it too
+    // (redundant under its header, but consistent across surfaces).
+    private var showsInputBadge: Bool { lane == .needsInput }
 
     // v0.10: status=approved tasks ride in running[] as state=="queued" —
     // greyed like pending (no spinner), no session, nothing to copy yet.
@@ -793,18 +861,23 @@ struct TaskRow: View {
         return nil
     }
 
+    /// dispatch_error for queued rows, last_error otherwise — the row shows a
+    /// one-line truncation; the detail block carries the full text (P2-4).
+    private var errorText: String? {
+        let e = isQueued ? task.dispatch_error : task.last_error
+        guard let e, !e.isEmpty else { return nil }
+        return e
+    }
+
     private var hasDetailContent: Bool {
         (task.summary?.isEmpty == false)
             || !(task.plan ?? []).isEmpty
             || !(task.dod ?? []).isEmpty
             || (task.log?.isEmpty == false)
+            || errorText != nil
     }
 
-    // v0.10.2: which lane this row sits in. The lane can't be passed in —
-    // Kanban.swift/DashboardView.swift belong to other buckets this batch —
-    // so the accent doubles as the discriminator: every call site uses .green
-    // for the delivered/completed lane and .blue/.orange for running/needs_input.
-    private var isDelivered: Bool { accent == .green }
+    private var isDelivered: Bool { lane == .completed }
 
     // 契约: 停止并退回 on regular running rows (queued/working/blocked …),
     // NOT on review-active rework rows and NOT in the completed lane.
@@ -915,6 +988,7 @@ struct TaskRow: View {
                         .foregroundColor(.red)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(de)
                 }
                 if !isQueued, let le = task.last_error, !le.isEmpty {
                     Text(L("错误：", "Error: ") + le)
@@ -922,6 +996,7 @@ struct TaskRow: View {
                         .foregroundColor(.red)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(le)
                 }
                 if let an = task.agent_name, !an.isEmpty {
                     Text(L("claude agents 列表名：", "claude agents list name: ") + an)
@@ -944,6 +1019,7 @@ struct TaskRow: View {
 
     @ViewBuilder private var detailBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let err = errorText { ErrorTextBlock(text: err) }
             if let s = task.summary, !s.isEmpty {
                 Text(s)
                     .font(.system(size: 11))

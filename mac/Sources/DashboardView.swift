@@ -311,7 +311,7 @@ struct DashboardView: View {
                           count: running.count + runningEchoes.count)
             ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
             ForEach(running, id: \.id) { t in
-                TaskRow(task: t, app: app, accent: .blue)
+                TaskRow(task: t, app: app, lane: .running)
             }
         }
 
@@ -322,7 +322,7 @@ struct DashboardView: View {
             SectionHeader(title: L("需输入 · needs input", "Needs Input"),
                           count: needsInput.count)
             ForEach(needsInput, id: \.id) { t in
-                TaskRow(task: t, app: app, accent: .orange)
+                TaskRow(task: t, app: app, lane: .needsInput)
             }
         }
 
@@ -345,7 +345,7 @@ struct DashboardView: View {
             ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
             // keep the popover shallow: first 5 delivered, main window has all
             ForEach(completed.prefix(5), id: \.id) { t in
-                TaskRow(task: t, app: app, accent: .green)
+                TaskRow(task: t, app: app, lane: .completed)
             }
             if completed.count > 5 {
                 Button {
