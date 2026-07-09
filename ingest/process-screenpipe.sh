@@ -85,23 +85,25 @@ cd "$VAULT" || exit 1
 #
 # IMPORTANT: key file MUST live outside TCC-protected folders (~/Desktop, ~/Documents,
 # ~/Downloads, etc). cron's grandfathered FDA via /usr/sbin/cron covers ~/Documents
-# but NOT ~/Desktop — silently empty grep → ANTHROPIC_API_KEY="" → abort.
+# but NOT ~/Desktop — a key file there reads as silently empty from cron.
 #
 # Resolution order (CONTRACT §19, mirrors act/lib/secrets.resolve_credential):
 #   1. $AIASSISTANT_HOME/config/secrets/anthropic-api-key.txt (App 设置窗口保存;
 #      defaults to ~/Projects/zelin-ai-assistant when AIASSISTANT_HOME unset)
-#   2. legacy ~/.config/anthropic-key.txt (single line, sk-ant-... only). Refresh:
-#      grep -E '^sk-ant-' ~/Desktop/Keys/anthropic_key.txt > ~/.config/anthropic-key.txt
+#   2. legacy ~/.config/anthropic-key.txt (single line, sk-ant-... only)
+#   3. neither file → fall back to the claude CLI's own stored credentials.
+#      The keychain caveats above are real on some machines, but not all: on an
+#      always-logged-in Mac (e.g. a Mac mini) cron can often use the CLI's own
+#      auth just fine. If claude then fails, its error lands in $LOGFILE below.
 SECRETS_KEY_FILE="${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}/config/secrets/anthropic-api-key.txt"
 if [ -s "$SECRETS_KEY_FILE" ]; then
     export ANTHROPIC_API_KEY=$(cat "$SECRETS_KEY_FILE" 2>>"$LOGFILE")
-else
+elif [ -s "$HOME/.config/anthropic-key.txt" ]; then
     export ANTHROPIC_API_KEY=$(cat "$HOME/.config/anthropic-key.txt" 2>>"$LOGFILE")
 fi
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ ANTHROPIC_API_KEY empty (neither $SECRETS_KEY_FILE nor ~/.config/anthropic-key.txt readable?) — aborting" >> "$LOGFILE"
-    echo "---" >> "$LOGFILE"
-    exit 1
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    unset ANTHROPIC_API_KEY
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] no API key file — falling back to the claude CLI's own credentials" >> "$LOGFILE"
 fi
 
 # Resolve the claude binary — cron's PATH is minimal, so check the usual homes
