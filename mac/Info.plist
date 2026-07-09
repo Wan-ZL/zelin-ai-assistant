@@ -18,6 +18,9 @@
 	<string>AppIcon</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<!-- Fallback only: mac/build.sh stamps both version keys into the staged
+	     bundle from act/__init__.py (the single source of truth) at build time.
+	     Bump the version there, not here. -->
 	<key>CFBundleShortVersionString</key>
 	<string>0.11.0</string>
 	<key>CFBundleVersion</key>
