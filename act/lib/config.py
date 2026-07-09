@@ -119,6 +119,9 @@ class Config:
     memory_inject: bool = True
     create_github_repo: bool = True
     auto_resume: bool = True
+    # claude --bg with --dangerously-skip-permissions (default, unattended);
+    # False = claude's normal permission model, blocked agents -> needs_input
+    skip_permissions: bool = True
     self_check: bool = True
     fresh_context_review: bool = True
     system_card_per_ckpt: bool = True
@@ -233,6 +236,9 @@ def load_config() -> Config:
         execution.get("create_github_repo", cfg.create_github_repo)
     )
     cfg.auto_resume = bool(execution.get("auto_resume", cfg.auto_resume))
+    cfg.skip_permissions = bool(
+        execution.get("skip_permissions", cfg.skip_permissions)
+    )
     qg = execution.get("quality_gate", {}) or {}
     cfg.self_check = bool(qg.get("self_check", cfg.self_check))
     cfg.fresh_context_review = bool(qg.get("fresh_context_review", cfg.fresh_context_review))
