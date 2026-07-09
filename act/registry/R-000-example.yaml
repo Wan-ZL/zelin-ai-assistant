@@ -1,0 +1,25 @@
+# 完全虚构的示例条目 — 展示注册表 YAML 格式（CONTRACT §1）。可以删除。
+id: R-000
+title: 给 example-bench 加一键导出评测报告
+type: engineering
+tier: T1
+status: detected
+hardness: soft
+deadline: null
+repeated_mentions: 1
+green_sign_required: false
+disagreement: null
+cost_estimate_usd: null
+sources:
+  - channel: meeting
+    date: "2026-01-15"
+    ref: "~/Documents/Obsidian Vault/2 - raw/2026-01-15-weekly-sync.md"
+    quote: "能不能加个按钮，一键把 leaderboard 导出成报告发出去"
+    who: manager
+plan:
+  - 在 example-bench 的 dashboard 页加"导出报告"按钮
+  - 后端把当前 leaderboard 渲染成 markdown + png
+  - 产出 draft PR，不 merge
+summary: 给评测面板加一个一键导出报告按钮，批准后会以 draft PR 交付。
+delivery_mode: repo
+notes: ""

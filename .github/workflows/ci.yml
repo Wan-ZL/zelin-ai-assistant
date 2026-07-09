@@ -1,0 +1,31 @@
+# CI: compile check, unit tests, and macOS app build — on every pull request and push to main.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch (never cancels main pushes mid-run).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
+        run: python3 -m pip install --user pyyaml || python3 -m pip install --user --break-system-packages pyyaml
+
+      - name: Compile Python sources
+        run: python3 -m compileall -q act ingest
+
+      - name: Run unit tests
+        run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
+
+      - name: Build macOS app
+        run: bash mac/build.sh

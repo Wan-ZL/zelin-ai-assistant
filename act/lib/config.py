@@ -1,0 +1,367 @@
+"""Configuration + canonical runtime paths for Zelin's AI Assistant.
+
+Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
+(source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
+(``R-*.yaml``) are gitignored — they contain real extracted work data.
+
+All paths are derived from the ``AIASSISTANT_HOME`` env var, defaulting to
+``~/Projects/zelin-ai-assistant``. Constants are exposed as ``pathlib.Path`` objects so
+every component (executor, actd, radar, dashboard) resolves to the same files.
+"""
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+try:
+    import yaml  # PyYAML — install if missing (see module docstring)
+except ImportError:  # pragma: no cover - surfaced clearly at runtime
+    yaml = None  # type: ignore
+
+
+# --------------------------------------------------------------------------- #
+# Canonical paths (env-driven, single source everywhere)
+# --------------------------------------------------------------------------- #
+def _home() -> Path:
+    return Path(os.environ.get("AIASSISTANT_HOME", "~/Projects/zelin-ai-assistant")).expanduser()
+
+
+HOME: Path = _home()
+STATE_DIR: Path = HOME / "state"
+REGISTRY_DIR: Path = HOME / "act" / "registry"
+INBOX_DIR: Path = STATE_DIR / "inbox"
+DASHBOARD_PATH: Path = STATE_DIR / "dashboard.json"
+LOG_DIR: Path = STATE_DIR / "logs"
+
+# Auto-memory MEMORY.md injected into every dispatched prompt — Claude Code
+# keys its per-project memory dir on the dash-encoded absolute project path.
+MEMORY_PATH: Path = (
+    Path.home() / ".claude" / "projects"
+    / str(Path.home() / "Projects").replace("/", "-")
+    / "memory" / "MEMORY.md"
+)
+
+# Config files (config.yaml is gitignored; config.example.yaml is the fallback).
+CONFIG_PATH: Path = HOME / "config.yaml"
+CONFIG_EXAMPLE_PATH: Path = HOME / "config.example.yaml"
+
+# Mac-app settings overrides (§15) — app writes ONLY this file; load_config()
+# merges it LAST so it has the highest priority.
+SETTINGS_OVERRIDES_PATH: Path = STATE_DIR / "settings_overrides.json"
+
+# Built-in Obsidian vault root fallback — used to derive the pipeline dirs
+# when sources.obsidian_raw is not configured (v0.10.3 契约二).
+DEFAULT_OBSIDIAN_VAULT: str = "~/Documents/Obsidian Vault"
+
+# Feature flags (§16) — default ALL on; config.yaml `features:` then
+# settings_overrides.json `features` overlay on top.
+DEFAULT_FEATURES: dict = {
+    "slack_radar": True,
+    "gmail_radar": True,
+    "obsidian_radar": True,
+    "digest": True,
+    "auto_resume": True,
+    "analytics": True,
+    "manager_pack": True,
+}
+
+
+def ensure_state_dirs() -> None:
+    """Create the runtime state directories if they do not yet exist."""
+    for d in (STATE_DIR, INBOX_DIR, LOG_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+# --------------------------------------------------------------------------- #
+# Config object
+# --------------------------------------------------------------------------- #
+@dataclass
+class Config:
+    """Parsed config.yaml (with defaults so callers never KeyError)."""
+
+    raw: dict = field(default_factory=dict)
+
+    # owner
+    owner_name: str = "Zelin"
+    owner_slack_user_id: Optional[str] = None
+    display_name: str = "Zelin's AI Assistant"
+
+    # sources
+    obsidian_raw: Optional[str] = None
+    # Obsidian 管线另外三目录（v0.10.3 契约二）— 缺省时由 obsidian_raw 的
+    # parent（vault 根）+ 标准目录名派生；load_config() 之后永不为 None。
+    obsidian_unprocessed: Optional[str] = None
+    obsidian_change_summary: Optional[str] = None
+    obsidian_wiki: Optional[str] = None
+    slack_channels: list = field(default_factory=list)
+    slack_dms: list = field(default_factory=list)
+    slack_token_path: Optional[str] = None
+    # Slack MCP fallback (v0.11) — 没有 xoxp token（卡在管理员审批）时，radar_slack
+    # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
+    slack_mcp_fallback: bool = True
+    slack_mcp_interval_minutes: int = 30
+    watch_people: list = field(default_factory=list)
+    # gmail capture (CONTRACT §14) — app password file missing => radar no-ops
+    gmail_address: Optional[str] = None
+    gmail_app_password_path: str = "~/Desktop/Keys/gmail-app-password.txt"
+    gmail_enabled: bool = True
+
+    # approval / cost
+    poll_interval_seconds: int = 10
+    show_cost_above_usd: float = 5.0
+    require_text_confirm_above_usd: float = 50.0
+
+    # execution
+    default_target_repo: str = "~/Projects/your-workbench"
+    memory_inject: bool = True
+    create_github_repo: bool = True
+    auto_resume: bool = True
+    self_check: bool = True
+    fresh_context_review: bool = True
+    system_card_per_ckpt: bool = True
+
+    # trash / recycle bin
+    trash_retention_days: int = 60
+
+    # local pre-send redaction (opt-in)
+    redaction_enabled: bool = False
+    redaction_terms_file: str = "config/redaction_terms.txt"
+    redaction_mask_secrets: bool = True
+
+    # UI language (§15) — stored value only for now ("zh" | "en")
+    language: str = "zh"
+
+    # feature flags (§16) — default all on; see DEFAULT_FEATURES
+    features: dict = field(default_factory=lambda: dict(DEFAULT_FEATURES))
+
+    @property
+    def target_repo_path(self) -> Path:
+        return Path(self.default_target_repo).expanduser()
+
+    def feature(self, name: str) -> bool:
+        """Feature-flag check (§16). Unknown flags default to on."""
+        try:
+            return bool(self.features.get(name, True))
+        except AttributeError:
+            return True
+
+    def requester_display(self) -> str:
+        """Best-effort display name for the person whose asks we track."""
+        if self.watch_people:
+            return self.watch_people[0].split(".")[0].title()
+        return self.owner_name
+
+
+def load_config() -> Config:
+    """Load ``config.yaml`` (falling back to ``config.example.yaml``).
+
+    Never raises on a missing file — returns a Config with defaults so the
+    daemon keeps running in a fresh checkout.
+    """
+    path = CONFIG_PATH if CONFIG_PATH.exists() else CONFIG_EXAMPLE_PATH
+    data: dict = {}
+    if yaml is not None and path.exists():
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+
+    cfg = Config(raw=data)
+
+    owner = data.get("owner", {}) or {}
+    cfg.owner_name = owner.get("name", cfg.owner_name)
+    cfg.owner_slack_user_id = owner.get("slack_user_id", cfg.owner_slack_user_id)
+    cfg.display_name = owner.get("display_name", cfg.display_name)
+
+    sources = data.get("sources", {}) or {}
+    cfg.obsidian_raw = sources.get("obsidian_raw", cfg.obsidian_raw)
+    cfg.obsidian_unprocessed = sources.get(
+        "obsidian_unprocessed", cfg.obsidian_unprocessed
+    )
+    cfg.obsidian_change_summary = sources.get(
+        "obsidian_change_summary", cfg.obsidian_change_summary
+    )
+    cfg.obsidian_wiki = sources.get("obsidian_wiki", cfg.obsidian_wiki)
+    cfg.slack_channels = sources.get("slack_channels", []) or []
+    cfg.slack_dms = sources.get("slack_dms", []) or []
+    cfg.slack_token_path = sources.get("slack_token_path", cfg.slack_token_path)
+    cfg.slack_mcp_fallback = bool(
+        sources.get("slack_mcp_fallback", cfg.slack_mcp_fallback)
+    )
+    cfg.slack_mcp_interval_minutes = int(
+        sources.get("slack_mcp_interval_minutes", cfg.slack_mcp_interval_minutes)
+    )
+    cfg.watch_people = sources.get("watch_people", []) or []
+
+    gmail = sources.get("gmail", {}) or {}
+    cfg.gmail_address = gmail.get("address", cfg.gmail_address)
+    cfg.gmail_app_password_path = gmail.get(
+        "app_password_path", cfg.gmail_app_password_path
+    )
+    cfg.gmail_enabled = bool(gmail.get("enabled", cfg.gmail_enabled))
+
+    approval = data.get("approval", {}) or {}
+    # poll_interval: config.example uses minutes for the approval surface; the
+    # daemon loop also accepts an explicit seconds override.
+    if "poll_interval_seconds" in approval:
+        cfg.poll_interval_seconds = int(approval["poll_interval_seconds"])
+    elif "poll_interval_minutes" in approval:
+        # Daemon default stays 10s; the minutes value governs the approval
+        # surface poll, not the tight local loop. We keep 10s unless an explicit
+        # seconds value is provided, to remain responsive to the inbox.
+        cfg.poll_interval_seconds = cfg.poll_interval_seconds
+    thresholds = approval.get("cost_thresholds", {}) or {}
+    cfg.show_cost_above_usd = float(
+        thresholds.get("show_cost_above_usd", cfg.show_cost_above_usd)
+    )
+    cfg.require_text_confirm_above_usd = float(
+        thresholds.get("require_text_confirm_above_usd", cfg.require_text_confirm_above_usd)
+    )
+
+    execution = data.get("execution", {}) or {}
+    cfg.default_target_repo = execution.get("default_target_repo", cfg.default_target_repo)
+    cfg.memory_inject = bool(execution.get("memory_inject", cfg.memory_inject))
+    cfg.create_github_repo = bool(
+        execution.get("create_github_repo", cfg.create_github_repo)
+    )
+    cfg.auto_resume = bool(execution.get("auto_resume", cfg.auto_resume))
+    qg = execution.get("quality_gate", {}) or {}
+    cfg.self_check = bool(qg.get("self_check", cfg.self_check))
+    cfg.fresh_context_review = bool(qg.get("fresh_context_review", cfg.fresh_context_review))
+    training = execution.get("training", {}) or {}
+    cfg.system_card_per_ckpt = bool(
+        training.get("system_card_per_ckpt", cfg.system_card_per_ckpt)
+    )
+
+    trash = data.get("trash", {}) or {}
+    cfg.trash_retention_days = int(
+        trash.get("retention_days", cfg.trash_retention_days)
+    )
+
+    red = data.get("redaction", {}) or {}
+    cfg.redaction_enabled = bool(red.get("enabled", cfg.redaction_enabled))
+    cfg.redaction_terms_file = red.get("terms_file", cfg.redaction_terms_file)
+    cfg.redaction_mask_secrets = bool(red.get("mask_secrets", cfg.redaction_mask_secrets))
+    _tf = cfg.redaction_terms_file
+    if _tf and not str(_tf).startswith(("/", "~")):
+        cfg.redaction_terms_file = str(HOME / _tf)
+
+    if isinstance(data.get("language"), str) and data["language"].strip():
+        cfg.language = data["language"].strip()
+
+    feats = data.get("features", {}) or {}
+    if isinstance(feats, dict):
+        for k, v in feats.items():
+            cfg.features[str(k)] = bool(v)
+
+    _apply_settings_overrides(cfg)
+    # AFTER the overrides merge, so an overridden obsidian_raw re-points the
+    # derived pipeline dirs too (explicitly-set dirs are left untouched).
+    _derive_obsidian_dirs(cfg)
+
+    return cfg
+
+
+# --------------------------------------------------------------------------- #
+# Obsidian pipeline dirs (v0.10.3 契约二) — derive the unset ones from the
+# vault root (= obsidian_raw's parent, or the built-in default vault).
+# --------------------------------------------------------------------------- #
+_OBSIDIAN_DIR_NAMES: dict = {
+    "obsidian_unprocessed": "1 - unprocessed",
+    "obsidian_change_summary": "3 - change-summary",
+    "obsidian_wiki": "4 - wiki",
+}
+
+
+def _derive_obsidian_dirs(cfg: Config) -> None:
+    """Fill any unset pipeline dir with vault-root + standard folder name."""
+    if cfg.obsidian_raw and str(cfg.obsidian_raw).strip():
+        vault = Path(str(cfg.obsidian_raw)).expanduser().parent
+    else:
+        vault = Path(DEFAULT_OBSIDIAN_VAULT).expanduser()
+    for attr, name in _OBSIDIAN_DIR_NAMES.items():
+        current = getattr(cfg, attr)
+        if not (current and str(current).strip()):
+            setattr(cfg, attr, str(vault / name))
+
+
+# --------------------------------------------------------------------------- #
+# settings_overrides.json overlay (§15) — Mac app writes it; highest priority.
+# --------------------------------------------------------------------------- #
+# Scalar cfg fields the app may override, with a coercion for each.
+_OVERRIDE_FIELDS: dict = {
+    "obsidian_raw": str,
+    "obsidian_unprocessed": str,
+    "obsidian_change_summary": str,
+    "obsidian_wiki": str,
+    "slack_token_path": str,
+    "gmail_address": str,
+    "gmail_app_password_path": str,
+    "gmail_enabled": bool,
+    "show_cost_above_usd": float,
+    "require_text_confirm_above_usd": float,
+    "trash_retention_days": int,
+    "language": str,
+    "redaction_enabled": bool,
+    "redaction_terms_file": str,
+    "redaction_mask_secrets": bool,
+}
+
+
+def _apply_settings_overrides(cfg: Config) -> None:
+    """Overlay ``STATE_DIR/settings_overrides.json`` onto ``cfg`` (§15).
+
+    Only the fields the file names are touched. Malformed JSON, wrong types, or
+    unknown keys are silently ignored — a broken overrides file must never take
+    the daemon down.
+    """
+    try:
+        if not SETTINGS_OVERRIDES_PATH.exists():
+            return
+        data = json.loads(SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — never raise on a malformed overrides file
+        return
+    if not isinstance(data, dict):
+        return
+
+    for key, value in data.items():
+        try:
+            if key == "features" and isinstance(value, dict):
+                for fk, fv in value.items():
+                    cfg.features[str(fk)] = bool(fv)
+            elif key.startswith("features."):
+                # flat form: {"features.digest": false}
+                cfg.features[key.split(".", 1)[1]] = bool(value)
+            elif key == "gmail" and isinstance(value, dict):
+                # nested form mirroring config.yaml sources.gmail
+                if value.get("address") is not None:
+                    cfg.gmail_address = str(value["address"])
+                if value.get("app_password_path") is not None:
+                    cfg.gmail_app_password_path = str(value["app_password_path"])
+                if value.get("enabled") is not None:
+                    cfg.gmail_enabled = bool(value["enabled"])
+            elif key == "cost_thresholds" and isinstance(value, dict):
+                # nested form mirroring config.yaml approval.cost_thresholds
+                if value.get("show_cost_above_usd") is not None:
+                    cfg.show_cost_above_usd = float(value["show_cost_above_usd"])
+                if value.get("require_text_confirm_above_usd") is not None:
+                    cfg.require_text_confirm_above_usd = float(
+                        value["require_text_confirm_above_usd"]
+                    )
+            elif key.startswith("sources."):
+                # dotted form mirroring config.yaml, e.g.
+                # {"sources.obsidian_wiki": "/path/to/4 - wiki"}
+                sub = key.split(".", 1)[1]
+                if sub in _OVERRIDE_FIELDS and value is not None:
+                    setattr(cfg, sub, _OVERRIDE_FIELDS[sub](value))
+            elif key in _OVERRIDE_FIELDS and value is not None:
+                setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
+        except Exception:  # noqa: BLE001 — skip just the bad entry
+            continue
+
+
+# Module-level singleton for convenience (callers may also call load_config()).
+def get_config() -> Config:
+    return load_config()

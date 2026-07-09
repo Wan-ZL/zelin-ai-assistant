@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  actd — resident daemon of Zelin's AI Assistant (Act pipeline).
+  Reads state/inbox/*.json, drives the requirement registry state machine,
+  dispatches approved work via `claude --bg`, joins `claude agents --json`,
+  and writes state/dashboard.json atomically (.tmp -> rename).
+
+  CREDENTIALS: ANTHROPIC_API_KEY is NOT set here. actd reads the key internally
+  from ~/.config/anthropic-key.txt (see docs/CONTRACT.md + README landmine #1:
+  a launchd/cron daemon session cannot read the Keychain OAuth token).
+
+  TCC PITFALL: launchd processes are blocked by TCC from ~/Documents (that is why
+  the screenpipe ingest chain uses crontab, which inherits Full Disk Access).
+  actd is safe under launchd: it ONLY reads/writes ~/Projects/zelin-ai-assistant/state
+  and calls `claude` — it never touches ~/Documents. The RADAR, which must read
+  "~/Documents/Obsidian Vault", is the TCC-blocked one, so radar should run via
+  crontab, not launchd (see com.zelin.aiassistant.radar.plist).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zelin.aiassistant.actd</string>
+
+    <!-- run as the login user's python, invoking the act.actd module -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSERNAME/miniconda3/bin/python3</string>
+        <string>-m</string>
+        <string>act.actd</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIASSISTANT_HOME</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <!-- PATH must find: env/python3, claude, homebrew tools, conda -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/actd.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/actd.launchd.log</string>
+</dict>
+</plist>

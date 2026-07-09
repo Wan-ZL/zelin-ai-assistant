@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  gmailradar — polls the Gmail INBOX (IMAP, read-only via BODY.PEEK) for unread
+  mail and turns the actionable ones into requirement cards. FYI mail is skipped;
+  unread state is never modified.
+
+  SAFE UNDER LAUNCHD: this radar only touches the network + ~/Projects/zelin-ai-assistant/state,
+  never ~/Documents, so it is NOT TCC-blocked (unlike the Obsidian radar, which
+  must use crontab). It no-ops silently until a Gmail app password exists at the
+  path in config (sources.gmail.app_password_path, default
+  ~/Desktop/Keys/gmail-app-password.txt).
+
+  AUTH: Gmail app password (Google account -> 2-Step Verification -> App
+  passwords). See docs/GMAIL_SETUP.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zelin.aiassistant.gmailradar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSERNAME/miniconda3/bin/python3</string>
+        <string>-m</string>
+        <string>act.radar_gmail</string>
+        <string>--once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+
+    <!-- poll every 5 minutes -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIASSISTANT_HOME</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/gmailradar.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/gmailradar.launchd.log</string>
+</dict>
+</plist>
