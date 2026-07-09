@@ -17,9 +17,22 @@ final class LanguageStore: ObservableObject {
         didSet { LanguageMirror.current = lang }
     }
     private init() {
-        let v = (SettingsIO.readOverrides()["language"] as? String) == "en" ? "en" : "zh"
+        // P0-12: an explicit override always wins; with no "language" key at
+        // all (first run) follow the system locale instead of hardcoding zh.
+        let v: String
+        if let stored = SettingsIO.readOverrides()["language"] as? String {
+            v = stored == "en" ? "en" : "zh"
+        } else {
+            v = Self.systemDefault
+        }
         lang = v
         LanguageMirror.current = v
+    }
+
+    /// First-run default: zh-* system locales → "zh", everything else → "en".
+    /// Never persisted — only an explicit choice saved in 设置 writes the key.
+    nonisolated static var systemDefault: String {
+        (Locale.preferredLanguages.first ?? "en").hasPrefix("zh") ? "zh" : "en"
     }
 }
 

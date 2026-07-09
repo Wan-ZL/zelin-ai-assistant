@@ -47,8 +47,9 @@ enum ScreenpipeRecipe {
 // MARK: - Recording controller (Screenpipe engine)
 //
 // mode ∈ "off" | "screen" | "screen_audio", persisted in UserDefaults
-// "recordingMode" (default "screen"). The engine outlives the app (nohup …&);
-// liveness = `pgrep -f "screenpipe.*record"` has results (contract).
+// "recordingMode" (fresh install: "off" until the one-time consent prompt —
+// P0-11; RecordingConsent in Onboarding.swift). The engine outlives the app
+// (nohup …&); liveness = `pgrep -f "screenpipe.*record"` has results (contract).
 
 @MainActor
 final class RecordingController: ObservableObject {
@@ -69,7 +70,9 @@ final class RecordingController: ObservableObject {
 
     private init() {
         let stored = UserDefaults.standard.string(forKey: "recordingMode") ?? ""
-        mode = ["off", "screen", "screen_audio"].contains(stored) ? stored : "screen"
+        // P0-11: no stored key = fresh install → OFF; recording must not start
+        // before consent. Existing installs keep whatever they chose.
+        mode = ["off", "screen", "screen_audio"].contains(stored) ? stored : "off"
     }
 
     var modeLabel: String {
