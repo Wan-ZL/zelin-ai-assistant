@@ -21,12 +21,46 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-The P0 wave of the open-source readiness review: make a fresh install work on a
-clean Mac, default to privacy-safe behavior, and give first-time visitors
-English docs plus privacy/security policies.
+The P0 + P1 waves of the open-source readiness review: make a fresh install
+work on a clean Mac, default to privacy-safe behavior, give first-time visitors
+English docs plus privacy/security policies, and harden the pipeline
+(security fencing, diagnostics, state-machine test coverage, an iMessage phone
+channel, and sensitive-app capture exclusion).
 
 ### Added
 
+- iMessage phone channel: approve/reject/rework/accept cards, quick capture,
+  and 👍-tapback approvals from the iMessage "message yourself" thread
+  (`phone_channel: imessage`); Slack remains available; see
+  `docs/IMESSAGE_SETUP.md`
+  ([`4f8cbb7`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/4f8cbb7))
+- Sensitive-app screen-capture exclusion (`recording.ignored_apps`): password
+  managers, Keychain Access, and private-browsing windows are excluded at the
+  engine level by default, with a matching SQL filter on export for frames
+  recorded earlier
+  ([`5c292b2`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/5c292b2))
+- `python3 -m act.doctor` (also `install.sh --check`): 14 post-install
+  diagnostics with symptom-first output and per-check fixes; an "auth model"
+  section in `docs/INSTALL.md` explains API key vs subscription auth
+  ([`172f71f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/172f71f))
+- Pipeline health banner in the app distinguishing slow vs broken (stale/dead
+  tiers with recovery actions), first-launch dependencies walkthrough, TCC
+  status rows, and instant Anthropic-key validation in Settings
+  ([`3a0ada6`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/3a0ada6))
+- CI: shellcheck + ruff lint gates and a Python 3.9 floor job; releases now
+  ship SHA-256 checksums and build-provenance attestations; third-party actions
+  pinned to commit SHAs with Dependabot updates
+  ([`206bd01`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/206bd01))
+- 94 new state-machine and radar tests (reconcile/resume/transitions/registry
+  merge), plus a shared agent-state vocabulary module ending the
+  actd/dashboard drift
+  ([`fe0e6c0`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/fe0e6c0))
+- Community files: contributor quickstart without the full stack, issue forms,
+  PR template, Code of Conduct, and a plain-language license FAQ
+  ([`c75ce55`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/c75ce55))
+- Mermaid architecture diagram with the trust boundary in both READMEs,
+  English orientation headers for HANDOFF/CONTRACT, and `docs/ROADMAP.md`
+  ([`7ef8705`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/7ef8705))
 - `docs/PRIVACY.md`: full data-egress inventory — every channel that sends data
   off the machine (ingest cron chain, radars, quick capture, executor, telemetry)
   with trigger, frequency, payload, and off-switch, plus local retention and an
@@ -68,6 +102,21 @@ English docs plus privacy/security policies.
 
 ### Fixed
 
+- Obsidian radar prompts now pass through the same redaction scrub as every
+  other outbound channel, and all radar/executor prompts fence untrusted
+  source material as data-not-instructions
+  ([`6d91a82`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/6d91a82))
+- The Obsidian radar marker is now a watermark: a note that fails extraction
+  no longer silently advances the marker (the failure class behind the
+  2026-07-08 incident); recovery rescans are idempotent
+  ([`fe0e6c0`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/fe0e6c0))
+- Ingest scripts resolve the Obsidian vault path through the config layer
+  instead of a hardcoded location, with a cron-safe fallback
+  ([`b7ab49a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/b7ab49a))
+- launchd plists render real paths at install time instead of shipping
+  placeholders (fresh installs used to silently never start the daemon), and
+  `install.sh` verifies each agent actually spawned
+  ([`13e3700`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/13e3700))
 - Fresh installs actually start: `install.sh` renders the launchd plist
   placeholders (python path, repo root, log paths) before loading and verifies
   each agent really spawned, instead of copying template plists verbatim and

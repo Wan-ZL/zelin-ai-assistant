@@ -312,10 +312,10 @@ def dispatch_approved(cfg: config.Config) -> int:
                  f"(session={ (req.execution or {}).get('session_id') })")
             count += 1
             # retry succeeded -> clear the failure left by a previous attempt.
-            # (dispatch rebuilds execution so this is usually a no-op; kept as a
-            # belt-and-braces so a stale last_error never lingers on a live run.)
+            # Only when a session actually exists: a dispatch that "succeeded"
+            # without a session_id must keep its error visible on the queued card.
             ex = dict(req.execution or {})
-            if "last_error" in ex or "last_error_at" in ex:
+            if ex.get("session_id") and ("last_error" in ex or "last_error_at" in ex):
                 ex.pop("last_error", None)
                 ex.pop("last_error_at", None)
                 req.execution = ex
