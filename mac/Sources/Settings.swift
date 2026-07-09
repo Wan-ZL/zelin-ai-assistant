@@ -283,18 +283,18 @@ struct SettingsFormView: View {
             .font(.system(size: 12))
 
             group(L("脱敏（发给 AI 前本地打码）", "Redaction (local masking before sending to AI)")) {
-                Toggle(L("启用脱敏 — 发出 prompt 前把词表/密钥替换成 [脱敏]",
-                         "Enable redaction — replace term-list/secret matches with [REDACTED] before sending prompts"),
+                Toggle(L("启用词表脱敏 — 发出 prompt 前把词表词条替换成 [脱敏]",
+                         "Enable term-list redaction — replace term-list matches with [REDACTED] before sending prompts"),
                        isOn: $redactionEnabled)
                     .toggleStyle(.switch)
-                Toggle(L("密钥兜底 — 内置正则 (sk-ant-/xox*/AKIA/gh*_/PEM)",
-                         "Secret fallback — built-in regexes (sk-ant-/xox*/AKIA/gh*_/PEM)"),
+                Toggle(L("密钥掩码 — 内置正则 (sk-ant-/xox*/AKIA/gh*_/PEM)，始终生效，不依赖词表开关",
+                         "Secrets masking — built-in regexes (sk-ant-/xox*/AKIA/gh*_/PEM), always on regardless of the toggle above"),
                        isOn: $redactionMaskSecrets)
                     .toggleStyle(.switch)
                 labeledField(L("词表文件（一行一条，re: 前缀=正则）",
                                "Terms file (one per line, re: prefix = regex)"), $redactionTermsFile)
-                Text(L("默认关闭；打开会改变 AI 看到的内容。本地存的原文不受影响。",
-                       "Off by default; enabling changes what the AI sees. Local originals are unaffected."))
+                Text(L("密钥掩码默认开启；词表脱敏默认关闭（打开会改变 AI 看到的内容）。本地存的原文不受影响。",
+                       "Secrets masking is on by default; term-list redaction is off by default (enabling changes what the AI sees). Local originals are unaffected."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }

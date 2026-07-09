@@ -70,10 +70,10 @@ digest:
 # raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。
 # execution.default_target_repo: "~/Projects/your-workbench"
 
-redaction:                             # 发给 AI 前的本地脱敏（默认关；打开会改变 AI 看到的内容）
-  enabled: false                       # 主开关（也可在 app 设置里切）
+redaction:                             # 发给 AI 前的本地脱敏
+  enabled: false                       # 词表脱敏开关（默认关；打开会改变 AI 看到的内容，也可在 app 设置里切）
   terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）
-  mask_secrets: true                   # 内置密钥/token 正则兜底（sk-ant-/xox*/AKIA/gh*_/PEM）
+  mask_secrets: true                   # 内置密钥/token 掩码（sk-ant-/xox*/AKIA/gh*_/PEM）；默认开且不依赖 enabled
 
 # telemetry:                           # 行为埋点上传（默认关；见 docs/TELEMETRY.md）
 #   enabled: false                     # 打开前先建好自己的 Supabase 项目并跑 supabase/migrations/

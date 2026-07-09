@@ -4,12 +4,16 @@ A deterministic, offline scrub applied at every prompt boundary (executor,
 analyze, radar_slack, radar_gmail, quick_capture). It rewrites only the OUTBOUND
 prompt copy; the registry / notes / vault keep the original text untouched.
 
-Opt-in: config.redaction_enabled (default False — masking changes what the model
-sees, so Zelin turns it on deliberately in Settings). When on:
-  - user terms from config.redaction_terms_file (one per line; `#` comment;
-    `re:<pattern>` = regex; everything else = case-insensitive literal)
-  - built-in secret patterns (if config.redaction_mask_secrets) — the
-    "密钥不出 Mac" belt-and-suspenders: API keys / tokens / private keys.
+Two independent switches:
+  - built-in secret patterns (config.redaction_mask_secrets, default True) —
+    API keys / tokens / private keys are masked in every outbound prompt,
+    REGARDLESS of redaction_enabled. This is the "密钥不出 Mac"
+    belt-and-suspenders and stays on unless explicitly disabled.
+  - user terms (config.redaction_enabled, default False) — opt-in list from
+    config.redaction_terms_file (one per line; `#` comment; `re:<pattern>` =
+    regex; everything else = case-insensitive literal). Opt-in because masking
+    arbitrary terms changes what the model sees, so Zelin turns it on
+    deliberately in Settings.
 
 The matched content is NEVER logged; only the mask COUNT is surfaced.
 """
@@ -71,26 +75,25 @@ def scrub(text: str, cfg=None) -> tuple[str, int]:
             from act.lib import config
             cfg = config.load_config()
         except Exception:  # noqa: BLE001
-            return text, 0
-    if not getattr(cfg, "redaction_enabled", False):
-        return text, 0
+            cfg = None  # fail safe: getattr defaults below still mask secrets
 
     count = 0
     out = text
 
-    # 1) user literal + regex terms
-    terms_file = getattr(cfg, "redaction_terms_file", None)
-    if terms_file:
-        for kind, pat in _load_terms(Path(terms_file).expanduser()):
-            if kind == "lit":
-                if pat.lower() in out.lower():
-                    out, n = re.subn(re.escape(pat), MASK, out, flags=re.IGNORECASE)
+    # 1) user literal + regex terms — opt-in behind redaction_enabled
+    if getattr(cfg, "redaction_enabled", False):
+        terms_file = getattr(cfg, "redaction_terms_file", None)
+        if terms_file:
+            for kind, pat in _load_terms(Path(terms_file).expanduser()):
+                if kind == "lit":
+                    if pat.lower() in out.lower():
+                        out, n = re.subn(re.escape(pat), MASK, out, flags=re.IGNORECASE)
+                        count += n
+                else:
+                    out, n = pat.subn(MASK, out)
                     count += n
-            else:
-                out, n = pat.subn(MASK, out)
-                count += n
 
-    # 2) built-in secrets
+    # 2) built-in secrets — default-on, independent of redaction_enabled
     if getattr(cfg, "redaction_mask_secrets", True):
         for pat in _SECRET_PATTERNS:
             out, n = pat.subn(MASK, out)
