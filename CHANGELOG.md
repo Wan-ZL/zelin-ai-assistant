@@ -21,6 +21,10 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.12.0] - 2026-07-09
+
 The P0 + P1 waves of the open-source readiness review: make a fresh install
 work on a clean Mac, default to privacy-safe behavior, give first-time visitors
 English docs plus privacy/security policies, and harden the pipeline
@@ -89,6 +93,19 @@ channel, and sensitive-app capture exclusion).
   ([`c906f9d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/c906f9d))
 
 ### Changed
+
+- **BREAKING**: approving a card no longer auto-creates a private GitHub repo
+  for new targets — `execution.create_github_repo` now defaults to `false`;
+  set it to `true` explicitly to restore the old behavior
+  ([`710da5a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/710da5a))
+- The dashboard's `completed` list is capped at the 50 most recent items
+  (counts stay exact); resolving credentials through the legacy
+  `~/Desktop/Keys/` path now logs a deprecation warning
+  ([`710da5a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/710da5a))
+- Kanban/popover task rows take an explicit lane (retiring the accent-color
+  hack), error messages are copyable with full text, and timeout notices
+  appear in the lane where the action happened
+  ([`a3fbdca`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/a3fbdca))
 
 - UI language now defaults to the system locale (`zh-*` → Chinese, otherwise
   English) instead of hardcoded Chinese; an explicit language override still
@@ -172,6 +189,7 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`88a2141`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/88a2141)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/Wan-ZL/zelin-ai-assistant/releases/tag/v0.10.3

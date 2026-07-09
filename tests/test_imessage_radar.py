@@ -186,11 +186,11 @@ class IMessageRadarTestCase(unittest.TestCase):
 
     # -- (b) capture path ----------------------------------------------------- #
     def test_non_command_text_goes_to_quick_capture(self):
-        _add_msg(self.conn, text="研究一下新的雪板固定器要不要换")
+        _add_msg(self.conn, text="研究一下 example-bench 的报告导出格式")
         extractor = _FakeExtractor({"action": "ignore", "reason": "闲聊"})
         self.assertEqual(self._scan(extractor=extractor), 1)
         self.assertEqual(len(extractor.calls), 1)
-        self.assertIn("研究一下新的雪板固定器要不要换", extractor.calls[0])
+        self.assertIn("研究一下 example-bench 的报告导出格式", extractor.calls[0])
         self.assertEqual(self._inbox(), [])                 # no approval written
         self.assertIn("先不建卡", self.sender.sent[0][1])   # capture reply relayed
 
