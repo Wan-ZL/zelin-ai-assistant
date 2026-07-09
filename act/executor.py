@@ -9,9 +9,12 @@ Flow (CONTRACT §4):
          paste-ready `FINAL DRAFT:` block in the closing summary, no repo files)
        + if type==training: force a system card per checkpoint.
   2. cd <target_repo> (default ~/Projects/your-workbench, overridable by req/LLM routing)
-     and run `claude --bg --dangerously-skip-permissions "<prompt>"`.
+     and run `claude --bg "<prompt>"` (with --dangerously-skip-permissions while
+     execution.skip_permissions is on — the default).
   3. Capture session_id (from output, else newest `claude agents --json` match on
-     cwd); write back req.execution + status=executing + save.
+     cwd started after the dispatch); write back req.execution + status=executing
+     + save. A failed launch / uncaptured session id keeps the requirement
+     APPROVED with execution.last_error set and raises DispatchError (P0-6).
 
 Run standalone: ``python -m act.executor <req_id>``.
 """
@@ -27,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import analytics, config, sanitize
+from act.lib import analytics, config, notify, sanitize
 from act.lib.registry import Requirement, State, load, save
 
 MEMORY_HEAD_LINES = 60
@@ -287,6 +290,19 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
 # --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
+class DispatchError(RuntimeError):
+    """A ``claude --bg`` launch failed (non-zero exit / subprocess error / no
+    session id captured), or the retry backoff window is still open.
+
+    dispatch() records ``execution.last_error``/``last_error_at`` (the same
+    shape rework() writes) BEFORE raising. Raising — instead of returning —
+    matters: actd.dispatch_approved's success path wipes ``last_error`` after
+    any non-raising dispatch, while its except path keeps the requirement
+    APPROVED for the next-pass retry and re-records the same error, so the
+    dashboard's queued card keeps showing ``dispatch_error``.
+    """
+
+
 def _runner_env() -> dict:
     """Ensure ANTHROPIC_API_KEY is set for the claude subprocess.
 
@@ -317,9 +333,22 @@ def session_name(req: Requirement) -> str:
     return f"{req.id} · {title[:48]}" if title else req.id
 
 
-def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None) -> subprocess.CompletedProcess:
+def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
+    """Base ``claude --bg`` argv shared by all three launch sites (dispatch /
+    resume / rework). ``--dangerously-skip-permissions`` is included only while
+    ``execution.skip_permissions`` is on (default; P0-10) — off means the agent
+    runs under claude's normal permission model and a blocked agent surfaces as
+    needs_input instead of acting unattended."""
+    cmd = ["claude", "--bg"]
+    if cfg is None or getattr(cfg, "skip_permissions", True):
+        cmd.append("--dangerously-skip-permissions")
+    return cmd
+
+
+def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
+                    cfg: Optional[config.Config] = None) -> subprocess.CompletedProcess:
     prompt, _ = sanitize.scrub(prompt)
-    cmd = ["claude", "--bg", "--dangerously-skip-permissions"]
+    cmd = _bg_base_cmd(cfg)
     if name:
         cmd += ["--name", name]
     cmd.append(prompt)
@@ -333,8 +362,46 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None) -> subpr
     )
 
 
-def _newest_session_for_cwd(cwd: str) -> Optional[str]:
-    """Fallback: query `claude agents --json` and return the newest match on cwd."""
+def _parse_when(value) -> Optional[_dt.datetime]:
+    """Best-effort timestamp -> aware UTC datetime (roster ``started_at`` may be
+    ISO-8601, epoch seconds, or epoch millis; registry stamps are ISO Z)."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts <= 0:
+            return None
+        if ts > 1e12:  # epoch millis
+            ts /= 1000.0
+        try:
+            return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return _parse_when(float(s))
+        except (TypeError, ValueError):
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_dt.timezone.utc)
+    return dt
+
+
+def _newest_session_for_cwd(cwd: str,
+                            after: Optional[_dt.datetime] = None) -> Optional[str]:
+    """Fallback: query `claude agents --json` and return the newest match on cwd.
+
+    ``after`` (the pre-launch dispatch timestamp) gates the claim: sessions
+    started before it — or with no parseable start time at all — are never
+    adopted, so a stale unrelated session in the same cwd cannot be claimed as
+    the one we just launched (P0-6). 2s slack tolerates second-truncated roster
+    timestamps.
+    """
     try:
         proc = subprocess.run(
             ["claude", "agents", "--json", "--all"],
@@ -361,8 +428,13 @@ def _newest_session_for_cwd(cwd: str) -> Optional[str]:
         if acwd and (str(acwd).rstrip("/") == tgt or str(acwd).startswith(tgt + "/")):
             sid = a.get("session_id") or a.get("sessionId") or a.get("id")
             started = a.get("started_at") or a.get("startedAt") or a.get("created_at") or 0
-            if sid:
-                candidates.append((started, sid))
+            if not sid:
+                continue
+            if after is not None:
+                started_dt = _parse_when(started)
+                if started_dt is None or started_dt < after - _dt.timedelta(seconds=2):
+                    continue  # pre-dispatch or unknown-age session — never claim it
+            candidates.append((started, sid))
     if not candidates:
         return None
     candidates.sort(key=lambda t: (str(t[0])))
@@ -383,15 +455,43 @@ def dispatch(
     cfg: Optional[config.Config] = None,
     runner: Optional[Callable[[str, Path], subprocess.CompletedProcess]] = None,
 ) -> Requirement:
-    """Dispatch an approved requirement. Injectable ``runner`` for unit tests."""
+    """Dispatch an approved requirement. Injectable ``runner`` for unit tests.
+
+    A failed launch (claude exits non-zero, subprocess error, or no session id
+    captured) must NOT enter EXECUTING (P0-6): reconcile skips executing items
+    without a session_id, so the card would hang "执行中" forever with no agent
+    behind it. Instead the requirement stays APPROVED (dispatch_approved
+    retries it next pass), ``execution.last_error``/``last_error_at`` record
+    the failure (rework() shape; the queued card shows it as dispatch_error),
+    a ``dispatch_failed`` event + notification fire, and DispatchError is
+    raised. Retries back off exponentially (30s·2^attempts, capped 10 min, the
+    reconcile_executing curve) via ``dispatch_attempts``/
+    ``last_dispatch_attempt_at``, which survive actd's last_error clearing;
+    while the window is open the launch is skipped entirely.
+    """
     if cfg is None:
         cfg = config.load_config()
     if runner is None:
         _name = session_name(req)
         def runner(p: str, c: Path) -> subprocess.CompletedProcess:  # noqa: E306
-            return _default_runner(p, c, _name)
+            return _default_runner(p, c, _name, cfg)
 
     config.ensure_state_dirs()
+
+    ex = dict(req.execution or {})
+    attempts = int(ex.get("dispatch_attempts") or 0)
+    if attempts:
+        last_try = _parse_when(ex.get("last_dispatch_attempt_at"))
+        if last_try is not None:
+            backoff = min(600, 30 * (2 ** min(attempts, 5)))
+            elapsed = (_dt.datetime.now(_dt.timezone.utc) - last_try).total_seconds()
+            if 0 <= elapsed < backoff:
+                # still backing off — no launch. Raise the STORED error text
+                # verbatim so actd's re-record is a stable fixpoint (no prefix
+                # stacking) and the queued card keeps showing it.
+                raise DispatchError(str(ex.get("last_error")
+                                        or "dispatch launch failed; retry backing off"))
+
     target = Path(req.target_repo).expanduser() if req.target_repo else cfg.target_repo_path
 
     # Compute + persist target_kind if unset (dir exists & non-empty -> existing).
@@ -421,9 +521,18 @@ def dispatch(
     prompt = build_prompt(req, cfg, target=target)
 
     log_path = config.LOG_DIR / f"{req.id}.log"
-    proc = runner(prompt, target)
-    stdout = getattr(proc, "stdout", "") or ""
-    stderr = getattr(proc, "stderr", "") or ""
+    # pre-launch stamp: the roster fallback below only claims sessions started
+    # AFTER this moment, so it can never adopt an older unrelated session.
+    dispatched_dt = _dt.datetime.now(_dt.timezone.utc)
+    try:
+        proc = runner(prompt, target)
+        rc = getattr(proc, "returncode", 1)
+        stdout = getattr(proc, "stdout", "") or ""
+        stderr = getattr(proc, "stderr", "") or ""
+    except (OSError, subprocess.SubprocessError) as e:
+        # claude missing from PATH under launchd, timeout, ... — same failure
+        # path as a non-zero exit instead of an opaque traceback in actd.log.
+        rc, stdout, stderr = 1, "", str(e)
     try:
         log_path.write_text(
             f"# dispatch {req.id} @ {_dt.datetime.now().isoformat()}\n"
@@ -433,13 +542,37 @@ def dispatch(
     except OSError:
         pass
 
-    session_id = _parse_session_id(stdout) or _parse_session_id(stderr)
-    if not session_id:
-        session_id = _newest_session_for_cwd(str(target))
+    session_id = None
+    if rc == 0:
+        session_id = _parse_session_id(stdout) or _parse_session_id(stderr)
+        if not session_id:
+            session_id = _newest_session_for_cwd(str(target), after=dispatched_dt)
+
+    if rc != 0 or not session_id:
+        if rc != 0:
+            err = ((stdout or "") + (stderr or "")).strip() \
+                or f"claude --bg exited {rc} (no output)"
+            reason = "launch_failed"
+        else:
+            err = "claude --bg launched but no session id was captured"
+            reason = "no_session_id"
+        now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ex["last_error"] = err[:500]
+        ex["last_error_at"] = now
+        ex["dispatch_attempts"] = attempts + 1
+        ex["last_dispatch_attempt_at"] = now
+        ex["log"] = str(log_path)
+        req.execution = ex
+        save(req)  # status untouched — stays APPROVED for the next-pass retry
+        analytics.log_event("dispatch_failed", req=req.id, error=err[:120],
+                            reason=reason, attempt=attempts + 1)
+        if attempts == 0:  # once per failure streak, not on every retry
+            notify.notify("任务派发失败（将自动重试）", req.title or req.id, req=req.id)
+        raise DispatchError(err[:500])
 
     req.execution = {
         "session_id": session_id,
-        "dispatched_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "dispatched_at": dispatched_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "log": str(log_path),
     }
     req.set_status(State.EXECUTING)
@@ -486,8 +619,7 @@ def resume(
     if runner is None:
         def runner() -> subprocess.CompletedProcess:
             return subprocess.run(
-                ["claude", "--bg", "--dangerously-skip-permissions",
-                 "--name", session_name(req), "--resume", str(sid)],
+                _bg_base_cmd(cfg) + ["--name", session_name(req), "--resume", str(sid)],
                 cwd=str(target),
                 capture_output=True,
                 text=True,
@@ -748,8 +880,8 @@ def rework(
             # (extracted helper; same behaviour as the old inline block).
             stop_session(sid, info=info)
             return subprocess.run(
-                ["claude", "--bg", "--dangerously-skip-permissions",
-                 "--name", session_name(req), "--resume", str(sid), sanitize.scrub(p)[0]],
+                _bg_base_cmd(cfg) + ["--name", session_name(req),
+                                     "--resume", str(sid), sanitize.scrub(p)[0]],
                 cwd=str(target),
                 capture_output=True,
                 text=True,
@@ -800,7 +932,11 @@ def _main(argv: list[str]) -> int:
     if req is None:
         print(f"error: requirement {req_id} not found in registry")
         return 1
-    dispatch(req)
+    try:
+        dispatch(req)
+    except DispatchError as e:
+        print(f"dispatch failed (status stays {req.status}): {e}")
+        return 1
     sid = (req.execution or {}).get("session_id")
     print(f"dispatched {req_id} -> session {sid} (status={req.status})")
     return 0

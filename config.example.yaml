@@ -50,6 +50,7 @@ execution:
   memory_inject: true                  # 注入 auto-memory program maps + 约束
   create_github_repo: true             # target_kind=new 时建私有 GitHub repo 做 remote（draft PR 需要）；关掉则只本地 git init 交分支
   auto_resume: true                    # 执行中任务的后台 agent 死掉（睡眠/断网/崩溃）时自动 claude --resume 拉起，带退避
+  # skip_permissions: true             # 后台 agent 带 --dangerously-skip-permissions 无人值守跑（默认）；改 false 走 claude 正常权限模型，被挡住的 agent 会浮到 needs_input 等你确认
   quality_gate:
     self_check: true                   # 可运行检查 + 证据
     fresh_context_review: true         # 交付前 fresh-context 审 diff
