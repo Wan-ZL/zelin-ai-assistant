@@ -265,16 +265,17 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
                 + mem
             )
 
-    # comms voice: chat 模式的产出以 Zelin 名义发出，必须像他本人。档案住 state/
-    # （真实说话样本 = 工作数据，不入 git）；文件不存在时静默跳过，行为不变。
-    if delivery_mode == "chat":
-        voice_file = config.STATE_DIR / "voice-profile.md"
-        if voice_file.exists():
-            blocks.append(
-                "\n## VOICE PROFILE — 以 Zelin 名义发出的一切文字必须过这关\n"
-                f"先 Read {voice_file} 并严格遵守：全局铁律、匹配语境桶的例句风格、"
-                "反面清单。自检标准：你的草稿放进该桶的真实例句堆里毫不违和。"
-            )
+    # comms voice: 以 Zelin 名义起草的文字必须像他本人。档案住 state/（真实
+    # 说话样本 = 工作数据，不入 git）；文件不存在时静默跳过，行为不变。不做
+    # chat-only 门控：repo 任务也常在总结/交付物里带消息草稿，同样适用。
+    voice_file = config.STATE_DIR / "voice-profile.md"
+    if voice_file.exists():
+        blocks.append(
+            "\n## VOICE PROFILE — 以 Zelin 名义起草的一切文字（消息/邮件/报告）必须过这关\n"
+            f"先 Read {voice_file} 并严格遵守：全局铁律、匹配语境桶的例句风格、"
+            "反面清单。自检标准：你的草稿放进该桶的真实例句堆里毫不违和。"
+            "Plain, short, direct beats polished."
+        )
 
     blocks.append("\n## " + _quality_gate_block(cfg, remote=remote,
                                                 delivery_mode=delivery_mode))
@@ -286,19 +287,6 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
         blocks.append(
             "\nNOTE: This output requires the manager's green sign before going external. "
             "Stop at draft — do not publish or share outside."
-        )
-
-    # Voice profile (optional, user-maintained at state/voice-profile.md):
-    # drafts written in the owner's name must sound like the owner, not like a
-    # polished assistant — past rework feedback shows tone mismatch is the #1
-    # reason comms drafts get rejected.
-    voice = config.STATE_DIR / "voice-profile.md"
-    if voice.exists():
-        blocks.append(
-            f"\nVOICE: if this task involves drafting ANY message or document in "
-            f"the owner's name (chat replies, emails, reports), first Read "
-            f"{voice} and follow its tone rules and few-shot examples exactly. "
-            "Plain, short, direct beats polished."
         )
 
     if delivery_mode == "chat":
