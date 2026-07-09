@@ -70,6 +70,17 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN" "$APP_DIR/Contents/MacOS/$EXEC_NAME"
 cp "$PLIST" "$APP_DIR/Contents/Info.plist"
+# version single source of truth: act/__init__.py (same extraction as
+# mac/package.sh). Stamp the STAGED plist only — the source Info.plist keeps
+# its values as a fallback for when the version cannot be read.
+VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$SCRIPT_DIR/../act/__init__.py" 2>/dev/null || true)"
+if [ -n "$VERSION" ]; then
+    plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+    plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+    echo "    stamped version $VERSION (from act/__init__.py)"
+else
+    echo "WARN: could not read __version__ from act/__init__.py — bundle keeps the Info.plist fallback version."
+fi
 # app icon (optional — present after icon generation)
 if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then
     cp "$SCRIPT_DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
