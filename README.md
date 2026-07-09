@@ -54,7 +54,7 @@ HANDOFF.md         # 交接书：架构地图 + 设计决策 + 血泪坑清单
 
 ## 地雷（新组件开发必读）
 
-1. cron 的 daemon session 读不了 Keychain OAuth → headless Claude 用 `ANTHROPIC_API_KEY`（`config/secrets/anthropic-api-key.txt`，见 `docs/CONTRACT.md` §19）。
+1. cron 的 daemon session 读不了 Keychain OAuth（部分机器如此）→ headless Claude 优先用 `ANTHROPIC_API_KEY`（`config/secrets/anthropic-api-key.txt`，见 `docs/CONTRACT.md` §19）；两个 key 文件都缺失时回退到 claude CLI 自带凭证（常开的 Mac mini 上 cron 通常能用）。
 2. launchd 进程被 TCC 挡在 ~/Documents 外 → 定时任务走 crontab，launchd 只做不碰 Documents 的活。
 3. Slack/Atlassian MCP 的 OAuth 在 headless 下未验证；兜底 = Atlassian API token（写入 `config/secrets/`，见 `docs/CONTRACT.md` §19）。
 4. 执行器必须注入 auto-memory 的 program map 与约束（例如：eval 走统一 CLI、数据放固定目录、云端资源命名规则等）。
