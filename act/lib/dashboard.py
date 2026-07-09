@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import config
+from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all
 
 TIER_HINTS = {
@@ -91,11 +92,6 @@ def _index_agents(agents: list[dict]) -> dict[str, dict]:
             if key:
                 idx.setdefault(str(key), n)
     return idx
-
-
-_RUNNING_STATES = {"working", "running", "executing", "active", "busy", "in_progress"}
-_BLOCKED_STATES = {"blocked", "waiting", "needs_input", "paused", "waiting_for_input"}
-_DONE_STATES = {"done", "completed", "finished", "exited", "complete", "success"}
 
 
 # --------------------------------------------------------------------------- #

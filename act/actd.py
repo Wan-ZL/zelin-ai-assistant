@@ -26,14 +26,17 @@ from pathlib import Path
 from typing import Optional
 
 from act.lib import analytics, config, notify, registry
+from act.lib.agent_states import (
+    _BLOCKED_STATES,
+    _DONE_STATES,
+    _LIVE_STATES,
+    _RUNNING_STATES,
+)
 from act.lib.dashboard import (
     build_dashboard,
     write_dashboard,
     _run_claude_agents,
     _index_agents,
-    _DONE_STATES,
-    _BLOCKED_STATES,
-    _RUNNING_STATES,
 )
 from act.lib.registry import Requirement, State, load, load_all, save
 
@@ -445,11 +448,6 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------- #
 # auto-resume interrupted executing tasks
 # --------------------------------------------------------------------------- #
-_LIVE_STATES = {
-    "working", "running", "executing", "active", "busy", "in_progress", "idle",
-}
-
-
 def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
     """待验收任务的 attach 回流 —— 只动投影层，不动状态机（registry 仍是 review）。
 
