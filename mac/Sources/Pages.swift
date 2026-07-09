@@ -11,6 +11,7 @@ enum DepAction {
     case url(String)
     case reveal(String)
     case settings   // credential rows: jump to the 设置 page (App 内管理)
+    case ingest     // engine row: jump to the 录制与 ingest page (start/stop there)
 
     @MainActor func perform() {
         switch self {
@@ -27,6 +28,8 @@ enum DepAction {
             // and flashes it (Settings.swift side).
             MainNav.shared.pendingAnchor = "credentials"
             MainNav.shared.section = .settings
+        case .ingest:
+            MainNav.shared.section = .ingest
         }
     }
 
@@ -35,6 +38,7 @@ enum DepAction {
         case .url: return L("下载页", "Download")
         case .reveal: return L("显示", "Reveal")
         case .settings: return L("去设置", "Open Settings")
+        case .ingest: return L("去录制页", "Open Recording")
         }
     }
 }
@@ -93,11 +97,22 @@ final class DepsModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let fm = FileManager.default
             var out: [DepRowState] = []
+            // screenpipe: canonical launch path is `npx screenpipe@<pin>`
+            // (Recording.swift) — check npx presence + engine liveness (pgrep
+            // contract), NOT /Applications/Screenpipe.app.
             out.append(DepRowState(
-                id: "screenpipe", name: "Screenpipe",
-                ok: fm.fileExists(atPath: "/Applications/Screenpipe.app"),
-                detail: "/Applications/Screenpipe.app",
-                action: .url("https://screenpi.pe")))
+                id: "npx", name: "Node / npx",
+                ok: Shell.ok("command -v npx >/dev/null"
+                    + " || test -x /opt/homebrew/bin/npx"),
+                detail: L("npx（screenpipe 引擎经 npx 自动运行，无需单独安装；缺失则 brew install node）",
+                          "npx (screenpipe engine runs via npx — no separate install; missing? brew install node)"),
+                action: .url("https://nodejs.org")))
+            out.append(DepRowState(
+                id: "engine", name: L("录制引擎", "Recording engine"),
+                ok: RecordingController.isEngineRunning(),
+                detail: "pgrep -f \"\(RecordingController.enginePattern)\""
+                    + L("（引擎进程存活）", " (engine process alive)"),
+                action: .ingest))
             // API-key workflow: only probe that the executable exists (GUI
             // shells often miss ~/.local/bin in PATH). Never suggests login.
             out.append(DepRowState(

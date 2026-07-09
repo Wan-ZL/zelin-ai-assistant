@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) into ~/Library/LaunchAgents — do not load this file as-is.
+
   radar — periodic requirement scanner (every 30 min) for Zelin's AI Assistant.
   Scans incremental sources (Obsidian "2 - raw", watched Slack) and updates the
   requirement registry (act/registry/*.yaml), emitting new approval cards.

@@ -29,7 +29,8 @@ state 目录 → 构建并安装 Mac app → launchd agents → crontab。幂等
 ## 装完之后（两条路线都要，手动）
 
 1. **依赖自备**：[Claude Code CLI](https://claude.com/claude-code)（必需）、
-   [screenpipe](https://screenpi.pe)（可选，录屏 ingest 源）、Obsidian（可选，雷达读 vault）。
+   [Node.js](https://nodejs.org) ≥ LTS（录屏 ingest 用——screenpipe 引擎经 npx
+   自动运行，无需单独安装）、Obsidian（可选，雷达读 vault）。
 2. **Anthropic API key**：打开 app 的设置窗口粘贴保存（写入
    `config/secrets/anthropic-api-key.txt`，见 CONTRACT §19）。headless claude 在
    cron/launchd 下读不了 Keychain OAuth，必须有文件形式的 key。
