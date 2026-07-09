@@ -34,6 +34,7 @@
 | 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | 开 | `execution.create_github_repo: false` |
 | 9 | 通知镜像 | 每条 macOS 通知 | 你的 Slack self-DM | 开 | `features.slack_radar: false` / 不配 token |
 | 10 | Telemetry | 手动/cron 运行 sync 时 | 你自己的 Supabase | **关** | 默认即关（`telemetry.enabled: false`） |
+| 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -139,6 +140,26 @@
   （事件名/时间戳/req id/版本/随机 device uuid）,**无任何内容数据**——没有 prompt、
   消息正文、文件内容、密钥。
 - 详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
+
+### 11. iMessage 手机通道（opt-in，默认关，仅 macOS）
+
+- **默认关**。`phone_channel: none` 时这条通道完全不存在（launchd plist 都不会被安装，
+  见 install.sh step 5 的 gate）。设 `phone_channel: imessage` 才启用（CONTRACT §13
+  通道可插拔；`docs/IMESSAGE_SETUP.md`）。
+- **本地读取（不出境）**：`act/radar_imessage.py` 每 3 分钟以 sqlite **只读**（`mode=ro`
+  URI，无法写入）打开 `~/Library/Messages/chat.db`，只处理"给自己发消息"线程里
+  `is_from_me=1` 的新行（marker = 最后 ROWID）。这需要给雷达的 python 二进制授
+  **Full Disk Access**——授了 FDA 的进程技术上能读整个 chat.db，但本雷达只查询
+  self-thread 的消息与 tapback 目标行。数据库内容本身**不上传**。
+- **出境**：你在 self-thread 里发的**文字**走 quick capture（同第 5 条：文本 + 注册表
+  清单 → Anthropic，出境前过 `sanitize.scrub()`）；审批指令（`批准 R-xxx` 等）在本地
+  正则解析，**不经 LLM**。通知镜像（🔔 + `#R-xxx`，与第 9 条同款元数据）经 osascript →
+  Messages.app → Apple 的 iMessage 服务发给**你自己的 handle**——pipeline 永远不会给
+  别人发 iMessage（与 Slack 通道同一条红线）。出站消息只在本地
+  `state/imessage_outbox.json` 记 req id + 时间（14 天后清）。
+- **关闭**：`phone_channel` 改回 `none`（或 `slack`）后重跑 `install.sh`——step 5 会
+  卸载并删除该 launchd agent；或手动 `launchctl unload
+  ~/Library/LaunchAgents/com.zelin.aiassistant.imessageradar.plist`。
 
 ## 什么永不离开你的 Mac
 

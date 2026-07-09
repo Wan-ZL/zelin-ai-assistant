@@ -1,4 +1,4 @@
-"""macOS notifications + Slack self-DM mirror + transition classifiers (CONTRACT §5, §13).
+"""macOS notifications + phone-channel mirror + transition classifiers (CONTRACT §5, §13).
 
 State transitions surfaced as native notifications:
   - new card_sent (radar found a new requirement)  -> "有新需求待审批：<title>"
@@ -6,11 +6,18 @@ State transitions surfaced as native notifications:
   - executing -> blocked (needs_input)             -> "任务需要你输入：<title>"
   - credential failure (log has auth/login words)  -> "需要重新登录：<service>"
 
-v0.4 (§13): every notification is ALSO mirrored to the Slack self-DM
-(best-effort, never raises, requires features.slack_radar + a readable user
-token) so it reaches Zelin's phone. Pass ``req="R-xxx"`` so the Slack message
-carries ``#R-xxx`` and gets tracked in state/slack_outbox.json — a ✅ reaction
-on it then approves that requirement (radar_slack polls reactions.get).
+v0.4 (§13): every notification is ALSO mirrored to the phone channel
+(best-effort, never raises) so it reaches Zelin's phone. Pass ``req="R-xxx"``
+so the mirrored message carries ``#R-xxx`` and is tracked in the channel's
+outbox — reacting to it (Slack ✅ / iMessage 👍/❤️ tapback) then approves that
+requirement.
+
+v0.12 (§13, channel-pluggable): the mirror routes on config ``phone_channel``:
+  - "imessage"        -> iMessage message-yourself thread (osascript ->
+                         Messages.app; tracked in state/imessage_outbox.json)
+  - "slack" / "none"  -> the legacy Slack self-DM path, which self-gates on
+                         features.slack_radar + a readable user token — so
+                         existing setups keep working with no config change.
 """
 from __future__ import annotations
 
@@ -31,9 +38,9 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
     """Fire a macOS notification via osascript. Returns True on success.
 
     Never raises — a failed notification must not break the daemon loop.
-    Also mirrors to the Slack self-DM (§13) best-effort; the return value
-    reflects ONLY the osascript path (unchanged behavior). ``req`` (an R-xxx
-    id, optional) makes the Slack copy ✅-approvable.
+    Also mirrors to the configured phone channel (§13) best-effort; the return
+    value reflects ONLY the osascript path (unchanged behavior). ``req`` (an
+    R-xxx id, optional) makes the mirrored copy reaction-approvable.
     """
     def esc(s: str) -> str:
         return str(s).replace("\\", "\\\\").replace('"', '\\"')
@@ -53,10 +60,66 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
         ok = False
 
     try:
-        slack_notify(title, body, req=req)   # best-effort phone mirror (§13)
-    except Exception:  # noqa: BLE001 - slack_notify already never raises; belt+braces
+        _phone_mirror(title, body, req=req)   # best-effort phone mirror (§13)
+    except Exception:  # noqa: BLE001 - the mirrors already never raise; belt+braces
         pass
     return ok
+
+
+def _phone_mirror(title: str, body: str, req: Optional[str] = None) -> None:
+    """Route the phone mirror by config (§13, channel-pluggable).
+
+    ``phone_channel: imessage`` -> iMessage only. ``slack`` and ``none``
+    (including a missing key) both take the legacy Slack path, which self-gates
+    on features.slack_radar + token — an existing Slack setup keeps mirroring
+    after an upgrade without touching its config, and a tokenless one stays a
+    no-op exactly as before.
+    """
+    from act.lib import config as _config
+    cfg = _config.load_config()
+    if getattr(cfg, "phone_channel", "none") == "imessage":
+        imessage_notify(title, body, req=req, cfg=cfg)
+    else:
+        slack_notify(title, body, req=req)
+
+
+# --------------------------------------------------------------------------- #
+# iMessage message-yourself thread (§13 outbound, v0.12)
+# --------------------------------------------------------------------------- #
+def imessage_notify(title: str, body: str, req: Optional[str] = None,
+                    cfg=None, runner=None) -> bool:
+    """Post ``🔔 <title>\\n<body>`` (+ ``#R-xxx`` when ``req`` given) into the
+    user's own iMessage thread. Returns True when the send succeeded.
+
+    Best-effort: channel not selected / no self_handle / osascript failure ->
+    False, NEVER raises. When ``req`` is given it is recorded in
+    state/imessage_outbox.json so radar_imessage can turn a 👍/❤️ tapback on
+    the message into an inbox approve. ``runner`` is the injectable osascript
+    send runner (tests).
+    """
+    try:
+        # lazy import: radar_imessage owns all iMessage plumbing (same pattern
+        # as slack_notify -> radar_slack below).
+        from act import radar_imessage
+        from act.lib import config as _config
+
+        if cfg is None:
+            cfg = _config.load_config()
+        if getattr(cfg, "phone_channel", "none") != "imessage":
+            return False
+        handle = str(getattr(cfg, "imessage_self_handle", None) or "").strip()
+        if not handle:
+            return False
+        text = f"🔔 {title}\n{body}"
+        if req:
+            text += f"\n#{req}"
+        if not radar_imessage.send_imessage(handle, text, runner=runner):
+            return False
+        if req:
+            radar_imessage.record_outbox(req)
+        return True
+    except Exception:  # noqa: BLE001 - a phone mirror must never break the daemon
+        return False
 
 
 # --------------------------------------------------------------------------- #

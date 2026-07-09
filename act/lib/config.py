@@ -143,6 +143,14 @@ class Config:
     telemetry_supabase_url: str = ""
     telemetry_key_path: Optional[str] = None
 
+    # phone command channel (§13, channel-pluggable) — which channel carries
+    # the notify mirror + the phone command surface. "none"/"slack" keep the
+    # legacy Slack behavior (self-gated on features.slack_radar + token);
+    # "imessage" switches the mirror to iMessage and arms act/radar_imessage.py
+    # (needs imessage_self_handle + Full Disk Access, docs/IMESSAGE_SETUP.md).
+    phone_channel: str = "none"
+    imessage_self_handle: Optional[str] = None
+
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"
 
@@ -270,6 +278,13 @@ def load_config() -> Config:
     if _tf and not str(_tf).startswith(("/", "~")):
         cfg.redaction_terms_file = str(HOME / _tf)
 
+    pc = str(data.get("phone_channel") or "").strip().lower()
+    if pc in ("none", "slack", "imessage"):
+        cfg.phone_channel = pc
+    imsg = data.get("imessage", {}) or {}
+    if isinstance(imsg, dict):
+        cfg.imessage_self_handle = imsg.get("self_handle", cfg.imessage_self_handle)
+
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
 
@@ -322,6 +337,8 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_address": str,
     "gmail_app_password_path": str,
     "gmail_enabled": bool,
+    "phone_channel": str,
+    "imessage_self_handle": str,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
     "trash_retention_days": int,

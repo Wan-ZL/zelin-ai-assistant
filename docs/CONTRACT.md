@@ -145,6 +145,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **出站通知**：notify 增加 Slack 通道（token 存在时）——新卡/待验收/需输入/恢复放弃 发到 self-DM，格式含 `#R-xxx`。
 - **手机审批**：self-DM 回复 `批准 R-xxx` / `拒绝 R-xxx` / `打回 R-xxx <反馈>` / `验收 R-xxx` → 写 inbox 同名 action。对通知消息点 ✅ reaction（reactions:read 轮询）= 批准该消息里的 R-xxx。
 - 新增 user-token scopes：`files:read, chat:write, reactions:read`（SLACK_SETUP.md 更新）。
+- **通道可插拔（v0.12 additive）**：本节的指令面（`批准/拒绝/打回/验收 R-xxx`、快速捕获、reaction/tapback 审批、🔔 出站镜像）不与 Slack 绑定。config `phone_channel: imessage` 时由 `act/radar_imessage.py` 在 iMessage"给自己发消息"线程上提供**同一指令面、写同一批 inbox 决策文件**（`~/Library/Messages/chat.db` 只读轮询 + osascript 发送；👍/❤️ tapback = ✅；marker = 最后 message ROWID，`state/imessage_radar.json`；出站追踪 `state/imessage_outbox.json`；文法/inbox 写入直接复用 radar_slack，两通道不可能漂移）。`phone_channel: none|slack`（含缺省）时 Slack 侧行为不变。iMessage 侧 v1 仅支持文字（图片/视频仍走 Slack 路径）。详见 `docs/IMESSAGE_SETUP.md`。
 
 ## 14. Gmail 捕获
 `act/radar_gmail.py`：imaplib SSL 轮询 INBOX 未读（只读、不改已读状态优先用 BODY.PEEK）→ LLM 三选一（需要 Zelin 处理→卡片 / FYI 跳过）。config: `sources.gmail: {address, app_password_path: "~/Desktop/Keys/gmail-app-password.txt", enabled}`；密码文件不存在则静默 no-op。launchd 每 5 分钟（纯网络，TCC 安全）。marker=最后处理的 UID（state/gmail_radar.json）。docs/GMAIL_SETUP.md 写建应用专用密码步骤。

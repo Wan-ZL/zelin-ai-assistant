@@ -293,12 +293,23 @@ else
     echo "==> 5. launchd agents"
     mkdir -p "$LA_DIR"
     info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
+    # feature gate: the imessage radar only loads when config selects the
+    # channel. Read through act.lib.config (so settings_overrides.json is
+    # honored too); an unreadable config counts as "none".
+    PHONE_CHANNEL="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c 'from act.lib import config; print(getattr(config.load_config(), "phone_channel", "none"))' 2>/dev/null || echo none)"
     LOADED_LABELS=""
     for plist in "$REPO_ROOT"/act/launchd/*.plist; do
         [ -e "$plist" ] || continue
         base="$(basename "$plist")"
         label="${base%.plist}"
         dest="$LA_DIR/$base"
+        if [ "$label" = "com.zelin.aiassistant.imessageradar" ] && [ "$PHONE_CHANNEL" != "imessage" ]; then
+            # feature off: also unload+remove any previously-installed copy
+            launchctl unload "$dest" >/dev/null 2>&1 || true
+            rm -f "$dest"
+            info "skipped $label (phone_channel=$PHONE_CHANNEL — set phone_channel: imessage in config.yaml to enable, see docs/IMESSAGE_SETUP.md)"
+            continue
+        fi
         # unload any previous version first
         launchctl unload "$dest" >/dev/null 2>&1 || true
         render_launchd_plist "$plist" "$dest"
