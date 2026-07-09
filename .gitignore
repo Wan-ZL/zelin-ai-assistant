@@ -1,0 +1,13 @@
+config.yaml
+config/secrets/
+config/redaction_terms.txt
+# runtime registry entries contain real extracted work data — never commit them
+act/registry/R-*.yaml
+!act/registry/R-000-example.yaml
+*.log
+.DS_Store
+state/
+mac/build/
+__pycache__/
+*.pyc
+config/runtime.json

@@ -1,0 +1,22 @@
+display_information:
+  name: Zelin AI Engineer Capture
+  description: Personal capture channel. Reads own DMs and mentions to draft tasks. Drafts only, never auto-sends.
+  background_color: "#1a1d21"
+oauth_config:
+  scopes:
+    user:
+      - search:read
+      - im:history
+      - im:read
+      - mpim:history
+      - mpim:read
+      - channels:history
+      - groups:history
+      - users:read
+      - files:read
+      - chat:write
+      - reactions:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

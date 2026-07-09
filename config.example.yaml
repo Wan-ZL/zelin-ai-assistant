@@ -1,0 +1,76 @@
+# Zelin's AI Assistant 配置模板 — copy 为 config.yaml 并按自己环境填写（config.yaml 不入库）
+owner:
+  name: Your Name
+  slack_user_id: U01234ABCDE          # 审批 DM 发到这里（换成你自己的 Slack user id）
+  display_name: "Zelin's AI Assistant"
+
+# 凭证说明（CONTRACT §19）：token/密码路径字段都可省略——推荐直接在 App 设置窗口
+# 粘贴保存（写入 config/secrets/，目录 0700/文件 0600）。解析顺序：
+#   config/secrets/<固定文件名> → 这里的显式路径 → 旧默认（~/Desktop/Keys/...）
+sources:                               # 需求雷达监控的增量源
+  obsidian_raw: "~/Documents/Obsidian Vault/2 - raw"
+  # Obsidian 管线四目录（按处理顺序）：1 - unprocessed（截图/录音导出落点）→
+  # 2 - raw（= 上面的 obsidian_raw，雷达扫描源）→ 3 - change-summary（ingest
+  # 变更日志）→ 4 - wiki（加工后的知识库）。下面三键缺省时自动由 obsidian_raw
+  # 的上级目录（vault 根）+ 标准目录名派生，通常无需填写；也可在 App 设置窗口
+  # 的"Obsidian 目录"小节编辑（写入 settings_overrides，优先级最高）。
+  # obsidian_unprocessed: "~/Documents/Obsidian Vault/1 - unprocessed"
+  # obsidian_change_summary: "~/Documents/Obsidian Vault/3 - change-summary"
+  # obsidian_wiki: "~/Documents/Obsidian Vault/4 - wiki"
+  # slack_token_path 可省略：推荐在 App 设置窗口粘贴保存（config/secrets/slack-user-token.txt）
+  slack_token_path: "~/Desktop/Keys/slack-user-token.txt"  # user token xoxp-（读 DM/@提及需要；见 docs/SLACK_SETUP.md）
+  slack_channels:                      # 这些频道里 @ 你才会建卡片（DM/群会全看）
+    - id: C01234ABCDE                  # <your-team-channel>
+      name: your-team-channel
+    - id: C01234FGHIJ                  # <your-weekly-report-channel>（周报所在）
+      name: your-weekly-report-channel
+  slack_dms:
+    - id: D01234ABCDE                  # manager DM
+      name: manager
+  slack_mcp_fallback: true             # 无 token 时改走 Slack MCP 只读兜底扫描（见 docs/SLACK_SETUP.md）
+  slack_mcp_interval_minutes: 30       # MCP 兜底最小间隔（launchd 每 3 分钟触发，靠 state/slack_mcp.marker 节流）
+  watch_people:                        # 这些人的消息/会议内容才触发需求提取
+    # 第一项视为你的 manager（radar 用其 first-name token 识别会议记录里的提及）
+    - your.manager
+  # gmail:                             # Gmail 捕获（见 docs/GMAIL_SETUP.md）
+  #   address: "your.name@gmail.com"
+  #   enabled: true
+  #   # app_password_path 可省略：推荐在 App 设置窗口粘贴保存
+  #   # （config/secrets/gmail-app-password.txt）；旧默认 ~/Desktop/Keys/gmail-app-password.txt 仍兜底
+
+approval:
+  surface: slack                       # v0: slack（桌面+手机同一条消息）；v2+: mac-app
+  poll_interval_minutes: 30
+  cost_thresholds:
+    show_cost_above_usd: 5             # 低于此值卡片不显示成本
+    require_text_confirm_above_usd: 50 # 高于此值升 T2，需文字确认
+
+execution:
+  dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控
+  memory_inject: true                  # 注入 auto-memory program maps + 约束
+  create_github_repo: true             # target_kind=new 时建私有 GitHub repo 做 remote（draft PR 需要）；关掉则只本地 git init 交分支
+  auto_resume: true                    # 执行中任务的后台 agent 死掉（睡眠/断网/崩溃）时自动 claude --resume 拉起，带退避
+  quality_gate:
+    self_check: true                   # 可运行检查 + 证据
+    fresh_context_review: true         # 交付前 fresh-context 审 diff
+  training:
+    system_card_per_ckpt: true         # 强制：训前设计卡 + 训后结果回填
+
+trash:
+  retention_days: 60                   # 回收站保留天数；超期且未标永久的硬删。设 0 = 永不自动清
+
+integrations:
+  jira: off                            # 默认关；开启后自动建票到 projectKey
+  jira_project_key: ABC                # 换成你自己的 Jira project key
+
+digest:
+  weekly: monday                       # 周一 digest：低置信度疑似需求 + 卡住任务 + 双向欠账
+
+# 执行落点：req 未指定 target_repo 时的兜底（paperwork/调研的家；绝不默认进你的代码 repo，如 your-bench-repo）
+# raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。
+# execution.default_target_repo: "~/Projects/your-workbench"
+
+redaction:                             # 发给 AI 前的本地脱敏（默认关；打开会改变 AI 看到的内容）
+  enabled: false                       # 主开关（也可在 app 设置里切）
+  terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）
+  mask_secrets: true                   # 内置密钥/token 正则兜底（sk-ant-/xox*/AKIA/gh*_/PEM）

@@ -1,0 +1,11 @@
+# Copy this file to config/redaction_terms.txt — the real file is gitignored.
+# 本地脱敏词表 — 发给 Claude / API 之前在本机把这些内容替换成 [脱敏]
+# 一行一条。# 开头是注释。re: 开头是正则（不区分大小写）。其余按字面（不区分大小写）匹配。
+# 只影响"发出去的那份 prompt"，本地存的原文（注册表/笔记/vault）不动。
+# 编辑后立即生效，无需重启（按文件 mtime 热加载）。
+#
+# 示例（删掉 # 启用）：
+# 某个不想外发的项目代号
+# re:\b内部代号[-_]?\d+\b
+#
+# 密钥类默认由内置正则兜底（sk-ant-/xox*/AKIA/gh*_/PEM 私钥），无需在此列。

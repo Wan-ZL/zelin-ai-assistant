@@ -1,0 +1,45 @@
+# Release: on push of a v* tag — run all CI gates, package the .app with ditto, publish a GitHub Release.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
+        run: python3 -m pip install --user pyyaml || python3 -m pip install --user --break-system-packages pyyaml
+
+      - name: Compile Python sources
+        run: python3 -m compileall -q act ingest
+
+      - name: Run unit tests
+        run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
+
+      - name: Build macOS app
+        run: bash mac/build.sh
+
+      - name: Package app bundle
+        # ditto (not zip) preserves resource forks / bundle metadata correctly.
+        # App name contains an apostrophe — always reference it via a quoted variable.
+        run: |
+          APP="Zelin's AI Assistant.app"
+          ZIP="ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
+          cd mac/build
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+
+      - name: Create GitHub Release and upload asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
+          gh release create "$GITHUB_REF_NAME" --generate-notes --latest
+          gh release upload "$GITHUB_REF_NAME" "$ZIP"
