@@ -1,0 +1,27 @@
+# Template for GitHub's auto-generated release notes (used by
+# `gh release create --generate-notes` and the Releases UI).
+# Categories match on PR labels; unlabeled PRs land in "Other changes".
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: Features
+      labels:
+        - feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - fix
+        - bug
+    - title: Docs
+      labels:
+        - docs
+        - documentation
+    - title: CI & internal
+      labels:
+        - ci
+        - chore
+    - title: Other changes
+      labels:
+        - "*"

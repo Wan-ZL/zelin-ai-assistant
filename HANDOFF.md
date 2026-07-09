@@ -137,8 +137,13 @@
 - 已知小债：① TaskRow 用 accent 颜色识别"已验收"列（宜改显式参数）；② queued 灰卡上的
   停止按钮可点（合语义但视觉待观察）；③ ingest 导出脚本硬编码 unprocessed 路径，
   未接 config 的 obsidian_unprocessed；④ 排序无 memo（当前量级无碍）。
+- **Ingest 切换说明（暂不执行）**：原开发机的生产 crontab 仍指向 `~/Applications/*.sh` 和
+  `~/.local/bin/process-screenpipe.sh`；本 repo 内是这些脚本的受版本控制副本。验证一段
+  时间后，将 crontab 改指向本 repo 路径，原件归档。（新装机器不受影响——install.sh
+  直接装 repo 路径的 cron 链。）
 - 平台依赖：macOS + screenpipe（npx 起录制引擎）+ Obsidian vault + claude CLI +
-  自备 Anthropic API key。首次跑见 PUBLISHING.md 与 install.sh。
+  自备 Anthropic API key。首次跑见 docs/INSTALL.md 与 install.sh；公开导出的脱敏
+  说明见 docs/SANITIZATION.md。
 
 ## 6. 路线图（原开发环境里排过序的想法）
 
