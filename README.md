@@ -1,9 +1,21 @@
 # Zelin's AI Assistant
 
+[![CI](https://github.com/Wan-ZL/zelin-ai-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Wan-ZL/zelin-ai-assistant/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Wan-ZL/zelin-ai-assistant)](https://github.com/Wan-ZL/zelin-ai-assistant/releases/latest)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/license-FSL--1.1--MIT-blue)](LICENSE.md)
+
 个人 AI 助理套件：**感知（Ingest）+ 行动（Act）** 两条 pipeline，一个 repo。
+你只做两件事——**批准** 和 **验收**，其余全自动。
+
+![任务台看板](docs/assets/kanban.png)
 
 - **Ingest**（已运转，本 repo 收编版本控制）：Screenpipe 屏幕+音频 → 增量导出 → headless Claude 全自动加工 → Obsidian LLM-wiki。
 - **Act**（新建）：需求雷达扫描会议记录/Slack/Confluence → 需求注册表（跨源合并去重）→ 审批卡片（电脑/手机一键 ✅/❌/💬）→ `claude --bg` 后台执行（代码/benchmark/实验/训练）→ 质量门 → 交付闭环。
+
+<table><tr>
+<td width="38%" valign="top"><img src="docs/assets/popover.png" alt="菜单栏 popover：待审批卡片"></td>
+<td valign="top"><img src="docs/assets/flow.gif" alt="审批 → 排队 → 执行 → 待验收 → 已验收 全流程"><br><sub>一张卡片的一生：批准 → 排队 → 执行 → 待验收 → 已验收（<a href="docs/assets/demo.mp4">mp4 版</a>；图中数据全部为虚构 demo 数据，由 <code>scripts/demo_seed.py</code> 生成）</sub></td>
+</tr></table>
 
 设计文档：`docs/design/`（内部版设计文档含真实工作细节，公开导出中已移除，仅留说明）。
 
