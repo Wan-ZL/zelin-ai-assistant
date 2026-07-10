@@ -132,6 +132,15 @@ def process_inbox() -> int:
             _safe_unlink(path)
             continue
 
+        # weekly digest on demand (CONTRACT §24): no req id — the Settings
+        # 「现在生成一份」button. Runs detached so the 420s claude call never
+        # blocks the 10s daemon pass.
+        if action == "weekly_digest_now":
+            _spawn_weekly_digest()
+            processed += 1
+            _safe_unlink(path)
+            continue
+
         req = load(req_id) if req_id else None
 
         if req is None:
@@ -144,6 +153,31 @@ def process_inbox() -> int:
 
         _safe_unlink(path)
     return processed
+
+
+def _spawn_weekly_digest() -> None:
+    """Launch ``python -m act.weekly_digest --now`` detached (CONTRACT §24).
+
+    Same detachment pattern as the merge-review analysis subprocess: never
+    waited on, stdout/err appended to ``state/weekly_digest.log``. A failed
+    launch only logs — the button press must never take the daemon down.
+    """
+    config.ensure_state_dirs()
+    log_path = config.STATE_DIR / "weekly_digest.log"
+    try:
+        with open(log_path, "ab") as fh:
+            subprocess.Popen(
+                [sys.executable, "-m", "act.weekly_digest", "--now"],
+                cwd=str(config.HOME),
+                stdin=subprocess.DEVNULL,
+                stdout=fh,
+                stderr=fh,
+                start_new_session=True,  # detached: outlives the pass
+            )
+        _log("inbox: weekly_digest_now — generation subprocess started")
+        analytics.log_event("weekly_digest_requested")
+    except Exception as e:  # noqa: BLE001 — never let the button kill the pass
+        _log(f"inbox: weekly_digest_now launch FAILED: {e}")
 
 
 def _apply_capture(text: Optional[str]) -> None:

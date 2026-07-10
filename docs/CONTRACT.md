@@ -6,7 +6,7 @@
 > `state/dashboard.json` (actd writes, app reads), and `state/inbox/<uuid>.json` (app writes,
 > actd reads then deletes). Fields are **add-only** — never renamed or removed; the Swift side
 > decodes every new field with `decodeIfPresent`. Change this file *before* any code that touches
-> these shapes. **Section numbers §1–§23 are referenced from code and docs — never renumber.**
+> these shapes. **Section numbers §1–§24 are referenced from code and docs — never renumber.**
 > The Chinese body is canonical.
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
@@ -120,7 +120,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -368,3 +368,33 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
+
+---
+
+# v0.14 additions（每周摘要：ingest → 回顾 + 自动化建议）
+
+## 24. 每周摘要（weekly digest）
+
+**目标**：把最近 7 天的 Obsidian ingest 产出（`sources.obsidian_raw` 下的 `*.md`，即 `2 - raw`）变成 ① 一张"本周你都在忙什么"回顾卡（进待验收）和 ② 2-3 张"这件事我可以帮你自动化"提案卡（进待审批）。实现：`act/weekly_digest.py`（headless `claude -p`，出站材料统一 `sanitize.scrub` + `fence_untrusted`）。
+
+**config（add-only）** `sources.weekly_digest`：
+```yaml
+sources:
+  weekly_digest:
+    enabled: true   # 默认开；无 ingest 数据时任务自动跳过（不调 claude，零成本）
+    day: 0          # 0=周一 .. 6=周日（python weekday()）
+    hour: 9         # 当地时间小时（24h），到点后的第一个整点触发
+```
+overrides 允许列表新增扁平键 `weekly_digest_enabled`（bool，App 设置「每周摘要」开关即时写入；true = 产品默认，写 true 时直接删键）。`day`/`hour` 仅 config.yaml 可设。
+
+**调度**：launchd agent `com.zelin.aiassistant.weeklydigest`（install.sh 同一模板渲染管线）每小时 :23 唤醒 `python -m act.weekly_digest`；模块自行闸门 —— enabled 关/未到 day+hour/6 天内已跑过 → 直接退出。因此改 config 的 day/hour **无需重载 plist**。状态标记 `state/weekly_digest.json`：`{"last_run":"YYYY-MM-DD","last_ingest_mtime":<float>}`（原子写）。
+
+**成本护栏**（两级，均打 `weekly_digest_skip{reason}` analytics 事件 + log 一行）：窗口内零笔记 → `no_data` 跳过；有笔记但 mtime 都 ≤ `last_ingest_mtime` → `no_new_data` 跳过。两级都不调 claude。
+
+**卡片语义**（都经 `registry.merge_or_new` 落账，source `channel="weekly-digest"`，同周重跑合并不重复建卡）：
+- 回顾卡：title 含日期区间（每周新卡），`type=digest`、`tier=T0`、`delivery_mode=chat`、status=**review**；`execution.review_at`/`delivered_summary`(≤500)/`final_draft`(≤20000，全文) 每次生成都刷新，已 trashed 的不复活，其余状态一律拉回 review（新内容需要重新看）。验收 = 归档本周回顾。
+- 建议卡：`type=automation`、`tier=T1`、status=**card_sent**（正常提案卡，批准后照常派发执行）；≤3 张/次。
+
+**inbox 动作** `weekly_digest_now`（§10 全集成员；无 `id` 字段，App 设置「现在生成一份」按钮写入）：actd 收到后 `subprocess.Popen` 分离启动 `python -m act.weekly_digest --now`（stdout/err 追加 `state/weekly_digest.log`；启动失败只 log），打点 `weekly_digest_requested`。`--now` 跳过调度闸门与 `no_new_data` 护栏，但 `no_data`（零笔记）仍跳过并弹通知说明缘由。
+
+**analytics**：`weekly_digest_generated{notes,suggestions}` / `weekly_digest_skip{reason}` / `weekly_digest_requested`（actd）+ app 侧 `weekly_digest_toggle{on}` / `weekly_digest_generate_now`。

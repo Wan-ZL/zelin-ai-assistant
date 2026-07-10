@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) into ~/Library/LaunchAgents - do not load this file as-is.
+
+  weeklydigest - the weekly ingest digest (CONTRACT s24): reads the last 7
+  days of Obsidian ingest output and files a review-lane digest card plus 2-3
+  automation proposal cards.
+
+  SCHEDULING: launchd fires this hourly (StartCalendarInterval Minute only);
+  the module itself gates on sources.weekly_digest (enabled/day/hour, default
+  Monday 09:xx) plus a run-once-per-week marker, so day/hour changes in config
+  take effect WITHOUT re-rendering this plist. The hourly wake is a cheap
+  python no-op outside the scheduled window. If the Mac is asleep at the hour,
+  launchd coalesces the missed fire and runs it on wake.
+
+  SAFE UNDER LAUNCHD? The Obsidian vault usually lives in ~/Documents, which
+  is TCC-gated for launchd daemons - like the Obsidian radar's cron story. If
+  the vault is unreadable the module simply sees zero notes and skips with a
+  log line (cost guard); grant the runtime python Full Disk Access or move the
+  vault outside ~/Documents to enable it. The "Generate now" Settings button
+  goes through actd instead and inherits actd's context.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zelin.aiassistant.weeklydigest</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSERNAME/miniconda3/bin/python3</string>
+        <string>-m</string>
+        <string>act.weekly_digest</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+
+    <!-- hourly wake at :23; the module's schedule gate does the weekly logic -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>23</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIASSISTANT_HOME</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/weeklydigest.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/weeklydigest.launchd.log</string>
+</dict>
+</plist>

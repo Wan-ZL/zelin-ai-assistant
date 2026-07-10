@@ -39,6 +39,10 @@ sources:                               # 需求雷达监控的增量源
   #   enabled: true
   #   # app_password_path 可省略：推荐在 App 设置窗口粘贴保存
   #   # （config/secrets/gmail-app-password.txt）；旧默认 ~/Desktop/Keys/gmail-app-password.txt 仍兜底
+  # weekly_digest:                     # 每周摘要（CONTRACT §24）：近 7 天 ingest → 回顾卡 + 自动化建议卡
+  #   enabled: true                    # 默认开；没有新 ingest 数据时自动跳过（不调 claude，零成本）
+  #   day: 0                           # 0=周一 .. 6=周日
+  #   hour: 9                          # 当地时间小时（24h）；改这里即可，无需重装 launchd agent
 
 approval:
   surface: slack                       # v0: slack（桌面+手机同一条消息）；v2+: mac-app

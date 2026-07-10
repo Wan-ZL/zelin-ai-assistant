@@ -114,6 +114,10 @@ struct SettingsFormView: View {
             ClaudeImportSettingsSection()
             approvalGroup
             flagsGroup
+            // v0.14 weekly ingest digest (CONTRACT §24) — self-contained
+            // section (own state, immediate writes), lives in
+            // SettingsWeeklyDigest.swift.
+            WeeklyDigestSettingsSection()
             redactionGroup
             telemetryGroup
             footerRow

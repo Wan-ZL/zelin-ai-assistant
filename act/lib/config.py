@@ -141,6 +141,13 @@ class Config:
     gmail_address: Optional[str] = None
     gmail_app_password_path: str = "~/Desktop/Keys/gmail-app-password.txt"
     gmail_enabled: bool = True
+    # weekly ingest digest (CONTRACT §24) — reads the last 7 days of Obsidian
+    # ingest output and turns it into a review-lane digest card + automation
+    # proposal cards. Skips itself (cheap, no claude call) when there is no
+    # new ingest data, so "enabled by default" costs nothing on empty vaults.
+    weekly_digest_enabled: bool = True
+    weekly_digest_day: int = 0    # 0=Monday .. 6=Sunday (python weekday())
+    weekly_digest_hour: int = 9   # local hour (24h) the weekly run unlocks
 
     # approval / cost
     poll_interval_seconds: int = 10
@@ -262,6 +269,22 @@ def load_config() -> Config:
         "app_password_path", cfg.gmail_app_password_path
     )
     cfg.gmail_enabled = bool(gmail.get("enabled", cfg.gmail_enabled))
+
+    wd = sources.get("weekly_digest", {}) or {}
+    if isinstance(wd, dict):
+        cfg.weekly_digest_enabled = bool(wd.get("enabled", cfg.weekly_digest_enabled))
+        try:
+            day = int(wd.get("day", cfg.weekly_digest_day))
+            if 0 <= day <= 6:
+                cfg.weekly_digest_day = day
+        except (TypeError, ValueError):
+            pass
+        try:
+            hour = int(wd.get("hour", cfg.weekly_digest_hour))
+            if 0 <= hour <= 23:
+                cfg.weekly_digest_hour = hour
+        except (TypeError, ValueError):
+            pass
 
     approval = data.get("approval", {}) or {}
     # poll_interval: config.example uses minutes for the approval surface; the
@@ -389,6 +412,7 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_address": str,
     "gmail_app_password_path": str,
     "gmail_enabled": bool,
+    "weekly_digest_enabled": bool,
     "phone_channel": str,
     "imessage_self_handle": str,
     "show_cost_above_usd": float,
