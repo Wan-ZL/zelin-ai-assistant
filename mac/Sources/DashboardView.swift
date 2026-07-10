@@ -297,11 +297,12 @@ struct DashboardView: View {
         // the real approval cards.
         let suggestions = store.visibleMergeSuggestions
 
+        // W8: lane display name 提案/Proposals — internal keys unchanged.
         if approvals.isEmpty && suggestions.isEmpty {
-            CompactEmptySection(title: L("待审批 · needs approval", "Needs Approval"),
-                                emptyText: L("无待审批", "Nothing awaiting approval"))
+            CompactEmptySection(title: L("提案 · proposals", "Proposals"),
+                                emptyText: L("暂无提案", "No proposals yet"))
         } else {
-            SectionHeader(title: L("待审批 · needs approval", "Needs Approval"),
+            SectionHeader(title: L("提案 · proposals", "Proposals"),
                           count: approvals.count + suggestions.count)
             let placeholderPrefix = approvals.prefix(while: { $0.processing })
             ForEach(Array(placeholderPrefix), id: \.id) { card in

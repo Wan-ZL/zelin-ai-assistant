@@ -140,13 +140,13 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先
 
    > 在 ~/Projects/assistant-hello 新建一个小脚本:统计 ~/Downloads 里各扩展名的文件数,输出 markdown 表格,配一个单元测试。
 
-3. 回车。占位卡**立刻**出现(乐观回显);LLM 对照注册表三选一后,真实的**待审批卡**通常 **15 秒–2 分钟**内落地(actd 每 10s 一个 pass + 一次 claude 判定)。
+3. 回车。占位卡**立刻**出现(乐观回显);LLM 对照注册表三选一后,真实的**提案卡**通常 **15 秒–2 分钟**内落地(actd 每 10s 一个 pass + 一次 claude 判定)。
 4. 点 ✅ 批准 → 卡片先灰显"排队"(瞬时),随后进入**执行中**(`claude --bg` 在独立 worktree 里跑)。这样的简单任务通常 **2–10 分钟**。
 5. 完工后卡片进入**待验收**,带交付摘要(代码任务给分支/draft PR;文书任务给可直接复制的 FINAL DRAFT)。点 ✅ 验收归档,或 💬 带评论打回重做。
 
 **慢 vs 坏**的判别线(拿不准就先跑 `bash install.sh --check`,它会把坏的一环直接指出来):
 
-- 捕获后 **>5 分钟**没有待审批卡 → actd 没在跑或 key 无效:`launchctl list | grep actd`、`tail state/actd.log`。
+- 捕获后 **>5 分钟**没有提案卡 → actd 没在跑或 key 无效:`launchctl list | grep actd`、`tail state/actd.log`。
 - 批准后卡在"排队" **>2 分钟** → 派发失败,卡片会显示 last_error;看 `state/actd.log`。
 
 ### 零 key 的 UI 预览

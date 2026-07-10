@@ -740,8 +740,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func promptComment() -> String? {
         promptText(title: L("💬 修改方向", "💬 Comment / Change Direction"),
-                   info: L("会并入需求的 plan/notes 并保持待审批。",
-                           "Merged into the request's plan/notes; stays pending approval."),
+                   info: L("会并入需求的 plan/notes，卡片留在提案列等你批准。",
+                           "Merged into the request's plan/notes; the card stays in Proposals awaiting your approval."),
                    placeholder: L("改哪里…", "What to change…"))
     }
 

@@ -131,15 +131,17 @@ struct KanbanView: View {
                     // isEmpty: false — the resident composer means this lane
                     // always has content; the ghost placeholder renders below
                     // it manually so the empty look stays the same.
-                    column(title: L("待审批 · needs approval", "Needs Approval"),
+                    // W8: lane display name 提案/Proposals — internal keys
+                    // (needs_approval, card_sent, …) unchanged.
+                    column(title: L("提案 · proposals", "Proposals"),
                            count: approvals.count + suggestions.count,
-                           emptyText: L("无待审批", "Nothing awaiting approval"),
+                           emptyText: L("暂无提案", "No proposals yet"),
                            isEmpty: false) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
                             && suggestions.isEmpty {
-                            lanePlaceholder(L("无待审批", "Nothing awaiting approval"))
+                            lanePlaceholder(L("暂无提案", "No proposals yet"))
                         }
                         ForEach(approvalNotices) { NoticeRow(notice: $0) }
                         // 契约七: 建议卡插在 composer 与占位卡之后、真实卡之前。

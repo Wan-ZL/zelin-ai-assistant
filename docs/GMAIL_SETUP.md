@@ -40,7 +40,7 @@ cd "${AIASSISTANT_HOME:-$HOME/Projects/zelin-ai-assistant}" && AIASSISTANT_HOME=
 ```
 
 通过后 gmailradar 的 launchd 每 5 分钟自动扫一次：收件箱里新的未读邮件会被
-LLM 三选一（需要你处理 → 出卡片待审批 / 纯 FYI → 跳过）。noreply 发件人、
+LLM 三选一（需要你处理 → 出提案卡 / 纯 FYI → 跳过）。noreply 发件人、
 带退订头的 newsletter、日历"已接受"回执会被直接过滤，不进 LLM。
 
 ## 备注

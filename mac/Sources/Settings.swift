@@ -1,5 +1,16 @@
 // Settings.swift — 设置页 SettingsFormView（settings_overrides.json 读写）/ CredentialRowView（凭证行）
-// Mechanically split from main.swift — zero logic changes.
+//
+// v0.14 save semantics (audit 5.1/5.2, CONTRACT §15.3 v0.14 note):
+// - NO deferred save. Every control persists on change (toggles/pickers) or on
+//   Enter / focus-out (text fields). There is no global Save button.
+// - Diff-write: a key is written ONLY when the user's value differs from the
+//   config-layer effective value (config.yaml → built-in default, i.e. what
+//   the pipeline would resolve WITHOUT the override); equal values REMOVE the
+//   key so choices made in config.yaml stay live. The app never mirrors whole
+//   sections it didn't change — that used to silently clobber redaction /
+//   telemetry choices made in config.yaml (a real privacy regression).
+// - Numbers are validated: parse failure shows an inline error and writes
+//   nothing (no silent coercion to defaults).
 
 import AppKit
 import SwiftUI
@@ -29,6 +40,11 @@ struct SettingsFormView: View {
     @State private var obsidianUnprocessed = ""
     @State private var obsidianChangeSummary = ""
     @State private var obsidianWiki = ""
+    // raw value the currently displayed derived dirs were derived from — when
+    // raw moves, fields still tracking the derivation re-point (config.py
+    // semantics), explicitly overridden ones stay.
+    @State private var lastRawForDerivation = ""
+    @State private var missingObsidian: Set<String> = []
     @State private var gmailAddress = ""
     @State private var showMenuBarIcon = true
     // 通用 · launch at login (SMAppService; state read from the system, not stored)
@@ -36,7 +52,15 @@ struct SettingsFormView: View {
     @State private var showCostAbove = "5"
     @State private var confirmAbove = "50"
     @State private var trashDays = "60"
+    @State private var showCostError = ""
+    @State private var confirmError = ""
+    @State private var trashDaysError = ""
     @State private var language = "zh"
+    // v0.14 (audit 7.1/7.3): execution keys promoted from config.yaml-only.
+    @State private var targetRepo = ""
+    @State private var targetRepoExists = true
+    @State private var skipPermissions = true
+    @State private var createGithubRepo = false
     // §16 feature flags — default all on.
     @State private var featSlackRadar = true
     @State private var featGmailRadar = true
@@ -55,351 +79,510 @@ struct SettingsFormView: View {
     @State private var telemetryEnabled = true
     @State private var telemetryLevel = "basic"
     @State private var status = ""
+    @State private var statusIsError = false
     @State private var loaded = false
     // 1.5 s highlight on the credentials group after a deps「去设置」jump
     @State private var credFlash = false
+    // text-field commit plumbing: field key currently focused; leaving a field
+    // (or pressing Enter) commits it.
+    @FocusState private var focusedField: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L("设置", "Settings"))
                 .font(.system(size: 18, weight: .semibold))
-            Text(L("保存到 state/settings_overrides.json，优先级最高（覆盖 config.yaml）。",
-                   "Saved to state/settings_overrides.json; highest priority (overrides config.yaml)."))
+            Text(L("设置只存在这台 Mac 上，修改即时生效。",
+                   "Settings live only on this Mac; changes take effect immediately."))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
+                .help(L("写入 state/settings_overrides.json——只写与 config.yaml 不同的键（优先级最高）。",
+                        "Written to state/settings_overrides.json — only keys that differ from config.yaml (highest priority)."))
 
-            group(L("通用", "General")) {
-                Toggle(L("登录时启动（推荐：菜单栏助手常驻）",
-                         "Launch at login (recommended: keep the menu-bar assistant resident)"),
-                       isOn: Binding(
-                    get: { launchAtLogin },
-                    set: { v in setLaunchAtLogin(v) }))
-                Text(L("走 macOS 登录项（系统设置 → 通用 → 登录项与扩展 可见/可改）。",
-                       "Uses macOS login items (visible in System Settings → General → Login Items & Extensions)."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Divider()
-                // v0.10.3 契约一: 卡片排序 — takes effect immediately (Prefs
-                // write + store republish; visible* re-sort on next render).
-                HStack {
-                    Text(L("卡片排序", "Card sorting"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Picker("", selection: Binding(
-                        get: { cardSortOrder },
-                        set: { v in
-                            cardSortOrder = v
-                            UserDefaults.standard.set(v, forKey: "cardSortOrder")
-                            (NSApp.delegate as? AppDelegate)?.store.sortOrderChanged()
-                            Analytics.log("mw_sort_order", fields: ["order": v])
-                        })) {
-                        Text(L("新的在上（默认）", "Newest first")).tag("newest")
-                        Text(L("旧的在上（先清积压）", "Oldest first")).tag("oldest")
-                        Text(L("Deadline 近的在上", "Deadline first")).tag("deadline")
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 220)
-                    Spacer()
-                }
-                Text(L("纯界面偏好（存本机），弹窗与看板同时生效；待审批列顶的处理中占位卡不参与排序。",
-                       "UI-only preference (stored locally); applies to the popover and the board alike — processing placeholders stay pinned atop the approval column."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Divider()
-                // v0.13: reopen the first-run permissions page anytime.
-                HStack {
-                    Text(L("权限体检", "Permissions checkup"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Button(L("打开", "Open")) {
-                        PermissionsWindowController.shared.show(firstRun: false)
-                    }
-                    .controlSize(.small)
-                    Spacer()
-                }
-                Text(L("屏幕录制 / 通知 / 完全磁盘访问的授权状态一页看全，缺哪个当场补。",
-                       "See Screen Recording / Notifications / Full Disk Access grants on one page and fix any gap on the spot."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Divider()
-                // v0.14: reopen the first-run setup wizard anytime — idempotent
-                // (all steps prefilled with current values, never wipes data,
-                // never re-imports, never re-asks an answered consent).
-                HStack {
-                    Text(L("初始设置向导", "Setup wizard"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Button(L("重新运行初始设置", "Re-run setup")) {
-                        Analytics.log("wizard_rerun_from_settings")
-                        SetupWizardController.shared.show()
-                    }
-                    .controlSize(.small)
-                    Spacer()
-                }
-                Text(L("重跑一遍首次设置（语言 / AI 引擎 / 权限 / 录制 / 笔记库 / 健康检查）：全部预填当前值，不会清除任何数据。",
-                       "Walk through first-run setup again (language / AI engine / permissions / recording / notes / health check): everything prefilled with current values; nothing gets wiped."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-
-            group(L("菜单栏", "Menu Bar")) {
-                Toggle(L("显示菜单栏图标（主图标：卡片列表）",
-                         "Show menu-bar icon (main icon: checklist)"), isOn: Binding(
-                    get: { showMenuBarIcon },
-                    set: { v in
-                        showMenuBarIcon = v
-                        UserDefaults.standard.set(v, forKey: "showMenuBarIcon")
-                        (NSApp.delegate as? AppDelegate)?.updateStatusItemsVisibility()
-                    }))
-                Text(L("隐藏主图标后，主窗口仍可从 Dock / 再次打开 App 唤起。",
-                       "With the main icon hidden, the main window still opens from the Dock / by reopening the app."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-
-            group(L("快捷键", "Hotkey")) {
-                Toggle(L("全局热键唤出快速捕获（图标隐藏时打开主窗口）",
-                         "Global hotkey opens quick capture (main window when the icon is hidden)"),
-                       isOn: Binding(
-                    get: { hotkeyEnabled },
-                    set: { v in
-                        hotkeyEnabled = v
-                        UserDefaults.standard.set(v, forKey: "hotkeyEnabled")
-                        HotKeyCenter.shared.apply()
-                    }))
-                HStack {
-                    Text(L("按键", "Shortcut"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Picker("", selection: Binding(
-                        get: { hotkeyPreset },
-                        set: { v in
-                            hotkeyPreset = v
-                            UserDefaults.standard.set(v, forKey: "hotkeyPreset")
-                            HotKeyCenter.shared.apply()
-                        })) {
-                        ForEach(HotKeyCenter.presets, id: \.id) { p in
-                            Text(p.label).tag(p.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 160)
-                    .disabled(!hotkeyEnabled)
-                    Spacer()
-                }
-                if hotkeyEnabled && !hotkey.registered {
-                    Text(L("⚠︎ 注册失败——该快捷键可能被其他 App 占用，换一个预设试试。",
-                           "⚠︎ Registration failed — this shortcut may be taken by another app; try a different preset."))
-                        .font(.system(size: 11))
-                        .foregroundColor(.orange)
-                }
-                Text(L("默认 ⌥Space。⌃⌥Space 常被系统「选择上一个输入源」占用（多输入法环境慎选）。",
-                       "Default ⌥Space. ⌃⌥Space is often taken by the system input-source switcher (avoid with multiple input methods)."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-
-            group(L("录制", "Recording")) {
-                HStack {
-                    Text(L("默认录制模式", "Default recording mode"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Picker("", selection: Binding(
-                        get: { rec.mode },
-                        set: { rec.setMode($0) })) {
-                        Text(L("关", "Off")).tag("off")
-                        Text(L("仅屏幕", "Screen Only")).tag("screen")
-                        Text(L("屏幕 + 音频", "Screen + Audio")).tag("screen_audio")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 280)
-                    Spacer()
-                }
-                Text(L("打开 App 时自动按此模式启动 Screenpipe 持续录制。",
-                       "On app launch, Screenpipe recording starts automatically in this mode."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-
-            // v0.10.3 契约二: the four Obsidian pipeline dirs, in pipeline
-            // order. 2 - raw keeps its existing editable override
-            // (obsidian_raw); the other three default to vault root (raw's
-            // parent) + standard name — same derivation as config.py — and
-            // save into settings_overrides when edited.
-            group(L("Obsidian 目录（按管线顺序）", "Obsidian directories (pipeline order)")) {
-                obsidianRow("1 - unprocessed",
-                            desc: L("截图/录音导出落点", "Screenshots / recording exports land here"),
-                            path: $obsidianUnprocessed)
-                Divider()
-                obsidianRow("2 - raw",
-                            desc: L("雷达扫描源", "Radar scan source"),
-                            path: $obsidianRaw)
-                Divider()
-                obsidianRow("3 - change-summary",
-                            desc: L("ingest 变更日志", "Ingest change logs"),
-                            path: $obsidianChangeSummary)
-                Divider()
-                obsidianRow("4 - wiki",
-                            desc: L("加工后的知识库", "Processed knowledge base"),
-                            path: $obsidianWiki)
-                Text(L("1/3/4 默认由 vault 根（= 2 - raw 的上级目录）+ 标准名派生；编辑后点保存写入 settings_overrides。",
-                       "1/3/4 default to the vault root (2 - raw's parent) + the standard name; edit and Save to write settings_overrides."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-
-            group(L("凭证（存本机 config/secrets/，目录 0700 / 文件 0600）",
-                    "Credentials (stored locally in config/secrets/, dir 0700 / file 0600)")) {
-                labeledField(L("Gmail 地址", "Gmail address"), $gmailAddress)
-                Divider()
-                CredentialRowView(
-                    title: "Slack token",
-                    secretName: SecretsIO.slackFile,
-                    legacyPath: "~/Desktop/Keys/slack-user-token.txt",
-                    links: [(L("申请页", "Apply"), "https://api.slack.com/apps"),
-                            (L("指南", "Guide"), "docs/SLACK_SETUP.md")])
-                Divider()
-                CredentialRowView(
-                    title: L("Gmail 应用密码", "Gmail app password"),
-                    secretName: SecretsIO.gmailFile,
-                    legacyPath: "~/Desktop/Keys/gmail-app-password.txt",
-                    links: [(L("生成密码", "Generate"), "https://myaccount.google.com/apppasswords"),
-                            (L("指南", "Guide"), "docs/GMAIL_SETUP.md")])
-                Divider()
-                CredentialRowView(
-                    title: "Anthropic API key",
-                    secretName: SecretsIO.anthropicFile,
-                    legacyPath: "~/.config/anthropic-key.txt",
-                    links: [(L("控制台", "Console"), "https://console.anthropic.com/settings/keys")],
-                    validatesAnthropicKey: true)
-            }
-            // 契约3 frozen anchor — MainWindowView scrollTo()s here from deps
-            .id("credentials")
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.accentColor.opacity(credFlash ? 0.16 : 0))
-                    .allowsHitTesting(false)
-            }
-
+            generalGroup
+            menuBarGroup
+            hotkeyGroup
+            recordingGroup
+            obsidianGroup
+            credentialsGroup
             // v0.13: iPhone 联动 (iMessage phone channel, CONTRACT §13/§15) —
             // self-contained section (own state, immediate writes), lives in
             // SettingsIMessage.swift.
             IMessageSettingsSection()
-
             // §22: one-click Claude Code session import (cold-start seeding) —
             // self-contained section, lives in SettingsClaudeImport.swift.
             // Frozen scroll anchor "claude_import" (wizard finale deep-link).
             ClaudeImportSettingsSection()
-
-            group(L("审批 / 成本", "Approval / Cost")) {
-                labeledField(L("显示成本阈值（USD ≥）", "Show cost above (USD ≥)"), $showCostAbove)
-                labeledField(L("文字确认阈值（USD ≥，升 T2）",
-                               "Text-confirm above (USD ≥, escalates to T2)"), $confirmAbove)
-                labeledField(L("回收站保留天数", "Trash retention days"), $trashDays)
-                HStack {
-                    Text(L("界面语言", "Interface language"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Picker("", selection: $language) {
-                        Text("中文 (zh)").tag("zh")
-                        Text("English (en)").tag("en")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
-                    Spacer()
-                }
-            }
-
-            group(L("Feature flags（§16，默认全开）", "Feature flags (§16, all on by default)")) {
-                Toggle(L("slack_radar — Slack 需求雷达", "slack_radar — Slack demand radar"),
-                       isOn: $featSlackRadar)
-                Toggle(L("gmail_radar — Gmail 捕获", "gmail_radar — Gmail capture"),
-                       isOn: $featGmailRadar)
-                Toggle(L("obsidian_radar — Obsidian 雷达", "obsidian_radar — Obsidian radar"),
-                       isOn: $featObsidianRadar)
-                Toggle(L("digest — 周一 digest", "digest — Monday digest"), isOn: $featDigest)
-                Toggle(L("auto_resume — 后台任务自动拉起", "auto_resume — auto-resume background tasks"),
-                       isOn: $featAutoResume)
-                Toggle(L("analytics — 用量统计", "analytics — usage stats"), isOn: $featAnalytics)
-                Toggle(L("manager_pack — 会后清单 + 1:1 准备页",
-                         "manager_pack — post-meeting checklist + 1:1 prep page"), isOn: $featManagerPack)
-            }
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-
-            group(L("脱敏（发给 AI 前本地打码）", "Redaction (local masking before sending to AI)")) {
-                Toggle(L("启用词表脱敏 — 发出 prompt 前把词表词条替换成 [脱敏]",
-                         "Enable term-list redaction — replace term-list matches with [REDACTED] before sending prompts"),
-                       isOn: $redactionEnabled)
-                    .toggleStyle(.switch)
-                Toggle(L("密钥掩码 — 内置正则 (sk-ant-/xox*/AKIA/gh*_/PEM)，始终生效，不依赖词表开关",
-                         "Secrets masking — built-in regexes (sk-ant-/xox*/AKIA/gh*_/PEM), always on regardless of the toggle above"),
-                       isOn: $redactionMaskSecrets)
-                    .toggleStyle(.switch)
-                labeledField(L("词表文件（一行一条，re: 前缀=正则）",
-                               "Terms file (one per line, re: prefix = regex)"), $redactionTermsFile)
-                Text(L("密钥掩码默认开启；词表脱敏默认关闭（打开会改变 AI 看到的内容）。本地存的原文不受影响。",
-                       "Secrets masking is on by default; term-list redaction is off by default (enabling changes what the AI sees). Local originals are unaffected."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .font(.system(size: 12))
-
-            group(L("产品改进计划", "Product improvement program")) {
-                Toggle(L("参与匿名使用统计（默认开，帮助改进产品）",
-                         "Share anonymous usage statistics (on by default; helps improve the product)"),
-                       isOn: $telemetryEnabled)
-                    .toggleStyle(.switch)
-                HStack {
-                    Text(L("收集级别", "Collection level"))
-                        .font(.system(size: 12))
-                        .frame(width: 220, alignment: .leading)
-                    Picker("", selection: $telemetryLevel) {
-                        Text(L("基础（默认）", "Basic (default)")).tag("basic")
-                        Text(L("详细", "Detailed")).tag("detailed")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 220)
-                    .disabled(!telemetryEnabled)
-                    Spacer()
-                }
-                Text(L("基础：只发送匿名事件元数据——事件名、时间、随机设备号、版本号，不含任何内容。",
-                       "Basic: sends anonymous event metadata only — event name, time, random device id, app version; never any content."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要。",
-                       "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Text(L("关掉开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
-                       "Turning the toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .font(.system(size: 12))
-
-            HStack(spacing: 10) {
-                Button(L("保存", "Save")) { save() }
-                    .keyboardShortcut("s", modifiers: .command)
-                if !status.isEmpty {
-                    Text(status)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
+            approvalGroup
+            flagsGroup
+            redactionGroup
+            telemetryGroup
+            footerRow
         }
         .onAppear {
             if !loaded { load(); loaded = true }
             flashCredentialsIfPending()
         }
         .onChange(of: nav.pendingAnchor) { _, _ in flashCredentialsIfPending() }
+        // leaving a text field commits it; window close commits the focused one
+        .onChange(of: focusedField) { old, _ in commitField(old) }
+        .onDisappear { commitField(focusedField) }
+    }
+
+    // MARK: - groups
+
+    private var generalGroup: some View {
+        group(L("通用", "General")) {
+            Toggle(L("登录时启动（推荐：菜单栏助手常驻）",
+                     "Launch at login (recommended: keep the menu-bar assistant resident)"),
+                   isOn: Binding(
+                get: { launchAtLogin },
+                set: { v in setLaunchAtLogin(v) }))
+            Text(L("走 macOS 登录项（系统设置 → 通用 → 登录项与扩展 可见/可改）。",
+                   "Uses macOS login items (visible in System Settings → General → Login Items & Extensions)."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // audit 5.5: language lives in General (was buried in Approval/Cost)
+            HStack {
+                Text(L("界面语言", "Interface language"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { language },
+                    set: { v in
+                        language = v == "en" ? "en" : "zh"
+                        persistLanguage()
+                    })) {
+                    Text("中文 (zh)").tag("zh")
+                    Text("English (en)").tag("en")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                Spacer()
+            }
+            Divider()
+            // v0.10.3 契约一: 卡片排序 — takes effect immediately (Prefs
+            // write + store republish; visible* re-sort on next render).
+            HStack {
+                Text(L("卡片排序", "Card sorting"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { cardSortOrder },
+                    set: { v in
+                        cardSortOrder = v
+                        UserDefaults.standard.set(v, forKey: "cardSortOrder")
+                        (NSApp.delegate as? AppDelegate)?.store.sortOrderChanged()
+                        Analytics.log("mw_sort_order", fields: ["order": v])
+                    })) {
+                    Text(L("新的在上（默认）", "Newest first")).tag("newest")
+                    Text(L("旧的在上（先清积压）", "Oldest first")).tag("oldest")
+                    Text(L("Deadline 近的在上", "Deadline first")).tag("deadline")
+                }
+                .pickerStyle(.menu)
+                .frame(width: 220)
+                Spacer()
+            }
+            Text(L("纯界面偏好（存本机），弹窗与看板同时生效；提案列顶的处理中占位卡不参与排序。",
+                   "UI-only preference (stored locally); applies to the popover and the board alike — processing placeholders stay pinned atop the Proposals column."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // v0.13: reopen the first-run permissions page anytime.
+            HStack {
+                Text(L("权限体检", "Permissions checkup"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Button(L("打开", "Open")) {
+                    PermissionsWindowController.shared.show(firstRun: false)
+                }
+                .controlSize(.small)
+                Spacer()
+            }
+            Text(L("屏幕录制 / 通知 / 完全磁盘访问的授权状态一页看全，缺哪个当场补。",
+                   "See Screen Recording / Notifications / Full Disk Access grants on one page and fix any gap on the spot."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // v0.14: reopen the first-run setup wizard anytime — idempotent
+            // (all steps prefilled with current values, never wipes data,
+            // never re-imports, never re-asks an answered consent).
+            HStack {
+                Text(L("初始设置向导", "Setup wizard"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Button(L("重新运行初始设置", "Re-run setup")) {
+                    Analytics.log("wizard_rerun_from_settings")
+                    SetupWizardController.shared.show()
+                }
+                .controlSize(.small)
+                Spacer()
+            }
+            Text(L("重跑一遍首次设置（语言 / AI 引擎 / 权限 / 录制 / 笔记库 / 健康检查）：全部预填当前值，不会清除任何数据。",
+                   "Walk through first-run setup again (language / AI engine / permissions / recording / notes / health check): everything prefilled with current values; nothing gets wiped."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 12))
+    }
+
+    private var menuBarGroup: some View {
+        group(L("菜单栏", "Menu Bar")) {
+            Toggle(L("显示菜单栏图标（主图标：卡片列表）",
+                     "Show menu-bar icon (main icon: checklist)"), isOn: Binding(
+                get: { showMenuBarIcon },
+                set: { v in
+                    showMenuBarIcon = v
+                    UserDefaults.standard.set(v, forKey: "showMenuBarIcon")
+                    (NSApp.delegate as? AppDelegate)?.updateStatusItemsVisibility()
+                }))
+            Text(L("隐藏主图标后，主窗口仍可从 Dock / 再次打开 App 唤起。",
+                   "With the main icon hidden, the main window still opens from the Dock / by reopening the app."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 12))
+    }
+
+    private var hotkeyGroup: some View {
+        group(L("快捷键", "Hotkey")) {
+            Toggle(L("全局热键唤出快速捕获（图标隐藏时打开主窗口）",
+                     "Global hotkey opens quick capture (main window when the icon is hidden)"),
+                   isOn: Binding(
+                get: { hotkeyEnabled },
+                set: { v in
+                    hotkeyEnabled = v
+                    UserDefaults.standard.set(v, forKey: "hotkeyEnabled")
+                    HotKeyCenter.shared.apply()
+                }))
+            HStack {
+                Text(L("按键", "Shortcut"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { hotkeyPreset },
+                    set: { v in
+                        hotkeyPreset = v
+                        UserDefaults.standard.set(v, forKey: "hotkeyPreset")
+                        HotKeyCenter.shared.apply()
+                    })) {
+                    ForEach(HotKeyCenter.presets, id: \.id) { p in
+                        Text(p.label).tag(p.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 160)
+                .disabled(!hotkeyEnabled)
+                Spacer()
+            }
+            if hotkeyEnabled && !hotkey.registered {
+                Text(L("⚠︎ 注册失败——该快捷键可能被其他 App 占用，换一个预设试试。",
+                       "⚠︎ Registration failed — this shortcut may be taken by another app; try a different preset."))
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+            }
+            Text(L("默认 ⌥Space。⌃⌥Space 常被系统「选择上一个输入源」占用（多输入法环境慎选）。",
+                   "Default ⌥Space. ⌃⌥Space is often taken by the system input-source switcher (avoid with multiple input methods)."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 12))
+    }
+
+    private var recordingGroup: some View {
+        group(L("录制", "Recording")) {
+            HStack {
+                Text(L("默认录制模式", "Default recording mode"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { rec.mode },
+                    set: { rec.setMode($0) })) {
+                    Text(L("关", "Off")).tag("off")
+                    Text(L("仅屏幕", "Screen Only")).tag("screen")
+                    Text(L("屏幕 + 音频", "Screen + Audio")).tag("screen_audio")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 280)
+                Spacer()
+            }
+            Text(L("打开 App 时自动按此模式启动 Screenpipe 持续录制。",
+                   "On app launch, Screenpipe recording starts automatically in this mode."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    // v0.10.3 契约二: the four Obsidian pipeline dirs, in pipeline order.
+    // v0.14: Choose… picker + existence validation per row (audit 7.5).
+    private var obsidianGroup: some View {
+        group(L("Obsidian 目录（按管线顺序）", "Obsidian directories (pipeline order)")) {
+            obsidianRow("1 - unprocessed",
+                        desc: L("截图/录音导出落点", "Screenshots / recording exports land here"),
+                        path: $obsidianUnprocessed, key: "obsidian_unprocessed")
+            Divider()
+            obsidianRow("2 - raw",
+                        desc: L("雷达扫描源", "Radar scan source"),
+                        path: $obsidianRaw, key: "obsidian_raw")
+            Divider()
+            obsidianRow("3 - change-summary",
+                        desc: L("ingest 变更日志", "Ingest change logs"),
+                        path: $obsidianChangeSummary, key: "obsidian_change_summary")
+            Divider()
+            obsidianRow("4 - wiki",
+                        desc: L("加工后的知识库", "Processed knowledge base"),
+                        path: $obsidianWiki, key: "obsidian_wiki")
+            Text(L("通常只需设置 2 - raw，其余三个自动跟随（vault 根 = 2 - raw 的上级目录）；改动即时保存。",
+                   "Usually only 2 - raw needs setting; the other three follow automatically (vault root = 2 - raw's parent). Edits save immediately."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var credentialsGroup: some View {
+        group(L("凭证（存本机 config/secrets/，保存后自动验证）",
+                "Credentials (stored locally in config/secrets/; verified automatically on save)")) {
+            labeledField(L("Gmail 地址", "Gmail address"), $gmailAddress, key: "gmail_address")
+            Divider()
+            CredentialRowView(
+                title: "Slack token",
+                secretName: SecretsIO.slackFile,
+                legacyPath: "~/Desktop/Keys/slack-user-token.txt",
+                links: [(L("申请页", "Apply"), "https://api.slack.com/apps"),
+                        (L("指南", "Guide"), "docs/SLACK_SETUP.md")],
+                kind: .slack)
+            Divider()
+            CredentialRowView(
+                title: L("Gmail 应用密码", "Gmail app password"),
+                secretName: SecretsIO.gmailFile,
+                legacyPath: "~/Desktop/Keys/gmail-app-password.txt",
+                links: [(L("生成密码", "Generate"), "https://myaccount.google.com/apppasswords"),
+                        (L("指南", "Guide"), "docs/GMAIL_SETUP.md")],
+                kind: .gmail)
+            Divider()
+            CredentialRowView(
+                title: "Anthropic API key",
+                secretName: SecretsIO.anthropicFile,
+                legacyPath: "~/.config/anthropic-key.txt",
+                links: [(L("控制台", "Console"), "https://console.anthropic.com/settings/keys")],
+                kind: .anthropic)
+        }
+        // 契约3 frozen anchor — MainWindowView scrollTo()s here from deps
+        .id("credentials")
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity(credFlash ? 0.16 : 0))
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var approvalGroup: some View {
+        group(L("审批 / 成本", "Approval / Cost")) {
+            // v0.14 (audit 7.1): execution.default_target_repo — until now the
+            // first approved card dispatched into a nonexistent placeholder.
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L("任务工作目录", "Task working folder"))
+                        .font(.system(size: 12, weight: .medium))
+                    Text(L("批准的卡片默认在这个文件夹里执行", "Approved cards run inside this folder by default"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 220, alignment: .leading)
+                TextField("", text: $targetRepo)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .focused($focusedField, equals: "target_repo")
+                    .onSubmit { commitField("target_repo") }
+                Button(L("选择…", "Choose…")) {
+                    pickFolder(current: targetRepo) { p in
+                        targetRepo = p
+                        commitTargetRepo()
+                    }
+                }
+                .controlSize(.small)
+            }
+            if !targetRepoExists {
+                HStack(spacing: 8) {
+                    Text(L("⚠︎ 目录不存在——第一张批准的卡会派发失败。",
+                           "⚠︎ Folder doesn't exist — the first approved card will fail to dispatch."))
+                        .font(.system(size: 10))
+                        .foregroundColor(.red)
+                    Button(L("创建文件夹", "Create folder")) { createTargetRepoDir() }
+                        .controlSize(.small)
+                }
+            }
+            Divider()
+            numberField(L("显示成本阈值（USD ≥）", "Show cost above (USD ≥)"),
+                        $showCostAbove, key: "show_cost", error: showCostError)
+            numberField(L("超过此金额需文字确认（USD ≥）", "Require text confirmation above (USD ≥)"),
+                        $confirmAbove, key: "confirm_cost", error: confirmError)
+            numberField(L("回收站保留天数", "Trash retention days"),
+                        $trashDays, key: "trash_days", error: trashDaysError)
+            Divider()
+            // v0.14 (audit 7.3): security-relevant execution switches, plain
+            // language, effective-load + diff-write.
+            Toggle(L("后台任务免确认执行（更快，默认开）",
+                     "Run background tasks without per-action confirmations (faster, default on)"),
+                   isOn: Binding(
+                get: { skipPermissions },
+                set: { v in
+                    skipPermissions = v
+                    persistOverride("skip_permissions", v,
+                                    dropWhen: v == configLayerBool(block: "execution",
+                                                                   key: "skip_permissions",
+                                                                   default: true))
+                }))
+            Text(L("关掉后走 claude 正常权限模型：敏感操作会把任务挂到「需输入」等你确认。",
+                   "When off, claude's normal permission model applies: sensitive actions park the task in Needs Input until you confirm."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Toggle(L("允许自动创建 GitHub 私有仓库（默认关）",
+                     "Allow auto-creating private GitHub repos (default off)"),
+                   isOn: Binding(
+                get: { createGithubRepo },
+                set: { v in
+                    createGithubRepo = v
+                    persistOverride("create_github_repo", v,
+                                    dropWhen: v == configLayerBool(block: "execution",
+                                                                   key: "create_github_repo",
+                                                                   default: false))
+                }))
+            Text(L("开启后，新建目标的卡片会自动建私有 repo 以交付 draft PR；内容可能源自屏幕/邮件，默认不外推。",
+                   "When on, cards targeting a new repo auto-create a private repo so draft PRs can be delivered; content may originate from your screen/mail, so nothing is pushed by default."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 12))
+    }
+
+    private var flagsGroup: some View {
+        group(L("Feature flags（§16，默认全开）", "Feature flags (§16, all on by default)")) {
+            Toggle(L("slack_radar — Slack 需求雷达", "slack_radar — Slack demand radar"),
+                   isOn: featureBinding("slack_radar", $featSlackRadar))
+            Toggle(L("gmail_radar — Gmail 捕获", "gmail_radar — Gmail capture"),
+                   isOn: featureBinding("gmail_radar", $featGmailRadar))
+            Toggle(L("obsidian_radar — Obsidian 雷达", "obsidian_radar — Obsidian radar"),
+                   isOn: featureBinding("obsidian_radar", $featObsidianRadar))
+            Toggle(L("digest — 周一 digest", "digest — Monday digest"),
+                   isOn: featureBinding("digest", $featDigest))
+            Toggle(L("auto_resume — 后台任务自动拉起", "auto_resume — auto-resume background tasks"),
+                   isOn: featureBinding("auto_resume", $featAutoResume))
+            Toggle(L("analytics — 用量统计", "analytics — usage stats"),
+                   isOn: featureBinding("analytics", $featAnalytics))
+            Toggle(L("manager_pack — 会后清单 + 1:1 准备页",
+                     "manager_pack — post-meeting checklist + 1:1 prep page"),
+                   isOn: featureBinding("manager_pack", $featManagerPack))
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 12))
+    }
+
+    private var redactionGroup: some View {
+        group(L("脱敏（发给 AI 前本地打码）", "Redaction (local masking before sending to AI)")) {
+            Toggle(L("启用词表脱敏 — 发出 prompt 前把词表词条替换成 [脱敏]",
+                     "Enable term-list redaction — replace term-list matches with [REDACTED] before sending prompts"),
+                   isOn: Binding(
+                get: { redactionEnabled },
+                set: { v in
+                    redactionEnabled = v
+                    persistOverride("redaction_enabled", v,
+                                    dropWhen: v == configLayerBool(block: "redaction",
+                                                                   key: "enabled",
+                                                                   default: false))
+                }))
+                .toggleStyle(.switch)
+            Toggle(L("密钥掩码 — 内置正则 (sk-ant-/xox*/AKIA/gh*_/PEM)，始终生效，不依赖词表开关",
+                     "Secrets masking — built-in regexes (sk-ant-/xox*/AKIA/gh*_/PEM), always on regardless of the toggle above"),
+                   isOn: Binding(
+                get: { redactionMaskSecrets },
+                set: { v in
+                    redactionMaskSecrets = v
+                    persistOverride("redaction_mask_secrets", v,
+                                    dropWhen: v == configLayerBool(block: "redaction",
+                                                                   key: "mask_secrets",
+                                                                   default: true))
+                }))
+                .toggleStyle(.switch)
+            labeledField(L("词表文件（一行一条，re: 前缀=正则）",
+                           "Terms file (one per line, re: prefix = regex)"),
+                         $redactionTermsFile, key: "redaction_terms_file")
+            Text(L("密钥掩码默认开启；词表脱敏默认关闭（打开会改变 AI 看到的内容）。本地存的原文不受影响。",
+                   "Secrets masking is on by default; term-list redaction is off by default (enabling changes what the AI sees). Local originals are unaffected."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .font(.system(size: 12))
+    }
+
+    private var telemetryGroup: some View {
+        group(L("产品改进计划", "Product improvement program")) {
+            Toggle(L("参与匿名使用统计（默认开，帮助改进产品）",
+                     "Share anonymous usage statistics (on by default; helps improve the product)"),
+                   isOn: Binding(
+                get: { telemetryEnabled },
+                set: { v in
+                    telemetryEnabled = v
+                    persistTelemetry()
+                }))
+                .toggleStyle(.switch)
+            HStack {
+                Text(L("收集级别", "Collection level"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { telemetryLevel },
+                    set: { v in
+                        telemetryLevel = v == "detailed" ? "detailed" : "basic"
+                        persistTelemetry()
+                    })) {
+                    Text(L("基础（默认）", "Basic (default)")).tag("basic")
+                    Text(L("详细", "Detailed")).tag("detailed")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                .disabled(!telemetryEnabled)
+                Spacer()
+            }
+            Text(L("基础：只发送匿名事件元数据——事件名、时间、随机设备号、版本号，不含任何内容。",
+                   "Basic: sends anonymous event metadata only — event name, time, random device id, app version; never any content."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要。",
+                   "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Text(L("关掉开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+                   "Turning the toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .font(.system(size: 12))
+    }
+
+    // v0.14 (audit 7.6): expert-only keys stay in config.yaml — say so, and
+    // open the file on request (copied from the example first when missing).
+    private var footerRow: some View {
+        HStack(spacing: 10) {
+            Text(L("高级选项（轮询间隔、digest 时间、不录制的 App 等）在 config.yaml 中",
+                   "Advanced options (poll intervals, digest schedule, ignored apps, …) live in config.yaml"))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Button(L("打开 config.yaml", "Open config.yaml")) { openConfigYaml() }
+                .controlSize(.small)
+            Spacer()
+            if !status.isEmpty {
+                Text(status)
+                    .font(.system(size: 11))
+                    .foregroundColor(statusIsError ? .red : .secondary)
+                    .lineLimit(2)
+                    .help(status)
+            }
+        }
     }
 
     /// 契约3: on arrival from deps「去设置」(pendingAnchor still set — the
@@ -426,7 +609,7 @@ struct SettingsFormView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func labeledField(_ label: String, _ binding: Binding<String>) -> some View {
+    private func labeledField(_ label: String, _ binding: Binding<String>, key: String) -> some View {
         HStack {
             Text(label)
                 .font(.system(size: 12))
@@ -434,26 +617,80 @@ struct SettingsFormView: View {
             TextField("", text: binding)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
+                .focused($focusedField, equals: key)
+                .onSubmit { commitField(key) }
         }
     }
 
-    /// v0.10.3 契约二: one Obsidian pipeline-directory row — folder name +
-    /// purpose blurb, editable path, and an Open-in-Finder button.
-    private func obsidianRow(_ name: String, desc: String, path: Binding<String>) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(name)
-                    .font(.system(size: 12, weight: .medium))
-                Text(desc)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 220, alignment: .leading)
-            TextField("", text: path)
+    /// audit 5.3: numeric field with inline validation — a parse failure shows
+    /// a red hint and writes NOTHING (the displayed value always equals the
+    /// effective one after a successful commit).
+    @ViewBuilder
+    private func numberField(_ label: String, _ binding: Binding<String>,
+                             key: String, error: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12))
+                .frame(width: 220, alignment: .leading)
+            TextField("", text: binding)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
-            Button(L("打开", "Open")) { openInFinder(path.wrappedValue) }
+                .frame(width: 120)
+                .focused($focusedField, equals: key)
+                .onSubmit { commitField(key) }
+            if !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+            }
+            Spacer()
+        }
+    }
+
+    /// v0.10.3 契约二 + v0.14 (audit 7.5): one Obsidian pipeline-directory row —
+    /// folder name + purpose blurb, editable path (commits on Enter/blur),
+    /// Choose… picker, Open-in-Finder, and an existence warning + create button.
+    @ViewBuilder
+    private func obsidianRow(_ name: String, desc: String, path: Binding<String>,
+                             key: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 12, weight: .medium))
+                    Text(desc)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 220, alignment: .leading)
+                TextField("", text: path)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .focused($focusedField, equals: key)
+                    .onSubmit { commitField(key) }
+                Button(L("选择…", "Choose…")) {
+                    pickFolder(current: path.wrappedValue) { p in
+                        path.wrappedValue = p
+                        persistObsidianDirs()
+                    }
+                }
                 .controlSize(.small)
+                Button(L("打开", "Open")) { openInFinder(path.wrappedValue) }
+                    .controlSize(.small)
+            }
+            if missingObsidian.contains(key) {
+                HStack(spacing: 8) {
+                    Text(L("⚠︎ 目录不存在——点「选择…」挑一个，或新建它。",
+                           "⚠︎ Folder doesn't exist — pick one with Choose…, or create it."))
+                        .font(.system(size: 10))
+                        .foregroundColor(.red)
+                    Button(L("创建文件夹", "Create folder")) {
+                        createDir(path.wrappedValue)
+                        refreshObsidianExists()
+                    }
+                    .controlSize(.small)
+                }
+            }
         }
     }
 
@@ -462,6 +699,46 @@ struct SettingsFormView: View {
         let p = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
         guard !p.isEmpty else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: p, isDirectory: true))
+    }
+
+    /// NSOpenPanel folder picker (directories only, may create) — returns the
+    /// picked path with $HOME abbreviated back to "~".
+    private func pickFolder(current: String, done: (String) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = L("选择", "Choose")
+        let cur = (current.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        if !cur.isEmpty, FileManager.default.fileExists(atPath: cur) {
+            panel.directoryURL = URL(fileURLWithPath: cur, isDirectory: true)
+        }
+        if panel.runModal() == .OK, let url = panel.url {
+            done(abbreviateHome(url.path))
+        }
+    }
+
+    private func abbreviateHome(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
+    private func dirExists(_ path: String) -> Bool {
+        let p = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        guard !p.isEmpty else { return true }
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: p, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    private func createDir(_ path: String) {
+        let p = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        guard !p.isEmpty else { return }
+        do {
+            try FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
+            noteSaved()
+        } catch {
+            noteError(L("创建目录失败：", "Couldn't create the folder: ") + error.localizedDescription)
+        }
     }
 
     /// v0.10.3 契约二: default pipeline dir = vault root (2 - raw's parent;
@@ -521,6 +798,8 @@ struct SettingsFormView: View {
         alert.runModal()
     }
 
+    // MARK: - load (effective values: overrides → config.yaml → defaults)
+
     private func load() {
         let ov = SettingsIO.readOverrides()
         func str(_ key: String, configKey: String?, fallback: String) -> String {
@@ -541,6 +820,8 @@ struct SettingsFormView: View {
         obsidianWiki = str(
             "obsidian_wiki", configKey: "obsidian_wiki",
             fallback: Self.derivedObsidianDir(raw: obsidianRaw, name: "4 - wiki"))
+        lastRawForDerivation = obsidianRaw
+        refreshObsidianExists()
         gmailAddress = str("gmail_address", configKey: "address", fallback: "")
         showMenuBarIcon = Prefs.bool("showMenuBarIcon", default: true)
         hotkeyEnabled = Prefs.bool("hotkeyEnabled", default: true)
@@ -559,12 +840,26 @@ struct SettingsFormView: View {
         confirmAbove = num("require_text_confirm_above_usd",
                            configKey: "require_text_confirm_above_usd", fallback: "50")
         trashDays = num("trash_retention_days", configKey: "retention_days", fallback: "60")
+        // v0.14 (audit 7.1/7.3): execution keys — effective load.
+        targetRepo = (ov["default_target_repo"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? SettingsIO.configNestedScalar(block: "execution", key: "default_target_repo")
+            ?? "~/Projects/your-workbench"
+        targetRepoExists = dirExists(targetRepo)
+        skipPermissions = (ov["skip_permissions"] as? Bool)
+            ?? configLayerBool(block: "execution", key: "skip_permissions", default: true)
+        createGithubRepo = (ov["create_github_repo"] as? Bool)
+            ?? configLayerBool(block: "execution", key: "create_github_repo", default: false)
         // P0-12: no override key → picker mirrors the same locale fallback
         // LanguageStore resolved at launch (an explicit save still wins).
         language = (ov["language"] as? String).map { $0 == "en" ? "en" : "zh" }
             ?? LanguageStore.systemDefault
+        // §16 flags — effective: overrides → config.yaml features: → default on
+        // (audit 5.2: reading overrides only made config.yaml choices look wrong
+        // and get clobbered on the next save).
         let feats = ov["features"] as? [String: Any] ?? [:]
-        func flag(_ key: String) -> Bool { (feats[key] as? Bool) ?? true }
+        func flag(_ key: String) -> Bool {
+            (feats[key] as? Bool) ?? configLayerBool(block: "features", key: key, default: true)
+        }
         featSlackRadar = flag("slack_radar")
         featGmailRadar = flag("gmail_radar")
         featObsidianRadar = flag("obsidian_radar")
@@ -572,10 +867,15 @@ struct SettingsFormView: View {
         featAutoResume = flag("auto_resume")
         featAnalytics = flag("analytics")
         featManagerPack = flag("manager_pack")
-        redactionEnabled = (ov["redaction_enabled"] as? Bool) ?? false
-        redactionMaskSecrets = (ov["redaction_mask_secrets"] as? Bool) ?? true
-        redactionTermsFile = str("redaction_terms_file", configKey: nil,
-                                 fallback: "config/redaction_terms.txt")
+        // redaction — effective (audit 5.2: a config.yaml `redaction.enabled:
+        // true` used to show as off AND get overwritten by unrelated saves).
+        redactionEnabled = (ov["redaction_enabled"] as? Bool)
+            ?? configLayerBool(block: "redaction", key: "enabled", default: false)
+        redactionMaskSecrets = (ov["redaction_mask_secrets"] as? Bool)
+            ?? configLayerBool(block: "redaction", key: "mask_secrets", default: true)
+        redactionTermsFile = (ov["redaction_terms_file"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? SettingsIO.configNestedScalar(block: "redaction", key: "terms_file")
+            ?? "config/redaction_terms.txt"
         // telemetry — mirror the effective config: overrides (nested form
         // shared with the first-run permissions page, flat keys accepted
         // too) → config.yaml telemetry block → built-in defaults (on /
@@ -597,50 +897,179 @@ struct SettingsFormView: View {
         telemetryLevel = level == "detailed" ? "detailed" : "basic"
     }
 
-    private func save() {
-        // read-merge-write: SettingsIO.writeOverrides REPLACES the whole file
-        // (same landmine /lang works around) — merge over the existing keys so
-        // out-of-form overrides (e.g. legacy slack_token_path) survive a save.
+    // MARK: - persist (on change, diff-write; CONTRACT §15.3 v0.14)
+
+    /// Config-layer effective bool (config.yaml → built-in default) — the
+    /// value the pipeline would resolve WITHOUT any override. Used to decide
+    /// whether an override key is needed at all.
+    private func configLayerBool(block: String, key: String, default def: Bool) -> Bool {
+        guard let v = SettingsIO.configNestedScalar(block: block, key: key) else { return def }
+        return v.lowercased() != "false"
+    }
+
+    /// Write (or drop) ONE override key. `dropWhen` = the new value equals the
+    /// config-layer effective value, so the key is removed and config.yaml
+    /// stays live. All other keys in the file are left untouched.
+    private func persistOverride(_ key: String, _ value: Any, dropWhen equalsConfigLayer: Bool) {
         var merged = SettingsIO.readOverrides()
-        let dict: [String: Any] = [
-            "obsidian_raw": obsidianRaw.trimmingCharacters(in: .whitespaces),
-            "gmail_address": gmailAddress.trimmingCharacters(in: .whitespaces),
-            "show_cost_above_usd": Double(showCostAbove.trimmingCharacters(in: .whitespaces)) ?? 5.0,
-            "require_text_confirm_above_usd": Double(confirmAbove.trimmingCharacters(in: .whitespaces)) ?? 50.0,
-            "trash_retention_days": Int(trashDays.trimmingCharacters(in: .whitespaces)) ?? 60,
-            "language": language == "en" ? "en" : "zh",
-            "redaction_enabled": redactionEnabled,
-            "redaction_mask_secrets": redactionMaskSecrets,
-            "redaction_terms_file": redactionTermsFile.trimmingCharacters(in: .whitespaces),
-            "features": [
-                "slack_radar": featSlackRadar,
-                "gmail_radar": featGmailRadar,
-                "obsidian_radar": featObsidianRadar,
-                "digest": featDigest,
-                "auto_resume": featAutoResume,
-                "analytics": featAnalytics,
-                "manager_pack": featManagerPack,
-            ],
-        ]
-        for (k, v) in dict { merged[k] = v }
-        // §15 telemetry overrides (docs/TELEMETRY.md): write the nested form
-        // shared with the first-run permissions page (TelemetryConsent,
-        // Permissions.swift) and drop any legacy flat keys, so the two
-        // spellings can never disagree.
+        if equalsConfigLayer {
+            merged.removeValue(forKey: key)
+        } else {
+            merged[key] = value
+        }
+        writeMerged(merged)
+    }
+
+    private func writeMerged(_ merged: [String: Any]) {
+        do {
+            try SettingsIO.writeOverrides(merged)
+            noteSaved()
+            Analytics.log("mw_settings_save")
+        } catch {
+            noteError(L("保存失败（磁盘或权限问题），这次改动没写入——再改一次即可重试：",
+                        "Save failed (disk or permissions); this change was not written — change it again to retry: ")
+                + error.localizedDescription)
+        }
+    }
+
+    private func noteSaved() {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        status = L("已保存 ", "Saved ") + f.string(from: Date())
+        statusIsError = false
+    }
+
+    private func noteError(_ text: String) {
+        status = text
+        statusIsError = true
+    }
+
+    /// One toggle = one flag key inside the "features" dict; equal to the
+    /// config-layer value → key dropped (empty dict → whole key dropped).
+    private func featureBinding(_ key: String, _ state: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { state.wrappedValue },
+            set: { v in
+                state.wrappedValue = v
+                var merged = SettingsIO.readOverrides()
+                var feats = merged["features"] as? [String: Any] ?? [:]
+                if v == configLayerBool(block: "features", key: key, default: true) {
+                    feats.removeValue(forKey: key)
+                } else {
+                    feats[key] = v
+                }
+                if feats.isEmpty {
+                    merged.removeValue(forKey: "features")
+                } else {
+                    merged["features"] = feats
+                }
+                writeMerged(merged)
+            })
+    }
+
+    /// Language is an explicit user choice that must stick (the fallback is
+    /// locale-dependent, not a config layer) — always written on change.
+    private func persistLanguage() {
+        var merged = SettingsIO.readOverrides()
+        merged["language"] = language == "en" ? "en" : "zh"
+        writeMerged(merged)
+        // apply the UI language immediately (observed views re-render)
+        LanguageStore.shared.lang = language == "en" ? "en" : "zh"
+        // AppKit main menu doesn't observe SwiftUI state — rebuild it so
+        // menu titles follow the new language too.
+        (NSApp.delegate as? AppDelegate)?.installMainMenu()
+    }
+
+    /// §15 telemetry overrides (docs/TELEMETRY.md): nested form shared with
+    /// the first-run permissions page; sub-keys diff-written, legacy flat
+    /// keys dropped so the two spellings can never disagree.
+    private func persistTelemetry() {
+        var merged = SettingsIO.readOverrides()
         var tele = merged["telemetry"] as? [String: Any] ?? [:]
-        tele["enabled"] = telemetryEnabled
-        tele["level"] = telemetryLevel == "detailed" ? "detailed" : "basic"
-        merged["telemetry"] = tele
+        let cfgEnabled = configLayerBool(block: "telemetry", key: "enabled", default: true)
+        let cfgLevelRaw = (SettingsIO.configNestedScalar(block: "telemetry", key: "level")
+            ?? "basic").lowercased()
+        let cfgLevel = cfgLevelRaw == "detailed" ? "detailed" : "basic"
+        let level = telemetryLevel == "detailed" ? "detailed" : "basic"
+        if telemetryEnabled == cfgEnabled {
+            tele.removeValue(forKey: "enabled")
+        } else {
+            tele["enabled"] = telemetryEnabled
+        }
+        if level == cfgLevel {
+            tele.removeValue(forKey: "level")
+        } else {
+            tele["level"] = level
+        }
+        if tele.isEmpty {
+            merged.removeValue(forKey: "telemetry")
+        } else {
+            merged["telemetry"] = tele
+        }
         merged.removeValue(forKey: "telemetry.enabled")
         merged.removeValue(forKey: "telemetry.level")
-        // v0.10.3 契约二: the three derived Obsidian dirs. An emptied field
-        // snaps back to its derived default; a value equal to that default
-        // DROPS the override key (config.py derivation stays live, so moving
-        // raw later re-points them); anything else is written explicitly.
-        let rawSaved = obsidianRaw.trimmingCharacters(in: .whitespaces)
-        let unprocessedDefault = Self.derivedObsidianDir(raw: rawSaved, name: "1 - unprocessed")
-        let changeSummaryDefault = Self.derivedObsidianDir(raw: rawSaved, name: "3 - change-summary")
-        let wikiDefault = Self.derivedObsidianDir(raw: rawSaved, name: "4 - wiki")
+        writeMerged(merged)
+    }
+
+    /// Route a text-field commit (Enter / focus-out / window close).
+    private func commitField(_ key: String?) {
+        guard loaded, let key else { return }
+        switch key {
+        case "obsidian_raw", "obsidian_unprocessed", "obsidian_change_summary", "obsidian_wiki":
+            persistObsidianDirs()
+        case "gmail_address":
+            commitGmailAddress()
+        case "show_cost":
+            commitShowCost()
+        case "confirm_cost":
+            commitConfirmAbove()
+        case "trash_days":
+            commitTrashDays()
+        case "redaction_terms_file":
+            commitTermsFile()
+        case "target_repo":
+            commitTargetRepo()
+        default:
+            break
+        }
+    }
+
+    /// v0.10.3 契约二 semantics, per-change: raw diff-written vs config.yaml;
+    /// an emptied derived field snaps back to its derived default; a value
+    /// equal to that default DROPS the override key (config.py derivation
+    /// stays live, so moving raw later re-points them); anything else is
+    /// written explicitly. Fields still tracking the derivation re-point when
+    /// raw moves.
+    private func persistObsidianDirs() {
+        var merged = SettingsIO.readOverrides()
+        let rawConfigLayer = SettingsIO.configScalar("obsidian_raw")
+            .flatMap { $0.isEmpty ? nil : $0 } ?? "~/Documents/Obsidian Vault/2 - raw"
+        var raw = obsidianRaw.trimmingCharacters(in: .whitespaces)
+        if raw.isEmpty {
+            raw = rawConfigLayer
+            obsidianRaw = raw
+        }
+        if raw == rawConfigLayer {
+            merged.removeValue(forKey: "obsidian_raw")
+        } else {
+            merged["obsidian_raw"] = raw
+        }
+        // re-point fields that were tracking the OLD raw's derivation
+        let oldRaw = lastRawForDerivation
+        if oldRaw != raw {
+            for (state, name) in [($obsidianUnprocessed, "1 - unprocessed"),
+                                  ($obsidianChangeSummary, "3 - change-summary"),
+                                  ($obsidianWiki, "4 - wiki")] {
+                if state.wrappedValue.trimmingCharacters(in: .whitespaces)
+                    == Self.derivedObsidianDir(raw: oldRaw, name: name) {
+                    state.wrappedValue = Self.derivedObsidianDir(raw: raw, name: name)
+                }
+            }
+            lastRawForDerivation = raw
+        }
+        let unprocessedDefault = Self.derivedObsidianDir(raw: raw, name: "1 - unprocessed")
+        let changeSummaryDefault = Self.derivedObsidianDir(raw: raw, name: "3 - change-summary")
+        let wikiDefault = Self.derivedObsidianDir(raw: raw, name: "4 - wiki")
         if obsidianUnprocessed.trimmingCharacters(in: .whitespaces).isEmpty {
             obsidianUnprocessed = unprocessedDefault
         }
@@ -662,38 +1091,151 @@ struct SettingsFormView: View {
                 merged[key] = v
             }
         }
+        writeMerged(merged)
+        refreshObsidianExists()
+    }
+
+    private func refreshObsidianExists() {
+        var missing: Set<String> = []
+        for (key, value) in [("obsidian_raw", obsidianRaw),
+                             ("obsidian_unprocessed", obsidianUnprocessed),
+                             ("obsidian_change_summary", obsidianChangeSummary),
+                             ("obsidian_wiki", obsidianWiki)] {
+            if !value.trimmingCharacters(in: .whitespaces).isEmpty && !dirExists(value) {
+                missing.insert(key)
+            }
+        }
+        missingObsidian = missing
+    }
+
+    private func commitGmailAddress() {
+        let v = gmailAddress.trimmingCharacters(in: .whitespaces)
+        gmailAddress = v
+        let configLayer = SettingsIO.configScalar("address") ?? ""
+        persistOverride("gmail_address", v, dropWhen: v.isEmpty || v == configLayer)
+    }
+
+    private func commitTermsFile() {
+        let v = redactionTermsFile.trimmingCharacters(in: .whitespaces)
+        let configLayer = SettingsIO.configNestedScalar(block: "redaction", key: "terms_file")
+            ?? "config/redaction_terms.txt"
+        if v.isEmpty {
+            redactionTermsFile = configLayer
+            persistOverride("redaction_terms_file", configLayer, dropWhen: true)
+            return
+        }
+        persistOverride("redaction_terms_file", v, dropWhen: v == configLayer)
+    }
+
+    private func numFormat(_ v: Double) -> String {
+        v == v.rounded() ? String(Int(v)) : String(v)
+    }
+
+    private func commitShowCost() {
+        let t = showCostAbove.trimmingCharacters(in: .whitespaces)
+        guard let v = Double(t), v >= 0 else {
+            showCostError = L("请输入不小于 0 的数字，如 5", "Enter a number ≥ 0, e.g. 5")
+            return
+        }
+        showCostError = ""
+        showCostAbove = numFormat(v)
+        let cfgLayer = Double(SettingsIO.configScalar("show_cost_above_usd") ?? "") ?? 5.0
+        persistOverride("show_cost_above_usd", v, dropWhen: v == cfgLayer)
+    }
+
+    private func commitConfirmAbove() {
+        let t = confirmAbove.trimmingCharacters(in: .whitespaces)
+        guard let v = Double(t), v >= 0 else {
+            confirmError = L("请输入不小于 0 的数字，如 50", "Enter a number ≥ 0, e.g. 50")
+            return
+        }
+        confirmError = ""
+        confirmAbove = numFormat(v)
+        let cfgLayer = Double(SettingsIO.configScalar("require_text_confirm_above_usd") ?? "") ?? 50.0
+        persistOverride("require_text_confirm_above_usd", v, dropWhen: v == cfgLayer)
+    }
+
+    private func commitTrashDays() {
+        let t = trashDays.trimmingCharacters(in: .whitespaces)
+        guard let v = Int(t), v >= 0 else {
+            trashDaysError = L("请输入整数天数，如 60（0 = 永不自动清）",
+                               "Enter a whole number of days, e.g. 60 (0 = never auto-purge)")
+            return
+        }
+        trashDaysError = ""
+        trashDays = String(v)
+        let cfgLayer = Int(SettingsIO.configScalar("retention_days") ?? "") ?? 60
+        persistOverride("trash_retention_days", v, dropWhen: v == cfgLayer)
+    }
+
+    private func commitTargetRepo() {
+        let cfgLayer = SettingsIO.configNestedScalar(block: "execution", key: "default_target_repo")
+            ?? "~/Projects/your-workbench"
+        var v = targetRepo.trimmingCharacters(in: .whitespaces)
+        if v.isEmpty {
+            v = cfgLayer
+            targetRepo = v
+        }
+        persistOverride("default_target_repo", v, dropWhen: v == cfgLayer)
+        targetRepoExists = dirExists(v)
+    }
+
+    /// Create the task working folder (with a best-effort background
+    /// `git init` so branch-based delivery works out of the box).
+    private func createTargetRepoDir() {
+        let p = (targetRepo.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        guard !p.isEmpty else { return }
         do {
-            try SettingsIO.writeOverrides(merged)
-            // apply the UI language immediately (observed views re-render)
-            LanguageStore.shared.lang = language == "en" ? "en" : "zh"
-            // AppKit main menu doesn't observe SwiftUI state — rebuild it so
-            // menu titles follow the new language too.
-            (NSApp.delegate as? AppDelegate)?.installMainMenu()
-            let f = DateFormatter()
-            f.dateFormat = "HH:mm:ss"
-            status = L("已保存 ", "Saved ") + f.string(from: Date())
-            Analytics.log("mw_settings_save")
+            try FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
+            targetRepoExists = true
+            noteSaved()
+            DispatchQueue.global(qos: .utility).async {
+                if !FileManager.default.fileExists(atPath: p + "/.git") {
+                    _ = Shell.run("/usr/bin/git", ["-C", p, "init", "-q"])
+                }
+            }
         } catch {
-            status = L("保存失败: ", "Save failed: ") + error.localizedDescription
+            noteError(L("创建目录失败：", "Couldn't create the folder: ") + error.localizedDescription)
+        }
+    }
+
+    private func openConfigYaml() {
+        let root = AppPaths.stateRoot
+        let cfg = root + "/config.yaml"
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: cfg) {
+            try? fm.copyItem(atPath: root + "/config.example.yaml", toPath: cfg)
+        }
+        if fm.fileExists(atPath: cfg) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cfg)])
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: root, isDirectory: true))
         }
     }
 }
 
-// One credential row in 设置·凭证 — status dot (green = secrets file saved,
-// yellow = legacy path in use, grey = unset) + SecureField paste + save +
+// One credential row in 设置·凭证 — status dot + SecureField paste + save +
 // helper link buttons (http URL or repo-relative doc path).
-// P1-2: rows with validatesAnthropicKey get a 验证 button (cheap live probe
-// against api.anthropic.com/v1/models) and every save auto-verifies — an
-// invalid key is never stored silently.
+//
+// v0.14 (audit 6.1/6.4): EVERY row verifies on save with a real probe —
+// Anthropic → GET /v1/models, Slack → auth.test, Gmail app password → IMAP
+// LOGIN via the runtime python. The dot is green ONLY after a successful
+// verification; a failed probe shows the classified plain-language reason
+// inline. Gmail passwords are stripped of ALL whitespace before storing
+// (Google renders them as "abcd efgh ijkl mnop"; pasting that used to fail).
 struct CredentialRowView: View {
+    enum Kind { case plain, anthropic, slack, gmail }
+
     let title: String
     let secretName: String                       // file name under config/secrets/
     let legacyPath: String                       // tilde form ok
     let links: [(label: String, target: String)] // http(s) URL or repo-relative path
-    var validatesAnthropicKey: Bool = false
+    var kind: Kind = .plain
 
+    // 0 = unset, 1 = legacy path, 2 = saved (not verified),
+    // 3 = verified ok, 4 = verification failed (bad credential)
     @State private var input = ""
-    @State private var state = 0   // 0 = unset, 1 = legacy path, 2 = saved
+    @State private var state = 0
     @State private var note = ""
     @State private var noteColor = Color.secondary
     @State private var validating = false
@@ -715,15 +1257,17 @@ struct CredentialRowView: View {
                 }
             }
             HStack(spacing: 8) {
-                SecureField(L("粘贴后点保存（只存本机）", "Paste, then Save (stored locally only)"),
+                SecureField(L("粘贴后点保存（只存本机，保存即验证）",
+                              "Paste, then Save (stored locally; verified on save)"),
                             text: $input)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
                 Button(L("保存", "Save")) { save() }
                     .controlSize(.small)
-                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if validatesAnthropicKey {
-                    // P1-2: probe the pasted key (or the stored one when the
+                    .disabled(validating
+                        || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if kind != .plain {
+                    // probe the pasted credential (or the stored one when the
                     // field is empty) — inline ok/fail with the reason.
                     Button(validating ? L("验证中…", "Verifying…") : L("验证", "Verify")) {
                         verify()
@@ -739,11 +1283,6 @@ struct CredentialRowView: View {
                         .help(note)
                 }
             }
-            Text(SecretsIO.path(secretName))
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
         }
         .padding(.vertical, 2)
         .onAppear { refreshState() }
@@ -751,15 +1290,19 @@ struct CredentialRowView: View {
 
     private var dotColor: Color {
         switch state {
-        case 2: return .green
-        case 1: return .yellow
+        case 3: return .green
+        case 4: return .red
+        case 2, 1: return .yellow
         default: return Color.secondary.opacity(0.4)
         }
     }
 
     private var stateText: String {
         switch state {
-        case 2: return L("已保存（App 内管理）", "Saved (managed in-app)")
+        case 4: return L("验证失败", "verification failed")
+        case 3: return L("已验证 ✓", "verified ✓")
+        case 2: return kind == .plain ? L("已保存（App 内管理）", "Saved (managed in-app)")
+                                      : L("已保存（未验证）", "saved (not verified)")
         case 1: return L("使用旧路径", "Using legacy path")
         default: return L("未设置", "Not set")
         }
@@ -776,25 +1319,36 @@ struct CredentialRowView: View {
     }
 
     private func save() {
-        let token = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        var token = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind == .gmail {
+            // audit 6.4: Google displays app passwords as "abcd efgh ijkl
+            // mnop" — inner whitespace is never part of the password.
+            token = token.filter { !$0.isWhitespace }
+        }
         guard !token.isEmpty else { return }
         do {
             try SecretsIO.save(secretName, token: token)
             input = ""
             refreshState()
             Analytics.log("mw_secret_save", fields: ["name": secretName])
-            if validatesAnthropicKey {
-                // P1-2: never store an invalid key silently — probe right away
-                runProbe(token, savedFirst: true)
-            } else {
-                setNote(L("已保存 ✓", "Saved ✓"), .secondary)
+            if kind == .gmail && !Self.looksLikeAppPassword(token) {
+                setNote(L("提示：应用密码通常是 16 位字母——检查是否粘贴了别的东西。仍会尝试验证…",
+                          "Heads-up: app passwords are usually 16 letters — check you pasted the right thing. Verifying anyway…"),
+                        .orange)
             }
+            // never leave an invalid credential looking green — probe right away
+            runVerify(token, savedFirst: true)
         } catch {
             setNote(L("保存失败: ", "Save failed: ") + error.localizedDescription, .red)
         }
     }
 
-    // MARK: P1-2 key validation
+    /// 16 alphanumerics (Google app-password shape) — advisory only.
+    private static func looksLikeAppPassword(_ s: String) -> Bool {
+        s.count == 16 && s.allSatisfy { $0.isLetter || $0.isNumber }
+    }
+
+    // MARK: verification
 
     private func setNote(_ text: String, _ color: Color) {
         note = text
@@ -803,42 +1357,112 @@ struct CredentialRowView: View {
 
     /// 验证 button: probe the field content; empty field → the stored secret.
     private func verify() {
-        let candidate = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key: String
+        var candidate = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind == .gmail { candidate = candidate.filter { !$0.isWhitespace } }
+        let secret: String
         if !candidate.isEmpty {
-            key = candidate
+            secret = candidate
         } else if let stored = try? String(contentsOfFile: SecretsIO.path(secretName),
                                            encoding: .utf8)
                     .trimmingCharacters(in: .whitespacesAndNewlines), !stored.isEmpty {
-            key = stored
+            secret = stored
         } else {
-            setNote(L("先粘贴（或保存）一个 key 再验证", "Paste (or save) a key first"), .orange)
+            setNote(L("先粘贴（或保存）一个凭证再验证", "Paste (or save) a credential first"), .orange)
             return
         }
-        runProbe(key, savedFirst: false)
+        runVerify(secret, savedFirst: false)
     }
 
-    private func runProbe(_ key: String, savedFirst: Bool) {
+    private func runVerify(_ secret: String, savedFirst: Bool) {
+        let done: @MainActor (KeyProbe.Outcome) -> Void = { outcome in
+            validating = false
+            handleOutcome(outcome, savedFirst: savedFirst)
+        }
+        switch kind {
+        case .anthropic:
+            beginValidating(savedFirst)
+            KeyProbe.anthropic(key: secret, done: done)
+        case .slack:
+            beginValidating(savedFirst)
+            KeyProbe.slack(token: secret, done: done)
+        case .gmail:
+            let address = Self.effectiveGmailAddress()
+            guard !address.isEmpty else {
+                setNote((savedFirst ? L("已保存，但还没填 Gmail 地址——", "Saved, but no Gmail address yet — ")
+                                    : L("还没填 Gmail 地址——", "No Gmail address yet — "))
+                    + L("在上面「Gmail 地址」填好后点「验证」。",
+                        "fill in \"Gmail address\" above, then click Verify."),
+                        .orange)
+                return
+            }
+            beginValidating(savedFirst)
+            // legacy stored values may still carry inner spaces — normalize
+            KeyProbe.gmailIMAP(address: address,
+                               password: secret.filter { !$0.isWhitespace }, done: done)
+        case .plain:
+            setNote(L("已保存 ✓", "Saved ✓"), .secondary)
+        }
+    }
+
+    private func beginValidating(_ savedFirst: Bool) {
         validating = true
         setNote(savedFirst ? L("已保存，验证中…", "Saved — verifying…")
                            : L("验证中…", "Verifying…"), .secondary)
-        KeyProbe.anthropic(key: key) { outcome in
-            validating = false
-            switch outcome {
-            case .ok:
-                setNote(savedFirst ? L("已保存 ✓ key 有效", "Saved ✓ key valid")
-                                   : L("key 有效 ✓", "Key valid ✓"), .green)
-                Analytics.log("mw_key_validate", fields: ["result": "ok"])
-            case .unauthorized(let why):
-                setNote((savedFirst ? L("已保存，但 key 无效：", "Saved, but the key is INVALID: ")
-                                    : L("key 无效：", "Invalid key: ")) + why, .red)
-                Analytics.log("mw_key_validate", fields: ["result": "unauthorized"])
-            case .failed(let why):
-                setNote(L("无法验证（网络/服务问题）：", "Couldn't verify (network/service): ") + why,
-                        .orange)
-                Analytics.log("mw_key_validate", fields: ["result": "error"])
-            }
+    }
+
+    private func handleOutcome(_ outcome: KeyProbe.Outcome, savedFirst: Bool) {
+        switch outcome {
+        case .ok(let detail):
+            state = 3
+            let suffix = detail.map { " " + $0 } ?? ""
+            setNote((savedFirst ? L("已保存 ✓ 验证通过", "Saved ✓ verified")
+                                : L("验证通过 ✓", "Verified ✓")) + suffix, .green)
+            Analytics.log("mw_key_validate",
+                          fields: ["name": secretName, "result": "ok"])
+        case .unauthorized(let why):
+            state = 4
+            setNote((savedFirst ? L("已保存，但验证失败：", "Saved, but verification FAILED: ")
+                                : L("验证失败：", "Verification failed: ")) + humanAuthReason(why),
+                    .red)
+            Analytics.log("mw_key_validate",
+                          fields: ["name": secretName, "result": "unauthorized"])
+        case .failed(let why):
+            // network/service — the credential's verdict is unknown, keep it
+            // saved-but-unverified rather than pretending either way.
+            if state == 3 || state == 4 { state = 2 }
+            setNote(L("无法验证（网络/服务问题），稍后点「验证」重试：",
+                      "Couldn't verify (network/service) — click Verify again later: ") + why,
+                    .orange)
+            Analytics.log("mw_key_validate",
+                          fields: ["name": secretName, "result": "error"])
         }
+    }
+
+    /// Classified plain-language reason (audit 6.1): what went wrong + the
+    /// one action that fixes it; the raw code rides along in parentheses.
+    private func humanAuthReason(_ raw: String) -> String {
+        switch kind {
+        case .slack:
+            return L("token 无效——到 api.slack.com/apps → OAuth & Permissions 重新生成 User OAuth Token 再粘贴（\(raw)）",
+                     "The token is invalid — regenerate the User OAuth Token at api.slack.com/apps → OAuth & Permissions and paste it again (\(raw))")
+        case .gmail:
+            return L("应用密码或地址不对——点「生成密码」重新生成一个应用密码再粘贴（\(raw)）",
+                     "Wrong app password or address — click Generate for a fresh app password and paste it (\(raw))")
+        case .anthropic:
+            return L("key 无效——到 console.anthropic.com 重新生成，回来粘贴保存（\(raw)）",
+                     "The key is invalid — regenerate it at console.anthropic.com, then paste and save (\(raw))")
+        case .plain:
+            return raw
+        }
+    }
+
+    /// Effective Gmail address for the IMAP probe: override → config.yaml.
+    /// (The address field persists on change, so disk is current.)
+    private static func effectiveGmailAddress() -> String {
+        if let v = SettingsIO.readOverrides()["gmail_address"] as? String, !v.isEmpty {
+            return v
+        }
+        return SettingsIO.configScalar("address") ?? ""
     }
 
     private func openLink(_ target: String) {
@@ -850,17 +1474,18 @@ struct CredentialRowView: View {
     }
 }
 
-// MARK: - P1-2 Anthropic key probe
+// MARK: - Credential probes (P1-2 Anthropic; v0.14 Slack + Gmail)
 //
-// GET /v1/models — free (no tokens billed), fast, and it fails with 401 on a
-// bad key, which is exactly the signal we need. URLSession instead of a curl
-// subprocess so the key never appears in a process argv (`ps` would show it).
+// Anthropic: GET /v1/models — free (no tokens billed), fast, 401 on a bad key.
+// Slack: POST auth.test — the canonical token check; ok:false carries an error
+// code we classify. Gmail: a real IMAP LOGIN via the runtime python (imaplib),
+// password passed over stdin so it NEVER appears in a process argv (`ps`).
 
 enum KeyProbe {
     enum Outcome {
-        case ok
-        case unauthorized(String)  // the key itself is bad (401/403)
-        case failed(String)        // network / service — key verdict unknown
+        case ok(String?)           // verified; optional detail ("@user", address)
+        case unauthorized(String)  // the credential itself is bad
+        case failed(String)        // network / service — verdict unknown
     }
 
     static func anthropic(key: String, done: @escaping @MainActor (Outcome) -> Void) {
@@ -874,7 +1499,7 @@ enum KeyProbe {
                 outcome = .failed(err.localizedDescription)
             } else if let http = resp as? HTTPURLResponse {
                 if (200..<300).contains(http.statusCode) {
-                    outcome = .ok
+                    outcome = .ok(nil)
                 } else {
                     let detail = Self.apiErrorMessage(data) ?? "HTTP \(http.statusCode)"
                     outcome = (http.statusCode == 401 || http.statusCode == 403)
@@ -887,6 +1512,101 @@ enum KeyProbe {
                 MainActor.assumeIsolated { done(outcome) }
             }
         }.resume()
+    }
+
+    /// Slack auth.test (audit 6.1) — token-shaped errors → .unauthorized.
+    static func slack(token: String, done: @escaping @MainActor (Outcome) -> Void) {
+        var req = URLRequest(url: URL(string: "https://slack.com/api/auth.test")!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10
+        req.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: req) { data, _, err in
+            let outcome: Outcome
+            if let err {
+                outcome = .failed(err.localizedDescription)
+            } else if let data,
+                      let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let ok = obj["ok"] as? Bool {
+                if ok {
+                    let user = obj["user"] as? String
+                    outcome = .ok(user.map { "@" + $0 })
+                } else {
+                    let code = obj["error"] as? String ?? "unknown_error"
+                    let tokenErrors = ["invalid_auth", "not_authed", "account_inactive",
+                                       "token_revoked", "token_expired"]
+                    outcome = tokenErrors.contains(code) ? .unauthorized(code) : .failed(code)
+                }
+            } else {
+                outcome = .failed("no response")
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { done(outcome) }
+            }
+        }.resume()
+    }
+
+    /// Gmail app password (audit 6.1/6.4): one real IMAP LOGIN through the
+    /// pinned runtime python — the same interpreter the radar runs under.
+    static func gmailIMAP(address: String, password: String,
+                          done: @escaping @MainActor (Outcome) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = gmailProbeSync(address: address, password: password)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { done(outcome) }
+            }
+        }
+    }
+
+    /// Blocking — call from a background queue only.
+    private static func gmailProbeSync(address: String, password: String) -> Outcome {
+        let py = IMessageSettingsModel.runtimePython()
+        let code = """
+        import imaplib, sys
+        pw = sys.stdin.read().strip()
+        try:
+            c = imaplib.IMAP4_SSL("imap.gmail.com", timeout=15)
+            c.login(sys.argv[1], pw)
+            try:
+                c.logout()
+            except Exception:
+                pass
+            print("PROBE_OK")
+        except imaplib.IMAP4.error as e:
+            print("PROBE_AUTH " + str(e)[:200])
+            sys.exit(1)
+        except Exception as e:
+            print("PROBE_NET " + str(e)[:200])
+            sys.exit(2)
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: py)
+        p.arguments = ["-c", code, address]
+        let inPipe = Pipe()
+        let outPipe = Pipe()
+        p.standardInput = inPipe
+        p.standardOutput = outPipe
+        p.standardError = outPipe
+        do { try p.run() } catch {
+            return .failed(L("找不到可用的 python（", "No usable python (")
+                + error.localizedDescription + ")")
+        }
+        try? inPipe.fileHandleForWriting.write(contentsOf: Data(password.utf8))
+        try? inPipe.fileHandleForWriting.close()
+        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let out = String(data: data, encoding: .utf8) ?? ""
+        let last = out.split(separator: "\n").last.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        if last == "PROBE_OK" { return .ok(address) }
+        if last.hasPrefix("PROBE_AUTH") {
+            return .unauthorized(String(last.dropFirst("PROBE_AUTH".count))
+                .trimmingCharacters(in: .whitespaces))
+        }
+        if last.hasPrefix("PROBE_NET") {
+            return .failed(String(last.dropFirst("PROBE_NET".count))
+                .trimmingCharacters(in: .whitespaces))
+        }
+        return .failed(last.isEmpty ? "probe produced no output" : String(last.suffix(200)))
     }
 
     /// {"error": {"type": "...", "message": "..."}} → "type: message"

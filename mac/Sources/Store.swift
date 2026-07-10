@@ -468,8 +468,8 @@ final class DashboardStore: ObservableObject {
                 // v0.10.2: stop the run, card returns to 待审批 (CARD_SENT) —
                 // same pending+timeout mechanism as restore (契约: 信息条).
                 beginReturn(id, from: .running, kind: .abort,
-                            info: L("停止中，卡片将回到待审批",
-                                    "Stopping — card returns to approval"))
+                            info: L("停止中，卡片将回到提案列",
+                                    "Stopping — card returns to Proposals"))
             case "revert_review":
                 // v0.10.2: delivered → back to REVIEW for re-acceptance.
                 beginReturn(id, from: .completed, kind: .revert,

@@ -128,10 +128,14 @@ final class IMessageSettingsModel: ObservableObject {
         }
         handle = t
         guard writeOverrides(channel: nil, handle: t) else { return }
+        // status language aligned with the credentials rows (v0.14): a format
+        // check is not delivery verification — say so, and point at the real
+        // verification actions.
         handleNote = enabled
-            ? L("已保存 ✓ 下一轮（≤3 分钟）生效；也可点「立即测试一轮」。",
-                "Saved ✓ Takes effect next round (≤3 min) — or click \"Test one round now\".")
-            : L("已保存 ✓", "Saved ✓")
+            ? L("已保存 ✓（格式有效）下一轮（≤3 分钟）生效；点「立即测试一轮」或「发送测试消息」可真实验证。",
+                "Saved ✓ (format valid) Takes effect next round (≤3 min) — verify for real with \"Test one round now\" or \"Send test message\".")
+            : L("已保存 ✓（格式有效，尚未真实验证——开启开关后可发送测试消息）",
+                "Saved ✓ (format valid; not verified yet — enable the toggle to send a test message)")
         handleNoteIsError = false
         Analytics.log("mw_imessage_handle_save")
     }

@@ -131,7 +131,7 @@
 
 ### 9. 通知镜像 → 你的 Slack self-DM
 
-- **触发/频率**：actd 每发一条 macOS 通知（新卡待审批 / 任务完成 / 需要输入 / 凭证失效,
+- **触发/频率**：actd 每发一条 macOS 通知（新提案卡 / 任务完成 / 需要输入 / 凭证失效,
   CONTRACT §5），同时 best-effort 镜像一条到你的 Slack self-DM（`act/lib/notify.py`,
   CONTRACT §13）。
 - **Payload**：通知标题 + 正文（通常是卡片标题这类元数据，非文档内容）+ `#R-xxx` id;

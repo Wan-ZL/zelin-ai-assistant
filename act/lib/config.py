@@ -398,6 +398,12 @@ _OVERRIDE_FIELDS: dict = {
     "redaction_enabled": bool,
     "redaction_terms_file": str,
     "redaction_mask_secrets": bool,
+    # v0.14 (§15.3 add-only): execution keys promoted to Settings controls —
+    # the app diff-writes them (key present only when it differs from the
+    # config.yaml/default effective value).
+    "default_target_repo": str,
+    "skip_permissions": bool,
+    "create_github_repo": bool,
 }
 
 

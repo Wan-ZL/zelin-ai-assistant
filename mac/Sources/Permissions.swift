@@ -481,8 +481,8 @@ struct CapabilityRowsView: View {
         capabilityRow(
             status: model.notifications,
             name: L("通知", "Notifications"),
-            why: L("有新卡片待审批、任务完成或需要你输入时,用系统通知第一时间提醒你。",
-                   "System notifications alert you the moment a new card awaits approval or a task finishes / needs your input."),
+            why: L("有新提案卡、任务完成或需要你输入时,用系统通知第一时间提醒你。",
+                   "System notifications alert you the moment a new proposal card arrives or a task finishes / needs your input."),
             statusText: model.notifications == .granted ? L("已授权", "Granted")
                 : model.notifications == .denied ? L("未授权", "Not granted")
                 : L("尚未请求", "Not requested yet"),
