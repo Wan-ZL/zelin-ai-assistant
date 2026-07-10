@@ -114,6 +114,11 @@ digest:
 #   ai_fix_enabled: true               # 「让 AI 修」按钮/CLI（act/ai_fix.py）总开关；
 #                                      # false = 隐藏按钮、python -m act.ai_fix 直接退出
 
+# updates:                             # 应用内更新检查（CONTRACT §26；docs/TELEMETRY.md「更新检查」）
+#   check_enabled: true                # 默认开：至多每 24h 向 GitHub 查一次最新版本号（请求只暴露
+#                                      # IP + 当前版本号）。发现新版只在菜单栏/关于页低调提示，
+#                                      # 绝不自动下载安装。App 设置「自动检查新版本」也能关。
+
 redaction:                             # 发给 AI 前的本地脱敏
   enabled: false                       # 词表脱敏开关（默认关；打开会改变 AI 看到的内容，也可在 app 设置里切）
   terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）

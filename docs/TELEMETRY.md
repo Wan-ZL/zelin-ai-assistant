@@ -84,6 +84,31 @@ no-op，不必删除。
 也就是说：哪怕 install.sh 已经装好 cron，在你第一次看到披露界面（或显式配置过
 telemetry）之前，不会有任何事件离开本机。
 
+## 更新检查（GitHub API，与 telemetry 上传无关）
+
+除 telemetry 外，产品还有一条独立的轻量网络请求：**应用内更新检查**
+（CONTRACT §26，`act/lib/update_check.py`）。actd 至多**每 24h 一次** GET
+`https://api.github.com/repos/Wan-ZL/zelin-ai-assistant/releases/latest`
+（无鉴权，带 ETag 缓存——版本没变时 GitHub 返回 304，几乎零流量）。
+
+**这次请求暴露什么**：你的 **IP 地址**（任何 HTTP 请求都会）+ User-Agent 里的
+**当前版本号**（`zelin-ai-assistant/<version> (update-check)`）。仅此而已——
+没有 device id、没有事件、没有任何内容数据；对端是 GitHub，不是本项目的
+收集端，维护者**看不到**这些请求。
+
+离线/限流时静默保留上次结果（同样计入 24h 预算，绝不重试风暴）。发现新版只在
+菜单栏菜单与「关于」页低调提示一行，点击**只打开 release 页**——绝不自动下载
+或安装。
+
+关闭（任选其一）：App 设置 → 通用 →「自动检查新版本」；或 config.yaml：
+
+```yaml
+updates:
+  check_enabled: false
+```
+
+关闭后不再发出任何请求（已缓存的旧结果也不再提示）。
+
 ## Fork 用户须知（重要）
 
 - fork 里**不改配置**的话，telemetry 仍指向维护者的 Supabase 项目——你 fork

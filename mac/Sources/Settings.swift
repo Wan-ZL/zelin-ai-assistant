@@ -70,6 +70,8 @@ struct SettingsFormView: View {
     // override (same form as the first-run permissions page, CONTRACT §15).
     @State private var telemetryEnabled = true
     @State private var telemetryLevel = "basic"
+    // §26: in-app update check (GitHub releases API, at most once a day).
+    @State private var updateCheckEnabled = true
     @State private var status = ""
     @State private var statusIsError = false
     @State private var loaded = false
@@ -215,6 +217,23 @@ struct SettingsFormView: View {
             }
             Text(L("重跑一遍首次设置（语言 / AI 引擎 / 权限 / 录制 / 笔记库 / 健康检查）：全部预填当前值，不会清除任何数据。",
                    "Walk through first-run setup again (language / AI engine / permissions / recording / notes / health check): everything prefilled with current values; nothing gets wiped."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // §26: in-app update check — default on, diff-write override.
+            Toggle(L("自动检查新版本（每天最多一次）",
+                     "Check for updates automatically (at most once a day)"),
+                   isOn: Binding(
+                get: { updateCheckEnabled },
+                set: { v in
+                    updateCheckEnabled = v
+                    persistOverride("updates_check_enabled", v,
+                                    dropWhen: v == configLayerBool(block: "updates",
+                                                                   key: "check_enabled",
+                                                                   default: true))
+                }))
+            Text(L("向 GitHub 查询最新版本号（api.github.com）——请求只暴露你的 IP 和当前版本号，别无其他。发现新版只在菜单栏菜单与「关于」页低调提示，绝不自动下载安装。详见 docs/TELEMETRY.md。",
+                   "Asks GitHub for the latest version number (api.github.com) — the request exposes only your IP and the current version string, nothing else. A new version shows a low-key note in the menu-bar menu and the About page; nothing is ever downloaded or installed automatically. See docs/TELEMETRY.md."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
@@ -756,6 +775,9 @@ struct SettingsFormView: View {
             ?? configLayerBool(block: "execution", key: "skip_permissions", default: true)
         createGithubRepo = (ov["create_github_repo"] as? Bool)
             ?? configLayerBool(block: "execution", key: "create_github_repo", default: false)
+        // §26: update check — effective load (override → config.yaml → on)
+        updateCheckEnabled = (ov["updates_check_enabled"] as? Bool)
+            ?? configLayerBool(block: "updates", key: "check_enabled", default: true)
         // P0-12: no override key → picker mirrors the same locale fallback
         // LanguageStore resolved at launch (an explicit save still wins).
         language = (ov["language"] as? String).map { $0 == "en" ? "en" : "zh" }

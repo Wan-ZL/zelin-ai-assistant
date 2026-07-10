@@ -37,6 +37,7 @@
 | 9 | 通知镜像 | 每条 macOS 通知 | 你的 Slack self-DM | 开 | `features.slack_radar: false` / 不配 token |
 | 10 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
 | 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
+| 12 | 更新检查 | actd，至多每 24h 一次（ETag 缓存） | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false` |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -170,6 +171,18 @@
 - **关闭**：`phone_channel` 改回 `none`（或 `slack`）后重跑 `install.sh`——step 5 会
   卸载并删除该 launchd agent；或手动 `launchctl unload
   ~/Library/LaunchAgents/com.zelin.aiassistant.imessageradar.plist`。
+
+### 12. 更新检查 → GitHub releases API（默认开，一键可关）
+
+- actd 至多**每 24h 一次** GET GitHub 的 `/releases/latest`（无鉴权，ETag 缓存，
+  版本没变时 304 几乎零流量；离线/限流静默保留缓存，不重试）。
+- **暴露的信息**：你的 IP + User-Agent 里的当前版本号，仅此而已——没有 device
+  id、没有事件、没有内容；对端是 GitHub，本项目维护者看不到这些请求
+  （详见 [`docs/TELEMETRY.md`](TELEMETRY.md)「更新检查」节）。
+- 发现新版只在菜单栏菜单与「关于」页提示一行；点击只打开 release 页，
+  **绝不自动下载或安装**（CONTRACT §26）。
+- **关闭**：App 设置 → 通用 →「自动检查新版本」；或 config.yaml
+  `updates.check_enabled: false`——关闭后不再发出任何请求。
 
 ## 什么永不离开你的 Mac
 

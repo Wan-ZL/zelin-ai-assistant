@@ -355,7 +355,11 @@ struct MainWindowView: View {
                                 TrashPageView(store: app.store, app: app)
                             }
                         case .settings: SettingsFormView()
-                        case .about: AboutView()
+                        case .about:
+                            // §26: the update row observes the shared store.
+                            if let app = NSApp.delegate as? AppDelegate {
+                                AboutView(store: app.store)
+                            }
                         }
                     }
                     .padding(20)

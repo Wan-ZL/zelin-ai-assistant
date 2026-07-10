@@ -982,6 +982,9 @@ struct IngestView: View {
 
 struct AboutView: View {
     @ObservedObject private var i18n = LanguageStore.shared
+    // §26: the update row reads dashboard.update_available off the shared
+    // store (nil = no known update → the row simply doesn't render).
+    @ObservedObject var store: DashboardStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -998,6 +1001,9 @@ struct AboutView: View {
                     // the bare binary outside a bundle (no info dictionary)
                     Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
                          as? String ?? "dev")
+                }
+                if let upd = store.dashboard?.update_available {
+                    updateRow(upd)
                 }
                 HStack(alignment: .top) {
                     Text(L("仓库", "Repo")).foregroundColor(.secondary).frame(width: 80, alignment: .leading)
@@ -1035,6 +1041,36 @@ struct AboutView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    // MARK: §26 更新 — release-page link + upgrade reassurance
+
+    /// One low-key row when a newer release is known. The button opens the
+    /// GitHub release page — the unsigned .pkg is downloaded and installed by
+    /// the user deliberately, never auto-run (trust honesty). Wording of the
+    /// reassurance line verified against SetupWizard behavior: data/settings
+    /// live on this Mac (state/, config/secrets/, UserDefaults — the bundle id
+    /// never changes), and the wizard reopens only when its completion marker
+    /// is missing, always prefilled and never wiping anything.
+    @ViewBuilder
+    private func updateRow(_ upd: UpdateInfo) -> some View {
+        HStack(alignment: .top) {
+            Text(L("更新", "Update")).foregroundColor(.secondary).frame(width: 80, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Button(L("新版本 v\(upd.latest) 可用 — 下载安装包",
+                         "Update v\(upd.latest) available — download installer")) {
+                    guard let url = upd.releaseURL else { return }
+                    Analytics.log("update_open_release",
+                                  fields: ["source": "about", "latest": upd.latest])
+                    NSWorkspace.shared.open(url)
+                }
+                .controlSize(.small)
+                Text(L("打开 GitHub release 页手动下载安装——绝不自动下载或运行。设置与任务数据都保留在本机，升级后原样可用；初始设置向导若需再次出现，会预填当前值，绝不清空。",
+                       "Opens the GitHub release page for a manual download — nothing is ever downloaded or run automatically. Settings and task data stay on this Mac and survive the upgrade; if the setup wizard needs to reappear, it comes prefilled and never wipes anything."))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
         }
     }
 

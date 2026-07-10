@@ -266,6 +266,33 @@ struct MergeSuggestion: Decodable, Hashable {
     }
 }
 
+// CONTRACT §26 — optional top-level dashboard field. Present ONLY when actd
+// knows a strictly newer release (updates.check_enabled on); absent = no
+// known update. The app only ever OPENS the release page — never downloads.
+struct UpdateInfo: Decodable, Hashable {
+    let current: String?
+    let latest: String
+    let url: String?
+    let pkg_asset_url: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case current, latest, url, pkg_asset_url
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        latest = (try? c.decode(String.self, forKey: .latest)) ?? ""
+        current = try? c.decodeIfPresent(String.self, forKey: .current)
+        url = try? c.decodeIfPresent(String.self, forKey: .url)
+        pkg_asset_url = try? c.decodeIfPresent(String.self, forKey: .pkg_asset_url)
+    }
+
+    /// Release page to open (§26: open, never auto-download).
+    var releaseURL: URL? {
+        URL(string: url ?? "https://github.com/Wan-ZL/zelin-ai-assistant/releases")
+    }
+}
+
 struct Counts: Decodable {
     let needs_approval: Int
     let running: Int
@@ -309,10 +336,12 @@ struct Dashboard: Decodable {
     let trash: [TrashItem]
     // 契约 merge-review §六 — optional 分区，缺失时解码为 []（向后兼容）。
     let merge_suggestions: [MergeSuggestion]
+    // §26 — optional; nil = no known update (older actd never emits it).
+    let update_available: UpdateInfo?
 
     private enum CodingKeys: String, CodingKey {
         case generated_at, counts, needs_approval, running, needs_input, review, completed, debt, trash
-        case merge_suggestions
+        case merge_suggestions, update_available
     }
 
     init(from decoder: Decoder) throws {
@@ -328,6 +357,9 @@ struct Dashboard: Decodable {
         trash = (try? c.decodeIfPresent([TrashItem].self, forKey: .trash)) ?? []
         merge_suggestions = (try? c.decodeIfPresent([MergeSuggestion].self,
                                                     forKey: .merge_suggestions)) ?? []
+        // an empty latest is meaningless — treat as "no known update"
+        let upd = try? c.decodeIfPresent(UpdateInfo.self, forKey: .update_available)
+        update_available = (upd?.latest.isEmpty == false) ? upd : nil
     }
 }
 

@@ -65,6 +65,11 @@ try:
 except Exception:  # pragma: no cover - session import must not kill daemon
     radar_claude_sessions = None  # type: ignore
 
+try:
+    from act.lib import update_check
+except Exception:  # pragma: no cover - update check must not kill daemon
+    update_check = None  # type: ignore
+
 
 # --------------------------------------------------------------------------- #
 # logging
@@ -1049,6 +1054,11 @@ def run_once(
     purge_trash(cfg)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     dash = build_dashboard(cfg=cfg)
+    # §26 in-app update check: cheap (ETag-cached, at most one network attempt
+    # per 24h) and never raises — the field is simply absent when no newer
+    # release is known or the check is disabled.
+    if update_check is not None:
+        dash = update_check.attach(dash, cfg)
     write_dashboard(dash)
 
     for title, body, rid in detect_transitions(prev_dash, dash):

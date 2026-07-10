@@ -531,6 +531,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                keyEquivalent: "")
         about.target = self
         menu.addItem(about)
+        // §26: low-key update line — present only while dashboard.json carries
+        // update_available (a strictly newer release). Opens the release page;
+        // nothing auto-downloads (unsigned .pkg + trust honesty).
+        if let upd = store.dashboard?.update_available {
+            menu.addItem(.separator())
+            let updateItem = NSMenuItem(
+                title: L("新版本 v\(upd.latest) 可用 — 下载安装包",
+                         "Update v\(upd.latest) available — download installer"),
+                action: #selector(openReleasePage(_:)), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L("退出", "Quit"),
                                 action: #selector(NSApplication.terminate(_:)),
@@ -544,6 +556,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown { popover.performClose(sender) }
         removePopoverClickMonitor()
         MainWindowController.shared.show()
+    }
+
+    // §26: status-menu update line → open the GitHub release page in the
+    // browser. Download/install stays a deliberate user action.
+    @objc func openReleasePage(_ sender: Any?) {
+        guard let upd = store.dashboard?.update_available,
+              let url = upd.releaseURL else { return }
+        Analytics.log("update_open_release",
+                      fields: ["source": "menu", "latest": upd.latest])
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: hello bubble (setup wizard finale — audit 2.5)

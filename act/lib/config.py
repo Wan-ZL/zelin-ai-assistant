@@ -196,6 +196,11 @@ class Config:
     # `doctor.ai_fix_enabled: false` in config.yaml disables the button + CLI.
     doctor_ai_fix_enabled: bool = True
 
+    # in-app update check (§26) — GitHub releases API, ETag-cached, at most
+    # one network attempt per 24h. Off = no request is ever made (and the
+    # cached answer stops being projected into the dashboard).
+    updates_check_enabled: bool = True
+
     # phone command channel (§13, channel-pluggable) — which channel carries
     # the notify mirror + the phone command surface. "none"/"slack" keep the
     # legacy Slack behavior (self-gated on features.slack_radar + token);
@@ -364,6 +369,12 @@ def load_config() -> Config:
             doctor_block.get("ai_fix_enabled", cfg.doctor_ai_fix_enabled)
         )
 
+    updates_block = data.get("updates", {}) or {}
+    if isinstance(updates_block, dict):
+        cfg.updates_check_enabled = bool(
+            updates_block.get("check_enabled", cfg.updates_check_enabled)
+        )
+
     pc = str(data.get("phone_channel") or "").strip().lower()
     if pc in ("none", "slack", "imessage"):
         cfg.phone_channel = pc
@@ -439,6 +450,8 @@ _OVERRIDE_FIELDS: dict = {
     "default_target_repo": str,
     "skip_permissions": bool,
     "create_github_repo": bool,
+    # §26: in-app update check toggle (App 设置「自动检查新版本」, diff-write).
+    "updates_check_enabled": bool,
 }
 
 
