@@ -1,0 +1,94 @@
+# Usage insights — monthly telemetry aggregates -> one pinned issue.
+#
+# scripts/insights_report.py pulls AGGREGATES ONLY (counts by event/day/
+# version/level + error rates — never raw rows) from the telemetry Supabase
+# project, optionally turns them into 3-5 AI insights (claude-sonnet-5), and
+# this workflow create-or-updates a single pinned issue titled
+# "📊 Usage Insights" — never a new issue per run.
+#
+# Secrets (both optional — the report degrades gracefully):
+#   SUPABASE_INSIGHTS_KEY — read-capable Supabase key. Missing -> the issue
+#                           carries a how-to-configure notice.
+#   ANTHROPIC_API_KEY     — enables the AI insights section. Missing -> the
+#                           issue carries the raw aggregate tables only.
+#
+# Security: minimal permissions (issues: write), all dynamic values flow
+# through env — no untrusted input is interpolated into run: scripts.
+name: Usage insights
+
+on:
+  schedule:
+    - cron: "23 9 1 * *" # monthly, 1st at 09:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: insights
+  cancel-in-progress: false
+
+jobs:
+  insights:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Build insights report
+        env:
+          SUPABASE_INSIGHTS_KEY: ${{ secrets.SUPABASE_INSIGHTS_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 scripts/insights_report.py --out insights-body.md
+
+      # Runs even when the build step exited non-zero (fetch failure): the
+      # script always writes a body first, so the pinned issue reports the
+      # failure honestly while the red run flags it in Actions.
+      - name: Create or update the pinned issue
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: "📊 Usage Insights"
+        run: |
+          set -euo pipefail
+          if [ ! -f insights-body.md ]; then
+            echo "no body file produced — nothing to post"
+            exit 0
+          fi
+          # exact-title match against ALL issues (open + closed): this
+          # workflow never opens a second issue per run.
+          number=$(gh issue list -R "$GITHUB_REPOSITORY" --state all \
+            --limit 100 --json number,title \
+            --jq 'map(select(.title == env.ISSUE_TITLE)) | (first // empty) | .number')
+          if [ -z "$number" ]; then
+            url=$(gh issue create -R "$GITHUB_REPOSITORY" \
+              --title "$ISSUE_TITLE" --body-file insights-body.md)
+            number="${url##*/}"
+            echo "created issue #$number"
+          else
+            state=$(gh issue view "$number" -R "$GITHUB_REPOSITORY" \
+              --json state --jq .state)
+            if [ "$state" = "CLOSED" ]; then
+              gh issue reopen "$number" -R "$GITHUB_REPOSITORY"
+            fi
+            gh issue edit "$number" -R "$GITHUB_REPOSITORY" \
+              --body-file insights-body.md
+            echo "updated issue #$number"
+          fi
+          echo "ISSUE_NUMBER=$number" >> "$GITHUB_ENV"
+
+      # Pinning needs GraphQL; best-effort — a token without the needed
+      # access must not fail the run (the issue still updated above).
+      - name: Pin the issue (best-effort)
+        if: ${{ always() && env.ISSUE_NUMBER != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          node_id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER" \
+            --jq .node_id) || exit 0
+          gh api graphql \
+            -f query='mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }' \
+            -f id="$node_id" \
+            && echo "pinned #$ISSUE_NUMBER" \
+            || echo "pin failed (already pinned, or token lacks access) — continuing"
