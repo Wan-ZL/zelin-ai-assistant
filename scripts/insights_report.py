@@ -300,6 +300,16 @@ def main(argv=None) -> int:
     print(f"fetched {len(rows)} rows -> {agg['total']} events / "
           f"{agg['devices']} devices")
 
+    # Daily no-change gate: the workflow passes the total from the last
+    # posted report (extracted by regex, validated numeric there). Identical
+    # total -> no report file at all, so the update step posts nothing and
+    # the Anthropic call is never made on a quiet day.
+    prev_total = (os.environ.get("INSIGHTS_PREV_TOTAL") or "").strip()
+    if prev_total.isdigit() and int(prev_total) == agg["total"]:
+        print(f"no new events since last report (total={agg['total']}) "
+              "— skipping report and AI analysis")
+        return 0
+
     insights = None
     if anthropic_key and agg["total"] > 0:
         insights = analyze(render_tables(agg), anthropic_key)

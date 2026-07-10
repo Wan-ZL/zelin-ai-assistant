@@ -1,4 +1,8 @@
-# Usage insights — monthly telemetry aggregates -> one pinned issue.
+# Usage insights — daily telemetry aggregates -> one pinned issue.
+#
+# Daily cadence with a no-change gate: when the total event count is
+# unchanged since the last posted report, the update (and any AI spend)
+# is skipped — the schedule can be aggressive without producing noise.
 #
 # scripts/insights_report.py pulls AGGREGATES ONLY (counts by event/day/
 # version/level + error rates — never raw rows) from the telemetry Supabase
@@ -18,7 +22,7 @@ name: Usage insights
 
 on:
   schedule:
-    - cron: "23 9 1 * *" # monthly, 1st at 09:23 UTC
+    - cron: "23 9 * * *" # daily at 09:23 UTC (02:23 US Pacific)
   workflow_dispatch:
 
 permissions:
@@ -35,10 +39,34 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      # No-change gate, part 1: read the total from the last posted report.
+      # The issue body is treated as data — the value is extracted by regex
+      # and validated numeric before it is allowed into the environment.
+      - name: Read previous report total
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: "📊 Usage Insights"
+        run: |
+          set -euo pipefail
+          number=$(gh issue list -R "$GITHUB_REPOSITORY" --state all \
+            --limit 100 --json number,title \
+            --jq 'map(select(.title == env.ISSUE_TITLE)) | (first // empty) | .number')
+          prev=""
+          if [ -n "$number" ]; then
+            prev=$(gh issue view "$number" -R "$GITHUB_REPOSITORY" \
+              --json body --jq .body \
+              | sed -n 's/.*\*\*Totals:\*\* \([0-9][0-9]*\) events.*/\1/p' \
+              | head -n1)
+          fi
+          case "$prev" in (*[!0-9]*|"") prev="" ;; esac
+          echo "PREV_TOTAL=$prev" >> "$GITHUB_ENV"
+          echo "previous total: ${prev:-<none>}"
+
       - name: Build insights report
         env:
           SUPABASE_INSIGHTS_KEY: ${{ secrets.SUPABASE_INSIGHTS_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INSIGHTS_PREV_TOTAL: ${{ env.PREV_TOTAL }}
         run: python3 scripts/insights_report.py --out insights-body.md
 
       # Runs even when the build step exited non-zero (fetch failure): the
