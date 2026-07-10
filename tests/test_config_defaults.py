@@ -106,5 +106,18 @@ class TelemetryDefaultsTestCase(unittest.TestCase):
         self.assertEqual(cfg.telemetry_level, "basic")
 
 
+class FeatureFlagSemanticsTestCase(unittest.TestCase):
+    """Config.feature() (CONTRACT §16): flags default on — known, unknown, or
+    absent alike — and only an explicit false turns one off."""
+
+    def test_absent_or_unknown_flag_defaults_on(self):
+        self.assertTrue(config.Config().feature("digest"))
+        self.assertTrue(config.Config().feature("no_such_flag"))
+
+    def test_explicit_false_is_honored(self):
+        cfg = config.Config(features={"digest": False})
+        self.assertFalse(cfg.feature("digest"))
+
+
 if __name__ == "__main__":
     unittest.main()
