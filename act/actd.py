@@ -60,6 +60,11 @@ try:
 except Exception:  # pragma: no cover - merge_review import must not kill daemon
     merge_review = None  # type: ignore
 
+try:
+    from act import radar_claude_sessions
+except Exception:  # pragma: no cover - session import must not kill daemon
+    radar_claude_sessions = None  # type: ignore
+
 
 # --------------------------------------------------------------------------- #
 # logging
@@ -120,6 +125,13 @@ def process_inbox() -> int:
             _safe_unlink(path)
             continue
 
+        # §22 one-shot Claude Code session import — no requirement-level id.
+        if action == "import_claude_sessions":
+            _apply_claude_import(decision)
+            processed += 1
+            _safe_unlink(path)
+            continue
+
         req = load(req_id) if req_id else None
 
         if req is None:
@@ -173,6 +185,37 @@ def _apply_capture(text: Optional[str]) -> None:
     else:
         _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
     analytics.log_event("inbox_capture", req=saved.id, status=str(saved.status))
+
+
+def _apply_claude_import(decision: dict) -> None:
+    """One-shot Claude Code session import (CONTRACT §22).
+
+    ``{"action":"import_claude_sessions","session_ids":[…],"window_days":7}``
+    — with explicit ids (the Settings checkbox flow) each session becomes a
+    proposal card; without ids, every waiting-on-you session inside the window
+    is imported. Idempotent: already-imported ids are skipped via the
+    state/claude_sessions_import.json marker, and card creation goes through
+    merge_or_new. Cheap (head/tail file reads, no LLM) — safe inline in the
+    poll loop.
+    """
+    if radar_claude_sessions is None:
+        _log("inbox: import_claude_sessions requested but module unavailable — dropped")
+        return
+    raw_ids = decision.get("session_ids")
+    ids = [str(s) for s in raw_ids if s] if isinstance(raw_ids, list) else []
+    try:
+        window = int(decision.get("window_days") or 7)
+    except (TypeError, ValueError):
+        window = 7
+    try:
+        if ids:
+            n = radar_claude_sessions.import_by_ids(ids)
+        else:
+            n = radar_claude_sessions.run_once(window_days=window)
+        _log(f"inbox: import_claude_sessions -> {n} card(s) "
+             f"({len(ids) or 'auto'} requested)")
+    except Exception as e:  # noqa: BLE001 — an import failure must not kill the pass
+        _log(f"inbox: import_claude_sessions failed: {e}")
 
 
 # --------------------------------------------------------------------------- #

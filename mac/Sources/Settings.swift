@@ -273,6 +273,11 @@ struct SettingsFormView: View {
             // SettingsIMessage.swift.
             IMessageSettingsSection()
 
+            // §22: one-click Claude Code session import (cold-start seeding) —
+            // self-contained section, lives in SettingsClaudeImport.swift.
+            // Frozen scroll anchor "claude_import" (wizard finale deep-link).
+            ClaudeImportSettingsSection()
+
             group(L("审批 / 成本", "Approval / Cost")) {
                 labeledField(L("显示成本阈值（USD ≥）", "Show cost above (USD ≥)"), $showCostAbove)
                 labeledField(L("文字确认阈值（USD ≥，升 T2）",

@@ -120,7 +120,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -282,3 +282,50 @@ install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 
 **app 侧（概要）**：看板 header「选择」进入多选态；选中 ≥2 → 底部操作条「请求合并建议 (N)」写 `merge_review`；建议卡（紫 accent，待审批列顶）analyzing=spinner、done=结论+主副卡+rationale+**"接受后将执行"动作清单全文**+confidence 徽章+「接受」(`merge_apply`)/「取消」(`merge_dismiss`)、failed=橙色+error+仅「取消」；接受/取消乐观回显 180s 兜底。popover 只镜像显示建议卡（可接受/取消），不做多选。
 
 **analytics**：`merge_review_requested{n}`（actd）、`merge_suggestion_done{verdict,confidence}`（分析子进程）；apply/dismiss 由 app 侧 `card_action` 自动覆盖。
+
+---
+
+# v0.13.x additions（Claude Code 会话导入 — 空看板冷启动）
+
+## 22. import_claude_sessions（一键导入 Claude Code 近期工作）
+
+目标用户几乎一定已在用 Claude Code——首启看板为空时，最近的会话就是最便宜的种子。
+`act/radar_claude_sessions.py` 扫描 `~/.claude/projects/<slug>/*.jsonl`（Claude Code 自己的
+transcript 目录；`$CLAUDE_CONFIG_DIR` 可改根）。**一次性触发，非常驻**：只由 inbox 动作或
+CLI 驱动，绝不定时跑。**全程本地、无 LLM 调用**——gist = 首条用户消息头 + 末条 assistant
+消息头（截断）；每个文件只读 head/tail（会话可达数十 MB）。
+
+**inbox 动作**（app 写，actd 消费；无需求级 `id`，不走 §3 的 req 查找）：
+
+```json
+{"action":"import_claude_sessions","session_ids":["<uuid>","…"],"window_days":7,"ts":"<ISO>"}
+```
+
+- `session_ids`（可选）：设置页勾选流——只导入这些会话（id = jsonl 文件名 stem，直接按
+  `*/<id>.jsonl` 定位，不做全扫描；含 `/` 的 id 一律丢弃防路径穿越）。
+- `session_ids` 缺失/空 + `window_days`（可选，默认 7）：导入窗口内全部
+  「等你回复」（ended_waiting_on_user）会话——与设置页复选框的疲惫用户默认一致。
+
+**落卡语义**（每个导入会话经 `registry.merge_or_new` 建普通提案卡）：
+- 会话以 assistant 提问收尾（ended_waiting_on_user）→ `status=card_sent`（待审批）；
+  仅仅是近期活动 → `status=detected`（欠账）。与其他雷达的置信分流同构。
+- `sources[0] = {who:"claude-code", channel:"claude_code", date:<last_activity 日期>,
+  quote:<gist>, ref:<session_id>}`；`summary=gist`；`type=code`；`tier=T1`；
+  会话 cwd 存在时作 `target_repo`。
+- notes 带 `claude-code 导入 / imported from Claude Code session <短id>` 溯源标记。
+
+**幂等 / 去重（双保险）**：① 状态标记 `state/claude_sessions_import.json`
+（`{"imported": {<session_id>: <ISO>}}`，add-only）——scan 与 import 都跳过已导入 id；
+② `merge_or_new` 的重述合并。另外**排除本产品自己派发的会话**（session_id 出现在任何
+注册表条目的 `execution.session_id`/`aborted_session_id`）——自己的 agent 工作不得回流成新卡。
+
+**CLI**（与 inbox 动作同一实现）：
+- `python3 -m act.radar_claude_sessions --once --window 7`（导入等你回复的；`--all` = 全部）
+- `python3 -m act.radar_claude_sessions --scan --window 7` — 只扫描，stdout 一行 JSON：
+  `{"ok":true,"root":"…","candidates":[{session_id,session_file,project,project_dir,title,
+  gist,last_activity,ended_waiting_on_user}]}`（等你回复的在前，组内新的在前，上限 100）；
+  目录不存在时 `{"ok":false,"reason":"no_claude_dir","root":"…"}`。设置页「导入 Claude Code
+  工作」区经 runtime python（§19 指针）调它渲染预览，勾选后写上面的 inbox 动作。
+
+**analytics**：`claude_sessions_import{requested,imported}`（导入侧）。隐私：一切本地；
+gist 只进注册表/看板，与其他雷达来源同等对待，永不上传。
