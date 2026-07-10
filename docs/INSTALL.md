@@ -156,3 +156,23 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先
 - **Gmail 雷达**:`docs/GMAIL_SETUP.md`(应用专用密码)。
 - **遥测**(匿名使用统计,默认开、一键可关):`docs/TELEMETRY.md`。
 - 什么数据会离开你的机器:`docs/PRIVACY.md`。
+
+## 卸载(clean uninstall)
+
+最快路径:App 主窗口 → **关于 → 卸载…**(弹确认框列明每一步,再在 Terminal 里执行)。等价命令行:
+
+```bash
+cd ~/Projects/zelin-ai-assistant
+bash uninstall.sh --dry-run   # 先预览:只打印计划,不改任何东西
+bash uninstall.sh             # 执行(Y/n 确认)
+```
+
+它做什么:卸载全部 launchd agents、从 crontab 移除**只属于本产品**的行(按标记 token 匹配,你的其他 cron 行原样保留)、退出 App 并停止录制引擎、删除 `/Applications` 里的 App 与 root 所有的管线母本(权限不够时会打印对应的 `sudo` 命令)。
+
+**默认保留你的数据**——任务历史(`state/`)、`config.yaml` 与 API 密钥(`config/secrets/`)、Obsidian vault、`~/.screenpipe` 录像,结尾逐项附上删除命令。想一次删干净(vault 除外,**永不碰**):
+
+```bash
+bash uninstall.sh --purge
+```
+
+> ✅ **预期状态**:`launchctl list | grep com.zelin.aiassistant` 无输出;`crontab -l` 里没有 screenpipe/act.* 行;后台不再有任何 claude 调用与屏幕录制。

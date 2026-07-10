@@ -832,6 +832,18 @@ struct AboutView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+                Divider()
+                HStack(alignment: .top) {
+                    Text(L("卸载", "Uninstall")).foregroundColor(.secondary).frame(width: 80, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Button(L("卸载…", "Uninstall…")) { confirmUninstall() }
+                            .controlSize(.small)
+                        Text(L("停止全部后台服务并移除本产品；任务历史与密钥默认保留。",
+                               "Stops every background service and removes the product; task history and keys are kept by default."))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .font(.system(size: 13))
             .padding(12)
@@ -839,5 +851,76 @@ struct AboutView: View {
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
+    }
+
+    // MARK: 卸载 — confirmation dialog, then uninstall.sh in Terminal
+
+    /// The app cannot safely delete itself and its own daemons from inside
+    /// the process — uninstall.sh (repo root) owns that. This entry makes the
+    /// script reachable without reading docs: an explicit dialog listing
+    /// exactly what will happen, then Terminal runs the script, which echoes
+    /// every action and asks its own final Y/n.
+    private func confirmUninstall() {
+        let script = AppPaths.stateRoot + "/uninstall.sh"
+        guard FileManager.default.fileExists(atPath: script) else {
+            let alert = NSAlert()
+            alert.messageText = L("找不到卸载脚本", "Uninstall script not found")
+            alert.informativeText = L(
+                "预期位置：\(script)\n更新一次产品（重装 .pkg 或 git pull）即可补上，或按 docs/INSTALL.md 的「卸载」一节手动移除。",
+                "Expected at: \(script)\nUpdate the product once (reinstall the .pkg or git pull) to restore it, or follow the Uninstall section of docs/INSTALL.md to remove things manually.")
+            alert.addButton(withTitle: L("好", "OK"))
+            alert.runModal()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = L("卸载 Zelin's AI Assistant？", "Uninstall Zelin's AI Assistant?")
+        alert.informativeText = L(
+            """
+            将执行以下操作（在 Terminal 中逐条显示，动手前再确认一次）：
+            • 停止并移除全部后台服务（AI 派发、屏幕录制、雷达、定时任务）
+            • 从 crontab 移除本产品的行（你的其他行原样保留）
+            • 退出本 App，删除 /Applications 里的 App 与系统级管线副本
+
+            默认保留：任务历史（state/）、API 密钥、Obsidian vault、屏幕录像——每一项都会附上删除命令。
+            """,
+            """
+            What will happen (each step shown in Terminal, with one final confirmation there):
+            • Stop and remove every background service (AI dispatch, screen recording, radars, scheduled jobs)
+            • Remove this product's lines from your crontab (all your other lines kept)
+            • Quit this app, delete the app in /Applications and the system-level pipeline copy
+
+            Kept by default: task history (state/), API keys, your Obsidian vault, screen recordings — each listed with its removal command.
+            """)
+        alert.addButton(withTitle: L("在 Terminal 中卸载…", "Uninstall in Terminal…"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Analytics.log("uninstall_started")
+        // POSIX-quote the path for the shell, then escape for the AppleScript
+        // string literal (repo paths can contain spaces/quotes).
+        let shellCmd = "bash " + Self.shellQuote(script)
+        let osa = "tell application \"Terminal\"\nactivate\ndo script \""
+            + Self.appleScriptEscape(shellCmd) + "\"\nend tell"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", osa]
+        do { try p.run() } catch {
+            let fail = NSAlert()
+            fail.messageText = L("无法打开 Terminal", "Could not open Terminal")
+            fail.informativeText = L(
+                "请手动在 Terminal 里运行：\(shellCmd)",
+                "Run this in Terminal yourself: \(shellCmd)")
+            fail.addButton(withTitle: L("好", "OK"))
+            fail.runModal()
+        }
+    }
+
+    private static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func appleScriptEscape(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }
