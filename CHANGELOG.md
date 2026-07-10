@@ -23,6 +23,74 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.13.0] - 2026-07-09
+
+Card workflow power-ups (merge review, done-outside, voice profiles) plus the
+first big novice-friendliness wave: a first-run permissions page, screen-only
+recording by default, fully in-app iMessage setup — and anonymous usage
+telemetry that now defaults to on behind an explicit first-run consent surface.
+
+### Added
+
+- Multi-select merge review: select two or more cards, an AI pass suggests
+  merge / link-improvement / keep-separate / close-secondary with reasoning,
+  and the human verdict is applied deterministically; new terminal `merged`
+  registry state that still absorbs restatements (`docs/CONTRACT.md` §21)
+  ([`5e00555`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/5e00555))
+- "Done outside" exit for approved and executing tasks: harvest the
+  transcript best-effort, stop the lingering session, deliver — no more cards
+  stranded behind a blocked agent
+  ([`892da54`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/892da54))
+- Optional voice profile: when `state/voice-profile.md` exists, dispatched
+  agents are told to match the owner's writing style for drafts in their name
+  — and to treat the file strictly as style guidance
+  ([`b321061`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/b321061),
+  [`e922df2`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/e922df2))
+- First-run permissions & setup page: live status rows for Screen Recording,
+  Notifications, and Full Disk Access (marked iPhone-channel-only) with
+  one-click grants and plain-language explanations; reopenable anytime from
+  the App menu, the status-item menu, or Settings
+  ([`ba6d58d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ba6d58d))
+- Fully in-app iMessage (iPhone) setup in Settings: an enable toggle that
+  writes config and loads/unloads the launchd radar, handle validation, live
+  health rows with plain-language skip reasons, guided Full Disk Access steps
+  with a copyable python path, and one-click test rounds / test messages
+  ([`d6eebbd`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/d6eebbd))
+- Anonymous usage telemetry with `basic` / `detailed` collection levels
+  (`detailed` is opt-in and adds short instruction summaries), a Settings
+  "product improvement program" section, and an anon INSERT-only Supabase
+  policy so the shipped key can write but never read
+  ([`e24e5cd`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/e24e5cd))
+- Supabase keepalive workflow so the maintainer's free-tier telemetry project
+  is never paused for inactivity
+  ([`5f4738e`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/5f4738e))
+
+### Changed
+
+- **Recording defaults to screen-only.** First run asks a single on/off
+  consent; audio capture moved to an explicit opt-in in Settings
+  ([`ba6d58d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ba6d58d))
+- **Telemetry now defaults to on** — behind a consent door: nothing uploads
+  until a consent surface has been shown (or telemetry is explicitly
+  configured), and opting out is one click on first run or in Settings; see
+  `docs/TELEMETRY.md`
+  ([`e24e5cd`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/e24e5cd),
+  [`5854726`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/5854726))
+
+### Fixed
+
+- Merge review persists the primary card's absorbed data before marking each
+  secondary as merged, so a mid-merge crash can no longer lose it
+  ([`d32d491`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/d32d491))
+- Repaired CHANGELOG prose corrupted by the history-rewrite text replacement,
+  including the inverted `create_github_repo` migration note
+  ([`13b64a9`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/13b64a9))
+
+### Removed
+
+- Dependabot version-update PRs; actions stay SHA-pinned and manually reviewed
+  ([`5f4738e`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/5f4738e))
+
 ## [0.12.0] - 2026-07-09
 
 The P0 + P1 waves of the open-source readiness review: make a fresh install
@@ -189,7 +257,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/Wan-ZL/zelin-ai-assistant/releases/tag/v0.10.3
