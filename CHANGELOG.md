@@ -23,6 +23,45 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.17.0] - 2026-07-10
+
+### Added
+
+- **Unified radar triage gate** — every radar candidate (Slack native, Slack
+  MCP sweep, Obsidian notes, self-DM quick capture) now passes one three-way
+  gate before filing: act-now proposal, lineage follow-up on a
+  delivered/merged ancestor (one per cluster, deduped across passes and
+  sources), fold-into-open-card note, backlog demotion for real-but-not-urgent
+  items, or ignore for pure-FYI. The proposals lane now strictly means "needs
+  the owner's action or decision now"
+  ([`807f90a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/807f90a))
+- **Voice-first default** — the author's sanitized voice profile ships as the
+  repo default for any text drafted in the owner's name, plus a Settings
+  「语气档案 / Voice profile」 group: live status row, master switch
+  (`voice.enabled`), open-profile button, and one-click generation of your own
+  private profile from your sent Slack messages (`python -m act.voice_gen`;
+  read-only MCP tools, automatic backup, never overwrites on failure)
+  ([`6cac752`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/6cac752))
+- **Board search (⌘F)** — local keyword filter across all lanes; the 备选 lane
+  is now labelled **备选 · Backlog**
+  ([`807f90a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/807f90a))
+- **Card feedback channel** — pick cards on the board, describe what looked
+  wrong, and the report is saved under `state/feedback/` (and uploaded to your
+  own Supabase when configured — see `docs/PRIVACY.md`)
+  ([`807f90a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/807f90a))
+
+### Fixed
+
+- **Session binding** — cards only carry a `claude --resume` command when the
+  transcript really belongs to them: sessionId is validated against the
+  transcript itself, and an empty session id no longer globs the whole
+  transcript dir and grabs the alphabetically-first session. Double-clicking a
+  card's terminal command now bootstraps PATH so `claude` resolves under a
+  fresh shell ([`807f90a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/807f90a))
+- The shipped `R-000-example.yaml` is documentation and never loads as a real
+  card (it used to surface in the backlog lane on every fresh install)
+  ([`6cac752`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/6cac752))
+
 ## [0.16.0] - 2026-07-10
 
 ### Added
@@ -431,7 +470,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.13.0...v0.14.0
