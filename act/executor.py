@@ -174,9 +174,10 @@ def resolve_voice_profile() -> Optional[Path]:
 
     1. ``state/voice-profile.md`` — the owner's PRIVATE profile (real speech
        samples = work data; gitignored) always wins when present;
-    2. ``<repo>/config/voice-profile.default.md`` — the neutral starter
-       template that ships with the repo (anti-assistant-register rules only,
-       nobody's actual voice);
+    2. ``<repo>/config/voice-profile.default.md`` — the sanitized author
+       default that ships with the repo (his rule layer verbatim, fictional
+       examples — the project ships its author's voice as the starting point,
+       docs/VOICE.md);
     3. neither exists -> ``None`` and build_prompt injects nothing.
 
     Both paths derive from ``config.HOME`` (AIASSISTANT_HOME): actd runs under
@@ -289,9 +290,10 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
 
     # comms voice: 以 owner 名义起草的文字必须像本人。两级回退（docs/VOICE.md）：
     # state/voice-profile.md（私有档案，真实说话样本=工作数据，不入 git）优先，
-    # 否则用 repo 自带的中性起步模板；都不存在则静默跳过。不做 chat-only 门控：
+    # 否则用 repo 自带的净化作者默认档案；都不存在或 voice.enabled=false 则跳过。
+    # 不做 chat-only 门控：
     # repo 任务也常在总结/交付物里带消息草稿，同样适用。
-    voice_file = resolve_voice_profile()
+    voice_file = resolve_voice_profile() if getattr(cfg, "voice_enabled", True) else None
     if voice_file is not None:
         blocks.append(
             "\n## VOICE PROFILE — 以 owner 名义起草的一切文字（消息/邮件/报告）必须过这关\n"

@@ -176,7 +176,11 @@ class Requirement:
 def _iter_files() -> Iterable[Path]:
     if not config.REGISTRY_DIR.exists():
         return []
-    return sorted(config.REGISTRY_DIR.glob("*.yaml"))
+    # R-000-example.yaml ships with the repo as documentation — never load
+    # it as a real card (it used to surface in the backlog lane on every
+    # fresh install).
+    return sorted(p for p in config.REGISTRY_DIR.glob("*.yaml")
+                  if p.name != "R-000-example.yaml")
 
 
 def load_all() -> list[Requirement]:
