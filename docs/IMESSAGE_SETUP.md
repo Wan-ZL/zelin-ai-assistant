@@ -1,4 +1,27 @@
-# iMessage 手机通道：给没有 Slack 的用户（一次性设置，~5 分钟）
+# iMessage 手机通道：给没有 Slack 的用户
+
+> **English** — Normal path: configure everything inside the app's Settings
+> window ("iPhone via iMessage" section — one toggle, a handle field with
+> inline validation, guided Full Disk Access steps with a copy-path button,
+> live status rows, and a test-message button). The rest of this document is
+> the **advanced / troubleshooting reference** for manual setup.
+
+## 正常路径：全部在 App 里完成（推荐，不用改任何文件）
+
+打开菜单栏 App → 主窗口 → **设置** → **「iPhone 联动（iMessage）」**：
+
+1. 填**你自己的**手机号（国际格式，如 `+14155551234`）或 Apple ID 邮箱 → 打开开关。
+   App 会自动装好后台雷达（launchd），无需跑 install.sh。
+2. 按界面上的**「完全磁盘访问」步骤**给 python 授权——界面直接给出要添加的
+   python 路径（带「复制路径」按钮）和「打开系统设置」直达按钮。
+3. 点**「立即测试一轮」**看状态变绿；点**「发送测试消息」**确认发送链路。
+   每一步失败都有大白话原因和修法，跟着界面走即可。
+
+下面的内容是**进阶 / 排障参考**（手工配置、实现原理、故障对照表），正常情况无需阅读。
+
+---
+
+## 这是什么（原理）
 
 没有 Slack？用 iMessage 的 **"给自己发消息"** 线程做手机端指挥通道（CONTRACT §13
 通道可插拔）。功能与 Slack self-DM 完全对等（文法、inbox 决策文件一字不差）：
@@ -12,7 +35,7 @@
 （sqlite `mode=ro`，无法写入 Apple 的库）；回复/镜像经 osascript → Messages.app 发给
 **你自己**（永远不会给别人发消息）。隐私细节见 [`PRIVACY.md`](PRIVACY.md) 第 11 条。
 
-## 步骤
+## 手工配置步骤（进阶——正常情况用上面的 App 设置即可）
 
 1. **确认 Messages 可用**：这台 Mac 的 Messages.app 已登录你的 iMessage 账号
    （设置 → 已启用"信息"的 Apple ID）。手机号要能收发的话，iPhone 上开
@@ -30,6 +53,10 @@
      self_handle: "+14155551234"   # E.164 手机号或 iCloud 邮箱，与第 2 步线程的收件人一致
    ```
 
+   注意：App 设置窗口写的是 `state/settings_overrides.json`（`phone_channel` /
+   `imessage_self_handle` 两个键），**优先级高于 config.yaml**——两处都设过时以
+   App 里的为准。
+
 4. **给 python 授 Full Disk Access（必须）**：chat.db 在 `~/Library/Messages` 下，
    受 TCC 保护——launchd 跑的是 python 二进制本身，所以 FDA 必须授给**那个 python**，
    授给 Terminal 没用。
@@ -41,7 +68,8 @@
 
 5. **重跑 `./install.sh`**：step 5 只有在 `phone_channel: imessage` 时才会渲染并加载
    `com.zelin.aiassistant.imessageradar`（180 秒一轮）。改回 `none`/`slack` 再重跑
-   则会自动卸载它。
+   则会自动卸载它。（App 设置里的开关做的是同一件事——开=渲染+加载，关=卸载+删除，
+   两条路径等价、可混用。）
 
 6. **首次发送授权**：第一条回复发出时 macOS 会弹 "python 想要控制 Messages" 的
    自动化（Automation）授权——点允许。launchd 下弹不出来的话，手动跑一次

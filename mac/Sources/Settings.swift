@@ -247,6 +247,11 @@ struct SettingsFormView: View {
                     .allowsHitTesting(false)
             }
 
+            // v0.13: iPhone 联动 (iMessage phone channel, CONTRACT §13/§15) —
+            // self-contained section (own state, immediate writes), lives in
+            // SettingsIMessage.swift.
+            IMessageSettingsSection()
+
             group(L("审批 / 成本", "Approval / Cost")) {
                 labeledField(L("显示成本阈值（USD ≥）", "Show cost above (USD ≥)"), $showCostAbove)
                 labeledField(L("文字确认阈值（USD ≥，升 T2）",
