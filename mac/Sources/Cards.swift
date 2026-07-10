@@ -70,6 +70,10 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
     let cornerRadius: CGFloat
     let stroked: Bool               // primary.opacity(0.12) stroke; suppressed when pending
     let copyText: String?           // non-nil: whole-card tap copies + trailing clipboard→✓
+    let doubleClickRuns: Bool       // + double-click runs copyText in the user's terminal
+                                    //   (TerminalLauncher). SECURITY: opt-in ONLY for rows
+                                    //   whose copyText is an app-generated claude command —
+                                    //   never enable it for paths/drafts/error text.
     let trailingIcon: (name: String, color: Color)?  // ignored when copyText != nil
     let pending: Bool               // content at 0.75 + no tap + no stroke (actions stay full)
     let expandedBinding: Binding<Bool>?   // nil → internal @State drives the detail slot
@@ -81,6 +85,11 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
 
     // click-to-copy feedback, internal to the surface (1.5 s reset)
     @State private var copied = false
+    // double-click feedback (已在终端打开 2.5 s / 打开失败 3 s). Optimistic:
+    // launched flips before osascript returns — dead air until the terminal
+    // window appears would read as a broken double-click.
+    @State private var launched = false
+    @State private var launchFailed = false
     @State private var hovering = false
     // detail-slot disclosure when the caller doesn't pass a binding
     @State private var expandedInternal = false
@@ -89,6 +98,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
     // keeps it out of overload resolution against the @ViewBuilder variants)
     fileprivate init(accent: Color?, bgOpacity: Double, padding: CGFloat,
                      cornerRadius: CGFloat, stroked: Bool, copyText: String?,
+                     doubleClickRuns: Bool,
                      trailingIcon: (name: String, color: Color)?, pending: Bool,
                      expandedBinding: Binding<Bool>?,
                      detailOrNil: (() -> Detail)?,
@@ -100,6 +110,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
         self.cornerRadius = cornerRadius
         self.stroked = stroked
         self.copyText = copyText
+        self.doubleClickRuns = doubleClickRuns
         self.trailingIcon = trailingIcon
         self.pending = pending
         self.expandedBinding = expandedBinding
@@ -116,6 +127,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
          cornerRadius: CGFloat = 6,
          stroked: Bool = false,
          copyText: String? = nil,
+         doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
          pending: Bool = false,
          expanded: Binding<Bool>? = nil,
@@ -124,6 +136,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
          @ViewBuilder content: @escaping () -> Content) {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
+                  doubleClickRuns: doubleClickRuns,
                   trailingIcon: trailingIcon, pending: pending,
                   expandedBinding: expanded, detailOrNil: detail,
                   actions: actions, content: content)
@@ -134,13 +147,25 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
     var body: some View {
         let base = card
         if let text = copyText, !pending {
-            base
+            // Single click copies IMMEDIATELY even when a double-click may
+            // follow (no exclusively-before timer): copying is side-effect-
+            // free, so the first click of a double-click just copies too.
+            let tappable = base
                 .contentShape(Rectangle())
                 .onTapGesture { copy(text) }
                 .onHover { h in
                     hovering = h
                     if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                 }
+            if doubleClickRuns {
+                tappable
+                    .simultaneousGesture(TapGesture(count: 2)
+                        .onEnded { runInTerminal(text) })
+                    .help(L("单击复制 · 双击在终端运行",
+                            "Click to copy · double-click to run in terminal"))
+            } else {
+                tappable
+            }
         } else {
             base
         }
@@ -156,9 +181,27 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
                         VStack(alignment: .leading, spacing: 8) { content() }
                         Spacer(minLength: 4)
                         if copyText != nil {
-                            Image(systemName: copied ? "checkmark" : "doc.on.clipboard")
-                                .font(.system(size: 10))
-                                .foregroundColor(copied ? .green : .secondary)
+                            if launchFailed {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .font(.system(size: 10))
+                                    Text(L("打开终端失败", "Terminal launch failed"))
+                                        .font(.system(size: 9))
+                                }
+                                .foregroundColor(.red)
+                            } else if launched {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "terminal.fill")
+                                        .font(.system(size: 10))
+                                    Text(L("已在终端打开", "Opened in terminal"))
+                                        .font(.system(size: 9))
+                                }
+                                .foregroundColor(.green)
+                            } else {
+                                Image(systemName: copied ? "checkmark" : "doc.on.clipboard")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(copied ? .green : .secondary)
+                            }
                         } else if let icon = trailingIcon {
                             Image(systemName: icon.name)
                                 .font(.system(size: 10))
@@ -218,6 +261,24 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
     }
 
+    // SECURITY: `text` is this card's copyText, which doubleClickRuns callers
+    // guarantee to be an app-generated claude command (TaskRow.cmd /
+    // ReviewItem.copy_cmd) — the only strings allowed into TerminalLauncher.
+    private func runInTerminal(_ text: String) {
+        launched = true
+        launchFailed = false
+        Analytics.log("card_run_in_terminal",
+                      fields: ["app": TerminalLauncher.preferred.rawValue])
+        TerminalLauncher.launch(text) { ok in
+            if !ok {
+                launched = false
+                launchFailed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { launchFailed = false }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { launched = false }
+    }
+
     private func toggleExpanded() {
         withAnimation(.easeInOut(duration: 0.15)) {
             if let b = expandedBinding { b.wrappedValue.toggle() }
@@ -234,12 +295,14 @@ extension CardSurface where Detail == EmptyView {
          cornerRadius: CGFloat = 6,
          stroked: Bool = false,
          copyText: String? = nil,
+         doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
          pending: Bool = false,
          @ViewBuilder actions: @escaping () -> Actions,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
+                  doubleClickRuns: doubleClickRuns,
                   trailingIcon: trailingIcon, pending: pending,
                   expandedBinding: nil, detailOrNil: nil,
                   actions: actions, content: content)
@@ -254,11 +317,13 @@ extension CardSurface where Actions == EmptyView, Detail == EmptyView {
          cornerRadius: CGFloat = 6,
          stroked: Bool = false,
          copyText: String? = nil,
+         doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
          pending: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
+                  doubleClickRuns: doubleClickRuns,
                   trailingIcon: trailingIcon, pending: pending,
                   expandedBinding: nil, detailOrNil: nil,
                   actions: { EmptyView() }, content: content)
@@ -273,6 +338,7 @@ extension CardSurface where Actions == EmptyView {
          cornerRadius: CGFloat = 6,
          stroked: Bool = false,
          copyText: String? = nil,
+         doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
          pending: Bool = false,
          expanded: Binding<Bool>? = nil,
@@ -280,6 +346,7 @@ extension CardSurface where Actions == EmptyView {
          @ViewBuilder content: @escaping () -> Content) {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
+                  doubleClickRuns: doubleClickRuns,
                   trailingIcon: trailingIcon, pending: pending,
                   expandedBinding: expanded, detailOrNil: detail,
                   actions: { EmptyView() }, content: content)
@@ -895,18 +962,20 @@ struct TaskRow: View {
 
     var body: some View {
         let hasButtons = showsAbort || isDelivered || showsDoneOutside
+        // doubleClickRuns: cmd is app-generated (pipeline copy_cmd / Swift-built
+        // "claude --resume <id>") — the TerminalLauncher security precondition.
         if hasDetailContent && hasButtons {
-            CardSurface(copyText: cmd, pending: isQueued,
+            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         actions: { actionButtons },
                         detail: { detailBlock }, content: { rowContent })
         } else if hasDetailContent {
-            CardSurface(copyText: cmd, pending: isQueued,
+            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         detail: { detailBlock }, content: { rowContent })
         } else if hasButtons {
-            CardSurface(copyText: cmd, pending: isQueued,
+            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         actions: { actionButtons }, content: { rowContent })
         } else {
-            CardSurface(copyText: cmd, pending: isQueued) { rowContent }
+            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued) { rowContent }
         }
     }
 
@@ -995,7 +1064,7 @@ struct TaskRow: View {
                         .truncationMode(.tail)
                 }
                 if let cmd {
-                    Text(L("点按复制：", "Click to copy: ") + cmd)
+                    Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -1094,13 +1163,15 @@ struct ReviewRow: View {
     }
 
     var body: some View {
+        // doubleClickRuns: copy_cmd is app-generated by the pipeline — the
+        // TerminalLauncher security precondition.
         if hasDetailContent {
-            CardSurface(accent: .teal, copyText: item.copy_cmd,
+            CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
                         actions: { actionButtons },
                         detail: { detailBlock },
                         content: { rowContent })
         } else {
-            CardSurface(accent: .teal, copyText: item.copy_cmd,
+            CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
                         actions: { actionButtons },
                         content: { rowContent })
         }
@@ -1211,7 +1282,7 @@ struct ReviewRow: View {
         }
         if let cmd = item.copy_cmd {
             // echo line only — the copy action is the whole-card tap
-            Text(L("点按复制：", "Click to copy: ") + cmd)
+            Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundColor(.secondary)
                 .lineLimit(1)

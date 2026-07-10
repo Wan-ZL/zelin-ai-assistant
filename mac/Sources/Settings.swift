@@ -28,6 +28,9 @@ struct SettingsFormView: View {
     // v0.10.3 契约一: 卡片排序 — UserDefaults only (pure UI pref, NOT
     // settings_overrides.json). "newest" | "oldest" | "deadline".
     @State private var cardSortOrder = "newest"
+    // 终端应用 for double-click run-in-terminal — UserDefaults only, same
+    // rationale (TerminalLauncher owns default + fallback).
+    @State private var terminalApp = TerminalApp.terminal.rawValue
     // v0.15 owner decision: ONE vault-root field. The four pipeline-dir keys
     // (obsidian_raw/_unprocessed/_change_summary/_wiki) remain valid in
     // config.yaml/overrides for experts; the UI edits the vault root and the
@@ -186,6 +189,33 @@ struct SettingsFormView: View {
             }
             Text(L("纯界面偏好（存本机），弹窗与看板同时生效；提案列顶的处理中占位卡不参与排序。",
                    "UI-only preference (stored locally); applies to the popover and the board alike — processing placeholders stay pinned atop the Proposals column."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // 终端应用 — double-click run-in-terminal target (TerminalLauncher).
+            // Installed apps only; UserDefaults like cardSortOrder (app-only
+            // pref, the pipeline never reads it — no settings_overrides key).
+            HStack {
+                Text(L("终端应用", "Terminal app"))
+                    .font(.system(size: 12))
+                    .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { terminalApp },
+                    set: { v in
+                        terminalApp = v
+                        UserDefaults.standard.set(v, forKey: "terminalApp")
+                        Analytics.log("terminal_app_changed", fields: ["app": v])
+                    })) {
+                    ForEach(TerminalLauncher.installed, id: \.rawValue) { app in
+                        Text(app.displayName).tag(app.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 220)
+                Spacer()
+            }
+            Text(L("双击卡片上的 claude 命令时在这个终端里新开窗口运行（单击仍是复制）。首次使用 macOS 会弹一次「控制该终端」的自动化授权。纯界面偏好（存本机）。",
+                   "Double-clicking a card's claude command opens and runs it in a new window of this terminal (single click still copies). First use shows the one-time macOS Automation consent for controlling that app. UI-only preference (stored locally)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Divider()
@@ -743,6 +773,8 @@ struct SettingsFormView: View {
                   overrides: ov)
         showMenuBarIcon = Prefs.bool("showMenuBarIcon", default: true)
         cardSortOrder = Prefs.cardSortOrder
+        // preferred validates the stored choice against installed apps
+        terminalApp = TerminalLauncher.preferred.rawValue
         launchAtLogin = SMAppService.mainApp.status == .enabled
         func num(_ key: String, configKey: String?, fallback: String) -> String {
             if let v = ov[key] as? Double {

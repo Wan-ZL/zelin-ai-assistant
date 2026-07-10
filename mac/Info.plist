@@ -37,5 +37,7 @@
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>「屏幕 + 音频」录制模式需要麦克风来转录会议与语音，数据只存本地 ~/.screenpipe。</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>双击卡片上的 claude 命令时，需要控制所选终端（Ghostty / Terminal / iTerm2）来新开窗口运行它。</string>
 </dict>
 </plist>
