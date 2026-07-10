@@ -289,7 +289,7 @@ install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 
 
 **app 侧（概要）**：看板 header「选择」进入多选态；选中 ≥2 → 底部操作条「请求合并建议 (N)」写 `merge_review`；建议卡（紫 accent，待审批列顶）analyzing=spinner、done=结论+主副卡+rationale+**"接受后将执行"动作清单全文**+confidence 徽章+「接受」(`merge_apply`)/「取消」(`merge_dismiss`)、failed=橙色+error+仅「取消」；接受/取消乐观回显 180s 兜底。popover 只镜像显示建议卡（可接受/取消），不做多选。
 
-**analytics**：`merge_review_requested{n}`（actd）、`merge_suggestion_done{verdict,confidence}`（分析子进程）；apply/dismiss 由 app 侧 `card_action` 自动覆盖。
+**analytics**：`merge_review_requested{n}`（actd）、`merge_suggestion_done{verdict,confidence}`（分析子进程）；apply/dismiss 由 app 侧 `card_action` 自动覆盖。**追加（add-only）**：actd 侧确定性 apply 落地点补 `merge_apply{suggestion,verdict,outcome}`（`outcome=ok|fail`——`card_action` 只记录意图，apply 失败此前 telemetry 不可见；连点/迟到的 no-op 分支不打点，不算使用量）。
 
 ---
 

@@ -21,7 +21,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd, merge_review
-from act.lib import config, registry
+from act.lib import analytics, config, registry
 from act.lib.registry import Requirement, State
 
 
@@ -139,6 +139,56 @@ class CleanupMergeJobsTestCase(MergeApplyBase):
         self.assertEqual(removed, 1)
         self.assertFalse(merge_review.job_path("s-old").exists())
         self.assertTrue(merge_review.job_path("s-new").exists())
+
+
+# --------------------------------------------------------------------------- #
+# merge_apply telemetry outcome（docs/TELEMETRY.md）— the authoritative apply
+# site logs merge_apply{outcome=ok|fail}; the no-op guards stay silent so
+# double-clicks are never counted as usage.
+# --------------------------------------------------------------------------- #
+class MergeApplyOutcomeTestCase(MergeApplyBase):
+    def setUp(self):
+        super().setUp()
+        if analytics.EVENTS_PATH.exists():
+            analytics.EVENTS_PATH.unlink()
+
+    def _events(self):
+        return [e for e in analytics.read_events()
+                if e.get("event") == "merge_apply"]
+
+    def test_apply_ok_logs_outcome(self):
+        self._save("R-1", "a")
+        self._save("R-2", "b")
+        job = {"id": "s-ok", "status": "done", "verdict": "merge",
+               "ids": ["R-1", "R-2"], "primary": "R-1"}
+        with mock.patch.object(actd.merge_review, "load_job",
+                               return_value=job), \
+                mock.patch.object(actd.merge_review, "dismiss_job"):
+            actd._apply_merge_decision("merge_apply", "s-ok")
+        (ev,) = self._events()
+        self.assertEqual(ev["outcome"], "ok")
+        self.assertEqual(ev["suggestion"], "s-ok")
+        self.assertEqual(ev["verdict"], "merge")
+
+    def test_apply_failure_logs_fail(self):
+        # primary outside ids -> _apply_merge_verdict raises -> outcome=fail
+        job = {"id": "s-bad", "status": "done", "verdict": "merge",
+               "ids": ["R-1"], "primary": "R-9"}
+        with mock.patch.object(actd.merge_review, "load_job",
+                               return_value=job):
+            actd._apply_merge_decision("merge_apply", "s-bad")
+        (ev,) = self._events()
+        self.assertEqual(ev["outcome"], "fail")
+
+    def test_noop_paths_stay_silent(self):
+        job = {"id": "s-wait", "status": "analyzing"}
+        with mock.patch.object(actd.merge_review, "load_job",
+                               return_value=job):
+            actd._apply_merge_decision("merge_apply", "s-wait")
+        with mock.patch.object(actd.merge_review, "load_job",
+                               return_value=None):
+            actd._apply_merge_decision("merge_apply", "s-none")
+        self.assertEqual(self._events(), [])
 
 
 if __name__ == "__main__":  # pragma: no cover

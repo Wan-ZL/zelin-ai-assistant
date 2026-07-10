@@ -332,14 +332,22 @@ def _apply_merge_decision(action: str, suggestion_id) -> None:
         _log(f"inbox: merge_apply {sid} ignored (status={status}) — no-op")
         return
     verdict = str(job.get("verdict") or "")
+    # merge_apply outcome at the authoritative apply site (docs/TELEMETRY.md):
+    # the app's card_action only records intent — a failed deterministic apply
+    # was invisible to telemetry before this. No-op paths above stay unlogged
+    # (double-clicks are not usage). Metadata only: ids + outcome, no content.
     try:
         _apply_merge_verdict(job)
     except Exception as e:  # noqa: BLE001 - job stays 'done' so Zelin can retry/dismiss
         _log(f"inbox: merge_apply {sid} ({verdict}) FAILED: {e}\n"
              f"{traceback.format_exc()}")
+        analytics.log_event("merge_apply", suggestion=sid, verdict=verdict,
+                            outcome="fail")
         return
     merge_review.dismiss_job(job, applied=True)  # 即刻从 dashboard 消失，文件留到 TTL
     _log(f"inbox: merge_apply {sid} ({verdict}) applied")
+    analytics.log_event("merge_apply", suggestion=sid, verdict=verdict,
+                        outcome="ok")
 
 
 def _apply_merge_verdict(job: dict) -> None:

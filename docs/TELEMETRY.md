@@ -21,8 +21,10 @@ truth，上传只读不改不删。
 | `client_ts` / `ts` | 事件时间（UTC） | `"2026-07-09T01:02:03Z"` |
 | `device_id` | 装机时生成一次的随机 uuid4（`state/device_id`），不含任何个人信息 | `"5f3a…"` |
 | `sid` | Mac app 单次运行的 8 位随机会话 id | `"ab12cd34"` |
-| `app_version` / `v` | 版本号 | `"0.12.0"` |
+| `app_version` / `v` | 版本号——两个 writer 在**写入端统一盖章**（python 侧 `act.__version__`，App 侧 bundle 版本），任何事件都带 | `"0.13.0"` |
 | `source` | 事件来源渠道 | `"slack"` |
+| `outcome` | 动作类事件的结果（`ok` \| `fail`）；目前带此字段的事件：`meeting_action_items`（会后清单生成）、`merge_apply`（合并建议落地） | `"ok"` |
+| `failure` | `outcome="fail"` 时的失败分类 id（`act/lib/failures.py` 目录）；**只有 id，绝不含原始报错文本**，无法分类时整个字段缺席 | `"claude_auth_failed"` |
 | 各事件自带的元数据 | req id、状态、布尔结果、计数等（见 `props`，即事件原始记录） | `"req": "R-004"` |
 
 **basic 级绝不包含内容数据**：没有 prompt、没有指令摘要、没有消息正文、没有

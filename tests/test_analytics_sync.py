@@ -21,6 +21,7 @@ from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
+from act import __version__ as act_version
 from act.lib import analytics, config, secrets
 from act.lib import analytics_sync as sync
 
@@ -310,6 +311,27 @@ class KeyResolutionTestCase(unittest.TestCase):
         cfg = config.Config()
         cfg.telemetry_key_path = str(path)
         self.assertEqual(sync._resolve_key(cfg), "alt-key-456")
+
+
+class WriterVersionStampTestCase(unittest.TestCase):
+    """log_event stamps "v" at the WRITER (docs/TELEMETRY.md), so app_version
+    can never be "(unset)" on upload whatever the emitter forgot to pass."""
+
+    def setUp(self):
+        config.ensure_state_dirs()
+        if analytics.EVENTS_PATH.exists():
+            analytics.EVENTS_PATH.unlink()
+
+    def test_log_event_stamps_package_version(self):
+        analytics.log_event("version_stamp_probe", req="R-9")
+        (ev,) = list(analytics.read_events())
+        self.assertEqual(ev["v"], act_version)
+
+    def test_stamped_version_reaches_app_version_column(self):
+        analytics.log_event("version_stamp_probe")
+        raw = analytics.EVENTS_PATH.read_bytes().splitlines()[-1]
+        row = sync._to_row(raw, "device-1")
+        self.assertEqual(row["app_version"], act_version)
 
 
 if __name__ == "__main__":

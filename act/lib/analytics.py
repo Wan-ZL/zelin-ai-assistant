@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 from typing import Iterator, Optional
 
+from act import __version__
 from act.lib import config
 
 ANALYTICS_DIR: Path = config.STATE_DIR / "analytics"
@@ -29,6 +30,10 @@ def log_event(event: str, **fields) -> None:
         rec = {
             "ts": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "event": str(event),
+            # writer-level version stamp (docs/TELEMETRY.md): every python
+            # event carries "v", mirroring the Swift writer — no emitter can
+            # forget it, so app_version is never "(unset)" on upload.
+            "v": __version__,
         }
         for k, v in fields.items():
             if v is not None:

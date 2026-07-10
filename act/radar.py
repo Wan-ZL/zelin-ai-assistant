@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from act.executor import _runner_env
-from act.lib import analytics, config, notify, sanitize
+from act.lib import analytics, config, failures, notify, sanitize
 from act.lib.registry import Requirement, merge_or_new
 
 MARKER_PATH_NAME = "radar.marker"
@@ -212,6 +212,11 @@ def manager_action_items(note: Path, text: str,
 
     Strictly best-effort — returns the written path or None, NEVER raises, so
     it can never block the radar scan.
+
+    Every real attempt (past the feature/keyword gates) logs one
+    ``meeting_action_items`` event with ``outcome`` ok|fail (+ a ``failure``
+    catalog id from act/lib/failures.py when the raw error classifies), so the
+    error rate is computable. Basic-level payload: metadata only, no content.
     """
     try:
         if cfg is None:
@@ -221,7 +226,12 @@ def manager_action_items(note: Path, text: str,
         kw = _manager_keyword(cfg)
         if not kw or kw not in (text or "").lower():
             return None
+    except Exception:  # noqa: BLE001 — must never break the scan
+        return None
 
+    # Past the gates = one attempt; every exit below logs its outcome.
+    try:
+        stderr = ""
         if runner is not None:
             result = runner(text)
         else:
@@ -234,7 +244,11 @@ def manager_action_items(note: Path, text: str,
                 env=_runner_env(),
             )
             result = proc.stdout or ""
+            stderr = proc.stderr or ""
         if not result.strip():
+            analytics.log_event("meeting_action_items", outcome="fail",
+                                failure=failures.classify(stderr),
+                                file=note.name)
             return None
 
         MEETINGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,9 +257,12 @@ def manager_action_items(note: Path, text: str,
         path.write_text(result, encoding="utf-8")
 
         notify.notify("会后 action-item 清单已生成", str(path))
-        analytics.log_event("meeting_action_items", file=note.name)
+        analytics.log_event("meeting_action_items", outcome="ok", file=note.name)
         return path
-    except Exception:  # noqa: BLE001 — must never break the scan
+    except Exception as exc:  # noqa: BLE001 — must never break the scan
+        analytics.log_event("meeting_action_items", outcome="fail",
+                            failure=failures.classify(str(exc)),
+                            file=note.name)
         return None
 
 
