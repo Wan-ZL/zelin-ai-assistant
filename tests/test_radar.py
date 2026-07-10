@@ -1,8 +1,7 @@
 """radar.scan — Obsidian extraction loop against a tmpdir vault (P1-12).
 
-The injectable ``runner`` replaces the headless ``claude -p`` call (the
-manager action-items pack auto-skips when a runner is injected, so no other
-subprocess can fire). Pinned here:
+The injectable ``runner`` replaces the headless ``claude -p`` call, so no
+subprocess can fire. Pinned here:
 
 - strict-JSON output -> requirement reconciled through merge_or_new, hard +
   deadline routes straight to card_sent, marker advances to the note's mtime;
@@ -20,13 +19,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import radar
-from act import __version__ as act_version
-from act.lib import analytics, config, registry
+from act.lib import config, registry
 
 BASE = 1_760_000_000.0  # fixed epoch — deterministic mtimes
 
@@ -261,73 +258,6 @@ class ParseExtractionTestCase(unittest.TestCase):
 
     def test_non_array_json_is_malformed(self):
         self.assertIsNone(radar._parse_extraction('{"title": "x"}'))
-
-
-class ManagerActionItemsOutcomeTestCase(unittest.TestCase):
-    """manager_action_items telemetry (docs/TELEMETRY.md): every real attempt
-    (past the feature/keyword gates) logs ONE meeting_action_items event with
-    outcome ok|fail (+ a failures.py id when the error classifies); the gate
-    exits stay silent so skipped notes are never counted as attempts."""
-
-    def setUp(self):
-        config.ensure_state_dirs()
-        if analytics.EVENTS_PATH.exists():
-            analytics.EVENTS_PATH.unlink()
-        self.tmp = tempfile.TemporaryDirectory(prefix="radar-meetings-")
-        self.addCleanup(self.tmp.cleanup)
-        patcher = mock.patch.object(radar.notify, "notify", return_value=True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.cfg = config.Config()
-        self.cfg.watch_people = ["boss"]
-        # manager_pack is explicit-enable only (post-2026-07-08)
-        self.cfg.features_explicit = {"manager_pack"}
-        # explicit workbench -> drafts land in the tmp dir, no fallback notice
-        self.cfg.default_target_repo = self.tmp.name + "/workbench"
-        self.cfg.default_target_repo_configured = True
-        self.note = Path(self.tmp.name) / "2026-07-08-sync.md"
-
-    def _events(self):
-        return [e for e in analytics.read_events()
-                if e.get("event") == "meeting_action_items"]
-
-    def test_ok_outcome_logged_with_writer_version(self):
-        path = radar.manager_action_items(
-            self.note, "boss said do X", self.cfg, runner=lambda t: "- do X")
-        self.assertIsNotNone(path)
-        (ev,) = self._events()
-        self.assertEqual(ev["outcome"], "ok")
-        self.assertNotIn("failure", ev)
-        self.assertEqual(ev["v"], act_version)  # writer-level version stamp
-
-    def test_empty_result_logs_fail(self):
-        out = radar.manager_action_items(
-            self.note, "boss said do X", self.cfg, runner=lambda t: "")
-        self.assertIsNone(out)
-        (ev,) = self._events()
-        self.assertEqual(ev["outcome"], "fail")
-
-    def test_exception_logs_classified_failure(self):
-        def runner(_):
-            raise RuntimeError("Connection refused by api.anthropic.com")
-        out = radar.manager_action_items(self.note, "boss said do X",
-                                         self.cfg, runner=runner)
-        self.assertIsNone(out)
-        (ev,) = self._events()
-        self.assertEqual(ev["outcome"], "fail")
-        self.assertEqual(ev["failure"], "network_error")
-
-    def test_gate_exits_stay_silent(self):
-        # no manager keyword in the note
-        radar.manager_action_items(self.note, "nothing relevant here",
-                                   self.cfg, runner=lambda t: "- x")
-        # feature flag off
-        cfg_off = config.Config()
-        cfg_off.watch_people = ["boss"]
-        cfg_off.features = dict(cfg_off.features, manager_pack=False)
-        radar.manager_action_items(self.note, "boss said do X",
-                                   cfg_off, runner=lambda t: "- x")
-        self.assertEqual(self._events(), [])
 
 
 if __name__ == "__main__":

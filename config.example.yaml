@@ -32,7 +32,6 @@ sources:                               # 需求雷达监控的增量源
   slack_mcp_fallback: true             # 无 token 时改走 Slack MCP 只读兜底扫描（见 docs/SLACK_SETUP.md）
   slack_mcp_interval_minutes: 30       # MCP 兜底最小间隔（launchd 每 3 分钟触发，靠 state/slack_mcp.marker 节流）
   watch_people:                        # 这些人的消息/会议内容才触发需求提取
-    # 第一项视为你的 manager（radar 用其 first-name token 识别会议记录里的提及）
     - your.manager
   # gmail:                             # Gmail 捕获（见 docs/GMAIL_SETUP.md）
   #   address: "your.name@gmail.com"

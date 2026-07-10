@@ -211,6 +211,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **显式启用（行为变更，随 release 记 CHANGELOG）**：manager pack 自此要求 `features.manager_pack` **显式**出现在 config.yaml `features:` 块或 overrides 且为 true（Python 侧 `Config.feature_explicit("manager_pack")`，基于新增的 `Config.features_explicit` 显式集合）。§16 的「缺省 flag 默认 on」全局语义**不变**——只有本功能在调用点收紧：风暴当晚该 pack 在从未配置过 manager 的安装上靠默认值跑了起来。
 - **关键词护栏**：`sources.watch_people` 为空、首项仍为示例占位 `your.manager`（大小写不敏感）、或派生的 first-name token 退化（<3 字符，或属停用词 {your, the, my}）时，本 pass 的 manager pack 直接停用并打一行日志（每进程一次）——**绝不**用退化关键词扫描：占位符派生的 "your" 会把几乎每篇英文笔记都当成 manager 会议记录。
 
+**v0.14 修订（add-only 追记；随 release 记 CHANGELOG）**：manager pack ①（会后 action-item 清单）已**从产品整体移除**——占位配置退化的关键词一晚匹配了 92 篇历史笔记，酿成 backfill 风暴；这个概念将泛化为**按人承诺账本**从头重新设计（issue #23）。自此 `features.manager_pack` **被忽略**（无任何代码再据其门控），`state/meetings/` 与 `state/meetings_notice.sent` **不再写入**（存量文件不迁移、不删除）；本节上文 ① 的描述与 v0.14 各守卫补充仅作历史记录保留。**不在移除范围**：②（`act/oneonone.py` 1:1 准备页）与 `[MANAGER-OWES]` 账本行为不变；整 pass 的 `state/radar.lock` 互斥（保护的是整个 scan，不只该功能）与 `Config.default_target_repo_configured`（设置页「任务工作目录」与 executor 仍在用 `default_target_repo`）保留。
+
 ## 18. 定时任务归一（ingest 切换）
 install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 内脚本，并在链尾追加 `&& python -m act.radar --once`（cron 有 FDA，radar 可读 ~/Documents）。Screenpipe-Export.command 改为调 repo 脚本（主窗口"立即导出"同源）。
 
