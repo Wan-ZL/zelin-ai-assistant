@@ -15,7 +15,6 @@ sandbox AIASSISTANT_HOME（tests/__init__.py）里。钉住的契约：
     new_proposal，行为与三选一落地前完全一致（宁可多建，不丢候选）；
 (g) self-DM quick capture 的 relates_to 命中已交付卡 -> 同一 follow-up 机制。
 """
-import datetime as _dt
 import json
 import shutil
 import subprocess
