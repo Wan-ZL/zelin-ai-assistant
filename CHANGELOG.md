@@ -21,7 +21,15 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Voice profile two-level fallback** ([docs/VOICE.md](docs/VOICE.md)):
+  drafts written in the owner's name follow `state/voice-profile.md`
+  (private, gitignored) when present, else the neutral
+  anti-assistant-register starter template that now ships at
+  `config/voice-profile.default.md`; the template is nobody's voice
+  (empty example buckets, fingerprint-guard test) and the prompt injection
+  no longer hardcodes a personal name.
 
 ## [0.14.0] - 2026-07-10
 
