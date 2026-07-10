@@ -2,6 +2,9 @@
 
 首次安装的**唯一权威文档**。两条路线:**.pkg 安装包**(新机器推荐)或**从源码**(开发者路线);装完后都走同一套"装完之后"步骤。每一步末尾有一个 ✅ **预期状态** checkpoint——到不了预期状态就先去 [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md),别带病继续。
 
+> **先说清楚一件事:安装包目前没有 Apple 开发者签名**,所以 macOS 第一次打开会拦下它说"无法打开"——这不是故障,也不是恶意软件,是 macOS 对所有未签名软件的统一态度。绕过只需 3 步、只做一次:① 在 Finder 里**右键点击**下载的文件 → 选「打开」;② 弹窗里再点一次「打开」;③ 如果 macOS Sequoia 仍然拒绝,打开 系统设置 → 隐私与安全性,拉到底部点「**仍要打开**」,输一次密码。之后就再也不会被拦。
+> *The installer is not yet signed with an Apple Developer ID, so macOS blocks the first open — expected, not malware. Bypass once: right-click the file in Finder → Open → Open; on macOS Sequoia, if still refused, System Settings → Privacy & Security → scroll to the bottom → **Open Anyway**.*
+
 ## English quickstart
 
 1. Prerequisites: macOS 14+, Xcode / Swift 6.x toolchain, [Claude Code CLI](https://claude.com/claude-code) + an Anthropic API key, Python 3.9+ with PyYAML, Node.js LTS (`npx` — the capture engine runs via `npx screenpipe`). Optional: Obsidian, `gh` CLI.

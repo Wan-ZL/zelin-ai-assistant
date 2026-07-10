@@ -87,10 +87,33 @@ jobs:
             mac/build/ZelinAIAssistant-*.pkg
 
       - name: Create GitHub Release and upload assets
+        # The install-steps block is prepended to the auto-generated notes
+        # (gh appends --generate-notes output after --notes-file). It exists
+        # because the pkg is UNSIGNED (no Developer ID yet): without the
+        # three-click bypass spelled out next to the download, macOS Sequoia
+        # shows only "Done / Move to Trash" and users conclude the app is
+        # malware. Remove the Gatekeeper paragraph once builds are signed
+        # and notarized.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
           PKG="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
-          gh release create "$GITHUB_REF_NAME" --generate-notes --latest
+          cat > /tmp/release-notes.md <<'NOTES'
+          ## 安装 / Install
+
+          下载下方的 `ZelinAIAssistant-*.pkg` 双击安装。装完后菜单栏会自动出现小图标（首启弹权限设置页）。
+
+          **这个安装包目前没有 Apple 开发者签名**，所以 macOS 第一次会拦下它说"无法打开"。这不是故障，也不是恶意软件——用 3 步绕过（只需做这一次）：
+
+          1. 在 Finder 里**右键点击** .pkg 文件 → 选「打开」；
+          2. 弹窗里再点一次「打开」；
+          3. 如果 macOS Sequoia 仍然拒绝：打开 系统设置 → 隐私与安全性，拉到底部，点「仍要打开」，输一次密码。
+
+          Download `ZelinAIAssistant-*.pkg` below and double-click it. The build is **not yet signed with an Apple Developer ID**, so macOS blocks the first open — expected, not malware. Bypass it once: **right-click the .pkg in Finder → Open → Open**; if macOS Sequoia still refuses, go to System Settings → Privacy & Security, scroll to the bottom, click **Open Anyway** and enter your password.
+
+          完整安装指南 / full install guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · 卸载 / uninstall: `bash uninstall.sh`
+
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md --generate-notes --latest
           gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" mac/build/checksums.sha256
