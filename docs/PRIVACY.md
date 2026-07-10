@@ -225,7 +225,7 @@
 - **`execution.create_github_repo`**：**默认 false**（v0.11 起）——无任何自动 GitHub repo
   创建；显式设 true 才恢复"新目录卡自动建私有 repo + draft PR"。
 - **`execution.memory_inject: false`**：关掉 MEMORY.md 注入。
-- **Telemetry 默认关**,开也只去你自己的 Supabase（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
+- **Telemetry 默认开、一键可关**（App 设置「产品改进计划」/ `telemetry.enabled: false`）；默认上传匿名事件元数据到维护者的 Supabase，`supabase_url: ""` 彻底禁用（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
 
 ## 执行权限（--dangerously-skip-permissions）
 

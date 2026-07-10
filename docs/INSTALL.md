@@ -152,5 +152,5 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先
 
 - **Slack 雷达**:`docs/SLACK_SETUP.md`(user token,或 MCP 只读兜底)。
 - **Gmail 雷达**:`docs/GMAIL_SETUP.md`(应用专用密码)。
-- **遥测**(默认关):`docs/TELEMETRY.md`。
+- **遥测**(匿名使用统计,默认开、一键可关):`docs/TELEMETRY.md`。
 - 什么数据会离开你的机器:`docs/PRIVACY.md`。

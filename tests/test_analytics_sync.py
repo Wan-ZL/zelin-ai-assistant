@@ -5,11 +5,16 @@ sync_once must (a) upload only complete new lines and advance the byte cursor,
 (c) be a silent no-op when telemetry is disabled (opt-out) or the URL is
 empty, (d) skip (and count) malformed lines without crashing, (e) leave a
 half-written trailing line for the next run, (f) write the cursor atomically,
-and (g) resolve the upload key as key file -> built-in publishable key.
+(g) resolve the upload key as key file -> built-in publishable key, and
+(h) never upload before a consent surface existed: the app's shown-marker
+(state/telemetry_consent_shown), a config.yaml ``telemetry:`` block, or a
+telemetry key in settings_overrides.json (ConsentGateTestCase).
 
 The local JSONL file is never modified. Transport is injected — no network.
 Everything lives under the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
+import contextlib
+import io
 import json
 import unittest
 from pathlib import Path
@@ -52,6 +57,10 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         secrets.write_secret(sync.SUPABASE_SERVICE_KEY_FILE, "test-service-key")
 
     def setUp(self):
+        # consent surface shown — the gate itself is ConsentGateTestCase's job
+        sync.CONSENT_MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        sync.CONSENT_MARKER_PATH.write_text("2026-07-09T00:00:00Z\n",
+                                            encoding="utf-8")
         for p in (analytics.EVENTS_PATH, sync.CURSOR_PATH):
             if p.exists():
                 p.unlink()
@@ -210,6 +219,65 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         stats = self._sync()
         self.assertTrue(stats["ok"])
         json.loads(sync.CURSOR_PATH.read_text(encoding="utf-8"))
+
+
+class ConsentGateTestCase(unittest.TestCase):
+    """Pre-consent upload window (docs/TELEMETRY.md "上传何时发生"): install.sh
+    installs the hourly cron unconditionally, so sync_once must no-op until a
+    consent surface existed — the app's shown-marker, an explicit config.yaml
+    ``telemetry:`` block, or a telemetry key in settings_overrides.json."""
+
+    def setUp(self):
+        for p in (sync.CONSENT_MARKER_PATH, config.CONFIG_PATH,
+                  config.SETTINGS_OVERRIDES_PATH, analytics.EVENTS_PATH,
+                  sync.CURSOR_PATH):
+            if p.exists():
+                p.unlink()
+        _write_events(_event_line("inbox_approve"))
+        self.batches: list = []
+
+    def tearDown(self):
+        # leave no consent state behind for later test modules
+        for p in (sync.CONSENT_MARKER_PATH, config.CONFIG_PATH,
+                  config.SETTINGS_OVERRIDES_PATH):
+            if p.exists():
+                p.unlink()
+
+    def _transport(self, rows):
+        self.batches.append(list(rows))
+
+    def test_no_marker_and_no_explicit_config_blocks_upload(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            stats = sync.sync_once(cfg=_cfg(), transport=self._transport)
+        self.assertEqual(stats["skipped"], "consent_pending")
+        self.assertEqual(self.batches, [])
+        self.assertFalse(sync.CURSOR_PATH.exists())
+        # the cron log gets a clear line instead of a silent mystery no-op
+        self.assertIn("waiting for first-run consent surface", buf.getvalue())
+
+    def test_marker_file_unblocks_upload(self):
+        sync.CONSENT_MARKER_PATH.write_text("2026-07-09T00:00:00Z\n",
+                                            encoding="utf-8")
+        stats = sync.sync_once(cfg=_cfg(), transport=self._transport)
+        self.assertNotIn("skipped", stats)
+        self.assertEqual(stats["uploaded"], 1)
+
+    def test_explicit_config_yaml_telemetry_section_unblocks_upload(self):
+        config.CONFIG_PATH.write_text(
+            "owner:\n  name: Test\ntelemetry:\n  enabled: true\n",
+            encoding="utf-8")
+        stats = sync.sync_once(cfg=_cfg(), transport=self._transport)
+        self.assertNotIn("skipped", stats)
+        self.assertEqual(stats["uploaded"], 1)
+
+    def test_settings_overrides_telemetry_key_unblocks_upload(self):
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"telemetry": {"enabled": True}}), encoding="utf-8")
+        stats = sync.sync_once(cfg=_cfg(), transport=self._transport)
+        self.assertNotIn("skipped", stats)
+        self.assertEqual(stats["uploaded"], 1)
 
 
 class KeyResolutionTestCase(unittest.TestCase):

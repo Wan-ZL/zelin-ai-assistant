@@ -181,6 +181,22 @@ enum TelemetryConsent {
         try? SettingsIO.writeOverrides(merged)
         Analytics.log("telemetry_consent", fields: ["enabled": enabled])
     }
+
+    /// Marker the Python uploader gates on (act/lib/analytics_sync, CONTRACT
+    /// §15): its existence means "the consent surface was DISPLAYED at least
+    /// once" — independent of the checkbox choice (telemetry.enabled controls
+    /// on/off). Without it, and without an explicit telemetry config, the
+    /// hourly cron sync no-ops, so a fresh install can never upload before
+    /// this page appeared. Content = first-shown UTC timestamp, written once.
+    static func markSurfaceShown() {
+        let path = AppPaths.stateRoot + "/state/telemetry_consent_shown"
+        guard !FileManager.default.fileExists(atPath: path) else { return }
+        try? FileManager.default.createDirectory(
+            atPath: AppPaths.stateRoot + "/state",
+            withIntermediateDirectories: true)
+        let ts = ISO8601DateFormatter().string(from: Date()) + "\n"
+        try? ts.write(toFile: path, atomically: true, encoding: .utf8)
+    }
 }
 
 // MARK: - window (singleton; closing hides, app stays .accessory)
@@ -507,8 +523,8 @@ struct PermissionsView: View {
                     .font(.system(size: 12))
             }
             .toggleStyle(.checkbox)
-            Text(L("只含功能使用次数等聚合信号;绝不包含屏幕内容、文件或任何个人信息。随时可在这里更改。",
-                   "Aggregate signals only (e.g. feature-usage counts) — never screen content, files, or any personal information. Change it here anytime."))
+            Text(L("只上传匿名事件记录(功能名、时间戳、随机设备编号);绝不含屏幕内容、对话或任何个人文本。随时可在这里更改。",
+                   "Anonymous event records only (feature name, timestamp, a random device id) — never screen content, conversations, or any personal text. Change it here anytime."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -517,6 +533,7 @@ struct PermissionsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onAppear { TelemetryConsent.markSurfaceShown() }
     }
 
     // MARK: footer

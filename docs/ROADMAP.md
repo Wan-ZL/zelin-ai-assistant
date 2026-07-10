@@ -12,7 +12,7 @@ Before picking anything up, check the in-progress list — several items already
 - **Demo assets** — hero screenshots, flow GIF and demo video per the conventions in
   [docs/assets/README.md](assets/README.md); the hero set has landed, remaining screenshot slots
   (`t2-card`, `review-final-draft`, `trash`) are in flight.
-- **Telemetry v2 — research loop** — v1 (opt-in Supabase sync of local analytics events) has landed;
+- **Telemetry v2 — research loop** — v1 (Supabase sync of local analytics events; default-on with a one-click opt-out) has landed;
   v2 closes the loop: after ≥14 days of data the Monday digest proposes self-improvement cards
   ("this feature is unused", "this step keeps failing") — the new-install guard is already written.
 - **iMessage channel** — a fourth capture/notification channel alongside Obsidian, Slack and Gmail;

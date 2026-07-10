@@ -2,7 +2,9 @@
 
 Default ON with opt-out (config.yaml ``telemetry:`` block or the app's
 Settings toggle; see docs/TELEMETRY.md). Disabled/unconfigured -> exits 0
-silently. All logic in act/lib/analytics_sync.
+silently; before the first-run consent surface was shown (and without any
+explicit telemetry config) it exits 0 with a "waiting for first-run consent
+surface" log line and uploads nothing. All logic in act/lib/analytics_sync.
 
 Run standalone:  python -m act.analytics_sync --once
 """

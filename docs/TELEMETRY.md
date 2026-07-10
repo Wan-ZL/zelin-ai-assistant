@@ -72,6 +72,18 @@ act.analytics_sync --once`）。没跑过 install.sh 就没有定时上传——
 `python3 -m act.analytics_sync --once`。关闭 telemetry 后这行 cron 变成静默
 no-op，不必删除。
 
+另有一道 **consent 门**（堵住「cron 先装好、披露界面还没出现」的窗口）：以下
+三者**全部缺席**时，`act.analytics_sync` 什么都不上传，只在日志里写一行
+"waiting for first-run consent surface"：
+
+1. 标记文件 `state/telemetry_consent_shown`——App「权限体检」页第一次**展示**
+   「匿名使用统计」块时写入（内容为时间戳），与你勾不勾选无关；
+2. config.yaml 里显式写了 `telemetry:` 块（显式配置 = 知情同意）；
+3. `state/settings_overrides.json` 里有 telemetry 键（在 App 里动过开关）。
+
+也就是说：哪怕 install.sh 已经装好 cron，在你第一次看到披露界面（或显式配置过
+telemetry）之前，不会有任何事件离开本机。
+
 ## Fork 用户须知（重要）
 
 - fork 里**不改配置**的话，telemetry 仍指向维护者的 Supabase 项目——你 fork

@@ -16,6 +16,13 @@ present, so a self-hosted/service-key setup keeps working unchanged. Opt out
 with the Settings toggle or ``telemetry.enabled: false``; an empty
 ``supabase_url`` disables uploads entirely -> silent cheap no-op.
 
+Consent gate (docs/TELEMETRY.md "上传何时发生"): install.sh installs the hourly
+cron unconditionally, but the consent surface (the app's first-run permissions
+page) only appears on first launch — so until that page was shown (marker file
+``state/telemetry_consent_shown``, CONTRACT §15) or an explicit ``telemetry``
+choice exists (config.yaml block / settings_overrides.json key), sync no-ops
+with a log line instead of uploading.
+
 Exactly-once for appends: the cursor is saved atomically (.tmp + os.replace)
 after EVERY successfully uploaded batch, so a mid-run failure resumes at the
 last good batch. A half-written trailing line (no "\\n" yet — the Swift and
@@ -40,6 +47,10 @@ from act.lib import analytics, config, secrets
 
 CURSOR_PATH: Path = config.STATE_DIR / "analytics_sync.json"
 DEVICE_ID_PATH: Path = config.STATE_DIR / "device_id"
+# Written by the app when the first-run permissions page DISPLAYS the
+# telemetry consent block (CONTRACT §15) — "the surface was shown",
+# independent of the checkbox choice (telemetry.enabled controls on/off).
+CONSENT_MARKER_PATH: Path = config.STATE_DIR / "telemetry_consent_shown"
 
 # Fixed secrets file name (CONTRACT §19 pattern, like slack-user-token.txt).
 SUPABASE_SERVICE_KEY_FILE = "supabase-service-key.txt"
@@ -188,6 +199,35 @@ def _make_transport(supabase_url: str, key: str) -> Transport:
 
 
 # --------------------------------------------------------------------------- #
+# Consent gate — never upload before ANY consent surface existed.
+# --------------------------------------------------------------------------- #
+def consent_surfaced() -> bool:
+    """True once at least one consent surface existed: the app wrote the
+    shown-marker, the user's config.yaml explicitly has a ``telemetry:``
+    block (explicit config = informed consent), or settings_overrides.json
+    carries a telemetry key (an explicit choice made in the UI)."""
+    if CONSENT_MARKER_PATH.exists():
+        return True
+    try:
+        # top-level YAML key = a line starting at column 0 (block or inline
+        # form); only the REAL config.yaml counts, never config.example.yaml
+        for line in config.CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            if line.startswith("telemetry:"):
+                return True
+    except OSError:
+        pass
+    try:
+        data = json.loads(
+            config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and any(
+                k == "telemetry" or k.startswith("telemetry.") for k in data):
+            return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+# --------------------------------------------------------------------------- #
 # One sync pass
 # --------------------------------------------------------------------------- #
 def sync_once(cfg: Optional[config.Config] = None,
@@ -195,11 +235,18 @@ def sync_once(cfg: Optional[config.Config] = None,
     """Upload all new complete events in batches. Never raises.
 
     Returns a stats dict: {"ok", "uploaded", "batches", "malformed", "error"}
-    plus "skipped" when telemetry is disabled/unconfigured (silent no-op).
+    plus "skipped" when telemetry is disabled/unconfigured (silent no-op) or
+    the consent surface has not been shown yet ("consent_pending").
     """
     stats: dict = {"ok": True, "uploaded": 0, "batches": 0,
                    "malformed": 0, "error": None}
     try:
+        if not consent_surfaced():
+            # cron output is redirected to state/analytics_sync.log
+            print("telemetry sync: waiting for first-run consent surface — "
+                  "nothing uploaded")
+            stats["skipped"] = "consent_pending"
+            return stats
         cfg = cfg or config.load_config()
         url = str(cfg.telemetry_supabase_url or "").strip()
         if not (cfg.telemetry_enabled and url):
