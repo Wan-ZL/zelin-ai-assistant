@@ -436,11 +436,16 @@ def build_dashboard(
                 # both required for --resume; the roster shows the launch dir,
                 # which is the wrong place to resume from.
                 from act.executor import _transcript_info
-                tinfo = _transcript_info(str(resume_sid or short_id or ""))
+                sid_for_resume = str(resume_sid or short_id or "")
+                tinfo = _transcript_info(sid_for_resume) if sid_for_resume else None
                 if tinfo:
                     copy_cmd = f"cd '{tinfo[1]}' && claude --resume {tinfo[0]}"
+                elif sid_for_resume:
+                    copy_cmd = f"claude --resume {sid_for_resume}"
                 else:
-                    copy_cmd = f"claude --resume {resume_sid}"
+                    # No session id at all — emit NO command rather than guess
+                    # (an empty sid used to glob-bind an unrelated transcript).
+                    copy_cmd = None
             agent_name = (agent or {}).get("name")
 
             if req.status == State.DELIVERED.value:

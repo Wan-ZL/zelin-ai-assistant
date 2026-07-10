@@ -683,6 +683,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return true
     }
 
+    /// 建议上报入口（看板 header 直点 = ids 空 → 对整体；多选操作条 = 针对
+    /// 所选卡）: 弹多行文本框（promptText 复用——↩ 发送 · ⇧↩ 换行 同款），
+    /// 提交走 submitFeedback。返回 true = 已写入 inbox（调用方据此退出多选）；
+    /// 取消 / 空文本 / 写失败 = false，选择保持原样。
+    func promptFeedback(ids: [String]) -> Bool {
+        let title = ids.isEmpty
+            ? L("💡 提建议（对整体）", "💡 Send feedback (overall)")
+            : L("💡 提建议（\(ids.count) 张卡）", "💡 Send feedback (\(ids.count) cards)")
+        // CONTRACT §29 明示条款：内容（建议全文 + 所选卡片标题快照）会上传给
+        // 维护者，且不受「产品改进计划」开关/首启 consent 限制——入口文案必须
+        // 把这一点讲清楚，不得暗示是本地闭环。
+        guard let text = promptText(
+            title: title,
+            info: L("说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。",
+                    "What's off / could be better. On send, your feedback text and the selected cards' title snapshots are uploaded to the maintainer to improve the product (even with anonymous stats off) — avoid sensitive details."),
+            placeholder: L("建议内容…", "Your feedback…")),
+            !text.isEmpty
+        else { return false }
+        return submitFeedback(ids: ids, text: text)
+    }
+
+    /// 建议上报（照 submitMergeReview 模式）:
+    /// {"action":"feedback","ids":[…],"text":…} inbox 文件 — ids sorted 保持
+    /// payload 确定性，允许为空（对整体提建议）。同一 atomic-write +
+    /// failure-alert 路径（writeInboxFile）；成功后乐观回显一条绿色
+    /// 「已记录建议，感谢」信息条（store.noteFeedbackRecorded）。
+    func submitFeedback(ids: [String], text: String) -> Bool {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["action": "feedback", "ids": ids.sorted(),
+                                   "text": text, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.log("feedback_submit", fields: ["ids": ids.count])
+        store.noteFeedbackRecorded()
+        return true
+    }
+
     /// The ONE atomic inbox write + failure alert (card actions + merge_review
     /// share it). Contract: on false the caller must NOT apply optimistic UI.
     private func writeInboxFile(_ dict: [String: Any]) -> Bool {

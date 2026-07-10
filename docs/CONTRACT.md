@@ -82,7 +82,7 @@ approved 的需求：
 
 - LSUIElement（菜单栏 app，无 Dock 图标），NSStatusItem
 - 每 5s 读 dashboard.json 重渲染；菜单栏标题显示待审批数（>0 时高亮）
-- 五区：待审批（卡片带 ✅/❌/💬 按钮）/ 运行中 / 需输入 / 已完成 / 欠账
+- 五区：待审批（卡片带 ✅/❌/💬 按钮）/ 运行中 / 需输入 / 已完成 / 欠账（v0.17 起展示层更名「备选/Backlog」，见 v0.17 additions；registry `status=detected` 与 dashboard 的 `debt` key 不变）
 - ✅→写 `{action:approve}`；❌→`{action:reject}`；💬→弹输入框→`{action:comment,comment:...}`
 - "运行中/需输入"项点击 → 复制 `claude --resume <session_id>` 到剪贴板（方便进会话看）
 - app 绝不直接调 claude / 改注册表 / 持密钥——只读 dashboard.json、只写 inbox
@@ -124,7 +124,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -342,7 +342,8 @@ CLI 驱动，绝不定时跑。**全程本地、无 LLM 调用**——gist = 首
 
 **落卡语义**（每个导入会话经 `registry.merge_or_new` 建普通提案卡）：
 - 会话以 assistant 提问收尾（ended_waiting_on_user）→ `status=card_sent`（待审批）；
-  仅仅是近期活动 → `status=detected`（欠账）。与其他雷达的置信分流同构。
+  仅仅是近期活动 → `status=detected`（欠账，v0.17 起展示为「备选/Backlog」）。
+  与其他雷达的置信分流同构。
 - `sources[0] = {who:"claude-code", channel:"claude_code", date:<last_activity 日期>,
   quote:<gist>, ref:<session_id>}`；`summary=gist`；`type=code`；`tier=T1`；
   会话 cwd 存在时作 `target_repo`。
@@ -691,3 +692,77 @@ UNUserNotificationCenter 弹出（identifier = `id`），单轮最多 **5** 条
 add 静默 no-op、文件照删——权限真相在权限体检页，队列不负责重试。点击通知 =
 打开主窗口（§5 文案本来就都指向「打开 App」；osascript 旧路径从无点击行为，
 无保真负担）。
+
+# v0.17 additions（建议上报：用户 → 维护者反馈通道）
+
+> **车道更名（v0.17，纯展示层）**：原「欠账/debt」车道在 UI 上更名为
+> 「备选/Backlog」（双语 `L("备选 · backlog", "Backlog")`）。只是展示层改名：
+> registry `status=detected` 与 dashboard.json 的 `debt` key **一律不变**
+> （§6/§8/§22 等处「欠账」按此括注理解）。
+
+## 29. feedback（建议上报）— inbox 动作 + `state/feedback/<uuid>.json` + 上传
+
+**目标**：Zelin 在 App 里对某张（或某几张、或不针对任何卡）提意见，一个动作直达
+维护者——本地永久留档 + best-effort 上传，用户零等待、绝不因网络丢报告。
+实现：`act/actd.py`（inbox 校验/路由）+ `act/lib/feedback.py`（落盘 + 上传）。
+
+**inbox 动作**（App 写 `state/inbox/<uuid>.json`，actd 读后删——同 §3/§10）：
+
+```json
+{"action":"feedback","ids":["R-032","MS-ab12cd34"],"text":"这卡张冠李戴了","ts":"<ISO8601>"}
+```
+
+- 无 requirement 级 `id` 字段（同 capture / weekly_digest_now 先例）。
+- `text` **必填非空**（strip 后为空 = log 丢弃整条）；落盘截断 4000 字符。
+- `ids` 可缺失/可空数组/可含垃圾——**坏 ids 容错**：非法条目降级为
+  `kind:"unknown"` 快照，绝不因此丢掉 text；数组去重、逐项转字符串。
+
+**本地记录**（`state/feedback/<uuid>.json`，原子写 `.tmp` + rename，**永久保留**）：
+
+```json
+{
+  "id": "<uuid hex>",
+  "ts": "<UTC ISO>",
+  "ids": ["R-032", "MS-ab12cd34"],
+  "cards": [
+    {"id":"R-032","kind":"requirement","type":"other","title":"<报告时刻标题快照>","status":"delivered"},
+    {"id":"MS-ab12cd34","kind":"merge_suggestion","type":"merge_suggestion","title":"merge suggestion: R-001 + R-002","status":"done"}
+  ],
+  "text": "<用户原文>",
+  "app_version": "0.16.0",
+  "uploaded": null,
+  "upload_attempts": 0
+}
+```
+
+- `cards` = 每个 id 的**报告时刻快照**（类型 + 标题 + 状态）——卡片之后被改名/
+  合并/清理，报告仍可读。R- id 查注册表；MS- id 查 `state/merge/` 作业（标题由
+  成员卡 id 合成）；查不到 = `kind:"unknown"`、`title:null`。
+- `uploaded` 三态：`null` = 待重试（pending）、`true` = 已上传（附
+  `uploaded_at`）、`false` = 已放弃（附 `upload_error` 前 200 字）。
+
+**上传（best-effort）**：复用 telemetry 的 **anon INSERT 通道**（docs/TELEMETRY.md
+/ `act/lib/analytics_sync.py` 约定）：PostgREST `POST {supabase_url}/rest/v1/
+analytics_events`，key 解析同序（§19 key 文件 → `telemetry.key_path` → 内置
+publishable key，RLS 仅 INSERT）。**不建新表**——anon 的 INSERT policy 只覆盖
+`analytics_events`，feedback 作为**独立事件类型**落同表：`event="feedback"`、
+`source="feedback"`、`props` = 本地记录内容（id/ts/ids/cards/text/app_version，
+不含 upload 簿记）、`client_ts` = 记录 ts。
+
+**重试语义**（全部 best-effort，任何失败静默、绝不打断 daemon pass）：
+1. 落盘后**立即尝试一次**（inline，10s 超时封顶）；
+2. 失败 → 记录留在本地（`uploaded:null`，`upload_attempts:1`）；
+3. 下一轮 actd pass（`run_once` 的 housekeeping 段）对所有 pending 记录
+   **再试一次**；再失败 → `uploaded:false` **永久放弃**（文件保留，之后每轮
+   sweep 直接跳过——terminal 态，成本 O(目录扫描)）。
+
+**明确拍板（与 telemetry 的关键差异）**：
+- feedback 是**用户显式动作**（点了「上报」就是同意发送），因此上传**不受
+  `telemetry.enabled` 开关限制**，也**不看首启 consent 门**
+  （`state/telemetry_consent_shown`）——关了匿名统计仍能上报建议。
+- 仍尊重 fork 硬关开关：`telemetry.supabase_url` 为空 = 无处可发，记录只留
+  本地并立即置 `uploaded:false`（`upload_error:"uploads disabled …"`）。
+- **内容含卡片标题快照与用户原文**，可能含敏感词——发送即用户自担（区别于
+  telemetry basic 级的"只有元数据"承诺）。App 侧上报入口文案须明示这一点。
+- 本地 analytics 事件（`inbox_feedback`）只记元数据（ids 数量 + 上传结果），
+  **text 绝不进 events.jsonl**——报告原文只经 feedback 自己的通道走。

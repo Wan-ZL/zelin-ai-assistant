@@ -49,12 +49,13 @@ struct PendingMergeAction {
     let created: Date
 }
 
-/// Timed-out placeholder notice (capture → yellow, raise → orange).
+/// Timed-out placeholder notice (capture → yellow, raise → orange) or a
+/// positive info strip (info → green, e.g. 建议上报的「已记录建议」回执).
 /// `lane` = where the triggering action happened; the kanban renders each
 /// notice in that column (P2-4 — an abort timeout two columns away from the
 /// running lane was invisible), the popover keeps its single list.
 struct LocalNotice: Identifiable, Equatable {
-    enum Kind { case captureTimeout, raiseTimeout }
+    enum Kind { case captureTimeout, raiseTimeout, info }
     let id: String
     let kind: Kind
     let lane: ListKind
@@ -602,6 +603,21 @@ final class DashboardStore: ObservableObject {
         }
     }
 
+    /// 建议上报: the feedback inbox write succeeded → optimistic green
+    /// 「已记录建议，感谢」info strip in the proposal lane (fixed id — a
+    /// second submit replaces, not stacks). Fades with the standard 120 s
+    /// notice sweep. ONLY call site: AppDelegate.submitFeedback.
+    func noteFeedbackRecorded() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            let noticeID = "notice-feedback"
+            notices.removeAll { $0.id == noticeID }
+            notices.append(LocalNotice(
+                id: noticeID, kind: .info, lane: .approval,
+                text: L("已记录建议，感谢", "Feedback recorded"),
+                created: Date()))
+        }
+    }
+
     private func isHidden(_ id: String) -> Bool {
         hiddenSticky[id] != nil || hiddenOnce.contains(id)
     }
@@ -771,6 +787,82 @@ final class DashboardStore: ObservableObject {
         if mergeAnalyzingLocal[id] != nil { return true }
         return (dashboard?.merge_suggestions ?? []).contains {
             $0.status == "analyzing" && $0.ids.contains(id)
+        }
+    }
+
+    // MARK: board search (看板搜索过滤 — board* projections over visible*)
+
+    /// Kanban header search box text. Non-empty → the board* projections
+    /// below filter every lane in real time; "" (or whitespace) = passthrough.
+    /// Lives in the store per the visible* projection pattern; the POPOVER
+    /// deliberately keeps reading visible* — search is a board-only
+    /// affordance, and KanbanView clears the query onDisappear so a stale
+    /// filter can never silently hide cards elsewhere.
+    @Published var boardQuery: String = ""
+
+    /// Normalized needle ("" = filtering off).
+    private var boardNeedle: String {
+        boardQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// Case-insensitive substring match over one card's searchable text —
+    /// 词表冻结: id + title/summary (scalar) + dod/plan (lists). Kept private
+    /// so every lane filters by exactly the same rule.
+    private static func searchMatches(_ needle: String, id: String,
+                                      texts: [String?], lists: [[String]?]) -> Bool {
+        if id.lowercased().contains(needle) { return true }
+        for t in texts where t?.lowercased().contains(needle) == true { return true }
+        for list in lists where list?.contains(
+            where: { $0.lowercased().contains(needle) }) == true { return true }
+        return false
+    }
+
+    /// visibleApprovals + search. 占位卡不参与过滤隐藏: the grey processing
+    /// prefix (captures + raise placeholders, `processing == true`) always
+    /// rides through — hiding an in-flight submit behind a filter would read
+    /// as a lost capture. (建议卡 likewise stay unfiltered — they never pass
+    /// through this projection at all; KanbanView keeps visibleMergeSuggestions.)
+    var boardApprovals: [ApprovalCard] {
+        let q = boardNeedle
+        guard !q.isEmpty else { return visibleApprovals }
+        return visibleApprovals.filter {
+            $0.processing || Self.searchMatches(q, id: $0.id,
+                                                texts: [$0.title, $0.summary],
+                                                lists: [$0.dod, $0.plan])
+        }
+    }
+
+    var boardRunning: [RunningTask] { searchTasks(visibleRunning) }
+    var boardNeedsInput: [RunningTask] { searchTasks(visibleNeedsInput) }
+    var boardCompleted: [RunningTask] { searchTasks(visibleCompleted) }
+
+    /// Shared RunningTask filter (running / needs_input / completed reuse the
+    /// struct); `name` is the row's title-equivalent field.
+    private func searchTasks(_ tasks: [RunningTask]) -> [RunningTask] {
+        let q = boardNeedle
+        guard !q.isEmpty else { return tasks }
+        return tasks.filter {
+            Self.searchMatches(q, id: $0.id, texts: [$0.name, $0.summary],
+                               lists: [$0.dod, $0.plan])
+        }
+    }
+
+    var boardReview: [ReviewItem] {
+        let q = boardNeedle
+        guard !q.isEmpty else { return visibleReview }
+        return visibleReview.filter {
+            Self.searchMatches(q, id: $0.id, texts: [$0.name, $0.summary],
+                               lists: [$0.dod, $0.plan])
+        }
+    }
+
+    /// 备选 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
+    var boardDebt: [DebtItem] {
+        let q = boardNeedle
+        guard !q.isEmpty else { return visibleDebt }
+        return visibleDebt.filter {
+            Self.searchMatches(q, id: $0.id, texts: [$0.title, $0.summary],
+                               lists: [])
         }
     }
 }

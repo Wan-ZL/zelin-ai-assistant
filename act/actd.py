@@ -10,6 +10,8 @@ Each pass:
   (b) dispatch every status=approved requirement that has no execution yet.
   (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
        'analyzing' jobs older than 20 minutes.
+  (b'') feedback upload retry (§29): pending state/feedback/ records get ONE
+        more attempt, then uploaded:false (kept local, never retried again).
   (c) build + atomically write dashboard.json.
   (d) diff against the previous dashboard; notify on state transitions.
 
@@ -70,6 +72,11 @@ try:
 except Exception:  # pragma: no cover - update check must not kill daemon
     update_check = None  # type: ignore
 
+try:
+    from act.lib import feedback
+except Exception:  # pragma: no cover - feedback import must not kill daemon
+    feedback = None  # type: ignore
+
 
 # --------------------------------------------------------------------------- #
 # logging
@@ -112,6 +119,14 @@ def process_inbox() -> int:
         # §10 capture: no req id — the app popover's one-liner quick capture.
         if action == "capture":
             _apply_capture(decision.get("text"))
+            processed += 1
+            _safe_unlink(path)
+            continue
+
+        # §29 feedback（建议上报）: carries "ids" (0..n R-/MS- ids), never a
+        # requirement-level "id" — validated + recorded by act/lib/feedback.py.
+        if action == "feedback":
+            _apply_feedback(decision)
             processed += 1
             _safe_unlink(path)
             continue
@@ -224,6 +239,35 @@ def _apply_capture(text: Optional[str]) -> None:
     else:
         _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
     analytics.log_event("inbox_capture", req=saved.id, status=str(saved.status))
+
+
+def _apply_feedback(decision: dict) -> None:
+    """建议上报 (CONTRACT §29) — explicit user report to the maintainer.
+
+    ``{"action":"feedback","ids":["R-001","MS-ab12cd34"],"text":"…"}`` —
+    validation here: non-empty text is REQUIRED (empty -> logged drop);
+    ``ids`` may be missing/empty/garbage (bad ids degrade to "unknown"
+    snapshots inside the record — the text must never be lost over them).
+    Recording + best-effort upload live in act/lib/feedback.py; only event
+    METADATA reaches the local analytics log — the report text travels solely
+    inside the feedback record itself.
+    """
+    if feedback is None:
+        _log("inbox: feedback requested but module unavailable — dropped")
+        return
+    text = str(decision.get("text") or "").strip()
+    if not text:
+        _log("inbox: feedback with empty text — dropped")
+        return
+    ids = feedback.clean_ids(decision.get("ids"))
+    rec = feedback.record_feedback(ids, text)
+    if rec is None:
+        _log("inbox: feedback record FAILED — dropped")
+        return
+    _log(f"inbox: feedback {rec['id']} recorded "
+         f"(ids={ids or []}, uploaded={rec.get('uploaded')})")
+    analytics.log_event("inbox_feedback", n=len(ids),
+                        uploaded=rec.get("uploaded"))
 
 
 def _apply_claude_import(decision: dict) -> None:
@@ -1072,6 +1116,13 @@ def run_once(
     process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
     purge_trash(cfg)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
+    if feedback is not None:
+        # §29: retry pending feedback uploads ONCE, then give up (uploaded:
+        # false). Records created THIS pass (process_inbox above already did
+        # their inline attempt) are age-gated inside retry_pending, so the
+        # single retry lands on a genuinely later pass, not seconds later
+        # inside the same outage. Cheap when state/feedback/ is empty.
+        feedback.retry_pending(cfg)
     dash = build_dashboard(cfg=cfg)
     # §26 in-app update check: cheap (ETag-cached, at most one network attempt
     # per 24h) and never raises — the field is simply absent when no newer

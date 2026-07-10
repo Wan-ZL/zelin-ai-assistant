@@ -10,9 +10,12 @@
 - **内容数据没有产品方服务器**。本项目没有任何处理内容的自营后端；内容类出境流量只去往
   **你自己配置凭证的服务**：Anthropic API（经官方 `claude` CLI）、你自己的 Slack
   workspace（你的 user token）、Gmail IMAP（你的 app password）、GitHub（你的 `gh` 登录）。
-  **唯一的例外是匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据默认上传到
-  **维护者的** Supabase 项目，用于产品改进——不含屏幕内容/消息正文/文件内容/密钥，
-  详见第 10 行与 [`docs/TELEMETRY.md`](TELEMETRY.md)。
+  **去往维护者服务器的例外只有两类**（同一个维护者 Supabase 项目）：
+  ①**匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据默认上传，用于产品
+  改进——不含屏幕内容/消息正文/文件内容/密钥，详见第 10 行与
+  [`docs/TELEMETRY.md`](TELEMETRY.md)；②**建议上报（feedback，仅在你主动点「提建议」
+  发送时）**：你的建议**全文** + 所选卡片的**标题快照**上传给维护者，且**不受**
+  telemetry 开关/首启 consent 限制（发送即同意）——这是内容数据，详见第 16 行。
 - **LLM 通道只有一个**：所有发往 Anthropic 的**内容**都经由 `claude` CLI（headless `claude -p`
   或 `claude --bg`）。唯一绕过 CLI 的直连是 App 的凭证验证 probe（GET
   `api.anthropic.com/v1/models`）——只携带你的 key 验证其有效性，不含任何内容数据。
@@ -47,6 +50,7 @@
 | 13 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **开** | `sources.weekly_digest.enabled: false` |
 | 14 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
 | 15 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |
+| 16 | 建议上报（feedback） | **你点「提建议」发送时** | 维护者的 Supabase（同 telemetry 通道/表；**不受** telemetry 开关限制） | — | 不发送即不触发；fork 设 `telemetry.supabase_url: ""` 硬关 |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -227,6 +231,21 @@
   会话**不带** `--dangerously-skip-permissions`——claude 每次想改文件/跑命令都会先
   征求你同意；但会话中它读到的其他文件与命令输出同样进入 context（= 发往 Anthropic）。
 - **关闭**：不点即不触发；`doctor.ai_fix_enabled: false` 禁用按钮与 CLI（exit 2）。
+
+### 16. 建议上报（feedback）→ 维护者的 Supabase（仅在你主动发送时）
+
+- **触发**：只在你于 App 里点「提建议」（看板 header 或多选操作条）并发送时
+  （CONTRACT §29）。
+- **Payload**：你的建议**全文**（截断 4000 字符）+ 所选卡片在报告时刻的**标题快照**
+  （id / 类型 / 标题 / 状态，卡片标题可能含内部项目名/人名）+ app 版本 + 随机 device
+  uuid。经 telemetry 同一条 anon INSERT 通道写入维护者 Supabase 的 `analytics_events`
+  表（`event="feedback"`，key 只能 INSERT、读不回，`act/lib/feedback.py`）。
+- **与匿名统计（第 10 行）的关键差异**：这是**内容数据**，且**不受**
+  `telemetry.enabled` 开关与首启 consent 门限制——建议上报是显式用户动作，
+  点「发送」本身就是同意（App 的入口文案会明示这一点，请勿包含敏感信息）。
+  本地永久留档 `state/feedback/<uuid>.json`（不删）。
+- **关闭**：不点「提建议」即不触发；fork 用户设 `telemetry.supabase_url: ""` 后
+  无处可发——报告只留本地（`uploaded:false`）。
 
 ## 什么永不离开你的 Mac
 

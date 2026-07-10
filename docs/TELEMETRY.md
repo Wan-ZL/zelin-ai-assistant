@@ -30,6 +30,14 @@ truth，上传只读不改不删。
 **basic 级绝不包含内容数据**：没有 prompt、没有指令摘要、没有消息正文、没有
 文件内容，更没有密钥。
 
+> **同表的例外行：`event="feedback"`（建议上报，CONTRACT §29）**。这不是
+> telemetry 自动上传的事件，而是你在 App 里**点「提建议」主动发送**的用户报告，
+> 复用同一张 `analytics_events` 表落库：其 `props` 含你的建议**全文**与所选卡片的
+> **标题快照**——是内容数据，不在上面 basic 级"只有事件元数据"的承诺范围内
+> （该承诺只覆盖 telemetry 自动上传的事件）。它也**不受** `telemetry.enabled`
+> 开关与首启 consent 门限制（点发送即同意；fork 仍可用 `supabase_url: ""` 硬关）。
+> 详见 [`docs/PRIVACY.md`](PRIVACY.md) 第 16 条。
+
 **历史事件**：`meeting_action_items`（会后清单生成，带 `outcome`）——该功能已在
 v0.14 从产品移除（发射端不复存在），维护者项目中已上传的历史数据仍然存在；
 字段语义同上表，仅作解读旧数据用。

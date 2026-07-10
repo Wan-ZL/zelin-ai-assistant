@@ -352,6 +352,87 @@ def delete(req: Requirement) -> bool:
 # --------------------------------------------------------------------------- #
 _ID_RE = re.compile(r"^R-(\d+)$")
 
+# "Resolved" = the work behind the card already closed (delivered, or merged
+# into a primary — incl. the legacy ``merged_into:<id>`` status). A radar hit
+# that relates to a resolved card must NOT be filed as an isolated new card:
+# it becomes a follow-up with ``improvement_of`` lineage (统一口径, v0.17).
+RESOLVED_STATES = (State.DELIVERED.value, State.MERGED.value)
+
+
+def is_resolved(req: Requirement) -> bool:
+    """Delivered / merged (incl. legacy ``merged_into:<id>``) — work closed."""
+    return req.is_merged or req.status in RESOLVED_STATES
+
+
+def _is_merged_out(req: Requirement) -> bool:
+    """Merged into a primary — either the ``merged`` terminal state (契约 四)
+    or the legacy ``merged_into:<id>`` status."""
+    return req.is_merged or req.status == State.MERGED.value
+
+
+def _canonical_id(rid: str, by_id: dict) -> str:
+    """Follow merge lineage ids to the primary card's id (cycle-safe)."""
+    seen: set = set()
+    while rid and rid not in seen:
+        seen.add(rid)
+        r = by_id.get(rid)
+        if r is None or not _is_merged_out(r):
+            break
+        nxt = r.merged_parent
+        if not nxt:
+            break
+        rid = nxt
+    return rid
+
+
+def canonical(req: Requirement) -> Requirement:
+    """The primary card of ``req``'s merge cluster (``req`` itself when it is
+    not merged, or when the chain dead-ends on a missing id).
+
+    A merged duplicate and its primary are BOTH visible to the triage LLM
+    (registry inventory keeps merged entries so restatements can be related),
+    so two radar hits on the same event may point at different lineage nodes.
+    Canonicalizing before any fold/follow-up keeps the whole cluster on ONE
+    node — otherwise the same event grows parallel follow-ups (R-028/R-029-类
+    near-duplicates all over again).
+    """
+    if not _is_merged_out(req):
+        return req
+    by_id = {r.id: r for r in load_all()}
+    by_id.setdefault(req.id, req)
+    return by_id.get(_canonical_id(req.id, by_id), req)
+
+
+def find_open_follow_up(parent_id: str) -> Optional[Requirement]:
+    """The unresolved follow-up already hanging off ``parent_id``'s merge
+    cluster, if any.
+
+    This IS the cross-pass / cross-source dedup window: as long as one
+    follow-up of a parent is still open (not delivered/merged/rejected/
+    trashed), every later radar hit that relates to the same parent folds
+    into it (note + source) instead of filing a second card. The window
+    closes itself the moment the follow-up resolves — a NEW later mention
+    then legitimately opens a fresh follow-up.
+
+    Matching is merge-cluster-wide on both sides: ``parent_id`` and each
+    follow-up's ``improvement_of`` are canonicalized (merged duplicates hop
+    to their primary), so a follow-up filed against a merged duplicate still
+    dedupes a later hit on the primary (and vice versa).
+    """
+    if not parent_id:
+        return None
+    reqs = load_all()
+    by_id = {r.id: r for r in reqs}
+    target = _canonical_id(parent_id, by_id)
+    for r in reqs:
+        if not r.improvement_of:
+            continue
+        if is_resolved(r) or r.status in (State.REJECTED.value, State.TRASHED.value):
+            continue
+        if _canonical_id(r.improvement_of, by_id) == target:
+            return r
+    return None
+
 
 def next_id() -> str:
     mx = 0
