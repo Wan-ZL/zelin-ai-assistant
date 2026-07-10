@@ -33,6 +33,8 @@ class RadarScrubTestCase(unittest.TestCase):
         config.CONFIG_PATH.write_text(
             "sources:\n"
             '  watch_people: ["boss.man"]\n'
+            "features:\n"
+            "  manager_pack: true\n"  # explicit-enable only (post-2026-07-08)
             "execution:\n"
             f'  default_target_repo: "{self.tmp.name}/workbench"\n'
             "redaction:\n"

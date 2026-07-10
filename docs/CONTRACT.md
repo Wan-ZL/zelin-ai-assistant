@@ -208,6 +208,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **落点守卫**：清单只在 `execution.default_target_repo` 被**显式**配置（config.yaml `execution:` 块或 §15.3 override `default_target_repo`；Python 侧 `Config.default_target_repo_configured`）时写 `<工作台>/meetings/`；未配置时**绝不**创建示例占位路径，改存 **`state/meetings/`**（add-only 目录），并发**一次性**双语通知指向设置页的「任务工作目录」选择器。已发标记 = **`state/meetings_notice.sent`**（内容为首次提示的 UTC 时间戳；存在即不再提示）。bug 时期遗留的占位目录不迁移、不删除，只是不再写入。
 - **通知合并**：单个 radar pass 生成 ≤3 份清单时逐份通知；>3 份（backfill 场景）只发一条汇总（"已生成 N 份会后 action-item 清单 → <目录>"）。清单通知统一延后到 pass 末尾发出。summary 新增 `action_items`（本 pass 写出的清单数，仅日志观测用）。
 - **pass 互斥**：整个 obsidian radar pass（`--once` 与 loop 模式共用 `scan()`）持有 **`state/radar.lock`**（fcntl.flock 非阻塞，随进程退出自动释放）；抢不到锁的 pass 以 no-op 退出（exit 0，summary 带 skipped 行 + `radar_skip(reason=lock_held)` 埋点），由在跑的 pass 覆盖本轮。actd 不调用该 scan（它只接 act.radar_claude_sessions），其余 radar 各有自己的 marker，锁只属于 act/radar.py。
+- **显式启用（行为变更，随 release 记 CHANGELOG）**：manager pack 自此要求 `features.manager_pack` **显式**出现在 config.yaml `features:` 块或 overrides 且为 true（Python 侧 `Config.feature_explicit("manager_pack")`，基于新增的 `Config.features_explicit` 显式集合）。§16 的「缺省 flag 默认 on」全局语义**不变**——只有本功能在调用点收紧：风暴当晚该 pack 在从未配置过 manager 的安装上靠默认值跑了起来。
+- **关键词护栏**：`sources.watch_people` 为空、首项仍为示例占位 `your.manager`（大小写不敏感）、或派生的 first-name token 退化（<3 字符，或属停用词 {your, the, my}）时，本 pass 的 manager pack 直接停用并打一行日志（每进程一次）——**绝不**用退化关键词扫描：占位符派生的 "your" 会把几乎每篇英文笔记都当成 manager 会议记录。
 
 ## 18. 定时任务归一（ingest 切换）
 install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 内脚本，并在链尾追加 `&& python -m act.radar --once`（cron 有 FDA，radar 可读 ~/Documents）。Screenpipe-Export.command 改为调 repo 脚本（主窗口"立即导出"同源）。

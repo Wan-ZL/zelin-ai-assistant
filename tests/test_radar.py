@@ -280,6 +280,8 @@ class ManagerActionItemsOutcomeTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.cfg = config.Config()
         self.cfg.watch_people = ["boss"]
+        # manager_pack is explicit-enable only (post-2026-07-08)
+        self.cfg.features_explicit = {"manager_pack"}
         # explicit workbench -> drafts land in the tmp dir, no fallback notice
         self.cfg.default_target_repo = self.tmp.name + "/workbench"
         self.cfg.default_target_repo_configured = True

@@ -10,7 +10,12 @@ next cron invocation. Pinned here:
   one-time notice pointing at the Settings folder picker;
 - notification coalescing: <=3 drafts per pass notify individually, >3 send
   ONE summary;
-- state/radar.lock: a pass that finds the lock held exits as a clean no-op.
+- state/radar.lock: a pass that finds the lock held exits as a clean no-op;
+- explicit enablement: the pack no longer runs on the §16 default-on
+  fallback — features.manager_pack must be configured (production ran it
+  despite never being set up);
+- keyword guard: placeholder/stopword watch_people ("your.manager" derives
+  the token "your", matching nearly every English note) disables the pack.
 
 All fixtures are synthetic. Runs entirely inside the sandbox
 AIASSISTANT_HOME (tests/__init__.py).
@@ -47,10 +52,13 @@ class MeetingsBase(RadarScanBase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _write_cfg(self, extra: str = ""):
+    def _write_cfg(self, extra: str = "", watch: str = "boss.person",
+                   features: str = "features:\n  manager_pack: true\n"):
+        # manager_pack is explicit-enable only (post-2026-07-08); the base
+        # config turns it on so these tests exercise the pack writer.
         config.CONFIG_PATH.write_text(
             f'sources:\n  obsidian_raw: "{self.raw}"\n'
-            '  watch_people: ["boss.person"]\n' + extra,
+            f'  watch_people: ["{watch}"]\n' + features + extra,
             encoding="utf-8")
 
     @staticmethod
@@ -156,6 +164,76 @@ class CoalescingTestCase(MeetingsBase):
         self.assertEqual(len(drafts), 1)           # ONE summary, not four
         self.assertIn("4", drafts[0][1])
         self.assertIn(str(config.STATE_DIR / "meetings"), drafts[0][1])
+
+
+# --------------------------------------------------------------------------- #
+# explicit enablement — the §16 default-on fallback no longer runs the pack
+# --------------------------------------------------------------------------- #
+class ExplicitEnableTestCase(MeetingsBase):
+    def test_default_on_fallback_no_longer_runs_the_pack(self):
+        self._write_cfg(features="")  # no features block at all
+        self._meeting_notes(1)
+        summary = self._scan()
+        self.assertEqual(summary["action_items"], 0)
+        self.assertEqual(self._drafts(), [])
+        cfg = config.load_config()
+        # §16 global semantics unchanged: an absent flag still reads as on...
+        self.assertTrue(cfg.feature("manager_pack"))
+        # ...but the pack's own gate requires explicit configuration
+        self.assertFalse(cfg.feature_explicit("manager_pack"))
+
+    def test_explicit_true_in_config_yaml_enables(self):
+        self._meeting_notes(1)  # base cfg already sets manager_pack: true
+        self.assertEqual(self._scan()["action_items"], 1)
+
+    def test_explicit_false_stays_off(self):
+        self._write_cfg(features="features:\n  manager_pack: false\n")
+        self._meeting_notes(1)
+        self.assertEqual(self._scan()["action_items"], 0)
+
+    def test_settings_override_counts_as_explicit(self):
+        self._write_cfg(features="")
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"features": {"manager_pack": True}}), encoding="utf-8")
+        self._meeting_notes(1)
+        self.assertEqual(self._scan()["action_items"], 1)
+
+
+# --------------------------------------------------------------------------- #
+# keyword guard — placeholder / stopword watch_people never scans
+# --------------------------------------------------------------------------- #
+class KeywordGuardTestCase(MeetingsBase):
+    # contains "your", "my", and "jo" (in "major") — a degenerate keyword
+    # WOULD match this text if the guard failed
+    TRAP = "your major synthetic review is due, please email my notes"
+
+    def _scan_with(self, watch: str):
+        self._write_cfg(watch=watch)
+        self._note("2026-07-01 all-hands.md", self.TRAP, BASE)
+        return radar.scan(runner=lambda t: "[]", pack_runner=lambda t: PACK_MD)
+
+    def test_placeholder_watch_people_disables_pack(self):
+        self.assertEqual(self._scan_with("your.manager")["action_items"], 0)
+
+    def test_stopword_keyword_disables_pack(self):
+        self.assertEqual(self._scan_with("my.boss")["action_items"], 0)
+
+    def test_short_token_disables_pack(self):
+        self.assertEqual(self._scan_with("jo.smith")["action_items"], 0)
+
+    def test_real_keyword_still_matches(self):
+        self._write_cfg(watch="alice.wong")
+        self._note("2026-07-01 sync.md", "alice asked for a synthetic recap", BASE)
+        summary = radar.scan(runner=lambda t: "[]", pack_runner=lambda t: PACK_MD)
+        self.assertEqual(summary["action_items"], 1)
+
+    def test_manager_keyword_unit(self):
+        cfg = config.Config()
+        for people, expect in (([], ""), (["your.manager"], ""),
+                               (["My.Boss"], ""), (["jo.smith"], ""),
+                               (["alice.wong"], "alice")):
+            cfg.watch_people = people
+            self.assertEqual(radar._manager_keyword(cfg), expect, people)
 
 
 # --------------------------------------------------------------------------- #

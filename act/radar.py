@@ -196,12 +196,43 @@ def _slug(name: str) -> str:
     return s[:40] or "note"
 
 
+# sources.watch_people as shipped in config.example.yaml — first-name token
+# "your" matches essentially every English note (2026-07-08 storm).
+_WATCH_PLACEHOLDER = "your.manager"
+# Degenerate first-name tokens that can never identify a person's mentions.
+_KEYWORD_STOPWORDS = {"your", "the", "my"}
+_keyword_warned: set = set()
+
+
+def _warn_once(msg: str) -> None:
+    """One log line per process (= per --once pass; cron log picks it up)."""
+    if msg not in _keyword_warned:
+        _keyword_warned.add(msg)
+        print(f"radar: {msg}")
+
+
 def _manager_keyword(cfg: config.Config) -> str:
     """Lower-cased first-name token of the first watched person
-    (config ``sources.watch_people``), used to spot manager mentions."""
-    if cfg.watch_people:
-        return str(cfg.watch_people[0]).split(".")[0].strip().lower()
-    return ""
+    (config ``sources.watch_people``), used to spot manager mentions.
+
+    Returns "" — manager pack off for the pass, one log line — when
+    watch_people is unset, still the example placeholder, or the derived
+    token is degenerate (< 3 chars or a stopword): a stopword keyword turns
+    every English note into a "meeting" (2026-07-08 storm).
+    """
+    if not cfg.watch_people:
+        return ""
+    first = str(cfg.watch_people[0]).strip()
+    if first.lower() == _WATCH_PLACEHOLDER:
+        _warn_once("manager pack off: sources.watch_people is still the "
+                   f"example placeholder {first!r} — set your real manager")
+        return ""
+    kw = first.split(".")[0].strip().lower()
+    if len(kw) < 3 or kw in _KEYWORD_STOPWORDS:
+        _warn_once(f"manager pack off: keyword {kw!r} derived from "
+                   "watch_people is too generic to spot manager mentions")
+        return ""
+    return kw
 
 
 def _action_items_prompt(text: str) -> str:
@@ -252,6 +283,12 @@ def manager_action_items(note: Path, text: str,
     Strictly best-effort — returns the written path or None, NEVER raises, so
     it can never block the radar scan.
 
+    BEHAVIOR CHANGE (post-2026-07-08, CONTRACT §17): the pack requires
+    EXPLICIT enablement — ``features.manager_pack`` must be present and true
+    in config.yaml or a Settings override. The §16 default-on fallback ran it
+    on installs that never configured a manager; ``Config.feature()``
+    semantics for every other feature are unchanged.
+
     Every real attempt (past the feature/keyword gates) logs one
     ``meeting_action_items`` event with ``outcome`` ok|fail (+ a ``failure``
     catalog id from act/lib/failures.py when the raw error classifies), so the
@@ -260,7 +297,7 @@ def manager_action_items(note: Path, text: str,
     try:
         if cfg is None:
             cfg = config.load_config()
-        if not cfg.feature("manager_pack"):
+        if not cfg.feature_explicit("manager_pack"):
             return None
         kw = _manager_keyword(cfg)
         if not kw or kw not in (text or "").lower():

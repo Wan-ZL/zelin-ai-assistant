@@ -223,6 +223,10 @@ class Config:
 
     # feature flags (§16) — default all on; see DEFAULT_FEATURES
     features: dict = field(default_factory=lambda: dict(DEFAULT_FEATURES))
+    # names of flags EXPLICITLY set (config.yaml features: block or a Settings
+    # override) — features that must not run on the §16 default-on fallback
+    # (manager_pack, post-2026-07-08) check membership here at their call site.
+    features_explicit: set = field(default_factory=set)
 
     @property
     def target_repo_path(self) -> Path:
@@ -234,6 +238,15 @@ class Config:
             return bool(self.features.get(name, True))
         except AttributeError:
             return True
+
+    def feature_explicit(self, name: str) -> bool:
+        """True only when the flag was EXPLICITLY configured AND is on (§17).
+
+        The §16 default-on fallback is right for features that are safe on an
+        unconfigured install; it is wrong for ones that key off other config
+        (manager_pack ran against the watch_people placeholder, 2026-07-08).
+        """
+        return name in self.features_explicit and self.feature(name)
 
     def requester_display(self) -> str:
         """Best-effort display name for the person whose asks we track."""
@@ -404,6 +417,7 @@ def load_config() -> Config:
     if isinstance(feats, dict):
         for k, v in feats.items():
             cfg.features[str(k)] = bool(v)
+            cfg.features_explicit.add(str(k))
 
     _apply_settings_overrides(cfg)
     # AFTER the overrides merge, so an overridden obsidian_raw re-points the
@@ -518,9 +532,12 @@ def _apply_settings_overrides(cfg: Config) -> None:
             if key == "features" and isinstance(value, dict):
                 for fk, fv in value.items():
                     cfg.features[str(fk)] = bool(fv)
+                    cfg.features_explicit.add(str(fk))
             elif key.startswith("features."):
                 # flat form: {"features.digest": false}
-                cfg.features[key.split(".", 1)[1]] = bool(value)
+                fname = key.split(".", 1)[1]
+                cfg.features[fname] = bool(value)
+                cfg.features_explicit.add(fname)
             elif key == "gmail" and isinstance(value, dict):
                 # nested form mirroring config.yaml sources.gmail
                 if value.get("address") is not None:
