@@ -96,7 +96,7 @@ channel, and sensitive-app capture exclusion).
 
 - **BREAKING**: approving a card no longer auto-creates a private GitHub repo
   for new targets — `execution.create_github_repo` now defaults to `false`;
-  set it to `true` explicitly to restore the new behavior
+  set it to `true` explicitly to restore the old behavior
   ([`f5feeb2`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/f5feeb2))
 - The dashboard's `completed` list is capped at the 50 most recent items
   (counts stay exact); resolving credentials through the legacy
@@ -131,11 +131,11 @@ channel, and sensitive-app capture exclusion).
   instead of a hardcoded location, with a cron-safe fallback
   ([`3afae87`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/3afae87))
 - launchd plists render real paths at install time instead of shipping
-  placehnewers (fresh installs used to silently never start the daemon), and
+  placeholders (fresh installs used to silently never start the daemon), and
   `install.sh` verifies each agent actually spawned
   ([`24aca9d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/24aca9d))
 - Fresh installs actually start: `install.sh` renders the launchd plist
-  placehnewers (python path, repo root, log paths) before loading and verifies
+  placeholders (python path, repo root, log paths) before loading and verifies
   each agent really spawned, instead of copying template plists verbatim and
   failing silently
   ([`24aca9d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/24aca9d))
