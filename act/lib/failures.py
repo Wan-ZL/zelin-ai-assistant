@@ -34,12 +34,22 @@ from typing import Optional
 #   retry             transient — just try the action again
 #   show_engine_log   reveal ~/.screenpipe/engine.log (download progress lives there)
 #   regrant_screen    open System Settings -> Screen Recording (re-grant)
+#   open_deps         jump to the dependencies/diagnostics page (the doctor row
+#                     shows the exact binaries/paths involved)
 # --------------------------------------------------------------------------- #
 FAILURES: dict = {
     "claude_cli_missing": {
         "plain_zh": "claude 命令行没装好——助手无法研究或执行任何卡片",
         "plain_en": "The claude CLI is not installed — the assistant cannot research or execute any card",
         "action_id": "install_claude",
+    },
+    # a SECOND, older claude install shadowing the real one on the daemon's
+    # PATH (2026-07-08: /opt/homebrew/bin/claude 2.1.16 vs ~/.local/bin
+    # 2.1.206) — dispatch dies on "unknown option '--bg'" and retries forever.
+    "claude_cli_outdated": {
+        "plain_zh": "这台机器上有多个 claude 命令，后台服务在用过旧的那个——更新或删掉旧版，再重跑一次安装",
+        "plain_en": "This Mac has more than one claude CLI and the background service is using an outdated copy — update or remove the old one, then re-run the installer",
+        "action_id": "open_deps",
     },
     "claude_auth_failed": {
         "plain_zh": "AI 的 API key 无效或过期——去设置页重新粘贴一个",
@@ -117,6 +127,12 @@ _RULES: list = [
         r"claude.{0,40}(command not found|no such file)|"
         r"(command not found|no such file or directory).{0,20}claude|"
         r"\[Errno 2\].*claude", re.IGNORECASE | re.DOTALL)),
+    # version-mismatch signatures only: the exact flags/subcommands dispatch
+    # relies on (--bg/--name/--resume, `claude agents`) rejected as unknown.
+    # A generic "unknown option" must NOT match — could be the task's own text.
+    ("claude_cli_outdated", re.compile(
+        r"unknown option.{0,10}['\"]?--(bg|name|resume)\b|"
+        r"unknown command.{0,10}['\"]?agents\b", re.IGNORECASE)),
     ("claude_auth_failed", re.compile(
         r"authentication_error|invalid (x-)?api[- _]?key|"
         r"\b401\b|OAuth token has expired|(?<![\w-])unauthorized|"

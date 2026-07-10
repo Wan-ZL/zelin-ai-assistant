@@ -254,7 +254,10 @@ class SkipPermissionsTestCase(unittest.TestCase):
         self.assertNotIn(self.FLAG, executor._bg_base_cmd(cfg))
         argv = self._default_runner_argv(cfg)
         self.assertNotIn(self.FLAG, argv)
-        self.assertEqual(argv[:2], ["claude", "--bg"])
+        # argv[0] is the RESOLVED claude (path or bare fallback), never assumed
+        # to be the literal "claude" (2026-07-08 PATH-shadowing incident)
+        self.assertEqual(Path(argv[0]).name, "claude")
+        self.assertEqual(argv[1], "--bg")
         self.assertIn("--name", argv)
 
     def test_yaml_plumbing_execution_skip_permissions(self):
@@ -266,6 +269,46 @@ class SkipPermissionsTestCase(unittest.TestCase):
             config.CONFIG_PATH.unlink()  # never leak into other sandbox tests
         self.assertFalse(cfg.skip_permissions)
         self.assertNotIn(self.FLAG, executor._bg_base_cmd(cfg))
+
+
+# --------------------------------------------------------------------------- #
+# claude binary resolution — execution.claude_bin pin -> PATH -> ~/.local/bin
+# (2026-07-08: launchd PATH ranked an outdated second install first and every
+# dispatch died on "unknown option '--bg'"; a bare "claude" argv trusts PATH)
+# --------------------------------------------------------------------------- #
+class ClaudeBinResolutionTestCase(unittest.TestCase):
+    def test_pinned_claude_bin_wins(self):
+        cfg = config.Config()
+        cfg.claude_bin = "/opt/pinned/claude"
+        self.assertEqual(executor._bg_base_cmd(cfg)[0], "/opt/pinned/claude")
+
+    def test_pin_expands_tilde(self):
+        cfg = config.Config()
+        cfg.claude_bin = "~/.local/bin/claude"
+        self.assertEqual(executor._bg_base_cmd(cfg)[0],
+                         str(Path.home() / ".local" / "bin" / "claude"))
+
+    def test_default_resolves_via_path(self):
+        cfg = config.Config()
+        with mock.patch("act.lib.config.shutil.which",
+                        return_value="/resolved/claude"):
+            self.assertEqual(executor._bg_base_cmd(cfg)[0], "/resolved/claude")
+
+    def test_missing_from_path_falls_back_to_local_bin(self):
+        cfg = config.Config()
+        with mock.patch("act.lib.config.shutil.which", return_value=None):
+            self.assertEqual(executor._bg_base_cmd(cfg)[0],
+                             str(Path.home() / ".local" / "bin" / "claude"))
+
+    def test_yaml_plumbing_execution_claude_bin(self):
+        config.CONFIG_PATH.write_text(
+            "execution:\n  claude_bin: /opt/pinned/claude\n", encoding="utf-8")
+        try:
+            cfg = config.load_config()
+        finally:
+            config.CONFIG_PATH.unlink()  # never leak into other sandbox tests
+        self.assertEqual(cfg.claude_bin, "/opt/pinned/claude")
+        self.assertEqual(config.resolve_claude_bin(cfg), "/opt/pinned/claude")
 
 
 # --------------------------------------------------------------------------- #

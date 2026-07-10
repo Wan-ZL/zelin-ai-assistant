@@ -33,7 +33,6 @@ import datetime as _dt
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -107,8 +106,9 @@ def _write_marker(data: dict) -> None:
 
 
 def _claude_bin() -> str:
-    # launchd/cron PATH may miss ~/.local/bin (same pitfall as the radar).
-    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+    # launchd/cron PATH may miss ~/.local/bin (same pitfall as the radar) —
+    # unified resolution: execution.claude_bin pin -> PATH -> ~/.local/bin.
+    return config.resolve_claude_bin()
 
 
 # --------------------------------------------------------------------------- #

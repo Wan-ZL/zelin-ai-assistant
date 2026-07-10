@@ -45,9 +45,13 @@
     <dict>
         <key>AIASSISTANT_HOME</key>
         <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
-        <!-- PATH must find: env/python3, claude, homebrew tools, conda -->
+        <!-- PATH must find: env/python3, claude, homebrew tools, conda.
+             .claude-bin is rendered by install.sh to the directory of the
+             claude the LOGIN SHELL resolves and must stay FIRST: a second,
+             outdated claude install earlier on this PATH once broke every
+             dispatch with "unknown option --bg" (2026-07-08 incident). -->
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <key>StandardOutPath</key>

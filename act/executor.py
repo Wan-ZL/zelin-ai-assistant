@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import analytics, config, notify, sanitize
+from act.lib import analytics, config, failures, notify, sanitize
 from act.lib.registry import Requirement, State, load, save
 
 MEMORY_HEAD_LINES = 60
@@ -359,13 +359,23 @@ def session_name(req: Requirement) -> str:
     return f"{req.id} · {title[:48]}" if title else req.id
 
 
+def _claude_bin(cfg: Optional[config.Config] = None) -> str:
+    """Resolved claude CLI for every subprocess site (launch / roster / stop).
+
+    A bare "claude" argv trusts the daemon's PATH — under launchd that once
+    resolved a second, outdated install and every dispatch died on
+    "unknown option '--bg'" (2026-07-08). config.resolve_claude_bin prefers
+    the execution.claude_bin pin, then PATH, then ~/.local/bin/claude."""
+    return config.resolve_claude_bin(cfg)
+
+
 def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
     """Base ``claude --bg`` argv shared by all three launch sites (dispatch /
     resume / rework). ``--dangerously-skip-permissions`` is included only while
     ``execution.skip_permissions`` is on (default; P0-10) — off means the agent
     runs under claude's normal permission model and a blocked agent surfaces as
     needs_input instead of acting unattended."""
-    cmd = ["claude", "--bg"]
+    cmd = [_claude_bin(cfg), "--bg"]
     if cfg is None or getattr(cfg, "skip_permissions", True):
         cmd.append("--dangerously-skip-permissions")
     return cmd
@@ -430,7 +440,7 @@ def _newest_session_for_cwd(cwd: str,
     """
     try:
         proc = subprocess.run(
-            ["claude", "agents", "--json", "--all"],
+            [_claude_bin(), "agents", "--json", "--all"],
             capture_output=True, text=True, timeout=30,
         )
         data = json.loads(proc.stdout) if proc.stdout.strip() else []
@@ -604,7 +614,11 @@ def dispatch(
         analytics.log_event("dispatch_failed", req=req.id, error=err[:120],
                             reason=reason, attempt=attempts + 1)
         if attempts == 0:  # once per failure streak, not on every retry
-            notify.notify(*notify.msg_dispatch_failed(req.title or req.id), req=req.id)
+            # classified reason in the notification body — "任务派发失败" with
+            # zero clue left the 2026-07-08 outdated-claude loop undiagnosed
+            reason = failures.user_message(failures.classify(err))
+            notify.notify(*notify.msg_dispatch_failed(req.title or req.id, reason),
+                          req=req.id)
         raise DispatchError(err[:500])
 
     req.execution = {
@@ -824,7 +838,7 @@ def _agent_info(sid: str) -> dict:
     """{'pid':..., 'cwd':...} for this session from claude agents; {} if unknown."""
     try:
         proc = subprocess.run(
-            ["claude", "agents", "--json", "--all"],
+            [_claude_bin(), "agents", "--json", "--all"],
             capture_output=True, text=True, timeout=30,
         )
         data = json.loads(proc.stdout) if proc.stdout.strip() else []
@@ -859,7 +873,7 @@ def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
     if not (info or {}).get("pid"):
         return False
     short = str(session_id).split("-")[0]
-    subprocess.run(["claude", "stop", short],
+    subprocess.run([_claude_bin(), "stop", short],
                    capture_output=True, text=True, timeout=30)
     time.sleep(2)
     return True

@@ -51,7 +51,7 @@
         <key>AIASSISTANT_HOME</key>
         <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <key>StandardOutPath</key>

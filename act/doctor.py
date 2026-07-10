@@ -31,6 +31,7 @@ import argparse
 import datetime as _dt
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -71,7 +72,8 @@ def _run(cmd: List[str], env: Optional[dict] = None,
     """(exit code, combined stdout+stderr). Never raises: 124 timeout, 127 spawn error."""
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout, env=env)
+                              timeout=timeout, env=env,
+                              stdin=subprocess.DEVNULL)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "timed out after %ss" % timeout
@@ -89,6 +91,30 @@ def _crontab() -> str:
     return out if rc == 0 else ""
 
 
+def _installed_actd_path_env() -> Optional[str]:
+    """The PATH the resident daemon actually runs with — read from the
+    INSTALLED actd plist (~/Library/LaunchAgents), not the repo template:
+    what install.sh rendered is what launchd exports."""
+    plist = Path.home() / "Library" / "LaunchAgents" / (ACTD_LABEL + ".plist")
+    try:
+        text = plist.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"<key>PATH</key>\s*<string>([^<]+)</string>", text)
+    return m.group(1) if m else None
+
+
+def _login_shell_claude() -> Optional[str]:
+    """The claude the USER'S login shell resolves (same probe install.sh uses).
+    None when the shell probe fails or finds nothing."""
+    shell = os.environ.get("SHELL") or "/bin/zsh"
+    rc, out = _run([shell, "-lc", "command -v claude"], timeout=15)
+    if rc != 0 or not out.strip():
+        return None
+    last = out.strip().splitlines()[-1].strip()
+    return last if last.startswith("/") else None
+
+
 @dataclass
 class Probes:
     which: Callable[[str], Optional[str]] = shutil.which
@@ -102,6 +128,9 @@ class Probes:
         default_factory=lambda: Path.home() / ".screenpipe" / "db.sqlite")
     legacy_key_path: Path = field(
         default_factory=lambda: Path("~/.config/anthropic-key.txt").expanduser())
+    # daemon-vs-shell claude comparison (the 2026-07-08 two-installs incident)
+    daemon_path_env: Callable[[], Optional[str]] = _installed_actd_path_env
+    login_shell_claude: Callable[[], Optional[str]] = _login_shell_claude
 
 
 @dataclass
@@ -168,6 +197,66 @@ def _check_claude(probes: Probes):
             "reinstall Claude Code")
     version = out.strip().splitlines()[0][:60] if out.strip() else "unknown version"
     return CheckResult("claude CLI", OK, "%s (%s)" % (path, version))
+
+
+def _version_of(probes: Probes, claude_path: str) -> str:
+    rc, out = probes.run([claude_path, "--version"], timeout=15)
+    return out.strip().splitlines()[0][:60] if rc == 0 and out.strip() else ""
+
+
+def _check_daemon_claude(probes: Probes):
+    """launchd/cron can resolve a DIFFERENT claude than the login shell — a
+    second, outdated install ranked first on the daemon PATH once broke every
+    dispatch with "unknown option '--bg'", retrying forever behind a generic
+    notification (2026-07-08). Compare the binary the installed actd plist's
+    PATH resolves against the login shell's, and probe --bg support."""
+    path_env = probes.daemon_path_env()
+    if not path_env:
+        return CheckResult(
+            "daemon claude", WARN,
+            "actd launchd plist not installed (or carries no PATH) - cannot verify "
+            "which claude the daemon runs",
+            "bash install.sh (renders the agents with your shell's claude dir first on PATH)")
+    daemon_claude = shutil.which("claude", path=path_env)
+    if not daemon_claude:
+        return CheckResult(
+            "daemon claude", FAIL,
+            "no claude anywhere on the daemon PATH - dispatch and radar extraction cannot run",
+            "install Claude Code, then: bash install.sh (re-renders the daemon PATH)",
+        ).with_failure("claude_cli_missing")
+    daemon_ver = _version_of(probes, daemon_claude)
+    shell_claude = probes.login_shell_claude()
+    if (shell_claude and os.path.realpath(shell_claude) != os.path.realpath(daemon_claude)):
+        shell_ver = _version_of(probes, shell_claude)
+        if daemon_ver != shell_ver:
+            return CheckResult(
+                "daemon claude", FAIL,
+                "the daemon runs %s (%s) but your shell runs %s (%s) - two installs; "
+                "background dispatch uses the old one" % (
+                    daemon_claude, daemon_ver or "version unknown",
+                    shell_claude, shell_ver or "version unknown"),
+                "update or remove the outdated copy, then: bash install.sh "
+                "(re-renders the daemon PATH with your shell's claude first)",
+            ).with_failure("claude_cli_outdated")
+    # --bg is what dispatch hangs off. Two-step probe: `--help` (side-effect
+    # free; 2.1.206 lists "--bg, --background") and, ONLY when help lacks it,
+    # a bare `claude --bg` whose error must carry the exact §25 outdated
+    # signature — so a reformatted future help page alone can never false-FAIL.
+    rc, help_out = probes.run([daemon_claude, "--help"], timeout=15)
+    if rc == 0 and help_out.strip() and "--bg" not in help_out:
+        rc2, bg_out = probes.run([daemon_claude, "--bg"], timeout=15)
+        if rc2 != 0 and failures.classify(bg_out) == "claude_cli_outdated":
+            return CheckResult(
+                "daemon claude", FAIL,
+                "%s (%s) does not support --bg - every dispatch fails with "
+                "\"unknown option '--bg'\"" % (daemon_claude, daemon_ver or "version unknown"),
+                "update Claude Code (or remove this outdated copy), then: bash install.sh",
+            ).with_failure("claude_cli_outdated")
+    same = shell_claude and os.path.realpath(shell_claude) == os.path.realpath(daemon_claude)
+    return CheckResult(
+        "daemon claude", OK,
+        "%s (%s)%s" % (daemon_claude, daemon_ver or "version unknown",
+                       " - same as your login shell" if same else ""))
 
 
 def _check_runtime_python(probes: Probes):
@@ -512,6 +601,7 @@ def _check_claude_auth(probes: Probes):
 _CHECKS = [
     _check_home,
     _check_claude,
+    _check_daemon_claude,
     _check_runtime_python,
     _check_config,
     _check_anthropic_key,

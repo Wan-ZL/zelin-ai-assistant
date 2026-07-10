@@ -15,7 +15,6 @@ import argparse
 import fcntl
 import json
 import re
-import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -70,8 +69,9 @@ def _write_marker(ts: float) -> None:
 # --------------------------------------------------------------------------- #
 def _claude_bin() -> str:
     # cron 的 PATH 不含 ~/.local/bin（2026-07-08 事故：每次提取 FileNotFoundError
-    # 被吞成 "claude -p failed"，雷达自 cron 接管起零产出）——绝对路径兜底。
-    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+    # 被吞成 "claude -p failed"，雷达自 cron 接管起零产出）——统一走
+    # config.resolve_claude_bin（execution.claude_bin pin → PATH → ~/.local/bin）。
+    return config.resolve_claude_bin()
 
 
 def _extract_prompt(note_text: str) -> str:

@@ -12,6 +12,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -145,6 +146,10 @@ class DoctorTestCase(unittest.TestCase):
             launchd_labels=LABELS,
             screenpipe_db=db or self.db_file,
             legacy_key_path=legacy or self.missing_legacy,
+            # hermetic: never read the REAL ~/Library/LaunchAgents plist or
+            # probe the real login shell from the sandboxed suite
+            daemon_path_env=lambda: None,
+            login_shell_claude=lambda: None,
         )
 
     def _main(self, probes, argv=None):
@@ -290,6 +295,85 @@ class DoctorTestCase(unittest.TestCase):
             self.make_probes(which_map={"npx": "/fake/npx", "gh": "/fake/gh"}),
             fast=True)
         self.assertEqual(by_name(results, "claude CLI").status, doctor.FAIL)
+
+
+class DaemonClaudeCheckTestCase(unittest.TestCase):
+    """_check_daemon_claude — the 2026-07-08 two-installs incident: launchd's
+    PATH resolved an outdated claude (no --bg) while the login shell used the
+    new one; every dispatch failed with "unknown option '--bg'" forever.
+
+    Real executable shims in tempdirs (echoing different --version / --help)
+    exercise the real resolution path; only the plist/login-shell probes are
+    injected."""
+
+    NEW_HELP = "Usage: claude [options]\n  --bg, --background  background\n"
+    OLD_HELP = "Usage: claude [options]\n  -p, --print  print mode\n"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="daemon-claude-"))
+
+    def _shim(self, sub: str, version: str, help_text: str,
+              bg_supported: bool) -> Path:
+        d = self.tmp / sub
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "claude"
+        bg_case = ("  --bg) echo backgrounded ;;\n" if bg_supported else
+                   "  --bg) echo \"error: unknown option '--bg'\" >&2; exit 1 ;;\n")
+        p.write_text("#!/bin/sh\ncase \"$1\" in\n"
+                     "  --version) echo \"%s\" ;;\n"
+                     "  --help) printf '%%b' \"%s\" ;;\n%s"
+                     "esac\n" % (version, help_text.replace("\n", "\\n"), bg_case),
+                     encoding="utf-8")
+        p.chmod(0o755)
+        return p
+
+    def _probes(self, daemon_dir, shell_claude):
+        return doctor.Probes(
+            daemon_path_env=lambda: str(daemon_dir) if daemon_dir else None,
+            login_shell_claude=lambda: str(shell_claude) if shell_claude else None,
+        )
+
+    def test_version_mismatch_is_fail_with_outdated_classification(self):
+        old = self._shim("old", "2.1.16 (Claude Code)", self.OLD_HELP, False)
+        new = self._shim("new", "2.1.206 (Claude Code)", self.NEW_HELP, True)
+        res = doctor._check_daemon_claude(self._probes(old.parent, new))
+        self.assertEqual(res.status, doctor.FAIL)
+        self.assertEqual(res.failure_id, "claude_cli_outdated")
+        self.assertEqual(res.action_id, "open_deps")
+        self.assertIn("2.1.16", res.detail)
+        self.assertIn("2.1.206", res.detail)
+        self.assertIn("install.sh", res.fix)
+
+    def test_same_binary_everywhere_is_ok(self):
+        new = self._shim("new", "2.1.206 (Claude Code)", self.NEW_HELP, True)
+        res = doctor._check_daemon_claude(self._probes(new.parent, new))
+        self.assertEqual(res.status, doctor.OK)
+        self.assertIn("same as your login shell", res.detail)
+
+    def test_bg_unsupported_fails_even_without_a_shell_comparison(self):
+        old = self._shim("old", "2.1.16 (Claude Code)", self.OLD_HELP, False)
+        res = doctor._check_daemon_claude(self._probes(old.parent, None))
+        self.assertEqual(res.status, doctor.FAIL)
+        self.assertEqual(res.failure_id, "claude_cli_outdated")
+        self.assertIn("--bg", res.detail)
+
+    def test_two_copies_same_version_is_ok(self):
+        a = self._shim("a", "2.1.206 (Claude Code)", self.NEW_HELP, True)
+        b = self._shim("b", "2.1.206 (Claude Code)", self.NEW_HELP, True)
+        res = doctor._check_daemon_claude(self._probes(a.parent, b))
+        self.assertEqual(res.status, doctor.OK)
+
+    def test_missing_plist_is_honest_warn(self):
+        res = doctor._check_daemon_claude(self._probes(None, None))
+        self.assertEqual(res.status, doctor.WARN)
+        self.assertIn("install.sh", res.fix)
+
+    def test_no_claude_on_daemon_path_is_fail(self):
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        res = doctor._check_daemon_claude(self._probes(empty, None))
+        self.assertEqual(res.status, doctor.FAIL)
+        self.assertEqual(res.failure_id, "claude_cli_missing")
 
 
 if __name__ == "__main__":

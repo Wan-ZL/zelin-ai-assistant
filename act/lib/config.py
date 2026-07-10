@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -170,6 +171,11 @@ class Config:
     # claude --bg with --dangerously-skip-permissions (default, unattended);
     # False = claude's normal permission model, blocked agents -> needs_input
     skip_permissions: bool = True
+    # explicit claude CLI pin (execution.claude_bin) — None = resolve via PATH
+    # then ~/.local/bin/claude (see resolve_claude_bin below). The pin is the
+    # runtime escape hatch for machines with multiple claude installs where
+    # the daemon PATH keeps picking the wrong one (2026-07-08 incident).
+    claude_bin: Optional[str] = None
     self_check: bool = True
     fresh_context_review: bool = True
     system_card_per_ckpt: bool = True
@@ -335,6 +341,9 @@ def load_config() -> Config:
     cfg.skip_permissions = bool(
         execution.get("skip_permissions", cfg.skip_permissions)
     )
+    _cb = execution.get("claude_bin")
+    if _cb and str(_cb).strip():
+        cfg.claude_bin = str(_cb).strip()
     qg = execution.get("quality_gate", {}) or {}
     cfg.self_check = bool(qg.get("self_check", cfg.self_check))
     cfg.fresh_context_review = bool(qg.get("fresh_context_review", cfg.fresh_context_review))
@@ -411,6 +420,24 @@ def load_config() -> Config:
     _derive_obsidian_dirs(cfg)
 
     return cfg
+
+
+def resolve_claude_bin(cfg: Optional[Config] = None) -> str:
+    """The claude CLI every subprocess site launches (executor/radar/ask/...).
+
+    Order: execution.claude_bin (explicit pin) -> PATH -> ~/.local/bin/claude.
+    Daemon PATHs are hostile: cron's misses ~/.local/bin entirely (2026-07-08:
+    radar zero output), and a second, OUTDATED claude install ranked first on
+    launchd's PATH once broke every dispatch with "unknown option '--bg'"
+    (2026-07-08). install.sh now renders the login shell's claude dir first
+    into every plist; the pin covers machines where that still picks wrong.
+    """
+    if cfg is None:
+        cfg = load_config()
+    pinned = str(getattr(cfg, "claude_bin", "") or "").strip()
+    if pinned:
+        return str(Path(pinned).expanduser())
+    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
 
 
 # --------------------------------------------------------------------------- #

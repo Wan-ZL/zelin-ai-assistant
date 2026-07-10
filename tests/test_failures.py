@@ -24,6 +24,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,6 +91,21 @@ class ClassifyTestCase(unittest.TestCase):
         for raw in ("zsh:1: command not found: npx",
                     "env: node: No such file or directory"):
             self.assertEqual(failures.classify(raw), "node_missing", raw)
+
+    def test_outdated_cli_signatures(self):
+        # the 2026-07-08 incident text (old claude 2.1.16 behind launchd PATH)
+        for raw in ("error: unknown option '--bg'",
+                    "error: unknown option '--bg'\n(Did you mean --debug?)",
+                    'Error: Unknown option "--name"',
+                    "error: unknown option '--resume'",
+                    "error: unknown command 'agents'"):
+            self.assertEqual(failures.classify(raw), "claude_cli_outdated", raw)
+
+    def test_generic_unknown_option_stays_unclassified(self):
+        # precision contract: only the dispatch-critical flags/subcommands are
+        # version signatures — a task's own "unknown option" must not classify.
+        self.assertIsNone(failures.classify("error: unknown option '--verbose'"))
+        self.assertIsNone(failures.classify("make: unknown command 'agentsmith'"))
 
     def test_network_errors(self):
         for raw in ("curl: (7) Connection refused",
@@ -213,6 +229,15 @@ class DashboardClassificationTestCase(unittest.TestCase):
         })
         dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config())
         self.assertIsNone(dash["running"][0]["dispatch_error_id"])
+
+    def test_queued_item_classifies_outdated_claude(self):
+        req = Requirement.from_dict({
+            "id": "R-902", "title": "t", "status": "approved",
+            "execution": {"last_error": "error: unknown option '--bg'"},
+        })
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config())
+        self.assertEqual(dash["running"][0]["dispatch_error_id"],
+                         "claude_cli_outdated")
 
 
 class DoctorJSONTestCase(unittest.TestCase):
@@ -367,6 +392,16 @@ class NotifyCopyTestCase(unittest.TestCase):
             self.assertIn("——", body,
                           "%s body must carry a next step" % fn.__name__)
 
+    def test_dispatch_failed_body_carries_classified_reason(self):
+        # 2026-07-08: "任务派发失败" with no reason left an outdated claude
+        # retrying for hours — a classified error now rides in the body.
+        from act.lib import notify
+        self._set_lang("zh")
+        reason = failures.user_message("claude_cli_outdated", lang="zh")
+        _, body = notify.msg_dispatch_failed("X", reason)
+        self.assertIn(reason, body)
+        self.assertIn("——", body)  # the catalog sentence carries the next step
+
 
 class CronChainProbeWiringTestCase(unittest.TestCase):
     """install.sh arms the probe; the export script writes it atomically."""
@@ -385,6 +420,62 @@ class CronChainProbeWiringTestCase(unittest.TestCase):
         self.assertIn("cron_probe.json", text)
         # atomic write: tmp file then mv
         self.assertIn("cron_probe.json.tmp", text)
+
+
+class ClaudePathRenderTestCase(unittest.TestCase):
+    """install.sh puts the login shell's claude dir FIRST on every daemon PATH
+    (2026-07-08: an outdated /opt/homebrew/bin/claude shadowing ~/.local/bin
+    in the rendered plists broke every dispatch with "unknown option '--bg'")."""
+
+    PATH_RE = re.compile(r"<key>PATH</key>\s*<string>([^<]+)</string>")
+
+    def test_every_plist_template_leads_with_the_claude_placeholder(self):
+        for plist in sorted((REPO_ROOT / "act" / "launchd").glob("*.plist")):
+            m = self.PATH_RE.search(plist.read_text(encoding="utf-8"))
+            self.assertIsNotNone(m, "%s has no PATH" % plist.name)
+            self.assertTrue(
+                m.group(1).startswith("/Users/YOURUSERNAME/.claude-bin:"),
+                "%s PATH must lead with the .claude-bin placeholder (got %s)"
+                % (plist.name, m.group(1)))
+
+    def test_cron_chain_pins_the_claude_dir_first(self):
+        text = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+        m = re.search(r'INGEST_CHAIN="([^"]+)"', text)
+        self.assertIsNotNone(m)
+        self.assertIn("export PATH=$CRON_CLAUDE_DIR:\\$PATH", m.group(1))
+
+    def _render(self, claude_login_bin):
+        out = Path(tempfile.mkdtemp(prefix="render-")) / "out.plist"
+        # run the REAL render function, extracted verbatim from install.sh
+        script = (
+            'set -eu\n'
+            'cd "$REPO"\n'
+            'eval "$(grep \'^_sed_escape()\' install.sh)"\n'
+            "eval \"$(awk '/^render_launchd_plist\\(\\) \\{/,/^\\}/' install.sh)\"\n"
+            'REPO_ROOT="$REPO"\n'
+            'RUNTIME_PY=/fake/py/bin/python3\n'
+            + ("CLAUDE_LOGIN_BIN=%s\n" % claude_login_bin
+               if claude_login_bin else "")
+            + 'render_launchd_plist act/launchd/com.zelin.aiassistant.actd.plist "$OUT"\n'
+        )
+        proc = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, timeout=30,
+            env={**os.environ, "REPO": str(REPO_ROOT), "OUT": str(out)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        m = self.PATH_RE.search(out.read_text(encoding="utf-8"))
+        self.assertIsNotNone(m)
+        return m.group(1)
+
+    def test_render_puts_the_resolved_claude_dir_first(self):
+        path = self._render("/fake/claude-home/claude")
+        self.assertTrue(path.startswith("/fake/claude-home:"), path)
+        self.assertNotIn(".claude-bin", path)
+        self.assertIn("/opt/homebrew/bin", path)  # the rest of the PATH survives
+
+    def test_render_falls_back_to_local_bin_without_a_resolved_claude(self):
+        path = self._render(None)
+        expected = str(Path.home() / ".local" / "bin")
+        self.assertTrue(path.startswith(expected + ":"), path)
 
 
 if __name__ == "__main__":

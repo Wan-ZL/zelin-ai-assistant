@@ -69,6 +69,9 @@ execution:
   create_github_repo: false            # 默认关（v0.11 起）：批卡不静默在你的 GitHub 建私有 repo、推送源自屏幕/会议/邮件的内容——false = 仅本地 git init + 本地分支交付；设 true 才对 target_kind=new 自动 gh repo create --private 做 remote（draft PR 需要）
   auto_resume: true                    # 执行中任务的后台 agent 死掉（睡眠/断网/崩溃）时自动 claude --resume 拉起，带退避
   # skip_permissions: true             # 后台 agent 带 --dangerously-skip-permissions 无人值守跑（默认）；改 false 走 claude 正常权限模型，被挡住的 agent 会浮到 needs_input 等你确认
+  # claude_bin: ~/.local/bin/claude    # 显式钉死 claude CLI 路径（默认不设：PATH → ~/.local/bin 兜底）。
+  #                                    # 机器上装了多个 claude、后台服务总用错旧版时的运行时逃生口
+  #                                    # （2026-07-08 事故：旧版不认 --bg，派发无限重试）
   quality_gate:
     self_check: true                   # 可运行检查 + 证据
     fresh_context_review: true         # 交付前 fresh-context 审 diff

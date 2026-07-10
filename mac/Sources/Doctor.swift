@@ -74,6 +74,9 @@ enum FailureCatalog {
         case "claude_cli_missing":
             return L("claude 命令行没装好——助手无法研究或执行任何卡片",
                      "The claude CLI is not installed — the assistant cannot research or execute any card")
+        case "claude_cli_outdated":
+            return L("这台机器上有多个 claude 命令，后台服务在用过旧的那个——更新或删掉旧版，再重跑一次安装",
+                     "This Mac has more than one claude CLI and the background service is using an outdated copy — update or remove the old one, then re-run the installer")
         case "claude_auth_failed":
             return L("AI 的 API key 无效或过期——去设置页重新粘贴一个",
                      "The AI API key is invalid or expired — re-paste one in Settings")
@@ -121,6 +124,7 @@ enum FailureCatalog {
     static func actionLabel(_ id: String?) -> String? {
         switch id ?? "" {
         case "claude_cli_missing", "node_missing": return L("安装页", "Install page")
+        case "claude_cli_outdated": return L("去诊断", "Open diagnostics")
         case "claude_auth_failed": return L("去设置", "Open Settings")
         case "engine_dead": return L("去录制页", "Open Recording")
         case "engine_npm_download": return L("看进度", "View progress")
@@ -162,6 +166,11 @@ enum FailureCatalog {
             RecordingController.openScreenRecordingSettings()
         case "agent_unloaded", "dashboard_stale":
             PipelineRepair.shared.restartActd()
+        case "claude_cli_outdated":
+            // the doctor row on the diagnostics page names the two binaries
+            // and the fix — deep-link there (same rationale as cron_missing)
+            MainNav.shared.section = .deps
+            app?.openMainWindow(nil)
         case "cron_missing":
             // the honest fix is install.sh's cron step — the diagnostics page
             // explains it; deep-link there rather than print a terminal command

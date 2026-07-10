@@ -30,6 +30,7 @@ import json
 import subprocess
 import unittest
 import uuid
+from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
@@ -388,7 +389,11 @@ class StopSessionHelperTestCase(unittest.TestCase):
             ok = executor.stop_session(
                 "abc12345-6789-4abc-8def-0123456789ab", info={"pid": 4242})
         self.assertTrue(ok)
-        self.assertEqual(calls, [["claude", "stop", "abc12345"]])
+        # argv[0] is the RESOLVED claude (config.resolve_claude_bin), not the
+        # bare name — the daemon PATH once ranked an outdated copy first.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(Path(calls[0][0]).name, "claude")
+        self.assertEqual(calls[0][1:], ["stop", "abc12345"])
         slept.assert_called_once_with(2)  # rework 原路径的 2s 等待不变
 
     def test_no_live_pid_is_a_noop(self):

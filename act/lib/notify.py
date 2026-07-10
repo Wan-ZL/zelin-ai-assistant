@@ -291,8 +291,15 @@ def msg_review_ready(title: str) -> tuple[str, str]:
                   f"{title} — open the app's Review column to accept or send back"))
 
 
-def msg_dispatch_failed(title: str) -> tuple[str, str]:
-    """dispatch launch failed; actd auto-retries with backoff (P0-6)."""
+def msg_dispatch_failed(title: str, reason: Optional[str] = None) -> tuple[str, str]:
+    """dispatch launch failed; actd auto-retries with backoff (P0-6).
+
+    ``reason`` = the §25 plain-language sentence when the error classified
+    (failures.user_message) — without it the notification said nothing usable
+    (2026-07-08: an outdated claude retried for hours behind「任务派发失败」)."""
+    if reason:
+        return (_pick("任务派发失败（会自动重试）", "Task launch failed (will auto-retry)"),
+                _pick(f"{title}：{reason}", f"{title}: {reason}"))
     return (_pick("任务派发失败（会自动重试）", "Task launch failed (will auto-retry)"),
             _pick(f"{title} —— 一直失败的话，打开 App 排队卡片上的错误提示按对应按钮修",
                   f"{title} — if it keeps failing, open the app: the queued card"

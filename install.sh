@@ -9,7 +9,8 @@
 #   4. build + install the Mac app (mac/build.sh --install)
 #   5. install launchd agents (actd resident + radar periodic): render the
 #      plist templates (replace /Users/YOURUSERNAME placeholders with the real
-#      python/repo/home paths), load them, then verify they actually spawn
+#      python/repo/home paths + the login shell's claude directory, which goes
+#      FIRST on the daemon PATH), load them, then verify they actually spawn
 #   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
 #      the repo's ingest/ scripts + `python -m act.radar --once`, and Monday
 #      09:07 runs `python -m act.digest --now`
@@ -101,14 +102,19 @@ _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
 # Render a launchd plist template into place. The repo plists carry
 # /Users/YOURUSERNAME placeholders (plists don't expand ~) — substitute the
-# detected python interpreter, this repo root and $HOME before installing.
+# detected python interpreter, this repo root, $HOME, and the login shell's
+# claude directory (/Users/YOURUSERNAME/.claude-bin, kept FIRST on PATH —
+# see the CLAUDE_LOGIN_BIN resolution below) before installing.
 # Kept as a function so both the interactive path and --pkg-postinstall (which
 # currently skips launchd) render identically if they ever load agents.
 render_launchd_plist() {
     src="$1"; dest="$2"
     py="${RUNTIME_PY:-$(command -v python3 || echo /usr/bin/python3)}"
     pydir="$(dirname "$py")"
-    sed -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
+    claudedir="$HOME/.local/bin"
+    [ -n "${CLAUDE_LOGIN_BIN:-}" ] && claudedir="$(dirname "$CLAUDE_LOGIN_BIN")"
+    sed -e "s|/Users/YOURUSERNAME/\.claude-bin|$(_sed_escape "$claudedir")|g" \
+        -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
         -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$REPO_ROOT")|g" \
         -e "s|/Users/YOURUSERNAME/miniconda3/bin|$(_sed_escape "$pydir")|g" \
         -e "s|/Users/YOURUSERNAME|$(_sed_escape "$HOME")|g" \
@@ -274,6 +280,34 @@ else
     report_step "runtime_python" "fail" "python3 not found"
 fi
 
+# claude for the DAEMONS (launchd plists + cron chain) — resolve the binary the
+# user's LOGIN SHELL runs, not this script's PATH: the pkg postinstall carries
+# a minimal PATH, and a second, OUTDATED claude install can rank first for
+# launchd while the login shell uses the new one. 2026-07-08 incident:
+# /opt/homebrew/bin/claude 2.1.16 (no --bg) shadowed ~/.local/bin 2.1.206 in
+# the rendered plists — every dispatch died on "unknown option '--bg'" and
+# retried forever. Its directory goes FIRST in every rendered PATH below.
+CLAUDE_LOGIN_BIN=""
+_c="$("${SHELL:-/bin/zsh}" -lc 'command -v claude' 2>/dev/null | tail -n 1 || true)"
+case "$_c" in
+    /*) [ -x "$_c" ] && CLAUDE_LOGIN_BIN="$_c" ;;
+esac
+if [ -z "$CLAUDE_LOGIN_BIN" ]; then
+    CLAUDE_LOGIN_BIN="$(command -v claude 2>/dev/null || true)"
+fi
+if [ -z "$CLAUDE_LOGIN_BIN" ]; then
+    for _c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
+        [ -x "$_c" ] && { CLAUDE_LOGIN_BIN="$_c"; break; }
+    done
+fi
+if [ -n "$CLAUDE_LOGIN_BIN" ]; then
+    ok "daemon claude: $CLAUDE_LOGIN_BIN (login-shell resolution)"
+    report_step "claude_bin" "ok" "$CLAUDE_LOGIN_BIN"
+else
+    warn "claude not resolvable from the login shell — daemon PATH falls back to ~/.local/bin first"
+    report_step "claude_bin" "missing"
+fi
+
 # verify PyYAML against the DAEMON interpreter — RUNTIME_PY is what launchd
 # and cron actually run, and it can differ from the shell python3 checked in
 # step 1 (e.g. $AIASSISTANT_PYTHON override). Without yaml, actd exits on
@@ -399,12 +433,19 @@ chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || t
 CRON_PY="$HOME/miniconda3/bin/python3"
 [ -x "$CRON_PY" ] || CRON_PY="${PY:-python3}"
 
+# cron's PATH is minimal AND user-customizable — pin the login shell's claude
+# dir first so process-screenpipe.sh's `command -v claude` and the radar's
+# shutil.which never land on a second, outdated install (same 2026-07-08
+# incident class the launchd plists guard against above).
+CRON_CLAUDE_DIR="$HOME/.local/bin"
+[ -n "$CLAUDE_LOGIN_BIN" ] && CRON_CLAUDE_DIR="$(dirname "$CLAUDE_LOGIN_BIN")"
+
 # process-screenpipe.sh exits 3 when another run holds the lock — that's a
 # skip, not a failure, so it must not break the chain (radar still runs).
 # AIASSISTANT_CRON=1 arms the FDA probe in screenpipe-export.sh (CONTRACT §25):
 # only real cron runs may write state/cron_probe.json — a manual in-app run
 # has the app's own disk access and would falsify the verdict.
-INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export AIASSISTANT_CRON=1 && ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; } && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.radar --once >> $REPO_ROOT/state/radar.cron.log 2>&1"
+INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; } && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.radar --once >> $REPO_ROOT/state/radar.cron.log 2>&1"
 DIGEST_LINE="7 9 * * 1 cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest --now >> $REPO_ROOT/state/digest.log 2>&1"
 TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.analytics_sync --once >> $REPO_ROOT/state/analytics_sync.log 2>&1"
 

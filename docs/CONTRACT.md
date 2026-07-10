@@ -448,6 +448,26 @@ install_node · restart_engine · reload_agent · repair_cron · grant_cron_fda 
 restart_actd · fix_config · retry`；v0.14 追加 `show_engine_log`（显示
 ~/.screenpipe/engine.log）· `regrant_screen`（打开 系统设置 → 屏幕录制）。
 
+2026-07 追加（add-only）：failure id `claude_cli_outdated`——daemon（launchd/
+cron）解析到**过旧的第二份 claude** 时的分类（2026-07-08 事故：/opt/homebrew/bin
+的 2.1.16 在 launchd PATH 里排在 ~/.local/bin 的 2.1.206 前面，派发全数死在
+`unknown option '--bg'` 并无限重试，通知只说「任务派发失败」）。分类签名
+**刻意收窄**为派发依赖的 flag/子命令被拒（`unknown option
+'--bg'/'--name'/'--resume'`、`unknown command 'agents'`）——泛化的 "unknown
+option" 可能来自任务自身文本，绝不匹配。action_id 词表追加 `open_deps`（打开
+依赖/诊断页——doctor 行点名两个二进制的具体路径与修法）。配套（同为 add-only）：
+- install.sh 以**登录 shell** 解析 claude（`$SHELL -lc 'command -v claude'`，
+  兜底 installer PATH → 常见安装位），其目录渲染进每个 launchd plist PATH 的
+  **最前**（模板占位符 `/Users/YOURUSERNAME/.claude-bin`）与 §18 cron 链头的
+  `export PATH=<dir>:$PATH`；install_report 新 step `claude_bin`。
+- config **execution.claude_bin**（仅 config.yaml 可设，无 override 键）：显式
+  钉死 claude 路径。运行时统一解析 = pin → PATH → `~/.local/bin/claude`
+  （`config.resolve_claude_bin`；executor 全部 launch/roster/stop 调用点、
+  radar/ask/merge_review/weekly_digest 都走它）。
+- doctor 新检查 `daemon claude`：读**已安装** actd plist 的 PATH 解析 claude，
+  与登录 shell 的比对——路径不同且版本不同，或 `--bg` 探测不被支持 → FAIL
+  （failure_id=claude_cli_outdated）；plist 未安装 → WARN（诚实跳过）。
+
 **dashboard.json 新字段**（全部 optional，Swift `decodeIfPresent`；原始错误文本
 字段不变，分类 id 只是伴随）：
 - `running[]` queued 项加 `dispatch_error_id`（str|null）= `failures.classify(dispatch_error)`
