@@ -257,37 +257,25 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
 
 struct PermissionsView: View {
     @ObservedObject var model: PermissionsModel
-    @ObservedObject private var rec = RecordingController.shared
     @ObservedObject private var i18n = LanguageStore.shared
     let firstRun: Bool
     let close: () -> Void
-
-    @State private var consentPending: Bool
-    @State private var telemetryOn: Bool
 
     init(model: PermissionsModel, firstRun: Bool, close: @escaping () -> Void) {
         self.model = model
         self.firstRun = firstRun
         self.close = close
-        _consentPending = State(initialValue: RecordingConsent.needsPrompt)
-        _telemetryOn = State(initialValue: TelemetryConsent.isEnabled())
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
-                if consentPending {
-                    consentBlock
-                } else {
-                    recordingStatusRow
-                }
+                RecordingConsentSection(model: model)
                 Text(L("系统权限", "System permissions"))
                     .font(.system(size: 13, weight: .semibold))
-                screenRow
-                notificationsRow
-                fullDiskRow
-                telemetryBlock
+                CapabilityRowsView(model: model)
+                TelemetryBlockView()
                 footer
             }
             .padding(20)
@@ -308,6 +296,49 @@ struct PermissionsView: View {
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: footer
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            // the permissions window replaces the P1-5 first-launch deps pop —
+            // link to the full dependency checklist instead of stacking windows
+            Button(L("打开依赖检查", "Open dependency check")) {
+                MainNav.shared.section = .deps
+                (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
+            }
+            .controlSize(.small)
+            Spacer()
+            Button(firstRun ? L("完成", "Done") : L("关闭", "Close")) {
+                close()
+            }
+        }
+    }
+}
+
+// MARK: - shared step components (permissions checkup + setup wizard)
+//
+// The three blocks below were extracted verbatim from PermissionsView so the
+// setup wizard (SetupWizard.swift) can embed the SAME consent semantics,
+// capability rows and telemetry checkbox as standalone steps. No behavior
+// change: keys (recordingConsentShown / recordingMode), probes and copy are
+// untouched.
+
+/// Recording consent (one-time question) or the live recording status row.
+struct RecordingConsentSection: View {
+    @ObservedObject var model: PermissionsModel
+    @ObservedObject private var rec = RecordingController.shared
+    @ObservedObject private var i18n = LanguageStore.shared
+
+    @State private var consentPending = RecordingConsent.needsPrompt
+
+    var body: some View {
+        if consentPending {
+            consentBlock
+        } else {
+            recordingStatusRow
         }
     }
 
@@ -415,6 +446,20 @@ struct PermissionsView: View {
         return rec.mode == "screen_audio" ? L("录制中(屏幕+音频)", "Recording (screen + audio)")
                                           : L("录制中(仅屏幕)", "Recording (screen only)")
     }
+}
+
+/// The three capability rows (screen / notifications / full disk), live.
+struct CapabilityRowsView: View {
+    @ObservedObject var model: PermissionsModel
+    @ObservedObject private var i18n = LanguageStore.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            screenRow
+            notificationsRow
+            fullDiskRow
+        }
+    }
 
     // MARK: capability rows
 
@@ -507,6 +552,17 @@ struct PermissionsView: View {
         case .unknown: return Color.secondary.opacity(0.6)
         }
     }
+}
+
+/// Anonymous-usage-stats checkbox (writes the telemetry override, CONTRACT
+/// §15) + the consent-surface marker the Python uploader gates on.
+struct TelemetryBlockView: View {
+    @ObservedObject private var i18n = LanguageStore.shared
+    @State private var telemetryOn = TelemetryConsent.isEnabled()
+
+    var body: some View {
+        telemetryBlock
+    }
 
     // MARK: telemetry consent
 
@@ -534,23 +590,5 @@ struct PermissionsView: View {
         .background(Color.primary.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .onAppear { TelemetryConsent.markSurfaceShown() }
-    }
-
-    // MARK: footer
-
-    private var footer: some View {
-        HStack(spacing: 10) {
-            // the permissions window replaces the P1-5 first-launch deps pop —
-            // link to the full dependency checklist instead of stacking windows
-            Button(L("打开依赖检查", "Open dependency check")) {
-                MainNav.shared.section = .deps
-                (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
-            }
-            .controlSize(.small)
-            Spacer()
-            Button(firstRun ? L("完成", "Done") : L("关闭", "Close")) {
-                close()
-            }
-        }
     }
 }

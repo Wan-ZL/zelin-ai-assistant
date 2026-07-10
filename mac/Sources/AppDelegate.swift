@@ -52,12 +52,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // P0-11: a fresh install must not capture anything before the one-time
         // consent prompt — recording defaults to off, and this autostart only
         // runs once a mode exists (prior consent or pre-existing prefs).
+        //
+        // v0.14: the setup wizard (SetupWizard.swift) replaces the single
+        // first-run permissions page. It opens whenever its completion marker
+        // (UserDefaults "setupWizardCompleted") is missing or corrupt — fresh
+        // installs, upgrades that never saw the wizard, and interrupted runs
+        // alike. Idempotent: every step is prefilled and an answered recording
+        // consent (recordingConsentShown / recordingMode) is never re-asked.
+        let wizardPending = !SetupWizardMarker.completed
         if RecordingConsent.needsPrompt {
-            // v0.13: the first-run permissions & setup window replaces BOTH
-            // the modal consent alert and the P1-5 deps pop (the window links
-            // to the dependency checklist itself) — one surface, not two
-            // stacked windows. Mark first-run consumed so the deps pop can
-            // never additionally fire on a later launch.
+            // fresh install: consent is answered inside the wizard; no engine
+            // autostart before consent (P0-11). Mark first-run consumed so the
+            // P1-5 deps pop can never additionally fire on a later launch.
             UserDefaults.standard.set(true, forKey: "hasCompletedFirstRun")
             // deferred a turn so launch setup finishes before the window shows
             DispatchQueue.main.async {
@@ -68,8 +74,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         } else {
             RecordingController.shared.autostartIfNeeded()
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self.openDepsOnFirstLaunchIfNeeded() }
+            if wizardPending {
+                // upgrade or interrupted wizard: reopen (once — 完成 writes the
+                // marker). Everything is prefilled; nothing is wiped/re-asked.
+                UserDefaults.standard.set(true, forKey: "hasCompletedFirstRun")
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        SetupWizardController.shared.show()
+                    }
+                }
+            } else {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self.openDepsOnFirstLaunchIfNeeded() }
+                }
             }
         }
 
@@ -547,6 +564,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown { popover.performClose(sender) }
         removePopoverClickMonitor()
         MainWindowController.shared.show()
+    }
+
+    // MARK: hello bubble (setup wizard finale — audit 2.5)
+
+    // v0.14: after the wizard's 完成, point at the status item so users of
+    // this menu-bar-only app know where it lives (otherwise "nothing
+    // launched"). Separate NSPopover — the main dashboard popover, its click
+    // monitors and toggle logic stay untouched.
+    private var helloPopover: NSPopover?
+
+    func showHelloBubble() {
+        guard let button = statusItem?.button else { return }  // icon hidden → skip
+        helloPopover?.performClose(nil)
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = NSHostingController(
+            rootView: HelloBubbleView { [weak self] in
+                self?.helloPopover?.performClose(nil)
+            })
+        pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        helloPopover = pop
+        Analytics.log("wizard_hello_bubble")
+        // auto-dismiss so a click-elsewhere user is never stuck with it
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let p = self.helloPopover, p === pop, p.isShown else { return }
+                p.performClose(nil)
+            }
+        }
     }
 
     // T2 (§ v0 contract + task): typed confirmation gate. Returns true only if

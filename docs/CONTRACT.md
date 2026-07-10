@@ -177,6 +177,13 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 
 **v0.13 补充（iPhone 联动 / iMessage 设置区，add-only）**：设置页新增「iPhone 联动（iMessage）」区（`mac/Sources/SettingsIMessage.swift`，改动即时生效、不走表单的保存按钮），写两个 §15.3 overrides 键：`phone_channel`（该区只写 `"imessage"` 或 `"none"`）与 `imessage_self_handle`（str，E.164 手机号或 iCloud 邮箱）——两键自 v0.12 起即在 `act/lib/config.py` `_OVERRIDE_FIELDS` 允许列表内，语义见 §13 通道可插拔。App 侧附带职责（不新增数据契约字段）：①开关 = 按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.imessageradar.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`/`unload`（先写 overrides 再 load，保证 RunAtLoad 首轮就能读到 `phone_channel: imessage`）；②状态行读 `state/radar_health.json` 的 `imessage` 条目（契约 E 同形，radar_imessage 每轮写入）+ `launchctl print gui/<uid>/…`，「立即测试一轮」= `launchctl kickstart`（Full Disk Access 的真值只能来自 launchd 语境下 python 的真实运行结果——TCC 按 responsible process 判权限，app 内直接探测会失真）；③「发送测试消息」经 runtime python（CONTRACT §19 指针）调 `act.radar_imessage` 的同一 osascript 发送路径。
 
+**v0.14 补充（初始设置向导，add-only；不新增 pipeline 契约字段）**：首启界面从单页权限窗升级为多步「初始设置向导」（`mac/Sources/SetupWizard.swift`，步骤：欢迎+语言 → AI 引擎 → 系统权限 → 屏幕记录 consent → 笔记库 → 健康检查）。
+
+- **完成标记** = UserDefaults `setupWizardCompleted`（Bool）：缺失或非 Bool（损坏）→ 下次启动自动重开向导；只有向导结尾的「完成」按钮写 true。设置 → 通用 提供「重新运行初始设置」随时重开。
+- **幂等性**：向导所有步骤预填当前生效值，绝不清除数据、绝不重复导入。录制 consent 的 key 与语义完全不变（`recordingConsentShown` / `recordingMode`，v0.11/v0.13 补充照旧）——已回答过的 consent 在向导里只显示状态行，不再询问；向导中途关窗仍按 暂不 记录（同 v0.13 权限窗行为）。存量安装升级后向导会出现一次（标记缺失），走完即消失。
+- **写入面**：只写既有的 §15.3 overrides 键（`language`、`obsidian_raw`——均在 `_OVERRIDE_FIELDS` 允许列表内，且仅在与当前生效值不同时 diff-write）与 §19 的 `config/secrets/anthropic-api-key.txt`（粘贴 key 经 api.anthropic.com/v1/models 免费探针验证通过后才落盘，0600）。笔记库步骤会在所选根目录下创建 4 个标准管线子目录（与 config.py `_derive_obsidian_dirs` 同名，幂等 mkdir）。
+- **App 侧附带职责（同 v0.13 iMessage 区先例，不新增契约字段）**：健康检查页的「启动后台服务」按钮按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.actd.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`；「立即生成一次」经 runtime python（§19 指针）跑 `python -m act.lib.dashboard` 补种 dashboard.json。
+
 ## 16. Feature flags + 自我进化
 - config `features: {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics, manager_pack}`，默认全 on；各模块入口检查 flag，off 则 no-op。overrides 可改。
 - 周一 digest 末尾加**进化建议**节：基于 analytics（30 天未用的功能→建议关；重复风暴/高拒绝率→建议改），生成 type=self-improvement 的卡片（target_repo=本 repo），批准后照常 claude --bg 实现并以 **draft PR** 交付——app 更新永远走 PR。

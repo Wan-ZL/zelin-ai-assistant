@@ -121,6 +121,25 @@ struct SettingsFormView: View {
                        "See Screen Recording / Notifications / Full Disk Access grants on one page and fix any gap on the spot."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                Divider()
+                // v0.14: reopen the first-run setup wizard anytime — idempotent
+                // (all steps prefilled with current values, never wipes data,
+                // never re-imports, never re-asks an answered consent).
+                HStack {
+                    Text(L("初始设置向导", "Setup wizard"))
+                        .font(.system(size: 12))
+                        .frame(width: 220, alignment: .leading)
+                    Button(L("重新运行初始设置", "Re-run setup")) {
+                        Analytics.log("wizard_rerun_from_settings")
+                        SetupWizardController.shared.show()
+                    }
+                    .controlSize(.small)
+                    Spacer()
+                }
+                Text(L("重跑一遍首次设置（语言 / AI 引擎 / 权限 / 录制 / 笔记库 / 健康检查）：全部预填当前值，不会清除任何数据。",
+                       "Walk through first-run setup again (language / AI engine / permissions / recording / notes / health check): everything prefilled with current values; nothing gets wiped."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
             }
             .toggleStyle(.switch)
             .font(.system(size: 12))

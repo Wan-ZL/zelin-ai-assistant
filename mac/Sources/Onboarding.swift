@@ -27,11 +27,13 @@ enum RecordingConsent {
             && !Prefs.bool("recordingConsentShown", default: false)
     }
 
-    /// Fresh install: open the first-run permissions & setup window. The
-    /// window records the choice via record(granted:); closing it without
-    /// choosing counts as 暂不 (PermissionsWindowController.windowWillClose).
+    /// Fresh install: open the setup wizard (v0.14 — SetupWizard.swift), which
+    /// embeds this consent as its recording step. The step records the choice
+    /// via record(granted:); closing the wizard without choosing counts as
+    /// 暂不 (SetupWizardController.windowWillClose) — same P0-11 guarantee as
+    /// the previous single permissions page.
     static func present() {
-        PermissionsWindowController.shared.show(firstRun: true)
+        SetupWizardController.shared.show()
     }
 
     /// Persist the one-time consent. granted → screen-ONLY recording starts
