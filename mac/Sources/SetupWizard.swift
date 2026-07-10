@@ -967,7 +967,7 @@ struct SetupWizardView: View {
             HStack(spacing: 8) {
                 Button(L("导入 Claude Code 已有工作…", "Import existing Claude Code work…")) {
                     Analytics.log("wizard_import_link")
-                    MainNav.shared.pendingAnchor = "claude-import"
+                    MainNav.shared.pendingAnchor = "claude_import"
                     MainNav.shared.section = .settings
                     (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
                 }
