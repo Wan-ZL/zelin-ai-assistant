@@ -15,6 +15,7 @@ both sides of that handshake:
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 — sets AIASSISTANT_HOME before act imports
 
@@ -73,7 +74,10 @@ class IMessageHealthSkipReasonTest(unittest.TestCase):
 
     def test_enabled_without_handle_records_no_self_handle(self):
         _write_overrides({"phone_channel": "imessage"})
-        self.assertEqual(radar_imessage.scan(), 0)
+        # pin darwin: off-macOS the platform guard outranks the handle check
+        # (see test_imessage_radar's platform_unsupported test)
+        with mock.patch("sys.platform", "darwin"):
+            self.assertEqual(radar_imessage.scan(), 0)
         self.assertEqual(self._health()["skip_reason"], "no_self_handle")
 
     def test_enabled_with_handle_missing_db_records_db_missing(self):
