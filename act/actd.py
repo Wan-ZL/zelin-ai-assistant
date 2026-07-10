@@ -670,7 +670,18 @@ def dispatch_approved(cfg: config.Config) -> int:
                 save(req)
             except Exception:  # noqa: BLE001 - bookkeeping must not block retry
                 pass
-            analytics.log_event("dispatch_failed", req=req.id, error=err[:120])
+            # executor.dispatch already emits dispatch_failed (with reason/attempt)
+            # for DispatchError. Only log unexpected crashes here so analytics
+            # is not double-counted for a single failed launch (issue #12).
+            if executor is not None and isinstance(e, executor.DispatchError):
+                pass
+            else:
+                analytics.log_event(
+                    "dispatch_failed",
+                    req=req.id,
+                    error=err[:120],
+                    reason="dispatch_crashed",
+                )
     return count
 
 

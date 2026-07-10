@@ -326,20 +326,48 @@ class DispatchApprovedClearingTestCase(unittest.TestCase):
         self.assertEqual(ex.get("last_error_at"), "2026-07-08T00:00:00Z")
 
     def test_raising_failure_records_error_and_stays_approved(self):
-        # today's signaling: DispatchError -> the except path re-records the
-        # error and keeps the requirement approved for the next-pass retry
-        self._approved()
+        # DispatchError: actd re-records last_error for the dashboard and keeps
+        # APPROVED for retry, but does NOT emit a second dispatch_failed event
+        # (executor already logged the rich one with reason/attempt).
+        self._approved("R-970")
         boom = mock.Mock(side_effect=executor.DispatchError("Invalid API key"))
         with mock.patch.object(actd.executor, "dispatch", boom):
             n = actd.dispatch_approved(self.cfg)
         self.assertEqual(n, 0)
-        saved = registry.load("R-960")
+        saved = registry.load("R-970")
         self.assertEqual(saved.status, State.APPROVED.value)
         ex = saved.execution or {}
         self.assertIn("Invalid API key", ex.get("last_error", ""))
         self.assertTrue(ex.get("last_error_at"))
-        self.assertTrue(any(e.get("event") == "dispatch_failed"
-                            for e in _events("R-960")))
+        self.assertFalse(any(e.get("event") == "dispatch_failed"
+                             for e in _events("R-970")))
+
+    def test_unexpected_dispatch_exception_logs_once(self):
+        # Non-DispatchError crashes still get a single analytics event.
+        self._approved("R-971")
+        boom = mock.Mock(side_effect=RuntimeError("boom outside dispatch"))
+        with mock.patch.object(actd.executor, "dispatch", boom):
+            n = actd.dispatch_approved(self.cfg)
+        self.assertEqual(n, 0)
+        events = [e for e in _events("R-971") if e.get("event") == "dispatch_failed"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].get("reason"), "dispatch_crashed")
+
+    def test_executor_failure_through_actd_logs_exactly_once(self):
+        # End-to-end: real executor.dispatch failure emits one event; actd does not double-log.
+        self._approved("R-972")
+        runner = mock.Mock(return_value=_proc(1, stderr="Invalid API key"))
+        real_dispatch = executor.dispatch
+
+        def wrap(req, cfg):
+            return real_dispatch(req, cfg, runner=runner)
+
+        with mock.patch.object(actd.executor, "dispatch", wrap):
+            n = actd.dispatch_approved(self.cfg)
+        self.assertEqual(n, 0)
+        events = [e for e in _events("R-972") if e.get("event") == "dispatch_failed"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].get("reason"), "launch_failed")
 
 
 if __name__ == "__main__":
