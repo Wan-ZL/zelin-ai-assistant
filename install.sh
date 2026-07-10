@@ -384,7 +384,7 @@ fi
 if [ "$LAUNCHD_FAILED" -gt 0 ]; then
     report_step "launchd" "fail" "$LAUNCHD_FAILED agent(s) failed to load"
 elif [ -n "$LOADED_LABELS" ]; then
-    report_step "launchd" "ok" "$(echo $LOADED_LABELS | wc -w | tr -d ' ') agents loaded"
+    report_step "launchd" "ok" "$(echo "$LOADED_LABELS" | wc -w | tr -d ' ') agents loaded"
 else
     report_step "launchd" "skipped" "no agents to load"
 fi

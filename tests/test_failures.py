@@ -28,7 +28,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests import TMP_HOME
+from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
 from act import ai_fix, doctor
 from act.lib import config, dashboard, failures

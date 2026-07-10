@@ -113,26 +113,29 @@ fi
 
 # --------------------------------------------------------------------------
 echo "==> 1. launchd agents"
-if command -v launchctl >/dev/null 2>&1; then
-    UID_NUM="$(id -u)"
-    found_any=0
-    for plist in "$LA_DIR"/com.zelin.aiassistant.*.plist; do
-        [ -e "$plist" ] || continue
-        found_any=1
-        label="$(basename "$plist" .plist)"
-        if [ "$DRY" -eq 1 ]; then
-            plan "unload + delete agent: $label"
-            continue
-        fi
+# Enumerating the plists (and the dry-run plan) must not depend on launchctl
+# being present — leftover plists on a non-mac box still get listed/removed.
+HAVE_LAUNCHCTL=0
+command -v launchctl >/dev/null 2>&1 && HAVE_LAUNCHCTL=1
+[ "$HAVE_LAUNCHCTL" -eq 0 ] && info "launchctl not available (not macOS?) — deleting plist files only"
+UID_NUM="$(id -u)"
+found_any=0
+for plist in "$LA_DIR"/com.zelin.aiassistant.*.plist; do
+    [ -e "$plist" ] || continue
+    found_any=1
+    label="$(basename "$plist" .plist)"
+    if [ "$DRY" -eq 1 ]; then
+        plan "unload + delete agent: $label"
+        continue
+    fi
+    if [ "$HAVE_LAUNCHCTL" -eq 1 ]; then
         launchctl bootout "gui/$UID_NUM/$label" >/dev/null 2>&1 \
             || launchctl unload "$plist" >/dev/null 2>&1 || true
-        rm -f "$plist"
-        ok "unloaded + deleted agent: $label"
-    done
-    [ "$found_any" -eq 0 ] && info "no com.zelin.aiassistant.* agents installed"
-else
-    info "launchctl not available — skipped (not macOS?)"
-fi
+    fi
+    rm -f "$plist"
+    ok "unloaded + deleted agent: $label"
+done
+[ "$found_any" -eq 0 ] && info "no com.zelin.aiassistant.* agents installed"
 
 # --------------------------------------------------------------------------
 echo ""

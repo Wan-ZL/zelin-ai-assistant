@@ -567,29 +567,10 @@ struct DepsView: View {
                 }
                 // §25 classified findings — plain sentence + one right button;
                 // the raw probe text drops to the tooltip / full report.
+                // (Row body lives in doctorFindingRow — inlining it here made
+                // the CI swiftc time out type-checking this VStack.)
                 ForEach(model.doctorRows.filter { $0.status != "ok" }) { row in
-                    HStack(alignment: .center, spacing: 8) {
-                        Text(row.status == "fail" ? "❌" : "⚠️")
-                            .font(.system(size: 12))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(FailureCatalog.message(row.failureID) ?? row.detail)
-                                .font(.system(size: 11))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(row.name)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if let label = FailureCatalog.actionLabel(row.failureID) {
-                            Button(label) { FailureCatalog.perform(row.failureID) }
-                                .controlSize(.small)
-                        }
-                    }
-                    .help(row.detail + (row.fix.isEmpty ? "" : "\nfix: " + row.fix))
-                    .padding(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background((row.status == "fail" ? Color.red : Color.orange).opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    doctorFindingRow(row)
                 }
                 if !model.doctorOutput.isEmpty {
                     DisclosureGroup(L("完整报告", "Full report")) {
@@ -617,6 +598,35 @@ struct DepsView: View {
         // item 7: model-produced strings (detail suffixes) are baked at check
         // time — re-run on language switch so rows don't linger in the old one.
         .onChange(of: i18n.lang) { _, _ in model.check() }
+    }
+
+    // One §25 finding row. Kept as its own function so swiftc type-checks it
+    // separately — inlined in the ForEach it blew the CI compiler's budget
+    // ("unable to type-check this expression in reasonable time").
+    private func doctorFindingRow(_ row: DoctorRow) -> some View {
+        let tint: Color = row.status == "fail" ? .red : .orange
+        return HStack(alignment: .center, spacing: 8) {
+            Text(row.status == "fail" ? "❌" : "⚠️")
+                .font(.system(size: 12))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(FailureCatalog.message(row.failureID) ?? row.detail)
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(row.name)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            if let label = FailureCatalog.actionLabel(row.failureID) {
+                Button(label) { FailureCatalog.perform(row.failureID) }
+                    .controlSize(.small)
+            }
+        }
+        .help(row.detail + (row.fix.isEmpty ? "" : "\nfix: " + row.fix))
+        .padding(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     // green = has succeeded; orange = never, with a known reason; red = never,
