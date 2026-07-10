@@ -107,6 +107,16 @@ On first launch the app opens a bilingual **permissions & setup page**: one scre
 | Obsidian *(optional)* | — | radar scan source and wiki destination |
 | `gh` CLI *(optional)* | — | draft-PR delivery |
 
+### Platform support
+
+| OS | Status |
+|---|---|
+| macOS 14+ | **Full product** — menu-bar app, launchd/cron scheduling, screen-capture ingest, iMessage channel |
+| Linux | **Core is portable, port wanted** — the headless pipeline (radars, `actd`, executor) is pure Python and its full test suite runs green on ubuntu CI; service wiring (systemd units), an ingest chain, and a UI are unbuilt. Map + first milestone: [docs/PORTING.md](docs/PORTING.md) |
+| Windows | **Core is portable, port wanted** — same story as Linux (minus CI coverage so far); Task Scheduler equivalents in [docs/PORTING.md](docs/PORTING.md) |
+
+The iMessage channel is macOS-only by nature (Messages.app + chat.db); the Slack channel is the cross-platform command surface.
+
 ## Features
 
 - **Requirement radars with dedup** — restatements merge into the existing card instead of spamming you; genuine increments become linked "improvement" cards; low-confidence items park in a debt lane until raised.
@@ -163,6 +173,7 @@ More questions — use at work, forks, what counts as competing use, per-release
 | [docs/DEMO.md](docs/DEMO.md) | demo mode (fictional data, no keys needed) and recording guide |
 | [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | data egress inventory / vulnerability reporting |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what's in progress, next, and later |
+| [docs/PORTING.md](docs/PORTING.md) | Windows/Linux porting map: what's portable today, the OS seam, service-manager equivalents, first milestone |
 | [CHANGELOG.md](CHANGELOG.md) | human-readable release history |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | how to contribute / community standards |
 | [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT in practice: company use, competing use, the 2-year MIT conversion |

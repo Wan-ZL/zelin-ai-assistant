@@ -107,6 +107,16 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 | Obsidian(可选) | — | 雷达扫描源 + wiki 落点 |
 | `gh` CLI(可选) | — | draft-PR 交付 |
 
+### 平台支持
+
+| 操作系统 | 状态 |
+|---|---|
+| macOS 14+ | **完整产品**——菜单栏 app、launchd/cron 定时、屏幕录制 ingest、iMessage 通道 |
+| Linux | **核心已可移植,欢迎认领移植**——headless 流水线(雷达、`actd`、执行器)是纯 Python,完整测试套件在 ubuntu CI 上全绿;还缺 systemd 服务接线、ingest 链和 UI。移植地图与第一个里程碑:[docs/PORTING.md](docs/PORTING.md) |
+| Windows | **核心已可移植,欢迎认领移植**——与 Linux 相同(暂无 CI 覆盖);Task Scheduler 对照表见 [docs/PORTING.md](docs/PORTING.md) |
+
+iMessage 通道天然只属于 macOS(Messages.app + chat.db);跨平台的手机指挥通道用 Slack。
+
 ## 功能特性
 
 - **带去重的需求雷达**——纯重述合并进已有卡片不刷屏;含增量出"改进卡"链接父条目;低置信度进欠账停车场,可 raise 升级。
@@ -163,6 +173,7 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 | [docs/DEMO.md](docs/DEMO.md) | demo 模式(虚构数据、零 key)与录屏指南 |
 | [docs/PRIVACY.md](docs/PRIVACY.md) / [SECURITY.md](SECURITY.md) | 数据出境清单 / 漏洞上报 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 路线图:进行中 / 下一步 / 以后 |
+| [docs/PORTING.md](docs/PORTING.md) | Windows/Linux 移植地图:今天哪些已可移植、OS seam、服务管理器对照表、第一个里程碑 |
 | [CHANGELOG.md](CHANGELOG.md) | 人类可读的版本历史 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 贡献指南 / 社区行为准则 |
 | [docs/LICENSE-FAQ.md](docs/LICENSE-FAQ.md) | FSL-1.1-MIT 实务问答:公司内能不能用、什么算竞争用途、满 2 年转 MIT |
