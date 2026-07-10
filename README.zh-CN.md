@@ -90,7 +90,7 @@ cp config.example.yaml config.yaml   # 编辑:Obsidian vault 路径、watch_peop
 bash install.sh                      # 依赖检查 → 构建装 app → launchd agents + crontab
 ```
 
-然后打开菜单栏 app 的设置窗口,粘贴 Anthropic API key(cron/launchd 下的 headless `claude` 读不了 Keychain OAuth,所以 key 以 `0600` 文件存在 `config/secrets/` 下)。
+首次启动 app 会弹出双语**权限体检页**:唯一的屏幕记录 consent(默认**仅屏幕**,音频需在「设置 → 录制」单独打开)、屏幕录制/通知/完全磁盘访问 的实时授权清单,以及匿名使用统计复选框;之后随时可从 菜单 → 权限体检 重开。然后打开菜单栏 app 的设置窗口,粘贴 Anthropic API key(cron/launchd 下的 headless `claude` 读不了 Keychain OAuth,所以 key 以 `0600` 文件存在 `config/secrets/` 下)。
 
 - 完整安装教程(逐步 checkpoint、TCC 授权准确路径、"第一张卡 5 分钟"练习):**[docs/INSTALL.md](docs/INSTALL.md)**(也覆盖 `.pkg` 安装包路线)。
 - 还没有 API key?用完全虚构的数据预览整套 UI:`python3 scripts/demo_seed.py /tmp/assistant-demo`,见 [docs/DEMO.md](docs/DEMO.md)。

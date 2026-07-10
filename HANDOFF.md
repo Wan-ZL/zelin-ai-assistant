@@ -102,7 +102,9 @@
     双语 consent alert（采集什么/去哪里/保留多久，链 PRIVACY.md）后才可能开录；任一选择持久化
     （UserDefaults `recordingConsentShown`），已有 `recordingMode` 值的存量安装永不询问。
     理由：trust-critical 产品不能在用户读到任何说明之前就开始录屏。细节见 CONTRACT §15 的
-    v0.11 补充。
+    v0.11 补充。v0.13 起呈现形式升级为首启**权限体检窗口**（Permissions.swift）：单选
+    「开启屏幕记录？」→ 仅屏幕（音频改为设置里显式 opt-in），同页给出 屏幕录制/通知/完全磁盘访问
+    实时授权状态与匿名统计复选框——key 与语义不变，见 CONTRACT §15 v0.13 补充。
 
 ## 3. 血泪坑清单（每条都付过学费，别再交一遍）
 

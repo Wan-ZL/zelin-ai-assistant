@@ -100,6 +100,22 @@ struct SettingsFormView: View {
                        "UI-only preference (stored locally); applies to the popover and the board alike — processing placeholders stay pinned atop the approval column."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                Divider()
+                // v0.13: reopen the first-run permissions page anytime.
+                HStack {
+                    Text(L("权限体检", "Permissions checkup"))
+                        .font(.system(size: 12))
+                        .frame(width: 220, alignment: .leading)
+                    Button(L("打开", "Open")) {
+                        PermissionsWindowController.shared.show(firstRun: false)
+                    }
+                    .controlSize(.small)
+                    Spacer()
+                }
+                Text(L("屏幕录制 / 通知 / 完全磁盘访问的授权状态一页看全，缺哪个当场补。",
+                       "See Screen Recording / Notifications / Full Disk Access grants on one page and fix any gap on the spot."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
             }
             .toggleStyle(.switch)
             .font(.system(size: 12))

@@ -160,11 +160,13 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 1) **依赖检查**：逐行 Node/npx 与录制引擎存活（引擎经 `npx screenpipe@<pin>` 运行，v0.11 起不再检查 /Applications/Screenpipe.app）、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。
 2) **录制与 ingest**：启动/退出 Screenpipe（open -a / osascript quit）、"立即导出"（跑 ingest/screenpipe-export.sh）、"立即 ingest"（跑 process 脚本）、显示最近一次导出/ingest 时间（读 log mtime）。
 3) **设置**：写 `state/settings_overrides.json`（app 只写这个文件；config.load_config() 最后合并 overrides，优先级最高）。字段：obsidian_raw、slack_token_path、gmail address/密码路径、成本双阈值、trash 保留天数、界面语言(zh/en，先存值)、feature flags 开关。
+   - **v0.13 追加（add-only）**：`telemetry.enabled`（bool）——首启权限页「匿名使用统计」复选框取消勾选时写嵌套形式 `{"telemetry": {"enabled": false}}`；重新勾选**删除**该 override 键（回落产品默认）。Python 侧 `_apply_settings_overrides` 同时接受嵌套与扁平 `"telemetry.enabled"` 两种形式，且**只认 enabled 子键**——`telemetry.supabase_url` / `telemetry.key_path` 仅 config.yaml 可设，overrides 里出现一律忽略。
 4) **关于**：版本、repo 路径、`python -m act.report` 提示。
 
 **菜单栏 / popover 补充（v0 bootstrap）**：
 - **录制三态**：菜单栏控制 Screenpipe 录制，三态 关 / 仅屏幕 / 屏幕+音频。存 UserDefaults `recordingMode` ∈ `"off"|"screen"|"screen_audio"`，默认 `"screen"`；开 app 时按当前模式**自动启动**录制引擎（引擎运行判定 = `pgrep -f "screenpipe.*record"` 有结果）。引擎启动参数含 sensitive-app 排除（每个 config `recording.ignored_apps` 词条一个 `--ignored-windows`，默认密码管理器 + 无痕窗口标题；`ingest/screenpipe-export.sh` 导出时用同一清单二次过滤——见 docs/PRIVACY.md「你有哪些控制」）。
   - **v0.11 补充（P0-11，覆盖上行 default，字段语义与取值不变）**：fresh install（UserDefaults 无 `recordingMode` key）默认视为 `"off"`，首启弹**一次性**双语 consent alert（`RecordingConsent`，Onboarding.swift）：说明采集什么、去哪里、保留多久，链 docs/PRIVACY.md，按钮 仅屏幕 / 屏幕+音频 / 暂不开启。任一选择均持久化 `recordingMode` + UserDefaults `recordingConsentShown`（Bool），两个 key 任一存在即不再弹；自动启动仅在已存在模式值时进行。已有 `recordingMode` 值的存量安装不受影响、永不询问。
+  - **v0.13 补充（覆盖上行 consent 的呈现形式，key 语义与取值不变）**：consent 改为**首启「权限体检」窗口**（`PermissionsWindowController`，Permissions.swift），单一问题「现在开启屏幕记录吗？」——开启 → `recordingMode="screen"`（**仅屏幕**；onboarding 不再提供 屏幕+音频 选项，音频只能事后在 设置/录制菜单 里显式打开），暂不 / 直接关窗 → `"off"`。任一路径都照旧持久化 `recordingConsentShown` + `recordingMode`。窗口同时列出 屏幕录制 / 通知 / 完全磁盘访问（标注「仅 iPhone 联动需要」）三行实时授权状态（2s 轮询 + 窗口重获焦点刷新，探测分别为 CGPreflightScreenCaptureAccess / UNUserNotificationCenter / 试读 `~/Library/Messages/chat.db`）与「匿名使用统计」复选框（见 3) 的 telemetry.enabled），并取代 P1-5 的首启依赖页弹窗（窗口内含「打开依赖检查」入口）。可随时从 App 菜单 / 状态栏右键菜单 /「设置 → 通用 → 权限体检」重开。
 - **popover 快速捕获输入框**：一句话回车 → 写 `state/inbox/capture-<uuid>.json`（§10 capture 动作），app 不直接碰注册表。
 - **菜单栏图标显示开关**：UserDefaults `showMenuBarIcon`（Bool，默认 true）；录制状态图标开关 `showRecordingIcon`（Bool，默认 true）。
 - **语言即时切换**：界面语言存 `settings_overrides.json` 的 `"language"`（`"zh"|"en"`），切换即时生效（app 与 Python 侧共用该值）。

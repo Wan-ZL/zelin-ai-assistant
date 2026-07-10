@@ -423,6 +423,16 @@ def _apply_settings_overrides(cfg: Config) -> None:
                     cfg.require_text_confirm_above_usd = float(
                         value["require_text_confirm_above_usd"]
                     )
+            elif key == "telemetry" and isinstance(value, dict):
+                # v0.13 (§15 note): the app's first-run page opts OUT of
+                # anonymous usage stats by writing {"telemetry": {"enabled":
+                # false}}. Only the enabled flag is app-overridable —
+                # supabase_url / key_path stay config.yaml-only.
+                if value.get("enabled") is not None:
+                    cfg.telemetry_enabled = bool(value["enabled"])
+            elif key == "telemetry.enabled" and value is not None:
+                # flat form, same single-flag allowlist
+                cfg.telemetry_enabled = bool(value)
             elif key.startswith("sources."):
                 # dotted form mirroring config.yaml, e.g.
                 # {"sources.obsidian_wiki": "/path/to/4 - wiki"}

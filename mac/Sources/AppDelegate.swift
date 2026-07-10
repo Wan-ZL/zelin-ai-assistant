@@ -53,13 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // consent prompt — recording defaults to off, and this autostart only
         // runs once a mode exists (prior consent or pre-existing prefs).
         if RecordingConsent.needsPrompt {
-            // deferred a turn so launch setup finishes before the modal alert;
-            // present() runs a modal loop, so the P1-5 first-launch check below
-            // only fires after the consent choice is made.
+            // v0.13: the first-run permissions & setup window replaces BOTH
+            // the modal consent alert and the P1-5 deps pop (the window links
+            // to the dependency checklist itself) — one surface, not two
+            // stacked windows. Mark first-run consumed so the deps pop can
+            // never additionally fire on a later launch.
+            UserDefaults.standard.set(true, forKey: "hasCompletedFirstRun")
+            // deferred a turn so launch setup finishes before the window shows
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    Analytics.log("first_launch_permissions")
                     RecordingConsent.present()
-                    self.openDepsOnFirstLaunchIfNeeded()
                 }
             }
         } else {
@@ -330,6 +334,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         openMainWindow(sender)
     }
 
+    // App menu / status menu / 设置 → 通用: reopen the first-run permissions
+    // page anytime (权限体检 — Screen Recording / Notifications / Full Disk
+    // Access, live statuses).
+    @objc func openPermissionsWindow(_ sender: Any?) {
+        if popover.isShown { popover.performClose(sender) }
+        PermissionsWindowController.shared.show(firstRun: false)
+    }
+
     @objc func openAboutPage(_ sender: Any?) {
         MainNav.shared.section = .about
         openMainWindow(sender)
@@ -397,6 +409,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
+        let permsItem = NSMenuItem(title: L("权限体检…", "Permissions Checkup…"),
+                                   action: #selector(openPermissionsWindow(_:)),
+                                   keyEquivalent: "")
+        permsItem.target = self
+        appMenu.addItem(permsItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: L("隐藏 Zelin's AI Assistant", "Hide Zelin's AI Assistant"),
                         action: #selector(NSApplication.hide(_:)),
@@ -507,6 +524,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   keyEquivalent: "")
         settings.target = self
         menu.addItem(settings)
+        let perms = NSMenuItem(title: L("权限体检…", "Permissions Checkup…"),
+                               action: #selector(openPermissionsWindow(_:)),
+                               keyEquivalent: "")
+        perms.target = self
+        menu.addItem(perms)
         let about = NSMenuItem(title: L("关于", "About"),
                                action: #selector(openAboutPage(_:)),
                                keyEquivalent: "")

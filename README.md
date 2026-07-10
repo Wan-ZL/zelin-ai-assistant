@@ -90,7 +90,7 @@ cp config.example.yaml config.yaml   # edit: Obsidian vault path, watched people
 bash install.sh                      # dependency checks → builds the app → launchd agents + cron chain
 ```
 
-Then open the menu-bar app's Settings and paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in a `0600` file under `config/secrets/`).
+On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and an anonymous-usage-stats checkbox. Reopen it anytime via the app menu → Permissions Checkup. Then open the menu-bar app's Settings and paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in a `0600` file under `config/secrets/`).
 
 - Full walkthrough with per-step checkpoints, exact TCC permission paths, and a "first card in 5 minutes" exercise: **[docs/INSTALL.md](docs/INSTALL.md)** (also covers the `.pkg` installer route).
 - No API key yet? Preview the full UI with fictional data: `python3 scripts/demo_seed.py /tmp/assistant-demo` — see [docs/DEMO.md](docs/DEMO.md).
