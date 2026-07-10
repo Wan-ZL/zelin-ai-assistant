@@ -106,6 +106,8 @@ device id 或任何 detailed 级摘要文本。事件总量没有变化的日子
 （CONTRACT §26，`act/lib/update_check.py`）。actd 至多**每 24h 一次** GET
 `https://api.github.com/repos/Wan-ZL/zelin-ai-assistant/releases/latest`
 （无鉴权，带 ETag 缓存——版本没变时 GitHub 返回 304，几乎零流量）。
+「关于」页的「立即检查」按钮手动触发**同一条请求**（跳过 24h 间隔，但请求
+内容与对端完全相同，且开关关闭时按钮同样不发任何请求）。
 
 **这次请求暴露什么**：你的 **IP 地址**（任何 HTTP 请求都会）+ User-Agent 里的
 **当前版本号**（`zelin-ai-assistant/<version> (update-check)`）。仅此而已——

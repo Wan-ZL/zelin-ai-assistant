@@ -6,7 +6,10 @@ with an injected fetch stub — first run fetches, a fresh cache never fetches,
 an expired cache revalidates with If-None-Match, 304 keeps the cached answer,
 transport failure silently keeps the cache AND consumes the 24h budget,
 (c) the dashboard projection: ``update_available`` present ONLY when a
-strictly newer version is known and the check is enabled.
+strictly newer version is known and the check is enabled, (d) the manual
+「立即检查」path: ``force=True`` / ``cli_status`` bypasses the 24h budget but
+never the enabled switch, keeps ETag/304 semantics, and reports transport
+failure honestly while preserving the cache.
 
 No network ever: fetch is injected everywhere. Everything lives under the
 sandbox AIASSISTANT_HOME (tests/__init__.py).
@@ -191,6 +194,94 @@ class CacheTestCase(unittest.TestCase):
         fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))
         info = uc.check(_cfg(), fetch=fetch, now=self.t0)
         self.assertEqual(info["latest"], "9.9.9")
+
+
+class ForceCheckTestCase(unittest.TestCase):
+    """§26 manual「立即检查」— force + the cli_status one-line JSON."""
+
+    def setUp(self):
+        if uc.STATE_PATH.exists():
+            uc.STATE_PATH.unlink()
+        self.t0 = dt.datetime(2026, 7, 9, 12, 0, tzinfo=dt.timezone.utc)
+
+    def test_force_bypasses_fresh_budget(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")),
+                          (200, 'W/"e2"', _release("v9.10.0")))
+        uc.check(_cfg(), fetch=fetch, now=self.t0)
+        # one minute later the periodic path would cache-hit; force must fetch
+        later = self.t0 + dt.timedelta(minutes=1)
+        info = uc.check(_cfg(), fetch=fetch, now=later, force=True)
+        self.assertEqual(fetch.calls, [None, 'W/"e1"'])  # ETag still sent
+        self.assertEqual(info["latest"], "9.10.0")
+        state = json.loads(uc.STATE_PATH.read_text(encoding="utf-8"))
+        # checked_at restamped -> the periodic budget restarts from the click
+        self.assertEqual(state["checked_at"], "2026-07-09T12:01:00Z")
+
+    def test_force_304_is_a_valid_fresh_answer(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")),
+                          (304, 'W/"e1"', None))
+        uc.check(_cfg(), fetch=fetch, now=self.t0)
+        st = uc.cli_status(True, cfg=_cfg(), fetch=fetch,
+                           now=self.t0 + dt.timedelta(minutes=5))
+        self.assertTrue(st["ok"])
+        self.assertNotIn("error", st)
+        self.assertEqual(st["latest"], "9.9.9")           # cache kept
+        self.assertEqual(st["checked_at"], "2026-07-09T12:05:00Z")
+
+    def test_force_never_overrides_disabled(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))
+        self.assertIsNone(uc.check(_cfg(enabled=False), fetch=fetch,
+                                   now=self.t0, force=True))
+        self.assertEqual(fetch.calls, [])                 # no network, ever
+        st = uc.cli_status(True, cfg=_cfg(enabled=False), fetch=fetch,
+                           now=self.t0)
+        self.assertEqual(fetch.calls, [])
+        self.assertTrue(st["ok"])
+        self.assertFalse(st["enabled"])
+        self.assertFalse(st["update_available"])
+
+    def test_force_offline_reports_failure_and_keeps_cache(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")),
+                          OSError("offline"))
+        uc.check(_cfg(), fetch=fetch, now=self.t0)
+        later = self.t0 + dt.timedelta(minutes=1)
+        st = uc.cli_status(True, cfg=_cfg(), fetch=fetch, now=later)
+        self.assertFalse(st["ok"])
+        self.assertEqual(st["error"], "network")
+        self.assertEqual(st["latest"], "9.9.9")           # cache preserved
+        # the failed manual attempt consumed the budget like any other
+        self.assertEqual(st["checked_at"], "2026-07-09T12:01:00Z")
+
+    def test_cli_status_surfaces_checked_at_and_verdict(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))
+        st = uc.cli_status(cfg=_cfg(), fetch=fetch, now=self.t0)
+        self.assertTrue(st["ok"])
+        self.assertTrue(st["enabled"])
+        self.assertTrue(st["update_available"])
+        self.assertEqual(st["current"], __version__)
+        self.assertEqual(st["latest"], "9.9.9")
+        self.assertIn("/releases/tag/v9.9.9", st["url"])
+        self.assertEqual(st["pkg_asset_url"], "https://example.com/v9.9.9.pkg")
+        self.assertEqual(st["checked_at"], "2026-07-09T12:00:00Z")
+
+    def test_cli_status_same_version_not_available(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v" + __version__)))
+        st = uc.cli_status(cfg=_cfg(), fetch=fetch, now=self.t0)
+        self.assertTrue(st["ok"])
+        self.assertFalse(st["update_available"])
+        self.assertEqual(st["latest"], __version__)
+
+    def test_cli_status_without_force_respects_budget(self):
+        fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))
+        uc.check(_cfg(), fetch=fetch, now=self.t0)
+
+        def boom(_etag):
+            raise AssertionError("non-force cli_status fetched inside 24h")
+
+        st = uc.cli_status(cfg=_cfg(), fetch=boom,
+                           now=self.t0 + dt.timedelta(hours=1))
+        self.assertTrue(st["ok"])
+        self.assertEqual(st["latest"], "9.9.9")
 
 
 class DashboardProjectionTestCase(unittest.TestCase):

@@ -1108,13 +1108,127 @@ struct IngestView: View {
     }
 }
 
+// MARK: §26 update check model (About page)
+
+/// Backs the About page's always-visible update row. Two honest data paths:
+/// reload() reads state/update_check.json (the App is a read-only consumer —
+/// update_check.py stays the only writer) plus the dashboard's authoritative
+/// update_available projection; checkNow() runs the §26 CLI
+/// `runtime-python -m act.lib.update_check --force` off the main actor and
+/// applies its one-line JSON verdict — the only path that skips the 24h
+/// budget, and only ever on an explicit user click (a ~10s client-side
+/// cooldown keeps even that from hammering the API).
+@MainActor
+final class UpdateCheckModel: ObservableObject {
+    @Published var checking = false
+    @Published var failed = false     // last manual attempt hit the network and lost
+    @Published var cooldown = false   // ~10s re-click guard after each attempt
+    @Published var enabled = true     // updates.check_enabled effective value
+    @Published var updateAvailable = false
+    @Published var current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+        as? String ?? "dev"
+    @Published var latest: String?    // newest known release (may equal current)
+    @Published var url: String?       // release page behind the download button
+    @Published var checkedAt: String? // ISO, straight from state/update_check.json
+
+    /// Release page to open (§26: open, never auto-download).
+    var releaseURL: URL? {
+        URL(string: url ?? "https://github.com/Wan-ZL/zelin-ai-assistant/releases")
+    }
+
+    func reload(dashboard: Dashboard?) {
+        let path = AppPaths.stateRoot + "/state/update_check.json"
+        var state: [String: Any] = [:]
+        if let data = FileManager.default.contents(atPath: path),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            state = obj
+        }
+        checkedAt = (state["checked_at"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        latest = (state["latest"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        url = (state["url"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // the "strictly newer" verdict is semver and lives python-side (§26);
+        // between manual checks the dashboard projection is the authority
+        if let upd = dashboard?.update_available {
+            updateAvailable = true
+            latest = upd.latest
+            if let u = upd.url, !u.isEmpty { url = u }
+            if let c = upd.current, !c.isEmpty { current = c }
+        } else {
+            updateAvailable = false
+        }
+        // same effective read as the Settings toggle: override → config → on
+        let ov = SettingsIO.readOverrides()
+        enabled = (ov["updates_check_enabled"] as? Bool)
+            ?? ((SettingsIO.configNestedScalar(block: "updates", key: "check_enabled") ?? "true")
+                .lowercased() != "false")
+    }
+
+    func checkNow() {
+        guard !checking, !cooldown, enabled else { return }
+        checking = true
+        failed = false
+        Analytics.log("update_check_now", fields: ["source": "about"])
+        let py = IMessageSettingsModel.runtimePython()
+        let root = AppPaths.stateRoot
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: py)
+            p.arguments = ["-m", "act.lib.update_check", "--force"]
+            p.currentDirectoryURL = URL(fileURLWithPath: root, isDirectory: true)
+            var env = ProcessInfo.processInfo.environment
+            env["AIASSISTANT_HOME"] = root
+            p.environment = env
+            let outPipe = Pipe()
+            p.standardOutput = outPipe
+            p.standardError = Pipe()
+            var obj: [String: Any] = [:]
+            do {
+                try p.run()
+                // python bounds the fetch at 10s (TIMEOUT_SECONDS); this only
+                // guards a wedged interpreter so the button can never stick
+                DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+                    if p.isRunning { p.terminate() }
+                }
+                let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            } catch {}
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.finish(obj) }
+            }
+        }
+    }
+
+    private func finish(_ obj: [String: Any]) {
+        checking = false
+        // rate-limit the button regardless of outcome — never hammer the API
+        cooldown = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            MainActor.assumeIsolated { self?.cooldown = false }
+        }
+        guard !obj.isEmpty else {
+            failed = true  // CLI never launched / printed garbage
+            return
+        }
+        enabled = (obj["enabled"] as? Bool) ?? enabled
+        failed = (obj["ok"] as? Bool) != true
+        if let c = obj["current"] as? String, !c.isEmpty { current = c }
+        latest = (obj["latest"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        if let u = obj["url"] as? String, !u.isEmpty { url = u }
+        updateAvailable = (obj["update_available"] as? Bool) ?? false
+        checkedAt = (obj["checked_at"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
 // MARK: §15.4 关于
 
 struct AboutView: View {
     @ObservedObject private var i18n = LanguageStore.shared
-    // §26: the update row reads dashboard.update_available off the shared
-    // store (nil = no known update → the row simply doesn't render).
+    // §26: the always-visible update row shows the cached verdict + last
+    // check time; dashboard.update_available (shared store) stays the
+    // authoritative "strictly newer exists" signal between manual checks.
     @ObservedObject var store: DashboardStore
+    @StateObject private var upd = UpdateCheckModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1132,9 +1246,7 @@ struct AboutView: View {
                     Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
                          as? String ?? "dev")
                 }
-                if let upd = store.dashboard?.update_available {
-                    updateRow(upd)
-                }
+                updateSection
                 HStack(alignment: .top) {
                     Text(L("仓库", "Repo")).foregroundColor(.secondary).frame(width: 80, alignment: .leading)
                     Text(AppPaths.stateRoot)
@@ -1172,36 +1284,87 @@ struct AboutView: View {
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
+        .onAppear { upd.reload(dashboard: store.dashboard) }
+        // an actd pass landing a fresh projection while the page is open
+        // (e.g. right after a manual check) keeps the row current
+        .onChange(of: store.dashboard?.update_available) { _, _ in
+            upd.reload(dashboard: store.dashboard)
+        }
     }
 
-    // MARK: §26 更新 — release-page link + upgrade reassurance
+    // MARK: §26 更新 — always-visible row: status + manual check + release link
 
-    /// One low-key row when a newer release is known. The button opens the
-    /// GitHub release page — the unsigned .pkg is downloaded and installed by
-    /// the user deliberately, never auto-run (trust honesty). Wording of the
+    /// The row renders even when nothing is newer — users can see the feature
+    /// exists, when it last checked, and force a check (`--force` skips the
+    /// 24h budget; user click only). The download button opens the GitHub
+    /// release page — the unsigned .pkg is downloaded and installed by the
+    /// user deliberately, never auto-run (trust honesty). Wording of the
     /// reassurance line verified against SetupWizard behavior: data/settings
     /// live on this Mac (state/, config/secrets/, UserDefaults — the bundle id
     /// never changes), and the wizard reopens only when its completion marker
     /// is missing, always prefilled and never wiping anything.
     @ViewBuilder
-    private func updateRow(_ upd: UpdateInfo) -> some View {
+    private var updateSection: some View {
         HStack(alignment: .top) {
             Text(L("更新", "Update")).foregroundColor(.secondary).frame(width: 80, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Button(L("新版本 v\(upd.latest) 可用 — 下载安装包",
-                         "Update v\(upd.latest) available — download installer")) {
-                    guard let url = upd.releaseURL else { return }
-                    Analytics.log("update_open_release",
-                                  fields: ["source": "about", "latest": upd.latest])
-                    NSWorkspace.shared.open(url)
+            VStack(alignment: .leading, spacing: 4) {
+                if upd.updateAvailable, let latest = upd.latest {
+                    Button(L("新版本 v\(latest) 可用 — 下载安装包",
+                             "Update v\(latest) available — download installer")) {
+                        guard let url = upd.releaseURL else { return }
+                        Analytics.log("update_open_release",
+                                      fields: ["source": "about", "latest": latest])
+                        NSWorkspace.shared.open(url)
+                    }
+                    .controlSize(.small)
+                    Text(L("打开 GitHub release 页手动下载安装——绝不自动下载或运行。设置与任务数据都保留在本机，升级后原样可用；初始设置向导若需再次出现，会预填当前值，绝不清空。",
+                           "Opens the GitHub release page for a manual download — nothing is ever downloaded or run automatically. Settings and task data stay on this Mac and survive the upgrade; if the setup wizard needs to reappear, it comes prefilled and never wipes anything."))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
-                .controlSize(.small)
-                Text(L("打开 GitHub release 页手动下载安装——绝不自动下载或运行。设置与任务数据都保留在本机，升级后原样可用；初始设置向导若需再次出现，会预填当前值，绝不清空。",
-                       "Opens the GitHub release page for a manual download — nothing is ever downloaded or run automatically. Settings and task data stay on this Mac and survive the upgrade; if the setup wizard needs to reappear, it comes prefilled and never wipes anything."))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                if !updateStatus.isEmpty {
+                    Text(updateStatus)
+                        .font(.system(size: 11))
+                        .foregroundColor(upd.failed ? .orange : .secondary)
+                }
+                Button(L("立即检查", "Check now")) { upd.checkNow() }
+                    .controlSize(.small)
+                    .disabled(upd.checking || upd.cooldown || !upd.enabled)
             }
         }
+    }
+
+    /// Honest status line: never claims "up to date" beyond what the cache
+    /// actually proves (a checked_at with no answer stays "no answer").
+    private var updateStatus: String {
+        if upd.checking { return L("正在检查…", "Checking…") }
+        if upd.failed {
+            return L("检查失败——网络不可用，稍后再试。",
+                     "Check failed — network unavailable; try again later.")
+        }
+        if !upd.enabled {
+            return L("自动检查新版本已关闭——到「设置」页可重新开启。",
+                     "Automatic update checks are off — re-enable them on the Settings page.")
+        }
+        let rel = RelativeTime.since(upd.checkedAt)
+        if upd.updateAvailable {
+            // the button above says the rest — only the timestamp is extra
+            return rel.map { L("上次检查：\($0)", "Last checked: \($0)") } ?? ""
+        }
+        if let latest = upd.latest {
+            let when = rel.map { L("（上次检查：\($0)）", " (last checked: \($0))") } ?? ""
+            if latest == upd.current {
+                return L("已是最新", "Up to date") + when
+            }
+            // known latest ≠ this build (e.g. dev binary, or the dashboard
+            // projection hasn't landed yet) — state the fact, claim nothing
+            return L("最新发布：v\(latest)", "Latest release: v\(latest)") + when
+        }
+        if let r = rel {
+            return L("上次检查没有取得结果（\(r)）——点「立即检查」重试。",
+                     "The last check got no answer (\(r)) — hit Check now to retry.")
+        }
+        return L("尚未检查过。", "Not checked yet.")
     }
 
     // MARK: 卸载 — confirmation dialog, then uninstall.sh in Terminal

@@ -43,7 +43,7 @@
 | 9 | 通知镜像 | 每条 macOS 通知 | 你的 Slack self-DM | 开 | `features.slack_radar: false` / 不配 token |
 | 10 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
 | 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
-| 12 | 更新检查 | actd，至多每 24h 一次（ETag 缓存） | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false` |
+| 12 | 更新检查 | actd，至多每 24h 一次（ETag 缓存）；「关于」页「立即检查」按钮手动触发同一请求 | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false`（关闭后手动按钮同样不发请求） |
 | 13 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **开** | `sources.weekly_digest.enabled: false` |
 | 14 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
 | 15 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |

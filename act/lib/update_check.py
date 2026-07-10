@@ -9,6 +9,11 @@ Honesty rules (the trust posture of the whole product):
 - At most ONE network attempt per 24h — failures (offline, rate-limited, bad
   response) consume the budget too, so a broken network can never turn the
   10s daemon pass into a retry storm. Failure = silently keep the cache.
+  The ONLY exception is an explicit user click: the About page's「立即检查」
+  runs ``python3 -m act.lib.update_check --force`` (see :func:`cli_status`),
+  which skips the freshness gate for that one attempt — still ETag-validated,
+  still stamping ``checked_at`` (so the periodic budget restarts from it),
+  and still a hard no-op while ``updates.check_enabled`` is off.
 - The request exposes ONLY the caller's IP and the current version string in
   the User-Agent (docs/TELEMETRY.md「更新检查」). No auth, no cookies, no ids.
 - The dashboard projection (``update_available``) is emitted ONLY when a
@@ -174,13 +179,21 @@ def _release_view(release: dict) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 def check(cfg: Optional[config.Config] = None, *,
           fetch: Optional[Fetch] = None,
-          now: Optional[_dt.datetime] = None) -> Optional[dict]:
+          now: Optional[_dt.datetime] = None,
+          force: bool = False) -> Optional[dict]:
     """Return ``{current, latest, url, pkg_asset_url, checked_at}`` or None.
 
     None = the check is disabled or nothing is known yet (first run offline).
     Never raises; performs at most one network attempt per 24h (a failed
     attempt consumes the budget too, so failures keep the cached answer and
     stay silent — CONTRACT §26).
+
+    ``force=True`` (manual「立即检查」only — never the actd path) skips the
+    24h freshness gate for this one call: the fetch still sends If-None-Match
+    (a 304 is a valid fresh "no update"), and ``checked_at`` is stamped as
+    usual, so the periodic budget restarts from the manual check. A disabled
+    config still short-circuits before any network — force never overrides
+    the privacy switch.
     """
     if cfg is None:
         cfg = config.load_config()
@@ -190,7 +203,8 @@ def check(cfg: Optional[config.Config] = None, *,
     state = _load_state()
     now_dt = now or _dt.datetime.now(_dt.timezone.utc)
     last = _parse_iso(state.get("checked_at"))
-    fresh = (last is not None
+    fresh = (not force
+             and last is not None
              and (now_dt - last).total_seconds() < CHECK_INTERVAL_SECONDS)
 
     if not fresh:
@@ -253,9 +267,54 @@ def attach(dash: dict, cfg: Optional[config.Config] = None, *,
     return dash
 
 
+def cli_status(force: bool = False, *,
+               cfg: Optional[config.Config] = None,
+               fetch: Optional[Fetch] = None,
+               now: Optional[_dt.datetime] = None) -> dict:
+    """§26 CLI payload behind ``python3 -m act.lib.update_check [--force]``.
+
+    Unlike :func:`check`, this reports a transport failure honestly
+    (``ok=False, error="network"``) so the About page's manual check can say
+    "check failed" instead of pretending freshness — while the state file
+    semantics stay identical (the failed attempt consumes the budget and the
+    cached answer is kept). With ``updates.check_enabled`` off it never
+    touches the network, force or not: ``ok=True, enabled=False`` plus
+    whatever the cache last knew.
+    """
+    if cfg is None:
+        cfg = config.load_config()
+    enabled = bool(getattr(cfg, "updates_check_enabled", True))
+    inner = fetch or _default_fetch
+    errors: list = []
+
+    def tracking_fetch(etag):
+        try:
+            return inner(etag)
+        except Exception as e:  # noqa: BLE001 — recorded, then re-raised into check()'s keep-the-cache path
+            errors.append(e)
+            raise
+
+    check(cfg, fetch=tracking_fetch, now=now, force=force)
+    state = _load_state()
+    latest = state.get("latest")
+    out = {
+        "ok": not errors,
+        "enabled": enabled,
+        "current": __version__,
+        "latest": str(latest) if latest else None,
+        "update_available": bool(enabled and latest
+                                 and is_newer(latest, __version__)),
+        "url": state.get("url") or RELEASES_PAGE_URL,
+        "pkg_asset_url": state.get("pkg_asset_url"),
+        "checked_at": state.get("checked_at"),
+    }
+    if errors:
+        out["error"] = "network"
+    return out
+
+
 if __name__ == "__main__":
-    # debugging aid: print the current verdict as one JSON line
+    # §26 CLI (About page「立即检查」+ debugging): one JSON line on stdout.
+    # --force = skip the 24h budget for this attempt (user-initiated only).
     import sys
-    json.dump({"check": check(), "update_available": update_available()},
-              sys.stdout, ensure_ascii=False, indent=2)
-    sys.stdout.write("\n")
+    print(json.dumps(cli_status("--force" in sys.argv[1:]), ensure_ascii=False))
