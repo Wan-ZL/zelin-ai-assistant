@@ -1,11 +1,11 @@
 # Voice Profile — Default (sanitized starting point)
 
-> **What this is**: a sanitized snapshot of the author's (Zelin's) personal voice
-> profile, shipped as the repo default. The rule layer is his, verbatim in meaning;
-> every example sentence has been rewritten into a fictional scenario of the same
-> shape (all names — Alex / Jordan / Morgan — plus systems, roles, and numbers are
-> invented and match no real person, company, or internal system). Using it as-is
-> means drafts written in your name start from the author's tendencies.
+> **What this is**: the author's voice-profile rule layer, shipped as the repo
+> default. The rules are his; the example sentences are fictional illustrations
+> of those rules (all names — Alex / Jordan / Morgan — plus systems, roles, and
+> numbers are invented and match no real person, company, or internal system).
+> Using it as-is means drafts written in your name start from the author's
+> tendencies.
 >
 > **Recommended**: generate your own profile from your real messages (guide:
 > [docs/VOICE.md](../docs/VOICE.md)) and save it to `state/voice-profile.md`.
@@ -23,8 +23,8 @@
 2. **句子简单直白**：主谓宾，不堆从句，无成语/俚语/花哨习语。动词朴素（help / check / add / need / share / try）。
 3. **不用破折号（——/—）**，用句号断句。列表用 • 或 1. 2. 3.；硬信息用 "Label: value" 前缀（`Staging link:` / `Internal mirror:` / `Error code:` / `Account name:`）。
 4. **无签名、无 "Best," 收尾、无 "Hope you're well" 式寒暄**。开场最多 "Hi <名字>," 或直接说事。
-5. 表情克制：`:pray:` `:cry:` `~`（软化请求/感谢）`:)` 偶用，绝不连串 emoji。
-6. 感谢常自成一条短消息："Thanks!" / "got it~" / "Perfect, thank you!" / "Thanks a lot!"
+5. 表情克制：`:pray:` `:cry:` `:)` 偶用，绝不连串 emoji。
+6. 感谢常自成一条短消息："Thanks!" / "got it!" / "Perfect, thank you!" / "Thanks a lot!"
 7. 链接直接贴，通常带一行说明；票号/账号/房间号等硬信息裸给（"room 4207"）。
 8. 允许小写开头、允许省略句（"didn't see 730041992615"）。草稿语法要对，但**不要润色成 native 腔**——保持朴素结构，不加地道习语。
 
@@ -44,11 +44,11 @@
 
 模式：无寒暄直入。状态/请求一句话；确认用 "Got it!" / "of course"；主动补信息（"booked a room: 4207" / "Forgot one thing in the standup."）。**要说不或谈判时**：事实 → 已做的贡献 → 立场（"I feel ..."）→ 留活口的问句收尾。不道歉式开场，不过度铺垫。
 
-- "IT set up a shared staging server for us. I filed the access request. Could you approve it?"
+- "The vendor trial license is in the shared vault now. Could you activate it?"
 - "Yep, just saw the update. Will be included. Not sure about the timeline yet."
 - "I feel we should wait for the load test results before announcing the date."（表达保留意见：直接、留有余地）
-- 长谈判范式（罕见的长消息长这样）："Small request about the bug triage rotation. This sprint I have three triage mornings, and each one runs 3 to 4 hours at the current queue size. Most tickets are password resets and license renewals, and helpdesk closes those much faster than I do. I covered Monday already and routed the two real product bugs to their owners. I'm trying to land the database migration before the code freeze, so I feel Monday plus those handoffs are a reasonable share from me this sprint. Could my remaining two mornings go back to the helpdesk pool?"
-- 承诺具体且有限："I will try to get a prototype running. Will share results by Friday."
+- 长谈判范式（罕见的长消息长这样）："Question about the release sign-off rota. I'm down for six slots this cycle. I already took the two Friday slots and wrote up the checklist gaps I found there. Most sign-offs are routine version bumps that the release captains clear in minutes, and I'm heads-down on audit prep until the 20th. I feel two slots plus the checklist work is a fair share for this cycle. Could the other four go to the captains' pool?"
+- 承诺具体且有限："I will try to get a prototype running. I'll post the numbers on Friday."
 
 ## 桶 C：频道公告/分享
 
@@ -58,7 +58,7 @@
 - "Room reserved: Maple"
 - "The staging server is ready! Request access on the portal, permission name staging-dev-editor. The server name is stg-core-04."
 - "Ran a quick experiment with the new caching layer on the v2 test rig. Cold-start latency improved 18%. Notes: <link>"
-- "Comments and pushback are very welcome here :pray:. Thanks for taking a look!"
+- "If anything looks off, reply here and I'll fix it."
 - 征求意见："Does the setup guide need any edits? (Troubleshooting will move to its own page later)"
 
 ## 桶 D：技术升级/证据链（安全团队、外部工程师）
