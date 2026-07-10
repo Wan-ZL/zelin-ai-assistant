@@ -21,6 +21,12 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.15.0] - 2026-07-10
+
+Voice, speed, and a milestone: the first external contribution.
+
 ### Added
 
 - **Voice profile two-level fallback** ([docs/VOICE.md](docs/VOICE.md)):
@@ -29,7 +35,24 @@ other file needs editing. To cut a release:
   anti-assistant-register starter template that now ships at
   `config/voice-profile.default.md`; the template is nobody's voice
   (empty example buckets, fingerprint-guard test) and the prompt injection
-  no longer hardcodes a personal name.
+  no longer hardcodes a personal name
+  ([`7329157`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/7329157))
+- **Double-click to run in your terminal**: a card's copyable
+  `claude attach` / `--resume` command now runs on double-click in a new
+  window of your terminal of choice (Ghostty via its AppleScript
+  dictionary, Terminal, iTerm2 when installed — pick in Settings →
+  General); single click still copies. First run asks for the standard
+  macOS Automation consent
+  ([`a2c99ac`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/a2c99ac))
+
+### Fixed
+
+- `dispatch_failed` analytics event now fires exactly once per launch
+  failure (and backoff-window passes no longer emit noise events);
+  unexpected crashes are tagged `dispatch_crashed` — the project's first
+  external contribution, thanks @tapheret2!
+  ([#24](https://github.com/Wan-ZL/zelin-ai-assistant/pull/24), closes
+  [#12](https://github.com/Wan-ZL/zelin-ai-assistant/issues/12))
 
 ## [0.14.0] - 2026-07-10
 
@@ -394,7 +417,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.11.0...v0.12.0
