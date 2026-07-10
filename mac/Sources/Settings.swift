@@ -66,6 +66,18 @@ struct SettingsFormView: View {
     @State private var redactionEnabled = false
     @State private var redactionTermsFile = ""
     @State private var redactionMaskSecrets = true
+    // 语气档案 (docs/VOICE.md): the executor injects the effective voice
+    // profile into every dispatched prompt so drafts in the owner's name
+    // sound like the owner. Toggle = config voice.enabled (diff-write
+    // override key `voice_enabled`); status mirrors executor
+    // resolve_voice_profile()'s two-level fallback: state/voice-profile.md
+    // (private, gitignored) → config/voice-profile.default.md (shipped).
+    @State private var voiceEnabled = true
+    @State private var voicePrivateExists = false
+    @State private var voiceDefaultExists = false
+    @State private var voiceGenRunning = false
+    @State private var voiceGenStatus = ""
+    @State private var voiceGenFailed = false
     // product improvement program (docs/TELEMETRY.md) — anonymous usage
     // stats, default ON; saved as the nested {"telemetry": {enabled, level}}
     // override (same form as the first-run permissions page, CONTRACT §15).
@@ -118,6 +130,9 @@ struct SettingsFormView: View {
             // section (own state, immediate writes), lives in
             // SettingsWeeklyDigest.swift.
             WeeklyDigestSettingsSection()
+            // 语气档案 (docs/VOICE.md): product-core behavior made visible &
+            // controllable — status + open + injection toggle + generator.
+            voiceGroup
             redactionGroup
             telemetryGroup
             footerRow
@@ -499,6 +514,94 @@ struct SettingsFormView: View {
         .font(.system(size: 12))
     }
 
+    // 语气档案 (docs/VOICE.md): status row (which profile the executor would
+    // inject right now) + open + voice.enabled toggle + one-click generation
+    // from the owner's real messages (`python -m act.voice_gen`, same
+    // subprocess/progress/result pattern as the iMessage test button).
+    private var voiceGroup: some View {
+        group(L("语气档案（以你的口吻起草）", "Voice profile (drafts in your voice)")) {
+            Text(L("以你的名义起草的文字（Slack 回复、邮件正文等）会先读这份档案来模仿你的说话风格。私有档案只存本机 state/，永不进 git。",
+                   "Text drafted in your name (Slack replies, email bodies, …) first reads this profile to match how you write. Your private profile stays local in state/ and is never committed."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // 1) status row: what resolve_voice_profile() would pick right now
+            HStack(spacing: 8) {
+                Circle().fill(voiceDotColor).frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(L("当前生效", "In effect"))
+                            .font(.system(size: 12, weight: .medium))
+                        Text(voiceStatusText)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    if let p = voiceEffectivePath {
+                        Text(abbreviateHome(p))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
+                Spacer()
+                // 2) open the effective file (when disabled: the one that
+                //    WOULD take effect after re-enabling)
+                Button(L("打开档案", "Open profile")) {
+                    if let p = voiceEffectivePath {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: p))
+                    }
+                }
+                .controlSize(.small)
+                .disabled(voiceEffectivePath == nil)
+            }
+            // 3) master switch — config voice.enabled, diff-write override
+            Toggle(L("启用语气注入（默认开）", "Voice injection (default on)"),
+                   isOn: Binding(
+                get: { voiceEnabled },
+                set: { v in
+                    voiceEnabled = v
+                    persistOverride("voice_enabled", v,
+                                    dropWhen: v == configLayerBool(block: "voice",
+                                                                   key: "enabled",
+                                                                   default: true))
+                    Analytics.log("mw_voice_toggle", fields: ["on": v])
+                }))
+            Text(L("关掉后后台任务照常运行，只是起草的文字不再模仿你的口吻。",
+                   "When off, background tasks run as usual — drafted text just stops imitating your voice."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // 4) generate/update the private profile from real messages
+            HStack(spacing: 8) {
+                Button(voiceGenRunning ? L("生成中…", "Generating…")
+                                       : L("从我的消息生成/更新档案", "Generate from my messages")) {
+                    runVoiceGen()
+                }
+                .controlSize(.small)
+                .disabled(voiceGenRunning)
+                if voiceGenRunning { ProgressView().controlSize(.small) }
+                Text(L("需要 Slack 连接；生成前会自动备份现有档案。",
+                       "Requires the Slack connection; the existing profile is backed up automatically before generating."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            }
+            if !voiceGenStatus.isEmpty {
+                Text(voiceGenStatus)
+                    .font(.system(size: 11))
+                    .foregroundColor(voiceGenRunning ? .secondary
+                                     : (voiceGenFailed ? .orange : .green))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .toggleStyle(.switch)
+        .font(.system(size: 12))
+    }
+
     private var redactionGroup: some View {
         group(L("脱敏（发给 AI 前本地打码）", "Redaction (local masking before sending to AI)")) {
             Toggle(L("启用词表脱敏 — 发出 prompt 前把词表词条替换成 [脱敏]",
@@ -826,6 +929,11 @@ struct SettingsFormView: View {
         redactionTermsFile = (ov["redaction_terms_file"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? SettingsIO.configNestedScalar(block: "redaction", key: "terms_file")
             ?? "config/redaction_terms.txt"
+        // 语气档案 — effective (override → config.yaml voice.enabled → on),
+        // plus which profile file resolve_voice_profile() would pick.
+        voiceEnabled = (ov["voice_enabled"] as? Bool)
+            ?? configLayerBool(block: "voice", key: "enabled", default: true)
+        refreshVoiceProfileStatus()
         // telemetry — mirror the effective config: overrides (nested form
         // shared with the first-run permissions page, flat keys accepted
         // too) → config.yaml telemetry block → built-in defaults (on /
@@ -1123,6 +1231,100 @@ struct SettingsFormView: View {
         } catch {
             noteError(L("创建目录失败：", "Couldn't create the folder: ") + error.localizedDescription)
         }
+    }
+
+    // MARK: - 语气档案 helpers (docs/VOICE.md)
+
+    // The two candidate files, exactly as act/executor.py
+    // resolve_voice_profile() derives them from AIASSISTANT_HOME.
+    private var voicePrivatePath: String { AppPaths.stateRoot + "/state/voice-profile.md" }
+    private var voiceDefaultPath: String { AppPaths.stateRoot + "/config/voice-profile.default.md" }
+
+    /// The file the executor injects right now — or, when injection is
+    /// disabled, the one that WOULD take effect after re-enabling (the Open
+    /// button intentionally opens that one). nil = neither file exists.
+    private var voiceEffectivePath: String? {
+        if voicePrivateExists { return voicePrivatePath }
+        if voiceDefaultExists { return voiceDefaultPath }
+        return nil
+    }
+
+    private var voiceStatusText: String {
+        if !voiceEnabled { return L("已停用", "Disabled") }
+        if voicePrivateExists { return L("你的私有档案", "Your private profile") }
+        if voiceDefaultExists { return L("出厂默认（作者风格）", "Shipped default (author's style)") }
+        return L("无档案（不注入）", "No profile (nothing injected)")
+    }
+
+    private var voiceDotColor: Color {
+        if !voiceEnabled { return Color.secondary.opacity(0.4) }
+        if voicePrivateExists { return .green }
+        if voiceDefaultExists { return .blue }
+        return .orange
+    }
+
+    private func refreshVoiceProfileStatus() {
+        voicePrivateExists = FileManager.default.fileExists(atPath: voicePrivatePath)
+        voiceDefaultExists = FileManager.default.fileExists(atPath: voiceDefaultPath)
+    }
+
+    /// 「从我的消息生成/更新档案」— run `<runtime python> -m act.voice_gen`
+    /// asynchronously (same subprocess + progress + result-feedback pattern as
+    /// the iMessage test button). Success → green one-liner + status refresh;
+    /// failure → the error verbatim in orange.
+    private func runVoiceGen() {
+        guard !voiceGenRunning else { return }
+        voiceGenRunning = true
+        voiceGenFailed = false
+        voiceGenStatus = L("生成中……会读取你最近发出的 Slack 消息，可能需要几分钟。",
+                           "Generating… reads Slack messages you sent recently; this can take a few minutes.")
+        Analytics.log("mw_voice_gen")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (code, tail) = Self.runVoiceGenProcess()
+            DispatchQueue.main.async {
+                voiceGenRunning = false
+                voiceGenFailed = code != 0
+                let trimmed = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+                if code == 0 {
+                    // stdout's last non-empty line is the tool's one-line result
+                    let line = trimmed.components(separatedBy: "\n")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .last { !$0.isEmpty }
+                    voiceGenStatus = line ?? L("已生成 ✓", "Generated ✓")
+                } else {
+                    voiceGenStatus = trimmed.isEmpty
+                        ? L("生成失败（退出码 \(code)），没有更多输出。",
+                            "Generation failed (exit code \(code)) with no further output.")
+                        : trimmed
+                }
+                // refresh even on failure — a backup/restore may have
+                // changed which file exists
+                refreshVoiceProfileStatus()
+                Analytics.log("mw_voice_gen_done", fields: ["ok": code == 0])
+            }
+        }
+    }
+
+    /// Blocking — call from a background queue only. Mirrors the iMessage
+    /// send-test runner: pinned runtime python, cwd + AIASSISTANT_HOME =
+    /// repo root, stdout+stderr merged, tail returned for display.
+    private static func runVoiceGenProcess() -> (Int32, String) {
+        let py = IMessageSettingsModel.runtimePython()
+        let root = AppPaths.stateRoot
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: py)
+        p.arguments = ["-m", "act.voice_gen"]
+        p.currentDirectoryURL = URL(fileURLWithPath: root, isDirectory: true)
+        var env = ProcessInfo.processInfo.environment
+        env["AIASSISTANT_HOME"] = root
+        p.environment = env
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() } catch { return (127, error.localizedDescription) }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (p.terminationStatus, String((String(data: data, encoding: .utf8) ?? "").suffix(600)))
     }
 
     private func openConfigYaml() {

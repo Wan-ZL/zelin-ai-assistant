@@ -198,6 +198,7 @@ class Config:
     # "basic" sends event metadata only; "detailed" (opt-in) may add short
     # instruction/delivery summaries (<=200 chars) to dispatch/delivery events.
     telemetry_enabled: bool = True
+    voice_enabled: bool = True   # docs/VOICE.md voice-profile injection master switch
     telemetry_level: str = "basic"
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
@@ -357,6 +358,9 @@ def load_config() -> Config:
         trash.get("retention_days", cfg.trash_retention_days)
     )
 
+    voice = data.get("voice", {}) or {}
+    cfg.voice_enabled = bool(voice.get("enabled", cfg.voice_enabled))
+
     recording = data.get("recording", {}) or {}
     apps = recording.get("ignored_apps")
     if isinstance(apps, list):
@@ -494,6 +498,9 @@ _OVERRIDE_FIELDS: dict = {
     "create_github_repo": bool,
     # §26: in-app update check toggle (App 设置「自动检查新版本」, diff-write).
     "updates_check_enabled": bool,
+    # docs/VOICE.md: voice-profile injection master switch (App 设置「启用语气
+    # 注入」, diff-write vs config.yaml `voice.enabled`).
+    "voice_enabled": bool,
     # v0.14 (§15.3 add-only, Slack in-app setup): auth.test auto-fills the
     # owner identity — the user never types a Uxxxx id by hand.
     "owner_slack_user_id": str,

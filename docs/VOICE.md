@@ -16,39 +16,62 @@ time:
 | Priority | File | What it is |
 |---|---|---|
 | 1 | `state/voice-profile.md` | **Your private profile** — induced from your real messages. Work data: gitignored, never committed. |
-| 2 | `config/voice-profile.default.md` | **The neutral starter template** that ships with the repo (see below). |
+| 2 | `config/voice-profile.default.md` | **The author's sanitized default** that ships with the repo (see below). |
 | — | neither exists | No injection; agents draft with no voice constraints. |
 
 Both paths are derived from `AIASSISTANT_HOME`, so headless dispatches under
 launchd/cron (whose cwd is the *target* repo, not this one) resolve the same
 files.
 
-## The default template is nobody's voice
+## Master switch
 
+Voice injection is on by default and controllable in two equivalent places:
+
+- **Settings → 语气档案 · Voice profile → 启用语气注入** — the app diff-writes
+  the `voice_enabled` override to `state/settings_overrides.json` (highest
+  priority, same mechanism as the other Settings toggles);
+- `config.yaml`:
+
+  ```yaml
+  voice:
+    enabled: false
+  ```
+
+When off, background tasks run unchanged — drafted text just stops imitating
+the profile (the executor skips the VOICE PROFILE block entirely). The same
+Settings group also shows which file is currently in effect and opens it.
+
+## The shipped default is the author's (sanitized) voice
+
+This project is named after its author, and it ships with his writing
+tendencies as the starting point — that is part of the product's identity.
 [`config/voice-profile.default.md`](../config/voice-profile.default.md) is a
-**neutral starter**, not a person's profile:
+**sanitized snapshot of the author's profile**:
 
-- The **global iron rules** are universal anti-assistant-register rules —
-  short and plain, no corporate boilerplate, no unprompted formality
-  escalation, match the counterparty's language, plain statements over
-  hedging. They make almost any draft better regardless of whose name is on
-  it.
-- The **context buckets ship empty** (placeholders with fill-in
-  instructions). A profile only starts sounding like *you* once each bucket
-  holds sentences you actually sent — and those must come from you, not from
-  the repo, so the template deliberately contains zero example sentences.
-- **Nothing in the file is derived from any real person's messages**, and a
-  test guards that the shipped file stays free of personal fingerprints.
+- The **rule layer** (iron rules, context-bucket patterns, negative checklist,
+  the negotiation arc) is his, verbatim in meaning: short and plain, no
+  boilerplate, hard facts as bare `Label: value`, asks that end at the ask.
+- Every **example sentence is a fictional illustration** of those rules —
+  invented names, systems, and numbers. The file went through repeated
+  adversarial audits; a test guards that it stays free of real-world
+  identifiers (real people, companies, or greppable message fingerprints).
 
-Out of the box you therefore get "de-assistanted" drafts, not personalized
-ones. To get drafts that sound like you, generate a private profile.
+Out of the box your drafts therefore start from the author's tendencies. To
+make them sound like *you*, generate a private profile — it fully replaces
+the default the moment it exists.
 
 ## Generate your own profile
 
 The goal: 100–200 messages **you actually sent**, distilled into the same
-template structure as the default file. With the Slack MCP server connected
-(see [SLACK_SETUP.md](SLACK_SETUP.md)), a Claude Code session can do the whole
-loop:
+template structure as the default file. The Settings page's one-click
+**Generate voice profile** button runs exactly this flow headlessly
+(`python -m act.voice_gen`): read-only Slack MCP tools collect your sent
+messages, the profile is induced against the default template's skeleton and
+validated, any existing `state/voice-profile.md` is backed up to
+`.bak-<timestamp>` first, and a failed run never overwrites the old profile.
+Alternatively, with the Slack MCP server connected (see
+[SLACK_SETUP.md](SLACK_SETUP.md)), a Claude Code session can do the whole
+loop by hand:
 
 1. **Pull your own messages.** Use the Slack search tools with a `from:me`
    query (or `from:@your-handle`), across DMs, group DMs, and channels. Aim for
@@ -84,7 +107,7 @@ Your profile quotes your real messages — treat it like the work data it is:
 
 - `state/` is gitignored; **never** move the file into a tracked directory or
   paste its contents into commits, issues, or PRs.
-- The neutral template is the only voice file that belongs in git. Never
+- The shipped default is the only voice file that belongs in git. Never
   commit a real profile — yours or anyone else's — no matter how "sanitized"
   it looks: rewritten examples still leak phrasing habits.
 - If you fork this repo publicly, double-check `git status` before pushing.

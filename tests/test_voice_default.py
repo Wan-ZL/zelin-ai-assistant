@@ -10,7 +10,7 @@ at a throwaway tmp dir before any act.* import — so both files here live in th
 sandbox and the real repo/state is never touched.
 
 The shipped default is additionally guarded: it must be a NEUTRAL starter
-template (empty example buckets, universal rules) with no personal fingerprints
+the authors sanitized voice (rule layer verbatim, fictional examples) free of real-world identifiers
 — it is nobody's voice, and no one's real profile may ever land in git.
 """
 import unittest
@@ -29,11 +29,12 @@ DEFAULT = config.HOME / "config" / "voice-profile.default.md"
 REPO_DEFAULT = Path(__file__).resolve().parents[1] / "config" / "voice-profile.default.md"
 
 
-def _build_prompt() -> str:
+def _build_prompt(voice_enabled: bool = True) -> str:
     """build_prompt against a sandbox target with hermetic cfg (no memory read,
     no git remote probing outside the sandbox)."""
     cfg = config.Config()
     cfg.memory_inject = False
+    cfg.voice_enabled = voice_enabled
     req = Requirement.from_dict({"id": "R-970", "title": "voice fallback test"})
     target = Path(TMP_HOME) / "voice-target"
     target.mkdir(exist_ok=True)
@@ -90,6 +91,14 @@ class VoiceProfileFallbackTestCase(unittest.TestCase):
         self.assertNotIn("VOICE PROFILE", prompt)
         self.assertNotIn("voice-profile", prompt)
 
+    # -- master switch (config voice.enabled / Settings 「启用语气注入」) ------- #
+    def test_voice_disabled_skips_injection_even_with_both_files(self):
+        PRIVATE.write_text("# private profile\n", encoding="utf-8")
+        DEFAULT.write_text("# default profile\n", encoding="utf-8")
+        prompt = _build_prompt(voice_enabled=False)
+        self.assertNotIn("VOICE PROFILE", prompt)
+        self.assertNotIn("voice-profile", prompt)
+
     def test_injection_text_says_owner_not_zelin(self):
         DEFAULT.write_text("# default profile\n", encoding="utf-8")
         prompt = _build_prompt()
@@ -113,7 +122,7 @@ class ShippedDefaultIsNeutralTestCase(unittest.TestCase):
         self.assertTrue(REPO_DEFAULT.exists(),
                         "config/voice-profile.default.md missing from repo")
         text = REPO_DEFAULT.read_text(encoding="utf-8")
-        for section in ("全局铁律", "语境桶", "桶 A", "桶 B", "桶 C", "反面清单"):
+        for section in ("全局铁律", "桶 A", "桶 B", "桶 C", "桶 D", "桶 E", "反面清单"):
             self.assertIn(section, text)
         self.assertIn("state/voice-profile.md", text)  # points users at the override
 
@@ -121,7 +130,10 @@ class ShippedDefaultIsNeutralTestCase(unittest.TestCase):
         text = REPO_DEFAULT.read_text(encoding="utf-8").lower()
         # names + phrase/emoji habits that would identify a real person's
         # profile; the shipped template must be attribution-free.
-        denylist = ("zelin", "feel free to", "btw,", ":pray:", "one question:")
+        # real-world leak terms only: the shipped default IS the authors
+        # (sanitized) voice by design, so style habits are allowed; what must
+        # never appear is anything tying it to real people or real threads.
+        denylist = ("zelin", "postman", "mythos", "i feel we better to", "got it~")
         for term in denylist:
             self.assertNotIn(term, text,
                              f"shipped default voice profile contains {term!r}")
