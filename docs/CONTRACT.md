@@ -602,3 +602,40 @@ App 隐藏提问框。仅 config.yaml 可设（同 §24 day/hour 先例，无 ov
 mac/Sources/Ask.swift）：输入框 + 思考态（spinner + 已耗秒数，可取消，绝不阻塞
 UI）+ 答案卡（citation 行 + 👍/👎）+ 分类失败行（§25 人话 + 对症按钮 + 重试）+
 历史列表。无 AI 引擎时复用向导的 EngineDetector 显示「AI 引擎未连接」引导态。
+
+# v0.14 additions（通知身份中继）
+
+## 28. 通知中继队列 — `state/notify_queue/`（python 写，App 消费即删）
+
+**目标**：python daemons 的系统通知以 **Zelin's AI Assistant** 的身份/图标弹出，
+不再是 osascript 的 Script Editor 身份。实现：`act/lib/notify.py`（写方 + 兜底）
++ `mac/Sources/NotifyRelay.swift`（消费方）。§5 的通知语义、文案与 §13 手机镜像
+均不变——只换 native 弹出通道。
+
+**队列文件**（每条通知一个文件 `state/notify_queue/<id>.json`；原子写
+`<id>.json.tmp` + rename——消费方只认 `.json` 后缀，永远看不到半成品）：
+
+```json
+{"id":"<uuid hex>","title":"…","body":"…","subtitle":"…"?,"created_at":<epoch int>}
+```
+
+`subtitle` optional；`created_at` = 写入时刻 epoch 秒（同 §21 epoch int 先例）。
+add-only：未来字段（如 action hint）只增不改，消费方对未知字段视而不见。
+
+**消费方（App）**：5 秒 refresh tick（同 dashboard.json 的节奏）扫描目录，按
+`created_at` 升序经 UNUserNotificationCenter 弹出（identifier = `id`），**弹完
+即删**（消费即删 = 队列常空）。损坏文件 log + 删（留着会每 5 秒重复 log）；
+`created_at` 距今 > **1h** 的过期文件删而不弹（stale storm guard——长睡醒来 /
+兜底线程死亡留下的尸体不准轰炸用户）。通知权限未授予时 UN add 静默 no-op、文件
+照删——权限真相在权限体检页，队列不负责重试。点击通知 = 打开主窗口（§5 文案
+本来就都指向「打开 App」；osascript 旧路径从无点击行为，无保真负担）。
+
+**兜底诚实（python）**：daemon 无法可靠知道 App 是否在跑。规则：写完队列文件后
+armed 一个 **20 s** 一次性检查——文件还在 **且** `pgrep -x ZelinAIEngineer` 找
+不到 App 进程 → 走旧 osascript 路径弹一次并删文件（App 关着时通知照样到达，只是
+身份难看——刻意保留的诚实降级，不装作没发生）；文件还在但 App 活着 → 不管（App
+的 1h stale guard 兜底）。检查线程**故意不是 daemon 线程**：5 分钟级 radar 进程
+发完通知就退出，daemon 线程会陪葬、闭 App 时通知丢失——代价是进程退出前最多多
+等 20 s。python 侧同样有 1h stale guard（mtime 超龄 → 删而不弹，防长睡后的定时
+器风暴）。队列目录不可写等任何失败 → 直接退回 osascript 旧路径（宁丑勿哑）。
+非 darwin 平台不走队列（App 是 darwin-only），维持 platform.notify_user 原路径。

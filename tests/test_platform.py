@@ -131,12 +131,26 @@ class UnsupportedOSTestCase(unittest.TestCase):
 
 
 class NotifyDelegationTestCase(unittest.TestCase):
-    def test_notify_routes_through_the_seam(self):
-        """act/lib/notify.notify must have no OS calls of its own left."""
+    def test_notify_routes_through_the_native_path(self):
+        """act/lib/notify.notify must have no OS calls of its own left.
+
+        Since §28 the native path is the app relay (_native_notify) — its
+        queue/fallback contract lives in tests/test_notify_relay.py; here we
+        pin that notify() delegates to it, and that off-darwin (no app, no
+        relay) the OS seam is still the one direct route.
+        """
         from act.lib import notify
-        with mock.patch.object(platform, "notify_user",
-                               return_value=True) as seam:
+        with mock.patch.object(notify, "_native_notify",
+                               return_value=True) as native:
             self.assertTrue(notify.notify("标题", "正文", subtitle="sub"))
+        native.assert_called_once_with("标题", "正文", "sub")
+
+    def test_native_path_reaches_the_seam_off_darwin(self):
+        from act.lib import notify
+        with mock.patch("sys.platform", "linux"), \
+             mock.patch.object(platform, "notify_user",
+                               return_value=True) as seam:
+            self.assertTrue(notify._native_notify("标题", "正文", "sub"))
         seam.assert_called_once_with("标题", "正文", "sub")
 
 

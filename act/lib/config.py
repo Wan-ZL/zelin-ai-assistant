@@ -36,6 +36,7 @@ HOME: Path = _home()
 STATE_DIR: Path = HOME / "state"
 REGISTRY_DIR: Path = HOME / "act" / "registry"
 INBOX_DIR: Path = STATE_DIR / "inbox"
+NOTIFY_QUEUE_DIR: Path = STATE_DIR / "notify_queue"  # §28 app notification relay
 DASHBOARD_PATH: Path = STATE_DIR / "dashboard.json"
 LOG_DIR: Path = STATE_DIR / "logs"
 

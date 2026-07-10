@@ -21,7 +21,15 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Changed
+
+- System notifications from the python daemons now display under the
+  "Zelin's AI Assistant" identity and icon: they are relayed through
+  `state/notify_queue/` and posted by the menu-bar app
+  (`docs/CONTRACT.md` §28). When the app is not running, the old osascript
+  path still fires after a 20 s grace period, so notifications keep
+  arriving — just with the legacy Script Editor identity. Clicking a
+  relayed notification opens the main window.
 
 ## [0.13.0] - 2026-07-09
 

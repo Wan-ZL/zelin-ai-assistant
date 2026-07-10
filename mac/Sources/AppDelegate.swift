@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // main icon + recording-control icon, per UserDefaults visibility prefs
         updateStatusItemsVisibility()
 
+        // §28: relayed-notification clicks open the main window; banners keep
+        // showing while the app is frontmost.
+        NotifyRelayDelegate.install()
+
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 400, height: 560)
         popover.contentViewController = NSHostingController(
@@ -164,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func refresh() {
         store.reload()
         updateStatusTitle()
+        // §28: post + delete any python-relayed notifications (app identity)
+        NotifyRelay.drain()
         // consent-race self-heal / TCC-loss watch first (cheap TCC read) so a
         // fresh grant restarts the engine before the liveness poll reports it
         RecordingController.shared.pollScreenPermission()
