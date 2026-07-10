@@ -160,7 +160,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 1) **依赖检查**：逐行 Node/npx 与录制引擎存活（引擎经 `npx screenpipe@<pin>` 运行，v0.11 起不再检查 /Applications/Screenpipe.app）、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。
 2) **录制与 ingest**：启动/退出 Screenpipe（open -a / osascript quit）、"立即导出"（跑 ingest/screenpipe-export.sh）、"立即 ingest"（跑 process 脚本）、显示最近一次导出/ingest 时间（读 log mtime）。
 3) **设置**：写 `state/settings_overrides.json`（app 只写这个文件；config.load_config() 最后合并 overrides，优先级最高）。字段：obsidian_raw、slack_token_path、gmail address/密码路径、成本双阈值、trash 保留天数、界面语言(zh/en，先存值)、feature flags 开关。
-   - **v0.13 追加（add-only）**：`telemetry.enabled`（bool）——首启权限页「匿名使用统计」复选框取消勾选时写嵌套形式 `{"telemetry": {"enabled": false}}`；重新勾选**删除**该 override 键（回落产品默认）。Python 侧 `_apply_settings_overrides` 同时接受嵌套与扁平 `"telemetry.enabled"` 两种形式，且**只认 enabled 子键**——`telemetry.supabase_url` / `telemetry.key_path` 仅 config.yaml 可设，overrides 里出现一律忽略。
+   - **v0.13 追加（add-only）**：`telemetry.enabled`（bool）——首启权限页「匿名使用统计」复选框取消勾选时写嵌套形式 `{"telemetry": {"enabled": false}}`；重新勾选**删除**该 override 键（回落产品默认）。Python 侧 `_apply_settings_overrides` 同时接受嵌套与扁平 `"telemetry.enabled"` 两种形式，且**只认 enabled / level 两个子键**（level 见下方「Telemetry 覆写」补充）——`telemetry.supabase_url` / `telemetry.key_path` 仅 config.yaml 可设，overrides 里出现一律忽略。
 4) **关于**：版本、repo 路径、`python -m act.report` 提示。
 
 **菜单栏 / popover 补充（v0 bootstrap）**：
@@ -170,6 +170,9 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **popover 快速捕获输入框**：一句话回车 → 写 `state/inbox/capture-<uuid>.json`（§10 capture 动作），app 不直接碰注册表。
 - **菜单栏图标显示开关**：UserDefaults `showMenuBarIcon`（Bool，默认 true）；录制状态图标开关 `showRecordingIcon`（Bool，默认 true）。
 - **语言即时切换**：界面语言存 `settings_overrides.json` 的 `"language"`（`"zh"|"en"`），切换即时生效（app 与 Python 侧共用该值）。
+- **Telemetry 覆写（add-only 补充，docs/TELEMETRY.md）**：设置页「产品改进计划」区写嵌套形式 `{"telemetry": {"enabled": …, "level": …}}`（与首启权限页同一 override 键；扁平 `"telemetry.enabled"` / `"telemetry.level"` 两个点号键 Python 侧同样接受），`config.load_config()` 最后合并（优先级最高，覆盖 config.yaml `telemetry:` 块）：
+  - `enabled`（Bool）——匿名使用统计上传总开关。**默认 true（默认开 + 明确可关）**。
+  - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。
 
 **v0.13 补充（iPhone 联动 / iMessage 设置区，add-only）**：设置页新增「iPhone 联动（iMessage）」区（`mac/Sources/SettingsIMessage.swift`，改动即时生效、不走表单的保存按钮），写两个 §15.3 overrides 键：`phone_channel`（该区只写 `"imessage"` 或 `"none"`）与 `imessage_self_handle`（str，E.164 手机号或 iCloud 邮箱）——两键自 v0.12 起即在 `act/lib/config.py` `_OVERRIDE_FIELDS` 允许列表内，语义见 §13 通道可插拔。App 侧附带职责（不新增数据契约字段）：①开关 = 按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.imessageradar.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`/`unload`（先写 overrides 再 load，保证 RunAtLoad 首轮就能读到 `phone_channel: imessage`）；②状态行读 `state/radar_health.json` 的 `imessage` 条目（契约 E 同形，radar_imessage 每轮写入）+ `launchctl print gui/<uid>/…`，「立即测试一轮」= `launchctl kickstart`（Full Disk Access 的真值只能来自 launchd 语境下 python 的真实运行结果——TCC 按 responsible process 判权限，app 内直接探测会失真）；③「发送测试消息」经 runtime python（CONTRACT §19 指针）调 `act.radar_imessage` 的同一 osascript 发送路径。
 

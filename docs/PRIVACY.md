@@ -7,10 +7,12 @@
 
 ## 信任模型（一句话版）
 
-- **没有产品方服务器**。本项目没有任何自营后端、没有共享收集端；所有出境流量只去往
+- **内容数据没有产品方服务器**。本项目没有任何处理内容的自营后端；内容类出境流量只去往
   **你自己配置凭证的服务**：Anthropic API（经官方 `claude` CLI）、你自己的 Slack
-  workspace（你的 user token）、Gmail IMAP（你的 app password）、GitHub（你的 `gh` 登录）、
-  以及可选的**你自己的** Supabase 项目（telemetry，默认关）。
+  workspace（你的 user token）、Gmail IMAP（你的 app password）、GitHub（你的 `gh` 登录）。
+  **唯一的例外是匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据默认上传到
+  **维护者的** Supabase 项目，用于产品改进——不含屏幕内容/消息正文/文件内容/密钥，
+  详见第 10 行与 [`docs/TELEMETRY.md`](TELEMETRY.md)。
 - **LLM 通道只有一个**：所有发往 Anthropic 的内容都经由 `claude` CLI（headless `claude -p`
   或 `claude --bg`），没有绕过它的直连 HTTP 调用。
 - Mac app 本身（`mac/Sources/`）**不直接联网**：它只读本地 `state/dashboard.json`、写本地
@@ -33,7 +35,7 @@
 | 7 | 执行派发 | **你批准一张卡时** | Anthropic | — | 审批本身就是开关 |
 | 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | **关**（v0.11 起） | 默认即关；设 `execution.create_github_repo: true` 才启用 |
 | 9 | 通知镜像 | 每条 macOS 通知 | 你的 Slack self-DM | 开 | `features.slack_radar: false` / 不配 token |
-| 10 | Telemetry | 手动/cron 运行 sync 时 | 你自己的 Supabase | **关** | 默认即关（`telemetry.enabled: false`） |
+| 10 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
 | 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
 
 ### 1. Ingest 加工 → Anthropic
@@ -136,14 +138,18 @@
   消息 ts 记录在本地 `state/slack_outbox.json`（用于 ✅ 反应审批）。
 - **关闭**：`features.slack_radar: false` 或不配 token → 只剩本地 osascript 通知。
 
-### 10. Telemetry → 你自己的 Supabase（opt-in，默认关）
+### 10. Telemetry（匿名使用统计）→ 维护者的 Supabase（**默认开**，一键可关）
 
-- **默认关**。`telemetry.enabled` 默认 `false`,不配置就什么都不发生;开启也只上传到
-  **你自己建的** Supabase 项目——没有共享收集端。
+- **默认开**（像 VS Code）：`telemetry.enabled` 默认 `true`，上传目标默认是**维护者的**
+  Supabase 项目，用内置 publishable key 写入（该 key 公开设计，RLS 只允许 INSERT——
+  它写得进、**读不回**任何数据）。数据用于驱动产品改进。
 - **Payload**：只有 `state/analytics/events.jsonl` 里**已在本机记录**的事件元数据
-  （事件名/时间戳/req id/版本/随机 device uuid）,**无任何内容数据**——没有 prompt、
-  消息正文、文件内容、密钥。
-- 详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
+  （事件名/时间戳/req id/版本/随机 device uuid），**默认（basic 级）无任何内容数据**——
+  没有 prompt、消息正文、文件内容、密钥。opt-in 的 `detailed` 级会在派发/交付事件上
+  额外附带 ≤200 字符的指令/交付摘要（默认不开）。
+- **关闭**：App 设置 →「产品改进计划」关掉开关；或 config.yaml `telemetry.enabled: false`。
+  fork 用户还可以 `supabase_url: ""` 彻底禁用，或指到自己的项目。
+- 字段表、级别说明、fork 须知详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
 
 ### 11. iMessage 手机通道（opt-in，默认关，仅 macOS）
 
@@ -170,8 +176,8 @@
 - **凭证**：`config/secrets/` 下的所有 token/key 文件。凭证内容永不打印、永不入日志
   （CONTRACT §19）,内置 secret-pattern 掩码再兜一层（见下文）。
 - **注册表与状态**：`act/registry/R-*.yaml`（真源）、`state/dashboard.json`、`state/inbox/`、
-  执行日志、`state/analytics/events.jsonl`（除非你打开 telemetry,而那也只去你自己的
-  Supabase）。
+  执行日志。`state/analytics/events.jsonl` 本身不上传——telemetry（默认开，见第 10 条）
+  上传的是其中的**匿名事件元数据**，关掉开关后它就纯粹留在本机。
 - **screenpipe 原始数据**：`~/.screenpipe/db.sqlite` 与媒体文件本身不上传——出境的是
   ingest/雷达 prompt 里**引用到的文本**（见第 1/2 条,这是核心设计而非泄漏）。
 - **redaction 词表**：`config/redaction_terms.txt` 只在本地做替换,词表本身与命中的原文
@@ -279,6 +285,6 @@ session 下也会被拒（详见 `ingest/process-screenpipe.sh` 头部注释与
 ## 相关文档
 
 - [`/SECURITY.md`](../SECURITY.md) — 安全漏洞上报渠道与范围
-- [`docs/TELEMETRY.md`](TELEMETRY.md) — opt-in telemetry 细节
+- [`docs/TELEMETRY.md`](TELEMETRY.md) — 匿名使用统计细节（默认开、级别、关闭方法、fork 须知）
 - [`docs/CONTRACT.md`](CONTRACT.md) — §4 执行派发、§19 凭证与 secrets
 - [`docs/INSTALL.md`](INSTALL.md) — 安装与 TCC 授权

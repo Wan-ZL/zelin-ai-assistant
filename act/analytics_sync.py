@@ -1,7 +1,8 @@
 """Telemetry sync entrypoint — upload new analytics events to Supabase.
 
-Opt-in (config.yaml ``telemetry:`` block, default off; see docs/TELEMETRY.md).
-Disabled/unconfigured -> exits 0 silently. All logic in act/lib/analytics_sync.
+Default ON with opt-out (config.yaml ``telemetry:`` block or the app's
+Settings toggle; see docs/TELEMETRY.md). Disabled/unconfigured -> exits 0
+silently. All logic in act/lib/analytics_sync.
 
 Run standalone:  python -m act.analytics_sync --once
 """

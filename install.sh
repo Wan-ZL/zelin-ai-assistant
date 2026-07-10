@@ -343,6 +343,7 @@ CRON_PY="$HOME/miniconda3/bin/python3"
 # skip, not a failure, so it must not break the chain (radar still runs).
 INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; } && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.radar --once >> $REPO_ROOT/state/radar.cron.log 2>&1"
 DIGEST_LINE="7 9 * * 1 cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest --now >> $REPO_ROOT/state/digest.log 2>&1"
+TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.analytics_sync --once >> $REPO_ROOT/state/analytics_sync.log 2>&1"
 
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 NEW_CRON="$CURRENT_CRON"
@@ -362,6 +363,16 @@ if printf '%s\n' "$NEW_CRON" | grep -q 'act\.digest'; then
 else
     NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$DIGEST_LINE")"
     ok "Monday digest cron installed (Mon 09:07)"
+fi
+
+# idempotent: append the hourly telemetry sync if absent (default-on anonymous
+# usage stats, docs/TELEMETRY.md — the sync is a silent no-op when the user
+# opts out, so the line is harmless to keep)
+if printf '%s\n' "$NEW_CRON" | grep -q 'act\.analytics_sync'; then
+    ok "telemetry sync cron already installed"
+else
+    NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$TELEMETRY_LINE")"
+    ok "telemetry sync cron installed (hourly; opt out in app Settings or telemetry.enabled: false)"
 fi
 
 if [ "$NEW_CRON" != "$CURRENT_CRON" ]; then

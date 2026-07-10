@@ -1,16 +1,18 @@
-"""act/lib/analytics_sync.py — opt-in Supabase telemetry uploader.
+"""act/lib/analytics_sync.py — default-on Supabase telemetry uploader.
 
 sync_once must (a) upload only complete new lines and advance the byte cursor,
 (b) split uploads into BATCH_SIZE batches with the cursor saved per batch,
-(c) be a silent no-op when telemetry is disabled/unconfigured, (d) skip (and
-count) malformed lines without crashing, (e) leave a half-written trailing
-line for the next run, and (f) write the cursor atomically.
+(c) be a silent no-op when telemetry is disabled (opt-out) or the URL is
+empty, (d) skip (and count) malformed lines without crashing, (e) leave a
+half-written trailing line for the next run, (f) write the cursor atomically,
+and (g) resolve the upload key as key file -> built-in publishable key.
 
 The local JSONL file is never modified. Transport is injected — no network.
 Everything lives under the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import json
 import unittest
+from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
@@ -45,7 +47,8 @@ def _cursor_offset() -> int:
 class AnalyticsSyncTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # gate needs a resolvable key even with an injected transport
+        # a key file pins the resolution away from the built-in publishable
+        # key (KeyResolutionTestCase covers the resolution order itself)
         secrets.write_secret(sync.SUPABASE_SERVICE_KEY_FILE, "test-service-key")
 
     def setUp(self):
@@ -133,9 +136,26 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         self.assertEqual(analytics.EVENTS_PATH.read_text(encoding="utf-8"),
                          before)
 
-    def test_default_config_has_telemetry_off(self):
-        stats = sync.sync_once(cfg=config.Config(), transport=self._transport)
+    def test_default_config_uploads_by_default(self):
+        # default-on telemetry (docs/TELEMETRY.md): a plain Config() has
+        # enabled=True + the maintainer URL, so events upload out of the box
+        _write_events(_event_line("inbox_approve"))
+        cfg = config.Config()
+        self.assertTrue(cfg.telemetry_enabled)
+        self.assertEqual(cfg.telemetry_supabase_url,
+                         config.DEFAULT_TELEMETRY_SUPABASE_URL)
+        stats = sync.sync_once(cfg=cfg, transport=self._transport)
+        self.assertNotIn("skipped", stats)
+        self.assertEqual(stats["uploaded"], 1)
+
+    def test_empty_supabase_url_disables_uploads_entirely(self):
+        # forks' hard off switch (docs/TELEMETRY.md): supabase_url "" -> no-op
+        _write_events(_event_line("inbox_approve"))
+        cfg = config.Config()
+        cfg.telemetry_supabase_url = ""
+        stats = sync.sync_once(cfg=cfg, transport=self._transport)
         self.assertEqual(stats["skipped"], "disabled")
+        self.assertEqual(self.batches, [])
 
     # -- malformed line skip ------------------------------------------------ #
     def test_malformed_lines_are_counted_skipped_and_cursor_passes_them(self):
@@ -173,6 +193,11 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         uploaded = [r["event"] for b in self.batches for r in b]
         self.assertEqual(uploaded, ["in_flight"])
 
+    # -- key resolution: key file wins, publishable key is the fallback ------ #
+    def test_key_file_wins_over_publishable_default(self):
+        # setUpClass wrote the secrets file — it must beat the built-in key
+        self.assertEqual(sync._resolve_key(config.Config()), "test-service-key")
+
     # -- atomic cursor write -------------------------------------------------- #
     def test_cursor_write_is_atomic_and_never_torn(self):
         _write_events(_event_line("good_one"))
@@ -185,6 +210,38 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         stats = self._sync()
         self.assertTrue(stats["ok"])
         json.loads(sync.CURSOR_PATH.read_text(encoding="utf-8"))
+
+
+class KeyResolutionTestCase(unittest.TestCase):
+    """_resolve_key order: secrets file -> telemetry.key_path -> built-in
+    publishable key (default-on telemetry, docs/TELEMETRY.md)."""
+
+    def setUp(self):
+        # start from "no key file configured"
+        path = secrets.SECRETS_DIR / sync.SUPABASE_SERVICE_KEY_FILE
+        if path.exists():
+            path.unlink()
+
+    def test_publishable_key_is_the_default(self):
+        self.assertEqual(sync._resolve_key(config.Config()),
+                         config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY)
+        self.assertTrue(
+            config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY.startswith(
+                "sb_publishable_"))  # never ship a secret key as the default
+
+    def test_secrets_file_wins(self):
+        secrets.write_secret(sync.SUPABASE_SERVICE_KEY_FILE, "svc-key-123")
+        try:
+            self.assertEqual(sync._resolve_key(config.Config()), "svc-key-123")
+        finally:
+            (secrets.SECRETS_DIR / sync.SUPABASE_SERVICE_KEY_FILE).unlink()
+
+    def test_explicit_key_path_wins_over_publishable_default(self):
+        path = Path(TMP_HOME) / "alt-supabase-key.txt"
+        path.write_text("alt-key-456\n", encoding="utf-8")
+        cfg = config.Config()
+        cfg.telemetry_key_path = str(path)
+        self.assertEqual(sync._resolve_key(cfg), "alt-key-456")
 
 
 if __name__ == "__main__":

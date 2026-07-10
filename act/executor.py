@@ -476,6 +476,17 @@ def _parse_session_id(output: str) -> Optional[str]:
     return None
 
 
+def _instruction_summary(req: Requirement) -> Optional[str]:
+    """telemetry level="detailed" only (docs/TELEMETRY.md): a short (<=200
+    chars) summary of what claude was asked to do — requirement title + plan
+    head, never the full prompt or fenced source excerpts."""
+    plan = req.plan
+    if isinstance(plan, list):
+        plan = "; ".join(str(p) for p in plan[:3])
+    parts = [str(req.title or ""), str(plan or "")]
+    return analytics.clip(" — ".join(p for p in parts if p.strip()))
+
+
 def dispatch(
     req: Requirement,
     cfg: Optional[config.Config] = None,
@@ -603,8 +614,12 @@ def dispatch(
     }
     req.set_status(State.EXECUTING)
     save(req)
+    # telemetry.level gating (docs/TELEMETRY.md): the instruction summary is
+    # recorded ONLY at the opt-in "detailed" level — never at "basic".
+    detailed = getattr(cfg, "telemetry_level", "basic") == "detailed"
     analytics.log_event("dispatch", req=req.id, target_kind=req.target_kind,
-                        session=session_id, type=req.type)
+                        session=session_id, type=req.type,
+                        instruction=_instruction_summary(req) if detailed else None)
     return req
 
 

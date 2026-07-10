@@ -77,6 +77,18 @@ DEFAULT_IGNORED_APPS: list = [
     "Incognito",         # Chrome/Edge incognito windows (window-title match)
 ]
 
+# Telemetry defaults (docs/TELEMETRY.md) — anonymous usage analytics upload is
+# ON by default (like VS Code) and points at the maintainer's Supabase project.
+# The publishable key is DESIGNED to be public (RLS allows INSERT only — it can
+# never read anyone's data). A key file (CONTRACT §19 / telemetry.key_path)
+# still wins when present. Opt out: Settings toggle or `telemetry.enabled:
+# false`; setting `supabase_url: ""` disables uploads entirely (forks!).
+DEFAULT_TELEMETRY_SUPABASE_URL: str = "https://vlxshwmdjpaxmcwbhutb.supabase.co"
+DEFAULT_TELEMETRY_PUBLISHABLE_KEY: str = (
+    "sb_publishable_bNWOKJTAH52AfwTao-nHUQ_jdsTUpYi"
+)
+TELEMETRY_LEVELS: tuple = ("basic", "detailed")
+
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
 DEFAULT_FEATURES: dict = {
@@ -164,10 +176,12 @@ class Config:
     redaction_terms_file: str = "config/redaction_terms.txt"
     redaction_mask_secrets: bool = True
 
-    # telemetry upload (opt-in; docs/TELEMETRY.md) — events stay local unless
-    # enabled AND a supabase_url + service key are configured
-    telemetry_enabled: bool = False
-    telemetry_supabase_url: str = ""
+    # telemetry upload (default ON with opt-out; docs/TELEMETRY.md) — level
+    # "basic" sends event metadata only; "detailed" (opt-in) may add short
+    # instruction/delivery summaries (<=200 chars) to dispatch/delivery events.
+    telemetry_enabled: bool = True
+    telemetry_level: str = "basic"
+    telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
 
     # phone command channel (§13, channel-pluggable) — which channel carries
@@ -299,6 +313,10 @@ def load_config() -> Config:
 
     tele = data.get("telemetry", {}) or {}
     cfg.telemetry_enabled = bool(tele.get("enabled", cfg.telemetry_enabled))
+    _lvl = str(tele.get("level", cfg.telemetry_level) or "").strip().lower()
+    cfg.telemetry_level = _lvl if _lvl in TELEMETRY_LEVELS else "basic"
+    # An explicit empty/null supabase_url disables uploads entirely (forks:
+    # this is the hard off switch); an ABSENT key keeps the default project.
     cfg.telemetry_supabase_url = str(
         tele.get("supabase_url", cfg.telemetry_supabase_url) or ""
     )
@@ -426,13 +444,21 @@ def _apply_settings_overrides(cfg: Config) -> None:
             elif key == "telemetry" and isinstance(value, dict):
                 # v0.13 (§15 note): the app's first-run page opts OUT of
                 # anonymous usage stats by writing {"telemetry": {"enabled":
-                # false}}. Only the enabled flag is app-overridable —
+                # false}}. App-overridable: enabled + level ONLY —
                 # supabase_url / key_path stay config.yaml-only.
                 if value.get("enabled") is not None:
                     cfg.telemetry_enabled = bool(value["enabled"])
+                if value.get("level") is not None:
+                    lvl = str(value["level"]).strip().lower()
+                    if lvl in TELEMETRY_LEVELS:
+                        cfg.telemetry_level = lvl
             elif key == "telemetry.enabled" and value is not None:
-                # flat form, same single-flag allowlist
+                # flat form, same allowlist (§15 telemetry overrides)
                 cfg.telemetry_enabled = bool(value)
+            elif key == "telemetry.level" and value is not None:
+                lvl = str(value).strip().lower()
+                if lvl in TELEMETRY_LEVELS:
+                    cfg.telemetry_level = lvl
             elif key.startswith("sources."):
                 # dotted form mirroring config.yaml, e.g.
                 # {"sources.obsidian_wiki": "/path/to/4 - wiki"}

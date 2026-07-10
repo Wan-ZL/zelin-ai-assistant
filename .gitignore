@@ -11,3 +11,4 @@ mac/build/
 __pycache__/
 *.pyc
 config/runtime.json
+supabase/.temp/

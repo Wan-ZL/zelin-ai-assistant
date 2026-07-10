@@ -49,6 +49,11 @@ struct SettingsFormView: View {
     @State private var redactionEnabled = false
     @State private var redactionTermsFile = ""
     @State private var redactionMaskSecrets = true
+    // product improvement program (docs/TELEMETRY.md) — anonymous usage
+    // stats, default ON; saved as the nested {"telemetry": {enabled, level}}
+    // override (same form as the first-run permissions page, CONTRACT §15).
+    @State private var telemetryEnabled = true
+    @State private var telemetryLevel = "basic"
     @State private var status = ""
     @State private var loaded = false
     // 1.5 s highlight on the credentials group after a deps「去设置」jump
@@ -322,6 +327,39 @@ struct SettingsFormView: View {
             }
             .font(.system(size: 12))
 
+            group(L("产品改进计划", "Product improvement program")) {
+                Toggle(L("参与匿名使用统计（默认开，帮助改进产品）",
+                         "Share anonymous usage statistics (on by default; helps improve the product)"),
+                       isOn: $telemetryEnabled)
+                    .toggleStyle(.switch)
+                HStack {
+                    Text(L("收集级别", "Collection level"))
+                        .font(.system(size: 12))
+                        .frame(width: 220, alignment: .leading)
+                    Picker("", selection: $telemetryLevel) {
+                        Text(L("基础（默认）", "Basic (default)")).tag("basic")
+                        Text(L("详细", "Detailed")).tag("detailed")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                    .disabled(!telemetryEnabled)
+                    Spacer()
+                }
+                Text(L("基础：只发送匿名事件元数据——事件名、时间、随机设备号、版本号，不含任何内容。",
+                       "Basic: sends anonymous event metadata only — event name, time, random device id, app version; never any content."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要。",
+                       "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(L("关掉开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+                       "Turning the toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            .font(.system(size: 12))
+
             HStack(spacing: 10) {
                 Button(L("保存", "Save")) { save() }
                     .keyboardShortcut("s", modifiers: .command)
@@ -514,6 +552,25 @@ struct SettingsFormView: View {
         redactionMaskSecrets = (ov["redaction_mask_secrets"] as? Bool) ?? true
         redactionTermsFile = str("redaction_terms_file", configKey: nil,
                                  fallback: "config/redaction_terms.txt")
+        // telemetry — mirror the effective config: overrides (nested form
+        // shared with the first-run permissions page, flat keys accepted
+        // too) → config.yaml telemetry block → built-in defaults (on /
+        // basic), same precedence as act/lib/config.py.
+        let tele = ov["telemetry"] as? [String: Any] ?? [:]
+        if let v = tele["enabled"] as? Bool {
+            telemetryEnabled = v
+        } else if let v = ov["telemetry.enabled"] as? Bool {
+            telemetryEnabled = v
+        } else if let v = SettingsIO.configNestedScalar(block: "telemetry", key: "enabled") {
+            telemetryEnabled = (v.lowercased() != "false")
+        } else {
+            telemetryEnabled = true
+        }
+        let level = ((tele["level"] as? String)
+            ?? (ov["telemetry.level"] as? String)
+            ?? SettingsIO.configNestedScalar(block: "telemetry", key: "level")
+            ?? "basic").lowercased()
+        telemetryLevel = level == "detailed" ? "detailed" : "basic"
     }
 
     private func save() {
@@ -542,6 +599,16 @@ struct SettingsFormView: View {
             ],
         ]
         for (k, v) in dict { merged[k] = v }
+        // §15 telemetry overrides (docs/TELEMETRY.md): write the nested form
+        // shared with the first-run permissions page (TelemetryConsent,
+        // Permissions.swift) and drop any legacy flat keys, so the two
+        // spellings can never disagree.
+        var tele = merged["telemetry"] as? [String: Any] ?? [:]
+        tele["enabled"] = telemetryEnabled
+        tele["level"] = telemetryLevel == "detailed" ? "detailed" : "basic"
+        merged["telemetry"] = tele
+        merged.removeValue(forKey: "telemetry.enabled")
+        merged.removeValue(forKey: "telemetry.level")
         // v0.10.3 契约二: the three derived Obsidian dirs. An emptied field
         // snaps back to its derived default; a value equal to that default
         // DROPS the override key (config.py derivation stays live, so moving

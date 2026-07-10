@@ -868,7 +868,14 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。
                 req.set_status(registry.State.REVIEW)
                 registry.save(req)
-                analytics.log_event("review_promoted", req=req.id)
+                # telemetry.level gating (docs/TELEMETRY.md): the delivery
+                # summary excerpt is recorded ONLY at the opt-in "detailed"
+                # level — never at "basic".
+                detailed = getattr(cfg, "telemetry_level", "basic") == "detailed"
+                analytics.log_event(
+                    "review_promoted", req=req.id,
+                    summary=(analytics.clip(ex.get("delivered_summary"))
+                             if detailed else None))
             continue
         if ex.get("done"):
             # finished earlier; agent purged from the list — promote if missed

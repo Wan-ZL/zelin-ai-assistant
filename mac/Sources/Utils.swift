@@ -145,6 +145,46 @@ enum SettingsIO {
         return nil
     }
 
+    /// Naive scan for a scalar nested one level under a top-level block, e.g.
+    ///
+    ///     telemetry:
+    ///       enabled: false
+    ///
+    /// configScalar would match the first bare `enabled:` anywhere in the file
+    /// (redaction's, gmail's, ...), so nested keys need the block anchor. Same
+    /// config.yaml → config.example.yaml fallback; a commented-out block
+    /// (`# telemetry:`) never matches.
+    static func configNestedScalar(block: String, key: String) -> String? {
+        for file in [AppPaths.stateRoot + "/config.yaml",
+                     AppPaths.stateRoot + "/config.example.yaml"] {
+            guard let text = try? String(contentsOfFile: file, encoding: .utf8) else { continue }
+            var inBlock = false
+            for rawLine in text.components(separatedBy: "\n") {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if !inBlock {
+                    if rawLine.hasPrefix(block + ":") { inBlock = true }
+                    continue
+                }
+                if !rawLine.hasPrefix(" ") && !rawLine.hasPrefix("\t") {
+                    if line.isEmpty || line.hasPrefix("#") { continue }
+                    break  // next top-level key ends the block
+                }
+                guard line.hasPrefix(key + ":") else { continue }
+                var v = String(line.dropFirst(key.count + 1)).trimmingCharacters(in: .whitespaces)
+                if v.hasPrefix("\"") {
+                    let inner = String(v.dropFirst())
+                    v = inner.firstIndex(of: "\"").map { String(inner[..<$0]) } ?? inner
+                } else if v.hasPrefix("#") {
+                    v = ""
+                } else if let hash = v.range(of: " #") {
+                    v = String(v[..<hash.lowerBound]).trimmingCharacters(in: .whitespaces)
+                }
+                if !v.isEmpty { return v }
+            }
+        }
+        return nil
+    }
+
     /// Naive line-scan for a YAML block sequence, e.g.
     ///
     ///     ignored_apps:

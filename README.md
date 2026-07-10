@@ -116,7 +116,11 @@ On first launch the app opens a bilingual **permissions & setup page**: one scre
 - **Quick capture** — press ⌥Space anywhere, type a thought; an LLM triages it against the registry: new card, related to an existing one, or ignore. <!-- screenshot slot: docs/assets/t2-card.png -->
 - **Responsive UI** — every click gives feedback within one frame (optimistic echo), kanban main window, recycle bin with inverse operations instead of a fake undo, bilingual UI (English / 中文). <!-- screenshot slot: docs/assets/review-final-draft.png -->
 - **Phone companion via iMessage or Slack** — approve/reject/accept cards, quick-capture thoughts, and 👍-tapback approvals from your iPhone using the iMessage "message yourself" thread (`phone_channel: imessage`, no third-party account needed — [docs/IMESSAGE_SETUP.md](docs/IMESSAGE_SETUP.md)); a Slack self-DM channel is available too.
-- **Local-first state** — the registry, dashboard, and analytics stay on your Mac; telemetry is opt-in and off by default ([docs/TELEMETRY.md](docs/TELEMETRY.md)).
+- **Local-first content** — the registry, dashboard, and all captured content stay on your Mac; only anonymous usage events are uploaded by default (see Telemetry below).
+
+## Telemetry
+
+> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. Only event metadata is sent — event names, timestamps, a random device id, app version — **never screen content, message bodies, file contents, or keys**. Opt out in one step: Settings → "Product improvement program" toggle, or `telemetry.enabled: false` in config.yaml. An opt-in "detailed" level can additionally attach short (≤200-char) instruction/delivery summaries to dispatch/delivery events. Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
 
 ## Privacy & security
 

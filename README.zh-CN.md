@@ -116,7 +116,11 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 - **快速捕获**——任意界面 ⌥Space 随手记一句;LLM 对照注册表三选一:新卡 / 关联已有 / 忽略。<!-- screenshot slot: docs/assets/t2-card.png -->
 - **即时反馈的 UI**——所有点击 ≤1 帧内有视觉反馈(乐观回显),看板主窗口,回收站配逆操作而非假 undo,双语界面(English / 中文)。<!-- screenshot slot: docs/assets/review-final-draft.png -->
 - **手机联动(iMessage 或 Slack)**——用 iMessage「给自己发消息」线程在 iPhone 上审批/打回/验收卡片、快速捕获想法、👍 tapback 一键批准(`phone_channel: imessage`,零第三方账号依赖,见 [docs/IMESSAGE_SETUP.md](docs/IMESSAGE_SETUP.md));也支持 Slack self-DM 通道。
-- **本地优先**——注册表、dashboard、行为埋点全部留在本机;遥测 opt-in 且默认关([docs/TELEMETRY.md](docs/TELEMETRY.md))。
+- **内容本地优先**——注册表、dashboard、所有采集内容全部留在本机;默认只上传匿名使用事件(见下方「匿名使用统计」)。
+
+## 匿名使用统计(Telemetry)
+
+> **匿名使用统计默认开启**(像 VS Code 一样),用于驱动产品改进。只发送事件元数据——事件名、时间戳、随机设备号、版本号,**绝不含屏幕内容、消息正文、文件内容或密钥**。一步关闭:设置 →「产品改进计划」开关,或 config.yaml 里 `telemetry.enabled: false`。opt-in 的「详细」级别会在派发/交付事件上额外附带 ≤200 字符的指令/交付摘要。Fork 用户注意:不改 `telemetry.supabase_url` 时数据会传给本项目维护者——把 URL 置空(`""`)即彻底禁用上传。字段表与细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
 
 ## 隐私与安全
 

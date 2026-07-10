@@ -1,16 +1,20 @@
-"""Telemetry sync — OPT-IN batched upload of analytics events to Supabase.
+"""Telemetry sync — default-ON batched upload of analytics events to Supabase.
 
 The local JSONL log (``state/analytics/events.jsonl``, see act/lib/analytics.py)
 stays the source of truth and is NEVER modified or deleted here. This module
 tails it with a persistent byte-offset cursor (``state/analytics_sync.json``)
-and POSTs new events to a user-owned Supabase project via PostgREST:
+and POSTs new events to Supabase via PostgREST:
 
-    POST {supabase_url}/rest/v1/analytics_events   (apikey + service key)
+    POST {supabase_url}/rest/v1/analytics_events   (apikey + key)
 
-Default OFF. Enabled only when config.yaml has ``telemetry.enabled: true``, a
-``telemetry.supabase_url``, and a service key resolvable per CONTRACT §19
-(``config/secrets/supabase-service-key.txt`` → explicit ``telemetry.key_path``).
-Anything less -> silent cheap no-op. See docs/TELEMETRY.md.
+Default ON (docs/TELEMETRY.md): ``telemetry.enabled`` defaults true and
+``telemetry.supabase_url`` defaults to the maintainer's project, uploading with
+the built-in PUBLISHABLE key (anon role, RLS INSERT-only — it can never read
+data back). A key file per CONTRACT §19 (``config/secrets/
+supabase-service-key.txt`` → explicit ``telemetry.key_path``) still WINS when
+present, so a self-hosted/service-key setup keeps working unchanged. Opt out
+with the Settings toggle or ``telemetry.enabled: false``; an empty
+``supabase_url`` disables uploads entirely -> silent cheap no-op.
 
 Exactly-once for appends: the cursor is saved atomically (.tmp + os.replace)
 after EVERY successfully uploaded batch, so a mid-run failure resumes at the
@@ -39,6 +43,14 @@ DEVICE_ID_PATH: Path = config.STATE_DIR / "device_id"
 
 # Fixed secrets file name (CONTRACT §19 pattern, like slack-user-token.txt).
 SUPABASE_SERVICE_KEY_FILE = "supabase-service-key.txt"
+
+
+def _resolve_key(cfg: config.Config) -> str:
+    """Upload key: key file (CONTRACT §19 / telemetry.key_path) wins; else the
+    built-in publishable key (public by design — RLS allows INSERT only)."""
+    key = secrets.resolve_credential(
+        SUPABASE_SERVICE_KEY_FILE, explicit_path=cfg.telemetry_key_path)
+    return key or config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY
 
 BATCH_SIZE = 500
 TIMEOUT_SECONDS = 15
@@ -153,7 +165,7 @@ def _to_row(raw: bytes, device_id: str) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # Transport — stdlib urllib only (repo has no third-party deps beyond PyYAML).
 # --------------------------------------------------------------------------- #
-def _make_transport(supabase_url: str, service_key: str) -> Transport:
+def _make_transport(supabase_url: str, key: str) -> Transport:
     endpoint = supabase_url.rstrip("/") + "/rest/v1/analytics_events"
 
     def send(rows: List[dict]) -> None:
@@ -164,8 +176,8 @@ def _make_transport(supabase_url: str, service_key: str) -> Transport:
             method="POST",
             headers={
                 "Content-Type": "application/json",
-                "apikey": service_key,
-                "Authorization": "Bearer " + service_key,
+                "apikey": key,
+                "Authorization": "Bearer " + key,
                 "Prefer": "return=minimal",
             },
         )
@@ -193,8 +205,7 @@ def sync_once(cfg: Optional[config.Config] = None,
         if not (cfg.telemetry_enabled and url):
             stats["skipped"] = "disabled"
             return stats
-        key = secrets.resolve_credential(
-            SUPABASE_SERVICE_KEY_FILE, explicit_path=cfg.telemetry_key_path)
+        key = _resolve_key(cfg)
         if not key:
             stats["skipped"] = "no_key"
             return stats

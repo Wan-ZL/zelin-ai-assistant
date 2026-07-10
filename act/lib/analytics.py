@@ -39,6 +39,14 @@ def log_event(event: str, **fields) -> None:
         pass
 
 
+def clip(text, limit: int = 200) -> Optional[str]:
+    """Whitespace-collapsed, truncated string for telemetry level="detailed"
+    payload fields (docs/TELEMETRY.md) — None when empty so log_event drops it.
+    """
+    s = " ".join(str(text or "").split())
+    return s[:limit] or None
+
+
 def parse_ts(s: str) -> Optional[_dt.datetime]:
     """Parse an event 'ts' (UTC) -> aware datetime, or None."""
     try:
