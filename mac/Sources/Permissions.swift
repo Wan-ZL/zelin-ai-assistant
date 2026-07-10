@@ -54,6 +54,10 @@ final class PermissionsModel: ObservableObject {
 
     func refresh() {
         screen = RecordingController.hasScreenPermission() ? .granted : .denied
+        // consent-race self-heal (audit 2.2): this 2 s poll is exactly the
+        // "user is in System Settings flipping the switch" window — a fresh
+        // grant auto-restarts the engine (RecordingController decides).
+        RecordingController.shared.pollScreenPermission()
         refreshNotifications()
         DispatchQueue.global(qos: .utility).async {
             let s = Self.probeFullDisk()
@@ -417,6 +421,19 @@ struct RecordingConsentSection: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !rec.selfHealNote.isEmpty {
+                    // consent-race self-heal just fired (audit 2.2)
+                    Text(rec.selfHealNote)
+                        .font(.system(size: 11))
+                        .foregroundColor(.green)
+                } else if rec.tccLost && rec.mode != "off" {
+                    // audit 9.2 — the honest post-update story; the screen
+                    // capability row below carries the Grant button
+                    Text(FailureCatalog.message("screen_tcc_lost") ?? "")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
             if rec.mode == "off" {

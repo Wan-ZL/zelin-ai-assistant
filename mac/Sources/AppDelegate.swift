@@ -164,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func refresh() {
         store.reload()
         updateStatusTitle()
+        // consent-race self-heal / TCC-loss watch first (cheap TCC read) so a
+        // fresh grant restarts the engine before the liveness poll reports it
+        RecordingController.shared.pollScreenPermission()
         RecordingController.shared.refreshEngineState()
     }
 

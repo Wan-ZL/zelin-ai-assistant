@@ -108,6 +108,80 @@ class ClassifyTestCase(unittest.TestCase):
         # word "unauthorized" — must stay unclassified.
         self.assertIsNone(failures.classify("user is authorized; proceeding"))
 
+    def test_npm_download_banner_variants(self):
+        for raw in ("npm warn exec The following package was not found and "
+                    "will be installed: screenpipe@0.3.349",
+                    "Need to install the following packages:\n"
+                    "screenpipe@0.3.349\nOk to proceed? (y)"):
+            self.assertEqual(failures.classify(raw), "engine_npm_download", raw)
+
+    def test_download_that_died_on_network_is_network_not_download(self):
+        # rule order contract: network_error outranks engine_npm_download —
+        # a download killed by the network must never read "in progress".
+        raw = ("npm warn exec The following package was not found and will be "
+               "installed: screenpipe@0.3.349\n"
+               "npm error network ETIMEDOUT registry.npmjs.org")
+        self.assertEqual(failures.classify(raw), "network_error")
+
+
+class EngineLogClassifyTestCase(unittest.TestCase):
+    """classify_engine_log — the engine-death diagnosis (audit 2.3).
+
+    Swift mirror: RecordingController.diagnoseEngine (Recording.swift)."""
+
+    DOWNLOAD = ("npm warn exec The following package was not found and will "
+                "be installed: screenpipe@0.3.349")
+
+    def test_missing_npx_wins_over_everything(self):
+        self.assertEqual(
+            failures.classify_engine_log(self.DOWNLOAD, npx_present=False,
+                                         engine_alive=True),
+            "node_missing")
+
+    def test_alive_download_is_progress_not_error(self):
+        fid = failures.classify_engine_log(self.DOWNLOAD, engine_alive=True)
+        self.assertEqual(fid, "engine_npm_download")
+        # the catalog copy must read as calm progress, not as a failure
+        msg = failures.user_message(fid, lang="zh")
+        self.assertIn("下载中", msg)
+        for bad in ("失败", "错误", "崩溃"):
+            self.assertNotIn(bad, msg)
+
+    def test_alive_and_quiet_is_healthy(self):
+        # locked screens legitimately go silent — never classify silence
+        self.assertIsNone(failures.classify_engine_log(
+            "2026-07-08T01:00:00 INFO capturing frame", engine_alive=True))
+        self.assertIsNone(failures.classify_engine_log("", engine_alive=True))
+
+    def test_dead_with_output_is_crashed(self):
+        self.assertEqual(
+            failures.classify_engine_log(
+                "thread 'main' panicked at src/core.rs:42", engine_alive=False),
+            "engine_crashed")
+
+    def test_dead_download_banner_is_crashed_not_in_progress(self):
+        self.assertEqual(
+            failures.classify_engine_log(self.DOWNLOAD, engine_alive=False),
+            "engine_crashed")
+
+    def test_dead_and_silent_is_plain_engine_dead(self):
+        self.assertEqual(failures.classify_engine_log("", engine_alive=False),
+                         "engine_dead")
+        self.assertEqual(failures.classify_engine_log(None, engine_alive=False),
+                         "engine_dead")
+
+    def test_apps_own_breadcrumbs_do_not_count_as_engine_output(self):
+        tail = ("[app 2026-07-08 01:00:00] autostart mode=screen running=false\n"
+                "[app 2026-07-08 01:00:01] spawn mode=screen\n")
+        self.assertEqual(failures.classify_engine_log(tail, engine_alive=False),
+                         "engine_dead")
+
+    def test_node_missing_in_log_text_trusted_even_if_probe_disagrees(self):
+        self.assertEqual(
+            failures.classify_engine_log("env: node: No such file or directory",
+                                         npx_present=True, engine_alive=False),
+            "node_missing")
+
 
 class SwiftDriftTestCase(unittest.TestCase):
     """FailureCatalog (Doctor.swift) must know every python-side id."""

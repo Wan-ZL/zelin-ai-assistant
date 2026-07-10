@@ -328,6 +328,11 @@ final class PipelineProbeModel: ObservableObject {
     @Published var fixingDaemon = false
     @Published var seeding = false
     @Published var fixNote = ""
+    // §25 cron FDA probe (state/cron_probe.json) — nil = no data yet; the
+    // wizard finale renders it as its own health row (audit 3.1: an all-green
+    // finale without this probe would be a lie).
+    @Published var cronProbe: CronProbe?
+    @Published var cronProbeChecked = false       // false = still checking
 
     private var timer: Timer?
 
@@ -362,11 +367,14 @@ final class PipelineProbeModel: ObservableObject {
                     ago = rel
                 }
             }
+            let cron = CronProbe.read()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.actdLoaded = loaded
                     self.dashboardExists = exists
                     self.dashboardAgo = ago
+                    self.cronProbe = cron
+                    self.cronProbeChecked = true
                 }
             }
         }
@@ -973,6 +981,7 @@ struct SetupWizardView: View {
                 engineHealthRow
                 daemonHealthRow
                 dataHealthRow
+                cronFDAHealthRow
                 if rec.mode != "off" {
                     recordingHealthRow
                 }
@@ -1014,8 +1023,21 @@ struct SetupWizardView: View {
     private var allGreen: Bool {
         let permOK = rec.mode == "off" || perms.screen == .granted
         let recOK = rec.mode == "off" || rec.engineRunning
+        // no probe data yet is normal minutes after install (row shows "—");
+        // a KNOWN-bad probe must block the 🎉 — an all-green lie is worse
+        // than an honest wait (audit 3.1).
         return permOK && engine.detection.ready
             && probe.actdLoaded == true && probe.dashboardExists == true && recOK
+            && !cronFDABad
+    }
+
+    /// Probe says cron is blocked right now, or the chain visibly stopped
+    /// (probe exists but is stale). Missing probe = not bad, just unknown.
+    private var cronFDABad: Bool {
+        guard let cp = probe.cronProbe else { return false }
+        if cp.isBlocked { return true }
+        if let ts = cp.ts, Date().timeIntervalSince(ts) > 2 * 3600 { return true }
+        return false
     }
 
     private enum HealthState { case checking, ok, fail, neutral }
@@ -1086,12 +1108,57 @@ struct SetupWizardView: View {
         }
     }
 
+    /// §25 cron Full-Disk-Access row (audit 3.1) — ground truth is
+    /// state/cron_probe.json, written by REAL cron runs (an in-app probe
+    /// would use the app's own grant and lie). Right after a fresh install
+    /// there is no data yet — that's a calm "—", not a failure.
+    private var cronFDAHealthRow: some View {
+        let state: HealthState
+        let detail: String
+        var fixLabel: String?
+        var fix: () -> Void = { CronFDA.beginGrant() }
+        if !probe.cronProbeChecked {
+            state = .checking
+            detail = L("检测中…", "Checking…")
+        } else if let cp = probe.cronProbe {
+            if cp.isBlocked {
+                state = .fail
+                detail = FailureCatalog.message("cron_fda_blocked") ?? ""
+                fixLabel = L("去授权", "Grant…")
+            } else if let ts = cp.ts, Date().timeIntervalSince(ts) > 2 * 3600 {
+                state = .fail
+                detail = L("最近一次定时任务在 \(Int(Date().timeIntervalSince(ts) / 3600)) 小时前——它可能停跑了",
+                           "Last scheduled run was \(Int(Date().timeIntervalSince(ts) / 3600))h ago — the jobs may have stopped")
+                fixLabel = L("查看诊断", "Diagnostics")
+                fix = {
+                    MainNav.shared.section = .deps
+                    (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
+                }
+            } else {
+                state = .ok
+                detail = L("定时任务能读取你的数据", "The scheduled jobs can read your data")
+            }
+        } else {
+            state = .neutral
+            detail = L("还没有数据——定时任务首次运行（约 30 分钟内）后自动出现，现在可以先点「完成」",
+                       "No data yet — appears after the first scheduled run (within ~30 min); you can finish now")
+        }
+        return healthRow(state, name: L("定时任务磁盘权限", "Cron disk access"),
+                         detail: detail, fixLabel: fixLabel, fix: fix)
+    }
+
     private var recordingHealthRow: some View {
-        let state: HealthState = rec.engineRunning ? .ok : .fail
-        let detail = rec.engineRunning
+        // first-run npm download reads as calm progress, never as a failure
+        let downloading = rec.diagnosis?.failureId == "engine_npm_download"
+        let state: HealthState = downloading ? .checking
+            : (rec.engineRunning ? .ok : .fail)
+        let detail = downloading
+            ? (FailureCatalog.message("engine_npm_download") ?? "")
+            : rec.engineRunning
             ? (rec.mode == "screen_audio" ? L("录制中(屏幕+音频)", "Recording (screen + audio)")
                                           : L("录制中(仅屏幕)", "Recording (screen only)"))
-            : L("未在录制——首次启动要下载引擎,可能需要几分钟", "Not recording — the first start downloads the engine and can take a few minutes")
+            : (rec.diagnosis.flatMap { FailureCatalog.message($0.failureId) }
+               ?? L("未在录制——首次启动要下载引擎,可能需要几分钟", "Not recording — the first start downloads the engine and can take a few minutes"))
         return healthRow(state, name: L("录制引擎", "Capture engine"), detail: detail,
                          fixLabel: state == .fail ? L("启动引擎", "Start engine") : nil) {
             if !RecordingController.hasScreenPermission() {

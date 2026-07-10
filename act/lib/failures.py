@@ -32,6 +32,8 @@ from typing import Optional
 #   restart_actd      render + reload the actd launchd agent (in-app)
 #   fix_config        reveal config.yaml / restore from template
 #   retry             transient — just try the action again
+#   show_engine_log   reveal ~/.screenpipe/engine.log (download progress lives there)
+#   regrant_screen    open System Settings -> Screen Recording (re-grant)
 # --------------------------------------------------------------------------- #
 FAILURES: dict = {
     "claude_cli_missing": {
@@ -53,6 +55,25 @@ FAILURES: dict = {
         "plain_zh": "录制引擎没有在运行——屏幕内容不会被记录",
         "plain_en": "The recording engine is not running — nothing on screen is being captured",
         "action_id": "restart_engine",
+    },
+    # NOT an error: first-run npx download of the pinned screenpipe package.
+    # Copy must read as calm progress, never as a failure (audit 2.3).
+    "engine_npm_download": {
+        "plain_zh": "录制引擎首次下载中（约 1-3 分钟）——不用做任何事，下载完会自动开始录制",
+        "plain_en": "The recording engine is downloading for the first time (~1-3 min) — nothing to do; recording starts automatically when it finishes",
+        "action_id": "show_engine_log",
+    },
+    "engine_crashed": {
+        "plain_zh": "录制引擎意外停了——点「重启引擎」再试；反复失败就看下面的引擎日志",
+        "plain_en": "The recording engine stopped unexpectedly — click Restart engine; if it keeps happening, check the engine log lines below",
+        "action_id": "restart_engine",
+    },
+    # macOS ties the Screen Recording grant to the app's code signature —
+    # an OS update or app reinstall changes it and silently revokes the grant.
+    "screen_tcc_lost": {
+        "plain_zh": "「屏幕录制」授权被 macOS 收回了（系统更新或重装应用后常见）——重新授权一次即可恢复",
+        "plain_en": "macOS revoked the Screen Recording permission (common after a macOS update or app reinstall) — grant it once more to resume",
+        "action_id": "regrant_screen",
     },
     "agent_unloaded": {
         "plain_zh": "一个后台服务没有装载——它负责的工作停了",
@@ -109,6 +130,12 @@ _RULES: list = [
         r"connection (refused|reset|timed? ?out)|network is (down|unreachable)|"
         r"getaddrinfo|ENOTFOUND|ETIMEDOUT|ECONNRE|temporary failure in name",
         re.IGNORECASE)),
+    # npx cache-miss download banner (npm >= 7 prints the first line, the
+    # interactive prompt the second). Ranked AFTER network_error on purpose:
+    # a download that died on the network must not classify as "in progress".
+    ("engine_npm_download", re.compile(
+        r"package was not found and will be installed|"
+        r"need to install the following packages?", re.IGNORECASE)),
 ]
 
 
@@ -121,6 +148,43 @@ def classify(raw: Optional[str]) -> Optional[str]:
         if pattern.search(text):
             return fid
     return None
+
+
+def _strip_app_markers(tail: str) -> str:
+    """Drop the app's own breadcrumb lines ("[app …] spawn/autostart …") so a
+    log that only contains our markers counts as empty, not as engine output."""
+    return "\n".join(
+        line for line in tail.splitlines() if not line.startswith("[app")
+    ).strip()
+
+
+def classify_engine_log(tail: Optional[str], npx_present: bool = True,
+                        engine_alive: bool = False) -> Optional[str]:
+    """Why is the recording engine down? (audit 2.3 — engine-death diagnosis)
+
+    ``tail`` = the last lines of ``~/.screenpipe/engine.log`` (the engine's
+    combined stdout/stderr). Returns a failure id, or None when the engine is
+    alive and nothing in the log looks wrong (healthy — including "alive but
+    quiet"; a locked screen legitimately goes silent, so silence alone is
+    never classified as a failure).
+
+    Mirrored in Swift by RecordingController.diagnoseEngine (Recording.swift);
+    keep the two in sync when touching this.
+    """
+    if not npx_present:
+        return "node_missing"
+    text = _strip_app_markers(str(tail or ""))
+    fid = classify(text)
+    if fid == "node_missing":
+        return fid
+    if engine_alive:
+        # while the npx process is alive, the download banner means exactly
+        # that: first-run download in progress. (A DEAD process whose last
+        # line is the banner is a failed download -> crashed, below.)
+        return "engine_npm_download" if fid == "engine_npm_download" else None
+    # dead with real output -> crashed (callers surface the tail verbatim);
+    # dead with nothing but our own markers -> plain "not running".
+    return "engine_crashed" if text else "engine_dead"
 
 
 # --------------------------------------------------------------------------- #

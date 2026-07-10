@@ -123,6 +123,8 @@ final class DepsModel: ObservableObject {
         let radarHealthPath = AppPaths.stateRoot + "/state/radar_health.json"
         // P1-5: recording mode decides whether a missing mic grant is a blocker
         let recMode = RecordingController.shared.mode
+        // audit 9.2: a revoked-after-granted screen grant gets the honest story
+        let tccLost = RecordingController.shared.tccLost
 
         DispatchQueue.global(qos: .userInitiated).async {
             let fm = FileManager.default
@@ -137,19 +139,32 @@ final class DepsModel: ObservableObject {
                 detail: L("npx（screenpipe 引擎经 npx 自动运行，无需单独安装；缺失则 brew install node）",
                           "npx (screenpipe engine runs via npx — no separate install; missing? brew install node)"),
                 action: .url("https://nodejs.org")))
+            // engine row — classified when down (audit 2.3): the tired user
+            // reads WHY (node missing / first-run download / crashed), not a
+            // bare pgrep pattern. First-run npm download is NOT an error.
+            let engineRunning = RecordingController.isEngineRunning()
+            var engineOK = engineRunning
+            var engineDetail = "pgrep -f \"\(RecordingController.enginePattern)\""
+                + L("（引擎进程存活）", " (engine process alive)")
+            if recMode != "off",
+               let diag = RecordingController.diagnoseEngine(running: engineRunning) {
+                engineDetail = FailureCatalog.message(diag.failureId) ?? engineDetail
+                engineOK = engineRunning && diag.failureId == "engine_npm_download"
+            }
             out.append(DepRowState(
                 id: "engine", name: L("录制引擎", "Recording engine"),
-                ok: RecordingController.isEngineRunning(),
-                detail: "pgrep -f \"\(RecordingController.enginePattern)\""
-                    + L("（引擎进程存活）", " (engine process alive)"),
+                ok: engineOK,
+                detail: engineDetail,
                 action: .ingest))
             // P1-5 TCC rows — the two most common first-launch blockers, both
             // probeable without prompting (CGPreflight / authorizationStatus).
             out.append(DepRowState(
                 id: "screen_tcc", name: L("屏幕录制权限", "Screen Recording permission"),
                 ok: RecordingController.hasScreenPermission(),
-                detail: L("CGPreflightScreenCaptureAccess()（未授权时引擎启动即退出、录不到任何内容）",
-                          "CGPreflightScreenCaptureAccess() (without it the engine exits instantly, capturing nothing)"),
+                detail: tccLost
+                    ? (FailureCatalog.message("screen_tcc_lost") ?? "")
+                    : L("CGPreflightScreenCaptureAccess()（未授权时引擎启动即退出、录不到任何内容）",
+                        "CGPreflightScreenCaptureAccess() (without it the engine exits instantly, capturing nothing)"),
                 action: .grant(
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")))
             let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
@@ -822,6 +837,74 @@ final class IngestModel: ObservableObject {
     }
 }
 
+/// Classified engine-death row (audit 2.3): one plain sentence + ONE
+/// on-the-spot action. The npm first-run download renders as calm progress
+/// (spinner, secondary color) — it is NOT an error and must not look like one.
+struct EngineDiagnosisRow: View {
+    let diag: EngineDiagnosis
+    @ObservedObject private var i18n = LanguageStore.shared
+
+    init(diag: EngineDiagnosis) {
+        self.diag = diag
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                if diag.failureId == "engine_npm_download" {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(FailureCatalog.message(diag.failureId) ?? diag.failureId)
+                    .font(.system(size: 11))
+                    .foregroundColor(diag.failureId == "engine_npm_download"
+                                     ? .secondary : .orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                actionButton
+            }
+            if !diag.logTail.isEmpty {
+                // engine_crashed: the last real engine lines, verbatim —
+                // honesty over prettiness (raw text is never replaced).
+                Text(diag.logTail)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(6)
+                    .textSelection(.enabled)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Button(L("查看引擎日志", "View engine log")) {
+                    NSWorkspace.shared.activateFileViewerSelecting(
+                        [URL(fileURLWithPath: RecordingController.engineLogPath)])
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    /// On the recording page the engine_dead/engine_crashed action is a
+    /// direct restart (FailureCatalog's engine_dead deep-link would point
+    /// right back here).
+    @ViewBuilder private var actionButton: some View {
+        switch diag.failureId {
+        case "engine_dead", "engine_crashed":
+            Button(L("重启引擎", "Restart engine")) {
+                Analytics.log("failure_action", fields: ["id": diag.failureId])
+                RecordingController.shared.restartEngine()
+            }
+            .controlSize(.small)
+        default:
+            if let label = FailureCatalog.actionLabel(diag.failureId) {
+                Button(label) {
+                    FailureCatalog.perform(diag.failureId)
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+}
+
 struct IngestView: View {
     @StateObject private var model = IngestModel()
     @ObservedObject private var rec = RecordingController.shared
@@ -877,7 +960,42 @@ struct IngestView: View {
                     .controlSize(.small)
                     Spacer()
                 }
-                if !rec.engineRunning && rec.mode != "off"
+                if !rec.selfHealNote.isEmpty {
+                    // consent-race self-heal just fired (audit 2.2)
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text(rec.selfHealNote)
+                            .font(.system(size: 11))
+                            .foregroundColor(.green)
+                    }
+                }
+                if rec.mode != "off" && rec.tccLost {
+                    // TCC-loss banner (audit 9.2): prominent but calm — names
+                    // the real cause so the user doesn't blame themselves.
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.shield")
+                                .foregroundColor(.orange)
+                            Text(FailureCatalog.message("screen_tcc_lost") ?? "")
+                                .font(.system(size: 12, weight: .medium))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text(L("macOS 按应用签名识别授权；系统更新或重装应用会改变签名，旧授权就静默失效——不是你操作错了。重新授权后录制会自动恢复。",
+                               "macOS ties this permission to the app's signature; an OS update or reinstall changes it, so the old grant silently stops working — nothing you did wrong. Recording resumes automatically once re-granted."))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(L("去授权", "Grant…")) {
+                            FailureCatalog.perform("screen_tcc_lost")
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else if !rec.engineRunning && rec.mode != "off"
                     && !RecordingController.hasScreenPermission() {
                     HStack(spacing: 8) {
                         Text(L("原因：macOS 还没把「屏幕录制」权限授给本 App（授权一次即可，之后开 App 自动录制）。",
@@ -889,6 +1007,8 @@ struct IngestView: View {
                         }
                         .controlSize(.small)
                     }
+                } else if rec.mode != "off", let diag = rec.diagnosis {
+                    EngineDiagnosisRow(diag: diag)
                 }
                 Text(L("菜单栏面板右上角的录制按钮可随时切换。",
                        "The recording button at the top-right of the menu-bar panel can switch modes anytime."))
