@@ -68,6 +68,10 @@ approved 的需求：
 
 ## 5. macOS 通知（actd）
 
+> **v0.14 追记**：本节的 `osascript` 发送机制已被 **§28 的 notify_queue 中继**
+> 取代（通知由 App 以自身身份发出，osascript display-notification 路径已整体
+> 移除）。触发时机与文案约定不变，仍以本节为准。
+
 状态跃迁时用 `osascript -e 'display notification ...'`：
 - 新 card_sent（雷达发现新需求）→ "有新需求待审批：<title>"
 - executing → done → "任务完成：<title>"

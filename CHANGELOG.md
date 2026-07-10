@@ -21,17 +21,136 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.14.0] - 2026-07-10
+
+The novice-friendliness release: a guided setup wizard, one-click repair on
+every failure, in-app Q&A, fully in-app Slack/Gmail/iMessage setup, and a
+`.pkg` that ends with a *live* product — plus the first self-improvement
+loops (weekly digest, daily usage insights) and Windows/Linux porting
+groundwork. Standard: the happy path never requires YAML, Terminal, or docs.
+
+### Added
+
+- Six-step first-run **setup wizard**: language, AI-engine detection with
+  paste-and-verify API key, permissions, screen-only recording consent,
+  Obsidian vault picker (reads the Obsidian registry), and a live
+  health-check finale with fix buttons and a menu-bar "I live here" bubble;
+  re-runnable anytime from Settings
+  ([`128d400`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/128d400))
+- **AI Doctor** (`docs/CONTRACT.md` §25): a failure-classification catalog
+  shared by python and the app, one-click in-app repair buttons on every
+  banner that used to print raw `launchctl` commands, auto-run diagnostics,
+  a real cron Full-Disk-Access probe, and a **Fix with AI** button that opens
+  Terminal on an interactive claude session pre-loaded with a scrubbed
+  diagnostic bundle
+  ([`0527f4d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/0527f4d))
+- **In-app Q&A "问问助手 / Ask"** (§27): ask anything about the product;
+  answers are grounded in the docs and this Mac's real state via one
+  tool-less headless claude call, with history, feedback, and honest
+  disclosure of what is sent where
+  ([`d522624`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/d522624))
+- **Claude Code session import** (§22): scan recent local sessions, preview
+  with waiting-on-you badges, and import selected work as proposal cards —
+  no more empty board on day one
+  ([`c52bcc4`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/c52bcc4))
+- **In-app update check** (§26): daily ETag-cached GitHub releases query, a
+  low-key menu line and About-page download row, Settings toggle
+  ([`0154430`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/0154430))
+- **Slack & Gmail fully in-app** (Settings): copy-manifest button, token
+  paste verified via `auth.test` with identity autofill, channel and people
+  pickers; Gmail guided app-password card with in-UI address field —
+  `config.yaml` is gone from both happy paths
+  ([`202d1f5`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/202d1f5))
+- **Weekly digest** (§24): a "what you worked on this week" recap card plus
+  2-3 automation-suggestion proposals mined from the week's ingest
+  ([`2193ced`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/2193ced))
+- **Usage-insights loop**: a GitHub Action aggregates telemetry into one
+  pinned issue (aggregates only), with optional Claude analysis; runs daily
+  and skips no-change days
+  ([`82c79e9`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/82c79e9),
+  [`aee705c`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/aee705c))
+- **Install lifecycle**: the `.pkg` now ends with a *live* product — launchd
+  agents loaded, the app launched, `state/install_report.json` written
+  (§23); launch-at-login defaults on; a real `uninstall.sh` (with
+  `--dry-run` and `--purge`) plus an About-page uninstall entry; the release
+  notes spell out the unsigned-pkg right-click-Open steps
+  ([`785979b`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/785979b),
+  [`e02cd1f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/e02cd1f),
+  [`501adc5`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/501adc5),
+  [`ac539d1`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ac539d1))
+- **Recording robustness**: the engine restarts itself the moment Screen
+  Recording permission lands, engine death is diagnosed in plain language
+  (including the "npm is downloading screenpipe, 1-3 minutes" first-run
+  state), and a lost TCC grant after a macOS update is detected with a calm
+  re-grant flow
+  ([`a6a3b06`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/a6a3b06))
+- **Windows/Linux porting groundwork**: an OS seam for service control and
+  notifications, `docs/PORTING.md` with a component-by-component map, an
+  ubuntu CI lane keeping the core genuinely portable, and a README platform
+  matrix
+  ([`f4c346d`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/f4c346d),
+  [`f31cb2b`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/f31cb2b))
+
 ### Changed
 
-- System notifications from the python daemons now display under the
-  "Zelin's AI Assistant" identity and icon: they are relayed through
-  `state/notify_queue/` and posted by the menu-bar app
-  (`docs/CONTRACT.md` §28). The old osascript / Script Editor path is gone
-  entirely — native notifications require the app to be running (it
-  auto-starts at login, so this is the normal state; phone mirrors are
-  unaffected). Bursts are capped at 5 banners per pass with a single
-  "+N more" summary, backlog older than 10 minutes is silently dropped,
-  and clicking a relayed notification opens the main window.
+- Kanban lane renamed: 待审批 → **提案** / "Needs approval" → "Proposals"
+  ([`6dfe56f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/6dfe56f))
+- Settings now **persist on change** with diff-writes (unrelated saves can no
+  longer clobber `config.yaml` values), credentials are **verified on save**
+  (Slack `auth.test`, Gmail IMAP probe, spaces stripped), and the task
+  working folder has a picker with auto-create instead of a dead placeholder
+  ([`6dfe56f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/6dfe56f))
+- One **"Obsidian Vault 位置"** field replaces the four pipeline-directory
+  fields (they derive automatically; `config.yaml` overrides remain for
+  experts), and the global-hotkey Settings group is gone
+  ([`fa92120`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/fa92120))
+- System notifications now display under the **"Zelin's AI Assistant"
+  identity** (§28): relayed through `state/notify_queue/` and posted by the
+  app; the osascript / Script Editor path is gone entirely, so native
+  notifications require the running app (it auto-starts at login; phone
+  mirrors unaffected); bursts cap at 5 with a "+N more" summary, backlog
+  older than 10 minutes is dropped, clicking opens the main window
+  ([`591705f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/591705f),
+  [`76bae6f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/76bae6f))
+- Every headless-claude call site resolves the **claude binary the login
+  shell uses** (install-time PATH pinning, runtime `execution.claude_bin`
+  pin, doctor check for duplicate/outdated installations, and a classified
+  plain-language dispatch-failure reason) — fixes dispatches failing with
+  `unknown option '--bg'` when an old npm-global claude shadowed the real one
+  ([`997485c`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/997485c))
+- Telemetry quality: the version stamp is applied at the **writer level** on
+  both sides, action events carry ok/fail outcomes, and a `merge_apply`
+  outcome event makes failed merge applies visible
+  ([`dd7ca03`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/dd7ca03));
+  consent and collection-level copy now state exactly what is sent where,
+  and the privacy egress inventory covers every channel including the weekly
+  digest, Ask, and Fix-with-AI
+  ([`151661a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/151661a))
+
+### Fixed
+
+- Meeting action-items **backfill storm**: an unconfigured install could
+  back-process months of historical notes in one evening into a placeholder
+  directory with one notification each; fixed with a placeholder-path guard,
+  notification coalescing, and a whole-pass radar reentry lock
+  ([`aa8e8d1`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/aa8e8d1),
+  [`026d83f`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/026d83f))
+- Linux CI lane healed: shellcheck SC2086, uninstall dry-run portability,
+  swiftc type-check timeout
+  ([`93de626`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/93de626))
+
+### Removed
+
+- The **manager pack** meeting action-items feature: unconfigurable in
+  practice (a placeholder degenerated into matching nearly every note) and
+  too narrow to be universal; the concept returns as a per-person
+  commitments ledger
+  ([#23](https://github.com/Wan-ZL/zelin-ai-assistant/issues/23)).
+  `features.manager_pack` is now ignored
+  ([`b26f188`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/b26f188),
+  [`e7a5816`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/e7a5816))
 
 ## [0.13.0] - 2026-07-09
 
@@ -267,7 +386,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.10.3...v0.11.0
