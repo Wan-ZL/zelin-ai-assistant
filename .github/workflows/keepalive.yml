@@ -1,0 +1,41 @@
+# Free-tier Supabase projects are paused after ~1 week without API activity.
+# This ping keeps the maintainer's telemetry project awake without depending
+# on any personal machine. Forks: this is a no-op unless you configure the
+# two repository secrets below for your own Supabase project.
+#   SUPABASE_KEEPALIVE_URL — https://<project-ref>.supabase.co
+#   SUPABASE_KEEPALIVE_KEY — the project's publishable (anon) API key
+# Note: GitHub disables scheduled workflows after ~60 days without repo
+# activity; any commit re-enables them.
+name: Supabase keepalive
+
+on:
+  schedule:
+    - cron: "17 6 */3 * *" # every 3 days, 06:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping REST endpoint
+        env:
+          URL: ${{ secrets.SUPABASE_KEEPALIVE_URL }}
+          KEY: ${{ secrets.SUPABASE_KEEPALIVE_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "keepalive secrets not configured — skipping"
+            exit 0
+          fi
+          # RLS denies anon reads on this table, but the filtered query still
+          # reaches Postgres, which is what counts as activity. Anything 2xx
+          # (200 + empty array) means the project is awake.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/analytics_events?select=id&limit=1")
+          echo "HTTP $code"
+          case "$code" in
+            2*) exit 0 ;;
+            *) exit 1 ;;
+          esac
