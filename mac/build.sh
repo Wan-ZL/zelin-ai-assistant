@@ -77,8 +77,7 @@ fi
 echo "==> Compiling $SRC_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
 swiftc -O "$SRC_DIR"/*.swift -o "$BIN" \
-    -framework AppKit -framework SwiftUI -framework Foundation \
-    -framework Carbon
+    -framework AppKit -framework SwiftUI -framework Foundation
 echo "    built binary: $BIN"
 
 # --- compile framegrab helper (§13: video → evenly spaced JPEG frames) ---

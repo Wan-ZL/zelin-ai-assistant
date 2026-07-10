@@ -1,10 +1,9 @@
-// Recording.swift — ScreenpipeRecipe / RecordingController（录制引擎）/ HotKeyCenter（全局热键）
+// Recording.swift — ScreenpipeRecipe / RecordingController（录制引擎）
 // Mechanically split from main.swift — zero logic changes.
 
 import AppKit
 import SwiftUI
 import Foundation
-import Carbon.HIToolbox  // RegisterEventHotKey (global hotkey, no TCC)
 
 // MARK: - Screenpipe launch recipe (tuning verbatim from the Automator applet —
 // SHARED contract; + sensitive-app exclusion, P1-9)
@@ -240,83 +239,8 @@ final class RecordingController: ObservableObject {
     }
 }
 
-// MARK: - Global hotkey (item 2) — Carbon RegisterEventHotKey
-//
-// No TCC permission needed; works for an LSUIElement app. Preference lives in
-// UserDefaults ("hotkeyEnabled"/"hotkeyPreset") — a pure local UI pref, kept
-// OUT of settings_overrides.json (that file is a pipeline contract).
-// Default ⌥Space: ⌃⌥Space is the system "select next input source" default on
-// multi-IME setups (Zelin types Chinese) and would silently shadow us.
-
-@MainActor
-final class HotKeyCenter: ObservableObject {
-    static let shared = HotKeyCenter()
-
-    struct Preset {
-        let id: String
-        let keyCode: UInt32
-        let carbonMods: UInt32
-        let label: String   // pure symbols — no L() needed
-    }
-
-    static let presets: [Preset] = [
-        Preset(id: "opt-space", keyCode: UInt32(kVK_Space),
-               carbonMods: UInt32(optionKey), label: "⌥ Space"),
-        Preset(id: "ctrl-opt-space", keyCode: UInt32(kVK_Space),
-               carbonMods: UInt32(controlKey | optionKey), label: "⌃⌥ Space"),
-        Preset(id: "ctrl-shift-space", keyCode: UInt32(kVK_Space),
-               carbonMods: UInt32(controlKey | shiftKey), label: "⌃⇧ Space"),
-        Preset(id: "cmd-shift-space", keyCode: UInt32(kVK_Space),
-               carbonMods: UInt32(cmdKey | shiftKey), label: "⌘⇧ Space"),
-    ]
-
-    static func preset(for id: String?) -> Preset {
-        presets.first { $0.id == id } ?? presets[0]
-    }
-
-    /// False when registration failed (e.g. another app owns the combo) —
-    /// the settings page shows a yellow hint to pick a different preset.
-    @Published private(set) var registered = false
-
-    private var hotKeyRef: EventHotKeyRef?
-    private var handlerInstalled = false
-
-    /// (Re-)register per current prefs. Failure is silent here (no dialogs);
-    /// state surfaces in 设置 → 快捷键.
-    func apply() {
-        if let ref = hotKeyRef {
-            UnregisterEventHotKey(ref)
-            hotKeyRef = nil
-        }
-        registered = false
-        guard Prefs.bool("hotkeyEnabled", default: true) else { return }
-        installHandlerIfNeeded()
-        let p = Self.preset(for: UserDefaults.standard.string(forKey: "hotkeyPreset"))
-        // four-char code 'ZAI1' = 0x5A414931
-        let hotKeyID = EventHotKeyID(signature: OSType(0x5A41_4931), id: 1)
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(p.keyCode, p.carbonMods, hotKeyID,
-                                         GetApplicationEventTarget(), 0, &ref)
-        if status == noErr, let ref {
-            hotKeyRef = ref
-            registered = true
-        }
-    }
-
-    private func installHandlerIfNeeded() {
-        guard !handlerInstalled else { return }
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                                      eventKind: UInt32(kEventHotKeyPressed))
-        // C callback — no captures; hop to the main actor per house style.
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ -> OSStatus in
-            Analytics.log("hotkey_activated")  // static call — no capture
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    (NSApp.delegate as? AppDelegate)?.hotKeyActivated()
-                }
-            }
-            return noErr
-        }, 1, &eventType, nil, nil)
-        handlerInstalled = true
-    }
-}
+// v0.15 (owner decision): the Carbon global hotkey (HotKeyCenter, ⌥Space) is
+// gone — with its settings UI removed there was no way to see registration
+// failures or turn it off, and an invisible always-on global shortcut is
+// worse than none. Quick capture stays: menu-bar icon click, ⌘L (View menu),
+// the kanban composer, and text dropped onto the icon.

@@ -492,7 +492,7 @@ cat <<'EOF'
  4. The menu-bar app is installed; launch it from /Applications (or ~/Applications).
     It reads state/dashboard.json every 5s and writes approvals to state/inbox/.
  5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」。
-    ⌥Space quick capture → approve ✅ → a reviewable draft arrives minutes later
+    menu-bar icon → quick capture → approve ✅ → a reviewable draft arrives minutes later
     (needs only claude + API key — no screenpipe/Obsidian material required).
  6. Anything off later? Re-run diagnostics anytime: bash install.sh --check
 ==============================================

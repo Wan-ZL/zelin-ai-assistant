@@ -124,7 +124,8 @@
 - **短 id vs 完整 UUID**：`claude agents --json` 两种都有，任何按 session join 的代码要双键索引。
 - **NSAlert/输入框在菜单栏 app**：编辑快捷键(⌘C/V/A)靠主菜单 Edit 分发，没有就全死；
   transient popover 检测不到外点（app 从不 active）→ 全局鼠标监听；Return/Shift+Return 要
-  IME-safe（hasMarkedText() 防线）；⌃⌥Space 和输入法冲突，默认热键用 ⌥Space。
+  IME-safe（hasMarkedText() 防线）；全局热键与输入法/他 App 冲突且无法自察，v0.15 起已整体移除
+  （快速捕获走菜单栏图标 / ⌘L）。
 - **麦克风**：Info.plist 缺 NSMicrophoneUsageDescription = 进程被掐死且不弹任何提示。
 - **git 合并验证**：ff-only 失败时 "Aborting" 走 stderr，管道会骗人——**合并后必 `git log -1`
   验 HEAD 真的动了**。`grep -c` 数到 0 退出码是 1，会短路 `&&` 链。
@@ -150,7 +151,7 @@
 ## 5. 当前状态快照（交接时点）
 
 - 版本 v0.11.0（版本号真源 `act/__init__.py`）。全链路实测可用：录屏→ingest→wiki、雷达→卡片、批准→执行→验收、
-  快速捕获（popover + 看板列顶多行 composer + ⌥Space）、回收站、双语。
+  快速捕获（popover + 看板列顶多行 composer + ⌘L；v0.15 移除了 ⌥Space 全局热键）、回收站、双语。
 - 已知小债：① TaskRow 用 accent 颜色识别"已验收"列（宜改显式参数）；② queued 灰卡上的
   停止按钮可点（合语义但视觉待观察）；③ ~~ingest 导出脚本硬编码 unprocessed 路径，
   未接 config 的 obsidian_unprocessed~~（已修，P1-6：ingest 脚本经

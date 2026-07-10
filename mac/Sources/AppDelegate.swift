@@ -90,10 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        // item 2: global hotkey (default ⌥Space) — registration failure is
-        // silent here; status shows in 设置 → 快捷键.
-        HotKeyCenter.shared.apply()
-
         // item 1: Shift+Return = newline in the SwiftUI capture fields (their
         // backing NSTextView is the window's field editor; isFieldEditor also
         // rules out the NSAlert comment editor, which has its own delegate).
@@ -249,29 +245,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    /// Item 2: global hotkey — toggle the quick-capture popover; fall back to
-    /// the main window when the menu-bar icon is hidden. Unlike the icon
-    /// click, the hotkey may arrive while another app is active, so activate
-    /// first to make sure keyboard focus really lands in the capture field.
-    func hotKeyActivated() {
-        guard statusItem?.button != nil else {
-            openMainWindow(nil)   // MainWindowController.show activates itself
-            return
-        }
-        if popover.isShown {
-            popover.performClose(nil)   // toggle semantics
-            return
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        showPopover(source: "hotkey")
-    }
-
     /// Open the popover on the status item and install the outside-click +
-    /// Esc monitors. Shared by the icon click and the global hotkey (item 2).
+    /// Esc monitors.
     /// 契约F: every successful show logs popover_open{source}; the source
-    /// vocabulary is click|hotkey|menu|reopen. menu/reopen are reserved — no
-    /// menu item opens the popover today, and a Dock/Finder reopen goes to the
-    /// main window (applicationShouldHandleReopen), not here.
+    /// vocabulary is click|hotkey|menu|reopen. hotkey retired in v0.15 (the
+    /// Carbon global hotkey was removed with its settings UI); menu/reopen
+    /// are reserved — no menu item opens the popover today, and a Dock/Finder
+    /// reopen goes to the main window (applicationShouldHandleReopen).
     private func showPopover(source: String) {
         guard let button = statusItem?.button else { return }
         Analytics.log("popover_open", fields: ["source": source])
@@ -817,7 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 }
 
 // item 7c: drop text onto the menu-bar icon = quick capture (mouse-side
-// complement of the global hotkey). A transparent overlay on the status
+// complement of ⌘L). A transparent overlay on the status
 // button accepts string drags; every mouse event is forwarded to the button
 // underneath so left/right-click behavior stays exactly as before. Feedback
 // comes for free: submitCapture plants the grey spinner card (beginCapture).

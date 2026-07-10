@@ -25,26 +25,18 @@ struct SettingsFormView: View {
     // 契约3: deps「去设置」sets nav.pendingAnchor = "credentials" then switches
     // here — observe it so the credentials group can flash on arrival.
     @ObservedObject private var nav = MainNav.shared
-    // item 2: global hotkey — UserDefaults only (NOT settings_overrides.json:
-    // that file is a pipeline contract; this is a pure local UI pref).
-    @ObservedObject private var hotkey = HotKeyCenter.shared
-    @State private var hotkeyEnabled = true
-    @State private var hotkeyPreset = "opt-space"
     // v0.10.3 契约一: 卡片排序 — UserDefaults only (pure UI pref, NOT
     // settings_overrides.json). "newest" | "oldest" | "deadline".
     @State private var cardSortOrder = "newest"
-    @State private var obsidianRaw = ""
-    // v0.10.3 契约二: the other three Obsidian pipeline dirs — default derived
-    // from the vault root (= raw's parent), editable, saved to
-    // settings_overrides (obsidian_unprocessed / _change_summary / _wiki).
-    @State private var obsidianUnprocessed = ""
-    @State private var obsidianChangeSummary = ""
-    @State private var obsidianWiki = ""
-    // raw value the currently displayed derived dirs were derived from — when
-    // raw moves, fields still tracking the derivation re-point (config.py
-    // semantics), explicitly overridden ones stay.
-    @State private var lastRawForDerivation = ""
-    @State private var missingObsidian: Set<String> = []
+    // v0.15 owner decision: ONE vault-root field. The four pipeline-dir keys
+    // (obsidian_raw/_unprocessed/_change_summary/_wiki) remain valid in
+    // config.yaml/overrides for experts; the UI edits the vault root and the
+    // dirs derive automatically (config.py rule, via ObsidianVaultSetup).
+    @State private var vaultRoot = ""
+    @State private var vaultMissing = false
+    // a pipeline-dir key hand-customized away from the derivation — surfaced
+    // as a note so the single field never misrepresents the effective config.
+    @State private var obsidianCustomized = false
     @State private var gmailAddress = ""
     @State private var showMenuBarIcon = true
     // 通用 · launch at login (SMAppService; state read from the system, not stored)
@@ -100,7 +92,6 @@ struct SettingsFormView: View {
 
             generalGroup
             menuBarGroup
-            hotkeyGroup
             recordingGroup
             obsidianGroup
             credentialsGroup
@@ -250,52 +241,6 @@ struct SettingsFormView: View {
         .font(.system(size: 12))
     }
 
-    private var hotkeyGroup: some View {
-        group(L("快捷键", "Hotkey")) {
-            Toggle(L("全局热键唤出快速捕获（图标隐藏时打开主窗口）",
-                     "Global hotkey opens quick capture (main window when the icon is hidden)"),
-                   isOn: Binding(
-                get: { hotkeyEnabled },
-                set: { v in
-                    hotkeyEnabled = v
-                    UserDefaults.standard.set(v, forKey: "hotkeyEnabled")
-                    HotKeyCenter.shared.apply()
-                }))
-            HStack {
-                Text(L("按键", "Shortcut"))
-                    .font(.system(size: 12))
-                    .frame(width: 220, alignment: .leading)
-                Picker("", selection: Binding(
-                    get: { hotkeyPreset },
-                    set: { v in
-                        hotkeyPreset = v
-                        UserDefaults.standard.set(v, forKey: "hotkeyPreset")
-                        HotKeyCenter.shared.apply()
-                    })) {
-                    ForEach(HotKeyCenter.presets, id: \.id) { p in
-                        Text(p.label).tag(p.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 160)
-                .disabled(!hotkeyEnabled)
-                Spacer()
-            }
-            if hotkeyEnabled && !hotkey.registered {
-                Text(L("⚠︎ 注册失败——该快捷键可能被其他 App 占用，换一个预设试试。",
-                       "⚠︎ Registration failed — this shortcut may be taken by another app; try a different preset."))
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-            }
-            Text(L("默认 ⌥Space。⌃⌥Space 常被系统「选择上一个输入源」占用（多输入法环境慎选）。",
-                   "Default ⌥Space. ⌃⌥Space is often taken by the system input-source switcher (avoid with multiple input methods)."))
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-        }
-        .toggleStyle(.switch)
-        .font(.system(size: 12))
-    }
-
     private var recordingGroup: some View {
         group(L("录制", "Recording")) {
             HStack {
@@ -320,27 +265,55 @@ struct SettingsFormView: View {
         }
     }
 
-    // v0.10.3 契约二: the four Obsidian pipeline dirs, in pipeline order.
-    // v0.14: Choose… picker + existence validation per row (audit 7.5).
+    // v0.15 (owner decision): ONE vault-root field replaces the four
+    // per-directory rows. Picking a vault creates the standard pipeline dirs
+    // and diff-writes obsidian_raw via ObsidianVaultSetup (shared with the
+    // setup wizard's step 5 — same derivation as config.py).
     private var obsidianGroup: some View {
-        group(L("Obsidian 目录（按管线顺序）", "Obsidian directories (pipeline order)")) {
-            obsidianRow("1 - unprocessed",
-                        desc: L("截图/录音导出落点", "Screenshots / recording exports land here"),
-                        path: $obsidianUnprocessed, key: "obsidian_unprocessed")
-            Divider()
-            obsidianRow("2 - raw",
-                        desc: L("雷达扫描源", "Radar scan source"),
-                        path: $obsidianRaw, key: "obsidian_raw")
-            Divider()
-            obsidianRow("3 - change-summary",
-                        desc: L("ingest 变更日志", "Ingest change logs"),
-                        path: $obsidianChangeSummary, key: "obsidian_change_summary")
-            Divider()
-            obsidianRow("4 - wiki",
-                        desc: L("加工后的知识库", "Processed knowledge base"),
-                        path: $obsidianWiki, key: "obsidian_wiki")
-            Text(L("通常只需设置 2 - raw，其余三个自动跟随（vault 根 = 2 - raw 的上级目录）；改动即时保存。",
-                   "Usually only 2 - raw needs setting; the other three follow automatically (vault root = 2 - raw's parent). Edits save immediately."))
+        group(L("笔记库", "Notes vault")) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L("Obsidian Vault 位置", "Obsidian Vault location"))
+                        .font(.system(size: 12, weight: .medium))
+                    Text(L("笔记存这里，雷达也从这里发现待办",
+                           "Notes live here; the radar scans it for asks"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 220, alignment: .leading)
+                TextField("", text: $vaultRoot)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .focused($focusedField, equals: "obsidian_vault")
+                    .onSubmit { commitField("obsidian_vault") }
+                Button(L("选择…", "Choose…")) {
+                    pickFolder(current: vaultRoot) { p in
+                        vaultRoot = p
+                        commitVaultRoot()
+                    }
+                }
+                .controlSize(.small)
+                Button(L("打开", "Open")) { openInFinder(vaultRoot) }
+                    .controlSize(.small)
+            }
+            if vaultMissing {
+                HStack(spacing: 8) {
+                    Text(L("⚠︎ 笔记库目录还不存在——点「选择…」挑一个，或一键创建。",
+                           "⚠︎ The vault folder doesn't exist yet — pick one with Choose…, or create it now."))
+                        .font(.system(size: 10))
+                        .foregroundColor(.red)
+                    Button(L("创建", "Create")) { commitVaultRoot() }
+                        .controlSize(.small)
+                }
+            }
+            if obsidianCustomized {
+                Text(L("⚙︎ 部分管线目录已在 config.yaml 自定义，不跟随这里的 vault 根目录——以 config.yaml 为准。",
+                       "⚙︎ Some pipeline folders are customized in config.yaml and don't follow this vault root — config.yaml wins."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+            }
+            Text(L("vault 内自动使用并创建 4 个标准子目录：1 - unprocessed（截图/录音落点）· 2 - raw（雷达扫描源）· 3 - change-summary（变更日志）· 4 - wiki（知识库）。默认 ~/Documents/Obsidian Vault。",
+                   "Four standard subfolders inside the vault are used (and created) automatically: 1 - unprocessed (capture exports) · 2 - raw (radar scan source) · 3 - change-summary (change logs) · 4 - wiki (knowledge base). Default: ~/Documents/Obsidian Vault."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
@@ -572,8 +545,8 @@ struct SettingsFormView: View {
     // open the file on request (copied from the example first when missing).
     private var footerRow: some View {
         HStack(spacing: 10) {
-            Text(L("高级选项（轮询间隔、digest 时间、不录制的 App 等）在 config.yaml 中",
-                   "Advanced options (poll intervals, digest schedule, ignored apps, …) live in config.yaml"))
+            Text(L("高级选项（轮询间隔、digest 时间、不录制的 App、单独指定 4 个 Obsidian 管线目录等）在 config.yaml 中",
+                   "Advanced options (poll intervals, digest schedule, ignored apps, per-directory Obsidian pipeline paths, …) live in config.yaml"))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Button(L("打开 config.yaml", "Open config.yaml")) { openConfigYaml() }
@@ -651,53 +624,6 @@ struct SettingsFormView: View {
         }
     }
 
-    /// v0.10.3 契约二 + v0.14 (audit 7.5): one Obsidian pipeline-directory row —
-    /// folder name + purpose blurb, editable path (commits on Enter/blur),
-    /// Choose… picker, Open-in-Finder, and an existence warning + create button.
-    @ViewBuilder
-    private func obsidianRow(_ name: String, desc: String, path: Binding<String>,
-                             key: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(name)
-                        .font(.system(size: 12, weight: .medium))
-                    Text(desc)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .frame(width: 220, alignment: .leading)
-                TextField("", text: path)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
-                    .focused($focusedField, equals: key)
-                    .onSubmit { commitField(key) }
-                Button(L("选择…", "Choose…")) {
-                    pickFolder(current: path.wrappedValue) { p in
-                        path.wrappedValue = p
-                        persistObsidianDirs()
-                    }
-                }
-                .controlSize(.small)
-                Button(L("打开", "Open")) { openInFinder(path.wrappedValue) }
-                    .controlSize(.small)
-            }
-            if missingObsidian.contains(key) {
-                HStack(spacing: 8) {
-                    Text(L("⚠︎ 目录不存在——点「选择…」挑一个，或新建它。",
-                           "⚠︎ Folder doesn't exist — pick one with Choose…, or create it."))
-                        .font(.system(size: 10))
-                        .foregroundColor(.red)
-                    Button(L("创建文件夹", "Create folder")) {
-                        createDir(path.wrappedValue)
-                        refreshObsidianExists()
-                    }
-                    .controlSize(.small)
-                }
-            }
-        }
-    }
-
     /// Open a (possibly tilde-prefixed) directory in Finder.
     private func openInFinder(_ path: String) {
         let p = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
@@ -732,17 +658,6 @@ struct SettingsFormView: View {
         guard !p.isEmpty else { return true }
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: p, isDirectory: &isDir) && isDir.boolValue
-    }
-
-    private func createDir(_ path: String) {
-        let p = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
-        guard !p.isEmpty else { return }
-        do {
-            try FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
-            noteSaved()
-        } catch {
-            noteError(L("创建目录失败：", "Couldn't create the folder: ") + error.localizedDescription)
-        }
     }
 
     /// v0.10.3 契约二: default pipeline dir = vault root (2 - raw's parent;
@@ -811,25 +726,13 @@ struct SettingsFormView: View {
             if let ck = configKey, let v = SettingsIO.configScalar(ck), !v.isEmpty { return v }
             return fallback
         }
-        obsidianRaw = str("obsidian_raw", configKey: "obsidian_raw",
-                          fallback: "~/Documents/Obsidian Vault/2 - raw")
-        // v0.10.3 契约二: override → config.yaml → derived from the raw dir
-        // just loaded (vault root + standard name, same rule as config.py).
-        obsidianUnprocessed = str(
-            "obsidian_unprocessed", configKey: "obsidian_unprocessed",
-            fallback: Self.derivedObsidianDir(raw: obsidianRaw, name: "1 - unprocessed"))
-        obsidianChangeSummary = str(
-            "obsidian_change_summary", configKey: "obsidian_change_summary",
-            fallback: Self.derivedObsidianDir(raw: obsidianRaw, name: "3 - change-summary"))
-        obsidianWiki = str(
-            "obsidian_wiki", configKey: "obsidian_wiki",
-            fallback: Self.derivedObsidianDir(raw: obsidianRaw, name: "4 - wiki"))
-        lastRawForDerivation = obsidianRaw
-        refreshObsidianExists()
+        // v0.15: vault root = the effective obsidian_raw's parent (override →
+        // config.yaml → built-in default); customized per-dir keys flagged.
+        loadVault(effectiveRaw: str("obsidian_raw", configKey: "obsidian_raw",
+                                    fallback: "~/Documents/Obsidian Vault/2 - raw"),
+                  overrides: ov)
         gmailAddress = str("gmail_address", configKey: "address", fallback: "")
         showMenuBarIcon = Prefs.bool("showMenuBarIcon", default: true)
-        hotkeyEnabled = Prefs.bool("hotkeyEnabled", default: true)
-        hotkeyPreset = UserDefaults.standard.string(forKey: "hotkeyPreset") ?? "opt-space"
         cardSortOrder = Prefs.cardSortOrder
         launchAtLogin = SMAppService.mainApp.status == .enabled
         func num(_ key: String, configKey: String?, fallback: String) -> String {
@@ -1019,8 +922,8 @@ struct SettingsFormView: View {
     private func commitField(_ key: String?) {
         guard loaded, let key else { return }
         switch key {
-        case "obsidian_raw", "obsidian_unprocessed", "obsidian_change_summary", "obsidian_wiki":
-            persistObsidianDirs()
+        case "obsidian_vault":
+            commitVaultRoot()
         case "gmail_address":
             commitGmailAddress()
         case "show_cost":
@@ -1038,78 +941,63 @@ struct SettingsFormView: View {
         }
     }
 
-    /// v0.10.3 契约二 semantics, per-change: raw diff-written vs config.yaml;
-    /// an emptied derived field snaps back to its derived default; a value
-    /// equal to that default DROPS the override key (config.py derivation
-    /// stays live, so moving raw later re-points them); anything else is
-    /// written explicitly. Fields still tracking the derivation re-point when
-    /// raw moves.
-    private func persistObsidianDirs() {
-        var merged = SettingsIO.readOverrides()
-        let rawConfigLayer = SettingsIO.configScalar("obsidian_raw")
-            .flatMap { $0.isEmpty ? nil : $0 } ?? "~/Documents/Obsidian Vault/2 - raw"
-        var raw = obsidianRaw.trimmingCharacters(in: .whitespaces)
-        if raw.isEmpty {
-            raw = rawConfigLayer
-            obsidianRaw = raw
-        }
-        if raw == rawConfigLayer {
-            merged.removeValue(forKey: "obsidian_raw")
-        } else {
-            merged["obsidian_raw"] = raw
-        }
-        // re-point fields that were tracking the OLD raw's derivation
-        let oldRaw = lastRawForDerivation
-        if oldRaw != raw {
-            for (state, name) in [($obsidianUnprocessed, "1 - unprocessed"),
-                                  ($obsidianChangeSummary, "3 - change-summary"),
-                                  ($obsidianWiki, "4 - wiki")] {
-                if state.wrappedValue.trimmingCharacters(in: .whitespaces)
-                    == Self.derivedObsidianDir(raw: oldRaw, name: name) {
-                    state.wrappedValue = Self.derivedObsidianDir(raw: raw, name: name)
-                }
-            }
-            lastRawForDerivation = raw
-        }
-        let unprocessedDefault = Self.derivedObsidianDir(raw: raw, name: "1 - unprocessed")
-        let changeSummaryDefault = Self.derivedObsidianDir(raw: raw, name: "3 - change-summary")
-        let wikiDefault = Self.derivedObsidianDir(raw: raw, name: "4 - wiki")
-        if obsidianUnprocessed.trimmingCharacters(in: .whitespaces).isEmpty {
-            obsidianUnprocessed = unprocessedDefault
-        }
-        if obsidianChangeSummary.trimmingCharacters(in: .whitespaces).isEmpty {
-            obsidianChangeSummary = changeSummaryDefault
-        }
-        if obsidianWiki.trimmingCharacters(in: .whitespaces).isEmpty {
-            obsidianWiki = wikiDefault
-        }
-        for (key, def, value) in [
-            ("obsidian_unprocessed", unprocessedDefault, obsidianUnprocessed),
-            ("obsidian_change_summary", changeSummaryDefault, obsidianChangeSummary),
-            ("obsidian_wiki", wikiDefault, obsidianWiki),
-        ] {
-            let v = value.trimmingCharacters(in: .whitespaces)
-            if v == def {
-                merged.removeValue(forKey: key)
-            } else {
-                merged[key] = v
+    /// v0.15: derive the display state from the effective config. Vault root
+    /// = effective obsidian_raw's parent; any per-dir key (still honored from
+    /// config.yaml/overrides) that doesn't match the derivation — or a raw
+    /// dir not named "2 - raw" — marks the config as hand-customized.
+    private func loadVault(effectiveRaw: String, overrides ov: [String: Any]) {
+        func expand(_ s: String) -> String { (s as NSString).expandingTildeInPath }
+        vaultRoot = (effectiveRaw as NSString).deletingLastPathComponent
+        var customized = (effectiveRaw as NSString).lastPathComponent != "2 - raw"
+        for (key, name) in [("obsidian_unprocessed", "1 - unprocessed"),
+                            ("obsidian_change_summary", "3 - change-summary"),
+                            ("obsidian_wiki", "4 - wiki")] {
+            let v = (ov[key] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? SettingsIO.configScalar(key)
+            if let v, expand(v) != expand(Self.derivedObsidianDir(raw: effectiveRaw, name: name)) {
+                customized = true
             }
         }
-        writeMerged(merged)
-        refreshObsidianExists()
+        obsidianCustomized = customized
+        refreshVaultExists()
     }
 
-    private func refreshObsidianExists() {
-        var missing: Set<String> = []
-        for (key, value) in [("obsidian_raw", obsidianRaw),
-                             ("obsidian_unprocessed", obsidianUnprocessed),
-                             ("obsidian_change_summary", obsidianChangeSummary),
-                             ("obsidian_wiki", obsidianWiki)] {
-            if !value.trimmingCharacters(in: .whitespaces).isEmpty && !dirExists(value) {
-                missing.insert(key)
-            }
+    private func refreshVaultExists() {
+        vaultMissing = !dirExists(vaultRoot)
+            || (!obsidianCustomized && !ObsidianVaultSetup.pipelineDirNames
+                .allSatisfy { dirExists(vaultRoot + "/" + $0) })
+    }
+
+    /// Commit the vault root (Enter / focus-out / Choose… / Create): create
+    /// the standard pipeline dirs and diff-write obsidian_raw through
+    /// ObsidianVaultSetup — the same helper wizard step 5 uses (no fork).
+    private func commitVaultRoot() {
+        var v = vaultRoot.trimmingCharacters(in: .whitespaces)
+        if v.isEmpty {
+            // emptied field snaps back to the config layer's vault root
+            let rawLayer = SettingsIO.configScalar("obsidian_raw")
+                .flatMap { $0.isEmpty ? nil : $0 } ?? "~/Documents/Obsidian Vault/2 - raw"
+            v = (rawLayer as NSString).deletingLastPathComponent
         }
-        missingObsidian = missing
+        vaultRoot = v
+        do {
+            try ObsidianVaultSetup.apply(root: v)
+            noteSaved()
+            Analytics.log("mw_settings_save")
+        } catch {
+            noteError(L("保存失败（磁盘或权限问题），这次改动没写入——再改一次即可重试：",
+                        "Save failed (disk or permissions); this change was not written — change it again to retry: ")
+                + error.localizedDescription)
+        }
+        loadVault(effectiveRaw: effectiveRawDir(), overrides: SettingsIO.readOverrides())
+    }
+
+    /// Effective obsidian_raw for display (override → config.yaml → default).
+    private func effectiveRawDir() -> String {
+        let ov = SettingsIO.readOverrides()
+        if let v = ov["obsidian_raw"] as? String, !v.isEmpty { return v }
+        if let v = SettingsIO.configScalar("obsidian_raw"), !v.isEmpty { return v }
+        return "~/Documents/Obsidian Vault/2 - raw"
     }
 
     private func commitGmailAddress() {

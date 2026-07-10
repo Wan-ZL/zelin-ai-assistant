@@ -56,7 +56,7 @@ flowchart TB
         INBOX["state/inbox/*.json<br/>(one file per user action)"]
 
         subgraph APP["Mac app (SwiftUI menu bar)"]
-            UI["approval cards · kanban ·<br/>quick capture (⌥Space)"]
+            UI["approval cards · kanban ·<br/>quick capture"]
         end
 
         ACTD --> DASH
@@ -113,7 +113,7 @@ On first launch the app opens a bilingual **permissions & setup page**: one scre
 - **Tiered approvals** — T0 auto / T1 one-click / T2 typed confirmation. Outbound messages, merges, and resource deletion are never automatic. Cost is shown above $5; above $50 the card escalates to T2.
 - **Quality gate** — runnable check, read-only tests, fresh-context diff review, risk tiering, and revertible draft-PR delivery.
 - **Two delivery modes** — `repo` (feature branch / draft PR) for code; `chat` (a paste-ready `FINAL DRAFT`) for writing tasks, so a one-paragraph reply never forces a git branch.
-- **Quick capture** — press ⌥Space anywhere, type a thought; an LLM triages it against the registry: new card, related to an existing one, or ignore. <!-- screenshot slot: docs/assets/t2-card.png -->
+- **Quick capture** — click the menu-bar icon (or ⌘L in the main window), type a thought; an LLM triages it against the registry: new card, related to an existing one, or ignore. <!-- screenshot slot: docs/assets/t2-card.png -->
 - **Responsive UI** — every click gives feedback within one frame (optimistic echo), kanban main window, recycle bin with inverse operations instead of a fake undo, bilingual UI (English / 中文). <!-- screenshot slot: docs/assets/review-final-draft.png -->
 - **Phone companion via iMessage or Slack** — approve/reject/accept cards, quick-capture thoughts, and 👍-tapback approvals from your iPhone using the iMessage "message yourself" thread (`phone_channel: imessage`, no third-party account needed — [docs/IMESSAGE_SETUP.md](docs/IMESSAGE_SETUP.md)); a Slack self-DM channel is available too.
 - **Local-first content** — the registry, dashboard, and all captured content stay on your Mac; only anonymous usage events are uploaded by default (see Telemetry below).

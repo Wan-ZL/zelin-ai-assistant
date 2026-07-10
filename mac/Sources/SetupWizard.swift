@@ -226,6 +226,48 @@ enum ObsidianVaults {
     }
 }
 
+// MARK: - Vault apply (shared: wizard step 5 + 设置 → Obsidian Vault 位置)
+
+enum ObsidianVaultSetup {
+    /// The four standard pipeline dirs inside the vault root, pipeline order —
+    /// same derivation as config.py `_derive_obsidian_dirs`.
+    static let pipelineDirNames = ["1 - unprocessed", "2 - raw",
+                                   "3 - change-summary", "4 - wiki"]
+
+    /// Point the pipeline at a vault root: create the four standard dirs
+    /// (idempotent, best-effort), then diff-write the "obsidian_raw" override —
+    /// written ONLY when the choice differs from the current effective value,
+    /// and DROPPED when it equals the config layer (config.yaml → built-in
+    /// default) so config.yaml stays live (§15.3). Returns true when the
+    /// effective raw dir actually changed (analytics hook).
+    @discardableResult
+    static func apply(root: String) throws -> Bool {
+        let r = root.trimmingCharacters(in: .whitespaces)
+        guard !r.isEmpty else { return false }
+        let rootExpanded = (r as NSString).expandingTildeInPath
+        for name in pipelineDirNames {
+            try? FileManager.default.createDirectory(
+                atPath: rootExpanded + "/" + name, withIntermediateDirectories: true)
+        }
+        let raw = r + "/2 - raw"
+        let current = SettingsIO.resolvedPath(
+            overrideKey: "obsidian_raw", configKey: "obsidian_raw",
+            fallback: "~/Documents/Obsidian Vault/2 - raw")
+        guard (raw as NSString).expandingTildeInPath != current else { return false }
+        let configLayer = SettingsIO.configScalar("obsidian_raw")
+            .flatMap { $0.isEmpty ? nil : $0 } ?? "~/Documents/Obsidian Vault/2 - raw"
+        var merged = SettingsIO.readOverrides()
+        if (raw as NSString).expandingTildeInPath
+            == (configLayer as NSString).expandingTildeInPath {
+            merged.removeValue(forKey: "obsidian_raw")
+        } else {
+            merged["obsidian_raw"] = raw
+        }
+        try SettingsIO.writeOverrides(merged)
+        return true
+    }
+}
+
 // MARK: - actd launchd agent (render + load, mirrors install.sh step 5)
 
 enum ActdAgent {
@@ -826,8 +868,8 @@ struct SetupWizardView: View {
                      subtitle: customRoot,
                      badge: nil,
                      chooser: true)
-            Text(L("会在所选位置自动创建 4 个标准子目录(1 - unprocessed / 2 - raw / 3 - change-summary / 4 - wiki);之后可在 设置 → Obsidian 目录 修改。",
-                   "Four standard subfolders are created inside (1 - unprocessed / 2 - raw / 3 - change-summary / 4 - wiki); changeable later in Settings → Obsidian directories."))
+            Text(L("会在所选位置自动创建 4 个标准子目录(1 - unprocessed / 2 - raw / 3 - change-summary / 4 - wiki);之后可在 设置 → Obsidian Vault 位置 修改。",
+                   "Four standard subfolders are created inside (1 - unprocessed / 2 - raw / 3 - change-summary / 4 - wiki); changeable later in Settings → Obsidian Vault location."))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -906,27 +948,16 @@ struct SetupWizardView: View {
         }
     }
 
-    /// Write the "obsidian_raw" override ONLY when the choice differs from the
-    /// current effective value (diff-write: an unchanged wizard run never
-    /// clobbers a config.yaml-level setting), then create the pipeline dirs.
+    /// Create the pipeline dirs and diff-write the "obsidian_raw" override
+    /// (an unchanged wizard run never clobbers a config.yaml-level setting) —
+    /// ObsidianVaultSetup is shared with 设置 → Obsidian Vault 位置.
     private func applyVaultChoice() {
         let root = vaultRoot.trimmingCharacters(in: .whitespaces)
         guard !root.isEmpty else { return }
-        let raw = root + "/2 - raw"
-        let current = SettingsIO.resolvedPath(
-            overrideKey: "obsidian_raw", configKey: "obsidian_raw",
-            fallback: "~/Documents/Obsidian Vault/2 - raw")
-        if raw != current {
-            var merged = SettingsIO.readOverrides()
-            merged["obsidian_raw"] = raw
-            try? SettingsIO.writeOverrides(merged)
+        let changed = (try? ObsidianVaultSetup.apply(root: root)) ?? false
+        if changed {
             Analytics.log("wizard_vault_set", fields: [
                 "obsidian": registeredVaults.contains(root)])
-        }
-        // idempotent: the standard pipeline dirs, same derivation as config.py
-        for name in ["1 - unprocessed", "2 - raw", "3 - change-summary", "4 - wiki"] {
-            try? FileManager.default.createDirectory(
-                atPath: root + "/" + name, withIntermediateDirectories: true)
         }
     }
 
@@ -1113,8 +1144,8 @@ struct HelloBubbleView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L("我在这里 👆", "I live up here 👆"))
                 .font(.system(size: 15, weight: .semibold))
-            Text(L("助手住在菜单栏。点图标看提案卡片;按 ⌥Space 随时捕获一句话任务。",
-                   "The assistant lives in the menu bar. Click the icon for proposal cards; press ⌥Space anytime to capture a task."))
+            Text(L("助手住在菜单栏。点图标看提案卡片,顶部输入框随时捕获一句话任务。",
+                   "The assistant lives in the menu bar. Click the icon for proposal cards; the capture field on top takes a one-line task anytime."))
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

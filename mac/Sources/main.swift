@@ -2,7 +2,7 @@
 //
 // Compile (build.sh compiles ALL of mac/Sources/*.swift in one module):
 //   swiftc -O Sources/*.swift -o ZelinAIEngineer \
-//     -framework AppKit -framework SwiftUI -framework Foundation -framework Carbon
+//     -framework AppKit -framework SwiftUI -framework Foundation
 //
 // Runtime: reads  AIASSISTANT_HOME/state/dashboard.json  (read-only, every 5s)
 //          writes AIASSISTANT_HOME/state/inbox/<uuid>.json (approve/reject/comment)

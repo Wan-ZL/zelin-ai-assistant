@@ -1,6 +1,6 @@
 // Composer.swift — KanbanComposer（待审批列顶的常驻折叠捕获行）
 //
-// 折叠态：一行「＋ 一句话，AI 来研究并提案…」；点击或 ⌥Space/⌘L 路径发出的
+// 折叠态：一行「＋ 一句话，AI 来研究并提案…」；点击或 ⌘L 路径发出的
 // .focusCaptureField 通知就地展开为多行输入区（自动增高，上限约 5 行）。
 // Return 发送 / Shift+Return 换行 —— IME-safe：拼音组合期间 Return 在输入法内
 // commit 候选、到不了 onSubmit；Shift+Return 由 AppDelegate 的 app-lifetime
@@ -37,7 +37,7 @@ struct KanbanComposer: View {
                 collapsedRow
             }
         }
-        // ⌥Space/⌘L route: AppDelegate posts .focusCaptureField (popover open →
+        // ⌘L route: AppDelegate posts .focusCaptureField (popover open →
         // the popover field takes it; otherwise main window + this composer).
         // The notification is global: when the popover is open its field owns
         // the caret — this composer must NOT also expand invisibly, steal

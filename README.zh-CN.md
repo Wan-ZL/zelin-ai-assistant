@@ -56,7 +56,7 @@ flowchart TB
         INBOX["state/inbox/*.json<br/>(一个用户操作一个文件)"]
 
         subgraph APP["Mac app(SwiftUI 菜单栏)"]
-            UI["审批卡片 · 看板 ·<br/>快速捕获(⌥Space)"]
+            UI["审批卡片 · 看板 ·<br/>快速捕获"]
         end
 
         ACTD --> DASH
@@ -113,7 +113,7 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 - **分级审批**——T0 自动 / T1 一键 / T2 文字确认;对外发消息、merge、删资源永不自动。成本 >$5 显示,>$50 升 T2。
 - **质量门**——可运行检查 + 只读测试 + fresh-context 审 diff + 风险分级 + 可回滚的 draft PR 交付。
 - **两种交付方式**——代码走 `repo`(feature 分支 / draft PR);文书走 `chat`(可直接粘贴的 `FINAL DRAFT`),一段回复稿不会被逼着建分支。
-- **快速捕获**——任意界面 ⌥Space 随手记一句;LLM 对照注册表三选一:新卡 / 关联已有 / 忽略。<!-- screenshot slot: docs/assets/t2-card.png -->
+- **快速捕获**——点菜单栏图标(主窗口内 ⌘L)随手记一句;LLM 对照注册表三选一:新卡 / 关联已有 / 忽略。<!-- screenshot slot: docs/assets/t2-card.png -->
 - **即时反馈的 UI**——所有点击 ≤1 帧内有视觉反馈(乐观回显),看板主窗口,回收站配逆操作而非假 undo,双语界面(English / 中文)。<!-- screenshot slot: docs/assets/review-final-draft.png -->
 - **手机联动(iMessage 或 Slack)**——用 iMessage「给自己发消息」线程在 iPhone 上审批/打回/验收卡片、快速捕获想法、👍 tapback 一键批准(`phone_channel: imessage`,零第三方账号依赖,见 [docs/IMESSAGE_SETUP.md](docs/IMESSAGE_SETUP.md));也支持 Slack self-DM 通道。
 - **内容本地优先**——注册表、dashboard、所有采集内容全部留在本机;默认只上传匿名使用事件(见下方「匿名使用统计」)。

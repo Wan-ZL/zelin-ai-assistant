@@ -14,7 +14,7 @@
 5. First launch is blocked by Gatekeeper (unsigned build): right-click the app in /Applications → Open. On macOS Sequoia+, also System Settings → Privacy & Security → "Open Anyway". Once open, the app shows a first-run **permissions & setup page**: answer the single screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings → Recording), grant Screen Recording / Notifications from the live checklist, and adjust the anonymous-usage-stats checkbox. Reopen it anytime via the app menu → **Permissions Checkup**.
 6. Menu-bar app → Settings → paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth; the key is stored as a `0600` file in `config/secrets/`).
 7. Grant permissions in System Settings → Privacy & Security: **Screen Recording** and **Microphone** for the app; **Full Disk Access** for `/usr/sbin/cron` (click "+", press ⌘⇧G, type `/usr/sbin/cron`).
-8. Expected state: the popover header says the dashboard was generated **≤10 s ago**. Then try the "first card in 5 minutes" exercise below (⌥Space → type a small task → ✅ → a reviewable draft arrives minutes later).
+8. Expected state: the popover header says the dashboard was generated **≤10 s ago**. Then try the "first card in 5 minutes" exercise below (click the menu-bar icon → type a small task → ✅ → a reviewable draft arrives minutes later).
 9. Anything off at any step: `bash install.sh --check` (= `python3 -m act.doctor`) re-validates the whole chain — deps, key resolution, launchd agents actually alive, cron lines, dashboard freshness — one `ok/warn/FAIL` line per check with the exact fix.
 
 No API key yet? `python3 scripts/demo_seed.py /tmp/assistant-demo` previews the entire UI with fictional data — see [docs/DEMO.md](DEMO.md).
@@ -135,7 +135,7 @@ app 未签名,首次启动被 Gatekeeper 拦:在 `/Applications` 里**右键 →
 
 radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先走快速捕获**——只要 claude CLI + API key + actd 在跑,就能体验完整闭环。
 
-1. 按 **⌥Space**(默认全局热键)呼出快速捕获,或用 popover / 看板列顶的输入框。
+1. 点**菜单栏图标**呼出快速捕获 popover(主窗口内也可按 ⌘L),或用看板列顶的输入框。
 2. 输入一个 starter task(可直接复制):
 
    > 在 ~/Projects/assistant-hello 新建一个小脚本:统计 ~/Downloads 里各扩展名的文件数,输出 markdown 表格,配一个单元测试。
