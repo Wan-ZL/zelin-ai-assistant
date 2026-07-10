@@ -37,7 +37,6 @@ struct SettingsFormView: View {
     // a pipeline-dir key hand-customized away from the derivation — surfaced
     // as a note so the single field never misrepresents the effective config.
     @State private var obsidianCustomized = false
-    @State private var gmailAddress = ""
     @State private var showMenuBarIcon = true
     // 通用 · launch at login (SMAppService; state read from the system, not stored)
     @State private var launchAtLogin = false
@@ -97,6 +96,12 @@ struct SettingsFormView: View {
             recordingGroup
             obsidianGroup
             credentialsGroup
+            // v0.14 Slack/Gmail 设置区 (CONTRACT §15): fully in-app channel
+            // setup — manifest copy + token verify + pickers / app-password
+            // guide + address + health. Self-contained sections in
+            // SettingsSlack.swift / SettingsGmail.swift.
+            SlackSettingsSection()
+            GmailSettingsSection()
             // v0.13: iPhone 联动 (iMessage phone channel, CONTRACT §13/§15) —
             // self-contained section (own state, immediate writes), lives in
             // SettingsIMessage.swift.
@@ -338,33 +343,23 @@ struct SettingsFormView: View {
         }
     }
 
+    // v0.14 Slack/Gmail 设置区: the Slack token and Gmail address/password
+    // moved into their own guided sections (SettingsSlack.swift /
+    // SettingsGmail.swift) right below — this group keeps the AI engine key
+    // (and the frozen "credentials" anchor deps/Doctor deep-link to).
     private var credentialsGroup: some View {
         group(L("凭证（存本机 config/secrets/，保存后自动验证）",
                 "Credentials (stored locally in config/secrets/; verified automatically on save)")) {
-            labeledField(L("Gmail 地址", "Gmail address"), $gmailAddress, key: "gmail_address")
-            Divider()
-            CredentialRowView(
-                title: "Slack token",
-                secretName: SecretsIO.slackFile,
-                legacyPath: "~/Desktop/Keys/slack-user-token.txt",
-                links: [(L("申请页", "Apply"), "https://api.slack.com/apps"),
-                        (L("指南", "Guide"), "docs/SLACK_SETUP.md")],
-                kind: .slack)
-            Divider()
-            CredentialRowView(
-                title: L("Gmail 应用密码", "Gmail app password"),
-                secretName: SecretsIO.gmailFile,
-                legacyPath: "~/Desktop/Keys/gmail-app-password.txt",
-                links: [(L("生成密码", "Generate"), "https://myaccount.google.com/apppasswords"),
-                        (L("指南", "Guide"), "docs/GMAIL_SETUP.md")],
-                kind: .gmail)
-            Divider()
             CredentialRowView(
                 title: "Anthropic API key",
                 secretName: SecretsIO.anthropicFile,
                 legacyPath: "~/.config/anthropic-key.txt",
                 links: [(L("控制台", "Console"), "https://console.anthropic.com/settings/keys")],
                 kind: .anthropic)
+            Text(L("Slack token 与 Gmail 密码在下面各自的接入区里粘贴（同样存本机、保存即验证）。",
+                   "The Slack token and Gmail password live in their own sections below (same local storage, same verify-on-save)."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
         }
         // 契约3 frozen anchor — MainWindowView scrollTo()s here from deps
         .id("credentials")
@@ -750,7 +745,6 @@ struct SettingsFormView: View {
         loadVault(effectiveRaw: str("obsidian_raw", configKey: "obsidian_raw",
                                     fallback: "~/Documents/Obsidian Vault/2 - raw"),
                   overrides: ov)
-        gmailAddress = str("gmail_address", configKey: "address", fallback: "")
         showMenuBarIcon = Prefs.bool("showMenuBarIcon", default: true)
         cardSortOrder = Prefs.cardSortOrder
         launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -946,8 +940,6 @@ struct SettingsFormView: View {
         switch key {
         case "obsidian_vault":
             commitVaultRoot()
-        case "gmail_address":
-            commitGmailAddress()
         case "show_cost":
             commitShowCost()
         case "confirm_cost":
@@ -1020,13 +1012,6 @@ struct SettingsFormView: View {
         if let v = ov["obsidian_raw"] as? String, !v.isEmpty { return v }
         if let v = SettingsIO.configScalar("obsidian_raw"), !v.isEmpty { return v }
         return "~/Documents/Obsidian Vault/2 - raw"
-    }
-
-    private func commitGmailAddress() {
-        let v = gmailAddress.trimmingCharacters(in: .whitespaces)
-        gmailAddress = v
-        let configLayer = SettingsIO.configScalar("address") ?? ""
-        persistOverride("gmail_address", v, dropWhen: v.isEmpty || v == configLayer)
     }
 
     private func commitTermsFile() {
@@ -1360,8 +1345,23 @@ struct CredentialRowView: View {
             return L("token 无效——到 api.slack.com/apps → OAuth & Permissions 重新生成 User OAuth Token 再粘贴（\(raw)）",
                      "The token is invalid — regenerate the User OAuth Token at api.slack.com/apps → OAuth & Permissions and paste it again (\(raw))")
         case .gmail:
-            return L("应用密码或地址不对——点「生成密码」重新生成一个应用密码再粘贴（\(raw)）",
-                     "Wrong app password or address — click Generate for a fresh app password and paste it (\(raw))")
+            // Workspace-admin telltales (docs/GMAIL_SETUP.md caveat, surfaced
+            // as a plain sentence right where the failure happens): Google
+            // rejects the LOGIN with these strings when the domain admin has
+            // disabled IMAP / forces web login (app passwords included).
+            let lower = raw.lowercased()
+            if lower.contains("disabled for your domain")
+                || lower.contains("web login required")
+                || lower.contains("imap access is disabled") {
+                return L("你的公司 Google Workspace 禁用了这条登录路（\(raw)）——此路不通，不用再试；你读邮件的画面仍会经屏幕录制链进入系统。",
+                         "Your company's Google Workspace has disabled this login path (\(raw)) — it's a dead end, don't keep trying; mail you read on screen still reaches the system via the recording pipeline.")
+            }
+            if lower.contains("application-specific password required") {
+                return L("粘贴的是账号普通密码——这里需要的是应用专用密码：点「打开 Google 应用专用密码页」生成一个再粘贴（\(raw)）",
+                         "That's your normal account password — this needs an app password: click \"Open Google app passwords\" to generate one and paste it (\(raw))")
+            }
+            return L("应用密码或地址不对——重新生成一个应用专用密码再粘贴（\(raw)）",
+                     "Wrong app password or address — generate a fresh app password and paste it (\(raw))")
         case .anthropic:
             return L("key 无效——到 console.anthropic.com 重新生成，回来粘贴保存（\(raw)）",
                      "The key is invalid — regenerate it at console.anthropic.com, then paste and save (\(raw))")

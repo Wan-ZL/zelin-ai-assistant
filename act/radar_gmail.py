@@ -66,15 +66,38 @@ def get_app_password(cfg: Optional[config.Config] = None) -> Optional[str]:
 
 def connect(cfg: config.Config, password: str) -> Optional[imaplib.IMAP4_SSL]:
     """IMAP4_SSL login + readonly INBOX select. Never raises — None on failure."""
+    return connect_ex(cfg, password)[0]
+
+
+def connect_ex(cfg: config.Config, password: str
+               ) -> tuple[Optional[imaplib.IMAP4_SSL], Optional[str]]:
+    """Like :func:`connect` but classifies the failure (Settings status row).
+
+    Returns (conn, None) on success, else (None, reason) with reason one of
+    ``no_address`` / ``auth_failed`` / ``connect_failed`` — the health
+    skip_reason vocabulary the app maps to a next action (audit 6.5: one
+    opaque connect_failed used to cover wrong password, missing address AND
+    network trouble). Never raises.
+    """
     if not cfg.gmail_address:
-        return None
+        return None, "no_address"
     try:
         conn = imaplib.IMAP4_SSL(IMAP_HOST)
+    except OSError:
+        return None, "connect_failed"
+    try:
         conn.login(cfg.gmail_address, password)
+    except imaplib.IMAP4.error:
+        # LOGIN rejected — bad app password / address (or the Workspace admin
+        # disabled IMAP/app passwords; the Settings row spells that out)
+        return None, "auth_failed"
+    except OSError:
+        return None, "connect_failed"
+    try:
         conn.select("INBOX", readonly=True)   # belt: even flags stay untouched
-        return conn
+        return conn, None
     except (imaplib.IMAP4.error, OSError):
-        return None
+        return None, "connect_failed"
 
 
 # --------------------------------------------------------------------------- #
@@ -336,9 +359,9 @@ def scan(cfg: Optional[config.Config] = None,
 
     last_uid = _load_last_uid()
     if fetcher is None:
-        conn = connect(cfg, password)
+        conn, reason = connect_ex(cfg, password)
         if conn is None:
-            _note_skip("connect_failed")
+            _note_skip(reason or "connect_failed")
             return 0
         try:
             messages, newest_uid = fetch_new_messages(conn, last_uid)
@@ -405,10 +428,11 @@ def _check(cfg: config.Config) -> int:
     if not cfg.gmail_address:
         print("no gmail address in config (sources.gmail.address)")
         return 1
-    conn = connect(cfg, password)
+    conn, reason = connect_ex(cfg, password)
     if conn is None:
         print(json.dumps({"ok": False, "address": cfg.gmail_address,
-                          "error": "login/select failed"}, ensure_ascii=False))
+                          "error": reason or "login/select failed"},
+                         ensure_ascii=False))
         return 1
     try:
         conn.logout()

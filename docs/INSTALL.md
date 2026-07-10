@@ -9,7 +9,7 @@
 
 1. Prerequisites: macOS 14+, Xcode / Swift 6.x toolchain, [Claude Code CLI](https://claude.com/claude-code) + an Anthropic API key, Python 3.9+ with PyYAML, Node.js LTS (`npx` — the capture engine runs via `npx screenpipe`). Optional: Obsidian, `gh` CLI.
 2. `git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant` (several defaults resolve this path; if you clone elsewhere, export `AIASSISTANT_HOME=<path>` everywhere the pipeline runs).
-3. `cd ~/Projects/zelin-ai-assistant && cp config.example.yaml config.yaml`, then edit the Obsidian vault path and watched people.
+3. `cd ~/Projects/zelin-ai-assistant && cp config.example.yaml config.yaml`. Editing it is optional — the vault path, Slack channels / watched people, and Gmail address are all configurable later in the app's Settings (no YAML needed).
 4. `bash install.sh` — dependency checks, builds + installs the app, loads launchd agents, installs the cron chain. Idempotent; safe to re-run.
 5. First launch is blocked by Gatekeeper (unsigned build): right-click the app in /Applications → Open. On macOS Sequoia+, also System Settings → Privacy & Security → "Open Anyway". Once open, the app shows a first-run **permissions & setup page**: answer the single screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings → Recording), grant Screen Recording / Notifications from the live checklist, and adjust the anonymous-usage-stats checkbox. Reopen it anytime via the app menu → **Permissions Checkup**.
 6. Menu-bar app → Settings → paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth; the key is stored as a `0600` file in `config/secrets/`).
@@ -89,7 +89,7 @@ cd ~/Projects/zelin-ai-assistant
 cp config.example.yaml config.yaml
 ```
 
-打开 `config.yaml` 至少检查:`sources.obsidian_raw`(你的 vault 路径)、`sources.watch_people`。没有 Obsidian / Slack / Gmail 也能先跑——对应雷达会静默待机,快速捕获链路不受影响。
+改不改都行:`sources.obsidian_raw`(vault 路径)、`sources.watch_people`、Slack 频道、Gmail 地址之后都能在 App 的 **设置** 里图形化配置(写 overrides,优先级最高),不需要编辑任何文件。没有 Obsidian / Slack / Gmail 也能先跑——对应雷达会静默待机,快速捕获链路不受影响。
 
 > ✅ **预期状态**:`config.yaml` 存在且 `python3 -c "import yaml; yaml.safe_load(open('config.yaml'))"` 不报错。
 

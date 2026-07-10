@@ -178,6 +178,17 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 
 **v0.13 补充（iPhone 联动 / iMessage 设置区，add-only）**：设置页新增「iPhone 联动（iMessage）」区（`mac/Sources/SettingsIMessage.swift`，改动即时生效、不走表单的保存按钮），写两个 §15.3 overrides 键：`phone_channel`（该区只写 `"imessage"` 或 `"none"`）与 `imessage_self_handle`（str，E.164 手机号或 iCloud 邮箱）——两键自 v0.12 起即在 `act/lib/config.py` `_OVERRIDE_FIELDS` 允许列表内，语义见 §13 通道可插拔。App 侧附带职责（不新增数据契约字段）：①开关 = 按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.imessageradar.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`/`unload`（先写 overrides 再 load，保证 RunAtLoad 首轮就能读到 `phone_channel: imessage`）；②状态行读 `state/radar_health.json` 的 `imessage` 条目（契约 E 同形，radar_imessage 每轮写入）+ `launchctl print gui/<uid>/…`，「立即测试一轮」= `launchctl kickstart`（Full Disk Access 的真值只能来自 launchd 语境下 python 的真实运行结果——TCC 按 responsible process 判权限，app 内直接探测会失真）；③「发送测试消息」经 runtime python（CONTRACT §19 指针）调 `act.radar_imessage` 的同一 osascript 发送路径。
 
+**v0.14 补充（Slack / Gmail 设置区，add-only）**：设置页新增「Slack 接入」「Gmail 接入」两区（`mac/Sources/SettingsSlack.swift` / `SettingsGmail.swift`，改动即时生效），happy path 全程不碰 config.yaml/docs。overrides 允许列表（`act/lib/config.py`）新增 §15.3 键：
+
+- `owner_slack_user_id`（str，语义 = config.yaml `owner.slack_user_id`）——保存 Slack token 时 auth.test 返回的 `user_id` **自动写入**（身份零手填）。
+- `slack_channels`（list，语义 = `sources.slack_channels`；条目为 `{"id": "C…", "name": "…"}`（name 可省）或纯 id 字符串；**空列表 = 明确不看任何频道**）。
+- `watch_people`（list[str]，语义 = `sources.watch_people`）。
+- 两个 list 键同样接受 `sources.` 点号前缀形式。**写入语义（写入方约束）**：App 只在用户实际改动勾选时写整个列表——App 无法可靠解析 YAML 嵌套列表，v0.14 的 diff-write 在这两个键上退化为 change-write；键缺省时 config.yaml 照常生效（读取方语义不变）。
+- **App 侧附带职责**（同 v0.13 iMessage 区先例，不新增管线契约字段）：区内开关按 install.sh step 5 占位符规则渲染 + `launchctl load`/`unload` `com.zelin.aiassistant.slackradar` / `com.zelin.aiassistant.gmailradar`；Slack 开关写 §16 的 `features.slack_radar`（语义不变），Gmail 开关写既有 `gmail_enabled` 键（**显式双向写**——App 读不到两层嵌套的 config 层，为保证 UI==生效值，true/false 都落键）。
+- **频道/成员目录**经 runtime python（§19 指针）`python3 -m act.lib.slack_setup --directory [--refresh]`（conversations.list/users.list 分页；缓存 `state/slack_directory.json`，TTL 1h——App 侧缓存文件，可随时删除，不属于管线契约；scope 缺失等错误按 §15 语言设置输出双语人话句）。
+- **App Manifest 真源** = `config/slack-app-manifest.json`（生成器 `act/lib/slack_setup.manifest_json`，tests/test_slack_setup.py 防漂移）。v0.14 起 scopes 增补 `channels:read` + `groups:read`（频道勾选器需要）——旧 app 需在 api.slack.com/apps 更新 manifest 后 Reinstall to Workspace。
+- Gmail 地址字段从「凭证」组移入 Gmail 区（override 键 `gmail_address` 不变）。radar_gmail 健康 `skip_reason` 词表增补 `no_address` / `auth_failed`（add-only；原 `connect_failed` 语义收窄为网络/其他连接问题）。
+
 **v0.14 补充（初始设置向导，add-only；不新增 pipeline 契约字段）**：首启界面从单页权限窗升级为多步「初始设置向导」（`mac/Sources/SetupWizard.swift`，步骤：欢迎+语言 → AI 引擎 → 系统权限 → 屏幕记录 consent → 笔记库 → 健康检查）。
 
 - **完成标记** = UserDefaults `setupWizardCompleted`（Bool）：缺失或非 Bool（损坏）→ 下次启动自动重开向导；只有向导结尾的「完成」按钮写 true。设置 → 通用 提供「重新运行初始设置」随时重开。

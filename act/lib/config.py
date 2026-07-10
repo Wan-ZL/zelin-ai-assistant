@@ -460,7 +460,34 @@ _OVERRIDE_FIELDS: dict = {
     "create_github_repo": bool,
     # §26: in-app update check toggle (App 设置「自动检查新版本」, diff-write).
     "updates_check_enabled": bool,
+    # v0.14 (§15.3 add-only, Slack in-app setup): auth.test auto-fills the
+    # owner identity — the user never types a Uxxxx id by hand.
+    "owner_slack_user_id": str,
 }
+
+# List-valued override keys (§15.3 add-only, Slack in-app setup) — the scalar
+# coercion table above can't express these. Shapes mirror config.yaml:
+#   slack_channels: [ {"id": "C…", "name": "…"} | "C…" ]   (name optional)
+#   watch_people:   [ "handle", … ]
+_OVERRIDE_LIST_FIELDS: tuple = ("slack_channels", "watch_people")
+
+
+def _clean_slack_channels(value: list) -> list:
+    out: list = []
+    for it in value:
+        if isinstance(it, dict) and it.get("id"):
+            entry: dict = {"id": str(it["id"])}
+            if it.get("name"):
+                entry["name"] = str(it["name"])
+            out.append(entry)
+        elif isinstance(it, str) and it.strip():
+            out.append(it.strip())
+    return out
+
+
+def _clean_watch_people(value: list) -> list:
+    return [str(v).strip() for v in value
+            if isinstance(v, (str, int)) and str(v).strip()]
 
 
 def _apply_settings_overrides(cfg: Config) -> None:
@@ -521,11 +548,22 @@ def _apply_settings_overrides(cfg: Config) -> None:
                 lvl = str(value).strip().lower()
                 if lvl in TELEMETRY_LEVELS:
                     cfg.telemetry_level = lvl
+            elif key == "slack_channels" and isinstance(value, list):
+                # §15.3 add-only (Slack in-app setup): the app's channel
+                # picker writes the whole list (entries {id,name} or bare id
+                # strings); an empty list is a deliberate "watch none".
+                cfg.slack_channels = _clean_slack_channels(value)
+            elif key == "watch_people" and isinstance(value, list):
+                cfg.watch_people = _clean_watch_people(value)
             elif key.startswith("sources."):
                 # dotted form mirroring config.yaml, e.g.
                 # {"sources.obsidian_wiki": "/path/to/4 - wiki"}
                 sub = key.split(".", 1)[1]
-                if sub in _OVERRIDE_FIELDS and value is not None:
+                if sub in _OVERRIDE_LIST_FIELDS and isinstance(value, list):
+                    setattr(cfg, sub,
+                            _clean_slack_channels(value) if sub == "slack_channels"
+                            else _clean_watch_people(value))
+                elif sub in _OVERRIDE_FIELDS and value is not None:
                     setattr(cfg, sub, _OVERRIDE_FIELDS[sub](value))
             elif key in _OVERRIDE_FIELDS and value is not None:
                 setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
