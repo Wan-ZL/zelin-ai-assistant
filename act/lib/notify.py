@@ -1,4 +1,4 @@
-"""macOS notifications + phone-channel mirror + transition classifiers (CONTRACT §5, §13).
+"""Native notifications + phone-channel mirror + transition classifiers (CONTRACT §5, §13).
 
 State transitions surfaced as native notifications:
   - new card_sent (radar found a new requirement)  -> "有新需求待审批：<title>"
@@ -22,8 +22,9 @@ v0.12 (§13, channel-pluggable): the mirror routes on config ``phone_channel``:
 from __future__ import annotations
 
 import re
-import subprocess
 from typing import Optional
+
+from act.lib import platform
 
 # self-DM channel id per token — resolved once per process (auth.test +
 # conversations.list are not free; notifications are frequent enough to cache).
@@ -35,29 +36,14 @@ _SELF_DM_CACHE: dict = {}
 # --------------------------------------------------------------------------- #
 def notify(title: str, body: str, subtitle: Optional[str] = None,
            req: Optional[str] = None) -> bool:
-    """Fire a macOS notification via osascript. Returns True on success.
+    """Fire a native notification via the OS seam (act/lib/platform.py).
 
     Never raises — a failed notification must not break the daemon loop.
     Also mirrors to the configured phone channel (§13) best-effort; the return
-    value reflects ONLY the osascript path (unchanged behavior). ``req`` (an
-    R-xxx id, optional) makes the mirrored copy reaction-approvable.
+    value reflects ONLY the native-notification path (unchanged behavior).
+    ``req`` (an R-xxx id, optional) makes the mirrored copy reaction-approvable.
     """
-    def esc(s: str) -> str:
-        return str(s).replace("\\", "\\\\").replace('"', '\\"')
-
-    script = f'display notification "{esc(body)}" with title "{esc(title)}"'
-    if subtitle:
-        script += f' subtitle "{esc(subtitle)}"'
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        ok = proc.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        ok = False
+    ok = platform.notify_user(title, body, subtitle)
 
     try:
         _phone_mirror(title, body, req=req)   # best-effort phone mirror (§13)

@@ -23,16 +23,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import os
 import stat
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import List, Optional
 
 from act import doctor
-from act.lib import config, failures, sanitize
+from act.lib import config, failures, platform, sanitize
 
 ISSUES_URL = "https://github.com/Wan-ZL/zelin-ai-assistant/issues/new"
 
@@ -178,7 +176,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         path = build_command_file(extra_context=extra, cfg=cfg)
         print(str(path))
         if args.open_it:
-            subprocess.run(["open", str(path)], check=False, timeout=15)
+            platform.open_path(path)
         return 0
     except Exception as exc:  # noqa: BLE001 - the escape hatch must not crash
         print(failures.pick(

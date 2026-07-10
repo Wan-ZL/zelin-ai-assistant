@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import radar_slack
-from act.lib import analytics, config, health
+from act.lib import analytics, config, failures, health, platform
 
 # §13 command surface — single source of truth lives in radar_slack.
 _CMD_RE = radar_slack._CMD_RE
@@ -403,6 +403,13 @@ def _scan(cfg, extractor, send_runner, db_path) -> int:
     if getattr(cfg, "phone_channel", "none") != "imessage":
         _note_skip("disabled")
         return 0
+    # This channel is darwin-only by nature (Messages.app + chat.db) — on any
+    # other OS the ENABLED channel skips with a classified reason instead of
+    # limping into misleading db_missing/no_self_handle territory. Tests that
+    # inject a fake chat.db via db_path stay cross-platform.
+    if db_path is None and not platform.is_darwin():
+        _note_skip("platform_unsupported")
+        return 0
     handle = str(getattr(cfg, "imessage_self_handle", None) or "").strip()
     if not handle:
         _note_skip("no_self_handle")
@@ -477,6 +484,15 @@ def _main(argv: Optional[list] = None) -> int:
     args = parser.parse_args(argv)
     cfg = config.load_config()
     if args.check:
+        if not platform.is_darwin():
+            print(failures.pick(
+                "iMessage 渠道只支持 macOS——它依赖 Messages.app 和 "
+                "~/Library/Messages/chat.db。这台机器请把 phone_channel 设为 "
+                "slack 或 none。",
+                "The iMessage channel is macOS-only — it needs Messages.app "
+                "and ~/Library/Messages/chat.db. On this machine set "
+                "phone_channel to slack or none."))
+            return 1
         pc = getattr(cfg, "phone_channel", "none")
         handle = str(getattr(cfg, "imessage_self_handle", None) or "").strip()
         print(f"phone_channel: {pc}")

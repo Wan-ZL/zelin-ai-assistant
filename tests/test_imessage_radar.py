@@ -27,6 +27,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
@@ -295,6 +296,17 @@ class IMessageRadarTestCase(unittest.TestCase):
                                 db_path=self.db_path.with_name("nope.db"))
         self.assertEqual(n, 0)
         self.assertEqual(self._health()["skip_reason"], "db_missing")
+        self.assertEqual(self.sender.sent, [])
+
+    def test_non_darwin_default_db_skips_platform_unsupported(self):
+        # PORTING.md: this channel is darwin-exclusive — off macOS an ENABLED
+        # channel must classify itself, not limp into db_missing. Only the
+        # default chat.db path is guarded; the injected-db tests above stay
+        # cross-platform.
+        with mock.patch("sys.platform", "linux"):
+            n = radar_imessage.scan(self.cfg, send_runner=self.sender)
+        self.assertEqual(n, 0)
+        self.assertEqual(self._health()["skip_reason"], "platform_unsupported")
         self.assertEqual(self.sender.sent, [])
 
     def test_db_locked_is_silent_noop(self):

@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, failures, secrets
+from act.lib import config, failures, platform, secrets
 
 OK = "ok"
 WARN = "warn"
@@ -80,7 +80,8 @@ def _run(cmd: List[str], env: Optional[dict] = None,
 
 
 def _launchctl_list() -> str:
-    return _run(["launchctl", "list"], timeout=10)[1]
+    # via the OS seam: "" off-macOS (the agents then honestly read unregistered)
+    return platform.service_list_text()
 
 
 def _crontab() -> str:
