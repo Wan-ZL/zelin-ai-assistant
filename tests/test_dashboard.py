@@ -276,5 +276,76 @@ class CompletedCapTestCase(unittest.TestCase):
         self.assertIsNone(dash["completed"][-1]["accepted_at"])
 
 
+class EmptySidNoGlobBindTestCase(unittest.TestCase):
+    """例4a regression: a card with NO session id must never glob-bind an
+    unrelated transcript.
+
+    Root cause (production, 2026-07): executor._transcript_info("") built
+    short="" and glob("*/*.jsonl") matched EVERY transcript, returning the
+    alphabetically-first one — on Zelin's disk an Obsidian-ingest session —
+    so completed cards without a session_id got a bogus
+    ``cd '/Users/zelin/Documents/Obsidian Vault' && claude --resume 008b…``
+    copy_cmd. Now: _transcript_info rejects empty/too-short sids and the
+    dashboard emits copy_cmd=None instead of guessing.
+    """
+
+    def setUp(self):
+        self.cfg = config.Config()
+        self.home = tempfile.mkdtemp(prefix="dash-home-")
+        patcher = mock.patch.dict(os.environ, {"HOME": self.home})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # plant an unrelated transcript that the old glob("*/*.jsonl") matched
+        proj = os.path.join(self.home, ".claude", "projects",
+                            "-Users-zelin-Documents-Obsidian-Vault")
+        os.makedirs(proj)
+        self.decoy_sid = "008b4c28-0000-0000-0000-000000000000"
+        with open(os.path.join(proj, f"{self.decoy_sid}.jsonl"), "w",
+                  encoding="utf-8") as fh:
+            fh.write('{"type": "user", "cwd": '
+                     '"/Users/zelin/Documents/Obsidian Vault"}\n')
+
+    def test_transcript_info_rejects_empty_and_short_sids(self):
+        from act import executor
+        for bad in ("", None, "ab", "sid", "feedc0d"):  # < 8-hex short segment
+            self.assertIsNone(executor._transcript_info(bad),
+                              f"sid {bad!r} must not bind a transcript")
+        # a real short id still resolves against the planted transcript
+        info = executor._transcript_info("008b4c28")
+        self.assertIsNotNone(info)
+        self.assertEqual(info[0], self.decoy_sid)
+
+    def test_delivered_card_without_session_id_gets_no_copy_cmd(self):
+        req = Requirement.from_dict({
+            "id": "R-400", "title": "没有 session 的已交付卡",
+            "status": "delivered", "execution": {},
+        })
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=self.cfg)
+        item = dash["completed"][0]
+        self.assertIsNone(item["copy_cmd"])
+
+    def test_review_card_without_session_id_gets_no_copy_cmd(self):
+        req = Requirement.from_dict({
+            "id": "R-401", "title": "没有 session 的待验收卡",
+            "status": "review", "execution": {},
+        })
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=self.cfg)
+        item = dash["review"][0]
+        self.assertIsNone(item["copy_cmd"])
+
+    def test_card_with_real_session_id_still_gets_resume_cmd(self):
+        req = Requirement.from_dict({
+            "id": "R-402", "title": "有 session 的已交付卡",
+            "status": "delivered",
+            "execution": {"session_id": self.decoy_sid},
+        })
+        dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=self.cfg)
+        item = dash["completed"][0]
+        self.assertEqual(
+            item["copy_cmd"],
+            "cd '/Users/zelin/Documents/Obsidian Vault' "
+            f"&& claude --resume {self.decoy_sid}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -68,7 +68,7 @@ python3 scripts/demo_seed.py /tmp/assistant-demo --scene approved
 1. **Popover**：点菜单栏图标——提案徽章数、快速捕获输入框、卡片折叠态一屏全有
    （scene `initial`）。
 2. **看板主窗口**：菜单栏右键 →「打开主窗口」→ 看板。五列
-   提案 / 运行中 / 待验收 / 欠账 / 完成 全部非空（scene `initial`）。
+   提案 / 运行中 / 待验收 / 备选 / 已验收 全部非空（scene `initial`）。
 3. **T2 卡展开**：R-102（inkweld demo 环境）点「展开详情 ▸」——$85 成本、
    需文字确认、disagreement、重复×3、🟢 新建 repo 一行全在。
 4. **待验收 + final draft**：R-110（周报）——chat 交付，展开可见完整双语周报草稿；

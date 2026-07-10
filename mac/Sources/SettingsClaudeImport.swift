@@ -31,6 +31,10 @@ final class ClaudeImportModel: ObservableObject {
         let gist: String
         let lastActivity: String
         let waiting: Bool
+        /// Soft gate: looks like an answered closed-loop Q&A. Shown (unchecked,
+        /// sorted last by the scanner) as an escape hatch — the heuristic has
+        /// false positives, and checking the box overrides it python-side.
+        let answered: Bool
     }
 
     @Published var candidates: [Candidate] = []
@@ -132,7 +136,8 @@ final class ClaudeImportModel: ObservableObject {
                 title: (d["title"] as? String) ?? "",
                 gist: (d["gist"] as? String) ?? "",
                 lastActivity: (d["last_activity"] as? String) ?? "",
-                waiting: (d["ended_waiting_on_user"] as? Bool) ?? false)
+                waiting: (d["ended_waiting_on_user"] as? Bool) ?? false,
+                answered: (d["answered"] as? Bool) ?? false)
         }
         return (true, "", cands)
     }
@@ -173,8 +178,8 @@ final class ClaudeImportModel: ObservableObject {
         candidates.removeAll { locallyImported.contains($0.sessionId) }
         selected = []
         importFailed = false
-        importStatus = L("已提交 \(ids.count) 条——后台服务几秒内会把它们变成看板卡片（等你回复的进「待审批」，其余进「欠账」）。",
-                         "Submitted \(ids.count) — the background service turns them into board cards within seconds (waiting-on-you ones go to Approvals, the rest to Debt).")
+        importStatus = L("已提交 \(ids.count) 条——后台服务几秒内会把它们变成看板卡片（等你回复的进「提案」，其余进「备选」）。",
+                         "Submitted \(ids.count) — the background service turns them into board cards within seconds (waiting-on-you ones go to Proposals, the rest to Backlog).")
         Analytics.log("mw_claude_import_submit", fields: ["n": ids.count])
     }
 }
@@ -307,6 +312,17 @@ struct ClaudeImportSettingsSection: View {
                             .padding(.vertical, 1)
                             .background(Color.orange.opacity(0.18))
                             .foregroundColor(.orange)
+                            .clipShape(Capsule())
+                    }
+                    if c.answered {
+                        // soft-gate badge: why the row sits at the bottom,
+                        // unchecked — checking it still imports (override)
+                        Text(L("像已答完的问答", "looks answered"))
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.14))
+                            .foregroundColor(.secondary)
                             .clipShape(Capsule())
                     }
                     if let rel = RelativeTime.since(c.lastActivity) {

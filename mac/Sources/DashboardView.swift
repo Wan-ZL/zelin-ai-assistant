@@ -379,11 +379,13 @@ struct DashboardView: View {
             }
         }
 
+        // 备选/Backlog: display rename of the debt lane (dashboard key `debt`
+        // and the store projection names stay — 纯展示层).
         if debtEchoes.isEmpty && debt.isEmpty {
-            CompactEmptySection(title: L("欠账 · debt", "Debt"),
-                                emptyText: L("无欠账", "No debt items"))
+            CompactEmptySection(title: L("备选 · backlog", "Backlog"),
+                                emptyText: L("暂无备选", "No backlog items"))
         } else {
-            SectionHeader(title: L("欠账 · debt", "Debt"),
+            SectionHeader(title: L("备选 · backlog", "Backlog"),
                           count: debt.count + debtEchoes.count)
             ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
             ForEach(debt, id: \.id) { d in

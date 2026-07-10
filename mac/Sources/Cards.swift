@@ -551,13 +551,14 @@ struct PendingEchoRow: View {
     }
 }
 
-// MARK: - NoticeRow — placeholder-timeout strip (capture = yellow, raise = orange)
+// MARK: - NoticeRow — placeholder-timeout strip (capture = yellow, raise =
+// orange) or positive info strip (info = green ✓, e.g. 建议上报回执)
 
 struct NoticeRow: View {
     let notice: LocalNotice
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: symbol)
                 .font(.system(size: 10))
                 .foregroundColor(color)
             Text(notice.text)
@@ -573,7 +574,15 @@ struct NoticeRow: View {
     }
 
     private var color: Color {
-        notice.kind == .captureTimeout ? .yellow : .orange
+        switch notice.kind {
+        case .captureTimeout: return .yellow
+        case .raiseTimeout: return .orange
+        case .info: return .green
+        }
+    }
+
+    private var symbol: String {
+        notice.kind == .info ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
     }
 }
 

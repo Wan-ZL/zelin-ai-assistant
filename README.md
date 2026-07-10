@@ -119,7 +119,7 @@ The iMessage channel is macOS-only by nature (Messages.app + chat.db); the Slack
 
 ## Features
 
-- **Requirement radars with dedup** — restatements merge into the existing card instead of spamming you; genuine increments become linked "improvement" cards; low-confidence items park in a debt lane until raised.
+- **Requirement radars with dedup** — restatements merge into the existing card instead of spamming you; genuine increments become linked "improvement" cards; low-confidence items park in a Backlog lane until raised.
 - **Tiered approvals** — T0 auto / T1 one-click / T2 typed confirmation. Outbound messages, merges, and resource deletion are never automatic. Cost is shown above $5; above $50 the card escalates to T2.
 - **Quality gate** — runnable check, read-only tests, fresh-context diff review, risk tiering, and revertible draft-PR delivery.
 - **Two delivery modes** — `repo` (feature branch / draft PR) for code; `chat` (a paste-ready `FINAL DRAFT`) for writing tasks, so a one-paragraph reply never forces a git branch.

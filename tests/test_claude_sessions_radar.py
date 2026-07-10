@@ -14,7 +14,21 @@ Contract under test:
 (d) import: waiting -> card_sent, merely-recent -> detected; marker file
     written; re-import and re-scan are no-ops (dedupe both belts);
 (e) the import_claude_sessions inbox action end-to-end through
-    actd.process_inbox (explicit ids and the no-ids waiting-only default).
+    actd.process_inbox (explicit ids and the no-ids waiting-only default);
+(f) session binding (例4a regression): a card binds the session its content
+    really came from — session_id verified against the transcript's own
+    main-chain ``sessionId`` (mismatch -> skip + radar_skip analytics), cwd
+    taken from main-chain entries (last one wins) and written into the
+    card's source; two sessions never cross-bind;
+(g) import gate: closed-loop Q&A (user asked, got the answer, nothing
+    pending) is a SOFT gate — the bulk paths (run_once, --all) skip it with
+    radar_skip reason=answered, but scan() still offers it flagged
+    ``answered`` (sorted last, never pre-checked) and an EXPLICIT
+    import_by_ids selection overrides the heuristic (radar_gate_override) —
+    a cheap-regex false positive must never make a session permanently
+    unimportable. session_mismatch stays hard everywhere. A Q&A whose final
+    assistant message promises follow-up work is not answered at all; the
+    heuristic never judges the lastPrompt fallback.
 """
 import json
 import os
@@ -28,7 +42,7 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
 from act import actd, radar_claude_sessions as rcs
-from act.lib import config, registry
+from act.lib import analytics, config, registry
 
 
 # a real directory, so import sets it as target_repo (existence-checked)
@@ -48,8 +62,12 @@ def _entry(etype: str, text, ts: datetime, cwd: str = None,
         "timestamp": _iso(ts),
         "cwd": cwd,
         "isSidechain": False,
-        "sessionId": extra.pop("sessionId", "s"),
     }
+    # like real transcripts, every line carries its session's id; the writer
+    # (_write_session) stamps the true sid unless a test forces a foreign one
+    sid = extra.pop("sessionId", None)
+    if sid is not None:
+        e["sessionId"] = sid
     if etype == "user":
         e["message"] = {"role": "user", "content": text}
     elif etype == "assistant":
@@ -73,6 +91,12 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         marker = config.STATE_DIR / rcs.STATE_FILE
         if marker.exists():
             marker.unlink()
+        # analytics offset so _new_events() sees only this test's events
+        try:
+            self._events_offset = len(
+                analytics.EVENTS_PATH.read_text(encoding="utf-8"))
+        except OSError:
+            self._events_offset = 0
 
     def tearDown(self):
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
@@ -82,12 +106,24 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
     def _write_session(self, sid: str, entries: list, project: Path = None,
                        mtime: datetime = None) -> Path:
         p = (project or self.proj) / f"{sid}.jsonl"
+        for e in entries:   # stamp the owning session's id like Claude Code does
+            e.setdefault("sessionId", sid)
         p.write_text("\n".join(json.dumps(e, ensure_ascii=False)
                                for e in entries) + "\n", encoding="utf-8")
         if mtime is not None:
             ts = mtime.timestamp()
             os.utime(p, (ts, ts))
         return p
+
+    def _new_events(self) -> list:
+        """Analytics events appended since setUp (the sandbox events file
+        persists across tests, so read past the recorded offset)."""
+        try:
+            raw = analytics.EVENTS_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return []
+        return [json.loads(line) for line in
+                raw[self._events_offset:].splitlines() if line.strip()]
 
     def _waiting_session(self, sid: str = "sess-waiting") -> Path:
         t = self.now - timedelta(hours=2)
@@ -285,6 +321,187 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         rcs.import_by_ids(["sess-gone"])
         req = registry.load_all()[0]
         self.assertIsNone(req.target_repo)
+
+    # -- (f) session binding (例4a regression) --------------------------------- #
+    def test_two_sessions_bind_their_own_id_and_cwd(self):
+        # regression 例4a: a Q&A card must NOT end up bound to another
+        # session's id/cwd (berkeley Q&A card pointing at an Obsidian ingest
+        # session). Two transcripts, different projects/cwds -> each imported
+        # card carries ITS OWN session id (ref) and cwd in the source.
+        vault_cwd = tempfile.mkdtemp(prefix="vault-")
+        self.addCleanup(shutil.rmtree, vault_cwd, ignore_errors=True)
+        vault_proj = self.claude_dir / "projects" / "-vault"
+        vault_proj.mkdir(parents=True)
+        t = self.now - timedelta(hours=2)
+        self._write_session("sess-parking-qa", [
+            _entry("user", "Fix the parking-page build in demo-app", t),
+            _entry("assistant", "Should I pin the node version or patch CI?",
+                   t + timedelta(minutes=1)),
+        ])
+        self._write_session("sess-vault-ingest", [
+            _entry("user", "Run the vault ingest checklist on the inbox files",
+                   t, cwd=vault_cwd),
+            _entry("assistant", "Which folder should I start with?",
+                   t + timedelta(minutes=1), cwd=vault_cwd),
+        ], project=vault_proj)
+        self.assertEqual(rcs.import_by_ids(["sess-parking-qa",
+                                            "sess-vault-ingest"]), 2)
+        by_ref = {r.sources[0]["ref"]: r for r in registry.load_all()}
+        self.assertEqual(set(by_ref),
+                         {"sess-parking-qa", "sess-vault-ingest"})
+        self.assertEqual(by_ref["sess-parking-qa"].sources[0]["cwd"],
+                         _DEMO_CWD)
+        self.assertEqual(by_ref["sess-vault-ingest"].sources[0]["cwd"],
+                         vault_cwd)
+        self.assertEqual(by_ref["sess-vault-ingest"].target_repo, vault_cwd)
+        self.assertIn("sess-vault-ingest"[:8],
+                      by_ref["sess-vault-ingest"].notes)
+
+    def test_mismatched_session_id_skipped_everywhere(self):
+        # the file's main-chain entries claim a DIFFERENT sessionId than the
+        # filename -> the file does not own this content; never bind/import
+        t = self.now - timedelta(hours=1)
+        self._write_session("sess-file-id", [
+            _entry("user", "Draft the quarterly infra report", t,
+                   sessionId="sess-real-origin"),
+            _entry("assistant", "Should I include the cost table?",
+                   t + timedelta(minutes=1), sessionId="sess-real-origin"),
+        ])
+        self.assertEqual(rcs.scan(7), [])
+        self.assertEqual(rcs.import_by_ids(["sess-file-id"]), 0)
+        self.assertEqual(registry.load_all(), [])
+        reasons = [e.get("reason") for e in self._new_events()
+                   if e.get("event") == "radar_skip"
+                   and e.get("source") == "claude_code"]
+        self.assertIn("session_mismatch", reasons)
+
+    def test_project_dir_uses_final_main_chain_cwd(self):
+        # sessions migrate into worktrees mid-flight; resume is scoped to the
+        # FINAL cwd, so the binding must use the last main-chain cwd
+        wt = tempfile.mkdtemp(prefix="worktree-")
+        self.addCleanup(shutil.rmtree, wt, ignore_errors=True)
+        t = self.now - timedelta(hours=1)
+        self._write_session("sess-migrating", [
+            _entry("user", "Isolate this refactor into a worktree", t),
+            _entry("assistant", "Moved. Should I continue with the rename?",
+                   t + timedelta(minutes=5), cwd=wt),
+        ])
+        c = rcs.scan(7)[0]
+        self.assertEqual(c["project_dir"], wt)
+
+    # -- (g) import gate: closed-loop Q&A is a SOFT gate ------------------------ #
+    def _answered_qa_session(self, sid: str = "sess-qa-answered") -> None:
+        t = self.now - timedelta(hours=1)
+        self._write_session(sid, [
+            _entry("user", "Where should I park when the Berkeley office "
+                           "lot is full?", t),
+            _entry("assistant", "Center Street Garage has an early-bird "
+                                "rate. Street meters are 3-hour max.",
+                   t + timedelta(minutes=1)),
+        ])
+
+    def test_answered_qa_skipped_by_bulk_paths(self):
+        self._answered_qa_session()
+        self.assertEqual(rcs.run_once(7, include_all=True), 0)  # --all skips it
+        self.assertEqual(registry.load_all(), [])
+        skip = [e for e in self._new_events()
+                if e.get("event") == "radar_skip"
+                and e.get("source") == "claude_code"
+                and e.get("reason") == "answered"]
+        self.assertTrue(skip)
+
+    def test_answered_qa_still_offered_by_scan_flagged_and_last(self):
+        # escape hatch: the heuristic has false positives, so scan() keeps the
+        # candidate (flagged, sorted last) instead of hiding it forever
+        self._answered_qa_session()
+        self._finished_session("sess-task-plain")
+        cands = rcs.scan(7)
+        self.assertEqual([c["session_id"] for c in cands],
+                         ["sess-task-plain", "sess-qa-answered"])
+        self.assertTrue(cands[-1]["answered"])
+        self.assertFalse(cands[0]["answered"])
+
+    def test_explicit_import_overrides_answered_gate(self):
+        # a user-picked checkbox / explicit id wins over the cheap regex —
+        # the session must not be permanently unimportable
+        self._answered_qa_session()
+        self.assertEqual(rcs.import_by_ids(["sess-qa-answered"]), 1)
+        (req,) = registry.load_all()
+        self.assertEqual(req.sources[0]["ref"], "sess-qa-answered")
+        override = [e for e in self._new_events()
+                    if e.get("event") == "radar_gate_override"
+                    and e.get("reason") == "answered"]
+        self.assertTrue(override)
+
+    def test_answered_chinese_qa_skipped_by_bulk(self):
+        t = self.now - timedelta(hours=1)
+        self._write_session("sess-qa-zh", [
+            _entry("user", "之前聊过 berkeley office 车位满了我该停哪，帮我快速找找", t),
+            _entry("assistant", "找到了：Postman 有 5 个专属车位，满了就去 "
+                                "Center Street Garage，早鸟 $15 一天。",
+                   t + timedelta(minutes=1)),
+        ])
+        (c,) = rcs.scan(7)
+        self.assertTrue(c["answered"])                      # offered, flagged
+        self.assertEqual(rcs.run_once(7, include_all=True), 0)
+        self.assertEqual(registry.load_all(), [])
+
+    def test_lastprompt_fallback_never_judged_as_answered(self):
+        # work order whose first prompt scrolled past the head window: the
+        # fallback text is the LAST user message (a closing question) — the
+        # answered heuristic must not judge it (false-positive surface)
+        t = self.now - timedelta(hours=1)
+        # 250 meta lines push every real user prompt out of the head window
+        # (_HEAD_MAX_LINES=200) without providing any main-chain user text
+        filler = [_entry("user", "attachment context %d" % i, t, isMeta=True)
+                  for i in range(250)]
+        entries = filler + [
+            _entry("assistant", "All done. The refactor is merged locally.",
+                   t + timedelta(minutes=30)),
+            {"type": "last-prompt",
+             "lastPrompt": "为什么这个测试还会挂？帮我看看",
+             "sessionId": "sess-longhead", "timestamp": _iso(t)},
+        ]
+        self._write_session("sess-longhead", entries)
+        cands = rcs.scan(7)
+        self.assertEqual(len(cands), 1)
+        self.assertFalse(cands[0]["answered"])
+
+    def test_mismatch_stays_hard_even_with_explicit_ids(self):
+        t = self.now - timedelta(hours=1)
+        self._write_session("sess-wrong-owner", [
+            _entry("user", "Where should I park near the office?", t,
+                   sessionId="sess-actual"),
+            _entry("assistant", "Garage on Center Street.",
+                   t + timedelta(minutes=1), sessionId="sess-actual"),
+        ])
+        self.assertEqual(rcs.import_by_ids(["sess-wrong-owner"]), 0)
+        self.assertEqual(registry.load_all(), [])
+
+    def test_qa_with_pending_followup_still_imported(self):
+        # question got an answer BUT the assistant promised more work — a
+        # pending deliverable keeps the session importable (backlog group)
+        t = self.now - timedelta(hours=1)
+        self._write_session("sess-qa-followup", [
+            _entry("user", "Which vendors quoted under 10k?", t),
+            _entry("assistant", "Acme and Bolt. I'll draft the comparison "
+                                "doc and send it to you tomorrow.",
+                   t + timedelta(minutes=1)),
+        ])
+        cands = rcs.scan(7)
+        self.assertEqual([c["session_id"] for c in cands],
+                         ["sess-qa-followup"])
+        self.assertFalse(cands[0]["ended_waiting_on_user"])
+        self.assertEqual(rcs.run_once(7, include_all=True), 1)
+
+    def test_task_session_not_treated_as_answered_qa(self):
+        # imperative work order that finished is NOT a closed-loop Q&A — the
+        # existing --all / checkbox path still imports it (备选 detected)
+        self._finished_session("sess-task-done")
+        cands = rcs.scan(7)
+        self.assertEqual([c["session_id"] for c in cands], ["sess-task-done"])
+        self.assertEqual(rcs.run_once(7, include_all=True), 1)
+        self.assertEqual(registry.load_all()[0].status, "detected")
 
     # -- (e) inbox action end-to-end -------------------------------------------- #
     def _inbox_write(self, payload: dict) -> None:

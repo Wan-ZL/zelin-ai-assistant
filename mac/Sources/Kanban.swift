@@ -10,7 +10,9 @@ import Foundation
 // Main window only; the popover keeps the vertical DashboardView untouched.
 // Cards/rows are the popover components reused verbatim at their popover
 // width (fixed 400pt lanes); each lane scrolls vertically on its own.
-// Columns: 待审批 | 运行中(+需输入) | 待验收 | 欠账 | 完成 — trash stays out.
+// Columns: 提案 | 运行中(+需输入) | 待验收 | 备选 | 已验收 — trash stays out.
+// (备选/Backlog is the DISPLAY name of the former 欠账/debt lane — registry
+// status names and the dashboard.json `debt` key are unchanged, 纯展示层.)
 
 struct KanbanView: View {
     @ObservedObject var store: DashboardStore
@@ -22,6 +24,10 @@ struct KanbanView: View {
     // the page switches away, so select mode never leaks across pages.
     @State private var selectMode = false
     @State private var selectedIDs: Set<String> = []
+    // 搜索过滤: focus for the header search box (⌘F focuses, Esc clears).
+    // The query itself lives in the STORE (boardQuery) so the board*
+    // projections can filter — visible* 现有模式.
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,7 +52,7 @@ struct KanbanView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // 契约七: 选中 ≥2 → 底部浮出操作条（请求合并建议 / 取消）
+        // 多选态 → 底部浮出操作条（请求合并建议 ≥2 / 提建议 ≥0 / 取消）
         .overlay(alignment: .bottom) { selectionBar }
         .background {
             // 契约七: Esc 退出多选 — window-scoped hidden cancel action (no
@@ -59,7 +65,19 @@ struct KanbanView: View {
                     .frame(width: 0, height: 0)
                     .accessibilityHidden(true)
             }
+            // 搜索过滤: ⌘F puts the caret in the board search box — same
+            // hidden-button pattern; window-scoped, so the popover (no board,
+            // no box) and the 设置 page's local shortcuts are untouched.
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
         }
+        // page switched away / window closed → drop the filter, so cards can
+        // never come back silently hidden (same policy as the multi-select
+        // @State, which SwiftUI discards for us).
+        .onDisappear { store.boardQuery = "" }
         // 快速捕获输入框已从这里的工具栏移入待审批列顶（KanbanComposer，
         // Composer.swift）；.focusCaptureField 通知改由 composer 自己接收。
     }
@@ -71,9 +89,20 @@ struct KanbanView: View {
             // dashboard.json freshness — same semantics as the popover footer
             FreshnessLabel(generatedAt: FreshnessLabel.parseISO(store.dashboard?.generated_at))
             Spacer()
-            // 契约七: 「选择」enters multi-select; the same button (or Esc /
-            // the bar's 取消) exits. Board-only — no dashboard, no button.
             if store.dashboard != nil {
+                // 搜索过滤: non-empty → every lane filters in real time
+                // (board* store projections); ⌘F focuses, Esc clears.
+                searchField
+                // 建议上报: header 直点 = 对整体提建议（ids 空）；多选后
+                // 操作条上的同名按钮才针对所选卡。
+                Button(L("提建议", "Send feedback")) {
+                    _ = app.promptFeedback(ids: [])
+                }
+                .font(.system(size: 12))
+                .help(L("对整体提建议；先「选择」卡片可针对所选卡",
+                        "Overall feedback; use Select first to target cards"))
+                // 契约七: 「选择」enters multi-select; the same button (or Esc
+                // / the bar's 取消) exits. Board-only — no dashboard, no button.
                 Button(selectMode ? L("退出选择", "Done") : L("选择", "Select")) {
                     setSelectMode(!selectMode)
                 }
@@ -81,6 +110,63 @@ struct KanbanView: View {
             }
             RecordingMenuButton()
         }
+    }
+
+    // MARK: - board search (搜索过滤)
+
+    /// Header search box. Matching is case-insensitive over
+    /// title/summary/dod/plan/id (DashboardStore.board* projections);
+    /// 占位卡/建议卡 never hide. Esc clears (IME-safe); when already empty it
+    /// falls through (.ignored) so select-mode's cancel action still fires.
+    private var searchField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            TextField(L("搜索卡片（⌘F）", "Search cards (⌘F)"),
+                      text: $store.boardQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .frame(width: 170)
+                .focused($searchFocused)
+                .onKeyPress(.escape) { escClearSearch() }
+            if !store.boardQuery.isEmpty {
+                Button {
+                    store.boardQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L("清空搜索", "Clear search"))
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(Color.primary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func escClearSearch() -> KeyPress.Result {
+        // IME red line: Esc cancels a live pinyin composition — the input
+        // method owns it, pass through untouched (Composer.escKey 先例).
+        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+           tv.hasMarkedText() { return .ignored }
+        guard !store.boardQuery.isEmpty else { return .ignored }
+        store.boardQuery = ""
+        return .handled
+    }
+
+    /// True while a search filter is active (mirrors the store's normalization).
+    private var searching: Bool {
+        !store.boardQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Lane empty copy: while filtering, an empty lane means "no matches
+    /// here", not "nothing exists" — say so instead of the normal empty text.
+    private func laneEmptyText(_ normal: String) -> String {
+        searching ? L("无匹配卡片", "No matching cards") : normal
     }
 
     private var emptyState: some View {
@@ -102,17 +188,21 @@ struct KanbanView: View {
     // policy as the popover, so a badge can never disagree with its lane.
     @ViewBuilder private var board: some View {
         if store.dashboard != nil {
-            // visibleApprovals prepends the quick-capture / raisingLocal grey
-            // processing placeholders — identical behavior to the popover.
-            let approvals = store.visibleApprovals
-            let reviews = store.visibleReview
-            let debt = store.visibleDebt
+            // 搜索过滤: board* = visible* + the search filter (empty query →
+            // passthrough), so lanes and their counts follow the filter for
+            // free. visibleApprovals' quick-capture / raisingLocal grey
+            // processing placeholders ride through unfiltered (占位卡不参与
+            // 过滤隐藏) — identical behavior to the popover otherwise.
+            let approvals = store.boardApprovals
+            let reviews = store.boardReview
+            let debt = store.boardDebt
             // v0.10.3 契约一: sorted+hidden-filtered projections, shared with
             // the popover so both surfaces always agree.
-            let running = store.visibleRunning
-            let needsInput = store.visibleNeedsInput
-            let completed = store.visibleCompleted
-            // merge-review 契约七: suggestion cards (dismiss-echo filtered)
+            let running = store.boardRunning
+            let needsInput = store.boardNeedsInput
+            let completed = store.boardCompleted
+            // merge-review 契约七: suggestion cards (dismiss-echo filtered);
+            // 建议卡不参与过滤隐藏 — deliberately NOT search-filtered.
             let suggestions = store.visibleMergeSuggestions
             let runningEchoes = store.echoes(for: .running)
             let completedEchoes = store.echoes(for: .completed)
@@ -135,13 +225,13 @@ struct KanbanView: View {
                     // (needs_approval, card_sent, …) unchanged.
                     column(title: L("提案 · proposals", "Proposals"),
                            count: approvals.count + suggestions.count,
-                           emptyText: L("暂无提案", "No proposals yet"),
+                           emptyText: laneEmptyText(L("暂无提案", "No proposals yet")),
                            isEmpty: false) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
                             && suggestions.isEmpty {
-                            lanePlaceholder(L("暂无提案", "No proposals yet"))
+                            lanePlaceholder(laneEmptyText(L("暂无提案", "No proposals yet")))
                         }
                         ForEach(approvalNotices) { NoticeRow(notice: $0) }
                         // 契约七: 建议卡插在 composer 与占位卡之后、真实卡之前。
@@ -173,7 +263,7 @@ struct KanbanView: View {
                     // permanent orange 需输入 badge, then a thin divider.
                     column(title: L("运行中 · running", "Running"),
                            count: running.count + needsInput.count + runningEchoes.count,
-                           emptyText: L("无运行中任务", "No running tasks"),
+                           emptyText: laneEmptyText(L("无运行中任务", "No running tasks")),
                            isEmpty: running.isEmpty && needsInput.isEmpty
                                && runningEchoes.isEmpty && runningNotices.isEmpty) {
                         ForEach(runningNotices) { NoticeRow(notice: $0) }
@@ -194,7 +284,7 @@ struct KanbanView: View {
                     }
                     column(title: L("待验收 · review", "Review"),
                            count: reviews.count,
-                           emptyText: L("无待验收草稿", "No drafts to review"),
+                           emptyText: laneEmptyText(L("无待验收草稿", "No drafts to review")),
                            isEmpty: reviews.isEmpty && reviewNotices.isEmpty) {
                         ForEach(reviewNotices) { NoticeRow(notice: $0) }
                         ForEach(reviews, id: \.id) { r in
@@ -203,9 +293,11 @@ struct KanbanView: View {
                             }
                         }
                     }
-                    column(title: L("欠账 · debt", "Debt"),
+                    // 备选/Backlog: display rename of the debt lane — the
+                    // store projection (visibleDebt) and dashboard key stay.
+                    column(title: L("备选 · backlog", "Backlog"),
                            count: debt.count + debtEchoes.count,
-                           emptyText: L("无欠账", "No debt items"),
+                           emptyText: laneEmptyText(L("暂无备选", "No backlog items")),
                            isEmpty: debt.isEmpty && debtEchoes.isEmpty
                                && debtNotices.isEmpty) {
                         ForEach(debtNotices) { NoticeRow(notice: $0) }
@@ -216,7 +308,7 @@ struct KanbanView: View {
                     }
                     column(title: L("已验收 · delivered", "Delivered"),
                            count: completed.count + completedEchoes.count,
-                           emptyText: L("无已验收任务", "No delivered tasks"),
+                           emptyText: laneEmptyText(L("无已验收任务", "No delivered tasks")),
                            isEmpty: completed.isEmpty && completedEchoes.isEmpty
                                && completedNotices.isEmpty) {
                         ForEach(completedNotices) { NoticeRow(notice: $0) }
@@ -278,19 +370,42 @@ struct KanbanView: View {
         }
     }
 
-    /// 契约七: 选中 ≥2 → bottom floating action bar.
+    /// 建议上报: 操作条「提建议」— stale ids dropped like submitSelection;
+    /// 零选中 = ids 空（对整体提建议）。成功提交后退出多选。
+    private func submitFeedbackSelection() {
+        let ids = selectedIDs.intersection(selectableIDs).sorted()
+        if app.promptFeedback(ids: ids) {
+            setSelectMode(false)
+        }
+    }
+
+    /// Multi-select bottom floating action bar — shows for the whole select
+    /// session (提建议 works at ≥0 selected; 契约一 keeps 请求合并建议 at ≥2).
     @ViewBuilder private var selectionBar: some View {
-        if selectMode && selectedIDs.count >= 2 {
+        if selectMode {
             HStack(spacing: 10) {
+                if selectedIDs.count >= 2 {
+                    Button {
+                        submitSelection()
+                    } label: {
+                        Text(L("请求合并建议 (\(selectedIDs.count))",
+                               "Suggest merge (\(selectedIDs.count))"))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)   // 建议卡同款紫色 accent
+                }
+                // 建议上报: ≥0 张 — 零选中即对整体提建议
                 Button {
-                    submitSelection()
+                    submitFeedbackSelection()
                 } label: {
-                    Text(L("请求合并建议 (\(selectedIDs.count))",
-                           "Suggest merge (\(selectedIDs.count))"))
+                    Text(selectedIDs.isEmpty
+                         ? L("提建议", "Send feedback")
+                         : L("提建议 (\(selectedIDs.count))",
+                             "Send feedback (\(selectedIDs.count))"))
                         .font(.system(size: 12, weight: .medium))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.purple)   // 建议卡同款紫色 accent
+                .buttonStyle(.bordered)
                 Button(L("取消", "Cancel")) { setSelectMode(false) }
                     .font(.system(size: 12))
             }

@@ -18,6 +18,12 @@
 // /bin/zsh -lc wrapping (Ghostty/iTerm2): their `command` execs without a
 // login environment and `claude` lives in ~/.local/bin, so PATH must come
 // from a login shell. Terminal.app's do script already runs in one.
+// 例4b: a login shell alone is NOT enough — a non-interactive `zsh -lc`
+// sources .zprofile/.zlogin but never .zshrc, and on this machine (and any
+// standard `claude` install) ~/.local/bin is added to PATH in .zshrc, so a
+// fresh Ghostty window died with `command not found: claude`. Fix: every
+// EXECUTED command gets a PATH bootstrap prepended (bootstrapped(_:) below);
+// the card's displayed copy text stays the readable raw command.
 //
 // First use per terminal app shows the one-time macOS Automation consent
 // ("…wants access to control Terminal.app"); Info.plist carries
@@ -75,13 +81,34 @@ enum TerminalLauncher {
         return TerminalApp.ghostty.isInstalled ? .ghostty : .terminal
     }
 
+    /// 例4b PATH 兜底: prefix prepended to every EXECUTED command (never to
+    /// the displayed copy text). ~/.local/bin = the standard `claude` install
+    /// location, missing from non-interactive login-shell PATH (it's added in
+    /// .zshrc, which `zsh -lc` never sources); /opt/homebrew/bin +
+    /// /usr/local/bin cover brew installs on Apple silicon / Intel. Appending
+    /// :$PATH keeps everything the login shell did resolve. Double quotes
+    /// survive both quoting layers below: shellSingleQuoted wraps the whole
+    /// line in single quotes (double quotes pass through untouched) and
+    /// appleScriptQuoted escapes them for the AppleScript literal — $HOME
+    /// still expands at execution time inside the target shell.
+    static let pathBootstrap =
+        #"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; "#
+
+    /// The command line that actually runs: PATH bootstrap + raw command.
+    static func bootstrapped(_ command: String) -> String {
+        pathBootstrap + command
+    }
+
     /// Run `command` in a new window of `app` (nil → preferred). osascript
     /// blocks (TCC consent can hold the Apple Event for up to ~2 min), so it
     /// runs off-main; completion comes back on the main queue.
+    /// 例4b: the PATH bootstrap is injected HERE — the one execution entry —
+    /// so every caller (CardSurface double-click today, anything later) gets
+    /// it without touching its user-visible copy string.
     static func launch(_ command: String, in app: TerminalApp? = nil,
                        completion: @escaping (Bool) -> Void = { _ in }) {
         let target = app ?? preferred
-        let script = script(for: target, command: command)
+        let script = script(for: target, command: bootstrapped(command))
         DispatchQueue.global(qos: .userInitiated).async {
             let (ok, tail) = runOsascript(script)
             if !ok { NSLog("TerminalLauncher: osascript failed for %@: %@",

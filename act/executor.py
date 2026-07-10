@@ -736,7 +736,14 @@ def _transcript_info(sid: str) -> Optional[tuple[str, Path]]:
       worktree), not the launch cwd (the repo root, which is what the roster
       shows and what the transcript's first lines record).
     """
-    short = str(sid).split("-")[0]
+    short = str(sid or "").split("-")[0]
+    # Guard: an empty/too-short sid would glob-match EVERY transcript below and
+    # return the alphabetically-first one — a wrong-session binding (2026-07
+    # 例4a: cards with no session_id got copy_cmds pointing at an unrelated
+    # Obsidian-ingest session). Session ids are UUIDs, so a legitimate short id
+    # is the full 8-hex first segment; anything shorter cannot be resumed.
+    if len(short) < 8:
+        return None
     proj_root = Path("~/.claude/projects").expanduser()
     try:
         matches = sorted(proj_root.glob(f"*/{short}*.jsonl"))
