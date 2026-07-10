@@ -23,6 +23,20 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.16.0] - 2026-07-10
+
+### Added
+
+- **Always-visible update row** in About: current version, an honest status
+  line ("已是最新（上次检查：X 分钟前）", failure and disabled states
+  included), and a **立即检查 / Check now** button that bypasses the daily
+  budget (`python3 -m act.lib.update_check --force`); the privacy switch
+  still wins — when auto-check is off, the button never fires a request
+  ([`0ff44a8`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/0ff44a8))
+- **Contributors wall** in both READMEs with a good-first-issue pointer —
+  celebrating the project's first external contributor
+  ([`a59c7ba`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/a59c7ba))
+
 ## [0.15.0] - 2026-07-10
 
 Voice, speed, and a milestone: the first external contribution.
@@ -417,7 +431,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.12.0...v0.13.0
