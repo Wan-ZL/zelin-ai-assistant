@@ -2,17 +2,22 @@
 // in a NEW WINDOW of the user's chosen terminal app.
 //
 // Mechanisms (plain Apple Events per app — no Accessibility hacks):
-// - Ghostty (≥1.2 scripting dictionary, verified live on 1.3.1):
-//     new window with configuration {command:"/bin/zsh -lc '<cmd>'"}
-//   opens on the RUNNING instance; the command string is shell-word parsed
-//   (single quotes respected). The CLI route (`open -na Ghostty --args -e …`)
-//   was tried first and REJECTED: it spawns a second app instance and never
-//   started the command on this machine.
+// - Ghostty (≥1.2 scripting dictionary, verified live on 1.3.1): a new TAB in
+//   the frontmost window when one exists, else a new window (owner preference,
+//   2026-07-10 — a window per card gets noisy):
+//     new tab in window 1 with configuration {command:"/bin/zsh -lc '<cmd>'"}
+//   `in window 1` is REQUIRED: the bare application-level `new tab …` and
+//   `tell front window to new tab …` forms both fail with -1708 (event not
+//   handled) on 1.3.1; only the `in <window>` parameter form works. The
+//   command string is shell-word parsed (single quotes respected). The CLI
+//   route (`open -na Ghostty --args -e …`) was tried first and REJECTED: it
+//   spawns a second app instance and never started the command on this
+//   machine.
 // - Terminal.app: classic `do script "<cmd>"` — new window, login shell.
 // - iTerm2: `create window with default profile command "/bin/zsh -lc '<cmd>'"`
 //   per its documented scripting API. Offered only when installed; NOT
 //   live-verified (iTerm2 absent on the dev machine).
-// New window (not new tab) everywhere: it's what all three support scriptably
+// Terminal.app/iTerm2 stay new-window: it's what they support scriptably
 // without knowing whether a front window exists.
 //
 // /bin/zsh -lc wrapping (Ghostty/iTerm2): their `command` execs without a
@@ -126,7 +131,11 @@ enum TerminalLauncher {
             let cmd = appleScriptQuoted("/bin/zsh -lc " + shellSingleQuoted(command))
             return """
             tell application "Ghostty"
-                new window with configuration {command:\(cmd)}
+                if (count of windows) > 0 then
+                    new tab in window 1 with configuration {command:\(cmd)}
+                else
+                    new window with configuration {command:\(cmd)}
+                end if
                 activate
             end tell
             """
