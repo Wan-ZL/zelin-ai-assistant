@@ -19,9 +19,11 @@
 #
 # --pkg-postinstall: non-interactive mode used by the .pkg installer's
 #   postinstall (mac/package.sh). Skips dependency checks (nothing to ask a
-#   user for), the Mac app build/install (the pkg already installed it) and
-#   the launchd agents (they need per-user config that doesn't exist yet),
-#   but still does config files, state dirs and the ingest cron chain.
+#   user for) and the Mac app build/install (the pkg already installed it),
+#   but does everything else: config files, state dirs, the launchd agents
+#   (actd + radars per config — without them the product is inert) and the
+#   ingest cron chain. Every run (both modes) ends by writing
+#   state/install_report.json (CONTRACT §23) with what actually happened.
 #
 # --check: run the post-install doctor (python -m act.doctor) and exit with
 #   the number of failing checks. Installs/changes nothing.
@@ -51,6 +53,48 @@ PKG_POSTINSTALL=0
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
 info() { printf "  [info] %s\n" "$1"; }
+
+# install report (CONTRACT §23) — newline-separated "name=status[:detail]"
+# lines accumulated as a plain string (macOS bash 3.2 + set -u make empty
+# arrays hazardous), written by write_install_report at the end of the run.
+REPORT_STEPS=""
+LOADED_LABELS=""
+report_step() { # $1=name $2=status [$3=detail]
+    REPORT_STEPS="${REPORT_STEPS}$1=$2${3:+:$3}
+"
+}
+
+write_install_report() {
+    RPY="${RUNTIME_PY:-${PY:-}}"
+    { [ -n "$RPY" ] && [ -x "$RPY" ]; } || RPY="$(command -v python3 || true)"
+    if [ -z "$RPY" ]; then
+        warn "no python3 — skipped state/install_report.json"
+        return 0
+    fi
+    MODE=interactive
+    [ "$PKG_POSTINSTALL" -eq 1 ] && MODE=pkg-postinstall
+    if printf '%s' "$REPORT_STEPS" | (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
+        "$RPY" -m act.lib.install_report --mode "$MODE" --steps-stdin \
+        --agents "$LOADED_LABELS" >/dev/null 2>&1); then
+        ok "state/install_report.json written"
+    else
+        warn "could not write state/install_report.json (non-fatal)"
+    fi
+}
+
+# launchd load/unload — modern bootstrap/bootout against the user's gui
+# domain first (the only form that works from the pkg postinstall context,
+# where mac/package.sh wraps us in `launchctl asuser`), legacy load/unload
+# as fallback for older macOS.
+UID_NUM="$(id -u)"
+launchd_unload() { # $1=plist path, $2=label
+    launchctl bootout "gui/$UID_NUM/$2" >/dev/null 2>&1 \
+        || launchctl unload "$1" >/dev/null 2>&1 || true
+}
+launchd_load() { # $1=plist path
+    launchctl bootstrap "gui/$UID_NUM" "$1" >/dev/null 2>&1 \
+        || launchctl load "$1" >/dev/null 2>&1
+}
 
 # escape a value for use on the replacement side of sed s|…|…| (delimiter |)
 _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
@@ -196,9 +240,11 @@ echo ""
 echo "==> 2. config.yaml + config/runtime.json"
 if [ -f "$REPO_ROOT/config.yaml" ]; then
     ok "config.yaml already exists (left untouched)"
+    report_step "config" "ok" "existing config.yaml kept"
 else
     cp "$REPO_ROOT/config.example.yaml" "$REPO_ROOT/config.yaml"
     ok "created config.yaml from config.example.yaml — review it before first run"
+    report_step "config" "ok" "created from config.example.yaml"
 fi
 
 # redaction terms live outside git (they hold the user's real sensitive terms)
@@ -222,8 +268,10 @@ fi
 if [ -n "$RUNTIME_PY" ]; then
     printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
     ok "config/runtime.json -> $RUNTIME_PY"
+    report_step "runtime_python" "ok" "$RUNTIME_PY"
 else
     warn "python3 not found — skipped config/runtime.json (re-run install.sh once python3 exists)"
+    report_step "runtime_python" "fail" "python3 not found"
 fi
 
 # verify PyYAML against the DAEMON interpreter — RUNTIME_PY is what launchd
@@ -259,6 +307,7 @@ echo ""
 echo "==> 3. state directories"
 mkdir -p "$REPO_ROOT/state/inbox"
 ok "state/ and state/inbox/ ready"
+report_step "state_dirs" "ok"
 # generate the initial dashboard from the (git-tracked) registry so the app renders
 # before the daemon's first pass. Falls back to the seed if generation fails.
 if [ ! -f "$REPO_ROOT/state/dashboard.json" ]; then
@@ -276,57 +325,68 @@ fi
 echo ""
 if [ "$PKG_POSTINSTALL" -eq 1 ]; then
     echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
+    report_step "app" "skipped" "installed by the .pkg"
 else
     echo "==> 4. build + install Mac app"
     if bash "$REPO_ROOT/mac/build.sh" --install; then
         ok "Mac app built + installed"
+        report_step "app" "ok" "built and installed"
     else
         warn "Mac app build failed — see output above"
+        report_step "app" "fail" "mac/build.sh --install failed"
     fi
 fi
 
 # --------------------------------------------------------------------------
+# Runs in BOTH modes: a .pkg install that leaves actd unloaded ships an inert
+# product (the app shows an orange banner and nothing ever executes). The
+# radars are safe to load before credentials exist — they no-op and record a
+# skip_reason until configured.
 echo ""
-if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-    echo "==> 5. launchd agents — skipped (edit config.yaml first, then re-run install.sh)"
-else
-    echo "==> 5. launchd agents"
-    mkdir -p "$LA_DIR"
-    info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
-    # feature gate: the imessage radar only loads when config selects the
-    # channel. Read through act.lib.config (so settings_overrides.json is
-    # honored too); an unreadable config counts as "none".
-    PHONE_CHANNEL="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c 'from act.lib import config; print(getattr(config.load_config(), "phone_channel", "none"))' 2>/dev/null || echo none)"
-    LOADED_LABELS=""
-    for plist in "$REPO_ROOT"/act/launchd/*.plist; do
-        [ -e "$plist" ] || continue
-        base="$(basename "$plist")"
-        label="${base%.plist}"
-        dest="$LA_DIR/$base"
-        if [ "$label" = "com.zelin.aiassistant.imessageradar" ] && [ "$PHONE_CHANNEL" != "imessage" ]; then
-            # feature off: also unload+remove any previously-installed copy
-            launchctl unload "$dest" >/dev/null 2>&1 || true
-            rm -f "$dest"
-            info "skipped $label (phone_channel=$PHONE_CHANNEL — set phone_channel: imessage in config.yaml to enable, see docs/IMESSAGE_SETUP.md)"
-            continue
-        fi
-        # unload any previous version first
-        launchctl unload "$dest" >/dev/null 2>&1 || true
-        render_launchd_plist "$plist" "$dest"
-        if launchctl load "$dest" >/dev/null 2>&1; then
-            ok "loaded $label"
-            LOADED_LABELS="$LOADED_LABELS $label"
-        else
-            warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
-        fi
-    done
-    # give launchd a moment to spawn the jobs, then verify they really run
-    if [ -n "$LOADED_LABELS" ]; then
-        sleep 2
-        for label in $LOADED_LABELS; do
-            verify_launchd_agent "$label"
-        done
+echo "==> 5. launchd agents"
+LAUNCHD_FAILED=0
+mkdir -p "$LA_DIR"
+info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
+# feature gate: the imessage radar only loads when config selects the
+# channel. Read through act.lib.config (so settings_overrides.json is
+# honored too); an unreadable config counts as "none".
+PHONE_CHANNEL="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c 'from act.lib import config; print(getattr(config.load_config(), "phone_channel", "none"))' 2>/dev/null || echo none)"
+for plist in "$REPO_ROOT"/act/launchd/*.plist; do
+    [ -e "$plist" ] || continue
+    base="$(basename "$plist")"
+    label="${base%.plist}"
+    dest="$LA_DIR/$base"
+    if [ "$label" = "com.zelin.aiassistant.imessageradar" ] && [ "$PHONE_CHANNEL" != "imessage" ]; then
+        # feature off: also unload+remove any previously-installed copy
+        launchd_unload "$dest" "$label"
+        rm -f "$dest"
+        info "skipped $label (phone_channel=$PHONE_CHANNEL — set phone_channel: imessage in config.yaml to enable, see docs/IMESSAGE_SETUP.md)"
+        continue
     fi
+    # unload any previous version first (idempotent upgrades)
+    launchd_unload "$dest" "$label"
+    render_launchd_plist "$plist" "$dest"
+    if launchd_load "$dest"; then
+        ok "loaded $label"
+        LOADED_LABELS="$LOADED_LABELS $label"
+    else
+        warn "failed to load $label (may need TCC/Full Disk Access approval — see below)"
+        LAUNCHD_FAILED=$((LAUNCHD_FAILED + 1))
+    fi
+done
+# give launchd a moment to spawn the jobs, then verify they really run
+if [ -n "$LOADED_LABELS" ]; then
+    sleep 2
+    for label in $LOADED_LABELS; do
+        verify_launchd_agent "$label"
+    done
+fi
+if [ "$LAUNCHD_FAILED" -gt 0 ]; then
+    report_step "launchd" "fail" "$LAUNCHD_FAILED agent(s) failed to load"
+elif [ -n "$LOADED_LABELS" ]; then
+    report_step "launchd" "ok" "$(echo $LOADED_LABELS | wc -w | tr -d ' ') agents loaded"
+else
+    report_step "launchd" "skipped" "no agents to load"
 fi
 
 # --------------------------------------------------------------------------
@@ -378,17 +438,21 @@ fi
 if [ "$NEW_CRON" != "$CURRENT_CRON" ]; then
     if printf '%s\n' "$NEW_CRON" | grep -v '^[[:space:]]*$' | crontab -; then
         ok "crontab rewritten (other lines preserved)"
+        report_step "cron" "ok" "ingest chain + digest + telemetry installed"
     else
         warn "crontab update failed — add these lines manually with 'crontab -e':"
         info "$INGEST_CHAIN"
         info "$DIGEST_LINE"
+        report_step "cron" "fail" "crontab rewrite failed"
     fi
+else
+    report_step "cron" "ok" "already installed"
 fi
 
 # --------------------------------------------------------------------------
 echo ""
 if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-    echo "==> 7. diagnostics — skipped (agents not loaded yet; after configuring, run: bash install.sh --check)"
+    echo "==> 7. diagnostics — skipped (non-interactive pkg mode; run anytime: bash install.sh --check)"
 elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
     echo "==> 7. post-install diagnostics (python -m act.doctor)"
     if ! (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.doctor); then
@@ -397,6 +461,11 @@ elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
 else
     echo "==> 7. diagnostics — skipped (no usable python3); run later: bash install.sh --check"
 fi
+
+# --------------------------------------------------------------------------
+# install report (CONTRACT §23) — what this run actually did, machine-readable
+echo ""
+write_install_report
 
 # --------------------------------------------------------------------------
 cat <<'EOF'

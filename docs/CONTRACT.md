@@ -6,7 +6,7 @@
 > `state/dashboard.json` (actd writes, app reads), and `state/inbox/<uuid>.json` (app writes,
 > actd reads then deletes). Fields are **add-only** — never renamed or removed; the Swift side
 > decodes every new field with `decodeIfPresent`. Change this file *before* any code that touches
-> these shapes. **Section numbers §1–§21 are referenced from code and docs — never renumber.**
+> these shapes. **Section numbers §1–§23 are referenced from code and docs — never renumber.**
 > The Chinese body is canonical.
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
@@ -329,3 +329,34 @@ CLI 驱动，绝不定时跑。**全程本地、无 LLM 调用**——gist = 首
 
 **analytics**：`claude_sessions_import{requested,imported}`（导入侧）。隐私：一切本地；
 gist 只进注册表/看板，与其他雷达来源同等对待，永不上传。
+
+---
+
+# 安装生命周期 additions（install / uninstall）
+
+## 23. `state/install_report.json`（install.sh 写，App / doctor 只读）
+
+install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是）在结尾写一份"这次安装实际做了什么"的机读报告（writer = `act/lib/install_report.py`，原子写：先写 `.json.tmp` 再 rename；写失败只 warn，永不打断安装）：
+
+```json
+{
+  "version": "0.13.0",
+  "generated_at": "2026-07-09T20:15:00Z",
+  "mode": "pkg-postinstall",
+  "user": "zelin",
+  "steps": [
+    {"name": "config", "status": "ok", "detail": "created from config.example.yaml"},
+    {"name": "runtime_python", "status": "ok", "detail": "/usr/bin/python3"},
+    {"name": "state_dirs", "status": "ok", "detail": null},
+    {"name": "app", "status": "skipped", "detail": "installed by the .pkg"},
+    {"name": "launchd", "status": "ok", "detail": "4 agents loaded"},
+    {"name": "cron", "status": "ok", "detail": "ingest chain + digest + telemetry installed"}
+  ],
+  "agents_loaded": ["com.zelin.aiassistant.actd", "com.zelin.aiassistant.radar"]
+}
+```
+
+- `mode` ∈ `"interactive" | "pkg-postinstall"`；`user` = 实际执行安装步骤的用户（pkg 路线下 = console user，postinstall 经 `launchctl asuser <uid> sudo -u <user>` 降权执行）。
+- `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。
+- `agents_loaded` = 本次成功 load 的 launchd label 列表。
+- 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。

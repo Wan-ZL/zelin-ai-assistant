@@ -4,8 +4,10 @@
 #   component 2: the pipeline (repo export)  -> /Library/Application Support/
 #                ZelinAIAssistant/pipeline   (root-owned, versioned master copy)
 # plus a postinstall that rsyncs the master copy into the console user's
-# ~/Projects/zelin-ai-assistant and runs `install.sh --pkg-postinstall`
-# (config copy-if-absent, state dirs, ingest cron chain — CONTRACT §18).
+# ~/Projects/zelin-ai-assistant, runs `install.sh --pkg-postinstall` (config
+# copy-if-absent, state dirs, launchd agents, ingest cron chain — CONTRACT
+# §18/§23) and finally launches the menu-bar app as the console user, so the
+# pkg route ends with a LIVE product, not an inert one.
 #
 # Usage:  bash mac/package.sh
 # Needs:  the app already built (runs mac/build.sh itself if missing); no root.
@@ -118,10 +120,34 @@ if ! sudo -u "$CONSOLE_USER" -H rsync -a \
     exit 1
 fi
 
-# config copy-if-absent, state dirs, ingest cron chain (CONTRACT §18) — the
-# logic lives in install.sh so pkg and from-source installs can't drift.
-if ! sudo -u "$CONSOLE_USER" -H bash "$DEST/install.sh" --pkg-postinstall; then
+# config copy-if-absent, state dirs, launchd agents, ingest cron chain
+# (CONTRACT §18) plus state/install_report.json (CONTRACT §23) — the logic
+# lives in install.sh so pkg and from-source installs can't drift.
+# `launchctl asuser` puts the run inside the console user's audit session:
+# without it, launchctl gui-domain operations (agent bootstrap) and cron
+# edits made from the installer's root context misbehave or silently no-op.
+CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null || echo '')"
+run_as_console_user() {
+    if [ -n "$CONSOLE_UID" ]; then
+        launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" -H "$@"
+    else
+        sudo -u "$CONSOLE_USER" -H "$@"
+    fi
+}
+if ! run_as_console_user bash "$DEST/install.sh" --pkg-postinstall; then
     echo "postinstall: install.sh --pkg-postinstall reported errors (non-fatal)" >&2
+fi
+
+# Launch the app so "install finished" visibly means "assistant is running"
+# (first run opens the permissions & setup window). Payloads installed by
+# Installer carry no quarantine xattr, so this does not fight Gatekeeper.
+APP="/Applications/Zelin's AI Assistant.app"
+if [ -d "$APP" ]; then
+    if run_as_console_user open -a "$APP"; then
+        echo "postinstall: launched the menu-bar app for $CONSOLE_USER"
+    else
+        echo "postinstall: could not launch the app — open it from /Applications" >&2
+    fi
 fi
 
 exit 0
