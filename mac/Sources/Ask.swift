@@ -267,8 +267,8 @@ struct AskPageView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L("问问助手", "Ask the assistant"))
                 .font(.system(size: 18, weight: .semibold))
-            Text(L("关于这个产品的任何问题——为什么没有新卡片、怎么换录制模式……回答基于产品文档和这台 Mac 的真实状态，全程在本机后台完成。",
-                   "Ask anything about this product — why there are no new cards, how to switch recording modes… Answers are grounded in the product docs and this Mac's real state, entirely in the background."))
+            Text(L("关于这个产品的任何问题——为什么没有新卡片、怎么换录制模式……回答基于产品文档和这台 Mac 的真实状态。提问会把问题、相关文档摘录和机器状态摘要发送给你的 AI 引擎（Anthropic）；在后台完成，不弹终端。",
+                   "Ask anything about this product — why there are no new cards, how to switch recording modes… Answers are grounded in the product docs and this Mac's real state. Asking sends your question, the relevant doc excerpts and a machine-state summary to your AI engine (Anthropic); it runs in the background — no terminal window."))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -390,8 +390,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("有帮助（只在本机记一条匿名事件，不上传问题内容）",
-                    "Helpful (logs one anonymous local event; the question text is not included)"))
+            .help(L("有帮助（记一条匿名事件，随使用统计上传；基础级不含问题内容，详细级会附问题文本）",
+                    "Helpful (logs an anonymous event that uploads with usage stats; Basic carries no question text, Detailed attaches it)"))
             Button {
                 model.rate("down")
             } label: {
@@ -401,8 +401,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("没帮助（只在本机记一条匿名事件，不上传问题内容）",
-                    "Not helpful (logs one anonymous local event; the question text is not included)"))
+            .help(L("没帮助（记一条匿名事件，随使用统计上传；基础级不含问题内容，详细级会附问题文本）",
+                    "Not helpful (logs an anonymous event that uploads with usage stats; Basic carries no question text, Detailed attaches it)"))
         }
         .font(.system(size: 12))
     }

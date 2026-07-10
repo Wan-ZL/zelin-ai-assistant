@@ -88,6 +88,14 @@ no-op，不必删除。
 也就是说：哪怕 install.sh 已经装好 cron，在你第一次看到披露界面（或显式配置过
 telemetry）之前，不会有任何事件离开本机。
 
+## 聚合数据的公开发布
+
+上传的事件会以**聚合形式**公开：GitHub Actions（`.github/workflows/insights.yml`）
+**每天**把聚合报告写进本仓库一个公开的置顶 issue（「📊 Usage Insights」——只更新
+这一个 issue，不会每次新开）。报告只含聚合值：按事件/日期/版本/级别的**计数**、
+错误率、去重设备**数**（`scripts/insights_report.py`）——**绝不**出现原始事件行、
+device id 或任何 detailed 级摘要文本。事件总量没有变化的日子跳过更新。
+
 ## 更新检查（GitHub API，与 telemetry 上传无关）
 
 除 telemetry 外，产品还有一条独立的轻量网络请求：**应用内更新检查**

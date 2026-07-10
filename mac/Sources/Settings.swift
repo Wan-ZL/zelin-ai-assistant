@@ -543,8 +543,8 @@ struct SettingsFormView: View {
                    "Basic: sends anonymous event metadata only — event name, time, random device id, app version; never any content."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要。",
-                   "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters."))
+            Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要；问问助手事件会记录并上传你输入的问题文本（同样 ≤200 字符）。",
+                   "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters; Ask events also record and upload the question you typed (same ≤200-character cap)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Text(L("关掉开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",

@@ -13,12 +13,18 @@
   **唯一的例外是匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据默认上传到
   **维护者的** Supabase 项目，用于产品改进——不含屏幕内容/消息正文/文件内容/密钥，
   详见第 10 行与 [`docs/TELEMETRY.md`](TELEMETRY.md)。
-- **LLM 通道只有一个**：所有发往 Anthropic 的内容都经由 `claude` CLI（headless `claude -p`
-  或 `claude --bg`），没有绕过它的直连 HTTP 调用。
-- Mac app 本身（`mac/Sources/`）**不直接联网**：它只读本地 `state/dashboard.json`、写本地
-  `state/inbox/`（见 `docs/CONTRACT.md` §2/§3）。唯一例外是它会以 `npx screenpipe@0.3.349`
-  拉起录制引擎（`mac/Sources/Recording.swift`）——首次运行时 npx 会从 npm registry
-  **下载**引擎包（进来的流量，不带出你的数据）。
+- **LLM 通道只有一个**：所有发往 Anthropic 的**内容**都经由 `claude` CLI（headless `claude -p`
+  或 `claude --bg`）。唯一绕过 CLI 的直连是 App 的凭证验证 probe（GET
+  `api.anthropic.com/v1/models`）——只携带你的 key 验证其有效性，不含任何内容数据。
+- Mac app 本身（`mac/Sources/`）的核心数据交互是本地的：读 `state/dashboard.json`、写
+  `state/inbox/`（见 `docs/CONTRACT.md` §2/§3）。它会发起的网络请求只有三类，都不携带
+  内容数据：**凭证验证**（保存或点「验证」时——Anthropic key → GET
+  `api.anthropic.com/v1/models`；Slack token → POST `slack.com/api/auth.test`；Gmail
+  app password → 经 runtime python 做一次真实 IMAP LOGIN，`mac/Sources/Settings.swift`
+  `KeyProbe`）；**更新检查**（GET `api.github.com` releases——由 actd 的 python 进程发出
+  而非 App 进程，见第 12 条）；以及以 `npx screenpipe@0.3.349` 拉起录制引擎
+  （`mac/Sources/Recording.swift`）——首次运行时 npx 会从 npm registry **下载**引擎包
+  （进来的流量，不带出你的数据）。
 
 ## Egress 清单：什么数据、何时、离开你的机器
 
@@ -38,6 +44,9 @@
 | 10 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
 | 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
 | 12 | 更新检查 | actd，至多每 24h 一次（ETag 缓存） | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false` |
+| 13 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **开** | `sources.weekly_digest.enabled: false` |
+| 14 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
+| 15 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -183,6 +192,43 @@
   **绝不自动下载或安装**（CONTRACT §26）。
 - **关闭**：App 设置 → 通用 →「自动检查新版本」；或 config.yaml
   `updates.check_enabled: false`——关闭后不再发出任何请求。
+
+### 13. 周报（weekly digest）→ Anthropic（**默认开**）
+
+- **触发/频率**：launchd agent（`act/launchd/com.zelin.aiassistant.weeklydigest.plist`）
+  每小时醒来，模块自己按 `sources.weekly_digest`（enabled/day/hour，默认周一 9 点）
+  加 state marker（`state/weekly_digest.json`）把真正执行限制在**每周至多一次**；
+  设置页「现在生成一份」按钮跳过时间闸（`act/weekly_digest.py`）。
+- **Payload**：近 7 天 ingest 产出 note（`sources.obsidian_raw`——来源是全屏文本与
+  音频转写的提炼，全系统敏感度最高的内容之一）按最新优先取至多 **40 篇 × 每篇头部
+  4000 字符**（总预算 60000 字符），经 UNTRUSTED 围栏 + `sanitize.scrub()` 后由
+  headless `claude -p` 发往你的 AI 引擎。窗口内没有新 note 时**不调用** claude
+  （cost guard）。
+- **产出**：一张周回顾卡 + 至多 3 张自动化建议卡，走注册表 merge——同一周重跑
+  合并而不堆叠。
+- **关闭**：`sources.weekly_digest.enabled: false`。
+
+### 14. 问问助手（Ask）→ Anthropic
+
+- **触发**：只在你于 App「问答」页提交问题时（`act/ask.py`，CONTRACT §27）。
+- **Payload**：你的问题 + 问题相关的产品文档摘录（本地关键词匹配挑选，非 LLM）+
+  白名单化的 effective-config 摘要（凭证只以 present/absent **布尔**出现，secret 值
+  永不进 bundle）+ `doctor --fast` 体检报告 + dashboard 计数——整个 bundle 经
+  headless `claude -p`（60 秒上限）发往你的 AI 引擎。
+- **本地**：问答历史存 `state/ask_history.json`（不上传）。telemetry basic 级只记
+  事件元数据；opt-in 的 detailed 级会附带问题文本（≤200 字符，见
+  [`docs/TELEMETRY.md`](TELEMETRY.md)）。
+- **关闭**：不提问即不触发；`ask.enabled: false` 整体关掉问答页。
+
+### 15. 让 AI 修（Fix with AI）→ Anthropic
+
+- **触发**：只在你点「让 AI 修」按钮或跑 `python3 -m act.ai_fix --open` 时。
+- **Payload**：诊断 bundle = doctor 体检结果 + 相关日志尾部（每份 40 行），**写入前**
+  先过 `sanitize.scrub()`（掩掉 API key / token / 私钥与 opt-in 词表命中）；随后在
+  Terminal 里打开一个**交互式** `claude` 会话并预载这个 bundle（`act/ai_fix.py`）。
+  会话**不带** `--dangerously-skip-permissions`——claude 每次想改文件/跑命令都会先
+  征求你同意；但会话中它读到的其他文件与命令输出同样进入 context（= 发往 Anthropic）。
+- **关闭**：不点即不触发；`doctor.ai_fix_enabled: false` 禁用按钮与 CLI（exit 2）。
 
 ## 什么永不离开你的 Mac
 

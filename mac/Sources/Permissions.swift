@@ -596,8 +596,8 @@ struct TelemetryBlockView: View {
                     .font(.system(size: 12))
             }
             .toggleStyle(.checkbox)
-            Text(L("只上传匿名事件记录(功能名、时间戳、随机设备编号);绝不含屏幕内容、对话或任何个人文本。随时可在这里更改。",
-                   "Anonymous event records only (feature name, timestamp, a random device id) — never screen content, conversations, or any personal text. Change it here anytime."))
+            Text(L("只上传匿名事件记录(功能名、时间戳、随机设备编号)。基础级(默认)绝不含屏幕内容、对话或任何个人文本;详细级(需手动开启)会附带指令与提问摘要(≤200 字符)。随时可在这里更改。",
+                   "Anonymous event records only (feature name, timestamp, a random device id). The Basic level (default) never includes screen content, conversations, or any personal text; the Detailed level (manual opt-in) attaches instruction and question summaries (≤200 chars). Change it here anytime."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
