@@ -336,6 +336,11 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
                 _log(f"merge: {sec.id} stop_session({sec_sid}) -> {stopped}")
             except Exception as e:  # noqa: BLE001 - best-effort
                 _log(f"merge: {sec.id} stop_session({sec_sid}) failed (ignored): {e}")
+        # Persist the primary's absorption BEFORE marking the secondary as
+        # merged: retries skip already-merged secondaries, so a crash between
+        # the two saves must never leave the absorbed sources/mentions/notes
+        # only in memory.
+        save(primary)
         # 副卡终态（registry State.MERGED，语义见 §21）
         sec.set_status(State.MERGED)
         sec.merged_into = primary.id
@@ -352,7 +357,6 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             f"{sec.id} 已并入，其交付物/worktree：{worktree or sec.target_repo or '(无)'}；"
             f"摘要：{summary[:300] or '(无)'}")
 
-    save(primary)
     if not feedback_lines:
         return
     if str(primary.status) == State.REVIEW.value and executor is not None:
