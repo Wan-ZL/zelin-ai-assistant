@@ -38,10 +38,12 @@ truth，上传只读不改不删。
 |------|----------|------|
 | `instruction` | `dispatch`（任务派发） | 给 claude 的指令摘要：需求标题 + 计划开头，**≤200 字符**（绝不含完整 prompt 或围栏内的源材料） |
 | `summary` | `review_promoted`（任务交付） | 交付摘要节选，**≤200 字符** |
+| `question` | `ask_answered` / `ask_submit` / `ask_feedback`（问问助手，CONTRACT §27） | 你输入的问题原文，**≤200 字符**（绝不含回答或上下文 bundle） |
 
 这些字段在 emit 端 gate：级别是 `basic` 时**根本不会写进本地 events.jsonl**，
-自然也永远不会上传。切到 `detailed` 才开始记录。这两个字段可能包含你任务
-标题/计划里的文字，所以它是更敏感的级别——默认不开。
+自然也永远不会上传。切到 `detailed` 才开始记录。这些字段可能包含你任务
+标题/计划/提问里的文字，所以它是更敏感的级别——默认不开。basic 级的问问助手
+事件只有事件名 + 结果元数据（ok/耗时/failure_id、👍/👎 verdict），没有问题文本。
 
 ## 默认开 + 两条关闭路径
 

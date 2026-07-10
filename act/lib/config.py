@@ -201,6 +201,10 @@ class Config:
     # cached answer stops being projected into the dashboard).
     updates_check_enabled: bool = True
 
+    # in-app Q&A (§27) — `ask.enabled: false` in config.yaml disables both
+    # `python3 -m act.ask` (exit 2) and the app's Ask page input.
+    ask_enabled: bool = True
+
     # phone command channel (§13, channel-pluggable) — which channel carries
     # the notify mirror + the phone command surface. "none"/"slack" keep the
     # legacy Slack behavior (self-gated on features.slack_radar + token);
@@ -374,6 +378,10 @@ def load_config() -> Config:
         cfg.updates_check_enabled = bool(
             updates_block.get("check_enabled", cfg.updates_check_enabled)
         )
+
+    ask_block = data.get("ask", {}) or {}
+    if isinstance(ask_block, dict):
+        cfg.ask_enabled = bool(ask_block.get("enabled", cfg.ask_enabled))
 
     pc = str(data.get("phone_channel") or "").strip().lower()
     if pc in ("none", "slack", "imessage"):

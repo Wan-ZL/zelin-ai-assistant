@@ -103,11 +103,13 @@ enum MainSection: String, CaseIterable, Identifiable {
     // dashboard first: main window = full workbench, popover = quick preview
     // v0.10.2: trash sits right before settings (契约); the kanban keeps
     // excluding trash — this page is where deleted cards live in the window.
-    case dashboard, deps, ingest, trash, settings, about
+    // v0.14 (§27): ask — in-app Q&A over the docs + this machine's state.
+    case dashboard, ask, deps, ingest, trash, settings, about
     var id: String { rawValue }
     var title: String {
         switch self {
         case .dashboard: return L("任务台", "Workbench")
+        case .ask: return L("问问助手", "Ask")
         case .deps: return L("依赖检查", "Dependencies")
         case .ingest: return L("录制与 ingest", "Recording & Ingest")
         case .trash: return L("回收站", "Trash")
@@ -118,6 +120,7 @@ enum MainSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .dashboard: return "tray.full"
+        case .ask: return "questionmark.bubble"
         case .deps: return "checklist"
         case .ingest: return "record.circle"
         case .trash: return "trash"
@@ -346,6 +349,7 @@ struct MainWindowView: View {
                     Group {
                         switch nav.section {
                         case .dashboard: EmptyView()   // handled above
+                        case .ask: AskPageView()
                         case .deps: DepsView()
                         case .ingest: IngestView()
                         case .trash:

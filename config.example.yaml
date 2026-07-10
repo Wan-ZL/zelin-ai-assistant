@@ -119,6 +119,9 @@ digest:
 #                                      # IP + 当前版本号）。发现新版只在菜单栏/关于页低调提示，
 #                                      # 绝不自动下载安装。App 设置「自动检查新版本」也能关。
 
+# ask:                                 # 问问助手 in-app Q&A（CONTRACT §27）
+#   enabled: true                      # 默认开；false = 隐藏主窗口提问框、python -m act.ask 直接退出
+
 redaction:                             # 发给 AI 前的本地脱敏
   enabled: false                       # 词表脱敏开关（默认关；打开会改变 AI 看到的内容，也可在 app 设置里切）
   terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）
