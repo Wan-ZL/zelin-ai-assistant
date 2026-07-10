@@ -70,12 +70,10 @@
 - **触发/频率**：同一条 cron 链的末尾（`python3 -m act.radar --once`，每 30 分钟），另有一个
   同样 30 分钟周期的 launchd agent（`act/launchd/com.zelin.aiassistant.radar.plist`）。
 - **Payload**：`sources.obsidian_raw` 下新增/变化 note 的**全文**拼进需求提取 prompt
-  （`act/radar.py`）；涉及 manager 的 note 会再发一次 action-items 起草 prompt
-  （flag `manager_pack`）。
-- 两处 prompt（需求提取与 action-items 起草）出境前都过 `sanitize.scrub()`。
+  （`act/radar.py`）。
+- 需求提取 prompt 出境前过 `sanitize.scrub()`。
   vault raw 是全系统敏感度最高的内容（来源是全屏文本）。
-- **关闭**：`features.obsidian_radar: false`（config.yaml 或 App 设置窗口）；
-  `manager_pack: false` 单独关 action-items 草稿。
+- **关闭**：`features.obsidian_radar: false`（config.yaml 或 App 设置窗口）。
 
 ### 3. Slack 雷达 → Anthropic
 
@@ -279,8 +277,8 @@
     radar（Obsidian）、radar_slack、radar_gmail、quick_capture。**未覆盖**：
     ingest 加工（claude 直接读文件,prompt 级 redaction 不适用于此路径）。
 - **Feature flags**（CONTRACT §16,config.yaml `features:` 或 App 设置）：
-  `slack_radar` / `gmail_radar` / `obsidian_radar` / `digest` / `auto_resume` / `analytics` /
-  `manager_pack`——每一路雷达都能单独关死。
+  `slack_radar` / `gmail_radar` / `obsidian_radar` / `digest` / `auto_resume` /
+  `analytics`——每一路雷达都能单独关死。
 - **`execution.create_github_repo`**：**默认 false**（v0.11 起）——无任何自动 GitHub repo
   创建；显式设 true 才恢复"新目录卡自动建私有 repo + draft PR"。
 - **`execution.memory_inject: false`**：关掉 MEMORY.md 注入。

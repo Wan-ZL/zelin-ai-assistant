@@ -95,11 +95,10 @@ def _feature_related(feature: str, event: dict) -> bool:
     if feature == "obsidian_radar":
         return ev == "radar_scan" and src == "obsidian"
     if feature == "digest":
-        return ev == "digest_generated"
+        # write_digest emits both: the 1:1 prep page is generated alongside
+        return ev in ("digest_generated", "oneonone_prep")
     if feature == "auto_resume":
         return ev in ("auto_resume", "resume_launch", "auto_resume_exhausted")
-    if feature == "manager_pack":
-        return ev in ("meeting_action_items", "oneonone_prep")
     if feature == "analytics":
         return True  # any event at all means analytics is earning its keep
     return True  # unknown feature -> never suggest closing it

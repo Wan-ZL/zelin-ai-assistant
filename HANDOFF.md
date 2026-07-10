@@ -86,8 +86,8 @@
 10. **分级审批**：T0 自动/T1 一键/T2 需展开+文字确认；成本双阈值（<$5 不显示，>$50 升 T2）；
     对外发送/merge/删资源永不自动。执行 agent 的 quality gate：自检 + fresh-context 审 diff +
     draft 交付不 merge。
-11. **manager 泛化**：所有"重点关注某人需求"的功能（manager_pack、[MANAGER-OWES] 账本、
-    雷达关键词）从 config 的 `owner_name`/`sources.watch_people` 派生，不硬编码人名。
+11. **manager 泛化**：所有"重点关注某人需求"的功能（[MANAGER-OWES] 账本、雷达关键词）
+    从 config 的 `owner_name`/`sources.watch_people` 派生，不硬编码人名。
 12. **本地脱敏**（act/lib/sanitize.py）：发往 claude 的出口统一 scrub。内置密钥正则掩码
     **默认开**（`redaction.mask_secrets`）；用户词条掩码默认关、设置里可开
     （打码会改变 AI 输入质量）。

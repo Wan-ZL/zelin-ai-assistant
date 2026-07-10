@@ -59,7 +59,6 @@ struct SettingsFormView: View {
     @State private var featDigest = true
     @State private var featAutoResume = true
     @State private var featAnalytics = true
-    @State private var featManagerPack = true
     // local pre-send redaction
     @State private var redactionEnabled = false
     @State private var redactionTermsFile = ""
@@ -465,9 +464,6 @@ struct SettingsFormView: View {
                    isOn: featureBinding("auto_resume", $featAutoResume))
             Toggle(L("analytics — 用量统计", "analytics — usage stats"),
                    isOn: featureBinding("analytics", $featAnalytics))
-            Toggle(L("manager_pack — 会后清单 + 1:1 准备页",
-                     "manager_pack — post-meeting checklist + 1:1 prep page"),
-                   isOn: featureBinding("manager_pack", $featManagerPack))
         }
         .toggleStyle(.switch)
         .font(.system(size: 12))
@@ -789,7 +785,6 @@ struct SettingsFormView: View {
         featDigest = flag("digest")
         featAutoResume = flag("auto_resume")
         featAnalytics = flag("analytics")
-        featManagerPack = flag("manager_pack")
         // redaction — effective (audit 5.2: a config.yaml `redaction.enabled:
         // true` used to show as off AND get overwritten by unrelated saves).
         redactionEnabled = (ov["redaction_enabled"] as? Bool)

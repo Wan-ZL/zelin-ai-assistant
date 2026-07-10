@@ -98,7 +98,6 @@ DEFAULT_FEATURES: dict = {
     "digest": True,
     "auto_resume": True,
     "analytics": True,
-    "manager_pack": True,
 }
 
 
