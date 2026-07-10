@@ -14,6 +14,7 @@
 
 import AppKit
 import Foundation
+import ServiceManagement  // SMAppService (first-run launch-at-login default)
 
 @MainActor
 enum RecordingConsent {
@@ -40,12 +41,37 @@ enum RecordingConsent {
         let mode = granted ? "screen" : "off"
         UserDefaults.standard.set(true, forKey: "recordingConsentShown")
         Analytics.log("recording_consent", fields: ["choice": mode])
+        registerLaunchAtLoginDefault()
         if granted, !RecordingController.hasScreenPermission() {
             RecordingController.requestScreenPermission()
         }
         // persists recordingMode and (when granted) starts the engine via the
         // normal stop→start path
         RecordingController.shared.setMode(mode)
+    }
+
+    /// First run only: default launch-at-login ON. A menu-bar assistant that
+    /// dies at the first reboot is an inert product for pkg users (audit 1.2)
+    /// — the tired expert never finds the Settings toggle. One-shot marker so
+    /// a user who later turns the toggle OFF is never re-registered; dev
+    /// builds are skipped (the login item would pin the temporary build
+    /// path); failure is silent — the Settings toggle reads the real
+    /// SMAppService status either way, and this stays user-visible and
+    /// changeable in System Settings → General → Login Items.
+    private static func registerLaunchAtLoginDefault() {
+        let appliedKey = "launchAtLoginDefaultApplied"
+        guard !UserDefaults.standard.bool(forKey: appliedKey) else { return }
+        UserDefaults.standard.set(true, forKey: appliedKey)
+        let path = Bundle.main.bundlePath
+        let installed = path.hasPrefix("/Applications/")
+            || path.hasPrefix(NSHomeDirectory() + "/Applications/")
+        guard installed, SMAppService.mainApp.status != .enabled else { return }
+        do {
+            try SMAppService.mainApp.register()
+            Analytics.log("launch_at_login_default", fields: ["ok": true])
+        } catch {
+            Analytics.log("launch_at_login_default", fields: ["ok": false])
+        }
     }
 
     static func openPrivacyDoc() {
