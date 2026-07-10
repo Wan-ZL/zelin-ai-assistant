@@ -1001,21 +1001,15 @@ struct TaskRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                // §25: classified errors show the plain-language sentence +
+                // one right button; the raw text drops to the tooltip/detail.
                 if isQueued, let de = task.dispatch_error, !de.isEmpty {
-                    Text(L("派发失败：", "Dispatch failed: ") + de)
-                        .font(.system(size: 10))
-                        .foregroundColor(.red)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(de)
+                    errorLine(prefix: L("派发失败：", "Dispatch failed: "),
+                              raw: de, failureID: task.dispatch_error_id)
                 }
                 if !isQueued, let le = task.last_error, !le.isEmpty {
-                    Text(L("错误：", "Error: ") + le)
-                        .font(.system(size: 10))
-                        .foregroundColor(.red)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(le)
+                    errorLine(prefix: L("错误：", "Error: "),
+                              raw: le, failureID: task.last_error_id)
                 }
                 if let an = task.agent_name, !an.isEmpty {
                     Text(L("claude agents 列表名：", "claude agents list name: ") + an)
@@ -1033,6 +1027,35 @@ struct TaskRow: View {
                     .foregroundColor(.red)
                     .padding(.top, 2)
             }
+        }
+    }
+
+    /// §25 error line: classified id → plain sentence + the one right button
+    /// (+ 让 AI 修 fallback); unclassified → raw text + 让 AI 修. The raw text
+    /// always survives in the tooltip and the expanded detail block.
+    @ViewBuilder private func errorLine(prefix: String, raw: String,
+                                        failureID: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(FailureCatalog.message(failureID).map { prefix + $0 } ?? (prefix + raw))
+                .font(.system(size: 10))
+                .foregroundColor(.red)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .help(raw)
+            HStack(spacing: 6) {
+                if let label = FailureCatalog.actionLabel(failureID) {
+                    Button(label) { FailureCatalog.perform(failureID) }
+                }
+                if AIFix.enabled {
+                    Button(L("让 AI 修", "Fix with AI")) {
+                        AIFix.launch(context: prefix + raw) { _, _ in }
+                    }
+                }
+                Spacer()
+            }
+            .font(.system(size: 10))
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
         }
     }
 

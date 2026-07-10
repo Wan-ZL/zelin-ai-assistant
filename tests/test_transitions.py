@@ -18,6 +18,22 @@ import unittest
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd
+from act.lib import notify
+
+
+def _new_card(title):
+    t, b = notify.msg_new_card(title)
+    return t, b
+
+
+def _review_ready(name):
+    t, b = notify.msg_review_ready(name)
+    return t, b
+
+
+def _needs_input(name):
+    t, b = notify.msg_needs_input(name)
+    return t, b
 
 
 def _dash(needs_approval=(), running=(), needs_input=(), review=()):
@@ -44,7 +60,7 @@ class NewCardTestCase(unittest.TestCase):
         prev = _dash()
         curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [("有新需求待审批", "写周报", "R-1")])
+                         [(*_new_card("写周报"), "R-1")])
 
     def test_existing_card_stays_silent(self):
         prev = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
@@ -55,7 +71,7 @@ class NewCardTestCase(unittest.TestCase):
         prev = _dash()
         curr = _dash(needs_approval=[{"id": "R-1"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [("有新需求待审批", "R-1", "R-1")])
+                         [(*_new_card("R-1"), "R-1")])
 
 
 class ReviewTransitionTestCase(unittest.TestCase):
@@ -63,7 +79,7 @@ class ReviewTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-2", "name": "任务二"}])
         curr = _dash(review=[{"id": "R-2", "name": "任务二"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [("待验收：AI 已交付草稿", "任务二", "R-2")])
+                         [(*_review_ready("任务二"), "R-2")])
 
     def test_review_without_prior_running_is_silent(self):
         # e.g. actd restarted while the item already sat in review upstream
@@ -80,7 +96,7 @@ class ReviewTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-2"}])
         curr = _dash(review=[{"id": "R-2"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [("待验收：AI 已交付草稿", "R-2", "R-2")])
+                         [(*_review_ready("R-2"), "R-2")])
 
 
 class NeedsInputTransitionTestCase(unittest.TestCase):
@@ -88,7 +104,7 @@ class NeedsInputTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-3", "name": "任务三"}])
         curr = _dash(needs_input=[{"id": "R-3", "name": "任务三"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [("任务需要你输入", "任务三", "R-3")])
+                         [(*_needs_input("任务三"), "R-3")])
 
     def test_needs_input_persisting_is_silent(self):
         prev = _dash(needs_input=[{"id": "R-3", "name": "任务三"}])
@@ -110,9 +126,9 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
                      needs_input=[{"id": "R-3", "name": "任务三"}])
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual(set(msgs), {
-            ("有新需求待审批", "写周报", "R-1"),
-            ("待验收：AI 已交付草稿", "任务二", "R-2"),
-            ("任务需要你输入", "任务三", "R-3"),
+            (*_new_card("写周报"), "R-1"),
+            (*_review_ready("任务二"), "R-2"),
+            (*_needs_input("任务三"), "R-3"),
         })
 
     def test_approval_to_running_is_silent(self):
@@ -125,7 +141,7 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
         # prev written by an older build without some partitions
         msgs = actd.detect_transitions({}, _dash(
             needs_approval=[{"id": "R-1", "title": "写周报"}]))
-        self.assertEqual(msgs, [("有新需求待审批", "写周报", "R-1")])
+        self.assertEqual(msgs, [(*_new_card("写周报"), "R-1")])
 
     def test_items_without_id_are_ignored(self):
         prev = _dash()

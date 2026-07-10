@@ -103,6 +103,10 @@ struct PipelineHealthBanner: View {
     unowned let app: AppDelegate
     var horizontalPadding: CGFloat = 0
     var bottomPadding: CGFloat = 0
+    // §25 one-click repair state (shared: popover + kanban banner show the
+    // same spinner/result instead of a copy-this-command line).
+    @ObservedObject private var repair = PipelineRepair.shared
+    @State private var aiFixStatus = ""
 
     var body: some View {
         switch store.pipelineHealth {
@@ -110,19 +114,19 @@ struct PipelineHealthBanner: View {
             EmptyView()
         case .stale(let mins):
             banner(color: .orange,
-                   title: L("数据 \(mins) 分钟未更新——actd 可能变慢或刚停止",
-                            "Data \(mins) min stale — actd may be slow or just stopped"),
-                   reason: L("卡片操作仍会写入队列，pipeline 恢复后照常生效。",
-                             "Card actions still land in the queue and apply once the pipeline recovers."))
+                   title: L("数据 \(mins) 分钟没更新——后台服务可能变慢或刚停止",
+                            "Data \(mins) min stale — the background service may be slow or just stopped"),
+                   reason: L("卡片操作仍会写入队列，后台服务恢复后照常生效。",
+                             "Card actions still land in the queue and apply once the service recovers."))
         case .dead(let mins, let why):
             banner(color: .red,
-                   title: L("pipeline 已停止：数据 \(mins) 分钟未更新",
-                            "Pipeline down: data \(mins) min stale"),
+                   title: L("后台服务已停止：数据 \(mins) 分钟没更新",
+                            "Background service down: data \(mins) min stale"),
                    reason: why == .radarsAlive
-                       ? L("雷达仍在上报——只有 actd 停了，复制下面的命令在终端重启。",
-                           "Radars still report — only actd is down; copy the command below and run it in Terminal.")
-                       : L("整条 pipeline 都没有输出——launchd agents 可能没装好，先过一遍依赖检查。",
-                           "No pipeline output at all — launchd agents may be missing; run the dependency check first."))
+                       ? L("雷达仍在上报——只有主后台服务停了。点「一键修复」原地重启它。",
+                           "Radars still report — only the main service is down. \"Fix now\" restarts it in place.")
+                       : L("整条链路都没有输出——先点「一键修复」，仍不行就过一遍依赖检查。",
+                           "No pipeline output at all — press \"Fix now\" first; if that fails, run the dependency check."))
         }
     }
 
@@ -142,7 +146,7 @@ struct PipelineHealthBanner: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            CopyPathLine(label: L("重启：", "Restart: "), path: PipelineHealthUI.startCommand)
+            repairRow
             HStack(spacing: 8) {
                 Button(L("查看日志", "View log")) { PipelineHealthUI.revealActdLog() }
                 Button(L("依赖检查", "Dependency check")) { PipelineHealthUI.openDeps(app: app) }
@@ -159,6 +163,69 @@ struct PipelineHealthBanner: View {
         .padding(.horizontal, horizontalPadding)
         .padding(.bottom, bottomPadding)
     }
+
+    /// §25: primary = 一键修复 (in-app launchctl, honest verification);
+    /// the raw command downgraded to a collapsed fallback + AI escape hatch.
+    @ViewBuilder private var repairRow: some View {
+        switch repair.phase {
+        case .idle:
+            HStack(spacing: 8) {
+                Button {
+                    repair.restartActd()
+                } label: {
+                    Label(L("一键修复", "Fix now"), systemImage: "wrench.and.screwdriver")
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Spacer()
+            }
+        case .running:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(L("正在重启后台服务并等待数据更新（最多 15 秒）…",
+                       "Restarting the service and waiting for fresh data (up to 15 s)…"))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+        case .success:
+            Label(L("已恢复 ✓ 数据重新更新了", "Recovered ✓ data is updating again"),
+                  systemImage: "checkmark.circle.fill")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.green)
+        case .failure(let detail):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L("自动修复没成功：", "Auto-repair didn't work: ") + detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(L("再试一次", "Try again")) { repair.restartActd() }
+                    if AIFix.enabled {
+                        Button(L("让 AI 修", "Fix with AI")) {
+                            aiFixStatus = L("正在准备诊断包…", "Preparing the diagnostic bundle…")
+                            AIFix.launch(context: L("看板健康横幅：后台服务已停止；一键修复失败：",
+                                                    "Board health banner: background service down; one-click repair failed: ")
+                                         + detail) { _, msg in aiFixStatus = msg }
+                        }
+                    }
+                    Spacer()
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                if !aiFixStatus.isEmpty {
+                    Text(aiFixStatus)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                // fallback for the terminal-comfortable: the raw command stays
+                // available but demoted (audit 4.1 — never the primary path)
+                CopyPathLine(label: L("手动命令：", "Manual command: "),
+                             path: PipelineHealthUI.startCommand)
+            }
+        }
+    }
 }
 
 // MARK: - PipelineEmptyStateView (P1-5) — "no dashboard.json" is not a dead end
@@ -169,29 +236,55 @@ struct PipelineHealthBanner: View {
 
 struct PipelineEmptyStateView: View {
     unowned let app: AppDelegate
+    @ObservedObject private var repair = PipelineRepair.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Image(systemName: "hourglass")
                 .font(.system(size: 22))
                 .foregroundColor(.secondary)
-            Text(L("等待 pipeline 启动", "Waiting for pipeline"))
+            Text(L("后台服务还没写出数据", "The background service hasn't produced data yet"))
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
-            Text(L("未找到 state/dashboard.json——actd 还没写出数据（首次安装：先跑 bash install.sh）",
-                   "state/dashboard.json not found — actd hasn't written data yet (first install: run bash install.sh)"))
+            Text(L("首次安装或服务未启动时会这样。点「启动后台服务」原地拉起它。",
+                   "This happens on a fresh install or when the service isn't running. \"Start service\" launches it in place."))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            CopyPathLine(label: L("启动 actd：", "Start actd: "),
-                         path: PipelineHealthUI.startCommand)
-            Button {
-                PipelineHealthUI.openDeps(app: app)
-            } label: {
-                Label(L("打开依赖检查", "Open dependency check"), systemImage: "checklist")
+            switch repair.phase {
+            case .running:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L("正在启动并等待首份数据…", "Starting and waiting for the first data…"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            case .failure(let detail):
+                Text(L("启动没成功：", "Start didn't work: ") + detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                CopyPathLine(label: L("手动命令：", "Manual command: "),
+                             path: PipelineHealthUI.startCommand)
+            default:
+                EmptyView()
+            }
+            HStack(spacing: 8) {
+                Button {
+                    repair.restartActd()
+                } label: {
+                    Label(L("启动后台服务", "Start service"), systemImage: "play.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(repair.phase == .running)
+                Button {
+                    PipelineHealthUI.openDeps(app: app)
+                } label: {
+                    Label(L("打开依赖检查", "Open dependency check"), systemImage: "checklist")
+                }
+                .buttonStyle(.bordered)
             }
             .font(.system(size: 11))
-            .buttonStyle(.bordered)
             .controlSize(.small)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

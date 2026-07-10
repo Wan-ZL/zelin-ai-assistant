@@ -176,22 +176,68 @@ def _self_dm_channel(token: str) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
-# message builders (CONTRACT §5 copy)
+# message builders (CONTRACT §5 copy — v0.14: bilingual per the UI language
+# setting, and every message names the user's next step; act/lib/failures.pick
+# is the single language switch for ALL python-originated user-facing copy)
 # --------------------------------------------------------------------------- #
+def _pick(zh: str, en: str) -> str:
+    from act.lib import failures
+    return failures.pick(zh, en)
+
+
 def msg_new_card(title: str) -> tuple[str, str]:
-    return ("有新需求待审批", title)
+    return (_pick("有新需求待审批", "New card awaiting approval"),
+            _pick(f"{title} —— 打开菜单栏面板，✅ 批准或 ❌ 拒绝",
+                  f"{title} — open the menu-bar panel: ✅ approve or ❌ reject"))
 
 
 def msg_done(title: str) -> tuple[str, str]:
-    return ("任务完成", title)
+    return (_pick("任务完成", "Task finished"),
+            _pick(f"{title} —— 打开 App 验收或打回",
+                  f"{title} — open the app to accept or send back"))
 
 
 def msg_needs_input(title: str) -> tuple[str, str]:
-    return ("任务需要你输入", title)
+    return (_pick("任务需要你输入", "A task needs your input"),
+            _pick(f"{title} —— 打开 App 的「需输入」列查看它在等什么",
+                  f"{title} — open the app's Needs-input column to see what it's waiting for"))
 
 
 def msg_auth(service: str) -> tuple[str, str]:
-    return ("需要重新登录", service)
+    return (_pick("需要重新登录", "Login needed again"),
+            _pick(f"{service} —— 打开 App 设置页重新粘贴对应的 key/密码",
+                  f"{service} — open the app's Settings and re-paste the key/password"))
+
+
+def msg_review_ready(title: str) -> tuple[str, str]:
+    """executing -> review: the draft is ready for Zelin's ✓/↩︎."""
+    return (_pick("待验收：AI 已交付草稿", "Ready for review: draft delivered"),
+            _pick(f"{title} —— 打开 App 的「待验收」列验收或打回",
+                  f"{title} — open the app's Review column to accept or send back"))
+
+
+def msg_dispatch_failed(title: str) -> tuple[str, str]:
+    """dispatch launch failed; actd auto-retries with backoff (P0-6)."""
+    return (_pick("任务派发失败（会自动重试）", "Task launch failed (will auto-retry)"),
+            _pick(f"{title} —— 一直失败的话，打开 App 排队卡片上的错误提示按对应按钮修",
+                  f"{title} — if it keeps failing, open the app: the queued card"
+                  " shows the error with a fix button"))
+
+
+def msg_resuming(title: str) -> tuple[str, str]:
+    return (_pick("任务疑似中断，正在自动恢复", "Task looks interrupted — auto-recovering"),
+            _pick(f"{title} —— 无需操作；持续失败会另行通知",
+                  f"{title} — nothing to do; you'll be notified if it keeps failing"))
+
+
+def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
+    """5 straight resume failures — actd gives up; name the exact buttons."""
+    return (_pick("自动恢复已放弃（连续失败 5 次）",
+                  "Auto-recovery gave up (5 straight failures)"),
+            _pick(f"{title} —— 打开 App，在「运行中」列对这张卡点「停止并退回」重新批准，"
+                  "或点「已办完」结束它",
+                  f"{title} — open the app: on this card in Running, press"
+                  " \"Stop & return\" to re-approve, or \"Done outside\" to close it"))
 
 
 # --------------------------------------------------------------------------- #

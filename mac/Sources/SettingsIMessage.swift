@@ -317,37 +317,10 @@ final class IMessageSettingsModel: ObservableObject {
         NSHomeDirectory() + "/Library/LaunchAgents/\(agentLabel).plist"
     }
 
-    /// Render the repo plist template (same 4 placeholder substitutions as
-    /// install.sh render_launchd_plist, same order) and launchctl load it.
+    /// Render + load via the shared launchd helper (Doctor.swift LaunchAgents —
+    /// same 4 placeholder substitutions as install.sh render_launchd_plist).
     nonisolated static func installAgent() -> (Bool, String) {
-        let root = AppPaths.stateRoot
-        let template = root + "/act/launchd/\(agentLabel).plist"
-        guard var text = try? String(contentsOfFile: template, encoding: .utf8) else {
-            return (false, L("找不到模板 \(template)——repo 不完整？", "Template missing: \(template) — incomplete repo?"))
-        }
-        let py = runtimePython()
-        let pyDir = (py as NSString).deletingLastPathComponent
-        let home = NSHomeDirectory()
-        text = text
-            .replacingOccurrences(of: "/Users/YOURUSERNAME/miniconda3/bin/python3", with: py)
-            .replacingOccurrences(of: "/Users/YOURUSERNAME/Projects/zelin-ai-assistant", with: root)
-            .replacingOccurrences(of: "/Users/YOURUSERNAME/miniconda3/bin", with: pyDir)
-            .replacingOccurrences(of: "/Users/YOURUSERNAME", with: home)
-        let dest = plistDest
-        do {
-            try FileManager.default.createDirectory(
-                atPath: (dest as NSString).deletingLastPathComponent,
-                withIntermediateDirectories: true)
-            try text.write(toFile: dest, atomically: true, encoding: .utf8)
-        } catch {
-            return (false, L("写入 \(dest) 失败: ", "Failed to write \(dest): ") + error.localizedDescription)
-        }
-        _ = Shell.run("/bin/launchctl", ["unload", dest])  // ignore "not loaded"
-        let (code, out) = Shell.run("/bin/launchctl", ["load", dest])
-        if code != 0 {
-            return (false, L("launchctl load 失败: ", "launchctl load failed: ") + out)
-        }
-        return (true, "")
+        LaunchAgents.install(label: agentLabel)
     }
 
     /// Unload + remove — same as install.sh's feature-off branch.

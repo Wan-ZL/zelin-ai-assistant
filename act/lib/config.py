@@ -191,6 +191,11 @@ class Config:
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
 
+    # AI Doctor (§25) — "让 AI 修 / Fix with AI" escape hatch: generates a
+    # Terminal .command that hands the scrubbed diagnostic bundle to claude.
+    # `doctor.ai_fix_enabled: false` in config.yaml disables the button + CLI.
+    doctor_ai_fix_enabled: bool = True
+
     # phone command channel (§13, channel-pluggable) — which channel carries
     # the notify mirror + the phone command surface. "none"/"slack" keep the
     # legacy Slack behavior (self-gated on features.slack_radar + token);
@@ -352,6 +357,12 @@ def load_config() -> Config:
     _tf = cfg.redaction_terms_file
     if _tf and not str(_tf).startswith(("/", "~")):
         cfg.redaction_terms_file = str(HOME / _tf)
+
+    doctor_block = data.get("doctor", {}) or {}
+    if isinstance(doctor_block, dict):
+        cfg.doctor_ai_fix_enabled = bool(
+            doctor_block.get("ai_fix_enabled", cfg.doctor_ai_fix_enabled)
+        )
 
     pc = str(data.get("phone_channel") or "").strip().lower()
     if pc in ("none", "slack", "imessage"):

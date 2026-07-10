@@ -604,7 +604,7 @@ def dispatch(
         analytics.log_event("dispatch_failed", req=req.id, error=err[:120],
                             reason=reason, attempt=attempts + 1)
         if attempts == 0:  # once per failure streak, not on every retry
-            notify.notify("任务派发失败（将自动重试）", req.title or req.id, req=req.id)
+            notify.notify(*notify.msg_dispatch_failed(req.title or req.id), req=req.id)
         raise DispatchError(err[:500])
 
     req.execution = {

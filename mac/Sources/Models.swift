@@ -122,6 +122,9 @@ struct RunningTask: Decodable, Hashable {
     let delivery_mode: String?   // "chat" | "repo"
     let last_error: String?
     let dispatch_error: String?  // queued items only: why dispatch failed (nil = pending)
+    // §25 classification ids (act/lib/failures.py) — nil/absent = unclassified
+    let last_error_id: String?
+    let dispatch_error_id: String?
     // completed[] extras (contract B).
     let delivered_summary: String?
     let accepted_at: Int?        // epoch seconds

@@ -14,6 +14,7 @@ enum DepAction {
     case grant(String)  // TCC rows: x-apple.systempreferences deep link to the pane
     case settings   // credential rows: jump to the 设置 page (App 内管理)
     case ingest     // engine row: jump to the 录制与 ingest page (start/stop there)
+    case cronFDA    // §25 guided grant: copy /usr/sbin/cron + open the FDA pane
 
     @MainActor func perform() {
         switch self {
@@ -32,6 +33,8 @@ enum DepAction {
             MainNav.shared.section = .settings
         case .ingest:
             MainNav.shared.section = .ingest
+        case .cronFDA:
+            CronFDA.beginGrant()
         }
     }
 
@@ -42,6 +45,7 @@ enum DepAction {
         case .grant: return L("去授权", "Grant…")
         case .settings: return L("去设置", "Open Settings")
         case .ingest: return L("去录制页", "Open Recording")
+        case .cronFDA: return L("去授权", "Grant…")
         }
     }
 }
@@ -52,6 +56,18 @@ struct DepRowState: Identifiable {
     var ok: Bool?          // nil = still checking
     var detail: String
     let action: DepAction
+}
+
+/// One §25 doctor check (python -m act.doctor --json): raw fields only —
+/// display text is built in the view so it follows language switches.
+struct DoctorRow: Identifiable {
+    let id: String
+    let name: String
+    let status: String     // "ok" | "warn" | "fail"
+    let detail: String
+    let fix: String
+    let failureID: String  // act/lib/failures.py id ("" = unclassified)
+    let actionID: String
 }
 
 /// One radar source's health (contract E: state/radar_health.json, written by
@@ -75,6 +91,10 @@ final class DepsModel: ObservableObject {
     @Published var doctorRunning = false
     // exit code = number of FAILs (doctor contract); nil = never run
     @Published var doctorFails: Int? = nil
+    // §25 classified findings (empty when the JSON path was unavailable)
+    @Published var doctorRows: [DoctorRow] = []
+    // "让 AI 修" status line under the diagnostics block
+    @Published var aiFixStatus = ""
 
     func check() {
         guard !checking else { return }
@@ -206,6 +226,10 @@ final class DepsModel: ObservableObject {
                                secretsPath: secretsGmail, legacyPath: legacyGmail))
             out.append(credRow(id: "anthropic", name: "Anthropic API key",
                                secretsPath: secretsAnthropic, legacyPath: legacyAnthropic))
+            // §25 cron Full Disk Access — the audit's #1 documented silent
+            // failure. Ground truth = state/cron_probe.json, written by REAL
+            // cron runs (an in-app probe would use the app's own grant and lie).
+            out.append(Self.cronFDARow())
             // 雷达健康 (contract E) — is the gmail/slack radar actually landing?
             let radar = Self.readRadarHealth(path: radarHealthPath)
             DispatchQueue.main.async {
@@ -213,9 +237,45 @@ final class DepsModel: ObservableObject {
                     self.rows = out
                     self.radar = radar
                     self.checking = false
+                    self.autoRunDoctorIfBroken(rows: out)
                 }
             }
         }
+    }
+
+    /// §25 row from the cron FDA probe. Three honest states: no data yet /
+    /// probe fresh + read ok / probe says blocked (or the chain stopped).
+    nonisolated private static func cronFDARow() -> DepRowState {
+        guard let probe = CronProbe.read() else {
+            return DepRowState(
+                id: "cron_fda", name: L("定时任务磁盘权限", "Cron disk access"),
+                ok: false,
+                detail: L("还没有探测数据——等下一次定时运行（约 30 分钟）；一直没有就重跑一遍安装（会更新定时任务）",
+                          "No probe data yet — wait for the next scheduled run (~30 min); if it never appears, rerun the installer (updates the cron line)"),
+                action: .cronFDA)
+        }
+        let age = probe.ts.map { Date().timeIntervalSince($0) }
+        if let age, age > 2 * 3600 {
+            return DepRowState(
+                id: "cron_fda", name: L("定时任务磁盘权限", "Cron disk access"),
+                ok: false,
+                detail: L("最近一次探测在 \(Int(age / 3600)) 小时前——定时任务可能停跑了（先查「诊断」）",
+                          "Last probe \(Int(age / 3600))h ago — the scheduled jobs may have stopped (run Diagnostics)"),
+                action: .cronFDA)
+        }
+        if probe.readOK {
+            return DepRowState(
+                id: "cron_fda", name: L("定时任务磁盘权限", "Cron disk access"),
+                ok: true,
+                detail: L("定时任务能读取 \(probe.path)", "cron can read \(probe.path)"),
+                action: .cronFDA)
+        }
+        return DepRowState(
+            id: "cron_fda", name: L("定时任务磁盘权限", "Cron disk access"),
+            ok: false,
+            detail: L("macOS 挡住了定时任务读取 \(probe.path)——屏幕记录不会变成笔记。点「去授权」按提示给 cron 开「完全磁盘访问」",
+                      "macOS blocks the scheduled jobs from reading \(probe.path) — captures never become notes. Click Grant and follow the steps"),
+            action: .cronFDA)
     }
 
     /// nil = file missing / unreadable / bad JSON. Tolerant by contract E —
@@ -234,44 +294,115 @@ final class DepsModel: ObservableObject {
         }
     }
 
-    // MARK: P1-3 diagnostics — shell out to the post-install doctor
+    // MARK: P1-3/§25 diagnostics — the post-install doctor, classified
 
-    /// `bash install.sh --check` from the repo root: 14 symptom-first checks,
-    /// one fix line per finding, exit code = number of FAILs. The full run
-    /// ends with a cheap live claude call (validates the key end-to-end), so
-    /// it can take a minute or two — never auto-run, button only.
-    func runDoctor() {
+    /// §25: auto-run the cheap doctor (--fast, no live claude call) ONCE per
+    /// app session as soon as a failure state is visible in the quick rows —
+    /// the tired user must not have to know a "Run diagnostics" button exists.
+    nonisolated(unsafe) private static var autoDoctorRan = false
+
+    func autoRunDoctorIfBroken(rows: [DepRowState]) {
+        guard !Self.autoDoctorRan, !doctorRunning else { return }
+        let recOff = RecordingController.shared.mode == "off"
+        let critical = rows.contains { row in
+            guard row.ok == false else { return false }
+            switch row.id {
+            case "npx", "claude", "pyyaml", "cron_fda": return true
+            case "engine": return !recOff  // a stopped engine is fine when recording is off
+            default: return false
+            }
+        }
+        guard critical else { return }
+        Self.autoDoctorRan = true
+        runDoctor(fast: true)
+    }
+
+    /// `python -m act.doctor --json` (§25): classified rows with one-click
+    /// fixes. `fast` skips the live claude probe (free — used for auto-runs);
+    /// the manual button does the full run. JSON unavailable (broken runtime
+    /// python) → fall back to the legacy `bash install.sh --check` text dump.
+    func runDoctor(fast: Bool = false) {
         guard !doctorRunning else { return }
         doctorRunning = true
         doctorOutput = ""
+        doctorRows = []
         doctorFails = nil
-        Analytics.log("mw_doctor_run")
+        Analytics.log(fast ? "mw_doctor_auto" : "mw_doctor_run")
         let root = AppPaths.stateRoot
+        let py = IMessageSettingsModel.runtimePython()
         DispatchQueue.global(qos: .userInitiated).async {
+            var args = ["-m", "act.doctor", "--json"]
+            if fast { args.append("--fast") }
+            let (code, out) = Self.runFullOutput(py, args, cwd: root)
+            if let rows = Self.parseDoctorJSON(out) {
+                let text = rows.map { r in
+                    var line = "[\(r.status)] \(r.name): \(r.detail)"
+                    if !r.fix.isEmpty && r.status != "ok" { line += "\n    fix: \(r.fix)" }
+                    return line
+                }.joined(separator: "\n")
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.doctorRunning = false
+                        self.doctorRows = rows
+                        self.doctorOutput = text
+                        self.doctorFails = rows.filter { $0.status == "fail" }.count
+                        Analytics.log("mw_doctor_result", fields: ["fails": Int(code)])
+                    }
+                }
+                return
+            }
+            // legacy fallback — e.g. runtime python broken: install.sh --check
+            // has its own interpreter detection.
             let cmd = "cd " + Self.shellQuote(root) + " && bash install.sh --check 2>&1"
-            let (code, out) = Self.runFullOutput("/bin/zsh", ["-lc", cmd])
+            let (code2, out2) = Self.runFullOutput("/bin/zsh", ["-lc", cmd])
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.doctorRunning = false
-                    let text = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let text = out2.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.doctorOutput = text.isEmpty
-                        ? L("诊断没有产生输出（exit \(code)）——检查 install.sh 是否存在于 repo 根目录",
-                            "Diagnostics produced no output (exit \(code)) — check that install.sh exists at the repo root")
+                        ? L("诊断没有产生输出（exit \(code2)）——检查 install.sh 是否存在于 repo 根目录",
+                            "Diagnostics produced no output (exit \(code2)) — check that install.sh exists at the repo root")
                         : text
-                    self.doctorFails = text.isEmpty ? nil : Int(code)
-                    Analytics.log("mw_doctor_result", fields: ["fails": Int(code)])
+                    self.doctorFails = text.isEmpty ? nil : Int(code2)
+                    Analytics.log("mw_doctor_result", fields: ["fails": Int(code2)])
                 }
             }
+        }
+    }
+
+    /// {"home":…, "checks":[{name,status,detail,fix,failure_id,action_id}]} →
+    /// rows; nil when the output is not the §25 JSON shape.
+    nonisolated private static func parseDoctorJSON(_ out: String) -> [DoctorRow]? {
+        guard let start = out.firstIndex(of: "{"),
+              let data = String(out[start...]).data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let checks = obj["checks"] as? [[String: Any]]
+        else { return nil }
+        return checks.enumerated().map { i, c in
+            DoctorRow(
+                id: "\(i)-\((c["name"] as? String) ?? "?")",
+                name: (c["name"] as? String) ?? "?",
+                status: (c["status"] as? String) ?? "warn",
+                detail: (c["detail"] as? String) ?? "",
+                fix: (c["fix"] as? String) ?? "",
+                failureID: (c["failure_id"] as? String) ?? "",
+                actionID: (c["action_id"] as? String) ?? "")
         }
     }
 
     /// Like Shell.run but returns the FULL combined output — the doctor
     /// report must not be truncated to Shell.run's 400-char tail.
     nonisolated private static func runFullOutput(
-        _ launchPath: String, _ args: [String]) -> (Int32, String) {
+        _ launchPath: String, _ args: [String], cwd: String? = nil) -> (Int32, String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: launchPath)
         p.arguments = args
+        if let cwd {
+            p.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
+            var env = ProcessInfo.processInfo.environment
+            env["AIASSISTANT_HOME"] = cwd
+            p.environment = env
+        }
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
@@ -312,21 +443,32 @@ struct DepsView: View {
             }
 
             ForEach(model.rows) { row in
-                HStack(alignment: .center, spacing: 10) {
-                    Text(row.ok == true ? "✅" : "⚠️")
-                        .font(.system(size: 14))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.name)
-                            .font(.system(size: 13, weight: .medium))
-                        Text(row.detail)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(row.ok == true ? "✅" : "⚠️")
+                            .font(.system(size: 14))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.name)
+                                .font(.system(size: 13, weight: .medium))
+                            Text(row.detail)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(row.detail)
+                        }
+                        Spacer()
+                        Button(row.action.label) { row.action.perform() }
+                            .controlSize(.small)
                     }
-                    Spacer()
-                    Button(row.action.label) { row.action.perform() }
-                        .controlSize(.small)
+                    // §25 cron FDA guided grant — inline click-by-click steps
+                    // (clone of the iMessage FDA block's approach)
+                    if row.id == "cron_fda", row.ok == false {
+                        Text(CronFDA.grantSteps)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -383,29 +525,72 @@ struct DepsView: View {
                     } else if let fails = model.doctorFails {
                         Text(fails == 0
                              ? L("全部通过 ✓", "All checks passed ✓")
-                             : L("\(fails) 项未通过——按报告里的 fix 行修复",
-                                 "\(fails) check(s) failed — apply the fix lines in the report"))
+                             : L("\(fails) 项未通过——每条都有对应按钮",
+                                 "\(fails) check(s) failed — each has its own button"))
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(fails == 0 ? .green : .red)
                     }
+                    // §25 escape hatch: anything unclassified / repair failed
+                    if !model.doctorRunning, (model.doctorFails ?? 0) > 0, AIFix.enabled {
+                        Button(L("让 AI 修", "Fix with AI")) {
+                            model.aiFixStatus = L("正在准备诊断包…", "Preparing the diagnostic bundle…")
+                            AIFix.launch(context: model.doctorOutput) { _, msg in
+                                model.aiFixStatus = msg
+                            }
+                        }
+                    }
                     Spacer()
                 }
-                Text(L("跑 bash install.sh --check（= python -m act.doctor）：逐项复验运行时假设，每条失败带一行修复命令。",
-                       "Runs bash install.sh --check (= python -m act.doctor): re-validates every runtime assumption, one fix line per finding."))
+                Text(L("发现异常时会自动运行一次快速诊断；这个按钮跑完整版（含一次真实 claude 调用）。",
+                       "A quick diagnostic auto-runs when something looks broken; this button runs the full version (one live claude call)."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                if !model.doctorOutput.isEmpty {
-                    ScrollView {
-                        Text(model.doctorOutput)
-                            .font(.system(size: 10, design: .monospaced))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
+                if !model.aiFixStatus.isEmpty {
+                    Text(model.aiFixStatus)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                // §25 classified findings — plain sentence + one right button;
+                // the raw probe text drops to the tooltip / full report.
+                ForEach(model.doctorRows.filter { $0.status != "ok" }) { row in
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(row.status == "fail" ? "❌" : "⚠️")
+                            .font(.system(size: 12))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(FailureCatalog.message(row.failureID) ?? row.detail)
+                                .font(.system(size: 11))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(row.name)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if let label = FailureCatalog.actionLabel(row.failureID) {
+                            Button(label) { FailureCatalog.perform(row.failureID) }
+                                .controlSize(.small)
+                        }
                     }
-                    .frame(maxHeight: 260)
-                    .background(Color.primary.opacity(0.04))
+                    .help(row.detail + (row.fix.isEmpty ? "" : "\nfix: " + row.fix))
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background((row.status == "fail" ? Color.red : Color.orange).opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                if !model.doctorOutput.isEmpty {
+                    DisclosureGroup(L("完整报告", "Full report")) {
+                        ScrollView {
+                            Text(model.doctorOutput)
+                                .font(.system(size: 10, design: .monospaced))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                        }
+                        .frame(maxHeight: 260)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .font(.system(size: 11))
                 }
             }
             .padding(10)

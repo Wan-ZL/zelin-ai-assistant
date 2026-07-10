@@ -38,6 +38,28 @@ resolve_config_path() {  # $1 = config key, $2 = fallback path
 DB="$HOME/.screenpipe/db.sqlite"
 OUT_DIR="$(resolve_config_path obsidian_unprocessed "$HOME/Documents/Obsidian Vault/1 - unprocessed")"
 MARKER_DIR="$HOME/.screenpipe/export_markers"
+
+# cron Full Disk Access probe (CONTRACT §25): under cron (AIASSISTANT_CRON=1,
+# set by the install.sh §18 chain) record whether this process can actually
+# read the protected export target. Without FDA, cron writes nothing into
+# ~/Documents and reports nothing — this file is the only honest signal the
+# doctor and the app's dependency page can read. Written BEFORE any early
+# exit below so a blocked run still leaves evidence. Never fails the chain.
+if [ -n "${AIASSISTANT_CRON:-}" ]; then
+    PROBE_DIR="$REPO_ROOT/state"
+    if mkdir -p "$PROBE_DIR" 2>/dev/null; then
+        # same operation the export itself needs: create-if-missing + read.
+        # (Without the mkdir the very first cron run would report a missing
+        # dir as "blocked" — a false alarm on fresh installs.)
+        mkdir -p "$OUT_DIR" 2>/dev/null
+        if ls "$OUT_DIR" >/dev/null 2>&1; then READ_OK=true; else READ_OK=false; fi
+        printf '{"ts":"%s","protected_path":"%s","read_ok":%s}\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$OUT_DIR" "$READ_OK" \
+            > "$PROBE_DIR/cron_probe.json.tmp" 2>/dev/null \
+            && mv -f "$PROBE_DIR/cron_probe.json.tmp" "$PROBE_DIR/cron_probe.json" 2>/dev/null
+    fi
+fi
+
 mkdir -p "$OUT_DIR" "$MARKER_DIR"
 
 # Read last exported IDs

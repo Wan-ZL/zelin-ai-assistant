@@ -110,6 +110,10 @@ digest:
 # raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。
 # execution.default_target_repo: "~/Projects/your-workbench"
 
+# doctor:                              # AI Doctor（CONTRACT §25）
+#   ai_fix_enabled: true               # 「让 AI 修」按钮/CLI（act/ai_fix.py）总开关；
+#                                      # false = 隐藏按钮、python -m act.ai_fix 直接退出
+
 redaction:                             # 发给 AI 前的本地脱敏
   enabled: false                       # 词表脱敏开关（默认关；打开会改变 AI 看到的内容，也可在 app 设置里切）
   terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）

@@ -796,7 +796,8 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     # executing -> review (§11 draft ready, awaiting acceptance)
     for rid, item in c_rev.items():
         if rid not in p_rev and rid in p_run:
-            msgs.append(("待验收：AI 已交付草稿", item.get("name") or rid, rid))
+            t, b = notify.msg_review_ready(item.get("name") or rid)
+            msgs.append((t, b, rid))
 
     # executing -> blocked (newly needs_input, previously running)
     for rid, item in c_ni.items():
@@ -969,8 +970,9 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             ex["resume_exhausted"] = True
             req.execution = ex
             registry.save(req)
-            notify.notify("自动恢复已放弃（连续失败 5 次），需要人工处理",
-                          req.title or req.id)
+            # §5 v0.14 copy: bilingual + names the exact card buttons to press
+            notify.notify(*notify.msg_auto_resume_exhausted(req.title or req.id),
+                          req=req.id)
             analytics.log_event("auto_resume_exhausted", req=req.id)
             continue
         backoff = min(600, 30 * (2 ** min(attempts, 5)))
@@ -992,7 +994,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             analytics.log_event("auto_resume", req=req.id, ok=ok, attempt=attempts + 1)
             if attempts + 1 >= 3 and req.id not in resume_notified:
                 resume_notified.add(req.id)
-                notify.notify("任务疑似中断，正在自动恢复", req.title or req.id)
+                notify.notify(*notify.msg_resuming(req.title or req.id))
         except Exception as e:  # noqa: BLE001
             _log(f"reconcile: resume {req.id} FAILED: {e}")
     return resumed

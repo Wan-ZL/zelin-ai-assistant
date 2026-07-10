@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config
+from act.lib import config, failures
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all
 
@@ -401,6 +401,9 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "delivery_mode": _delivery_mode(req),
                     "dispatch_error": ex.get("last_error") or None,
+                    # §25: classification id alongside the raw text (None when
+                    # unknown — Swift falls back to the raw string + AI fix).
+                    "dispatch_error_id": failures.classify(ex.get("last_error")),
                 }
             )
 
@@ -482,6 +485,7 @@ def build_dashboard(
                         "dispatched_at": _epoch(ex.get("dispatched_at")),
                         "delivery_mode": _delivery_mode(req),
                         "last_error": ex.get("last_error"),
+                        "last_error_id": failures.classify(ex.get("last_error")),
                     }
                 )
             elif req.status == State.REVIEW.value or state in _DONE_STATES:
@@ -543,6 +547,7 @@ def build_dashboard(
                         "dispatched_at": _epoch(ex.get("dispatched_at")),
                         "delivery_mode": _delivery_mode(req),
                         "last_error": ex.get("last_error"),
+                        "last_error_id": failures.classify(ex.get("last_error")),
                     }
                 )
         # approved surfaces as a "queued" item inside running (branch above, §2)

@@ -40,13 +40,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, secrets
+from act.lib import config, failures, secrets
 
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 
 ACTD_LABEL = "com.zelin.aiassistant.actd"
+
+# cron ingest chain fires every 30 min; a probe older than this means either
+# the chain stopped firing or it comes from an install predating the probe.
+CRON_PROBE_FRESH_SECONDS = 2 * 3600
+CRON_PROBE_PATH = config.STATE_DIR / "cron_probe.json"
 
 # actd rewrites dashboard.json every ~10s pass; anything older than this means
 # the daemon is not writing (same threshold as the app's staleness banner).
@@ -104,6 +109,16 @@ class CheckResult:
     status: str  # OK | WARN | FAIL
     detail: str  # the symptom, one line
     fix: str = ""  # one-line fix (empty for OK)
+    # §25 classification (act/lib/failures.py) — empty when unclassified; the
+    # app maps action_id to a one-click repair, falling back to the raw fix.
+    failure_id: str = ""
+    action_id: str = ""
+
+    def with_failure(self, failure_id: str) -> "CheckResult":
+        """Attach a catalog id (and its action) to a non-ok result."""
+        self.failure_id = failure_id
+        self.action_id = failures.action_id(failure_id) or ""
+        return self
 
 
 def _resolve_key(probes: Probes) -> Tuple[Optional[str], str]:
@@ -142,7 +157,8 @@ def _check_claude(probes: Probes):
         return CheckResult(
             "claude CLI", FAIL,
             "not on PATH - nothing can extract, expand or execute cards",
-            "install Claude Code (https://claude.com/claude-code), then re-run this check")
+            "install Claude Code (https://claude.com/claude-code), then re-run this check",
+        ).with_failure("claude_cli_missing")
     rc, out = probes.run([path, "--version"], timeout=15)
     if rc != 0:
         return CheckResult(
@@ -208,7 +224,8 @@ def _check_config(probes: Probes):
         return CheckResult(
             "config.yaml", FAIL,
             "invalid YAML (%s) - every component silently falls back to defaults" % first,
-            "fix the syntax; verify: python3 -c \"import yaml; yaml.safe_load(open('config.yaml'))\"")
+            "fix the syntax; verify: python3 -c \"import yaml; yaml.safe_load(open('config.yaml'))\"",
+        ).with_failure("config_invalid")
     return CheckResult("config.yaml", OK, str(config.CONFIG_PATH))
 
 
@@ -279,7 +296,8 @@ def _check_launchd(probes: Probes):
                 short, severity,
                 "%s not registered with launchd%s" % (
                     label, " - cards never move" if label == ACTD_LABEL else ""),
-                "bash install.sh (renders + loads the agents)"))
+                "bash install.sh (renders + loads the agents)",
+            ).with_failure("agent_unloaded"))
             continue
         pid, status = table[label]
         if pid != "-":
@@ -291,7 +309,8 @@ def _check_launchd(probes: Probes):
                 short, severity,
                 "loaded but its process exits with status %s" % status,
                 "tail -20 state/%s.launchd.log  # usual causes: PyYAML missing "
-                "for the daemon python, missing API key" % short))
+                "for the daemon python, missing API key" % short,
+            ).with_failure("agent_unloaded"))
     return results
 
 
@@ -304,15 +323,63 @@ def _check_cron(probes: Probes):
         results.append(CheckResult(
             "cron ingest chain", FAIL,
             "missing from crontab - screen captures never become vault notes or radar cards",
-            "bash install.sh (reinstalls the §18 cron lines)"))
+            "bash install.sh (reinstalls the §18 cron lines)",
+        ).with_failure("cron_missing"))
     if "act.digest" in text:
         results.append(CheckResult("cron digest", OK, "installed (Mon 09:07)"))
     else:
         results.append(CheckResult(
             "cron digest", WARN,
             "Monday digest line missing from crontab",
-            "bash install.sh"))
+            "bash install.sh",
+        ).with_failure("cron_missing"))
+    results.append(_check_cron_probe(probes, cron_installed="screenpipe-export.sh" in text))
     return results
+
+
+def _check_cron_probe(probes: Probes, cron_installed: bool):
+    """The cron FDA probe (§25): every cron chain run writes state/cron_probe.json
+    with a real read attempt against the protected export target. This is the
+    ONLY honest signal for the #1 silent failure — cron blocked by missing
+    Full Disk Access writes nothing into ~/Documents and reports nothing.
+    """
+    name = "cron disk access"
+    if not CRON_PROBE_PATH.exists():
+        if not cron_installed:
+            return CheckResult(name, WARN,
+                               "no probe data (cron chain not installed yet)",
+                               "bash install.sh, then wait ~30 min for the first cron run")
+        return CheckResult(
+            name, WARN,
+            "no probe yet - the cron chain has not run since this version was installed",
+            "rerun bash install.sh (updates the cron line), then wait ~30 min")
+    try:
+        data = json.loads(CRON_PROBE_PATH.read_text(encoding="utf-8"))
+        ts = _dt.datetime.strptime(str(data.get("ts", "")), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=_dt.timezone.utc).timestamp()
+        read_ok = bool(data.get("read_ok"))
+        probed = str(data.get("protected_path") or "")
+    except Exception:  # noqa: BLE001 - torn/hand-edited file is the symptom
+        return CheckResult(name, WARN,
+                           "state/cron_probe.json unreadable - wait for the next cron run",
+                           "if it stays unreadable: rerun bash install.sh")
+    age = probes.now() - ts
+    if age > CRON_PROBE_FRESH_SECONDS:
+        return CheckResult(
+            name, WARN,
+            "last cron probe %dh ago - the cron chain looks stopped" % int(age // 3600),
+            "bash install.sh (reinstalls the cron lines); check crontab -l",
+        ).with_failure("cron_missing")
+    if not read_ok:
+        return CheckResult(
+            name, FAIL,
+            "cron CANNOT read %s - macOS Full Disk Access is blocking it; "
+            "captures are silently lost" % (probed or "the vault"),
+            "System Settings > Privacy & Security > Full Disk Access > '+' > "
+            "Cmd+Shift+G > /usr/sbin/cron (the app's dependency page has a guided button)",
+        ).with_failure("cron_fda_blocked")
+    return CheckResult(name, OK,
+                       "cron read %s ok (probe %d min ago)" % (probed, int(age // 60)))
 
 
 def _check_dashboard(probes: Probes):
@@ -337,7 +404,8 @@ def _check_dashboard(probes: Probes):
     return CheckResult(
         "dashboard", FAIL,
         "stale (generated %d min ago) - actd is not writing; the app renders old data" % int(age // 60),
-        "launchctl list | grep aiassistant; tail -20 state/actd.launchd.log")
+        "launchctl list | grep aiassistant; tail -20 state/actd.launchd.log",
+    ).with_failure("dashboard_stale")
 
 
 def _check_obsidian(probes: Probes):
@@ -375,7 +443,8 @@ def _check_screenpipe(probes: Probes):
         return CheckResult(
             "screenpipe db", WARN,
             "last write %dh ago - the capture engine looks stopped" % int(age // 3600),
-            "menu-bar app -> recording toggle (needs node/npx)")
+            "menu-bar app -> recording toggle (needs node/npx)",
+        ).with_failure("engine_dead")
     return CheckResult("screenpipe db", OK,
                        "recording data fresh (last write %d min ago)" % int(age // 60))
 
@@ -386,7 +455,8 @@ def _check_npx(probes: Probes):
         return CheckResult(
             "node/npx", WARN,
             "missing - the recording engine (`npx screenpipe`) cannot start",
-            "brew install node")
+            "brew install node",
+        ).with_failure("node_missing")
     return CheckResult("node/npx", OK, path)
 
 
@@ -432,8 +502,10 @@ def _check_claude_auth(probes: Probes):
     fix = ("check the key (active? billing?) or re-paste it in the app's Settings window"
            if key else
            "paste an API key in the app's Settings window (headless-safe), or log in: claude")
-    return CheckResult("claude auth", FAIL,
-                       "live call failed via %s (exit %s: %s)" % (via, rc, tail), fix)
+    return CheckResult(
+        "claude auth", FAIL,
+        "live call failed via %s (exit %s: %s)" % (via, rc, tail), fix,
+    ).with_failure(failures.classify(out) or "claude_auth_failed")
 
 
 _CHECKS = [
@@ -493,6 +565,15 @@ def render(results: List[CheckResult]) -> str:
     return "\n".join(lines)
 
 
+def render_json(results: List[CheckResult]) -> str:
+    """§25 machine output: one row per check for the app's diagnostics page."""
+    rows = [{"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix,
+             "failure_id": r.failure_id, "action_id": r.action_id}
+            for r in results]
+    return json.dumps({"home": str(config.HOME), "checks": rows},
+                      ensure_ascii=False, indent=1)
+
+
 def main(argv: Optional[List[str]] = None, probes: Optional[Probes] = None) -> int:
     """Run all checks, print the report, return the number of FAILs (max 99)."""
     try:
@@ -501,10 +582,15 @@ def main(argv: Optional[List[str]] = None, probes: Optional[Probes] = None) -> i
             description="Post-install diagnostics for Zelin's AI Assistant.")
         parser.add_argument("--fast", action="store_true",
                             help="skip the live claude auth probe (spends no tokens)")
+        parser.add_argument("--json", action="store_true", dest="as_json",
+                            help="machine-readable output (one row per check, §25)")
         args = parser.parse_args(argv)
         results = run_checks(probes=probes, fast=args.fast)
-        print("act.doctor - home: %s" % config.HOME)
-        print(render(results))
+        if args.as_json:
+            print(render_json(results))
+        else:
+            print("act.doctor - home: %s" % config.HOME)
+            print(render(results))
         return min(sum(r.status == FAIL for r in results), 99)
     except SystemExit:
         raise  # argparse --help / bad flag
