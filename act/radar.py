@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import fcntl
 import json
 import re
 import shutil
@@ -26,10 +27,18 @@ from act.lib import analytics, config, failures, notify, sanitize
 from act.lib.registry import Requirement, merge_or_new
 
 MARKER_PATH_NAME = "radar.marker"
+# Whole-pass mutex (state/radar.lock): a backfill pass over months of notes
+# takes >30 min while the cron chain fires every 30 — without it two passes
+# interleave (2026-07-08 storm). flock is per-open-fd, auto-released on exit.
+LOCK_PATH_NAME = "radar.lock"
+# One-time-notice flag (state/meetings_notice.sent): workbench-unset fallback
+# has been explained to the user once; never nag again.
+NOTICE_PATH_NAME = "meetings_notice.sent"
 
-# Manager pack ① (CONTRACT §17): a scanned note mentioning the manager
-# additionally gets a T0 action-items draft written to the workbench.
-MEETINGS_DIR = Path("~/Projects/your-workbench/meetings").expanduser()
+# Per-pass threshold for individual draft notifications; above it the pass is
+# a backfill and gets ONE coalesced summary (81 notifications in one evening
+# on 2026-07-08 — a fresh install over months of historical notes).
+NOTIFY_EACH_MAX = 3
 
 ACTION_ITEMS_PROMPT = (
     "下面是一份涉及 Zelin 的 manager 的会议/工作记录。请起草一份会后 "
@@ -201,6 +210,33 @@ def _action_items_prompt(text: str) -> str:
     return sanitize.scrub(prompt)[0]
 
 
+def _meetings_dir(cfg: config.Config) -> Path:
+    """Where 会后 action-item drafts land.
+
+    ``<workbench>/meetings`` ONLY when ``execution.default_target_repo`` was
+    explicitly configured (config.yaml or Settings override). Unconfigured
+    installs fall back to ``state/meetings`` — silently materializing the
+    example placeholder path put months of drafts where nobody would look
+    (2026-07-08 storm). A placeholder dir left over from that era is never
+    touched; drafts just stop landing there.
+    """
+    if cfg.default_target_repo_configured:
+        return cfg.target_repo_path / "meetings"
+    return config.STATE_DIR / "meetings"
+
+
+def _fallback_notice_once(meetings_dir: Path) -> None:
+    """First fallback write ever -> one classified bilingual notice pointing
+    at the Settings folder picker; flagged via state/meetings_notice.sent."""
+    flag = config.STATE_DIR / NOTICE_PATH_NAME
+    if flag.exists():
+        return
+    config.ensure_state_dirs()
+    flag.write_text(_dt.datetime.now(_dt.timezone.utc).isoformat(), encoding="utf-8")
+    notify.notify(*notify.msg_meetings_fallback(str(meetings_dir)))
+    analytics.log_event("meetings_fallback_notice")
+
+
 def manager_action_items(note: Path, text: str,
                        cfg: Optional[config.Config] = None,
                        runner=None) -> Optional[Path]:
@@ -208,7 +244,10 @@ def manager_action_items(note: Path, text: str,
 
     Runs headless ``claude -p`` (same runner pattern as extraction, with the
     executor's ANTHROPIC_API_KEY fallback env) and writes the draft to
-    ``~/Projects/your-workbench/meetings/<date>-<slug>-action-items.md``.
+    ``<workbench>/meetings/<date>-<slug>-action-items.md`` — or, when no
+    workbench is configured, ``state/meetings/`` (with a one-time notice; see
+    :func:`_meetings_dir`). Notification is the CALLER's job (scan coalesces
+    per pass); the writer only fires the one-time fallback notice.
 
     Strictly best-effort — returns the written path or None, NEVER raises, so
     it can never block the radar scan.
@@ -251,12 +290,14 @@ def manager_action_items(note: Path, text: str,
                                 file=note.name)
             return None
 
-        MEETINGS_DIR.mkdir(parents=True, exist_ok=True)
+        meetings_dir = _meetings_dir(cfg)
+        meetings_dir.mkdir(parents=True, exist_ok=True)
         date = _note_date(note) or _dt.date.today().isoformat()
-        path = MEETINGS_DIR / f"{date}-{_slug(note.stem)}-action-items.md"
+        path = meetings_dir / f"{date}-{_slug(note.stem)}-action-items.md"
         path.write_text(result, encoding="utf-8")
 
-        notify.notify("会后 action-item 清单已生成", str(path))
+        if not cfg.default_target_repo_configured:
+            _fallback_notice_once(meetings_dir)
         analytics.log_event("meeting_action_items", outcome="ok", file=note.name)
         return path
     except Exception as exc:  # noqa: BLE001 — must never break the scan
@@ -269,12 +310,38 @@ def manager_action_items(note: Path, text: str,
 # --------------------------------------------------------------------------- #
 # scan
 # --------------------------------------------------------------------------- #
+def _acquire_pass_lock():
+    """Non-blocking flock on state/radar.lock — returns the handle to hold for
+    the whole pass, or None when another pass already holds it. The lock dies
+    with the fd/process, so a crashed pass can never wedge the next one.
+
+    Callers covered: cron's ``--once`` (install.sh ingest chain), loop mode
+    (the launchd fallback plist runs ``act.radar`` with no ``--once``), and
+    manual runs — all funnel through :func:`scan`. actd does NOT invoke this
+    scan (it only imports act.radar_claude_sessions, a separate source), and
+    the other radars keep their own markers, so this lock is radar.py-only.
+    """
+    config.ensure_state_dirs()
+    fh = open(config.STATE_DIR / LOCK_PATH_NAME, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fh
+    except OSError:
+        fh.close()
+        return None
+
+
 def scan(runner=None, pack_runner=None) -> dict:
     """Scan Obsidian raw notes newer than the marker. Returns a summary dict.
 
     ``runner`` overrides the extraction ``claude -p`` call (tests); when it is
     injected without a ``pack_runner``, the manager action-items pack is skipped
     so tests stay hermetic.
+
+    The whole pass holds state/radar.lock: a backfill pass outlives the 30-min
+    cron cadence, and two interleaved passes double every claude call and
+    notification (2026-07-08 storm). A pass that finds the lock held exits as
+    a no-op — the running pass's marker write covers it.
 
     The marker is a watermark of *successfully processed* notes: a note whose
     extraction fails (claude error, unreadable file, unparseable output) pins
@@ -286,6 +353,19 @@ def scan(runner=None, pack_runner=None) -> dict:
     cfg = config.load_config()
     summary = {"files_scanned": 0, "extracted": 0, "reconciled": 0, "cards": 0, "skipped": []}
 
+    lock = _acquire_pass_lock()
+    if lock is None:
+        summary["skipped"].append(
+            "state/radar.lock held by another radar pass — it will cover this scan")
+        analytics.log_event("radar_skip", source="obsidian", reason="lock_held")
+        return summary
+    try:
+        return _scan_locked(cfg, summary, runner, pack_runner)
+    finally:
+        lock.close()
+
+
+def _scan_locked(cfg: config.Config, summary: dict, runner, pack_runner) -> dict:
     if not cfg.feature("obsidian_radar"):
         summary["skipped"].append("features.obsidian_radar is off")
         return summary
@@ -302,6 +382,7 @@ def scan(runner=None, pack_runner=None) -> dict:
     marker = _read_marker()
     newest_done = marker
     halted = False  # first failed note pins the watermark just before itself
+    pack_paths: list[Path] = []  # action-item drafts written this pass
     md_files = sorted(root.glob("*.md"), key=lambda p: p.stat().st_mtime)
 
     for note in md_files:
@@ -345,13 +426,27 @@ def scan(runner=None, pack_runner=None) -> dict:
         # mentioning the manager also gets an action-items draft. Best-effort —
         # the helper swallows every failure and never blocks the scan.
         if runner is None or pack_runner is not None:
-            manager_action_items(note, text, cfg, runner=pack_runner)
+            written = manager_action_items(note, text, cfg, runner=pack_runner)
+            if written is not None:
+                pack_paths.append(written)
 
         if not halted:
             newest_done = max(newest_done, mtime)
 
     if newest_done > marker:
         _write_marker(newest_done)
+
+    # Draft notifications, coalesced per pass: individual files up to
+    # NOTIFY_EACH_MAX, one summary beyond (a backfill pass over a historical
+    # vault must not fire one notification per meeting).
+    summary["action_items"] = len(pack_paths)
+    if len(pack_paths) > NOTIFY_EACH_MAX:
+        notify.notify(*notify.msg_action_items_batch(
+            len(pack_paths), str(pack_paths[-1].parent)))
+    else:
+        for p in pack_paths:
+            notify.notify(*notify.msg_action_items(str(p)))
+
     analytics.log_event("radar_scan", source="obsidian",
                         files=summary.get("files_scanned"), new_cards=summary.get("cards"))
     return summary

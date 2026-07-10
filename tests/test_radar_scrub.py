@@ -33,6 +33,8 @@ class RadarScrubTestCase(unittest.TestCase):
         config.CONFIG_PATH.write_text(
             "sources:\n"
             '  watch_people: ["boss.man"]\n'
+            "execution:\n"
+            f'  default_target_repo: "{self.tmp.name}/workbench"\n'
             "redaction:\n"
             "  enabled: true\n"
             f'  terms_file: "{terms_file}"\n',
@@ -74,12 +76,10 @@ class RadarScrubTestCase(unittest.TestCase):
 
     # -- manager action-items call site ------------------------------------ #
     def test_action_items_prompt_masks_redaction_terms(self):
-        cfg = config.load_config()
-        meetings = Path(self.tmp.name) / "meetings"
+        cfg = config.load_config()  # explicit target repo -> tmp workbench
         note = Path(self.tmp.name) / "2026-07-08-sync.md"
         text = f"boss 让我把 {TERM} 的评审安排一下"
-        with mock.patch.object(radar, "MEETINGS_DIR", meetings), \
-                mock.patch.object(radar.notify, "notify"), \
+        with mock.patch.object(radar.notify, "notify"), \
                 mock.patch.object(radar.subprocess, "run", side_effect=_fake_run) as run:
             radar.manager_action_items(note, text, cfg)
         prompt = run.call_args[0][0][-1]

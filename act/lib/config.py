@@ -156,6 +156,11 @@ class Config:
 
     # execution
     default_target_repo: str = "~/Projects/your-workbench"
+    # True only when default_target_repo came from an EXPLICIT source
+    # (config.yaml execution block or a Settings override) — writers that
+    # would otherwise CREATE the example placeholder path must check this
+    # and fall back to state/ instead (2026-07-08 backfill storm).
+    default_target_repo_configured: bool = False
     memory_inject: bool = True
     # False by default: approving a card must not silently create GitHub repos
     # / push content that originated from screen/meetings/mail. Explicit
@@ -319,6 +324,8 @@ def load_config() -> Config:
     )
 
     execution = data.get("execution", {}) or {}
+    if "default_target_repo" in execution and execution["default_target_repo"]:
+        cfg.default_target_repo_configured = True
     cfg.default_target_repo = execution.get("default_target_repo", cfg.default_target_repo)
     cfg.memory_inject = bool(execution.get("memory_inject", cfg.memory_inject))
     cfg.create_github_repo = bool(
@@ -565,8 +572,12 @@ def _apply_settings_overrides(cfg: Config) -> None:
                             else _clean_watch_people(value))
                 elif sub in _OVERRIDE_FIELDS and value is not None:
                     setattr(cfg, sub, _OVERRIDE_FIELDS[sub](value))
+                    if sub == "default_target_repo":
+                        cfg.default_target_repo_configured = True
             elif key in _OVERRIDE_FIELDS and value is not None:
                 setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
+                if key == "default_target_repo":
+                    cfg.default_target_repo_configured = True
         except Exception:  # noqa: BLE001 — skip just the bad entry
             continue
 

@@ -204,6 +204,11 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - `python -m act.digest`：待审批积压、待验收积压、needs_input/resume_exhausted 卡住项、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
 - Manager pack（flag: manager_pack）：①obsidian radar 扫到含 manager（watch_people 首项的 first-name token）的新会议记录时，额外派 T0 任务生成**会后 action-item 清单草稿**（workbench/meetings/<date>-action-items.md，通知）；②`python -m act.oneonone` 生成 1:1 准备页（ready/not-ready per registry + 双向欠账 + 上次以来 delta），digest 周一自动附带。
 
+**v0.14 补充（会后清单落点守卫 + 通知合并 + pass 互斥，add-only；2026-07-08 backfill 风暴修正）**：
+- **落点守卫**：清单只在 `execution.default_target_repo` 被**显式**配置（config.yaml `execution:` 块或 §15.3 override `default_target_repo`；Python 侧 `Config.default_target_repo_configured`）时写 `<工作台>/meetings/`；未配置时**绝不**创建示例占位路径，改存 **`state/meetings/`**（add-only 目录），并发**一次性**双语通知指向设置页的「任务工作目录」选择器。已发标记 = **`state/meetings_notice.sent`**（内容为首次提示的 UTC 时间戳；存在即不再提示）。bug 时期遗留的占位目录不迁移、不删除，只是不再写入。
+- **通知合并**：单个 radar pass 生成 ≤3 份清单时逐份通知；>3 份（backfill 场景）只发一条汇总（"已生成 N 份会后 action-item 清单 → <目录>"）。清单通知统一延后到 pass 末尾发出。summary 新增 `action_items`（本 pass 写出的清单数，仅日志观测用）。
+- **pass 互斥**：整个 obsidian radar pass（`--once` 与 loop 模式共用 `scan()`）持有 **`state/radar.lock`**（fcntl.flock 非阻塞，随进程退出自动释放）；抢不到锁的 pass 以 no-op 退出（exit 0，summary 带 skipped 行 + `radar_skip(reason=lock_held)` 埋点），由在跑的 pass 覆盖本轮。actd 不调用该 scan（它只接 act.radar_claude_sessions），其余 radar 各有自己的 marker，锁只属于 act/radar.py。
+
 ## 18. 定时任务归一（ingest 切换）
 install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 内脚本，并在链尾追加 `&& python -m act.radar --once`（cron 有 FDA，radar 可读 ~/Documents）。Screenpipe-Export.command 改为调 repo 脚本（主窗口"立即导出"同源）。
 

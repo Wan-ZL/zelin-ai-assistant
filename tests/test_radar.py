@@ -275,15 +275,14 @@ class ManagerActionItemsOutcomeTestCase(unittest.TestCase):
             analytics.EVENTS_PATH.unlink()
         self.tmp = tempfile.TemporaryDirectory(prefix="radar-meetings-")
         self.addCleanup(self.tmp.cleanup)
-        for patcher in (
-            mock.patch.object(radar, "MEETINGS_DIR",
-                              Path(self.tmp.name) / "meetings"),
-            mock.patch.object(radar.notify, "notify", return_value=True),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(radar.notify, "notify", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.cfg = config.Config()
         self.cfg.watch_people = ["boss"]
+        # explicit workbench -> drafts land in the tmp dir, no fallback notice
+        self.cfg.default_target_repo = self.tmp.name + "/workbench"
+        self.cfg.default_target_repo_configured = True
         self.note = Path(self.tmp.name) / "2026-07-08-sync.md"
 
     def _events(self):

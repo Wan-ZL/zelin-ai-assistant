@@ -226,6 +226,29 @@ def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
                   " \"Stop & return\" to re-approve, or \"Done outside\" to close it"))
 
 
+def msg_action_items(path: str) -> tuple[str, str]:
+    """One post-meeting action-items draft written (radar manager pack, §17)."""
+    return (_pick("会后 action-item 清单已生成", "Post-meeting action items drafted"),
+            path)
+
+
+def msg_action_items_batch(n: int, dir_path: str) -> tuple[str, str]:
+    """Coalesced form (§17): a backfill pass wrote >3 drafts — one summary
+    notification instead of one per file (2026-07-08: 81 in one evening)."""
+    return (_pick("会后 action-item 清单已生成", "Post-meeting action items drafted"),
+            _pick(f"已生成 {n} 份会后 action-item 清单 → {dir_path}",
+                  f"Generated {n} post-meeting action-item lists → {dir_path}"))
+
+
+def msg_meetings_fallback(dir_path: str) -> tuple[str, str]:
+    """One-time notice (§17): no explicit workbench — drafts parked in state/.
+    Names the exact Settings control (「任务工作目录 / Task working folder」)."""
+    return (_pick("未设置工作台目录", "Workbench folder not set"),
+            _pick(f"会后清单暂存在 {dir_path} —— 在 App 设置里选择「任务工作目录」后将改存到工作台",
+                  f"Post-meeting lists are parked in {dir_path} — pick a"
+                  " \"Task working folder\" in the app's Settings to move them"))
+
+
 # --------------------------------------------------------------------------- #
 # classifiers
 # --------------------------------------------------------------------------- #
