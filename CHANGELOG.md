@@ -26,10 +26,12 @@ other file needs editing. To cut a release:
 - System notifications from the python daemons now display under the
   "Zelin's AI Assistant" identity and icon: they are relayed through
   `state/notify_queue/` and posted by the menu-bar app
-  (`docs/CONTRACT.md` §28). When the app is not running, the old osascript
-  path still fires after a 20 s grace period, so notifications keep
-  arriving — just with the legacy Script Editor identity. Clicking a
-  relayed notification opens the main window.
+  (`docs/CONTRACT.md` §28). The old osascript / Script Editor path is gone
+  entirely — native notifications require the app to be running (it
+  auto-starts at login, so this is the normal state; phone mirrors are
+  unaffected). Bursts are capped at 5 banners per pass with a single
+  "+N more" summary, backlog older than 10 minutes is silently dropped,
+  and clicking a relayed notification opens the main window.
 
 ## [0.13.0] - 2026-07-09
 

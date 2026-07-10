@@ -19,20 +19,19 @@ v0.12 (§13, channel-pluggable): the mirror routes on config ``phone_channel``:
                          features.slack_radar + a readable user token — so
                          existing setups keep working with no config change.
 
-§28 (app identity relay): on darwin the native path no longer fires osascript
-directly — it queues one JSON file into state/notify_queue/ for the menu-bar
-app, which posts it via UNUserNotificationCenter (proper "Zelin's AI
-Assistant" identity/icon instead of Script Editor) and deletes the file.
-osascript survives only as the fallback when the app never consumes the file
-and isn't running.
+§28 (app identity relay): on darwin the native path never fires osascript —
+it queues one JSON file into state/notify_queue/ for the menu-bar app, which
+posts it via UNUserNotificationCenter (proper "Zelin's AI Assistant"
+identity/icon instead of Script Editor) and deletes the file. There is NO
+fallback by owner decision (2026-07-10): app closed = no native notification
+(the app auto-starts at login, so running is the normal state); the §13 phone
+mirror below is unaffected either way.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import subprocess
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -50,7 +49,7 @@ _SELF_DM_CACHE: dict = {}
 # --------------------------------------------------------------------------- #
 def notify(title: str, body: str, subtitle: Optional[str] = None,
            req: Optional[str] = None) -> bool:
-    """Fire a native notification — app relay first (§28), OS seam fallback.
+    """Fire a native notification via the app relay queue (§28).
 
     Never raises — a failed notification must not break the daemon loop.
     Also mirrors to the configured phone channel (§13) best-effort; the return
@@ -70,54 +69,43 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
 # app relay queue (§28) — native notifications carry the app's identity
 # --------------------------------------------------------------------------- #
 # The menu-bar app drains state/notify_queue/*.json on its 5 s refresh tick and
-# posts each entry via UNUserNotificationCenter, then deletes the file. A
-# daemon can't reliably know whether the app is running, so every queue write
-# arms a one-shot fallback check: file still there after the grace period AND
-# no app process -> post once via the old osascript seam and delete the file
-# (an ugly Script Editor identity beats silence when the app is closed).
-APP_PROCESS_NAME = "ZelinAIEngineer"   # frozen app executable name (§12)
-FALLBACK_AFTER_S = 20.0                # a live app consumes within ~5 s
-STALE_AFTER_S = 3600.0                 # §28 stale storm guard (both sides)
+# posts each entry via UNUserNotificationCenter, then deletes the file. No
+# osascript fallback, by owner decision: app closed = no native notification
+# (Script Editor identity is exactly what this replaces, and the app
+# auto-starts at login). Writers sweep entries older than STALE_AFTER_S so the
+# queue can't grow unboundedly when the app never runs.
+STALE_AFTER_S = 600.0   # §28 stale storm guard (both sides, 10 min)
 
 
 def _native_notify(title: str, body: str, subtitle: Optional[str] = None) -> bool:
-    """§28 relay-first native notification. Never raises.
+    """§28 relay-only native notification. Never raises.
 
-    darwin: queue for the app + arm the osascript fallback; an unwritable
-    queue degrades straight to the old osascript path. Other OSes keep the
-    plain OS seam — the relay exists only because the darwin app owns the
-    notification identity.
+    darwin: queue for the app — its 5 s tick posts and deletes the entry;
+    nothing is posted while the app is closed (no fallback, on purpose).
+    Other OSes keep the plain OS seam (notify-send) — the relay exists only
+    because the darwin app owns the notification identity.
     """
     if not platform.is_darwin():
         return platform.notify_user(title, body, subtitle)
-    path = _queue_write(title, body, subtitle)
-    if path is None:
-        return platform.notify_user(title, body, subtitle)
-    timer = threading.Timer(
-        FALLBACK_AFTER_S, _fallback_check, args=(path, title, body, subtitle))
-    # Deliberately NOT a daemon thread: the 5-minute radar processes exit
-    # right after notifying — a daemon timer would die with them and a
-    # closed-app notification would be lost. Lingering ≤20 s at process exit
-    # is the honest cost.
-    timer.start()
-    return True
+    return _queue_write(title, body, subtitle) is not None
 
 
-def _queue_write(title: str, body: str,
-                 subtitle: Optional[str] = None) -> Optional[Path]:
+def _queue_write(title: str, body: str, subtitle: Optional[str] = None,
+                 now: Optional[float] = None) -> Optional[Path]:
     """Write one §28 queue entry (atomic .json.tmp + rename).
 
-    Returns the queue file path, or None on ANY failure — the caller then
-    falls back to the direct osascript path, so a notification is never lost
-    to an unwritable state dir.
+    Sweeps stale siblings (mtime older than STALE_AFTER_S) first, so an
+    always-closed app can't make the dir grow without bound. Returns the
+    queue file path, or None on ANY failure. ``now`` is the injectable clock.
     """
     try:
         from act.lib import config as _config
         qdir = Path(_config.NOTIFY_QUEUE_DIR)
         qdir.mkdir(parents=True, exist_ok=True)
+        _sweep_stale(qdir, now=now)
         nid = uuid.uuid4().hex
         entry = {"id": nid, "title": str(title), "body": str(body),
-                 "created_at": int(time.time())}
+                 "created_at": int(now if now is not None else time.time())}
         if subtitle:
             entry["subtitle"] = str(subtitle)
         target = qdir / (nid + ".json")
@@ -132,45 +120,25 @@ def _queue_write(title: str, body: str,
         return None
 
 
-def _app_running(runner=None) -> bool:
-    """True when the menu-bar app process exists (pgrep -x). Never raises."""
-    argv = ["pgrep", "-x", APP_PROCESS_NAME]
-    try:
-        if runner is not None:
-            return runner(argv, 5).returncode == 0
-        return subprocess.run(argv, capture_output=True, text=True,
-                              timeout=5).returncode == 0
-    except Exception:  # noqa: BLE001
-        return False
+def _sweep_stale(qdir: Path, now: Optional[float] = None) -> int:
+    """Delete queue entries (and tmp corpses) older than STALE_AFTER_S.
 
-
-def _fallback_check(path: Path, title: str, body: str,
-                    subtitle: Optional[str] = None,
-                    runner=None, now: Optional[float] = None) -> bool:
-    """One-shot §28 fallback verdict, FALLBACK_AFTER_S after the queue write.
-
-    file gone            -> the app consumed it (pretty identity won): no-op.
-    file there, app runs -> leave it to the app (its 1h stale guard caps it).
-    file there, no app   -> osascript once + delete — unless the file is
-                            older than STALE_AFTER_S (machine slept through
-                            many armed timers): then delete WITHOUT posting.
-    Never raises; True only when the osascript fallback actually fired.
-    ``runner`` (pgrep + osascript) and ``now`` are injectable for tests.
+    Best-effort, never raises; returns how many files were removed. Losing a
+    race with the app deleting the same file is fine (missing_ok).
     """
+    removed = 0
+    cutoff = (now if now is not None else time.time()) - STALE_AFTER_S
     try:
-        mtime = path.stat().st_mtime
+        for f in qdir.iterdir():
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+                    removed += 1
+            except OSError:
+                continue   # raced with the app's own delete
     except OSError:
-        return False   # consumed — the app got there first
-    try:
-        if _app_running(runner=runner):
-            return False
-        stale = ((now if now is not None else time.time()) - mtime) > STALE_AFTER_S
-        posted = False if stale else platform.notify_user(title, body, subtitle,
-                                                          runner=runner)
-        path.unlink(missing_ok=True)
-        return posted
-    except Exception:  # noqa: BLE001 - a notification must never break a caller
-        return False
+        pass
+    return removed
 
 
 def _phone_mirror(title: str, body: str, req: Optional[str] = None) -> None:

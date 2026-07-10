@@ -608,9 +608,18 @@ UI）+ 答案卡（citation 行 + 👍/👎）+ 分类失败行（§25 人话 + 
 ## 28. 通知中继队列 — `state/notify_queue/`（python 写，App 消费即删）
 
 **目标**：python daemons 的系统通知以 **Zelin's AI Assistant** 的身份/图标弹出，
-不再是 osascript 的 Script Editor 身份。实现：`act/lib/notify.py`（写方 + 兜底）
+不再是 osascript 的 Script Editor 身份。实现：`act/lib/notify.py`（写方）
 + `mac/Sources/NotifyRelay.swift`（消费方）。§5 的通知语义、文案与 §13 手机镜像
 均不变——只换 native 弹出通道。
+
+**无兜底（owner 拍板 2026-07-10）**：中继是**唯一** native 通知路径，无开关、无
+osascript 降级——「app 没开时就不要消息通知了」「不喜欢 Script Editor 的方式」。
+所以：**native 通知需要 App 在跑**；App 自 e02cd1f 起默认登录自启，在跑即常态。
+App 长期关着时 native 通知静默丢弃（§13 手机镜像照常送达）。notify.py 里
+osascript 只剩 radar_imessage 的 iMessage 发送用途（无关，保留）；
+`platform.notify_user` 的 darwin osascript 实现保留为 OS seam（docs/PORTING.md），
+但 darwin 上无调用方。非 darwin 平台不走队列（App 是 darwin-only），维持
+platform.notify_user 原路径（notify-send 无身份问题）。
 
 **队列文件**（每条通知一个文件 `state/notify_queue/<id>.json`；原子写
 `<id>.json.tmp` + rename——消费方只认 `.json` 后缀，永远看不到半成品）：
@@ -621,21 +630,17 @@ UI）+ 答案卡（citation 行 + 👍/👎）+ 分类失败行（§25 人话 + 
 
 `subtitle` optional；`created_at` = 写入时刻 epoch 秒（同 §21 epoch int 先例）。
 add-only：未来字段（如 action hint）只增不改，消费方对未知字段视而不见。
+写方每次写入前顺手清扫 mtime 距今 > **10 min** 的旧条目（App 永不运行时目录
+不至于无限增长）；队列目录不可写等任何失败 = 该条 native 通知丢弃（返回 False，
+不降级）。
 
-**消费方（App）**：5 秒 refresh tick（同 dashboard.json 的节奏）扫描目录，按
-`created_at` 升序经 UNUserNotificationCenter 弹出（identifier = `id`），**弹完
-即删**（消费即删 = 队列常空）。损坏文件 log + 删（留着会每 5 秒重复 log）；
-`created_at` 距今 > **1h** 的过期文件删而不弹（stale storm guard——长睡醒来 /
-兜底线程死亡留下的尸体不准轰炸用户）。通知权限未授予时 UN add 静默 no-op、文件
-照删——权限真相在权限体检页，队列不负责重试。点击通知 = 打开主窗口（§5 文案
-本来就都指向「打开 App」；osascript 旧路径从无点击行为，无保真负担）。
-
-**兜底诚实（python）**：daemon 无法可靠知道 App 是否在跑。规则：写完队列文件后
-armed 一个 **20 s** 一次性检查——文件还在 **且** `pgrep -x ZelinAIEngineer` 找
-不到 App 进程 → 走旧 osascript 路径弹一次并删文件（App 关着时通知照样到达，只是
-身份难看——刻意保留的诚实降级，不装作没发生）；文件还在但 App 活着 → 不管（App
-的 1h stale guard 兜底）。检查线程**故意不是 daemon 线程**：5 分钟级 radar 进程
-发完通知就退出，daemon 线程会陪葬、闭 App 时通知丢失——代价是进程退出前最多多
-等 20 s。python 侧同样有 1h stale guard（mtime 超龄 → 删而不弹，防长睡后的定时
-器风暴）。队列目录不可写等任何失败 → 直接退回 osascript 旧路径（宁丑勿哑）。
-非 darwin 平台不走队列（App 是 darwin-only），维持 platform.notify_user 原路径。
+**消费方（App）**：5 秒 refresh tick（同 dashboard.json 的节奏）扫描目录。
+`created_at` 距今 > **10 min** 的过期文件删而不弹（stale storm guard——关 App
+期间的积压不准在下次启动时轰炸用户）；剩余按 `created_at` 升序经
+UNUserNotificationCenter 弹出（identifier = `id`），单轮最多 **5** 条
+（burst cap），超出部分**只弹一条**「还有 N 条通知 / +N more notifications」
+汇总（正文指向打开 App 看板）。无论逐条还是进汇总，本轮扫到的文件**全部消费即删**
+（队列常空）。损坏文件 log + 删（留着会每 5 秒重复 log）。通知权限未授予时 UN
+add 静默 no-op、文件照删——权限真相在权限体检页，队列不负责重试。点击通知 =
+打开主窗口（§5 文案本来就都指向「打开 App」；osascript 旧路径从无点击行为，
+无保真负担）。

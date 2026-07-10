@@ -4,9 +4,10 @@
 // (atomic .json.tmp + rename); the app posts each entry via
 // UNUserNotificationCenter — so banners carry the "Zelin's AI Assistant"
 // identity/icon instead of osascript's Script Editor — and deletes the
-// consumed file (consume-on-post keeps the queue empty). Python's 20 s
-// osascript fallback fires only when the app is NOT running, so both sides
-// never double-post the same entry.
+// consumed file (consume-on-post keeps the queue empty). This is the ONLY
+// native-notification path — python has no fallback, by owner decision: app
+// closed = no notification (the app auto-starts at login, so running is the
+// normal state).
 
 import AppKit
 import Foundation
@@ -16,9 +17,12 @@ enum NotifyRelay {
     static var queueDir: String { AppPaths.stateRoot + "/state/notify_queue" }
 
     /// §28 stale storm guard: entries older than this are deleted UNPOSTED —
-    /// leftovers of a fallback thread that died mid-grace or a long machine
-    /// sleep must not carpet-bomb the user on the next launch.
-    static let staleAfter: TimeInterval = 3600
+    /// a closed-app backlog must not carpet-bomb the user on the next launch.
+    static let staleAfter: TimeInterval = 600
+
+    /// §28 burst cap: at most this many individual banners per drain pass;
+    /// the overflow collapses into ONE "+N more" summary notification.
+    static let burstCap = 5
 
     private struct Entry {
         let path: String
@@ -65,23 +69,38 @@ enum NotifyRelay {
 
         let now = Date().timeIntervalSince1970
         let center = UNUserNotificationCenter.current()
-        // oldest first, so a burst posts in the order it was produced
-        for e in entries.sorted(by: { $0.createdAt < $1.createdAt }) {
+        // stale entries (closed-app backlog) are silently consumed first
+        var fresh: [Entry] = []
+        for e in entries {
             if now - e.createdAt <= staleAfter {
-                let content = UNMutableNotificationContent()
-                content.title = e.title
-                content.body = e.body
-                if let s = e.subtitle { content.subtitle = s }
-                // ungranted permission → add() silently no-ops; the truth
-                // lives in the Permissions page — the queue never retries.
-                center.add(UNNotificationRequest(identifier: e.id,
-                                                 content: content, trigger: nil))
+                fresh.append(e)
             } else {
                 NSLog("notify_queue: stale entry dropped: \(e.id)")
+                try? fm.removeItem(atPath: e.path)
             }
-            // consume-on-post (and on stale-drop) keeps the queue empty
+        }
+        // oldest first, so a burst posts in the order it was produced; the
+        // whole pass is consumed either way (individually or via the summary)
+        fresh.sort { $0.createdAt < $1.createdAt }
+        for e in fresh.prefix(burstCap) {
+            let content = UNMutableNotificationContent()
+            content.title = e.title
+            content.body = e.body
+            if let s = e.subtitle { content.subtitle = s }
+            // ungranted permission → add() silently no-ops; the truth
+            // lives in the Permissions page — the queue never retries.
+            center.add(UNNotificationRequest(identifier: e.id,
+                                             content: content, trigger: nil))
             try? fm.removeItem(atPath: e.path)
         }
+        let overflow = fresh.dropFirst(burstCap)
+        guard !overflow.isEmpty else { return }
+        let content = UNMutableNotificationContent()
+        content.title = L("还有 \(overflow.count) 条通知", "+\(overflow.count) more notifications")
+        content.body = L("打开 App 查看看板", "Open the app to see the board")
+        center.add(UNNotificationRequest(identifier: "notify-relay-overflow-\(UUID().uuidString)",
+                                         content: content, trigger: nil))
+        for e in overflow { try? fm.removeItem(atPath: e.path) }
     }
 }
 

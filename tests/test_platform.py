@@ -134,10 +134,10 @@ class NotifyDelegationTestCase(unittest.TestCase):
     def test_notify_routes_through_the_native_path(self):
         """act/lib/notify.notify must have no OS calls of its own left.
 
-        Since §28 the native path is the app relay (_native_notify) — its
-        queue/fallback contract lives in tests/test_notify_relay.py; here we
-        pin that notify() delegates to it, and that off-darwin (no app, no
-        relay) the OS seam is still the one direct route.
+        Since §28 the native path is the app relay (_native_notify, no
+        fallback) — its queue contract lives in tests/test_notify_relay.py;
+        here we pin that notify() delegates to it, and that off-darwin (no
+        app, no relay) the OS seam is still the one direct route.
         """
         from act.lib import notify
         with mock.patch.object(notify, "_native_notify",
