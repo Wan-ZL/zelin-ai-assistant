@@ -200,4 +200,15 @@ mac/               # SwiftUI menu-bar app (reads dashboard.json, writes inbox, n
 ios/               # v3: remote approver (placeholder)
 ```
 
+## Contributors
+
+Thanks to everyone who has contributed — every issue, suggestion, and PR
+makes this project better:
+
+[![Contributors](https://contrib.rocks/image?repo=Wan-ZL/zelin-ai-assistant)](https://github.com/Wan-ZL/zelin-ai-assistant/graphs/contributors)
+
+Want to join them? Start with a
+[good first issue](https://github.com/Wan-ZL/zelin-ai-assistant/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+and see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 Copyright (c) 2026 Zelin Wan (https://github.com/Wan-ZL)
