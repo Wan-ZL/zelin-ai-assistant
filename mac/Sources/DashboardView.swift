@@ -195,6 +195,10 @@ struct DashboardView: View {
                 // P1-4: slow-vs-broken pipeline banner (shared with the kanban)
                 PipelineHealthBanner(store: store, app: app)
 
+                // v0.19.0: board-level ingest diagnostic cards (silent ingest
+                // failure → visible, actionable card); empty for a healthy setup
+                DiagnosticsStrip(app: app)
+
                 // placeholder-timeout notices (capture = yellow, raise = orange)
                 ForEach(store.notices) { NoticeRow(notice: $0) }
 

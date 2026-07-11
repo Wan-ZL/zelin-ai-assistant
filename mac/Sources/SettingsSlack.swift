@@ -200,6 +200,9 @@ final class SlackSettingsModel: ObservableObject {
                     .green)
                 Analytics.log("mw_key_validate",
                               fields: ["name": SecretsIO.slackFile, "result": "ok"])
+                // v0.19.0 funnel (C's milestone, folded into Swift): a working
+                // Slack token means an ingest source is live. firstReach dedups.
+                Analytics.firstReach("ingest_configured")
                 // token freshly working → offer the pickers with fresh data
                 self.loadDirectory(refresh: true)
                 self.refreshStatus(afterDelay: 2)

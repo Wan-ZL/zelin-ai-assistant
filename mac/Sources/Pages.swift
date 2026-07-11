@@ -74,7 +74,7 @@ struct DoctorRow: Identifiable {
 /// the radar's health hook). Raw strings only — display text is built in the
 /// view so it follows language switches without a re-check.
 struct RadarHealthRow: Identifiable {
-    let id: String          // "gmail" | "slack"
+    let id: String          // "obsidian" | "gmail" | "slack"
     let hasData: Bool       // false = source absent from the file
     let lastOK: String?     // iso timestamp of the last successful poll
     let skipReason: String? // machine reason when it never succeeded
@@ -299,7 +299,7 @@ final class DepsModel: ObservableObject {
         guard let data = FileManager.default.contents(atPath: path),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
-        return ["gmail", "slack"].map { key in
+        return ["obsidian", "gmail", "slack"].map { key in
             let d = obj[key] as? [String: Any]
             return RadarHealthRow(
                 id: key,
@@ -501,7 +501,8 @@ struct DepsView: View {
                         Circle()
                             .fill(radarColor(row))
                             .frame(width: 8, height: 8)
-                        Text(row.id == "gmail" ? "Gmail" : "Slack")
+                        Text(row.id == "gmail" ? "Gmail"
+                             : row.id == "slack" ? "Slack" : "Obsidian")
                             .font(.system(size: 13, weight: .medium))
                         Text(radarDetail(row))
                             .font(.system(size: 12))
@@ -660,6 +661,16 @@ struct DepsView: View {
         // 契约E 词表第三项：radar 连不上 / auth.test 校验失败也归这个 code。
         case "connect_failed": return L("连接失败", "connection failed")
         case "disabled": return L("已禁用", "disabled")
+        // v0.19.0 codes — each names the next action honestly (see Diagnostics.swift)
+        case "vault_missing": return L("没指定 Obsidian 目录", "no Obsidian folder set")
+        case "vault_empty": return L("目录里没有笔记（去开录制/授权）",
+                                     "folder empty (start recording / grant access)")
+        case "no_api_key": return L("定时任务没 API key（去填）",
+                                    "scheduled job has no API key (add one)")
+        case "extract_failed": return L("截图→笔记链报错（看依赖检查）",
+                                        "capture→note chain erroring (see Dependencies)")
+        case "mcp_not_configured": return L("Slack 兜底没连（去连接 Slack）",
+                                            "Slack fallback not connected (connect Slack)")
         default: return r
         }
     }
