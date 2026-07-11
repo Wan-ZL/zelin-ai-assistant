@@ -539,6 +539,10 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         ex["approved_at"] = _iso_now()
         req.execution = ex
         save(req)
+        # lifecycle milestone (docs/TELEMETRY.md): first genuine approval on
+        # this install. The idempotent guard above means re-approvals of an
+        # already-running card never reach here, so only real approvals count.
+        analytics.log_first("milestone_first_approval", req=req.id)
         _log(f"inbox: {req.id} approved")
     elif action == "reject":
         registry.trash(req, "rejected")  # recoverable, not a bare rejected status

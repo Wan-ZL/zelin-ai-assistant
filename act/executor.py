@@ -681,6 +681,10 @@ def dispatch(
         session=session_id, type=req.type, wait_s=wait_s,
         instruction=(_instruction_summary(req)
                      if analytics.content_gate(cfg) else None))
+    # lifecycle milestone (docs/TELEMETRY.md): first successful dispatch on this
+    # install — the end of the activation funnel. Once-per-install, behavior
+    # only (req id, no instruction content).
+    analytics.log_first("milestone_first_delivery", req=req.id)
     return req
 
 

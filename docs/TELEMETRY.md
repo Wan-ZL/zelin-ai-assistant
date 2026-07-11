@@ -60,6 +60,27 @@ truth，上传只读不改不删。
 （v0.18 同时移除：首启页勾选框及其 `telemetry_consent` 事件——首启改为一行
 披露 + 「详情与关闭在设置」链接，开关全部集中在设置页，写同一个 override 键。）
 
+**v0.19 新增：生命周期里程碑事件**（全部元数据、两档都上传；每装机至多一条，
+用于把"📊 Usage Insights"报告做成 install→配置→首卡→首批→首派 的激活漏斗）。
+统一由**去重一次**的写法产出——App 侧 `Analytics.firstReach`（UserDefaults 标记，
+`mac/Sources/Utils.swift`）、daemon 侧 `analytics.log_first`（`state/analytics/first/`
+标记文件，`act/lib/analytics.py`）——同一里程碑重复触发只会落一次。**只带行为
+字段（req id/计数），绝不含卡片标题/链接/摘要等内容。**
+
+| 事件 | 端 | 触发 |
+|------|----|------|
+| `feature_first_reach{feature:"app_launch"}` | App | 本机**第一次**打开 App |
+| `feature_first_reach{feature:"ingest_configured"}` | App | 第一次配好任一 ingest 源（Slack key 验过 / 录制授权 / Gmail 凭据存盘） |
+| `milestone_first_card{req}` | daemon | 第一张需求卡进入 提案 lane（`registry.save()` 单一 choke，`req`=需求 id） |
+| `milestone_first_approval{req}` | daemon | 第一次批准一张卡（`actd` approve 分支） |
+| `milestone_first_delivery{req}` | daemon | 第一次成功派发执行（`executor` dispatch 成功处） |
+
+> 报告侧（`scripts/insights_report.py`）另派生两个视图，**不新增任何事件**：
+> retention（按 `client_ts` 推每装机的返访日）与 abandonment（配了源却没拿到首卡 /
+> 某路径只用过一次）。这些聚合**只输出计数/比例**，device id 永不出现在报告里，
+> 且当前跨所有装机的匿名 device 合并计（多用户共享部署会拉高漏斗/留存数，per-tenant
+> 区分标记暂缓，属未来 sync/auth 设计）。
+
 > **同表的例外行：`event="feedback"`（建议上报，CONTRACT §29）**。这不是
 > telemetry 自动上传的事件，而是你在 App 里**点「提建议」主动发送**的用户报告，
 > 复用同一张 `analytics_events` 表落库：其 `props` 含你的建议**全文**与所选卡片的

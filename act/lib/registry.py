@@ -256,6 +256,25 @@ def save(req: Requirement) -> None:
         req._file = str(path)
         req._in_list = False
         _atomic_write(path, _dump_yaml(req.to_dict()))
+    _note_first_card(req)
+
+
+def _note_first_card(req: Requirement) -> None:
+    """Fire the once-per-install ``milestone_first_card`` event the first time
+    ANY requirement is persisted in the 提案 (card_sent) lane. ``save()`` is the
+    single choke every producer funnels through — ``analyze.py``, quick_capture
+    ``apply_triage``, self-DM follow-ups, and ``merge_or_new`` (which writes
+    ``card_sent`` directly, bypassing ``set_status``) — so guarding on the saved
+    status here catches them all without touching the hot path in each. Lazy
+    import keeps registry import-light; ``log_first`` is idempotent and never
+    raises, so this is safe on the write path."""
+    try:
+        if str(req.status) != State.CARD_SENT.value:
+            return
+        from act.lib import analytics  # lazy: keep registry import-light
+        analytics.log_first("milestone_first_card", req=req.id)
+    except Exception:  # noqa: BLE001 - telemetry must never break a save
+        pass
 
 
 def upsert(req: Requirement) -> Requirement:
