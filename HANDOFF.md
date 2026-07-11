@@ -78,9 +78,11 @@
 7. **逆操作矩阵而非全局 ⌘Z**：批准 5 秒后 claude 会话已真实在跑，undo 语义不成立。
    每个操作配逆操作：回收站恢复 / 停止并退回待审批（abort_execution，session 归档重派发）/
    退回待验收（revert_review）/ attach 进会话改口。
-8. **review-attach 回流**：待验收任务被用户 attach 后 agent 重新 working → dashboard **投影层**
-   把它临时投回运行中列（state=review-active），registry 状态机不动；settle 时重新收割交付摘要。
-   原则：**能在投影层解决的不动状态机**。
+8. **review-attach 回流 ≠ 返工**（§30）：待验收任务被用户 attach 后 agent 重新 working →
+   卡**留在待验收列**，review[] 项标 `session_active=true`（App 平静徽章「会话有新活动」）；
+   registry 状态机不动，settle 时重新收割交付摘要（终端对话可能产生新交付物）。真返工轮只从
+   打回 verdict 开始——executor.rework 写 rework_count/last_rework_at 并同步回 executing。
+   原则：**能在投影层解决的不动状态机**，且投影必须诚实（attach 聊天不是「验收后返工中」）。
 9. **交付摘要收割**：executor prompt 要求 agent 完工写总结；done→review 提升时从 transcript
    收割最后一条 assistant 消息（executor.harvest_delivery），FINAL DRAFT 段拆出全文供"复制成稿"。
 10. **分级审批**：T0 自动/T1 一键/T2 需展开+文字确认；成本双阈值（<$5 不显示，>$50 升 T2）；

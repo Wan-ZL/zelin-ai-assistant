@@ -1020,7 +1020,8 @@ struct TaskRow: View {
     private var isDelivered: Bool { lane == .completed }
 
     // 契约: 停止并退回 on regular running rows (queued/working/blocked …),
-    // NOT on review-active rework rows and NOT in the completed lane.
+    // NOT on legacy review-active rows (attach activity from an older actd,
+    // §30 — the card is really in review) and NOT in the completed lane.
     private var showsAbort: Bool { !isDelivered && task.state != "review-active" }
 
     // 契约 done_external: 已办完 on EVERY non-delivered row (queued/working/
@@ -1096,10 +1097,12 @@ struct TaskRow: View {
                         Badge(text: L("排队中", "Queued"), color: .gray)
                     } else {
                         if showsInputBadge { Badge(text: L("需输入", "Input"), color: .orange) }
-                        // v0.10 attach 回流: review req whose agent is working
-                        // again — teal to tell it apart from working/queued.
+                        // legacy review-active rows (older actd ≤0.17.1 only;
+                        // §30 actd keeps attach-active cards in review[]) —
+                        // same honest wording as the review-lane badge: no 打回
+                        // verdict happened, so "reworking" was a misstatement.
                         if task.state == "review-active" {
-                            Badge(text: L("验收后返工中", "reworking"), color: .teal)
+                            Badge(text: L("会话有新活动", "Session active"), color: .teal)
                         } else if let st = task.state { Badge(text: st, color: accent) }
                         if let sid = task.short_id ?? task.session_id {
                             Text(sid.prefix(8))
@@ -1337,6 +1340,12 @@ struct ReviewRow: View {
         }
         // meta line: where it ran + how long it took + how long it's waited
         HStack(spacing: 6) {
+            // §30: the session is live-working — user attach / organic
+            // activity, calmly noted; a real 打回 leaves this lane entirely
+            // (review->executing), so this is never a rework round.
+            if item.session_active {
+                Badge(text: L("会话有新活动", "Session active"), color: .teal)
+            }
             if let cwd = item.cwd, !cwd.isEmpty {
                 Badge(text: (cwd as NSString).lastPathComponent, color: .secondary)
             }

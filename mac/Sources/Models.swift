@@ -203,10 +203,14 @@ struct ReviewItem: Decodable, Hashable {
     let dispatched_at: Int?      // epoch seconds
     let review_at: Int?          // epoch seconds
     let delivery_mode: String?   // "chat" | "repo"
+    // §30: live working agent on this review card = user attach / organic
+    // session activity — NOT a rework round. Absent (older actd) = false.
+    let session_active: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, name, summary, dod, session_id, short_id, copy_cmd, cwd, agent_name
         case delivered_summary, final_draft, plan, sources, log, dispatched_at, review_at, delivery_mode
+        case session_active
     }
 
     init(from decoder: Decoder) throws {
@@ -228,6 +232,7 @@ struct ReviewItem: Decodable, Hashable {
         dispatched_at = try? c.decodeIfPresent(Int.self, forKey: .dispatched_at)
         review_at = try? c.decodeIfPresent(Int.self, forKey: .review_at)
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
+        session_active = (try? c.decodeIfPresent(Bool.self, forKey: .session_active)) ?? false
     }
 }
 
