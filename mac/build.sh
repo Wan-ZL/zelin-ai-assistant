@@ -140,12 +140,32 @@ if [ "$INSTALL" -eq 1 ]; then
         DEST="$HOME/Applications"
         mkdir -p "$DEST"
     fi
+    # Quit a running instance BEFORE swapping the bundle: overwriting a live
+    # app leaves the OLD version running (menu bar still shows it) until a
+    # manual quit — nobody should have to know that. Graceful quit via Apple
+    # Event first, pkill only as the fallback; relaunch after the copy so the
+    # upgrade is invisible.
+    WAS_RUNNING=0
+    if pgrep -x "$EXEC_NAME" >/dev/null 2>&1; then
+        WAS_RUNNING=1
+        echo "==> Quitting the running $APP_NAME instance"
+        osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            pgrep -x "$EXEC_NAME" >/dev/null 2>&1 || break
+            sleep 0.5
+        done
+        pkill -x "$EXEC_NAME" 2>/dev/null || true
+    fi
     echo "==> Installing to $DEST"
     rm -rf "$DEST/$APP_NAME.app"
     if cp -R "$APP_DIR" "$DEST/"; then
         FINAL="$DEST/$APP_NAME.app"
         # re-sign in place (cp can perturb signature)
         codesign --force --deep --sign "$SIGN_ID" "$FINAL" 2>/dev/null || true
+        if [ "$WAS_RUNNING" -eq 1 ]; then
+            echo "==> Relaunching $APP_NAME ($DEST)"
+            open "$FINAL" || echo "WARN: relaunch failed — start it manually: open \"$FINAL\""
+        fi
     else
         echo "WARN: copy to $DEST failed; using built bundle in place."
     fi
