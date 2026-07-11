@@ -27,6 +27,26 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.17.1] - 2026-07-11
+
+### Fixed
+
+- Double-click terminal launch opens a new **tab** of the existing Ghostty
+  window instead of a separate window, and `--install` swaps the running
+  app seamlessly
+  ([#32](https://github.com/Wan-ZL/zelin-ai-assistant/pull/32))
+- Clicking outside a text field (board search, proposals composer, Ask,
+  popover capture…) or pressing Esc now dismisses the caret — drafts are
+  never lost, and Esc on a non-empty search clears the filter first
+  ([`e790f7a`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/e790f7a))
+
+### Changed
+
+- CONTRIBUTING/CHANGELOG now codify the versioning rule: patch = fixes and
+  small UX corrections, minor = new user-visible features; merging a PR does
+  not build an installer — cutting a release does
+  ([`789e7c6`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/789e7c6))
+
 ## [0.17.0] - 2026-07-10
 
 ### Added
