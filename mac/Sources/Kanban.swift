@@ -10,9 +10,13 @@ import Foundation
 // Main window only; the popover keeps the vertical DashboardView untouched.
 // Cards/rows are the popover components reused verbatim at their popover
 // width (fixed 400pt lanes); each lane scrolls vertically on its own.
-// Columns: 提案 | 运行中(+需输入) | 待验收 | 备选 | 已验收 — trash stays out.
-// (备选/Backlog is the DISPLAY name of the former 欠账/debt lane — registry
-// status names and the dashboard.json `debt` key are unchanged, 纯展示层.)
+// Columns: 备选 | 提案 | 运行中(+需输入) | 待验收 | 已验收 — trash stays out.
+// (v0.18: backlog moved leftmost so the board reads as a spatial flow —
+// detected sits upstream of card_sent, and every action moves a card exactly
+// one column to the right. Display order ONLY; the menu-bar popover keeps its
+// own attention-ordered list. 备选/Backlog is the DISPLAY name of the former
+// 欠账/debt lane — registry status names and the dashboard.json `debt` key
+// are unchanged, 纯展示层.)
 
 struct KanbanView: View {
     @ObservedObject var store: DashboardStore
@@ -230,6 +234,25 @@ struct KanbanView: View {
             let completedNotices = laneNotices(.completed)
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
+                    // 备选/Backlog leftmost (v0.18 flow order): display rename
+                    // of the debt lane — the store projection (visibleDebt)
+                    // and dashboard key stay. quiet: a pre-execution parking
+                    // lot must not compete with proposals for attention.
+                    column(title: L("备选 · backlog", "Backlog"),
+                           count: debt.count + debtEchoes.count,
+                           help: LaneHelp.backlog,
+                           emptyText: laneEmptyText(
+                               L("不着急的事会先停在这里——不会自动执行，也永不过期",
+                                 "Not-urgent items park here — nothing runs on its own, nothing expires")),
+                           isEmpty: debt.isEmpty && debtEchoes.isEmpty
+                               && debtNotices.isEmpty,
+                           quiet: true) {
+                        ForEach(debtNotices) { NoticeRow(notice: $0) }
+                        ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
+                        ForEach(debt, id: \.id) { d in
+                            DebtRow(item: d, app: app)
+                        }
+                    }
                     // isEmpty: false — the resident composer means this lane
                     // always has content; the ghost placeholder renders below
                     // it manually so the empty look stays the same.
@@ -237,13 +260,18 @@ struct KanbanView: View {
                     // (needs_approval, card_sent, …) unchanged.
                     column(title: L("提案 · proposals", "Proposals"),
                            count: approvals.count + suggestions.count,
-                           emptyText: laneEmptyText(L("暂无提案", "No proposals yet")),
+                           help: LaneHelp.proposals,
+                           emptyText: laneEmptyText(
+                               L("没有等你拍板的事。想到什么，直接在上面输入框里说一句",
+                                 "Nothing needs your decision. Capture a thought in the box above")),
                            isEmpty: false) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
                             && suggestions.isEmpty {
-                            lanePlaceholder(laneEmptyText(L("暂无提案", "No proposals yet")))
+                            lanePlaceholder(laneEmptyText(
+                                L("没有等你拍板的事。想到什么，直接在上面输入框里说一句",
+                                  "Nothing needs your decision. Capture a thought in the box above")))
                         }
                         ForEach(approvalNotices) { NoticeRow(notice: $0) }
                         // 契约七: 建议卡插在 composer 与占位卡之后、真实卡之前。
@@ -275,7 +303,10 @@ struct KanbanView: View {
                     // permanent orange 需输入 badge, then a thin divider.
                     column(title: L("运行中 · running", "Running"),
                            count: running.count + needsInput.count + runningEchoes.count,
-                           emptyText: laneEmptyText(L("无运行中任务", "No running tasks")),
+                           help: LaneHelp.running,
+                           emptyText: laneEmptyText(
+                               L("没有正在执行的任务。批准一个提案，AI 就开始干活",
+                                 "Nothing running — approve a proposal to start")),
                            isEmpty: running.isEmpty && needsInput.isEmpty
                                && runningEchoes.isEmpty && runningNotices.isEmpty) {
                         ForEach(runningNotices) { NoticeRow(notice: $0) }
@@ -296,7 +327,9 @@ struct KanbanView: View {
                     }
                     column(title: L("待验收 · review", "Review"),
                            count: reviews.count,
-                           emptyText: laneEmptyText(L("无待验收草稿", "No drafts to review")),
+                           help: LaneHelp.review,
+                           emptyText: laneEmptyText(
+                               L("没有等你验收的交付", "No drafts waiting for your review")),
                            isEmpty: reviews.isEmpty && reviewNotices.isEmpty) {
                         ForEach(reviewNotices) { NoticeRow(notice: $0) }
                         ForEach(reviews, id: \.id) { r in
@@ -305,22 +338,14 @@ struct KanbanView: View {
                             }
                         }
                     }
-                    // 备选/Backlog: display rename of the debt lane — the
-                    // store projection (visibleDebt) and dashboard key stay.
-                    column(title: L("备选 · backlog", "Backlog"),
-                           count: debt.count + debtEchoes.count,
-                           emptyText: laneEmptyText(L("暂无备选", "No backlog items")),
-                           isEmpty: debt.isEmpty && debtEchoes.isEmpty
-                               && debtNotices.isEmpty) {
-                        ForEach(debtNotices) { NoticeRow(notice: $0) }
-                        ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
-                        ForEach(debt, id: \.id) { d in
-                            DebtRow(item: d, app: app)
-                        }
-                    }
-                    column(title: L("已验收 · delivered", "Delivered"),
+                    // English twin Delivered→Done (v0.18, display-only):
+                    // delivery happens at the review stage; this lane means
+                    // "you accepted it". Registry status `delivered` frozen.
+                    column(title: L("已验收 · done", "Done"),
                            count: completed.count + completedEchoes.count,
-                           emptyText: laneEmptyText(L("无已验收任务", "No delivered tasks")),
+                           help: LaneHelp.done,
+                           emptyText: laneEmptyText(
+                               L("还没有验收过的交付", "Nothing accepted yet")),
                            isEmpty: completed.isEmpty && completedEchoes.isEmpty
                                && completedNotices.isEmpty) {
                         ForEach(completedNotices) { NoticeRow(notice: $0) }
@@ -481,12 +506,16 @@ struct KanbanView: View {
 
     // one lane: fixed 400pt so cards keep their popover size; header on top,
     // then an independent vertical scroll for the lane's cards.
+    // help → SectionHeader's ? popover/tooltip; quiet → one notch of visual
+    // quieting on the header (v0.18: backlog only, so proposals keep the eye).
     private func column<Content: View>(
-        title: String, count: Int, emptyText: String, isEmpty: Bool,
+        title: String, count: Int, help: String? = nil,
+        emptyText: String, isEmpty: Bool, quiet: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionHeader(title: title, count: count)
+            SectionHeader(title: title, count: count, help: help)
+                .opacity(quiet ? 0.65 : 1)
                 .padding(.horizontal, 10)
                 .padding(.top, 6)
             ScrollView(.vertical) {

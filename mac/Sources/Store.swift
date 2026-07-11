@@ -369,7 +369,7 @@ final class DashboardStore: ObservableObject {
                      "Stop & return timed out — the card is still in Running, try again (check that actd is running)")
         case .revert:
             return L("退回待验收超时，卡片仍在已验收列，可重试（检查 actd 是否在运行）",
-                     "Back-to-review timed out — the card is still in Delivered, try again (check that actd is running)")
+                     "Back-to-review timed out — the card is still in Done, try again (check that actd is running)")
         }
     }
 
