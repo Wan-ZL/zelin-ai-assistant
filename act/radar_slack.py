@@ -73,6 +73,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
+from act import radar
 from act.lib import analytics, config, health, registry, sanitize, secrets
 
 SLACK_API = "https://slack.com/api/"
@@ -325,6 +326,10 @@ def fetch_new_messages(token: str, my_id: str, cfg: config.Config,
                 "ts": ts,
                 "user": m.get("user"),
                 "text": text,
+                # Slack thread anchor: present only when the message is part of
+                # a thread (external thread ref for thread-level matching);
+                # absent on standalone messages -> honest None fallback.
+                "thread_ts": m.get("thread_ts"),
                 "permalink": _permalink(token, channel_id, ts),
             })
             newest_ts = max(newest_ts, ts, key=lambda x: float(x))
@@ -960,10 +965,29 @@ def scan(cfg: Optional[config.Config] = None,
     # ignore (informational, no card). The triage LLM reuses ``extractor``.
     from act.lib import quick_capture  # lazy: keeps the notify import chain acyclic
     reqs = extract_requirements(others, extractor=extractor)
+    # permalink -> source message, so an extracted item can recover its origin
+    # message's thread_ts (the LLM copies the permalink back verbatim, and it is
+    # already the card's `ref`). Best-effort: no match -> no thread ref -> None.
+    by_permalink = {m.get("permalink"): m for m in others if m.get("permalink")}
     created = 0
     for r in reqs:
         if not isinstance(r, dict) or not r.get("summary"):
             continue
+        src_msg = by_permalink.get(r.get("permalink")) or {}
+        source = {
+            "who": "slack",
+            "channel": "slack",
+            "date": None,
+            "quote": r.get("summary"),
+            "ref": r.get("permalink"),
+        }
+        # External thread ref for thread-level matching (A↔B interface):
+        # registry.derive_thread_key reads source["slack_thread_ts"]. Only set
+        # it when the origin message was actually threaded — else omit so
+        # derive_thread_key returns None (honest title/LLM fallback).
+        thread_ts = src_msg.get("thread_ts")
+        if thread_ts:
+            source["slack_thread_ts"] = thread_ts
         new = registry.Requirement(
             id=registry.next_id(),
             title=(r.get("summary") or "")[:80],
@@ -974,15 +998,10 @@ def scan(cfg: Optional[config.Config] = None,
             status="card_sent" if r.get("urgent") is not False else "detected",
             hardness="soft",
             plan=r.get("plan") or [],
-            sources=[{
-                "who": "slack",
-                "channel": "slack",
-                "date": None,
-                "quote": r.get("summary"),
-                "ref": r.get("permalink"),
-            }],
+            sources=[source],
             notes=f"needs_reply={r.get('needs_reply')} · from Slack",
         )
+        radar._set_thread_key(new)
         desc = quick_capture.candidate_desc(
             str(r.get("summary") or ""), who="slack", channel="slack",
             ref=r.get("permalink"))
