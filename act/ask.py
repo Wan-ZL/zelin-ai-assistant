@@ -409,12 +409,14 @@ def answer(question: str,
     _append_history({"q": question, "a": text, "citation": citation,
                      "lang": lang, "ts": _iso_now(),
                      "elapsed_s": result["elapsed_s"]})
-    # question text is emit-gated on telemetry level (docs/TELEMETRY.md):
-    # basic never writes it into events.jsonl, so it can never upload either.
+    # question text is emit-gated on capture_input AND detailed
+    # (docs/TELEMETRY.md): at any other setting it never reaches
+    # events.jsonl, so it can never upload either.
     analytics.log_event(
         "ask_answered", ok=True, elapsed_s=result["elapsed_s"],
         cited=bool(citation),
-        question=analytics.clip(question) if cfg.telemetry_level == "detailed" else None)
+        question=(analytics.clip_content(question)
+                  if analytics.content_gate(cfg) else None))
     return result
 
 

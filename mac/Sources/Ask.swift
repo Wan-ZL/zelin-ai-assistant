@@ -14,9 +14,10 @@
 //               last-20 history read from state/ask_history.json (python is
 //               the only writer; the app only renders it).
 //
-// Privacy: 👍/👎 feedback goes to the LOCAL analytics log only — event name +
-// verdict at telemetry level basic; the question text is attached ONLY at
-// level "detailed" (emit-side gate, docs/TELEMETRY.md).
+// Privacy: 👍/👎 feedback goes to the LOCAL analytics log — event name +
+// verdict always; the question text is attached only while the content gate
+// is open (capture_input AND level=detailed, both default ON — emit-side
+// gate, docs/TELEMETRY.md).
 
 import AppKit
 import SwiftUI
@@ -59,29 +60,14 @@ final class AskModel: ObservableObject {
             .lowercased() != "false"
     }
 
-    /// telemetry.level per §15 override precedence (overrides nested → flat →
-    /// config.yaml) — gates whether the question TEXT may enter analytics.
-    nonisolated static func telemetryLevel() -> String {
-        let ov = SettingsIO.readOverrides()
-        if let t = ov["telemetry"] as? [String: Any], let l = t["level"] as? String {
-            return l == "detailed" ? "detailed" : "basic"
-        }
-        if let l = ov["telemetry.level"] as? String {
-            return l == "detailed" ? "detailed" : "basic"
-        }
-        if let l = SettingsIO.configNestedScalar(block: "telemetry", key: "level") {
-            return l == "detailed" ? "detailed" : "basic"
-        }
-        return "basic"
-    }
-
-    /// Adds `question` to `fields` only at telemetry level detailed
-    /// (emit-side gate: at basic the text never reaches events.jsonl).
+    /// Adds `question` to `fields` only when the content gate is open
+    /// (capture_input AND level=detailed, Telemetry.contentCaptureActive —
+    /// emit-side gate: otherwise the text never reaches events.jsonl).
     private static func logGated(_ event: String, question: String,
                                  fields: [String: Any] = [:]) {
         var f = fields
-        if telemetryLevel() == "detailed" {
-            f["question"] = String(question.prefix(200))
+        if Telemetry.contentCaptureActive() {
+            f["question"] = Analytics.clip(question)
         }
         Analytics.log(event, fields: f)
     }
@@ -107,7 +93,8 @@ final class AskModel: ObservableObject {
         phase = .thinking
         elapsed = 0
         startTimer()
-        Self.logGated("ask_submit", question: text)
+        Analytics.firstReach("ask")
+        Self.logGated("ask_submit", question: text, fields: ["chars": text.count])
 
         let py = IMessageSettingsModel.runtimePython()
         let root = AppPaths.stateRoot
@@ -398,8 +385,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("有帮助（记一条匿名事件，随使用统计上传；基础级不含问题内容，详细级会附问题文本）",
-                    "Helpful (logs an anonymous event that uploads with usage stats; Basic carries no question text, Detailed attaches it)"))
+            .help(L("有帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认开）",
+                    "Helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — the default)"))
             Button {
                 model.rate("down")
             } label: {
@@ -409,8 +396,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("没帮助（记一条匿名事件，随使用统计上传；基础级不含问题内容，详细级会附问题文本）",
-                    "Not helpful (logs an anonymous event that uploads with usage stats; Basic carries no question text, Detailed attaches it)"))
+            .help(L("没帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认开）",
+                    "Not helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — the default)"))
         }
         .font(.system(size: 12))
     }

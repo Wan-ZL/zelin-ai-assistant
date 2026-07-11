@@ -79,10 +79,14 @@ struct SettingsFormView: View {
     @State private var voiceGenStatus = ""
     @State private var voiceGenFailed = false
     // product improvement program (docs/TELEMETRY.md) — anonymous usage
-    // stats, default ON; saved as the nested {"telemetry": {enabled, level}}
-    // override (same form as the first-run permissions page, CONTRACT §15).
+    // stats, default ON; saved as the nested {"telemetry": {enabled, level,
+    // capture_input}} override (CONTRACT §15). capture_input (default ON
+    // since v0.18, like level=detailed) is the typed-text switch — only
+    // effective together with 详细 level; the copy above must keep saying
+    // typed text is included while these defaults hold.
     @State private var telemetryEnabled = true
-    @State private var telemetryLevel = "basic"
+    @State private var telemetryLevel = "detailed"
+    @State private var telemetryCaptureInput = true
     // §26: in-app update check (GitHub releases API, at most once a day).
     @State private var updateCheckEnabled = true
     @State private var status = ""
@@ -641,8 +645,8 @@ struct SettingsFormView: View {
 
     private var telemetryGroup: some View {
         group(L("产品改进计划", "Product improvement program")) {
-            Toggle(L("参与匿名使用统计（默认开，帮助改进产品）",
-                     "Share anonymous usage statistics (on by default; helps improve the product)"),
+            Toggle(L("参与产品改进（默认开，默认含我输入的文本——可在下方单独关闭）",
+                     "Product improvement (on by default; includes text I type by default — separately switchable below)"),
                    isOn: Binding(
                 get: { telemetryEnabled },
                 set: { v in
@@ -651,7 +655,7 @@ struct SettingsFormView: View {
                 }))
                 .toggleStyle(.switch)
             HStack {
-                Text(L("收集级别", "Collection level"))
+                Text(L("行为事件级别", "Behavior-event level"))
                     .font(.system(size: 12))
                     .frame(width: 220, alignment: .leading)
                 Picker("", selection: Binding(
@@ -660,28 +664,51 @@ struct SettingsFormView: View {
                         telemetryLevel = v == "detailed" ? "detailed" : "basic"
                         persistTelemetry()
                     })) {
-                    Text(L("基础（默认）", "Basic (default)")).tag("basic")
-                    Text(L("详细", "Detailed")).tag("detailed")
+                    Text(L("基础", "Basic")).tag("basic")
+                    Text(L("详细（默认）", "Detailed (default)")).tag("detailed")
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
                 .disabled(!telemetryEnabled)
                 Spacer()
             }
-            Text(L("基础：只发送匿名事件元数据——事件名、时间、随机设备号、版本号，不含任何内容。",
-                   "Basic: sends anonymous event metadata only — event name, time, random device id, app version; never any content."))
+            Text(L("基础与详细都发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号。切到基础还会同时停掉下方的输入文本上传（文本需要详细级）。",
+                   "Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要；问问助手事件会记录并上传你输入的问题文本（同样 ≤200 字符）。",
-                   "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters; Ask events also record and upload the question you typed (same ≤200-character cap)."))
+            Toggle(L("上传我输入的文本以更懂我（默认开：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
+                     "Upload the text I type, to know me better (on by default: captures, questions, rework feedback, search terms; ≤500 chars each)"),
+                   isOn: Binding(
+                get: { telemetryCaptureInput },
+                set: { v in
+                    telemetryCaptureInput = v
+                    // captureTouched: flipping THIS toggle is the informed
+                    // interaction with the disclosing control — the key is
+                    // written explicitly (even when it equals the default)
+                    // so content_gate accepts it without the v2 marker.
+                    persistTelemetry(captureTouched: true)
+                }))
+                .toggleStyle(.switch)
+                .disabled(!telemetryEnabled || telemetryLevel != "detailed")
+            Text(L("只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
+                   "Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack/iMessage messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text(L("关掉开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
-                   "Turning the toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
+            Text(L("关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+                   "Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
         .font(.system(size: 12))
+        // 首启披露页「详情与关闭在设置」跳转锚点（pendingAnchor = "telemetry"）
+        .id("telemetry")
+        // NO passive v2-marker writer here: SettingsFormView is a non-lazy
+        // VStack, so .onAppear fires on INSERTION (opening the Settings page
+        // for any reason), not when this below-the-fold section is actually
+        // seen — that would silently arm content for upgraded installs.
+        // Legitimate arming: the first-run disclosure/wizard writes the v2
+        // marker when its copy renders, and flipping the toggle above writes
+        // the explicit capture_input key (captureTouched).
     }
 
     // v0.14 (audit 7.6): expert-only keys stay in config.yaml — say so, and
@@ -937,7 +964,7 @@ struct SettingsFormView: View {
         // telemetry — mirror the effective config: overrides (nested form
         // shared with the first-run permissions page, flat keys accepted
         // too) → config.yaml telemetry block → built-in defaults (on /
-        // basic), same precedence as act/lib/config.py.
+        // detailed / capture on, v0.18), same precedence as act/lib/config.py.
         let tele = ov["telemetry"] as? [String: Any] ?? [:]
         if let v = tele["enabled"] as? Bool {
             telemetryEnabled = v
@@ -951,8 +978,20 @@ struct SettingsFormView: View {
         let level = ((tele["level"] as? String)
             ?? (ov["telemetry.level"] as? String)
             ?? SettingsIO.configNestedScalar(block: "telemetry", key: "level")
-            ?? "basic").lowercased()
+            ?? "detailed").lowercased()
         telemetryLevel = level == "detailed" ? "detailed" : "basic"
+        // capture_input（输入文本上传，v0.18 起默认开）— same precedence
+        // chain; effective truth mirrored by Telemetry.captureInput().
+        if let v = tele["capture_input"] as? Bool {
+            telemetryCaptureInput = v
+        } else if let v = ov["telemetry.capture_input"] as? Bool {
+            telemetryCaptureInput = v
+        } else if let v = SettingsIO.configNestedScalar(block: "telemetry",
+                                                        key: "capture_input") {
+            telemetryCaptureInput = (v.lowercased() != "false")
+        } else {
+            telemetryCaptureInput = true
+        }
     }
 
     // MARK: - persist (on change, diff-write; CONTRACT §15.3 v0.14)
@@ -975,6 +1014,9 @@ struct SettingsFormView: View {
         } else {
             merged[key] = value
         }
+        // behavior telemetry (docs/TELEMETRY.md): WHICH key changed — never
+        // the value (paths/addresses/thresholds stay on this machine).
+        Analytics.log("mw_setting_change", fields: ["key": key])
         writeMerged(merged)
     }
 
@@ -1021,6 +1063,8 @@ struct SettingsFormView: View {
                 } else {
                     merged["features"] = feats
                 }
+                Analytics.log("mw_setting_change",
+                              fields: ["key": "features." + key])
                 writeMerged(merged)
             })
     }
@@ -1030,6 +1074,7 @@ struct SettingsFormView: View {
     private func persistLanguage() {
         var merged = SettingsIO.readOverrides()
         merged["language"] = language == "en" ? "en" : "zh"
+        Analytics.log("mw_setting_change", fields: ["key": "language"])
         writeMerged(merged)
         // apply the UI language immediately (observed views re-render)
         LanguageStore.shared.lang = language == "en" ? "en" : "zh"
@@ -1038,15 +1083,19 @@ struct SettingsFormView: View {
         (NSApp.delegate as? AppDelegate)?.installMainMenu()
     }
 
-    /// §15 telemetry overrides (docs/TELEMETRY.md): nested form shared with
-    /// the first-run permissions page; sub-keys diff-written, legacy flat
-    /// keys dropped so the two spellings can never disagree.
-    private func persistTelemetry() {
+    /// §15 telemetry overrides (docs/TELEMETRY.md): nested form; enabled +
+    /// level sub-keys diff-written, legacy flat keys dropped so the two
+    /// spellings can never disagree. capture_input is DIFFERENT: it doubles
+    /// as the consent record (CONTRACT §15 v0.18) — once the user has
+    /// flipped its toggle (captureTouched) the key is written explicitly
+    /// even at the default value, and unrelated saves never diff-drop an
+    /// existing key (dropping it would silently revoke a recorded choice).
+    private func persistTelemetry(captureTouched: Bool = false) {
         var merged = SettingsIO.readOverrides()
         var tele = merged["telemetry"] as? [String: Any] ?? [:]
         let cfgEnabled = configLayerBool(block: "telemetry", key: "enabled", default: true)
         let cfgLevelRaw = (SettingsIO.configNestedScalar(block: "telemetry", key: "level")
-            ?? "basic").lowercased()
+            ?? "detailed").lowercased()
         let cfgLevel = cfgLevelRaw == "detailed" ? "detailed" : "basic"
         let level = telemetryLevel == "detailed" ? "detailed" : "basic"
         if telemetryEnabled == cfgEnabled {
@@ -1059,6 +1108,18 @@ struct SettingsFormView: View {
         } else {
             tele["level"] = level
         }
+        if captureTouched {
+            tele["capture_input"] = telemetryCaptureInput
+        } else if tele["capture_input"] == nil,
+                  let legacy = merged["telemetry.capture_input"] as? Bool {
+            // migrate a hand-written LEGACY FLAT capture_input into the
+            // nested form BEFORE the flat-key cleanup below deletes it —
+            // dropping it would silently revoke a recorded opt-out
+            // (the nested key, when present, already wins and is kept).
+            tele["capture_input"] = legacy
+        }
+        // not touched this save: leave any existing capture_input key
+        // exactly as it is — it records an explicit (consent) choice.
         if tele.isEmpty {
             merged.removeValue(forKey: "telemetry")
         } else {
@@ -1066,6 +1127,8 @@ struct SettingsFormView: View {
         }
         merged.removeValue(forKey: "telemetry.enabled")
         merged.removeValue(forKey: "telemetry.level")
+        merged.removeValue(forKey: "telemetry.capture_input")
+        Analytics.log("mw_setting_change", fields: ["key": "telemetry"])
         writeMerged(merged)
     }
 

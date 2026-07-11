@@ -134,6 +134,7 @@ struct KanbanComposer: View {
         withAnimation(.easeInOut(duration: 0.12)) { expanded = true }
         // 契约F trigger 词表冻结为 user|auto：点击和热键都是用户手势 → "user"；
         // 入口细分（click|hotkey）记在词表外的 via 字段，不占用 trigger。
+        Analytics.firstReach("composer")
         Analytics.log("composer_open", fields: ["trigger": "user", "via": via])
         // focus lands via the editor's .onAppear once it exists
     }

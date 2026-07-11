@@ -167,8 +167,14 @@ def process_inbox() -> int:
             _log(f"inbox: decision for unknown req {req_id!r} ({action}) — dropped")
         else:
             _apply_decision(req, action, comment)
-            analytics.log_event(f"inbox_{action or 'unknown'}", req=req.id,
-                                status=str(req.status))
+            # the comment (打回反馈/修改方向) is user-typed content —
+            # attached only behind the capture_input gate, clipped.
+            c = (comment or "").strip()
+            analytics.log_event(
+                f"inbox_{action or 'unknown'}", req=req.id,
+                status=str(req.status), has_comment=bool(c) or None,
+                comment=(analytics.clip_content(c)
+                         if c and analytics.content_gate() else None))
             processed += 1
 
         _safe_unlink(path)
@@ -238,7 +244,12 @@ def _apply_capture(text: Optional[str]) -> None:
         _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion)")
     else:
         _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
-    analytics.log_event("inbox_capture", req=saved.id, status=str(saved.status))
+    # the typed capture text is content — capture_input-gated, clipped;
+    # chars stays metadata (usage signal without the words).
+    analytics.log_event(
+        "inbox_capture", req=saved.id, status=str(saved.status), chars=len(t),
+        text=(analytics.clip_content(t)
+              if analytics.content_gate() else None))
 
 
 def _apply_feedback(decision: dict) -> None:
@@ -522,6 +533,11 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
             _log(f"inbox: {req.id} approve ignored (already {req.status})")
             return
         req.set_status(State.APPROVED)
+        # approval timestamp (add-only bookkeeping, like accepted_at) — lets
+        # the dispatch event report wait_s (approve -> launch latency).
+        ex = dict(req.execution or {})
+        ex["approved_at"] = _iso_now()
+        req.execution = ex
         save(req)
         _log(f"inbox: {req.id} approved")
     elif action == "reject":
@@ -1034,14 +1050,19 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。
                 req.set_status(registry.State.REVIEW)
                 registry.save(req)
-                # telemetry.level gating (docs/TELEMETRY.md): the delivery
-                # summary excerpt is recorded ONLY at the opt-in "detailed"
-                # level — never at "basic".
-                detailed = getattr(cfg, "telemetry_level", "basic") == "detailed"
-                analytics.log_event(
-                    "review_promoted", req=req.id,
-                    summary=(analytics.clip(ex.get("delivered_summary"))
-                             if detailed else None))
+                # exec_s (metadata): dispatch -> delivery wall time. No
+                # summary excerpt anymore (v0.18): delivered_summary is MODEL
+                # OUTPUT, which telemetry never stores at any setting
+                # (docs/TELEMETRY.md red line) — the pre-v0.18 detailed-level
+                # summary field is retired, not moved behind capture_input.
+                exec_s = None
+                disp_dt = _parse_iso(ex.get("dispatched_at"))
+                if disp_dt is not None:
+                    exec_s = max(0, round(
+                        (_dt.datetime.now(_dt.timezone.utc) - disp_dt)
+                        .total_seconds()))
+                analytics.log_event("review_promoted", req=req.id,
+                                    exec_s=exec_s)
             continue
         if ex.get("done"):
             # finished earlier; agent purged from the list — promote if missed

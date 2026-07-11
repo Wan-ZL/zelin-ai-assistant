@@ -239,6 +239,7 @@ def scan(runner=None, triager=None) -> dict:
 
 
 def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dict:
+    scan_started = time.monotonic()
     if not cfg.feature("obsidian_radar"):
         summary["skipped"].append("features.obsidian_radar is off")
         return summary
@@ -323,7 +324,9 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     if newest_done > marker:
         _write_marker(newest_done)
     analytics.log_event("radar_scan", source="obsidian",
-                        files=summary.get("files_scanned"), new_cards=summary.get("cards"))
+                        files=summary.get("files_scanned"),
+                        new_cards=summary.get("cards"),
+                        secs=round(time.monotonic() - scan_started, 1))
     return summary
 
 

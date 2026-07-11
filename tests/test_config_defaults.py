@@ -3,8 +3,10 @@
 - execution.create_github_repo (PRIVACY.md egress row 8): approving a card
   must NOT silently create GitHub repos for new users — default False.
 - telemetry (PRIVACY.md egress row 10, docs/TELEMETRY.md): default ON at
-  level "basic" with the maintainer URL; opt-out via config.yaml or the
-  settings_overrides.json keys "telemetry.enabled"/"telemetry.level" (§15).
+  level "detailed" with capture_input on (v0.18 shipped defaults — the
+  disclosure copy must say typed text is included) and the maintainer URL;
+  opt-out via config.yaml or the settings_overrides.json telemetry keys
+  (§15).
 
 Explicit config.yaml values (either way) always keep their behavior.
 """
@@ -49,17 +51,21 @@ class TelemetryDefaultsTestCase(unittest.TestCase):
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
 
-    def test_dataclass_defaults_on_basic_maintainer_url(self):
+    def test_dataclass_defaults_on_detailed_maintainer_url(self):
+        # v0.18 shipped defaults: on / detailed / capture_input on — the
+        # disclosure copy states typed text is included BECAUSE of these.
         cfg = config.Config()
         self.assertTrue(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "basic")
+        self.assertEqual(cfg.telemetry_level, "detailed")
+        self.assertTrue(cfg.telemetry_capture_input)
         self.assertEqual(cfg.telemetry_supabase_url,
                          config.DEFAULT_TELEMETRY_SUPABASE_URL)
 
     def test_missing_block_keeps_defaults(self):
         cfg = self._load_with_yaml("owner:\n  name: X\n")
         self.assertTrue(cfg.telemetry_enabled)
-        self.assertEqual(cfg.telemetry_level, "basic")
+        self.assertEqual(cfg.telemetry_level, "detailed")
+        self.assertTrue(cfg.telemetry_capture_input)
         self.assertEqual(cfg.telemetry_supabase_url,
                          config.DEFAULT_TELEMETRY_SUPABASE_URL)
 
@@ -101,7 +107,10 @@ class TelemetryDefaultsTestCase(unittest.TestCase):
         self.assertFalse(cfg.telemetry_enabled)
         self.assertEqual(cfg.telemetry_level, "detailed")
 
-    def test_overrides_invalid_level_is_ignored(self):
+    def test_overrides_invalid_level_degrades_to_basic(self):
+        # an unrecognized EXPLICIT override value degrades to "basic",
+        # mirroring the config.yaml path (fail-private on typos) — it must
+        # not silently keep the more-permissive default "detailed"
         cfg = self._load_with_overrides({"telemetry.level": "verbose"})
         self.assertEqual(cfg.telemetry_level, "basic")
 

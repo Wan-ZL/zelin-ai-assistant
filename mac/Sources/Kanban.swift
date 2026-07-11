@@ -32,6 +32,10 @@ struct KanbanView: View {
     // The query itself lives in the STORE (boardQuery) so the board*
     // projections can filter — visible* 现有模式.
     @FocusState private var searchFocused: Bool
+    // 搜索埋点: last non-empty query of the current search session — flushed
+    // as ONE board_search event when the caret leaves the box / page switches
+    // (never per keystroke). Query text itself is capture_input-gated.
+    @State private var searchSessionQuery = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -78,10 +82,21 @@ struct KanbanView: View {
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
+        .onChange(of: store.boardQuery) { _, v in
+            if !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                searchSessionQuery = v
+            }
+        }
+        .onChange(of: searchFocused) { _, focused in
+            if !focused { flushSearchEvent() }
+        }
         // page switched away / window closed → drop the filter, so cards can
         // never come back silently hidden (same policy as the multi-select
         // @State, which SwiftUI discards for us).
-        .onDisappear { store.boardQuery = "" }
+        .onDisappear {
+            flushSearchEvent()
+            store.boardQuery = ""
+        }
         // 快速捕获输入框已从这里的工具栏移入待审批列顶（KanbanComposer，
         // Composer.swift）；.focusCaptureField 通知改由 composer 自己接收。
     }
@@ -159,6 +174,21 @@ struct KanbanView: View {
         .padding(.horizontal, 8)
         .background(Color.primary.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// One board_search event per search session (docs/TELEMETRY.md): chars
+    /// is metadata; the query TEXT rides along only behind the capture_input
+    /// gate. No-op when nothing was typed since the last flush.
+    private func flushSearchEvent() {
+        let q = searchSessionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        searchSessionQuery = ""
+        Analytics.firstReach("board_search")
+        var fields: [String: Any] = ["chars": q.count]
+        if Telemetry.contentCaptureActive() {
+            fields["query"] = Analytics.clip(q)
+        }
+        Analytics.log("board_search", fields: fields)
     }
 
     private func escClearSearch() -> KeyPress.Result {

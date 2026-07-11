@@ -90,7 +90,7 @@ cp config.example.yaml config.yaml   # edit: Obsidian vault path, watched people
 bash install.sh                      # dependency checks → builds the app → launchd agents + cron chain
 ```
 
-On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and an anonymous-usage-stats checkbox. Reopen it anytime via the app menu → Permissions Checkup. Then open the menu-bar app's Settings and paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in a `0600` file under `config/secrets/`).
+On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and a one-line anonymous-usage-stats disclosure (details & opt-out in Settings). Reopen it anytime via the app menu → Permissions Checkup. Then open the menu-bar app's Settings and paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in a `0600` file under `config/secrets/`).
 
 - Full walkthrough with per-step checkpoints, exact TCC permission paths, and a "first card in 5 minutes" exercise: **[docs/INSTALL.md](docs/INSTALL.md)** (also covers the `.pkg` installer route).
 - No API key yet? Preview the full UI with fictional data: `python3 scripts/demo_seed.py /tmp/assistant-demo` — see [docs/DEMO.md](docs/DEMO.md).
@@ -131,7 +131,7 @@ The iMessage channel is macOS-only by nature (Messages.app + chat.db); the Slack
 
 ## Telemetry
 
-> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. Only event metadata is sent — event names, timestamps, a random device id, app version — **never screen content, message bodies, file contents, or keys**. Opt out in one step: Settings → "Product improvement program" toggle, or `telemetry.enabled: false` in config.yaml. An opt-in "detailed" level can additionally attach short (≤200-char) instruction/delivery summaries to dispatch/delivery events. Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
+> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. What's sent: event metadata (event names, timestamps, a random device id, app version) **and, by default, the text you type into the app** — captures, questions, rework feedback, search terms, each clipped to 500 chars (`telemetry.capture_input`, on by default). **Never sent at any setting**: the AI's answers, screen-recording content, email or Slack/iMessage message bodies, file contents, or keys. Opt out in Settings → "Product improvement program": one toggle stops just the typed text (`telemetry.capture_input: false`), the master toggle stops everything (`telemetry.enabled: false`). Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
 
 ## Privacy & security
 

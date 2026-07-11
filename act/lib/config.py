@@ -194,12 +194,24 @@ class Config:
     redaction_terms_file: str = "config/redaction_terms.txt"
     redaction_mask_secrets: bool = True
 
-    # telemetry upload (default ON with opt-out; docs/TELEMETRY.md) — level
-    # "basic" sends event metadata only; "detailed" (opt-in) may add short
-    # instruction/delivery summaries (<=200 chars) to dispatch/delivery events.
+    # telemetry upload (default ON with opt-out; docs/TELEMETRY.md) — levels
+    # carry event metadata (names, timings, counts, ids). Typed text THE USER
+    # ENTERS INTO THIS APP (captures, Ask questions, card comments,
+    # instruction summaries) is recorded when capture_input is true AND level
+    # is "detailed" (capture_input_active below) — BOTH ship default ON, so
+    # the disclosure copy (first-run line, Settings, docs) must say typed
+    # text is included; ingested third-party content (screen OCR, emails,
+    # Slack/iMessage messages) is NEVER telemetry, at any setting.
     telemetry_enabled: bool = True
     voice_enabled: bool = True   # docs/VOICE.md voice-profile injection master switch
-    telemetry_level: str = "basic"
+    telemetry_level: str = "detailed"
+    telemetry_capture_input: bool = True
+    # True only when capture_input came from an EXPLICIT source (config.yaml
+    # telemetry block or a Settings override) — writing the key is an
+    # informed choice, so analytics.content_gate accepts it in place of the
+    # v2 consent marker; the built-in default alone never does (upgraded
+    # installs must see the new disclosure first, CONTRACT §15 v0.18).
+    telemetry_capture_input_explicit: bool = False
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
 
@@ -247,6 +259,22 @@ class Config:
         if self.watch_people:
             return self.watch_people[0].split(".")[0].title()
         return self.owner_name
+
+    def capture_input_active(self) -> bool:
+        """Typed-text capture gate (docs/TELEMETRY.md「输入文本收集」).
+
+        True only when BOTH `telemetry.capture_input` AND `telemetry.level:
+        detailed` are set — both default ON since v0.18 (the disclosure copy
+        says so), and either switch alone turns text capture off. Every emit
+        site that attaches user-typed text must check this — when the gate is
+        closed the text never reaches events.jsonl, so it can never upload
+        either. Scope: only text the user types into THIS app — ingested
+        third-party content (screen OCR, emails, Slack/iMessage messages)
+        must never be attached regardless of this gate. Mirrored by
+        Telemetry.contentCaptureActive() in mac/Sources/Utils.swift.
+        """
+        return bool(self.telemetry_capture_input
+                    and self.telemetry_level == "detailed")
 
 
 def load_config() -> Config:
@@ -372,6 +400,9 @@ def load_config() -> Config:
     cfg.telemetry_enabled = bool(tele.get("enabled", cfg.telemetry_enabled))
     _lvl = str(tele.get("level", cfg.telemetry_level) or "").strip().lower()
     cfg.telemetry_level = _lvl if _lvl in TELEMETRY_LEVELS else "basic"
+    if "capture_input" in tele:
+        cfg.telemetry_capture_input = bool(tele.get("capture_input"))
+        cfg.telemetry_capture_input_explicit = True
     # An explicit empty/null supabase_url disables uploads entirely (forks:
     # this is the hard off switch); an ABSENT key keeps the default project.
     cfg.telemetry_supabase_url = str(
@@ -574,21 +605,27 @@ def _apply_settings_overrides(cfg: Config) -> None:
             elif key == "telemetry" and isinstance(value, dict):
                 # v0.13 (§15 note): the app's first-run page opts OUT of
                 # anonymous usage stats by writing {"telemetry": {"enabled":
-                # false}}. App-overridable: enabled + level ONLY —
-                # supabase_url / key_path stay config.yaml-only.
+                # false}}. App-overridable: enabled + level + capture_input
+                # ONLY — supabase_url / key_path stay config.yaml-only.
                 if value.get("enabled") is not None:
                     cfg.telemetry_enabled = bool(value["enabled"])
                 if value.get("level") is not None:
+                    # invalid explicit values degrade to "basic", mirroring
+                    # the config.yaml path (fail-private on typos)
                     lvl = str(value["level"]).strip().lower()
-                    if lvl in TELEMETRY_LEVELS:
-                        cfg.telemetry_level = lvl
+                    cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
+                if value.get("capture_input") is not None:
+                    cfg.telemetry_capture_input = bool(value["capture_input"])
+                    cfg.telemetry_capture_input_explicit = True
             elif key == "telemetry.enabled" and value is not None:
                 # flat form, same allowlist (§15 telemetry overrides)
                 cfg.telemetry_enabled = bool(value)
             elif key == "telemetry.level" and value is not None:
                 lvl = str(value).strip().lower()
-                if lvl in TELEMETRY_LEVELS:
-                    cfg.telemetry_level = lvl
+                cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
+            elif key == "telemetry.capture_input" and value is not None:
+                cfg.telemetry_capture_input = bool(value)
+                cfg.telemetry_capture_input_explicit = True
             elif key == "slack_channels" and isinstance(value, list):
                 # §15.3 add-only (Slack in-app setup): the app's channel
                 # picker writes the whole list (entries {id,name} or bare id

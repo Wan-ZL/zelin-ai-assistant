@@ -318,6 +318,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
     private func runInTerminal(_ text: String) {
         launched = true
         launchFailed = false
+        Analytics.firstReach("terminal")
         Analytics.log("card_run_in_terminal",
                       fields: ["app": TerminalLauncher.preferred.rawValue])
         TerminalLauncher.launch(text) { ok in

@@ -11,8 +11,10 @@
   **你自己配置凭证的服务**：Anthropic API（经官方 `claude` CLI）、你自己的 Slack
   workspace（你的 user token）、Gmail IMAP（你的 app password）、GitHub（你的 `gh` 登录）。
   **去往维护者服务器的例外只有两类**（同一个维护者 Supabase 项目）：
-  ①**匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据默认上传，用于产品
-  改进——不含屏幕内容/消息正文/文件内容/密钥，详见第 10 行与
+  ①**匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据 + **你输入进
+  本 App 的文本**（每条 ≤500 字符；`telemetry.capture_input` **默认开**，可单独
+  关）默认上传，用于产品改进——**不含**屏幕录制内容/邮件与 Slack/iMessage 消息
+  正文/文件内容/AI 回答/密钥，详见第 10 行与
   [`docs/TELEMETRY.md`](TELEMETRY.md)；②**建议上报（feedback，仅在你主动点「提建议」
   发送时）**：你的建议**全文** + 所选卡片的**标题快照**上传给维护者，且**不受**
   telemetry 开关/首启 consent 限制（发送即同意）——这是内容数据，详见第 16 行。
@@ -150,18 +152,29 @@
   消息 ts 记录在本地 `state/slack_outbox.json`（用于 ✅ 反应审批）。
 - **关闭**：`features.slack_radar: false` 或不配 token → 只剩本地 osascript 通知。
 
-### 10. Telemetry（匿名使用统计）→ 维护者的 Supabase（**默认开**，一键可关）
+### 10. Telemetry（匿名使用统计 + 输入文本）→ 维护者的 Supabase（**默认开**，一键可关）
 
 - **默认开**（像 VS Code）：`telemetry.enabled` 默认 `true`，上传目标默认是**维护者的**
   Supabase 项目，用内置 publishable key 写入（该 key 公开设计，RLS 只允许 INSERT——
   它写得进、**读不回**任何数据）。数据用于驱动产品改进。
-- **Payload**：只有 `state/analytics/events.jsonl` 里**已在本机记录**的事件元数据
-  （事件名/时间戳/req id/版本/随机 device uuid），**默认（basic 级）无任何内容数据**——
-  没有 prompt、消息正文、文件内容、密钥。opt-in 的 `detailed` 级会在派发/交付事件上
-  额外附带 ≤200 字符的指令/交付摘要（默认不开）。
-- **关闭**：App 设置 →「产品改进计划」关掉开关；或 config.yaml `telemetry.enabled: false`。
-  fork 用户还可以 `supabase_url: ""` 彻底禁用，或指到自己的项目。
-- 字段表、级别说明、fork 须知详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
+- **Payload（两部分，都只来自 `state/analytics/events.jsonl` 里已在本机记录的事件）**：
+  ①**事件元数据**（事件名/时间戳/页面与动作/耗时计数/req id/版本/随机 device uuid）；
+  ②**你亲手输入进本 App 的文本**（快速捕获、提问、打回反馈、搜索词、你批准的派发
+  摘要，每条截断 500 字符）——由 `telemetry.capture_input`（**默认开**）与
+  `level: detailed`（**默认值**）双开关控制，关掉任一即停止文本记录与上传。
+  **任何设置下都不收集**：AI 的回答/模型输出、屏幕录制内容、邮件与 Slack/iMessage
+  的消息正文（第三方私人通信）、文件内容、密钥——雷达提取的第三方内容永远不进
+  telemetry：雷达来源卡片的派发事件没有 instruction 字段（provenance 白名单），
+  每个内容字段写入前先过**无条件**密钥掩码（与 redaction 配置无关），带附件的
+  快速捕获只记你打的文字（`tests/test_telemetry_level.py` boundary guard）。
+  **升级保护（v2 consent）**：从旧版本升级的安装在**首启新版披露**（明说含输入
+  文本）真正渲染、或亲手切过设置页「上传我输入的文本」开关之前，内容一个字都
+  不上传——只有行为元数据沿用旧的 consent 标记（打开设置页本身不算看到披露）。
+- **关闭**：App 设置 →「产品改进计划」——关「上传我输入的文本」只停文本、留匿名
+  行为统计（`telemetry.capture_input: false` 同效）；关总开关全部停止
+  （`telemetry.enabled: false` 同效）。fork 用户还可以 `supabase_url: ""`
+  彻底禁用，或指到自己的项目。
+- 字段表、开关说明、容量预算、fork 须知详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
 
 ### 11. iMessage 手机通道（opt-in，默认关，仅 macOS）
 
@@ -217,9 +230,10 @@
   白名单化的 effective-config 摘要（凭证只以 present/absent **布尔**出现，secret 值
   永不进 bundle）+ `doctor --fast` 体检报告 + dashboard 计数——整个 bundle 经
   headless `claude -p`（60 秒上限）发往你的 AI 引擎。
-- **本地**：问答历史存 `state/ask_history.json`（不上传）。telemetry basic 级只记
-  事件元数据；opt-in 的 detailed 级会附带问题文本（≤200 字符，见
-  [`docs/TELEMETRY.md`](TELEMETRY.md)）。
+- **本地**：问答历史存 `state/ask_history.json`（不上传）。telemetry 侧：问题
+  文本随 `telemetry.capture_input`（默认开）+ `level: detailed`（默认值）附带
+  上传（≤500 字符，绝不含回答）；关掉任一开关后只剩事件元数据（见
+  [`docs/TELEMETRY.md`](TELEMETRY.md) 第 10 行）。
 - **关闭**：不提问即不触发；`ask.enabled: false` 整体关掉问答页。
 
 ### 15. 让 AI 修（Fix with AI）→ Anthropic
@@ -301,7 +315,7 @@
 - **`execution.create_github_repo`**：**默认 false**（v0.11 起）——无任何自动 GitHub repo
   创建；显式设 true 才恢复"新目录卡自动建私有 repo + draft PR"。
 - **`execution.memory_inject: false`**：关掉 MEMORY.md 注入。
-- **Telemetry 默认开、一键可关**（App 设置「产品改进计划」/ `telemetry.enabled: false`）；默认上传匿名事件元数据到维护者的 Supabase，`supabase_url: ""` 彻底禁用（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
+- **Telemetry 默认开、一键可关**（App 设置「产品改进计划」/ `telemetry.enabled: false`）；默认上传匿名事件元数据 + **你输入进本 App 的文本**（≤500 字符/条）到维护者的 Supabase。**只关文本**：`telemetry.capture_input: false`（或设置区单独那个开关）；`supabase_url: ""` 彻底禁用一切上传（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
 
 ## 执行权限（--dangerously-skip-permissions）
 

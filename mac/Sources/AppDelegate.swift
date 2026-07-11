@@ -688,8 +688,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // on failure the card stays put and an alert explains why.
         guard writeInbox(id: id, action: action, comment: comment) else { return }
         // 契约F: the action really reached the inbox — count it (failed writes
-        // above already return and must not be counted).
-        Analytics.log("card_action", fields: ["action": action, "req": id])
+        // above already return and must not be counted). The comment text
+        // (打回反馈/修改方向) is user-typed content — attached ONLY behind the
+        // capture_input gate (docs/TELEMETRY.md), clipped to 500 chars.
+        var fields: [String: Any] = ["action": action, "req": id]
+        if let c = comment, !c.isEmpty {
+            fields["has_comment"] = true
+            if Telemetry.contentCaptureActive() {
+                fields["comment"] = Analytics.clip(c)
+            }
+        }
+        Analytics.log("card_action", fields: fields)
         // instant local feedback — hide/echo/pin/comment policy is frozen in
         // DashboardStore.applyAction; this is its ONLY call site.
         store.applyAction(action, id: id)
@@ -715,6 +724,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let ts = ISO8601DateFormatter().string(from: Date())
         let dict: [String: Any] = ["action": "merge_review", "ids": ids, "ts": ts]
         guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("merge_review")
         store.beginMergeReview(ids: ids)   // 契约七: 涉及卡片盖角标
         return true
     }
@@ -750,6 +760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let dict: [String: Any] = ["action": "feedback", "ids": ids.sorted(),
                                    "text": text, "ts": ts]
         guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("feedback")
         Analytics.log("feedback_submit", fields: ["ids": ids.count])
         store.noteFeedbackRecorded()
         return true
@@ -810,8 +821,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
             store.beginCapture(text)
             CaptureHistory.push(text)   // item 5
-            // 契约F: renamed from "quick_capture"; source 词表 = popover|kanban
-            Analytics.log("capture_submit", fields: ["source": source])
+            // 契约F: renamed from "quick_capture"; source 词表 = popover|kanban.
+            // chars only — the capture TEXT is recorded python-side
+            // (inbox_capture, capture_input-gated), never doubled here.
+            Analytics.firstReach("capture")
+            Analytics.log("capture_submit",
+                          fields: ["source": source, "chars": text.count])
         } catch {
             // wave 2: surface the IO failure — the caller keeps the input and
             // shows 提交失败 (bucket A's non-command false branch).

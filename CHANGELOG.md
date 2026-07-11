@@ -25,6 +25,51 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+### Added
+
+- **Richer behavior telemetry (metadata only, default-on)**: new events
+  `mw_section_dwell` (per-page dwell), `mw_setting_change` (which settings
+  key changed — never the value), `board_search` (query length only),
+  `feature_first_reach` (once-per-install feature reach); new metadata
+  fields `dispatch.wait_s`, `review_promoted.exec_s`, `rework_launch.round`,
+  `radar_scan.secs`, comment/typed-length counters. Full list in
+  docs/TELEMETRY.md.
+- **`telemetry.capture_input` (default ON, together with the new default
+  `level: detailed`)**: telemetry now includes the text you type into the
+  app — captures, Ask questions, card comments / rework feedback, board
+  search terms — each clipped to 500 chars. The first-run disclosure and all
+  docs say so plainly; a dedicated Settings toggle ("上传我输入的文本 /
+  Upload the text I type") turns just the text off while keeping anonymous
+  behavior stats. Hard scope boundary at any setting: never the AI's
+  answers, screen-recording content, email or Slack/iMessage message bodies,
+  or secrets — radar-extracted third-party content never enters telemetry.
+  The double gate (capture_input AND detailed) is enforced emit-side in both
+  Python and Swift and locked by tests (tests/test_telemetry_level.py,
+  including an honesty drift-guard on the disclosure copy).
+- Capacity budget section in docs/TELEMETRY.md (Supabase free-tier headroom
+  + archival guidance).
+- Adversarial-review hardening of the content pipeline: dispatch.instruction
+  is provenance-gated (user-capture-origin cards only, title only — radar
+  cards summarizing third-party mail/messages/screen send no instruction at
+  all); a v2 consent marker gates content for upgraded installs (behavior
+  telemetry keeps the old marker, typed text waits for the new disclosure
+  to render or an explicit capture_input); every content field passes an
+  unconditional secret masker (mirrored in Swift, drift-guarded) before
+  hitting the local log; media quick-captures record only the typed words,
+  never the synthetic image prompt or local file paths.
+
+### Changed
+
+- **`level: detailed` no longer attaches any content by itself** (previously
+  ≤200-char instruction/delivery/question summaries) — content is controlled
+  by the separate `capture_input` switch; level only sets behavior-event
+  granularity (and basic also switches text capture off).
+- First-run telemetry consent is now a one-line honest disclosure — it
+  states that typed text is included by default — with a "Details & opt-out
+  in Settings" link (the toggles live in Settings → Product improvement
+  program, same override key; the `telemetry_consent` event retired with
+  the old checkbox).
+
 ### Fixed
 
 - Attaching to a review-lane card's session (the v0.17.1 double-click

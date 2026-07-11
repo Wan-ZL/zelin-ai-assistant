@@ -93,6 +93,115 @@ enum Analytics {
         f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
         return f.string(from: Date())
     }
+
+    /// Once-per-install feature-reach marker (docs/TELEMETRY.md): the FIRST
+    /// time a feature is used, one `feature_first_reach` event fires; the
+    /// UserDefaults flag suppresses every later call. Metadata only.
+    static func firstReach(_ feature: String) {
+        let key = "analytics.firstReach." + feature
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        log("feature_first_reach", fields: ["feature": feature])
+    }
+
+    /// Secret-mask regexes for content fields — MUST mirror
+    /// act/lib/sanitize._SECRET_PATTERNS (drift-guarded by
+    /// tests/test_telemetry_level.py): the docs promise keys never ride in
+    /// telemetry at any setting, and question/comment/query fields are
+    /// written on THIS side.
+    private static let secretPatterns = [
+        "sk-ant-[A-Za-z0-9_\\-]{8,}",
+        "sk-[A-Za-z0-9]{20,}",
+        "xox[bpasr]-[A-Za-z0-9\\-]{8,}",
+        "AKIA[0-9A-Z]{16}",
+        "gh[pousr]_[A-Za-z0-9]{20,}",
+        "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+    ]
+
+    /// Whitespace-collapse + UNCONDITIONAL secret masking + ≤500-char cap
+    /// for user-typed CONTENT fields — mirrors act/lib/analytics
+    /// .clip_content (mask first, then clip, so a truncated key can't slip
+    /// through half-masked). Call sites must already be behind
+    /// Telemetry.contentCaptureActive().
+    static func clip(_ text: String) -> String {
+        var s = text.split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        for pattern in secretPatterns {
+            s = s.replacingOccurrences(of: pattern, with: "[脱敏]",
+                                       options: .regularExpression)
+        }
+        return String(s.prefix(500))
+    }
+}
+
+// MARK: - Telemetry gates (read side; mirrors act/lib/config.py precedence)
+
+/// Effective telemetry.level / telemetry.capture_input: settings overrides
+/// (nested form, then legacy flat keys) → config.yaml `telemetry:` block →
+/// built-in defaults (detailed / true — BOTH default ON since v0.18, which
+/// is why every disclosure surface must say typed text is included). The
+/// content gate requires BOTH capture_input AND level=detailed
+/// (docs/TELEMETRY.md「输入文本收集」) — emit sites attach typed text ONLY
+/// behind contentCaptureActive(); with either switch off the text never
+/// reaches events.jsonl. Scope red line: only text the user types into THIS
+/// app — ingested screen/mail/message content is never telemetry.
+enum Telemetry {
+    static func level() -> String {
+        // explicit values: anything not "detailed" degrades to "basic"
+        // (fail-private on typos, matching act/lib/config.py); only a fully
+        // ABSENT key falls through to the built-in default "detailed".
+        let ov = SettingsIO.readOverrides()
+        if let t = ov["telemetry"] as? [String: Any], let l = t["level"] as? String {
+            return l == "detailed" ? "detailed" : "basic"
+        }
+        if let l = ov["telemetry.level"] as? String {
+            return l == "detailed" ? "detailed" : "basic"
+        }
+        if let l = SettingsIO.configNestedScalar(block: "telemetry", key: "level") {
+            return l == "detailed" ? "detailed" : "basic"
+        }
+        return "detailed"
+    }
+
+    /// capture_input from an EXPLICIT source only (overrides nested/flat →
+    /// config.yaml scalar); nil = key absent everywhere. Writing the key is
+    /// an informed choice, so it can stand in for the v2 consent marker.
+    static func explicitCaptureInput() -> Bool? {
+        let ov = SettingsIO.readOverrides()
+        if let t = ov["telemetry"] as? [String: Any],
+           let v = t["capture_input"] as? Bool {
+            return v
+        }
+        if let v = ov["telemetry.capture_input"] as? Bool { return v }
+        if let v = SettingsIO.configNestedScalar(block: "telemetry",
+                                                 key: "capture_input") {
+            return v.lowercased() != "false"
+        }
+        return nil
+    }
+
+    /// Effective capture_input value (for the Settings mirror): explicit
+    /// source → built-in default ON (v0.18).
+    static func captureInput() -> Bool {
+        explicitCaptureInput() ?? true
+    }
+
+    /// v2 consent-surface marker (CONTRACT §15 v0.18) — written when the
+    /// NEW disclosure (the one that says typed text is included) first
+    /// renders. Mirrors analytics.CONSENT_V2_PATH on the Python side.
+    static var consentV2Path: String {
+        AppPaths.stateRoot + "/state/telemetry_consent_shown_v2"
+    }
+
+    /// Content gate (mirrors act/lib/analytics.content_gate): capture_input
+    /// AND detailed AND (v2 disclosure shown OR capture_input explicit).
+    /// Upgraded installs whose only marker predates v0.18 keep behavior
+    /// telemetry but send NO content until the new disclosure appears.
+    static func contentCaptureActive() -> Bool {
+        guard level() == "detailed" else { return false }
+        if let explicit = explicitCaptureInput() { return explicit }
+        return FileManager.default.fileExists(atPath: consentV2Path)
+    }
 }
 
 // MARK: - Settings overrides + config.yaml fallback (read side, §15)
