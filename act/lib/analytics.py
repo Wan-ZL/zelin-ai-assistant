@@ -30,23 +30,61 @@ EVENTS_PATH: Path = ANALYTICS_DIR / "events.jsonl"
 # at any setting — only what the user typed into this app.
 CONTENT_CLIP: int = 500
 
+# v2 consent-surface marker (CONTRACT §15 v0.18): written by the app the
+# first time the NEW disclosure (the one that says typed text is included)
+# renders. Pre-v0.18 installs only have the old telemetry_consent_shown
+# marker, written when the copy still said "no personal text" — their
+# behavior telemetry keeps flowing on that old marker, but CONTENT stays off
+# until the new disclosure has been seen (or capture_input is set
+# explicitly, which is its own informed choice).
+CONSENT_V2_PATH: Path = config.STATE_DIR / "telemetry_consent_shown_v2"
+
 
 def content_gate(cfg=None) -> bool:
     """Emit-side gate for user-typed content fields (docs/TELEMETRY.md).
 
-    True only when telemetry.capture_input is on AND level is "detailed"
-    (Config.capture_input_active) — both default ON since v0.18 (the
-    disclosure copy says so); either switch alone closes the gate. Only text
-    the user typed into THIS app may sit behind it — never pipeline/ingested
-    content. Loads config lazily so no-cfg call sites (actd inbox helpers)
-    can use it; any failure means False — content must never leak because a
-    gate check crashed.
+    ALL required:
+    1. telemetry.capture_input on AND level "detailed"
+       (Config.capture_input_active — both default ON since v0.18);
+    2. consent: the v2 disclosure marker exists, OR capture_input was set
+       EXPLICITLY (config.yaml / overrides — writing the key is an informed
+       choice; upgraded installs that never saw the new copy have neither,
+       so their content stays off while behavior telemetry continues);
+    3. nothing crashed — any failure means False (fail closed).
+
+    Only text the user typed into THIS app may sit behind this gate — never
+    pipeline/ingested content. Loads config lazily so no-cfg call sites
+    (actd inbox helpers) can use it.
     """
     try:
         cfg = cfg or config.load_config()
-        return bool(cfg.capture_input_active())
+        if not cfg.capture_input_active():
+            return False
+        if getattr(cfg, "telemetry_capture_input_explicit", False):
+            return True
+        return CONSENT_V2_PATH.exists()
     except Exception:  # noqa: BLE001 - fail closed, never break the pipeline
         return False
+
+
+def clip_content(text) -> Optional[str]:
+    """clip() for user-typed CONTENT fields: secret-mask FIRST, then cap at
+    CONTENT_CLIP. The masking (act/lib/sanitize._SECRET_PATTERNS) is
+    UNCONDITIONAL — independent of every redaction.* switch — because the
+    docs promise keys never ride in telemetry at any setting (the Swift
+    writer mirrors the same patterns in Analytics.clip). Fail closed: if
+    masking itself breaks, the content is dropped, never sent raw.
+    """
+    s = " ".join(str(text or "").split())
+    if not s:
+        return None
+    try:
+        from act.lib import sanitize  # lazy: keep analytics import-light
+        for pat in sanitize._SECRET_PATTERNS:
+            s = pat.sub(sanitize.MASK, s)
+    except Exception:  # noqa: BLE001 - never emit unmasked content
+        return None
+    return s[:CONTENT_CLIP] or None
 
 
 def log_event(event: str, **fields) -> None:

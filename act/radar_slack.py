@@ -754,7 +754,10 @@ def _handle_self_message(m: dict, token: str, self_dm: str, cfg: config.Config,
         return
     from act.lib import quick_capture
     try:
-        res = quick_capture.capture(desc, cfg, extractor=extractor)
+        # typed_text: only the words the user typed — the synthetic media
+        # prompt + local file paths in desc stay out of telemetry.
+        res = quick_capture.capture(desc, cfg, extractor=extractor,
+                                    typed_text=text)
         reply = quick_capture.apply_result(res, cfg)
     except Exception as e:  # noqa: BLE001 - reply the failure, don't kill the scan
         reply = f"快速捕获失败：{e}"

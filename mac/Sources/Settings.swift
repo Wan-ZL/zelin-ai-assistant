@@ -686,8 +686,8 @@ struct SettingsFormView: View {
                 }))
                 .toggleStyle(.switch)
                 .disabled(!telemetryEnabled || telemetryLevel != "detailed")
-            Text(L("只收集你亲手输入进本 App 的文字（截断 500 字符）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息、密钥。关掉此开关即停止一切文本上传，行为统计不受影响。",
-                   "Collects only what you personally type into this app (truncated to 500 chars) — never the AI's answers, screen-recording content, emails or Slack/iMessage messages, or secrets. Turning this off stops all text upload; behavior stats are unaffected."))
+            Text(L("只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
+                   "Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack/iMessage messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Text(L("关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
@@ -698,6 +698,10 @@ struct SettingsFormView: View {
         .font(.system(size: 12))
         // 首启披露页「详情与关闭在设置」跳转锚点（pendingAnchor = "telemetry"）
         .id("telemetry")
+        // v2 consent surface (CONTRACT §15 v0.18): this section's copy fully
+        // discloses typed-text collection — rendering it arms the content
+        // gate for installs whose first-run marker predates v0.18.
+        .onAppear { TelemetryConsent.markSurfaceShownV2() }
     }
 
     // v0.14 (audit 7.6): expert-only keys stay in config.yaml — say so, and

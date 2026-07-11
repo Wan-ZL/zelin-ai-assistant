@@ -415,7 +415,7 @@ def answer(question: str,
     analytics.log_event(
         "ask_answered", ok=True, elapsed_s=result["elapsed_s"],
         cited=bool(citation),
-        question=(analytics.clip(question, analytics.CONTENT_CLIP)
+        question=(analytics.clip_content(question)
                   if analytics.content_gate(cfg) else None))
     return result
 

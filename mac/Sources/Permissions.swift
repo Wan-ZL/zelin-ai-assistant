@@ -167,7 +167,22 @@ enum TelemetryConsent {
     /// upload before this disclosure appeared. Content = first-shown UTC
     /// timestamp, written once.
     static func markSurfaceShown() {
-        let path = AppPaths.stateRoot + "/state/telemetry_consent_shown"
+        writeMarkerOnce(AppPaths.stateRoot + "/state/telemetry_consent_shown")
+        // the current disclosure copy states typed text is included, so
+        // showing it also satisfies the v2 (content) consent surface
+        markSurfaceShownV2()
+    }
+
+    /// v2 marker (CONTRACT §15 v0.18): gates CONTENT capture the way the v1
+    /// marker gates uploads — written only when a surface whose copy
+    /// discloses typed-text collection has rendered (this first-run line, or
+    /// the Settings telemetry section). Upgraded installs keep behavior
+    /// telemetry on the v1 marker but send no content until this exists.
+    static func markSurfaceShownV2() {
+        writeMarkerOnce(Telemetry.consentV2Path)
+    }
+
+    private static func writeMarkerOnce(_ path: String) {
         guard !FileManager.default.fileExists(atPath: path) else { return }
         try? FileManager.default.createDirectory(
             atPath: AppPaths.stateRoot + "/state",

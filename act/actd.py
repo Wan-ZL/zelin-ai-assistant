@@ -173,7 +173,7 @@ def process_inbox() -> int:
             analytics.log_event(
                 f"inbox_{action or 'unknown'}", req=req.id,
                 status=str(req.status), has_comment=bool(c) or None,
-                comment=(analytics.clip(c, analytics.CONTENT_CLIP)
+                comment=(analytics.clip_content(c)
                          if c and analytics.content_gate() else None))
             processed += 1
 
@@ -248,7 +248,7 @@ def _apply_capture(text: Optional[str]) -> None:
     # chars stays metadata (usage signal without the words).
     analytics.log_event(
         "inbox_capture", req=saved.id, status=str(saved.status), chars=len(t),
-        text=(analytics.clip(t, analytics.CONTENT_CLIP)
+        text=(analytics.clip_content(t)
               if analytics.content_gate() else None))
 
 

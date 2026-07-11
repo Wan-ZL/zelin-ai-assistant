@@ -11,7 +11,7 @@
 2. `git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant` (several defaults resolve this path; if you clone elsewhere, export `AIASSISTANT_HOME=<path>` everywhere the pipeline runs).
 3. `cd ~/Projects/zelin-ai-assistant && cp config.example.yaml config.yaml`. Editing it is optional — the vault path, Slack channels / watched people, and Gmail address are all configurable later in the app's Settings (no YAML needed).
 4. `bash install.sh` — dependency checks, builds + installs the app, loads launchd agents, installs the cron chain. Idempotent; safe to re-run.
-5. First launch is blocked by Gatekeeper (unsigned build): right-click the app in /Applications → Open. On macOS Sequoia+, also System Settings → Privacy & Security → "Open Anyway". Once open, the app shows a first-run **permissions & setup page**: answer the single screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings → Recording), grant Screen Recording / Notifications from the live checklist, and adjust the anonymous-usage-stats checkbox. Reopen it anytime via the app menu → **Permissions Checkup**.
+5. First launch is blocked by Gatekeeper (unsigned build): right-click the app in /Applications → Open. On macOS Sequoia+, also System Settings → Privacy & Security → "Open Anyway". Once open, the app shows a first-run **permissions & setup page**: answer the single screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings → Recording), grant Screen Recording / Notifications from the live checklist, and see the one-line anonymous-usage-stats disclosure (stats are on by default and include the text you type into the app; details & opt-out live in Settings). Reopen it anytime via the app menu → **Permissions Checkup**.
 6. Menu-bar app → Settings → paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth; the key is stored as a `0600` file in `config/secrets/`).
 7. Grant permissions in System Settings → Privacy & Security: **Screen Recording** and **Microphone** for the app; **Full Disk Access** for `/usr/sbin/cron` (click "+", press ⌘⇧G, type `/usr/sbin/cron`).
 8. Expected state: the popover header says the dashboard was generated **≤10 s ago**. Then try the "first card in 5 minutes" exercise below (click the menu-bar icon → type a small task → ✅ → a reviewable draft arrives minutes later).
@@ -107,7 +107,7 @@ bash install.sh
 
 app 未签名,首次启动被 Gatekeeper 拦:在 `/Applications` 里**右键 → 打开**;macOS Sequoia+ 若仍被拒,去 系统设置 → 隐私与安全性 → 底部 "仍要打开"。
 
-打开后 app 会弹出首启**权限体检页**:回答唯一的屏幕记录 consent(默认**仅屏幕**,不录音频——语音转写之后可在「设置 → 录制」单独打开)、按清单授予 屏幕录制/通知(完全磁盘访问仅 iPhone 联动需要),并可取消勾选匿名使用统计。之后随时可从 菜单 → 权限体检 重开这一页。
+打开后 app 会弹出首启**权限体检页**:回答唯一的屏幕记录 consent(默认**仅屏幕**,不录音频——语音转写之后可在「设置 → 录制」单独打开)、按清单授予 屏幕录制/通知(完全磁盘访问仅 iPhone 联动需要),并看到一行匿名使用统计披露(默认开启、含你输入进本 App 的文本;详情与关闭在 设置 →「产品改进计划」)。之后随时可从 菜单 → 权限体检 重开这一页。
 
 > ✅ **预期状态**:菜单栏出现图标,点击能打开 popover。
 

@@ -511,17 +511,30 @@ def _parse_session_id(output: str) -> Optional[str]:
     return None
 
 
+# Provenance allowlist for the dispatch instruction content field
+# (docs/TELEMETRY.md scope red line): ONLY cards whose every source is the
+# user's own typed capture qualify. Radar cards (gmail / slack / meeting /
+# claude_code / …) carry LLM summaries of OTHER PEOPLE's private comms in
+# title/plan — those must never enter telemetry, so anything not on this
+# allowlist (including unknown future channels) is excluded, fail-closed.
+_USER_ORIGIN_CHANNELS = ("quick", "quick_capture")
+
+
 def _instruction_summary(req: Requirement) -> Optional[str]:
     """Content field, gated on analytics.content_gate (docs/TELEMETRY.md
-    「输入文本收集」): a short (<=CONTENT_CLIP chars) summary of what claude
-    was asked to do — requirement title + plan head, never the full prompt
-    or fenced source excerpts."""
-    plan = req.plan
-    if isinstance(plan, list):
-        plan = "; ".join(str(p) for p in plan[:3])
-    parts = [str(req.title or ""), str(plan or "")]
-    return analytics.clip(" — ".join(p for p in parts if p.strip()),
-                          analytics.CONTENT_CLIP)
+    「输入文本收集」) AND card provenance: the approved TITLE only (the plan
+    is model-drafted and stays out), and only when every source channel is
+    the user's own capture (_USER_ORIGIN_CHANNELS). Cards with no sources or
+    any third-party-derived source return None — the dispatch event then
+    carries metadata only."""
+    sources = req.sources or []
+    if not sources:
+        return None
+    for s in sources:
+        chan = str(((s or {}) if isinstance(s, dict) else {}).get("channel") or "")
+        if chan not in _USER_ORIGIN_CHANNELS:
+            return None
+    return analytics.clip_content(req.title)
 
 
 def dispatch(
@@ -1020,7 +1033,7 @@ def rework(
     # the feedback TEXT itself is content — capture_input-gated.
     analytics.log_event("rework_launch", req=req.id, ok=ok,
                         round=ex["rework_count"],
-                        feedback=(analytics.clip(feedback, analytics.CONTENT_CLIP)
+                        feedback=(analytics.clip_content(feedback)
                                   if analytics.content_gate(cfg) else None))
     return ok
 

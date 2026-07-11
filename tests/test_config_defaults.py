@@ -107,11 +107,12 @@ class TelemetryDefaultsTestCase(unittest.TestCase):
         self.assertFalse(cfg.telemetry_enabled)
         self.assertEqual(cfg.telemetry_level, "detailed")
 
-    def test_overrides_invalid_level_is_ignored(self):
-        # an unrecognized override value is dropped — the effective level
-        # stays at the config-layer default (detailed since v0.18)
+    def test_overrides_invalid_level_degrades_to_basic(self):
+        # an unrecognized EXPLICIT override value degrades to "basic",
+        # mirroring the config.yaml path (fail-private on typos) — it must
+        # not silently keep the more-permissive default "detailed"
         cfg = self._load_with_overrides({"telemetry.level": "verbose"})
-        self.assertEqual(cfg.telemetry_level, "detailed")
+        self.assertEqual(cfg.telemetry_level, "basic")
 
 
 class FeatureFlagSemanticsTestCase(unittest.TestCase):

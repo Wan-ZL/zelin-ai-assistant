@@ -155,12 +155,16 @@ def capture(
     text_or_media_desc: str,
     cfg: Optional[config.Config] = None,
     extractor: Optional[Callable[[str], subprocess.CompletedProcess]] = None,
+    typed_text: Optional[str] = None,
 ) -> dict:
     """One quick-capture decision. Returns the three-way JSON dict (§13).
 
     Never raises; an LLM failure degrades to a minimal ``new_proposal`` so the
     captured thought is not lost. The original text rides along in ``_text``
-    for :func:`apply_result` to quote in ``sources``.
+    for :func:`apply_result` to quote in ``sources``. ``typed_text`` is the
+    user's TYPED portion only — media captures pass it so the synthetic
+    "Read these images…" prompt + local file paths in ``_text`` never enter
+    telemetry (``_typed`` is what apply_result's content field uses).
     """
     if cfg is None:
         cfg = config.load_config()
@@ -178,6 +182,8 @@ def capture(
     if not isinstance(data, dict) or data.get("action") not in _VALID_ACTIONS:
         data = _fallback_result(text_or_media_desc)
     data.setdefault("_text", str(text_or_media_desc))
+    data.setdefault("_typed", str(typed_text) if typed_text is not None
+                    else str(text_or_media_desc))
     return data
 
 
@@ -441,7 +447,7 @@ def apply_result(res: dict, cfg: Optional[config.Config] = None) -> str:
     action = (res or {}).get("action")
     # the user's typed capture text is content — capture_input-gated
     # (docs/TELEMETRY.md), attached to whichever quick_capture event fires.
-    tele_text = (analytics.clip((res or {}).get("_text"), analytics.CONTENT_CLIP)
+    tele_text = (analytics.clip_content((res or {}).get("_typed", (res or {}).get("_text")))
                  if analytics.content_gate(cfg) else None)
 
     if action == "new_proposal":

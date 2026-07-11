@@ -104,12 +104,33 @@ enum Analytics {
         log("feature_first_reach", fields: ["feature": feature])
     }
 
-    /// Whitespace-collapsed ≤500-char cap for user-typed CONTENT fields —
-    /// mirrors act/lib/analytics.clip(text, CONTENT_CLIP). Call sites must
-    /// already be behind Telemetry.contentCaptureActive().
+    /// Secret-mask regexes for content fields — MUST mirror
+    /// act/lib/sanitize._SECRET_PATTERNS (drift-guarded by
+    /// tests/test_telemetry_level.py): the docs promise keys never ride in
+    /// telemetry at any setting, and question/comment/query fields are
+    /// written on THIS side.
+    private static let secretPatterns = [
+        "sk-ant-[A-Za-z0-9_\\-]{8,}",
+        "sk-[A-Za-z0-9]{20,}",
+        "xox[bpasr]-[A-Za-z0-9\\-]{8,}",
+        "AKIA[0-9A-Z]{16}",
+        "gh[pousr]_[A-Za-z0-9]{20,}",
+        "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+    ]
+
+    /// Whitespace-collapse + UNCONDITIONAL secret masking + ≤500-char cap
+    /// for user-typed CONTENT fields — mirrors act/lib/analytics
+    /// .clip_content (mask first, then clip, so a truncated key can't slip
+    /// through half-masked). Call sites must already be behind
+    /// Telemetry.contentCaptureActive().
     static func clip(_ text: String) -> String {
-        String(text.split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ").prefix(500))
+        var s = text.split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        for pattern in secretPatterns {
+            s = s.replacingOccurrences(of: pattern, with: "[脱敏]",
+                                       options: .regularExpression)
+        }
+        return String(s.prefix(500))
     }
 }
 
@@ -142,7 +163,10 @@ enum Telemetry {
         return "detailed"
     }
 
-    static func captureInput() -> Bool {
+    /// capture_input from an EXPLICIT source only (overrides nested/flat →
+    /// config.yaml scalar); nil = key absent everywhere. Writing the key is
+    /// an informed choice, so it can stand in for the v2 consent marker.
+    static func explicitCaptureInput() -> Bool? {
         let ov = SettingsIO.readOverrides()
         if let t = ov["telemetry"] as? [String: Any],
            let v = t["capture_input"] as? Bool {
@@ -153,11 +177,30 @@ enum Telemetry {
                                                  key: "capture_input") {
             return v.lowercased() != "false"
         }
-        return true
+        return nil
     }
 
+    /// Effective capture_input value (for the Settings mirror): explicit
+    /// source → built-in default ON (v0.18).
+    static func captureInput() -> Bool {
+        explicitCaptureInput() ?? true
+    }
+
+    /// v2 consent-surface marker (CONTRACT §15 v0.18) — written when the
+    /// NEW disclosure (the one that says typed text is included) first
+    /// renders. Mirrors analytics.CONSENT_V2_PATH on the Python side.
+    static var consentV2Path: String {
+        AppPaths.stateRoot + "/state/telemetry_consent_shown_v2"
+    }
+
+    /// Content gate (mirrors act/lib/analytics.content_gate): capture_input
+    /// AND detailed AND (v2 disclosure shown OR capture_input explicit).
+    /// Upgraded installs whose only marker predates v0.18 keep behavior
+    /// telemetry but send NO content until the new disclosure appears.
     static func contentCaptureActive() -> Bool {
-        captureInput() && level() == "detailed"
+        guard level() == "detailed" else { return false }
+        if let explicit = explicitCaptureInput() { return explicit }
+        return FileManager.default.fileExists(atPath: consentV2Path)
     }
 }
 

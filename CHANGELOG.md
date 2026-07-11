@@ -48,6 +48,15 @@ other file needs editing. To cut a release:
   including an honesty drift-guard on the disclosure copy).
 - Capacity budget section in docs/TELEMETRY.md (Supabase free-tier headroom
   + archival guidance).
+- Adversarial-review hardening of the content pipeline: dispatch.instruction
+  is provenance-gated (user-capture-origin cards only, title only — radar
+  cards summarizing third-party mail/messages/screen send no instruction at
+  all); a v2 consent marker gates content for upgraded installs (behavior
+  telemetry keeps the old marker, typed text waits for the new disclosure
+  to render or an explicit capture_input); every content field passes an
+  unconditional secret masker (mirrored in Swift, drift-guarded) before
+  hitting the local log; media quick-captures record only the typed words,
+  never the synthetic image prompt or local file paths.
 
 ### Changed
 

@@ -164,7 +164,11 @@
   `level: detailed`（**默认值**）双开关控制，关掉任一即停止文本记录与上传。
   **任何设置下都不收集**：AI 的回答/模型输出、屏幕录制内容、邮件与 Slack/iMessage
   的消息正文（第三方私人通信）、文件内容、密钥——雷达提取的第三方内容永远不进
-  telemetry（`tests/test_telemetry_level.py` boundary guard）。
+  telemetry：雷达来源卡片的派发事件没有 instruction 字段（provenance 白名单），
+  每个内容字段写入前先过**无条件**密钥掩码（与 redaction 配置无关），带附件的
+  快速捕获只记你打的文字（`tests/test_telemetry_level.py` boundary guard）。
+  **升级保护（v2 consent）**：从旧版本升级的安装在**新版披露**（明说含输入文本）
+  第一次出现之前，内容一个字都不上传——只有行为元数据沿用旧的 consent 标记。
 - **关闭**：App 设置 →「产品改进计划」——关「上传我输入的文本」只停文本、留匿名
   行为统计（`telemetry.capture_input: false` 同效）；关总开关全部停止
   （`telemetry.enabled: false` 同效）。fork 用户还可以 `supabase_url: ""`

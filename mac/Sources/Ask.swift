@@ -385,8 +385,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("有帮助（记一条匿名事件，随使用统计上传；基础级不含问题内容，详细级会附问题文本）",
-                    "Helpful (logs an anonymous event that uploads with usage stats; Basic carries no question text, Detailed attaches it)"))
+            .help(L("有帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认开）",
+                    "Helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — the default)"))
             Button {
                 model.rate("down")
             } label: {
@@ -396,8 +396,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("没帮助（记一条匿名事件，随使用统计上传；基础级不含问题内容，详细级会附问题文本）",
-                    "Not helpful (logs an anonymous event that uploads with usage stats; Basic carries no question text, Detailed attaches it)"))
+            .help(L("没帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认开）",
+                    "Not helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — the default)"))
         }
         .font(.system(size: 12))
     }

@@ -206,6 +206,12 @@ class Config:
     voice_enabled: bool = True   # docs/VOICE.md voice-profile injection master switch
     telemetry_level: str = "detailed"
     telemetry_capture_input: bool = True
+    # True only when capture_input came from an EXPLICIT source (config.yaml
+    # telemetry block or a Settings override) — writing the key is an
+    # informed choice, so analytics.content_gate accepts it in place of the
+    # v2 consent marker; the built-in default alone never does (upgraded
+    # installs must see the new disclosure first, CONTRACT §15 v0.18).
+    telemetry_capture_input_explicit: bool = False
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
 
@@ -394,8 +400,9 @@ def load_config() -> Config:
     cfg.telemetry_enabled = bool(tele.get("enabled", cfg.telemetry_enabled))
     _lvl = str(tele.get("level", cfg.telemetry_level) or "").strip().lower()
     cfg.telemetry_level = _lvl if _lvl in TELEMETRY_LEVELS else "basic"
-    cfg.telemetry_capture_input = bool(
-        tele.get("capture_input", cfg.telemetry_capture_input))
+    if "capture_input" in tele:
+        cfg.telemetry_capture_input = bool(tele.get("capture_input"))
+        cfg.telemetry_capture_input_explicit = True
     # An explicit empty/null supabase_url disables uploads entirely (forks:
     # this is the hard off switch); an ABSENT key keeps the default project.
     cfg.telemetry_supabase_url = str(
@@ -603,20 +610,22 @@ def _apply_settings_overrides(cfg: Config) -> None:
                 if value.get("enabled") is not None:
                     cfg.telemetry_enabled = bool(value["enabled"])
                 if value.get("level") is not None:
+                    # invalid explicit values degrade to "basic", mirroring
+                    # the config.yaml path (fail-private on typos)
                     lvl = str(value["level"]).strip().lower()
-                    if lvl in TELEMETRY_LEVELS:
-                        cfg.telemetry_level = lvl
+                    cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
                 if value.get("capture_input") is not None:
                     cfg.telemetry_capture_input = bool(value["capture_input"])
+                    cfg.telemetry_capture_input_explicit = True
             elif key == "telemetry.enabled" and value is not None:
                 # flat form, same allowlist (§15 telemetry overrides)
                 cfg.telemetry_enabled = bool(value)
             elif key == "telemetry.level" and value is not None:
                 lvl = str(value).strip().lower()
-                if lvl in TELEMETRY_LEVELS:
-                    cfg.telemetry_level = lvl
+                cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
             elif key == "telemetry.capture_input" and value is not None:
                 cfg.telemetry_capture_input = bool(value)
+                cfg.telemetry_capture_input_explicit = True
             elif key == "slack_channels" and isinstance(value, list):
                 # §15.3 add-only (Slack in-app setup): the app's channel
                 # picker writes the whole list (entries {id,name} or bare id
