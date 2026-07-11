@@ -5,14 +5,65 @@ import AppKit
 import SwiftUI
 import Foundation
 
+// Lane definitions (v0.18) — the single source both surfaces (board columns
+// and popover sections) pass into SectionHeader's `help:`. Copy is derived
+// from the triage prompt / code truth so the UI and the radar tell the same
+// story; keep them in sync with quick_capture.py's triage rules.
+enum LaneHelp {
+    static var backlog: String {
+        L("真实但不着急的事都先停在这里：雷达低置信度捕获、导入的旧会话、你暂缓的提案。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」升级成提案。",
+          "Real but not-urgent asks park here — low-confidence radar captures, imported sessions, proposals you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to promote one.")
+    }
+    static var proposals: String {
+        L("需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；存备选=先不做。灰色卡是 AI 正在研究的占位。",
+          "Cards that need your decision now, each with a plan, cost, and acceptance criteria. Approve = start executing; Comment = redo with your input; Backlog = not now. Grey cards are placeholders the AI is still researching.")
+    }
+    static var running: String {
+        L("已批准的任务由 AI 在后台执行（排队中显示灰卡）。橙色「需输入」= AI 卡住等你回答，排在最前。",
+          "Approved tasks the AI is executing in the background (queued ones show grey). Orange \"Needs input\" = the AI is blocked on your answer; those sort first.")
+    }
+    static var review: String {
+        L("AI 认为做完了：看交付摘要或 draft PR。验收=归档进已验收；打回=带你的反馈继续改。",
+          "The AI thinks it's done — check the delivery summary or draft PR. Accept archives it; Send back continues with your feedback.")
+    }
+    static var done: String {
+        L("你验收通过的任务存档。徽章数字是真实总数，列表只显示最近 50 条；可退回待验收。",
+          "Tasks you accepted. The badge shows the true total; the list keeps the latest 50. Items can be sent back to Review.")
+    }
+}
+
 struct SectionHeader: View {
     let title: String
     let count: Int
+    // v0.18: optional lane definition. macOS tooltips have a ~1s delay and no
+    // visual signifier, so hover-only is invisible to a novice — the ? icon is
+    // always shown and CLICK is the primary path (instant popover); .help()
+    // stays as the secondary hover path.
+    var help: String? = nil
+    @State private var showHelp = false
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.secondary)
+            if let help {
+                Button {
+                    showHelp.toggle()
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(help)
+                .popover(isPresented: $showHelp, arrowEdge: .bottom) {
+                    Text(help)
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 280, alignment: .leading)
+                        .padding(12)
+                }
+            }
             Text("\(count)")
                 .font(.system(size: 11, weight: .bold))
                 .padding(.horizontal, 6)
@@ -657,7 +708,9 @@ struct ApprovalCardView: View {
                 // v0.10.3: reject asks which kind (Zelin 拍板)。区分是功能性的：
                 // 回收站条目不参与 merge_or_new 匹配，同一需求会重新出卡；
                 // "已办完"(done_external→delivered) 才能把后续重述压成合并。
-                // 拒绝是低频操作，多一次点击可接受，按钮行保持三个。
+                // 拒绝是低频操作，多一次点击可接受。v0.18 拍板：按钮行改为四个
+                // —— 第四个是「存备选」(defer)，见下；「先不做」刻意不塞进这个
+                // 弹窗（标题问的是"不需要执行？"，语义相反），弹窗保持两选。
                 let alert = NSAlert()
                 alert.messageText = L("这张卡不需要执行？", "No need to run this card?")
                 alert.informativeText = card.displaySummary
@@ -682,6 +735,17 @@ struct ApprovalCardView: View {
                 }
             } label: { Label(L("修改", "Comment"), systemImage: "bubble.left.fill") }
                 .tint(.blue)
+
+            Button {
+                // v0.18 存备选 (defer): demote is NOT reject — the card goes
+                // back to the backlog (card_sent→detected) with summary/plan/
+                // sources intact and KEEPS matching in merge_or_new
+                // (restatements merge; radar act-now re-promotes), while
+                // trash is excluded from matching. One click, no confirmation:
+                // cheap + reversible — undo is the backlog lane's 研究并提议.
+                app.submit(id: card.id, action: "defer", comment: nil)
+            } label: { Label(L("存备选", "Backlog"), systemImage: "tray.and.arrow.down") }
+                .tint(.gray)
         } detail: {
             // expanded detail blocks (sources + plan + long title) — rendered
             // by the base between content and the buttons row, as before.
@@ -957,7 +1021,8 @@ struct TaskRow: View {
     private var isDelivered: Bool { lane == .completed }
 
     // 契约: 停止并退回 on regular running rows (queued/working/blocked …),
-    // NOT on review-active rework rows and NOT in the completed lane.
+    // NOT on legacy review-active rows (attach activity from an older actd,
+    // §30 — the card is really in review) and NOT in the completed lane.
     private var showsAbort: Bool { !isDelivered && task.state != "review-active" }
 
     // 契约 done_external: 已办完 on EVERY non-delivered row (queued/working/
@@ -1033,10 +1098,12 @@ struct TaskRow: View {
                         Badge(text: L("排队中", "Queued"), color: .gray)
                     } else {
                         if showsInputBadge { Badge(text: L("需输入", "Input"), color: .orange) }
-                        // v0.10 attach 回流: review req whose agent is working
-                        // again — teal to tell it apart from working/queued.
+                        // legacy review-active rows (older actd ≤0.17.1 only;
+                        // §30 actd keeps attach-active cards in review[]) —
+                        // same honest wording as the review-lane badge: no 打回
+                        // verdict happened, so "reworking" was a misstatement.
                         if task.state == "review-active" {
-                            Badge(text: L("验收后返工中", "reworking"), color: .teal)
+                            Badge(text: L("会话有新活动", "Session active"), color: .teal)
                         } else if let st = task.state { Badge(text: st, color: accent) }
                         if let sid = task.short_id ?? task.session_id {
                             Text(sid.prefix(8))
@@ -1274,6 +1341,12 @@ struct ReviewRow: View {
         }
         // meta line: where it ran + how long it took + how long it's waited
         HStack(spacing: 6) {
+            // §30: the session is live-working — user attach / organic
+            // activity, calmly noted; a real 打回 leaves this lane entirely
+            // (review->executing), so this is never a rework round.
+            if item.session_active {
+                Badge(text: L("会话有新活动", "Session active"), color: .teal)
+            }
             if let cwd = item.cwd, !cwd.isEmpty {
                 Badge(text: (cwd as NSString).lastPathComponent, color: .secondary)
             }

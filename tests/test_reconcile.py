@@ -299,7 +299,8 @@ class GuardsTestCase(ReconcileBase):
 
 
 # --------------------------------------------------------------------------- #
-# review attach reflow (决策 8) — projection-side only, re-harvest on settle
+# review attach reflow (决策 8 / §30) — attach activity is NOT a rework round;
+# the registry stays review and deliverables are re-harvested on settle
 # --------------------------------------------------------------------------- #
 class ReviewAttachReflowTestCase(ReconcileBase):
     def test_working_again_marks_review_active(self):
@@ -316,14 +317,14 @@ class ReviewAttachReflowTestCase(ReconcileBase):
                      execution={"session_id": "aaaa1111", "done": True,
                                 "_review_active": True,
                                 "delivered_summary": "旧摘要"})
-        harvest = mock.Mock(return_value={"delivered_summary": "返工后的新摘要",
+        harvest = mock.Mock(return_value={"delivered_summary": "attach 对话后的新摘要",
                                           "final_draft": "新全文"})
         with mock.patch.object(actd.executor, "harvest_delivery", harvest):
             self._reconcile([_agent("done")])
         req = registry.load("R-900")
         ex = req.execution or {}
         self.assertNotIn("_review_active", ex)
-        self.assertEqual(ex.get("delivered_summary"), "返工后的新摘要")
+        self.assertEqual(ex.get("delivered_summary"), "attach 对话后的新摘要")
         self.assertEqual(ex.get("final_draft"), "新全文")
 
     def test_settle_with_empty_harvest_keeps_old_values(self):
@@ -340,14 +341,14 @@ class ReviewAttachReflowTestCase(ReconcileBase):
         self.assertNotIn("_review_active", ex)
         self.assertEqual(ex.get("delivered_summary"), "旧摘要")  # 空收割不覆盖
 
-    def test_blocked_mid_rework_keeps_flag(self):
+    def test_blocked_mid_activity_keeps_flag(self):
         self._mk_req(status=State.REVIEW.value,
                      execution={"session_id": "aaaa1111", "done": True,
                                 "_review_active": True})
         harvest = mock.Mock()
         with mock.patch.object(actd.executor, "harvest_delivery", harvest):
             self._reconcile([_agent("blocked")])
-        harvest.assert_not_called()  # 返工中途等输入，还没收工
+        harvest.assert_not_called()  # 会话中途等输入，还没收工
         req = registry.load("R-900")
         self.assertTrue((req.execution or {}).get("_review_active"))
 

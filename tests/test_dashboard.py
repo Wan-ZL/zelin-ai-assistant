@@ -11,9 +11,11 @@ Covered:
   session_id/copy_cmd KEYS (absent, not null), dispatch_error passthrough;
 - review[] passes delivered_summary/final_draft through and converts
   review_at/dispatched_at from registry ISO strings to epoch ints;
-- attach 回流（投影层）：status=review + roster working -> the item leaves
-  review[] and rides in running[] as state="review-active"; roster done /
-  blocked / absent keeps it in review[] (counts follow the lists).
+- attach ≠ 打回（§30）：status=review + roster working -> the item STAYS in
+  review[] with session_active=true (user attach / organic activity — a real
+  rework verdict flips the card to executing, so it never presents this way);
+  roster done / blocked / absent keeps it in review[] with
+  session_active=false (counts follow the lists).
 """
 import datetime as _dt
 import os
@@ -137,11 +139,11 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(dashboard._epoch("2026-07-08T00:00:00Z"),
                          _utc_epoch(2026, 7, 8))
 
-    # -- review + attach 回流 -> running[] as "review-active" ------------------- #
+    # -- review + attach 活动 -> stays in review[] with session_active (§30) --- #
     def _review_req(self, rid="R-200"):
         return Requirement.from_dict({
             "id": rid,
-            "title": "被打回后又在改的任务",
+            "title": "被 attach 回去聊天的任务",
             "status": "review",
             "summary": "任务概述",
             "plan": ["步骤一"],
@@ -167,18 +169,20 @@ class BuildDashboardV010TestCase(unittest.TestCase):
             a["pid"] = pid
         return a
 
-    def test_review_with_working_agent_projects_into_running(self):
+    def test_review_with_working_agent_stays_in_review_session_active(self):
+        # §30 attach ≠ 打回：working agent on a review card = user attach /
+        # organic activity；卡留在待验收列，只标 session_active，绝不冒充返工。
         dash = dashboard.build_dashboard(
             reqs=[self._review_req()], agents=[self._agent("working")], cfg=self.cfg)
 
-        # 不进 review，临时回到 running（registry 状态不动，纯投影）
-        self.assertEqual(dash["review"], [])
-        self.assertEqual(len(dash["running"]), 1)
-        item = dash["running"][0]
-        self.assertEqual(item["state"], "review-active")
+        self.assertEqual(dash["running"], [])
+        self.assertEqual(len(dash["review"]), 1)
+        item = dash["review"][0]
+        self.assertEqual(item["state"], "review")
+        self.assertTrue(item["session_active"])
         self.assertEqual(item["id"], "R-200")
-        self.assertEqual(item["name"], "被打回后又在改的任务")
-        # 常规 running 字段照常：roster 数据 + attach 命令（pid 在场 -> attach）
+        self.assertEqual(item["name"], "被 attach 回去聊天的任务")
+        # 常规 review 字段照常：roster 数据 + attach 命令（pid 在场 -> attach）
         self.assertEqual(item["short_id"], "feedc0de")
         self.assertEqual(item["session_id"],
                          "feedc0de-0000-0000-0000-000000000000")
@@ -189,10 +193,31 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(item["dod"], ["能跑"])
         self.assertEqual(item["log"], "/tmp/executor-R-200.log")
         self.assertEqual(item["dispatched_at"], _utc_epoch(2026, 7, 8, 0, 0, 0))
+        self.assertEqual(item["review_at"], _utc_epoch(2026, 7, 8, 1, 0, 0))
         self.assertEqual(item["delivery_mode"], "chat")
-        # counts 跟着列表走：running +1，review 0
-        self.assertEqual(dash["counts"]["running"], 1)
-        self.assertEqual(dash["counts"]["review"], 0)
+        # counts 跟着列表走：review 1，running 0
+        self.assertEqual(dash["counts"]["review"], 1)
+        self.assertEqual(dash["counts"]["running"], 0)
+
+    def test_executing_after_rework_verdict_projects_as_working(self):
+        # §30 真返工轮不变：打回 verdict（executor.rework）写 rework_count/
+        # last_rework_at 并同步回 executing —— 照常走 running[]，state="working"。
+        req = Requirement.from_dict({
+            "id": "R-201",
+            "title": "被真打回的任务",
+            "status": "executing",
+            "execution": {
+                "session_id": "feedc0de",
+                "rework_count": 1,
+                "last_rework_at": "2026-07-08T02:00:00Z",
+            },
+        })
+        dash = dashboard.build_dashboard(
+            reqs=[req], agents=[self._agent("working")], cfg=self.cfg)
+
+        self.assertEqual(dash["review"], [])
+        self.assertEqual(len(dash["running"]), 1)
+        self.assertEqual(dash["running"][0]["state"], "working")
 
     def test_review_with_done_agent_stays_in_review(self):
         dash = dashboard.build_dashboard(
@@ -201,6 +226,7 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(dash["running"], [])
         self.assertEqual(len(dash["review"]), 1)
         self.assertEqual(dash["review"][0]["state"], "review")
+        self.assertFalse(dash["review"][0]["session_active"])
         self.assertEqual(dash["counts"]["running"], 0)
         self.assertEqual(dash["counts"]["review"], 1)
 
@@ -210,13 +236,15 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(dash["running"], [])
         self.assertEqual(len(dash["review"]), 1)
         self.assertEqual(dash["review"][0]["state"], "review")
+        self.assertFalse(dash["review"][0]["session_active"])
 
     def test_review_with_blocked_agent_stays_in_review(self):
-        # blocked = 返工中途等用户输入，还没收工 —— 照旧留在待验收列
+        # blocked = 会话中途等用户输入，还没收工 —— 照旧留在待验收列
         dash = dashboard.build_dashboard(
             reqs=[self._review_req()], agents=[self._agent("blocked")], cfg=self.cfg)
         self.assertEqual(dash["running"], [])
         self.assertEqual(len(dash["review"]), 1)
+        self.assertFalse(dash["review"][0]["session_active"])
 
 
 class CompletedCapTestCase(unittest.TestCase):

@@ -300,10 +300,12 @@ struct DashboardView: View {
         // W8: lane display name 提案/Proposals — internal keys unchanged.
         if approvals.isEmpty && suggestions.isEmpty {
             CompactEmptySection(title: L("提案 · proposals", "Proposals"),
-                                emptyText: L("暂无提案", "No proposals yet"))
+                                emptyText: L("没有等你拍板的事。想到什么，直接在上面输入框里说一句",
+                                             "Nothing needs your decision. Capture a thought in the box above"))
         } else {
             SectionHeader(title: L("提案 · proposals", "Proposals"),
-                          count: approvals.count + suggestions.count)
+                          count: approvals.count + suggestions.count,
+                          help: LaneHelp.proposals)
             let placeholderPrefix = approvals.prefix(while: { $0.processing })
             ForEach(Array(placeholderPrefix), id: \.id) { card in
                 ApprovalCardView(card: card, app: app,
@@ -324,10 +326,12 @@ struct DashboardView: View {
 
         if runningEchoes.isEmpty && running.isEmpty {
             CompactEmptySection(title: L("运行中 · running", "Running"),
-                                emptyText: L("无运行中任务", "No running tasks"))
+                                emptyText: L("没有正在执行的任务。批准一个提案，AI 就开始干活",
+                                             "Nothing running — approve a proposal to start"))
         } else {
             SectionHeader(title: L("运行中 · running", "Running"),
-                          count: running.count + runningEchoes.count)
+                          count: running.count + runningEchoes.count,
+                          help: LaneHelp.running)
             ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
             ForEach(running, id: \.id) { t in
                 TaskRow(task: t, app: app, lane: .running)
@@ -347,20 +351,26 @@ struct DashboardView: View {
 
         if reviews.isEmpty {
             CompactEmptySection(title: L("待验收 · review", "Review"),
-                                emptyText: L("无待验收草稿", "No drafts to review"))
+                                emptyText: L("没有等你验收的交付",
+                                             "No drafts waiting for your review"))
         } else {
-            SectionHeader(title: L("待验收 · review", "Review"), count: reviews.count)
+            SectionHeader(title: L("待验收 · review", "Review"), count: reviews.count,
+                          help: LaneHelp.review)
             ForEach(reviews, id: \.id) { r in
                 ReviewRow(item: r, app: app)
             }
         }
 
+        // English twin Delivered→Done (v0.18, display-only): delivery happens
+        // at the review stage; this lane means "you accepted it". Registry
+        // status `delivered` and the dashboard `completed` key are frozen.
         if completedEchoes.isEmpty && completed.isEmpty {
-            CompactEmptySection(title: L("已验收 · delivered", "Delivered"),
-                                emptyText: L("无已验收任务", "No delivered tasks"))
+            CompactEmptySection(title: L("已验收 · done", "Done"),
+                                emptyText: L("还没有验收过的交付", "Nothing accepted yet"))
         } else {
-            SectionHeader(title: L("已验收 · delivered", "Delivered"),
-                          count: completed.count + completedEchoes.count)
+            SectionHeader(title: L("已验收 · done", "Done"),
+                          count: completed.count + completedEchoes.count,
+                          help: LaneHelp.done)
             ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
             // keep the popover shallow: first 5 delivered, main window has all
             ForEach(completed.prefix(5), id: \.id) { t in
@@ -383,10 +393,12 @@ struct DashboardView: View {
         // and the store projection names stay — 纯展示层).
         if debtEchoes.isEmpty && debt.isEmpty {
             CompactEmptySection(title: L("备选 · backlog", "Backlog"),
-                                emptyText: L("暂无备选", "No backlog items"))
+                                emptyText: L("不着急的事会先停在这里——不会自动执行，也永不过期",
+                                             "Not-urgent items park here — nothing runs on its own, nothing expires"))
         } else {
             SectionHeader(title: L("备选 · backlog", "Backlog"),
-                          count: debt.count + debtEchoes.count)
+                          count: debt.count + debtEchoes.count,
+                          help: LaneHelp.backlog)
             ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
             ForEach(debt, id: \.id) { d in
                 DebtRow(item: d, app: app)

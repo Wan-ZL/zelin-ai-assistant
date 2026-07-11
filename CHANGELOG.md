@@ -61,6 +61,16 @@ other file needs editing. To cut a release:
   program, same override key; the `telemetry_consent` event retired with
   the old checkbox).
 
+### Fixed
+
+- Attaching to a review-lane card's session (the v0.17.1 double-click
+  `claude attach`) is no longer misreported as a rework round: the card now
+  stays in the review lane with a calm "会话有新活动 / Session active" badge
+  (new optional `review[].session_active` field, CONTRACT §30) instead of
+  jumping to the running lane as「验收后返工中」— no 打回 verdict ever
+  happened. Genuine rework rounds are untouched, and the periodic re-harvest
+  of deliverables from attach conversations is kept
+
 ## [0.17.1] - 2026-07-11
 
 ### Fixed

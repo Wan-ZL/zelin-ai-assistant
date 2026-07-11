@@ -369,7 +369,7 @@ final class DashboardStore: ObservableObject {
                      "Stop & return timed out — the card is still in Running, try again (check that actd is running)")
         case .revert:
             return L("退回待验收超时，卡片仍在已验收列，可重试（检查 actd 是否在运行）",
-                     "Back-to-review timed out — the card is still in Delivered, try again (check that actd is running)")
+                     "Back-to-review timed out — the card is still in Done, try again (check that actd is running)")
         }
     }
 
@@ -440,6 +440,14 @@ final class DashboardStore: ObservableObject {
                 hideSticky(id, from: src)
                 // trash echo counts (visibleTrashCount) but renders no card
                 addEcho(id: id, target: .trash, source: src ?? .approval, label: "")
+            case "defer":
+                // v0.18 存备选: proposal returns to the backlog (detected)
+                // with its plan intact. Fixed, known target — a real echo in
+                // the debt lane (both kanban and popover already render
+                // debtEchoes), unlike restore's any-lane info strip.
+                hideSticky(id, from: .approval)
+                addEcho(id: id, target: .debt, source: .approval,
+                        label: L("存入备选…", "Moving to backlog…"))
             case "restore":
                 // no echo: the card may return to ANY lane (its previous
                 // state), so a fixed-target placeholder would often be wrong.
