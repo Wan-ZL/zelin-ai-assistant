@@ -17,8 +17,8 @@
   the screenpipe ingest chain uses crontab, which inherits Full Disk Access).
   actd is safe under launchd: it ONLY reads/writes ~/Projects/zelin-ai-assistant/state
   and calls `claude` — it never touches ~/Documents. The RADAR, which must read
-  "~/Documents/Obsidian Vault", is the TCC-blocked one, so radar should run via
-  crontab, not launchd (see com.zelin.aiassistant.radar.plist).
+  "~/Documents/Obsidian Vault", is the TCC-blocked one, so radar runs from the
+  crontab ingest chain (install.sh step 6), not a launchd agent.
 -->
 <plist version="1.0">
 <dict>

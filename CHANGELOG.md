@@ -27,6 +27,46 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.18.1] - 2026-07-11
+
+Patch release: bug fixes, one cleanup, and an honesty correction to the config
+docs — no new user-visible features.
+
+### Fixed
+
+- **Proposal card action row no longer truncates**: the 存备选 (defer) button
+  was being clipped on narrower cards; the action row is restructured into a
+  primary/secondary hierarchy so every button stays reachable
+  ([`3428413`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/3428413))
+- **Gmail radar now goes through the unified triage gate**
+  (`act/radar_gmail.py`): it was the only radar still filing every extracted
+  item straight into the 提案 lane as a `card_sent` proposal, bypassing the
+  shared `quick_capture.triage` / `apply_triage` gate the Slack and Obsidian
+  radars use. Gmail candidates now get the same three-way decision — new
+  proposal (提案, or 备选 when the ask is real but not urgent), fold into a
+  related open card, or ignore pure-FYI mail — gaining ignore / relates_to /
+  improvement_of lineage. The existing UID-marker dedup is untouched.
+
+### Removed
+
+- **Retired the redundant Obsidian radar launchd agent**
+  (`act/launchd/com.zelin.aiassistant.radar.plist`): it was TCC-blocked from
+  `~/Documents` and only ever saw an empty vault. The Obsidian radar already
+  runs from the crontab ingest chain (`python3 -m act.radar --once`, every
+  30 min); `install.sh` now unloads and removes any previously-installed copy
+  on upgrade, and the next-steps output + `docs/PRIVACY.md` no longer reference
+  the launchd agent.
+
+### Changed
+
+- **Honest `watch_people` docs** (`config.example.yaml`): the comment used to
+  promise these people's messages/meetings "trigger extraction", but no radar
+  reads the list to filter what gets extracted — it only derives the
+  tracked-requester display name (first entry, `config.requester_display`) and
+  drives the Settings people picker. The comment now says so plainly and notes
+  it is **not** a hard filter, so no one's messages are dropped for being off
+  the list.
+
 ## [0.18.0] - 2026-07-11
 
 Board redesign, a defer verdict, and — the big one — richer, honest-by-default
@@ -569,7 +609,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.16.0...v0.17.0

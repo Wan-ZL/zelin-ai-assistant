@@ -373,6 +373,15 @@ def scan(cfg: Optional[config.Config] = None,
     else:
         messages, newest_uid = fetcher(cfg, last_uid)
 
+    # v0.17 统一口径: route every Gmail candidate through the SAME three-way
+    # triage gate (act/lib/quick_capture.triage — the one radar_slack and the
+    # obsidian radar use) BEFORE touching the registry: new_proposal (提案，或
+    # confidence=="low" 落 备选) / relates_to (fold into an open card, or file
+    # an improvement_of follow-up on a resolved one) / ignore (pure FYI mail,
+    # no card). Replaces the old unconditional merge_or_new(status="card_sent")
+    # that bypassed the gate — a pure-FYI mail can now be ignored/folded, which
+    # is the intended fix, not a regression.
+    from act.lib import quick_capture  # lazy: mirror radar_slack, avoid import cycle
     reqs = extract_requirements(messages, extractor=extractor)
     created = 0
     for r in reqs:
@@ -387,6 +396,7 @@ def scan(cfg: Optional[config.Config] = None,
             summary=r.get("summary"),
             type=r.get("type") or "comms",
             tier=r.get("tier") or "T1",
+            # 预设 lane；triage confidence=="low" 会把它降到 detected/备选。
             status="card_sent",
             hardness="soft",
             plan=r.get("plan") or [],
@@ -399,8 +409,15 @@ def scan(cfg: Optional[config.Config] = None,
             }],
             notes=f"needs_reply={r.get('needs_reply')} · from Gmail",
         )
-        registry.merge_or_new(new)
-        created += 1
+        desc = quick_capture.candidate_desc(
+            str(r.get("summary") or ""), quote=quote,
+            who=(r.get("from") or src_msg.get("from")),
+            channel="gmail", date=src_msg.get("date"),
+            ref=src_msg.get("message_id") or r.get("message_id"))
+        decision = quick_capture.triage(desc, cfg, extractor=extractor)
+        kind, _saved = quick_capture.apply_triage(decision, new, cfg)
+        if kind in ("proposed", "follow_up"):
+            created += 1
 
     if newest_uid > last_uid:
         _save_last_uid(newest_uid)

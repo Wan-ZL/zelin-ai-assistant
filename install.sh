@@ -385,6 +385,13 @@ info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
 # channel. Read through act.lib.config (so settings_overrides.json is
 # honored too); an unreadable config counts as "none".
 PHONE_CHANNEL="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c 'from act.lib import config; print(getattr(config.load_config(), "phone_channel", "none"))' 2>/dev/null || echo none)"
+# v0.18.1: the Obsidian radar now runs ONLY through the cron ingest chain
+# (step 6). Its old launchd agent was TCC-blocked from ~/Documents and only
+# ever saw an empty vault — retire any previously-installed copy so an upgrade
+# doesn't leave a redundant agent that logs empty passes forever.
+RETIRED_RADAR_LABEL="com.zelin.aiassistant.radar"
+launchd_unload "$LA_DIR/$RETIRED_RADAR_LABEL.plist" "$RETIRED_RADAR_LABEL"
+rm -f "$LA_DIR/$RETIRED_RADAR_LABEL.plist"
 for plist in "$REPO_ROOT"/act/launchd/*.plist; do
     [ -e "$plist" ] || continue
     base="$(basename "$plist")"
@@ -525,11 +532,12 @@ cat <<'EOF'
  3. Grant TCC / privacy permissions:
       - actd (launchd) only touches the repo's state/ + calls claude,
         so it needs NO Full Disk Access.
-      - RADAR reads "~/Documents/Obsidian Vault". launchd is TCC-BLOCKED from
-        ~/Documents. Recommended: run radar via crontab (crontab HAS Full Disk
-        Access if Terminal/cron is granted it) instead of the radar launchd agent.
-        See the comment at the top of act/launchd/com.zelin.aiassistant.radar.plist
-        for the exact crontab line.
+      - RADAR reads "~/Documents/Obsidian Vault". It runs from the step-6
+        crontab ingest chain installed above (`python3 -m act.radar --once`,
+        every 30 min) — crontab HAS Full Disk Access once Terminal/cron is
+        granted it in System Settings > Privacy > Full Disk Access. There is no
+        launchd radar agent to manage: just grant that access and the ingest
+        chain picks up the vault.
  4. The menu-bar app is installed; launch it from /Applications (or ~/Applications).
     It reads state/dashboard.json every 5s and writes approvals to state/inbox/.
  5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」。

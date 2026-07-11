@@ -73,8 +73,7 @@
 
 ### 2. Obsidian 雷达 → Anthropic
 
-- **触发/频率**：同一条 cron 链的末尾（`python3 -m act.radar --once`，每 30 分钟），另有一个
-  同样 30 分钟周期的 launchd agent（`act/launchd/com.zelin.aiassistant.radar.plist`）。
+- **触发/频率**：同一条 cron 链的末尾（`python3 -m act.radar --once`，每 30 分钟）。
 - **Payload**：`sources.obsidian_raw` 下新增/变化 note 的**全文**拼进需求提取 prompt
   （`act/radar.py`）。
 - 需求提取 prompt 出境前过 `sanitize.scrub()`。

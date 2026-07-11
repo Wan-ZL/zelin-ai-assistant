@@ -31,7 +31,10 @@ sources:                               # 需求雷达监控的增量源
       name: manager
   slack_mcp_fallback: true             # 无 token 时改走 Slack MCP 只读兜底扫描（见 docs/SLACK_SETUP.md）
   slack_mcp_interval_minutes: 30       # MCP 兜底最小间隔（launchd 每 3 分钟触发，靠 state/slack_mcp.marker 节流）
-  watch_people:                        # 这些人的消息/会议内容才触发需求提取
+  watch_people:   # 你主要盯的人（第一个当作直属经理）。当前仅用于：设置页人物
+                  # 勾选 + 派生「追踪对象」显示名（config.requester_display 取
+                  # 第一个）。注意：这【不是】硬过滤——雷达仍会看所有 DM/@提及/
+                  # 会议记录，不会因某人不在此列就丢其消息（避免误配置清空看板）。
     - your.manager
   # gmail:                             # Gmail 捕获（见 docs/GMAIL_SETUP.md）
   #   address: "your.name@gmail.com"
