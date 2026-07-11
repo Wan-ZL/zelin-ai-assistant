@@ -512,6 +512,7 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
     #                                             (v0.10.2, 扩展 v0.12)
     #   | abort_execution(approved|executing->card_sent)      (v0.10.2)
     #   | revert_review(delivered->review)                    (v0.10.2)
+    #   | defer(card_sent->detected, back to the backlog)     (v0.18)
     # v0.10.2 公共规则：状态不匹配的逆向动作 = 幂等 no-op + log（防连点/迟到 inbox）。
     if action == "approve":
         # idempotent: a double-click (or re-approve while already running) must
@@ -645,6 +646,22 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         req.set_status(State.REVIEW)
         save(req)
         _log(f"inbox: {req.id} revert_review -> review")
+    elif action == "defer":
+        # v0.18 存备选：card_sent -> detected（退回备选）。Deliberately NOT
+        # trash: a deferred card keeps its expanded summary/plan/sources/
+        # repeated_mentions and stays in merge_or_new matching (restatements
+        # merge in; radar act-now re-promotes) — trashed cards are excluded
+        # and would re-card from scratch. Only card_sent is allowed (raising
+        # finishes its expansion and becomes card_sent first); anything else
+        # is the v0.10.2 idempotent no-op. Undo = the backlog lane's raise.
+        if str(req.status) != State.CARD_SENT.value:
+            _log(f"inbox: {req.id} defer ignored (status={req.status}) — no-op")
+            return
+        tag = "[deferred] 暂缓，退回备选"
+        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        req.set_status(State.DETECTED)
+        save(req)
+        _log(f"inbox: {req.id} defer -> detected (backlog)")
     else:
         _log(f"inbox: {req.id} unknown action {action!r} — ignored")
 
