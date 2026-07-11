@@ -284,6 +284,15 @@ def msg_auth(service: str) -> tuple[str, str]:
                   f"{service} — open the app's Settings and re-paste the key/password"))
 
 
+def msg_reraised(title: str, note: str = "") -> tuple[str, str]:
+    """re-raise -> card_sent (v0.20.0 §5「回锅」): a card the user already
+    accepted came back with new actionable info and is a proposal again."""
+    extra = f"：{note}" if note else ""
+    return (_pick("回锅：你验收过的事来了新信息", "Returned: new info on an accepted task"),
+            _pick(f"{title}{extra} —— 打开菜单栏面板重新审批（✅ 批准 / ❌ 拒绝）",
+                  f"{title}{extra} — open the menu-bar panel to re-approve (✅ / ❌)"))
+
+
 def msg_review_ready(title: str) -> tuple[str, str]:
     """executing -> review: the draft is ready for Zelin's ✓/↩︎."""
     return (_pick("待验收：AI 已交付草稿", "Ready for review: draft delivered"),

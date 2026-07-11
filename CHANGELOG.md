@@ -27,6 +27,60 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.20.0] - 2026-07-11
+
+Card lifecycle: thread-level matching + an `archived` sealed state + re-raise
+of already-accepted cards. A thing you already accepted no longer silently
+spawns a duplicate backlog card when related info arrives — it comes back to
+your proposals; only after you archive it does later info open a fresh card.
+
+### Added
+
+- **Re-raise (prior acceptance = ownership)**: when new *actionable* info
+  matches an un-archived completed (`delivered`/`merged`) card, the original
+  card flips back to a proposal (`card_sent`) instead of a new backlog card —
+  source folded, `repeated_mentions` bumped, `execution.reraised_at`/
+  `reraised_note` stamped, summary appended with "· 新增:…". A hit on the same
+  email/Slack thread but a *different* task opens a distinct follow-up child
+  (inheriting the thread lineage) without polluting the old card. Both the
+  deterministic (`merge_or_new`) and LLM (`apply_triage`/self-DM quick capture)
+  paths share `registry.reraise_or_followup`. Pure restatements / `needs_action=
+  false` only bump the count — they never flip (Q3: flip on new actionable
+  content only). Re-raised proposals carry a `reraised` flag + note in the
+  dashboard (app shows an amber "↩︎ Returned" badge) and notify via
+  `notify.msg_reraised`.
+- **Thread-level matching**: cards gain `thread_id` (grouping anchor, reuses
+  the `R-` namespace) and `thread_key` (a strong deterministic bucket from an
+  external thread ref only — `gmail:<X-GM-THRID>` / `slack:<thread_ts>`, else
+  None, never fuzzy; `registry.derive_thread_key`). `merge_or_new` prefers a
+  `thread_key` match, then the legacy title heuristic. The triage/capture LLM
+  inventory is capped but HARD-PINS all non-archived delivered/merged cards so
+  re-raise recall can't silently fail.
+- **`archived` state + `archive`/`unarchive` inbox actions**: seal a completed
+  card from 已验收 (`delivered`) or 备选 (`detected`) (Q2). Archived cards
+  RELOCATE to `act/registry/archive/` (out of the hot scan, #10), are excluded
+  from matching, hidden from the LLM, and NEVER purged; `unarchive` restores the
+  prior status and moves the file back. New dashboard partition `archived[]`
+  (+ `counts.archived`); archived cards enter no kanban lane.
+- **`archive_stale` auto-archive of cold delivered matters (#10) — DEFAULT OFF**
+  (`archive_after_days=0`). When enabled it runs at most once per 24h and skips
+  cards with a future deadline or a live sibling in their cluster — so a
+  long-silent immigration/EB-1A matter is never auto-sealed (which would let new
+  mail re-open a duplicate).
+
+### Fixed
+
+- **id-collision data-loss guard**: `next_id()` and `load()` now scan the
+  archive subdir, so a freshly allocated id can never overwrite an archived card
+  (the highest-risk failure of the relocate model).
+
+### Changed
+
+- **MERGED / delivered card behavior (visible change)**: a restatement carrying
+  a new actionable ask on a `delivered`/`merged` card now RE-RAISES the original
+  card back to a proposal, rather than silently absorbing it (previously merged
+  duplicates just bumped the count). Pure restatements are unchanged (bump only).
+
 ## [0.19.2] - 2026-07-11
 
 The first stably-self-signed release: release builds now carry a constant
@@ -712,7 +766,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.1...v0.19.0

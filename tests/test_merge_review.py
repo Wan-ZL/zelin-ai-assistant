@@ -119,15 +119,19 @@ class MergedMatchingTestCase(RegistryBase):
         self.assertEqual(got.repeated_mentions, 2)
         self.assertEqual(len(got.sources), 2)             # 新来源并入
 
-    def test_merged_parent_with_increment_gets_improvement_card(self):
-        # 视同 delivered：带增量的重提照旧走改进卡路径
+    def test_merged_parent_with_increment_reraises_in_place(self):
+        # v0.20.0 行为变更 (§3.3 / 残留风险 #5): a resolved (merged/delivered)
+        # parent + same-task restatement carrying a new actionable ask now
+        # RE-RAISES the original card back to 提案 (card_sent) instead of
+        # spawning an improvement child. (canonical R-050 is absent here, so the
+        # merged duplicate itself is the re-raise target.)
         self._save(status=State.MERGED.value, merged_into="R-050",
                    deadline="2026-08-01")
         got = registry.merge_or_new(_incoming(deadline="2026-07-15"))
-        self.assertNotEqual(got.id, "R-100")
-        self.assertEqual(got.improvement_of, "R-100")
-        parent = registry.load("R-100")
-        self.assertEqual(parent.status, State.MERGED.value)  # 主体不动
+        self.assertEqual(got.id, "R-100")                       # in-place
+        self.assertEqual(got.status, State.CARD_SENT.value)     # 翻回提案
+        self.assertTrue((got.execution or {}).get("reraised_at"))
+        self.assertEqual(self._all_ids(), ["R-100"])            # no second card
 
     def test_trashed_parent_still_never_matches_the_contrast(self):
         # 对照组（决策 6）：回收站的卡重提必须重新出卡

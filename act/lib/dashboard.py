@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 from act.lib import config, failures
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
-from act.lib.registry import Requirement, State, load_all
+from act.lib.registry import Requirement, State, load_all, load_archived
 
 TIER_HINTS = {
     "T0": "自动执行",
@@ -114,6 +114,11 @@ def _index_agents(agents: list[dict]) -> dict[str, dict]:
 # counts.completed stays the TRUE total.
 COMPLETED_CAP = 50
 
+# archived[] cap (§5 v0.20.0): sealed cards live in the archive/ subdir forever
+# (never purged). The app's archive browse only needs the most-recent window;
+# counts.archived stays the TRUE total (same convention as completed).
+ARCHIVED_CAP = 50
+
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -160,6 +165,23 @@ def _source_view(req: Requirement, cfg: config.Config) -> list[dict]:
             }
         )
     return out
+
+
+def _archived_view(req: Requirement) -> dict:
+    """One archived[] row (§5 v0.20.0). Mirrors the trash row fields + archive
+    bookkeeping (archived_at / archive_reason / prev_status) so the app decodes
+    it with the same shape as TrashItem."""
+    return {
+        "id": req.id,
+        "title": req.title,
+        "summary": req.summary or req.title,
+        "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
+        "archived_at": req.archived_at,
+        "archive_reason": req.archive_reason,
+        "prev_status": req.prev_status,
+        "type": req.type,
+        "hardness": req.hardness,
+    }
 
 
 def _dir_is_nonempty(path: Path) -> bool:
@@ -284,14 +306,21 @@ def build_dashboard(
     agents: Optional[list[dict]] = None,
     cfg: Optional[config.Config] = None,
     merge_dir: Optional[Path] = None,
+    archived: Optional[list[Requirement]] = None,
 ) -> dict:
-    """Assemble the dashboard dict (CONTRACT §2). Pure/injectable for testing."""
+    """Assemble the dashboard dict (CONTRACT §2). Pure/injectable for testing.
+
+    ``archived`` defaults to :func:`registry.load_archived` (the relocated
+    archive/ subdir) — kept a SEPARATE source from ``reqs`` (= load_all, which
+    excludes archived) so sealed cards enter ONLY the archived[] partition."""
     if cfg is None:
         cfg = config.load_config()
     if reqs is None:
         reqs = load_all()
     if agents is None:
         agents = _run_claude_agents()
+    if archived is None:
+        archived = load_archived()
     agent_idx = _index_agents(agents)
 
     needs_approval: list[dict] = []
@@ -305,8 +334,12 @@ def build_dashboard(
     for req in reqs:
         # merged (契约 四 终态) is invisible everywhere, like the legacy
         # merged_into:<id> statuses — its content lives on in the primary card.
+        # ARCHIVED goes in the belt-and-suspenders list too: sealed cards are
+        # meant to live in archive/ (out of ``reqs``), but if one lingers in the
+        # active dir it must still stay out of every kanban lane (§5).
         if req.is_merged or req.status in (State.REJECTED.value,
-                                           State.MERGED.value):
+                                           State.MERGED.value,
+                                           State.ARCHIVED.value):
             continue
 
         if req.status == State.CARD_SENT.value:
@@ -337,6 +370,11 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "processing": False,
                     "delivery_mode": _delivery_mode(req),
+                    # v0.20.0 §5: 「回锅」marker — this proposal came from a
+                    # re-raise of a card the user had already accepted; the app
+                    # shows an amber Returned badge + the new ask.
+                    "reraised": bool((req.execution or {}).get("reraised_at")),
+                    "reraised_note": str((req.execution or {}).get("reraised_note") or ""),
                 }
             )
 
@@ -543,6 +581,14 @@ def build_dashboard(
     completed.sort(key=lambda c: c.get("accepted_at") or 0, reverse=True)
     del completed[COMPLETED_CAP:]
 
+    # §5 v0.20.0 archived[] partition — mirrors the trash row (+ archive fields)
+    # so the app's archive browse decodes it the same way; newest archived_at
+    # first, capped, with counts.archived carrying the TRUE total.
+    archived_rows = [_archived_view(r) for r in (archived or [])]
+    archived_total = len(archived_rows)
+    archived_rows.sort(key=lambda a: str(a.get("archived_at") or ""), reverse=True)
+    del archived_rows[ARCHIVED_CAP:]
+
     return {
         "generated_at": _iso_now(),
         "counts": {
@@ -553,6 +599,7 @@ def build_dashboard(
             "completed": completed_total,
             "debt": len(debt),
             "trash": len(trash),
+            "archived": archived_total,
         },
         "needs_approval": needs_approval,
         "running": running,
@@ -561,6 +608,7 @@ def build_dashboard(
         "completed": completed,
         "debt": debt,
         "trash": trash,
+        "archived": archived_rows,
         # merge-review 契约 六 — new partition; Swift reads decodeIfPresent so
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),

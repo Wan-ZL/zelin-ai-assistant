@@ -55,18 +55,44 @@ _VALID_TIERS = ("T0", "T1", "T2")
 # --------------------------------------------------------------------------- #
 # prompt
 # --------------------------------------------------------------------------- #
-def registry_inventory_text() -> str:
-    """One line per non-trashed requirement: ``R-xxx | status | title``.
+# Inventory window cap (v0.20.0 §2, critique high #5). The prompt can't carry an
+# unbounded registry, but capping must never drop a closed card the LLM needs to
+# relate a follow-up to — so all non-archived delivered/merged are HARD-PINNED
+# into the window and only the *other* cards compete for the remaining slots.
+_INVENTORY_CAP = 60
 
-    Deliberately INCLUDES delivered/merged cards — the triage LLM must be able
-    to relate a follow-up message to an already-closed card (统一口径：相关既往
-    卡挂血缘 follow-up，不发孤立新卡). Follow-ups show their lineage so later
-    hits point at the right entry.
+
+def registry_inventory_text() -> str:
+    """Up to ``_INVENTORY_CAP`` lines ``R-xxx | status | title`` for the triage/
+    capture LLM.
+
+    Deliberately INCLUDES delivered/merged cards — the LLM must be able to
+    relate a follow-up to an already-closed card (统一口径：相关既往卡挂血缘
+    follow-up / re-raise，不发孤立新卡). Trashed + archived cards are sealed and
+    excluded (§3.2). When the registry outgrows the cap, non-archived
+    delivered/merged are HARD-PINNED so re-raise recall never silently fails
+    (critique high #5); the remaining slots go to the most-recent other cards.
     """
+    reqs = [r for r in registry.load_all()
+            if r.status not in (registry.State.TRASHED.value,
+                                registry.State.ARCHIVED.value)]
+
+    def _idnum(r) -> int:
+        m = registry._ID_RE.match(r.id or "")
+        return int(m.group(1)) if m else 0
+
+    def _pinned(r) -> bool:
+        return (r.is_merged
+                or r.status in (registry.State.DELIVERED.value,
+                                registry.State.MERGED.value))
+
+    pinned = [r for r in reqs if _pinned(r)]
+    others = sorted((r for r in reqs if not _pinned(r)), key=_idnum, reverse=True)
+    room = max(0, _INVENTORY_CAP - len(pinned))
+    selected = sorted(pinned + others[:room], key=_idnum)
+
     lines = []
-    for r in registry.load_all():
-        if r.status == registry.State.TRASHED.value:
-            continue
+    for r in selected:
         line = f"{r.id} | {r.status} | {r.title}"
         if r.improvement_of:
             line += f"（{r.improvement_of} 的后续）"
@@ -387,11 +413,12 @@ def apply_triage(
             # follow-ups (the R-028/R-029 near-duplicate failure again).
             target = registry.canonical(target)
         rejected_hit = target is not None and target.status in (
-            registry.State.REJECTED.value, registry.State.TRASHED.value)
+            registry.State.REJECTED.value, registry.State.TRASHED.value,
+            registry.State.ARCHIVED.value)
         if rejected_hit:
-            # 决策6: 拒绝 ≠ 已办完 — a restated ask must RE-CARD, never be
-            # buried as a note inside a rejected/trashed card. Treat exactly
-            # like an unknown id (merge_or_new skips rejected/trashed too).
+            # 决策6 / 归档语义: rejected/trashed/archived ≠ 可 re-raise — a
+            # restated ask must RE-CARD, never be buried inside a sealed card.
+            # Treat exactly like an unknown id (merge_or_new skips them too).
             analytics.log_event("radar_triage", action="relates_to_rejected",
                                 req=target.id)
             target = None
@@ -403,27 +430,37 @@ def apply_triage(
                 # losing an actionable follow-up inside a closed card is the
                 # 例1/2/3 failure mode; a needless follow-up card is cheap.
                 if _needs_action(decision, default=True):
-                    saved, created = _follow_up_card(target, req, note)
-                    analytics.log_event(
-                        "radar_triage",
-                        action="follow_up" if created else "follow_up_fold",
-                        req=saved.id, parent=target.id)
-                    return ("follow_up" if created else "folded"), saved
+                    # v0.20.0 unified re-raise/follow-up (§3.5): a title match
+                    # (真 restatement, same_task) flips the ORIGINAL card back
+                    # to 提案; a thread-only hit (different task) opens a distinct
+                    # thread-lineage follow-up. needs_action=True == actionable.
+                    same_task = registry._same_source_and_title(target, req)
+                    kind, saved = registry.reraise_or_followup(
+                        target, req, same_task=same_task, actionable=True,
+                        sources=req.sources, note=note)
+                    if saved is not None:
+                        analytics.log_event("radar_triage", action=kind,
+                                            req=saved.id, parent=target.id)
+                        return kind, saved
+                    # dead-end -> fall through to new_proposal (fresh card)
+                else:
+                    # needs_action=false -> fold as a note, never flip (Q3).
+                    _fold_into(target, req, note)
+                    analytics.log_event("radar_triage", action="relates_to",
+                                        req=target.id)
+                    return "folded", target
+            else:
                 _fold_into(target, req, note)
-                analytics.log_event("radar_triage", action="relates_to",
-                                    req=target.id)
+                if target.status == registry.State.DETECTED.value and (
+                        _needs_action(decision, default=False)
+                        or req.status == registry.State.CARD_SENT.value):
+                    # 统一口径：现在需要行动 -> 提案列。An act-now candidate must
+                    # not stay invisible in the 备选/backlog lane just because it
+                    # folded into a detected card — promote the card it fed.
+                    target.set_status(registry.State.CARD_SENT)
+                    registry.save(target)
+                analytics.log_event("radar_triage", action="relates_to", req=target.id)
                 return "folded", target
-            _fold_into(target, req, note)
-            if target.status == registry.State.DETECTED.value and (
-                    _needs_action(decision, default=False)
-                    or req.status == registry.State.CARD_SENT.value):
-                # 统一口径：现在需要行动 -> 提案列。An act-now candidate must
-                # not stay invisible in the 备选/backlog lane just because it
-                # folded into a detected card — promote the card it fed.
-                target.set_status(registry.State.CARD_SENT)
-                registry.save(target)
-            analytics.log_event("radar_triage", action="relates_to", req=target.id)
-            return "folded", target
         if not rejected_hit:
             analytics.log_event("radar_triage", action="relates_to_miss",
                                 req=rid or None)
@@ -531,8 +568,9 @@ def _apply_relates_to(res: dict, cfg: config.Config,
     req = registry.canonical(req)
     note = str(res.get("note") or "").strip() or str(res.get("_text") or "").strip()
     if registry.is_resolved(req):
-        # 统一口径：已交付/已合并的既往卡不追加备注了事——生成挂 improvement_of
-        # 血缘的后续卡（或并入其未决 follow-up），和雷达路径同一机制。
+        # 统一口径：已交付/已合并的既往卡不追加备注了事——走 reraise_or_followup
+        # 同一机制（v0.20.0 §3.5）：真 restatement（title 对齐）翻原卡回提案，
+        # 同 thread 不同任务则开继承 thread_id 的 follow-up 子卡（或并入未决 follow-up）。
         child = registry.Requirement(
             id="",
             title=(note or req.title)[:80],
@@ -546,11 +584,18 @@ def _apply_relates_to(res: dict, cfg: config.Config,
                 "quote": note or req.title,
             }],
         )
-        saved, created = _follow_up_card(req, child, note)
-        analytics.log_event("quick_capture",
-                            action="follow_up" if created else "follow_up_fold",
-                            req=saved.id, text=tele_text)
-        if created:
+        # explicit self-capture is inherently actionable (无损原则).
+        same_task = registry._same_source_and_title(req, child)
+        kind, saved = registry.reraise_or_followup(
+            req, child, same_task=same_task, actionable=True,
+            sources=child.sources, note=note)
+        analytics.log_event("quick_capture", action=kind or "relates_to",
+                            req=(saved.id if saved is not None else None),
+                            text=tele_text)
+        if kind == "reraised":
+            return (f"{req.id} 之前已验收；来了新信息，已回锅重新提案，进待审批 / "
+                    f"{req.id} was accepted; re-raised as a proposal (pending approval)")
+        if kind == "follow_up":
             return (f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
                     f"{req.id} is closed; filed follow-up {saved.id} (pending approval)")
         return (f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
