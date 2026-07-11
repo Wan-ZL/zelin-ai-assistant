@@ -656,7 +656,9 @@ struct ApprovalCardView: View {
                 // v0.10.3: reject asks which kind (Zelin 拍板)。区分是功能性的：
                 // 回收站条目不参与 merge_or_new 匹配，同一需求会重新出卡；
                 // "已办完"(done_external→delivered) 才能把后续重述压成合并。
-                // 拒绝是低频操作，多一次点击可接受，按钮行保持三个。
+                // 拒绝是低频操作，多一次点击可接受。v0.18 拍板：按钮行改为四个
+                // —— 第四个是「存备选」(defer)，见下；「先不做」刻意不塞进这个
+                // 弹窗（标题问的是"不需要执行？"，语义相反），弹窗保持两选。
                 let alert = NSAlert()
                 alert.messageText = L("这张卡不需要执行？", "No need to run this card?")
                 alert.informativeText = card.displaySummary
@@ -681,6 +683,17 @@ struct ApprovalCardView: View {
                 }
             } label: { Label(L("修改", "Comment"), systemImage: "bubble.left.fill") }
                 .tint(.blue)
+
+            Button {
+                // v0.18 存备选 (defer): demote is NOT reject — the card goes
+                // back to the backlog (card_sent→detected) with summary/plan/
+                // sources intact and KEEPS matching in merge_or_new
+                // (restatements merge; radar act-now re-promotes), while
+                // trash is excluded from matching. One click, no confirmation:
+                // cheap + reversible — undo is the backlog lane's 研究并提议.
+                app.submit(id: card.id, action: "defer", comment: nil)
+            } label: { Label(L("存备选", "Backlog"), systemImage: "tray.and.arrow.down") }
+                .tint(.gray)
         } detail: {
             // expanded detail blocks (sources + plan + long title) — rendered
             // by the base between content and the buttons row, as before.
