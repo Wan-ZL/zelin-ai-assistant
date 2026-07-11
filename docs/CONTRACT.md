@@ -52,6 +52,10 @@
 
 **v0.11 行为补充（add-only，字段形状不变）**：`completed[]` 只保留按 `accepted_at` **降序**（最新在前，缺失/不可解析的排最后）的最近 **50** 条（`act/lib/dashboard.py` `COMPLETED_CAP`）；`counts.completed` 仍为**真实总数**，因此可能大于 `len(completed)`。Swift 侧无需改动——列表照常解码，计数徽章一律读 `counts`。
 
+**v0.20.0 新增字段（add-only，Swift 一律 `decodeIfPresent`；见 §10 archive/re-raise）**：
+- 顶层新分区 `archived: [{id, title, summary, kind("debt"|"suggestion"), archived_at(str|null), archive_reason("user"|"auto"|null), prev_status(str|null), type, hardness}]`（`load_archived()`，按 `archived_at` 降序 cap 50，`act/lib/dashboard.py` `ARCHIVED_CAP`；镜像回收站 `trash[]` 行 + archive 三字段）；`counts.archived` = **真实总数**。archived 卡**不进**任何看板列（same as trash）。
+- `needs_approval[]` 每项加 `reraised`(bool，= truthy `execution.reraised_at`) + `reraised_note`(str)——「回锅」marker：这张提案来自一张你已验收过的卡的 re-raise，App 显 amber「↩︎ Returned」badge + `reraised_note` 的新诉求。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -124,7 +128,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -135,6 +139,10 @@ debt item 新增 `summary`（同上，大白话）。
 - `revert_review`（退回待验收）：允许 `delivered` → 置 `review`；删 `execution.accepted_at`，记 `execution.reverted_at` = ISO now。
 
 **v0.18 `defer`（存备选，提案→备选）**：允许状态**仅** `card_sent` → 置 `detected`；**保留** summary / plan / sources / repeated_mentions（一切已扩写内容不动，只改 status）；notes 追加 `[deferred] 暂缓，退回备选`；其余状态（含 raising——扩写完自然变 card_sent 再说）= 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点，零新增事件。与 `reject`(→trash) 的区别是功能性的：deferred 卡回到 `detected` 后**继续参与 merge_or_new 匹配**（后续重述静默合并计数、雷达 act-now 重提自动升回 card_sent），trashed 被匹配明确排除（重述从零重新出卡）。撤销 = 备选列现成的「研究并提议」(raise)。
+
+**v0.20.0 archive/unarchive**：archive 仅允许 `delivered`/`detected`(Q2)→`archived`，记 `prev_status`+`archived_at`+`archive_reason`(`"user"`|`"auto"`)；其余状态幂等 no-op。`archived` 语义=完成且封存：排除 `merge_or_new` 匹配（同 trashed/rejected）、对 triage/capture LLM 不可见、relocate 到 `act/registry/archive/` 子目录（退出 hot `_iter_files` 扫描）、NEVER purge。后续相关信息开新卡而非 re-raise 本卡。`unarchive` 回 `prev_status`(usually delivered)，文件移回 active dir、清 archive 字段。**关键（数据安全）**：`next_id()` 与 `load()` 都用 `include_archived=True` 扫 archive 子目录，防新 id 碰撞覆盖归档卡；dashboard/matching 仍默认 `include_archived=False`。archived 进 dashboard 新分区 `archived[]`（`load_archived()`，按 `archived_at` newest-first cap，`counts.archived` 为真实总数），不进任何看板列（同回收站）；build-loop 有 archived skip guard 兜底。auto-archive(`archive_stale`)**首发默认 off**（`archive_after_days=0`）：只封存冷 `delivered`（跳过带未来 deadline / cluster 内有 open sibling / 近期活动的卡），daily gate 防重跑——长期静默的移民/EB-1A matter 默认不被自动封存。
+
+**v0.20.0 re-raise（prior-accept = ownership，Q3）**：新 actionable 信息命中未归档 completed（`delivered`/`merged`）线程 → same_task（title 对齐=真 restatement）则把**原卡翻回 `card_sent`（提案）**、折 source、`repeated_mentions`+1、记 `execution.reraised_at`+`reraised_note`、summary 追加「· 新增:…」；same_task=False（同 thread 不同任务，仅 `thread_key` 命中）则开继承 `thread_id` 的 follow-up 子卡（`card_sent`），**不翻原卡、不污染其标题**。pure restatement / `needs_action=false` / 无新增量 只 bump 不翻。re-raise 前先 `canonical` 到主卡重判 `is_resolved`，绝不把 running/queued/review 卡拽回 card_sent；canonical dead-end 在 trashed/rejected/archived 则回退开新卡。两入口（`merge_or_new` 确定性 backstop + `apply_triage`/`_apply_relates_to` LLM 路径）共用 `registry.reraise_or_followup`。dashboard 的 `needs_approval` 行带 `reraised: bool` + `reraised_note`，App 显「↩︎ 回锅」badge；通知走 `notify.msg_reraised`。（thread_key 只来自 external ref：`gmail:<X-GM-THRID>` / `slack:<thread_ts>`，无强信号=None、绝不 fuzzy——见 `registry.derive_thread_key`。）
 
 **capture**（无 `id` 字段，app popover 快速捕获输入框写入）：文件名 `state/inbox/capture-<uuid>.json`，内容
 ```json

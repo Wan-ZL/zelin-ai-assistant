@@ -524,6 +524,8 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
     #   | abort_execution(approved|executing->card_sent)      (v0.10.2)
     #   | revert_review(delivered->review)                    (v0.10.2)
     #   | defer(card_sent->detected, back to the backlog)     (v0.18)
+    #   | archive(delivered|detected->archived, relocate)     (v0.20.0)
+    #   | unarchive(archived->prev_status, back to active)    (v0.20.0)
     # v0.10.2 公共规则：状态不匹配的逆向动作 = 幂等 no-op + log（防连点/迟到 inbox）。
     if action == "approve":
         # idempotent: a double-click (or re-approve while already running) must
@@ -682,6 +684,24 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         req.set_status(State.DETECTED)
         save(req)
         _log(f"inbox: {req.id} defer -> detected (backlog)")
+    elif action == "archive":
+        # v0.20.0 封存线程 (§3.7): archive is reachable ONLY from 已验收
+        # (delivered) or 备选 (detected) per Q2; anything else is the v0.10.2
+        # idempotent no-op. registry.archive relocates the card to archive/ and
+        # stamps prev_status/archived_at/archive_reason.
+        if str(req.status) not in (State.DELIVERED.value, State.DETECTED.value):
+            _log(f"inbox: {req.id} archive ignored (status={req.status}) — no-op")
+            return
+        prev = str(req.status)
+        registry.archive(req, reason="user")
+        _log(f"inbox: {req.id} archived (from {prev})")
+    elif action == "unarchive":
+        # v0.20.0 取消归档 (§3.7): archived -> prev_status, file back to active dir.
+        if str(req.status) != State.ARCHIVED.value:
+            _log(f"inbox: {req.id} unarchive ignored (status={req.status}) — no-op")
+            return
+        registry.unarchive(req)
+        _log(f"inbox: {req.id} unarchived -> {req.status}")
     else:
         _log(f"inbox: {req.id} unknown action {action!r} — ignored")
 
@@ -815,6 +835,113 @@ def purge_trash(cfg: config.Config) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# (c') auto-archive stale delivered matters (卡片生命周期 §4 / #10) — DEFAULT OFF
+# --------------------------------------------------------------------------- #
+_ARCHIVE_SWEEP_MARKER = "last_archive_sweep"
+_OPEN_STATES = (
+    State.DETECTED.value, State.RAISING.value, State.CARD_SENT.value,
+    State.APPROVED.value, State.EXECUTING.value, State.REVIEW.value,
+)
+
+
+def _swept_within_last_24h() -> bool:
+    """Daily gate: the auto-archive sweep runs at most once per 24h."""
+    try:
+        p = config.STATE_DIR / _ARCHIVE_SWEEP_MARKER
+        if not p.exists():
+            return False
+        age = _dt.datetime.now(_dt.timezone.utc).timestamp() - p.stat().st_mtime
+        return age < 24 * 3600
+    except OSError:
+        return False
+
+
+def _mark_swept() -> None:
+    try:
+        config.ensure_state_dirs()
+        (config.STATE_DIR / _ARCHIVE_SWEEP_MARKER).write_text(
+            _iso_now(), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _has_future_deadline(req: Requirement) -> bool:
+    """A delivered card with a deadline still in the future (USCIS/长 matter
+    里程碑) must NOT be auto-sealed — new mail on it would open a dup card."""
+    if not req.deadline:
+        return False
+    try:
+        d = _dt.date.fromisoformat(str(req.deadline))
+    except ValueError:
+        return False
+    return d >= _dt.date.today()
+
+
+def _cluster_has_live_sibling(req: Requirement, all_reqs: list[Requirement]) -> bool:
+    """True if any OTHER card in this thread/lineage cluster is still open —
+    never seal a matter that still has live work attached."""
+    thread = req.thread_id or req.id
+    for r in all_reqs:
+        if r.id == req.id:
+            continue
+        same_cluster = (
+            (r.thread_id or r.id) == thread
+            or r.improvement_of == req.id
+            or req.improvement_of == r.id
+        )
+        if same_cluster and str(r.status) in _OPEN_STATES:
+            return True
+    return False
+
+
+def _thread_last_activity(req: Requirement) -> Optional[_dt.datetime]:
+    """Newest activity timestamp for the card (cross-dep; legacy fallback =
+    accepted_at). None when nothing is parseable — then the card is never
+    auto-archived (conservative: ambiguous cards are left alone)."""
+    ex = req.execution if isinstance(req.execution, dict) else {}
+    cands = (ex.get("accepted_at"), ex.get("approved_at"),
+             ex.get("dispatched_at"), ex.get("review_at"),
+             ex.get("reraised_at"))
+    dts = [d for d in (_parse_iso(c) for c in cands) if d is not None]
+    return max(dts) if dts else None
+
+
+def archive_stale(cfg: config.Config) -> int:
+    """Auto-archive cold DELIVERED cards (§4 / #10). DEFAULT OFF.
+
+    ``archive_after_days`` defaults to 0 (off) — long-silent immigration/EB-1A
+    matters must not be auto-sealed, or new mail re-opens a duplicate card (the
+    very bug this feature kills). When enabled it runs at most once per 24h and
+    skips cards with a future deadline or a live sibling in their cluster."""
+    days = int(getattr(cfg, "archive_after_days", 0) or 0)
+    if days <= 0:
+        return 0
+    if _swept_within_last_24h():
+        return 0
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    reqs = load_all()
+    n = 0
+    for req in reqs:
+        try:
+            if req.status != State.DELIVERED.value:
+                continue
+            if _has_future_deadline(req):
+                continue
+            if _cluster_has_live_sibling(req, reqs):
+                continue
+            last = _thread_last_activity(req)
+            if last is None or last >= cutoff:
+                continue
+            registry.archive(req, reason="auto")
+            n += 1
+            _log(f"archive: auto-archived {req.id} (last activity {last.isoformat()})")
+        except Exception as e:  # noqa: BLE001 - one bad item must not abort the pass
+            _log(f"archive: auto-archive failed for {getattr(req, 'id', '?')}: {e}")
+    _mark_swept()
+    return n
+
+
+# --------------------------------------------------------------------------- #
 # (c'') merge-review job housekeeping (§21) — every pass, best-effort
 # --------------------------------------------------------------------------- #
 def _mtime_dt(path: Path) -> Optional[_dt.datetime]:
@@ -892,10 +1019,15 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     p_rev, c_rev = _by_id(prev.get("review", [])), _by_id(curr.get("review", []))
 
     # 3-tuples (title, body, req) so Slack ✅-reaction knows which R-id to approve
-    # new card_sent
+    # new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
+    # so Zelin knows it's a card he already accepted, not a brand-new find.
     for rid, item in c_na.items():
         if rid not in p_na:
-            t, b = notify.msg_new_card(item.get("title", rid))
+            if item.get("reraised"):
+                t, b = notify.msg_reraised(item.get("title", rid),
+                                           item.get("reraised_note") or "")
+            else:
+                t, b = notify.msg_new_card(item.get("title", rid))
             msgs.append((t, b, rid))
 
     # executing -> review (§11 draft ready, awaiting acceptance)
@@ -1160,6 +1292,7 @@ def run_once(
     reconcile_executing(cfg, resume_notified if resume_notified is not None else set())
     process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
     purge_trash(cfg)
+    archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     if feedback is not None:
         # §29: retry pending feedback uploads ONCE, then give up (uploaded:

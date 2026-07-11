@@ -1,10 +1,25 @@
 # Card 生命周期 + 归档/重提（archive & re-raise）设计
 
-> **Status: DRAFT for Zelin's review, 2026-07-11**
+> **Status: LOCKED & IMPLEMENTED in v0.20.0 (2026-07-11).**
 > 这份文档记录的是 PM-level 的产品意图（lane 语义、re-raise 规则、archive 概念），
-> 以及为什么现在会出现「已验收的事又冒出一张新 backlog 卡」。所有对**当前行为**的
-> 陈述都 ground 在 `file:line`，方便你逐条核对；带 **(NEW)** 标记的是**尚未实现**的
-> 提案（future feature → minor release），不是现状。
+> 以及为什么之前会出现「已验收的事又冒出一张新 backlog 卡」。所有对**当前行为**的
+> 陈述都 ground 在 `file:line`。文中带 **(NEW)** 标记的提案**已在 v0.20.0 落地**——
+> 权威实现口径见 §「Locked decisions（v0.20.0）」与 `docs/CONTRACT.md` §2/§10。
+>
+> ### Locked decisions（v0.20.0，maintainer 拍板）
+> - **Q1 = thread-level 匹配**：分组键 = `thread_id`（复用 `R-` 命名空间，match 继承 /
+>   new self-root）+ 强信号 `thread_key`（只来自 external ref：`gmail:<X-GM-THRID>` /
+>   `slack:<thread_ts>`，无则 None、绝不 fuzzy——`registry.derive_thread_key`）。匹配器 =
+>   triage LLM(primary，零额外 call) + `merge_or_new` 的 thread_key deterministic backstop。
+> - **Q2 = archive 可达自「已验收 + 备选」**：`delivered`/`detected` → `archived`（其余幂等
+>   no-op）；`archived` 为 sealed 完成态，**relocate 到 `act/registry/archive/` 子目录**
+>   （退出 hot scan，#10），排除匹配、对 LLM 不可见、NEVER purge。`next_id()`/`load()` 扫
+>   archive 子目录防 id 碰撞覆盖（数据安全）。auto-archive(`archive_stale`)**首发默认 off**。
+> - **Q3 = flip-on-actionable-only**：re-raise 翻回 `card_sent` **仅当**新信息带新 actionable
+>   内容；纯 FYI / `needs_action=false` / 无增量 → 只 `repeated_mentions += 1`，**不翻卡**。
+>   same_task（title 对齐）翻原卡；同 thread 不同任务（仅 thread_key 命中）开继承 `thread_id`
+>   的 follow-up 子卡，绝不污染旧卡标题。两入口共用 `registry.reraise_or_followup`。
+> - **archived relocate** 为唯一 archive 存储模型（非 in-place 改状态）。
 
 ---
 

@@ -41,6 +41,14 @@ class State(str, Enum):
     # 看板列、purge 不删），但 merge_or_new 匹配语义同 delivered —— 参与匹配
     # 以压住后续重述（这点与 trashed 相反，决策 6）。
     MERGED = "merged"
+    # v0.20.0 sealed-completed state (卡片生命周期 §3.1). Reached from delivered
+    # (已验收) or detected (备选) via the archive action, or an auto sweep of
+    # cold delivered matters. Semantics mirror trashed for VISIBILITY (in NO
+    # kanban lane) but are EXCLUDED from merge_or_new matching + hidden from the
+    # triage/capture LLM (same as trashed), NEVER purged, and RELOCATED to the
+    # ``archive/`` subdir so the hot registry scan skips them (#10). Later
+    # related info opens a NEW card rather than re-raising a sealed one.
+    ARCHIVED = "archived"
 
     def __str__(self) -> str:  # so f-strings emit the bare value
         return self.value
@@ -83,6 +91,14 @@ _OPTIONAL_ORDER = [
     "prev_status",
     "trash_reason",
     "permanent",
+    # v0.20.0 thread-level matching (卡片生命周期 §2) — appended so old YAML that
+    # lacks them round-trips clean (to_dict skips None) and lazily backfills.
+    "thread_id",
+    "thread_key",
+    # v0.20.0 archive bookkeeping (§4) — only present once archived; prev_status
+    # (above) is reused to remember the restore target for unarchive.
+    "archived_at",
+    "archive_reason",
 ]
 
 
@@ -118,6 +134,18 @@ class Requirement:
     prev_status: Optional[str] = None
     trash_reason: Optional[str] = None
     permanent: bool = False
+
+    # v0.20.0 thread-level matching (卡片生命周期 §2)
+    # thread_id: the thread anchor = the R-id of the thread-root card (reuses the
+    #   R- namespace; inherited on a match, self-rooted on a brand-new card).
+    # thread_key: a STRONG deterministic bucket, only from an external thread ref
+    #   ("gmail:<X-GM-THRID>" / "slack:<thread_ts>"); None when there is no strong
+    #   signal — never fuzzy. See :func:`derive_thread_key`.
+    thread_id: Optional[str] = None
+    thread_key: Optional[str] = None
+    # v0.20.0 archive bookkeeping (§4) — set once archived (prev_status reused).
+    archived_at: Optional[str] = None
+    archive_reason: Optional[str] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -173,20 +201,36 @@ class Requirement:
 # --------------------------------------------------------------------------- #
 # Load
 # --------------------------------------------------------------------------- #
-def _iter_files() -> Iterable[Path]:
+# v0.20.0 (§4): archived cards RELOCATE to this subdir so the hot registry scan
+# (non-recursive glob) skips them (#10 performance) while they stay recoverable
+# and NEVER get purged. glob("*.yaml") is non-recursive, so ``archive/`` files
+# are only ever loaded when a caller explicitly opts in (include_archived=True).
+ARCHIVE_DIR: Path = config.REGISTRY_DIR / "archive"
+
+
+def _iter_files(include_archived: bool = False) -> Iterable[Path]:
     if not config.REGISTRY_DIR.exists():
         return []
     # R-000-example.yaml ships with the repo as documentation — never load
     # it as a real card (it used to surface in the backlog lane on every
     # fresh install).
-    return sorted(p for p in config.REGISTRY_DIR.glob("*.yaml")
-                  if p.name != "R-000-example.yaml")
+    files = [p for p in config.REGISTRY_DIR.glob("*.yaml")
+             if p.name != "R-000-example.yaml"]
+    if include_archived and ARCHIVE_DIR.exists():
+        files += list(ARCHIVE_DIR.glob("*.yaml"))
+    return sorted(files)
 
 
-def load_all() -> list[Requirement]:
-    """Load every requirement across single-doc and list files."""
+def load_all(include_archived: bool = False) -> list[Requirement]:
+    """Load every requirement across single-doc and list files.
+
+    ``include_archived`` pulls in the relocated ``archive/`` cards too — used by
+    :func:`next_id` and :func:`load` (id-collision safety, §4) and by
+    :func:`load_archived`; the dashboard + matching keep the default False so
+    sealed cards stay out of the hot path and out of matching.
+    """
     reqs: list[Requirement] = []
-    for path in _iter_files():
+    for path in _iter_files(include_archived):
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError:
@@ -210,10 +254,19 @@ def load_all() -> list[Requirement]:
 
 
 def load(req_id: str) -> Optional[Requirement]:
-    for r in load_all():
+    # CRITICAL (§4): scan the archive dir too, or an archived card is invisible
+    # to load()/unarchive and — worse — next_id() would reallocate its id and
+    # overwrite it (silent data loss). Both funnel through include_archived=True.
+    for r in load_all(include_archived=True):
         if r.id == req_id:
             return r
     return None
+
+
+def load_archived() -> list[Requirement]:
+    """Every sealed (archived) card — newest handling left to the caller."""
+    return [r for r in load_all(include_archived=True)
+            if r.status == State.ARCHIVED.value]
 
 
 # --------------------------------------------------------------------------- #
@@ -371,6 +424,65 @@ def delete(req: Requirement) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Archive / unarchive (卡片生命周期 §4) — RELOCATE model (the single impl).
+# --------------------------------------------------------------------------- #
+def _delete_original(orig_file: str, in_list: bool, rid: str) -> None:
+    """Drop ``rid`` from its ORIGINAL location after it was relocated.
+
+    Reuses :func:`delete`'s tested single-doc / list-member extraction by
+    pointing a throwaway stub at the original file (``req._file`` has already
+    been repointed at the archive path by the time we get here)."""
+    stub = Requirement(id=rid)
+    stub._file = orig_file
+    stub._in_list = in_list
+    try:
+        delete(stub)
+    except Exception:  # noqa: BLE001 - the relocated copy is already safe on disk
+        pass
+
+
+def archive(req: Requirement, reason: str) -> Requirement:
+    """Seal a completed card and RELOCATE it to ``archive/`` (§4).
+
+    ``reason`` is "user" (点归档：已验收/备选) or "auto" (archive_stale 冷扫).
+    The prior status is stashed in ``prev_status`` so :func:`unarchive` restores
+    it. The file is written into ``ARCHIVE_DIR`` first, then the original entry
+    is removed — so a crash mid-move leaves the card recoverable, never lost."""
+    if req.status != State.ARCHIVED.value:
+        req.prev_status = req.status
+    req.set_status(State.ARCHIVED)
+    req.archived_at = _iso_now()
+    req.archive_reason = reason
+    orig, in_list = req._file, req._in_list
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    req._file = str(ARCHIVE_DIR / f"{req.id}.yaml")
+    req._in_list = False
+    save(req)
+    if orig and Path(orig) != Path(req._file):
+        _delete_original(orig, in_list, req.id)
+    return req
+
+
+def unarchive(req: Requirement) -> Requirement:
+    """Restore an archived card to ``prev_status`` and move it back to the
+    active registry dir (§4). Clears the archive bookkeeping."""
+    req.set_status(req.prev_status or State.DELIVERED.value)
+    req.prev_status = None
+    req.archived_at = None
+    req.archive_reason = None
+    orig = req._file
+    req._file = str(config.REGISTRY_DIR / f"{req.id}.yaml")
+    req._in_list = False
+    save(req)
+    if orig and Path(orig) != Path(req._file):
+        try:
+            Path(orig).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return req
+
+
+# --------------------------------------------------------------------------- #
 # ID allocation + matching / merge
 # --------------------------------------------------------------------------- #
 _ID_RE = re.compile(r"^R-(\d+)$")
@@ -459,11 +571,31 @@ def find_open_follow_up(parent_id: str) -> Optional[Requirement]:
 
 def next_id() -> str:
     mx = 0
-    for r in load_all():
+    # CRITICAL (§4): include archived cards, or a freshly allocated id could
+    # collide with a sealed R-050 and overwrite it (silent data loss).
+    for r in load_all(include_archived=True):
         m = _ID_RE.match(r.id or "")
         if m:
             mx = max(mx, int(m.group(1)))
     return f"R-{mx + 1:03d}"
+
+
+def derive_thread_key(source: Optional[dict]) -> Optional[str]:
+    """The STRONG deterministic thread bucket for a single source dict (§2).
+
+    Only an external thread ref counts: ``gmail:<gmail_thread_id>`` /
+    ``slack:<slack_thread_ts>``. Everything else (obsidian / meeting notes with
+    no external ref) returns None → honest degrade to title-only matching, never
+    a fuzzy thread guess. Radars (worktree B) populate the two source keys."""
+    if not isinstance(source, dict):
+        return None
+    gt = source.get("gmail_thread_id")
+    if gt:
+        return f"gmail:{gt}"
+    st = source.get("slack_thread_ts")
+    if st:
+        return f"slack:{st}"
+    return None
 
 
 def _norm_title(t: str) -> str:
@@ -529,61 +661,214 @@ def _carries_increment(parent: Requirement, new: Requirement) -> bool:
     return False
 
 
+def _fold_hit(target: Requirement, new_req: Optional[Requirement],
+              note: str = "", sources: Optional[list] = None) -> Requirement:
+    """Fold a hit into ``target``: note + deduped sources + mentions bump.
+
+    Mirrors quick_capture's ``_fold_into`` so both the deterministic and LLM
+    re-raise paths add the same ``[radar]`` note tag and dedupe identically."""
+    src = sources if sources is not None else (
+        new_req.sources if new_req is not None else None)
+    merged, added = _dedupe_sources(target.sources or [], src or [])
+    target.sources = merged
+    if added:
+        target.repeated_mentions = int(target.repeated_mentions or 1) + added
+    if note:
+        tag = f"[radar] {note}"
+        target.notes = (target.notes + "\n" + tag).strip() if target.notes else tag
+    save(target)
+    return target
+
+
+def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
+                        same_task: bool, actionable: Optional[bool] = None,
+                        sources: Optional[list] = None,
+                        note: str = "") -> tuple[Optional[str], Optional[Requirement]]:
+    """Unified re-raise / follow-up for a candidate matching a RESOLVED card
+    (卡片生命周期 §3.3). Shared by ``merge_or_new`` (deterministic) and
+    ``apply_triage`` / ``_apply_relates_to`` (LLM) so both apply ONE门槛.
+
+    Returns ``(kind, saved)``:
+      - ``(None, None)``            dead-end — canonical primary is
+                                    rejected/trashed/archived → caller opens a
+                                    fresh card (never bury in a dead card);
+      - ``("reraised", parent)``    same-task + new actionable ask → the ORIGINAL
+                                    card flips back to card_sent (提案), source
+                                    folded, repeated_mentions+1, execution
+                                    .reraised_at/_note set, summary "· 新增:…";
+      - ``("follow_up", child)``    different task in the SAME thread → a distinct
+                                    child (card_sent) inheriting thread lineage,
+                                    NEVER polluting the old card's title;
+      - ``("folded", card)``        pure restatement/no new ask (bump only, no
+                                    flip), OR a fold into an already-open
+                                    follow-up (cross-pass/source dedup), OR a
+                                    fold into a live/open canonical primary.
+
+    ``actionable``: None → decide deterministically via ``_carries_increment``
+    (the merge_or_new path); an explicit bool is the LLM's ``needs_action``.
+    ``same_task`` = the titles align (a genuine restatement of the same task),
+    vs a thread-only match (same email/slack thread, different matter/task).
+    """
+    parent = canonical(parent)                       # merged 副卡 -> 主卡
+    if parent.status in (State.REJECTED.value, State.TRASHED.value,
+                         State.ARCHIVED.value):
+        # canonical dead-end — caller re-cards from scratch (决策6 / 归档语义).
+        return None, None
+    parent.thread_id = parent.thread_id or parent.id
+    if not is_resolved(parent):
+        # canonical hopped to a LIVE/open primary (a merged duplicate whose
+        # primary is card_sent/approved/executing/review): never pull running/
+        # queued work back to card_sent — just fold the note + source.
+        return "folded", _fold_hit(parent, new_req, note, sources)
+
+    # resolved parent (delivered / merged, NOT archived):
+    acts = _carries_increment(parent, new_req) if actionable is None else bool(actionable)
+    if same_task and not acts:
+        # Q3 pure-restatement gate: a closed thread re-mentioned with NO new
+        # actionable content → bump repeated_mentions, do NOT flip (kills the
+        # hot-thread 提案 noise that LLM-recall jitter would otherwise create).
+        merged, _added = _dedupe_sources(
+            parent.sources or [],
+            (sources if sources is not None else new_req.sources) or [])
+        parent.sources = merged
+        parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
+        save(parent)
+        return "folded", parent
+
+    # actionable (or a different-task hit): first dedupe into an already-open
+    # follow-up of this cluster (cross-pass / cross-source window) so a second
+    # radar source of the same event never produces a second card.
+    existing_child = find_open_follow_up(parent.id)
+    if existing_child is not None:
+        return "folded", _fold_hit(existing_child, new_req, note, sources)
+
+    if same_task:
+        # in-place re-raise: flip the ORIGINAL card back to 提案 (Q3 ownership).
+        merged, _added = _dedupe_sources(
+            parent.sources or [],
+            (sources if sources is not None else new_req.sources) or [])
+        parent.sources = merged
+        parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
+        if note:
+            tag = f"[re-raised] {note}"
+            parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
+            parent.summary = (f"{parent.summary} · 新增:{note}").strip()
+        ex = dict(parent.execution or {})
+        ex["reraised_at"] = _iso_now()
+        ex["reraised_note"] = note or ""
+        parent.execution = ex
+        parent.set_status(State.CARD_SENT)
+        return "reraised", upsert(parent)
+
+    # different task, same thread -> distinct follow-up child (card_sent),
+    # inheriting the thread lineage; the old card's title is left untouched.
+    summary = str(new_req.summary or new_req.title or note).strip()
+    child = Requirement(
+        id=next_id(),
+        title=(new_req.title or note or parent.title)[:80],
+        type=new_req.type or parent.type,
+        tier=new_req.tier or parent.tier,
+        status=State.CARD_SENT.value,
+        hardness=new_req.hardness or "soft",
+        deadline=new_req.deadline,
+        repeated_mentions=1,
+        cost_estimate_usd=new_req.cost_estimate_usd,
+        sources=list(new_req.sources or []),
+        plan=new_req.plan or [],
+        improvement_of=parent.id,
+        thread_id=parent.thread_id or parent.id,
+        thread_key=new_req.thread_key or parent.thread_key,
+        summary=f"既往卡 {parent.id} 的后续：{summary}",
+        notes=(f"[radar] {note}" if note else ""),
+    )
+    return "follow_up", upsert(child)
+
+
 def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = False) -> Requirement:
     """Reconcile a freshly-extracted requirement against the registry.
 
-    - Pure restatement of an existing entry (same source+title, no increment):
-      merge sources into the parent, bump ``repeated_mentions``, **status
-      unchanged**. Returns the (updated) parent.
-    - Carries an increment (new/earlier deadline or improvement): create an
-      "improvement card" with ``improvement_of=<parent-id>`` and return it.
-    - No match: create a brand-new entry (status=detected, or card_sent when
-      high-confidence + a hard deadline). Returns the new entry.
+    Parent selection (v0.20.0 §3.4): a STRONG external ``thread_key`` match wins
+    first, then the legacy title heuristic. When the matched parent is RESOLVED
+    (delivered/merged, non-archived) the reconciliation is delegated to
+    :func:`reraise_or_followup` (re-raise the card, or open a thread-lineage
+    follow-up for a different task in the same thread). Open parents keep the
+    existing increment-child / restatement-bump behavior (never pulled back).
+
+    - Pure restatement of an OPEN entry (same source+title, no increment):
+      merge sources into the parent, bump ``repeated_mentions``, status unchanged.
+    - Carries an increment on an OPEN entry: an ``improvement_of`` child.
+    - No match: a brand-new self-rooted entry (status=detected, or card_sent when
+      high-confidence + a hard deadline).
     """
     if isinstance(new_req, dict):
         new_req = Requirement.from_dict(new_req)
+    # Derive the strong thread_key from the primary source when the caller
+    # (a radar) did not set it — keeps A self-sufficient before B lands.
+    if not new_req.thread_key and new_req.sources:
+        new_req.thread_key = derive_thread_key(new_req.sources[0])
 
     existing = load_all()
+
+    def matchable(r: Requirement) -> bool:
+        # Never match: legacy merged_into:<id>, rejected, trashed, ARCHIVED
+        # (决策 6 / 归档语义). MERGED (契约 四) DOES match — treated like delivered.
+        return not (r.is_merged or r.status in (
+            State.REJECTED.value, State.TRASHED.value, State.ARCHIVED.value))
+
     parent: Optional[Requirement] = None
-    for r in existing:
-        # Never match: legacy merged_into:<id> statuses, rejected, trashed
-        # (决策 6: 拒绝 ≠ 已办完 — a trashed ask restated must re-card).
-        # DOES match: State.MERGED (merge-review 契约 四) — treated exactly like
-        # DELIVERED so later restatements are silently absorbed instead of
-        # producing a fresh card for work that already merged into a primary.
-        if r.is_merged or r.status in (State.REJECTED.value, State.TRASHED.value):
-            continue
-        if _same_source_and_title(r, new_req):
-            parent = r
-            break
+    same_task = False
+    if new_req.thread_key:
+        parent = next((r for r in existing
+                       if matchable(r) and r.thread_key == new_req.thread_key), None)
+        # thread_key alone is a GROUPING key, not a same-task signal: only a
+        # title match on top of it means the same task (else = different matter).
+        same_task = bool(parent and _same_source_and_title(parent, new_req))
+    if parent is None:
+        parent = next((r for r in existing
+                       if matchable(r) and _same_source_and_title(r, new_req)), None)
+        same_task = parent is not None                # a title match IS same-task
 
     if parent is not None:
-        if _carries_increment(parent, new_req):
-            child = Requirement(
-                id=next_id(),
-                title=new_req.title or parent.title,
-                type=new_req.type or parent.type,
-                tier=new_req.tier or parent.tier,
-                status=State.CARD_SENT.value if high_confidence else State.DETECTED.value,
-                hardness=new_req.hardness or parent.hardness,
-                deadline=new_req.deadline or parent.deadline,
-                repeated_mentions=1,
-                cost_estimate_usd=new_req.cost_estimate_usd,
-                sources=list(new_req.sources or []),
-                plan=new_req.plan or parent.plan,
-                improvement_of=parent.id,
-                notes=new_req.notes or "",
-            )
-            return upsert(child)
-        # pure restatement -> merge sources, bump count, keep status
-        merged, added = _dedupe_sources(parent.sources or [], new_req.sources or [])
-        parent.sources = merged
-        if added:
-            parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
-        return upsert(parent)
+        if is_resolved(parent):
+            # is_resolved MUST be decided here (before _carries_increment).
+            _kind, res = reraise_or_followup(
+                parent, new_req, same_task=same_task,
+                sources=new_req.sources,
+                note=(new_req.summary or new_req.title))
+            if res is not None:
+                return res
+            # dead-end (canonical trashed/rejected/archived) -> fresh card below
+        else:
+            parent.thread_id = parent.thread_id or parent.id
+            if _carries_increment(parent, new_req):
+                child = Requirement(
+                    id=next_id(),
+                    title=new_req.title or parent.title,
+                    type=new_req.type or parent.type,
+                    tier=new_req.tier or parent.tier,
+                    status=State.CARD_SENT.value if high_confidence else State.DETECTED.value,
+                    hardness=new_req.hardness or parent.hardness,
+                    deadline=new_req.deadline or parent.deadline,
+                    repeated_mentions=1,
+                    cost_estimate_usd=new_req.cost_estimate_usd,
+                    sources=list(new_req.sources or []),
+                    plan=new_req.plan or parent.plan,
+                    improvement_of=parent.id,
+                    thread_id=parent.thread_id or parent.id,
+                    thread_key=new_req.thread_key or parent.thread_key,
+                    notes=new_req.notes or "",
+                )
+                return upsert(child)
+            # pure restatement -> merge sources, bump count, keep status
+            merged, added = _dedupe_sources(parent.sources or [], new_req.sources or [])
+            parent.sources = merged
+            if added:
+                parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
+            return upsert(parent)
 
-    # brand new
+    # brand new — self-root the thread on its own id
     new_req.id = new_req.id or next_id()
+    new_req.thread_id = new_req.thread_id or new_req.id
     if not new_req.status or new_req.status == State.DETECTED.value:
         if high_confidence and new_req.hardness == "hard" and new_req.deadline:
             new_req.status = State.CARD_SENT.value
