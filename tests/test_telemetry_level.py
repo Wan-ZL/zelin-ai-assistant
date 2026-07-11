@@ -615,6 +615,23 @@ class DisclosureCopyHonestyTestCase(unittest.TestCase):
         src = self.EXAMPLE.read_text(encoding="utf-8")
         self.assertIn("capture_input: true", src)
 
+    def test_legacy_flat_capture_key_migrates_not_drops(self):
+        # opt-out-safety guard (Swift has no unit harness — source-literal
+        # check like test_capture_exclusion.py): persistTelemetry's flat-key
+        # cleanup deletes "telemetry.capture_input", so an untouched save
+        # must first MIGRATE a hand-written legacy flat value into the
+        # nested form — silently deleting it would revoke a recorded
+        # explicit opt-out.
+        src = self.SETTINGS.read_text(encoding="utf-8")
+        self.assertIn('merged.removeValue(forKey: "telemetry.capture_input")',
+                      src)
+        self.assertIn('merged["telemetry.capture_input"] as? Bool', src)
+        self.assertIn('tele["capture_input"] = legacy', src)
+        # the migration must sit BEFORE the cleanup in the save flow
+        self.assertLess(
+            src.index('tele["capture_input"] = legacy'),
+            src.index('merged.removeValue(forKey: "telemetry.capture_input")'))
+
     def test_settings_never_writes_the_v2_marker_passively(self):
         # HOLE 2 regression guard: SettingsFormView is a non-lazy VStack —
         # .onAppear fires on page INSERTION, not section visibility, so a

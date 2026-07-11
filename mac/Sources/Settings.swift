@@ -1110,6 +1110,13 @@ struct SettingsFormView: View {
         }
         if captureTouched {
             tele["capture_input"] = telemetryCaptureInput
+        } else if tele["capture_input"] == nil,
+                  let legacy = merged["telemetry.capture_input"] as? Bool {
+            // migrate a hand-written LEGACY FLAT capture_input into the
+            // nested form BEFORE the flat-key cleanup below deletes it —
+            // dropping it would silently revoke a recorded opt-out
+            // (the nested key, when present, already wins and is kept).
+            tele["capture_input"] = legacy
         }
         // not touched this save: leave any existing capture_input key
         // exactly as it is — it records an explicit (consent) choice.
