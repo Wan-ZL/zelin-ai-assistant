@@ -7,7 +7,7 @@ import Foundation
 // MARK: - Local instant-feedback types (契约2)
 
 /// Which dashboard list an item (or its echo) belongs to.
-enum ListKind: String { case approval, running, review, debt, trash, completed }
+enum ListKind: String { case approval, running, review, debt, trash, completed, archived }
 
 /// Optimistic "the action is in flight" placeholder rendered in the TARGET
 /// list right after a button press, before actd rewrites dashboard.json.
@@ -32,7 +32,7 @@ struct RaisingEntry {
 /// that restore introduced in v0.10 (契约: 信息条 instead of an echo);
 /// `kind` picks the per-action timeout wording.
 struct PendingReturn {
-    enum Kind { case restore, abort, revert }
+    enum Kind { case restore, abort, revert, unarchive }
     let kind: Kind
     let source: ListKind  // lane the action was taken in (P2-4 notice routing)
     let created: Date
@@ -370,6 +370,9 @@ final class DashboardStore: ObservableObject {
         case .revert:
             return L("退回待验收超时，卡片仍在已验收列，可重试（检查 actd 是否在运行）",
                      "Back-to-review timed out — the card is still in Done, try again (check that actd is running)")
+        case .unarchive:
+            return L("取消归档超时，卡片仍在归档区，可重试（检查 actd 是否在运行）",
+                     "Unarchive timed out — the card is still in the Archive, try again (check that actd is running)")
         }
     }
 
@@ -457,6 +460,25 @@ final class DashboardStore: ObservableObject {
                 beginReturn(id, from: .trash, kind: .restore,
                             info: L("恢复中，卡片将回到原状态列",
                                     "Restoring — the card returns to its previous lane"))
+            case "archive":
+                // v0.20 card-lifecycle: seal a delivered (已验收) or backlog
+                // (备选) card into the archive — reversible, no confirm. Fixed,
+                // known target: sticky-hide from whichever lane holds it and
+                // plant an echo in the archive section (renders no card, but
+                // keeps visibleArchivedCount honest, mirroring trash).
+                let src = dashboard.flatMap { db in
+                    [ListKind.completed, .debt].first { ids(in: $0, of: db).contains(id) }
+                }
+                hideSticky(id, from: src)
+                addEcho(id: id, target: .archived, source: src ?? .completed, label: "")
+            case "unarchive":
+                // v0.20: 取消归档 — like restore, the card returns to its
+                // prev_status (any lane), so no fixed-target echo. sticky-hide
+                // from the archive + info strip; returningLocal arms the 180 s
+                // timeout so an unresponsive actd can't hide it forever.
+                beginReturn(id, from: .archived, kind: .unarchive,
+                            info: L("取消归档中，卡片将回到原状态列",
+                                    "Unarchiving — the card returns to its previous lane"))
             case "done_external":
                 // Zelin finished it outside the system → DELIVERED; the button
                 // now also lives on running-lane rows (queued/working/blocked/
@@ -543,7 +565,7 @@ final class DashboardStore: ObservableObject {
     /// Which list currently holds this id (self-lookup for source recording).
     private func currentList(of id: String) -> ListKind? {
         guard let db = dashboard else { return nil }
-        for kind in [ListKind.approval, .review, .debt, .trash, .running, .completed]
+        for kind in [ListKind.approval, .review, .debt, .trash, .running, .completed, .archived]
         where ids(in: kind, of: db).contains(id) { return kind }
         return nil
     }
@@ -557,6 +579,7 @@ final class DashboardStore: ObservableObject {
         case .debt: return Set(db.debt.map { $0.id })
         case .trash: return Set(db.trash.map { $0.id })
         case .completed: return Set(db.completed.map { $0.id })
+        case .archived: return Set(db.archived.map { $0.id })
         }
     }
 
@@ -748,6 +771,19 @@ final class DashboardStore: ObservableObject {
 
     var visibleTrash: [TrashItem] {
         Self.sortCards((dashboard?.trash ?? []).filter { !isHidden($0.id) }, id: { $0.id })
+    }
+
+    // v0.20 card-lifecycle: archived items (sealed, off-board). dashboard.py
+    // already ships them newest-first by archived_at, so keep backend order
+    // rather than re-sorting by id (unlike trash, archive is a chronological
+    // browse view); still honor the sticky-hide of an in-flight unarchive.
+    var visibleArchived: [ArchivedItem] {
+        (dashboard?.archived ?? []).filter { !isHidden($0.id) }
+    }
+
+    /// Archive count including in-flight archive echoes (rendered nowhere).
+    var visibleArchivedCount: Int {
+        visibleArchived.count + echoes(for: .archived).count
     }
 
     var visibleReview: [ReviewItem] {

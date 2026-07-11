@@ -782,6 +782,12 @@ struct ApprovalCardView: View {
                 }
             }
         } content: {
+            // v0.20 card-lifecycle 「回锅」marker: this proposal is a
+            // previously-accepted thread re-raised because new info arrived.
+            // Amber, at the very top so a tired expert reads "this came back"
+            // before anything else; the new ask (reraisedNote) shows inline.
+            if card.reraised { reraisedBadge }
+
             // §16 self-improvement lineage: first line when this improves another req.
             if let imp = card.improvement_of, !imp.isEmpty {
                 Text(L("↳ 改进 #\(imp)", "↳ Improves #\(imp)"))
@@ -891,6 +897,40 @@ struct ApprovalCardView: View {
             return (repo as NSString).lastPathComponent
         }
         return nil
+    }
+
+    // MARK: 回锅 marker (v0.20 card-lifecycle re-raise)
+
+    // amber pill 「↩︎ 回锅·Returned」+ plain-language subtext + the new ask.
+    private static let reraisedTint = Color.orange
+    @ViewBuilder private var reraisedBadge: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(L("↩︎ 回锅 · Returned", "↩︎ Returned"))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Self.reraisedTint)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Self.reraisedTint.opacity(0.15))
+                    .clipShape(Capsule())
+                Text(L("你之前验收过这件事，来了新信息",
+                       "You accepted this before — new info arrived"))
+                    .font(.system(size: 10))
+                    .foregroundColor(Self.reraisedTint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let note = card.reraisedNote, !note.isEmpty {
+                Text(L("新增：", "New: ") + note)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Self.reraisedTint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(7)
+        .background(Self.reraisedTint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: badge row
@@ -1114,6 +1154,14 @@ struct TaskRow: View {
                 app.submit(id: task.id, action: "revert_review", comment: nil)
             } label: { Label(L("退回待验收", "Back to review"), systemImage: "arrow.uturn.backward") }
                 .tint(.teal)
+            // v0.20 card-lifecycle: 归档 — seal this accepted thread. One tap,
+            // no confirm (reversible via the Archive section's 取消归档). Sealed
+            // = excluded from matching, so later mentions open a fresh card
+            // instead of re-raising this one.
+            Button {
+                app.submit(id: task.id, action: "archive", comment: nil)
+            } label: { Label(L("归档", "Archive"), systemImage: "archivebox") }
+                .tint(.gray)
         }
         Spacer()
     }
@@ -1432,8 +1480,12 @@ struct DebtRow: View {
     unowned let app: AppDelegate
 
     var body: some View {
-        // detail slot only when there are source quotes to show — otherwise
-        // the toggle would open an empty drawer.
+        surface.contextMenu { contextItems }
+    }
+
+    // detail slot only when there are source quotes to show — otherwise the
+    // toggle would open an empty drawer.
+    @ViewBuilder private var surface: some View {
         if let srcs = item.sources, !srcs.isEmpty {
             CardSurface(actions: { actionButtons },
                         detail: { SourceListView(sources: srcs)
@@ -1442,6 +1494,18 @@ struct DebtRow: View {
         } else {
             CardSurface(actions: { actionButtons }, content: { rowContent })
         }
+    }
+
+    // v0.20 card-lifecycle: 归档 lives in the context menu, deliberately
+    // distinct from the primary 删除 button — archive SEALS the item (keeps it
+    // as a record, excluded from matching so it never re-suggests), whereas
+    // delete drops it into trash. Kept off the main button row so the two
+    // one-click actions (研究并提议 / 删除) stay uncluttered.
+    @ViewBuilder private var contextItems: some View {
+        Button {
+            app.submit(id: item.id, action: "archive", comment: nil)
+        } label: { Label(L("归档（封存，不再提示）", "Archive (seal, stop suggesting)"),
+                         systemImage: "archivebox") }
     }
 
     @ViewBuilder private var actionButtons: some View {
@@ -1821,6 +1885,122 @@ struct TrashRow: View {
                         .foregroundColor(.secondary)
                 }
                 if let age = RelativeTime.since(item.trashed_at) {
+                    Text(age)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+}
+
+// v0.20 card-lifecycle §5: 归档 browse view — mirrors TrashSectionView
+// (collapsible, collapsed by default in the popover; search box; per-row
+// 「取消归档」→ unarchive). Archived cards are sealed & off-board (like trash),
+// so this is a calm browse+restore surface, never a work queue.
+struct ArchiveSectionView: View {
+    let items: [ArchivedItem]
+    let count: Int
+    unowned let app: AppDelegate
+    // main-window page opens expanded; popover keeps collapsed-by-default.
+    var startExpanded: Bool = false
+    @State private var expanded = false
+    @State private var query = ""
+
+    private var filtered: [ArchivedItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return items }
+        return items.filter {
+            $0.title.lowercased().contains(q)
+                || ($0.summary?.lowercased().contains(q) ?? false)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(expanded ? "▾" : "▸")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    SectionHeader(title: L("🗄 归档 · archive", "🗄 Archive"), count: count,
+                                  help: L("你验收后封存的线程（和自动归档的冷交付）。封存=不再参与匹配，后续相关信息会开新卡而不是回锅这张。可随时「取消归档」放回原状态列。",
+                                          "Threads you sealed after accepting (plus auto-archived cold deliveries). Sealed = excluded from matching, so later mentions open a fresh card instead of re-raising this one. Unarchive any time to return it to its previous lane."))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                TextField(L("搜索标题 / summary…", "Search title / summary…"), text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+
+                if filtered.isEmpty {
+                    EmptyRow(text: items.isEmpty ? L("归档为空", "Archive is empty")
+                                                 : L("无匹配项", "No matches"))
+                } else {
+                    ForEach(filtered, id: \.id) { it in
+                        ArchiveRow(item: it, app: app)
+                    }
+                }
+            }
+        }
+        .onAppear { if startExpanded { expanded = true } }
+    }
+}
+
+struct ArchiveRow: View {
+    let item: ArchivedItem
+    unowned let app: AppDelegate
+
+    // "user" → 你归档 (green); "auto" → 自动归档 (gray). Anything else omits.
+    private var reasonBadge: (text: String, color: Color)? {
+        switch item.archive_reason {
+        case "user": return (L("你归档", "You archived"), .green)
+        case "auto": return (L("自动归档", "Auto-archived"), .gray)
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        CardSurface {
+            Button {
+                app.submit(id: item.id, action: "unarchive", comment: nil)
+            } label: { Label(L("取消归档", "Unarchive"), systemImage: "arrow.uturn.left") }
+                .tint(.green)
+
+            Spacer()
+        } content: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "archivebox")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .padding(.top, 2)
+                Text(item.displaySummary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Spacer(minLength: 4)
+                if let rb = reasonBadge {
+                    Badge(text: rb.text, color: rb.color)
+                }
+            }
+
+            // tag line: kind · previous status · relative age
+            HStack(spacing: 6) {
+                if let k = item.kind, !k.isEmpty { Badge(text: k, color: .gray) }
+                if let ps = item.prev_status, !ps.isEmpty {
+                    Text(L("原状态: ", "was: ") + ps)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                if let age = RelativeTime.since(item.archived_at) {
                     Text(age)
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
