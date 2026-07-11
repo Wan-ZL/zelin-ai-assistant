@@ -14,8 +14,9 @@ four product questions instead of dumping vanity per-event counts:
 
 No raw rows, no props payloads, and no device ids ever appear in the output —
 devices show up only as a distinct COUNT (pinned by tests/test_insights_report).
-The legacy raw counts survive in a collapsed <details> appendix so the
-``**Totals:** N events`` line the workflow greps for is preserved.
+The legacy raw counts survive in a collapsed <details> appendix; the
+``**Totals:** N events`` line the workflow greps for is emitted once, in the
+main body (never duplicated into the appendix).
 
 If ``ANTHROPIC_API_KEY`` is set, the funnel/failure/abandonment/retention views
 are summarized into up to 5 concrete "Fix X — because <number>" recommendations
@@ -300,6 +301,15 @@ def path_failures(rows: list) -> dict:
 # --------------------------------------------------------------------------- #
 _CARD_EVENTS = {"milestone_first_card", "card_sent"}
 
+# Once-per-install milestone / first-reach events are used exactly once BY
+# CONSTRUCTION (analytics.log_first fires each a single time per install), so
+# they always dominate the "used exactly once" table without signalling any
+# abandonment. Exclude them — this view is about features TRIED then DROPPED.
+_MILESTONE_EVENTS = {
+    "milestone_first_card", "milestone_first_approval",
+    "milestone_first_delivery", "feature_first_reach",
+}
+
 
 def abandonment(rows: list) -> dict:
     configured: set = set()
@@ -317,7 +327,8 @@ def abandonment(rows: list) -> dict:
             configured.add(dev)
         if ev in _CARD_EVENTS:
             carded.add(dev)
-        per_event[ev][dev] += 1
+        if ev not in _MILESTONE_EVENTS:   # milestones are once-by-construction
+            per_event[ev][dev] += 1
 
     no_card = configured - carded
     used_once = {}
@@ -529,9 +540,10 @@ def render_retention(r: dict) -> str:
 
 
 def render_tables(agg: dict) -> str:
+    # NOTE: the **Totals:** line is emitted ONCE by build_body in the main body
+    # (the no-change gate greps it via head -n1); the appendix must NOT repeat
+    # it, or the report would carry two identical Totals lines.
     parts = [
-        f"**Totals:** {agg['total']} events from {agg['devices']} devices.",
-        "",
         "### Events",
         _table(["event", "count"],
                sorted(agg["by_event"].items(), key=lambda kv: -kv[1])),

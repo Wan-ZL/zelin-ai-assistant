@@ -137,9 +137,13 @@ class AbandonmentTestCase(unittest.TestCase):
         self.assertEqual(ab["configured"], 3)          # a, b, c
         self.assertEqual(ab["configured_no_card"], 1)  # only dev-c
         self.assertAlmostEqual(ab["configured_no_card_pct"], 100.0 / 3)
-        # every event above is emitted exactly once per device
-        self.assertEqual(ab["used_once"]["milestone_first_delivery"], 1)
+        # real feature paths still count: card_sent fired once for dev-b
         self.assertEqual(ab["used_once"]["card_sent"], 1)
+        # once-per-install milestones / first-reach events are used-once BY
+        # CONSTRUCTION, so they must be EXCLUDED (they'd otherwise dominate).
+        for ev in ("milestone_first_card", "milestone_first_approval",
+                   "milestone_first_delivery", "feature_first_reach"):
+            self.assertNotIn(ev, ab["used_once"])
 
 
 class RetentionTestCase(unittest.TestCase):
@@ -214,6 +218,8 @@ class BodyTestCase(unittest.TestCase):
         body = insights_report.build_body(self.agg, None, days=30, **self.views)
         # matches insights.yml's sed 's/.*\*\*Totals:\*\* \([0-9]*\) events.*/'
         self.assertIn(f"**Totals:** {self.agg['total']} events from", body)
+        # emitted exactly ONCE — the appendix no longer repeats it
+        self.assertEqual(body.count("**Totals:**"), 1)
 
     def test_body_with_insights_section(self):
         body = insights_report.build_body(
@@ -246,8 +252,9 @@ class BodyTestCase(unittest.TestCase):
 
 
 class LegacyAggregateTestCase(unittest.TestCase):
-    """The appendix aggregate/render_tables are unchanged — the Totals line and
-    per-event error rates still work for the collapsed raw-counts appendix."""
+    """The appendix aggregate/render_tables still emit the per-event tables and
+    error rates — but the **Totals:** line is now emitted ONLY by build_body in
+    the main body, never duplicated into this collapsed raw-counts appendix."""
 
     def test_aggregate_and_render_tables(self):
         rows = [
@@ -259,7 +266,9 @@ class LegacyAggregateTestCase(unittest.TestCase):
         self.assertEqual(agg["total"], 3)
         self.assertEqual(agg["devices"], 2)
         md = insights_report.render_tables(agg)
-        self.assertIn("3 events from 2 devices", md)
+        self.assertIn("### Events", md)
+        # appendix must NOT repeat the main-body Totals line
+        self.assertNotIn("**Totals:**", md)
         self.assertIn("| auto_resume | 1 | 2 | 50.0% |", md)
         self.assertNotIn("dev-a", md)
 

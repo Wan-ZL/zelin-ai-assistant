@@ -546,19 +546,22 @@ def _mcp_present_marker_path() -> Path:
 def _probe_slack_mcp() -> bool:
     """`claude mcp list` grepped for a Slack server. Any error / non-zero exit
     / unparseable output -> False (honest: we file mcp_not_configured rather
-    than pretend the MCP is there). Never raises."""
-    from act.executor import _runner_env
-    from act.radar import _claude_bin   # cron/launchd PATH 兜底（radar.py 事故注）
+    than pretend the MCP is there). TRULY total: the imports and the
+    _claude_bin()/_runner_env() arg-eval are inside the guard too, so any
+    Exception (not only OSError/SubprocessError) degrades to False instead of
+    escaping into the slack radar scan(). Never raises."""
     try:
+        from act.executor import _runner_env
+        from act.radar import _claude_bin   # cron/launchd PATH 兜底（radar.py 事故注）
         proc = subprocess.run(
             [_claude_bin(), "mcp", "list"],
             capture_output=True, text=True, timeout=30, env=_runner_env(),
         )
-    except (OSError, subprocess.SubprocessError):
+        if getattr(proc, "returncode", 1) != 0:
+            return False
+        return "slack" in (getattr(proc, "stdout", "") or "").lower()
+    except Exception:  # noqa: BLE001 - probe must never raise into the radar
         return False
-    if getattr(proc, "returncode", 1) != 0:
-        return False
-    return "slack" in (getattr(proc, "stdout", "") or "").lower()
 
 
 def _slack_mcp_present() -> tuple[bool, bool]:

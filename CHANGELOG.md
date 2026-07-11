@@ -27,6 +27,32 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.19.1] - 2026-07-11
+
+Patch release: a voice-profile cleanup plus two follow-ups from the v0.19.0
+review — no new user-visible features.
+
+### Changed
+
+- **Voice-profile default drops the vulgar example**
+  (`config/voice-profile.default.md`): the shipped author's-voice layer keeps
+  all of its rules and register, but the illustrative Chinese chitchat line no
+  longer uses a crude interjection — softened to a clean casual exclamation
+  that makes the same point.
+- **Usage-insights abandonment table excludes once-per-install milestones**
+  (`scripts/insights_report.py`): the "used exactly once" / abandonment view no
+  longer counts the milestone / first-reach events (`milestone_first_card`,
+  `milestone_first_approval`, `milestone_first_delivery`, `feature_first_reach`)
+  that are used exactly once *by construction* and were drowning out the real
+  tried-then-dropped signal.
+- **De-duplicated the insights `**Totals:**` line**: it was emitted both in the
+  main body and again inside the `<details>` appendix — now emitted once, in the
+  main body (the no-change gate still greps it via `head -n1`).
+- **Hardened the Slack MCP probe** (`act/radar_slack.py`): `_probe_slack_mcp`
+  now wraps its imports and `_claude_bin()`/`_runner_env()` arg-eval inside the
+  guard too, so any exception (not only `OSError`/`SubprocessError`) degrades to
+  "not present / `mcp_not_configured`" instead of escaping into the radar scan.
+
 ## [0.19.0] - 2026-07-11
 
 Diagnose-and-fix, then measure: the board now surfaces the ingest paths that
@@ -651,7 +677,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.1...v0.18.0
