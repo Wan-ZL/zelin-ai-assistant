@@ -40,6 +40,12 @@ struct ApprovalCard: Decodable, Hashable {
     let dod: [String]   // §11 验收标准 — approving the card approves this too
     let processing: Bool   // AI is expanding a raised debt -> greyed spinner, no buttons
     let delivery_mode: String?   // v0.10 contract B: "chat" | "repo"
+    // v0.20 card-lifecycle re-raise: this proposal is a previously-accepted
+    // (delivered/merged) thread re-raised to card_sent after new actionable
+    // info arrived. reraised → amber 「回锅/Returned」marker; reraisedNote =
+    // the new ask, shown inline (新增:<note>).
+    let reraised: Bool
+    let reraisedNote: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, target_repo, target_name, target_kind
@@ -47,6 +53,8 @@ struct ApprovalCard: Decodable, Hashable {
         case repeated, cost_usd, show_cost, green_sign, disagreement
         case improvement_of, sources, plan, outputs, dod, processing
         case delivery_mode
+        case reraised
+        case reraisedNote = "reraised_note"
     }
 
     init(from decoder: Decoder) throws {
@@ -74,6 +82,8 @@ struct ApprovalCard: Decodable, Hashable {
         dod = (try? c.decodeIfPresent([String].self, forKey: .dod)) ?? []
         processing = (try? c.decodeIfPresent(Bool.self, forKey: .processing)) ?? false
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
+        reraised = (try? c.decodeIfPresent(Bool.self, forKey: .reraised)) ?? false
+        reraisedNote = try? c.decodeIfPresent(String.self, forKey: .reraisedNote)
     }
 
     /// Plain-language headline shown by default.
@@ -172,6 +182,53 @@ struct TrashItem: Decodable, Hashable {
         permanent = (try? c.decodeIfPresent(Bool.self, forKey: .permanent)) ?? false
         type = try? c.decodeIfPresent(String.self, forKey: .type)
         hardness = try? c.decodeIfPresent(String.self, forKey: .hardness)
+    }
+
+    /// Plain-language headline shown by default.
+    var displaySummary: String {
+        if let s = summary, !s.isEmpty { return s }
+        return title
+    }
+}
+
+// v0.20 card-lifecycle §5: archived item. Mirrors TrashItem (sealed, off-board
+// like trash) PLUS archive-specific fields. Sourced from load_archived(),
+// newest-first by archived_at. All fields decodeIfPresent → backward-compatible
+// (old payloads without `archived` decode to [] at the Dashboard level).
+struct ArchivedItem: Decodable, Hashable {
+    let id: String
+    let title: String
+    let summary: String?
+    let kind: String?          // "suggestion" | "debt" | "proposal" …
+    let trashed_at: String?    // mirrored from TrashItem (usually absent here)
+    let trash_reason: String?  // mirrored from TrashItem (usually absent here)
+    let permanent: Bool
+    let type: String?
+    let hardness: String?
+    // archive-specific
+    let archived_at: String?     // ISO8601 — sort key + relative-age display
+    let archive_reason: String?  // "user" (你归档) | "auto" (自动归档)
+    let prev_status: String?     // lane to restore into on unarchive (usually delivered)
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, kind, trashed_at, trash_reason, permanent, type, hardness
+        case archived_at, archive_reason, prev_status
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        summary = try? c.decodeIfPresent(String.self, forKey: .summary)
+        kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        trashed_at = try? c.decodeIfPresent(String.self, forKey: .trashed_at)
+        trash_reason = try? c.decodeIfPresent(String.self, forKey: .trash_reason)
+        permanent = (try? c.decodeIfPresent(Bool.self, forKey: .permanent)) ?? false
+        type = try? c.decodeIfPresent(String.self, forKey: .type)
+        hardness = try? c.decodeIfPresent(String.self, forKey: .hardness)
+        archived_at = try? c.decodeIfPresent(String.self, forKey: .archived_at)
+        archive_reason = try? c.decodeIfPresent(String.self, forKey: .archive_reason)
+        prev_status = try? c.decodeIfPresent(String.self, forKey: .prev_status)
     }
 
     /// Plain-language headline shown by default.
@@ -306,9 +363,11 @@ struct Counts: Decodable {
     let completed: Int
     let debt: Int
     let trash: Int
+    let archived: Int   // v0.20 card-lifecycle — sealed/off-board like trash
 
     private enum CodingKeys: String, CodingKey {
         case needs_approval, running, needs_input, review, completed, debt, trash
+        case archived
     }
 
     init(from decoder: Decoder) throws {
@@ -320,12 +379,13 @@ struct Counts: Decodable {
         completed = (try? c.decodeIfPresent(Int.self, forKey: .completed)) ?? 0
         debt = (try? c.decodeIfPresent(Int.self, forKey: .debt)) ?? 0
         trash = (try? c.decodeIfPresent(Int.self, forKey: .trash)) ?? 0
+        archived = (try? c.decodeIfPresent(Int.self, forKey: .archived)) ?? 0
     }
 
     static let empty = Counts()
     private init() {
         needs_approval = 0; running = 0; needs_input = 0; review = 0
-        completed = 0; debt = 0; trash = 0
+        completed = 0; debt = 0; trash = 0; archived = 0
     }
 }
 
@@ -339,6 +399,9 @@ struct Dashboard: Decodable {
     let completed: [RunningTask]
     let debt: [DebtItem]
     let trash: [TrashItem]
+    // v0.20 card-lifecycle — sealed archived items (off-board like trash).
+    // Optional 分区，缺失时解码为 []（向后兼容 old payloads）。
+    let archived: [ArchivedItem]
     // 契约 merge-review §六 — optional 分区，缺失时解码为 []（向后兼容）。
     let merge_suggestions: [MergeSuggestion]
     // §26 — optional; nil = no known update (older actd never emits it).
@@ -346,6 +409,7 @@ struct Dashboard: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case generated_at, counts, needs_approval, running, needs_input, review, completed, debt, trash
+        case archived
         case merge_suggestions, update_available
     }
 
@@ -360,6 +424,7 @@ struct Dashboard: Decodable {
         completed = (try? c.decodeIfPresent([RunningTask].self, forKey: .completed)) ?? []
         debt = (try? c.decodeIfPresent([DebtItem].self, forKey: .debt)) ?? []
         trash = (try? c.decodeIfPresent([TrashItem].self, forKey: .trash)) ?? []
+        archived = (try? c.decodeIfPresent([ArchivedItem].self, forKey: .archived)) ?? []
         merge_suggestions = (try? c.decodeIfPresent([MergeSuggestion].self,
                                                     forKey: .merge_suggestions)) ?? []
         // an empty latest is meaningless — treat as "no known update"

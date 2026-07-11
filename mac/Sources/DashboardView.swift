@@ -411,6 +411,11 @@ struct DashboardView: View {
 
         TrashSectionView(items: store.visibleTrash, count: store.visibleTrashCount,
                          pinnedLocal: store.pinnedLocal, app: app)
+
+        // v0.20 card-lifecycle: 归档 browse+restore section (follows the trash
+        // precedent — collapsible, collapsed by default in the popover).
+        ArchiveSectionView(items: store.visibleArchived,
+                           count: store.visibleArchivedCount, app: app)
     }
 
     // footer freshness: generated_at age (orange past 90 s = actd likely down);
