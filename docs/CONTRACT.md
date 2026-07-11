@@ -766,3 +766,38 @@ publishable key，RLS 仅 INSERT）。**不建新表**——anon 的 INSERT poli
   telemetry basic 级的"只有元数据"承诺）。App 侧上报入口文案须明示这一点。
 - 本地 analytics 事件（`inbox_feedback`）只记元数据（ids 数量 + 上传结果），
   **text 绝不进 events.jsonl**——报告原文只经 feedback 自己的通道走。
+
+---
+
+# v0.17.2 additions（attach ≠ 打回：review 卡会话活动的诚实投影）
+
+## 30. review 卡的会话活动（`session_active`）与返工轮的区分
+
+**背景（2026-07 生产实况）**：v0.17.1 起双击卡片即 `claude attach` 回原会话，
+owner 常在待验收卡上 attach 提问/聊天。此前 dashboard 把「status=review +
+roster 上该 session 正在 working」投影成 running[] 的 `state="review-active"`，
+App 显示「验收后返工中」——但没有任何打回 verdict 发生过，这是误标。
+
+**判别规则（语义拍板）**：真返工轮**只**从打回 verdict 开始（§10 `rework` /
+§21 merge 注入，均走 `executor.rework`）。打回派发点写
+`execution.rework_count`（int，累计打回次数）与 `execution.last_rework_at`
+（UTC ISO）——§20 execution 块此前未列出的既有键，此处补记（add-only）——并且
+**同一调用内**把状态置回 `executing`。因此「status=review + session 正在
+working」不可能是返工轮，只能是用户 attach / 会话自发活动。
+
+- **dashboard 投影**：这类卡**留在 `review[]`**（不再挪去 running[]）；
+  `review[]` 项新增 optional 字段 `session_active`（bool；Swift
+  `decodeIfPresent`，缺失=false）。App 在待验收卡上显示平静徽章
+  `L("会话有新活动", "Session active")`，验收/打回按钮照常可用；
+  counts.review/running 跟随列表。
+- **重新收割保持不变**：actd reconcile 见到 review 卡 session 转 working 时记
+  内部标记 `execution._review_active`（下划线内部键，非投影字段），settle
+  （done/缺席）时 `harvest_delivery` 刷新 `delivered_summary`/`final_draft`
+  （非空才覆盖），blocked 保留标记等下一轮——终端对话可能产生新交付物，这是
+  特性，保留。analytics 事件名 `review_active`/`review_reharvested` 不变。
+- **真返工轮行为不变**：打回后卡回 `executing`，照常走 running[]
+  （state="working"），done 后重新提升 review 并收割。
+- **兼容性**：老 App + 新 actd —— review[] 未知字段被忽略，卡片留在待验收列
+  （诚实降级）；新 App + 老 actd —— 仍可能收到 running[] 里
+  `state="review-active"` 的行（该行形状只来自老 actd，add-only 不删），App
+  徽章文案改为同语义的「会话有新活动」。

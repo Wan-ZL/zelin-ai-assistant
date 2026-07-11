@@ -901,14 +901,17 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
 # auto-resume interrupted executing tasks
 # --------------------------------------------------------------------------- #
 def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
-    """待验收任务的 attach 回流 —— 只动投影层，不动状态机（registry 仍是 review）。
+    """待验收任务的会话活动（attach 回流）—— 不动状态机（registry 仍是 review）。
 
-    Zelin 可能 ``claude attach`` 回原 session 继续输入，agent 重新 working：
+    Zelin 可能 ``claude attach`` 回原 session 聊天/追问，agent 重新 working。
+    这不是返工轮 —— 真返工只从打回 verdict 开始，而打回（executor.rework）会在
+    同一调用里写 rework_count/last_rework_at 并把状态置回 executing（§30）：
     - roster working -> 在 execution 里记 ``_review_active=True``。dashboard 的
-      分流看的是 roster 实况，这个标记只给 actd 自己做「返工轮结束」判断用；
-    - 此前 ``_review_active`` 且现在 done/缺席 -> 这轮返工收工了：重新
+      分流看的是 roster 实况，这个标记只给 actd 自己做「活动结束」判断用；
+    - 此前 ``_review_active`` 且现在 done/缺席 -> 这轮会话活动收工了：重新
       harvest_delivery 刷新 delivered_summary/final_draft（非空才覆盖旧值），
-      并清掉标记。blocked 时标记保留（返工中途等输入，还没收工）。
+      并清掉标记 —— 终端对话可能产生新交付物，所以照旧收割。blocked 时标记
+      保留（等输入，还没收工）。
     Best-effort：任何异常吞掉并记日志，绝不影响主循环。
     """
     try:
@@ -924,12 +927,12 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
                 ex["_review_active"] = True
                 req.execution = ex
                 registry.save(req)
-                _log(f"reconcile: {req.id} review-active（attach 回流，agent 重新工作）")
+                _log(f"reconcile: {req.id} session-active（attach/会话有新活动，非打回返工）")
                 analytics.log_event("review_active", req=req.id)
             return
 
         if ex.get("_review_active") and (agent is None or state in _DONE_STATES):
-            # 返工轮结束 -> 重新收割交付物（收割失败/为空不覆盖旧值）
+            # 会话活动结束 -> 重新收割交付物（收割失败/为空不覆盖旧值）
             if executor is not None:
                 try:
                     harvested = executor.harvest_delivery(str(sid)) or {}
@@ -943,7 +946,7 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
             ex.pop("_review_active", None)
             req.execution = ex
             registry.save(req)
-            _log(f"reconcile: {req.id} 返工轮结束，已重新收割交付物")
+            _log(f"reconcile: {req.id} 会话活动结束，已重新收割交付物（attach 回流）")
             analytics.log_event("review_reharvested", req=req.id)
     except Exception as e:  # noqa: BLE001 - must never break the daemon pass
         _log(f"reconcile: review attach check {getattr(req, 'id', '?')} failed: {e}")

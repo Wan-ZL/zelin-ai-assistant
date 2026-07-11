@@ -466,37 +466,16 @@ def build_dashboard(
                         "dod": list(req.definition_of_done or []),
                     }
                 )
-            elif req.status == State.REVIEW.value and state in _RUNNING_STATES:
-                # attach 回流（只动投影层，不动状态机）：待验收后 Zelin 可能
-                # `claude attach` 回原 session 继续输入，agent 重新 working ——
-                # registry 仍是 review，但卡片临时回到「运行中」列（state=
-                # "review-active"，Swift 端 teal 徽章）。roster blocked/done/
-                # 缺席则走下面的分支，照旧进 review。
-                running.append(
-                    {
-                        "id": req.id,
-                        "name": name,
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "cwd": cwd,
-                        "state": "review-active",
-                        "started_at": (agent or {}).get("started_at"),
-                        "summary": req.summary or None,
-                        "plan": _as_list(req.plan),
-                        "dod": list(req.definition_of_done or []),
-                        "log": ex.get("log"),
-                        "dispatched_at": _epoch(ex.get("dispatched_at")),
-                        "delivery_mode": _delivery_mode(req),
-                        "last_error": ex.get("last_error"),
-                        "last_error_id": failures.classify(ex.get("last_error")),
-                    }
-                )
             elif req.status == State.REVIEW.value or state in _DONE_STATES:
                 # §11 待验收 — draft ready, awaiting Zelin's ✓/↩︎
                 # (agent-done-while-still-executing lands here too, covering the
                 # gap between dashboard passes and actd's promotion.)
+                # §30 session_active: a live WORKING agent on a review card can
+                # only be user attach / organic session activity — a genuine 打回
+                # verdict (executor.rework) flips review->executing in the same
+                # call, so it never presents as review+working. The card stays
+                # in this lane (calm「会话有新活动」badge in the app); actd's
+                # reconcile keeps re-harvesting deliverables when it settles.
                 review.append(
                     {
                         "id": req.id,
@@ -517,6 +496,7 @@ def build_dashboard(
                         "dispatched_at": _epoch(ex.get("dispatched_at")),
                         "review_at": _epoch(ex.get("review_at")),
                         "delivery_mode": _delivery_mode(req),
+                        "session_active": state in _RUNNING_STATES,
                     }
                 )
             elif state in _BLOCKED_STATES:
