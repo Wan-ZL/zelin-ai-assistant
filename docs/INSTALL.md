@@ -125,7 +125,7 @@ app 未签名,首次启动被 Gatekeeper 拦:在 `/Applications` 里**右键 →
 - **麦克风**:系统设置 → 隐私与安全性 → 麦克风 → 打开 app(录音转写用;只录屏可跳过)。
 - **完全磁盘访问权限(给 cron)**:系统设置 → 隐私与安全性 → 完全磁盘访问权限 → 左下 "+" → 按 ⌘⇧G 输入 `/usr/sbin/cron` → 添加并打开开关。ingest/radar 走 crontab 是因为 launchd 被 TCC 挡在 `~/Documents`(vault 所在)之外——见 `HANDOFF.md` §3。
 
-> ✅ **预期状态**:三个开关都已打开。注意:每次重新构建安装 app 后,屏幕录制授权会**静默失效**(ad-hoc 签名),症状与修复见 [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md)。
+> ✅ **预期状态**:三个开关都已打开。注意:**未配置稳定签名时**,每次重新构建安装 app 后屏幕录制授权会**静默失效**(ad-hoc 签名),症状与修复见 [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md)。维护者按 TROUBLESHOOTING 里的说明配好 stable self-signed 证书(`mac/scripts/make-signing-cert.sh` + 两个 GitHub secret)后,**之后的更新不再要求重新授权**——只有从 ad-hoc 切到 self-signed 的那一个版本会再弹一次。Gatekeeper 首次打开的拦截**不受影响**:self-signed 没有 notarize,首启仍需右键→打开一次(见步骤 4)。
 
 ### 步骤 7 · 心跳验证
 

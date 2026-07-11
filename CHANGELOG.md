@@ -25,7 +25,21 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Stable self-signed code-signing infra so TCC grants persist across updates**
+  (`mac/scripts/make-signing-cert.sh`, `.github/workflows/release.yml`): a
+  one-time, idempotent maintainer script creates a free (non-notarized)
+  self-signed `Zelin AI Engineer Dev` code-signing identity and prints how to
+  wire it into CI via two secrets (`MACOS_SIGN_CERT_P12`,
+  `MACOS_SIGN_CERT_PASSWORD`). The release workflow imports the cert into a
+  throwaway keychain before the build (guarded — absent secret ⇒ ad-hoc
+  fallback, still builds) and fails loudly on a misconfigured secret. With
+  signing configured, the app's Designated Requirement stays constant across
+  versions, so macOS Screen Recording / TCC grants no longer reset on every
+  update. `mac/build.sh` is unchanged — it already probed for this identity.
+  One-time transition: the first stably-signed release re-prompts for Screen
+  Recording once; Gatekeeper first-open is unchanged (self-signed ≠ notarized).
 
 ## [0.19.1] - 2026-07-11
 
