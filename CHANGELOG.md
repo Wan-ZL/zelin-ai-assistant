@@ -25,8 +25,25 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.18.0] - 2026-07-11
+
+Board redesign, a defer verdict, and — the big one — richer, honest-by-default
+telemetry.
+
 ### Added
 
+- **「存备选」— defer a proposal to the backlog** (`docs/CONTRACT.md` §10):
+  a fourth on-card button sends a proposal to the backlog instead of
+  approving or rejecting it; unlike reject (which trashes and kills
+  dedup-matching), defer keeps the card matchable so the radar can merge
+  future mentions. One click, undo via the backlog's 研究并提议
+  ([#34](https://github.com/Wan-ZL/zelin-ai-assistant/pull/34))
+- **Lane definitions**: every board lane header gets a `?` icon — click for
+  a popover explaining what the lane means, hover for a tooltip — plus
+  empty-state copy that teaches the lane when it has no cards
+  ([#33](https://github.com/Wan-ZL/zelin-ai-assistant/pull/33))
 - **Richer behavior telemetry (metadata only, default-on)**: new events
   `mw_section_dwell` (per-page dwell), `mw_setting_change` (which settings
   key changed — never the value), `board_search` (query length only),
@@ -60,6 +77,11 @@ other file needs editing. To cut a release:
 
 ### Changed
 
+- **Board lane order is now backlog-first**: 备选 | 提案 | 运行中 | 待验收 |
+  已验收 (the backlog pool sits upstream, left of proposals, with a quieted
+  header so proposals still draw the eye), and the 已验收 lane's English
+  label is now "Done"
+  ([#33](https://github.com/Wan-ZL/zelin-ai-assistant/pull/33))
 - **`level: detailed` no longer attaches any content by itself** (previously
   ≤200-char instruction/delivery/question summaries) — content is controlled
   by the separate `capture_input` switch; level only sets behavior-event
@@ -547,7 +569,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.15.0...v0.16.0
