@@ -27,6 +27,48 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.19.0] - 2026-07-11
+
+Diagnose-and-fix, then measure: the board now surfaces the ingest paths that
+are silently failing with a one-tap fix, and a lifecycle funnel replaces raw
+event counts in the usage insights report.
+
+### Added
+
+- **Board diagnostic cards** (`mac/Sources/Diagnostics.swift`): when an ingest
+  path you've configured is silently failing, the task board / popover now
+  synthesizes a plain-language diagnostic card — one sentence naming the
+  problem, one primary button that jumps straight to the fix. Cards only show
+  for paths you've actually set up (never noise), are dismissable, and vanish
+  on their own once the path recovers. Composed Swift-side from
+  `state/radar_health.json`; no new `dashboard.json` partition.
+- **Obsidian radar health tracking**: the Obsidian radar now writes an
+  `obsidian` entry into `state/radar_health.json` (same shape as gmail/slack),
+  but **only** from the cron ingest chain (`AIASSISTANT_CRON=1`) — gated by
+  `radar._owns_health()` so a TCC-blocked launchd context or a manual run can
+  never stomp cron's good health with a fake-empty vault. Entries carry an
+  optional `last_cards` count and a `skip_reason` vocabulary (`disabled` /
+  `vault_missing` / `vault_empty` / `no_api_key` / `extract_failed`).
+- **Slack `mcp_not_configured` diagnosis** (B4): Slack radar health tells the
+  actionable "fallback is on but there's no token and the claude CLI has no
+  Slack MCP" case apart from a transient `mcp_failed:` error, via a
+  `claude mcp list` pre-check cached in `state/slack_mcp_present.marker`.
+- **Lifecycle / activation-funnel telemetry milestones** (metadata only,
+  at most one per install; docs/TELEMETRY.md): `feature_first_reach` for
+  `app_launch` (first launch) and `ingest_configured` (first ingest source
+  live) on the app side; daemon-side `milestone_first_card`,
+  `milestone_first_approval`, and `milestone_first_delivery` fired once each
+  through a single choke point (`registry.save`, actd approve, executor
+  dispatch). Behavior fields only (`req` id / counts) — no card titles, links,
+  or summaries — reusing the existing `analytics.content_gate` privacy
+  boundary with no schema migration.
+- **Rewritten Usage Insights report** (`scripts/insights_report.py`): instead
+  of raw event counts it now reports an activation funnel
+  (launch → ingest configured → first card → first approval → first delivery),
+  reliability, abandonment, and retention (by `client_ts`) — aggregate
+  counts / ratios only, device ids never leak, anonymous devices merged across
+  all installs.
+
 ## [0.18.1] - 2026-07-11
 
 Patch release: bug fixes, one cleanup, and an honesty correction to the config
@@ -609,7 +651,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.17.0...v0.17.1
