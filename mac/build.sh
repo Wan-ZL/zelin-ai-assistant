@@ -120,7 +120,11 @@ fi
 # --- codesign: prefer the stable self-signed identity so TCC grants (screen
 # recording etc.) SURVIVE reinstalls; ad-hoc ("-") invalidates them every build.
 SIGN_ID="Zelin AI Engineer Dev"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+# NOTE: no `-v` — this identity is a self-signed cert that is NOT trusted
+# (CSSMERR_TP_NOT_TRUSTED), so `-v` (valid/trusted-only) would hide it. Trust is
+# irrelevant to codesign + TCC persistence; the untrusted cert still signs fine
+# and yields a stable cert-based Designated Requirement.
+if security find-identity -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
     echo "==> Codesigning with '$SIGN_ID' (stable identity, TCC-safe)"
 else
     SIGN_ID="-"

@@ -84,9 +84,11 @@ jobs:
 
           # fail LOUDLY if a misconfigured secret didn't actually yield the identity —
           # better a red build than a silently ad-hoc release that resets TCC grants.
-          if ! security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
+          # No `-v`: the self-signed cert is untrusted (CSSMERR_TP_NOT_TRUSTED), which
+          # `-v` (trusted-only) would hide even though it signs fine.
+          if ! security find-identity -p codesigning | grep -q "$IDENTITY"; then
             echo "::error::signing cert secret present but identity '$IDENTITY' not found — check MACOS_SIGN_CERT_P12 / MACOS_SIGN_CERT_PASSWORD"
-            security find-identity -v -p codesigning || true
+            security find-identity -p codesigning || true
             exit 1
           fi
           echo "signing identity '$IDENTITY' ready — build.sh will sign with it"

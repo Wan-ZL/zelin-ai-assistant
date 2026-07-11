@@ -60,7 +60,11 @@ if [ ! -f "$LOGIN_KEYCHAIN" ]; then
 fi
 
 # --- idempotency guard ---
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+# No `-v`: this self-signed cert is untrusted (CSSMERR_TP_NOT_TRUSTED), so `-v`
+# (valid/trusted-only) would NOT list it — the guard would then miss an existing
+# identity and create a duplicate CN (codesign "ambiguous, matches multiple
+# identities"). Trust is irrelevant here, so probe without `-v`.
+if security find-identity -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     if [ "$FORCE" -eq 0 ]; then
         echo "==> Identity '$IDENTITY' already exists in your keychain — nothing to do (idempotent)."
         echo "    build.sh already signs local builds with it."
@@ -131,12 +135,21 @@ security import "$P12_PATH" -k "$LOGIN_KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/
 # Let codesign use the key WITHOUT a GUI prompt on every build. This updates the
 # key's ACL partition list, which needs your macOS LOGIN password — used locally
 # only, never printed, never uploaded.
+#
+# Non-interactive path: if $KEYCHAIN_PW is set (e.g. CI or an automated re-run),
+# use it as the login password instead of prompting. Otherwise prompt as before.
 echo ""
-echo "To let codesign use the key non-interactively, macOS must update the key's"
-echo "partition list, which needs your macOS LOGIN password (local use only)."
-printf "macOS login password (blank = skip; you'd click 'Always Allow' on first build): "
-read -r -s LOGIN_PW || true
-echo ""
+if [ -n "${KEYCHAIN_PW:-}" ]; then
+    echo "To let codesign use the key non-interactively, macOS must update the key's"
+    echo "partition list — using the login password from \$KEYCHAIN_PW (not prompting)."
+    LOGIN_PW="$KEYCHAIN_PW"
+else
+    echo "To let codesign use the key non-interactively, macOS must update the key's"
+    echo "partition list, which needs your macOS LOGIN password (local use only)."
+    printf "macOS login password (blank = skip; you'd click 'Always Allow' on first build): "
+    read -r -s LOGIN_PW || true
+    echo ""
+fi
 if [ -n "${LOGIN_PW:-}" ]; then
     if security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
         -k "$LOGIN_PW" "$LOGIN_KEYCHAIN" >/dev/null 2>&1; then
@@ -151,8 +164,11 @@ fi
 LOGIN_PW=""
 
 # --- verify the identity is now usable ---
+# No `-v`: the freshly-imported self-signed cert is untrusted
+# (CSSMERR_TP_NOT_TRUSTED), so `-v` (trusted-only) would NOT list it and this
+# check would false-negative even though the cert signs fine. Probe without `-v`.
 echo ""
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+if security find-identity -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
     echo "==> OK: '$IDENTITY' is now a usable code-signing identity."
 else
     echo "ERROR: '$IDENTITY' not found after import — something went wrong." >&2
