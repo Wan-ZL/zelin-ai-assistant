@@ -559,8 +559,8 @@ struct TelemetryBlockView: View {
     @ObservedObject private var i18n = LanguageStore.shared
 
     var body: some View {
-        (Text(L("匿名使用统计默认开启，用于改进产品——含功能事件与你输入的文本（每条截断 500 字符；绝不含 AI 的回答、屏幕内容或密钥）。",
-                "Anonymous usage stats are on by default to improve the product — including feature events and the text you type (each clipped to 500 chars; never the AI's answers, screen content, or keys)."))
+        (Text(L("匿名使用统计（含你输入的文本，每条截断 500 字）默认开启以改进产品。",
+                "Anonymous usage stats (including the text you type, clipped to 500 chars each) are on by default to improve the product."))
             + Text(" ")
             + Text(L("详情与关闭在设置。", "Details & opt-out in Settings."))
                 .foregroundColor(.accentColor)
