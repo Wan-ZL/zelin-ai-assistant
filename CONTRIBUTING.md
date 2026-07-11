@@ -72,6 +72,22 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
 - After merging, verify HEAD actually moved (`git log -1`) — a failed `--ff-only` merge prints "Aborting" to stderr, which pipelines can swallow.
 - External PRs can't be ff-merged as-is; rebase them onto `main` (keeping the linear history) and run the three gates before the merge lands.
 
+## Versioning
+
+Releases follow [Semantic Versioning](https://semver.org), applied like this
+while the project is pre-1.0:
+
+- **PATCH** (`x.y.Z`) — bug fixes, small UX corrections, docs. "小修小补."
+- **MINOR** (`x.Y.0`) — new user-visible features. Pre-1.0, breaking changes
+  also ride a minor bump: the commit must carry the conventional `!` marker
+  and the changelog entry must call the break out prominently.
+- **MAJOR** — reserved for 1.0 and post-1.0 breaking changes.
+
+Merging a PR does **not** produce an installer: packages are built only when
+a maintainer cuts a release (version bump + changelog + `vX.Y.Z` tag — see
+the procedure at the top of [CHANGELOG.md](CHANGELOG.md)). Contributors never
+need to touch the version.
+
 ## License of contributions
 
 This project is licensed under the [Functional Source License 1.1, MIT Future License (FSL-1.1-MIT)](LICENSE.md). By submitting a contribution (pull request, patch, or suggestion incorporated into the code), you agree that:

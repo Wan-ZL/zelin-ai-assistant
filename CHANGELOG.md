@@ -12,6 +12,10 @@ truth** for the project version. `mac/build.sh` stamps it into the app bundle's
 `Info.plist` at build time, and `mac/package.sh` reads it for the `.pkg` — no
 other file needs editing. To cut a release:
 
+0. Pick the bump: **patch** for bug fixes / small UX corrections / docs,
+   **minor** for new user-visible features (pre-1.0, breaking changes also
+   ride a minor with a `!` commit marker and a prominent changelog callout).
+   See CONTRIBUTING.md "Versioning".
 1. Bump `__version__` in `act/__init__.py`.
 2. Rename the `[Unreleased]` section below to `[X.Y.Z] - YYYY-MM-DD` and add a
    fresh empty `[Unreleased]` heading above it; update the compare links at the
