@@ -277,8 +277,11 @@ class SetThreadKeyGuardTestCase(unittest.TestCase):
                 registry.derive_thread_key = orig
 
     def test_noop_when_absent(self):
-        # On this branch A's helper has not landed -> _set_thread_key must be a
-        # silent no-op (no crash, thread_key never set).
+        # When A's helper is absent, _set_thread_key must be a silent no-op:
+        # no crash, thread_key left at its default (unpopulated). Post-A the
+        # Requirement carries thread_key as a field defaulting to None, so the
+        # "unpopulated" assertion is `is None` (before A landed it was the
+        # absence of the attribute) — same intent, integrated reality.
         req = registry.Requirement(id="R-1",
                                    sources=[{"gmail_thread_id": "123"}])
         orig = getattr(registry, "derive_thread_key", None)
@@ -286,7 +289,7 @@ class SetThreadKeyGuardTestCase(unittest.TestCase):
             del registry.derive_thread_key
         try:
             radar._set_thread_key(req)  # must not raise
-            self.assertFalse(hasattr(req, "thread_key"))
+            self.assertIsNone(req.thread_key)
         finally:
             if orig is not None:
                 registry.derive_thread_key = orig

@@ -104,7 +104,9 @@ enum MainSection: String, CaseIterable, Identifiable {
     // v0.10.2: trash sits right before settings (契约); the kanban keeps
     // excluding trash — this page is where deleted cards live in the window.
     // v0.14 (§27): ask — in-app Q&A over the docs + this machine's state.
-    case dashboard, ask, deps, ingest, trash, settings, about
+    // v0.20 card-lifecycle: archive — sealed/off-board cards (like trash),
+    // sits right after trash and before settings.
+    case dashboard, ask, deps, ingest, trash, archive, settings, about
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -113,6 +115,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .deps: return L("依赖检查", "Dependencies")
         case .ingest: return L("录制与 ingest", "Recording & Ingest")
         case .trash: return L("回收站", "Trash")
+        case .archive: return L("归档", "Archive")
         case .settings: return L("设置", "Settings")
         case .about: return L("关于", "About")
         }
@@ -124,6 +127,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .deps: return "checklist"
         case .ingest: return "record.circle"
         case .trash: return "trash"
+        case .archive: return "archivebox"
         case .settings: return "gearshape"
         case .about: return "info.circle"
         }
@@ -376,6 +380,12 @@ struct MainWindowView: View {
                             if let app = NSApp.delegate as? AppDelegate {
                                 TrashPageView(store: app.store, app: app)
                             }
+                        case .archive:
+                            // v0.20 归档 page — popover 同款 ArchiveSectionView
+                            // (search / unarchive), same store.
+                            if let app = NSApp.delegate as? AppDelegate {
+                                ArchivePageView(store: app.store, app: app)
+                            }
                         case .settings: SettingsFormView()
                         case .about:
                             // §26: the update row observes the shared store.
@@ -426,6 +436,26 @@ struct TrashPageView: View {
     var body: some View {
         TrashSectionView(items: store.visibleTrash, count: store.visibleTrashCount,
                          pinnedLocal: store.pinnedLocal, app: app, startExpanded: true)
+            // keep cards at their popover-designed width (kanban lanes are
+            // 400pt too) instead of stretching across the whole window
+            .frame(maxWidth: 420, alignment: .leading)
+    }
+}
+
+// MARK: - Archive page (v0.20 card-lifecycle) — main-window sidebar 归档
+//
+// Mirrors TrashPageView: a thin store-OBSERVING wrapper around the popover's
+// ArchiveSectionView (search / unarchive) opened expanded. Archive has no pin
+// (sealed cards are chronological, not permanent-toggled), so no pinnedLocal.
+struct ArchivePageView: View {
+    @ObservedObject var store: DashboardStore
+    // re-render on language switch (same pattern as KanbanView)
+    @ObservedObject private var i18n = LanguageStore.shared
+    unowned let app: AppDelegate
+
+    var body: some View {
+        ArchiveSectionView(items: store.visibleArchived, count: store.visibleArchivedCount,
+                           app: app, startExpanded: true)
             // keep cards at their popover-designed width (kanban lanes are
             // 400pt too) instead of stretching across the whole window
             .frame(maxWidth: 420, alignment: .leading)
