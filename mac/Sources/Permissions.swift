@@ -546,17 +546,21 @@ struct CapabilityRowsView: View {
 }
 
 /// First-run telemetry disclosure (v0.18): one low-key honest line — stats
-/// are ON by default, metadata only — plus a link to the Settings section
-/// that holds the full detail, the off toggle and the capture_input switch.
-/// Low-key but NOT hidden: the link is right here, one click away.
-/// Rendering this block still writes the consent-surface marker the Python
-/// uploader gates on (unchanged semantics).
+/// are ON by default and, per the shipped default, INCLUDE the text the
+/// user types into the app (truth in labeling: the copy below must never
+/// claim "no personal text" while capture_input defaults on; the honesty
+/// drift-guard in tests/test_telemetry_level.py checks this file). Plus a
+/// link to the Settings section that holds the full detail and the off
+/// switches. Low-key but NOT hidden: the link is right here, one click
+/// away. Rendering this block still writes the consent-surface marker the
+/// Python uploader gates on (unchanged semantics — nothing uploads before
+/// this line has been shown).
 struct TelemetryBlockView: View {
     @ObservedObject private var i18n = LanguageStore.shared
 
     var body: some View {
-        (Text(L("匿名使用统计默认开启，用于改进产品——默认只含功能事件元数据（事件名/时间/随机设备号），不含屏幕内容或你输入的文字。",
-                "Anonymous usage stats are on by default to improve the product — by default they carry feature-event metadata only (event name / time / random device id), never screen content or anything you type."))
+        (Text(L("匿名使用统计默认开启，用于改进产品——含功能事件与你输入的文本（每条截断 500 字符；绝不含 AI 的回答、屏幕内容或密钥）。",
+                "Anonymous usage stats are on by default to improve the product — including feature events and the text you type (each clipped to 500 chars; never the AI's answers, screen content, or keys)."))
             + Text(" ")
             + Text(L("详情与关闭在设置。", "Details & opt-out in Settings."))
                 .foregroundColor(.accentColor)

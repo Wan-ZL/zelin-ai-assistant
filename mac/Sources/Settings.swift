@@ -80,11 +80,13 @@ struct SettingsFormView: View {
     @State private var voiceGenFailed = false
     // product improvement program (docs/TELEMETRY.md) — anonymous usage
     // stats, default ON; saved as the nested {"telemetry": {enabled, level,
-    // capture_input}} override (CONTRACT §15). capture_input (default OFF)
-    // is the typed-text opt-in — only effective together with 详细 level.
+    // capture_input}} override (CONTRACT §15). capture_input (default ON
+    // since v0.18, like level=detailed) is the typed-text switch — only
+    // effective together with 详细 level; the copy above must keep saying
+    // typed text is included while these defaults hold.
     @State private var telemetryEnabled = true
-    @State private var telemetryLevel = "basic"
-    @State private var telemetryCaptureInput = false
+    @State private var telemetryLevel = "detailed"
+    @State private var telemetryCaptureInput = true
     // §26: in-app update check (GitHub releases API, at most once a day).
     @State private var updateCheckEnabled = true
     @State private var status = ""
@@ -643,8 +645,8 @@ struct SettingsFormView: View {
 
     private var telemetryGroup: some View {
         group(L("产品改进计划", "Product improvement program")) {
-            Toggle(L("参与匿名使用统计（默认开，帮助改进产品）",
-                     "Share anonymous usage statistics (on by default; helps improve the product)"),
+            Toggle(L("参与产品改进（默认开，默认含我输入的文本——可在下方单独关闭）",
+                     "Product improvement (on by default; includes text I type by default — separately switchable below)"),
                    isOn: Binding(
                 get: { telemetryEnabled },
                 set: { v in
@@ -653,7 +655,7 @@ struct SettingsFormView: View {
                 }))
                 .toggleStyle(.switch)
             HStack {
-                Text(L("收集级别", "Collection level"))
+                Text(L("行为事件级别", "Behavior-event level"))
                     .font(.system(size: 12))
                     .frame(width: 220, alignment: .leading)
                 Picker("", selection: Binding(
@@ -662,20 +664,20 @@ struct SettingsFormView: View {
                         telemetryLevel = v == "detailed" ? "detailed" : "basic"
                         persistTelemetry()
                     })) {
-                    Text(L("基础（默认）", "Basic (default)")).tag("basic")
-                    Text(L("详细", "Detailed")).tag("detailed")
+                    Text(L("基础", "Basic")).tag("basic")
+                    Text(L("详细（默认）", "Detailed (default)")).tag("detailed")
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
                 .disabled(!telemetryEnabled)
                 Spacer()
             }
-            Text(L("基础与详细都只发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号，不含任何内容文字。详细级是下方「收集输入文本」的前置档位，单独打开不收集任何文字。",
-                   "Both Basic and Detailed send anonymous event metadata only — event name, time, page/action, timing counts, random device id, app version; never any content text. Detailed is the prerequisite tier for \"include the text I type\" below and collects no text on its own."))
+            Text(L("基础与详细都发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号。切到基础还会同时停掉下方的输入文本上传（文本需要详细级）。",
+                   "Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Toggle(L("收集我输入的文本以更懂我（快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
-                     "Include the text I type, to know me better (captures, questions, rework feedback, search terms; ≤500 chars each)"),
+            Toggle(L("上传我输入的文本以更懂我（默认开：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
+                     "Upload the text I type, to know me better (on by default: captures, questions, rework feedback, search terms; ≤500 chars each)"),
                    isOn: Binding(
                 get: { telemetryCaptureInput },
                 set: { v in
@@ -684,11 +686,11 @@ struct SettingsFormView: View {
                 }))
                 .toggleStyle(.switch)
                 .disabled(!telemetryEnabled || telemetryLevel != "detailed")
-            Text(L("默认关。开启后（且级别为详细时）会上传你输入的文本原文（截断 500 字符）——绝不含 AI 的回答、屏幕内容或密钥。级别为基础时此开关无效。",
-                   "Off by default. When on (and the level is Detailed) the text you type is uploaded verbatim, truncated to 500 chars — never the AI's answers, screen content, or secrets. Has no effect at the Basic level."))
+            Text(L("只收集你亲手输入进本 App 的文字（截断 500 字符）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息、密钥。关掉此开关即停止一切文本上传，行为统计不受影响。",
+                   "Collects only what you personally type into this app (truncated to 500 chars) — never the AI's answers, screen-recording content, emails or Slack/iMessage messages, or secrets. Turning this off stops all text upload; behavior stats are unaffected."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text(L("关掉最上方开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+            Text(L("关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
                    "Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
@@ -951,7 +953,7 @@ struct SettingsFormView: View {
         // telemetry — mirror the effective config: overrides (nested form
         // shared with the first-run permissions page, flat keys accepted
         // too) → config.yaml telemetry block → built-in defaults (on /
-        // basic), same precedence as act/lib/config.py.
+        // detailed / capture on, v0.18), same precedence as act/lib/config.py.
         let tele = ov["telemetry"] as? [String: Any] ?? [:]
         if let v = tele["enabled"] as? Bool {
             telemetryEnabled = v
@@ -965,19 +967,19 @@ struct SettingsFormView: View {
         let level = ((tele["level"] as? String)
             ?? (ov["telemetry.level"] as? String)
             ?? SettingsIO.configNestedScalar(block: "telemetry", key: "level")
-            ?? "basic").lowercased()
+            ?? "detailed").lowercased()
         telemetryLevel = level == "detailed" ? "detailed" : "basic"
-        // capture_input（输入文本收集，默认关）— same precedence chain;
-        // effective truth mirrored by Telemetry.captureInput() (Utils.swift).
+        // capture_input（输入文本上传，v0.18 起默认开）— same precedence
+        // chain; effective truth mirrored by Telemetry.captureInput().
         if let v = tele["capture_input"] as? Bool {
             telemetryCaptureInput = v
         } else if let v = ov["telemetry.capture_input"] as? Bool {
             telemetryCaptureInput = v
         } else if let v = SettingsIO.configNestedScalar(block: "telemetry",
                                                         key: "capture_input") {
-            telemetryCaptureInput = (v.lowercased() == "true")
+            telemetryCaptureInput = (v.lowercased() != "false")
         } else {
-            telemetryCaptureInput = false
+            telemetryCaptureInput = true
         }
     }
 
@@ -1078,11 +1080,11 @@ struct SettingsFormView: View {
         var tele = merged["telemetry"] as? [String: Any] ?? [:]
         let cfgEnabled = configLayerBool(block: "telemetry", key: "enabled", default: true)
         let cfgLevelRaw = (SettingsIO.configNestedScalar(block: "telemetry", key: "level")
-            ?? "basic").lowercased()
+            ?? "detailed").lowercased()
         let cfgLevel = cfgLevelRaw == "detailed" ? "detailed" : "basic"
         let level = telemetryLevel == "detailed" ? "detailed" : "basic"
         let cfgCapture = configLayerBool(block: "telemetry", key: "capture_input",
-                                         default: false)
+                                         default: true)
         if telemetryEnabled == cfgEnabled {
             tele.removeValue(forKey: "enabled")
         } else {

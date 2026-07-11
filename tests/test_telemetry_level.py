@@ -1,11 +1,14 @@
 """Typed-text capture gating (docs/TELEMETRY.md, CONTRACT §15 telemetry keys).
 
-Both telemetry levels are metadata-only. User-typed content fields
-(instruction / delivery summaries, capture text, Ask questions) require BOTH
-`telemetry.capture_input: true` (default false) AND level="detailed" — the
-double gate lives at the EMIT site: at any other combination the fields never
-reach events.jsonl, so they can never be uploaded either. Content fields are
-clipped to analytics.CONTENT_CLIP (500 chars).
+User-typed content fields (instruction summaries, capture text,
+Ask questions) require BOTH `telemetry.capture_input: true` AND
+level="detailed" — SHIPPED DEFAULTS since v0.18, which is why the disclosure
+copy must say typed text is included (DisclosureCopyHonestyTestCase guards
+that). The double gate lives at the EMIT site: with either switch off the
+fields never reach events.jsonl, so they can never be uploaded either.
+Content fields are clipped to analytics.CONTENT_CLIP (500 chars). Scope
+boundary (RadarContentBoundaryTestCase): only text the user types into this
+app — radar-extracted third-party content never enters telemetry.
 """
 import json
 import subprocess
@@ -51,8 +54,10 @@ class ClipTestCase(unittest.TestCase):
 
 
 class CaptureInputConfigTestCase(unittest.TestCase):
-    """The capture_input switch: default FALSE everywhere; explicit config
-    values honored; §15 override plumbing (nested + flat forms)."""
+    """The capture_input switch: shipped default TRUE (v0.18, with
+    level=detailed — a vanilla install collects typed text and the docs say
+    so); explicit config values honored; §15 override plumbing (nested +
+    flat forms)."""
 
     def _load_with_yaml(self, body: str) -> config.Config:
         path = Path(tempfile.mkdtemp(prefix="cfg-capture-")) / "config.yaml"
@@ -60,17 +65,24 @@ class CaptureInputConfigTestCase(unittest.TestCase):
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
 
-    def test_dataclass_default_is_false(self):
-        self.assertFalse(config.Config().telemetry_capture_input)
+    def test_dataclass_default_is_true(self):
+        self.assertTrue(config.Config().telemetry_capture_input)
+        self.assertTrue(config.Config().capture_input_active())
 
-    def test_missing_key_resolves_false(self):
+    def test_missing_key_resolves_true(self):
         cfg = self._load_with_yaml("telemetry:\n  level: detailed\n")
-        self.assertFalse(cfg.telemetry_capture_input)
-
-    def test_explicit_yaml_true_is_honored(self):
-        cfg = self._load_with_yaml(
-            "telemetry:\n  level: detailed\n  capture_input: true\n")
         self.assertTrue(cfg.telemetry_capture_input)
+
+    def test_explicit_yaml_false_is_honored(self):
+        cfg = self._load_with_yaml(
+            "telemetry:\n  level: detailed\n  capture_input: false\n")
+        self.assertFalse(cfg.telemetry_capture_input)
+        self.assertFalse(cfg.capture_input_active())
+
+    def test_basic_level_disables_content_even_with_capture_on(self):
+        cfg = self._load_with_yaml("telemetry:\n  level: basic\n")
+        self.assertTrue(cfg.telemetry_capture_input)  # switch untouched
+        self.assertFalse(cfg.capture_input_active())  # but the gate is shut
 
     def _load_with_overrides(self, data: dict) -> config.Config:
         config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -216,16 +228,12 @@ class ReviewPromotedCaptureGateTestCase(unittest.TestCase):
         self.assertIsNotNone(ev)
         self.assertNotIn("summary", ev)
 
-    def test_detailed_alone_never_records_summary(self):
-        ev = self._promote("R-981", "detailed")
-        self.assertIsNotNone(ev)
-        self.assertNotIn("summary", ev)
-
-    def test_capture_plus_detailed_records_clipped_summary(self):
+    def test_summary_is_model_output_and_never_uploads(self):
+        # red line (docs/TELEMETRY.md): delivered_summary is MODEL OUTPUT —
+        # retired from telemetry entirely in v0.18, even with BOTH gates open.
         ev = self._promote("R-982", "detailed", capture=True)
         self.assertIsNotNone(ev)
-        self.assertIn("机密摘要", ev.get("summary", ""))
-        self.assertLessEqual(len(ev["summary"]), analytics.CONTENT_CLIP)
+        self.assertNotIn("summary", ev)
 
     def test_exec_seconds_is_metadata_at_basic(self):
         # dispatch -> delivery wall time is a behavior field, NOT content:
@@ -294,8 +302,9 @@ class QuickCaptureGateTestCase(unittest.TestCase):
 
 class InboxCaptureGateTestCase(unittest.TestCase):
     """actd._apply_capture resolves the gate via config (no cfg argument) —
-    chars is always-on metadata; text needs the sandbox config.yaml to open
-    both gates."""
+    chars is always-on metadata; the DEFAULT config (no config.yaml, v0.18
+    shipped defaults) has both gates open, so text IS recorded; an explicit
+    capture_input: false stops it."""
 
     def setUp(self):
         config.ensure_state_dirs()
@@ -310,20 +319,126 @@ class InboxCaptureGateTestCase(unittest.TestCase):
                 last = e
         return last
 
-    def test_default_config_records_chars_but_no_text(self):
+    def test_default_config_records_chars_and_text(self):
         ev = self._capture("默认配置下打的字")
         self.assertIsNotNone(ev)
         self.assertEqual(ev.get("chars"), len("默认配置下打的字"))
+        self.assertIn("默认配置下打的字", ev.get("text", ""))
+
+    def test_capture_off_keeps_chars_but_drops_text(self):
+        config.CONFIG_PATH.write_text(
+            "telemetry:\n  capture_input: false\n", encoding="utf-8")
+        self.addCleanup(config.CONFIG_PATH.unlink)
+        ev = self._capture("关掉开关后打的字")
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev.get("chars"), len("关掉开关后打的字"))
         self.assertNotIn("text", ev)
 
-    def test_gates_open_records_text(self):
+    def test_basic_level_also_drops_text(self):
         config.CONFIG_PATH.write_text(
-            "telemetry:\n  level: detailed\n  capture_input: true\n",
-            encoding="utf-8")
+            "telemetry:\n  level: basic\n", encoding="utf-8")
         self.addCleanup(config.CONFIG_PATH.unlink)
-        ev = self._capture("双开关打开后打的字")
+        ev = self._capture("基础档下打的字")
         self.assertIsNotNone(ev)
-        self.assertIn("双开关打开后打的字", ev.get("text", ""))
+        self.assertNotIn("text", ev)
+
+
+class ExampleConfigDefaultsTestCase(unittest.TestCase):
+    """The SHIPPED example config must resolve to content collection ON —
+    and actually produce content on an emit path (audit requirement: the
+    vanilla download collects the full set out of the box)."""
+
+    REPO_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.yaml"
+
+    def _example_cfg(self) -> config.Config:
+        missing = Path(tempfile.mkdtemp(prefix="cfg-none-")) / "config.yaml"
+        with mock.patch.object(config, "CONFIG_PATH", missing), \
+             mock.patch.object(config, "CONFIG_EXAMPLE_PATH",
+                               self.REPO_EXAMPLE):
+            return config.load_config()
+
+    def test_example_defaults_collect_content(self):
+        cfg = self._example_cfg()
+        self.assertTrue(cfg.telemetry_enabled)
+        self.assertEqual(cfg.telemetry_level, "detailed")
+        self.assertTrue(cfg.telemetry_capture_input)
+        self.assertTrue(cfg.capture_input_active())
+
+    def test_example_defaults_produce_content_on_ask(self):
+        cfg = self._example_cfg()
+        runner = mock.Mock(return_value=subprocess.CompletedProcess(
+            ["claude"], 0,
+            stdout='{"answer": "好的", "citation": null}', stderr=""))
+        res = ask.answer("出厂默认下打的问题", runner=runner, cfg=cfg)
+        self.assertTrue(res["ok"])
+        last = None
+        for e in analytics.read_events():
+            if e.get("event") == "ask_answered" and e.get("ok"):
+                last = e
+        self.assertIn("出厂默认下打的问题", last.get("question", ""))
+
+
+class RadarContentBoundaryTestCase(unittest.TestCase):
+    """Scope red line: radar candidates originate from third-party content
+    (screen OCR / emails / Slack messages) — radar_triage events must stay
+    metadata-only even with BOTH gates open."""
+
+    def setUp(self):
+        config.ensure_state_dirs()
+        for p in config.REGISTRY_DIR.glob("*.yaml"):
+            p.unlink()
+
+    def test_radar_triage_never_carries_content(self):
+        cfg = _cfg("detailed", True)  # gates fully open on purpose
+        req = Requirement(id=registry.next_id(), title="第三方邮件里提取的事项",
+                          summary="来自邮件正文的敏感内容",
+                          status=State.DETECTED.value)
+        decision = {"action": "new_proposal",
+                    "note": "note derived from third-party mail"}
+        quick_capture.apply_triage(decision, req, cfg)
+        evs = [e for e in analytics.read_events()
+               if e.get("event") == "radar_triage"]
+        self.assertTrue(evs)
+        for e in evs:
+            for banned in ("text", "note", "quote", "comment", "summary",
+                           "title", "instruction", "question"):
+                self.assertNotIn(banned, e)
+
+
+class DisclosureCopyHonestyTestCase(unittest.TestCase):
+    """Truth-in-labeling drift-guard (CONTRACT §15 v0.18): while
+    capture_input defaults ON, the first-run disclosure must SAY typed text
+    is included, and no consent/settings copy may claim no personal text is
+    collected. Checked against the Swift sources like the
+    tests/test_capture_exclusion.py drift-guard."""
+
+    ROOT = Path(__file__).resolve().parent.parent
+    PERMISSIONS = ROOT / "mac" / "Sources" / "Permissions.swift"
+    SETTINGS = ROOT / "mac" / "Sources" / "Settings.swift"
+    EXAMPLE = ROOT / "config.example.yaml"
+
+    def test_first_run_disclosure_mentions_typed_text(self):
+        src = self.PERMISSIONS.read_text(encoding="utf-8")
+        self.assertIn("你输入的文本", src)
+        self.assertIn("text you type", src)
+
+    def test_no_copy_denies_text_collection(self):
+        banned = ("绝不含屏幕内容、对话或任何个人文本",
+                  "不含屏幕内容或你输入的文字",
+                  "不含任何内容文字",
+                  "never any personal text",
+                  "never screen content, conversations, or any personal",
+                  "never .* anything you type")
+        import re
+        for path in (self.PERMISSIONS, self.SETTINGS):
+            src = path.read_text(encoding="utf-8")
+            for phrase in banned:
+                self.assertIsNone(re.search(phrase, src),
+                                  f"{path.name} still claims: {phrase!r}")
+
+    def test_example_config_documents_default_on(self):
+        src = self.EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("capture_input: true", src)
 
 
 if __name__ == "__main__":

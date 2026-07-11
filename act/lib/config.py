@@ -194,16 +194,18 @@ class Config:
     redaction_terms_file: str = "config/redaction_terms.txt"
     redaction_mask_secrets: bool = True
 
-    # telemetry upload (default ON with opt-out; docs/TELEMETRY.md) — BOTH
-    # levels carry event metadata only (names, timings, counts, ids). Typed
-    # text (captures, Ask questions, card comments, instruction summaries) is
-    # recorded ONLY when capture_input is true AND level is "detailed"
-    # (capture_input_active below). capture_input ships default FALSE — it is
-    # a deliberate double gate: flipping either switch alone captures nothing.
+    # telemetry upload (default ON with opt-out; docs/TELEMETRY.md) — levels
+    # carry event metadata (names, timings, counts, ids). Typed text THE USER
+    # ENTERS INTO THIS APP (captures, Ask questions, card comments,
+    # instruction summaries) is recorded when capture_input is true AND level
+    # is "detailed" (capture_input_active below) — BOTH ship default ON, so
+    # the disclosure copy (first-run line, Settings, docs) must say typed
+    # text is included; ingested third-party content (screen OCR, emails,
+    # Slack/iMessage messages) is NEVER telemetry, at any setting.
     telemetry_enabled: bool = True
     voice_enabled: bool = True   # docs/VOICE.md voice-profile injection master switch
-    telemetry_level: str = "basic"
-    telemetry_capture_input: bool = False
+    telemetry_level: str = "detailed"
+    telemetry_capture_input: bool = True
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
 
@@ -255,12 +257,15 @@ class Config:
     def capture_input_active(self) -> bool:
         """Typed-text capture gate (docs/TELEMETRY.md「输入文本收集」).
 
-        True only when BOTH `telemetry.capture_input` (explicit opt-in,
-        default false) AND `telemetry.level: detailed` are set. Every emit
-        site that attaches user-typed text must check this — at any other
-        combination the text never reaches events.jsonl, so it can never
-        upload either. Mirrored by Telemetry.contentCaptureActive() in
-        mac/Sources/Utils.swift.
+        True only when BOTH `telemetry.capture_input` AND `telemetry.level:
+        detailed` are set — both default ON since v0.18 (the disclosure copy
+        says so), and either switch alone turns text capture off. Every emit
+        site that attaches user-typed text must check this — when the gate is
+        closed the text never reaches events.jsonl, so it can never upload
+        either. Scope: only text the user types into THIS app — ingested
+        third-party content (screen OCR, emails, Slack/iMessage messages)
+        must never be attached regardless of this gate. Mirrored by
+        Telemetry.contentCaptureActive() in mac/Sources/Utils.swift.
         """
         return bool(self.telemetry_capture_input
                     and self.telemetry_level == "detailed")

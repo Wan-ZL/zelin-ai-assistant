@@ -24,8 +24,10 @@ EVENTS_PATH: Path = ANALYTICS_DIR / "events.jsonl"
 
 # Hard cap for every user-typed content field (docs/TELEMETRY.md「输入文本
 # 收集」): capture text / Ask questions / card comments / instruction
-# summaries all pass through clip(text, CONTENT_CLIP). Model OUTPUT is never
-# captured at any setting — only what the user typed.
+# summaries all pass through clip(text, CONTENT_CLIP). Model OUTPUT and
+# ingested third-party content (screen OCR / emails / Slack/iMessage
+# messages, tests/test_telemetry_level.py boundary guard) are never captured
+# at any setting — only what the user typed into this app.
 CONTENT_CLIP: int = 500
 
 
@@ -33,9 +35,12 @@ def content_gate(cfg=None) -> bool:
     """Emit-side gate for user-typed content fields (docs/TELEMETRY.md).
 
     True only when telemetry.capture_input is on AND level is "detailed"
-    (Config.capture_input_active). Loads config lazily so no-cfg call sites
-    (actd inbox helpers) can use it; any failure means False — content must
-    never leak because a gate check crashed.
+    (Config.capture_input_active) — both default ON since v0.18 (the
+    disclosure copy says so); either switch alone closes the gate. Only text
+    the user typed into THIS app may sit behind it — never pipeline/ingested
+    content. Loads config lazily so no-cfg call sites (actd inbox helpers)
+    can use it; any failure means False — content must never leak because a
+    gate check crashed.
     """
     try:
         cfg = cfg or config.load_config()

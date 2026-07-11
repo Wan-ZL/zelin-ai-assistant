@@ -1030,20 +1030,19 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。
                 req.set_status(registry.State.REVIEW)
                 registry.save(req)
-                # exec_s (metadata): dispatch -> delivery wall time. The
-                # delivery summary excerpt is content — capture_input-gated
-                # (docs/TELEMETRY.md), never at basic/detailed alone.
+                # exec_s (metadata): dispatch -> delivery wall time. No
+                # summary excerpt anymore (v0.18): delivered_summary is MODEL
+                # OUTPUT, which telemetry never stores at any setting
+                # (docs/TELEMETRY.md red line) — the pre-v0.18 detailed-level
+                # summary field is retired, not moved behind capture_input.
                 exec_s = None
                 disp_dt = _parse_iso(ex.get("dispatched_at"))
                 if disp_dt is not None:
                     exec_s = max(0, round(
                         (_dt.datetime.now(_dt.timezone.utc) - disp_dt)
                         .total_seconds()))
-                analytics.log_event(
-                    "review_promoted", req=req.id, exec_s=exec_s,
-                    summary=(analytics.clip(ex.get("delivered_summary"),
-                                            analytics.CONTENT_CLIP)
-                             if analytics.content_gate(cfg) else None))
+                analytics.log_event("review_promoted", req=req.id,
+                                    exec_s=exec_s)
             continue
         if ex.get("done"):
             # finished earlier; agent purged from the list — promote if missed

@@ -117,12 +117,18 @@ enum Analytics {
 
 /// Effective telemetry.level / telemetry.capture_input: settings overrides
 /// (nested form, then legacy flat keys) → config.yaml `telemetry:` block →
-/// built-in defaults (basic / false). The content gate requires BOTH
-/// capture_input AND level=detailed (docs/TELEMETRY.md「输入文本收集」) —
-/// emit sites attach typed text ONLY behind contentCaptureActive(), so at
-/// any other setting the text never reaches events.jsonl.
+/// built-in defaults (detailed / true — BOTH default ON since v0.18, which
+/// is why every disclosure surface must say typed text is included). The
+/// content gate requires BOTH capture_input AND level=detailed
+/// (docs/TELEMETRY.md「输入文本收集」) — emit sites attach typed text ONLY
+/// behind contentCaptureActive(); with either switch off the text never
+/// reaches events.jsonl. Scope red line: only text the user types into THIS
+/// app — ingested screen/mail/message content is never telemetry.
 enum Telemetry {
     static func level() -> String {
+        // explicit values: anything not "detailed" degrades to "basic"
+        // (fail-private on typos, matching act/lib/config.py); only a fully
+        // ABSENT key falls through to the built-in default "detailed".
         let ov = SettingsIO.readOverrides()
         if let t = ov["telemetry"] as? [String: Any], let l = t["level"] as? String {
             return l == "detailed" ? "detailed" : "basic"
@@ -133,7 +139,7 @@ enum Telemetry {
         if let l = SettingsIO.configNestedScalar(block: "telemetry", key: "level") {
             return l == "detailed" ? "detailed" : "basic"
         }
-        return "basic"
+        return "detailed"
     }
 
     static func captureInput() -> Bool {
@@ -145,9 +151,9 @@ enum Telemetry {
         if let v = ov["telemetry.capture_input"] as? Bool { return v }
         if let v = SettingsIO.configNestedScalar(block: "telemetry",
                                                  key: "capture_input") {
-            return v.lowercased() == "true"
+            return v.lowercased() != "false"
         }
-        return false
+        return true
     }
 
     static func contentCaptureActive() -> Bool {

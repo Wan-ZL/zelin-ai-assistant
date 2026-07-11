@@ -129,13 +129,14 @@ redaction:                             # 发给 AI 前的本地脱敏
   terms_file: config/redaction_terms.txt  # 你的词表（一行一条，re: 前缀=正则）
   mask_secrets: true                   # 内置密钥/token 掩码（sk-ant-/xox*/AKIA/gh*_/PEM）；默认开且不依赖 enabled
 
-# telemetry:                           # 匿名使用统计（**默认开**，见 docs/TELEMETRY.md 字段表）
-#   enabled: false                     # 关掉即完全停止上传（App 设置「产品改进计划」也能关）
-#   level: basic                       # basic（默认）/ detailed——两档都只有事件元数据（事件名/耗时/计数），
-#                                      # 不含任何内容文字；detailed 是下面 capture_input 的前置档位
-#   capture_input: false               # 【默认关】设 true（且 level: detailed）才会记录并上传你输入的
-#                                      # 文本原文（快速捕获、提问、打回反馈、搜索词；每条截断 500 字符）。
-#                                      # 绝不含 AI 的回答、屏幕内容或密钥。单独打开（level 仍是 basic）无效。
+# telemetry:                           # 匿名使用统计（**默认开、默认含你输入的文本**，见 docs/TELEMETRY.md 字段表）
+#   enabled: true                      # 【默认 true】总开关；false = 完全停止上传（App 设置「产品改进计划」也能关）
+#   level: detailed                    # 【默认 detailed】行为事件粒度（basic/detailed 都只是事件元数据：
+#                                      # 事件名/耗时/计数）；切 basic 同时会停掉下面的输入文本上传
+#   capture_input: true                # 【默认 true】上传你输入进本 App 的文本原文（快速捕获、提问、
+#                                      # 打回反馈、搜索词；每条截断 500 字符）。false = 只留行为事件。
+#                                      # 边界：只收集你亲手输入的文字——绝不含 AI 的回答、屏幕录制内容、
+#                                      # 邮件或 Slack/iMessage 消息、密钥（这些在任何设置下都不进 telemetry）。
 #   # 默认上传到维护者的 Supabase（内置 publishable key，RLS 只允许写入、读不回数据）。
 #   # fork/自建收集端：换成你自己的项目 URL；置空 "" 则彻底禁用上传。
 #   supabase_url: "https://xxxx.supabase.co"

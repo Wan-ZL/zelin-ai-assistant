@@ -14,9 +14,10 @@
 //               last-20 history read from state/ask_history.json (python is
 //               the only writer; the app only renders it).
 //
-// Privacy: 👍/👎 feedback goes to the LOCAL analytics log only — event name +
-// verdict at telemetry level basic; the question text is attached ONLY at
-// level "detailed" (emit-side gate, docs/TELEMETRY.md).
+// Privacy: 👍/👎 feedback goes to the LOCAL analytics log — event name +
+// verdict always; the question text is attached only while the content gate
+// is open (capture_input AND level=detailed, both default ON — emit-side
+// gate, docs/TELEMETRY.md).
 
 import AppKit
 import SwiftUI
