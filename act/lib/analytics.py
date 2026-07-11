@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re as _re
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -21,6 +22,11 @@ from act.lib import config
 
 ANALYTICS_DIR: Path = config.STATE_DIR / "analytics"
 EVENTS_PATH: Path = ANALYTICS_DIR / "events.jsonl"
+# Once-per-install milestone markers (docs/TELEMETRY.md 生命周期里程碑): one
+# empty file per milestone name under here suppresses every later log_first for
+# that milestone. Python counterpart of the Swift Analytics.firstReach marker
+# (mac/Sources/Utils.swift), which uses a UserDefaults flag for the same job.
+FIRST_DIR: Path = ANALYTICS_DIR / "first"
 
 # Hard cap for every user-typed content field (docs/TELEMETRY.md「输入文本
 # 收集」): capture text / Ask questions / card comments / instruction
@@ -104,6 +110,36 @@ def log_event(event: str, **fields) -> None:
                 rec[k] = v
         with open(EVENTS_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 - analytics must never break the pipeline
+        pass
+
+
+_MARKER_SAFE = _re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def log_first(event: str, **fields) -> None:
+    """Emit ``event`` at most once per install (lifecycle milestone).
+
+    A persistent empty marker under ``state/analytics/first/<event>`` records
+    that the milestone already fired; every later call is a no-op. ``fields``
+    are behavior-only metadata (req ids, counts) exactly like :func:`log_event`
+    — NEVER card content — so this fits the existing content_gate/privacy scope
+    without touching it.
+
+    Emit-then-mark: the event is logged first and the marker written after, so a
+    crash in between at worst double-emits. That is harmless because every
+    consumer of these milestones (scripts/insights_report.py) counts DISTINCT
+    devices, and multiple processes (radar cron vs. actd) racing the check can
+    likewise only cause a few harmless duplicates. Never raises.
+    """
+    try:
+        name = _MARKER_SAFE.sub("_", str(event)).strip("._") or "event"
+        marker = FIRST_DIR / name
+        if marker.exists():
+            return
+        log_event(event, **fields)
+        FIRST_DIR.mkdir(parents=True, exist_ok=True)
+        marker.touch()
     except Exception:  # noqa: BLE001 - analytics must never break the pipeline
         pass
 
