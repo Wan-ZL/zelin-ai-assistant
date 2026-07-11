@@ -615,6 +615,18 @@ class DisclosureCopyHonestyTestCase(unittest.TestCase):
         src = self.EXAMPLE.read_text(encoding="utf-8")
         self.assertIn("capture_input: true", src)
 
+    def test_settings_never_writes_the_v2_marker_passively(self):
+        # HOLE 2 regression guard: SettingsFormView is a non-lazy VStack —
+        # .onAppear fires on page INSERTION, not section visibility, so a
+        # marker writer there would arm content for upgraded installs that
+        # never saw the disclosure. Only the first-run disclosure block
+        # (Permissions.swift TelemetryBlockView) may write it; Settings
+        # opts in via the explicit capture_input key (captureTouched).
+        self.assertNotIn("markSurfaceShownV2",
+                         self.SETTINGS.read_text(encoding="utf-8"))
+        self.assertIn("markSurfaceShownV2",
+                      self.PERMISSIONS.read_text(encoding="utf-8"))
+
     def test_swift_secret_patterns_mirror_python(self):
         # FIX 3 drift-guard: the Swift Analytics.clip masker must carry every
         # pattern sanitize._SECRET_PATTERNS has (source-literal comparison —

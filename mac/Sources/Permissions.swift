@@ -174,10 +174,13 @@ enum TelemetryConsent {
     }
 
     /// v2 marker (CONTRACT §15 v0.18): gates CONTENT capture the way the v1
-    /// marker gates uploads — written only when a surface whose copy
-    /// discloses typed-text collection has rendered (this first-run line, or
-    /// the Settings telemetry section). Upgraded installs keep behavior
-    /// telemetry on the v1 marker but send no content until this exists.
+    /// marker gates uploads — written ONLY when the first-run disclosure
+    /// line (whose copy states typed text is included) actually renders;
+    /// the Settings page deliberately does NOT write it passively (non-lazy
+    /// VStack .onAppear fires on page open, not section visibility — that
+    /// would silently arm upgraded installs). Upgraded installs keep
+    /// behavior telemetry on the v1 marker but send no content until this
+    /// exists or they flip the Settings capture toggle (explicit key).
     static func markSurfaceShownV2() {
         writeMarkerOnce(Telemetry.consentV2Path)
     }

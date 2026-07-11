@@ -682,7 +682,11 @@ struct SettingsFormView: View {
                 get: { telemetryCaptureInput },
                 set: { v in
                     telemetryCaptureInput = v
-                    persistTelemetry()
+                    // captureTouched: flipping THIS toggle is the informed
+                    // interaction with the disclosing control — the key is
+                    // written explicitly (even when it equals the default)
+                    // so content_gate accepts it without the v2 marker.
+                    persistTelemetry(captureTouched: true)
                 }))
                 .toggleStyle(.switch)
                 .disabled(!telemetryEnabled || telemetryLevel != "detailed")
@@ -698,10 +702,13 @@ struct SettingsFormView: View {
         .font(.system(size: 12))
         // 首启披露页「详情与关闭在设置」跳转锚点（pendingAnchor = "telemetry"）
         .id("telemetry")
-        // v2 consent surface (CONTRACT §15 v0.18): this section's copy fully
-        // discloses typed-text collection — rendering it arms the content
-        // gate for installs whose first-run marker predates v0.18.
-        .onAppear { TelemetryConsent.markSurfaceShownV2() }
+        // NO passive v2-marker writer here: SettingsFormView is a non-lazy
+        // VStack, so .onAppear fires on INSERTION (opening the Settings page
+        // for any reason), not when this below-the-fold section is actually
+        // seen — that would silently arm content for upgraded installs.
+        // Legitimate arming: the first-run disclosure/wizard writes the v2
+        // marker when its copy renders, and flipping the toggle above writes
+        // the explicit capture_input key (captureTouched).
     }
 
     // v0.14 (audit 7.6): expert-only keys stay in config.yaml — say so, and
@@ -1076,10 +1083,14 @@ struct SettingsFormView: View {
         (NSApp.delegate as? AppDelegate)?.installMainMenu()
     }
 
-    /// §15 telemetry overrides (docs/TELEMETRY.md): nested form shared with
-    /// the first-run permissions page; sub-keys diff-written, legacy flat
-    /// keys dropped so the two spellings can never disagree.
-    private func persistTelemetry() {
+    /// §15 telemetry overrides (docs/TELEMETRY.md): nested form; enabled +
+    /// level sub-keys diff-written, legacy flat keys dropped so the two
+    /// spellings can never disagree. capture_input is DIFFERENT: it doubles
+    /// as the consent record (CONTRACT §15 v0.18) — once the user has
+    /// flipped its toggle (captureTouched) the key is written explicitly
+    /// even at the default value, and unrelated saves never diff-drop an
+    /// existing key (dropping it would silently revoke a recorded choice).
+    private func persistTelemetry(captureTouched: Bool = false) {
         var merged = SettingsIO.readOverrides()
         var tele = merged["telemetry"] as? [String: Any] ?? [:]
         let cfgEnabled = configLayerBool(block: "telemetry", key: "enabled", default: true)
@@ -1087,8 +1098,6 @@ struct SettingsFormView: View {
             ?? "detailed").lowercased()
         let cfgLevel = cfgLevelRaw == "detailed" ? "detailed" : "basic"
         let level = telemetryLevel == "detailed" ? "detailed" : "basic"
-        let cfgCapture = configLayerBool(block: "telemetry", key: "capture_input",
-                                         default: true)
         if telemetryEnabled == cfgEnabled {
             tele.removeValue(forKey: "enabled")
         } else {
@@ -1099,11 +1108,11 @@ struct SettingsFormView: View {
         } else {
             tele["level"] = level
         }
-        if telemetryCaptureInput == cfgCapture {
-            tele.removeValue(forKey: "capture_input")
-        } else {
+        if captureTouched {
             tele["capture_input"] = telemetryCaptureInput
         }
+        // not touched this save: leave any existing capture_input key
+        // exactly as it is — it records an explicit (consent) choice.
         if tele.isEmpty {
             merged.removeValue(forKey: "telemetry")
         } else {

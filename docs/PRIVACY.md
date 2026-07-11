@@ -167,8 +167,9 @@
   telemetry：雷达来源卡片的派发事件没有 instruction 字段（provenance 白名单），
   每个内容字段写入前先过**无条件**密钥掩码（与 redaction 配置无关），带附件的
   快速捕获只记你打的文字（`tests/test_telemetry_level.py` boundary guard）。
-  **升级保护（v2 consent）**：从旧版本升级的安装在**新版披露**（明说含输入文本）
-  第一次出现之前，内容一个字都不上传——只有行为元数据沿用旧的 consent 标记。
+  **升级保护（v2 consent）**：从旧版本升级的安装在**首启新版披露**（明说含输入
+  文本）真正渲染、或亲手切过设置页「上传我输入的文本」开关之前，内容一个字都
+  不上传——只有行为元数据沿用旧的 consent 标记（打开设置页本身不算看到披露）。
 - **关闭**：App 设置 →「产品改进计划」——关「上传我输入的文本」只停文本、留匿名
   行为统计（`telemetry.capture_input: false` 同效）；关总开关全部停止
   （`telemetry.enabled: false` 同效）。fork 用户还可以 `supabase_url: ""`

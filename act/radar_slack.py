@@ -606,10 +606,17 @@ def mcp_scan(cfg: config.Config,
             plan=[],
             sources=[{
                 "who": r.get("who") or "slack",
-                "channel": r.get("channel") or "slack",
+                # provenance red line (docs/TELEMETRY.md): "channel" feeds
+                # executor._USER_ORIGIN_CHANNELS — it must NEVER be
+                # LLM-controlled. r["channel"] is the extraction LLM's free
+                # text over third-party messages (a channel literally named
+                # "quick", or injected content, would otherwise pass the
+                # allowlist). Hardcode like the native path; the reported
+                # channel NAME rides in "ref" for display only.
+                "channel": "slack",
                 "date": r.get("date"),
                 "quote": r.get("quote") or r.get("summary"),
-                "ref": None,
+                "ref": (str(r.get("channel")) if r.get("channel") else None),
             }],
             notes="from Slack (MCP fallback)",
         )
