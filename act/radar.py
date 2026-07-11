@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import re
 import subprocess
 import time
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from act.executor import _runner_env
-from act.lib import analytics, config, sanitize
+from act.lib import analytics, config, health, sanitize, secrets
 from act.lib.registry import Requirement
 
 MARKER_PATH_NAME = "radar.marker"
@@ -177,6 +178,48 @@ def _is_high_confidence(req: Requirement) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# obsidian radar_health (v0.19.0) — cron-only writer
+# --------------------------------------------------------------------------- #
+def _owns_health() -> bool:
+    """Only the cron ingest chain owns the obsidian health marker.
+
+    install.sh:455 runs this pass with ``AIASSISTANT_CRON=1``; the retired
+    (B3) / TCC-blocked launchd context and manual ``python -m act.radar`` runs
+    — which would see an empty vault under ~/Documents (no FDA) and mislabel it
+    vault_empty — must NEVER overwrite the cron pass's good health. Gating the
+    write on this flag makes the cron the single authoritative writer.
+    """
+    return os.environ.get("AIASSISTANT_CRON") == "1"
+
+
+def _note_health(ok: bool, reason: Optional[str] = None,
+                 cards: Optional[int] = None) -> None:
+    """Write the obsidian radar_health entry — cron-only (see _owns_health).
+    Never raises (health must never break a pass)."""
+    if not _owns_health():
+        return
+    try:
+        health.update_radar_health("obsidian", ok=ok, skip_reason=reason,
+                                   cards=cards)
+    except Exception:  # noqa: BLE001 - health must never break a radar pass
+        pass
+
+
+def _has_anthropic_key() -> bool:
+    """Mirror ingest/process-screenpipe.sh:118-134 + executor._runner_env: an
+    Anthropic key is resolvable from the env or the §19 file chain. Used to
+    tell ``no_api_key`` (extraction can't authenticate at all) apart from
+    ``extract_failed`` (a key exists but ``claude -p`` still failed)."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    try:
+        return bool(secrets.resolve_credential(
+            secrets.ANTHROPIC_API_KEY_FILE, None, "~/.config/anthropic-key.txt"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# --------------------------------------------------------------------------- #
 # scan
 # --------------------------------------------------------------------------- #
 def _acquire_pass_lock():
@@ -242,15 +285,18 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     scan_started = time.monotonic()
     if not cfg.feature("obsidian_radar"):
         summary["skipped"].append("features.obsidian_radar is off")
+        _note_health(False, "disabled")
         return summary
 
     raw_dir = cfg.obsidian_raw
     if not raw_dir:
         summary["skipped"].append("no sources.obsidian_raw configured")
+        _note_health(False, "vault_missing")
         return summary
     root = Path(raw_dir).expanduser()
     if not root.exists():
         summary["skipped"].append(f"obsidian_raw not found: {root}")
+        _note_health(False, "vault_missing")
         return summary
 
     # v0.17 统一口径: every extracted item passes the shared three-way triage
@@ -327,6 +373,16 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
                         files=summary.get("files_scanned"),
                         new_cards=summary.get("cards"),
                         secs=round(time.monotonic() - scan_started, 1))
+    # v0.19.0 obsidian health (cron-only): a healthy scan (even one that found
+    # nothing newer than the marker) is ok+last_cards; the silent-failure modes
+    # the app turns into a diagnostic card are distinct skip codes.
+    if not md_files:
+        _note_health(False, "vault_empty")           # dir there, zero .md
+    elif halted:
+        _note_health(False, "no_api_key" if not _has_anthropic_key()
+                     else "extract_failed")
+    else:
+        _note_health(True, cards=summary["cards"])    # 扫了 = ok, cards≥0
     return summary
 
 

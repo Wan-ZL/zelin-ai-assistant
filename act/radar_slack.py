@@ -78,6 +78,7 @@ from act.lib import analytics, config, health, registry, sanitize, secrets
 SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
 MCP_MARKER_FILE = "slack_mcp.marker"   # iso start-ts of the last SUCCESSFUL MCP pass
+MCP_PRESENT_MARKER_FILE = "slack_mcp_present.marker"  # B4: cached `claude mcp list` verdict
 OUTBOX_FILE = "slack_outbox.json"      # outbound notification msgs (§13d): [{ts, req, channel, ...}]
 DEFAULT_TOKEN_PATH = "~/Desktop/Keys/slack-user-token.txt"
 MEDIA_DIR = config.STATE_DIR / "media"
@@ -443,6 +444,7 @@ _MCP_ALLOWED_TOOLS = ",".join([
 
 _MCP_LOOKBACK_DEFAULT_H = 24   # no marker yet -> look back this far
 _MCP_LOOKBACK_CAP_H = 48       # stale marker (long lid-closed) -> cap the window
+_MCP_PRESENT_TTL_S = 30 * 60   # B4: cache `claude mcp list` for 30 min
 
 # Judgment wording kept in sync with _EXTRACT_PROMPT above (the native path):
 # same "需要他处理的事 / 纯 FYI 跳过" bar, so the two paths file the same cards.
@@ -534,8 +536,58 @@ def _parse_mcp_output(raw: str) -> Optional[list]:
     return [d for d in data if isinstance(d, dict)]
 
 
+# --------------------------------------------------------------------------- #
+# B4: is a user-level Slack MCP actually reachable to the fallback agent?
+# --------------------------------------------------------------------------- #
+def _mcp_present_marker_path() -> Path:
+    return config.STATE_DIR / MCP_PRESENT_MARKER_FILE
+
+
+def _probe_slack_mcp() -> bool:
+    """`claude mcp list` grepped for a Slack server. Any error / non-zero exit
+    / unparseable output -> False (honest: we file mcp_not_configured rather
+    than pretend the MCP is there). Never raises."""
+    from act.executor import _runner_env
+    from act.radar import _claude_bin   # cron/launchd PATH 兜底（radar.py 事故注）
+    try:
+        proc = subprocess.run(
+            [_claude_bin(), "mcp", "list"],
+            capture_output=True, text=True, timeout=30, env=_runner_env(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if getattr(proc, "returncode", 1) != 0:
+        return False
+    return "slack" in (getattr(proc, "stdout", "") or "").lower()
+
+
+def _slack_mcp_present() -> tuple[bool, bool]:
+    """(present, freshly_probed).
+
+    ``present`` = a Slack MCP server is registered in the claude CLI. Cached
+    30 min in ``state/slack_mcp_present.marker`` so we neither shell out to
+    ``claude mcp list`` nor beacon on every 3-minute launchd tick — a fresh
+    probe (cache miss/expired) is the only pass allowed to record the skip,
+    which throttles the ``mcp_not_configured`` beacon to once per interval.
+    Never raises."""
+    p = _mcp_present_marker_path()
+    try:
+        if (time.time() - p.stat().st_mtime) < _MCP_PRESENT_TTL_S:
+            return (p.read_text(encoding="utf-8").strip() == "1", False)
+    except OSError:
+        pass
+    present = _probe_slack_mcp()
+    try:
+        config.ensure_state_dirs()
+        p.write_text("1" if present else "0", encoding="utf-8")
+    except OSError:
+        pass
+    return (present, True)
+
+
 def mcp_scan(cfg: config.Config,
-             runner: Optional[Callable[[str], subprocess.CompletedProcess]] = None) -> int:
+             runner: Optional[Callable[[str], subprocess.CompletedProcess]] = None,
+             mcp_present: Optional[Callable[[], bool]] = None) -> int:
     """One token-less fallback pass. Returns the number of new cards created.
 
     Throttling: launchd fires every 3 minutes, but a real scan only runs once
@@ -544,9 +596,29 @@ def mcp_scan(cfg: config.Config,
     beacon, or the analytics log would fill with non-events. On failure the
     marker is untouched, so the next due pass re-covers the same window (this
     is what closes multi-hour lid-closed gaps).
+
+    B4: before spending a ``claude -p`` call, preflight that a user-level Slack
+    MCP is actually configured (``_slack_mcp_present``). If not, file the honest
+    ``mcp_not_configured`` skip (distinct from a transient ``mcp_failed:``) and
+    return — this is what turns "fallback on, no token, no MCP" into a board
+    diagnostic card instead of an opaque failed claude call. An injected
+    ``runner`` IS the MCP surface (tests), so presence is assumed there;
+    ``mcp_present`` overrides the probe for deterministic tests.
     """
     interval = int(getattr(cfg, "slack_mcp_interval_minutes", 30) or 30)
     now = _dt.datetime.now(_dt.timezone.utc)
+
+    # B4 preflight (before the throttle: a missing MCP short-circuits every
+    # pass, and the present-marker's own 30-min cache rate-limits the beacon).
+    if mcp_present is None:
+        present, fresh = _slack_mcp_present() if runner is None else (True, False)
+    else:
+        present, fresh = mcp_present(), True
+    if not present:
+        if fresh:                       # beacon once per probe interval, not per tick
+            _note_skip("mcp_not_configured")
+        return 0
+
     marker = _read_mcp_marker()
     if marker is not None and (now - marker) < _dt.timedelta(minutes=interval):
         return 0   # not due yet — silent by design (see docstring)

@@ -52,6 +52,10 @@ struct KanbanView: View {
             // P1-4: slow-vs-broken pipeline banner (shared with the popover)
             PipelineHealthBanner(store: store, app: app,
                                  horizontalPadding: 16, bottomPadding: 8)
+            // v0.19.0: board-level ingest diagnostic cards — silent ingest
+            // failures become visible, actionable cards. Renders nothing for a
+            // healthy / fresh (recording off + no creds) setup.
+            DiagnosticsStrip(app: app, horizontalPadding: 16, bottomPadding: 8)
             Divider()
             if store.dashboard == nil {
                 emptyState

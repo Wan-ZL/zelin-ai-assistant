@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // BEFORE the first L() call — the main menu below reads LanguageMirror,
         // which only leaves its "zh" fallback once LanguageStore.shared exists.
         _ = LanguageStore.shared
+        // v0.19.0 funnel (C's milestone, folded into Swift): first-ever launch.
+        // Analytics.firstReach dedups via UserDefaults — fires at most once.
+        Analytics.firstReach("app_launch")
         // ⌘C/⌘V/⌘A/⌘Z dispatch through the main menu even for a menu-bar app —
         // without an Edit menu every text field is copy/paste-dead.
         installMainMenu()
@@ -210,6 +213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // fresh grant restarts the engine before the liveness poll reports it
         RecordingController.shared.pollScreenPermission()
         RecordingController.shared.refreshEngineState()
+        // v0.19.0: refresh the board-level ingest diagnostic cards on the same
+        // tick (cheap: tiny JSON read + cached RecordingController state).
+        DiagnosticsModel.shared.rebuild()
     }
 
     // MARK: status items (visibility per UserDefaults, changeable from 设置)

@@ -1522,6 +1522,11 @@ struct CredentialRowView: View {
             input = ""
             refreshState()
             Analytics.log("mw_secret_save", fields: ["name": secretName])
+            // v0.19.0 funnel (C's milestone, folded into Swift): a saved Gmail
+            // app password configures the Gmail ingest source. The Anthropic key
+            // is the LLM credential (not an ingest source), so it is excluded.
+            // firstReach dedups — the first configured source wins.
+            if kind == .gmail { Analytics.firstReach("ingest_configured") }
             if kind == .gmail && !Self.looksLikeAppPassword(token) {
                 setNote(L("提示：应用密码通常是 16 位字母——检查是否粘贴了别的东西。仍会尝试验证…",
                           "Heads-up: app passwords are usually 16 letters — check you pasted the right thing. Verifying anyway…"),

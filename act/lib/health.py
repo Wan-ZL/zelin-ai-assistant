@@ -1,16 +1,34 @@
 """Radar health file — per-source last attempt / last success / skip reason.
 
 One JSON file at ``state/radar_health.json`` (contract §E, v0.10):
-    {"gmail": {"last_attempt": iso, "last_ok": iso|null, "skip_reason": str|null},
-     "slack": {...}}
+    {"gmail":    {"last_attempt": iso, "last_ok": iso|null, "skip_reason": str|null},
+     "slack":    {...},
+     "obsidian": {..., "last_cards": int|null}}
 
-Written by the radars (act/radar_gmail.py, act/radar_slack.py) on every scan
-attempt; read by the Mac app to surface "radar 多久没成功跑过了" in the UI.
+Written by the radars (act/radar_gmail.py, act/radar_slack.py, act/radar.py)
+on every scan attempt; read by the Mac app to surface "radar 多久没成功跑过了"
+in the UI and to synthesize board-level diagnostic cards (v0.19.0).
+
+Source keys and their skip_reason vocabulary (the app maps each code to a
+concrete next action):
+- gmail:    disabled / no_credentials / no_address / auth_failed / connect_failed
+- slack:    disabled / no_credentials / connect_failed / mcp_failed:… (transient)
+            / mcp_not_configured (fallback on, no token, no Slack MCP in the CLI)
+- obsidian: disabled / vault_missing (dir unset or gone) / vault_empty (dir there
+            but zero .md) / no_api_key (extraction failed, no resolvable Anthropic
+            key) / extract_failed (claude -p failed on ≥1 note). A pass that
+            scanned but found nothing newer than the marker is ok=True with
+            last_cards=0 — NOT a skip.
 
 Semantics of :func:`update_radar_health`:
 - every call bumps ``last_attempt`` to now;
-- ``ok=True``  -> ``last_ok`` = now, ``skip_reason`` = None;
+- ``ok=True``  -> ``last_ok`` = now, ``skip_reason`` = None, and (only when
+  ``cards is not None``) ``last_cards`` = ``cards``;
 - ``ok=False`` -> ``skip_reason`` recorded, previous ``last_ok`` preserved.
+
+``cards`` is ADD-ONLY and backward compatible — old readers ignore the key
+(the Swift side decodes it with ``as? Int``), and callers that never pass it
+(gmail/slack) leave the entry shape exactly as before.
 
 Health must NEVER break a radar pass — every failure here is swallowed, and
 the write is atomic (.tmp + os.replace) so the app never reads a torn file.
@@ -49,8 +67,14 @@ def _load() -> dict:
 
 
 def update_radar_health(source: str, ok: bool,
-                        skip_reason: Optional[str] = None) -> None:
-    """Record one radar attempt for ``source`` ("gmail"/"slack"). Never raises."""
+                        skip_reason: Optional[str] = None,
+                        cards: Optional[int] = None) -> None:
+    """Record one radar attempt for ``source`` ("gmail"/"slack"/"obsidian").
+
+    ``cards`` (obsidian only, ADD-ONLY) is the number of cards the last OK pass
+    produced — recorded on ``entry["last_cards"]`` when ``ok`` and it is not
+    None, so a card can say "上次成功抓到 0 条". Never raises.
+    """
     try:
         HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
         # Serialize the whole read-modify-write across processes; blocking is
@@ -66,6 +90,8 @@ def update_radar_health(source: str, ok: bool,
             if ok:
                 entry["last_ok"] = _iso_now()
                 entry["skip_reason"] = None
+                if cards is not None:
+                    entry["last_cards"] = cards
             else:
                 entry["skip_reason"] = skip_reason
             data[source] = entry

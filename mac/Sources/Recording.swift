@@ -151,6 +151,9 @@ final class RecordingController: ObservableObject {
             applyMode()
         }
         Analytics.log("recording_set_mode", fields: ["mode": newMode])
+        // v0.19.0 funnel (C's milestone, folded into Swift): turning recording
+        // on is configuring the screenpipe ingest source. firstReach dedups.
+        if newMode != "off" { Analytics.firstReach("ingest_configured") }
     }
 
     /// Contract D: restart the current mode's engine — same stop→start path
