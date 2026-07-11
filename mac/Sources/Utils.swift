@@ -93,6 +93,66 @@ enum Analytics {
         f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
         return f.string(from: Date())
     }
+
+    /// Once-per-install feature-reach marker (docs/TELEMETRY.md): the FIRST
+    /// time a feature is used, one `feature_first_reach` event fires; the
+    /// UserDefaults flag suppresses every later call. Metadata only.
+    static func firstReach(_ feature: String) {
+        let key = "analytics.firstReach." + feature
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        log("feature_first_reach", fields: ["feature": feature])
+    }
+
+    /// Whitespace-collapsed ≤500-char cap for user-typed CONTENT fields —
+    /// mirrors act/lib/analytics.clip(text, CONTENT_CLIP). Call sites must
+    /// already be behind Telemetry.contentCaptureActive().
+    static func clip(_ text: String) -> String {
+        String(text.split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ").prefix(500))
+    }
+}
+
+// MARK: - Telemetry gates (read side; mirrors act/lib/config.py precedence)
+
+/// Effective telemetry.level / telemetry.capture_input: settings overrides
+/// (nested form, then legacy flat keys) → config.yaml `telemetry:` block →
+/// built-in defaults (basic / false). The content gate requires BOTH
+/// capture_input AND level=detailed (docs/TELEMETRY.md「输入文本收集」) —
+/// emit sites attach typed text ONLY behind contentCaptureActive(), so at
+/// any other setting the text never reaches events.jsonl.
+enum Telemetry {
+    static func level() -> String {
+        let ov = SettingsIO.readOverrides()
+        if let t = ov["telemetry"] as? [String: Any], let l = t["level"] as? String {
+            return l == "detailed" ? "detailed" : "basic"
+        }
+        if let l = ov["telemetry.level"] as? String {
+            return l == "detailed" ? "detailed" : "basic"
+        }
+        if let l = SettingsIO.configNestedScalar(block: "telemetry", key: "level") {
+            return l == "detailed" ? "detailed" : "basic"
+        }
+        return "basic"
+    }
+
+    static func captureInput() -> Bool {
+        let ov = SettingsIO.readOverrides()
+        if let t = ov["telemetry"] as? [String: Any],
+           let v = t["capture_input"] as? Bool {
+            return v
+        }
+        if let v = ov["telemetry.capture_input"] as? Bool { return v }
+        if let v = SettingsIO.configNestedScalar(block: "telemetry",
+                                                 key: "capture_input") {
+            return v.lowercased() == "true"
+        }
+        return false
+    }
+
+    static func contentCaptureActive() -> Bool {
+        captureInput() && level() == "detailed"
+    }
 }
 
 // MARK: - Settings overrides + config.yaml fallback (read side, §15)

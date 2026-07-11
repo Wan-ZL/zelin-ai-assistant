@@ -139,8 +139,26 @@ final class MainNav: ObservableObject {
 
     /// current page — remembered across launches (UserDefaults "mainSection")
     @Published var section: MainSection {
-        didSet { UserDefaults.standard.set(section.rawValue, forKey: "mainSection") }
+        didSet {
+            UserDefaults.standard.set(section.rawValue, forKey: "mainSection")
+            // behavior telemetry (docs/TELEMETRY.md): per-page dwell + full
+            // nav coverage in ONE central spot — sidebar clicks and deep
+            // links included (mw_nav only covers menu/⌘ gestures). seconds
+            // is wall time since the previous switch (window may have been
+            // in the background for part of it), capped at 24h.
+            if oldValue != section {
+                let secs = min(max(0, Int(Date().timeIntervalSince(sectionSince))),
+                               86_400)
+                Analytics.log("mw_section_dwell",
+                              fields: ["from": oldValue.rawValue,
+                                       "to": section.rawValue,
+                                       "seconds": secs])
+                sectionSince = Date()
+            }
+        }
     }
+    /// when the current section was entered (dwell anchor, not persisted)
+    private var sectionSince = Date()
     /// sidebar collapsed to a 48pt icon rail (UserDefaults "sidebarCollapsed")
     @Published var sidebarCollapsed: Bool {
         didSet { UserDefaults.standard.set(sidebarCollapsed, forKey: "sidebarCollapsed") }

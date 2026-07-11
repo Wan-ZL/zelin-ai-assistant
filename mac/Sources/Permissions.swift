@@ -151,47 +151,21 @@ final class PermissionsModel: ObservableObject {
     }
 }
 
-// MARK: - telemetry consent (settings_overrides.json {"telemetry": {"enabled": …}})
+// MARK: - telemetry consent surface (marker only since v0.18)
 
-/// First-run checkbox IO. Product default: anonymous usage stats ON to help
-/// improve the product; unchecking writes {"telemetry": {"enabled": false}}
-/// into settings_overrides.json (CONTRACT §15 v0.13 note — the Python side
-/// reads it in act/lib/config._apply_settings_overrides). Re-checking DROPS
-/// the override key so the product default stays live.
+/// First-run disclosure IO. Since v0.18 the first-run surface is a one-line
+/// disclosure (TelemetryBlockView) — the on/off toggle, level picker and
+/// capture_input switch all live in Settings「产品改进计划」, which writes
+/// the SAME override key shape ({"telemetry": {…}}, CONTRACT §15). What
+/// remains here is the consent-surface marker.
 enum TelemetryConsent {
-    static func isEnabled() -> Bool {
-        if let t = SettingsIO.readOverrides()["telemetry"] as? [String: Any],
-           let e = t["enabled"] as? Bool {
-            return e
-        }
-        return true
-    }
-
-    static func set(enabled: Bool) {
-        // read-merge-write: writeOverrides REPLACES the whole file — merge
-        // over existing keys (same landmine SettingsFormView.save works around).
-        var merged = SettingsIO.readOverrides()
-        var tele = merged["telemetry"] as? [String: Any] ?? [:]
-        if enabled {
-            tele.removeValue(forKey: "enabled")  // back to the product default
-        } else {
-            tele["enabled"] = false
-        }
-        if tele.isEmpty {
-            merged.removeValue(forKey: "telemetry")
-        } else {
-            merged["telemetry"] = tele
-        }
-        try? SettingsIO.writeOverrides(merged)
-        Analytics.log("telemetry_consent", fields: ["enabled": enabled])
-    }
-
     /// Marker the Python uploader gates on (act/lib/analytics_sync, CONTRACT
     /// §15): its existence means "the consent surface was DISPLAYED at least
-    /// once" — independent of the checkbox choice (telemetry.enabled controls
-    /// on/off). Without it, and without an explicit telemetry config, the
-    /// hourly cron sync no-ops, so a fresh install can never upload before
-    /// this page appeared. Content = first-shown UTC timestamp, written once.
+    /// once" — independent of any choice (telemetry.enabled in Settings
+    /// controls on/off). Without it, and without an explicit telemetry
+    /// config, the hourly cron sync no-ops, so a fresh install can never
+    /// upload before this disclosure appeared. Content = first-shown UTC
+    /// timestamp, written once.
     static func markSurfaceShown() {
         let path = AppPaths.stateRoot + "/state/telemetry_consent_shown"
         guard !FileManager.default.fileExists(atPath: path) else { return }
@@ -571,41 +545,34 @@ struct CapabilityRowsView: View {
     }
 }
 
-/// Anonymous-usage-stats checkbox (writes the telemetry override, CONTRACT
-/// §15) + the consent-surface marker the Python uploader gates on.
+/// First-run telemetry disclosure (v0.18): one low-key honest line — stats
+/// are ON by default, metadata only — plus a link to the Settings section
+/// that holds the full detail, the off toggle and the capture_input switch.
+/// Low-key but NOT hidden: the link is right here, one click away.
+/// Rendering this block still writes the consent-surface marker the Python
+/// uploader gates on (unchanged semantics).
 struct TelemetryBlockView: View {
     @ObservedObject private var i18n = LanguageStore.shared
-    @State private var telemetryOn = TelemetryConsent.isEnabled()
 
     var body: some View {
-        telemetryBlock
-    }
-
-    // MARK: telemetry consent
-
-    private var telemetryBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(isOn: Binding(
-                get: { telemetryOn },
-                set: { v in
-                    telemetryOn = v
-                    TelemetryConsent.set(enabled: v)
-                })) {
-                Text(L("发送匿名使用统计,帮助改进产品(默认开启)",
-                       "Send anonymous usage statistics to help improve the product (on by default)"))
-                    .font(.system(size: 12))
+        (Text(L("匿名使用统计默认开启，用于改进产品——默认只含功能事件元数据（事件名/时间/随机设备号），不含屏幕内容或你输入的文字。",
+                "Anonymous usage stats are on by default to improve the product — by default they carry feature-event metadata only (event name / time / random device id), never screen content or anything you type."))
+            + Text(" ")
+            + Text(L("详情与关闭在设置。", "Details & opt-out in Settings."))
+                .foregroundColor(.accentColor)
+                .underline())
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .onTapGesture {
+                MainNav.shared.pendingAnchor = "telemetry"
+                MainNav.shared.section = .settings
+                (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
             }
-            .toggleStyle(.checkbox)
-            Text(L("只上传匿名事件记录(功能名、时间戳、随机设备编号)。基础级(默认)绝不含屏幕内容、对话或任何个人文本;详细级(需手动开启)会附带指令与提问摘要(≤200 字符)。随时可在这里更改。",
-                   "Anonymous event records only (feature name, timestamp, a random device id). The Basic level (default) never includes screen content, conversations, or any personal text; the Detailed level (manual opt-in) attaches instruction and question summaries (≤200 chars). Change it here anytime."))
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .onAppear { TelemetryConsent.markSurfaceShown() }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .onAppear { TelemetryConsent.markSurfaceShown() }
     }
 }

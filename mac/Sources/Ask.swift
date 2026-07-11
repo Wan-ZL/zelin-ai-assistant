@@ -59,29 +59,14 @@ final class AskModel: ObservableObject {
             .lowercased() != "false"
     }
 
-    /// telemetry.level per §15 override precedence (overrides nested → flat →
-    /// config.yaml) — gates whether the question TEXT may enter analytics.
-    nonisolated static func telemetryLevel() -> String {
-        let ov = SettingsIO.readOverrides()
-        if let t = ov["telemetry"] as? [String: Any], let l = t["level"] as? String {
-            return l == "detailed" ? "detailed" : "basic"
-        }
-        if let l = ov["telemetry.level"] as? String {
-            return l == "detailed" ? "detailed" : "basic"
-        }
-        if let l = SettingsIO.configNestedScalar(block: "telemetry", key: "level") {
-            return l == "detailed" ? "detailed" : "basic"
-        }
-        return "basic"
-    }
-
-    /// Adds `question` to `fields` only at telemetry level detailed
-    /// (emit-side gate: at basic the text never reaches events.jsonl).
+    /// Adds `question` to `fields` only when the content gate is open
+    /// (capture_input AND level=detailed, Telemetry.contentCaptureActive —
+    /// emit-side gate: otherwise the text never reaches events.jsonl).
     private static func logGated(_ event: String, question: String,
                                  fields: [String: Any] = [:]) {
         var f = fields
-        if telemetryLevel() == "detailed" {
-            f["question"] = String(question.prefix(200))
+        if Telemetry.contentCaptureActive() {
+            f["question"] = Analytics.clip(question)
         }
         Analytics.log(event, fields: f)
     }
@@ -107,7 +92,8 @@ final class AskModel: ObservableObject {
         phase = .thinking
         elapsed = 0
         startTimer()
-        Self.logGated("ask_submit", question: text)
+        Analytics.firstReach("ask")
+        Self.logGated("ask_submit", question: text, fields: ["chars": text.count])
 
         let py = IMessageSettingsModel.runtimePython()
         let root = AppPaths.stateRoot

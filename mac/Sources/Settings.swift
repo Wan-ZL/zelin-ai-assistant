@@ -79,10 +79,12 @@ struct SettingsFormView: View {
     @State private var voiceGenStatus = ""
     @State private var voiceGenFailed = false
     // product improvement program (docs/TELEMETRY.md) — anonymous usage
-    // stats, default ON; saved as the nested {"telemetry": {enabled, level}}
-    // override (same form as the first-run permissions page, CONTRACT §15).
+    // stats, default ON; saved as the nested {"telemetry": {enabled, level,
+    // capture_input}} override (CONTRACT §15). capture_input (default OFF)
+    // is the typed-text opt-in — only effective together with 详细 level.
     @State private var telemetryEnabled = true
     @State private var telemetryLevel = "basic"
+    @State private var telemetryCaptureInput = false
     // §26: in-app update check (GitHub releases API, at most once a day).
     @State private var updateCheckEnabled = true
     @State private var status = ""
@@ -668,20 +670,32 @@ struct SettingsFormView: View {
                 .disabled(!telemetryEnabled)
                 Spacer()
             }
-            Text(L("基础：只发送匿名事件元数据——事件名、时间、随机设备号、版本号，不含任何内容。",
-                   "Basic: sends anonymous event metadata only — event name, time, random device id, app version; never any content."))
+            Text(L("基础与详细都只发送匿名事件元数据——事件名、时间、页面/动作、耗时计数、随机设备号、版本号，不含任何内容文字。详细级是下方「收集输入文本」的前置档位，单独打开不收集任何文字。",
+                   "Both Basic and Detailed send anonymous event metadata only — event name, time, page/action, timing counts, random device id, app version; never any content text. Detailed is the prerequisite tier for \"include the text I type\" below and collects no text on its own."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text(L("详细：在基础之上，任务派发/交付事件额外附带一段不超过 200 字符的指令/交付摘要；问问助手事件会记录并上传你输入的问题文本（同样 ≤200 字符）。",
-                   "Detailed: on top of Basic, task dispatch/delivery events also include a summary of the instruction/delivery of at most 200 characters; Ask events also record and upload the question you typed (same ≤200-character cap)."))
+            Toggle(L("收集我输入的文本以更懂我（快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
+                     "Include the text I type, to know me better (captures, questions, rework feedback, search terms; ≤500 chars each)"),
+                   isOn: Binding(
+                get: { telemetryCaptureInput },
+                set: { v in
+                    telemetryCaptureInput = v
+                    persistTelemetry()
+                }))
+                .toggleStyle(.switch)
+                .disabled(!telemetryEnabled || telemetryLevel != "detailed")
+            Text(L("默认关。开启后（且级别为详细时）会上传你输入的文本原文（截断 500 字符）——绝不含 AI 的回答、屏幕内容或密钥。级别为基础时此开关无效。",
+                   "Off by default. When on (and the level is Detailed) the text you type is uploaded verbatim, truncated to 500 chars — never the AI's answers, screen content, or secrets. Has no effect at the Basic level."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text(L("关掉开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
-                   "Turning the toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
+            Text(L("关掉最上方开关即完全停止上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
+                   "Turning the top toggle off stops all uploads entirely; the local stats file is unaffected. See docs/TELEMETRY.md."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
         .font(.system(size: 12))
+        // 首启披露页「详情与关闭在设置」跳转锚点（pendingAnchor = "telemetry"）
+        .id("telemetry")
     }
 
     // v0.14 (audit 7.6): expert-only keys stay in config.yaml — say so, and
@@ -953,6 +967,18 @@ struct SettingsFormView: View {
             ?? SettingsIO.configNestedScalar(block: "telemetry", key: "level")
             ?? "basic").lowercased()
         telemetryLevel = level == "detailed" ? "detailed" : "basic"
+        // capture_input（输入文本收集，默认关）— same precedence chain;
+        // effective truth mirrored by Telemetry.captureInput() (Utils.swift).
+        if let v = tele["capture_input"] as? Bool {
+            telemetryCaptureInput = v
+        } else if let v = ov["telemetry.capture_input"] as? Bool {
+            telemetryCaptureInput = v
+        } else if let v = SettingsIO.configNestedScalar(block: "telemetry",
+                                                        key: "capture_input") {
+            telemetryCaptureInput = (v.lowercased() == "true")
+        } else {
+            telemetryCaptureInput = false
+        }
     }
 
     // MARK: - persist (on change, diff-write; CONTRACT §15.3 v0.14)
@@ -975,6 +1001,9 @@ struct SettingsFormView: View {
         } else {
             merged[key] = value
         }
+        // behavior telemetry (docs/TELEMETRY.md): WHICH key changed — never
+        // the value (paths/addresses/thresholds stay on this machine).
+        Analytics.log("mw_setting_change", fields: ["key": key])
         writeMerged(merged)
     }
 
@@ -1021,6 +1050,8 @@ struct SettingsFormView: View {
                 } else {
                     merged["features"] = feats
                 }
+                Analytics.log("mw_setting_change",
+                              fields: ["key": "features." + key])
                 writeMerged(merged)
             })
     }
@@ -1030,6 +1061,7 @@ struct SettingsFormView: View {
     private func persistLanguage() {
         var merged = SettingsIO.readOverrides()
         merged["language"] = language == "en" ? "en" : "zh"
+        Analytics.log("mw_setting_change", fields: ["key": "language"])
         writeMerged(merged)
         // apply the UI language immediately (observed views re-render)
         LanguageStore.shared.lang = language == "en" ? "en" : "zh"
@@ -1049,6 +1081,8 @@ struct SettingsFormView: View {
             ?? "basic").lowercased()
         let cfgLevel = cfgLevelRaw == "detailed" ? "detailed" : "basic"
         let level = telemetryLevel == "detailed" ? "detailed" : "basic"
+        let cfgCapture = configLayerBool(block: "telemetry", key: "capture_input",
+                                         default: false)
         if telemetryEnabled == cfgEnabled {
             tele.removeValue(forKey: "enabled")
         } else {
@@ -1059,6 +1093,11 @@ struct SettingsFormView: View {
         } else {
             tele["level"] = level
         }
+        if telemetryCaptureInput == cfgCapture {
+            tele.removeValue(forKey: "capture_input")
+        } else {
+            tele["capture_input"] = telemetryCaptureInput
+        }
         if tele.isEmpty {
             merged.removeValue(forKey: "telemetry")
         } else {
@@ -1066,6 +1105,8 @@ struct SettingsFormView: View {
         }
         merged.removeValue(forKey: "telemetry.enabled")
         merged.removeValue(forKey: "telemetry.level")
+        merged.removeValue(forKey: "telemetry.capture_input")
+        Analytics.log("mw_setting_change", fields: ["key": "telemetry"])
         writeMerged(merged)
     }
 

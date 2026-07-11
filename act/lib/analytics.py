@@ -22,6 +22,27 @@ from act.lib import config
 ANALYTICS_DIR: Path = config.STATE_DIR / "analytics"
 EVENTS_PATH: Path = ANALYTICS_DIR / "events.jsonl"
 
+# Hard cap for every user-typed content field (docs/TELEMETRY.md「输入文本
+# 收集」): capture text / Ask questions / card comments / instruction
+# summaries all pass through clip(text, CONTENT_CLIP). Model OUTPUT is never
+# captured at any setting — only what the user typed.
+CONTENT_CLIP: int = 500
+
+
+def content_gate(cfg=None) -> bool:
+    """Emit-side gate for user-typed content fields (docs/TELEMETRY.md).
+
+    True only when telemetry.capture_input is on AND level is "detailed"
+    (Config.capture_input_active). Loads config lazily so no-cfg call sites
+    (actd inbox helpers) can use it; any failure means False — content must
+    never leak because a gate check crashed.
+    """
+    try:
+        cfg = cfg or config.load_config()
+        return bool(cfg.capture_input_active())
+    except Exception:  # noqa: BLE001 - fail closed, never break the pipeline
+        return False
+
 
 def log_event(event: str, **fields) -> None:
     """Append one event. Non-None fields only. Never raises."""
@@ -45,8 +66,9 @@ def log_event(event: str, **fields) -> None:
 
 
 def clip(text, limit: int = 200) -> Optional[str]:
-    """Whitespace-collapsed, truncated string for telemetry level="detailed"
-    payload fields (docs/TELEMETRY.md) — None when empty so log_event drops it.
+    """Whitespace-collapsed, truncated string for telemetry payload fields
+    (docs/TELEMETRY.md; content fields use limit=CONTENT_CLIP) — None when
+    empty so log_event drops it.
     """
     s = " ".join(str(text or "").split())
     return s[:limit] or None

@@ -1,19 +1,28 @@
 # Telemetry（匿名使用统计——**默认开**，随时可关）
 
 > **一句话披露**：本项目默认上传**匿名的功能使用事件**（像 VS Code 一样默认开启），
-> 用于驱动产品改进。**不上传**屏幕内容、消息正文、文件内容或任何密钥。
-> 关闭只需一步：App 设置 →「产品改进计划」把开关关掉（或 config.yaml 里
+> 用于驱动产品改进。**不上传**屏幕内容、消息正文、文件内容、你输入的文字或任何
+> 密钥。关闭只需一步：App 设置 →「产品改进计划」把开关关掉（或 config.yaml 里
 > `telemetry.enabled: false`）。
 
-## 收集什么（按级别）
+## 三个开关一览
+
+| 开关 | 默认 | 含义 |
+|------|------|------|
+| `telemetry.enabled` | **开** | 总开关：关掉即完全停止上传 |
+| `telemetry.level` | `basic` | `basic` / `detailed` **两档都只有事件元数据**（事件名/时间/页面/耗时/计数）、都不含内容文字；`detailed` 目前唯一的作用是充当下行 capture_input 的**前置档位**，单独打开不收集任何文字（v0.18 起——此前 detailed 会附带 ≤200 字符摘要，该行为已并入 capture_input 开关） |
+| `telemetry.capture_input` | **关** | 【内容开关，显式 opt-in】设 true **且** level=detailed 时，你**输入的文本**（快速捕获、提问、打回反馈、搜索词等，见下方内容字段表）以原文记录并上传，每条截断 **500 字符**。**绝不**含 AI 的回答/模型输出、屏幕内容或密钥。双开关缺一无效 |
+
+三个键都可在 config.yaml `telemetry:` 块或 App 设置「产品改进计划」里改
+（App 写 `state/settings_overrides.json`，优先级最高，CONTRACT §15）。
+
+## 收集什么
 
 只上传 `state/analytics/events.jsonl` 里**已经在本机记录**的功能使用事件
 （`act/lib/analytics.py` / Mac app `Analytics`）。本地 JSONL 永远是 source of
 truth，上传只读不改不删。
 
-两个收集级别（`telemetry.level`，默认 `basic`）：
-
-### `basic`（默认）——只有事件元数据
+### `basic` / `detailed`——只有事件元数据
 
 | 字段 | 内容 | 示例 |
 |------|------|------|
@@ -25,10 +34,28 @@ truth，上传只读不改不删。
 | `source` | 事件来源渠道 | `"slack"` |
 | `outcome` | 动作类事件的结果（`ok` \| `fail`）；目前带此字段的事件：`merge_apply`（合并建议落地）；历史事件见下方注 | `"ok"` |
 | `failure` | `outcome="fail"` 时的失败分类 id（`act/lib/failures.py` 目录）；**只有 id，绝不含原始报错文本**，无法分类时整个字段缺席 | `"claude_auth_failed"` |
-| 各事件自带的元数据 | req id、状态、布尔结果、计数等（见 `props`，即事件原始记录） | `"req": "R-004"` |
+| 各事件自带的元数据 | req id、状态、布尔结果、计数、耗时秒数、字符**数**（不含字符本身）等（见 `props`，即事件原始记录） | `"req": "R-004"` |
 
-**basic 级绝不包含内容数据**：没有 prompt、没有指令摘要、没有消息正文、没有
-文件内容，更没有密钥。
+**basic / detailed 两档都绝不包含内容数据**：没有 prompt、没有指令摘要、没有
+消息正文、没有文件内容、没有你输入的文字，更没有密钥。
+
+**v0.18 新增行为事件与字段**（全部元数据、默认随 basic 上传；一并列全以便审计）：
+
+| 事件 / 字段 | 内容 |
+|-------------|------|
+| `mw_section_dwell{from,to,seconds}` | 主窗口切页：从哪页到哪页 + 上一页停留秒数（含窗口在后台的时间，封顶 24h） |
+| `mw_setting_change{key}` | 设置页改了**哪个键**（只有键名如 `language` / `features.digest` / `telemetry`，**绝不含新值**——路径/地址/阈值都留在本机） |
+| `board_search{chars}` | 看板搜索：一次搜索会话结束时的关键词**长度**（词本身属内容，见下表） |
+| `feature_first_reach{feature}` | 某功能（ask/capture/terminal/feedback/merge_review/composer/board_search）在本机**第一次**被用到——每装机每功能至多一条 |
+| `dispatch.wait_s` | 批准 → 实际派发的等待秒数 |
+| `review_promoted.exec_s` | 派发 → 交付的执行秒数 |
+| `rework_launch.round` | 第几轮打回 |
+| `radar_scan.secs` | 一轮雷达扫描耗时 |
+| `card_action.has_comment` / `inbox_*.has_comment` | 该操作是否带了评论（布尔；评论文本属内容，见下表） |
+| `capture_submit.chars` / `ask_submit.chars` / `inbox_capture.chars` | 输入长度（只有**数字**） |
+
+（v0.18 同时移除：首启页勾选框及其 `telemetry_consent` 事件——首启改为一行
+披露 + 「详情与关闭在设置」链接，开关全部集中在设置页，写同一个 override 键。）
 
 > **同表的例外行：`event="feedback"`（建议上报，CONTRACT §29）**。这不是
 > telemetry 自动上传的事件，而是你在 App 里**点「提建议」主动发送**的用户报告，
@@ -42,20 +69,31 @@ truth，上传只读不改不删。
 v0.14 从产品移除（发射端不复存在），维护者项目中已上传的历史数据仍然存在；
 字段语义同上表，仅作解读旧数据用。
 
-### `detailed`（**opt-in**，需你主动打开）——basic + 简短摘要
+### `capture_input`（**默认关**，显式 opt-in）——你输入的文本
 
-在 basic 的全部字段之上，额外允许：
+`telemetry.capture_input: true` **且** `telemetry.level: detailed` 时（双开关，
+缺一无效），以下**用户输入的文本**字段以原文附在对应事件上，每条经
+`analytics.clip(…, 500)` 截断到 **≤500 字符**：
 
 | 字段 | 所在事件 | 内容 |
 |------|----------|------|
-| `instruction` | `dispatch`（任务派发） | 给 claude 的指令摘要：需求标题 + 计划开头，**≤200 字符**（绝不含完整 prompt 或围栏内的源材料） |
-| `summary` | `review_promoted`（任务交付） | 交付摘要节选，**≤200 字符** |
-| `question` | `ask_answered` / `ask_submit` / `ask_feedback`（问问助手，CONTRACT §27） | 你输入的问题原文，**≤200 字符**（绝不含回答或上下文 bundle） |
+| `text` | `inbox_capture`（App 快速捕获）/ `quick_capture`（Slack/iMessage 快速捕获） | 你打的捕获原文 |
+| `question` | `ask_submit` / `ask_answered` / `ask_feedback`（问问助手，CONTRACT §27） | 你输入的问题原文（**绝不含回答**或上下文 bundle） |
+| `comment` | `card_action` / `inbox_*`（带评论的卡片操作） | 你打的评论/修改方向 |
+| `feedback` | `rework_launch`（打回） | 你打的打回反馈 |
+| `instruction` | `dispatch`（任务派发） | 派发摘要：需求标题 + 计划开头（绝不含完整 prompt 或围栏内的源材料） |
+| `summary` | `review_promoted`（任务交付） | 交付摘要节选 |
+| `query` | `board_search`（看板搜索） | 搜索关键词 |
 
-这些字段在 emit 端 gate：级别是 `basic` 时**根本不会写进本地 events.jsonl**，
-自然也永远不会上传。切到 `detailed` 才开始记录。这些字段可能包含你任务
-标题/计划/提问里的文字，所以它是更敏感的级别——默认不开。basic 级的问问助手
-事件只有事件名 + 结果元数据（ok/耗时/failure_id、👍/👎 verdict），没有问题文本。
+**红线（无论什么设置都不收集）**：AI 的回答/模型输出、屏幕文本、消息正文、
+文件内容、密钥。雷达从屏幕/Slack/邮件里**提取**的候选内容也不属于「你输入的
+文本」，不在收集范围。
+
+这些字段在 emit 端 gate：双开关没同时打开时**根本不会写进本地 events.jsonl**，
+自然也永远不会上传（`act/lib/analytics.content_gate` /
+`Telemetry.contentCaptureActive`，测试 `tests/test_telemetry_level.py` 锁死）。
+默认配置下的问问助手事件只有事件名 + 结果元数据（ok/耗时/failure_id、👍/👎
+verdict、字符数），没有问题文本。
 
 ## 默认开 + 两条关闭路径
 
@@ -92,8 +130,8 @@ no-op，不必删除。
 三者**全部缺席**时，`act.analytics_sync` 什么都不上传，只在日志里写一行
 "waiting for first-run consent surface"：
 
-1. 标记文件 `state/telemetry_consent_shown`——App「权限体检」页第一次**展示**
-   「匿名使用统计」块时写入（内容为时间戳），与你勾不勾选无关；
+1. 标记文件 `state/telemetry_consent_shown`——App「权限体检」页/设置向导第一次
+   **展示**「匿名使用统计」披露行时写入（内容为时间戳），与你是否点开设置无关；
 2. config.yaml 里显式写了 `telemetry:` 块（显式配置 = 知情同意）；
 3. `state/settings_overrides.json` 里有 telemetry 键（在 App 里动过开关）。
 
@@ -106,7 +144,23 @@ telemetry）之前，不会有任何事件离开本机。
 **每天**把聚合报告写进本仓库一个公开的置顶 issue（「📊 Usage Insights」——只更新
 这一个 issue，不会每次新开）。报告只含聚合值：按事件/日期/版本/级别的**计数**、
 错误率、去重设备**数**（`scripts/insights_report.py`）——**绝不**出现原始事件行、
-device id 或任何 detailed 级摘要文本。事件总量没有变化的日子跳过更新。
+device id 或任何 capture_input 内容文本。事件总量没有变化的日子跳过更新。
+
+## 容量预算（Supabase free tier）
+
+粗算（单台重度使用的机器）：
+
+- **行为事件量**：常驻 radar/launchd 心跳（radar_skip/radar_scan/telemetry_sync
+  等）约 300–600 条/天 + 交互事件（导航/卡片操作/设置）约 100–300 条/天，
+  合计 **≤1000 条/天 ≈ 3 万条/月**。轻度使用（不开录制、少交互）约十分之一。
+- **单条体积**：basic 事件 JSONL 一般 150–300 字节；落库含 props(jsonb)+索引
+  开销按 ~600 字节/行估。**一台重度机器 ≈ 18 MB/月**。
+- **capture_input 增量**：内容字段 ≤500 字符/条，且只挂在少数用户主动动作的
+  事件上（捕获/提问/打回/搜索，一般几十条/天）——**≪ 5 MB/月**。
+- **free tier 头寸**：500 MB 数据库 ≈ 单台重度机器 2 年以上；多台按台数线性。
+  维护者侧的运维约定：每月看一眼 insights issue 的总量曲线，DB 超过 ~300 MB
+  时用 service key 把 90 天前的原始行聚合归档后删除（RLS 不影响 service key）。
+  高频心跳事件若成为主要噪音，优先在发射端降频/采样，而不是加大库。
 
 ## 更新检查（GitHub API，与 telemetry 上传无关）
 

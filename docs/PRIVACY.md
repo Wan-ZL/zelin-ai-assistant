@@ -12,7 +12,8 @@
   workspace（你的 user token）、Gmail IMAP（你的 app password）、GitHub（你的 `gh` 登录）。
   **去往维护者服务器的例外只有两类**（同一个维护者 Supabase 项目）：
   ①**匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据默认上传，用于产品
-  改进——不含屏幕内容/消息正文/文件内容/密钥，详见第 10 行与
+  改进——不含屏幕内容/消息正文/文件内容/你输入的文字/密钥（输入文本另有**默认关**的
+  双开关 opt-in，`telemetry.capture_input`），详见第 10 行与
   [`docs/TELEMETRY.md`](TELEMETRY.md)；②**建议上报（feedback，仅在你主动点「提建议」
   发送时）**：你的建议**全文** + 所选卡片的**标题快照**上传给维护者，且**不受**
   telemetry 开关/首启 consent 限制（发送即同意）——这是内容数据，详见第 16 行。
@@ -156,12 +157,15 @@
   Supabase 项目，用内置 publishable key 写入（该 key 公开设计，RLS 只允许 INSERT——
   它写得进、**读不回**任何数据）。数据用于驱动产品改进。
 - **Payload**：只有 `state/analytics/events.jsonl` 里**已在本机记录**的事件元数据
-  （事件名/时间戳/req id/版本/随机 device uuid），**默认（basic 级）无任何内容数据**——
-  没有 prompt、消息正文、文件内容、密钥。opt-in 的 `detailed` 级会在派发/交付事件上
-  额外附带 ≤200 字符的指令/交付摘要（默认不开）。
+  （事件名/时间戳/页面与动作/耗时计数/req id/版本/随机 device uuid）。**默认无任何
+  内容数据**——basic 和 detailed 两档都不含 prompt、消息正文、文件内容、你输入的
+  文字或密钥。**你输入的文本**（快速捕获/提问/打回反馈/搜索词等，每条 ≤500 字符）
+  只在**显式打开** `telemetry.capture_input: true` **且** `level: detailed`
+  （双开关，默认全关）后才会记录并上传；**任何设置下都不收集** AI 的回答/模型
+  输出、屏幕内容或密钥。
 - **关闭**：App 设置 →「产品改进计划」关掉开关；或 config.yaml `telemetry.enabled: false`。
   fork 用户还可以 `supabase_url: ""` 彻底禁用，或指到自己的项目。
-- 字段表、级别说明、fork 须知详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
+- 字段表、开关说明、容量预算、fork 须知详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
 
 ### 11. iMessage 手机通道（opt-in，默认关，仅 macOS）
 
@@ -217,9 +221,9 @@
   白名单化的 effective-config 摘要（凭证只以 present/absent **布尔**出现，secret 值
   永不进 bundle）+ `doctor --fast` 体检报告 + dashboard 计数——整个 bundle 经
   headless `claude -p`（60 秒上限）发往你的 AI 引擎。
-- **本地**：问答历史存 `state/ask_history.json`（不上传）。telemetry basic 级只记
-  事件元数据；opt-in 的 detailed 级会附带问题文本（≤200 字符，见
-  [`docs/TELEMETRY.md`](TELEMETRY.md)）。
+- **本地**：问答历史存 `state/ask_history.json`（不上传）。telemetry 默认只记
+  事件元数据；问题文本只在显式打开 `telemetry.capture_input` + `level: detailed`
+  双开关后附带（≤500 字符，见 [`docs/TELEMETRY.md`](TELEMETRY.md)）。
 - **关闭**：不提问即不触发；`ask.enabled: false` 整体关掉问答页。
 
 ### 15. 让 AI 修（Fix with AI）→ Anthropic
@@ -301,7 +305,7 @@
 - **`execution.create_github_repo`**：**默认 false**（v0.11 起）——无任何自动 GitHub repo
   创建；显式设 true 才恢复"新目录卡自动建私有 repo + draft PR"。
 - **`execution.memory_inject: false`**：关掉 MEMORY.md 注入。
-- **Telemetry 默认开、一键可关**（App 设置「产品改进计划」/ `telemetry.enabled: false`）；默认上传匿名事件元数据到维护者的 Supabase，`supabase_url: ""` 彻底禁用（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
+- **Telemetry 默认开、一键可关**（App 设置「产品改进计划」/ `telemetry.enabled: false`）；默认上传匿名事件元数据到维护者的 Supabase，`supabase_url: ""` 彻底禁用。**输入文本收集**（`telemetry.capture_input`）**默认关**，需与 `level: detailed` 同时显式打开才生效（[`docs/TELEMETRY.md`](TELEMETRY.md)）。
 
 ## 执行权限（--dangerously-skip-permissions）
 

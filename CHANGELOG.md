@@ -25,7 +25,33 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Richer behavior telemetry (metadata only, default-on)**: new events
+  `mw_section_dwell` (per-page dwell), `mw_setting_change` (which settings
+  key changed — never the value), `board_search` (query length only),
+  `feature_first_reach` (once-per-install feature reach); new metadata
+  fields `dispatch.wait_s`, `review_promoted.exec_s`, `rework_launch.round`,
+  `radar_scan.secs`, comment/typed-length counters. Full list in
+  docs/TELEMETRY.md.
+- **`telemetry.capture_input` (default OFF)**: explicit opt-in that — only
+  together with `level: detailed` — records the text you type (captures,
+  Ask questions, card comments / rework feedback, board search terms; each
+  clipped to 500 chars). Model output, screen content and secrets are never
+  collected at any setting. The double gate is enforced emit-side in both
+  Python and Swift, locked by tests (tests/test_telemetry_level.py).
+- Capacity budget section in docs/TELEMETRY.md (Supabase free-tier headroom
+  + archival guidance).
+
+### Changed
+
+- **`level: detailed` no longer attaches any content by itself** (previously
+  ≤200-char instruction/delivery/question summaries) — content now requires
+  the separate `capture_input` switch on top; detailed alone is metadata-only.
+- First-run telemetry consent is now a one-line disclosure with a
+  "Details & opt-out in Settings" link (the toggle moved to Settings →
+  Product improvement program, same override key; the `telemetry_consent`
+  event retired with it).
 
 ## [0.17.1] - 2026-07-11
 

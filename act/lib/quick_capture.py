@@ -439,18 +439,22 @@ def apply_result(res: dict, cfg: Optional[config.Config] = None) -> str:
     if cfg is None:
         cfg = config.load_config()
     action = (res or {}).get("action")
+    # the user's typed capture text is content — capture_input-gated
+    # (docs/TELEMETRY.md), attached to whichever quick_capture event fires.
+    tele_text = (analytics.clip((res or {}).get("_text"), analytics.CONTENT_CLIP)
+                 if analytics.content_gate(cfg) else None)
 
     if action == "new_proposal":
-        return _apply_new_proposal(res)
+        return _apply_new_proposal(res, tele_text)
     if action == "relates_to":
-        return _apply_relates_to(res, cfg)
+        return _apply_relates_to(res, cfg, tele_text)
     # ignore (or anything unrecognized — capture() already normalized)
     reason = str((res or {}).get("reason") or "").strip() or "看起来不需要行动"
-    analytics.log_event("quick_capture", action="ignore")
+    analytics.log_event("quick_capture", action="ignore", text=tele_text)
     return f"先不建卡：{reason}（要建的话再发一条明确点的）"
 
 
-def _apply_new_proposal(res: dict) -> str:
+def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
     quote = str(res.get("_text") or res.get("summary") or "").strip()
     title = str(res.get("title") or res.get("summary") or quote or "quick capture").strip()
     # confidence="low" = 不紧急的备忘（含未来条件性）——落备选/Backlog 而不是
@@ -498,7 +502,7 @@ def _apply_new_proposal(res: dict) -> str:
     req.delivery_mode = dm if dm in ("chat", "repo") else "repo"
     saved = registry.merge_or_new(req, high_confidence=not low_conf)
     analytics.log_event("quick_capture", action="new_proposal", req=saved.id,
-                        confidence="low" if low_conf else None)
+                        confidence="low" if low_conf else None, text=tele_text)
     if saved.id != req.id and not saved.improvement_of:
         # merged into an existing entry as a restatement
         return f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1"
@@ -508,11 +512,13 @@ def _apply_new_proposal(res: dict) -> str:
     return f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）"
 
 
-def _apply_relates_to(res: dict, cfg: config.Config) -> str:
+def _apply_relates_to(res: dict, cfg: config.Config,
+                      tele_text: Optional[str] = None) -> str:
     rid = str(res.get("req") or "").strip()
     req = registry.load(rid) if rid else None
     if req is None:
-        analytics.log_event("quick_capture", action="relates_to_miss", req=rid or None)
+        analytics.log_event("quick_capture", action="relates_to_miss",
+                            req=rid or None, text=tele_text)
         return f"没找到条目 {rid or '?'}，这条先没动注册表——要新建的话再发一条"
     # merge-cluster canonicalization（同 apply_triage）：命中已并入主卡的副卡时
     # 挂到主卡名下，同一事件的 follow-up 全簇收敛到一个血缘节点。
@@ -537,7 +543,7 @@ def _apply_relates_to(res: dict, cfg: config.Config) -> str:
         saved, created = _follow_up_card(req, child, note)
         analytics.log_event("quick_capture",
                             action="follow_up" if created else "follow_up_fold",
-                            req=saved.id)
+                            req=saved.id, text=tele_text)
         if created:
             return (f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
                     f"{req.id} is closed; filed follow-up {saved.id} (pending approval)")
@@ -549,10 +555,12 @@ def _apply_relates_to(res: dict, cfg: config.Config) -> str:
     if req.status == registry.State.DETECTED.value:
         # a quick mention of a debt item = raise it into a full proposal
         analyze.expand_debt(req, cfg)  # saves + status=card_sent
-        analytics.log_event("quick_capture", action="relates_to", req=req.id)
+        analytics.log_event("quick_capture", action="relates_to", req=req.id,
+                            text=tele_text)
         return f"已关联 {req.id}，已提案（扩成完整建议，进待审批）"
     registry.save(req)
-    analytics.log_event("quick_capture", action="relates_to", req=req.id)
+    analytics.log_event("quick_capture", action="relates_to", req=req.id,
+                        text=tele_text)
     phrase = {
         registry.State.CARD_SENT.value: "已在待审批，备注已追加",
         registry.State.APPROVED.value: "已批准待派发，备注已追加",

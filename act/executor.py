@@ -512,14 +512,16 @@ def _parse_session_id(output: str) -> Optional[str]:
 
 
 def _instruction_summary(req: Requirement) -> Optional[str]:
-    """telemetry level="detailed" only (docs/TELEMETRY.md): a short (<=200
-    chars) summary of what claude was asked to do — requirement title + plan
-    head, never the full prompt or fenced source excerpts."""
+    """Content field, gated on analytics.content_gate (docs/TELEMETRY.md
+    「输入文本收集」): a short (<=CONTENT_CLIP chars) summary of what claude
+    was asked to do — requirement title + plan head, never the full prompt
+    or fenced source excerpts."""
     plan = req.plan
     if isinstance(plan, list):
         plan = "; ".join(str(p) for p in plan[:3])
     parts = [str(req.title or ""), str(plan or "")]
-    return analytics.clip(" — ".join(p for p in parts if p.strip()))
+    return analytics.clip(" — ".join(p for p in parts if p.strip()),
+                          analytics.CONTENT_CLIP)
 
 
 def dispatch(
@@ -646,6 +648,12 @@ def dispatch(
                           req=req.id)
         raise DispatchError(err[:500])
 
+    # dispatch lifecycle timing (metadata): seconds the card waited between
+    # approval (actd stamps execution.approved_at) and this launch.
+    wait_s = None
+    approved_dt = _parse_when(ex.get("approved_at"))
+    if approved_dt is not None:
+        wait_s = max(0, round((dispatched_dt - approved_dt).total_seconds()))
     req.execution = {
         "session_id": session_id,
         "dispatched_at": dispatched_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -653,12 +661,13 @@ def dispatch(
     }
     req.set_status(State.EXECUTING)
     save(req)
-    # telemetry.level gating (docs/TELEMETRY.md): the instruction summary is
-    # recorded ONLY at the opt-in "detailed" level — never at "basic".
-    detailed = getattr(cfg, "telemetry_level", "basic") == "detailed"
-    analytics.log_event("dispatch", req=req.id, target_kind=req.target_kind,
-                        session=session_id, type=req.type,
-                        instruction=_instruction_summary(req) if detailed else None)
+    # capture_input gating (docs/TELEMETRY.md): the instruction summary is
+    # user-shaped content — recorded ONLY when capture_input AND detailed.
+    analytics.log_event(
+        "dispatch", req=req.id, target_kind=req.target_kind,
+        session=session_id, type=req.type, wait_s=wait_s,
+        instruction=(_instruction_summary(req)
+                     if analytics.content_gate(cfg) else None))
     return req
 
 
@@ -994,7 +1003,8 @@ def rework(
         ex["last_error_at"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         req.execution = ex
         save(req)
-        analytics.log_event("rework_launch", req=req.id, ok=False)
+        analytics.log_event("rework_launch", req=req.id, ok=False,
+                            round=ex["rework_count"])
         analytics.log_event("rework_failed", req=req.id, error=err[:120])
         return False
     ex.pop("done", None)                      # it's working again
@@ -1006,7 +1016,12 @@ def rework(
     req.execution = ex
     req.set_status(State.EXECUTING)
     save(req)
-    analytics.log_event("rework_launch", req=req.id, ok=ok)
+    # round = how many times this delivery got sent back (rework health);
+    # the feedback TEXT itself is content — capture_input-gated.
+    analytics.log_event("rework_launch", req=req.id, ok=ok,
+                        round=ex["rework_count"],
+                        feedback=(analytics.clip(feedback, analytics.CONTENT_CLIP)
+                                  if analytics.content_gate(cfg) else None))
     return ok
 
 
