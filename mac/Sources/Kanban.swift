@@ -116,8 +116,12 @@ struct KanbanView: View {
 
     /// Header search box. Matching is case-insensitive over
     /// title/summary/dod/plan/id (DashboardStore.board* projections);
-    /// 占位卡/建议卡 never hide. Esc clears (IME-safe); when already empty it
-    /// falls through (.ignored) so select-mode's cancel action still fires.
+    /// 占位卡/建议卡 never hide. Esc is staged (IME-safe): non-empty clears
+    /// the query (native search-field behavior — a filter, not a draft);
+    /// already empty defocuses, and a further Esc (field no longer focused,
+    /// onKeyPress can't fire) reaches select-mode's cancel action as before.
+    /// Clicking outside the box defocuses too (AppDelegate's app-wide
+    /// clickDefocusMonitor) — the query stays, visible in the box.
     private var searchField: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
@@ -133,6 +137,11 @@ struct KanbanView: View {
             if !store.boardQuery.isEmpty {
                 Button {
                     store.boardQuery = ""
+                    // the clear button sits INSIDE the visual search box, but
+                    // the defocus monitor can't tell (SwiftUI buttons have no
+                    // NSView) — refocus so clear-and-retype keeps the caret,
+                    // matching native NSSearchField.
+                    searchFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11))
@@ -153,8 +162,11 @@ struct KanbanView: View {
         // method owns it, pass through untouched (Composer.escKey 先例).
         if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
            tv.hasMarkedText() { return .ignored }
-        guard !store.boardQuery.isEmpty else { return .ignored }
-        store.boardQuery = ""
+        if !store.boardQuery.isEmpty {
+            store.boardQuery = ""    // 1st Esc: clear the filter
+        } else {
+            searchFocused = false    // 2nd Esc: release the caret
+        }
         return .handled
     }
 

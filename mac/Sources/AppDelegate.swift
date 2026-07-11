@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // item 1: app-lifetime local monitor — Shift+Return inserts a newline in
     // field-editor-backed (SwiftUI) text fields; plain Return keeps submitting.
     private var shiftReturnMonitor: Any?
+    // click-outside defocus: app-lifetime local monitor — see install below.
+    private var clickDefocusMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // P0-12: force the language store to resolve (override → system locale)
@@ -115,6 +117,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 handled = true
             }
             return handled ? nil : event
+        }
+
+        // Click-outside defocus: AppKit keeps the first responder when a
+        // click lands on dead space, so a focused field's caret survives
+        // clicks anywhere outside it. Expected macOS feel: click outside =
+        // defocus. Watch mouseDown app-wide (main window, popover, panels):
+        // when a field editor owns the caret and the click doesn't land on a
+        // text input, end editing — @FocusState bindings sync to false and
+        // drafts stay in their bindings. The event is ALWAYS returned
+        // unmodified, so the click itself (button action, card tap, drag,
+        // scroll) proceeds exactly as before; only the caret moves out.
+        clickDefocusMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .leftMouseDown) { event in
+            MainActor.assumeIsolated {
+                guard let window = event.window,
+                      let editor = window.firstResponder as? NSTextView,
+                      editor.isFieldEditor,
+                      let content = window.contentView,
+                      // nil hit = title bar / window edge — native behavior
+                      // there (drag/resize) never moved the caret; keep that.
+                      let hit = content.hitTest(event.locationInWindow)
+                else { return }
+                var v: NSView? = hit
+                while let view = v {
+                    // clicks INTO any text input keep the normal focus path;
+                    // scroller clicks keep native behavior (scrolling never
+                    // moves the caret).
+                    if view is NSTextView || view is NSTextField
+                        || view is NSScroller { return }
+                    v = view.superview
+                }
+                window.makeFirstResponder(nil)
+            }
+            return event
         }
 
         refresh()

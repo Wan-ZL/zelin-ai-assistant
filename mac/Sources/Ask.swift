@@ -304,6 +304,14 @@ struct AskPageView: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($inputFocused)
                 .onSubmit { model.submit() }
+                // Esc releases the caret without touching the typed question
+                // (click-outside parity; Composer.escKey 同款 IME red line)
+                .onKeyPress(.escape) {
+                    if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+                       tv.hasMarkedText() { return .ignored }
+                    inputFocused = false
+                    return .handled
+                }
                 .disabled(model.phase == .thinking)
             Button(L("提问", "Ask")) { model.submit() }
                 .disabled(model.phase == .thinking ||

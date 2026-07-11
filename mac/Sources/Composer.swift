@@ -6,8 +6,11 @@
 // commit 候选、到不了 onSubmit；Shift+Return 由 AppDelegate 的 app-lifetime
 // shiftReturnMonitor 对 field editor 注入换行（与 prompt panel 的
 // PromptSendDelegate 同一条红线，参照实现、不改它）。
-// Esc 两段式：先清空草稿，再折叠回一行。斜杠命令提示/报错 + ↑/↓ 历史逻辑
-// 从 KanbanView 旧 header 输入框整体搬入（Kanban.swift 里已删除原件）。
+// Esc 退出输入但从不丢草稿：有草稿 → 只交还光标（保持展开，草稿可见）；
+// 空 → 折叠回一行。点击输入框外任意处同样只 defocus（AppDelegate 的
+// clickDefocusMonitor）。非空永不折叠 —— 折叠会把未发送的草稿藏起来。
+// 斜杠命令提示/报错 + ↑/↓ 历史逻辑从 KanbanView 旧 header 输入框整体搬入
+// （Kanban.swift 里已删除原件）。
 
 import AppKit
 import SwiftUI
@@ -109,8 +112,8 @@ struct KanbanComposer: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             } else {
-                Text(L("↩ 发送 · ⇧↩ 换行 · Esc 清空/收起",
-                       "↩ send · ⇧↩ newline · Esc clear/collapse"))
+                Text(L("↩ 发送 · ⇧↩ 换行 · Esc 退出",
+                       "↩ send · ⇧↩ newline · Esc dismiss"))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary.opacity(0.7))
             }
@@ -160,18 +163,17 @@ struct KanbanComposer: View {
         }
     }
 
-    // Esc 两段式 — IME red line: Esc cancels a live pinyin composition, the
-    // input method owns it, pass through untouched.
+    // Esc exits the input WITHOUT discarding the draft (click-outside parity)
+    // — IME red line: Esc cancels a live pinyin composition, the input method
+    // owns it, pass through untouched.
     private func escKey() -> KeyPress.Result {
         if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
            tv.hasMarkedText() { return .ignored }
         if !text.isEmpty {
-            text = ""            // 1st Esc: clear the draft
-            slashError = nil
-            historyIndex = nil
-            return .handled
+            focused = false      // draft present: defocus only, stay expanded
+            return .handled      // (collapsing would hide the unsent draft)
         }
-        collapse()               // 2nd Esc: fold back to one line
+        collapse()               // empty: fold back to one line
         return .handled
     }
 
