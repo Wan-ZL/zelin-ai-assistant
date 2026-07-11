@@ -25,21 +25,42 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-### Added
+(nothing yet)
 
-- **Stable self-signed code-signing infra so TCC grants persist across updates**
-  (`mac/scripts/make-signing-cert.sh`, `.github/workflows/release.yml`): a
-  one-time, idempotent maintainer script creates a free (non-notarized)
-  self-signed `Zelin AI Engineer Dev` code-signing identity and prints how to
-  wire it into CI via two secrets (`MACOS_SIGN_CERT_P12`,
-  `MACOS_SIGN_CERT_PASSWORD`). The release workflow imports the cert into a
-  throwaway keychain before the build (guarded — absent secret ⇒ ad-hoc
-  fallback, still builds) and fails loudly on a misconfigured secret. With
-  signing configured, the app's Designated Requirement stays constant across
-  versions, so macOS Screen Recording / TCC grants no longer reset on every
-  update. `mac/build.sh` is unchanged — it already probed for this identity.
-  One-time transition: the first stably-signed release re-prompts for Screen
-  Recording once; Gatekeeper first-open is unchanged (self-signed ≠ notarized).
+## [0.19.2] - 2026-07-11
+
+The first stably-self-signed release: release builds now carry a constant
+code-signing identity, so macOS keeps its permission grants across updates.
+
+### Changed
+
+- **Release builds are now signed with a stable self-signed code-signing
+  identity, so macOS Screen Recording (and other TCC) permissions persist
+  across app updates** instead of re-prompting on every version. A one-time,
+  idempotent maintainer script (`mac/scripts/make-signing-cert.sh`) creates a
+  free (non-notarized) `Zelin AI Engineer Dev` identity and wires it into CI
+  via two secrets (`MACOS_SIGN_CERT_P12`, `MACOS_SIGN_CERT_PASSWORD`); the
+  release workflow imports it into a throwaway keychain before building
+  (guarded — absent secret ⇒ ad-hoc fallback, still builds) and fails loudly on
+  a misconfigured secret. With signing configured the app's Designated
+  Requirement stays constant across versions, so the grants no longer reset.
+  One-time transition: the first stably-signed update re-prompts for Screen
+  Recording once, then never again. Gatekeeper first-open is unchanged —
+  self-signed is not notarized.
+
+### Fixed
+
+- **Detect the untrusted self-signed identity correctly** (`mac/build.sh`,
+  `.github/workflows/release.yml`, `mac/scripts/make-signing-cert.sh`): the
+  `Zelin AI Engineer Dev` cert is self-signed and therefore untrusted
+  (`CSSMERR_TP_NOT_TRUSTED`), so `security find-identity -v` (valid/trusted-only)
+  would hide it even though it signs fine and yields a stable cert-based
+  Designated Requirement. Dropping `-v` from the identity probes makes the build,
+  the CI import verification, and the cert script's idempotency guard all detect
+  the untrusted-but-usable cert (the guard would otherwise miss an existing cert
+  and create a duplicate CN). `make-signing-cert.sh` also supports
+  non-interactive setup, using `$KEYCHAIN_PW` for the key partition list instead
+  of prompting when it is set.
 
 ## [0.19.1] - 2026-07-11
 
@@ -691,7 +712,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...HEAD
+[0.19.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.18.0...v0.18.1
