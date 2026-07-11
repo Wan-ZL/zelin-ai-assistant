@@ -33,6 +33,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from act import radar
 from act.lib import analytics, config, health, registry, sanitize, secrets
 
 IMAP_HOST = "imap.gmail.com"
@@ -129,6 +130,28 @@ def _save_last_uid(uid: int) -> None:
 _TAG_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
 
+# Gmail thread id (X-GM-THRID) — the external thread ref for card-lifecycle
+# thread-level matching (registry.derive_thread_key reads source["gmail_thread_id"]).
+# Gmail's IMAP always exposes it (X-GM-EXT-1 capability on imap.gmail.com); it
+# rides in the FETCH response ENVELOPE (the tuple prefix item[0], or a trailing
+# bytes element), NEVER in the RFC822 body literal (item[1]) — so we only scan
+# the envelope parts to avoid matching a literal "X-GM-THRID" inside a body.
+_GM_THRID_RE = re.compile(rb"X-GM-THRID\s+(\d+)")
+
+
+def _parse_gm_thrid(fetched) -> Optional[str]:
+    """Pull the Gmail thread id (X-GM-THRID) out of an IMAP FETCH response.
+    Returns the bare numeric id, or None when absent (e.g. a non-Gmail IMAP
+    host, or a server that did not honor the X-GM-THRID data item) — an honest
+    fallback to title/LLM matching."""
+    for item in fetched or []:
+        blob = item[0] if isinstance(item, tuple) else item
+        if isinstance(blob, (bytes, bytearray)):
+            m = _GM_THRID_RE.search(blob)
+            if m:
+                return m.group(1).decode("ascii")
+    return None
+
 
 def _strip_html(text: str) -> str:
     text = _TAG_RE.sub(" ", text)
@@ -208,8 +231,11 @@ def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int
         if uid <= last_uid:
             continue
         try:
-            # BODY.PEEK[] — fetch WITHOUT setting \Seen (do not mark read)
-            status, fetched = conn.uid("fetch", str(uid), "(BODY.PEEK[])")
+            # BODY.PEEK[] — fetch WITHOUT setting \Seen (do not mark read).
+            # X-GM-THRID — Gmail's conversation id, the external thread ref for
+            # thread-level matching (parsed from the response envelope below).
+            status, fetched = conn.uid(
+                "fetch", str(uid), "(BODY.PEEK[] X-GM-THRID)")
         except (imaplib.IMAP4.error, OSError):
             continue
         newest = max(newest, uid)
@@ -236,6 +262,8 @@ def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int
             "subject": subject,
             "date": str(msg.get("Date", "") or ""),
             "message_id": str(msg.get("Message-ID", "") or "").strip(),
+            # Gmail thread id (external thread ref); None on a non-Gmail host.
+            "gm_thrid": _parse_gm_thrid(fetched),
             "body": _body_text(msg),
         })
     return out, newest
@@ -390,6 +418,20 @@ def scan(cfg: Optional[config.Config] = None,
         src_msg = _match_message(r, messages) or {}
         quote = f"{r.get('from') or src_msg.get('from') or '?'}: " \
                 f"{r.get('subject') or src_msg.get('subject') or '?'}"
+        source = {
+            "who": r.get("from") or src_msg.get("from"),
+            "channel": "gmail",
+            "date": src_msg.get("date"),
+            "quote": quote,
+            "ref": src_msg.get("message_id") or r.get("message_id"),
+        }
+        # External thread ref for thread-level matching (A↔B interface):
+        # registry.derive_thread_key reads source["gmail_thread_id"]. Only set
+        # it when the Gmail thread id is actually available — otherwise omit so
+        # derive_thread_key returns None (honest title/LLM fallback).
+        thrid = src_msg.get("gm_thrid")
+        if thrid:
+            source["gmail_thread_id"] = thrid
         new = registry.Requirement(
             id=registry.next_id(),
             title=(r.get("summary") or "")[:80],
@@ -400,15 +442,10 @@ def scan(cfg: Optional[config.Config] = None,
             status="card_sent",
             hardness="soft",
             plan=r.get("plan") or [],
-            sources=[{
-                "who": r.get("from") or src_msg.get("from"),
-                "channel": "gmail",
-                "date": src_msg.get("date"),
-                "quote": quote,
-                "ref": src_msg.get("message_id") or r.get("message_id"),
-            }],
+            sources=[source],
             notes=f"needs_reply={r.get('needs_reply')} · from Gmail",
         )
+        radar._set_thread_key(new)
         desc = quick_capture.candidate_desc(
             str(r.get("summary") or ""), quote=quote,
             who=(r.get("from") or src_msg.get("from")),
