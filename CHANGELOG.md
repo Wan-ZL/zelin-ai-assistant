@@ -27,6 +27,26 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.24.0] - 2026-07-12
+
+### Added
+
+- **Local web dashboard (`python -m act.webui`).** A cross-platform,
+  browser-based view of the task board that reads the same dashboard and writes
+  the same approvals as the Mac app — so you can watch and steer the board from
+  any browser, not just the menu-bar UI. It binds to `127.0.0.1` with a
+  per-install token plus Host/Origin checks, so it is not reachable from other
+  machines. This is the first step toward Windows/Linux support (the UI has been
+  macOS-only until now).
+
+### Fixed
+
+- **`bash mac/build.sh` no longer fails on a fresh checkout without Sparkle.**
+  When the Sparkle framework wasn't vendored, expanding the empty
+  `SPARKLE_FLAGS` array under `set -u` on macOS's default bash 3.2 raised an
+  `unbound variable` error, breaking the "builds fine without the framework"
+  fallback. The array expansions are now bash-3.2-safe.
+
 ## [0.23.0] - 2026-07-12
 
 ### Added
@@ -864,7 +884,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...v0.21.0

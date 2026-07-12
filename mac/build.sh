@@ -94,7 +94,7 @@ mkdir -p "$BUILD_DIR"
 # Sparkle code compiles out cleanly with no extra -D flag.
 swiftc -O "$SRC_DIR"/*.swift -o "$BIN" \
     -framework AppKit -framework SwiftUI -framework Foundation \
-    "${SPARKLE_FLAGS[@]}"
+    ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"}
 echo "    built binary: $BIN"
 
 # --- compile framegrab helper (§13: video → evenly spaced JPEG frames) ---
