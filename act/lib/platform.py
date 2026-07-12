@@ -9,9 +9,6 @@ honest equivalent where one exists (notify-send, xdg-open) and a truthful
 empty result where none does yet.
 
 NOT here on purpose:
-  - anything darwin-only by NATURE: the iMessage channel (Messages.app +
-    chat.db) stays in act/radar_imessage.py behind an explicit is_darwin()
-    guard — it degrades to a classified skip on other OSes, it does not port;
   - anything already portable: claude / git / gh subprocess calls.
 
 Every function is best-effort and NEVER raises — a failed notification or

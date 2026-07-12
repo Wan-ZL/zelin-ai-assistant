@@ -5,7 +5,8 @@ written from a real audit of every OS-specific call in the tree (July 2026) —
 not from hope. Honest summary up front: **the headless core is already
 portable and its test suite runs green on ubuntu CI on every push**; what a
 port must build is the service wiring (launchd → systemd/Task Scheduler), an
-ingest chain, and eventually a UI. The iMessage channel does not port at all.
+ingest chain, and eventually a UI. (The iMessage transport was removed in
+v0.21 — nothing macOS-exclusive remains in the capture layer.)
 
 Want to help? Comment on the pinned "Windows/Linux port — help wanted" issue.
 
@@ -16,12 +17,11 @@ Want to help? Comment on the pinned "Windows/Linux port — help wanted" issue.
 | act core: `actd` daemon, executor, registry, dashboard projection, inbox, config, failures, health, analytics | `act/`, `act/lib/` | **Portable as-is** — pure Python 3.9+ + PyYAML; subprocess calls are `claude` / `git` / `gh`, all cross-platform. CI runs the full suite on ubuntu (Python 3.9 and current). |
 | Obsidian radar | `act/radar.py` | **Portable as-is** (filesystem + `claude`) |
 | Gmail radar | `act/radar_gmail.py` | **Portable as-is** (network + state/) |
-| Slack radar + self-DM channel | `act/radar_slack.py` | **Portable as-is** (network + state/) |
+| Slack radar (DMs/mentions + self-DM quick capture) | `act/radar_slack.py` | **Portable as-is** (network + state/) |
 | Claude-sessions radar | `act/radar_claude_sessions.py` | **Portable as-is** (reads `~/.claude` projects) |
 | Weekly digest / merge review / analyze | `act/weekly_digest.py`, `act/merge_review.py`, `act/analyze.py` | **Portable as-is** |
 | Doctor | `act/doctor.py` | **Mostly portable** — service checks read `platform.service_list_text()` (empty off macOS → agents honestly report unregistered); cron/FDA checks are macOS-shaped and need per-OS equivalents |
 | OS seam | `act/lib/platform.py` | **The porting surface** — see the interface below |
-| iMessage channel | `act/radar_imessage.py`, `imessage_notify` | **Platform-exclusive (darwin)** — Messages.app + `~/Library/Messages/chat.db` are Apple-only. Guarded: on other OSes the radar skips with `platform_unsupported` and `--check` says so plainly. Do NOT try to port; the Slack channel is the cross-platform command surface. |
 | Ingest chain (screenpipe → Obsidian) | `ingest/*.sh` | **Needs platform impl** — bash + cron + macOS TCC assumptions. [screenpipe](https://github.com/mediar-ai/screenpipe) itself runs on Windows/Linux, so this is a rewrite of the glue (export/process/cleanup on a timer), not of the engine. |
 | Service wiring (install/uninstall) | `install.sh`, `uninstall.sh`, `act/launchd/*.plist` | **Needs platform impl** — plist templates + `launchctl` + `crontab`. See the equivalents table. |
 | Menu-bar app | `mac/Sources/*.swift` | **Platform-exclusive (darwin)** — SwiftUI. A port needs its own thin UI later; the product works headless first (dashboard.json is the UI contract, `docs/CONTRACT.md`). |
@@ -43,8 +43,8 @@ Rules for touching the seam:
 - keep it thin — no classes, no plugin registry, one function per concern;
 - every function is best-effort and never raises (a failed notification must
   not kill the daemon loop);
-- darwin-only-by-nature features (iMessage) do **not** get seam functions —
-  they guard with `is_darwin()` and skip with a classified reason.
+- darwin-only-by-nature features do **not** get seam functions — they guard
+  with `is_darwin()` and skip with a classified reason.
 
 ## Service-manager equivalents
 
@@ -92,10 +92,12 @@ Smallest honest useful port — no UI, no screen capture:
 3. Wire `platform.service_list_text()` to `systemctl --user` and teach
    `act.doctor`'s parser about it — doctor is the acceptance test:
    `python3 -m act.doctor` should read all-green on a healthy Linux install.
-4. Phone channel = Slack self-DM (works today); notifications via
-   `notify-send` (works today on desktop).
-5. Skip: ingest chain, iMessage, the app. Cards flow end to end from radar →
-   approval (via Slack) → executor → draft PR. That is the demo that proves
-   the port.
+4. Mobile capture = Slack self-DM quick capture (works today); notifications
+   via `notify-send` (works today on desktop). Approval is via inbox files
+   today (CONTRACT §3/§10; the Mac app is the reference approver — a port
+   supplies its own UI or writes inbox JSON directly).
+5. Skip: ingest chain, the app. Cards flow end to end from radar → approval
+   (inbox decision) → executor → draft PR. That is the demo that proves the
+   port.
 
 CI will hold you honest: the ubuntu jobs run the full suite on every PR.

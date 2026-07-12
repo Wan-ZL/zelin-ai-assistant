@@ -158,6 +158,9 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 显示名 **Zelin's AI Assistant**（2026-07-07 /ask-me 拍板）；app bundle "Zelin's AI Assistant.app"。可执行 `ZelinAIEngineer`、bundle id `com.zelin.ai-engineer` **刻意不改**——TCC 授权与 UserDefaults 挂在 bundle id 名下，改=权限设置全部重来。launchd label 与 `AIASSISTANT_HOME` 环境变量名保持不变（兼容）。仓库目录默认 `~/Projects/zelin-ai-assistant`（旧默认兜底；clone 到任意位置均可，实际解析顺序见 §19 的 home 指针条目）。
 
 ## 13. Slack 手机端（self-DM = 指挥通道）
+
+> **v0.21 弃用说明（add-only，本节其余内容保留作历史）**：iMessage 通道整体移除（`act/radar_imessage.py`、`com.zelin.aiassistant.imessageradar.plist`、config `phone_channel`/`imessage_self_handle`、§13 v0.13「iPhone 联动 / iMessage 设置区」note（本节 194 行）、Permissions 里「仅 iPhone 联动需要」的 Full Disk Access 行（185 行）均随之退役）。Slack 的**手机审批角色**也移除：不再有出站通知镜像到 self-DM、不再有 `批准/拒绝/打回/验收 R-xxx` 指令面、不再有 ✅ reaction 审批（§5 通知语义里的「§13 手机镜像」与 §29「notify.py 里 osascript 只剩 radar_imessage 用途」等引用一并作古——notify 现在只走 §28 app 身份中继，`req` 参数保留但不再使用）。**Mac App 成为唯一审批面**。**保留**：Slack self-DM 的**快速捕获**（下面 #0 那条：给自己发一条文字/图片/视频 → 三选一建卡），以及全部 Slack 入站 ingest（DM/群/@提及 + MCP 兜底）——self-DM 现在是**只进不出**的手机端捕获入口，助手不再往里回帖。
+
 - radar_slack 对 **自己→自己的 DM**（im channel with self）做特殊处理：自己发的消息 = 指令/快速捕获，其他 DM/群/频道逻辑不变。
 - **快速捕获（#0）**：self-DM 文字 → LLM 收到（新文字 + 现有注册表条目清单 id+title+status）→ 三选一 JSON：`{"action":"new_proposal", ...卡片字段}` / `{"action":"relates_to","req":"R-xxx","note":...}`（把该条目 raise/追加 note 并回 DM 告知"已在弄/已关联"）/ `{"action":"ignore","reason":...}`。
 - **图片/视频**：self-DM 附件 → 用 token 下载（files:read）到 `state/media/<ts>/` → 视频先拆帧（ffmpeg 有则用之，否则 `mac/framegrab`(AVFoundation, build.sh 编译) 抽 ≤12 帧）→ `claude -p` 带图片路径识别 → 走快速捕获同款三选一。

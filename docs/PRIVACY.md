@@ -13,11 +13,11 @@
   **去往维护者服务器的例外只有两类**（同一个维护者 Supabase 项目）：
   ①**匿名使用统计（telemetry，默认开、可一键关）**：匿名事件元数据 + **你输入进
   本 App 的文本**（每条 ≤500 字符；`telemetry.capture_input` **默认开**，可单独
-  关）默认上传，用于产品改进——**不含**屏幕录制内容/邮件与 Slack/iMessage 消息
-  正文/文件内容/AI 回答/密钥，详见第 10 行与
+  关）默认上传，用于产品改进——**不含**屏幕录制内容/邮件与 Slack 消息
+  正文/文件内容/AI 回答/密钥，详见第 9 行与
   [`docs/TELEMETRY.md`](TELEMETRY.md)；②**建议上报（feedback，仅在你主动点「提建议」
   发送时）**：你的建议**全文** + 所选卡片的**标题快照**上传给维护者，且**不受**
-  telemetry 开关/首启 consent 限制（发送即同意）——这是内容数据，详见第 16 行。
+  telemetry 开关/首启 consent 限制（发送即同意）——这是内容数据，详见第 14 行。
 - **LLM 通道只有一个**：所有发往 Anthropic 的**内容**都经由 `claude` CLI（headless `claude -p`
   或 `claude --bg`）。唯一绕过 CLI 的直连是 App 的凭证验证 probe（GET
   `api.anthropic.com/v1/models`）——只携带你的 key 验证其有效性，不含任何内容数据。
@@ -27,7 +27,7 @@
   `api.anthropic.com/v1/models`；Slack token → POST `slack.com/api/auth.test`；Gmail
   app password → 经 runtime python 做一次真实 IMAP LOGIN，`mac/Sources/Settings.swift`
   `KeyProbe`）；**更新检查**（GET `api.github.com` releases——由 actd 的 python 进程发出
-  而非 App 进程，见第 12 条）；以及以 `npx screenpipe@0.3.349` 拉起录制引擎
+  而非 App 进程，见第 10 条）；以及以 `npx screenpipe@0.3.349` 拉起录制引擎
   （`mac/Sources/Recording.swift`）——首次运行时 npx 会从 npm registry **下载**引擎包
   （进来的流量，不带出你的数据）。
 
@@ -45,14 +45,12 @@
 | 6 | 欠账扩写 | 欠账升级为提案时 | Anthropic（+ 联网工具） | 开 | 无专用开关（不用欠账循环即不触发） |
 | 7 | 执行派发 | **你批准一张卡时** | Anthropic | — | 审批本身就是开关 |
 | 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | **关**（v0.11 起） | 默认即关；设 `execution.create_github_repo: true` 才启用 |
-| 9 | 通知镜像 | 每条 macOS 通知 | 你的 Slack self-DM | 开 | `features.slack_radar: false` / 不配 token |
-| 10 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
-| 11 | iMessage 通道 | launchd，每 3 分钟（本地只读 chat.db）；每条通知（镜像发送） | self-thread 文本 → Anthropic；镜像经 Apple iMessage 发给**你自己** | **关** | 默认即关（`phone_channel: none`） |
-| 12 | 更新检查 | actd，至多每 24h 一次（ETag 缓存）；「关于」页「立即检查」按钮手动触发同一请求 | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false`（关闭后手动按钮同样不发请求） |
-| 13 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **开** | `sources.weekly_digest.enabled: false` |
-| 14 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
-| 15 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |
-| 16 | 建议上报（feedback） | **你点「提建议」发送时** | 维护者的 Supabase（同 telemetry 通道/表；**不受** telemetry 开关限制） | — | 不发送即不触发；fork 设 `telemetry.supabase_url: ""` 硬关 |
+| 9 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
+| 10 | 更新检查 | actd，至多每 24h 一次（ETag 缓存）；「关于」页「立即检查」按钮手动触发同一请求 | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false`（关闭后手动按钮同样不发请求） |
+| 11 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **开** | `sources.weekly_digest.enabled: false` |
+| 12 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
+| 13 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |
+| 14 | 建议上报（feedback） | **你点「提建议」发送时** | 维护者的 Supabase（同 telemetry 通道/表；**不受** telemetry 开关限制） | — | 不发送即不触发；fork 设 `telemetry.supabase_url: ""` 硬关 |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -88,8 +86,9 @@
   `sanitize.scrub()`。无 xoxp token 时的 MCP 兜底扫描（每 30 分钟节流）只用**只读** Slack
   MCP 工具。
 - **读取凭证**：需要你自己的 Slack **user token**（xoxp-），读取范围见 `docs/SLACK_SETUP.md`。
-  雷达产出的对外沟通类卡片**永远只生成草稿**——pipeline 不会替你给别人发消息
-  （`chat.postMessage` 只发进你自己的 self-DM，见第 9 条）。
+  雷达产出的对外沟通类卡片**永远只生成草稿**——pipeline 不会替你给别人发消息。
+  self-DM 现在是**只进不出**的手机端捕获入口（v0.21 起，助手不再往里回帖或发通知；
+  你发给自己的文本/图片/视频走 quick capture，见第 5 条）。
 - **关闭**：`features.slack_radar: false`；或根本不配置 token（静默 no-op）。
 
 ### 4. Gmail 雷达 → Anthropic
@@ -142,16 +141,7 @@
 - **关闭时的行为**：仅本地 `git init` + 本地分支交付；任何失败也自动留在本地
   （"stay local"，永不阻塞派发）。
 
-### 9. 通知镜像 → 你的 Slack self-DM
-
-- **触发/频率**：actd 每发一条 macOS 通知（新提案卡 / 任务完成 / 需要输入 / 凭证失效,
-  CONTRACT §5），同时 best-effort 镜像一条到你的 Slack self-DM（`act/lib/notify.py`,
-  CONTRACT §13）。
-- **Payload**：通知标题 + 正文（通常是卡片标题这类元数据，非文档内容）+ `#R-xxx` id;
-  消息 ts 记录在本地 `state/slack_outbox.json`（用于 ✅ 反应审批）。
-- **关闭**：`features.slack_radar: false` 或不配 token → 只剩本地 osascript 通知。
-
-### 10. Telemetry（匿名使用统计 + 输入文本）→ 维护者的 Supabase（**默认开**，一键可关）
+### 9. Telemetry（匿名使用统计 + 输入文本）→ 维护者的 Supabase（**默认开**，一键可关）
 
 - **默认开**（像 VS Code）：`telemetry.enabled` 默认 `true`，上传目标默认是**维护者的**
   Supabase 项目，用内置 publishable key 写入（该 key 公开设计，RLS 只允许 INSERT——
@@ -161,7 +151,7 @@
   ②**你亲手输入进本 App 的文本**（快速捕获、提问、打回反馈、搜索词、你批准的派发
   摘要，每条截断 500 字符）——由 `telemetry.capture_input`（**默认开**）与
   `level: detailed`（**默认值**）双开关控制，关掉任一即停止文本记录与上传。
-  **任何设置下都不收集**：AI 的回答/模型输出、屏幕录制内容、邮件与 Slack/iMessage
+  **任何设置下都不收集**：AI 的回答/模型输出、屏幕录制内容、邮件与 Slack
   的消息正文（第三方私人通信）、文件内容、密钥——雷达提取的第三方内容永远不进
   telemetry：雷达来源卡片的派发事件没有 instruction 字段（provenance 白名单），
   每个内容字段写入前先过**无条件**密钥掩码（与 redaction 配置无关），带附件的
@@ -175,27 +165,7 @@
   彻底禁用，或指到自己的项目。
 - 字段表、开关说明、容量预算、fork 须知详见 [`docs/TELEMETRY.md`](TELEMETRY.md)。
 
-### 11. iMessage 手机通道（opt-in，默认关，仅 macOS）
-
-- **默认关**。`phone_channel: none` 时这条通道完全不存在（launchd plist 都不会被安装，
-  见 install.sh step 5 的 gate）。设 `phone_channel: imessage` 才启用（CONTRACT §13
-  通道可插拔；`docs/IMESSAGE_SETUP.md`）。
-- **本地读取（不出境）**：`act/radar_imessage.py` 每 3 分钟以 sqlite **只读**（`mode=ro`
-  URI，无法写入）打开 `~/Library/Messages/chat.db`，只处理"给自己发消息"线程里
-  `is_from_me=1` 的新行（marker = 最后 ROWID）。这需要给雷达的 python 二进制授
-  **Full Disk Access**——授了 FDA 的进程技术上能读整个 chat.db，但本雷达只查询
-  self-thread 的消息与 tapback 目标行。数据库内容本身**不上传**。
-- **出境**：你在 self-thread 里发的**文字**走 quick capture（同第 5 条：文本 + 注册表
-  清单 → Anthropic，出境前过 `sanitize.scrub()`）；审批指令（`批准 R-xxx` 等）在本地
-  正则解析，**不经 LLM**。通知镜像（🔔 + `#R-xxx`，与第 9 条同款元数据）经 osascript →
-  Messages.app → Apple 的 iMessage 服务发给**你自己的 handle**——pipeline 永远不会给
-  别人发 iMessage（与 Slack 通道同一条红线）。出站消息只在本地
-  `state/imessage_outbox.json` 记 req id + 时间（14 天后清）。
-- **关闭**：`phone_channel` 改回 `none`（或 `slack`）后重跑 `install.sh`——step 5 会
-  卸载并删除该 launchd agent；或手动 `launchctl unload
-  ~/Library/LaunchAgents/com.zelin.aiassistant.imessageradar.plist`。
-
-### 12. 更新检查 → GitHub releases API（默认开，一键可关）
+### 10. 更新检查 → GitHub releases API（默认开，一键可关）
 
 - actd 至多**每 24h 一次** GET GitHub 的 `/releases/latest`（无鉴权，ETag 缓存，
   版本没变时 304 几乎零流量；离线/限流静默保留缓存，不重试）。
@@ -207,7 +177,7 @@
 - **关闭**：App 设置 → 通用 →「自动检查新版本」；或 config.yaml
   `updates.check_enabled: false`——关闭后不再发出任何请求。
 
-### 13. 周报（weekly digest）→ Anthropic（**默认开**）
+### 11. 周报（weekly digest）→ Anthropic（**默认开**）
 
 - **触发/频率**：launchd agent（`act/launchd/com.zelin.aiassistant.weeklydigest.plist`）
   每小时醒来，模块自己按 `sources.weekly_digest`（enabled/day/hour，默认周一 9 点）
@@ -222,7 +192,7 @@
   合并而不堆叠。
 - **关闭**：`sources.weekly_digest.enabled: false`。
 
-### 14. 问问助手（Ask）→ Anthropic
+### 12. 问问助手（Ask）→ Anthropic
 
 - **触发**：只在你于 App「问答」页提交问题时（`act/ask.py`，CONTRACT §27）。
 - **Payload**：你的问题 + 问题相关的产品文档摘录（本地关键词匹配挑选，非 LLM）+
@@ -235,7 +205,7 @@
   [`docs/TELEMETRY.md`](TELEMETRY.md) 第 10 行）。
 - **关闭**：不提问即不触发；`ask.enabled: false` 整体关掉问答页。
 
-### 15. 让 AI 修（Fix with AI）→ Anthropic
+### 13. 让 AI 修（Fix with AI）→ Anthropic
 
 - **触发**：只在你点「让 AI 修」按钮或跑 `python3 -m act.ai_fix --open` 时。
 - **Payload**：诊断 bundle = doctor 体检结果 + 相关日志尾部（每份 40 行），**写入前**
@@ -245,7 +215,7 @@
   征求你同意；但会话中它读到的其他文件与命令输出同样进入 context（= 发往 Anthropic）。
 - **关闭**：不点即不触发；`doctor.ai_fix_enabled: false` 禁用按钮与 CLI（exit 2）。
 
-### 16. 建议上报（feedback）→ 维护者的 Supabase（仅在你主动发送时）
+### 14. 建议上报（feedback）→ 维护者的 Supabase（仅在你主动发送时）
 
 - **触发**：只在你于 App 里点「提建议」（看板 header 或多选操作条）并发送时
   （CONTRACT §29）。
@@ -253,7 +223,7 @@
   （id / 类型 / 标题 / 状态，卡片标题可能含内部项目名/人名）+ app 版本 + 随机 device
   uuid。经 telemetry 同一条 anon INSERT 通道写入维护者 Supabase 的 `analytics_events`
   表（`event="feedback"`，key 只能 INSERT、读不回，`act/lib/feedback.py`）。
-- **与匿名统计（第 10 行）的关键差异**：这是**内容数据**，且**不受**
+- **与匿名统计（第 9 行）的关键差异**：这是**内容数据**，且**不受**
   `telemetry.enabled` 开关与首启 consent 门限制——建议上报是显式用户动作，
   点「发送」本身就是同意（App 的入口文案会明示这一点，请勿包含敏感信息）。
   本地永久留档 `state/feedback/<uuid>.json`（不删）。
@@ -265,7 +235,7 @@
 - **凭证**：`config/secrets/` 下的所有 token/key 文件。凭证内容永不打印、永不入日志
   （CONTRACT §19）,内置 secret-pattern 掩码再兜一层（见下文）。
 - **注册表与状态**：`act/registry/R-*.yaml`（真源）、`state/dashboard.json`、`state/inbox/`、
-  执行日志。`state/analytics/events.jsonl` 本身不上传——telemetry（默认开，见第 10 条）
+  执行日志。`state/analytics/events.jsonl` 本身不上传——telemetry（默认开，见第 9 条）
   上传的是其中的**匿名事件元数据**，关掉开关后它就纯粹留在本机。
 - **screenpipe 原始数据**：`~/.screenpipe/db.sqlite` 与媒体文件本身不上传——出境的是
   ingest/雷达 prompt 里**引用到的文本**（见第 1/2 条,这是核心设计而非泄漏）。

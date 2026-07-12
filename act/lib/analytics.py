@@ -31,7 +31,7 @@ FIRST_DIR: Path = ANALYTICS_DIR / "first"
 # Hard cap for every user-typed content field (docs/TELEMETRY.md「输入文本
 # 收集」): capture text / Ask questions / card comments / instruction
 # summaries all pass through clip(text, CONTENT_CLIP). Model OUTPUT and
-# ingested third-party content (screen OCR / emails / Slack/iMessage
+# ingested third-party content (screen OCR / emails / Slack
 # messages, tests/test_telemetry_level.py boundary guard) are never captured
 # at any setting — only what the user typed into this app.
 CONTENT_CLIP: int = 500

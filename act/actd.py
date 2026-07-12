@@ -1018,7 +1018,8 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     p_ni, c_ni = _by_id(prev.get("needs_input", [])), _by_id(curr.get("needs_input", []))
     p_rev, c_rev = _by_id(prev.get("review", [])), _by_id(curr.get("review", []))
 
-    # 3-tuples (title, body, req) so Slack ✅-reaction knows which R-id to approve
+    # 3-tuples (title, body, req); req is carried for caller compatibility (the
+    # phone ✅-reaction approval surface was removed in v0.21 — Mac app only).
     # new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
     # so Zelin knows it's a card he already accepted, not a brand-new find.
     for rid, item in c_na.items():

@@ -53,18 +53,8 @@ approval:
     show_cost_above_usd: 5             # 低于此值卡片不显示成本
     require_text_confirm_above_usd: 50 # 高于此值升 T2，需文字确认
 
-# 手机指挥通道（CONTRACT §13 的指令面 + 通知镜像走哪个通道）：
-#   none     = 默认。不启用 iMessage；Slack 侧维持现状（features.slack_radar 开
-#              且有 token 时通知照旧镜像到 Slack self-DM，没配 token 则本来就是 no-op）
-#   slack    = 显式选 Slack（行为与 none 完全相同，仅表达意图）
-#   imessage = 没有 Slack 的用户用 iMessage"给自己发消息"线程做手机端：
-#              批准/拒绝/打回/验收 R-xxx、快速捕获、👍/❤️ tapback 审批、🔔 通知镜像。
-#              需要：下面的 imessage.self_handle + 给 python 授 Full Disk Access
-#              （chat.db 只读轮询）。步骤见 docs/IMESSAGE_SETUP.md。仅 macOS。
-phone_channel: none
-# imessage:
-#   self_handle: "+14155551234"        # 你自己的 iMessage handle：E.164 手机号或 iCloud 邮箱
-#                                      # （必须和 Messages 里"给自己发消息"线程的收件人完全一致）
+# 审批只在 Mac App 里做（v0.21 起）。iMessage 通道与 Slack 的手机审批角色都已移除；
+# Slack self-DM 仍保留为「给自己发一条 = 快速建卡」的手机端捕获入口（见 docs/SLACK_SETUP.md）。
 
 execution:
   dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控
@@ -139,7 +129,7 @@ redaction:                             # 发给 AI 前的本地脱敏
 #   capture_input: true                # 【默认 true】上传你输入进本 App 的文本原文（快速捕获、提问、
 #                                      # 打回反馈、搜索词；每条截断 500 字符）。false = 只留行为事件。
 #                                      # 边界：只收集你亲手输入的文字——绝不含 AI 的回答、屏幕录制内容、
-#                                      # 邮件或 Slack/iMessage 消息、密钥（这些在任何设置下都不进 telemetry）。
+#                                      # 邮件或 Slack 消息、密钥（这些在任何设置下都不进 telemetry）。
 #   # 默认上传到维护者的 Supabase（内置 publishable key，RLS 只允许写入、读不回数据）。
 #   # fork/自建收集端：换成你自己的项目 URL；置空 "" 则彻底禁用上传。
 #   supabase_url: "https://xxxx.supabase.co"

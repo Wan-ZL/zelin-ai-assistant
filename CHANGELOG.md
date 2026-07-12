@@ -25,7 +25,19 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Removed
+- **iMessage transport removed**, and **Slack's phone-approval role removed**.
+  The Mac app is now the **sole approval surface**. Dropped: the iMessage radar
+  (`act/radar_imessage.py` + its launchd agent), the `phone_channel` /
+  `imessage_self_handle` config, all outbound notification mirroring to the
+  Slack self-DM, the `批准/拒绝/打回/验收 R-xxx` phone command surface, and the
+  ✅-reaction approval poll. Upgrades auto-unload the stale `imessageradar`
+  launchd agent. Migration: approve/accept cards in the Mac app.
+- **Kept**: Slack ingest (DMs / group DMs / @mentions + MCP fallback) and
+  **Slack self-DM quick capture** — DM yourself a one-liner (or a photo/video)
+  and it triages into a card. Self-DM is now a one-way capture inbox (the
+  assistant no longer posts replies or notifications back into it); it remains
+  the mobile-capture path until the iOS app ships.
 
 ## [0.20.1] - 2026-07-12
 
