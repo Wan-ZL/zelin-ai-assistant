@@ -824,3 +824,91 @@ working」不可能是返工轮，只能是用户 attach / 会话自发活动。
   （诚实降级）；新 App + 老 actd —— 仍可能收到 running[] 里
   `state="review-active"` 的行（该行形状只来自老 actd，add-only 不删），App
   徽章文案改为同语义的「会话有新活动」。
+
+# iOS 云同步 additions（Phase 1b — `syncd` + actd sync-safety，plan of record §5/§7.3）
+
+## 31. `syncd` — headless 云同步守护进程（`python3 -m act.syncd`）
+
+`syncd` 是既有「两文件契约」的**第二个 client**（与 Mac app 并列）：DOWN 读
+`state/dashboard.json`、UP 写 `state/inbox/<action_id>.json`。它**从不 import
+`actd`**、从不碰 registry；Supabase 全程只见 `act/lib/e2e.py` 产出的**密文**
+（per-pairing 对称 AEAD，维护者读不到正文）。launchd plist
+`act/launchd/com.zelin.aiassistant.syncd.plist`（KeepAlive）。
+
+- **启动门（默认关，硬边界）**：进程启动第一件事是读 `state/sync.json`；文件不存在
+  或 `mode != "cloud"` → **立即 `exit 0`**，在任何其他文件操作 / 任何网络之前。所以
+  一次没 opt-in 的普通安装（哪怕 plist 已 load）**零网络**。开 = 写 `sync.json`
+  `mode:"cloud"`；关 = `mode:"off"` 或删文件（完全回本地）。
+- **鉴权（§3）**：headless 无 login session，拿 per-device secret（`config/secrets.json`
+  的 `sync_device_secret` 优先，否则 `state/sync.json.device_secret`）POST
+  `exchange_device_token` Edge Function 换 1h device-scoped JWT，缓存 + 到期前刷新。
+  换取失败 → **暂停同步（不 crash、不影响 actd 本地写盘）**，写
+  `state/sync/status.json` `{paused:true, reason:"云同步已暂停:请在 App 重新配对"}`
+  并退避重试。
+- **DOWN（§5.2）**：poll `dashboard.json` mtime（≤10s）→ 本地 sha256 change-gate
+  （**hash 只在本地、绝不上传**）→ 变了就 bump `seq`（启动 seed =
+  `max(server row seq, 本地 seq)+1`，同一设备下永不回退）→ `e2e.encrypt_board`
+  原始 dashboard 字节 → UPSERT `board_snapshots`（on_conflict=device_id，device
+  JWT）。把 blob 内嵌 nonce 镜像进 `nonce` 列（schema NOT NULL）。每 30s 心跳
+  `device_heartbeats` 带 `last_pushed_seq`（揭穿「心跳活着但推送卡死」）。
+- **UP（§5.3）**：poll `inbox_actions WHERE target_device_id=me AND
+  status='pending'`（10s）→ 经 `delivered.jsonl` ledger 去重（同 action_id 两次 =
+  一个 inbox 文件）→ `e2e.decrypt_action`（AEAD 认证，relay 无法伪造/改路由）→
+  原子写 `state/inbox/<action_id>.json`（tmp+os.replace）→ PATCH 行 `delivered`。
+- **ack-tail**：用字节游标 tail `state/sync/applied.jsonl`（actd 写，§32）→ PATCH 行
+  `applied` + `result_status`（PATCH 失败则不前进游标、下轮重试）。
+- **`state/sync/` 归 `syncd`**：`down_state.json`（`snapshot_seq` + change-gate
+  hash）、`delivered.jsonl`（L3 去重）、`applied_cursor.json`（ack-tail 游标）、
+  `status.json`（UI 可读的暂停原因）、`pairing_registration.json`（配对产物）。
+- **网络全 best-effort**：任何 network 调用失败只 log、绝不 raise 进循环。
+
+### `state/sync.json`（opt-in 门 + 路由；不存在 = 纯本地）
+```json
+{"mode":"cloud","device_id":"<sync-only uuid>","owner":"<auth.uid>","epoch":1,
+ "platform":"macos","supabase_url":"https://…","apikey":"sb_publishable_…"}
+```
+`mode` ∈ `cloud` | `off`（缺失 = off）。`device_id` = **独立 sync-only UUID**
+（`e2e.sync_device_id` → `state/sync_device_id`），**绝不复用** telemetry 的
+`state/device_id`（§8-4：否则给 operator 去匿名化 telemetry）。可选 `edge_url`、
+`device_secret`（也可放 `config/secrets.json`）。
+
+### 配对 / consent CLI（Settings UI 调用）
+- `python3 -m act.syncd --pair --label "公司 Mac" --supabase-url … --apikey … --owner …`
+  ：mint sync device UUID + per-pairing key `K_i`（`e2e.new_pairing_key` /
+  `save_pairing`）+ per-device secret（写 `config/secrets.json` 0600），写
+  `state/sync.json`（mode=cloud，即 opt-in），产出 QR blob（`e2e.build_pairing_blob`，
+  不透明、非 URL scheme）与 `state/sync/pairing_registration.json`（app/operator 用
+  service_role 插 `devices` + `device_secrets` 行所需材料，含 argon2id 或待哈希 secret）。
+- `python3 -m act.syncd --disable`：`mode:"off"`，回本地（保留密钥，重开无需重配对）。
+- `python3 -m act.syncd --consent-text`：打印 §7.3 B 多设备同步诚实披露文案
+  （`syncd.CONSENT_DISCLOSURE_ZH`，与「匿名使用统计」是两个独立开关）。
+
+## 32. actd 的 sync-safety 改动（§5.4；macOS/Linux 同样运行，向后不回归）
+
+1. **`state/sync/applied.jsonl` ack（每个终态一行）**：`process_inbox` 消费**任何**
+   inbox 文件后都追加一行 `{"action_id":<文件名 stem>,"result_status":…,"ts":…}`
+   —— 不只 apply 成功，连 guarded no-op、unknown-req drop、bad-JSON 也写
+   （`result_status` ∈ `running`|`noop`|`unknown`|`bad_json`）。这样手机的
+   badge：已提交→已送达→**已生效(`running`)/已是最新(`noop`)/该卡已不存在
+   (`unknown`)**，全读 durable status，**绝不靠 inbox 文件消失推断 applied**
+   （`actd.py` 无论结果都删文件）。本地 Mac app 的随机 action_id 不匹配任何云端行 →
+   syncd PATCH 命中 0 行，无害。best-effort，绝不 raise 进 pass。
+2. **`comment`/`raise`/`accept`/`rework` 收紧 status guard**：`_apply_decision`
+   现读 inbox 文件里的 `expected_status`/`board_seq`（手机 tap 时钉入），
+   `expected_status` 若与当前状态不符 = 幂等 no-op；且各自的固有前置态收紧为
+   —— `comment` 仅 `card_sent`/`detected`、`raise` 仅 `detected`、`accept`/`rework`
+   仅 `review`。防陈旧/重放动作撕走 running 卡 / 提前归档 / 重复返工。
+   （`approve`/`done_external`/`abort_execution`/`revert_review`/`stop_to_review`/
+   `defer`/`archive`/`unarchive` 早已有 guard，未改语义，只补 `result_status` 返回值。）
+3. **inbox 文件名接受 `<action_id>.json`**：现有 `*.json` glob 已兼容，无需改动
+   （`action_id` = 云端幂等键 = 文件名；文件内 `id` 仍是需求 id 如 `R-001`）。
+
+### `state/inbox/<action_id>.json` 的 §5.4 附加字段（add-only，Mac app 不写、缺省即老行为）
+```json
+{"id":"R-001","action":"approve","comment":null,"ts":"…",
+ "expected_status":"card_sent","board_seq":42}
+```
+- `expected_status`(str|absent)：手机看到该卡时的状态，actd 的 §5.4 guard 前置检查；
+  缺省 = 不做 expected 检查（保持 Mac app 老行为）。
+- `board_seq`(int|absent)：手机所见看板 revision（也进 `e2e` action AAD），provenance/
+  staleness 信号；syncd 从 `inbox_actions.board_seq` 行值回填。
