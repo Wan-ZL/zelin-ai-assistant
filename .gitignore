@@ -12,3 +12,7 @@ __pycache__/
 *.pyc
 config/runtime.json
 supabase/.temp/
+promo/build/
+promo/node_modules/
+promo/package.json
+promo/package-lock.json
