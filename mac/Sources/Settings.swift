@@ -17,6 +17,160 @@ import SwiftUI
 import Foundation
 import ServiceManagement  // SMAppService (launch at login)
 
+// MARK: - Settings redesign infrastructure (v0.21: collapsible + searchable)
+
+/// One entry per settings section. Section-grain (not row-grain): the content
+/// is the existing group / embedded-section view; `keywords` is a hand-authored
+/// bilingual (zh+en) blob so the finder hits regardless of the shown language.
+struct SettingsSectionDescriptor: Identifiable {
+    let id: String          // stable key; == frozen anchor where one exists
+    let titleZh: String
+    let titleEn: String
+    let keywords: String    // zh+en blob: title + labels + help lines
+    let anchor: String?     // "credentials" | "telemetry" | "claude_import" | nil
+    let content: AnyView    // existing group content OR embedded section view
+}
+
+/// Persisted collapse state (UserDefaults, comma-joined id list). Default =
+/// remember-last, seeded to all-collapsed on first run — a single-screen
+/// overview of every section title; expand on demand. Deep-link anchors
+/// force-expand their target regardless of stored state.
+@MainActor
+final class SettingsCollapseStore: ObservableObject {
+    private static let key = "settings.expandedSections"
+    @Published private var expanded: Set<String>
+
+    init() {
+        let raw = UserDefaults.standard.string(forKey: Self.key) ?? ""
+        expanded = Set(raw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+    }
+
+    func isExpanded(_ id: String) -> Bool { expanded.contains(id) }
+
+    func expand(_ id: String) {
+        guard !expanded.contains(id) else { return }
+        expanded.insert(id)
+        persist()
+    }
+
+    /// Two-way binding for a section id — the collapse toggle drives this.
+    func binding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { self.expanded.contains(id) },
+            set: { on in
+                if on { self.expand(id) }
+                else if self.expanded.remove(id) != nil { self.persist() }
+            })
+    }
+
+    private func persist() {
+        UserDefaults.standard.set(expanded.sorted().joined(separator: ","), forKey: Self.key)
+    }
+}
+
+/// Shared card wrapper — one consistent card / collapse / search chrome for
+/// every section (replaces both the old `group()` card and the embedded
+/// sections' hand-rolled cards). Body renders only when expanded (or when a
+/// search is active, which force-expands every match).
+struct CollapsibleSection<Content: View>: View {
+    let id: String
+    let title: String
+    var anchor: String? = nil
+    @Binding var isExpanded: Bool
+    var searchActive: Bool = false
+    var matched: Bool = false
+    var flash: Bool = false
+    @ViewBuilder let content: () -> Content
+
+    private var effectiveExpanded: Bool { searchActive ? true : isExpanded }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(effectiveExpanded ? 90 : 0))
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // during an active search every match is force-expanded; disabling
+            // the toggle keeps the stored accordion state untouched (§1.9).
+            .disabled(searchActive)
+
+            if effectiveExpanded { content() }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity((flash || (searchActive && matched)) ? 0.16 : 0))
+                .allowsHitTesting(false)
+        }
+        // frozen anchor stays on the (always-present) card so scrollTo lands
+        // even while collapsed; the deep-link handler expands to reveal content.
+        .id(anchor ?? id)
+    }
+}
+
+/// The settings finder box. Magnifier + trailing clear (×); ⌘F focuses it
+/// (hidden button in SettingsFormView), Esc clears then defocuses. NOT
+/// auto-focused on page open, so deep-link scroll-to-anchor is preserved.
+struct SettingsSearchField: View {
+    @Binding var text: String
+    var focused: FocusState<Bool>.Binding
+    @ObservedObject private var i18n = LanguageStore.shared
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            TextField(L("搜索设置（⌘F）", "Search settings (⌘F)"), text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused(focused)
+                .onKeyPress(.escape) { esc() }
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                    focused.wrappedValue = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L("清空搜索", "Clear search"))
+            }
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: 460, alignment: .leading)
+        .background(Color.primary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func esc() -> KeyPress.Result {
+        // IME red line: Esc cancels a live pinyin composition — the input
+        // method owns it, pass through untouched (Composer.escKey 先例).
+        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+           tv.hasMarkedText() { return .ignored }
+        if !text.isEmpty { text = "" }        // 1st Esc: clear the query
+        else { focused.wrappedValue = false } // 2nd Esc: release the caret
+        return .handled
+    }
+}
+
 // MARK: §15.3 设置 — reads/writes state/settings_overrides.json (atomic)
 
 struct SettingsFormView: View {
@@ -92,13 +246,20 @@ struct SettingsFormView: View {
     @State private var status = ""
     @State private var statusIsError = false
     @State private var loaded = false
-    // 1.5 s highlight on the credentials group after a deps「去设置」jump
-    @State private var credFlash = false
+    // v0.21 collapsible + searchable settings
+    @StateObject private var collapse = SettingsCollapseStore()
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+    // 1.5 s highlight on the section a deps/wizard「去设置」jump lands on
+    // (credentials or claude_import); nil = nothing flashing.
+    @State private var flashedAnchor: String? = nil
     // text-field commit plumbing: field key currently focused; leaving a field
     // (or pressing Enter) commits it.
     @FocusState private var focusedField: String?
 
     var body: some View {
+        let searchActive = !query.isEmpty
+        let visible = searchActive ? sections.filter { matches($0, query) } : sections
         VStack(alignment: .leading, spacing: 14) {
             Text(L("设置", "Settings"))
                 .font(.system(size: 18, weight: .semibold))
@@ -109,52 +270,161 @@ struct SettingsFormView: View {
                 .help(L("写入 state/settings_overrides.json——只写与 config.yaml 不同的键（优先级最高）。",
                         "Written to state/settings_overrides.json — only keys that differ from config.yaml (highest priority)."))
 
-            generalGroup
-            menuBarGroup
-            recordingGroup
-            obsidianGroup
-            credentialsGroup
-            // v0.14 Slack/Gmail 设置区 (CONTRACT §15): fully in-app channel
-            // setup — manifest copy + token verify + pickers / app-password
-            // guide + address + health. Self-contained sections in
-            // SettingsSlack.swift / SettingsGmail.swift.
-            SlackSettingsSection()
-            GmailSettingsSection()
-            // v0.13: iPhone 联动 (iMessage phone channel, CONTRACT §13/§15) —
-            // self-contained section (own state, immediate writes), lives in
-            // SettingsIMessage.swift.
-            IMessageSettingsSection()
-            // §22: one-click Claude Code session import (cold-start seeding) —
-            // self-contained section, lives in SettingsClaudeImport.swift.
-            // Frozen scroll anchor "claude_import" (wizard finale deep-link).
-            ClaudeImportSettingsSection()
-            approvalGroup
-            flagsGroup
-            // v0.14 weekly ingest digest (CONTRACT §24) — self-contained
-            // section (own state, immediate writes), lives in
-            // SettingsWeeklyDigest.swift.
-            WeeklyDigestSettingsSection()
-            // 语气档案 (docs/VOICE.md): product-core behavior made visible &
-            // controllable — status + open + injection toggle + generator.
-            voiceGroup
-            redactionGroup
-            telemetryGroup
-            footerRow
+            SettingsSearchField(text: $query, focused: $searchFocused)
+
+            if searchActive && visible.isEmpty {
+                emptyStateView
+            } else {
+                ForEach(visible) { sectionView($0) }
+            }
+
+            // Advanced/config.yaml + status footer — hidden during an active
+            // search so the result list reads clean.
+            if !searchActive { footerRow }
+        }
+        .background {
+            // ⌘F focuses the finder — hidden window-scoped shortcut (same
+            // pattern as the board search; only fires while 设置 is the page).
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
         }
         .onAppear {
             if !loaded { load(); loaded = true }
-            flashCredentialsIfPending()
+            expandAnchorIfPending()
+            flashAnchorIfPending()
         }
-        .onChange(of: nav.pendingAnchor) { _, _ in flashCredentialsIfPending() }
+        .onChange(of: nav.pendingAnchor) { _, _ in
+            expandAnchorIfPending()
+            flashAnchorIfPending()
+        }
         // leaving a text field commits it; window close commits the focused one
         .onChange(of: focusedField) { old, _ in commitField(old) }
         .onDisappear { commitField(focusedField) }
     }
 
+    // MARK: - section registry + search
+
+    /// One descriptor per section, in display order. Built inside the view so
+    /// each `content` closure still captures self / $focusedField / the private
+    /// persist helpers — zero change to save/focus plumbing.
+    private var sections: [SettingsSectionDescriptor] {
+        [
+            SettingsSectionDescriptor(
+                id: "general", titleZh: "通用", titleEn: "General",
+                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 卡片排序 card sorting 排序 newest oldest deadline 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 完全磁盘访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
+                anchor: nil, content: AnyView(generalGroup)),
+            SettingsSectionDescriptor(
+                id: "menuBar", titleZh: "菜单栏", titleEn: "Menu Bar",
+                keywords: "菜单栏 menu bar 显示菜单栏图标 show menu-bar icon 主图标 卡片列表 checklist dock",
+                anchor: nil, content: AnyView(menuBarGroup)),
+            SettingsSectionDescriptor(
+                id: "recording", titleZh: "录制", titleEn: "Recording",
+                keywords: "录制 recording 默认录制模式 default recording mode 关 off 仅屏幕 screen only 屏幕音频 screen audio screenpipe 持续录制",
+                anchor: nil, content: AnyView(recordingGroup)),
+            SettingsSectionDescriptor(
+                id: "obsidian", titleZh: "笔记库", titleEn: "Notes vault",
+                keywords: "笔记库 notes vault obsidian vault 位置 location 雷达 radar 待办 unprocessed raw change-summary wiki 管线目录 pipeline",
+                anchor: nil, content: AnyView(obsidianGroup)),
+            SettingsSectionDescriptor(
+                id: "credentials",
+                titleZh: "凭证（存本机 config/secrets/，保存后自动验证）",
+                titleEn: "Credentials (stored locally in config/secrets/; verified automatically on save)",
+                keywords: "凭证 credentials secrets anthropic api key 密钥 控制台 console slack token gmail 密码 password 验证 verify",
+                anchor: "credentials", content: AnyView(credentialsGroup)),
+            SettingsSectionDescriptor(
+                id: "slack", titleZh: "Slack 接入", titleEn: "Slack",
+                keywords: "slack 接入 雷达 radar dm 群 @提及 mention 提案卡 proposal card token 草稿 draft ingest 需求",
+                anchor: nil, content: AnyView(SlackSettingsSection())),
+            SettingsSectionDescriptor(
+                id: "gmail", titleZh: "Gmail 接入", titleEn: "Gmail",
+                keywords: "gmail 接入 email 邮件 雷达 radar 收件箱 inbox 未读 unread 提案卡 proposal card 只读 read-only app password 应用专用密码",
+                anchor: nil, content: AnyView(GmailSettingsSection())),
+            SettingsSectionDescriptor(
+                id: "claudeImport", titleZh: "导入 Claude Code 工作",
+                titleEn: "Import Claude Code work",
+                keywords: "导入 import claude code 工作 会话 session 看板卡片 board card 扫描 scan 最近 7 天 last 7 days 等你回复 waiting",
+                anchor: "claude_import", content: AnyView(ClaudeImportSettingsSection())),
+            SettingsSectionDescriptor(
+                id: "approval", titleZh: "审批 / 成本", titleEn: "Approval / Cost",
+                keywords: "审批 approval 成本 cost 任务工作目录 task working folder target repo 显示成本阈值 show cost 文字确认 confirm 回收站保留天数 trash retention 免确认 skip permissions github 私有仓库 private repo",
+                anchor: nil, content: AnyView(approvalGroup)),
+            SettingsSectionDescriptor(
+                id: "flags", titleZh: "Feature flags（§16，默认全开）",
+                titleEn: "Feature flags (§16, all on by default)",
+                keywords: "feature flags 开关 slack_radar gmail_radar obsidian_radar digest auto_resume analytics 雷达 用量统计 usage stats",
+                anchor: nil, content: AnyView(flagsGroup)),
+            SettingsSectionDescriptor(
+                id: "weeklyDigest", titleZh: "每周摘要", titleEn: "Weekly digest",
+                keywords: "每周摘要 weekly digest 摘要 recap 自动化建议 automation ideas 现在生成 generate now 待验收 review 待审批 approvals ingest",
+                anchor: nil, content: AnyView(WeeklyDigestSettingsSection())),
+            SettingsSectionDescriptor(
+                id: "voice", titleZh: "语气档案（以你的口吻起草）",
+                titleEn: "Voice profile (drafts in your voice)",
+                keywords: "语气档案 voice profile 口吻 起草 draft slack 回复 邮件 email 当前生效 in effect 打开档案 open profile 语气注入 voice injection 生成 generate",
+                anchor: nil, content: AnyView(voiceGroup)),
+            SettingsSectionDescriptor(
+                id: "redaction", titleZh: "脱敏（发给 AI 前本地打码）",
+                titleEn: "Redaction (local masking before sending to AI)",
+                keywords: "脱敏 redaction 打码 mask 词表 term list 密钥掩码 secrets masking regex 正则 sk-ant xox akia pem 词表文件 terms file",
+                anchor: nil, content: AnyView(redactionGroup)),
+            SettingsSectionDescriptor(
+                id: "telemetry", titleZh: "产品改进计划",
+                titleEn: "Product improvement program",
+                keywords: "产品改进计划 product improvement telemetry 遥测 匿名 anonymous 行为事件级别 behavior event level 基础 basic 详细 detailed 上传文本 upload text capture input 隐私 privacy",
+                anchor: "telemetry", content: AnyView(telemetryGroup)),
+        ]
+    }
+
+    /// §1.7: lowercase + diacritic-fold both sides, whitespace-split the query
+    /// into tokens, require ALL tokens to be substrings of the bilingual
+    /// keyword blob (AND semantics). Empty query ⇒ every section visible.
+    private func matches(_ d: SettingsSectionDescriptor, _ query: String) -> Bool {
+        let fold: (String) -> String = {
+            $0.folding(options: [.diacriticInsensitive, .caseInsensitive],
+                       locale: .current)
+        }
+        let hay = fold(d.titleZh + " " + d.titleEn + " " + d.keywords)
+        let tokens = fold(query).split(whereSeparator: { $0.isWhitespace })
+        guard !tokens.isEmpty else { return true }
+        return tokens.allSatisfy { hay.contains($0) }
+    }
+
+    @ViewBuilder
+    private func sectionView(_ d: SettingsSectionDescriptor) -> some View {
+        let searchActive = !query.isEmpty
+        CollapsibleSection(
+            id: d.id,
+            title: L(d.titleZh, d.titleEn),
+            anchor: d.anchor,
+            isExpanded: collapse.binding(d.id),
+            searchActive: searchActive,
+            matched: searchActive && matches(d, query),
+            flash: d.anchor != nil && flashedAnchor == d.anchor
+        ) { d.content }
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 22))
+                .foregroundColor(.secondary)
+            Text(L("无匹配设置", "No matching settings"))
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+            Button(L("清除", "Clear")) { query = "" }
+                .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+
     // MARK: - groups
 
     private var generalGroup: some View {
-        group(L("通用", "General")) {
+        group {
             Toggle(L("登录时启动（推荐：菜单栏助手常驻）",
                      "Launch at login (recommended: keep the menu-bar assistant resident)"),
                    isOn: Binding(
@@ -295,7 +565,7 @@ struct SettingsFormView: View {
     }
 
     private var menuBarGroup: some View {
-        group(L("菜单栏", "Menu Bar")) {
+        group {
             Toggle(L("显示菜单栏图标（主图标：卡片列表）",
                      "Show menu-bar icon (main icon: checklist)"), isOn: Binding(
                 get: { showMenuBarIcon },
@@ -314,7 +584,7 @@ struct SettingsFormView: View {
     }
 
     private var recordingGroup: some View {
-        group(L("录制", "Recording")) {
+        group {
             HStack {
                 Text(L("默认录制模式", "Default recording mode"))
                     .font(.system(size: 12))
@@ -342,7 +612,7 @@ struct SettingsFormView: View {
     // and diff-writes obsidian_raw via ObsidianVaultSetup (shared with the
     // setup wizard's step 5 — same derivation as config.py).
     private var obsidianGroup: some View {
-        group(L("笔记库", "Notes vault")) {
+        group {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L("Obsidian Vault 位置", "Obsidian Vault location"))
@@ -395,9 +665,10 @@ struct SettingsFormView: View {
     // moved into their own guided sections (SettingsSlack.swift /
     // SettingsGmail.swift) right below — this group keeps the AI engine key
     // (and the frozen "credentials" anchor deps/Doctor deep-link to).
+    // Frozen anchor "credentials" + flash-on-arrival now live in the shared
+    // CollapsibleSection wrapper (registered with anchor: "credentials").
     private var credentialsGroup: some View {
-        group(L("凭证（存本机 config/secrets/，保存后自动验证）",
-                "Credentials (stored locally in config/secrets/; verified automatically on save)")) {
+        group {
             CredentialRowView(
                 title: "Anthropic API key",
                 secretName: SecretsIO.anthropicFile,
@@ -409,17 +680,10 @@ struct SettingsFormView: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
-        // 契约3 frozen anchor — MainWindowView scrollTo()s here from deps
-        .id("credentials")
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentColor.opacity(credFlash ? 0.16 : 0))
-                .allowsHitTesting(false)
-        }
     }
 
     private var approvalGroup: some View {
-        group(L("审批 / 成本", "Approval / Cost")) {
+        group {
             // v0.14 (audit 7.1): execution.default_target_repo — until now the
             // first approved card dispatched into a nonexistent placeholder.
             HStack(spacing: 8) {
@@ -500,7 +764,7 @@ struct SettingsFormView: View {
     }
 
     private var flagsGroup: some View {
-        group(L("Feature flags（§16，默认全开）", "Feature flags (§16, all on by default)")) {
+        group {
             Toggle(L("slack_radar — Slack 需求雷达", "slack_radar — Slack demand radar"),
                    isOn: featureBinding("slack_radar", $featSlackRadar))
             Toggle(L("gmail_radar — Gmail 捕获", "gmail_radar — Gmail capture"),
@@ -523,7 +787,7 @@ struct SettingsFormView: View {
     // from the owner's real messages (`python -m act.voice_gen`, same
     // subprocess/progress/result pattern as the iMessage test button).
     private var voiceGroup: some View {
-        group(L("语气档案（以你的口吻起草）", "Voice profile (drafts in your voice)")) {
+        group {
             Text(L("以你的名义起草的文字（Slack 回复、邮件正文等）会先读这份档案来模仿你的说话风格。私有档案只存本机 state/，永不进 git。",
                    "Text drafted in your name (Slack replies, email bodies, …) first reads this profile to match how you write. Your private profile stays local in state/ and is never committed."))
                 .font(.system(size: 10))
@@ -607,7 +871,7 @@ struct SettingsFormView: View {
     }
 
     private var redactionGroup: some View {
-        group(L("脱敏（发给 AI 前本地打码）", "Redaction (local masking before sending to AI)")) {
+        group {
             Toggle(L("启用词表脱敏 — 发出 prompt 前把词表词条替换成 [脱敏]",
                      "Enable term-list redaction — replace term-list matches with [REDACTED] before sending prompts"),
                    isOn: Binding(
@@ -644,7 +908,7 @@ struct SettingsFormView: View {
     }
 
     private var telemetryGroup: some View {
-        group(L("产品改进计划", "Product improvement program")) {
+        group {
             Toggle(L("参与产品改进（默认开，默认含我输入的文本——可在下方单独关闭）",
                      "Product improvement (on by default; includes text I type by default — separately switchable below)"),
                    isOn: Binding(
@@ -700,15 +964,15 @@ struct SettingsFormView: View {
                 .foregroundColor(.secondary)
         }
         .font(.system(size: 12))
-        // 首启披露页「详情与关闭在设置」跳转锚点（pendingAnchor = "telemetry"）
-        .id("telemetry")
-        // NO passive v2-marker writer here: SettingsFormView is a non-lazy
-        // VStack, so .onAppear fires on INSERTION (opening the Settings page
-        // for any reason), not when this below-the-fold section is actually
-        // seen — that would silently arm content for upgraded installs.
-        // Legitimate arming: the first-run disclosure/wizard writes the v2
-        // marker when its copy renders, and flipping the toggle above writes
-        // the explicit capture_input key (captureTouched).
+        // 首启披露页「详情与关闭在设置」跳转锚点 (pendingAnchor = "telemetry")
+        // now lives on the CollapsibleSection wrapper (anchor: "telemetry").
+        // NO passive v2-marker writer here — and never should be. Historically
+        // the risk was the non-lazy VStack firing .onAppear on INSERTION; with
+        // v0.21 collapse, this section's content mounts only on EXPAND, which
+        // is even safer (still not "the user read & consented"). Legitimate
+        // arming stays: the first-run disclosure/wizard writes the v2 marker
+        // when its copy renders, and flipping the toggle above writes the
+        // explicit capture_input key (captureTouched).
     }
 
     // v0.14 (audit 7.6): expert-only keys stay in config.yaml — say so, and
@@ -732,28 +996,38 @@ struct SettingsFormView: View {
         }
     }
 
-    /// 契约3: on arrival from deps「去设置」(pendingAnchor still set — the
+    /// Deep-link expand (§1.9): a deps/wizard「去设置」jump sets
+    /// nav.pendingAnchor; force-expand the target section so the async
+    /// scrollTo (MainWindow.consumePendingAnchor) lands on rendered content.
+    private func expandAnchorIfPending() {
+        guard let a = nav.pendingAnchor,
+              let d = sections.first(where: { $0.anchor == a }) else { return }
+        collapse.expand(d.id)
+    }
+
+    /// 契约3: on arrival from a「去设置」jump (pendingAnchor still set — the
     /// MainWindowView consumer clears it on an async hop AFTER this appears),
-    /// flash the credentials group for 1.5 s so the eye lands on it.
-    private func flashCredentialsIfPending() {
-        guard nav.pendingAnchor == "credentials" else { return }
-        withAnimation(.easeIn(duration: 0.2)) { credFlash = true }
+    /// flash the target section for 1.5 s so the eye lands on it. Covers the
+    /// credentials + claude_import anchors (telemetry doesn't flash today).
+    private func flashAnchorIfPending() {
+        guard let a = nav.pendingAnchor,
+              a == "credentials" || a == "claude_import" else { return }
+        withAnimation(.easeIn(duration: 0.2)) { flashedAnchor = a }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation(.easeOut(duration: 0.4)) { credFlash = false }
+            withAnimation(.easeOut(duration: 0.4)) {
+                if flashedAnchor == a { flashedAnchor = nil }
+            }
         }
     }
 
+    /// Inner content container for the inline sections — the card / title /
+    /// collapse / anchor chrome now lives in the shared CollapsibleSection
+    /// wrapper (§1.5), so this only groups the rows.
     @ViewBuilder
-    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+    private func group<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
             content()
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func labeledField(_ label: String, _ binding: Binding<String>, key: String) -> some View {
@@ -1372,7 +1646,7 @@ struct SettingsFormView: View {
     /// send-test runner: pinned runtime python, cwd + AIASSISTANT_HOME =
     /// repo root, stdout+stderr merged, tail returned for display.
     private static func runVoiceGenProcess() -> (Int32, String) {
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let root = AppPaths.stateRoot
         let p = Process()
         p.executableURL = URL(fileURLWithPath: py)
@@ -1770,7 +2044,7 @@ enum KeyProbe {
 
     /// Blocking — call from a background queue only.
     private static func gmailProbeSync(address: String, password: String) -> Outcome {
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let code = """
         import imaplib, sys
         pw = sys.stdin.read().strip()

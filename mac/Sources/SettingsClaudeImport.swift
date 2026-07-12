@@ -88,7 +88,7 @@ final class ClaudeImportModel: ObservableObject {
     /// Blocking (background queue): runtime python → `--scan --window 7`,
     /// full-stdout JSON per CONTRACT §22.
     nonisolated private static func runScan() -> (Bool, String, [Candidate]) {
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let root = AppPaths.stateRoot
         let p = Process()
         p.executableURL = URL(fileURLWithPath: py)
@@ -189,15 +189,14 @@ final class ClaudeImportModel: ObservableObject {
 struct ClaudeImportSettingsSection: View {
     @StateObject private var model = ClaudeImportModel()
     @ObservedObject private var i18n = LanguageStore.shared
-    @ObservedObject private var nav = MainNav.shared
-    @State private var flash = false
 
     private let previewCap = 8
 
+    // Content-only (v0.21): the card / title / collapse chrome + the frozen
+    // "claude_import" anchor + flash-on-arrival are supplied by the shared
+    // CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("导入 Claude Code 工作", "Import Claude Code work"))
-                .font(.system(size: 13, weight: .semibold))
             Text(L("把你最近在 Claude Code 里做的事一键变成看板卡片，尤其是 AI 还在等你回复的那些。全程本地，不上传任何内容。",
                    "Turn your recent Claude Code work into board cards in one click — especially sessions where the AI is still waiting on your reply. Everything stays local; nothing is uploaded."))
                 .font(.system(size: 10))
@@ -273,20 +272,7 @@ struct ClaudeImportSettingsSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .font(.system(size: 12))
-        // frozen anchor "claude_import" — wizard finale deep-links here
-        .id("claude_import")
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentColor.opacity(flash ? 0.16 : 0))
-                .allowsHitTesting(false)
-        }
-        .onAppear { flashIfPending() }
-        .onChange(of: nav.pendingAnchor) { _, _ in flashIfPending() }
     }
 
     private var visibleCandidates: [ClaudeImportModel.Candidate] {
@@ -338,15 +324,6 @@ struct ClaudeImportSettingsSection: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    /// Same flash-on-arrival pattern as the credentials anchor (contract 3).
-    private func flashIfPending() {
-        guard nav.pendingAnchor == "claude_import" else { return }
-        withAnimation(.easeIn(duration: 0.2)) { flash = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation(.easeOut(duration: 0.4)) { flash = false }
         }
     }
 }

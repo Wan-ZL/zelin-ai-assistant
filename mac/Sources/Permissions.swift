@@ -506,11 +506,11 @@ struct CapabilityRowsView: View {
         capabilityRow(
             status: model.fullDisk,
             name: L("完全磁盘访问", "Full Disk Access"),
-            why: L("仅在开启 iPhone(iMessage)联动时需要——读取「给自己发消息」线程来接收手机指令;不用该功能可跳过。",
-                   "Only needed for the iPhone (iMessage) channel — it reads your \"message yourself\" thread for phone commands; skip if you don't use it."),
+            why: L("供定时后台任务(cron/launchd)在 App 未打开时读取受保护的数据;不跑定时后台任务可跳过。",
+                   "Needed for scheduled background jobs (cron/launchd) to read protected data while the app isn't open; skip if you don't run scheduled background tasks."),
             statusText: model.fullDisk == .granted ? L("已授权", "Granted")
                 : model.fullDisk == .denied ? L("未授权(可选)", "Not granted (optional)")
-                : L("无法检测(本机暂无 iMessage 数据)", "Can't probe (no iMessage data on this Mac)"),
+                : L("无法检测(可选)", "Can't probe (optional)"),
             buttonLabel: L("去授权", "Grant…"),
             showButton: model.fullDisk != .granted) {
             model.openFullDiskPane()
