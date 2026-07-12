@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TEMPLATE: rendered by install.ps1 (see act/lib/taskscheduler.py), registered
+     as \ZelinAIAssistant\gmail-radar. Repetition every 5 min (mirror of the
+     plist StartInterval 300 / systemd zelin-gmail-radar.timer OnUnitActiveSec=5min).
+
+     gmailradar — polls the Gmail INBOX (IMAP, read-only via BODY.PEEK) for unread
+     mail and turns actionable ones into requirement cards. No-ops silently until a
+     Gmail app password exists at sources.gmail_app_password_path (docs/GMAIL_SETUP.md).
+     Network + state/ only — nothing OS-specific.
+
+     Overlap: MultipleInstancesPolicy=IgnoreNew is the Windows substitute for the
+     radars' fcntl pass-lock (fcntl is POSIX-only) — a still-running pass makes
+     Task Scheduler skip the next fire instead of stacking. -->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Zelin AI Assistant — Gmail radar scan (one pass, every 5 min)</Description>
+    <URI>\ZelinAIAssistant\gmail-radar</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -Command "$env:AIASSISTANT_HOME='@REPO_ROOT@'; $env:PATH='@CLAUDE_BIN_DIR@;'+$env:PATH; &amp; '@PYTHON@' -m act.radar_gmail --once"</Arguments>
+      <WorkingDirectory>@REPO_ROOT@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

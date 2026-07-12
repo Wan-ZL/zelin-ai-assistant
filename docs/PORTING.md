@@ -32,12 +32,12 @@ Want to help? Comment on the pinned "Windows/Linux port — help wanted" issue.
 Every *generic* OS effect in the python tree goes through this module. This
 is the contract a port implements; everything else in `act/` is plain Python.
 
-| Function | Semantics | darwin impl | linux today | a port provides |
+| Function | Semantics | darwin impl | linux today | windows today |
 |---|---|---|---|---|
-| `is_darwin()` | platform check for darwin-exclusive features | `sys.platform == "darwin"` | — | — |
-| `notify_user(title, body, subtitle=None)` | native user notification; best-effort, never raises | `osascript` `display notification` | `notify-send` (desktop) | toast/libnotify equivalent |
-| `open_path(path)` | open a path with the system handler / file manager; never raises | `open`(1) | `xdg-open` | `os.startfile` already wired for Windows |
-| `service_list_text()` | raw user-service table for `act.doctor` | `launchctl list` | `systemctl --user list-units --type=service,timer` (wired; doctor parses it — see LINUX.md) | `schtasks` adapter + doctor parser (Windows) |
+| `is_darwin()` / `is_windows()` | platform check for OS-exclusive features | `sys.platform == "darwin"` | — | `sys.platform.startswith("win")` |
+| `notify_user(title, body, subtitle=None)` | native user notification; best-effort, never raises | `osascript` `display notification` | `notify-send` (desktop) | PowerShell WinRT toast (wired; no pip dep — see WINDOWS.md) |
+| `open_path(path)` | open a path with the system handler / file manager; never raises | `open`(1) | `xdg-open` | `os.startfile` (wired) |
+| `service_list_text()` | raw user-service table for `act.doctor` | `launchctl list` | `systemctl --user list-units --type=service,timer` (wired; doctor parses it — see LINUX.md) | `schtasks /query /fo LIST /v` (wired; doctor parses it — see WINDOWS.md) |
 
 Rules for touching the seam:
 - keep it thin — no classes, no plugin registry, one function per concern;
@@ -86,6 +86,16 @@ A first cut of this milestone now ships: systemd user units
 `doctor` systemd branches, and the web dashboard as the Linux UI. See
 **[LINUX.md](LINUX.md)** for exactly what runs, what is deferred (screen
 ingest), and what still needs a real Linux machine to validate.
+
+## Windows v1 (beta)
+
+The analogous Windows cut now ships too: Task Scheduler XML templates
+(`act/tasksched/*.xml`) rendered by `act/lib/taskscheduler.py`, `install.ps1`,
+the `platform` (PowerShell WinRT toast + `schtasks`) + `doctor` (schtasks
+branch) Windows seams, and the same web dashboard as the Windows UI. See
+**[WINDOWS.md](WINDOWS.md)** for exactly what runs, what is deferred (screen
+ingest — a `.ps1` + DXGI rewrite), and what still needs a real Windows machine
+to validate (Task Scheduler load/restart, toast firing, the claude PATH guard).
 
 ## Suggested first milestone: headless core on Linux
 

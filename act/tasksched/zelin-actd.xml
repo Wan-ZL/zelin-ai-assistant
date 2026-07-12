@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TEMPLATE: install.ps1 renders the @PYTHON@ / @REPO_ROOT@ / @CLAUDE_BIN_DIR@
+     placeholders (via `python -m act.lib.taskscheduler`) into a staging dir, then
+     Register-ScheduledTask -TaskPath "\ZelinAIAssistant\" -TaskName "actd". Do not
+     import this file as-is.
+
+     actd — resident daemon of Zelin's AI Assistant (Act pipeline), the Windows
+     mirror of act/launchd/com.zelin.aiassistant.actd.plist and
+     act/systemd/zelin-actd.service. Reads state/inbox/*.json, drives the
+     requirement registry state machine, dispatches approved work via a
+     backgrounded `claude` call, and writes state/dashboard.json atomically.
+
+     KeepAlive / Restart=always equivalent: LogonTrigger + StartWhenAvailable +
+     RestartOnFailure. NOTE (docs/WINDOWS.md): Task Scheduler only restarts a task
+     it considers *failed* (nonzero exit); it is a weaker guarantee than launchd
+     KeepAlive / systemd Restart=always — needs a real Windows box to validate.
+
+     CREDENTIALS: ANTHROPIC_API_KEY is NOT set here. actd reads the key from
+     config/secrets/anthropic-api-key.txt (CONTRACT §19); a Task Scheduler session
+     has no Keychain, so a file-form key is required just like under launchd/systemd.
+
+     PATH: Task Scheduler has no per-task environment, so the action is a
+     `powershell -Command` that prepends @CLAUDE_BIN_DIR@ to PATH (so the daemon
+     resolves the same `claude` the login shell does — the "outdated claude
+     shadowed the new one" guard the plists/units carry) and sets AIASSISTANT_HOME
+     before invoking the pinned interpreter. -->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Zelin AI Assistant — actd resident daemon (Act pipeline)</Description>
+    <URI>\ZelinAIAssistant\actd</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -Command "$env:AIASSISTANT_HOME='@REPO_ROOT@'; $env:PATH='@CLAUDE_BIN_DIR@;'+$env:PATH; &amp; '@PYTHON@' -m act.actd"</Arguments>
+      <WorkingDirectory>@REPO_ROOT@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
