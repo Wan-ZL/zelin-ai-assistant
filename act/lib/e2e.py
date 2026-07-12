@@ -149,6 +149,20 @@ def _seal(k_i: bytes, epoch: int, info: bytes, aad: bytes, plaintext: bytes) -> 
     return header + ct_and_tag
 
 
+def embedded_nonce(blob: bytes) -> bytes:
+    """Extract the 12-byte AEAD nonce embedded in a §4.2 record blob.
+
+    The blob is fully self-describing, so decryption never needs this — it is a
+    convenience for ``syncd`` to fill the DB ``nonce`` / ``label_nonce`` mirror
+    column (schema NOT NULL) from the same blob it uploads in ``payload_enc``.
+    """
+    blob = bytes(blob)
+    if len(blob) < _HEADER_LEN:
+        raise ValueError("blob too short to carry a nonce")
+    off = 10 + _SALT_LEN  # after magic(4)+ver(1)+alg(1)+epoch(4)+salt(32)
+    return blob[off:off + _NONCE_LEN]
+
+
 def _open(k_i: bytes, epoch: int, info: bytes, aad_for, blob: bytes) -> bytes:
     """Parse + verify header, rebuild AAD, decrypt. Raises on any mismatch.
 

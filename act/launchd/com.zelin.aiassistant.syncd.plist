@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) into ~/Library/LaunchAgents — do not load this file as-is.
+
+  syncd — the headless cloud-sync daemon (plan of record §5). Reads
+  state/dashboard.json (DOWN), writes state/inbox/<action_id>.json (UP), relays
+  ONLY ciphertext through Supabase. It never imports actd and never touches the
+  registry.
+
+  SYNC IS OFF BY DEFAULT. syncd's FIRST act at every launch is the startup gate:
+  it reads state/sync.json and, if that file is absent or mode != "cloud", it
+  exits 0 IMMEDIATELY — before any other filesystem work and before any network.
+  So a plain install (this plist loaded but sync never opted-in) does ZERO
+  network, forever.
+
+  KeepAlive interaction (flagged for review): KeepAlive relaunches syncd after
+  the immediate gate-exit. While sync is OFF this is a ~ThrottleInterval cadence
+  of "read one small file, exit 0, zero network" — cheap and harmless. The
+  upside is that flipping state/sync.json to mode=cloud (the in-app opt-in) is
+  picked up automatically within ThrottleInterval with NO launchctl kickstart
+  plumbing. While sync is ON, KeepAlive gives the daemon crash-recovery.
+
+  TCC: like actd, syncd only reads/writes ~/Projects/zelin-ai-assistant/state
+  and talks to Supabase over HTTPS — it never touches ~/Documents, so it is safe
+  under launchd (unlike the radar, which must run from the crontab ingest chain).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zelin.aiassistant.syncd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSERNAME/miniconda3/bin/python3</string>
+        <string>-m</string>
+        <string>act.syncd</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- Give the OS a breather between the OFF-gate relaunches (default is 10s).
+         When sync is ON this is also the max delay before a crashed daemon is
+         restarted, and the max delay before an opt-in is picked up. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIASSISTANT_HOME</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <key>PATH</key>
+        <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/syncd.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/syncd.launchd.log</string>
+</dict>
+</plist>
