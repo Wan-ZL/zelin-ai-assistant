@@ -54,6 +54,11 @@ EXEC_NAME="ZelinAIEngineer"
 # all module files in Sources/ compile as ONE module; only main.swift may hold
 # top-level statements (the bootstrap), per swiftc rules.
 SRC_DIR="$SCRIPT_DIR/Sources"
+# shared/ — Foundation-only contract types compiled into BOTH this Mac app and
+# the iOS app (Contract/I18n/Lanes/InboxAction/BoardModel). They join this same
+# single module, so there is no duplicate symbol. The iOS Xcode target compiles
+# the very same files (ios/project.yml). Lint gate below keeps shared/ portable.
+SHARED_DIR="$SCRIPT_DIR/../shared/Sources"
 PLIST="$SCRIPT_DIR/Info.plist"
 BUILD_DIR="$SCRIPT_DIR/build"
 BIN="$BUILD_DIR/$EXEC_NAME"
@@ -87,12 +92,24 @@ else
     echo "==> Sparkle absent — building without auto-update (run mac/scripts/fetch-sparkle.sh to enable)"
 fi
 
+# --- shared/ portability lint gate ---
+# shared/Sources/*.swift are compiled into BOTH the Mac app and the iOS app, so
+# they must import ONLY Foundation — any AppKit/UIKit/SwiftUI/Combine import
+# would break the iOS build (UIKit) or the portability contract. Fail loud here.
+if [ -d "$SHARED_DIR" ]; then
+    if grep -REn '^\s*import\s+(AppKit|UIKit|SwiftUI|Combine|Cocoa)\b' "$SHARED_DIR" 2>/dev/null; then
+        echo "ERROR: shared/Sources must import only Foundation (found a UI/platform import above)." >&2
+        echo "       shared/ is compiled into both the Mac and iOS targets — keep it portable." >&2
+        exit 1
+    fi
+fi
+
 # --- compile ---
-echo "==> Compiling $SRC_DIR/*.swift"
+echo "==> Compiling $SRC_DIR/*.swift + $SHARED_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
 # canImport(Sparkle) is false when the -F/-framework flags aren't passed, so the
 # Sparkle code compiles out cleanly with no extra -D flag.
-swiftc -O "$SRC_DIR"/*.swift -o "$BIN" \
+swiftc -O "$SRC_DIR"/*.swift "$SHARED_DIR"/*.swift -o "$BIN" \
     -framework AppKit -framework SwiftUI -framework Foundation \
     ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"}
 echo "    built binary: $BIN"

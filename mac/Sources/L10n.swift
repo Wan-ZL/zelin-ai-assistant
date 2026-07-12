@@ -1,5 +1,7 @@
-// L10n.swift — L() 双语文案 / LanguageStore / LanguageMirror（界面语言）
-// Mechanically split from main.swift — zero logic changes.
+// L10n.swift — LanguageStore（界面语言，Mac-only ObservableObject）
+// L() 与 LanguageMirror 已抽到 shared/Sources/I18n.swift（iOS 共用）；本文件
+// 只保留依赖 AppKit/SwiftUI/SettingsIO 的 Mac-only LanguageStore，它照旧写
+// LanguageMirror.current。Mechanically split — zero logic changes.
 
 import AppKit
 import SwiftUI
@@ -36,14 +38,4 @@ final class LanguageStore: ObservableObject {
     }
 }
 
-/// Nonisolated mirror of LanguageStore.lang so L() stays callable off the main
-/// actor (e.g. dependency checks build row strings on a background queue).
-/// Written only from the main actor; a stale read during a switch is benign.
-enum LanguageMirror {
-    nonisolated(unsafe) static var current = "zh"
-}
-
-/// L("中文", "English") — inline bilingual literal, picked per current UI language.
-func L(_ zh: String, _ en: String) -> String {
-    LanguageMirror.current == "en" ? en : zh
-}
+// L(_:_:) and LanguageMirror moved to shared/Sources/I18n.swift (shared with iOS).

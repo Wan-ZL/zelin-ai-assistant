@@ -1,0 +1,318 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000000000000000000000006 /* BoardModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000001 /* BoardModel.swift */; };
+		000000000000000000000007 /* Contract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000002 /* Contract.swift */; };
+		000000000000000000000008 /* I18n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* I18n.swift */; };
+		000000000000000000000009 /* InboxAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* InboxAction.swift */; };
+		00000000000000000000000A /* Lanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005 /* Lanes.swift */; };
+		00000000000000000000001A /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* App.swift */; };
+		00000000000000000000001B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* AppState.swift */; };
+		00000000000000000000001C /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* BoardView.swift */; };
+		00000000000000000000001D /* CardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000E /* CardViews.swift */; };
+		00000000000000000000001E /* CertExpiry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000F /* CertExpiry.swift */; };
+		00000000000000000000001F /* E2E.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* E2E.swift */; };
+		000000000000000000000020 /* Freshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000011 /* Freshness.swift */; };
+		000000000000000000000021 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000012 /* Keychain.swift */; };
+		000000000000000000000022 /* Language.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000013 /* Language.swift */; };
+		000000000000000000000023 /* LocalNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000014 /* LocalNotifications.swift */; };
+		000000000000000000000024 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000015 /* OnboardingView.swift */; };
+		000000000000000000000025 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000016 /* PairingView.swift */; };
+		000000000000000000000026 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000017 /* SettingsView.swift */; };
+		000000000000000000000027 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000018 /* SupabaseClient.swift */; };
+		000000000000000000000028 /* SyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019 /* SyncModels.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		000000000000000000000001 /* BoardModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardModel.swift; sourceTree = "<group>"; };
+		000000000000000000000002 /* Contract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Contract.swift; sourceTree = "<group>"; };
+		000000000000000000000003 /* I18n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18n.swift; sourceTree = "<group>"; };
+		000000000000000000000004 /* InboxAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxAction.swift; sourceTree = "<group>"; };
+		000000000000000000000005 /* Lanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lanes.swift; sourceTree = "<group>"; };
+		00000000000000000000000B /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		00000000000000000000000C /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		00000000000000000000000D /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
+		00000000000000000000000E /* CardViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardViews.swift; sourceTree = "<group>"; };
+		00000000000000000000000F /* CertExpiry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertExpiry.swift; sourceTree = "<group>"; };
+		000000000000000000000010 /* E2E.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2E.swift; sourceTree = "<group>"; };
+		000000000000000000000011 /* Freshness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Freshness.swift; sourceTree = "<group>"; };
+		000000000000000000000012 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		000000000000000000000013 /* Language.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Language.swift; sourceTree = "<group>"; };
+		000000000000000000000014 /* LocalNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNotifications.swift; sourceTree = "<group>"; };
+		000000000000000000000015 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		000000000000000000000016 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		000000000000000000000017 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000018 /* SupabaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
+		000000000000000000000019 /* SyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncModels.swift; sourceTree = "<group>"; };
+		000000000000000000000029 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		00000000000000000000002A /* Zelin AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Zelin AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000032 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		00000000000000000000002E = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000002B /* Shared */,
+				00000000000000000000002C /* Sources */,
+				000000000000000000000029 /* Info.plist */,
+				00000000000000000000002D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		00000000000000000000002B /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000001 /* BoardModel.swift */,
+				000000000000000000000002 /* Contract.swift */,
+				000000000000000000000003 /* I18n.swift */,
+				000000000000000000000004 /* InboxAction.swift */,
+				000000000000000000000005 /* Lanes.swift */,
+			);
+			name = Shared;
+			path = "../shared/Sources";
+			sourceTree = "<group>";
+		};
+		00000000000000000000002C /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000000B /* App.swift */,
+				00000000000000000000000C /* AppState.swift */,
+				00000000000000000000000D /* BoardView.swift */,
+				00000000000000000000000E /* CardViews.swift */,
+				00000000000000000000000F /* CertExpiry.swift */,
+				000000000000000000000010 /* E2E.swift */,
+				000000000000000000000011 /* Freshness.swift */,
+				000000000000000000000012 /* Keychain.swift */,
+				000000000000000000000013 /* Language.swift */,
+				000000000000000000000014 /* LocalNotifications.swift */,
+				000000000000000000000015 /* OnboardingView.swift */,
+				000000000000000000000016 /* PairingView.swift */,
+				000000000000000000000017 /* SettingsView.swift */,
+				000000000000000000000018 /* SupabaseClient.swift */,
+				000000000000000000000019 /* SyncModels.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		00000000000000000000002D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000002A /* Zelin AI.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000030 /* ZelinAIAssistant */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000035 /* Build configuration list for PBXNativeTarget */;
+			buildPhases = (
+				000000000000000000000031 /* Sources */,
+				000000000000000000000032 /* Frameworks */,
+				000000000000000000000033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ZelinAIAssistant;
+			productName = "Zelin AI";
+			productReference = 00000000000000000000002A /* Zelin AI.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		00000000000000000000002F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1520;
+				LastUpgradeCheck = 1520;
+				TargetAttributes = {
+					000000000000000000000030 = {
+						CreatedOnToolsVersion = 15.2;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000034 /* Build configuration list for PBXProject */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 00000000000000000000002E;
+			productRefGroup = 00000000000000000000002D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000030 /* ZelinAIAssistant */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000031 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000006 /* BoardModel.swift in Sources */,
+				000000000000000000000007 /* Contract.swift in Sources */,
+				000000000000000000000008 /* I18n.swift in Sources */,
+				000000000000000000000009 /* InboxAction.swift in Sources */,
+				00000000000000000000000A /* Lanes.swift in Sources */,
+				00000000000000000000001A /* App.swift in Sources */,
+				00000000000000000000001B /* AppState.swift in Sources */,
+				00000000000000000000001C /* BoardView.swift in Sources */,
+				00000000000000000000001D /* CardViews.swift in Sources */,
+				00000000000000000000001E /* CertExpiry.swift in Sources */,
+				00000000000000000000001F /* E2E.swift in Sources */,
+				000000000000000000000020 /* Freshness.swift in Sources */,
+				000000000000000000000021 /* Keychain.swift in Sources */,
+				000000000000000000000022 /* Language.swift in Sources */,
+				000000000000000000000023 /* LocalNotifications.swift in Sources */,
+				000000000000000000000024 /* OnboardingView.swift in Sources */,
+				000000000000000000000025 /* PairingView.swift in Sources */,
+				000000000000000000000026 /* SettingsView.swift in Sources */,
+				000000000000000000000027 /* SupabaseClient.swift in Sources */,
+				000000000000000000000028 /* SyncModels.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		000000000000000000000036 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			};
+			name = Debug;
+		};
+		000000000000000000000037 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		000000000000000000000038 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.zelin.ai-engineer.ios";
+				PRODUCT_NAME = "Zelin AI";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		000000000000000000000039 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.zelin.ai-engineer.ios";
+				PRODUCT_NAME = "Zelin AI";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000034 /* Build configuration list for PBXProject */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000036 /* Debug */,
+				000000000000000000000037 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000035 /* Build configuration list for PBXNativeTarget */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000038 /* Debug */,
+				000000000000000000000039 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 00000000000000000000002F /* Project object */;
+}

@@ -1,8 +1,8 @@
-// Models.swift — dashboard.json 的 Codable 契约结构（docs/CONTRACT.md section 2；勿改字段）
-// Mechanically split from main.swift — zero logic changes.
+// Contract.swift — dashboard.json 的 Codable 契约结构（docs/CONTRACT.md section 2；勿改字段）
+// SHARED between the Mac app and the iOS app. Foundation-only by contract
+// (mac/build.sh lint gate forbids AppKit/UIKit/SwiftUI here). Was mac/Sources/
+// Models.swift — moved verbatim (zero logic changes) except the imports.
 
-import AppKit
-import SwiftUI
 import Foundation
 
 // MARK: - Codable models (strictly per docs/CONTRACT.md section 2)

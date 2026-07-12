@@ -1,0 +1,46 @@
+# project.yml — XcodeGen spec for the iOS companion app (plan §6.1).
+#
+# CANONICAL project definition. Regenerate the .xcodeproj any time with:
+#     cd ios && xcodegen generate
+# (brew install xcodegen). A hand-written ZelinAIAssistant.xcodeproj is also
+# committed so the project opens WITHOUT xcodegen; if you edit the file list,
+# prefer regenerating from this spec.
+#
+# The app target compiles the SHARED Foundation-only contract sources
+# (../shared/Sources) into the iOS binary alongside ios/Sources — the exact same
+# files the Mac app compiles (mac/build.sh), so the two clients share one
+# contract. No paid entitlements, no APNs — free personal-team provisioning.
+name: ZelinAIAssistant
+options:
+  bundleIdPrefix: com.zelin.ai-engineer
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.0.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"          # iPhone only
+    CODE_SIGN_STYLE: Automatic
+    # DEVELOPMENT_TEAM is intentionally empty — the maintainer sets their Apple
+    # ID team in Xcode (Signing & Capabilities) for a real-device build. The
+    # simulator build needs no signing identity.
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  ZelinAIAssistant:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../shared/Sources
+        name: Shared
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zelin.ai-engineer.ios
+        PRODUCT_NAME: "Zelin AI"
+        INFOPLIST_FILE: Info.plist
+        ENABLE_BITCODE: NO
