@@ -75,8 +75,7 @@ flowchart TB
     RADARS -.->|"note & message text in prompts"| ANTH
     AGENTS -.->|"task prompts + repo context"| ANTH
     AGENTS -.->|"draft PRs via gh (repo mode)"| GH
-    SRC -.->|"messages / unread mail"| RADARS
-    ACTD -.->|"optional notification mirror (Slack self-DM)"| SRC
+    SRC -.->|"messages / unread mail / self-DM quick capture"| RADARS
 ```
 
 Solid arrows are local file/process flow; dashed arrows are the only network egress (the full inventory, with the switches that control each one, is in [docs/PRIVACY.md](docs/PRIVACY.md)). The app never talks to the network and never touches the registry, secrets, or `claude` — its whole world is one readable file and one writable directory.
@@ -111,11 +110,11 @@ On first launch the app opens a bilingual **permissions & setup page**: one scre
 
 | OS | Status |
 |---|---|
-| macOS 14+ | **Full product** — menu-bar app, launchd/cron scheduling, screen-capture ingest, iMessage channel |
+| macOS 14+ | **Full product** — menu-bar app, launchd/cron scheduling, screen-capture ingest, Slack/Gmail radars |
 | Linux | **Core is portable, port wanted** — the headless pipeline (radars, `actd`, executor) is pure Python and its full test suite runs green on ubuntu CI; service wiring (systemd units), an ingest chain, and a UI are unbuilt. Map + first milestone: [docs/PORTING.md](docs/PORTING.md) |
 | Windows | **Core is portable, port wanted** — same story as Linux (minus CI coverage so far); Task Scheduler equivalents in [docs/PORTING.md](docs/PORTING.md) |
 
-The iMessage channel is macOS-only by nature (Messages.app + chat.db); the Slack channel is the cross-platform command surface.
+The Slack radar (incl. self-DM quick capture) is the cross-platform capture surface; approvals happen in the Mac app.
 
 ## Features
 
@@ -126,7 +125,7 @@ The iMessage channel is macOS-only by nature (Messages.app + chat.db); the Slack
 - **Voice profile for drafts** — anything written in your name follows a voice profile (short, plain, no boilerplate) instead of "polished assistant" register; a neutral starter template ships with the repo, and a private profile induced from your own messages overrides it ([docs/VOICE.md](docs/VOICE.md)).
 - **Quick capture** — click the menu-bar icon (or ⌘L in the main window), type a thought; an LLM triages it against the registry: new card, related to an existing one, or ignore. <!-- screenshot slot: docs/assets/t2-card.png -->
 - **Responsive UI** — every click gives feedback within one frame (optimistic echo), kanban main window, recycle bin with inverse operations instead of a fake undo, bilingual UI (English / 中文). <!-- screenshot slot: docs/assets/review-final-draft.png -->
-- **Phone companion via iMessage or Slack** — approve/reject/accept cards, quick-capture thoughts, and 👍-tapback approvals from your iPhone using the iMessage "message yourself" thread (`phone_channel: imessage`, no third-party account needed — [docs/IMESSAGE_SETUP.md](docs/IMESSAGE_SETUP.md)); a Slack self-DM channel is available too.
+- **Mobile quick capture via Slack self-DM** — DM yourself a one-liner (or a photo/video of a whiteboard, screen, or sticky note) from your phone and it triages into a card, the same three-way gate as desktop capture ([docs/SLACK_SETUP.md](docs/SLACK_SETUP.md)). This is the mobile capture path until the iOS app ships; **approvals happen in the Mac app** (the iMessage transport and Slack phone-approval were removed in v0.21).
 - **Local-first content** — the registry, dashboard, and all captured content stay on your Mac; only anonymous usage events are uploaded by default (see Telemetry below).
 
 ## Telemetry

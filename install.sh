@@ -381,10 +381,6 @@ echo "==> 5. launchd agents"
 LAUNCHD_FAILED=0
 mkdir -p "$LA_DIR"
 info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
-# feature gate: the imessage radar only loads when config selects the
-# channel. Read through act.lib.config (so settings_overrides.json is
-# honored too); an unreadable config counts as "none".
-PHONE_CHANNEL="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c 'from act.lib import config; print(getattr(config.load_config(), "phone_channel", "none"))' 2>/dev/null || echo none)"
 # v0.18.1: the Obsidian radar now runs ONLY through the cron ingest chain
 # (step 6). Its old launchd agent was TCC-blocked from ~/Documents and only
 # ever saw an empty vault — retire any previously-installed copy so an upgrade
@@ -392,18 +388,18 @@ PHONE_CHANNEL="$(cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:
 RETIRED_RADAR_LABEL="com.zelin.aiassistant.radar"
 launchd_unload "$LA_DIR/$RETIRED_RADAR_LABEL.plist" "$RETIRED_RADAR_LABEL"
 rm -f "$LA_DIR/$RETIRED_RADAR_LABEL.plist"
+# v0.21.0: the iMessage transport was removed (Slack's phone-approval role too;
+# the Mac app is now the sole approval surface). Its launchd agent is no longer
+# shipped — retire any previously-installed copy so an upgrade unloads the
+# already-loaded agent instead of leaving it polling chat.db forever.
+RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
+launchd_unload "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist" "$RETIRED_IMESSAGE_LABEL"
+rm -f "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist"
 for plist in "$REPO_ROOT"/act/launchd/*.plist; do
     [ -e "$plist" ] || continue
     base="$(basename "$plist")"
     label="${base%.plist}"
     dest="$LA_DIR/$base"
-    if [ "$label" = "com.zelin.aiassistant.imessageradar" ] && [ "$PHONE_CHANNEL" != "imessage" ]; then
-        # feature off: also unload+remove any previously-installed copy
-        launchd_unload "$dest" "$label"
-        rm -f "$dest"
-        info "skipped $label (phone_channel=$PHONE_CHANNEL — set phone_channel: imessage in config.yaml to enable, see docs/IMESSAGE_SETUP.md)"
-        continue
-    fi
     # unload any previous version first (idempotent upgrades)
     launchd_unload "$dest" "$label"
     render_launchd_plist "$plist" "$dest"

@@ -7,8 +7,8 @@ through the shared three-way triage gate (act/lib/quick_capture.triage:
 new_proposal / relates_to / ignore, v0.17 统一口径) and file the survivors via
 ``quick_capture.apply_triage`` (-> registry.merge_or_new for new proposals,
 keeping the hard+deadline card split). The other sources have their own radars:
-``act/radar_slack.py`` (DMs/mentions), ``act/radar_gmail.py`` (INBOX triage)
-and ``act/radar_imessage.py`` (self-thread commands).
+``act/radar_slack.py`` (DMs/mentions + self-DM quick capture) and
+``act/radar_gmail.py`` (INBOX triage).
 
 Run: ``python -m act.radar`` (or ``python -m act.radar --once``).
 """

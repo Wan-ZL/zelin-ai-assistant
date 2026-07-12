@@ -382,15 +382,12 @@ class SlackNativeTriageTestCase(TriageBase):
 
     def setUp(self):
         super().setUp()
-        self._orig = (radar_slack.get_token, radar_slack.verify_token,
-                      radar_slack.find_self_dm)
+        self._orig = (radar_slack.get_token, radar_slack.verify_token)
         radar_slack.get_token = lambda cfg=None: "xoxp-test"
         radar_slack.verify_token = lambda token: {"ok": True, "user_id": "U1"}
-        radar_slack.find_self_dm = lambda token, my_id: None
 
     def tearDown(self):
-        (radar_slack.get_token, radar_slack.verify_token,
-         radar_slack.find_self_dm) = self._orig
+        (radar_slack.get_token, radar_slack.verify_token) = self._orig
 
     def _scan(self, llm) -> int:
         return radar_slack.scan(
