@@ -11,6 +11,7 @@ These tests pin the Python side of that contract so a rename/allowlist change
 over there can never silently orphan what the wizard writes.
 """
 import json
+import os
 import unittest
 from pathlib import Path
 
@@ -100,8 +101,9 @@ class WizardSecretsFileTestCase(unittest.TestCase):
             self.assertEqual(secrets.read_secret(secrets.ANTHROPIC_API_KEY_FILE),
                              "sk-ant-test-123")
             # 0600 file / 0700 dir — what the wizard promises in its copy
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(secrets.SECRETS_DIR.stat().st_mode & 0o777, 0o700)
+            if os.name != "nt":  # NTFS has no POSIX mode bits
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(secrets.SECRETS_DIR.stat().st_mode & 0o777, 0o700)
         finally:
             path.unlink()
 

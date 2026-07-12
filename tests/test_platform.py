@@ -7,7 +7,7 @@ jobs. Contract under test:
 
 (a) darwin argv shapes: osascript `display notification` (with escaping),
     `open <path>`, `launchctl list`;
-(b) linux argv shapes: notify-send, xdg-open; service listing is honestly "";
+(b) linux argv shapes: notify-send, xdg-open, systemctl --user list-units;
 (c) unsupported OSes degrade to False/"" — never a crash;
 (d) NOTHING raises: a runner throwing OSError/TimeoutExpired means False/"".
 """
@@ -116,10 +116,21 @@ class LinuxSeamTestCase(unittest.TestCase):
         self.assertTrue(platform.open_path("/tmp/x", runner=runner))
         self.assertEqual(runner.calls[0][0], ["xdg-open", "/tmp/x"])
 
-    def test_service_list_text_is_empty_and_runs_nothing(self):
-        runner = _FakeRunner(stdout="should never be used")
-        self.assertEqual(platform.service_list_text(runner=runner), "")
-        self.assertEqual(runner.calls, [])   # no launchctl equivalent yet
+    def test_service_list_text_uses_systemctl_user(self):
+        runner = _FakeRunner(
+            stdout="zelin-actd.service loaded active running actd\n",
+            stderr="")
+        out = platform.service_list_text(runner=runner)
+        (argv, timeout), = runner.calls
+        self.assertEqual(argv[:4],
+                         ["systemctl", "--user", "list-units", "--type=service,timer"])
+        self.assertIn("--all", argv)         # keep cleanly-stopped units visible
+        self.assertIn("--no-legend", argv)   # just the unit rows for the parser
+        self.assertEqual(timeout, 10)
+        self.assertIn("zelin-actd.service", out)
+        # never raises: a missing systemctl / no user bus -> ""
+        self.assertEqual(platform.service_list_text(
+            runner=_FakeRunner(raises=FileNotFoundError())), "")
 
 
 class UnsupportedOSTestCase(unittest.TestCase):

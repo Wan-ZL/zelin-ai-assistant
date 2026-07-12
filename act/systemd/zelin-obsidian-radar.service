@@ -1,0 +1,22 @@
+# TEMPLATE: rendered by install-linux.sh (see act/lib/systemd.py). Driven by
+# zelin-obsidian-radar.timer — a oneshot pass of `act.radar --once`.
+#
+# obsidian radar — scans the Obsidian vault (sources.obsidian_raw) for
+# actionable notes and turns them into requirement cards. On macOS this radar
+# runs from the crontab ingest chain because launchd is TCC-blocked from
+# ~/Documents; Linux has no TCC, so it runs cleanly as a normal user timer.
+# No-ops silently until sources.obsidian_raw is set and exists.
+#
+# NOTE: this scans notes already in the vault. Turning screen captures INTO
+# vault notes (the screenpipe ingest chain) is DEFERRED on Linux v1 — see
+# docs/LINUX.md.
+[Unit]
+Description=Zelin AI Assistant — Obsidian vault radar scan (one pass)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m act.radar --once

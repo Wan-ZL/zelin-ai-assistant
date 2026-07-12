@@ -1,0 +1,13 @@
+# TEMPLATE: rendered by install-linux.sh. Fires zelin-obsidian-radar.service
+# every 30 minutes (mirror of the macOS */30 crontab ingest cadence).
+[Unit]
+Description=Zelin AI Assistant — Obsidian radar timer (every 30 min)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+Unit=zelin-obsidian-radar.service
+
+[Install]
+WantedBy=timers.target

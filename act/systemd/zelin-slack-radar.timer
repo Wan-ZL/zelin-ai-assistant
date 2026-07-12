@@ -1,0 +1,13 @@
+# TEMPLATE: rendered by install-linux.sh. Fires zelin-slack-radar.service
+# every 3 minutes (mirror of the plist's <key>StartInterval</key> 180).
+[Unit]
+Description=Zelin AI Assistant — Slack radar timer (every 3 min)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=3min
+Unit=zelin-slack-radar.service
+
+[Install]
+WantedBy=timers.target
