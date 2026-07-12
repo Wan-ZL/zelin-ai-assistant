@@ -205,6 +205,38 @@ def process_inbox() -> int:
 # --------------------------------------------------------------------------- #
 # §5.4 sync ack ledger — one line per terminal inbox disposition.
 # --------------------------------------------------------------------------- #
+# M2 sync-active cache — keyed on state/sync.json's stat, so an opt-in/opt-out
+# flip (syncd rewrites the file) is picked up without a daemon restart, while a
+# non-sync install pays only one cheap os.stat() per call (never a JSON parse).
+_SYNC_ACTIVE_CACHE: Optional[tuple] = None  # (stat_key, is_active)
+
+
+def _sync_active() -> bool:
+    """M2: True only when cloud sync is opted in (``state/sync.json`` exists with
+    ``mode == "cloud"``). Gates ``_write_applied_ack`` so a purely local Mac/web
+    user never creates ``state/sync/`` nor grows ``applied.jsonl``; a synced user
+    still gets every ack (the ack→delivered/applied flow syncd relies on)."""
+    global _SYNC_ACTIVE_CACHE
+    path = config.STATE_DIR / "sync.json"
+    try:
+        st = path.stat()
+        stat_key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stat_key = None
+    if _SYNC_ACTIVE_CACHE is not None and _SYNC_ACTIVE_CACHE[0] == stat_key:
+        return _SYNC_ACTIVE_CACHE[1]
+    active = False
+    if stat_key is not None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            active = (isinstance(data, dict)
+                      and str(data.get("mode") or "").lower() == "cloud")
+        except (OSError, ValueError):
+            active = False
+    _SYNC_ACTIVE_CACHE = (stat_key, active)
+    return active
+
+
 def _write_applied_ack(action_id: str, result_status: str) -> None:
     """Append an ack line to ``state/sync/applied.jsonl`` (§5.4).
 
@@ -216,11 +248,16 @@ def _write_applied_ack(action_id: str, result_status: str) -> None:
     deleted inbox file (``_safe_unlink`` runs on every path), which is a
     false-negative retry loop / a false 已生效.
 
+    M2: no-op unless cloud sync is ACTIVE — a local-only install has no phone to
+    ack to, so it must not create ``state/sync/`` or grow ``applied.jsonl``.
+
     ``action_id`` is the inbox file stem (= the cloud idempotency key for synced
     actions; a random Mac-app uuid for local ones, which simply matches no cloud
     row — a harmless PATCH of 0 rows). Runs on macOS/Linux too; best-effort,
     never raises into the daemon pass.
     """
+    if not _sync_active():
+        return
     try:
         d = config.STATE_DIR / "sync"
         d.mkdir(parents=True, exist_ok=True)
@@ -649,16 +686,15 @@ def _apply_decision(req: Requirement, action: Optional[str],
         _log(f"inbox: {req.id} rejected -> trash")
         return "running"
     elif action == "comment":
-        # §5.4 guard: comment folds a modification and returns the card to
-        # card_sent for re-approval — only meaningful on a still-pending proposal
-        # (card_sent) or a backlog item (detected). A stale comment must NEVER
-        # rip an executing/review/delivered card back to card_sent.
+        # §5.4 stale-guard (SYNC only): when the phone pinned an expected_status
+        # that no longer matches, a stale 修改 must not rip a moved card back to
+        # card_sent. LOCAL callers (Mac app / web) send no expected_status, so
+        # this passes and comment applies unconditionally exactly as on main —
+        # the web renders 修改 on RAISING/processing cards too, and folding one
+        # back to card_sent for re-approval is the intended local behavior.
         if not _precondition_ok(req, expected_status):
             _log(f"inbox: {req.id} comment stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
-            return "noop"
-        if str(req.status) not in (State.CARD_SENT.value, State.DETECTED.value):
-            _log(f"inbox: {req.id} comment ignored (status={req.status}) — no-op")
             return "noop"
         _fold_comment(req, comment)
         req.set_status(State.CARD_SENT)  # stays pending, re-approval
@@ -669,15 +705,13 @@ def _apply_decision(req: Requirement, action: Optional[str],
         if analyze is None:
             _log(f"inbox: {req.id} raise requested but analyze unavailable — ignored")
             return "noop"
-        # §5.4 guard: raise promotes a backlog item (detected) into an AI
-        # expansion — only valid FROM detected; from any other state it is a
-        # stale/duplicate no-op (never re-raise a card already past the backlog).
+        # §5.4 stale-guard (SYNC only): a phone-pinned expected_status that no
+        # longer matches → no-op (never re-raise a card the board already moved
+        # past the backlog). LOCAL callers send no expected_status, so this
+        # passes and raise applies unconditionally as on main.
         if not _precondition_ok(req, expected_status):
             _log(f"inbox: {req.id} raise stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
-            return "noop"
-        if str(req.status) != State.DETECTED.value:
-            _log(f"inbox: {req.id} raise ignored (status={req.status}) — no-op")
             return "noop"
         # Fast: just mark it 'raising' so it shows a processing spinner in 待审批
         # immediately. The slow claude -p expansion happens in process_raising(),
@@ -700,14 +734,17 @@ def _apply_decision(req: Requirement, action: Optional[str],
         return "running"
     elif action == "accept":
         # §11 验收通过 -> delivered（归档）；accepted_at 供 completed 行显示（§2）
-        # §5.4 guard: accept only from review (a card already delivered/executing
-        # must not be re-delivered by a stale tap).
+        # §5.4 stale-guard (SYNC only): a phone-pinned expected_status mismatch
+        # → no-op (a stale tap must not re-deliver a card that already moved).
+        # LOCAL callers send no expected_status, so accept applies exactly as on
+        # main — CRUCIALLY the 待验收 lane also holds cards whose on-disk status
+        # is still EXECUTING (agent done, not yet promoted: process_inbox runs
+        # BEFORE reconcile_executing), so a local 验收 must land regardless of
+        # the current status. A hard REVIEW-only precondition would silently
+        # no-op those and, with auto_resume:false, break accept forever.
         if not _precondition_ok(req, expected_status):
             _log(f"inbox: {req.id} accept stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
-            return "noop"
-        if str(req.status) != State.REVIEW.value:
-            _log(f"inbox: {req.id} accept ignored (status={req.status}) — no-op")
             return "noop"
         req.set_status(State.DELIVERED)
         ex = dict(req.execution or {})
@@ -725,15 +762,15 @@ def _apply_decision(req: Requirement, action: Optional[str],
         if not (comment or "").strip():
             _log(f"inbox: {req.id} rework with empty feedback — ignored")
             return "noop"
-        # §5.4 guard: rework only from review — resuming a card that is not
-        # awaiting acceptance (e.g. already executing, or delivered) would
-        # double-run or reopen it on a stale tap.
+        # §5.4 stale-guard (SYNC only): a phone-pinned expected_status mismatch
+        # → no-op (a stale tap must not reopen/double-run a card that moved).
+        # LOCAL callers send no expected_status, so rework applies as on main —
+        # including the 待验收 EXECUTING-done case (process_inbox runs BEFORE
+        # reconcile_executing promotes it to review). executor.rework itself
+        # handles stop-idle-then-resume, so an on-disk EXECUTING card is safe.
         if not _precondition_ok(req, expected_status):
             _log(f"inbox: {req.id} rework stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
-            return "noop"
-        if str(req.status) != State.REVIEW.value:
-            _log(f"inbox: {req.id} rework ignored (status={req.status}) — no-op")
             return "noop"
         ok = executor.rework(req, comment)
         _log(f"inbox: {req.id} rework sent (ok={ok}) — back to executing")

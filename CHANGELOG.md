@@ -45,6 +45,17 @@ other file needs editing. To cut a release:
 - **Beta / setup required.** Nothing syncs until you (a) deploy the Supabase
   migrations + enable Auth (see the wake-up steps), (b) opt in + pair, and
   (c) build the iOS app with your Apple ID.
+- **Honest limits (also shown at the consent gate):**
+  - End-to-end encryption hides card **bodies**, but not **metadata**: the
+    number and size of cards leak from the encrypted blob's size. Anyone who can
+    see your Supabase rows learns roughly how much you have on the board, never
+    what it says.
+  - The device-token Edge Function mints an **HS256** (symmetric) token. It
+    **fails closed** if your Supabase project's JWT signing is asymmetric — so
+    verify your project's JWT signing config at deploy time before relying on it.
+  - `cryptography` is an **optional dependency** — it is only needed for cloud
+    sync (`pip install -r requirements-cloud.txt`). A local-only install never
+    imports it and is unaffected.
 
 ## [0.26.0] - 2026-07-12
 

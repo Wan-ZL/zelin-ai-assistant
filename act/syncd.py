@@ -579,10 +579,18 @@ class Syncd:
             except ValueError:
                 _log(f"UP: {aid} decrypted payload is not JSON — skipped")
                 continue
-            if not self._write_inbox_file(aid, action, board_seq):
-                continue
+            # M4 mark-then-materialise: append to the L3 delivered ledger BEFORE
+            # writing the inbox file. If we crash between the two and actd has
+            # already consumed+deleted the file, a re-run must NOT re-materialise
+            # it (that would double-apply a non-idempotent action — capture /
+            # feedback). Ledger-first means the re-run sees it delivered and
+            # skips; the cost is that a crash in this same window drops the
+            # action instead (safe: the phone simply never sees it 'applied' and
+            # can retry with a fresh idempotency key, vs a silent duplicate).
             self._ledger_append(aid)
             delivered.add(aid)
+            if not self._write_inbox_file(aid, action, board_seq):
+                continue
             self._patch_delivered(token, aid)
             written += 1
         if written:

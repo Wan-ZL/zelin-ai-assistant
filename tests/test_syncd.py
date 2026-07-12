@@ -276,6 +276,36 @@ class UpTestCase(unittest.TestCase):
         files = list(config.INBOX_DIR.glob(f"{aid}.json"))
         self.assertEqual(len(files), 1)
 
+    def test_crash_between_ledger_and_inbox_does_not_double_materialise(self):
+        # M4 mark-then-materialise: the L3 delivered ledger is appended BEFORE
+        # the inbox file is written. Simulate a crash DURING the inbox write —
+        # the ledger must already record the action, so a re-run (after actd may
+        # have consumed+deleted the file) sees it delivered and does NOT
+        # re-materialise. The pre-fix order (write-then-ledger) would leave the
+        # ledger empty after the crash → the re-run re-writes the file → a
+        # non-idempotent capture/feedback double-applies.
+        aid = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+        payload = {"action": "capture", "text": "quick note",
+                   "ts": "2026-07-12T01:00:00Z"}
+        ft = FakeTransport(inbox_rows=[self._pending_row(aid, payload)])
+        d = syncd.Syncd(_sync_cfg(), ft)
+        token = d.ensure_token()
+
+        # pass 1 — crash mid-materialise (process dies while writing the file)
+        with mock.patch.object(d, "_write_inbox_file",
+                               side_effect=RuntimeError("crash")):
+            with self.assertRaises(RuntimeError):
+                d.pull_up(token)
+        # the M4 invariant the pre-fix order violated: ledger recorded it FIRST
+        self.assertIn(aid, d._delivered_set())
+        # actd already consumed+deleted whatever might have landed
+        for p in config.INBOX_DIR.glob(f"{aid}.json"):
+            p.unlink()
+
+        # pass 2 — recovered: the re-run must SKIP, never re-materialise
+        self.assertEqual(d.pull_up(token), 0)
+        self.assertFalse((config.INBOX_DIR / f"{aid}.json").exists())
+
     def test_ack_tail_patches_applied_with_result_status(self):
         aid = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
         syncd.SYNC_DIR.mkdir(parents=True, exist_ok=True)
