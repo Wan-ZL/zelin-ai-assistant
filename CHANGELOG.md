@@ -27,6 +27,30 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.26.0] - 2026-07-12
+
+### Added
+
+- **Windows support (beta).** The headless Python core now runs under **Task
+  Scheduler** — `install.ps1` renders and registers the daemon, radar, web-UI,
+  and digest tasks — with the **web dashboard** (`python -m act.webui`) as the
+  Windows UI. Notifications use **native Windows toasts**, and `doctor` now
+  understands scheduled tasks (task state parsed from `schtasks`) alongside the
+  existing launchd and systemd checks.
+
+### Fixed
+
+- POSIX-only `fcntl` import crashed module import on Windows; the import is now
+  guarded so the whole test suite can be imported (and run) on Windows.
+
+### Note
+
+- **Windows is beta, like Linux.** Screen-capture ingest is deferred (the web
+  dashboard and the ingest cron chain are the Windows surface for now), and Task
+  Scheduler task loading / toast notifications / the daemon's `PATH` still need
+  testing on a real machine — friends are welcome to file PRs. Task Scheduler's
+  restart-on-failure handling is also weaker than launchd/systemd.
+
 ## [0.25.0] - 2026-07-12
 
 ### Added
@@ -903,7 +927,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...v0.23.0
