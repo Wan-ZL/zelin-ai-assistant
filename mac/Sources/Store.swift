@@ -6,8 +6,7 @@ import Foundation
 
 // MARK: - Local instant-feedback types (契约2)
 
-/// Which dashboard list an item (or its echo) belongs to.
-enum ListKind: String { case approval, running, review, debt, trash, completed, archived }
+// enum ListKind moved to shared/Sources/Lanes.swift (shared with iOS).
 
 /// Optimistic "the action is in flight" placeholder rendered in the TARGET
 /// list right after a button press, before actd rewrites dashboard.json.
