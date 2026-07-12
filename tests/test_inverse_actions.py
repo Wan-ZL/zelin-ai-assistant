@@ -300,6 +300,110 @@ class AbortExecutionTestCase(InverseActionsBase):
 
 
 # --------------------------------------------------------------------------- #
+# stop_to_review — executing | approved -> review（去待验收：停 agent + 收下成果）
+# --------------------------------------------------------------------------- #
+class StopToReviewTestCase(InverseActionsBase):
+    def _run_with_executor(self, harvest, stop, req_id="R-800"):
+        with mock.patch.object(actd.executor, "harvest_delivery", harvest), \
+             mock.patch.object(actd.executor, "stop_session", stop):
+            return self._run("stop_to_review", req_id=req_id)
+
+    def test_from_executing_harvests_stops_and_lands_in_review(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-70", "log": "/tmp/x.log"})
+        harvest = mock.Mock(return_value={"delivered_summary": "阶段成果",
+                                          "final_draft": "半成品草稿"})
+        stop = mock.Mock(return_value=True)
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_called_once_with("sess-70")   # 先收下成果……
+        stop.assert_called_once_with("sess-70")      # ……再停掉跑着的 agent
+        self.assertEqual(req.status, State.REVIEW.value)
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "阶段成果")
+        self.assertEqual(ex.get("final_draft"), "半成品草稿")
+        self.assertTrue(ex.get("review_at"))         # 镜像自然 executing->review
+        self.assertTrue(ex.get("done"))
+        self.assertEqual(ex.get("session_id"), "sess-70")  # 不归档不删除
+        self.assertEqual(ex.get("log"), "/tmp/x.log")      # 其余字段保留
+        self.assertIn("[stopped by user] 手动停止，已收下成果待验收", req.notes)
+
+    def test_from_approved_without_session_lands_in_review_no_crash(self):
+        # 排队未派发、无 session：harvest 为空，直接落待验收（空交付物，不崩）
+        _mk_req(status=State.APPROVED.value, execution=None)
+        harvest, stop = mock.Mock(), mock.Mock()
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_not_called()
+        stop.assert_not_called()
+        self.assertEqual(req.status, State.REVIEW.value)
+        ex = req.execution or {}
+        self.assertTrue(ex.get("review_at"))
+        self.assertTrue(ex.get("done"))
+        self.assertIsNone(ex.get("delivered_summary"))
+        self.assertIn("[stopped by user]", req.notes)
+
+    def test_empty_harvest_never_overwrites_existing_fields(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-71",
+                           "delivered_summary": "旧小结",
+                           "final_draft": "旧草稿"})
+        harvest = mock.Mock(return_value={"delivered_summary": None,
+                                          "final_draft": None})
+        req = self._run_with_executor(harvest, mock.Mock(return_value=True))
+        self.assertEqual(req.status, State.REVIEW.value)
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "旧小结")  # 非空才写
+        self.assertEqual(ex.get("final_draft"), "旧草稿")
+
+    def test_harvest_failure_only_logged_stop_still_runs(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-72"})
+        harvest = mock.Mock(side_effect=RuntimeError("transcript exploded"))
+        stop = mock.Mock(return_value=True)
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_called_once_with("sess-72")   # harvest 炸了……
+        stop.assert_called_once_with("sess-72")      # ……stop 照跑
+        self.assertEqual(req.status, State.REVIEW.value)
+        self.assertTrue((req.execution or {}).get("review_at"))
+
+    def test_stop_failure_never_blocks_review_write(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-73"})
+        harvest = mock.Mock(return_value={"delivered_summary": "小结",
+                                          "final_draft": None})
+        stop = mock.Mock(side_effect=RuntimeError("claude stop exploded"))
+        req = self._run_with_executor(harvest, stop)
+        stop.assert_called_once_with("sess-73")      # stop 被调且失败……
+        self.assertEqual(req.status, State.REVIEW.value)  # ……不阻塞落 review
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "小结")
+        self.assertTrue(ex.get("review_at"))
+
+    def test_wrong_status_is_idempotent_noop(self):
+        wrong = (State.CARD_SENT.value, State.REVIEW.value,
+                 State.DELIVERED.value, State.DETECTED.value)
+        for i, st in enumerate(wrong):
+            rid = f"R-85{i}"
+            _mk_req(req_id=rid, status=st, execution={"session_id": "keep-me"})
+            harvest, stop = mock.Mock(), mock.Mock()
+            req = self._run_with_executor(harvest, stop, req_id=rid)
+            harvest.assert_not_called()
+            stop.assert_not_called()
+            self.assertEqual(req.status, st, msg=st)
+            ex = req.execution or {}
+            self.assertEqual(ex.get("session_id"), "keep-me", msg=st)
+            self.assertNotIn("review_at", ex, msg=st)
+            self.assertNotIn("[stopped by user]", req.notes or "", msg=st)
+
+    def test_analytics_autologged(self):
+        _mk_req(req_id="R-859", status=State.EXECUTING.value,
+                execution={"session_id": "s"})
+        self._run_with_executor(mock.Mock(return_value={}),
+                                mock.Mock(return_value=True), req_id="R-859")
+        events = [(e.get("event"), e.get("req")) for e in analytics.read_events()]
+        self.assertIn(("inbox_stop_to_review", "R-859"), events)
+
+
+# --------------------------------------------------------------------------- #
 # revert_review — delivered -> review
 # --------------------------------------------------------------------------- #
 class RevertReviewTestCase(InverseActionsBase):

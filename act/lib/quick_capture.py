@@ -550,7 +550,7 @@ def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
         # merged into an existing entry as a restatement
         return f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1"
     if low_conf and saved.status == registry.State.DETECTED.value:
-        return (f"已记入备选 {saved.id}：{saved.summary or saved.title}"
+        return (f"已记入储备 {saved.id}：{saved.summary or saved.title}"
                 f"（不紧急，先存着不打扰）/ parked in backlog {saved.id}")
     return f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）"
 
