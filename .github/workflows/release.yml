@@ -93,6 +93,12 @@ jobs:
           fi
           echo "signing identity '$IDENTITY' ready — build.sh will sign with it"
 
+      - name: Vendor Sparkle (framework + tools)
+        # Download + verify (SHA-256) + vendor Sparkle.framework and its bin/ tools
+        # into mac/Frameworks/ (gitignored). MUST run before the build so build.sh
+        # links + embeds + signs the framework and the appcast step can sign_update.
+        run: bash mac/scripts/fetch-sparkle.sh
+
       - name: Build macOS app
         run: bash mac/build.sh
 
@@ -115,6 +121,51 @@ jobs:
         run: |
           VERSION="$(python3 -c 'import act; print(act.__version__)')"
           mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
+
+      - name: EdDSA-sign the .pkg and generate appcast.xml
+        # Sparkle integrity: EdDSA-sign the .pkg with the maintainer's private key
+        # (GitHub secret; never in the repo) and emit a single-item appcast.xml
+        # whose enclosure is the .pkg (installationType="package" — updates the
+        # whole product, app + pipeline, no drift). Guarded on the secret so a fork
+        # without it fails loudly rather than shipping an unusable feed.
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY secret missing — auto-update assets not produced"; exit 1
+          fi
+          TAG="${GITHUB_REF_NAME}"                      # e.g. v0.23.0
+          VER="${TAG#v}"                                # 0.23.0  (== CFBundleVersion)
+          PKG="mac/build/ZelinAIAssistant-${TAG}.pkg"
+          KEYFILE="$RUNNER_TEMP/sparkle_ed_priv"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEYFILE"
+
+          # sign_update prints:  sparkle:edSignature="…" length="…"
+          SIGATTR="$(mac/Frameworks/bin/sign_update "$PKG" -f "$KEYFILE")"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ZelinAIAssistant-${TAG}.pkg"
+
+          cat > mac/build/appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Zelin's AI Assistant</title>
+              <item>
+                <title>${VER}</title>
+                <sparkle:version>${VER}</sparkle:version>
+                <sparkle:shortVersionString>${VER}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+                <sparkle:releaseNotesLink>https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}</sparkle:releaseNotesLink>
+                <pubDate>$(date -u +"%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+                <enclosure url="${URL}"
+                           sparkle:installationType="package"
+                           ${SIGATTR}
+                           type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          EOF
+          echo "generated appcast.xml:"; cat mac/build/appcast.xml
 
       - name: Generate SHA-256 checksums
         # One checksums file covering both assets. Users verify a download with:
@@ -163,7 +214,7 @@ jobs:
 
           NOTES
           gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md --generate-notes --latest
-          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" mac/build/checksums.sha256
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" mac/build/checksums.sha256 mac/build/appcast.xml
 
       - name: Clean up signing keychain
         # Runs even if an earlier step failed: never leave the decoded cert or
@@ -172,5 +223,7 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/sign-cert.p12" 2>/dev/null || true
+          # never leave the decoded Sparkle EdDSA private key on the runner
+          rm -f "$RUNNER_TEMP/sparkle_ed_priv" 2>/dev/null || true
           # restore the default user keychain search list
           security list-keychains -d user -s login.keychain-db 2>/dev/null || true

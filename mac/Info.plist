@@ -39,5 +39,20 @@
 	<string>「屏幕 + 音频」录制模式需要麦克风来转录会议与语音，数据只存本地 ~/.screenpipe。</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>双击卡片上的 claude 命令时，需要控制所选终端（Ghostty / Terminal / iTerm2）来新开窗口运行它。</string>
+	<!-- Sparkle auto-update (EdDSA-signed, package-based). The appcast is hosted
+	     on the newest GitHub Release via the stable /releases/latest/download
+	     redirect (no GitHub Pages, no commit-back to main). NOTE: the app and the
+	     Python pipeline ship in lockstep and BOTH live in the .pkg, so the appcast
+	     enclosure is the .pkg (installationType="package"), not the .app-only .zip. -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/Wan-ZL/zelin-ai-assistant/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>VAVks5YGb78Nt7ntPLx3CxXLZ3cLUaopWsQfJXZBFmI=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 </dict>
 </plist>

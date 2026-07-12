@@ -1239,6 +1239,10 @@ struct AboutView: View {
     // check time; dashboard.update_available (shared store) stays the
     // authoritative "strictly newer exists" signal between manual checks.
     @ObservedObject var store: DashboardStore
+    // §26: the update buttons route through AppDelegate.triggerUpdate (Sparkle
+    // one-click install+relaunch, or the GitHub-page fallback when Sparkle isn't
+    // compiled in). unowned matches the other page views (TrashPageView etc.).
+    unowned let app: AppDelegate
     @StateObject private var upd = UpdateCheckModel()
 
     var body: some View {
@@ -1320,16 +1324,13 @@ struct AboutView: View {
             Text(L("更新", "Update")).foregroundColor(.secondary).frame(width: 80, alignment: .leading)
             VStack(alignment: .leading, spacing: 4) {
                 if upd.updateAvailable, let latest = upd.latest {
-                    Button(L("新版本 v\(latest) 可用 — 下载安装包",
-                             "Update v\(latest) available — download installer")) {
-                        guard let url = upd.releaseURL else { return }
-                        Analytics.log("update_open_release",
-                                      fields: ["source": "about", "latest": latest])
-                        NSWorkspace.shared.open(url)
+                    Button(L("新版本 v\(latest) 可用 — 一键更新",
+                             "Update v\(latest) available — install now")) {
+                        app.triggerUpdate(nil)
                     }
                     .controlSize(.small)
-                    Text(L("打开 GitHub release 页手动下载安装——绝不自动下载或运行。设置与任务数据都保留在本机，升级后原样可用；初始设置向导若需再次出现，会预填当前值，绝不清空。",
-                           "Opens the GitHub release page for a manual download — nothing is ever downloaded or run automatically. Settings and task data stay on this Mac and survive the upgrade; if the setup wizard needs to reappear, it comes prefilled and never wipes anything."))
+                    Text(L("检查并一键安装更新——自动下载、校验签名、安装并重启，无需去 GitHub。安装那一步会要一次管理员密码（和手动安装一样）。设置与任务数据都保留在本机，升级后原样可用。",
+                           "Check and install in one click — downloads, verifies the signature, installs, and relaunches; no trip to GitHub. The install step asks for your admin password once (same as a manual install). Settings and task data stay on this Mac and survive the upgrade."))
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -1338,9 +1339,17 @@ struct AboutView: View {
                         .font(.system(size: 11))
                         .foregroundColor(upd.failed ? .orange : .secondary)
                 }
+                // On-demand check: Sparkle's check → download → install → relaunch
+                // when compiled in; the Python §26 check-now (state/update_check.json
+                // + dashboard projection) remains the fallback for non-Sparkle builds.
+#if canImport(Sparkle)
+                Button(L("检查更新", "Check for updates")) { app.triggerUpdate(nil) }
+                    .controlSize(.small)
+#else
                 Button(L("立即检查", "Check now")) { upd.checkNow() }
                     .controlSize(.small)
                     .disabled(upd.checking || upd.cooldown || !upd.enabled)
+#endif
             }
         }
     }
