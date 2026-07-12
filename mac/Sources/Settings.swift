@@ -278,9 +278,14 @@ struct SettingsFormView: View {
                 ForEach(visible) { sectionView($0) }
             }
 
-            // Advanced/config.yaml + status footer — hidden during an active
-            // search so the result list reads clean.
-            if !searchActive { footerRow }
+            // Advanced/config.yaml footer — hidden during an active search so
+            // the result list reads clean. The save status/error still surfaces
+            // on its own, so a rare「保存失败…」is never silently hidden.
+            if !searchActive {
+                footerRow
+            } else {
+                statusText
+            }
         }
         .background {
             // ⌘F focuses the finder — hidden window-scoped shortcut (same
@@ -954,8 +959,8 @@ struct SettingsFormView: View {
                 }))
                 .toggleStyle(.switch)
                 .disabled(!telemetryEnabled || telemetryLevel != "detailed")
-            Text(L("只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
-                   "Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack/iMessage messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."))
+            Text(L("只收集你亲手输入进本 App 的文字（截断 500 字符，内置密钥掩码）——绝不含 AI 的回答、屏幕录制内容、邮件或 Slack 消息。关掉此开关即停止记录与上传新的文本（关前已记录、尚未上传的少量行仍会随行为统计发出），行为统计不受影响。",
+                   "Collects only what you personally type into this app (truncated to 500 chars, built-in key masking) — never the AI's answers, screen-recording content, emails or Slack messages. Turning this off stops recording and uploading new text (a few lines recorded before the switch-off may still upload with behavior stats); behavior stats are unaffected."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Text(L("关掉最上方开关即完全停止全部上传；本地统计文件不受影响。详见 docs/TELEMETRY.md。",
@@ -986,13 +991,21 @@ struct SettingsFormView: View {
             Button(L("打开 config.yaml", "Open config.yaml")) { openConfigYaml() }
                 .controlSize(.small)
             Spacer()
-            if !status.isEmpty {
-                Text(status)
-                    .font(.system(size: 11))
-                    .foregroundColor(statusIsError ? .red : .secondary)
-                    .lineLimit(2)
-                    .help(status)
-            }
+            statusText
+        }
+    }
+
+    /// Save status / error line — sits at the right of the footer normally, and
+    /// is surfaced on its own during an active search so a failed save is never
+    /// silently hidden.
+    @ViewBuilder
+    private var statusText: some View {
+        if !status.isEmpty {
+            Text(status)
+                .font(.system(size: 11))
+                .foregroundColor(statusIsError ? .red : .secondary)
+                .lineLimit(2)
+                .help(status)
         }
     }
 
@@ -1002,6 +1015,9 @@ struct SettingsFormView: View {
     private func expandAnchorIfPending() {
         guard let a = nav.pendingAnchor,
               let d = sections.first(where: { $0.anchor == a }) else { return }
+        // An active search filters the target out of `visible`, so its .id
+        // never renders and the async scrollTo can't land — clear it first.
+        query = ""
         collapse.expand(d.id)
     }
 
