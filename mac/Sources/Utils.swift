@@ -385,6 +385,37 @@ enum Shell {
     }
 }
 
+// MARK: - Runtime Python resolver (CONTRACT §19)
+//
+// App-wide resolver for the interpreter launchd runs. This lives here (not in
+// any one settings section) because it is used across the whole app — Ask,
+// Doctor, Pages, Settings, Slack/Gmail/ClaudeImport ingest, and the setup
+// wizard all shell out to python3 the same way launchd does.
+
+enum RuntimePython {
+    /// The interpreter launchd runs: config/runtime.json pointer (CONTRACT
+    /// §19) → login-shell `command -v python3` → /usr/bin/python3.
+    nonisolated static func resolve() -> String {
+        let p = AppPaths.stateRoot + "/config/runtime.json"
+        if let data = FileManager.default.contents(atPath: p),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let py = obj["python"] as? String, !py.isEmpty {
+            return py
+        }
+        let (code, out) = Shell.run("/bin/zsh", ["-lc", "command -v python3"])
+        let lines = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: "\n")
+        if code == 0, let found = lines.last, found.hasPrefix("/") { return found }
+        return "/usr/bin/python3"
+    }
+
+    /// FDA must be granted to the REAL binary — resolve symlinks (miniconda's
+    /// python3 usually symlinks python3.x).
+    nonisolated static func realBinary(of path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+}
+
 // MARK: - UserDefaults helpers
 
 enum Prefs {

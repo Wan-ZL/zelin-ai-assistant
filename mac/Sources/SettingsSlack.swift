@@ -315,7 +315,7 @@ final class SlackSettingsModel: ObservableObject {
     /// they are unit-tested — tests/test_slack_setup.py).
     nonisolated private static func fetchDirectory(refresh: Bool)
         -> (Bool, [SlackDirEntry], [SlackDirEntry], String, String) {
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let root = AppPaths.stateRoot
         var args = ["-m", "act.lib.slack_setup", "--directory"]
         if refresh { args.append("--refresh") }
@@ -522,10 +522,10 @@ struct SlackSettingsSection: View {
     @StateObject private var model = SlackSettingsModel()
     @ObservedObject private var i18n = LanguageStore.shared
 
+    // Content-only (v0.21): the card / title / collapse chrome is supplied by
+    // the shared CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("Slack 接入", "Slack"))
-                .font(.system(size: 13, weight: .semibold))
             Text(L("把「别人在 Slack 上找你的事」（DM / 群 / @提及）自动变成提案卡。3 步全在这里完成，不用改任何文件；对外只出草稿，永远你自己发。此区改动即时生效。",
                    "Turns \"people needing you on Slack\" (DMs / groups / @mentions) into proposal cards automatically. All 3 setup steps happen right here — no files to edit; outbound replies are drafts only, you always send them yourself. Changes apply immediately."))
                 .font(.system(size: 10))
@@ -561,10 +561,6 @@ struct SlackSettingsSection: View {
                 healthRow
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .font(.system(size: 12))
         .onAppear { model.loadIfNeeded() }
         .onChange(of: i18n.lang) { _, _ in model.refreshStatus() }

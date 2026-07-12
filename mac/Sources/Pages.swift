@@ -344,7 +344,7 @@ final class DepsModel: ObservableObject {
         doctorFails = nil
         Analytics.log(fast ? "mw_doctor_auto" : "mw_doctor_run")
         let root = AppPaths.stateRoot
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         DispatchQueue.global(qos: .userInitiated).async {
             var args = ["-m", "act.doctor", "--json"]
             if fast { args.append("--fast") }
@@ -1179,7 +1179,7 @@ final class UpdateCheckModel: ObservableObject {
         checking = true
         failed = false
         Analytics.log("update_check_now", fields: ["source": "about"])
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let root = AppPaths.stateRoot
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let p = Process()

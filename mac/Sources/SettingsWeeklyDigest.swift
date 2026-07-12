@@ -13,11 +13,10 @@ struct WeeklyDigestSettingsSection: View {
     @State private var status = ""
     @State private var loaded = false
 
+    // Content-only (v0.21): the card / title / collapse chrome is supplied by
+    // the shared CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("每周摘要", "Weekly digest"))
-                .font(.system(size: 13, weight: .semibold))
-
             Toggle(L("每周自动生成「本周你都在忙什么」+ 自动化建议",
                      "Auto-generate a weekly \"what you were up to\" recap + automation ideas"),
                    isOn: Binding(
@@ -49,11 +48,6 @@ struct WeeklyDigestSettingsSection: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor)))
         .onAppear {
             if !loaded {
                 load()

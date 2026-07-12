@@ -226,10 +226,10 @@ struct GmailSettingsSection: View {
     @StateObject private var model = GmailSettingsModel()
     @ObservedObject private var i18n = LanguageStore.shared
 
+    // Content-only (v0.21): the card / title / collapse chrome is supplied by
+    // the shared CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("Gmail 接入", "Gmail"))
-                .font(.system(size: 13, weight: .semibold))
             Text(L("轮询收件箱里的未读邮件，需要你处理的自动变成提案卡（纯通知/营销直接过滤）。只读——邮件绝不会被标成已读。全部在这里配好，不用改任何文件；此区改动即时生效。",
                    "Polls unread inbox mail and turns the ones needing you into proposal cards (notifications/marketing filtered out). Read-only — mail is never marked read. Everything is set up right here, no files to edit; changes apply immediately."))
                 .font(.system(size: 10))
@@ -260,10 +260,6 @@ struct GmailSettingsSection: View {
                 healthRow
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .font(.system(size: 12))
         .onAppear { model.loadIfNeeded() }
         .onChange(of: i18n.lang) { _, _ in model.refreshStatus() }

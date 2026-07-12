@@ -282,8 +282,8 @@ enum ActdAgent {
     }
 
     /// Render the repo plist template (same 4 placeholder substitutions as
-    /// install.sh render_launchd_plist / IMessageSettingsModel.installAgent,
-    /// same order) and launchctl load it. Blocking — background queue only.
+    /// install.sh render_launchd_plist, same order) and launchctl load it.
+    /// Blocking — background queue only.
     nonisolated static func renderAndLoad() -> (Bool, String) {
         let root = AppPaths.stateRoot
         let template = root + "/act/launchd/\(label).plist"
@@ -291,7 +291,7 @@ enum ActdAgent {
             return (false, L("后台服务模板缺失(\(template))——repo 不完整?在 repo 目录运行 bash install.sh 可修复",
                              "Background-service template missing (\(template)) — incomplete repo? Running bash install.sh in the repo directory fixes it"))
         }
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()
         text = text
@@ -411,7 +411,7 @@ final class PipelineProbeModel: ObservableObject {
         Analytics.log("wizard_fix", fields: ["what": "seed_dashboard"])
         let root = AppPaths.stateRoot
         DispatchQueue.global(qos: .userInitiated).async {
-            let py = IMessageSettingsModel.runtimePython()
+            let py = RuntimePython.resolve()
             let p = Process()
             p.executableURL = URL(fileURLWithPath: py)
             p.arguments = ["-m", "act.lib.dashboard"]
