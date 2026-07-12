@@ -25,19 +25,42 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.21.0] - 2026-07-12
+
+### Added
+
+- **Settings redesign — collapsible sections + fuzzy search.** Settings is now
+  organized into collapsible sections (**default collapsed**) with a search box
+  that fuzzy-matches setting names and reveals the matching sections, so the
+  growing list of integrations stays scannable.
+
 ### Removed
-- **iMessage transport removed**, and **Slack's phone-approval role removed**.
-  The Mac app is now the **sole approval surface**. Dropped: the iMessage radar
-  (`act/radar_imessage.py` + its launchd agent), the `phone_channel` /
+
+- **⚠️ iMessage transport removed, and Slack's phone-approval commands /
+  reactions removed** — a user-visible capability removal. Dropped: the iMessage
+  radar (`act/radar_imessage.py` + its launchd agent), the `phone_channel` /
   `imessage_self_handle` config, all outbound notification mirroring to the
   Slack self-DM, the `批准/拒绝/打回/验收 R-xxx` phone command surface, and the
   ✅-reaction approval poll. Upgrades auto-unload the stale `imessageradar`
-  launchd agent. Migration: approve/accept cards in the Mac app.
-- **Kept**: Slack ingest (DMs / group DMs / @mentions + MCP fallback) and
-  **Slack self-DM quick capture** — DM yourself a one-liner (or a photo/video)
-  and it triages into a card. Self-DM is now a one-way capture inbox (the
-  assistant no longer posts replies or notifications back into it); it remains
-  the mobile-capture path until the iOS app ships.
+  launchd agent.
+  - **Mobile approval now happens in the Mac app** — it is the sole approval
+    surface (a dedicated **iOS app is planned**). Migration: approve/accept
+    cards in the Mac app.
+  - **Slack self-DM QUICK-CAPTURE is KEPT** — only the phone-approval commands
+    were removed. DM yourself a one-liner (or a photo/video) and it still
+    triages into a card; self-DM is now a one-way capture inbox (the assistant
+    no longer posts replies or notifications back into it) and remains the
+    mobile-capture path until the iOS app ships. Slack ingest (DMs / group DMs /
+    @mentions + MCP fallback) is unchanged.
+
+### Changed
+
+- **Permissions: Full Disk Access row repurposed for scheduled jobs.** With the
+  iMessage radar gone, the FDA capability row no longer references Messages; it
+  now explains that Full Disk Access is for scheduled background jobs
+  (cron/launchd) reading protected data while the app isn't open.
 
 ## [0.20.1] - 2026-07-12
 
@@ -793,7 +816,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...v0.19.2
