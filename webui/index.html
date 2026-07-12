@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zelin AI Assistant — 看板</title>
+  <!-- The per-install token is injected here SERVER-SIDE (act/webui.py replaces
+       __WEBUI_TOKEN__ at serve time). It is never exposed by any GET endpoint a
+       cross-origin page could read. -->
+  <script>window.WEBUI_TOKEN = "__WEBUI_TOKEN__";</script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>Zelin's AI Assistant</h1>
+    </div>
+    <div class="freshness" id="freshness" title="board freshness (generated_at)">—</div>
+  </header>
+
+  <section class="capture">
+    <input id="captureInput" type="text" autocomplete="off"
+           placeholder="快速捕获：一句话回车建卡…  (quick capture)">
+    <button id="captureBtn" type="button">捕获</button>
+  </section>
+
+  <main id="board" class="board" aria-live="polite"></main>
+
+  <div id="toast" class="toast" role="status" aria-live="assertive"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
