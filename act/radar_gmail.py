@@ -453,7 +453,7 @@ def scan(cfg: Optional[config.Config] = None,
             ref=src_msg.get("message_id") or r.get("message_id"))
         decision = quick_capture.triage(desc, cfg, extractor=extractor)
         kind, _saved = quick_capture.apply_triage(decision, new, cfg)
-        if kind in ("proposed", "follow_up"):
+        if kind in ("proposed", "follow_up", "reraised"):
             created += 1
 
     if newest_uid > last_uid:

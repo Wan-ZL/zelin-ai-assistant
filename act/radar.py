@@ -386,7 +386,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
             summary["reconciled"] += 1
             # hard+deadline 分流保留：new_proposal 只有 hc 才进提案列（否则
             # detected/备选）；follow-up 卡按统一口径直接是 card_sent。
-            if kind == "follow_up" or (hc and kind == "proposed"):
+            if kind in ("follow_up", "reraised") or (hc and kind == "proposed"):
                 summary["cards"] += 1
 
         if not halted:

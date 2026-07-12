@@ -706,7 +706,7 @@ def mcp_scan(cfg: config.Config,
             channel=r.get("channel"), date=r.get("date"))
         decision = quick_capture.triage(desc, cfg, extractor=runner)
         kind, _saved = quick_capture.apply_triage(decision, new, cfg)
-        if kind in ("proposed", "follow_up"):
+        if kind in ("proposed", "follow_up", "reraised"):
             created += 1
 
     _write_mcp_marker(now)   # = this pass's start; messages during it survive
@@ -1007,7 +1007,7 @@ def scan(cfg: Optional[config.Config] = None,
             ref=r.get("permalink"))
         decision = quick_capture.triage(desc, cfg, extractor=extractor)
         kind, _saved = quick_capture.apply_triage(decision, new, cfg)
-        if kind in ("proposed", "follow_up"):
+        if kind in ("proposed", "follow_up", "reraised"):
             created += 1
 
     # §13 phone surface: commands + quick capture, then ✅-reaction approvals

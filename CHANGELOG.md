@@ -27,6 +27,21 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.20.1] - 2026-07-12
+
+### Fixed
+
+- The first-run finale coach-mark ("我在这里 👆") now points at the menu-bar
+  icon instead of floating in the middle of the screen over the Settings
+  window. It fires from a delayed dispatch after the wizard window closes, so
+  the menu-bar-only app was no longer active and the transient popover failed
+  to attach to the status item — the app is now re-activated before the bubble
+  is shown so it anchors under the menu-bar icon where the assistant lives.
+- Radar scan analytics now count re-raised cards: the `new_cards` field of the
+  `radar_scan` event undercounted passes where LLM triage re-raised an
+  already-accepted card (kind `"reraised"`, added in v0.20.0) back into
+  proposals. Gmail, Slack and Obsidian radars all include it now.
+
 ## [0.20.0] - 2026-07-11
 
 Card lifecycle: thread-level matching + an `archived` sealed state + re-raise
@@ -766,7 +781,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...v0.19.2
 [0.19.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.0...v0.19.1

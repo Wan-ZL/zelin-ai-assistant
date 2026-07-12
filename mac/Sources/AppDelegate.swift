@@ -636,7 +636,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             rootView: HelloBubbleView { [weak self] in
                 self?.helloPopover?.performClose(nil)
             })
+        // v0.20.1: this fires from a delayed dispatch AFTER the wizard/settings
+        // window closes, so an LSUIElement app is no longer active here. A
+        // transient popover shown while inactive fails to attach to the status
+        // button's on-screen frame — it drifts and renders detached over the
+        // frontmost (Settings) window instead of under the menu-bar icon. Re-
+        // activate first (the same trap SetupWizardController.show() documents)
+        // and make the popover key so it anchors to the top-right menu-bar slot.
+        NSApp.activate(ignoringOtherApps: true)
         pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        pop.contentViewController?.view.window?.makeKey()
         helloPopover = pop
         Analytics.log("wizard_hello_bubble")
         // auto-dismiss so a click-elsewhere user is never stuck with it
