@@ -27,6 +27,24 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.23.0] - 2026-07-12
+
+### Added
+
+- **One-click auto-update via Sparkle + EdDSA.** The app now downloads,
+  verifies (EdDSA signature **and** code-signature), installs, and relaunches
+  the new version with a single click — or fully automatically in the
+  background — so there's no more manual trip to GitHub to grab the `.pkg`. The
+  existing 「检查更新」/「新版本可用」 surfaces (About-page update row and the
+  menu line) are wired straight to it. It stays **free**: updates are
+  authenticated with the stable self-signed code-signing identity plus an EdDSA
+  appcast signature, so no paid Developer ID is needed. Because the update is a
+  `.pkg`, the installer asks for your admin password **once per update** (the
+  same prompt as a manual install); your settings and task data are preserved
+  across the upgrade. **Note the transition:** the *first* Sparkle-enabled
+  version (v0.23.0) must still be installed manually once — every update after
+  that is one-click / automatic ([`Closes #38`](https://github.com/Wan-ZL/zelin-ai-assistant/issues/38)).
+
 ## [0.22.0] - 2026-07-12
 
 ### Added
@@ -846,7 +864,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...v0.20.1

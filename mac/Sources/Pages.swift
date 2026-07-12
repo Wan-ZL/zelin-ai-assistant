@@ -1311,13 +1311,15 @@ struct AboutView: View {
 
     /// The row renders even when nothing is newer — users can see the feature
     /// exists, when it last checked, and force a check (`--force` skips the
-    /// 24h budget; user click only). The download button opens the GitHub
-    /// release page — the unsigned .pkg is downloaded and installed by the
-    /// user deliberately, never auto-run (trust honesty). Wording of the
-    /// reassurance line verified against SetupWizard behavior: data/settings
-    /// live on this Mac (state/, config/secrets/, UserDefaults — the bundle id
-    /// never changes), and the wizard reopens only when its completion marker
-    /// is missing, always prefilled and never wiping anything.
+    /// 24h budget; user click only). The update action is one-click Sparkle:
+    /// it downloads the new .pkg, verifies it (EdDSA + code-signature),
+    /// installs it, and relaunches the app — no trip to GitHub. Only when
+    /// Sparkle is compiled out does the fallback open the GitHub release page
+    /// for a deliberate manual download+install. Wording of the reassurance
+    /// line verified against SetupWizard behavior: data/settings live on this
+    /// Mac (state/, config/secrets/, UserDefaults — the bundle id never
+    /// changes), and the wizard reopens only when its completion marker is
+    /// missing, always prefilled and never wiping anything.
     @ViewBuilder
     private var updateSection: some View {
         HStack(alignment: .top) {
