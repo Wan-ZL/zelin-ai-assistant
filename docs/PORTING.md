@@ -37,7 +37,7 @@ is the contract a port implements; everything else in `act/` is plain Python.
 | `is_darwin()` | platform check for darwin-exclusive features | `sys.platform == "darwin"` | — | — |
 | `notify_user(title, body, subtitle=None)` | native user notification; best-effort, never raises | `osascript` `display notification` | `notify-send` (desktop) | toast/libnotify equivalent |
 | `open_path(path)` | open a path with the system handler / file manager; never raises | `open`(1) | `xdg-open` | `os.startfile` already wired for Windows |
-| `service_list_text()` | raw user-service table for `act.doctor` (PID / last exit / label lines) | `launchctl list` | `""` (honest: not wired yet) | `systemctl --user list-units` / `schtasks` adapter + doctor parser |
+| `service_list_text()` | raw user-service table for `act.doctor` | `launchctl list` | `systemctl --user list-units --type=service,timer` (wired; doctor parses it — see LINUX.md) | `schtasks` adapter + doctor parser (Windows) |
 
 Rules for touching the seam:
 - keep it thin — no classes, no plugin registry, one function per concern;
@@ -78,6 +78,14 @@ interpreter from `config/runtime.json` (CONTRACT §19) — keep both in unit fil
 - **Bilingual copy rules** — user-facing python text goes through
   `failures.pick(zh, en)`.
 - **Secrets layout** — `config/secrets/*` files with `0600` modes (§19).
+
+## Linux v1 (beta)
+
+A first cut of this milestone now ships: systemd user units
+(`act/systemd/*.service|*.timer`), `install-linux.sh`, the `platform` +
+`doctor` systemd branches, and the web dashboard as the Linux UI. See
+**[LINUX.md](LINUX.md)** for exactly what runs, what is deferred (screen
+ingest), and what still needs a real Linux machine to validate.
 
 ## Suggested first milestone: headless core on Linux
 

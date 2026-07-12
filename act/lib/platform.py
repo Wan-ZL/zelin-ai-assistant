@@ -84,17 +84,26 @@ def open_path(path, runner: Optional[Runner] = None) -> bool:
 def service_list_text(runner: Optional[Runner] = None) -> str:
     """The user-session service table as raw text. Never raises.
 
-    darwin: ``launchctl list`` (columns: PID / last exit status / label) —
-    act.doctor parses it to tell "running" from "loaded but crashing" from
-    "not registered". Other OSes return "" (doctor then honestly reports the
-    agents as not registered); a port plugs its service manager in here
-    (``systemctl --user`` / Task Scheduler, see docs/PORTING.md) and the
-    doctor checks start working unchanged.
+    darwin: ``launchctl list`` (columns: PID / last exit status / label).
+    linux: ``systemctl --user list-units --type=service,timer`` (columns:
+    UNIT / LOAD / ACTIVE / SUB / DESCRIPTION). act.doctor parses whichever
+    format the current OS produces to tell "running" from "loaded but
+    crashing/failed" from "not registered". ``--all`` keeps cleanly-stopped
+    units visible (so doctor can tell "inactive" from "never installed") and
+    ``--no-legend``/``--no-pager`` keep the output to just the unit rows.
+    Other OSes return "" (doctor then honestly reports the agents as not
+    registered); a port plugs its service manager in here (Task Scheduler,
+    see docs/PORTING.md).
     """
-    if not is_darwin():
+    if is_darwin():
+        argv = ["launchctl", "list"]
+    elif sys.platform.startswith("linux"):
+        argv = ["systemctl", "--user", "list-units", "--type=service,timer",
+                "--all", "--no-legend", "--no-pager"]
+    else:
         return ""
     try:
-        proc = (runner or _run)(["launchctl", "list"], 10)
+        proc = (runner or _run)(argv, 10)
         return (proc.stdout or "") + (proc.stderr or "")
     except Exception:  # noqa: BLE001
         return ""

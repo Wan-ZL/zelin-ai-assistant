@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME
 
@@ -22,6 +23,12 @@ from act import doctor
 from act.lib import config, secrets
 
 NOW = 1_700_000_000.0
+
+# The launchd/cron/screenpipe checks model a macOS install and lean on POSIX
+# file modes + executable shell shims; skip them on Windows (the systemd branch
+# has its own Windows-safe suite below). Not darwin-only in spirit — Linux runs
+# them fine — so key on "not Windows".
+_WIN = sys.platform.startswith("win")
 
 LABELS = ["com.zelin.aiassistant.actd", "com.zelin.aiassistant.radar"]
 
@@ -73,8 +80,16 @@ def by_name(results, name):
     return matches[0]
 
 
+@unittest.skipIf(_WIN, "macOS/POSIX install checks (launchd/cron/modes)")
 class DoctorTestCase(unittest.TestCase):
     def setUp(self):
+        # This suite exercises the macOS launchd/cron/screenpipe checks; pin
+        # darwin so it validates that branch identically on the macOS and
+        # ubuntu/windows CI runners. The systemd branch has its own suite below.
+        p = mock.patch("sys.platform", "darwin")
+        p.start()
+        self.addCleanup(p.stop)
+
         self.home = Path(TMP_HOME)
         self._created = []
 
@@ -297,6 +312,7 @@ class DoctorTestCase(unittest.TestCase):
         self.assertEqual(by_name(results, "claude CLI").status, doctor.FAIL)
 
 
+@unittest.skipIf(_WIN, "uses #!/bin/sh executable shims resolved via PATH")
 class DaemonClaudeCheckTestCase(unittest.TestCase):
     """_check_daemon_claude — the 2026-07-08 two-installs incident: launchd's
     PATH resolved an outdated claude (no --bg) while the login shell used the
@@ -310,6 +326,11 @@ class DaemonClaudeCheckTestCase(unittest.TestCase):
     OLD_HELP = "Usage: claude [options]\n  -p, --print  print mode\n"
 
     def setUp(self):
+        # pinned darwin: this is the launchd two-installs incident; the fix
+        # lines reference the OS installer (install.sh on darwin).
+        p = mock.patch("sys.platform", "darwin")
+        p.start()
+        self.addCleanup(p.stop)
         self.tmp = Path(tempfile.mkdtemp(prefix="daemon-claude-"))
 
     def _shim(self, sub: str, version: str, help_text: str,
@@ -374,6 +395,108 @@ class DaemonClaudeCheckTestCase(unittest.TestCase):
         res = doctor._check_daemon_claude(self._probes(empty, None))
         self.assertEqual(res.status, doctor.FAIL)
         self.assertEqual(res.failure_id, "claude_cli_missing")
+
+
+SYSTEMD_UNITS = [
+    "zelin-actd.service", "zelin-webui.service",
+    "zelin-gmail-radar.timer", "zelin-slack-radar.timer",
+    "zelin-obsidian-radar.timer", "zelin-weekly-digest.timer",
+]
+
+
+def _systemctl(rows, bullets=()):
+    """Build `systemctl --user list-units` output from {unit: (active, sub)}.
+
+    ``bullets`` names units that get the failed-unit ● prefix systemd emits.
+    """
+    out = []
+    for unit, (active, sub) in rows.items():
+        prefix = "● " if unit in bullets else "  "
+        out.append("%s%-28s loaded %-9s %-8s Zelin AI Assistant\n"
+                   % (prefix, unit, active, sub))
+    return "".join(out)
+
+
+class SystemdDoctorTestCase(unittest.TestCase):
+    """_check_systemd — the Linux systemd --user mirror of the launchd check.
+
+    Feeds `systemctl --user list-units` fixture text (what the OS seam returns
+    off-macOS) and asserts the parse: resident services must be active, timers
+    must be active, actd is the only FAIL-if-down unit, a ● failed line parses.
+    """
+
+    def setUp(self):
+        p = mock.patch("sys.platform", "linux")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _probes(self, listing):
+        return doctor.Probes(launchctl_list=lambda: listing,
+                             systemd_units=list(SYSTEMD_UNITS))
+
+    def _healthy_rows(self):
+        rows = {"zelin-actd.service": ("active", "running"),
+                "zelin-webui.service": ("active", "running"),
+                # a timer-driven oneshot .service is correctly inactive between
+                # fires — present in --all output but NOT in our expected list
+                "zelin-gmail-radar.service": ("inactive", "dead")}
+        for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
+            rows["zelin-%s.timer" % t] = ("active", "waiting")
+        return rows
+
+    def test_healthy_units_all_ok(self):
+        results = doctor._check_systemd(self._probes(
+            _systemctl(self._healthy_rows())))
+        by = {r.name: r for r in results}
+        self.assertEqual(by["actd"].status, doctor.OK)
+        self.assertIn("active (running)", by["actd"].detail)
+        self.assertEqual(by["webui"].status, doctor.OK)
+        for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
+            self.assertEqual(by[t].status, doctor.OK)
+            self.assertIn("waiting", by[t].detail)
+        # the inactive oneshot .service is NOT reported (only residents+timers)
+        self.assertNotIn("gmail-radar.service", by)
+
+    def test_actd_down_fails_but_timer_only_warns(self):
+        rows = self._healthy_rows()
+        rows["zelin-actd.service"] = ("inactive", "dead")
+        rows["zelin-gmail-radar.timer"] = ("inactive", "dead")
+        by = {r.name: r for r in doctor._check_systemd(
+            self._probes(_systemctl(rows)))}
+        self.assertEqual(by["actd"].status, doctor.FAIL)
+        self.assertIn("not running", by["actd"].detail)
+        self.assertIn("systemctl --user enable --now", by["actd"].fix)
+        self.assertEqual(by["actd"].failure_id, "agent_unloaded")
+        self.assertEqual(by["gmail-radar"].status, doctor.WARN)
+
+    def test_failed_unit_bullet_is_parsed(self):
+        rows = self._healthy_rows()
+        rows["zelin-actd.service"] = ("failed", "failed")
+        by = {r.name: r for r in doctor._check_systemd(
+            self._probes(_systemctl(rows, bullets=("zelin-actd.service",))))}
+        self.assertEqual(by["actd"].status, doctor.FAIL)
+        self.assertIn("failed to start", by["actd"].detail)
+        self.assertIn("journalctl", by["actd"].fix)
+
+    def test_not_registered_when_manager_absent(self):
+        # empty listing (e.g. `systemctl --user` could not reach the bus)
+        by = {r.name: r for r in doctor._check_systemd(self._probes(""))}
+        self.assertEqual(by["actd"].status, doctor.FAIL)
+        self.assertIn("not registered", by["actd"].detail)
+        self.assertIn("install-linux.sh", by["actd"].fix)
+        self.assertEqual(by["webui"].status, doctor.WARN)
+
+    def test_platform_composition_drops_macos_only_checks(self):
+        names = {f.__name__ for f in doctor._checks_for_platform()}
+        self.assertIn("_check_systemd", names)
+        for macos_only in ("_check_launchd", "_check_cron",
+                           "_check_screenpipe", "_check_npx"):
+            self.assertNotIn(macos_only, names)
+        with mock.patch("sys.platform", "darwin"):
+            dnames = {f.__name__ for f in doctor._checks_for_platform()}
+        self.assertIn("_check_launchd", dnames)
+        self.assertIn("_check_cron", dnames)
+        self.assertNotIn("_check_systemd", dnames)
 
 
 if __name__ == "__main__":

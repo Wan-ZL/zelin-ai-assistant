@@ -1,0 +1,19 @@
+# TEMPLATE: rendered by install-linux.sh (see act/lib/systemd.py). Driven by
+# zelin-weekly-digest.timer — the Linux mirror of
+# act/launchd/com.zelin.aiassistant.weeklydigest.plist.
+#
+# weekly digest (CONTRACT §24) — files a review-lane digest card plus a few
+# automation-proposal cards from the last 7 days of ingest output. The timer
+# wakes it hourly; the module itself gates on sources.weekly_digest
+# (enabled/day/hour, default Monday 09:xx) + a run-once-per-week marker, so
+# schedule changes in config take effect WITHOUT re-rendering the timer.
+[Unit]
+Description=Zelin AI Assistant — weekly digest (one pass)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m act.weekly_digest

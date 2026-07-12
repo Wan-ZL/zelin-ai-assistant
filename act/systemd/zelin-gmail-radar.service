@@ -1,0 +1,18 @@
+# TEMPLATE: rendered by install-linux.sh (see act/lib/systemd.py). Driven by
+# zelin-gmail-radar.timer — a oneshot pass, the Linux mirror of
+# act/launchd/com.zelin.aiassistant.gmailradar.plist.
+#
+# gmailradar — polls the Gmail INBOX (IMAP, read-only via BODY.PEEK) for unread
+# mail and turns actionable ones into requirement cards. No-ops silently until a
+# Gmail app password exists at sources.gmail.app_password_path (see
+# docs/GMAIL_SETUP.md). Network + state/ only — nothing macOS-specific.
+[Unit]
+Description=Zelin AI Assistant — Gmail radar scan (one pass)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m act.radar_gmail --once

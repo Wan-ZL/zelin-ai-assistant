@@ -1,0 +1,13 @@
+# TEMPLATE: rendered by install-linux.sh. Fires zelin-gmail-radar.service
+# every 5 minutes (mirror of the plist's <key>StartInterval</key> 300).
+[Unit]
+Description=Zelin AI Assistant — Gmail radar timer (every 5 min)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=zelin-gmail-radar.service
+
+[Install]
+WantedBy=timers.target

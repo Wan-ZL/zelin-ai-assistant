@@ -40,8 +40,9 @@ class SecretsTestCase(unittest.TestCase):
     def test_write_secret_enforces_modes_and_read_roundtrip(self):
         path = secrets.write_secret(secrets.SLACK_TOKEN_FILE, "  xoxp-123  \n")
         self.assertEqual(path.read_text(encoding="utf-8"), "xoxp-123\n")
-        self.assertEqual(stat.S_IMODE(os.stat(secrets.SECRETS_DIR).st_mode), 0o700)
-        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        if os.name != "nt":  # NTFS has no POSIX mode bits; chmod is a no-op there
+            self.assertEqual(stat.S_IMODE(os.stat(secrets.SECRETS_DIR).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         self.assertEqual(secrets.read_secret(secrets.SLACK_TOKEN_FILE), "xoxp-123")
 
     def test_read_secret_missing_or_empty_is_none(self):

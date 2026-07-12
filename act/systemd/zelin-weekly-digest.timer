@@ -1,0 +1,15 @@
+# TEMPLATE: rendered by install-linux.sh. Wakes zelin-weekly-digest.service
+# hourly at :23 (mirror of the plist's StartCalendarInterval Minute=23); the
+# module's own schedule gate does the weekly Monday-09:xx logic. Persistent=true
+# so a fire missed while the box was asleep runs on the next wake.
+[Unit]
+Description=Zelin AI Assistant — weekly digest timer (hourly wake)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Timer]
+OnCalendar=*-*-* *:23:00
+Persistent=true
+Unit=zelin-weekly-digest.service
+
+[Install]
+WantedBy=timers.target
