@@ -393,14 +393,14 @@ struct DashboardView: View {
             }
         }
 
-        // 备选/Backlog: display rename of the debt lane (dashboard key `debt`
+        // 储备/Backlog: display rename of the debt lane (dashboard key `debt`
         // and the store projection names stay — 纯展示层).
         if debtEchoes.isEmpty && debt.isEmpty {
-            CompactEmptySection(title: L("备选 · backlog", "Backlog"),
+            CompactEmptySection(title: L("储备 · backlog", "Backlog"),
                                 emptyText: L("不着急的事会先停在这里——不会自动执行，也永不过期",
                                              "Not-urgent items park here — nothing runs on its own, nothing expires"))
         } else {
-            SectionHeader(title: L("备选 · backlog", "Backlog"),
+            SectionHeader(title: L("储备 · backlog", "Backlog"),
                           count: debt.count + debtEchoes.count,
                           help: LaneHelp.backlog)
             ForEach(debtEchoes) { PendingEchoRow(echo: $0) }

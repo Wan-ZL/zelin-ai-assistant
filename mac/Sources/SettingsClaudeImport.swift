@@ -178,7 +178,7 @@ final class ClaudeImportModel: ObservableObject {
         candidates.removeAll { locallyImported.contains($0.sessionId) }
         selected = []
         importFailed = false
-        importStatus = L("已提交 \(ids.count) 条——后台服务几秒内会把它们变成看板卡片（等你回复的进「提案」，其余进「备选」）。",
+        importStatus = L("已提交 \(ids.count) 条——后台服务几秒内会把它们变成看板卡片（等你回复的进「提案」，其余进「储备」）。",
                          "Submitted \(ids.count) — the background service turns them into board cards within seconds (waiting-on-you ones go to Proposals, the rest to Backlog).")
         Analytics.log("mw_claude_import_submit", fields: ["n": ids.count])
     }
