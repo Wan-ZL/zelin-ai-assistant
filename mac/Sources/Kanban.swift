@@ -10,11 +10,11 @@ import Foundation
 // Main window only; the popover keeps the vertical DashboardView untouched.
 // Cards/rows are the popover components reused verbatim at their popover
 // width (fixed 400pt lanes); each lane scrolls vertically on its own.
-// Columns: 备选 | 提案 | 运行中(+需输入) | 待验收 | 已验收 — trash stays out.
+// Columns: 储备 | 提案 | 运行中(+需输入) | 待验收 | 已验收 — trash stays out.
 // (v0.18: backlog moved leftmost so the board reads as a spatial flow —
 // detected sits upstream of card_sent, and every action moves a card exactly
 // one column to the right. Display order ONLY; the menu-bar popover keeps its
-// own attention-ordered list. 备选/Backlog is the DISPLAY name of the former
+// own attention-ordered list. 储备/Backlog is the DISPLAY name of the former
 // 欠账/debt lane — registry status names and the dashboard.json `debt` key
 // are unchanged, 纯展示层.)
 
@@ -268,11 +268,11 @@ struct KanbanView: View {
             let completedNotices = laneNotices(.completed)
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
-                    // 备选/Backlog leftmost (v0.18 flow order): display rename
+                    // 储备/Backlog leftmost (v0.18 flow order): display rename
                     // of the debt lane — the store projection (visibleDebt)
                     // and dashboard key stay. quiet: a pre-execution parking
                     // lot must not compete with proposals for attention.
-                    column(title: L("备选 · backlog", "Backlog"),
+                    column(title: L("储备 · backlog", "Backlog"),
                            count: debt.count + debtEchoes.count,
                            help: LaneHelp.backlog,
                            emptyText: laneEmptyText(
@@ -283,8 +283,11 @@ struct KanbanView: View {
                            quiet: true) {
                         ForEach(debtNotices) { NoticeRow(notice: $0) }
                         ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
+                        // v0.21 契约七: 储备卡也可多选参与合并（selectableIDs 已含 debt）。
                         ForEach(debt, id: \.id) { d in
-                            DebtRow(item: d, app: app)
+                            selectableCard(d.id) {
+                                DebtRow(item: d, app: app)
+                            }
                         }
                     }
                     // isEmpty: false — the resident composer means this lane
@@ -384,8 +387,11 @@ struct KanbanView: View {
                                && completedNotices.isEmpty) {
                         ForEach(completedNotices) { NoticeRow(notice: $0) }
                         ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
+                        // v0.21 契约七: 已验收卡也可多选参与合并（selectableIDs 已含 completed）。
                         ForEach(completed, id: \.id) { t in
-                            TaskRow(task: t, app: app, lane: .completed)
+                            selectableCard(t.id) {
+                                TaskRow(task: t, app: app, lane: .completed)
+                            }
                         }
                     }
                 }
@@ -419,15 +425,20 @@ struct KanbanView: View {
         }
     }
 
-    /// Ids that may join a merge review right now: real cards of the
-    /// 待审批/运行中(含需输入)/待验收 lanes — no placeholders (processing),
-    /// no echoes, no suggestion cards. Selection is re-validated against this
-    /// at submit time (a card may have moved lanes since it was ticked).
+    /// Ids that may join a merge review right now: real cards of EVERY board
+    /// lane — 储备/待审批/运行中(含需输入)/待验收/已验收 — minus placeholders
+    /// (processing), echoes, and suggestion cards. v0.21: 全 lane 可选（含
+    /// 储备/debt + 已验收/completed）；跨状态合并的合法性交由后端 merge_review
+    /// 判定 —— Swift 侧只保持选择 UI 宽松，不预先拦截。归档区不是看板列，不在此
+    /// 多选面里。Selection is re-validated against this at submit time (a card
+    /// may have moved lanes since it was ticked).
     private var selectableIDs: Set<String> {
         var s = Set(store.visibleApprovals.filter { !$0.processing }.map { $0.id })
         s.formUnion(store.visibleRunning.map { $0.id })
         s.formUnion(store.visibleNeedsInput.map { $0.id })
         s.formUnion(store.visibleReview.map { $0.id })
+        s.formUnion(store.visibleDebt.map { $0.id })
+        s.formUnion(store.visibleCompleted.map { $0.id })
         return s
     }
 
