@@ -2,7 +2,7 @@
 
 defer : card_sent -> detected（存备选，提案退回备选）. Everything expanded on
         the card is preserved — summary / plan / sources / repeated_mentions
-        — only the status changes; notes get "[deferred] 暂缓，退回备选".
+        — only the status changes; notes get "[deferred] 暂缓，入库".
         Deliberately NOT trash: a deferred card stays in merge_or_new
         matching (restatements merge in; radar act-now re-promotes), while
         trashed cards are excluded and re-card from scratch.
@@ -76,13 +76,13 @@ class DeferHappyPathTestCase(DeferActionBase):
         self.assertEqual(req.sources, [{"channel": "slack", "quote": "原话"}])
         self.assertEqual(req.repeated_mentions, 3)
         self.assertTrue(req.notes.startswith("原有备注"))
-        self.assertIn("[deferred] 暂缓，退回备选", req.notes)
+        self.assertIn("[deferred] 暂缓，入库", req.notes)
 
     def test_without_notes_gets_bare_deferred_tag(self):
         _mk_req(status=State.CARD_SENT.value)
         req = self._run("defer")
         self.assertEqual(req.status, State.DETECTED.value)
-        self.assertEqual(req.notes, "[deferred] 暂缓，退回备选")
+        self.assertEqual(req.notes, "[deferred] 暂缓，入库")
 
 
 class DeferNoOpTestCase(DeferActionBase):

@@ -522,6 +522,7 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
     #   | done_external(card_sent|review|approved|executing->delivered)
     #                                             (v0.10.2, 扩展 v0.12)
     #   | abort_execution(approved|executing->card_sent)      (v0.10.2)
+    #   | stop_to_review(executing|approved->review, 收下成果待验收)
     #   | revert_review(delivered->review)                    (v0.10.2)
     #   | defer(card_sent->detected, back to the backlog)     (v0.18)
     #   | archive(delivered|detected->archived, relocate)     (v0.20.0)
@@ -656,6 +657,52 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         req.set_status(State.CARD_SENT)
         save(req)
         _log(f"inbox: {req.id} abort_execution -> card_sent")
+    elif action == "stop_to_review":
+        # 手动停止转待验收（「去待验收」）：executing（+ approved）-> review。
+        # 三个「停」动作的分工：done_external =「我在系统外做完了」直接落
+        # delivered 跳过验收；abort_execution =「不要了」丢弃成果退回待审批；
+        # stop_to_review =「停下来我看看它做了什么」—— 停 agent、收下成果、
+        # 落 待验收 让 Zelin ✓验收/↩︎打回，绝不跳过验收。
+        #   executing 且有 session：先 best-effort harvest_delivery（非空才写
+        #   delivered_summary/final_draft），再 best-effort stop_session 停掉
+        #   跑着的 agent；两步都吞异常只记日志，绝不阻塞状态落 review。
+        #   approved（排队未派发，无 session）：harvest 为空，直接落 review
+        #   （空交付物，待验收卡照常渲染，不崩）。
+        allowed = (State.EXECUTING.value, State.APPROVED.value)
+        prev_status = str(req.status)
+        if prev_status not in allowed:
+            _log(f"inbox: {req.id} stop_to_review ignored (status={req.status}) — no-op")
+            return
+        ex = dict(req.execution or {})
+        sid = ex.get("session_id")
+        if prev_status == State.EXECUTING.value and sid and executor is not None:
+            try:
+                harvested = executor.harvest_delivery(str(sid)) or {}
+                if harvested.get("delivered_summary"):
+                    ex["delivered_summary"] = harvested["delivered_summary"]
+                if harvested.get("final_draft"):
+                    ex["final_draft"] = harvested["final_draft"]
+            except Exception as e:  # noqa: BLE001 - harvest is best-effort
+                _log(f"inbox: {req.id} stop_to_review — "
+                     f"harvest_delivery({sid}) failed (ignored): {e}")
+            try:
+                stopped = executor.stop_session(str(sid))
+                _log(f"inbox: {req.id} stop_to_review — stop_session({sid}) -> {stopped}")
+            except Exception as e:  # noqa: BLE001 - best-effort, never block review write
+                _log(f"inbox: {req.id} stop_to_review — "
+                     f"stop_session({sid}) failed (ignored): {e}")
+        # mirror the natural executing->review transition's review fields
+        # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
+        # renders (dashboard reads execution.review_at) and a later purge is
+        # never mistaken for a crash needing auto-resume.
+        ex["done"] = True
+        ex["review_at"] = _iso_now()
+        req.execution = ex
+        tag = "[stopped by user] 手动停止，已收下成果待验收"
+        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        req.set_status(State.REVIEW)
+        save(req)
+        _log(f"inbox: {req.id} stop_to_review ({prev_status}) -> review")
     elif action == "revert_review":
         # v0.10.2 退回待验收：delivered -> review（验收撤回）。
         if str(req.status) != State.DELIVERED.value:
@@ -679,7 +726,7 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         if str(req.status) != State.CARD_SENT.value:
             _log(f"inbox: {req.id} defer ignored (status={req.status}) — no-op")
             return
-        tag = "[deferred] 暂缓，退回备选"
+        tag = "[deferred] 暂缓，入库"
         req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
         req.set_status(State.DETECTED)
         save(req)

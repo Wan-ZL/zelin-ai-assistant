@@ -128,7 +128,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -137,6 +137,11 @@ debt item 新增 `summary`（同上，大白话）。
   - `approved`（排队未派发）：直接落账，无 harvest/stop。
 - `abort_execution`（停止并退回待审批）：允许 `approved | executing` → 活 session 先 best-effort 停止（`executor.stop_session(session_id)`，即 rework「活进程先 claude stop」的同一路径；stop 失败只记日志，不阻塞状态回退）；`execution.session_id` 归档为 `execution.aborted_session_id` 后删除（保证重新批准时干净重派发），删 `execution.done`，记 `execution.aborted_at` = ISO now → 置 `card_sent`。
 - `revert_review`（退回待验收）：允许 `delivered` → 置 `review`；删 `execution.accepted_at`，记 `execution.reverted_at` = ISO now。
+
+**`stop_to_review`（停止并收下成果待验收，「去待验收」）**：允许 `executing | approved` → 置 `review`（待验收）。语义 = 「停下来我看看它做了什么」——**停掉跑着的 agent、KEEP 它已产出的成果**，落 待验收 让 Zelin ✓验收 / ↩︎打回，**绝不跳过验收**。这是运行中卡片的新「去待验收」出口，区别于同样停 agent 的另两个动作：`done_external`（→`delivered`，「我在系统外做完了」直接完成、跳过验收）、`abort_execution`（→`card_sent`，「不要了」丢弃成果退回待审批）。分状态行为：
+  - `executing` 且有 `session_id`：先 best-effort `executor.harvest_delivery(session_id)`（**非空才写** `execution.delivered_summary`/`final_draft`，失败只记日志），再 best-effort `executor.stop_session(session_id)`（停掉跑着的 agent；失败只记日志，**绝不阻塞状态落 review**）；
+  - `approved`（排队未派发，无 session）：harvest 为空，直接落 `review`（空交付物，待验收卡照常渲染）。
+  镜像自然 `executing → review` 迁移的 review 字段：置 `execution.done = True`、`execution.review_at` = ISO now（dashboard 待验收卡读 `execution.review_at`，且防日后 purge 被误判为需 auto-resume 的崩溃）；notes 追加 `[stopped by user] 手动停止，已收下成果待验收`。其余状态 = 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点（`inbox_stop_to_review`），零新增事件。
 
 **v0.18 `defer`（存备选，提案→备选）**：允许状态**仅** `card_sent` → 置 `detected`；**保留** summary / plan / sources / repeated_mentions（一切已扩写内容不动，只改 status）；notes 追加 `[deferred] 暂缓，退回备选`；其余状态（含 raising——扩写完自然变 card_sent 再说）= 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点，零新增事件。与 `reject`(→trash) 的区别是功能性的：deferred 卡回到 `detected` 后**继续参与 merge_or_new 匹配**（后续重述静默合并计数、雷达 act-now 重提自动升回 card_sent），trashed 被匹配明确排除（重述从零重新出卡）。撤销 = 备选列现成的「研究并提议」(raise)。
 

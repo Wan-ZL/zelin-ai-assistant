@@ -669,8 +669,8 @@ class QuickCaptureLosslessTestCase(TriageBase):
              "plan": ["等 X 改完", "确认权限生效"],
              "_text": "X 说今晚会改权限，记一下"}, self.cfg)
         (req,) = registry.load_all()
-        self.assertEqual(req.status, "detected")       # 备选, not lost
-        self.assertIn("备选", reply)
+        self.assertEqual(req.status, "detected")       # 储备, not lost
+        self.assertIn("储备", reply)
         self.assertIn(req.id, reply)
 
     def test_default_capture_still_files_card_sent(self):
