@@ -184,6 +184,25 @@ class WebUITestCase(unittest.TestCase):
         self.assertEqual(len(made), 1)
         self.assertEqual(made[0].status, registry.State.RAISING.value)
 
+    def test_traversal_id_rejected_normal_id_accepted(self):
+        # A path-traversal-y id must be refused (400) and never reach the inbox
+        # (downstream merge_review.job_path would otherwise escape state/merge/).
+        for bad in ("../../x", "../../../tmp/x", "..", "a/b", ".hidden"):
+            status, _ = self._req(
+                "POST", "/api/inbox", token=self.token,
+                origin=self._good_origin(), content_type="application/json",
+                body=json.dumps({"id": bad, "action": "merge_apply"}))
+            self.assertEqual(status, 400, f"expected 400 for id={bad!r}")
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
+        # A normal requirement id is accepted and written.
+        status, _ = self._req(
+            "POST", "/api/inbox", token=self.token, origin=self._good_origin(),
+            content_type="application/json",
+            body=json.dumps({"id": "R-1", "action": "approve"}))
+        self.assertEqual(status, 200)
+        self.assertEqual(len(list(config.INBOX_DIR.glob("*.json"))), 1)
+
     def test_static_and_traversal(self):
         status, data = self._req("GET", "/style.css")
         self.assertEqual(status, 200)

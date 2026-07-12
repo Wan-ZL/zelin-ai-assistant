@@ -31,6 +31,7 @@ import datetime as _dt
 import hmac
 import json
 import os
+import re
 import secrets
 import sys
 import uuid
@@ -62,6 +63,18 @@ ALLOWED_ACTIONS = frozenset({
 # else is dropped; ``ts`` is always (re)stamped server-side so the client can
 # never spoof it. This mirrors the Mac app's inbox payload shapes (§3/§10/§21).
 _INBOX_KEYS = ("id", "action", "comment", "text", "ids")
+
+# A scalar ``id`` in a POST body is forwarded verbatim into the inbox file and
+# ends up in merge_review.job_path() as ``MERGE_DIR / f"{id}.json"`` (via
+# actd _apply_merge_decision for merge_apply/merge_dismiss), so an unsanitized
+# id like ``../../../tmp/x`` would build a path OUTSIDE state/merge/. This
+# conservative allow-list admits every legitimate id — requirement ids
+# ``R-\d+`` (act/lib/registry.py _ID_RE / next_id) and merge-session ids
+# ``MS-`` + 8 hex (act/merge_review.py new_suggestion_id) — while blocking all
+# traversal: no ``/``, no ``.`` (so no ``..`` and no dotfile), no leading dash,
+# no NUL, capped length. Actions with no scalar id (capture/feedback/weekly
+# digest carry ``ids`` or nothing) are unaffected; only a PRESENT id is checked.
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 _TOKEN_HEADER = "X-Webui-Token"
 _TOKEN_PLACEHOLDER = "__WEBUI_TOKEN__"
@@ -157,6 +170,10 @@ def write_inbox(payload: dict) -> str:
 class _Handler(BaseHTTPRequestHandler):
     server_version = "ZelinWebUI/1"
     protocol_version = "HTTP/1.1"
+    # Bound a slow-drip (slowloris-style) local client: StreamRequestHandler
+    # arms this on the connection socket, so a client that stalls mid-request
+    # times out instead of pinning a worker thread indefinitely.
+    timeout = 15
 
     # -- helpers ----------------------------------------------------------- #
     def _send(self, code: int, ctype: str, body: bytes,
@@ -300,10 +317,20 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(action, str) or action not in ALLOWED_ACTIONS:
             self._json(400, {"error": f"unknown action: {action!r}"})
             return
+        # Defense-in-depth: a present scalar ``id`` must match a real id shape
+        # so it can never traverse out of state/merge/ downstream. A missing /
+        # null id is fine (capture/feedback/digest); a present unsafe one is 400.
+        rid = payload.get("id")
+        if rid is not None and not (isinstance(rid, str) and _SAFE_ID_RE.match(rid)):
+            self._json(400, {"error": "invalid id"})
+            return
         try:
             name = write_inbox(payload)
         except OSError as e:
-            self._json(500, {"error": f"inbox write failed: {e}"})
+            # Log the detail server-side; the client gets a generic message so
+            # the response body never echoes a local filesystem path.
+            self.log_error("inbox write failed: %s", e)
+            self._json(500, {"error": "internal error"})
             return
         self._json(200, {"ok": True, "file": name})
 
