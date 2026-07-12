@@ -27,6 +27,25 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.27.0] - 2026-07-12
+
+### Added
+
+- **Multi-device cloud sync (Mac side, OPT-IN, OFF by default).** A new `syncd`
+  daemon relays the board to your other devices via Supabase with **per-pairing
+  end-to-end encryption** — the server (and the maintainer) can't read card
+  bodies. Paired with it, a companion **iOS app** (in `ios/`, build in Xcode)
+  lets you view and approve from your phone.
+- Shared Swift contract types moved to `shared/` and are now compiled into both
+  the Mac and iOS apps, so the two stay byte-for-byte in agreement on the wire
+  format.
+
+### Note
+
+- **Beta / setup required.** Nothing syncs until you (a) deploy the Supabase
+  migrations + enable Auth (see the wake-up steps), (b) opt in + pair, and
+  (c) build the iOS app with your Apple ID.
+
 ## [0.26.0] - 2026-07-12
 
 ### Added
@@ -927,7 +946,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...v0.24.0
