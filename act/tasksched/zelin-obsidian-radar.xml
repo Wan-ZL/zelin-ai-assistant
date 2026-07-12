@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TEMPLATE: rendered by install.ps1 (see act/lib/taskscheduler.py), registered
+     as \ZelinAIAssistant\obsidian-radar. Repetition every 30 min (mirror of the
+     macOS */30 crontab ingest cadence / systemd zelin-obsidian-radar.timer).
+
+     obsidian radar — scans the Obsidian vault (sources.obsidian_raw) for
+     actionable notes and turns them into requirement cards. On Windows there is
+     no TCC, so it runs cleanly as a normal user task (unlike the macOS crontab
+     story). No-ops silently until sources.obsidian_raw is set and exists.
+
+     NOTE: this scans notes already in the vault. Turning screen captures INTO
+     vault notes (the screenpipe ingest chain) is DEFERRED on Windows v1 — see
+     docs/WINDOWS.md.
+
+     Overlap: MultipleInstancesPolicy=IgnoreNew replaces the POSIX fcntl pass-lock
+     on Windows — a long backfill pass makes Task Scheduler skip the next fire
+     rather than let two passes interleave (the 2026-07-08 storm regression). -->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Zelin AI Assistant — Obsidian vault radar scan (one pass, every 30 min)</Description>
+    <URI>\ZelinAIAssistant\obsidian-radar</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT30M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT2H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -Command "$env:AIASSISTANT_HOME='@REPO_ROOT@'; $env:PATH='@CLAUDE_BIN_DIR@;'+$env:PATH; &amp; '@PYTHON@' -m act.radar --once"</Arguments>
+      <WorkingDirectory>@REPO_ROOT@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

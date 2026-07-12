@@ -499,5 +499,110 @@ class SystemdDoctorTestCase(unittest.TestCase):
         self.assertNotIn("_check_systemd", dnames)
 
 
+# Full \ZelinAIAssistant\ task names doctor expects, mirroring SYSTEMD_UNITS.
+TASKS = [
+    "\\ZelinAIAssistant\\actd", "\\ZelinAIAssistant\\webui",
+    "\\ZelinAIAssistant\\gmail-radar", "\\ZelinAIAssistant\\slack-radar",
+    "\\ZelinAIAssistant\\obsidian-radar", "\\ZelinAIAssistant\\weekly-digest",
+]
+
+
+def _schtasks(rows):
+    """Build `schtasks /query /fo LIST /v` output from {task: (status, state)}.
+
+    LIST is one "Field: Value" block per task, blocks separated by a blank line.
+    """
+    out = []
+    for task, (status, state) in rows.items():
+        out.append(
+            "Folder: \\ZelinAIAssistant\n"
+            "HostName: FRIEND-PC\n"
+            "TaskName: %s\n"
+            "Next Run Time: 7/11/2026 9:00:00 AM\n"
+            "Status: %s\n"
+            "Logon Mode: Interactive only\n"
+            "Scheduled Task State: %s\n"
+            "\n" % (task, status, state))
+    return "".join(out)
+
+
+class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
+    """_check_scheduled_tasks — the Windows Task Scheduler mirror of the launchd
+    / systemd checks.
+
+    Feeds `schtasks /query /fo LIST /v` fixture text (what the OS seam returns on
+    Windows) and asserts the parse: resident tasks Running/Ready are OK, a
+    Disabled task is down, actd is the only FAIL-if-down task, and unrelated
+    OS tasks are ignored.
+    """
+
+    def setUp(self):
+        p = mock.patch("sys.platform", "win32")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _probes(self, listing):
+        return doctor.Probes(launchctl_list=lambda: listing,
+                             scheduled_tasks=list(TASKS))
+
+    def _healthy_rows(self):
+        rows = {"\\ZelinAIAssistant\\actd": ("Running", "Enabled"),
+                "\\ZelinAIAssistant\\webui": ("Running", "Enabled")}
+        for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
+            rows["\\ZelinAIAssistant\\" + t] = ("Ready", "Enabled")
+        return rows
+
+    def test_healthy_tasks_all_ok(self):
+        # add an unrelated Windows task to prove it is filtered out
+        rows = self._healthy_rows()
+        rows["\\Microsoft\\Windows\\UpdateOrchestrator\\Scan"] = ("Ready", "Enabled")
+        by = {r.name: r for r in doctor._check_scheduled_tasks(
+            self._probes(_schtasks(rows)))}
+        self.assertEqual(by["actd"].status, doctor.OK)
+        self.assertIn("running", by["actd"].detail)
+        self.assertEqual(by["webui"].status, doctor.OK)
+        for t in ("gmail-radar", "slack-radar", "obsidian-radar", "weekly-digest"):
+            self.assertEqual(by[t].status, doctor.OK)
+            self.assertIn("ready", by[t].detail)
+        self.assertNotIn("Scan", by)
+
+    def test_actd_missing_fails_but_radar_only_warns(self):
+        rows = self._healthy_rows()
+        del rows["\\ZelinAIAssistant\\actd"]
+        del rows["\\ZelinAIAssistant\\gmail-radar"]
+        by = {r.name: r for r in doctor._check_scheduled_tasks(
+            self._probes(_schtasks(rows)))}
+        self.assertEqual(by["actd"].status, doctor.FAIL)
+        self.assertIn("not registered", by["actd"].detail)
+        self.assertIn("install.ps1", by["actd"].fix)
+        self.assertEqual(by["actd"].failure_id, "agent_unloaded")
+        self.assertEqual(by["gmail-radar"].status, doctor.WARN)
+
+    def test_disabled_task_is_down(self):
+        rows = self._healthy_rows()
+        rows["\\ZelinAIAssistant\\actd"] = ("Ready", "Disabled")
+        by = {r.name: r for r in doctor._check_scheduled_tasks(
+            self._probes(_schtasks(rows)))}
+        self.assertEqual(by["actd"].status, doctor.FAIL)
+        self.assertIn("disabled", by["actd"].detail)
+        self.assertIn("/ENABLE", by["actd"].fix)
+
+    def test_not_registered_when_schtasks_empty(self):
+        by = {r.name: r for r in doctor._check_scheduled_tasks(self._probes(""))}
+        self.assertEqual(by["actd"].status, doctor.FAIL)
+        self.assertIn("not registered", by["actd"].detail)
+        self.assertEqual(by["webui"].status, doctor.WARN)
+
+    def test_platform_composition_uses_tasks_not_launchd_or_systemd(self):
+        names = {f.__name__ for f in doctor._checks_for_platform()}
+        self.assertIn("_check_scheduled_tasks", names)
+        for other in ("_check_launchd", "_check_cron", "_check_systemd",
+                      "_check_screenpipe", "_check_npx"):
+            self.assertNotIn(other, names)
+
+    def test_installer_is_ps1_on_windows(self):
+        self.assertEqual(doctor._installer(), "install.ps1")
+
+
 if __name__ == "__main__":
     unittest.main()

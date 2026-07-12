@@ -6,7 +6,8 @@ path with the system file handler, and listing the user's background
 services. The darwin implementations delegate to the exact commands this
 codebase always ran (osascript / open / launchctl); linux gets the cheap
 honest equivalent where one exists (notify-send, xdg-open) and a truthful
-empty result where none does yet.
+empty result where none does yet; windows uses the OS that is always present
+(PowerShell toast, schtasks, os.startfile) with no pip dependency.
 
 NOT here on purpose:
   - anything already portable: claude / git / gh subprocess calls.
@@ -24,9 +25,35 @@ from typing import Callable, List, Optional
 
 Runner = Callable[[List[str], float], "subprocess.CompletedProcess"]
 
+# Best-effort native Windows toast with NO pip dependency: drive the built-in
+# WinRT ToastNotificationManager through PowerShell (the OS ships it). Attributed
+# to PowerShell's registered AppUserModelID so it shows without our own app
+# being installed/registered — a BurntToast-free path. If WinRT is unavailable
+# (older Windows / Server Core), the script throws, the runner returns nonzero,
+# and notify_user honestly returns False (Slack self-DM + the web dashboard
+# badge still cover the user). @TITLE@/@BODY@ are filled by string replacement,
+# each already escaped for a PowerShell single-quoted string (doubled quotes).
+_WINDOWS_TOAST_PS = (
+    "$ErrorActionPreference='Stop';"
+    "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,"
+    "ContentType=WindowsRuntime]|Out-Null;"
+    "$AppId='{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';"
+    "$tpl=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+    "[Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+    "$n=$tpl.GetElementsByTagName('text');"
+    "$n.Item(0).AppendChild($tpl.CreateTextNode('@TITLE@'))|Out-Null;"
+    "$n.Item(1).AppendChild($tpl.CreateTextNode('@BODY@'))|Out-Null;"
+    "$toast=[Windows.UI.Notifications.ToastNotification]::new($tpl);"
+    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId).Show($toast)"
+)
+
 
 def is_darwin() -> bool:
     return sys.platform == "darwin"
+
+
+def is_windows() -> bool:
+    return sys.platform.startswith("win")
 
 
 def _run(argv: List[str], timeout: float) -> subprocess.CompletedProcess:
@@ -38,7 +65,8 @@ def notify_user(title: str, body: str, subtitle: Optional[str] = None,
     """Fire a native user notification. True on success, never raises.
 
     darwin: osascript ``display notification``. linux: notify-send when
-    present (desktop sessions; headless boxes just return False). Other OSes:
+    present (desktop sessions; headless boxes just return False). windows:
+    a WinRT toast via PowerShell (no pip dep; _WINDOWS_TOAST_PS). Other OSes:
     False until a port lands (docs/PORTING.md).
     """
     if is_darwin():
@@ -49,6 +77,17 @@ def notify_user(title: str, body: str, subtitle: Optional[str] = None,
         if subtitle:
             script += f' subtitle "{esc(subtitle)}"'
         argv = ["osascript", "-e", script]
+    elif is_windows():
+        # PowerShell single-quoted strings take everything literally; the only
+        # metacharacter is the quote itself, escaped by doubling it.
+        def psq(s) -> str:
+            return str(s).replace("'", "''")
+
+        text = f"{subtitle}\n{body}" if subtitle else str(body)
+        script = (_WINDOWS_TOAST_PS
+                  .replace("@TITLE@", psq(title))
+                  .replace("@BODY@", psq(text)))
+        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
     elif sys.platform.startswith("linux"):
         text = f"{subtitle}\n{body}" if subtitle else str(body)
         argv = ["notify-send", str(title), text]
@@ -86,17 +125,21 @@ def service_list_text(runner: Optional[Runner] = None) -> str:
 
     darwin: ``launchctl list`` (columns: PID / last exit status / label).
     linux: ``systemctl --user list-units --type=service,timer`` (columns:
-    UNIT / LOAD / ACTIVE / SUB / DESCRIPTION). act.doctor parses whichever
-    format the current OS produces to tell "running" from "loaded but
-    crashing/failed" from "not registered". ``--all`` keeps cleanly-stopped
-    units visible (so doctor can tell "inactive" from "never installed") and
-    ``--no-legend``/``--no-pager`` keep the output to just the unit rows.
-    Other OSes return "" (doctor then honestly reports the agents as not
-    registered); a port plugs its service manager in here (Task Scheduler,
-    see docs/PORTING.md).
+    UNIT / LOAD / ACTIVE / SUB / DESCRIPTION). windows: ``schtasks /query /fo
+    LIST /v`` — one verbose block per task (TaskName / Status / Scheduled Task
+    State / ...). act.doctor parses whichever format the current OS produces to
+    tell "running" from "loaded but crashing/failed" from "not registered", and
+    (as on macOS/linux, where launchctl/systemctl list every label/unit) filters
+    the full listing down to OUR tasks by their ``\\ZelinAIAssistant\\`` prefix.
+    ``--all`` keeps cleanly-stopped units visible (so doctor can tell "inactive"
+    from "never installed") and ``--no-legend``/``--no-pager`` keep the output
+    to just the unit rows. Other OSes return "" (doctor then honestly reports
+    the agents as not registered); see docs/PORTING.md.
     """
     if is_darwin():
         argv = ["launchctl", "list"]
+    elif is_windows():
+        argv = ["schtasks", "/query", "/fo", "LIST", "/v"]
     elif sys.platform.startswith("linux"):
         argv = ["systemctl", "--user", "list-units", "--type=service,timer",
                 "--all", "--no-legend", "--no-pager"]

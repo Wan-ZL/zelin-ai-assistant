@@ -115,6 +115,7 @@ exercised on Linux here — please test and PR fixes:
 
 ## Windows
 
-Not yet. `windows-latest` is in the CI matrix so the portable core is proven to
-import and run on Windows, but the service wiring (Task Scheduler), toast
-notifications, and an installer are a later port — see PORTING.md.
+Windows v1 (beta) now ships the analogous port: Task Scheduler tasks
+(`act/tasksched/*.xml`), `install.ps1`, a PowerShell WinRT toast, and the
+`schtasks` doctor branch — with the same web dashboard as the UI. See
+**[WINDOWS.md](WINDOWS.md)**. `windows-latest` runs the pure-Python suite in CI.

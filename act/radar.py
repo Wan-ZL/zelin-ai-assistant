@@ -15,7 +15,6 @@ Run: ``python -m act.radar`` (or ``python -m act.radar --once``).
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import re
@@ -23,6 +22,11 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Optional
+
+try:
+    import fcntl  # POSIX-only; absent on Windows (see _acquire_pass_lock)
+except ImportError:  # pragma: no cover - exercised only on Windows CI
+    fcntl = None
 
 from act.executor import _runner_env
 from act.lib import analytics, config, health, registry, sanitize, secrets
@@ -257,9 +261,15 @@ def _acquire_pass_lock():
     manual runs — all funnel through :func:`scan`. actd does NOT invoke this
     scan (it only imports act.radar_claude_sessions, a separate source), and
     the other radars keep their own markers, so this lock is radar.py-only.
+
+    Windows has no ``fcntl`` (flock): there the pass runs unlocked and overlap
+    is instead prevented at the scheduler level by the Task Scheduler
+    MultipleInstancesPolicy=IgnoreNew on zelin-obsidian-radar (docs/WINDOWS.md).
     """
     config.ensure_state_dirs()
     fh = open(config.STATE_DIR / LOCK_PATH_NAME, "w")
+    if fcntl is None:  # Windows — Task Scheduler IgnoreNew guards overlap
+        return fh
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return fh

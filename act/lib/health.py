@@ -36,11 +36,15 @@ the write is atomic (.tmp + os.replace) so the app never reads a torn file.
 from __future__ import annotations
 
 import datetime as _dt
-import fcntl
 import json
 import os
 from pathlib import Path
 from typing import Optional
+
+try:
+    import fcntl  # POSIX-only; absent on Windows (the lock is then a no-op)
+except ImportError:  # pragma: no cover - exercised only on Windows CI
+    fcntl = None
 
 from act.lib import config
 
@@ -79,9 +83,12 @@ def update_radar_health(source: str, ok: bool,
         HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
         # Serialize the whole read-modify-write across processes; blocking is
         # fine (holders finish in milliseconds, and the OS drops the lock even
-        # if a holder crashes).
+        # if a holder crashes). Windows has no fcntl — there the write is
+        # unlocked (a rare concurrent-radar lost update in a best-effort
+        # diagnostics file is acceptable; see docs/WINDOWS.md).
         with open(_LOCK_PATH, "w") as lock_fh:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             data = _load()
             entry = data.get(source)
             if not isinstance(entry, dict):
