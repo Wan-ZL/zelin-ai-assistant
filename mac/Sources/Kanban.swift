@@ -572,6 +572,10 @@ struct KanbanView: View {
                     }
                 }
                 .padding(.horizontal, 10)
+                // top inset so the first item's focus ring (e.g. the
+                // composer's .roundedBorder blue ring) clears the lane's
+                // rounded-rect clipShape instead of being cut off.
+                .padding(.top, 6)
                 .padding(.bottom, 10)
             }
         }

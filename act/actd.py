@@ -473,6 +473,31 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             str(sec_ex.get("delivered_summary") or sec.title or "").split()).strip()
         tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}"
         primary.notes = (primary.notes + "\n" + tag).strip() if primary.notes else tag
+        # Preserve a delivered secondary's FULL deliverable on the primary.
+        # MERGED is terminal + UI-unreachable (no un-merge), so a finished
+        # final_draft / delivered_summary on the secondary would otherwise be
+        # lost from the UI — the notes breadcrumb above is only a ~200-char
+        # summary. If the secondary carried finished work, carry the full,
+        # UNTRUNCATED content onto the primary's
+        # execution.merged_deliverables list (add-only — never touches the
+        # primary's OWN delivered_summary/final_draft). At minimum this keeps
+        # the deliverable verbatim in the primary's registry YAML.
+        sec_final = str(sec_ex.get("final_draft") or "").strip()
+        sec_delivered = str(sec_ex.get("delivered_summary") or "").strip()
+        if sec_final or sec_delivered:
+            prim_ex = dict(primary.execution or {})
+            carried = list(prim_ex.get("merged_deliverables") or [])
+            carried.append({
+                "id": sec.id,
+                "title": sec.title or "",
+                "delivered_summary": sec_ex.get("delivered_summary"),
+                "final_draft": sec_ex.get("final_draft"),
+                "merged_at": _iso_now(),
+            })
+            prim_ex["merged_deliverables"] = carried
+            primary.execution = prim_ex
+            _log(f"merge: {sec.id} deliverable carried onto {primary.id} "
+                 f"(execution.merged_deliverables, n={len(carried)})")
         # 副卡活 session best-effort 停止（失败只记日志，绝不阻塞合并落账）
         sec_sid = sec_ex.get("session_id")
         if sec_sid and executor is not None:

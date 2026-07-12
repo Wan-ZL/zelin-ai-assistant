@@ -74,6 +74,41 @@ class ApplyMergeVerdictTestCase(MergeApplyBase):
         self.assertIn("don't forget the OKR report", quotes)
         self.assertIn("[merged] R-2", primary.notes)
 
+    def test_merge_preserves_delivered_secondary_final_draft(self):
+        # A delivered secondary folded into the primary lands terminal MERGED
+        # (UI-unreachable, no un-merge). Its FULL deliverable must not be lost:
+        # carry the untruncated final_draft onto the primary's registry via
+        # execution.merged_deliverables, without touching the primary's own
+        # execution fields.
+        long_draft = "DRAFT-" + ("x" * 5000)  # well past the 200-char notes cap
+        self._save("R-1", "write the migration brief",
+                   status=State.CARD_SENT.value,
+                   execution={"final_draft": "primary own draft",
+                              "delivered_summary": "primary summary"})
+        self._save("R-2", "same migration brief, finished",
+                   status=State.DELIVERED.value,
+                   execution={"final_draft": long_draft,
+                              "delivered_summary": "did the migration brief"})
+        job = {"id": "s-del", "verdict": "merge",
+               "ids": ["R-1", "R-2"], "primary": "R-1"}
+
+        actd._apply_merge_verdict(job)
+
+        sec = registry.load("R-2")
+        self.assertEqual(str(sec.status), State.MERGED.value)
+
+        primary = registry.load("R-1")
+        # primary's OWN deliverable is untouched (add-only)
+        self.assertEqual(primary.execution.get("final_draft"), "primary own draft")
+        self.assertEqual(primary.execution.get("delivered_summary"), "primary summary")
+        # the secondary's FULL final_draft is preserved verbatim (untruncated)
+        carried = primary.execution.get("merged_deliverables") or []
+        self.assertEqual(len(carried), 1)
+        entry = carried[0]
+        self.assertEqual(entry["id"], "R-2")
+        self.assertEqual(entry["final_draft"], long_draft)
+        self.assertEqual(entry["delivered_summary"], "did the migration brief")
+
     def test_keep_separate_is_noop(self):
         self._save("R-1", "a")
         self._save("R-2", "b")
