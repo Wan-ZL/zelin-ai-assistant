@@ -27,6 +27,36 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.22.0] - 2026-07-12
+
+### Added
+
+- **Multi-card merge selection now works across all board lanes.** The
+  merge-selection affordance is no longer limited to a single lane — you can
+  select cards in 储备 / 提案 / 运行中 / 待验收 / 已验收 and request a merge
+  proposal across them (legality of cross-status merges stays with the backend
+  `merge_review`).
+- **Running cards now stop into review instead of vanishing.** The single
+  「停止」 on a running card opens a 退回提案 / 去待验收 choice:
+  `stop_to_review` stops the agent but **keeps what it produced** and lands the
+  card in 待验收 for you to check, instead of discarding the run (退回提案 /
+  `abort_execution`) or skipping review entirely.
+
+### Changed
+
+- **Backlog lane renamed 备选 → 储备** (and its proposal defer button
+  存备选 → 入库) — a display rename of the former debt/backlog lane; the
+  underlying `defer` action and `detected` status are unchanged.
+- **Proposal decision buttons are back to one compact row** (批准 · 拒绝 ·
+  修改 · 入库), with 展开 demoted to a right-aligned disclosure link rather than
+  competing as a fifth button.
+
+### Known limitation
+
+- Stopping an agent **externally** inside Claude Code can still trigger
+  auto-resume; use the in-app 「停止」 button to reliably land the card in
+  待验收 (follow-up tracked).
+
 ## [0.21.0] - 2026-07-12
 
 ### Added
@@ -816,7 +846,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...v0.20.0
