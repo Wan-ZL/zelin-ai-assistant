@@ -1,0 +1,20 @@
+# OPTIONAL dependencies — cloud sync only (plan of record Phase 1+).
+#
+# The base runtime floor stays PyYAML-only (see .github/workflows/ci.yml: the
+# tests-linux / tests-windows / macOS jobs install ONLY "pyyaml>=6,<7"). The
+# act pipeline, dashboard, radars and Mac app never need anything here.
+#
+# `cryptography` is required exclusively by act/lib/e2e.py (the E2E crypto for
+# the iOS cloud-sync backend). e2e.py imports it LAZILY inside its functions, so
+# importing the module — and running the whole existing suite — works fine
+# WITHOUT this installed; only actually invoking encrypt/decrypt needs it.
+#
+# Install for cloud work:
+#     pip install -r requirements-cloud.txt
+#
+# CI: a dedicated "cloud tests" job would add one step —
+#     pip install "pyyaml>=6,<7" && pip install -r requirements-cloud.txt
+# then run the suite so tests/test_e2e.py exercises the crypto instead of
+# skipping. The existing floor jobs stay PyYAML-only, so test_e2e skips there.
+
+cryptography>=42
