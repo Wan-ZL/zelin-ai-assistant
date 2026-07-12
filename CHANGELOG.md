@@ -27,6 +27,25 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.25.0] - 2026-07-12
+
+### Added
+
+- **Linux support (beta).** The headless Python core now runs under **systemd
+  user units** — `install-linux.sh` renders and installs the daemon, radar,
+  web-UI, and digest units — with the **web dashboard** (`python -m act.webui`)
+  as the Linux UI. `doctor` now understands systemd (unit / timer state parsed
+  from `systemctl --user`) alongside the existing launchd checks, and the test
+  suite now also runs on **Windows** in CI (non-blocking for now) as the
+  cross-platform foundation.
+
+### Note
+
+- **Linux/Windows are beta.** Screen-capture ingest is deferred (the web
+  dashboard and the ingest cron chain are the Linux surface for now), and
+  systemd unit loading / desktop notifications / the daemon's `PATH` still need
+  testing on a real machine — friends are welcome to file PRs.
+
 ## [0.24.0] - 2026-07-12
 
 ### Added
@@ -884,7 +903,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...v0.22.0

@@ -73,6 +73,12 @@ jobs:
     # resolution) guard themselves with sys.platform / os.name and are skipped
     # here — never deleted. Windows service wiring (Task Scheduler) is a later
     # port; this job only proves the portable core imports + runs on Windows.
+    #
+    # INFORMATIONAL for now: the Windows suite has never actually run, so its
+    # first CI runs may surface path/OS bugs. continue-on-error keeps a red
+    # Windows run from failing the workflow / blocking PRs until it's driven
+    # green — flip this off once Windows is reliably passing.
+    continue-on-error: true
     runs-on: windows-latest
     defaults:
       run:

@@ -451,8 +451,9 @@ class LoopSafetyTestCase(LifecycleBase):
         r = self._seed("R-100", "Ship the quarterly report", State.DELIVERED.value,
                        thread_key="gmail:T1")
         registry.archive(r, "user")
-        mk = lambda: Requirement(id="", title="Ship the quarterly report",
-                                 sources=[_src(channel="gmail", gmail_thread_id="T1")])
+        def mk():
+            return Requirement(id="", title="Ship the quarterly report",
+                               sources=[_src(channel="gmail", gmail_thread_id="T1")])
         first = registry.merge_or_new(mk())
         second = registry.merge_or_new(mk())
         self.assertNotEqual(first.id, "R-100")                  # archived not revived
