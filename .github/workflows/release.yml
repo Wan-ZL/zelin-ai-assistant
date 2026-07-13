@@ -93,6 +93,12 @@ jobs:
           fi
           echo "signing identity '$IDENTITY' ready — build.sh will sign with it"
 
+      - name: Vendor Sparkle (framework + tools)
+        # Download + verify (SHA-256) + vendor Sparkle.framework and its bin/ tools
+        # into mac/Frameworks/ (gitignored). MUST run before the build so build.sh
+        # links + embeds + signs the framework and the appcast step can sign_update.
+        run: bash mac/scripts/fetch-sparkle.sh
+
       - name: Build macOS app
         run: bash mac/build.sh
 
@@ -116,13 +122,75 @@ jobs:
           VERSION="$(python3 -c 'import act; print(act.__version__)')"
           mv "mac/build/ZelinAIAssistant-${VERSION}.pkg" "mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
 
+      - name: EdDSA-sign the .pkg and generate appcast.xml
+        # Sparkle integrity: EdDSA-sign the .pkg with the maintainer's private key
+        # (GitHub secret; never in the repo) and emit a single-item appcast.xml
+        # whose enclosure is the .pkg (installationType="package" — updates the
+        # whole product, app + pipeline, no drift). Guarded on the secret so a fork
+        # without it fails loudly rather than shipping an unusable feed.
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY secret missing — auto-update assets not produced"; exit 1
+          fi
+          TAG="${GITHUB_REF_NAME}"                      # e.g. v0.23.0
+          VER="${TAG#v}"                                # 0.23.0  (== CFBundleVersion)
+          PKG="mac/build/ZelinAIAssistant-${TAG}.pkg"
+          KEYFILE="$RUNNER_TEMP/sparkle_ed_priv"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEYFILE"
+
+          # sign_update prints:  sparkle:edSignature="…" length="…"
+          SIGATTR="$(mac/Frameworks/bin/sign_update "$PKG" -f "$KEYFILE")"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ZelinAIAssistant-${TAG}.pkg"
+
+          cat > mac/build/appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Zelin's AI Assistant</title>
+              <item>
+                <title>${VER}</title>
+                <sparkle:version>${VER}</sparkle:version>
+                <sparkle:shortVersionString>${VER}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+                <sparkle:releaseNotesLink>https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}</sparkle:releaseNotesLink>
+                <pubDate>$(date -u +"%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+                <enclosure url="${URL}"
+                           sparkle:installationType="package"
+                           ${SIGATTR}
+                           type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          EOF
+          echo "generated appcast.xml:"; cat mac/build/appcast.xml
+
+      - name: Package portable Linux + Windows bundles
+        # Windows/Linux are pure Python (no compiled binary), so each "installer"
+        # is a self-contained source archive + the platform install script. Emits
+        # dist/ZelinAIAssistant-<tag>-linux.tar.gz and -windows.zip. Independent of
+        # the macOS signing/Sparkle steps above. See scripts/package-portable.sh.
+        run: bash scripts/package-portable.sh "${GITHUB_REF_NAME}"
+
       - name: Generate SHA-256 checksums
-        # One checksums file covering both assets. Users verify a download with:
+        # One checksums file covering all four assets, written with BARE filenames
+        # (mac assets live in mac/build/, portable archives in dist/) so a user who
+        # downloads the assets into one flat dir can verify with:
         #   shasum -a 256 -c checksums.sha256 --ignore-missing
         run: |
-          cd mac/build
-          shasum -a 256 "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" "ZelinAIAssistant-${GITHUB_REF_NAME}.pkg" > checksums.sha256
-          cat checksums.sha256
+          set -euo pipefail
+          MB="mac/build"
+          {
+            ( cd "$MB" && shasum -a 256 \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}.pkg" )
+            ( cd dist && shasum -a 256 \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}-linux.tar.gz" \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}-windows.zip" )
+          } > "$MB/checksums.sha256"
+          cat "$MB/checksums.sha256"
 
       - name: Attest build provenance
         # Publishes SLSA provenance tying both assets to this workflow run.
@@ -132,6 +200,8 @@ jobs:
           subject-path: |
             mac/build/ZelinAIAssistant-*-macos.zip
             mac/build/ZelinAIAssistant-*.pkg
+            dist/ZelinAIAssistant-*-linux.tar.gz
+            dist/ZelinAIAssistant-*-windows.zip
 
       - name: Create GitHub Release and upload assets
         # The install-steps block is prepended to the auto-generated notes
@@ -146,8 +216,12 @@ jobs:
         run: |
           ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
           PKG="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
+          LINUX="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-linux.tar.gz"
+          WIN="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-windows.zip"
           cat > /tmp/release-notes.md <<'NOTES'
           ## 安装 / Install
+
+          ### macOS
 
           下载下方的 `ZelinAIAssistant-*.pkg` 双击安装。装完后菜单栏会自动出现小图标（首启弹权限设置页）。
 
@@ -159,11 +233,23 @@ jobs:
 
           Download `ZelinAIAssistant-*.pkg` below and double-click it. The build is **not yet signed with an Apple Developer ID**, so macOS blocks the first open — expected, not malware. Bypass it once: **right-click the .pkg in Finder → Open → Open**; if macOS Sequoia still refuses, go to System Settings → Privacy & Security, scroll to the bottom, click **Open Anyway** and enter your password.
 
+          ### Windows / Linux
+
+          Windows 和 Linux 是纯 Python（无需编译）。下载对应的源码包，解压，然后从解压出的目录里运行安装脚本：
+
+          - **Windows**：下载 `ZelinAIAssistant-*-windows.zip`，解压后运行 `install.ps1`（指南：[docs/WINDOWS.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/WINDOWS.md)）。
+          - **Linux**：下载 `ZelinAIAssistant-*-linux.tar.gz`，解压后运行 `bash install-linux.sh`（指南：[docs/LINUX.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/LINUX.md)）。
+
+          Windows and Linux are pure Python (no build step). Download the matching source bundle, unpack it, and run the install script from the extracted folder:
+
+          - **Windows**: download `ZelinAIAssistant-*-windows.zip`, extract, run `install.ps1` — see [docs/WINDOWS.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/WINDOWS.md).
+          - **Linux**: download `ZelinAIAssistant-*-linux.tar.gz`, unpack, run `bash install-linux.sh` — see [docs/LINUX.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/LINUX.md).
+
           完整安装指南 / full install guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · 卸载 / uninstall: `bash uninstall.sh`
 
           NOTES
           gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md --generate-notes --latest
-          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" mac/build/checksums.sha256
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" "$LINUX" "$WIN" mac/build/checksums.sha256 mac/build/appcast.xml
 
       - name: Clean up signing keychain
         # Runs even if an earlier step failed: never leave the decoded cert or
@@ -172,5 +258,7 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/sign-cert.p12" 2>/dev/null || true
+          # never leave the decoded Sparkle EdDSA private key on the runner
+          rm -f "$RUNNER_TEMP/sparkle_ed_priv" 2>/dev/null || true
           # restore the default user keychain search list
           security list-keychains -d user -s login.keychain-db 2>/dev/null || true

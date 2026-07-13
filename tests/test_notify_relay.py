@@ -88,8 +88,7 @@ class NativeNotifyRoutingTestCase(unittest.TestCase):
         self.assertEqual(list(config.NOTIFY_QUEUE_DIR.glob("*.json")), [])
 
     def test_notify_routes_through_relay(self):
-        with mock.patch("act.lib.notify._native_notify", return_value=True) as nn, \
-             mock.patch("act.lib.notify._phone_mirror"):
+        with mock.patch("act.lib.notify._native_notify", return_value=True) as nn:
             self.assertTrue(notify.notify("t", "b", subtitle="s"))
         nn.assert_called_once_with("t", "b", "s")
 

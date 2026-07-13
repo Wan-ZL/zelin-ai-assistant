@@ -11,11 +11,12 @@ Covered:
   session_id/copy_cmd KEYS (absent, not null), dispatch_error passthrough;
 - review[] passes delivered_summary/final_draft through and converts
   review_at/dispatched_at from registry ISO strings to epoch ints;
-- attach ≠ 打回（§30）：status=review + roster working -> the item STAYS in
-  review[] with session_active=true (user attach / organic activity — a real
-  rework verdict flips the card to executing, so it never presents this way);
-  roster done / blocked / absent keeps it in review[] with
-  session_active=false (counts follow the lists).
+- attach 回流（§30, v0.28.1）：status=review + roster WORKING -> the card
+  reroutes to running[] with from_review=true while the session actively runs
+  (real work resumed — not stranded in 待验收 behind a 0-count 运行中 lane);
+  it is a presentation-only reroute (on-disk status stays review). roster
+  done / blocked / absent keeps it in review[] with session_active=false, so
+  it falls back the moment the session settles (counts follow the lists).
 """
 import datetime as _dt
 import os
@@ -169,20 +170,24 @@ class BuildDashboardV010TestCase(unittest.TestCase):
             a["pid"] = pid
         return a
 
-    def test_review_with_working_agent_stays_in_review_session_active(self):
-        # §30 attach ≠ 打回：working agent on a review card = user attach /
-        # organic activity；卡留在待验收列，只标 session_active，绝不冒充返工。
+    def test_review_with_working_agent_routes_to_running(self):
+        # v0.28.1 §30 fix: a review card whose session is actively WORKING again
+        # (user attach + real work) shows in 运行中 while it runs — not stranded
+        # in 待验收 with a 0-count running lane. Registry status is untouched
+        # (still review on disk); this is a presentation-only reroute that falls
+        # back to review the moment the session settles (see the done/absent/
+        # blocked tests below, which stay in review).
         dash = dashboard.build_dashboard(
             reqs=[self._review_req()], agents=[self._agent("working")], cfg=self.cfg)
 
-        self.assertEqual(dash["running"], [])
-        self.assertEqual(len(dash["review"]), 1)
-        item = dash["review"][0]
-        self.assertEqual(item["state"], "review")
-        self.assertTrue(item["session_active"])
+        self.assertEqual(dash["review"], [])
+        self.assertEqual(len(dash["running"]), 1)
+        item = dash["running"][0]
+        self.assertEqual(item["state"], "working")
+        self.assertTrue(item["from_review"])
         self.assertEqual(item["id"], "R-200")
         self.assertEqual(item["name"], "被 attach 回去聊天的任务")
-        # 常规 review 字段照常：roster 数据 + attach 命令（pid 在场 -> attach）
+        # roster data + attach command still present (pid in roster -> attach)
         self.assertEqual(item["short_id"], "feedc0de")
         self.assertEqual(item["session_id"],
                          "feedc0de-0000-0000-0000-000000000000")
@@ -191,13 +196,10 @@ class BuildDashboardV010TestCase(unittest.TestCase):
         self.assertEqual(item["cwd"], "/tmp/worktree")
         self.assertEqual(item["plan"], ["步骤一"])
         self.assertEqual(item["dod"], ["能跑"])
-        self.assertEqual(item["log"], "/tmp/executor-R-200.log")
-        self.assertEqual(item["dispatched_at"], _utc_epoch(2026, 7, 8, 0, 0, 0))
-        self.assertEqual(item["review_at"], _utc_epoch(2026, 7, 8, 1, 0, 0))
         self.assertEqual(item["delivery_mode"], "chat")
-        # counts 跟着列表走：review 1，running 0
-        self.assertEqual(dash["counts"]["review"], 1)
-        self.assertEqual(dash["counts"]["running"], 0)
+        # counts follow the lists: running 1, review 0
+        self.assertEqual(dash["counts"]["review"], 0)
+        self.assertEqual(dash["counts"]["running"], 1)
 
     def test_executing_after_rework_verdict_projects_as_working(self):
         # §30 真返工轮不变：打回 verdict（executor.rework）写 rework_count/

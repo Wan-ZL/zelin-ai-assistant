@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TEMPLATE: rendered by install.ps1 (see act/lib/taskscheduler.py), registered
+     as \ZelinAIAssistant\slack-radar. Repetition every 3 min (mirror of the plist
+     StartInterval 180 / systemd zelin-slack-radar.timer OnUnitActiveSec=3min).
+
+     slackradar — captures Slack DMs / group DMs / watched-channel @mentions (and
+     self-DM quick capture, the phone / always-on channel) into requirement cards.
+     No-ops until a Slack user token exists at sources.slack_token_path
+     (docs/SLACK_SETUP.md). Network + state/ only — fully portable.
+
+     Overlap: MultipleInstancesPolicy=IgnoreNew replaces the POSIX fcntl pass-lock
+     on Windows (a still-running pass makes Task Scheduler skip the next fire). -->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Zelin AI Assistant — Slack radar scan (one pass, every 3 min)</Description>
+    <URI>\ZelinAIAssistant\slack-radar</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT3M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -Command "$env:AIASSISTANT_HOME='@REPO_ROOT@'; $env:PATH='@CLAUDE_BIN_DIR@;'+$env:PATH; &amp; '@PYTHON@' -m act.radar_slack --once"</Arguments>
+      <WorkingDirectory>@REPO_ROOT@</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

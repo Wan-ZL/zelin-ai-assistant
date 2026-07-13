@@ -90,6 +90,9 @@ DEFAULT_TELEMETRY_PUBLISHABLE_KEY: str = (
     "sb_publishable_bNWOKJTAH52AfwTao-nHUQ_jdsTUpYi"
 )
 TELEMETRY_LEVELS: tuple = ("basic", "detailed")
+# §15 default output format for drafted deliverables. "markdown" = status quo
+# (no prompt change); "html" makes the executor author deliverables as HTML.
+OUTPUT_FORMATS: tuple = ("markdown", "html")
 
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
@@ -229,16 +232,12 @@ class Config:
     # `python3 -m act.ask` (exit 2) and the app's Ask page input.
     ask_enabled: bool = True
 
-    # phone command channel (§13, channel-pluggable) — which channel carries
-    # the notify mirror + the phone command surface. "none"/"slack" keep the
-    # legacy Slack behavior (self-gated on features.slack_radar + token);
-    # "imessage" switches the mirror to iMessage and arms act/radar_imessage.py
-    # (needs imessage_self_handle + Full Disk Access, docs/IMESSAGE_SETUP.md).
-    phone_channel: str = "none"
-    imessage_self_handle: Optional[str] = None
-
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"
+    # §15 default output format for drafted deliverables ("markdown" | "html").
+    # markdown = status quo (executor prompt unchanged); html injects an HTML
+    # authoring instruction so drafts/reports/FINAL DRAFT come back as HTML.
+    default_output_format: str = "markdown"
 
     # feature flags (§16) — default all on; see DEFAULT_FEATURES
     features: dict = field(default_factory=lambda: dict(DEFAULT_FEATURES))
@@ -434,15 +433,14 @@ def load_config() -> Config:
     if isinstance(ask_block, dict):
         cfg.ask_enabled = bool(ask_block.get("enabled", cfg.ask_enabled))
 
-    pc = str(data.get("phone_channel") or "").strip().lower()
-    if pc in ("none", "slack", "imessage"):
-        cfg.phone_channel = pc
-    imsg = data.get("imessage", {}) or {}
-    if isinstance(imsg, dict):
-        cfg.imessage_self_handle = imsg.get("self_handle", cfg.imessage_self_handle)
-
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
+
+    # §15 default output format — invalid/typo values degrade to markdown
+    # (the safe status-quo default), mirroring telemetry_level's fail-safe.
+    _of = str(data.get("default_output_format", cfg.default_output_format)
+              or "").strip().lower()
+    cfg.default_output_format = _of if _of in OUTPUT_FORMATS else "markdown"
 
     feats = data.get("features", {}) or {}
     if isinstance(feats, dict):
@@ -501,6 +499,13 @@ def _derive_obsidian_dirs(cfg: Config) -> None:
 # --------------------------------------------------------------------------- #
 # settings_overrides.json overlay (§15) — Mac app writes it; highest priority.
 # --------------------------------------------------------------------------- #
+def _coerce_output_format(value) -> str:
+    """§15 override coercion: normalise to a valid OUTPUT_FORMATS member,
+    fail-safe to markdown on any typo/unknown value (mirrors the yaml path)."""
+    v = str(value).strip().lower()
+    return v if v in OUTPUT_FORMATS else "markdown"
+
+
 # Scalar cfg fields the app may override, with a coercion for each.
 _OVERRIDE_FIELDS: dict = {
     "obsidian_raw": str,
@@ -512,12 +517,11 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_app_password_path": str,
     "gmail_enabled": bool,
     "weekly_digest_enabled": bool,
-    "phone_channel": str,
-    "imessage_self_handle": str,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
     "trash_retention_days": int,
     "language": str,
+    "default_output_format": _coerce_output_format,
     "redaction_enabled": bool,
     "redaction_terms_file": str,
     "redaction_mask_secrets": bool,

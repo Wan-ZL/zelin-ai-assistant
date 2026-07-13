@@ -6,8 +6,7 @@ import Foundation
 
 // MARK: - Local instant-feedback types (契约2)
 
-/// Which dashboard list an item (or its echo) belongs to.
-enum ListKind: String { case approval, running, review, debt, trash, completed, archived }
+// enum ListKind moved to shared/Sources/Lanes.swift (shared with iOS).
 
 /// Optimistic "the action is in flight" placeholder rendered in the TARGET
 /// list right after a button press, before actd rewrites dashboard.json.
@@ -32,7 +31,7 @@ struct RaisingEntry {
 /// that restore introduced in v0.10 (契约: 信息条 instead of an echo);
 /// `kind` picks the per-action timeout wording.
 struct PendingReturn {
-    enum Kind { case restore, abort, revert, unarchive }
+    enum Kind { case restore, abort, revert, unarchive, stopToReview }
     let kind: Kind
     let source: ListKind  // lane the action was taken in (P2-4 notice routing)
     let created: Date
@@ -373,6 +372,9 @@ final class DashboardStore: ObservableObject {
         case .unarchive:
             return L("取消归档超时，卡片仍在归档区，可重试（检查 actd 是否在运行）",
                      "Unarchive timed out — the card is still in the Archive, try again (check that actd is running)")
+        case .stopToReview:
+            return L("去待验收超时，卡片仍在运行中列，可重试（检查 actd 是否在运行）",
+                     "Stop-to-review timed out — the card is still in Running, try again (check that actd is running)")
         }
     }
 
@@ -444,13 +446,13 @@ final class DashboardStore: ObservableObject {
                 // trash echo counts (visibleTrashCount) but renders no card
                 addEcho(id: id, target: .trash, source: src ?? .approval, label: "")
             case "defer":
-                // v0.18 存备选: proposal returns to the backlog (detected)
+                // v0.18 入库 (defer): proposal returns to the backlog (detected)
                 // with its plan intact. Fixed, known target — a real echo in
                 // the debt lane (both kanban and popover already render
                 // debtEchoes), unlike restore's any-lane info strip.
                 hideSticky(id, from: .approval)
                 addEcho(id: id, target: .debt, source: .approval,
-                        label: L("存入备选…", "Moving to backlog…"))
+                        label: L("入库中…", "Moving to backlog…"))
             case "restore":
                 // no echo: the card may return to ANY lane (its previous
                 // state), so a fixed-target placeholder would often be wrong.
@@ -462,7 +464,7 @@ final class DashboardStore: ObservableObject {
                                     "Restoring — the card returns to its previous lane"))
             case "archive":
                 // v0.20 card-lifecycle: seal a delivered (已验收) or backlog
-                // (备选) card into the archive — reversible, no confirm. Fixed,
+                // (储备) card into the archive — reversible, no confirm. Fixed,
                 // known target: sticky-hide from whichever lane holds it and
                 // plant an echo in the archive section (renders no card, but
                 // keeps visibleArchivedCount honest, mirroring trash).
@@ -501,6 +503,13 @@ final class DashboardStore: ObservableObject {
                 beginReturn(id, from: .running, kind: .abort,
                             info: L("停止中，卡片将回到提案列",
                                     "Stopping — card returns to Proposals"))
+            case "stop_to_review":
+                // v0.21: stop the agent but KEEP what it produced → 待验收.
+                // Same pending+timeout mechanism as abort (契约: 信息条); only
+                // the target lane (and thus the wording) differs.
+                beginReturn(id, from: .running, kind: .stopToReview,
+                            info: L("停止中，卡片将去待验收",
+                                    "Stopping — card moves to Review"))
             case "revert_review":
                 // v0.10.2: delivered → back to REVIEW for re-acceptance.
                 beginReturn(id, from: .completed, kind: .revert,
@@ -900,7 +909,7 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    /// 备选 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
+    /// 储备 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
     var boardDebt: [DebtItem] {
         let q = boardNeedle
         guard !q.isEmpty else { return visibleDebt }

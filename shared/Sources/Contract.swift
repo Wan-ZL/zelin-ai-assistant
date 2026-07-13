@@ -1,8 +1,8 @@
-// Models.swift — dashboard.json 的 Codable 契约结构（docs/CONTRACT.md section 2；勿改字段）
-// Mechanically split from main.swift — zero logic changes.
+// Contract.swift — dashboard.json 的 Codable 契约结构（docs/CONTRACT.md section 2；勿改字段）
+// SHARED between the Mac app and the iOS app. Foundation-only by contract
+// (mac/build.sh lint gate forbids AppKit/UIKit/SwiftUI here). Was mac/Sources/
+// Models.swift — moved verbatim (zero logic changes) except the imports.
 
-import AppKit
-import SwiftUI
 import Foundation
 
 // MARK: - Codable models (strictly per docs/CONTRACT.md section 2)
@@ -138,6 +138,9 @@ struct RunningTask: Decodable, Hashable {
     // completed[] extras (contract B).
     let delivered_summary: String?
     let accepted_at: Int?        // epoch seconds
+    // §30 v0.28.1: true when a 待验收 card is projected into 运行中 because its
+    // session was reactivated via attach (on-disk status is still review).
+    let from_review: Bool?
 }
 
 struct DebtItem: Decodable, Hashable {

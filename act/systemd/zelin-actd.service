@@ -1,0 +1,35 @@
+# TEMPLATE: install-linux.sh renders the @PYTHON@ / @REPO_ROOT@ /
+# @CLAUDE_BIN_DIR@ placeholders (via `python3 -m act.lib.systemd`) into
+# ~/.config/systemd/user — do not `systemctl enable` this file in place.
+#
+# actd — resident daemon of Zelin's AI Assistant (Act pipeline), the Linux
+# mirror of act/launchd/com.zelin.aiassistant.actd.plist. Reads
+# state/inbox/*.json, drives the requirement registry state machine, dispatches
+# approved work via `claude --bg`, and writes state/dashboard.json atomically.
+#
+# KeepAlive equivalent: Restart=always (launchd's <key>KeepAlive</key><true/>).
+#
+# CREDENTIALS: ANTHROPIC_API_KEY is NOT set here. actd reads the key from
+# config/secrets/anthropic-api-key.txt (CONTRACT §19); a systemd --user session
+# has no Keychain, so a file-form key is required just like under launchd.
+#
+# PATH: @CLAUDE_BIN_DIR@ is kept FIRST so the daemon resolves the same `claude`
+# the login shell does (the 2026-07-08 "outdated claude shadowed the new one"
+# guard the plists carry). systemd --user does NOT source ~/.profile, so the
+# interpreter and PATH are pinned here explicitly.
+[Unit]
+Description=Zelin AI Assistant — actd resident daemon (Act pipeline)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m act.actd
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

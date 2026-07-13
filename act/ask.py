@@ -60,7 +60,6 @@ _CORPUS: Tuple[str, ...] = (
     "docs/CONTRACT.md",
     "docs/GMAIL_SETUP.md",
     "docs/SLACK_SETUP.md",
-    "docs/IMESSAGE_SETUP.md",
     "docs/SANITIZATION.md",
     "docs/LICENSE-FAQ.md",
     "docs/ROADMAP.md",
@@ -172,7 +171,6 @@ def _config_summary(cfg: config.Config) -> str:
 
     lines = [
         "language: %s" % cfg.language,
-        "phone_channel: %s" % cfg.phone_channel,
         "features: %s" % json.dumps(
             {k: bool(v) for k, v in sorted(cfg.features.items())}),
         "obsidian_raw: %s" % (cfg.obsidian_raw or "(not set)"),

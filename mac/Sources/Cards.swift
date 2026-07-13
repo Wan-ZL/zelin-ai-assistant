@@ -5,32 +5,7 @@ import AppKit
 import SwiftUI
 import Foundation
 
-// Lane definitions (v0.18) — the single source both surfaces (board columns
-// and popover sections) pass into SectionHeader's `help:`. Copy is derived
-// from the triage prompt / code truth so the UI and the radar tell the same
-// story; keep them in sync with quick_capture.py's triage rules.
-enum LaneHelp {
-    static var backlog: String {
-        L("真实但不着急的事都先停在这里：雷达低置信度捕获、导入的旧会话、你暂缓的提案。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」升级成提案。",
-          "Real but not-urgent asks park here — low-confidence radar captures, imported sessions, proposals you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to promote one.")
-    }
-    static var proposals: String {
-        L("需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；存备选=先不做。灰色卡是 AI 正在研究的占位。",
-          "Cards that need your decision now, each with a plan, cost, and acceptance criteria. Approve = start executing; Comment = redo with your input; Backlog = not now. Grey cards are placeholders the AI is still researching.")
-    }
-    static var running: String {
-        L("已批准的任务由 AI 在后台执行（排队中显示灰卡）。橙色「需输入」= AI 卡住等你回答，排在最前。",
-          "Approved tasks the AI is executing in the background (queued ones show grey). Orange \"Needs input\" = the AI is blocked on your answer; those sort first.")
-    }
-    static var review: String {
-        L("AI 认为做完了：看交付摘要或 draft PR。验收=归档进已验收；打回=带你的反馈继续改。",
-          "The AI thinks it's done — check the delivery summary or draft PR. Accept archives it; Send back continues with your feedback.")
-    }
-    static var done: String {
-        L("你验收通过的任务存档。徽章数字是真实总数，列表只显示最近 50 条；可退回待验收。",
-          "Tasks you accepted. The badge shows the true total; the list keeps the latest 50. Items can be sent back to Review.")
-    }
-}
+// enum LaneHelp moved to shared/Sources/Lanes.swift (shared with iOS).
 
 struct SectionHeader: View {
     let title: String
@@ -692,94 +667,87 @@ struct ApprovalCardView: View {
 
     private var normalBody: some View {
         CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, stroked: true) {
-            // v0.19 拍板：按钮行拆成两排，杜绝「存备选」被挤成「存…」。
-            // 上排 = 拍板主操作(批准/拒绝)；下排 = 次级操作(修改/存备选) + 右侧
-            // 「展开详情」disclosure（plain 灰链接，不与决策按钮抢戏）。每个 label
-            // 都 .lineLimit(1) + .fixedSize，任何卡宽都不截断 —— 窄卡至多换排，
-            // 绝不吞字。(font 11 / .bordered / .small 由 CardSurface 统一施加；
-            // detail 槽的共享 toggle 不再使用，展开由下排的 disclosure 直接驱动。)
-            VStack(alignment: .leading, spacing: 6) {
-                // —— 上排：拍板主操作 ——
-                HStack(spacing: 8) {
-                    Button {
-                        if card.tier == "T2" {
-                            // typed confirmation (确认 / go) — anything else = no-op.
-                            guard app.confirmT2(id: card.id, summary: card.displaySummary) else { return }
-                        }
-                        app.submit(id: card.id, action: "approve", comment: nil)
-                    } label: { Label(L("批准", "Approve"), systemImage: "checkmark.circle.fill") }
-                        .tint(.green)
-                        .disabled(card.tier == "T2" && !expanded)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Button {
-                        // v0.10.3: reject asks which kind (Zelin 拍板)。区分是功能性的：
-                        // 回收站条目不参与 merge_or_new 匹配，同一需求会重新出卡；
-                        // "已办完"(done_external→delivered) 才能把后续重述压成合并。
-                        // 拒绝是低频操作，多一次点击可接受。v0.18 拍板：按钮行改为四个
-                        // —— 第四个是「存备选」(defer)，见下；「先不做」刻意不塞进这个
-                        // 弹窗（标题问的是"不需要执行？"，语义相反），弹窗保持两选。
-                        let alert = NSAlert()
-                        alert.messageText = L("这张卡不需要执行？", "No need to run this card?")
-                        alert.informativeText = card.displaySummary
-                        alert.addButton(withTitle: L("不想做（进回收站）", "Won't do (to trash)"))
-                        alert.addButton(withTitle: L("已办完（记为已交付）", "Already done (mark delivered)"))
-                        let cancel = alert.addButton(withTitle: L("取消", "Cancel"))
-                        cancel.keyEquivalent = "\u{1b}"
-                        switch alert.runModal() {
-                        case .alertFirstButtonReturn:
-                            app.submit(id: card.id, action: "reject", comment: nil)
-                        case .alertSecondButtonReturn:
-                            app.submit(id: card.id, action: "done_external", comment: nil)
-                        default:
-                            break
-                        }
-                    } label: { Label(L("拒绝", "Reject"), systemImage: "xmark.circle.fill") }
-                        .tint(.red)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-
-                // —— 下排：次级操作 + 展开详情 disclosure ——
-                HStack(spacing: 8) {
-                    Button {
-                        if let c = app.promptComment() {
-                            app.submit(id: card.id, action: "comment", comment: c)
-                        }
-                    } label: { Label(L("修改", "Comment"), systemImage: "bubble.left.fill") }
-                        .tint(.blue)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Button {
-                        // v0.18 存备选 (defer): demote is NOT reject — the card goes
-                        // back to the backlog (card_sent→detected) with summary/plan/
-                        // sources intact and KEEPS matching in merge_or_new
-                        // (restatements merge; radar act-now re-promotes), while
-                        // trash is excluded from matching. One click, no confirmation:
-                        // cheap + reversible — undo is the backlog lane's 研究并提议.
-                        app.submit(id: card.id, action: "defer", comment: nil)
-                    } label: { Label(L("存备选", "Backlog"), systemImage: "tray.and.arrow.down") }
-                        .tint(.gray)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-
-                    Spacer(minLength: 8)
-
-                    // 展开详情 是 disclosure，不是决策：做成 plain 灰链接（覆盖继承的
-                    // .bordered），读作「展开」而非第五个竞争按钮。保留 ▸/▾ 提示与
-                    // T2 gate 所用的 expanded 状态。
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-                    } label: {
-                        Text(expanded ? L("收起 ▾", "Collapse ▾")
-                                      : L("展开详情 ▸", "Details ▸"))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+            // v0.21 拍板：四个 2 字决策按钮回到一排（批准·拒绝·修改·入库），每个
+            // .lineLimit(1)+.fixedSize，2 字标签四颗在 ~400pt 卡宽绰绰有余、绝不
+            // 截断。「展开详情」移出决策行 —— 右对齐的 plain 灰链接（disclosure，
+            // 不与决策按钮抢戏），正是它腾出的空间让四颗按钮回到一排。保留 T2 gate
+            //（批准在展开前禁用）+ ▸/▾ 提示与 expanded 状态。(font 11 / .bordered /
+            // .small 由 CardSurface 统一施加；detail 槽的共享 toggle 不使用。)
+            HStack(spacing: 8) {
+                Button {
+                    if card.tier == "T2" {
+                        // typed confirmation (确认 / go) — anything else = no-op.
+                        guard app.confirmT2(id: card.id, summary: card.displaySummary) else { return }
                     }
-                    .buttonStyle(.plain)
+                    app.submit(id: card.id, action: "approve", comment: nil)
+                } label: { Label(L("批准", "Approve"), systemImage: "checkmark.circle.fill") }
+                    .tint(.green)
+                    .disabled(card.tier == "T2" && !expanded)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Button {
+                    // v0.10.3: reject asks which kind (Zelin 拍板)。区分是功能性的：
+                    // 回收站条目不参与 merge_or_new 匹配，同一需求会重新出卡；
+                    // "已办完"(done_external→delivered) 才能把后续重述压成合并。
+                    // 拒绝是低频操作，多一次点击可接受。「先不做」刻意不塞进这个
+                    // 弹窗（标题问的是"不需要执行？"，语义相反），弹窗保持两选。
+                    let alert = NSAlert()
+                    alert.messageText = L("这张卡不需要执行？", "No need to run this card?")
+                    alert.informativeText = card.displaySummary
+                    alert.addButton(withTitle: L("不想做（进回收站）", "Won't do (to trash)"))
+                    alert.addButton(withTitle: L("已办完（记为已交付）", "Already done (mark delivered)"))
+                    let cancel = alert.addButton(withTitle: L("取消", "Cancel"))
+                    cancel.keyEquivalent = "\u{1b}"
+                    switch alert.runModal() {
+                    case .alertFirstButtonReturn:
+                        app.submit(id: card.id, action: "reject", comment: nil)
+                    case .alertSecondButtonReturn:
+                        app.submit(id: card.id, action: "done_external", comment: nil)
+                    default:
+                        break
+                    }
+                } label: { Label(L("拒绝", "Reject"), systemImage: "xmark.circle.fill") }
+                    .tint(.red)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Button {
+                    if let c = app.promptComment() {
+                        app.submit(id: card.id, action: "comment", comment: c)
+                    }
+                } label: { Label(L("修改", "Comment"), systemImage: "bubble.left.fill") }
+                    .tint(.blue)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Button {
+                    // v0.18 入库 (defer): demote is NOT reject — the card goes
+                    // back to the backlog (card_sent→detected) with summary/plan/
+                    // sources intact and KEEPS matching in merge_or_new
+                    // (restatements merge; radar act-now re-promotes), while
+                    // trash is excluded from matching. One click, no confirmation:
+                    // cheap + reversible — undo is the backlog lane's 研究并提议.
+                    app.submit(id: card.id, action: "defer", comment: nil)
+                } label: { Label(L("入库", "Backlog"), systemImage: "tray.and.arrow.down") }
+                    .tint(.gray)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Spacer(minLength: 8)
+
+                // 展开详情 是 disclosure，不是决策：做成 plain 灰链接（覆盖继承的
+                // .bordered），读作「展开」而非第五个竞争按钮。保留 ▸/▾ 提示与
+                // T2 gate 所用的 expanded 状态。
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    Text(expanded ? L("收起 ▾", "Collapse ▾")
+                                  : L("展开详情 ▸", "Details ▸"))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
+                .buttonStyle(.plain)
             }
         } content: {
             // v0.20 card-lifecycle 「回锅」marker: this proposal is a
@@ -1049,6 +1017,9 @@ struct TaskRow: View {
     unowned let app: AppDelegate
     let lane: TaskLane
 
+    // v0.21: 运行中卡上「停止」→ 2 选 confirmationDialog（退回提案/去待验收）。
+    @State private var showStopDialog = false
+
     // accent is purely visual now, derived from the lane — no call site can
     // drift a color away from its semantics again.
     private var accent: Color {
@@ -1095,23 +1066,16 @@ struct TaskRow: View {
 
     private var isDelivered: Bool { lane == .completed }
 
-    // 契约: 停止并退回 on regular running rows (queued/working/blocked …),
-    // NOT on legacy review-active rows (attach activity from an older actd,
-    // §30 — the card is really in review) and NOT in the completed lane.
-    private var showsAbort: Bool { !isDelivered && task.state != "review-active" }
-
-    // 契约 done_external: 已办完 on EVERY non-delivered row (queued/working/
-    // blocked/needs_input AND review-active) — "I already got what I needed /
-    // it was finished outside the system". Same semantics + analytics event
-    // as the approval card's 已办完 (card_action, action=done_external).
-    private var showsDoneOutside: Bool { !isDelivered }
-
-    // 灰绿 (muted green): deliberately duller than the saturated .green of
-    // approve/accept — this ends a run without a reviewed delivery.
-    private static let doneOutsideTint = Color(red: 0.45, green: 0.62, blue: 0.48)
+    // v0.21 契约: 「停止」on EVERY non-delivered running-lane row (queued/
+    // working/blocked/needs_input AND legacy review-active). One button →
+    // 2-choice confirmationDialog: 退回提案 (abort_execution) or 去待验收
+    // (stop_to_review). Replaces the old 停止并退回 + 已办完 pair; done_external
+    // no longer lives on the running card (it stays on the proposal reject
+    // dialog). Never on the completed lane.
+    private var showsStop: Bool { !isDelivered }
 
     var body: some View {
-        let hasButtons = showsAbort || isDelivered || showsDoneOutside
+        let hasButtons = showsStop || isDelivered
         // doubleClickRuns: cmd is app-generated (pipeline copy_cmd / Swift-built
         // "claude --resume <id>") — the TerminalLauncher security precondition.
         if hasDetailContent && hasButtons {
@@ -1132,21 +1096,30 @@ struct TaskRow: View {
     // v0.10.2 action row — Buttons win over the whole-card copy tap (ReviewRow
     // 先例); CardSurface applies the unified font/bordered/small styling.
     @ViewBuilder private var actionButtons: some View {
-        if showsAbort {
-            // approved|executing → stop the run, card returns to 待审批
+        if showsStop {
+            // v0.21: one 停止 opens a 2-choice dialog so the fork is explicit —
+            // 退回提案 discards this run (abort_execution → back to 提案), 去待验收
+            // keeps what the agent produced (stop_to_review → 待验收). Both just
+            // stop the agent; the dialog subtitle spells out the difference.
             Button {
-                app.submit(id: task.id, action: "abort_execution", comment: nil)
-            } label: { Label(L("停止并退回", "Stop & return"), systemImage: "stop.circle") }
+                showStopDialog = true
+            } label: { Label(L("停止", "Stop"), systemImage: "stop.circle") }
                 .tint(.orange)
-        }
-        if showsDoneOutside {
-            // blocked agent waiting for input, but Zelin already has the
-            // deliverable (e.g. from an attach session) → mark DELIVERED;
-            // actd harvests what it can and stops the hung session.
-            Button {
-                app.submit(id: task.id, action: "done_external", comment: nil)
-            } label: { Label(L("已办完", "Done outside"), systemImage: "checkmark.circle") }
-                .tint(Self.doneOutsideTint)
+                .confirmationDialog(
+                    L("停止这个任务？", "Stop this task?"),
+                    isPresented: $showStopDialog, titleVisibility: .visible
+                ) {
+                    Button(L("退回提案", "Discard & re-propose"), role: .destructive) {
+                        app.submit(id: task.id, action: "abort_execution", comment: nil)
+                    }
+                    Button(L("去待验收", "Keep for review")) {
+                        app.submit(id: task.id, action: "stop_to_review", comment: nil)
+                    }
+                    Button(L("取消", "Cancel"), role: .cancel) {}
+                } message: {
+                    Text(L("退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
+                           "Discard & re-propose = throw away this run and start over; Keep for review = keep what it made and I'll check it"))
+                }
         }
         if isDelivered {
             // delivered → back to REVIEW for re-acceptance
@@ -1188,6 +1161,13 @@ struct TaskRow: View {
                         if task.state == "review-active" {
                             Badge(text: L("会话有新活动", "Session active"), color: .teal)
                         } else if let st = task.state { Badge(text: st, color: accent) }
+                        // §30 v0.28.1: a 待验收 card projected here because its
+                        // session was reactivated (attach). Label it so a card
+                        // Zelin remembers delivering doesn't read as brand-new
+                        // work; it drops back to 待验收 when the session settles.
+                        if task.from_review == true {
+                            Badge(text: L("已交付过·再运行", "Delivered · re-running"), color: .teal)
+                        }
                         if let sid = task.short_id ?? task.session_id {
                             Text(sid.prefix(8))
                                 .font(.system(size: 10, design: .monospaced))

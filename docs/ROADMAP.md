@@ -15,9 +15,6 @@ Before picking anything up, check the in-progress list — several items already
 - **Telemetry v2 — research loop** — v1 (Supabase sync of local analytics events; default-on with a one-click opt-out) has landed;
   v2 closes the loop: after ≥14 days of data the Monday digest proposes self-improvement cards
   ("this feature is unused", "this step keeps failing") — the new-install guard is already written.
-- **iMessage channel** — a fourth capture/notification channel alongside Obsidian, Slack and Gmail;
-  v1 has landed (text-only, `phone_channel: imessage`, see [docs/IMESSAGE_SETUP.md](IMESSAGE_SETUP.md)) —
-  image/video capture still routes through the Slack path.
 - **Swift strict-concurrency migration** — move the Mac app onto Swift 6 strict concurrency before
   the toolchain default flips make it urgent.
 - **Developer ID signing & notarization** — a stable signing identity so upgrades stop resetting TCC

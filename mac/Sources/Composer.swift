@@ -118,8 +118,12 @@ struct KanbanComposer: View {
                     .foregroundColor(.secondary.opacity(0.7))
             }
         }
-        // first expand: the field lands in the hierarchy here — focus it
-        .onAppear { focused = true }
+        // first expand: the field lands in the hierarchy here — focus it.
+        // Defer to the next runloop tick so the just-inserted (animating)
+        // field is first-responder-eligible before we request focus; a
+        // synchronous request races the insertion and silently falls back
+        // to the board's 搜索卡片 field (keystrokes then go to search).
+        .onAppear { DispatchQueue.main.async { focused = true } }
     }
 
     private var trimmed: String {
@@ -132,11 +136,14 @@ struct KanbanComposer: View {
             return
         }
         withAnimation(.easeInOut(duration: 0.12)) { expanded = true }
+        // request focus right after the expand: deferred to the next runloop
+        // tick so the newly-inserted field exists and is first-responder-
+        // eligible first (belt-and-suspenders with the editor's .onAppear).
+        DispatchQueue.main.async { focused = true }
         // 契约F trigger 词表冻结为 user|auto：点击和热键都是用户手势 → "user"；
         // 入口细分（click|hotkey）记在词表外的 via 字段，不占用 trigger。
         Analytics.firstReach("composer")
         Analytics.log("composer_open", fields: ["trigger": "user", "via": via])
-        // focus lands via the editor's .onAppear once it exists
     }
 
     private func collapse() {

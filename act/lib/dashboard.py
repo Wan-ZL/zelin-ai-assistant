@@ -504,6 +504,44 @@ def build_dashboard(
                         "dod": list(req.definition_of_done or []),
                     }
                 )
+            elif req.status == State.REVIEW.value and state in _RUNNING_STATES:
+                # §30 fix: a delivered 待验收 card whose session is actively
+                # WORKING again (user `claude attach` + real work — e.g. a
+                # follow-up deep-research) shows in 运行中 while it runs, instead
+                # of sitting stranded in 待验收 with only a badge while the
+                # 运行中 lane reads 0. Registry status stays review (NO
+                # state-machine flip) — so the ✓验收/↩︎打回 verdict and the
+                # delivered draft are preserved; when the session settles it
+                # falls straight back into the review branch below, refreshed by
+                # _reconcile_review_attach's re-harvest. `from_review` lets the
+                # app label it, and the stop button routes via stop_to_review /
+                # abort_execution which now accept review status (§10).
+                running.append(
+                    {
+                        "id": req.id,
+                        "name": name,
+                        "session_id": resume_sid,
+                        "short_id": short_id,
+                        "copy_cmd": copy_cmd,
+                        "agent_name": agent_name,
+                        "cwd": cwd,
+                        "state": "working",
+                        "started_at": (agent or {}).get("started_at"),
+                        "summary": req.summary or None,
+                        "plan": _as_list(req.plan),
+                        "dod": list(req.definition_of_done or []),
+                        "log": ex.get("log"),
+                        "dispatched_at": _epoch(ex.get("dispatched_at")),
+                        "delivery_mode": _delivery_mode(req),
+                        "last_error": None,
+                        "last_error_id": None,
+                        # carried so nothing is lost while it re-runs; the app
+                        # can hint "已交付过·再运行" off from_review.
+                        "from_review": True,
+                        "delivered_summary": ex.get("delivered_summary"),
+                        "final_draft": ex.get("final_draft"),
+                    }
+                )
             elif req.status == State.REVIEW.value or state in _DONE_STATES:
                 # §11 待验收 — draft ready, awaiting Zelin's ✓/↩︎
                 # (agent-done-while-still-executing lands here too, covering the

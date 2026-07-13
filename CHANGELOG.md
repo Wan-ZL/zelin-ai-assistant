@@ -27,6 +27,237 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.29.0] - 2026-07-13
+
+### Added
+
+- **Cross-platform release bundles — every Release now ships install packages
+  for all three platforms.** Previously only macOS got a downloadable artifact
+  (`.pkg` + `.zip`); Windows/Linux friends were told to `git clone`. Now the
+  release workflow also produces two portable source bundles —
+  `ZelinAIAssistant-<tag>-linux.tar.gz` and `ZelinAIAssistant-<tag>-windows.zip`
+  — each a self-contained tree of exactly the files the headless pipeline needs
+  (`act/`, `ingest/`, `webui/`, `config/`, `config.example.yaml`,
+  `requirements-cloud.txt`, `docs/`, the READMEs, `LICENSE.md`, `CHANGELOG.md`,
+  `uninstall.sh`) plus the platform install script (`install-linux.sh` /
+  `install.ps1`). The Swift app sources (`mac/`, `ios/`, `shared/`) and repo
+  plumbing are excluded. A friend downloads the archive, unpacks it under a
+  single `ZelinAIAssistant-<tag>/` dir, and runs the install script from the
+  extracted tree (both locate the repo root via their own path) — no git clone
+  required. Built by the new `scripts/package-portable.sh` (deterministic file
+  set, no compilation, `tar` + `zip` only). Both archives are covered by the
+  release `checksums.sha256` and the SLSA build-provenance attestation, and the
+  bilingual release notes now point macOS / Windows / Linux users at their
+  respective download. `docs/LINUX.md` and `docs/WINDOWS.md` document the new
+  download-the-bundle install path alongside the existing git-clone one.
+
+## [0.28.1] - 2026-07-12
+
+### Fixed
+
+- **A 待验收 card whose session is actively working again now shows in 运行中.**
+  Previously, if you `claude attach`ed back into a delivered card's session and
+  kicked off real work (e.g. a follow-up deep-research), the card sat in 待验收
+  behind a calm "会话有新活动" badge while the 运行中 lane read 0 — the board
+  didn't reflect that a session was actively burning compute. Now such a card is
+  projected into the 运行中 lane (`from_review`) while its session runs, and
+  falls straight back to 待验收 (with a refreshed draft) the moment the session
+  settles. This is a **presentation-only** reroute — the on-disk status stays
+  `review`, so the ✓验收/↩︎打回 verdict and the delivered draft are preserved and
+  auto-resume is never triggered. The 停止 button on these cards now works:
+  `stop_to_review` / `abort_execution` accept `review` status (CONTRACT §30 /
+  §10 v0.28.1 add-only), giving review cards their first in-app stop path.
+
+## [0.28.0] - 2026-07-12
+
+### Added
+
+- **Deliverable output format setting (Markdown / HTML).** New Settings control
+  (通用 → 交付物默认格式 / General → Deliverable format) that picks the markup
+  language the assistant drafts documents, reports and the `FINAL DRAFT` block
+  in. `markdown` is the default and leaves behavior **byte-identical** to before
+  (the executor prompt is unchanged); `html` injects an HTML-authoring
+  instruction so drafts come back as valid, self-contained HTML instead of
+  Markdown. Persists as the `default_output_format` key (config.yaml top-level
+  or `settings_overrides.json`, diff-written vs the config layer); invalid/typo
+  values fail safe to `markdown` (CONTRACT §15 v0.28 add-only).
+
+## [0.27.0] - 2026-07-12
+
+### Added
+
+- **Multi-device cloud sync (Mac side, OPT-IN, OFF by default).** A new `syncd`
+  daemon relays the board to your other devices via Supabase with **per-pairing
+  end-to-end encryption** — the server (and the maintainer) can't read card
+  bodies. Paired with it, a companion **iOS app** (in `ios/`, build in Xcode)
+  lets you view and approve from your phone.
+- Shared Swift contract types moved to `shared/` and are now compiled into both
+  the Mac and iOS apps, so the two stay byte-for-byte in agreement on the wire
+  format.
+
+### Note
+
+- **Beta / setup required.** Nothing syncs until you (a) deploy the Supabase
+  migrations + enable Auth (see the wake-up steps), (b) opt in + pair, and
+  (c) build the iOS app with your Apple ID.
+- **Honest limits (also shown at the consent gate):**
+  - End-to-end encryption hides card **bodies**, but not **metadata**: the
+    number and size of cards leak from the encrypted blob's size. Anyone who can
+    see your Supabase rows learns roughly how much you have on the board, never
+    what it says.
+  - The device-token Edge Function mints an **HS256** (symmetric) token. It
+    **fails closed** if your Supabase project's JWT signing is asymmetric — so
+    verify your project's JWT signing config at deploy time before relying on it.
+  - `cryptography` is an **optional dependency** — it is only needed for cloud
+    sync (`pip install -r requirements-cloud.txt`). A local-only install never
+    imports it and is unaffected.
+
+## [0.26.0] - 2026-07-12
+
+### Added
+
+- **Windows support (beta).** The headless Python core now runs under **Task
+  Scheduler** — `install.ps1` renders and registers the daemon, radar, web-UI,
+  and digest tasks — with the **web dashboard** (`python -m act.webui`) as the
+  Windows UI. Notifications use **native Windows toasts**, and `doctor` now
+  understands scheduled tasks (task state parsed from `schtasks`) alongside the
+  existing launchd and systemd checks.
+
+### Fixed
+
+- POSIX-only `fcntl` import crashed module import on Windows; the import is now
+  guarded so the whole test suite can be imported (and run) on Windows.
+
+### Note
+
+- **Windows is beta, like Linux.** Screen-capture ingest is deferred (the web
+  dashboard and the ingest cron chain are the Windows surface for now), and Task
+  Scheduler task loading / toast notifications / the daemon's `PATH` still need
+  testing on a real machine — friends are welcome to file PRs. Task Scheduler's
+  restart-on-failure handling is also weaker than launchd/systemd.
+
+## [0.25.0] - 2026-07-12
+
+### Added
+
+- **Linux support (beta).** The headless Python core now runs under **systemd
+  user units** — `install-linux.sh` renders and installs the daemon, radar,
+  web-UI, and digest units — with the **web dashboard** (`python -m act.webui`)
+  as the Linux UI. `doctor` now understands systemd (unit / timer state parsed
+  from `systemctl --user`) alongside the existing launchd checks, and the test
+  suite now also runs on **Windows** in CI (non-blocking for now) as the
+  cross-platform foundation.
+
+### Note
+
+- **Linux/Windows are beta.** Screen-capture ingest is deferred (the web
+  dashboard and the ingest cron chain are the Linux surface for now), and
+  systemd unit loading / desktop notifications / the daemon's `PATH` still need
+  testing on a real machine — friends are welcome to file PRs.
+
+## [0.24.0] - 2026-07-12
+
+### Added
+
+- **Local web dashboard (`python -m act.webui`).** A cross-platform,
+  browser-based view of the task board that reads the same dashboard and writes
+  the same approvals as the Mac app — so you can watch and steer the board from
+  any browser, not just the menu-bar UI. It binds to `127.0.0.1` with a
+  per-install token plus Host/Origin checks, so it is not reachable from other
+  machines. This is the first step toward Windows/Linux support (the UI has been
+  macOS-only until now).
+
+### Fixed
+
+- **`bash mac/build.sh` no longer fails on a fresh checkout without Sparkle.**
+  When the Sparkle framework wasn't vendored, expanding the empty
+  `SPARKLE_FLAGS` array under `set -u` on macOS's default bash 3.2 raised an
+  `unbound variable` error, breaking the "builds fine without the framework"
+  fallback. The array expansions are now bash-3.2-safe.
+
+## [0.23.0] - 2026-07-12
+
+### Added
+
+- **One-click auto-update via Sparkle + EdDSA.** The app now downloads,
+  verifies (EdDSA signature **and** code-signature), installs, and relaunches
+  the new version with a single click — or fully automatically in the
+  background — so there's no more manual trip to GitHub to grab the `.pkg`. The
+  existing 「检查更新」/「新版本可用」 surfaces (About-page update row and the
+  menu line) are wired straight to it. It stays **free**: updates are
+  authenticated with the stable self-signed code-signing identity plus an EdDSA
+  appcast signature, so no paid Developer ID is needed. Because the update is a
+  `.pkg`, the installer asks for your admin password **once per update** (the
+  same prompt as a manual install); your settings and task data are preserved
+  across the upgrade. **Note the transition:** the *first* Sparkle-enabled
+  version (v0.23.0) must still be installed manually once — every update after
+  that is one-click / automatic ([`Closes #38`](https://github.com/Wan-ZL/zelin-ai-assistant/issues/38)).
+
+## [0.22.0] - 2026-07-12
+
+### Added
+
+- **Multi-card merge selection now works across all board lanes.** The
+  merge-selection affordance is no longer limited to a single lane — you can
+  select cards in 储备 / 提案 / 运行中 / 待验收 / 已验收 and request a merge
+  proposal across them (legality of cross-status merges stays with the backend
+  `merge_review`).
+- **Running cards now stop into review instead of vanishing.** The single
+  「停止」 on a running card opens a 退回提案 / 去待验收 choice:
+  `stop_to_review` stops the agent but **keeps what it produced** and lands the
+  card in 待验收 for you to check, instead of discarding the run (退回提案 /
+  `abort_execution`) or skipping review entirely.
+
+### Changed
+
+- **Backlog lane renamed 备选 → 储备** (and its proposal defer button
+  存备选 → 入库) — a display rename of the former debt/backlog lane; the
+  underlying `defer` action and `detected` status are unchanged.
+- **Proposal decision buttons are back to one compact row** (批准 · 拒绝 ·
+  修改 · 入库), with 展开 demoted to a right-aligned disclosure link rather than
+  competing as a fifth button.
+
+### Known limitation
+
+- Stopping an agent **externally** inside Claude Code can still trigger
+  auto-resume; use the in-app 「停止」 button to reliably land the card in
+  待验收 (follow-up tracked).
+
+## [0.21.0] - 2026-07-12
+
+### Added
+
+- **Settings redesign — collapsible sections + fuzzy search.** Settings is now
+  organized into collapsible sections (**default collapsed**) with a search box
+  that fuzzy-matches setting names and reveals the matching sections, so the
+  growing list of integrations stays scannable.
+
+### Removed
+
+- **⚠️ iMessage transport removed, and Slack's phone-approval commands /
+  reactions removed** — a user-visible capability removal. Dropped: the iMessage
+  radar (`act/radar_imessage.py` + its launchd agent), the `phone_channel` /
+  `imessage_self_handle` config, all outbound notification mirroring to the
+  Slack self-DM, the `批准/拒绝/打回/验收 R-xxx` phone command surface, and the
+  ✅-reaction approval poll. Upgrades auto-unload the stale `imessageradar`
+  launchd agent.
+  - **Mobile approval now happens in the Mac app** — it is the sole approval
+    surface (a dedicated **iOS app is planned**). Migration: approve/accept
+    cards in the Mac app.
+  - **Slack self-DM QUICK-CAPTURE is KEPT** — only the phone-approval commands
+    were removed. DM yourself a one-liner (or a photo/video) and it still
+    triages into a card; self-DM is now a one-way capture inbox (the assistant
+    no longer posts replies or notifications back into it) and remains the
+    mobile-capture path until the iOS app ships. Slack ingest (DMs / group DMs /
+    @mentions + MCP fallback) is unchanged.
+
+### Changed
+
+- **Permissions: Full Disk Access row repurposed for scheduled jobs.** With the
+  iMessage radar gone, the FDA capability row no longer references Messages; it
+  now explains that Full Disk Access is for scheduled background jobs
+  (cron/launchd) reading protected data while the app isn't open.
+
 ## [0.20.1] - 2026-07-12
 
 ### Fixed
@@ -781,7 +1012,14 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.2...v0.20.0
 [0.19.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.19.1...v0.19.2

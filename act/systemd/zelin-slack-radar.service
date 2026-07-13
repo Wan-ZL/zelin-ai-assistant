@@ -1,0 +1,18 @@
+# TEMPLATE: rendered by install-linux.sh (see act/lib/systemd.py). Driven by
+# zelin-slack-radar.timer — a oneshot pass, the Linux mirror of
+# act/launchd/com.zelin.aiassistant.slackradar.plist.
+#
+# slackradar — captures Slack DMs / group DMs / watched-channel @mentions (and
+# self-DM quick capture, the phone channel) into requirement cards. No-ops until
+# a Slack user token exists at sources.slack_token_path (docs/SLACK_SETUP.md).
+# Network + state/ only — fully portable.
+[Unit]
+Description=Zelin AI Assistant — Slack radar scan (one pass)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m act.radar_slack --once

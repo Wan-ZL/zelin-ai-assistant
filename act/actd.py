@@ -109,17 +109,26 @@ def process_inbox() -> int:
             decision = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             _log(f"inbox: bad decision file {path.name}: {e}")
+            # §5.4 ack: a terminal disposition even when unreadable, so the phone
+            # never sees a stuck 'delivered' → false "未送达" retry loop.
+            _write_applied_ack(path.stem, "bad_json")
             _safe_unlink(path)
             continue
 
         req_id = decision.get("id")
         action = decision.get("action")
         comment = decision.get("comment")
+        # §5.4 sync preconditions carried by the phone (absent for Mac-app files):
+        # expected_status pins the card state the phone SAW, board_seq the board
+        # revision — a stale action whose precondition no longer holds is a no-op.
+        expected_status = decision.get("expected_status")
+        board_seq = decision.get("board_seq")
 
         # §10 capture: no req id — the app popover's one-liner quick capture.
         if action == "capture":
             _apply_capture(decision.get("text"))
             processed += 1
+            _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
 
@@ -128,6 +137,7 @@ def process_inbox() -> int:
         if action == "feedback":
             _apply_feedback(decision)
             processed += 1
+            _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
 
@@ -137,11 +147,13 @@ def process_inbox() -> int:
         if action == "merge_review":
             _apply_merge_review(decision.get("ids"))
             processed += 1
+            _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
         if action in ("merge_apply", "merge_dismiss"):
             _apply_merge_decision(action, decision.get("id"))
             processed += 1
+            _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
 
@@ -149,6 +161,7 @@ def process_inbox() -> int:
         if action == "import_claude_sessions":
             _apply_claude_import(decision)
             processed += 1
+            _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
 
@@ -158,6 +171,7 @@ def process_inbox() -> int:
         if action == "weekly_digest_now":
             _spawn_weekly_digest()
             processed += 1
+            _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
 
@@ -165,8 +179,12 @@ def process_inbox() -> int:
 
         if req is None:
             _log(f"inbox: decision for unknown req {req_id!r} ({action}) — dropped")
+            # §5.4 ack: the card is gone → the phone must be told "该卡已不存在"
+            # (result_status=unknown), never left guessing on a stuck 'delivered'.
+            _write_applied_ack(path.stem, "unknown")
         else:
-            _apply_decision(req, action, comment)
+            result_status = _apply_decision(
+                req, action, comment, expected_status, board_seq)
             # the comment (打回反馈/修改方向) is user-typed content —
             # attached only behind the capture_input gate, clipped.
             c = (comment or "").strip()
@@ -175,10 +193,91 @@ def process_inbox() -> int:
                 status=str(req.status), has_comment=bool(c) or None,
                 comment=(analytics.clip_content(c)
                          if c and analytics.content_gate() else None))
+            # §5.4 ack: durable "did it land?" truth — running (applied a real
+            # change) | noop (stale/idempotent guard) | unknown (bad action).
+            _write_applied_ack(path.stem, result_status)
             processed += 1
 
         _safe_unlink(path)
     return processed
+
+
+# --------------------------------------------------------------------------- #
+# §5.4 sync ack ledger — one line per terminal inbox disposition.
+# --------------------------------------------------------------------------- #
+# M2 sync-active cache — keyed on state/sync.json's stat, so an opt-in/opt-out
+# flip (syncd rewrites the file) is picked up without a daemon restart, while a
+# non-sync install pays only one cheap os.stat() per call (never a JSON parse).
+_SYNC_ACTIVE_CACHE: Optional[tuple] = None  # (stat_key, is_active)
+
+
+def _sync_active() -> bool:
+    """M2: True only when cloud sync is opted in (``state/sync.json`` exists with
+    ``mode == "cloud"``). Gates ``_write_applied_ack`` so a purely local Mac/web
+    user never creates ``state/sync/`` nor grows ``applied.jsonl``; a synced user
+    still gets every ack (the ack→delivered/applied flow syncd relies on)."""
+    global _SYNC_ACTIVE_CACHE
+    path = config.STATE_DIR / "sync.json"
+    try:
+        st = path.stat()
+        stat_key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stat_key = None
+    if _SYNC_ACTIVE_CACHE is not None and _SYNC_ACTIVE_CACHE[0] == stat_key:
+        return _SYNC_ACTIVE_CACHE[1]
+    active = False
+    if stat_key is not None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            active = (isinstance(data, dict)
+                      and str(data.get("mode") or "").lower() == "cloud")
+        except (OSError, ValueError):
+            active = False
+    _SYNC_ACTIVE_CACHE = (stat_key, active)
+    return active
+
+
+def _write_applied_ack(action_id: str, result_status: str) -> None:
+    """Append an ack line to ``state/sync/applied.jsonl`` (§5.4).
+
+    ``syncd`` tails this file and PATCHes ``inbox_actions.status='applied'`` +
+    ``result_status`` from it, so a phone-issued action reaches a DURABLE
+    terminal state for EVERY outcome — not just success, but a guarded no-op
+    (result_status=noop), an unknown/gone card (unknown) and an unreadable file
+    (bad_json) too. Without this the phone can only infer application from a
+    deleted inbox file (``_safe_unlink`` runs on every path), which is a
+    false-negative retry loop / a false 已生效.
+
+    M2: no-op unless cloud sync is ACTIVE — a local-only install has no phone to
+    ack to, so it must not create ``state/sync/`` or grow ``applied.jsonl``.
+
+    ``action_id`` is the inbox file stem (= the cloud idempotency key for synced
+    actions; a random Mac-app uuid for local ones, which simply matches no cloud
+    row — a harmless PATCH of 0 rows). Runs on macOS/Linux too; best-effort,
+    never raises into the daemon pass.
+    """
+    if not _sync_active():
+        return
+    try:
+        d = config.STATE_DIR / "sync"
+        d.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(
+            {"action_id": str(action_id), "result_status": str(result_status),
+             "ts": _iso_now()},
+            ensure_ascii=False)
+        with (d / "applied.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+
+
+def _precondition_ok(req: Requirement, expected_status: Optional[str]) -> bool:
+    """§5.4 stale-guard: True unless the phone pinned an ``expected_status`` that
+    no longer matches the card's current status (the card moved since the phone
+    saw it — apply would rip a running/moved card, so caller no-ops)."""
+    if expected_status is None:
+        return True
+    return str(req.status) == str(expected_status)
 
 
 def _spawn_weekly_digest() -> None:
@@ -473,6 +572,31 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             str(sec_ex.get("delivered_summary") or sec.title or "").split()).strip()
         tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}"
         primary.notes = (primary.notes + "\n" + tag).strip() if primary.notes else tag
+        # Preserve a delivered secondary's FULL deliverable on the primary.
+        # MERGED is terminal + UI-unreachable (no un-merge), so a finished
+        # final_draft / delivered_summary on the secondary would otherwise be
+        # lost from the UI — the notes breadcrumb above is only a ~200-char
+        # summary. If the secondary carried finished work, carry the full,
+        # UNTRUNCATED content onto the primary's
+        # execution.merged_deliverables list (add-only — never touches the
+        # primary's OWN delivered_summary/final_draft). At minimum this keeps
+        # the deliverable verbatim in the primary's registry YAML.
+        sec_final = str(sec_ex.get("final_draft") or "").strip()
+        sec_delivered = str(sec_ex.get("delivered_summary") or "").strip()
+        if sec_final or sec_delivered:
+            prim_ex = dict(primary.execution or {})
+            carried = list(prim_ex.get("merged_deliverables") or [])
+            carried.append({
+                "id": sec.id,
+                "title": sec.title or "",
+                "delivered_summary": sec_ex.get("delivered_summary"),
+                "final_draft": sec_ex.get("final_draft"),
+                "merged_at": _iso_now(),
+            })
+            prim_ex["merged_deliverables"] = carried
+            primary.execution = prim_ex
+            _log(f"merge: {sec.id} deliverable carried onto {primary.id} "
+                 f"(execution.merged_deliverables, n={len(carried)})")
         # 副卡活 session best-effort 停止（失败只记日志，绝不阻塞合并落账）
         sec_sid = sec_ex.get("session_id")
         if sec_sid and executor is not None:
@@ -513,7 +637,10 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
     # 主卡其他状态：notes 已留痕，不动其 session（契约 四）。
 
 
-def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[str]) -> None:
+def _apply_decision(req: Requirement, action: Optional[str],
+                    comment: Optional[str],
+                    expected_status: Optional[str] = None,
+                    board_seq=None) -> str:
     # Full inbox action set (CONTRACT §10) — this elif chain IS the action
     # whitelist/validation; anything else falls through to the logged no-op else:
     #   approve | reject(->trash) | comment | raise(debt->proposal)
@@ -522,18 +649,25 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
     #   | done_external(card_sent|review|approved|executing->delivered)
     #                                             (v0.10.2, 扩展 v0.12)
     #   | abort_execution(approved|executing->card_sent)      (v0.10.2)
+    #   | stop_to_review(executing|approved->review, 收下成果待验收)
     #   | revert_review(delivered->review)                    (v0.10.2)
     #   | defer(card_sent->detected, back to the backlog)     (v0.18)
     #   | archive(delivered|detected->archived, relocate)     (v0.20.0)
     #   | unarchive(archived->prev_status, back to active)    (v0.20.0)
     # v0.10.2 公共规则：状态不匹配的逆向动作 = 幂等 no-op + log（防连点/迟到 inbox）。
+    #
+    # Returns a §5.4 result_status for the sync ack ledger:
+    #   "running" = applied a real state change; "noop" = guarded/idempotent/
+    #   stale no-op; "unknown" = unrecognised action. (Local Mac-app callers may
+    #   ignore the return.) The board_seq precondition rides in the AAD + inbox
+    #   file for provenance; expected_status is the enforced stale-guard (§5.4).
     if action == "approve":
         # idempotent: a double-click (or re-approve while already running) must
         # not re-dispatch and spawn a duplicate agent.
         if str(req.status) in (State.APPROVED.value, State.EXECUTING.value,
                                State.REVIEW.value, State.DELIVERED.value):
             _log(f"inbox: {req.id} approve ignored (already {req.status})")
-            return
+            return "noop"
         req.set_status(State.APPROVED)
         # approval timestamp (add-only bookkeeping, like accepted_at) — lets
         # the dispatch event report wait_s (approve -> launch latency).
@@ -546,52 +680,101 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         # already-running card never reach here, so only real approvals count.
         analytics.log_first("milestone_first_approval", req=req.id)
         _log(f"inbox: {req.id} approved")
+        return "running"
     elif action == "reject":
         registry.trash(req, "rejected")  # recoverable, not a bare rejected status
         _log(f"inbox: {req.id} rejected -> trash")
+        return "running"
     elif action == "comment":
+        # §5.4 stale-guard (SYNC only): when the phone pinned an expected_status
+        # that no longer matches, a stale 修改 must not rip a moved card back to
+        # card_sent. LOCAL callers (Mac app / web) send no expected_status, so
+        # this passes and comment applies unconditionally exactly as on main —
+        # the web renders 修改 on RAISING/processing cards too, and folding one
+        # back to card_sent for re-approval is the intended local behavior.
+        if not _precondition_ok(req, expected_status):
+            _log(f"inbox: {req.id} comment stale "
+                 f"(expected {expected_status}, is {req.status}) — no-op")
+            return "noop"
         _fold_comment(req, comment)
         req.set_status(State.CARD_SENT)  # stays pending, re-approval
         save(req)
         _log(f"inbox: {req.id} comment folded — re-approval pending")
+        return "running"
     elif action == "raise":
         if analyze is None:
             _log(f"inbox: {req.id} raise requested but analyze unavailable — ignored")
-            return
+            return "noop"
+        # §5.4 stale-guard (SYNC only): a phone-pinned expected_status that no
+        # longer matches → no-op (never re-raise a card the board already moved
+        # past the backlog). LOCAL callers send no expected_status, so this
+        # passes and raise applies unconditionally as on main.
+        if not _precondition_ok(req, expected_status):
+            _log(f"inbox: {req.id} raise stale "
+                 f"(expected {expected_status}, is {req.status}) — no-op")
+            return "noop"
         # Fast: just mark it 'raising' so it shows a processing spinner in 待审批
         # immediately. The slow claude -p expansion happens in process_raising(),
         # one item per loop pass, so 4 raises don't freeze the daemon for minutes.
         req.set_status(State.RAISING)
         save(req)
         _log(f"inbox: {req.id} -> raising (queued for AI expansion)")
+        return "running"
     elif action == "trash":
         registry.trash(req, "deleted")
         _log(f"inbox: {req.id} trashed (deleted)")
+        return "running"
     elif action == "restore":
         registry.restore(req)
         _log(f"inbox: {req.id} restored -> {req.status}")
+        return "running"
     elif action == "pin":
         registry.pin(req)
         _log(f"inbox: {req.id} pinned permanent")
+        return "running"
     elif action == "accept":
         # §11 验收通过 -> delivered（归档）；accepted_at 供 completed 行显示（§2）
+        # §5.4 stale-guard (SYNC only): a phone-pinned expected_status mismatch
+        # → no-op (a stale tap must not re-deliver a card that already moved).
+        # LOCAL callers send no expected_status, so accept applies exactly as on
+        # main — CRUCIALLY the 待验收 lane also holds cards whose on-disk status
+        # is still EXECUTING (agent done, not yet promoted: process_inbox runs
+        # BEFORE reconcile_executing), so a local 验收 must land regardless of
+        # the current status. A hard REVIEW-only precondition would silently
+        # no-op those and, with auto_resume:false, break accept forever.
+        if not _precondition_ok(req, expected_status):
+            _log(f"inbox: {req.id} accept stale "
+                 f"(expected {expected_status}, is {req.status}) — no-op")
+            return "noop"
         req.set_status(State.DELIVERED)
         ex = dict(req.execution or {})
         ex["accepted_at"] = _iso_now()
         req.execution = ex
         save(req)
         _log(f"inbox: {req.id} accepted -> delivered")
+        return "running"
     elif action == "rework":
         # §11 打回：把 Zelin 的反馈送回原 session 继续（executor.rework 处理
         # stop-idle-then-resume），状态回 executing
         if executor is None:
             _log(f"inbox: {req.id} rework requested but executor unavailable — ignored")
-            return
+            return "noop"
         if not (comment or "").strip():
             _log(f"inbox: {req.id} rework with empty feedback — ignored")
-            return
+            return "noop"
+        # §5.4 stale-guard (SYNC only): a phone-pinned expected_status mismatch
+        # → no-op (a stale tap must not reopen/double-run a card that moved).
+        # LOCAL callers send no expected_status, so rework applies as on main —
+        # including the 待验收 EXECUTING-done case (process_inbox runs BEFORE
+        # reconcile_executing promotes it to review). executor.rework itself
+        # handles stop-idle-then-resume, so an on-disk EXECUTING card is safe.
+        if not _precondition_ok(req, expected_status):
+            _log(f"inbox: {req.id} rework stale "
+                 f"(expected {expected_status}, is {req.status}) — no-op")
+            return "noop"
         ok = executor.rework(req, comment)
         _log(f"inbox: {req.id} rework sent (ok={ok}) — back to executing")
+        return "running"
     elif action == "done_external":
         # v0.10.2 已办完（系统外完成）：card_sent|review -> delivered。有活
         # session 不动它 —— 人做完了，AI 会话自然闲置。
@@ -606,7 +789,7 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         prev_status = str(req.status)
         if prev_status not in allowed:
             _log(f"inbox: {req.id} done_external ignored (status={req.status}) — no-op")
-            return
+            return "noop"
         ex = dict(req.execution or {})
         sid = ex.get("session_id")
         if prev_status == State.EXECUTING.value and sid and executor is not None:
@@ -632,13 +815,18 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         req.set_status(State.DELIVERED)
         save(req)
         _log(f"inbox: {req.id} done_external ({prev_status}) -> delivered")
+        return "running"
     elif action == "abort_execution":
         # v0.10.2 停止并退回待审批：approved|executing -> card_sent。活 session
         # 先 best-effort 停止（stop 失败只记日志，绝不阻塞状态回退）；session_id
         # 归档到 aborted_session_id 后删除，保证重新批准时干净重派发。
-        if str(req.status) not in (State.APPROVED.value, State.EXECUTING.value):
+        # v0.28.1 §30: review is allowed too — a 待验收 card routed into 运行中
+        # by attach-reactivated session activity; 「退回提案」 discards this
+        # reattached run and kicks it back to card_sent for a fresh decision.
+        if str(req.status) not in (State.APPROVED.value, State.EXECUTING.value,
+                                   State.REVIEW.value):
             _log(f"inbox: {req.id} abort_execution ignored (status={req.status}) — no-op")
-            return
+            return "noop"
         ex = dict(req.execution or {})
         sid = ex.get("session_id")
         if sid and executor is not None:
@@ -656,11 +844,64 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         req.set_status(State.CARD_SENT)
         save(req)
         _log(f"inbox: {req.id} abort_execution -> card_sent")
+        return "running"
+    elif action == "stop_to_review":
+        # 手动停止转待验收（「去待验收」）：executing（+ approved）-> review。
+        # 三个「停」动作的分工：done_external =「我在系统外做完了」直接落
+        # delivered 跳过验收；abort_execution =「不要了」丢弃成果退回待审批；
+        # stop_to_review =「停下来我看看它做了什么」—— 停 agent、收下成果、
+        # 落 待验收 让 Zelin ✓验收/↩︎打回，绝不跳过验收。
+        #   executing 且有 session：先 best-effort harvest_delivery（非空才写
+        #   delivered_summary/final_draft），再 best-effort stop_session 停掉
+        #   跑着的 agent；两步都吞异常只记日志，绝不阻塞状态落 review。
+        #   approved（排队未派发，无 session）：harvest 为空，直接落 review
+        #   （空交付物，待验收卡照常渲染，不崩）。
+        #   review（v0.28.1 §30：会话有新活动被路由进「运行中」的卡，registry
+        #   仍是 review、带活 session）：停掉 attach 回流的 session、重新收割成果、
+        #   留在 review —— 「去待验收」在这种卡上就是「停下我看看它这轮跑了什么」。
+        allowed = (State.EXECUTING.value, State.APPROVED.value, State.REVIEW.value)
+        prev_status = str(req.status)
+        if prev_status not in allowed:
+            _log(f"inbox: {req.id} stop_to_review ignored (status={req.status}) — no-op")
+            return "noop"
+        ex = dict(req.execution or {})
+        sid = ex.get("session_id")
+        # harvest whenever a live session exists (executing OR a review card with
+        # an attach-reactivated session); approved has no sid so this skips.
+        if sid and executor is not None:
+            try:
+                harvested = executor.harvest_delivery(str(sid)) or {}
+                if harvested.get("delivered_summary"):
+                    ex["delivered_summary"] = harvested["delivered_summary"]
+                if harvested.get("final_draft"):
+                    ex["final_draft"] = harvested["final_draft"]
+            except Exception as e:  # noqa: BLE001 - harvest is best-effort
+                _log(f"inbox: {req.id} stop_to_review — "
+                     f"harvest_delivery({sid}) failed (ignored): {e}")
+            try:
+                stopped = executor.stop_session(str(sid))
+                _log(f"inbox: {req.id} stop_to_review — stop_session({sid}) -> {stopped}")
+            except Exception as e:  # noqa: BLE001 - best-effort, never block review write
+                _log(f"inbox: {req.id} stop_to_review — "
+                     f"stop_session({sid}) failed (ignored): {e}")
+        # mirror the natural executing->review transition's review fields
+        # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
+        # renders (dashboard reads execution.review_at) and a later purge is
+        # never mistaken for a crash needing auto-resume.
+        ex["done"] = True
+        ex["review_at"] = _iso_now()
+        req.execution = ex
+        tag = "[stopped by user] 手动停止，已收下成果待验收"
+        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        req.set_status(State.REVIEW)
+        save(req)
+        _log(f"inbox: {req.id} stop_to_review ({prev_status}) -> review")
+        return "running"
     elif action == "revert_review":
         # v0.10.2 退回待验收：delivered -> review（验收撤回）。
         if str(req.status) != State.DELIVERED.value:
             _log(f"inbox: {req.id} revert_review ignored (status={req.status}) — no-op")
-            return
+            return "noop"
         ex = dict(req.execution or {})
         ex.pop("accepted_at", None)
         ex["reverted_at"] = _iso_now()
@@ -668,6 +909,7 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         req.set_status(State.REVIEW)
         save(req)
         _log(f"inbox: {req.id} revert_review -> review")
+        return "running"
     elif action == "defer":
         # v0.18 存备选：card_sent -> detected（退回备选）。Deliberately NOT
         # trash: a deferred card keeps its expanded summary/plan/sources/
@@ -678,12 +920,13 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         # is the v0.10.2 idempotent no-op. Undo = the backlog lane's raise.
         if str(req.status) != State.CARD_SENT.value:
             _log(f"inbox: {req.id} defer ignored (status={req.status}) — no-op")
-            return
-        tag = "[deferred] 暂缓，退回备选"
+            return "noop"
+        tag = "[deferred] 暂缓，入库"
         req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
         req.set_status(State.DETECTED)
         save(req)
         _log(f"inbox: {req.id} defer -> detected (backlog)")
+        return "running"
     elif action == "archive":
         # v0.20.0 封存线程 (§3.7): archive is reachable ONLY from 已验收
         # (delivered) or 备选 (detected) per Q2; anything else is the v0.10.2
@@ -691,19 +934,22 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         # stamps prev_status/archived_at/archive_reason.
         if str(req.status) not in (State.DELIVERED.value, State.DETECTED.value):
             _log(f"inbox: {req.id} archive ignored (status={req.status}) — no-op")
-            return
+            return "noop"
         prev = str(req.status)
         registry.archive(req, reason="user")
         _log(f"inbox: {req.id} archived (from {prev})")
+        return "running"
     elif action == "unarchive":
         # v0.20.0 取消归档 (§3.7): archived -> prev_status, file back to active dir.
         if str(req.status) != State.ARCHIVED.value:
             _log(f"inbox: {req.id} unarchive ignored (status={req.status}) — no-op")
-            return
+            return "noop"
         registry.unarchive(req)
         _log(f"inbox: {req.id} unarchived -> {req.status}")
+        return "running"
     else:
         _log(f"inbox: {req.id} unknown action {action!r} — ignored")
+        return "unknown"
 
 
 def _fold_comment(req: Requirement, comment: Optional[str]) -> None:
@@ -1018,7 +1264,8 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     p_ni, c_ni = _by_id(prev.get("needs_input", [])), _by_id(curr.get("needs_input", []))
     p_rev, c_rev = _by_id(prev.get("review", [])), _by_id(curr.get("review", []))
 
-    # 3-tuples (title, body, req) so Slack ✅-reaction knows which R-id to approve
+    # 3-tuples (title, body, req); req is carried for caller compatibility (the
+    # phone ✅-reaction approval surface was removed in v0.21 — Mac app only).
     # new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
     # so Zelin knows it's a card he already accepted, not a brand-new find.
     for rid, item in c_na.items():
@@ -1033,6 +1280,13 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     # executing -> review (§11 draft ready, awaiting acceptance)
     for rid, item in c_rev.items():
         if rid not in p_rev and rid in p_run:
+            # §30 v0.28.1: skip when the previous running row was a `from_review`
+            # re-run (an already-delivered 待验收 card whose attach-reactivated
+            # session settled back to review). It was NOT a fresh delivery — on
+            # main it never left review[] and never notified — so re-firing
+            # "待验收：AI 已交付草稿" on every working↔idle bounce is spurious spam.
+            if p_run.get(rid, {}).get("from_review"):
+                continue
             t, b = notify.msg_review_ready(item.get("name") or rid)
             msgs.append((t, b, rid))
 

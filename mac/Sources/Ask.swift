@@ -96,7 +96,7 @@ final class AskModel: ObservableObject {
         Analytics.firstReach("ask")
         Self.logGated("ask_submit", question: text, fields: ["chars": text.count])
 
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let root = AppPaths.stateRoot
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let p = Process()

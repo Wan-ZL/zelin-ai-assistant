@@ -382,15 +382,12 @@ class SlackNativeTriageTestCase(TriageBase):
 
     def setUp(self):
         super().setUp()
-        self._orig = (radar_slack.get_token, radar_slack.verify_token,
-                      radar_slack.find_self_dm)
+        self._orig = (radar_slack.get_token, radar_slack.verify_token)
         radar_slack.get_token = lambda cfg=None: "xoxp-test"
         radar_slack.verify_token = lambda token: {"ok": True, "user_id": "U1"}
-        radar_slack.find_self_dm = lambda token, my_id: None
 
     def tearDown(self):
-        (radar_slack.get_token, radar_slack.verify_token,
-         radar_slack.find_self_dm) = self._orig
+        (radar_slack.get_token, radar_slack.verify_token) = self._orig
 
     def _scan(self, llm) -> int:
         return radar_slack.scan(
@@ -672,8 +669,8 @@ class QuickCaptureLosslessTestCase(TriageBase):
              "plan": ["等 X 改完", "确认权限生效"],
              "_text": "X 说今晚会改权限，记一下"}, self.cfg)
         (req,) = registry.load_all()
-        self.assertEqual(req.status, "detected")       # 备选, not lost
-        self.assertIn("备选", reply)
+        self.assertEqual(req.status, "detected")       # 储备, not lost
+        self.assertIn("储备", reply)
         self.assertIn(req.id, reply)
 
     def test_default_capture_still_files_card_sent(self):

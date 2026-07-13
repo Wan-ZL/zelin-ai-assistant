@@ -1,4 +1,4 @@
-"""Slack capture source for the requirement radar + the phone command surface.
+"""Slack capture source for the requirement radar + self-DM quick capture.
 
 Watches the things that need Zelin's attention on Slack — DMs, group DMs, and
 @mentions in watched channels — and turns the actionable ones into registry
@@ -12,18 +12,15 @@ informational or future-conditional messages never card; follow-ups of
 delivered/merged cards get improvement_of lineage instead of isolated new
 cards; a second source of the same event folds into the open follow-up.
 
-v0.4 (CONTRACT §13) — the SELF-DM (the im channel with yourself) is the phone
-command channel. Zelin's OWN messages there are NOT skipped; they are handled as:
-  - approval commands  批准/拒绝/打回/验收 R-xxx [反馈]  -> state/inbox/<uuid>.json
-    (打回 requires nonempty feedback; guidance is replied when missing)
-  - anything else (text and/or photo/video attachments)  -> quick capture
-    (act/lib/quick_capture.py three-way: new_proposal / relates_to / ignore),
-    with the result replied back into the self-DM.
-Attachments are downloaded via url_private (files:read) to state/media/<ts>/;
-videos are split into <=12 frames (ffmpeg if present, else mac/build/framegrab;
-neither -> reply 视频暂不支持，请发图片). A ✅ (white_check_mark) reaction on an
-outbound notification we sent (tracked in state/slack_outbox.json by
-act/lib/notify.slack_notify) approves that requirement (reactions:read poll).
+Self-DM quick capture — the SELF-DM (the im channel with yourself) is a mobile
+capture inbox. Zelin's OWN messages there are NOT skipped; each one (text
+and/or photo/video attachments) is pushed through the same three-way
+quick_capture gate (new_proposal / relates_to / ignore) and, when it warrants
+a card, folded into the registry. This is capture-ONLY: there is no phone
+approval/command surface (v0.21 removed it — the Mac app is now the sole
+approval surface). Attachments are downloaded via url_private (files:read) to
+state/media/<ts>/; videos are split into <=12 frames (ffmpeg if present, else
+mac/build/framegrab; neither -> the video is skipped).
 
 Design notes / landmines:
 - Reading YOUR OWN DMs + mentions needs a Slack **user token** (xoxp-), NOT a
@@ -35,13 +32,9 @@ Design notes / landmines:
   config/secrets/slack-user-token.txt (App 设置窗口保存) -> config
   sources.slack_token_path -> legacy ~/Desktop/Keys/slack-user-token.txt.
   Never printed/logged.
-- Assistant-authored self-DM posts are prefixed 🔔 (notify.slack_notify) or 🤖
-  (replies here) and are skipped on re-scan, so the radar never quick-captures
-  its own output (that would loop forever). Markers are NOT bumped past our own
-  replies — a message Zelin sends mid-scan must survive to the next pass.
 - Comms items are draft-only: the pipeline NEVER auto-sends Slack to OTHERS. An
   approved comms card produces a DRAFT for Zelin to review and send (the manager's
-  rule + the never-auto tier). chat.postMessage here goes ONLY to the self-DM.
+  rule + the never-auto tier).
 - This radar only touches the network + state/, so it is safe to run under a
   launchd agent (unlike the Obsidian radar, which is TCC-blocked from ~/Documents
   and must use crontab).
@@ -69,7 +62,6 @@ import subprocess
 import time
 import urllib.parse
 import urllib.request
-import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -80,7 +72,6 @@ SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
 MCP_MARKER_FILE = "slack_mcp.marker"   # iso start-ts of the last SUCCESSFUL MCP pass
 MCP_PRESENT_MARKER_FILE = "slack_mcp_present.marker"  # B4: cached `claude mcp list` verdict
-OUTBOX_FILE = "slack_outbox.json"      # outbound notification msgs (§13d): [{ts, req, channel, ...}]
 DEFAULT_TOKEN_PATH = "~/Desktop/Keys/slack-user-token.txt"
 MEDIA_DIR = config.STATE_DIR / "media"
 FRAMEGRAB = config.HOME / "mac" / "build" / "framegrab"   # AVFoundation frame extractor (mac/build.sh)
@@ -88,14 +79,6 @@ MAX_FRAMES = 12
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 VIDEO_EXTS = {".mp4", ".mov"}
-
-# our own self-DM posts (must never be re-captured): 🔔 = notify.slack_notify,
-# 🤖 = command/capture replies posted below.
-_ASSISTANT_PREFIXES = ("🔔", "🤖", "✅ 已批准")
-
-# phone approval commands (§13): 批准/拒绝/打回/验收 R-xxx [comment...]
-_CMD_RE = re.compile(r"^(批准|拒绝|打回|验收)\s+(R-\d+)(.*)$", re.DOTALL)
-_CMD_MAP = {"批准": "approve", "拒绝": "reject", "打回": "rework", "验收": "accept"}
 
 _ssl_ctx = ssl.create_default_context()
 
@@ -151,7 +134,8 @@ def verify_token(token: str) -> dict:
 
 def download_file(token: str, url: str, dest: Path) -> bool:
     """Raw authorized GET (Slack ``url_private`` needs the Bearer header; the
-    JSON helper above can't carry binary bodies). Never raises."""
+    JSON helper above can't carry binary bodies). Used to pull self-DM
+    quick-capture attachments (photos/videos). Never raises."""
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as resp:
@@ -161,32 +145,6 @@ def download_file(token: str, url: str, dest: Path) -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
-
-
-def post_message(token: str, channel: str, text: str) -> dict:
-    """chat.postMessage (chat:write). Used ONLY for the self-DM."""
-    return slack_api("chat.postMessage", token, {"channel": channel, "text": text})
-
-
-def find_self_dm(token: str, my_id: Optional[str]) -> Optional[str]:
-    """The im channel whose counterpart user == my_id (i.e. DM with yourself)."""
-    if not my_id:
-        return None
-    cursor = None
-    for _ in range(10):  # paginate defensively
-        params: dict = {"types": "im", "limit": 200}
-        if cursor:
-            params["cursor"] = cursor
-        resp = slack_api("conversations.list", token, params)
-        if not resp.get("ok"):
-            return None
-        for c in resp.get("channels", []):
-            if c.get("user") == my_id:
-                return c.get("id")
-        cursor = (resp.get("response_metadata") or {}).get("next_cursor") or None
-        if not cursor:
-            return None
-    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -212,80 +170,23 @@ def _save_markers(m: dict) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# outbox (§13d) — outbound notification messages awaiting a ✅ reaction
-# --------------------------------------------------------------------------- #
-def _outbox_path() -> Path:
-    return config.STATE_DIR / OUTBOX_FILE
-
-
-def load_outbox() -> list:
-    try:
-        data = json.loads(_outbox_path().read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (OSError, json.JSONDecodeError):
-        return []
-
-
-def save_outbox(items: list) -> None:
-    p = _outbox_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(p)
-
-
-def record_outbox(ts: Optional[str], req: Optional[str], channel: Optional[str] = None) -> None:
-    """Track an outbound notification message so a ✅ reaction can approve it.
-    Called by act/lib/notify.slack_notify. Never raises."""
-    if not ts or not req:
-        return
-    try:
-        items = load_outbox()
-        items.append({
-            "ts": str(ts),
-            "req": str(req),
-            "channel": channel,
-            "sent_at": _iso_now(),
-        })
-        save_outbox(items)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def _iso_now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-# --------------------------------------------------------------------------- #
-# inbox decisions (same schema the Mac app writes — CONTRACT §3/§10)
-# --------------------------------------------------------------------------- #
-def _write_inbox(action: str, req_id: str, comment: Optional[str] = None) -> Path:
-    config.ensure_state_dirs()
-    payload = {"id": req_id, "action": action, "comment": comment or None,
-               "ts": _iso_now()}
-    path = config.INBOX_DIR / f"{uuid.uuid4()}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
-
-
-# --------------------------------------------------------------------------- #
 # fetch new messages that may need attention
 # --------------------------------------------------------------------------- #
 def fetch_new_messages(token: str, my_id: str, cfg: config.Config,
-                       markers: dict, self_dm: Optional[str] = None) -> list[dict]:
+                       markers: dict) -> list[dict]:
     """Collect new messages from DMs, group DMs, and watched channels.
 
     Returns a list of {channel, channel_type, ts, user, text, permalink}.
     Updates ``markers`` in place (per-channel last ts).
 
-    §13: in the SELF-DM (``self_dm``) my own messages are NOT skipped — they
+    Self-DM: the im channel whose counterpart is ``my_id`` is detected inline
+    (no extra API round-trip); my OWN messages there are NOT skipped — they
     come back with ``channel_type="self"`` (+ a ``files`` list) and are handled
-    by :func:`_handle_self_message` as commands / quick capture.
+    by :func:`_handle_self_message` as quick capture (text / photo / video).
     """
     out: list[dict] = []
 
-    def history(channel_id: str, channel_type: str) -> None:
-        is_self = self_dm is not None and channel_id == self_dm
+    def history(channel_id: str, channel_type: str, is_self: bool = False) -> None:
         oldest = markers.get(channel_id, "0")
         params = {"channel": channel_id, "oldest": oldest, "limit": 50}
         resp = slack_api("conversations.history", token, params)
@@ -301,18 +202,15 @@ def fetch_new_messages(token: str, my_id: str, cfg: config.Config,
                 continue                     # joins/leaves/bot noise
             if m.get("user") == my_id:      # my own messages
                 if is_self:
-                    text = (m.get("text") or "")
-                    # skip our own 🔔/🤖 posts — never re-capture assistant output
-                    if not text.strip().startswith(_ASSISTANT_PREFIXES):
-                        out.append({
-                            "channel": channel_id,
-                            "channel_type": "self",
-                            "ts": ts,
-                            "user": my_id,
-                            "text": text,
-                            "files": m.get("files") or [],
-                            "permalink": None,
-                        })
+                    out.append({
+                        "channel": channel_id,
+                        "channel_type": "self",
+                        "ts": ts,
+                        "user": my_id,
+                        "text": (m.get("text") or ""),
+                        "files": m.get("files") or [],
+                        "permalink": None,
+                    })
                 newest_ts = max(newest_ts, ts, key=lambda x: float(x))
                 continue
             text = m.get("text", "")
@@ -341,7 +239,10 @@ def fetch_new_messages(token: str, my_id: str, cfg: config.Config,
     if convs.get("ok"):
         for c in convs.get("channels", []):
             ctype = "mpim" if c.get("is_mpim") else "im"
-            history(c["id"], ctype)
+            # the im with yourself (counterpart user == my_id) is the self-DM
+            # capture inbox — detected here, no separate lookup needed.
+            is_self = ctype == "im" and c.get("user") == my_id
+            history(c["id"], ctype, is_self=is_self)
 
     # 2) explicitly watched channels (from config), mentions only
     for ch in (cfg.slack_channels or []):
@@ -791,33 +692,17 @@ def _collect_media(token: str, files: list, ts: str) -> tuple[list[Path], list[s
 
 
 # --------------------------------------------------------------------------- #
-# §13 self-DM: commands + quick capture
+# self-DM quick capture (capture-only; no approval/command surface as of v0.21)
 # --------------------------------------------------------------------------- #
-def _post_reply(token: str, channel: str, text: str) -> dict:
-    """Reply into the self-DM. The 🤖 prefix marks it as assistant output so the
-    next fetch skips it (never bump markers here — a message Zelin sends while a
-    slow capture is running must still be picked up by the next scan)."""
-    return post_message(token, channel, f"🤖 {text}")
-
-
-def _handle_self_message(m: dict, token: str, self_dm: str, cfg: config.Config,
+def _handle_self_message(m: dict, token: str, cfg: config.Config,
                          extractor: Optional[Callable] = None) -> None:
-    """One self-DM message: approval command FIRST (no LLM), else quick capture."""
-    text = (m.get("text") or "").strip()
+    """One self-DM message -> quick capture (text and/or photos/videos).
 
-    # (b) command parsing BEFORE any LLM call
-    cmd = _CMD_RE.match(text)
-    if cmd:
-        verb, rid, rest = cmd.group(1), cmd.group(2), (cmd.group(3) or "").strip()
-        action = _CMD_MAP[verb]
-        if action == "rework" and not rest:
-            _post_reply(token, self_dm,
-                        f"打回需要带反馈，例如：打回 {rid} 参数表要补上依据")
-            return
-        _write_inbox(action, rid, rest or None)
-        analytics.log_event("slack_command", action=action, req=rid)
-        _post_reply(token, self_dm, f"收到：{verb} {rid}（已写入处理队列）")
-        return
+    Folds the message into the registry via the shared three-way quick_capture
+    gate (new_proposal / relates_to / ignore). Capture-only: no reply is posted
+    back into Slack (the phone approval/command surface was removed in v0.21).
+    """
+    text = (m.get("text") or "").strip()
 
     # media attachments -> images (photos as-is, videos -> frames)
     images: list[Path] = []
@@ -825,8 +710,7 @@ def _handle_self_message(m: dict, token: str, self_dm: str, cfg: config.Config,
     if m.get("files"):
         images, problems = _collect_media(token, m["files"], m.get("ts") or "0")
     if problems and not images and not text:
-        _post_reply(token, self_dm, problems[0])
-        return
+        return   # nothing capturable (e.g. unsupported video, no text)
 
     # quick capture (text and/or images) — three-way decision
     desc = text
@@ -843,64 +727,13 @@ def _handle_self_message(m: dict, token: str, self_dm: str, cfg: config.Config,
     try:
         # typed_text: only the words the user typed — the synthetic media
         # prompt + local file paths in desc stay out of telemetry.
+        # apply_result performs the registry write; the returned reply string
+        # is unused now that there is no self-DM reply surface.
         res = quick_capture.capture(desc, cfg, extractor=extractor,
                                     typed_text=text)
-        reply = quick_capture.apply_result(res, cfg)
-    except Exception as e:  # noqa: BLE001 - reply the failure, don't kill the scan
-        reply = f"快速捕获失败：{e}"
-    if problems:
-        reply = problems[0] + "；" + reply
-    _post_reply(token, self_dm, reply)
-
-
-# --------------------------------------------------------------------------- #
-# §13d reactions approval: ✅ on a tracked outbound notification = approve
-# --------------------------------------------------------------------------- #
-_OUTBOX_MAX_AGE_S = 14 * 86400   # stop polling (and drop) entries older than this
-
-
-def poll_reaction_approvals(token: str, self_dm: Optional[str]) -> int:
-    """reactions.get over unconsumed outbox entries; ✅ -> inbox approve (once)."""
-    items = load_outbox()
-    if not items:
-        return 0
-    approved = 0
-    changed = False
-    keep: list = []
-    now = time.time()
-    for it in items:
-        if not isinstance(it, dict):
-            changed = True
-            continue
-        try:
-            too_old = (now - float(it.get("ts") or 0)) > _OUTBOX_MAX_AGE_S
-        except (TypeError, ValueError):
-            too_old = True
-        if too_old:
-            changed = True
-            continue                      # prune — bounds the polling volume
-        keep.append(it)
-        if it.get("consumed"):
-            continue
-        channel = it.get("channel") or self_dm
-        ts, rid = it.get("ts"), it.get("req")
-        if not (channel and ts and rid):
-            continue
-        resp = slack_api("reactions.get", token, {"channel": channel, "timestamp": ts})
-        if not resp.get("ok"):
-            continue
-        reactions = (resp.get("message") or {}).get("reactions") or []
-        names = {r.get("name") for r in reactions if isinstance(r, dict)}
-        if "white_check_mark" in names:
-            _write_inbox("approve", str(rid), None)
-            it["consumed"] = True
-            changed = True
-            approved += 1
-            analytics.log_event("slack_reaction_approve", req=str(rid))
-            _post_reply(token, channel, f"✅ 已批准 {rid}（点✅）")
-    if changed:
-        save_outbox(keep)
-    return approved
+        quick_capture.apply_result(res, cfg)
+    except Exception:  # noqa: BLE001 - one bad message must not kill the scan
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -942,15 +775,14 @@ def scan(cfg: Optional[config.Config] = None,
         _note_skip("connect_failed")
         return 0
     my_id = auth.get("user_id") or cfg.owner_slack_user_id
-    self_dm = find_self_dm(token, my_id)
     markers = _load_markers()
 
     if fetcher is None:
-        messages = fetch_new_messages(token, my_id, cfg, markers, self_dm=self_dm)
+        messages = fetch_new_messages(token, my_id, cfg, markers)
     else:
         messages = fetcher(token, my_id, cfg, markers)
 
-    # §13: split my own self-DM messages (commands / quick capture) from the rest
+    # split my own self-DM messages (quick capture) from the rest
     self_msgs = sorted(
         (m for m in messages if m.get("channel_type") == "self"),
         key=lambda m: float(m.get("ts") or 0),
@@ -1010,16 +842,11 @@ def scan(cfg: Optional[config.Config] = None,
         if kind in ("proposed", "follow_up", "reraised"):
             created += 1
 
-    # §13 phone surface: commands + quick capture, then ✅-reaction approvals
-    if self_dm:
-        for m in self_msgs:
-            try:
-                _handle_self_message(m, token, self_dm, cfg, extractor=extractor)
-            except Exception:  # noqa: BLE001 - one bad message must not kill the pass
-                pass
+    # self-DM quick capture: fold my own DM-to-self notes/photos into the registry
+    for m in self_msgs:
         try:
-            poll_reaction_approvals(token, self_dm)
-        except Exception:  # noqa: BLE001
+            _handle_self_message(m, token, cfg, extractor=extractor)
+        except Exception:  # noqa: BLE001 - one bad message must not kill the pass
             pass
 
     _save_markers(markers)
@@ -1047,9 +874,6 @@ def _main(argv: Optional[list[str]] = None) -> int:
         auth = verify_token(tok)
         print(json.dumps({k: auth.get(k) for k in ("ok", "user", "user_id", "team", "error")},
                          ensure_ascii=False))
-        if auth.get("ok"):
-            dm = find_self_dm(tok, auth.get("user_id"))
-            print(f"self-DM channel: {dm or 'NOT FOUND (send yourself one message first)'}")
         return 0 if auth.get("ok") else 1
     n = scan(cfg)
     print(f"slack radar: {n} new card(s)")

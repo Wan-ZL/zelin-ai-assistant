@@ -4,6 +4,9 @@
 import AppKit
 import SwiftUI
 import Foundation
+#if canImport(Sparkle)
+import Sparkle
+#endif
 
 // MARK: - App delegate
 
@@ -15,6 +18,14 @@ extension Notification.Name {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let store = DashboardStore()
+#if canImport(Sparkle)
+    // Sparkle updater: startingUpdater:true begins scheduled background checks per
+    // Info.plist (SUEnableAutomaticChecks + SUScheduledCheckInterval + SUAutomaticallyUpdate).
+    // Non-sandboxed app => no XPC-service Info.plist keys needed. Drives the §26
+    // one-click check → download → verify → guided .pkg install → relaunch.
+    let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+#endif
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     /// Read-only popover visibility for views outside this file (e.g. the
@@ -582,18 +593,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                keyEquivalent: "")
         about.target = self
         menu.addItem(about)
-        // §26: low-key update line — present only while dashboard.json carries
-        // update_available (a strictly newer release). Opens the release page;
-        // nothing auto-downloads (unsigned .pkg + trust honesty).
+        // §26: update line — present while dashboard.json carries update_available
+        // (a strictly newer release, from update_check.py). Now a one-click action:
+        // triggerUpdate runs Sparkle's download+verify+install+relaunch (falls back
+        // to opening the release page when Sparkle isn't compiled in).
         if let upd = store.dashboard?.update_available {
             menu.addItem(.separator())
             let updateItem = NSMenuItem(
-                title: L("新版本 v\(upd.latest) 可用 — 下载安装包",
-                         "Update v\(upd.latest) available — download installer"),
-                action: #selector(openReleasePage(_:)), keyEquivalent: "")
+                title: L("新版本 v\(upd.latest) 可用 — 一键更新",
+                         "Update v\(upd.latest) available — install now"),
+                action: #selector(triggerUpdate(_:)), keyEquivalent: "")
             updateItem.target = self
             menu.addItem(updateItem)
         }
+#if canImport(Sparkle)
+        // Permanent, discoverable entry so users can check on demand even when no
+        // update is currently known (only meaningful with Sparkle compiled in).
+        if store.dashboard?.update_available == nil {
+            menu.addItem(.separator())
+            let checkItem = NSMenuItem(
+                title: L("检查更新…", "Check for Updates…"),
+                action: #selector(triggerUpdate(_:)), keyEquivalent: "")
+            checkItem.target = self
+            menu.addItem(checkItem)
+        }
+#endif
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L("退出", "Quit"),
                                 action: #selector(NSApplication.terminate(_:)),
@@ -609,8 +633,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MainWindowController.shared.show()
     }
 
-    // §26: status-menu update line → open the GitHub release page in the
-    // browser. Download/install stays a deliberate user action.
+    // §26: repurposed one-click update action shared by the menu-bar line and
+    // the About page. With Sparkle it does check → download → verify (EdDSA +
+    // matching self-signed cert) → guided .pkg install → relaunch, no trip to
+    // GitHub. When Sparkle is absent (forks / ad-hoc builds) it falls back to the
+    // old "open the GitHub release page" behavior so the button is never dead.
+    @objc func triggerUpdate(_ sender: Any?) {
+#if canImport(Sparkle)
+        Analytics.log("update_check_now", fields: ["source": "sparkle"])
+        updaterController.checkForUpdates(sender)   // Sparkle's standard install+relaunch UI
+#else
+        openReleasePage(sender)
+#endif
+    }
+
+    // §26 fallback: open the GitHub release page in the browser. Used when
+    // Sparkle isn't compiled in (see triggerUpdate).
     @objc func openReleasePage(_ sender: Any?) {
         guard let upd = store.dashboard?.update_available,
               let url = upd.releaseURL else { return }

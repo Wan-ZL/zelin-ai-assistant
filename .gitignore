@@ -8,6 +8,9 @@ act/registry/R-*.yaml
 .DS_Store
 state/
 mac/build/
+# Sparkle.framework + bin/ tools — vendored on demand by mac/scripts/fetch-sparkle.sh,
+# never committed (~30 MB binary; build.sh works fine without it).
+mac/Frameworks/
 __pycache__/
 *.pyc
 config/runtime.json

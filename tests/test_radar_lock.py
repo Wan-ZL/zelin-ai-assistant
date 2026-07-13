@@ -10,7 +10,6 @@ was removed in v0.14; the lock protects the whole pass and stays.
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import contextlib
-import fcntl
 import io
 import json
 import unittest
@@ -21,7 +20,14 @@ from tests.test_radar import BASE, RadarScanBase
 from act import radar
 from act.lib import config
 
+try:
+    import fcntl  # POSIX-only; this whole suite exercises flock semantics
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None
 
+
+@unittest.skipIf(fcntl is None, "state/radar.lock uses POSIX fcntl flock "
+                 "(Windows relies on Task Scheduler IgnoreNew instead)")
 class PassLockTestCase(RadarScanBase):
     @contextlib.contextmanager
     def _held_lock(self):

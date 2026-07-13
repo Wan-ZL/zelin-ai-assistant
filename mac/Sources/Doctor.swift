@@ -33,7 +33,7 @@ enum LaunchAgents {
             return (false, L("找不到模板 \(template)——repo 不完整？",
                              "Template missing: \(template) — incomplete repo?"))
         }
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()
         text = text
@@ -329,7 +329,7 @@ enum AIFix {
                                   completion: @escaping @MainActor (Bool, String) -> Void) {
         Analytics.log("ai_fix_launch")
         let root = AppPaths.stateRoot
-        let py = IMessageSettingsModel.runtimePython()
+        let py = RuntimePython.resolve()
         let ctx = context
         DispatchQueue.global(qos: .userInitiated).async {
             var args = ["-m", "act.ai_fix", "--open"]

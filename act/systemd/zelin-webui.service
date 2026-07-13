@@ -1,0 +1,31 @@
+# TEMPLATE: install-linux.sh renders the @PYTHON@ / @REPO_ROOT@ /
+# @CLAUDE_BIN_DIR@ placeholders (via `python3 -m act.lib.systemd`) into
+# ~/.config/systemd/user — do not `systemctl enable` this file in place.
+#
+# webui — the local web dashboard (act/webui.py, shipped v0.24.0). On Linux
+# this IS the UI: the Mac menu-bar app cannot run here, so the browser board is
+# how a Linux user reads state/dashboard.json and approves inbox cards.
+# Resident like actd (Restart=always) so it auto-starts and stays up.
+#
+# SECURITY: act.webui binds 127.0.0.1 ONLY and requires a per-install token
+# (state/webui.token, 0600) on every /api/* request — see act/webui.py. The
+# unit adds nothing network-facing.
+#
+# URL: prints "web dashboard on http://127.0.0.1:8787" to the journal
+# (journalctl --user -u zelin-webui). Open that in a browser on the same box.
+[Unit]
+Description=Zelin AI Assistant — local web dashboard (the Linux UI)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m act.webui
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

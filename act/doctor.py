@@ -41,13 +41,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, failures, platform, secrets
+from act.lib import config, failures, platform, secrets, taskscheduler
 
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 
-ACTD_LABEL = "com.zelin.aiassistant.actd"
+ACTD_LABEL = "com.zelin.aiassistant.actd"      # launchd label (macOS)
+ACTD_UNIT = "zelin-actd.service"               # systemd --user unit (Linux)
+ACTD_TASK = taskscheduler.TASK_PATH_PREFIX + "actd"  # schtasks TaskName (Windows)
+# Resident systemd services doctor expects up (the rest are timer-driven
+# oneshots that are correctly inactive between fires — the timer is the signal).
+SYSTEMD_RESIDENT = ("zelin-actd.service", "zelin-webui.service")
+
+
+def _installer() -> str:
+    """The installer to point fixes at on this OS."""
+    if platform.is_darwin():
+        return "install.sh"
+    if platform.is_windows():
+        return "install.ps1"
+    return "install-linux.sh"
 
 # cron ingest chain fires every 30 min; a probe older than this means either
 # the chain stopped firing or it comes from an install predating the probe.
@@ -93,15 +107,36 @@ def _crontab() -> str:
 
 def _installed_actd_path_env() -> Optional[str]:
     """The PATH the resident daemon actually runs with — read from the
-    INSTALLED actd plist (~/Library/LaunchAgents), not the repo template:
-    what install.sh rendered is what launchd exports."""
-    plist = Path.home() / "Library" / "LaunchAgents" / (ACTD_LABEL + ".plist")
+    INSTALLED unit, not the repo template: what the installer rendered is what
+    the service manager exports.
+
+    darwin: ~/Library/LaunchAgents/<label>.plist (<key>PATH</key>).
+    linux:  ~/.config/systemd/user/zelin-actd.service (Environment=PATH=).
+    windows: None — the task's PATH is embedded in a `powershell -Command`
+    action, not a readable env stanza; the daemon-claude check degrades to a
+    plain PATH probe there (the login-shell comparison is macOS/Linux-only)."""
+    if platform.is_windows():
+        return None
+    if platform.is_darwin():
+        plist = Path.home() / "Library" / "LaunchAgents" / (ACTD_LABEL + ".plist")
+        try:
+            text = plist.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        m = re.search(r"<key>PATH</key>\s*<string>([^<]+)</string>", text)
+        return m.group(1) if m else None
+    unit = Path.home() / ".config" / "systemd" / "user" / ACTD_UNIT
     try:
-        text = plist.read_text(encoding="utf-8")
+        text = unit.read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.search(r"<key>PATH</key>\s*<string>([^<]+)</string>", text)
-    return m.group(1) if m else None
+    # last Environment=PATH= wins, mirroring systemd's own override order
+    found = None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("Environment=PATH="):
+            found = s[len("Environment=PATH="):].strip()
+    return found
 
 
 def _login_shell_claude() -> Optional[str]:
@@ -124,6 +159,10 @@ class Probes:
     now: Callable[[], float] = time.time
     # None -> derive from act/launchd/*.plist basenames under AIASSISTANT_HOME
     launchd_labels: Optional[List[str]] = None
+    # None -> derive from act/systemd (resident services + *.timer); Linux only
+    systemd_units: Optional[List[str]] = None
+    # None -> derive from act/tasksched (full \ZelinAIAssistant\ names); Windows only
+    scheduled_tasks: Optional[List[str]] = None
     screenpipe_db: Path = field(
         default_factory=lambda: Path.home() / ".screenpipe" / "db.sqlite")
     legacy_key_path: Path = field(
@@ -212,17 +251,24 @@ def _check_daemon_claude(probes: Probes):
     PATH resolves against the login shell's, and probe --bg support."""
     path_env = probes.daemon_path_env()
     if not path_env:
+        if platform.is_darwin():
+            where = "launchd plist"
+        elif platform.is_windows():
+            where = "scheduled task"
+        else:
+            where = "systemd unit"
         return CheckResult(
             "daemon claude", WARN,
-            "actd launchd plist not installed (or carries no PATH) - cannot verify "
-            "which claude the daemon runs",
-            "bash install.sh (renders the agents with your shell's claude dir first on PATH)")
+            "actd %s not installed (or carries no PATH) - cannot verify "
+            "which claude the daemon runs" % where,
+            "bash %s (renders the agent with your shell's claude dir first on PATH)"
+            % _installer())
     daemon_claude = shutil.which("claude", path=path_env)
     if not daemon_claude:
         return CheckResult(
             "daemon claude", FAIL,
             "no claude anywhere on the daemon PATH - dispatch and radar extraction cannot run",
-            "install Claude Code, then: bash install.sh (re-renders the daemon PATH)",
+            "install Claude Code, then: bash %s (re-renders the daemon PATH)" % _installer(),
         ).with_failure("claude_cli_missing")
     daemon_ver = _version_of(probes, daemon_claude)
     shell_claude = probes.login_shell_claude()
@@ -235,8 +281,8 @@ def _check_daemon_claude(probes: Probes):
                 "background dispatch uses the old one" % (
                     daemon_claude, daemon_ver or "version unknown",
                     shell_claude, shell_ver or "version unknown"),
-                "update or remove the outdated copy, then: bash install.sh "
-                "(re-renders the daemon PATH with your shell's claude first)",
+                "update or remove the outdated copy, then: bash %s "
+                "(re-renders the daemon PATH with your shell's claude first)" % _installer(),
             ).with_failure("claude_cli_outdated")
     # --bg is what dispatch hangs off. Two-step probe: `--help` (side-effect
     # free; 2.1.206 lists "--bg, --background") and, ONLY when help lacks it,
@@ -250,7 +296,7 @@ def _check_daemon_claude(probes: Probes):
                 "daemon claude", FAIL,
                 "%s (%s) does not support --bg - every dispatch fails with "
                 "\"unknown option '--bg'\"" % (daemon_claude, daemon_ver or "version unknown"),
-                "update Claude Code (or remove this outdated copy), then: bash install.sh",
+                "update Claude Code (or remove this outdated copy), then: bash %s" % _installer(),
             ).with_failure("claude_cli_outdated")
     same = shell_claude and os.path.realpath(shell_claude) == os.path.realpath(daemon_claude)
     return CheckResult(
@@ -323,6 +369,12 @@ def _check_anthropic_key(probes: Probes):
     sec = secrets.SECRETS_DIR / secrets.ANTHROPIC_API_KEY_FILE
     key, source = _resolve_key(probes)
     if key and source.startswith("config/secrets"):
+        # NTFS has no POSIX mode bits — chmod 600 is a no-op there, so the
+        # world-readable check would false-WARN on Windows. Skip it and note
+        # that access control is via NTFS ACLs instead (docs/WINDOWS.md).
+        if platform.is_windows():
+            return CheckResult("anthropic key", OK,
+                               "config/secrets/anthropic-api-key.txt (NTFS ACL; no POSIX 0600)")
         mode = stat.S_IMODE(sec.stat().st_mode)
         if mode & 0o077:
             return CheckResult(
@@ -400,6 +452,160 @@ def _check_launchd(probes: Probes):
                 "loaded but its process exits with status %s" % status,
                 "tail -20 state/%s.launchd.log  # usual causes: PyYAML missing "
                 "for the daemon python, missing API key" % short,
+            ).with_failure("agent_unloaded"))
+    return results
+
+
+def _systemd_units() -> List[str]:
+    """Expected checkable units: resident services + every timer template."""
+    d = config.HOME / "act" / "systemd"
+    residents = [u for u in SYSTEMD_RESIDENT if (d / u).exists()]
+    timers = sorted(p.name for p in d.glob("*.timer"))
+    return residents + timers
+
+
+def _check_systemd(probes: Probes):
+    """Linux service check — the systemd --user mirror of _check_launchd.
+
+    Parses ``systemctl --user list-units`` (UNIT / LOAD / ACTIVE / SUB) that
+    the OS seam returns off-macOS. actd is the resident daemon (FAIL if not
+    active); the radar/digest work is timer-driven, so the *.timer being
+    active is what we check (the oneshot .service is correctly inactive between
+    fires). A failed-unit bullet (●) is stripped before splitting.
+    """
+    units = probes.systemd_units
+    if units is None:
+        units = _systemd_units()
+    if not units:
+        return CheckResult(
+            "systemd units", WARN,
+            "no unit templates under act/systemd - incomplete checkout?",
+            "git -C '%s' checkout act/systemd" % config.HOME)
+    table = {}
+    for line in probes.launchctl_list().splitlines():
+        parts = line.replace("●", " ").split()  # drop the failed-unit bullet
+        if len(parts) >= 4 and (parts[0].endswith(".service")
+                                or parts[0].endswith(".timer")):
+            table[parts[0]] = (parts[2], parts[3])  # (ACTIVE, SUB)
+    results = []
+    for unit in units:
+        short = unit.rsplit(".", 1)[0].replace("zelin-", "")
+        is_actd = unit == ACTD_UNIT
+        severity = FAIL if is_actd else WARN
+        if unit not in table:
+            results.append(CheckResult(
+                short, severity,
+                "%s not registered with systemd --user%s" % (
+                    unit, " - cards never move" if is_actd else ""),
+                "bash install-linux.sh (renders + enables the user units)",
+            ).with_failure("agent_unloaded"))
+            continue
+        active, sub = table[unit]
+        if active == "active":
+            results.append(CheckResult(short, OK, "active (%s)" % sub))
+        elif active == "failed":
+            results.append(CheckResult(
+                short, severity,
+                "%s failed to start" % unit,
+                "journalctl --user -u %s -n 20  # usual causes: PyYAML missing "
+                "for the daemon python, missing API key" % unit,
+            ).with_failure("agent_unloaded"))
+        else:  # inactive / dead — enabled unit that is not up
+            results.append(CheckResult(
+                short, severity,
+                "%s is %s (not running)" % (unit, active),
+                "systemctl --user enable --now %s" % unit,
+            ).with_failure("agent_unloaded"))
+    return results
+
+
+def _scheduled_tasks() -> List[str]:
+    """Expected checkable Windows tasks — full ``\\ZelinAIAssistant\\<leaf>``
+    names derived from the act/tasksched/*.xml templates."""
+    d = config.HOME / "act" / "tasksched"
+    return [taskscheduler.full_task_name(p.name) for p in sorted(d.glob("*.xml"))]
+
+
+def _parse_schtasks(text: str) -> dict:
+    """Parse ``schtasks /query /fo LIST /v`` into {TaskName: {field: value}}.
+
+    LIST output is one "Field: Value" block per task (verbose can emit a block
+    per trigger; same Status each, so last-wins is correct). Only the first ":"
+    splits key from value so clock values ("9:00:00 AM") survive intact.
+    """
+    table: dict = {}
+    cur: dict = {}
+
+    def flush() -> None:
+        name = cur.get("TaskName")
+        if name:
+            table[name] = dict(cur)
+
+    for raw in text.splitlines():
+        if not raw.strip():
+            flush()
+            cur = {}
+            continue
+        key, sep, val = raw.partition(":")
+        if sep:
+            cur[key.strip()] = val.strip()
+    flush()
+    return table
+
+
+def _check_scheduled_tasks(probes: Probes):
+    """Windows service check — the Task Scheduler mirror of _check_launchd /
+    _check_systemd.
+
+    Parses ``schtasks /query /fo LIST /v`` (what the OS seam returns on Windows)
+    filtered to our ``\\ZelinAIAssistant\\`` tasks. actd is the resident daemon
+    (FAIL if missing/disabled); the radar/digest tasks are repetition-driven and
+    only WARN. NOTE (docs/WINDOWS.md): schtasks reports Ready vs Running vs
+    Disabled — it does NOT expose "registered but crash-looping" the way systemd
+    does, so a healthy-looking "Ready"/"Running" still needs a real box to prove
+    the daemon actually dispatches.
+    """
+    tasks = probes.scheduled_tasks
+    if tasks is None:
+        tasks = _scheduled_tasks()
+    if not tasks:
+        return CheckResult(
+            "scheduled tasks", WARN,
+            "no task templates under act/tasksched - incomplete checkout?",
+            "git -C '%s' checkout act/tasksched" % config.HOME)
+    table = _parse_schtasks(probes.launchctl_list())
+    results = []
+    for full in tasks:
+        short = full.rsplit("\\", 1)[-1]
+        is_actd = full == ACTD_TASK
+        severity = FAIL if is_actd else WARN
+        info = table.get(full)
+        if info is None:
+            results.append(CheckResult(
+                short, severity,
+                "%s not registered with Task Scheduler%s" % (
+                    full, " - cards never move" if is_actd else ""),
+                "powershell -ExecutionPolicy Bypass -File install.ps1 "
+                "(renders + registers the tasks)",
+            ).with_failure("agent_unloaded"))
+            continue
+        status = info.get("Status", "")
+        state = info.get("Scheduled Task State", "")
+        if state == "Disabled" or status == "Disabled":
+            results.append(CheckResult(
+                short, severity,
+                "%s is disabled (not running)" % full,
+                "schtasks /Change /TN \"%s\" /ENABLE" % full,
+            ).with_failure("agent_unloaded"))
+        elif status == "Running":
+            results.append(CheckResult(short, OK, "running"))
+        elif status == "Ready":
+            results.append(CheckResult(short, OK, "registered (ready)"))
+        else:
+            results.append(CheckResult(
+                short, severity,
+                "%s status is %r (not ready/running)" % (full, status or "unknown"),
+                "schtasks /Query /TN \"%s\" /V /FO LIST  # inspect; then re-run install.ps1" % full,
             ).with_failure("agent_unloaded"))
     return results
 
@@ -598,7 +804,8 @@ def _check_claude_auth(probes: Probes):
     ).with_failure(failures.classify(out) or "claude_auth_failed")
 
 
-_CHECKS = [
+# Shared checks that run on every OS (pure Python / portable subprocess).
+_CHECKS_COMMON_HEAD = [
     _check_home,
     _check_claude,
     _check_daemon_claude,
@@ -606,14 +813,30 @@ _CHECKS = [
     _check_config,
     _check_anthropic_key,
     _check_state_dirs,
-    _check_launchd,
-    _check_cron,
-    _check_dashboard,
-    _check_obsidian,
-    _check_screenpipe,
-    _check_npx,
-    _check_gh,
 ]
+
+
+def _checks_for_platform() -> List:
+    """Compose the check list for the current OS.
+
+    Shared checks always run. The service check swaps launchd (macOS) <->
+    systemd (Linux) <-> Task Scheduler (Windows). The macOS-only screen-ingest /
+    crontab checks (cron chain + FDA probe, screenpipe db, node/npx) are
+    conditioned out off-macOS: Linux/Windows v1 defer screen ingest
+    (docs/LINUX.md, docs/WINDOWS.md) and drive radars via systemd timers /
+    scheduled tasks, so there is no crontab ingest chain to probe.
+    """
+    if platform.is_darwin():
+        middle = [_check_launchd, _check_cron]
+        tail_extra = [_check_screenpipe, _check_npx]
+    elif platform.is_windows():
+        middle = [_check_scheduled_tasks]
+        tail_extra = []
+    else:
+        middle = [_check_systemd]
+        tail_extra = []
+    return (_CHECKS_COMMON_HEAD + middle
+            + [_check_dashboard, _check_obsidian] + tail_extra + [_check_gh])
 
 
 def _safe(fn, probes: Probes) -> List[CheckResult]:
@@ -629,7 +852,7 @@ def _safe(fn, probes: Probes) -> List[CheckResult]:
 
 def run_checks(probes: Optional[Probes] = None, fast: bool = False) -> List[CheckResult]:
     probes = probes or Probes()
-    checks = list(_CHECKS)
+    checks = _checks_for_platform()
     if not fast:
         checks.append(_check_claude_auth)
     results: List[CheckResult] = []

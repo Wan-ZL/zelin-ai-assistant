@@ -128,17 +128,22 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
   - `card_sent | review`：有活 session 不动它（人做完了，AI 会话自然闲置）——原语义不变；
   - `executing` 且有 `session_id`：先 best-effort `executor.harvest_delivery(session_id)`（**非空才写** `execution.delivered_summary`/`final_draft`，失败只记日志），再 best-effort `executor.stop_session(session_id)`（清掉挂着的 blocked agent；失败只记日志，**绝不阻塞交付落账**），然后照常落账；
   - `approved`（排队未派发）：直接落账，无 harvest/stop。
-- `abort_execution`（停止并退回待审批）：允许 `approved | executing` → 活 session 先 best-effort 停止（`executor.stop_session(session_id)`，即 rework「活进程先 claude stop」的同一路径；stop 失败只记日志，不阻塞状态回退）；`execution.session_id` 归档为 `execution.aborted_session_id` 后删除（保证重新批准时干净重派发），删 `execution.done`，记 `execution.aborted_at` = ISO now → 置 `card_sent`。
+- `abort_execution`（停止并退回待审批）：允许 `approved | executing | review`（**v0.28.1 §30 add-only**：review = 被 attach 回流投影进运行中的待验收卡，「退回提案」丢弃这轮重跑）→ 活 session 先 best-effort 停止（`executor.stop_session(session_id)`，即 rework「活进程先 claude stop」的同一路径；stop 失败只记日志，不阻塞状态回退）；`execution.session_id` 归档为 `execution.aborted_session_id` 后删除（保证重新批准时干净重派发），删 `execution.done`，记 `execution.aborted_at` = ISO now → 置 `card_sent`。
 - `revert_review`（退回待验收）：允许 `delivered` → 置 `review`；删 `execution.accepted_at`，记 `execution.reverted_at` = ISO now。
 
-**v0.18 `defer`（存备选，提案→备选）**：允许状态**仅** `card_sent` → 置 `detected`；**保留** summary / plan / sources / repeated_mentions（一切已扩写内容不动，只改 status）；notes 追加 `[deferred] 暂缓，退回备选`；其余状态（含 raising——扩写完自然变 card_sent 再说）= 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点，零新增事件。与 `reject`(→trash) 的区别是功能性的：deferred 卡回到 `detected` 后**继续参与 merge_or_new 匹配**（后续重述静默合并计数、雷达 act-now 重提自动升回 card_sent），trashed 被匹配明确排除（重述从零重新出卡）。撤销 = 备选列现成的「研究并提议」(raise)。
+**`stop_to_review`（停止并收下成果待验收，「去待验收」）**：允许 `executing | approved | review`（**v0.28.1 §30 add-only**：review = 被 attach 回流投影进运行中的待验收卡，「去待验收」停掉回流 session、重新收割刷新交付、留在 review；harvest 门从「仅 executing」放宽为「有活 session 即收割」）→ 置 `review`（待验收）。语义 = 「停下来我看看它做了什么」——**停掉跑着的 agent、KEEP 它已产出的成果**，落 待验收 让 Zelin ✓验收 / ↩︎打回，**绝不跳过验收**。这是运行中卡片的新「去待验收」出口，区别于同样停 agent 的另两个动作：`done_external`（→`delivered`，「我在系统外做完了」直接完成、跳过验收）、`abort_execution`（→`card_sent`，「不要了」丢弃成果退回待审批）。分状态行为：
+  - `executing` 且有 `session_id`：先 best-effort `executor.harvest_delivery(session_id)`（**非空才写** `execution.delivered_summary`/`final_draft`，失败只记日志），再 best-effort `executor.stop_session(session_id)`（停掉跑着的 agent；失败只记日志，**绝不阻塞状态落 review**）；
+  - `approved`（排队未派发，无 session）：harvest 为空，直接落 `review`（空交付物，待验收卡照常渲染）。
+  镜像自然 `executing → review` 迁移的 review 字段：置 `execution.done = True`、`execution.review_at` = ISO now（dashboard 待验收卡读 `execution.review_at`，且防日后 purge 被误判为需 auto-resume 的崩溃）；notes 追加 `[stopped by user] 手动停止，已收下成果待验收`。其余状态 = 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点（`inbox_stop_to_review`），零新增事件。
+
+**v0.18 `defer`（入库，提案→储备）**：允许状态**仅** `card_sent` → 置 `detected`；**保留** summary / plan / sources / repeated_mentions（一切已扩写内容不动，只改 status）；notes 追加 `[deferred] 暂缓，入库`；其余状态（含 raising——扩写完自然变 card_sent 再说）= 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点，零新增事件。与 `reject`(→trash) 的区别是功能性的：deferred 卡回到 `detected` 后**继续参与 merge_or_new 匹配**（后续重述静默合并计数、雷达 act-now 重提自动升回 card_sent），trashed 被匹配明确排除（重述从零重新出卡）。撤销 = 储备列现成的「研究并提议」(raise)。
 
 **v0.20.0 archive/unarchive**：archive 仅允许 `delivered`/`detected`(Q2)→`archived`，记 `prev_status`+`archived_at`+`archive_reason`(`"user"`|`"auto"`)；其余状态幂等 no-op。`archived` 语义=完成且封存：排除 `merge_or_new` 匹配（同 trashed/rejected）、对 triage/capture LLM 不可见、relocate 到 `act/registry/archive/` 子目录（退出 hot `_iter_files` 扫描）、NEVER purge。后续相关信息开新卡而非 re-raise 本卡。`unarchive` 回 `prev_status`(usually delivered)，文件移回 active dir、清 archive 字段。**关键（数据安全）**：`next_id()` 与 `load()` 都用 `include_archived=True` 扫 archive 子目录，防新 id 碰撞覆盖归档卡；dashboard/matching 仍默认 `include_archived=False`。archived 进 dashboard 新分区 `archived[]`（`load_archived()`，按 `archived_at` newest-first cap，`counts.archived` 为真实总数），不进任何看板列（同回收站）；build-loop 有 archived skip guard 兜底。auto-archive(`archive_stale`)**首发默认 off**（`archive_after_days=0`）：只封存冷 `delivered`（跳过带未来 deadline / cluster 内有 open sibling / 近期活动的卡），daily gate 防重跑——长期静默的移民/EB-1A matter 默认不被自动封存。
 
@@ -158,6 +163,9 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 显示名 **Zelin's AI Assistant**（2026-07-07 /ask-me 拍板）；app bundle "Zelin's AI Assistant.app"。可执行 `ZelinAIEngineer`、bundle id `com.zelin.ai-engineer` **刻意不改**——TCC 授权与 UserDefaults 挂在 bundle id 名下，改=权限设置全部重来。launchd label 与 `AIASSISTANT_HOME` 环境变量名保持不变（兼容）。仓库目录默认 `~/Projects/zelin-ai-assistant`（旧默认兜底；clone 到任意位置均可，实际解析顺序见 §19 的 home 指针条目）。
 
 ## 13. Slack 手机端（self-DM = 指挥通道）
+
+> **v0.21 弃用说明（add-only，本节其余内容保留作历史）**：iMessage 通道整体移除（`act/radar_imessage.py`、`com.zelin.aiassistant.imessageradar.plist`、config `phone_channel`/`imessage_self_handle`、§13 v0.13「iPhone 联动 / iMessage 设置区」note（本节 194 行）、Permissions 里「仅 iPhone 联动需要」的 Full Disk Access 行（185 行）均随之退役）。Slack 的**手机审批角色**也移除：不再有出站通知镜像到 self-DM、不再有 `批准/拒绝/打回/验收 R-xxx` 指令面、不再有 ✅ reaction 审批（§5 通知语义里的「§13 手机镜像」与 §29「notify.py 里 osascript 只剩 radar_imessage 用途」等引用一并作古——notify 现在只走 §28 app 身份中继，`req` 参数保留但不再使用）。**Mac App 成为唯一审批面**。**保留**：Slack self-DM 的**快速捕获**（下面 #0 那条：给自己发一条文字/图片/视频 → 三选一建卡），以及全部 Slack 入站 ingest（DM/群/@提及 + MCP 兜底）——self-DM 现在是**只进不出**的手机端捕获入口，助手不再往里回帖。
+
 - radar_slack 对 **自己→自己的 DM**（im channel with self）做特殊处理：自己发的消息 = 指令/快速捕获，其他 DM/群/频道逻辑不变。
 - **快速捕获（#0）**：self-DM 文字 → LLM 收到（新文字 + 现有注册表条目清单 id+title+status）→ 三选一 JSON：`{"action":"new_proposal", ...卡片字段}` / `{"action":"relates_to","req":"R-xxx","note":...}`（把该条目 raise/追加 note 并回 DM 告知"已在弄/已关联"）/ `{"action":"ignore","reason":...}`。
 - **图片/视频**：self-DM 附件 → 用 token 下载（files:read）到 `state/media/<ts>/` → 视频先拆帧（ffmpeg 有则用之，否则 `mac/framegrab`(AVFoundation, build.sh 编译) 抽 ≤12 帧）→ `claude -p` 带图片路径识别 → 走快速捕获同款三选一。
@@ -186,6 +194,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **popover 快速捕获输入框**：一句话回车 → 写 `state/inbox/capture-<uuid>.json`（§10 capture 动作），app 不直接碰注册表。
 - **菜单栏图标显示开关**：UserDefaults `showMenuBarIcon`（Bool，默认 true）；录制状态图标开关 `showRecordingIcon`（Bool，默认 true）。
 - **语言即时切换**：界面语言存 `settings_overrides.json` 的 `"language"`（`"zh"|"en"`），切换即时生效（app 与 Python 侧共用该值）。
+- **v0.28 追加（add-only，交付物默认格式）**：新增扁平 override 键 `default_output_format`（`"markdown" | "html"`，与 config.yaml 顶层同名键逐字一致；`act/lib/config.py` `_OVERRIDE_FIELDS` 用 `_coerce_output_format` 归一化——非法/typo 一律回落 `"markdown"`，yaml 路径同规则）。语义：`"markdown"` = 现状(executor prompt 逐字不变、零回归)；`"html"` 时 `act/executor.py` `build_prompt` 在交付指令前追加一段「以 HTML 起草交付物」指令(文档/报告/`FINAL DRAFT` 用语义 HTML 标签而非 Markdown 语法)。写入方 = 设置页「通用 → 交付物默认格式」分段选择器，按 §14 v0.14 **diff-write** 语义(与不含该 override 的 effective 值相同则删键、不同才写)。读取方 `_apply_settings_overrides` 语义不变。
 - **Telemetry 覆写（add-only 补充，docs/TELEMETRY.md）**：设置页「产品改进计划」区写嵌套形式 `{"telemetry": {"enabled": …, "level": …}}`（与首启权限页同一 override 键；扁平 `"telemetry.enabled"` / `"telemetry.level"` 两个点号键 Python 侧同样接受），`config.load_config()` 最后合并（优先级最高，覆盖 config.yaml `telemetry:` 块）：
   - `enabled`（Bool）——匿名使用统计上传总开关。**默认 true（默认开 + 明确可关）**。
   - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。**v0.18 修订（见下条 capture_input 追加）**：detailed 单独不再附带任何内容字段——内容一律再要求 capture_input，本行仅作历史语义记录。
@@ -816,3 +825,108 @@ working」不可能是返工轮，只能是用户 attach / 会话自发活动。
   （诚实降级）；新 App + 老 actd —— 仍可能收到 running[] 里
   `state="review-active"` 的行（该行形状只来自老 actd，add-only 不删），App
   徽章文案改为同语义的「会话有新活动」。
+
+**v0.28.1 追加（add-only，投影修订）**：上面「留在 `review[]` 只标 `session_active`」
+在生产暴露了一个盲区——owner 若 attach 回会话**启动了实打实的工作**（例：跑一整个
+deep-research workflow，几十个子 agent、数分钟），看板 运行中 显示 0、而该 session
+正烧算力,卡却静躺在待验收,与直觉冲突(被判为 bug)。修订:**`status=review` 且该
+session 的 roster state ∈ 正在 working 时,dashboard 把该卡投影进 `running[]`**（`state="working"`、
+新增 optional 字段 `from_review=true` 供 App 标注「已交付过·再运行」，同时携带
+`delivered_summary`/`final_draft` 以免丢草稿）。**关键:这是纯投影改动——磁盘上
+registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review 卡不被
+`reconcile_executing` 拉起)、验收/打回 verdict 与交付草稿全保留;session settle
+（done/缺席/blocked）后该卡自然落回上文的 `review[]` 分支(§30 判别规则、`session_active`
+徽章、`_review_active` 重新收割均不变)。§30 对「attach 活动 ≠ 返工轮」的语义判别**不变**
+——`from_review` 卡明确标为 working、非 rework。配套:`stop_to_review` / `abort_execution`
+的允许状态扩入 `review`（见 §10），使这类卡在 运行中 车道上的「停止」二选一（去待验收 /
+退回提案）真正生效——此前 review 卡无任何 in-app 停止入口。兼容性:老 App 忽略
+`from_review` 未知字段、卡仍显示在运行中(诚实降级);老 actd 不产生该投影,卡照旧留待验收。
+**通知守卫**:`detect_transitions` 的 running→review「待验收:AI 已交付草稿」通知,当**上一轮 running 行带 `from_review`** 时跳过——这只是 re-run 落回、非新交付(main 上该卡从不离开 review[]、从不通知),否则 attach 会话每次 working↔idle 循环都会误报。真正的 executing→review 首次交付(上一轮 running 行无 `from_review`)照常通知。
+
+# iOS 云同步 additions（Phase 1b — `syncd` + actd sync-safety，plan of record §5/§7.3）
+
+## 31. `syncd` — headless 云同步守护进程（`python3 -m act.syncd`）
+
+`syncd` 是既有「两文件契约」的**第二个 client**（与 Mac app 并列）：DOWN 读
+`state/dashboard.json`、UP 写 `state/inbox/<action_id>.json`。它**从不 import
+`actd`**、从不碰 registry；Supabase 全程只见 `act/lib/e2e.py` 产出的**密文**
+（per-pairing 对称 AEAD，维护者读不到正文）。launchd plist
+`act/launchd/com.zelin.aiassistant.syncd.plist`（KeepAlive）。
+
+- **启动门（默认关，硬边界）**：进程启动第一件事是读 `state/sync.json`；文件不存在
+  或 `mode != "cloud"` → **立即 `exit 0`**，在任何其他文件操作 / 任何网络之前。所以
+  一次没 opt-in 的普通安装（哪怕 plist 已 load）**零网络**。开 = 写 `sync.json`
+  `mode:"cloud"`；关 = `mode:"off"` 或删文件（完全回本地）。
+- **鉴权（§3）**：headless 无 login session，拿 per-device secret（`config/secrets.json`
+  的 `sync_device_secret` 优先，否则 `state/sync.json.device_secret`）POST
+  `exchange_device_token` Edge Function 换 1h device-scoped JWT，缓存 + 到期前刷新。
+  换取失败 → **暂停同步（不 crash、不影响 actd 本地写盘）**，写
+  `state/sync/status.json` `{paused:true, reason:"云同步已暂停:请在 App 重新配对"}`
+  并退避重试。
+- **DOWN（§5.2）**：poll `dashboard.json` mtime（≤10s）→ 本地 sha256 change-gate
+  （**hash 只在本地、绝不上传**）→ 变了就 bump `seq`（启动 seed =
+  `max(server row seq, 本地 seq)+1`，同一设备下永不回退）→ `e2e.encrypt_board`
+  原始 dashboard 字节 → UPSERT `board_snapshots`（on_conflict=device_id，device
+  JWT）。把 blob 内嵌 nonce 镜像进 `nonce` 列（schema NOT NULL）。每 30s 心跳
+  `device_heartbeats` 带 `last_pushed_seq`（揭穿「心跳活着但推送卡死」）。
+- **UP（§5.3）**：poll `inbox_actions WHERE target_device_id=me AND
+  status='pending'`（10s）→ 经 `delivered.jsonl` ledger 去重（同 action_id 两次 =
+  一个 inbox 文件）→ `e2e.decrypt_action`（AEAD 认证，relay 无法伪造/改路由）→
+  原子写 `state/inbox/<action_id>.json`（tmp+os.replace）→ PATCH 行 `delivered`。
+- **ack-tail**：用字节游标 tail `state/sync/applied.jsonl`（actd 写，§32）→ PATCH 行
+  `applied` + `result_status`（PATCH 失败则不前进游标、下轮重试）。
+- **`state/sync/` 归 `syncd`**：`down_state.json`（`snapshot_seq` + change-gate
+  hash）、`delivered.jsonl`（L3 去重）、`applied_cursor.json`（ack-tail 游标）、
+  `status.json`（UI 可读的暂停原因）、`pairing_registration.json`（配对产物）。
+- **网络全 best-effort**：任何 network 调用失败只 log、绝不 raise 进循环。
+
+### `state/sync.json`（opt-in 门 + 路由；不存在 = 纯本地）
+```json
+{"mode":"cloud","device_id":"<sync-only uuid>","owner":"<auth.uid>","epoch":1,
+ "platform":"macos","supabase_url":"https://…","apikey":"sb_publishable_…"}
+```
+`mode` ∈ `cloud` | `off`（缺失 = off）。`device_id` = **独立 sync-only UUID**
+（`e2e.sync_device_id` → `state/sync_device_id`），**绝不复用** telemetry 的
+`state/device_id`（§8-4：否则给 operator 去匿名化 telemetry）。可选 `edge_url`、
+`device_secret`（也可放 `config/secrets.json`）。
+
+### 配对 / consent CLI（Settings UI 调用）
+- `python3 -m act.syncd --pair --label "公司 Mac" --supabase-url … --apikey … --owner …`
+  ：mint sync device UUID + per-pairing key `K_i`（`e2e.new_pairing_key` /
+  `save_pairing`）+ per-device secret（写 `config/secrets.json` 0600），写
+  `state/sync.json`（mode=cloud，即 opt-in），产出 QR blob（`e2e.build_pairing_blob`，
+  不透明、非 URL scheme）与 `state/sync/pairing_registration.json`（app/operator 用
+  service_role 插 `devices` + `device_secrets` 行所需材料，含 argon2id 或待哈希 secret）。
+- `python3 -m act.syncd --disable`：`mode:"off"`，回本地（保留密钥，重开无需重配对）。
+- `python3 -m act.syncd --consent-text`：打印 §7.3 B 多设备同步诚实披露文案
+  （`syncd.CONSENT_DISCLOSURE_ZH`，与「匿名使用统计」是两个独立开关）。
+
+## 32. actd 的 sync-safety 改动（§5.4；macOS/Linux 同样运行，向后不回归）
+
+1. **`state/sync/applied.jsonl` ack（每个终态一行）**：`process_inbox` 消费**任何**
+   inbox 文件后都追加一行 `{"action_id":<文件名 stem>,"result_status":…,"ts":…}`
+   —— 不只 apply 成功，连 guarded no-op、unknown-req drop、bad-JSON 也写
+   （`result_status` ∈ `running`|`noop`|`unknown`|`bad_json`）。这样手机的
+   badge：已提交→已送达→**已生效(`running`)/已是最新(`noop`)/该卡已不存在
+   (`unknown`)**，全读 durable status，**绝不靠 inbox 文件消失推断 applied**
+   （`actd.py` 无论结果都删文件）。本地 Mac app 的随机 action_id 不匹配任何云端行 →
+   syncd PATCH 命中 0 行，无害。best-effort，绝不 raise 进 pass。
+2. **`comment`/`raise`/`accept`/`rework` 收紧 status guard**：`_apply_decision`
+   现读 inbox 文件里的 `expected_status`/`board_seq`（手机 tap 时钉入），
+   `expected_status` 若与当前状态不符 = 幂等 no-op；且各自的固有前置态收紧为
+   —— `comment` 仅 `card_sent`/`detected`、`raise` 仅 `detected`、`accept`/`rework`
+   仅 `review`。防陈旧/重放动作撕走 running 卡 / 提前归档 / 重复返工。
+   （`approve`/`done_external`/`abort_execution`/`revert_review`/`stop_to_review`/
+   `defer`/`archive`/`unarchive` 早已有 guard，未改语义，只补 `result_status` 返回值。）
+3. **inbox 文件名接受 `<action_id>.json`**：现有 `*.json` glob 已兼容，无需改动
+   （`action_id` = 云端幂等键 = 文件名；文件内 `id` 仍是需求 id 如 `R-001`）。
+
+### `state/inbox/<action_id>.json` 的 §5.4 附加字段（add-only，Mac app 不写、缺省即老行为）
+```json
+{"id":"R-001","action":"approve","comment":null,"ts":"…",
+ "expected_status":"card_sent","board_seq":42}
+```
+- `expected_status`(str|absent)：手机看到该卡时的状态，actd 的 §5.4 guard 前置检查；
+  缺省 = 不做 expected 检查（保持 Mac app 老行为）。
+- `board_seq`(int|absent)：手机所见看板 revision（也进 `e2e` action AAD），provenance/
+  staleness 信号；syncd 从 `inbox_actions.board_seq` 行值回填。

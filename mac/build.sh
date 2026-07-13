@@ -54,6 +54,11 @@ EXEC_NAME="ZelinAIEngineer"
 # all module files in Sources/ compile as ONE module; only main.swift may hold
 # top-level statements (the bootstrap), per swiftc rules.
 SRC_DIR="$SCRIPT_DIR/Sources"
+# shared/ — Foundation-only contract types compiled into BOTH this Mac app and
+# the iOS app (Contract/I18n/Lanes/InboxAction/BoardModel). They join this same
+# single module, so there is no duplicate symbol. The iOS Xcode target compiles
+# the very same files (ios/project.yml). Lint gate below keeps shared/ portable.
+SHARED_DIR="$SCRIPT_DIR/../shared/Sources"
 PLIST="$SCRIPT_DIR/Info.plist"
 BUILD_DIR="$SCRIPT_DIR/build"
 BIN="$BUILD_DIR/$EXEC_NAME"
@@ -73,11 +78,40 @@ if [ ! -f "$PLIST" ]; then
     exit 1
 fi
 
+# --- Sparkle (optional) — auto-update framework, vendored by mac/scripts/fetch-sparkle.sh.
+# Absent (e.g. forks, offline dev) => build compiles WITHOUT it; the Swift code is
+# guarded by #if canImport(Sparkle), so no auto-update, no build failure.
+FRAMEWORKS_DIR="$SCRIPT_DIR/Frameworks"
+SPARKLE_FW="$FRAMEWORKS_DIR/Sparkle.framework"
+SPARKLE_FLAGS=()
+if [ -d "$SPARKLE_FW" ]; then
+    echo "==> Sparkle present — linking auto-update support"
+    SPARKLE_FLAGS=(-F "$FRAMEWORKS_DIR" -framework Sparkle
+                   -Xlinker -rpath -Xlinker "@executable_path/../Frameworks")
+else
+    echo "==> Sparkle absent — building without auto-update (run mac/scripts/fetch-sparkle.sh to enable)"
+fi
+
+# --- shared/ portability lint gate ---
+# shared/Sources/*.swift are compiled into BOTH the Mac app and the iOS app, so
+# they must import ONLY Foundation — any AppKit/UIKit/SwiftUI/Combine import
+# would break the iOS build (UIKit) or the portability contract. Fail loud here.
+if [ -d "$SHARED_DIR" ]; then
+    if grep -REn '^\s*import\s+(AppKit|UIKit|SwiftUI|Combine|Cocoa)\b' "$SHARED_DIR" 2>/dev/null; then
+        echo "ERROR: shared/Sources must import only Foundation (found a UI/platform import above)." >&2
+        echo "       shared/ is compiled into both the Mac and iOS targets — keep it portable." >&2
+        exit 1
+    fi
+fi
+
 # --- compile ---
-echo "==> Compiling $SRC_DIR/*.swift"
+echo "==> Compiling $SRC_DIR/*.swift + $SHARED_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
-swiftc -O "$SRC_DIR"/*.swift -o "$BIN" \
-    -framework AppKit -framework SwiftUI -framework Foundation
+# canImport(Sparkle) is false when the -F/-framework flags aren't passed, so the
+# Sparkle code compiles out cleanly with no extra -D flag.
+swiftc -O "$SRC_DIR"/*.swift "$SHARED_DIR"/*.swift -o "$BIN" \
+    -framework AppKit -framework SwiftUI -framework Foundation \
+    ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"}
 echo "    built binary: $BIN"
 
 # --- compile framegrab helper (§13: video → evenly spaced JPEG frames) ---
@@ -117,6 +151,13 @@ if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then
     echo "    bundled AppIcon.icns"
 fi
 
+# --- embed Sparkle.framework (ditto preserves the Versions/ symlinks + exec bits) ---
+if [ -d "$SPARKLE_FW" ]; then
+    echo "==> Embedding Sparkle.framework"
+    mkdir -p "$APP_DIR/Contents/Frameworks"
+    ditto "$SPARKLE_FW" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+fi
+
 # --- codesign: prefer the stable self-signed identity so TCC grants (screen
 # recording etc.) SURVIVE reinstalls; ad-hoc ("-") invalidates them every build.
 SIGN_ID="Zelin AI Engineer Dev"
@@ -130,7 +171,30 @@ else
     SIGN_ID="-"
     echo "==> Ad-hoc codesigning (identity missing — TCC grants will reset on reinstall)"
 fi
-codesign --force --deep --sign "$SIGN_ID" "$APP_DIR" || \
+
+# Sign a .app bundle correctly whether or not Sparkle is embedded. Sparkle ships
+# its own nested Mach-O / bundles (XPC services, the Autoupdate helper, Updater.app);
+# those MUST be signed inside-out (deepest first), THEN the framework, THEN the
+# outer app WITHOUT --deep. --deep re-signs the nested Sparkle code with generic
+# flags and is the classic cause of "nested code is modified / invalid" seal
+# breakage — so we drop it and sign the nested items explicitly.
+sign_bundle() {   # $1 = .app path
+    local app="$1" spk="$1/Contents/Frameworks/Sparkle.framework"
+    if [ -d "$spk" ]; then
+        local ver="$spk/Versions/B"
+        for nested in \
+            "$ver/XPCServices/Installer.xpc" \
+            "$ver/XPCServices/Downloader.xpc" \
+            "$ver/Updater.app" \
+            "$ver/Autoupdate"; do
+            [ -e "$nested" ] && codesign --force --sign "$SIGN_ID" --timestamp=none "$nested"
+        done
+        codesign --force --sign "$SIGN_ID" --timestamp=none "$spk"
+    fi
+    # OUTER app last, WITHOUT --deep — nested code (if any) is already signed above.
+    codesign --force --sign "$SIGN_ID" "$app"
+}
+sign_bundle "$APP_DIR" || \
     echo "WARN: codesign failed (app may still run after Gatekeeper prompt)."
 
 # --- optional install ---
@@ -164,8 +228,8 @@ if [ "$INSTALL" -eq 1 ]; then
     rm -rf "$DEST/$APP_NAME.app"
     if cp -R "$APP_DIR" "$DEST/"; then
         FINAL="$DEST/$APP_NAME.app"
-        # re-sign in place (cp can perturb signature)
-        codesign --force --deep --sign "$SIGN_ID" "$FINAL" 2>/dev/null || true
+        # re-sign in place (cp can perturb signature) — same inside-out helper.
+        sign_bundle "$FINAL" 2>/dev/null || true
         if [ "$WAS_RUNNING" -eq 1 ]; then
             echo "==> Relaunching $APP_NAME ($DEST)"
             open "$FINAL" || echo "WARN: relaunch failed — start it manually: open \"$FINAL\""

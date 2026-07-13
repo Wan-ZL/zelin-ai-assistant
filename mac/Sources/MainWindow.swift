@@ -390,7 +390,7 @@ struct MainWindowView: View {
                         case .about:
                             // §26: the update row observes the shared store.
                             if let app = NSApp.delegate as? AppDelegate {
-                                AboutView(store: app.store)
+                                AboutView(store: app.store, app: app)
                             }
                         }
                     }

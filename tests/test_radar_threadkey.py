@@ -194,11 +194,9 @@ class SlackThreadRefTestCase(unittest.TestCase):
         self._stubs = {
             "get_token": radar_slack.get_token,
             "verify_token": radar_slack.verify_token,
-            "find_self_dm": radar_slack.find_self_dm,
         }
         radar_slack.get_token = lambda cfg=None: "tok"
         radar_slack.verify_token = lambda t: {"ok": True, "user_id": "ME"}
-        radar_slack.find_self_dm = lambda t, i: None
         self.addCleanup(self._restore)
 
     def _restore(self):
@@ -220,8 +218,7 @@ class SlackThreadRefTestCase(unittest.TestCase):
         orig = radar_slack.slack_api
         radar_slack.slack_api = fake_api
         try:
-            out = radar_slack.fetch_new_messages("tok", "ME", self.cfg, {},
-                                                 self_dm=None)
+            out = radar_slack.fetch_new_messages("tok", "ME", self.cfg, {})
         finally:
             radar_slack.slack_api = orig
         self.assertEqual(len(out), 1)
