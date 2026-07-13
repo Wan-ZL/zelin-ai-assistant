@@ -130,6 +130,7 @@ html, body {
   padding: 15px 16px;
   font-size: 14px;
   position: relative;
+  overflow: hidden; /* long mono lines must clip at the rounded edge */
 }
 .card .title { font-size: 16.5px; font-weight: 650; line-height: 1.35; }
 .card .metaline { margin-top: 8px; font-size: 13.5px; color: var(--orange); }
@@ -179,6 +180,9 @@ html, body {
 
 /* running / review shared bits */
 .card .namerow { display: flex; gap: 9px; align-items: flex-start; }
+/* the body must be allowed to shrink below its content width, or a nowrap
+   mono line (claude --resume <uuid>) pushes the whole card open */
+.card .namerow > div:last-child { min-width: 0; flex: 1; }
 .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 7px; flex: none; }
 .dot.blue { background: var(--blue); } .dot.gray { background: #6a6a70; }
 .dot.orange { background: var(--orange); }

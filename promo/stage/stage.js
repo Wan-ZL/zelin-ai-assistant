@@ -172,7 +172,7 @@ function reviewCard(r, nowE) {
   const dl = el('div', 'delivered');
   const bold = el('b', null, T('交付了什么：'));
   dl.appendChild(bold);
-  dl.appendChild(document.createTextNode(T(r.delivered_summary)));
+  dl.appendChild(document.createTextNode((EN() ? ' ' : '') + T(r.delivered_summary)));
   body.appendChild(dl);
   body.appendChild(el('div', 'dodhead', T('验收清单——逐条对照：')));
   const list = el('div', 'dodlist');
