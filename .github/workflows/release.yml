@@ -167,13 +167,30 @@ jobs:
           EOF
           echo "generated appcast.xml:"; cat mac/build/appcast.xml
 
+      - name: Package portable Linux + Windows bundles
+        # Windows/Linux are pure Python (no compiled binary), so each "installer"
+        # is a self-contained source archive + the platform install script. Emits
+        # dist/ZelinAIAssistant-<tag>-linux.tar.gz and -windows.zip. Independent of
+        # the macOS signing/Sparkle steps above. See scripts/package-portable.sh.
+        run: bash scripts/package-portable.sh "${GITHUB_REF_NAME}"
+
       - name: Generate SHA-256 checksums
-        # One checksums file covering both assets. Users verify a download with:
+        # One checksums file covering all four assets, written with BARE filenames
+        # (mac assets live in mac/build/, portable archives in dist/) so a user who
+        # downloads the assets into one flat dir can verify with:
         #   shasum -a 256 -c checksums.sha256 --ignore-missing
         run: |
-          cd mac/build
-          shasum -a 256 "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" "ZelinAIAssistant-${GITHUB_REF_NAME}.pkg" > checksums.sha256
-          cat checksums.sha256
+          set -euo pipefail
+          MB="mac/build"
+          {
+            ( cd "$MB" && shasum -a 256 \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip" \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}.pkg" )
+            ( cd dist && shasum -a 256 \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}-linux.tar.gz" \
+                "ZelinAIAssistant-${GITHUB_REF_NAME}-windows.zip" )
+          } > "$MB/checksums.sha256"
+          cat "$MB/checksums.sha256"
 
       - name: Attest build provenance
         # Publishes SLSA provenance tying both assets to this workflow run.
@@ -183,6 +200,8 @@ jobs:
           subject-path: |
             mac/build/ZelinAIAssistant-*-macos.zip
             mac/build/ZelinAIAssistant-*.pkg
+            dist/ZelinAIAssistant-*-linux.tar.gz
+            dist/ZelinAIAssistant-*-windows.zip
 
       - name: Create GitHub Release and upload assets
         # The install-steps block is prepended to the auto-generated notes
@@ -197,8 +216,12 @@ jobs:
         run: |
           ZIP="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
           PKG="mac/build/ZelinAIAssistant-${GITHUB_REF_NAME}.pkg"
+          LINUX="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-linux.tar.gz"
+          WIN="dist/ZelinAIAssistant-${GITHUB_REF_NAME}-windows.zip"
           cat > /tmp/release-notes.md <<'NOTES'
           ## 安装 / Install
+
+          ### macOS
 
           下载下方的 `ZelinAIAssistant-*.pkg` 双击安装。装完后菜单栏会自动出现小图标（首启弹权限设置页）。
 
@@ -210,11 +233,23 @@ jobs:
 
           Download `ZelinAIAssistant-*.pkg` below and double-click it. The build is **not yet signed with an Apple Developer ID**, so macOS blocks the first open — expected, not malware. Bypass it once: **right-click the .pkg in Finder → Open → Open**; if macOS Sequoia still refuses, go to System Settings → Privacy & Security, scroll to the bottom, click **Open Anyway** and enter your password.
 
+          ### Windows / Linux
+
+          Windows 和 Linux 是纯 Python（无需编译）。下载对应的源码包，解压，然后从解压出的目录里运行安装脚本：
+
+          - **Windows**：下载 `ZelinAIAssistant-*-windows.zip`，解压后运行 `install.ps1`（指南：[docs/WINDOWS.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/WINDOWS.md)）。
+          - **Linux**：下载 `ZelinAIAssistant-*-linux.tar.gz`，解压后运行 `bash install-linux.sh`（指南：[docs/LINUX.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/LINUX.md)）。
+
+          Windows and Linux are pure Python (no build step). Download the matching source bundle, unpack it, and run the install script from the extracted folder:
+
+          - **Windows**: download `ZelinAIAssistant-*-windows.zip`, extract, run `install.ps1` — see [docs/WINDOWS.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/WINDOWS.md).
+          - **Linux**: download `ZelinAIAssistant-*-linux.tar.gz`, unpack, run `bash install-linux.sh` — see [docs/LINUX.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/LINUX.md).
+
           完整安装指南 / full install guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · 卸载 / uninstall: `bash uninstall.sh`
 
           NOTES
           gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md --generate-notes --latest
-          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" mac/build/checksums.sha256 mac/build/appcast.xml
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" "$LINUX" "$WIN" mac/build/checksums.sha256 mac/build/appcast.xml
 
       - name: Clean up signing keychain
         # Runs even if an earlier step failed: never leave the decoded cert or

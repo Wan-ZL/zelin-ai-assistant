@@ -26,6 +26,20 @@ executor → draft PR.
 
 ## Install
 
+**Option A — download the release bundle (no git).** On the
+[latest Release](https://github.com/Wan-ZL/zelin-ai-assistant/releases/latest),
+grab `ZelinAIAssistant-<tag>-windows.zip`, extract it (right-click → Extract
+All, or `Expand-Archive`), and run the installer from the extracted folder:
+
+```powershell
+Expand-Archive ZelinAIAssistant-*-windows.zip -DestinationPath .
+cd ZelinAIAssistant-*\
+powershell -ExecutionPolicy Bypass -File install.ps1          # renders + registers the tasks, runs the doctor
+powershell -ExecutionPolicy Bypass -File install.ps1 --check  # re-run diagnostics anytime (python -m act.doctor)
+```
+
+**Option B — clone the repo** (for contributors / to track `main`):
+
 ```powershell
 git clone https://github.com/Wan-ZL/zelin-ai-assistant
 cd zelin-ai-assistant

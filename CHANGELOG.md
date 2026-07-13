@@ -27,6 +27,30 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.29.0] - 2026-07-13
+
+### Added
+
+- **Cross-platform release bundles — every Release now ships install packages
+  for all three platforms.** Previously only macOS got a downloadable artifact
+  (`.pkg` + `.zip`); Windows/Linux friends were told to `git clone`. Now the
+  release workflow also produces two portable source bundles —
+  `ZelinAIAssistant-<tag>-linux.tar.gz` and `ZelinAIAssistant-<tag>-windows.zip`
+  — each a self-contained tree of exactly the files the headless pipeline needs
+  (`act/`, `ingest/`, `webui/`, `config/`, `config.example.yaml`,
+  `requirements-cloud.txt`, `docs/`, the READMEs, `LICENSE.md`, `CHANGELOG.md`,
+  `uninstall.sh`) plus the platform install script (`install-linux.sh` /
+  `install.ps1`). The Swift app sources (`mac/`, `ios/`, `shared/`) and repo
+  plumbing are excluded. A friend downloads the archive, unpacks it under a
+  single `ZelinAIAssistant-<tag>/` dir, and runs the install script from the
+  extracted tree (both locate the repo root via their own path) — no git clone
+  required. Built by the new `scripts/package-portable.sh` (deterministic file
+  set, no compilation, `tar` + `zip` only). Both archives are covered by the
+  release `checksums.sha256` and the SLSA build-provenance attestation, and the
+  bilingual release notes now point macOS / Windows / Linux users at their
+  respective download. `docs/LINUX.md` and `docs/WINDOWS.md` document the new
+  download-the-bundle install path alongside the existing git-clone one.
+
 ## [0.28.1] - 2026-07-12
 
 ### Fixed

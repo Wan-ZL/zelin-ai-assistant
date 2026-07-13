@@ -24,6 +24,20 @@ the full card lifecycle works end to end: radar → approve → executor → dra
 
 ## Install
 
+**Option A — download the release bundle (no git).** On the
+[latest Release](https://github.com/Wan-ZL/zelin-ai-assistant/releases/latest),
+grab `ZelinAIAssistant-<tag>-linux.tar.gz`, unpack it, and run the installer
+from the extracted tree:
+
+```bash
+tar -xzf ZelinAIAssistant-*-linux.tar.gz
+cd ZelinAIAssistant-*/
+bash install-linux.sh          # renders + enables the systemd user units, runs the doctor
+bash install-linux.sh --check  # re-run diagnostics anytime (python -m act.doctor)
+```
+
+**Option B — clone the repo** (for contributors / to track `main`):
+
 ```bash
 git clone https://github.com/Wan-ZL/zelin-ai-assistant
 cd zelin-ai-assistant
