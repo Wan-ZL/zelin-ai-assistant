@@ -204,6 +204,8 @@ struct SettingsFormView: View {
     @State private var confirmError = ""
     @State private var trashDaysError = ""
     @State private var language = "zh"
+    // §15: default output format for drafted deliverables ("markdown" | "html").
+    @State private var outputFormat = "markdown"
     // v0.14 (audit 7.1/7.3): execution keys promoted from config.yaml-only.
     @State private var targetRepo = ""
     @State private var targetRepoExists = true
@@ -319,7 +321,7 @@ struct SettingsFormView: View {
         [
             SettingsSectionDescriptor(
                 id: "general", titleZh: "通用", titleEn: "General",
-                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 卡片排序 card sorting 排序 newest oldest deadline 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 完全磁盘访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
+                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 交付物格式 输出格式 deliverable format output format markdown html 标记语言 卡片排序 card sorting 排序 newest oldest deadline 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 完全磁盘访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
                 anchor: nil, content: AnyView(generalGroup)),
             SettingsSectionDescriptor(
                 id: "menuBar", titleZh: "菜单栏", titleEn: "Menu Bar",
@@ -453,6 +455,32 @@ struct SettingsFormView: View {
                     })) {
                     Text("中文 (zh)").tag("zh")
                     Text("English (en)").tag("en")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+                Spacer()
+            }
+            Divider()
+            // §15: default output format for drafted deliverables — diff-write
+            // vs config.yaml `default_output_format` (markdown = status quo).
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("交付物默认格式", "Deliverable format"))
+                        .font(.system(size: 12))
+                    Text(L("助手起草文档/报告时用哪种标记语言",
+                           "Markup the assistant drafts documents/reports in"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { outputFormat },
+                    set: { v in
+                        outputFormat = v == "html" ? "html" : "markdown"
+                        persistOutputFormat()
+                    })) {
+                    Text("Markdown").tag("markdown")
+                    Text("HTML").tag("html")
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
@@ -1224,6 +1252,12 @@ struct SettingsFormView: View {
         // LanguageStore resolved at launch (an explicit save still wins).
         language = (ov["language"] as? String).map { $0 == "en" ? "en" : "zh" }
             ?? LanguageStore.systemDefault
+        // §15: deliverable format — effective (override → config.yaml → markdown)
+        outputFormat = {
+            let v = str("default_output_format", configKey: "default_output_format",
+                        fallback: "markdown").lowercased()
+            return v == "html" ? "html" : "markdown"
+        }()
         // §16 flags — effective: overrides → config.yaml features: → default on
         // (audit 5.2: reading overrides only made config.yaml choices look wrong
         // and get clobbered on the next save).
@@ -1371,6 +1405,24 @@ struct SettingsFormView: View {
         // AppKit main menu doesn't observe SwiftUI state — rebuild it so
         // menu titles follow the new language too.
         (NSApp.delegate as? AppDelegate)?.installMainMenu()
+    }
+
+    /// §15 deliverable format: diff-write vs the config.yaml effective value —
+    /// key present only when it differs from `default_output_format` (→ default
+    /// markdown), removed when it matches, so the app never clobbers a
+    /// config.yaml choice. Read side = executor build_prompt (HTML instruction).
+    private func persistOutputFormat() {
+        var merged = SettingsIO.readOverrides()
+        let cfgRaw = (SettingsIO.configScalar("default_output_format") ?? "markdown").lowercased()
+        let cfgVal = cfgRaw == "html" ? "html" : "markdown"
+        let val = outputFormat == "html" ? "html" : "markdown"
+        if val == cfgVal {
+            merged.removeValue(forKey: "default_output_format")
+        } else {
+            merged["default_output_format"] = val
+        }
+        Analytics.log("mw_setting_change", fields: ["key": "default_output_format"])
+        writeMerged(merged)
     }
 
     /// §15 telemetry overrides (docs/TELEMETRY.md): nested form; enabled +

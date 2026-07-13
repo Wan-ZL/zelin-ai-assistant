@@ -316,6 +316,18 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
             "Stop at draft — do not publish or share outside."
         )
 
+    # §15 default output format: markdown = status quo (no instruction, prompt
+    # byte-identical to before this feature). html = author deliverables as HTML.
+    if str(getattr(cfg, "default_output_format", "markdown")).lower() == "html":
+        blocks.append(
+            "\n## OUTPUT FORMAT — deliverables must be authored as HTML\n"
+            "The owner's default output format is set to HTML. Any document, "
+            "report, or the FINAL DRAFT you hand back must be valid, self-contained HTML "
+            "(semantic tags: <h1>/<h2>, <p>, <ul>/<li>, <strong>, <a href> …), "
+            "NOT Markdown syntax (no #, -, **, backticks). Plain, direct prose "
+            "still beats decoration; this only fixes the markup language."
+        )
+
     if delivery_mode == "chat":
         blocks.append(
             f"\nWork from the directory at {target}. "

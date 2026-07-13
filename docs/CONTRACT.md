@@ -194,6 +194,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **popover 快速捕获输入框**：一句话回车 → 写 `state/inbox/capture-<uuid>.json`（§10 capture 动作），app 不直接碰注册表。
 - **菜单栏图标显示开关**：UserDefaults `showMenuBarIcon`（Bool，默认 true）；录制状态图标开关 `showRecordingIcon`（Bool，默认 true）。
 - **语言即时切换**：界面语言存 `settings_overrides.json` 的 `"language"`（`"zh"|"en"`），切换即时生效（app 与 Python 侧共用该值）。
+- **v0.28 追加（add-only，交付物默认格式）**：新增扁平 override 键 `default_output_format`（`"markdown" | "html"`，与 config.yaml 顶层同名键逐字一致；`act/lib/config.py` `_OVERRIDE_FIELDS` 用 `_coerce_output_format` 归一化——非法/typo 一律回落 `"markdown"`，yaml 路径同规则）。语义：`"markdown"` = 现状(executor prompt 逐字不变、零回归)；`"html"` 时 `act/executor.py` `build_prompt` 在交付指令前追加一段「以 HTML 起草交付物」指令(文档/报告/`FINAL DRAFT` 用语义 HTML 标签而非 Markdown 语法)。写入方 = 设置页「通用 → 交付物默认格式」分段选择器，按 §14 v0.14 **diff-write** 语义(与不含该 override 的 effective 值相同则删键、不同才写)。读取方 `_apply_settings_overrides` 语义不变。
 - **Telemetry 覆写（add-only 补充，docs/TELEMETRY.md）**：设置页「产品改进计划」区写嵌套形式 `{"telemetry": {"enabled": …, "level": …}}`（与首启权限页同一 override 键；扁平 `"telemetry.enabled"` / `"telemetry.level"` 两个点号键 Python 侧同样接受），`config.load_config()` 最后合并（优先级最高，覆盖 config.yaml `telemetry:` 块）：
   - `enabled`（Bool）——匿名使用统计上传总开关。**默认 true（默认开 + 明确可关）**。
   - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。**v0.18 修订（见下条 capture_input 追加）**：detailed 单独不再附带任何内容字段——内容一律再要求 capture_input，本行仅作历史语义记录。

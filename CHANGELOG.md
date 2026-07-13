@@ -27,6 +27,20 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.28.0] - 2026-07-12
+
+### Added
+
+- **Deliverable output format setting (Markdown / HTML).** New Settings control
+  (通用 → 交付物默认格式 / General → Deliverable format) that picks the markup
+  language the assistant drafts documents, reports and the `FINAL DRAFT` block
+  in. `markdown` is the default and leaves behavior **byte-identical** to before
+  (the executor prompt is unchanged); `html` injects an HTML-authoring
+  instruction so drafts come back as valid, self-contained HTML instead of
+  Markdown. Persists as the `default_output_format` key (config.yaml top-level
+  or `settings_overrides.json`, diff-written vs the config layer); invalid/typo
+  values fail safe to `markdown` (CONTRACT §15 v0.28 add-only).
+
 ## [0.27.0] - 2026-07-12
 
 ### Added

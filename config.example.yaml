@@ -105,6 +105,10 @@ digest:
 # raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。
 # execution.default_target_repo: "~/Projects/your-workbench"
 
+# 交付物默认格式（CONTRACT §15）：助手以你名义起草文档/报告/FINAL DRAFT 时用哪种标记语言。
+# markdown（默认，行为不变）| html（追加一条 HTML 起草指令）。App 设置「交付物默认格式」也能改。
+# default_output_format: markdown
+
 # doctor:                              # AI Doctor（CONTRACT §25）
 #   ai_fix_enabled: true               # 「让 AI 修」按钮/CLI（act/ai_fix.py）总开关；
 #                                      # false = 隐藏按钮、python -m act.ai_fix 直接退出

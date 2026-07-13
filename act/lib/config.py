@@ -90,6 +90,9 @@ DEFAULT_TELEMETRY_PUBLISHABLE_KEY: str = (
     "sb_publishable_bNWOKJTAH52AfwTao-nHUQ_jdsTUpYi"
 )
 TELEMETRY_LEVELS: tuple = ("basic", "detailed")
+# §15 default output format for drafted deliverables. "markdown" = status quo
+# (no prompt change); "html" makes the executor author deliverables as HTML.
+OUTPUT_FORMATS: tuple = ("markdown", "html")
 
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
@@ -231,6 +234,10 @@ class Config:
 
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"
+    # §15 default output format for drafted deliverables ("markdown" | "html").
+    # markdown = status quo (executor prompt unchanged); html injects an HTML
+    # authoring instruction so drafts/reports/FINAL DRAFT come back as HTML.
+    default_output_format: str = "markdown"
 
     # feature flags (§16) — default all on; see DEFAULT_FEATURES
     features: dict = field(default_factory=lambda: dict(DEFAULT_FEATURES))
@@ -429,6 +436,12 @@ def load_config() -> Config:
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
 
+    # §15 default output format — invalid/typo values degrade to markdown
+    # (the safe status-quo default), mirroring telemetry_level's fail-safe.
+    _of = str(data.get("default_output_format", cfg.default_output_format)
+              or "").strip().lower()
+    cfg.default_output_format = _of if _of in OUTPUT_FORMATS else "markdown"
+
     feats = data.get("features", {}) or {}
     if isinstance(feats, dict):
         for k, v in feats.items():
@@ -486,6 +499,13 @@ def _derive_obsidian_dirs(cfg: Config) -> None:
 # --------------------------------------------------------------------------- #
 # settings_overrides.json overlay (§15) — Mac app writes it; highest priority.
 # --------------------------------------------------------------------------- #
+def _coerce_output_format(value) -> str:
+    """§15 override coercion: normalise to a valid OUTPUT_FORMATS member,
+    fail-safe to markdown on any typo/unknown value (mirrors the yaml path)."""
+    v = str(value).strip().lower()
+    return v if v in OUTPUT_FORMATS else "markdown"
+
+
 # Scalar cfg fields the app may override, with a coercion for each.
 _OVERRIDE_FIELDS: dict = {
     "obsidian_raw": str,
@@ -501,6 +521,7 @@ _OVERRIDE_FIELDS: dict = {
     "require_text_confirm_above_usd": float,
     "trash_retention_days": int,
     "language": str,
+    "default_output_format": _coerce_output_format,
     "redaction_enabled": bool,
     "redaction_terms_file": str,
     "redaction_mask_secrets": bool,
