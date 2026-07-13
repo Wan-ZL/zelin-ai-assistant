@@ -16,10 +16,11 @@ process.chdir(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };
 const vertical = argv.includes('--vertical');
+const lang = opt('lang', 'zh') === 'en' ? 'en' : 'zh';
 const FPS = parseInt(opt('fps', '30'), 10);
 const W = vertical ? 1080 : 1920;
 const H = vertical ? 1920 : 1080;
-const dir = path.resolve(`promo/build/frames${vertical ? '-v' : ''}`);
+const dir = path.resolve(`promo/build/frames-${lang}${vertical ? '-v' : ''}`);
 
 function findChrome() {
   if (process.env.PROMO_CHROME) return process.env.PROMO_CHROME;
@@ -46,7 +47,7 @@ fs.mkdirSync(dir, { recursive: true });
 const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 page.on('pageerror', (e) => { console.error('PAGE ERROR:', e.message); process.exitCode = 1; });
-await page.goto('file://' + path.resolve('promo/stage/index.html'));
+await page.goto('file://' + path.resolve('promo/stage/index.html') + `?lang=${lang}`);
 await page.waitForFunction('window.STAGE_READY === true', null, { timeout: 30000 });
 
 const duration = await page.evaluate('TL.duration');

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Assemble captured frames + music into the final mp4(s) in ~/Downloads.
+# Assemble captured frames + music into the final mp4s in ~/Downloads
+# (zh + en, horizontal + vertical — whichever frame dirs exist).
 # Music: "Voxel Revolution" by Kevin MacLeod (incompetech.com), CC BY 4.0 —
 # keep the attribution line in the X post / video description.
 set -euo pipefail
@@ -8,8 +9,6 @@ cd "$(dirname "$0")/.."
 FPS=30
 MUSIC=promo/build/music.mp3
 MUSIC_URL="https://incompetech.com/music/royalty-free/mp3-royaltyfree/Voxel%20Revolution.mp3"
-OUT_H="$HOME/Downloads/zelin-ai-assistant-promo.mp4"
-OUT_V="$HOME/Downloads/zelin-ai-assistant-promo-vertical.mp4"
 
 [ -s "$MUSIC" ] || curl -fsSL -o "$MUSIC" "$MUSIC_URL"
 
@@ -24,6 +23,10 @@ compose() { # $1 frames dir, $2 output
   echo "wrote $2"
 }
 
-[ -d promo/build/frames ] && compose promo/build/frames "$OUT_H"
-[ -d promo/build/frames-v ] && compose promo/build/frames-v "$OUT_V"
+for lang in zh en; do
+  [ -d "promo/build/frames-$lang" ] && \
+    compose "promo/build/frames-$lang" "$HOME/Downloads/zelin-ai-assistant-promo-$lang.mp4"
+  [ -d "promo/build/frames-$lang-v" ] && \
+    compose "promo/build/frames-$lang-v" "$HOME/Downloads/zelin-ai-assistant-promo-$lang-vertical.mp4"
+done
 echo 'attribution: "Voxel Revolution" Kevin MacLeod (incompetech.com), CC BY 4.0'

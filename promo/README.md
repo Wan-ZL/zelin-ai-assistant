@@ -1,10 +1,10 @@
 # promo/ — 宣传视频制作管线
 
-一条命令重录 README/X 用的宣传片（≤60s，1080p 横版 + 竖版备选）：
+一条命令重录 README/X 用的宣传片（≤60s，中英两版 × 横竖两版）：
 
 ```bash
 bash promo/make.sh
-# 产物: ~/Downloads/zelin-ai-assistant-promo.mp4 (+ -vertical.mp4)
+# 产物: ~/Downloads/zelin-ai-assistant-promo-{zh,en}.mp4 (+ -vertical.mp4)
 ```
 
 分镜与风格说明见 [storyboard.md](storyboard.md)。
@@ -21,8 +21,8 @@ bash promo/make.sh
 | 步骤 | 脚本 | 说明 |
 |---|---|---|
 | 1 | `prepare.sh` | demo_seed 生成 scene JSON → `build/scenes.js`；从 `mac/AppIcon.icns` 提取图标 |
-| 2 | `render.mjs` | playwright-core + 本机 Chromium 逐帧截图（30fps；`--vertical` 出竖版） |
-| 3 | `compose.sh` | ffmpeg：帧序列 + 配乐（自动下载）→ mp4 到 `~/Downloads` |
+| 2 | `render.mjs` | playwright-core + 本机 Chromium 逐帧截图（30fps；`--vertical` 竖版；`--lang en` 英文版——UI 文案取自 app 真实 `L()` 英文串 + `stage/i18n.js` 的虚构数据英文版） |
+| 3 | `compose.sh` | ffmpeg：帧序列 + 配乐（自动下载）→ 四个 mp4 到 `~/Downloads` |
 
 依赖：`python3`、`ffmpeg`、`node`（首次会 `npm install playwright-core`）、
 本机任一 Chromium/Chrome（自动探测，或设 `PROMO_CHROME`）。

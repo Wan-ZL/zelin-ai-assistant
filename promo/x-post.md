@@ -1,7 +1,10 @@
 # X 发布文案（中英两版，任选其一发布）
 
-视频文件：`~/Downloads/zelin-ai-assistant-promo.mp4`（横版，随帖 1 上传；
-竖版备选 `-vertical.mp4`）。CC BY 配乐署名已放在末帖，不要删。
+视频文件（横版随帖 1 上传，竖版备选 `-vertical`）：
+- 中文帖 → `~/Downloads/zelin-ai-assistant-promo-zh.mp4`
+- 英文帖 → `~/Downloads/zelin-ai-assistant-promo-en.mp4`
+
+CC BY 配乐署名已放在末帖，不要删。
 
 ---
 
@@ -28,7 +31,8 @@
 **帖 4**
 
 > 代码：github.com/Wan-ZL/zelin-ai-assistant
-> macOS 14+，source available（FSL-1.1-MIT）。视频里全是 demo 假数据。
+> macOS 14+，iOS / Linux / Windows 有 beta。source available（FSL-1.1-MIT）。
+> 视频里全是 demo 假数据。
 > Music: "Voxel Revolution" Kevin MacLeod (incompetech.com), CC BY 4.0
 
 ---
@@ -58,6 +62,6 @@
 **Post 4**
 
 > Code: github.com/Wan-ZL/zelin-ai-assistant
-> macOS 14+, source available (FSL-1.1-MIT). All data in the video is
-> fictional demo seed data.
+> macOS 14+, with iOS / Linux / Windows betas. Source available (FSL-1.1-MIT).
+> All data in the video is fictional demo seed data.
 > Music: "Voxel Revolution" Kevin MacLeod (incompetech.com), CC BY 4.0

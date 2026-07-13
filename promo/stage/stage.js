@@ -40,20 +40,25 @@ function splitWords(container, text) {
 
 function isoToEpoch(s) { return Math.floor(Date.parse(s) / 1000); }
 
+const EN = () => window.LANG === 'en';
+
+// time strings mirror the app's real L() pairs in Cards.swift
 function agoStr(nowE, e) {
   const m = Math.round((nowE - e) / 60);
-  if (m < 1) return '刚刚';
-  if (m < 60) return `${m}分钟前`;
+  if (m < 1) return EN() ? 'just now' : '刚刚';
+  if (m < 60) return EN() ? `${m}m ago` : `${m}分钟前`;
   const h = Math.round(m / 60);
-  if (h < 24) return `${h}小时前`;
-  return `${Math.round(h / 24)}天前`;
+  if (h < 24) return EN() ? `${h}h ago` : `${h}小时前`;
+  const d = Math.round(h / 24);
+  return EN() ? `${d}d ago` : `${d}天前`;
 }
 
 function durStr(sec) {
-  if (sec < 60) return `${Math.max(1, Math.round(sec))}秒`;
+  if (sec < 60) { const s = Math.max(1, Math.round(sec)); return EN() ? `${s}s` : `${s}秒`; }
   const m = Math.round(sec / 60);
-  if (m < 60) return `${m}分钟`;
-  return `${Math.round(m / 6) / 10}小时`;
+  if (m < 60) return EN() ? `${m}m` : `${m}分钟`;
+  const h = Math.round(m / 6) / 10;
+  return EN() ? `${h}h` : `${h}小时`;
 }
 
 function repoName(p) { return (p || '').split('/').pop(); }
@@ -61,13 +66,15 @@ function repoName(p) { return (p || '').split('/').pop(); }
 // -------------------------------------------------------------- card DOM
 function chipsFor(c) {
   const box = el('div', 'chips cascade');
-  box.appendChild(el('span', 'chip tier', `${c.tier} · ${c.tier_hint}`));
-  if (c.delivery_mode === 'chat') box.appendChild(el('span', 'chip chat', '交付：聊天成稿'));
-  if (c.deadline) box.appendChild(el('span', 'chip deadline', `截止 ${c.deadline} (${c.days_left}d)`));
+  box.appendChild(el('span', 'chip tier', T(`${c.tier} · ${c.tier_hint}`)));
+  if (c.delivery_mode === 'chat') box.appendChild(el('span', 'chip chat', T('交付：聊天成稿')));
+  if (c.deadline) box.appendChild(el('span', 'chip deadline',
+    EN() ? `Due ${c.deadline} (${c.days_left}d)` : `截止 ${c.deadline} (${c.days_left}d)`));
   if (c.hardness) box.appendChild(el('span', `chip ${c.hardness === 'hard' ? 'hard' : ''}`, c.hardness));
   if (c.show_cost && c.cost_usd != null) box.appendChild(el('span', 'chip cost', `$${c.cost_usd}`));
-  if (c.repeated > 1) box.appendChild(el('span', 'chip', `重复 ×${c.repeated}`));
-  if (c.green_sign) box.appendChild(el('span', 'chip gsign', '需 manager green-sign（只出草稿）'));
+  if (c.repeated > 1) box.appendChild(el('span', 'chip',
+    EN() ? `Repeated ×${c.repeated}` : `重复 ×${c.repeated}`));
+  if (c.green_sign) box.appendChild(el('span', 'chip gsign', T('需 manager green-sign（只出草稿）')));
   return box;
 }
 
@@ -76,37 +83,39 @@ function naCard(c) {
     const card = el('div', 'card processing');
     card.appendChild(el('div', 'spinner'));
     const body = el('div');
-    body.appendChild(el('div', 'title', c.title));
-    body.appendChild(el('div', 'sub', 'AI 研究中…（补全上下文、生成提案）'));
+    body.appendChild(el('div', 'title', T(c.title)));
+    body.appendChild(el('div', 'sub', T('AI 研究中…（补全上下文、生成提案）')));
     card.appendChild(body);
     if (c.id === HERO) card.classList.add('hero');
     return card;
   }
   const card = el('div', 'card');
-  card.appendChild(el('div', 'title', c.title));
+  card.appendChild(el('div', 'title', T(c.title)));
   const kind = c.target_kind === 'new'
-    ? `🟢 新建 repo: ${c.target_name}`
-    : `🟠 修改现有: ${c.target_name}`;
+    ? (EN() ? `🟢 New repo: ${c.target_name}` : `🟢 新建 repo: ${c.target_name}`)
+    : (EN() ? `🟠 Modify existing: ${c.target_name}` : `🟠 修改现有: ${c.target_name}`);
   const meta = el('div', `metaline cascade ${c.target_kind === 'new' ? 'new' : ''}`);
   meta.textContent = kind;
   if (c.delivery_mode === 'repo') {
-    const d = el('span', 'dim', '（只提 draft PR，不动主分支）');
+    const d = el('span', 'dim', EN()
+      ? ' (draft PR only, main branch untouched)' : '（只提 draft PR，不动主分支）');
     meta.appendChild(d);
   }
   card.appendChild(meta);
   card.appendChild(chipsFor(c));
   if (c.dod && c.dod.length) {
-    card.appendChild(el('div', 'dodhead cascade', '怎样算办完：'));
+    card.appendChild(el('div', 'dodhead cascade', T('怎样算办完：')));
     const list = el('div', 'dodlist');
-    c.dod.forEach((d, i) => list.appendChild(el('div', 'li cascade', `${i + 1}. ${d}`)));
+    c.dod.forEach((d, i) => list.appendChild(el('div', 'li cascade', `${i + 1}. ${T(d)}`)));
     card.appendChild(list);
   }
-  if (c.disagreement) card.appendChild(el('div', 'disagree cascade', `⚠ 分歧: ${c.disagreement}`));
+  if (c.disagreement) card.appendChild(el('div', 'disagree cascade',
+    (EN() ? '⚠︎ Disagreement: ' : '⚠ 分歧: ') + T(c.disagreement)));
   const row = el('div', 'btnrow cascade');
-  row.appendChild(el('div', 'btn approve', '✓ 批准'));
-  row.appendChild(el('div', 'btn reject', '✕ 拒绝'));
-  row.appendChild(el('div', 'btn', '💬 修改'));
-  row.appendChild(el('div', 'btn ghost', '展开详情 ▸'));
+  row.appendChild(el('div', 'btn approve', T('✓ 批准')));
+  row.appendChild(el('div', 'btn reject', T('✕ 拒绝')));
+  row.appendChild(el('div', 'btn', T('💬 修改')));
+  row.appendChild(el('div', 'btn ghost', T('展开详情 ▸')));
   card.appendChild(row);
   if (c.id === HERO) card.classList.add('hero');
   return card;
@@ -119,14 +128,14 @@ function runCard(r, nowE) {
   const queued = r.state === 'queued';
   row.appendChild(el('div', `dot ${blocked ? 'orange' : queued ? 'gray' : 'blue'}`));
   const body = el('div');
-  body.appendChild(el('div', 'title', r.name));
+  body.appendChild(el('div', 'title', T(r.name)));
   const badges = el('div', 'chips');
   if (blocked) {
-    badges.appendChild(el('span', 'badge input', '需输入'));
+    badges.appendChild(el('span', 'badge input', T('需输入')));
     badges.appendChild(el('span', 'badge blocked', 'blocked'));
     badges.appendChild(el('span', 'badge', r.short_id));
   } else if (queued) {
-    badges.appendChild(el('span', 'badge queued', '排队中'));
+    badges.appendChild(el('span', 'badge queued', T('排队中')));
   } else {
     badges.appendChild(el('span', 'badge working', 'working'));
     badges.appendChild(el('span', 'badge', r.short_id));
@@ -134,15 +143,19 @@ function runCard(r, nowE) {
     if (r.cwd) badges.appendChild(el('span', 'badge', repoName(r.cwd)));
   }
   body.appendChild(badges);
-  if (blocked) body.appendChild(el('div', 'mono', `等待: ${r.waiting_for} · 点按复制: ${r.copy_cmd}`));
+  const copyLabel = EN() ? 'Click to copy · double-click runs: ' : '单击复制 · 双击在终端运行：';
+  if (blocked) body.appendChild(el('div', 'mono',
+    `${EN() ? 'Waiting: ' : '等待: '}${r.waiting_for} · ${copyLabel}${r.copy_cmd}`));
   else if (!queued) {
-    body.appendChild(el('div', 'mono', `点按复制: ${r.copy_cmd}`));
-    body.appendChild(el('div', 'mono', `claude agents 列表名: ${r.agent_name}`));
+    body.appendChild(el('div', 'mono', `${copyLabel}${r.copy_cmd}`));
+    body.appendChild(el('div', 'mono',
+      `${EN() ? 'claude agents list name: ' : 'claude agents 列表名: '}${r.agent_name}`));
   }
-  if (r.last_error) body.appendChild(el('div', 'errline', `错误: ${r.last_error}`));
+  if (r.last_error) body.appendChild(el('div', 'errline',
+    `${EN() ? 'Error: ' : '错误: '}${r.last_error}`));
   const btns = el('div', 'btnrow');
-  btns.appendChild(el('div', 'btn', '◉ 停止并退回'));
-  if (!queued && !blocked) btns.appendChild(el('div', 'btn ghost', '展开详情 ▸'));
+  btns.appendChild(el('div', 'btn', T('◉ 停止')));
+  if (!queued && !blocked) btns.appendChild(el('div', 'btn ghost', T('展开详情 ▸')));
   body.appendChild(btns);
   row.appendChild(body);
   card.appendChild(row);
@@ -155,30 +168,34 @@ function reviewCard(r, nowE) {
   const row = el('div', 'namerow');
   row.appendChild(el('div', 'dot blue'));
   const body = el('div');
-  body.appendChild(el('div', 'title', r.name));
+  body.appendChild(el('div', 'title', T(r.name)));
   const dl = el('div', 'delivered');
-  dl.innerHTML = '<b>交付了什么：</b>';
-  dl.appendChild(document.createTextNode(r.delivered_summary));
+  const bold = el('b', null, T('交付了什么：'));
+  dl.appendChild(bold);
+  dl.appendChild(document.createTextNode(T(r.delivered_summary)));
   body.appendChild(dl);
-  body.appendChild(el('div', 'dodhead', '验收清单——逐条对照：'));
+  body.appendChild(el('div', 'dodhead', T('验收清单——逐条对照：')));
   const list = el('div', 'dodlist');
   (r.dod || []).forEach((d) => {
     const it = el('div', 'checkitem');
     it.appendChild(el('span', 'box', '☐'));
-    it.appendChild(el('span', null, d));
+    it.appendChild(el('span', null, T(d)));
     list.appendChild(it);
   });
   body.appendChild(list);
   const badges = el('div', 'chips');
   if (r.cwd) badges.appendChild(el('span', 'badge', repoName(r.cwd)));
-  badges.appendChild(el('span', 'badge', `耗时 ${durStr(r.review_at - r.dispatched_at)}`));
-  badges.appendChild(el('span', 'badge', `已等待验收 ${durStr(nowE - r.review_at)}`));
+  badges.appendChild(el('span', 'badge',
+    `${EN() ? 'took ' : '耗时 '}${durStr(r.review_at - r.dispatched_at)}`));
+  badges.appendChild(el('span', 'badge',
+    `${EN() ? 'in review ' : '已等待验收 '}${durStr(nowE - r.review_at)}`));
   body.appendChild(badges);
-  body.appendChild(el('div', 'mono', `点按复制: ${r.copy_cmd}`));
+  body.appendChild(el('div', 'mono',
+    `${EN() ? 'Click to copy · double-click runs: ' : '单击复制 · 双击在终端运行：'}${r.copy_cmd}`));
   const btns = el('div', 'btnrow');
-  btns.appendChild(el('div', 'btn accept', '✓ 验收'));
-  btns.appendChild(el('div', 'btn', '↩ 打回'));
-  if (r.delivery_mode === 'chat') btns.appendChild(el('div', 'btn', '📋 复制成稿'));
+  btns.appendChild(el('div', 'btn accept', T('✓ 验收')));
+  btns.appendChild(el('div', 'btn', T('↩ 打回')));
+  if (r.delivery_mode === 'chat') btns.appendChild(el('div', 'btn', T('📋 复制成稿')));
   body.appendChild(btns);
   row.appendChild(body);
   card.appendChild(row);
@@ -188,22 +205,25 @@ function reviewCard(r, nowE) {
 
 function doneCard(c, nowE) {
   const card = el('div', 'card completed');
-  card.appendChild(el('div', 'title', c.name));
-  card.appendChild(el('div', 'when', `✓ 已验收 · ${agoStr(nowE, c.accepted_at)}`));
+  card.appendChild(el('div', 'title', T(c.name)));
+  card.appendChild(el('div', 'when',
+    `✓ ${EN() ? 'accepted' : '已验收'} · ${agoStr(nowE, c.accepted_at)}`));
   if (c.id === HERO) card.classList.add('hero');
   return card;
 }
 
 function debtCard(d) {
   const card = el('div', 'card debt');
-  card.appendChild(el('div', 'title', d.title));
-  card.appendChild(el('div', 'when dodhead', d.summary));
+  card.appendChild(el('div', 'title', T(d.title)));
+  card.appendChild(el('div', 'when dodhead', T(d.summary)));
   const chips = el('div', 'chips');
   chips.appendChild(el('span', `chip ${d.hardness === 'hard' ? 'hard' : ''}`, d.hardness));
   chips.appendChild(el('span', 'chip', d.type));
   card.appendChild(chips);
   const s = (d.sources || [])[0];
-  if (s) card.appendChild(el('div', 'quote', `${s.who} · ${s.channel}：“${s.quote}”`));
+  if (s) card.appendChild(el('div', 'quote',
+    EN() ? `${s.who} · ${s.channel}: “${T(s.quote)}”`
+         : `${s.who} · ${s.channel}：“${s.quote}”`));
   return card;
 }
 
@@ -212,11 +232,11 @@ function buildPane(scene) {
   const pane = el('div', 'pane');
   const running = [...(scene.needs_input || []), ...(scene.running || [])];
   const cols = [
-    ['待审批 · needs approval', scene.needs_approval, (c) => naCard(c), true],
-    ['运行中 · running', running, (r) => runCard(r, nowE), false],
-    ['待验收 · review', scene.review, (r) => reviewCard(r, nowE), false],
-    ['备选 · backlog', scene.debt, (d) => debtCard(d), false],
-    ['已验收 · done', scene.completed, (c) => doneCard(c, nowE), false],
+    [T('提案 · proposals'), scene.needs_approval, (c) => naCard(c), true],
+    [T('运行中 · running'), running, (r) => runCard(r, nowE), false],
+    [T('待验收 · review'), scene.review, (r) => reviewCard(r, nowE), false],
+    [T('储备 · backlog'), scene.debt, (d) => debtCard(d), false],
+    [T('已验收 · done'), scene.completed, (c) => doneCard(c, nowE), false],
   ];
   for (const [head, items, render, quickCap] of cols) {
     const col = el('div', 'col');
@@ -225,7 +245,7 @@ function buildPane(scene) {
     h.appendChild(el('span', 'count', String((items || []).length)));
     col.appendChild(h);
     const body = el('div', 'colbody');
-    if (quickCap) body.appendChild(el('div', 'qcap', '＋ 一句话，AI 来研究并提案…'));
+    if (quickCap) body.appendChild(el('div', 'qcap', T('＋ 一句话，AI 来研究并提案…')));
     (items || []).forEach((it) => body.appendChild(render(it)));
     col.appendChild(body);
     pane.appendChild(col);
@@ -245,26 +265,32 @@ function build() {
   const tr = el('div', 'traffic');
   ['r', 'y', 'g'].forEach((k) => tr.appendChild(el('span', k)));
   tb.appendChild(tr);
-  const wt = el('div'); wt.id = 'wintitle'; wt.textContent = "Zelin's AI Assistant — 任务台";
+  const wt = el('div'); wt.id = 'wintitle';
+  wt.textContent = T("Zelin's AI Assistant — 任务台");
   tb.appendChild(wt);
   win.appendChild(tb);
   const body = el('div'); body.id = 'winbody'; win.appendChild(body);
   const sb = el('div'); sb.id = 'sidebar';
   sb.appendChild(el('div', 'appname', "Zelin's AI Assistant"));
-  [['📋', '任务台', true], ['🧩', '依赖检查', false], ['🎙️', '录制与 ingest', false],
-   ['🗑️', '回收站', false], ['⚙️', '设置', false], ['ℹ️', '关于', false]]
+  [['📋', '任务台', true], ['💬', '问问助手', false], ['🧩', '依赖检查', false],
+   ['🎙️', '录制与 ingest', false], ['🗑️', '回收站', false], ['🗄', '归档', false],
+   ['⚙️', '设置', false], ['ℹ️', '关于', false]]
     .forEach(([ico, name, act]) => {
       const n = el('div', `nav ${act ? 'active' : ''}`);
       n.appendChild(el('span', null, ico));
-      n.appendChild(el('span', null, name));
+      n.appendChild(el('span', null, T(name)));
       sb.appendChild(n);
     });
   body.appendChild(sb);
   const bw = el('div'); bw.id = 'boardwrap'; body.appendChild(bw);
-  const bh = el('div'); bh.id = 'boardheader'; bh.textContent = '数据生成于 刚刚'; bw.appendChild(bh);
+  const bh = el('div'); bh.id = 'boardheader';
+  bh.textContent = T('数据生成于 刚刚'); bw.appendChild(bh);
   for (const name of PANE_ORDER) {
     const p = buildPane(window.SCENES[name]);
     p.dataset.scene = name;
+    // hero-focus shots: everything but the hero card dims (reference-video
+    // style — one idea per shot). The 'done' pane is the wide shot: no dim.
+    if (name !== 'done') p.classList.add('focus');
     bw.appendChild(p);
   }
 
@@ -280,7 +306,7 @@ function build() {
   const title = el('div', 'overlay'); title.id = 'titlecard';
   const icon = el('img'); icon.src = '../build/icon.png'; icon.alt = ''; title.appendChild(icon);
   title.appendChild(splitWords(el('div', 'bigtitle'), TEXTS.title_big));
-  title.appendChild(splitWords(el('div', 'bigsub'), TEXTS.title_sub_cn));
+  title.appendChild(splitWords(el('div', 'bigsub'), T(TEXTS.title_sub_cn)));
   const tse = el('div', 'bigsub'); tse.style.fontSize = '2.2vh';
   splitWords(tse, TEXTS.title_sub_en); title.appendChild(tse);
   vp.appendChild(title);
@@ -288,22 +314,22 @@ function build() {
   const rec = el('div', 'overlay'); rec.id = 'recscene';
   const badges = el('div'); badges.id = 'recbadges';
   const b1 = el('div', 'recbadge'); b1.appendChild(el('span', 'reddot'));
-  b1.appendChild(el('span', null, '会议录音中')); badges.appendChild(b1);
+  b1.appendChild(el('span', null, T('会议录音中'))); badges.appendChild(b1);
   const b2 = el('div', 'recbadge'); b2.appendChild(el('span', null, '🖥️'));
-  b2.appendChild(el('span', null, '录屏中')); badges.appendChild(b2);
+  b2.appendChild(el('span', null, T('录屏中'))); badges.appendChild(b2);
   rec.appendChild(badges);
   const wave = el('div'); wave.id = 'wave';
   for (let i = 0; i < 42; i++) wave.appendChild(el('span'));
   rec.appendChild(wave);
   const qb = el('div'); qb.id = 'quotebubble';
-  qb.appendChild(el('div', 'who', REC.who));
+  qb.appendChild(el('div', 'who', T(REC.who)));
   const qt = el('span'); qt.id = 'quotetext'; qb.appendChild(qt);
   const caret = el('span', 'caret'); caret.id = 'quotecaret'; qb.appendChild(caret);
   rec.appendChild(qb);
   const rl = el('div'); rl.id = 'radarline';
-  rl.appendChild(el('span', null, '📡 radar 已捕获'));
+  rl.appendChild(el('span', null, T('📡 radar 已捕获')));
   rl.appendChild(el('span', 'arrow', '→'));
-  rl.appendChild(el('span', null, '生成提案'));
+  rl.appendChild(el('span', null, T('生成提案')));
   rec.appendChild(rl);
   vp.appendChild(rec);
 
@@ -313,14 +339,19 @@ function build() {
   for (const [ico, cn, en] of GRID_ITEMS) {
     const tcell = el('div', 'tile');
     tcell.appendChild(el('div', 'ico', ico));
-    tcell.appendChild(el('div', 'cn', cn));
-    tcell.appendChild(el('div', 'en', en));
+    tcell.appendChild(el('div', 'cn', T(cn)));
+    // in EN mode drop sublabels that would just repeat the main label
+    if (!(EN() && T(cn).toLowerCase() === T(en).toLowerCase())) {
+      tcell.appendChild(el('div', 'en', T(en)));
+    }
     g.appendChild(tcell);
   }
   gw.appendChild(g); grid.appendChild(gw);
   const gc = el('div'); gc.id = 'gridcaption';
-  gc.appendChild(splitWords(el('div', 'cngc'), TEXTS.grid_cn));
-  gc.appendChild(el('div', 'en', TEXTS.grid_en));
+  gc.appendChild(splitWords(el('div', 'cngc'), T(TEXTS.grid_cn)));
+  if (!(EN() && T(TEXTS.grid_cn).toLowerCase() === TEXTS.grid_en.toLowerCase())) {
+    gc.appendChild(el('div', 'en', TEXTS.grid_en));
+  }
   grid.appendChild(gc);
   vp.appendChild(grid);
 
@@ -331,13 +362,18 @@ function build() {
   end.appendChild(el('div', 'lictag', TEXTS.end_tag));
   vp.appendChild(end);
 
-  // lower-third caption cues, prebuilt for determinism
+  // caption scrim — text never fights the busy board (reference-video rule:
+  // words get their own space)
+  const scrim = el('div'); scrim.id = 'capscrim'; vp.appendChild(scrim);
+
+  // lower-third caption cues, prebuilt for determinism.
+  // zh build: big zh line + small en line; en build: one big en line.
   const cap = el('div'); cap.id = 'caption'; vp.appendChild(cap);
   for (const cue of CAPTIONS) {
     const c = el('div', 'capcue');
     c.style.position = 'absolute'; c.style.left = '0'; c.style.right = '0';
-    c.appendChild(splitWords(el('div', 'cn'), cue.cn));
-    c.appendChild(splitWords(el('div', 'en'), cue.en));
+    c.appendChild(splitWords(el('div', 'cn'), T(cue.cn)));
+    if (!EN()) c.appendChild(splitWords(el('div', 'en'), cue.en));
     cap.appendChild(c);
     cue._el = c;
   }
@@ -345,6 +381,23 @@ function build() {
   const veil = el('div'); veil.id = 'fadeveil';
   veil.style.cssText = 'position:absolute;inset:0;background:#000;opacity:0;z-index:99;';
   vp.appendChild(veil);
+}
+
+// hero-fly ghosts: a simplified copy of the hero card that physically travels
+// to its next column across the approve / accept cuts (reference-video style
+// continuity — the card visibly MOVES instead of teleporting between cuts).
+const FLIGHTS = [];
+function buildGhosts() {
+  const win = $('#macwin');
+  const mk = (labelZh, fromKey, toKey, t0, dur) => {
+    const g = el('div', 'flyghost', T(labelZh));
+    win.appendChild(g);
+    FLIGHTS.push({ el: g, from: rects[fromKey], to: rects[toKey], t0, dur });
+  };
+  mk('example-bench: leaderboard 一键导出评测报告',
+     'initial|.hero', 'approved|.hero', TL.initial_end, 0.55);
+  mk('example-bench: leaderboard 一键导出评测报告',
+     'review|.hero', 'done|.hero', TL.review_end + 0.05, 0.6);
 }
 
 // --------------------------------------------------------------- measuring
@@ -415,7 +468,13 @@ function seek(t) {
     rect.y = Math.max(wr.y - 30, Math.min(rect.y, wr.y + wr.h + 30 - rect.h));
   }
 
-  const s = Math.min(vw / rect.w, vh / rect.h);
+  let s = Math.min(vw / rect.w, vh / rect.h);
+  // punch-in on every hard cut: land 3% tight, settle in 0.4s — makes the
+  // beat-aligned cut land visually as well as musically
+  for (const c of [TL.initial_end, TL.queued_end, TL.working_end, TL.review_end]) {
+    const p = (t - c) / 0.4;
+    if (p >= 0 && p < 1) s *= 1 + 0.03 * (1 - easeOut(p));
+  }
   const tx = vw / 2 - s * (rect.x + rect.w / 2);
   const ty = vh / 2 - s * (rect.y + rect.h / 2);
   const cam = $('#camera');
@@ -447,6 +506,27 @@ function seek(t) {
     hero.classList.toggle('glow', on);
     const pop = on ? 1 + 0.045 * (1 - easeOut(clamp01(local / 0.8))) : 1;
     hero.style.transform = `scale(${pop})`;
+    hero.style.opacity = 1;
+  }
+
+  // ---- hero-fly ghosts (approve / accept moments)
+  for (const f of FLIGHTS) {
+    const local = t - f.t0;
+    const active = local >= 0 && local < f.dur + 0.18 && f.from && f.to;
+    f.el.style.opacity = 0;
+    if (!active) continue;
+    const p = easeIO(clamp01(local / f.dur));
+    f.el.style.left = `${lerp(f.from.x, f.to.x, p)}px`;
+    f.el.style.top = `${lerp(f.from.y, f.to.y, p)}px`;
+    f.el.style.width = `${lerp(f.from.w, f.to.w, p)}px`;
+    f.el.style.height = `${lerp(96, Math.min(f.to.h, 120), p)}px`;
+    f.el.style.opacity = 1 - seg(local, f.dur, f.dur + 0.18);
+    // the landing card stays hidden until the ghost arrives
+    if (p < 0.92) {
+      const landPane = f.to === rects['approved|.hero'] ? 'approved' : 'done';
+      const landing = paneEl(landPane).querySelector('.hero');
+      if (landing) landing.style.opacity = 0;
+    }
   }
 
   // ---- spinners (raising placeholders) keep turning
@@ -532,7 +612,7 @@ function seek(t) {
       b.style.height = `${(8 + 84 * a * env) * enter}%`;
       b.style.opacity = 0.35 + 0.65 * enter;
     });
-    const chars = [...REC.quote];
+    const chars = [...T(REC.quote)];
     const n = Math.floor(chars.length * seg(t, REC.type_t0, REC.type_t1));
     $('#quotetext').textContent = chars.slice(0, n).join('');
     $('#quotecaret').style.opacity = (t < REC.type_t1 + 0.8 && (t * 2.4) % 1 < 0.55) ? 1 : 0;
@@ -545,16 +625,21 @@ function seek(t) {
     rl.querySelector('.arrow').style.transform = `translateX(${4 * Math.sin(t * 5)}px)`;
   }
 
-  // ---- captions
+  // ---- captions (+ scrim so text never fights the board)
+  let capVis = 0;
   for (const cue of CAPTIONS) {
     const on = t >= cue.t0 && t <= cue.t1;
     const out = 1 - seg(t, cue.t1 - 0.25, cue.t1);
     cue._el.style.opacity = on ? out : 0;
     if (on) {
+      capVis = Math.max(capVis, out * seg(t, cue.t0, cue.t0 + 0.3));
       wordsIn(cue._el.children[0], t, cue.t0, 0.035);
-      wordsIn(cue._el.children[1], t, cue.t0 + 0.3, 0.02, 8);
+      if (cue._el.children[1]) wordsIn(cue._el.children[1], t, cue.t0 + 0.3, 0.02, 8);
     }
   }
+  // scrim only matters while the board is up — overlays have their own space
+  $('#capscrim').style.opacity =
+    capVis * (t > TL.rec_end && t < TL.done_end ? 0.9 : 0);
 
   // ---- feature grid
   const grid = $('#gridscene');
@@ -570,7 +655,8 @@ function seek(t) {
       tile.style.transform = `translateY(${(1 - p) * 26}px)`;
     });
     wordsIn($('#gridcaption').children[0], t, TL.done_end + 1.9, 0.035);
-    $('#gridcaption').children[1].style.opacity = seg(t, TL.done_end + 2.4, TL.done_end + 2.8);
+    const gcEn = $('#gridcaption').children[1];
+    if (gcEn) gcEn.style.opacity = seg(t, TL.done_end + 2.4, TL.done_end + 2.8);
   }
 
   // ---- end card
@@ -592,11 +678,13 @@ function seek(t) {
 
 // ------------------------------------------------------------------- init
 async function init() {
+  window.LANG = new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'zh';
   if (window.innerHeight > window.innerWidth) document.body.classList.add('vertical');
   build();
   await document.fonts.ready;
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   measure();
+  buildGhosts();
   window.seek = seek;
   seek(0);
   window.STAGE_READY = true;

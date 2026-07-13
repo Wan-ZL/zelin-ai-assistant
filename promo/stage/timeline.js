@@ -117,11 +117,10 @@ const REC = {
   radar_t: TL.title_end + 3.0,
 };
 
-// feature grid montage — every tile is a real, shipped feature
+// feature grid montage — every tile is a real, shipped feature (v0.29)
 const GRID_ITEMS = [
   ['🖥️', '录屏捕获', 'screen capture'],
   ['🎙️', '会议录音', 'meeting audio'],
-  ['📚', '蒸馏成 Obsidian wiki', 'distilled to a wiki'],
   ['📡', '三路 radar', 'Obsidian · Slack · Gmail'],
   ['🔁', '跨渠道去重', 'dedup across sources'],
   ['💰', '批准前看成本', 'cost before you approve'],
@@ -130,15 +129,16 @@ const GRID_ITEMS = [
   ['🛡️', '质量门', 'quality gate'],
   ['🔀', '只交 draft PR', 'draft-PR-only delivery'],
   ['📋', '写作任务出成稿', 'paste-ready drafts'],
-  ['🗑️', '回收站可恢复', 'nothing hard-deleted'],
+  ['📱', 'iOS companion（beta）', '手机上批准'],
+  ['🐧', 'Linux / Windows（beta）', 'headless pipeline 可装'],
 ];
 
 const TEXTS = {
   title_big: "Zelin's AI Assistant",
   title_sub_cn: '你只做两件事：批准、验收',
   title_sub_en: 'A personal AI chief-of-staff for macOS',
-  grid_cn: '全程 local-first，数据不出你的 Mac',
-  grid_en: 'Local-first. Nothing leaves your Mac.',
+  grid_cn: 'local-first，数据留在你的 Mac',
+  grid_en: 'Local-first — your data stays on your Mac',
   end_url: 'github.com/Wan-ZL/zelin-ai-assistant',
   end_tag: 'macOS 14+ · source available · FSL-1.1-MIT',
 };

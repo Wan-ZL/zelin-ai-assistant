@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 
 bash promo/prepare.sh
 [ -d promo/node_modules/playwright-core ] || (cd promo && npm install --no-save --no-audit --no-fund playwright-core)
-node promo/render.mjs
-node promo/render.mjs --vertical
+for lang in zh en; do
+  node promo/render.mjs --lang "$lang"
+  node promo/render.mjs --lang "$lang" --vertical
+done
 bash promo/compose.sh
