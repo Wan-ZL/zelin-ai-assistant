@@ -221,6 +221,9 @@ html, body {
 /* hero-focus shots: one idea per frame — everything but the hero recedes */
 .pane.focus .card:not(.hero) { opacity: 0.45; filter: saturate(0.7); }
 .pane.focus .qcap, .pane.focus .colhead { opacity: 0.6; }
+/* review pane, second half: the spotlight moves to the weekly report */
+.pane.focus.late .card.hero2 { opacity: 1; filter: none; }
+.pane.focus.late .card.hero { opacity: 0.45; filter: saturate(0.7); }
 
 /* hero card emphasis (driven from seek) */
 .card.hero { will-change: transform, box-shadow; }
@@ -277,9 +280,179 @@ html, body {
 }
 #endcard .lictag { font-size: 2vh; color: var(--text-faint); }
 
-/* recording scene */
-#recscene { display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 5vh; }
+/* the ephemeral quick-capture card must not be dimmed by focus mode */
+.pane.focus .card.qccard { opacity: 1; filter: none; }
+.card.qccard.glow {
+  border-color: rgba(177, 140, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(177, 140, 255, 0.35), 0 0 60px rgba(125, 91, 214, 0.45);
+}
+
+/* review final draft (weekly report) */
+.finaldraft {
+  margin-top: 10px; max-height: 0; overflow: hidden;
+  background: #232326; border: 1px solid #37373b; border-radius: 9px;
+  padding: 0 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.btn.copyfinal.copied { background: #2e4a38; color: #7fe0a2; }
+
+/* S1 extraction scene */
+#extractscene { overflow: hidden; }
+#extractscene #recbadges {
+  position: absolute; top: 6vh; left: 0; right: 0;
+  display: flex; justify-content: center; gap: 1.6vw;
+}
+#extractscene #wave {
+  position: absolute; top: 13vh; left: 0; right: 0; height: 10vh;
+  display: flex; align-items: center; justify-content: center; gap: 0.5vw;
+}
+#fragwrap { position: absolute; inset: 0; }
+.frag {
+  position: absolute; width: 22vw;
+  background: #202023; border: 1px solid #34343a; border-radius: 1.4vh;
+  padding: 1.4vh 1.1vw; will-change: transform, opacity; opacity: 0;
+}
+.frag .fwho { font-size: 1.5vh; color: var(--text-faint); margin-bottom: 0.7vh; }
+.frag .ftext { font-size: 2vh; line-height: 1.45; color: var(--text-dim); }
+.frag.k-audio .fwho::before { content: '🎙 '; }
+.frag.k-screen .fwho::before { content: '🖥 '; }
+.frag.k-slack .fwho::before { content: '💬 '; }
+.frag.lit { border-color: rgba(177, 140, 255, 0.85);
+  box-shadow: 0 0 40px rgba(125, 91, 214, 0.35); }
+.frag.lit .ftext { color: var(--text); }
+.frag .hl { color: var(--purple); font-weight: 650; }
+#fraglines { position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; }
+#fragline { fill: none; stroke: rgba(177, 140, 255, 0.8); stroke-width: 3;
+  stroke-linecap: round; }
+#minicard {
+  position: absolute; left: 50%; top: 58%; width: 34vw;
+  background: var(--card-bg); border: 1.5px solid rgba(177, 140, 255, 0.9);
+  border-radius: 1.6vh; padding: 2.2vh 1.6vw; opacity: 0;
+  box-shadow: 0 0 60px rgba(125, 91, 214, 0.45), 0 30px 70px rgba(0, 0, 0, 0.6);
+}
+#minicard .mtitle { font-size: 2.6vh; font-weight: 700; }
+#minicard .chips { margin-top: 1.4vh; }
+#minicard .chip { font-size: 1.7vh; }
+
+/* S5 terminal overlay */
+#termscene { background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center; }
+#termwin {
+  width: 62vw; border-radius: 1.6vh; overflow: hidden;
+  background: #101014; border: 1px solid #3a3a40;
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.8);
+}
+#termwin .termbar { display: flex; align-items: center; height: 5vh;
+  background: #1b1b1f; border-bottom: 1px solid #2c2c30; padding: 0 1.2vw; }
+#termwin .termtitle { color: var(--text-faint); font-size: 1.8vh; margin-left: 1vw; }
+#termwin .termbody {
+  padding: 2.4vh 1.6vw 3vh; min-height: 26vh;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 2.2vh; line-height: 1.75; color: #c8e6c9;
+}
+#termwin .tline { opacity: 0; white-space: pre; }
+#termwin .tline:nth-child(1) { color: #f2f2f4; }
+#termwin .tline:nth-child(2) { color: #7fe0a2; }
+#termwin .tcursor { color: #b18cff; }
+
+/* S6 merge-review vignette */
+#mergescene { background: rgba(10, 10, 13, 0.92);
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 4.5vh; }
+#mergerow { display: flex; gap: 3vw; }
+.mcard {
+  position: relative; width: 26vw;
+  background: var(--card-bg); border: 1px solid var(--card-border);
+  border-radius: 1.6vh; padding: 2.2vh 1.4vw; opacity: 0;
+  will-change: transform, opacity;
+}
+.mcard .mtag { font-size: 1.6vh; color: var(--text-faint); margin-bottom: 0.8vh; }
+.mcard .mtitle { font-size: 2.2vh; font-weight: 650; line-height: 1.4; }
+.mcard .msel {
+  position: absolute; top: -1.4vh; right: -1vh; width: 3.4vh; height: 3.4vh;
+  border-radius: 50%; background: var(--purple); color: #17171a;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2vh; font-weight: 800; opacity: 0;
+}
+#verdict {
+  width: 40vw; background: rgba(125, 91, 214, 0.14);
+  border: 1.5px solid rgba(177, 140, 255, 0.8); border-radius: 1.8vh;
+  padding: 2.4vh 1.8vw; opacity: 0;
+  box-shadow: 0 0 70px rgba(125, 91, 214, 0.35);
+}
+#verdict .vtitle { font-size: 2.6vh; font-weight: 720; color: var(--purple); }
+#verdict .vconf { font-size: 1.9vh; color: var(--text-dim); margin-top: 0.8vh; }
+#verdict .btnrow { margin-top: 1.8vh; }
+#verdict .btn { font-size: 1.9vh; padding: 1vh 1.6vw; }
+#vcursor { position: absolute; left: 0; top: 0; opacity: 0; z-index: 5;
+  will-change: transform; }
+#vripple {
+  position: absolute; width: 80px; height: 80px; border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.85);
+  transform: translate(-50%, -50%) scale(0); opacity: 0;
+}
+
+/* S9 phone loop */
+#phonescene { display: flex; align-items: center; justify-content: center; }
+#phoneframe {
+  width: 36vh; height: 74vh; border-radius: 5.5vh;
+  border: 0.9vh solid #3a3a40; background: #0c0c0f;
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.8); overflow: hidden;
+  position: relative; will-change: transform;
+}
+#phonescreen { position: absolute; inset: 0; }
+.pview { position: absolute; inset: 0; padding: 3.6vh 1.6vh 2vh; opacity: 0; }
+.pview .phead {
+  font-size: 1.9vh; font-weight: 650; color: var(--text-dim);
+  padding-bottom: 1.4vh; border-bottom: 1px solid #26262a; margin-bottom: 1.8vh;
+}
+#wbphoto { margin-left: auto; width: 84%; opacity: 0; will-change: transform; }
+#whiteboard {
+  background: #f4f4f0; border-radius: 1.2vh; padding: 1.6vh 1.4vh; color: #2a2a30;
+}
+#whiteboard .wbtitle { font-weight: 800; font-size: 1.9vh; margin-bottom: 1vh;
+  font-style: italic; }
+#whiteboard .wbrow { display: flex; align-items: center; gap: 0.7vh;
+  flex-wrap: wrap; }
+#whiteboard .wbbox {
+  border: 2px solid #4a4a55; border-radius: 0.7vh; padding: 0.4vh 0.9vh;
+  font-size: 1.5vh; font-weight: 650; transform: rotate(-1deg);
+}
+#whiteboard .wbarrow { font-weight: 800; }
+#whiteboard .wbnote { margin-top: 1vh; font-size: 1.4vh; font-style: italic;
+  color: #55555f; }
+#wbphoto .pcap { text-align: right; font-size: 1.5vh; color: var(--text-faint);
+  margin-top: 0.8vh; }
+#phonecard {
+  margin-top: 2.2vh; display: flex; gap: 1.2vh; align-items: flex-start;
+  background: var(--card-bg); border: 1px solid rgba(177, 140, 255, 0.7);
+  border-radius: 1.2vh; padding: 1.5vh 1.4vh; opacity: 0; will-change: transform;
+}
+#phonecard .pctitle { font-size: 1.7vh; font-weight: 650; line-height: 1.4; }
+#phonecard .pcsub { font-size: 1.4vh; color: var(--text-faint); margin-top: 0.5vh; }
+#iosview .plane { font-size: 1.7vh; font-weight: 650; color: var(--text-dim);
+  margin-bottom: 1.2vh; }
+#ioscard {
+  background: var(--card-bg); border: 1px solid var(--card-border);
+  border-radius: 1.4vh; padding: 1.8vh 1.5vh; will-change: transform;
+}
+#ioscard .pctitle { font-size: 1.9vh; font-weight: 680; line-height: 1.45; }
+#ioscard .chips { margin-top: 1.2vh; }
+#ioscard .chip { font-size: 1.4vh; }
+#ioscard .btnrow { margin-top: 1.6vh; }
+#ioscard .btn { font-size: 1.7vh; padding: 1vh 1.5vh; }
+#ioscard .btn.approve.done { background: #2e4a38; color: #7fe0a2; }
+#iosview .e2enote { position: absolute; bottom: 2.4vh; left: 0; right: 0;
+  text-align: center; font-size: 1.4vh; color: var(--text-faint); }
+#thumb {
+  position: absolute; left: 0; top: 0; width: 5.5vh; height: 5.5vh;
+  border-radius: 50%; background: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 30px rgba(255, 255, 255, 0.3); opacity: 0;
+  will-change: transform; z-index: 6;
+}
+
+/* legacy rec-scene bits reused inside extraction */
 #wave { display: flex; align-items: center; gap: 0.55vw; height: 16vh; }
 #wave span {
   width: 0.62vw; border-radius: 0.31vw; height: 8%;

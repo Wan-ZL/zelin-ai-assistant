@@ -164,6 +164,65 @@ const I18N_EN = {
 
   'macOS 14+ · source available · FSL-1.1-MIT':
     'macOS 14+ · source available · FSL-1.1-MIT',
+
+  // ---- v4 captions
+  '录音、录屏，全在本地': 'Meetings and screen, recorded locally',
+  'AI 从海量数据里找出相关碎片': 'AI pulls the related fragments from hours of data',
+  '不同渠道催同一件事，只出一张卡': 'Same ask, several channels — one card',
+  '或者，一句话扔给它': 'Or just type one line',
+  '一键批准，后台 Claude agent 开工': 'One click — a background Claude agent starts',
+  '双击，随时进 live session 微操': 'Double-click to drop into the live session',
+  '重复的卡？AI 裁决怎么合': 'Duplicate cards? AI referees the merge',
+  '交付 draft PR + 验收清单，不碰 main': 'Draft PR + checklist — main untouched',
+  '写作任务出成稿，用你的语气': 'Paste-ready drafts, in your voice',
+  '白板拍一张就是卡片，iOS 直接批准': 'Snap a whiteboard — approve from your phone',
+
+  // ---- extraction fragments (fictional transcript / OCR / slack noise)
+  '周会转写 00:14:03': 'meeting transcript 00:14:03',
+  '周会转写 00:17:22': 'meeting transcript 00:17:22',
+  '周会转写 00:31:47': 'meeting transcript 00:31:47',
+  '屏幕 OCR · example-bench': 'screen OCR · example-bench',
+  '屏幕 OCR · 浏览器': 'screen OCR · browser',
+  '……预算的事下周再说……': '…budget talk moved to next week…',
+  '能不能加个按钮，一键把 leaderboard 导出成报告发出去':
+    'can we add a button that exports the leaderboard as a report',
+  '一键把 leaderboard 导出成报告': 'exports the leaderboard as a report',
+  '上周说的导出报告那个还做吗？周会又有人问了':
+    'is that report-export from last week still happening? it came up again',
+  '导出报告': 'report-export',
+  '……demo 环境等 green-sign……': '…demo env awaits green-sign…',
+  '重复 ×2': 'Repeated ×2',
+
+  // ---- merge-review vignette (chrome verbatim from the app's L() pairs)
+  '主卡 · R-101': 'primary · R-101',
+  '副卡 · 来自 slack': 'secondary · from slack',
+  '评测报告能不能一键导出？': 'could the eval report be one-click exported?',
+  'AI 建议合并：副卡并入主卡': 'AI suggests merging the secondary into the primary',
+  '置信度：高': 'Confidence: high',
+  '接受': 'Accept',
+  '取消': 'Dismiss',
+
+  // ---- phone loop
+  'Slack · 发给自己': 'Slack · DM to yourself',
+  '白板 · inkweld demo 方案': 'whiteboard · inkweld demo plan',
+  'AI 研究中…': 'AI researching…',
+  "Zelin's AI Assistant · iOS（beta）": "Zelin's AI Assistant · iOS (beta)",
+  '已批准 ✓': 'Approved ✓',
+  '端到端加密同步 · E2E encrypted': 'End-to-end encrypted sync',
+  'seed 数据': 'seed data',
+  '✎ 只读演示账号 / reset 脚本': '✎ read-only demo account / reset script',
+  '已复制 ✓': 'Copied ✓',
+
+  // ---- v4 grid tiles
+  '拖拽文字即捕获': 'Drag text to capture',
+  '导入已有 Claude Code 会话': 'Import Claude Code sessions',
+  'Ask 问答（带引用）': 'Ask (cited answers)',
+  '本地 web 看板': 'Local web dashboard',
+  '一键修复': 'One-click fix-it',
+  'agent 卡住自动恢复': 'Auto-resume stuck agents',
+  'E2E 云同步（可选）': 'Optional E2E cloud sync',
+  '每周 digest': 'Weekly digest',
+  '中英一键切换': 'Bilingual UI, one tap',
 };
 
 // current language, set by stage.js from ?lang=

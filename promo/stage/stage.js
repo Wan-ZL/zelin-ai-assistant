@@ -19,6 +19,7 @@ const easeOutBack = (p) => {
 
 const PANE_ORDER = ['captured', 'initial', 'approved', 'running', 'review', 'done'];
 const HERO = 'R-101';
+const FRAG_POS = [[10, 34], [36, 28], [64, 33], [12, 62], [57, 60], [33, 76]];
 
 // ------------------------------------------------------------------ helpers
 function el(tag, cls, text) {
@@ -192,14 +193,20 @@ function reviewCard(r, nowE) {
   body.appendChild(badges);
   body.appendChild(el('div', 'mono',
     `${EN() ? 'Click to copy · double-click runs: ' : '单击复制 · 双击在终端运行：'}${r.copy_cmd}`));
+  if (r.final_draft) {
+    const fd = el('div', 'finaldraft');
+    fd.textContent = T(r.final_draft);
+    body.appendChild(fd);
+  }
   const btns = el('div', 'btnrow');
   btns.appendChild(el('div', 'btn accept', T('✓ 验收')));
   btns.appendChild(el('div', 'btn', T('↩ 打回')));
-  if (r.delivery_mode === 'chat') btns.appendChild(el('div', 'btn', T('📋 复制成稿')));
+  if (r.delivery_mode === 'chat') btns.appendChild(el('div', 'btn copyfinal', T('📋 复制成稿')));
   body.appendChild(btns);
   row.appendChild(body);
   card.appendChild(row);
   if (r.id === HERO) card.classList.add('hero');
+  if (r.id === 'R-110') card.classList.add('hero2'); // weekly report — S7b subject
   return card;
 }
 
@@ -311,27 +318,142 @@ function build() {
   splitWords(tse, TEXTS.title_sub_en); title.appendChild(tse);
   vp.appendChild(title);
 
-  const rec = el('div', 'overlay'); rec.id = 'recscene';
+  // ---- S1 extraction: mass fragments -> related ones connect -> one card
+  const ext = el('div', 'overlay'); ext.id = 'extractscene';
   const badges = el('div'); badges.id = 'recbadges';
   const b1 = el('div', 'recbadge'); b1.appendChild(el('span', 'reddot'));
   b1.appendChild(el('span', null, T('会议录音中'))); badges.appendChild(b1);
   const b2 = el('div', 'recbadge'); b2.appendChild(el('span', null, '🖥️'));
   b2.appendChild(el('span', null, T('录屏中'))); badges.appendChild(b2);
-  rec.appendChild(badges);
+  ext.appendChild(badges);
   const wave = el('div'); wave.id = 'wave';
   for (let i = 0; i < 42; i++) wave.appendChild(el('span'));
-  rec.appendChild(wave);
-  const qb = el('div'); qb.id = 'quotebubble';
-  qb.appendChild(el('div', 'who', T(REC.who)));
-  const qt = el('span'); qt.id = 'quotetext'; qb.appendChild(qt);
-  const caret = el('span', 'caret'); caret.id = 'quotecaret'; qb.appendChild(caret);
-  rec.appendChild(qb);
-  const rl = el('div'); rl.id = 'radarline';
-  rl.appendChild(el('span', null, T('📡 radar 已捕获')));
-  rl.appendChild(el('span', 'arrow', '→'));
-  rl.appendChild(el('span', null, T('生成提案')));
-  rec.appendChild(rl);
-  vp.appendChild(rec);
+  ext.appendChild(wave);
+  const fw = el('div'); fw.id = 'fragwrap';
+  EXTRACT.frags.forEach((f, i) => {
+    const fr = el('div', `frag ${f.rel ? 'rel' : ''} k-${f.kind}`);
+    fr.style.left = `${FRAG_POS[i][0]}%`; fr.style.top = `${FRAG_POS[i][1]}%`;
+    fr.appendChild(el('div', 'fwho', T(f.who)));
+    const body = el('div', 'ftext');
+    if (f.hl) {
+      const [pre, post] = T(f.text).split(T(f.hl));
+      body.appendChild(document.createTextNode(pre ?? ''));
+      body.appendChild(el('span', 'hl', T(f.hl)));
+      body.appendChild(document.createTextNode(post ?? ''));
+    } else body.textContent = T(f.text);
+    fr.appendChild(body);
+    fw.appendChild(fr);
+  });
+  ext.appendChild(fw);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'fraglines'; svg.setAttribute('preserveAspectRatio', 'none');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  line.id = 'fragline'; svg.appendChild(line);
+  ext.appendChild(svg);
+  const mini = el('div'); mini.id = 'minicard';
+  mini.appendChild(el('div', 'mtitle', T(EXTRACT.card_title)));
+  const mchips = el('div', 'chips');
+  EXTRACT.chips.forEach((c) => mchips.appendChild(el('span', 'chip', T(c))));
+  mini.appendChild(mchips);
+  ext.appendChild(mini);
+  vp.appendChild(ext);
+
+  // ---- S5 terminal overlay (double-click -> live session)
+  const term = el('div', 'overlay'); term.id = 'termscene';
+  const tw = el('div'); tw.id = 'termwin';
+  const ttb = el('div', 'termbar');
+  const ttr = el('div', 'traffic');
+  ['r', 'y', 'g'].forEach((k) => ttr.appendChild(el('span', k)));
+  ttb.appendChild(ttr);
+  ttb.appendChild(el('span', 'termtitle', TERM.title));
+  tw.appendChild(ttb);
+  const tbody = el('div', 'termbody');
+  TERM.lines.forEach(([txt]) => tbody.appendChild(el('div', 'tline', txt)));
+  tbody.appendChild(el('span', 'tcursor', '▍'));
+  tw.appendChild(tbody);
+  term.appendChild(tw);
+  vp.appendChild(term);
+
+  // ---- S6 merge-review vignette (主卡/副卡 AI verdict)
+  const mg = el('div', 'overlay'); mg.id = 'mergescene';
+  const mrow = el('div'); mrow.id = 'mergerow';
+  for (const [item, cls] of [[MERGE.primary, 'primary'], [MERGE.secondary, 'secondary']]) {
+    const c = el('div', `mcard ${cls}`);
+    c.appendChild(el('div', 'mtag', T(item.tag)));
+    c.appendChild(el('div', 'mtitle', T(item.title)));
+    c.appendChild(el('div', 'msel', '✓'));
+    mrow.appendChild(c);
+  }
+  mg.appendChild(mrow);
+  const vd = el('div'); vd.id = 'verdict';
+  vd.appendChild(el('div', 'vtitle', T(MERGE.verdict)));
+  vd.appendChild(el('div', 'vconf', T(MERGE.confidence)));
+  const vbtns = el('div', 'btnrow');
+  const vacc = el('div', 'btn accept'); vacc.id = 'vaccept'; vacc.textContent = T(MERGE.accept);
+  vbtns.appendChild(vacc);
+  vbtns.appendChild(el('div', 'btn', T(MERGE.dismiss)));
+  vd.appendChild(vbtns);
+  mg.appendChild(vd);
+  const vcur = el('div'); vcur.id = 'vcursor';
+  vcur.innerHTML = '<svg viewBox="0 0 28 40" width="30" height="42">'
+    + '<path d="M3 1 L3 30 L10 24 L14.5 37 L19.5 35 L15 22.5 L25 22.5 Z" '
+    + 'fill="#fff" stroke="#111" stroke-width="1.6"/></svg>';
+  mg.appendChild(vcur);
+  const vrip = el('div'); vrip.id = 'vripple'; mg.appendChild(vrip);
+  vp.appendChild(mg);
+
+  // ---- S9 phone loop (Slack self-DM photo -> card; iOS approve)
+  const ph = el('div', 'overlay'); ph.id = 'phonescene';
+  const frame = el('div'); frame.id = 'phoneframe';
+  const scr = el('div'); scr.id = 'phonescreen';
+  // slack view
+  const slack = el('div', 'pview'); slack.id = 'slackview';
+  slack.appendChild(el('div', 'phead', T(PHONE.slack_self)));
+  const photo = el('div'); photo.id = 'wbphoto';
+  const wb = el('div'); wb.id = 'whiteboard';
+  wb.appendChild(el('div', 'wbtitle', 'inkweld demo'));
+  const wbrow = el('div', 'wbrow');
+  ['repo', 'seed 数据', 'PaaS'].forEach((s, i) => {
+    if (i > 0) wbrow.appendChild(el('span', 'wbarrow', '→'));
+    wbrow.appendChild(el('span', 'wbbox', T(s)));
+  });
+  wb.appendChild(wbrow);
+  wb.appendChild(el('div', 'wbnote', T('✎ 只读演示账号 / reset 脚本')));
+  photo.appendChild(wb);
+  photo.appendChild(el('div', 'pcap', T(PHONE.photo_caption)));
+  slack.appendChild(photo);
+  const pcard = el('div'); pcard.id = 'phonecard';
+  const psp = el('div', 'spinner'); psp.style.width = '18px'; psp.style.height = '18px';
+  pcard.appendChild(psp);
+  const pcbody = el('div');
+  pcbody.appendChild(el('div', 'pctitle', T(PHONE.card_title)));
+  pcbody.appendChild(el('div', 'pcsub', T(PHONE.processing)));
+  pcard.appendChild(pcbody);
+  slack.appendChild(pcard);
+  scr.appendChild(slack);
+  // ios view
+  const ios = el('div', 'pview'); ios.id = 'iosview';
+  ios.appendChild(el('div', 'phead', T(PHONE.ios_header)));
+  ios.appendChild(el('div', 'plane', T(PHONE.ios_lane)));
+  const icard = el('div'); icard.id = 'ioscard';
+  icard.appendChild(el('div', 'pctitle', T(PHONE.card_title)));
+  const ichips = el('div', 'chips');
+  ichips.appendChild(el('span', 'chip tier', T('T2 · 需文字确认')));
+  ichips.appendChild(el('span', 'chip cost', '$85'));
+  icard.appendChild(ichips);
+  const ibtns = el('div', 'btnrow');
+  const iapp = el('div', 'btn approve'); iapp.id = 'iosapprove';
+  iapp.textContent = T(PHONE.approve);
+  ibtns.appendChild(iapp);
+  ibtns.appendChild(el('div', 'btn reject', T('✕ 拒绝')));
+  icard.appendChild(ibtns);
+  ios.appendChild(icard);
+  ios.appendChild(el('div', 'e2enote', T('端到端加密同步 · E2E encrypted')));
+  scr.appendChild(ios);
+  frame.appendChild(scr);
+  ph.appendChild(frame);
+  const thumb = el('div'); thumb.id = 'thumb'; ph.appendChild(thumb);
+  vp.appendChild(ph);
 
   const grid = el('div', 'overlay'); grid.id = 'gridscene';
   const gw = el('div'); gw.id = 'gridwrap';
@@ -402,6 +524,7 @@ function buildGhosts() {
 
 // --------------------------------------------------------------- measuring
 const rects = {};
+const vrects = {}; // viewport-space rects for overlay cursors
 function measure() {
   const win = $('#macwin');
   const wr = win.getBoundingClientRect();
@@ -409,14 +532,46 @@ function measure() {
   for (const pane of document.querySelectorAll('.pane')) {
     const name = pane.dataset.scene;
     pane.style.opacity = 1; // ensure layout is realized
-    for (const sel of ['.hero', '.hero .btn.approve', '.hero .btn.accept']) {
+    // hero2's final draft is measured EXPANDED so the camera pre-frames it
+    const fd = pane.querySelector('.hero2 .finaldraft');
+    if (fd) fd.style.maxHeight = '340px';
+    for (const sel of ['.hero', '.hero .btn.approve', '.hero .btn.accept',
+                       '.hero .mono', '.qcap',
+                       '.hero2', '.hero2 .finaldraft', '.hero2 .btn.copyfinal']) {
       const e = pane.querySelector(sel);
       if (!e) continue;
       const r = e.getBoundingClientRect();
       rects[`${name}|${sel}`] = { x: r.left, y: r.top, w: r.width, h: r.height };
     }
+    if (fd) fd.style.maxHeight = '';
     pane.style.opacity = 0;
   }
+  // overlay hotspots (viewport space; opacity doesn't affect geometry)
+  for (const [key, sel] of [['vaccept', '#vaccept'], ['iosapprove', '#iosapprove']]) {
+    const r = $(sel).getBoundingClientRect();
+    vrects[key] = { x: r.left, y: r.top, w: r.width, h: r.height };
+  }
+}
+
+// ephemeral quick-capture card: absolutely anchored right under the initial
+// pane's composer; pops during S3, stays out of every pane's layout flow
+let qcCard = null;
+function buildQcCard() {
+  const pane = document.querySelector('.pane[data-scene="initial"]');
+  const body = pane.querySelector('.colbody');
+  body.style.position = 'relative';
+  const q = pane.querySelector('.qcap');
+  qcCard = el('div', 'card processing qccard');
+  qcCard.appendChild(el('div', 'spinner'));
+  const b = el('div');
+  b.appendChild(el('div', 'title', T(QC.text)));
+  b.appendChild(el('div', 'sub', T('AI 研究中…（补全上下文、生成提案）')));
+  qcCard.appendChild(b);
+  qcCard.style.position = 'absolute';
+  qcCard.style.left = '0'; qcCard.style.right = '0';
+  qcCard.style.top = `${q.offsetTop + q.offsetHeight + 14}px`;
+  qcCard.style.zIndex = '5';
+  body.appendChild(qcCard);
 }
 function rectFor(target, pad = 0) {
   const key = target[1] === 'window' ? 'window' : `${target[0]}|${target[1]}`;
@@ -442,6 +597,12 @@ function wordsIn(rootEl, t, t0, stagger = 0.045, rise = 18) {
   });
 }
 
+function cueRect(cue) {
+  const r = rectFor(cue.target, cue.pad);
+  if (cue.dy) r.y += cue.dy;
+  return r;
+}
+
 function seek(t) {
   const vw = window.innerWidth, vh = window.innerHeight;
 
@@ -449,12 +610,12 @@ function seek(t) {
   let rect = rectFor(['done', 'window'], 0);
   for (let i = 0; i < CAM_CUES.length; i++) {
     const cur = CAM_CUES[i], nxt = CAM_CUES[i + 1];
-    if (t < cur.t && i === 0) { rect = rectFor(cur.target, cur.pad); break; }
+    if (t < cur.t && i === 0) { rect = cueRect(cur); break; }
     if (t >= cur.t && (!nxt || t < nxt.t)) {
-      rect = rectFor(cur.target, cur.pad);
+      rect = cueRect(cur);
       if (nxt && !nxt.cut) {
         const p = easeIO(seg(t, cur.t, nxt.t));
-        rect = lerpRect(rect, rectFor(nxt.target, nxt.pad), p);
+        rect = lerpRect(rect, cueRect(nxt), p);
       }
       break;
     }
@@ -473,7 +634,7 @@ function seek(t) {
   const ty = vh / 2 - s * (rect.y + rect.h / 2);
   const cam = $('#camera');
   cam.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
-  cam.style.opacity = seg(t, TL.rec_end - 0.12, TL.rec_end + 0.45)
+  cam.style.opacity = seg(t, TL.board_in, TL.board_in + 0.55)
     * (1 - seg(t, TL.done_end - 0.3, TL.done_end + 0.05));
 
   // ---- panes (crossfade or hard cut)
@@ -581,42 +742,237 @@ function seek(t) {
 
   // ---- title card
   const title = $('#titlecard');
-  const tIn = seg(t, 0.0, 0.4), tOut = 1 - seg(t, TL.title_end - 0.45, TL.title_end - 0.05);
+  const tIn = seg(t, 0.0, 0.35), tOut = 1 - seg(t, TL.title_end - 0.4, TL.title_end - 0.05);
   title.style.opacity = Math.min(tIn, tOut);
-  title.style.transform = `scale(${1 + 0.06 * seg(t, TL.title_end - 0.45, TL.title_end)})`;
+  title.style.transform = `scale(${1 + 0.06 * seg(t, TL.title_end - 0.4, TL.title_end)})`;
   const ticon = title.querySelector('img');
-  const ip = easeOutBack(seg(t, 0.25, 0.9));
-  ticon.style.opacity = seg(t, 0.25, 0.6);
+  const ip = easeOutBack(seg(t, 0.15, 0.7));
+  ticon.style.opacity = seg(t, 0.15, 0.45);
   ticon.style.transform = `scale(${0.4 + 0.6 * ip})`;
-  wordsIn(title.children[1], t, 0.65, 0.045);
-  wordsIn(title.children[2], t, 1.45, 0.045);
-  wordsIn(title.children[3], t, 2.05, 0.025, 10);
+  wordsIn(title.children[1], t, 0.45, 0.04);
+  wordsIn(title.children[2], t, 1.0, 0.04);
+  wordsIn(title.children[3], t, 1.45, 0.02, 10);
 
-  // ---- recording scene
-  const rec = $('#recscene');
-  const rIn = seg(t, TL.title_end - 0.15, TL.title_end + 0.35);
-  const rOut = 1 - seg(t, TL.rec_end - 0.4, TL.rec_end - 0.05);
-  rec.style.opacity = Math.min(rIn, rOut);
-  if (rec.style.opacity > 0) {
-    const bars = rec.querySelectorAll('#wave span');
-    bars.forEach((b, i) => {
-      const enter = easeOut(seg(t, TL.title_end + 0.1 + i * 0.02, TL.title_end + 0.45 + i * 0.02));
+  // ---- S1 extraction scene
+  const ext = $('#extractscene');
+  const tt = TL.title_end;
+  const eIn = seg(t, tt - 0.15, tt + 0.3);
+  const eOut = 1 - seg(t, TL.extract_end - 0.6, TL.extract_end - 0.1);
+  ext.style.opacity = Math.min(eIn, eOut);
+  if (ext.style.opacity > 0) {
+    ext.querySelectorAll('#wave span').forEach((b, i) => {
+      const enter = easeOut(seg(t, tt + 0.05 + i * 0.015, tt + 0.35 + i * 0.015));
       const a = Math.abs(Math.sin(i * 0.83 + t * 4.1)) * Math.abs(Math.sin(i * 2.71 - t * 2.3));
       const env = 0.55 + 0.45 * Math.sin(t * 1.7 + i * 0.13);
-      b.style.height = `${(8 + 84 * a * env) * enter}%`;
+      b.style.height = `${(6 + 70 * a * env) * enter}%`;
       b.style.opacity = 0.35 + 0.65 * enter;
     });
-    const chars = [...T(REC.quote)];
-    const n = Math.floor(chars.length * seg(t, REC.type_t0, REC.type_t1));
-    $('#quotetext').textContent = chars.slice(0, n).join('');
-    $('#quotecaret').style.opacity = (t < REC.type_t1 + 0.8 && (t * 2.4) % 1 < 0.55) ? 1 : 0;
-    $('#quotebubble').style.opacity = seg(t, REC.type_t0 - 0.35, REC.type_t0);
-    $('#quotebubble').style.transform = `translateY(${(1 - easeOut(seg(t, REC.type_t0 - 0.35, REC.type_t0 + 0.1))) * 24}px)`;
-    const rl = $('#radarline');
-    const rp = easeOut(seg(t, REC.radar_t, REC.radar_t + 0.5));
-    rl.style.opacity = rp;
-    rl.style.transform = `translateY(${(1 - rp) * 18}px)`;
-    rl.querySelector('.arrow').style.transform = `translateX(${4 * Math.sin(t * 5)}px)`;
+    // fragments rain in, unrelated ones recede, related ones light + connect
+    const frags = ext.querySelectorAll('.frag');
+    const dimT = tt + 2.8, convT = tt + 4.4;
+    frags.forEach((fr, i) => {
+      const enter = easeOut(seg(t, tt + 1.0 + i * 0.22, tt + 1.5 + i * 0.22));
+      const rel = fr.classList.contains('rel');
+      const dim = rel ? 1 : 1 - 0.75 * seg(t, dimT, dimT + 0.6);
+      const conv = rel ? easeIO(seg(t, convT, convT + 0.8)) : 0;
+      const gone = rel ? 0 : seg(t, convT, convT + 0.5);
+      // converge toward the minicard spot (50%, 58%)
+      const dx = (50 - parseFloat(fr.style.left) - 11) * conv;
+      const dy2 = (58 - parseFloat(fr.style.top) - 5) * conv;
+      fr.style.opacity = enter * dim * (1 - gone) * (1 - 0.999 * seg(t, convT + 0.55, convT + 0.8));
+      fr.style.transform = `translate(${dx}vw, ${dy2}vh) `
+        + `translateY(${(1 - enter) * 24}px) scale(${1 - 0.75 * conv})`;
+      fr.classList.toggle('lit', rel && t > dimT + 0.25);
+    });
+    // connecting line between the two related fragments
+    const lineP = seg(t, tt + 3.3, tt + 4.0);
+    const line = $('#fragline');
+    if (lineP > 0 && t < convT + 0.5) {
+      const W = vw, H = vh;
+      const a = { x: (FRAG_POS[1][0] + 11) / 100 * W, y: (FRAG_POS[1][1] + 7) / 100 * H };
+      const b = { x: (FRAG_POS[4][0] + 11) / 100 * W, y: (FRAG_POS[4][1] + 5) / 100 * H };
+      $('#fraglines').setAttribute('viewBox', `0 0 ${W} ${H}`);
+      line.setAttribute('d', `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2} ${(a.y + b.y) / 2 - 60} ${b.x} ${b.y}`);
+      const len = 900;
+      line.style.strokeDasharray = len;
+      line.style.strokeDashoffset = len * (1 - lineP);
+      line.style.opacity = 1 - seg(t, convT, convT + 0.4);
+    } else line.style.opacity = 0;
+    // the one card they become
+    const mini = $('#minicard');
+    const mp = easeOutBack(seg(t, convT + 0.3, convT + 0.9));
+    mini.style.opacity = seg(t, convT + 0.3, convT + 0.6);
+    mini.style.transform = `translate(-50%, -50%) scale(${0.5 + 0.5 * mp})`;
+    mini.querySelectorAll('.chip').forEach((c, i) => {
+      const cp = easeOutBack(seg(t, convT + 0.7 + i * 0.2, convT + 1.05 + i * 0.2));
+      c.style.opacity = seg(t, convT + 0.7 + i * 0.2, convT + 0.9 + i * 0.2);
+      c.style.transform = `scale(${0.5 + 0.5 * cp})`;
+    });
+  }
+
+  // ---- S3 quick-capture typing in the composer
+  const qcap = paneEl('initial').querySelector('.qcap');
+  if (t >= TL.qc_start + 0.25 && t <= TL.qc_end + 0.55) {
+    const chars = [...T(QC.text)];
+    const n = Math.floor(chars.length * seg(t, QC.type_t0, QC.type_t1));
+    const caret = (t < QC.enter_t + 0.4 && (t * 2.6) % 1 < 0.55) ? '▍' : '';
+    qcap.textContent = '＋ ' + chars.slice(0, n).join('') + caret;
+    qcap.style.opacity = 1;
+    const flash = 1 - clamp01(Math.abs(t - QC.enter_t) / 0.2);
+    qcap.style.borderColor = `rgba(177, 140, 255, ${0.25 + 0.7 * flash})`;
+    qcap.style.color = '#e8e8ec';
+  } else {
+    qcap.textContent = T('＋ 一句话，AI 来研究并提案…');
+    qcap.style.opacity = ''; qcap.style.borderColor = ''; qcap.style.color = '';
+  }
+  if (qcCard) {
+    const qp = easeOutBack(seg(t, QC.enter_t, QC.enter_t + 0.5));
+    // fades back out as the camera returns to the hero card (it sits on top
+    // of the flow, so it must not linger over R-101 in the approve shot)
+    qcCard.style.opacity = seg(t, QC.enter_t, QC.enter_t + 0.25)
+      * (1 - seg(t, TL.qc_end + 0.15, TL.qc_end + 0.55));
+    qcCard.style.transform = `translateY(${(1 - qp) * 22}px) scale(${0.92 + 0.08 * qp})`;
+    qcCard.classList.toggle('glow', t >= QC.enter_t && t < QC.enter_t + 1.3);
+  }
+
+  // ---- S2 chip pulses on the hero proposal (cost / due / tier)
+  paneEl('initial').querySelectorAll('.hero .chips .chip').forEach((c, i) => {
+    if (i > 3) return;
+    const p0 = TL.captured_end + 1.7 + i * 0.4;
+    const pp = Math.sin(Math.PI * seg(t, p0, p0 + 0.4));
+    c.style.transform = `scale(${1 + 0.14 * pp})`;
+    c.style.filter = pp > 0.01 ? `brightness(${1 + 0.5 * pp})` : 'none';
+  });
+
+  // ---- S5 terminal overlay
+  const term = $('#termscene');
+  const tmIn = seg(t, TL.term_in - 0.05, TL.term_in + 0.3);
+  const tmOut = 1 - seg(t, TL.term_end - 0.35, TL.term_end - 0.05);
+  term.style.opacity = Math.min(tmIn, tmOut);
+  if (term.style.opacity > 0) {
+    const rise = easeOut(seg(t, TL.term_in, TL.term_in + 0.45));
+    $('#termwin').style.transform = `translateY(${(1 - rise) * 46}px) scale(${0.96 + 0.04 * rise})`;
+    const lines = term.querySelectorAll('.tline');
+    lines.forEach((ln, i) => {
+      const off = TL.term_in + 0.15 + TERM.lines[i][1];
+      if (i === 0) {
+        const chars = TERM.lines[0][0];
+        const n = Math.floor(chars.length * seg(t, off, off + 0.4));
+        ln.textContent = chars.slice(0, n);
+        ln.style.opacity = 1;
+      } else {
+        ln.style.opacity = seg(t, off, off + 0.2);
+        ln.style.transform = `translateX(${(1 - easeOut(seg(t, off, off + 0.3))) * 10}px)`;
+      }
+    });
+    term.querySelector('.tcursor').style.opacity = (t * 2.4) % 1 < 0.55 ? 1 : 0;
+  }
+
+  // ---- S6 merge-review vignette
+  const mg = $('#mergescene');
+  const mgIn = seg(t, TL.term_end - 0.1, TL.term_end + 0.3);
+  const mgOut = 1 - seg(t, TL.merge_end - 0.4, TL.merge_end - 0.05);
+  mg.style.opacity = Math.min(mgIn, mgOut);
+  if (mg.style.opacity > 0) {
+    const cards = mg.querySelectorAll('.mcard');
+    cards.forEach((c, i) => {
+      const enter = easeOut(seg(t, TL.term_end + 0.1 + i * 0.15, TL.term_end + 0.5 + i * 0.15));
+      let extra = '';
+      if (c.classList.contains('secondary')) {
+        const fuse = easeIO(seg(t, MERGE.accept_t + 0.25, MERGE.accept_t + 0.85));
+        const pv = vrects['mprimary'], sv = vrects['msecondary'];
+        if (pv && sv) extra = ` translate(${(pv.x - sv.x) * fuse}px, ${(pv.y - sv.y) * fuse}px) scale(${1 - 0.8 * fuse})`;
+        c.style.opacity = enter * (1 - seg(t, MERGE.accept_t + 0.75, MERGE.accept_t + 0.95));
+      } else {
+        const pulse = 1 + 0.05 * Math.sin(Math.PI * seg(t, MERGE.accept_t + 0.8, MERGE.accept_t + 1.2));
+        extra = ` scale(${pulse})`;
+        c.style.opacity = enter;
+      }
+      c.style.transform = `translateY(${(1 - enter) * 26}px)` + extra;
+      const sel = c.querySelector('.msel');
+      const sp = easeOutBack(seg(t, MERGE.select_t + i * 0.35, MERGE.select_t + 0.35 + i * 0.35));
+      sel.style.opacity = seg(t, MERGE.select_t + i * 0.35, MERGE.select_t + 0.2 + i * 0.35);
+      sel.style.transform = `scale(${0.4 + 0.6 * sp})`;
+    });
+    const vd = $('#verdict');
+    const vp2 = easeOut(seg(t, MERGE.verdict_t, MERGE.verdict_t + 0.45));
+    vd.style.opacity = vp2 * (1 - seg(t, MERGE.accept_t + 0.5, MERGE.accept_t + 0.8));
+    vd.style.transform = `translateY(${(1 - vp2) * 30}px)`;
+    // vignette cursor + click
+    const vc = $('#vcursor'), vr = $('#vripple'), va = vrects['vaccept'];
+    vc.style.opacity = 0; vr.style.opacity = 0;
+    if (va && t >= MERGE.verdict_t + 0.4 && t <= MERGE.accept_t + 0.35) {
+      vc.style.opacity = seg(t, MERGE.verdict_t + 0.4, MERGE.verdict_t + 0.6);
+      const p = easeIO(seg(t, MERGE.verdict_t + 0.5, MERGE.accept_t - 0.08));
+      const x = lerp(va.x + va.w / 2 + 210, va.x + va.w / 2, p);
+      const y = lerp(va.y + va.h / 2 + 150, va.y + va.h / 2, p);
+      const dip = 1 - 0.14 * (1 - clamp01(Math.abs(t - MERGE.accept_t) / 0.14));
+      vc.style.transform = `translate(${x}px, ${y}px) scale(${dip})`;
+    }
+    if (va) {
+      const rp = seg(t, MERGE.accept_t, MERGE.accept_t + 0.45);
+      if (rp > 0 && rp < 1) {
+        vr.style.left = `${va.x + va.w / 2}px`; vr.style.top = `${va.y + va.h / 2}px`;
+        vr.style.opacity = 0.9 * (1 - rp);
+        vr.style.transform = `translate(-50%,-50%) scale(${0.2 + 1.5 * easeOut(rp)})`;
+      }
+      $('#vaccept').style.filter = (t >= MERGE.accept_t && t < MERGE.accept_t + 0.4)
+        ? `brightness(${1 + 0.8 * (1 - seg(t, MERGE.accept_t, MERGE.accept_t + 0.4))})` : 'none';
+    }
+  }
+
+  // ---- S7b final draft expands + 复制成稿 click
+  // spotlight moves from the PR card (hero) to the weekly report (hero2)
+  paneEl('review').classList.toggle('late', t >= TL.review_pan + 0.3);
+  const fdEl = paneEl('review').querySelector('.hero2 .finaldraft');
+  if (fdEl) {
+    const open = easeIO(seg(t, TL.review_pan + 0.5, TL.review_pan + 1.3));
+    fdEl.style.maxHeight = `${340 * open}px`;
+    fdEl.style.opacity = 0.4 + 0.6 * open;
+  }
+  const cfBtn = paneEl('review').querySelector('.hero2 .btn.copyfinal');
+  if (cfBtn) {
+    const copied = t >= TL.copy_click + 0.1;
+    cfBtn.textContent = copied ? T('已复制 ✓') : T('📋 复制成稿');
+    cfBtn.classList.toggle('copied', copied);
+  }
+
+  // ---- S9 phone loop
+  const ph = $('#phonescene');
+  const phIn = seg(t, TL.done_end - 0.05, TL.done_end + 0.35);
+  const phOut = 1 - seg(t, TL.phone_end - 0.4, TL.phone_end - 0.05);
+  ph.style.opacity = Math.min(phIn, phOut);
+  if (ph.style.opacity > 0) {
+    const rise = easeOut(seg(t, TL.done_end, TL.done_end + 0.55));
+    $('#phoneframe').style.transform = `translateY(${(1 - rise) * 50}px)`;
+    const sw = seg(t, TL.phone_switch - 0.15, TL.phone_switch + 0.15);
+    $('#slackview').style.opacity = 1 - sw;
+    $('#iosview').style.opacity = sw;
+    const pp = easeOutBack(seg(t, PHONE.photo_t, PHONE.photo_t + 0.5));
+    $('#wbphoto').style.opacity = seg(t, PHONE.photo_t, PHONE.photo_t + 0.25);
+    $('#wbphoto').style.transform = `translateY(${(1 - pp) * 46}px)`;
+    const cp = easeOutBack(seg(t, PHONE.card_t, PHONE.card_t + 0.5));
+    $('#phonecard').style.opacity = seg(t, PHONE.card_t, PHONE.card_t + 0.25);
+    $('#phonecard').style.transform = `translateY(${(1 - cp) * 30}px)`;
+    // thumb tap on 批准
+    const th = $('#thumb'), ia = vrects['iosapprove'];
+    th.style.opacity = 0;
+    if (ia && t >= PHONE.tap_t - 0.55 && t <= PHONE.tap_t + 0.5) {
+      th.style.opacity = 0.55 * seg(t, PHONE.tap_t - 0.55, PHONE.tap_t - 0.3)
+        * (1 - seg(t, PHONE.tap_t + 0.25, PHONE.tap_t + 0.5));
+      const ap = easeIO(seg(t, PHONE.tap_t - 0.55, PHONE.tap_t - 0.05));
+      const x = lerp(ia.x + ia.w / 2 + 60, ia.x + ia.w / 2, ap);
+      const y = lerp(ia.y + ia.h / 2 + 90, ia.y + ia.h / 2, ap);
+      const dip = 1 - 0.25 * (1 - clamp01(Math.abs(t - PHONE.tap_t) / 0.15));
+      th.style.transform = `translate(-50%,-50%) translate(${x}px, ${y}px) scale(${dip})`;
+    }
+    const iBtn = $('#iosapprove');
+    const done = t >= PHONE.tap_t + 0.12;
+    iBtn.textContent = done ? T(PHONE.approved) : T(PHONE.approve);
+    iBtn.classList.toggle('done', done);
+    const slide = easeIO(seg(t, PHONE.tap_t + 0.4, PHONE.tap_t + 0.95));
+    $('#ioscard').style.transform = `translateX(${slide * 120}px)`;
+    $('#ioscard').style.opacity = 1 - 0.7 * slide;
   }
 
   // ---- captions (+ scrim so text never fights the board)
@@ -633,24 +989,24 @@ function seek(t) {
   }
   // scrim only matters while the board is up — overlays have their own space
   $('#capscrim').style.opacity =
-    capVis * (t > TL.rec_end && t < TL.done_end ? 0.9 : 0);
+    capVis * (t > TL.board_in && t < TL.done_end ? 0.9 : 0);
 
   // ---- feature grid
   const grid = $('#gridscene');
-  const gIn = seg(t, TL.done_end - 0.1, TL.done_end + 0.3);
+  const gIn = seg(t, TL.phone_end - 0.1, TL.phone_end + 0.3);
   const gOut = 1 - seg(t, TL.grid_end - 0.4, TL.grid_end - 0.05);
   grid.style.opacity = Math.min(gIn, gOut);
   if (grid.style.opacity > 0) {
     $('#gridwrap').style.transform =
-      `scale(${lerp(1.5, 1.0, easeOut(seg(t, TL.done_end, TL.done_end + 1.9)))})`;
+      `scale(${lerp(1.5, 1.0, easeOut(seg(t, TL.phone_end, TL.phone_end + 1.9)))})`;
     grid.querySelectorAll('.tile').forEach((tile, i) => {
-      const p = easeOut(seg(t, TL.done_end + 0.12 + i * 0.06, TL.done_end + 0.5 + i * 0.06));
+      const p = easeOut(seg(t, TL.phone_end + 0.12 + i * 0.06, TL.phone_end + 0.5 + i * 0.06));
       tile.style.opacity = p;
       tile.style.transform = `translateY(${(1 - p) * 26}px)`;
     });
-    wordsIn($('#gridcaption').children[0], t, TL.done_end + 1.9, 0.035);
+    wordsIn($('#gridcaption').children[0], t, TL.phone_end + 1.6, 0.035);
     const gcEn = $('#gridcaption').children[1];
-    if (gcEn) gcEn.style.opacity = seg(t, TL.done_end + 2.4, TL.done_end + 2.8);
+    if (gcEn) gcEn.style.opacity = seg(t, TL.phone_end + 2.1, TL.phone_end + 2.5);
   }
 
   // ---- end card
@@ -679,6 +1035,7 @@ async function init() {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   measure();
   buildGhosts();
+  buildQcCard();
   window.seek = seek;
   seek(0);
   window.STAGE_READY = true;
