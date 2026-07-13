@@ -87,6 +87,24 @@ class ReviewTransitionTestCase(unittest.TestCase):
         curr = _dash(review=[{"id": "R-2", "name": "任务二"}])
         self.assertEqual(actd.detect_transitions(prev, curr), [])
 
+    def test_from_review_rerun_settling_back_is_silent(self):
+        # §30 v0.28.1: an already-delivered 待验收 card whose attach-reactivated
+        # session was projected into 运行中 (from_review) settles back to review
+        # when the session goes idle/done. That running->review bounce must NOT
+        # fire "待验收：AI 已交付草稿" — it was never a fresh delivery (on main it
+        # stayed in review the whole time). Guard = prev running row's from_review.
+        prev = _dash(running=[{"id": "R-2", "name": "任务二", "from_review": True}])
+        curr = _dash(review=[{"id": "R-2", "name": "任务二"}])
+        self.assertEqual(actd.detect_transitions(prev, curr), [])
+
+    def test_genuine_executing_to_review_still_notifies(self):
+        # regression guard: a normal executing run finishing (prev running row
+        # has NO from_review) still fires the fresh-delivery notification.
+        prev = _dash(running=[{"id": "R-2", "name": "任务二"}])
+        curr = _dash(review=[{"id": "R-2", "name": "任务二"}])
+        self.assertEqual(actd.detect_transitions(prev, curr),
+                         [(*_review_ready("任务二"), "R-2")])
+
     def test_review_persisting_is_silent(self):
         prev = _dash(review=[{"id": "R-2", "name": "任务二"}])
         curr = _dash(review=[{"id": "R-2", "name": "任务二"}])

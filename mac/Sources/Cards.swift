@@ -1161,6 +1161,13 @@ struct TaskRow: View {
                         if task.state == "review-active" {
                             Badge(text: L("会话有新活动", "Session active"), color: .teal)
                         } else if let st = task.state { Badge(text: st, color: accent) }
+                        // §30 v0.28.1: a 待验收 card projected here because its
+                        // session was reactivated (attach). Label it so a card
+                        // Zelin remembers delivering doesn't read as brand-new
+                        // work; it drops back to 待验收 when the session settles.
+                        if task.from_review == true {
+                            Badge(text: L("已交付过·再运行", "Delivered · re-running"), color: .teal)
+                        }
                         if let sid = task.short_id ?? task.session_id {
                             Text(sid.prefix(8))
                                 .font(.system(size: 10, design: .monospaced))

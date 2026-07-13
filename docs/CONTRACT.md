@@ -135,10 +135,10 @@ debt item 新增 `summary`（同上，大白话）。
   - `card_sent | review`：有活 session 不动它（人做完了，AI 会话自然闲置）——原语义不变；
   - `executing` 且有 `session_id`：先 best-effort `executor.harvest_delivery(session_id)`（**非空才写** `execution.delivered_summary`/`final_draft`，失败只记日志），再 best-effort `executor.stop_session(session_id)`（清掉挂着的 blocked agent；失败只记日志，**绝不阻塞交付落账**），然后照常落账；
   - `approved`（排队未派发）：直接落账，无 harvest/stop。
-- `abort_execution`（停止并退回待审批）：允许 `approved | executing` → 活 session 先 best-effort 停止（`executor.stop_session(session_id)`，即 rework「活进程先 claude stop」的同一路径；stop 失败只记日志，不阻塞状态回退）；`execution.session_id` 归档为 `execution.aborted_session_id` 后删除（保证重新批准时干净重派发），删 `execution.done`，记 `execution.aborted_at` = ISO now → 置 `card_sent`。
+- `abort_execution`（停止并退回待审批）：允许 `approved | executing | review`（**v0.28.1 §30 add-only**：review = 被 attach 回流投影进运行中的待验收卡，「退回提案」丢弃这轮重跑）→ 活 session 先 best-effort 停止（`executor.stop_session(session_id)`，即 rework「活进程先 claude stop」的同一路径；stop 失败只记日志，不阻塞状态回退）；`execution.session_id` 归档为 `execution.aborted_session_id` 后删除（保证重新批准时干净重派发），删 `execution.done`，记 `execution.aborted_at` = ISO now → 置 `card_sent`。
 - `revert_review`（退回待验收）：允许 `delivered` → 置 `review`；删 `execution.accepted_at`，记 `execution.reverted_at` = ISO now。
 
-**`stop_to_review`（停止并收下成果待验收，「去待验收」）**：允许 `executing | approved` → 置 `review`（待验收）。语义 = 「停下来我看看它做了什么」——**停掉跑着的 agent、KEEP 它已产出的成果**，落 待验收 让 Zelin ✓验收 / ↩︎打回，**绝不跳过验收**。这是运行中卡片的新「去待验收」出口，区别于同样停 agent 的另两个动作：`done_external`（→`delivered`，「我在系统外做完了」直接完成、跳过验收）、`abort_execution`（→`card_sent`，「不要了」丢弃成果退回待审批）。分状态行为：
+**`stop_to_review`（停止并收下成果待验收，「去待验收」）**：允许 `executing | approved | review`（**v0.28.1 §30 add-only**：review = 被 attach 回流投影进运行中的待验收卡，「去待验收」停掉回流 session、重新收割刷新交付、留在 review；harvest 门从「仅 executing」放宽为「有活 session 即收割」）→ 置 `review`（待验收）。语义 = 「停下来我看看它做了什么」——**停掉跑着的 agent、KEEP 它已产出的成果**，落 待验收 让 Zelin ✓验收 / ↩︎打回，**绝不跳过验收**。这是运行中卡片的新「去待验收」出口，区别于同样停 agent 的另两个动作：`done_external`（→`delivered`，「我在系统外做完了」直接完成、跳过验收）、`abort_execution`（→`card_sent`，「不要了」丢弃成果退回待审批）。分状态行为：
   - `executing` 且有 `session_id`：先 best-effort `executor.harvest_delivery(session_id)`（**非空才写** `execution.delivered_summary`/`final_draft`，失败只记日志），再 best-effort `executor.stop_session(session_id)`（停掉跑着的 agent；失败只记日志，**绝不阻塞状态落 review**）；
   - `approved`（排队未派发，无 session）：harvest 为空，直接落 `review`（空交付物，待验收卡照常渲染）。
   镜像自然 `executing → review` 迁移的 review 字段：置 `execution.done = True`、`execution.review_at` = ISO now（dashboard 待验收卡读 `execution.review_at`，且防日后 purge 被误判为需 auto-resume 的崩溃）；notes 追加 `[stopped by user] 手动停止，已收下成果待验收`。其余状态 = 幂等 no-op + 日志（v0.10.2 公共规则）；走现有 `inbox_{action}` analytics 自动打点（`inbox_stop_to_review`），零新增事件。
@@ -825,6 +825,23 @@ working」不可能是返工轮，只能是用户 attach / 会话自发活动。
   （诚实降级）；新 App + 老 actd —— 仍可能收到 running[] 里
   `state="review-active"` 的行（该行形状只来自老 actd，add-only 不删），App
   徽章文案改为同语义的「会话有新活动」。
+
+**v0.28.1 追加（add-only，投影修订）**：上面「留在 `review[]` 只标 `session_active`」
+在生产暴露了一个盲区——owner 若 attach 回会话**启动了实打实的工作**（例：跑一整个
+deep-research workflow，几十个子 agent、数分钟），看板 运行中 显示 0、而该 session
+正烧算力,卡却静躺在待验收,与直觉冲突(被判为 bug)。修订:**`status=review` 且该
+session 的 roster state ∈ 正在 working 时,dashboard 把该卡投影进 `running[]`**（`state="working"`、
+新增 optional 字段 `from_review=true` 供 App 标注「已交付过·再运行」，同时携带
+`delivered_summary`/`final_draft` 以免丢草稿）。**关键:这是纯投影改动——磁盘上
+registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review 卡不被
+`reconcile_executing` 拉起)、验收/打回 verdict 与交付草稿全保留;session settle
+（done/缺席/blocked）后该卡自然落回上文的 `review[]` 分支(§30 判别规则、`session_active`
+徽章、`_review_active` 重新收割均不变)。§30 对「attach 活动 ≠ 返工轮」的语义判别**不变**
+——`from_review` 卡明确标为 working、非 rework。配套:`stop_to_review` / `abort_execution`
+的允许状态扩入 `review`（见 §10），使这类卡在 运行中 车道上的「停止」二选一（去待验收 /
+退回提案）真正生效——此前 review 卡无任何 in-app 停止入口。兼容性:老 App 忽略
+`from_review` 未知字段、卡仍显示在运行中(诚实降级);老 actd 不产生该投影,卡照旧留待验收。
+**通知守卫**:`detect_transitions` 的 running→review「待验收:AI 已交付草稿」通知,当**上一轮 running 行带 `from_review`** 时跳过——这只是 re-run 落回、非新交付(main 上该卡从不离开 review[]、从不通知),否则 attach 会话每次 working↔idle 循环都会误报。真正的 executing→review 首次交付(上一轮 running 行无 `from_review`)照常通知。
 
 # iOS 云同步 additions（Phase 1b — `syncd` + actd sync-safety，plan of record §5/§7.3）
 

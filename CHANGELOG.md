@@ -27,6 +27,23 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.28.1] - 2026-07-12
+
+### Fixed
+
+- **A 待验收 card whose session is actively working again now shows in 运行中.**
+  Previously, if you `claude attach`ed back into a delivered card's session and
+  kicked off real work (e.g. a follow-up deep-research), the card sat in 待验收
+  behind a calm "会话有新活动" badge while the 运行中 lane read 0 — the board
+  didn't reflect that a session was actively burning compute. Now such a card is
+  projected into the 运行中 lane (`from_review`) while its session runs, and
+  falls straight back to 待验收 (with a refreshed draft) the moment the session
+  settles. This is a **presentation-only** reroute — the on-disk status stays
+  `review`, so the ✓验收/↩︎打回 verdict and the delivered draft are preserved and
+  auto-resume is never triggered. The 停止 button on these cards now works:
+  `stop_to_review` / `abort_execution` accept `review` status (CONTRACT §30 /
+  §10 v0.28.1 add-only), giving review cards their first in-app stop path.
+
 ## [0.28.0] - 2026-07-12
 
 ### Added

@@ -138,6 +138,9 @@ struct RunningTask: Decodable, Hashable {
     // completed[] extras (contract B).
     let delivered_summary: String?
     let accepted_at: Int?        // epoch seconds
+    // §30 v0.28.1: true when a 待验收 card is projected into 运行中 because its
+    // session was reactivated via attach (on-disk status is still review).
+    let from_review: Bool?
 }
 
 struct DebtItem: Decodable, Hashable {

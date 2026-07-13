@@ -12,11 +12,13 @@ done_external   : card_sent | review | approved | executing -> delivered
                   blocked agent; failure NEVER blocks the delivery).
                   approved (queued, undispatched): straight to delivered,
                   no harvest/stop.
-abort_execution : approved | executing -> card_sent; live session stopped
-                  best-effort via executor.stop_session (a stop failure NEVER
-                  blocks the state rollback); execution.session_id archived to
-                  aborted_session_id then removed (clean re-dispatch on
+abort_execution : approved | executing | review -> card_sent; live session
+                  stopped best-effort via executor.stop_session (a stop failure
+                  NEVER blocks the state rollback); execution.session_id archived
+                  to aborted_session_id then removed (clean re-dispatch on
                   re-approval); execution.done dropped; aborted_at recorded.
+                  (v0.28.1 §30: review added — a 待验收 card routed into 运行中
+                  by an attach-reactivated session can be discarded from there.)
 revert_review   : delivered -> review; execution.accepted_at dropped;
                   reverted_at recorded.
 
@@ -272,8 +274,11 @@ class AbortExecutionTestCase(InverseActionsBase):
         self.assertNotIn("aborted_session_id", ex)
 
     def test_wrong_status_is_idempotent_noop(self):
-        wrong = (State.CARD_SENT.value, State.REVIEW.value,
-                 State.DELIVERED.value, State.DETECTED.value)
+        # v0.28.1 §30: review DROPPED from the no-op set — 「退回提案」 must apply
+        # to a review card routed into 运行中 by attach-reactivated session
+        # activity (covered by test_from_review_discards_and_returns_to_card_sent).
+        wrong = (State.CARD_SENT.value, State.DELIVERED.value,
+                 State.DETECTED.value)
         for i, st in enumerate(wrong):
             rid = f"R-82{i}"
             _mk_req(req_id=rid, status=st, execution={"session_id": "keep-me"})
@@ -286,6 +291,22 @@ class AbortExecutionTestCase(InverseActionsBase):
             self.assertEqual(ex.get("session_id"), "keep-me", msg=st)
             self.assertNotIn("aborted_session_id", ex, msg=st)
             self.assertNotIn("aborted_at", ex, msg=st)
+
+    def test_from_review_discards_and_returns_to_card_sent(self):
+        # v0.28.1 §30: 待验收 card routed to 运行中 by a reactivated session —
+        # 「退回提案」 stops the live session and kicks the card back to card_sent
+        # for a fresh decision (the reattached run is discarded).
+        _mk_req(status=State.REVIEW.value,
+                execution={"session_id": "sess-rv2", "done": True})
+        stub = mock.Mock(return_value=True)
+        with mock.patch.object(actd.executor, "stop_session", stub):
+            req = self._run("abort_execution")
+        stub.assert_called_once_with("sess-rv2")
+        self.assertEqual(req.status, State.CARD_SENT.value)
+        ex = req.execution or {}
+        self.assertNotIn("session_id", ex)                 # 干净重派发
+        self.assertEqual(ex.get("aborted_session_id"), "sess-rv2")
+        self.assertTrue(ex.get("aborted_at"))
 
     def test_double_abort_second_is_noop(self):
         _mk_req(status=State.EXECUTING.value,
@@ -300,7 +321,8 @@ class AbortExecutionTestCase(InverseActionsBase):
 
 
 # --------------------------------------------------------------------------- #
-# stop_to_review — executing | approved -> review（去待验收：停 agent + 收下成果）
+# stop_to_review — executing | approved | review -> review（去待验收：停 agent
+# + 收下成果；v0.28.1 §30 review：attach 回流被路由进运行中的卡也能「去待验收」）
 # --------------------------------------------------------------------------- #
 class StopToReviewTestCase(InverseActionsBase):
     def _run_with_executor(self, harvest, stop, req_id="R-800"):
@@ -379,8 +401,11 @@ class StopToReviewTestCase(InverseActionsBase):
         self.assertTrue(ex.get("review_at"))
 
     def test_wrong_status_is_idempotent_noop(self):
-        wrong = (State.CARD_SENT.value, State.REVIEW.value,
-                 State.DELIVERED.value, State.DETECTED.value)
+        # v0.28.1 §30: review DROPPED from the no-op set — a review card with an
+        # attach-reactivated session is routed into 运行中 and 「去待验收」 must
+        # apply there (covered by test_from_review_reharvests_and_stays_review).
+        wrong = (State.CARD_SENT.value, State.DELIVERED.value,
+                 State.DETECTED.value)
         for i, st in enumerate(wrong):
             rid = f"R-85{i}"
             _mk_req(req_id=rid, status=st, execution={"session_id": "keep-me"})
@@ -393,6 +418,28 @@ class StopToReviewTestCase(InverseActionsBase):
             self.assertEqual(ex.get("session_id"), "keep-me", msg=st)
             self.assertNotIn("review_at", ex, msg=st)
             self.assertNotIn("[stopped by user]", req.notes or "", msg=st)
+
+    def test_from_review_reharvests_and_stays_review(self):
+        # v0.28.1 §30: 待验收 card whose session was reactivated via attach and
+        # got routed to 运行中 — 「去待验收」 stops the live session, re-harvests
+        # (refreshing the draft with anything the reattached run produced) and
+        # stays in review. Registry status was never flipped, so this is
+        # idempotent-safe and the ✓/↩︎ verdict remains available.
+        _mk_req(status=State.REVIEW.value,
+                execution={"session_id": "sess-rv", "delivered_summary": "旧稿",
+                           "review_at": "2026-07-08T01:00:00Z"})
+        harvest = mock.Mock(return_value={"delivered_summary": "重跑后的新稿",
+                                          "final_draft": "新草稿全文"})
+        stop = mock.Mock(return_value=True)
+        req = self._run_with_executor(harvest, stop)
+        harvest.assert_called_once_with("sess-rv")   # 活 session -> 收割
+        stop.assert_called_once_with("sess-rv")      # ……并停掉 attach 回流会话
+        self.assertEqual(req.status, State.REVIEW.value)   # 仍留待验收
+        ex = req.execution or {}
+        self.assertEqual(ex.get("delivered_summary"), "重跑后的新稿")  # 刷新
+        self.assertEqual(ex.get("final_draft"), "新草稿全文")
+        self.assertTrue(ex.get("done"))
+        self.assertIn("[stopped by user]", req.notes)
 
     def test_analytics_autologged(self):
         _mk_req(req_id="R-859", status=State.EXECUTING.value,

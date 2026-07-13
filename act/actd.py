@@ -820,7 +820,11 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # v0.10.2 停止并退回待审批：approved|executing -> card_sent。活 session
         # 先 best-effort 停止（stop 失败只记日志，绝不阻塞状态回退）；session_id
         # 归档到 aborted_session_id 后删除，保证重新批准时干净重派发。
-        if str(req.status) not in (State.APPROVED.value, State.EXECUTING.value):
+        # v0.28.1 §30: review is allowed too — a 待验收 card routed into 运行中
+        # by attach-reactivated session activity; 「退回提案」 discards this
+        # reattached run and kicks it back to card_sent for a fresh decision.
+        if str(req.status) not in (State.APPROVED.value, State.EXECUTING.value,
+                                   State.REVIEW.value):
             _log(f"inbox: {req.id} abort_execution ignored (status={req.status}) — no-op")
             return "noop"
         ex = dict(req.execution or {})
@@ -852,14 +856,19 @@ def _apply_decision(req: Requirement, action: Optional[str],
         #   跑着的 agent；两步都吞异常只记日志，绝不阻塞状态落 review。
         #   approved（排队未派发，无 session）：harvest 为空，直接落 review
         #   （空交付物，待验收卡照常渲染，不崩）。
-        allowed = (State.EXECUTING.value, State.APPROVED.value)
+        #   review（v0.28.1 §30：会话有新活动被路由进「运行中」的卡，registry
+        #   仍是 review、带活 session）：停掉 attach 回流的 session、重新收割成果、
+        #   留在 review —— 「去待验收」在这种卡上就是「停下我看看它这轮跑了什么」。
+        allowed = (State.EXECUTING.value, State.APPROVED.value, State.REVIEW.value)
         prev_status = str(req.status)
         if prev_status not in allowed:
             _log(f"inbox: {req.id} stop_to_review ignored (status={req.status}) — no-op")
             return "noop"
         ex = dict(req.execution or {})
         sid = ex.get("session_id")
-        if prev_status == State.EXECUTING.value and sid and executor is not None:
+        # harvest whenever a live session exists (executing OR a review card with
+        # an attach-reactivated session); approved has no sid so this skips.
+        if sid and executor is not None:
             try:
                 harvested = executor.harvest_delivery(str(sid)) or {}
                 if harvested.get("delivered_summary"):
@@ -1271,6 +1280,13 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     # executing -> review (§11 draft ready, awaiting acceptance)
     for rid, item in c_rev.items():
         if rid not in p_rev and rid in p_run:
+            # §30 v0.28.1: skip when the previous running row was a `from_review`
+            # re-run (an already-delivered 待验收 card whose attach-reactivated
+            # session settled back to review). It was NOT a fresh delivery — on
+            # main it never left review[] and never notified — so re-firing
+            # "待验收：AI 已交付草稿" on every working↔idle bounce is spurious spam.
+            if p_run.get(rid, {}).get("from_review"):
+                continue
             t, b = notify.msg_review_ready(item.get("name") or rid)
             msgs.append((t, b, rid))
 
