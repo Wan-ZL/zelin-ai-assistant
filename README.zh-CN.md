@@ -10,6 +10,11 @@
 
 macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack、Gmail），把"别人要你做的事"变成菜单栏里的审批卡片，批准后由后台 Claude agent 自动执行。你只做两件事——**批准** 和 **验收**，其余全自动。
 
+<p align="center">
+  <a href="docs/assets/promo-zh.mp4"><img src="docs/assets/promo-teaser-zh.gif" alt="60 秒产品导览：AI 从录音里找出相关碎片，汇聚成一张审批卡" width="760"></a>
+  <br><sub>▶️ <a href="docs/assets/promo-zh.mp4">观看 60 秒导览（含配乐）</a> · <a href="docs/assets/promo-en.mp4">English</a> —— 画面全部为虚构 demo 数据，成片可由 <a href="promo/">promo/</a> 一条命令重录</sub>
+</p>
+
 ![任务台看板](docs/assets/kanban.png)
 
 <table><tr>

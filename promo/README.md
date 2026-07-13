@@ -38,4 +38,24 @@ Creative Commons **CC BY 4.0**（https://creativecommons.org/licenses/by/4.0/）
 
 > Music: "Voxel Revolution" Kevin MacLeod (incompetech.com), CC BY 4.0
 
+## README 展示资产
+
+repo 主页嵌入的压缩版视频与 teaser 动图（`docs/assets/promo-*`）由成片再生成：
+
+```bash
+for lang in en zh; do
+  ffmpeg -y -i ~/Downloads/zelin-ai-assistant-promo-$lang.mp4 \
+    -vf scale=1280:720 -c:v libx264 -crf 26 -preset slow -c:a aac -b:a 112k \
+    -movflags +faststart docs/assets/promo-$lang.mp4
+  ffmpeg -y -ss 6.2 -t 8.3 -i ~/Downloads/zelin-ai-assistant-promo-$lang.mp4 \
+    -vf "fps=11,scale=640:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+    docs/assets/promo-teaser-$lang.gif
+done
+```
+
+GitHub README 无法为 commit 进仓库的 mp4 内嵌原生播放器（只支持网页拖拽上传的
+attachment URL），所以 README 用「teaser 动图 → 点击进 blob 页播放」。想升级成
+原生内嵌播放器：把 mp4 拖进任意 GitHub 评论框，把生成的
+`github.com/user-attachments/assets/...` URL 单独一行贴进 README 即可。
+
 `build/` 与 `node_modules/` 为生成物，不入库。

@@ -10,6 +10,11 @@
 
 A personal AI chief-of-staff for macOS. It watches where work arrives (meeting notes, Slack, Gmail), turns requests into approval cards in your menu bar, and executes approved tasks with background Claude agents. You do two things — **approve** and **accept**. Everything else is automated.
 
+<p align="center">
+  <a href="docs/assets/promo-en.mp4"><img src="docs/assets/promo-teaser-en.gif" alt="60-second tour: AI pulls the related fragments out of your recordings and turns them into one approval card" width="760"></a>
+  <br><sub>▶️ <a href="docs/assets/promo-en.mp4">Watch the 60-second tour with sound</a> · <a href="docs/assets/promo-zh.mp4">中文版</a> — every frame is fictional demo data; the film rebuilds with one command from <a href="promo/">promo/</a></sub>
+</p>
+
 ![Kanban board](docs/assets/kanban.png)
 
 <table><tr>
