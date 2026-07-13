@@ -1,13 +1,14 @@
-// Promo video timeline v4 — ALL timing, captions and camera targets live here.
+// Promo video timeline v6 — ALL timing, captions and camera targets live here.
 // Cut times sit on the music's accent grid so every scene change lands on a
 // beat. Grid measured by promo/beatgrid.py on "Voxel Revolution" (Kevin
 // MacLeod): strong accents every 1.4769 s starting at 0.255 s.
 //
-// 11 scenes covering the 8 showcase features approved by the owner:
-// extraction (mass data → related fragments → one card), transparent proposal,
-// quick capture, approve→agent, double-click→live terminal, AI merge-review,
-// draft-PR + paste-ready drafts in your voice, accept, phone loop (Slack photo
-// → iOS approve), feature grid, end card.
+// STORY SPINE (see storyboard.md 故事脉络): one hero card's life runs
+// UNBROKEN — birth from mass recordings → proposal → approve → work →
+// draft PR → accept ("一张卡的一生"). Every other capability plays as a
+// quick montage AFTER the arc completes: final draft, one-liner capture,
+// double-click into the live session (and talk to it), stop-anytime,
+// AI merge-review, phone loop, feature grid.
 //
 // Do NOT speed the film up with ffmpeg setpts afterwards — retime cues here
 // so cuts stay on the beat grid.
@@ -19,29 +20,33 @@ const B = (n) => OFFSET + n * PULSE;
 const TL = {
   duration: 56.0,            // total video length (s) — hard cap 60
 
-  // ---- scene boundaries (all on the beat grid)
+  // ---- MAIN LINE · one card, birth to archive (B2–B18, uninterrupted)
   title_end: B(2),           //  3.21  title card out, extraction scene in
   extract_end: B(7),         // 10.59  extraction out, board on placeholder
   board_in: B(7) - 1.25,     //  9.34  board fades in under the extraction exit
   captured_end: B(7),        // 10.59  placeholder -> full proposal reveal
-  qc_start: B(10),           // 15.02  camera to composer, typing
-  qc_end: B(12),             // 17.98  back to hero card
-  approve_click: B(13) - 0.30,
-  initial_end: B(13),        // 19.45  cut: approved (queued) + fly
-  queued_end: B(14),         // 20.93  queued -> working
-  dbl_click: B(16) - 0.35,   // 23.53  double-click on the copy-cmd line
-  term_in: B(16),            // 23.88  terminal overlay up
-  term_end: B(18),           // 26.84  terminal out, merge vignette in
-  merge_end: B(21),          // 31.27  vignette out, review lane in
-  working_end: B(21),        // (review pane cut — same beat)
-  review_pan: B(23),         // 34.22  camera pans to the weekly-report card
-  copy_click: B(23) + 1.35,  // 35.57  复制成稿 click
-  accept_click: B(25) - 0.30,
-  review_end: B(25),         // 37.18  cut: accepted, wide shot + fly
-  done_end: B(27),           // 40.13  board out, phone loop in
-  phone_switch: B(28.5),     // 42.34  Slack DM -> iOS board
-  phone_end: B(30),          // 44.56  phone out, feature grid in
-  grid_end: B(33),           // 48.99  grid out, end card in
+  approve_click: B(10) - 0.30,
+  initial_end: B(10),        // 15.02  cut: approved (queued) + hero fly
+  queued_end: B(11),         // 16.50  queued -> working
+  working_end: B(13),        // 19.45  cut to review lane (draft PR + checklist)
+  review_end: B(16),         // 23.88  cut: accepted, wide shot + hero fly
+  wide_end: B(18),           // 26.84  "一张卡的一生" beat ends, montage begins
+
+  // ---- MONTAGE · everything else, quick cuts (B18–B35)
+  draft_in: B(18),           // 26.84  camera dives to the weekly-report draft
+  copy_click: B(19) + 0.20,  // 28.52  复制成稿 click
+  qc_start: B(20),           // 29.79  camera to composer, one-liner typing
+  extras_run: B(22),         // 32.75  cut back to Running: the flaky-test card
+  dbl_click: B(23) - 0.35,   // 33.87  double-click on its copy-cmd line
+  term_in: B(23),            // 34.22  terminal overlay up (attach + talk to it)
+  term_end: B(25),           // 37.18  terminal out — stop-anytime beat
+  stop_click: B(26) - 0.35,  // 38.31  cursor hits 停止
+  merge_in: B(26),           // 38.66  merge-review vignette in
+  merge_end: B(29),          // 43.09  secondary fused into primary
+  board_out: B(29),          // 43.09  board out, phone loop in
+  phone_switch: B(30.5),     // 45.30  Slack DM -> iOS board
+  phone_end: B(32),          // 47.52  phone out, feature grid in
+  grid_end: B(35),           // 51.95  grid out, end card in
 
   fade_out: 55.2,            // video fade to black
 };
@@ -52,33 +57,37 @@ const PANE_CUES = [
   { t: TL.captured_end, pane: 'initial', fade: 0.35 },
   { t: TL.initial_end, pane: 'approved', fade: 0 },
   { t: TL.queued_end, pane: 'running', fade: 0 },
-  { t: TL.merge_end, pane: 'review', fade: 0 },
+  { t: TL.working_end, pane: 'review', fade: 0 },
   { t: TL.review_end, pane: 'done', fade: 0 },
+  { t: TL.extras_run, pane: 'running', fade: 0 },   // montage: back to Running
 ];
 
 // camera keyframes: target = [pane, selector] (or 'window'), pad in board px,
 // optional dy shifts the focus center down in board px. cut:true jumps.
 const CAM_CUES = [
+  // main line
   { t: TL.board_in, target: ['captured', '.hero'], pad: 260, cut: true },
   { t: TL.captured_end, target: ['captured', '.hero'], pad: 170 },
   { t: TL.captured_end + 0.5, target: ['initial', '.hero'], pad: 90 },
-  { t: TL.qc_start, target: ['initial', '.hero'], pad: 55 },
-  { t: TL.qc_start + 0.55, target: ['initial', '.qcap'], pad: 210, dy: 170 },
-  { t: TL.qc_end, target: ['initial', '.qcap'], pad: 180, dy: 170 },
-  { t: TL.qc_end + 0.5, target: ['initial', '.hero'], pad: 70 },
-  { t: TL.initial_end, target: ['initial', '.hero'], pad: 60 },
+  { t: TL.initial_end - PULSE, target: ['initial', '.hero'], pad: 62 },
+  { t: TL.initial_end, target: ['initial', '.hero'], pad: 52 },
   { t: TL.initial_end, target: ['approved', '.hero'], pad: 300, cut: true },
   { t: TL.queued_end, target: ['approved', '.hero'], pad: 230 },
   { t: TL.queued_end, target: ['running', '.hero'], pad: 170, cut: true },
-  { t: TL.term_in, target: ['running', '.hero'], pad: 60 },
-  { t: TL.term_end, target: ['running', '.hero'], pad: 60 },
-  { t: TL.merge_end, target: ['review', '.hero'], pad: 170, cut: true },
-  { t: TL.review_pan, target: ['review', '.hero'], pad: 110 },
-  { t: TL.review_pan + 0.6, target: ['review', '.hero2'], pad: 70 },
-  { t: TL.review_pan + 1.7, target: ['review', '.hero2 .finaldraft'], pad: 90, dy: 55 },
-  { t: TL.review_end, target: ['review', '.hero2 .finaldraft'], pad: 70, dy: 55 },
+  { t: TL.working_end, target: ['running', '.hero'], pad: 110 },
+  { t: TL.working_end, target: ['review', '.hero'], pad: 170, cut: true },
+  { t: TL.review_end, target: ['review', '.hero'], pad: 100 },
   { t: TL.review_end, target: ['done', 'window'], pad: -60, cut: true },
-  { t: TL.done_end, target: ['done', 'window'], pad: 10 },
+  { t: TL.wide_end, target: ['done', 'window'], pad: 10 },
+  // montage — the board stays on screen until the phone loop
+  { t: TL.draft_in + 0.7, target: ['done', '.hero2 .finaldraft'], pad: 90, dy: 55 },
+  { t: TL.qc_start - 0.1, target: ['done', '.hero2 .finaldraft'], pad: 78, dy: 55 },
+  { t: TL.qc_start + 0.55, target: ['done', '.qcap'], pad: 210, dy: 170 },
+  { t: TL.extras_run, target: ['done', '.qcap'], pad: 195, dy: 170 },
+  { t: TL.extras_run, target: ['running', '.hero3'], pad: 150, cut: true },
+  { t: TL.term_in, target: ['running', '.hero3 .mono'], pad: 130, dy: 12 },
+  { t: TL.term_end, target: ['running', '.hero3'], pad: 105 },
+  { t: TL.merge_in, target: ['running', '.hero3'], pad: 100 },
 ];
 
 // lower-third captions
@@ -92,31 +101,35 @@ const CAPTIONS = [
   { t0: TL.title_end + 4.3, t1: TL.extract_end + 0.9,
     cn: '不同渠道催同一件事，只出一张卡',
     en: 'Same ask, several channels — one card' },
-  { t0: TL.extract_end + 1.3, t1: TL.qc_start - 0.3,
+  { t0: TL.extract_end + 1.3, t1: TL.initial_end - 0.35,
     cn: '自动变成提案：计划、验收标准、成本',
     en: 'A full proposal: plan, DoD, cost' },
-  { t0: TL.qc_start + 0.3, t1: TL.qc_end + 0.4,
-    cn: '或者，一句话扔给它',
-    en: 'Or just type one line' },
-  { t0: TL.qc_end + 0.7, t1: TL.queued_end + 0.6,
+  { t0: TL.initial_end + 0.25, t1: TL.working_end - 0.3,
     cn: '一键批准，后台 Claude agent 开工',
     en: 'One click — a background Claude agent starts' },
-  { t0: TL.queued_end + 0.9, t1: TL.term_end - 0.3,
-    cn: '双击，随时进 live session 微操',
-    en: 'Double-click to drop into the live session' },
-  { t0: TL.term_end + 0.25, t1: TL.merge_end - 0.3,
-    cn: '重复的卡？AI 裁决怎么合',
-    en: 'Duplicate cards? AI referees the merge' },
-  { t0: TL.merge_end + 0.25, t1: TL.review_pan + 0.3,
+  { t0: TL.working_end + 0.25, t1: TL.review_end - 0.3,
     cn: '交付 draft PR + 验收清单，不碰 main',
     en: 'Draft PR + checklist — main untouched' },
-  { t0: TL.review_pan + 0.6, t1: TL.review_end - 0.3,
+  { t0: TL.review_end + 0.25, t1: TL.wide_end - 0.2,
+    cn: '验收归档——一张卡的一生',
+    en: "Accepted and archived — that's one card's journey" },
+  // montage
+  { t0: TL.draft_in + 0.3, t1: TL.qc_start - 0.2,
     cn: '写作任务出成稿，用你的语气',
     en: 'Paste-ready drafts, in your voice' },
-  { t0: TL.review_end + 0.25, t1: TL.done_end - 0.3,
-    cn: '验收，归档',
-    en: 'Accept. Done.' },
-  { t0: TL.done_end + 0.3, t1: TL.phone_end - 0.3,
+  { t0: TL.qc_start + 0.2, t1: TL.extras_run - 0.15,
+    cn: '或者，一句话扔给它',
+    en: 'Or just type one line' },
+  { t0: TL.extras_run + 0.2, t1: TL.term_end - 0.25,
+    cn: '双击进 live session，像平时一样接着聊',
+    en: 'Double-click into the live session — talk to it like everyday Claude Code' },
+  { t0: TL.term_end + 0.2, t1: TL.merge_in + 1.0,
+    cn: '随时停、随时打回——每张卡都在你手里',
+    en: 'Stop or send back anytime — every card stays in your hands' },
+  { t0: TL.merge_in + 1.3, t1: TL.board_out - 0.3,
+    cn: '重复的卡？AI 裁决怎么合',
+    en: 'Duplicate cards? AI referees the merge' },
+  { t0: TL.board_out + 0.3, t1: TL.phone_end - 0.3,
     cn: '白板拍一张就是卡片，iOS 直接批准',
     en: 'Snap a whiteboard — approve from your phone' },
 ];
@@ -124,30 +137,37 @@ const CAPTIONS = [
 // cursor waypoints (board space) + clicks
 const CURSOR_CUES = {
   show: [
-    { t0: TL.qc_end + 0.6, t1: TL.initial_end,
+    { t0: TL.initial_end - PULSE + 0.25, t1: TL.initial_end,
       path: [
-        { t: TL.qc_end + 0.6, target: ['initial', '.hero'], ax: 0.9, ay: 0.85 },
+        { t: TL.initial_end - PULSE + 0.25, target: ['initial', '.hero'], ax: 0.9, ay: 0.85 },
         { t: TL.approve_click - 0.2, target: ['initial', '.hero .btn.approve'], ax: 0.55, ay: 0.55 },
         { t: TL.initial_end, target: ['initial', '.hero .btn.approve'], ax: 0.55, ay: 0.55 },
       ] },
-    { t0: TL.queued_end + 1.0, t1: TL.term_in,
+    { t0: TL.draft_in + 0.7, t1: TL.copy_click + 0.45,
       path: [
-        { t: TL.queued_end + 1.0, target: ['running', '.hero'], ax: 0.85, ay: 0.95 },
-        { t: TL.dbl_click - 0.2, target: ['running', '.hero .mono'], ax: 0.4, ay: 0.5 },
-        { t: TL.term_in, target: ['running', '.hero .mono'], ax: 0.4, ay: 0.5 },
+        { t: TL.draft_in + 0.7, target: ['done', '.hero2'], ax: 0.8, ay: 0.78 },
+        { t: TL.copy_click - 0.2, target: ['done', '.hero2 .btn.copyfinal'], ax: 0.5, ay: 0.55 },
+        { t: TL.copy_click + 0.45, target: ['done', '.hero2 .btn.copyfinal'], ax: 0.5, ay: 0.55 },
       ] },
-    { t0: TL.review_pan + 0.7, t1: TL.copy_click + 0.45,
+    { t0: TL.extras_run + 0.4, t1: TL.term_in,
       path: [
-        { t: TL.review_pan + 0.7, target: ['review', '.hero2'], ax: 0.8, ay: 0.75 },
-        { t: TL.copy_click - 0.2, target: ['review', '.hero2 .btn.copyfinal'], ax: 0.5, ay: 0.55 },
-        { t: TL.copy_click + 0.45, target: ['review', '.hero2 .btn.copyfinal'], ax: 0.5, ay: 0.55 },
+        { t: TL.extras_run + 0.4, target: ['running', '.hero3'], ax: 0.85, ay: 0.9 },
+        { t: TL.dbl_click - 0.2, target: ['running', '.hero3 .mono'], ax: 0.4, ay: 0.5 },
+        { t: TL.term_in, target: ['running', '.hero3 .mono'], ax: 0.4, ay: 0.5 },
+      ] },
+    { t0: TL.term_end + 0.12, t1: TL.merge_in,
+      path: [
+        { t: TL.term_end + 0.12, target: ['running', '.hero3 .mono'], ax: 0.5, ay: 0.9 },
+        { t: TL.stop_click - 0.12, target: ['running', '.hero3 .btn'], ax: 0.5, ay: 0.55 },
+        { t: TL.merge_in, target: ['running', '.hero3 .btn'], ax: 0.5, ay: 0.55 },
       ] },
   ],
   clicks: [
     { t: TL.approve_click, target: ['initial', '.hero .btn.approve'] },
-    { t: TL.dbl_click, target: ['running', '.hero .mono'] },
-    { t: TL.dbl_click + 0.16, target: ['running', '.hero .mono'] },
-    { t: TL.copy_click, target: ['review', '.hero2 .btn.copyfinal'] },
+    { t: TL.copy_click, target: ['done', '.hero2 .btn.copyfinal'] },
+    { t: TL.dbl_click, target: ['running', '.hero3 .mono'] },
+    { t: TL.dbl_click + 0.16, target: ['running', '.hero3 .mono'] },
+    { t: TL.stop_click, target: ['running', '.hero3 .btn'] },
   ],
 };
 
@@ -155,7 +175,6 @@ const CURSOR_CUES = {
 // sources plus surrounding noise fragments from the same fictional world
 const EXTRACT = {
   frags: [
-    // [text, kind zh, source-kind, key phrase to highlight, related]
     { who: '周会转写 00:14:03', text: '……预算的事下周再说……', kind: 'audio', rel: false },
     { who: '周会转写 00:17:22', text: '能不能加个按钮，一键把 leaderboard 导出成报告发出去',
       kind: 'audio', hl: '一键把 leaderboard 导出成报告', rel: true },
@@ -169,28 +188,28 @@ const EXTRACT = {
   chips: ['meeting', 'slack', '重复 ×2'],
 };
 
-// ---- quick capture typing (S3)
+// ---- quick capture typing (montage)
 const QC = {
   text: '统一 example-bench 和 inkweld 的 lint 配置',
-  type_t0: TL.qc_start + 0.7,
-  type_t1: TL.qc_start + 2.0,
-  enter_t: TL.qc_start + 2.15,   // card pops right after
+  type_t0: TL.qc_start + 0.5,
+  type_t1: TL.qc_start + 1.7,
+  enter_t: TL.qc_start + 1.85,
 };
 
-// ---- terminal overlay (S5) — fictional agent session
+// ---- terminal overlay (montage) — attach to the flaky-test agent AND talk
+// to it, exactly like everyday Claude Code. Lines starting '> ' are the user.
 const TERM = {
-  title: 'ghostty — claude attach b1e4d7a2',
+  title: 'ghostty — claude attach a7c9e2f4',
   lines: [
-    ['$ claude attach b1e4d7a2', 0.0],
-    ['✔ attached — agent "export leaderboard report"', 0.35],
-    ['● Read src/dashboard/Toolbar.tsx', 0.75],
-    ['● Edit Toolbar.tsx  +34 -2  (ExportButton)', 1.25],
-    ['● Bash npm test -- --filter export … 12 passed', 1.8],
-    ['› opening draft PR #42 — waiting for CI', 2.35],
+    ['$ claude attach a7c9e2f4', 0.0],
+    ['✔ attached — agent "fix flaky e2e retries"', 0.35],
+    ['● Edit tests/retry.ts +18 -4 (backoff helper)', 0.8],
+    ['> you: bump the retry cap to 5', 1.3],
+    ['● Edit tests/retry.ts +1 -1 · done — 40/40 green', 2.35],
   ],
 };
 
-// ---- merge-review vignette (S6) — mirrors the app's purple verdict card
+// ---- merge-review vignette (montage) — mirrors the app's purple verdict card
 const MERGE = {
   primary: { title: 'example-bench: leaderboard 一键导出评测报告', tag: '主卡 · R-101' },
   secondary: { title: '评测报告能不能一键导出？', tag: '副卡 · 来自 slack' },
@@ -198,12 +217,12 @@ const MERGE = {
   confidence: '置信度：高',
   accept: '接受',
   dismiss: '取消',
-  select_t: TL.term_end + 0.4,
-  verdict_t: TL.term_end + 1.3,
+  select_t: TL.merge_in + 0.4,
+  verdict_t: TL.merge_in + 1.3,
   accept_t: TL.merge_end - 1.2,
 };
 
-// ---- phone loop (S9)
+// ---- phone loop (montage)
 const PHONE = {
   slack_self: 'Slack · 发给自己',
   photo_caption: '白板 · inkweld demo 方案',
@@ -213,8 +232,8 @@ const PHONE = {
   ios_lane: '提案 · proposals',
   approve: '✓ 批准',
   approved: '已批准 ✓',
-  photo_t: TL.done_end + 0.5,
-  card_t: TL.done_end + 1.5,
+  photo_t: TL.board_out + 0.5,
+  card_t: TL.board_out + 1.5,
   tap_t: TL.phone_switch + 1.1,
 };
 

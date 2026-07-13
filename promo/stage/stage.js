@@ -161,6 +161,7 @@ function runCard(r, nowE) {
   row.appendChild(body);
   card.appendChild(row);
   if (r.id === HERO) card.classList.add('hero');
+  if (r.id === 'R-105') card.classList.add('hero3'); // flaky-test card — montage subject
   return card;
 }
 
@@ -368,7 +369,10 @@ function build() {
   ttb.appendChild(el('span', 'termtitle', TERM.title));
   tw.appendChild(ttb);
   const tbody = el('div', 'termbody');
-  TERM.lines.forEach(([txt]) => tbody.appendChild(el('div', 'tline', txt)));
+  TERM.lines.forEach(([txt]) => {
+    const ln = el('div', `tline ${txt.startsWith('> ') ? 'tuser' : ''}`, txt);
+    tbody.appendChild(ln);
+  });
   tbody.appendChild(el('span', 'tcursor', '▍'));
   tw.appendChild(tbody);
   term.appendChild(tw);
@@ -537,7 +541,8 @@ function measure() {
     if (fd) fd.style.maxHeight = '340px';
     for (const sel of ['.hero', '.hero .btn.approve', '.hero .btn.accept',
                        '.hero .mono', '.qcap',
-                       '.hero2', '.hero2 .finaldraft', '.hero2 .btn.copyfinal']) {
+                       '.hero2', '.hero2 .finaldraft', '.hero2 .btn.copyfinal',
+                       '.hero3', '.hero3 .mono', '.hero3 .btn']) {
       const e = pane.querySelector(sel);
       if (!e) continue;
       const r = e.getBoundingClientRect();
@@ -557,7 +562,7 @@ function measure() {
 // pane's composer; pops during S3, stays out of every pane's layout flow
 let qcCard = null;
 function buildQcCard() {
-  const pane = document.querySelector('.pane[data-scene="initial"]');
+  const pane = document.querySelector('.pane[data-scene="done"]');
   const body = pane.querySelector('.colbody');
   body.style.position = 'relative';
   const q = pane.querySelector('.qcap');
@@ -635,7 +640,7 @@ function seek(t) {
   const cam = $('#camera');
   cam.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
   cam.style.opacity = seg(t, TL.board_in, TL.board_in + 0.55)
-    * (1 - seg(t, TL.done_end - 0.3, TL.done_end + 0.05));
+    * (1 - seg(t, TL.board_out - 0.3, TL.board_out + 0.05));
 
   // ---- panes (crossfade or hard cut)
   let active = 0;
@@ -652,8 +657,9 @@ function seek(t) {
     actEl.style.opacity = 1;
   }
 
-  // ---- hero pulse right after every pane cut
+  // ---- hero pulse right after every pane cut (main line only)
   for (const c of PANE_CUES) {
+    if (c.t >= TL.draft_in) continue;
     const hero = paneEl(c.pane).querySelector('.hero');
     if (!hero) continue;
     const local = t - c.t;
@@ -810,9 +816,9 @@ function seek(t) {
     });
   }
 
-  // ---- S3 quick-capture typing in the composer
-  const qcap = paneEl('initial').querySelector('.qcap');
-  if (t >= TL.qc_start + 0.25 && t <= TL.qc_end + 0.55) {
+  // ---- montage: quick-capture typing in the composer (done pane)
+  const qcap = paneEl('done').querySelector('.qcap');
+  if (t >= TL.qc_start + 0.25 && t <= TL.extras_run) {
     const chars = [...T(QC.text)];
     const n = Math.floor(chars.length * seg(t, QC.type_t0, QC.type_t1));
     const caret = (t < QC.enter_t + 0.4 && (t * 2.6) % 1 < 0.55) ? '▍' : '';
@@ -827,10 +833,8 @@ function seek(t) {
   }
   if (qcCard) {
     const qp = easeOutBack(seg(t, QC.enter_t, QC.enter_t + 0.5));
-    // fades back out as the camera returns to the hero card (it sits on top
-    // of the flow, so it must not linger over R-101 in the approve shot)
     qcCard.style.opacity = seg(t, QC.enter_t, QC.enter_t + 0.25)
-      * (1 - seg(t, TL.qc_end + 0.15, TL.qc_end + 0.55));
+      * (1 - seg(t, TL.extras_run - 0.45, TL.extras_run - 0.1));
     qcCard.style.transform = `translateY(${(1 - qp) * 22}px) scale(${0.92 + 0.08 * qp})`;
     qcCard.classList.toggle('glow', t >= QC.enter_t && t < QC.enter_t + 1.3);
   }
@@ -855,9 +859,12 @@ function seek(t) {
     const lines = term.querySelectorAll('.tline');
     lines.forEach((ln, i) => {
       const off = TL.term_in + 0.15 + TERM.lines[i][1];
-      if (i === 0) {
-        const chars = TERM.lines[0][0];
-        const n = Math.floor(chars.length * seg(t, off, off + 0.4));
+      const typed = i === 0 || ln.classList.contains('tuser');
+      if (typed) {
+        // the shell command and the user's message type on char by char —
+        // this is a live, talk-to-it session, not a log replay
+        const chars = TERM.lines[i][0];
+        const n = Math.floor(chars.length * seg(t, off, off + (i === 0 ? 0.4 : 0.7)));
         ln.textContent = chars.slice(0, n);
         ln.style.opacity = 1;
       } else {
@@ -868,15 +875,15 @@ function seek(t) {
     term.querySelector('.tcursor').style.opacity = (t * 2.4) % 1 < 0.55 ? 1 : 0;
   }
 
-  // ---- S6 merge-review vignette
+  // ---- montage: merge-review vignette
   const mg = $('#mergescene');
-  const mgIn = seg(t, TL.term_end - 0.1, TL.term_end + 0.3);
+  const mgIn = seg(t, TL.merge_in - 0.1, TL.merge_in + 0.3);
   const mgOut = 1 - seg(t, TL.merge_end - 0.4, TL.merge_end - 0.05);
   mg.style.opacity = Math.min(mgIn, mgOut);
   if (mg.style.opacity > 0) {
     const cards = mg.querySelectorAll('.mcard');
     cards.forEach((c, i) => {
-      const enter = easeOut(seg(t, TL.term_end + 0.1 + i * 0.15, TL.term_end + 0.5 + i * 0.15));
+      const enter = easeOut(seg(t, TL.merge_in + 0.1 + i * 0.15, TL.merge_in + 0.5 + i * 0.15));
       let extra = '';
       if (c.classList.contains('secondary')) {
         const fuse = easeIO(seg(t, MERGE.accept_t + 0.25, MERGE.accept_t + 0.85));
@@ -921,16 +928,14 @@ function seek(t) {
     }
   }
 
-  // ---- S7b final draft expands + 复制成稿 click
-  // spotlight moves from the PR card (hero) to the weekly report (hero2)
-  paneEl('review').classList.toggle('late', t >= TL.review_pan + 0.3);
-  const fdEl = paneEl('review').querySelector('.hero2 .finaldraft');
+  // ---- montage: final draft expands + 复制成稿 click (done pane)
+  const fdEl = paneEl('done').querySelector('.hero2 .finaldraft');
   if (fdEl) {
-    const open = easeIO(seg(t, TL.review_pan + 0.5, TL.review_pan + 1.3));
+    const open = easeIO(seg(t, TL.draft_in + 0.4, TL.draft_in + 1.2));
     fdEl.style.maxHeight = `${340 * open}px`;
     fdEl.style.opacity = 0.4 + 0.6 * open;
   }
-  const cfBtn = paneEl('review').querySelector('.hero2 .btn.copyfinal');
+  const cfBtn = paneEl('done').querySelector('.hero2 .btn.copyfinal');
   if (cfBtn) {
     const copied = t >= TL.copy_click + 0.1;
     cfBtn.textContent = copied ? T('已复制 ✓') : T('📋 复制成稿');
@@ -939,11 +944,11 @@ function seek(t) {
 
   // ---- S9 phone loop
   const ph = $('#phonescene');
-  const phIn = seg(t, TL.done_end - 0.05, TL.done_end + 0.35);
+  const phIn = seg(t, TL.board_out - 0.05, TL.board_out + 0.35);
   const phOut = 1 - seg(t, TL.phone_end - 0.4, TL.phone_end - 0.05);
   ph.style.opacity = Math.min(phIn, phOut);
   if (ph.style.opacity > 0) {
-    const rise = easeOut(seg(t, TL.done_end, TL.done_end + 0.55));
+    const rise = easeOut(seg(t, TL.board_out, TL.board_out + 0.55));
     $('#phoneframe').style.transform = `translateY(${(1 - rise) * 50}px)`;
     const sw = seg(t, TL.phone_switch - 0.15, TL.phone_switch + 0.15);
     $('#slackview').style.opacity = 1 - sw;
@@ -989,7 +994,7 @@ function seek(t) {
   }
   // scrim only matters while the board is up — overlays have their own space
   $('#capscrim').style.opacity =
-    capVis * (t > TL.board_in && t < TL.done_end ? 0.9 : 0);
+    capVis * (t > TL.board_in && t < TL.board_out ? 0.9 : 0);
 
   // ---- feature grid
   const grid = $('#gridscene');

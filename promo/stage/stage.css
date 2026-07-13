@@ -354,6 +354,7 @@ html, body {
 #termwin .tline { opacity: 0; white-space: pre; }
 #termwin .tline:nth-child(1) { color: #f2f2f4; }
 #termwin .tline:nth-child(2) { color: #7fe0a2; }
+#termwin .tline.tuser { color: #b18cff; font-weight: 650; }
 #termwin .tcursor { color: #b18cff; }
 
 /* S6 merge-review vignette */

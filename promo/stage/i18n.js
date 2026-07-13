@@ -223,6 +223,13 @@ const I18N_EN = {
   'E2E 云同步（可选）': 'Optional E2E cloud sync',
   '每周 digest': 'Weekly digest',
   '中英一键切换': 'Bilingual UI, one tap',
+
+  // ---- v6 story-spine captions
+  '验收归档——一张卡的一生': "Accepted and archived — that's one card's journey",
+  '双击进 live session，像平时一样接着聊':
+    'Double-click into the live session — talk to it like everyday Claude Code',
+  '随时停、随时打回——每张卡都在你手里':
+    'Stop or send back anytime — every card stays in your hands',
 };
 
 // current language, set by stage.js from ?lang=
