@@ -500,7 +500,7 @@ class ObsidianTriageTestCase(TriageBase):
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n', encoding="utf-8")
 
     def _note(self, name, text, mtime=BASE):
         import os

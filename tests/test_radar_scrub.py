@@ -33,7 +33,7 @@ class RadarScrubTestCase(unittest.TestCase):
         config.CONFIG_PATH.write_text(
             "redaction:\n"
             "  enabled: true\n"
-            f'  terms_file: "{terms_file}"\n',
+            f'  terms_file: "{terms_file.as_posix()}"\n',
             encoding="utf-8",
         )
 

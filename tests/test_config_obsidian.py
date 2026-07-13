@@ -51,7 +51,7 @@ class ObsidianDirsTestCase(unittest.TestCase):
     def test_derivation_follows_custom_raw_path(self):
         """obsidian_raw 自定义时，三目录跟随其 parent（vault 根）派生."""
         self._write_yaml(
-            f'sources:\n  obsidian_raw: "{self.vault / "2 - raw"}"\n'
+            f'sources:\n  obsidian_raw: "{(self.vault / "2 - raw").as_posix()}"\n'
         )
         cfg = config.load_config()
         self.assertEqual(cfg.obsidian_unprocessed, str(self.vault / "1 - unprocessed"))
@@ -60,10 +60,10 @@ class ObsidianDirsTestCase(unittest.TestCase):
 
     def test_explicit_yaml_key_beats_derivation(self):
         """config.yaml 显式给出的键不被派生覆盖，未给的仍派生."""
-        custom_wiki = str(self.vault / "elsewhere" / "wiki")
+        custom_wiki = (self.vault / "elsewhere" / "wiki").as_posix()
         self._write_yaml(
             "sources:\n"
-            f'  obsidian_raw: "{self.vault / "2 - raw"}"\n'
+            f'  obsidian_raw: "{(self.vault / "2 - raw").as_posix()}"\n'
             f'  obsidian_wiki: "{custom_wiki}"\n'
         )
         cfg = config.load_config()
@@ -75,7 +75,7 @@ class ObsidianDirsTestCase(unittest.TestCase):
     def test_overrides_flat_keys_win(self):
         """扁平键（与 obsidian_raw 同风格）覆盖 yaml 与派生."""
         self._write_yaml(
-            f'sources:\n  obsidian_raw: "{self.vault / "2 - raw"}"\n'
+            f'sources:\n  obsidian_raw: "{(self.vault / "2 - raw").as_posix()}"\n'
         )
         self._write_overrides({
             "obsidian_unprocessed": "/tmp/ov-unprocessed",
@@ -103,7 +103,7 @@ class ObsidianDirsTestCase(unittest.TestCase):
     def test_overridden_raw_repoints_derivation(self):
         """overrides 只改 obsidian_raw 时，未显式设置的三目录跟着新 vault 派生."""
         self._write_yaml(
-            f'sources:\n  obsidian_raw: "{self.vault / "2 - raw"}"\n'
+            f'sources:\n  obsidian_raw: "{(self.vault / "2 - raw").as_posix()}"\n'
         )
         other = Path(self.tmp.name) / "OtherVault"
         self._write_overrides({"obsidian_raw": str(other / "2 - raw")})
@@ -117,7 +117,7 @@ class ObsidianDirsTestCase(unittest.TestCase):
         """空串（App 清空输入框）不算显式设置 — 仍派生."""
         self._write_yaml(
             "sources:\n"
-            f'  obsidian_raw: "{self.vault / "2 - raw"}"\n'
+            f'  obsidian_raw: "{(self.vault / "2 - raw").as_posix()}"\n'
             '  obsidian_wiki: ""\n'
         )
         self._write_overrides({"obsidian_unprocessed": "  "})

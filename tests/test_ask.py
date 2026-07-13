@@ -77,7 +77,7 @@ class AskBase(unittest.TestCase):
         gmail_path = config.HOME / "gmail-pass.txt"
         gmail_path.write_text(FAKE_GMAIL + "\n", encoding="utf-8")
         config.CONFIG_PATH.write_text(
-            "sources:\n  gmail:\n    app_password_path: \"%s\"\n" % gmail_path,
+            "sources:\n  gmail:\n    app_password_path: \"%s\"\n" % gmail_path.as_posix(),
             encoding="utf-8")
         self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
 

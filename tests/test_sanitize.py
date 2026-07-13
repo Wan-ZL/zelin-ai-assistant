@@ -57,7 +57,7 @@ class SanitizeTestCase(unittest.TestCase):
     # -- 用户词表维持 opt-in ---------------------------------------------------- #
     def test_user_terms_untouched_by_default(self):
         """redaction_enabled=False 时用户词表不生效."""
-        cfg = self._cfg(f'redaction:\n  terms_file: "{self.terms_file}"\n')
+        cfg = self._cfg(f'redaction:\n  terms_file: "{self.terms_file.as_posix()}"\n')
         out, n = sanitize.scrub("ProjectPhoenix launch notes", cfg)
         self.assertIn("ProjectPhoenix", out)
         self.assertEqual(n, 0)
@@ -67,7 +67,7 @@ class SanitizeTestCase(unittest.TestCase):
         cfg = self._cfg(
             "redaction:\n"
             "  enabled: true\n"
-            f'  terms_file: "{self.terms_file}"\n'
+            f'  terms_file: "{self.terms_file.as_posix()}"\n'
         )
         out, n = sanitize.scrub(f"ProjectPhoenix uses {SECRET}", cfg)
         self.assertNotIn("ProjectPhoenix", out)

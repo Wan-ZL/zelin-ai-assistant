@@ -51,7 +51,7 @@ class ConfigCliTestCase(unittest.TestCase):
     # -- config.yaml 生效 ------------------------------------------------------ #
     def test_configured_vault_repoints_unprocessed(self):
         vault = self.home / "MyVault"
-        self._write_yaml(f'sources:\n  obsidian_raw: "{vault / "2 - raw"}"\n')
+        self._write_yaml(f'sources:\n  obsidian_raw: "{(vault / "2 - raw").as_posix()}"\n')
         proc = self._run("--print-path", "obsidian_unprocessed")
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout.strip(), str(vault / "1 - unprocessed"))

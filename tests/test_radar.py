@@ -44,7 +44,7 @@ class RadarScanBase(unittest.TestCase):
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n', encoding="utf-8")
 
     @staticmethod
     def _cleanup():
@@ -210,7 +210,7 @@ class WatermarkTestCase(RadarScanBase):
 class PreflightTestCase(RadarScanBase):
     def test_feature_flag_off_skips_scan(self):
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n'
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n'
             "features:\n  obsidian_radar: false\n", encoding="utf-8")
         self._note("n.md", "x", BASE)
         summary = radar.scan(runner=lambda t: self.fail("scanned while off"))
@@ -220,7 +220,7 @@ class PreflightTestCase(RadarScanBase):
     def test_missing_vault_dir_is_reported_not_fatal(self):
         gone = Path(self.tmp.name) / "no-such-dir"
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{gone}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{gone.as_posix()}"\n', encoding="utf-8")
         summary = radar.scan(runner=lambda t: self.fail("scanned a missing vault"))
         self.assertTrue(any(s.startswith("obsidian_raw not found")
                             for s in summary["skipped"]))

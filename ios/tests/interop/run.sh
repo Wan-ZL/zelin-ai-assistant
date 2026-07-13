@@ -26,7 +26,7 @@ find_pyrepo() {
     # sibling worktrees under ../.claude/worktrees/*/act/lib/e2e.py
     local wt
     for wt in "$REPO"/../*/act/lib/e2e.py; do
-        [ -f "$wt" ] && { echo "$(cd "$(dirname "$wt")/../.." && pwd)"; return; }
+        [ -f "$wt" ] && { (cd "$(dirname "$wt")/../.." && pwd); return; }
     done
     return 1
 }

@@ -53,7 +53,7 @@ class WeeklyDigestBase(unittest.TestCase):
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n', encoding="utf-8")
         # keep tests hermetic: no osascript / phone mirror
         patcher = mock.patch.object(weekly_digest.notify, "notify",
                                     return_value=True)
@@ -114,7 +114,7 @@ class CostGuardTestCase(WeeklyDigestBase):
     def test_disabled_flag_no_ops(self):
         config.CONFIG_PATH.write_text(
             'sources:\n'
-            f'  obsidian_raw: "{self.raw}"\n'
+            f'  obsidian_raw: "{self.raw.as_posix()}"\n'
             '  weekly_digest:\n    enabled: false\n', encoding="utf-8")
         self._note("2026-07-05-a.md", "note", age_days=1)
         summary = weekly_digest.run(force=True, now=self.now,
