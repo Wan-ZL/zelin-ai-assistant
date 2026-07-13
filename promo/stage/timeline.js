@@ -3,37 +3,41 @@
 // beat. Grid measured by promo/beatgrid.py on "Voxel Revolution" (Kevin
 // MacLeod): strong accents every 1.4769 s starting at 0.255 s.
 //
+// Pacing: scenes run ~1.25x tighter than a first-draft cut would suggest —
+// cuts land on EVERY accent (single pulse) rather than every other one, so
+// the film keeps its beat sync while feeling faster. Music is untouched.
+//
 // To retime after swapping the track: rerun beatgrid.py, update PULSE/OFFSET,
 // keep cuts on B(n) multiples.
 
 const OFFSET = 0.255;        // first accent of the track (s)
-const PULSE = 2.9538;        // one bar of the 81.25 BPM grid (s)
+const PULSE = 1.4769;        // one strong accent of the 81.25 BPM grid (s)
 const B = (n) => OFFSET + n * PULSE;
 
 const TL = {
-  duration: 56.5,            // total video length (s) — hard cap 60
+  duration: 43.1,            // total video length (s) — hard cap 60
 
   // scene boundaries (all on the beat grid)
-  title_end: B(2),           //  6.16  title card out
-  rec_end: B(4),             // 12.07  recording scene out, board in
-  captured_end: B(5),        // 15.02  placeholder -> full proposal
-  approve_click: B(7) - 0.30,
-  initial_end: B(7),         // 20.93  cut: proposal approved
-  queued_end: B(8),          // 23.88  queued -> working
-  working_end: B(10),        // 29.79  cut to review lane
-  accept_click: B(12.5) - 0.30,
-  review_end: B(12.5),       // 37.18  cut: accepted, wide shot
-  done_end: B(14),           // 41.61  board out, feature grid in
-  grid_end: B(16.5),         // 48.99  grid out, end card in
+  title_end: B(3),           //  4.69  title card out
+  rec_end: B(6),             //  9.12  recording scene out, board in
+  captured_end: B(8),        // 12.07  placeholder -> full proposal
+  approve_click: B(11) - 0.30,
+  initial_end: B(11),        // 16.50  cut: proposal approved
+  queued_end: B(12),         // 17.98  queued -> working
+  working_end: B(15),        // 22.41  cut to review lane
+  accept_click: B(19) - 0.30,
+  review_end: B(19),         // 28.32  cut: accepted, wide shot
+  done_end: B(21),           // 31.27  board out, feature grid in
+  grid_end: B(25),           // 37.18  grid out, end card in
 
-  fade_out: 55.8,            // video fade to black
+  fade_out: 42.3,            // video fade to black
 };
 
 // which demo_seed scene pane is visible from a given time
 // fade > 0 crossfades from the previous pane; 0 is a hard cut
 const PANE_CUES = [
-  { t: TL.rec_end, pane: 'captured', fade: 0.5 },
-  { t: TL.captured_end, pane: 'initial', fade: 0.45 },
+  { t: TL.rec_end, pane: 'captured', fade: 0.4 },
+  { t: TL.captured_end, pane: 'initial', fade: 0.35 },
   { t: TL.initial_end, pane: 'approved', fade: 0 },
   { t: TL.queued_end, pane: 'running', fade: 0 },
   { t: TL.working_end, pane: 'review', fade: 0 },
@@ -85,15 +89,15 @@ const CAPTIONS = [
 // cursor: waypoints in [pane, selector] space; clicks trigger ripples
 const CURSOR_CUES = {
   show: [
-    { t0: TL.initial_end - 2.2, t1: TL.initial_end,
+    { t0: TL.initial_end - 1.8, t1: TL.initial_end,
       path: [
-        { t: TL.initial_end - 2.2, target: ['initial', '.hero'], ax: 0.95, ay: 0.9 },
+        { t: TL.initial_end - 1.8, target: ['initial', '.hero'], ax: 0.95, ay: 0.9 },
         { t: TL.approve_click - 0.25, target: ['initial', '.hero .btn.approve'], ax: 0.55, ay: 0.55 },
         { t: TL.initial_end, target: ['initial', '.hero .btn.approve'], ax: 0.55, ay: 0.55 },
       ] },
-    { t0: TL.review_end - 2.0, t1: TL.review_end,
+    { t0: TL.review_end - 1.8, t1: TL.review_end,
       path: [
-        { t: TL.review_end - 2.0, target: ['review', '.hero'], ax: 0.9, ay: 1.05 },
+        { t: TL.review_end - 1.8, target: ['review', '.hero'], ax: 0.9, ay: 1.05 },
         { t: TL.accept_click - 0.25, target: ['review', '.hero .btn.accept'], ax: 0.5, ay: 0.55 },
         { t: TL.review_end, target: ['review', '.hero .btn.accept'], ax: 0.5, ay: 0.55 },
       ] },
@@ -108,9 +112,9 @@ const CURSOR_CUES = {
 const REC = {
   who: 'manager · 周会录音',
   quote: '能不能加个按钮，一键把 leaderboard 导出成报告发出去？',
-  type_t0: TL.title_end + 0.7,
-  type_t1: TL.title_end + 3.4,
-  radar_t: TL.title_end + 3.9,
+  type_t0: TL.title_end + 0.5,
+  type_t1: TL.title_end + 2.6,
+  radar_t: TL.title_end + 3.0,
 };
 
 // feature grid montage — every tile is a real, shipped feature

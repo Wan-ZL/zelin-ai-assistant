@@ -457,14 +457,14 @@ function seek(t) {
   // ---- proposal cascade (initial pane hero card children)
   const casc = paneEl('initial').querySelectorAll('.hero .cascade');
   casc.forEach((c, i) => {
-    const p = easeOut(seg(t, TL.captured_end + 0.25 + i * 0.14, TL.captured_end + 0.25 + i * 0.14 + 0.5));
+    const p = easeOut(seg(t, TL.captured_end + 0.2 + i * 0.11, TL.captured_end + 0.2 + i * 0.11 + 0.45));
     c.style.opacity = p;
     c.style.transform = `translateY(${(1 - p) * 16}px)`;
   });
 
   // ---- review checklist ticks
   paneEl('review').querySelectorAll('.hero .checkitem').forEach((it, i) => {
-    const done = t >= TL.working_end + 1.3 + i * 0.55;
+    const done = t >= TL.working_end + 0.9 + i * 0.45;
     it.classList.toggle('checked', done);
     it.querySelector('.box').textContent = done ? '☑' : '☐';
   });
@@ -514,9 +514,9 @@ function seek(t) {
   const ip = easeOutBack(seg(t, 0.25, 0.9));
   ticon.style.opacity = seg(t, 0.25, 0.6);
   ticon.style.transform = `scale(${0.4 + 0.6 * ip})`;
-  wordsIn(title.children[1], t, 0.75, 0.05);
-  wordsIn(title.children[2], t, 1.65, 0.05);
-  wordsIn(title.children[3], t, 2.35, 0.03, 10);
+  wordsIn(title.children[1], t, 0.65, 0.045);
+  wordsIn(title.children[2], t, 1.45, 0.045);
+  wordsIn(title.children[3], t, 2.05, 0.025, 10);
 
   // ---- recording scene
   const rec = $('#recscene');
@@ -563,14 +563,14 @@ function seek(t) {
   grid.style.opacity = Math.min(gIn, gOut);
   if (grid.style.opacity > 0) {
     $('#gridwrap').style.transform =
-      `scale(${lerp(1.5, 1.0, easeOut(seg(t, TL.done_end, TL.done_end + 2.4)))})`;
+      `scale(${lerp(1.5, 1.0, easeOut(seg(t, TL.done_end, TL.done_end + 1.9)))})`;
     grid.querySelectorAll('.tile').forEach((tile, i) => {
-      const p = easeOut(seg(t, TL.done_end + 0.15 + i * 0.08, TL.done_end + 0.55 + i * 0.08));
+      const p = easeOut(seg(t, TL.done_end + 0.12 + i * 0.06, TL.done_end + 0.5 + i * 0.06));
       tile.style.opacity = p;
       tile.style.transform = `translateY(${(1 - p) * 26}px)`;
     });
-    wordsIn($('#gridcaption').children[0], t, TL.done_end + 2.3, 0.04);
-    $('#gridcaption').children[1].style.opacity = seg(t, TL.done_end + 2.9, TL.done_end + 3.3);
+    wordsIn($('#gridcaption').children[0], t, TL.done_end + 1.9, 0.035);
+    $('#gridcaption').children[1].style.opacity = seg(t, TL.done_end + 2.4, TL.done_end + 2.8);
   }
 
   // ---- end card
