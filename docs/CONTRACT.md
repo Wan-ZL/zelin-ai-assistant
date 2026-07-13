@@ -847,6 +847,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 ## 31. `syncd` — headless 云同步守护进程（`python3 -m act.syncd`）
 
+> **v0.30.0 supersession（add-only note；权威设计见 `docs/design/qr-only-capability-sync.md`）**：本节以下描述的 v1 认证模型（Supabase 账号/email OTP + `exchange_device_token` Edge Function + per-device JWT + `devices`/`device_secrets`/`device_heartbeats` 表）**已被 QR-only 能力模型取代**。原因:免费版发不了验证码、且项目已迁 ES256 无法自签 HS256。v2 要点(取代下文相应条目,其余"两文件契约/密文/launchd/`state/sync/`"不变):①每台 Mac 一个**稳定** `channel_id`(读能力)+ `write_secret`(写能力)+ E2E `K`,全在一张二维码里(`e2e.build_channel_qr`,主入口=Mac 设置「同步/配对」区,CLI `--pair [--json]` 兜底);②传输用 **anon/publishable key** + header `x-sync-channel`(每请求)/`x-sync-write`(仅写);③Supabase v2 三表 `channels`/`board_snapshots`/`inbox_actions` 按 `channel_id` 存,RLS 对 anon 放行:读要 `channel_id`(强制 header 过滤防遍历)、写要 `write_secret`(服务端 `sha256` 经**硬化的** SECURITY DEFINER `sync_write_ok` 核验:`search_path=''` + 全限定 `extensions.digest`/`public.channels`,并 revoke create on public);④无账号/无 email/无 edge function。安全姿态:二维码=该 Mac 看板的主钥匙。已在生产库端到端实测(读写门控 + 防遍历全通过)。
+
 `syncd` 是既有「两文件契约」的**第二个 client**（与 Mac app 并列）：DOWN 读
 `state/dashboard.json`、UP 写 `state/inbox/<action_id>.json`。它**从不 import
 `actd`**、从不碰 registry；Supabase 全程只见 `act/lib/e2e.py` 产出的**密文**

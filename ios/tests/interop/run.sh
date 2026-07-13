@@ -52,11 +52,30 @@ echo "==> [2/4] Compile Swift harness (swiftc, macOS CLI + CryptoKit)"
 cp "$HERE/InteropHarness.swift" "$WORK/main.swift"
 swiftc -O "$E2E_SWIFT" "$WORK/main.swift" -o "$WORK/InteropHarness"
 
-echo "==> [3/4] Swift decrypts Python blobs + encrypts its own"
-"$WORK/InteropHarness" "$WORK/python_fixtures.json" "$WORK/swift_out.json"
+echo "==> [3/4] Swift decrypts Python blobs + encrypts its own (+ parses/builds pairing v2)"
+"$WORK/InteropHarness" "$WORK/python_fixtures.json" "$WORK/swift_out.json" | tee "$WORK/swift.log"
 
-echo "==> [4/4] Python verifies Swift-encrypted blobs"
-python3 "$HERE/interop.py" verify "$WORK/swift_out.json"
+echo "==> [4/4] Python verifies Swift-encrypted blobs (+ pairing v2 byte-identity)"
+python3 "$HERE/interop.py" verify "$WORK/swift_out.json" | tee "$WORK/verify.log"
+
+# --- explicit gates: record blobs AND the v2 channel pairing blob both ways ---
+echo ""
+echo "==> Gate summary"
+if grep -q "verify: ALL PASS" "$WORK/verify.log"; then
+    echo "  record interop PASS (board/label/action, Python<->Swift)"
+else
+    echo "  record interop FAIL" >&2; exit 1
+fi
+if grep -q "channel_pairing.build_matches_python" "$WORK/swift.log" \
+   && grep -q "PASS channel_pairing.channel_id" "$WORK/swift.log" \
+   && ! grep -q "FAIL channel_pairing" "$WORK/swift.log" \
+   && grep -q "PASS channel_pairing: Swift-built blob byte-matches Python build" "$WORK/verify.log" \
+   && grep -q "PASS channel_pairing: Python re-parsed Swift blob" "$WORK/verify.log"; then
+    echo "  pairing interop PASS (ZQR1 channel blob, Python<->Swift byte-identical)"
+else
+    echo "  pairing interop FAIL" >&2; exit 1
+fi
 
 echo ""
-echo "INTEROP OK — Swift E2E.swift byte-matches Python act/lib/e2e.py both ways."
+echo "INTEROP OK — Swift E2E.swift byte-matches Python act/lib/e2e.py both ways"
+echo "            (record blobs AND the v2 channel pairing blob)."

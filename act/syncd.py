@@ -1,4 +1,4 @@
-"""syncd — the headless cloud-sync daemon (plan of record §5).
+"""syncd — the headless cloud-sync daemon (QR-only capability model, DESIGN §syncd).
 
 ``syncd`` is a SECOND client of the two-file contract, next to the Mac app: it
 reads ``state/dashboard.json`` (DOWN) and writes ``state/inbox/<action_id>.json``
@@ -6,27 +6,44 @@ reads ``state/dashboard.json`` (DOWN) and writes ``state/inbox/<action_id>.json`
 ever relays ciphertext produced by ``act/lib/e2e.py`` (per-pairing symmetric
 AEAD) — the maintainer/operator cannot read card bodies.
 
-Startup gate (feasibility must-fix §medium-7 / plan §5.1): the daemon reads
-``state/sync.json`` and, if that file is absent or ``mode != "cloud"``, exits 0
-IMMEDIATELY — before any other filesystem work and before any network. A plain
-install (or a plain upgrade) that never opted in therefore does ZERO network,
-even though a launchd plist may be loaded. Turning sync ON = writing
-``state/sync.json`` with ``mode:"cloud"``; turning it OFF = ``mode:"off"`` or
-deleting the file (a full return to local-only).
+Capability model (v2 — replaces the v1 account/email + device-token exchange):
+the Mac's QR *is* the credential. There is no Supabase Auth, no email OTP, no
+``exchange_device_token`` edge function, no per-device JWT. Each Mac owns a
+stable **channel**:
+  * ``channel_id`` — UUIDv4, the stable identity + the READ capability.
+    ``state/sync/channel_id``.
+  * ``write_secret`` — 32 random bytes (persisted base64url), the WRITE
+    capability. The server stores only ``sha256(<header text>)``.
+    ``state/sync/write_secret``.
+  * ``K`` — the 32-byte E2E symmetric key (existing per-pairing key), QR-only,
+    never uploaded. ``state/pairings/<channel_id>.key`` via ``e2e.save_pairing``.
 
-DOWN (daemon → Supabase → phone), plan §5.2:
+Transport: the publishable/anon Supabase key (public by design — RLS makes it
+safe, exactly like telemetry) sent as both ``apikey`` and ``Authorization:
+Bearer <anon>``, plus two capability headers read by RLS:
+  * ``x-sync-channel: <channel_id>`` — on EVERY request.
+  * ``x-sync-write: <write_secret>`` — on writes ONLY (channels INSERT,
+    board_snapshots INSERT/UPDATE, inbox_actions INSERT/UPDATE).
+
+Startup gate (unchanged): the daemon reads ``state/sync.json`` and, if that file
+is absent or ``mode != "cloud"`` (or it carries no ``channel_id``), exits 0
+IMMEDIATELY — before any filesystem work and before any network. A plain install
+that never opted in therefore does ZERO network. Turning sync ON = writing
+``state/sync.json`` with ``mode:"cloud"`` (``--pair`` does this); turning it OFF
+= ``mode:"off"`` or deleting the file.
+
+DOWN (daemon → Supabase → phone):
   * poll ``dashboard.json`` mtime (≤10s), sha256 it LOCALLY as a change-gate
     (the hash is NEVER uploaded — a plaintext-hash column would be an equality
     oracle on the server);
   * on change bump ``seq`` (seeded at startup to ``max(server row seq, local
-    seq)+1`` so it never regresses under a device), ``e2e.encrypt_board`` the
-    raw dashboard bytes, UPSERT ``board_snapshots`` with the device JWT;
-  * mirror the blob's embedded nonce into the ``nonce`` column (schema NOT NULL);
-  * heartbeat every 30s → ``device_heartbeats`` carrying ``last_pushed_seq`` (so
-    a stuck board-push can't masquerade as "online, unchanged, safe", §5.6).
+    seq)+1`` so it never regresses under a device), ``e2e.encrypt_board`` the raw
+    dashboard bytes, UPSERT ``board_snapshots`` on_conflict ``channel_id``;
+  * mirror the blob's embedded nonce into the ``nonce`` column (schema NOT NULL).
+  * liveness is ``board_snapshots.updated_at`` (no more heartbeats table).
 
-UP (phone → Supabase → this daemon), plan §5.3:
-  * poll ``inbox_actions WHERE target_device_id=me AND status='pending'`` (10s);
+UP (phone → Supabase → this daemon):
+  * poll ``inbox_actions WHERE channel_id=eq.<id> AND status='pending'`` (10s);
   * dedup via the ``delivered.jsonl`` ledger (L3) so a re-materialise is
     idempotent (one inbox file per ``action_id``);
   * ``e2e.decrypt_action`` (AEAD-authenticated: a relay cannot forge or re-route
@@ -38,14 +55,6 @@ UP (phone → Supabase → this daemon), plan §5.3:
     ``result_status`` — so the phone's "did my approve land?" is a durable
     truth, never a false-negative inferred from a deleted inbox file.
 
-Auth (plan §3): a launchd daemon has no login session, so it exchanges a
-per-device secret (from ``config/secrets.json`` or ``state/sync.json``) for a
-1-hour device-scoped JWT via the ``exchange_device_token`` Edge Function, caches
-it and refreshes before expiry. An exchange failure PAUSES syncing (logs +
-writes a status file with the honest "云同步已暂停:请在 App 重新配对" copy, retries
-with backoff) — it NEVER crashes and never affects actd, which keeps writing
-``dashboard.json`` locally.
-
 Transport reuses the ``analytics_sync`` posture: stdlib ``urllib`` only, atomic
 cursor writes, and EVERY network call is best-effort — nothing here ever raises
 into the daemon loop.
@@ -53,17 +62,19 @@ into the daemon loop.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as _dt
 import hashlib
 import json
 import os
-import secrets as _pysecrets
+import subprocess
+import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from act import __version__ as _VERSION
 from act.lib import config, e2e
 
 # --------------------------------------------------------------------------- #
@@ -71,18 +82,22 @@ from act.lib import config, e2e
 # --------------------------------------------------------------------------- #
 SYNC_CONFIG_PATH: Path = config.STATE_DIR / "sync.json"       # opt-in gate + routing
 SYNC_DIR: Path = config.STATE_DIR / "sync"                    # owns the files below
-DELIVERED_LEDGER: Path = SYNC_DIR / "delivered.jsonl"         # L3 dedup ledger (UP)
-APPLIED_LEDGER: Path = SYNC_DIR / "applied.jsonl"             # written by actd (§5.4)
+CHANNEL_ID_PATH: Path = SYNC_DIR / "channel_id"              # stable channel UUID (read cap)
+WRITE_SECRET_PATH: Path = SYNC_DIR / "write_secret"         # 32 bytes base64url (write cap)
+PAIRING_QR_PNG: Path = SYNC_DIR / "pairing-qr.png"          # scannable QR of the blob
+DELIVERED_LEDGER: Path = SYNC_DIR / "delivered.jsonl"        # L3 dedup ledger (UP)
+APPLIED_LEDGER: Path = SYNC_DIR / "applied.jsonl"            # written by actd (§5.4)
 APPLIED_CURSOR_PATH: Path = SYNC_DIR / "applied_cursor.json"  # ack-tail byte cursor
-DOWN_STATE_PATH: Path = SYNC_DIR / "down_state.json"          # {seq, hash} snapshot_seq
-STATUS_PATH: Path = SYNC_DIR / "status.json"                  # UI-readable pause reason
-SECRETS_JSON_PATH: Path = config.HOME / "config" / "secrets.json"
+DOWN_STATE_PATH: Path = SYNC_DIR / "down_state.json"         # {seq, hash} snapshot_seq
+STATUS_PATH: Path = SYNC_DIR / "status.json"                 # UI-readable pause reason
 
 DASHBOARD_POLL_SECONDS = 10
-HEARTBEAT_SECONDS = 30
-TOKEN_REFRESH_MARGIN = 300   # refresh 5 min before expiry
 TIMEOUT_SECONDS = 15
 _ALG = "chacha20poly1305-ietf"
+
+# Capability header names (DESIGN §RLS; contract phase 1, verbatim).
+HDR_CHANNEL = "x-sync-channel"
+HDR_WRITE = "x-sync-write"
 
 # Honest pause copy surfaced to the UI (plan §3: "失败即降级不崩").
 PAUSE_MESSAGE = "云同步已暂停:请在 App 重新配对"
@@ -101,7 +116,7 @@ CONSENT_DISCLOSURE_ZH = """开启多设备同步 / 默认关闭
 
 端到端加密做了什么: 卡片正文与设备标签在离开这台 Mac 之前就已加密,密钥只经配对二维码传给你的设备、从不上传服务器。Supabase 和维护者都读不到明文。
 
-端到端加密保护不了什么: 元数据——同步时间、数据大小、卡片数量、设备数量、你的匿名设备 ID,以及“你在用这个功能”本身。弄丢配对密钥 = 服务器上的数据无法恢复;拿到你配对密钥的任何人都能读到你的卡片。
+端到端加密保护不了什么: 元数据——同步时间、数据大小、卡片数量、设备数量,以及“你在用这个功能”本身。弄丢配对二维码 = 服务器上的数据无法恢复;拿到你配对二维码的任何人都能读到你的卡片,还能替你操作。
 
 这和“匿名使用统计”是两个独立开关,互不影响。
 
@@ -142,6 +157,38 @@ def _from_bytea(v) -> bytes:
 
 
 # --------------------------------------------------------------------------- #
+# base64url (no padding) — the write_secret's on-disk + header text form. The
+# QR carries write_secret as 32 raw bytes; on-disk and in the x-sync-write
+# header it is this base64url text, and write_secret_hash = sha256(that text).
+# --------------------------------------------------------------------------- #
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    s = str(s).strip()
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _write_secret_hash(write_secret_text: str) -> str:
+    """encode(sha256(<x-sync-write header text>),'hex') — matches the server's
+    ``encode(digest(current_setting(...->>'x-sync-write'),'sha256'),'hex')``."""
+    return hashlib.sha256(write_secret_text.encode("ascii")).hexdigest()
+
+
+def _is_duplicate_error(exc: Exception) -> bool:
+    """True when an INSERT failed because the row already exists — i.e. the
+    channel is already registered, which for the self-heal path is *success*.
+    Covers PostgREST's 409 (HTTPError.code) and the unique-violation text it
+    returns (SQLSTATE 23505 / "duplicate" / "conflict" / "already exists")."""
+    if getattr(exc, "code", None) == 409:
+        return True
+    text = str(exc).lower()
+    return any(s in text for s in
+               ("409", "conflict", "duplicate", "23505", "already exists"))
+
+
+# --------------------------------------------------------------------------- #
 # startup gate — the ONLY filesystem touch before we know sync is opted-in
 # --------------------------------------------------------------------------- #
 def read_sync_config() -> Optional[dict]:
@@ -154,7 +201,8 @@ def read_sync_config() -> Optional[dict]:
 
 
 def startup_gate() -> Optional[dict]:
-    """Return the sync config ONLY when opted in (``mode == "cloud"``), else None.
+    """Return the sync config ONLY when opted in (``mode == "cloud"`` and a
+    ``channel_id`` is present), else None.
 
     The single decision point that keeps a non-opted-in install fully offline:
     ``main`` returns 0 the instant this returns None, before building any
@@ -163,23 +211,9 @@ def startup_gate() -> Optional[dict]:
     cfg = read_sync_config()
     if not cfg or str(cfg.get("mode") or "").lower() != "cloud":
         return None
-    if not cfg.get("device_id"):
+    if not cfg.get("channel_id"):
         return None
     return cfg
-
-
-# --------------------------------------------------------------------------- #
-# device secret — config/secrets.json wins, then state/sync.json
-# --------------------------------------------------------------------------- #
-def _load_device_secret(sync_cfg: dict) -> Optional[str]:
-    try:
-        data = json.loads(SECRETS_JSON_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and data.get("sync_device_secret"):
-            return str(data["sync_device_secret"])
-    except (OSError, ValueError):
-        pass
-    s = sync_cfg.get("device_secret")
-    return str(s) if s else None
 
 
 # --------------------------------------------------------------------------- #
@@ -220,39 +254,106 @@ def _complete_lines(path: Path, offset: int) -> Iterator[Tuple[bytes, int]]:
 
 
 # --------------------------------------------------------------------------- #
-# Transport — semantic PostgREST + Edge-Function operations. The default is
-# urllib; tests inject a fake with the SAME four methods so no network happens.
+# identity — channel_id + write_secret + K (generated once, persisted 0600)
+# --------------------------------------------------------------------------- #
+def _ensure_sync_dir() -> None:
+    SYNC_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(SYNC_DIR, 0o700)
+    except OSError:
+        pass
+
+
+def _load_or_create_channel_id() -> str:
+    try:
+        val = CHANNEL_ID_PATH.read_text(encoding="utf-8").strip()
+        if val:
+            return str(uuid.UUID(val))
+    except (OSError, ValueError):
+        pass
+    val = str(uuid.uuid4())
+    _ensure_sync_dir()
+    tmp = CHANNEL_ID_PATH.with_suffix(".tmp")
+    tmp.write_text(val + "\n", encoding="utf-8")
+    os.replace(tmp, CHANNEL_ID_PATH)
+    try:
+        os.chmod(CHANNEL_ID_PATH, 0o600)
+    except OSError:
+        pass
+    return val
+
+
+def _load_or_create_write_secret() -> str:
+    """Return the write_secret as base64url(no-pad) text (43 chars for 32 bytes),
+    generating + persisting it 0600 on first use."""
+    try:
+        val = WRITE_SECRET_PATH.read_text(encoding="utf-8").strip()
+        if val:
+            _b64url_decode(val)  # validate it decodes (self-heal on corruption)
+            return val
+    except Exception:  # noqa: BLE001 - regenerate on any read/decode corruption
+        pass
+    val = _b64url_encode(os.urandom(e2e.WRITE_SECRET_LEN))
+    _ensure_sync_dir()
+    tmp = WRITE_SECRET_PATH.with_suffix(".tmp")
+    tmp.write_text(val + "\n", encoding="utf-8")
+    os.replace(tmp, WRITE_SECRET_PATH)
+    try:
+        os.chmod(WRITE_SECRET_PATH, 0o600)
+    except OSError:
+        pass
+    return val
+
+
+def _load_write_secret_text() -> Optional[str]:
+    try:
+        val = WRITE_SECRET_PATH.read_text(encoding="utf-8").strip()
+        return val or None
+    except OSError:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Transport — semantic PostgREST operations over the anon key + capability
+# headers. The default is urllib; tests inject a fake with the SAME methods so
+# no network happens. ``channel_id`` is fixed per transport (x-sync-channel on
+# every request); ``write_secret`` (the x-sync-write header text) is passed on
+# writes only.
 # --------------------------------------------------------------------------- #
 class Transport:
-    def exchange_token(self, device_id: str, secret: str) -> dict:
+    def select(self, table: str, params: dict) -> List[dict]:
         raise NotImplementedError
 
-    def select(self, table: str, params: dict, token: str) -> List[dict]:
+    def insert(self, table: str, row: dict, write_secret: str) -> None:
         raise NotImplementedError
 
-    def upsert(self, table: str, row: dict, token: str, on_conflict: str) -> None:
+    def upsert(self, table: str, row: dict, on_conflict: str, write_secret: str) -> None:
         raise NotImplementedError
 
-    def patch(self, table: str, params: dict, patch: dict, token: str) -> None:
+    def patch(self, table: str, params: dict, patch: dict, write_secret: str) -> None:
         raise NotImplementedError
 
 
 class HttpTransport(Transport):
-    """Stdlib-only PostgREST/Edge transport (no third-party deps, like
+    """Stdlib-only PostgREST transport (no third-party deps, like
     analytics_sync). Every method raises on a non-2xx response; the Syncd caller
     swallows those (best-effort)."""
 
-    def __init__(self, supabase_url: str, edge_url: str, apikey: str):
+    def __init__(self, supabase_url: str, apikey: str, channel_id: str):
         self._rest = supabase_url.rstrip("/") + "/rest/v1"
-        self._edge = edge_url
         self._apikey = apikey
+        self._channel_id = str(channel_id)
 
-    def _headers(self, token: str, extra: Optional[dict] = None) -> dict:
+    def _headers(self, write_secret: Optional[str] = None,
+                 extra: Optional[dict] = None) -> dict:
         h = {
             "apikey": self._apikey,
-            "Authorization": "Bearer " + token,
+            "Authorization": "Bearer " + self._apikey,
             "Content-Type": "application/json",
+            HDR_CHANNEL: self._channel_id,
         }
+        if write_secret:
+            h[HDR_WRITE] = write_secret
         if extra:
             h.update(extra)
         return h
@@ -262,15 +363,6 @@ class HttpTransport(Transport):
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
             return resp.read()
 
-    def exchange_token(self, device_id: str, secret: str) -> dict:
-        body = json.dumps({"device_id": device_id, "secret": secret}).encode("utf-8")
-        req = urllib.request.Request(
-            self._edge, data=body, method="POST",
-            headers={"Content-Type": "application/json", "apikey": self._apikey,
-                     "Authorization": "Bearer " + self._apikey})
-        raw = self._send(req)
-        return json.loads(raw) if raw else {}
-
     def _url(self, table: str, params: Optional[dict] = None) -> str:
         from urllib.parse import urlencode
         url = f"{self._rest}/{table}"
@@ -278,37 +370,61 @@ class HttpTransport(Transport):
             url += "?" + urlencode(params)
         return url
 
-    def select(self, table: str, params: dict, token: str) -> List[dict]:
+    def select(self, table: str, params: dict) -> List[dict]:
         req = urllib.request.Request(
             self._url(table, params), method="GET",
-            headers=self._headers(token, {"Accept": "application/json"}))
+            headers=self._headers(extra={"Accept": "application/json"}))
         raw = self._send(req)
         data = json.loads(raw) if raw else []
         return data if isinstance(data, list) else []
 
-    def upsert(self, table: str, row: dict, token: str, on_conflict: str) -> None:
+    def insert(self, table: str, row: dict, write_secret: str) -> None:
+        body = json.dumps([row], ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            self._url(table), data=body, method="POST",
+            headers=self._headers(write_secret, {"Prefer": "return=minimal"}))
+        self._send(req)
+
+    def upsert(self, table: str, row: dict, on_conflict: str, write_secret: str) -> None:
         body = json.dumps([row], ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             self._url(table, {"on_conflict": on_conflict}), data=body, method="POST",
-            headers=self._headers(token, {
+            headers=self._headers(write_secret, {
                 "Prefer": "resolution=merge-duplicates,return=minimal"}))
         self._send(req)
 
-    def patch(self, table: str, params: dict, patch: dict, token: str) -> None:
+    def patch(self, table: str, params: dict, patch: dict, write_secret: str) -> None:
         body = json.dumps(patch, ensure_ascii=False).encode("utf-8")
         # urllib has no PATCH constant, but Request honours an explicit method.
         req = urllib.request.Request(
             self._url(table, params), data=body, method="PATCH",
-            headers=self._headers(token, {"Prefer": "return=minimal"}))
+            headers=self._headers(write_secret, {"Prefer": "return=minimal"}))
         self._send(req)
 
 
+def _resolve_anon_key() -> str:
+    """The publishable/anon Supabase key. Mirrors telemetry's handling exactly
+    (contract): a key file (config/secrets/supabase-service-key.txt or an
+    explicit telemetry.key_path) wins, else the built-in publishable key —
+    public by design, RLS makes it safe (anon has INSERT-only on channels and
+    no SELECT there, so write_secret_hash never leaves the server)."""
+    try:
+        from act.lib import analytics_sync
+        return analytics_sync._resolve_key(config.load_config())
+    except Exception:  # noqa: BLE001 - never fail to a missing key
+        return config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY
+
+
+def _resolve_supabase_url(sync_cfg: dict) -> str:
+    """The project URL: an explicit sync.json override wins, else the built-in
+    default project (same project as telemetry, per contract)."""
+    return (str(sync_cfg.get("supabase_url") or "").strip()
+            or config.DEFAULT_TELEMETRY_SUPABASE_URL)
+
+
 def _default_transport(sync_cfg: dict) -> HttpTransport:
-    url = str(sync_cfg.get("supabase_url") or "").rstrip("/")
-    edge = (str(sync_cfg.get("edge_url") or "").strip()
-            or url + "/functions/v1/exchange_device_token")
-    apikey = str(sync_cfg.get("apikey") or "")
-    return HttpTransport(url, edge, apikey)
+    return HttpTransport(_resolve_supabase_url(sync_cfg), _resolve_anon_key(),
+                         str(sync_cfg["channel_id"]))
 
 
 # --------------------------------------------------------------------------- #
@@ -317,15 +433,11 @@ def _default_transport(sync_cfg: dict) -> HttpTransport:
 class Syncd:
     def __init__(self, sync_cfg: dict, transport: Transport, *, clock=time.time):
         self.cfg = sync_cfg
-        self.device_id = str(sync_cfg["device_id"])
-        self.owner = sync_cfg.get("owner")
+        self.channel_id = str(sync_cfg["channel_id"])
         self.transport = transport
         self._clock = clock
 
-        self._token: Optional[str] = None
-        self._token_exp = 0.0
         self._paused_reason: Optional[str] = None
-        self._last_heartbeat = 0.0
 
         # DOWN durable state (snapshot_seq + change-gate hash live under state/sync/)
         st = _load_json(DOWN_STATE_PATH)
@@ -334,9 +446,19 @@ class Syncd:
         self._next_seq: Optional[int] = None   # seeded lazily on first push
         self._seeded = False
 
-        # pairing key (epoch + K_i); loaded lazily so a missing pairing → pause
+        # write capability (x-sync-write header text); loaded lazily so a missing
+        # secret → pause rather than crash.
+        self._write_secret: Optional[str] = None
+
+        # pairing key (epoch + K); loaded lazily so a missing pairing → pause
         self._epoch: Optional[int] = None
         self._k_i: Optional[bytes] = None
+
+        # self-heal: whether this channel's registry row is known to exist. In
+        # memory (re-attempted once per daemon run) so a Mac that paired OFFLINE
+        # — its --pair INSERT never landed — re-registers on the next online
+        # pass instead of failing every write's FK / write-secret check forever.
+        self._channel_registered = False
 
     # -- pause / resume ------------------------------------------------------ #
     def _pause(self, reason: str) -> None:
@@ -346,64 +468,88 @@ class Syncd:
             try:
                 _atomic_write_json(STATUS_PATH, {
                     "paused": True, "reason": reason, "at": _iso_now(),
-                    "device_id": self.device_id})
+                    "channel_id": self.channel_id})
             except OSError:
                 pass
 
     def _resume(self) -> None:
         if self._paused_reason is not None:
             self._paused_reason = None
-            _log("resumed: token exchange succeeded")
+            _log("resumed: capability + keys available")
             try:
                 _atomic_write_json(STATUS_PATH, {
-                    "paused": False, "at": _iso_now(), "device_id": self.device_id})
+                    "paused": False, "at": _iso_now(), "channel_id": self.channel_id})
             except OSError:
                 pass
 
-    # -- auth ---------------------------------------------------------------- #
-    def ensure_token(self) -> Optional[str]:
-        """Return a valid device JWT, exchanging/refreshing as needed. On any
-        failure PAUSE (log + status file) and return None — never raise."""
-        now = self._clock()
-        if self._token and now < self._token_exp - TOKEN_REFRESH_MARGIN:
-            return self._token
-        secret = _load_device_secret(self.cfg)
+    # -- capability / keys --------------------------------------------------- #
+    def _load_write_secret(self) -> bool:
+        if self._write_secret is not None:
+            return True
+        secret = _load_write_secret_text()
         if not secret:
-            self._pause(PAUSE_MESSAGE + "(缺少设备密钥)")
-            return None
-        try:
-            resp = self.transport.exchange_token(self.device_id, secret)
-        except Exception as e:  # noqa: BLE001 - exchange failure must not crash
-            self._pause(PAUSE_MESSAGE)
-            _log(f"token exchange failed (will retry): {e}")
-            return None
-        token = (resp or {}).get("access_token")
-        if not token:
-            self._pause(PAUSE_MESSAGE + "(令牌交换失败)")
-            return None
-        self._token = str(token)
-        try:
-            ttl = int(resp.get("expires_in") or 3600)
-        except (TypeError, ValueError):
-            ttl = 3600
-        self._token_exp = now + ttl
-        self._resume()
-        return self._token
+            self._pause(PAUSE_MESSAGE + "(缺少写入密钥)")
+            return False
+        self._write_secret = secret
+        return True
 
-    # -- pairing key --------------------------------------------------------- #
     def _load_keys(self) -> bool:
         if self._k_i is not None:
             return True
         try:
-            self._epoch, self._k_i = e2e.load_pairing(self.device_id)
+            self._epoch, self._k_i = e2e.load_pairing(self.channel_id)
             return True
         except (FileNotFoundError, ValueError, OSError) as e:
             self._pause(PAUSE_MESSAGE + "(缺少配对密钥)")
             _log(f"pairing key load failed: {e}")
             return False
 
+    def _ensure_ready(self) -> bool:
+        """Load the write capability + pairing key. On success clear any prior
+        pause; on failure PAUSE (status file + reason) and return False —
+        never raise, so actd keeps writing dashboard.json locally regardless."""
+        if not self._load_write_secret():
+            return False
+        if not self._load_keys():
+            return False
+        self._resume()
+        return True
+
+    # -- self-heal channel registration -------------------------------------- #
+    def _ensure_channel_registered(self) -> None:
+        """Best-effort, idempotent registration of this Mac's channel row.
+
+        Registration normally happens once at ``--pair`` time, but if that
+        INSERT failed (e.g. the Mac was offline when it paired) the daemon would
+        otherwise never retry — and every board/inbox write then fails the FK /
+        ``sync_write_ok`` check forever. So before the first board push of each
+        online pass we re-attempt the INSERT (same shape as ``init_channel``:
+        ``channel_id`` + ``write_secret_hash`` + E2E ``label_enc``, carrying the
+        ``x-sync-write`` header). A duplicate / 409 means it already exists =
+        success; any other error is swallowed + logged and retried next pass.
+        NEVER raises — actd keeps writing dashboard.json locally regardless."""
+        if self._channel_registered:
+            return
+        try:
+            label = str(self.cfg.get("label") or "")
+            label_blob = e2e.encrypt_label(self._k_i, self._epoch,
+                                           self.channel_id, label)
+            self.transport.insert("channels", {
+                "channel_id": self.channel_id,
+                "write_secret_hash": _write_secret_hash(self._write_secret),
+                "label_enc": _to_bytea(label_blob),
+            }, self._write_secret)
+            self._channel_registered = True
+            _log("channel registration confirmed (self-heal INSERT succeeded)")
+        except Exception as e:  # noqa: BLE001 - best-effort; never crash the pass
+            if _is_duplicate_error(e):
+                self._channel_registered = True
+                _log("channel already registered (duplicate) — self-heal satisfied")
+            else:
+                _log(f"channel self-heal register failed (will retry next pass): {e}")
+
     # -- DOWN ---------------------------------------------------------------- #
-    def _seed_seq(self, token: str) -> None:
+    def _seed_seq(self) -> None:
         """Seed the seq to ``max(server row seq, local seq) + 1`` so it never
         regresses under this device (§5.2 anti-rollback). Server read is
         best-effort; on failure we seed from local only."""
@@ -413,7 +559,7 @@ class Syncd:
         try:
             rows = self.transport.select(
                 "board_snapshots",
-                {"device_id": f"eq.{self.device_id}", "select": "seq"}, token)
+                {"channel_id": f"eq.{self.channel_id}", "select": "seq"})
             if rows:
                 server_seq = int(rows[0].get("seq") or 0)
         except Exception as e:  # noqa: BLE001 - best-effort seed
@@ -422,7 +568,7 @@ class Syncd:
         self._next_seq = max(server_seq, local_seq) + 1
         self._seeded = True
 
-    def push_down_if_changed(self, token: str) -> bool:
+    def push_down_if_changed(self) -> bool:
         """Change-gated full-snapshot UPSERT. Returns True iff a push happened."""
         try:
             raw = config.DASHBOARD_PATH.read_bytes()
@@ -431,15 +577,12 @@ class Syncd:
         digest = hashlib.sha256(raw).hexdigest()   # LOCAL ONLY, never uploaded
         if digest == self._last_hash:
             return False
-        if not self._load_keys():
-            return False
-        self._seed_seq(token)
+        self._seed_seq()
         seq = int(self._next_seq)
         try:
-            blob = e2e.encrypt_board(self._k_i, self._epoch, self.device_id, seq, raw)
+            blob = e2e.encrypt_board(self._k_i, self._epoch, self.channel_id, seq, raw)
             row = {
-                "device_id": self.device_id,
-                "owner": self.owner,
+                "channel_id": self.channel_id,
                 "seq": seq,
                 "payload_enc": _to_bytea(blob),
                 "nonce": _to_bytea(e2e.embedded_nonce(blob)),
@@ -447,7 +590,8 @@ class Syncd:
                 "schema_version": 1,
                 "updated_at": _iso_now(),
             }
-            self.transport.upsert("board_snapshots", row, token, on_conflict="device_id")
+            self.transport.upsert("board_snapshots", row, on_conflict="channel_id",
+                                  write_secret=self._write_secret)
         except Exception as e:  # noqa: BLE001 - never advance state on failure
             _log(f"DOWN: board upsert failed (seq={seq}, will retry): {e}")
             return False
@@ -461,23 +605,6 @@ class Syncd:
             pass
         _log(f"DOWN: pushed board snapshot seq={seq} ({len(raw)} bytes)")
         return True
-
-    def heartbeat(self, token: str) -> None:
-        now = self._clock()
-        if now - self._last_heartbeat < HEARTBEAT_SECONDS:
-            return
-        row = {
-            "device_id": self.device_id,
-            "owner": self.owner,
-            "beat_at": _iso_now(),
-            "last_pushed_seq": self._last_pushed_seq,
-            "daemon_version": _VERSION,
-        }
-        try:
-            self.transport.upsert("device_heartbeats", row, token, on_conflict="device_id")
-            self._last_heartbeat = now
-        except Exception as e:  # noqa: BLE001 - best-effort liveness
-            _log(f"heartbeat failed (will retry): {e}")
 
     # -- UP ------------------------------------------------------------------ #
     def _delivered_set(self) -> set:
@@ -534,24 +661,22 @@ class Syncd:
             _log(f"UP: writing inbox file for {action_id} failed: {e}")
             return False
 
-    def _patch_delivered(self, token: str, action_id: str) -> None:
+    def _patch_delivered(self, action_id: str) -> None:
         try:
             self.transport.patch(
                 "inbox_actions", {"action_id": f"eq.{action_id}"},
-                {"status": "delivered", "delivered_at": _iso_now()}, token)
+                {"status": "delivered"}, self._write_secret)
         except Exception as e:  # noqa: BLE001 - best-effort status advance
             _log(f"UP: patch delivered {action_id} failed (will retry): {e}")
 
-    def pull_up(self, token: str) -> int:
-        """Materialise pending actions addressed to this device. Returns the
-        number of NEW inbox files written."""
-        if not self._load_keys():
-            return 0
+    def pull_up(self) -> int:
+        """Materialise pending actions for this channel. Returns the number of
+        NEW inbox files written."""
         try:
             rows = self.transport.select(
                 "inbox_actions",
-                {"target_device_id": f"eq.{self.device_id}", "status": "eq.pending",
-                 "select": "action_id,payload_enc,board_seq"}, token)
+                {"channel_id": f"eq.{self.channel_id}", "status": "eq.pending",
+                 "select": "action_id,payload_enc,board_seq"})
         except Exception as e:  # noqa: BLE001 - best-effort pull
             _log(f"UP: pull failed (will retry): {e}")
             return 0
@@ -564,13 +689,13 @@ class Syncd:
             if aid in delivered:
                 # L3 dedup: already materialised — one inbox file per action_id.
                 # Re-attempt the delivered PATCH in case a prior one was lost.
-                self._patch_delivered(token, aid)
+                self._patch_delivered(aid)
                 continue
             board_seq = row.get("board_seq")
             try:
                 blob = _from_bytea(row.get("payload_enc"))
                 plaintext = e2e.decrypt_action(
-                    self._k_i, self._epoch, self.device_id, aid, board_seq, blob)
+                    self._k_i, self._epoch, self.channel_id, aid, board_seq, blob)
             except Exception as e:  # noqa: BLE001 - bad/forged blob → skip, never crash
                 _log(f"UP: decrypt {aid} failed (skipped): {e}")
                 continue
@@ -591,14 +716,14 @@ class Syncd:
             delivered.add(aid)
             if not self._write_inbox_file(aid, action, board_seq):
                 continue
-            self._patch_delivered(token, aid)
+            self._patch_delivered(aid)
             written += 1
         if written:
             _log(f"UP: materialised {written} action(s) to the inbox")
         return written
 
     # -- ack-tail ------------------------------------------------------------ #
-    def ack_tail(self, token: str) -> int:
+    def ack_tail(self) -> int:
         """Tail actd's ``applied.jsonl`` and PATCH ``inbox_actions`` to the
         durable terminal state (status='applied' + result_status). The byte
         cursor only advances past a line whose PATCH succeeded (a network
@@ -619,7 +744,7 @@ class Syncd:
                     self.transport.patch(
                         "inbox_actions", {"action_id": f"eq.{aid}"},
                         {"status": "applied", "result_status": result_status,
-                         "applied_at": _iso_now()}, token)
+                         "applied_at": _iso_now()}, self._write_secret)
                 except Exception as e:  # noqa: BLE001 - stop, retry this line later
                     _log(f"ack-tail: patch {aid} failed (will retry): {e}")
                     break
@@ -636,112 +761,108 @@ class Syncd:
 
     # -- one pass ------------------------------------------------------------ #
     def run_once(self) -> None:
-        """One best-effort cycle: auth → DOWN → heartbeat → UP → ack-tail.
-        Never raises; a closed auth gate simply pauses the whole pass."""
-        token = self.ensure_token()
-        if token is None:
+        """One best-effort cycle: ensure-ready → DOWN → UP → ack-tail.
+        Never raises; a missing capability/key simply pauses the whole pass."""
+        if not self._ensure_ready():
             return  # paused — actd keeps writing dashboard.json locally regardless
-        self.push_down_if_changed(token)
-        self.heartbeat(token)
-        self.pull_up(token)
-        self.ack_tail(token)
+        self._ensure_channel_registered()
+        self.push_down_if_changed()
+        self.pull_up()
+        self.ack_tail()
 
 
 # --------------------------------------------------------------------------- #
-# Mac-side pairing (the CLI the Settings UI calls; plan §3/§4.4)
+# Mac-side pairing (the CLI the Settings UI calls; DESIGN §syncd / §Mac-side QR)
 # --------------------------------------------------------------------------- #
-def _argon2_hash(secret: str) -> Optional[str]:
-    """argon2id(secret) for device_secrets.secret_hash if a hasher is available
-    (optional dep). None → the registration artifact ships the raw secret with a
-    note that the server must hash it. Never used in the hot sync path."""
+def init_channel(label: str, supabase_url: str = "",
+                 platform: str = "macos") -> dict:
+    """Provision this Mac's channel and enable cloud sync (the opt-in).
+
+    Loads-or-creates the three stable secrets — ``channel_id`` (read cap),
+    ``write_secret`` (write cap), and ``K`` (E2E key, epoch) — persisting them
+    0600 under ``state/sync/`` and ``state/pairings/``. Registers the channel
+    with Supabase (``INSERT channels`` with ``write_secret_hash`` +
+    ``label_enc``) using the anon key + capability headers, then writes
+    ``state/sync.json`` (mode=cloud + routing) and renders the QR.
+
+    Idempotent: re-running loads the existing secrets (the QR is stable), so a
+    duplicate channel INSERT is expected and swallowed. Returns
+    ``{channel_id, qr_blob, qr_png_path, registered}``.
+    """
+    channel_id = _load_or_create_channel_id()
+    write_secret_text = _load_or_create_write_secret()
+    write_secret_raw = _b64url_decode(write_secret_text)
+
+    # K + epoch: reuse the existing pairing key when present (stable QR).
     try:
-        from argon2 import PasswordHasher  # type: ignore
-        return PasswordHasher().hash(secret)
-    except Exception:  # noqa: BLE001 - optional; hashing may be done server-side
-        return None
+        epoch, k_i = e2e.load_pairing(channel_id)
+    except (FileNotFoundError, ValueError, OSError):
+        epoch = 1
+        k_i = e2e.new_pairing_key()
+        e2e.save_pairing(channel_id, epoch, k_i)
 
-
-def pair(label: str, supabase_url: str, apikey: str, owner: str,
-         platform: str = "macos", edge_url: Optional[str] = None) -> dict:
-    """Provision this Mac as a sync device and enable cloud sync (the opt-in).
-
-    Mints/loads the sync-only device UUID, a per-pairing symmetric key K_i (QR
-    only, never uploaded) and a per-device secret (stored 0600 in
-    config/secrets.json, server keeps only argon2id(secret)); writes
-    state/sync.json (mode=cloud + routing) and a registration artifact the app/
-    operator uses to insert the devices + device_secrets rows via service_role.
-    Returns a dict with the QR blob + artifact path (also printed by the CLI)."""
-    device_id = e2e.sync_device_id()
-    epoch = 1
-    k_i = e2e.new_pairing_key()
-    e2e.save_pairing(device_id, epoch, k_i)
-
-    # per-device secret (32 bytes hex) → config/secrets.json (0600)
-    secret = _pysecrets.token_hex(32)
-    SECRETS_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # register the channel (anon INSERT; write header carried per contract).
+    label_blob = e2e.encrypt_label(k_i, epoch, channel_id, label)
+    registered = False
     try:
-        os.chmod(SECRETS_JSON_PATH.parent, 0o700)
-    except OSError:
-        pass
-    existing = _load_json(SECRETS_JSON_PATH)
-    existing["sync_device_secret"] = secret
-    _atomic_write_json(SECRETS_JSON_PATH, existing)
-    try:
-        os.chmod(SECRETS_JSON_PATH, 0o600)
-    except OSError:
-        pass
+        transport = HttpTransport(_resolve_supabase_url({"supabase_url": supabase_url}),
+                                  _resolve_anon_key(), channel_id)
+        transport.insert("channels", {
+            "channel_id": channel_id,
+            "write_secret_hash": _write_secret_hash(write_secret_text),
+            "label_enc": _to_bytea(label_blob),
+        }, write_secret_text)
+        registered = True
+    except Exception as e:  # noqa: BLE001 - a re-pair duplicates the PK; keep going
+        _log(f"channel register (INSERT channels) returned an error "
+             f"(ok if re-pairing): {e}")
 
     # opt-in: state/sync.json (mode=cloud). Deleting it / mode=off = back to local.
     _atomic_write_json(SYNC_CONFIG_PATH, {
         "mode": "cloud",
-        "device_id": device_id,
-        "owner": owner,
+        "channel_id": channel_id,
         "epoch": epoch,
+        "label": label,
         "platform": platform,
-        "supabase_url": supabase_url,
-        "apikey": apikey,
-        **({"edge_url": edge_url} if edge_url else {}),
+        **({"supabase_url": supabase_url} if supabase_url else {}),
     })
 
-    # registration artifact for the devices + device_secrets rows (service_role)
-    label_blob = e2e.encrypt_label(k_i, epoch, device_id, label)
-    secret_hash = _argon2_hash(secret)
-    registration = {
-        "device_id": device_id,
-        "owner": owner,
-        "platform": platform,
-        "key_epoch": epoch,
-        "label_enc": _to_bytea(label_blob),
-        "label_nonce": _to_bytea(e2e.embedded_nonce(label_blob)),
-        "secret_hash": secret_hash,
-        # only present when a local argon2 hasher was unavailable:
-        **({} if secret_hash else {"secret_PLAINTEXT_hash_me_server_side": secret}),
-        "note": ("Insert one row into public.devices (id/owner/label_enc/"
-                 "label_nonce/platform/key_epoch) and one into "
-                 "public.device_secrets (device_id/owner/secret_hash=argon2id"
-                 "(secret)) using the service_role key."),
-    }
-    reg_path = SYNC_DIR / "pairing_registration.json"
-    _atomic_write_json(reg_path, registration)
+    # render the scannable QR (terminal + PNG) of the pairing blob.
+    qr_blob = e2e.build_channel_qr(channel_id, epoch, write_secret_raw, k_i, label)
+    qr_png_path: Optional[str] = None
     try:
-        # may carry the raw secret when no local argon2 hasher exists — 0600 it
-        os.chmod(reg_path, 0o600)
-    except OSError:
-        pass
+        from act.lib import qr
+        _ensure_sync_dir()
+        qr.qr_png(qr_blob, PAIRING_QR_PNG)
+        qr_png_path = str(PAIRING_QR_PNG)
+    except Exception as e:  # noqa: BLE001 - PNG is a convenience; the blob still prints
+        _log(f"QR PNG render failed (blob still available): {e}")
 
-    qr_blob = e2e.build_pairing_blob(device_id, epoch, k_i, label)
-    _log(f"paired device {device_id} (epoch={epoch}, platform={platform})")
-    return {"device_id": device_id, "epoch": epoch, "qr_blob": qr_blob,
-            "registration_path": str(reg_path)}
+    _log(f"initialised channel {channel_id} (epoch={epoch}, platform={platform}, "
+         f"registered={registered})")
+    return {"channel_id": channel_id, "qr_blob": qr_blob,
+            "qr_png_path": qr_png_path, "registered": registered}
 
 
 def disable() -> None:
-    """Turn sync OFF (mode=off) — a full return to local-only. The pairing key
-    and device secret are left in place so re-enabling needs no re-pairing."""
+    """Turn sync OFF (mode=off) — a full return to local-only. The channel_id,
+    write_secret and pairing key are left in place so re-enabling needs no
+    re-pairing (the QR stays stable)."""
     cfg = read_sync_config() or {}
     cfg["mode"] = "off"
     _atomic_write_json(SYNC_CONFIG_PATH, cfg)
     _log("sync disabled (mode=off) — daemon will exit 0 on next launch")
+
+
+def _open_file(path: str) -> None:
+    """Best-effort ``open`` of the QR PNG on macOS (no-op elsewhere / on error)."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.run(["open", path], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa: BLE001 - opening the preview must never fail --pair
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -754,15 +875,16 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--consent-text", action="store_true",
                         help="print the §7.3 sync consent disclosure and exit")
     parser.add_argument("--pair", action="store_true",
-                        help="provision this Mac as a sync device + enable sync")
+                        help="initialise this Mac's channel + enable sync + print QR")
+    parser.add_argument("--json", action="store_true",
+                        help="with --pair: emit ONE JSON object to stdout "
+                             "(machine-readable, for the Mac app) and nothing else")
     parser.add_argument("--disable", action="store_true", help="turn sync off")
     parser.add_argument("--label", default="这台 Mac")
-    parser.add_argument("--supabase-url", default="")
-    parser.add_argument("--apikey", default="")
-    parser.add_argument("--owner", default="")
+    parser.add_argument("--supabase-url", default="",
+                        help="optional project URL override (defaults to built-in)")
     parser.add_argument("--platform", default="macos",
                         choices=("macos", "ios", "linux"))
-    parser.add_argument("--edge-url", default=None)
     args = parser.parse_args(argv)
 
     if args.consent_text:
@@ -775,14 +897,34 @@ def main(argv: Optional[list] = None) -> int:
         return 0
 
     if args.pair:
-        if not (args.supabase_url and args.apikey and args.owner):
-            parser.error("--pair requires --supabase-url, --apikey and --owner")
-        result = pair(args.label, args.supabase_url, args.apikey, args.owner,
-                      platform=args.platform, edge_url=args.edge_url)
-        print("配对二维码 blob(在 App 里扫描 / 展示):")
+        result = init_channel(args.label, supabase_url=args.supabase_url,
+                              platform=args.platform)
+        if args.json:
+            # Machine-readable: EXACTLY one JSON object on stdout, nothing else
+            # (init_channel's diagnostics already go to the syncd logfile, not
+            # stdout). The Mac app consumes this to render the QR itself.
+            print(json.dumps({
+                "channel_id": result["channel_id"],
+                "qr_blob": result["qr_blob"],
+                "qr_png_path": result.get("qr_png_path"),
+                "registered": bool(result.get("registered")),
+                "label": args.label,
+            }, ensure_ascii=False))
+            return 0
+        print("用手机 App 扫描下面的二维码即可配对这台 Mac:\n")
+        try:
+            from act.lib import qr
+            print(qr.qr_terminal(result["qr_blob"]))
+        except Exception as e:  # noqa: BLE001 - fall back to the raw blob
+            print(f"(二维码渲染失败: {e})")
+        print("\n配对 blob(扫码失败时可手动输入):")
         print(result["qr_blob"])
-        print(f"\n设备注册材料已写入: {result['registration_path']}")
-        print(f"device_id: {result['device_id']}")
+        if result.get("qr_png_path"):
+            print(f"\n二维码图片: {result['qr_png_path']}")
+            _open_file(result["qr_png_path"])
+        print(f"channel_id: {result['channel_id']}")
+        if not result.get("registered"):
+            print("注意: 频道注册请求未成功(重复配对时属正常;否则请检查网络后重试 --pair)。")
         return 0
 
     # STARTUP GATE — exit 0 immediately (zero further fs/network) when not opted in.
@@ -801,7 +943,7 @@ def main(argv: Optional[list] = None) -> int:
         return 0
 
     interval = args.interval or DASHBOARD_POLL_SECONDS
-    _log(f"syncd starting (interval={interval}s, device={sync_cfg['device_id']})")
+    _log(f"syncd starting (interval={interval}s, channel={sync_cfg['channel_id']})")
     while True:
         try:
             daemon.run_once()

@@ -355,6 +355,10 @@ struct SettingsFormView: View {
                 keywords: "导入 import claude code 工作 会话 session 看板卡片 board card 扫描 scan 最近 7 天 last 7 days 等你回复 waiting",
                 anchor: "claude_import", content: AnyView(ClaudeImportSettingsSection())),
             SettingsSectionDescriptor(
+                id: "sync", titleZh: "同步 / 配对", titleEn: "Sync / Pairing",
+                keywords: "同步 配对 二维码 手机 iphone sync pairing QR qr code device 看板 board 远程 remote 扫码 scan 端到端加密 e2e",
+                anchor: nil, content: AnyView(SyncSettingsSection())),
+            SettingsSectionDescriptor(
                 id: "approval", titleZh: "审批 / 成本", titleEn: "Approval / Cost",
                 keywords: "审批 approval 成本 cost 任务工作目录 task working folder target repo 显示成本阈值 show cost 文字确认 confirm 回收站保留天数 trash retention 免确认 skip permissions github 私有仓库 private repo",
                 anchor: nil, content: AnyView(approvalGroup)),

@@ -44,20 +44,16 @@ enum Freshness: Equatable {
         }
     }
 
-    /// Compute from a heartbeat + the board head seq (plan §5.6 thresholds).
-    /// `now` should be the server-adjusted current time.
-    static func compute(beatAt: Date?, lastPushedSeq: Int?, boardSeq: Int?, now: Date = Date()) -> Freshness {
-        guard let beat = beatAt else { return .dead }
-        let gap = now.timeIntervalSince(beat)
-        if gap >= 600 { return .dead }                       // ≥ 10 min
-        // push stuck: heartbeat alive but the pushed head is ahead of the board
-        // row we can see (or a known board seq behind the pushed head).
-        if let lp = lastPushedSeq, let bs = boardSeq, lp > bs { return .stale }
-        if gap >= 90 { return .stale }                       // 90s–10m
-        // < 90s and not stuck → online. quiet vs fresh is a display nuance;
-        // both are safe, so collapse to fresh unless the board matches head.
-        if let lp = lastPushedSeq, let bs = boardSeq, lp == bs { return .fresh }
-        return .quiet
+    /// Compute from the board snapshot's `updated_at` (QR-only v2 — liveness is
+    /// `board_snapshots.updated_at`, there is no heartbeat table). `now` should be
+    /// the server-adjusted current time. `.unknown` when the channel's board has
+    /// not been fetched yet.
+    static func compute(updatedAt: Date?, now: Date = Date()) -> Freshness {
+        guard let u = updatedAt else { return .unknown }
+        let gap = now.timeIntervalSince(u)
+        if gap >= 600 { return .dead }    // ≥ 10 min
+        if gap >= 90 { return .stale }    // 90s–10m
+        return .fresh
     }
 }
 

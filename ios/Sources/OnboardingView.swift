@@ -1,19 +1,14 @@
-// OnboardingView.swift — screen 1 (plan §6.6): the explicit multi-device-sync
-// opt-in (default OFF, honest disclosure, no pre-checked boxes) followed by the
-// email-OTP login. Two independent gates: enabling sync, then signing in.
+// OnboardingView.swift — screen 1 (QR-only v2): the explicit multi-device-sync
+// opt-in (default OFF, honest disclosure, no pre-checked boxes). There is NO
+// account and NO email step — once sync is on, the app goes straight to pairing
+// (scan each Mac's QR). The QR is the credential.
 
 import SwiftUI
 
 struct OnboardingView: View {
-    @EnvironmentObject var state: AppState
-
     var body: some View {
         NavigationStack {
-            if !state.syncEnabled {
-                ConsentView()
-            } else {
-                LoginView()
-            }
+            ConsentView()
         }
     }
 }
@@ -38,15 +33,19 @@ private struct ConsentView: View {
                       "Card titles, summaries, links, notes, plan/acceptance lists, your phone actions (approve/reject/comment text), and device labels."))
                 disclosureBlock(
                     L("端到端加密做了什么", "What E2E encryption does"),
-                    L("卡片正文与设备标签在离开这台 Mac 之前就已加密，密钥只经配对二维码传给你的设备、从不上传服务器。Supabase 和维护者都读不到明文。",
-                      "Card bodies and device labels are encrypted before leaving the Mac; the key travels only via the pairing QR, never to the server. Supabase and the maintainer cannot read the plaintext."))
+                    L("卡片正文在离开这台 Mac 之前就已加密，密钥只经配对二维码传给你的设备、从不上传服务器。Supabase 和维护者都读不到明文。",
+                      "Card bodies are encrypted before leaving the Mac; the key travels only via the pairing QR, never to the server. Supabase and the maintainer cannot read the plaintext."))
                 disclosureBlock(
                     L("保护不了什么", "What it can't hide"),
-                    L("元数据——同步时间、数据大小、卡片数量、设备数量、你的匿名设备 ID，以及“你在用这个功能”本身。弄丢配对密钥 = 服务器上的数据无法恢复；拿到你配对密钥的任何人都能读到你的卡片。",
-                      "Metadata — sync times, data size, card count, device count, your anonymous device ID, and that you use this at all. Lose the pairing key = the server data is unrecoverable; anyone with your pairing key can read your cards."))
+                    L("元数据——同步时间、数据大小、卡片数量、设备数量，以及“你在用这个功能”本身。配对二维码就是唯一凭证：拿到它的任何人都能读写你这台 Mac 的看板，请当作密码保管；弄丢密钥 = 服务器上的数据无法恢复。",
+                      "Metadata — sync times, data size, card count, device count, and that you use this at all. The pairing QR is the only credential: anyone who has it can read and control that Mac's board, so treat it like a password. Lose the key = the server data is unrecoverable."))
 
                 Text(L("这和“匿名使用统计”是两个独立开关，互不影响。",
                        "This is a separate switch from anonymous usage stats; they don't affect each other."))
+                    .font(.footnote).foregroundStyle(.secondary)
+
+                Text(L("开启后，逐台扫描每台 Mac 上的配对二维码即可——无需邮箱、无需账号。",
+                       "After turning it on, just scan each Mac's pairing QR — no email, no account."))
                     .font(.footnote).foregroundStyle(.secondary)
 
                 Button {
@@ -75,56 +74,5 @@ private struct ConsentView: View {
             Text(title).font(.headline)
             Text(body).font(.subheadline).foregroundStyle(.secondary)
         }
-    }
-}
-
-// MARK: - Email OTP login -----------------------------------------------------
-private struct LoginView: View {
-    @EnvironmentObject var state: AppState
-    @State private var email = ""
-    @State private var code = ""
-    @State private var codeSent = false
-
-    var body: some View {
-        Form {
-            Section {
-                TextField(L("邮箱", "Email"), text: $email)
-                    .textContentType(.emailAddress)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if codeSent {
-                    TextField(L("6 位验证码", "6-digit code"), text: $code)
-                        .textContentType(.oneTimeCode)
-                        .keyboardType(.numberPad)
-                }
-            } footer: {
-                Text(L("用邮箱验证码登录（无需密码）。登录后逐台扫 Mac 的二维码即可。",
-                       "Sign in with an emailed code (no password). Then scan each Mac's QR to pair."))
-            }
-
-            Section {
-                if !codeSent {
-                    Button(L("发送验证码", "Send code")) {
-                        Task { if await state.sendOTP(email: email.trimmingCharacters(in: .whitespaces)) { codeSent = true } }
-                    }
-                    .disabled(email.isEmpty || state.isBusy)
-                } else {
-                    Button(L("验证并登录", "Verify & sign in")) {
-                        Task { _ = await state.verifyOTP(email: email.trimmingCharacters(in: .whitespaces),
-                                                         code: code.trimmingCharacters(in: .whitespaces)) }
-                    }
-                    .disabled(code.count < 6 || state.isBusy)
-                    Button(L("重新发送", "Resend code")) { codeSent = false; code = "" }
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if let err = state.lastError {
-                Section { Text(err).font(.footnote).foregroundStyle(.red) }
-            }
-        }
-        .navigationTitle(L("登录", "Sign in"))
-        .overlay { if state.isBusy { ProgressView() } }
     }
 }

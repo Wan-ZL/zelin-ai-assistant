@@ -1,9 +1,9 @@
-// App.swift — the iOS companion app entry point + root routing (plan §6.6).
+// App.swift — the iOS companion app entry point + root routing (QR-only v2).
 //
-// Routing:
-//   sync off / signed out           → OnboardingView (opt-in + email OTP)
-//   signed in, no pairing yet        → PairingView    (scan a Mac's QR)
-//   signed in, ≥1 pairing            → BoardView       (the 5-lane board)
+// Routing (no account — the QR is the credential):
+//   sync off               → OnboardingView (consent/disclosure only)
+//   sync on, no channel     → PairingView    (scan a Mac's QR)
+//   sync on, ≥1 channel     → BoardView       (the 5-lane board)
 //
 // Free-tier reality (plan §6.4): while foregrounded we poll + subscribe and
 // raise LOCAL notifications; when closed there is no push. The board is a
@@ -33,9 +33,9 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if !state.syncEnabled || !state.isSignedIn {
+            if !state.syncEnabled {
                 OnboardingView()
-            } else if state.pairings.isEmpty {
+            } else if state.channels.isEmpty {
                 NavigationStack { PairingView() }
             } else {
                 BoardView()

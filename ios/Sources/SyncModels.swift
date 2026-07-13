@@ -1,52 +1,41 @@
 // SyncModels.swift — the Supabase row shapes the phone reads/writes, plus the
-// stored-pairing model and the PostgREST bytea <-> Data bridge.
+// stored-channel model and the PostgREST bytea <-> Data bridge (QR-only v2).
+//
+// v2 capability model: each paired Mac is a CHANNEL. The QR carries
+// {channel_id, epoch, write_secret, K, label}; the phone stores it in Keychain
+// and talks to Supabase as the anon role with per-request headers
+// (x-sync-channel, and x-sync-write on writes). There is no account, no device
+// registry and no heartbeat table — liveness is `board_snapshots.updated_at`.
 //
 // PostgREST renders a `bytea` column as PostgreSQL's hex text (`\x…`) in JSON,
 // and accepts the same `\x…` form on write. Our E2E blobs are self-contained
-// (they carry their own nonce), so `payload_enc` / `label_enc` hold the WHOLE
-// blob and the sibling `nonce` columns just mirror the embedded 12-byte nonce
-// (kept NOT NULL by the schema). We decode the blob column and hand it straight
-// to E2E; we fill `nonce` from the blob's own nonce slice on write.
+// (they carry their own nonce), so `payload_enc` holds the WHOLE blob and the
+// sibling `nonce` column just mirrors the embedded 12-byte nonce (kept NOT NULL
+// by the schema). We decode the blob column and hand it straight to E2E; we fill
+// `nonce` from the blob's own nonce slice on write.
 
 import Foundation
 
-/// A pairing the phone scanned (K_i lives in Keychain; this is the in-memory
-/// view). `epoch` must match `devices.key_epoch` for decryption to succeed.
-struct Pairing: Identifiable, Equatable {
-    let deviceId: String
+/// A paired channel = one Mac. `writeSecret` + `key` live in the Keychain; this
+/// is the in-memory view. `channelId` is the canonical lowercase UUID string.
+struct Channel: Identifiable, Equatable {
+    let channelId: String
     let epoch: UInt32
-    let key: Data          // K_i, 32 bytes (from Keychain)
-    var label: String      // decrypted device label
-    var id: String { deviceId }
+    let writeSecret: Data  // 32 bytes — the write capability (x-sync-write)
+    let key: Data          // K, 32 bytes — the E2E decrypt key (never uploaded)
+    var label: String      // human label carried in the QR (not encrypted in v2)
+    var id: String { channelId }
 }
 
-/// `devices` row (owner-scoped SELECT). label_enc decrypts to the human label
-/// only if we hold this device's K_i; otherwise it renders as "未配对".
-struct DeviceRow: Decodable, Identifiable {
-    let id: String
-    let platform: String
-    let key_epoch: Int
-    let last_seen_at: String?
-    let label_enc: String?   // bytea hex, may be nil for our own not-yet-pushed row
-    var idValue: String { id }
-}
-
-/// `board_snapshots` row. `payload_enc` is the full E2E board blob; `seq` is the
-/// plaintext monotonic counter that also feeds the board AAD.
+/// `board_snapshots` row (one per channel, keyed by channel_id). `payload_enc`
+/// is the full E2E board blob; `seq` is the plaintext monotonic counter that also
+/// feeds the board AAD; `updated_at` (server clock) is the liveness authority.
 struct BoardSnapshotRow: Decodable {
-    let device_id: String
+    let channel_id: String
     let seq: Int
     let payload_enc: String     // bytea hex — full E2E blob
     let updated_at: String?
     let schema_version: Int?
-}
-
-/// `device_heartbeats` row — freshness authority (server clock).
-struct HeartbeatRow: Decodable {
-    let device_id: String
-    let beat_at: String?
-    let last_pushed_seq: Int?
-    let daemon_version: String?
 }
 
 // MARK: - bytea <-> Data (PostgREST hex text form) ---------------------------

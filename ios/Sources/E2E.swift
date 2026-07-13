@@ -222,4 +222,92 @@ enum E2E {
         _ = k.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, keyLen, $0.baseAddress!) }
         return k
     }
+
+    // ---- Channel pairing blob (QR-only capability sync v2) ----------------
+    // Mirrors act/lib/e2e.build_channel_qr / parse_channel_qr byte-for-byte.
+    // Fixed binary layout, base64url (no padding) → the QR text:
+    //   MAGIC2("ZQR1") ‖ ver(1) ‖ channel_id(16) ‖ epoch(4 BE u32) ‖
+    //   write_secret(32) ‖ K(32) ‖ label_utf8(var)
+    // The whole blob is the master key; the label is NOT separately encrypted.
+    static let magic2 = Data("ZQR1".utf8)
+    static let pairingVersion: UInt8 = 1
+    static let writeSecretLen = 32
+    // magic(4)+ver(1)+channel_id(16)+epoch(4)+write_secret(32)+K(32)
+    static let pairingMinLen = 4 + 1 + 16 + 4 + 32 + 32
+
+    struct ChannelPairing: Equatable, Identifiable {
+        let channelId: String   // canonical lowercase UUID string (== Python str(uuid))
+        let epoch: UInt32
+        let writeSecret: Data   // 32 bytes
+        let key: Data           // K, 32 bytes
+        let label: String
+        var id: String { channelId }
+    }
+
+    private static func base64urlNoPad(_ d: Data) -> String {
+        var s = d.base64EncodedString()
+        s = s.replacingOccurrences(of: "+", with: "-")
+             .replacingOccurrences(of: "/", with: "_")
+        while s.hasSuffix("=") { s.removeLast() }
+        return s
+    }
+
+    private static func base64urlDecode(_ s: String) -> Data? {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while t.count % 4 != 0 { t.append("=") }
+        return Data(base64Encoded: t)
+    }
+
+    private static func uuidBytes(_ id: UUID) -> Data {
+        let u = id.uuid
+        return Data([u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
+                     u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15])
+    }
+
+    private static func uuidString(from bytes: Data) -> String {
+        let b = [UInt8](bytes)
+        let id = UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                             b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
+        return id.uuidString.lowercased()
+    }
+
+    /// Build the v2 channel pairing blob (base64url, no pad) — byte-identical to
+    /// the Python encoder. `channelId` must be a UUID; write_secret and key are
+    /// 32 bytes each; label is arbitrary UTF-8.
+    static func buildChannelQR(channelId: String, epoch: UInt32,
+                               writeSecret: Data, key: Data, label: String) throws -> String {
+        guard writeSecret.count == writeSecretLen else { throw E2EError.badPairingBlob("write_secret must be 32 bytes") }
+        try checkKey(key)
+        guard let cid = UUID(uuidString: channelId) else { throw E2EError.badPairingBlob("bad channel_id") }
+        var raw = Data()
+        raw.append(magic2)
+        raw.append(pairingVersion)
+        raw.append(uuidBytes(cid))
+        raw.append(epochBE(epoch))
+        raw.append(writeSecret)
+        raw.append(key)
+        raw.append(Data(label.utf8))
+        return base64urlNoPad(raw)
+    }
+
+    /// Parse the v2 channel pairing blob → ChannelPairing. Byte-identical to the
+    /// Python parser (canonical lowercase channelId).
+    static func parseChannelQR(_ blob: String) throws -> ChannelPairing {
+        guard let raw = base64urlDecode(blob) else { throw E2EError.badPairingBlob("not base64url") }
+        guard raw.count >= pairingMinLen else { throw E2EError.badPairingBlob("too short") }
+        let b = [UInt8](raw)
+        guard Data(b[0..<4]) == magic2 else { throw E2EError.badPairingBlob("bad magic") }
+        guard b[4] == pairingVersion else { throw E2EError.badPairingBlob("unsupported version \(b[4])") }
+        var off = 5
+        let channelId = uuidString(from: Data(b[off..<off + 16])); off += 16
+        let epoch = (UInt32(b[off]) << 24) | (UInt32(b[off + 1]) << 16)
+                  | (UInt32(b[off + 2]) << 8) | UInt32(b[off + 3]); off += 4
+        let writeSecret = Data(b[off..<off + writeSecretLen]); off += writeSecretLen
+        let key = Data(b[off..<off + keyLen]); off += keyLen
+        let label = String(decoding: Data(b[off...]), as: UTF8.self)
+        return ChannelPairing(channelId: channelId, epoch: epoch,
+                              writeSecret: writeSecret, key: key, label: label)
+    }
 }

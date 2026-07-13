@@ -149,29 +149,34 @@ private struct QuickCapture: View {
     }
 }
 
-// Cross-lane device switcher (plan §6.3): ●◐○ freshness + decrypted label.
+// Cross-channel device switcher (plan §6.3): each paired Mac = a channel.
+// ●◐○ freshness (from board updated_at) + the channel's label.
 struct DeviceSwitcher: View {
     @EnvironmentObject var state: AppState
     @Binding var showPairing: Bool
 
+    private var sortedChannels: [Channel] {
+        state.channels.values.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+    }
+
     var body: some View {
         Menu {
-            ForEach(state.devices) { d in
+            ForEach(sortedChannels) { c in
                 Button {
-                    state.selectedDeviceId = d.id
+                    state.selectedChannelId = c.channelId
                     Task { await state.refreshBoard() }
                 } label: {
-                    let mark = d.id == state.selectedDeviceId ? "✓ " : ""
-                    Text("\(mark)\(state.freshness(for: d.id).glyph)  \(state.label(for: d))")
+                    let mark = c.channelId == state.selectedChannelId ? "✓ " : ""
+                    Text("\(mark)\(state.freshness(for: c.channelId).glyph)  \(c.label)")
                 }
             }
             Divider()
             Button { showPairing = true } label: { Label(L("配对新设备", "Pair a device"), systemImage: "qrcode.viewfinder") }
         } label: {
             HStack(spacing: 4) {
-                if let id = state.selectedDeviceId {
+                if let id = state.selectedChannelId {
                     Text(state.freshness(for: id).glyph).foregroundStyle(state.freshness(for: id).color)
-                    Text(state.selectedPairing?.label ?? L("选择设备", "Select device"))
+                    Text(state.selectedChannel?.label ?? L("选择设备", "Select device"))
                         .font(.subheadline).lineLimit(1)
                 } else {
                     Text(L("选择设备", "Select device")).font(.subheadline)

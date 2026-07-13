@@ -25,7 +25,9 @@ B = lambda b: base64.b64encode(bytes(b)).decode("ascii")  # noqa: E731
 U = base64.b64decode
 
 _K = bytes(range(1, 33))                      # deterministic 32-byte key
+_WS = bytes(range(32))                         # deterministic 32-byte write_secret
 _DEV = "11111111-1111-4111-8111-111111111111"
+_CID = "deadbeef-dead-4ead-8ead-deadbeefdead"  # channel_id (v2 pairing)
 _AID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 _BOARD = ('{"generated_at":"2026-07-12T00:00:00Z","counts":{"needs_approval":1},'
           '"needs_approval":[{"id":"R-001","title":"公司 Mac 上的提案","show_cost":false}]}').encode()
@@ -52,6 +54,16 @@ def emit(path: str) -> None:
             "blob": e2e.build_pairing_blob(_DEV, 3, _K, "书房 Mac mini"),
             "expect": {"device_id": _DEV, "epoch": 3, "key": B(_K), "label": "书房 Mac mini"},
         },
+        # v2 channel pairing blob (MAGIC2 "ZQR1"). Swift parses `blob` + asserts
+        # against `expect`, then BUILDS from `build` and echoes it back; verify()
+        # recomputes the Python build and byte-compares (both directions).
+        "channel_pairing": {
+            "blob": e2e.build_channel_qr(_CID, 7, _WS, _K, "书房 Mac mini"),
+            "expect": {"channel_id": _CID, "epoch": 7, "write_secret": B(_WS),
+                       "key": B(_K), "label": "书房 Mac mini"},
+            "build": {"channel_id": _CID, "epoch": 7, "write_secret": B(_WS),
+                      "key": B(_K), "label": "书房 Mac mini"},
+        },
         # UP: Swift must encrypt these; verify() decrypts what Swift produced.
         "encrypt_specs": [
             {"kind": "action", "k": B(_K), "epoch": 1, "device_id": _DEV, "action_id": _AID,
@@ -74,6 +86,30 @@ def verify(path: str) -> int:
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
     ok = True
+    # v2 channel pairing: Swift built a blob from the spec; it must be
+    # byte-identical to Python's build, and re-parse to the same fields.
+    cp = doc.get("channel_pairing")
+    if cp is None:
+        print("  FAIL channel_pairing: missing from Swift output")
+        ok = False
+    else:
+        spec = cp["spec"]
+        want_blob = e2e.build_channel_qr(
+            spec["channel_id"], int(spec["epoch"]), U(spec["write_secret"]),
+            U(spec["key"]), spec["label"])
+        if cp["built"] == want_blob:
+            print("  PASS channel_pairing: Swift-built blob byte-matches Python build")
+        else:
+            print(f"  FAIL channel_pairing: blob mismatch\n    want={want_blob}\n    got ={cp['built']}")
+            ok = False
+        p = e2e.parse_channel_qr(cp["built"])
+        if (p["channel_id"] == spec["channel_id"] and p["epoch"] == int(spec["epoch"])
+                and p["write_secret"] == U(spec["write_secret"]) and p["key"] == U(spec["key"])
+                and p["label"] == spec["label"]):
+            print("  PASS channel_pairing: Python re-parsed Swift blob, fields match")
+        else:
+            print(f"  FAIL channel_pairing: parsed fields mismatch: {p}")
+            ok = False
     for i, c in enumerate(doc["encrypted"]):
         k, ep, dev = U(c["k"]), int(c["epoch"]), c["device_id"]
         blob, want = U(c["blob"]), U(c["plaintext"])

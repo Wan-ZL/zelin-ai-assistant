@@ -1,7 +1,8 @@
-// PairingView.swift — screen 2 (plan §6.6): scan a Mac's pairing QR, parse the
-// opaque blob in-app (never a URL scheme), decrypt its label with the carried
-// key, and store K_i in the Keychain (ThisDeviceOnly). A paste fallback lets
-// the simulator / a camera-less device pair by pasting the blob text.
+// PairingView.swift — screen 2 (QR-only v2): scan a Mac's pairing QR, parse the
+// opaque channel blob in-app (never a URL scheme), and store the channel
+// {channel_id, write_secret, K, label} in the Keychain (ThisDeviceOnly).
+// Scanning another Mac adds another channel (multi-channel). A paste fallback
+// lets the simulator / a camera-less device pair by pasting the blob text.
 
 import SwiftUI
 import AVFoundation
@@ -11,7 +12,7 @@ struct PairingView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var scanned: E2E.PairingInfo?
+    @State private var scanned: E2E.ChannelPairing?
     @State private var pasteText = ""
     @State private var errorText: String?
     @State private var showPaste = false
@@ -46,7 +47,7 @@ struct PairingView: View {
                 title: Text(L("配对这台设备？", "Pair this device?")),
                 message: Text(info.label),
                 primaryButton: .default(Text(L("配对", "Pair"))) {
-                    state.addPairing(info)
+                    state.addChannel(info)
                     Task { await state.refreshEverything() }
                     dismiss()
                 },
@@ -72,7 +73,7 @@ struct PairingView: View {
 
     private func handle(_ blob: String) {
         do {
-            scanned = try E2E.parsePairingBlob(blob)
+            scanned = try E2E.parseChannelQR(blob)
             errorText = nil
         } catch {
             errorText = L("配对码无效或已损坏。", "That pairing code is invalid or corrupted.")

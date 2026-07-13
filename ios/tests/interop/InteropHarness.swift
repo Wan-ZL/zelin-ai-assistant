@@ -74,6 +74,34 @@ if let p = doc["pairing"] as? [String: Any],
     }
 } else { check(false, "pairing", "missing block") }
 
+// ---- channel pairing (v2): parse Python's blob, then build one for Python ----
+print("Swift channel-pairing (v2):")
+var channelPairingOut: [String: Any] = [:]
+if let cp = doc["channel_pairing"] as? [String: Any],
+   let blob = cp["blob"] as? String,
+   let expect = cp["expect"] as? [String: Any],
+   let build = cp["build"] as? [String: Any] {
+    do {
+        let info = try E2E.parseChannelQR(blob)
+        check(info.channelId == expect["channel_id"] as! String, "channel_pairing.channel_id", "got \(info.channelId)")
+        check(info.epoch == UInt32(expect["epoch"] as! Int), "channel_pairing.epoch")
+        check(info.writeSecret == b64(expect["write_secret"] as! String), "channel_pairing.write_secret")
+        check(info.key == b64(expect["key"] as! String), "channel_pairing.key")
+        check(info.label == expect["label"] as! String, "channel_pairing.label", "got \(info.label)")
+        // build from spec → Python verifies byte-identity
+        let built = try E2E.buildChannelQR(
+            channelId: build["channel_id"] as! String,
+            epoch: UInt32(build["epoch"] as! Int),
+            writeSecret: b64(build["write_secret"] as! String),
+            key: b64(build["key"] as! String),
+            label: build["label"] as! String)
+        check(built == blob, "channel_pairing.build_matches_python", "Swift build != Python blob")
+        channelPairingOut = ["built": built, "spec": build]
+    } catch {
+        check(false, "channel_pairing", "threw: \(error)")
+    }
+} else { check(false, "channel_pairing", "missing block") }
+
 // ---- UP: encrypt the requested plaintexts for Python to verify ----
 print("Swift encrypting for Python to verify (UP):")
 var encrypted: [[String: Any]] = []
@@ -111,7 +139,7 @@ for c in specs {
     }
 }
 
-let outDoc: [String: Any] = ["encrypted": encrypted]
+let outDoc: [String: Any] = ["encrypted": encrypted, "channel_pairing": channelPairingOut]
 let outData = try! JSONSerialization.data(withJSONObject: outDoc, options: [.prettyPrinted])
 try! outData.write(to: URL(fileURLWithPath: args[2]))
 print("wrote \(encrypted.count) Swift-encrypted blobs → \(args[2])")

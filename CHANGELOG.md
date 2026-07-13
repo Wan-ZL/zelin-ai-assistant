@@ -27,6 +27,26 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.30.0] - 2026-07-13
+
+### Changed
+
+- **Multi-device sync reworked to a QR-only capability model (no account /
+  email).** Pairing is now the whole story: each Mac holds a stable
+  `channel_id` + `write_secret` + E2E key, all carried in one QR shown in
+  **Settings → 同步 / 配对 (Sync / Pairing)**. The phone scans it (once per Mac,
+  any number of phones/Macs) — no email OTP, no login. Supabase access is gated
+  by the QR itself: reading a board needs the (unguessable) `channel_id`, writing
+  needs the `write_secret` (verified server-side via a hardened SECURITY DEFINER
+  RLS check); card bodies stay end-to-end encrypted with the QR's key. This
+  removes the v1 email/OTP flow and the `exchange_device_token` edge function /
+  per-device JWT entirely (the v1 design assumed editable email templates and
+  HS256 JWTs — neither holds on a free-tier ES256 project). **Security posture:
+  the QR is the master key for that Mac's board — keep it private.** iOS app is
+  now QR-only + multi-channel. `syncd` uses the anon key + `x-sync-channel` /
+  `x-sync-write` headers. Supersedes the v1 sync tables (dropped + replaced).
+  CONTRACT §31 (v0.30.0 supersession note) + docs/design/qr-only-capability-sync.md.
+
 ## [0.29.0] - 2026-07-13
 
 ### Added

@@ -1,6 +1,7 @@
-// SettingsView.swift — screen 5 (plan §6.6): sync on/off, notification
+// SettingsView.swift — screen 5 (QR-only v2): sync on/off, notification
 // permission (with the honest free-tier disclosure), the expiry countdown,
-// device labels + unpair/wipe-keys, language, and sign out.
+// paired-channel labels + unpair/wipe-keys, and language. No account, so no
+// sign-out — a channel is forgotten by unpairing it.
 
 import SwiftUI
 
@@ -50,43 +51,39 @@ struct SettingsView: View {
                     }
                 }
 
-                // --- devices ---
+                // --- paired Macs (channels) ---
                 Section(L("已配对设备", "Paired devices")) {
-                    if state.pairings.isEmpty {
+                    if state.channels.isEmpty {
                         Text(L("还没有配对任何 Mac。", "No Macs paired yet.")).foregroundStyle(.secondary)
                     }
-                    ForEach(Array(state.pairings.values)) { p in
+                    ForEach(Array(state.channels.values)) { c in
                         HStack {
-                            Text(state.freshness(for: p.deviceId).glyph)
-                                .foregroundStyle(state.freshness(for: p.deviceId).color)
+                            Text(state.freshness(for: c.channelId).glyph)
+                                .foregroundStyle(state.freshness(for: c.channelId).color)
                             VStack(alignment: .leading) {
-                                Text(p.label)
-                                Text(p.deviceId).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                Text(c.label)
+                                Text(c.channelId).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             }
                             Spacer()
-                            Button(role: .destructive) { state.unpair(deviceId: p.deviceId) } label: {
+                            Button(role: .destructive) { state.unpair(channelId: c.channelId) } label: {
                                 Text(L("解除配对", "Unpair"))
                             }.font(.caption)
                         }
                     }
-                    if !state.pairings.isEmpty {
+                    if !state.channels.isEmpty {
                         Button(role: .destructive) { confirmWipe = true } label: {
                             Text(L("擦除所有配对密钥", "Wipe all pairing keys"))
                         }
                     }
                 }
 
-                // --- language + account ---
+                // --- language ---
                 Section {
                     Picker(L("语言", "Language"), selection: Binding(
                         get: { lang.lang }, set: { lang.lang = $0 })) {
                         Text("中文").tag("zh")
                         Text("English").tag("en")
                     }
-                }
-                Section {
-                    if let s = state.session { Text(L("已登录：\(s.email)", "Signed in: \(s.email)")).font(.caption) }
-                    Button(role: .destructive) { state.signOut() } label: { Text(L("退出登录", "Sign out")) }
                 }
             }
             .navigationTitle(L("设置", "Settings"))

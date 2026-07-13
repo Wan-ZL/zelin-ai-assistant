@@ -140,6 +140,50 @@ class PairingBlobTestCase(unittest.TestCase):
         self.assertNotIn(":", blob)
 
 
+class ChannelQrBlobTestCase(unittest.TestCase):
+    """v2 channel pairing blob (MAGIC2 "ZQR1"). Pure byte packing — no crypto."""
+
+    _CID = "11111111-1111-4111-8111-111111111111"
+    _WS = bytes(range(32))
+
+    def test_build_parse_roundtrip(self):
+        blob = e2e.build_channel_qr(self._CID, 3, self._WS, _K, "书房 Mac mini")
+        p = e2e.parse_channel_qr(blob)
+        self.assertEqual(p["channel_id"], self._CID)
+        self.assertEqual(p["epoch"], 3)
+        self.assertEqual(p["write_secret"], self._WS)
+        self.assertEqual(p["key"], _K)
+        self.assertEqual(p["label"], "书房 Mac mini")
+
+    def test_empty_label(self):
+        blob = e2e.build_channel_qr(self._CID, 0, self._WS, _K, "")
+        self.assertEqual(e2e.parse_channel_qr(blob)["label"], "")
+
+    def test_blob_is_base64url_nopad(self):
+        blob = e2e.build_channel_qr(self._CID, 1, self._WS, _K, "x")
+        # url-safe alphabet only: [A-Za-z0-9-_], never +, /, = or ":"
+        self.assertNotIn("=", blob)
+        self.assertNotIn("+", blob)
+        self.assertNotIn("/", blob)
+        self.assertNotIn(":", blob)
+
+    def test_binary_layout(self):
+        blob = e2e.build_channel_qr(self._CID, 5, self._WS, _K, "hi")
+        raw = e2e._b64url_decode(blob)
+        self.assertEqual(raw[0:4], e2e.MAGIC2)
+        self.assertEqual(raw[4], e2e.PAIRING_VERSION)
+        self.assertEqual(struct.unpack(">I", raw[21:25])[0], 5)  # epoch after magic4+ver1+cid16
+        self.assertEqual(raw[-2:], b"hi")
+
+    def test_bad_magic_raises(self):
+        with self.assertRaises(ValueError):
+            e2e.parse_channel_qr(e2e._b64url_nopad(b"XXXX\x01" + b"\x00" * 90))
+
+    def test_wrong_write_secret_length_raises(self):
+        with self.assertRaises(ValueError):
+            e2e.build_channel_qr(self._CID, 1, b"short", _K, "x")
+
+
 class PairingKeyStorageTestCase(unittest.TestCase):
     """Storage helpers do NOT need cryptography (pure fs), so these always run."""
 

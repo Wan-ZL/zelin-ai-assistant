@@ -83,7 +83,7 @@ struct ActionBar: View {
 
     private func tap(_ a: LaneAction) {
         if a.textNeed != .none { composer = a; return }
-        if state.selectedDeviceId.map({ state.freshness(for: $0).requiresConfirm }) ?? false {
+        if state.selectedChannelId.map({ state.freshness(for: $0).requiresConfirm }) ?? false {
             confirm = a
         } else {
             fire(a, comment: nil)
@@ -103,7 +103,7 @@ struct ActionBar: View {
         Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } })
     }
     private var confirmMessage: String {
-        let fresh = state.selectedDeviceId.map { state.freshness(for: $0).label } ?? ""
+        let fresh = state.selectedChannelId.map { state.freshness(for: $0).label } ?? ""
         return L("这台设备的看板可能已过时（\(fresh)）。仍要继续吗？",
                  "This device's board may be out of date (\(fresh)). Continue anyway?")
     }

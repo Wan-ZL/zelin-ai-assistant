@@ -352,3 +352,96 @@ def parse_pairing_blob(blob: str) -> dict:
     _check_key(k_i)
     label = decrypt_label(k_i, epoch, device_id, base64.b64decode(payload["label_enc"]))
     return {"device_id": device_id, "epoch": epoch, "key": k_i, "label": label}
+
+
+# --------------------------------------------------------------------------- #
+# Channel pairing blob (QR-only capability sync v2 — DESIGN §Pairing blob)
+# --------------------------------------------------------------------------- #
+# A NEW, distinct blob from the ZSYN *record* blob above (which is UNCHANGED).
+# Fixed binary layout, base64url (no padding) → the QR text:
+#
+#   MAGIC2("ZQR1") ‖ ver(1) ‖ channel_id(16) ‖ epoch(4 BE u32) ‖
+#   write_secret(32) ‖ K(32) ‖ label_utf8(var)
+#
+# Possessing this blob = full read+write+decrypt of that Mac's channel. Unlike
+# the v1 pairing blob the label is NOT encrypted: the whole QR is already the
+# master key (leaking it leaks K anyway), so an inner label cipher buys nothing,
+# and iOS/Swift must render the label before it can decrypt anything. Mirror
+# byte-for-byte in ios/Sources/E2E.swift (interop test covers both directions).
+MAGIC2 = b"ZQR1"
+PAIRING_VERSION = 1
+WRITE_SECRET_LEN = 32
+# magic(4)+ver(1)+channel_id(16)+epoch(4)+write_secret(32)+K(32)
+_PAIRING_MIN_LEN = 4 + 1 + 16 + 4 + WRITE_SECRET_LEN + KEY_LEN
+
+
+def _b64url_nopad(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    s = str(s).strip()
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _check_write_secret(write_secret: bytes) -> bytes:
+    if not isinstance(write_secret, (bytes, bytearray)) or len(write_secret) != WRITE_SECRET_LEN:
+        raise ValueError(f"write_secret must be exactly {WRITE_SECRET_LEN} bytes")
+    return bytes(write_secret)
+
+
+def build_channel_qr(channel_id: str, epoch: int, write_secret: bytes, K: bytes, label: str) -> str:
+    """Build the v2 channel pairing blob (base64url, no pad) for the QR text.
+
+    ``channel_id`` is a UUID (stored as its 16 raw bytes). ``write_secret`` and
+    ``K`` are each 32 bytes. ``label`` is UTF-8, unencrypted (the blob is the
+    master key). Returns URL-safe base64 (``-``/``_``, no ``=``).
+    """
+    cid = uuid.UUID(str(channel_id))
+    epoch = _check_epoch(epoch)
+    write_secret = _check_write_secret(write_secret)
+    _check_key(K)
+    raw = (
+        MAGIC2
+        + bytes([PAIRING_VERSION])
+        + cid.bytes
+        + struct.pack(">I", epoch)
+        + write_secret
+        + bytes(K)
+        + label.encode("utf-8")
+    )
+    return _b64url_nopad(raw)
+
+
+def parse_channel_qr(s: str) -> dict:
+    """Parse a v2 channel pairing blob → ``{channel_id, epoch, write_secret, key, label}``.
+
+    ``channel_id`` is the canonical (lowercase, hyphenated) UUID string; ``key``
+    is K (32 bytes); ``write_secret`` is 32 bytes; ``label`` is a ``str``. Raises
+    on bad magic / version / length.
+    """
+    raw = _b64url_decode(s)
+    if len(raw) < _PAIRING_MIN_LEN:
+        raise ValueError("channel QR blob too short")
+    if raw[0:4] != MAGIC2:
+        raise ValueError("bad magic (not a channel QR blob)")
+    ver = raw[4]
+    if ver != PAIRING_VERSION:
+        raise ValueError(f"unsupported channel-QR version {ver}")
+    off = 5
+    channel_id = str(uuid.UUID(bytes=raw[off:off + 16]))
+    off += 16
+    (epoch,) = struct.unpack(">I", raw[off:off + 4])
+    off += 4
+    write_secret = raw[off:off + WRITE_SECRET_LEN]
+    off += WRITE_SECRET_LEN
+    k_i = raw[off:off + KEY_LEN]
+    off += KEY_LEN
+    label = raw[off:].decode("utf-8")
+    return {
+        "channel_id": channel_id,
+        "epoch": epoch,
+        "write_secret": bytes(write_secret),
+        "key": bytes(k_i),
+        "label": label,
+    }
