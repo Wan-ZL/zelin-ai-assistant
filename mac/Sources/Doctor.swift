@@ -93,6 +93,9 @@ enum FailureCatalog {
         case "engine_crashed":
             return L("录制引擎意外停了——点「重启引擎」再试；反复失败就看下面的引擎日志",
                      "The recording engine stopped unexpectedly — click Restart engine; if it keeps happening, check the engine log lines below")
+        case "engine_ffmpeg_missing":
+            return L("「屏幕+音频」需要 ffmpeg，这台电脑上还没有——装一个（brew install ffmpeg）或切回「仅屏幕」",
+                     "Screen + Audio needs ffmpeg, which this Mac does not have — install it (brew install ffmpeg) or switch back to Screen Only")
         case "screen_tcc_lost":
             return L("「屏幕录制」授权被 macOS 收回了（系统更新或重装应用后常见）——重新授权一次即可恢复",
                      "macOS revoked the Screen Recording permission (common after a macOS update or app reinstall) — grant it once more to resume")
@@ -129,6 +132,7 @@ enum FailureCatalog {
         case "engine_dead": return L("去录制页", "Open Recording")
         case "engine_npm_download": return L("看进度", "View progress")
         case "engine_crashed": return L("重启引擎", "Restart engine")
+        case "engine_ffmpeg_missing": return L("安装 ffmpeg", "Install ffmpeg")
         case "screen_tcc_lost": return L("去授权", "Grant…")
         case "agent_unloaded", "dashboard_stale": return L("一键修复", "Fix now")
         case "cron_missing": return L("查看修法", "How to fix")
@@ -162,6 +166,10 @@ enum FailureCatalog {
                 [URL(fileURLWithPath: RecordingController.engineLogPath)])
         case "engine_crashed":
             RecordingController.shared.restartEngine()
+        case "engine_ffmpeg_missing":
+            // same shape as node_missing: point at the authoritative install
+            // page (the catalog sentence already names `brew install ffmpeg`)
+            NSWorkspace.shared.open(URL(string: "https://ffmpeg.org/download.html")!)
         case "screen_tcc_lost":
             RecordingController.openScreenRecordingSettings()
         case "agent_unloaded", "dashboard_stale":

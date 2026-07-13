@@ -497,6 +497,38 @@ option" 可能来自任务自身文本，绝不匹配。action_id 词表追加 `
   与登录 shell 的比对——路径不同且版本不同，或 `--bg` 探测不被支持 → FAIL
   （failure_id=claude_cli_outdated）；plist 未安装 → WARN（诚实跳过）。
 
+2026-07-13 追加（add-only）：failure id `engine_ffmpeg_missing`——「屏幕+音频」
+（screen_audio）模式的引擎启动**强制依赖 ffmpeg**，缺失时 screenpipe 自带的
+自动安装器不可靠（当日事故：安装器写出了二进制却仍每次报 `os error 2` 后秒退，
+引擎反复暴毙，而菜单栏把死因猜成「屏幕录制」权限）。分类**只在引擎日志语境**
+（`classify_engine_log` / Swift `diagnoseEngine` 的死引擎分支）做直接子串检测
+（`_FFMPEG_INSTALL_FAILED`：`failed to install ffmpeg:`（冒号钉死 screenpipe
+格式）/ `ffmpeg not found and installation failed`）——**刻意不进通用
+`classify()` 规则链**：派发/卡片文本里的 `failed to install ffmpeg-python`
+或聊到 ffmpeg 的散文绝不触发；安装错误自带网络/401 字样时仍归 ffmpeg（修法
+是手动装）；活引擎带旧错误尾 = 健康，活引擎带 npm banner = 重新下载中
+（banner 语义优先，两侧镜像一致）。action_id 词表追加 `install_ffmpeg`（打开
+ffmpeg 下载页；目录句子自带 `brew install ffmpeg`）。配套行为（app 侧，同为
+add-only）：
+- 切到 screen_audio **先预检 ffmpeg**（登录 shell 依次**执行**
+  `ffmpeg -version` / `~/.local/bin/ffmpeg -version` /
+  `/opt/homebrew/bin/ffmpeg -version`——执行而非 `test -x`：安装器的残留
+  文件不证明能跑；**无缓存**：刚 brew 完的用户不能被旧值误拒）——缺失则拒绝
+  切换并解释，**绝不为一次注定失败的切换 pkill 正在跑的引擎**；预检回调
+  校验模式未被用户改动（stale click 丢弃）；
+- 模式切换失败**自动回滚**到原模式（一次、不递归；`applyMode(rollbackTo:)`）。
+  切换路径带**慢死观察**：+0.5s 乐观发布后持有 `applying` 至 ~8s 复核
+  （事故引擎 spawn 后 ~4-5s 才死，而存活 pgrep 从 t=0 就匹配 npx wrapper，
+  单次 +0.5s 检查看不见慢死）；回滚回写前校验用户没有换新模式（新选择
+  绝不被 clobber，错过的选择在收尾补跑一轮 applyMode）；
+- 拒绝/回滚的解释走 `recordingNote`（15s transient，录制页 + 菜单栏菜单
+  顶部各一行）+ 系统通知（通知未授权时静默丢弃，note 是兜底）；通知正文
+  自足（不复用为行内 doctor 行写的目录句——那些句子会跟回滚后的现实矛盾）；
+- 菜单栏「未在录制」行按 `diagnoseEngine` 分类显示**真实死因**（权限行仍在，
+  但只在 CGPreflight 真报缺权限时出现），不再无条件猜「多半缺权限」；录制页
+  的 ffmpeg 诊断行给「安装 ffmpeg」+「装好了，重启引擎」两个动作（死引擎的
+  日志尾在装好后仍是旧错误行，就地重启是该页唯一的复活路径）。
+
 **dashboard.json 新字段**（全部 optional，Swift `decodeIfPresent`；原始错误文本
 字段不变，分类 id 只是伴随）：
 - `running[]` queued 项加 `dispatch_error_id`（str|null）= `failures.classify(dispatch_error)`

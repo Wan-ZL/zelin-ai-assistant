@@ -34,6 +34,7 @@ from typing import Optional
 #   retry             transient — just try the action again
 #   show_engine_log   reveal ~/.screenpipe/engine.log (download progress lives there)
 #   regrant_screen    open System Settings -> Screen Recording (re-grant)
+#   install_ffmpeg    open the ffmpeg download page (screen_audio dependency)
 #   open_deps         jump to the dependencies/diagnostics page (the doctor row
 #                     shows the exact binaries/paths involved)
 # --------------------------------------------------------------------------- #
@@ -77,6 +78,15 @@ FAILURES: dict = {
         "plain_zh": "录制引擎意外停了——点「重启引擎」再试；反复失败就看下面的引擎日志",
         "plain_en": "The recording engine stopped unexpectedly — click Restart engine; if it keeps happening, check the engine log lines below",
         "action_id": "restart_engine",
+    },
+    # screen_audio hard-requires ffmpeg at engine startup, and screenpipe's
+    # built-in auto-installer is unreliable (2026-07-13: it wrote the binary
+    # yet still exited "os error 2" on every attempt, killing the engine
+    # seconds after spawn while the menu bar blamed Screen Recording TCC).
+    "engine_ffmpeg_missing": {
+        "plain_zh": "「屏幕+音频」需要 ffmpeg，这台电脑上还没有——装一个（brew install ffmpeg）或切回「仅屏幕」",
+        "plain_en": "Screen + Audio needs ffmpeg, which this Mac does not have — install it (brew install ffmpeg) or switch back to Screen Only",
+        "action_id": "install_ffmpeg",
     },
     # macOS ties the Screen Recording grant to the app's code signature —
     # an OS update or app reinstall changes it and silently revokes the grant.
@@ -155,6 +165,19 @@ _RULES: list = [
 ]
 
 
+# screenpipe's ffmpeg install-failure phrasing — ENGINE-LOG CONTEXT ONLY,
+# deliberately NOT a classify() rule: dispatch/card text may legitimately say
+# "failed to install ffmpeg-python" or discuss ffmpeg, and the recording
+# catalog sentence would then mislabel an unrelated task failure. The colon
+# pins the first signature to screenpipe's exact format ("failed to install
+# ffmpeg: <os error>"). Checked directly (not via the rules chain) so an
+# install error carrying network/401-flavored words still reads as the
+# ffmpeg dependency — mirroring Swift diagnoseEngine's substring check.
+_FFMPEG_INSTALL_FAILED = re.compile(
+    r"failed to install ffmpeg:|"
+    r"ffmpeg not found and installation failed", re.IGNORECASE)
+
+
 def classify(raw: Optional[str]) -> Optional[str]:
     """Map raw error text to a failure id, or None when honestly unknown."""
     if not raw or not str(raw).strip():
@@ -198,6 +221,12 @@ def classify_engine_log(tail: Optional[str], npx_present: bool = True,
         # that: first-run download in progress. (A DEAD process whose last
         # line is the banner is a failed download -> crashed, below.)
         return "engine_npm_download" if fid == "engine_npm_download" else None
+    # dead on screenpipe's ffmpeg install failure -> the specific fix beats
+    # the generic "crashed" (an ALIVE engine with stale ffmpeg lines in its
+    # tail already returned healthy/downloading above — it found ffmpeg this
+    # time). Direct substring check, see _FFMPEG_INSTALL_FAILED.
+    if _FFMPEG_INSTALL_FAILED.search(text):
+        return "engine_ffmpeg_missing"
     # dead with real output -> crashed (callers surface the tail verbatim);
     # dead with nothing but our own markers -> plain "not running".
     return "engine_crashed" if text else "engine_dead"
