@@ -468,13 +468,7 @@ function seek(t) {
     rect.y = Math.max(wr.y - 30, Math.min(rect.y, wr.y + wr.h + 30 - rect.h));
   }
 
-  let s = Math.min(vw / rect.w, vh / rect.h);
-  // punch-in on every hard cut: land 3% tight, settle in 0.4s — makes the
-  // beat-aligned cut land visually as well as musically
-  for (const c of [TL.initial_end, TL.queued_end, TL.working_end, TL.review_end]) {
-    const p = (t - c) / 0.4;
-    if (p >= 0 && p < 1) s *= 1 + 0.03 * (1 - easeOut(p));
-  }
+  const s = Math.min(vw / rect.w, vh / rect.h);
   const tx = vw / 2 - s * (rect.x + rect.w / 2);
   const ty = vh / 2 - s * (rect.y + rect.h / 2);
   const cam = $('#camera');
