@@ -73,6 +73,26 @@ def content_gate(cfg=None) -> bool:
         return False
 
 
+def _secret_positions(s: str, patterns) -> set:
+    """Index set of every character of ``s`` that is secret material.
+
+    两遍扫描：先扫原串；再把空白拼掉扫一遍并映射回原串下标——邮件式换行/
+    空格会把 key 劈成两段，只有拼合后才能看出整条是密钥素材（§15 承诺任何
+    设置下都不收集 key，劈开的尾段也是）。拼合可能把紧邻 key 的词也圈进来
+    （无法与折行区分），宁可多掩不可半漏（fail safe）。
+    """
+    positions: set = set()
+    for pat in patterns:
+        for m in pat.finditer(s):
+            positions.update(range(m.start(), m.end()))
+    idx_map = [i for i, ch in enumerate(s) if ch != " "]
+    compact = "".join(ch for ch in s if ch != " ")
+    for pat in patterns:
+        for m in pat.finditer(compact):
+            positions.update(idx_map[j] for j in range(m.start(), m.end()))
+    return positions
+
+
 def clip_content(text) -> Optional[str]:
     """clip() for user-typed CONTENT fields: secret-mask FIRST, then cap at
     CONTENT_CLIP. The masking (act/lib/sanitize._SECRET_PATTERNS) is
@@ -86,8 +106,26 @@ def clip_content(text) -> Optional[str]:
         return None
     try:
         from act.lib import sanitize  # lazy: keep analytics import-light
-        for pat in sanitize._SECRET_PATTERNS:
-            s = pat.sub(sanitize.MASK, s)
+        positions = _secret_positions(s, sanitize._SECRET_PATTERNS)
+        if positions:
+            # 每段连续的密钥区间折叠成一个 MASK；夹在两段掩码之间的折行
+            # 空格一并吞掉（它只是被 split 归一出来的换行痕迹）
+            out: list = []
+            i = 0
+            while i < len(s):
+                if i in positions:
+                    out.append(sanitize.MASK)
+                    while i < len(s):
+                        if i in positions:
+                            i += 1
+                        elif s[i] == " " and (i + 1) in positions:
+                            i += 1
+                        else:
+                            break
+                else:
+                    out.append(s[i])
+                    i += 1
+            s = "".join(out)
     except Exception:  # noqa: BLE001 - never emit unmasked content
         return None
     return s[:CONTENT_CLIP] or None

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -165,6 +166,14 @@ class Requirement:
         kwargs["delivery_mode"] = dm if dm in ("chat", "repo") else "repo"
         if "id" not in kwargs:
             kwargs["id"] = d.get("id", "")
+        # YAML 类型归一：手写卡把 `id: 4` / `title: 456` / `tier: 7` 写成无引号
+        # 数字时 PyYAML 解析成 int —— 一律 str() 归一，否则 next_id 的正则
+        # match 抛 TypeError（快速捕获整条链瘫痪），且 dashboard wire 上的 int
+        # 会让 Swift 端硬 String decode 把整列清空（CONTRACT §2）。
+        for k in ("id", "title", "tier"):
+            v = kwargs.get(k)
+            if v is not None and not isinstance(v, str):
+                kwargs[k] = str(v)
         return cls(**kwargs)
 
     def to_dict(self) -> dict:
@@ -233,7 +242,11 @@ def load_all(include_archived: bool = False) -> list[Requirement]:
     for path in _iter_files(include_archived):
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
+        except (OSError, yaml.YAMLError) as e:
+            # 单个损坏/不可读文件（语法坏 YAML、chmod 000 等）只跳过这一个 +
+            # log，绝不拖垮 load_all 的所有消费者（dashboard/收件箱/雷达/capture）。
+            print(f"registry: skip unreadable card file {path.name}: {e}",
+                  file=sys.stderr)
             continue
         if data is None:
             continue
@@ -574,7 +587,9 @@ def next_id() -> str:
     # CRITICAL (§4): include archived cards, or a freshly allocated id could
     # collide with a sealed R-050 and overwrite it (silent data loss).
     for r in load_all(include_archived=True):
-        m = _ID_RE.match(r.id or "")
+        # str() 防御第二层（from_dict 已归一 YAML 路径）：直接构造的
+        # Requirement 仍可能带 int id —— 正则 match 对 int 抛 TypeError。
+        m = _ID_RE.match(str(r.id or ""))
         if m:
             mx = max(mx, int(m.group(1)))
     return f"R-{mx + 1:03d}"

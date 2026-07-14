@@ -377,5 +377,156 @@ class EmptySidNoGlobBindTestCase(unittest.TestCase):
             f"&& claude --resume {self.decoy_sid}")
 
 
+class SingleCardCorruptionIsolationTestCase(unittest.TestCase):
+    """单点损坏不倒全局（nightly audit batch）：一张手改坏的卡只降级/跳过，
+    绝不冻结整个 dashboard pass；wire 类型归一保证 Swift 端的硬 String/Int
+    decode 不会因单张卡把整列清空（CONTRACT §2）。"""
+
+    def setUp(self):
+        self.cfg = config.Config()
+        home = tempfile.mkdtemp(prefix="dash-home-")
+        patcher = mock.patch.dict(os.environ, {"HOME": home})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _build(self, reqs, agents=None, **kw):
+        return dashboard.build_dashboard(
+            reqs=reqs, agents=agents or [], cfg=self.cfg, **kw)
+
+    # -- 字段级损坏降级（不丢卡） -------------------------------------------- #
+    def test_execution_string_on_card_sent_degrades_not_crash(self):
+        req = Requirement.from_dict({
+            "id": "R-101", "title": "bad exec", "status": "card_sent",
+            "execution": "oops-a-string",
+        })
+        dash = self._build([req])
+        item = dash["needs_approval"][0]
+        self.assertEqual(item["id"], "R-101")
+        self.assertFalse(item["reraised"])
+
+    def test_bad_repeated_mentions_degrades_to_one(self):
+        req = Requirement.from_dict({
+            "id": "R-102", "title": "bad repeats", "status": "card_sent",
+            "repeated_mentions": "abc",
+        })
+        dash = self._build([req])
+        self.assertEqual(dash["needs_approval"][0]["repeated"], 1)
+
+    def test_bad_cost_estimate_degrades_to_no_cost(self):
+        req = Requirement.from_dict({
+            "id": "R-103", "title": "bad cost", "status": "card_sent",
+            "cost_estimate_usd": "cheap",
+        })
+        dash = self._build([req])
+        item = dash["needs_approval"][0]
+        self.assertIsNone(item["cost_usd"])
+        self.assertFalse(item["show_cost"])
+
+    # -- 整卡不可投影 -> 跳过这一张，兄弟卡与 counts 保持一致 ----------------- #
+    def test_unprojectable_card_skipped_siblings_survive(self):
+        bad = Requirement.from_dict({
+            "id": "R-110", "title": "broken dod", "status": "card_sent",
+            "definition_of_done": 42,           # list(42) -> TypeError
+        })
+        good = Requirement.from_dict({
+            "id": "R-111", "title": "healthy sibling", "status": "card_sent",
+        })
+        dash = self._build([bad, good])
+        self.assertEqual([i["id"] for i in dash["needs_approval"]], ["R-111"])
+        # 徽章与列表一致：跳过的卡也不计数（诚实降级，不出现"有数没卡"）
+        self.assertEqual(dash["counts"]["needs_approval"], 1)
+
+    # -- wire 类型归一：int id/title/tier -> str ------------------------------ #
+    def test_int_id_title_tier_emit_as_strings(self):
+        req = Requirement.from_dict({
+            "id": 300, "title": 456, "tier": 7, "status": "card_sent",
+        })
+        dash = self._build([req])
+        item = dash["needs_approval"][0]
+        self.assertEqual(item["id"], "300")
+        self.assertEqual(item["title"], "456")
+        self.assertEqual(item["tier"], "7")
+
+    # -- started_at 归一 epoch int（§2；Swift 端 started_at: Int?） ------------ #
+    def test_started_at_iso_string_normalized_to_epoch(self):
+        req = Requirement.from_dict({
+            "id": "R-005", "title": "run", "status": "executing",
+            "execution": {"session_id": "aaaaaaaa-1111"},
+        })
+        agent = {"id": "aaaaaaaa", "sessionId": "aaaaaaaa-1111",
+                 "state": "working", "pid": 1,
+                 "startedAt": "2026-07-08T10:00:05Z"}
+        dash = self._build([req], agents=[agent])
+        self.assertEqual(dash["running"][0]["started_at"],
+                         _utc_epoch(2026, 7, 8, 10, 0, 5))
+
+    def test_started_at_already_epoch_passes_through(self):
+        req = Requirement.from_dict({
+            "id": "R-006", "title": "run2", "status": "executing",
+            "execution": {"session_id": "bbbbbbbb-2222"},
+        })
+        agent = {"id": "bbbbbbbb", "sessionId": "bbbbbbbb-2222",
+                 "state": "working", "pid": 1, "startedAt": 1783504800}
+        dash = self._build([req], agents=[agent])
+        self.assertEqual(dash["running"][0]["started_at"], 1783504800)
+
+    def test_epoch_accepts_int_float_rejects_bool(self):
+        self.assertEqual(dashboard._epoch(1783504800), 1783504800)
+        self.assertEqual(dashboard._epoch(1783504800.9), 1783504800)
+        self.assertIsNone(dashboard._epoch(True))   # bool 是 int 子类，不是时间戳
+        self.assertIsNone(dashboard._epoch("not-a-date"))
+
+    # -- archive() crash-mid-move 残件：同 id 只出现在 archived 一个分区 ------- #
+    def test_active_residue_of_archived_card_deduped(self):
+        residue = Requirement.from_dict({
+            "id": "R-201", "title": "mid-move", "status": "delivered",
+            "execution": {"accepted_at": "2026-07-08T12:00:00Z"},
+        })
+        sealed = Requirement.from_dict({
+            "id": "R-201", "title": "mid-move", "status": "archived",
+            "prev_status": "delivered",
+            "archived_at": "2026-07-08T12:01:00Z", "archive_reason": "user",
+        })
+        dash = self._build([residue], archived=[sealed])
+        self.assertEqual([i["id"] for i in dash["completed"]], [])
+        self.assertEqual([i["id"] for i in dash["archived"]], ["R-201"])
+        self.assertEqual(dash["counts"]["completed"], 0)
+        self.assertEqual(dash["counts"]["archived"], 1)
+
+    # -- final_draft 投影端兜底截断（契约 §16 ≤20000 字） ---------------------- #
+    def test_review_final_draft_clipped_to_contract_cap(self):
+        req = Requirement.from_dict({
+            "id": "R-200", "title": "big", "status": "review",
+            "execution": {"session_id": "aaaaaaaa-1",
+                          "final_draft": "x" * 50000},
+        })
+        dash = self._build([req])
+        self.assertEqual(len(dash["review"][0]["final_draft"]), 20000)
+
+    def test_review_missing_final_draft_stays_none(self):
+        req = Requirement.from_dict({
+            "id": "R-202", "title": "no draft", "status": "review",
+            "execution": {"session_id": "aaaaaaaa-2"},
+        })
+        dash = self._build([req])
+        self.assertIsNone(dash["review"][0]["final_draft"])
+
+    # -- 损坏的 archived 卡同样单卡隔离 --------------------------------------- #
+    def test_corrupt_archived_card_skipped_others_survive(self):
+        class _Exploding:
+            id = "R-666"
+
+            def __getattr__(self, name):
+                raise RuntimeError("corrupt archived card")
+
+        good = Requirement.from_dict({
+            "id": "R-203", "title": "good archived", "status": "archived",
+            "archived_at": "2026-07-08T12:00:00Z", "archive_reason": "user",
+        })
+        dash = self._build([], archived=[_Exploding(), good])
+        self.assertEqual([i["id"] for i in dash["archived"]], ["R-203"])
+        self.assertEqual(dash["counts"]["archived"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

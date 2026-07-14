@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 from act import oneonone
-from act.lib import analytics, config, notify
+from act.lib import analytics, config, failures, notify
 from act.lib.registry import Requirement, State, load_all, merge_or_new
 from act.oneonone import manager_owes, first_seen
 from act.report import build_report
@@ -264,7 +264,14 @@ def write_digest(today: Optional[_dt.date] = None) -> Path:
     with open(path, "w", encoding="utf-8") as f:
         f.write(md)
 
-    notify.notify("周一 digest 已生成", str(path))
+    # §5 v0.14：python 侧全部通知经 failures.pick 走 UI 语言，body 必带下一步
+    notify.notify(
+        failures.pick("周一 digest 已生成", "Monday digest ready"),
+        failures.pick(
+            f"打开查看待审批积压与进化建议：{path}",
+            f"Open it to review the approval backlog and suggestions: {path}",
+        ),
+    )
     analytics.log_event("digest_generated", path=str(path))
     return path
 

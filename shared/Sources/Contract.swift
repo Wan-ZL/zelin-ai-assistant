@@ -112,6 +112,57 @@ private func jsonString(_ s: String) -> String {
     (try? String(data: JSONSerialization.data(withJSONObject: s, options: .fragmentsAllowed), encoding: .utf8)) ?? "\"\""
 }
 
+// 缺 id 行的确定性回退 id：由行内容派生（FNV-1a 64-bit），同一行每次 decode
+// 得到同一个 id —— 随机 UUID 会让身份每 ~10s reload 漂移一次（SwiftUI 动画
+// 抖动、hiddenSticky/pendingMergeActions 等按 id 记账全部失配）。"noid-" 前缀
+// 让它在日志/inbox 里一眼可辨（缺 id 的行 actd 本就无法匹配，这点不变）。
+private func stableFallbackID(_ parts: String?...) -> String {
+    var hash: UInt64 = 0xcbf2_9ce4_8422_2325           // FNV offset basis
+    for part in parts {
+        for byte in (part ?? "\u{1}").utf8 {           // nil 与空串区分开
+            hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+        }
+        hash = (hash ^ 0x1f) &* 0x0000_0100_0000_01b3  // 字段分隔，防串接歧义
+    }
+    return String(format: "noid-%016llx", hash)
+}
+
+// 行级 lenient 解码（docs/CONTRACT.md §2 v0.10 容错意图的落实）：一行坏数据只
+// 跳过该行（好行存活），绝不把整列清空。之前 `(try? [T].self) ?? []` 会把单行
+// 失败放大成整列静默丢失——徽章有数、列却空着，loadError 还是 nil。
+// 每个被跳过的行/分区记进 drops（Dashboard.decodeDrops），UI 可见 + NSLog。
+private struct AnySkippedRow: Decodable {}   // 只为把坏行从容器里消费掉
+
+private func decodeLossyRows<T: Decodable, K: CodingKey>(
+    _ c: KeyedDecodingContainer<K>,
+    _ key: K,
+    drops: inout [String]
+) -> [T] {
+    guard var rows = try? c.nestedUnkeyedContainer(forKey: key) else {
+        // 键缺失 = 老 payload 正常向后兼容；键存在但整列类型坏 = 可观测地丢弃
+        if c.contains(key) { drops.append("\(key.stringValue) (整列损坏 not an array)") }
+        return []
+    }
+    var out: [T] = []
+    while !rows.isAtEnd {
+        let idx = rows.currentIndex
+        if let item = try? rows.decode(T.self) {
+            out.append(item)
+            continue
+        }
+        drops.append("\(key.stringValue)[\(idx)]")
+        // 失败后 index 一般不前进：消费掉坏行再继续；仍卡住则放弃余下行防死循环
+        if rows.currentIndex == idx {
+            _ = try? rows.decode(AnySkippedRow.self)
+            if rows.currentIndex == idx {
+                drops.append("\(key.stringValue)[\(idx)+] (无法跳过，余行丢弃)")
+                break
+            }
+        }
+    }
+    return out
+}
+
 struct RunningTask: Decodable, Hashable {
     let id: String
     let name: String
@@ -176,7 +227,6 @@ struct TrashItem: Decodable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         summary = try? c.decodeIfPresent(String.self, forKey: .summary)
         kind = try? c.decodeIfPresent(String.self, forKey: .kind)
@@ -185,6 +235,9 @@ struct TrashItem: Decodable, Hashable {
         permanent = (try? c.decodeIfPresent(Bool.self, forKey: .permanent)) ?? false
         type = try? c.decodeIfPresent(String.self, forKey: .type)
         hardness = try? c.decodeIfPresent(String.self, forKey: .hardness)
+        // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
+        id = (try? c.decode(String.self, forKey: .id))
+            ?? stableFallbackID("trash", title, summary, kind, trashed_at, trash_reason)
     }
 
     /// Plain-language headline shown by default.
@@ -220,7 +273,6 @@ struct ArchivedItem: Decodable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         summary = try? c.decodeIfPresent(String.self, forKey: .summary)
         kind = try? c.decodeIfPresent(String.self, forKey: .kind)
@@ -232,6 +284,9 @@ struct ArchivedItem: Decodable, Hashable {
         archived_at = try? c.decodeIfPresent(String.self, forKey: .archived_at)
         archive_reason = try? c.decodeIfPresent(String.self, forKey: .archive_reason)
         prev_status = try? c.decodeIfPresent(String.self, forKey: .prev_status)
+        // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
+        id = (try? c.decode(String.self, forKey: .id))
+            ?? stableFallbackID("archived", title, summary, kind, archived_at, prev_status)
     }
 
     /// Plain-language headline shown by default.
@@ -275,7 +330,6 @@ struct ReviewItem: Decodable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
         summary = try? c.decodeIfPresent(String.self, forKey: .summary)
         dod = (try? c.decodeIfPresent([String].self, forKey: .dod)) ?? []
@@ -293,6 +347,10 @@ struct ReviewItem: Decodable, Hashable {
         review_at = try? c.decodeIfPresent(Int.self, forKey: .review_at)
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
         session_active = (try? c.decodeIfPresent(Bool.self, forKey: .session_active)) ?? false
+        // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
+        id = (try? c.decode(String.self, forKey: .id))
+            ?? stableFallbackID("review", name, summary, session_id,
+                                dispatched_at.map(String.init))
     }
 }
 
@@ -318,7 +376,6 @@ struct MergeSuggestion: Decodable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         ids = (try? c.decodeIfPresent([String].self, forKey: .ids)) ?? []
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "analyzing"
         verdict = try? c.decodeIfPresent(String.self, forKey: .verdict)
@@ -328,6 +385,11 @@ struct MergeSuggestion: Decodable, Hashable {
         confidence = try? c.decodeIfPresent(String.self, forKey: .confidence)
         error = try? c.decodeIfPresent(String.self, forKey: .error)
         requested_at = try? c.decodeIfPresent(Int.self, forKey: .requested_at)
+        // 缺 id → 内容派生的确定性 id。注意不掺 status/verdict：analyzing→done
+        // 的状态推进不应换身份（否则 pendingMergeActions 记账又会失配）。
+        id = (try? c.decode(String.self, forKey: .id))
+            ?? stableFallbackID("merge", ids.joined(separator: "|"),
+                                requested_at.map(String.init))
     }
 }
 
@@ -409,6 +471,10 @@ struct Dashboard: Decodable {
     let merge_suggestions: [MergeSuggestion]
     // §26 — optional; nil = no known update (older actd never emits it).
     let update_available: UpdateInfo?
+    // 非 wire 字段：行级解码时被跳过的坏行清单（如 "running[1]"）。空 = 全部
+    // 解码成功。上层（Store/AppState）用它把「丢了哪些行」亮出来——honest
+    // fallback：跳过 + 可观测，绝不静默丢数据。
+    let decodeDrops: [String]
 
     private enum CodingKeys: String, CodingKey {
         case generated_at, counts, needs_approval, running, needs_input, review, completed, debt, trash
@@ -418,21 +484,26 @@ struct Dashboard: Decodable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        var drops: [String] = []
         generated_at = try? c.decodeIfPresent(String.self, forKey: .generated_at)
         counts = (try? c.decodeIfPresent(Counts.self, forKey: .counts)) ?? .empty
-        needs_approval = (try? c.decodeIfPresent([ApprovalCard].self, forKey: .needs_approval)) ?? []
-        running = (try? c.decodeIfPresent([RunningTask].self, forKey: .running)) ?? []
-        needs_input = (try? c.decodeIfPresent([RunningTask].self, forKey: .needs_input)) ?? []
-        review = (try? c.decodeIfPresent([ReviewItem].self, forKey: .review)) ?? []
-        completed = (try? c.decodeIfPresent([RunningTask].self, forKey: .completed)) ?? []
-        debt = (try? c.decodeIfPresent([DebtItem].self, forKey: .debt)) ?? []
-        trash = (try? c.decodeIfPresent([TrashItem].self, forKey: .trash)) ?? []
-        archived = (try? c.decodeIfPresent([ArchivedItem].self, forKey: .archived)) ?? []
-        merge_suggestions = (try? c.decodeIfPresent([MergeSuggestion].self,
-                                                    forKey: .merge_suggestions)) ?? []
+        // 行级 lenient：单行坏数据跳过该行并记录，好行存活（之前是整列清空）。
+        needs_approval = decodeLossyRows(c, CodingKeys.needs_approval, drops: &drops)
+        running = decodeLossyRows(c, CodingKeys.running, drops: &drops)
+        needs_input = decodeLossyRows(c, CodingKeys.needs_input, drops: &drops)
+        review = decodeLossyRows(c, CodingKeys.review, drops: &drops)
+        completed = decodeLossyRows(c, CodingKeys.completed, drops: &drops)
+        debt = decodeLossyRows(c, CodingKeys.debt, drops: &drops)
+        trash = decodeLossyRows(c, CodingKeys.trash, drops: &drops)
+        archived = decodeLossyRows(c, CodingKeys.archived, drops: &drops)
+        merge_suggestions = decodeLossyRows(c, CodingKeys.merge_suggestions, drops: &drops)
         // an empty latest is meaningless — treat as "no known update"
         let upd = try? c.decodeIfPresent(UpdateInfo.self, forKey: .update_available)
         update_available = (upd?.latest.isEmpty == false) ? upd : nil
+        decodeDrops = drops
+        if !drops.isEmpty {   // Foundation-only 契约内的兜底可观测（mac + iOS 都走这）
+            NSLog("[Contract] dashboard.json 坏行已跳过: %@", drops.joined(separator: ", "))
+        }
     }
 }
 

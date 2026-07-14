@@ -409,6 +409,17 @@ class DeliveredTranscriptPromotionTestCase(ReconcileBase):
         resume.assert_called_once()
         self.assertEqual(registry.load("R-900").status, State.EXECUTING.value)
 
+    def test_first_probe_survives_young_uptime(self):
+        # 0.0-sentinel regression (CI runners, just-rebooted Macs): monotonic()
+        # counts from boot, so with a 0.0 "never probed" default the very
+        # first probe was throttled away whenever uptime < interval.
+        self._mk_req(execution={"session_id": "d1a10005"})
+        with self._harvest(final_draft="成稿全文"), \
+                mock.patch.object(actd.time, "monotonic", return_value=5.0):
+            _, resume = self._reconcile([_agent("blocked", sid="d1a10005")])
+        resume.assert_not_called()
+        self.assertEqual(registry.load("R-900").status, State.REVIEW.value)
+
     def test_blocked_probe_is_throttled_between_passes(self):
         # a genuinely blocked agent must not get its transcript re-read on
         # every 10 s daemon pass.

@@ -98,6 +98,31 @@ class HarvestDeliveryTestCase(unittest.TestCase):
         self.assertIsNone(out["final_draft"])
         self.assertEqual(out["delivered_summary"], text[:500])
 
+    def test_double_marker_takes_the_last_occurrence(self):
+        # LLM 在总结正文里引述指令行（行首 FINAL DRAFT:）时会出现两个 marker；
+        # 契约语义是"结束总结的末尾"跟成稿——取最后一个，final_draft 必须是
+        # 纯成稿，不混入总结残余和第二个 marker 行。
+        self._write([_assistant(
+            "I must end with a line\n"
+            "FINAL DRAFT:\n"
+            "(quoting the marker) my summary...\n"
+            "real deliverable:\n"
+            "FINAL DRAFT:\n"
+            "Dear team, actual final text."
+        )])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["final_draft"], "Dear team, actual final text.")
+        self.assertNotIn("FINAL DRAFT:", out["final_draft"])
+        self.assertIn("I must end with a line", out["delivered_summary"])
+
+    def test_trailing_empty_marker_falls_back_to_earlier_nonempty_marker(self):
+        # 成稿本身以 marker 行结尾（最后一个 marker 后为空）——回退到更早的
+        # 有内容的 marker，而不是把整段降级成 summary-only（不丢成稿）。
+        self._write([_assistant("总结\nFINAL DRAFT:\n正文全文\nFINAL DRAFT:")])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["delivered_summary"], "总结")
+        self.assertEqual(out["final_draft"], "正文全文\nFINAL DRAFT:")
+
     def test_truncation_500_and_20000(self):
         before = "摘" * 600
         draft = "文" * 25000

@@ -516,6 +516,26 @@ class SecretMaskTestCase(unittest.TestCase):
         s = analytics.clip_content("x" * 490 + " sk-ant-abcdefgh12345678")
         self.assertNotIn("sk-ant-", s)
 
+    def test_clip_content_masks_folded_key_entirely(self):
+        """邮件式换行把 key 劈成两段：旧行为掩前缀、尾段 42 字符裸奔进
+        events.jsonl——§15 承诺任何设置下 key 都不收集，整条必须被掩。"""
+        key = "sk-ant-api03-" + "SECRETKEYMATERIAL0123456789" * 2
+        # 折在前缀还能匹配的位置：旧行为 = 掩前缀、尾段裸奔
+        s = analytics.clip_content("my key " + key[:25] + "\n" + key[25:])
+        self.assertNotIn("SECRETKEYMATERIAL", s)
+        self.assertNotIn("0123456789", s)
+        self.assertIn("my key", s)          # 上下文保留
+        self.assertIn("[脱敏]", s)
+        # 折在连前缀都匹配不上的位置：旧行为 = 整条 key 原样通过
+        s2 = analytics.clip_content("note " + key[:10] + "\n" + key[10:])
+        self.assertNotIn("SECRETKEYMATERIAL", s2)
+        self.assertIn("note", s2)
+        # 未折行的 key 保持原行为：掩码 + 上下文保留
+        s3 = analytics.clip_content("my key " + key + ", thanks")
+        self.assertNotIn("SECRETKEYMATERIAL", s3)
+        self.assertIn("[脱敏]", s3)
+        self.assertIn("thanks", s3)
+
     def test_masked_secret_never_reaches_the_event(self):
         cfg = _cfg("detailed", True)
         runner = mock.Mock(return_value=subprocess.CompletedProcess(
