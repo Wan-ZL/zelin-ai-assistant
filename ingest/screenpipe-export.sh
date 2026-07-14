@@ -186,4 +186,15 @@ NEW_AUDIO=$(sqlite3 "$DB" "SELECT MAX(id) FROM audio_transcriptions;" 2>/dev/nul
 [ -n "$NEW_FRAME" ] && [ "$NEW_FRAME" != "" ] && echo "$NEW_FRAME" > "$MARKER_DIR/last_frame_id"
 [ -n "$NEW_AUDIO" ] && [ "$NEW_AUDIO" != "" ] && echo "$NEW_AUDIO" > "$MARKER_DIR/last_audio_id"
 
+# Mirror-mode source safety (2026-07-14 13:30 incident hardening): until a
+# push runs, a mirror-mode dump exists ONLY in the mirror — and the export
+# markers above are already advanced, so losing it means no re-export. When
+# no processing is in flight (a push now is clean — no half-written raw/wiki
+# to leak), push immediately so the source dump lands in the real vault the
+# moment it exists. With processing in flight the round's own final push
+# carries it home instead.
+if [ "$VAULT_SYNC_MODE" = "mirror" ] && ! vault_sync_processing_live; then
+    vault_sync_push "$VAULT_ROOT" >/dev/null 2>&1 || true
+fi
+
 echo "Exported to: $OUT_FILE"
