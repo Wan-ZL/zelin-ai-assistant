@@ -32,6 +32,11 @@ final class PermissionsModel: ObservableObject {
     @Published var screen: PermissionStatus = .unknown
     @Published var notifications: PermissionStatus = .unknown
     @Published var fullDisk: PermissionStatus = .unknown
+    /// Vault (Documents) access for the app bundle — the ONE grant the whole
+    /// pipeline rides on in vault-mirror mode (claude TCC isolation): the
+    /// vault-sync courier shares the bundle identity, so this never has to
+    /// be granted again across app OR claude updates.
+    @Published var vault: PermissionStatus = .unknown
 
     private var timer: Timer?
 
@@ -59,10 +64,69 @@ final class PermissionsModel: ObservableObject {
         // grant auto-restarts the engine (RecordingController decides).
         RecordingController.shared.pollScreenPermission()
         refreshNotifications()
+        vault = Self.probeVaultPassive()
         DispatchQueue.global(qos: .utility).async {
             let s = Self.probeFullDisk()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self.fullDisk = s }
+            }
+        }
+    }
+
+    /// PASSIVE vault probe — deliberately never reads ~/Documents: a read
+    /// from the GUI would itself fire the one-shot TCC prompt, and the
+    /// prompt must stay behind the row's button. Evidence instead: the
+    /// ingest chain writes vault_sync_mode="mirror" only after a successful
+    /// courier pull (proof the grant works, even from cron), and the
+    /// UserDefaults flag records a successful in-app grant click.
+    nonisolated private static func probeVaultPassive() -> PermissionStatus {
+        let modeFile = AppPaths.stateRoot + "/state/vault_sync_mode"
+        if let mode = try? String(contentsOfFile: modeFile, encoding: .utf8),
+           mode.trimmingCharacters(in: .whitespacesAndNewlines) == "mirror" {
+            return .granted
+        }
+        return Prefs.bool("vaultAccessGranted", default: false) ? .granted : .unknown
+    }
+
+    /// The effective vault ROOT (= obsidian_raw's parent) via the same
+    /// override → config.yaml → default resolution Settings uses.
+    nonisolated static func vaultRootPath() -> String {
+        let ov = SettingsIO.readOverrides()
+        var raw = "~/Documents/Obsidian Vault/2 - raw"
+        if let v = ov["obsidian_raw"] as? String, !v.isEmpty {
+            raw = v
+        } else if let v = SettingsIO.configScalar("obsidian_raw"), !v.isEmpty {
+            raw = v
+        }
+        return ((raw as NSString).expandingTildeInPath as NSString)
+            .deletingLastPathComponent
+    }
+
+    /// Vault access: ONE GUI read of the vault dir — macOS shows the
+    /// standard "wants to access files in your Documents folder" prompt,
+    /// the grant lands on the app bundle's stable identity, and the
+    /// vault-sync courier (same bundle) reuses it from cron forever. The
+    /// prompt is one-shot per identity, so a denial deep-links the Files &
+    /// Folders pane for the second chance.
+    func requestVaultAccess() {
+        Analytics.log("permissions_action", fields: ["cap": "vault"])
+        let alreadyDenied = vault == .denied
+        DispatchQueue.global(qos: .userInitiated).async {
+            let dir = Self.vaultRootPath()
+            let ok = (try? FileManager.default.contentsOfDirectory(atPath: dir)) != nil
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if ok {
+                        UserDefaults.standard.set(true, forKey: "vaultAccessGranted")
+                        self.vault = .granted
+                    } else {
+                        self.vault = .denied
+                        if alreadyDenied,
+                           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
             }
         }
     }
@@ -465,6 +529,7 @@ struct CapabilityRowsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             screenRow
+            vaultRow
             notificationsRow
             fullDiskRow
         }
@@ -483,6 +548,22 @@ struct CapabilityRowsView: View {
                 ? L("打开系统设置", "Open System Settings") : L("去授权", "Grant…"),
             showButton: model.screen != .granted) {
             model.requestScreen()
+        }
+    }
+
+    private var vaultRow: some View {
+        capabilityRow(
+            status: model.vault,
+            name: L("笔记库访问（Documents）", "Notes vault access (Documents)"),
+            why: L("授权一次，后台管线就永远经由 App 的稳定身份读写 Obsidian 笔记库——此后 claude/python 升级不会再弹任何权限窗口。",
+                   "Grant once and the background pipeline reaches your Obsidian vault through the app's stable identity forever — claude/python updates can never trigger new permission prompts again."),
+            statusText: model.vault == .granted ? L("已授权", "Granted")
+                : model.vault == .denied ? L("未授权", "Not granted")
+                : L("尚未请求", "Not requested yet"),
+            buttonLabel: model.vault == .denied
+                ? L("打开系统设置", "Open System Settings") : L("去授权", "Grant…"),
+            showButton: model.vault != .granted) {
+            model.requestVaultAccess()
         }
     }
 
