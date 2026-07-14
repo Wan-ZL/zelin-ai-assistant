@@ -23,10 +23,14 @@ struct RecordingMenuButton: View {
     var body: some View {
         Menu {
             if rec.mode != "off" && !rec.engineRunning {
-                Text(L("未在录制 — 多半缺「屏幕录制」权限",
-                       "Not recording — likely missing Screen Recording permission"))
+                Text(deadReason)
             } else {
                 Text(L("录制：", "Recording: ") + stateWord)
+            }
+            if !rec.recordingNote.isEmpty {
+                // refused / rolled-back mode switch — the durable in-app
+                // explanation (15 s; notifications may be denied)
+                Text(rec.recordingNote)
             }
             Divider()
             ForEach(modes, id: \.0) { m, label in
@@ -57,6 +61,15 @@ struct RecordingMenuButton: View {
                     RecordingController.openScreenRecordingSettings()
                 }
             }
+            // ffmpeg is the diagnosis, or the transient refusal note is up
+            // (the note names ffmpeg in either language) — offer the fix.
+            if rec.diagnosis?.failureId == "engine_ffmpeg_missing"
+                || rec.recordingNote.contains("ffmpeg") {
+                Divider()
+                Button(L("安装 ffmpeg…", "Install ffmpeg…")) {
+                    FailureCatalog.perform("engine_ffmpeg_missing")
+                }
+            }
         } label: {
             // icon + text (Zelin: icon alone is not readable at a glance)
             HStack(spacing: 4) {
@@ -74,6 +87,34 @@ struct RecordingMenuButton: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help(L("录制控制", "Recording controls"))
+    }
+
+    // Dead-engine menu line: name the ACTUAL classified cause (diagnoseEngine)
+    // instead of always guessing "permissions" — 2026-07-13 the engine was
+    // dying on missing ffmpeg while this line pointed users at Screen
+    // Recording TCC. Permission first (it IS checked here), then the §25 id.
+    private var deadReason: String {
+        if !RecordingController.hasScreenPermission() {
+            return L("未在录制 — 缺「屏幕录制」权限",
+                     "Not recording — missing Screen Recording permission")
+        }
+        switch rec.diagnosis?.failureId {
+        case "engine_ffmpeg_missing":
+            return L("未在录制 — 缺 ffmpeg（「屏幕+音频」需要）",
+                     "Not recording — ffmpeg is missing (Screen + Audio needs it)")
+        case "node_missing":
+            return L("未在录制 — 缺 Node.js", "Not recording — Node.js is missing")
+        case "engine_npm_download":
+            // in practice unreachable here (a downloading npx wrapper already
+            // matches the liveness pgrep, so engineRunning stays true) — kept
+            // as defense against a future spawn-shape change
+            return L("引擎首次下载中…", "Engine downloading (first run)…")
+        case "engine_crashed":
+            return L("未在录制 — 引擎意外停了（详见录制页）",
+                     "Not recording — the engine stopped unexpectedly (see Recording page)")
+        default:
+            return L("未在录制", "Not recording")
+        }
     }
 
     // Show 重启中… for a few seconds, then let the normal state refresh speak.

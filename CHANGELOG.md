@@ -25,7 +25,42 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **A doomed switch to Screen + Audio can no longer silently kill recording,
+  and the menu bar stops blaming permissions for every engine death.**
+  2026-07-13 incident: the Screen + Audio engine hard-requires ffmpeg at
+  startup and screenpipe's built-in auto-installer is unreliable (it wrote a
+  working binary yet still exited "os error 2" every attempt), so switching
+  modes pkilled a healthy screen-only engine, every replacement spawn died
+  seconds later, capture stopped — and the menu bar guessed "多半缺「屏幕录制」
+  权限" even though the TCC grant was fine. Three-part fix (CONTRACT §25
+  add-only): (1) new failure id `engine_ffmpeg_missing` — detected only in
+  the engine-log context (`failures.classify_engine_log` + Swift mirror
+  `diagnoseEngine`, screenpipe's exact install-failure phrasing; card or
+  dispatch text like "failed to install ffmpeg-python" never triggers it),
+  with an "Install ffmpeg" action (`install_ffmpeg`; the catalog sentence
+  names `brew install ffmpeg`); (2) switching to Screen + Audio now
+  prechecks ffmpeg by EXECUTING `-version` (a file test proves nothing —
+  the broken installer leaves artifacts behind) and refuses the switch —
+  explained via a 15 s in-app note plus a notification — instead of killing
+  the running engine first; a click made stale by a newer mode choice is
+  dropped; (3) a mode switch whose engine fails to start rolls back to the
+  previous mode automatically (one attempt, with a self-contained notice),
+  guarded by a slow-death watch: the doomed engine outlives a naive +0.5 s
+  liveness check by ~4-5 s (pgrep sees the npx wrapper immediately), so the
+  switch is re-verified at ~8 s before being declared good, and a mode the
+  user picked meanwhile is never clobbered. The menu-bar "not recording"
+  line now names the actual classified cause (ffmpeg / Node.js / crash),
+  reserving the permissions wording for when Screen Recording is genuinely
+  missing, and offers an "Install ffmpeg…" item when that is the diagnosis;
+  the recording page's ffmpeg row pairs "Install ffmpeg" with an
+  "Installed — restart engine" retry. The engine spawn PATH now also covers
+  the common ffmpeg install dirs (`~/.local/bin`, Intel-brew
+  `/usr/local/bin`, MacPorts `/opt/local/bin`) so a present ffmpeg is always
+  found — the non-interactive login shell never sources `.zshrc`, which is
+  where those dirs usually get added (root-cause hardening from PR #42; the
+  precheck probes the same locations).
 
 ## [0.30.0] - 2026-07-13
 

@@ -60,7 +60,15 @@ enum ScreenpipeRecipe {
         // exec (not `nohup … &`): a GUI app's orphaned background jobs get
         // reaped by macOS (RunningBoard) before npx even writes a byte — the
         // engine must stay a direct child of the app, referenced by a Process.
-        return "export PATH=\"/opt/homebrew/bin:$PATH\"; "
+        // PATH must cover BOTH where npx lives (/opt/homebrew/bin) AND where
+        // ffmpeg may live — screenpipe shells out to ffmpeg to encode frames
+        // and, if it can't find one, tries (and often fails) to auto-download
+        // it, leaving recording silently dead. The login shell only sources
+        // .zprofile (never .zshrc, 例4b), so an ffmpeg outside
+        // /opt/homebrew/bin (e.g. ~/.local/bin, Intel-brew /usr/local/bin,
+        // MacPorts /opt/local/bin) was invisible. Cover the common install
+        // dirs so a present ffmpeg is always found (from PR #42).
+        return "export PATH=\"/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:/opt/local/bin:$PATH\"; "
             + "mkdir -p \"$HOME/.screenpipe\"; "
             + prep
             + "exec \(record) >> \"$HOME/.screenpipe/engine.log\" 2>&1"
@@ -71,9 +79,10 @@ enum ScreenpipeRecipe {
 // act/lib/failures.classify_engine_log; keep the two in sync)
 
 /// Why the engine is down (or busy downloading). failureId ∈ the §25 catalog:
-/// node_missing | engine_npm_download | engine_crashed | engine_dead.
-/// logTail is only populated for engine_crashed (the last real log lines —
-/// surfacing them verbatim is the whole point).
+/// node_missing | engine_npm_download | engine_crashed | engine_dead |
+/// engine_ffmpeg_missing. logTail is only populated for engine_crashed /
+/// engine_ffmpeg_missing (the last real log lines — surfacing them verbatim
+/// is the whole point).
 struct EngineDiagnosis: Equatable {
     let failureId: String
     let logTail: String
@@ -107,6 +116,11 @@ final class RecordingController: ObservableObject {
     @Published private(set) var tccLost = false
     /// Transient success line after a consent-race self-heal ("权限已生效…").
     @Published private(set) var selfHealNote = ""
+    /// Transient warning line for a refused / rolled-back mode switch — the
+    /// DURABLE in-app explanation (15 s): the injected diagnosis would be
+    /// wiped by the next 5 s refresh tick and postSystemNotice is dropped
+    /// silently when notifications are not granted.
+    @Published private(set) var recordingNote = ""
 
     private var applying = false
     private var checking = false
@@ -114,6 +128,7 @@ final class RecordingController: ObservableObject {
     /// the false→true flip is what triggers the self-heal restart.
     private var lastGrantSeen: Bool?
     private var selfHealToken = 0
+    private var noteToken = 0
 
     private init() {
         let stored = UserDefaults.standard.string(forKey: "recordingMode") ?? ""
@@ -132,23 +147,77 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    var modeLabel: String {
-        switch mode {
+    nonisolated static func label(forMode m: String) -> String {
+        switch m {
         case "off": return L("关", "Off")
         case "screen_audio": return L("屏幕 + 音频", "Screen + Audio")
         default: return L("仅屏幕", "Screen Only")
         }
     }
 
+    var modeLabel: String { Self.label(forMode: mode) }
+
+    /// Show `text` in recordingNote for 15 s (token: an older timer must not
+    /// clear a newer note — same pattern as selfHealNote).
+    private func flashNote(_ text: String) {
+        recordingNote = text
+        noteToken += 1
+        let token = noteToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+            MainActor.assumeIsolated {
+                if self.noteToken == token { self.recordingNote = "" }
+            }
+        }
+    }
+
     func setMode(_ newMode: String) {
         guard ["off", "screen", "screen_audio"].contains(newMode) else { return }
+        // screen_audio hard-requires ffmpeg at engine startup — precheck
+        // BEFORE committing, so a doomed switch never pkills a healthy
+        // engine (2026-07-13: the stop→start path killed a live screen
+        // engine, every screen_audio spawn then died on ffmpeg, and
+        // recording silently stopped). Probe is blocking → off-main.
+        if newMode == "screen_audio" {
+            let prev = mode
+            DispatchQueue.global(qos: .userInitiated).async {
+                let ok = Self.ffmpegPresent()
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        // stale click: the user picked another mode while the
+                        // probe ran — their newer choice wins, this one drops
+                        // (a late commit here once re-enabled the microphone
+                        // AFTER an explicit 关).
+                        guard self.mode == prev else { return }
+                        if ok {
+                            self.commitMode(newMode, rollbackTo: prev)
+                        } else {
+                            Analytics.log("recording_ffmpeg_blocked",
+                                          fields: ["kept_mode": prev])
+                            let note = FailureCatalog.message("engine_ffmpeg_missing") ?? ""
+                            self.flashNote(note)
+                            Self.postSystemNotice(
+                                title: L("还开不了「屏幕+音频」", "Screen + Audio is not ready"),
+                                body: note)
+                        }
+                    }
+                }
+            }
+            return
+        }
+        commitMode(newMode, rollbackTo: mode)
+    }
+
+    /// The actual mode write + engine cycle (post-precheck). `previous` feeds
+    /// applyMode's rollback so a switch that cannot start falls back instead
+    /// of leaving recording dead.
+    private func commitMode(_ newMode: String, rollbackTo previous: String) {
         UserDefaults.standard.set(newMode, forKey: "recordingMode")
         let changed = newMode != mode
         mode = newMode
         // switching mode = stop → start; re-picking a live mode with a dead
         // engine also (re)starts it.
         if changed || (newMode != "off" && !engineRunning) {
-            applyMode()
+            applyMode(rollbackTo: changed ? previous : nil)
         }
         Analytics.log("recording_set_mode", fields: ["mode": newMode])
         // v0.19.0 funnel (C's milestone, folded into Swift): turning recording
@@ -165,8 +234,12 @@ final class RecordingController: ObservableObject {
     }
 
     /// stop → (start per mode). Blocking work runs off-main; engineRunning is
-    /// refreshed when done.
-    func applyMode() {
+    /// refreshed when done. `rollbackTo` (mode-switch path only): when the NEW
+    /// mode fails to come up, restart the previous live mode instead of
+    /// leaving recording silently dead — one attempt, no recursion
+    /// (2026-07-13: a switch to screen_audio killed a healthy screen engine
+    /// and its replacement died on missing ffmpeg; capture just stopped).
+    func applyMode(rollbackTo previous: String? = nil) {
         guard !applying else { return }
         applying = true
         let m = mode
@@ -174,16 +247,87 @@ final class RecordingController: ObservableObject {
             Self.stopEngineBlocking()
             if m != "off" { Self.startEngineBlocking(mode: m) }
             Thread.sleep(forTimeInterval: 0.5)  // let the process surface in pgrep
-            let running = Self.isEngineRunning()
-            let diag = m == "off" ? nil : Self.diagnoseEngine(running: running)
+            var running = Self.isEngineRunning()
+            var diag = m == "off" ? nil : Self.diagnoseEngine(running: running)
+            // Mode-switch slow-death watch: a doomed engine can outlive the
+            // +0.5 s check by seconds (2026-07-13: the screen_audio spawn
+            // spent ~4 s downloading ffmpeg before dying, and pgrep matches
+            // the zsh/npx wrapper argv from t=0) — publish optimistically,
+            // keep `applying` held, and re-verify before declaring the
+            // switch good.
+            if running, m != "off", previous != nil {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.engineRunning = true
+                        self.diagnosis = diag
+                    }
+                }
+                Thread.sleep(forTimeInterval: 7.5)
+                running = Self.isEngineRunning()
+                diag = Self.diagnoseEngine(running: running)
+            }
+            var rolledBack = false
+            if !running, m != "off", let prev = previous,
+               prev != m, prev != "off" {
+                _ = Shell.ok("echo \"[app $(date '+%F %T')] rollback mode=\(prev) after failed \(m)\" >> \"$HOME/.screenpipe/engine.log\"")
+                Self.startEngineBlocking(mode: prev)
+                Thread.sleep(forTimeInterval: 0.5)
+                running = Self.isEngineRunning()
+                rolledBack = running
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.applying = false
+                    // did the user pick something else while this cycle ran?
+                    // (their commitMode's applyMode was dropped by the
+                    // `applying` guard — honor it below, and never clobber
+                    // it with the rollback write.)
+                    let userChanged = self.mode != m
+                    if rolledBack, let prev = previous, !userChanged {
+                        // the mode the user asked for never started — be
+                        // honest in the persisted state and say why (note +
+                        // notice; `diagnosis` alone would be wiped by the
+                        // next 5 s refresh once the rolled-back engine
+                        // reports healthy).
+                        UserDefaults.standard.set(prev, forKey: "recordingMode")
+                        self.mode = prev
+                        Analytics.log("recording_mode_rollback", fields: [
+                            "from": m, "to": prev,
+                            "reason": diag?.failureId ?? "unknown"])
+                        let note = Self.rollbackNote(failed: m, kept: prev,
+                                                     diag: diag)
+                        self.flashNote(note)
+                        Self.postSystemNotice(
+                            title: L("已退回原来的录制模式",
+                                     "Reverted to the previous recording mode"),
+                            body: note)
+                    }
                     self.engineRunning = running
                     self.diagnosis = diag
+                    if userChanged { self.applyMode() }
                 }
             }
         }
+    }
+
+    /// Self-contained rollback explanation (notification + recordingNote).
+    /// Deliberately NOT the FailureCatalog sentence: those are written for
+    /// the inline doctor row ("看下面的引擎日志") and would contradict a
+    /// successful rollback ("录制引擎没有在运行" while the old engine records).
+    nonisolated static func rollbackNote(failed: String, kept: String,
+                                         diag: EngineDiagnosis?) -> String {
+        let cause: String
+        switch diag?.failureId {
+        case "engine_ffmpeg_missing":
+            cause = L("缺 ffmpeg（brew install ffmpeg 装好后再切一次）",
+                      "ffmpeg is missing (brew install ffmpeg, then switch again)")
+        case "node_missing":
+            cause = L("缺 Node.js", "Node.js is missing")
+        default:
+            cause = L("引擎没能启动", "its engine failed to start")
+        }
+        return L("「\(label(forMode: failed))」没能开启——\(cause)；已退回「\(label(forMode: kept))」继续录制",
+                 "\(label(forMode: failed)) could not start — \(cause); reverted to \(label(forMode: kept)) and recording continues")
     }
 
     /// App launch: mode != off and engine not already running → start.
@@ -373,6 +517,26 @@ final class RecordingController: ObservableObject {
         return ok
     }
 
+    /// ffmpeg presence — the screen_audio hard dependency (the engine exits
+    /// seconds after spawn without it, and its built-in auto-installer is
+    /// unreliable — 2026-07-13). EXECUTES `-version` rather than testing for
+    /// a file: the installer's own artifact proves nothing (that day it
+    /// wrote ~/.local/bin/ffmpeg and still reported "os error 2").
+    /// ~/.local/bin is probed explicitly because the engine's install
+    /// location may be missing from a NON-interactive login-shell PATH
+    /// (例4b). Deliberately uncached: mode switches are rare, concurrent
+    /// probes would race a shared cache, and a stale "missing" would refuse
+    /// a user who JUST installed it. Blocking — background queue only.
+    nonisolated static func ffmpegPresent() -> Bool {
+        // arms mirror ScreenpipeRecipe.startCommand's engine PATH — the
+        // precheck must never refuse a switch the engine could serve
+        Shell.ok("ffmpeg -version >/dev/null 2>&1"
+            + " || \"$HOME/.local/bin/ffmpeg\" -version >/dev/null 2>&1"
+            + " || /opt/homebrew/bin/ffmpeg -version >/dev/null 2>&1"
+            + " || /usr/local/bin/ffmpeg -version >/dev/null 2>&1"
+            + " || /opt/local/bin/ffmpeg -version >/dev/null 2>&1")
+    }
+
     /// The capture db got a write in the last 5 min — recording is really on.
     nonisolated static func dbFresh() -> Bool {
         let db = NSHomeDirectory() + "/.screenpipe/db.sqlite"
@@ -408,6 +572,16 @@ final class RecordingController: ObservableObject {
                 return EngineDiagnosis(failureId: "engine_npm_download", logTail: "")
             }
             return nil
+        }
+        // dead on screenpipe's ffmpeg install failure -> the specific fix
+        // beats the generic "crashed" (an ALIVE engine with stale ffmpeg
+        // lines in its tail already returned healthy above). The colon keeps
+        // the signature screenpipe-exclusive ("failed to install
+        // ffmpeg-python" and prose must not match) — python mirror:
+        // failures._FFMPEG_INSTALL_FAILED.
+        if lower.contains("failed to install ffmpeg:")
+            || lower.contains("ffmpeg not found and installation failed") {
+            return EngineDiagnosis(failureId: "engine_ffmpeg_missing", logTail: tail)
         }
         return tail.isEmpty
             ? EngineDiagnosis(failureId: "engine_dead", logTail: "")
