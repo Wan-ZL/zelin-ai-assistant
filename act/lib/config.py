@@ -496,6 +496,32 @@ def _derive_obsidian_dirs(cfg: Config) -> None:
             setattr(cfg, attr, str(vault / name))
 
 
+def effective_obsidian_raw(cfg: Config) -> Optional[Path]:
+    """The raw-notes dir READERS should use (radar, weekly digest).
+
+    Vault-mirror mode (macOS claude-TCC isolation, ingest/vault-sync.sh): when
+    the ingest chain maintains a repo-local mirror of the vault, readers use
+    the mirror — no pipeline process then touches the TCC-protected
+    ~/Documents, so a claude/python update can never re-prompt or EPERM.
+    Active only when the chain's mode file says "mirror" AND the mirrored raw
+    dir exists; anything else (Linux/Windows, helper missing, grant missing,
+    chain never ran) falls back to the real vault — mirror mode is an
+    upgrade, never a requirement. Returns None when obsidian_raw is unset.
+    """
+    raw_dir = cfg.obsidian_raw
+    if not raw_dir:
+        return None
+    try:
+        mode = (STATE_DIR / "vault_sync_mode").read_text(encoding="utf-8").strip()
+    except OSError:
+        mode = ""
+    if mode == "mirror":
+        mirrored = STATE_DIR / "vault-mirror" / "2 - raw"
+        if mirrored.is_dir():
+            return mirrored
+    return Path(str(raw_dir)).expanduser()
+
+
 # --------------------------------------------------------------------------- #
 # settings_overrides.json overlay (§15) — Mac app writes it; highest priority.
 # --------------------------------------------------------------------------- #

@@ -323,12 +323,13 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
         _note_health(False, "disabled")
         return summary
 
-    raw_dir = cfg.obsidian_raw
-    if not raw_dir:
+    # mirror-aware (claude TCC isolation): reads the repo-local vault mirror
+    # when the ingest chain maintains one, the real vault otherwise.
+    root = config.effective_obsidian_raw(cfg)
+    if root is None:
         summary["skipped"].append("no sources.obsidian_raw configured")
         _note_health(False, "vault_missing")
         return summary
-    root = Path(raw_dir).expanduser()
     if not root.exists():
         summary["skipped"].append(f"obsidian_raw not found: {root}")
         _note_health(False, "vault_missing")

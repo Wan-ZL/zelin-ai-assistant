@@ -118,10 +118,11 @@ def collect_notes(cfg: config.Config,
                   now: Optional[_dt.datetime] = None) -> list:
     """Return [(path, mtime)] of ingest notes modified in the window,
     newest first. Missing/unset dir -> []."""
-    raw_dir = cfg.obsidian_raw
-    if not raw_dir:
+    # mirror-aware (claude TCC isolation): reads the repo-local vault mirror
+    # when the ingest chain maintains one, the real vault otherwise.
+    root = config.effective_obsidian_raw(cfg)
+    if root is None:
         return []
-    root = Path(str(raw_dir)).expanduser()
     if not root.exists():
         return []
     now = now or _dt.datetime.now()

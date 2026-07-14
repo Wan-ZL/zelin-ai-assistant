@@ -38,6 +38,25 @@ VAULT="$(dirname "$(resolve_config_path obsidian_raw "$HOME/Documents/Obsidian V
 LOCKFILE="/tmp/process-screenpipe.lock"
 LOGFILE="/tmp/screenpipe-auto.log"
 
+# VAULT MIRROR mode (claude TCC isolation — see ingest/vault-sync.sh):
+# screenpipe-export.sh, at the top of this same chain run, pulled the vault
+# into the repo-local mirror and recorded the mode. In mirror mode claude
+# works entirely inside the repo — it never sees ~/Documents, so a claude
+# CLI update can no longer re-prompt for permissions or die with EPERM
+# (the 07-09→07-13 incident: 38 straight cron failures from the CLI's
+# per-version TCC identity). Results are pushed back by the app-bundle
+# courier after a successful run.
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/vault-sync.sh"
+VAULT_ROOT_REAL="$VAULT"
+VAULT_SYNC_MODE="$(cat "$VAULT_SYNC_MODE_FILE" 2>/dev/null || echo direct)"
+if [ "$VAULT_SYNC_MODE" = "mirror" ] && [ -d "$VAULT_MIRROR/1 - unprocessed" ]; then
+    VAULT="$VAULT_MIRROR"
+    UNPROCESSED="$VAULT_MIRROR/1 - unprocessed"
+else
+    VAULT_SYNC_MODE="direct"
+fi
+
 # Prevent concurrent runs — PID lock.
 # (Was an mtime lock with a 30-min staleness cutoff, but real runs take
 # 26-33 min: a slow run's lock could be declared stale and a second run
@@ -151,17 +170,41 @@ if [ -z "$CLAUDE_BIN" ]; then
     exit 1
 fi
 
-# Skill lives in the vault (original setup); fall back to the repo's copy so a
-# fresh machine works before the vault skill is provisioned (self-contained).
+# Skill lives in the vault (original setup — the mirror carries the vault's
+# copy); fall back to the repo's copy so a fresh machine works before the
+# vault skill is provisioned (self-contained).
 SKILL_MD="$VAULT/.claude/skills/unprocessed-ingest/SKILL.md"
 [ -f "$SKILL_MD" ] || SKILL_MD="$SCRIPT_DIR/skills/unprocessed-ingest/SKILL.md"
 
-# Run claude in headless print mode and load the /unprocessed-ingest skill directly.
-"$CLAUDE_BIN" -p "Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\"." --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1
+# Run claude in headless print mode and load the /unprocessed-ingest skill
+# directly — under a watchdog: a wedged run once held the chain's lock for
+# 41 hours (2026-07-11, EINTR). 2h covers the observed worst honest case
+# (26-33 min normal, longer on backlog) with wide margin.
+CLAUDE_MAX_SECONDS="${CLAUDE_MAX_SECONDS:-7200}"
+"$CLAUDE_BIN" -p "Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\"." --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1 &
+CLAUDE_PID=$!
+( sleep "$CLAUDE_MAX_SECONDS" && kill "$CLAUDE_PID" 2>/dev/null \
+  && echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⏱ watchdog killed claude after ${CLAUDE_MAX_SECONDS}s" >> "$LOGFILE" ) &
+WATCHDOG_PID=$!
+wait "$CLAUDE_PID"
 EXIT_CODE=$?
+kill "$WATCHDOG_PID" 2>/dev/null
 
 if [ $EXIT_CODE -eq 0 ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Processing complete (exit $EXIT_CODE)" >> "$LOGFILE"
+    if [ "$VAULT_SYNC_MODE" = "mirror" ]; then
+        # publish the mirror's results (new raw/wiki/change-summary + consumed
+        # inbox files) back to the real vault via the app-bundle courier.
+        if vault_sync_push "$VAULT_ROOT_REAL" >> "$LOGFILE" 2>&1; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ vault-sync push ok" >> "$LOGFILE"
+        else
+            # results stay safe in the mirror; the next chain run retries the
+            # push BEFORE pulling (vault-sync.sh pending marker) so nothing
+            # is lost. Fail the chain so the health banner surfaces it.
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ vault-sync push failed — results held in mirror, will retry next run" >> "$LOGFILE"
+            EXIT_CODE=1
+        fi
+    fi
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Processing failed (exit $EXIT_CODE)" >> "$LOGFILE"
 fi
