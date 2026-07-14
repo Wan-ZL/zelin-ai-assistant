@@ -219,6 +219,83 @@ class NewestSessionTimeGateTestCase(unittest.TestCase):
                     "started_at": late}]
         self.assertEqual(self._lookup(entries, after=after), "epoch001")
 
+    def test_mixed_timestamp_formats_sort_by_parsed_time_not_lexically(self):
+        # roster started_at 混用 epoch 秒和 ISO 时，str 字典序把 "17…" 排在
+        # "2026-…" 前面而选错"最新"会话（wrong-session binding, P0-6）——
+        # 必须按 _parse_when 归一化后的 datetime 排序。
+        after = executor._parse_when("2026-07-08T12:00:00Z")
+        entries = [
+            {"cwd": self.CWD, "session_id": "epochnew",
+             "started_at": after.timestamp() + 3},          # 真正更新的会话
+            {"cwd": self.CWD, "session_id": "isoolder",
+             "started_at": "2026-07-08T12:00:01Z"},
+        ]
+        self.assertEqual(self._lookup(entries, after=after), "epochnew")
+        # 无 after 门控（legacy 路径）时同样按解析后的时间取最新
+        self.assertEqual(self._lookup(entries), "epochnew")
+
+
+# --------------------------------------------------------------------------- #
+# _parse_session_id — id 只匹配 UUID/短 hex 形态，且容忍 ANSI 色码
+# --------------------------------------------------------------------------- #
+class ParseSessionIdTestCase(unittest.TestCase):
+    def test_short_hex_and_full_uuid_still_parse(self):
+        self.assertEqual(executor._parse_session_id("backgrounded · e88561e5"),
+                         "e88561e5")
+        full = "e88561e5-1234-4abc-8def-0123456789ab"
+        self.assertEqual(executor._parse_session_id(f"session_id: {full}"), full)
+        self.assertEqual(executor._parse_session_id(f"--resume {full}"), full)
+
+    def test_date_after_keyword_is_not_a_session_id(self):
+        # 旧字符类 [0-9a-fA-F-]{5,} 会把日期吞成假 sid（"2026-07-08"），写进
+        # execution 后 resume 因 short<8 拒绝、transcript 永远找不到——应返回
+        # None 让 roster fallback 兜底。
+        self.assertIsNone(
+            executor._parse_session_id("task backgrounded: 2026-07-08 12:00:01"))
+
+    def test_hyphenated_tail_is_not_sucked_into_the_id(self):
+        # 紧跟 id 的连字符文本不再被吸进来（旧行为: "e88561e5-abc-de"）
+        self.assertEqual(
+            executor._parse_session_id("backgrounded · e88561e5-abc-de rest"),
+            "e88561e5")
+
+    def test_ansi_codes_between_keyword_and_id_are_tolerated(self):
+        # FORCE_COLOR 下 claude 会给 keyword 和 id 分别包色码；剥掉再匹配，
+        # 否则成功 launch 被判 no_session_id → 下轮重试出重复 agent。
+        colored = "\x1b[1mbackgrounded\x1b[0m · \x1b[36me88561e5\x1b[0m"
+        self.assertEqual(executor._parse_session_id(colored), "e88561e5")
+        wrapped = "\x1b[32mbackgrounded · e88561e5\x1b[0m"
+        self.assertEqual(executor._parse_session_id(wrapped), "e88561e5")
+
+    def test_empty_or_no_match_returns_none(self):
+        self.assertIsNone(executor._parse_session_id(""))
+        self.assertIsNone(executor._parse_session_id("launched, no id printed"))
+
+
+# --------------------------------------------------------------------------- #
+# session_name — title 清洗：换行/路径分隔符/控制字符不进 --name
+# (agent name 会被 claude 用作 <target>/.claude/worktrees/<name> 和分支名)
+# --------------------------------------------------------------------------- #
+class SessionNameSanitizeTestCase(unittest.TestCase):
+    def test_newlines_and_path_separators_collapse_to_spaces(self):
+        req = Requirement(id="R-X", title="fix bug\nrm -rf /tmp/x\\evil")
+        name = executor.session_name(req)
+        self.assertEqual(name, "R-X · fix bug rm -rf tmp x evil")
+        for bad in ("\n", "/", "\\", "\t"):
+            self.assertNotIn(bad, name)
+
+    def test_traversal_title_loses_its_separators(self):
+        req = Requirement(id="R-X", title="a/b/../../x")
+        self.assertEqual(executor.session_name(req), "R-X · a b .. .. x")
+
+    def test_plain_title_and_truncation_unchanged(self):
+        req = Requirement(id="R-1", title="正常标题 with spaces")
+        self.assertEqual(executor.session_name(req), "R-1 · 正常标题 with spaces")
+        long = Requirement(id="R-2", title="t" * 100)
+        self.assertEqual(executor.session_name(long), "R-2 · " + "t" * 48)
+        self.assertEqual(executor.session_name(Requirement(id="R-3", title="")),
+                         "R-3")
+
 
 # --------------------------------------------------------------------------- #
 # execution.skip_permissions (P0-10) — flag on/off toggles the argv

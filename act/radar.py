@@ -1,7 +1,9 @@
 """Requirement radar (Obsidian source) — scan incremental notes, extract requirements.
 
 This module covers the Obsidian raw source. For each ``.md`` file newer than
-the last marker (STATE/radar.marker), run headless ``claude -p`` to extract the
+the last marker (STATE/radar.marker) — plus the notes queued for retry in
+STATE/radar_failed.json (水位语义 v2, see ``scan``) — run headless
+``claude -p`` to extract the
 manager's new requirements for Zelin as a JSON list, then push each candidate
 through the shared three-way triage gate (act/lib/quick_capture.triage:
 new_proposal / relates_to / ignore, v0.17 统一口径) and file the survivors via
@@ -20,6 +22,7 @@ import os
 import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +40,12 @@ MARKER_PATH_NAME = "radar.marker"
 # takes >30 min while the cron chain fires every 30 — without it two passes
 # interleave (2026-07-08 storm). flock is per-open-fd, auto-released on exit.
 LOCK_PATH_NAME = "radar.lock"
+# 失败 note 重试台账（state/radar_failed.json）：path -> {mtime, attempts,
+# last_error, gave_up}。水位语义 v2 的另一半，见 scan() docstring。
+FAILED_QUEUE_NAME = "radar_failed.json"
+# 每轮 cron（30 min）重试一次，超过次数上限就放弃并留案底（gave_up=True，
+# skipped+analytics 都有记录）——毒 note 不再无限重烧 claude，也绝不静默消失。
+FAILED_MAX_ATTEMPTS = 5
 
 EXTRACT_PROMPT = (
     "You are a requirement radar for Zelin. Read the meeting/Slack note below and "
@@ -104,6 +113,49 @@ def _write_marker(ts: float) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# failed-note retry queue (水位语义 v2 的另一半)
+# --------------------------------------------------------------------------- #
+def _failed_queue_path() -> Path:
+    return config.STATE_DIR / FAILED_QUEUE_NAME
+
+
+def _load_failed_queue() -> dict:
+    """读 state/radar_failed.json（path -> entry dict）。损坏/缺失按空处理——
+    honest fallback：台账丢了顶多把失败 note 当新 note 少重试几次，绝不崩 pass。"""
+    try:
+        data = json.loads(_failed_queue_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def _save_failed_queue(queue: dict) -> None:
+    """写台账。写失败只能吞掉（state 只读/满盘时雷达本体照常跑完这轮）。"""
+    try:
+        config.ensure_state_dirs()
+        _failed_queue_path().write_text(
+            json.dumps(queue, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
+    """给失败 note 记一笔：同 mtime 累计 attempts；文件变过（mtime 不同）则
+    重置计数——用户改了 note，值得从头再给满额重试。"""
+    key = str(note)
+    entry = queue.get(key)
+    if not isinstance(entry, dict) or entry.get("mtime") != mtime:
+        entry = {"mtime": mtime, "attempts": 0}
+    entry["attempts"] = int(entry.get("attempts") or 0) + 1
+    entry["last_error"] = error[:200]
+    entry["gave_up"] = entry["attempts"] >= FAILED_MAX_ATTEMPTS
+    queue[key] = entry
+    return entry
+
+
+# --------------------------------------------------------------------------- #
 # claude -p extraction
 # --------------------------------------------------------------------------- #
 def _claude_bin() -> str:
@@ -136,14 +188,38 @@ def _run_extract(note_text: str, runner=None) -> str:
     return proc.stdout or ""
 
 
-_JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
+def _find_json_array(text: str) -> Optional[list]:
+    """Locate the first genuinely-parseable JSON array inside prose.
+
+    旧实现是贪婪正则 ``\\[.*\\]``：从第一个 ``[`` 吞到最后一个 ``]``，数组前的
+    "[from the note]" 式方括号插语、或数组后的 "[1]" 式脚注都会让整段解析失败
+    → note 被判 malformed 反复重试。这里改用 ``raw_decode`` 平衡扫描每个 ``[``
+    起点：优先返回含 dict 的数组（真正的提取结果），否则返回第一个合法数组
+    （如提示词约定的 ``[]``）。
+    """
+    decoder = json.JSONDecoder()
+    fallback = None
+    for i, ch in enumerate(text):
+        if ch != "[":
+            continue
+        try:
+            data, _end = decoder.raw_decode(text, i)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(data, list):
+            continue
+        if any(isinstance(d, dict) for d in data):
+            return data
+        if fallback is None:
+            fallback = data
+    return fallback
 
 
 def _parse_extraction(raw: str) -> Optional[list[dict]]:
     """Parse the extraction output. ``[]`` = VALID empty (the prompt asks for
     ``[]`` when a note has no new requirements); ``None`` = malformed (empty
     output, prose without a JSON array, non-array JSON) — the caller must treat
-    the note as UNPROCESSED and keep the marker before it, so the next scan
+    the note as UNPROCESSED and route it to the retry queue, so the next scan
     retries instead of silently dropping whatever the note contained.
     """
     if not raw or not raw.strip():
@@ -156,39 +232,79 @@ def _parse_extraction(raw: str) -> Optional[list[dict]]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        m = _JSON_ARRAY_RE.search(text)
-        if not m:
-            return None
-        try:
-            data = json.loads(m.group(0))
-        except json.JSONDecodeError:
-            return None
-    if isinstance(data, list):
-        return [d for d in data if isinstance(d, dict)]
-    return None
+        data = _find_json_array(text)
+    if not isinstance(data, list):
+        return None
+    dicts = [d for d in data if isinstance(d, dict)]
+    if data and not dicts:
+        # 全非 dict 的数组（如 ["do X by friday"]）不是『合法空』：字符串形态
+        # 的需求若按空处理会被静默丢弃（雷达最坏失败模式）——判 malformed 走
+        # 重试。混合数组仍抢救 dict 项（能救的先救，比整体退回重试少丢东西）。
+        return None
+    return dicts
+
+
+def _clean_deadline(value) -> Optional[str]:
+    """LLM 提取的 deadline 只收真能解析的 ``YYYY-MM-DD`` 字符串。
+
+    ``bool(deadline)`` 是 hard+deadline 发卡门的一半：``True``/"next Friday"/
+    "2026-13-99" 这类脏值不过滤会直接骗过高置信门发卡入库——一律归 None
+    （回落 detected/备选，宁可保守不可误发）。
+    """
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if v.lower() in ("null", "none", ""):
+        return None
+    try:
+        datetime.strptime(v, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return v
+
+
+def _extractor_urgent(item: dict) -> bool:
+    """提取器的 ``urgent`` 宽松转 bool（与 quick_capture._needs_action 同口径）。
+
+    缺失/None -> True（宁可打扰不可漏）；字符串 "false"/"no"/"0" -> False——
+    旧的 ``is not False`` 恒等比较会把字符串 "false" 当 urgent 发进提案列。
+    """
+    v = item.get("urgent")
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "no", "0", "none", "null", "")
+    return bool(v)
 
 
 def _to_requirement(item: dict, note: Path) -> Requirement:
-    deadline = item.get("deadline")
-    if isinstance(deadline, str) and deadline.lower() in ("null", "none", ""):
-        deadline = None
+    # 字段级消毒：LLM 输出的类型不可信（数字 title、bool deadline、dict quote
+    # 都真实出现过）。脏字段各自回退默认值，绝不让一个畸形 item 崩整个 pass。
+    title = item.get("title")
+    title = title.strip()[:80] if isinstance(title, str) else ""  # 与 quick_capture 同截 80
+    type_ = item.get("type")
+    tier = item.get("tier")
+    hardness = item.get("hardness")
+    quote = item.get("quote")
+    cost = item.get("cost_estimate_usd")
     source = {
         "channel": "meeting",
         "date": _note_date(note),
         "ref": str(note),
-        "quote": item.get("quote"),
+        "quote": quote if isinstance(quote, str) else None,
         "who": "manager",
     }
     return Requirement(
         id="",  # merge_or_new assigns
-        title=item.get("title", "").strip(),
-        type=item.get("type", "") or "",
-        tier=item.get("tier", "T1") or "T1",
+        title=title,
+        type=type_.strip() if isinstance(type_, str) else "",
+        tier=tier if tier in ("T0", "T1", "T2") else "T1",
         status="detected",
-        hardness=item.get("hardness", "soft") or "soft",
-        deadline=deadline,
+        hardness=hardness if hardness in ("hard", "soft") else "soft",
+        deadline=_clean_deadline(item.get("deadline")),
         repeated_mentions=1,
-        cost_estimate_usd=item.get("cost_estimate_usd"),
+        cost_estimate_usd=cost if isinstance(cost, (int, float))
+        and not isinstance(cost, bool) else None,
         sources=[source],
     )
 
@@ -294,12 +410,23 @@ def scan(runner=None, triager=None) -> dict:
     notification (2026-07-08 storm). A pass that finds the lock held exits as
     a no-op — the running pass's marker write covers it.
 
-    The marker is a watermark of *successfully processed* notes: a note whose
-    extraction fails (claude error, unreadable file, unparseable output) pins
-    the watermark just before itself so the next scan retries it — silently
-    losing a note is the radar's worst failure mode. Later notes are still
-    scanned this pass; the re-extraction next pass is harmless because
-    merge_or_new dedupes restatements (identical sources never re-merge).
+    水位语义 v2（marker + 失败重试台账）: the marker advances over every note the
+    pass has ACCOUNTED FOR — successfully processed OR recorded as failed in
+    state/radar_failed.json. A note whose extraction fails (claude error,
+    unreadable file, unparseable output) goes to that retry queue and is
+    re-tried once per pass, up to FAILED_MAX_ATTEMPTS, then given up WITH a
+    visible trace (skipped line + radar_give_up analytics + the queue entry
+    stays as the case file) — silently losing a note is the radar's worst
+    failure mode. Editing the note (mtime change) resets its attempt budget.
+
+    为什么不再让失败 note 钉死 marker（旧语义）——旧语义自相矛盾：
+    ① 失败 note 与更早成功的 note 共享同一 mtime 时，marker 已被成功者推到
+       该 mtime，失败者下轮起 ``mtime <= marker`` 永久跳过 = 静默丢失；
+    ② 失败 note 若持续失败（毒 note/非 UTF-8），marker 永不前进，它之后的所有
+       note 每 30 分钟被完整重新提取 = 无限重烧 claude。
+    v2 把「重试谁」从 marker 挪进 per-note 台账，两个矛盾同时消掉；重试期间的
+    re-extraction 依旧无害，因为 merge_or_new dedupes restatements（identical
+    sources never re-merge）。
     """
     cfg = config.load_config()
     summary = {"files_scanned": 0, "extracted": 0, "reconciled": 0, "cards": 0, "skipped": []}
@@ -339,8 +466,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     # gate (act/lib/quick_capture.triage) before merge_or_new — informational
     # items never card; hits on delivered/merged cards become improvement_of
     # follow-ups (deduped against an open follow-up); the hard+deadline split
-    # for genuinely-new items is PRESERVED via high_confidence below.
-    from act.lib import quick_capture  # lazy: analyze->executor chain stays acyclic
+    # for genuinely-new items is PRESERVED via high_confidence (_process_note).
     if triager is None and runner is not None:
         def triager(prompt, _r=runner):  # route triage through the injected runner
             return subprocess.CompletedProcess(
@@ -348,63 +474,57 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
 
     marker = _read_marker()
     newest_done = marker
-    halted = False  # first failed note pins the watermark just before itself
-    md_files = sorted(root.glob("*.md"), key=lambda p: p.stat().st_mtime)
+    any_failed = False  # ≥1 note 本轮提取失败（进了重试台账）-> health not ok
+    failed = _load_failed_queue()
 
-    for note in md_files:
-        mtime = note.stat().st_mtime
-        if mtime <= marker:
+    # 文件级容错：glob 会捡到叫 *.md 的目录、悬空软链；stat 也可能撞上
+    # rsync/vault-mirror 的 mid-pass 删除竞态。任何一个坏路径都只跳过自己
+    # （skipped 留痕），绝不崩整个 pass（旧代码在 sorted 的 key 里裸 stat）。
+    md_files: list[tuple[Path, float]] = []
+    for p in root.glob("*.md"):
+        try:
+            if not p.is_file():  # 目录/悬空软链不是 note
+                continue
+            md_files.append((p, p.stat().st_mtime))
+        except OSError as e:
+            summary["skipped"].append(f"unstattable path {p.name}: {e}")
+    md_files.sort(key=lambda t: t[1])
+
+    # 重试台账对账：note 已删除 -> 销案（没有内容可丢了）。
+    existing = {str(p) for p, _ in md_files}
+    for key in list(failed):
+        if key not in existing:
+            failed.pop(key)
+
+    for note, mtime in md_files:
+        entry = failed.get(str(note))
+        # mtime <= marker 的 note 只有在台账里、且还没放弃（或文件已被改过，
+        # mtime 与案底不符 -> 重置重试额度）时才重扫。
+        is_retry = (entry is not None and mtime <= marker
+                    and not (entry.get("gave_up") and entry.get("mtime") == mtime))
+        if mtime <= marker and not is_retry:
             continue
         summary["files_scanned"] += 1
-        try:
-            text = note.read_text(encoding="utf-8")
-        except OSError as e:
-            summary["skipped"].append(f"unreadable note {note.name}: {e}")
-            halted = True
-            continue
-        try:
-            raw = _run_extract(text, runner=runner)
-        except (OSError, subprocess.SubprocessError, RuntimeError) as e:
-            summary["skipped"].append(
-                f"claude -p failed on {note.name}: {type(e).__name__}: {str(e)[:160]}"
-            )
-            halted = True
-            continue
-        items = _parse_extraction(raw)
-        if items is None:
-            summary["skipped"].append(
-                f"unparseable extraction on {note.name}: {(raw or '')[:80]!r}"
-            )
-            halted = True
-            continue
-        summary["extracted"] += len(items)
-        for item in items:
-            if not item.get("title"):
-                continue
-            req = _to_requirement(item, note)
-            # extraction-level urgency joins the hard+deadline split: an item
-            # the extractor marked non-urgent parks in 备选 (detected) even
-            # when it carries a hard deadline — 现在需要行动才进提案列.
-            hc = _is_high_confidence(req) and item.get("urgent") is not False
-            desc = quick_capture.candidate_desc(
-                req.title, quote=item.get("quote"), who="manager",
-                channel="meeting", date=_note_date(note))
-            decision = quick_capture.triage(desc, cfg, extractor=triager)
-            kind, _saved = quick_capture.apply_triage(
-                decision, req, cfg, high_confidence=hc)
-            if kind == "ignored":
-                continue
-            summary["reconciled"] += 1
-            # hard+deadline 分流保留：new_proposal 只有 hc 才进提案列（否则
-            # detected/备选）；follow-up 卡按统一口径直接是 card_sent。
-            if kind in ("follow_up", "reraised") or (hc and kind == "proposed"):
-                summary["cards"] += 1
-
-        if not halted:
-            newest_done = max(newest_done, mtime)
+        error = _process_note(note, cfg, summary, runner, triager)
+        if error is None:
+            failed.pop(str(note), None)
+        else:
+            summary["skipped"].append(error)
+            entry = _record_failure(failed, note, mtime, error)
+            any_failed = True
+            if entry["gave_up"]:
+                summary["skipped"].append(
+                    f"giving up on {note.name} after {entry['attempts']} attempts "
+                    f"(case kept in state/{FAILED_QUEUE_NAME})")
+                analytics.log_event("radar_give_up", source="obsidian",
+                                    note=note.name, attempts=entry["attempts"])
+        # 水位语义 v2：成功与失败都推进 marker——失败 note 的重试由台账负责，
+        # 它既不再钉死后续 note（无限重烧），也不会被同 mtime 的成功者越过而丢失。
+        newest_done = max(newest_done, mtime)
 
     if newest_done > marker:
         _write_marker(newest_done)
+    _save_failed_queue(failed)
     analytics.log_event("radar_scan", source="obsidian",
                         files=summary.get("files_scanned"),
                         new_cards=summary.get("cards"),
@@ -414,12 +534,77 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     # the app turns into a diagnostic card are distinct skip codes.
     if not md_files:
         _note_health(False, "vault_empty")           # dir there, zero .md
-    elif halted:
+    elif any_failed:
         _note_health(False, "no_api_key" if not _has_anthropic_key()
                      else "extract_failed")
     else:
         _note_health(True, cards=summary["cards"])    # 扫了 = ok, cards≥0
     return summary
+
+
+def _process_note(note: Path, cfg: config.Config, summary: dict,
+                  runner, triager) -> Optional[str]:
+    """处理一篇 note：读取 -> 提取 -> 逐项 triage 落库。原地累加 ``summary``
+    的 extracted/reconciled/cards；返回 None（成功）或一条错误描述（进重试
+    台账）。任何失败都只属于这一篇 note，绝不外溢崩掉整个 pass。"""
+    from act.lib import quick_capture  # lazy: analyze->executor chain stays acyclic
+    try:
+        text = note.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        # UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的
+        # note 曾让整个 pass 崩掉、marker/health 全部停摆。
+        return f"unreadable note {note.name}: {e}"
+    try:
+        raw = _run_extract(text, runner=runner)
+    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+        return f"claude -p failed on {note.name}: {type(e).__name__}: {str(e)[:160]}"
+    items = _parse_extraction(raw)
+    if items is None:
+        return f"unparseable extraction on {note.name}: {(raw or '')[:80]!r}"
+    summary["extracted"] += len(items)
+    item_error: Optional[str] = None
+    for item in items:
+        title = item.get("title")
+        # 非字符串 title（数字/列表）与缺失同罪：跳过。旧代码对 truthy 非
+        # 字符串直接 .strip() -> AttributeError 崩整个 pass。
+        if not isinstance(title, str) or not title.strip():
+            continue
+        try:
+            req = _to_requirement(item, note)
+            # extraction-level urgency joins the hard+deadline split: an item
+            # the extractor marked non-urgent parks in 备选 (detected) even
+            # when it carries a hard deadline — 现在需要行动才进提案列.
+            hc = _is_high_confidence(req) and _extractor_urgent(item)
+            if hc:
+                # act-now 信号随 req.status 传给 apply_triage：relates_to 命中
+                # DETECTED 卡的 fold 路径靠 status==card_sent 提升目标卡进提案
+                # 列（否则硬 deadline 的紧急诉求折进备选卡后不可见）；低置信
+                # 降级时 apply_triage 会把它重置回 detected。
+                req.set_status(registry.State.CARD_SENT)
+            quote = item.get("quote")
+            desc = quick_capture.candidate_desc(
+                req.title, quote=quote if isinstance(quote, str) else None,
+                who="manager", channel="meeting", date=_note_date(note))
+            decision = quick_capture.triage(desc, cfg, extractor=triager)
+            kind, saved = quick_capture.apply_triage(
+                decision, req, cfg, high_confidence=hc)
+        except Exception as e:  # noqa: BLE001 - 单条候选落库失败不许炸全 pass
+            item_error = (f"filing failed on {note.name}: "
+                          f"{type(e).__name__}: {str(e)[:120]}")
+            continue
+        if kind == "ignored":
+            continue
+        summary["reconciled"] += 1
+        # hard+deadline 分流保留：new_proposal 只有真落到提案列才计卡——triage
+        # 低置信降级（apply_triage 内部改 status）时不能再拿本地 hc 虚报；
+        # follow-up 卡按统一口径直接是 card_sent。
+        if kind in ("follow_up", "reraised") or (
+                hc and kind == "proposed" and saved is not None
+                and saved.status == registry.State.CARD_SENT.value):
+            summary["cards"] += 1
+    # 有 item 落库失败 -> 整篇 note 进重试台账重跑（merge_or_new 会去重已成功
+    # 落库的兄弟项），比只丢这一条更诚实。
+    return item_error
 
 
 def main(argv: Optional[list[str]] = None) -> int:

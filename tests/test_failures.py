@@ -454,6 +454,26 @@ class NotifyCopyTestCase(unittest.TestCase):
         title_zh, body_zh = notify.msg_auto_resume_exhausted("周报")
         self.assertIn("自动恢复已放弃", title_zh)
 
+    def test_auto_resume_exhausted_names_existing_buttons(self):
+        # 审计 2026-07: v0.21 把运行中卡的「停止并退回 + 已办完」按钮对换成了
+        # 单个「停止」→ 对话框（退回提案/去待验收），但通知文案还在指旧按钮。
+        # 文案必须逐字引用现存 UI（Cards.swift TaskRow 的 confirmationDialog）。
+        from act.lib import notify
+        self._set_lang("zh")
+        _, body = notify.msg_auto_resume_exhausted("周报")
+        self.assertIn("「停止」", body)
+        self.assertIn("「退回提案」", body)
+        self.assertIn("「去待验收」", body)
+        self.assertNotIn("停止并退回", body, "v0.21 已删除的按钮不能再出现在文案里")
+        self.assertNotIn("「已办完」", body)
+        self._set_lang("en")
+        _, body_en = notify.msg_auto_resume_exhausted("Weekly report")
+        self.assertIn('"Stop"', body_en)
+        self.assertIn("Discard & re-propose", body_en)
+        self.assertIn("Keep for review", body_en)
+        self.assertNotIn("Stop & return", body_en)
+        self.assertNotIn("Done outside", body_en)
+
     def test_every_builder_body_names_a_next_step(self):
         from act.lib import notify
         self._set_lang("zh")

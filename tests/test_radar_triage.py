@@ -682,5 +682,32 @@ class QuickCaptureLosslessTestCase(TriageBase):
         self.assertEqual(req.status, "card_sent")
 
 
+class LegacyIntIdCardDoesNotHaltCaptureTestCase(TriageBase):
+    """单点损坏不倒全局：一张遗留 int-id 卡（手写 YAML `id: 4`）不能让
+    registry_inventory_text/capture/triage/next_id 集体 TypeError——那会堵死
+    所有新卡入口（快速捕获、雷达 triage、popover capture）。"""
+
+    def _seed_int_id_card(self):
+        config.REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        (config.REGISTRY_DIR / "R-004.yaml").write_text(
+            "id: 4\ntitle: legacy int-id card\nstatus: card_sent\n",
+            encoding="utf-8")
+
+    def test_inventory_and_next_id_survive(self):
+        self._seed_int_id_card()
+        inv = quick_capture.registry_inventory_text()
+        self.assertIn("4 | card_sent | legacy int-id card", inv)
+        self.assertEqual(registry.next_id(), "R-001")   # "4" 不占 R- 号段
+
+    def test_capture_keeps_its_never_raises_promise(self):
+        self._seed_int_id_card()
+        # capture 的 prompt 不是 triage prompt，_FakeLLM 会走 extraction 分支，
+        # 所以直接注入一个固定回答的 extractor。
+        extractor = lambda p: _proc(json.dumps(              # noqa: E731
+            {"action": "ignore", "reason": "闲聊"}, ensure_ascii=False))
+        d = quick_capture.capture("buy milk", self.cfg, extractor=extractor)
+        self.assertEqual(d["action"], "ignore")
+
+
 if __name__ == "__main__":
     unittest.main()

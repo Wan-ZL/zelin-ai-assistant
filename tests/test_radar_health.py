@@ -64,7 +64,8 @@ class ObsidianHealthBase(unittest.TestCase):
     @staticmethod
     def _cleanup():
         for p in (config.CONFIG_PATH, health.HEALTH_PATH,
-                  config.STATE_DIR / radar.MARKER_PATH_NAME):
+                  config.STATE_DIR / radar.MARKER_PATH_NAME,
+                  config.STATE_DIR / radar.FAILED_QUEUE_NAME):
             if p.exists():
                 p.unlink()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
@@ -109,7 +110,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         self.addCleanup(setattr, radar, "_has_anthropic_key",
                         radar._has_anthropic_key)
         radar._has_anthropic_key = lambda: False
-        radar.scan(runner=lambda t: "not json at all")  # -> halted
+        radar.scan(runner=lambda t: "not json at all")  # -> extract failure
         self.assertEqual(_read_obsidian()["skip_reason"], "no_api_key")
 
     def test_extraction_failure_with_key_is_extract_failed(self):
@@ -117,7 +118,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         self.addCleanup(setattr, radar, "_has_anthropic_key",
                         radar._has_anthropic_key)
         radar._has_anthropic_key = lambda: True
-        radar.scan(runner=lambda t: "not json at all")  # -> halted
+        radar.scan(runner=lambda t: "not json at all")  # -> extract failure
         self.assertEqual(_read_obsidian()["skip_reason"], "extract_failed")
 
     def test_healthy_scan_records_ok_and_card_count(self):

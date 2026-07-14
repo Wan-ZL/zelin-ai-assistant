@@ -26,6 +26,7 @@ import getpass
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -86,9 +87,22 @@ def write_report(
         "agents_loaded": agents_loaded,
     }
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, target)
+    # 唯一临时名（同目录 mkstemp）+ rename：固定共享 .tmp 名在并发 writer
+    # 下会互抢——一方 os.replace 拿走对方的 tmp（FileNotFoundError 崩掉
+    # writer），另一方残余 fd 继续写已被 rename 的 inode，读者见撕裂 JSON，
+    # 违反 §23「读者永不见撕裂文件」（终端重跑 install.sh 与 in-app repair
+    # / pkg postinstall 可并发）。
+    fd, tmp = tempfile.mkstemp(
+        prefix=target.name + ".", suffix=".tmp", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        os.replace(tmp, target)
+    finally:
+        try:
+            os.unlink(tmp)  # 成功时 tmp 已被 rename 走；这里只清失败残骸
+        except OSError:
+            pass
     return target
 
 

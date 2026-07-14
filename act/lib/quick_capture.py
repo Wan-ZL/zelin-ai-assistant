@@ -78,7 +78,10 @@ def registry_inventory_text() -> str:
                                 registry.State.ARCHIVED.value)]
 
     def _idnum(r) -> int:
-        m = registry._ID_RE.match(r.id or "")
+        # str() 防御第二层（from_dict 已归一 YAML 路径）：一张遗留 int-id 卡
+        # 不能让 capture()/triage() 的清单窗口整个 TypeError（capture 承诺
+        # never raises）。
+        m = registry._ID_RE.match(str(r.id or ""))
         return int(m.group(1)) if m else 0
 
     def _pinned(r) -> bool:

@@ -168,7 +168,8 @@ final class DashboardStore: ObservableObject {
         // unchanged bytes (vs the last SUCCESSFUL decode) → nothing new to
         // decode or publish; clear a stale decode error from a bad interim file
         if data == lastRawData {
-            if loadError != nil { loadError = nil }
+            // 例外：丢行提示不清 —— 字节没变说明坏行还躺在文件里
+            if loadError != nil && (dashboard?.decodeDrops.isEmpty ?? true) { loadError = nil }
             return
         }
         do {
@@ -177,7 +178,12 @@ final class DashboardStore: ObservableObject {
             withAnimation(.easeOut(duration: 0.2)) {
                 dashboard = db
                 missing = false
-                loadError = nil
+                // 行级 lenient 解码（Contract.swift）跳过的坏行必须可观测：
+                // 好行照常展示，banner 说清丢了哪些行 —— 绝不静默丢数据。
+                loadError = db.decodeDrops.isEmpty ? nil
+                    : L("dashboard.json 有 \(db.decodeDrops.count) 行损坏已跳过（其余照常显示）: ",
+                        "dashboard.json: skipped \(db.decodeDrops.count) corrupt row(s), the rest render normally: ")
+                        + db.decodeDrops.joined(separator: ", ")
                 // one-shot hides + pending comments clear when the backend has
                 // actually regenerated (generated_at changed); missing field →
                 // legacy behavior (clear on any reload) + 180 s fallback.
@@ -364,8 +370,9 @@ final class DashboardStore: ObservableObject {
             return L("恢复超时，卡片仍在回收站，可重试（检查 actd 是否在运行）",
                      "Restore timed out — the card is back in the trash, try again (check that actd is running)")
         case .abort:
-            return L("停止退回超时，卡片仍在运行中列，可重试（检查 actd 是否在运行）",
-                     "Stop & return timed out — the card is still in Running, try again (check that actd is running)")
+            // v0.21 起按钮叫「停止」→「退回提案/Discard & re-propose」——文案跟按钮走
+            return L("退回提案超时，卡片仍在运行中列，可重试（检查 actd 是否在运行）",
+                     "Discard & re-propose timed out — the card is still in Running, try again (check that actd is running)")
         case .revert:
             return L("退回待验收超时，卡片仍在已验收列，可重试（检查 actd 是否在运行）",
                      "Back-to-review timed out — the card is still in Done, try again (check that actd is running)")

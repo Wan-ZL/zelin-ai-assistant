@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -137,6 +138,30 @@ def days_left(deadline: Optional[str]) -> Optional[int]:
     return (d - _today()).days
 
 
+def _s(v: Any) -> str:
+    """Wire 类型归一：Swift 端 id/title/name/tier 都是硬 String decode（合成
+    Decodable），一个 int（如手写 YAML 的 ``id: 300``）就能让整列解码成 []
+    而 counts 徽章还显示真实数（§2）。None -> ""（字段本身非可选）。"""
+    return "" if v is None else str(v)
+
+
+def _int_or(v: Any, default: int) -> int:
+    """损坏的数字字段（``repeated_mentions: abc``）降级成 default，不让一张
+    坏卡把整个 dashboard pass 炸掉。"""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clip_draft(v: Any) -> Optional[str]:
+    """final_draft 契约上限 ≤20000 字（§16）——harvest 端已截断，这里是投影端
+    兜底（手写/旧数据不受 harvest 约束），坏数据不放大进 ~10s 重写的热路径。"""
+    if v in (None, ""):
+        return None
+    return str(v)[:20000]
+
+
 def _as_list(plan: Any) -> list:
     if plan is None:
         return []
@@ -172,9 +197,9 @@ def _archived_view(req: Requirement) -> dict:
     bookkeeping (archived_at / archive_reason / prev_status) so the app decodes
     it with the same shape as TrashItem."""
     return {
-        "id": req.id,
-        "title": req.title,
-        "summary": req.summary or req.title,
+        "id": _s(req.id),
+        "title": _s(req.title),
+        "summary": req.summary or _s(req.title),
         "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
         "archived_at": req.archived_at,
         "archive_reason": req.archive_reason,
@@ -209,7 +234,13 @@ def _cost_view(req: Requirement, cfg: config.Config) -> tuple[Optional[float], b
     cost = req.cost_estimate_usd
     if cost is None:
         return None, False
-    return cost, float(cost) >= cfg.show_cost_above_usd
+    try:
+        c = float(cost)
+    except (TypeError, ValueError):
+        # ``cost_estimate_usd: cheap`` 之类的坏值：字段降级成"无成本估算"，
+        # 卡片其余部分照常投影（单字段损坏不丢整卡，更不丢整个 pass）。
+        return None, False
+    return c, c >= cfg.show_cost_above_usd
 
 
 def _iso_now() -> str:
@@ -223,6 +254,12 @@ def _epoch(ts: Any) -> Optional[int]:
     convention as ``started_at``. Returns None when unparsable (Swift reads
     every timestamp with decodeIfPresent).
     """
+    if isinstance(ts, bool):
+        return None  # bool 是 int 子类，但 True/False 不是时间戳
+    if isinstance(ts, (int, float)):
+        # 已经是 epoch（claude roster / 手写数据都可能直接给数字）——幂等
+        # 返回，不能走 str->fromisoformat 把目标格式反而丢成 None。
+        return int(ts)
     if not ts:
         return None
     try:
@@ -331,7 +368,12 @@ def build_dashboard(
     debt: list[dict] = []
     trash: list[dict] = []
 
-    for req in reqs:
+    # archive() crash-mid-move 残件去重：archive/ 副本已落盘、active 目录里的
+    # 同 id 原件还没删掉时，视 active 残件为"已迁移"跳过——否则同一张卡同时
+    # 出现在 completed 和 archived 两个分区、各计一次。
+    archived_ids = {_s(r.id) for r in (archived or [])}
+
+    def _project(req: Requirement) -> None:
         # merged (契约 四 终态) is invisible everywhere, like the legacy
         # merged_into:<id> statuses — its content lives on in the primary card.
         # ARCHIVED goes in the belt-and-suspenders list too: sealed cards are
@@ -340,25 +382,28 @@ def build_dashboard(
         if req.is_merged or req.status in (State.REJECTED.value,
                                            State.MERGED.value,
                                            State.ARCHIVED.value):
-            continue
+            return
 
         if req.status == State.CARD_SENT.value:
             cost, show_cost = _cost_view(req, cfg)
             target_repo, target_name, target_kind = _target_view(req, cfg)
+            # 手改 YAML 把 execution 写成字符串时按"无 execution"降级（同
+            # executing 分支的 isinstance 守卫）——不炸整卡。
+            ex = req.execution if isinstance(req.execution, dict) else {}
             needs_approval.append(
                 {
-                    "id": req.id,
-                    "title": req.title,
-                    "summary": req.summary or req.title,
+                    "id": _s(req.id),
+                    "title": _s(req.title),
+                    "summary": req.summary or _s(req.title),
                     "target_repo": target_repo,
                     "target_name": target_name,
                     "target_kind": target_kind,
-                    "tier": req.tier,
-                    "tier_hint": TIER_HINTS.get(req.tier, ""),
+                    "tier": _s(req.tier),
+                    "tier_hint": TIER_HINTS.get(_s(req.tier), ""),
                     "hardness": req.hardness,
                     "deadline": req.deadline,
                     "days_left": days_left(req.deadline),
-                    "repeated": int(req.repeated_mentions or 1),
+                    "repeated": _int_or(req.repeated_mentions, 1) or 1,
                     "cost_usd": cost,
                     "show_cost": show_cost,
                     "green_sign": bool(req.green_sign_required),
@@ -373,8 +418,8 @@ def build_dashboard(
                     # v0.20.0 §5: 「回锅」marker — this proposal came from a
                     # re-raise of a card the user had already accepted; the app
                     # shows an amber Returned badge + the new ask.
-                    "reraised": bool((req.execution or {}).get("reraised_at")),
-                    "reraised_note": str((req.execution or {}).get("reraised_note") or ""),
+                    "reraised": bool(ex.get("reraised_at")),
+                    "reraised_note": str(ex.get("reraised_note") or ""),
                 }
             )
 
@@ -383,10 +428,10 @@ def build_dashboard(
             # greyed spinner placeholder so the click gives immediate feedback.
             needs_approval.append(
                 {
-                    "id": req.id,
-                    "title": req.title,
-                    "summary": req.summary or req.title,
-                    "tier": req.tier,
+                    "id": _s(req.id),
+                    "title": _s(req.title),
+                    "summary": req.summary or _s(req.title),
+                    "tier": _s(req.tier),
                     "tier_hint": "AI 研究中",
                     "processing": True,
                     "sources": [],
@@ -400,9 +445,9 @@ def build_dashboard(
         elif req.status == State.DETECTED.value:
             debt.append(
                 {
-                    "id": req.id,
-                    "title": req.title,
-                    "summary": req.summary or req.title,
+                    "id": _s(req.id),
+                    "title": _s(req.title),
+                    "summary": req.summary or _s(req.title),
                     "hardness": req.hardness,
                     "type": req.type,
                     "sources": _source_view(req, cfg),
@@ -412,9 +457,9 @@ def build_dashboard(
         elif req.status == State.TRASHED.value:
             trash.append(
                 {
-                    "id": req.id,
-                    "title": req.title,
-                    "summary": req.summary or req.title,
+                    "id": _s(req.id),
+                    "title": _s(req.title),
+                    "summary": req.summary or _s(req.title),
                     "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
                     "trashed_at": req.trashed_at,
                     "trash_reason": req.trash_reason,
@@ -431,8 +476,8 @@ def build_dashboard(
             ex = req.execution if isinstance(req.execution, dict) else {}
             running.append(
                 {
-                    "id": req.id,
-                    "name": req.title or req.id,
+                    "id": _s(req.id),
+                    "name": _s(req.title or req.id),
                     "state": "queued",
                     "summary": req.summary or None,
                     "plan": _as_list(req.plan),
@@ -452,7 +497,7 @@ def build_dashboard(
             agent = agent_idx.get(str(sid)) if sid else None
             # prefer the requirement title: claude uses the (huge) injected prompt
             # as the agent "name", which is useless to display.
-            name = req.title or (agent or {}).get("name") or req.id
+            name = _s(req.title or (agent or {}).get("name") or req.id)
             cwd = (agent or {}).get("cwd") or (req.target_repo or str(cfg.target_repo_path))
             state = (agent or {}).get("state") or "unknown"
             # emit the FULL sessionId for the `claude --resume` copy: dispatch
@@ -490,7 +535,7 @@ def build_dashboard(
                 # §11 已验收 — archive row
                 completed.append(
                     {
-                        "id": req.id,
+                        "id": _s(req.id),
                         "name": name,
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -518,7 +563,7 @@ def build_dashboard(
                 # abort_execution which now accept review status (§10).
                 running.append(
                     {
-                        "id": req.id,
+                        "id": _s(req.id),
                         "name": name,
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -526,7 +571,10 @@ def build_dashboard(
                         "agent_name": agent_name,
                         "cwd": cwd,
                         "state": "working",
-                        "started_at": (agent or {}).get("started_at"),
+                        # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字
+                        # 符串必须归一，否则 Swift 端 started_at: Int? 的合成
+                        # decode 一个 typeMismatch 会把整个 running 列清空。
+                        "started_at": _epoch((agent or {}).get("started_at")),
                         "summary": req.summary or None,
                         "plan": _as_list(req.plan),
                         "dod": list(req.definition_of_done or []),
@@ -539,7 +587,7 @@ def build_dashboard(
                         # can hint "已交付过·再运行" off from_review.
                         "from_review": True,
                         "delivered_summary": ex.get("delivered_summary"),
-                        "final_draft": ex.get("final_draft"),
+                        "final_draft": _clip_draft(ex.get("final_draft")),
                     }
                 )
             elif req.status == State.REVIEW.value or state in _DONE_STATES:
@@ -554,7 +602,7 @@ def build_dashboard(
                 # reconcile keeps re-harvesting deliverables when it settles.
                 review.append(
                     {
-                        "id": req.id,
+                        "id": _s(req.id),
                         "name": name,
                         "summary": req.summary or None,
                         "dod": list(req.definition_of_done or []),
@@ -565,7 +613,7 @@ def build_dashboard(
                         "state": "review",
                         "cwd": cwd,
                         "delivered_summary": ex.get("delivered_summary"),
-                        "final_draft": ex.get("final_draft"),
+                        "final_draft": _clip_draft(ex.get("final_draft")),
                         "plan": _as_list(req.plan),
                         "sources": _source_view(req, cfg),
                         "log": ex.get("log"),
@@ -578,7 +626,7 @@ def build_dashboard(
             elif state in _BLOCKED_STATES:
                 needs_input.append(
                     {
-                        "id": req.id,
+                        "id": _s(req.id),
                         "name": name,
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -592,7 +640,7 @@ def build_dashboard(
                 # running, or agent not found yet -> still consider it running
                 running.append(
                     {
-                        "id": req.id,
+                        "id": _s(req.id),
                         "name": name,
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -600,7 +648,8 @@ def build_dashboard(
                         "agent_name": agent_name,
                         "cwd": cwd,
                         "state": "working" if state in _RUNNING_STATES else state,
-                        "started_at": (agent or {}).get("started_at"),
+                        # epoch 归一，理由同 §30 from_review 分支（Swift Int?）。
+                        "started_at": _epoch((agent or {}).get("started_at")),
                         "summary": req.summary or None,
                         "plan": _as_list(req.plan),
                         "dod": list(req.definition_of_done or []),
@@ -613,6 +662,18 @@ def build_dashboard(
                 )
         # approved surfaces as a "queued" item inside running (branch above, §2)
 
+    for req in reqs:
+        if _s(req.id) and _s(req.id) in archived_ids:
+            continue  # crash-mid-move 残件——archive/ 里已有权威副本（上方注释）
+        try:
+            _project(req)
+        except Exception as e:  # noqa: BLE001 - 单卡隔离，见下
+            # 手改 YAML 把某个字段改坏（execution 变字符串、dod 变 int……）时：
+            # 跳过这一张卡 + log，其余卡照常投影——绝不让一张坏卡冻结整个
+            # dashboard pass（同 merge_suggestions 分区"损坏文件跳过"的既有约定）。
+            print(f"dashboard: skip corrupt card {getattr(req, 'id', '?')!r}: "
+                  f"{type(e).__name__}: {e}", file=sys.stderr)
+
     # §2 completed cap: newest first (missing/unparsable accepted_at sinks to
     # the end), truncated to COMPLETED_CAP; the count keeps the real total.
     completed_total = len(completed)
@@ -622,7 +683,14 @@ def build_dashboard(
     # §5 v0.20.0 archived[] partition — mirrors the trash row (+ archive fields)
     # so the app's archive browse decodes it the same way; newest archived_at
     # first, capped, with counts.archived carrying the TRUE total.
-    archived_rows = [_archived_view(r) for r in (archived or [])]
+    archived_rows = []
+    for r in (archived or []):
+        try:
+            archived_rows.append(_archived_view(r))
+        except Exception as e:  # noqa: BLE001 - 单卡隔离，同上
+            print(f"dashboard: skip corrupt archived card "
+                  f"{getattr(r, 'id', '?')!r}: {type(e).__name__}: {e}",
+                  file=sys.stderr)
     archived_total = len(archived_rows)
     archived_rows.sort(key=lambda a: str(a.get("archived_at") or ""), reverse=True)
     del archived_rows[ARCHIVED_CAP:]

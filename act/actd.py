@@ -1718,7 +1718,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--interval", type=int, default=None, help="override poll seconds")
     args = parser.parse_args(argv)
 
-    cfg = config.load_config()
+    try:
+        cfg = config.load_config()
+    except Exception as e:  # noqa: BLE001 — 坏 config.yaml/overrides 绝不拒启：
+        # 用内置默认起动并 log 一条（load_config 自身已防崩，这里是纵深防御）
+        _log(f"load_config FAILED at startup ({e}); using built-in defaults")
+        cfg = config.Config()
     interval = args.interval or cfg.poll_interval_seconds or 10
     auth_notified: set[str] = set()
     resume_notified: set[str] = set()
