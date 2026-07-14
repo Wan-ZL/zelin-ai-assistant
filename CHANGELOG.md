@@ -27,6 +27,22 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.31.1] - 2026-07-14
+
+### Fixed
+
+- **A cron round can no longer wipe the previous round's in-flight ingest
+  work in the vault mirror.** Real incident hours after v0.31.0 shipped:
+  the previous round's claude was still writing raw/wiki in the mirror when
+  the next round's export ran the pull — rsync `--delete` destroyed every
+  un-pushed product, and since a mirror-mode dump exists only in the mirror
+  until push (with the export markers already advanced), the source dump
+  died with it. Two guards: the pull now skips while the processing PID
+  lock is held by a live process (the mirror is a live workspace then, not
+  a stale copy — the round's own push carries everything home), and the
+  export pushes immediately after writing a dump when no processing is in
+  flight, so the source lands in the real vault the moment it exists.
+
 ## [0.31.0] - 2026-07-14
 
 ### Changed
@@ -1113,7 +1129,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.1...HEAD
+[0.31.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.28.1...v0.29.0
