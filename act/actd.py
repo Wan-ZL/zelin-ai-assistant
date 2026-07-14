@@ -1375,6 +1375,52 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
         _log(f"reconcile: review attach check {getattr(req, 'id', '?')} failed: {e}")
 
 
+# transcript-probe throttle for _promote_if_delivered: a genuinely blocked
+# agent (no FINAL DRAFT yet) would otherwise get its transcript tail re-read
+# every 10 s pass. Process-local is fine — actd is a resident daemon.
+_HARVEST_PROBE_AT: dict = {}
+_HARVEST_PROBE_INTERVAL_S = 120.0
+
+
+def _promote_if_delivered(req, ex: dict, sid) -> bool:
+    """Promote to 待验收 IFF the transcript carries the standalone FINAL DRAFT
+    marker — the chat-delivery contract's STRONG completion signal. A bare
+    delivered_summary is any dead session's last words, never proof of
+    delivery, so it must not short-circuit a resume. Returns True when
+    promoted (callers `continue`).
+    """
+    if executor is None:
+        return False
+    now = time.monotonic()
+    last = _HARVEST_PROBE_AT.get(str(sid), 0.0)
+    if now - last < _HARVEST_PROBE_INTERVAL_S:
+        return False
+    _HARVEST_PROBE_AT[str(sid)] = now
+    try:
+        harvested = executor.harvest_delivery(str(sid)) or {}
+    except Exception:  # noqa: BLE001 - the probe is best-effort
+        return False
+    if not str(harvested.get("final_draft") or "").strip():
+        return False
+    ex["done"] = True
+    ex["review_at"] = _iso_now()
+    if harvested.get("delivered_summary"):
+        ex["delivered_summary"] = harvested["delivered_summary"]
+    ex["final_draft"] = harvested["final_draft"]
+    req.execution = ex
+    req.set_status(registry.State.REVIEW)
+    registry.save(req)
+    exec_s = None
+    disp_dt = _parse_iso(ex.get("dispatched_at"))
+    if disp_dt is not None:
+        exec_s = max(0, round(
+            (_dt.datetime.now(_dt.timezone.utc) - disp_dt).total_seconds()))
+    analytics.log_event("review_promoted", req=req.id, exec_s=exec_s)
+    _log(f"reconcile: {req.id} promoted to review — transcript already "
+         f"carries FINAL DRAFT (session {sid} blocked or purged)")
+    return True
+
+
 def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
     """Auto-resume executing tasks whose background agent died (sleep / network
     loss / crash). Skips tasks that already finished. Exponential backoff so a
@@ -1413,8 +1459,15 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             resume_notified.discard(req.id)
             continue
         if agent and state in _BLOCKED_STATES:
-            # waiting for the USER to answer (needs input) — NOT dead. Do NOT
-            # resume (resuming a blocked agent spawns duplicates). Leave it be.
+            # waiting for the USER to answer (needs input) — usually NOT dead,
+            # and resuming a blocked agent spawns duplicates. But FIRST check
+            # for a completed delivery: a chat-mode agent that printed its
+            # FINAL DRAFT block settles in exactly this waiting-input state
+            # (a bg session never exits on its own), and 2026-07-14 R-041 sat
+            # here for hours with the finished brief already in the
+            # transcript while the board said 需输入.
+            if not ex.get("done") and _promote_if_delivered(req, ex, sid):
+                continue
             if ex.get("resume_attempts"):
                 ex["resume_attempts"] = 0
                 req.execution = ex
@@ -1461,7 +1514,14 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 registry.save(req)
             continue
 
-        # dead (failed/stopped) or vanished-before-completing -> resume w/ backoff
+        # dead (failed/stopped) or vanished-before-completing. BEFORE burning
+        # a resume, check the transcript for a completed delivery: a session
+        # that finishes while the Mac sleeps is purged from the roster before
+        # any reconcile pass ever sees it in a done state (2026-07-14 R-041),
+        # and resuming a finished session only spawns a confused duplicate.
+        if not ex.get("done") and _promote_if_delivered(req, ex, sid):
+            continue
+        # -> resume w/ backoff
         if ex.get("resume_exhausted"):
             continue
         attempts = int(ex.get("resume_attempts", 0))

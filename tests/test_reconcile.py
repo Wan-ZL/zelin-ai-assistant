@@ -353,5 +353,71 @@ class ReviewAttachReflowTestCase(ReconcileBase):
         self.assertTrue((req.execution or {}).get("_review_active"))
 
 
+# --------------------------------------------------------------------------- #
+# transcript-delivery promotion — FINAL DRAFT beats waiting/resume
+# (2026-07-14 R-041: the finished brief sat in 需输入 for hours; the session
+# was later purged from the roster, where a resume would have spawned a
+# confused duplicate instead of shipping the delivery.)
+# --------------------------------------------------------------------------- #
+class DeliveredTranscriptPromotionTestCase(ReconcileBase):
+    # Isolation, belt AND suspenders: the throttle memo is module-global and
+    # OTHER suites also drive reconcile_executing over blocked/vanished
+    # agents (which probes and records their sid). patch.dict scopes the memo
+    # per test, and every test here uses its OWN sid so no ordering — local
+    # or CI's — can leave a fresh throttle entry behind (2026-07-14: passed
+    # locally on 3.13, failed on CI 3.14 through exactly that interaction).
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.dict(actd._HARVEST_PROBE_AT, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _harvest(self, final_draft, summary="last words"):
+        return mock.patch.object(
+            actd.executor, "harvest_delivery",
+            mock.Mock(return_value={"delivered_summary": summary,
+                                    "final_draft": final_draft}))
+
+    def test_blocked_agent_with_final_draft_promotes_to_review(self):
+        # a chat-mode agent that printed FINAL DRAFT settles in waiting-input
+        # (a bg session never exits on its own) — that is a delivery, not a
+        # question for the user.
+        self._mk_req(execution={"session_id": "d1a10001"})
+        with self._harvest(final_draft="成稿全文"):
+            _, resume = self._reconcile([_agent("blocked", sid="d1a10001")])
+        resume.assert_not_called()
+        req = registry.load("R-900")
+        self.assertEqual(req.status, State.REVIEW.value)
+        ex = req.execution or {}
+        self.assertTrue(ex.get("done"))
+        self.assertEqual(ex.get("final_draft"), "成稿全文")
+        self.assertEqual(ex.get("delivered_summary"), "last words")
+
+    def test_vanished_session_with_final_draft_promotes_instead_of_resume(self):
+        self._mk_req(execution={"session_id": "d1a10002"})
+        with self._harvest(final_draft="成稿全文"):
+            _, resume = self._reconcile([])  # roster empty — session purged
+        resume.assert_not_called()
+        self.assertEqual(registry.load("R-900").status, State.REVIEW.value)
+
+    def test_vanished_session_without_final_draft_still_resumes(self):
+        # delivered_summary alone is any dead session's last words — never
+        # proof of delivery; the resume path must stay intact.
+        self._mk_req(execution={"session_id": "d1a10003"})
+        with self._harvest(final_draft=None):
+            _, resume = self._reconcile([])
+        resume.assert_called_once()
+        self.assertEqual(registry.load("R-900").status, State.EXECUTING.value)
+
+    def test_blocked_probe_is_throttled_between_passes(self):
+        # a genuinely blocked agent must not get its transcript re-read on
+        # every 10 s daemon pass.
+        self._mk_req(execution={"session_id": "d1a10004"})
+        with self._harvest(final_draft=None) as harvest:
+            self._reconcile([_agent("blocked", sid="d1a10004")])
+            self._reconcile([_agent("blocked", sid="d1a10004")])
+        self.assertEqual(harvest.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
