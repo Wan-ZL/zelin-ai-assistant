@@ -210,6 +210,11 @@ function cardEl(item, lane) {
   lane.actions.forEach(spec => {
     const btn = el("button", spec.cls || "", esc(spec.label));
     if (!item.id) btn.disabled = true; // every req-level action needs an id
+    // AI-processing (raising) cards: approve/reject/defer are guarded no-ops
+    // daemon-side (audit 2026-07-14) — don't offer a button that toasts
+    // success and does nothing. 修改方向 stays live (it folds honestly), same
+    // as the iOS card body does.
+    if (item.processing && spec.action !== "comment") btn.disabled = true;
     btn.addEventListener("click", () => doAction(spec, item.id));
     acts.appendChild(btn);
   });

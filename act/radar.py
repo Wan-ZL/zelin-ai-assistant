@@ -490,11 +490,23 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
             summary["skipped"].append(f"unstattable path {p.name}: {e}")
     md_files.sort(key=lambda t: t[1])
 
-    # 重试台账对账：note 已删除 -> 销案（没有内容可丢了）。
+    # 重试台账对账：note 已删除 -> 销案（没有内容可丢了）。本轮列表缺席
+    # 不足为凭——mid-pass 的 stat 竞态/瞬时不可见会把台账里的活案误销，
+    # 显式 exists() 复核后才销（audit review 2026-07-14）。
     existing = {str(p) for p, _ in md_files}
     for key in list(failed):
-        if key not in existing:
+        if key not in existing and not Path(key).exists():
             failed.pop(key)
+    # systemic-failure snapshot：本轮开始时的台账。若这轮"全军覆没"（所有
+    # 尝试的 note 都提取失败——claude 二进制坏 / key 失效 / 断网的形态，
+    # 2026-07-08 与 07-09 两次真实事故都属此类），说明挂的是提取通道而不是
+    # note：不 charge 任何 note 的重试额度、也不推 marker（回到旧的
+    # pin-the-marker 语义），故障修复后整个积压自然重扫。只有部分失败
+    # （真·毒 note）才走 v2 台账。单一毒 note 独自扫描时会被误判 systemic
+    # 而暂时钉住 marker——代价是它被重烧几轮，等下一篇新 note 加入（部分
+    # 失败成立）就会归队进台账；比误判系统故障丢掉整个积压便宜得多。
+    failed_before = json.loads(json.dumps(failed))
+    succeeded_this_pass = 0
 
     for note, mtime in md_files:
         entry = failed.get(str(note))
@@ -507,6 +519,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
         summary["files_scanned"] += 1
         error = _process_note(note, cfg, summary, runner, triager)
         if error is None:
+            succeeded_this_pass += 1
             failed.pop(str(note), None)
         else:
             summary["skipped"].append(error)
@@ -522,9 +535,20 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
         # 它既不再钉死后续 note（无限重烧），也不会被同 mtime 的成功者越过而丢失。
         newest_done = max(newest_done, mtime)
 
+    if any_failed and succeeded_this_pass == 0 and summary["files_scanned"] > 0:
+        # 全军覆没 = systemic（见上）：本轮的账全部作废——marker 不动、
+        # attempts 不扣，下一轮从同一起点重来。
+        summary["skipped"].append(
+            "systemic extraction failure (every attempted note failed) — "
+            "marker pinned, no retry budget charged")
+        failed = failed_before
+        newest_done = marker
+    # 台账先于 marker 落盘（audit review 2026-07-14）：反过来时，两次写之间
+    # 的崩溃/ENOSPC 会留下"marker 已越过、台账没记上"的失败 note = 静默永久
+    # 丢失；这个顺序下崩溃顶多让失败 note 多重试一轮。
+    _save_failed_queue(failed)
     if newest_done > marker:
         _write_marker(newest_done)
-    _save_failed_queue(failed)
     analytics.log_event("radar_scan", source="obsidian",
                         files=summary.get("files_scanned"),
                         new_cards=summary.get("cards"),

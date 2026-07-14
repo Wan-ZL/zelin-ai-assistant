@@ -230,16 +230,21 @@ class WatermarkTestCase(RadarScanBase):
         self.assertEqual(self._queue(), {})
 
     def test_retry_gives_up_after_max_attempts_with_trace(self):
+        # 陪跑成功 note：部分失败（≠systemic 全军覆没）才 charge 重试额度
         note = self._note("poison.md", "poison content", BASE)
         calls = []
 
-        def always_fails(text):
+        def runner(text):
             calls.append(text)
-            raise RuntimeError("permanent failure")
+            if "poison" in text:
+                raise RuntimeError("permanent failure")
+            return "[]"
 
         for attempt in range(1, radar.FAILED_MAX_ATTEMPTS + 1):
-            summary = radar.scan(runner=always_fails)
-            self.assertEqual(summary["files_scanned"], 1, f"attempt {attempt}")
+            self._note(f"ok-{attempt}.md", f"ok content {attempt}",
+                       BASE + 10 * attempt)
+            summary = radar.scan(runner=runner)
+            self.assertEqual(summary["files_scanned"], 2, f"attempt {attempt}")
         self.assertTrue(any("giving up on poison.md" in s
                             for s in summary["skipped"]))
         entry = self._queue()[str(note)]
@@ -248,30 +253,66 @@ class WatermarkTestCase(RadarScanBase):
 
         # 放弃后不再烧 claude —— 但案底留在台账里（不是静默消失）
         calls.clear()
-        after = radar.scan(runner=always_fails)
-        self.assertEqual(after["files_scanned"], 0)
-        self.assertEqual(calls, [])
+        self._note("ok-final.md", "ok final content", BASE + 1000)
+        after = radar.scan(runner=runner)
+        self.assertEqual(after["files_scanned"], 1)
+        self.assertFalse(any("poison" in c for c in calls))
         self.assertIn(str(note), self._queue())
 
     def test_editing_a_given_up_note_resets_its_attempts(self):
         note = self._note("poison.md", "poison content", BASE)
-        for _ in range(radar.FAILED_MAX_ATTEMPTS):
-            radar.scan(runner=lambda t: (_ for _ in ()).throw(RuntimeError("x")))
+
+        def runner(text):
+            if "poison" in text:
+                raise RuntimeError("x")
+            return "[]"
+
+        for i in range(radar.FAILED_MAX_ATTEMPTS):
+            # 陪跑成功 note：部分失败才 charge 额度（systemic 不扣）
+            self._note(f"ok-{i}.md", f"ok {i}", BASE + 10 * (i + 1))
+            radar.scan(runner=runner)
         self.assertTrue(self._queue()[str(note)]["gave_up"])
 
         # 用户改了 note（新 mtime）→ 重新扫描 + 重试额度从头计
-        self._note("poison.md", "fixed content", BASE + 30)
+        self._note("poison.md", "fixed content", BASE + 1000)
         summary = radar.scan(runner=lambda t: "[]")
         self.assertEqual(summary["files_scanned"], 1)
         self.assertEqual(self._queue(), {})
 
     def test_deleted_note_case_is_closed(self):
-        note = self._note("gone.md", "content", BASE)
-        radar.scan(runner=lambda t: (_ for _ in ()).throw(RuntimeError("x")))
+        note = self._note("gone.md", "gone content", BASE)
+        self._note("ok.md", "ok content", BASE + 10)  # 陪跑：≠systemic
+
+        def runner(text):
+            if "gone" in text:
+                raise RuntimeError("x")
+            return "[]"
+
+        radar.scan(runner=runner)
         self.assertIn(str(note), self._queue())
         note.unlink()
         radar.scan(runner=lambda t: self.fail("nothing left to scan"))
         self.assertEqual(self._queue(), {})
+
+    def test_systemic_outage_never_burns_retry_budget(self):
+        # audit review 2026-07-14 blocker 回归：claude/key/网络整体故障
+        # （本轮全军覆没）不 charge 重试额度、不推 marker——故障修复后整个
+        # 积压自动重扫，绝不出现 gave_up 的"死积压"。
+        self._note("a.md", "AAA content", BASE)
+        self._note("b.md", "BBB content", BASE + 10)
+        marker_before = radar._read_marker()
+        for _ in range(radar.FAILED_MAX_ATTEMPTS + 2):  # 远超单 note 额度
+            s = radar.scan(runner=lambda t: (_ for _ in ()).throw(
+                RuntimeError("claude exit 1: EPERM")))
+            self.assertTrue(any("systemic extraction failure" in x
+                                for x in s["skipped"]))
+        self.assertEqual(self._queue(), {})              # 没有人被扣额度
+        self.assertEqual(radar._read_marker(), marker_before)  # marker 钉住
+
+        # 通道恢复 → 整个积压一轮扫完
+        ok = radar.scan(runner=lambda t: "[]")
+        self.assertEqual(ok["files_scanned"], 2)
+        self.assertEqual(radar._read_marker(), BASE + 10)
 
     def test_valid_empty_array_advances_marker(self):
         # "[]" is the prompt's own no-requirements answer — NOT a failure
@@ -428,7 +469,10 @@ class ItemHygieneTestCase(RadarScanBase):
 
         quick_capture.apply_triage = boom
         note = self._note("n.md", "x", BASE)
-        summary = radar.scan(runner=lambda t: json.dumps([_item("T")]))
+        # 陪跑 note 提取出 0 项（不触发 filing）→ 计成功：部分失败 ≠ systemic
+        self._note("ok.md", "quiet", BASE + 10)
+        summary = radar.scan(
+            runner=lambda t: json.dumps([_item("T")]) if t and "x" in t else "[]")
         self.assertTrue(any("filing failed on n.md" in s
                             for s in summary["skipped"]))
         self.assertIn(str(note), radar._load_failed_queue())

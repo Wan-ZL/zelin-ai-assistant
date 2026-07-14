@@ -666,14 +666,20 @@ def _stop_live_session(req: Requirement, why: str) -> None:
     sid = ex.get("session_id")
     if not sid:
         return
+    stopped = False
     if executor is not None:
         try:
-            stopped = executor.stop_session(str(sid))
+            stopped = bool(executor.stop_session(str(sid)))
             _log(f"inbox: {req.id} {why} — stop_session({sid}) -> {stopped}")
         except Exception as e:  # noqa: BLE001 - best-effort, never block
             _log(f"inbox: {req.id} {why} — stop_session({sid}) failed (ignored): {e}")
     ex["aborted_session_id"] = sid
-    ex.pop("session_id", None)
+    if stopped:
+        # only a session we actually killed loses its id — when the stop
+        # failed (or executor is unavailable) the agent may still be alive,
+        # and a later trash→restore round-trip must be able to re-attach
+        # (audit review 2026-07-14: unconditional pop made restore lossy).
+        ex.pop("session_id", None)
     req.execution = ex
 
 
@@ -755,11 +761,23 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # approve re-dispatches against a stale session). Past-approval
         # states keep their status; the note is folded for the record (review
         # has its own formal channel: rework).
-        if str(req.status) in (State.APPROVED.value, State.EXECUTING.value,
-                               State.REVIEW.value, State.DELIVERED.value):
+        if str(req.status) == State.APPROVED.value:
+            # pre-dispatch: the folded note rides into the dispatch prompt —
+            # the direction change genuinely lands, so "running" is honest.
             save(req)
-            _log(f"inbox: {req.id} comment folded (status {req.status} kept)")
+            _log(f"inbox: {req.id} comment folded (approved kept, pre-dispatch)")
             return "running"
+        if str(req.status) in (State.EXECUTING.value, State.REVIEW.value,
+                               State.DELIVERED.value):
+            # post-dispatch: nothing consumes the folded note — the live agent
+            # never sees it. Fold for the record but ack "noop" so a phone's
+            # §5.4 ledger never shows 已生效 for a direction change that had
+            # no effect (audit review 2026-07-14). review 的正式改方向通道是
+            # rework（打回）。
+            save(req)
+            _log(f"inbox: {req.id} comment folded (status {req.status} kept — "
+                 f"note is record-only, acking noop)")
+            return "noop"
         req.set_status(State.CARD_SENT)  # stays pending, re-approval
         save(req)
         _log(f"inbox: {req.id} comment folded — re-approval pending")
