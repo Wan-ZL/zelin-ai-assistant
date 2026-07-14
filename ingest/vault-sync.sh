@@ -25,6 +25,21 @@ VAULT_SYNC_MODE_FILE="$AIASSISTANT_HOME/state/vault_sync_mode"
 # push failed last round → its products only exist in the mirror; a pull
 # (rsync --delete) before a successful retry would DESTROY them.
 VAULT_PUSH_PENDING="$AIASSISTANT_HOME/state/vault-sync-push-pending"
+# the processing chain's PID lock (must match process-screenpipe.sh) — the
+# in-flight guard below keys off it.
+VAULT_SYNC_PROCESS_LOCK="/tmp/process-screenpipe.lock"
+
+# vault_sync_processing_live — true iff the previous round's processing is
+# STILL RUNNING in the mirror (same liveness rule as process-screenpipe.sh's
+# own lock takeover: pid in the lock file belongs to the processing script or
+# its headless-claude child).
+vault_sync_processing_live() {
+    local pid
+    [ -f "$VAULT_SYNC_PROCESS_LOCK" ] || return 1
+    pid="$(tr -cd '0-9' < "$VAULT_SYNC_PROCESS_LOCK" 2>/dev/null)"
+    [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null \
+        | grep -qE 'process-screenpipe|unprocessed-ingest'
+}
 
 find_vault_sync_helper() {
     local c
@@ -41,6 +56,19 @@ find_vault_sync_helper() {
 vault_sync_pull() {
     local vault_root="$1" helper
     helper="$(find_vault_sync_helper)" || return 1
+    # IN-FLIGHT GUARD (2026-07-14 13:30 incident): the previous round's claude
+    # was still writing raw/wiki in the mirror when the next round's export
+    # ran this pull — rsync --delete wiped every un-pushed product, and since
+    # a mirror-mode dump exists ONLY in the mirror until push, the source
+    # dump died with it (the export marker had advanced: no re-export).
+    # Processing alive → the mirror is a workspace, not a stale copy: skip
+    # the pull, keep mirror mode (the caller still writes its export into the
+    # mirror inbox; the round's eventual push carries everything home, and
+    # the NEXT idle round pulls fresh vault edits).
+    if vault_sync_processing_live; then
+        echo "vault-sync: processing in flight — pull skipped (mirror is a live workspace)"
+        return 0
+    fi
     if [ -f "$VAULT_PUSH_PENDING" ]; then
         if "$helper" push --vault "$vault_root" --mirror "$VAULT_MIRROR"; then
             rm -f "$VAULT_PUSH_PENDING"
