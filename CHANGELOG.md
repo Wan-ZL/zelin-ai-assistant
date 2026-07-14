@@ -25,6 +25,32 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+### Changed
+
+- **Vault-mirror mode: the pipeline no longer touches ~/Documents — one
+  app-identity grant replaces every per-tool permission.** Incident
+  (2026-07-14): the claude CLI now installs per-version binaries and macOS
+  keys permission grants to the real binary path, so every CLI update became
+  a new TCC identity — the GUI re-prompted "would like to access your
+  Documents folder" on each update, and cron (nowhere to show a prompt) died
+  with `EPERM`: 38 consecutive screenshot→notes failures 07-09→07-13. Now a
+  `vault-sync-helper` compiled into the app bundle (same bundle id + the
+  stable TCC-safe signing identity) is the ONLY thing that touches the
+  Obsidian vault: it pulls the vault into a repo-local mirror
+  (`state/vault-mirror/`) at the top of each ingest run and publishes
+  results back afterwards (additive `--update` everywhere; inbox deletions
+  are manifest-based so a file dropped mid-run is never destroyed; a failed
+  publish is retried before the next pull so results are never wiped).
+  claude, python and bash all work repo-local — the radar and weekly digest
+  read the mirror too (`config.effective_obsidian_raw`). The permissions
+  checkup gains a "Notes vault access" row: ONE standard GUI prompt, and no
+  pipeline permission ever needs granting again — across app AND claude
+  updates. Everything degrades automatically to the legacy direct-vault
+  behavior when the helper or the grant is missing (Linux/Windows included);
+  mirror mode is an upgrade, never a requirement. Also: the ingest claude
+  call now runs under a 2 h watchdog (a wedged run once held the chain's
+  lock for 41 hours).
+
 ### Fixed
 
 - **A doomed switch to Screen + Audio can no longer silently kill recording,

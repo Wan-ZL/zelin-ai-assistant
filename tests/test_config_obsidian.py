@@ -137,5 +137,59 @@ class ObsidianDirsTestCase(unittest.TestCase):
             self.assertTrue(Path(p).is_dir(), f"missing real dir: {p}")
 
 
+class EffectiveObsidianRawTestCase(unittest.TestCase):
+    """effective_obsidian_raw — vault-mirror mode routing (claude TCC isolation).
+
+    Readers (radar, weekly digest) must use the repo-local mirror ONLY when
+    the ingest chain declared mirror mode AND the mirrored raw dir exists;
+    every other state falls back to the real vault (mirror mode is an
+    upgrade, never a requirement — Linux/Windows/fresh installs never see it).
+    """
+
+    MODE_FILE = config.STATE_DIR / "vault_sync_mode"
+    MIRROR_RAW = config.STATE_DIR / "vault-mirror" / "2 - raw"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="obsidian-vault-")
+        self.vault_raw = Path(self.tmp.name) / "MyVault" / "2 - raw"
+        self.vault_raw.mkdir(parents=True)
+        self.cfg = config.Config()
+        self.cfg.obsidian_raw = str(self.vault_raw)
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        if self.MODE_FILE.exists():
+            self.MODE_FILE.unlink()
+        if self.MIRROR_RAW.exists():
+            self.MIRROR_RAW.rmdir()
+        self.tmp.cleanup()
+
+    def _set_mode(self, mode: str) -> None:
+        self.MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.MODE_FILE.write_text(mode + "\n", encoding="utf-8")
+
+    def test_no_mode_file_reads_the_real_vault(self):
+        self.assertEqual(config.effective_obsidian_raw(self.cfg), self.vault_raw)
+
+    def test_direct_mode_reads_the_real_vault(self):
+        self._set_mode("direct")
+        self.assertEqual(config.effective_obsidian_raw(self.cfg), self.vault_raw)
+
+    def test_mirror_mode_with_mirror_present_reads_the_mirror(self):
+        self._set_mode("mirror")
+        self.MIRROR_RAW.mkdir(parents=True)
+        self.assertEqual(config.effective_obsidian_raw(self.cfg), self.MIRROR_RAW)
+
+    def test_mirror_mode_without_mirror_dir_falls_back_to_the_vault(self):
+        # chain said mirror but the mirror is gone (wiped state/, first run
+        # after an update) — never point readers at a missing dir.
+        self._set_mode("mirror")
+        self.assertEqual(config.effective_obsidian_raw(self.cfg), self.vault_raw)
+
+    def test_unset_obsidian_raw_returns_none(self):
+        self.cfg.obsidian_raw = ""
+        self.assertIsNone(config.effective_obsidian_raw(self.cfg))
+
+
 if __name__ == "__main__":
     unittest.main()

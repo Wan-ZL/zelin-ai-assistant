@@ -246,6 +246,27 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 ## 18. 定时任务归一（ingest 切换）
 install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 内脚本，并在链尾追加 `&& python -m act.radar --once`（cron 有 FDA，radar 可读 ~/Documents）。Screenpipe-Export.command 改为调 repo 脚本（主窗口"立即导出"同源）。
 
+2026-07-14 追加（add-only）：**vault-mirror 模式（claude TCC 身份隔离）**。事故：
+claude CLI 改为分版本安装（`~/.local/share/claude/versions/X.Y.Z`），macOS TCC
+按真实二进制路径记账 → 每次 CLI 升级都是新身份：GUI 每版重弹「访问 Documents」，
+cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）。契约：
+- **唯一触碰 vault 的身份** = `vault-sync-helper`（`mac/VaultSyncHelper.swift`，
+  build.sh 编进 app bundle `Contents/MacOS/`，与菜单栏 app 同 bundle id + 同
+  稳定签名证书）——用户在权限体检页「笔记库访问」行做**一次** GUI 授权，此后
+  跨 app / claude / python 升级永久有效；
+- 链序（crontab 行不变）：export 开头 courier `pull`（vault → 精确镜像
+  `state/vault-mirror/`，`--delete`；写 `state/vault_sync_mode` = mirror|direct）
+  → export 产物写镜像 inbox → claude 对镜像执行 ingest skill → 成功后 courier
+  `push`（全目录 `--update` 只增不删；inbox 删除走 **manifest**——pull 时记录
+  的文件、镜像中已消失、且 vault 侧 mtime 未变才删，处理期间用户丢进 vault 的
+  新文件绝不误删）；push 失败 → `state/vault-sync-push-pending` 标记，下轮
+  **先重推后拉取**（宁可重复处理，绝不丢产出），且当轮链以失败上报；
+- 读方（radar / weekly digest）走 `config.effective_obsidian_raw()`：mode 文件
+  = mirror 且镜像 raw 目录存在 → 读镜像，否则读真 vault；
+- **降级永远可用**：helper 缺失 / 未授权（exit 3）/ 非 mac → direct 模式 =
+  本节原有行为逐字不变；mirror 是升级，不是前置条件。附带：ingest 的 claude
+  调用加 watchdog（默认 7200s，`CLAUDE_MAX_SECONDS` 可调）。
+
 ## 19. 凭证与 secrets（跨组件契约，两侧逐字一致）
 
 - **SECRETS 目录** = `<AIASSISTANT_HOME>/config/secrets/`，目录权限 **0700**、文件权限 **0600**（App 设置窗口写入方与 `act/lib/secrets.write_secret` 均强制）。gitignore：`config/secrets/`。

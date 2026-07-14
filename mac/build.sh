@@ -114,6 +114,22 @@ swiftc -O "$SRC_DIR"/*.swift "$SHARED_DIR"/*.swift -o "$BIN" \
     ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"}
 echo "    built binary: $BIN"
 
+# --- compile vault-sync helper (claude TCC isolation, 2026-07-14) ---
+# Ships INSIDE the app bundle so it inherits the bundle's stable TCC identity:
+# the user grants Documents access once via the app (one GUI prompt), and this
+# courier reuses that grant from cron forever — claude/python/bash never touch
+# the vault again, so a claude CLI update can no longer re-prompt or EPERM.
+# Failure is non-fatal: the ingest chain falls back to legacy direct-vault mode.
+VAULTSYNC_SRC="$SCRIPT_DIR/VaultSyncHelper.swift"
+if [ -f "$VAULTSYNC_SRC" ]; then
+    echo "==> Compiling vault-sync-helper"
+    if swiftc -O "$VAULTSYNC_SRC" -o "$BUILD_DIR/vault-sync-helper" -framework Foundation; then
+        echo "    built binary: $BUILD_DIR/vault-sync-helper"
+    else
+        echo "WARN: vault-sync-helper compile failed — ingest keeps legacy direct-vault access."
+    fi
+fi
+
 # --- compile framegrab helper (§13: video → evenly spaced JPEG frames) ---
 # Failure here is non-fatal: Slack video capture falls back to ffmpeg.
 FRAMEGRAB_SRC="$SCRIPT_DIR/framegrab.swift"
@@ -134,6 +150,12 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN" "$APP_DIR/Contents/MacOS/$EXEC_NAME"
 cp "$PLIST" "$APP_DIR/Contents/Info.plist"
+# vault-sync courier rides in the bundle → same bundle id + signature = the
+# one TCC Documents grant the user gives the app covers it (incl. from cron).
+if [ -x "$BUILD_DIR/vault-sync-helper" ]; then
+    cp "$BUILD_DIR/vault-sync-helper" "$APP_DIR/Contents/MacOS/vault-sync-helper"
+    echo "    bundled vault-sync-helper"
+fi
 # version single source of truth: act/__init__.py (same extraction as
 # mac/package.sh). Stamp the STAGED plist only — the source Info.plist keeps
 # its values as a fallback for when the version cannot be read.
