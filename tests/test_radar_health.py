@@ -59,7 +59,7 @@ class ObsidianHealthBase(unittest.TestCase):
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n', encoding="utf-8")
 
     @staticmethod
     def _cleanup():
@@ -80,7 +80,7 @@ class ObsidianHealthBase(unittest.TestCase):
 class ObsidianHealthTestCase(ObsidianHealthBase):
     def test_feature_off_is_disabled(self):
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n'
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n'
             "features:\n  obsidian_radar: false\n", encoding="utf-8")
         radar.scan(runner=lambda t: self.fail("scanned while off"))
         self.assertEqual(_read_obsidian()["skip_reason"], "disabled")
@@ -93,7 +93,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
     def test_missing_dir_is_vault_missing(self):
         gone = Path(self.tmp.name) / "no-such-dir"
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{gone}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{gone.as_posix()}"\n', encoding="utf-8")
         radar.scan(runner=lambda t: self.fail("scanned a missing vault"))
         self.assertEqual(_read_obsidian()["skip_reason"], "vault_missing")
 

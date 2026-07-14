@@ -4,7 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p promo/build/scenes
-for s in captured initial approved running review done; do
+# 'done' is a demo SCENE NAME here, not the loop keyword — quoted so the
+# linter (SC1010) and any reader doing a double take both relax.
+for s in captured initial approved running review 'done'; do
   python3 scripts/demo_seed.py promo/build/seed-tmp --scene "$s" >/dev/null
   mv promo/build/seed-tmp/state/dashboard.json "promo/build/scenes/$s.json"
 done
