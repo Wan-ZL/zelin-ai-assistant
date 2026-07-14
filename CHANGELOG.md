@@ -25,6 +25,10 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.31.0] - 2026-07-14
+
 ### Changed
 
 - **Vault-mirror mode: the pipeline no longer touches ~/Documents — one
@@ -1109,7 +1113,12 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.28.1...v0.29.0
+[0.28.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.28.0...v0.28.1
+[0.28.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0
