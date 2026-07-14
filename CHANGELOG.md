@@ -55,7 +55,12 @@ other file needs editing. To cut a release:
   reserving the permissions wording for when Screen Recording is genuinely
   missing, and offers an "Install ffmpeg…" item when that is the diagnosis;
   the recording page's ffmpeg row pairs "Install ffmpeg" with an
-  "Installed — restart engine" retry.
+  "Installed — restart engine" retry. The engine spawn PATH now also covers
+  the common ffmpeg install dirs (`~/.local/bin`, Intel-brew
+  `/usr/local/bin`, MacPorts `/opt/local/bin`) so a present ffmpeg is always
+  found — the non-interactive login shell never sources `.zshrc`, which is
+  where those dirs usually get added (root-cause hardening from PR #42; the
+  precheck probes the same locations).
 
 ## [0.30.0] - 2026-07-13
 

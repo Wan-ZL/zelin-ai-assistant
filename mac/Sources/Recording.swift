@@ -60,7 +60,15 @@ enum ScreenpipeRecipe {
         // exec (not `nohup … &`): a GUI app's orphaned background jobs get
         // reaped by macOS (RunningBoard) before npx even writes a byte — the
         // engine must stay a direct child of the app, referenced by a Process.
-        return "export PATH=\"/opt/homebrew/bin:$PATH\"; "
+        // PATH must cover BOTH where npx lives (/opt/homebrew/bin) AND where
+        // ffmpeg may live — screenpipe shells out to ffmpeg to encode frames
+        // and, if it can't find one, tries (and often fails) to auto-download
+        // it, leaving recording silently dead. The login shell only sources
+        // .zprofile (never .zshrc, 例4b), so an ffmpeg outside
+        // /opt/homebrew/bin (e.g. ~/.local/bin, Intel-brew /usr/local/bin,
+        // MacPorts /opt/local/bin) was invisible. Cover the common install
+        // dirs so a present ffmpeg is always found (from PR #42).
+        return "export PATH=\"/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:/opt/local/bin:$PATH\"; "
             + "mkdir -p \"$HOME/.screenpipe\"; "
             + prep
             + "exec \(record) >> \"$HOME/.screenpipe/engine.log\" 2>&1"
@@ -520,9 +528,13 @@ final class RecordingController: ObservableObject {
     /// probes would race a shared cache, and a stale "missing" would refuse
     /// a user who JUST installed it. Blocking — background queue only.
     nonisolated static func ffmpegPresent() -> Bool {
+        // arms mirror ScreenpipeRecipe.startCommand's engine PATH — the
+        // precheck must never refuse a switch the engine could serve
         Shell.ok("ffmpeg -version >/dev/null 2>&1"
             + " || \"$HOME/.local/bin/ffmpeg\" -version >/dev/null 2>&1"
-            + " || /opt/homebrew/bin/ffmpeg -version >/dev/null 2>&1")
+            + " || /opt/homebrew/bin/ffmpeg -version >/dev/null 2>&1"
+            + " || /usr/local/bin/ffmpeg -version >/dev/null 2>&1"
+            + " || /opt/local/bin/ffmpeg -version >/dev/null 2>&1")
     }
 
     /// The capture db got a write in the last 5 min — recording is really on.
