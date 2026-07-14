@@ -78,6 +78,14 @@ FAILURES: dict = {
         "plain_en": "The recording engine stopped unexpectedly — click Restart engine; if it keeps happening, check the engine log lines below",
         "action_id": "restart_engine",
     },
+    # screenpipe needs ffmpeg to encode; missing/off-PATH ffmpeg silently kills
+    # recording. Actionable: install it (brew) — the app already broadens PATH to
+    # cover the common install dirs, so an installed ffmpeg is found on restart.
+    "engine_ffmpeg_missing": {
+        "plain_zh": "录制引擎找不到 ffmpeg（录屏编码要用它）——终端运行 `brew install ffmpeg`,再点「重启引擎」",
+        "plain_en": "The recording engine can't find ffmpeg (needed to encode the screen capture) — run `brew install ffmpeg` in Terminal, then Restart engine",
+        "action_id": "show_engine_log",
+    },
     # macOS ties the Screen Recording grant to the app's code signature —
     # an OS update or app reinstall changes it and silently revokes the grant.
     "screen_tcc_lost": {
@@ -146,6 +154,12 @@ _RULES: list = [
         r"connection (refused|reset|timed? ?out)|network is (down|unreachable)|"
         r"getaddrinfo|ENOTFOUND|ETIMEDOUT|ECONNRE|temporary failure in name",
         re.IGNORECASE)),
+    # screenpipe can't find ffmpeg (needed to encode frames) and its own
+    # auto-download failed — recording is dead until ffmpeg is installed /
+    # placed on the engine's PATH. Distinct, actionable ("brew install ffmpeg").
+    ("engine_ffmpeg_missing", re.compile(
+        r"ffmpeg not found|please install ffmpeg|failed to install ffmpeg",
+        re.IGNORECASE)),
     # npx cache-miss download banner (npm >= 7 prints the first line, the
     # interactive prompt the second). Ranked AFTER network_error on purpose:
     # a download that died on the network must not classify as "in progress".
@@ -192,6 +206,10 @@ def classify_engine_log(tail: Optional[str], npx_present: bool = True,
     text = _strip_app_markers(str(tail or ""))
     fid = classify(text)
     if fid == "node_missing":
+        return fid
+    # ffmpeg missing is the same verdict whether the engine is briefly alive or
+    # already dead — screenpipe exits without it, so surface it either way.
+    if fid == "engine_ffmpeg_missing":
         return fid
     if engine_alive:
         # while the npx process is alive, the download banner means exactly

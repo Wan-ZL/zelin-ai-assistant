@@ -60,7 +60,14 @@ enum ScreenpipeRecipe {
         // exec (not `nohup … &`): a GUI app's orphaned background jobs get
         // reaped by macOS (RunningBoard) before npx even writes a byte — the
         // engine must stay a direct child of the app, referenced by a Process.
-        return "export PATH=\"/opt/homebrew/bin:$PATH\"; "
+        // PATH must cover BOTH where npx lives (/opt/homebrew/bin) AND where
+        // ffmpeg may live — screenpipe shells out to ffmpeg to encode frames and,
+        // if it can't find it on PATH, tries (and often fails) to auto-download
+        // one, leaving recording silently dead. A GUI app inherits only a minimal
+        // PATH, so an ffmpeg installed outside /opt/homebrew/bin (e.g. ~/.local/bin,
+        // an Intel-brew /usr/local/bin, or MacPorts /opt/local/bin) was invisible.
+        // Cover all the common install dirs so a present ffmpeg is always found.
+        return "export PATH=\"/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:/opt/local/bin:$PATH\"; "
             + "mkdir -p \"$HOME/.screenpipe\"; "
             + prep
             + "exec \(record) >> \"$HOME/.screenpipe/engine.log\" 2>&1"
@@ -71,7 +78,7 @@ enum ScreenpipeRecipe {
 // act/lib/failures.classify_engine_log; keep the two in sync)
 
 /// Why the engine is down (or busy downloading). failureId ∈ the §25 catalog:
-/// node_missing | engine_npm_download | engine_crashed | engine_dead.
+/// node_missing | engine_npm_download | engine_ffmpeg_missing | engine_crashed | engine_dead.
 /// logTail is only populated for engine_crashed (the last real log lines —
 /// surfacing them verbatim is the whole point).
 struct EngineDiagnosis: Equatable {
@@ -408,6 +415,14 @@ final class RecordingController: ObservableObject {
                 return EngineDiagnosis(failureId: "engine_npm_download", logTail: "")
             }
             return nil
+        }
+        // ffmpeg missing/unreachable: screenpipe needs ffmpeg to encode frames;
+        // when it can't find one it prints "ffmpeg not found … please install
+        // ffmpeg" and exits, so recording is dead until ffmpeg is installed. Give
+        // this its own actionable classification rather than a generic crash.
+        if lower.contains("ffmpeg not found") || lower.contains("please install ffmpeg")
+            || lower.contains("failed to install ffmpeg") {
+            return EngineDiagnosis(failureId: "engine_ffmpeg_missing", logTail: tail)
         }
         return tail.isEmpty
             ? EngineDiagnosis(failureId: "engine_dead", logTail: "")

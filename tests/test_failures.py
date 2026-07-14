@@ -175,6 +175,22 @@ class EngineLogClassifyTestCase(unittest.TestCase):
                 "thread 'main' panicked at src/core.rs:42", engine_alive=False),
             "engine_crashed")
 
+    FFMPEG = ("ERROR screenpipe_core::ffmpeg: failed to install ffmpeg: No such "
+              "file or directory\nffmpeg not found and installation failed. "
+              "please install ffmpeg manually.")
+
+    def test_ffmpeg_missing_classified_specifically(self):
+        # real screenpipe log when ffmpeg isn't on the engine's PATH — must be
+        # its own actionable id, not a generic crash, whether alive or dead.
+        self.assertEqual(
+            failures.classify_engine_log(self.FFMPEG, engine_alive=False),
+            "engine_ffmpeg_missing")
+        self.assertEqual(
+            failures.classify_engine_log(self.FFMPEG, engine_alive=True),
+            "engine_ffmpeg_missing")
+        msg = failures.user_message("engine_ffmpeg_missing", lang="zh")
+        self.assertIn("ffmpeg", msg)
+
     def test_dead_download_banner_is_crashed_not_in_progress(self):
         self.assertEqual(
             failures.classify_engine_log(self.DOWNLOAD, engine_alive=False),

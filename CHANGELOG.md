@@ -25,7 +25,18 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **Recording silently dead when ffmpeg isn't on `/opt/homebrew/bin`.** screenpipe
+  shells out to ffmpeg to encode frames; the app spawned it with only
+  `/opt/homebrew/bin` on PATH, so an ffmpeg installed elsewhere (`~/.local/bin`,
+  Intel-brew `/usr/local/bin`, MacPorts `/opt/local/bin`) was invisible →
+  screenpipe tried (and failed) to auto-download one → recording never started,
+  with only a buried log line to show for it. The engine PATH now covers all the
+  common ffmpeg install dirs, and a new `engine_ffmpeg_missing` diagnosis tells a
+  user with no ffmpeg exactly what to do (`brew install ffmpeg`) instead of a
+  generic "engine crashed". (Swift `diagnoseEngine` + Python
+  `failures.classify_engine_log` kept in sync.)
 
 ## [0.30.0] - 2026-07-13
 
