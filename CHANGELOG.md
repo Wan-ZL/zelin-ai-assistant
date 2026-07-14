@@ -87,6 +87,22 @@ other file needs editing. To cut a release:
   found — the non-interactive login shell never sources `.zshrc`, which is
   where those dirs usually get added (root-cause hardening from PR #42; the
   precheck probes the same locations).
+- **A finished task can no longer sit in 运行中/需输入 forever after its
+  session goes quiet.** 2026-07-14 R-041: a chat-mode agent printed its
+  complete `FINAL DRAFT` and settled — but a background session never exits
+  on its own, so the roster reported "blocked / waiting for input" and the
+  board showed 需输入 for hours with the finished brief already in the
+  transcript; after the Mac slept, the session was purged from the roster
+  entirely, where the reconciler's only move was a resume (spawning a
+  confused duplicate of an already-finished job). The reconciler now probes
+  the transcript FIRST in both situations — blocked agents and
+  vanished-from-roster sessions — and a standalone `FINAL DRAFT` marker (the
+  chat-delivery contract's strong completion signal) promotes the card
+  straight to 待验收 with the harvested draft. A bare last-message summary
+  deliberately does NOT short-circuit anything (any dead session has last
+  words; only the explicit marker proves delivery), so the auto-resume path
+  for genuinely crashed sessions is unchanged. Transcript probes are
+  throttled to one per session per 2 minutes.
 
 ## [0.30.0] - 2026-07-13
 
