@@ -1491,8 +1491,12 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     if executor is None:
         return False
     now = time.monotonic()
-    last = _HARVEST_PROBE_AT.get(str(sid), 0.0)
-    if now - last < _HARVEST_PROBE_INTERVAL_S:
+    # None sentinel, NOT 0.0: monotonic() counts from boot, so on a freshly
+    # started machine `now - 0.0 < interval` is TRUE for the first minutes —
+    # a 0.0 default swallowed the very first probe (surfaced on CI runners,
+    # whose uptime is seconds; a just-rebooted Mac would hit it too).
+    last = _HARVEST_PROBE_AT.get(str(sid))
+    if last is not None and now - last < _HARVEST_PROBE_INTERVAL_S:
         return False
     _HARVEST_PROBE_AT[str(sid)] = now
     try:
