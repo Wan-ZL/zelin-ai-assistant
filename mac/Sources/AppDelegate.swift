@@ -736,10 +736,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // unchanged — writeInbox has no action whitelist, and applyAction carries
     // their optimistic echo (契约七). card_action analytics below covers them
     // automatically (契约八).
-    func submit(id: String, action: String, comment: String?) {
+    /// Returns true when the action reached the inbox — callers with extra
+    /// optimistic UI of their own (e.g. DebtRow's beginRaising) key on it.
+    @discardableResult
+    func submit(id: String, action: String, comment: String?) -> Bool {
         // wave 2 (契约2): the IO write must succeed BEFORE any optimistic UI —
         // on failure the card stays put and an alert explains why.
-        guard writeInbox(id: id, action: action, comment: comment) else { return }
+        guard writeInbox(id: id, action: action, comment: comment) else { return false }
         // 契约F: the action really reached the inbox — count it (failed writes
         // above already return and must not be counted). The comment text
         // (打回反馈/修改方向) is user-typed content — attached ONLY behind the
@@ -755,6 +758,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // instant local feedback — hide/echo/pin/comment policy is frozen in
         // DashboardStore.applyAction; this is its ONLY call site.
         store.applyAction(action, id: id)
+        return true
     }
 
     /// Returns false when the inbox file could not be written; the caller must
@@ -869,7 +873,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Quick capture (popover input): state/inbox/capture-<uuid>.json with
     /// {"action":"capture","text":…,"ts":ISO8601} — contract #4. A local grey
     /// spinner card covers the gap until actd surfaces the proposal.
-    /// Item 3: a leading /rec | /open | /lang runs as a command instead.
+    /// Item 3: a leading /rec | /open | /lang runs as a command instead —
+    /// TYPED input only; runCommands: false (the menu-bar icon drop) captures
+    /// such text verbatim: dragging a doc snippet that happens to start with
+    /// "/rec off" must never flip recording.
     /// Returns true when the text was consumed (capture written or command
     /// executed); false = unrecognized/malformed slash command OR the capture
     /// inbox write failed — the caller keeps the input (correction / retry;
@@ -877,8 +884,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 契约F `source` 词表冻结为 popover|kanban —— 无默认值，每个调用点必须
     /// 显式传词表内的值（状态栏图标拖放归入 popover：同属菜单栏入口）。
     @discardableResult
-    func submitCapture(_ text: String, source: String) -> Bool {
-        if SlashCommands.isCommand(text) {
+    func submitCapture(_ text: String, source: String, runCommands: Bool = true) -> Bool {
+        if runCommands && SlashCommands.isCommand(text) {
             let ok = SlashCommands.run(text, app: self)
             if ok { CaptureHistory.push(text) }   // item 5: commands count too
             return ok
@@ -1011,11 +1018,31 @@ private final class StatusDropView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let raw = sender.draggingPasteboard.string(forType: .string) else { return false }
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
+        guard !text.isEmpty, let app else { return false }
         // 契约F 词表只有 popover|kanban：状态栏图标拖放归入 popover（同一个
         // 菜单栏入口），避免打出词表外的 source 污染下游聚合。
-        app?.submitCapture(text, source: "popover")
-        return true
+        // runCommands: false — drop = capture intent; dragged text starting
+        // with "/rec …" is captured verbatim, never executed as a command.
+        if app.submitCapture(text, source: "popover", runCommands: false) {
+            return true
+        }
+        // The write failed and this entry point has no input field to keep
+        // the draft in — an accepted-looking drop would silently lose the
+        // text. Reject the drop (spring-back) and say so, honestly, once the
+        // drag session has ended (an alert mid-drag would wedge the session).
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = L("捕获未能写入", "Capture Could Not Be Written")
+                alert.informativeText = L(
+                    "拖放的文字写入 inbox 失败，这条捕获没有被记录，请重试。",
+                    "The dropped text could not be written to the inbox — this capture was NOT recorded. Please try again.")
+                alert.addButton(withTitle: L("好", "OK"))
+                alert.runModal()
+            }
+        }
+        return false
     }
 
     // clicks belong to the status button underneath — forward everything

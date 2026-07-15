@@ -1492,8 +1492,13 @@ struct DebtRow: View {
 
     @ViewBuilder private var actionButtons: some View {
         Button {
-            app.store.beginRaising(item.id, summary: item.displaySummary)
-            app.submit(id: item.id, action: "raise", comment: nil)
+            // the inbox write must succeed BEFORE any optimistic UI (wave-2
+            // contract): a failed submit already alerts "卡片保持原样" — it
+            // must not also leave a ghost 研究中 placeholder in the proposal
+            // lane, so beginRaising only runs after submit returns true.
+            if app.submit(id: item.id, action: "raise", comment: nil) {
+                app.store.beginRaising(item.id, summary: item.displaySummary)
+            }
         // "propose" 小写：与 iOS 按钮及 shared/Lanes.swift backlog 说明逐字一致
         } label: { Label(L("研究并提议", "Research & propose"), systemImage: "magnifyingglass") }
             .tint(.blue)
@@ -1767,25 +1772,16 @@ struct MergeSuggestionCard: View {
         }
     }
 
-    /// "R-xxx · 标题"；卡已不在 dashboard（如已并走）时只剩 id。
+    /// "R-xxx · 标题"；卡已不在 dashboard（如已并走）时只剩 id。标题解析走
+    /// store.cardTitle —— 全 lane 覆盖（含 潜在任务/debt：v0.21 起多选合并
+    /// 覆盖全部看板列），与 ForceMergeSheet 同源，两个 surface 永远一致。
     private func nameLine(_ id: String) -> String {
-        let t = cardTitle(id)
+        let t = app.store.cardTitle(id)
         return t == id ? id : "\(id) · \(t)"
     }
 
     private var involvedLine: String {
         suggestion.ids.map { nameLine($0) }.joined(separator: "  +  ")
-    }
-
-    /// 从当前 dashboard 解析卡片标题（多选只覆盖 待审批/运行中/待验收 三列，
-    /// completed 一并查以防状态在分析期间漂移）。
-    private func cardTitle(_ id: String) -> String {
-        guard let db = app.store.dashboard else { return id }
-        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.displaySummary }
-        if let r = db.review.first(where: { $0.id == id }) { return r.name }
-        if let t = (db.running + db.needs_input + db.completed)
-            .first(where: { $0.id == id }) { return t.name }
-        return id
     }
 }
 
