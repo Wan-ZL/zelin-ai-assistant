@@ -76,8 +76,8 @@ _INBOX_KEYS = ("id", "action", "comment", "text", "ids")
 # digest carry ``ids`` or nothing) are unaffected; only a PRESENT id is checked.
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
-_TOKEN_HEADER = "X-Webui-Token"
-_TOKEN_PLACEHOLDER = "__WEBUI_TOKEN__"
+_TOKEN_HEADER = "X-Webui-Token"  # nosec B105 - header NAME, not a secret
+_TOKEN_PLACEHOLDER = "__WEBUI_TOKEN__"  # nosec B105 - substitution placeholder, not a secret
 _DEFAULT_PORT = 8787
 _PORT_FALLBACKS = 10  # try _DEFAULT_PORT .. _DEFAULT_PORT+9, then an ephemeral port
 

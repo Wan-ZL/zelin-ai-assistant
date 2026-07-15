@@ -37,7 +37,7 @@ from act import radar
 from act.lib import analytics, config, health, registry, sanitize, secrets
 
 IMAP_HOST = "imap.gmail.com"
-DEFAULT_APP_PASSWORD_PATH = "~/Desktop/Keys/gmail-app-password.txt"
+DEFAULT_APP_PASSWORD_PATH = "~/Desktop/Keys/gmail-app-password.txt"  # nosec B105 - file PATH, not a secret
 STATE_FILE = "gmail_radar.json"        # {"last_uid": <int>} marker
 BODY_TRUNCATE = 2000
 

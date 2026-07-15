@@ -382,7 +382,9 @@ class HttpTransport(Transport):
 
     @staticmethod
     def _send(req: urllib.request.Request) -> bytes:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        # B310: URL is built from the https Supabase endpoint in the user's
+        # own cloud-sync config
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # nosec B310
             return resp.read()
 
     def _url(self, table: str, params: Optional[dict] = None) -> str:

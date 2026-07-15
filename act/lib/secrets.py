@@ -28,8 +28,8 @@ from act.lib import config
 # Directory + canonical file names (CONTRACT §19 — must match the Swift app).
 SECRETS_DIR: Path = config.HOME / "config" / "secrets"
 
-SLACK_TOKEN_FILE = "slack-user-token.txt"
-GMAIL_APP_PASSWORD_FILE = "gmail-app-password.txt"
+SLACK_TOKEN_FILE = "slack-user-token.txt"  # nosec B105 - file NAME, not a secret
+GMAIL_APP_PASSWORD_FILE = "gmail-app-password.txt"  # nosec B105 - file NAME, not a secret
 ANTHROPIC_API_KEY_FILE = "anthropic-api-key.txt"
 
 _DIR_MODE = 0o700

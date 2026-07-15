@@ -109,7 +109,7 @@ def open_path(path, runner: Optional[Runner] = None) -> bool:
     p = str(path)
     if sys.platform.startswith("win"):
         try:
-            os.startfile(p)  # noqa: S606 - the whole point of this function
+            os.startfile(p)  # noqa: S606 # nosec B606 - the whole point of this function
             return True
         except Exception:  # noqa: BLE001
             return False

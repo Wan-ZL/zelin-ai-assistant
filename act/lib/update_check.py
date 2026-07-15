@@ -147,7 +147,8 @@ def _default_fetch(etag: Optional[str]):
         headers["If-None-Match"] = etag
     req = urllib.request.Request(RELEASES_LATEST_URL, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        # B310: RELEASES_LATEST_URL is a hardcoded https constant
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # nosec B310
             data = json.loads(resp.read().decode("utf-8"))
             return resp.status, resp.headers.get("ETag"), data
     except urllib.error.HTTPError as e:

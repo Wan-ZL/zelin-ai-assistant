@@ -36,9 +36,9 @@ from typing import Dict, List
 UNIT_DIR = Path(__file__).resolve().parent.parent / "systemd"
 
 # The placeholder tokens, in one place so template + renderer + tests agree.
-TOKEN_PYTHON = "@PYTHON@"
-TOKEN_REPO_ROOT = "@REPO_ROOT@"
-TOKEN_CLAUDE_BIN_DIR = "@CLAUDE_BIN_DIR@"
+TOKEN_PYTHON = "@PYTHON@"  # nosec B105 - template placeholder, not a secret
+TOKEN_REPO_ROOT = "@REPO_ROOT@"  # nosec B105 - template placeholder, not a secret
+TOKEN_CLAUDE_BIN_DIR = "@CLAUDE_BIN_DIR@"  # nosec B105 - template placeholder, not a secret
 
 _TOKENS = (TOKEN_PYTHON, TOKEN_REPO_ROOT, TOKEN_CLAUDE_BIN_DIR)
 
