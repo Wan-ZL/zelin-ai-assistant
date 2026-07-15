@@ -124,6 +124,23 @@ if let d = decodeDashboard(board) {
     check(m.title(of: "ZZZ") == "ZZZ", "title(of:) off-board id → bare id")
 } else { check(false, "decode", "board fixture must decode") }
 
+// ---- 7. device_label (§35 v0.35): optional top-level rename-without-rescan ----
+// The Mac's user-set device name rides the board payload; old actd payloads
+// lack the key and must keep decoding (nil), and junk must not fail the decode.
+print("[7] device_label decode:")
+if let d = decodeDashboard(#"{"device_label": "书房的 Mac mini", "counts": {"running": 1}}"#) {
+    check(d.device_label == "书房的 Mac mini", "present → decoded",
+          "got \(String(describing: d.device_label))")
+    check(d.counts.running == 1, "sibling fields unaffected")
+    check(d.decodeDrops.isEmpty, "device_label is not a drop", "got \(d.decodeDrops)")
+} else { check(false, "decode", "device_label payload must decode") }
+if let d = decodeDashboard("{}") {
+    check(d.device_label == nil, "absent → nil (old actd payloads)")
+} else { check(false, "decode", "empty payload must decode") }
+if let d = decodeDashboard(#"{"device_label": 42}"#) {
+    check(d.device_label == nil, "non-string → nil, payload still decodes")
+} else { check(false, "decode", "junk device_label must not fail the payload") }
+
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))
     exit(1)

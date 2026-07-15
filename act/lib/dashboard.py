@@ -387,6 +387,21 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
+def _device_label() -> Optional[str]:
+    """This Mac's user-facing device name — the pairing label the owner set in
+    设置 · 同步/配对 (``state/sync.json``, the same value the QR carries).
+    None when unpaired / unlabeled / unreadable; the dashboard key is then
+    omitted entirely (add-only: old apps ignore it, old payloads lack it)."""
+    try:
+        cfg = json.loads((config.STATE_DIR / "sync.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(cfg, dict):
+        return None
+    label = str(cfg.get("label") or "").strip()
+    return label or None
+
+
 def build_dashboard(
     reqs: Optional[list[Requirement]] = None,
     agents: Optional[list[dict]] = None,
@@ -744,7 +759,7 @@ def build_dashboard(
     archived_rows.sort(key=lambda a: str(a.get("archived_at") or ""), reverse=True)
     del archived_rows[ARCHIVED_CAP:]
 
-    return {
+    dash = {
         "generated_at": _iso_now(),
         "counts": {
             "needs_approval": len(needs_approval),
@@ -768,6 +783,13 @@ def build_dashboard(
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),
     }
+    # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
+    # paired phone adopt a Mac rename from the board payload without re-scanning
+    # the QR. Omitted (not null) when unpaired / unlabeled.
+    label = _device_label()
+    if label:
+        dash["device_label"] = label
+    return dash
 
 
 def _json_default(o):

@@ -1143,3 +1143,20 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   `shared/InboxAction.capture(text:mode:)`（additive key，sortedKeys 编码不变）
   经 syncd 通用透传落 actd inbox。
 - **webui**：本期不加运行中输入框（web 端 capture 仍只有提案路径）。
+
+## 35. v0.35.0 设备名称（add-only）
+
+- **`dashboard.json` 新增可选顶层 `device_label`**（§2 的兄弟字段，同
+  `update_available` 的加法约定）：这台 Mac 的用户自定义设备名，取自
+  `state/sync.json` 的 `label`（与配对二维码携带的 label 同源）。未配对 / 无
+  label / 文件不可读时**整个键缺失**（不是 null）。旧 app 忽略该键
+  （`decodeIfPresent`），旧 payload 照常解码。
+- **Mac 设置页提供可编辑的「设备名称」输入框**（设置 · 同步/配对；默认 = 系统
+  电脑名，≤64 字符）。提交即以 `--pair --label <新名>` 重跑既有配对路径——
+  `init_channel` 幂等，channel_id/密钥/epoch 稳定，仅二维码尾部 label 字节与
+  `state/sync.json` 变化，二维码即时重渲染。label 解析顺序不变（§33）：显式
+  `--label` → `state/sync.json` 既有 label → 「这台 Mac」。
+- **已配对手机无需重新扫码**：iOS 解码看板后，若 `device_label` 非空且与该
+  channel 本地 label 不同，更新内存 + Keychain 中的 label（改名经由既有 E2E
+  看板通道送达；服务器 `channels.label_enc` 仍是 INSERT-only 死角，不参与）。
+  重新扫码路径不变（`addChannel` 照旧覆盖 label）。
