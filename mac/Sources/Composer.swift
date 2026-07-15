@@ -1,4 +1,6 @@
-// Composer.swift — KanbanComposer（待审批列顶的常驻折叠捕获行）
+// Composer.swift — KanbanComposer（待审批列顶的常驻折叠捕获行；v0.34 起
+// 运行中列顶 + popover 运行中区还各驻一个 mode=.run 变体——同一行为，提交
+// 带 mode:"run" 直接开跑，跳过提案闸门）
 //
 // 折叠态：一行「＋ 一句话，AI 来研究并提案…」；点击或 ⌘L 路径发出的
 // .focusCaptureField 通知就地展开为多行输入区（自动增高，上限约 5 行）。
@@ -16,8 +18,20 @@ import AppKit
 import SwiftUI
 import Foundation
 
+/// Which slot a composer feeds (v0.34 dual input, CONTRACT §34):
+/// .propose = today's capture (radar triage → proposal card, human approves);
+/// .run = direct-run — the capture file carries mode:"run" and actd queues it
+/// straight for dispatch, skipping the proposal/cost preview.
+enum ComposerMode {
+    case propose, run
+}
+
 struct KanbanComposer: View {
     unowned let app: AppDelegate
+    // v0.34: the 运行中 lane hosts a .run composer (board column top + the
+    // popover's Running section, which passes source "popover").
+    var mode: ComposerMode = .propose
+    var source: String = "kanban"   // 契约F capture_submit vocab: popover|kanban
     // observe the UI language so placeholder/hints re-render on switch
     @ObservedObject private var i18n = LanguageStore.shared
     @State private var expanded = false
@@ -29,7 +43,9 @@ struct KanbanComposer: View {
     @FocusState private var focused: Bool
 
     private var placeholder: String {
-        L("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")
+        mode == .run
+            ? L("一句话，直接开跑（跳过提案）…", "One line — run it now (skips proposal)…")
+            : L("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")
     }
 
     var body: some View {
@@ -44,9 +60,11 @@ struct KanbanComposer: View {
         // the popover field takes it; otherwise main window + this composer).
         // The notification is global: when the popover is open its field owns
         // the caret — this composer must NOT also expand invisibly, steal
-        // focus, or log a spurious composer_open.
+        // focus, or log a spurious composer_open. ⌘L stays a PROPOSE-only
+        // affordance: the run composer never answers it (two composers
+        // expanding on one hotkey would race for focus).
         .onReceive(NotificationCenter.default.publisher(for: .focusCaptureField)) { _ in
-            guard !app.popoverIsShown else { return }
+            guard mode == .propose, !app.popoverIsShown else { return }
             expand(via: "hotkey")
         }
     }
@@ -73,7 +91,10 @@ struct KanbanComposer: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(L("快速捕获（⌘L）", "Quick capture (⌘L)"))
+        .help(mode == .run
+              ? L("直接开跑：跳过提案与费用预估，成果仍进「待验收」",
+                  "Runs now — skips the proposal & cost preview; the result still lands in Review")
+              : L("快速捕获（⌘L）", "Quick capture (⌘L)"))
     }
 
     // expanded: auto-growing multi-line input (~5 lines max) + send arrow
@@ -142,8 +163,11 @@ struct KanbanComposer: View {
         DispatchQueue.main.async { focused = true }
         // 契约F trigger 词表冻结为 user|auto：点击和热键都是用户手势 → "user"；
         // 入口细分（click|hotkey）记在词表外的 via 字段，不占用 trigger。
+        // v0.34 add-only field: mode:"run" marks the direct-run composer.
         Analytics.firstReach("composer")
-        Analytics.log("composer_open", fields: ["trigger": "user", "via": via])
+        var fields: [String: Any] = ["trigger": "user", "via": via]
+        if mode == .run { fields["mode"] = "run" }
+        Analytics.log("composer_open", fields: fields)
     }
 
     private func collapse() {
@@ -156,7 +180,7 @@ struct KanbanComposer: View {
         guard !t.isEmpty else { return }
         // 契约F: submitCapture 内部按 source 打 capture_submit（且 slash
         // 命令不计入 capture），这里只传 source，不再重复打点。
-        if app.submitCapture(t, source: "kanban") {
+        if app.submitCapture(t, source: source, directRun: mode == .run) {
             text = ""
             slashError = nil
             historyIndex = nil

@@ -509,9 +509,11 @@ struct Dashboard: Decodable {
 
 // quick-capture placeholder: shown as a grey spinner card until a matching
 // needs_approval card appears (title carries the first 20 chars of the text)
-// or 180 s pass.
+// or 180 s pass. v0.34: `run` marks a direct-run capture (mode:"run") — the
+// placeholder lives in the 运行中 lane instead and clears against running rows.
 struct CapturePending {
     let id: String
     let text: String
     let created: Date
+    var run: Bool = false
 }

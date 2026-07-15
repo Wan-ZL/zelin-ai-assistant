@@ -883,8 +883,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// SlashCommands.lastErrorLine distinguishes IO errors for commands).
     /// 契约F `source` 词表冻结为 popover|kanban —— 无默认值，每个调用点必须
     /// 显式传词表内的值（状态栏图标拖放归入 popover：同属菜单栏入口）。
+    /// v0.34 `directRun`: the 运行中 lane's second input — the capture file
+    /// carries `mode:"run"` (CONTRACT §34) and actd queues it straight for
+    /// dispatch, skipping the proposal gate; the placeholder echoes in the
+    /// running lane instead.
     @discardableResult
-    func submitCapture(_ text: String, source: String, runCommands: Bool = true) -> Bool {
+    func submitCapture(_ text: String, source: String, runCommands: Bool = true,
+                       directRun: Bool = false) -> Bool {
         if runCommands && SlashCommands.isCommand(text) {
             let ok = SlashCommands.run(text, app: self)
             if ok { CaptureHistory.push(text) }   // item 5: commands count too
@@ -895,19 +900,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try fm.createDirectory(atPath: AppPaths.inboxDir,
                                    withIntermediateDirectories: true)
             let ts = ISO8601DateFormatter().string(from: Date())
-            let dict: [String: Any] = ["action": "capture", "text": text, "ts": ts]
+            var dict: [String: Any] = ["action": "capture", "text": text, "ts": ts]
+            if directRun { dict["mode"] = "run" }
             let data = try JSONSerialization.data(withJSONObject: dict,
                                                   options: [.prettyPrinted, .sortedKeys])
             let path = AppPaths.inboxDir + "/capture-" + UUID().uuidString + ".json"
             try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            store.beginCapture(text)
+            store.beginCapture(text, run: directRun)
             CaptureHistory.push(text)   // item 5
             // 契约F: renamed from "quick_capture"; source 词表 = popover|kanban.
             // chars only — the capture TEXT is recorded python-side
             // (inbox_capture, capture_input-gated), never doubled here.
+            // v0.34 add-only field: mode:"run" marks a direct-run submit.
             Analytics.firstReach("capture")
-            Analytics.log("capture_submit",
-                          fields: ["source": source, "chars": text.count])
+            var fields: [String: Any] = ["source": source, "chars": text.count]
+            if directRun { fields["mode"] = "run" }
+            Analytics.log("capture_submit", fields: fields)
         } catch {
             // wave 2: surface the IO failure — the caller keeps the input and
             // shows 提交失败 (bucket A's non-command false branch).

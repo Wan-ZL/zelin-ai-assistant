@@ -578,6 +578,46 @@ struct PendingEchoRow: View {
     }
 }
 
+// MARK: - RunCapturePendingRow — grey queued placeholder for a direct-run
+// capture (v0.34, mode:"run") at the top of the 运行中 lane, until the backend
+// surfaces the matching queued/running card (Store clears it on match; the
+// 180 s sweep gives up with an honest orange notice). Mirrors the proposal
+// lane's processing placeholder, incl. the P1-4 honest stalled state.
+
+struct RunCapturePendingRow: View {
+    let pending: CapturePending
+    unowned let app: AppDelegate
+
+    var body: some View {
+        let stalled = app.store.pipelineHealth != .ok
+        CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, pending: true) {
+            HStack(spacing: 10) {
+                if stalled {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pending.text)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(stalled
+                         ? L("已保存到队列，pipeline 启动后直接开跑",
+                             "Saved to the queue — runs once the pipeline is up")
+                         : L("已提交，直接开跑（跳过提案），排队派发中…",
+                             "Submitted — running it now (skipped proposal), queued for dispatch…"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+}
+
 // MARK: - NoticeRow — placeholder-timeout strip (capture = yellow, raise =
 // orange) or positive info strip (info = green ✓, e.g. 建议上报回执)
 
