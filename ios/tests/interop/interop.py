@@ -24,6 +24,13 @@ from act.lib import e2e
 B = lambda b: base64.b64encode(bytes(b)).decode("ascii")  # noqa: E731
 U = base64.b64decode
 
+# Vacuous-pass canaries: emit() must write exactly these many cases and
+# verify() refuses to bless any other number of Swift-encrypted blobs — a
+# renamed fixture key or emptied list must fail LOUDLY, never pass with zero
+# cases. Update these alongside the fixture lists below.
+N_DECRYPT_CASES = 4
+N_ENCRYPT_SPECS = 4
+
 _K = bytes(range(1, 33))                      # deterministic 32-byte key
 _WS = bytes(range(32))                         # deterministic 32-byte write_secret
 _DEV = "11111111-1111-4111-8111-111111111111"
@@ -76,6 +83,9 @@ def emit(path: str) -> None:
              "plaintext": B("iPhone 15".encode())},
         ],
     }
+    if len(doc["decrypt_cases"]) != N_DECRYPT_CASES or len(doc["encrypt_specs"]) != N_ENCRYPT_SPECS:
+        sys.exit(f"emit: fixture drift — expected {N_DECRYPT_CASES} decrypt cases + "
+                 f"{N_ENCRYPT_SPECS} encrypt specs; update the N_* canaries with the lists")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False, indent=2)
     print(f"emit: wrote {len(doc['decrypt_cases'])} decrypt cases + "
@@ -110,7 +120,16 @@ def verify(path: str) -> int:
         else:
             print(f"  FAIL channel_pairing: parsed fields mismatch: {p}")
             ok = False
-    for i, c in enumerate(doc["encrypted"]):
+    # count canary: an absent key or short list means the Swift side silently
+    # tested fewer blobs than emit() requested — that must fail, not vacuously pass.
+    enc = doc.get("encrypted")
+    if not isinstance(enc, list):
+        print(f"  FAIL encrypted: key missing/not a list in Swift output ({type(enc).__name__})")
+        ok, enc = False, []
+    elif len(enc) != N_ENCRYPT_SPECS:
+        print(f"  FAIL encrypted: expected exactly {N_ENCRYPT_SPECS} Swift-encrypted blobs, got {len(enc)}")
+        ok = False
+    for i, c in enumerate(enc):
         k, ep, dev = U(c["k"]), int(c["epoch"]), c["device_id"]
         blob, want = U(c["blob"]), U(c["plaintext"])
         try:
