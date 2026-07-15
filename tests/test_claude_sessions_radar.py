@@ -539,6 +539,16 @@ class ClaudeSessionsRadarTest(unittest.TestCase):
         self.assertEqual(actd.process_inbox(), 1)
         self.assertEqual(registry.load_all(), [])
 
+    def test_reraised_session_is_still_our_own_work(self):
+        # review 2026-07-15: registry.reraise_or_followup archives the
+        # finished round's session as reraised_session_id — the bulk-import
+        # exclusion set must cover it, or a re-raised card's delivered
+        # session comes back as a duplicate "new" card.
+        registry.save(registry.Requirement(
+            id="R-950", title="re-raised card", status="card_sent",
+            execution={"reraised_session_id": "sess-rr01"}))
+        self.assertIn("sess-rr01", rcs._registry_session_ids())
+
 
 if __name__ == "__main__":
     unittest.main()
