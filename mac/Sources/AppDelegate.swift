@@ -110,6 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
+        // v0.36 实时字幕: captions were on at last quit → bring the overlay
+        // back (independent of recordingMode/consent — it has its own TCC
+        // prompts and starts nothing unless the user enabled it before).
+        LiveCaptionsController.shared.restoreOnLaunch()
+
         // item 1: Shift+Return = newline in the SwiftUI capture fields (their
         // backing NSTextView is the window's field editor; isFieldEditor also
         // rules out the NSAlert comment editor, which has its own delegate).

@@ -22,14 +22,17 @@
   或 `claude --bg`）。唯一绕过 CLI 的直连是 App 的凭证验证 probe（GET
   `api.anthropic.com/v1/models`）——只携带你的 key 验证其有效性，不含任何内容数据。
 - Mac app 本身（`mac/Sources/`）的核心数据交互是本地的：读 `state/dashboard.json`、写
-  `state/inbox/`（见 `docs/CONTRACT.md` §2/§3）。它会发起的网络请求只有三类，都不携带
-  内容数据：**凭证验证**（保存或点「验证」时——Anthropic key → GET
+  `state/inbox/`（见 `docs/CONTRACT.md` §2/§3）。它会发起的网络请求有四类，前三类
+  都不携带内容数据：**凭证验证**（保存或点「验证」时——Anthropic key → GET
   `api.anthropic.com/v1/models`；Slack token → POST `slack.com/api/auth.test`；Gmail
   app password → 经 runtime python 做一次真实 IMAP LOGIN，`mac/Sources/Settings.swift`
   `KeyProbe`）；**更新检查**（GET `api.github.com` releases——由 actd 的 python 进程发出
   而非 App 进程，见第 10 条）；以及以 `npx screenpipe@0.3.349` 拉起录制引擎
   （`mac/Sources/Recording.swift`）——首次运行时 npx 会从 npm registry **下载**引擎包
-  （进来的流量，不带出你的数据）。
+  （进来的流量，不带出你的数据；macOS 26 的 Apple 本地听写引擎首次启用时同样会
+  **下载**语音模型，也是入向流量）。第四类是 v0.36 的**实时字幕**：默认关、需要
+  你自己的火山引擎 key，开启后音频/字幕**内容**直连你 key 对应的火山端点——完整
+  账目见 Egress 清单第 15 条。
 
 ## Egress 清单：什么数据、何时、离开你的机器
 
@@ -229,6 +232,27 @@
   本地永久留档 `state/feedback/<uuid>.json`（不删）。
 - **关闭**：不点「提建议」即不触发；fork 用户设 `telemetry.supabase_url: ""` 后
   无处可发——报告只留本地（`uploaded:false`）。
+
+### 15. 实时字幕（Live Captions）→ 火山引擎（**默认关，BYO-key**，v0.36）
+
+- **触发**：只在你打开菜单栏「实时字幕」**且**在设置里保存了自己的火山引擎
+  key 之后（`captions.*`，CONTRACT §36）。App **不内置任何 key**：没有 key 时
+  「豆包」引擎不可选（macOS 26 的 Apple **本地**引擎不联网，不在本清单内）。
+- **Payload（两条流，都是内容数据）**：
+  - **原始音频**（麦克风 PCM，开启系统声音时还含系统音频）→ 流式发往
+    `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`（豆包流式
+    ASR，`mac/Sources/LiveCaptions.swift`）。字幕开着=音频持续外发；暂停即
+    真停采集并断连（不采不计费）。
+  - **定稿字幕句子**（文本）→ `https://ark.cn-beijing.volces.com/api/v3/chat/completions`
+    （可选的 Ark 翻译，需单独保存 Ark key；不开翻译不发）。
+- **信任边界**：两条流都发往**你自己 key 对应的火山引擎账户**（计费也在你的
+  账户），不经过本产品维护者的任何服务器。key 存 `config/secrets/volcano-*.txt`
+  （0600，App-only——Python/cron 永不读，CONTRACT §36）。
+- **例外说明**：这是 Mac app 主进程**唯一**的内容级网络出境（上方信任模型段
+  的"三类不携带内容"随 v0.36 增补此第四类）——进程内实时采音频决定了 ASR
+  连接无法外移到 python 管线。
+- **关闭**：字幕开关即断流；删掉 key 则引擎不可选。与 screenpipe 录制引擎
+  完全独立（各自采音频，互不影响）。
 
 ## 什么永不离开你的 Mac
 

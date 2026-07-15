@@ -468,6 +468,10 @@ enum SecretsIO {
     static let slackFile = "slack-user-token.txt"
     static let gmailFile = "gmail-app-password.txt"
     static let anthropicFile = "anthropic-api-key.txt"
+    // v0.36 实时字幕 BYO keys (CONTRACT §36) — app-only: the Python side
+    // never reads these two.
+    static let volcanoSpeechFile = "volcano-speech-key.txt"
+    static let volcanoArkFile = "volcano-ark-key.txt"
 
     static func path(_ name: String) -> String { dir + "/" + name }
 
@@ -480,6 +484,14 @@ enum SecretsIO {
     }
 
     static func hasSecret(_ name: String) -> Bool { nonEmptyFile(path(name)) }
+
+    /// Trimmed secret content, nil when missing/empty.
+    static func read(_ name: String) -> String? {
+        guard let raw = try? String(contentsOfFile: path(name), encoding: .utf8)
+        else { return nil }
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
+    }
 
     /// Write one token (single line + trailing \n). Directory 0700, file 0600.
     static func save(_ name: String, token: String) throws {

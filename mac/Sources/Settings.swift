@@ -332,6 +332,10 @@ struct SettingsFormView: View {
                 keywords: "录制 recording 默认录制模式 default recording mode 关 off 仅屏幕 screen only 屏幕音频 screen audio screenpipe 持续录制",
                 anchor: nil, content: AnyView(recordingGroup)),
             SettingsSectionDescriptor(
+                id: "liveCaptions", titleZh: "实时字幕", titleEn: "Live captions",
+                keywords: "实时字幕 live captions 字幕 subtitles 悬浮窗 overlay 歌词 语音识别 speech asr 豆包 doubao 火山 volcano ark 翻译 translation 同传 中英 麦克风 microphone 系统声音 system audio apple 本地 on-device speechanalyzer 字号 font 不透明度 opacity api key",
+                anchor: "live_captions", content: AnyView(LiveCaptionsSettingsSection())),
+            SettingsSectionDescriptor(
                 id: "obsidian", titleZh: "笔记库", titleEn: "Notes vault",
                 keywords: "笔记库 notes vault obsidian vault 位置 location 雷达 radar 待办 unprocessed raw change-summary wiki 管线目录 pipeline",
                 anchor: nil, content: AnyView(obsidianGroup)),

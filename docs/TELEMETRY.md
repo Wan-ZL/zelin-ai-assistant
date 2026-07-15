@@ -90,6 +90,18 @@ truth，上传只读不改不删。
 > 开关与首启 consent 门限制（点发送即同意；fork 仍可用 `supabase_url: ""` 硬关）。
 > 详见 [`docs/PRIVACY.md`](PRIVACY.md) 第 16 条。
 
+**v0.36 新增行为事件**（实时字幕；全部元数据、两档都上传；一并列全以便审计）：
+
+| 事件 / 字段 | 内容 |
+|-------------|------|
+| `captions_toggle{on,engine,source}` | 字幕开/关 + 所选引擎（doubao/apple）与音源（mic/system/both）——**绝不含音频或字幕文本** |
+| `captions_autostart` | App 启动时按记住的偏好自动恢复字幕 |
+| `feature_first_reach{feature:"live_captions"}` | 本机第一次打开实时字幕 |
+
+> 字幕的**内容**（音频流、识别文本、翻译文本）走的是你自己 key 的火山引擎直连
+> （PRIVACY.md Egress 清单第 15 条），与 telemetry 通道完全无关——telemetry 只记
+> 上表的开关元数据。
+
 **历史事件**：`meeting_action_items`（会后清单生成，带 `outcome`）——该功能已在
 v0.14 从产品移除（发射端不复存在），维护者项目中已上传的历史数据仍然存在；
 字段语义同上表，仅作解读旧数据用。

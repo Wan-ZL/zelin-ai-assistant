@@ -109,8 +109,11 @@ echo "==> Compiling $SRC_DIR/*.swift + $SHARED_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
 # canImport(Sparkle) is false when the -F/-framework flags aren't passed, so the
 # Sparkle code compiles out cleanly with no extra -D flag.
+# AVFoundation + ScreenCaptureKit: 实时字幕 in-process audio capture
+# (LiveCaptions.swift); Speech (macOS 26 SpeechAnalyzer) auto-links on import.
 swiftc -O "$SRC_DIR"/*.swift "$SHARED_DIR"/*.swift -o "$BIN" \
     -framework AppKit -framework SwiftUI -framework Foundation \
+    -framework AVFoundation -framework ScreenCaptureKit \
     ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"}
 echo "    built binary: $BIN"
 

@@ -81,6 +81,60 @@ other file needs editing. To cut a release:
   memory and Keychain. Old apps ignore the key, old payloads still decode, and
   re-scanning the QR keeps working exactly as before.
 
+## [0.36.0] - 2026-07-15
+
+### Added
+
+- **实时字幕 / Live captions (Mac)** — a lyrics-style, always-on-top subtitle
+  overlay with real-time speech-to-text and optional zh↔en translation.
+  Toggle it from the menu-bar 录制 menu or 设置 → 实时字幕; the overlay is a
+  non-activating floating panel (draggable, resizable, joins every Space and
+  full-screen app, never steals focus), showing the live partial line under
+  the last finalized sentence. **BYO-key model: the app ships no API key and
+  only *supports* the feature — you bring your own.**
+  - **Engines** (设置 picker, default 自动): 豆包流式语音识别 2.0 over
+    WebSocket (needs your own 火山引擎 speech API key — personal accounts
+    qualify, ≈ ¥1/hour with 20 free hours; best zh/en code-switching and
+    punctuation), or **Apple on-device** SpeechAnalyzer — free and fully
+    offline but **macOS 26+ only** and single-language (中文 or English,
+    picked in settings). 自动 = Doubao when a key is saved, otherwise Apple.
+  - **Audio sources**: microphone, system audio (via ScreenCaptureKit — rides
+    the existing Screen Recording grant), or both mixed (default). The mic
+    prompts for its own permission on first enable. Capture is in-process and
+    fully independent of the screenpipe recording engine and its modes.
+  - **Optional translation** (Doubao engine only): finalized sentences stream
+    through Ark `doubao-seed-1-6-flash` (needs a **second** key from the Ark
+    console; usually < ¥0.1 per captioned hour) into a 原文小字 + 译文大字
+    pair. Direction 自动/中→英/英→中. The Apple engine is captions-only.
+  - Both keys live in local `config/secrets/` (0600) next to the existing
+    secrets; only the app reads them — never Python/cron. Caption text never
+    leaves this Mac except to your own ASR/translation endpoints, and never
+    appears in telemetry.
+  - Honest failure surfaces throughout: invalid/unactivated key, missing
+    permission per source, engine unavailable on this macOS — each states
+    what is missing and where to fix it, with automatic reconnect + backoff
+    for transient network drops. A fatal engine failure stops ALL capture
+    (mic/screen indicators go dark) while the overlay keeps the reason
+    visible and the menu item annotates itself instead of a checkmark.
+  - Pause (overlay hover button) fully stops capture and the engine
+    connection — nothing is captured or billed while paused; the last lines
+    stay on screen and resume rebuilds the pipeline. Hard privacy invariant
+    throughout: audio capture only ever runs while captions are enabled and
+    the overlay is visible (every async completion re-validates ownership,
+    so a toggle-off can never leave an orphaned mic tap or screen-capture
+    stream behind).
+  - New swiftc test gate `ios/tests/captions/run.sh` (wired into CI): the
+    hand-rolled Doubao binary wire framing (byte-exact vectors), gzip payload
+    decode, definite/partial dedup, the 2-line roll-up reducer, the async
+    ownership gate, pcm mixing, and the paused-status precedence.
+
+### Known limitations
+
+- The Apple on-device engine requires macOS 26+; on older systems only the
+  Doubao engine (with your key) is available.
+- Translation requires the separate Ark key and the Doubao engine; audio/UI
+  capture paths are manually tested (they cannot run headlessly in CI).
+
 ## [0.33.1] - 2026-07-15
 
 ### Fixed
@@ -1313,6 +1367,9 @@ ingest pipeline (screenpipe → headless claude → Obsidian), the act pipeline
 SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
+
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD
 [0.35.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.35.0
