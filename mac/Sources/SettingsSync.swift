@@ -67,9 +67,14 @@ final class SyncSettingsModel: ObservableObject {
             pair(mode: .refresh)   // idempotent: loads existing secrets, stable QR
         } else {
             enabled = false
-            // Prefill the (not yet visible) name field so a first-time enable
-            // pairs under the Mac's computer name instead of 「这台 Mac」.
-            label = Self.defaultDeviceName
+            // A previous pairing's name survives disable() (mode=off keeps
+            // sync.json), so prefill the stored name — re-enabling must keep
+            // a custom name, never reset it. Only a never-named Mac gets the
+            // computer-name default.
+            let stored = (cfg["label"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            savedLabel = stored
+            label = stored.isEmpty ? Self.defaultDeviceName : stored
         }
     }
 
@@ -78,10 +83,14 @@ final class SyncSettingsModel: ObservableObject {
     func setEnabled(_ on: Bool) {
         guard !busy else { return }
         if on {
-            // Pair under the name field's current value (prefilled with the
-            // computer name when never customized); empty → syncd resolves.
+            // Pass an explicit label only on FIRST pair (no stored name yet):
+            // the field then holds the computer-name default. When a stored
+            // name exists, pass nothing — the §33 resolution chain keeps
+            // sync.json's, so re-enabling never clobbers a custom name and an
+            // uncommitted half-typed edit is never saved (renames go through
+            // commitLabel only).
             let t = label.trimmingCharacters(in: .whitespacesAndNewlines)
-            pair(mode: .enable, label: t.isEmpty ? nil : t)
+            pair(mode: .enable, label: savedLabel.isEmpty && !t.isEmpty ? t : nil)
         } else {
             disable()
         }
@@ -176,6 +185,10 @@ final class SyncSettingsModel: ObservableObject {
                         self.enabled = false
                         self.qrImage = nil
                         self.qrBlob = ""
+                        // Drop any uncommitted edit so re-enabling can never
+                        // save a half-typed name (sync.json keeps savedLabel).
+                        self.label = self.savedLabel.isEmpty
+                            ? Self.defaultDeviceName : self.savedLabel
                         self.statusNote = L("已关闭。密钥保留在本机,随时可以再打开——不用重新配对。",
                                             "Off. The keys stay on this Mac; re-enable anytime — no re-pairing needed.")
                     } else {
