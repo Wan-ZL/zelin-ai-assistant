@@ -287,6 +287,7 @@ struct KanbanView: View {
             let reviewNotices = laneNotices(.review)
             let debtNotices = laneNotices(.debt)
             let completedNotices = laneNotices(.completed)
+            let archivedNotices = laneNotices(.archived)
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
                     // 潜在任务/Backlog leftmost (v0.18 flow order): display
@@ -295,6 +296,10 @@ struct KanbanView: View {
                     // pre-execution parking lot must not compete with
                     // proposals for attention. v0.33: default-collapsed strip;
                     // the store force-opens it when a debt echo/notice lands.
+                    // While a search has debt matches the strip renders
+                    // expanded regardless (a stale filter / collapsed strip
+                    // can never silently hide cards — Store.boardQuery
+                    // invariant); clearing the query restores the strip state.
                     collapsibleColumn(
                            title: L("潜在任务 · backlog", "Backlog"),
                            count: debt.count + debtEchoes.count,
@@ -305,7 +310,8 @@ struct KanbanView: View {
                            isEmpty: debt.isEmpty && debtEchoes.isEmpty
                                && debtNotices.isEmpty,
                            quiet: true,
-                           expanded: $store.backlogStripExpanded) {
+                           expanded: searching && !debt.isEmpty
+                               ? .constant(true) : $store.backlogStripExpanded) {
                         ForEach(debtNotices) { NoticeRow(notice: $0) }
                         ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
                         // v0.21 契约七: 潜在任务卡也可多选参与合并（selectableIDs 已含 debt）。
@@ -424,10 +430,12 @@ struct KanbanView: View {
                     // v0.33 far-right bookend: 永久性完成/Done for good — the
                     // off-board archive surfaced as a second default-collapsed
                     // strip, symmetric with the backlog strip. STILL NOT a
-                    // board lane: it joins neither selectableIDs/multi-select
-                    // nor lane-notice routing (unarchive keeps the info-strip
-                    // mechanism); expanded content = the popover archive
-                    // section's search + rows.
+                    // board lane: it joins no selectableIDs/multi-select.
+                    // Unarchive feedback (info strip / timeout notice, lane
+                    // .archived) renders at the top of the expanded content —
+                    // the store force-opens the strip when one lands, so 放回
+                    // 看板 can never fail invisibly. Expanded content = the
+                    // popover archive section's search + rows.
                     collapsibleColumn(
                            title: L("🗄 永久性完成 · done for good", "🗄 Done for good"),
                            count: store.visibleArchivedCount,
@@ -436,6 +444,7 @@ struct KanbanView: View {
                            isEmpty: false,
                            quiet: true,
                            expanded: $store.archiveStripExpanded) {
+                        ForEach(archivedNotices) { NoticeRow(notice: $0) }
                         ArchiveLaneContent(store: store, app: app)
                     }
                 }
@@ -510,13 +519,18 @@ struct KanbanView: View {
     /// session (提建议 works at ≥0 selected; 契约一 keeps 请求合并建议 at ≥2).
     @ViewBuilder private var selectionBar: some View {
         if selectMode {
+            // count + visibility follow what submit will ACTUALLY send (stale
+            // ids — cards that left the board since ticking — are pruned at
+            // submit time): a label promising (2) over a silent no-op guard
+            // would be a dead button.
+            let activeCount = selectedIDs.intersection(selectableIDs).count
             HStack(spacing: 10) {
-                if selectedIDs.count >= 2 {
+                if activeCount >= 2 {
                     Button {
                         submitSelection()
                     } label: {
-                        Text(L("请求合并建议 (\(selectedIDs.count))",
-                               "Suggest merge (\(selectedIDs.count))"))
+                        Text(L("请求合并建议 (\(activeCount))",
+                               "Suggest merge (\(activeCount))"))
                             .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.borderedProminent)
@@ -527,8 +541,8 @@ struct KanbanView: View {
                         guard ids.count >= 2 else { return }
                         forceMergePayload = ForceMergePayload(ids: ids)
                     } label: {
-                        Text(L("强制合并 (\(selectedIDs.count))",
-                               "Force-merge (\(selectedIDs.count))"))
+                        Text(L("强制合并 (\(activeCount))",
+                               "Force-merge (\(activeCount))"))
                             .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.bordered)
@@ -539,10 +553,10 @@ struct KanbanView: View {
                 Button {
                     submitFeedbackSelection()
                 } label: {
-                    Text(selectedIDs.isEmpty
+                    Text(activeCount == 0
                          ? L("提建议", "Send feedback")
-                         : L("提建议 (\(selectedIDs.count))",
-                             "Send feedback (\(selectedIDs.count))"))
+                         : L("提建议 (\(activeCount))",
+                             "Send feedback (\(activeCount))"))
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.bordered)

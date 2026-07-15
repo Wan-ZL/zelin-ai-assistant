@@ -21,7 +21,12 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.0"
+    # Version pin — act/__init__.py is the product's single source of truth
+    # (mac/build.sh stamps the Mac app from it at build time). Xcode builds
+    # this target straight from the project with no stamping step, so bump
+    # this value TOGETHER with act.__version__ — here AND in the committed
+    # project.pbxproj (2 build configurations). ci.yml fails on drift.
+    MARKETING_VERSION: "0.33.1"
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1"          # iPhone only
     CODE_SIGN_STYLE: Automatic

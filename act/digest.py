@@ -14,8 +14,9 @@ Sections:
                     type=self-improvement card (status=detected, i.e. it shows
                     up in 潜在任务 for Zelin to raise — never auto-card_sent).
 
-Output: ``~/Projects/your-workbench/digests/digest-YYYY-MM-DD.md`` plus a
-macOS notification. The 1:1 prep page (``act.oneonone``) is generated alongside
+Output: ``<execution.default_target_repo>/digests/digest-YYYY-MM-DD.md``
+(``state/digests/`` while no target repo has been configured) plus a macOS
+notification. The 1:1 prep page (``act.oneonone``) is generated alongside
 and linked.
 
 Run: ``python -m act.digest --now`` (crontab: Mondays 09:07; without ``--now``
@@ -34,13 +35,16 @@ from act.lib.registry import Requirement, State, load_all, merge_or_new
 from act.oneonone import manager_owes, first_seen
 from act.report import build_report
 
-WORKBENCH = Path("~/Projects/your-workbench").expanduser()
-DIGESTS_DIR = WORKBENCH / "digests"
-
 # Self-improvement cards target the assistant's own repo (§16: app 更新永远走 PR).
 ASSISTANT_REPO = "~/Projects/zelin-ai-assistant"
 
 STUCK_AFTER_HOURS = 24
+
+
+def _digests_dir() -> Path:
+    """Digest output dir, resolved at call time from the configured workbench
+    (STATE_DIR fallback — never the example placeholder path)."""
+    return oneonone.output_root() / "digests"
 
 
 # --------------------------------------------------------------------------- #
@@ -105,12 +109,18 @@ def _feature_related(feature: str, event: dict) -> bool:
 
 
 def build_suggestions(cfg: config.Config,
-                      events: Optional[list[dict]] = None) -> list[str]:
-    """One-line 进化建议 from the last 30 days of analytics events."""
+                      events: Optional[list[dict]] = None) -> list[tuple[str, str]]:
+    """进化建议 from the last 30 days of analytics events.
+
+    Returns ``(stable_title, volatile_detail)`` pairs. The title must NEVER
+    embed live counts: it becomes the filed card's title, and merge_or_new
+    dedups on title — a count baked in would mint a near-duplicate card every
+    Monday the number moves. Counts live in ``detail`` (summary/quote only).
+    """
     if events is None:
         since = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=30)
         events = list(analytics.read_events(since=since))
-    suggestions: list[str] = []
+    suggestions: list[tuple[str, str]] = []
 
     # DATA-SUFFICIENCY GUARD: never suggest closing a feature on a fresh install.
     # "zero events" on day 1 means no history, NOT an unused feature. Require the
@@ -132,7 +142,8 @@ def build_suggestions(cfg: config.Config,
             if not cfg.feature(name):
                 continue  # already off
             if not any(_feature_related(name, e) for e in events):
-                suggestions.append(f"建议关闭功能 {name}（近 30 天零相关事件，白耗资源）")
+                suggestions.append(
+                    (f"建议关闭功能 {name}（近 30 天零相关事件，白耗资源）", ""))
 
     # b) auto-resume failure storm
     resume_fails = sum(
@@ -141,45 +152,48 @@ def build_suggestions(cfg: config.Config,
         and e.get("ok") is False
     )
     if resume_fails > 10:
-        suggestions.append(
-            f"建议修自动恢复：近 30 天失败 {resume_fails} 次（无效重复的头号来源）"
-        )
+        suggestions.append((
+            "建议修自动恢复（近 30 天失败频繁）",
+            f"近 30 天失败 {resume_fails} 次（无效重复的头号来源）",
+        ))
 
     # c) high reject ratio
     n_rej = sum(1 for e in events if e.get("event") == "inbox_reject")
     n_appr = sum(1 for e in events if e.get("event") == "inbox_approve")
     if (n_rej + n_appr) > 0 and n_rej / (n_rej + n_appr) > 0.5:
-        suggestions.append(
-            f"建议改进提案质量：拒绝率 {n_rej}/{n_rej + n_appr} 超过 50%"
-            "（先看卡片 summary 是否说人话）"
-        )
+        suggestions.append((
+            "建议改进提案质量（拒绝率超过 50%）",
+            f"拒绝率 {n_rej}/{n_rej + n_appr}（先看卡片 summary 是否说人话）",
+        ))
     return suggestions
 
 
-def file_suggestion_cards(suggestions: list[str],
+def file_suggestion_cards(suggestions: list[tuple[str, str]],
                           today: Optional[_dt.date] = None) -> list[Requirement]:
     """Land each suggestion in the registry as a self-improvement card.
 
     status=detected (NOT card_sent) — they show up in 潜在任务 for Zelin to raise.
-    ``merge_or_new`` dedups on title, so repeat Mondays don't stack duplicates.
+    ``merge_or_new`` dedups on title, so repeat Mondays don't stack duplicates —
+    which is why the volatile detail (live counts) stays out of the title and
+    only lands in summary/quote.
     """
     today = today or _dt.date.today()
     filed: list[Requirement] = []
-    for text in suggestions:
+    for title, detail in suggestions:
         req = Requirement(
             id="",  # merge_or_new assigns
-            title=text,
+            title=title,
             type="self-improvement",
             tier="T1",
             status=State.DETECTED.value,
             hardness="soft",
-            summary=f"建议：{text}",
+            summary=f"建议：{title}" + (f" — {detail}" if detail else ""),
             target_repo=ASSISTANT_REPO,
             sources=[{
                 "channel": "analytics",
                 "date": today.isoformat(),
                 "ref": "act.digest 进化建议",
-                "quote": text,
+                "quote": detail or title,
                 "who": "digest",
             }],
         )
@@ -234,7 +248,7 @@ def build_digest(today: Optional[_dt.date] = None,
         out += ["## 🗓 1:1 准备页", f"- [{oneonone_path.name}]({oneonone_path})", ""]
 
     out += section("## 💡 进化建议（已作为 self-improvement 卡片进入潜在任务）",
-                   [f"- {s}" for s in suggestions],
+                   [f"- {t} — {d}" if d else f"- {t}" for t, d in suggestions],
                    empty="- （无 —— 各功能都在被用，健康）")
 
     try:
@@ -259,8 +273,9 @@ def write_digest(today: Optional[_dt.date] = None) -> Path:
         prep_path = None
 
     md = build_digest(today, oneonone_path=prep_path)
-    DIGESTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = DIGESTS_DIR / f"digest-{today.isoformat()}.md"
+    out_dir = _digests_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"digest-{today.isoformat()}.md"
     with open(path, "w", encoding="utf-8") as f:
         f.write(md)
 

@@ -17,7 +17,6 @@ import AppKit
 import SwiftUI
 import Foundation
 import UserNotifications
-import Darwin  // open(2) probe for Full Disk Access (TCC denies with EPERM)
 
 // MARK: - capability status
 
@@ -31,7 +30,6 @@ enum PermissionStatus {
 final class PermissionsModel: ObservableObject {
     @Published var screen: PermissionStatus = .unknown
     @Published var notifications: PermissionStatus = .unknown
-    @Published var fullDisk: PermissionStatus = .unknown
     /// Vault (Documents) access for the app bundle — the ONE grant the whole
     /// pipeline rides on in vault-mirror mode (claude TCC isolation): the
     /// vault-sync courier shares the bundle identity, so this never has to
@@ -65,12 +63,6 @@ final class PermissionsModel: ObservableObject {
         RecordingController.shared.pollScreenPermission()
         refreshNotifications()
         vault = Self.probeVaultPassive()
-        DispatchQueue.global(qos: .utility).async {
-            let s = Self.probeFullDisk()
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self.fullDisk = s }
-            }
-        }
     }
 
     /// PASSIVE vault probe — deliberately never reads ~/Documents: a read
@@ -112,8 +104,20 @@ final class PermissionsModel: ObservableObject {
         Analytics.log("permissions_action", fields: ["cap": "vault"])
         let alreadyDenied = vault == .denied
         DispatchQueue.global(qos: .userInitiated).async {
+            let fm = FileManager.default
             let dir = Self.vaultRootPath()
-            let ok = (try? FileManager.default.contentsOfDirectory(atPath: dir)) != nil
+            var ok = (try? fm.contentsOfDirectory(atPath: dir)) != nil
+            if !ok, !fm.fileExists(atPath: dir) {
+                // ENOENT is not a TCC denial: on a fresh install this row
+                // renders BEFORE the wizard's vault step ever creates the
+                // folder, and treating the failed read as "denied" was a
+                // dead-end (the deep-linked pane has nothing to fix).
+                // Creating the folder — mirroring ObsidianVaultSetup —
+                // exercises the same Documents grant (and fires the same
+                // one-shot prompt), so its success proves the grant.
+                ok = (try? fm.createDirectory(
+                    atPath: dir, withIntermediateDirectories: true)) != nil
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if ok {
@@ -149,20 +153,6 @@ final class PermissionsModel: ObservableObject {
                 MainActor.assumeIsolated { self.notifications = s }
             }
         }
-    }
-
-    /// FDA probe: actually open the Messages DB — without Full Disk Access
-    /// TCC denies the open(2) with EPERM (FileManager.isReadableFile can
-    /// misreport). ENOENT (no iMessage history on this Mac) = inconclusive,
-    /// NOT denied.
-    nonisolated private static func probeFullDisk() -> PermissionStatus {
-        let path = NSHomeDirectory() + "/Library/Messages/chat.db"
-        let fd = Darwin.open(path, O_RDONLY)
-        if fd >= 0 {
-            Darwin.close(fd)
-            return .granted
-        }
-        return errno == ENOENT ? .unknown : .denied
     }
 
     // MARK: actions — one button per capability row
@@ -201,11 +191,6 @@ final class PermissionsModel: ObservableObject {
                 }
             }
         }
-    }
-
-    func openFullDiskPane() {
-        Analytics.log("permissions_action", fields: ["cap": "full_disk"])
-        Self.openPane("com.apple.preference.security?Privacy_AllFiles")
     }
 
     static func openPane(_ pane: String) {
@@ -482,6 +467,14 @@ struct RecordingConsentSection: View {
                     Text(rec.selfHealNote)
                         .font(.system(size: 11))
                         .foregroundColor(.green)
+                } else if !rec.recordingNote.isEmpty {
+                    // refused / rolled-back mode switch (15 s transient) —
+                    // the user's own click must explain itself right here,
+                    // not only in the popover / ingest page
+                    Text(rec.recordingNote)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if rec.tccLost && rec.mode != "off" {
                     // audit 9.2 — the honest post-update story; the screen
                     // capability row below carries the Grant button
@@ -521,7 +514,11 @@ struct RecordingConsentSection: View {
     }
 }
 
-/// The three capability rows (screen / notifications / full disk), live.
+/// The three capability rows (screen / vault / notifications), live.
+/// The Full Disk Access row is retired (CONTRACT §13 v0.21): its app-identity
+/// probe cannot attest what cron/launchd may read (§25 — TCC judges the
+/// responsible process), so the row could only lie about scheduled-job
+/// coverage; the deps page's cron-probe row is the honest surface for that.
 struct CapabilityRowsView: View {
     @ObservedObject var model: PermissionsModel
     @ObservedObject private var i18n = LanguageStore.shared
@@ -531,7 +528,6 @@ struct CapabilityRowsView: View {
             screenRow
             vaultRow
             notificationsRow
-            fullDiskRow
         }
     }
 
@@ -580,21 +576,6 @@ struct CapabilityRowsView: View {
                 ? L("请求权限", "Request…") : L("打开系统设置", "Open System Settings"),
             showButton: model.notifications != .granted) {
             model.requestNotifications()
-        }
-    }
-
-    private var fullDiskRow: some View {
-        capabilityRow(
-            status: model.fullDisk,
-            name: L("完全磁盘访问", "Full Disk Access"),
-            why: L("供定时后台任务(cron/launchd)在 App 未打开时读取受保护的数据;不跑定时后台任务可跳过。",
-                   "Needed for scheduled background jobs (cron/launchd) to read protected data while the app isn't open; skip if you don't run scheduled background tasks."),
-            statusText: model.fullDisk == .granted ? L("已授权", "Granted")
-                : model.fullDisk == .denied ? L("未授权(可选)", "Not granted (optional)")
-                : L("无法检测(可选)", "Can't probe (optional)"),
-            buttonLabel: L("去授权", "Grant…"),
-            showButton: model.fullDisk != .granted) {
-            model.openFullDiskPane()
         }
     }
 

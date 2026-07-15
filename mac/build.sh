@@ -230,25 +230,33 @@ if [ "$INSTALL" -eq 1 ]; then
         DEST="$HOME/Applications"
         mkdir -p "$DEST"
     fi
-    # Quit a running instance BEFORE swapping the bundle: overwriting a live
-    # app leaves the OLD version running (menu bar still shows it) until a
-    # manual quit — nobody should have to know that. Graceful quit via Apple
-    # Event first, pkill only as the fallback; relaunch after the copy so the
-    # upgrade is invisible.
-    WAS_RUNNING=0
-    if pgrep -x "$EXEC_NAME" >/dev/null 2>&1; then
-        WAS_RUNNING=1
-        echo "==> Quitting the running $APP_NAME instance"
-        osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            pgrep -x "$EXEC_NAME" >/dev/null 2>&1 || break
-            sleep 0.5
-        done
-        pkill -x "$EXEC_NAME" 2>/dev/null || true
-    fi
-    echo "==> Installing to $DEST"
-    rm -rf "$DEST/$APP_NAME.app"
-    if cp -R "$APP_DIR" "$DEST/"; then
+    # Stage-then-swap: copy the new bundle NEXT TO the installed one first and
+    # only replace the old app after the copy fully succeeded — deleting the
+    # old app before cp meant a failed/interrupted copy left the user with no
+    # (or a half-copied, broken-signature) app in $DEST. The running instance
+    # is quit only around the near-instant rm+mv, not the whole copy: quitting
+    # matters because overwriting a live app leaves the OLD version running
+    # (menu bar still shows it) until a manual quit. Graceful quit via Apple
+    # Event first, pkill only as the fallback; relaunch so the upgrade is
+    # invisible.
+    STAGED="$DEST/.$APP_NAME.app.staged"
+    echo "==> Staging new bundle at $STAGED"
+    rm -rf "$STAGED"
+    if cp -R "$APP_DIR" "$STAGED"; then
+        WAS_RUNNING=0
+        if pgrep -x "$EXEC_NAME" >/dev/null 2>&1; then
+            WAS_RUNNING=1
+            echo "==> Quitting the running $APP_NAME instance"
+            osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+                pgrep -x "$EXEC_NAME" >/dev/null 2>&1 || break
+                sleep 0.5
+            done
+            pkill -x "$EXEC_NAME" 2>/dev/null || true
+        fi
+        echo "==> Installing to $DEST"
+        rm -rf "$DEST/$APP_NAME.app"
+        mv "$STAGED" "$DEST/$APP_NAME.app"
         FINAL="$DEST/$APP_NAME.app"
         # re-sign in place (cp can perturb signature) — same inside-out helper.
         sign_bundle "$FINAL" 2>/dev/null || true
@@ -257,7 +265,8 @@ if [ "$INSTALL" -eq 1 ]; then
             open "$FINAL" || echo "WARN: relaunch failed — start it manually: open \"$FINAL\""
         fi
     else
-        echo "WARN: copy to $DEST failed; using built bundle in place."
+        rm -rf "$STAGED"
+        echo "WARN: copy to $DEST failed; the installed app was left untouched — using built bundle in place."
     fi
 fi
 

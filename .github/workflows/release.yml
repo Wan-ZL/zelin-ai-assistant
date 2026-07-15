@@ -29,6 +29,33 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Sparkle key matches the baked SUPublicEDKey
+        # Integrity gate — the appcast step below signs the .pkg with the
+        # SPARKLE_ED_PRIVATE_KEY secret, but every installed app only accepts
+        # enclosures matching the SUPublicEDKey hardcoded in mac/Info.plist.
+        # Nothing else checks they are a pair: a rotated secret (or a fork's
+        # own secret) still produces a fully green release whose updates every
+        # client then silently discards — users just never move off the old
+        # version. Fail here, before the expensive build. The derivation
+        # helper (scripts/sparkle_pubkey.py) is validated against Sparkle's
+        # own sign_update; the secret only crosses via env + stdin, never argv.
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY secret missing — auto-update assets cannot be signed (set the secret, or drop the Sparkle steps in a fork)"
+            exit 1
+          fi
+          python3 -m pip install --user cryptography || python3 -m pip install --user --break-system-packages cryptography
+          BAKED="$(plutil -extract SUPublicEDKey raw -o - mac/Info.plist)"
+          DERIVED="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | python3 scripts/sparkle_pubkey.py)"
+          if [ "$DERIVED" != "$BAKED" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY does not derive the SUPublicEDKey baked into mac/Info.plist (derived ${DERIVED}, baked ${BAKED}) — shipped apps would silently reject this release's auto-update"
+            exit 1
+          fi
+          echo "Sparkle key preflight OK — secret derives the baked SUPublicEDKey (${BAKED})"
+
       - name: Select newest Xcode
         # Match the recent toolchain the Swift sources target (see ci.yml).
         run: |

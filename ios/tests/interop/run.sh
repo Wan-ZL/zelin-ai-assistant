@@ -6,36 +6,25 @@
 # plus the QR pairing blob. Needs NO Xcode: E2E.swift is Foundation + CryptoKit,
 # and CryptoKit ships in the macOS SDK, so swiftc builds a plain CLI tool.
 #
-# act/lib/e2e.py must exist on the PYTHONPATH repo. It lives on the Phase-1a
-# branch feat/ios-cloud-crypto; this branch (feat/ios-app) does not carry it.
-# Point E2E_PYREPO at a checkout that has it (default: auto-detect a sibling
-# worktree, else this repo root once crypto is merged).
+# act/lib/e2e.py lives in THIS repo; python3 needs its lazy `cryptography`
+# dependency installed. E2E_PYREPO can point at another checkout to cross-test
+# branches. A missing e2e.py is a HARD failure — this script is a CI gate
+# (ci.yml) and the project's only cross-language crypto guard, so it must
+# never silently self-skip.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IOS_DIR="$(cd "$HERE/../.." && pwd)"          # …/ios
-REPO="$(cd "$IOS_DIR/.." && pwd)"             # branch worktree root
+REPO="$(cd "$IOS_DIR/.." && pwd)"             # repo root
 E2E_SWIFT="$IOS_DIR/Sources/E2E.swift"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# --- locate a Python repo that has act/lib/e2e.py ---
-find_pyrepo() {
-    [ -n "${E2E_PYREPO:-}" ] && { echo "$E2E_PYREPO"; return; }
-    [ -f "$REPO/act/lib/e2e.py" ] && { echo "$REPO"; return; }
-    # sibling worktrees under ../.claude/worktrees/*/act/lib/e2e.py
-    local wt
-    for wt in "$REPO"/../*/act/lib/e2e.py; do
-        [ -f "$wt" ] && { (cd "$(dirname "$wt")/../.." && pwd); return; }
-    done
-    return 1
-}
-
-PYREPO="$(find_pyrepo || true)"
-if [ -z "$PYREPO" ] || [ ! -f "$PYREPO/act/lib/e2e.py" ]; then
-    echo "SKIP: act/lib/e2e.py not found (Phase-1a crypto branch not merged here)." >&2
-    echo "      Re-run with E2E_PYREPO=/path/to/repo-with-act-lib-e2e" >&2
-    exit 0
+PYREPO="${E2E_PYREPO:-$REPO}"
+if [ ! -f "$PYREPO/act/lib/e2e.py" ]; then
+    echo "ERROR: act/lib/e2e.py not found under $PYREPO — the interop gate cannot run." >&2
+    echo "       (E2E_PYREPO=/path/to/checkout overrides the default: this repo root)" >&2
+    exit 1
 fi
 echo "==> Python e2e.py from: $PYREPO"
 
@@ -61,10 +50,13 @@ python3 "$HERE/interop.py" verify "$WORK/swift_out.json" | tee "$WORK/verify.log
 # --- explicit gates: record blobs AND the v2 channel pairing blob both ways ---
 echo ""
 echo "==> Gate summary"
-if grep -q "verify: ALL PASS" "$WORK/verify.log"; then
+# PASS[3] = the 4th (last) Swift-encrypted blob verified — a canary so a
+# fixture-key rename can never turn this gate into a vacuous zero-case pass
+# (interop.py also enforces the exact blob count; belt and suspenders).
+if grep -q "verify: ALL PASS" "$WORK/verify.log" && grep -qF "PASS[3]" "$WORK/verify.log"; then
     echo "  record interop PASS (board/label/action, Python<->Swift)"
 else
-    echo "  record interop FAIL" >&2; exit 1
+    echo "  record interop FAIL (need 'verify: ALL PASS' plus the 4th blob's PASS[3] line)" >&2; exit 1
 fi
 if grep -q "channel_pairing.build_matches_python" "$WORK/swift.log" \
    && grep -q "PASS channel_pairing.channel_id" "$WORK/swift.log" \

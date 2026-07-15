@@ -1,5 +1,8 @@
 # CI: lint gates (shellcheck + ruff), Python 3.9 floor tests, compile check,
-# unit tests, and macOS app build — on every pull request and push to main.
+# unit tests, and one macOS job (macOS runners are expensive — everything
+# Apple-flavored lives in it: mac app build WITH Sparkle, shared-contract
+# Swift tests, the Swift↔Python crypto interop gate, and the iOS simulator
+# build) — on every pull request and push to main.
 name: CI
 
 on:
@@ -121,9 +124,11 @@ jobs:
           sudo xcode-select -s "$XCODE/Contents/Developer"
           swiftc --version
 
-      - name: Install PyYAML
+      - name: Install PyYAML + cryptography
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
-        run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
+        # cryptography is act/lib/e2e.py's lazy dependency, exercised by the
+        # Swift↔Python interop gate below.
+        run: python3 -m pip install --user "pyyaml>=6,<7" cryptography || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7" cryptography
 
       - name: Compile Python sources
         run: python3 -m compileall -q act ingest
@@ -131,5 +136,60 @@ jobs:
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
-      - name: Build macOS app
+      - name: Verify iOS MARKETING_VERSION matches act.__version__
+        # act/__init__.py is the version single source of truth. The Mac app is
+        # stamped from it at build time (mac/build.sh), but Xcode builds the iOS
+        # target straight from the committed project, so its MARKETING_VERSION
+        # is a pin (ios/project.yml + pbxproj) that WILL silently drift on
+        # version bumps unless this gate forces the sync — an iOS app
+        # self-reporting a years-old version makes device-side triage useless.
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' act/__init__.py)"
+          [ -n "$VERSION" ] || { echo "::error::could not read __version__ from act/__init__.py"; exit 1; }
+          for f in ios/project.yml ios/ZelinAIAssistant.xcodeproj/project.pbxproj; do
+            PINS="$(grep 'MARKETING_VERSION' "$f")" || { echo "::error file=$f::no MARKETING_VERSION found — project layout changed, update this gate"; exit 1; }
+            if printf '%s\n' "$PINS" | grep -vF "$VERSION"; then
+              echo "::error file=$f::iOS MARKETING_VERSION out of sync (lines above) — bump it to $VERSION in ios/project.yml AND ios/ZelinAIAssistant.xcodeproj/project.pbxproj (2 places) alongside act/__init__.py"
+              exit 1
+            fi
+          done
+          echo "iOS MARKETING_VERSION == $VERSION (project.yml + pbxproj)"
+
+      - name: Vendor Sparkle (framework + tools)
+        # Release builds link Sparkle (release.yml runs this same SHA-pinned
+        # script). Without it here, every `#if canImport(Sparkle)` block
+        # (updater wiring + the Settings update UI) compiles OUT of PR CI, so
+        # a symbol break inside those blocks merges green and only explodes at
+        # tag time — after the tag already exists.
+        run: bash mac/scripts/fetch-sparkle.sh
+
+      - name: Build macOS app (with Sparkle, like a release build)
         run: bash mac/build.sh
+
+      - name: Swift contract tests (shared/Sources, plain swiftc)
+        # Behavior tests for the lossy dashboard.json row decode (Contract.swift)
+        # and the board-lane merge/badge logic (BoardModel.swift) — shared logic
+        # both apps compile but nothing else executes. No Xcode project needed.
+        run: bash ios/tests/contract/run.sh
+
+      - name: Swift↔Python E2E crypto interop
+        # The ONLY check that ios/Sources/E2E.swift byte-interops with
+        # act/lib/e2e.py (tests/test_e2e.py is Python↔Python only): the frozen
+        # ZSYN/ZQR1 wire contract between the pipeline and the phone, both
+        # directions. Plain swiftc + CryptoKit — no Xcode project needed.
+        run: bash ios/tests/interop/run.sh
+
+      - name: Build iOS app (simulator, no signing)
+        # ios/Sources was previously compiled by NO workflow — an iOS-only (or
+        # shared-contract-used-only-by-iOS) break merged green and surfaced at
+        # the maintainer's next manual Xcode open. Builds the committed project
+        # (canonical spec: ios/project.yml; the pbxproj is kept in sync, so CI
+        # needs no xcodegen). Simulator destination → no signing identity.
+        run: |
+          set -euo pipefail
+          xcodebuild -project ios/ZelinAIAssistant.xcodeproj \
+                     -scheme ZelinAIAssistant \
+                     -destination 'generic/platform=iOS Simulator' \
+                     CODE_SIGNING_ALLOWED=NO \
+                     build

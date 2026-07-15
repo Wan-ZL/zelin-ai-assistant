@@ -697,7 +697,10 @@ class LegacyIntIdCardDoesNotHaltCaptureTestCase(TriageBase):
         self._seed_int_id_card()
         inv = quick_capture.registry_inventory_text()
         self.assertIn("4 | card_sent | legacy int-id card", inv)
-        self.assertEqual(registry.next_id(), "R-001")   # "4" 不占 R- 号段
+        # audit finding 3: the FILENAME R-004.yaml occupies the R- range even
+        # though the content id is "4" — reissuing R-004 would make save()
+        # overwrite this legacy card (silent data loss).
+        self.assertEqual(registry.next_id(), "R-005")
 
     def test_capture_keeps_its_never_raises_promise(self):
         self._seed_int_id_card()

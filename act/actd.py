@@ -131,98 +131,115 @@ def process_inbox() -> int:
             _safe_unlink(path)
             continue
 
-        req_id = decision.get("id")
-        action = decision.get("action")
-        comment = decision.get("comment")
-        # §5.4 sync preconditions carried by the phone (absent for Mac-app files):
-        # expected_status pins the card state the phone SAW, board_seq the board
-        # revision — a stale action whose precondition no longer holds is a no-op.
-        expected_status = decision.get("expected_status")
-        board_seq = decision.get("board_seq")
+        try:
+            req_id = decision.get("id")
+            action = decision.get("action")
+            comment = decision.get("comment")
+            # webui/syncd forward `comment` verbatim from the wire, so a
+            # non-string here would AttributeError deep inside the apply path
+            # AFTER state changes landed — the file would survive and re-crash
+            # every mtime-ordered pass (the non-dict poison class, one field
+            # deeper). Never trust wire field types: coerce to None.
+            if not isinstance(comment, str):
+                comment = None
+            # §5.4 sync preconditions carried by the phone (absent for Mac-app files):
+            # expected_status pins the card state the phone SAW, board_seq the board
+            # revision — a stale action whose precondition no longer holds is a no-op.
+            expected_status = decision.get("expected_status")
+            board_seq = decision.get("board_seq")
 
-        # §10 capture: no req id — the app popover's one-liner quick capture.
-        if action == "capture":
-            _apply_capture(decision.get("text"))
-            processed += 1
-            _write_applied_ack(path.stem, "running")
+            # §10 capture: no req id — the app popover's one-liner quick capture.
+            if action == "capture":
+                result = _apply_capture(decision.get("text"))
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
+            # §29 feedback（建议上报）: carries "ids" (0..n R-/MS- ids), never a
+            # requirement-level "id" — validated + recorded by act/lib/feedback.py.
+            if action == "feedback":
+                result = _apply_feedback(decision)
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
+            # merge-review actions (§21) — suggestion-level, not requirement-level:
+            # merge_review carries "ids" (>=2 R-ids); merge_apply/merge_dismiss carry
+            # id=<MS-suggestion id>. None of them go through the req lookup below.
+            if action == "merge_review":
+                result = _apply_merge_review(decision.get("ids"))
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+            if action in ("merge_apply", "merge_dismiss"):
+                result = _apply_merge_decision(action, decision.get("id"))
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+            # 强制合并（§21 v0.31）: user-chosen primary, skips the AI entirely —
+            # carries "ids" (>=2 R-ids) + "primary" (∈ ids), no MS- suggestion.
+            if action == "merge_force":
+                result = _apply_merge_force(decision.get("ids"), decision.get("primary"))
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
+            # §22 one-shot Claude Code session import — no requirement-level id.
+            if action == "import_claude_sessions":
+                result = _apply_claude_import(decision)
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
+            # weekly digest on demand (CONTRACT §24): no req id — the Settings
+            # 「现在生成一份」button. Runs detached so the 420s claude call never
+            # blocks the 10s daemon pass.
+            if action == "weekly_digest_now":
+                result = _spawn_weekly_digest()
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
+            req = load(req_id) if req_id else None
+
+            if req is None:
+                _log(f"inbox: decision for unknown req {req_id!r} ({action}) — dropped")
+                # §5.4 ack: the card is gone → the phone must be told "该卡已不存在"
+                # (result_status=unknown), never left guessing on a stuck 'delivered'.
+                _write_applied_ack(path.stem, "unknown")
+            else:
+                result_status = _apply_decision(
+                    req, action, comment, expected_status, board_seq)
+                # the comment (打回反馈/修改方向) is user-typed content —
+                # attached only behind the capture_input gate, clipped.
+                c = (comment or "").strip()
+                analytics.log_event(
+                    f"inbox_{action or 'unknown'}", req=req.id,
+                    status=str(req.status), has_comment=bool(c) or None,
+                    comment=(analytics.clip_content(c)
+                             if c and analytics.content_gate() else None))
+                # §5.4 ack: durable "did it land?" truth — running (applied a real
+                # change) | noop (stale/idempotent guard) | unknown (bad action).
+                _write_applied_ack(path.stem, result_status)
+                processed += 1
+
             _safe_unlink(path)
-            continue
-
-        # §29 feedback（建议上报）: carries "ids" (0..n R-/MS- ids), never a
-        # requirement-level "id" — validated + recorded by act/lib/feedback.py.
-        if action == "feedback":
-            _apply_feedback(decision)
-            processed += 1
-            _write_applied_ack(path.stem, "running")
+        except Exception as e:  # noqa: BLE001 - one poison file must never wedge the inbox
+            # ANY per-file crash (field-type poison, guard regression) must end
+            # terminally for THIS file only — ack + delete, exactly like the
+            # non-dict guard above — or the file re-crashes every mtime-ordered
+            # pass and freezes the whole pipeline behind it.
+            _log(f"inbox: decision file {path.name} crashed apply "
+                 f"({type(e).__name__}: {e}) — discarding\n{traceback.format_exc()}")
+            _write_applied_ack(path.stem, "bad_json")
             _safe_unlink(path)
-            continue
-
-        # merge-review actions (§21) — suggestion-level, not requirement-level:
-        # merge_review carries "ids" (>=2 R-ids); merge_apply/merge_dismiss carry
-        # id=<MS-suggestion id>. None of them go through the req lookup below.
-        if action == "merge_review":
-            _apply_merge_review(decision.get("ids"))
-            processed += 1
-            _write_applied_ack(path.stem, "running")
-            _safe_unlink(path)
-            continue
-        if action in ("merge_apply", "merge_dismiss"):
-            _apply_merge_decision(action, decision.get("id"))
-            processed += 1
-            _write_applied_ack(path.stem, "running")
-            _safe_unlink(path)
-            continue
-        # 强制合并（§21 v0.31）: user-chosen primary, skips the AI entirely —
-        # carries "ids" (>=2 R-ids) + "primary" (∈ ids), no MS- suggestion.
-        if action == "merge_force":
-            _apply_merge_force(decision.get("ids"), decision.get("primary"))
-            processed += 1
-            _write_applied_ack(path.stem, "running")
-            _safe_unlink(path)
-            continue
-
-        # §22 one-shot Claude Code session import — no requirement-level id.
-        if action == "import_claude_sessions":
-            _apply_claude_import(decision)
-            processed += 1
-            _write_applied_ack(path.stem, "running")
-            _safe_unlink(path)
-            continue
-
-        # weekly digest on demand (CONTRACT §24): no req id — the Settings
-        # 「现在生成一份」button. Runs detached so the 420s claude call never
-        # blocks the 10s daemon pass.
-        if action == "weekly_digest_now":
-            _spawn_weekly_digest()
-            processed += 1
-            _write_applied_ack(path.stem, "running")
-            _safe_unlink(path)
-            continue
-
-        req = load(req_id) if req_id else None
-
-        if req is None:
-            _log(f"inbox: decision for unknown req {req_id!r} ({action}) — dropped")
-            # §5.4 ack: the card is gone → the phone must be told "该卡已不存在"
-            # (result_status=unknown), never left guessing on a stuck 'delivered'.
-            _write_applied_ack(path.stem, "unknown")
-        else:
-            result_status = _apply_decision(
-                req, action, comment, expected_status, board_seq)
-            # the comment (打回反馈/修改方向) is user-typed content —
-            # attached only behind the capture_input gate, clipped.
-            c = (comment or "").strip()
-            analytics.log_event(
-                f"inbox_{action or 'unknown'}", req=req.id,
-                status=str(req.status), has_comment=bool(c) or None,
-                comment=(analytics.clip_content(c)
-                         if c and analytics.content_gate() else None))
-            # §5.4 ack: durable "did it land?" truth — running (applied a real
-            # change) | noop (stale/idempotent guard) | unknown (bad action).
-            _write_applied_ack(path.stem, result_status)
-            processed += 1
-
-        _safe_unlink(path)
     return processed
 
 
@@ -295,21 +312,45 @@ def _write_applied_ack(action_id: str, result_status: str) -> None:
         pass
 
 
-def _precondition_ok(req: Requirement, expected_status: Optional[str]) -> bool:
+def _precondition_ok(req: Requirement, expected_status: Optional[str],
+                     action: Optional[str] = None) -> bool:
     """§5.4 stale-guard: True unless the phone pinned an ``expected_status`` that
     no longer matches the card's current status (the card moved since the phone
-    saw it — apply would rip a running/moved card, so caller no-ops)."""
+    saw it — apply would rip a running/moved card, so caller no-ops).
+
+    Projection alias (integration audit 2026-07-15): the 待验收 lane the phone
+    renders is NOT a pure status view — the dashboard also projects an
+    on-disk-EXECUTING card there once its roster agent is done (and with
+    ``auto_resume: false`` nothing ever promotes it to on-disk review, so that
+    shape can persist indefinitely). The phone pins expected_status="review" on
+    every accept/rework from that lane, so for those two verbs "review" must be
+    satisfied by the SAME relaxed surface the no-expected local path accepts
+    (review OR executing — the accept branch's exact status whitelist; NOT
+    gated on execution.done, which is never stamped in the auto_resume:false
+    shape). Every other mismatch (trashed/card_sent/delivered/…) stays a stale
+    no-op. The other pinned verbs have no such alias: the phone renders 修改
+    only on non-processing 提案 cards (on-disk card_sent exactly — raising
+    cards hide the action bar) and 研究并提议 only in the debt lane (detected
+    exactly), so their pins always match at render time.
+    """
     if expected_status is None:
         return True
-    return str(req.status) == str(expected_status)
+    if str(req.status) == str(expected_status):
+        return True
+    if (action in ("accept", "rework")
+            and str(expected_status) == State.REVIEW.value
+            and str(req.status) == State.EXECUTING.value):
+        return True
+    return False
 
 
-def _spawn_weekly_digest() -> None:
+def _spawn_weekly_digest() -> str:
     """Launch ``python -m act.weekly_digest --now`` detached (CONTRACT §24).
 
     Same detachment pattern as the merge-review analysis subprocess: never
     waited on, stdout/err appended to ``state/weekly_digest.log``. A failed
     launch only logs — the button press must never take the daemon down.
+    Returns the §5.4 result_status ("running" started | "noop" launch failed).
     """
     config.ensure_state_dirs()
     log_path = config.STATE_DIR / "weekly_digest.log"
@@ -325,11 +366,13 @@ def _spawn_weekly_digest() -> None:
             )
         _log("inbox: weekly_digest_now — generation subprocess started")
         analytics.log_event("weekly_digest_requested")
+        return "running"
     except Exception as e:  # noqa: BLE001 — never let the button kill the pass
         _log(f"inbox: weekly_digest_now launch FAILED: {e}")
+        return "noop"
 
 
-def _apply_capture(text: Optional[str]) -> None:
+def _apply_capture(text: Optional[str]) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15).
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
@@ -340,11 +383,13 @@ def _apply_capture(text: Optional[str]) -> None:
     Idempotent: merge_or_new dedupes by title, so the same text arriving twice
     merges into the existing entry instead of creating a second card; an entry
     already raised past 'detected' is left in whatever state it reached.
+    Returns the §5.4 result_status ("running" filed | "noop" dropped) — the
+    phone's ledger must never show 已生效 for a capture that filed nothing.
     """
     t = " ".join(str(text or "").split()).strip()
     if not t:
         _log("inbox: capture with empty text — ignored")
-        return
+        return "noop"
     req = Requirement(
         id=registry.next_id(),
         title=t[:80],
@@ -373,9 +418,10 @@ def _apply_capture(text: Optional[str]) -> None:
         "inbox_capture", req=saved.id, status=str(saved.status), chars=len(t),
         text=(analytics.clip_content(t)
               if analytics.content_gate() else None))
+    return "running"
 
 
-def _apply_feedback(decision: dict) -> None:
+def _apply_feedback(decision: dict) -> str:
     """建议上报 (CONTRACT §29) — explicit user report to the maintainer.
 
     ``{"action":"feedback","ids":["R-001","MS-ab12cd34"],"text":"…"}`` —
@@ -384,27 +430,29 @@ def _apply_feedback(decision: dict) -> None:
     snapshots inside the record — the text must never be lost over them).
     Recording + best-effort upload live in act/lib/feedback.py; only event
     METADATA reaches the local analytics log — the report text travels solely
-    inside the feedback record itself.
+    inside the feedback record itself. Returns the §5.4 result_status
+    ("running" recorded | "noop" dropped).
     """
     if feedback is None:
         _log("inbox: feedback requested but module unavailable — dropped")
-        return
+        return "noop"
     text = str(decision.get("text") or "").strip()
     if not text:
         _log("inbox: feedback with empty text — dropped")
-        return
+        return "noop"
     ids = feedback.clean_ids(decision.get("ids"))
     rec = feedback.record_feedback(ids, text)
     if rec is None:
         _log("inbox: feedback record FAILED — dropped")
-        return
+        return "noop"
     _log(f"inbox: feedback {rec['id']} recorded "
          f"(ids={ids or []}, uploaded={rec.get('uploaded')})")
     analytics.log_event("inbox_feedback", n=len(ids),
                         uploaded=rec.get("uploaded"))
+    return "running"
 
 
-def _apply_claude_import(decision: dict) -> None:
+def _apply_claude_import(decision: dict) -> str:
     """One-shot Claude Code session import (CONTRACT §22).
 
     ``{"action":"import_claude_sessions","session_ids":[…],"window_days":7}``
@@ -413,11 +461,11 @@ def _apply_claude_import(decision: dict) -> None:
     is imported. Idempotent: already-imported ids are skipped via the
     state/claude_sessions_import.json marker, and card creation goes through
     merge_or_new. Cheap (head/tail file reads, no LLM) — safe inline in the
-    poll loop.
+    poll loop. Returns the §5.4 result_status ("running" ran | "noop" failed).
     """
     if radar_claude_sessions is None:
         _log("inbox: import_claude_sessions requested but module unavailable — dropped")
-        return
+        return "noop"
     raw_ids = decision.get("session_ids")
     ids = [str(s) for s in raw_ids if s] if isinstance(raw_ids, list) else []
     try:
@@ -431,21 +479,32 @@ def _apply_claude_import(decision: dict) -> None:
             n = radar_claude_sessions.run_once(window_days=window)
         _log(f"inbox: import_claude_sessions -> {n} card(s) "
              f"({len(ids) or 'auto'} requested)")
+        return "running"
     except Exception as e:  # noqa: BLE001 — an import failure must not kill the pass
         _log(f"inbox: import_claude_sessions failed: {e}")
+        return "noop"
 
 
 # --------------------------------------------------------------------------- #
 # merge-review (§21) — actd side: validate + job file + detached analysis;
 # apply is DETERMINISTIC (the AI's action_plan is display-only).
 # --------------------------------------------------------------------------- #
-def _apply_merge_review(ids) -> None:
+# Terminal/sealed states a merge may never write into or absorb from: folding
+# live cards into a trashed/merged/archived primary buries them in terminal
+# MERGED (no un-merge, no lane renders them) and their carried deliverables
+# get hard-deleted with the primary at trash purge (audit 2026-07-15).
+_MERGE_DEAD_STATES = (State.TRASHED.value, State.MERGED.value,
+                      State.REJECTED.value, State.ARCHIVED.value)
+
+
+def _apply_merge_review(ids) -> str:
     """契约 五 actd 侧：校验 ids（≥2、去重、都存在）→ 建 analyzing 作业文件 →
     subprocess.Popen 分离启动 ``python -m act.merge_review <id>``（不等待，
-    stdout/err 落 state/logs/<suggestion_id>.log）。不合法 -> log 丢弃。"""
+    stdout/err 落 state/logs/<suggestion_id>.log）。不合法 -> log 丢弃。
+    Returns the §5.4 result_status ("running" job created | "noop" dropped)."""
     if merge_review is None:
         _log("inbox: merge_review requested but module unavailable — dropped")
-        return
+        return "noop"
     raw = ids if isinstance(ids, list) else []
     seen: set[str] = set()
     uniq: list[str] = []
@@ -456,11 +515,11 @@ def _apply_merge_review(ids) -> None:
             uniq.append(s)
     if len(uniq) < 2:
         _log(f"inbox: merge_review needs >=2 distinct ids, got {raw!r} — dropped")
-        return
+        return "noop"
     missing = [i for i in uniq if load(i) is None]
     if missing:
         _log(f"inbox: merge_review unknown ids {missing} — dropped")
-        return
+        return "noop"
 
     job = merge_review.create_job(uniq)
     sid = str(job["id"])
@@ -478,18 +537,21 @@ def _apply_merge_review(ids) -> None:
     except Exception as e:  # noqa: BLE001 - a failed launch must not hang 'analyzing'
         merge_review.mark_failed(sid, f"analysis launch failed: {e}")
         _log(f"inbox: merge_review {sid} launch FAILED: {e}")
-        return
+        # the job file exists and visibly shows failed — a real, durable change
+        return "running"
     _log(f"inbox: merge_review {sid} ids={uniq} — analysis subprocess started")
     analytics.log_event("merge_review_requested", n=len(uniq), suggestion=sid)
+    return "running"
 
 
-def _apply_merge_force(ids, primary) -> None:
+def _apply_merge_force(ids, primary) -> str:
     """契约 §21 强制合并（v0.31）：用户钦定主卡、跳过 AI 直接落地 ``merge``。
     校验 ids（≥2、去重、都存在）+ primary ∈ ids → 复用 :func:`_merge_into_primary`
     ——与 AI ``merge`` verdict 逐字同一条确定性执行路径（主卡吸收 sources 去重 /
     repeated_mentions 累加 / notes 留痕 / 交付物搬运，副卡 best-effort 停 session +
     置 ``merged``；主卡在待验收则 rework 注入）。不合法 = log 丢弃（同 merge_review
-    公共规则）；执行失败只 log + 打点 outcome=fail，绝不抛穿轮询（用户可重试）。"""
+    公共规则）；执行失败只 log + 打点 outcome=fail，绝不抛穿轮询（用户可重试）。
+    Returns the §5.4 result_status ("running" applied | "noop" dropped/failed)."""
     raw = ids if isinstance(ids, list) else []
     seen: set[str] = set()
     uniq: list[str] = []
@@ -501,14 +563,20 @@ def _apply_merge_force(ids, primary) -> None:
     prim = str(primary or "").strip()
     if len(uniq) < 2:
         _log(f"inbox: merge_force needs >=2 distinct ids, got {raw!r} — dropped")
-        return
+        return "noop"
     if prim not in uniq:
         _log(f"inbox: merge_force primary {primary!r} not in ids {uniq} — dropped")
-        return
+        return "noop"
     missing = [i for i in uniq if load(i) is None]
     if missing:
         _log(f"inbox: merge_force unknown ids {missing} — dropped")
-        return
+        return "noop"
+    prim_req = load(prim)
+    if prim_req is not None and str(prim_req.status) in _MERGE_DEAD_STATES:
+        # a stale board can pick a primary the user meanwhile trashed/merged/
+        # archived — folding live cards into it loses them (audit 2026-07-15)
+        _log(f"inbox: merge_force primary {prim} is {prim_req.status} — dropped")
+        return "noop"
     secondaries = [i for i in uniq if i != prim]
     try:
         _merge_into_primary(prim, secondaries)
@@ -516,38 +584,55 @@ def _apply_merge_force(ids, primary) -> None:
         _log(f"inbox: merge_force primary={prim} secondaries={secondaries} "
              f"FAILED: {e}\n{traceback.format_exc()}")
         analytics.log_event("merge_force", n=len(uniq), outcome="fail")
-        return
+        return "noop"
     _log(f"inbox: merge_force primary={prim} secondaries={secondaries} applied")
     analytics.log_event("merge_force", n=len(uniq), outcome="ok")
+    return "running"
 
 
-def _apply_merge_decision(action: str, suggestion_id) -> None:
+def _apply_merge_decision(action: str, suggestion_id) -> str:
     """契约 一/四：merge_apply（status=done 才可执行，按 verdict 确定性落地，然后
     作业标记 dismissed 留到 TTL 清理）；merge_dismiss（直接标记 dismissed）。
-    状态不匹配 / 未知建议 = 幂等 no-op + log（同 v0.10.2 逆向动作公共规则）。"""
+    状态不匹配 / 未知建议 = 幂等 no-op + log（同 v0.10.2 逆向动作公共规则）。
+    Returns the §5.4 result_status ("running" | "noop" | "unknown")."""
     if merge_review is None:
         _log(f"inbox: {action} requested but merge_review unavailable — dropped")
-        return
+        return "noop"
     sid = str(suggestion_id or "").strip()
     job = merge_review.load_job(sid) if sid else None
     if job is None:
         _log(f"inbox: {action} for unknown suggestion {suggestion_id!r} — dropped")
-        return
+        return "unknown"
     status = str(job.get("status") or "")
 
     if action == "merge_dismiss":
         if status == "dismissed":
             _log(f"inbox: merge_dismiss {sid} already dismissed — no-op")
-            return
+            return "noop"
         merge_review.dismiss_job(job)
         _log(f"inbox: merge_dismiss {sid} (was {status})")
-        return
+        return "running"
 
     # merge_apply — only a finished analysis is actionable (连点/迟到 -> no-op)
     if status != "done":
         _log(f"inbox: merge_apply {sid} ignored (status={status}) — no-op")
-        return
+        return "noop"
     verdict = str(job.get("verdict") or "")
+    # a done suggestion stays actionable for its 24h TTL, but the board may
+    # have moved meanwhile: the user can trash/merge/archive the primary and
+    # THEN tap 采纳 from a stale surface. Applying would fold live secondaries
+    # into a dead primary — terminal MERGED, no undo, deliverables purged with
+    # the primary later. Fail the job visibly instead (audit 2026-07-15).
+    if verdict in ("merge", "link_improvement"):
+        prim = load(str(job.get("primary") or ""))
+        if prim is None or str(prim.status) in _MERGE_DEAD_STATES:
+            reason = "主卡已删除/已合并/已封存，该合并建议已失效"
+            merge_review.mark_failed(sid, reason)
+            _log(f"inbox: merge_apply {sid} ({verdict}) primary "
+                 f"{job.get('primary')!r} is gone/dead — job failed, no-op")
+            analytics.log_event("merge_apply", suggestion=sid, verdict=verdict,
+                                outcome="fail")
+            return "noop"
     # merge_apply outcome at the authoritative apply site (docs/TELEMETRY.md):
     # the app's card_action only records intent — a failed deterministic apply
     # was invisible to telemetry before this. No-op paths above stay unlogged
@@ -559,11 +644,12 @@ def _apply_merge_decision(action: str, suggestion_id) -> None:
              f"{traceback.format_exc()}")
         analytics.log_event("merge_apply", suggestion=sid, verdict=verdict,
                             outcome="fail")
-        return
+        return "noop"
     merge_review.dismiss_job(job, applied=True)  # 即刻从 dashboard 消失，文件留到 TTL
     _log(f"inbox: merge_apply {sid} ({verdict}) applied")
     analytics.log_event("merge_apply", suggestion=sid, verdict=verdict,
                         outcome="ok")
+    return "running"
 
 
 def _apply_merge_verdict(job: dict) -> None:
@@ -613,6 +699,11 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
     primary = load(primary_id)
     if primary is None:
         raise ValueError(f"primary {primary_id} not found in registry")
+    if str(primary.status) in _MERGE_DEAD_STATES:
+        # backstop behind the caller-level checks: never absorb live cards
+        # into a trashed/merged/archived primary (audit 2026-07-15)
+        raise ValueError(
+            f"primary {primary_id} is {primary.status} — refusing to merge into a dead card")
 
     feedback_lines: list[str] = []
     for rid in secondaries:
@@ -620,8 +711,10 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
         if sec is None:
             _log(f"merge: secondary {rid} not found — skipped")
             continue
-        if str(sec.status) == State.MERGED.value:
-            _log(f"merge: {rid} already merged — skipped")
+        if str(sec.status) in _MERGE_DEAD_STATES:
+            # already merged (retry idempotency) or trashed/archived meanwhile —
+            # absorbing a sealed card would strip its restorability
+            _log(f"merge: {rid} is {sec.status} — skipped (not a live card)")
             continue
         sec_ex = dict(sec.execution or {})
         # 主卡吸收
@@ -800,6 +893,15 @@ def _apply_decision(req: Requirement, action: Optional[str],
             _log(f"inbox: {req.id} comment stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"
+        if str(req.status) in (State.TRASHED.value, State.MERGED.value,
+                               State.REJECTED.value):
+            # CONTRACT §32.2 (audit 2026-07-15): a late comment on a terminal
+            # card must not fall through to the card_sent write below — that
+            # resurrects a rejected/merged card as a live proposal with its
+            # trash/merge bookkeeping still attached.
+            _log(f"inbox: {req.id} comment ignored (status={req.status} is "
+                 f"terminal) — no-op")
+            return "noop"
         _fold_comment(req, comment)
         # nightly audit 2026-07-14: a comment landing on a card that is
         # already past approval must NOT rip it back to card_sent — that
@@ -840,6 +942,18 @@ def _apply_decision(req: Requirement, action: Optional[str],
             _log(f"inbox: {req.id} raise stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"
+        if str(req.status) == State.RAISING.value:
+            _log(f"inbox: {req.id} raise already raising — no-op")
+            return "noop"
+        if str(req.status) not in (State.DETECTED.value, State.CARD_SENT.value):
+            # CONTRACT §32.2 (audit 2026-07-15): a late/replayed raise from a
+            # stale board must never rip a card past approval back to raising
+            # (approved→raising silently cancels the approval: dispatch never
+            # picks it up) nor resurrect a terminal card. Backlog/proposal only;
+            # card_sent stays allowed — the local web/board deliberately offers
+            # 研究并提议 there (see test_actd_sync raise cases).
+            _log(f"inbox: {req.id} raise ignored (status={req.status}) — no-op")
+            return "noop"
         # Fast: just mark it 'raising' so it shows a processing spinner in 待审批
         # immediately. The slow claude -p expansion happens in process_raising(),
         # one item per loop pass, so 4 raises don't freeze the daemon for minutes.
@@ -875,8 +989,10 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # is still EXECUTING (agent done, not yet promoted: process_inbox runs
         # BEFORE reconcile_executing), so a local 验收 must land regardless of
         # the current status. A hard REVIEW-only precondition would silently
-        # no-op those and, with auto_resume:false, break accept forever.
-        if not _precondition_ok(req, expected_status):
+        # no-op those and, with auto_resume:false, break accept forever. The
+        # phone pins expected_status="review" from that same projected lane, so
+        # _precondition_ok grants the review⇄executing alias for this verb.
+        if not _precondition_ok(req, expected_status, action):
             _log(f"inbox: {req.id} accept stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"
@@ -891,8 +1007,20 @@ def _apply_decision(req: Requirement, action: Optional[str],
         if str(req.status) not in (State.EXECUTING.value, State.REVIEW.value):
             _log(f"inbox: {req.id} accept ignored (status={req.status}, no delivery to accept)")
             return "noop"
-        req.set_status(State.DELIVERED)
         ex = dict(req.execution or {})
+        sid = ex.get("session_id")
+        if sid and executor is not None:
+            # a chat-mode delivery promoted from blocked leaves its bg session
+            # alive waiting for input FOREVER (a bg session never exits on its
+            # own) — mirror done_external: best-effort stop the reaped agent,
+            # never block the delivered write (audit 2026-07-15).
+            try:
+                stopped = executor.stop_session(str(sid))
+                _log(f"inbox: {req.id} accept — stop_session({sid}) -> {stopped}")
+            except Exception as e:  # noqa: BLE001 - best-effort, never block delivery
+                _log(f"inbox: {req.id} accept — stop_session({sid}) failed "
+                     f"(ignored): {e}")
+        req.set_status(State.DELIVERED)
         ex["accepted_at"] = _iso_now()
         req.execution = ex
         save(req)
@@ -913,12 +1041,21 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # including the 待验收 EXECUTING-done case (process_inbox runs BEFORE
         # reconcile_executing promotes it to review). executor.rework itself
         # handles stop-idle-then-resume, so an on-disk EXECUTING card is safe.
-        if not _precondition_ok(req, expected_status):
+        # The phone pins expected_status="review" from that same projected
+        # lane, so _precondition_ok grants the review⇄executing alias here too.
+        if not _precondition_ok(req, expected_status, action):
             _log(f"inbox: {req.id} rework stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"
         ok = executor.rework(req, comment)
-        _log(f"inbox: {req.id} rework sent (ok={ok}) — back to executing")
+        if not ok:
+            # executor.rework bailed (no session / transcript purged / launch
+            # failed): the card did NOT go back to executing, so acking
+            # "running" would show 已生效 for a 打回 that never started
+            # (§5.4 honesty, audit 2026-07-15).
+            _log(f"inbox: {req.id} rework NOT sent (ok=False) — card unchanged")
+            return "noop"
+        _log(f"inbox: {req.id} rework sent — back to executing")
         return "running"
     elif action == "done_external":
         # v0.10.2 已办完（系统外完成）：card_sent|review -> delivered。有活
@@ -1697,6 +1834,20 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             continue
         try:
             ok = executor.resume(req, cfg)
+            if not ok:
+                # executor.resume's early-return paths (transcript purged, mkdir
+                # failed) record NO bookkeeping — without it attempts stays 0
+                # forever: the exhaustion notification never fires and the
+                # resume+log+analytics burst repeats every 10s pass with zero
+                # backoff (audit 2026-07-15). Count the failed attempt here iff
+                # resume didn't already (its post-launch bookkeeping did).
+                ex_after = dict(req.execution or {})
+                if int(ex_after.get("resume_attempts", 0) or 0) == attempts:
+                    ex_after["resume_attempts"] = attempts + 1
+                    ex_after["last_resume_at"] = _iso_now()
+                    ex_after["last_resume_ok"] = False
+                    req.execution = ex_after
+                    registry.save(req)
             resumed += 1
             _log(f"reconcile: resume {req.id} attempt {attempts + 1} ok={ok}")
             analytics.log_event("auto_resume", req=req.id, ok=ok, attempt=attempts + 1)

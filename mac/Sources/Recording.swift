@@ -129,6 +129,12 @@ final class RecordingController: ObservableObject {
     private var lastGrantSeen: Bool?
     private var selfHealToken = 0
     private var noteToken = 0
+    /// Bumped by EVERY setMode call — the async ffmpeg precheck's commit is
+    /// dropped unless the generation still matches. Comparing mode VALUES
+    /// (mode == prev) was not enough: 屏幕+音频 → 关 → 仅屏幕 while the probe
+    /// ran ends on the same value the probe captured, and the stale commit
+    /// re-enabled the microphone against the user's newest choice.
+    private var modeGen = 0
 
     private init() {
         let stored = UserDefaults.standard.string(forKey: "recordingMode") ?? ""
@@ -172,6 +178,7 @@ final class RecordingController: ObservableObject {
 
     func setMode(_ newMode: String) {
         guard ["off", "screen", "screen_audio"].contains(newMode) else { return }
+        modeGen += 1
         // screen_audio hard-requires ffmpeg at engine startup — precheck
         // BEFORE committing, so a doomed switch never pkills a healthy
         // engine (2026-07-13: the stop→start path killed a live screen
@@ -179,6 +186,7 @@ final class RecordingController: ObservableObject {
         // recording silently stopped). Probe is blocking → off-main.
         if newMode == "screen_audio" {
             let prev = mode
+            let gen = modeGen
             DispatchQueue.global(qos: .userInitiated).async {
                 let ok = Self.ffmpegPresent()
                 DispatchQueue.main.async {
@@ -186,8 +194,9 @@ final class RecordingController: ObservableObject {
                         // stale click: the user picked another mode while the
                         // probe ran — their newer choice wins, this one drops
                         // (a late commit here once re-enabled the microphone
-                        // AFTER an explicit 关).
-                        guard self.mode == prev else { return }
+                        // AFTER an explicit 关; see modeGen for why the guard
+                        // is a generation, not a mode-value compare).
+                        guard self.modeGen == gen else { return }
                         if ok {
                             self.commitMode(newMode, rollbackTo: prev)
                         } else {

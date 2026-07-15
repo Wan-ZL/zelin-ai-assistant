@@ -37,6 +37,17 @@ struct PendingReturn {
     let created: Date
 }
 
+/// A 修改方向 comment in flight (blue "修改意见合并中…" line). `fingerprint`
+/// snapshots the card's plan at submit time — the entry clears once the plan
+/// actually CHANGED (actd folded the comment in, _fold_comment appends the
+/// tag to plan), NOT on a generated_at bump: actd rewrites the dashboard
+/// every pass regardless, which would drop the line before the comment file
+/// was even consumed (§21bis force-merge batch-clear precedent).
+struct PendingComment {
+    let fingerprint: String?   // nil = card wasn't in the proposal lane
+    let created: Date
+}
+
 /// merge-review 契约七: a merge_apply / merge_dismiss pressed on a suggestion
 /// card. apply → the card greys out in place; dismiss → it disappears at once
 /// (visibleMergeSuggestions filter). Cleared on reload once the suggestion has
@@ -121,8 +132,8 @@ final class DashboardStore: ObservableObject {
     // pin pressed → show the 永久 badge immediately (backend still catching up)
     @Published var pinnedLocal: Set<String> = []
     // comment sent → card stays in place with a blue "修改意见合并中…" line
-    // until generated_at changes (or the 180 s fallback)
-    @Published var pendingComment: [String: Date] = [:]
+    // until the card's plan actually changes (or the 180 s fallback)
+    @Published var pendingComment: [String: PendingComment] = [:]
     // "returns to another lane" actions in flight (restore / abort_execution /
     // revert_review) → id + kind + when. These plant NO echo (契约: info strip
     // instead; restore's target lane is unknown anyway), so without this the
@@ -153,9 +164,10 @@ final class DashboardStore: ObservableObject {
     // 永久性完成 (far right) render as narrow strips until expanded. Expansion
     // lives HERE — not view @State — so it survives page switches within a
     // session, and is deliberately NOT persisted: every launch starts
-    // collapsed. The backlog strip force-opens whenever feedback lands in the
-    // debt lane (暂缓 echo / raise-timeout notice) so a response to the user's
-    // own click can never appear inside an invisible column.
+    // collapsed. Each strip force-opens whenever feedback lands in it (debt:
+    // 暂缓 echo / raise-timeout notice; archive: unarchive info strip /
+    // timeout notice) so a response to the user's own click can never appear
+    // inside an invisible column.
     @Published var backlogStripExpanded = false
     @Published var archiveStripExpanded = false
     // P1-4: dashboard freshness verdict, recomputed on every refresh tick —
@@ -214,17 +226,26 @@ final class DashboardStore: ObservableObject {
                     : L("dashboard.json 有 \(db.decodeDrops.count) 行损坏已跳过（其余照常显示）: ",
                         "dashboard.json: skipped \(db.decodeDrops.count) corrupt row(s), the rest render normally: ")
                         + db.decodeDrops.joined(separator: ", ")
-                // one-shot hides + pending comments clear when the backend has
-                // actually regenerated (generated_at changed); missing field →
-                // legacy behavior (clear on any reload) + 180 s fallback.
+                // one-shot hides clear when the backend has actually
+                // regenerated (generated_at changed); missing field →
+                // legacy behavior (clear on any reload).
                 if let gen = db.generated_at, !gen.isEmpty {
                     if gen != lastGeneratedAt {
                         lastGeneratedAt = gen
                         hiddenOnce.removeAll()
-                        pendingComment.removeAll()
                     }
                 } else {
                     hiddenOnce.removeAll()
+                }
+                // pending comments clear on the REAL signal — the card's plan
+                // changed (actd folded the comment in) or the card left the
+                // proposal lane. A generated_at bump alone must NOT clear: a
+                // comment sent mid-pass lands in the inbox AFTER that pass's
+                // drain, yet the pass still rewrites the dashboard (§21bis).
+                // A dropped/failed comment never clears here → the 180 s
+                // sweep fires an honest timeout notice.
+                pendingComment = pendingComment.filter { id, entry in
+                    Self.commentFingerprint(of: id, in: db) == entry.fingerprint
                 }
                 // 契约 §21bis: a force-merge batch is done once EVERY secondary has
                 // left its lane (terminal `merged` → invisible). This is the real
@@ -300,8 +321,8 @@ final class DashboardStore: ObservableObject {
         let expiredRaises = raisingLocal.filter { now.timeIntervalSince($0.value.created) > 180 }
         // echoes: 180 s → give up; release the sticky hide so the card returns
         let expiredEchoes = pendingEchoes.filter { now.timeIntervalSince($0.created) > 180 }
-        // comment fallback (no generated_at movement): 180 s
-        let expiredComments = pendingComment.filter { now.timeIntervalSince($0.value) > 180 }
+        // comment fallback (plan never changed): 180 s
+        let expiredComments = pendingComment.filter { now.timeIntervalSince($0.value.created) > 180 }
         // returns (restore/abort/revert): 180 s without leaving the source
         // list → give up, release the hide
         let expiredReturns = returningLocal.filter { now.timeIntervalSince($0.value.created) > 180 }
@@ -375,7 +396,19 @@ final class DashboardStore: ObservableObject {
                 // land inside the collapsed backlog strip; force-open it.
                 if e.source == .debt { backlogStripExpanded = true }
             }
-            for (id, _) in expiredComments { pendingComment.removeValue(forKey: id) }
+            for (id, _) in expiredComments {
+                pendingComment.removeValue(forKey: id)
+                // the blue line vanishing must not be silent — the comment
+                // demonstrably never landed (plan unchanged), say so honestly
+                // like every other expiry path does.
+                let noticeID = "notice-comment-" + id
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .approval,
+                    text: L("修改意见超时未合并，卡片未变化，请重试（检查 actd 是否在运行）",
+                            "Comment timed out before merging — the card is unchanged, try again (check that actd is running)"),
+                    created: now))
+            }
             // merge-review 契约七: badges of one request expire together →
             // one grouped notice in the approval lane (where the suggestion
             // card would have appeared).
@@ -424,6 +457,10 @@ final class DashboardStore: ObservableObject {
                     id: noticeID, kind: .raiseTimeout, lane: entry.source,
                     text: Self.returnTimeoutText(entry.kind),
                     created: now))
+                // v0.33: an unarchive timeout notice — and the card silently
+                // reappearing there — must not hide inside the collapsed
+                // archive strip; force-open it (backlog strip precedent).
+                if entry.source == .archived { archiveStripExpanded = true }
             }
             for n in expiredNotices { notices.removeAll { $0.id == n.id } }
         }
@@ -593,7 +630,11 @@ final class DashboardStore: ObservableObject {
             case "pin":
                 pinnedLocal.insert(id)   // no hide — badge flips in place
             case "comment":
-                pendingComment[id] = Date()   // no hide — blue in-place line
+                // no hide — blue in-place line; cleared once the card's plan
+                // actually changes (the comment landed), 180 s sweep fallback
+                pendingComment[id] = PendingComment(
+                    fingerprint: dashboard.flatMap { Self.commentFingerprint(of: id, in: $0) },
+                    created: Date())
             case "merge_apply":
                 // merge-review 契约七: 接受 — the suggestion card greys out in
                 // place until actd consumes the job. MS- ids live in
@@ -637,6 +678,10 @@ final class DashboardStore: ObservableObject {
         notices.append(LocalNotice(
             id: noticeID, kind: .captureTimeout, lane: source, text: info,
             created: Date()))
+        // v0.33: unarchive's info strip lands in the (possibly collapsed)
+        // archive strip — a response to the user's own click can never appear
+        // inside an invisible column; force-open it (backlog strip precedent).
+        if source == .archived { archiveStripExpanded = true }
     }
 
     private func addEcho(id: String, target: ListKind, source: ListKind, label: String) {
@@ -764,6 +809,14 @@ final class DashboardStore: ObservableObject {
     /// by the backend (quotes, dashes, spacing) don't break the match.
     private static func normalized(_ s: String) -> String {
         s.lowercased().filter { !($0.isWhitespace || $0.isPunctuation || $0.isSymbol) }
+    }
+
+    /// Plan snapshot for the pendingComment clear signal: actd's _fold_comment
+    /// appends the 修改方向 tag to the card's plan, so a changed plan is the
+    /// proof the comment landed. nil = the card is not in the proposal lane
+    /// (comment buttons only exist there).
+    private static func commentFingerprint(of id: String, in db: Dashboard) -> String? {
+        db.needs_approval.first { $0.id == id }.map { $0.plan.joined(separator: "\n") }
     }
 
     private static func captureMatches(_ text: String, in db: Dashboard) -> Bool {

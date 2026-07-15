@@ -207,6 +207,8 @@ enum Telemetry {
 // MARK: - Settings overrides + config.yaml fallback (read side, §15)
 
 enum SettingsIO {
+    static let errorDomain = "SettingsIO"
+
     /// Read state/settings_overrides.json as a dictionary ([:] if absent/bad).
     static func readOverrides() -> [String: Any] {
         guard let data = FileManager.default.contents(atPath: AppPaths.settingsOverridesPath),
@@ -216,8 +218,31 @@ enum SettingsIO {
         return dict
     }
 
-    /// Atomic write (Data.write .atomic = temp file + rename).
+    /// The file EXISTS but does not parse as a JSON object (bad hand-edit /
+    /// on-disk corruption). readOverrides() degrades that to [:] for reads,
+    /// but a write built on that [:] would atomically destroy every other
+    /// override in the file — including recorded telemetry/redaction
+    /// opt-outs — so writeOverrides refuses while this is true (fail-closed).
+    static func overridesUnparseable() -> Bool {
+        guard let data = FileManager.default.contents(atPath: AppPaths.settingsOverridesPath)
+        else { return false }  // absent file: [:] is genuinely empty
+        guard let obj = try? JSONSerialization.jsonObject(with: data),
+              obj is [String: Any]
+        else { return true }
+        return false
+    }
+
+    /// Atomic write (Data.write .atomic = temp file + rename). Refuses (throws
+    /// before touching the file) when the existing file is unparseable: the
+    /// caller's merged dict was necessarily built from [:], so writing it
+    /// would silently wipe whatever the corrupt file still holds.
     static func writeOverrides(_ dict: [String: Any]) throws {
+        if overridesUnparseable() {
+            throw NSError(domain: errorDomain, code: 1, userInfo: [
+                NSLocalizedDescriptionKey: L(
+                    "settings_overrides.json 已存在但无法解析（可能是手改坏了）。为了不覆盖里面还保存着的其他设置，这次没有写入——请修复或移走 state/settings_overrides.json 后重试。",
+                    "settings_overrides.json exists but cannot be parsed (possibly a broken hand-edit). Nothing was written, to avoid wiping the other settings it still holds — fix or move state/settings_overrides.json, then retry.")])
+        }
         let data = try JSONSerialization.data(
             withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(

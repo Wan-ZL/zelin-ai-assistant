@@ -1032,3 +1032,44 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - 「永久性完成」条**仍不是看板列**：不进 `selectableIDs`/多选合并面，不参与
   lane-notice 路由（unarchive 仍走 info-strip 机制）。
 - iOS 不变：仍是 5 页 pager，无归档 lane（`BoardLane` 不加 case）。
+
+## 33. v0.33.1 审计加固 — add-only 修订与语义澄清
+
+（本节为 v0.33.1 全仓审计批次的契约后果；除明确标注 supersedes 的条目外，均为对既有行为的收紧/澄清，不引入新的对外形状。）
+
+- **§20 修订（chat 交付的文件型例外）**：`delivery_mode="chat"` 仍以 `FINAL DRAFT:`
+  为强完成信号，但**文件型交付物**（HTML 页面、表格等不适合纯文本粘贴的产物）改为
+  写入 workbench 下 `deliverables/` 的**绝对路径**文件，`FINAL DRAFT:` 之后跟该绝对
+  路径 + 3–5 行纯文本摘要（保持非空，`_promote_if_delivered` 的判定不变）。
+  所有交付模式新增统一规则：总结中提到的任何文件一律报绝对路径（执行会话隔离在
+  `<target>/.claude/worktrees/` 内，相对路径对 owner 无意义）。harvest 侧：final
+  draft 若恰为一个存在且可读的 `.html` 绝对路径，`final_draft` 从该文件回填
+  （≤20000 字符），路径+摘要留在 `delivered_summary`——「复制成稿」仍复制成品。
+- **§5.4/§32.2 ack 语义修订（supersedes「建议级动作一律 ack running」）**：所有
+  动作按真实处置回执——被丢弃/校验失败的动作 ack `noop`，未知目标 ack
+  `unknown`，坏文件 ack `bad_json`（文件删除，仅该文件终止）；rework 启动失败
+  ack `noop`。§32.2 前置条件落地情况：`comment` 对 trashed/merged/rejected 卡
+  no-op；`raise` 仅接受 detected/card_sent（card_sent 幂等重放为既定行为，测试
+  锚定）；accept/rework 的宽松接受面为本意保留。
+- **inbox 三重边界校验**：手机→syncd（非法形状拒收不落盘）、web→webui（400）、
+  actd（字段 coercion + per-file 兜底）。字段类型契约：`action/id/comment/text/
+  primary` 为 str-or-absent（null=absent），`ids` 为 list-of-str。
+- **`board_snapshots.updated_at` 改为服务器时钟**（migration
+  `20260715000000_board_snapshots_server_updated_at.sql`，BEFORE INSERT OR
+  UPDATE trigger 统一打 `now()`）；syncd 不再发送该列。手机 Freshness 语义不变，
+  但不再受 Mac 时钟偏移影响；手机侧另新增 seq 单调性检查（旧快照重放被忽略）。
+- **手机动作新增 `expected_status` 自动钉扎**：iOS 对 comment/raise/accept/rework
+  按其固有 lane 前置状态写入 `expected_status`（§32.2 guard 由此端到端生效）；
+  缺省仍为不检查（Mac app 行为不变，向后兼容）。
+- **registry 写入 fail-closed**：`save()` 对读不出/解析失败的既有文件拒绝写入并
+  抛错（原为按空文件覆盖）；`next_id()` 将 `R-<n>.yaml` 文件名（active + archive）
+  一并计入号段；archive/unarchive 半途残留由 `load()` 优先 archive 副本自愈。
+- **v0.33.0 折叠条一节的修订（supersedes「永久性完成条不参与 lane-notice 路由」）**：
+  自 v0.33.1 起「放回看板」的 info-strip 反馈与超时通知渲染于永久性完成条内部，
+  且反馈到达时该条自动展开（与潜在任务条同一机制）；该条仍不进
+  `selectableIDs`/多选合并面。看板搜索命中潜在任务时强制展开该条（仅视图态）。
+- **配对 label 解析顺序**：`--label` 显式参数 → `state/sync.json` 既有 label →
+  「这台 Mac」。打开设置页不再重置自定义 label。
+- **digest / 1:1 prep 输出根**：显式配置了 `execution.default_target_repo` 才写入
+  该 workbench，否则写 `state/digests/`、`state/oneonone/`；不再自动创建占位
+  `~/Projects/your-workbench`。

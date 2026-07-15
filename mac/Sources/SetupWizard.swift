@@ -235,18 +235,21 @@ enum ObsidianVaultSetup {
                                    "3 - change-summary", "4 - wiki"]
 
     /// Point the pipeline at a vault root: create the four standard dirs
-    /// (idempotent, best-effort), then diff-write the "obsidian_raw" override —
-    /// written ONLY when the choice differs from the current effective value,
-    /// and DROPPED when it equals the config layer (config.yaml → built-in
-    /// default) so config.yaml stays live (§15.3). Returns true when the
-    /// effective raw dir actually changed (analytics hook).
+    /// (idempotent — creating an existing dir is a no-op; a real failure
+    /// throws, because a vault the pipeline cannot create its dirs in means
+    /// radar/ingest would silently find nothing), then diff-write the
+    /// "obsidian_raw" override — written ONLY when the choice differs from
+    /// the current effective value, and DROPPED when it equals the config
+    /// layer (config.yaml → built-in default) so config.yaml stays live
+    /// (§15.3). Returns true when the effective raw dir actually changed
+    /// (analytics hook).
     @discardableResult
     static func apply(root: String) throws -> Bool {
         let r = root.trimmingCharacters(in: .whitespaces)
         guard !r.isEmpty else { return false }
         let rootExpanded = (r as NSString).expandingTildeInPath
         for name in pipelineDirNames {
-            try? FileManager.default.createDirectory(
+            try FileManager.default.createDirectory(
                 atPath: rootExpanded + "/" + name, withIntermediateDirectories: true)
         }
         let raw = r + "/2 - raw"
@@ -486,6 +489,7 @@ struct SetupWizardView: View {
     @State private var vaultRoot = ""
     @State private var customRoot = ""
     @State private var vaultLoaded = false
+    @State private var vaultError = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -569,7 +573,10 @@ struct SetupWizardView: View {
     }
 
     private func advance() {
-        if step == .vault { applyVaultChoice() }
+        // a failed vault apply keeps the user on this step with the error
+        // shown — advancing would let the finale declare 🎉 while notes
+        // would actually land somewhere else (or nowhere)
+        if step == .vault, !applyVaultChoice() { return }
         guard let next = Step(rawValue: step.rawValue + 1) else { return }
         setStep(next)
     }
@@ -881,6 +888,12 @@ struct SetupWizardView: View {
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !vaultError.isEmpty {
+                Text(vaultError)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -959,13 +972,25 @@ struct SetupWizardView: View {
     /// Create the pipeline dirs and diff-write the "obsidian_raw" override
     /// (an unchanged wizard run never clobbers a config.yaml-level setting) —
     /// ObsidianVaultSetup is shared with 设置 → Obsidian Vault 位置.
-    private func applyVaultChoice() {
+    /// Returns false (with the error rendered on the step) when the apply
+    /// failed — the wizard must never carry an unapplied choice forward.
+    private func applyVaultChoice() -> Bool {
         let root = vaultRoot.trimmingCharacters(in: .whitespaces)
-        guard !root.isEmpty else { return }
-        let changed = (try? ObsidianVaultSetup.apply(root: root)) ?? false
-        if changed {
-            Analytics.log("wizard_vault_set", fields: [
-                "obsidian": registeredVaults.contains(root)])
+        guard !root.isEmpty else { return true }
+        do {
+            let changed = try ObsidianVaultSetup.apply(root: root)
+            vaultError = ""
+            if changed {
+                Analytics.log("wizard_vault_set", fields: [
+                    "obsidian": registeredVaults.contains(root)])
+            }
+            return true
+        } catch {
+            vaultError = L("保存失败（磁盘或权限问题），这个位置没有生效——换一个位置或修复后再点「下一步」：",
+                           "Save failed (disk or permissions); this location was not applied — pick another or fix it, then click Next again: ")
+                + error.localizedDescription
+            Analytics.log("wizard_vault_set_failed")
+            return false
         }
     }
 

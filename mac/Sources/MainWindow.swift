@@ -454,10 +454,18 @@ struct ArchivePageView: View {
     unowned let app: AppDelegate
 
     var body: some View {
-        ArchiveSectionView(items: store.visibleArchived, count: store.visibleArchivedCount,
-                           app: app, startExpanded: true)
-            // keep cards at their popover-designed width (kanban lanes are
-            // 400pt too) instead of stretching across the whole window
-            .frame(maxWidth: 420, alignment: .leading)
+        VStack(alignment: .leading, spacing: 8) {
+            // unarchive feedback (info strip / timeout notice, lane .archived)
+            // renders here too — this page has its own 放回看板 buttons, and a
+            // click's response must be visible on the surface it happened on.
+            ForEach(store.notices.filter { $0.lane == .archived }) {
+                NoticeRow(notice: $0)
+            }
+            ArchiveSectionView(items: store.visibleArchived, count: store.visibleArchivedCount,
+                               app: app, startExpanded: true)
+        }
+        // keep cards at their popover-designed width (kanban lanes are
+        // 400pt too) instead of stretching across the whole window
+        .frame(maxWidth: 420, alignment: .leading)
     }
 }

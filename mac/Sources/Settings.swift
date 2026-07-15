@@ -321,7 +321,7 @@ struct SettingsFormView: View {
         [
             SettingsSectionDescriptor(
                 id: "general", titleZh: "通用", titleEn: "General",
-                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 交付物格式 输出格式 deliverable format output format markdown html 标记语言 卡片排序 card sorting 排序 newest oldest deadline 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 完全磁盘访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
+                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 交付物格式 输出格式 deliverable format output format markdown html 标记语言 卡片排序 card sorting 排序 newest oldest deadline 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 笔记库访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
                 anchor: nil, content: AnyView(generalGroup)),
             SettingsSectionDescriptor(
                 id: "menuBar", titleZh: "菜单栏", titleEn: "Menu Bar",
@@ -556,8 +556,8 @@ struct SettingsFormView: View {
                 .controlSize(.small)
                 Spacer()
             }
-            Text(L("屏幕录制 / 通知 / 完全磁盘访问的授权状态一页看全，缺哪个当场补。",
-                   "See Screen Recording / Notifications / Full Disk Access grants on one page and fix any gap on the spot."))
+            Text(L("屏幕录制 / 笔记库访问 / 通知的授权状态一页看全，缺哪个当场补。",
+                   "See Screen Recording / notes-vault / Notifications grants on one page and fix any gap on the spot."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Divider()
@@ -641,6 +641,29 @@ struct SettingsFormView: View {
                    "On app launch, Screenpipe recording starts automatically in this mode."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
+            if !rec.selfHealNote.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text(rec.selfHealNote)
+                        .font(.system(size: 11))
+                        .foregroundColor(.green)
+                }
+            }
+            if !rec.recordingNote.isEmpty {
+                // refused / rolled-back mode switch (15 s transient): without
+                // this the segmented picker above just snaps back with no
+                // explanation on THIS page (the note otherwise renders only
+                // in the popover and the ingest page) — mirror of IngestView.
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundColor(.orange)
+                    Text(rec.recordingNote)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -1354,6 +1377,17 @@ struct SettingsFormView: View {
             noteSaved()
             Analytics.log("mw_settings_save")
         } catch {
+            noteSaveFailure(error)
+        }
+    }
+
+    /// The fail-closed corrupt-overrides refusal carries its own honest,
+    /// self-contained message — the generic disk/permissions prefix ("change
+    /// it again to retry") would be wrong advice for it.
+    private func noteSaveFailure(_ error: Error) {
+        if (error as NSError).domain == SettingsIO.errorDomain {
+            noteError(error.localizedDescription)
+        } else {
             noteError(L("保存失败（磁盘或权限问题），这次改动没写入——再改一次即可重试：",
                         "Save failed (disk or permissions); this change was not written — change it again to retry: ")
                 + error.localizedDescription)
@@ -1543,9 +1577,7 @@ struct SettingsFormView: View {
             noteSaved()
             Analytics.log("mw_settings_save")
         } catch {
-            noteError(L("保存失败（磁盘或权限问题），这次改动没写入——再改一次即可重试：",
-                        "Save failed (disk or permissions); this change was not written — change it again to retry: ")
-                + error.localizedDescription)
+            noteSaveFailure(error)
         }
         loadVault(effectiveRaw: effectiveRawDir(), overrides: SettingsIO.readOverrides())
     }

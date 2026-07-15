@@ -78,8 +78,10 @@ class NumericYamlFieldsNormalizeTestCase(unittest.TestCase):
             # next_id(include_archived=True) 会捡到别的测试留下的归档卡
             with mock.patch.object(config, "REGISTRY_DIR", reg), \
                     mock.patch.object(registry, "ARCHIVE_DIR", reg / "archive"):
-                # 曾经：_ID_RE.match(int) -> TypeError，所有新建卡的入口全瘫
-                self.assertEqual(registry.next_id(), "R-001")
+                # 曾经：_ID_RE.match(int) -> TypeError，所有新建卡的入口全瘫。
+                # audit finding 3: 文件名 R-004.yaml 占号 —— 重发 R-004 会让
+                # save() 覆盖这张 legacy 卡（静默数据丢失），所以是 R-005。
+                self.assertEqual(registry.next_id(), "R-005")
                 loaded = registry.load_all()
             self.assertEqual([r.id for r in loaded], ["4"])
 

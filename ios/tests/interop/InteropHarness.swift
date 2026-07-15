@@ -34,7 +34,10 @@ func check(_ cond: Bool, _ label: String, _ detail: String = "") {
 
 // ---- DOWN: decrypt Python's blobs, assert plaintext matches ----
 print("Swift decrypting Python blobs (DOWN):")
-let decryptCases = doc["decrypt_cases"] as? [[String: Any]] ?? []
+// fail CLOSED: a missing/renamed/emptied fixture key must abort the gate,
+// not "pass" with zero cases (this is the only cross-language crypto guard)
+guard let decryptCases = doc["decrypt_cases"] as? [[String: Any]], !decryptCases.isEmpty
+else { fail("fixture key decrypt_cases missing/empty — interop.py emit and this harness drifted") }
 for (i, c) in decryptCases.enumerated() {
     let kind = c["kind"] as! String
     let k = b64(c["k"] as! String)
@@ -105,7 +108,10 @@ if let cp = doc["channel_pairing"] as? [String: Any],
 // ---- UP: encrypt the requested plaintexts for Python to verify ----
 print("Swift encrypting for Python to verify (UP):")
 var encrypted: [[String: Any]] = []
-let specs = doc["encrypt_specs"] as? [[String: Any]] ?? []
+// fail CLOSED here too — zero encrypt specs would hand Python an empty list
+// that its old verify() blessed as "ALL PASS"
+guard let specs = doc["encrypt_specs"] as? [[String: Any]], !specs.isEmpty
+else { fail("fixture key encrypt_specs missing/empty — interop.py emit and this harness drifted") }
 for c in specs {
     let kind = c["kind"] as! String
     let k = b64(c["k"] as! String)

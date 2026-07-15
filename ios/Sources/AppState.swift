@@ -28,8 +28,14 @@ final class AppState: ObservableObject {
     /// Last-seen board `updated_at` per channel — the freshness authority.
     private var updatedAt: [String: Date] = [:]
 
-    /// Tracks needs_approval count so we can fire a local notification on a rise.
-    private var lastApprovalCount = 0
+    /// Highest board seq seen per channel — the anti-replay floor. Within an
+    /// epoch the Mac's seq never regresses (§5.2), so a snapshot with a lower
+    /// seq is a replayed old row and is ignored, never rendered as current.
+    private var lastSeenSeq: [String: Int] = [:]
+
+    /// Tracks needs_approval count per channel so we fire a local notification
+    /// only on a rise within that channel (switching channels is not "new").
+    private var lastApprovalCount: [String: Int] = [:]
 
     let client = SupabaseClient()
 
@@ -58,6 +64,8 @@ final class AppState: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: payload) {
             Keychain.set(data, account: channelPrefix + c.channelId)
         }
+        // A fresh QR scan is a new trust anchor; the seq floor restarts with it.
+        lastSeenSeq.removeValue(forKey: c.channelId)
         if selectedChannelId == nil { selectedChannelId = c.channelId }
     }
 
@@ -66,6 +74,7 @@ final class AppState: ObservableObject {
     func unpair(channelId: String) {
         channels.removeValue(forKey: channelId)
         updatedAt.removeValue(forKey: channelId)
+        lastSeenSeq.removeValue(forKey: channelId)
         Keychain.delete(channelPrefix + channelId)
         if selectedChannelId == channelId { selectedChannelId = channels.keys.sorted().first }
         if selectedChannelId == nil { board = nil }
@@ -102,10 +111,20 @@ final class AppState: ObservableObject {
     func refreshBoard() async {
         guard let id = selectedChannelId, let channel = channels[id] else { board = nil; return }
         _ = await run {
-            guard let row = try await self.client.fetchBoard(channelId: id) else { self.board = nil; return }
+            let row = try await self.client.fetchBoard(channelId: id)
+            // Drop a stale in-flight response: the user switched channels (or
+            // unpaired this one) while the fetch was in the air — applying it
+            // would show channel A's board under channel B's label and pin
+            // subsequent actions to the wrong target.
+            guard self.selectedChannelId == id, self.channels[id] != nil else { return }
+            guard let row else { self.board = nil; return }
             guard let blob = PgBytea.decode(row.payload_enc) else {
                 throw SupabaseError.decode("board payload not decodable bytea")
             }
+            // Anti-replay floor: an intact old (seq, blob) tuple decrypts fine,
+            // so refuse to go backwards — equal seq is the same snapshot
+            // re-polled and still refreshes updated_at.
+            if let floor = self.lastSeenSeq[id], row.seq < floor { return }
             // The record blob is UNCHANGED from v1; the channel_id plays the role
             // of the AAD identifier the Mac sealed under.
             let plaintext = try E2E.decryptBoard(kI: channel.key, epoch: channel.epoch,
@@ -113,18 +132,20 @@ final class AppState: ObservableObject {
             let dash = try JSONDecoder().decode(Dashboard.self, from: plaintext)
             self.board = dash
             self.boardSeq = row.seq
+            self.lastSeenSeq[id] = row.seq
             if let u = parseISO(row.updated_at) { self.updatedAt[id] = u }
-            self.maybeNotify(dash)
+            self.maybeNotify(dash, channelId: id)
         }
     }
 
-    private func maybeNotify(_ dash: Dashboard) {
+    private func maybeNotify(_ dash: Dashboard, channelId: String) {
         let n = dash.counts.needs_approval
-        if n > lastApprovalCount {
-            LocalNotifications.notifyNewProposals(delta: n - lastApprovalCount, total: n)
+        let last = lastApprovalCount[channelId] ?? 0
+        if n > last {
+            LocalNotifications.notifyNewProposals(delta: n - last, total: n)
         }
         LocalNotifications.setBadge(n)
-        lastApprovalCount = n
+        lastApprovalCount[channelId] = n
     }
 
     /// Freshness for a channel, from its last-seen board `updated_at` (server
@@ -148,7 +169,10 @@ final class AppState: ObservableObject {
         let ts = InboxAction.nowTimestamp()
         let seq = boardSeq
         return await run {
-            let plaintext = InboxAction.card(id: cardId, verb: verb, comment: comment, ts: ts)
+            // §32.2: pin the status this verb's lane rendered from, so a stale
+            // tap (board moved since the phone saw it) no-ops on the Mac.
+            let plaintext = InboxAction.card(id: cardId, verb: verb, comment: comment,
+                                             expectedStatus: verb.pinnedExpectedStatus, ts: ts)
             let blob = try E2E.encryptAction(kI: channel.key, epoch: channel.epoch,
                                              deviceId: target, actionId: actionId,
                                              boardSeq: seq, plaintext: plaintext)

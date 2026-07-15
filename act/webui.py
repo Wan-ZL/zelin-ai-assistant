@@ -186,6 +186,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
+        # Anti-framing (clickjacking): the token-armed page must never render
+        # inside another page's iframe — Safari/Firefox load public->local
+        # frames, and one baited click on 批准 dispatches an autonomous agent.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         if extra:
             for k, v in extra.items():
                 self.send_header(k, v)
@@ -323,6 +328,19 @@ class _Handler(BaseHTTPRequestHandler):
         rid = payload.get("id")
         if rid is not None and not (isinstance(rid, str) and _SAFE_ID_RE.match(rid)):
             self._json(400, {"error": "invalid id"})
+            return
+        # Fail closed on field TYPES too: free-text fields must be str (or
+        # null/absent — the Mac app writes ``comment: null``). A non-string
+        # forwarded verbatim would poison the inbox file and wedge actd's
+        # ``(comment or "").strip()``-style handling every pass.
+        for key in ("comment", "text"):
+            if payload.get(key) is not None and not isinstance(payload[key], str):
+                self._json(400, {"error": f"{key} must be a string"})
+                return
+        ids = payload.get("ids")
+        if ids is not None and not (isinstance(ids, list)
+                                    and all(isinstance(x, str) for x in ids)):
+            self._json(400, {"error": "ids must be a list of strings"})
             return
         try:
             name = write_inbox(payload)

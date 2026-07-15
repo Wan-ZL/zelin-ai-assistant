@@ -27,6 +27,82 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.33.1] - 2026-07-15
+
+### Fixed
+
+- **Whole-repo adversarial audit: 72 confirmed findings fixed across every
+  subsystem** (15 auditors + 3-lens verification per finding; 11 high). The
+  themes, each with regression tests:
+  - **Data safety (registry/actd/ingest).** `next_id()` can no longer reissue
+    the id of an unreadable card file (filenames now count toward the id
+    range) and `save()` refuses to overwrite state it could not read — a
+    corrupt or hand-broken YAML file previously let one save wipe every
+    sibling card. A poison inbox file (e.g. a non-string `comment`) used to
+    re-crash the daemon every 10 s pass forever while re-folding the same
+    comment into the card each round; field types are now validated at all
+    three boundaries (phone→syncd, web→webui, actd itself) and any future bad
+    file is acked `bad_json` and removed, terminal for that file only.
+    Ingest markers advance only over rows actually written to a dump that
+    actually landed; the PID lock now covers the headless-claude child; a
+    failed mirror round salvage-pushes (or pends) its products so the next
+    round's pull can never `--delete` them.
+  - **Never-lose capture, for real.** A hallucinated/sealed `relates_to`
+    target now falls through to filing a new card instead of silently
+    dropping the capture; iPhone quick-capture keeps your text (and shows an
+    error banner) when the upload fails; a failed Mac menu-bar text drop
+    springs back and says so; dragged text is captured, never executed as a
+    slash command.
+  - **The app stops lying in small ways.** Inbox acks now report what
+    actually happened (dropped/no-op actions no longer ack "已生效"); the
+    setup wizard can no longer celebrate 🎉 over a vault it failed to
+    configure; a refused recording-mode switch explains itself where you
+    clicked; a corrupt `settings_overrides.json` blocks further writes
+    instead of being silently replaced by one surviving setting; the retired
+    Full-Disk-Access permissions row (whose copy overstated coverage) is
+    gone; web-dashboard destructive buttons name the card and admit the web
+    UI has no undo.
+  - **HTML deliverables land as files** (the reported bug): chat-mode
+    sessions now write file-type artifacts under the workbench
+    `deliverables/` directory and report ABSOLUTE paths after `FINAL DRAFT:`
+    (sessions run inside hidden git worktrees, so relative paths pointed
+    nowhere); the review card hydrates 复制成稿 from the file so it still
+    copies paste-ready HTML. FINAL DRAFT parsing is code-fence-aware and no
+    longer misses a draft buried behind a closing remark; a failed 打回
+    (rework) surfaces instead of silently discarding your feedback.
+  - **Sync hardening.** `board_snapshots.updated_at` is now stamped by the
+    server (new migration + trigger), so a Mac with a skewed clock cannot
+    paint a dead board FRESH on the phone; the phone rejects replayed older
+    board snapshots, pins `expected_status` on card actions (activating the
+    §32.2 stale-action guard end-to-end), and renders sync/action errors in
+    a visible banner; a custom pairing label is no longer reset to 「这台
+    Mac」 every time Settings opens; phone actions that fail to write locally
+    are retried instead of being falsely marked delivered.
+  - **Board UI honesty (Mac).** 放回看板 feedback and timeouts now render
+    inside the 永久性完成 strip (which auto-opens for them); board search
+    force-opens the collapsed 潜在任务 strip when it has matches; the
+    multi-select bar count always matches what submit will actually send;
+    merge-suggestion cards show real titles for backlog cards; a failed
+    研究并提议 no longer leaves a ghost 研究中 placeholder.
+  - Plus: Monday digest / 1:1 prep no longer create a placeholder
+    `~/Projects/your-workbench`; 进化建议 dedup works across Mondays; false
+    「需要重新登录」 alarms from cwd text in launch logs; doctor multiline
+    key false-negative; webui anti-framing headers, IME-safe Enter, stable
+    DOM under the cursor, and delivered-summary display; `build.sh --install`
+    stages before it swaps so a failed copy can't delete the installed app.
+
+### Added
+
+- **CI now actually guards the Swift half.** Every PR compiles the iOS app
+  and the Mac app WITH Sparkle, runs the Swift↔Python E2E crypto interop
+  gate (hardened against vacuous passes), runs a new 28-assert shared
+  contract test harness (lossy board decode, BoardModel lane projection),
+  and enforces iOS version sync with `act.__version__` (was frozen at 0.1.0).
+  Releases preflight that the Sparkle signing key matches the public key
+  baked into the app before building anything.
+- **+144 Python regression tests** (suite 1069 → 1213), most written to fail
+  against the pre-fix code (verified by stashing the fixes).
+
 ## [0.33.0] - 2026-07-15
 
 ### Changed
@@ -1184,7 +1260,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...HEAD
+[0.33.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.1...v0.32.0
 [0.31.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...v0.31.1
