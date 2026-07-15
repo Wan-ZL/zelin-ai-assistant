@@ -18,6 +18,7 @@ struct BoardView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 if CertExpiry.shouldWarn() { ExpiryBanner() }
+                if let err = state.lastError { ErrorBanner(message: err) }
                 laneStrip
                 Divider()
                 lanePager
@@ -138,6 +139,7 @@ private struct LanePage: View {
 private struct QuickCapture: View {
     @EnvironmentObject var state: AppState
     @State private var text = ""
+    @State private var sending = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -146,13 +148,50 @@ private struct QuickCapture: View {
                 .textFieldStyle(.roundedBorder).focused($focused)
             Button {
                 let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !t.isEmpty else { return }
-                text = ""; focused = false
-                Task { _ = await state.submitCapture(t) }
-            } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                guard !t.isEmpty, !sending else { return }
+                focused = false
+                sending = true
+                Task {
+                    // Clear only on confirmed success: a failed submit (offline,
+                    // server error) keeps the typed capture in the field — the
+                    // error banner explains — so the thought is never lost.
+                    if await state.submitCapture(t) { text = "" }
+                    sending = false
+                }
+            } label: {
+                if sending {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.up.circle.fill").font(.title2)
+                }
+            }
+            .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(.bottom, 4)
+    }
+}
+
+// Dismissible error strip (mirrors ExpiryBanner styling). `lastError` is set by
+// every failed refresh/action and cleared on the next success — without this
+// surface a failed 批准/capture on the phone is completely silent.
+private struct ErrorBanner: View {
+    @EnvironmentObject var state: AppState
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(L("同步或操作失败：\(message)", "Sync or action failed: \(message)"))
+                .font(.caption).lineLimit(3)
+            Spacer(minLength: 0)
+            Button { state.lastError = nil } label: {
+                Image(systemName: "xmark").font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("关闭", "Dismiss"))
+        }
+        .padding(8).foregroundStyle(.red)
+        .background(Color.red.opacity(0.1))
     }
 }
 

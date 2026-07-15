@@ -1,14 +1,31 @@
 // LocalNotifications.swift — the honest free-tier notification ladder
-// (plan §6.4). While the app is in the FOREGROUND (or a BGAppRefreshTask fires)
-// and the needs_approval count RISES, we post a LOCAL notification. There is no
-// APNs / server push on the free tier — that needs the paid Apple Developer
-// Program — so the disclosure copy says so plainly and the Mac stays the real
-// alert channel.
+// (plan §6.4). While the app is in the FOREGROUND and the needs_approval count
+// RISES, we post a LOCAL notification. There is no APNs / server push on the
+// free tier — that needs the paid Apple Developer Program — so the disclosure
+// copy says so plainly and the Mac stays the real alert channel.
 
 import Foundation
 import UserNotifications
 
+/// iOS silently discards notifications posted while the app is foreground-active
+/// unless the center's delegate implements `willPresent` — and foreground is the
+/// ONLY time this app can post at all (see header). Installed at app start.
+final class ForegroundNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ForegroundNotificationDelegate()
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification)
+        async -> UNNotificationPresentationOptions {
+        [.banner, .sound, .badge]
+    }
+}
+
 enum LocalNotifications {
+    /// Wire the foreground-presentation delegate. Must run at app start, before
+    /// any notification is posted, or every foreground banner is dropped.
+    static func installDelegate() {
+        UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
+    }
+
     static func requestAuthorization() async -> Bool {
         do {
             return try await UNUserNotificationCenter.current()

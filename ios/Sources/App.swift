@@ -16,6 +16,10 @@ struct ZelinCompanionApp: App {
     @StateObject private var state = AppState()
     @StateObject private var lang = LanguageStore.shared
 
+    init() {
+        LocalNotifications.installDelegate()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

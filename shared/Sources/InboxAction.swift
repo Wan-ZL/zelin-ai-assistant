@@ -26,6 +26,20 @@ enum InboxVerb: String, CaseIterable {
     case revert_review
     case archive, unarchive
     case capture
+
+    /// CONTRACT §32.2 stale-guard: the inherent precondition status actd checks
+    /// against a pinned `expected_status` for this verb. On the phone each of
+    /// these verbs is only ever rendered in the one lane whose status this is,
+    /// so pinning it records "the status the phone saw" at tap time. nil = actd
+    /// has no expected_status guard for the verb (the key is omitted).
+    var pinnedExpectedStatus: String? {
+        switch self {
+        case .comment: return "card_sent"       // 提案 lane
+        case .raise: return "detected"          // 潜在任务 lane
+        case .accept, .rework: return "review"  // 待验收 lane
+        default: return nil
+        }
+    }
 }
 
 enum InboxAction {
@@ -39,10 +53,15 @@ enum InboxAction {
     /// A card-decision action: {id, action, ts, comment}. `comment` becomes JSON
     /// null when nil (matches AppDelegate.writeInbox, which always writes the
     /// key). Deterministic key order (sorted) so equal actions serialize equally.
+    /// Synced clients pin `expectedStatus` — the card status they rendered the
+    /// action from — for actd's §32.2 stale-guard; nil omits the key entirely
+    /// (absent = no expected check, the local Mac-app behavior).
     static func card(id: String, verb: InboxVerb, comment: String?,
+                     expectedStatus: String? = nil,
                      ts: String = InboxAction.nowTimestamp()) -> Data {
         var obj: [String: Any] = ["id": id, "action": verb.rawValue, "ts": ts]
         obj["comment"] = comment ?? NSNull()
+        if let expectedStatus { obj["expected_status"] = expectedStatus }
         return encode(obj)
     }
 
