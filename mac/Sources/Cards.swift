@@ -1535,8 +1535,25 @@ struct MergeSuggestionCard: View {
     let suggestion: MergeSuggestion
     unowned let app: AppDelegate
     var actionPending: Bool = false
+    // 契约 §21bis: 「仍然合并」覆盖弹窗（当 AI 判 verdict≠merge 或分析失败时，
+    // 用户仍要合）。走同一个 ForceMergeSheet（选主卡 + 不可撤销告知）。
+    @State private var showForceMerge = false
 
     var body: some View {
+        content
+            // 强制合并确认弹窗（选主卡）——成功后顺手把这条建议 dismiss 掉，
+            // 因为它已被用户的直断取代，不该继续挂在看板上。
+            .sheet(isPresented: $showForceMerge) {
+                ForceMergeSheet(ids: suggestion.ids, app: app,
+                                defaultPrimary: suggestion.primary) { primary in
+                    if app.submitMergeForce(ids: suggestion.ids, primary: primary) {
+                        app.submit(id: suggestion.id, action: "merge_dismiss", comment: nil)
+                    }
+                }
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         switch suggestion.status {
         case "done": doneBody
         case "failed": failedBody
@@ -1633,6 +1650,15 @@ struct MergeSuggestionCard: View {
             } label: { Label(L("接受", "Accept"), systemImage: "checkmark.circle.fill") }
                 .tint(.green)
 
+            // 契约 §21bis: AI 没判「合并」（保持独立 / 挂改进卡 / 关副卡）时，
+            // 给不认同的用户一个直断入口——钦定主卡强制合并（走确认弹窗）。
+            if suggestion.verdict != "merge" {
+                Button {
+                    showForceMerge = true
+                } label: { Label(L("仍然合并", "Merge anyway"), systemImage: "arrow.triangle.merge") }
+                    .tint(.purple)
+            }
+
             Button {
                 app.submit(id: suggestion.id, action: "merge_dismiss", comment: nil)
             } label: { Label(L("取消", "Dismiss"), systemImage: "xmark.circle") }
@@ -1669,6 +1695,12 @@ struct MergeSuggestionCard: View {
         if actionPending {
             submittedLine
         } else {
+            // 契约 §21bis: 分析失败也别把用户卡死——仍可钦定主卡直接合并。
+            Button {
+                showForceMerge = true
+            } label: { Label(L("仍然合并", "Merge anyway"), systemImage: "arrow.triangle.merge") }
+                .tint(.purple)
+
             Button {
                 app.submit(id: suggestion.id, action: "merge_dismiss", comment: nil)
             } label: { Label(L("取消", "Dismiss"), systemImage: "xmark.circle") }
@@ -1751,6 +1783,102 @@ struct MergeSuggestionCard: View {
         if let t = (db.running + db.needs_input + db.completed)
             .first(where: { $0.id == id }) { return t.name }
         return id
+    }
+}
+
+// MARK: - ForceMergeSheet — 契约 §21bis 强制合并确认弹窗
+//
+// 两个入口共用（kanban 多选操作条「强制合并」/ AI 建议卡「仍然合并」覆盖）：
+// 选一张卡当主卡（默认第一张 / AI 选的 primary），读不可撤销告知，确认 →
+// onConfirm(primary)。宿主把 onConfirm 接到 AppDelegate.submitMergeForce（外加
+// 各自的收尾：多选退出 / 建议卡顺手 dismiss）。因 merged 是终态、UI 不可撤销，
+// 这个弹窗是唯一的确认关口——不做「一点就合」。
+struct ForceMergeSheet: View {
+    let ids: [String]
+    unowned let app: AppDelegate
+    let onConfirm: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var primary: String
+
+    init(ids: [String], app: AppDelegate, defaultPrimary: String? = nil,
+         onConfirm: @escaping (String) -> Void) {
+        self.ids = ids
+        self.app = app
+        self.onConfirm = onConfirm
+        let d = defaultPrimary.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first ?? ""
+        _primary = State(initialValue: d)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.merge").foregroundColor(.purple)
+                Text(L("强制合并 \(ids.count) 张卡片", "Force-merge \(ids.count) cards"))
+                    .font(.headline)
+            }
+            Text(L("选一张作为主卡保留，其余全部并入它。",
+                   "Pick one card to keep as the primary; the rest fold into it."))
+                .font(.subheadline).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(ids, id: \.self) { id in
+                    Button { primary = id } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: primary == id
+                                  ? "largecircle.fill.circle" : "circle")
+                                .foregroundColor(primary == id ? .purple : .secondary)
+                                .padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(app.store.cardTitle(id))
+                                    .font(.system(size: 12,
+                                                  weight: primary == id ? .semibold : .regular))
+                                    .foregroundColor(.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(primary == id
+                                     ? L("主卡 · 保留", "Primary · kept")
+                                     : L("副卡 · 并入主卡", "Secondary · folds in"))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(primary == id ? .purple : .secondary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 8))
+
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundColor(.orange).padding(.top, 1)
+                Text(L("副卡会停止运行、进入「已合并」——这一步不可撤销。它们的来源与交付物会保留在主卡上。",
+                       "Secondaries stop running and become \u{201C}merged\u{201D} — this cannot be undone. Their sources and deliverables are kept on the primary."))
+                    .font(.system(size: 11)).foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+                Button(L("取消", "Cancel")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button {
+                    onConfirm(primary)
+                    dismiss()
+                } label: {
+                    Text(L("强制合并", "Force-merge"))
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent).tint(.purple)
+                .disabled(primary.isEmpty || ids.count < 2)
+            }
+        }
+        .padding(18)
+        .frame(width: 400)
     }
 }
 

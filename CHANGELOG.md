@@ -27,6 +27,26 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.31.0] - 2026-07-14
+
+### Added
+
+- **强制合并 / Force-merge cards (Mac).** Alongside the AI-driven **合并建议
+  (Suggest merge)**, you can now merge cards yourself when you're certain —
+  skipping the AI analysis entirely. Two entry points, both routed through a
+  confirmation sheet where you pick which card stays as the **主卡 (primary)**
+  and read a plain-language, *not-reversible* warning:
+  - **看板多选 → 操作条「强制合并 (N)」**: tick ≥2 cards and merge them now.
+  - **建议卡「仍然合并」(Merge anyway)**: when the AI suggests *keeping cards
+    separate* (or its analysis failed) but you disagree, override it in one
+    click.
+  The merge itself is the exact same deterministic operation as accepting an
+  AI **merge** verdict — the primary absorbs the secondaries' sources, repeat
+  counts, notes and finished deliverables; each secondary stops and becomes
+  terminal **已合并 (merged)**. Involved cards show a **合并中… (Merging…)**
+  badge until it lands. (The iOS suggestion-card override follows in a later
+  release.)
+
 ## [0.30.0] - 2026-07-13
 
 ### Changed
@@ -1032,7 +1052,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.30.0...v0.31.0
 [0.27.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0

@@ -128,7 +128,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -340,6 +340,23 @@ install.sh 重写用户 crontab 的 screenpipe 行 → 指向本 repo `ingest/` 
 **app 侧（概要）**：看板 header「选择」进入多选态；选中 ≥2 → 底部操作条「请求合并建议 (N)」写 `merge_review`；建议卡（紫 accent，待审批列顶）analyzing=spinner、done=结论+主副卡+rationale+**"接受后将执行"动作清单全文**+confidence 徽章+「接受」(`merge_apply`)/「取消」(`merge_dismiss`)、failed=橙色+error+仅「取消」；接受/取消乐观回显 180s 兜底。popover 只镜像显示建议卡（可接受/取消），不做多选。
 
 **analytics**：`merge_review_requested{n}`（actd）、`merge_suggestion_done{verdict,confidence}`（分析子进程）；apply/dismiss 由 app 侧 `card_action` 自动覆盖。**追加（add-only）**：actd 侧确定性 apply 落地点补 `merge_apply{suggestion,verdict,outcome}`（`outcome=ok|fail`——`card_action` 只记录意图，apply 失败此前 telemetry 不可见；连点/迟到的 no-op 分支不打点，不算使用量）。
+
+### 21bis. 强制合并 merge_force（v0.31，add-only）
+
+"AI 建议合并"之外的**用户直断**路径：当用户确信这几张卡就是一回事、不想等 AI 分析、或**不认同** AI 判的 `keep_separate`/`link_improvement`/`close_secondary` 时，钦定主卡直接合并。语义**不新增**——就是 §21 `merge` verdict 那一档，只是 `primary` 由用户选、跳过 `claude -p` 与作业文件、即时落地。
+
+**inbox 动作**（app 写，actd 消费；不携带 `id`/不建 MS- 作业）：
+
+```json
+{"action":"merge_force","ids":["R-xxx","R-yyy"],"primary":"R-xxx"}
+// ids ≥2（去重后）且都存在；primary ∈ ids。不合法（<2 / 有不存在 id / primary∉ids）→ actd log 后丢弃
+```
+
+**actd 侧**（`_apply_merge_force`）：校验 ids（≥2、去重、都存在）+ primary ∈ ids → **复用 `_merge_into_primary(primary, secondaries)`**，与 AI `merge` verdict **逐字同一条确定性执行路径**（主卡 sources 去重合并 / repeated_mentions 累加 / notes 追加 `[merged]` / 副卡 `final_draft`·`delivered_summary` 搬到主卡 `execution.merged_deliverables`；副卡活 session best-effort `executor.stop_session`；副卡置 `merged` + `merged_into`；主卡 `status==review` 则 `executor.rework` 注入，其他状态只落 notes）。**无作业文件、无 claude、无等待**；执行失败只 log + 打点 `outcome=fail`，绝不抛穿轮询（用户可重试）。
+
+**app 侧（概要，v0.31.0 = Mac only）**：两个入口都走一个**确认弹窗**（`ForceMergeSheet`；因 `merged` 是终态、UI 不可撤销，必须让用户明确看到"哪张留、哪些被吸收"）——① Mac 看板多选 ≥2 张 → 操作条「强制合并 (N)」；② Mac 的 AI 建议卡「仍然合并」覆盖按钮，出现在 `verdict≠merge`（保持独立/挂改进卡/关副卡）**或分析 `failed`**（无 verdict）时——即 AI 没给出「合并」结论、而用户仍要合的场景；覆盖成功后顺手 `merge_dismiss` 掉这条被取代的建议。弹窗列出选中卡、让用户选主卡（默认第一张 / 建议卡的 primary）、一句大白话说明"副卡将停止运行、进入已合并（不可撤销），其来源/交付物保留在主卡"，确认才写 `merge_force`。乐观回显：涉及卡打「合并中…」角标，副卡落 `merged`（离开所在列）即清，180s 兜底。iOS 的建议卡镜像 + 覆盖是后续版本（v0.31.1）。
+
+**analytics**：`merge_force{n,outcome}`（actd 落地点，`outcome=ok|fail`；仅计数与结果，不记卡片 id/内容——app 侧 `card_action` 另记意图）。
 
 ---
 
