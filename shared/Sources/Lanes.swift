@@ -18,19 +18,28 @@ enum LaneHelp {
           "Real but not-urgent asks park here — low-confidence radar captures, imported sessions, proposals you deferred. Nothing runs on its own and nothing expires; restatements merge in automatically. Press \"Research & propose\" to promote one.")
     }
     static var proposals: String {
-        L("需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；入库=先不做。灰色卡是 AI 正在研究的占位。",
-          "Cards that need your decision now, each with a plan, cost, and acceptance criteria. Approve = start executing; Comment = redo with your input; Backlog = not now. Grey cards are placeholders the AI is still researching.")
+        L("需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；暂缓=先不做，放进潜在任务。灰色卡是 AI 正在研究的占位。",
+          "Cards that need your decision now, each with a plan, cost, and acceptance criteria. Approve = start executing; Comment = redo with your input; Later = not now, parks it in Backlog. Grey cards are placeholders the AI is still researching.")
     }
     static var running: String {
         L("已批准的任务由 AI 在后台执行（排队中显示灰卡）。橙色「需输入」= AI 卡住等你回答，排在最前。",
           "Approved tasks the AI is executing in the background (queued ones show grey). Orange \"Needs input\" = the AI is blocked on your answer; those sort first.")
     }
     static var review: String {
-        L("AI 认为做完了：看交付摘要或 draft PR。验收=归档进已验收；打回=带你的反馈继续改。",
-          "The AI thinks it's done — check the delivery summary or draft PR. Accept archives it; Send back continues with your feedback.")
+        L("AI 认为做完了：看交付摘要或 draft PR。验收=进入「阶段性完成」；打回=带你的反馈继续改。",
+          "The AI thinks it's done — check the delivery summary or draft PR. Accept moves it to Done for now; Send back continues with your feedback.")
     }
     static var done: String {
-        L("你验收通过的任务存档。徽章数字是真实总数，列表只显示最近 50 条；可退回待验收。",
-          "Tasks you accepted. The badge shows the true total; the list keeps the latest 50. Items can be sent back to Review.")
+        // The 永久完成 (Done for good) button exists only on the Mac — iOS
+        // deliberately has no archive lane/control, and it shows this help as
+        // an always-visible footnote on the lane page, so the phone variant
+        // must not name a button it doesn't have.
+        #if os(macOS)
+        return L("本轮完成——可能还在等对方反馈，可随时退回待验收；确认彻底结束就点「永久完成」。徽章数字是真实总数，列表只显示最近 50 条。",
+          "Done for this round — it may still be waiting on someone's reply, and can go back to Review any time; when it's truly over, press \"Done for good\". The badge shows the true total; the list keeps the latest 50.")
+        #else
+        return L("本轮完成——可能还在等对方反馈，可随时退回待验收。彻底封存在 Mac 端操作。徽章数字是真实总数，列表只显示最近 50 条。",
+          "Done for this round — it may still be waiting on someone's reply, and can go back to Review any time. Sealing it for good is done on the Mac. The badge shows the true total; the list keeps the latest 50.")
+        #endif
     }
 }

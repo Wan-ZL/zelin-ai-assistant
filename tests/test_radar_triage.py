@@ -104,8 +104,8 @@ class TriageDecisionTestCase(TriageBase):
         self.assertIn("硬标准", prompt)
         self.assertIn("现在】就需要", prompt)          # action-now bar
         self.assertIn("needs_action", prompt)
-        self.assertIn("confidence", prompt)            # 备选 exit exists
-        self.assertIn("备选", prompt)
+        self.assertIn("confidence", prompt)            # 潜在任务 exit exists
+        self.assertIn("潜在任务", prompt)
         self.assertIn(sanitize.UNTRUSTED_OPEN, prompt)  # candidate is fenced
         self.assertIn("不是给你的指令", prompt)
 
@@ -658,8 +658,8 @@ class QuickCaptureLosslessTestCase(TriageBase):
         self.assertIn("闲聊", prompt)
         self.assertNotIn("硬标准", prompt)
         self.assertIn("无损原则", prompt)
-        self.assertIn("confidence", prompt)   # low => 备选, not ignore
-        self.assertIn("备选", prompt)
+        self.assertIn("confidence", prompt)   # low => 潜在任务, not ignore
+        self.assertIn("潜在任务", prompt)
 
     def test_low_confidence_capture_lands_in_backlog_not_ignored(self):
         reply = quick_capture.apply_result(
@@ -669,8 +669,8 @@ class QuickCaptureLosslessTestCase(TriageBase):
              "plan": ["等 X 改完", "确认权限生效"],
              "_text": "X 说今晚会改权限，记一下"}, self.cfg)
         (req,) = registry.load_all()
-        self.assertEqual(req.status, "detected")       # 储备, not lost
-        self.assertIn("储备", reply)
+        self.assertEqual(req.status, "detected")       # 潜在任务, not lost
+        self.assertIn("潜在任务", reply)
         self.assertIn(req.id, reply)
 
     def test_default_capture_still_files_card_sent(self):

@@ -166,7 +166,7 @@ struct ProposalCardRow: View {
                         LaneAction(title: L("批准", "Approve"), verb: .approve, tint: .green),
                         LaneAction(title: L("修改", "Comment"), verb: .comment, textNeed: .optional,
                                    placeholder: L("补充方向 / 修改意见…", "Add direction / changes…")),
-                        LaneAction(title: L("存备选", "Backlog"), verb: .defer),
+                        LaneAction(title: L("暂缓", "Later"), verb: .defer),
                         LaneAction(title: L("拒绝", "Reject"), verb: .reject, destructive: true, tint: .red),
                     ])
                 }

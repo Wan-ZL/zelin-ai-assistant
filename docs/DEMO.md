@@ -58,7 +58,7 @@ session_id 等。写入模式跑完也会自动做同一套校验。
 | `approved` | 运行中——灰色 queued 卡（已批准、待派发） |
 | `running` | 运行中——working，40 秒前启动，带 `claude attach` 命令 |
 | `review` | 待验收——delivered_summary 提到 draft PR #42，30 秒前进入 |
-| `done` | 已完成——10 秒前验收归档 |
+| `done` | 已完成——10 秒前验收，进「阶段性完成」 |
 
 ```bash
 python3 scripts/demo_seed.py /tmp/assistant-demo --scene approved
@@ -68,8 +68,9 @@ python3 scripts/demo_seed.py /tmp/assistant-demo --scene approved
 
 1. **Popover**：点菜单栏图标——提案徽章数、快速捕获输入框、卡片折叠态一屏全有
    （scene `initial`）。
-2. **看板主窗口**：菜单栏右键 →「打开主窗口」→ 看板。五列
-   提案 / 运行中 / 待验收 / 备选 / 已验收 全部非空（scene `initial`）。
+2. **看板主窗口**：菜单栏右键 →「打开主窗口」→ 看板。点最左的「潜在任务」窄条
+   展开后，提案 / 运行中 / 待验收 / 潜在任务 / 阶段性完成 全部非空；最右还有一条
+   默认收起的「永久性完成」窄条（scene `initial`）。
 3. **T2 卡展开**：R-102（inkweld demo 环境）点「展开详情 ▸」——$85 成本、
    需文字确认、disagreement、重复×3、🟢 新建 repo 一行全在。
 4. **待验收 + final draft**：R-110（周报）——chat 交付，展开可见完整双语周报草稿；

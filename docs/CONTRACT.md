@@ -1002,3 +1002,33 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   缺省 = 不做 expected 检查（保持 Mac app 老行为）。
 - `board_seq`(int|absent)：手机所见看板 revision（也进 `e2e` action AAD），provenance/
   staleness 信号；syncd 从 `inbox_actions.board_seq` 行值回填。
+
+# v0.33.0 additions（车道展示层更名 + Mac 看板两条默认收起的书立条）
+
+> **车道更名（v0.33.0，纯展示层）**：
+> - 「储备/Backlog」→「**潜在任务/Backlog**」（EN 不变）
+> - 「已验收/Done」→「**阶段性完成/Done for now**」
+> - 归档区「归档/Archive」→「**永久性完成/Done for good**」；卡片按钮「归档/Archive」
+>   →「永久完成/Done for good」；「取消归档/Unarchive」→「**放回看板/Put back**」；
+>   归档行 badge「你归档/自动归档」→「你封存/自动封存 (You sealed/Auto-sealed)」
+> - 提案卡 defer 按钮「入库/Backlog」（iOS/webui 旧名「存备选」）三端统一为
+>   「**暂缓/Later**」；echo「入库中…」→「暂缓中…」
+> - 提案/运行中/待验收 车道名与「验收/Accept」按钮不变
+>
+> 与 v0.17 的「欠账→备选」一样只改展示层，以下全部**冻结不变**：registry status 名
+> （`detected`/`delivered`/`archived` 等）、dashboard keys（`debt`/`completed`/
+> `archived[]`/`counts.archived`/`prev_status`/`archive_reason`）、inbox action 名
+> （`defer`/`archive`/`unarchive`/`accept` 等）、notes 标签 `[deferred] 暂缓，入库`、
+> analytics 事件名、triage prompt 的 `入库把关` 识别标记。
+
+**Mac 看板两条书立条（display-only，无契约变化）**：
+
+- 「潜在任务」列默认收起为 ~44pt 窄条（竖排标题 + 计数）；点窄条展开为正常 400pt
+  列，点列头收起。看板最右**新增**「永久性完成」窄条——展开后 = popover 归档区同款
+  内容（搜索框 + 归档行 + 放回看板），左右两条书立夹住五列工作流。
+- 展开状态 session 内记忆（挂在 store 上，换页不丢）但**不持久化**——每次启动都收起。
+  暂缓 echo / debt 车道 notice 到达时潜在任务条自动展开（用户点了按钮，回执不能落在
+  看不见的列里）。
+- 「永久性完成」条**仍不是看板列**：不进 `selectableIDs`/多选合并面，不参与
+  lane-notice 路由（unarchive 仍走 info-strip 机制）。
+- iOS 不变：仍是 5 页 pager，无归档 lane（`BoardLane` 不加 case）。

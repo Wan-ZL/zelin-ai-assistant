@@ -27,6 +27,41 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.33.0] - 2026-07-15
+
+### Changed
+
+- **Board lanes now say what they mean — three renames, zero data changes.**
+  The old names described mechanics (储备/已验收/归档); the new ones describe
+  what the card *is* to you at 1 a.m.:
+  - **储备 · Backlog → 潜在任务 · Backlog** — real-but-not-urgent things that
+    *might* become tasks; nothing here runs on its own.
+  - **已验收 · Done → 阶段性完成 · Done for now** — you accepted this round,
+    but the thread may still be waiting on someone's reply; it can go back to
+    Review any time.
+  - **归档 · Archive → 永久性完成 · Done for good** — truly over, sealed. The
+    card button 归档 → **永久完成 (Done for good)**, and 取消归档 → **放回看板
+    (Put back)**. Archive-row badges now read 你封存/自动封存 (You sealed /
+    Auto-sealed).
+  - The defer button — 入库 on Mac, 存备选 on iPhone/web (a name retired
+    back in v0.22.0!) — is finally ONE word everywhere: **暂缓 · Later**.
+  提案 / 运行中 / 待验收 and the 验收 (Accept) button are unchanged. Purely
+  display-layer: registry statuses, dashboard keys, inbox action names and
+  analytics events are all frozen (docs/CONTRACT.md v0.33.0 note).
+- **The Mac kanban gets bookends: two default-collapsed strips.** 潜在任务
+  (far left) and the new **永久性完成 board presence** (far right) start every
+  launch as narrow vertical strips — the five-lane workflow keeps the room,
+  the parking lot and the archive stay one click away. Click a strip to expand
+  it into a normal column (the archive one opens with the familiar search +
+  put-back rows); click the column header to tuck it back. Expansion sticks
+  for the session but is never persisted. When you press 暂缓 on a proposal,
+  the backlog strip auto-opens so the 暂缓中… echo is never invisible. The
+  archive strip is still not a board lane: no multi-select, no merge.
+- Weekly digest section headers, quick-capture replies and triage prompts now
+  use 潜在任务 instead of the two-generations-old 欠账/备选 vocabulary.
+- iPhone app: lane titles/help follow the renames automatically (shared copy);
+  still five pages, deliberately no archive lane.
+
 ## [0.32.0] - 2026-07-14
 
 ### Added
@@ -1149,7 +1184,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.1...v0.32.0
 [0.31.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.30.0...v0.31.0

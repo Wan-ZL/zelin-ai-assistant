@@ -263,7 +263,7 @@ struct ArchivedItem: Decodable, Hashable {
     let hardness: String?
     // archive-specific
     let archived_at: String?     // ISO8601 — sort key + relative-age display
-    let archive_reason: String?  // "user" (你归档) | "auto" (自动归档)
+    let archive_reason: String?  // "user" (你封存) | "auto" (自动封存)
     let prev_status: String?     // lane to restore into on unarchive (usually delivered)
 
     private enum CodingKeys: String, CodingKey {

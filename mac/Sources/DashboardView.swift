@@ -406,14 +406,14 @@ struct DashboardView: View {
             }
         }
 
-        // English twin Delivered→Done (v0.18, display-only): delivery happens
-        // at the review stage; this lane means "you accepted it". Registry
+        // 阶段性完成/Done for now (display-only): delivery happens at the
+        // review stage; this lane means "you accepted this round". Registry
         // status `delivered` and the dashboard `completed` key are frozen.
         if completedEchoes.isEmpty && completed.isEmpty {
-            CompactEmptySection(title: L("已验收 · done", "Done"),
+            CompactEmptySection(title: L("阶段性完成 · done for now", "Done for now"),
                                 emptyText: L("还没有验收过的交付", "Nothing accepted yet"))
         } else {
-            SectionHeader(title: L("已验收 · done", "Done"),
+            SectionHeader(title: L("阶段性完成 · done for now", "Done for now"),
                           count: completed.count + completedEchoes.count,
                           help: LaneHelp.done)
             ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
@@ -434,14 +434,14 @@ struct DashboardView: View {
             }
         }
 
-        // 储备/Backlog: display rename of the debt lane (dashboard key `debt`
-        // and the store projection names stay — 纯展示层).
+        // 潜在任务/Backlog: display rename of the debt lane (dashboard key
+        // `debt` and the store projection names stay — 纯展示层).
         if debtEchoes.isEmpty && debt.isEmpty {
-            CompactEmptySection(title: L("储备 · backlog", "Backlog"),
+            CompactEmptySection(title: L("潜在任务 · backlog", "Backlog"),
                                 emptyText: L("不着急的事会先停在这里——不会自动执行，也永不过期",
                                              "Not-urgent items park here — nothing runs on its own, nothing expires"))
         } else {
-            SectionHeader(title: L("储备 · backlog", "Backlog"),
+            SectionHeader(title: L("潜在任务 · backlog", "Backlog"),
                           count: debt.count + debtEchoes.count,
                           help: LaneHelp.backlog)
             ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
@@ -453,8 +453,9 @@ struct DashboardView: View {
         TrashSectionView(items: store.visibleTrash, count: store.visibleTrashCount,
                          pinnedLocal: store.pinnedLocal, app: app)
 
-        // v0.20 card-lifecycle: 归档 browse+restore section (follows the trash
-        // precedent — collapsible, collapsed by default in the popover).
+        // v0.20 card-lifecycle: 永久性完成 (archive) browse+restore section
+        // (follows the trash precedent — collapsible, collapsed by default in
+        // the popover).
         ArchiveSectionView(items: store.visibleArchived,
                            count: store.visibleArchivedCount, app: app)
     }
