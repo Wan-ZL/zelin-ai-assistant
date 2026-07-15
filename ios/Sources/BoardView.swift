@@ -86,7 +86,14 @@ private struct LanePage: View {
                 Text(lane.help).font(.footnote).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 2)
 
-                if lane == .proposals { QuickCapture() }
+                if lane == .proposals {
+                    QuickCapture()
+                    // 契约 §21/§21bis: AI 合并建议卡（含「仍然合并」强制合并覆盖）
+                    // 置于提案列顶部，镜像 Mac 看板。
+                    ForEach(state.board?.merge_suggestions ?? [], id: \.id) { s in
+                        MergeSuggestionCard(suggestion: s, model: model)
+                    }
+                }
 
                 if let model {
                     content(model)

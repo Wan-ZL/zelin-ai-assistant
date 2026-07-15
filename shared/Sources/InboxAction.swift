@@ -51,6 +51,30 @@ enum InboxAction {
         encode(["action": InboxVerb.capture.rawValue, "text": text, "ts": ts])
     }
 
+    // merge-review 契约 §21 — suggestion-level actions (not card verbs): the
+    // `id` is the MS- suggestion id; merge_force instead carries the raw card
+    // ids + the user-chosen primary. actd reads decision["id"] / ["ids"]+["primary"].
+
+    /// Accept an AI merge suggestion: {action:"merge_apply", id, ts}.
+    static func mergeApply(suggestionId: String,
+                           ts: String = InboxAction.nowTimestamp()) -> Data {
+        encode(["action": "merge_apply", "id": suggestionId, "ts": ts])
+    }
+
+    /// Dismiss an AI merge suggestion: {action:"merge_dismiss", id, ts}.
+    static func mergeDismiss(suggestionId: String,
+                             ts: String = InboxAction.nowTimestamp()) -> Data {
+        encode(["action": "merge_dismiss", "id": suggestionId, "ts": ts])
+    }
+
+    /// 契约 §21bis 强制合并: user-chosen primary, skips the AI —
+    /// {action:"merge_force", ids, primary, ts}. actd validates ids≥2 distinct,
+    /// all exist, primary ∈ ids (else drops the request).
+    static func mergeForce(ids: [String], primary: String,
+                           ts: String = InboxAction.nowTimestamp()) -> Data {
+        encode(["action": "merge_force", "ids": ids, "primary": primary, "ts": ts])
+    }
+
     /// Serialize with sorted keys so the ciphertext is a pure function of the
     /// logical action (no dictionary-ordering nondeterminism across runs).
     static func encode(_ obj: [String: Any]) -> Data {

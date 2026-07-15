@@ -315,3 +315,223 @@ struct CardDetailSheet: View {
         }
     }
 }
+
+// MARK: - Merge suggestions (契约 §21 / §21bis) --------------------------------
+// The AI merge-suggestion card mirrored on the phone: analyzing / done / failed,
+// with 接受 (merge_apply) / 取消 (merge_dismiss) and — when the AI did NOT land
+// on 「合并」(verdict≠merge, or a failed analysis) — a 「仍然合并」override that
+// force-merges with a user-chosen primary (§21bis). Rendered at the top of the
+// 提案 lane. After any action we refresh the board (the card updates/vanishes).
+struct MergeSuggestionCard: View {
+    let suggestion: MergeSuggestion
+    let model: BoardModel?
+    @EnvironmentObject var state: AppState
+    @State private var busy = false
+    @State private var showForceMerge = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch suggestion.status {
+            case "done": doneBody
+            case "failed": failedBody
+            default: analyzingBody
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.purple.opacity(0.25)))
+        .opacity(busy ? 0.55 : 1)
+        .sheet(isPresented: $showForceMerge) {
+            ForceMergeSheet(ids: suggestion.ids, model: model,
+                            defaultPrimary: suggestion.primary) { primary in
+                act {
+                    let ok = await state.submitMergeForce(ids: suggestion.ids, primary: primary)
+                    // 顺手 dismiss 被取代的建议（同 Mac）——只在 force 成功后。
+                    if ok { _ = await state.submitMergeDismiss(suggestionId: suggestion.id) }
+                    return ok
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var analyzingBody: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(L("合并分析中…", "Analyzing merge…")).font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+        }
+        Text(involvedLine).font(.caption).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var doneBody: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "arrow.triangle.merge").foregroundStyle(.purple)
+            Text(verdictHeadline).font(.subheadline).fontWeight(.semibold)
+            Spacer(minLength: 4)
+            if let c = suggestion.confidence, !c.isEmpty { confidenceChip(c) }
+        }
+        if let p = suggestion.primary, !p.isEmpty {
+            Text(L("主卡：", "Primary: ") + title(p)).font(.caption).fontWeight(.medium)
+            ForEach(suggestion.ids.filter { $0 != p }, id: \.self) { sid in
+                Text(L("副卡：", "Secondary: ") + title(sid)).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            ForEach(suggestion.ids, id: \.self) { sid in
+                Text("• " + title(sid)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if let r = suggestion.rationale, !r.isEmpty {
+            Text(r).font(.caption).foregroundStyle(.secondary)
+        }
+        if !suggestion.action_plan.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(L("接受后将执行：", "On accept, this will:"))
+                    .font(.caption2).fontWeight(.semibold).foregroundStyle(.secondary)
+                ForEach(Array(suggestion.action_plan.enumerated()), id: \.offset) { i, step in
+                    Text("\(i + 1). \(step)").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        buttonsRow(showAccept: true)
+    }
+
+    @ViewBuilder private var failedBody: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text(L("合并分析失败", "Merge analysis failed")).font(.subheadline).fontWeight(.semibold)
+            Spacer()
+        }
+        Text(involvedLine).font(.caption).foregroundStyle(.secondary)
+        if let e = suggestion.error, !e.isEmpty {
+            Text(e).font(.caption2).foregroundStyle(.secondary)
+        }
+        buttonsRow(showAccept: false)
+    }
+
+    @ViewBuilder private func buttonsRow(showAccept: Bool) -> some View {
+        if busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(L("已提交…", "Submitted…")).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 8) {
+                if showAccept {
+                    Button(L("接受", "Accept")) {
+                        act { await state.submitMergeApply(suggestionId: suggestion.id) }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small).tint(.green)
+                }
+                // 仍然合并: shown when the AI did NOT land on 「合并」(or it failed).
+                if suggestion.status == "failed" || suggestion.verdict != "merge" {
+                    Button(L("仍然合并", "Merge anyway")) { showForceMerge = true }
+                        .buttonStyle(.bordered).controlSize(.small).tint(.purple)
+                }
+                Button(L("取消", "Dismiss")) {
+                    act { await state.submitMergeDismiss(suggestionId: suggestion.id) }
+                }
+                .buttonStyle(.bordered).controlSize(.small).tint(.gray)
+                Spacer()
+            }
+        }
+    }
+
+    /// Run a write, then (on success) refresh so the card updates/vanishes.
+    private func act(_ op: @escaping () async -> Bool) {
+        busy = true
+        Task {
+            let ok = await op()
+            if ok {
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                await state.refreshBoard()
+            }
+            busy = false
+        }
+    }
+
+    private func title(_ id: String) -> String { model?.title(of: id) ?? id }
+    private var involvedLine: String { suggestion.ids.map { title($0) }.joined(separator: "  +  ") }
+    private var verdictHeadline: String {
+        switch suggestion.verdict {
+        case "merge": return L("建议合并：副卡并入主卡", "Suggest merging the secondary into the primary")
+        case "link_improvement": return L("建议挂为主卡的改进卡", "Suggest linking as an improvement of the primary")
+        case "keep_separate": return L("建议保持独立，不合并", "Suggest keeping them separate")
+        case "close_secondary": return L("建议关闭副卡（进回收站）", "Suggest closing the secondary (to trash)")
+        default: return suggestion.verdict ?? L("分析完成", "Analysis complete")
+        }
+    }
+    @ViewBuilder private func confidenceChip(_ c: String) -> some View {
+        switch c {
+        case "high":   MetaChip(text: L("置信 高", "Conf: high"), color: .green)
+        case "medium": MetaChip(text: L("置信 中", "Conf: med"), color: .orange)
+        case "low":    MetaChip(text: L("置信 低", "Conf: low"), color: .gray)
+        default:       MetaChip(text: c, color: .gray)
+        }
+    }
+}
+
+// 契约 §21bis 强制合并确认弹窗（iOS）：选主卡 + 不可撤销告知 → onConfirm(primary)。
+struct ForceMergeSheet: View {
+    let ids: [String]
+    let model: BoardModel?
+    let onConfirm: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var primary: String
+
+    init(ids: [String], model: BoardModel?, defaultPrimary: String? = nil,
+         onConfirm: @escaping (String) -> Void) {
+        self.ids = ids
+        self.model = model
+        self.onConfirm = onConfirm
+        let d = defaultPrimary.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first ?? ""
+        _primary = State(initialValue: d)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(ids, id: \.self) { id in
+                        Button { primary = id } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: primary == id ? "largecircle.fill.circle" : "circle")
+                                    .foregroundStyle(primary == id ? .purple : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(title(id)).foregroundStyle(.primary)
+                                    Text(primary == id ? L("主卡 · 保留", "Primary · kept")
+                                                       : L("副卡 · 并入主卡", "Secondary · folds in"))
+                                        .font(.caption)
+                                        .foregroundStyle(primary == id ? .purple : .secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text(L("选一张作为主卡保留，其余全部并入它",
+                           "Pick one card to keep as the primary; the rest fold in"))
+                }
+                Section {
+                    Label(L("副卡会停止运行、进入「已合并」——不可撤销。来源与交付物保留在主卡上。",
+                            "Secondaries stop and become \u{201C}merged\u{201D} — not reversible. Their sources & deliverables are kept on the primary."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+            .navigationTitle(L("强制合并 \(ids.count) 张卡片", "Force-merge \(ids.count) cards"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(L("取消", "Cancel")) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L("强制合并", "Force-merge")) { onConfirm(primary); dismiss() }
+                        .disabled(primary.isEmpty || ids.count < 2)
+                }
+            }
+        }
+    }
+
+    private func title(_ id: String) -> String { model?.title(of: id) ?? id }
+}
