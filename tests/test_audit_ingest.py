@@ -120,12 +120,16 @@ class ExportScriptTestCase(unittest.TestCase):
         return p.read_text().strip() if p.exists() else None
 
     def _dumps(self):
-        # whichever inbox the mode decision picked, both are ours
-        out = []
+        # whichever inbox the mode decision picked, both are ours. Dedupe by
+        # basename: in mirror mode the SAME dump legitimately exists in both
+        # the mirror and (after the immediate/retried push) the vault inbox —
+        # one logical export, two rsync'd copies.
+        seen = {}
         for d in (self.inbox, self.mirror_inbox):
             if d.is_dir():
-                out.extend(d.glob("screenpipe_*.md"))
-        return out
+                for p in d.glob("screenpipe_*.md"):
+                    seen.setdefault(p.name, p)
+        return list(seen.values())
 
     def test_markers_come_from_exported_rows_not_max_id(self):
         proc = self._run_export()

@@ -19,3 +19,4 @@ promo/build/
 promo/node_modules/
 promo/package.json
 promo/package-lock.json
+.coverage
