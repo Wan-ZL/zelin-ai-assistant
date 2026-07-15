@@ -40,6 +40,29 @@ OUT_DIR="$(resolve_config_path obsidian_unprocessed "$HOME/Documents/Obsidian Va
 VAULT_ROOT="$(dirname "$(resolve_config_path obsidian_raw "$HOME/Documents/Obsidian Vault/2 - raw")")"
 MARKER_DIR="$HOME/.screenpipe/export_markers"
 
+# Prevent concurrent exports — same alive-PID lock pattern as
+# process-screenpipe.sh. Cron fires this every 30 min and two manual
+# triggers (Screenpipe-Export.command, 主窗口"立即导出") can land at any
+# time: overlapping runs read the same markers and write duplicate dumps,
+# and the second run's mirror pull (rsync --delete) can destroy the first
+# run's mirror-only dump after its markers already advanced — permanent
+# loss of that capture window. Must be taken BEFORE vault_sync_pull below.
+LOCKFILE="/tmp/screenpipe-export.lock"
+if [ -f "$LOCKFILE" ]; then
+    LOCK_PID="$(tr -cd '0-9' < "$LOCKFILE" 2>/dev/null)"
+    if [ -n "$LOCK_PID" ] && ps -p "$LOCK_PID" -o command= 2>/dev/null \
+            | grep -q 'screenpipe-export'; then
+        # exit 3 = "another run holds the lock" (same convention as
+        # process-screenpipe.sh) so callers can tell skip from failure.
+        echo "Another export is already running (pid $LOCK_PID) — skipped."
+        exit 3
+    fi
+    # Holder gone (crash/reboot) — take over.
+    rm -f "$LOCKFILE"
+fi
+trap 'rm -f "$LOCKFILE"' EXIT
+echo $$ > "$LOCKFILE"
+
 # VAULT MIRROR mode (claude TCC isolation — see ingest/vault-sync.sh): pull
 # the vault into the repo-local mirror via the app-bundle courier, then write
 # the export INTO THE MIRROR. The whole chain (this script, claude in
@@ -114,8 +137,11 @@ fi
 # (full_text = accessibility_text + ocr_text merged by screenpipe;
 #  querying just ocr_text misses most frames because modern screenpipe
 #  prefers macOS accessibility API and skips OCR when a11y text is available)
+# f.id leads each row: the export markers are derived from the last row
+# actually exported (see "Update markers" below), so the id must travel with
+# the data instead of being re-queried after the write loop.
 OCR_DATA=$(sqlite3 "$DB" "
-SELECT f.timestamp, f.app_name, f.window_name, replace(f.full_text, char(10), ' ')
+SELECT f.id, f.timestamp, f.app_name, f.window_name, replace(f.full_text, char(10), ' ')
 FROM frames f
 WHERE f.id > $LAST_FRAME
   AND f.full_text IS NOT NULL
@@ -124,9 +150,11 @@ WHERE f.id > $LAST_FRAME
 ORDER BY f.id ASC;
 " 2>/dev/null)
 
-# Query new audio entries
+# Query new audio entries (transcription newline-flattened like full_text
+# above — one row per line, so the id-leading marker extraction below and
+# the while-read parsing both stay reliable)
 AUDIO_DATA=$(sqlite3 "$DB" "
-SELECT ac.timestamp, a.transcription, a.device
+SELECT a.id, ac.timestamp, replace(a.transcription, char(10), ' '), a.device
 FROM audio_transcriptions a
 JOIN audio_chunks ac ON a.audio_chunk_id = ac.id
 WHERE a.id > $LAST_AUDIO
@@ -151,7 +179,7 @@ OUT_FILE="$OUT_DIR/screenpipe_${NOW}.md"
     if [ -n "$AUDIO_DATA" ]; then
         echo "## Audio Transcriptions"
         echo ""
-        echo "$AUDIO_DATA" | while IFS='|' read -r timestamp transcription device; do
+        echo "$AUDIO_DATA" | while IFS='|' read -r _ timestamp transcription device; do
             ts_clean=$(echo "$timestamp" | cut -d'.' -f1 | sed 's/Z$//')
             time_only=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "${ts_clean/T/ }")
             echo "**[$time_only]** ($device)"
@@ -166,7 +194,7 @@ OUT_FILE="$OUT_DIR/screenpipe_${NOW}.md"
     if [ -n "$OCR_DATA" ]; then
         echo "## Screen OCR"
         echo ""
-        echo "$OCR_DATA" | while IFS='|' read -r timestamp app window text; do
+        echo "$OCR_DATA" | while IFS='|' read -r _ timestamp app window text; do
             ts_clean=$(echo "$timestamp" | cut -d'.' -f1 | sed 's/Z$//')
             time_only=$(TZ='America/Los_Angeles' date -j -f "%Y-%m-%dT%H:%M:%S" "$ts_clean" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "${ts_clean/T/ }")
             label=""
@@ -179,12 +207,31 @@ OUT_FILE="$OUT_DIR/screenpipe_${NOW}.md"
         done
     fi
 } > "$OUT_FILE"
+WRITE_RC=$?
 
-# Update markers
-NEW_FRAME=$(sqlite3 "$DB" "SELECT MAX(id) FROM frames WHERE full_text IS NOT NULL AND length(full_text) > 0;" 2>/dev/null)
-NEW_AUDIO=$(sqlite3 "$DB" "SELECT MAX(id) FROM audio_transcriptions;" 2>/dev/null)
-[ -n "$NEW_FRAME" ] && [ "$NEW_FRAME" != "" ] && echo "$NEW_FRAME" > "$MARKER_DIR/last_frame_id"
-[ -n "$NEW_AUDIO" ] && [ "$NEW_AUDIO" != "" ] && echo "$NEW_AUDIO" > "$MARKER_DIR/last_audio_id"
+# Fail-closed marker advance: this script has no set -e — if the redirect
+# above failed to open (direct-mode cron without an FDA grant to ~/Documents)
+# or the write died mid-block (ENOSPC), bash just carries on. Advancing the
+# markers then would bury the whole pending capture window behind them with
+# nothing usable on disk — silent, unrecoverable loss reported as success.
+# Verify the write landed before moving any marker; otherwise drop the
+# partial file and fail the chain so the next run re-exports the same window.
+if [ "$WRITE_RC" -ne 0 ] || [ ! -s "$OUT_FILE" ]; then
+    rm -f "$OUT_FILE"
+    echo "Export write failed (rc=$WRITE_RC) — markers not advanced, window will re-export next run." >&2
+    exit 1
+fi
+
+# Update markers — to the last id actually EXPORTED (rows are ORDER BY id
+# ASC with the id as the first field), never a fresh MAX(id): the write loop
+# takes seconds while screenpipe keeps inserting, and a post-write MAX would
+# cover rows that never made it into this dump — dropped without re-export.
+NEW_FRAME=$(echo "$OCR_DATA" | tail -n 1 | cut -d'|' -f1)
+NEW_AUDIO=$(echo "$AUDIO_DATA" | tail -n 1 | cut -d'|' -f1)
+case "$NEW_FRAME" in *[!0-9]*) NEW_FRAME="" ;; esac
+case "$NEW_AUDIO" in *[!0-9]*) NEW_AUDIO="" ;; esac
+[ -n "$NEW_FRAME" ] && echo "$NEW_FRAME" > "$MARKER_DIR/last_frame_id"
+[ -n "$NEW_AUDIO" ] && echo "$NEW_AUDIO" > "$MARKER_DIR/last_audio_id"
 
 # Mirror-mode source safety (2026-07-14 13:30 incident hardening): until a
 # push runs, a mirror-mode dump exists ONLY in the mirror — and the export
@@ -192,9 +239,16 @@ NEW_AUDIO=$(sqlite3 "$DB" "SELECT MAX(id) FROM audio_transcriptions;" 2>/dev/nul
 # no processing is in flight (a push now is clean — no half-written raw/wiki
 # to leak), push immediately so the source dump lands in the real vault the
 # moment it exists. With processing in flight the round's own final push
-# carries it home instead.
-if [ "$VAULT_SYNC_MODE" = "mirror" ] && ! vault_sync_processing_live; then
-    vault_sync_push "$VAULT_ROOT" >/dev/null 2>&1 || true
+# carries it home instead — but until SOME push succeeds, mark push-pending:
+# if that round dies without pushing (killed script, watchdog'd claude), the
+# next round's pull must retry a push BEFORE its rsync --delete instead of
+# wiping the only copy of this dump.
+if [ "$VAULT_SYNC_MODE" = "mirror" ]; then
+    if vault_sync_processing_live; then
+        touch "$VAULT_PUSH_PENDING"
+    else
+        vault_sync_push "$VAULT_ROOT" >/dev/null 2>&1 || true
+    fi
 fi
 
 echo "Exported to: $OUT_FILE"

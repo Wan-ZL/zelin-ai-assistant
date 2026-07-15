@@ -63,20 +63,35 @@ fi
 # started on top of it — 2026-07-08 double-run incident. A PID lock asks
 # "is the holder actually alive" instead of guessing from age.)
 if [ -f "$LOCKFILE" ]; then
-    LOCK_PID="$(tr -cd '0-9' < "$LOCKFILE" 2>/dev/null)"
-    # Holder counts as alive if the PID is this script OR its headless-claude
-    # child (an orphaned claude keeps ingesting after its parent script dies).
-    if [ -n "$LOCK_PID" ] && ps -p "$LOCK_PID" -o command= 2>/dev/null \
-            | grep -qE 'process-screenpipe|unprocessed-ingest'; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipped — already running (pid $LOCK_PID)" >> "$LOGFILE"
+    # Holder counts as alive if ANY recorded PID is this script OR its
+    # headless-claude child (an orphaned claude keeps ingesting after its
+    # parent script dies). The lock holds one PID per line — $$ at startup,
+    # the claude child appended at spawn; vault_sync_processing_live
+    # (vault-sync.sh, sourced above) checks every line.
+    if vault_sync_processing_live; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Skipped — already running (pids: $(tr '\n' ' ' < "$LOCKFILE" 2>/dev/null))" >> "$LOGFILE"
         # exit 3 = "another run holds the lock" so callers (main-window button)
         # can say "already running" instead of a misleading "done"
         exit 3
     fi
-    # Holder gone (crash/reboot) or legacy PID-less lock — take over.
+    # Every holder gone (crash/reboot) or legacy PID-less lock — take over.
     rm -f "$LOCKFILE"
 fi
-trap 'rm -f "$LOCKFILE"' EXIT
+# On exit KEEP the lock while the headless-claude child is still alive: a
+# killed parent (Ctrl-C in the .command Terminal, SIGTERM) orphans the
+# backgrounded claude, which keeps writing the mirror for up to
+# CLAUDE_MAX_SECONDS — dropping the lock then would let the next round start
+# a second claude over the same inbox AND let its pull rsync --delete the
+# live mirror workspace (the 2026-07-14 13:30 incident class). The next run
+# takes over the stale lock once every recorded PID is gone.
+cleanup_lock() {
+    if [ -n "${CLAUDE_PID:-}" ] && ps -p "$CLAUDE_PID" -o command= 2>/dev/null \
+            | grep -qE 'process-screenpipe|unprocessed-ingest'; then
+        return 0
+    fi
+    rm -f "$LOCKFILE"
+}
+trap cleanup_lock EXIT
 echo $$ > "$LOCKFILE"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Triggered (cron-chain) — checking for files..." >> "$LOGFILE"
@@ -183,6 +198,13 @@ SKILL_MD="$VAULT/.claude/skills/unprocessed-ingest/SKILL.md"
 CLAUDE_MAX_SECONDS="${CLAUDE_MAX_SECONDS:-7200}"
 "$CLAUDE_BIN" -p "Read \"$SKILL_MD\" and execute it on all files in \"$UNPROCESSED\"." --allowedTools "Read,Write,Edit,Bash,Glob,Grep" >> "$LOGFILE" 2>&1 &
 CLAUDE_PID=$!
+# Record the child in the PID lock (second line): the liveness checks here
+# and in vault-sync.sh promise to cover "this script OR its headless-claude
+# child" — without this line the child was never actually in the lock, so
+# killing the parent defeated both the double-run lock and the in-flight
+# pull guard. (The child's command line carries the skill path, which the
+# 'unprocessed-ingest' grep matches.)
+echo "$CLAUDE_PID" >> "$LOCKFILE"
 ( sleep "$CLAUDE_MAX_SECONDS" && kill "$CLAUDE_PID" 2>/dev/null \
   && echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⏱ watchdog killed claude after ${CLAUDE_MAX_SECONDS}s" >> "$LOGFILE" ) &
 WATCHDOG_PID=$!
@@ -207,6 +229,23 @@ if [ $EXIT_CODE -eq 0 ]; then
     fi
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Processing failed (exit $EXIT_CODE)" >> "$LOGFILE"
+    if [ "$VAULT_SYNC_MODE" = "mirror" ]; then
+        # A failed run can still hold mirror-ONLY state that the next round's
+        # pull (rsync --delete) would destroy: this round's export dump (its
+        # immediate push was skipped while our claude looked live) plus any
+        # partial raw/wiki written before claude died — and the export
+        # markers are long advanced, so losing the dump means that capture
+        # window is never re-exported. The helper's push is additive
+        # (--update + manifest-based inbox deletion only), so pushing after
+        # a dead claude is safe; if the push fails too, vault_sync_push
+        # leaves VAULT_PUSH_PENDING so the next pull retries the push
+        # BEFORE any --delete.
+        if vault_sync_push "$VAULT_ROOT_REAL" >> "$LOGFILE" 2>&1; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ vault-sync push ok (mirror state salvaged after failed run)" >> "$LOGFILE"
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ vault-sync push failed — mirror state held, will retry next run" >> "$LOGFILE"
+        fi
+    fi
 fi
 
 echo "---" >> "$LOGFILE"

@@ -26,19 +26,27 @@ VAULT_SYNC_MODE_FILE="$AIASSISTANT_HOME/state/vault_sync_mode"
 # (rsync --delete) before a successful retry would DESTROY them.
 VAULT_PUSH_PENDING="$AIASSISTANT_HOME/state/vault-sync-push-pending"
 # the processing chain's PID lock (must match process-screenpipe.sh) — the
-# in-flight guard below keys off it.
+# in-flight guard below keys off it. Holds one PID per line: the script's own
+# $$ at startup, plus the headless-claude child's PID once spawned (so a
+# killed parent's orphaned claude still holds the lock).
 VAULT_SYNC_PROCESS_LOCK="/tmp/process-screenpipe.lock"
 
 # vault_sync_processing_live — true iff the previous round's processing is
 # STILL RUNNING in the mirror (same liveness rule as process-screenpipe.sh's
-# own lock takeover: pid in the lock file belongs to the processing script or
-# its headless-claude child).
+# own lock takeover: ANY pid in the lock file belongs to the processing
+# script or its headless-claude child).
 vault_sync_processing_live() {
-    local pid
+    local line pid
     [ -f "$VAULT_SYNC_PROCESS_LOCK" ] || return 1
-    pid="$(tr -cd '0-9' < "$VAULT_SYNC_PROCESS_LOCK" 2>/dev/null)"
-    [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null \
-        | grep -qE 'process-screenpipe|unprocessed-ingest'
+    while IFS= read -r line || [ -n "$line" ]; do
+        pid="$(printf '%s' "$line" | tr -cd '0-9')"
+        [ -n "$pid" ] || continue
+        if ps -p "$pid" -o command= 2>/dev/null \
+                | grep -qE 'process-screenpipe|unprocessed-ingest'; then
+            return 0
+        fi
+    done < "$VAULT_SYNC_PROCESS_LOCK"
+    return 1
 }
 
 find_vault_sync_helper() {
