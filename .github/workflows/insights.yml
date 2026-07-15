@@ -38,6 +38,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # gh talks to the API via GH_TOKEN env — git auth is never used
+          persist-credentials: false
 
       # No-change gate, part 1: read the total from the last posted report.
       # The issue body is treated as data — the value is extracted by regex

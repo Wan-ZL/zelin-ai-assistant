@@ -17,6 +17,10 @@ jobs:
       attestations: write # persist the provenance attestation
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # gh release talks to the API via GH_TOKEN env — git auth is never
+          # used after checkout
+          persist-credentials: false
 
       - name: Verify tag matches act.__version__
         # Integrity gate — act/__init__.py is the version's source of truth. A tag
