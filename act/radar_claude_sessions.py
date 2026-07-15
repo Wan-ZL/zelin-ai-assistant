@@ -404,7 +404,13 @@ def _registry_session_ids() -> set:
     try:
         for r in registry.load_all():
             ex = r.execution if isinstance(r.execution, dict) else {}
-            for key in ("session_id", "aborted_session_id"):
+            # reraised_session_id: a finished round archived by
+            # registry.reraise_or_followup — still OUR agent's work; without
+            # it a re-raised card's old session gets bulk-imported as a brand
+            # new card (review 2026-07-15: would break this docstring's
+            # invariant the moment a delivered chat session is re-raised).
+            for key in ("session_id", "aborted_session_id",
+                        "reraised_session_id"):
                 sid = ex.get(key)
                 if sid:
                     ids.add(str(sid))

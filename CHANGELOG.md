@@ -25,7 +25,16 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **Re-raised rounds actually run now.** A finished (delivered) card keeps its
+  agent session id for the record, and the §3.5 re-raise flip used to leave it
+  in place — so after you approved the re-raised round, the dispatcher skipped
+  the card as "already dispatched" and it sat queued forever, with no agent
+  behind it and no error anywhere. The flip now archives the finished round's
+  session id (as `reraised_session_id`) so the new round launches like any
+  other approval. Both re-raise entry points (deterministic radar backstop and
+  the LLM triage/quick-capture paths) share the fixed seam.
 
 ## [0.33.1] - 2026-07-15
 

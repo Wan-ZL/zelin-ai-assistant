@@ -149,6 +149,8 @@ debt item 新增 `summary`（同上，大白话）。
 
 **v0.20.0 re-raise（prior-accept = ownership，Q3）**：新 actionable 信息命中未归档 completed（`delivered`/`merged`）线程 → same_task（title 对齐=真 restatement）则把**原卡翻回 `card_sent`（提案）**、折 source、`repeated_mentions`+1、记 `execution.reraised_at`+`reraised_note`、summary 追加「· 新增:…」；same_task=False（同 thread 不同任务，仅 `thread_key` 命中）则开继承 `thread_id` 的 follow-up 子卡（`card_sent`），**不翻原卡、不污染其标题**。pure restatement / `needs_action=false` / 无新增量 只 bump 不翻。re-raise 前先 `canonical` 到主卡重判 `is_resolved`，绝不把 running/queued/review 卡拽回 card_sent；canonical dead-end 在 trashed/rejected/archived 则回退开新卡。两入口（`merge_or_new` 确定性 backstop + `apply_triage`/`_apply_relates_to` LLM 路径）共用 `registry.reraise_or_followup`。dashboard 的 `needs_approval` 行带 `reraised: bool` + `reraised_note`，App 显「↩︎ 回锅」badge；通知走 `notify.msg_reraised`。（thread_key 只来自 external ref：`gmail:<X-GM-THRID>` / `slack:<thread_ts>`，无强信号=None、绝不 fuzzy——见 `registry.derive_thread_key`。）
 
+**v0.20.0 re-raise 修订（2026-07-15，add-only）**：翻回 `card_sent` 时同步把已完结轮次的 `execution.session_id` 归档为 `reraised_session_id` 并删除，连同删 `execution.done`——否则重新批准后 `dispatch_approved` 会把新一轮当 "already dispatched" 跳过，卡永远停在排队、没有 agent 也没有任何报错；其余轮次账目（`accepted_at`/`delivered_summary` 等）留作历史。两入口共用的 `registry.reraise_or_followup` in-place re-raise 分支为唯一落点。
+
 **capture**（无 `id` 字段，app popover 快速捕获输入框写入）：文件名 `state/inbox/capture-<uuid>.json`，内容
 ```json
 {"action":"capture","text":"<用户一句话>","ts":"<ISO8601>"}
