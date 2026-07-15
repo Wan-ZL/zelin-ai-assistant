@@ -48,6 +48,19 @@ struct PendingMergeAction {
     let created: Date
 }
 
+/// 契约 §21bis: one in-flight force-merge (合并中… badge). Tracked as a BATCH so
+/// the badge clears on the REAL signal — every secondary has left its lane
+/// (become terminal `merged`, invisible everywhere) — NOT on a generated_at
+/// bump (actd rewrites the dashboard every pass regardless of merges, which
+/// would clear the badge before the merge actually lands).
+struct PendingForceMerge: Identifiable {
+    let id = UUID()
+    let primary: String
+    let secondaries: [String]
+    let created: Date
+    var involved: [String] { [primary] + secondaries }
+}
+
 /// Timed-out placeholder notice (capture → yellow, raise → orange) or a
 /// positive info strip (info → green, e.g. 建议上报的「已记录建议」回执).
 /// `lane` = where the triggering action happened; the kanban renders each
@@ -123,6 +136,13 @@ final class DashboardStore: ObservableObject {
     // from then on the suggestion card itself is the visible analyzing signal
     // (isMergeAnalyzing unions both, so the badge survives the handoff).
     @Published var mergeAnalyzingLocal: [String: Date] = [:]
+    // 契约 §21bis (强制合并): in-flight force merges → every involved card carries
+    // a 「合并中…」badge. Unlike a merge_review request there is NO backend
+    // suggestion to hand off to (force skips the AI); we clear a batch once all
+    // its secondaries have left their lanes (become terminal `merged`) — the
+    // real "it landed" signal — with a 180 s fallback. Kept separate from
+    // mergeAnalyzingLocal so the false "分析请求超时" notice never fires here.
+    @Published var mergeForcingLocal: [PendingForceMerge] = []
     // 契约七: suggestion-card accept/dismiss echoes (apply = grey in place,
     // dismiss = instant removal), keyed by suggestion id ("MS-…").
     @Published var pendingMergeActions: [String: PendingMergeAction] = [:]
@@ -195,6 +215,15 @@ final class DashboardStore: ObservableObject {
                     }
                 } else {
                     hiddenOnce.removeAll()
+                }
+                // 契约 §21bis: a force-merge batch is done once EVERY secondary has
+                // left its lane (terminal `merged` → invisible). This is the real
+                // "it landed" signal; clearing on generated_at alone would drop the
+                // badge on any pass's dashboard rewrite, before the merge_force
+                // inbox file was even consumed. A dropped/failed request never
+                // clears here → the 180 s sweep fallback fires the honest notice.
+                mergeForcingLocal.removeAll { batch in
+                    batch.secondaries.allSatisfy { currentList(of: $0) == nil }
                 }
                 // sticky hides release once the id has LEFT its source list —
                 // moving to ANOTHER list no longer keeps it hidden forever.
@@ -275,11 +304,18 @@ final class DashboardStore: ObservableObject {
         let expiredMergeActions = pendingMergeActions.filter {
             now.timeIntervalSince($0.value.created) > 180
         }
+        // 契约 §21bis: force-merge batches give up after 180 s without their
+        // secondaries leaving their lanes (the merge never landed — actd down /
+        // request dropped as invalid).
+        let expiredForceBadges = mergeForcingLocal.filter {
+            now.timeIntervalSince($0.created) > 180
+        }
         // notices themselves fade after 120 s
         let expiredNotices = notices.filter { now.timeIntervalSince($0.created) > 120 }
         guard !expiredCaptures.isEmpty || !expiredRaises.isEmpty || !expiredEchoes.isEmpty
             || !expiredComments.isEmpty || !expiredReturns.isEmpty
             || !expiredMergeBadges.isEmpty || !expiredMergeActions.isEmpty
+            || !expiredForceBadges.isEmpty
             || !expiredNotices.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
@@ -347,6 +383,19 @@ final class DashboardStore: ObservableObject {
                     id: noticeID, kind: .raiseTimeout, lane: .approval,
                     text: L("合并建议操作超时，卡片已恢复可操作（检查 actd 是否在运行）",
                             "Merge-suggestion action timed out — the card is interactive again (check that actd is running)"),
+                    created: now))
+            }
+            // 契约 §21bis: force-merge batches that timed out expire together →
+            // one grouped notice (the merge never landed — actd likely down).
+            if !expiredForceBadges.isEmpty {
+                let expiredIDs = Set(expiredForceBadges.map { $0.id })
+                mergeForcingLocal.removeAll { expiredIDs.contains($0.id) }
+                let noticeID = "notice-merge-force"
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .approval,
+                    text: L("强制合并未确认，卡片未变化，请重试（检查 actd 是否在运行）",
+                            "Force-merge never confirmed — nothing changed, try again (check that actd is running)"),
                     created: now))
             }
             for (id, entry) in expiredReturns {
@@ -611,6 +660,11 @@ final class DashboardStore: ObservableObject {
         return id
     }
 
+    /// Public id → human title resolver (all lanes incl. 储备/debt), used by
+    /// ForceMergeSheet's primary picker so the user never has to choose between
+    /// bare R-ids. Falls back to the id itself when the card isn't on the board.
+    func cardTitle(_ id: String) -> String { title(of: id) }
+
     // MARK: legacy shim (wave 1: AppDelegate.submit still calls this)
 
     /// Compatibility shim — sticky hides self-look-up their source list, so
@@ -647,6 +701,19 @@ final class DashboardStore: ObservableObject {
         withAnimation(.easeOut(duration: 0.2)) {
             let now = Date()
             for id in ids { mergeAnalyzingLocal[id] = now }
+        }
+    }
+
+    /// 契约 §21bis: the merge_force inbox write succeeded — badge every involved
+    /// card with 合并中… (optimistic; cleared once the secondaries land terminal
+    /// `merged`, or after 180 s). ONLY call site: AppDelegate.submitMergeForce,
+    /// after the IO succeeded. `secondaries` must be non-empty (the caller
+    /// guarantees ≥2 distinct ids with primary ∈ ids).
+    func beginMergeForce(primary: String, secondaries: [String]) {
+        guard !secondaries.isEmpty else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            mergeForcingLocal.append(PendingForceMerge(
+                primary: primary, secondaries: secondaries, created: Date()))
         }
     }
 
@@ -848,6 +915,13 @@ final class DashboardStore: ObservableObject {
         return (dashboard?.merge_suggestions ?? []).contains {
             $0.status == "analyzing" && $0.ids.contains(id)
         }
+    }
+
+    /// 契约 §21bis 角标: this card is part of an in-flight force merge (primary
+    /// or a not-yet-merged secondary). Optimistic — cleared once the batch's
+    /// secondaries land terminal `merged`, or after the 180 s sweep.
+    func isMergeForcing(_ id: String) -> Bool {
+        mergeForcingLocal.contains { $0.primary == id || $0.secondaries.contains(id) }
     }
 
     // MARK: board search (看板搜索过滤 — board* projections over visible*)

@@ -18,6 +18,13 @@ import Foundation
 // 欠账/debt lane — registry status names and the dashboard.json `debt` key
 // are unchanged, 纯展示层.)
 
+/// 契约 §21bis: Identifiable payload carrying the multi-selected ids into the
+/// force-merge confirmation sheet (`.sheet(item:)` requires Identifiable).
+private struct ForceMergePayload: Identifiable {
+    let id = UUID()
+    let ids: [String]
+}
+
 struct KanbanView: View {
     @ObservedObject var store: DashboardStore
     // observe the UI language so the whole board re-renders on switch
@@ -28,6 +35,9 @@ struct KanbanView: View {
     // the page switches away, so select mode never leaks across pages.
     @State private var selectMode = false
     @State private var selectedIDs: Set<String> = []
+    // 契约 §21bis 强制合并: 操作条「强制合并」点开确认弹窗（选主卡）。非 nil =
+    // 弹窗展示中；Identifiable 载荷带住此刻的选中集，弹窗内选主卡后 submit。
+    @State private var forceMergePayload: ForceMergePayload?
     // 搜索过滤: focus for the header search box (⌘F focuses, Esc clears).
     // The query itself lives in the STORE (boardQuery) so the board*
     // projections can filter — visible* 现有模式.
@@ -64,8 +74,16 @@ struct KanbanView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // 多选态 → 底部浮出操作条（请求合并建议 ≥2 / 提建议 ≥0 / 取消）
+        // 多选态 → 底部浮出操作条（请求合并建议 ≥2 / 强制合并 ≥2 / 提建议 ≥0 / 取消）
         .overlay(alignment: .bottom) { selectionBar }
+        // 契约 §21bis: 强制合并确认弹窗（选主卡）。提交成功后退出多选。
+        .sheet(item: $forceMergePayload) { payload in
+            ForceMergeSheet(ids: payload.ids, app: app) { primary in
+                if app.submitMergeForce(ids: payload.ids, primary: primary) {
+                    setSelectMode(false)
+                }
+            }
+        }
         .background {
             // 契约七: Esc 退出多选 — window-scoped hidden cancel action (no
             // event monitor; keyboard shortcuts only fire while THIS window is
@@ -476,6 +494,19 @@ struct KanbanView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.purple)   // 建议卡同款紫色 accent
+                    // 契约 §21bis: 用户直断——跳过 AI、钦定主卡直接合并（走确认弹窗）
+                    Button {
+                        let ids = selectedIDs.intersection(selectableIDs).sorted()
+                        guard ids.count >= 2 else { return }
+                        forceMergePayload = ForceMergePayload(ids: ids)
+                    } label: {
+                        Text(L("强制合并 (\(selectedIDs.count))",
+                               "Force-merge (\(selectedIDs.count))"))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .help(L("跳过 AI 分析，钦定主卡直接合并（不可撤销）",
+                            "Skip AI analysis — pick a primary and merge now (not reversible)"))
                 }
                 // 建议上报: ≥0 张 — 零选中即对整体提建议
                 Button {
@@ -530,7 +561,9 @@ struct KanbanView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if store.isMergeAnalyzing(id) {
+                if store.isMergeForcing(id) {
+                    mergeForcingBadge
+                } else if store.isMergeAnalyzing(id) {
                     mergeAnalyzingBadge
                 }
             }
@@ -539,6 +572,19 @@ struct KanbanView: View {
     /// 契约七: 合并分析中… 角标 (local optimistic → backend analyzing handoff).
     private var mergeAnalyzingBadge: some View {
         Text(L("合并分析中…", "Analyzing…"))
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(.purple)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.purple.opacity(0.12))
+            .clipShape(Capsule())
+            .padding(6)
+            .allowsHitTesting(false)
+    }
+
+    /// 契约 §21bis: 合并中… 角标 (强制合并已提交，等下一版 dashboard 落地).
+    private var mergeForcingBadge: some View {
+        Text(L("合并中…", "Merging…"))
             .font(.system(size: 9, weight: .medium))
             .foregroundColor(.purple)
             .padding(.horizontal, 6)

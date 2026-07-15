@@ -172,6 +172,14 @@ def process_inbox() -> int:
             _write_applied_ack(path.stem, "running")
             _safe_unlink(path)
             continue
+        # 强制合并（§21 v0.31）: user-chosen primary, skips the AI entirely —
+        # carries "ids" (>=2 R-ids) + "primary" (∈ ids), no MS- suggestion.
+        if action == "merge_force":
+            _apply_merge_force(decision.get("ids"), decision.get("primary"))
+            processed += 1
+            _write_applied_ack(path.stem, "running")
+            _safe_unlink(path)
+            continue
 
         # §22 one-shot Claude Code session import — no requirement-level id.
         if action == "import_claude_sessions":
@@ -473,6 +481,44 @@ def _apply_merge_review(ids) -> None:
         return
     _log(f"inbox: merge_review {sid} ids={uniq} — analysis subprocess started")
     analytics.log_event("merge_review_requested", n=len(uniq), suggestion=sid)
+
+
+def _apply_merge_force(ids, primary) -> None:
+    """契约 §21 强制合并（v0.31）：用户钦定主卡、跳过 AI 直接落地 ``merge``。
+    校验 ids（≥2、去重、都存在）+ primary ∈ ids → 复用 :func:`_merge_into_primary`
+    ——与 AI ``merge`` verdict 逐字同一条确定性执行路径（主卡吸收 sources 去重 /
+    repeated_mentions 累加 / notes 留痕 / 交付物搬运，副卡 best-effort 停 session +
+    置 ``merged``；主卡在待验收则 rework 注入）。不合法 = log 丢弃（同 merge_review
+    公共规则）；执行失败只 log + 打点 outcome=fail，绝不抛穿轮询（用户可重试）。"""
+    raw = ids if isinstance(ids, list) else []
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for i in raw:
+        s = str(i or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    prim = str(primary or "").strip()
+    if len(uniq) < 2:
+        _log(f"inbox: merge_force needs >=2 distinct ids, got {raw!r} — dropped")
+        return
+    if prim not in uniq:
+        _log(f"inbox: merge_force primary {primary!r} not in ids {uniq} — dropped")
+        return
+    missing = [i for i in uniq if load(i) is None]
+    if missing:
+        _log(f"inbox: merge_force unknown ids {missing} — dropped")
+        return
+    secondaries = [i for i in uniq if i != prim]
+    try:
+        _merge_into_primary(prim, secondaries)
+    except Exception as e:  # noqa: BLE001 - never hang the poll; user can retry/redo
+        _log(f"inbox: merge_force primary={prim} secondaries={secondaries} "
+             f"FAILED: {e}\n{traceback.format_exc()}")
+        analytics.log_event("merge_force", n=len(uniq), outcome="fail")
+        return
+    _log(f"inbox: merge_force primary={prim} secondaries={secondaries} applied")
+    analytics.log_event("merge_force", n=len(uniq), outcome="ok")
 
 
 def _apply_merge_decision(action: str, suggestion_id) -> None:

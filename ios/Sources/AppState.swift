@@ -174,6 +174,46 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - merge-review actions (契约 §21 / §21bis) -------------------------
+    /// Accept an AI merge suggestion (merge_apply). `suggestionId` = MS- id.
+    func submitMergeApply(suggestionId: String) async -> Bool {
+        await sealAndPost { ts in InboxAction.mergeApply(suggestionId: suggestionId, ts: ts) }
+    }
+
+    /// Dismiss an AI merge suggestion (merge_dismiss).
+    func submitMergeDismiss(suggestionId: String) async -> Bool {
+        await sealAndPost { ts in InboxAction.mergeDismiss(suggestionId: suggestionId, ts: ts) }
+    }
+
+    /// 契约 §21bis 强制合并: user-chosen primary, skips the AI. De-dups + guards
+    /// ≥2 distinct ids with primary ∈ ids before writing (actd re-validates).
+    func submitMergeForce(ids: [String], primary: String) async -> Bool {
+        var seen = Set<String>()
+        let uniq = ids.filter { seen.insert($0).inserted }
+        guard uniq.count >= 2, uniq.contains(primary) else { return false }
+        return await sealAndPost { ts in InboxAction.mergeForce(ids: uniq, primary: primary, ts: ts) }
+    }
+
+    /// Seal a suggestion-level action plaintext under the selected channel's key
+    /// and POST it to inbox_actions — same transport as submit/submitCapture.
+    private func sealAndPost(_ build: (String) -> Data) async -> Bool {
+        guard let target = selectedChannelId, let channel = channels[target] else {
+            lastError = L("请先选择并配对一台设备", "Pick and pair a device first"); return false
+        }
+        let actionId = UUID().uuidString.lowercased()
+        let ts = InboxAction.nowTimestamp()
+        let seq = boardSeq
+        let plaintext = build(ts)
+        return await run {
+            let blob = try E2E.encryptAction(kI: channel.key, epoch: channel.epoch,
+                                             deviceId: target, actionId: actionId,
+                                             boardSeq: seq, plaintext: plaintext)
+            try await self.client.postInboxAction(actionId: actionId, channelId: target,
+                                                  writeSecret: channel.writeSecret,
+                                                  boardSeq: seq, blob: blob, clientTs: ts)
+        }
+    }
+
     // MARK: - error-catching runner --------------------------------------------
     /// Run an async throwing block, surfacing errors into `lastError` and
     /// toggling `isBusy`. Returns true on success.

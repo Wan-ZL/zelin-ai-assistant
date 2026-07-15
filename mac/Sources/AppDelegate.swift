@@ -782,6 +782,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return true
     }
 
+    /// 契约 §21bis 强制合并: 用户钦定主卡、跳过 AI →
+    /// {"action":"merge_force","ids":[…],"primary":"R-xxx"} inbox file. Same
+    /// atomic-write + failure-alert path as merge_review (writeInboxFile); on
+    /// success the involved cards get the 合并中… badge (store.beginMergeForce).
+    /// The apply itself is counted python-side (merge_force{n,outcome}, 契约
+    /// §21bis) — only a firstReach discovery marker is logged here.
+    func submitMergeForce(ids: [String], primary: String) -> Bool {
+        // de-dup while preserving order; the contract requires ≥2 distinct ids
+        // with primary ∈ ids (actd re-validates and drops anything malformed).
+        var seen = Set<String>()
+        let uniq = ids.filter { seen.insert($0).inserted }
+        guard uniq.count >= 2, uniq.contains(primary) else { return false }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["action": "merge_force", "ids": uniq,
+                                   "primary": primary, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("merge_force")
+        store.beginMergeForce(primary: primary, secondaries: uniq.filter { $0 != primary })
+        return true
+    }
+
     /// 建议上报入口（看板 header 直点 = ids 空 → 对整体；多选操作条 = 针对
     /// 所选卡）: 弹多行文本框（promptText 复用——↩ 发送 · ⇧↩ 换行 同款），
     /// 提交走 submitFeedback。返回 true = 已写入 inbox（调用方据此退出多选）；
