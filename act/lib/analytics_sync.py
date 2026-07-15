@@ -192,7 +192,8 @@ def _make_transport(supabase_url: str, key: str) -> Transport:
                 "Prefer": "return=minimal",
             },
         )
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        # B310: endpoint is the https Supabase URL from the user's own config
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # nosec B310
             resp.read()
 
     return send

@@ -72,7 +72,7 @@ SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
 MCP_MARKER_FILE = "slack_mcp.marker"   # iso start-ts of the last SUCCESSFUL MCP pass
 MCP_PRESENT_MARKER_FILE = "slack_mcp_present.marker"  # B4: cached `claude mcp list` verdict
-DEFAULT_TOKEN_PATH = "~/Desktop/Keys/slack-user-token.txt"
+DEFAULT_TOKEN_PATH = "~/Desktop/Keys/slack-user-token.txt"  # nosec B105 - file PATH, not a secret
 MEDIA_DIR = config.STATE_DIR / "media"
 FRAMEGRAB = config.HOME / "mac" / "build" / "framegrab"   # AVFoundation frame extractor (mac/build.sh)
 MAX_FRAMES = 12
@@ -121,7 +121,8 @@ def slack_api(method: str, token: str, params: Optional[dict] = None) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx) as resp:
+        # B310: SLACK_API is a hardcoded https constant
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx) as resp:  # nosec B310
             return json.loads(resp.read().decode())
     except Exception as e:  # noqa: BLE001 - network/JSON, never crash the daemon
         return {"ok": False, "error": f"transport:{e}"}
@@ -138,7 +139,8 @@ def download_file(token: str, url: str, dest: Path) -> bool:
     quick-capture attachments (photos/videos). Never raises."""
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as resp:
+        # B310: url_private comes from Slack's API over TLS (https CDN)
+        with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx) as resp:  # nosec B310
             data = resp.read()
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
