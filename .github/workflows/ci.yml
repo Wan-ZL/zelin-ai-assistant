@@ -193,6 +193,13 @@ jobs:
         # both apps compile but nothing else executes. No Xcode project needed.
         run: bash ios/tests/contract/run.sh
 
+      - name: Swift captions tests (CaptionCore, plain swiftc)
+        # 实时字幕 pure-logic gate: byte-exact Doubao ASR wire framing, gzip
+        # payload decode, definite/partial dedup, and the 2-line caption
+        # roll-up reducer (mac/Sources/CaptionCore.swift) — the only
+        # executable check on the hand-rolled binary protocol.
+        run: bash ios/tests/captions/run.sh
+
       - name: Swift↔Python E2E crypto interop
         # The ONLY check that ios/Sources/E2E.swift byte-interops with
         # act/lib/e2e.py (tests/test_e2e.py is Python↔Python only): the frozen

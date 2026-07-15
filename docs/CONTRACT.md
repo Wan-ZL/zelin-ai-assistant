@@ -1160,3 +1160,25 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   channel 本地 label 不同，更新内存 + Keychain 中的 label（改名经由既有 E2E
   看板通道送达；服务器 `channels.label_enc` 仍是 INSERT-only 死角，不参与）。
   重新扫码路径不变（`addChannel` 照旧覆盖 label）。
+
+## 34. v0.36.0 实时字幕（add-only，Mac 展示层）
+
+实时字幕是**纯 Mac 本机展示层功能**，对既有契约零改动，本节只登记新增面：
+
+- **不碰录制状态机**：`recordingMode` 词表仍冻结为 `"off"|"screen"|"screen_audio"`
+  （§15）；实时字幕是独立的 UserDefaults Bool（`liveCaptionsEnabled` 及一组
+  `captions*` 外观/引擎偏好），与 screenpipe 引擎、`/rec` slash 命令、dashboard/
+  registry/inbox 的任何形状互不相干。音频采集为 App 进程内自有通路
+  （AVAudioEngine 麦克风 + ScreenCaptureKit 系统声音），与录制引擎并行共存。
+- **新增 secrets 文件名（BYO key，App 专用）**：`config/secrets/` 下新增
+  `volcano-speech-key.txt`（豆包流式语音识别）与 `volcano-ark-key.txt`（Ark 翻
+  译），同既有 secrets 契约（目录 0700、文件 0600、单行 + 换行）。**只有 Mac App
+  读取这两个文件——Python/cron 侧永不读取**（区别于 anthropic/slack/gmail 三个
+  跨组件文件）。App 不内置任何 key。
+- **隐私**：字幕文本永不落盘、永不进 analytics/telemetry（只有 `captions_toggle`
+  / `captions_autostart` / firstReach `live_captions` 元数据事件）、永不离开本机
+  ——唯一外发目的地是用户自己 key 对应的识别/翻译服务端点（Apple 本地引擎则完全
+  离线）。
+- **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
+  `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
+  程触发）；系统声音复用既有「屏幕录制」授权探测/深链。

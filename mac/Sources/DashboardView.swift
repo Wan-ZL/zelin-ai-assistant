@@ -12,6 +12,7 @@ import Foundation
 /// plus a permission escape hatch when TCC blocks the engine.
 struct RecordingMenuButton: View {
     @ObservedObject private var rec = RecordingController.shared
+    @ObservedObject private var cap = LiveCaptionsController.shared
     @ObservedObject private var i18n = LanguageStore.shared
     // 契约D feedback: transient 重启中… next to the button text after a mode
     // switch / engine restart; the 5-s refresh loop (refreshEngineState) then
@@ -44,6 +45,19 @@ struct RecordingMenuButton: View {
                     } else {
                         Text(label)
                     }
+                }
+            }
+            Divider()
+            // v0.36 实时字幕 — an independent Bool, deliberately NOT a 4th
+            // recordingMode (frozen vocabulary, CONTRACT §15): the overlay
+            // runs its own in-process capture, orthogonal to the engine.
+            Button {
+                cap.setEnabled(!cap.enabled)
+            } label: {
+                if cap.enabled {
+                    Label(L("实时字幕", "Live captions"), systemImage: "checkmark")
+                } else {
+                    Text(L("实时字幕", "Live captions"))
                 }
             }
             Divider()
