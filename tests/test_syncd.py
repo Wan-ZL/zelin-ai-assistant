@@ -26,6 +26,7 @@ cloud dep), like tests/test_e2e.py.
 """
 import hashlib
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -313,13 +314,14 @@ class UpTestCase(unittest.TestCase):
         self.assertEqual(len(files), 1)
 
     def test_crash_between_ledger_and_inbox_does_not_double_materialise(self):
-        # M4 mark-then-materialise: the L3 delivered ledger is appended BEFORE
-        # the inbox file is written. Simulate a crash DURING the inbox write —
-        # the ledger must already record the action, so a re-run (after actd may
-        # have consumed+deleted the file) sees it delivered and does NOT
-        # re-materialise. The pre-fix order (write-then-ledger) would leave the
-        # ledger empty after the crash → the re-run re-writes the file → a
-        # non-idempotent capture/feedback double-applies.
+        # M4 mark-then-materialise (refined by the write-failure retry fix):
+        # the inbox file is STAGED to a tmp path, the L3 delivered ledger is
+        # appended, and only then the file is atomically finalised — so any
+        # file actd can ever see already has a ledger entry. Simulate a crash
+        # at the finalising os.replace: the ledger must already record the
+        # action, so a re-run (after actd may have consumed+deleted the file)
+        # sees it delivered and does NOT re-materialise — a non-idempotent
+        # capture/feedback can never double-apply.
         aid = "ffffffff-ffff-4fff-8fff-ffffffffffff"
         payload = {"action": "capture", "text": "quick note",
                    "ts": "2026-07-12T01:00:00Z"}
@@ -327,12 +329,19 @@ class UpTestCase(unittest.TestCase):
         d = syncd.Syncd(_sync_cfg(), ft)
         self.assertTrue(d._ensure_ready())
 
-        # pass 1 — crash mid-materialise (process dies while writing the file)
-        with mock.patch.object(d, "_write_inbox_file",
-                               side_effect=RuntimeError("crash")):
+        # pass 1 — crash mid-materialise (process dies finalising the file)
+        final_path = str(config.INBOX_DIR / f"{aid}.json")
+        real_replace = os.replace
+
+        def crash_on_finalise(src, dst):
+            if str(dst) == final_path:
+                raise RuntimeError("crash")
+            return real_replace(src, dst)
+
+        with mock.patch.object(syncd.os, "replace", crash_on_finalise):
             with self.assertRaises(RuntimeError):
                 d.pull_up()
-        # the M4 invariant the pre-fix order violated: ledger recorded it FIRST
+        # the M4 invariant: the ledger recorded it BEFORE the file could land
         self.assertIn(aid, d._delivered_set())
         # actd already consumed+deleted whatever might have landed
         for p in config.INBOX_DIR.glob(f"{aid}.json"):

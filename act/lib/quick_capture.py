@@ -209,7 +209,18 @@ def capture(
     except Exception:  # noqa: BLE001 - quick capture must never crash the radar
         data = None
     if not isinstance(data, dict) or data.get("action") not in _VALID_ACTIONS:
-        data = _fallback_result(text_or_media_desc)
+        typed = str(typed_text).strip() if typed_text is not None else ""
+        if typed and typed != str(text_or_media_desc).strip():
+            # Media-capture fallback: the card the user sees must quote his
+            # TYPED words, never the synthetic "Read these images…" tool
+            # prompt + local file paths (小白友好; the docstring's promise).
+            # The media description still rides in plan so the image
+            # pointers are not lost for the executing agent.
+            data = _fallback_result(typed)
+            data["plan"] = [typed[:200], str(text_or_media_desc)[:400]]
+            data["_text"] = typed
+        else:
+            data = _fallback_result(text_or_media_desc)
     data.setdefault("_text", str(text_or_media_desc))
     data.setdefault("_typed", str(typed_text) if typed_text is not None
                     else str(text_or_media_desc))
@@ -327,7 +338,11 @@ def _fold_into(target: "registry.Requirement", child: Optional["registry.Require
     """Fold a radar hit into an existing card: note + deduped sources + mentions."""
     if note:
         tag = f"[radar] {note}"
-        target.notes = (target.notes + "\n" + tag).strip() if target.notes else tag
+        # The radar's failed-note retry queue re-folds the same hit on every
+        # retry — an identical tag must not accumulate on the user-visible
+        # card ("retry is harmless" invariant; sources are already deduped).
+        if tag not in (target.notes or "").split("\n"):
+            target.notes = (target.notes + "\n" + tag).strip() if target.notes else tag
     merged, added = registry._dedupe_sources(
         target.sources or [], (child.sources if child is not None else None) or [])
     target.sources = merged
@@ -516,6 +531,8 @@ def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
     notes = "from Slack self-DM quick capture"
     if res.get("_fallback"):
         notes += " (quick-capture LLM failed, needs manual)"
+    if res.get("_relates_to_miss"):
+        notes += f" (relates_to miss: {res['_relates_to_miss']})"
 
     req = registry.Requirement(
         id=registry.next_id(),
@@ -562,13 +579,42 @@ def _apply_relates_to(res: dict, cfg: config.Config,
                       tele_text: Optional[str] = None) -> str:
     rid = str(res.get("req") or "").strip()
     req = registry.load(rid) if rid else None
+    sealed_hit = False
+    if req is not None:
+        # merge-cluster canonicalization（同 apply_triage）：命中已并入主卡的副卡时
+        # 挂到主卡名下，同一事件的 follow-up 全簇收敛到一个血缘节点。
+        req = registry.canonical(req)
+        if req.status in (registry.State.REJECTED.value,
+                          registry.State.TRASHED.value,
+                          registry.State.ARCHIVED.value):
+            # 决策6 / sealed-archive semantics (same guard as apply_triage):
+            # rejected/trashed/archived cards are sealed — a restated ask must
+            # RE-CARD, never be buried as a note inside a card no kanban lane
+            # shows. Treat exactly like an unknown id (fall through below).
+            analytics.log_event("quick_capture", action="relates_to_rejected",
+                                req=req.id, text=tele_text)
+            sealed_hit = True
+            req = None
     if req is None:
-        analytics.log_event("quick_capture", action="relates_to_miss",
-                            req=rid or None, text=tele_text)
-        return f"没找到条目 {rid or '?'}，这条先没动注册表——要新建的话再发一条"
-    # merge-cluster canonicalization（同 apply_triage）：命中已并入主卡的副卡时
-    # 挂到主卡名下，同一事件的 follow-up 全簇收敛到一个血缘节点。
-    req = registry.canonical(req)
+        # never-lose (§13): an unknown/hallucinated id (or a sealed-card hit)
+        # must not drop the capture — since v0.21 the self-DM reply surface is
+        # gone, so replying "没找到" without a registry write silently loses
+        # the thought. Mirror apply_triage's unknown-id fall-through: file a
+        # minimal new_proposal instead.
+        if not sealed_hit:
+            analytics.log_event("quick_capture", action="relates_to_miss",
+                                req=rid or None, text=tele_text)
+        typed = str(res.get("_typed") or "").strip()
+        raw = (typed or str(res.get("note") or "").strip()
+               or str(res.get("_text") or "").strip())
+        fb = _fallback_result(raw)
+        fb.pop("_fallback", None)
+        fb["_relates_to_miss"] = rid or "?"
+        fb["_text"] = raw
+        reply = _apply_new_proposal(fb, tele_text)
+        if sealed_hit:
+            return (f"{rid} 已封存（拒绝/回收站/归档），重述按新卡处理——{reply}")
+        return f"没找到条目 {rid or '?'}；为了不丢先按新卡记下——{reply}"
     note = str(res.get("note") or "").strip() or str(res.get("_text") or "").strip()
     if registry.is_resolved(req):
         # 统一口径：已交付/已合并的既往卡不追加备注了事——走 reraise_or_followup

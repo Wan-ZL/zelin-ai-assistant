@@ -283,16 +283,38 @@ def _load_or_create_channel_id() -> str:
     return val
 
 
+def _valid_write_secret(val: str) -> bool:
+    """True iff ``val`` decodes to exactly ``WRITE_SECRET_LEN`` bytes.
+    (b64decode silently DISCARDS junk characters, so the length check — not
+    the decode call — is the real corruption gate.)"""
+    try:
+        return len(_b64url_decode(val)) == e2e.WRITE_SECRET_LEN
+    except Exception:  # noqa: BLE001 - any decode failure = invalid
+        return False
+
+
 def _load_or_create_write_secret() -> str:
     """Return the write_secret as base64url(no-pad) text (43 chars for 32 bytes),
-    generating + persisting it 0600 on first use."""
-    try:
-        val = WRITE_SECRET_PATH.read_text(encoding="utf-8").strip()
-        if val:
-            _b64url_decode(val)  # validate it decodes (self-heal on corruption)
-            return val
-    except Exception:  # noqa: BLE001 - regenerate on any read/decode corruption
-        pass
+    generating + persisting it 0600 on first use.
+
+    A PRESENT-but-corrupt secret must NOT be silently regenerated under the
+    same channel_id: the server keeps the OLD ``write_secret_hash`` and the
+    ``channels`` table is anon INSERT-only (no UPDATE policy), so every future
+    write would fail RLS forever while ``--pair`` reassures the user. Recovery
+    is rotating the CHANNEL: drop ``channel_id`` so ``init_channel`` mints a
+    fresh, server-consistent one — the caller is already re-pairing, and the
+    regenerated QR covers the phone re-scan."""
+    val = _load_write_secret_text() or ""
+    if _valid_write_secret(val):
+        return val
+    if val or WRITE_SECRET_PATH.exists():
+        # present but corrupt/unreadable — same brick either way
+        _log("write_secret corrupt — rotating channel_id so this re-pair "
+             "mints a fresh, server-consistent channel")
+        try:
+            CHANNEL_ID_PATH.unlink()
+        except OSError:
+            pass
     val = _b64url_encode(os.urandom(e2e.WRITE_SECRET_LEN))
     _ensure_sync_dir()
     tmp = WRITE_SECRET_PATH.with_suffix(".tmp")
@@ -428,6 +450,34 @@ def _default_transport(sync_cfg: dict) -> HttpTransport:
 
 
 # --------------------------------------------------------------------------- #
+# inbox payload shape gate (fail-closed at the syncd boundary)
+# --------------------------------------------------------------------------- #
+# Scalar fields every downstream consumer (actd.process_inbox) calls str
+# methods on. A non-string value is a poison file: actd crashes AFTER applying
+# but BEFORE ack+unlink, so the same file re-crashes (and re-applies) every
+# 10s pass forever — the whole board freezes until it is removed by hand.
+_INBOX_STR_FIELDS = ("action", "id", "comment", "text", "primary")
+
+
+def _inbox_shape_error(action: dict) -> Optional[str]:
+    """Field-type check for a decrypted inbox payload: the AEAD authenticates
+    the bytes, not the shape — anyone holding the pairing QR (or a buggy
+    client build) can relay validly-encrypted junk. ``None``-valued fields
+    count as absent (actd coerces them). Returns a reason string to log, or
+    None when the shape is usable."""
+    for key in _INBOX_STR_FIELDS:
+        v = action.get(key)
+        if v is not None and not isinstance(v, str):
+            return f"field '{key}' is not a string"
+    ids = action.get("ids")
+    if ids is not None and (
+            not isinstance(ids, list)
+            or any(not isinstance(x, str) for x in ids)):
+        return "field 'ids' is not a list of strings"
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # The daemon
 # --------------------------------------------------------------------------- #
 class Syncd:
@@ -489,6 +539,12 @@ class Syncd:
         secret = _load_write_secret_text()
         if not secret:
             self._pause(PAUSE_MESSAGE + "(缺少写入密钥)")
+            return False
+        if not _valid_write_secret(secret):
+            # A corrupt on-disk secret would make EVERY write fail RLS forever
+            # while status.json keeps claiming sync is on — pause with an
+            # honest reason instead (re-pairing rotates the channel).
+            self._pause(PAUSE_MESSAGE + "(写入密钥已损坏)")
             return False
         self._write_secret = secret
         return True
@@ -588,7 +644,10 @@ class Syncd:
                 "nonce": _to_bytea(e2e.embedded_nonce(blob)),
                 "alg": _ALG,
                 "schema_version": 1,
-                "updated_at": _iso_now(),
+                # updated_at deliberately NOT sent: the SERVER clock is the
+                # liveness authority (a trigger stamps it on every write; see
+                # the board_snapshots_server_updated_at migration). A skewed
+                # Mac clock must never paint a dead board FRESH on the phone.
             }
             self.transport.upsert("board_snapshots", row, on_conflict="channel_id",
                                   write_secret=self._write_secret)
@@ -640,26 +699,49 @@ class Syncd:
         """Atomically materialise ``state/inbox/<action_id>.json`` from the
         decrypted (AEAD-authenticated) action payload. The payload IS the inbox
         record; we pass it through (preserving action-specific fields like
-        capture's ``text``) but guarantee ``ts`` and stamp the server-authoritative
-        ``board_seq`` when the row carried one (consumed by the actd §5.4 guard).
-        Returns False (skip) if the payload is not a usable inbox action."""
+        capture's ``text``) but fail CLOSED on field types — the AEAD
+        authenticates the bytes, not the shape, and a poison payload (e.g. a
+        dict-valued ``comment``) must die here, not wedge actd's whole inbox
+        pass forever. We guarantee ``ts`` and stamp the server-authoritative
+        ``board_seq`` when the row carried one (consumed by the actd §5.4
+        guard). Returns False (skip) if the payload is not a usable inbox
+        action or the write failed.
+
+        M4 mark-then-materialise, refined: stage to a tmp file first, append
+        the L3 delivered ledger, THEN atomically replace into the inbox. The
+        file only becomes visible to actd AFTER its ledger entry exists (so a
+        crash can never re-materialise a consumed action → no double-apply),
+        while a failed stage write (disk full / permissions) leaves the action
+        un-ledgered — it stays 'pending' and is retried next pass instead of
+        being marked delivered with no inbox file ever written."""
         if not isinstance(action, dict) or not action.get("action"):
             _log(f"UP: {action_id} decrypted payload has no action — skipped")
+            return False
+        shape_err = _inbox_shape_error(action)
+        if shape_err:
+            _log(f"UP: {action_id} decrypted payload rejected ({shape_err}) — skipped")
             return False
         record = dict(action)
         record.setdefault("ts", _iso_now())
         if board_seq is not None and "board_seq" not in record:
             record["board_seq"] = board_seq
+        path = config.INBOX_DIR / f"{action_id}.json"
+        tmp = path.with_suffix(".json.tmp")
         try:
             config.INBOX_DIR.mkdir(parents=True, exist_ok=True)
-            path = config.INBOX_DIR / f"{action_id}.json"
-            tmp = path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, path)
-            return True
         except OSError as e:
-            _log(f"UP: writing inbox file for {action_id} failed: {e}")
+            _log(f"UP: staging inbox file for {action_id} failed (will retry): {e}")
             return False
+        self._ledger_append(action_id)
+        try:
+            os.replace(tmp, path)
+        except OSError as e:
+            # Already ledgered: the action is dropped (safe direction — the
+            # phone never sees it applied and can retry), never double-applied.
+            _log(f"UP: finalising inbox file for {action_id} failed: {e}")
+            return False
+        return True
 
     def _patch_delivered(self, action_id: str) -> None:
         try:
@@ -704,18 +786,13 @@ class Syncd:
             except ValueError:
                 _log(f"UP: {aid} decrypted payload is not JSON — skipped")
                 continue
-            # M4 mark-then-materialise: append to the L3 delivered ledger BEFORE
-            # writing the inbox file. If we crash between the two and actd has
-            # already consumed+deleted the file, a re-run must NOT re-materialise
-            # it (that would double-apply a non-idempotent action — capture /
-            # feedback). Ledger-first means the re-run sees it delivered and
-            # skips; the cost is that a crash in this same window drops the
-            # action instead (safe: the phone simply never sees it 'applied' and
-            # can retry with a fresh idempotency key, vs a silent duplicate).
-            self._ledger_append(aid)
-            delivered.add(aid)
+            # M4 ordering lives inside _write_inbox_file (stage → ledger →
+            # atomic replace): a stage-write failure keeps the action pending
+            # for retry next pass (never falsely 'delivered'), while a crash
+            # mid-materialise can never double-apply a consumed action.
             if not self._write_inbox_file(aid, action, board_seq):
                 continue
+            delivered.add(aid)
             self._patch_delivered(aid)
             written += 1
         if written:
@@ -789,8 +866,10 @@ def init_channel(label: str, supabase_url: str = "",
     duplicate channel INSERT is expected and swallowed. Returns
     ``{channel_id, qr_blob, qr_png_path, registered}``.
     """
-    channel_id = _load_or_create_channel_id()
+    # Write secret FIRST: a present-but-corrupt secret rotates channel_id
+    # (see _load_or_create_write_secret), so the channel id must be read after.
     write_secret_text = _load_or_create_write_secret()
+    channel_id = _load_or_create_channel_id()
     write_secret_raw = _b64url_decode(write_secret_text)
 
     # K + epoch: reuse the existing pairing key when present (stable QR).
@@ -880,7 +959,10 @@ def main(argv: Optional[list] = None) -> int:
                         help="with --pair: emit ONE JSON object to stdout "
                              "(machine-readable, for the Mac app) and nothing else")
     parser.add_argument("--disable", action="store_true", help="turn sync off")
-    parser.add_argument("--label", default="这台 Mac")
+    parser.add_argument("--label", default=None,
+                        help="device label for the pairing QR; when omitted, "
+                             "the already-paired label (state/sync.json) is "
+                             "kept, else 这台 Mac")
     parser.add_argument("--supabase-url", default="",
                         help="optional project URL override (defaults to built-in)")
     parser.add_argument("--platform", default="macos",
@@ -897,7 +979,14 @@ def main(argv: Optional[list] = None) -> int:
         return 0
 
     if args.pair:
-        result = init_channel(args.label, supabase_url=args.supabase_url,
+        # Resolve the label: explicit arg → existing state/sync.json label →
+        # default. The Settings page re-runs a bare --pair on every open, so
+        # the old hardcoded default clobbered any custom label back to 这台 Mac.
+        label = (args.label or "").strip()
+        if not label:
+            prior = read_sync_config() or {}
+            label = str(prior.get("label") or "").strip() or "这台 Mac"
+        result = init_channel(label, supabase_url=args.supabase_url,
                               platform=args.platform)
         if args.json:
             # Machine-readable: EXACTLY one JSON object on stdout, nothing else
@@ -908,7 +997,7 @@ def main(argv: Optional[list] = None) -> int:
                 "qr_blob": result["qr_blob"],
                 "qr_png_path": result.get("qr_png_path"),
                 "registered": bool(result.get("registered")),
-                "label": args.label,
+                "label": label,
             }, ensure_ascii=False))
             return 0
         print("用手机 App 扫描下面的二维码即可配对这台 Mac:\n")

@@ -132,11 +132,19 @@ def _load_failed_queue() -> dict:
 
 
 def _save_failed_queue(queue: dict) -> None:
-    """写台账。写失败只能吞掉（state 只读/满盘时雷达本体照常跑完这轮）。"""
+    """写台账。写失败只能吞掉（state 只读/满盘时雷达本体照常跑完这轮）。
+
+    Atomic tmp + os.replace: a truncating in-place write would destroy the
+    whole existing ledger on crash/ENOSPC mid-write (every queued failed note
+    silently lost — the radar's worst failure mode); the replace either lands
+    the new ledger in full or leaves the previous one intact."""
     try:
         config.ensure_state_dirs()
-        _failed_queue_path().write_text(
+        path = _failed_queue_path()
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps(queue, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
     except OSError:
         pass
 

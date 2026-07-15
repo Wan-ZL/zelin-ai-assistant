@@ -304,12 +304,20 @@ def save_pairing(device_id: str, epoch: int, k_i: bytes) -> Path:
 
 def load_pairing(device_id: str) -> Tuple[int, bytes]:
     """Return ``(epoch, K_i)`` for ``device_id``. Raises ``FileNotFoundError``
-    if the pairing was never saved / was removed (revoked)."""
+    if the pairing was never saved / was removed (revoked), and ``ValueError``
+    when the file exists but is not a valid pairing record (valid JSON, wrong
+    shape) — the type both catch sites (syncd._load_keys, syncd.init_channel)
+    already handle, so a corrupt file pauses the daemon honestly and lets
+    ``--pair`` regenerate the key instead of crashing both paths."""
     path = pairing_key_path(device_id)
     data = json.loads(path.read_text(encoding="utf-8"))
-    k_i = base64.b64decode(data["key"])
+    try:
+        k_i = base64.b64decode(data["key"])
+        epoch = int(data["epoch"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise ValueError(f"corrupt pairing record {path.name}: {e}") from e
     _check_key(k_i)
-    return int(data["epoch"]), k_i
+    return epoch, k_i
 
 
 # --------------------------------------------------------------------------- #
