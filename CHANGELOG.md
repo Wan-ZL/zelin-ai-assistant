@@ -25,61 +25,7 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-### Fixed
-
-- **Re-raised rounds actually run now.** A finished (delivered) card keeps its
-  agent session id for the record, and the §3.5 re-raise flip used to leave it
-  in place — so after you approved the re-raised round, the dispatcher skipped
-  the card as "already dispatched" and it sat queued forever, with no agent
-  behind it and no error anywhere. The flip now archives the finished round's
-  session id (as `reraised_session_id`) so the new round launches like any
-  other approval. Both re-raise entry points (deterministic radar backstop and
-  the LLM triage/quick-capture paths) share the fixed seam.
-
-## [0.34.0] - 2026-07-15
-
-### Added
-
-- **Dual input — type in the Running lane to run it now** (CONTRACT §34). The
-  运行中 lane gets its own resident input, next to the existing proposals one:
-  whichever box you type into decides the slot. The proposals box keeps
-  today's behavior (AI researches → proposal card → you approve); the new
-  Running box (「一句话，直接开跑（跳过提案）…」) files your one-liner straight
-  into the approved queue — the agent's first job is to gather its own
-  context, and the deliverable still lands in 待验收 for your acceptance.
-  Vague asks resolve through the existing 需输入 flow. **Honest caveat:
-  direct-run skips the proposal/cost preview entirely** — there is no plan or
-  estimate to review before the agent starts. By design, everything the run
-  box queues is pinned to chat delivery at the default workbench and never
-  touches a repo — even when your line matches an existing card that carried
-  repo routing, the promoted card is rewritten to chat (a notes tag records
-  the reroute), so no branches or PRs land anywhere you didn't preview
-  (file-type outputs go to the workbench `deliverables/` directory per
-  CONTRACT §33). Matching an existing card never spawns a twin agent: an
-  open proposal/backlog card is promoted in place, a card already
-  queued/running just absorbs the mention, a finished (delivered) card is
-  re-raised as a new round that genuinely re-dispatches, and a line that
-  matches a card sitting in 待验收 starts nothing — the app says so honestly
-  instead of pretending a launch happened. Available on the Mac
-  board column + popover Running section and the iPhone Running page
-  (`mode:"run"` on the capture action, add-only); the web dashboard does not
-  get the Running input this release.
-
-## [0.35.0] - 2026-07-15
-
-### Added
-
-- **Custom Mac device name for phone pairing (设置 · 同步/配对).** The device
-  name shown on the phone — previously the hardcoded 「这台 Mac」 — is now an
-  editable field in Mac Settings, defaulting to the Mac's computer name
-  (max 64 chars). Committing a rename re-runs the idempotent pair path
-  (`--pair --label`), so the QR and `state/sync.json` update immediately while
-  channel_id / secrets / epoch stay stable.
-- **Rename without re-scan.** `dashboard.json` gains an optional top-level
-  `device_label` (add-only, CONTRACT §35) mirroring the pairing label; the iOS
-  app adopts it after each board refresh, updating the stored channel label in
-  memory and Keychain. Old apps ignore the key, old payloads still decode, and
-  re-scanning the QR keeps working exactly as before.
+(nothing yet)
 
 ## [0.36.0] - 2026-07-15
 
@@ -134,6 +80,62 @@ other file needs editing. To cut a release:
   Doubao engine (with your key) is available.
 - Translation requires the separate Ark key and the Doubao engine; audio/UI
   capture paths are manually tested (they cannot run headlessly in CI).
+
+### Fixed
+
+- **Re-raised rounds actually run now.** A finished (delivered) card keeps its
+  agent session id for the record, and the §3.5 re-raise flip used to leave it
+  in place — so after you approved the re-raised round, the dispatcher skipped
+  the card as "already dispatched" and it sat queued forever, with no agent
+  behind it and no error anywhere. The flip now archives the finished round's
+  session id (as `reraised_session_id`) so the new round launches like any
+  other approval. Both re-raise entry points (deterministic radar backstop and
+  the LLM triage/quick-capture paths) share the fixed seam.
+
+## [0.35.0] - 2026-07-15
+
+### Added
+
+- **Custom Mac device name for phone pairing (设置 · 同步/配对).** The device
+  name shown on the phone — previously the hardcoded 「这台 Mac」 — is now an
+  editable field in Mac Settings, defaulting to the Mac's computer name
+  (max 64 chars). Committing a rename re-runs the idempotent pair path
+  (`--pair --label`), so the QR and `state/sync.json` update immediately while
+  channel_id / secrets / epoch stay stable.
+- **Rename without re-scan.** `dashboard.json` gains an optional top-level
+  `device_label` (add-only, CONTRACT §35) mirroring the pairing label; the iOS
+  app adopts it after each board refresh, updating the stored channel label in
+  memory and Keychain. Old apps ignore the key, old payloads still decode, and
+  re-scanning the QR keeps working exactly as before.
+
+## [0.34.0] - 2026-07-15
+
+### Added
+
+- **Dual input — type in the Running lane to run it now** (CONTRACT §34). The
+  运行中 lane gets its own resident input, next to the existing proposals one:
+  whichever box you type into decides the slot. The proposals box keeps
+  today's behavior (AI researches → proposal card → you approve); the new
+  Running box (「一句话，直接开跑（跳过提案）…」) files your one-liner straight
+  into the approved queue — the agent's first job is to gather its own
+  context, and the deliverable still lands in 待验收 for your acceptance.
+  Vague asks resolve through the existing 需输入 flow. **Honest caveat:
+  direct-run skips the proposal/cost preview entirely** — there is no plan or
+  estimate to review before the agent starts. By design, everything the run
+  box queues is pinned to chat delivery at the default workbench and never
+  touches a repo — even when your line matches an existing card that carried
+  repo routing, the promoted card is rewritten to chat (a notes tag records
+  the reroute), so no branches or PRs land anywhere you didn't preview
+  (file-type outputs go to the workbench `deliverables/` directory per
+  CONTRACT §33). Matching an existing card never spawns a twin agent: an
+  open proposal/backlog card is promoted in place, a card already
+  queued/running just absorbs the mention, a finished (delivered) card is
+  re-raised as a new round that genuinely re-dispatches, and a line that
+  matches a card sitting in 待验收 starts nothing — the app says so honestly
+  instead of pretending a launch happened. Available on the Mac
+  board column + popover Running section and the iPhone Running page
+  (`mode:"run"` on the capture action, add-only); the web dashboard does not
+  get the Running input this release.
 
 ## [0.33.1] - 2026-07-15
 
