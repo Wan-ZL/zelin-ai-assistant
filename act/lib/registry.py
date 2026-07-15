@@ -825,6 +825,19 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
         ex = dict(parent.execution or {})
         ex["reraised_at"] = _iso_now()
         ex["reraised_note"] = note or ""
+        # The flip starts a NEW round: the resolved parent still carries the
+        # FINISHED round's session_id, and actd.dispatch_approved skips any
+        # approved card with one ("already dispatched") — left in place, the
+        # re-raised round would sit queued forever after approval, with no
+        # agent behind it and no error anywhere. Archive it (audit trail,
+        # mirrors abort's aborted_session_id) and drop the stale done flag;
+        # the round's other bookkeeping (accepted_at/delivered_summary/…) is
+        # history and stays.
+        sid = ex.get("session_id")
+        if sid:
+            ex["reraised_session_id"] = sid
+            ex.pop("session_id", None)
+        ex.pop("done", None)
         parent.execution = ex
         parent.set_status(State.CARD_SENT)
         return "reraised", upsert(parent)
