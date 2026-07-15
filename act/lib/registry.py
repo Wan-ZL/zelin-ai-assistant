@@ -270,10 +270,23 @@ def load(req_id: str) -> Optional[Requirement]:
     # CRITICAL (§4): scan the archive dir too, or an archived card is invisible
     # to load()/unarchive and — worse — next_id() would reallocate its id and
     # overwrite it (silent data loss). Both funnel through include_archived=True.
+    found: Optional[Requirement] = None
     for r in load_all(include_archived=True):
-        if r.id == req_id:
+        if r.id != req_id:
+            continue
+        # Crash-mid-move residue (§4): archive() writes archive/<id>.yaml FIRST
+        # and deletes the active original SECOND, so a crash between the two
+        # leaves BOTH copies on disk. The archive copy is authoritative — the
+        # dashboard already hides the active twin (archived_ids dedup) — so
+        # load() must agree, or actd sees the stale active status and the
+        # user's unarchive click dead-ends in a silent no-op forever.
+        # unarchive() then repairs the residue: save() overwrites the stale
+        # active file and the archive copy is unlinked.
+        if r._file and Path(r._file).parent == ARCHIVE_DIR:
             return r
-    return None
+        if found is None:
+            found = r
+    return found
 
 
 def load_archived() -> list[Requirement]:
@@ -302,14 +315,25 @@ def save(req: Requirement) -> None:
         path = Path(req._file)
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
-        except (OSError, yaml.YAMLError):
-            data = []
+        except (OSError, yaml.YAMLError) as e:
+            # Fail-closed: this req is ONE member of a multi-card list file.
+            # Treating an existing-but-unreadable file as empty would rewrite
+            # it with just this card — silently destroying every sibling AND
+            # the still-recoverable corrupt content. Refuse the write instead
+            # (mirrors delete(), which returns False on the same failure).
+            print(f"registry: refuse save into unreadable list file "
+                  f"{path.name} (member {req.id}): {e}", file=sys.stderr)
+            raise
         if not isinstance(data, list):
             data = [data]
         out: list = []
         replaced = False
         for item in data:
-            if isinstance(item, dict) and item.get("id") == req.id:
+            # str() both sides: from_dict normalizes hand-written numeric ids
+            # (`id: 4` -> "4") but the raw on-disk entry still holds the int —
+            # an un-normalized == would append a duplicate instead of replacing.
+            if (isinstance(item, dict) and item.get("id") is not None
+                    and str(item.get("id")) == str(req.id)):
                 out.append(req.to_dict())
                 replaced = True
             else:
@@ -319,6 +343,19 @@ def save(req: Requirement) -> None:
         _atomic_write(path, _dump_yaml(out))
     else:
         path = Path(req._file) if req._file else config.REGISTRY_DIR / f"{req.id}.yaml"
+        if req._file is None and path.exists():
+            # Fail-closed: this req was NOT loaded from disk (its _file is
+            # unset) yet a file for its id already exists. If that file is
+            # unreadable its content was skipped by load_all()/load() — still
+            # recoverable by hand — and overwriting would make the loss
+            # permanent. Readable files pass through: updating an existing id
+            # via a fresh object is a legitimate save.
+            try:
+                yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError) as e:
+                print(f"registry: refuse to overwrite unreadable card file "
+                      f"{path.name} with {req.id}: {e}", file=sys.stderr)
+                raise
         req._file = str(path)
         req._in_list = False
         _atomic_write(path, _dump_yaml(req.to_dict()))
@@ -417,7 +454,11 @@ def delete(req: Requirement) -> bool:
             data = [data]
         remaining = [
             it for it in data
-            if not (isinstance(it, dict) and it.get("id") == req.id)
+            # str() both sides — same normalization as save(): an on-disk
+            # hand-written int id must match its str-normalized in-memory twin,
+            # or delete() drops the wrong row / nothing at all.
+            if not (isinstance(it, dict) and it.get("id") is not None
+                    and str(it.get("id")) == str(req.id))
         ]
         if len(remaining) == len(data):
             return False
@@ -499,6 +540,9 @@ def unarchive(req: Requirement) -> Requirement:
 # ID allocation + matching / merge
 # --------------------------------------------------------------------------- #
 _ID_RE = re.compile(r"^R-(\d+)$")
+# Filename form of an id — prefix match so "R-042" and "R-042-notes" both
+# count as allocating 42 (next_id's unreadable-file guard; conservative).
+_FILE_ID_RE = re.compile(r"^R-(\d+)")
 
 # "Resolved" = the work behind the card already closed (delivered, or merged
 # into a primary — incl. the legacy ``merged_into:<id>`` status). A radar hit
@@ -590,6 +634,16 @@ def next_id() -> str:
         # str() 防御第二层（from_dict 已归一 YAML 路径）：直接构造的
         # Requirement 仍可能带 int id —— 正则 match 对 int 抛 TypeError。
         m = _ID_RE.match(str(r.id or ""))
+        if m:
+            mx = max(mx, int(m.group(1)))
+    # Fail-closed vs unreadable files: load_all() SKIPS a corrupt/unreadable
+    # card file (hand-edit YAML typo, transient OSError), so its id would
+    # otherwise be re-allocated here and the still-recoverable file overwritten
+    # by the next save(). Filenames stay readable even when content isn't —
+    # count R-<n>*.yaml names in both the active and archive dirs as allocated.
+    # (Over-counting is harmless: worst case an id number is skipped.)
+    for p in _iter_files(include_archived=True):
+        m = _FILE_ID_RE.match(p.stem)
         if m:
             mx = max(mx, int(m.group(1)))
     return f"R-{mx + 1:03d}"

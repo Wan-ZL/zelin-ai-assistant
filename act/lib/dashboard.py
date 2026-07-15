@@ -40,6 +40,55 @@ _MERGE_EMIT_STATUSES = ("analyzing", "done", "failed")
 
 
 # --------------------------------------------------------------------------- #
+# transcript-info memoization (hot path)
+# --------------------------------------------------------------------------- #
+# executor._transcript_info reads + json-parses the FULL transcript of a
+# session. The dashboard needs it for every executing/review/delivered card
+# without a live pid — and the delivered set grows forever (never auto-
+# archived) — so calling it uncached on every ~10s pass is unbounded IO that
+# can push a pass past the app's freshness window (false "后台服务可能没在
+# 运行" banner). Memoize per session id, validated by the (path, mtime, size)
+# signature of every transcript file the lookup would scan: an appended,
+# replaced or deleted transcript invalidates immediately, an idle one is free.
+_TINFO_CACHE: dict[str, tuple[tuple, Optional[tuple]]] = {}
+_TINFO_CACHE_MAX = 512  # tiny entries; bound it so a long-lived actd can't grow
+
+
+def _transcript_sig(sid: str) -> Optional[tuple]:
+    """Freshness signature: (path, mtime_ns, size) of each transcript file
+    ``executor._transcript_info(sid)`` would consider — the glob pattern must
+    stay in sync with executor's. None = can't sign (short sid / OSError):
+    the caller falls through to an uncached lookup, never a stale answer."""
+    short = str(sid or "").split("-")[0]
+    if len(short) < 8:  # executor's guard: anything shorter globs everything
+        return None
+    root = Path("~/.claude/projects").expanduser()
+    try:
+        sig = []
+        for f in sorted(root.glob(f"*/{short}*.jsonl")):
+            st = f.stat()
+            sig.append((str(f), st.st_mtime_ns, st.st_size))
+        return tuple(sig)
+    except OSError:
+        return None
+
+
+def _transcript_info_cached(sid: str) -> Optional[tuple]:
+    from act.executor import _transcript_info  # lazy: keep dashboard import-light
+    sig = _transcript_sig(sid)
+    if sig is None:
+        return _transcript_info(sid)
+    hit = _TINFO_CACHE.get(sid)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    info = _transcript_info(sid)
+    if len(_TINFO_CACHE) >= _TINFO_CACHE_MAX:
+        _TINFO_CACHE.clear()
+    _TINFO_CACHE[sid] = (sig, info)
+    return info
+
+
+# --------------------------------------------------------------------------- #
 # claude agents --json --all
 # --------------------------------------------------------------------------- #
 def _run_claude_agents() -> list[dict]:
@@ -518,9 +567,9 @@ def build_dashboard(
                 # full UUID + the transcript's LAST cwd (the agent's worktree) —
                 # both required for --resume; the roster shows the launch dir,
                 # which is the wrong place to resume from.
-                from act.executor import _transcript_info
                 sid_for_resume = str(resume_sid or short_id or "")
-                tinfo = _transcript_info(sid_for_resume) if sid_for_resume else None
+                tinfo = (_transcript_info_cached(sid_for_resume)
+                         if sid_for_resume else None)
                 if tinfo:
                     copy_cmd = f"cd '{tinfo[1]}' && claude --resume {tinfo[0]}"
                 elif sid_for_resume:
