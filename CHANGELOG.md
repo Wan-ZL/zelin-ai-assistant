@@ -65,6 +65,22 @@ other file needs editing. To cut a release:
   (`mode:"run"` on the capture action, add-only); the web dashboard does not
   get the Running input this release.
 
+## [0.35.0] - 2026-07-15
+
+### Added
+
+- **Custom Mac device name for phone pairing (设置 · 同步/配对).** The device
+  name shown on the phone — previously the hardcoded 「这台 Mac」 — is now an
+  editable field in Mac Settings, defaulting to the Mac's computer name
+  (max 64 chars). Committing a rename re-runs the idempotent pair path
+  (`--pair --label`), so the QR and `state/sync.json` update immediately while
+  channel_id / secrets / epoch stay stable.
+- **Rename without re-scan.** `dashboard.json` gains an optional top-level
+  `device_label` (add-only, CONTRACT §34) mirroring the pairing label; the iOS
+  app adopts it after each board refresh, updating the stored channel label in
+  memory and Keychain. Old apps ignore the key, old payloads still decode, and
+  re-scanning the QR keeps working exactly as before.
+
 ## [0.33.1] - 2026-07-15
 
 ### Fixed
@@ -1297,6 +1313,9 @@ ingest pipeline (screenpipe → headless claude → Obsidian), the act pipeline
 SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
+
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.35.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.34.0...HEAD
 [0.34.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.34.0

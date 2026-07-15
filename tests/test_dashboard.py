@@ -19,6 +19,7 @@ Covered:
   it falls back the moment the session settles (counts follow the lists).
 """
 import datetime as _dt
+import json
 import os
 import tempfile
 import unittest
@@ -526,6 +527,47 @@ class SingleCardCorruptionIsolationTestCase(unittest.TestCase):
         dash = self._build([], archived=[_Exploding(), good])
         self.assertEqual([i["id"] for i in dash["archived"]], ["R-203"])
         self.assertEqual(dash["counts"]["archived"], 1)
+
+
+class DeviceLabelTestCase(unittest.TestCase):
+    """v0.35 top-level ``device_label`` (CONTRACT §34) — add-only passthrough
+    of the pairing label from state/sync.json so a paired phone can adopt a
+    Mac rename without re-scanning. Absent (not null) when unpaired /
+    unlabeled / unreadable."""
+
+    def setUp(self):
+        self.cfg = config.Config()
+        config.ensure_state_dirs()
+        self.sync_path = config.STATE_DIR / "sync.json"
+        self.addCleanup(lambda: self.sync_path.unlink(missing_ok=True))
+
+    def _build(self):
+        return dashboard.build_dashboard(reqs=[], agents=[], cfg=self.cfg,
+                                         archived=[])
+
+    def test_label_from_sync_json_lands_top_level(self):
+        self.sync_path.write_text(
+            json.dumps({"mode": "cloud", "label": "书房的 Mac mini"}),
+            encoding="utf-8")
+        self.assertEqual(self._build()["device_label"], "书房的 Mac mini")
+
+    def test_unpaired_no_sync_json_key_absent(self):
+        self.sync_path.unlink(missing_ok=True)
+        self.assertNotIn("device_label", self._build())
+
+    def test_empty_or_missing_label_key_absent(self):
+        for cfg in ({"mode": "cloud"},
+                    {"mode": "cloud", "label": ""},
+                    {"mode": "cloud", "label": "   "}):
+            with self.subTest(cfg=cfg):
+                self.sync_path.write_text(json.dumps(cfg), encoding="utf-8")
+                self.assertNotIn("device_label", self._build())
+
+    def test_corrupt_sync_json_key_absent_not_crash(self):
+        for raw in ("{not json", "[1, 2]"):
+            with self.subTest(raw=raw):
+                self.sync_path.write_text(raw, encoding="utf-8")
+                self.assertNotIn("device_label", self._build())
 
 
 if __name__ == "__main__":

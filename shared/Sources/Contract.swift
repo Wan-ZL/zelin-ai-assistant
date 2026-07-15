@@ -471,6 +471,10 @@ struct Dashboard: Decodable {
     let merge_suggestions: [MergeSuggestion]
     // §26 — optional; nil = no known update (older actd never emits it).
     let update_available: UpdateInfo?
+    // §34 v0.35 — optional; the Mac's user-set device name (mirrors the
+    // pairing-QR label via state/sync.json). iOS adopts it after a board
+    // refresh so a rename needs no re-scan; nil on older actd payloads.
+    let device_label: String?
     // 非 wire 字段：行级解码时被跳过的坏行清单（如 "running[1]"）。空 = 全部
     // 解码成功。上层（Store/AppState）用它把「丢了哪些行」亮出来——honest
     // fallback：跳过 + 可观测，绝不静默丢数据。
@@ -479,7 +483,7 @@ struct Dashboard: Decodable {
     private enum CodingKeys: String, CodingKey {
         case generated_at, counts, needs_approval, running, needs_input, review, completed, debt, trash
         case archived
-        case merge_suggestions, update_available
+        case merge_suggestions, update_available, device_label
     }
 
     init(from decoder: Decoder) throws {
@@ -500,6 +504,7 @@ struct Dashboard: Decodable {
         // an empty latest is meaningless — treat as "no known update"
         let upd = try? c.decodeIfPresent(UpdateInfo.self, forKey: .update_available)
         update_available = (upd?.latest.isEmpty == false) ? upd : nil
+        device_label = try? c.decodeIfPresent(String.self, forKey: .device_label)
         decodeDrops = drops
         if !drops.isEmpty {   // Foundation-only 契约内的兜底可观测（mac + iOS 都走这）
             NSLog("[Contract] dashboard.json 坏行已跳过: %@", drops.joined(separator: ", "))

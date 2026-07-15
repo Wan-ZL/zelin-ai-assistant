@@ -24,7 +24,9 @@ AIASSISTANT_HOME from tests/__init__.py). Covers:
 Skips crypto-dependent cases gracefully when `cryptography` is absent (optional
 cloud dep), like tests/test_e2e.py.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import unittest
@@ -440,6 +442,57 @@ class InitChannelTestCase(unittest.TestCase):
         self.assertFalse(result["registered"])
         self.assertTrue(syncd.SYNC_CONFIG_PATH.exists())
         self.assertTrue(result["qr_blob"])
+
+
+# --------------------------------------------------------------------------- #
+# --pair label resolution (§33 fix + §34 rename path, via the real CLI)
+# --------------------------------------------------------------------------- #
+class PairLabelResolutionTestCase(unittest.TestCase):
+    """Label resolution through ``--pair --json``: explicit ``--label`` →
+    existing state/sync.json label → 「这台 Mac」. The Settings page re-runs a
+    bare ``--pair`` on every open, so the sync.json fallback is what keeps a
+    custom device name from being clobbered back to the default."""
+
+    def setUp(self):
+        _reset_state()
+
+    def _pair_json(self, argv):
+        buf = io.StringIO()
+        with mock.patch.object(syncd, "HttpTransport",
+                               return_value=FakeTransport()), \
+                contextlib.redirect_stdout(buf):
+            code = syncd.main(argv)
+        self.assertEqual(code, 0)
+        return json.loads(buf.getvalue())
+
+    def test_explicit_label_round_trips_and_survives_bare_repair(self):
+        out = self._pair_json(["--pair", "--json", "--label", "书房的 Mac mini"])
+        self.assertEqual(out["label"], "书房的 Mac mini")
+        self.assertEqual(e2e.parse_channel_qr(out["qr_blob"])["label"],
+                         "书房的 Mac mini")
+        cfg = json.loads(syncd.SYNC_CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(cfg["label"], "书房的 Mac mini")
+
+        # bare --pair (Settings open / refresh): the custom name is KEPT and
+        # the QR stays byte-identical (stable secrets + same label).
+        again = self._pair_json(["--pair", "--json"])
+        self.assertEqual(again["label"], "书房的 Mac mini")
+        self.assertEqual(again["qr_blob"], out["qr_blob"])
+
+        # an explicit rename wins over the stored label; secrets stay stable
+        # so only the QR's trailing label bytes change.
+        renamed = self._pair_json(["--pair", "--json", "--label", "客厅 Mac"])
+        self.assertEqual(renamed["label"], "客厅 Mac")
+        self.assertEqual(renamed["channel_id"], out["channel_id"])
+        parsed = e2e.parse_channel_qr(renamed["qr_blob"])
+        self.assertEqual(parsed["label"], "客厅 Mac")
+        self.assertEqual(parsed["channel_id"], out["channel_id"])
+        cfg = json.loads(syncd.SYNC_CONFIG_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(cfg["label"], "客厅 Mac")
+
+    def test_unpaired_bare_pair_falls_back_to_default(self):
+        out = self._pair_json(["--pair", "--json"])
+        self.assertEqual(out["label"], "这台 Mac")
 
 
 # --------------------------------------------------------------------------- #

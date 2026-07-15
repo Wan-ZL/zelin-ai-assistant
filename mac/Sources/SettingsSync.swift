@@ -26,11 +26,30 @@ final class SyncSettingsModel: ObservableObject {
     @Published var statusNote = ""
     @Published var errorNote = ""
     @Published var channelId = ""
-    @Published var label = ""
+    @Published var label = "" {
+        // QR capacity guard (§34): the name rides the pairing QR's trailing
+        // bytes, so cap the editable field at 64 characters.
+        didSet { if label.count > 64 { label = String(label.prefix(64)) } }
+    }
     @Published var qrBlob = ""
     @Published var qrImage: NSImage? = nil
 
+    /// The name currently persisted in state/sync.json (and thus in the QR);
+    /// the Save button lights up only when the field diverges from it.
+    @Published private(set) var savedLabel = ""
+
     private var loaded = false
+
+    /// Default device name when unpaired / never customized: the Mac's own
+    /// computer name (falls back to the historical hardcoded label).
+    static var defaultDeviceName: String {
+        Host.current().localizedName ?? "这台 Mac"
+    }
+
+    var labelDirty: Bool {
+        let t = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.isEmpty && t != savedLabel
+    }
 
     /// One shot on first appear: read the on/off state from state/sync.json
     /// (no network), and if already enabled fetch the (stable) QR blob to show.
@@ -44,9 +63,13 @@ final class SyncSettingsModel: ObservableObject {
             enabled = true
             channelId = cid
             label = cfg["label"] as? String ?? ""
+            savedLabel = label
             pair(mode: .refresh)   // idempotent: loads existing secrets, stable QR
         } else {
             enabled = false
+            // Prefill the (not yet visible) name field so a first-time enable
+            // pairs under the Mac's computer name instead of 「这台 Mac」.
+            label = Self.defaultDeviceName
         }
     }
 
@@ -55,7 +78,10 @@ final class SyncSettingsModel: ObservableObject {
     func setEnabled(_ on: Bool) {
         guard !busy else { return }
         if on {
-            pair(mode: .enable)
+            // Pair under the name field's current value (prefilled with the
+            // computer name when never customized); empty → syncd resolves.
+            let t = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            pair(mode: .enable, label: t.isEmpty ? nil : t)
         } else {
             disable()
         }
@@ -63,14 +89,28 @@ final class SyncSettingsModel: ObservableObject {
 
     func regenerate() {
         guard !busy else { return }
+        // No explicit label: syncd keeps the state/sync.json one (§33), so an
+        // uncommitted half-typed name in the field is never accidentally saved.
         pair(mode: .repair)
     }
 
-    private enum PairMode { case enable, repair, refresh }
+    /// Commit a device-name edit: re-run the idempotent pair path with the new
+    /// label — channel_id/secrets stay stable, only the QR's trailing label
+    /// bytes + state/sync.json change (§34).
+    func commitLabel() {
+        guard !busy, enabled else { return }
+        let t = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { label = savedLabel; return }
+        guard t != savedLabel else { label = t; return }
+        label = t
+        pair(mode: .rename, label: t)
+    }
+
+    private enum PairMode { case enable, repair, refresh, rename }
 
     /// Runs `syncd --pair --json` off the main thread; syncd owns all state, we
     /// only render what it returns. Never throws into the UI.
-    private func pair(mode: PairMode) {
+    private func pair(mode: PairMode, label explicitLabel: String? = nil) {
         busy = true
         errorNote = ""
         switch mode {
@@ -81,10 +121,13 @@ final class SyncSettingsModel: ObservableObject {
             statusNote = L("正在重新生成配对二维码…", "Regenerating the pairing QR…")
         case .refresh:
             statusNote = ""
+        case .rename:
+            statusNote = L("正在更新设备名并刷新二维码…",
+                           "Updating the device name and refreshing the QR…")
         }
         Analytics.log("mw_sync_pair", fields: ["mode": "\(mode)"])
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = Self.runPairJSON()
+            let result = Self.runPairJSON(label: explicitLabel)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.busy = false
@@ -94,10 +137,14 @@ final class SyncSettingsModel: ObservableObject {
                         self.channelId = cid
                         self.qrBlob = blob
                         self.label = label
+                        self.savedLabel = label
                         self.qrImage = Self.qrImage(from: blob)
                         self.errorNote = ""
                         if mode == .refresh {
                             self.statusNote = ""
+                        } else if mode == .rename {
+                            self.statusNote = L("设备名已更新 ✓ 二维码已同步刷新。",
+                                                "Device name updated ✓ The QR has been refreshed too.")
                         } else if registered {
                             self.statusNote = L("已开启 ✓ 用手机扫下面的码即可配对。",
                                                 "On ✓ Scan the code below from your phone to pair.")
@@ -148,8 +195,12 @@ final class SyncSettingsModel: ObservableObject {
     }
 
     /// Blocking — background queue only. Parses syncd's single-line JSON.
-    nonisolated static func runPairJSON() -> PairResult {
-        let (code, data) = runSyncdData(["--pair", "--json"])
+    /// `label` (when non-empty) renames the device: syncd's resolution is
+    /// explicit --label → existing state/sync.json label → 「这台 Mac」 (§33).
+    nonisolated static func runPairJSON(label: String? = nil) -> PairResult {
+        var args = ["--pair", "--json"]
+        if let label, !label.isEmpty { args += ["--label", label] }
+        let (code, data) = runSyncdData(args)
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let cid = obj["channel_id"] as? String,
               let blob = obj["qr_blob"] as? String, !blob.isEmpty else {
@@ -294,14 +345,27 @@ struct SyncSettingsSection: View {
                     .frame(height: 220)
             }
 
-            if !model.label.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(L("设备标签:", "Device label:"))
+                    Text(L("设备名称:", "Device name:"))
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
-                    Text(model.label)
-                        .font(.system(size: 11, weight: .medium))
+                    TextField(SyncSettingsModel.defaultDeviceName, text: $model.label)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .font(.system(size: 11))
+                        .frame(maxWidth: 200)
+                        .disabled(model.busy)
+                        .onSubmit { model.commitLabel() }
+                    Button(L("保存", "Save")) { model.commitLabel() }
+                        .controlSize(.small)
+                        .disabled(model.busy || !model.labelDirty)
                 }
+                Text(L("这个名字会显示在手机 App 里。改名立即进二维码;已配对的手机在下一次刷新看板时自动更新名字,不用重新扫码。",
+                       "This name shows in the phone app. A rename goes into the QR immediately; already-paired phones pick up the new name on their next board refresh — no re-scan needed."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Text(L("⚠️ 这个二维码就是主密钥——谁扫到就能看你的看板、还能替你操作。别截图群发、别贴到公开的地方。",
