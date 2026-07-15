@@ -84,7 +84,7 @@ fi
 # a second claude over the same inbox AND let its pull rsync --delete the
 # live mirror workspace (the 2026-07-14 13:30 incident class). The next run
 # takes over the stale lock once every recorded PID is gone.
-# shellcheck disable=SC2329  # invoked via the EXIT trap below, not directly
+# shellcheck disable=SC2317,SC2329  # invoked via the EXIT trap below, not directly
 cleanup_lock() {
     if [ -n "${CLAUDE_PID:-}" ] && ps -p "$CLAUDE_PID" -o command= 2>/dev/null \
             | grep -qE 'process-screenpipe|unprocessed-ingest'; then
