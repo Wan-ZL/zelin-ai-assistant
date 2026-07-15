@@ -5,14 +5,14 @@ Sections:
   2. 待验收       — status=review
   3. 卡住         — executing items that look stuck (resume exhausted, or
                     dispatched >24h ago with no promotion)
-  4. 欠账         — status=detected (low-confidence backlog)
+  4. 潜在任务     — status=detected (low-confidence backlog)
   5. 双向承诺账本 — registry notes carrying the [MANAGER-OWES] tag
   6. analytics 摘要 — act.report.build_report(days=7) in a folded block
   7. 进化建议     — CONTRACT §16: features unused for 30 days -> 建议关闭;
                     resume-failure storms / high reject ratio -> one-liners.
                     Each suggestion ALSO lands in the registry as a
                     type=self-improvement card (status=detected, i.e. it shows
-                    up in 欠账 for Zelin to raise — never auto-card_sent).
+                    up in 潜在任务 for Zelin to raise — never auto-card_sent).
 
 Output: ``~/Projects/your-workbench/digests/digest-YYYY-MM-DD.md`` plus a
 macOS notification. The 1:1 prep page (``act.oneonone``) is generated alongside
@@ -160,7 +160,7 @@ def file_suggestion_cards(suggestions: list[str],
                           today: Optional[_dt.date] = None) -> list[Requirement]:
     """Land each suggestion in the registry as a self-improvement card.
 
-    status=detected (NOT card_sent) — they show up in 欠账 for Zelin to raise.
+    status=detected (NOT card_sent) — they show up in 潜在任务 for Zelin to raise.
     ``merge_or_new`` dedups on title, so repeat Mondays don't stack duplicates.
     """
     today = today or _dt.date.today()
@@ -199,7 +199,7 @@ def build_digest(today: Optional[_dt.date] = None,
     now = _dt.datetime.now(_dt.timezone.utc)
     cfg = config.load_config()
 
-    # 进化建议 first — filing them (status=detected) lets 欠账 below include them.
+    # 进化建议 first — filing them (status=detected) lets 潜在任务 below include them.
     suggestions = build_suggestions(cfg)
     file_suggestion_cards(suggestions, today)
 
@@ -225,7 +225,7 @@ def build_digest(today: Optional[_dt.date] = None,
                    [_fmt(r, today) for r in review])
     out += section(f"## 🧱 卡住（{len(stuck)}）",
                    [_fmt(r, today, extra=why) for r, why in stuck])
-    out += section(f"## 📡 欠账（detected，{len(detected)}）",
+    out += section(f"## 📡 潜在任务（detected，{len(detected)}）",
                    [_fmt(r, today) for r in detected])
     out += section("## 🤝 双向承诺账本（manager 欠的）", manager_owes(reqs),
                    empty="- （无 —— notes 里用 [MANAGER-OWES] 标记他的承诺）")
@@ -233,7 +233,7 @@ def build_digest(today: Optional[_dt.date] = None,
     if oneonone_path is not None:
         out += ["## 🗓 1:1 准备页", f"- [{oneonone_path.name}]({oneonone_path})", ""]
 
-    out += section("## 💡 进化建议（已作为 self-improvement 卡片进入欠账）",
+    out += section("## 💡 进化建议（已作为 self-improvement 卡片进入潜在任务）",
                    [f"- {s}" for s in suggestions],
                    empty="- （无 —— 各功能都在被用，健康）")
 

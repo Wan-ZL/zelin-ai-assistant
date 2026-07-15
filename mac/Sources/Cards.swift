@@ -667,7 +667,7 @@ struct ApprovalCardView: View {
 
     private var normalBody: some View {
         CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, stroked: true) {
-            // v0.21 拍板：四个 2 字决策按钮回到一排（批准·拒绝·修改·入库），每个
+            // v0.21 拍板：四个 2 字决策按钮回到一排（批准·拒绝·修改·暂缓），每个
             // .lineLimit(1)+.fixedSize，2 字标签四颗在 ~400pt 卡宽绰绰有余、绝不
             // 截断。「展开详情」移出决策行 —— 右对齐的 plain 灰链接（disclosure，
             // 不与决策按钮抢戏），正是它腾出的空间让四颗按钮回到一排。保留 T2 gate
@@ -722,14 +722,15 @@ struct ApprovalCardView: View {
                     .fixedSize(horizontal: true, vertical: false)
 
                 Button {
-                    // v0.18 入库 (defer): demote is NOT reject — the card goes
-                    // back to the backlog (card_sent→detected) with summary/plan/
-                    // sources intact and KEEPS matching in merge_or_new
-                    // (restatements merge; radar act-now re-promotes), while
-                    // trash is excluded from matching. One click, no confirmation:
-                    // cheap + reversible — undo is the backlog lane's 研究并提议.
+                    // v0.18 defer (暂缓/Later since v0.33): demote is NOT
+                    // reject — the card goes back to the backlog
+                    // (card_sent→detected) with summary/plan/sources intact
+                    // and KEEPS matching in merge_or_new (restatements merge;
+                    // radar act-now re-promotes), while trash is excluded from
+                    // matching. One click, no confirmation: cheap + reversible
+                    // — undo is the backlog lane's 研究并提议.
                     app.submit(id: card.id, action: "defer", comment: nil)
-                } label: { Label(L("入库", "Backlog"), systemImage: "tray.and.arrow.down") }
+                } label: { Label(L("暂缓", "Later"), systemImage: "tray.and.arrow.down") }
                     .tint(.gray)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -1127,13 +1128,14 @@ struct TaskRow: View {
                 app.submit(id: task.id, action: "revert_review", comment: nil)
             } label: { Label(L("退回待验收", "Back to review"), systemImage: "arrow.uturn.backward") }
                 .tint(.teal)
-            // v0.20 card-lifecycle: 归档 — seal this accepted thread. One tap,
-            // no confirm (reversible via the Archive section's 取消归档). Sealed
-            // = excluded from matching, so later mentions open a fresh card
+            // v0.20 card-lifecycle archive (永久完成/Done for good since
+            // v0.33): seal this accepted thread. One tap, no confirm
+            // (reversible via the 永久性完成 section's 放回看板). Sealed =
+            // excluded from matching, so later mentions open a fresh card
             // instead of re-raising this one.
             Button {
                 app.submit(id: task.id, action: "archive", comment: nil)
-            } label: { Label(L("归档", "Archive"), systemImage: "archivebox") }
+            } label: { Label(L("永久完成", "Done for good"), systemImage: "archivebox") }
                 .tint(.gray)
         }
         Spacer()
@@ -1476,15 +1478,15 @@ struct DebtRow: View {
         }
     }
 
-    // v0.20 card-lifecycle: 归档 lives in the context menu, deliberately
-    // distinct from the primary 删除 button — archive SEALS the item (keeps it
-    // as a record, excluded from matching so it never re-suggests), whereas
-    // delete drops it into trash. Kept off the main button row so the two
-    // one-click actions (研究并提议 / 删除) stay uncluttered.
+    // v0.20 card-lifecycle: 永久完成 (archive) lives in the context menu,
+    // deliberately distinct from the primary 删除 button — it SEALS the item
+    // (keeps it as a record, excluded from matching so it never re-suggests),
+    // whereas delete drops it into trash. Kept off the main button row so the
+    // two one-click actions (研究并提议 / 删除) stay uncluttered.
     @ViewBuilder private var contextItems: some View {
         Button {
             app.submit(id: item.id, action: "archive", comment: nil)
-        } label: { Label(L("归档（封存，不再提示）", "Archive (seal, stop suggesting)"),
+        } label: { Label(L("永久完成（封存，不再提示）", "Done for good (seal, stop suggesting)"),
                          systemImage: "archivebox") }
     }
 
@@ -2004,10 +2006,10 @@ struct TrashRow: View {
     }
 }
 
-// v0.20 card-lifecycle §5: 归档 browse view — mirrors TrashSectionView
-// (collapsible, collapsed by default in the popover; search box; per-row
-// 「取消归档」→ unarchive). Archived cards are sealed & off-board (like trash),
-// so this is a calm browse+restore surface, never a work queue.
+// v0.20 card-lifecycle §5: 永久性完成 (archive) browse view — mirrors
+// TrashSectionView (collapsible, collapsed by default in the popover; search
+// box; per-row 「放回看板」→ unarchive). Archived cards are sealed & off-board
+// (like trash), so this is a calm browse+restore surface, never a work queue.
 struct ArchiveSectionView: View {
     let items: [ArchivedItem]
     let count: Int
@@ -2016,6 +2018,13 @@ struct ArchiveSectionView: View {
     var startExpanded: Bool = false
     @State private var expanded = false
     @State private var query = ""
+
+    /// Shared section help — also the kanban 永久性完成 strip's header help
+    /// (v0.33), so both surfaces describe the archive with one voice.
+    static var helpCopy: String {
+        L("彻底结束、封存的线程（你点的永久完成 + 自动封存的冷交付）。封存=不再参与匹配，后续相关信息会开新卡而不是回锅这张。可随时「放回看板」回到原状态列。",
+          "Threads that are truly over — ones you marked done for good, plus auto-sealed cold deliveries. Sealed = excluded from matching, so later mentions open a fresh card instead of re-raising this one. Press \"Put back\" any time to return one to its previous lane.")
+    }
 
     private var filtered: [ArchivedItem] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2036,9 +2045,8 @@ struct ArchiveSectionView: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
-                    SectionHeader(title: L("🗄 归档 · archive", "🗄 Archive"), count: count,
-                                  help: L("你验收后封存的线程（和自动归档的冷交付）。封存=不再参与匹配，后续相关信息会开新卡而不是回锅这张。可随时「取消归档」放回原状态列。",
-                                          "Threads you sealed after accepting (plus auto-archived cold deliveries). Sealed = excluded from matching, so later mentions open a fresh card instead of re-raising this one. Unarchive any time to return it to its previous lane."))
+                    SectionHeader(title: L("🗄 永久性完成 · done for good", "🗄 Done for good"),
+                                  count: count, help: Self.helpCopy)
                 }
                 .contentShape(Rectangle())
             }
@@ -2050,7 +2058,7 @@ struct ArchiveSectionView: View {
                     .font(.system(size: 11))
 
                 if filtered.isEmpty {
-                    EmptyRow(text: items.isEmpty ? L("归档为空", "Archive is empty")
+                    EmptyRow(text: items.isEmpty ? L("还没有永久完成的卡", "Nothing here yet")
                                                  : L("无匹配项", "No matches"))
                 } else {
                     ForEach(filtered, id: \.id) { it in
@@ -2067,11 +2075,11 @@ struct ArchiveRow: View {
     let item: ArchivedItem
     unowned let app: AppDelegate
 
-    // "user" → 你归档 (green); "auto" → 自动归档 (gray). Anything else omits.
+    // "user" → 你封存 (green); "auto" → 自动封存 (gray). Anything else omits.
     private var reasonBadge: (text: String, color: Color)? {
         switch item.archive_reason {
-        case "user": return (L("你归档", "You archived"), .green)
-        case "auto": return (L("自动归档", "Auto-archived"), .gray)
+        case "user": return (L("你封存", "You sealed"), .green)
+        case "auto": return (L("自动封存", "Auto-sealed"), .gray)
         default: return nil
         }
     }
@@ -2080,7 +2088,7 @@ struct ArchiveRow: View {
         CardSurface {
             Button {
                 app.submit(id: item.id, action: "unarchive", comment: nil)
-            } label: { Label(L("取消归档", "Unarchive"), systemImage: "arrow.uturn.left") }
+            } label: { Label(L("放回看板", "Put back"), systemImage: "arrow.uturn.left") }
                 .tint(.green)
 
             Spacer()

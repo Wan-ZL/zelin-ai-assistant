@@ -12,7 +12,7 @@ const POLL_MS = 5000;
 // for text (comment / rework feedback); `confirm` = ask before firing.
 const LANES = [
   {
-    key: "debt", zh: "储备", en: "Backlog",
+    key: "debt", zh: "潜在任务", en: "Backlog",
     parts: ["debt"],
     actions: [
       { action: "raise", label: "研究并提议" },
@@ -26,7 +26,7 @@ const LANES = [
       { action: "approve", label: "✅ 批准", cls: "primary" },
       { action: "reject", label: "❌ 拒绝", cls: "danger", confirm: true },
       { action: "comment", label: "💬 修改方向", needs: "修改方向 / 反馈" },
-      { action: "defer", label: "存备选" },
+      { action: "defer", label: "暂缓" },
     ],
   },
   {
@@ -47,11 +47,11 @@ const LANES = [
     ],
   },
   {
-    key: "completed", zh: "已验收", en: "Accepted",
+    key: "completed", zh: "阶段性完成", en: "Done for now",
     parts: ["completed"],
     actions: [
       { action: "revert_review", label: "退回待验收" },
-      { action: "archive", label: "封存", confirm: true },
+      { action: "archive", label: "永久完成", confirm: true },
     ],
   },
 ];

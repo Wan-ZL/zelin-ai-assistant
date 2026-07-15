@@ -134,14 +134,14 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
         "要长期留存引用的文档、多文件产出）,\n"
         '    "cost_estimate_usd": 数字或 null,\n'
         '    "confidence": "high|low"（high=现在就要办，进待审批；low=不紧急的'
-        "备忘/未来条件性事项，先进备选不打扰）}\n"
+        "备忘/未来条件性事项，先进潜在任务不打扰）}\n"
         "2) 他在说上面清单里的某个已有条目（含 delivered/merged 既往卡的后续）->\n"
         '   {"action": "relates_to", "req": "R-xxx", "note": "他补充/追加了什么"}\n'
         "3) 纯闲聊 / 纯感慨（真的什么都不用记）->\n"
         '   {"action": "ignore", "reason": "为什么不需要行动"}\n'
         "无损原则：这是他【主动发给自己】的快速捕获——他明确要记的备忘（含\"某人说"
         "稍后会做 X，记一下\"这类未来条件性/不紧急事项）不算闲聊，选 new_proposal 且 "
-        'confidence="low"（进备选），或 relates_to 已有条目折叠；宁可多建一张卡，'
+        'confidence="low"（进潜在任务），或 relates_to 已有条目折叠；宁可多建一张卡，'
         "也不能把他随手记的东西弄丢。\n"
     )
 
@@ -225,8 +225,8 @@ _TRIAGE_BAR = (
     "- 只有当【现在】就需要 {owner} 采取行动或做决策时，才允许 "
     'new_proposal 且 confidence="high"（进提案列）。\n'
     '- 真实但不紧急的全新需求（确实要 {owner} 做，只是此刻不用动手，如"下季度'
-    '想做 X"）-> new_proposal 且 confidence="low"（进备选/Backlog 停车，'
-    "绝不 ignore——宁可备选，不可丢失）。\n"
+    '想做 X"）-> new_proposal 且 confidence="low"（进潜在任务/Backlog 停车，'
+    "绝不 ignore——宁可进潜在任务，不可丢失）。\n"
     "- ignore 只留给：纯信息性通知 / FYI / 闲聊 / 已解决的事。\n"
     "- 未来条件性消息（对方说\"稍后/今天晚些会做 X\"——事情还没发生，此刻轮不到 "
     "{owner} 动手）：若它是清单里某张卡的后续进展 -> relates_to 且 "
@@ -266,7 +266,7 @@ def build_triage_prompt(desc: str, cfg: Optional[config.Config] = None) -> str:
         f"{_TRIAGE_BAR.format(owner=owner)}\n"
         "三选一。只输出**一个** JSON 对象（无多余文字、无 code fence）：\n"
         '1) 全新的需求 -> {"action": "new_proposal", "confidence": "high|low"}\n'
-        "   （high=现在就需要行动/决策，进提案列；low=真实但不紧急，进备选/Backlog）\n"
+        "   （high=现在就需要行动/决策，进提案列；low=真实但不紧急，进潜在任务/Backlog）\n"
         "2) 与清单里某条相关（后续/进展/重述/补充）->\n"
         '   {"action": "relates_to", "req": "R-xxx", "note": "它补充了什么",\n'
         f'    "needs_action": true|false（现在是否需要 {owner} 新的行动或决策）}}\n'
@@ -553,7 +553,7 @@ def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
         # merged into an existing entry as a restatement
         return f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1"
     if low_conf and saved.status == registry.State.DETECTED.value:
-        return (f"已记入储备 {saved.id}：{saved.summary or saved.title}"
+        return (f"已记入潜在任务 {saved.id}：{saved.summary or saved.title}"
                 f"（不紧急，先存着不打扰）/ parked in backlog {saved.id}")
     return f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）"
 

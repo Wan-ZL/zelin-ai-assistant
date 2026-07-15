@@ -115,7 +115,7 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .deps: return L("依赖检查", "Dependencies")
         case .ingest: return L("录制与 ingest", "Recording & Ingest")
         case .trash: return L("回收站", "Trash")
-        case .archive: return L("归档", "Archive")
+        case .archive: return L("永久性完成", "Done for good")
         case .settings: return L("设置", "Settings")
         case .about: return L("关于", "About")
         }
@@ -381,8 +381,8 @@ struct MainWindowView: View {
                                 TrashPageView(store: app.store, app: app)
                             }
                         case .archive:
-                            // v0.20 归档 page — popover 同款 ArchiveSectionView
-                            // (search / unarchive), same store.
+                            // v0.20 永久性完成 (archive) page — popover 同款
+                            // ArchiveSectionView (search / put back), same store.
                             if let app = NSApp.delegate as? AppDelegate {
                                 ArchivePageView(store: app.store, app: app)
                             }
@@ -442,10 +442,10 @@ struct TrashPageView: View {
     }
 }
 
-// MARK: - Archive page (v0.20 card-lifecycle) — main-window sidebar 归档
+// MARK: - Archive page (v0.20 card-lifecycle) — main-window sidebar 永久性完成
 //
 // Mirrors TrashPageView: a thin store-OBSERVING wrapper around the popover's
-// ArchiveSectionView (search / unarchive) opened expanded. Archive has no pin
+// ArchiveSectionView (search / put back) opened expanded. Archive has no pin
 // (sealed cards are chronological, not permanent-toggled), so no pinnedLocal.
 struct ArchivePageView: View {
     @ObservedObject var store: DashboardStore

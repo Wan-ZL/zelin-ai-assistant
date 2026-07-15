@@ -1,5 +1,5 @@
 // BoardView.swift — screen 3 (plan §6.2/§6.6): the portrait board. Five lanes
-// (储备 · 提案 · 运行中 · 待验收 · 已验收) as a horizontally-paged TabView; each
+// (潜在任务 · 提案 · 运行中 · 待验收 · 阶段性完成) as a horizontally-paged TabView; each
 // page is a vertical scroll of cards mirroring the Mac row styling. A top lane
 // strip doubles as tap-to-jump + live counts; the device switcher and settings
 // live in the toolbar; the 7-day expiry banner pins to the top when ≤2 days.

@@ -148,6 +148,16 @@ final class DashboardStore: ObservableObject {
     @Published var pendingMergeActions: [String: PendingMergeAction] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
+
+    // v0.33 collapsed bookend strips (Mac kanban): 潜在任务 (far left) and
+    // 永久性完成 (far right) render as narrow strips until expanded. Expansion
+    // lives HERE — not view @State — so it survives page switches within a
+    // session, and is deliberately NOT persisted: every launch starts
+    // collapsed. The backlog strip force-opens whenever feedback lands in the
+    // debt lane (暂缓 echo / raise-timeout notice) so a response to the user's
+    // own click can never appear inside an invisible column.
+    @Published var backlogStripExpanded = false
+    @Published var archiveStripExpanded = false
     // P1-4: dashboard freshness verdict, recomputed on every refresh tick —
     // the file being frozen (reload short-circuit) is exactly the signal.
     @Published var pipelineHealth: PipelineHealth = .ok
@@ -336,6 +346,9 @@ final class DashboardStore: ObservableObject {
                     text: L("「\(String(entry.summary.prefix(20)))」研究提案超时，请重试",
                             "Research proposal for \"\(String(entry.summary.prefix(20)))\" timed out — try again"),
                     created: now))
+                // v0.33: the notice lands in the (possibly collapsed) backlog
+                // strip — force-open so the retry hint is visible.
+                backlogStripExpanded = true
             }
             for e in expiredEchoes {
                 pendingEchoes.removeAll { $0.id == e.id }
@@ -423,11 +436,11 @@ final class DashboardStore: ObservableObject {
             return L("退回提案超时，卡片仍在运行中列，可重试（检查 actd 是否在运行）",
                      "Discard & re-propose timed out — the card is still in Running, try again (check that actd is running)")
         case .revert:
-            return L("退回待验收超时，卡片仍在已验收列，可重试（检查 actd 是否在运行）",
-                     "Back-to-review timed out — the card is still in Done, try again (check that actd is running)")
+            return L("退回待验收超时，卡片仍在「阶段性完成」列，可重试（检查 actd 是否在运行）",
+                     "Back-to-review timed out — the card is still in Done for now, try again (check that actd is running)")
         case .unarchive:
-            return L("取消归档超时，卡片仍在归档区，可重试（检查 actd 是否在运行）",
-                     "Unarchive timed out — the card is still in the Archive, try again (check that actd is running)")
+            return L("放回看板超时，卡片仍在「永久性完成」区，可重试（检查 actd 是否在运行）",
+                     "Put back timed out — the card is still in Done for good, try again (check that actd is running)")
         case .stopToReview:
             return L("去待验收超时，卡片仍在运行中列，可重试（检查 actd 是否在运行）",
                      "Stop-to-review timed out — the card is still in Running, try again (check that actd is running)")
@@ -502,13 +515,14 @@ final class DashboardStore: ObservableObject {
                 // trash echo counts (visibleTrashCount) but renders no card
                 addEcho(id: id, target: .trash, source: src ?? .approval, label: "")
             case "defer":
-                // v0.18 入库 (defer): proposal returns to the backlog (detected)
-                // with its plan intact. Fixed, known target — a real echo in
-                // the debt lane (both kanban and popover already render
-                // debtEchoes), unlike restore's any-lane info strip.
+                // v0.18 defer (displayed as 暂缓/Later since v0.33): proposal
+                // returns to the backlog (detected) with its plan intact.
+                // Fixed, known target — a real echo in the debt lane (both
+                // kanban and popover already render debtEchoes), unlike
+                // restore's any-lane info strip.
                 hideSticky(id, from: .approval)
                 addEcho(id: id, target: .debt, source: .approval,
-                        label: L("入库中…", "Moving to backlog…"))
+                        label: L("暂缓中…", "Moving to backlog…"))
             case "restore":
                 // no echo: the card may return to ANY lane (its previous
                 // state), so a fixed-target placeholder would often be wrong.
@@ -519,8 +533,8 @@ final class DashboardStore: ObservableObject {
                             info: L("恢复中，卡片将回到原状态列",
                                     "Restoring — the card returns to its previous lane"))
             case "archive":
-                // v0.20 card-lifecycle: seal a delivered (已验收) or backlog
-                // (储备) card into the archive — reversible, no confirm. Fixed,
+                // v0.20 card-lifecycle: seal a delivered (阶段性完成) or backlog
+                // (潜在任务) card into the archive — reversible, no confirm. Fixed,
                 // known target: sticky-hide from whichever lane holds it and
                 // plant an echo in the archive section (renders no card, but
                 // keeps visibleArchivedCount honest, mirroring trash).
@@ -530,13 +544,14 @@ final class DashboardStore: ObservableObject {
                 hideSticky(id, from: src)
                 addEcho(id: id, target: .archived, source: src ?? .completed, label: "")
             case "unarchive":
-                // v0.20: 取消归档 — like restore, the card returns to its
-                // prev_status (any lane), so no fixed-target echo. sticky-hide
-                // from the archive + info strip; returningLocal arms the 180 s
-                // timeout so an unresponsive actd can't hide it forever.
+                // v0.20 unarchive (displayed as 放回看板/Put back since v0.33):
+                // like restore, the card returns to its prev_status (any
+                // lane), so no fixed-target echo. sticky-hide from the archive
+                // + info strip; returningLocal arms the 180 s timeout so an
+                // unresponsive actd can't hide it forever.
                 beginReturn(id, from: .archived, kind: .unarchive,
-                            info: L("取消归档中，卡片将回到原状态列",
-                                    "Unarchiving — the card returns to its previous lane"))
+                            info: L("放回看板中，卡片将回到原状态列",
+                                    "Putting back — the card returns to its previous lane"))
             case "done_external":
                 // Zelin finished it outside the system → DELIVERED; the button
                 // now also lives on running-lane rows (queued/working/blocked/
@@ -625,6 +640,9 @@ final class DashboardStore: ObservableObject {
         pendingEchoes.append(PendingEcho(
             id: "echo-" + id, sourceID: id, title: title(of: id),
             target: target, source: source, label: label, created: Date()))
+        // v0.33: an echo landing in the collapsed backlog strip (暂缓中…)
+        // must be visible — force-open the strip.
+        if target == .debt { backlogStripExpanded = true }
     }
 
     /// Which list currently holds this id (self-lookup for source recording).
@@ -660,7 +678,7 @@ final class DashboardStore: ObservableObject {
         return id
     }
 
-    /// Public id → human title resolver (all lanes incl. 储备/debt), used by
+    /// Public id → human title resolver (all lanes incl. 潜在任务/debt), used by
     /// ForceMergeSheet's primary picker so the user never has to choose between
     /// bare R-ids. Falls back to the id itself when the card isn't on the board.
     func cardTitle(_ id: String) -> String { title(of: id) }
@@ -990,7 +1008,7 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    /// 储备 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
+    /// 潜在任务 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
     var boardDebt: [DebtItem] {
         let q = boardNeedle
         guard !q.isEmpty else { return visibleDebt }

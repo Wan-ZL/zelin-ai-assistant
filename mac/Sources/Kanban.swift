@@ -10,13 +10,16 @@ import Foundation
 // Main window only; the popover keeps the vertical DashboardView untouched.
 // Cards/rows are the popover components reused verbatim at their popover
 // width (fixed 400pt lanes); each lane scrolls vertically on its own.
-// Columns: 储备 | 提案 | 运行中(+需输入) | 待验收 | 已验收 — trash stays out.
-// (v0.18: backlog moved leftmost so the board reads as a spatial flow —
-// detected sits upstream of card_sent, and every action moves a card exactly
-// one column to the right. Display order ONLY; the menu-bar popover keeps its
-// own attention-ordered list. 储备/Backlog is the DISPLAY name of the former
-// 欠账/debt lane — registry status names and the dashboard.json `debt` key
-// are unchanged, 纯展示层.)
+// Columns: 潜在任务 | 提案 | 运行中(+需输入) | 待验收 | 阶段性完成 | 永久性完成
+// — trash stays out. (v0.18: backlog moved leftmost so the board reads as a
+// spatial flow — detected sits upstream of card_sent, and every action moves
+// a card exactly one column to the right. Display order ONLY; the menu-bar
+// popover keeps its own attention-ordered list. 潜在任务/Backlog is the
+// DISPLAY name of the former 欠账/debt lane and 阶段性完成/Done for now of the
+// completed lane — registry status names and the dashboard.json keys are
+// unchanged, 纯展示层. v0.33: the backlog lane and the off-board archive
+// [永久性完成/Done for good] render as default-collapsed bookend strips —
+// see collapsibleColumn below.)
 
 /// 契约 §21bis: Identifiable payload carrying the multi-selected ids into the
 /// force-merge confirmation sheet (`.sheet(item:)` requires Identifiable).
@@ -286,11 +289,14 @@ struct KanbanView: View {
             let completedNotices = laneNotices(.completed)
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
-                    // 储备/Backlog leftmost (v0.18 flow order): display rename
-                    // of the debt lane — the store projection (visibleDebt)
-                    // and dashboard key stay. quiet: a pre-execution parking
-                    // lot must not compete with proposals for attention.
-                    column(title: L("储备 · backlog", "Backlog"),
+                    // 潜在任务/Backlog leftmost (v0.18 flow order): display
+                    // rename of the debt lane — the store projection
+                    // (visibleDebt) and dashboard key stay. quiet: a
+                    // pre-execution parking lot must not compete with
+                    // proposals for attention. v0.33: default-collapsed strip;
+                    // the store force-opens it when a debt echo/notice lands.
+                    collapsibleColumn(
+                           title: L("潜在任务 · backlog", "Backlog"),
                            count: debt.count + debtEchoes.count,
                            help: LaneHelp.backlog,
                            emptyText: laneEmptyText(
@@ -298,10 +304,11 @@ struct KanbanView: View {
                                  "Not-urgent items park here — nothing runs on its own, nothing expires")),
                            isEmpty: debt.isEmpty && debtEchoes.isEmpty
                                && debtNotices.isEmpty,
-                           quiet: true) {
+                           quiet: true,
+                           expanded: $store.backlogStripExpanded) {
                         ForEach(debtNotices) { NoticeRow(notice: $0) }
                         ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
-                        // v0.21 契约七: 储备卡也可多选参与合并（selectableIDs 已含 debt）。
+                        // v0.21 契约七: 潜在任务卡也可多选参与合并（selectableIDs 已含 debt）。
                         ForEach(debt, id: \.id) { d in
                             selectableCard(d.id) {
                                 DebtRow(item: d, app: app)
@@ -393,10 +400,12 @@ struct KanbanView: View {
                             }
                         }
                     }
-                    // English twin Delivered→Done (v0.18, display-only):
-                    // delivery happens at the review stage; this lane means
-                    // "you accepted it". Registry status `delivered` frozen.
-                    column(title: L("已验收 · done", "Done"),
+                    // 阶段性完成/Done for now (display-only): delivery happens
+                    // at the review stage; this lane means "you accepted this
+                    // round" — it may still be waiting on the other side, and
+                    // 永久完成 (archive) is one lane further right. Registry
+                    // status `delivered` frozen.
+                    column(title: L("阶段性完成 · done for now", "Done for now"),
                            count: completed.count + completedEchoes.count,
                            help: LaneHelp.done,
                            emptyText: laneEmptyText(
@@ -405,12 +414,29 @@ struct KanbanView: View {
                                && completedNotices.isEmpty) {
                         ForEach(completedNotices) { NoticeRow(notice: $0) }
                         ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
-                        // v0.21 契约七: 已验收卡也可多选参与合并（selectableIDs 已含 completed）。
+                        // v0.21 契约七: 阶段性完成卡也可多选参与合并（selectableIDs 已含 completed）。
                         ForEach(completed, id: \.id) { t in
                             selectableCard(t.id) {
                                 TaskRow(task: t, app: app, lane: .completed)
                             }
                         }
+                    }
+                    // v0.33 far-right bookend: 永久性完成/Done for good — the
+                    // off-board archive surfaced as a second default-collapsed
+                    // strip, symmetric with the backlog strip. STILL NOT a
+                    // board lane: it joins neither selectableIDs/multi-select
+                    // nor lane-notice routing (unarchive keeps the info-strip
+                    // mechanism); expanded content = the popover archive
+                    // section's search + rows.
+                    collapsibleColumn(
+                           title: L("🗄 永久性完成 · done for good", "🗄 Done for good"),
+                           count: store.visibleArchivedCount,
+                           help: ArchiveSectionView.helpCopy,
+                           emptyText: L("还没有永久完成的卡", "Nothing here yet"),
+                           isEmpty: false,
+                           quiet: true,
+                           expanded: $store.archiveStripExpanded) {
+                        ArchiveLaneContent(store: store, app: app)
                     }
                 }
                 .padding(16)
@@ -444,12 +470,13 @@ struct KanbanView: View {
     }
 
     /// Ids that may join a merge review right now: real cards of EVERY board
-    /// lane — 储备/待审批/运行中(含需输入)/待验收/已验收 — minus placeholders
-    /// (processing), echoes, and suggestion cards. v0.21: 全 lane 可选（含
-    /// 储备/debt + 已验收/completed）；跨状态合并的合法性交由后端 merge_review
-    /// 判定 —— Swift 侧只保持选择 UI 宽松，不预先拦截。归档区不是看板列，不在此
-    /// 多选面里。Selection is re-validated against this at submit time (a card
-    /// may have moved lanes since it was ticked).
+    /// lane — 潜在任务/待审批/运行中(含需输入)/待验收/阶段性完成 — minus
+    /// placeholders (processing), echoes, and suggestion cards. v0.21: 全 lane
+    /// 可选（含 debt + completed）；跨状态合并的合法性交由后端 merge_review
+    /// 判定 —— Swift 侧只保持选择 UI 宽松，不预先拦截。永久性完成（归档区）不是
+    /// 看板列——它的 v0.33 书立条不在此多选面里。Selection is re-validated
+    /// against this at submit time (a card may have moved lanes since it was
+    /// ticked).
     private var selectableIDs: Set<String> {
         var s = Set(store.visibleApprovals.filter { !$0.processing }.map { $0.id })
         s.formUnion(store.visibleRunning.map { $0.id })
@@ -598,17 +625,31 @@ struct KanbanView: View {
     // one lane: fixed 400pt so cards keep their popover size; header on top,
     // then an independent vertical scroll for the lane's cards.
     // help → SectionHeader's ? popover/tooltip; quiet → one notch of visual
-    // quieting on the header (v0.18: backlog only, so proposals keep the eye).
+    // quieting on the header (backlog + archive, so proposals keep the eye).
+    // collapse ≠ nil → this is an expanded strip: clicking the header (or its
+    // ⟨⟨ hint) collapses it back to collapsedStrip (v0.33).
     private func column<Content: View>(
         title: String, count: Int, help: String? = nil,
         emptyText: String, isEmpty: Bool, quiet: Bool = false,
+        collapse: (() -> Void)? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionHeader(title: title, count: count, help: help)
+            HStack(spacing: 4) {
+                SectionHeader(title: title, count: count, help: help)
+                if collapse != nil {
+                    Image(systemName: "chevron.left.2")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .padding(.top, 4)
+                        .help(L("点列头收起", "Click the header to collapse"))
+                }
+            }
                 .opacity(quiet ? 0.65 : 1)
                 .padding(.horizontal, 10)
                 .padding(.top, 6)
+                .contentShape(Rectangle())
+                .onTapGesture { collapse?() }
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if isEmpty {
@@ -631,6 +672,74 @@ struct KanbanView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
+    // v0.33 bookend strips: a lane that renders as a narrow 44pt strip until
+    // expanded. Expansion is session-sticky STORE state (survives page
+    // switches, never persisted — every launch starts collapsed); the debt
+    // strip is additionally force-opened by the store when an echo/notice
+    // lands in it.
+    private func collapsibleColumn<Content: View>(
+        title: String, count: Int, help: String? = nil,
+        emptyText: String, isEmpty: Bool, quiet: Bool = false,
+        expanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Group {
+            if expanded.wrappedValue {
+                column(title: title, count: count, help: help,
+                       emptyText: emptyText, isEmpty: isEmpty, quiet: quiet,
+                       collapse: {
+                           withAnimation(.easeInOut(duration: 0.15)) {
+                               expanded.wrappedValue = false
+                           }
+                       }, content: content)
+            } else {
+                collapsedStrip(title: title, count: count) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        expanded.wrappedValue = true
+                    }
+                }
+            }
+        }
+    }
+
+    /// The collapsed form: count badge on top, lane title rotated 90°.
+    /// Click anywhere to expand back into the normal 400pt column.
+    private func collapsedStrip(title: String, count: Int,
+                                expand: @escaping () -> Void) -> some View {
+        Button(action: expand) {
+            VStack(spacing: 8) {
+                Image(systemName: "chevron.right.2")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .padding(.top, 10)
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.18))
+                    .clipShape(Capsule())
+                // rotated title: the unrotated layout box stays text-sized, so
+                // give it an explicit tall frame the rotated glyphs fit into.
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .rotationEffect(.degrees(90))
+                    .frame(width: 16, height: 240)
+                Spacer(minLength: 0)
+            }
+            .frame(width: 44)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.primary.opacity(0.018))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .help(L("点击展开", "Click to expand"))
+    }
+
     // centered ghost placeholder (the popover keeps EmptyRow) — shared by the
     // generic empty branch above and the composer-resident 待审批 lane.
     private func lanePlaceholder(_ text: String) -> some View {
@@ -644,5 +753,39 @@ struct KanbanView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
+    }
+}
+
+// v0.33: expanded content of the 永久性完成 strip — the same search box +
+// ArchiveRow list the popover's ArchiveSectionView shows, minus its own
+// disclosure header (the lane header handles collapse). Deliberately outside
+// multi-select: the archive is still not a board lane.
+private struct ArchiveLaneContent: View {
+    @ObservedObject var store: DashboardStore
+    unowned let app: AppDelegate
+    @State private var query = ""
+
+    private var filtered: [ArchivedItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return store.visibleArchived }
+        return store.visibleArchived.filter {
+            $0.title.lowercased().contains(q)
+                || ($0.summary?.lowercased().contains(q) ?? false)
+        }
+    }
+
+    var body: some View {
+        TextField(L("搜索标题 / summary…", "Search title / summary…"), text: $query)
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 11))
+        if filtered.isEmpty {
+            EmptyRow(text: store.visibleArchived.isEmpty
+                     ? L("还没有永久完成的卡", "Nothing here yet")
+                     : L("无匹配项", "No matches"))
+        } else {
+            ForEach(filtered, id: \.id) { it in
+                ArchiveRow(item: it, app: app)
+            }
+        }
     }
 }

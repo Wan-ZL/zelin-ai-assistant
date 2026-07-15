@@ -8,13 +8,13 @@
 import Foundation
 
 /// One of the five board lanes, in left-to-right / first-to-last page order:
-/// 储备 · 提案 · 运行中 · 待验收 · 已验收 (trash + archived are off-board).
+/// 潜在任务 · 提案 · 运行中 · 待验收 · 阶段性完成 (trash + archived are off-board).
 enum BoardLane: String, CaseIterable, Identifiable {
-    case backlog     // 储备  — dashboard.debt
-    case proposals   // 提案  — dashboard.needs_approval
+    case backlog     // 潜在任务 — dashboard.debt
+    case proposals   // 提案   — dashboard.needs_approval
     case running     // 运行中 — dashboard.needs_input + dashboard.running (merged)
     case review      // 待验收 — dashboard.review
-    case done        // 已验收 — dashboard.completed
+    case done        // 阶段性完成 — dashboard.completed
 
     var id: String { rawValue }
 
@@ -34,11 +34,11 @@ enum BoardLane: String, CaseIterable, Identifiable {
     /// Bilingual lane title (picked via the shared L()).
     var title: String {
         switch self {
-        case .backlog: return L("储备", "Backlog")
+        case .backlog: return L("潜在任务", "Backlog")
         case .proposals: return L("提案", "Proposals")
         case .running: return L("运行中", "Running")
         case .review: return L("待验收", "Review")
-        case .done: return L("已验收", "Done")
+        case .done: return L("阶段性完成", "Done for now")
         }
     }
 
