@@ -370,6 +370,10 @@ final class DashboardStore: ObservableObject {
                         : L("「\(label)」已提交但后台超时未确认，请检查 actd 是否在运行",
                             "\"\(label)\" was submitted but the backend never confirmed — check that actd is running"),
                     created: now))
+                // v0.33: a debt-lane timeout notice (trash/archive echo from a
+                // DebtRow) — and the card silently un-hiding there — must not
+                // land inside the collapsed backlog strip; force-open it.
+                if e.source == .debt { backlogStripExpanded = true }
             }
             for (id, _) in expiredComments { pendingComment.removeValue(forKey: id) }
             // merge-review 契约七: badges of one request expire together →

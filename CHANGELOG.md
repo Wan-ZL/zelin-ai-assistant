@@ -43,8 +43,8 @@ other file needs editing. To cut a release:
     card button 归档 → **永久完成 (Done for good)**, and 取消归档 → **放回看板
     (Put back)**. Archive-row badges now read 你封存/自动封存 (You sealed /
     Auto-sealed).
-  - The defer button — 入库 on Mac, 存备选 on iPhone/web (a name retired two
-    releases ago!) — is finally ONE word everywhere: **暂缓 · Later**.
+  - The defer button — 入库 on Mac, 存备选 on iPhone/web (a name retired
+    back in v0.22.0!) — is finally ONE word everywhere: **暂缓 · Later**.
   提案 / 运行中 / 待验收 and the 验收 (Accept) button are unchanged. Purely
   display-layer: registry statuses, dashboard keys, inbox action names and
   analytics events are all frozen (docs/CONTRACT.md v0.33.0 note).

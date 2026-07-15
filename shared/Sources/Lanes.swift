@@ -30,7 +30,16 @@ enum LaneHelp {
           "The AI thinks it's done — check the delivery summary or draft PR. Accept moves it to Done for now; Send back continues with your feedback.")
     }
     static var done: String {
-        L("本轮完成——可能还在等对方反馈，可随时退回待验收；确认彻底结束就点「永久完成」。徽章数字是真实总数，列表只显示最近 50 条。",
+        // The 永久完成 (Done for good) button exists only on the Mac — iOS
+        // deliberately has no archive lane/control, and it shows this help as
+        // an always-visible footnote on the lane page, so the phone variant
+        // must not name a button it doesn't have.
+        #if os(macOS)
+        return L("本轮完成——可能还在等对方反馈，可随时退回待验收；确认彻底结束就点「永久完成」。徽章数字是真实总数，列表只显示最近 50 条。",
           "Done for this round — it may still be waiting on someone's reply, and can go back to Review any time; when it's truly over, press \"Done for good\". The badge shows the true total; the list keeps the latest 50.")
+        #else
+        return L("本轮完成——可能还在等对方反馈，可随时退回待验收。彻底封存在 Mac 端操作。徽章数字是真实总数，列表只显示最近 50 条。",
+          "Done for this round — it may still be waiting on someone's reply, and can go back to Review any time. Sealing it for good is done on the Mac. The badge shows the true total; the list keeps the latest 50.")
+        #endif
     }
 }
