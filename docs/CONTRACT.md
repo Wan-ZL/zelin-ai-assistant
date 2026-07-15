@@ -1073,3 +1073,49 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **digest / 1:1 prep 输出根**：显式配置了 `execution.default_target_repo` 才写入
   该 workbench，否则写 `state/digests/`、`state/oneonone/`；不再自动创建占位
   `~/Projects/your-workbench`。
+
+# v0.34.0 additions（双输入框：运行中列直接开跑）
+
+## 34. capture 的 `mode:"run"`（add-only；§10 capture 语义扩展）
+
+在提案和运行中分别提供输入框，**用户在哪输入就进入哪个 slot**：提案列输入 =
+今天的 capture（雷达 triage → 提案/备选，人批准才跑）；运行中列输入 = 直接开跑。
+
+**inbox 形状（add-only）**：capture 文件新增可选键 `"mode"`（str）。
+
+```json
+{"action":"capture","text":"<用户一句话>","mode":"run","ts":"<ISO8601>"}
+```
+
+- `mode` 缺省/其它任何值（含非法类型）= 今天的行为不变（raising → triage →
+  提案卡）——垃圾值绝不静默启动 agent（fail-safe 落提案路径）。syncd 的
+  §33 入站形状闸门把 `mode` 纳入 str-or-absent 字段校验。
+- `mode:"run"`：actd 用与普通 capture **同一条极简建卡路径**（title=原话截 80、
+  channel=quick_capture、原话进 sources）经 `registry.merge_or_new` 落卡，然后
+  把 pre-approval 形态（detected/card_sent/raising）**直接提升为 `approved`**
+  （补记 `execution.approved_at`，与 approve 动作同一账目），下一轮
+  `dispatch_approved` 照常派发。notes 打 `[direct-run] 用户直接开跑` 标签。
+  执行会话的第一件事是自行分析上下文再干活；交付物仍落**待验收**由人验收，
+  模糊的任务靠既有**需输入**机制自行澄清。
+- **诚实声明：direct-run 跳过了 plan/费用预估的人审预览**——没有提案卡、没有
+  cost 提示，任务直接进入派发队列。UI 文案不得暗示有预估。
+- **去重（不长第二个 agent）**：merge_or_new 语义原样生效——同 text 命中未结
+  pre-approval 卡时提升**那张卡**（不双开）；命中已在 approved/executing 的卡
+  = 只并 sources，绝不重复排队；命中已交付卡走 §3.5 re-raise，再按上面规则
+  提升。空/非法 `text` 按 §5.4 诚实 ack `noop`；成功 ack `running`。
+- **交付默认（无 LLM 路由）**：新建的 direct-run 卡 `delivery_mode="chat"` +
+  `target_repo` 缺省（派发回退默认 workbench）——没有人审过任何 repo 路由，
+  不得默认在 repo 里建分支/开 PR；chat 交付的 `FINAL DRAFT:`（或 §33 的
+  deliverables/ 文件例外）照常被收割进待验收。命中已有卡时沿用该卡自身路由。
+- **analytics**：actd 落地点新增 `capture_direct_run`（req/status/chars +
+  capture_input 门控的 text，形制同 `inbox_capture`）；App 侧 `capture_submit`
+  / `composer_open` 增加 add-only 字段 `mode:"run"`（source/trigger 词表不变）。
+- **Mac UI**：运行中列顶常驻 mode=.run 的 KanbanComposer（看板列 + popover
+  运行中区各一，placeholder「一句话，直接开跑（跳过提案）…」）；乐观回显 =
+  运行中列顶的灰色排队占位卡（复用 capture placeholder 机制，对 running/
+  needs_input/review 行做归一匹配清除；pipeline 不健康时诚实显示「已保存到
+  队列」，180 s 未确认→橙色超时条「任务没有开始」）。⌘L 仍只归提案 composer。
+- **iOS**：Running lane 页顶同款 QuickCapture 变体（directRun），走
+  `shared/InboxAction.capture(text:mode:)`（additive key，sortedKeys 编码不变）
+  经 syncd 通用透传落 actd inbox。
+- **webui**：本期不加运行中输入框（web 端 capture 仍只有提案路径）。

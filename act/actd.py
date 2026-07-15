@@ -149,8 +149,10 @@ def process_inbox() -> int:
             board_seq = decision.get("board_seq")
 
             # §10 capture: no req id — the app popover's one-liner quick capture.
+            # v0.34.0: optional mode="run" (运行中 lane input) skips the proposal
+            # gate — the card is filed straight into the approved queue.
             if action == "capture":
-                result = _apply_capture(decision.get("text"))
+                result = _apply_capture(decision.get("text"), decision.get("mode"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -372,24 +374,39 @@ def _spawn_weekly_digest() -> str:
         return "noop"
 
 
-def _apply_capture(text: Optional[str]) -> str:
-    """Quick capture from the app popover (CONTRACT §10/§15).
+def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
+    """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
     (title=text, channel=quick_capture, 原话进 sources) -> status=raising, so the
     existing process_raising() expands it (one per pass) into a card_sent
     proposal. Fast: no LLM call here, the poll loop is never blocked.
 
+    v0.34.0 ``mode="run"`` (the 运行中 lane's second input, CONTRACT §34): the
+    SAME minimal card, but instead of the raising→proposal loop it is promoted
+    straight to APPROVED so dispatch_approved launches it on the next pass —
+    no plan/cost preview; the deliverable still lands in 待验收. Any other
+    ``mode`` value (absent, junk, wrong type) fail-safes to today's proposal
+    path — junk must never silently start an agent.
+
     Idempotent: merge_or_new dedupes by title, so the same text arriving twice
-    merges into the existing entry instead of creating a second card; an entry
-    already raised past 'detected' is left in whatever state it reached.
+    merges into the existing entry instead of creating a second card (for
+    mode=run that also means: a text matching an OPEN pre-approval card
+    promotes THAT card instead of double-carding, and a match already past
+    approval is left alone — never a duplicate agent).
     Returns the §5.4 result_status ("running" filed | "noop" dropped) — the
     phone's ledger must never show 已生效 for a capture that filed nothing.
     """
+    # non-str text is a poison payload (§33 boundary doctrine): coercing it
+    # with str() would file a garbage card — ack noop honestly instead.
+    if text is not None and not isinstance(text, str):
+        _log(f"inbox: capture with non-string text ({type(text).__name__}) — ignored")
+        return "noop"
     t = " ".join(str(text or "").split()).strip()
     if not t:
         _log("inbox: capture with empty text — ignored")
         return "noop"
+    run = mode == "run"
     req = Requirement(
         id=registry.next_id(),
         title=t[:80],
@@ -403,9 +420,39 @@ def _apply_capture(text: Optional[str]) -> str:
             "date": _dt.date.today().isoformat(),
             "quote": t,
         }],
-        notes="from app quick capture",
+        notes="[direct-run] 用户直接开跑" if run else "from app quick capture",
     )
+    if run:
+        # direct-run skips LLM routing entirely — chat delivery at the default
+        # workbench is the only no-preview-safe default (§34): no branch/PR
+        # lands in a repo the user never confirmed; the FINAL DRAFT (or a
+        # deliverables/ file artifact, §33) still reaches 待验收 for acceptance.
+        req.delivery_mode = "chat"
     saved = registry.merge_or_new(req)
+    if run:
+        # promote pre-approval shapes to the approved queue; the fresh-card
+        # path returns 'detected', a title match may return the OPEN card it
+        # merged into, and a resolved match re-raises to card_sent (§3.5).
+        if str(saved.status) in (State.DETECTED.value, State.CARD_SENT.value,
+                                 State.RAISING.value):
+            saved.set_status(State.APPROVED)
+            # same bookkeeping as the approve action — dispatch reports wait_s
+            # (approve → launch latency) off this stamp.
+            ex = dict(saved.execution or {})
+            ex["approved_at"] = _iso_now()
+            saved.execution = ex
+            save(saved)
+            _log(f"inbox: capture[run] -> {saved.id} approved (queued for dispatch)")
+        else:
+            # already approved/executing/review: fold, never spawn a twin agent
+            _log(f"inbox: capture[run] merged into {saved.id} "
+                 f"(status={saved.status}) — already past approval, not re-queued")
+        analytics.log_event(
+            "capture_direct_run", req=saved.id, status=str(saved.status),
+            chars=len(t),
+            text=(analytics.clip_content(t)
+                  if analytics.content_gate() else None))
+        return "running"
     if saved.status == State.DETECTED.value:
         saved.set_status(State.RAISING)
         save(saved)
