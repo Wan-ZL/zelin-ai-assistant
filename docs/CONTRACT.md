@@ -1103,8 +1103,9 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   pre-approval 卡时提升**那张卡**（不双开）；命中已在 approved/executing 的卡
   = 只并 sources，绝不重复排队；命中已交付卡走 §3.5 re-raise，再按上面规则
   提升。空/非法 `text` 按 §5.4 诚实 ack `noop`；成功 ack `running`。
-- **交付默认（无 LLM 路由）**：新建的 direct-run 卡 `delivery_mode="chat"` +
-  `target_repo` 缺省（派发回退默认 workbench）——没有人审过任何 repo 路由，
+- **交付默认（无 LLM 路由，钦定设计）**：**mode=run 新建卡强制 chat 交付 +
+  默认 workbench，不进任何 repo**——显式写 `delivery_mode="chat"`、
+  `target_repo` 缺省（派发回退默认 workbench）。没有人审过任何 repo 路由，
   不得默认在 repo 里建分支/开 PR；chat 交付的 `FINAL DRAFT:`（或 §33 的
   deliverables/ 文件例外）照常被收割进待验收。命中已有卡时沿用该卡自身路由。
 - **analytics**：actd 落地点新增 `capture_direct_run`（req/status/chars +

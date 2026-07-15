@@ -40,10 +40,12 @@ other file needs editing. To cut a release:
   context, and the deliverable still lands in 待验收 for your acceptance.
   Vague asks resolve through the existing 需输入 flow. **Honest caveat:
   direct-run skips the proposal/cost preview entirely** — there is no plan or
-  estimate to review before the agent starts. Unrouted direct-run cards
-  deliver in chat mode at the default workbench (no branches/PRs in a repo
-  you never confirmed); typing a line that matches an existing open card
-  promotes that card instead of spawning a twin agent. Available on the Mac
+  estimate to review before the agent starts. By design, a fresh direct-run
+  card is pinned to chat delivery at the default workbench and never touches
+  a repo — no branches or PRs land anywhere you didn't confirm (file-type
+  outputs go to the workbench `deliverables/` directory per CONTRACT §33);
+  typing a line that matches an existing open card promotes that card —
+  keeping its own routing — instead of spawning a twin agent. Available on the Mac
   board column + popover Running section and the iPhone Running page
   (`mode:"run"` on the capture action, add-only); the web dashboard does not
   get the Running input this release.
