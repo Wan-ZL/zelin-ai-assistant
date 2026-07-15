@@ -33,7 +33,7 @@ import json
 import sys
 from pathlib import Path
 
-SCENES = ("initial", "approved", "running", "review", "done")
+SCENES = ("captured", "initial", "approved", "running", "review", "done")
 
 HERO_ID = "R-101"  # the card the --scene flag walks through the pipeline
 
@@ -438,6 +438,25 @@ def _epoch(now: dt.datetime) -> int:
     return int(now.timestamp())
 
 
+def _hero_captured(now: dt.datetime) -> dict:
+    """R-101 as a raising placeholder — the moment right after a meeting
+    recording was ingested and radar picked the requirement up (scene=captured).
+    Same shape dashboard.py emits for status=raising (cf. R-104)."""
+    return {
+        "id": HERO_ID,
+        "title": "leaderboard 一键导出评测报告",
+        "summary": "leaderboard 一键导出评测报告",
+        "tier": "T1",
+        "tier_hint": "AI 研究中",
+        "processing": True,
+        "sources": [],
+        "plan": [],
+        "dod": [],
+        "show_cost": False,
+        "delivery_mode": "repo",
+    }
+
+
 def _hero_queued(now: dt.datetime) -> dict:
     h = _hero_plan_dod(now)
     return {
@@ -534,7 +553,9 @@ def build(scene: str, now: dt.datetime | None = None) -> dict:
 
     if scene != "initial":
         needs_approval = [c for c in needs_approval if c["id"] != HERO_ID]
-    if scene == "approved":
+    if scene == "captured":
+        needs_approval = [_hero_captured(now)] + needs_approval
+    elif scene == "approved":
         running = [_hero_queued(now)] + running
     elif scene == "running":
         running = [_hero_running(now)] + running

@@ -51,6 +51,45 @@ class SecretsTestCase(unittest.TestCase):
         (secrets.SECRETS_DIR / "empty.txt").write_text("  \n", encoding="utf-8")
         self.assertIsNone(secrets.read_secret("empty.txt"))
 
+    # -- 多行文件 = 畸形：取首个非空行 + log 一条（§19「各一行纯 token」） --- #
+    def test_multiline_secret_uses_first_line_only(self):
+        secrets.SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+        (secrets.SECRETS_DIR / "multi.txt").write_text(
+            "abcd efgh\nWARNING do not share\n", encoding="utf-8")
+        secrets._warned_multiline.clear()
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            val = secrets.read_secret("multi.txt")
+        self.assertEqual(val, "abcd efgh")   # 首行原样（app password 可带空格）
+        self.assertNotIn("\n", val)
+        self.assertIn("multi.txt", buf.getvalue())          # 有一条 log…
+        self.assertNotIn("abcd efgh", buf.getvalue())       # …但绝不带凭证值
+        self.assertNotIn("WARNING do not share", buf.getvalue())
+
+    def test_multiline_warning_fires_once_per_file(self):
+        secrets.SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+        (secrets.SECRETS_DIR / "multi2.txt").write_text(
+            "tok\nrest\n", encoding="utf-8")
+        secrets._warned_multiline.clear()
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            secrets.read_secret("multi2.txt")
+            secrets.read_secret("multi2.txt")   # radar 轮询第二次
+        self.assertEqual(buf.getvalue().count("multi2.txt"), 1)
+
+    def test_resolve_credential_multiline_explicit_path(self):
+        explicit = self._path("multi-explicit.txt", "tok-123\n# pasted comment\n")
+        secrets._warned_multiline.clear()
+        with contextlib.redirect_stderr(io.StringIO()):
+            val = secrets.resolve_credential("no-such.txt", explicit, None)
+        self.assertEqual(val, "tok-123")
+
+    def test_write_secret_multiline_paste_keeps_first_line(self):
+        secrets._warned_multiline.clear()
+        with contextlib.redirect_stderr(io.StringIO()):
+            path = secrets.write_secret("multi-w.txt", "tok-456\nrest of paste\n")
+        self.assertEqual(path.read_text(encoding="utf-8"), "tok-456\n")
+
     # -- resolution order (§19): secrets -> explicit -> legacy --------------- #
     def test_resolution_order(self):
         name = secrets.SLACK_TOKEN_FILE

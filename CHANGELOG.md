@@ -27,7 +27,7 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
-## [0.31.0] - 2026-07-14
+## [0.32.0] - 2026-07-14
 
 ### Added
 
@@ -46,6 +46,103 @@ other file needs editing. To cut a release:
   counts, notes and finished deliverables; each secondary stops and becomes
   terminal **已合并 (merged)**. On Mac, involved cards show a **合并中…
   (Merging…)** badge until it lands.
+
+## [0.31.1] - 2026-07-14
+
+### Fixed
+
+- **A cron round can no longer wipe the previous round's in-flight ingest
+  work in the vault mirror.** Real incident hours after v0.31.0 shipped:
+  the previous round's claude was still writing raw/wiki in the mirror when
+  the next round's export ran the pull — rsync `--delete` destroyed every
+  un-pushed product, and since a mirror-mode dump exists only in the mirror
+  until push (with the export markers already advanced), the source dump
+  died with it. Two guards: the pull now skips while the processing PID
+  lock is held by a live process (the mirror is a live workspace then, not
+  a stale copy — the round's own push carries everything home), and the
+  export pushes immediately after writing a dump when no processing is in
+  flight, so the source lands in the real vault the moment it exists.
+
+## [0.31.0] - 2026-07-14
+
+### Changed
+
+- **Vault-mirror mode: the pipeline no longer touches ~/Documents — one
+  app-identity grant replaces every per-tool permission.** Incident
+  (2026-07-14): the claude CLI now installs per-version binaries and macOS
+  keys permission grants to the real binary path, so every CLI update became
+  a new TCC identity — the GUI re-prompted "would like to access your
+  Documents folder" on each update, and cron (nowhere to show a prompt) died
+  with `EPERM`: 38 consecutive screenshot→notes failures 07-09→07-13. Now a
+  `vault-sync-helper` compiled into the app bundle (same bundle id + the
+  stable TCC-safe signing identity) is the ONLY thing that touches the
+  Obsidian vault: it pulls the vault into a repo-local mirror
+  (`state/vault-mirror/`) at the top of each ingest run and publishes
+  results back afterwards (additive `--update` everywhere; inbox deletions
+  are manifest-based so a file dropped mid-run is never destroyed; a failed
+  publish is retried before the next pull so results are never wiped).
+  claude, python and bash all work repo-local — the radar and weekly digest
+  read the mirror too (`config.effective_obsidian_raw`). The permissions
+  checkup gains a "Notes vault access" row: ONE standard GUI prompt, and no
+  pipeline permission ever needs granting again — across app AND claude
+  updates. Everything degrades automatically to the legacy direct-vault
+  behavior when the helper or the grant is missing (Linux/Windows included);
+  mirror mode is an upgrade, never a requirement. Also: the ingest claude
+  call now runs under a 2 h watchdog (a wedged run once held the chain's
+  lock for 41 hours).
+
+### Fixed
+
+- **A doomed switch to Screen + Audio can no longer silently kill recording,
+  and the menu bar stops blaming permissions for every engine death.**
+  2026-07-13 incident: the Screen + Audio engine hard-requires ffmpeg at
+  startup and screenpipe's built-in auto-installer is unreliable (it wrote a
+  working binary yet still exited "os error 2" every attempt), so switching
+  modes pkilled a healthy screen-only engine, every replacement spawn died
+  seconds later, capture stopped — and the menu bar guessed "多半缺「屏幕录制」
+  权限" even though the TCC grant was fine. Three-part fix (CONTRACT §25
+  add-only): (1) new failure id `engine_ffmpeg_missing` — detected only in
+  the engine-log context (`failures.classify_engine_log` + Swift mirror
+  `diagnoseEngine`, screenpipe's exact install-failure phrasing; card or
+  dispatch text like "failed to install ffmpeg-python" never triggers it),
+  with an "Install ffmpeg" action (`install_ffmpeg`; the catalog sentence
+  names `brew install ffmpeg`); (2) switching to Screen + Audio now
+  prechecks ffmpeg by EXECUTING `-version` (a file test proves nothing —
+  the broken installer leaves artifacts behind) and refuses the switch —
+  explained via a 15 s in-app note plus a notification — instead of killing
+  the running engine first; a click made stale by a newer mode choice is
+  dropped; (3) a mode switch whose engine fails to start rolls back to the
+  previous mode automatically (one attempt, with a self-contained notice),
+  guarded by a slow-death watch: the doomed engine outlives a naive +0.5 s
+  liveness check by ~4-5 s (pgrep sees the npx wrapper immediately), so the
+  switch is re-verified at ~8 s before being declared good, and a mode the
+  user picked meanwhile is never clobbered. The menu-bar "not recording"
+  line now names the actual classified cause (ffmpeg / Node.js / crash),
+  reserving the permissions wording for when Screen Recording is genuinely
+  missing, and offers an "Install ffmpeg…" item when that is the diagnosis;
+  the recording page's ffmpeg row pairs "Install ffmpeg" with an
+  "Installed — restart engine" retry. The engine spawn PATH now also covers
+  the common ffmpeg install dirs (`~/.local/bin`, Intel-brew
+  `/usr/local/bin`, MacPorts `/opt/local/bin`) so a present ffmpeg is always
+  found — the non-interactive login shell never sources `.zshrc`, which is
+  where those dirs usually get added (root-cause hardening from PR #42; the
+  precheck probes the same locations).
+- **A finished task can no longer sit in 运行中/需输入 forever after its
+  session goes quiet.** 2026-07-14 R-041: a chat-mode agent printed its
+  complete `FINAL DRAFT` and settled — but a background session never exits
+  on its own, so the roster reported "blocked / waiting for input" and the
+  board showed 需输入 for hours with the finished brief already in the
+  transcript; after the Mac slept, the session was purged from the roster
+  entirely, where the reconciler's only move was a resume (spawning a
+  confused duplicate of an already-finished job). The reconciler now probes
+  the transcript FIRST in both situations — blocked agents and
+  vanished-from-roster sessions — and a standalone `FINAL DRAFT` marker (the
+  chat-delivery contract's strong completion signal) promotes the card
+  straight to 待验收 with the harvested draft. A bare last-message summary
+  deliberately does NOT short-circuit anything (any dead session has last
+  words; only the explicit marker proves delivery), so the auto-resume path
+  for genuinely crashed sessions is unchanged. Transcript probes are
+  throttled to one per session per 2 minutes.
 
 ## [0.30.0] - 2026-07-13
 
@@ -1052,8 +1149,14 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.1...v0.32.0
+[0.31.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.28.1...v0.29.0
+[0.28.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.28.0...v0.28.1
+[0.28.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.24.0...v0.25.0

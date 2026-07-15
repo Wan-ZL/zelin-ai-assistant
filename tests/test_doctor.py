@@ -604,5 +604,53 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
         self.assertEqual(doctor._installer(), "install.ps1")
 
 
+class CronProbeSchemaTestCase(unittest.TestCase):
+    """cron_probe.json 半截损坏（read_ok 缺键 / 非 bool）的容错要与其它损坏
+    probe 文件一致：WARN unreadable，绝不据半截数据给出「FDA 被禁」的红色
+    确定性诊断 + 授权指引（shell writer 只写字面量 true/false）。"""
+
+    def setUp(self):
+        config.ensure_state_dirs()
+        self.addCleanup(lambda: doctor.CRON_PROBE_PATH.unlink(missing_ok=True))
+        self.probes = doctor.Probes(crontab=lambda: HEALTHY_CRON)
+
+    def _write(self, payload: dict) -> None:
+        doctor.CRON_PROBE_PATH.write_text(json.dumps(payload), encoding="utf-8")
+
+    @staticmethod
+    def _fresh_ts() -> str:
+        return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _check(self):
+        return doctor._check_cron_probe(self.probes, cron_installed=True)
+
+    def test_missing_read_ok_is_warn_not_fda_fail(self):
+        self._write({"ts": self._fresh_ts(), "protected_path": "/v"})
+        r = self._check()
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "")
+        self.assertIn("unreadable", r.detail)
+
+    def test_non_bool_read_ok_is_warn(self):
+        for bad in (0, 1, None, "false", "true", []):
+            self._write({"ts": self._fresh_ts(), "read_ok": bad,
+                         "protected_path": "/v"})
+            r = self._check()
+            self.assertEqual(r.status, doctor.WARN, f"read_ok={bad!r}")
+            self.assertEqual(r.failure_id, "", f"read_ok={bad!r}")
+
+    def test_real_false_still_fails_as_fda_blocked(self):
+        self._write({"ts": self._fresh_ts(), "read_ok": False,
+                     "protected_path": "/v"})
+        r = self._check()
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertEqual(r.failure_id, "cron_fda_blocked")
+
+    def test_real_true_is_ok(self):
+        self._write({"ts": self._fresh_ts(), "read_ok": True,
+                     "protected_path": "/v"})
+        self.assertEqual(self._check().status, doctor.OK)
+
+
 if __name__ == "__main__":
     unittest.main()

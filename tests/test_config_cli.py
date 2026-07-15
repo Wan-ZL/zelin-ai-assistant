@@ -51,7 +51,7 @@ class ConfigCliTestCase(unittest.TestCase):
     # -- config.yaml 生效 ------------------------------------------------------ #
     def test_configured_vault_repoints_unprocessed(self):
         vault = self.home / "MyVault"
-        self._write_yaml(f'sources:\n  obsidian_raw: "{vault / "2 - raw"}"\n')
+        self._write_yaml(f'sources:\n  obsidian_raw: "{(vault / "2 - raw").as_posix()}"\n')
         proc = self._run("--print-path", "obsidian_unprocessed")
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout.strip(), str(vault / "1 - unprocessed"))
@@ -65,6 +65,20 @@ class ConfigCliTestCase(unittest.TestCase):
         self.assertEqual(
             proc.stdout.strip(), str(Path("~/SomeVault/1 - unprocessed").expanduser())
         )
+
+    # -- 相对路径锚定 AIASSISTANT_HOME（cron 消费方 cwd 不定） ------------------ #
+    def test_relative_path_is_anchored_at_home(self):
+        self._write_yaml('sources:\n  obsidian_raw: "rel/2 - raw"\n')
+        proc = self._run("--print-path", "obsidian_raw")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), str(self.home / "rel/2 - raw"))
+
+    def test_relative_derived_dir_is_anchored_too(self):
+        self._write_yaml('sources:\n  obsidian_raw: "rel/2 - raw"\n')
+        proc = self._run("--print-path", "obsidian_unprocessed")
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(),
+                         str(self.home / "rel/1 - unprocessed"))
 
     # -- silent-on-error ------------------------------------------------------- #
     def test_malformed_yaml_prints_default(self):

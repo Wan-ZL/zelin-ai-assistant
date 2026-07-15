@@ -305,5 +305,20 @@ class AppliedAckGatingTestCase(unittest.TestCase):
         self.assertEqual(_result_for(aid2), "running")   # now acking
 
 
+class StartupConfigGuardTestCase(unittest.TestCase):
+    """main() 启动处的 config 纵深防御（夜间审计批次）：load_config 意外抛
+    异常时用内置默认起动，坏 config.yaml/overrides 绝不拒启 daemon
+    （load_config 自身已防崩，这里守「万一」）。"""
+
+    def test_main_once_survives_load_config_crash(self):
+        with mock.patch.object(actd.config, "load_config",
+                               side_effect=RuntimeError("boom")), \
+             mock.patch.object(actd, "run_once", return_value=None) as ro:
+            code = actd.main(["--once"])
+        self.assertEqual(code, 0)                      # 没有崩、正常跑完一轮
+        cfg = ro.call_args[0][0]
+        self.assertIsInstance(cfg, config.Config)      # 用的是内置默认
+
+
 if __name__ == "__main__":
     unittest.main()

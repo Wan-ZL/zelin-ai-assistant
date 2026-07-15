@@ -193,13 +193,17 @@ def msg_resuming(title: str) -> tuple[str, str]:
 
 
 def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
-    """5 straight resume failures — actd gives up; name the exact buttons."""
+    """5 straight resume failures — actd gives up; name the exact buttons.
+
+    v0.21 起运行中卡只有一个「停止/Stop」→ 二选一对话框（退回提案 / 去待验收），
+    文案必须指向现存按钮（审计：旧文案引用已删除的「停止并退回」「已办完」）。"""
     return (_pick("自动恢复已放弃（连续失败 5 次）",
                   "Auto-recovery gave up (5 straight failures)"),
-            _pick(f"{title} —— 打开 App，在「运行中」列对这张卡点「停止并退回」重新批准，"
-                  "或点「已办完」结束它",
+            _pick(f"{title} —— 打开 App，在「运行中」列对这张卡点「停止」，"
+                  "选「退回提案」重新批准，或选「去待验收」留下已产出的结果由你验收",
                   f"{title} — open the app: on this card in Running, press"
-                  " \"Stop & return\" to re-approve, or \"Done outside\" to close it"))
+                  " \"Stop\", then \"Discard & re-propose\" to re-approve or"
+                  " \"Keep for review\" to keep what it produced for your check"))
 
 
 # --------------------------------------------------------------------------- #

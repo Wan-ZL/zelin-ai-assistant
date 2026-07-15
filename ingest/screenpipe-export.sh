@@ -37,11 +37,30 @@ resolve_config_path() {  # $1 = config key, $2 = fallback path
 
 DB="$HOME/.screenpipe/db.sqlite"
 OUT_DIR="$(resolve_config_path obsidian_unprocessed "$HOME/Documents/Obsidian Vault/1 - unprocessed")"
+VAULT_ROOT="$(dirname "$(resolve_config_path obsidian_raw "$HOME/Documents/Obsidian Vault/2 - raw")")"
 MARKER_DIR="$HOME/.screenpipe/export_markers"
+
+# VAULT MIRROR mode (claude TCC isolation — see ingest/vault-sync.sh): pull
+# the vault into the repo-local mirror via the app-bundle courier, then write
+# the export INTO THE MIRROR. The whole chain (this script, claude in
+# process-screenpipe.sh, radar) works repo-local; only the courier — with the
+# app's stable TCC identity — touches ~/Documents. Helper missing / grant
+# missing / pull failure → legacy direct-vault mode, chain never breaks.
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/vault-sync.sh"
+VAULT_SYNC_MODE="direct"
+if vault_sync_pull "$VAULT_ROOT" 2>/dev/null; then
+    VAULT_SYNC_MODE="mirror"
+    OUT_DIR="$VAULT_MIRROR/1 - unprocessed"
+fi
+mkdir -p "$(dirname "$VAULT_SYNC_MODE_FILE")" 2>/dev/null
+printf '%s\n' "$VAULT_SYNC_MODE" > "$VAULT_SYNC_MODE_FILE" 2>/dev/null
 
 # cron Full Disk Access probe (CONTRACT §25): under cron (AIASSISTANT_CRON=1,
 # set by the install.sh §18 chain) record whether this process can actually
-# read the protected export target. Without FDA, cron writes nothing into
+# read the export target. In mirror mode OUT_DIR is repo-local, so read_ok
+# reflects the courier pull that just succeeded — still the honest "can the
+# chain reach its data source" signal. Without FDA, cron writes nothing into
 # ~/Documents and reports nothing — this file is the only honest signal the
 # doctor and the app's dependency page can read. Written BEFORE any early
 # exit below so a blocked run still leaves evidence. Never fails the chain.
@@ -166,5 +185,16 @@ NEW_FRAME=$(sqlite3 "$DB" "SELECT MAX(id) FROM frames WHERE full_text IS NOT NUL
 NEW_AUDIO=$(sqlite3 "$DB" "SELECT MAX(id) FROM audio_transcriptions;" 2>/dev/null)
 [ -n "$NEW_FRAME" ] && [ "$NEW_FRAME" != "" ] && echo "$NEW_FRAME" > "$MARKER_DIR/last_frame_id"
 [ -n "$NEW_AUDIO" ] && [ "$NEW_AUDIO" != "" ] && echo "$NEW_AUDIO" > "$MARKER_DIR/last_audio_id"
+
+# Mirror-mode source safety (2026-07-14 13:30 incident hardening): until a
+# push runs, a mirror-mode dump exists ONLY in the mirror — and the export
+# markers above are already advanced, so losing it means no re-export. When
+# no processing is in flight (a push now is clean — no half-written raw/wiki
+# to leak), push immediately so the source dump lands in the real vault the
+# moment it exists. With processing in flight the round's own final push
+# carries it home instead.
+if [ "$VAULT_SYNC_MODE" = "mirror" ] && ! vault_sync_processing_live; then
+    vault_sync_push "$VAULT_ROOT" >/dev/null 2>&1 || true
+fi
 
 echo "Exported to: $OUT_FILE"

@@ -653,7 +653,12 @@ def _check_cron_probe(probes: Probes, cron_installed: bool):
         data = json.loads(CRON_PROBE_PATH.read_text(encoding="utf-8"))
         ts = _dt.datetime.strptime(str(data.get("ts", "")), "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=_dt.timezone.utc).timestamp()
-        read_ok = bool(data.get("read_ok"))
+        read_ok = data.get("read_ok")
+        if not isinstance(read_ok, bool):
+            # schema 降级（read_ok 缺键/非 bool——半截/手改/旧版文件）与整体
+            # 损坏同级处理：WARN unreadable，绝不据此给出「FDA 被禁」的红色
+            # 确定性诊断 + 授权指引（shell writer 只写字面量 true/false）
+            raise ValueError("read_ok missing or not a bool")
         probed = str(data.get("protected_path") or "")
     except Exception:  # noqa: BLE001 - torn/hand-edited file is the symptom
         return CheckResult(name, WARN,

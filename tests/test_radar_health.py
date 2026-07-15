@@ -59,12 +59,13 @@ class ObsidianHealthBase(unittest.TestCase):
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n', encoding="utf-8")
 
     @staticmethod
     def _cleanup():
         for p in (config.CONFIG_PATH, health.HEALTH_PATH,
-                  config.STATE_DIR / radar.MARKER_PATH_NAME):
+                  config.STATE_DIR / radar.MARKER_PATH_NAME,
+                  config.STATE_DIR / radar.FAILED_QUEUE_NAME):
             if p.exists():
                 p.unlink()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
@@ -80,7 +81,7 @@ class ObsidianHealthBase(unittest.TestCase):
 class ObsidianHealthTestCase(ObsidianHealthBase):
     def test_feature_off_is_disabled(self):
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw}"\n'
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n'
             "features:\n  obsidian_radar: false\n", encoding="utf-8")
         radar.scan(runner=lambda t: self.fail("scanned while off"))
         self.assertEqual(_read_obsidian()["skip_reason"], "disabled")
@@ -93,7 +94,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
     def test_missing_dir_is_vault_missing(self):
         gone = Path(self.tmp.name) / "no-such-dir"
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{gone}"\n', encoding="utf-8")
+            f'sources:\n  obsidian_raw: "{gone.as_posix()}"\n', encoding="utf-8")
         radar.scan(runner=lambda t: self.fail("scanned a missing vault"))
         self.assertEqual(_read_obsidian()["skip_reason"], "vault_missing")
 
@@ -109,7 +110,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         self.addCleanup(setattr, radar, "_has_anthropic_key",
                         radar._has_anthropic_key)
         radar._has_anthropic_key = lambda: False
-        radar.scan(runner=lambda t: "not json at all")  # -> halted
+        radar.scan(runner=lambda t: "not json at all")  # -> extract failure
         self.assertEqual(_read_obsidian()["skip_reason"], "no_api_key")
 
     def test_extraction_failure_with_key_is_extract_failed(self):
@@ -117,7 +118,7 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         self.addCleanup(setattr, radar, "_has_anthropic_key",
                         radar._has_anthropic_key)
         radar._has_anthropic_key = lambda: True
-        radar.scan(runner=lambda t: "not json at all")  # -> halted
+        radar.scan(runner=lambda t: "not json at all")  # -> extract failure
         self.assertEqual(_read_obsidian()["skip_reason"], "extract_failed")
 
     def test_healthy_scan_records_ok_and_card_count(self):

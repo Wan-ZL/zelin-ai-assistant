@@ -48,11 +48,12 @@ session_id 等。写入模式跑完也会自动做同一套校验。
 
 ## `--scene`：为视频分步生成流水线时刻
 
-主角卡 **R-101**（example-bench 一键导出评测报告）在五个 scene 里走完整个流水线，
+主角卡 **R-101**（example-bench 一键导出评测报告）在六个 scene 里走完整个流水线，
 其余卡片保持不动，视频里就是"一张卡在动"：
 
 | scene | R-101 所在位置 |
 |---|---|
+| `captured` | 提案——「AI 研究中」占位卡（会议录音刚被 radar 捕获，完整提案生成前） |
 | `initial`（默认） | 提案（T1 卡，满配：sources/plan/DoD/成本/截止） |
 | `approved` | 运行中——灰色 queued 卡（已批准、待派发） |
 | `running` | 运行中——working，40 秒前启动，带 `claude attach` 命令 |

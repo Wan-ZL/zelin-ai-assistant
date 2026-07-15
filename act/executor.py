@@ -39,10 +39,19 @@ MEMORY_HEAD_LINES = 60
 # real `claude --bg` prints:  "backgrounded · e88561e5"  (verified 2026-07-06),
 # so "backgrounded" + the middot separator must be matched first; also keep the
 # session-id / --resume forms and allow 6+ hex (short ids like e88561e5 are 8).
+# id 只匹配两种真实形态：完整 UUID 或连续短 hex——旧的 [0-9a-fA-F-]{5,} 会把
+# "backgrounded: 2026-07-08" 的日期吞成假 sid（写进 execution 后 resume/
+# transcript 永远对不上），也会把紧跟 id 的连字符文本吸进来（e88561e5-abc-de）。
 _SESSION_RE = re.compile(
-    r"(?:backgrounded|session[_ -]?id|--resume)[\"'\s:=·]+([0-9a-fA-F][0-9a-fA-F-]{5,})",
+    r"(?:backgrounded|session[_ -]?id|--resume)[\"'\s:=·]+"
+    r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{6,})",
     re.IGNORECASE,
 )
+
+# CSI escape sequences (color codes etc.) — claude under FORCE_COLOR/
+# CLICOLOR_FORCE may wrap the keyword and the id separately, which breaks the
+# separator character class; strip before matching (_parse_session_id).
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 # --------------------------------------------------------------------------- #
@@ -391,8 +400,16 @@ def _runner_env() -> dict:
 
 def session_name(req: Requirement) -> str:
     """Readable display name for the bg session — shows up in `claude agents`
-    so Zelin can correlate list entries with assistant cards at a glance."""
+    so Zelin can correlate list entries with assistant cards at a glance.
+
+    卡片 title 是 LLM/用户产物，可能含换行、路径分隔符、控制字符——而 agent
+    name 会被 claude 用作 worktree 目录/分支名的一部分
+    (<target>/.claude/worktrees/<name>)，合法性必须在本侧保证，不押注下游
+    CLI 的内部清洗：路径分隔符和控制字符统一折叠成单个空格。argv 数组传参
+    本身无 shell 注入面，这里只管名字的文件系统/git 合法性。"""
     title = (req.title or "").strip()
+    title = re.sub(r"[\\/\x00-\x1f\x7f]+", " ", title)   # newlines, / \, ctrl chars
+    title = re.sub(r"\s+", " ", title).strip()
     return f"{req.id} · {title[:48]}" if title else req.id
 
 
@@ -503,21 +520,29 @@ def _newest_session_for_cwd(cwd: str,
             started = a.get("started_at") or a.get("startedAt") or a.get("created_at") or 0
             if not sid:
                 continue
+            started_dt = _parse_when(started)
             if after is not None:
-                started_dt = _parse_when(started)
                 if started_dt is None or started_dt < after - _dt.timedelta(seconds=2):
                     continue  # pre-dispatch or unknown-age session — never claim it
-            candidates.append((started, sid))
+            # 排序键必须是归一化后的 datetime：started_at 可能混用 ISO/epoch秒/
+            # epoch毫秒（_parse_when 三态容忍），str 字典序会把 "17…"(epoch) 排在
+            # "2026-…"(ISO) 前面，选错"最新"会话 → 绑到别人的 session（P0-6）。
+            # 解析不出时间的（只在无 after 门控时还留在候选里）当作最旧。
+            candidates.append(
+                (started_dt or _dt.datetime.min.replace(tzinfo=_dt.timezone.utc), sid))
     if not candidates:
         return None
-    candidates.sort(key=lambda t: (str(t[0])))
+    candidates.sort(key=lambda t: t[0])
     return str(candidates[-1][1])
 
 
 def _parse_session_id(output: str) -> Optional[str]:
     if not output:
         return None
-    m = _SESSION_RE.search(output)
+    # keyword 和 id 之间夹 ANSI 色码（FORCE_COLOR 下的 claude 输出，_runner_env
+    # 原样透传 os.environ）会让分隔符字符类匹配不上——先剥转义序列再匹配，
+    # 否则一次成功的 launch 会被误判成 no_session_id 并在下轮重试出重复 agent。
+    m = _SESSION_RE.search(_ANSI_RE.sub("", output))
     if m:
         return m.group(1)
     return None
@@ -886,12 +911,15 @@ def harvest_delivery(session_id: str) -> dict:
             return empty
 
         lines = text.splitlines()
-        marker_idx: Optional[int] = None
-        for i, ln in enumerate(lines):
-            if ln.strip().startswith(_FINAL_DRAFT_MARKER):
-                marker_idx = i
-                break
-        if marker_idx is not None:
+        marker_idxs = [i for i, ln in enumerate(lines)
+                       if ln.strip().startswith(_FINAL_DRAFT_MARKER)]
+        # 契约语义是"结束总结的末尾单独一行 FINAL DRAFT: 之后跟全文"（CONTRACT
+        # G）——LLM 在总结正文里引述这条指令（行首 FINAL DRAFT:）会造出多个
+        # marker，取第一个（旧行为）会把总结残余和真 marker 一起混进 final_draft，
+        # 成稿不再"可直接粘贴"。从后往前取第一个后面有内容的 marker：单 marker
+        # 行为不变，marker 恰为末行（draft 为空）时继续回退到更早的 marker，
+        # 全部为空则维持"marker 后为空视为无 marker"的旧兜底。
+        for marker_idx in reversed(marker_idxs):
             # remainder of the marker line itself (if any) belongs to the draft
             ln_rest = lines[marker_idx].strip()[len(_FINAL_DRAFT_MARKER):].strip()
             draft_lines = ([ln_rest] if ln_rest else []) + lines[marker_idx + 1:]

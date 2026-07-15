@@ -1492,7 +1492,8 @@ struct DebtRow: View {
         Button {
             app.store.beginRaising(item.id, summary: item.displaySummary)
             app.submit(id: item.id, action: "raise", comment: nil)
-        } label: { Label(L("研究并提议", "Research & Propose"), systemImage: "magnifyingglass") }
+        // "propose" 小写：与 iOS 按钮及 shared/Lanes.swift backlog 说明逐字一致
+        } label: { Label(L("研究并提议", "Research & propose"), systemImage: "magnifyingglass") }
             .tint(.blue)
 
         Button {

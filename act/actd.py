@@ -85,9 +85,14 @@ def _log(msg: str) -> None:
     config.ensure_state_dirs()
     line = f"{_dt.datetime.now().isoformat(timespec='seconds')}  {msg}\n"
     try:
-        with (config.STATE_DIR / "actd.log").open("a", encoding="utf-8") as fh:
+        # errors="replace": a decision file may legally json-decode into text
+        # containing lone UTF-16 surrogates ("\ud800"), which utf-8 refuses to
+        # encode — logging about bad input must never crash on the bad input
+        # itself (nightly audit 2026-07-14).
+        with (config.STATE_DIR / "actd.log").open(
+                "a", encoding="utf-8", errors="replace") as fh:
             fh.write(line)
-    except OSError:
+    except (OSError, UnicodeError):
         pass
 
 
@@ -111,6 +116,17 @@ def process_inbox() -> int:
             _log(f"inbox: bad decision file {path.name}: {e}")
             # §5.4 ack: a terminal disposition even when unreadable, so the phone
             # never sees a stuck 'delivered' → false "未送达" retry loop.
+            _write_applied_ack(path.stem, "bad_json")
+            _safe_unlink(path)
+            continue
+        if not isinstance(decision, dict):
+            # legal JSON but not an object (null/number/string/list): treating
+            # it like a decision would AttributeError OUTSIDE any guard, the
+            # file would survive, and — processed in mtime order — the poison
+            # file would re-crash every pass, wedging the whole inbox
+            # (nightly audit 2026-07-14, blocker).
+            _log(f"inbox: decision file {path.name} is not a JSON object "
+                 f"({type(decision).__name__}) — discarding")
             _write_applied_ack(path.stem, "bad_json")
             _safe_unlink(path)
             continue
@@ -683,6 +699,36 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
     # 主卡其他状态：notes 已留痕，不动其 session（契约 四）。
 
 
+def _stop_live_session(req: Requirement, why: str) -> None:
+    """Best-effort stop of a card's live agent before a destructive action
+    (reject/trash on an approved/executing/review card — nightly audit
+    2026-07-14: the old path binned the card while its agent kept running,
+    burning tokens into a worktree nobody would ever look at). Mirrors the
+    abort_execution recipe: stop, archive the sid, never block the action."""
+    if str(req.status) not in (State.APPROVED.value, State.EXECUTING.value,
+                               State.REVIEW.value):
+        return
+    ex = dict(req.execution or {})
+    sid = ex.get("session_id")
+    if not sid:
+        return
+    stopped = False
+    if executor is not None:
+        try:
+            stopped = bool(executor.stop_session(str(sid)))
+            _log(f"inbox: {req.id} {why} — stop_session({sid}) -> {stopped}")
+        except Exception as e:  # noqa: BLE001 - best-effort, never block
+            _log(f"inbox: {req.id} {why} — stop_session({sid}) failed (ignored): {e}")
+    ex["aborted_session_id"] = sid
+    if stopped:
+        # only a session we actually killed loses its id — when the stop
+        # failed (or executor is unavailable) the agent may still be alive,
+        # and a later trash→restore round-trip must be able to re-attach
+        # (audit review 2026-07-14: unconditional pop made restore lossy).
+        ex.pop("session_id", None)
+    req.execution = ex
+
+
 def _apply_decision(req: Requirement, action: Optional[str],
                     comment: Optional[str],
                     expected_status: Optional[str] = None,
@@ -707,12 +753,23 @@ def _apply_decision(req: Requirement, action: Optional[str],
     #   stale no-op; "unknown" = unrecognised action. (Local Mac-app callers may
     #   ignore the return.) The board_seq precondition rides in the AAD + inbox
     #   file for provenance; expected_status is the enforced stale-guard (§5.4).
+    # ---- central archived gate (nightly audit 2026-07-14) ----
+    # An archived card's FILE lives in archive/ — any status write except
+    # unarchive would strand a live-status card inside the archive dir (split
+    # brain: dashboard shows it nowhere, purge rules stop applying). Every
+    # action but unarchive is a guarded no-op.
+    if str(req.status) == State.ARCHIVED.value and action != "unarchive":
+        _log(f"inbox: {req.id} {action} on archived card — no-op (unarchive first)")
+        return "noop"
+
     if action == "approve":
         # idempotent: a double-click (or re-approve while already running) must
-        # not re-dispatch and spawn a duplicate agent.
-        if str(req.status) in (State.APPROVED.value, State.EXECUTING.value,
-                               State.REVIEW.value, State.DELIVERED.value):
-            _log(f"inbox: {req.id} approve ignored (already {req.status})")
+        # not re-dispatch and spawn a duplicate agent. WHITELIST (nightly audit
+        # 2026-07-14): the old blacklist let a late/replayed approve flip
+        # trashed/merged/raising cards straight to approved — dispatching
+        # deleted or mid-expansion work. Only a live proposal may be approved.
+        if str(req.status) not in (State.DETECTED.value, State.CARD_SENT.value):
+            _log(f"inbox: {req.id} approve ignored (status={req.status})")
             return "noop"
         req.set_status(State.APPROVED)
         # approval timestamp (add-only bookkeeping, like accepted_at) — lets
@@ -728,6 +785,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
         _log(f"inbox: {req.id} approved")
         return "running"
     elif action == "reject":
+        _stop_live_session(req, "reject")  # nightly audit: never orphan a live agent
         registry.trash(req, "rejected")  # recoverable, not a bare rejected status
         _log(f"inbox: {req.id} rejected -> trash")
         return "running"
@@ -743,6 +801,29 @@ def _apply_decision(req: Requirement, action: Optional[str],
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"
         _fold_comment(req, comment)
+        # nightly audit 2026-07-14: a comment landing on a card that is
+        # already past approval must NOT rip it back to card_sent — that
+        # orphans a live agent (execution.session_id survives, and the next
+        # approve re-dispatches against a stale session). Past-approval
+        # states keep their status; the note is folded for the record (review
+        # has its own formal channel: rework).
+        if str(req.status) == State.APPROVED.value:
+            # pre-dispatch: the folded note rides into the dispatch prompt —
+            # the direction change genuinely lands, so "running" is honest.
+            save(req)
+            _log(f"inbox: {req.id} comment folded (approved kept, pre-dispatch)")
+            return "running"
+        if str(req.status) in (State.EXECUTING.value, State.REVIEW.value,
+                               State.DELIVERED.value):
+            # post-dispatch: nothing consumes the folded note — the live agent
+            # never sees it. Fold for the record but ack "noop" so a phone's
+            # §5.4 ledger never shows 已生效 for a direction change that had
+            # no effect (audit review 2026-07-14). review 的正式改方向通道是
+            # rework（打回）。
+            save(req)
+            _log(f"inbox: {req.id} comment folded (status {req.status} kept — "
+                 f"note is record-only, acking noop)")
+            return "noop"
         req.set_status(State.CARD_SENT)  # stays pending, re-approval
         save(req)
         _log(f"inbox: {req.id} comment folded — re-approval pending")
@@ -767,10 +848,17 @@ def _apply_decision(req: Requirement, action: Optional[str],
         _log(f"inbox: {req.id} -> raising (queued for AI expansion)")
         return "running"
     elif action == "trash":
+        _stop_live_session(req, "trash")  # nightly audit: never orphan a live agent
         registry.trash(req, "deleted")
         _log(f"inbox: {req.id} trashed (deleted)")
         return "running"
     elif action == "restore":
+        # nightly audit 2026-07-14: restore is trash-lane-only — replayed on a
+        # live card it would rewrite status to prev_status-or-detected (an
+        # executing card silently became detected while its agent kept running).
+        if str(req.status) != State.TRASHED.value:
+            _log(f"inbox: {req.id} restore ignored (status={req.status}, not trashed)")
+            return "noop"
         registry.restore(req)
         _log(f"inbox: {req.id} restored -> {req.status}")
         return "running"
@@ -791,6 +879,17 @@ def _apply_decision(req: Requirement, action: Optional[str],
         if not _precondition_ok(req, expected_status):
             _log(f"inbox: {req.id} accept stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
+            return "noop"
+        # nightly audit 2026-07-14: accept needs work to accept. The 待验收
+        # lane can hold on-disk EXECUTING cards (see above), so executing and
+        # review are both legal; delivered is an idempotent double-click. But
+        # a replayed accept on a never-dispatched card (detected/card_sent/
+        # raising/…) must not teleport it to delivered.
+        if str(req.status) == State.DELIVERED.value:
+            _log(f"inbox: {req.id} accept ignored (already delivered)")
+            return "noop"
+        if str(req.status) not in (State.EXECUTING.value, State.REVIEW.value):
+            _log(f"inbox: {req.id} accept ignored (status={req.status}, no delivery to accept)")
             return "noop"
         req.set_status(State.DELIVERED)
         ex = dict(req.execution or {})
@@ -1421,6 +1520,56 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
         _log(f"reconcile: review attach check {getattr(req, 'id', '?')} failed: {e}")
 
 
+# transcript-probe throttle for _promote_if_delivered: a genuinely blocked
+# agent (no FINAL DRAFT yet) would otherwise get its transcript tail re-read
+# every 10 s pass. Process-local is fine — actd is a resident daemon.
+_HARVEST_PROBE_AT: dict = {}
+_HARVEST_PROBE_INTERVAL_S = 120.0
+
+
+def _promote_if_delivered(req, ex: dict, sid) -> bool:
+    """Promote to 待验收 IFF the transcript carries the standalone FINAL DRAFT
+    marker — the chat-delivery contract's STRONG completion signal. A bare
+    delivered_summary is any dead session's last words, never proof of
+    delivery, so it must not short-circuit a resume. Returns True when
+    promoted (callers `continue`).
+    """
+    if executor is None:
+        return False
+    now = time.monotonic()
+    # None sentinel, NOT 0.0: monotonic() counts from boot, so on a freshly
+    # started machine `now - 0.0 < interval` is TRUE for the first minutes —
+    # a 0.0 default swallowed the very first probe (surfaced on CI runners,
+    # whose uptime is seconds; a just-rebooted Mac would hit it too).
+    last = _HARVEST_PROBE_AT.get(str(sid))
+    if last is not None and now - last < _HARVEST_PROBE_INTERVAL_S:
+        return False
+    _HARVEST_PROBE_AT[str(sid)] = now
+    try:
+        harvested = executor.harvest_delivery(str(sid)) or {}
+    except Exception:  # noqa: BLE001 - the probe is best-effort
+        return False
+    if not str(harvested.get("final_draft") or "").strip():
+        return False
+    ex["done"] = True
+    ex["review_at"] = _iso_now()
+    if harvested.get("delivered_summary"):
+        ex["delivered_summary"] = harvested["delivered_summary"]
+    ex["final_draft"] = harvested["final_draft"]
+    req.execution = ex
+    req.set_status(registry.State.REVIEW)
+    registry.save(req)
+    exec_s = None
+    disp_dt = _parse_iso(ex.get("dispatched_at"))
+    if disp_dt is not None:
+        exec_s = max(0, round(
+            (_dt.datetime.now(_dt.timezone.utc) - disp_dt).total_seconds()))
+    analytics.log_event("review_promoted", req=req.id, exec_s=exec_s)
+    _log(f"reconcile: {req.id} promoted to review — transcript already "
+         f"carries FINAL DRAFT (session {sid} blocked or purged)")
+    return True
+
+
 def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
     """Auto-resume executing tasks whose background agent died (sleep / network
     loss / crash). Skips tasks that already finished. Exponential backoff so a
@@ -1459,8 +1608,15 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             resume_notified.discard(req.id)
             continue
         if agent and state in _BLOCKED_STATES:
-            # waiting for the USER to answer (needs input) — NOT dead. Do NOT
-            # resume (resuming a blocked agent spawns duplicates). Leave it be.
+            # waiting for the USER to answer (needs input) — usually NOT dead,
+            # and resuming a blocked agent spawns duplicates. But FIRST check
+            # for a completed delivery: a chat-mode agent that printed its
+            # FINAL DRAFT block settles in exactly this waiting-input state
+            # (a bg session never exits on its own), and 2026-07-14 R-041 sat
+            # here for hours with the finished brief already in the
+            # transcript while the board said 需输入.
+            if not ex.get("done") and _promote_if_delivered(req, ex, sid):
+                continue
             if ex.get("resume_attempts"):
                 ex["resume_attempts"] = 0
                 req.execution = ex
@@ -1507,7 +1663,14 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 registry.save(req)
             continue
 
-        # dead (failed/stopped) or vanished-before-completing -> resume w/ backoff
+        # dead (failed/stopped) or vanished-before-completing. BEFORE burning
+        # a resume, check the transcript for a completed delivery: a session
+        # that finishes while the Mac sleeps is purged from the roster before
+        # any reconcile pass ever sees it in a done state (2026-07-14 R-041),
+        # and resuming a finished session only spawns a confused duplicate.
+        if not ex.get("done") and _promote_if_delivered(req, ex, sid):
+            continue
+        # -> resume w/ backoff
         if ex.get("resume_exhausted"):
             continue
         attempts = int(ex.get("resume_attempts", 0))
@@ -1623,7 +1786,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--interval", type=int, default=None, help="override poll seconds")
     args = parser.parse_args(argv)
 
-    cfg = config.load_config()
+    try:
+        cfg = config.load_config()
+    except Exception as e:  # noqa: BLE001 — 坏 config.yaml/overrides 绝不拒启：
+        # 用内置默认起动并 log 一条（load_config 自身已防崩，这里是纵深防御）
+        _log(f"load_config FAILED at startup ({e}); using built-in defaults")
+        cfg = config.Config()
     interval = args.interval or cfg.poll_interval_seconds or 10
     auth_notified: set[str] = set()
     resume_notified: set[str] = set()

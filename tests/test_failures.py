@@ -139,6 +139,22 @@ class ClassifyTestCase(unittest.TestCase):
                "npm error network ETIMEDOUT registry.npmjs.org")
         self.assertEqual(failures.classify(raw), "network_error")
 
+    def test_ffmpeg_failures_never_classify_outside_the_engine_log(self):
+        # engine-log-context-only contract: classify() runs on dispatch
+        # errors and card/ask output, where "failed to install ffmpeg-python"
+        # or prose about ffmpeg is the TASK's business — mapping it to the
+        # recording-engine sentence (with an Install-ffmpeg action) would
+        # mislabel an unrelated failure. classify_engine_log handles the
+        # engine-log context (EngineLogClassifyTestCase).
+        for raw in ("ERROR: failed to install ffmpeg-python==0.2.0",
+                    "I tried brew but failed to install ffmpeg because the "
+                    "sandbox blocks network",
+                    "ERROR screenpipe_core::ffmpeg: failed to install ffmpeg: "
+                    "No such file or directory (os error 2)",
+                    "converted the clip with ffmpeg and uploaded it",
+                    "ffmpeg not found. installing..."):
+            self.assertIsNone(failures.classify(raw), raw)
+
 
 class EngineLogClassifyTestCase(unittest.TestCase):
     """classify_engine_log — the engine-death diagnosis (audit 2.3).
@@ -147,6 +163,11 @@ class EngineLogClassifyTestCase(unittest.TestCase):
 
     DOWNLOAD = ("npm warn exec The following package was not found and will "
                 "be installed: screenpipe@0.3.349")
+
+    FFMPEG = ("2026-07-13T19:24:44 ERROR screenpipe_core::ffmpeg: failed to "
+              "install ffmpeg: No such file or directory (os error 2)\n"
+              "ffmpeg not found and installation failed. "
+              "please install ffmpeg manually.")
 
     def test_missing_npx_wins_over_everything(self):
         self.assertEqual(
@@ -173,6 +194,59 @@ class EngineLogClassifyTestCase(unittest.TestCase):
         self.assertEqual(
             failures.classify_engine_log(
                 "thread 'main' panicked at src/core.rs:42", engine_alive=False),
+            "engine_crashed")
+
+    def test_dead_on_ffmpeg_is_the_specific_fix_not_generic_crash(self):
+        # 2026-07-13: screen_audio dying on the missing ffmpeg must name the
+        # dependency, not read as a generic crash (let alone "permissions").
+        self.assertEqual(
+            failures.classify_engine_log(self.FFMPEG, engine_alive=False),
+            "engine_ffmpeg_missing")
+
+    def test_alive_with_stale_ffmpeg_lines_is_healthy(self):
+        # an engine that recovered (ffmpeg installed later) keeps the old
+        # error lines in its tail — alive always wins over stale text.
+        self.assertIsNone(
+            failures.classify_engine_log(self.FFMPEG, engine_alive=True))
+
+    def test_missing_npx_outranks_ffmpeg(self):
+        self.assertEqual(
+            failures.classify_engine_log(self.FFMPEG, npx_present=False,
+                                         engine_alive=False),
+            "node_missing")
+
+    def test_dead_ffmpeg_with_auth_flavored_error_is_still_ffmpeg(self):
+        # mirror contract with Swift's direct substring check: the install
+        # error's own "401 Unauthorized" must not classify as an API-key
+        # problem — the fix is installing ffmpeg either way.
+        self.assertEqual(
+            failures.classify_engine_log(
+                "failed to install ffmpeg: HTTP 401 Unauthorized",
+                engine_alive=False),
+            "engine_ffmpeg_missing")
+
+    def test_dead_ffmpeg_that_died_on_network_is_still_ffmpeg(self):
+        self.assertEqual(
+            failures.classify_engine_log(
+                "failed to install ffmpeg: getaddrinfo ENOTFOUND "
+                "www.osxexperts.net", engine_alive=False),
+            "engine_ffmpeg_missing")
+
+    def test_alive_redownload_with_stale_ffmpeg_lines_is_download(self):
+        # banner + old ffmpeg failure lines while ALIVE = a re-download in
+        # progress (mirror contract: Swift's `downloading` branch outranks
+        # its ffmpeg substrings the same way).
+        self.assertEqual(
+            failures.classify_engine_log(self.DOWNLOAD + "\n" + self.FFMPEG,
+                                         engine_alive=True),
+            "engine_npm_download")
+
+    def test_ffmpeg_installing_first_line_alone_is_not_the_failure(self):
+        # "installing..." is progress; only the failure phrasing classifies
+        # (a process killed mid-install reads as a plain crash).
+        self.assertEqual(
+            failures.classify_engine_log("ffmpeg not found. installing...",
+                                         engine_alive=False),
             "engine_crashed")
 
     def test_dead_download_banner_is_crashed_not_in_progress(self):
@@ -379,6 +453,26 @@ class NotifyCopyTestCase(unittest.TestCase):
         self._set_lang("zh")
         title_zh, body_zh = notify.msg_auto_resume_exhausted("周报")
         self.assertIn("自动恢复已放弃", title_zh)
+
+    def test_auto_resume_exhausted_names_existing_buttons(self):
+        # 审计 2026-07: v0.21 把运行中卡的「停止并退回 + 已办完」按钮对换成了
+        # 单个「停止」→ 对话框（退回提案/去待验收），但通知文案还在指旧按钮。
+        # 文案必须逐字引用现存 UI（Cards.swift TaskRow 的 confirmationDialog）。
+        from act.lib import notify
+        self._set_lang("zh")
+        _, body = notify.msg_auto_resume_exhausted("周报")
+        self.assertIn("「停止」", body)
+        self.assertIn("「退回提案」", body)
+        self.assertIn("「去待验收」", body)
+        self.assertNotIn("停止并退回", body, "v0.21 已删除的按钮不能再出现在文案里")
+        self.assertNotIn("「已办完」", body)
+        self._set_lang("en")
+        _, body_en = notify.msg_auto_resume_exhausted("Weekly report")
+        self.assertIn('"Stop"', body_en)
+        self.assertIn("Discard & re-propose", body_en)
+        self.assertIn("Keep for review", body_en)
+        self.assertNotIn("Stop & return", body_en)
+        self.assertNotIn("Done outside", body_en)
 
     def test_every_builder_body_names_a_next_step(self):
         from act.lib import notify

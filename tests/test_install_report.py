@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -70,6 +71,49 @@ class WriteReportTestCase(unittest.TestCase):
         data = json.loads(install_report.REPORT_PATH.read_text(encoding="utf-8"))
         self.assertEqual(data["mode"], "pkg-postinstall")
         self.assertEqual(data["user"], "b")
+
+
+class ConcurrentWriteTestCase(unittest.TestCase):
+    """§23 原子写在多 writer 下的保证（夜间审计批次）：固定共享 tmp 名会让
+    并发 writer 互抢——一方 os.replace 拿走对方的 tmp（FileNotFoundError 崩
+    writer），另一方残余 fd 写已 rename 的 inode（读者见撕裂 JSON）。mkstemp
+    唯一名后两个症状都必须消失（终端重跑 install.sh 与 in-app repair 可并发）。"""
+
+    def test_concurrent_writers_no_crash_no_torn_reads(self):
+        errors = []
+
+        def spin(tag):
+            try:
+                for _ in range(25):
+                    install_report.write_report(
+                        "interactive",
+                        [{"name": tag, "status": "ok", "detail": "x" * 20000}],
+                        [], user=tag)
+            except Exception as exc:  # noqa: BLE001 - the regression itself
+                errors.append(exc)
+
+        threads = [threading.Thread(target=spin, args=(f"w{i}",))
+                   for i in range(3)]
+        for t in threads:
+            t.start()
+        torn = 0
+        while any(t.is_alive() for t in threads):
+            if install_report.REPORT_PATH.exists():
+                try:
+                    json.loads(install_report.REPORT_PATH.read_text(
+                        encoding="utf-8"))
+                except ValueError:
+                    torn += 1
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])   # 旧实现：必现 FileNotFoundError
+        self.assertEqual(torn, 0)      # 读者任何时刻都读到完整 JSON
+        # 最终文件完整、且没留下唯一名 tmp 残骸
+        json.loads(install_report.REPORT_PATH.read_text(encoding="utf-8"))
+        leftovers = [p for p in install_report.REPORT_PATH.parent.iterdir()
+                     if p.name.startswith("install_report.json.")
+                     and p.name.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
 
 
 class CliTestCase(unittest.TestCase):

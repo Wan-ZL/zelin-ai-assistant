@@ -915,6 +915,21 @@ struct EngineDiagnosisRow: View {
                 RecordingController.shared.restartEngine()
             }
             .controlSize(.small)
+        case "engine_ffmpeg_missing":
+            // install + retry side by side: a dead engine's log tail keeps
+            // the old install-failure lines even after the user brew-installs
+            // ffmpeg, so this row would assert "missing" forever — and the
+            // segmented picker cannot re-fire an already-selected mode, so an
+            // on-the-spot restart is the only recovery this page can offer.
+            if let label = FailureCatalog.actionLabel(diag.failureId) {
+                Button(label) { FailureCatalog.perform(diag.failureId) }
+                    .controlSize(.small)
+            }
+            Button(L("装好了，重启引擎", "Installed — restart engine")) {
+                Analytics.log("failure_action", fields: ["id": diag.failureId])
+                RecordingController.shared.restartEngine()
+            }
+            .controlSize(.small)
         default:
             if let label = FailureCatalog.actionLabel(diag.failureId) {
                 Button(label) {
@@ -989,6 +1004,19 @@ struct IngestView: View {
                         Text(rec.selfHealNote)
                             .font(.system(size: 11))
                             .foregroundColor(.green)
+                    }
+                }
+                if !rec.recordingNote.isEmpty {
+                    // refused / rolled-back mode switch (15 s transient) —
+                    // shown regardless of mode: an off→screen_audio refusal
+                    // leaves mode at "off", which hides the diagnosis row.
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundColor(.orange)
+                        Text(rec.recordingNote)
+                            .font(.system(size: 11))
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 if rec.mode != "off" && rec.tccLost {
