@@ -209,18 +209,30 @@ def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 # classifiers
 # --------------------------------------------------------------------------- #
+# High-precision credential-failure signatures only, aligned with
+# act/lib/failures.py claude_auth_failed. Generic single words (auth / login /
+# credentials) are excluded on purpose: they matched repo paths like
+# ~/Projects/auth-service in the launch log and fabricated a "需要重新登录"
+# notification right after a successful dispatch.
 _AUTH_RE = re.compile(
-    r"\b(auth(?:entication)?|unauthorized|401|login|log in|re-?login|"
-    r"session expired|invalid[_ -]?token|please sign in|credentials?)\b",
+    r"authentication_error|invalid (x-)?api[- _]?key|"
+    r"\b401\b|OAuth token has expired|(?<![\w-])unauthorized|"
+    r"please run /login|api key.{0,20}(invalid|expired|revoked)|"
+    r"session expired|invalid[_ -]?token|please sign in",
     re.IGNORECASE,
 )
+
+# The dispatch launch log's fixed header (act/executor.py) embeds the target
+# path — "# dispatch R-x @ ..." / "# cwd=<target>". Never classify it: the
+# path is user data, not an error message.
+_LOG_HEADER_RE = re.compile(r"^# (dispatch\b|cwd=).*$", re.MULTILINE)
 
 
 def detect_auth_failure(log_text: str) -> bool:
     """True if an execution log looks like a credential/login failure."""
     if not log_text:
         return False
-    return bool(_AUTH_RE.search(log_text))
+    return bool(_AUTH_RE.search(_LOG_HEADER_RE.sub("", log_text)))
 
 
 def notify_new_card(title: str, req: Optional[str] = None) -> bool:

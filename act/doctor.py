@@ -191,20 +191,18 @@ class CheckResult:
 
 
 def _resolve_key(probes: Probes) -> Tuple[Optional[str], str]:
-    """Anthropic key content per CONTRACT §19 order, plus its source label."""
-    try:
-        val = (secrets.SECRETS_DIR / secrets.ANTHROPIC_API_KEY_FILE).read_text(
-            encoding="utf-8").strip()
-        if val:
-            return val, "config/secrets/anthropic-api-key.txt"
-    except OSError:
-        pass
-    try:
-        val = probes.legacy_key_path.read_text(encoding="utf-8").strip()
-        if val:
-            return val, str(probes.legacy_key_path)
-    except OSError:
-        pass
+    """Anthropic key content per CONTRACT §19 order, plus its source label.
+
+    Goes through act/lib/secrets so the first-token-line semantics match every
+    runtime consumer exactly — a whole-file read of a multiline key file used
+    to make the live probe FAIL on a key that works everywhere else.
+    """
+    val = secrets.read_secret(secrets.ANTHROPIC_API_KEY_FILE)
+    if val:
+        return val, "config/secrets/anthropic-api-key.txt"
+    val = secrets._read_path(probes.legacy_key_path)
+    if val:
+        return val, str(probes.legacy_key_path)
     return None, ""
 
 

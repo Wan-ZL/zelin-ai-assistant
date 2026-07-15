@@ -9,7 +9,8 @@ the manager, grouped by readiness:
 
 plus the 双向承诺账本 — every ``[MANAGER-OWES]`` line found in registry notes.
 
-Output: ``~/Projects/your-workbench/oneonone/prep-YYYY-MM-DD.md``.
+Output: ``<execution.default_target_repo>/oneonone/prep-YYYY-MM-DD.md``, or
+``state/oneonone/`` while no target repo has been configured.
 Run standalone: ``python -m act.oneonone`` (prints the written path).
 The Monday digest (``act.digest``) generates and links this page automatically.
 """
@@ -20,11 +21,22 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from act.lib import analytics
+from act.lib import analytics, config
 from act.lib.registry import Requirement, State, load_all
 
-WORKBENCH = Path("~/Projects/your-workbench").expanduser()
-ONEONONE_DIR = WORKBENCH / "oneonone"
+
+def output_root() -> Path:
+    """Root for generated pages (digest + 1:1 prep), resolved at call time.
+
+    Honors ``execution.default_target_repo``; when it was never explicitly
+    configured, falls back to STATE_DIR so the literal example placeholder
+    path (~/Projects/your-workbench) is never created on the user's disk
+    (config.default_target_repo_configured).
+    """
+    cfg = config.load_config()
+    if cfg.default_target_repo_configured:
+        return cfg.target_repo_path
+    return config.STATE_DIR
 
 _STATUS_ICON = {
     State.DETECTED.value: "📡",
@@ -164,8 +176,9 @@ def build_prep(today: Optional[_dt.date] = None) -> str:
 def write_prep(today: Optional[_dt.date] = None) -> Path:
     """Build + write the prep page; returns the written path."""
     today = today or _dt.date.today()
-    ONEONONE_DIR.mkdir(parents=True, exist_ok=True)
-    path = ONEONONE_DIR / f"prep-{today.isoformat()}.md"
+    out_dir = output_root() / "oneonone"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"prep-{today.isoformat()}.md"
     with open(path, "w", encoding="utf-8") as f:
         f.write(build_prep(today))
     analytics.log_event("oneonone_prep", path=str(path))

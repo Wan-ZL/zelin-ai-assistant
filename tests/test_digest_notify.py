@@ -28,8 +28,8 @@ class DigestNotifyTestCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="digest-out-")
         self.addCleanup(self.tmp.cleanup)
         patchers = [
-            mock.patch.object(digest, "DIGESTS_DIR",
-                              Path(self.tmp.name) / "digests"),
+            mock.patch.object(digest, "_digests_dir",
+                              return_value=Path(self.tmp.name) / "digests"),
             mock.patch.object(digest, "build_digest", return_value="# d\n"),
             mock.patch.object(digest.oneonone, "write_prep",
                               side_effect=RuntimeError("skip prep")),
