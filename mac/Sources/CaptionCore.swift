@@ -278,6 +278,67 @@ struct CaptionReducer {
     }
 }
 
+// MARK: - async ownership gate
+//
+// PR #51 review: every lifecycle finding traced to ONE structural root —
+// async completions (WS receive, reconnect timers, TCC callbacks,
+// capture-start Tasks) applying side effects without re-checking that they
+// still own the pipeline they were issued for. This gate is the shared fix:
+// a completion captures `token` when issued; every teardown/restart calls
+// bump(); a stale completion fails isCurrent() and must apply NOTHING.
+
+struct AsyncGate: Equatable {
+    private(set) var token = 0
+
+    /// Invalidate every outstanding completion; returns the new current token.
+    @discardableResult
+    mutating func bump() -> Int {
+        token += 1
+        return token
+    }
+
+    func isCurrent(_ t: Int) -> Bool { t == token }
+}
+
+// MARK: - pcm mixing
+
+enum CaptionMixer {
+    /// Sum two 16 kHz mono s16 streams with saturation; the shorter one is
+    /// zero-padded (one silent source must not mute the other). Empty inputs
+    /// pass the other stream through untouched.
+    static func mix(_ a: [Int16], _ b: [Int16]) -> [Int16] {
+        if a.isEmpty { return b }
+        if b.isEmpty { return a }
+        var out = [Int16](repeating: 0, count: max(a.count, b.count))
+        for i in 0..<out.count {
+            let sum = Int(i < a.count ? a[i] : 0) + Int(i < b.count ? b[i] : 0)
+            out[i] = Int16(clamping: sum)
+        }
+        return out
+    }
+}
+
+// MARK: - overlay status precedence
+//
+// Review G: pause is USER intent and must never be overwritten by engine
+// chatter (a late .listening once wiped the 已暂停 display, so the overlay
+// claimed to listen while feeding nothing). One pure source of truth for
+// what the status area shows, so the precedence is executable + tested.
+
+struct CaptionDisplayState: Equatable {
+    var paused = false
+    var statusText = ""
+    var statusIsError = false
+
+    /// The status line to render: the paused label always wins; then the
+    /// engine status/error; nil = listening normally (no line).
+    func statusLine(pausedLabel: String) -> (text: String, isError: Bool)? {
+        if paused { return (pausedLabel, false) }
+        if statusText.isEmpty { return nil }
+        return (statusText, statusIsError)
+    }
+}
+
 // MARK: - translation direction
 
 enum TranslateDirection {

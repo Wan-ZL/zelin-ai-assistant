@@ -113,10 +113,20 @@ other file needs editing. To cut a release:
   - Honest failure surfaces throughout: invalid/unactivated key, missing
     permission per source, engine unavailable on this macOS — each states
     what is missing and where to fix it, with automatic reconnect + backoff
-    for transient network drops.
+    for transient network drops. A fatal engine failure stops ALL capture
+    (mic/screen indicators go dark) while the overlay keeps the reason
+    visible and the menu item annotates itself instead of a checkmark.
+  - Pause (overlay hover button) fully stops capture and the engine
+    connection — nothing is captured or billed while paused; the last lines
+    stay on screen and resume rebuilds the pipeline. Hard privacy invariant
+    throughout: audio capture only ever runs while captions are enabled and
+    the overlay is visible (every async completion re-validates ownership,
+    so a toggle-off can never leave an orphaned mic tap or screen-capture
+    stream behind).
   - New swiftc test gate `ios/tests/captions/run.sh` (wired into CI): the
     hand-rolled Doubao binary wire framing (byte-exact vectors), gzip payload
-    decode, definite/partial dedup, and the 2-line roll-up reducer.
+    decode, definite/partial dedup, the 2-line roll-up reducer, the async
+    ownership gate, pcm mixing, and the paused-status precedence.
 
 ### Known limitations
 

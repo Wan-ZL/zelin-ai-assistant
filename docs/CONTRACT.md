@@ -1163,6 +1163,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 ## 34. v0.36.0 实时字幕（add-only，Mac 展示层）
 
+## 36. v0.36.0 实时字幕（add-only，Mac 展示层）
+
 实时字幕是**纯 Mac 本机展示层功能**，对既有契约零改动，本节只登记新增面：
 
 - **不碰录制状态机**：`recordingMode` 词表仍冻结为 `"off"|"screen"|"screen_audio"`

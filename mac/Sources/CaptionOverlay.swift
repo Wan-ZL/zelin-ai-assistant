@@ -64,13 +64,18 @@ struct CaptionOverlayView: View {
         ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 4) {
                 Spacer(minLength: 0)
-                if !cap.statusText.isEmpty {
-                    Text(cap.statusText)
+                // status precedence lives in CaptionDisplayState (CaptionCore,
+                // tested): the paused label always outranks engine status, so
+                // a late .listening can never claim we're listening while
+                // nothing is captured (review G)
+                if let status = displayState.statusLine(pausedLabel: Self.pausedLabel) {
+                    Text(status.text)
                         .font(.system(size: 11))
-                        .foregroundColor(cap.statusIsError ? .orange : .white.opacity(0.55))
+                        .foregroundColor(status.isError ? .orange
+                            : cap.paused ? .yellow.opacity(0.9) : .white.opacity(0.55))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if !cap.sourceNote.isEmpty {
+                if !cap.sourceNote.isEmpty && !cap.paused {
                     Text(cap.sourceNote)
                         .font(.system(size: 11))
                         .foregroundColor(.orange.opacity(0.9))
@@ -98,9 +103,18 @@ struct CaptionOverlayView: View {
         .onHover { hovering = $0 }
     }
 
+    static var pausedLabel: String {
+        L("已暂停 — 未在采集，也不计费", "Paused — nothing is captured or billed")
+    }
+
+    private var displayState: CaptionDisplayState {
+        CaptionDisplayState(paused: cap.paused, statusText: cap.statusText,
+                            statusIsError: cap.statusIsError)
+    }
+
     /// Nothing to show yet (and no status line explaining why).
     private var idle: Bool {
-        cap.statusText.isEmpty && cap.sourceNote.isEmpty
+        !cap.paused && cap.statusText.isEmpty && cap.sourceNote.isEmpty
             && cap.lines.finalText.isEmpty && cap.lines.liveText.isEmpty
     }
 
@@ -132,12 +146,17 @@ struct CaptionOverlayView: View {
     // hover-only strip: pause / settings / close
     private var controlStrip: some View {
         HStack(spacing: 10) {
-            Button {
-                cap.togglePause()
-            } label: {
-                Image(systemName: cap.paused ? "play.fill" : "pause.fill")
+            // engineDead = capture already stopped; nothing left to pause
+            // (toggling off / fixing the key in settings are the real moves)
+            if !cap.engineDead {
+                Button {
+                    cap.togglePause()
+                } label: {
+                    Image(systemName: cap.paused ? "play.fill" : "pause.fill")
+                }
+                .help(cap.paused ? L("继续", "Resume")
+                                 : L("暂停（停止采集与计费）", "Pause (stops capture and billing)"))
             }
-            .help(cap.paused ? L("继续", "Resume") : L("暂停（暂停时不计费）", "Pause (nothing is billed while paused)"))
             Button {
                 MainNav.shared.pendingAnchor = "live_captions"
                 MainNav.shared.section = .settings

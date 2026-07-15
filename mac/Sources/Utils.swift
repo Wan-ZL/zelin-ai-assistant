@@ -468,7 +468,7 @@ enum SecretsIO {
     static let slackFile = "slack-user-token.txt"
     static let gmailFile = "gmail-app-password.txt"
     static let anthropicFile = "anthropic-api-key.txt"
-    // v0.36 实时字幕 BYO keys (CONTRACT §34) — app-only: the Python side
+    // v0.36 实时字幕 BYO keys (CONTRACT §36) — app-only: the Python side
     // never reads these two.
     static let volcanoSpeechFile = "volcano-speech-key.txt"
     static let volcanoArkFile = "volcano-ark-key.txt"

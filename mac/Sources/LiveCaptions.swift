@@ -61,8 +61,31 @@ final class PCMFifo: @unchecked Sendable {
 final class MicCapture {
     private let engine = AVAudioEngine()
     private var running = false
+    private var fifo: PCMFifo?
+    private var observer: NSObjectProtocol?
+    /// Fired (main queue) when the tap could not be rebuilt after a device
+    /// change — the controller surfaces an honest note instead of a silent
+    /// frozen mic (review D).
+    var onFailure: ((String) -> Void)?
 
     func start(into fifo: PCMFifo) throws {
+        self.fifo = fifo
+        try installTapAndStart()
+        // AirPods connect / USB mic unplug / sleep-wake: macOS switches the
+        // default input, the engine stops and the captured formats go stale.
+        // Rebuild the tap with the fresh input format (main queue — all
+        // MicCapture state is touched from the main actor only).
+        observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine,
+            queue: .main) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    private func installTapAndStart() throws {
+        guard let fifo else {
+            throw CaptionError(message: L("麦克风尚未初始化", "Microphone not initialized"))
+        }
         let input = engine.inputNode
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
@@ -97,7 +120,23 @@ final class MicCapture {
         running = true
     }
 
+    private func handleConfigurationChange() {
+        guard running else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        do {
+            try installTapAndStart()
+        } catch {
+            running = false
+            onFailure?((error as? CaptionError)?.message
+                ?? error.localizedDescription)
+        }
+    }
+
     func stop() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        fifo = nil
         guard running else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -108,17 +147,52 @@ final class MicCapture {
 // MARK: - system-audio capture (ScreenCaptureKit; needs the Screen Recording
 // grant the app already manages for the screenpipe engine)
 
-final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+    // stream/fifo/stopped are touched from the main actor (start/stop), the
+    // cooperative pool (post-await resumes), AND SCStream's callback queue —
+    // one lock serializes them all (review B).
+    private let lock = NSLock()
     private var stream: SCStream?
     private var fifo: PCMFifo?
+    private var stopped = false
     private let queue = DispatchQueue(label: "zelin.captions.sysaudio", qos: .userInitiated)
     /// Fired when the stream dies out from under us (display unplug, TCC pull).
     var onStopped: (@Sendable (String) -> Void)?
 
+    // NSLock may not be called directly from async contexts (Swift 6 rule) —
+    // these tiny sync helpers do the locking; the async start() calls them.
+    private var isStopped: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopped
+    }
+
+    private func setFifo(_ f: PCMFifo?) {
+        lock.lock()
+        fifo = f
+        lock.unlock()
+    }
+
+    /// Publish the started stream unless stop() raced us; false = the caller
+    /// must stop the stream itself.
+    private func publishStream(_ s: SCStream) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if stopped { return false }
+        stream = s
+        return true
+    }
+
+    /// Privacy-critical shape (review B): stop() can arrive at ANY await
+    /// suspension below — every resume re-checks `stopped`, and the
+    /// post-startCapture window hands the just-started stream straight to
+    /// stopCapture instead of publishing it. Throws CancellationError when
+    /// stopped mid-flight (callers treat that as silence, not an error note).
     func start(into fifo: PCMFifo) async throws {
-        self.fifo = fifo
+        setFifo(fifo)
         let content = try await SCShareableContent
             .excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        if isStopped { throw CancellationError() }
         guard let display = content.displays.first else {
             throw CaptionError(message: L("找不到可捕获的显示器", "No display available to capture"))
         }
@@ -134,20 +208,33 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
         let s = SCStream(filter: filter, configuration: cfg, delegate: self)
         try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+        if isStopped { throw CancellationError() }
         try await s.startCapture()
-        stream = s
+        guard publishStream(s) else {
+            // stop() raced us — never leave the fresh stream running
+            try? await s.stopCapture()
+            throw CancellationError()
+        }
     }
 
     func stop() {
+        lock.lock()
+        stopped = true
         let s = stream
         stream = nil
         fifo = nil
+        lock.unlock()
         s?.stopCapture { _ in }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
-        guard type == .audio, let fifo else { return }
+        guard type == .audio else { return }
+        lock.lock()
+        let fifo = self.fifo
+        let dead = stopped
+        lock.unlock()
+        guard !dead, let fifo else { return }
         guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer),
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee
         else { return }
@@ -222,9 +309,12 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
     private var stopped = false
     private var gotFirstFrame = false
     private var backoff: TimeInterval = 1
-    /// Generation guard: a queued reconnect from a previous stop must not
-    /// resurrect a stopped engine.
-    private var generation = 0
+    /// Ownership gate (CaptionCore): EVERY connection teardown — stop(),
+    /// failAuth(), scheduleReconnect() — bumps it, so the dead connection's
+    /// still-registered receive callback and any queued reconnect closure
+    /// fail isCurrent() and apply nothing (review A: an in-band error frame
+    /// used to double-schedule reconnects into a 2^n connection storm).
+    private var gate = AsyncGate()
 
     init(apiKey: String) {
         self.apiKey = apiKey
@@ -238,7 +328,7 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
 
     func stop() {
         stopped = true
-        generation += 1
+        gate.bump()
         // polite end-of-stream marker (negative sequence), then close
         if let task {
             task.send(.data(DoubaoFrame.audioFrame(Data(), sequence: sequence, last: true))) { _ in }
@@ -284,20 +374,24 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
             t.send(.data(DoubaoFrame.fullClientRequest(json: payload, sequence: 1))) { _ in }
         }
         sequence = 2
-        receiveLoop(t, generation: generation)
+        receiveLoop(t, token: gate.token)
     }
 
-    private func receiveLoop(_ t: URLSessionWebSocketTask, generation gen: Int) {
+    private func receiveLoop(_ t: URLSessionWebSocketTask, token: Int) {
         t.receive { [weak self] result in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, !self.stopped, self.generation == gen else { return }
+                    guard let self, !self.stopped, self.gate.isCurrent(token) else { return }
                     switch result {
                     case .failure(let error):
                         self.handleFailure(error)
                     case .success(let message):
                         if case .data(let data) = message { self.handleFrame(data) }
-                        self.receiveLoop(t, generation: gen)
+                        // handleFrame may have torn this connection down (an
+                        // error frame → reconnect/auth-fail bumps the gate) —
+                        // never re-arm receive on a dead task (review A)
+                        guard self.gate.isCurrent(token) else { return }
+                        self.receiveLoop(t, token: token)
                     }
                 }
             }
@@ -340,7 +434,7 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
     /// would just look broken. Honest copy; the settings page has the fix.
     private func failAuth() {
         stopped = true
-        generation += 1
+        gate.bump()
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
         onStatus?(.failed(L("豆包语音 API Key 无效或未开通流式语音识别——去 设置→实时字幕 检查",
@@ -349,14 +443,17 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
 
     private func scheduleReconnect(after reason: String) {
         guard !stopped else { return }
+        // bump FIRST: the dying connection's receive callback (already
+        // registered) and any previously queued reconnect become stale NOW —
+        // exactly one reconnect can ever be in flight (review A)
+        let token = gate.bump()
         NSLog("[captions] doubao reconnect in %.0fs: %@", backoff, reason)
         onStatus?(.reconnecting)
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
-        let gen = generation
         DispatchQueue.main.asyncAfter(deadline: .now() + backoff) {
             MainActor.assumeIsolated {
-                guard !self.stopped, self.generation == gen else { return }
+                guard !self.stopped, self.gate.isCurrent(token) else { return }
                 self.connect()
             }
         }
@@ -574,10 +671,17 @@ final class LiveCaptionsController: ObservableObject {
     static let shared = LiveCaptionsController()
 
     @Published private(set) var enabled = false
+    /// Paused = user intent: ALL capture and the engine connection are torn
+    /// down (nothing is captured, nothing is billed, indicators go dark);
+    /// only the overlay + last lines stay. Resume rebuilds the pipeline.
     @Published private(set) var paused = false
+    /// The engine failed fatally (bad key, unsupported OS, …): capture is
+    /// stopped (privacy invariant), the overlay shows the reason, and the
+    /// menu toggle annotates itself instead of showing a plain checkmark.
+    @Published private(set) var engineDead = false
     @Published private(set) var lines = CaptionLines()
-    /// "" = listening normally; otherwise the honest status/error line the
-    /// overlay + settings both render.
+    /// "" = listening normally; otherwise the honest status/error line.
+    /// Views render it through CaptionDisplayState (pause outranks it).
     @Published private(set) var statusText = ""
     @Published private(set) var statusIsError = false
     /// Honest degradation note for a partially available source ("缺屏幕录制
@@ -625,6 +729,10 @@ final class LiveCaptionsController: ObservableObject {
     private let systemFifo = PCMFifo()
     private var sendTimer: Timer?
     private let translator = ArkTranslator()
+    /// Ownership gate for the controller's async edges (TCC callback,
+    /// SCStream start Task, capture failure callbacks): stopAllCapture()
+    /// bumps it, so completions issued for a previous pipeline apply nothing.
+    private var pipelineGate = AsyncGate()
 
     private init() {
         let d = UserDefaults.standard
@@ -669,13 +777,19 @@ final class LiveCaptionsController: ObservableObject {
         startPipeline()
     }
 
+    /// Pause = full stop of capture + engine (nothing captured, nothing
+    /// billed, mic/screen indicators go dark) with the overlay + last lines
+    /// kept. Resume rebuilds the pipeline. This is structural review-G
+    /// enforcement: while paused there IS no engine to emit a status that
+    /// could claim "listening", and views render the paused label from the
+    /// flag (CaptionDisplayState), never from statusText.
     func togglePause() {
-        paused.toggle()
-        // pausing stops FEEDING (Doubao bills by audio duration sent) but
-        // keeps the connection + overlay; fifos keep draining in tick()
         if paused {
-            setStatus(L("已暂停", "Paused"), error: false)
-        } else if statusText == L("已暂停", "Paused") {
+            paused = false
+            startEngineAndCapture()
+        } else {
+            paused = true
+            stopEngineAndCapture()
             setStatus("", error: false)
         }
     }
@@ -687,20 +801,81 @@ final class LiveCaptionsController: ObservableObject {
     }
 
     // MARK: pipeline
+    //
+    // Privacy invariant (review): capture may only be live while
+    // enabled == true AND the overlay is visible. Every ending path —
+    // toggle off, pause, restart, fatal engine failure — funnels through
+    // stopAllCapture(), and every async completion that could START capture
+    // is pipelineGate/ownership-guarded, so no orphan can survive it.
 
     private func startPipeline() {
         reducer.reset()
         lines = reducer.lines
         paused = false
+        startEngineAndCapture()
+    }
+
+    private func stopPipeline() {
+        stopEngineAndCapture()
+        paused = false
+        engineDead = false
+        setStatus("", error: false)
         sourceNote = ""
-        guard let resolved = resolveEngine() else { return }
-        engine = resolved.0
+        translationNote = ""
+        translationActive = false
+    }
+
+    /// Everything that listens or connects, torn down in one place.
+    private func stopEngineAndCapture() {
+        stopAllCapture()
+        engine?.stop()
+        engine = nil
+        translator.cancel()
+    }
+
+    /// THE capture chokepoint: after this returns, no mic tap, no SCStream,
+    /// no send timer is owned by the controller, and the gate bump makes
+    /// every in-flight async start stale (its ownership guard then stops any
+    /// stream it managed to create).
+    private func stopAllCapture() {
+        pipelineGate.bump()
+        sendTimer?.invalidate()
+        sendTimer = nil
+        mic?.stop()
+        mic = nil
+        systemCapture?.stop()
+        systemCapture = nil
+        micFifo.drain()
+        systemFifo.drain()
+    }
+
+    /// Engine + capture + send loop (shared by start and resume — resume
+    /// keeps the last lines on screen instead of blanking them).
+    private func startEngineAndCapture() {
+        pipelineGate.bump()
+        engineDead = false
+        sourceNote = ""
+        guard let resolved = resolveEngine() else {
+            // resolveEngine set the honest fatal status; nothing captures
+            engineDead = true
+            return
+        }
+        let eng = resolved.0
+        engine = eng
         engineIsDoubao = resolved.1
         activeEngineLabel = resolved.1 ? L("豆包在线", "Doubao (online)")
                                        : L("Apple 本地", "Apple on-device")
-        resolved.0.onUpdate = { [weak self] update in self?.apply(update) }
-        resolved.0.onStatus = { [weak self] status in self?.apply(status) }
-        resolved.0.start()
+        // ownership guard: callbacks from a replaced/stopped engine instance
+        // (late WS receive, analyzer task wind-down) must apply nothing
+        eng.onUpdate = { [weak self, weak eng] update in
+            guard let self, let eng, self.engine === eng else { return }
+            self.apply(update)
+        }
+        eng.onStatus = { [weak self, weak eng] status in
+            guard let self, let eng, self.engine === eng else { return }
+            self.apply(status)
+        }
+        eng.start()
         startAudio()
         recomputeTranslation()
         let timer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
@@ -708,25 +883,6 @@ final class LiveCaptionsController: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         sendTimer = timer
-    }
-
-    private func stopPipeline() {
-        sendTimer?.invalidate()
-        sendTimer = nil
-        engine?.stop()
-        engine = nil
-        mic?.stop()
-        mic = nil
-        systemCapture?.stop()
-        systemCapture = nil
-        micFifo.drain()
-        systemFifo.drain()
-        translator.cancel()
-        paused = false
-        setStatus("", error: false)
-        sourceNote = ""
-        translationNote = ""
-        translationActive = false
     }
 
     /// Engine per settings; nil = nothing usable (status explains what's
@@ -768,11 +924,19 @@ final class LiveCaptionsController: ObservableObject {
                 startMic()
             case .notDetermined:
                 // net-new for the app: recording's mic TCC is triggered by the
-                // screenpipe child; captions capture in-process, so ask here
+                // screenpipe child; captions capture in-process, so ask here.
+                // The grant can arrive MINUTES later — re-validate ownership
+                // and the CURRENT source choice before starting anything
+                // (review E: a stale grant once started a mic the user had
+                // switched away from, or a second one on re-enable).
+                let token = pipelineGate.token
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
-                            guard self.enabled else { return }
+                            guard self.enabled, !self.paused,
+                                  self.pipelineGate.isCurrent(token),
+                                  self.source != "system", self.mic == nil
+                            else { return }
                             if granted { self.startMic() } else { self.micUnavailable() }
                         }
                     }
@@ -795,6 +959,14 @@ final class LiveCaptionsController: ObservableObject {
 
     private func startMic() {
         let capture = MicCapture()
+        // device-change rebuild failed (review D) — only the CURRENT mic may
+        // report itself dead
+        capture.onFailure = { [weak self, weak capture] message in
+            guard let self, let capture, self.mic === capture else { return }
+            self.mic = nil
+            guard self.enabled, !self.paused else { return }
+            self.micUnavailable(message)
+        }
         do {
             try capture.start(into: micFifo)
             mic = capture
@@ -805,11 +977,16 @@ final class LiveCaptionsController: ObservableObject {
 
     private func startSystem() {
         let capture = SystemAudioCapture()
-        capture.onStopped = { [weak self] reason in
+        let token = pipelineGate.token
+        // stream died from the outside (display unplug, TCC pull): only the
+        // CURRENT capture may nil the reference/raise the note — a stale
+        // instance's death once dropped the healthy replacement (review B)
+        capture.onStopped = { [weak self, weak capture] reason in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.enabled else { return }
+                    guard let self, let capture, self.systemCapture === capture else { return }
                     self.systemCapture = nil
+                    guard self.enabled, !self.paused else { return }
                     self.systemUnavailable(L("系统声音捕获中断：", "System-audio capture stopped: ") + reason)
                 }
             }
@@ -818,9 +995,20 @@ final class LiveCaptionsController: ObservableObject {
         Task { @MainActor in
             do {
                 try await capture.start(into: systemFifo)
+                // the awaits inside start() are a toggle-off/restart window —
+                // re-check ownership; a stream we no longer own gets stopped
+                // on the spot (review B: orphaned SCStream, purple indicator
+                // stuck on with captions off)
+                guard enabled, !paused, pipelineGate.isCurrent(token),
+                      systemCapture === capture else {
+                    capture.stop()
+                    return
+                }
             } catch {
-                guard enabled, systemCapture === capture else { return }
+                if error is CancellationError { return }  // stopped mid-start: expected
+                guard systemCapture === capture else { return }
                 systemCapture = nil
+                guard enabled, pipelineGate.isCurrent(token) else { return }
                 systemUnavailable((error as? CaptionError)?.message
                     ?? error.localizedDescription)
             }
@@ -855,26 +1043,20 @@ final class LiveCaptionsController: ObservableObject {
     // MARK: send loop (150 ms cadence: drain fifos → mix → engine)
 
     private func tick() {
-        guard enabled, let engine else { return }
-        let n = 2400  // 150 ms @ 16 kHz
-        let a = micFifo.pop(n)
-        let b = systemFifo.pop(n)
-        // paused: fifos drained + dropped so unpausing never replays a backlog
-        guard !paused else { return }
-        var mixed: [Int16]
-        if a.isEmpty {
-            mixed = b
-        } else if b.isEmpty {
-            mixed = a
-        } else {
-            mixed = [Int16](repeating: 0, count: max(a.count, b.count))
-            for i in 0..<mixed.count {
-                let sum = Int(i < a.count ? a[i] : 0) + Int(i < b.count ? b[i] : 0)
-                mixed[i] = Int16(clamping: sum)
-            }
+        guard enabled, !paused, let engine else { return }
+        let frame = 2400  // 150 ms @ 16 kHz
+        // Catch-up drain (review C): a main-thread stall coalesces missed
+        // Timer fires into one, but capture kept pushing in real time — pop
+        // the WHOLE backlog as multiple ≤150 ms frames (Doubao wants
+        // 100–200 ms packets) so a stall is a one-tick blip, not permanent
+        // lag ending in silent drops at the fifo's 10 s cap. The iteration
+        // bound is that cap itself (67 × 150 ms) — the loop always ends.
+        for _ in 0..<67 {
+            let mixed = CaptionMixer.mix(micFifo.pop(frame), systemFifo.pop(frame))
+            if mixed.isEmpty { return }
+            engine.feed(mixed)
+            if mixed.count < frame { return }  // under one frame: caught up
         }
-        guard !mixed.isEmpty else { return }
-        engine.feed(mixed)
     }
 
     // MARK: results → reducer → overlay
@@ -901,6 +1083,13 @@ final class LiveCaptionsController: ObservableObject {
         case .reconnecting:
             setStatus(L("连接断开，正在重连…", "Connection lost — reconnecting…"), error: false)
         case .failed(let message):
+            // fatal, no retry: capture must not outlive a dead engine
+            // (review F — mic/screen indicators once stayed lit for hours
+            // feeding a dead engine while the overlay said the key was bad).
+            // Keep the overlay + honest error visible; the menu toggle
+            // annotates itself via engineDead.
+            engineDead = true
+            stopEngineAndCapture()
             setStatus(message, error: true)
         }
     }

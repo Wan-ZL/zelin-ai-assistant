@@ -54,7 +54,15 @@ struct RecordingMenuButton: View {
             Button {
                 cap.setEnabled(!cap.enabled)
             } label: {
-                if cap.enabled {
+                if cap.enabled && cap.engineDead {
+                    // engine failed fatally: capture is stopped and the
+                    // overlay shows why — a plain checkmark would lie
+                    Label(L("实时字幕（出错，见悬浮窗）", "Live captions (error — see overlay)"),
+                          systemImage: "exclamationmark.triangle")
+                } else if cap.enabled && cap.paused {
+                    Label(L("实时字幕（已暂停）", "Live captions (paused)"),
+                          systemImage: "pause.circle")
+                } else if cap.enabled {
                     Label(L("实时字幕", "Live captions"), systemImage: "checkmark")
                 } else {
                     Text(L("实时字幕", "Live captions"))

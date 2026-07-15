@@ -185,6 +185,64 @@ check(TranslateDirection.target(for: "Let's review the quarterly numbers", mode:
 check(TranslateDirection.target(for: "12345 …", mode: "auto") == "zh",
       "auto: no letters at all → zh (safe default)")
 
+// ---- 7. async ownership gate (PR #51 review: the shared fix for every
+// stale-completion finding — reconnect storms, orphaned SCStreams, late TCC
+// grants all reduce to "a completion outlived its pipeline") ----
+print("[16] AsyncGate: bump invalidates every outstanding token:")
+var gate = AsyncGate()
+let t0 = gate.token
+check(gate.isCurrent(t0), "initial token is current")
+let t1 = gate.bump()
+check(!gate.isCurrent(t0), "old token stale after bump")
+check(gate.isCurrent(t1), "bump returns the new current token")
+let t2 = gate.bump()
+check(!gate.isCurrent(t1) && gate.isCurrent(t2), "second bump: only newest survives")
+// the reconnect-storm shape (review A): teardown bumps FIRST; the dead
+// connection's still-registered receive callback AND any previously queued
+// reconnect both hold older tokens — neither may act
+let receiveToken = gate.token
+let reconnectToken = gate.bump()   // scheduleReconnect: bump, then queue
+check(!gate.isCurrent(receiveToken), "dead connection's receive re-arm is stale")
+check(gate.isCurrent(reconnectToken), "exactly one reconnect owns the gate")
+
+// ---- 8. pcm mixing (extracted from the send loop for the catch-up drain) ----
+print("[17] CaptionMixer: saturation + passthrough + unequal lengths:")
+check(CaptionMixer.mix([], []) == [], "both empty → empty")
+check(CaptionMixer.mix([1, 2], []) == [1, 2], "empty b → a passthrough")
+check(CaptionMixer.mix([], [3]) == [3], "empty a → b passthrough")
+check(CaptionMixer.mix([1000, -1000], [500, 500]) == [1500, -500], "plain sum")
+check(CaptionMixer.mix([32000], [32000]) == [32767], "positive clamp")
+check(CaptionMixer.mix([-32000], [-32000]) == [-32768], "negative clamp")
+check(CaptionMixer.mix([100, 200, 300], [10]) == [110, 200, 300],
+      "shorter stream zero-padded, longer one intact")
+
+// ---- 9. overlay status precedence (review G) ----
+print("[18] CaptionDisplayState: paused outranks engine status/errors:")
+var display = CaptionDisplayState()
+check(display.statusLine(pausedLabel: "PAUSED") == nil, "idle → no status line")
+display.statusText = "connecting"
+if let line = display.statusLine(pausedLabel: "PAUSED") {
+    check(line == ("connecting", false), "engine status shows when not paused")
+} else { check(false, "status", "engine status must render") }
+display.paused = true
+if let line = display.statusLine(pausedLabel: "PAUSED") {
+    check(line == ("PAUSED", false), "paused label wins over engine status",
+          "got \(line)")
+} else { check(false, "paused", "paused label must render") }
+display.statusText = ""
+if let line = display.statusLine(pausedLabel: "PAUSED") {
+    check(line == ("PAUSED", false), "paused label survives a .listening wipe")
+} else { check(false, "paused", "paused label must survive statusText clear") }
+display.statusText = "key invalid"
+display.statusIsError = true
+if let line = display.statusLine(pausedLabel: "PAUSED") {
+    check(line == ("PAUSED", false), "paused label wins over an error too")
+} else { check(false, "paused", "paused label must outrank errors") }
+display.paused = false
+if let line = display.statusLine(pausedLabel: "PAUSED") {
+    check(line == ("key invalid", true), "unpause reveals the error unchanged")
+} else { check(false, "status", "error must render after unpause") }
+
 if allOK {
     print("ALL CAPTIONS TESTS PASSED")
     exit(0)

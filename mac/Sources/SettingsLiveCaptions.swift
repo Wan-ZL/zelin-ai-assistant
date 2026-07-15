@@ -20,10 +20,17 @@ struct LiveCaptionsSettingsSection: View {
                    "Lyrics-style always-on-top captions: live transcription of the microphone and/or system audio. Also toggleable from the menu-bar Recording menu."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            if !cap.statusText.isEmpty {
-                statusRow(cap.statusText, isError: cap.statusIsError)
+            // same precedence as the overlay (CaptionDisplayState, tested):
+            // the paused label outranks engine status — never claim
+            // listening while nothing is captured
+            if let status = CaptionDisplayState(paused: cap.paused,
+                                                statusText: cap.statusText,
+                                                statusIsError: cap.statusIsError)
+                .statusLine(pausedLabel: CaptionOverlayView.pausedLabel
+                    + L("；在悬浮窗上点 ▶ 继续", " — click ▶ on the overlay to resume")) {
+                statusRow(status.text, isError: status.isError)
             }
-            if !cap.sourceNote.isEmpty {
+            if !cap.sourceNote.isEmpty && !cap.paused {
                 statusRow(cap.sourceNote, isError: true)
             }
             Divider()
