@@ -471,7 +471,7 @@ struct Dashboard: Decodable {
     let merge_suggestions: [MergeSuggestion]
     // §26 — optional; nil = no known update (older actd never emits it).
     let update_available: UpdateInfo?
-    // §34 v0.35 — optional; the Mac's user-set device name (mirrors the
+    // §35 v0.35 — optional; the Mac's user-set device name (mirrors the
     // pairing-QR label via state/sync.json). iOS adopts it after a board
     // refresh so a rename needs no re-scan; nil on older actd payloads.
     let device_label: String?

@@ -27,7 +27,7 @@ final class SyncSettingsModel: ObservableObject {
     @Published var errorNote = ""
     @Published var channelId = ""
     @Published var label = "" {
-        // QR capacity guard (§34): the name rides the pairing QR's trailing
+        // QR capacity guard (§35): the name rides the pairing QR's trailing
         // bytes, so cap the editable field at 64 characters.
         didSet { if label.count > 64 { label = String(label.prefix(64)) } }
     }
@@ -105,7 +105,7 @@ final class SyncSettingsModel: ObservableObject {
 
     /// Commit a device-name edit: re-run the idempotent pair path with the new
     /// label — channel_id/secrets stay stable, only the QR's trailing label
-    /// bytes + state/sync.json change (§34).
+    /// bytes + state/sync.json change (§35).
     func commitLabel() {
         guard !busy, enabled else { return }
         let t = label.trimmingCharacters(in: .whitespacesAndNewlines)

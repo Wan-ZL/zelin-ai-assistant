@@ -134,14 +134,14 @@ final class AppState: ObservableObject {
             self.boardSeq = row.seq
             self.lastSeenSeq[id] = row.seq
             if let u = parseISO(row.updated_at) { self.updatedAt[id] = u }
-            // §34 v0.35: a Mac rename rides the board payload (device_label) —
+            // §35 v0.35: a Mac rename rides the board payload (device_label) —
             // adopt it for the channel this snapshot came from, no re-scan.
             self.adoptDeviceLabel(dash.device_label, for: id)
             self.maybeNotify(dash, channelId: id)
         }
     }
 
-    /// §34 v0.35 rename-without-rescan: the board payload carries the Mac's
+    /// §35 v0.35 rename-without-rescan: the board payload carries the Mac's
     /// current device name. Update the in-memory Channel and rewrite its
     /// Keychain JSON (the exact shape addChannel persists) so the new name
     /// survives relaunch. No-op when absent / empty / unchanged.

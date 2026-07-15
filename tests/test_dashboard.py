@@ -530,7 +530,7 @@ class SingleCardCorruptionIsolationTestCase(unittest.TestCase):
 
 
 class DeviceLabelTestCase(unittest.TestCase):
-    """v0.35 top-level ``device_label`` (CONTRACT §34) — add-only passthrough
+    """v0.35 top-level ``device_label`` (CONTRACT §35) — add-only passthrough
     of the pairing label from state/sync.json so a paired phone can adopt a
     Mac rename without re-scanning. Absent (not null) when unpaired /
     unlabeled / unreadable."""

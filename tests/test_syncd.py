@@ -445,7 +445,7 @@ class InitChannelTestCase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# --pair label resolution (§33 fix + §34 rename path, via the real CLI)
+# --pair label resolution (§33 fix + §35 rename path, via the real CLI)
 # --------------------------------------------------------------------------- #
 @unittest.skipUnless(HAVE_CRYPTO, "cryptography not installed (optional cloud dep)")
 class PairLabelResolutionTestCase(unittest.TestCase):

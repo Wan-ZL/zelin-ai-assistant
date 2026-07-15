@@ -783,7 +783,7 @@ def build_dashboard(
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),
     }
-    # v0.35 device_label — §2 sibling field (add-only, CONTRACT §34): lets a
+    # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
     # paired phone adopt a Mac rename from the board payload without re-scanning
     # the QR. Omitted (not null) when unpaired / unlabeled.
     label = _device_label()

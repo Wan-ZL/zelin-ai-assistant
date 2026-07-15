@@ -124,7 +124,7 @@ if let d = decodeDashboard(board) {
     check(m.title(of: "ZZZ") == "ZZZ", "title(of:) off-board id → bare id")
 } else { check(false, "decode", "board fixture must decode") }
 
-// ---- 7. device_label (§34 v0.35): optional top-level rename-without-rescan ----
+// ---- 7. device_label (§35 v0.35): optional top-level rename-without-rescan ----
 // The Mac's user-set device name rides the board payload; old actd payloads
 // lack the key and must keep decoding (nil), and junk must not fail the decode.
 print("[7] device_label decode:")

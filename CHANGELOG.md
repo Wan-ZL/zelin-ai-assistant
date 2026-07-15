@@ -76,7 +76,7 @@ other file needs editing. To cut a release:
   (`--pair --label`), so the QR and `state/sync.json` update immediately while
   channel_id / secrets / epoch stay stable.
 - **Rename without re-scan.** `dashboard.json` gains an optional top-level
-  `device_label` (add-only, CONTRACT §34) mirroring the pairing label; the iOS
+  `device_label` (add-only, CONTRACT §35) mirroring the pairing label; the iOS
   app adopts it after each board refresh, updating the stored channel label in
   memory and Keychain. Old apps ignore the key, old payloads still decode, and
   re-scanning the QR keeps working exactly as before.
