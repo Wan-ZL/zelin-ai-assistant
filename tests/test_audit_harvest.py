@@ -18,6 +18,7 @@ transcripts under ~/.claude/projects — the real ~/.claude is never read.
 """
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,6 +58,10 @@ def _tool_result() -> str:
     }, ensure_ascii=False)
 
 
+@unittest.skipIf(
+    sys.platform.startswith("win"),
+    "sandbox via HOME env (Windows expanduser uses USERPROFILE) — the harvest "
+    "transcript-path area is not ported yet, same as test_harvest_delivery")
 class AuditHarvestBase(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="audit-harvest-home-")

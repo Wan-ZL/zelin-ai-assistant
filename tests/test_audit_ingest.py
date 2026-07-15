@@ -23,6 +23,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 
@@ -229,6 +230,8 @@ class ProcessingLivenessTestCase(unittest.TestCase):
         p.wait()
         return p.pid
 
+    @unittest.skipIf(sys.platform.startswith("win"),
+                     "POSIX ps -p liveness semantics (git-bash ps differs)")
     def test_live_claude_child_on_second_line_holds_the_lock(self):
         # killed parent (dead pid, line 1) + orphaned claude child whose
         # command line carries the skill path (line 2) → still live. The

@@ -14,6 +14,7 @@ Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import os
 import tempfile
+import sys
 import unittest
 from unittest import mock
 
@@ -88,6 +89,9 @@ class TinfoSigTestCase(unittest.TestCase):
         self.assertIsNone(dashboard._transcript_sig("abc"))
         self.assertIsNone(dashboard._transcript_sig(""))
 
+    @unittest.skipIf(sys.platform.startswith("win"),
+                     "transcript dir resolution unported on Windows "
+                     "(HOME-based sandbox; same area as harvest)")
     def test_signature_tracks_the_transcript_file(self):
         home = tempfile.mkdtemp(prefix="tinfo-home-")
         proj = os.path.join(home, ".claude", "projects", "proj-x")
