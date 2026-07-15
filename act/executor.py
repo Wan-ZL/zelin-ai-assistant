@@ -202,7 +202,11 @@ def resolve_voice_profile() -> Optional[Path]:
 
 
 def _quality_gate_block(cfg: config.Config, remote: bool = True,
-                        delivery_mode: str = "repo") -> str:
+                        delivery_mode: str = "repo",
+                        target: Optional[Path] = None) -> str:
+    """``target`` = the resolved dispatch cwd (build_prompt always passes it);
+    the chat file-artifact exception pins deliverables to {target}/deliverables/
+    per CONTRACT §33 — the working directory itself may be a hidden worktree."""
     parts = ["QUALITY GATE (mandatory before you consider this done):"]
     if cfg.self_check:
         parts.append(
@@ -224,10 +228,10 @@ def _quality_gate_block(cfg: config.Config, remote: bool = True,
         )
         parts.append(
             "- Exception — file-type artifacts (HTML pages, spreadsheets, anything "
-            "not meant to be pasted as plain text): write the artifact to a file at "
-            "an ABSOLUTE path under the working directory instead, and after the "
-            "standalone `FINAL DRAFT:` line put that file's absolute path plus a "
-            "3-5 line plain-text summary — never the raw source. The "
+            "not meant to be pasted as plain text): write the artifact to a file "
+            f"under the absolute directory {target}/deliverables/ instead, and "
+            "after the standalone `FINAL DRAFT:` line put that file's absolute "
+            "path plus a 3-5 line plain-text summary — never the raw source. The "
             "no-repo-files rule above does not apply to these artifact files."
         )
         parts.append(
@@ -322,7 +326,8 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
         )
 
     blocks.append("\n## " + _quality_gate_block(cfg, remote=remote,
-                                                delivery_mode=delivery_mode))
+                                                delivery_mode=delivery_mode,
+                                                target=target))
 
     if (req.type or "").lower() == "training":
         blocks.append("\n## " + _training_block())
@@ -868,13 +873,44 @@ def _transcript_cwd(sid: str) -> Optional[Path]:
 _FINAL_DRAFT_MARKER = "FINAL DRAFT:"
 
 
-def _assistant_texts(path: Path) -> list[str]:
+def _is_user_turn(d: dict) -> bool:
+    """True for a REAL user message line — the dispatch prompt, a rework
+    feedback injection, or attach input. Tool results also arrive as
+    type=="user" lines (content = tool_result blocks, top-level toolUseResult
+    key) and harness-injected lines carry isMeta — neither is a user turn.
+    Field shapes verified against live transcripts (2026-07-15)."""
+    if d.get("type") != "user" or d.get("isSidechain") or d.get("isMeta"):
+        return False
+    if "toolUseResult" in d:
+        return False
+    msg = d.get("message")
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        kinds = {b.get("type") for b in content if isinstance(b, dict)}
+        if "tool_result" in kinds:
+            return False
+        return bool(kinds & {"text", "image"})
+    return False
+
+
+def _assistant_texts(path: Path, since_last_user: bool = False) -> list[str]:
     """All non-empty assistant TEXT messages of a transcript JSONL, in order.
 
     Transcript lines are ``{"type": "assistant", "message": {"content": [...]}}``
     where content is a list of blocks (text / tool_use / ...); join the text
     blocks. Sidechain (subagent) messages are skipped — the delivery summary is
     a main-thread message. Same line-tolerant parsing as _transcript_info.
+
+    ``since_last_user=True`` keeps only messages AFTER the last real user turn
+    (see _is_user_turn): a rework resume injects Zelin's feedback as a user
+    message, so anything before it belongs to a previous delivery round — a
+    打回-rejected FINAL DRAFT must never be resurrected (audit 2026-07). The
+    initial dispatch prompt is also a user turn, so first-delivery transcripts
+    behave exactly as before.
     """
     out: list[str] = []
     with open(path, encoding="utf-8") as fh:
@@ -883,7 +919,12 @@ def _assistant_texts(path: Path) -> list[str]:
                 d = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(d, dict) or d.get("type") != "assistant" or d.get("isSidechain"):
+            if not isinstance(d, dict) or d.get("isSidechain"):
+                continue
+            if since_last_user and _is_user_turn(d):
+                out.clear()
+                continue
+            if d.get("type") != "assistant":
                 continue
             msg = d.get("message")
             if not isinstance(msg, dict):
@@ -950,11 +991,14 @@ def harvest_delivery(session_id: str) -> dict:
     session from its transcript (v0.10 契约 C).
 
     Returns ``{"delivered_summary": str|None, "final_draft": str|None}``:
-    - the delivery message is the LAST assistant text bearing a standalone
+    - only assistant messages AFTER the last real user turn count — a 打回
+      injects the feedback as a user message, so a previous round's rejected
+      draft can never be resurrected into 待验收 (audit 2026-07); the initial
+      dispatch prompt is also a user turn, so first deliveries are unchanged;
+    - the delivery message is the LAST such text bearing a standalone
       out-of-fence ``FINAL DRAFT:`` line — a closing remark AFTER it (final
       check, cleanup note) must not hide the draft (audit 2026-07); with no
-      marker anywhere, the last assistant text (500 chars max) is
-      ``delivered_summary``;
+      marker, the last assistant text (500 chars max) is ``delivered_summary``;
     - within that message, everything after the LAST out-of-fence marker
       (20000 chars max) is ``final_draft`` and the part before (500 chars max)
       is ``delivered_summary``; an empty draft after that marker means NO
@@ -976,7 +1020,7 @@ def harvest_delivery(session_id: str) -> dict:
         texts: list[str] = []
         for f in sorted(proj_root.glob(f"*/{short}*.jsonl")):
             try:
-                texts = _assistant_texts(f)
+                texts = _assistant_texts(f, since_last_user=True)
             except OSError:
                 continue
             if texts:
@@ -1122,12 +1166,18 @@ def rework(
 
     # v0.10: gate reminder follows the requirement's delivery mode.
     if (getattr(req, "delivery_mode", None) or "repo") == "chat":
+        # CONTRACT §33: file-type deliverables live under the WORKBENCH
+        # deliverables/ dir — `target` here is the transcript cwd (usually a
+        # hidden worktree), so derive the workbench root like build_prompt does.
+        repo_target = (Path(req.target_repo).expanduser() if req.target_repo
+                       else cfg.target_repo_path)
         gate_line = (
             "聊天交付规则不变（成稿放进结束总结、单独一行 FINAL DRAFT: 之后跟全文、"
             "不落文件、不建分支、不对外发消息），除非本次反馈本身是定稿指令"
             "（那就把最终稿落盘 commit 到新 feature 分支并报告路径）。"
-            "文件型交付物（HTML 等）例外：写成文件并在 FINAL DRAFT: 后报绝对路径，"
-            "不贴源码。提到任何文件一律用绝对路径。"
+            f"文件型交付物（HTML 等）例外：写到 {repo_target}/deliverables/ 下的"
+            "文件并在 FINAL DRAFT: 后报绝对路径，不贴源码。"
+            "提到任何文件一律用绝对路径。"
         )
     else:
         gate_line = ("原有 QUALITY GATE 规则不变（draft 交付、不 merge、不对外发消息）。"

@@ -38,6 +38,25 @@ def _assistant(text: str, sidechain: bool = False) -> str:
     return json.dumps(d, ensure_ascii=False)
 
 
+def _user(text: str, meta: bool = False, as_blocks: bool = False) -> str:
+    content = [{"type": "text", "text": text}] if as_blocks else text
+    d: dict = {"type": "user", "message": {"content": content}}
+    if meta:
+        d["isMeta"] = True
+    return json.dumps(d, ensure_ascii=False)
+
+
+def _tool_result() -> str:
+    # shape verified against live transcripts: type=user + tool_result blocks
+    # + top-level toolUseResult — NOT a user turn
+    return json.dumps({
+        "type": "user",
+        "message": {"content": [{"type": "tool_result",
+                                 "tool_use_id": "toolu_01", "content": "ok"}]},
+        "toolUseResult": {"stdout": "ok"},
+    }, ensure_ascii=False)
+
+
 class AuditHarvestBase(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="audit-harvest-home-")
@@ -200,6 +219,91 @@ class HtmlPathHydrationTestCase(AuditHarvestBase):
         self.html.write_text("<p>" + "文" * 25000, encoding="utf-8")
         out = self._deliver(str(self.html))
         self.assertEqual(len(out["final_draft"]), 20000)
+
+
+# --------------------------------------------------------------------------- #
+# 4. rework-round scoping — only messages after the last real user turn count
+# --------------------------------------------------------------------------- #
+class ReworkRoundScopingTestCase(AuditHarvestBase):
+    def test_stale_draft_before_feedback_is_not_resurrected(self):
+        # round-1 delivery -> 打回 feedback (user turn) -> rework agent blocks
+        # on a question: the rejected round-1 draft must NOT re-promote the
+        # card to 待验收.
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("第一轮总结\nFINAL DRAFT:\n第一轮成稿"),
+            _user("打回：换个口吻重写"),
+            _assistant("好的，先确认一下：面向内部还是客户？"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertIsNone(out["final_draft"])
+        self.assertEqual(out["delivered_summary"], "好的，先确认一下：面向内部还是客户？")
+
+    def test_no_assistant_reply_after_feedback_returns_both_none(self):
+        # feedback sent, rework agent died before answering — nothing has been
+        # delivered THIS round, so nothing is harvested (both None).
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("第一轮总结\nFINAL DRAFT:\n第一轮成稿"),
+            _user("打回：换个口吻重写"),
+        ])
+        self.assertEqual(executor.harvest_delivery(SID),
+                         {"delivered_summary": None, "final_draft": None})
+
+    def test_new_draft_after_feedback_wins(self):
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("第一轮总结\nFINAL DRAFT:\n第一轮成稿"),
+            _user("打回：换个口吻重写"),
+            _assistant("第二版总结\nFINAL DRAFT:\n第二轮成稿"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["final_draft"], "第二轮成稿")
+        self.assertEqual(out["delivered_summary"], "第二版总结")
+
+    def test_first_delivery_after_dispatch_prompt_unchanged(self):
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("总结\nFINAL DRAFT:\n成稿全文"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["final_draft"], "成稿全文")
+        self.assertEqual(out["delivered_summary"], "总结")
+
+    def test_tool_result_line_does_not_mask_the_draft(self):
+        # tool results arrive as type=user lines — they are NOT user turns, so
+        # the delivery→tool call→closing remark pattern keeps its draft.
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("总结\nFINAL DRAFT:\n成稿全文"),
+            _tool_result(),
+            _assistant("All checks pass."),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["final_draft"], "成稿全文")
+        self.assertEqual(out["delivered_summary"], "总结")
+
+    def test_meta_user_line_does_not_mask_the_draft(self):
+        # harness-injected isMeta lines are not user turns either.
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("总结\nFINAL DRAFT:\n成稿全文"),
+            _user("Caveat: injected by the harness", meta=True),
+            _assistant("收尾备注"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["final_draft"], "成稿全文")
+
+    def test_block_form_user_feedback_also_scopes(self):
+        # user turns may carry content as [{"type":"text",...}] blocks too.
+        self._write([
+            _user("dispatch prompt"),
+            _assistant("第一轮总结\nFINAL DRAFT:\n第一轮成稿"),
+            _user("打回：重写", as_blocks=True),
+            _assistant("收到，处理中的提问？"),
+        ])
+        out = executor.harvest_delivery(SID)
+        self.assertIsNone(out["final_draft"])
 
 
 if __name__ == "__main__":

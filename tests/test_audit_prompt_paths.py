@@ -45,11 +45,19 @@ class BuildPromptPathRulesTestCase(unittest.TestCase):
         self.assertIn("ABSOLUTE path", prompt)
 
     def test_chat_clause_has_file_artifact_carveout(self):
-        prompt, _ = self._prompt(delivery_mode="chat")
+        prompt, td = self._prompt(delivery_mode="chat")
         self.assertIn("file-type artifacts", prompt)
         # the carve-out keeps the FINAL DRAFT: marker non-empty (path+summary)
         self.assertIn("absolute path plus a", prompt)
         self.assertIn("never the raw source", prompt)
+        # CONTRACT §33: pinned to the workbench deliverables/ dir — for every
+        # output format, not just html (default _prompt fmt is markdown)
+        self.assertIn(f"{td}/deliverables/", prompt)
+
+    def test_chat_clause_deliverables_dir_present_for_all_formats(self):
+        for fmt in ("markdown", "html"):
+            prompt, td = self._prompt(fmt=fmt, delivery_mode="chat")
+            self.assertIn(f"{td}/deliverables/", prompt, msg=fmt)
 
     def test_file_path_reporting_block_is_universal(self):
         # applies to every mode/format — including the markdown default
@@ -105,6 +113,10 @@ class ReworkGateLinePathRulesTestCase(unittest.TestCase):
         self.assertIn("文件型交付物", prompt)
         self.assertIn("绝对路径", prompt)
         self.assertIn("不贴源码", prompt)
+        # CONTRACT §33: pinned to the WORKBENCH deliverables/ dir, not the
+        # transcript cwd (which is usually a hidden worktree)
+        self.assertIn(f"{self.cfg.target_repo_path}/deliverables/", prompt)
+        self.assertNotIn(f"{self.wt}/deliverables/", prompt)
 
     def test_repo_gate_line_requires_absolute_paths_too(self):
         self.assertIn("绝对路径", self._rework_prompt("repo"))

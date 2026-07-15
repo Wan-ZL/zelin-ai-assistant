@@ -312,13 +312,36 @@ def _write_applied_ack(action_id: str, result_status: str) -> None:
         pass
 
 
-def _precondition_ok(req: Requirement, expected_status: Optional[str]) -> bool:
+def _precondition_ok(req: Requirement, expected_status: Optional[str],
+                     action: Optional[str] = None) -> bool:
     """§5.4 stale-guard: True unless the phone pinned an ``expected_status`` that
     no longer matches the card's current status (the card moved since the phone
-    saw it — apply would rip a running/moved card, so caller no-ops)."""
+    saw it — apply would rip a running/moved card, so caller no-ops).
+
+    Projection alias (integration audit 2026-07-15): the 待验收 lane the phone
+    renders is NOT a pure status view — the dashboard also projects an
+    on-disk-EXECUTING card there once its roster agent is done (and with
+    ``auto_resume: false`` nothing ever promotes it to on-disk review, so that
+    shape can persist indefinitely). The phone pins expected_status="review" on
+    every accept/rework from that lane, so for those two verbs "review" must be
+    satisfied by the SAME relaxed surface the no-expected local path accepts
+    (review OR executing — the accept branch's exact status whitelist; NOT
+    gated on execution.done, which is never stamped in the auto_resume:false
+    shape). Every other mismatch (trashed/card_sent/delivered/…) stays a stale
+    no-op. The other pinned verbs have no such alias: the phone renders 修改
+    only on non-processing 提案 cards (on-disk card_sent exactly — raising
+    cards hide the action bar) and 研究并提议 only in the debt lane (detected
+    exactly), so their pins always match at render time.
+    """
     if expected_status is None:
         return True
-    return str(req.status) == str(expected_status)
+    if str(req.status) == str(expected_status):
+        return True
+    if (action in ("accept", "rework")
+            and str(expected_status) == State.REVIEW.value
+            and str(req.status) == State.EXECUTING.value):
+        return True
+    return False
 
 
 def _spawn_weekly_digest() -> str:
@@ -966,8 +989,10 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # is still EXECUTING (agent done, not yet promoted: process_inbox runs
         # BEFORE reconcile_executing), so a local 验收 must land regardless of
         # the current status. A hard REVIEW-only precondition would silently
-        # no-op those and, with auto_resume:false, break accept forever.
-        if not _precondition_ok(req, expected_status):
+        # no-op those and, with auto_resume:false, break accept forever. The
+        # phone pins expected_status="review" from that same projected lane, so
+        # _precondition_ok grants the review⇄executing alias for this verb.
+        if not _precondition_ok(req, expected_status, action):
             _log(f"inbox: {req.id} accept stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"
@@ -1016,7 +1041,9 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # including the 待验收 EXECUTING-done case (process_inbox runs BEFORE
         # reconcile_executing promotes it to review). executor.rework itself
         # handles stop-idle-then-resume, so an on-disk EXECUTING card is safe.
-        if not _precondition_ok(req, expected_status):
+        # The phone pins expected_status="review" from that same projected
+        # lane, so _precondition_ok grants the review⇄executing alias here too.
+        if not _precondition_ok(req, expected_status, action):
             _log(f"inbox: {req.id} rework stale "
                  f"(expected {expected_status}, is {req.status}) — no-op")
             return "noop"

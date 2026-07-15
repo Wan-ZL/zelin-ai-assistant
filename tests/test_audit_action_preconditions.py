@@ -34,11 +34,13 @@ def _mk_req(req_id="R-860", status=State.CARD_SENT.value, execution=None,
     return req
 
 
-def _drop(action, req_id="R-860", comment=None):
+def _drop(action, req_id="R-860", comment=None, expected_status=None):
     config.ensure_state_dirs()
+    body = {"id": req_id, "action": action, "comment": comment}
+    if expected_status is not None:
+        body["expected_status"] = expected_status
     path = config.INBOX_DIR / f"{uuid.uuid4()}.json"
-    path.write_text(json.dumps({"id": req_id, "action": action,
-                                "comment": comment}), encoding="utf-8")
+    path.write_text(json.dumps(body), encoding="utf-8")
     return path
 
 
@@ -137,6 +139,61 @@ class AcceptReapsSessionTestCase(PreconditionBase):
             actd.process_inbox()
         stop.assert_not_called()
         self.assertEqual(registry.load("R-860").status, State.DELIVERED.value)
+
+
+class ExpectedReviewProjectionAliasTestCase(PreconditionBase):
+    """Integration audit 2026-07-15: the phone pins expected_status="review"
+    on every accept/rework (shared/Sources/InboxAction.swift
+    pinnedExpectedStatus), but the 待验收 lane it rendered from also projects
+    on-disk-EXECUTING cards whose roster agent is done — and with
+    auto_resume:false that shape persists forever (reconcile never promotes).
+    The stale-guard must grant the review⇄executing alias for these two verbs
+    or a phone 验收/打回 on an agent-done card acks noop permanently."""
+
+    def test_synced_accept_on_executing_agent_done_card_applies(self):
+        _mk_req(status=State.EXECUTING.value,
+                execution={"session_id": "sess-1", "done": True})
+        stop = mock.Mock(return_value=True)
+        with mock.patch.object(actd.executor, "stop_session", stop):
+            _drop("accept", expected_status="review")
+            actd.process_inbox()
+        req = registry.load("R-860")
+        self.assertEqual(req.status, State.DELIVERED.value)
+        self.assertTrue((req.execution or {}).get("accepted_at"))
+
+    def test_synced_rework_on_executing_agent_done_card_applies(self):
+        req = _mk_req(status=State.EXECUTING.value,
+                      execution={"session_id": "sess-1", "done": True})
+        fake_exec = mock.Mock()
+        fake_exec.rework.return_value = True
+        with mock.patch.object(actd, "executor", fake_exec):
+            ret = actd._apply_decision(req, "rework", "再补一段", "review", None)
+        self.assertEqual(ret, "running")
+        fake_exec.rework.assert_called_once()
+
+    def test_synced_accept_on_trashed_card_stays_noop(self):
+        # the alias never weakens the guard's real value: a card that truly
+        # moved (trashed since the phone saw it) is still a stale no-op
+        req = _mk_req(status=State.TRASHED.value,
+                      trashed_at="2026-07-15T00:00:00Z")
+        ret = actd._apply_decision(req, "accept", None, "review", None)
+        self.assertEqual(ret, "noop")
+        self.assertEqual(registry.load("R-860").status, State.TRASHED.value)
+
+    def test_synced_accept_on_card_sent_stays_noop(self):
+        req = _mk_req(status=State.CARD_SENT.value)
+        ret = actd._apply_decision(req, "accept", None, "review", None)
+        self.assertEqual(ret, "noop")
+        self.assertEqual(registry.load("R-860").status, State.CARD_SENT.value)
+
+    def test_alias_is_accept_rework_only(self):
+        # comment pinning "card_sent" must NOT inherit the executing alias —
+        # the phone never renders 修改 on a non-card_sent surface
+        req = _mk_req(status=State.EXECUTING.value,
+                      execution={"session_id": "sess-1", "done": True})
+        ret = actd._apply_decision(req, "comment", "改方向", "card_sent", None)
+        self.assertEqual(ret, "noop")
+        self.assertEqual(registry.load("R-860").status, State.EXECUTING.value)
 
 
 if __name__ == "__main__":
