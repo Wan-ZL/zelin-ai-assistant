@@ -359,13 +359,16 @@ final class DashboardStore: ObservableObject {
                 // direct-run: after 180 s with no queued row the task really
                 // did NOT start — orange, and say so (audit honesty standard);
                 // a proposal capture is usually just slow analysis — yellow.
+                // The run copy names BOTH causes: actd acks noop when the line
+                // matched an existing 待验收/提案 card (fold, nothing runs) —
+                // indistinguishable from a dead backend at this distance.
                 notices.append(LocalNotice(
                     id: "notice-" + c.id,
                     kind: c.run ? .raiseTimeout : .captureTimeout,
                     lane: c.run ? .running : .approval,
                     text: c.run
-                        ? L("「\(String(c.text.prefix(20)))」已提交但后台超时未确认，任务没有开始，请重试（检查 actd 是否在运行）",
-                            "\"\(String(c.text.prefix(20)))\" was submitted but the backend never confirmed — nothing started, try again (check that actd is running)")
+                        ? L("「\(String(c.text.prefix(20)))」任务没有开始——可能这句话命中了已有的卡（看看待验收/提案），或后台没在跑（检查 actd）",
+                            "\"\(String(c.text.prefix(20)))\" did not start — the line may have matched an existing card (check Review/Proposals), or the backend isn't running (check actd)")
                         : L("分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log",
                             "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log"),
                     created: now))
@@ -840,12 +843,14 @@ final class DashboardStore: ObservableObject {
         let p = normalized(text)
         guard !p.isEmpty else { return false }
         let pKey = String(p.prefix(10))
-        // v0.34 direct-run: the card lands as a queued/running row (title =
-        // the typed text, truncated), promoted to review when it finishes —
-        // scan those lanes; a proposal capture keeps matching needs_approval.
+        // v0.34 direct-run: a filed run lands as a queued/running row (title =
+        // the typed text, truncated) — clear ONLY against rows that can
+        // represent THIS submit. Deliberately NOT review: a week-old 待验收
+        // card with the same words would clear the placeholder into a fake
+        // "launched" look while actd acked noop (nothing started); letting
+        // the 180 s timeout fire with its honest notice is the correct outcome.
         let fields: [[String]] = run
             ? (db.running + db.needs_input).map { [$0.name, $0.summary ?? ""] }
-                + db.review.map { [$0.name, $0.summary ?? ""] }
             : db.needs_approval.map { [$0.title, $0.summary ?? ""] }
         for row in fields {
             for field in row {

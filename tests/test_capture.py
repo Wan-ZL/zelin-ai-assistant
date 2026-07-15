@@ -224,9 +224,14 @@ class DirectRunCaptureTestCase(unittest.TestCase):
         self.assertEqual(entries[0].status, State.APPROVED.value)
 
     def test_run_mode_promotes_matching_open_proposal_instead_of_twin(self):
+        # the matched proposal carries LLM-chosen REPO routing — promotion must
+        # strip it (direct-run skipped the preview, so no branch/PR may land in
+        # that repo) and leave an honest notes tag about the reroute.
         text = "已有提案卡的同一句话"
         existing = Requirement(id=registry.next_id(), title=text,
                                status=State.CARD_SENT.value,
+                               delivery_mode="repo",
+                               target_repo="/tmp/llm-routed-repo",
                                sources=[{"who": "zelin", "channel": "quick_capture",
                                          "date": "2026-07-14", "quote": text}])
         registry.save(existing)
@@ -235,10 +240,33 @@ class DirectRunCaptureTestCase(unittest.TestCase):
         actd.process_inbox()
         entries = [r for r in registry.load_all() if r.title == text]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].id, existing.id)
+        got = entries[0]
+        self.assertEqual(got.id, existing.id)
+        self.assertEqual(got.status, State.APPROVED.value)
+        self.assertEqual(got.delivery_mode, "chat")
+        self.assertIsNone(got.target_repo)
+        self.assertIn("[direct-run] 交付改为 chat", got.notes or "")
+
+    def test_run_mode_promoted_raising_card_forced_to_chat(self):
+        # a plain-capture card mid-expansion defaults to delivery_mode="repo";
+        # a direct-run of the same text must promote it AND force chat.
+        text = "先普通捕获再直接开跑的同一句话"
+        self._write_capture(text, mode=None)
+        actd.process_inbox()
+        req = [r for r in registry.load_all() if r.title == text][0]
+        self.assertEqual(req.status, State.RAISING.value)
+        self.assertEqual(req.delivery_mode, "repo")
+
+        self._write_capture(text)
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].status, State.APPROVED.value)
+        self.assertEqual(entries[0].delivery_mode, "chat")
+        self.assertIsNone(entries[0].target_repo)
 
     def test_run_mode_never_requeues_a_card_already_running(self):
+        _activate_sync()
         text = "正在跑的卡不再重复排队"
         running = Requirement(id=registry.next_id(), title=text,
                               status=State.EXECUTING.value,
@@ -247,12 +275,84 @@ class DirectRunCaptureTestCase(unittest.TestCase):
                                         "date": "2026-07-14", "quote": text}])
         registry.save(running)
 
-        self._write_capture(text)
+        aid = self._write_capture(text)
         actd.process_inbox()
         entries = [r for r in registry.load_all() if r.title == text]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].status, State.EXECUTING.value)
         self.assertEqual((entries[0].execution or {}).get("session_id"), "live1234")
+        # the ask genuinely is in motion — "running" is the honest ack here
+        self.assertEqual(_ack_for(aid), "running")
+
+    def test_run_mode_reraises_delivered_card_as_new_queued_round(self):
+        # CONTRACT §34: the run box must be able to re-run a finished task —
+        # the resolved match forces the §3.5 re-raise (merge_or_new's increment
+        # gate alone would silently fold) and the new round actually queues:
+        # the finished round's session_id is archived so dispatch_approved
+        # does not skip the card as "already dispatched".
+        _activate_sync()
+        text = "重跑上次已交付的那个任务"
+        delivered = Requirement(id=registry.next_id(), title=text,
+                                status=State.DELIVERED.value,
+                                delivery_mode="repo",
+                                target_repo="/tmp/llm-routed-repo",
+                                execution={"session_id": "oldround1", "done": True,
+                                           "accepted_at": "2026-07-10T00:00:00Z"},
+                                sources=[{"who": "zelin", "channel": "quick_capture",
+                                          "date": "2026-07-10", "quote": text}])
+        registry.save(delivered)
+
+        aid = self._write_capture(text)
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
+        got = entries[0]
+        self.assertEqual(got.id, delivered.id)          # same card, new round
+        self.assertEqual(got.status, State.APPROVED.value)
+        self.assertEqual(got.delivery_mode, "chat")
+        self.assertIsNone(got.target_repo)
+        ex = got.execution or {}
+        self.assertTrue(ex.get("reraised_at"))
+        self.assertEqual(ex.get("reraised_session_id"), "oldround1")
+        self.assertNotIn("session_id", ex)
+        self.assertNotIn("done", ex)
+        self.assertEqual(_ack_for(aid), "running")
+
+        fake = mock.Mock()
+        fake.DispatchError = executor.DispatchError
+
+        def _dispatch(req, cfg):
+            req.set_status(State.EXECUTING)
+            req.execution = {"session_id": "newround2"}
+            registry.save(req)
+            return req
+
+        fake.dispatch.side_effect = _dispatch
+        with mock.patch.object(actd, "executor", fake):
+            self.assertEqual(actd.dispatch_approved(config.Config()), 1)
+        self.assertEqual(registry.load(delivered.id).status, State.EXECUTING.value)
+
+    def test_run_mode_fold_into_review_card_is_acked_noop(self):
+        # a 待验收 match files no run: sources fold, the card stays in review,
+        # and the ack must say so — "running" here would be a silent fake
+        # success (the Mac placeholder deliberately does not clear against
+        # review rows for the same reason).
+        _activate_sync()
+        text = "命中一张待验收卡的同一句话"
+        review = Requirement(id=registry.next_id(), title=text,
+                             status=State.REVIEW.value,
+                             execution={"session_id": "rev1", "done": True},
+                             sources=[{"who": "zelin", "channel": "quick_capture",
+                                       "date": "2026-07-12", "quote": text}])
+        registry.save(review)
+
+        aid = self._write_capture(text)
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].status, State.REVIEW.value)
+        self.assertEqual((entries[0].execution or {}).get("session_id"), "rev1")
+        self.assertEqual(_ack_for(aid), "noop")
 
 
 if __name__ == "__main__":

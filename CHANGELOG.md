@@ -40,12 +40,18 @@ other file needs editing. To cut a release:
   context, and the deliverable still lands in 待验收 for your acceptance.
   Vague asks resolve through the existing 需输入 flow. **Honest caveat:
   direct-run skips the proposal/cost preview entirely** — there is no plan or
-  estimate to review before the agent starts. By design, a fresh direct-run
-  card is pinned to chat delivery at the default workbench and never touches
-  a repo — no branches or PRs land anywhere you didn't confirm (file-type
-  outputs go to the workbench `deliverables/` directory per CONTRACT §33);
-  typing a line that matches an existing open card promotes that card —
-  keeping its own routing — instead of spawning a twin agent. Available on the Mac
+  estimate to review before the agent starts. By design, everything the run
+  box queues is pinned to chat delivery at the default workbench and never
+  touches a repo — even when your line matches an existing card that carried
+  repo routing, the promoted card is rewritten to chat (a notes tag records
+  the reroute), so no branches or PRs land anywhere you didn't preview
+  (file-type outputs go to the workbench `deliverables/` directory per
+  CONTRACT §33). Matching an existing card never spawns a twin agent: an
+  open proposal/backlog card is promoted in place, a card already
+  queued/running just absorbs the mention, a finished (delivered) card is
+  re-raised as a new round that genuinely re-dispatches, and a line that
+  matches a card sitting in 待验收 starts nothing — the app says so honestly
+  instead of pretending a launch happened. Available on the Mac
   board column + popover Running section and the iPhone Running page
   (`mode:"run"` on the capture action, add-only); the web dashboard does not
   get the Running input this release.
