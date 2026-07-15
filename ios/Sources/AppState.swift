@@ -182,13 +182,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    func submitCapture(_ text: String) async -> Bool {
+    /// `directRun` = direct-run capture (v0.34, CONTRACT §34): the plaintext
+    /// carries mode:"run" and actd queues the card straight for dispatch,
+    /// skipping the proposal gate. false = today's proposal capture (key omitted).
+    func submitCapture(_ text: String, directRun: Bool = false) async -> Bool {
         guard let target = selectedChannelId, let channel = channels[target] else { return false }
         let actionId = UUID().uuidString.lowercased()
         let ts = InboxAction.nowTimestamp()
         let seq = boardSeq
         return await run {
-            let plaintext = InboxAction.capture(text: text, ts: ts)
+            let plaintext = InboxAction.capture(text: text, mode: directRun ? "run" : nil, ts: ts)
             let blob = try E2E.encryptAction(kI: channel.key, epoch: channel.epoch,
                                              deviceId: target, actionId: actionId,
                                              boardSeq: seq, plaintext: plaintext)

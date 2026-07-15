@@ -96,6 +96,13 @@ private struct LanePage: View {
                     }
                 }
 
+                // v0.34 dual input (CONTRACT §34): the Running lane's resident
+                // direct-run capture — mirrors the Mac board; type here and it
+                // runs now, skipping the proposal gate.
+                if lane == .running {
+                    QuickCapture(directRun: true)
+                }
+
                 if let model {
                     content(model)
                 } else {
@@ -135,16 +142,21 @@ private struct LanePage: View {
     }
 }
 
-// Resident quick-capture at the top of Proposals (plan §6.2).
+// Resident quick-capture at the top of Proposals (plan §6.2). v0.34: the
+// Running lane hosts a directRun variant — the submit carries mode:"run"
+// (CONTRACT §34) and the card skips the proposal gate straight to dispatch.
 private struct QuickCapture: View {
     @EnvironmentObject var state: AppState
+    var directRun: Bool = false
     @State private var text = ""
     @State private var sending = false
     @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            TextField(L("快速记一件事…", "Quick-capture a task…"), text: $text)
+            TextField(directRun
+                      ? L("一句话，直接开跑（跳过提案）…", "One line — run it now (skips proposal)…")
+                      : L("快速记一件事…", "Quick-capture a task…"), text: $text)
                 .textFieldStyle(.roundedBorder).focused($focused)
             Button {
                 let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -155,7 +167,7 @@ private struct QuickCapture: View {
                     // Clear only on confirmed success: a failed submit (offline,
                     // server error) keeps the typed capture in the field — the
                     // error banner explains — so the thought is never lost.
-                    if await state.submitCapture(t) { text = "" }
+                    if await state.submitCapture(t, directRun: directRun) { text = "" }
                     sending = false
                 }
             } label: {
