@@ -223,6 +223,14 @@ def _quality_gate_block(cfg: config.Config, remote: bool = True,
             "（无文件即无可 commit）。"
         )
         parts.append(
+            "- Exception — file-type artifacts (HTML pages, spreadsheets, anything "
+            "not meant to be pasted as plain text): write the artifact to a file at "
+            "an ABSOLUTE path under the working directory instead, and after the "
+            "standalone `FINAL DRAFT:` line put that file's absolute path plus a "
+            "3-5 line plain-text summary — never the raw source. The "
+            "no-repo-files rule above does not apply to these artifact files."
+        )
+        parts.append(
             "- 常驻升级条款：若 Zelin 在后续消息说“定稿/存档/落盘/commit”（或同义），"
             "把当前最终稿写入 target_repo 合适路径、commit 到新 feature 分支并报告"
             "分支名/文件路径；收到该指令前，草稿只在回复中迭代。"
@@ -328,14 +336,32 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     # §15 default output format: markdown = status quo (no instruction, prompt
     # byte-identical to before this feature). html = author deliverables as HTML.
     if str(getattr(cfg, "default_output_format", "markdown")).lower() == "html":
+        # audit 2026-07: the old wording ("the FINAL DRAFT you hand back must be
+        # HTML") combined with the chat clause instructed the agent to paste raw
+        # HTML source into the transcript. HTML is a FILE format — deliver a file.
         blocks.append(
             "\n## OUTPUT FORMAT — deliverables must be authored as HTML\n"
-            "The owner's default output format is set to HTML. Any document, "
-            "report, or the FINAL DRAFT you hand back must be valid, self-contained HTML "
-            "(semantic tags: <h1>/<h2>, <p>, <ul>/<li>, <strong>, <a href> …), "
-            "NOT Markdown syntax (no #, -, **, backticks). Plain, direct prose "
+            "The owner's default output format is set to HTML. Any document, report, "
+            "or final deliverable must be valid, self-contained HTML (semantic tags: "
+            "<h1>/<h2>, <p>, <ul>/<li>, <strong>, <a href> …), NOT Markdown syntax. "
+            "Write every HTML deliverable to a FILE — use the absolute path "
+            f"{target}/deliverables/<short-name>.html — and NEVER paste raw HTML "
+            "source into a chat message or the closing summary. In the closing "
+            "summary reference the file by its ABSOLUTE path. Plain, direct prose "
             "still beats decoration; this only fixes the markup language."
         )
+
+    # audit 2026-07: bg sessions isolate into a git worktree mid-session, so a
+    # relative path in the summary points at a directory the owner cannot find.
+    blocks.append(
+        "\n## FILE PATH REPORTING\n"
+        f"Your launch directory is {target}, but this session may be isolated "
+        f"into a git worktree under {target}/.claude/worktrees/ — so relative "
+        "paths are meaningless to the owner. Whenever your summary mentions a "
+        "file you created or modified, give its ABSOLUTE path (resolve with "
+        "`pwd` first; it must start with `/` — never `./`, `~`, or a bare "
+        "filename)."
+    )
 
     if delivery_mode == "chat":
         blocks.append(
@@ -842,15 +868,15 @@ def _transcript_cwd(sid: str) -> Optional[Path]:
 _FINAL_DRAFT_MARKER = "FINAL DRAFT:"
 
 
-def _last_assistant_text(path: Path) -> Optional[str]:
-    """Last non-empty assistant TEXT message in a transcript JSONL, else None.
+def _assistant_texts(path: Path) -> list[str]:
+    """All non-empty assistant TEXT messages of a transcript JSONL, in order.
 
     Transcript lines are ``{"type": "assistant", "message": {"content": [...]}}``
     where content is a list of blocks (text / tool_use / ...); join the text
     blocks. Sidechain (subagent) messages are skipped — the delivery summary is
     a main-thread message. Same line-tolerant parsing as _transcript_info.
     """
-    last: Optional[str] = None
+    out: list[str] = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             try:
@@ -875,8 +901,48 @@ def _last_assistant_text(path: Path) -> Optional[str]:
                 continue
             text = text.strip()
             if text:
-                last = text
-    return last
+                out.append(text)
+    return out
+
+
+def _last_assistant_text(path: Path) -> Optional[str]:
+    """Last non-empty assistant TEXT message in a transcript JSONL, else None."""
+    texts = _assistant_texts(path)
+    return texts[-1] if texts else None
+
+
+def _fence_marker_idxs(lines: list[str]) -> list[int]:
+    """Indices of standalone ``FINAL DRAFT:`` lines OUTSIDE ``` fences.
+
+    A summary/draft often QUOTES the marker inside a fenced example (e.g. a
+    draft explaining how chat delivery works) — fence state toggles on every
+    line whose stripped text starts with ``` so those quoted markers can never
+    win over the real out-of-fence one (audit 2026-07)."""
+    idxs: list[int] = []
+    in_fence = False
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if s.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and s.startswith(_FINAL_DRAFT_MARKER):
+            idxs.append(i)
+    return idxs
+
+
+def _lone_html_path(draft: str) -> Optional[Path]:
+    """The single absolute ``*.html`` path a draft references, else None.
+
+    §15 html output format: the prompt tells the agent to write HTML
+    deliverables to a FILE and put its ABSOLUTE path (plus a short summary)
+    after ``FINAL DRAFT:`` instead of pasting raw source. Exactly one such
+    path line qualifies — anything ambiguous leaves the draft as-is."""
+    hits: list[str] = []
+    for ln in draft.splitlines():
+        s = ln.strip().strip("`")  # tolerate backtick-quoted paths
+        if s.startswith("/") and s.lower().endswith(".html"):
+            hits.append(s)
+    return Path(hits[0]) if len(hits) == 1 else None
 
 
 def harvest_delivery(session_id: str) -> dict:
@@ -884,11 +950,19 @@ def harvest_delivery(session_id: str) -> dict:
     session from its transcript (v0.10 契约 C).
 
     Returns ``{"delivered_summary": str|None, "final_draft": str|None}``:
-    - last assistant text message of the transcript is the delivery;
-    - if it contains a standalone line starting with ``FINAL DRAFT:``, everything
-      after the marker (20000 chars max) is ``final_draft`` and the part before
-      (500 chars max) is ``delivered_summary``;
-    - otherwise the whole message (500 chars max) is ``delivered_summary``.
+    - the delivery message is the LAST assistant text bearing a standalone
+      out-of-fence ``FINAL DRAFT:`` line — a closing remark AFTER it (final
+      check, cleanup note) must not hide the draft (audit 2026-07); with no
+      marker anywhere, the last assistant text (500 chars max) is
+      ``delivered_summary``;
+    - within that message, everything after the LAST out-of-fence marker
+      (20000 chars max) is ``final_draft`` and the part before (500 chars max)
+      is ``delivered_summary``; an empty draft after that marker means NO
+      draft — never fall back into summary prose (audit 2026-07: a bare
+      trailing marker used to promote "FINAL DRAFT: see the doc" prose);
+    - a draft referencing one absolute ``*.html`` file (§15 html output
+      format) is hydrated from that file so the draft stays paste-ready; the
+      path stays visible in ``delivered_summary``.
     Any failure returns both as None — never raises.
     """
     empty = {"delivered_summary": None, "final_draft": None}
@@ -899,35 +973,52 @@ def harvest_delivery(session_id: str) -> dict:
         if not short:
             return empty
         proj_root = Path("~/.claude/projects").expanduser()
-        text: Optional[str] = None
+        texts: list[str] = []
         for f in sorted(proj_root.glob(f"*/{short}*.jsonl")):
             try:
-                text = _last_assistant_text(f)
+                texts = _assistant_texts(f)
             except OSError:
                 continue
-            if text:
+            if texts:
                 break
-        if not text:
+        if not texts:
             return empty
 
-        lines = text.splitlines()
-        marker_idxs = [i for i, ln in enumerate(lines)
-                       if ln.strip().startswith(_FINAL_DRAFT_MARKER)]
-        # 契约语义是"结束总结的末尾单独一行 FINAL DRAFT: 之后跟全文"（CONTRACT
-        # G）——LLM 在总结正文里引述这条指令（行首 FINAL DRAFT:）会造出多个
-        # marker，取第一个（旧行为）会把总结残余和真 marker 一起混进 final_draft，
-        # 成稿不再"可直接粘贴"。从后往前取第一个后面有内容的 marker：单 marker
-        # 行为不变，marker 恰为末行（draft 为空）时继续回退到更早的 marker，
-        # 全部为空则维持"marker 后为空视为无 marker"的旧兜底。
-        for marker_idx in reversed(marker_idxs):
-            # remainder of the marker line itself (if any) belongs to the draft
-            ln_rest = lines[marker_idx].strip()[len(_FINAL_DRAFT_MARKER):].strip()
-            draft_lines = ([ln_rest] if ln_rest else []) + lines[marker_idx + 1:]
-            final_draft = "\n".join(draft_lines).strip()[:20000]
-            if final_draft:
-                before = "\n".join(lines[:marker_idx]).strip()[:500]
-                return {"delivered_summary": before or None, "final_draft": final_draft}
-        return {"delivered_summary": text[:500], "final_draft": None}
+        text = texts[-1]
+        marker_idx: Optional[int] = None
+        lines: list[str] = []
+        for t in reversed(texts):
+            idxs = _fence_marker_idxs(t.splitlines())
+            if idxs:
+                text = t
+                lines = t.splitlines()
+                marker_idx = idxs[-1]
+                break
+        if marker_idx is None:
+            return {"delivered_summary": text[:500], "final_draft": None}
+
+        # remainder of the marker line itself (if any) belongs to the draft
+        ln_rest = lines[marker_idx].strip()[len(_FINAL_DRAFT_MARKER):].strip()
+        draft_lines = ([ln_rest] if ln_rest else []) + lines[marker_idx + 1:]
+        final_draft = "\n".join(draft_lines).strip()[:20000]
+        if not final_draft:
+            return {"delivered_summary": text[:500], "final_draft": None}
+        before = "\n".join(lines[:marker_idx]).strip()[:500]
+
+        # §15 html delivery: hydrate the draft from the referenced file so the
+        # Mac 复制成稿 button still copies paste-ready HTML. Fail-closed: any
+        # read problem keeps the path-draft untouched (the file is still there).
+        html_file = _lone_html_path(final_draft)
+        if html_file is not None:
+            try:
+                contents = html_file.read_text(encoding="utf-8",
+                                               errors="replace").strip()
+            except OSError:
+                contents = ""
+            if contents:
+                before = "\n".join(x for x in (before, final_draft) if x).strip()[:500]
+                final_draft = contents[:20000]
+        return {"delivered_summary": before or None, "final_draft": final_draft}
     except Exception:  # noqa: BLE001 - harvesting must never break the pipeline
         return dict(empty)
 
@@ -977,6 +1068,19 @@ def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
     return True
 
 
+def _rework_abort(req: Requirement, ex: dict, err: str) -> bool:
+    """A 打回 that could not even launch: persist the reason so the card
+    surfaces it instead of silently staying in review with Zelin's feedback
+    dropped (audit 2026-07). Same execution.last_error shape as the
+    launch-failed path below; always returns False."""
+    ex["last_error"] = err[:500]
+    ex["last_error_at"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    req.execution = ex
+    save(req)
+    analytics.log_event("rework_failed", req=req.id, error=err[:120])
+    return False
+
+
 def rework(
     req: Requirement,
     feedback: str,
@@ -992,8 +1096,11 @@ def rework(
         cfg = config.load_config()
     ex = dict(req.execution or {})
     sid = ex.get("session_id")
-    if not sid or not (feedback or "").strip():
-        return False
+    if not (feedback or "").strip():
+        return False  # nothing to send — no feedback was lost (actd acks noop)
+    if not sid:
+        return _rework_abort(req, ex, "rework failed: no session to rework "
+                                      "(card has no session_id)")
     # full UUID + the transcript's LAST cwd (usually the agent's worktree) —
     # both are REQUIRED for --resume to find the conversation (see _transcript_info).
     # No transcript anywhere (current sid or root) -> resuming is impossible;
@@ -1003,12 +1110,14 @@ def rework(
     if tinfo is None and ex.get("root_session_id"):
         tinfo = _transcript_info(str(ex["root_session_id"]))
     if tinfo is None:
-        return False
+        return _rework_abort(req, ex, "rework failed: transcript missing — "
+                                      "cannot resume the session")
     sid, target = tinfo
     try:
         target.mkdir(parents=True, exist_ok=True)  # never OSError on a stale path
     except OSError:
-        return False
+        return _rework_abort(req, ex, f"rework failed: cannot recreate "
+                                      f"session cwd {target}")
     ex.setdefault("root_session_id", sid)
 
     # v0.10: gate reminder follows the requirement's delivery mode.
@@ -1017,9 +1126,12 @@ def rework(
             "聊天交付规则不变（成稿放进结束总结、单独一行 FINAL DRAFT: 之后跟全文、"
             "不落文件、不建分支、不对外发消息），除非本次反馈本身是定稿指令"
             "（那就把最终稿落盘 commit 到新 feature 分支并报告路径）。"
+            "文件型交付物（HTML 等）例外：写成文件并在 FINAL DRAFT: 后报绝对路径，"
+            "不贴源码。提到任何文件一律用绝对路径。"
         )
     else:
-        gate_line = "原有 QUALITY GATE 规则不变（draft 交付、不 merge、不对外发消息）。"
+        gate_line = ("原有 QUALITY GATE 规则不变（draft 交付、不 merge、不对外发消息）。"
+                     "提到任何文件一律用绝对路径。")
     prompt = (
         "Zelin 验收后打回了这次交付，追加要求如下（在原有上下文上继续，不要重做已完成的部分）：\n"
         f"{feedback.strip()}\n\n"
