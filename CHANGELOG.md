@@ -36,6 +36,35 @@ other file needs editing. To cut a release:
   other approval. Both re-raise entry points (deterministic radar backstop and
   the LLM triage/quick-capture paths) share the fixed seam.
 
+## [0.34.0] - 2026-07-15
+
+### Added
+
+- **Dual input — type in the Running lane to run it now** (CONTRACT §34). The
+  运行中 lane gets its own resident input, next to the existing proposals one:
+  whichever box you type into decides the slot. The proposals box keeps
+  today's behavior (AI researches → proposal card → you approve); the new
+  Running box (「一句话，直接开跑（跳过提案）…」) files your one-liner straight
+  into the approved queue — the agent's first job is to gather its own
+  context, and the deliverable still lands in 待验收 for your acceptance.
+  Vague asks resolve through the existing 需输入 flow. **Honest caveat:
+  direct-run skips the proposal/cost preview entirely** — there is no plan or
+  estimate to review before the agent starts. By design, everything the run
+  box queues is pinned to chat delivery at the default workbench and never
+  touches a repo — even when your line matches an existing card that carried
+  repo routing, the promoted card is rewritten to chat (a notes tag records
+  the reroute), so no branches or PRs land anywhere you didn't preview
+  (file-type outputs go to the workbench `deliverables/` directory per
+  CONTRACT §33). Matching an existing card never spawns a twin agent: an
+  open proposal/backlog card is promoted in place, a card already
+  queued/running just absorbs the mention, a finished (delivered) card is
+  re-raised as a new round that genuinely re-dispatches, and a line that
+  matches a card sitting in 待验收 starts nothing — the app says so honestly
+  instead of pretending a launch happened. Available on the Mac
+  board column + popover Running section and the iPhone Running page
+  (`mode:"run"` on the capture action, add-only); the web dashboard does not
+  get the Running input this release.
+
 ## [0.33.1] - 2026-07-15
 
 ### Fixed
@@ -1269,7 +1298,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.31.1...v0.32.0

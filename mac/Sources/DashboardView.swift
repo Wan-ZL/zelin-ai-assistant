@@ -369,18 +369,24 @@ struct DashboardView: View {
             }
         }
 
-        if runningEchoes.isEmpty && running.isEmpty {
-            CompactEmptySection(title: L("运行中 · running", "Running"),
-                                emptyText: L("没有正在执行的任务。批准一个提案，AI 就开始干活",
-                                             "Nothing running — approve a proposal to start"))
-        } else {
-            SectionHeader(title: L("运行中 · running", "Running"),
-                          count: running.count + runningEchoes.count,
-                          help: LaneHelp.running)
-            ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
-            ForEach(running, id: \.id) { t in
-                TaskRow(task: t, app: app, lane: .running)
-            }
+        // v0.34: the Running section always renders — it hosts the resident
+        // direct-run composer (popover mirror of the board's Running input),
+        // so the count=0 compact collapse no longer applies here.
+        let runCaptures = store.visibleRunCaptures
+        SectionHeader(title: L("运行中 · running", "Running"),
+                      count: running.count + runningEchoes.count + runCaptures.count,
+                      help: LaneHelp.running)
+        KanbanComposer(app: app, mode: .run, source: "popover")
+        if running.isEmpty && runningEchoes.isEmpty && runCaptures.isEmpty {
+            EmptyRow(text: L("没有正在执行的任务。批准一个提案，或在上面输入框里直接开跑",
+                             "Nothing running — approve a proposal, or type above to run one now"))
+        }
+        ForEach(runCaptures, id: \.id) { c in
+            RunCapturePendingRow(pending: c, app: app)
+        }
+        ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
+        ForEach(running, id: \.id) { t in
+            TaskRow(task: t, app: app, lane: .running)
         }
 
         if needsInput.isEmpty {

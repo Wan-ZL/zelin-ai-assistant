@@ -278,9 +278,10 @@ final class DashboardStore: ObservableObject {
                     raisingLocal.removeValue(forKey: id)
                 }
                 // drop capture placeholders once a needs_approval card matches
-                // (normalized, bidirectional contains on the first 10 chars)
+                // (normalized, bidirectional contains on the first 10 chars);
+                // direct-run placeholders match the running lane instead.
                 capturePending.removeAll { pending in
-                    Self.captureMatches(pending.text, in: db)
+                    Self.captureMatches(pending.text, in: db, run: pending.run)
                 }
                 // backend confirmed permanent → local pin marker is redundant
                 pinnedLocal.subtract(db.trash.filter { $0.permanent }.map { $0.id })
@@ -311,11 +312,15 @@ final class DashboardStore: ObservableObject {
     private func sweepTimeouts() {
         let now = Date()
         // capture placeholders: 300 s → yellow notice (analysis can be slow).
+        // Direct-run captures (v0.34) involve no LLM — actd queues them on the
+        // next ~10 s pass — so they give up at the echo-class 180 s instead.
         // P1-4: pipeline not ok → skip; the placeholder honestly says "queued
         // until the pipeline runs" (Cards.processingBody) and a timeout notice
         // would be a false alarm. updateHealth re-arms `created` on recovery.
         let expiredCaptures = pipelineHealth == .ok
-            ? capturePending.filter { now.timeIntervalSince($0.created) > 300 }
+            ? capturePending.filter {
+                now.timeIntervalSince($0.created) > ($0.run ? 180 : 300)
+            }
             : []
         // raise placeholders: 180 s → orange notice + release the sticky hide
         let expiredRaises = raisingLocal.filter { now.timeIntervalSince($0.value.created) > 180 }
@@ -351,9 +356,20 @@ final class DashboardStore: ObservableObject {
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
                 capturePending.removeAll { $0.id == c.id }
+                // direct-run: after 180 s with no queued row the task really
+                // did NOT start — orange, and say so (audit honesty standard);
+                // a proposal capture is usually just slow analysis — yellow.
+                // The run copy names BOTH causes: actd acks noop when the line
+                // matched an existing 待验收/提案 card (fold, nothing runs) —
+                // indistinguishable from a dead backend at this distance.
                 notices.append(LocalNotice(
-                    id: "notice-" + c.id, kind: .captureTimeout, lane: .approval,
-                    text: L("分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log",
+                    id: "notice-" + c.id,
+                    kind: c.run ? .raiseTimeout : .captureTimeout,
+                    lane: c.run ? .running : .approval,
+                    text: c.run
+                        ? L("「\(String(c.text.prefix(20)))」任务没有开始——可能这句话命中了已有的卡（看看待验收/提案），或后台没在跑（检查 actd）",
+                            "\"\(String(c.text.prefix(20)))\" did not start — the line may have matched an existing card (check Review/Proposals), or the backend isn't running (check actd)")
+                        : L("分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log",
                             "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log"),
                     created: now))
             }
@@ -503,7 +519,7 @@ final class DashboardStore: ObservableObject {
             // outage — restart their 300 s window so sweepTimeouts doesn't
             // fire a timeout notice the instant health returns.
             capturePending = capturePending.map {
-                CapturePending(id: $0.id, text: $0.text, created: Date())
+                CapturePending(id: $0.id, text: $0.text, created: Date(), run: $0.run)
             }
         }
     }
@@ -753,10 +769,13 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    func beginCapture(_ text: String) {
+    /// `run` = direct-run capture (v0.34, mode:"run"): the placeholder lands in
+    /// the 运行中 lane and clears against running rows instead of proposals.
+    func beginCapture(_ text: String, run: Bool = false) {
         withAnimation(.easeOut(duration: 0.2)) {
             capturePending.append(
-                CapturePending(id: "capture-" + UUID().uuidString, text: text, created: Date()))
+                CapturePending(id: "capture-" + UUID().uuidString, text: text,
+                               created: Date(), run: run))
         }
     }
 
@@ -819,12 +838,22 @@ final class DashboardStore: ObservableObject {
         db.needs_approval.first { $0.id == id }.map { $0.plan.joined(separator: "\n") }
     }
 
-    private static func captureMatches(_ text: String, in db: Dashboard) -> Bool {
+    private static func captureMatches(_ text: String, in db: Dashboard,
+                                       run: Bool = false) -> Bool {
         let p = normalized(text)
         guard !p.isEmpty else { return false }
         let pKey = String(p.prefix(10))
-        for card in db.needs_approval {
-            for field in [card.title, card.summary ?? ""] {
+        // v0.34 direct-run: a filed run lands as a queued/running row (title =
+        // the typed text, truncated) — clear ONLY against rows that can
+        // represent THIS submit. Deliberately NOT review: a week-old 待验收
+        // card with the same words would clear the placeholder into a fake
+        // "launched" look while actd acked noop (nothing started); letting
+        // the 180 s timeout fire with its honest notice is the correct outcome.
+        let fields: [[String]] = run
+            ? (db.running + db.needs_input).map { [$0.name, $0.summary ?? ""] }
+            : db.needs_approval.map { [$0.title, $0.summary ?? ""] }
+        for row in fields {
+            for field in row {
                 let t = normalized(field)
                 guard !t.isEmpty else { continue }
                 let tKey = String(t.prefix(10))
@@ -917,10 +946,20 @@ final class DashboardStore: ObservableObject {
             .filter { !backendIDs.contains($0.key) }
             .sorted { $0.value.created < $1.value.created }
             .map { ApprovalCard.processingPlaceholder(id: $0.key, summary: $0.value.summary) }
-        // quick-capture spinner cards (cleared on relaxed match or 300 s timeout)
+        // quick-capture spinner cards (cleared on relaxed match or 300 s
+        // timeout); direct-run captures echo in the running lane instead.
         let captures = capturePending
+            .filter { !$0.run }
             .map { ApprovalCard.processingPlaceholder(id: $0.id, summary: $0.text) }
         return captures + placeholders + backend
+    }
+
+    /// v0.34 direct-run placeholders — grey queued rows pinned at the top of
+    /// the 运行中 lane until the backend surfaces the matching queued/running
+    /// card (or the 180 s sweep gives up, honestly). Like the proposal-lane
+    /// processing prefix, these never participate in search filtering.
+    var visibleRunCaptures: [CapturePending] {
+        capturePending.filter { $0.run }
     }
 
     var visibleDebt: [DebtItem] {

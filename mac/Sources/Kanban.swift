@@ -272,6 +272,9 @@ struct KanbanView: View {
             let running = store.boardRunning
             let needsInput = store.boardNeedsInput
             let completed = store.boardCompleted
+            // v0.34 direct-run placeholders (占位卡不参与过滤隐藏, same policy
+            // as the proposal lane's processing prefix).
+            let runCaptures = store.visibleRunCaptures
             // merge-review 契约七: suggestion cards (dismiss-echo filtered);
             // 建议卡不参与过滤隐藏 — deliberately NOT search-filtered.
             let suggestions = store.visibleMergeSuggestions
@@ -369,15 +372,30 @@ struct KanbanView: View {
                     }
                     // needs_input merges into 运行中 — listed first with a
                     // permanent orange 需输入 badge, then a thin divider.
+                    // isEmpty: false — the resident run composer (v0.34) means
+                    // this lane always has content; the ghost placeholder
+                    // renders below it manually (proposals-column pattern).
                     column(title: L("运行中 · running", "Running"),
-                           count: running.count + needsInput.count + runningEchoes.count,
+                           count: running.count + needsInput.count
+                               + runningEchoes.count + runCaptures.count,
                            help: LaneHelp.running,
                            emptyText: laneEmptyText(
                                L("没有正在执行的任务。批准一个提案，AI 就开始干活",
                                  "Nothing running — approve a proposal to start")),
-                           isEmpty: running.isEmpty && needsInput.isEmpty
-                               && runningEchoes.isEmpty && runningNotices.isEmpty) {
+                           isEmpty: false) {
+                        // resident direct-run composer (Composer.swift, v0.34)
+                        KanbanComposer(app: app, mode: .run)
+                        if running.isEmpty && needsInput.isEmpty
+                            && runningEchoes.isEmpty && runningNotices.isEmpty
+                            && runCaptures.isEmpty {
+                            lanePlaceholder(laneEmptyText(
+                                L("没有正在执行的任务。批准一个提案，或在上面输入框里直接开跑",
+                                  "Nothing running — approve a proposal, or type above to run one now")))
+                        }
                         ForEach(runningNotices) { NoticeRow(notice: $0) }
+                        ForEach(runCaptures, id: \.id) { c in
+                            RunCapturePendingRow(pending: c, app: app)
+                        }
                         ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
                         ForEach(needsInput, id: \.id) { t in
                             selectableCard(t.id) {

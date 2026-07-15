@@ -65,9 +65,16 @@ enum InboxAction {
         return encode(obj)
     }
 
-    /// A quick-capture action: {action:"capture", text, ts}.
-    static func capture(text: String, ts: String = InboxAction.nowTimestamp()) -> Data {
-        encode(["action": InboxVerb.capture.rawValue, "text": text, "ts": ts])
+    /// A quick-capture action: {action:"capture", text, ts}. v0.34 (CONTRACT
+    /// §34): `mode` is an additive key — "run" files the text straight into
+    /// the approved queue (direct-run, skips the proposal gate); nil omits the
+    /// key entirely = today's triage → proposal behavior.
+    static func capture(text: String, mode: String? = nil,
+                        ts: String = InboxAction.nowTimestamp()) -> Data {
+        var obj: [String: Any] = ["action": InboxVerb.capture.rawValue,
+                                  "text": text, "ts": ts]
+        if let mode { obj["mode"] = mode }
+        return encode(obj)
     }
 
     // merge-review 契约 §21 — suggestion-level actions (not card verbs): the

@@ -1075,3 +1075,71 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **digest / 1:1 prep 输出根**：显式配置了 `execution.default_target_repo` 才写入
   该 workbench，否则写 `state/digests/`、`state/oneonone/`；不再自动创建占位
   `~/Projects/your-workbench`。
+
+# v0.34.0 additions（双输入框：运行中列直接开跑）
+
+## 34. capture 的 `mode:"run"`（add-only；§10 capture 语义扩展）
+
+在提案和运行中分别提供输入框，**用户在哪输入就进入哪个 slot**：提案列输入 =
+今天的 capture（雷达 triage → 提案/备选，人批准才跑）；运行中列输入 = 直接开跑。
+
+**inbox 形状（add-only）**：capture 文件新增可选键 `"mode"`（str）。
+
+```json
+{"action":"capture","text":"<用户一句话>","mode":"run","ts":"<ISO8601>"}
+```
+
+- `mode` 缺省/其它任何值（含非法类型）= 今天的行为不变（raising → triage →
+  提案卡）——垃圾值绝不静默启动 agent（fail-safe 落提案路径）。syncd 的
+  §33 入站形状闸门把 `mode` 纳入 str-or-absent 字段校验。
+- `mode:"run"`：actd 用与普通 capture **同一条极简建卡路径**（title=原话截 80、
+  channel=quick_capture、原话进 sources）经 `registry.merge_or_new` 落卡，然后
+  把 pre-approval 形态（detected/card_sent/raising）**直接提升为 `approved`**
+  （补记 `execution.approved_at`，与 approve 动作同一账目），下一轮
+  `dispatch_approved` 照常派发。notes 打 `[direct-run] 用户直接开跑` 标签。
+  执行会话的第一件事是自行分析上下文再干活；交付物仍落**待验收**由人验收，
+  模糊的任务靠既有**需输入**机制自行澄清。
+- **诚实声明：direct-run 跳过了 plan/费用预估的人审预览**——没有提案卡、没有
+  cost 提示，任务直接进入派发队列。UI 文案不得暗示有预估。
+- **处置表（按 text 命中什么，穷尽分支；治理原则：没有真的排上一轮运行就绝不
+  ack `running`，被提升的卡绝不继承 repo 路由）**：
+  - **没命中** → 新卡直接 approved，ack `running`；
+  - **命中未结 pre-approval 卡（detected/card_sent/raising）** → 提升**那张卡**
+    （不双开），提升时**强制改写路由**（见下），ack `running`；
+  - **命中 approved/executing 卡** → 只并 sources，不重复排队——这单确实在
+    队里/在跑，ack `running`，该卡自身路由**不动**（没有新派发）；
+  - **命中 review（待验收）卡** → 只并 sources，**什么都没启动** → ack
+    `noop`（假装 running 是审计红线的 silent fake success；Mac 占位卡为同一
+    理由不对 review 行做清除匹配，180 s 超时条如实提示「可能命中了已有的卡」）；
+  - **命中已交付/已合并（resolved）卡** → **强制走 §3.5 re-raise**
+    （merge_or_new 的确定性增量门槛看不见"用户在运行框打字"这个 actionable
+    信号，直接调 `reraise_or_followup(actionable=True)`；簇内已有未决
+    follow-up 则并入它）→ 重开一轮按 pre-approval 规则提升；提升时把上一轮
+    的 `execution.session_id` 归档为 `reraised_session_id` 并删除（否则
+    dispatch_approved 把它当 "already dispatched" 跳过，新一轮永远不派发），
+    同时删 `execution.done`；canonical dead-end（rejected/trashed/archived
+    主卡）则重新开新卡。ack `running`。
+  空/非法 `text` 按 §5.4 诚实 ack `noop`。
+- **交付强制（无 LLM 路由，钦定设计）**：**任何被 direct-run 提升为 approved
+  的卡（新卡、命中提升、re-raise 重开一轮）一律强制 chat 交付 + 默认
+  workbench，不进任何 repo**——显式写 `delivery_mode="chat"`、`target_repo`
+  清空（派发回退默认 workbench）。命中的卡带着 LLM 选过的 repo 路由也一样被
+  改写（notes 追加 `[direct-run] 交付改为 chat（跳过预览，不动 repo）`）：
+  没有人审过预览，不得在任何 repo 里建分支/开 PR。chat 交付的 `FINAL DRAFT:`
+  （或 §33 的 deliverables/ 文件例外）照常被收割进待验收。唯一不改路由的
+  分支是 approved/executing 折叠（上表）——那两种不产生新派发。
+- **analytics**：actd 落地点新增 `capture_direct_run`（req/status/chars +
+  capture_input 门控的 text，形制同 `inbox_capture`）；App 侧 `capture_submit`
+  / `composer_open` 增加 add-only 字段 `mode:"run"`（source/trigger 词表不变）。
+- **Mac UI**：运行中列顶常驻 mode=.run 的 KanbanComposer（看板列 + popover
+  运行中区各一，placeholder「一句话，直接开跑（跳过提案）…」）；乐观回显 =
+  运行中列顶的灰色排队占位卡（复用 capture placeholder 机制，只对 running/
+  needs_input 行做归一匹配清除——**刻意不对 review 行清除**：命中旧待验收卡
+  时 actd ack 的是 noop，占位卡若被一张一周前的 review 卡清掉就是视觉上的
+  fake launch；pipeline 不健康时诚实显示「已保存到队列」，180 s 未确认→橙色
+  超时条「任务没有开始——可能这句话命中了已有的卡（看看待验收/提案），或后台
+  没在跑」）。⌘L 仍只归提案 composer。
+- **iOS**：Running lane 页顶同款 QuickCapture 变体（directRun），走
+  `shared/InboxAction.capture(text:mode:)`（additive key，sortedKeys 编码不变）
+  经 syncd 通用透传落 actd inbox。
+- **webui**：本期不加运行中输入框（web 端 capture 仍只有提案路径）。
