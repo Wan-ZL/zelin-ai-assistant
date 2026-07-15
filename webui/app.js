@@ -9,14 +9,16 @@ const POLL_MS = 5000;
 
 // The five board lanes (CONTRACT §6). Each maps to dashboard.json partition(s)
 // and the actd actions reachable from that lane (§10). `needs` = action prompts
-// for text (comment / rework feedback); `confirm` = ask before firing.
+// for text (comment / rework feedback); `confirm` = ask before firing; `note` =
+// extra warning line appended to the confirm dialog.
 const LANES = [
   {
     key: "debt", zh: "潜在任务", en: "Backlog",
     parts: ["debt"],
     actions: [
       { action: "raise", label: "研究并提议" },
-      { action: "trash", label: "删除", cls: "danger", confirm: true },
+      { action: "trash", label: "删除", cls: "danger", confirm: true,
+        note: "删除后在网页端无法恢复（Mac 应用里可以找回）。" },
     ],
   },
   {
@@ -51,7 +53,8 @@ const LANES = [
     parts: ["completed"],
     actions: [
       { action: "revert_review", label: "退回待验收" },
-      { action: "archive", label: "永久完成", confirm: true },
+      { action: "archive", label: "永久完成", confirm: true,
+        note: "归档后在网页端无法恢复（Mac 应用里可以找回）。" },
     ],
   },
 ];
@@ -109,15 +112,19 @@ async function postInbox(payload) {
   }
 }
 
-function doAction(spec, id) {
+function doAction(spec, item) {
   const payload = { action: spec.action };
-  if (id) payload.id = id;
+  if (item && item.id) payload.id = item.id;
   if (spec.needs) {
     const text = window.prompt(spec.needs + "：");
     if (text == null || !text.trim()) return;
     payload.comment = text.trim();
   } else if (spec.confirm) {
-    if (!window.confirm("确认 " + spec.label + "？")) return;
+    // Name the target so a board refresh mid-aim can't silently swap it.
+    const title = String((item && (item.title || item.name || item.id)) || "").slice(0, 80);
+    let msg = "确认 " + spec.label + (title ? "「" + title + "」" : "") + "？";
+    if (spec.note) msg += "\n\n" + spec.note;
+    if (!window.confirm(msg)) return;
   }
   postInbox(payload);
 }
@@ -194,12 +201,20 @@ function detailsBlock(item) {
 
 function cardEl(item, lane) {
   const c = el("div", "card");
+  c.dataset.id = item.id || "";
   const title = item.title || item.name || item.id || "(untitled)";
-  const summary = item.summary || item.delivered_summary || item.delivered_summary || "";
   let inner = "";
   inner += `<div class="id">${esc(item.id || "")}</div>`;
   inner += `<p class="title">${esc(title)}</p>`;
-  if (summary) inner += `<p class="summary">${esc(summary)}</p>`;
+  // Review/completed items carry delivered_summary: what was actually
+  // delivered is the card body (same as the Mac card), the original ask
+  // demoted to a grey context line.
+  if (item.delivered_summary) {
+    inner += `<p class="summary"><span class="lbl">交付了什么</span>${esc(item.delivered_summary)}</p>`;
+    if (item.summary) inner += `<p class="summary dim">${esc(item.summary)}</p>`;
+  } else if (item.summary) {
+    inner += `<p class="summary">${esc(item.summary)}</p>`;
+  }
   if (item.reraised_note) inner += `<p class="summary">新增: ${esc(item.reraised_note)}</p>`;
   const b = badges(item);
   if (b) inner += `<div class="badges">${b}</div>`;
@@ -215,16 +230,46 @@ function cardEl(item, lane) {
     // success and does nothing. 修改方向 stays live (it folds honestly), same
     // as the iOS card body does.
     if (item.processing && spec.action !== "comment") btn.disabled = true;
-    btn.addEventListener("click", () => doAction(spec, item.id));
+    btn.addEventListener("click", () => doAction(spec, item));
     acts.appendChild(btn);
   });
   c.appendChild(acts);
   return c;
 }
 
+// Rebuilding the board swaps the DOM under the cursor, so an aimed click can
+// land on a different card. Guard: only rebuild when the data actually changed
+// (generated_at ticks every poll, so it is excluded from the comparison), and
+// never while a pointer is held down — defer to just after release.
+let lastBoardKey = null;
+let pendingData = null;
+let pointerHeld = false;
+window.addEventListener("pointerdown", () => { pointerHeld = true; }, true);
+window.addEventListener("pointerup", flushRender, true);
+window.addEventListener("pointercancel", flushRender, true);
+function flushRender() {
+  pointerHeld = false;
+  if (pendingData) {
+    const d = pendingData;
+    pendingData = null;
+    // setTimeout so the click event for this release dispatches first.
+    setTimeout(() => render(d), 0);
+  }
+}
+
 function render(data) {
   freshness(data.generated_at);
+  if (pointerHeld) { pendingData = data; return; }
+  const key = JSON.stringify(data, (k, v) => (k === "generated_at" ? undefined : v));
+  if (key === lastBoardKey) return;
+  lastBoardKey = key;
   const board = document.getElementById("board");
+  // Keep the user's 展开详情 open across the rebuild.
+  const openIds = new Set();
+  board.querySelectorAll(".card").forEach(c => {
+    const d = c.querySelector("details");
+    if (d && d.open && c.dataset.id) openIds.add(c.dataset.id);
+  });
   board.innerHTML = "";
   LANES.forEach(lane => {
     const items = [];
@@ -245,7 +290,14 @@ function render(data) {
     if (!items.length) {
       body.appendChild(el("div", "lane-empty", "空"));
     } else {
-      items.forEach(it => body.appendChild(cardEl(it, lane)));
+      items.forEach(it => {
+        const card = cardEl(it, lane);
+        if (it.id && openIds.has(String(it.id))) {
+          const d = card.querySelector("details");
+          if (d) d.open = true;
+        }
+        body.appendChild(card);
+      });
     }
     laneEl.appendChild(body);
     board.appendChild(laneEl);
@@ -280,7 +332,12 @@ function wireCapture() {
     input.value = "";
   };
   btn.addEventListener("click", submit);
-  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  input.addEventListener("keydown", e => {
+    // The Enter that confirms an IME composition (pinyin etc.) must not
+    // submit — isComposing covers Chrome, keyCode 229 covers Safari.
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") submit();
+  });
 }
 
 wireCapture();

@@ -119,6 +119,8 @@ html, body {
 }
 .card .title { font-weight: 600; margin: 0 0 4px; word-break: break-word; }
 .card .summary { color: var(--text); opacity: 0.9; margin: 0 0 8px; word-break: break-word; }
+.card .summary .lbl { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
+.card .summary.dim { color: var(--muted); font-size: 12.5px; }
 .card .id { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
 
 .badges { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 9px; }
