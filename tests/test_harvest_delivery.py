@@ -65,6 +65,7 @@ class HarvestDeliveryTestCase(unittest.TestCase):
         self.assertEqual(out, {
             "delivered_summary": "已完成任务，改动在 feat/x 分支",
             "final_draft": None,
+            "card_title": None,
         })
         # short id works the same as the full UUID
         self.assertEqual(executor.harvest_delivery("aaaa1111"), out)
@@ -139,15 +140,18 @@ class HarvestDeliveryTestCase(unittest.TestCase):
     def test_empty_transcript_returns_both_none(self):
         (self.proj / f"{SID}.jsonl").write_text("", encoding="utf-8")
         self.assertEqual(executor.harvest_delivery(SID),
-                         {"delivered_summary": None, "final_draft": None})
+                         {"delivered_summary": None, "final_draft": None,
+                          "card_title": None})
 
     def test_unknown_session_returns_both_none(self):
         self.assertEqual(executor.harvest_delivery("deadbeef-0000"),
-                         {"delivered_summary": None, "final_draft": None})
+                         {"delivered_summary": None, "final_draft": None,
+                          "card_title": None})
 
     def test_blank_session_id_returns_both_none(self):
         self.assertEqual(executor.harvest_delivery(""),
-                         {"delivered_summary": None, "final_draft": None})
+                         {"delivered_summary": None, "final_draft": None,
+                          "card_title": None})
 
     # -- case 4: corrupt lines -------------------------------------------------- #
     def test_corrupt_jsonl_lines_are_skipped_not_fatal(self):
@@ -164,7 +168,8 @@ class HarvestDeliveryTestCase(unittest.TestCase):
     def test_transcript_with_only_garbage_returns_both_none(self):
         self._write(["not json", "also not json"])
         self.assertEqual(executor.harvest_delivery(SID),
-                         {"delivered_summary": None, "final_draft": None})
+                         {"delivered_summary": None, "final_draft": None,
+                          "card_title": None})
 
 
 if __name__ == "__main__":

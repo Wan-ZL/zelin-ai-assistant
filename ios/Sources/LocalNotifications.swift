@@ -49,9 +49,33 @@ enum LocalNotifications {
         UNUserNotificationCenter.current().add(req)
     }
 
+    /// §39: one blocked agent = one notification (per-card, never batched) —
+    /// names the card and carries a snippet of the question it is asking.
+    /// `badge` = the full owner-decision count (needs_approval + needs_input).
+    static func notifyNeedsInput(name: String, question: String?, badge: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = L("任务需要你输入", "A task needs your input")
+        let q = (question ?? "").split(whereSeparator: \.isNewline)
+            .joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        if q.isEmpty {
+            content.body = L("\(name) 在等你回答——打开「运行中」页直接回它。",
+                             "\(name) is waiting for your answer — open Running to reply.")
+        } else {
+            let snippet = q.count > 120 ? String(q.prefix(120)) + "…" : q
+            content.body = L("\(name) 在问：\(snippet) —— 打开「运行中」页直接回它。",
+                             "\(name) asks: \(snippet) — open Running to reply.")
+        }
+        content.badge = NSNumber(value: badge)
+        content.sound = .default
+        let req = UNNotificationRequest(identifier: "needs-input-\(UUID().uuidString)",
+                                        content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+    }
+
     /// When the app is closed we can't push; the badge reflects the last known
     /// count so reopening shows the truth (plan §6.4 case 3). `setBadgeCount` is
     /// iOS 16.0+ and updates the icon badge without posting a notification.
+    /// §39: callers pass needs_approval + needs_input (both wait on the owner).
     static func setBadge(_ count: Int) {
         UNUserNotificationCenter.current().setBadgeCount(count)
     }

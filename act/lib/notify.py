@@ -137,16 +137,82 @@ def msg_new_card(title: str) -> tuple[str, str]:
                   f"{title} — open the menu-bar panel: ✅ approve or ❌ reject"))
 
 
+def msg_new_cards_batch(n: int) -> tuple[str, str]:
+    """§40: >2 fresh proposals in one actd pass collapse to ONE notification
+    (a radar backfill was previously n pings in a row). 需输入/回锅/失败
+    classes stay per-card — those each demand a distinct decision.
+
+    Copy is source-NEUTRAL on purpose: actd only sees the board diff, and
+    fresh cards may come from any filer (radar, weekly digest, capture) —
+    attributing them to 雷达 would mislabel every non-radar batch."""
+    return (_pick(f"新增 {n} 张待审批卡", f"{n} new cards awaiting approval"),
+            _pick("打开菜单栏面板逐张审批（✅ 批准 / ❌ 拒绝）",
+                  "Open the menu-bar panel to review them (✅ approve / ❌ reject)"))
+
+
 def msg_done(title: str) -> tuple[str, str]:
     return (_pick("任务完成", "Task finished"),
             _pick(f"{title} —— 打开 App 验收或打回",
                   f"{title} — open the app to accept or send back"))
 
 
-def msg_needs_input(title: str) -> tuple[str, str]:
+def msg_needs_input(title: str, question: Optional[str] = None) -> tuple[str, str]:
+    """§39: carry a snippet of WHAT is being asked, and name the real surface —
+    on the kanban the card sits at the top of the 运行中 column with the orange
+    「需输入」badge and a 「回答…」button (the popover keeps its 需输入 section)."""
+    q = " ".join(str(question or "").split()).strip()
+    where = _pick("打开 App：卡片在看板「运行中」列顶部（橙色「需输入」），点「回答…」直接回它",
+                  "open the app: the card sits at the top of the Running column"
+                  " (orange \"Input\") — press \"Answer…\" to reply")
+    if q:
+        snippet = q[:120] + ("…" if len(q) > 120 else "")
+        return (_pick("任务需要你输入", "A task needs your input"),
+                _pick(f"{title} 在问：{snippet} —— {where}",
+                      f"{title} asks: {snippet} — {where}"))
     return (_pick("任务需要你输入", "A task needs your input"),
-            _pick(f"{title} —— 打开 App 的「需输入」列查看它在等什么",
-                  f"{title} — open the app's Needs-input column to see what it's waiting for"))
+            _pick(f"{title} —— {where}", f"{title} — {where}"))
+
+
+def msg_answer_not_delivered(title: str, kind: str = "moved") -> tuple[str, str]:
+    """§39.2: a VALID answer arrived but the moment had passed — the session is
+    actively working (someone else may have answered it already) or the card
+    already left needs_input (e.g. promoted to review between the board render
+    and the inbox pass). The typed text is archived in the card's notes; the
+    answerer must be told, or both UIs' optimistic sends read as success while
+    the text silently vanished. ``kind`` ∈ working | review | recent |
+    oversize | moved."""
+    if kind == "working":
+        why = _pick("会话正在工作中，可能已被回答",
+                    "the session is actively working — it may already have been answered")
+    elif kind == "review":
+        why = _pick("任务已完成进了待验收",
+                    "the task already finished and moved to Review")
+    elif kind == "recent":
+        why = _pick("刚有一条回答送达（可能来自另一台设备），先等它生效；两分钟后还卡着再重发",
+                    "an answer was just delivered (maybe from another device) —"
+                    " let it settle; resend if it's still stuck in two minutes")
+    elif kind == "oversize":
+        why = _pick("回答超过 4000 字上限，请拆短重发",
+                    "the answer exceeds the 4000-char limit — split it and resend")
+    else:
+        why = _pick("卡片已不在需输入状态",
+                    "the card is no longer waiting for input")
+    return (_pick("你的回答没有送出去", "Your answer was not delivered"),
+            _pick(f"{title}：{why}——你打的文字已存进卡片备注，没有丢。",
+                  f"{title}: {why} — your text is saved in the card's notes,"
+                  " nothing is lost."))
+
+
+def msg_answer_failed(title: str, reason: str) -> tuple[str, str]:
+    """§39: the owner's answer could not be delivered into the blocked session
+    (transcript purged / relaunch failed) — never silent. Names the fallback:
+    the card's error text + the 展开详情「在终端接管会话」command."""
+    r = " ".join(str(reason or "").split()).strip()[:160] \
+        or _pick("原因未知", "unknown reason")
+    return (_pick("回答没有送达", "Your answer was not delivered"),
+            _pick(f"{title}：{r} —— 卡片上有错误详情；展开详情可用「在终端接管会话」直接接手",
+                  f"{title}: {r} — the card shows the error; expand details and"
+                  " use \"Take over in terminal\" to step in"))
 
 
 def msg_auth(service: str) -> tuple[str, str]:

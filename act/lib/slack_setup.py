@@ -57,6 +57,9 @@ REQUIRED_USER_SCOPES: list = [
     "files:read",
     "chat:write",
     "reactions:read",
+    # §40 capture receipts: emoji ack on captured self-DM messages. Missing
+    # scope only costs the ack (reactions.add fails soft), never the capture.
+    "reactions:write",
 ]
 
 

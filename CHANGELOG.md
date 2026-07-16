@@ -68,6 +68,324 @@ other file needs editing. To cut a release:
   a cross-lane flight has nowhere to be seen; nothing changes there beyond the
   version number. The menu-bar popover also stays still (board window only).
 
+## [0.42.0] - 2026-07-16
+
+Display-only release（卡面大扫除）— no wire, state-machine, or analytics-id
+changes (CONTRACT §42).
+
+### Changed
+
+- **卡面大扫除（Mac，audit #7）** — internal mechanics no longer leak onto card
+  faces. The always-visible raw-command echo lines on 运行中/待验收 cards
+  (`单击复制 · 双击在终端运行: cd '/U…'`) are replaced by an action-oriented
+  one-liner（「单击复制指令 · 双击在终端打开会话」）; the raw command itself,
+  the session id, and the `claude agents` roster name now live in 展开详情
+  (with a click-to-copy line for the command, same as the log path).
+- **Enum chips speak 大白话（Mac，audit #7）** — known closed sets are
+  localized; unknown values still render raw (the verdictHeadline precedent):
+  task state (`working`→执行中, `blocked`→受阻, `queued`→排队中, …), hardness
+  (`hard`→较难 / `soft`→常规), backlog type (`code`→代码, `comms`→沟通, …),
+  trash kind/reason (`suggestion`→建议, `debt`→潜在任务; `rejected`→你拒绝的,
+  `deleted`→你删除的), and archived cards' previous status now shows the lane
+  name the user knew (`delivered`→阶段性完成).
+- **Chip comprehensibility（audit #14）** — the deadline badge says it in words
+  (「已逾期 N 天」/「今天截止」/「还剩 N 天」 instead of `(-3d)`); the tier chip
+  falls back to a local hint map (T0 自动执行 / T1 一键可批 / T2 需文字确认,
+  unknown → 未分级) so it never renders a bare "T1"; 「重复×N」 is renamed
+  「被提×N」 with a tooltip explaining restatements were merged into the card.
+- **Sidebar wording（audit #15）** — 「录制与 ingest」→「录制与数据接入」
+  ("Recording & Data Sources"); display only, rawValue/analytics ids frozen.
+- **Doctor speaks the UI language（audit #16）** — `act.doctor`'s unclassified
+  detail/fix prose now routes through the `failures.pick` single language
+  switch (§15); shell commands stay English in both variants — they are
+  commands. The §15 resolution itself now bridges the two halves: the Mac app
+  passes its effective display language via `AIASSISTANT_UI_LANG` when
+  spawning python with user-facing output, and with nothing persisted python
+  falls back to the system locale (zh* → zh, else en) instead of hardcoded
+  zh — no more mixed-language doctor pages for en-locale users. On first
+  launch (no persisted language anywhere) the Mac app also persists its
+  effective language into `settings_overrides.json` — idempotent, never
+  overwrites an explicit choice — so cron/launchd copy (no `LANG` there)
+  keeps matching the app instead of falling back to en.
+- **Radar extraction framing（audit #19）** — `act.radar`'s extraction prompt
+  is parameterized on `owner.name` and reframed as "asks directed at the
+  owner"; the card source `who` names the actual note instead of a fabricated
+  "manager".
+
+### Fixed
+
+- **「让 AI 修」 gives feedback（Mac，audit #17）** — the task-card error line's
+  Fix-with-AI button used to discard the launch result; it now shows progress
+  and renders a launch failure inline in red (the DepsView aiFixStatus
+  pattern).
+## [0.41.0] - 2026-07-16
+
+「手机和网页不再是二等公民」— the same action now looks and behaves the same on
+Mac, iPhone and the web dashboard (CONTRACT §41; display-layer + webui inbound
+gate only, no new dashboard/inbox fields).
+
+### Added
+
+- **Web: AI merge-suggestion cards** (契约 §21/§21bis parity) — the 提案 lane
+  now renders `merge_suggestions` like Mac/iOS: analyzing spinner, done verdict
+  (primary/secondary titles, rationale, 接受后将执行 plan, confidence), failed
+  with the error; 接受 = merge_apply, 取消 = merge_dismiss, and 仍然合并
+  (merge_force with a primary-pick dialog + irreversibility notice) when the AI
+  didn't land on 「合并」 or the analysis failed.
+- **Web: 回收站 + 永久性完成 bookends** (v0.33 parity) — two default-collapsed
+  strips below the board: trash (恢复 = restore, 永久保存 = pin) and archived
+  (放回看板 = unarchive, 你封存/自动封存 badges). Deleting/archiving from the
+  web is no longer a one-way door, and the confirm dialogs stop claiming it is.
+- **Web: direct-run input** (v0.34 §34 parity) — the Running lane hosts the
+  resident 一句话直接开跑 box (`capture` + `mode:"run"`), with the same IME
+  Enter guard and clear-only-on-success draft protection as the capture box.
+- **iOS: 暂缓 on the detail sheet** — the sheet now carries the same four
+  decisions as the card row (批准 · 修改 · 暂缓 · 拒绝).
+- **iOS + Web: T2 gate** — approving a T2 (high-impact) card is no longer a
+  bare one-tap/one-click on any surface: 批准 opens a named confirm dialog
+  (the Mac's 「T2 · 高影响操作确认」 title, naming the card and its estimated
+  cost) before submitting.
+- **iOS: device-switcher legend** — each menu row spells the freshness out
+  (「● Mac mini · 在线 · 最新」; Menu strips color, so the glyph alone was
+  indistinguishable), and the paired-devices settings section gains a one-line
+  ●◐○ legend.
+- **Web: lane help** — every lane head shows the same one-line definition the
+  Mac/iOS boards show (shared LaneHelp copy).
+- **webui inbound gate**: `merge_force` allowed (ids deduped ≥2 safe ids,
+  primary ∈ ids — fail closed, actd still re-validates) and capture `mode`
+  forwarded (only the literal `"run"` passes; anything else is a 400 and never
+  reaches the inbox).
+
+### Changed
+
+- **iOS: 停止 is an explicit fork now** (Mac v0.21 parity) — one 停止 button on
+  a running card opens the same two-choice dialog as the Mac: 退回提案
+  (abort_execution, destructive) / 去待验收 (stop_to_review) / 取消, with the
+  explainer line. The old one-tap destructive 停止 and the running-card
+  已在别处完成 are gone — done_external lives on the reject fork, where the Mac
+  keeps it.
+- **iOS: 拒绝 is the Mac two-choice fork** (v0.10.3 parity) — 不想做（进回收站）
+  / 已办完（记为已交付）/ 取消, on the proposal row and the detail sheet. A
+  STALE/DEAD board folds its warning line into the fork message instead of
+  stacking a second confirm.
+- **iOS: switching devices drops the old board immediately** — Mac A's cards
+  never render under Mac B's label while the fetch is in flight, and A's seq is
+  never pinned into an action addressed to B. Unpairing the selected channel
+  gets the same treatment.
+- **iOS: the detail sheet dismisses once an action fires**, so the board's
+  ack/error banner — not a stale sheet — is the next thing you see.
+- **Web: 停止/拒绝 are the same forks as Mac/iOS** — the Running lane's three
+  buttons (去待验收 / 停止·退回 / 系统外完成) collapse into one 停止 fork
+  dialog, and 拒绝 asks 不想做 vs 已办完. 系统外完成 leaves the running lane
+  (v0.21 parity).
+- **Web: quick capture clears only on confirmed success** — a failed submit
+  keeps your draft in the field (the toast explains), matching iOS.
+- **iOS: ActionBar shows a submitted state** — after any action the button row
+  becomes 「已提交…」 until the post-submit refresh lands (same busy pattern as
+  the merge-suggestion card), so a second tap can't double-file the action.
+- **Copy fixes** — onboarding zh/en now agree (你的 Mac ↔ your Mac); the trial
+  expiry banner names the Apple Developer Program ($99/yr, done outside the
+  app) instead of a dangling 「升级」; the web archive confirm says 永久完成
+  instead of the retired 归档 wording.
+- **Web: blocked cards sort first** — the Running lane renders needs_input
+  before running, the order the lane help promises (parity with the shared
+  BoardModel sort).
+- **Web: typing survives the 5s poll** — the board rebuild now also defers
+  while an in-board input (the direct-run box) is focused, so the caret and
+  an un-committed IME composition are never dropped mid-typing.
+## [0.40.0] - 2026-07-16
+
+主题：**钱看得见、事有回执** —— 一批"系统做了但没告诉你"的诚实性欠账一次还清。
+
+### Added
+
+- **批准前能看到钱了** — 展开卡片详情永远有一行费用：有估算显「预计费用: $X」
+  （不再受 $5 阈值影响——阈值只继续管收起状态的小徽章），没有估算的卡（双输入框
+  直跑、捕获兜底、周摘要建议）诚实地显「成本未知」，不再看起来像免费。T2 高影响
+  确认对话框现在也带金额（或「成本未知」）。iOS/网页的展示是后续跟进——字段已
+  在共享契约里解码，只是还没有视图用它。
+- **手机捕获有回执了** — 在 Slack 里给自己发的每条消息，处理完会打上一个 emoji
+  回执：📥 已记下（建卡/并入已有卡/挂后续卡）、↩️ 你验收过的事回锅重新提案、
+  🚫 判定不用行动（没建卡）。只打 reaction、绝不回帖；关闭开关
+  `sources.slack_capture_receipts: false`。老 app 需重新粘贴 manifest 加
+  `reactions:write` 权限——缺了也只是没回执，捕获照常。
+- **雷达放弃一篇笔记会告诉你了** — 某篇笔记连续 5 次提取失败被放弃时，潜在任务列
+  会出现一张「有一篇笔记我处理不了：<文件名>」的卡，正文指回原文件路径（你可以
+  手动处理或删掉它），备注带最后的报错。之前只写进日志和统计——正是没人看的
+  地方。同一篇笔记只出一张卡，永不重复；卡片文案随界面语言（中/英）。
+- **周摘要失败会通知了** — 设置页点「现在生成一份」后如果 AI 调用失败或返回
+  解析不了，会收到「本周摘要生成失败——可在设置页重试」的通知。之前失败无声，
+  而"没有数据"反而有提示。（定时周一跑失败仍只记日志——失败不推进闹钟，每小时
+  重试，无条件通知会刷一整天屏。）
+- **回收站有倒计时了** — Mac 回收站每行显示「X 天后永久删除」（≤7 天变红），
+  点过「永久保存」的行显示「已永久保留」。60 天自动清理不再是暗地里发生的事。
+  iOS/网页无回收站列表面，不涉及。
+- **通知不刷屏了** — 一次冒出 3 张以上新提案时，合并成一条「新增 N 张待审批卡」
+  （文案不点名来源——新卡可能来自雷达/周摘要/捕获任何一方）；周摘要落的建议卡
+  由它自己的通知点名数量，不再被重复播报；需要你逐个处理的（需输入、回锅、
+  失败、待验收）保持一事一条。
+
+### Changed
+
+- **周一 digest 落卡，不再落盘** — 不再往工作台写 `digests/digest-*.md`、
+  通知里也不再塞文件路径（App 里根本点不开）；改为像周摘要一样落一张
+  「待验收」聊天卡（全文在卡里，当天重跑合并不堆叠）。1:1 准备页照常生成、
+  在 digest 正文里链接。
+- **页面不再说黑话** — 周一 digest 和 1:1 准备页里的条目状态从 registry 原词
+  （card_sent/review/…）换成通道显示名（待审批/待验收/进行中/潜在任务…，随
+  界面语言）；「双向承诺账本（manager 欠的）」改为中性表述并按 `owner.name`
+  参数化（`[MANAGER-OWES]` 标签本身冻结兼容，仍被识别）。
+- `quick_capture` 新增 additive seam `apply_result_with_kind`、`registry`
+  新增同形 `merge_or_new_with_kind`（回执 emoji 的依据——new_proposal 内部
+  触发的回锅也如实上报 ↩️；公共 `apply_result`/`merge_or_new` 签名与行为
+  逐字冻结，纯委托）。
+- 数据契约见 docs/CONTRACT.md §40（全部 add-only：老 App 忽略新键、老
+  payload 照常解码）。
+
+## [0.39.0] - 2026-07-16
+
+### Added
+
+- **需输入的卡能直接回答了（Mac + iPhone）** — 以前 AI 卡住等你输入时，卡片
+  只写一句「等待: input」：你看不到它在问什么，也没法在 App 里回它，只能复制
+  命令去终端。现在：
+  - **卡片直接显示 AI 的问题**（它最后说的那段话，最多 500 字）——Mac 看板、
+    菜单栏面板、iPhone「运行中」页都能看到；通知里也带上问题摘录，并告诉你
+    卡片就在「运行中」列顶部（橙色「需输入」）。
+  - **Mac：卡上新增主按钮「回答…」** —— 弹层里上面是问题全文（可滚动）、下面
+    是输入框，↩ 发送。答案原路送回那个 session（上下文都在），任务接着跑。
+    发送后卡上显示「回答发送中…」，送达后卡自动回到「运行中」；3 分钟没动静
+    会诚实提示超时。终端路径没删——降级到「展开详情」里的「在终端接管会话」。
+  - **iPhone：需输入卡也有了输入框** —— 直接打字点「发送」，走既有的端到端
+    加密通道送回 Mac。手机对需输入「只读」的时代结束。
+  - **送不到就明说**：session 已经没了/启动失败时，卡上显示错误、通知告诉你
+    原因和终端兜底入口；如果你回答的瞬间任务恰好已经跑起来（比如别人先答了）
+    或已经交付进了待验收，也会通知你「回答没送出去」并把你打的字原文存进
+    卡片备注——任何情况都绝不静默吞掉你打的字，也绝不打断一个正在干活的
+    session。
+  - iPhone 角标现在 = 待审批 + 需输入（被卡住的 agent 是最急的事），新增
+    逐卡的需输入本地通知。
+  - 回答成功会顺便把这张卡的自动恢复（auto-resume）配额清零重来——你亲手救活
+    的 session，之后再断线仍然享受自动恢复。
+## [0.38.0] - 2026-07-16
+
+### Changed
+
+- **少建卡、会折叠 / Fewer duplicate cards** — 随手一句进展、一条 FYI、一句
+  补充，不再动不动就变成一张新卡。判定口径反转：琐碎信息只要跟已有的卡相关，
+  就折进那张卡当备注；只有全新的、真要你行动的诉求才开新卡。敢这么折的底气是
+  **折叠现在可逆**（见下面「拆成新卡」）——折错了拆回来，信息不会丢。
+  - 认卡更准了：给判定 AI 看的卡片清单，每张卡带上大白话显示名和几个关键词
+    （标题是网址/路径的卡终于能被认出来），并先用确定性的关键词重合预筛出
+    「最可能相关」的卡供它参考。全程零新增 AI 调用。
+
+### Added
+
+- **拆成新卡 / Split a folded note back out (Mac)** — 卡片展开详情新增
+  「📎 折叠进来的信息」列表：每条折进来的备注单独一行，带「拆成新卡」小按钮。
+  AI 折错了？一键把那条信息拆出去单独成卡（走正常的 AI 扩写变提案），原卡上
+  的记录保留并标「已拆出 R-xxx」。提交后行内显示「拆分中…」，超时会诚实提示。
+  iOS 本期只能看折叠信息所在的卡，没有拆分按钮（如实声明）。
+- **重复卡自动提示 / Automatic duplicate hints** — 新卡一出现，如果跟某张
+  未结的卡明显是同一件事（关键词高度重合，或同一个人提的且内容相近），看板
+  会自动弹一条「规则判定」合并建议——不是 AI 分析，是确定性规则，卡上有紫色
+  「规则判定」徽章说明来源。点「接受」走既有合并流程，点「取消」就再也不会
+  对这两张卡重复提示；同时最多挂 3 条，绝不刷屏。
+## [0.37.1] - 2026-07-16
+
+实时字幕 credential usability（Mac 展示层，契约 add-only）。
+
+### Added
+- **旧版火山凭证支持**：豆包语音凭证输入框现在也接受旧版语音控制台的
+  App ID + Access Token，自动识别。**最稳的粘法是一行 `AppID:Token`**；
+  带控制台原样标签（`App ID:` / `Access Token:`，大小写/空格/下划线不敏感）
+  的一行或两行也认；直接粘两行通常可用，但依赖粘贴时输入框保留换行——
+  失败就改用一行形式。形状校验防误伤：两行内容只有在"第一行 6–12 位数字
+  + 第二行 ≥20 位无空白 token"时才按旧版凭证解析，被硬折行的新版单 Key
+  会重新拼回而不是被撕成假凭证对。引擎握手按代际发对应鉴权头（旧版
+  `X-Api-App-Key` + `X-Api-Access-Key`，新版单个 `X-Api-Key` 不变）。
+  存储格式：旧版凭证存为两行带标签内容（`appid:` / `token:`），单行裸内容
+  一律按新版 API Key 解读——已保存的 Key 无需迁移（CONTRACT §36 add-only）。
+- **「检测」按钮（两个凭证行都有）**：点一下做一次**真实**最小连接——语音
+  凭证走一次 Doubao WebSocket 握手（发会话配置、读首帧、即断，不发音频、
+  不产生计费），Ark Key 向所配翻译模型发一条 `max_tokens=1` 的请求。结果
+  就地诚实显示：✅ 有效（连接成功）/ ❌ Key 无效或未开通 / ❌ 资源未开通 /
+  ❌ 模型 ID 不存在（Ark 独立情形）/ ⚠️ 网络不通；未收录的错误码原样展示
+  （码 + 服务器消息），不猜测。检测可在保存前直接测输入框内容；凭证永不
+  写日志、永不回显。
+
+### Changed
+- 字幕两行凭证的文案与真实行为对齐：保存**只存本机、不联网**；点「检测」
+  才真连一次对应服务器（其余凭证行"保存即验证"的行为不变）。引擎侧的
+  致命鉴权错误提示改为指向「检测」按钮排查。
+
+## [0.37.0] - 2026-07-16
+
+「找得到、看得懂」— board search that actually finds things, and card titles
+that stay readable and evolve with the work (CONTRACT §37, add-only).
+
+### Added
+
+- **看板搜索全量化 (Mac)** — the board search box now matches far more than
+  title/summary/plan/dod/id:
+  - **normalized matching** (`shared/Sources/SearchMatch.swift`): "eb1" finds
+    "EB-1A", "h1b" finds "H-1B" (`-`/`_`/`.`/spaces are stripped from both
+    sides before comparing), CJK matches as a plain substring, and a
+    multi-word query is AND — every word must hit the card. "eb2" still does
+    NOT match "EB-1A".
+  - **expanded word list per lane**: display/former titles, notes (comments &
+    radar updates, newly projected as a capped `notes_text` row field),
+    delivered summaries and final drafts, source quotes, and the agent name.
+  - **session-content layer**: actd maintains `state/search_index.json`
+    (per-card main-thread transcript text — the boilerplate dispatch prompt
+    of the first user turn is excluded — tail-capped ~50KB, refreshed only
+    at the existing harvest/promotion touchpoints — zero new LLM calls) and
+    the Mac app searches it as the LAST layer with cross-layer AND: each
+    query word may be satisfied by a row field OR the transcript, so
+    "推荐信 chen" finds the card whose title says 推荐信 while only the
+    session mentions chen. Cards that matched but not on their visible
+    fields alone get a purple 「命中会话」 badge. Pruning removes only
+    irreversibly-gone cards (merged / hard-purged) — a trashed-then-restored
+    card keeps its session search. The file is Mac-local and never enters
+    dashboard.json (the E2E board payload does not grow); missing/corrupt
+    index = the layer is silently absent. Typing stays smooth on large
+    boards: the input echoes instantly, filtering debounces ~200 ms, and
+    normalized card/session text plus per-card hit results are memoized per
+    dashboard decode / query / index reload.
+- **活标题 display_title (§37)** — the internal `title` stays FROZEN (it is
+  the dedupe/re-raise identity anchor); a new optional `display_title` +
+  `user_titled` + `former_titles` ride the registry and every dashboard row:
+  - **fallback chain at projection time** — stored display_title (user or
+    LLM) → deterministic `sanitize(title)` (URL → "domain ▸ segment", path →
+    last component, overlong text → first-clause clip with …) → title. A raw
+    URL/path can never appear as a board title again, with zero migration
+    for legacy cards.
+  - **LLM titles piggyback on existing calls only**: quick-capture/triage and
+    debt-expansion prompts gain an optional `display_title` output key
+    (≤40 字中文大白话, 动词开头); executor closing prompts allow an optional
+    standalone `CARD TITLE: <new name>` line that `harvest_delivery` parses
+    (same fence discipline as `FINAL DRAFT:`, stripped from both outputs)
+    and actd applies at the same promotion points as delivered_summary —
+    titles refresh at round boundaries as the discussion evolves.
+  - **user sovereignty**: new `set_title` inbox action (fail-closed ≤64-char
+    validation at syncd/webui/actd, v0.33.1 boundary doctrine) pins
+    `user_titled` — a user-chosen name is NEVER overwritten by LLM/harvest
+    titles. Mac: ✏️「改名」inline editor in every card's 展开详情, with an
+    optimistic name echo (180 s honest timeout notice). Renamed cards stay
+    findable: previous names land in `former_titles` (capped 3, searched,
+    shown as 「曾用名: …」in the detail).
+  - iOS displays the new titles automatically via the shared row helpers
+    (`displayHeadline`/`rowTitle`/`BoardModel.title(of:)`).
+
+### Honest scope cuts
+
+- **iOS has no board search UI this release** — search (including the new
+  normalized matching and session layer) stays Mac-only; the phone only gains
+  the readable display titles on its rows.
+- **iOS has no rename entry this release** — `set_title` can be written by
+  the Mac app (and webui API); the phone renders `display_title` read-only.
+- webui's own search/filter surface is unchanged.
+
 ## [0.36.0] - 2026-07-15
 
 ### Added
@@ -1412,7 +1730,14 @@ release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...HEAD
-[0.43.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.43.0
+[0.43.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...v0.43.0
+[0.42.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.40.0...v0.41.0
+[0.40.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.39.0...v0.40.0
+[0.39.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.38.0...v0.39.0
+[0.38.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.1...v0.38.0
+[0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.0...v0.37.1
+[0.37.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD

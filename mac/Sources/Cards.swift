@@ -75,6 +75,95 @@ struct Badge: View {
     }
 }
 
+// MARK: - enum-chip localization (v0.42 卡面大扫除, audit #7)
+//
+// Wire enums are machine words ("working", "hard", "suggestion") — chips
+// render 大白话 for the known closed sets and fall back to the raw value for
+// anything unknown (the MergeSuggestionCard.verdictHeadline precedent: never
+// swallow information).
+
+/// task.state — dashboard.py emits queued/working/blocked/review/delivered;
+/// the raw `claude agents` roster vocabulary (act/lib/agent_states.py) can
+/// leak through the running branch ("idle", "unknown", odd states), so it is
+/// covered too. "review-active" is handled by its caller (older-actd legacy).
+fileprivate func stateLabel(_ s: String) -> String {
+    switch s {
+    case "queued": return L("排队中", "Queued")
+    case "dispatched": return L("已派发", "Dispatched")
+    case "working", "running", "executing", "active", "busy", "in_progress":
+        return L("执行中", "Working")
+    case "blocked", "waiting", "needs_input", "paused", "waiting_for_input":
+        return L("受阻", "Blocked")
+    case "review": return L("待验收", "In review")
+    case "delivered": return L("已交付", "Delivered")
+    case "done", "completed", "finished", "exited", "complete", "success":
+        return L("已完成", "Done")
+    case "idle": return L("空闲", "Idle")
+    case "unknown": return L("状态未知", "Unknown")
+    default: return s
+    }
+}
+
+/// hardness — the extraction schema's "hard"/"soft".
+fileprivate func hardnessLabel(_ h: String) -> String {
+    switch h {
+    case "hard": return L("较难", "Hard")
+    case "soft": return L("常规", "Routine")
+    default: return h
+    }
+}
+
+/// requirement type — quick_capture's extraction schema closed set, plus
+/// "suggestion" (trash/archive kind vocabulary shares this chip style).
+fileprivate func typeLabel(_ t: String) -> String {
+    switch t {
+    case "code": return L("代码", "Code")
+    case "comms": return L("沟通", "Comms")
+    case "paperwork": return L("文书", "Paperwork")
+    case "research": return L("调研", "Research")
+    case "review": return L("评审", "Review")
+    case "training": return L("训练", "Training")
+    case "other": return L("其他", "Other")
+    case "suggestion": return L("建议", "Suggestion")
+    default: return t
+    }
+}
+
+/// trash/archive row `kind` — dashboard.py: "debt" (was 潜在任务) else "suggestion".
+fileprivate func kindLabel(_ k: String) -> String {
+    switch k {
+    case "suggestion": return L("建议", "Suggestion")
+    case "debt": return L("潜在任务", "Backlog")
+    default: return k
+    }
+}
+
+/// trash_reason — registry.trash(): "rejected" (declined proposal) or
+/// "deleted" (dropped backlog item). Free-text reasons (merge-review) render raw.
+fileprivate func trashReasonLabel(_ r: String) -> String {
+    switch r {
+    case "rejected": return L("你拒绝的", "You rejected it")
+    case "deleted": return L("你删除的", "You deleted it")
+    default: return r
+    }
+}
+
+/// archived prev_status — registry State values → the lane display name the
+/// user knew the card by (reuses BoardLane.title so the archive row and the
+/// board speak with one voice; off-board terminals get their page names).
+fileprivate func prevStatusLabel(_ s: String) -> String {
+    switch s {
+    case "detected": return BoardLane.backlog.title
+    case "raising", "card_sent": return BoardLane.proposals.title
+    case "approved", "executing": return BoardLane.running.title
+    case "review": return BoardLane.review.title
+    case "delivered": return BoardLane.done.title
+    case "merged": return L("已合并", "Merged")
+    case "trashed": return L("回收站", "Trash")
+    default: return s
+    }
+}
+
 // MARK: - CardSurface (契约1) — the ONE card chrome all five rows share
 //
 // Background/stroke/padding/corner + optional whole-card click-to-copy
@@ -447,6 +536,149 @@ fileprivate struct DodListView: View {
     }
 }
 
+/// §37 living titles — the shared 展开详情 rename affordance: a 「曾用名」
+/// one-liner (previous display names stay searchable) + an inline ✏️ editor.
+/// Saving goes through the normal submit plumbing (AppDelegate.submitSetTitle
+/// → set_title inbox action) with the store's optimistic name echo; the
+/// frozen internal title never changes.
+fileprivate struct TitleEditRow: View {
+    let id: String
+    let current: String          // the display name shown right now (prefill)
+    let formerTitles: [String]
+    unowned let app: AppDelegate
+    @State private var editing = false
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !formerTitles.isEmpty {
+                Text(L("曾用名: ", "Former names: ")
+                     + formerTitles.joined(separator: " · "))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if editing {
+                HStack(spacing: 6) {
+                    TextField(L("新的卡片名字（≤64 字）", "New card name (≤64 chars)"),
+                              text: $draft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                        .onSubmit { save() }
+                    Button(L("保存", "Save")) { save() }
+                        .disabled(!valid)
+                    Button(L("取消", "Cancel")) { editing = false }
+                }
+                .font(.system(size: 10))
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            } else {
+                // a Button so its tap wins over the whole-card copy gesture
+                // (CopyPathLine 先例)
+                Button {
+                    draft = current
+                    editing = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 9))
+                        Text(L("改名", "Rename"))
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L("改看板显示名（内部标题不变，改过的旧名仍可搜索）",
+                        "Rename the board display name (internal title unchanged; old names stay searchable)"))
+            }
+        }
+    }
+
+    private var trimmed: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var valid: Bool { !trimmed.isEmpty && trimmed.count <= 64 }
+
+    private func save() {
+        guard valid else { return }
+        if app.submitSetTitle(id: id, title: trimmed) { editing = false }
+    }
+}
+
+/// §37 search badge: this row matched the current board query only through
+/// its session transcript (the search-index layer) — none of its visible
+/// fields carry the words.
+fileprivate struct SessionHitBadge: View {
+    var body: some View {
+        Badge(text: L("命中会话", "Session match"), color: .purple)
+    }
+}
+
+// MARK: - fold notes (§38) — 折叠进来的信息 + 拆成新卡
+//
+// FoldNote (the notes_text line parser) lives in shared/Sources/FoldNote.swift
+// so the contract harness pins it; this is the Mac-only presentation on top.
+
+/// The 展开详情 fold-note list: each folded-in update on its own line, with
+/// 拆成新卡 (split_note) on lines that carry a ts handle — the §38 undo for a
+/// fold the triage LLM got wrong. Observes the store so 拆分中… updates live.
+struct FoldNotesView: View {
+    let cardID: String
+    let notes: [FoldNote]
+    unowned let app: AppDelegate
+    @ObservedObject var store: DashboardStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L("📎 折叠进来的信息", "📎 Folded-in updates"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            ForEach(Array(notes.enumerated()), id: \.offset) { _, n in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(n.kind == "quick" ? "💬" : "📡")
+                        .font(.system(size: 9))
+                        .padding(.top, 1)
+                    Text(n.text)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    trailing(for: n)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func trailing(for n: FoldNote) -> some View {
+        if let rid = n.splitInto {
+            Badge(text: L("已拆出 \(rid)", "Split → \(rid)"), color: .gray)
+        } else if let ts = n.ts {
+            if store.pendingSplits["\(cardID)|\(ts)"] != nil {
+                HStack(spacing: 3) {
+                    ProgressView().controlSize(.mini)
+                    Text(L("拆分中…", "Splitting…"))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Button {
+                    app.submitSplitNote(id: cardID, noteTs: ts)
+                } label: {
+                    Label(L("拆成新卡", "Split into card"),
+                          systemImage: "square.on.square.dashed")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.blue)
+                .help(L("这条信息不该折在这张卡里？拆出去单独成卡（原记录保留）",
+                        "Folded into the wrong card? Split it out (the origin line is kept)"))
+            }
+        }
+    }
+}
+
 /// One-line mono path that copies itself on click (clipboard→✓, 1.5 s reset).
 /// A Button so its tap wins over the whole-card copy gesture underneath.
 /// Internal (not fileprivate like its siblings above): P1-4/P1-5 reuse it for
@@ -659,6 +891,9 @@ struct ApprovalCardView: View {
     // instant comment feedback: card stays in place with a blue merging line
     // (parent passes store.pendingComment[card.id] != nil)
     var commentPending: Bool = false
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
     // v0.1 §7: collapsed by default. v0.10: the toggle itself renders in the
     // CardSurface base (detail slot); the binding stays here for the T2 gate.
     @State private var expanded = false
@@ -804,8 +1039,9 @@ struct ApprovalCardView: View {
                     .foregroundColor(.teal)
             }
 
-            // 1) plain-language summary — prominent, black, ~15pt.
-            Text(linkified(card.displaySummary))
+            // 1) plain-language summary — prominent, black, ~15pt. §37: an
+            // in-flight rename echoes here immediately.
+            Text(linkified(app.store.pendingTitle(card.id) ?? card.displaySummary))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -947,14 +1183,21 @@ struct ApprovalCardView: View {
     @ViewBuilder private var badgeRow: some View {
         HStack(spacing: 6) {
             Badge(text: tierText, color: .purple)
+            if sessionHit { SessionHitBadge() }   // §37 search: matched via session
             // v0.10 chat delivery: draft lands in the reply, no repo/PR touched
             if card.delivery_mode == "chat" {
                 Badge(text: L("交付：聊天成稿", "Deliver: chat draft"), color: .blue)
             }
             if let dl = card.deadline, !dl.isEmpty {
                 let urgent = (card.days_left ?? 99) <= 3
-                let daysStr = card.days_left.map { " (\($0)d)" } ?? ""
-                Text(L("截止 \(dl)\(daysStr)", "Due \(dl)\(daysStr)"))
+                // v0.42 (audit #14): "(-3d)" was a puzzle — say it in words.
+                let phrase: String = {
+                    guard let d = card.days_left else { return "" }
+                    if d < 0 { return " · " + L("已逾期 \(-d) 天", "\(-d) d overdue") }
+                    if d == 0 { return " · " + L("今天截止", "due today") }
+                    return " · " + L("还剩 \(d) 天", "\(d) d left")
+                }()
+                Text(L("截止 \(dl)", "Due \(dl)") + phrase)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(urgent ? .red : .secondary)
             }
@@ -962,10 +1205,17 @@ struct ApprovalCardView: View {
                 Badge(text: Self.money(cost), color: .secondary)
             }
             if let hard = card.hardness, !hard.isEmpty {
-                Badge(text: hard, color: hard == "hard" ? .red : .gray)
+                Badge(text: hardnessLabel(hard), color: hard == "hard" ? .red : .gray)
             }
             if let r = card.repeated, r >= 2 {
-                Badge(text: L("重复×\(r)", "Repeated ×\(r)"), color: .orange)
+                // v0.42 (audit #14): 「重复×N」 read like an error — it is the
+                // restatement counter; the .help spells that out. No 「自动」:
+                // repeated also accumulates via the user-approved merge path
+                // (契约四 sums both counters on 采纳), so "automatically"
+                // would overclaim for those cards.
+                Badge(text: L("被提×\(r)", "Raised ×\(r)"), color: .orange)
+                    .help(L("这件事被提起过 \(r) 次，重述已合并进这张卡",
+                            "This came up \(r) times — restatements were merged into this card"))
             }
             if card.green_sign == true {
                 Badge(text: L("需 manager green-sign（只出草稿）",
@@ -985,6 +1235,22 @@ struct ApprovalCardView: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+
+            // §37 rename affordance + 曾用名 (former display names)
+            TitleEditRow(id: card.id,
+                         current: app.store.pendingTitle(card.id) ?? card.displaySummary,
+                         formerTitles: card.former_titles ?? [],
+                         app: app)
+
+            // §40 honest cost — the expanded detail ALWAYS states the money
+            // story: the estimate when there is one (show_cost keeps gating
+            // only the collapsed badge), 成本未知 when there isn't (direct-run
+            // promotions, capture fallbacks, digest suggestions used to read
+            // as free here). Old payloads lack cost_state → derive from
+            // cost_usd presence.
+            Text(costText)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
 
             // 「需求来自」— sources
             if !card.sources.isEmpty {
@@ -1024,15 +1290,42 @@ struct ApprovalCardView: View {
                     }
                 }
             }
+
+            // §38 折叠进来的信息 — each line with its 拆成新卡 undo
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: card.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private var foldNotes: [FoldNote] { FoldNote.parse(card.notes_text) }
 
     private var tierText: String {
         if let hint = card.tier_hint, !hint.isEmpty {
             return "\(card.tier) · \(hint)"
         }
-        return card.tier
+        // v0.42 (audit #14): the pipeline's hint can be absent, and a bare
+        // "T1" means nothing to a novice — local fallback map keeps the chip
+        // in plain words; unknown tiers read 未分级, never "T?".
+        switch card.tier {
+        case "T0": return "T0 · " + L("自动执行", "runs automatically")
+        case "T1": return "T1 · " + L("一键可批", "one-click approve")
+        case "T2": return "T2 · " + L("需文字确认", "needs written confirmation")
+        default: return L("未分级", "Untiered")
+        }
+    }
+
+    /// §40 expanded-detail money line. Shared derivation with the T2 dialog
+    /// (AppDelegate.confirmT2): a number that isn't flagged unknown is an
+    /// estimate; everything else is honestly 成本未知.
+    private var costText: String {
+        if let cost = card.cost_usd, card.cost_state != "unknown" {
+            return L("💰 预计费用: \(Self.money(cost))",
+                     "💰 Estimated cost: \(Self.money(cost))")
+        }
+        return L("💰 成本未知", "💰 Cost unknown")
     }
 
     private static func money(_ v: Double) -> String {
@@ -1057,9 +1350,19 @@ struct TaskRow: View {
     let task: RunningTask
     unowned let app: AppDelegate
     let lane: TaskLane
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
 
     // v0.21: 运行中卡上「停止」→ 2 选 confirmationDialog（退回提案/去待验收）。
     @State private var showStopDialog = false
+
+    // v0.42 (audit #17): AIFix.launch's completion used to be discarded — a
+    // failed launch looked like a dead button. Mirror DepsView's aiFixStatus
+    // (Pages.swift): progress + result inline; failures stay red until the
+    // next attempt, successes fade after a few seconds.
+    @State private var aiFixStatus = ""
+    @State private var aiFixFailed = false
 
     // accent is purely visual now, derived from the lane — no call site can
     // drift a color away from its semantics again.
@@ -1097,13 +1400,18 @@ struct TaskRow: View {
         return e
     }
 
-    private var hasDetailContent: Bool {
-        (task.summary?.isEmpty == false)
-            || !(task.plan ?? []).isEmpty
-            || !(task.dod ?? []).isEmpty
-            || (task.log?.isEmpty == false)
-            || errorText != nil
-    }
+    /// full session id for the 展开详情 line (short_id preferred — same
+    /// preference the face chip used before v0.42 moved it off the face).
+    private var sessionID: String? { task.short_id ?? task.session_id }
+
+    // §37: the detail slot always has content now — the rename affordance
+    // (TitleEditRow) lives there on every task row; the needs-input terminal
+    // takeover line (§39) rides in it too. (v0.42's raw command / session id
+    // / agents roster name also live there, so no gating needed either way.)
+
+    // §39: answer in flight (store echo) — cleared when the card leaves
+    // needs_input or the 180 s honest timeout fires.
+    private var answerSending: Bool { app.store.answerPending[task.id] != nil }
 
     private var isDelivered: Bool { lane == .completed }
 
@@ -1119,24 +1427,41 @@ struct TaskRow: View {
         let hasButtons = showsStop || isDelivered
         // doubleClickRuns: cmd is app-generated (pipeline copy_cmd / Swift-built
         // "claude --resume <id>") — the TerminalLauncher security precondition.
-        if hasDetailContent && hasButtons {
+        // §37: the detail slot is unconditional now (rename affordance).
+        if hasButtons {
             CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         actions: { actionButtons },
                         detail: { detailBlock }, content: { rowContent })
-        } else if hasDetailContent {
+        } else {
             CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         detail: { detailBlock }, content: { rowContent })
-        } else if hasButtons {
-            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
-                        actions: { actionButtons }, content: { rowContent })
-        } else {
-            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued) { rowContent }
         }
     }
 
     // v0.10.2 action row — Buttons win over the whole-card copy tap (ReviewRow
     // 先例); CardSurface applies the unified font/bordered/small styling.
     @ViewBuilder private var actionButtons: some View {
+        // §39 primary affordance on a blocked card: answer the question
+        // IN-APP — the sheet shows the question + a multiline editor, and the
+        // answer resumes the original session (no terminal needed).
+        if lane == .needsInput {
+            if answerSending {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    Text(L("回答发送中…", "Sending answer…"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.orange)
+                }
+            } else {
+                Button {
+                    if let a = app.promptAnswer(question: task.question) {
+                        app.submitAnswer(id: task.id, text: a)
+                    }
+                } label: { Label(L("回答…", "Answer…"),
+                                 systemImage: "arrowshape.turn.up.left.fill") }
+                    .tint(.orange)
+            }
+        }
         if showsStop {
             // v0.21: one 停止 opens a 2-choice dialog so the fork is explicit —
             // 退回提案 discards this run (abort_execution → back to 提案), 去待验收
@@ -1187,11 +1512,14 @@ struct TaskRow: View {
                 .fill(isQueued ? Color.secondary.opacity(0.5) : accent)
                 .frame(width: 7, height: 7).padding(.top, 4)
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.name)
+                // §37: display title over the frozen internal name; an
+                // in-flight rename echoes immediately.
+                Text(app.store.pendingTitle(task.id) ?? task.rowTitle)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isQueued ? .secondary : .primary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
+                    if sessionHit { SessionHitBadge() }   // §37 search layer
                     if isQueued {
                         Badge(text: L("排队中", "Queued"), color: .gray)
                     } else {
@@ -1202,7 +1530,11 @@ struct TaskRow: View {
                         // verdict happened, so "reworking" was a misstatement.
                         if task.state == "review-active" {
                             Badge(text: L("会话有新活动", "Session active"), color: .teal)
-                        } else if let st = task.state { Badge(text: st, color: accent) }
+                        } else if let st = task.state {
+                            // v0.42 (audit #7): raw wire words ("working",
+                            // "blocked") → 大白话; unknown states render raw.
+                            Badge(text: stateLabel(st), color: accent)
+                        }
                         // §30 v0.28.1: a 待验收 card projected here because its
                         // session was reactivated (attach). Label it so a card
                         // Zelin remembers delivering doesn't read as brand-new
@@ -1210,11 +1542,7 @@ struct TaskRow: View {
                         if task.from_review == true {
                             Badge(text: L("已交付过·再运行", "Delivered · re-running"), color: .teal)
                         }
-                        if let sid = task.short_id ?? task.session_id {
-                            Text(sid.prefix(8))
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
+                        // v0.42 卡面大扫除: the session-id chip moved into 展开详情.
                         // how long it's been running (dispatch time as fallback)
                         if let age = RelativeTime.sinceEpoch(task.started_at ?? task.dispatched_at) {
                             Text(age)
@@ -1237,6 +1565,18 @@ struct TaskRow: View {
                         Badge(text: (cwd as NSString).lastPathComponent, color: .secondary)
                     }
                 }
+                // §39: WHAT the agent is asking — the reason this card is
+                // blocked, front and center (the 回答… sheet shows it in full).
+                if showsInputBadge, let q = task.question, !q.isEmpty {
+                    Text(q)
+                        .font(.system(size: 11))
+                        .foregroundColor(.primary)
+                        .lineLimit(8)
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
                 // completed lane: what actually got delivered (one line)
                 if let ds = task.delivered_summary, !ds.isEmpty {
                     Text(ds)
@@ -1245,12 +1585,17 @@ struct TaskRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                if let cmd {
-                    Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
-                        .font(.system(size: 9, design: .monospaced))
+                // §39: on needs-input rows the terminal command demotes to the
+                // detail block (在终端接管会话) — 回答… is the primary path.
+                // v0.42 卡面大扫除 (audit #7): action words on the face — the
+                // raw command itself lives in 展开详情 now.
+                if cmd != nil, lane != .needsInput {
+                    Text(L("单击复制指令 · 双击在终端打开会话",
+                           "Click to copy the command · double-click opens the session in Terminal"))
+                        .font(.system(size: 9))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                 }
                 // §25: classified errors show the plain-language sentence +
                 // one right button; the raw text drops to the tooltip/detail.
@@ -1262,13 +1607,7 @@ struct TaskRow: View {
                     errorLine(prefix: L("错误：", "Error: "),
                               raw: le, failureID: task.last_error_id)
                 }
-                if let an = task.agent_name, !an.isEmpty {
-                    Text(L("claude agents 列表名：", "claude agents list name: ") + an)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                // v0.42 卡面大扫除: 「claude agents 列表名」 moved into 展开详情.
             }
             // red corner mark when the executor hit an error (detail line above)
             if !isQueued, task.last_error?.isEmpty == false {
@@ -1299,7 +1638,18 @@ struct TaskRow: View {
                 }
                 if AIFix.enabled {
                     Button(L("让 AI 修", "Fix with AI")) {
-                        AIFix.launch(context: prefix + raw) { _, _ in }
+                        aiFixFailed = false
+                        aiFixStatus = L("正在准备诊断包…", "Preparing the diagnostic bundle…")
+                        AIFix.launch(context: prefix + raw) { ok, msg in
+                            aiFixFailed = !ok
+                            aiFixStatus = ok ? msg
+                                : L("让 AI 修启动失败：", "Fix with AI failed to launch: ") + msg
+                            if ok {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                                    if !aiFixFailed { aiFixStatus = "" }
+                                }
+                            }
+                        }
                     }
                 }
                 Spacer()
@@ -1307,12 +1657,24 @@ struct TaskRow: View {
             .font(.system(size: 10))
             .buttonStyle(.bordered)
             .controlSize(.mini)
+            if !aiFixStatus.isEmpty {
+                Text(aiFixStatus)
+                    .font(.system(size: 10))
+                    .foregroundColor(aiFixFailed ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     @ViewBuilder private var detailBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let err = errorText { ErrorTextBlock(text: err) }
+            // §39: secondary path for a blocked card — take the session over
+            // in a terminal (copies the state-correct attach/--resume command).
+            if lane == .needsInput, let cmd {
+                CopyPathLine(label: L("在终端接管会话：", "Take over in terminal: "),
+                             path: cmd)
+            }
             if let s = task.summary, !s.isEmpty {
                 Text(s)
                     .font(.system(size: 11))
@@ -1324,6 +1686,32 @@ struct TaskRow: View {
             if let log = task.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
             }
+            // v0.42 卡面大扫除 (audit #7): the mechanics live here now — raw
+            // command (CopyPathLine = the log-path precedent; needs-input rows
+            // already carry it as §39's 在终端接管会话 line above), session id,
+            // `claude agents` roster name.
+            if let cmd, lane != .needsInput {
+                CopyPathLine(label: L("指令：", "Command: "), path: cmd)
+            }
+            if let sid = sessionID {
+                Text(L("会话 ID：", "Session ID: ") + sid)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let an = task.agent_name, !an.isEmpty {
+                Text(L("claude agents 列表名：", "claude agents list name: ") + an)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            // §37 rename affordance + 曾用名
+            TitleEditRow(id: task.id,
+                         current: app.store.pendingTitle(task.id) ?? task.rowTitle,
+                         formerTitles: task.former_titles ?? [],
+                         app: app)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1335,28 +1723,22 @@ struct TaskRow: View {
 struct ReviewRow: View {
     let item: ReviewItem
     unowned let app: AppDelegate
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
     // "复制成稿" clipboard→✓ feedback (1.5 s reset, same pattern as CardSurface)
     @State private var draftCopied = false
 
-    private var hasDetailContent: Bool {
-        !(item.plan ?? []).isEmpty
-            || !(item.sources ?? []).isEmpty
-            || (item.log?.isEmpty == false)
-    }
+    private var foldNotes: [FoldNote] { FoldNote.parse(item.notes_text) }
 
     var body: some View {
         // doubleClickRuns: copy_cmd is app-generated by the pipeline — the
-        // TerminalLauncher security precondition.
-        if hasDetailContent {
-            CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
-                        actions: { actionButtons },
-                        detail: { detailBlock },
-                        content: { rowContent })
-        } else {
-            CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
-                        actions: { actionButtons },
-                        content: { rowContent })
-        }
+        // TerminalLauncher security precondition. §37: the detail slot is
+        // unconditional now (rename affordance).
+        CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
+                    actions: { actionButtons },
+                    detail: { detailBlock },
+                    content: { rowContent })
     }
 
     @ViewBuilder private var actionButtons: some View {
@@ -1394,7 +1776,9 @@ struct ReviewRow: View {
         HStack(alignment: .top, spacing: 8) {
             Circle().fill(Color.teal).frame(width: 7, height: 7).padding(.top, 4)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
+                // §37: display title over the frozen internal name; an
+                // in-flight rename echoes immediately.
+                Text(app.store.pendingTitle(item.id) ?? item.rowTitle)
                     .font(.system(size: 12, weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
                 // no linkified in these body texts: link taps vs the whole-card
@@ -1446,6 +1830,7 @@ struct ReviewRow: View {
         }
         // meta line: where it ran + how long it took + how long it's waited
         HStack(spacing: 6) {
+            if sessionHit { SessionHitBadge() }   // §37 search layer
             // §30: the session is live-working — user attach / organic
             // activity, calmly noted; a real 打回 leaves this lane entirely
             // (review->executing), so this is never a rework round.
@@ -1468,30 +1853,47 @@ struct ReviewRow: View {
             }
             Spacer()
         }
-        if let cmd = item.copy_cmd {
-            // echo line only — the copy action is the whole-card tap
-            Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        if let an = item.agent_name, !an.isEmpty {
-            Text(L("claude agents 列表名：", "claude agents list name: ") + an)
+        if item.copy_cmd?.isEmpty == false {
+            // v0.42 卡面大扫除 (audit #7): action words on the face — the raw
+            // command itself lives in 展开详情 now (the copy action stays the
+            // whole-card tap).
+            Text(L("单击复制指令 · 双击在终端打开会话",
+                   "Click to copy the command · double-click opens the session in Terminal"))
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
+        // v0.42 卡面大扫除: 「claude agents 列表名」 moved into 展开详情.
     }
 
     @ViewBuilder private var detailBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let plan = item.plan, !plan.isEmpty { PlanListView(plan: plan) }
             if let srcs = item.sources, !srcs.isEmpty { SourceListView(sources: srcs) }
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: item.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
             if let log = item.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
             }
+            // v0.42 卡面大扫除 (audit #7): mechanics live here now.
+            if let cmd = item.copy_cmd, !cmd.isEmpty {
+                CopyPathLine(label: L("指令：", "Command: "), path: cmd)
+            }
+            if let an = item.agent_name, !an.isEmpty {
+                Text(L("claude agents 列表名：", "claude agents list name: ") + an)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            // §37 rename affordance + 曾用名
+            TitleEditRow(id: item.id,
+                         current: app.store.pendingTitle(item.id) ?? item.rowTitle,
+                         formerTitles: item.former_titles ?? [],
+                         app: app)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1500,22 +1902,41 @@ struct ReviewRow: View {
 struct DebtRow: View {
     let item: DebtItem
     unowned let app: AppDelegate
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
 
     var body: some View {
         surface.contextMenu { contextItems }
     }
 
-    // detail slot only when there are source quotes to show — otherwise the
-    // toggle would open an empty drawer.
+    private var foldNotes: [FoldNote] { FoldNote.parse(item.notes_text) }
+
+    // §37: the detail slot always has content now (rename affordance), with
+    // the source quotes above it when the card carries any.
     @ViewBuilder private var surface: some View {
-        if let srcs = item.sources, !srcs.isEmpty {
-            CardSurface(actions: { actionButtons },
-                        detail: { SourceListView(sources: srcs)
-                                      .frame(maxWidth: .infinity, alignment: .leading) },
-                        content: { rowContent })
-        } else {
-            CardSurface(actions: { actionButtons }, content: { rowContent })
+        CardSurface(actions: { actionButtons },
+                    detail: { detailBlock },
+                    content: { rowContent })
+    }
+
+    @ViewBuilder private var detailBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let srcs = item.sources, !srcs.isEmpty {
+                SourceListView(sources: srcs)
+            }
+            // §38 折叠进来的信息 — each line with its 拆成新卡 undo
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: item.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
+            // §37 rename affordance + 曾用名
+            TitleEditRow(id: item.id,
+                         current: app.store.pendingTitle(item.id) ?? item.displaySummary,
+                         formerTitles: item.former_titles ?? [],
+                         app: app)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // v0.20 card-lifecycle: 永久完成 (archive) lives in the context menu,
@@ -1557,15 +1978,18 @@ struct DebtRow: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .padding(.top, 2)
-            Text(linkified(item.displaySummary))
+            // §37: an in-flight rename echoes here immediately.
+            Text(linkified(app.store.pendingTitle(item.id) ?? item.displaySummary))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 4)
-            if let t = item.type, !t.isEmpty { Badge(text: t, color: .gray) }
+            if sessionHit { SessionHitBadge() }   // §37 search layer
+            // v0.42 (audit #7): enum chips in 大白话, unknown values raw.
+            if let t = item.type, !t.isEmpty { Badge(text: typeLabel(t), color: .gray) }
             if let h = item.hardness, !h.isEmpty {
-                Badge(text: h, color: h == "hard" ? .red : .gray)
+                Badge(text: hardnessLabel(h), color: h == "hard" ? .red : .gray)
             }
         }
     }
@@ -1798,6 +2222,8 @@ struct MergeSuggestionCard: View {
         case "high":   Badge(text: L("置信度：高", "Confidence: high"), color: .green)
         case "medium": Badge(text: L("置信度：中", "Confidence: medium"), color: .orange)
         case "low":    Badge(text: L("置信度：低", "Confidence: low"), color: .gray)
+        // §38 auto suggestions: deterministic rule, not an AI analysis
+        case "deterministic": Badge(text: L("规则判定", "Rule-based"), color: .purple)
         default:       Badge(text: conf, color: .gray)
         }
     }
@@ -1991,6 +2417,22 @@ struct TrashRow: View {
 
     private var isPinned: Bool { item.permanent || pinnedLocally }
 
+    private static let isoParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// §40 purge countdown: whole days until purge_at (ceiling — a row purged
+    /// tomorrow morning says 1 天, never 0 while still alive). nil = no known
+    /// purge (pinned / retention off / older actd) → no countdown shown.
+    private var daysUntilPurge: Int? {
+        guard let s = item.purge_at, let d = Self.isoParser.date(from: s)
+        else { return nil }
+        let secs = d.timeIntervalSinceNow
+        return max(0, Int(ceil(secs / 86400)))
+    }
+
     var body: some View {
         CardSurface {
             Button {
@@ -2023,11 +2465,12 @@ struct TrashRow: View {
                 }
             }
 
-            // tag line: kind · reason · relative age
+            // tag line: kind · reason · relative age · §40 purge countdown
+            // v0.42 (audit #7): enum values in 大白话, unknown values raw.
             HStack(spacing: 6) {
-                if let k = item.kind, !k.isEmpty { Badge(text: k, color: .gray) }
+                if let k = item.kind, !k.isEmpty { Badge(text: kindLabel(k), color: .gray) }
                 if let r = item.trash_reason, !r.isEmpty {
-                    Text(r)
+                    Text(trashReasonLabel(r))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
@@ -2035,6 +2478,17 @@ struct TrashRow: View {
                     Text(age)
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                }
+                // §40: the 60-day hard delete was invisible — say when it
+                // lands (red inside a week), or that a pinned row never goes.
+                if isPinned {
+                    Text(L("已永久保留", "Kept forever"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.teal)
+                } else if let days = daysUntilPurge {
+                    Text(L("\(days) 天后永久删除", "Deleted for good in \(days)d"))
+                        .font(.system(size: 10, weight: days <= 7 ? .semibold : .regular))
+                        .foregroundColor(days <= 7 ? .red : .secondary)
                 }
                 Spacer()
             }
@@ -2146,10 +2600,12 @@ struct ArchiveRow: View {
             }
 
             // tag line: kind · previous status · relative age
+            // v0.42 (audit #7): kind in 大白话; prev_status → the lane name
+            // the user knew the card by (raw registry words meant nothing).
             HStack(spacing: 6) {
-                if let k = item.kind, !k.isEmpty { Badge(text: k, color: .gray) }
+                if let k = item.kind, !k.isEmpty { Badge(text: kindLabel(k), color: .gray) }
                 if let ps = item.prev_status, !ps.isEmpty {
-                    Text(L("原状态: ", "was: ") + ps)
+                    Text(L("原来在：", "was in: ") + prevStatusLabel(ps))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }

@@ -579,6 +579,30 @@ class ObsidianTriageTestCase(TriageBase):
         self.assertIn("urgent", radar.EXTRACT_PROMPT)
         self.assertIn("NOT urgent", radar.EXTRACT_PROMPT)
 
+    def test_extract_prompt_parameterized_on_owner_name(self):
+        """v0.42: {owner} 槽位以 cfg.owner_name 注入——不再写死 Zelin，也不再
+        替 manager 代言（重构为 asks directed at {owner}）。"""
+        config.CONFIG_PATH.write_text(
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n'
+            "owner:\n  name: Alex\n", encoding="utf-8")
+        prompt = radar._extract_prompt("note body")
+        self.assertIn("requirement radar for Alex", prompt)
+        self.assertIn("asks directed at Alex", prompt)
+        self.assertNotIn("{owner}", prompt)
+        self.assertNotIn("manager", prompt)
+
+    def test_source_who_is_the_note_not_a_fabricated_manager(self):
+        """v0.42: 来源 who = 笔记名（真实来源）——雷达不知道谁在提需求，
+        不许虚构 "manager"。"""
+        self._note("2026-07-09 sync.md", "ship it")
+        item = {"title": "Ship the Q3 quarterly report", "type": "report",
+                "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
+                "cost_estimate_usd": None, "quote": "ship by July 20"}
+        radar.scan(runner=lambda text: json.dumps([item]))
+        (req,) = registry.load_all()
+        self.assertEqual(req.sources[0]["who"], "2026-07-09 sync")
+        self.assertEqual(req.sources[0]["channel"], "meeting")
+
     def test_non_urgent_hard_deadline_item_parks_in_backlog(self):
         """urgent:false 的项即使 hard+deadline 也不进提案列（现在不需要行动）."""
         self._note("2026-07-09 sync.md", "next quarter X, hard date already known")
