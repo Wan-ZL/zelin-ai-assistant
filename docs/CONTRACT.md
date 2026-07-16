@@ -1184,3 +1184,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+## 42. v0.42.0 卡面大扫除（display-only）
+
+纯展示层修订，**wire 契约与状态机零改动**：dashboard.json/board payload 的字段、
+枚举值、analytics id 全部原样（`MainSection.ingest` rawValue 冻结）；Mac 端仅改
+渲染（原始指令/会话 ID/agents 名下沉到展开详情、枚举 chips 本地化大白话、doctor
+文案走 `failures.pick` §15 单开关、radar 提取提示词参数化 `owner.name` 且来源
+`who` 不再虚构 "manager"——`who` 现为来源笔记名，属新写入卡片的展示字段值变化，
+不是形状变化）。
