@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - exercised only on Windows CI
     fcntl = None
 
 from act.executor import _runner_env
-from act.lib import analytics, config, health, registry, sanitize, secrets
+from act.lib import analytics, config, failures, health, registry, sanitize, secrets
 from act.lib.registry import Requirement
 
 MARKER_PATH_NAME = "radar.marker"
@@ -161,6 +161,68 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
     entry["gave_up"] = entry["attempts"] >= FAILED_MAX_ATTEMPTS
     queue[key] = entry
     return entry
+
+
+# give-up diagnostic card (§40) — dedup marker in sources[0]["channel"]
+GIVE_UP_CHANNEL = "radar-diagnostic"
+
+
+def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
+    """§40: a note the radar has given up on becomes a VISIBLE diagnostic card.
+
+    Before this, a give-up left only a stdout line + an analytics event —
+    per this module's own docstring, silently losing a note is the radar's
+    worst failure mode, and stdout/analytics are exactly the places the owner
+    never looks. The card lands in the 备选/detected lane (a fact to act on,
+    not a proposal to approve), titled 「有一篇笔记我处理不了」 with the last
+    error + file path in notes.
+
+    Dedup by note path (any status, incl. trashed/archived): one note = at
+    most one card, ever — a re-give-up after the user edits the note (mtime
+    reset) must not re-file, or the honesty fix becomes a nag. Never raises;
+    filing goes through registry.upsert, NOT merge_or_new (no LLM matching —
+    identity is the path). Returns the card, or None (dup / filing failed).
+    Copy is bilingual via failures.pick (§15 single language switch) — safe
+    because the dedup identity is the source ref, never the title.
+    """
+    try:
+        ref = str(note)
+        for r in registry.load_all(include_archived=True):
+            if any(isinstance(s, dict) and s.get("channel") == GIVE_UP_CHANNEL
+                   and s.get("ref") == ref for s in (r.sources or [])):
+                return None  # already filed for this note — never re-file
+        attempts = int(entry.get("attempts") or 0)
+        error = str(entry.get("last_error") or "")
+        req = Requirement(
+            id=registry.next_id(),
+            title=failures.pick(f"有一篇笔记我处理不了：{note.name}",
+                                f"A note I couldn't process: {note.name}")[:80],
+            type="diagnostic",
+            tier="T0",
+            status=registry.State.DETECTED.value,
+            hardness="soft",
+            summary=failures.pick(
+                f"原文还在 {ref}，你可以手动处理或删掉它。",
+                f"The original file is still at {ref} — handle it by hand "
+                "or delete it."),
+            notes=(failures.pick(
+                f"[radar-give-up] 连续提取失败 {attempts} 次后放弃",
+                f"[radar-give-up] gave up after {attempts} failed "
+                "extraction attempts")
+                + f"\nlast error: {error}\nfile: {ref}"),
+            sources=[{
+                "who": "assistant",
+                "channel": GIVE_UP_CHANNEL,
+                "date": datetime.now().date().isoformat(),
+                "quote": error[:200] or None,
+                "ref": ref,
+            }],
+        )
+        saved = registry.upsert(req)
+        analytics.log_event("radar_give_up_card", note=note.name, req=saved.id)
+        return saved
+    except Exception:  # noqa: BLE001 - visibility must never break the pass
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -424,8 +486,9 @@ def scan(runner=None, triager=None) -> dict:
     unreadable file, unparseable output) goes to that retry queue and is
     re-tried once per pass, up to FAILED_MAX_ATTEMPTS, then given up WITH a
     visible trace (skipped line + radar_give_up analytics + the queue entry
-    stays as the case file) — silently losing a note is the radar's worst
-    failure mode. Editing the note (mtime change) resets its attempt budget.
+    stays as the case file + a §40 diagnostic card in 备选, deduped by note
+    path) — silently losing a note is the radar's worst failure mode. Editing
+    the note (mtime change) resets its attempt budget.
 
     为什么不再让失败 note 钉死 marker（旧语义）——旧语义自相矛盾：
     ① 失败 note 与更早成功的 note 共享同一 mtime 时，marker 已被成功者推到
@@ -515,6 +578,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     # 失败成立）就会归队进台账；比误判系统故障丢掉整个积压便宜得多。
     failed_before = json.loads(json.dumps(failed))
     succeeded_this_pass = 0
+    gave_up_this_pass: list[tuple[Path, dict]] = []
 
     for note, mtime in md_files:
         entry = failed.get(str(note))
@@ -539,6 +603,9 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
                     f"(case kept in state/{FAILED_QUEUE_NAME})")
                 analytics.log_event("radar_give_up", source="obsidian",
                                     note=note.name, attempts=entry["attempts"])
+                # §40: queue the visible diagnostic card — filed AFTER the
+                # systemic-failure check below (a voided pass files nothing).
+                gave_up_this_pass.append((note, entry))
         # 水位语义 v2：成功与失败都推进 marker——失败 note 的重试由台账负责，
         # 它既不再钉死后续 note（无限重烧），也不会被同 mtime 的成功者越过而丢失。
         newest_done = max(newest_done, mtime)
@@ -551,6 +618,11 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
             "marker pinned, no retry budget charged")
         failed = failed_before
         newest_done = marker
+        gave_up_this_pass = []  # this pass's accounting is void — no cards
+    for note, entry in gave_up_this_pass:
+        # §40: give-up becomes visible — a diagnostic card in 备选 (deduped by
+        # note path inside file_give_up_card, so it never re-files).
+        file_give_up_card(note, entry)
     # 台账先于 marker 落盘（audit review 2026-07-14）：反过来时，两次写之间
     # 的崩溃/ENOSPC 会留下"marker 已越过、台账没记上"的失败 note = 静默永久
     # 丢失；这个顺序下崩溃顶多让失败 note 多重试一轮。

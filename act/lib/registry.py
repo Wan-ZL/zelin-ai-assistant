@@ -1017,6 +1017,17 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
 def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = False) -> Requirement:
     """Reconcile a freshly-extracted requirement against the registry.
 
+    Signature frozen (pre-§40); pure delegate — callers that need the
+    reconciliation OUTCOME use :func:`merge_or_new_with_kind`.
+    """
+    return merge_or_new_with_kind(new_req, high_confidence=high_confidence)[1]
+
+
+def merge_or_new_with_kind(
+    new_req: Union[Requirement, dict], *, high_confidence: bool = False,
+) -> tuple[str, Requirement]:
+    """:func:`merge_or_new` plus the reconciliation OUTCOME (§40 additive seam).
+
     Parent selection (v0.20.0 §3.4): a STRONG external ``thread_key`` match wins
     first, then the legacy title heuristic. When the matched parent is RESOLVED
     (delivered/merged, non-archived) the reconciliation is delegated to
@@ -1029,6 +1040,18 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
     - Carries an increment on an OPEN entry: an ``improvement_of`` child.
     - No match: a brand-new self-rooted entry (status=detected, or card_sent when
       high-confidence + a hard deadline).
+
+    Returns ``(kind, saved)`` — :func:`reraise_or_followup`'s vocabulary,
+    which only this function can report truthfully (a ``new_proposal``
+    capture can internally RE-RAISE a resolved parent; the §40.2 receipt
+    must read ↩️, not 📥):
+
+    - ``("proposed", saved)``   — a NEW card was filed (fresh self-rooted
+      entry, an increment child, or the fresh card after a reraise dead-end);
+    - ``("folded", parent)``    — pure restatement absorbed into an open (or
+      live-canonical) entry, no new card;
+    - ``("follow_up", child)``  — new lineage card under a resolved parent;
+    - ``("reraised", parent)``  — a resolved card flipped back to 提案.
     """
     if isinstance(new_req, dict):
         new_req = Requirement.from_dict(new_req)
@@ -1061,12 +1084,12 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
     if parent is not None:
         if is_resolved(parent):
             # is_resolved MUST be decided here (before _carries_increment).
-            _kind, res = reraise_or_followup(
+            kind, res = reraise_or_followup(
                 parent, new_req, same_task=same_task,
                 sources=new_req.sources,
                 note=(new_req.summary or new_req.title))
             if res is not None:
-                return res
+                return kind or "folded", res
             # dead-end (canonical trashed/rejected/archived) -> fresh card below
         else:
             parent.thread_id = parent.thread_id or parent.id
@@ -1091,13 +1114,13 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
                     display_title=new_req.display_title,
                     notes=new_req.notes or "",
                 )
-                return upsert(child)
+                return "proposed", upsert(child)
             # pure restatement -> merge sources, bump count, keep status
             merged, added = _dedupe_sources(parent.sources or [], new_req.sources or [])
             parent.sources = merged
             if added:
                 parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
-            return upsert(parent)
+            return "folded", upsert(parent)
 
     # brand new — self-root the thread on its own id
     new_req.id = new_req.id or next_id()
@@ -1108,4 +1131,4 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
         else:
             new_req.status = State.DETECTED.value
     new_req.repeated_mentions = int(new_req.repeated_mentions or 1)
-    return upsert(new_req)
+    return "proposed", upsert(new_req)

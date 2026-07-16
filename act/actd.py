@@ -1960,12 +1960,21 @@ def cleanup_merge_jobs() -> int:
 # --------------------------------------------------------------------------- #
 # (d) transition detection
 # --------------------------------------------------------------------------- #
+# §40: more than this many fresh proposals in one pass collapse to one
+# notification (msg_new_cards_batch). At 1-2 the per-card copy is still the
+# more useful one — it names the ask.
+_NEW_CARD_BATCH_ABOVE = 2
+
+
 def _by_id(items: list[dict]) -> dict[str, dict]:
     return {i["id"]: i for i in items if i.get("id")}
 
 
-def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]]:
-    """Return (title, body) notifications for prev->curr transitions."""
+def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str, Optional[str]]]:
+    """Return (title, body, req_id) notifications for prev->curr transitions.
+
+    req_id is None for the §40 batched new-cards entry (it names no single
+    card); every other class carries the card id."""
     msgs: list[tuple[str, str]] = []
     if prev is None:
         return msgs
@@ -1979,13 +1988,34 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     # phone ✅-reaction approval surface was removed in v0.21 — Mac app only).
     # new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
     # so Zelin knows it's a card he already accepted, not a brand-new find.
+    # §40 batching: >2 fresh (non-reraised) proposals in one pass collapse to
+    # ONE 「新增 N 张待审批卡」 — a radar backfill used to fire n pings in a
+    # row. 回锅 stays per-card (each names a prior decision of the user's), as
+    # do the 需输入/待验收 classes below. The §28 relay queue's 10-min stale
+    # sweep is untouched — one batched entry ages out like any other.
+    # Cards filed by the weekly digest are skipped entirely: its own
+    # notification already announced them by count (「另有 N 条自动化建议进了
+    # 待审批」) — re-announcing them here (per-card or batched) was a
+    # duplicate ping every suggestion-bearing Monday. Seam = the row's source
+    # channel (weekly_digest.SOURCE_CHANNEL rides the dashboard projection).
+    fresh: list[tuple[str, dict]] = []
     for rid, item in c_na.items():
         if rid not in p_na:
             if item.get("reraised"):
                 t, b = notify.msg_reraised(item.get("title", rid),
                                            item.get("reraised_note") or "")
+                msgs.append((t, b, rid))
+            elif any(isinstance(s, dict) and s.get("channel") == "weekly-digest"
+                     for s in item.get("sources") or []):
+                continue  # announced by the digest's own notification
             else:
-                t, b = notify.msg_new_card(item.get("title", rid))
+                fresh.append((rid, item))
+    if len(fresh) > _NEW_CARD_BATCH_ABOVE:
+        t, b = notify.msg_new_cards_batch(len(fresh))
+        msgs.append((t, b, None))
+    else:
+        for rid, item in fresh:
+            t, b = notify.msg_new_card(item.get("title", rid))
             msgs.append((t, b, rid))
 
     # executing -> review (§11 draft ready, awaiting acceptance)

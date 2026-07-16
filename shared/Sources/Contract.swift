@@ -31,6 +31,10 @@ struct ApprovalCard: Decodable, Hashable {
     let repeated: Int?
     let cost_usd: Double?
     let show_cost: Bool
+    // §40 add-only: "estimated" | "unknown". unknown → the expanded detail
+    // says 成本未知 instead of letting a missing estimate read as free; nil
+    // (older actd) derives from cost_usd presence at the render site.
+    let cost_state: String?
     let green_sign: Bool?
     let disagreement: String?
     let improvement_of: String?
@@ -59,7 +63,7 @@ struct ApprovalCard: Decodable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, target_repo, target_name, target_kind
         case tier, tier_hint, hardness, deadline, days_left
-        case repeated, cost_usd, show_cost, green_sign, disagreement
+        case repeated, cost_usd, show_cost, cost_state, green_sign, disagreement
         case improvement_of, sources, plan, outputs, dod, processing
         case delivery_mode
         case reraised
@@ -83,6 +87,7 @@ struct ApprovalCard: Decodable, Hashable {
         repeated = try? c.decodeIfPresent(Int.self, forKey: .repeated)
         cost_usd = try? c.decodeIfPresent(Double.self, forKey: .cost_usd)
         show_cost = (try? c.decodeIfPresent(Bool.self, forKey: .show_cost)) ?? false
+        cost_state = try? c.decodeIfPresent(String.self, forKey: .cost_state)
         green_sign = try? c.decodeIfPresent(Bool.self, forKey: .green_sign)
         disagreement = try? c.decodeIfPresent(String.self, forKey: .disagreement)
         improvement_of = try? c.decodeIfPresent(String.self, forKey: .improvement_of)
@@ -276,10 +281,15 @@ struct TrashItem: Decodable, Hashable {
     // §37 living display titles (see ApprovalCard).
     let display_title: String?
     let user_titled: Bool
+    // §40 add-only: ISO8601 hard-delete deadline (trashed_at + retention).
+    // nil = never purged (pinned / retention off / older actd) — the row
+    // then shows no countdown rather than inventing one.
+    let purge_at: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, kind, trashed_at, trash_reason, permanent, type, hardness
         case display_title, user_titled
+        case purge_at
     }
 
     init(from decoder: Decoder) throws {
@@ -294,6 +304,7 @@ struct TrashItem: Decodable, Hashable {
         hardness = try? c.decodeIfPresent(String.self, forKey: .hardness)
         display_title = try? c.decodeIfPresent(String.self, forKey: .display_title)
         user_titled = (try? c.decodeIfPresent(Bool.self, forKey: .user_titled)) ?? false
+        purge_at = try? c.decodeIfPresent(String.self, forKey: .purge_at)
         // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
         id = (try? c.decode(String.self, forKey: .id))
             ?? stableFallbackID("trash", title, summary, kind, trashed_at, trash_reason)

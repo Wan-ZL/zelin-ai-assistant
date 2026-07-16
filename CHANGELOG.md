@@ -27,6 +27,55 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.40.0] - 2026-07-16
+
+主题：**钱看得见、事有回执** —— 一批"系统做了但没告诉你"的诚实性欠账一次还清。
+
+### Added
+
+- **批准前能看到钱了** — 展开卡片详情永远有一行费用：有估算显「预计费用: $X」
+  （不再受 $5 阈值影响——阈值只继续管收起状态的小徽章），没有估算的卡（双输入框
+  直跑、捕获兜底、周摘要建议）诚实地显「成本未知」，不再看起来像免费。T2 高影响
+  确认对话框现在也带金额（或「成本未知」）。iOS/网页的展示是后续跟进——字段已
+  在共享契约里解码，只是还没有视图用它。
+- **手机捕获有回执了** — 在 Slack 里给自己发的每条消息，处理完会打上一个 emoji
+  回执：📥 已记下（建卡/并入已有卡/挂后续卡）、↩️ 你验收过的事回锅重新提案、
+  🚫 判定不用行动（没建卡）。只打 reaction、绝不回帖；关闭开关
+  `sources.slack_capture_receipts: false`。老 app 需重新粘贴 manifest 加
+  `reactions:write` 权限——缺了也只是没回执，捕获照常。
+- **雷达放弃一篇笔记会告诉你了** — 某篇笔记连续 5 次提取失败被放弃时，潜在任务列
+  会出现一张「有一篇笔记我处理不了：<文件名>」的卡，正文指回原文件路径（你可以
+  手动处理或删掉它），备注带最后的报错。之前只写进日志和统计——正是没人看的
+  地方。同一篇笔记只出一张卡，永不重复；卡片文案随界面语言（中/英）。
+- **周摘要失败会通知了** — 设置页点「现在生成一份」后如果 AI 调用失败或返回
+  解析不了，会收到「本周摘要生成失败——可在设置页重试」的通知。之前失败无声，
+  而"没有数据"反而有提示。（定时周一跑失败仍只记日志——失败不推进闹钟，每小时
+  重试，无条件通知会刷一整天屏。）
+- **回收站有倒计时了** — Mac 回收站每行显示「X 天后永久删除」（≤7 天变红），
+  点过「永久保存」的行显示「已永久保留」。60 天自动清理不再是暗地里发生的事。
+  iOS/网页无回收站列表面，不涉及。
+- **通知不刷屏了** — 一次冒出 3 张以上新提案时，合并成一条「新增 N 张待审批卡」
+  （文案不点名来源——新卡可能来自雷达/周摘要/捕获任何一方）；周摘要落的建议卡
+  由它自己的通知点名数量，不再被重复播报；需要你逐个处理的（需输入、回锅、
+  失败、待验收）保持一事一条。
+
+### Changed
+
+- **周一 digest 落卡，不再落盘** — 不再往工作台写 `digests/digest-*.md`、
+  通知里也不再塞文件路径（App 里根本点不开）；改为像周摘要一样落一张
+  「待验收」聊天卡（全文在卡里，当天重跑合并不堆叠）。1:1 准备页照常生成、
+  在 digest 正文里链接。
+- **页面不再说黑话** — 周一 digest 和 1:1 准备页里的条目状态从 registry 原词
+  （card_sent/review/…）换成通道显示名（待审批/待验收/进行中/潜在任务…，随
+  界面语言）；「双向承诺账本（manager 欠的）」改为中性表述并按 `owner.name`
+  参数化（`[MANAGER-OWES]` 标签本身冻结兼容，仍被识别）。
+- `quick_capture` 新增 additive seam `apply_result_with_kind`、`registry`
+  新增同形 `merge_or_new_with_kind`（回执 emoji 的依据——new_proposal 内部
+  触发的回锅也如实上报 ↩️；公共 `apply_result`/`merge_or_new` 签名与行为
+  逐字冻结，纯委托）。
+- 数据契约见 docs/CONTRACT.md §40（全部 add-only：老 App 忽略新键、老
+  payload 照常解码）。
+
 ## [0.39.0] - 2026-07-16
 
 ### Added
@@ -52,7 +101,6 @@ other file needs editing. To cut a release:
     逐卡的需输入本地通知。
   - 回答成功会顺便把这张卡的自动恢复（auto-resume）配额清零重来——你亲手救活
     的 session，之后再断线仍然享受自动恢复。
-=======
 ## [0.38.0] - 2026-07-16
 
 ### Changed
@@ -1515,7 +1563,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.1...v0.38.0
 [0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.0...v0.37.1

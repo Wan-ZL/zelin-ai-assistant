@@ -705,13 +705,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // re-prompts (with a "didn't match" note) instead of silently failing;
     // Cancel is the only way out with false.
     func confirmT2(id: String, summary: String) -> Bool {
+        // §40 money visibility: this dialog is the last stop before spending,
+        // so it names the amount (or admits the cost is unknown) instead of
+        // leaving the money buried in the card. Looked up from the store so
+        // call sites stay unchanged; same derivation as the card detail.
+        let card = store.dashboard?.needs_approval.first { $0.id == id }
+        let costLine: String
+        if let cost = card?.cost_usd, card?.cost_state != "unknown" {
+            let money = cost == cost.rounded()
+                ? "$\(Int(cost))" : String(format: "$%.2f", cost)
+            costLine = L("预计费用：\(money)", "Estimated cost: \(money)")
+        } else {
+            costLine = L("成本未知", "Cost unknown")
+        }
         var mismatched = false
         while true {
             let alert = NSAlert()
             alert.messageText = L("T2 · 高影响操作确认", "T2 · High-Impact Action Confirmation")
             var info = L(
-                "批准 \(id)：\(summary)\n\n请输入 确认 或 go 后再点「批准」。",
-                "Approve \(id): \(summary)\n\nType 确认 or go, then click \"Approve\".")
+                "批准 \(id)：\(summary)\n\(costLine)\n\n请输入 确认 或 go 后再点「批准」。",
+                "Approve \(id): \(summary)\n\(costLine)\n\nType 确认 or go, then click \"Approve\".")
             if mismatched {
                 info += "\n" + L("上次输入不匹配。", "Previous input didn't match.")
             }

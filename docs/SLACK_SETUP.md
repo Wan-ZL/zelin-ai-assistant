@@ -20,9 +20,11 @@ Bot token（`xoxb-`）不行——它读不到你的私信、也不能用 search
 > （Slack 的 YAML 解析器对注释/非 ASCII 字符很挑剔，JSON 版最稳；`config/slack-app-manifest.yaml`
 > 是同内容的 YAML 版）。真正的公司限制不会长这样——若安装一步出现"需要管理员审批"，按流程提交等批准即可。
 
-> **v0.14 起 manifest 增补了 `channels:read` / `groups:read`**（设置页的频道勾选器需要）。
-> 老版本建的 app 报 `missing_scope` 时：api.slack.com/apps → 你的 app → **App Manifest** →
-> 粘贴新 manifest → Save → **Reinstall to Workspace**，token 会换新，重新粘贴一次即可。
+> **v0.14 起 manifest 增补了 `channels:read` / `groups:read`**（设置页的频道勾选器需要）；
+> **v0.40 起增补了 `reactions:write`**（快速捕获的 emoji 回执需要——缺这个 scope 只会少回执，
+> 捕获本身不受影响）。老版本建的 app 报 `missing_scope` 时：api.slack.com/apps → 你的 app →
+> **App Manifest** → 粘贴新 manifest → Save → **Reinstall to Workspace**，token 会换新，
+> 重新粘贴一次即可。
 
 ## 排错 / 手工验证
 
@@ -59,10 +61,15 @@ self-DM 里回帖。
   （直接进提案列）、在说已有条目就关联并追加备注、闲话忽略。
 - **发图片/视频 = 拍照建任务**：白板、屏幕、纸条拍下来直接发；视频自动抽帧（≤12 帧）
   识别后走同样的三选一。图片存 `state/media/`。
+- **回执（v0.40）**：捕获处理完后，你的那条消息上会出现一个 emoji reaction 作为回执——
+  📥 已记下（新建卡 / 折进已有卡 / 挂了后续卡）、↩️ 你验收过的事回锅重新提案、
+  🚫 判定无需行动（没建卡，觉得不对就换个更明确的说法再发一条）。只打 reaction、
+  绝不回帖；token 缺 `reactions:write` scope 时回执静默缺席，捕获不受影响。
+  关闭：`config.yaml` 里 `sources.slack_capture_receipts: false`。
 
 > **审批只在 Mac App 里做**（v0.21 起）。旧版的 self-DM 指令（`批准/拒绝/打回/验收 R-xxx`）、
 > ✅ reaction 一键批准、以及出站通知镜像到 self-DM 都已移除；iMessage 手机通道也整体退役。
-> self-DM 现在纯做捕获。
+> self-DM 现在纯做捕获（v0.40 起加上面的 emoji 回执，仍然不发任何消息）。
 
 ## Token 批下来之前：MCP 兜底扫描（v0.11，默认开）
 

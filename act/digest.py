@@ -1,4 +1,4 @@
-"""周一 digest (CONTRACT §17) — the Monday morning state-of-the-world page.
+"""周一 digest (CONTRACT §17/§40.7) — the Monday morning state-of-the-world.
 
 Sections:
   1. 待审批积压   — status=card_sent, with age in days
@@ -12,12 +12,16 @@ Sections:
                     resume-failure storms / high reject ratio -> one-liners.
                     Each suggestion ALSO lands in the registry as a
                     type=self-improvement card (status=detected, i.e. it shows
-                    up in 潜在任务 for Zelin to raise — never auto-card_sent).
+                    up in 潜在任务 for the owner to raise — never auto-card_sent).
 
-Output: ``<execution.default_target_repo>/digests/digest-YYYY-MM-DD.md``
-(``state/digests/`` while no target repo has been configured) plus a macOS
-notification. The 1:1 prep page (``act.oneonone``) is generated alongside
-and linked.
+Output (§40.7): a review-lane chat card — same filing pattern as
+``act.weekly_digest`` (status=review, delivery_mode=chat, final_draft = the
+full markdown, merge_or_new dedup on the per-Monday title so a same-day
+re-run refreshes instead of stacking) — plus a notification pointing at the
+待验收 lane. No workbench file is written anymore and no filesystem path
+rides in the notification (the old ``digests/digest-YYYY-MM-DD.md`` output
+was invisible from every app surface). The 1:1 prep page (``act.oneonone``)
+is still generated alongside and linked inside the digest text.
 
 Run: ``python -m act.digest --now`` (crontab: Mondays 09:07; without ``--now``
 it no-ops unless today is Monday). Feature flag: ``features.digest``.
@@ -31,8 +35,8 @@ from typing import Optional
 
 from act import oneonone
 from act.lib import analytics, config, failures, notify
-from act.lib.registry import Requirement, State, load_all, merge_or_new
-from act.oneonone import manager_owes, first_seen
+from act.lib.registry import Requirement, State, load_all, merge_or_new, save
+from act.oneonone import first_seen, lane_name, ledger_empty, ledger_header, promises_owed
 from act.report import build_report
 
 # Self-improvement cards target the assistant's own repo (§16: app 更新永远走 PR).
@@ -40,16 +44,16 @@ ASSISTANT_REPO = "~/Projects/zelin-ai-assistant"
 
 STUCK_AFTER_HOURS = 24
 
-
-def _digests_dir() -> Path:
-    """Digest output dir, resolved at call time from the configured workbench
-    (STATE_DIR fallback — never the example placeholder path)."""
-    return oneonone.output_root() / "digests"
+SOURCE_CHANNEL = "digest"
 
 
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+def _iso_now() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _parse_iso(s) -> Optional[_dt.datetime]:
     if not s:
         return None
@@ -69,7 +73,9 @@ def _fmt(req: Requirement, today: _dt.date, extra: str = "") -> str:
     age = _age_days(req, today)
     age_s = f"，{age} 天" if age is not None else ""
     extra_s = f" — {extra}" if extra else ""
-    return f"- {req.id} · {req.title or '(untitled)'}（{req.status}{age_s}）{extra_s}"
+    # §40 (#19): lane display name, not the raw registry status word
+    return (f"- {req.id} · {req.title or '(untitled)'}"
+            f"（{lane_name(req.status)}{age_s}）{extra_s}")
 
 
 def _is_stuck(req: Requirement, now: _dt.datetime) -> Optional[str]:
@@ -172,10 +178,10 @@ def file_suggestion_cards(suggestions: list[tuple[str, str]],
                           today: Optional[_dt.date] = None) -> list[Requirement]:
     """Land each suggestion in the registry as a self-improvement card.
 
-    status=detected (NOT card_sent) — they show up in 潜在任务 for Zelin to raise.
-    ``merge_or_new`` dedups on title, so repeat Mondays don't stack duplicates —
-    which is why the volatile detail (live counts) stays out of the title and
-    only lands in summary/quote.
+    status=detected (NOT card_sent) — they show up in 潜在任务 for the owner
+    to raise. ``merge_or_new`` dedups on title, so repeat Mondays don't stack
+    duplicates — which is why the volatile detail (live counts) stays out of
+    the title and only lands in summary/quote.
     """
     today = today or _dt.date.today()
     filed: list[Requirement] = []
@@ -233,16 +239,22 @@ def build_digest(today: Optional[_dt.date] = None,
         return [header] + (lines if lines else [empty]) + [""]
 
     out: list[str] = [f"# 周一 digest · {today.isoformat()}", ""]
+    # one-line overview right under the title — doubles as the review-lane
+    # card's summary (_file_digest_card picks the first non-header line).
+    out += [failures.pick(
+        f"待审批 {len(card_sent)} · 待验收 {len(review)} · 卡住 {len(stuck)}"
+        f" · 潜在任务 {len(detected)}",
+        f"{len(card_sent)} awaiting approval · {len(review)} in review ·"
+        f" {len(stuck)} stuck · {len(detected)} in backlog"), ""]
     out += section(f"## 📨 待审批积压（{len(card_sent)}）",
                    [_fmt(r, today) for r in card_sent])
     out += section(f"## 🔍 待验收（{len(review)}）",
                    [_fmt(r, today) for r in review])
     out += section(f"## 🧱 卡住（{len(stuck)}）",
                    [_fmt(r, today, extra=why) for r, why in stuck])
-    out += section(f"## 📡 潜在任务（detected，{len(detected)}）",
+    out += section(f"## 📡 潜在任务（{len(detected)}）",
                    [_fmt(r, today) for r in detected])
-    out += section("## 🤝 双向承诺账本（manager 欠的）", manager_owes(reqs),
-                   empty="- （无 —— notes 里用 [MANAGER-OWES] 标记他的承诺）")
+    out += section(ledger_header(cfg), promises_owed(reqs), empty=ledger_empty())
 
     if oneonone_path is not None:
         out += ["## 🗓 1:1 准备页", f"- [{oneonone_path.name}]({oneonone_path})", ""]
@@ -261,9 +273,51 @@ def build_digest(today: Optional[_dt.date] = None,
     return "\n".join(out)
 
 
-def write_digest(today: Optional[_dt.date] = None) -> Path:
-    """Generate the 1:1 prep page + the digest, write both, notify. Returns
-    the digest path."""
+def _file_digest_card(md: str, today: _dt.date) -> Requirement:
+    """Digest -> review-lane chat card (§40.7) — the same filing pattern as
+    act/weekly_digest: status=review, delivery_mode=chat, final_draft = the
+    full markdown, delivered_summary = its head. merge_or_new dedups on the
+    per-Monday title, so a same-day re-run refreshes the existing card
+    instead of stacking a duplicate."""
+    title = failures.pick(f"周一 digest · {today.isoformat()}",
+                          f"Monday digest · {today.isoformat()}")
+    first_line = next((ln.strip() for ln in md.splitlines()
+                       if ln.strip() and not ln.strip().startswith("#")),
+                      title)
+    req = Requirement(
+        id="",  # merge_or_new assigns
+        title=title,
+        type="digest",
+        tier="T0",
+        status=State.REVIEW.value,
+        hardness="soft",
+        summary=first_line[:160],
+        delivery_mode="chat",
+        sources=[{
+            "channel": SOURCE_CHANNEL,
+            "date": today.isoformat(),
+            "ref": "act.digest",
+            "quote": failures.pick("周一状态盘点", "Monday state of the world"),
+            "who": "assistant",
+        }],
+    )
+    filed = merge_or_new(req, high_confidence=False)
+    ex = dict(filed.execution or {})
+    ex["review_at"] = _iso_now()
+    ex["delivered_summary"] = md[:500]
+    ex["final_draft"] = md[:20000]
+    filed.execution = ex
+    filed.summary = first_line[:160]
+    if filed.status != State.TRASHED.value:
+        filed.set_status(State.REVIEW)
+    save(filed)
+    return filed
+
+
+def publish_digest(today: Optional[_dt.date] = None) -> Requirement:
+    """Generate the 1:1 prep page + the digest, land the digest as a
+    review-lane chat card (§40.7 — no workbench file, no path in the
+    notification), notify. Returns the filed card."""
     today = today or _dt.date.today()
 
     prep_path: Optional[Path] = None
@@ -273,22 +327,19 @@ def write_digest(today: Optional[_dt.date] = None) -> Path:
         prep_path = None
 
     md = build_digest(today, oneonone_path=prep_path)
-    out_dir = _digests_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"digest-{today.isoformat()}.md"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(md)
+    card = _file_digest_card(md, today)
 
     # §5 v0.14：python 侧全部通知经 failures.pick 走 UI 语言，body 必带下一步
     notify.notify(
         failures.pick("周一 digest 已生成", "Monday digest ready"),
         failures.pick(
-            f"打开查看待审批积压与进化建议：{path}",
-            f"Open it to review the approval backlog and suggestions: {path}",
+            "去「待验收」看这周的盘点；进化建议在潜在任务列。",
+            "Open the Review lane for this week's state of the world; "
+            "suggestions sit in the backlog.",
         ),
     )
-    analytics.log_event("digest_generated", path=str(path))
-    return path
+    analytics.log_event("digest_generated", req=card.id)
+    return card
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -305,8 +356,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("today is not Monday — skipping (use --now to force)")
         return 0
 
-    path = write_digest()
-    print(str(path))
+    card = publish_digest()
+    print(f"{card.id} (review lane)")
     return 0
 
 

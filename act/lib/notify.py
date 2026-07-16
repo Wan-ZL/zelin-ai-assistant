@@ -137,6 +137,19 @@ def msg_new_card(title: str) -> tuple[str, str]:
                   f"{title} — open the menu-bar panel: ✅ approve or ❌ reject"))
 
 
+def msg_new_cards_batch(n: int) -> tuple[str, str]:
+    """§40: >2 fresh proposals in one actd pass collapse to ONE notification
+    (a radar backfill was previously n pings in a row). 需输入/回锅/失败
+    classes stay per-card — those each demand a distinct decision.
+
+    Copy is source-NEUTRAL on purpose: actd only sees the board diff, and
+    fresh cards may come from any filer (radar, weekly digest, capture) —
+    attributing them to 雷达 would mislabel every non-radar batch."""
+    return (_pick(f"新增 {n} 张待审批卡", f"{n} new cards awaiting approval"),
+            _pick("打开菜单栏面板逐张审批（✅ 批准 / ❌ 拒绝）",
+                  "Open the menu-bar panel to review them (✅ approve / ❌ reject)"))
+
+
 def msg_done(title: str) -> tuple[str, str]:
     return (_pick("任务完成", "Task finished"),
             _pick(f"{title} —— 打开 App 验收或打回",
