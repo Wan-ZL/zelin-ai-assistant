@@ -937,10 +937,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard resp == .alertFirstButtonReturn else { return nil }
         let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
         // empty = nothing to deliver (actd would drop it anyway — §39 1..4000);
-        // clip to the same 4000-char ceiling so the write can never be dropped
-        // server-side for length.
+        // clip by UNICODE SCALARS to the 4000 ceiling actd enforces in code
+        // points (a Character-based prefix can smuggle >4000 code points and
+        // get bounced server-side after the UI showed success).
         if text.isEmpty { return nil }
-        return String(text.prefix(4000))
+        return InboxAction.clipAnswer(text)
     }
 
     /// The ONE atomic inbox write + failure alert (card actions + merge_review

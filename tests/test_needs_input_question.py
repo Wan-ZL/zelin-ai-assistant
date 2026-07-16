@@ -82,10 +82,16 @@ class QuestionExtractionTestCase(unittest.TestCase):
         ])
         self.assertEqual(executor.extract_question(FULL_SID), "真正的问题？")
 
-    def test_clipped_to_500_chars(self):
+    def test_clipped_to_500_chars_with_honest_ellipsis(self):
+        # §39.1: a clipped question must SAY it is clipped — no surface may
+        # present a truncated tail as the complete text
         self._write([_user("p"), _assistant("问" * 600)])
         q = executor.extract_question(FULL_SID)
         self.assertEqual(len(q), 500)
+        self.assertTrue(q.endswith("…"))
+        # at/under the bound → untouched, no ellipsis
+        self._write([_user("p"), _assistant("答" * 500)])
+        self.assertEqual(executor.extract_question(FULL_SID), "答" * 500)
 
     def test_no_transcript_returns_none(self):
         self.assertIsNone(executor.extract_question(FULL_SID))
@@ -201,6 +207,8 @@ class NeedsInputNotifyTestCase(unittest.TestCase):
         # §39.2 stale ≠ silent: every variant must say the text is SAVED
         for kind, needle in (("working", "正在工作"),
                              ("review", "待验收"),
+                             ("recent", "刚有一条回答送达"),
+                             ("oversize", "4000"),
                              ("moved", "不在需输入")):
             t, b = notify.msg_answer_not_delivered("写周报", kind)
             self.assertIn("没有送出去", t)

@@ -344,6 +344,15 @@ class _Handler(BaseHTTPRequestHandler):
                                     and all(isinstance(x, str) for x in ids)):
             self._json(400, {"error": "ids must be a list of strings"})
             return
+        # §39.2: answer_input's text is bounded 1..4000 (code points) — reject
+        # here with a 400 so an oversize/empty answer never reaches the inbox
+        # (actd would archive-and-noop it, but the API caller deserves the
+        # immediate error).
+        if action == "answer_input":
+            t = payload.get("text")
+            if not isinstance(t, str) or not (1 <= len(t.strip()) <= 4000):
+                self._json(400, {"error": "text must be 1..4000 chars"})
+                return
         try:
             name = write_inbox(payload)
         except OSError as e:

@@ -92,6 +92,20 @@ enum InboxAction {
         return encode(obj)
     }
 
+    /// §39.2: clip an answer to the contract's 4000-char ceiling counting
+    /// UNICODE SCALARS, not Characters — actd validates ``len(text)`` in
+    /// Python code points, and a Character-based ``prefix(4000)`` can keep
+    /// well over 4000 code points (emoji / combining marks), which actd
+    /// would then bounce as oversize AFTER the UI already showed success.
+    /// Swift unicode scalars ≈ Python code points, so this bound holds on
+    /// both sides.
+    static func clipAnswer(_ text: String, max: Int = 4000) -> String {
+        guard text.unicodeScalars.count > max else { return text }
+        var v = String.UnicodeScalarView()
+        v.append(contentsOf: text.unicodeScalars.prefix(max))
+        return String(v)
+    }
+
     // merge-review 契约 §21 — suggestion-level actions (not card verbs): the
     // `id` is the MS- suggestion id; merge_force instead carries the raw card
     // ids + the user-chosen primary. actd reads decision["id"] / ["ids"]+["primary"].

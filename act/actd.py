@@ -561,16 +561,28 @@ def _apply_feedback(decision: dict) -> str:
     return "running"
 
 
+# §39.2 answer cooldown: a second answer landing this soon after a successful
+# one is a race (second device / double-submit), not a reply to a NEW question
+# — the resumed session may not even be on the roster yet, so the roster probe
+# alone can't see it. 120s covers the resume startup gap plus a phone round
+# trip; a genuinely new question normally arrives well past it (and the
+# archived-text notice tells the answerer to resend after the window).
+_ANSWER_COOLDOWN_S = 120
+
+
 def _answer_not_delivered(req: Requirement, text: str, kind: str) -> str:
     """§39.2: a VALIDATED answer that cannot be delivered because the moment
-    has passed — the card left needs_input (promotion race) or the session is
-    actively working (someone else answered it first). Both UIs already
-    accepted the send as success, so a bare logged no-op silently swallows
-    the owner's typed text: archive it in notes + notify instead. Returns
-    the §5.4 "noop" ack (nothing was started)."""
+    has passed — the card left needs_input (promotion race), the session is
+    actively working (someone else answered it first), an answer landed
+    moments ago (cooldown), or the text exceeds the wire bound. Both UIs
+    already accepted the send as success, so a bare logged no-op silently
+    swallows the owner's typed text: archive it in notes + notify instead.
+    Returns the §5.4 "noop" ack (nothing was started)."""
     reasons = {
         "working": "会话正在工作中，可能已被回答",
         "review": "任务已完成进了待验收",
+        "recent": "刚有一条回答送达，可能还在生效中",
+        "oversize": "回答超过 4000 字上限",
     }
     reason = reasons.get(kind, f"卡片已不在需输入状态（现为 {req.status}）")
     stamp = _dt.date.today().isoformat()
@@ -625,16 +637,20 @@ def _apply_answer_input(decision: dict) -> str:
              f"({type(text).__name__}) — dropped")
         return "noop"
     t = text.strip()
-    if not t or len(t) > 4000:
-        _log(f"inbox: answer_input text length {len(t)} outside 1..4000 — dropped")
+    if not t:
+        _log("inbox: answer_input with empty text — dropped")
         return "noop"
     req_id = decision.get("id")
     req = load(req_id) if req_id else None
     if req is None:
         _log(f"inbox: answer_input for unknown req {req_id!r} — dropped")
         return "unknown"
-    # From here on the text is valid and the card exists — any non-delivery
-    # must archive the text + notify (§39.2), never a bare logged no-op.
+    # From here on there is TEXT and a card — any non-delivery must archive
+    # the text + notify (§39.2), never a bare logged no-op. Oversize included:
+    # the clients clip to 4000 unicode scalars, so landing here means a buggy/
+    # raw client — the head of the text is still worth saving.
+    if len(t) > 4000:
+        return _answer_not_delivered(req, t, "oversize")
     expected_status = decision.get("expected_status")
     if (not _precondition_ok(req, expected_status)
             or str(req.status) != State.EXECUTING.value):
@@ -650,7 +666,8 @@ def _apply_answer_input(decision: dict) -> str:
         return _answer_not_delivered(req, t, kind)
     # §39.2 pre-delivery roster probe (see docstring): never stop a session
     # that is actively WORKING with a live process.
-    sid = (req.execution or {}).get("session_id") if isinstance(req.execution, dict) else None
+    ex_now = req.execution if isinstance(req.execution, dict) else {}
+    sid = ex_now.get("session_id")
     if sid:
         try:
             agent = _index_agents(_run_claude_agents()).get(str(sid))
@@ -659,6 +676,17 @@ def _apply_answer_input(decision: dict) -> str:
         state = (agent or {}).get("state", "") if agent else ""
         if agent is not None and agent.get("pid") and state not in _BLOCKED_STATES:
             return _answer_not_delivered(req, t, "working")
+    # §39.2 cooldown (belt+braces with the probe): a successful answer's
+    # resumed session may not be on the roster yet — during that gap the probe
+    # sees "absent" and a racing second answer would stop-kill the fresh
+    # session. Within the window, reject UNLESS the last attempt demonstrably
+    # failed (execution.last_error survives a failed answer and is cleared by
+    # a clean one) — a retry after failure must never be blocked.
+    last_answer = _parse_iso(ex_now.get("last_answer_at"))
+    if (last_answer is not None and not ex_now.get("last_error")
+            and (_dt.datetime.now(_dt.timezone.utc) - last_answer).total_seconds()
+                < _ANSWER_COOLDOWN_S):
+        return _answer_not_delivered(req, t, "recent")
     ok = False
     try:
         ok = bool(executor.answer(req, t))

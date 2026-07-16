@@ -1079,9 +1079,11 @@ def extract_question(session_id: str) -> Optional[str]:
     ~/.claude/projects, sidechain/isMeta/tool-result-aware via
     _assistant_texts(since_last_user=True) — so a rework/answer injection (a
     real user turn) resets the scope and a previous round's text is never
-    surfaced as the current question. Returns None when there is no
-    transcript or no post-user assistant text (the dashboard's bare
-    ``waiting_for: "input"`` fallback then stays). Never raises.
+    surfaced as the current question. A clipped question ends in "…" so no
+    surface can present a truncated tail as the complete text (§39.1).
+    Returns None when there is no transcript or no post-user assistant text
+    (the dashboard's bare ``waiting_for: "input"`` fallback then stays).
+    Never raises.
     """
     try:
         short = str(session_id or "").split("-")[0]
@@ -1096,7 +1098,10 @@ def extract_question(session_id: str) -> Optional[str]:
             except OSError:
                 continue
             if texts:
-                return texts[-1][:_QUESTION_MAX]
+                q = texts[-1]
+                if len(q) > _QUESTION_MAX:
+                    return q[:_QUESTION_MAX - 1] + "…"
+                return q
         return None
     except Exception:  # noqa: BLE001 - a projection helper must never raise
         return None

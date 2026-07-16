@@ -42,6 +42,14 @@ final class AppState: ObservableObject {
     /// nil (channel never fetched) stays silent, like the approval counter.
     private var lastNeedsInputIDs: [String: Set<String>] = [:]
 
+    /// §39: answers in flight, card id → send time (the Mac answerPending
+    /// semantics). answer_input is NOT idempotent — a second send stop-kills
+    /// the first answer's freshly-resumed session — so the input bar stays in
+    /// its 已发送 state until the card actually LEAVES needs_input on a board
+    /// refresh (real phone round-trip is 20-40s), with a 180s honest timeout
+    /// (entry expires → the bar re-arms for a retry).
+    @Published var answerPending: [String: Date] = [:]
+
     let client = SupabaseClient()
 
     private let channelPrefix = "channel."
@@ -142,6 +150,14 @@ final class AppState: ObservableObject {
             // §35 v0.35: a Mac rename rides the board payload (device_label) —
             // adopt it for the channel this snapshot came from, no re-scan.
             self.adoptDeviceLabel(dash.device_label, for: id)
+            // §39: an answer echo clears on the REAL signal — the card left
+            // needs_input (delivered, or failed over to running with
+            // last_error) — with a 180s expiry so a dead backend can't lock
+            // the input bar forever.
+            let blocked = Set(dash.needs_input.map { $0.id })
+            self.answerPending = self.answerPending.filter {
+                blocked.contains($0.key) && Date().timeIntervalSince($0.value) < 180
+            }
             self.maybeNotify(dash, channelId: id)
         }
     }
@@ -248,14 +264,21 @@ final class AppState: ObservableObject {
     /// the same transport as every other inbox action. Pins
     /// expected_status:"executing" (需输入 rows only ever project executing
     /// cards) so a stale tap no-ops honestly on the Mac. Trims + clips to the
-    /// contract's 4000-char ceiling; empty after trimming = nothing to send.
+    /// 4000 ceiling by unicode scalars (InboxAction.clipAnswer — actd counts
+    /// code points); empty after trimming = nothing to send. On success the
+    /// card enters answerPending until it leaves needs_input (see the
+    /// property doc) — the bar must NOT re-arm on a 3.5s timer, answer_input
+    /// is not idempotent.
     func submitAnswer(cardId: String, text: String) async -> Bool {
-        let t = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
+        let t = InboxAction.clipAnswer(
+            text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !t.isEmpty else { return false }
-        return await sealAndPost { ts in
+        let ok = await sealAndPost { ts in
             InboxAction.answerInput(id: cardId, text: t,
                                     expectedStatus: "executing", ts: ts)
         }
+        if ok { answerPending[cardId] = Date() }
+        return ok
     }
 
     // MARK: - merge-review actions (契约 §21 / §21bis) -------------------------

@@ -1198,8 +1198,9 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - `question`(str，≤500 字)：被阻塞 session 的**最后一条 assistant 正文**（
   `executor.extract_question`——与 harvest 同一套 transcript 纪律：短 id glob、
   跳过 sidechain/isMeta/tool-result 行、只取**最后一个真实 user turn 之后**的
-  文本，rework/answer 注入即 user turn，绝不把上一轮的话当成当前问题）。无
-  transcript / 无正文时**整键缺失**（不是 null）。热路径防线：按
+  文本，rework/answer 注入即 user turn，绝不把上一轮的话当成当前问题）。
+  **超长截断以 `…` 结尾**（总长仍 ≤500）——任何 surface 都不得把节选呈现成
+  全文。无 transcript / 无正文时**整键缺失**（不是 null）。热路径防线：按
   (sid, transcript 签名) 记忆化（`dashboard._QUESTION_CACHE`，v0.33.1 tinfo
   memo 同款 (path, mtime_ns, size) 签名）——空闲阻塞的 transcript 每 pass 只付
   stat 成本，绝不重复整文件 json-parse。
@@ -1217,11 +1218,16 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 - **形状**：`id` + `text`（不是 `comment`）；同步端可钉 `expected_status`
   （§32.2）。三重边界校验（§33 house pattern）：手机→syncd 形状闸门（`text`
-  已在 str-or-absent 词表）、web→webui ALLOWED_ACTIONS、actd 侧
-  fail-closed——`text` 非 str / 去空白后长度不在 **1..4000** → logged noop
-  （垃圾绝不 relaunch session）；未知卡 → `unknown`；**仅 EXECUTING 卡可回答**
-  （needs_input 行只投影 executing 卡）。iPhone 钉
-  `expected_status:"executing"`；Mac 本地不钉（既有惯例）。
+  已在 str-or-absent 词表）、web→webui（ALLOWED_ACTIONS + `text` 1..4000
+  长度门 400）、actd 侧 fail-closed——`text` 非 str / 空 → logged noop
+  （垃圾绝不 relaunch session）；未知卡 → `unknown`；**超 4000 且卡已知** →
+  按下条 `[回答未投递]` 存档 + 通知（客户端已按上限裁剪，落到这里=生客户端，
+  文本开头仍值得保住）；**仅 EXECUTING 卡可回答**（needs_input 行只投影
+  executing 卡）。iPhone 钉 `expected_status:"executing"`；Mac 本地不钉
+  （既有惯例）。**4000 上限按 Unicode code point 计**：Swift 端用
+  `InboxAction.clipAnswer`（unicode scalars ≈ Python code points）裁剪——
+  按 Character 的 `prefix(4000)` 会让 emoji/组合字符串超出 4000 code points、
+  在 UI 已显示成功之后被服务端弹回。
 - **stale ≠ silent（合法 text + 卡存在之后的任何未投递都必须可见）**：
   `expected_status` 不符 / 卡已不是 EXECUTING（最常见 = `_promote_if_delivered`
   的 executing→review 提升与 inbox pass 赛跑）→ ack `noop`，**且**把打的字
@@ -1238,6 +1244,14 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   `[回答未投递]`（原因=「会话正在工作中，可能已被回答」）存档 + 通知，
   ack `noop`。只有真正 blocked 的会话——或 dead/缺席的（既有的复活路径）——
   才收 stop+resume。
+- **回答冷却窗（roster 探测的 belt+braces）**：成功投递后 resume 的新 session
+  可能还没出现在 roster（启动间隙）——探测在这个间隙里看到的是「缺席」，
+  第二台设备的竞速回答会把刚复活的 session 再 stop 一次。规则：
+  `last_answer_at` 距今 **< 120s** 且 `execution.last_error` 为空（上一次
+  投递没有失败记录——失败后的合法重试绝不被拦）→ `[回答未投递]`（原因=
+  「刚有一条回答送达，可能还在生效中」）存档 + 通知，ack `noop`。120s 覆盖
+  resume 启动 + 一个手机往返；agent 的下一个真问题通常远晚于此，即便撞窗
+  也只是「两分钟后重发」（通知里写明）。
 - **投递（executor.answer）**：与 rework 同一条 stop-idle-then-resume 管线
   （blocked 活进程拒绝 --resume，先 `claude stop`；full-UUID + transcript 最后
   cwd；无 transcript → 不启动直接失败），resume prompt = `OWNER ANSWER:\n` +
@@ -1255,13 +1269,15 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   `notify.msg_answer_failed` 通知、卡上 `last_error`（39.1）；stale/working
   未投递 → 上两条的 `[回答未投递]` 存档 + `msg_answer_not_delivered` 通知
   ——任何路径都绝不静默吞答案。analytics：`inbox_answer_input`(ok/chars/
-  reason∈working|review|moved|launch_failed + capture_input 门控的 text)、
-  executor 侧 `answer_launch`/`answer_failed`（feedback 同款形制）。
+  reason∈working|review|recent|oversize|moved|launch_failed + capture_input
+  门控的 text)、executor 侧 `answer_launch`/`answer_failed`（feedback 同款
+  形制）。
 
 ### 39.3 UI（Mac + iPhone 同权；终端降级为次要通道）
 
 - **Mac**：needs_input 卡主按钮 **「回答…/Answer…」**（橙）→ NSAlert 弹层：
-  问题全文（只读可滚动）+ 多行输入（↩ 发送 · ⇧↩ 换行，promptText 同款）；
+  问题面板（只读可滚动；内容即 `question` 字段——超 500 字为节选、以 `…`
+  结尾，绝不把节选标成全文）+ 多行输入（↩ 发送 · ⇧↩ 换行，promptText 同款）；
   发出后卡上原地显示橙色「回答发送中…」（`store.answerPending`），**真信号
   清除** = 卡离开 needs_input（答案送达 session 恢复 working；或投递失败带
   last_error 改投 running）——generated_at bump 不清（§21bis 先例）；180 s
@@ -1270,8 +1286,13 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   「在终端接管会话」+ 命令，点击复制）——回答是主通道，终端是次要通道。
 - **iPhone**：RunningRow 需输入变体显示 question（缺失时回退 waiting_for）+
   **回答输入框**（TextField + 发送，走 `InboxAction.answerInput` → 既有
-  sealAndPost 密文通道；busy/已提交态照 MergeSuggestionCard 模式；失败保留
-  草稿）。「手机对需输入只读」的旧注记（plan §6.2）就此作废。
+  sealAndPost 密文通道；失败保留草稿）。**已发送态不走 merge 卡的 3.5s
+  echo**——answer_input 非幂等（重发会 stop 掉刚复活的 session），输入条在
+  `AppState.answerPending`（per-card，Mac answerPending 同语义）里保持
+  「回答已发送，等待送达…」直到该卡在 board 刷新中**真正离开 needs_input**，
+  180s 未动过期重新解锁（诚实重试）。运行中行渲染 `last_error`（红色紧凑行）
+  ——投递失败在手机上必须与成功可区分（§39.1 的字段本就在 wire 上）。
+  「手机对需输入只读」的旧注记（plan §6.2）就此作废。
 - **webui**：ALLOWED_ACTIONS 加入 `answer_input`（API 可用）；本期不做 web
   输入框 UI。
 

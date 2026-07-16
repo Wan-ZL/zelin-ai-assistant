@@ -12,6 +12,7 @@ failures are noop + notes tag + notification (never silent).
 _transcript_info and _agent_info are patched throughout (tests/test_rework.py
 discipline): never glob real transcripts or shell out to `claude agents`.
 """
+import datetime as _dt
 import json
 import subprocess
 import tempfile
@@ -143,9 +144,10 @@ class ApplyAnswerInputTestCase(unittest.TestCase):
             "id": "beefcafe", "sessionId": FULL_SID, "state": state, "pid": pid,
         }]
 
-    def _mk_req(self, status=State.EXECUTING.value):
+    def _mk_req(self, status=State.EXECUTING.value, execution=None):
         req = Requirement(id="R-971", title="回答测试", status=status,
-                          execution={"session_id": "beefcafe"})
+                          execution=execution if execution is not None
+                          else {"session_id": "beefcafe"})
         registry.save(req)
         return req
 
@@ -195,12 +197,53 @@ class ApplyAnswerInputTestCase(unittest.TestCase):
         with mock.patch.object(actd.executor, "answer", return_value=True) as ans:
             self.assertEqual(
                 actd._apply_answer_input(self._decision(text="  ")), "noop")
+            # oversize on a KNOWN card archives the head + notifies (§39.2) —
+            # clients clip by scalars, so this means a raw/buggy client
             self.assertEqual(
                 actd._apply_answer_input(self._decision(text="答" * 4001)), "noop")
             ans.assert_not_called()
+            notes = registry.load("R-971").notes or ""
+            self.assertIn("回答未投递", notes)
+            self.assertIn("4000", notes)
+            self.assertIn("答" * 200, notes)
+            self.notify.assert_called_once()
             self.assertEqual(
                 actd._apply_answer_input(self._decision(text="答" * 4000)), "running")
             ans.assert_called_once()
+
+    def test_cooldown_rejects_racing_second_answer(self):
+        # §39.2 cooldown: an answer landed seconds ago and its resumed session
+        # may not be on the roster yet (probe sees "absent") — a racing second
+        # answer must not stop-kill it. Archived + notified, never silent.
+        now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._mk_req(execution={"session_id": "beefcafe", "last_answer_at": now})
+        with mock.patch.object(actd.executor, "answer") as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "noop")
+        ans.assert_not_called()
+        notes = registry.load("R-971").notes or ""
+        self.assertIn("回答未投递", notes)
+        self.assertIn("刚有一条回答送达", notes)
+        self.assertIn("用 A 方案", notes)
+        self.notify.assert_called_once()
+
+    def test_cooldown_never_blocks_retry_after_failure(self):
+        # a FAILED delivery leaves last_error — the legitimate retry that
+        # follows must pass the cooldown (last_answer_at was bumped by the
+        # failed attempt too)
+        now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._mk_req(execution={"session_id": "beefcafe", "last_answer_at": now,
+                                "last_error": "answer launch failed"})
+        with mock.patch.object(actd.executor, "answer", return_value=True) as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "running")
+        ans.assert_called_once()
+
+    def test_cooldown_expires(self):
+        old = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=10)
+               ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._mk_req(execution={"session_id": "beefcafe", "last_answer_at": old})
+        with mock.patch.object(actd.executor, "answer", return_value=True) as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "running")
+        ans.assert_called_once()
 
     def test_unknown_card_acks_unknown(self):
         self.assertEqual(

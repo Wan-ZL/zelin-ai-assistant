@@ -166,13 +166,21 @@ def msg_answer_not_delivered(title: str, kind: str = "moved") -> tuple[str, str]
     already left needs_input (e.g. promoted to review between the board render
     and the inbox pass). The typed text is archived in the card's notes; the
     answerer must be told, or both UIs' optimistic sends read as success while
-    the text silently vanished. ``kind`` ∈ working | review | moved."""
+    the text silently vanished. ``kind`` ∈ working | review | recent |
+    oversize | moved."""
     if kind == "working":
         why = _pick("会话正在工作中，可能已被回答",
                     "the session is actively working — it may already have been answered")
     elif kind == "review":
         why = _pick("任务已完成进了待验收",
                     "the task already finished and moved to Review")
+    elif kind == "recent":
+        why = _pick("刚有一条回答送达（可能来自另一台设备），先等它生效；两分钟后还卡着再重发",
+                    "an answer was just delivered (maybe from another device) —"
+                    " let it settle; resend if it's still stuck in two minutes")
+    elif kind == "oversize":
+        why = _pick("回答超过 4000 字上限，请拆短重发",
+                    "the answer exceeds the 4000-char limit — split it and resend")
     else:
         why = _pick("卡片已不在需输入状态",
                     "the card is no longer waiting for input")

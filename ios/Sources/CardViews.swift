@@ -208,6 +208,18 @@ struct RunningRow: View {
                     Spacer()
                 }
                 Text(task.summary ?? task.name).font(.subheadline).fontWeight(.medium)
+                // §39: a failed answer delivery reroutes the card here with
+                // last_error — without this line the phone shows the exact
+                // same card for success and failure (Mac renders it already).
+                if task.state != "queued", let err = task.last_error, !err.isEmpty {
+                    Label {
+                        Text(err).font(.caption2)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.caption2)
+                    }
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+                }
                 if needsInput {
                     // §39: the question the agent is blocked on (falls back to
                     // the bare waiting_for reason on older actd payloads) + an
@@ -235,20 +247,30 @@ struct RunningRow: View {
 
 /// §39: the needs-input answer composer — TextField + 发送 through the normal
 /// sealed-action plumbing (AppState.submitAnswer → answer_input inbox action).
-/// Busy/submitted state mirrors MergeSuggestionCard: while in flight the bar
-/// swaps to a spinner + 已提交…, then the board refresh moves the card out of
-/// needs_input once the Mac delivered the answer into the session.
+///
+/// answer_input is NOT idempotent (a second send stop-kills the first
+/// answer's freshly-resumed session), so unlike the merge cards' 3.5s echo
+/// this bar stays in its 已发送 state until the card actually LEAVES
+/// needs_input on a board refresh — state.answerPending (the Mac
+/// answerPending semantics; per-card, survives row rebuilds) with a 180s
+/// expiry so a dead backend re-arms the bar for an honest retry.
 private struct AnswerInputBar: View {
     let cardId: String
     @EnvironmentObject var state: AppState
     @State private var text = ""
     @State private var busy = false
 
+    private var sent: Bool {
+        guard let at = state.answerPending[cardId] else { return false }
+        return Date().timeIntervalSince(at) < 180
+    }
+
     var body: some View {
-        if busy {
+        if busy || sent {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text(L("回答已提交…", "Answer submitted…"))
+                Text(L("回答已发送，等待送达…（送达后这张卡会回到运行中）",
+                       "Answer sent, delivering… (the card returns to Running once it lands)"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         } else {
@@ -267,12 +289,13 @@ private struct AnswerInputBar: View {
 
     private func send() {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, !busy else { return }
+        guard !t.isEmpty, !busy, !sent else { return }
         busy = true
         Task {
-            // success → clear the draft and refresh (the card leaves
-            // needs_input once the Mac delivered the answer); failure → keep
-            // the typed text so nothing is lost (state.lastError explains).
+            // success → clear the draft; answerPending (set inside
+            // submitAnswer) keeps the bar in 已发送 across refreshes until
+            // the card leaves needs_input. Failure → keep the typed text so
+            // nothing is lost (state.lastError explains).
             if await state.submitAnswer(cardId: cardId, text: t) {
                 text = ""
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
