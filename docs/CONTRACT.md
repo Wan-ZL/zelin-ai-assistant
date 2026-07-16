@@ -1184,3 +1184,50 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+# v0.41.0 additions（手机和网页不再是二等公民）
+
+## 41. v0.41.0 三端动作一致性（add-only，展示层 + webui 入站闸门）
+
+三端同一个动作应当长同一张脸。本节登记 iOS/网页补齐 Mac 既有语义的面，以及
+webui 入站闸门的两个加法。**对 dashboard.json / inbox 文件形状零新增字段**——
+唯一的新入站面是 webui 现在放行两个既有形状（§21bis 的 merge_force 与 §34 的
+capture `mode:"run"`），Mac/iOS 早已在写。
+
+- **iOS 停止 fork（对齐 Mac v0.21）**：运行中卡的「停止」不再单击即发
+  abort_execution——一颗停止按钮打开与 Mac 相同的两选弹窗：退回提案
+  （abort_execution，destructive）/ 去待验收（stop_to_review）/ 取消，弹窗
+  副标题解释分叉。done_external 随 v0.21 语义离开运行中卡（它住在拒绝弹窗里）。
+- **iOS 拒绝 fork（对齐 Mac v0.10.3）**：提案卡与详情页的「拒绝」打开两选弹窗：
+  不想做（进回收站，reject）/ 已办完（记为已交付，done_external）/ 取消，弹窗
+  正文是卡片摘要。
+- **iOS 详情页补齐**：补上第四颗决策按钮「暂缓」（与卡片行一致）；任一动作发出
+  后详情页自动关闭——用户接下来看到的是看板的回执/错误横幅，而不是一张过时的
+  详情页。
+- **iOS STALE/DEAD 确认并进 fork**：fork 弹窗本身即二次确认；看板可能过时
+  （§5.6）时把过时警告行并进 fork 弹窗文案，不再叠加第二个确认弹窗。
+- **iOS 诚实切换设备**：切换 channel（或解除当前 channel 的配对）时立即丢弃上
+  一台的看板与 boardSeq——A 机的卡绝不在 B 机的名字下渲染，A 机的 seq 也绝不
+  被 pin 进发往 B 机的动作（§5.3 目标锁定语义的前提）。
+- **网页合并建议卡（对齐契约 §21/§21bis）**：渲染 merge_suggestions 分区——
+  analyzing/done/failed 三态、接受=merge_apply、取消=merge_dismiss、AI 未拍板
+  「合并」或分析失败时的「仍然合并」=merge_force（主卡选择弹窗 + 不可撤销告
+  知；force 成功后顺手 dismiss 该建议，同 Mac/iOS）。
+- **网页回收站 + 永久性完成书立条（对齐 v0.33）**：页面底部两条默认收起的
+  `<details>` 书立——trash 分区（恢复=restore、永久保存=pin）与 archived 分区
+  （放回看板=unarchive；archived[] 被截断时按 counts 真实总数标注「仅显示最近
+  N 条」）。删除/归档确认弹窗不再声称「网页端无法恢复」。
+- **网页停止/拒绝 fork**：运行中列一颗「停止」打开与 Mac 相同的两选原生
+  `<dialog>`（系统外完成随 v0.21 离开运行中列）；提案列「拒绝」打开不想做/
+  已办完两选。
+- **网页直跑输入框（对齐 §34）**：运行中列顶部常驻直跑输入框，提交
+  `{action:"capture", text, mode:"run"}`；IME 回车守卫与草稿保留（仅确认成功
+  后清空——顶部快速捕获框同样改为仅成功后清空）同 Mac/iOS。
+- **webui 入站闸门（act/webui.py，加法）**：
+  - `ALLOWED_ACTIONS` += `merge_force`；`_INBOX_KEYS` += `primary`、`mode`。
+  - `primary` 无论随何种 action 出现，均须通过与 `id` 相同的防穿越 allow-list。
+  - `merge_force` 前置校验（fail closed，actd 照旧重校验）：ids 去重后 ≥2 个
+    安全 id 且 primary ∈ ids，否则 400、不落 inbox 文件。
+  - `mode` 只在 `action=="capture"` 且值恰为 `"run"` 时放行，其余一律 400——
+    未定义的 mode 永不落进 inbox 文件（§34 的 str-or-absent 闸门在 webui 前移
+    为白名单）。

@@ -27,6 +27,59 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.41.0] - 2026-07-16
+
+「手机和网页不再是二等公民」— the same action now looks and behaves the same on
+Mac, iPhone and the web dashboard (CONTRACT §41; display-layer + webui inbound
+gate only, no new dashboard/inbox fields).
+
+### Added
+
+- **Web: AI merge-suggestion cards** (契约 §21/§21bis parity) — the 提案 lane
+  now renders `merge_suggestions` like Mac/iOS: analyzing spinner, done verdict
+  (primary/secondary titles, rationale, 接受后将执行 plan, confidence), failed
+  with the error; 接受 = merge_apply, 取消 = merge_dismiss, and 仍然合并
+  (merge_force with a primary-pick dialog + irreversibility notice) when the AI
+  didn't land on 「合并」 or the analysis failed.
+- **Web: 回收站 + 永久性完成 bookends** (v0.33 parity) — two default-collapsed
+  strips below the board: trash (恢复 = restore, 永久保存 = pin) and archived
+  (放回看板 = unarchive, 你封存/自动封存 badges). Deleting/archiving from the
+  web is no longer a one-way door, and the confirm dialogs stop claiming it is.
+- **Web: direct-run input** (v0.34 §34 parity) — the Running lane hosts the
+  resident 一句话直接开跑 box (`capture` + `mode:"run"`), with the same IME
+  Enter guard and clear-only-on-success draft protection as the capture box.
+- **iOS: 暂缓 on the detail sheet** — the sheet now carries the same four
+  decisions as the card row (批准 · 修改 · 暂缓 · 拒绝).
+- **webui inbound gate**: `merge_force` allowed (ids deduped ≥2 safe ids,
+  primary ∈ ids — fail closed, actd still re-validates) and capture `mode`
+  forwarded (only the literal `"run"` passes; anything else is a 400 and never
+  reaches the inbox).
+
+### Changed
+
+- **iOS: 停止 is an explicit fork now** (Mac v0.21 parity) — one 停止 button on
+  a running card opens the same two-choice dialog as the Mac: 退回提案
+  (abort_execution, destructive) / 去待验收 (stop_to_review) / 取消, with the
+  explainer line. The old one-tap destructive 停止 and the running-card
+  已在别处完成 are gone — done_external lives on the reject fork, where the Mac
+  keeps it.
+- **iOS: 拒绝 is the Mac two-choice fork** (v0.10.3 parity) — 不想做（进回收站）
+  / 已办完（记为已交付）/ 取消, on the proposal row and the detail sheet. A
+  STALE/DEAD board folds its warning line into the fork message instead of
+  stacking a second confirm.
+- **iOS: switching devices drops the old board immediately** — Mac A's cards
+  never render under Mac B's label while the fetch is in flight, and A's seq is
+  never pinned into an action addressed to B. Unpairing the selected channel
+  gets the same treatment.
+- **iOS: the detail sheet dismisses once an action fires**, so the board's
+  ack/error banner — not a stale sheet — is the next thing you see.
+- **Web: 停止/拒绝 are the same forks as Mac/iOS** — the Running lane's three
+  buttons (去待验收 / 停止·退回 / 系统外完成) collapse into one 停止 fork
+  dialog, and 拒绝 asks 不想做 vs 已办完. 系统外完成 leaves the running lane
+  (v0.21 parity).
+- **Web: quick capture clears only on confirmed success** — a failed submit
+  keeps your draft in the field (the toast explains), matching iOS.
+
 ## [0.36.0] - 2026-07-15
 
 ### Added
@@ -1370,7 +1423,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.41.0
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD
