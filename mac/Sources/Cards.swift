@@ -75,6 +75,95 @@ struct Badge: View {
     }
 }
 
+// MARK: - enum-chip localization (v0.42 卡面大扫除, audit #7)
+//
+// Wire enums are machine words ("working", "hard", "suggestion") — chips
+// render 大白话 for the known closed sets and fall back to the raw value for
+// anything unknown (the MergeSuggestionCard.verdictHeadline precedent: never
+// swallow information).
+
+/// task.state — dashboard.py emits queued/working/blocked/review/delivered;
+/// the raw `claude agents` roster vocabulary (act/lib/agent_states.py) can
+/// leak through the running branch ("idle", "unknown", odd states), so it is
+/// covered too. "review-active" is handled by its caller (older-actd legacy).
+fileprivate func stateLabel(_ s: String) -> String {
+    switch s {
+    case "queued": return L("排队中", "Queued")
+    case "dispatched": return L("已派发", "Dispatched")
+    case "working", "running", "executing", "active", "busy", "in_progress":
+        return L("执行中", "Working")
+    case "blocked", "waiting", "needs_input", "paused", "waiting_for_input":
+        return L("受阻", "Blocked")
+    case "review": return L("待验收", "In review")
+    case "delivered": return L("已交付", "Delivered")
+    case "done", "completed", "finished", "exited", "complete", "success":
+        return L("已完成", "Done")
+    case "idle": return L("空闲", "Idle")
+    case "unknown": return L("状态未知", "Unknown")
+    default: return s
+    }
+}
+
+/// hardness — the extraction schema's "hard"/"soft".
+fileprivate func hardnessLabel(_ h: String) -> String {
+    switch h {
+    case "hard": return L("较难", "Hard")
+    case "soft": return L("常规", "Routine")
+    default: return h
+    }
+}
+
+/// requirement type — quick_capture's extraction schema closed set, plus
+/// "suggestion" (trash/archive kind vocabulary shares this chip style).
+fileprivate func typeLabel(_ t: String) -> String {
+    switch t {
+    case "code": return L("代码", "Code")
+    case "comms": return L("沟通", "Comms")
+    case "paperwork": return L("文书", "Paperwork")
+    case "research": return L("调研", "Research")
+    case "review": return L("评审", "Review")
+    case "training": return L("训练", "Training")
+    case "other": return L("其他", "Other")
+    case "suggestion": return L("建议", "Suggestion")
+    default: return t
+    }
+}
+
+/// trash/archive row `kind` — dashboard.py: "debt" (was 潜在任务) else "suggestion".
+fileprivate func kindLabel(_ k: String) -> String {
+    switch k {
+    case "suggestion": return L("建议", "Suggestion")
+    case "debt": return L("潜在任务", "Backlog")
+    default: return k
+    }
+}
+
+/// trash_reason — registry.trash(): "rejected" (declined proposal) or
+/// "deleted" (dropped backlog item). Free-text reasons (merge-review) render raw.
+fileprivate func trashReasonLabel(_ r: String) -> String {
+    switch r {
+    case "rejected": return L("你拒绝的", "You rejected it")
+    case "deleted": return L("你删除的", "You deleted it")
+    default: return r
+    }
+}
+
+/// archived prev_status — registry State values → the lane display name the
+/// user knew the card by (reuses BoardLane.title so the archive row and the
+/// board speak with one voice; off-board terminals get their page names).
+fileprivate func prevStatusLabel(_ s: String) -> String {
+    switch s {
+    case "detected": return BoardLane.backlog.title
+    case "raising", "card_sent": return BoardLane.proposals.title
+    case "approved", "executing": return BoardLane.running.title
+    case "review": return BoardLane.review.title
+    case "delivered": return BoardLane.done.title
+    case "merged": return L("已合并", "Merged")
+    case "trashed": return L("回收站", "Trash")
+    default: return s
+    }
+}
+
 // MARK: - CardSurface (契约1) — the ONE card chrome all five rows share
 //
 // Background/stroke/padding/corner + optional whole-card click-to-copy
@@ -1101,8 +1190,14 @@ struct ApprovalCardView: View {
             }
             if let dl = card.deadline, !dl.isEmpty {
                 let urgent = (card.days_left ?? 99) <= 3
-                let daysStr = card.days_left.map { " (\($0)d)" } ?? ""
-                Text(L("截止 \(dl)\(daysStr)", "Due \(dl)\(daysStr)"))
+                // v0.42 (audit #14): "(-3d)" was a puzzle — say it in words.
+                let phrase: String = {
+                    guard let d = card.days_left else { return "" }
+                    if d < 0 { return " · " + L("已逾期 \(-d) 天", "\(-d) d overdue") }
+                    if d == 0 { return " · " + L("今天截止", "due today") }
+                    return " · " + L("还剩 \(d) 天", "\(d) d left")
+                }()
+                Text(L("截止 \(dl)", "Due \(dl)") + phrase)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(urgent ? .red : .secondary)
             }
@@ -1110,10 +1205,17 @@ struct ApprovalCardView: View {
                 Badge(text: Self.money(cost), color: .secondary)
             }
             if let hard = card.hardness, !hard.isEmpty {
-                Badge(text: hard, color: hard == "hard" ? .red : .gray)
+                Badge(text: hardnessLabel(hard), color: hard == "hard" ? .red : .gray)
             }
             if let r = card.repeated, r >= 2 {
-                Badge(text: L("重复×\(r)", "Repeated ×\(r)"), color: .orange)
+                // v0.42 (audit #14): 「重复×N」 read like an error — it is the
+                // restatement counter; the .help spells that out. No 「自动」:
+                // repeated also accumulates via the user-approved merge path
+                // (契约四 sums both counters on 采纳), so "automatically"
+                // would overclaim for those cards.
+                Badge(text: L("被提×\(r)", "Raised ×\(r)"), color: .orange)
+                    .help(L("这件事被提起过 \(r) 次，重述已合并进这张卡",
+                            "This came up \(r) times — restatements were merged into this card"))
             }
             if card.green_sign == true {
                 Badge(text: L("需 manager green-sign（只出草稿）",
@@ -1204,7 +1306,15 @@ struct ApprovalCardView: View {
         if let hint = card.tier_hint, !hint.isEmpty {
             return "\(card.tier) · \(hint)"
         }
-        return card.tier
+        // v0.42 (audit #14): the pipeline's hint can be absent, and a bare
+        // "T1" means nothing to a novice — local fallback map keeps the chip
+        // in plain words; unknown tiers read 未分级, never "T?".
+        switch card.tier {
+        case "T0": return "T0 · " + L("自动执行", "runs automatically")
+        case "T1": return "T1 · " + L("一键可批", "one-click approve")
+        case "T2": return "T2 · " + L("需文字确认", "needs written confirmation")
+        default: return L("未分级", "Untiered")
+        }
     }
 
     /// §40 expanded-detail money line. Shared derivation with the T2 dialog
@@ -1247,6 +1357,13 @@ struct TaskRow: View {
     // v0.21: 运行中卡上「停止」→ 2 选 confirmationDialog（退回提案/去待验收）。
     @State private var showStopDialog = false
 
+    // v0.42 (audit #17): AIFix.launch's completion used to be discarded — a
+    // failed launch looked like a dead button. Mirror DepsView's aiFixStatus
+    // (Pages.swift): progress + result inline; failures stay red until the
+    // next attempt, successes fade after a few seconds.
+    @State private var aiFixStatus = ""
+    @State private var aiFixFailed = false
+
     // accent is purely visual now, derived from the lane — no call site can
     // drift a color away from its semantics again.
     private var accent: Color {
@@ -1283,9 +1400,14 @@ struct TaskRow: View {
         return e
     }
 
+    /// full session id for the 展开详情 line (short_id preferred — same
+    /// preference the face chip used before v0.42 moved it off the face).
+    private var sessionID: String? { task.short_id ?? task.session_id }
+
     // §37: the detail slot always has content now — the rename affordance
     // (TitleEditRow) lives there on every task row; the needs-input terminal
-    // takeover line (§39) rides in it too.
+    // takeover line (§39) rides in it too. (v0.42's raw command / session id
+    // / agents roster name also live there, so no gating needed either way.)
 
     // §39: answer in flight (store echo) — cleared when the card leaves
     // needs_input or the 180 s honest timeout fires.
@@ -1408,7 +1530,11 @@ struct TaskRow: View {
                         // verdict happened, so "reworking" was a misstatement.
                         if task.state == "review-active" {
                             Badge(text: L("会话有新活动", "Session active"), color: .teal)
-                        } else if let st = task.state { Badge(text: st, color: accent) }
+                        } else if let st = task.state {
+                            // v0.42 (audit #7): raw wire words ("working",
+                            // "blocked") → 大白话; unknown states render raw.
+                            Badge(text: stateLabel(st), color: accent)
+                        }
                         // §30 v0.28.1: a 待验收 card projected here because its
                         // session was reactivated (attach). Label it so a card
                         // Zelin remembers delivering doesn't read as brand-new
@@ -1416,11 +1542,7 @@ struct TaskRow: View {
                         if task.from_review == true {
                             Badge(text: L("已交付过·再运行", "Delivered · re-running"), color: .teal)
                         }
-                        if let sid = task.short_id ?? task.session_id {
-                            Text(sid.prefix(8))
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
+                        // v0.42 卡面大扫除: the session-id chip moved into 展开详情.
                         // how long it's been running (dispatch time as fallback)
                         if let age = RelativeTime.sinceEpoch(task.started_at ?? task.dispatched_at) {
                             Text(age)
@@ -1465,12 +1587,15 @@ struct TaskRow: View {
                 }
                 // §39: on needs-input rows the terminal command demotes to the
                 // detail block (在终端接管会话) — 回答… is the primary path.
-                if let cmd, lane != .needsInput {
-                    Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
-                        .font(.system(size: 9, design: .monospaced))
+                // v0.42 卡面大扫除 (audit #7): action words on the face — the
+                // raw command itself lives in 展开详情 now.
+                if cmd != nil, lane != .needsInput {
+                    Text(L("单击复制指令 · 双击在终端打开会话",
+                           "Click to copy the command · double-click opens the session in Terminal"))
+                        .font(.system(size: 9))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                 }
                 // §25: classified errors show the plain-language sentence +
                 // one right button; the raw text drops to the tooltip/detail.
@@ -1482,13 +1607,7 @@ struct TaskRow: View {
                     errorLine(prefix: L("错误：", "Error: "),
                               raw: le, failureID: task.last_error_id)
                 }
-                if let an = task.agent_name, !an.isEmpty {
-                    Text(L("claude agents 列表名：", "claude agents list name: ") + an)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                // v0.42 卡面大扫除: 「claude agents 列表名」 moved into 展开详情.
             }
             // red corner mark when the executor hit an error (detail line above)
             if !isQueued, task.last_error?.isEmpty == false {
@@ -1519,7 +1638,18 @@ struct TaskRow: View {
                 }
                 if AIFix.enabled {
                     Button(L("让 AI 修", "Fix with AI")) {
-                        AIFix.launch(context: prefix + raw) { _, _ in }
+                        aiFixFailed = false
+                        aiFixStatus = L("正在准备诊断包…", "Preparing the diagnostic bundle…")
+                        AIFix.launch(context: prefix + raw) { ok, msg in
+                            aiFixFailed = !ok
+                            aiFixStatus = ok ? msg
+                                : L("让 AI 修启动失败：", "Fix with AI failed to launch: ") + msg
+                            if ok {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                                    if !aiFixFailed { aiFixStatus = "" }
+                                }
+                            }
+                        }
                     }
                 }
                 Spacer()
@@ -1527,6 +1657,12 @@ struct TaskRow: View {
             .font(.system(size: 10))
             .buttonStyle(.bordered)
             .controlSize(.mini)
+            if !aiFixStatus.isEmpty {
+                Text(aiFixStatus)
+                    .font(.system(size: 10))
+                    .foregroundColor(aiFixFailed ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -1549,6 +1685,27 @@ struct TaskRow: View {
             if let dod = task.dod, !dod.isEmpty { DodListView(dod: dod) }
             if let log = task.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
+            }
+            // v0.42 卡面大扫除 (audit #7): the mechanics live here now — raw
+            // command (CopyPathLine = the log-path precedent; needs-input rows
+            // already carry it as §39's 在终端接管会话 line above), session id,
+            // `claude agents` roster name.
+            if let cmd, lane != .needsInput {
+                CopyPathLine(label: L("指令：", "Command: "), path: cmd)
+            }
+            if let sid = sessionID {
+                Text(L("会话 ID：", "Session ID: ") + sid)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let an = task.agent_name, !an.isEmpty {
+                Text(L("claude agents 列表名：", "claude agents list name: ") + an)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             // §37 rename affordance + 曾用名
             TitleEditRow(id: task.id,
@@ -1696,21 +1853,18 @@ struct ReviewRow: View {
             }
             Spacer()
         }
-        if let cmd = item.copy_cmd {
-            // echo line only — the copy action is the whole-card tap
-            Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        if let an = item.agent_name, !an.isEmpty {
-            Text(L("claude agents 列表名：", "claude agents list name: ") + an)
+        if item.copy_cmd?.isEmpty == false {
+            // v0.42 卡面大扫除 (audit #7): action words on the face — the raw
+            // command itself lives in 展开详情 now (the copy action stays the
+            // whole-card tap).
+            Text(L("单击复制指令 · 双击在终端打开会话",
+                   "Click to copy the command · double-click opens the session in Terminal"))
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
+        // v0.42 卡面大扫除: 「claude agents 列表名」 moved into 展开详情.
     }
 
     @ViewBuilder private var detailBlock: some View {
@@ -1723,6 +1877,17 @@ struct ReviewRow: View {
             }
             if let log = item.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
+            }
+            // v0.42 卡面大扫除 (audit #7): mechanics live here now.
+            if let cmd = item.copy_cmd, !cmd.isEmpty {
+                CopyPathLine(label: L("指令：", "Command: "), path: cmd)
+            }
+            if let an = item.agent_name, !an.isEmpty {
+                Text(L("claude agents 列表名：", "claude agents list name: ") + an)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             // §37 rename affordance + 曾用名
             TitleEditRow(id: item.id,
@@ -1821,9 +1986,10 @@ struct DebtRow: View {
                 .textSelection(.enabled)
             Spacer(minLength: 4)
             if sessionHit { SessionHitBadge() }   // §37 search layer
-            if let t = item.type, !t.isEmpty { Badge(text: t, color: .gray) }
+            // v0.42 (audit #7): enum chips in 大白话, unknown values raw.
+            if let t = item.type, !t.isEmpty { Badge(text: typeLabel(t), color: .gray) }
             if let h = item.hardness, !h.isEmpty {
-                Badge(text: h, color: h == "hard" ? .red : .gray)
+                Badge(text: hardnessLabel(h), color: h == "hard" ? .red : .gray)
             }
         }
     }
@@ -2300,10 +2466,11 @@ struct TrashRow: View {
             }
 
             // tag line: kind · reason · relative age · §40 purge countdown
+            // v0.42 (audit #7): enum values in 大白话, unknown values raw.
             HStack(spacing: 6) {
-                if let k = item.kind, !k.isEmpty { Badge(text: k, color: .gray) }
+                if let k = item.kind, !k.isEmpty { Badge(text: kindLabel(k), color: .gray) }
                 if let r = item.trash_reason, !r.isEmpty {
-                    Text(r)
+                    Text(trashReasonLabel(r))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
@@ -2433,10 +2600,12 @@ struct ArchiveRow: View {
             }
 
             // tag line: kind · previous status · relative age
+            // v0.42 (audit #7): kind in 大白话; prev_status → the lane name
+            // the user knew the card by (raw registry words meant nothing).
             HStack(spacing: 6) {
-                if let k = item.kind, !k.isEmpty { Badge(text: k, color: .gray) }
+                if let k = item.kind, !k.isEmpty { Badge(text: kindLabel(k), color: .gray) }
                 if let ps = item.prev_status, !ps.isEmpty {
-                    Text(L("原状态: ", "was: ") + ps)
+                    Text(L("原来在：", "was in: ") + prevStatusLabel(ps))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }

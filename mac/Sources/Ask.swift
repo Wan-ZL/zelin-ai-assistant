@@ -105,6 +105,7 @@ final class AskModel: ObservableObject {
             p.currentDirectoryURL = URL(fileURLWithPath: root, isDirectory: true)
             var env = ProcessInfo.processInfo.environment
             env["AIASSISTANT_HOME"] = root
+            env["AIASSISTANT_UI_LANG"] = LanguageMirror.current   // §15: python copy matches the app language
             p.environment = env
             let outPipe = Pipe()
             let errPipe = Pipe()

@@ -329,6 +329,13 @@ class GiveUpCardTestCase(unittest.TestCase):
         self.addCleanup(_clean_registry)
         self.addCleanup(self._clean_radar_state)
         self._clean_radar_state()
+        # v0.42 §15: copy follows AIASSISTANT_UI_LANG > persisted > system
+        # locale. Persist zh (NOT the env var — it would outrank the en-path
+        # tests' own persisted override below) so the zh-copy assertions stay
+        # locale-independent; _clean_radar_state removes the file again.
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"language": "zh"}), encoding="utf-8")
         self.entry = {"mtime": 1.0, "attempts": 5, "gave_up": True,
                       "last_error": "claude exit 1: boom"}
 

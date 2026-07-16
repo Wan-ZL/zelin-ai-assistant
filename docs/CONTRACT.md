@@ -1681,3 +1681,23 @@ capture `mode:"run"`），Mac/iOS 早已在写。
   - `mode` 只在 `action=="capture"` 且值恰为 `"run"` 时放行，其余一律 400——
     未定义的 mode 永不落进 inbox 文件（§34 的 str-or-absent 闸门在 webui 前移
     为白名单）。
+
+## 42. v0.42.0 卡面大扫除（display-only）
+
+纯展示层修订，**wire 契约与状态机零改动**：dashboard.json/board payload 的字段、
+枚举值、analytics id 全部原样（`MainSection.ingest` rawValue 冻结）；Mac 端仅改
+渲染（原始指令/会话 ID/agents 名下沉到展开详情、枚举 chips 本地化大白话、doctor
+文案走 `failures.pick` §15 单开关、radar 提取提示词参数化 `owner.name` 且来源
+`who` 不再虚构 "manager"——`who` 现为来源笔记名，属新写入卡片的展示字段值变化，
+不是形状变化）。
+
+**§15 语言解析顺序补充（add-only）**：python 侧 `failures.ui_lang()` 依次取
+① 环境变量 `AIASSISTANT_UI_LANG`（`zh`|`en`——Mac App spawn 有用户可见输出的
+python 时传入自己的实际显示语言，App 发起的输出与 App 严格同语言）→ ② 持久化
+设置（`state/settings_overrides.json` 的 `language`，其次 `config.yaml` 的
+`language`）→ ③ 系统 locale（`LC_ALL`/`LANG`：`zh*` → zh，否则 en——与 Swift
+首跑默认一致；旧行为是硬编码 zh）。此外 Mac App 首次启动时，若两个持久化来源
+都没有 `language`，会把当下实际生效的界面语言写入
+`settings_overrides.json`（幂等，绝不覆盖显式选择；设置页展示的正是这个值）——
+这样 launchd/cron 侧（无 `LANG` 环境）的通知文案与 App 同语言，未持久化的 zh
+用户不会在 ③ 回落成 en。

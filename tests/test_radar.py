@@ -92,7 +92,8 @@ class ExtractionTestCase(RadarScanBase):
         self.assertEqual(req.deadline, "2026-07-20")
         src = req.sources[0]
         self.assertEqual(src["channel"], "meeting")
-        self.assertEqual(src["who"], "manager")
+        # v0.42: who = the source note, not a fabricated "manager"
+        self.assertEqual(src["who"], "2026-07-08 weekly sync")
         self.assertEqual(src["date"], "2026-07-08")  # from the filename
         self.assertEqual(src["ref"], str(note))
 

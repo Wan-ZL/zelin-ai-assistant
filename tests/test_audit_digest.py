@@ -17,6 +17,7 @@
 Everything runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,6 +35,11 @@ class DigestCardTestCase(unittest.TestCase):
         if config.CONFIG_PATH.exists():
             config.CONFIG_PATH.unlink()
         self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
+        # v0.42 §15: copy follows AIASSISTANT_UI_LANG > persisted > system
+        # locale — pin zh so the zh-copy assertions stay locale-independent.
+        lang = mock.patch.dict(os.environ, {"AIASSISTANT_UI_LANG": "zh"})
+        lang.start()
+        self.addCleanup(lang.stop)
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
         # quiet + deterministic: no notification queue writes from these tests

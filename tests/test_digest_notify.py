@@ -9,6 +9,7 @@ build_digest / oneonone / _file_digest_card 被 mock 掉，不触 registry /
 workbench / analytics 报告。
 """
 import json
+import os
 import re
 import unittest
 from unittest import mock
@@ -63,8 +64,14 @@ class DigestNotifyTestCase(unittest.TestCase):
         self.assertIn("Review", body)           # 下一步：去待验收列
         self.assertNotIn("/", body)             # §40.7 不再携带文件路径
 
-    def test_zh_default_keeps_chinese_copy_with_next_step(self):
-        digest.publish_digest()
+    def test_zh_locale_fallback_keeps_chinese_copy_with_next_step(self):
+        # v0.42 §15: with nothing persisted the language follows the system
+        # locale (was: hardcoded zh) — pin a zh locale to exercise that path.
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("AIASSISTANT_UI_LANG", "LC_ALL")}
+        env["LANG"] = "zh_CN.UTF-8"
+        with mock.patch.dict(os.environ, env, clear=True):
+            digest.publish_digest()
         (title, body) = self.notify.call_args[0][:2]
         self.assertEqual(title, "周一 digest 已生成")
         self.assertIn("待验收", body)           # body 带下一步动作

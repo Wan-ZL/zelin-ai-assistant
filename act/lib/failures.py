@@ -15,6 +15,8 @@ tests/test_failures.py drift-guards the two lists.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 from typing import Optional
 
@@ -235,12 +237,59 @@ def classify_engine_log(tail: Optional[str], npx_present: bool = True,
 # --------------------------------------------------------------------------- #
 # language + copy helpers (python side of the UI language setting, §15)
 # --------------------------------------------------------------------------- #
-def ui_lang() -> str:
-    """The UI language ("zh" | "en") per settings_overrides/config (§15)."""
+def _persisted_language() -> Optional[str]:
+    """The user's explicitly persisted language, or None when neither source
+    ever set one. Reads the two sources directly (settings_overrides.json
+    wins over config.yaml — load_config precedence) because Config.language's
+    dataclass default "zh" is a placeholder, not a user choice, and going
+    through load_config() cannot tell the two apart. Values normalize with
+    the historical rule: "en" → en, any other non-empty value → zh."""
+    from act.lib import config
     try:
-        from act.lib import config
-        lang = str(config.load_config().language or "").strip().lower()
-        return "en" if lang == "en" else "zh"
+        data = json.loads(
+            config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+        v = str(data.get("language") or "").strip().lower()
+        if v:
+            return "en" if v == "en" else "zh"
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        if config.yaml is not None:
+            data = config.yaml.safe_load(
+                config.CONFIG_PATH.read_text(encoding="utf-8"))
+            v = ""
+            if isinstance(data, dict):
+                v = str(data.get("language") or "").strip().lower()
+            if v:
+                return "en" if v == "en" else "zh"
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def ui_lang() -> str:
+    """The UI language ("zh" | "en"), resolved in order (§15; v0.42):
+
+    1. ``AIASSISTANT_UI_LANG`` env var — the Mac app passes its EFFECTIVE
+       display language when spawning python whose output the user reads
+       (doctor --json, ask, wizard, settings helpers, …), so app-spawned
+       copy matches the app exactly;
+    2. the user's persisted setting (settings_overrides.json ``language``,
+       else config.yaml ``language``);
+    3. the system locale (LC_ALL/LANG: zh* → zh, else en) — mirroring the
+       Swift first-run default instead of the old hardcoded "zh", so an
+       en-locale user with no persisted override no longer gets zh
+       unclassified doctor rows interleaved with en classified ones.
+    """
+    try:
+        env = os.environ.get("AIASSISTANT_UI_LANG", "").strip().lower()
+        if env in ("zh", "en"):
+            return env
+        persisted = _persisted_language()
+        if persisted:
+            return persisted
+        loc = (os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
+        return "zh" if loc.startswith("zh") else "en"
     except Exception:  # noqa: BLE001 - copy helpers must never raise
         return "zh"
 

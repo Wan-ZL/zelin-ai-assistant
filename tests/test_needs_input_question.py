@@ -182,6 +182,13 @@ class DashboardQuestionTestCase(unittest.TestCase):
 
 
 class NeedsInputNotifyTestCase(unittest.TestCase):
+    def setUp(self):
+        # v0.42 §15: copy follows AIASSISTANT_UI_LANG > persisted > system
+        # locale — pin zh so the zh-copy assertions stay locale-independent.
+        lang = mock.patch.dict(os.environ, {"AIASSISTANT_UI_LANG": "zh"})
+        lang.start()
+        self.addCleanup(lang.stop)
+
     def test_msg_needs_input_carries_question_and_real_surface(self):
         t, b = notify.msg_needs_input("写周报", "要 A 还是 B？")
         self.assertIn("要 A 还是 B？", b)

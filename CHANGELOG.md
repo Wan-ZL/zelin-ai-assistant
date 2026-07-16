@@ -27,6 +27,56 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.42.0] - 2026-07-16
+
+Display-only release（卡面大扫除）— no wire, state-machine, or analytics-id
+changes (CONTRACT §42).
+
+### Changed
+
+- **卡面大扫除（Mac，audit #7）** — internal mechanics no longer leak onto card
+  faces. The always-visible raw-command echo lines on 运行中/待验收 cards
+  (`单击复制 · 双击在终端运行: cd '/U…'`) are replaced by an action-oriented
+  one-liner（「单击复制指令 · 双击在终端打开会话」）; the raw command itself,
+  the session id, and the `claude agents` roster name now live in 展开详情
+  (with a click-to-copy line for the command, same as the log path).
+- **Enum chips speak 大白话（Mac，audit #7）** — known closed sets are
+  localized; unknown values still render raw (the verdictHeadline precedent):
+  task state (`working`→执行中, `blocked`→受阻, `queued`→排队中, …), hardness
+  (`hard`→较难 / `soft`→常规), backlog type (`code`→代码, `comms`→沟通, …),
+  trash kind/reason (`suggestion`→建议, `debt`→潜在任务; `rejected`→你拒绝的,
+  `deleted`→你删除的), and archived cards' previous status now shows the lane
+  name the user knew (`delivered`→阶段性完成).
+- **Chip comprehensibility（audit #14）** — the deadline badge says it in words
+  (「已逾期 N 天」/「今天截止」/「还剩 N 天」 instead of `(-3d)`); the tier chip
+  falls back to a local hint map (T0 自动执行 / T1 一键可批 / T2 需文字确认,
+  unknown → 未分级) so it never renders a bare "T1"; 「重复×N」 is renamed
+  「被提×N」 with a tooltip explaining restatements were merged into the card.
+- **Sidebar wording（audit #15）** — 「录制与 ingest」→「录制与数据接入」
+  ("Recording & Data Sources"); display only, rawValue/analytics ids frozen.
+- **Doctor speaks the UI language（audit #16）** — `act.doctor`'s unclassified
+  detail/fix prose now routes through the `failures.pick` single language
+  switch (§15); shell commands stay English in both variants — they are
+  commands. The §15 resolution itself now bridges the two halves: the Mac app
+  passes its effective display language via `AIASSISTANT_UI_LANG` when
+  spawning python with user-facing output, and with nothing persisted python
+  falls back to the system locale (zh* → zh, else en) instead of hardcoded
+  zh — no more mixed-language doctor pages for en-locale users. On first
+  launch (no persisted language anywhere) the Mac app also persists its
+  effective language into `settings_overrides.json` — idempotent, never
+  overwrites an explicit choice — so cron/launchd copy (no `LANG` there)
+  keeps matching the app instead of falling back to en.
+- **Radar extraction framing（audit #19）** — `act.radar`'s extraction prompt
+  is parameterized on `owner.name` and reframed as "asks directed at the
+  owner"; the card source `who` names the actual note instead of a fabricated
+  "manager".
+
+### Fixed
+
+- **「让 AI 修」 gives feedback（Mac，audit #17）** — the task-card error line's
+  Fix-with-AI button used to discard the launch result; it now shows progress
+  and renders a launch failure inline in red (the DepsView aiFixStatus
+  pattern).
 ## [0.41.0] - 2026-07-16
 
 「手机和网页不再是二等公民」— the same action now looks and behaves the same on
@@ -1638,7 +1688,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.38.0...v0.39.0

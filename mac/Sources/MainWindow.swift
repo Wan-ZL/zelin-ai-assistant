@@ -113,7 +113,9 @@ enum MainSection: String, CaseIterable, Identifiable {
         case .dashboard: return L("任务台", "Workbench")
         case .ask: return L("问问助手", "Ask")
         case .deps: return L("依赖检查", "Dependencies")
-        case .ingest: return L("录制与 ingest", "Recording & Ingest")
+        // v0.42 (audit #15): "ingest" is pipeline jargon — display only; the
+        // rawValue ("ingest") and every analytics id stay frozen.
+        case .ingest: return L("录制与数据接入", "Recording & Data Sources")
         case .trash: return L("回收站", "Trash")
         case .archive: return L("永久性完成", "Done for good")
         case .settings: return L("设置", "Settings")

@@ -604,6 +604,80 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
         self.assertEqual(doctor._installer(), "install.ps1")
 
 
+class DoctorLanguageRoutingTestCase(unittest.TestCase):
+    """v0.42 (audit #16): the unclassified checks' detail/fix prose follows the
+    §15 language resolution (act/lib/failures.ui_lang): AIASSISTANT_UI_LANG
+    env var (app-spawned) > persisted setting (overrides/config.yaml) >
+    system locale (zh* → zh, else en). Commands stay English in every case.
+    _check_gh's missing-binary WARN is the probe — it only touches
+    probes.which, so the test needs no filesystem fixtures."""
+
+    def setUp(self):
+        config.ensure_state_dirs()
+        # hermetic: neither source may carry a persisted language going in
+        self._stashed_overrides = self._stash(config.SETTINGS_OVERRIDES_PATH)
+        self._stashed_config = self._stash(config.CONFIG_PATH)
+        self.addCleanup(self._restore)
+
+    @staticmethod
+    def _stash(path):
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            path.unlink()
+            return content
+        return None
+
+    def _restore(self):
+        for path, content in ((config.SETTINGS_OVERRIDES_PATH, self._stashed_overrides),
+                              (config.CONFIG_PATH, self._stashed_config)):
+            if content is not None:
+                path.write_text(content, encoding="utf-8")
+            elif path.exists():
+                path.unlink()
+
+    def _gh(self, env=None, persisted=None):
+        """Run the check with a controlled environment: the language-relevant
+        vars are removed, then `env` applied; `persisted` writes the §15
+        overrides file first."""
+        if persisted is not None:
+            config.SETTINGS_OVERRIDES_PATH.write_text(
+                json.dumps({"language": persisted}), encoding="utf-8")
+        base = {k: v for k, v in os.environ.items()
+                if k not in ("AIASSISTANT_UI_LANG", "LANG", "LC_ALL")}
+        base.update(env or {})
+        with mock.patch.dict(os.environ, base, clear=True):
+            return doctor._check_gh(doctor.Probes(which=lambda _n: None))
+
+    def test_persisted_zh_detail_with_english_command_fix(self):
+        r = self._gh(persisted="zh")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("缺失", r.detail)
+        self.assertIn("brew install gh", r.fix)   # the command stays a command
+
+    def test_persisted_en_detail_with_english_command_fix(self):
+        r = self._gh(persisted="en")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("missing", r.detail)
+        self.assertNotIn("缺失", r.detail)
+        self.assertIn("brew install gh", r.fix)
+
+    def test_env_var_wins_over_persisted_setting(self):
+        # app-spawned: the Mac app passes its EFFECTIVE language — it must
+        # beat a stale persisted value so app output always matches the app.
+        r = self._gh(env={"AIASSISTANT_UI_LANG": "en"}, persisted="zh")
+        self.assertIn("missing", r.detail)
+        r = self._gh(env={"AIASSISTANT_UI_LANG": "zh"}, persisted="en")
+        self.assertIn("缺失", r.detail)
+
+    def test_system_locale_fallback_when_nothing_persisted(self):
+        # cron/CLI with no persisted setting: system locale decides —
+        # matching the Swift first-run default instead of hardcoded zh.
+        self.assertIn("缺失", self._gh(env={"LANG": "zh_CN.UTF-8"}).detail)
+        self.assertIn("缺失", self._gh(env={"LC_ALL": "zh_TW.UTF-8"}).detail)
+        self.assertIn("missing", self._gh(env={"LANG": "en_US.UTF-8"}).detail)
+        self.assertIn("missing", self._gh().detail)   # no locale at all → en
+
+
 class CronProbeSchemaTestCase(unittest.TestCase):
     """cron_probe.json 半截损坏（read_ok 缺键 / 非 bool）的容错要与其它损坏
     probe 文件一致：WARN unreadable，绝不据半截数据给出「FDA 被禁」的红色
@@ -629,7 +703,9 @@ class CronProbeSchemaTestCase(unittest.TestCase):
         r = self._check()
         self.assertEqual(r.status, doctor.WARN)
         self.assertEqual(r.failure_id, "")
-        self.assertIn("unreadable", r.detail)
+        # v0.42: detail prose is language-routed — anchor the language-stable
+        # file name, not the English word.
+        self.assertIn("cron_probe.json", r.detail)
 
     def test_non_bool_read_ok_is_warn(self):
         for bad in (0, 1, None, "false", "true", []):
