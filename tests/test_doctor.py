@@ -604,6 +604,45 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
         self.assertEqual(doctor._installer(), "install.ps1")
 
 
+class DoctorLanguageRoutingTestCase(unittest.TestCase):
+    """v0.42 (audit #16): the unclassified checks' detail/fix prose follows the
+    §15 single language switch (act/lib/failures.pick); commands stay English
+    in both variants. _check_gh's missing-binary WARN is the probe — it only
+    touches probes.which, so the test needs no filesystem fixtures."""
+
+    def setUp(self):
+        config.ensure_state_dirs()
+        self._stashed = None
+        if config.SETTINGS_OVERRIDES_PATH.exists():
+            self._stashed = config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8")
+            config.SETTINGS_OVERRIDES_PATH.unlink()
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        if self._stashed is not None:
+            config.SETTINGS_OVERRIDES_PATH.write_text(self._stashed, encoding="utf-8")
+        elif config.SETTINGS_OVERRIDES_PATH.exists():
+            config.SETTINGS_OVERRIDES_PATH.unlink()
+
+    def _gh_missing(self, lang):
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"language": lang}), encoding="utf-8")
+        return doctor._check_gh(doctor.Probes(which=lambda _n: None))
+
+    def test_zh_detail_with_english_command_fix(self):
+        r = self._gh_missing("zh")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("缺失", r.detail)
+        self.assertIn("brew install gh", r.fix)   # the command stays a command
+
+    def test_en_detail_with_english_command_fix(self):
+        r = self._gh_missing("en")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("missing", r.detail)
+        self.assertNotIn("缺失", r.detail)
+        self.assertIn("brew install gh", r.fix)
+
+
 class CronProbeSchemaTestCase(unittest.TestCase):
     """cron_probe.json 半截损坏（read_ok 缺键 / 非 bool）的容错要与其它损坏
     probe 文件一致：WARN unreadable，绝不据半截数据给出「FDA 被禁」的红色
@@ -629,7 +668,9 @@ class CronProbeSchemaTestCase(unittest.TestCase):
         r = self._check()
         self.assertEqual(r.status, doctor.WARN)
         self.assertEqual(r.failure_id, "")
-        self.assertIn("unreadable", r.detail)
+        # v0.42: detail prose is language-routed — anchor the language-stable
+        # file name, not the English word.
+        self.assertIn("cron_probe.json", r.detail)
 
     def test_non_bool_read_ok_is_warn(self):
         for bad in (0, 1, None, "false", "true", []):

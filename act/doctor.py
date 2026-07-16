@@ -63,6 +63,15 @@ def _installer() -> str:
         return "install.ps1"
     return "install-linux.sh"
 
+
+def _pick(zh: str, en: str) -> str:
+    """§15 single language switch (act/lib/failures.pick) for the doctor's
+    user-facing detail/fix prose (v0.42, audit #16). Classified rows already
+    speak the UI language via the Swift FailureCatalog; this covers the
+    unclassified ones. Commands, paths and technical tokens stay English
+    inside BOTH variants — they are commands, not prose."""
+    return failures.pick(zh, en)
+
 # cron ingest chain fires every 30 min; a probe older than this means either
 # the chain stopped firing or it comes from an install predating the probe.
 CRON_PROBE_FRESH_SECONDS = 2 * 3600
@@ -213,8 +222,10 @@ def _check_home(probes: Probes):
     if not (config.HOME / "install.sh").exists():
         return CheckResult(
             "AIASSISTANT_HOME", FAIL,
-            "%s does not look like the repo (no install.sh) - every path below derives from it" % config.HOME,
-            "export AIASSISTANT_HOME=<your clone>, or run bash <your clone>/install.sh (writes the home pointer)")
+            _pick("%s 不像是仓库目录（没有 install.sh）——下面所有路径都由它推导",
+                  "%s does not look like the repo (no install.sh) - every path below derives from it") % config.HOME,
+            _pick("export AIASSISTANT_HOME=<你的 clone>，或运行 bash <你的 clone>/install.sh（会写入 home 指针）",
+                  "export AIASSISTANT_HOME=<your clone>, or run bash <your clone>/install.sh (writes the home pointer)"))
     return CheckResult("AIASSISTANT_HOME", OK, str(config.HOME))
 
 
@@ -230,8 +241,9 @@ def _check_claude(probes: Probes):
     if rc != 0:
         return CheckResult(
             "claude CLI", WARN,
-            "%s exists but `claude --version` failed (%s)" % (path, out.strip()[:80]),
-            "reinstall Claude Code")
+            _pick("%s 存在但 `claude --version` 失败（%s）",
+                  "%s exists but `claude --version` failed (%s)") % (path, out.strip()[:80]),
+            _pick("重装 Claude Code", "reinstall Claude Code"))
     version = out.strip().splitlines()[0][:60] if out.strip() else "unknown version"
     return CheckResult("claude CLI", OK, "%s (%s)" % (path, version))
 
@@ -257,9 +269,11 @@ def _check_daemon_claude(probes: Probes):
             where = "systemd unit"
         return CheckResult(
             "daemon claude", WARN,
-            "actd %s not installed (or carries no PATH) - cannot verify "
-            "which claude the daemon runs" % where,
-            "bash %s (renders the agent with your shell's claude dir first on PATH)"
+            _pick("actd 的 %s 未安装（或没带 PATH）——无法确认后台服务用的是哪个 claude",
+                  "actd %s not installed (or carries no PATH) - cannot verify "
+                  "which claude the daemon runs") % where,
+            _pick("bash %s（重渲染服务配置，把你 shell 的 claude 目录排在 PATH 最前）",
+                  "bash %s (renders the agent with your shell's claude dir first on PATH)")
             % _installer())
     daemon_claude = shutil.which("claude", path=path_env)
     if not daemon_claude:
@@ -308,8 +322,10 @@ def _check_runtime_python(probes: Probes):
     if not rj.exists():
         return CheckResult(
             "daemon python", WARN,
-            "config/runtime.json missing - launchd agents and the app guess at an interpreter",
-            "bash install.sh (re-detects and pins the interpreter)")
+            _pick("config/runtime.json 缺失——launchd 服务和 App 只能靠猜解释器",
+                  "config/runtime.json missing - launchd agents and the app guess at an interpreter"),
+            _pick("bash install.sh（重新探测并固定解释器）",
+                  "bash install.sh (re-detects and pins the interpreter)"))
     try:
         py = str(json.loads(rj.read_text(encoding="utf-8")).get("python") or "")
     except Exception:  # noqa: BLE001 - malformed file is just another symptom
@@ -317,22 +333,26 @@ def _check_runtime_python(probes: Probes):
     if not py or not os.access(py, os.X_OK):
         return CheckResult(
             "daemon python", FAIL,
-            "config/runtime.json points at a non-executable python (%s)" % (py or "empty"),
-            "bash install.sh (re-detects the interpreter)")
+            _pick("config/runtime.json 指向一个不可执行的 python（%s）",
+                  "config/runtime.json points at a non-executable python (%s)") % (py or "empty"),
+            _pick("bash install.sh（重新探测解释器）",
+                  "bash install.sh (re-detects the interpreter)"))
     rc, out = probes.run(
         [py, "-c", "import sys, yaml; print('%d.%d' % sys.version_info[:2])"],
         timeout=20)
     if rc != 0:
         return CheckResult(
             "daemon python", FAIL,
-            "%s cannot `import yaml` - actd/radar exit immediately under launchd" % py,
+            _pick("%s 无法 `import yaml`——actd/radar 在 launchd 下会立即退出",
+                  "%s cannot `import yaml` - actd/radar exit immediately under launchd") % py,
             "%s -m pip install --user pyyaml   (PEP 668 python: add --break-system-packages)" % py)
     ver = out.strip().splitlines()[-1] if out.strip() else ""
     try:
         if tuple(int(x) for x in ver.split(".")) < MIN_PYTHON:
             return CheckResult(
                 "daemon python", FAIL,
-                "%s is Python %s (need >= %s)" % (py, ver, ".".join(map(str, MIN_PYTHON))),
+                _pick("%s 是 Python %s（需要 >= %s）",
+                      "%s is Python %s (need >= %s)") % (py, ver, ".".join(map(str, MIN_PYTHON))),
                 "AIASSISTANT_PYTHON=<newer python3> bash install.sh")
     except ValueError:
         pass
@@ -344,12 +364,14 @@ def _check_config(probes: Probes):
     if not config.CONFIG_PATH.exists():
         return CheckResult(
             "config.yaml", WARN,
-            "missing - running on config.example.yaml defaults (no vault, no watched people)",
+            _pick("缺失——正在用 config.example.yaml 的默认值运行（没有 vault、没有 watch 名单）",
+                  "missing - running on config.example.yaml defaults (no vault, no watched people)"),
             "cp config.example.yaml config.yaml && edit sources.*")
     if config.yaml is None:
         return CheckResult(
             "config.yaml", FAIL,
-            "PyYAML missing for this python - config cannot be parsed",
+            _pick("这个 python 缺 PyYAML——config 无法解析",
+                  "PyYAML missing for this python - config cannot be parsed"),
             "%s -m pip install --user pyyaml" % sys.executable)
     try:
         config.yaml.safe_load(config.CONFIG_PATH.read_text(encoding="utf-8"))
@@ -377,7 +399,8 @@ def _check_anthropic_key(probes: Probes):
         if mode & 0o077:
             return CheckResult(
                 "anthropic key", WARN,
-                "config/secrets/anthropic-api-key.txt is readable by other users (mode %o)" % mode,
+                _pick("config/secrets/anthropic-api-key.txt 其他用户也能读（mode %o）",
+                      "config/secrets/anthropic-api-key.txt is readable by other users (mode %o)") % mode,
                 "chmod 600 '%s'" % sec)
         return CheckResult("anthropic key", OK,
                            "config/secrets/anthropic-api-key.txt (0600)")
@@ -388,9 +411,12 @@ def _check_anthropic_key(probes: Probes):
             "consider migrating: paste the key in the app's Settings window")
     return CheckResult(
         "anthropic key", WARN,
-        "no key file - headless claude (cron/launchd) falls back to CLI credentials "
-        "(subscription-auth mode), which daemon sessions usually cannot read",
-        "paste your API key in the app's Settings window (writes config/secrets/anthropic-api-key.txt)")
+        _pick("没有 key 文件——headless claude（cron/launchd）会退回 CLI 凭据"
+              "（subscription-auth 模式），daemon 会话通常读不到它",
+              "no key file - headless claude (cron/launchd) falls back to CLI credentials "
+              "(subscription-auth mode), which daemon sessions usually cannot read"),
+        _pick("在 App 的设置（Settings）页粘贴你的 API key（写入 config/secrets/anthropic-api-key.txt）",
+              "paste your API key in the app's Settings window (writes config/secrets/anthropic-api-key.txt)"))
 
 
 def _check_state_dirs(probes: Probes):
@@ -399,13 +425,15 @@ def _check_state_dirs(probes: Probes):
     if missing:
         return CheckResult(
             "state dirs", FAIL,
-            "missing: %s - actd/capture cannot persist anything" % ", ".join(map(str, missing)),
-            "bash install.sh (creates state/ + state/inbox/)")
+            _pick("缺失：%s——actd/capture 无法持久化任何东西",
+                  "missing: %s - actd/capture cannot persist anything") % ", ".join(map(str, missing)),
+            _pick("bash install.sh（创建 state/ + state/inbox/）",
+                  "bash install.sh (creates state/ + state/inbox/)"))
     blocked = [d for d in dirs if not os.access(d, os.W_OK)]
     if blocked:
         return CheckResult(
             "state dirs", FAIL,
-            "not writable: %s" % ", ".join(map(str, blocked)),
+            _pick("不可写：%s", "not writable: %s") % ", ".join(map(str, blocked)),
             "chown -R $(whoami) '%s'" % config.STATE_DIR)
     return CheckResult("state dirs", OK, "%s writable" % config.STATE_DIR)
 
@@ -417,7 +445,8 @@ def _check_launchd(probes: Probes):
     if not labels:
         return CheckResult(
             "launchd agents", WARN,
-            "no plist templates under act/launchd - incomplete checkout?",
+            _pick("act/launchd 下没有 plist 模板——checkout 不完整？",
+                  "no plist templates under act/launchd - incomplete checkout?"),
             "git -C '%s' checkout act/launchd" % config.HOME)
     table = {}
     for line in probes.launchctl_list().splitlines():
@@ -477,7 +506,8 @@ def _check_systemd(probes: Probes):
     if not units:
         return CheckResult(
             "systemd units", WARN,
-            "no unit templates under act/systemd - incomplete checkout?",
+            _pick("act/systemd 下没有 unit 模板——checkout 不完整？",
+                  "no unit templates under act/systemd - incomplete checkout?"),
             "git -C '%s' checkout act/systemd" % config.HOME)
     table = {}
     for line in probes.launchctl_list().splitlines():
@@ -569,7 +599,8 @@ def _check_scheduled_tasks(probes: Probes):
     if not tasks:
         return CheckResult(
             "scheduled tasks", WARN,
-            "no task templates under act/tasksched - incomplete checkout?",
+            _pick("act/tasksched 下没有任务模板——checkout 不完整？",
+                  "no task templates under act/tasksched - incomplete checkout?"),
             "git -C '%s' checkout act/tasksched" % config.HOME)
     table = _parse_schtasks(probes.launchctl_list())
     results = []
@@ -640,13 +671,18 @@ def _check_cron_probe(probes: Probes, cron_installed: bool):
     name = "cron disk access"
     if not CRON_PROBE_PATH.exists():
         if not cron_installed:
-            return CheckResult(name, WARN,
-                               "no probe data (cron chain not installed yet)",
-                               "bash install.sh, then wait ~30 min for the first cron run")
+            return CheckResult(
+                name, WARN,
+                _pick("还没有探针数据（cron 链尚未安装）",
+                      "no probe data (cron chain not installed yet)"),
+                _pick("bash install.sh，然后等 ~30 分钟让 cron 跑第一轮",
+                      "bash install.sh, then wait ~30 min for the first cron run"))
         return CheckResult(
             name, WARN,
-            "no probe yet - the cron chain has not run since this version was installed",
-            "rerun bash install.sh (updates the cron line), then wait ~30 min")
+            _pick("还没有探针数据——装上这个版本后 cron 链还没跑过",
+                  "no probe yet - the cron chain has not run since this version was installed"),
+            _pick("重跑 bash install.sh（更新 cron 行），然后等 ~30 分钟",
+                  "rerun bash install.sh (updates the cron line), then wait ~30 min"))
     try:
         data = json.loads(CRON_PROBE_PATH.read_text(encoding="utf-8"))
         ts = _dt.datetime.strptime(str(data.get("ts", "")), "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -659,9 +695,12 @@ def _check_cron_probe(probes: Probes, cron_installed: bool):
             raise ValueError("read_ok missing or not a bool")
         probed = str(data.get("protected_path") or "")
     except Exception:  # noqa: BLE001 - torn/hand-edited file is the symptom
-        return CheckResult(name, WARN,
-                           "state/cron_probe.json unreadable - wait for the next cron run",
-                           "if it stays unreadable: rerun bash install.sh")
+        return CheckResult(
+            name, WARN,
+            _pick("state/cron_probe.json 读不出来——等下一轮 cron 再看",
+                  "state/cron_probe.json unreadable - wait for the next cron run"),
+            _pick("如果一直读不出来：重跑 bash install.sh",
+                  "if it stays unreadable: rerun bash install.sh"))
     age = probes.now() - ts
     if age > CRON_PROBE_FRESH_SECONDS:
         return CheckResult(
@@ -686,8 +725,10 @@ def _check_dashboard(probes: Probes):
     if not path.exists():
         return CheckResult(
             "dashboard", FAIL,
-            "state/dashboard.json missing - the app shows 'missing' forever",
-            "start actd (bash install.sh), or seed once: python3 -m act.lib.dashboard")
+            _pick("state/dashboard.json 缺失——App 会一直显示「missing」",
+                  "state/dashboard.json missing - the app shows 'missing' forever"),
+            _pick("启动 actd（bash install.sh），或手动生成一次：python3 -m act.lib.dashboard",
+                  "start actd (bash install.sh), or seed once: python3 -m act.lib.dashboard"))
     try:
         gen = json.loads(path.read_text(encoding="utf-8")).get("generated_at", "")
         ts = _dt.datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -695,8 +736,10 @@ def _check_dashboard(probes: Probes):
     except Exception:  # noqa: BLE001 - torn/malformed file is the symptom
         return CheckResult(
             "dashboard", FAIL,
-            "state/dashboard.json is unreadable or has no valid generated_at",
-            "delete it and restart actd (it rewrites atomically)")
+            _pick("state/dashboard.json 读不出来或没有合法的 generated_at",
+                  "state/dashboard.json is unreadable or has no valid generated_at"),
+            _pick("删掉它并重启 actd（它会原子重写）",
+                  "delete it and restart actd (it rewrites atomically)"))
     age = probes.now() - ts
     if age <= DASHBOARD_FRESH_SECONDS:
         return CheckResult("dashboard", OK, "fresh (generated %ds ago)" % max(int(age), 0))
@@ -713,19 +756,24 @@ def _check_obsidian(probes: Probes):
     if not (raw and str(raw).strip()):
         return CheckResult(
             "obsidian vault", WARN,
-            "sources.obsidian_raw not set - the obsidian radar idles (quick capture still works)",
-            "set sources.obsidian_raw in config.yaml to your vault's raw-notes folder")
+            _pick("sources.obsidian_raw 未配置——obsidian 雷达空转（快速捕获不受影响）",
+                  "sources.obsidian_raw not set - the obsidian radar idles (quick capture still works)"),
+            _pick("在 config.yaml 的 sources.obsidian_raw 填上 vault 的 raw 笔记目录",
+                  "set sources.obsidian_raw in config.yaml to your vault's raw-notes folder"))
     raw_path = Path(str(raw)).expanduser()
     if not raw_path.is_dir():
         return CheckResult(
             "obsidian vault", WARN,
-            "sources.obsidian_raw does not exist (%s) - radar scans nothing, silently" % raw_path,
-            "create the folder or fix the path in config.yaml")
+            _pick("sources.obsidian_raw 不存在（%s）——雷达什么都扫不到，而且是静默的",
+                  "sources.obsidian_raw does not exist (%s) - radar scans nothing, silently") % raw_path,
+            _pick("创建该目录，或改 config.yaml 里的路径",
+                  "create the folder or fix the path in config.yaml"))
     unprocessed = Path(str(cfg.obsidian_unprocessed)).expanduser()
     if not unprocessed.is_dir():
         return CheckResult(
             "obsidian vault", WARN,
-            "ingest inbox missing (%s) - exports have nowhere to land" % unprocessed,
+            _pick("ingest 收件目录缺失（%s）——导出的笔记没有落脚点",
+                  "ingest inbox missing (%s) - exports have nowhere to land") % unprocessed,
             "mkdir -p '%s'" % unprocessed)
     return CheckResult("obsidian vault", OK, "%s (+ ingest inbox)" % raw_path)
 
@@ -735,8 +783,10 @@ def _check_screenpipe(probes: Probes):
     if not db.exists():
         return CheckResult(
             "screenpipe db", WARN,
-            "%s missing - recording has never run (fine if you keep recording off)" % db,
-            "menu-bar app -> enable recording (the engine runs via npx)")
+            _pick("%s 缺失——录制从未运行过（如果你本来就不开录制，这是正常的）",
+                  "%s missing - recording has never run (fine if you keep recording off)") % db,
+            _pick("菜单栏 App -> 打开录制（引擎经 npx 运行）",
+                  "menu-bar app -> enable recording (the engine runs via npx)"))
     age = probes.now() - db.stat().st_mtime
     if age > SCREENPIPE_STALE_SECONDS:
         return CheckResult(
@@ -764,13 +814,15 @@ def _check_gh(probes: Probes):
     if not path:
         return CheckResult(
             "gh CLI", WARN,
-            "missing - repo-mode cards deliver as local branches only (optional)",
+            _pick("缺失——repo 模式的卡片只能交付成本地分支（可选依赖）",
+                  "missing - repo-mode cards deliver as local branches only (optional)"),
             "brew install gh && gh auth login")
     rc, _ = probes.run([path, "auth", "status"], timeout=15)
     if rc != 0:
         return CheckResult(
             "gh CLI", WARN,
-            "%s present but not authenticated - draft-PR delivery will fail" % path,
+            _pick("%s 存在但未登录——draft-PR 交付会失败",
+                  "%s present but not authenticated - draft-PR delivery will fail") % path,
             "gh auth login")
     return CheckResult("gh CLI", OK, "%s (authenticated)" % path)
 
@@ -779,7 +831,8 @@ def _check_claude_auth(probes: Probes):
     """One cheap live call, with the SAME credential resolution headless runs use."""
     path = probes.which("claude")
     if not path:
-        return CheckResult("claude auth", WARN, "skipped (claude CLI not found)")
+        return CheckResult("claude auth", WARN,
+                           _pick("跳过（未找到 claude CLI）", "skipped (claude CLI not found)"))
     key, source = _resolve_key(probes)
     env = dict(os.environ)
     if key:
