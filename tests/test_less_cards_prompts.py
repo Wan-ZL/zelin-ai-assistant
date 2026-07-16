@@ -198,6 +198,33 @@ class NotesTextProjectionTestCase(unittest.TestCase):
         parsed = registry.parse_fold_notes(nt)
         self.assertEqual(parsed[-1]["ts"], ts)
 
+    def test_split_marker_straddling_the_cap_survives_intact(self):
+        # review blocker 9: with the OLD head clip, the 已拆出 flip could
+        # straddle the [:2000] boundary and project as "[已拆出 R" — the Mac
+        # real-signal never fired (false 180s timeout) and the line degraded
+        # to an un-splittable legacy row. The tail-aligned projection must
+        # keep the whole line.
+        from unittest import mock
+        r = _seed("R-045", "跨界卡", State.CARD_SENT.value)
+        r.notes = "x" * 1950                       # one old filler line
+        with mock.patch.object(registry, "_iso_now",
+                               return_value="2026-07-16T08:00:00Z"):
+            ts = registry.append_fold_note(r, "拆出去的那条进展", "radar")
+        registry.mark_note_split(r, ts, "R-999")
+        registry.save(r)
+        notes = registry.load("R-045").notes
+        # the repro shape really straddles: the 已拆出 tag spans offset 2000
+        tag_at = notes.index(" [已拆出 R-999]")
+        self.assertLess(tag_at, 2000)
+        self.assertGreater(tag_at + len(" [已拆出 R-999]"), 2000)
+        dash = self._dash()
+        row = next(x for x in dash["needs_approval"] if x["id"] == "R-045")
+        nt = row["notes_text"]
+        self.assertIn("[已拆出 R-999]", nt)              # intact, not "[已拆出 R"
+        entry = registry.parse_fold_notes(nt)[-1]        # Store's real-signal read
+        self.assertEqual(entry["split_into"], "R-999")
+        self.assertEqual(entry["ts"], ts)
+
     def test_review_row_carries_notes_text(self):
         _seed("R-043", "待验收卡", State.REVIEW.value,
               notes="[radar] 验收期折叠 [@t2]",

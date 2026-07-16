@@ -128,6 +128,7 @@ class SplitNoteEndToEndTestCase(unittest.TestCase):
         self.assertEqual(new.status, State.RAISING.value)
         self.assertEqual(new.title, "顺手记的另一件事 pytest")
         self.assertIn(f"[拆自 {r.id}]", new.notes)
+        self.assertEqual(new.split_from, r.id)   # machine-readable lineage (§38.3)
         self.assertEqual(new.type, "paperwork")
         self.assertEqual(new.sources[0]["channel"], "split")
         # origin line kept + tagged
@@ -161,6 +162,24 @@ class SplitNoteEndToEndTestCase(unittest.TestCase):
         r, ts = self._fold_then_ts()
         registry.archive(r, reason="user")
         self.assertEqual(actd._apply_split_note(r.id, ts), "noop")
+
+    def test_all_terminal_states_are_guarded(self):
+        # review blocker 8: trashed/merged/rejected must no-op exactly like
+        # archived (§32.2 terminal-state doctrine) — a stale detail panel must
+        # not mint a live card (+1 expand run) out of a dead one.
+        for status in (State.TRASHED.value, State.MERGED.value,
+                       State.REJECTED.value):
+            with self.subTest(status=status):
+                _clean()
+                r, ts = self._fold_then_ts()
+                r.set_status(status)
+                registry.save(r)
+                self.assertEqual(actd._apply_split_note(r.id, ts), "noop")
+                self.assertEqual(
+                    [x.id for x in registry.load_all() if x.id != r.id], [])
+                # origin notes untouched — no phantom 已拆出 tag
+                entry = registry.parse_fold_notes(registry.load(r.id).notes)[0]
+                self.assertIsNone(entry["split_into"])
 
     def test_legacy_untimestamped_note_cannot_split(self):
         r = _seed(notes="[radar] 老格式没有句柄")

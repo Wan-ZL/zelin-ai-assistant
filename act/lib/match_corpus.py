@@ -85,6 +85,12 @@ MAX_ALIASES = 6
 
 _CJK_CHAR_RE = re.compile(r"^[぀-ヿ㐀-䶿一-鿿]+$")
 
+# §38 fold-note bookkeeping tags ("[@<ts>]" / "[已拆出 R-yyy]", registry
+# append_fold_note / mark_note_split) — machinery, not content. Left in, the
+# timestamps tokenize into 2026/16t10-style junk that two unrelated folded
+# cards then "share" (review blocker 6).
+_NOTE_TAG_RE = re.compile(r" \[@[^\]\s]+\]| \[已拆出 [^\]\s]+\]")
+
 
 def normalize(text) -> str:
     """Python twin of ``SearchMatch.normalize`` (§37): lowercase + strip
@@ -147,7 +153,7 @@ def corpus_text(req) -> str:
         str(getattr(req, "title", "") or ""),
         str(getattr(req, "display_title", "") or ""),
         str(getattr(req, "summary", "") or ""),
-        str(getattr(req, "notes", "") or ""),
+        _NOTE_TAG_RE.sub("", str(getattr(req, "notes", "") or "")),
     ]
     for s in (getattr(req, "sources", None) or []):
         if isinstance(s, dict):
@@ -177,9 +183,11 @@ def alias_text(req) -> str:
 
 
 def display_tokens(matched: Iterable[str]) -> list[str]:
-    """Tokens safe to SHOW in prompt/rationale text: long pure-digit runs
-    (phone-shaped — outside scrub's pattern set) stay match-only."""
-    return [t for t in matched
+    """Tokens safe AND honest to SHOW in prompt/rationale text: whole-run
+    evidence only (no eb/1a/荐信 sub-token artifacts — :func:`strong_evidence`
+    does the run-dedup), minus long pure-digit runs (phone-shaped — outside
+    scrub's pattern set; they stay match-only)."""
+    return [t for t in strong_evidence(matched)
             if not (t.isdigit() and len(t) > _DIGIT_DISPLAY_MAX)]
 
 
@@ -232,8 +240,22 @@ def is_weak_gram(t: str) -> bool:
 
 
 def strong_evidence(matched: Iterable[str]) -> list[str]:
-    """The matched tokens that count toward threshold minimums."""
-    return [t for t in matched if not is_weak_gram(t)]
+    """The matched tokens that count toward threshold minimums, run-deduped.
+
+    tokens() emits a separator-run both joined and split ("EB-1A" → eb1a,
+    eb, 1a) so either phrasing can intersect — but ONE shared identifier must
+    count as ONE piece of evidence, or a single "EB-1A" satisfies a ≥3-token
+    gate by itself (review blocker 6). Containment-dedup, longest first: any
+    matched token that is a substring of an already-kept longer match is the
+    same run's sub-token."""
+    strong = sorted((t for t in matched if not is_weak_gram(t)),
+                    key=lambda t: (-len(t), t))
+    kept: list[str] = []
+    for t in strong:
+        if any(t in k for k in kept):
+            continue
+        kept.append(t)
+    return kept
 
 
 def score_pair(a: set, b: set) -> tuple[float, list[str]]:

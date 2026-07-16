@@ -100,6 +100,10 @@ _OPTIONAL_ORDER = [
     # (above) is reused to remember the restore target for unarchive.
     "archived_at",
     "archive_reason",
+    # §38 split lineage — set once on a card minted by the split_note undo;
+    # machine-readable so auto_merge never suggests merging the split back
+    # (the [拆自 R-xxx] notes breadcrumb is prose, not a signal).
+    "split_from",
 ]
 
 
@@ -147,6 +151,8 @@ class Requirement:
     # v0.20.0 archive bookkeeping (§4) — set once archived (prev_status reused).
     archived_at: Optional[str] = None
     archive_reason: Optional[str] = None
+    # §38 split lineage (see _OPTIONAL_ORDER note) — origin card of a split.
+    split_from: Optional[str] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)

@@ -121,6 +121,28 @@ class CjkStopAndEvidenceTestCase(unittest.TestCase):
         self.assertFalse(match_corpus.is_weak_gram("推荐信"))
         self.assertFalse(match_corpus.is_weak_gram("ab"))   # latin len-2 is not a CJK gram
 
+    def test_one_separator_run_counts_once(self):
+        # review blocker 6: "EB-1A" tokenizes as eb1a+eb+1a — one shared
+        # identifier must be ONE piece of evidence, not three.
+        strong = match_corpus.strong_evidence(["eb1a", "eb", "1a", "wegreened"])
+        self.assertEqual(strong, ["wegreened", "eb1a"])
+
+    def test_fold_note_tags_never_become_shared_evidence(self):
+        # review blocker 6: [@ts]/[已拆出] bookkeeping must not tokenize —
+        # two unrelated folded cards would "share" the timestamp junk.
+        r1 = Requirement(id="R-001", title="报销流程整理", status="card_sent",
+                         notes="[radar] 又催了 [@2026-07-16T08:00:00Z]")
+        r2 = Requirement(id="R-002", title="简历初稿修改", status="card_sent",
+                         notes="[quick] 补一句 [@2026-07-16T08:00:00Z] [已拆出 R-050]")
+        t1, t2 = match_corpus.corpus_tokens(r1), match_corpus.corpus_tokens(r2)
+        self.assertEqual(t1 & t2, set())
+        self.assertNotIn("r050", t2)
+        self.assertFalse(any("2026" in t for t in t1 | t2))
+
+    def test_display_tokens_show_whole_runs_only(self):
+        shown = match_corpus.display_tokens(["eb1a", "eb", "1a", "荐信", "推荐信"])
+        self.assertEqual(shown, ["eb1a", "推荐信"])   # no sub-tokens, no bigrams
+
     def test_scrub_mask_is_not_evidence(self):
         # two cards each holding a (different) masked secret must not match
         # on the mask text itself

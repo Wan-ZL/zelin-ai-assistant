@@ -560,10 +560,13 @@ def _apply_split_note(req_id, note_ts) -> str:
     if req is None:
         _log(f"inbox: split_note for unknown req {req_id!r} — dropped")
         return "unknown"
-    if str(req.status) == State.ARCHIVED.value:
-        # mirrors the central archived gate: a sealed card's file lives in
-        # archive/ — unarchive first.
-        _log(f"inbox: {req.id} split_note on archived card — no-op")
+    if str(req.status) in _MERGE_DEAD_STATES or req.is_merged:
+        # terminal-state doctrine (§32.2, same set the merge machinery
+        # refuses): a stale detail panel must not mint a live card (+1 expand
+        # LLM run) out of a card that meanwhile trashed/merged/rejected/
+        # archived. Notes stay untouched; honest noop ack.
+        _log(f"inbox: {req.id} split_note on terminal card "
+             f"({req.status}) — no-op")
         return "noop"
     entry = next((e for e in registry.parse_fold_notes(req.notes)
                   if e["ts"] == ts and not e["split_into"] and e["text"]), None)
@@ -587,6 +590,10 @@ def _apply_split_note(req_id, note_ts) -> str:
             "quote": text,
         }],
         notes=f"[拆自 {req.id}] 从其折叠备注拆出",
+        # machine-readable lineage: the new card's text ≈ the origin note by
+        # construction, and auto_merge would otherwise suggest merging it
+        # straight back — one 采纳 destroying the undo (§38.3 _linked).
+        split_from=req.id,
     )
     # new card FIRST, origin tag second (archive()'s crash-mid-move doctrine:
     # a crash between the two leaves the split recoverable, never lost).

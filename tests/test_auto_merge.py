@@ -62,6 +62,7 @@ class AutoSuggestTestCase(unittest.TestCase):
         self.assertTrue(job["auto"])
         self.assertTrue(str(job["id"]).startswith("MS-"))
         self.assertIn("规则判定", job["rationale"])
+        self.assertIn("高度相似", job["rationale"])   # the HIGH path's honest copy
         self.assertTrue(job.get("expires_at"))
         self.assertTrue(job.get("action_plan"))
 
@@ -110,19 +111,33 @@ class AutoSuggestTestCase(unittest.TestCase):
         self.assertEqual(auto_merge.scan_new_cards(), 0)   # pair is final
         self.assertEqual(_jobs(), [])
 
-    def test_max_three_outstanding(self):
-        for i in range(1, 6):
-            _seed(f"R-{2 * i - 1:03d}", f"独立主题 tag{i} 推荐信 wegreened letters")
-            _seed(f"R-{2 * i:03d}", f"独立主题 tag{i} 推荐信 wegreened letters 跟进")
-        auto_merge.scan_new_cards()
-        self.assertEqual(len([j for j in _jobs() if j.get("auto")]), 3)
-        # a dismissed job frees a slot; an over-budget pair stays eligible
-        job = next(j for j in _jobs() if j.get("auto"))
-        merge_review.dismiss_job(job)
-        state = json.loads(auto_merge.STATE_PATH.read_text(encoding="utf-8"))
-        state["scanned"] = []          # force a rescan of the same cards
-        auto_merge.STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
-        self.assertEqual(auto_merge.scan_new_cards(), 1)
+    # five near-dupe pairs with DISTINCT topics (no cross-pair overlap): the
+    # budget tests below need "5 real pairs" to mean exactly 5 suggestions.
+    _FIVE_PAIRS = [
+        ("snowboard burton gear 滑雪板 对比", "snowboard burton gear 滑雪板 跟进"),
+        ("taxreturn form1040 irs 报税材料 整理", "taxreturn form1040 irs 报税材料 补充"),
+        ("visaappointment delta airline 签证 预约", "visaappointment delta airline 签证 提醒"),
+        ("kubernetes ingress helm 部署脚本 修复", "kubernetes ingress helm 部署脚本 继续"),
+        ("newsletter mailchimp campaign 邮件模板 草稿", "newsletter mailchimp campaign 邮件模板 终稿"),
+    ]
+
+    def test_max_three_outstanding_and_deferred_pairs_survive(self):
+        # review blocker 5: over-budget pairs must survive until the board
+        # clears — through the REAL re-scan path, no ledger surgery.
+        for i, (a, b) in enumerate(self._FIVE_PAIRS, start=1):
+            _seed(f"R-{2 * i - 1:03d}", a)
+            _seed(f"R-{2 * i:03d}", b)
+        self.assertEqual(auto_merge.scan_new_cards(), 3)     # cap
+        self.assertEqual(auto_merge.scan_new_cards(), 0)     # still capped
+        # user clears the board (dismisses all three suggestions) …
+        for job in _jobs():
+            if job.get("auto") and str(job.get("status")) == "done":
+                merge_review.dismiss_job(job)
+        # … and the NEXT regular pass surfaces the two deferred pairs.
+        self.assertEqual(auto_merge.scan_new_cards(), 2)
+        self.assertEqual(auto_merge.scan_new_cards(), 0)     # all pairs done
+        self.assertEqual(
+            len([j for j in _jobs() if j.get("auto")]), 5)
 
     def test_terminal_and_linked_cards_never_suggested(self):
         # three near-dupe pairs, DISTINCT topics (no cross-pair overlap) —
@@ -141,6 +156,44 @@ class AutoSuggestTestCase(unittest.TestCase):
         for x, y in ((a1, a2), (b1, b2), (c1, c2)):
             self.assertTrue(auto_merge.is_near_dupe(x, y)[0])
         self.assertEqual(auto_merge.scan_new_cards(), 0)
+
+    def test_shared_identifier_alone_never_suggests(self):
+        # review blocker 6 repro: ONE shared identifier (EB-1A → eb1a/eb/1a
+        # sub-tokens) + generic CJK bigram overlap must not read as a
+        # duplicate — these are two distinct tasks on the same matter.
+        _seed("R-001", "EB-1A 推荐信跟进")
+        _seed("R-002", "EB-1A 推荐信初稿审阅")
+        self.assertEqual(auto_merge.scan_new_cards(), 0)
+        self.assertEqual(_jobs(), [])
+
+    def test_rationale_says_which_rule_fired(self):
+        # contact path (0.4 band) must not claim 高度相似
+        src = [{"who": "Quinton", "channel": "slack", "date": "2026-07-16",
+                "quote": "q"}]
+        _seed("R-001", self._MOD_A, sources=src)
+        _seed("R-002", self._MOD_B, sources=src)
+        auto_merge.scan_new_cards()
+        (job,) = _jobs()
+        self.assertIn("同一联系人", job["rationale"])
+        self.assertIn("中等重合", job["rationale"])
+        self.assertNotIn("高度相似", job["rationale"])
+
+    def test_split_card_never_suggested_against_origin(self):
+        # review blocker 7: split a note → the new card's text ≈ the origin
+        # note by construction; a same-pass scan suggesting the merge back
+        # would undo the undo. split_from lineage blocks the pair.
+        origin = _seed("R-001", "原卡 kubernetes ingress helm 部署")
+        ts = registry.append_fold_note(
+            origin, "newsletter mailchimp campaign 邮件模板 草稿", "radar")
+        registry.save(origin)
+        self.assertEqual(actd._apply_split_note("R-001", ts), "running")
+        new = next(r for r in registry.load_all() if r.id != "R-001")
+        self.assertEqual(new.split_from, "R-001")
+        # the raw SIGNAL fires (non-vacuous)…
+        self.assertTrue(auto_merge.is_near_dupe(origin, new)[0])
+        # …but the lineage guard keeps the pair out, same pass and later.
+        self.assertEqual(auto_merge.scan_new_cards(), 0)
+        self.assertEqual(_jobs(), [])
 
     def test_same_colleague_two_different_asks_no_false_positive(self):
         # review blocker 2, reproduced verbatim: shared contact + zh function

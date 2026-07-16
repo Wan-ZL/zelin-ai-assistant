@@ -450,55 +450,8 @@ fileprivate struct DodListView: View {
 /// One-line mono path that copies itself on click (clipboard→✓, 1.5 s reset).
 // MARK: - fold notes (§38) — 折叠进来的信息 + 拆成新卡
 //
-// Python 侧 registry.append_fold_note 往 notes 写
-// "[radar|quick] <text> [@<ts>]"（拆出后再追加 " [已拆出 R-yyy]"），dashboard
-// 以 notes_text 投影到 needs_approval/debt/review 行。这里的解析必须与
-// act/lib/registry.py 的 _FOLD_LINE_RE/_FOLD_TS_RE/_FOLD_SPLIT_RE 保持
-// lockstep——两边同时改。
-
-struct FoldNote: Hashable {
-    let kind: String        // "radar" | "quick"
-    let text: String
-    let ts: String?         // split handle；nil = §38 之前的旧行（不可拆）
-    let splitInto: String?  // 已拆出 → 新卡 id
-
-    static func parse(_ notes: String?) -> [FoldNote] {
-        guard let notes, !notes.isEmpty else { return [] }
-        var out: [FoldNote] = []
-        for raw in notes.components(separatedBy: "\n") {
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            var kind: String?
-            for k in ["radar", "quick"] where line.hasPrefix("[\(k)] ") {
-                kind = k
-                line = String(line.dropFirst(k.count + 3))
-                break
-            }
-            guard let kind else { continue }
-            var splitInto: String?
-            if line.hasSuffix("]"),
-               let r = line.range(of: " [已拆出 ", options: .backwards),
-               !line[r.upperBound...].dropLast().contains("]") {
-                splitInto = String(line[r.upperBound...].dropLast())
-                line = String(line[..<r.lowerBound])
-            }
-            var ts: String?
-            if line.hasSuffix("]"),
-               let r = line.range(of: " [@", options: .backwards) {
-                let tag = line[r.upperBound...].dropLast()
-                // the ts tag never contains spaces/brackets — a "]"-ending
-                // note text must not be mistaken for one.
-                if !tag.isEmpty, !tag.contains(" "), !tag.contains("]") {
-                    ts = String(tag)
-                    line = String(line[..<r.lowerBound])
-                }
-            }
-            out.append(FoldNote(kind: kind,
-                                text: line.trimmingCharacters(in: .whitespaces),
-                                ts: ts, splitInto: splitInto))
-        }
-        return out
-    }
-}
+// FoldNote (the notes_text line parser) lives in shared/Sources/FoldNote.swift
+// so the contract harness pins it; this is the Mac-only presentation on top.
 
 /// The 展开详情 fold-note list: each folded-in update on its own line, with
 /// 拆成新卡 (split_note) on lines that carry a ts handle — the §38 undo for a

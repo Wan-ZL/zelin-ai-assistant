@@ -103,8 +103,14 @@ def _contacts(req) -> set:
 
 
 def _linked(a, b) -> bool:
-    """Deliberately-related cards (lineage/thread) are never duplicate noise."""
+    """Deliberately-related cards (lineage/thread/split) are never duplicate
+    noise. Split lineage is CRITICAL: a just-split card's text ≈ its origin
+    note by construction — suggesting the merge back would undo the undo
+    (review blocker 7)."""
     if a.improvement_of == b.id or b.improvement_of == a.id:
+        return True
+    if (getattr(a, "split_from", None) == b.id
+            or getattr(b, "split_from", None) == a.id):
         return True
     ta, tb = getattr(a, "thread_id", None), getattr(b, "thread_id", None)
     if ta and tb and ta == tb:
@@ -115,17 +121,21 @@ def _linked(a, b) -> bool:
     return False
 
 
-def is_near_dupe(a, b, cfg=None) -> tuple[bool, list[str]]:
-    """The §38 deterministic near-dupe signal for two open cards."""
+def is_near_dupe(a, b, cfg=None) -> tuple[bool, list[str], str]:
+    """The §38 deterministic near-dupe signal for two open cards.
+
+    Returns ``(dupe, matched_tokens, reason)`` with reason ∈ ("high",
+    "contact", "") — the suggestion's rationale must say WHICH rule fired
+    (中等重合+同一联系人 is not 高度相似)."""
     score, matched = match_corpus.score_pair(
         match_corpus.corpus_tokens(a, cfg), match_corpus.corpus_tokens(b, cfg))
     strong = match_corpus.strong_evidence(matched)
     if score >= HIGH_SCORE and len(strong) >= HIGH_MIN_TOKENS:
-        return True, matched
+        return True, matched, "high"
     if (score >= CONTACT_SCORE and len(strong) >= CONTACT_MIN_TOKENS
             and _contacts(a) & _contacts(b)):
-        return True, matched
-    return False, []
+        return True, matched, "contact"
+    return False, [], ""
 
 
 def _outstanding_auto() -> int:
@@ -152,15 +162,23 @@ def _idnum(rid: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _make_suggestion(primary, secondary, matched: list) -> Optional[str]:
+def _make_suggestion(primary, secondary, matched: list,
+                     reason: str) -> Optional[str]:
     """Write the §21-shaped MS- job (status=done, verdict=merge). The existing
     merge_apply / merge_dismiss / dashboard projection paths consume it with
     zero changes; ``auto`` + ``confidence="deterministic"`` mark provenance
     (the apps render an unknown confidence string as a plain badge)."""
     if merge_review is None:
         return None
-    # display filter: long digit runs (phone-shaped) match but never print
+    # display filter: whole-run keywords only, long digit runs never print
     words = "、".join(match_corpus.display_tokens(matched)[:6])
+    if reason == "contact":
+        # honesty: the 0.4 contact path is NOT 高度相似 — say what fired.
+        finding = (f"规则判定：{secondary.id} 和 {primary.id} 来自同一联系人，"
+                   f"且内容中等重合（重合关键词：{words}），可能是同一件事建了两张卡。")
+    else:
+        finding = (f"规则判定：{secondary.id} 和 {primary.id} 的标题/内容高度相似"
+                   f"（重合关键词：{words}），可能是同一件事建了两张卡。")
     job = {
         "id": merge_review.new_suggestion_id(),
         "ids": [str(primary.id), str(secondary.id)],
@@ -168,10 +186,7 @@ def _make_suggestion(primary, secondary, matched: list) -> Optional[str]:
         "status": "done",
         "verdict": "merge",
         "primary": str(primary.id),
-        "rationale": (
-            f"规则判定：{secondary.id} 和 {primary.id} 的标题/内容高度相似"
-            f"（重合关键词：{words}），可能是同一件事建了两张卡。"
-            "这是确定性规则触发的提示，不是 AI 分析。"),
+        "rationale": finding + "这是确定性规则触发的提示，不是 AI 分析。",
         "action_plan": [
             f"接受后：副卡 {secondary.id} 并入主卡 {primary.id}——来源去重合并、"
             "提及次数累加、主卡 notes 留痕；副卡置「已合并」（终态，可见性同回收站）。",
@@ -193,6 +208,12 @@ def scan_new_cards() -> int:
     best-effort. Cards that vanished from the open set are dropped from the
     ``scanned`` ledger so a later re-raise re-enters as new — the pair ledger
     still blocks every already-suggested pair.
+
+    Budget deferral (review blocker 5): a card whose comparisons were cut
+    short by the max-outstanding budget is NOT marked scanned — it re-enters
+    as new on the next pass, so its pairs genuinely stay eligible until the
+    board clears; only fully-evaluated cards retire into the ledger. (Cheap:
+    once the budget is gone the remaining new cards defer WITHOUT comparing.)
     """
     try:
         if merge_review is None:
@@ -208,27 +229,34 @@ def scan_new_cards() -> int:
         new_reqs = [r for r in open_reqs if str(r.id) not in scanned]
 
         created = 0
+        deferred: set[str] = set()
         if new_reqs:
             budget = MAX_OUTSTANDING - _outstanding_auto()
             for new in new_reqs:
+                if budget <= 0:
+                    # not evaluated at all this pass — stays new next pass
+                    deferred.add(str(new.id))
+                    continue
                 for other in open_reqs:
                     if str(other.id) == str(new.id):
                         continue
                     key = pair_key(new.id, other.id)
                     if key in suggested or _linked(new, other):
                         continue
-                    dupe, matched = is_near_dupe(new, other, cfg)
+                    dupe, matched, reason = is_near_dupe(new, other, cfg)
                     if not dupe:
                         continue
                     if budget <= 0:
-                        # throttle: pair NOT recorded — it stays eligible once
-                        # the board clears below 3 outstanding suggestions.
-                        continue
+                        # mid-card exhaustion: this card's remaining pairs
+                        # were never judged — defer the whole card (already-
+                        # suggested pairs are ledger-blocked on re-scan).
+                        deferred.add(str(new.id))
+                        break
                     # primary = the older card (smaller id): the existing one
                     # the duplicate should fold into.
                     a, b = ((other, new)
                             if _idnum(other.id) <= _idnum(new.id) else (new, other))
-                    sid = _make_suggestion(a, b, matched)
+                    sid = _make_suggestion(a, b, matched, reason)
                     if sid is None:
                         continue
                     suggested.add(key)
@@ -237,7 +265,9 @@ def scan_new_cards() -> int:
                     analytics.log_event("auto_merge_suggested", suggestion=sid,
                                         primary=str(a.id), secondary=str(b.id))
 
-        new_scanned = (scanned & open_ids) | {str(r.id) for r in new_reqs}
+        new_scanned = ((scanned & open_ids)
+                       | {str(r.id) for r in new_reqs
+                          if str(r.id) not in deferred})
         if new_scanned != scanned or created:
             state["scanned"] = sorted(new_scanned)
             state["suggested"] = sorted(suggested)

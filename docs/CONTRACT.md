@@ -1218,6 +1218,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   - **中文停用**：常见助词/代词/客套 bigram（帮我/一下/我看…含掩码词 脱敏）
     不成为 token；且 **2 字 CJK gram 一律不计入证据数**（只贡献 overlap
     分数）——同一联系人两条不同请求不得因功能词被判 near-dupe。
+  - **同一分隔符 run 只算一份证据**：tokenizer 对 "EB-1A" 同时产出
+    eb1a/eb/1a（保证互相能命中），但证据计数（`strong_evidence`）按包含关系
+    去重——单个共享 identifier 绝不独自凑满 ≥3 词门槛；展示列表（关键词/
+    重合词/rationale）只打整 run 词，无 eb/1a/荐信 类碎片。
+  - **折叠簿记不参与匹配**：notes 里的 `[@ts]`/`[已拆出 R-yyy]` tag 在
+    tokenize 前剥除——两张不相干的折叠卡不得因时间戳碎片「重合」。
 
 ### 38.2 可逆折叠 — 折叠备注时间戳 + inbox 动作 `split_note`
 
@@ -1240,13 +1246,18 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   ```
   三重 fail-closed 校验（v0.33.1 边界原则）：syncd 形状闸门把 `note_ts` 纳入
   str-or-absent 字段表；webui `ALLOWED_ACTIONS` 收录 + `note_ts` 须 str 否则
-  400；actd 侧非 str / 未知卡（ack `unknown`）/ archived 卡 / 未知 ts / 已拆
-  过的行一律 no-op + log（ack `noop`，重放绝不二次出卡）。
+  400；actd 侧非 str / 未知卡（ack `unknown`）/ **终态卡**（trashed/merged/
+  rejected/archived，§32.2 终态原则——stale 详情面板不得从死卡铸出活卡）/
+  未知 ts / 已拆过的行一律 no-op + log（ack `noop`，重放绝不二次出卡）。
 - **actd 语义**：取该行文本走**正常 capture 路径**成新卡（`raising` → AI 扩写
-  → 提案；默认路由），notes 带 `[拆自 R-xxx]` 溯源；**刻意不过 merge_or_new**
+  → 提案；默认路由），notes 带 `[拆自 R-xxx]` 溯源 + **registry 新增 add-only
+  optional 字段 `split_from`**（str，= 原卡 id，机器可读血缘——§38.3 的
+  auto-merge 永不建议把刚拆出的卡合并回原卡）；**刻意不过 merge_or_new**
   ——用户刚说了这条不属于那张卡，确定性再折叠等于撤销这次撤销。新卡先落盘、
   原行后打标（archive() 的 crash-mid-move 同款次序）。打点 `split_note`
-  （metadata only）。
+  （metadata only）。折叠行解析器 `FoldNote`（shared/Sources/FoldNote.swift，
+  Foundation-only，contract harness 锁定）与 registry 三个正则 lockstep；
+  截断的 `[已拆出 R` 残 tag 安全降级为纯展示行，绝不产生幻影拆出标记。
 - **Mac UI**：needs_approval / 备选 / 待验收 卡的展开详情渲染「📎 折叠进来的
   信息」行列表（解析 `notes_text`，与 registry 正则 lockstep）；带句柄的行给
   「拆成新卡」小按钮（正常 submit 管道 + 乐观回显 `pendingSplits`，真信号 =
@@ -1261,9 +1272,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   `state/auto_merge_seen.json` 的 `scanned`）与其余未结卡做 §38.1 同一套
   normalized-token 重合判定：**高重合**（overlap ≥0.6 且 ≥3 个**强证据**
   重合词）**或同一非 owner 联系人 + 中等重合**（≥0.4 且 ≥2 个强证据词）→
-  自动生成一条 §21 合并建议。强证据 = 排除 2 字 CJK gram（§38.1 匹配硬
-  规则）。血缘/同 thread 关联卡（improvement_of / thread_id / thread_key
-  相同）不判——那是刻意关联，不是撞车。
+  自动生成一条 §21 合并建议。强证据 = 排除 2 字 CJK gram + 同 run 去重
+  （§38.1 匹配硬规则）。血缘/同 thread/**拆分**关联卡（improvement_of /
+  thread_id / thread_key / `split_from` 相同或互指）不判——那是刻意关联，
+  不是撞车（拆出的卡与原卡内容天然相似，建议合回 = 撤销用户的撤销）。
+  rationale 如实区分触发路径：高重合 =「标题/内容高度相似」，联系人路径 =
+  「来自同一联系人且内容中等重合」——0.4 档不得自称高度相似。
 - **作业文件 = §21 的 MS- 形状原样复用**（`state/merge/MS-*.json`，直接落
   `status="done"`）：`verdict="merge"`、`primary`=较旧卡、`rationale`=
   「规则判定：…（重合关键词：…）」、`action_plan` 如实描述确定性 apply、
@@ -1274,7 +1288,9 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **节流（硬规则）**：① **同一无序卡对终生只提示一次**（`auto_merge_seen.json`
   的 `suggested` 台账持久化——MS- 文件 24h 会被清，不能从它派生），因此
   **取消对该卡对即为终局**；② **未决自动建议同时最多 3 条**（auto 且仍
-  `done` 在板上的计数；超限的卡对不记账、以后仍可触发）；③ 终态/封存卡
-  （trashed/merged/rejected/archived/delivered）永不参与。
+  `done` 在板上的计数）——**超限被延迟的卡不记入 `scanned` 台账**：它下个
+  pass 仍算新卡、重新参评，直到看板清空腾出名额（只有完整评估过的卡才退休
+  进台账，被延迟的卡对真正存活到出头之日）；③ 终态/封存卡（trashed/merged/
+  rejected/archived/delivered）永不参与。
 - analytics：`auto_merge_suggested{suggestion,primary,secondary}`（metadata
   only）。
