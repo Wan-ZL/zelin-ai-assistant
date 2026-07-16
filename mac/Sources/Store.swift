@@ -37,6 +37,14 @@ struct PendingReturn {
     let created: Date
 }
 
+/// §37: a set_title rename in flight — the new name echoes on the row at
+/// once; cleared once the backend row carries it (reload), or the 180 s sweep
+/// gives up with an honest notice.
+struct PendingTitle {
+    let title: String
+    let created: Date
+}
+
 /// A 修改方向 comment in flight (blue "修改意见合并中…" line). `fingerprint`
 /// snapshots the card's plan at submit time — the entry clears once the plan
 /// actually CHANGED (actd folded the comment in, _fold_comment appends the
@@ -157,8 +165,21 @@ final class DashboardStore: ObservableObject {
     // 契约七: suggestion-card accept/dismiss echoes (apply = grey in place,
     // dismiss = instant removal), keyed by suggestion id ("MS-…").
     @Published var pendingMergeActions: [String: PendingMergeAction] = [:]
+    // §38 拆成新卡 in flight: "<cardID>|<noteTs>" → submitted-at. Cleared by
+    // the REAL signal (that fold-note line shows 已拆出 in the card's
+    // notes_text) or the 180 s sweep (honest timeout notice — the split
+    // demonstrably never landed).
+    @Published var pendingSplits: [String: Date] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
+    // §39 回答需输入: answer sent → the needs-input card keeps an orange
+    // 「回答发送中…」line until it LEAVES needs_input (actd delivered the
+    // answer and the session resumed — or the delivery failed and the card
+    // rerouted to running with last_error). 180 s sweep = honest timeout.
+    @Published var answerPending: [String: Date] = [:]
+    // §37 rename echoes: id → the in-flight display title (row shows it at
+    // once); cleared when the backend row carries the new name, 180 s sweep.
+    @Published var pendingTitles: [String: PendingTitle] = [:]
 
     // v0.33 collapsed bookend strips (Mac kanban): 潜在任务 (far left) and
     // 永久性完成 (far right) render as narrow strips until expanded. Expansion
@@ -217,6 +238,9 @@ final class DashboardStore: ObservableObject {
         do {
             let db = try JSONDecoder().decode(Dashboard.self, from: data)
             lastRawData = data
+            // §37 review fix (perf): a new dashboard invalidates the memoized
+            // normalized field blobs + per-query hit results.
+            invalidateSearchCaches()
             withAnimation(.easeOut(duration: 0.2)) {
                 dashboard = db
                 missing = false
@@ -255,6 +279,17 @@ final class DashboardStore: ObservableObject {
                 // clears here → the 180 s sweep fallback fires the honest notice.
                 mergeForcingLocal.removeAll { batch in
                     batch.secondaries.allSatisfy { currentList(of: $0) == nil }
+                }
+                // §37 rename echoes clear on the REAL signal — the backend row
+                // now carries the new display title (not on a generated_at
+                // bump: actd rewrites the dashboard every pass regardless).
+                // Belt+braces: compare whitespace-NORMALIZED forms — actd
+                // stores the collapsed title, and an exact-equality compare
+                // against a differently-spaced pending value was the false
+                // 「改名超时」 loop (review finding; submit normalizes too).
+                pendingTitles = pendingTitles.filter { id, p in
+                    Self.backendDisplayTitle(of: id, in: db).map(Self.normalizedTitle)
+                        != Self.normalizedTitle(p.title)
                 }
                 // sticky hides release once the id has LEFT its source list —
                 // moving to ANOTHER list no longer keeps it hidden forever.
@@ -297,6 +332,24 @@ final class DashboardStore: ObservableObject {
                 let suggestionIDs = Set(suggestions.map { $0.id })
                 pendingMergeActions = pendingMergeActions.filter {
                     suggestionIDs.contains($0.key)
+                }
+                // §39: an answer echo clears on the REAL signal — the card
+                // left needs_input (resumed to running, or the failed delivery
+                // rerouted it there with last_error + a notification). A
+                // generated_at bump alone must NOT clear it (§21bis precedent).
+                let blockedIDs = Set(db.needs_input.map { $0.id })
+                answerPending = answerPending.filter { blockedIDs.contains($0.key) }
+                // §38: a split clears on the REAL signal — the origin fold
+                // line now carries 已拆出 in the card's projected notes_text.
+                // Card not found / lane without notes → keep until the sweep.
+                pendingSplits = pendingSplits.filter { key, _ in
+                    guard let sep = key.firstIndex(of: "|") else { return false }
+                    let cid = String(key[..<sep])
+                    let ts = String(key[key.index(after: sep)...])
+                    guard let notes = Self.notesText(of: cid, in: db) else { return true }
+                    return !FoldNote.parse(notes).contains {
+                        $0.ts == ts && $0.splitInto != nil
+                    }
                 }
             }
         } catch {
@@ -346,12 +399,21 @@ final class DashboardStore: ObservableObject {
         let expiredForceBadges = mergeForcingLocal.filter {
             now.timeIntervalSince($0.created) > 180
         }
+        // §39: answer echoes give up after 180 s if the card never left
+        // needs_input (actd down / inbox file lost) — honest orange notice.
+        let expiredAnswers = answerPending.filter { now.timeIntervalSince($0.value) > 180 }
+        // §38 拆成新卡: 180 s without the origin line flipping to 已拆出 →
+        // the split never landed; button reverts, honest notice.
+        let expiredSplits = pendingSplits.filter { now.timeIntervalSince($0.value) > 180 }
+        // §37 rename echoes: 180 s without the backend adopting the new name
+        let expiredTitles = pendingTitles.filter { now.timeIntervalSince($0.value.created) > 180 }
         // notices themselves fade after 120 s
         let expiredNotices = notices.filter { now.timeIntervalSince($0.created) > 120 }
         guard !expiredCaptures.isEmpty || !expiredRaises.isEmpty || !expiredEchoes.isEmpty
             || !expiredComments.isEmpty || !expiredReturns.isEmpty
             || !expiredMergeBadges.isEmpty || !expiredMergeActions.isEmpty
-            || !expiredForceBadges.isEmpty
+            || !expiredForceBadges.isEmpty || !expiredAnswers.isEmpty
+            || !expiredSplits.isEmpty || !expiredTitles.isEmpty
             || !expiredNotices.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
@@ -412,6 +474,16 @@ final class DashboardStore: ObservableObject {
                 // land inside the collapsed backlog strip; force-open it.
                 if e.source == .debt { backlogStripExpanded = true }
             }
+            for (key, _) in expiredSplits {
+                pendingSplits.removeValue(forKey: key)
+                let noticeID = "notice-split-" + key
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .approval,
+                    text: L("「拆成新卡」超时未生效，原备注未变化，请重试（检查 actd 是否在运行）",
+                            "Split-into-card timed out — the note is unchanged, try again (check that actd is running)"),
+                    created: now))
+            }
             for (id, _) in expiredComments {
                 pendingComment.removeValue(forKey: id)
                 // the blue line vanishing must not be silent — the comment
@@ -464,6 +536,19 @@ final class DashboardStore: ObservableObject {
                             "Force-merge never confirmed — nothing changed, try again (check that actd is running)"),
                     created: now))
             }
+            // §37: a rename that never landed must not vanish silently — the
+            // row falls back to its old name, say so (audit honesty standard).
+            for (id, _) in expiredTitles {
+                pendingTitles.removeValue(forKey: id)
+                let noticeID = "notice-title-" + id
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout,
+                    lane: currentList(of: id) ?? .approval,
+                    text: L("改名超时未确认，卡片名字未变化，请重试（检查 actd 是否在运行）",
+                            "Rename timed out — the card name is unchanged, try again (check that actd is running)"),
+                    created: now))
+            }
             for (id, entry) in expiredReturns {
                 returningLocal.removeValue(forKey: id)
                 hiddenSticky.removeValue(forKey: id)   // source card returns, operable again
@@ -477,6 +562,18 @@ final class DashboardStore: ObservableObject {
                 // reappearing there — must not hide inside the collapsed
                 // archive strip; force-open it (backlog strip precedent).
                 if entry.source == .archived { archiveStripExpanded = true }
+            }
+            // §39: the answer echo vanishing must not be silent — the card
+            // never left needs_input, so the answer demonstrably never landed.
+            for (id, _) in expiredAnswers {
+                answerPending.removeValue(forKey: id)
+                let noticeID = "notice-answer-" + id
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .running,
+                    text: L("回答超时未确认，卡片仍在「需输入」，请重试（检查 actd 是否在运行）",
+                            "Answer timed out unconfirmed — the card still needs input, try again (check that actd is running)"),
+                    created: now))
             }
             for n in expiredNotices { notices.removeAll { $0.id == n.id } }
         }
@@ -734,11 +831,11 @@ final class DashboardStore: ObservableObject {
     private func title(of id: String) -> String {
         guard let db = dashboard else { return id }
         if let c = db.needs_approval.first(where: { $0.id == id }) { return c.displaySummary }
-        if let r = db.review.first(where: { $0.id == id }) { return r.name }
+        if let r = db.review.first(where: { $0.id == id }) { return r.rowTitle }
         if let d = db.debt.first(where: { $0.id == id }) { return d.displaySummary }
         if let t = db.trash.first(where: { $0.id == id }) { return t.displaySummary }
         if let t = (db.running + db.needs_input + db.completed).first(where: { $0.id == id }) {
-            return t.name
+            return t.rowTitle
         }
         return id
     }
@@ -769,6 +866,14 @@ final class DashboardStore: ObservableObject {
         }
     }
 
+    /// §39: answer sent — the needs-input card shows 「回答发送中…」in place
+    /// (no hide/echo: the card must stay visible while the answer travels).
+    func beginAnswer(_ id: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            answerPending[id] = Date()
+        }
+    }
+
     /// `run` = direct-run capture (v0.34, mode:"run"): the placeholder lands in
     /// the 运行中 lane and clears against running rows instead of proposals.
     func beginCapture(_ text: String, run: Bool = false) {
@@ -777,6 +882,40 @@ final class DashboardStore: ObservableObject {
                 CapturePending(id: "capture-" + UUID().uuidString, text: text,
                                created: Date(), run: run))
         }
+    }
+
+    /// §37: collapse internal whitespace runs exactly like actd's
+    /// `" ".join(title.split())` (Character.isWhitespace covers U+3000, the
+    /// full-width space Chinese IMEs produce). Review fix: the Mac used to
+    /// trim ENDS only while actd collapsed internal whitespace — a double
+    /// space / 全角空格 in the typed title meant the rename LANDED on disk
+    /// but the echo-clear's exact-equality compare never matched, leaving a
+    /// permanent FALSE 「改名超时未确认，卡片名字未变化」 notice (and a retry
+    /// no-oped into the same loop). Submit path and clear compare both go
+    /// through this.
+    static func normalizedTitle(_ s: String) -> String {
+        s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    /// §37: the set_title inbox write succeeded — echo the new display name on
+    /// the row immediately. ONLY call site: AppDelegate.submitSetTitle.
+    func beginTitleEdit(_ id: String, title: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            pendingTitles[id] = PendingTitle(title: title, created: Date())
+        }
+    }
+
+    /// The in-flight rename for a row, if any (views overlay it on the title).
+    func pendingTitle(_ id: String) -> String? { pendingTitles[id]?.title }
+
+    /// Backend display_title of a row (§37 rename-echo clear signal).
+    private static func backendDisplayTitle(of id: String, in db: Dashboard) -> String? {
+        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.display_title }
+        if let r = db.review.first(where: { $0.id == id }) { return r.display_title }
+        if let d = db.debt.first(where: { $0.id == id }) { return d.display_title }
+        if let t = (db.running + db.needs_input + db.completed)
+            .first(where: { $0.id == id }) { return t.display_title }
+        return nil
     }
 
     /// merge-review 契约七: the merge_review inbox write succeeded — badge
@@ -801,6 +940,26 @@ final class DashboardStore: ObservableObject {
             mergeForcingLocal.append(PendingForceMerge(
                 primary: primary, secondaries: secondaries, created: Date()))
         }
+    }
+
+    /// §38 拆成新卡: the split_note inbox write succeeded — that fold-note
+    /// line shows 拆分中… until the origin line flips to 已拆出 (reload) or
+    /// the 180 s sweep gives up honestly. ONLY call site:
+    /// AppDelegate.submitSplitNote, after the IO succeeded.
+    func beginSplitNote(cardID: String, ts: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            pendingSplits["\(cardID)|\(ts)"] = Date()
+        }
+    }
+
+    /// §38: the projected notes_text of a card, wherever its lane carries one
+    /// (needs_approval / debt / review — the fold-note surfaces). nil = the
+    /// card isn't visible on a notes-carrying row right now.
+    static func notesText(of id: String, in db: Dashboard) -> String? {
+        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.notes_text }
+        if let d = db.debt.first(where: { $0.id == id }) { return d.notes_text }
+        if let r = db.review.first(where: { $0.id == id }) { return r.notes_text }
+        return nil
     }
 
     /// 建议上报: the feedback inbox write succeeded → optimistic green
@@ -1041,28 +1200,182 @@ final class DashboardStore: ObservableObject {
     // MARK: board search (看板搜索过滤 — board* projections over visible*)
 
     /// Kanban header search box text. Non-empty → the board* projections
-    /// below filter every lane in real time; "" (or whitespace) = passthrough.
-    /// Lives in the store per the visible* projection pattern; the POPOVER
+    /// below filter every lane; "" (or whitespace) = passthrough. Lives in
+    /// the store per the visible* projection pattern; the POPOVER
     /// deliberately keeps reading visible* — search is a board-only
     /// affordance, and KanbanView clears the query onDisappear so a stale
     /// filter can never silently hide cards elsewhere.
-    @Published var boardQuery: String = ""
+    /// Review fix (perf): the TextField binds HERE (instant caret/echo), but
+    /// the projections filter on `boardFilterQuery`, which trails by ~200 ms
+    /// (debounce) — six lanes re-filtering synchronously on every keystroke
+    /// was hundreds of ms on a large indexed board. Clearing is instant.
+    @Published var boardQuery: String = "" { didSet { queryEdited() } }
 
-    /// Normalized needle ("" = filtering off).
-    private var boardNeedle: String {
-        boardQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    /// The query the board* projections actually filter on (≤200 ms behind
+    /// boardQuery; "" applied immediately so Esc/清空 never lags).
+    @Published private(set) var boardFilterQuery: String = ""
+    private var searchDebounce: DispatchWorkItem?
+
+    private func queryEdited() {
+        searchDebounce?.cancel()
+        let q = boardQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            applyFilterQuery("")
+            return
+        }
+        let item = DispatchWorkItem { [weak self] in self?.applyFilterQuery(q) }
+        searchDebounce = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: item)
     }
 
-    /// Case-insensitive substring match over one card's searchable text —
-    /// 词表冻结: id + title/summary (scalar) + dod/plan (lists). Kept private
-    /// so every lane filters by exactly the same rule.
-    private static func searchMatches(_ needle: String, id: String,
-                                      texts: [String?], lists: [[String]?]) -> Bool {
-        if id.lowercased().contains(needle) { return true }
-        for t in texts where t?.lowercased().contains(needle) == true { return true }
-        for list in lists where list?.contains(
-            where: { $0.lowercased().contains(needle) }) == true { return true }
-        return false
+    private func applyFilterQuery(_ q: String) {
+        guard q != boardFilterQuery else { return }
+        boardFilterQuery = q
+        hitCache.removeAll()   // per-query memo (see hitInfo)
+    }
+
+    // §37 词表 (v0.37, per lane where the row carries the field): id + frozen
+    // title/name + display_title + former_titles + summary + notes fold +
+    // plan/dod + delivered_summary/final_draft + source quotes + agent name.
+    // Matching itself is SearchMatch (shared/Sources): separator-free
+    // latin/digit runs ("eb1" finds "EB-1A"), CJK substring, AND terms.
+    private static func searchFields(of c: ApprovalCard) -> [String] {
+        var f = [c.id, c.title, c.summary ?? "", c.display_title ?? "",
+                 c.notes_text ?? ""]
+        f += c.former_titles ?? []
+        f += c.plan
+        f += c.dod
+        f += c.sources.map { $0.quote }
+        return f
+    }
+
+    private static func searchFields(of t: RunningTask) -> [String] {
+        var f = [t.id, t.name, t.summary ?? "", t.display_title ?? "",
+                 t.notes_text ?? "", t.delivered_summary ?? "",
+                 t.final_draft ?? "", t.agent_name ?? ""]
+        f += t.former_titles ?? []
+        f += t.plan ?? []
+        f += t.dod ?? []
+        return f
+    }
+
+    private static func searchFields(of r: ReviewItem) -> [String] {
+        var f = [r.id, r.name, r.summary ?? "", r.display_title ?? "",
+                 r.notes_text ?? "", r.delivered_summary ?? "",
+                 r.final_draft ?? "", r.agent_name ?? ""]
+        f += r.former_titles ?? []
+        f += r.plan ?? []
+        f += r.dod
+        f += (r.sources ?? []).map { $0.quote }
+        return f
+    }
+
+    private static func searchFields(of d: DebtItem) -> [String] {
+        var f = [d.id, d.title, d.summary ?? "", d.display_title ?? "",
+                 d.notes_text ?? ""]
+        f += d.former_titles ?? []
+        f += (d.sources ?? []).map { $0.quote }
+        return f
+    }
+
+    // §37 hit computation, memoized (review fix, perf):
+    //  - normFieldsCache: normalized field haystack per card id, built once
+    //    per dashboard decode (cleared in reload());
+    //  - hitCache: (hit, sessionOnly) per card id for the CURRENT filter
+    //    query — the lane filter computes it once and the 命中会话 badge
+    //    reuses it instead of re-matching per rendered row. Cleared when the
+    //    query, the dashboard, or the session index changes.
+    private var normFieldsCache: [String: [String]] = [:]
+    private var hitCache: [String: (hit: Bool, sessionOnly: Bool)] = [:]
+
+    /// Drop the per-dashboard caches (called on every successful decode).
+    fileprivate func invalidateSearchCaches() {
+        normFieldsCache.removeAll()
+        hitCache.removeAll()
+    }
+
+    /// §37 two-layer hit for one card under the current filter query.
+    /// Cross-layer AND (review fix): a term may be satisfied by a projected
+    /// field OR the session transcript — "推荐信 chen" matches a card whose
+    /// display title carries 推荐信 while only the transcript mentions chen.
+    /// `sessionOnly` (the 命中会话 badge) stays truthful: the card matched,
+    /// but NOT on its visible fields alone.
+    private func hitInfo(id: String, fields: () -> [String]) -> (hit: Bool, sessionOnly: Bool) {
+        let q = boardFilterQuery
+        guard !q.isEmpty else { return (true, false) }
+        if let cached = hitCache[id] { return cached }
+        let norm: [String]
+        if let cached = normFieldsCache[id] {
+            norm = cached
+        } else {
+            norm = SearchMatch.normalizedHaystack(fields())
+            normFieldsCache[id] = norm
+        }
+        let fieldHit = SearchMatch.matchesNormalized(q, in: norm)
+        var result = (hit: fieldHit, sessionOnly: false)
+        if !fieldHit, let session = sessionNormText(id),
+           SearchMatch.matchesNormalized(q, in: norm + [session]) {
+            result = (hit: true, sessionOnly: true)
+        }
+        hitCache[id] = result
+        return result
+    }
+
+    func sessionOnlyHit(_ c: ApprovalCard) -> Bool {
+        hitInfo(id: c.id, fields: { Self.searchFields(of: c) }).sessionOnly
+    }
+    func sessionOnlyHit(_ t: RunningTask) -> Bool {
+        hitInfo(id: t.id, fields: { Self.searchFields(of: t) }).sessionOnly
+    }
+    func sessionOnlyHit(_ r: ReviewItem) -> Bool {
+        hitInfo(id: r.id, fields: { Self.searchFields(of: r) }).sessionOnly
+    }
+    func sessionOnlyHit(_ d: DebtItem) -> Bool {
+        hitInfo(id: d.id, fields: { Self.searchFields(of: d) }).sessionOnly
+    }
+
+    // §37 session-content layer — state/search_index.json (actd-maintained,
+    // Mac-local, NEVER part of dashboard.json). Lazy-loaded and revalidated by
+    // (mtime, size) so the ~10s tick never re-parses an unchanged file;
+    // missing/corrupt = the layer is silently absent (field search still
+    // works). Texts are stored NORMALIZED once per (re)load — never
+    // re-normalized per keystroke (review fix, perf).
+    private var searchIndexNorm: [String: String] = [:]
+    private var searchIndexStamp: (mtime: Date, size: Int)?
+
+    private func sessionNormText(_ id: String) -> String? {
+        reloadSearchIndexIfNeeded()
+        return searchIndexNorm[id]
+    }
+
+    private func reloadSearchIndexIfNeeded() {
+        let path = AppPaths.stateRoot + "/state/search_index.json"
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date else {
+            if !searchIndexNorm.isEmpty { hitCache.removeAll() }
+            searchIndexNorm = [:]
+            searchIndexStamp = nil
+            return
+        }
+        let size = (attrs[.size] as? Int) ?? 0
+        if let stamp = searchIndexStamp, stamp.mtime == mtime, stamp.size == size {
+            return
+        }
+        searchIndexStamp = (mtime, size)
+        hitCache.removeAll()   // the session layer changed → hits may change
+        guard let data = FileManager.default.contents(atPath: path),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
+            searchIndexNorm = [:]   // corrupt → layer absent, never a crash
+            return
+        }
+        var out: [String: String] = [:]
+        for (k, v) in obj {
+            if let entry = v as? [String: Any], let text = entry["text"] as? String {
+                out[k] = SearchMatch.normalize(text)
+            }
+        }
+        searchIndexNorm = out
     }
 
     /// visibleApprovals + search. 占位卡不参与过滤隐藏: the grey processing
@@ -1071,12 +1384,10 @@ final class DashboardStore: ObservableObject {
     /// as a lost capture. (建议卡 likewise stay unfiltered — they never pass
     /// through this projection at all; KanbanView keeps visibleMergeSuggestions.)
     var boardApprovals: [ApprovalCard] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return visibleApprovals }
+        guard !boardFilterQuery.isEmpty else { return visibleApprovals }
         return visibleApprovals.filter {
-            $0.processing || Self.searchMatches(q, id: $0.id,
-                                                texts: [$0.title, $0.summary],
-                                                lists: [$0.dod, $0.plan])
+            card in card.processing
+                || hitInfo(id: card.id, fields: { Self.searchFields(of: card) }).hit
         }
     }
 
@@ -1085,32 +1396,26 @@ final class DashboardStore: ObservableObject {
     var boardCompleted: [RunningTask] { searchTasks(visibleCompleted) }
 
     /// Shared RunningTask filter (running / needs_input / completed reuse the
-    /// struct); `name` is the row's title-equivalent field.
+    /// struct).
     private func searchTasks(_ tasks: [RunningTask]) -> [RunningTask] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return tasks }
-        return tasks.filter {
-            Self.searchMatches(q, id: $0.id, texts: [$0.name, $0.summary],
-                               lists: [$0.dod, $0.plan])
+        guard !boardFilterQuery.isEmpty else { return tasks }
+        return tasks.filter { t in
+            hitInfo(id: t.id, fields: { Self.searchFields(of: t) }).hit
         }
     }
 
     var boardReview: [ReviewItem] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return visibleReview }
-        return visibleReview.filter {
-            Self.searchMatches(q, id: $0.id, texts: [$0.name, $0.summary],
-                               lists: [$0.dod, $0.plan])
+        guard !boardFilterQuery.isEmpty else { return visibleReview }
+        return visibleReview.filter { r in
+            hitInfo(id: r.id, fields: { Self.searchFields(of: r) }).hit
         }
     }
 
     /// 潜在任务 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
     var boardDebt: [DebtItem] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return visibleDebt }
-        return visibleDebt.filter {
-            Self.searchMatches(q, id: $0.id, texts: [$0.title, $0.summary],
-                               lists: [])
+        guard !boardFilterQuery.isEmpty else { return visibleDebt }
+        return visibleDebt.filter { d in
+            hitInfo(id: d.id, fields: { Self.searchFields(of: d) }).hit
         }
     }
 }

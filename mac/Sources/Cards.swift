@@ -447,6 +447,149 @@ fileprivate struct DodListView: View {
     }
 }
 
+/// §37 living titles — the shared 展开详情 rename affordance: a 「曾用名」
+/// one-liner (previous display names stay searchable) + an inline ✏️ editor.
+/// Saving goes through the normal submit plumbing (AppDelegate.submitSetTitle
+/// → set_title inbox action) with the store's optimistic name echo; the
+/// frozen internal title never changes.
+fileprivate struct TitleEditRow: View {
+    let id: String
+    let current: String          // the display name shown right now (prefill)
+    let formerTitles: [String]
+    unowned let app: AppDelegate
+    @State private var editing = false
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !formerTitles.isEmpty {
+                Text(L("曾用名: ", "Former names: ")
+                     + formerTitles.joined(separator: " · "))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if editing {
+                HStack(spacing: 6) {
+                    TextField(L("新的卡片名字（≤64 字）", "New card name (≤64 chars)"),
+                              text: $draft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                        .onSubmit { save() }
+                    Button(L("保存", "Save")) { save() }
+                        .disabled(!valid)
+                    Button(L("取消", "Cancel")) { editing = false }
+                }
+                .font(.system(size: 10))
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            } else {
+                // a Button so its tap wins over the whole-card copy gesture
+                // (CopyPathLine 先例)
+                Button {
+                    draft = current
+                    editing = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 9))
+                        Text(L("改名", "Rename"))
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L("改看板显示名（内部标题不变，改过的旧名仍可搜索）",
+                        "Rename the board display name (internal title unchanged; old names stay searchable)"))
+            }
+        }
+    }
+
+    private var trimmed: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var valid: Bool { !trimmed.isEmpty && trimmed.count <= 64 }
+
+    private func save() {
+        guard valid else { return }
+        if app.submitSetTitle(id: id, title: trimmed) { editing = false }
+    }
+}
+
+/// §37 search badge: this row matched the current board query only through
+/// its session transcript (the search-index layer) — none of its visible
+/// fields carry the words.
+fileprivate struct SessionHitBadge: View {
+    var body: some View {
+        Badge(text: L("命中会话", "Session match"), color: .purple)
+    }
+}
+
+// MARK: - fold notes (§38) — 折叠进来的信息 + 拆成新卡
+//
+// FoldNote (the notes_text line parser) lives in shared/Sources/FoldNote.swift
+// so the contract harness pins it; this is the Mac-only presentation on top.
+
+/// The 展开详情 fold-note list: each folded-in update on its own line, with
+/// 拆成新卡 (split_note) on lines that carry a ts handle — the §38 undo for a
+/// fold the triage LLM got wrong. Observes the store so 拆分中… updates live.
+struct FoldNotesView: View {
+    let cardID: String
+    let notes: [FoldNote]
+    unowned let app: AppDelegate
+    @ObservedObject var store: DashboardStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L("📎 折叠进来的信息", "📎 Folded-in updates"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            ForEach(Array(notes.enumerated()), id: \.offset) { _, n in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(n.kind == "quick" ? "💬" : "📡")
+                        .font(.system(size: 9))
+                        .padding(.top, 1)
+                    Text(n.text)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    trailing(for: n)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func trailing(for n: FoldNote) -> some View {
+        if let rid = n.splitInto {
+            Badge(text: L("已拆出 \(rid)", "Split → \(rid)"), color: .gray)
+        } else if let ts = n.ts {
+            if store.pendingSplits["\(cardID)|\(ts)"] != nil {
+                HStack(spacing: 3) {
+                    ProgressView().controlSize(.mini)
+                    Text(L("拆分中…", "Splitting…"))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Button {
+                    app.submitSplitNote(id: cardID, noteTs: ts)
+                } label: {
+                    Label(L("拆成新卡", "Split into card"),
+                          systemImage: "square.on.square.dashed")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.blue)
+                .help(L("这条信息不该折在这张卡里？拆出去单独成卡（原记录保留）",
+                        "Folded into the wrong card? Split it out (the origin line is kept)"))
+            }
+        }
+    }
+}
+
 /// One-line mono path that copies itself on click (clipboard→✓, 1.5 s reset).
 /// A Button so its tap wins over the whole-card copy gesture underneath.
 /// Internal (not fileprivate like its siblings above): P1-4/P1-5 reuse it for
@@ -659,6 +802,9 @@ struct ApprovalCardView: View {
     // instant comment feedback: card stays in place with a blue merging line
     // (parent passes store.pendingComment[card.id] != nil)
     var commentPending: Bool = false
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
     // v0.1 §7: collapsed by default. v0.10: the toggle itself renders in the
     // CardSurface base (detail slot); the binding stays here for the T2 gate.
     @State private var expanded = false
@@ -804,8 +950,9 @@ struct ApprovalCardView: View {
                     .foregroundColor(.teal)
             }
 
-            // 1) plain-language summary — prominent, black, ~15pt.
-            Text(linkified(card.displaySummary))
+            // 1) plain-language summary — prominent, black, ~15pt. §37: an
+            // in-flight rename echoes here immediately.
+            Text(linkified(app.store.pendingTitle(card.id) ?? card.displaySummary))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -947,6 +1094,7 @@ struct ApprovalCardView: View {
     @ViewBuilder private var badgeRow: some View {
         HStack(spacing: 6) {
             Badge(text: tierText, color: .purple)
+            if sessionHit { SessionHitBadge() }   // §37 search: matched via session
             // v0.10 chat delivery: draft lands in the reply, no repo/PR touched
             if card.delivery_mode == "chat" {
                 Badge(text: L("交付：聊天成稿", "Deliver: chat draft"), color: .blue)
@@ -985,6 +1133,12 @@ struct ApprovalCardView: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+
+            // §37 rename affordance + 曾用名 (former display names)
+            TitleEditRow(id: card.id,
+                         current: app.store.pendingTitle(card.id) ?? card.displaySummary,
+                         formerTitles: card.former_titles ?? [],
+                         app: app)
 
             // §40 honest cost — the expanded detail ALWAYS states the money
             // story: the estimate when there is one (show_cost keeps gating
@@ -1034,9 +1188,17 @@ struct ApprovalCardView: View {
                     }
                 }
             }
+
+            // §38 折叠进来的信息 — each line with its 拆成新卡 undo
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: card.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private var foldNotes: [FoldNote] { FoldNote.parse(card.notes_text) }
 
     private var tierText: String {
         if let hint = card.tier_hint, !hint.isEmpty {
@@ -1078,6 +1240,9 @@ struct TaskRow: View {
     let task: RunningTask
     unowned let app: AppDelegate
     let lane: TaskLane
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
 
     // v0.21: 运行中卡上「停止」→ 2 选 confirmationDialog（退回提案/去待验收）。
     @State private var showStopDialog = false
@@ -1118,13 +1283,13 @@ struct TaskRow: View {
         return e
     }
 
-    private var hasDetailContent: Bool {
-        (task.summary?.isEmpty == false)
-            || !(task.plan ?? []).isEmpty
-            || !(task.dod ?? []).isEmpty
-            || (task.log?.isEmpty == false)
-            || errorText != nil
-    }
+    // §37: the detail slot always has content now — the rename affordance
+    // (TitleEditRow) lives there on every task row; the needs-input terminal
+    // takeover line (§39) rides in it too.
+
+    // §39: answer in flight (store echo) — cleared when the card leaves
+    // needs_input or the 180 s honest timeout fires.
+    private var answerSending: Bool { app.store.answerPending[task.id] != nil }
 
     private var isDelivered: Bool { lane == .completed }
 
@@ -1140,24 +1305,41 @@ struct TaskRow: View {
         let hasButtons = showsStop || isDelivered
         // doubleClickRuns: cmd is app-generated (pipeline copy_cmd / Swift-built
         // "claude --resume <id>") — the TerminalLauncher security precondition.
-        if hasDetailContent && hasButtons {
+        // §37: the detail slot is unconditional now (rename affordance).
+        if hasButtons {
             CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         actions: { actionButtons },
                         detail: { detailBlock }, content: { rowContent })
-        } else if hasDetailContent {
+        } else {
             CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
                         detail: { detailBlock }, content: { rowContent })
-        } else if hasButtons {
-            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
-                        actions: { actionButtons }, content: { rowContent })
-        } else {
-            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued) { rowContent }
         }
     }
 
     // v0.10.2 action row — Buttons win over the whole-card copy tap (ReviewRow
     // 先例); CardSurface applies the unified font/bordered/small styling.
     @ViewBuilder private var actionButtons: some View {
+        // §39 primary affordance on a blocked card: answer the question
+        // IN-APP — the sheet shows the question + a multiline editor, and the
+        // answer resumes the original session (no terminal needed).
+        if lane == .needsInput {
+            if answerSending {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    Text(L("回答发送中…", "Sending answer…"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.orange)
+                }
+            } else {
+                Button {
+                    if let a = app.promptAnswer(question: task.question) {
+                        app.submitAnswer(id: task.id, text: a)
+                    }
+                } label: { Label(L("回答…", "Answer…"),
+                                 systemImage: "arrowshape.turn.up.left.fill") }
+                    .tint(.orange)
+            }
+        }
         if showsStop {
             // v0.21: one 停止 opens a 2-choice dialog so the fork is explicit —
             // 退回提案 discards this run (abort_execution → back to 提案), 去待验收
@@ -1208,11 +1390,14 @@ struct TaskRow: View {
                 .fill(isQueued ? Color.secondary.opacity(0.5) : accent)
                 .frame(width: 7, height: 7).padding(.top, 4)
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.name)
+                // §37: display title over the frozen internal name; an
+                // in-flight rename echoes immediately.
+                Text(app.store.pendingTitle(task.id) ?? task.rowTitle)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isQueued ? .secondary : .primary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
+                    if sessionHit { SessionHitBadge() }   // §37 search layer
                     if isQueued {
                         Badge(text: L("排队中", "Queued"), color: .gray)
                     } else {
@@ -1258,6 +1443,18 @@ struct TaskRow: View {
                         Badge(text: (cwd as NSString).lastPathComponent, color: .secondary)
                     }
                 }
+                // §39: WHAT the agent is asking — the reason this card is
+                // blocked, front and center (the 回答… sheet shows it in full).
+                if showsInputBadge, let q = task.question, !q.isEmpty {
+                    Text(q)
+                        .font(.system(size: 11))
+                        .foregroundColor(.primary)
+                        .lineLimit(8)
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
                 // completed lane: what actually got delivered (one line)
                 if let ds = task.delivered_summary, !ds.isEmpty {
                     Text(ds)
@@ -1266,7 +1463,9 @@ struct TaskRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                if let cmd {
+                // §39: on needs-input rows the terminal command demotes to the
+                // detail block (在终端接管会话) — 回答… is the primary path.
+                if let cmd, lane != .needsInput {
                     Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.secondary)
@@ -1334,6 +1533,12 @@ struct TaskRow: View {
     @ViewBuilder private var detailBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let err = errorText { ErrorTextBlock(text: err) }
+            // §39: secondary path for a blocked card — take the session over
+            // in a terminal (copies the state-correct attach/--resume command).
+            if lane == .needsInput, let cmd {
+                CopyPathLine(label: L("在终端接管会话：", "Take over in terminal: "),
+                             path: cmd)
+            }
             if let s = task.summary, !s.isEmpty {
                 Text(s)
                     .font(.system(size: 11))
@@ -1345,6 +1550,11 @@ struct TaskRow: View {
             if let log = task.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
             }
+            // §37 rename affordance + 曾用名
+            TitleEditRow(id: task.id,
+                         current: app.store.pendingTitle(task.id) ?? task.rowTitle,
+                         formerTitles: task.former_titles ?? [],
+                         app: app)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1356,28 +1566,22 @@ struct TaskRow: View {
 struct ReviewRow: View {
     let item: ReviewItem
     unowned let app: AppDelegate
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
     // "复制成稿" clipboard→✓ feedback (1.5 s reset, same pattern as CardSurface)
     @State private var draftCopied = false
 
-    private var hasDetailContent: Bool {
-        !(item.plan ?? []).isEmpty
-            || !(item.sources ?? []).isEmpty
-            || (item.log?.isEmpty == false)
-    }
+    private var foldNotes: [FoldNote] { FoldNote.parse(item.notes_text) }
 
     var body: some View {
         // doubleClickRuns: copy_cmd is app-generated by the pipeline — the
-        // TerminalLauncher security precondition.
-        if hasDetailContent {
-            CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
-                        actions: { actionButtons },
-                        detail: { detailBlock },
-                        content: { rowContent })
-        } else {
-            CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
-                        actions: { actionButtons },
-                        content: { rowContent })
-        }
+        // TerminalLauncher security precondition. §37: the detail slot is
+        // unconditional now (rename affordance).
+        CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
+                    actions: { actionButtons },
+                    detail: { detailBlock },
+                    content: { rowContent })
     }
 
     @ViewBuilder private var actionButtons: some View {
@@ -1415,7 +1619,9 @@ struct ReviewRow: View {
         HStack(alignment: .top, spacing: 8) {
             Circle().fill(Color.teal).frame(width: 7, height: 7).padding(.top, 4)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
+                // §37: display title over the frozen internal name; an
+                // in-flight rename echoes immediately.
+                Text(app.store.pendingTitle(item.id) ?? item.rowTitle)
                     .font(.system(size: 12, weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
                 // no linkified in these body texts: link taps vs the whole-card
@@ -1467,6 +1673,7 @@ struct ReviewRow: View {
         }
         // meta line: where it ran + how long it took + how long it's waited
         HStack(spacing: 6) {
+            if sessionHit { SessionHitBadge() }   // §37 search layer
             // §30: the session is live-working — user attach / organic
             // activity, calmly noted; a real 打回 leaves this lane entirely
             // (review->executing), so this is never a rework round.
@@ -1510,9 +1717,18 @@ struct ReviewRow: View {
         VStack(alignment: .leading, spacing: 8) {
             if let plan = item.plan, !plan.isEmpty { PlanListView(plan: plan) }
             if let srcs = item.sources, !srcs.isEmpty { SourceListView(sources: srcs) }
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: item.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
             if let log = item.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
             }
+            // §37 rename affordance + 曾用名
+            TitleEditRow(id: item.id,
+                         current: app.store.pendingTitle(item.id) ?? item.rowTitle,
+                         formerTitles: item.former_titles ?? [],
+                         app: app)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1521,22 +1737,41 @@ struct ReviewRow: View {
 struct DebtRow: View {
     let item: DebtItem
     unowned let app: AppDelegate
+    // §37: matched the board query only via session content (KanbanView passes
+    // store.sessionOnlyHit; the popover never filters → default false).
+    var sessionHit: Bool = false
 
     var body: some View {
         surface.contextMenu { contextItems }
     }
 
-    // detail slot only when there are source quotes to show — otherwise the
-    // toggle would open an empty drawer.
+    private var foldNotes: [FoldNote] { FoldNote.parse(item.notes_text) }
+
+    // §37: the detail slot always has content now (rename affordance), with
+    // the source quotes above it when the card carries any.
     @ViewBuilder private var surface: some View {
-        if let srcs = item.sources, !srcs.isEmpty {
-            CardSurface(actions: { actionButtons },
-                        detail: { SourceListView(sources: srcs)
-                                      .frame(maxWidth: .infinity, alignment: .leading) },
-                        content: { rowContent })
-        } else {
-            CardSurface(actions: { actionButtons }, content: { rowContent })
+        CardSurface(actions: { actionButtons },
+                    detail: { detailBlock },
+                    content: { rowContent })
+    }
+
+    @ViewBuilder private var detailBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let srcs = item.sources, !srcs.isEmpty {
+                SourceListView(sources: srcs)
+            }
+            // §38 折叠进来的信息 — each line with its 拆成新卡 undo
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: item.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
+            // §37 rename affordance + 曾用名
+            TitleEditRow(id: item.id,
+                         current: app.store.pendingTitle(item.id) ?? item.displaySummary,
+                         formerTitles: item.former_titles ?? [],
+                         app: app)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // v0.20 card-lifecycle: 永久完成 (archive) lives in the context menu,
@@ -1578,12 +1813,14 @@ struct DebtRow: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .padding(.top, 2)
-            Text(linkified(item.displaySummary))
+            // §37: an in-flight rename echoes here immediately.
+            Text(linkified(app.store.pendingTitle(item.id) ?? item.displaySummary))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 4)
+            if sessionHit { SessionHitBadge() }   // §37 search layer
             if let t = item.type, !t.isEmpty { Badge(text: t, color: .gray) }
             if let h = item.hardness, !h.isEmpty {
                 Badge(text: h, color: h == "hard" ? .red : .gray)
@@ -1819,6 +2056,8 @@ struct MergeSuggestionCard: View {
         case "high":   Badge(text: L("置信度：高", "Confidence: high"), color: .green)
         case "medium": Badge(text: L("置信度：中", "Confidence: medium"), color: .orange)
         case "low":    Badge(text: L("置信度：低", "Confidence: low"), color: .gray)
+        // §38 auto suggestions: deterministic rule, not an AI analysis
+        case "deterministic": Badge(text: L("规则判定", "Rule-based"), color: .purple)
         default:       Badge(text: conf, color: .gray)
         }
     }
