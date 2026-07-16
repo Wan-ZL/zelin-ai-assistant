@@ -40,25 +40,44 @@ private struct MetaChip: View {
 // MARK: - action model + bar --------------------------------------------------
 enum TextNeed { case none, optional, required }
 
-struct LaneAction: Identifiable {
+/// One choice inside a fork dialog (the Mac two-choice patterns: v0.21 停止,
+/// v0.10.3 拒绝). Tapping it fires the verb; the dialog carries the cancel.
+struct ForkChoice: Identifiable {
     let title: String
     let verb: InboxVerb
+    var destructive = false
+    var id: String { title }
+}
+
+struct LaneAction: Identifiable {
+    let title: String
+    var verb: InboxVerb? = nil   // nil ⇔ fork-only button (choices carry verbs)
     var destructive = false
     var tint: Color? = nil
     var textNeed: TextNeed = .none
     var placeholder: String = ""
+    var fork: [ForkChoice] = []  // non-empty → the button opens a choice dialog
+    var forkTitle: String = ""
+    var forkMessage: String = ""
     var id: String { title }
 }
 
 /// The row action bar: renders buttons, gates mutating actions behind a
-/// freshness confirm, and drives the composer for text actions.
+/// freshness confirm, and drives the composer for text actions. §41: fork
+/// actions open the same explicit multi-choice dialog the Mac card shows
+/// (停止/拒绝 are forks, not one-tap destructive fires); a STALE/DEAD board
+/// appends its warning line to the fork message instead of double-dialoging.
 struct ActionBar: View {
     @EnvironmentObject var state: AppState
     let cardId: String
     let actions: [LaneAction]
+    /// Called once an action has been submitted (success or failure — errors
+    /// surface in the board's error banner). The detail sheet dismisses here.
+    var onFired: (() -> Void)? = nil
 
     @State private var composer: LaneAction?
     @State private var confirm: LaneAction?
+    @State private var fork: LaneAction?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -70,42 +89,72 @@ struct ActionBar: View {
         }
         .sheet(item: $composer) { a in
             ComposerSheet(title: a.title, placeholder: a.placeholder, required: a.textNeed == .required) { text in
-                fire(a, comment: text)
+                if let verb = a.verb { fire(verb, comment: text) }
             }
         }
         .confirmationDialog(confirmMessage, isPresented: confirmBinding, titleVisibility: .visible) {
             if let a = confirm {
-                Button(a.title, role: a.destructive ? .destructive : nil) { fire(a, comment: nil) }
+                Button(a.title, role: a.destructive ? .destructive : nil) {
+                    if let verb = a.verb { fire(verb, comment: nil) }
+                }
                 Button(L("取消", "Cancel"), role: .cancel) {}
             }
+        }
+        .confirmationDialog(fork?.forkTitle ?? "", isPresented: forkBinding, titleVisibility: .visible) {
+            if let f = fork {
+                ForEach(f.fork) { c in
+                    Button(c.title, role: c.destructive ? .destructive : nil) { fire(c.verb, comment: nil) }
+                }
+                Button(L("取消", "Cancel"), role: .cancel) {}
+            }
+        } message: {
+            Text(forkMessage)
         }
     }
 
     private func tap(_ a: LaneAction) {
+        if !a.fork.isEmpty { fork = a; return }
         if a.textNeed != .none { composer = a; return }
-        if state.selectedChannelId.map({ state.freshness(for: $0).requiresConfirm }) ?? false {
+        if boardMayBeStale {
             confirm = a
-        } else {
-            fire(a, comment: nil)
+        } else if let verb = a.verb {
+            fire(verb, comment: nil)
         }
     }
 
-    private func fire(_ a: LaneAction, comment: String?) {
+    private func fire(_ verb: InboxVerb, comment: String?) {
         Task {
-            if await state.submit(cardId: cardId, verb: a.verb, comment: comment) {
+            let ok = await state.submit(cardId: cardId, verb: verb, comment: comment)
+            onFired?()
+            if ok {
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
                 await state.refreshBoard()
             }
         }
     }
 
+    private var boardMayBeStale: Bool {
+        state.selectedChannelId.map({ state.freshness(for: $0).requiresConfirm }) ?? false
+    }
+
     private var confirmBinding: Binding<Bool> {
         Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } })
+    }
+    private var forkBinding: Binding<Bool> {
+        Binding(get: { fork != nil }, set: { if !$0 { fork = nil } })
     }
     private var confirmMessage: String {
         let fresh = state.selectedChannelId.map { state.freshness(for: $0).label } ?? ""
         return L("这台设备的看板可能已过时（\(fresh)）。仍要继续吗？",
                  "This device's board may be out of date (\(fresh)). Continue anyway?")
+    }
+    private var forkMessage: String {
+        var msg = fork?.forkMessage ?? ""
+        if boardMayBeStale {
+            if !msg.isEmpty { msg += "\n" }
+            msg += confirmMessage
+        }
+        return msg
     }
 }
 
@@ -141,6 +190,22 @@ struct ComposerSheet: View {
     }
 }
 
+/// §41 reject fork — mirrors the Mac v0.10.3 two-choice reject dialog. The
+/// split is functional: trash entries leave merge_or_new matching (the same
+/// ask re-raises fresh) while 已办完 (done_external → delivered) folds later
+/// restatements into this thread.
+func rejectFork(summary: String) -> LaneAction {
+    LaneAction(title: L("拒绝", "Reject"), tint: .red,
+               fork: [
+                   ForkChoice(title: L("不想做（进回收站）", "Won't do (to trash)"),
+                              verb: .reject, destructive: true),
+                   ForkChoice(title: L("已办完（记为已交付）", "Already done (mark delivered)"),
+                              verb: .done_external),
+               ],
+               forkTitle: L("这张卡不需要执行？", "No need to run this card?"),
+               forkMessage: summary)
+}
+
 // MARK: - Proposals (needs_approval) ------------------------------------------
 struct ProposalCardRow: View {
     let card: ApprovalCard
@@ -167,7 +232,7 @@ struct ProposalCardRow: View {
                         LaneAction(title: L("修改", "Comment"), verb: .comment, textNeed: .optional,
                                    placeholder: L("补充方向 / 修改意见…", "Add direction / changes…")),
                         LaneAction(title: L("暂缓", "Later"), verb: .defer),
-                        LaneAction(title: L("拒绝", "Reject"), verb: .reject, destructive: true, tint: .red),
+                        rejectFork(summary: card.displaySummary),
                     ])
                 }
                 Button(L("展开详情", "Details")) { showDetail = true }
@@ -213,9 +278,21 @@ struct RunningRow: View {
                 }
                 // needs_input has no phone reply path (plan §6.2) — read-only.
                 if !needsInput {
+                    // §41 parity (Mac v0.21): one 停止 → explicit two-choice fork
+                    // (退回提案 discards this run, 去待验收 keeps its output for
+                    // review). done_external left the running card in v0.21 —
+                    // it lives on the proposal reject fork instead.
                     ActionBar(cardId: task.id, actions: [
-                        LaneAction(title: L("停止", "Stop"), verb: .abort_execution, destructive: true, tint: .red),
-                        LaneAction(title: L("已在别处完成", "Done elsewhere"), verb: .done_external),
+                        LaneAction(title: L("停止", "Stop"), tint: .orange,
+                                   fork: [
+                                       ForkChoice(title: L("退回提案", "Discard & re-propose"),
+                                                  verb: .abort_execution, destructive: true),
+                                       ForkChoice(title: L("去待验收", "Keep for review"),
+                                                  verb: .stop_to_review),
+                                   ],
+                                   forkTitle: L("停止这个任务？", "Stop this task?"),
+                                   forkMessage: L("退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
+                                                  "Discard & re-propose = throw away this run and start over; Keep for review = keep what it made and I'll check it")),
                     ])
                 }
             }
@@ -301,12 +378,16 @@ struct CardDetailSheet: View {
                     }
                 }
                 Section {
+                    // §41: same four decisions as the row (暂缓 was missing here),
+                    // and the sheet dismisses once an action fires so the board's
+                    // ack/error — not a stale sheet — is what the user sees next.
                     ActionBar(cardId: card.id, actions: [
                         LaneAction(title: L("批准", "Approve"), verb: .approve, tint: .green),
                         LaneAction(title: L("修改", "Comment"), verb: .comment, textNeed: .optional,
                                    placeholder: L("补充方向 / 修改意见…", "Add direction / changes…")),
-                        LaneAction(title: L("拒绝", "Reject"), verb: .reject, destructive: true, tint: .red),
-                    ])
+                        LaneAction(title: L("暂缓", "Later"), verb: .defer),
+                        rejectFork(summary: card.displaySummary),
+                    ], onFired: { dismiss() })
                 }
             }
             .navigationTitle(card.title)

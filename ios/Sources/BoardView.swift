@@ -221,7 +221,9 @@ struct DeviceSwitcher: View {
         Menu {
             ForEach(sortedChannels) { c in
                 Button {
-                    state.selectedChannelId = c.channelId
+                    // §41: selectChannel drops the old channel's board first, so
+                    // Mac A's cards never render under Mac B's label mid-fetch.
+                    state.selectChannel(c.channelId)
                     Task { await state.refreshBoard() }
                 } label: {
                     let mark = c.channelId == state.selectedChannelId ? "✓ " : ""

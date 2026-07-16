@@ -69,6 +69,17 @@ final class AppState: ObservableObject {
         if selectedChannelId == nil { selectedChannelId = c.channelId }
     }
 
+    /// Switch the selected channel (§41). The previous channel's board is
+    /// dropped immediately — it must never render under the new channel's
+    /// label while the fetch is in flight, and its seq must never be pinned
+    /// into an action addressed to the new channel.
+    func selectChannel(_ channelId: String) {
+        guard channelId != selectedChannelId else { return }
+        selectedChannelId = channelId
+        board = nil
+        boardSeq = nil
+    }
+
     /// Unpair a channel: forget its keys (plan §6.6 — 擦除密钥). The board becomes
     /// unreadable until re-scanned.
     func unpair(channelId: String) {
@@ -76,8 +87,13 @@ final class AppState: ObservableObject {
         updatedAt.removeValue(forKey: channelId)
         lastSeenSeq.removeValue(forKey: channelId)
         Keychain.delete(channelPrefix + channelId)
-        if selectedChannelId == channelId { selectedChannelId = channels.keys.sorted().first }
-        if selectedChannelId == nil { board = nil }
+        if selectedChannelId == channelId {
+            // §41: same honest-switch rule as selectChannel — the unpaired
+            // channel's board must not linger under the successor's label.
+            selectedChannelId = channels.keys.sorted().first
+            board = nil
+            boardSeq = nil
+        }
     }
 
     func wipeAllKeys() {
