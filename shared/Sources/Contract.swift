@@ -46,6 +46,9 @@ struct ApprovalCard: Decodable, Hashable {
     // the new ask, shown inline (新增:<note>).
     let reraised: Bool
     let reraisedNote: String?
+    // §38: capped notes projection — the 展开详情 fold-note lines (each with
+    // its 拆成新卡 handle) parse out of this. Absent on older payloads.
+    let notes_text: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, target_repo, target_name, target_kind
@@ -55,6 +58,7 @@ struct ApprovalCard: Decodable, Hashable {
         case delivery_mode
         case reraised
         case reraisedNote = "reraised_note"
+        case notes_text
     }
 
     init(from decoder: Decoder) throws {
@@ -84,6 +88,7 @@ struct ApprovalCard: Decodable, Hashable {
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
         reraised = (try? c.decodeIfPresent(Bool.self, forKey: .reraised)) ?? false
         reraisedNote = try? c.decodeIfPresent(String.self, forKey: .reraisedNote)
+        notes_text = try? c.decodeIfPresent(String.self, forKey: .notes_text)
     }
 
     /// Plain-language headline shown by default.
@@ -201,6 +206,7 @@ struct DebtItem: Decodable, Hashable {
     let hardness: String?
     let type: String?
     let sources: [Source]?   // v0.10 contract B: provenance quotes (same shape as approval card)
+    let notes_text: String?  // §38: fold-note lines (拆成新卡 handles)
 
     /// Plain-language headline shown by default.
     var displaySummary: String {
@@ -321,11 +327,14 @@ struct ReviewItem: Decodable, Hashable {
     // §30: live working agent on this review card = user attach / organic
     // session activity — NOT a rework round. Absent (older actd) = false.
     let session_active: Bool
+    // §38: capped notes projection (fold-note lines, 拆成新卡 handles).
+    let notes_text: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, summary, dod, session_id, short_id, copy_cmd, cwd, agent_name
         case delivered_summary, final_draft, plan, sources, log, dispatched_at, review_at, delivery_mode
         case session_active
+        case notes_text
     }
 
     init(from decoder: Decoder) throws {
@@ -347,6 +356,7 @@ struct ReviewItem: Decodable, Hashable {
         review_at = try? c.decodeIfPresent(Int.self, forKey: .review_at)
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
         session_active = (try? c.decodeIfPresent(Bool.self, forKey: .session_active)) ?? false
+        notes_text = try? c.decodeIfPresent(String.self, forKey: .notes_text)
         // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
         id = (try? c.decode(String.self, forKey: .id))
             ?? stableFallbackID("review", name, summary, session_id,

@@ -448,6 +448,117 @@ fileprivate struct DodListView: View {
 }
 
 /// One-line mono path that copies itself on click (clipboard→✓, 1.5 s reset).
+// MARK: - fold notes (§38) — 折叠进来的信息 + 拆成新卡
+//
+// Python 侧 registry.append_fold_note 往 notes 写
+// "[radar|quick] <text> [@<ts>]"（拆出后再追加 " [已拆出 R-yyy]"），dashboard
+// 以 notes_text 投影到 needs_approval/debt/review 行。这里的解析必须与
+// act/lib/registry.py 的 _FOLD_LINE_RE/_FOLD_TS_RE/_FOLD_SPLIT_RE 保持
+// lockstep——两边同时改。
+
+struct FoldNote: Hashable {
+    let kind: String        // "radar" | "quick"
+    let text: String
+    let ts: String?         // split handle；nil = §38 之前的旧行（不可拆）
+    let splitInto: String?  // 已拆出 → 新卡 id
+
+    static func parse(_ notes: String?) -> [FoldNote] {
+        guard let notes, !notes.isEmpty else { return [] }
+        var out: [FoldNote] = []
+        for raw in notes.components(separatedBy: "\n") {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            var kind: String?
+            for k in ["radar", "quick"] where line.hasPrefix("[\(k)] ") {
+                kind = k
+                line = String(line.dropFirst(k.count + 3))
+                break
+            }
+            guard let kind else { continue }
+            var splitInto: String?
+            if line.hasSuffix("]"),
+               let r = line.range(of: " [已拆出 ", options: .backwards),
+               !line[r.upperBound...].dropLast().contains("]") {
+                splitInto = String(line[r.upperBound...].dropLast())
+                line = String(line[..<r.lowerBound])
+            }
+            var ts: String?
+            if line.hasSuffix("]"),
+               let r = line.range(of: " [@", options: .backwards) {
+                let tag = line[r.upperBound...].dropLast()
+                // the ts tag never contains spaces/brackets — a "]"-ending
+                // note text must not be mistaken for one.
+                if !tag.isEmpty, !tag.contains(" "), !tag.contains("]") {
+                    ts = String(tag)
+                    line = String(line[..<r.lowerBound])
+                }
+            }
+            out.append(FoldNote(kind: kind,
+                                text: line.trimmingCharacters(in: .whitespaces),
+                                ts: ts, splitInto: splitInto))
+        }
+        return out
+    }
+}
+
+/// The 展开详情 fold-note list: each folded-in update on its own line, with
+/// 拆成新卡 (split_note) on lines that carry a ts handle — the §38 undo for a
+/// fold the triage LLM got wrong. Observes the store so 拆分中… updates live.
+struct FoldNotesView: View {
+    let cardID: String
+    let notes: [FoldNote]
+    unowned let app: AppDelegate
+    @ObservedObject var store: DashboardStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L("📎 折叠进来的信息", "📎 Folded-in updates"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            ForEach(Array(notes.enumerated()), id: \.offset) { _, n in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(n.kind == "quick" ? "💬" : "📡")
+                        .font(.system(size: 9))
+                        .padding(.top, 1)
+                    Text(n.text)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    trailing(for: n)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func trailing(for n: FoldNote) -> some View {
+        if let rid = n.splitInto {
+            Badge(text: L("已拆出 \(rid)", "Split → \(rid)"), color: .gray)
+        } else if let ts = n.ts {
+            if store.pendingSplits["\(cardID)|\(ts)"] != nil {
+                HStack(spacing: 3) {
+                    ProgressView().controlSize(.mini)
+                    Text(L("拆分中…", "Splitting…"))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Button {
+                    app.submitSplitNote(id: cardID, noteTs: ts)
+                } label: {
+                    Label(L("拆成新卡", "Split into card"),
+                          systemImage: "square.on.square.dashed")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.blue)
+                .help(L("这条信息不该折在这张卡里？拆出去单独成卡（原记录保留）",
+                        "Folded into the wrong card? Split it out (the origin line is kept)"))
+            }
+        }
+    }
+}
+
 /// A Button so its tap wins over the whole-card copy gesture underneath.
 /// Internal (not fileprivate like its siblings above): P1-4/P1-5 reuse it for
 /// the pipeline-health banner and the shared empty state (Freshness.swift).
@@ -1024,9 +1135,17 @@ struct ApprovalCardView: View {
                     }
                 }
             }
+
+            // §38 折叠进来的信息 — each line with its 拆成新卡 undo
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: card.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private var foldNotes: [FoldNote] { FoldNote.parse(card.notes_text) }
 
     private var tierText: String {
         if let hint = card.tier_hint, !hint.isEmpty {
@@ -1342,7 +1461,10 @@ struct ReviewRow: View {
         !(item.plan ?? []).isEmpty
             || !(item.sources ?? []).isEmpty
             || (item.log?.isEmpty == false)
+            || !foldNotes.isEmpty
     }
+
+    private var foldNotes: [FoldNote] { FoldNote.parse(item.notes_text) }
 
     var body: some View {
         // doubleClickRuns: copy_cmd is app-generated by the pipeline — the
@@ -1489,6 +1611,10 @@ struct ReviewRow: View {
         VStack(alignment: .leading, spacing: 8) {
             if let plan = item.plan, !plan.isEmpty { PlanListView(plan: plan) }
             if let srcs = item.sources, !srcs.isEmpty { SourceListView(sources: srcs) }
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: item.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
             if let log = item.log, !log.isEmpty {
                 CopyPathLine(label: L("日志：", "Log: "), path: log)
             }
@@ -1505,17 +1631,29 @@ struct DebtRow: View {
         surface.contextMenu { contextItems }
     }
 
-    // detail slot only when there are source quotes to show — otherwise the
-    // toggle would open an empty drawer.
+    private var foldNotes: [FoldNote] { FoldNote.parse(item.notes_text) }
+
+    // detail slot only when there are source quotes / fold notes to show —
+    // otherwise the toggle would open an empty drawer.
     @ViewBuilder private var surface: some View {
-        if let srcs = item.sources, !srcs.isEmpty {
+        if (item.sources?.isEmpty == false) || !foldNotes.isEmpty {
             CardSurface(actions: { actionButtons },
-                        detail: { SourceListView(sources: srcs)
-                                      .frame(maxWidth: .infinity, alignment: .leading) },
+                        detail: { detailBlock },
                         content: { rowContent })
         } else {
             CardSurface(actions: { actionButtons }, content: { rowContent })
         }
+    }
+
+    @ViewBuilder private var detailBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let srcs = item.sources, !srcs.isEmpty { SourceListView(sources: srcs) }
+            if !foldNotes.isEmpty {
+                FoldNotesView(cardID: item.id, notes: foldNotes,
+                              app: app, store: app.store)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // v0.20 card-lifecycle: 永久完成 (archive) lives in the context menu,
@@ -1798,6 +1936,8 @@ struct MergeSuggestionCard: View {
         case "high":   Badge(text: L("置信度：高", "Confidence: high"), color: .green)
         case "medium": Badge(text: L("置信度：中", "Confidence: medium"), color: .orange)
         case "low":    Badge(text: L("置信度：低", "Confidence: low"), color: .gray)
+        // §38 auto suggestions: deterministic rule, not an AI analysis
+        case "deterministic": Badge(text: L("规则判定", "Rule-based"), color: .purple)
         default:       Badge(text: conf, color: .gray)
         }
     }

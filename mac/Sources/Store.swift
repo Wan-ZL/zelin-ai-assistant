@@ -157,6 +157,11 @@ final class DashboardStore: ObservableObject {
     // 契约七: suggestion-card accept/dismiss echoes (apply = grey in place,
     // dismiss = instant removal), keyed by suggestion id ("MS-…").
     @Published var pendingMergeActions: [String: PendingMergeAction] = [:]
+    // §38 拆成新卡 in flight: "<cardID>|<noteTs>" → submitted-at. Cleared by
+    // the REAL signal (that fold-note line shows 已拆出 in the card's
+    // notes_text) or the 180 s sweep (honest timeout notice — the split
+    // demonstrably never landed).
+    @Published var pendingSplits: [String: Date] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
 
@@ -298,6 +303,18 @@ final class DashboardStore: ObservableObject {
                 pendingMergeActions = pendingMergeActions.filter {
                     suggestionIDs.contains($0.key)
                 }
+                // §38: a split clears on the REAL signal — the origin fold
+                // line now carries 已拆出 in the card's projected notes_text.
+                // Card not found / lane without notes → keep until the sweep.
+                pendingSplits = pendingSplits.filter { key, _ in
+                    guard let sep = key.firstIndex(of: "|") else { return false }
+                    let cid = String(key[..<sep])
+                    let ts = String(key[key.index(after: sep)...])
+                    guard let notes = Self.notesText(of: cid, in: db) else { return true }
+                    return !FoldNote.parse(notes).contains {
+                        $0.ts == ts && $0.splitInto != nil
+                    }
+                }
             }
         } catch {
             // Keep the previously good dashboard rather than blanking the UI.
@@ -346,12 +363,15 @@ final class DashboardStore: ObservableObject {
         let expiredForceBadges = mergeForcingLocal.filter {
             now.timeIntervalSince($0.created) > 180
         }
+        // §38 拆成新卡: 180 s without the origin line flipping to 已拆出 →
+        // the split never landed; button reverts, honest notice.
+        let expiredSplits = pendingSplits.filter { now.timeIntervalSince($0.value) > 180 }
         // notices themselves fade after 120 s
         let expiredNotices = notices.filter { now.timeIntervalSince($0.created) > 120 }
         guard !expiredCaptures.isEmpty || !expiredRaises.isEmpty || !expiredEchoes.isEmpty
             || !expiredComments.isEmpty || !expiredReturns.isEmpty
             || !expiredMergeBadges.isEmpty || !expiredMergeActions.isEmpty
-            || !expiredForceBadges.isEmpty
+            || !expiredForceBadges.isEmpty || !expiredSplits.isEmpty
             || !expiredNotices.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
@@ -411,6 +431,16 @@ final class DashboardStore: ObservableObject {
                 // DebtRow) — and the card silently un-hiding there — must not
                 // land inside the collapsed backlog strip; force-open it.
                 if e.source == .debt { backlogStripExpanded = true }
+            }
+            for (key, _) in expiredSplits {
+                pendingSplits.removeValue(forKey: key)
+                let noticeID = "notice-split-" + key
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .approval,
+                    text: L("「拆成新卡」超时未生效，原备注未变化，请重试（检查 actd 是否在运行）",
+                            "Split-into-card timed out — the note is unchanged, try again (check that actd is running)"),
+                    created: now))
             }
             for (id, _) in expiredComments {
                 pendingComment.removeValue(forKey: id)
@@ -801,6 +831,26 @@ final class DashboardStore: ObservableObject {
             mergeForcingLocal.append(PendingForceMerge(
                 primary: primary, secondaries: secondaries, created: Date()))
         }
+    }
+
+    /// §38 拆成新卡: the split_note inbox write succeeded — that fold-note
+    /// line shows 拆分中… until the origin line flips to 已拆出 (reload) or
+    /// the 180 s sweep gives up honestly. ONLY call site:
+    /// AppDelegate.submitSplitNote, after the IO succeeded.
+    func beginSplitNote(cardID: String, ts: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            pendingSplits["\(cardID)|\(ts)"] = Date()
+        }
+    }
+
+    /// §38: the projected notes_text of a card, wherever its lane carries one
+    /// (needs_approval / debt / review — the fold-note surfaces). nil = the
+    /// card isn't visible on a notes-carrying row right now.
+    static func notesText(of id: String, in db: Dashboard) -> String? {
+        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.notes_text }
+        if let d = db.debt.first(where: { $0.id == id }) { return d.notes_text }
+        if let r = db.review.first(where: { $0.id == id }) { return r.notes_text }
+        return nil
     }
 
     /// 建议上报: the feedback inbox write succeeded → optimistic green

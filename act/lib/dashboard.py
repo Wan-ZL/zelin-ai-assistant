@@ -327,6 +327,22 @@ def _delivery_mode(req: Requirement) -> str:
     return dm if dm in ("chat", "repo") else "repo"
 
 
+# §38: notes projected (capped) so the Mac 展开详情 can render fold-note lines
+# with their 拆成新卡 buttons. Same key + cap as §37's notes_text (PR #55 puts
+# it on every row via _title_fields) — after both merge, ONE implementation
+# survives; keeping name/cap identical makes that reconciliation mechanical.
+_NOTES_TEXT_CAP = 2000
+
+
+def _notes_view(req: Requirement) -> dict:
+    """``{"notes_text": ...}`` or ``{}`` — empty notes omit the key entirely
+    (add-only: Swift decodeIfPresent, old payloads unchanged)."""
+    notes = str(req.notes or "").strip()
+    if not notes:
+        return {}
+    return {"notes_text": notes[:_NOTES_TEXT_CAP]}
+
+
 # --------------------------------------------------------------------------- #
 # merge_suggestions partition (merge-review 契约 六)
 # --------------------------------------------------------------------------- #
@@ -479,6 +495,7 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "processing": False,
                     "delivery_mode": _delivery_mode(req),
+                    **_notes_view(req),   # §38: fold-note lines for 拆成新卡
                     # v0.20.0 §5: 「回锅」marker — this proposal came from a
                     # re-raise of a card the user had already accepted; the app
                     # shows an amber Returned badge + the new ask.
@@ -515,6 +532,7 @@ def build_dashboard(
                     "hardness": req.hardness,
                     "type": req.type,
                     "sources": _source_view(req, cfg),
+                    **_notes_view(req),   # §38: fold-note lines for 拆成新卡
                 }
             )
 
@@ -685,6 +703,7 @@ def build_dashboard(
                         "review_at": _epoch(ex.get("review_at")),
                         "delivery_mode": _delivery_mode(req),
                         "session_active": state in _RUNNING_STATES,
+                        **_notes_view(req),   # §38: fold visibility (display)
                     }
                 )
             elif state in _BLOCKED_STATES:

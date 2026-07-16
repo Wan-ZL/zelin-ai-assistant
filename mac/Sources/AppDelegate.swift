@@ -775,6 +775,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return writeInboxFile(dict)
     }
 
+    /// §38 拆成新卡（fold undo）: a fold-note line's button →
+    /// {"action":"split_note","id":"R-xxx","note_ts":"<ts>"} inbox file. Same
+    /// atomic-write + failure-alert path as card actions (writeInboxFile); on
+    /// success the line shows 拆分中… (store.beginSplitNote; cleared by the
+    /// origin line flipping to 已拆出, 180 s honest fallback). The apply is
+    /// counted python-side (split_note analytics) — only the card_action
+    /// intent is logged here.
+    @discardableResult
+    func submitSplitNote(id: String, noteTs: String) -> Bool {
+        guard !id.isEmpty, !noteTs.isEmpty else { return false }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["id": id, "action": "split_note",
+                                   "note_ts": noteTs, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("split_note")
+        Analytics.log("card_action", fields: ["action": "split_note", "req": id])
+        store.beginSplitNote(cardID: id, ts: noteTs)
+        return true
+    }
+
     /// merge-review 契约一/七: 多选「请求合并建议」→
     /// {"action":"merge_review","ids":["R-xxx","R-yyy",…]} inbox file. Same
     /// atomic-write + failure-alert path as card actions (writeInboxFile); on
