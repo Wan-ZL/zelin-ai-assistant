@@ -531,6 +531,11 @@ struct SettingsFormView: View {
                 set: { v in
                     boardAnimations = v
                     UserDefaults.standard.set(v, forKey: "boardAnimations")
+                    // frame reporting is gated on this pref (off = zero cost)
+                    // — republish so the board re-renders and arms/disarms it
+                    // NOW, not on the next dashboard tick (same helper the
+                    // sort picker uses: a plain objectWillChange.send()).
+                    (NSApp.delegate as? AppDelegate)?.store.sortOrderChanged()
                     Analytics.log("mw_setting_change", fields: ["key": "boardAnimations"])
                 }))
             Text(L("卡片换列/新出现时的飞行与入场动画（仅看板窗口）。跟随系统「减少动态效果」自动停用；一次刷新超过 6 张变化时退化为淡入淡出。纯界面偏好（存本机）。",

@@ -188,8 +188,9 @@ final class DashboardStore: ObservableObject {
     /// stale deal-in. nil ⇒ nothing is animating.
     @Published private(set) var boardMotion: BoardMotionEvent?
     /// Previous per-lane snapshot (BoardDiff baseline). Maintained even while
-    /// the 看板动画 pref is off / Reduce Motion is on — consumption is gated
-    /// view-side, so re-enabling never animates a stale mega-diff.
+    /// the 看板动画 pref is off / Reduce Motion is on (only the diff+publish
+    /// is skipped then — the view gates consumption too, belt and suspenders),
+    /// so re-enabling never animates a stale mega-diff.
     private var lastBoardLanes: [BoardLaneList]?
     private var boardMotionSeq = 0
 
@@ -542,6 +543,11 @@ final class DashboardStore: ObservableObject {
         let lanes = currentBoardLanes()
         defer { lastBoardLanes = lanes }
         guard lastBoardLanes != nil else { return }
+        // Toggle-off / Reduce Motion pays nothing past this line: no diff, no
+        // publish (an extra objectWillChange per mutation), no delayed
+        // nil-clear. The baseline above DOES keep updating, so re-enabling
+        // mid-session never animates a stale mega-diff.
+        guard BoardMotionPolicy.animationsEnabled else { return }
         let diff = BoardDiff.compute(previous: lastBoardLanes, current: lanes)
         guard !diff.isEmpty else { return }
         boardMotionSeq += 1

@@ -63,14 +63,23 @@ extension View {
     /// Report this view's frame (in the board coordinate space) under `key`.
     /// `generation` disambiguates same-key duplicates (see BoardFrameEntry);
     /// singleton keys (lanes/strips/board) keep the default 0.
+    /// Toggle-off really costs nothing: the GeometryReader + preference
+    /// publish only exist while 看板动画 is on (gated on the PREF alone —
+    /// UserDefaults is cheap enough for this per-row hot path, the
+    /// NSWorkspace reduce-motion check is not; reduce-motion is enforced at
+    /// the cold paths instead: event publish + consumption).
     func boardMotionFrame(_ key: String, generation: Int = 0) -> some View {
-        background(GeometryReader { geo in
-            Color.clear.preference(
-                key: BoardFramesKey.self,
-                value: [key: BoardFrameEntry(
-                    rect: geo.frame(in: .named(BoardMotionPolicy.space)),
-                    gen: generation)])
-        })
+        background {
+            if Prefs.boardAnimations {
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: BoardFramesKey.self,
+                        value: [key: BoardFrameEntry(
+                            rect: geo.frame(in: .named(BoardMotionPolicy.space)),
+                            gen: generation)])
+                }
+            }
+        }
     }
 }
 
@@ -154,11 +163,21 @@ final class BoardFlightController: ObservableObject {
             return
         }
         // Phase A snapshots: last-known frames of everything that leaves.
+        // A removal only gets a source frame (⇒ a sink) when a REAL card
+        // still stands behind the id: a trashed card still sits in
+        // dashboard.trash (title resolves), a force-merged secondary is
+        // covered by the 合并中 badge machinery. The completed/archived
+        // lists cap at their newest ~50, so a tail id evicted by a new
+        // arrival diffs as a removal too — that is bookkeeping, not a user
+        // action, and animating it would be a lie. (Suggestion-merge
+        // consolidation clears its pending marker in the same snapshot, so
+        // those absorptions stay silent as well — noted in the CHANGELOG.)
         var sourceFrames: [String: CGRect] = [:]
         for m in event.diff.moves {
             sourceFrames[m.id] = frames["row:\(m.fromLane):\(m.id)"]?.rect
         }
-        for r in event.diff.removals {
+        for r in event.diff.removals
+        where store.cardTitle(r.id) != r.id || store.isMergeForcing(r.id) {
             sourceFrames[r.id] = frames["row:\(r.lane):\(r.id)"]?.rect
         }
         let titles = titlesFor(event: event, store: store)
@@ -170,11 +189,15 @@ final class BoardFlightController: ObservableObject {
 
     /// Resolve display titles while the store still knows the card (removals'
     /// ids may already be pruned from every lane by the time flights land).
+    /// An id the store can't resolve renders an honest generic label — never
+    /// the raw R-/capture- id.
     private func titlesFor(event: BoardMotionEvent,
                            store: DashboardStore) -> [String: String] {
         var t: [String: String] = [:]
-        for m in event.diff.moves { t[m.id] = store.cardTitle(m.id) }
-        for r in event.diff.removals { t[r.id] = store.cardTitle(r.id) }
+        for id in event.diff.moves.map(\.id) + event.diff.removals.map(\.id) {
+            let title = store.cardTitle(id)   // falls back to the id itself
+            t[id] = title == id ? L("卡片", "Card") : title
+        }
         return t
     }
 

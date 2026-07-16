@@ -44,8 +44,13 @@ other file needs editing. To cut a release:
     launches on your *click*, and the later real snapshot doesn't re-animate.
   - **Deal-in for new cards**: fresh proposals/captures slide in from the lane
     top with a slight rotation settle, staggered 40 ms when several arrive.
-  - **Off-board removals** (trash / merged): the card shrinks and fades toward
-    the lane edge instead of vanishing.
+  - **Off-board removals** (trash / force-merge): the card shrinks and fades
+    toward the lane edge instead of vanishing. Honest limits: a card absorbed
+    by an *accepted merge suggestion*, or silently rotated off the
+    completed/archived lists' newest-50 cap, leaves WITHOUT animation — those
+    aren't board actions, and pretending otherwise would mislead; a title the
+    app can no longer resolve shows a generic 「卡片/Card」 label, never a raw
+    internal id.
   - **Collapsed-strip arrivals**: a card landing in a folded 潜在任务/永久性完成
     strip flies to the strip itself and pops its count badge once (1.0→1.25→1.0).
   - **Micro-juice**: board cards get a subtle hover lift (2 pt raise, 120 ms).
