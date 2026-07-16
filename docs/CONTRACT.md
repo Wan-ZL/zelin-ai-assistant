@@ -1184,3 +1184,80 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+## 38. v0.38.0 少建卡、会折叠 — 折叠优先 + 可逆拆分 + 规则合并提示（add-only）
+
+三层设计，目标 = 琐碎信息不再张张成卡；全程不改 §1 状态机、不动冻结 `title`。
+
+### 38.1 判定口径变更（triage/capture prompt bias，语义变更点）
+
+- **折叠优先**：纯进展 / FYI / 补充 / 顺带一提的琐碎信息，只要与清单里某张卡
+  相关，一律 `relates_to` 折进那张卡（`needs_action` 照旧如实判断）；**只有
+  全新的、需要 owner 行动或决策的可执行诉求才 `new_proposal`**。此前的
+  无损原则偏置（拿不准就新建）针对这类信息反转——安全性由 38.2 的**可逆折叠**
+  兜底：折错了可以拆回，信息不会丢。
+- 入库把关 marker（`入库把关`）与既有判定行全部逐字保留（add-only 追加行）；
+  快速捕获（self-DM）prompt 同步追加「折叠优先」段，无损原则原文不动。
+- **喂给匹配器的清单增强（实现注记，非契约形状）**：triage/capture 的注册表
+  清单每行在 `R-xxx | status | title` 之后追加可选段 ` | 显示名: <display_title
+  或确定性 sanitize 回退>` 与 ` | 关键词: <≤6 个确定性 alias>`；prompt 里另有
+  「最可能相关」确定性预筛块（`act/lib/match_corpus.py` 的 normalized-token
+  overlap，top-3）。`match_corpus.normalize` 是 §37 `SearchMatch.normalize` 的
+  **python 孪生**（lowercase + 剥 `-`/`_`/`.`/空白，CJK 原样）——两边语义
+  同步改。无任何新增 LLM 调用。
+
+### 38.2 可逆折叠 — 折叠备注时间戳 + inbox 动作 `split_note`
+
+- **折叠备注行形状**（`registry.append_fold_note`，radar/quick 两类折叠的唯一
+  落笔点）：`[radar|quick] <text> [@<ts>]`，`<ts>` = UTC ISO 秒级时间戳（同卡
+  同秒冲突追加 `#n`），是该行的**稳定拆分句柄**。拆出后行尾再追加
+  ` [已拆出 R-yyy]`（append-only，原文保留作历史）。`[kind] <text>` 前缀
+  冻结（§38 之前的测试锚定它）；§38 之前的无时间戳旧行不可拆（无句柄，诚实
+  降级为纯展示）。同 (kind, text) 去重不变（retry 无害不变式）。
+- **dashboard 行新增 add-only 字段 `notes_text`**（str，notes 投影，cap 2000
+  字，空值整键省略）：`needs_approval[]`、`debt[]`、`review[]` 三个分区携带
+  （Swift `decodeIfPresent`）。这与 §37（PR #55）在全部分区加的同名字段语义
+  一致——两者合流后收敛为一份实现，键名/cap 刻意逐字相同。
+- **inbox 动作全集（§10）新增 `split_note`**（折叠的撤销，拆成新卡）：
+  ```json
+  {"action":"split_note","id":"R-xxx","note_ts":"<ts 句柄>","ts":"<ISO8601>"}
+  ```
+  三重 fail-closed 校验（v0.33.1 边界原则）：syncd 形状闸门把 `note_ts` 纳入
+  str-or-absent 字段表；webui `ALLOWED_ACTIONS` 收录 + `note_ts` 须 str 否则
+  400；actd 侧非 str / 未知卡（ack `unknown`）/ archived 卡 / 未知 ts / 已拆
+  过的行一律 no-op + log（ack `noop`，重放绝不二次出卡）。
+- **actd 语义**：取该行文本走**正常 capture 路径**成新卡（`raising` → AI 扩写
+  → 提案；默认路由），notes 带 `[拆自 R-xxx]` 溯源；**刻意不过 merge_or_new**
+  ——用户刚说了这条不属于那张卡，确定性再折叠等于撤销这次撤销。新卡先落盘、
+  原行后打标（archive() 的 crash-mid-move 同款次序）。打点 `split_note`
+  （metadata only）。
+- **Mac UI**：needs_approval / 备选 / 待验收 卡的展开详情渲染「📎 折叠进来的
+  信息」行列表（解析 `notes_text`，与 registry 正则 lockstep）；带句柄的行给
+  「拆成新卡」小按钮（正常 submit 管道 + 乐观回显 `pendingSplits`，真信号 =
+  原行出现 已拆出；180 s 兜底橙条诚实报超时）；已拆行显示灰色「已拆出 R-yyy」
+  徽章。**iOS 本期只显示不拆**（诚实声明：无拆分入口，行渲染不变）。webui
+  本期无拆分入口（动作已在白名单，仅未做前端）。
+
+### 38.3 规则合并提示 — 确定性 near-dupe 自动建议（无 LLM）
+
+- **触发**：actd 每 pass（`act/lib/auto_merge.scan_new_cards`）对**新出现的
+  未结卡**（detected/raising/card_sent/approved/executing/review；增量台账
+  `state/auto_merge_seen.json` 的 `scanned`）与其余未结卡做 §38.1 同一套
+  normalized-token 重合判定：**高重合**（overlap ≥0.6 且 ≥3 重合词）**或
+  同一非 owner 联系人 + 中等重合**（≥0.4 且 ≥2 重合词）→ 自动生成一条 §21
+  合并建议。血缘/同 thread 关联卡（improvement_of / thread_id / thread_key
+  相同）不判——那是刻意关联，不是撞车。
+- **作业文件 = §21 的 MS- 形状原样复用**（`state/merge/MS-*.json`，直接落
+  `status="done"`）：`verdict="merge"`、`primary`=较旧卡、`rationale`=
+  「规则判定：…（重合关键词：…）」、`action_plan` 如实描述确定性 apply、
+  **`confidence="deterministic"`**（App 端渲染「规则判定」徽章；旧 App 按
+  未知字符串灰徽章展示，不崩）、**`auto: true`**（provenance 标记，投影
+  不转发）、`expires_at`=+24h（§21 TTL 清扫照常适用）。**采纳/取消 = 既有
+  `merge_apply` / `merge_dismiss` 路径零改动**。
+- **节流（硬规则）**：① **同一无序卡对终生只提示一次**（`auto_merge_seen.json`
+  的 `suggested` 台账持久化——MS- 文件 24h 会被清，不能从它派生），因此
+  **取消对该卡对即为终局**；② **未决自动建议同时最多 3 条**（auto 且仍
+  `done` 在板上的计数；超限的卡对不记账、以后仍可触发）；③ 终态/封存卡
+  （trashed/merged/rejected/archived/delivered）永不参与。
+- analytics：`auto_merge_suggested{suggestion,primary,secondary}`（metadata
+  only）。
