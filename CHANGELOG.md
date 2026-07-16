@@ -55,6 +55,73 @@ other file needs editing. To cut a release:
   才真连一次对应服务器（其余凭证行"保存即验证"的行为不变）。引擎侧的
   致命鉴权错误提示改为指向「检测」按钮排查。
 
+## [0.37.0] - 2026-07-16
+
+「找得到、看得懂」— board search that actually finds things, and card titles
+that stay readable and evolve with the work (CONTRACT §37, add-only).
+
+### Added
+
+- **看板搜索全量化 (Mac)** — the board search box now matches far more than
+  title/summary/plan/dod/id:
+  - **normalized matching** (`shared/Sources/SearchMatch.swift`): "eb1" finds
+    "EB-1A", "h1b" finds "H-1B" (`-`/`_`/`.`/spaces are stripped from both
+    sides before comparing), CJK matches as a plain substring, and a
+    multi-word query is AND — every word must hit the card. "eb2" still does
+    NOT match "EB-1A".
+  - **expanded word list per lane**: display/former titles, notes (comments &
+    radar updates, newly projected as a capped `notes_text` row field),
+    delivered summaries and final drafts, source quotes, and the agent name.
+  - **session-content layer**: actd maintains `state/search_index.json`
+    (per-card main-thread transcript text — the boilerplate dispatch prompt
+    of the first user turn is excluded — tail-capped ~50KB, refreshed only
+    at the existing harvest/promotion touchpoints — zero new LLM calls) and
+    the Mac app searches it as the LAST layer with cross-layer AND: each
+    query word may be satisfied by a row field OR the transcript, so
+    "推荐信 chen" finds the card whose title says 推荐信 while only the
+    session mentions chen. Cards that matched but not on their visible
+    fields alone get a purple 「命中会话」 badge. Pruning removes only
+    irreversibly-gone cards (merged / hard-purged) — a trashed-then-restored
+    card keeps its session search. The file is Mac-local and never enters
+    dashboard.json (the E2E board payload does not grow); missing/corrupt
+    index = the layer is silently absent. Typing stays smooth on large
+    boards: the input echoes instantly, filtering debounces ~200 ms, and
+    normalized card/session text plus per-card hit results are memoized per
+    dashboard decode / query / index reload.
+- **活标题 display_title (§37)** — the internal `title` stays FROZEN (it is
+  the dedupe/re-raise identity anchor); a new optional `display_title` +
+  `user_titled` + `former_titles` ride the registry and every dashboard row:
+  - **fallback chain at projection time** — stored display_title (user or
+    LLM) → deterministic `sanitize(title)` (URL → "domain ▸ segment", path →
+    last component, overlong text → first-clause clip with …) → title. A raw
+    URL/path can never appear as a board title again, with zero migration
+    for legacy cards.
+  - **LLM titles piggyback on existing calls only**: quick-capture/triage and
+    debt-expansion prompts gain an optional `display_title` output key
+    (≤40 字中文大白话, 动词开头); executor closing prompts allow an optional
+    standalone `CARD TITLE: <new name>` line that `harvest_delivery` parses
+    (same fence discipline as `FINAL DRAFT:`, stripped from both outputs)
+    and actd applies at the same promotion points as delivered_summary —
+    titles refresh at round boundaries as the discussion evolves.
+  - **user sovereignty**: new `set_title` inbox action (fail-closed ≤64-char
+    validation at syncd/webui/actd, v0.33.1 boundary doctrine) pins
+    `user_titled` — a user-chosen name is NEVER overwritten by LLM/harvest
+    titles. Mac: ✏️「改名」inline editor in every card's 展开详情, with an
+    optimistic name echo (180 s honest timeout notice). Renamed cards stay
+    findable: previous names land in `former_titles` (capped 3, searched,
+    shown as 「曾用名: …」in the detail).
+  - iOS displays the new titles automatically via the shared row helpers
+    (`displayHeadline`/`rowTitle`/`BoardModel.title(of:)`).
+
+### Honest scope cuts
+
+- **iOS has no board search UI this release** — search (including the new
+  normalized matching and session layer) stays Mac-only; the phone only gains
+  the readable display titles on its rows.
+- **iOS has no rename entry this release** — `set_title` can be written by
+  the Mac app (and webui API); the phone renders `display_title` read-only.
+- webui's own search/filter surface is unchanged.
+
 ## [0.36.0] - 2026-07-15
 
 ### Added
@@ -1399,7 +1466,8 @@ release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.1...HEAD
-[0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.37.1
+[0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.0...v0.37.1
+[0.37.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD
