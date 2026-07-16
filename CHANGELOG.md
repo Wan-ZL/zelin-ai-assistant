@@ -62,7 +62,11 @@ merge wave order.
   passes its effective display language via `AIASSISTANT_UI_LANG` when
   spawning python with user-facing output, and with nothing persisted python
   falls back to the system locale (zh* → zh, else en) instead of hardcoded
-  zh — no more mixed-language doctor pages for en-locale users.
+  zh — no more mixed-language doctor pages for en-locale users. On first
+  launch (no persisted language anywhere) the Mac app also persists its
+  effective language into `settings_overrides.json` — idempotent, never
+  overwrites an explicit choice — so cron/launchd copy (no `LANG` there)
+  keeps matching the app instead of falling back to en.
 - **Radar extraction framing（audit #19）** — `act.radar`'s extraction prompt
   is parameterized on `owner.name` and reframed as "asks directed at the
   owner"; the card source `who` names the actual note instead of a fabricated

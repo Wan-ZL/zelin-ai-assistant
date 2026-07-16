@@ -1199,4 +1199,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 python 时传入自己的实际显示语言，App 发起的输出与 App 严格同语言）→ ② 持久化
 设置（`state/settings_overrides.json` 的 `language`，其次 `config.yaml` 的
 `language`）→ ③ 系统 locale（`LC_ALL`/`LANG`：`zh*` → zh，否则 en——与 Swift
-首跑默认一致；旧行为是硬编码 zh）。
+首跑默认一致；旧行为是硬编码 zh）。此外 Mac App 首次启动时，若两个持久化来源
+都没有 `language`，会把当下实际生效的界面语言写入
+`settings_overrides.json`（幂等，绝不覆盖显式选择；设置页展示的正是这个值）——
+这样 launchd/cron 侧（无 `LANG` 环境）的通知文案与 App 同语言，未持久化的 zh
+用户不会在 ③ 回落成 en。
