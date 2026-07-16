@@ -8,19 +8,27 @@ Pinned here:
 - purge_at math (§40.5): trashed_at + retention, null for pinned rows /
   disabled retention / unparsable trashed_at — exactly the rows
   actd.purge_trash skips, so the countdown never promises a purge that
-  isn't coming.
+  isn't coming;
+- capture receipt chooser (§40.2): capture decision (res["action"]) ->
+  emoji reaction on the captured self-DM message; the receipt fires only
+  after apply_result returned; off-switch; failure is analytics-only and
+  never raises into the capture.
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no
-LLM subprocess is ever spawned.
+LLM subprocess is ever spawned (runners/extractors injected).
 """
+import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act.lib import config, dashboard
+from act import radar_slack
+from act.lib import config, dashboard, registry
 from act.lib.registry import Requirement
 
 
@@ -100,6 +108,127 @@ class PurgeAtTestCase(unittest.TestCase):
         # a purge that isn't coming.
         row = self._row(trashed_at="not-a-date")
         self.assertIsNone(row["purge_at"])
+
+
+# --------------------------------------------------------------------------- #
+# §40.2 capture receipt chooser (emoji reaction ack)
+# --------------------------------------------------------------------------- #
+def _clean_registry():
+    config.ensure_state_dirs()
+    if config.REGISTRY_DIR.exists():
+        shutil.rmtree(config.REGISTRY_DIR)
+    config.ensure_state_dirs()
+
+
+class CaptureReceiptTestCase(unittest.TestCase):
+    def setUp(self):
+        _clean_registry()
+        self.addCleanup(_clean_registry)
+        self.cfg = config.Config()
+        self.msg = {"channel": "D123", "channel_type": "self",
+                    "ts": "1700.42", "text": "记一下"}
+
+    def _ack(self, kind, resp=None):
+        calls = []
+
+        def fake_api(method, token, params=None):
+            calls.append((method, params))
+            return resp if resp is not None else {"ok": True}
+
+        with mock.patch.object(radar_slack, "slack_api", fake_api):
+            radar_slack._ack_capture("xoxp-t", self.msg, kind, self.cfg)
+        return calls
+
+    def test_receipt_kind_mirrors_the_normalized_decision(self):
+        # capture() normalizes action to exactly new_proposal/relates_to/
+        # ignore; anything else (defensive) must read as ignored, never filed.
+        self.assertEqual(radar_slack._receipt_kind({"action": "new_proposal"}),
+                         "new_proposal")
+        self.assertEqual(radar_slack._receipt_kind({"action": "relates_to"}),
+                         "relates_to")
+        self.assertEqual(radar_slack._receipt_kind({"action": "ignore"}),
+                         "ignored")
+        self.assertEqual(radar_slack._receipt_kind({}), "ignored")
+        self.assertEqual(radar_slack._receipt_kind(None), "ignored")
+
+    def test_filed_decisions_get_inbox_tray(self):
+        for kind in ("new_proposal", "relates_to"):
+            (call,) = self._ack(kind)
+            self.assertEqual(call[0], "reactions.add")
+            self.assertEqual(call[1]["name"], "inbox_tray")
+            self.assertEqual(call[1]["channel"], "D123")
+            self.assertEqual(call[1]["timestamp"], "1700.42")
+
+    def test_ignored_gets_no_entry_sign(self):
+        (call,) = self._ack("ignored")
+        self.assertEqual(call[1]["name"], "no_entry_sign")
+
+    def test_off_switch_posts_nothing(self):
+        self.cfg.slack_capture_receipts = False
+        self.assertEqual(self._ack("new_proposal"), [])
+
+    def test_unknown_kind_posts_nothing(self):
+        self.assertEqual(self._ack("banana"), [])
+
+    def test_failure_logs_only_and_never_raises(self):
+        events = []
+        with mock.patch.object(radar_slack.analytics, "log_event",
+                               lambda name, **kw: events.append((name, kw))):
+            self._ack("new_proposal",
+                      resp={"ok": False, "error": "missing_scope"})
+        self.assertEqual(events[0][0], "capture_receipt_failed")
+        self.assertEqual(events[0][1]["error"], "missing_scope")
+
+    def test_already_reacted_is_a_success_echo_not_a_failure(self):
+        events = []
+        with mock.patch.object(radar_slack.analytics, "log_event",
+                               lambda name, **kw: events.append(name)):
+            self._ack("new_proposal",
+                      resp={"ok": False, "error": "already_reacted"})
+        self.assertEqual(events, [])
+
+    def _handle(self, decision: dict) -> list:
+        raw = json.dumps(decision)
+        extractor = lambda prompt: subprocess.CompletedProcess(  # noqa: E731
+            args=["fake"], returncode=0, stdout=raw)
+        calls = []
+        with mock.patch.object(radar_slack, "slack_api",
+                               lambda m, t, p=None: calls.append((m, p)) or {"ok": True}):
+            radar_slack._handle_self_message(self.msg, "xoxp-t", self.cfg,
+                                             extractor=extractor)
+        return calls
+
+    def test_self_message_end_to_end_ignore_acks_no_entry(self):
+        # ignore decision -> registry untouched, 🚫 receipt on the message
+        calls = self._handle({"action": "ignore", "reason": "闲聊"})
+        self.assertEqual(registry.load_all(), [])
+        self.assertEqual(calls, [("reactions.add",
+                                  {"channel": "D123", "timestamp": "1700.42",
+                                   "name": "no_entry_sign"})])
+
+    def test_self_message_end_to_end_files_and_acks_inbox(self):
+        calls = self._handle({"action": "new_proposal", "title": "记一下",
+                              "summary": "记一下", "type": "other",
+                              "tier": "T0", "confidence": "high"})
+        self.assertEqual(len(registry.load_all()), 1)
+        self.assertEqual(calls[0][1]["name"], "inbox_tray")
+
+    def test_apply_result_raising_means_no_receipt(self):
+        # unknown outcome must not be acked as filed — the receipt only fires
+        # after apply_result returned.
+        extractor = lambda prompt: subprocess.CompletedProcess(  # noqa: E731
+            args=["fake"], returncode=0,
+            stdout=json.dumps({"action": "new_proposal", "title": "t",
+                               "summary": "t"}))
+        calls = []
+        from act.lib import quick_capture
+        with mock.patch.object(quick_capture, "apply_result",
+                               side_effect=RuntimeError("boom")), \
+             mock.patch.object(radar_slack, "slack_api",
+                               lambda m, t, p=None: calls.append(m) or {"ok": True}):
+            radar_slack._handle_self_message(self.msg, "xoxp-t", self.cfg,
+                                             extractor=extractor)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ oauth_config:
       - files:read
       - chat:write
       - reactions:read
+      - reactions:write
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false
