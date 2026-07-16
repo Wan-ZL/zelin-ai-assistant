@@ -172,6 +172,11 @@ final class DashboardStore: ObservableObject {
     @Published var pendingSplits: [String: Date] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
+    // §39 回答需输入: answer sent → the needs-input card keeps an orange
+    // 「回答发送中…」line until it LEAVES needs_input (actd delivered the
+    // answer and the session resumed — or the delivery failed and the card
+    // rerouted to running with last_error). 180 s sweep = honest timeout.
+    @Published var answerPending: [String: Date] = [:]
     // §37 rename echoes: id → the in-flight display title (row shows it at
     // once); cleared when the backend row carries the new name, 180 s sweep.
     @Published var pendingTitles: [String: PendingTitle] = [:]
@@ -328,6 +333,12 @@ final class DashboardStore: ObservableObject {
                 pendingMergeActions = pendingMergeActions.filter {
                     suggestionIDs.contains($0.key)
                 }
+                // §39: an answer echo clears on the REAL signal — the card
+                // left needs_input (resumed to running, or the failed delivery
+                // rerouted it there with last_error + a notification). A
+                // generated_at bump alone must NOT clear it (§21bis precedent).
+                let blockedIDs = Set(db.needs_input.map { $0.id })
+                answerPending = answerPending.filter { blockedIDs.contains($0.key) }
                 // §38: a split clears on the REAL signal — the origin fold
                 // line now carries 已拆出 in the card's projected notes_text.
                 // Card not found / lane without notes → keep until the sweep.
@@ -388,6 +399,9 @@ final class DashboardStore: ObservableObject {
         let expiredForceBadges = mergeForcingLocal.filter {
             now.timeIntervalSince($0.created) > 180
         }
+        // §39: answer echoes give up after 180 s if the card never left
+        // needs_input (actd down / inbox file lost) — honest orange notice.
+        let expiredAnswers = answerPending.filter { now.timeIntervalSince($0.value) > 180 }
         // §38 拆成新卡: 180 s without the origin line flipping to 已拆出 →
         // the split never landed; button reverts, honest notice.
         let expiredSplits = pendingSplits.filter { now.timeIntervalSince($0.value) > 180 }
@@ -398,8 +412,8 @@ final class DashboardStore: ObservableObject {
         guard !expiredCaptures.isEmpty || !expiredRaises.isEmpty || !expiredEchoes.isEmpty
             || !expiredComments.isEmpty || !expiredReturns.isEmpty
             || !expiredMergeBadges.isEmpty || !expiredMergeActions.isEmpty
-            || !expiredForceBadges.isEmpty || !expiredSplits.isEmpty
-            || !expiredTitles.isEmpty
+            || !expiredForceBadges.isEmpty || !expiredAnswers.isEmpty
+            || !expiredSplits.isEmpty || !expiredTitles.isEmpty
             || !expiredNotices.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
@@ -548,6 +562,18 @@ final class DashboardStore: ObservableObject {
                 // reappearing there — must not hide inside the collapsed
                 // archive strip; force-open it (backlog strip precedent).
                 if entry.source == .archived { archiveStripExpanded = true }
+            }
+            // §39: the answer echo vanishing must not be silent — the card
+            // never left needs_input, so the answer demonstrably never landed.
+            for (id, _) in expiredAnswers {
+                answerPending.removeValue(forKey: id)
+                let noticeID = "notice-answer-" + id
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout, lane: .running,
+                    text: L("回答超时未确认，卡片仍在「需输入」，请重试（检查 actd 是否在运行）",
+                            "Answer timed out unconfirmed — the card still needs input, try again (check that actd is running)"),
+                    created: now))
             }
             for n in expiredNotices { notices.removeAll { $0.id == n.id } }
         }
@@ -837,6 +863,14 @@ final class DashboardStore: ObservableObject {
     func beginRaising(_ id: String, summary: String) {
         withAnimation(.easeOut(duration: 0.2)) {
             raisingLocal[id] = RaisingEntry(summary: summary, created: Date())
+        }
+    }
+
+    /// §39: answer sent — the needs-input card shows 「回答发送中…」in place
+    /// (no hide/echo: the card must stay visible while the answer travels).
+    func beginAnswer(_ id: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            answerPending[id] = Date()
         }
     }
 

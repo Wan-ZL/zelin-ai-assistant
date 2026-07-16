@@ -89,6 +89,34 @@ def _transcript_info_cached(sid: str) -> Optional[tuple]:
 
 
 # --------------------------------------------------------------------------- #
+# needs_input question memoization (§39)
+# --------------------------------------------------------------------------- #
+# executor.extract_question reads + json-parses the FULL transcript, and a
+# genuinely blocked agent sits with an unchanged transcript for hours — so the
+# ~10s pass must never re-parse an idle one. Same (path, mtime, size)
+# freshness-signature scheme as _TINFO_CACHE (the v0.33.1 tinfo memo
+# precedent): an appended transcript (the agent said more / got answered)
+# invalidates immediately, an idle one costs only the stat calls.
+_QUESTION_CACHE: dict[str, tuple[tuple, Optional[str]]] = {}
+_QUESTION_CACHE_MAX = 512
+
+
+def _question_cached(sid: str) -> Optional[str]:
+    from act.executor import extract_question  # lazy: keep dashboard import-light
+    sig = _transcript_sig(sid)
+    if sig is None:
+        return extract_question(sid)
+    hit = _QUESTION_CACHE.get(sid)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    q = extract_question(sid)
+    if len(_QUESTION_CACHE) >= _QUESTION_CACHE_MAX:
+        _QUESTION_CACHE.clear()
+    _QUESTION_CACHE[sid] = (sig, q)
+    return q
+
+
+# --------------------------------------------------------------------------- #
 # claude agents --json --all
 # --------------------------------------------------------------------------- #
 def _run_claude_agents() -> list[dict]:
@@ -752,19 +780,34 @@ def build_dashboard(
                     }
                 )
             elif state in _BLOCKED_STATES:
-                needs_input.append(
-                    {
-                        "id": _s(req.id),
-                        "name": name,
-                        **_title_fields(req),
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "state": "blocked",
-                        "waiting_for": (agent or {}).get("waiting_for") or "input",
-                    }
-                )
+                # §39: surface WHAT the agent is asking — the transcript's
+                # last assistant text after the last real user turn (the same
+                # fence/sidechain-disciplined extraction harvest uses), cached
+                # per (sid, transcript signature) above.
+                question = (_question_cached(str(resume_sid or sid))
+                            if sid else None)
+                row = {
+                    "id": _s(req.id),
+                    "name": name,
+                    **_title_fields(req),
+                    "session_id": resume_sid,
+                    "short_id": short_id,
+                    "copy_cmd": copy_cmd,
+                    "agent_name": agent_name,
+                    "state": "blocked",
+                    # §39: the bare "input" fallback stays ONLY when no
+                    # transcript text exists — next to a real question it
+                    # was pure noise.
+                    "waiting_for": ((agent or {}).get("waiting_for")
+                                    or (None if question else "input")),
+                    # §39: an undeliverable answer (executor.answer failure)
+                    # must be visible ON the card, not just in a notification.
+                    "last_error": ex.get("last_error"),
+                    "last_error_id": failures.classify(ex.get("last_error")),
+                }
+                if question:
+                    row["question"] = question
+                needs_input.append(row)
             else:
                 # running, or agent not found yet -> still consider it running
                 running.append(

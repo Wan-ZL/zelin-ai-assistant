@@ -255,6 +255,51 @@ check(straddle.count == 1 && straddle[0].splitInto == nil,
 check(FoldNote.parse(nil).isEmpty && FoldNote.parse("").isEmpty,
       "nil/empty notes → empty")
 
+// ---- 11. question (§39 v0.39): needs_input rows carry the pending question ----
+// Old actd payloads lack the key (nil → UI falls back to waiting_for); the
+// InboxAction side of §39 (answer_input encoding + the scalar clip) is locked
+// in section 12 below, decode compat is locked here.
+print("[11] needs_input question decode:")
+let questionBoard = """
+{"needs_input": [
+   {"id": "N-1", "name": "asker", "state": "blocked",
+    "question": "A 方案还是 B 方案？", "waiting_for": null},
+   {"id": "N-2", "name": "legacy", "state": "blocked", "waiting_for": "input"}
+ ]}
+"""
+if let d = decodeDashboard(questionBoard) {
+    check(d.needs_input.first?.question == "A 方案还是 B 方案？",
+          "present → decoded", "got \(String(describing: d.needs_input.first?.question))")
+    check(d.needs_input.first?.waiting_for == nil,
+          "null waiting_for beside a question → nil")
+    check(d.needs_input.last?.question == nil, "absent → nil (old actd payloads)")
+    check(d.needs_input.last?.waiting_for == "input", "legacy fallback row intact")
+    check(d.decodeDrops.isEmpty, "question is not a drop", "got \(d.decodeDrops)")
+} else { check(false, "decode", "question payload must decode") }
+
+// ---- 12. InboxAction.answerInput (§39.2): pinned wire bytes + scalar clip ----
+// The encoder must stay byte-deterministic (sortedKeys) and clipAnswer must
+// count UNICODE SCALARS — actd validates len(text) in Python code points, so
+// a Character-based prefix could smuggle >4000 code points past the client.
+print("[12] answerInput encoding + clipAnswer:")
+let ansTS = "2026-07-16T00:00:00Z"
+let pinned = InboxAction.answerInput(id: "R-001", text: "用 A 方案",
+                                     expectedStatus: "executing", ts: ansTS)
+check(String(data: pinned, encoding: .utf8) ==
+      #"{"action":"answer_input","expected_status":"executing","id":"R-001","text":"用 A 方案","ts":"2026-07-16T00:00:00Z"}"#,
+      "pinned encoding is stable (sortedKeys)",
+      "got \(String(data: pinned, encoding: .utf8) ?? "nil")")
+let noPin = InboxAction.answerInput(id: "R-001", text: "t", ts: ansTS)
+check(String(data: noPin, encoding: .utf8)?.contains("expected_status") == false,
+      "nil expectedStatus omits the key (local Mac convention)")
+// "a🇨🇳b" = 4 scalars (flag is 2) but only 3 Characters — a Character-based
+// prefix(3) would keep all 4 code points; the scalar clip must not.
+check(InboxAction.clipAnswer("a🇨🇳b", max: 3) == "a🇨🇳",
+      "clipAnswer counts unicode scalars",
+      "got \(InboxAction.clipAnswer("a🇨🇳b", max: 3))")
+check(InboxAction.clipAnswer("abc", max: 3) == "abc", "under the bound → untouched")
+check(InboxAction.clipAnswer("", max: 3) == "", "empty stays empty")
+
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))
     exit(1)
