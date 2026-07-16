@@ -228,6 +228,9 @@ final class DashboardStore: ObservableObject {
         do {
             let db = try JSONDecoder().decode(Dashboard.self, from: data)
             lastRawData = data
+            // §37 review fix (perf): a new dashboard invalidates the memoized
+            // normalized field blobs + per-query hit results.
+            invalidateSearchCaches()
             withAnimation(.easeOut(duration: 0.2)) {
                 dashboard = db
                 missing = false
@@ -1094,16 +1097,38 @@ final class DashboardStore: ObservableObject {
     // MARK: board search (看板搜索过滤 — board* projections over visible*)
 
     /// Kanban header search box text. Non-empty → the board* projections
-    /// below filter every lane in real time; "" (or whitespace) = passthrough.
-    /// Lives in the store per the visible* projection pattern; the POPOVER
+    /// below filter every lane; "" (or whitespace) = passthrough. Lives in
+    /// the store per the visible* projection pattern; the POPOVER
     /// deliberately keeps reading visible* — search is a board-only
     /// affordance, and KanbanView clears the query onDisappear so a stale
     /// filter can never silently hide cards elsewhere.
-    @Published var boardQuery: String = ""
+    /// Review fix (perf): the TextField binds HERE (instant caret/echo), but
+    /// the projections filter on `boardFilterQuery`, which trails by ~200 ms
+    /// (debounce) — six lanes re-filtering synchronously on every keystroke
+    /// was hundreds of ms on a large indexed board. Clearing is instant.
+    @Published var boardQuery: String = "" { didSet { queryEdited() } }
 
-    /// Trimmed needle ("" = filtering off); SearchMatch handles case/separators.
-    private var boardNeedle: String {
-        boardQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The query the board* projections actually filter on (≤200 ms behind
+    /// boardQuery; "" applied immediately so Esc/清空 never lags).
+    @Published private(set) var boardFilterQuery: String = ""
+    private var searchDebounce: DispatchWorkItem?
+
+    private func queryEdited() {
+        searchDebounce?.cancel()
+        let q = boardQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            applyFilterQuery("")
+            return
+        }
+        let item = DispatchWorkItem { [weak self] in self?.applyFilterQuery(q) }
+        searchDebounce = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: item)
+    }
+
+    private func applyFilterQuery(_ q: String) {
+        guard q != boardFilterQuery else { return }
+        boardFilterQuery = q
+        hitCache.removeAll()   // per-query memo (see hitInfo)
     }
 
     // §37 词表 (v0.37, per lane where the row carries the field): id + frozen
@@ -1150,46 +1175,82 @@ final class DashboardStore: ObservableObject {
         return f
     }
 
-    /// §37 two-layer hit: normalized field match first, then the Mac-local
-    /// session-content index (state/search_index.json) as the LAST layer.
-    private func searchHit(_ q: String, id: String, fields: [String]) -> Bool {
-        if SearchMatch.matches(q, in: fields) { return true }
-        guard let text = sessionText(id) else { return false }
-        return SearchMatch.matches(q, in: [text])
+    // §37 hit computation, memoized (review fix, perf):
+    //  - normFieldsCache: normalized field haystack per card id, built once
+    //    per dashboard decode (cleared in reload());
+    //  - hitCache: (hit, sessionOnly) per card id for the CURRENT filter
+    //    query — the lane filter computes it once and the 命中会话 badge
+    //    reuses it instead of re-matching per rendered row. Cleared when the
+    //    query, the dashboard, or the session index changes.
+    private var normFieldsCache: [String: [String]] = [:]
+    private var hitCache: [String: (hit: Bool, sessionOnly: Bool)] = [:]
+
+    /// Drop the per-dashboard caches (called on every successful decode).
+    fileprivate func invalidateSearchCaches() {
+        normFieldsCache.removeAll()
+        hitCache.removeAll()
     }
 
-    /// §37 badge: a VISIBLE (already matched) row that matched the query only
-    /// through its session transcript — the row itself shows none of the words.
-    private func sessionOnly(_ id: String, _ fields: [String]) -> Bool {
-        let q = boardNeedle
-        guard !q.isEmpty else { return false }
-        if SearchMatch.matches(q, in: fields) { return false }
-        guard let text = sessionText(id) else { return false }
-        return SearchMatch.matches(q, in: [text])
+    /// §37 two-layer hit for one card under the current filter query.
+    /// Cross-layer AND (review fix): a term may be satisfied by a projected
+    /// field OR the session transcript — "推荐信 chen" matches a card whose
+    /// display title carries 推荐信 while only the transcript mentions chen.
+    /// `sessionOnly` (the 命中会话 badge) stays truthful: the card matched,
+    /// but NOT on its visible fields alone.
+    private func hitInfo(id: String, fields: () -> [String]) -> (hit: Bool, sessionOnly: Bool) {
+        let q = boardFilterQuery
+        guard !q.isEmpty else { return (true, false) }
+        if let cached = hitCache[id] { return cached }
+        let norm: [String]
+        if let cached = normFieldsCache[id] {
+            norm = cached
+        } else {
+            norm = SearchMatch.normalizedHaystack(fields())
+            normFieldsCache[id] = norm
+        }
+        let fieldHit = SearchMatch.matchesNormalized(q, in: norm)
+        var result = (hit: fieldHit, sessionOnly: false)
+        if !fieldHit, let session = sessionNormText(id),
+           SearchMatch.matchesNormalized(q, in: norm + [session]) {
+            result = (hit: true, sessionOnly: true)
+        }
+        hitCache[id] = result
+        return result
     }
 
-    func sessionOnlyHit(_ c: ApprovalCard) -> Bool { sessionOnly(c.id, Self.searchFields(of: c)) }
-    func sessionOnlyHit(_ t: RunningTask) -> Bool { sessionOnly(t.id, Self.searchFields(of: t)) }
-    func sessionOnlyHit(_ r: ReviewItem) -> Bool { sessionOnly(r.id, Self.searchFields(of: r)) }
-    func sessionOnlyHit(_ d: DebtItem) -> Bool { sessionOnly(d.id, Self.searchFields(of: d)) }
+    func sessionOnlyHit(_ c: ApprovalCard) -> Bool {
+        hitInfo(id: c.id, fields: { Self.searchFields(of: c) }).sessionOnly
+    }
+    func sessionOnlyHit(_ t: RunningTask) -> Bool {
+        hitInfo(id: t.id, fields: { Self.searchFields(of: t) }).sessionOnly
+    }
+    func sessionOnlyHit(_ r: ReviewItem) -> Bool {
+        hitInfo(id: r.id, fields: { Self.searchFields(of: r) }).sessionOnly
+    }
+    func sessionOnlyHit(_ d: DebtItem) -> Bool {
+        hitInfo(id: d.id, fields: { Self.searchFields(of: d) }).sessionOnly
+    }
 
     // §37 session-content layer — state/search_index.json (actd-maintained,
     // Mac-local, NEVER part of dashboard.json). Lazy-loaded and revalidated by
     // (mtime, size) so the ~10s tick never re-parses an unchanged file;
-    // missing/corrupt = the layer is silently absent (field search still works).
-    private var searchIndexText: [String: String] = [:]
+    // missing/corrupt = the layer is silently absent (field search still
+    // works). Texts are stored NORMALIZED once per (re)load — never
+    // re-normalized per keystroke (review fix, perf).
+    private var searchIndexNorm: [String: String] = [:]
     private var searchIndexStamp: (mtime: Date, size: Int)?
 
-    private func sessionText(_ id: String) -> String? {
+    private func sessionNormText(_ id: String) -> String? {
         reloadSearchIndexIfNeeded()
-        return searchIndexText[id]
+        return searchIndexNorm[id]
     }
 
     private func reloadSearchIndexIfNeeded() {
         let path = AppPaths.stateRoot + "/state/search_index.json"
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let mtime = attrs[.modificationDate] as? Date else {
-            searchIndexText = [:]
+            if !searchIndexNorm.isEmpty { hitCache.removeAll() }
+            searchIndexNorm = [:]
             searchIndexStamp = nil
             return
         }
@@ -1198,19 +1259,20 @@ final class DashboardStore: ObservableObject {
             return
         }
         searchIndexStamp = (mtime, size)
+        hitCache.removeAll()   // the session layer changed → hits may change
         guard let data = FileManager.default.contents(atPath: path),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else {
-            searchIndexText = [:]   // corrupt → layer absent, never a crash
+            searchIndexNorm = [:]   // corrupt → layer absent, never a crash
             return
         }
         var out: [String: String] = [:]
         for (k, v) in obj {
             if let entry = v as? [String: Any], let text = entry["text"] as? String {
-                out[k] = text
+                out[k] = SearchMatch.normalize(text)
             }
         }
-        searchIndexText = out
+        searchIndexNorm = out
     }
 
     /// visibleApprovals + search. 占位卡不参与过滤隐藏: the grey processing
@@ -1219,10 +1281,10 @@ final class DashboardStore: ObservableObject {
     /// as a lost capture. (建议卡 likewise stay unfiltered — they never pass
     /// through this projection at all; KanbanView keeps visibleMergeSuggestions.)
     var boardApprovals: [ApprovalCard] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return visibleApprovals }
+        guard !boardFilterQuery.isEmpty else { return visibleApprovals }
         return visibleApprovals.filter {
-            $0.processing || searchHit(q, id: $0.id, fields: Self.searchFields(of: $0))
+            card in card.processing
+                || hitInfo(id: card.id, fields: { Self.searchFields(of: card) }).hit
         }
     }
 
@@ -1233,22 +1295,25 @@ final class DashboardStore: ObservableObject {
     /// Shared RunningTask filter (running / needs_input / completed reuse the
     /// struct).
     private func searchTasks(_ tasks: [RunningTask]) -> [RunningTask] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return tasks }
-        return tasks.filter { searchHit(q, id: $0.id, fields: Self.searchFields(of: $0)) }
+        guard !boardFilterQuery.isEmpty else { return tasks }
+        return tasks.filter { t in
+            hitInfo(id: t.id, fields: { Self.searchFields(of: t) }).hit
+        }
     }
 
     var boardReview: [ReviewItem] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return visibleReview }
-        return visibleReview.filter { searchHit(q, id: $0.id, fields: Self.searchFields(of: $0)) }
+        guard !boardFilterQuery.isEmpty else { return visibleReview }
+        return visibleReview.filter { r in
+            hitInfo(id: r.id, fields: { Self.searchFields(of: r) }).hit
+        }
     }
 
     /// 潜在任务 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
     var boardDebt: [DebtItem] {
-        let q = boardNeedle
-        guard !q.isEmpty else { return visibleDebt }
-        return visibleDebt.filter { searchHit(q, id: $0.id, fields: Self.searchFields(of: $0)) }
+        guard !boardFilterQuery.isEmpty else { return visibleDebt }
+        return visibleDebt.filter { d in
+            hitInfo(id: d.id, fields: { Self.searchFields(of: d) }).hit
+        }
     }
 }
 

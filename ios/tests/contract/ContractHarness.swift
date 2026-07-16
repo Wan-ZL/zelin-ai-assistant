@@ -204,6 +204,23 @@ check(SearchMatch.matches("v0.33", in: ["v0_33 release notes"]),
       "underscore/dot separators strip the same way")
 check(SearchMatch.matches("", in: ["anything"]), "empty query = passthrough")
 check(!SearchMatch.matches("x", in: []), "no fields = no match")
+// review fix — cross-layer AND: the Store appends the session text to the
+// FIELD haystack (one combined AND pool), so "推荐信 chen" matches a card
+// whose display title has 推荐信 while only the transcript mentions chen.
+// Badge truth: fields alone must NOT match in that case.
+let cardFields = ["整理绿卡推荐信材料", "R-1"]
+let sessionText = "和 chen 教授通了电话，聊了下一步"
+check(!SearchMatch.matches("推荐信 chen", in: cardFields),
+      "cross-layer: fields alone miss (badge condition)")
+check(SearchMatch.matches("推荐信 chen", in: cardFields + [sessionText]),
+      "cross-layer: fields + session combined hit (filter condition)")
+// review fix — pre-normalized hot path must agree with the convenience API
+let hay = SearchMatch.normalizedHaystack(cardFields + [sessionText])
+check(SearchMatch.matchesNormalized("推荐信 chen", in: hay)
+        == SearchMatch.matches("推荐信 chen", in: cardFields + [sessionText]),
+      "matchesNormalized == matches over normalizedHaystack")
+check(SearchMatch.matchesNormalized("eb1", in: SearchMatch.normalizedHaystack(["EB-1A"])),
+      "normalizedHaystack strips separators once, matches still hit")
 
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))

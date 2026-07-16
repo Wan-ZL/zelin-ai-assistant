@@ -37,10 +37,24 @@ enum SearchMatch {
 
     /// True when EVERY query term matches (normalized substring) at least one
     /// of `fields`. Empty query / empty terms = true (filtering off).
+    /// Convenience over `matchesNormalized` — hot paths (per-keystroke board
+    /// filtering) should pre-normalize the haystack ONCE per card and call
+    /// the normalized variant instead (review fix: the old lazy haystack
+    /// re-normalized every field once per term).
     static func matches(_ query: String, in fields: [String]) -> Bool {
+        matchesNormalized(query, in: normalizedHaystack(fields))
+    }
+
+    /// Materialize the normalized haystack once (cacheable by callers).
+    static func normalizedHaystack(_ fields: [String]) -> [String] {
+        fields.map { normalize($0) }.filter { !$0.isEmpty }
+    }
+
+    /// Hot-path variant over an ALREADY-normalized haystack (see
+    /// `normalizedHaystack`). Empty query / empty terms = true.
+    static func matchesNormalized(_ query: String, in normalizedFields: [String]) -> Bool {
         let ts = terms(query)
         guard !ts.isEmpty else { return true }
-        let hay = fields.lazy.map { normalize($0) }.filter { !$0.isEmpty }
-        return ts.allSatisfy { t in hay.contains { $0.contains(t) } }
+        return ts.allSatisfy { t in normalizedFields.contains { $0.contains(t) } }
     }
 }

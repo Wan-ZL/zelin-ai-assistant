@@ -1252,11 +1252,20 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **会话内容层（LAST layer）**：`state/search_index.json`
   （`{card_id: {updated_at, text}}`，原子写）——actd 在上条的既有 harvest/
   promotion 触点用 `executor.transcript_plain_text`（主线程 user+assistant
-  纯文本，沿用 v0.33.1 sidechain/isMeta/tool-result 纪律，尾部截 ~50KB/卡）
-  维护，每 pass 顺带 prune 终态/消失卡（文件不存在时零开销）。**该文件是
-  Mac-local 非契约面：永不进 dashboard.json（E2E 看板负载不得增长），手机端
-  不感知。** Mac Store 按 (mtime,size) 懒加载缓存作为最后一层匹配；只靠会话
-  内容命中的卡在过滤时带紫色「命中会话」badge。索引缺失/损坏 = 该层静默缺席
-  （字段搜索照常），绝不崩。
+  纯文本，沿用 v0.33.1 sidechain/isMeta/tool-result 纪律；**首条 user turn
+  跳过**——那是每张卡都相同的派发 prompt 样板，收进索引会让「命中会话」
+  对 卡片/draft 这类词全板亮起，其真实内容 title/plan/sources 已在行字段可搜；
+  后续 user turns（打回反馈/attach 输入）保留；尾部截 ~50KB/卡）维护。
+  每 pass 顺带 prune——**只清不可逆消失的卡**（merged 终态、遗留裸
+  rejected、registry 里已硬删的），trashed/archived 可恢复（restore/
+  unarchive）所以条目保留（文件不存在时零开销）。**该文件是 Mac-local
+  非契约面：永不进 dashboard.json（E2E 看板负载不得增长），手机端不感知。**
+  Mac Store 按 (mtime,size) 懒加载并预归一化缓存；**命中语义 = 跨层合并
+  AND**——每个查询词可由行字段**或**会话文本满足（"推荐信 chen" 命中
+  标题含推荐信、只有会话里提过 chen 的卡）；「命中会话」badge = 命中且
+  仅靠行字段不命中（诚实条件）。输入框即时回显、过滤 ~200ms 去抖，
+  归一化字段/会话文本与逐卡命中结果均按 (dashboard 解码, 查询, 索引
+  mtime) 记忆化——纯 Mac 端实现细节，无契约形状。索引缺失/损坏 = 该层
+  静默缺席（字段搜索照常），绝不崩。
 - **iOS 本期无搜索 UI**（诚实声明）：搜索仍是 Mac 看板专属；iOS 自动获得的只
   是行渲染上的 display_title。webui 搜索面不变。

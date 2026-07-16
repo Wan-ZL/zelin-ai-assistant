@@ -46,18 +46,26 @@ class TranscriptPlainTextTestCase(unittest.TestCase):
 
     def test_main_thread_user_and_assistant_only(self):
         self._write([
-            _line("user", "请研究 EB-1A 的推荐信"),
+            # FIRST user turn = the injected dispatch prompt — boilerplate
+            # shared by every card, excluded (review fix: it lit the 命中会话
+            # badge board-wide for words like 卡片/FINAL DRAFT).
+            _line("user", "# Requirement R-1 …QUALITY GATE… CARD TITLE 样板"),
             _line("assistant", "好的，先列出三个方向"),
             _line("assistant", "sidechain 的话", isSidechain=True),
             _line("user", "meta 行", isMeta=True),
             json.dumps({"type": "user", "toolUseResult": {"x": 1},
                         "message": {"content": [
                             {"type": "tool_result", "content": "tool"}]}}),
+            # LATER user turns are genuine conversation (rework feedback,
+            # attach input) — they stay searchable.
+            _line("user", "打回：请研究 EB-1A 的推荐信"),
             _line("assistant", "最终结论：绿卡材料齐了"),
         ])
         text = executor.transcript_plain_text(SID)
-        self.assertIn("请研究 EB-1A 的推荐信", text)
+        self.assertIn("打回：请研究 EB-1A 的推荐信", text)
+        self.assertIn("好的，先列出三个方向", text)
         self.assertIn("最终结论：绿卡材料齐了", text)
+        self.assertNotIn("QUALITY GATE", text)   # dispatch prompt excluded
         self.assertNotIn("sidechain 的话", text)
         self.assertNotIn("meta 行", text)
         self.assertNotIn("tool", text)
@@ -77,6 +85,9 @@ class UpdateAndPruneTestCase(unittest.TestCase):
         config.ensure_state_dirs()
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
+        if registry.ARCHIVE_DIR.exists():
+            for p in registry.ARCHIVE_DIR.glob("*.yaml"):
+                p.unlink()
         if search_index.INDEX_PATH.exists():
             search_index.INDEX_PATH.unlink()
 
@@ -109,22 +120,47 @@ class UpdateAndPruneTestCase(unittest.TestCase):
         data = json.loads(search_index.INDEX_PATH.read_text(encoding="utf-8"))
         self.assertEqual(list(data), ["R-962"])
 
-    def test_prune_drops_terminal_and_absent(self):
-        live = Requirement(id="R-963", title="live",
-                           status=State.EXECUTING.value)
-        registry.save(live)
-        binned = Requirement(id="R-964", title="binned",
-                             status=State.TRASHED.value)
-        registry.save(binned)
+    def test_prune_is_irreversible_only(self):
+        # review fix: trashed/archived are RECOVERABLE — their entries must
+        # survive the ~10s prune, or an accidental 删除+恢复 permanently kills
+        # session search. Only merged / absent (hard-purged) drop.
+        registry.save(Requirement(id="R-963", title="live",
+                                  status=State.EXECUTING.value))
+        registry.save(Requirement(id="R-964", title="binned",
+                                  status=State.TRASHED.value))
+        registry.save(Requirement(id="R-965", title="merged out",
+                                  status=State.MERGED.value,
+                                  merged_into="R-963"))
+        sealed = Requirement(id="R-966", title="sealed",
+                             status=State.DELIVERED.value)
+        registry.save(sealed)
+        registry.archive(sealed, reason="user")
         search_index.INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
         search_index.INDEX_PATH.write_text(json.dumps({
             "R-963": {"updated_at": "x", "text": "keep"},
-            "R-964": {"updated_at": "x", "text": "trashed"},
-            "R-999": {"updated_at": "x", "text": "gone"},
+            "R-964": {"updated_at": "x", "text": "trashed keeps"},
+            "R-965": {"updated_at": "x", "text": "merged drops"},
+            "R-966": {"updated_at": "x", "text": "archived keeps"},
+            "R-999": {"updated_at": "x", "text": "purged drops"},
         }), encoding="utf-8")
         self.assertEqual(search_index.prune(), 2)
         data = json.loads(search_index.INDEX_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(list(data), ["R-963"])
+        self.assertEqual(sorted(data), ["R-963", "R-964", "R-966"])
+
+    def test_trash_then_restore_keeps_session_search(self):
+        # end-to-end regression for the review finding: trash → many prune
+        # passes → restore, and the card's transcript text is still there.
+        req = Requirement(id="R-967", title="t", status=State.CARD_SENT.value)
+        registry.save(req)
+        search_index.INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        search_index.INDEX_PATH.write_text(json.dumps({
+            "R-967": {"updated_at": "x", "text": "会话里聊过的关键内容"},
+        }), encoding="utf-8")
+        registry.trash(req, "deleted")
+        self.assertEqual(search_index.prune(), 0)
+        self.assertEqual(search_index.prune(), 0)   # repeated passes too
+        registry.restore(req)
+        self.assertIn("R-967", search_index.load_index())
 
     def test_prune_missing_file_is_free(self):
         self.assertEqual(search_index.prune(), 0)

@@ -968,9 +968,17 @@ def _plain_texts(path: Path) -> list[str]:
 
     Same discipline as :func:`_assistant_texts` / :func:`_is_user_turn`
     (v0.33.1): sidechain/isMeta/tool-result lines are never conversation text.
-    Used by the §37 Mac-local search index — never by delivery harvesting.
+    The FIRST user turn is skipped too (review fix): it is the injected
+    dispatch prompt — pages of near-identical boilerplate (quality gate,
+    CARD TITLE/FINAL DRAFT instructions, memory head) shared by EVERY card,
+    which would light the 命中会话 badge board-wide for words like 卡片/draft.
+    Its real content (title/plan/sources) is already searchable as projected
+    row fields; later user turns (rework feedback, attach input) are genuine
+    conversation and stay. Used by the §37 Mac-local search index — never by
+    delivery harvesting.
     """
     out: list[str] = []
+    seen_first_user = False
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             try:
@@ -980,6 +988,9 @@ def _plain_texts(path: Path) -> list[str]:
             if not isinstance(d, dict) or d.get("isSidechain"):
                 continue
             if _is_user_turn(d):
+                if not seen_first_user:
+                    seen_first_user = True   # dispatch prompt — boilerplate
+                    continue
                 content = (d.get("message") or {}).get("content")
                 if isinstance(content, str):
                     text = content

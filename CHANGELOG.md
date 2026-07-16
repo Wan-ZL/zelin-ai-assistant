@@ -45,12 +45,21 @@ that stay readable and evolve with the work (CONTRACT §37, add-only).
     radar updates, newly projected as a capped `notes_text` row field),
     delivered summaries and final drafts, source quotes, and the agent name.
   - **session-content layer**: actd maintains `state/search_index.json`
-    (per-card main-thread transcript text, tail-capped ~50KB, refreshed only
+    (per-card main-thread transcript text — the boilerplate dispatch prompt
+    of the first user turn is excluded — tail-capped ~50KB, refreshed only
     at the existing harvest/promotion touchpoints — zero new LLM calls) and
-    the Mac app searches it as the LAST layer; cards that matched only
-    through their session get a purple 「命中会话」 badge. The file is
-    Mac-local and never enters dashboard.json (the E2E board payload does not
-    grow). Missing/corrupt index = the layer is silently absent.
+    the Mac app searches it as the LAST layer with cross-layer AND: each
+    query word may be satisfied by a row field OR the transcript, so
+    "推荐信 chen" finds the card whose title says 推荐信 while only the
+    session mentions chen. Cards that matched but not on their visible
+    fields alone get a purple 「命中会话」 badge. Pruning removes only
+    irreversibly-gone cards (merged / hard-purged) — a trashed-then-restored
+    card keeps its session search. The file is Mac-local and never enters
+    dashboard.json (the E2E board payload does not grow); missing/corrupt
+    index = the layer is silently absent. Typing stays smooth on large
+    boards: the input echoes instantly, filtering debounces ~200 ms, and
+    normalized card/session text plus per-card hit results are memoized per
+    dashboard decode / query / index reload.
 - **活标题 display_title (§37)** — the internal `title` stays FROZEN (it is
   the dedupe/re-raise identity anchor); a new optional `display_title` +
   `user_titled` + `former_titles` ride the registry and every dashboard row:

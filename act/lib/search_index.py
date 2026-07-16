@@ -9,7 +9,8 @@ E2E board payload must not grow by megabytes of transcripts.
 
 Update discipline: actd refreshes an entry ONLY at the existing settle/harvest/
 reconcile touchpoints (zero new LLM calls, zero new transcript scans in the hot
-loop) and prunes terminal/absent cards once per pass. Everything here is
+loop) and prunes IRREVERSIBLY-gone cards once per pass (recoverable trashed/
+archived entries survive — see :func:`prune`). Everything here is
 best-effort and never raises into the daemon; a missing/corrupt file simply
 means the layer is absent (board search still works on the projected fields).
 """
@@ -73,12 +74,15 @@ def update_card(card_id: str, session_id: Optional[str]) -> bool:
 
 
 def prune() -> int:
-    """Drop entries for terminal/absent cards. Returns removed count.
+    """Drop entries for IRREVERSIBLY-gone cards only. Returns removed count.
 
-    Cheap when the index doesn't exist (no registry scan at all). Terminal =
-    trashed/rejected/merged (incl. legacy ``merged_into:``); archived cards
-    are absent from the default registry scan and prune the same way. Never
-    raises into the daemon pass.
+    Cheap when the index doesn't exist (no registry scan at all). Review fix
+    (v0.37): trashed and archived cards are RECOVERABLE (restore / unarchive)
+    — actd prunes every ~10s pass, so treating trashed as terminal meant one
+    accidental 删除 + 恢复 permanently killed session search for that card.
+    Only truly-gone shapes leave the index: merged (terminal, no undo, incl.
+    legacy ``merged_into:``), legacy bare ``rejected``, and cards absent from
+    the registry entirely (hard-purged). Never raises into the daemon pass.
     """
     try:
         if not INDEX_PATH.exists():
@@ -88,9 +92,8 @@ def prune() -> int:
             return 0
         from act.lib import registry  # lazy import, same reason as above
         live: set = set()
-        for r in registry.load_all():
+        for r in registry.load_all(include_archived=True):
             if r.is_merged or str(r.status) in (
-                    registry.State.TRASHED.value,
                     registry.State.REJECTED.value,
                     registry.State.MERGED.value):
                 continue
