@@ -416,6 +416,12 @@ final class DepsModel: ObservableObject {
             p.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
             var env = ProcessInfo.processInfo.environment
             env["AIASSISTANT_HOME"] = cwd
+            // v0.42 (audit #16 review): pass the app's EFFECTIVE language so
+            // python-side prose (failures.ui_lang → doctor detail/fix, …)
+            // matches the app exactly — an en-locale user without a persisted
+            // override otherwise saw en classified rows mixed with zh
+            // unclassified ones.
+            env["AIASSISTANT_UI_LANG"] = LanguageMirror.current
             p.environment = env
         }
         let pipe = Pipe()
@@ -1217,6 +1223,7 @@ final class UpdateCheckModel: ObservableObject {
             p.currentDirectoryURL = URL(fileURLWithPath: root, isDirectory: true)
             var env = ProcessInfo.processInfo.environment
             env["AIASSISTANT_HOME"] = root
+            env["AIASSISTANT_UI_LANG"] = LanguageMirror.current   // §15: python copy matches the app language
             p.environment = env
             let outPipe = Pipe()
             p.standardOutput = outPipe

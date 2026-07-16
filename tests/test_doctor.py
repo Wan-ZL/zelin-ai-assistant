@@ -606,41 +606,76 @@ class WindowsScheduledTasksDoctorTestCase(unittest.TestCase):
 
 class DoctorLanguageRoutingTestCase(unittest.TestCase):
     """v0.42 (audit #16): the unclassified checks' detail/fix prose follows the
-    §15 single language switch (act/lib/failures.pick); commands stay English
-    in both variants. _check_gh's missing-binary WARN is the probe — it only
-    touches probes.which, so the test needs no filesystem fixtures."""
+    §15 language resolution (act/lib/failures.ui_lang): AIASSISTANT_UI_LANG
+    env var (app-spawned) > persisted setting (overrides/config.yaml) >
+    system locale (zh* → zh, else en). Commands stay English in every case.
+    _check_gh's missing-binary WARN is the probe — it only touches
+    probes.which, so the test needs no filesystem fixtures."""
 
     def setUp(self):
         config.ensure_state_dirs()
-        self._stashed = None
-        if config.SETTINGS_OVERRIDES_PATH.exists():
-            self._stashed = config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8")
-            config.SETTINGS_OVERRIDES_PATH.unlink()
+        # hermetic: neither source may carry a persisted language going in
+        self._stashed_overrides = self._stash(config.SETTINGS_OVERRIDES_PATH)
+        self._stashed_config = self._stash(config.CONFIG_PATH)
         self.addCleanup(self._restore)
 
+    @staticmethod
+    def _stash(path):
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            path.unlink()
+            return content
+        return None
+
     def _restore(self):
-        if self._stashed is not None:
-            config.SETTINGS_OVERRIDES_PATH.write_text(self._stashed, encoding="utf-8")
-        elif config.SETTINGS_OVERRIDES_PATH.exists():
-            config.SETTINGS_OVERRIDES_PATH.unlink()
+        for path, content in ((config.SETTINGS_OVERRIDES_PATH, self._stashed_overrides),
+                              (config.CONFIG_PATH, self._stashed_config)):
+            if content is not None:
+                path.write_text(content, encoding="utf-8")
+            elif path.exists():
+                path.unlink()
 
-    def _gh_missing(self, lang):
-        config.SETTINGS_OVERRIDES_PATH.write_text(
-            json.dumps({"language": lang}), encoding="utf-8")
-        return doctor._check_gh(doctor.Probes(which=lambda _n: None))
+    def _gh(self, env=None, persisted=None):
+        """Run the check with a controlled environment: the language-relevant
+        vars are removed, then `env` applied; `persisted` writes the §15
+        overrides file first."""
+        if persisted is not None:
+            config.SETTINGS_OVERRIDES_PATH.write_text(
+                json.dumps({"language": persisted}), encoding="utf-8")
+        base = {k: v for k, v in os.environ.items()
+                if k not in ("AIASSISTANT_UI_LANG", "LANG", "LC_ALL")}
+        base.update(env or {})
+        with mock.patch.dict(os.environ, base, clear=True):
+            return doctor._check_gh(doctor.Probes(which=lambda _n: None))
 
-    def test_zh_detail_with_english_command_fix(self):
-        r = self._gh_missing("zh")
+    def test_persisted_zh_detail_with_english_command_fix(self):
+        r = self._gh(persisted="zh")
         self.assertEqual(r.status, doctor.WARN)
         self.assertIn("缺失", r.detail)
         self.assertIn("brew install gh", r.fix)   # the command stays a command
 
-    def test_en_detail_with_english_command_fix(self):
-        r = self._gh_missing("en")
+    def test_persisted_en_detail_with_english_command_fix(self):
+        r = self._gh(persisted="en")
         self.assertEqual(r.status, doctor.WARN)
         self.assertIn("missing", r.detail)
         self.assertNotIn("缺失", r.detail)
         self.assertIn("brew install gh", r.fix)
+
+    def test_env_var_wins_over_persisted_setting(self):
+        # app-spawned: the Mac app passes its EFFECTIVE language — it must
+        # beat a stale persisted value so app output always matches the app.
+        r = self._gh(env={"AIASSISTANT_UI_LANG": "en"}, persisted="zh")
+        self.assertIn("missing", r.detail)
+        r = self._gh(env={"AIASSISTANT_UI_LANG": "zh"}, persisted="en")
+        self.assertIn("缺失", r.detail)
+
+    def test_system_locale_fallback_when_nothing_persisted(self):
+        # cron/CLI with no persisted setting: system locale decides —
+        # matching the Swift first-run default instead of hardcoded zh.
+        self.assertIn("缺失", self._gh(env={"LANG": "zh_CN.UTF-8"}).detail)
+        self.assertIn("缺失", self._gh(env={"LC_ALL": "zh_TW.UTF-8"}).detail)
+        self.assertIn("missing", self._gh(env={"LANG": "en_US.UTF-8"}).detail)
+        self.assertIn("missing", self._gh().detail)   # no locale at all → en
 
 
 class CronProbeSchemaTestCase(unittest.TestCase):

@@ -52,13 +52,17 @@ merge wave order.
   (「已逾期 N 天」/「今天截止」/「还剩 N 天」 instead of `(-3d)`); the tier chip
   falls back to a local hint map (T0 自动执行 / T1 一键可批 / T2 需文字确认,
   unknown → 未分级) so it never renders a bare "T1"; 「重复×N」 is renamed
-  「被提×N」 with a tooltip explaining restatements were auto-merged.
+  「被提×N」 with a tooltip explaining restatements were merged into the card.
 - **Sidebar wording（audit #15）** — 「录制与 ingest」→「录制与数据接入」
   ("Recording & Data Sources"); display only, rawValue/analytics ids frozen.
 - **Doctor speaks the UI language（audit #16）** — `act.doctor`'s unclassified
   detail/fix prose now routes through the `failures.pick` single language
   switch (§15); shell commands stay English in both variants — they are
-  commands.
+  commands. The §15 resolution itself now bridges the two halves: the Mac app
+  passes its effective display language via `AIASSISTANT_UI_LANG` when
+  spawning python with user-facing output, and with nothing persisted python
+  falls back to the system locale (zh* → zh, else en) instead of hardcoded
+  zh — no more mixed-language doctor pages for en-locale users.
 - **Radar extraction framing（audit #19）** — `act.radar`'s extraction prompt
   is parameterized on `owner.name` and reframed as "asks directed at the
   owner"; the card source `who` names the actual note instead of a fabricated

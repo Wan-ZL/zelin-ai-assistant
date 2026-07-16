@@ -11,6 +11,7 @@ failed attempt itself when resume bailed before its own bookkeeping.
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
+import os
 import unittest
 from unittest import mock
 
@@ -38,6 +39,12 @@ class ResumeBookkeepingBase(unittest.TestCase):
         p = mock.patch.object(actd.notify, "notify", mock.Mock(return_value=True))
         self.notify = p.start()
         self.addCleanup(p.stop)
+        # v0.42 §15: notify copy follows AIASSISTANT_UI_LANG > persisted >
+        # system locale — pin zh so the zh-title assertion stays
+        # locale-independent on any runner.
+        lang = mock.patch.dict(os.environ, {"AIASSISTANT_UI_LANG": "zh"})
+        lang.start()
+        self.addCleanup(lang.stop)
         # dead-path probe must stay hermetic (no transcript reads)
         p2 = mock.patch.object(actd, "_promote_if_delivered", return_value=False)
         p2.start()

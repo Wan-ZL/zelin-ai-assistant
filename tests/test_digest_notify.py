@@ -6,6 +6,7 @@ Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py;
 build_digest / oneonone 被 mock 掉，不触 registry / workbench / analytics 报告。
 """
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -62,8 +63,14 @@ class DigestNotifyTestCase(unittest.TestCase):
         self.assertIn(str(path), body)          # 指到 digest 文件…
         self.assertIn("Open", body)             # …并带下一步动作
 
-    def test_zh_default_keeps_chinese_copy_with_next_step(self):
-        path = digest.write_digest()
+    def test_zh_locale_fallback_keeps_chinese_copy_with_next_step(self):
+        # v0.42 §15: with nothing persisted the language follows the system
+        # locale (was: hardcoded zh) — pin a zh locale to exercise that path.
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("AIASSISTANT_UI_LANG", "LC_ALL")}
+        env["LANG"] = "zh_CN.UTF-8"
+        with mock.patch.dict(os.environ, env, clear=True):
+            path = digest.write_digest()
         (title, body) = self.notify.call_args[0][:2]
         self.assertEqual(title, "周一 digest 已生成")
         self.assertIn(str(path), body)

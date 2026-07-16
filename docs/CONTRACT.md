@@ -1193,3 +1193,10 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 文案走 `failures.pick` §15 单开关、radar 提取提示词参数化 `owner.name` 且来源
 `who` 不再虚构 "manager"——`who` 现为来源笔记名，属新写入卡片的展示字段值变化，
 不是形状变化）。
+
+**§15 语言解析顺序补充（add-only）**：python 侧 `failures.ui_lang()` 依次取
+① 环境变量 `AIASSISTANT_UI_LANG`（`zh`|`en`——Mac App spawn 有用户可见输出的
+python 时传入自己的实际显示语言，App 发起的输出与 App 严格同语言）→ ② 持久化
+设置（`state/settings_overrides.json` 的 `language`，其次 `config.yaml` 的
+`language`）→ ③ 系统 locale（`LC_ALL`/`LANG`：`zh*` → zh，否则 en——与 Swift
+首跑默认一致；旧行为是硬编码 zh）。

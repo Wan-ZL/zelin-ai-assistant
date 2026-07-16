@@ -1061,10 +1061,13 @@ struct ApprovalCardView: View {
             }
             if let r = card.repeated, r >= 2 {
                 // v0.42 (audit #14): 「重复×N」 read like an error — it is the
-                // restatement counter; the .help spells that out.
+                // restatement counter; the .help spells that out. No 「自动」:
+                // repeated also accumulates via the user-approved merge path
+                // (契约四 sums both counters on 采纳), so "automatically"
+                // would overclaim for those cards.
                 Badge(text: L("被提×\(r)", "Raised ×\(r)"), color: .orange)
-                    .help(L("这件事被提起过 \(r) 次，重述已自动合并进这张卡",
-                            "This came up \(r) times — restatements were merged into this card automatically"))
+                    .help(L("这件事被提起过 \(r) 次，重述已合并进这张卡",
+                            "This came up \(r) times — restatements were merged into this card"))
             }
             if card.green_sign == true {
                 Badge(text: L("需 manager green-sign（只出草稿）",

@@ -15,6 +15,7 @@ Decision chain per executing item, against a FAKE `claude agents` roster
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
+import os
 import unittest
 from unittest import mock
 
@@ -51,6 +52,12 @@ class ReconcileBase(unittest.TestCase):
         p = mock.patch.object(actd.notify, "notify", mock.Mock(return_value=True))
         self.notify = p.start()
         self.addCleanup(p.stop)
+        # v0.42 §15: notify copy follows AIASSISTANT_UI_LANG > persisted >
+        # system locale — pin zh so the zh-title assertions below stay
+        # locale-independent on any runner.
+        lang = mock.patch.dict(os.environ, {"AIASSISTANT_UI_LANG": "zh"})
+        lang.start()
+        self.addCleanup(lang.stop)
 
     def _mk_req(self, req_id="R-900", status=State.EXECUTING.value, execution=None):
         # dispatch stores the SHORT id; the roster is dual-keyed (short + full)
