@@ -207,7 +207,8 @@ struct RunningRow: View {
                     if task.state == "queued" { MetaChip(text: L("排队中", "Queued")) }
                     Spacer()
                 }
-                Text(task.summary ?? task.name).font(.subheadline).fontWeight(.medium)
+                // §37: displayHeadline = user-pinned name → summary → display title → name
+                Text(task.displayHeadline).font(.subheadline).fontWeight(.medium)
                 // §39: a failed answer delivery reroutes the card here with
                 // last_error — without this line the phone shows the exact
                 // same card for success and failure (Mac renders it already).
@@ -367,7 +368,8 @@ struct ReviewRow: View {
     var body: some View {
         CardChrome {
             VStack(alignment: .leading, spacing: 8) {
-                Text(item.summary ?? item.name).font(.subheadline).fontWeight(.medium)
+                // §37: displayHeadline = user-pinned name → summary → display title → name
+                Text(item.displayHeadline).font(.subheadline).fontWeight(.medium)
                 if let ds = item.delivered_summary { Text(ds).font(.caption).foregroundStyle(.secondary) }
                 if !item.dod.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
@@ -390,7 +392,7 @@ struct DoneRow: View {
     var body: some View {
         CardChrome {
             VStack(alignment: .leading, spacing: 8) {
-                Text(task.delivered_summary ?? task.summary ?? task.name)
+                Text(task.delivered_summary ?? task.displayHeadline)
                     .font(.subheadline).foregroundStyle(.secondary)
                 ActionBar(cardId: task.id, actions: [
                     LaneAction(title: L("退回待验收", "Reopen review"), verb: .revert_review),
@@ -447,7 +449,7 @@ struct CardDetailSheet: View {
                     ])
                 }
             }
-            .navigationTitle(card.title)
+            .navigationTitle(card.display_title ?? card.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("完成", "Done")) { dismiss() } } }
         }
@@ -604,6 +606,8 @@ struct MergeSuggestionCard: View {
         case "high":   MetaChip(text: L("置信 高", "Conf: high"), color: .green)
         case "medium": MetaChip(text: L("置信 中", "Conf: med"), color: .orange)
         case "low":    MetaChip(text: L("置信 低", "Conf: low"), color: .gray)
+        // §38 auto suggestions: deterministic rule, not an AI analysis
+        case "deterministic": MetaChip(text: L("规则判定", "Rule-based"), color: .purple)
         default:       MetaChip(text: c, color: .gray)
         }
     }

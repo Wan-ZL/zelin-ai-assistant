@@ -339,6 +339,240 @@ struct CaptionDisplayState: Equatable {
     }
 }
 
+// MARK: - BYO speech credential (new-console API key OR legacy App ID + token)
+//
+// v0.37.1: the OLD Volcano console issues an App ID (digits) + Access Token
+// pair instead of the new console's single API key, and the WS handshake
+// needs different auth headers per generation (X-Api-Key vs X-Api-App-Key +
+// X-Api-Access-Key). One enum owns paste auto-detection, the stored-file
+// format, and the header mapping so the engine, the 检测 probe, and the
+// settings row can never disagree about what a saved credential means.
+
+enum VolcanoSpeechCredential: Equatable {
+    case apiKey(String)
+    case legacy(appID: String, accessToken: String)
+
+    /// Single line "AppID<sep>Token": old-console App IDs are 6–12 digits and
+    /// Access Tokens are long opaque strings — a new-console API key never
+    /// has this digits+separator prefix shape.
+    private static let legacyOneLine = try! NSRegularExpression(
+        pattern: #"^(\d{6,12})[\s:：,;，；]+(\S{20,})$"#)
+    /// Labeled one-line variant: covers a labeled two-line paste that a
+    /// single-line field flattened (newline → space, or dropped outright) —
+    /// the console's own labels survive the flattening and mark the boundary
+    /// the lost newline used to. The token label is REQUIRED here (an
+    /// unlabeled flattened pair already matches legacyOneLine above).
+    private static let legacyLabeledOneLine = try! NSRegularExpression(
+        pattern: #"^(?:app[\s_-]*(?:id|key)\s*[:：])?\s*(\d{6,12})\s*[\s:：,;，；]*(?:access[\s_-]*token|token|secret)\s*[:：]\s*(\S{20,})$"#,
+        options: [.caseInsensitive])
+
+    var isLegacy: Bool {
+        if case .legacy = self { return true }
+        return false
+    }
+
+    /// Auto-detect a user paste. Legacy shapes: two non-empty lines whose
+    /// halves actually LOOK like the pair (App ID first; the console's
+    /// "App ID:" / "Access Token:" labels — and our own stored labels — are
+    /// stripped first), or one "AppID<sep>Token" line, labeled or not.
+    /// Everything else is a new-console API key, passed through unchanged —
+    /// including a hard-wrapped key, which re-joins instead of being torn
+    /// into a bogus pair. nil = nothing pasted.
+    static func parse(_ input: String) -> VolcanoSpeechCredential? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if lines.count >= 2 {
+            let id = stripLabel(lines[0])
+            let token = stripLabel(lines[1])
+            if isAppID(id), looksLikeToken(token) {
+                return .legacy(appID: id, accessToken: token)
+            }
+            // not a credential pair — most plausibly one key hard-wrapped
+            // across lines; joining restores it
+            return .apiKey(lines.joined())
+        }
+        for regex in [legacyOneLine, legacyLabeledOneLine] {
+            let whole = NSRange(trimmed.startIndex..., in: trimmed)
+            if let m = regex.firstMatch(in: trimmed, range: whole),
+               let idRange = Range(m.range(at: 1), in: trimmed),
+               let tokenRange = Range(m.range(at: 2), in: trimmed) {
+                return .legacy(appID: String(trimmed[idRange]),
+                               accessToken: String(trimmed[tokenRange]))
+            }
+        }
+        return .apiKey(trimmed)
+    }
+
+    /// 6–12 ASCII digits — the old console's App ID shape.
+    private static func isAppID(_ s: String) -> Bool {
+        (6...12).contains(s.count) && s.allSatisfy { $0.isASCII && $0.isNumber }
+    }
+
+    /// One long opaque token (the console's Access Tokens are 32 chars).
+    private static func looksLikeToken(_ s: String) -> Bool {
+        s.count >= 20 && !s.contains(where: \.isWhitespace)
+    }
+
+    /// "App ID: 321…" / "ACCESS_TOKEN：2tz…" / "appid:321…" → the bare value.
+    /// The prefix before the first colon is normalized (lowercased; spaces,
+    /// underscores and dashes dropped) and must be a KNOWN credential label —
+    /// any other prefix leaves the line untouched, because a raw key may
+    /// legitimately contain a colon.
+    private static func stripLabel(_ line: String) -> String {
+        guard let colon = line.firstIndex(where: { $0 == ":" || $0 == "：" })
+        else { return line }
+        let label = line[..<colon].lowercased()
+            .filter { !$0.isWhitespace && $0 != "_" && $0 != "-" }
+        let known = ["appid", "appkey", "accesstoken", "token", "secret"]
+        guard known.contains(label) else { return line }
+        return String(line[line.index(after: colon)...])
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Content stored in config/secrets/volcano-speech-key.txt (CONTRACT §36
+    /// add-only): the legacy pair = two labeled lines, unambiguous against a
+    /// bare single-line new-console key.
+    var fileRepresentation: String {
+        switch self {
+        case .apiKey(let key): return key
+        case .legacy(let appID, let accessToken):
+            return "appid:\(appID)\ntoken:\(accessToken)"
+        }
+    }
+
+    /// Decode the stored secrets file. Two labeled lines = legacy pair; any
+    /// bare content = a new-console API key — files saved before v0.37.1
+    /// keep working untouched. nil = empty file.
+    static func decode(_ stored: String) -> VolcanoSpeechCredential? {
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if lines.count == 2, lines[0].lowercased().hasPrefix("appid:"),
+           lines[1].lowercased().hasPrefix("token:") {
+            let id = String(lines[0].dropFirst("appid:".count))
+                .trimmingCharacters(in: .whitespaces)
+            let token = String(lines[1].dropFirst("token:".count))
+                .trimmingCharacters(in: .whitespaces)
+            if !id.isEmpty, !token.isEmpty {
+                return .legacy(appID: id, accessToken: token)
+            }
+        }
+        return .apiKey(trimmed)
+    }
+
+    /// WS handshake auth headers per console generation: new console =
+    /// X-Api-Key; old console = X-Api-App-Key + X-Api-Access-Key; the
+    /// resource + request ids ride along in both.
+    func wsHeaders(resourceID: String,
+                   requestID: String) -> [(field: String, value: String)] {
+        var headers: [(field: String, value: String)]
+        switch self {
+        case .apiKey(let key):
+            headers = [("X-Api-Key", key)]
+        case .legacy(let appID, let accessToken):
+            headers = [("X-Api-App-Key", appID),
+                       ("X-Api-Access-Key", accessToken)]
+        }
+        headers.append(("X-Api-Resource-Id", resourceID))
+        headers.append(("X-Api-Request-Id", requestID))
+        return headers
+    }
+}
+
+// MARK: - key 检测 verdict mapping
+//
+// The 检测 buttons (CaptionKeyProbe in LiveCaptions.swift) classify their raw
+// network outcomes through these pure functions so the UI copy and the
+// harness assertions share one truth. Raw codes/messages always ride along —
+// unknown codes are shown as-is, never guessed at.
+
+enum CaptionKeyVerdict: Equatable {
+    case ok
+    /// The credential itself was rejected (HTTP or in-band 401/403): invalid
+    /// key/token, or the speech service was never activated for the account.
+    case badKey(detail: String)
+    /// Authenticated, but the server names a resource/activation problem.
+    case resourceNotEnabled(code: String, message: String)
+    /// Ark only: the configured model ID does not exist / is not opened.
+    case modelNotFound(detail: String)
+    /// Anything else the service said — raw code + message, no guessing.
+    case serviceError(code: String, message: String)
+    /// DNS/timeout/refused — the credential's verdict is unknown.
+    case network(detail: String)
+}
+
+enum DoubaoProbeLogic {
+    /// Server messages naming a resource/activation problem. The sauc error
+    /// code table is not exhaustively public, so sniff the message text
+    /// instead of hardcoding undocumented numeric codes.
+    static func mentionsResource(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("resource") || lower.contains("未开通")
+            || lower.contains("not granted") || lower.contains("permission")
+    }
+
+    /// First server frame of the 检测 handshake → verdict. Any non-error
+    /// frame means the server acked the session config: credential works.
+    static func verdict(for frame: DoubaoFrame.ServerFrame) -> CaptionKeyVerdict {
+        guard frame.isError else { return .ok }
+        let code = frame.errorCode ?? 0
+        let text = String(data: frame.payload, encoding: .utf8) ?? ""
+        if code == 401 || code == 403 {
+            return .badKey(detail: text.isEmpty ? "\(code)" : "\(code) \(text)")
+        }
+        if mentionsResource(text) {
+            return .resourceNotEnabled(code: "\(code)", message: text)
+        }
+        return .serviceError(code: "\(code)", message: text)
+    }
+
+    /// The WS upgrade itself was refused (HTTP status, no frames exchanged).
+    static func verdict(upgradeStatus: Int, message: String) -> CaptionKeyVerdict {
+        // 101 = the upgrade already SUCCEEDED — a transport failure carrying
+        // it is a connection dropped AFTER the handshake, not a service
+        // refusal; the credential's verdict is unknown.
+        if upgradeStatus == 101 {
+            return .network(detail: message.isEmpty
+                ? "connection lost after handshake" : message)
+        }
+        if upgradeStatus == 401 || upgradeStatus == 403 {
+            if mentionsResource(message) {
+                return .resourceNotEnabled(code: "HTTP \(upgradeStatus)",
+                                           message: message)
+            }
+            return .badKey(detail: message.isEmpty
+                ? "HTTP \(upgradeStatus)" : "HTTP \(upgradeStatus) \(message)")
+        }
+        return .serviceError(code: "HTTP \(upgradeStatus)", message: message)
+    }
+}
+
+enum ArkProbeLogic {
+    /// Ark chat-completion probe: HTTP status + the error body's code/message
+    /// → verdict. A missing/unopened model is its own case (the key may be
+    /// perfectly fine — the fix is the model-ID field, not the key).
+    static func verdict(status: Int, errorCode: String,
+                        errorMessage: String) -> CaptionKeyVerdict {
+        if (200..<300).contains(status) { return .ok }
+        let detail = [errorCode, errorMessage].filter { !$0.isEmpty }
+            .joined(separator: ": ")
+        if status == 401 || status == 403 {
+            return .badKey(detail: detail.isEmpty ? "HTTP \(status)" : detail)
+        }
+        let lowerCode = errorCode.lowercased()
+        if status == 404 || lowerCode.contains("notfound")
+            || lowerCode.contains("modelnotopen") {
+            return .modelNotFound(detail: detail.isEmpty ? "HTTP \(status)" : detail)
+        }
+        return .serviceError(code: "HTTP \(status)", message: detail)
+    }
+}
+
 // MARK: - translation direction
 
 enum TranslateDirection {

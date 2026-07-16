@@ -253,7 +253,8 @@ class ReworkRoundScopingTestCase(AuditHarvestBase):
             _user("打回：换个口吻重写"),
         ])
         self.assertEqual(executor.harvest_delivery(SID),
-                         {"delivered_summary": None, "final_draft": None})
+                         {"delivered_summary": None, "final_draft": None,
+                          "card_title": None})
 
     def test_new_draft_after_feedback_wins(self):
         self._write([

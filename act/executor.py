@@ -368,6 +368,17 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
         "filename)."
     )
 
+    # §37 living display title — OPTIONAL, all delivery modes: the work often
+    # outgrows the card's original name; the harvest side parses this line at
+    # the same promotion points that pick up delivered_summary.
+    blocks.append(
+        "\n## CARD TITLE (optional)\n"
+        "如果这轮工作让卡片现在的名字过时了（讨论演化出了新的实质），在结束总结里"
+        "加**单独一行** `CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头，说清"
+        "这卡现在在干什么；chat 交付时放在 FINAL DRAFT: 行之前）。名字仍然贴切就"
+        "省略这一行。"
+    )
+
     if delivery_mode == "chat":
         blocks.append(
             f"\nWork from the directory at {target}. "
@@ -952,6 +963,92 @@ def _last_assistant_text(path: Path) -> Optional[str]:
     return texts[-1] if texts else None
 
 
+def _plain_texts(path: Path) -> list[str]:
+    """Main-thread USER + ASSISTANT plain texts of a transcript, in order.
+
+    Same discipline as :func:`_assistant_texts` / :func:`_is_user_turn`
+    (v0.33.1): sidechain/isMeta/tool-result lines are never conversation text.
+    The FIRST user turn is skipped too (review fix): it is the injected
+    dispatch prompt — pages of near-identical boilerplate (quality gate,
+    CARD TITLE/FINAL DRAFT instructions, memory head) shared by EVERY card,
+    which would light the 命中会话 badge board-wide for words like 卡片/draft.
+    Its real content (title/plan/sources) is already searchable as projected
+    row fields; later user turns (rework feedback, attach input) are genuine
+    conversation and stay. Used by the §37 Mac-local search index — never by
+    delivery harvesting.
+    """
+    out: list[str] = []
+    seen_first_user = False
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(d, dict) or d.get("isSidechain"):
+                continue
+            if _is_user_turn(d):
+                if not seen_first_user:
+                    seen_first_user = True   # dispatch prompt — boilerplate
+                    continue
+                content = (d.get("message") or {}).get("content")
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = "\n".join(
+                        b.get("text") or ""
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text")
+                else:
+                    continue
+                text = text.strip()
+                if text:
+                    out.append(text)
+                continue
+            if d.get("type") != "assistant":
+                continue
+            msg = d.get("message")
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = "\n".join(
+                    b.get("text") or ""
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text")
+            else:
+                continue
+            text = text.strip()
+            if text:
+                out.append(text)
+    return out
+
+
+def transcript_plain_text(session_id: str, cap: int = 50_000) -> Optional[str]:
+    """Tail-capped main-thread conversation text of a session (§37 search
+    index). Locates the transcript the same way :func:`harvest_delivery` does
+    (short-id glob over ``~/.claude/projects``). Never raises; None when the
+    transcript is missing/empty."""
+    try:
+        short = str(session_id or "").split("-")[0]
+        if len(short) < 8:  # same guard as _transcript_info: no glob-everything
+            return None
+        proj_root = Path("~/.claude/projects").expanduser()
+        for f in sorted(proj_root.glob(f"*/{short}*.jsonl")):
+            try:
+                texts = _plain_texts(f)
+            except OSError:
+                continue
+            if texts:
+                joined = "\n".join(texts)
+                return joined[-cap:] if len(joined) > cap else joined
+        return None
+    except Exception:  # noqa: BLE001 - indexing must never break the pipeline
+        return None
+
+
 def _fence_marker_idxs(lines: list[str]) -> list[int]:
     """Indices of standalone ``FINAL DRAFT:`` lines OUTSIDE ``` fences.
 
@@ -969,6 +1066,38 @@ def _fence_marker_idxs(lines: list[str]) -> list[int]:
         if not in_fence and s.startswith(_FINAL_DRAFT_MARKER):
             idxs.append(i)
     return idxs
+
+
+_CARD_TITLE_MARKER = "CARD TITLE:"
+
+
+def _extract_card_title(lines: list[str]) -> tuple[Optional[str], list[str]]:
+    """Pull the §37 ``CARD TITLE:`` line out of a delivery message.
+
+    Same fence discipline as the FINAL DRAFT marker: only standalone lines
+    OUTSIDE ``` fences count (a draft explaining this mechanism can quote the
+    marker safely). Returns ``(title, remaining_lines)`` — the LAST marker line
+    wins, every out-of-fence marker line is stripped so neither
+    delivered_summary nor final_draft carries it. Oversize titles are clipped
+    (``titles.clip_title``); an empty remainder yields ``(None, ...)``.
+    """
+    from act.lib import titles
+    title: Optional[str] = None
+    kept: list[str] = []
+    in_fence = False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("```"):
+            in_fence = not in_fence
+            kept.append(ln)
+            continue
+        if not in_fence and s.startswith(_CARD_TITLE_MARKER):
+            cand = titles.clip_title(s[len(_CARD_TITLE_MARKER):])
+            if cand is not None:
+                title = cand
+            continue  # strip the line either way — it is metadata, not content
+        kept.append(ln)
+    return title, kept
 
 
 def _lone_html_path(draft: str) -> Optional[Path]:
@@ -1006,10 +1135,13 @@ def harvest_delivery(session_id: str) -> dict:
       trailing marker used to promote "FINAL DRAFT: see the doc" prose);
     - a draft referencing one absolute ``*.html`` file (§15 html output
       format) is hydrated from that file so the draft stays paste-ready; the
-      path stays visible in ``delivered_summary``.
-    Any failure returns both as None — never raises.
+      path stays visible in ``delivered_summary``;
+    - §37: an out-of-fence standalone ``CARD TITLE:`` line in the delivery
+      message (any delivery mode) comes back as ``card_title`` (clipped) and
+      is STRIPPED from both outputs; absent/empty/fenced -> None.
+    Any failure returns all None — never raises.
     """
-    empty = {"delivered_summary": None, "final_draft": None}
+    empty = {"delivered_summary": None, "final_draft": None, "card_title": None}
     try:
         # locate the transcript the same way _transcript_info does: short-id
         # glob over ~/.claude/projects (bg agents may hop dirs mid-session).
@@ -1029,24 +1161,28 @@ def harvest_delivery(session_id: str) -> dict:
             return empty
 
         text = texts[-1]
-        marker_idx: Optional[int] = None
-        lines: list[str] = []
         for t in reversed(texts):
-            idxs = _fence_marker_idxs(t.splitlines())
-            if idxs:
+            if _fence_marker_idxs(t.splitlines()):
                 text = t
-                lines = t.splitlines()
-                marker_idx = idxs[-1]
                 break
-        if marker_idx is None:
-            return {"delivered_summary": text[:500], "final_draft": None}
+        # §37 CARD TITLE rides in the same delivery message (all delivery
+        # modes) — extract + strip it BEFORE the FINAL DRAFT split so neither
+        # delivered_summary nor final_draft carries the marker line.
+        card_title, lines = _extract_card_title(text.splitlines())
+        idxs = _fence_marker_idxs(lines)
+        summary_text = "\n".join(lines).strip()[:500]
+        if not idxs:
+            return {"delivered_summary": summary_text or None,
+                    "final_draft": None, "card_title": card_title}
+        marker_idx = idxs[-1]
 
         # remainder of the marker line itself (if any) belongs to the draft
         ln_rest = lines[marker_idx].strip()[len(_FINAL_DRAFT_MARKER):].strip()
         draft_lines = ([ln_rest] if ln_rest else []) + lines[marker_idx + 1:]
         final_draft = "\n".join(draft_lines).strip()[:20000]
         if not final_draft:
-            return {"delivered_summary": text[:500], "final_draft": None}
+            return {"delivered_summary": summary_text or None,
+                    "final_draft": None, "card_title": card_title}
         before = "\n".join(lines[:marker_idx]).strip()[:500]
 
         # §15 html delivery: hydrate the draft from the referenced file so the
@@ -1062,7 +1198,8 @@ def harvest_delivery(session_id: str) -> dict:
             if contents:
                 before = "\n".join(x for x in (before, final_draft) if x).strip()[:500]
                 final_draft = contents[:20000]
-        return {"delivered_summary": before or None, "final_draft": final_draft}
+        return {"delivered_summary": before or None, "final_draft": final_draft,
+                "card_title": card_title}
     except Exception:  # noqa: BLE001 - harvesting must never break the pipeline
         return dict(empty)
 
@@ -1218,10 +1355,14 @@ def rework(
             f"文件型交付物（HTML 等）例外：写到 {repo_target}/deliverables/ 下的"
             "文件并在 FINAL DRAFT: 后报绝对路径，不贴源码。"
             "提到任何文件一律用绝对路径。"
+            "若这轮改动让卡片名字过时了，可在总结里加单独一行 "
+            "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头）更新看板显示名。"
         )
     else:
         gate_line = ("原有 QUALITY GATE 规则不变（draft 交付、不 merge、不对外发消息）。"
-                     "提到任何文件一律用绝对路径。")
+                     "提到任何文件一律用绝对路径。"
+                     "若这轮改动让卡片名字过时了，可在总结里加单独一行 "
+                     "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头）更新看板显示名。")
     prompt = (
         "Zelin 验收后打回了这次交付，追加要求如下（在原有上下文上继续，不要重做已完成的部分）：\n"
         f"{feedback.strip()}\n\n"
