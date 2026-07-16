@@ -5,10 +5,12 @@
 // on-device SpeechTranscriber on macOS 26+) → CaptionReducer → the overlay.
 //
 // BYO-key model: the app ships NO key. Doubao needs the user's own 火山
-// speech API key (SecretsIO volcano-speech-key.txt); optional translation
-// needs a SECOND user key for Ark (volcano-ark-key.txt). Caption text never
-// leaves this machine except to the user's own ASR/translation endpoints.
-// Pure protocol/reducer logic lives in CaptionCore.swift (swiftc-testable).
+// speech credential (SecretsIO volcano-speech-key.txt — a new-console API key
+// or the legacy App ID + Access Token pair, see VolcanoSpeechCredential);
+// optional translation needs a SECOND user key for Ark (volcano-ark-key.txt).
+// Caption text never leaves this machine except to the user's own
+// ASR/translation endpoints. Pure protocol/reducer logic lives in
+// CaptionCore.swift (swiftc-testable).
 
 import AppKit
 import SwiftUI
@@ -297,11 +299,14 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
 
     // 双向流式优化版 (only replies when the result changes — best latency).
     // Resource ID picks 豆包流式语音识别 2.0 (seedasr, ¥1/h; 20 free hours).
-    private static let endpoint =
+    // Non-private + nonisolated: CaptionKeyProbe runs its 检测 handshake
+    // against the SAME endpoint/resource/config so a probe success really
+    // predicts an engine success.
+    nonisolated static let endpoint =
         URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
-    private static let resourceID = "volc.seedasr.sauc.duration"
+    nonisolated static let resourceID = "volc.seedasr.sauc.duration"
 
-    private let apiKey: String
+    private let credential: VolcanoSpeechCredential
     private let urlSession = URLSession(configuration: .default)
     private var task: URLSessionWebSocketTask?
     private var sequence: Int32 = 1
@@ -316,8 +321,25 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
     /// used to double-schedule reconnects into a 2^n connection storm).
     private var gate = AsyncGate()
 
-    init(apiKey: String) {
-        self.apiKey = apiKey
+    init(credential: VolcanoSpeechCredential) {
+        self.credential = credential
+    }
+
+    /// Session config for the full client request — shared with the 检测
+    /// probe (CaptionKeyProbe) so the two can never drift apart.
+    nonisolated static func sessionConfig() -> [String: Any] {
+        [
+            "user": ["uid": "zelin-ai-assistant"],
+            "audio": ["format": "pcm", "codec": "raw", "rate": 16_000,
+                      "bits": 16, "channel": 1],
+            "request": [
+                "model_name": "bigmodel",
+                "enable_punc": true,
+                "enable_itn": true,
+                "show_utterances": true,   // definite/partial split needs these
+                "end_window_size": 500,    // ms of silence closing a sentence
+            ],
+        ]
     }
 
     func start() {
@@ -352,25 +374,14 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
         sequence = 1
         interpreter = DoubaoSession()
         var request = URLRequest(url: Self.endpoint)
-        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
-        request.setValue(Self.resourceID, forHTTPHeaderField: "X-Api-Resource-Id")
-        request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Api-Request-Id")
+        for h in credential.wsHeaders(resourceID: Self.resourceID,
+                                      requestID: UUID().uuidString) {
+            request.setValue(h.value, forHTTPHeaderField: h.field)
+        }
         let t = urlSession.webSocketTask(with: request)
         task = t
         t.resume()
-        let config: [String: Any] = [
-            "user": ["uid": "zelin-ai-assistant"],
-            "audio": ["format": "pcm", "codec": "raw", "rate": 16_000,
-                      "bits": 16, "channel": 1],
-            "request": [
-                "model_name": "bigmodel",
-                "enable_punc": true,
-                "enable_itn": true,
-                "show_utterances": true,   // definite/partial split needs these
-                "end_window_size": 500,    // ms of silence closing a sentence
-            ],
-        ]
-        if let payload = try? JSONSerialization.data(withJSONObject: config) {
+        if let payload = try? JSONSerialization.data(withJSONObject: Self.sessionConfig()) {
             t.send(.data(DoubaoFrame.fullClientRequest(json: payload, sequence: 1))) { _ in }
         }
         sequence = 2
@@ -437,8 +448,8 @@ final class DoubaoStreamingASR: NSObject, CaptionEngine {
         gate.bump()
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
-        onStatus?(.failed(L("豆包语音 API Key 无效或未开通流式语音识别——去 设置→实时字幕 检查",
-                            "Doubao speech API key is invalid or the streaming-ASR service is not activated — check 设置 → Live captions")))
+        onStatus?(.failed(L("豆包语音凭证无效或未开通流式语音识别——去 设置→实时字幕 点「检测」排查",
+                            "Doubao speech credential is invalid or the streaming-ASR service is not activated — click 检测 in 设置 → Live captions to diagnose")))
     }
 
     private func scheduleReconnect(after reason: String) {
@@ -597,7 +608,8 @@ func appleCaptionEngineAvailable() -> Bool {
 
 @MainActor
 final class ArkTranslator {
-    private static let endpoint =
+    // non-private + nonisolated: CaptionKeyProbe's 检测 hits the same endpoint
+    nonisolated static let endpoint =
         URL(string: "https://ark.cn-beijing.volces.com/api/v3/chat/completions")!
     private var current: Task<Void, Never>?
 
@@ -661,6 +673,149 @@ final class ArkTranslator {
     func cancel() {
         current?.cancel()
         current = nil
+    }
+}
+
+// MARK: - key 检测 probes (v0.37.1)
+//
+// One REAL minimal round-trip per click of the 检测 button — no fake
+// "looks like a key" checks. Credentials are only ever placed in auth
+// headers; they are never logged, echoed, or included in any verdict text
+// (only server-provided codes/messages surface). Raw outcomes are classified
+// through the pure DoubaoProbeLogic/ArkProbeLogic (CaptionCore.swift).
+
+/// Runs its body exactly once — a probe has racing completion paths (send
+/// error, first receive, watchdog timeout) that must yield ONE verdict.
+private final class ProbeFinish: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    private let body: @Sendable (CaptionKeyVerdict) -> Void
+
+    init(_ body: @escaping @Sendable (CaptionKeyVerdict) -> Void) {
+        self.body = body
+    }
+
+    func run(_ verdict: CaptionKeyVerdict) {
+        lock.lock()
+        let already = fired
+        fired = true
+        lock.unlock()
+        if !already { body(verdict) }
+    }
+}
+
+enum CaptionKeyProbe {
+    /// Doubao speech: a real WS handshake against the engine's endpoint —
+    /// auth headers from the credential, the engine's own session config as
+    /// the full client request, read the FIRST server frame, close. No audio
+    /// is ever sent, so nothing billable happens.
+    static func speech(credential: VolcanoSpeechCredential,
+                       done: @escaping @MainActor (CaptionKeyVerdict) -> Void) {
+        var request = URLRequest(url: DoubaoStreamingASR.endpoint)
+        request.timeoutInterval = 12
+        for h in credential.wsHeaders(resourceID: DoubaoStreamingASR.resourceID,
+                                      requestID: UUID().uuidString) {
+            request.setValue(h.value, forHTTPHeaderField: h.field)
+        }
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: request)
+        let finish = ProbeFinish { verdict in
+            task.cancel(with: .normalClosure, reason: nil)
+            session.invalidateAndCancel()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { done(verdict) }
+            }
+        }
+        task.resume()
+        if let payload = try? JSONSerialization.data(
+            withJSONObject: DoubaoStreamingASR.sessionConfig()) {
+            task.send(.data(DoubaoFrame.fullClientRequest(json: payload,
+                                                          sequence: 1))) { error in
+                if let error { finish.run(transportVerdict(error, task: task)) }
+            }
+        }
+        task.receive { result in
+            switch result {
+            case .success(let message):
+                if case .data(let data) = message,
+                   let frame = DoubaoFrame.parseServerFrame(data) {
+                    finish.run(DoubaoProbeLogic.verdict(for: frame))
+                } else {
+                    // text/malformed first frame — not a documented outcome;
+                    // report it honestly instead of guessing a cause
+                    finish.run(.serviceError(code: "-",
+                        message: L("服务器返回了无法解析的首帧",
+                                   "the server's first frame was unparseable")))
+                }
+            case .failure(let error):
+                finish.run(transportVerdict(error, task: task))
+            }
+        }
+        // a server that accepts the socket but never replies must not leave
+        // the 检测 button spinning forever
+        DispatchQueue.global().asyncAfter(deadline: .now() + 12) {
+            finish.run(.network(detail: L("连接超时", "connection timed out")))
+        }
+    }
+
+    /// WS transport failure → verdict: the HTTP status when the server
+    /// refused the upgrade handshake, otherwise a plain network problem.
+    private static func transportVerdict(
+        _ error: Error, task: URLSessionWebSocketTask) -> CaptionKeyVerdict {
+        if let http = task.response as? HTTPURLResponse {
+            // Volcano's speech gateway explains upgrade refusals here
+            let message = http.value(forHTTPHeaderField: "X-Api-Message") ?? ""
+            return DoubaoProbeLogic.verdict(upgradeStatus: http.statusCode,
+                                            message: message)
+        }
+        return .network(detail: error.localizedDescription)
+    }
+
+    /// Ark: ONE chat completion capped at a single output token against the
+    /// configured model — the cheapest documented call that exercises the key
+    /// AND the model ID together (a models listing wouldn't catch a typo'd
+    /// model, which is its own verdict case).
+    static func ark(key: String, model: String,
+                    done: @escaping @MainActor (CaptionKeyVerdict) -> Void) {
+        var request = URLRequest(url: ArkTranslator.endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 12
+        request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 1,
+            "messages": [["role": "user", "content": "ping"]],
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let verdict: CaptionKeyVerdict
+            if let error {
+                verdict = .network(detail: error.localizedDescription)
+            } else if let http = response as? HTTPURLResponse {
+                let (code, message) = arkErrorBody(data)
+                verdict = ArkProbeLogic.verdict(status: http.statusCode,
+                                                errorCode: code,
+                                                errorMessage: message)
+            } else {
+                verdict = .network(detail: "no response")
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { done(verdict) }
+            }
+        }.resume()
+    }
+
+    /// {"error":{"code":"...","message":"..."}} → (code, message); tolerant
+    /// of the OpenAI-style "type" field standing in for "code".
+    private static func arkErrorBody(_ data: Data?) -> (String, String) {
+        guard let data,
+              let obj = (try? JSONSerialization.jsonObject(with: data))
+                as? [String: Any],
+              let err = obj["error"] as? [String: Any] else { return ("", "") }
+        let code = (err["code"] as? String) ?? (err["type"] as? String) ?? ""
+        let message = err["message"] as? String ?? ""
+        return (code, message)
     }
 }
 
@@ -892,13 +1047,14 @@ final class LiveCaptionsController: ObservableObject {
         let wantsDoubao = engineChoice == "doubao"
             || (engineChoice == "auto" && hasDoubaoKey)
         if wantsDoubao {
-            guard let key = SecretsIO.read(SecretsIO.volcanoSpeechFile) else {
-                setStatus(L("还没有豆包语音 API Key——去 设置→实时字幕 粘贴（个人实名可开通，送 20 小时）",
-                            "No Doubao speech API key yet — paste one in 设置 → Live captions (personal accounts qualify; 20 free hours)"),
+            guard let raw = SecretsIO.read(SecretsIO.volcanoSpeechFile),
+                  let credential = VolcanoSpeechCredential.decode(raw) else {
+                setStatus(L("还没有豆包语音凭证——去 设置→实时字幕 粘贴（个人实名可开通，送 20 小时）",
+                            "No Doubao speech credential yet — paste one in 设置 → Live captions (personal accounts qualify; 20 free hours)"),
                           error: true)
                 return nil
             }
-            return (DoubaoStreamingASR(apiKey: key), true)
+            return (DoubaoStreamingASR(credential: credential), true)
         }
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {

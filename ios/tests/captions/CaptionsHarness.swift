@@ -243,6 +243,119 @@ if let line = display.statusLine(pausedLabel: "PAUSED") {
     check(line == ("key invalid", true), "unpause reveals the error unchanged")
 } else { check(false, "status", "error must render after unpause") }
 
+// ---- 10. v0.37.1 BYO speech credential: paste auto-detection ----
+print("[19] VolcanoSpeechCredential.parse — new key vs legacy pair:")
+let tok32 = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"  // 32 chars, old-console shape
+check(VolcanoSpeechCredential.parse("sk-abcdef1234567890")
+      == .apiKey("sk-abcdef1234567890"), "bare new-console key")
+check(VolcanoSpeechCredential.parse("  key-padded  ") == .apiKey("key-padded"),
+      "surrounding whitespace trimmed")
+check(VolcanoSpeechCredential.parse("") == nil, "empty paste → nil")
+check(VolcanoSpeechCredential.parse("   \n ") == nil, "whitespace-only → nil")
+let wantLegacy = VolcanoSpeechCredential.legacy(appID: "1234567890",
+                                                accessToken: tok32)
+check(VolcanoSpeechCredential.parse("1234567890:\(tok32)") == wantLegacy,
+      "AppID:Token on one line")
+check(VolcanoSpeechCredential.parse("1234567890：\(tok32)") == wantLegacy,
+      "full-width colon separator")
+check(VolcanoSpeechCredential.parse("1234567890 , \(tok32)") == wantLegacy,
+      "comma + spaces separator")
+check(VolcanoSpeechCredential.parse("1234567890\n\(tok32)") == wantLegacy,
+      "two non-empty lines")
+check(VolcanoSpeechCredential.parse("appid:1234567890\ntoken:\(tok32)")
+      == wantLegacy, "own stored format pastes back (labels stripped)")
+check(VolcanoSpeechCredential.parse("123456:\(tok32)")
+      == .legacy(appID: "123456", accessToken: tok32), "6-digit id is enough")
+check(VolcanoSpeechCredential.parse("12345:\(tok32)")
+      == .apiKey("12345:\(tok32)"), "5-digit prefix → NOT legacy (too short)")
+check(VolcanoSpeechCredential.parse("1234567890:shorttoken")
+      == .apiKey("1234567890:shorttoken"), "token under 20 chars → NOT legacy")
+
+print("[20] stored-file format: encode/decode + pre-0.37.1 compat:")
+check(wantLegacy.fileRepresentation == "appid:1234567890\ntoken:\(tok32)",
+      "legacy stores as two labeled lines")
+check(VolcanoSpeechCredential.apiKey("k1").fileRepresentation == "k1",
+      "api key stays a bare line")
+check(VolcanoSpeechCredential.decode(wantLegacy.fileRepresentation + "\n")
+      == wantLegacy, "legacy file round-trips (trailing newline ok)")
+check(VolcanoSpeechCredential.decode("plain-old-saved-key\n")
+      == .apiKey("plain-old-saved-key"), "pre-0.37.1 bare key file unchanged")
+check(VolcanoSpeechCredential.decode("") == nil, "empty file → nil")
+check(VolcanoSpeechCredential.decode("appid:1\ntoken:")
+      == .apiKey("appid:1\ntoken:"),
+      "half-empty labeled pair falls back to bare content, never a broken pair")
+check(wantLegacy.isLegacy && !VolcanoSpeechCredential.apiKey("k").isLegacy,
+      "isLegacy flag")
+
+print("[21] wsHeaders per console generation (recon §1):")
+let newHeaders = VolcanoSpeechCredential.apiKey("KEY")
+    .wsHeaders(resourceID: "rid", requestID: "req")
+check(newHeaders.map(\.field)
+      == ["X-Api-Key", "X-Api-Resource-Id", "X-Api-Request-Id"],
+      "new console: X-Api-Key + resource + request ids",
+      "got \(newHeaders.map(\.field))")
+check(newHeaders.map(\.value) == ["KEY", "rid", "req"], "new header values")
+let legacyHeaders = wantLegacy.wsHeaders(resourceID: "rid", requestID: "req")
+check(legacyHeaders.map(\.field)
+      == ["X-Api-App-Key", "X-Api-Access-Key",
+          "X-Api-Resource-Id", "X-Api-Request-Id"],
+      "legacy: X-Api-App-Key + X-Api-Access-Key + resource + request ids",
+      "got \(legacyHeaders.map(\.field))")
+check(legacyHeaders.map(\.value) == ["1234567890", tok32, "rid", "req"],
+      "legacy header values")
+
+// ---- 11. 检测 verdict mapping ----
+print("[22] DoubaoProbeLogic: first-frame + upgrade classification:")
+func errFrame(_ code: UInt32, _ text: String) -> DoubaoFrame.ServerFrame {
+    DoubaoFrame.ServerFrame(messageType: DoubaoFrame.typeError, flags: 0,
+                            sequence: nil, errorCode: code,
+                            payload: Data(text.utf8))
+}
+let ackFrame = DoubaoFrame.ServerFrame(messageType: DoubaoFrame.typeFullServer,
+                                       flags: 0b0001, sequence: 1,
+                                       errorCode: nil, payload: Data())
+check(DoubaoProbeLogic.verdict(for: ackFrame) == .ok, "server ack → ok")
+check(DoubaoProbeLogic.verdict(for: errFrame(401, "bad key"))
+      == .badKey(detail: "401 bad key"), "in-band 401 → bad key")
+check(DoubaoProbeLogic.verdict(for: errFrame(403, ""))
+      == .badKey(detail: "403"), "in-band 403 without text → bad key")
+check(DoubaoProbeLogic.verdict(for: errFrame(45000001, "invalid request"))
+      == .serviceError(code: "45000001", message: "invalid request"),
+      "unknown code → raw code + message, no guessing")
+check(DoubaoProbeLogic.verdict(for: errFrame(45000030, "resource not granted"))
+      == .resourceNotEnabled(code: "45000030", message: "resource not granted"),
+      "server message naming a resource problem → its own verdict")
+check(DoubaoProbeLogic.verdict(upgradeStatus: 401, message: "")
+      == .badKey(detail: "HTTP 401"), "upgrade 401 → bad key")
+check(DoubaoProbeLogic.verdict(upgradeStatus: 403, message: "服务未开通")
+      == .resourceNotEnabled(code: "HTTP 403", message: "服务未开通"),
+      "upgrade 403 naming 未开通 → resource verdict")
+check(DoubaoProbeLogic.verdict(upgradeStatus: 503, message: "busy")
+      == .serviceError(code: "HTTP 503", message: "busy"),
+      "upgrade 5xx → raw service error")
+
+print("[23] ArkProbeLogic: chat-completion probe classification:")
+check(ArkProbeLogic.verdict(status: 200, errorCode: "", errorMessage: "")
+      == .ok, "200 → ok")
+check(ArkProbeLogic.verdict(status: 401, errorCode: "AuthenticationError",
+                            errorMessage: "invalid key")
+      == .badKey(detail: "AuthenticationError: invalid key"), "401 → bad key")
+check(ArkProbeLogic.verdict(status: 403, errorCode: "", errorMessage: "")
+      == .badKey(detail: "HTTP 403"), "bare 403 → bad key with HTTP status")
+check(ArkProbeLogic.verdict(status: 404, errorCode: "ModelNotFound",
+                            errorMessage: "no such model")
+      == .modelNotFound(detail: "ModelNotFound: no such model"),
+      "404 → model-ID verdict")
+check(ArkProbeLogic.verdict(status: 400, errorCode: "ModelNotOpen",
+                            errorMessage: "activate first")
+      == .modelNotFound(detail: "ModelNotOpen: activate first"),
+      "ModelNotOpen code → model-ID verdict even on 400")
+check(ArkProbeLogic.verdict(status: 429, errorCode: "RateLimitExceeded",
+                            errorMessage: "slow down")
+      == .serviceError(code: "HTTP 429",
+                       message: "RateLimitExceeded: slow down"),
+      "other statuses → raw service error")
+
 if allOK {
     print("ALL CAPTIONS TESTS PASSED")
     exit(0)

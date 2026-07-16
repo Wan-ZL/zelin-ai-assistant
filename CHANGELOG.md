@@ -27,6 +27,30 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.37.1] - 2026-07-16
+
+实时字幕 credential usability（Mac 展示层，契约 add-only）。
+
+### Added
+- **旧版火山凭证支持**：豆包语音凭证输入框现在也接受旧版语音控制台的
+  App ID + Access Token（粘 `AppID:Token` 单行或分两行都行，自动识别）；
+  引擎握手按代际发对应鉴权头（旧版 `X-Api-App-Key` + `X-Api-Access-Key`，
+  新版单个 `X-Api-Key` 不变）。存储格式：旧版凭证存为两行带标签内容
+  （`appid:` / `token:`），单行裸内容一律按新版 API Key 解读——已保存的
+  Key 无需迁移（CONTRACT §36 add-only）。
+- **「检测」按钮（两个凭证行都有）**：点一下做一次**真实**最小连接——语音
+  凭证走一次 Doubao WebSocket 握手（发会话配置、读首帧、即断，不发音频、
+  不产生计费），Ark Key 向所配翻译模型发一条 `max_tokens=1` 的请求。结果
+  就地诚实显示：✅ 有效（连接成功）/ ❌ Key 无效或未开通 / ❌ 资源未开通 /
+  ❌ 模型 ID 不存在（Ark 独立情形）/ ⚠️ 网络不通；未收录的错误码原样展示
+  （码 + 服务器消息），不猜测。检测可在保存前直接测输入框内容；凭证永不
+  写日志、永不回显。
+
+### Changed
+- 字幕两行凭证的文案与真实行为对齐：保存**只存本机、不联网**；点「检测」
+  才真连一次对应服务器（其余凭证行"保存即验证"的行为不变）。引擎侧的
+  致命鉴权错误提示改为指向「检测」按钮排查。
+
 ## [0.36.0] - 2026-07-15
 
 ### Added
@@ -1370,7 +1394,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.1...HEAD
+[0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.37.1
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD

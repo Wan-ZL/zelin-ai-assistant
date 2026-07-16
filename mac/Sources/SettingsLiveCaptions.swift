@@ -65,21 +65,26 @@ struct LiveCaptionsSettingsSection: View {
             Divider()
 
             CredentialRowView(
-                title: L("豆包语音 API Key（识别用）", "Doubao speech API key (recognition)"),
+                title: L("豆包语音凭证（识别用）", "Doubao speech credential (recognition)"),
                 secretName: SecretsIO.volcanoSpeechFile,
                 legacyPath: "",
                 links: [(L("语音控制台", "Speech console"),
                          "https://console.volcengine.com/speech/app")],
-                kind: .plain)
+                kind: .volcanoSpeech)
+            Text(L("支持两种：新版控制台的 API Key，或旧版的 App ID + Access Token（粘 \"AppID:Token\" 或分两行）。",
+                   "Two formats work: the new-console API key, or the legacy App ID + Access Token (paste \"AppID:Token\" or two lines)."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             CredentialRowView(
                 title: L("Ark API Key（翻译用，另一个 Key）", "Ark API key (translation — a different key)"),
                 secretName: SecretsIO.volcanoArkFile,
                 legacyPath: "",
                 links: [(L("Ark 控制台", "Ark console"),
                          "https://console.volcengine.com/ark")],
-                kind: .plain)
-            Text(L("两个 Key 来自火山引擎的两个不同控制台：语音 Key 管识别，Ark Key 管翻译。都只存本机 config/secrets/，只有 App 自己读（Python/cron 永不读取），保存后在开启字幕时生效。",
-                   "The two keys come from two different Volcano consoles: the speech key does recognition, the Ark key does translation. Both live only in local config/secrets/, read only by the app itself (never by Python/cron), and take effect when captions start."))
+                kind: .volcanoArk)
+            Text(L("两个凭证来自火山引擎的两个不同控制台：语音凭证管识别，Ark Key 管翻译。都只存本机 config/secrets/，只有 App 自己读（Python/cron 永不读取），保存后在开启字幕时生效。保存只存本机、不联网；点「检测」才真连一次对应服务器验证。",
+                   "The two credentials come from two different Volcano consoles: the speech credential does recognition, the Ark key does translation. Both live only in local config/secrets/, read only by the app itself (never by Python/cron), and take effect when captions start. Saving stores locally without any network call; clicking Test makes one real connection to the matching server."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

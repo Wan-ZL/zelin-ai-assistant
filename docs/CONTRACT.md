@@ -1177,6 +1177,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   译），同既有 secrets 契约（目录 0700、文件 0600、单行 + 换行）。**只有 Mac App
   读取这两个文件——Python/cron 侧永不读取**（区别于 anthropic/slack/gmail 三个
   跨组件文件）。App 不内置任何 key。
+  - **v0.37.1（add-only）**：`volcano-speech-key.txt` 允许第二种内容格式，承载
+    旧版语音控制台凭证：两行 `appid:<App ID>` + `token:<Access Token>`（权限
+    /归属/换行约定不变）。单行裸内容一律按新版 API Key 解读——v0.37.1 之前
+    保存的文件不需迁移。`volcano-ark-key.txt` 格式不变。解析的唯一真源是
+    `VolcanoSpeechCredential`（mac/Sources/CaptionCore.swift）。
 - **隐私**：字幕文本永不落盘、永不进 analytics/telemetry（只有 `captions_toggle`
   / `captions_autostart` / firstReach `live_captions` 元数据事件）、永不离开本机
   ——唯一外发目的地是用户自己 key 对应的识别/翻译服务端点（Apple 本地引擎则完全
