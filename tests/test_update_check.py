@@ -17,6 +17,7 @@ sandbox AIASSISTANT_HOME (tests/__init__.py).
 import datetime as dt
 import json
 import unittest
+import urllib.error
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
@@ -251,6 +252,24 @@ class ForceCheckTestCase(unittest.TestCase):
         self.assertEqual(st["latest"], "9.9.9")           # cache preserved
         # the failed manual attempt consumed the budget like any other
         self.assertEqual(st["checked_at"], "2026-07-09T12:01:00Z")
+
+    def test_force_rate_limited_is_distinguished_from_network(self):
+        # HTTP 403/429 = the anonymous per-IP GitHub budget is spent; the
+        # About page must not tell the user their network is down (it isn't).
+        for code in (403, 429):
+            with self.subTest(code=code):
+                if uc.STATE_PATH.exists():
+                    uc.STATE_PATH.unlink()   # isolate the budget per subTest
+                fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")),
+                                  urllib.error.HTTPError(
+                                      uc.RELEASES_LATEST_URL, code,
+                                      "rate limit exceeded", None, None))
+                uc.check(_cfg(), fetch=fetch, now=self.t0)
+                st = uc.cli_status(True, cfg=_cfg(), fetch=fetch,
+                                   now=self.t0 + dt.timedelta(minutes=1))
+                self.assertFalse(st["ok"])
+                self.assertEqual(st["error"], "rate_limited")
+                self.assertEqual(st["latest"], "9.9.9")   # cache preserved
 
     def test_cli_status_surfaces_checked_at_and_verdict(self):
         fetch = FetchStub((200, 'W/"e1"', _release("v9.9.9")))

@@ -27,6 +27,25 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.43.1] - 2026-07-16
+
+### Fixed
+
+- **「关于」页更新检查：限流不再谎报「网络不可用」** — GitHub 的匿名 API
+  额度（每 IP 每小时 60 次）耗尽时返回 HTTP 403/429，此前一律显示「检查失败——
+  网络不可用」，把用户支去检查 Wi-Fi；实际网络毫无问题，且额度一小时内自动恢复。
+  §26 CLI 的 `error` 字段现在区分 `"rate_limited"`（403/429）与 `"network"`
+  （离线/DNS/超时），关于页对限流给出如实文案：「GitHub 接口暂时限流，约一小时内
+  自动恢复；你的网络没有问题。」旧 App 读新 CLI 输出不受影响（未知字段忽略，
+  沿用原文案）。
+
+### Notes
+
+- v0.37.0–v0.43.0 七个 tag 于 2026-07-16 批量补推——GitHub 对单次 push 超过
+  3 个 tag 不产生 push 事件，release workflow 因此未触发，这些版本没有对应的
+  GitHub Release/资产（tag 与 CHANGELOG compare links 正常）。本版起恢复
+  逐 tag 发布链。
+
 ## [0.43.0] - 2026-07-16
 
 ### Added
@@ -1729,7 +1748,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.40.0...v0.41.0
