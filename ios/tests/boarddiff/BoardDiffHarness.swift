@@ -122,5 +122,120 @@ check(BoardDiff.compute(previous: lanes([]), current: lanes([])).isEmpty,
 check(BoardDiff.compute(previous: firstBoard, current: lanes([])).removals.count == 3,
       "board emptied → every id a removal")
 
+// ======== BoardFlightPlanner (geometry policy) ========
+
+let visible = CGRect(x: 0, y: 0, width: 1200, height: 700)
+func rect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat = 380, _ h: CGFloat = 60) -> CGRect {
+    CGRect(x: x, y: y, width: w, height: h)
+}
+let oneMove = BoardDiff.compute(
+    previous: lanes([("approval", ["A"]), ("running", [])]),
+    current: lanes([("approval", []), ("running", ["A"])]))
+
+// ---- 12. never animate to a frame you don't have ----
+print("[12] nil / zero-size destination → move dropped:")
+check(BoardFlightPlanner.plans(diff: oneMove,
+                               sources: ["A": rect(10, 100)],
+                               frames: [:],   // no row/strip/lane frame at all
+                               visible: visible).isEmpty,
+      "nil destination → no plan")
+check(BoardFlightPlanner.plans(diff: oneMove,
+                               sources: ["A": rect(10, 100)],
+                               frames: ["row:running:A": CGRect(x: 500, y: 100,
+                                                                width: 0, height: 0)],
+                               visible: visible).isEmpty,
+      "zero-size destination → no plan (never a zero-frame flight)")
+check(BoardFlightPlanner.plans(diff: oneMove,
+                               sources: ["A": CGRect(x: 10, y: 100,
+                                                     width: 0, height: 0)],
+                               frames: ["row:running:A": rect(500, 100)],
+                               visible: visible).isEmpty,
+      "zero-size source → no plan")
+check(BoardFlightPlanner.plans(diff: oneMove,
+                               sources: [:],
+                               frames: ["row:running:A": rect(500, 100)],
+                               visible: visible).isEmpty,
+      "missing source → no plan")
+
+// ---- 13. A→B→A same window: coalescer contract + clean flight home ----
+print("[13] A→B→A / remove-then-reinsert coalescing:")
+// every id an event touches must cancel that card's in-flight proxy
+let touched = BoardFlightPlanner.touchedIDs(mix)
+check(touched == Set(["A", "NEW", "B", "C"]),
+      "touchedIDs covers moves + inserts + removals", "got \(touched)")
+// the return leg (B→A) with a valid home frame → ONE clean flight home
+let backHome = BoardDiff.compute(
+    previous: lanes([("approval", []), ("running", ["A"])]),
+    current: lanes([("approval", ["A"]), ("running", [])]))
+let homePlans = BoardFlightPlanner.plans(
+    diff: backHome,
+    sources: ["A": rect(500, 100)],
+    frames: ["row:approval:A": rect(10, 100)],
+    visible: visible)
+check(homePlans.count == 1 && homePlans[0].kind == .move
+      && homePlans[0].to == rect(10, 100),
+      "return leg plans one clean flight home", "got \(homePlans)")
+// trash→restore: the removal sinks, the re-insert plans NOTHING (inserts
+// deal in via transition, no proxy) — so cancellation + no-plan = no
+// zero-frame flight ever
+let reinsert = BoardDiff.compute(
+    previous: lanes([("approval", [])]),
+    current: lanes([("approval", ["A"])]))
+check(BoardFlightPlanner.touchedIDs(reinsert).contains("A"),
+      "re-insert cancels the card's in-flight sink")
+check(BoardFlightPlanner.plans(diff: reinsert, sources: [:],
+                               frames: ["row:approval:A": rect(10, 100)],
+                               visible: visible).isEmpty,
+      "inserts never fly a proxy")
+
+// ---- 14. viewport clamp: off-screen endpoints don't fly ----
+print("[14] off-screen endpoints:")
+check(BoardFlightPlanner.plans(diff: oneMove,
+                               sources: ["A": rect(10, -500)],   // scrolled out above
+                               frames: ["row:running:A": rect(500, 100)],
+                               visible: visible).isEmpty,
+      "source scrolled out of its lane viewport → no flight")
+check(BoardFlightPlanner.plans(diff: oneMove,
+                               sources: ["A": rect(10, 100)],
+                               frames: ["row:running:A": rect(500, 2000)],  // below fold
+                               visible: visible).isEmpty,
+      "destination outside the visible board → no flight")
+
+// ---- 15. strip / lane fallbacks ----
+print("[15] fallback landing zones:")
+let stripPlans = BoardFlightPlanner.plans(
+    diff: oneMove,
+    sources: ["A": rect(10, 100)],
+    frames: ["strip:running": CGRect(x: 1100, y: 0, width: 44, height: 660)],
+    visible: visible)
+check(stripPlans.count == 1 && stripPlans[0].pulseStrip == "running"
+      && stripPlans[0].to == CGRect(x: 1100, y: 0, width: 44, height: 72),
+      "collapsed strip → land on its TOP + badge pulse", "got \(stripPlans)")
+let lanePlans = BoardFlightPlanner.plans(
+    diff: oneMove,
+    sources: ["A": rect(10, 100)],
+    frames: ["lane:running": CGRect(x: 420, y: 0, width: 400, height: 660)],
+    visible: visible)
+check(lanePlans.count == 1 && lanePlans[0].pulseStrip == nil
+      && lanePlans[0].to == CGRect(x: 420, y: 0, width: 400, height: 120),
+      "no row/strip → lane-top region, no pulse", "got \(lanePlans)")
+
+// ---- 16. sinks ----
+print("[16] off-board removals:")
+let oneRemoval = BoardDiff.compute(
+    previous: lanes([("approval", ["A"])]),
+    current: lanes([("approval", [])]))
+let sinkPlans = BoardFlightPlanner.plans(
+    diff: oneRemoval,
+    sources: ["A": rect(10, 100)],
+    frames: [:], visible: visible)
+check(sinkPlans.count == 1 && sinkPlans[0].kind == .sink
+      && sinkPlans[0].to == rect(10, 126),
+      "sink drifts 26 pt toward the lane edge", "got \(sinkPlans)")
+check(BoardFlightPlanner.plans(diff: oneRemoval,
+                               sources: ["A": rect(10, -500)],
+                               frames: [:], visible: visible).isEmpty,
+      "off-screen removal → no sink")
+
 print(allOK ? "ALL PASS" : "FAILURES")
 exit(allOK ? 0 : 1)

@@ -31,28 +31,45 @@ enum BoardMotionPolicy {
 
 // MARK: - frame capture (rows + lanes + collapsed strips)
 
+/// One reported frame plus the motion-event generation the reporting view
+/// was born under. During an A→B→A the outgoing row at A (still fading for
+/// ~0.2 s) and the fresh row at A coexist under the SAME "row:A:<id>" key —
+/// the generation lets the merge deterministically keep the newer view
+/// instead of whichever lands later in tree order.
+struct BoardFrameEntry: Equatable {
+    let rect: CGRect
+    let gen: Int
+}
+
 /// Merged dictionary of "who is where" on the board, keyed
 /// "row:<lane>:<id>" for rows, "lane:<key>" for expanded columns,
-/// "strip:<key>" for collapsed bookend strips. Rows carry their LANE in the
-/// key on purpose: during a move the outgoing row (still fading for ~0.2 s)
-/// and the incoming row coexist — a bare-id key would let whichever lane
-/// renders later in tree order win the merge, sending the flight right back
-/// to its source. Only laid-out views report (LazyVStack ⇒ offscreen rows
-/// may be missing → the flight falls back to the lane/strip frame).
+/// "strip:<key>" for collapsed bookend strips, "board" for the whole
+/// visible board rect. Rows carry their LANE in the key on purpose: during
+/// a move the outgoing row and the incoming row coexist — a bare-id key
+/// would let whichever lane renders later in tree order win the merge,
+/// sending the flight right back to its source. Only laid-out views report
+/// (LazyVStack ⇒ offscreen rows may be missing → the flight falls back to
+/// the lane/strip frame; rows scrolled out of a lane's viewport DO still
+/// report, which is why the planner clamps to the visible rect).
 struct BoardFramesKey: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect],
-                       nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
+    static let defaultValue: [String: BoardFrameEntry] = [:]
+    static func reduce(value: inout [String: BoardFrameEntry],
+                       nextValue: () -> [String: BoardFrameEntry]) {
+        value.merge(nextValue()) { old, new in new.gen >= old.gen ? new : old }
     }
 }
 
 extension View {
     /// Report this view's frame (in the board coordinate space) under `key`.
-    func boardMotionFrame(_ key: String) -> some View {
+    /// `generation` disambiguates same-key duplicates (see BoardFrameEntry);
+    /// singleton keys (lanes/strips/board) keep the default 0.
+    func boardMotionFrame(_ key: String, generation: Int = 0) -> some View {
         background(GeometryReader { geo in
-            Color.clear.preference(key: BoardFramesKey.self,
-                                   value: [key: geo.frame(in: .named(BoardMotionPolicy.space))])
+            Color.clear.preference(
+                key: BoardFramesKey.self,
+                value: [key: BoardFrameEntry(
+                    rect: geo.frame(in: .named(BoardMotionPolicy.space)),
+                    gen: generation)])
         })
     }
 }
@@ -86,10 +103,15 @@ struct BoardFlight: Identifiable, Equatable {
 @MainActor
 final class BoardFlightController: ObservableObject {
     /// Continuously refreshed by onPreferenceChange; read only at flight start.
-    var frames: [String: CGRect] = [:]
+    var frames: [String: BoardFrameEntry] = [:]
     @Published var flights: [BoardFlight] = []
-    /// Move-target ids whose proxy has landed (or never launched) — the row
-    /// un-hides the moment its id enters this set. Reset per event.
+    /// Move-target ids whose proxy is queued or airborne — the row renders at
+    /// opacity 0 until its OWN proxy completes (per-proxy, so a second event
+    /// arriving mid-flight can neither orphan nor prematurely reveal it).
+    @Published var pendingLanding: Set<String> = []
+    /// Move-target ids of the CURRENT event whose proxy already landed or
+    /// never launched (planner dropped it / crossfade) — reset per event;
+    /// bridges the gap between the event render and the +0.05 s launch.
     @Published var landed: Set<String> = []
     /// Strip keys currently doing their one count-badge pop.
     @Published var pulsing: Set<String> = []
@@ -104,8 +126,9 @@ final class BoardFlightController: ObservableObject {
     /// True while `id` is the destination of a not-yet-landed flight — its
     /// real row renders at opacity 0 so the proxy is the only "card" visible.
     func isAwaitingLanding(_ id: String, event: BoardMotionEvent?) -> Bool {
-        guard BoardMotionPolicy.animationsEnabled,
-              let event, event.seq == lastSeq, !event.crossfade,
+        guard BoardMotionPolicy.animationsEnabled else { return false }
+        if pendingLanding.contains(id) { return true }
+        guard let event, event.seq == lastSeq, !event.crossfade,
               !landed.contains(id) else { return false }
         return event.diff.moves.contains { $0.id == id }
     }
@@ -117,6 +140,12 @@ final class BoardFlightController: ObservableObject {
     func handle(_ event: BoardMotionEvent, store: DashboardStore) {
         guard event.seq > lastSeq else { return }
         lastSeq = event.seq
+        // Every proxy of a card this event touches is superseded — an A→B→A
+        // replaces the first flight, a removal chased by a re-insert cancels
+        // the sink. Their completions become no-ops (finish() guard).
+        let touched = BoardFlightPlanner.touchedIDs(event.diff)
+        flights.removeAll { touched.contains($0.cardID) }
+        pendingLanding.subtract(touched)
         landed = []
         guard BoardMotionPolicy.animationsEnabled, !event.crossfade else {
             // crossfade / motion off: the store's own withAnimation fade IS
@@ -127,10 +156,10 @@ final class BoardFlightController: ObservableObject {
         // Phase A snapshots: last-known frames of everything that leaves.
         var sourceFrames: [String: CGRect] = [:]
         for m in event.diff.moves {
-            sourceFrames[m.id] = frames["row:\(m.fromLane):\(m.id)"]
+            sourceFrames[m.id] = frames["row:\(m.fromLane):\(m.id)"]?.rect
         }
         for r in event.diff.removals {
-            sourceFrames[r.id] = frames["row:\(r.lane):\(r.id)"]
+            sourceFrames[r.id] = frames["row:\(r.lane):\(r.id)"]?.rect
         }
         let titles = titlesFor(event: event, store: store)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -152,66 +181,45 @@ final class BoardFlightController: ObservableObject {
     private func launch(event: BoardMotionEvent,
                         sourceFrames: [String: CGRect],
                         titles: [String: String]) {
-        var newFlights: [BoardFlight] = []
-        var stagger = 0
-        for move in event.diff.moves {
-            guard let from = sourceFrames[move.id] else {
-                landed.insert(move.id)   // source never laid out → no flight
-                continue
-            }
-            // Destination priority: the real row (post-layout frame) → the
-            // collapsed strip (pop its badge on landing) → the lane column.
-            var pulse: String?
-            var to = frames["row:\(move.toLane):\(move.id)"]
-            if to == nil, let strip = frames["strip:\(move.toLane)"] {
-                // land on the strip's TOP (badge area), not its mid-height
-                to = CGRect(x: strip.minX, y: strip.minY,
-                            width: strip.width, height: 72)
-                pulse = move.toLane
-            }
-            if to == nil { to = frames["lane:\(move.toLane)"] }
-            guard let dest = to else {
-                landed.insert(move.id)   // lane not visible at all → skip
-                continue
-            }
-            newFlights.append(BoardFlight(
-                cardID: move.id, kind: .move,
-                title: titles[move.id] ?? move.id,
-                accent: Self.laneAccent(move.toLane),
-                from: from, to: dest,
-                delay: Double(stagger) * 0.04, pulseStrip: pulse))
-            stagger += 1
+        // Endpoint validation + strip/lane fallback + viewport clamp live in
+        // the PURE planner (harness-pinned): nil / zero-size / off-screen
+        // endpoints are dropped — those cards just appear at the destination.
+        let plans = BoardFlightPlanner.plans(
+            diff: event.diff,
+            sources: sourceFrames,
+            frames: frames.mapValues { $0.rect },
+            visible: frames["board"]?.rect ?? .null)
+        let flying = Set(plans.filter { $0.kind == .move }.map { $0.id })
+        for move in event.diff.moves where !flying.contains(move.id) {
+            landed.insert(move.id)   // dropped by the planner → show the row
         }
-        for removal in event.diff.removals {
-            guard let from = sourceFrames[removal.id] else { continue }
-            // shrink+fade drifting toward the lane's bottom edge — subtle,
-            // ~250 ms; the row's own store-driven fade runs underneath.
-            let to = from.offsetBy(dx: 0, dy: 26)
-            newFlights.append(BoardFlight(
-                cardID: removal.id, kind: .sink,
-                title: titles[removal.id] ?? removal.id,
-                accent: Self.laneAccent(removal.lane),
-                from: from, to: to,
-                delay: Double(stagger) * 0.04, pulseStrip: nil))
-            stagger += 1
+        guard !plans.isEmpty else { return }
+        let newFlights = plans.enumerated().map { index, plan in
+            BoardFlight(cardID: plan.id, kind: plan.kind == .move ? .move : .sink,
+                        title: titles[plan.id] ?? plan.id,
+                        accent: Self.laneAccent(plan.toLane),
+                        from: plan.from, to: plan.to,
+                        delay: Double(index) * 0.04,
+                        pulseStrip: plan.pulseStrip)
         }
-        guard !newFlights.isEmpty else { return }
-        // a newer event supersedes any still-flying proxy of the same card
-        let cardIDs = Set(newFlights.map { $0.cardID })
-        flights.removeAll { cardIDs.contains($0.cardID) }
+        pendingLanding.formUnion(flying)
         flights.append(contentsOf: newFlights)
-        for flight in newFlights {
-            let total = flight.delay + (flight.kind == .move ? 0.42 : 0.30)
-            DispatchQueue.main.asyncAfter(deadline: .now() + total) { [weak self] in
-                self?.finish(flight)
-            }
-        }
+        // no shared timer: each proxy reports its OWN animation completion
+        // (BoardFlightProxyView) and reconciles independently via finish().
     }
 
-    private func finish(_ flight: BoardFlight) {
+    /// Per-proxy completion (from the proxy view's animation-done callback,
+    /// with a safety-net timer behind it). Idempotent, and a no-op for
+    /// superseded proxies — only a flight still on the board may un-hide its
+    /// row or pop a strip badge.
+    func finish(_ flight: BoardFlight) {
+        guard flights.contains(where: { $0.id == flight.id }) else { return }
         flights.removeAll { $0.id == flight.id }
         if flight.kind == .move {
-            withAnimation(.easeOut(duration: 0.15)) { _ = landed.insert(flight.cardID) }
+            withAnimation(.easeOut(duration: 0.15)) {
+                pendingLanding.remove(flight.cardID)
+                landed.insert(flight.cardID)
+            }
         }
         if let strip = flight.pulseStrip { pulse(strip) }
     }
@@ -250,7 +258,9 @@ struct BoardFlightOverlay: View {
         ZStack(alignment: .topLeading) {
             Color.clear
             ForEach(controller.flights) { flight in
-                BoardFlightProxyView(flight: flight)
+                BoardFlightProxyView(flight: flight) {
+                    controller.finish(flight)
+                }
             }
         }
         .clipped()
@@ -260,9 +270,12 @@ struct BoardFlightOverlay: View {
 
 /// The animated silhouette: rounded rect + the card's title line, tinted with
 /// the destination lane's accent. One spring drives progress 0→1; the path
-/// modifier below turns progress into position/scale/shadow.
+/// modifier below turns progress into position/scale/shadow. Completion is
+/// per-proxy — each animation reports its OWN done (no shared timer), with a
+/// safety-net timer behind it; finish() is idempotent either way.
 private struct BoardFlightProxyView: View {
     let flight: BoardFlight
+    let onDone: () -> Void
     @State private var progress: CGFloat = 0
 
     var body: some View {
@@ -282,16 +295,21 @@ private struct BoardFlightProxyView: View {
             .stroke(flight.accent.opacity(0.45), lineWidth: 1))
         .modifier(BoardFlightPath(progress: progress, flight: flight))
         .onAppear {
-            switch flight.kind {
+            let animation: Animation = switch flight.kind {
             case .move:
                 // lift → curved flight → settle; the spring's light
                 // underdamping past t=1 IS the landing bounce.
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.72)
-                    .delay(flight.delay)) { progress = 1 }
+                .spring(response: 0.34, dampingFraction: 0.72).delay(flight.delay)
             case .sink:
-                withAnimation(.easeIn(duration: 0.25).delay(flight.delay)) {
-                    progress = 1
-                }
+                .easeIn(duration: 0.25).delay(flight.delay)
+            }
+            withAnimation(animation, completionCriteria: .logicallyComplete) {
+                progress = 1
+            } completion: { onDone() }
+            // safety net: a proxy whose animation never completes (view torn
+            // down mid-transaction) must not sit orphaned on the overlay.
+            DispatchQueue.main.asyncAfter(deadline: .now() + flight.delay + 1.0) {
+                onDone()
             }
         }
     }
@@ -371,10 +389,15 @@ private struct BoardCardMotionModifier: ViewModifier {
     @ObservedObject var store: DashboardStore
     @ObservedObject var flights: BoardFlightController
     @State private var hovering = false
+    // the motion-event generation this row was born under (0 = pre-motion):
+    // lets the frame merge prefer the FRESH row over a same-key outgoing one
+    // still fading through its removal transition (A→B→A within a window).
+    @State private var bornGen = 0
 
     func body(content: Content) -> some View {
         content
-            .boardMotionFrame("row:\(lane):\(id)")
+            .boardMotionFrame("row:\(lane):\(id)", generation: bornGen)
+            .onAppear { bornGen = store.boardMotion?.seq ?? 0 }
             .opacity(flights.isAwaitingLanding(id, event: store.boardMotion) ? 0 : 1)
             .transition(.asymmetric(insertion: insertion, removal: .opacity))
             // micro-juice: hover lift (none existed — CardSurface only tints).

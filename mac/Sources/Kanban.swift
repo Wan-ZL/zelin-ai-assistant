@@ -501,6 +501,11 @@ struct KanbanView: View {
             }
             BoardFlightOverlay(controller: flights)
             }
+            // the board's own visible rect — the planner clamps every flight
+            // endpoint to it (rows scrolled out of a lane's viewport report
+            // far-off frames; flying from/to off-screen crosses headers).
+            // INSIDE the coordinateSpace modifier, or .named can't resolve.
+            .boardMotionFrame("board")
             .coordinateSpace(name: BoardMotionPolicy.space)
             .onPreferenceChange(BoardFramesKey.self) { flights.frames = $0 }
             .onChange(of: store.boardMotion) { _, event in

@@ -1,7 +1,8 @@
-// BoardDiff.swift — pure snapshot differ behind the kanban flight layer
-// (v0.43 手感). Foundation-only BY CONTRACT: ios/tests/boarddiff/run.sh
-// compiles this file standalone with plain swiftc (CaptionCore.swift 先例),
-// so no AppKit/SwiftUI/Combine may ever be imported here.
+// BoardDiff.swift — pure snapshot differ + flight planner behind the kanban
+// flight layer (v0.43 手感). Foundation + CoreGraphics (geometry types) ONLY,
+// by contract: ios/tests/boarddiff/run.sh compiles this file standalone with
+// plain swiftc (CaptionCore.swift's Foundation+Compression 先例), so no
+// AppKit/SwiftUI/Combine may ever be imported here.
 //
 // Input: the per-lane ORDERED id lists the board renders, captured before and
 // after a change (a dashboard.json snapshot landing, or a local optimistic
@@ -12,6 +13,7 @@
 // sorting is not causality.
 
 import Foundation
+import CoreGraphics
 
 /// One board lane's rendered ids, in render order. `lane` is a stable key
 /// ("debt"/"approval"/"running"/"review"/"completed"/"archived") — plain
@@ -118,5 +120,98 @@ struct BoardMotionEvent: Equatable {
         self.seq = seq
         self.diff = diff
         self.crossfade = diff.changeCount > BoardDiff.flightCap
+    }
+}
+
+// MARK: - flight planning (pure — geometry policy the harness can pin)
+
+/// One planned proxy animation, fully resolved: both endpoints validated
+/// against the frames the board actually reported. Anything the planner
+/// drops simply appears at its destination — never a flight to a frame we
+/// don't have (a nil / zero-size / off-viewport endpoint reads as a glitch,
+/// not as juice).
+struct BoardFlightPlan: Equatable {
+    enum Kind: Equatable {
+        case move          // lane → lane, curved path + settle
+        case sink          // off-board removal: shrink+fade toward the lane edge
+    }
+    let id: String
+    let kind: Kind
+    let toLane: String         // accent derivation (sinks keep their last lane)
+    let from: CGRect
+    let to: CGRect
+    let pulseStrip: String?    // strip key to pop on landing (collapsed target)
+}
+
+/// Turns a diff + the board's reported frames into the flights that may
+/// actually run. Pure and deterministic (plan order = diff order: moves
+/// first, then removals) so ios/tests/boarddiff pins the drop rules.
+enum BoardFlightPlanner {
+    /// Every card id an event touches — the controller cancels any still-
+    /// flying proxy of these on event arrival (an A→B→A within one window
+    /// must replace the first proxy, and a removal chased by a re-insert
+    /// must cancel the sink; the superseded proxy's completion is a no-op).
+    static func touchedIDs(_ diff: BoardDiffResult) -> Set<String> {
+        var ids = Set(diff.moves.map { $0.id })
+        ids.formUnion(diff.inserts.map { $0.id })
+        ids.formUnion(diff.removals.map { $0.id })
+        return ids
+    }
+
+    /// - sources: pre-change frames per card id (captured before layout ran)
+    /// - frames:  post-layout lookup — "row:<lane>:<id>", "strip:<lane>",
+    ///            "lane:<lane>"
+    /// - visible: the board's on-screen rect in the same space; endpoints
+    ///            whose midpoint lies outside are dropped — rows scrolled out
+    ///            of their lane's viewport report far-off frames (LazyVStack
+    ///            keeps them alive), and a flight from off-screen crosses
+    ///            headers. An off-screen card just appears at its destination.
+    static func plans(diff: BoardDiffResult,
+                      sources: [String: CGRect],
+                      frames: [String: CGRect],
+                      visible: CGRect) -> [BoardFlightPlan] {
+        var plans: [BoardFlightPlan] = []
+        for move in diff.moves {
+            guard let from = sources[move.id], usable(from, in: visible) else { continue }
+            var pulse: String?
+            // destination priority: the real row → the collapsed strip's top
+            // (badge area; pop it on landing) → the lane column's top region.
+            var to = frames["row:\(move.toLane):\(move.id)"]
+            if !isUsable(to, in: visible), let strip = frames["strip:\(move.toLane)"] {
+                to = CGRect(x: strip.minX, y: strip.minY,
+                            width: strip.width, height: 72)
+                pulse = move.toLane
+            }
+            if !isUsable(to, in: visible), let lane = frames["lane:\(move.toLane)"] {
+                to = CGRect(x: lane.minX, y: lane.minY,
+                            width: lane.width, height: 120)
+                pulse = nil
+            }
+            guard let dest = to, usable(dest, in: visible) else { continue }
+            plans.append(BoardFlightPlan(id: move.id, kind: .move,
+                                         toLane: move.toLane,
+                                         from: from, to: dest, pulseStrip: pulse))
+        }
+        for removal in diff.removals {
+            guard let from = sources[removal.id], usable(from, in: visible) else { continue }
+            plans.append(BoardFlightPlan(id: removal.id, kind: .sink,
+                                         toLane: removal.lane,
+                                         from: from,
+                                         to: from.offsetBy(dx: 0, dy: 26),
+                                         pulseStrip: nil))
+        }
+        return plans
+    }
+
+    /// Non-degenerate (a zero-size frame is a view that never really laid
+    /// out) and on screen (midpoint inside the visible rect, small tolerance).
+    private static func usable(_ rect: CGRect, in visible: CGRect) -> Bool {
+        guard rect.width >= 2, rect.height >= 2 else { return false }
+        return visible.insetBy(dx: -4, dy: -4)
+            .contains(CGPoint(x: rect.midX, y: rect.midY))
+    }
+
+    private static func isUsable(_ rect: CGRect?, in visible: CGRect) -> Bool {
+        rect.map { usable($0, in: visible) } ?? false
     }
 }
