@@ -58,6 +58,7 @@ ALLOWED_ACTIONS = frozenset({
     "answer_input",
     # no-requirement / suggestion-level (actd.process_inbox dispatch)
     "capture", "feedback", "merge_review", "merge_apply", "merge_dismiss",
+    "merge_force",
     "import_claude_sessions", "weekly_digest_now",
     # §38 拆成新卡 (fold undo): id + note_ts
     "split_note",
@@ -66,7 +67,11 @@ ALLOWED_ACTIONS = frozenset({
 # Fields we accept from a POST body and forward into the inbox file. Everything
 # else is dropped; ``ts`` is always (re)stamped server-side so the client can
 # never spoof it. This mirrors the Mac app's inbox payload shapes (§3/§10/§21).
-_INBOX_KEYS = ("id", "action", "comment", "text", "ids", "title", "note_ts")
+# §37/§38 add ``title`` (set_title) and ``note_ts`` (split_note); §41 adds
+# ``primary`` (merge_force, §21bis) and ``mode`` (capture mode:"run", §34) so
+# the web client is no longer locked out of those flows.
+_INBOX_KEYS = ("id", "action", "comment", "text", "ids", "title", "note_ts",
+               "primary", "mode")
 
 # A scalar ``id`` in a POST body is forwarded verbatim into the inbox file and
 # ends up in merge_review.job_path() as ``MERGE_DIR / f"{id}.json"`` (via
@@ -352,6 +357,28 @@ class _Handler(BaseHTTPRequestHandler):
         if ids is not None and not (isinstance(ids, list)
                                     and all(isinstance(x, str) for x in ids)):
             self._json(400, {"error": "ids must be a list of strings"})
+            return
+        # §41 merge_force (§21bis): fail closed on shape here, same as the iOS
+        # client-side guard — ≥2 distinct safe ids with primary ∈ ids. actd
+        # re-validates existence; ``primary`` gets the same traversal-proof
+        # allow-list as ``id`` (defense-in-depth, it names a card).
+        primary = payload.get("primary")
+        if primary is not None and not (isinstance(primary, str)
+                                        and _SAFE_ID_RE.match(primary)):
+            self._json(400, {"error": "invalid primary"})
+            return
+        if action == "merge_force":
+            uniq = list(dict.fromkeys(ids or []))
+            if (len(uniq) < 2 or primary not in uniq
+                    or not all(_SAFE_ID_RE.match(x) for x in uniq)):
+                self._json(400, {"error": "merge_force needs >=2 distinct ids "
+                                          "and primary among them"})
+                return
+        # §41 capture mode (§34): only the defined value passes — an undefined
+        # mode must 400 here, never ride into the inbox file.
+        mode = payload.get("mode")
+        if mode is not None and (action != "capture" or mode != "run"):
+            self._json(400, {"error": "mode is only capture mode:\"run\""})
             return
         # §39.2: answer_input's text is bounded 1..4000 (code points) — reject
         # here with a 400 so an oversize/empty answer never reaches the inbox
