@@ -330,17 +330,30 @@ def _delivery_mode(req: Requirement) -> str:
 # §38: notes projected (capped) so the Mac 展开详情 can render fold-note lines
 # with their 拆成新卡 buttons. Same key + cap as §37's notes_text (PR #55 puts
 # it on every row via _title_fields) — after both merge, ONE implementation
-# survives; keeping name/cap identical makes that reconciliation mechanical.
+# survives. Clip semantics DIFFER deliberately: #55 keeps the HEAD, but fold
+# lines append at the TAIL — a head clip silently drops the newest folds'
+# [@ts] handles, exactly the ones 拆成新卡 exists for (review blocker 4). On
+# reconciliation keep THIS tail-aligned clip.
 _NOTES_TEXT_CAP = 2000
+_NOTES_CLIP_MARKER = "…（更早的备注已省略）"
 
 
 def _notes_view(req: Requirement) -> dict:
     """``{"notes_text": ...}`` or ``{}`` — empty notes omit the key entirely
-    (add-only: Swift decodeIfPresent, old payloads unchanged)."""
+    (add-only: Swift decodeIfPresent, old payloads unchanged). Over the cap,
+    the LAST ~2000 chars survive, snapped forward to a line boundary so
+    Swift's FoldNote.parse only ever sees intact lines; an ellipsis marker
+    line says honestly that older notes were dropped."""
     notes = str(req.notes or "").strip()
     if not notes:
         return {}
-    return {"notes_text": notes[:_NOTES_TEXT_CAP]}
+    if len(notes) > _NOTES_TEXT_CAP:
+        clipped = notes[-_NOTES_TEXT_CAP:]
+        nl = clipped.find("\n")
+        if nl >= 0:   # drop the partial first line (a giant single line stays)
+            clipped = clipped[nl + 1:]
+        notes = f"{_NOTES_CLIP_MARKER}\n{clipped}"
+    return {"notes_text": notes}
 
 
 # --------------------------------------------------------------------------- #

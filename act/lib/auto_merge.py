@@ -53,8 +53,9 @@ OPEN_STATES = (
 MAX_OUTSTANDING = 3
 
 # Strong signal: high overlap on its own, or a shared external contact plus
-# moderate overlap. Tokens counted per match_corpus.score_pair (latin runs +
-# CJK bigrams); thresholds are pinned by tests/test_auto_merge.py.
+# moderate overlap. Scores per match_corpus.score_pair; the token MINIMUMS
+# count only strong evidence (match_corpus.strong_evidence — 2-char CJK grams
+# score but never count, review blocker 2). Pinned by tests/test_auto_merge.py.
 HIGH_SCORE = 0.6
 HIGH_MIN_TOKENS = 3
 CONTACT_SCORE = 0.4
@@ -114,13 +115,14 @@ def _linked(a, b) -> bool:
     return False
 
 
-def is_near_dupe(a, b) -> tuple[bool, list[str]]:
+def is_near_dupe(a, b, cfg=None) -> tuple[bool, list[str]]:
     """The §38 deterministic near-dupe signal for two open cards."""
     score, matched = match_corpus.score_pair(
-        match_corpus.corpus_tokens(a), match_corpus.corpus_tokens(b))
-    if score >= HIGH_SCORE and len(matched) >= HIGH_MIN_TOKENS:
+        match_corpus.corpus_tokens(a, cfg), match_corpus.corpus_tokens(b, cfg))
+    strong = match_corpus.strong_evidence(matched)
+    if score >= HIGH_SCORE and len(strong) >= HIGH_MIN_TOKENS:
         return True, matched
-    if (score >= CONTACT_SCORE and len(matched) >= CONTACT_MIN_TOKENS
+    if (score >= CONTACT_SCORE and len(strong) >= CONTACT_MIN_TOKENS
             and _contacts(a) & _contacts(b)):
         return True, matched
     return False, []
@@ -157,7 +159,8 @@ def _make_suggestion(primary, secondary, matched: list) -> Optional[str]:
     (the apps render an unknown confidence string as a plain badge)."""
     if merge_review is None:
         return None
-    words = "、".join(matched[:6])
+    # display filter: long digit runs (phone-shaped) match but never print
+    words = "、".join(match_corpus.display_tokens(matched)[:6])
     job = {
         "id": merge_review.new_suggestion_id(),
         "ids": [str(primary.id), str(secondary.id)],
@@ -194,6 +197,7 @@ def scan_new_cards() -> int:
     try:
         if merge_review is None:
             return 0
+        cfg = config.load_config()   # one scrub config for the whole pass
         state = _load_state()
         scanned = {str(x) for x in state.get("scanned") or []}
         suggested = {str(x) for x in state.get("suggested") or []}
@@ -213,7 +217,7 @@ def scan_new_cards() -> int:
                     key = pair_key(new.id, other.id)
                     if key in suggested or _linked(new, other):
                         continue
-                    dupe, matched = is_near_dupe(new, other)
+                    dupe, matched = is_near_dupe(new, other, cfg)
                     if not dupe:
                         continue
                     if budget <= 0:

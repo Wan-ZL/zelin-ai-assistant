@@ -1205,6 +1205,19 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   overlap，top-3）。`match_corpus.normalize` 是 §37 `SearchMatch.normalize` 的
   **python 孪生**（lowercase + 剥 `-`/`_`/`.`/空白，CJK 原样）——两边语义
   同步改。无任何新增 LLM 调用。
+- **匹配语义硬规则（review 定案，测试钉死）**：
+  - **隐私**：token 会出现在围栏外的 prompt 文本里（关键词/重合词/规则判定
+    rationale），而 normalize 恰好剥掉密钥 pattern 依赖的分隔符、让 runner 端
+    整 prompt scrub 失效——所以一切 corpus **先 `sanitize.scrub` 再 tokenize**；
+    **alias 只取 title/显示名/summary**（notes 与来源引句是第三方不可信文本 +
+    密钥/PII 高发区，永不进 alias）；长纯数字串（电话形状，scrub pattern 不
+    覆盖）只参与匹配、**永不展示**（`display_tokens`）。
+  - **预筛只对内容排名**：`candidate_desc` 的脚手架（候选需求/原文引句标签、
+    来源/日期/链接行）不参与 overlap——否则标签词自制「重合词」证据，把真新
+    诉求折进巧合卡。
+  - **中文停用**：常见助词/代词/客套 bigram（帮我/一下/我看…含掩码词 脱敏）
+    不成为 token；且 **2 字 CJK gram 一律不计入证据数**（只贡献 overlap
+    分数）——同一联系人两条不同请求不得因功能词被判 near-dupe。
 
 ### 38.2 可逆折叠 — 折叠备注时间戳 + inbox 动作 `split_note`
 
@@ -1216,8 +1229,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   降级为纯展示）。同 (kind, text) 去重不变（retry 无害不变式）。
 - **dashboard 行新增 add-only 字段 `notes_text`**（str，notes 投影，cap 2000
   字，空值整键省略）：`needs_approval[]`、`debt[]`、`review[]` 三个分区携带
-  （Swift `decodeIfPresent`）。这与 §37（PR #55）在全部分区加的同名字段语义
-  一致——两者合流后收敛为一份实现，键名/cap 刻意逐字相同。
+  （Swift `decodeIfPresent`）。**截断语义 = 行对齐 TAIL**：超 cap 时保留最后
+  ~2000 字、向前对齐到整行、头部加一行「…（更早的备注已省略）」——折叠行追加
+  在尾部，HEAD 截断会静默丢掉最新折叠的 `[@ts]` 句柄（拆分入口随之消失）。
+  与 §37（PR #55）同名字段合流时收敛为一份实现，**以本节 TAIL 语义为准**
+  （键名/cap 逐字相同）。
 - **inbox 动作全集（§10）新增 `split_note`**（折叠的撤销，拆成新卡）：
   ```json
   {"action":"split_note","id":"R-xxx","note_ts":"<ts 句柄>","ts":"<ISO8601>"}
@@ -1243,9 +1259,10 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **触发**：actd 每 pass（`act/lib/auto_merge.scan_new_cards`）对**新出现的
   未结卡**（detected/raising/card_sent/approved/executing/review；增量台账
   `state/auto_merge_seen.json` 的 `scanned`）与其余未结卡做 §38.1 同一套
-  normalized-token 重合判定：**高重合**（overlap ≥0.6 且 ≥3 重合词）**或
-  同一非 owner 联系人 + 中等重合**（≥0.4 且 ≥2 重合词）→ 自动生成一条 §21
-  合并建议。血缘/同 thread 关联卡（improvement_of / thread_id / thread_key
+  normalized-token 重合判定：**高重合**（overlap ≥0.6 且 ≥3 个**强证据**
+  重合词）**或同一非 owner 联系人 + 中等重合**（≥0.4 且 ≥2 个强证据词）→
+  自动生成一条 §21 合并建议。强证据 = 排除 2 字 CJK gram（§38.1 匹配硬
+  规则）。血缘/同 thread 关联卡（improvement_of / thread_id / thread_key
   相同）不判——那是刻意关联，不是撞车。
 - **作业文件 = §21 的 MS- 形状原样复用**（`state/merge/MS-*.json`，直接落
   `status="done"`）：`verdict="merge"`、`primary`=较旧卡、`rationale`=

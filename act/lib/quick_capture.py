@@ -119,7 +119,8 @@ def _display_name(r) -> str:
     return title
 
 
-def registry_inventory_text(reqs: Optional[list] = None) -> str:
+def registry_inventory_text(reqs: Optional[list] = None,
+                            cfg: Optional[config.Config] = None) -> str:
     """Up to ``_INVENTORY_CAP`` lines for the triage/capture LLM, each
     ``R-xxx | status | title`` plus the card's display-corpus (§38): a
     readable 显示名 (when it differs from the frozen title) and up to
@@ -134,7 +135,7 @@ def registry_inventory_text(reqs: Optional[list] = None) -> str:
     (critique high #5); the remaining slots go to the most-recent other cards.
     """
     selected = _inventory_reqs() if reqs is None else reqs
-    token_sets = [match_corpus.corpus_tokens(r) for r in selected]
+    token_sets = [match_corpus.corpus_tokens(r, cfg) for r in selected]
     freq = match_corpus.doc_frequencies(token_sets)
 
     lines = []
@@ -145,23 +146,44 @@ def registry_inventory_text(reqs: Optional[list] = None) -> str:
         disp = _display_name(r)
         if disp and disp != str(r.title or "").strip():
             line += f" | 显示名: {disp}"
-        aliases = match_corpus.derive_aliases(r, freq)
+        aliases = match_corpus.derive_aliases(r, freq, cfg=cfg)
         if aliases:
             line += f" | 关键词: {' '.join(aliases)}"
         lines.append(line)
     return "\n".join(lines) or "(registry is empty)"
 
 
-def _likely_related_block(text: str, reqs: list) -> str:
+# candidate_desc() scaffolding — its labels/metadata must NEVER rank (review
+# blocker 1): 候选需求/来源/日期 tokens manufacture 重合词 against unrelated
+# cards, and the fold-first bias then buries a real new ask as a silent fold.
+_DESC_CONTENT_RE = re.compile(r"^(?:候选需求|原文引句)：(.*)$")
+
+
+def _prepass_text(desc: str) -> str:
+    """Content-only view of a :func:`candidate_desc` block for the pre-pass:
+    the 候选需求/原文引句 payloads, minus their labels; 来源/链接 metadata
+    lines drop entirely. Text without the scaffold (self-DM captures) passes
+    through unchanged."""
+    content = []
+    for ln in str(desc or "").split("\n"):
+        m = _DESC_CONTENT_RE.match(ln.strip())
+        if m:
+            content.append(m.group(1))
+    return "\n".join(content) if content else str(desc or "")
+
+
+def _likely_related_block(text: str, reqs: list,
+                          cfg: Optional[config.Config] = None) -> str:
     """§38 deterministic pre-pass: the top overlap candidates, flagged for the
     LLM as 「最可能相关」 (advisory — the LLM still decides). Empty string when
     nothing clears the bar, so legacy prompts are byte-identical then."""
-    ranked = match_corpus.rank_candidates(text, reqs)
+    ranked = match_corpus.rank_candidates(text, reqs, cfg=cfg)
     if not ranked:
         return ""
     lines = ["最可能相关的已有卡（确定性关键词预筛，仅供参考，最终判断以你为准）："]
     for r, _score, matched in ranked:
-        lines.append(f"- {r.id}（重合词：{'、'.join(matched[:5])}）")
+        shown = match_corpus.display_tokens(matched)[:5]
+        lines.append(f"- {r.id}（重合词：{'、'.join(shown)}）")
     return "\n".join(lines) + "\n\n"
 
 
@@ -178,8 +200,8 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
         "消息内容：\n"
         f"{sanitize.fence_untrusted(text_or_media_desc)}\n\n"
         "现有注册表条目（id | status | title；部分带 显示名/关键词 帮你认卡）：\n"
-        f"{registry_inventory_text(inv)}\n\n"
-        f"{_likely_related_block(text_or_media_desc, inv)}"
+        f"{registry_inventory_text(inv, cfg)}\n\n"
+        f"{_likely_related_block(text_or_media_desc, inv, cfg)}"
         f"{analyze.routing_rules_text(cfg)}\n\n"
         "三选一。只输出**一个** JSON 对象（无多余文字、无 code fence）：\n"
         "1) 这是一个新任务/新想法 ->\n"
@@ -347,8 +369,8 @@ def build_triage_prompt(desc: str, cfg: Optional[config.Config] = None) -> str:
         f"{sanitize.fence_untrusted(desc)}\n\n"
         "现有注册表条目（id | status | title；含已交付 delivered / 已合并 merged；"
         "部分带 显示名/关键词 帮你认卡）：\n"
-        f"{registry_inventory_text(inv)}\n\n"
-        f"{_likely_related_block(desc, inv)}"
+        f"{registry_inventory_text(inv, cfg)}\n\n"
+        f"{_likely_related_block(_prepass_text(desc), inv, cfg)}"
         f"{_TRIAGE_BAR.format(owner=owner)}\n"
         "三选一。只输出**一个** JSON 对象（无多余文字、无 code fence）：\n"
         '1) 全新的需求 -> {"action": "new_proposal", "confidence": "high|low"}\n'

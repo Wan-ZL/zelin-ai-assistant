@@ -126,14 +126,33 @@ class AutoSuggestTestCase(unittest.TestCase):
 
     def test_terminal_and_linked_cards_never_suggested(self):
         # three near-dupe pairs, DISTINCT topics (no cross-pair overlap) —
-        # each would fire on its own, and each is blocked by one rule.
-        _seed("R-001", "滑雪板 snowboard 采购 对比", status=State.DELIVERED.value)
-        _seed("R-002", "滑雪板 snowboard 采购 跟进")     # vs delivered → no
-        _seed("R-003", "报税 taxreturn 材料 整理", improvement_of="R-004")
-        _seed("R-004", "报税 taxreturn 材料 补充")       # lineage-linked → no
-        _seed("R-005", "签证 visa 预约 delta", thread_id="R-005")
-        _seed("R-006", "签证 visa 预约 提醒", thread_id="R-005")  # same thread → no
+        # each fires on its own (asserted below), and each is blocked by one rule.
+        a1 = _seed("R-001", "snowboard burton gear 滑雪板 对比",
+                   status=State.DELIVERED.value)
+        a2 = _seed("R-002", "snowboard burton gear 滑雪板 跟进")  # vs delivered → no
+        b1 = _seed("R-003", "taxreturn form1040 irs 报税材料 整理",
+                   improvement_of="R-004")
+        b2 = _seed("R-004", "taxreturn form1040 irs 报税材料 补充")  # lineage → no
+        c1 = _seed("R-005", "visaappointment delta airline 签证 预约",
+                   thread_id="R-005")
+        c2 = _seed("R-006", "visaappointment delta airline 签证 提醒",
+                   thread_id="R-005")                              # same thread → no
+        # the SIGNAL is present for every pair — only the guards block them
+        for x, y in ((a1, a2), (b1, b2), (c1, c2)):
+            self.assertTrue(auto_merge.is_near_dupe(x, y)[0])
         self.assertEqual(auto_merge.scan_new_cards(), 0)
+
+    def test_same_colleague_two_different_asks_no_false_positive(self):
+        # review blocker 2, reproduced verbatim: shared contact + zh function
+        # words (帮我/我看/一下) must not manufacture a merge suggestion —
+        # the contact path fires exactly on the population with two DIFFERENT
+        # real asks from one person.
+        src = [{"who": "colleague", "channel": "slack", "date": "2026-07-16",
+                "quote": "q"}]
+        _seed("R-001", "帮我看一下报销流程", sources=src)
+        _seed("R-002", "帮我看简历", sources=src)
+        self.assertEqual(auto_merge.scan_new_cards(), 0)
+        self.assertEqual(_jobs(), [])
 
     def test_steady_state_pass_is_incremental(self):
         _seed("R-001", DUP_A)

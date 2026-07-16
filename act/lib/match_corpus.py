@@ -8,9 +8,9 @@ sides. If either side's normalization semantics ever change, mirror the other.
 Three consumers, all LLM-free and pure (no IO, never raises):
 
 - **alias derivation** (:func:`derive_aliases`): up to ~6 distinctive keyword
-  tokens per card, drawn from its title/summary/sources/notes, shown next to
-  the card in the triage/capture inventory so the matcher LLM can recognize a
-  card whose frozen title is an unmatchable URL/path;
+  tokens per card, drawn from its title/display_title/summary ONLY, shown
+  next to the card in the triage/capture inventory so the matcher LLM can
+  recognize a card whose frozen title is an unmatchable URL/path;
 - **pre-pass ranking** (:func:`rank_candidates`): normalized-token overlap
   between an incoming candidate text and each card's corpus — the top hits get
   flagged 「最可能相关」 in the prompt before the LLM ever answers;
@@ -20,11 +20,23 @@ Three consumers, all LLM-free and pure (no IO, never raises):
 Tokenization: latin/digit runs are normalized as one token ("EB-1A" → "eb1a",
 "v0.33.1" → "v0331"); CJK runs contribute character bigrams (plus the whole
 run when short) — no segmenter, fully deterministic.
+
+PRIVACY (§38 review): tokens land in prompt text OUTSIDE the untrusted fence
+(inventory aliases, 重合词, auto-merge rationale), and :func:`normalize`
+strips exactly the separators sanitize's secret patterns anchor on — so the
+runner's whole-prompt scrub can no longer catch a token like "sk…"-minus-its-
+dashes. Every corpus is therefore scrubbed BEFORE tokenizing
+(:func:`corpus_tokens` / :func:`alias_text`), alias mining never touches
+notes/source quotes at all, and :func:`display_tokens` additionally keeps
+long digit runs (phone-shaped, which scrub does not cover) out of any
+displayed token list.
 """
 from __future__ import annotations
 
 import re
 from typing import Iterable, Optional
+
+from act.lib import sanitize
 
 # Twin of SearchMatch.swift's separator set — keep in lockstep (§37/§38).
 _SEPARATORS = frozenset("-_.")
@@ -46,12 +58,32 @@ _STOPWORDS = frozenset({
     "radar", "quick",   # the §38 fold-note tags — on every folded card
 })
 
+# CJK function-word grams — particles / pronouns / measure words / politeness
+# (and 脱敏, the scrub mask itself: two masked cards must not "match" on the
+# mask). Without this, 帮我/一下-class grams count as evidence and one
+# colleague's two DIFFERENT asks look like near-duplicates (review blocker 2).
+_CJK_STOP = frozenset({
+    "帮我", "给我", "我看", "看一", "一下", "这个", "那个", "一个", "什么",
+    "怎么", "可以", "需要", "不用", "不要", "我们", "你们", "他们", "大家",
+    "现在", "已经", "然后", "就是", "还是", "但是", "如果", "可能", "应该",
+    "时候", "今天", "明天", "昨天", "稍后", "谢谢", "麻烦", "记得", "记一",
+    "一句", "这条", "那条", "这张", "那张", "一点", "有点", "没有", "还有",
+    "或者", "因为", "所以", "觉得", "知道", "一起", "之后", "之前", "以后",
+    "以前", "东西", "事情", "脱敏",
+})
+
 # Pure-digit tokens shorter than this are dates/counters, not identifiers.
 _MIN_DIGIT_LEN = 4
+# Pure-digit tokens this long are phone-shaped: kept for MATCHING (invoice /
+# thread ids are real evidence) but never DISPLAYED (aliases, 重合词,
+# rationale) — sanitize's built-in patterns do not cover phone numbers.
+_DIGIT_DISPLAY_MAX = 6
 # A single shared token this long is a signal on its own (URL slug, video id).
 STRONG_TOKEN_LEN = 6
 
 MAX_ALIASES = 6
+
+_CJK_CHAR_RE = re.compile(r"^[぀-ヿ㐀-䶿一-鿿]+$")
 
 
 def normalize(text) -> str:
@@ -75,7 +107,7 @@ def _cjk_grams(run: str) -> list[str]:
     grams = [run[i:i + 2] for i in range(len(run) - 1)]
     if len(run) <= 4:
         grams.append(run)
-    return grams
+    return [g for g in grams if g not in _CJK_STOP]
 
 
 def _keep(t: str) -> bool:
@@ -124,22 +156,47 @@ def corpus_text(req) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def corpus_tokens(req) -> set[str]:
-    return tokens(corpus_text(req))
+def corpus_tokens(req, cfg=None) -> set[str]:
+    """Scrub-then-tokenize (PRIVACY, module doc): normalize() would strip the
+    separators the secret patterns anchor on, so masking must happen while the
+    text is still intact — the runner's whole-prompt scrub is too late."""
+    return tokens(sanitize.scrub(corpus_text(req), cfg)[0])
+
+
+def alias_text(req) -> str:
+    """Alias mining corpus: title + display_title + summary ONLY. Notes and
+    source quotes are deliberately excluded — they carry untrusted third-party
+    text and pasted secrets/PII, and alias ranking (rare + long first) would
+    select exactly those (review blocker 3)."""
+    parts = [
+        str(getattr(req, "title", "") or ""),
+        str(getattr(req, "display_title", "") or ""),
+        str(getattr(req, "summary", "") or ""),
+    ]
+    return "\n".join(p for p in parts if p)
+
+
+def display_tokens(matched: Iterable[str]) -> list[str]:
+    """Tokens safe to SHOW in prompt/rationale text: long pure-digit runs
+    (phone-shaped — outside scrub's pattern set) stay match-only."""
+    return [t for t in matched
+            if not (t.isdigit() and len(t) > _DIGIT_DISPLAY_MAX)]
 
 
 def derive_aliases(req, doc_freq: Optional[dict] = None,
-                   limit: int = MAX_ALIASES) -> list[str]:
+                   limit: int = MAX_ALIASES, cfg=None) -> list[str]:
     """Up to ``limit`` distinctive keyword aliases for one card.
 
-    Ranking is deterministic: rarest across the registry first (``doc_freq``
-    = token -> number of cards carrying it, from :func:`doc_frequencies`),
-    then longest, then lexicographic. Tokens already inside the card's own
-    (normalized) title are skipped — the title is already on the inventory
-    line; aliases exist to add what it can't say.
+    Candidates come from :func:`alias_text` (title/display_title/summary
+    only), scrubbed before tokenizing. Ranking is deterministic: rarest
+    across the registry first (``doc_freq`` = token -> number of cards
+    carrying it, from :func:`doc_frequencies`), then longest, then
+    lexicographic. Tokens already inside the card's own (normalized) title
+    are skipped — the title is already on the inventory line; aliases exist
+    to add what it can't say.
     """
     title_norm = normalize(str(getattr(req, "title", "") or ""))
-    cand = corpus_tokens(req)
+    cand = set(display_tokens(tokens(sanitize.scrub(alias_text(req), cfg)[0])))
     freq = doc_freq or {}
 
     def _key(t: str):
@@ -166,6 +223,19 @@ def doc_frequencies(token_sets: Iterable[set]) -> dict:
     return freq
 
 
+def is_weak_gram(t: str) -> bool:
+    """A 2-char CJK gram is context, not identity: with bigram tokenization
+    almost any two Chinese sentences share a few, so they contribute to the
+    overlap SCORE but never to evidence COUNTS (review blocker 2,
+    belt+braces with the _CJK_STOP list)."""
+    return len(t) == 2 and bool(_CJK_CHAR_RE.match(t))
+
+
+def strong_evidence(matched: Iterable[str]) -> list[str]:
+    """The matched tokens that count toward threshold minimums."""
+    return [t for t in matched if not is_weak_gram(t)]
+
+
 def score_pair(a: set, b: set) -> tuple[float, list[str]]:
     """Normalized-token overlap between two token sets.
 
@@ -186,19 +256,21 @@ def score_pair(a: set, b: set) -> tuple[float, list[str]]:
     return score, sorted(inter, key=lambda t: (-len(t), t))
 
 
-def rank_candidates(text, reqs, top: int = 3,
-                    min_score: float = 0.2) -> list[tuple[object, float, list[str]]]:
+def rank_candidates(text, reqs, top: int = 3, min_score: float = 0.2,
+                    cfg=None) -> list[tuple[object, float, list[str]]]:
     """Deterministic pre-pass: rank ``reqs`` by overlap with ``text``.
 
     Returns up to ``top`` entries ``(req, score, matched_tokens)`` with
     score ≥ ``min_score``, best first (ties broken by id string so the
-    prompt is stable across runs)."""
-    incoming = tokens(text)
+    prompt is stable across runs). ``text`` must be CONTENT only — the
+    caller strips its own prompt scaffolding first (quick_capture's
+    ``_prepass_text``), or label tokens manufacture 重合词."""
+    incoming = tokens(sanitize.scrub(str(text or ""), cfg)[0])
     if not incoming:
         return []
     scored = []
     for r in reqs:
-        s, matched = score_pair(incoming, corpus_tokens(r))
+        s, matched = score_pair(incoming, corpus_tokens(r, cfg))
         if s >= min_score:
             scored.append((r, s, matched))
     scored.sort(key=lambda e: (-e[1], str(getattr(e[0], "id", ""))))

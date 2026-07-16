@@ -32,14 +32,18 @@ class InventoryCorpusTestCase(unittest.TestCase):
         self.cfg = config.Config()
 
     def test_line_prefix_frozen_and_corpus_appended(self):
+        # aliases mine title/display_title/summary ONLY (§38 privacy rule —
+        # notes/quotes are untrusted and may carry pasted secrets)
         _seed("R-019", "给 Quinton 开通 PRD 文档编辑权限", "delivered",
+              summary="give Quinton PRD permissions",
               sources=[{"who": "quinton", "channel": "slack",
-                        "date": "2026-07-01", "quote": "need PRD permissions"}])
+                        "date": "2026-07-01", "quote": "quoteonlyword here"}])
         inv = quick_capture.registry_inventory_text()
         # pre-§38 anchor format survives as a literal prefix
         self.assertIn("R-019 | delivered | 给 Quinton 开通 PRD 文档编辑权限", inv)
         self.assertIn("关键词:", inv)
         self.assertIn("permissions", inv)
+        self.assertNotIn("quoteonlyword", inv)
 
     def test_url_title_gets_display_name(self):
         _seed("R-020", "https://github.com/Wan-ZL/zelin-ai-assistant/issues/42")
@@ -90,6 +94,33 @@ class PrePassTestCase(unittest.TestCase):
         _seed("R-030", "修 login oauth bug")
         prompt = quick_capture.build_triage_prompt("候选需求：订滑雪板", self.cfg)
         self.assertNotIn("最可能相关的已有卡", prompt)
+
+    def test_scaffold_labels_never_rank(self):
+        # review blocker 1, reproduced: a card whose corpus shares ONLY the
+        # candidate_desc scaffold tokens (需求/来源) with an unrelated new ask
+        # must not be flagged — label/metadata tokens are not evidence.
+        _seed("R-050", "整理需求来源清单")
+        desc = quick_capture.candidate_desc(
+            "订一块新的滑雪板 burton", quote="想订一块 burton 的滑雪板",
+            who="manager", channel="meeting", date="2026-07-16")
+        prompt = quick_capture.build_triage_prompt(desc, self.cfg)
+        self.assertNotIn("最可能相关的已有卡", prompt)
+
+    def test_prepass_text_strips_scaffold_keeps_content(self):
+        desc = quick_capture.candidate_desc(
+            "修 oauth bug", quote="原话 oauth 挂了",
+            who="quinton", channel="slack", date="2026-07-16",
+            ref="https://example.com/t/1")
+        t = quick_capture._prepass_text(desc)
+        self.assertIn("修 oauth bug", t)
+        self.assertIn("原话 oauth 挂了", t)
+        self.assertNotIn("候选需求", t)
+        self.assertNotIn("来源", t)
+        self.assertNotIn("quinton", t)
+        self.assertNotIn("2026-07-16", t)
+        self.assertNotIn("example.com", t)
+        # scaffold-free text (self-DM capture) passes through unchanged
+        self.assertEqual(quick_capture._prepass_text("随手记一条"), "随手记一条")
 
 
 class BiasAndFrozenAnchorsTestCase(unittest.TestCase):
@@ -144,6 +175,28 @@ class NotesTextProjectionTestCase(unittest.TestCase):
         dash = self._dash()
         row = next(r for r in dash["needs_approval"] if r["id"] == "R-042")
         self.assertNotIn("notes_text", row)
+
+    def test_notes_over_cap_keep_tail_fold_handles(self):
+        # review blocker 4: fold lines append at the TAIL — a head clip would
+        # silently drop the newest [@ts] handles, the exact thing 拆成新卡
+        # needs. Over the cap the tail survives, line-aligned, with an honest
+        # ellipsis marker for the dropped head.
+        r = _seed("R-044", "多备注卡", State.CARD_SENT.value)
+        r.notes = "\n".join(f"老备注填充行{i} " + "x" * 60 for i in range(40))
+        ts = registry.append_fold_note(r, "最新折叠进展", "radar")
+        registry.save(r)
+        dash = self._dash()
+        row = next(x for x in dash["needs_approval"] if x["id"] == "R-044")
+        nt = row["notes_text"]
+        self.assertIn(f"[@{ts}]", nt)
+        self.assertIn("[radar] 最新折叠进展", nt)
+        self.assertNotIn("老备注填充行0 ", nt)
+        lines = nt.split("\n")
+        self.assertIn("更早的备注已省略", lines[0])
+        # line-aligned: every surviving line is intact (parses or is filler)
+        self.assertTrue(lines[1].startswith("老备注填充行"))
+        parsed = registry.parse_fold_notes(nt)
+        self.assertEqual(parsed[-1]["ts"], ts)
 
     def test_review_row_carries_notes_text(self):
         _seed("R-043", "待验收卡", State.REVIEW.value,

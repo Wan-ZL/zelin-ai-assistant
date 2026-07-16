@@ -68,16 +68,22 @@ class AliasesTestCase(unittest.TestCase):
         base.update(kw)
         return Requirement(**base)
 
-    def test_aliases_come_from_sources_and_notes_not_title(self):
+    def test_aliases_from_summary_never_notes_or_quotes(self):
+        # review blocker 3: notes/source quotes carry untrusted third-party
+        # text and pasted secrets — alias mining must not touch them.
         r = self._req(
             title="https://example.com/threads/12345",
+            summary="给 Quinton 开通 PRD permissions",
             sources=[{"who": "quinton", "channel": "slack",
                       "date": "2026-07-01",
-                      "quote": "PRD 编辑权限 permissions for Quinton"}],
-            notes="[radar] grant PRD editing")
+                      "quote": "quoteonlyword should never surface"}],
+            notes="[radar] noteonlyword neither")
         aliases = match_corpus.derive_aliases(r)
         self.assertLessEqual(len(aliases), match_corpus.MAX_ALIASES)
         self.assertIn("permissions", aliases)
+        self.assertIn("quinton", aliases)
+        self.assertNotIn("quoteonlyword", aliases)
+        self.assertNotIn("noteonlyword", aliases)
         # tokens already inside the (normalized) title are skipped
         self.assertNotIn("12345", aliases)
         self.assertNotIn("example", aliases)
@@ -91,6 +97,71 @@ class AliasesTestCase(unittest.TestCase):
         # rare-first: "login" (1 card) ranks before "oauth" (2 cards)
         self.assertLess(a1.index("login"), a1.index("oauth"))
         self.assertEqual(a1, match_corpus.derive_aliases(r1, freq))  # stable
+
+
+class CjkStopAndEvidenceTestCase(unittest.TestCase):
+    """Review blocker 2: zh function words must never be match evidence."""
+
+    def test_particles_and_politeness_never_tokenize(self):
+        ts = match_corpus.tokens("帮我看一下这个，麻烦了，谢谢")
+        for stop in ("帮我", "我看", "一下", "这个", "麻烦", "谢谢"):
+            self.assertNotIn(stop, ts)
+
+    def test_two_different_asks_from_particles_share_nothing(self):
+        # the reproduced false positive: same colleague, two different asks
+        a = match_corpus.tokens("帮我看一下报销流程")
+        b = match_corpus.tokens("帮我看简历")
+        self.assertEqual(a & b, set())
+
+    def test_weak_grams_score_but_never_count(self):
+        # 2-char CJK grams are context, not identity
+        strong = match_corpus.strong_evidence(["报销", "流程", "taxform", "报税材料"])
+        self.assertEqual(strong, ["taxform", "报税材料"])
+        self.assertTrue(match_corpus.is_weak_gram("权限"))
+        self.assertFalse(match_corpus.is_weak_gram("推荐信"))
+        self.assertFalse(match_corpus.is_weak_gram("ab"))   # latin len-2 is not a CJK gram
+
+    def test_scrub_mask_is_not_evidence(self):
+        # two cards each holding a (different) masked secret must not match
+        # on the mask text itself
+        self.assertNotIn("脱敏", match_corpus.tokens("key 是 [脱敏] 那个"))
+
+
+class PrivacyScrubTestCase(unittest.TestCase):
+    """Review blocker 3: secrets in notes/quotes must never reach any prompt
+    surface — normalize() strips the separators the runner-side scrub anchors
+    on, so masking happens BEFORE tokenizing."""
+
+    _SK = "sk-abcdefghijklmnop12345678"
+    _GHP = "ghp_abcdefghijklmnopqrstuvwxyz123456"
+    _PHONE = "+1-415-555-0123"
+
+    def _req(self):
+        return Requirement(
+            id="R-001", title="正常标题", status="card_sent",
+            summary="正常 summary keyword",
+            sources=[{"who": "x", "channel": "slack", "date": "2026-07-01",
+                      "quote": f"my key is {self._SK} and pat {self._GHP}"}],
+            notes=f"[radar] call {self._PHONE} token {self._SK}")
+
+    def test_corpus_tokens_carry_no_secret_fragments(self):
+        toks = match_corpus.corpus_tokens(self._req())
+        joined = " ".join(toks)
+        self.assertNotIn("abcdefghijklmnop", joined)   # sk- body
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", joined)  # ghp body
+        self.assertNotIn("skabcdefghijklmnop", joined)  # normalized laundering
+
+    def test_aliases_carry_no_secret_or_phone_fragments(self):
+        aliases = match_corpus.derive_aliases(self._req())
+        joined = " ".join(aliases)
+        for frag in ("abcdefghijklmnop", "ghp", "4155550123", "415", "0123"):
+            self.assertNotIn(frag, joined)
+
+    def test_phone_shaped_digit_runs_never_display(self):
+        self.assertEqual(match_corpus.display_tokens(["14155550123", "burton"]),
+                         ["burton"])
+        # short numeric ids (years, small counters) still display
+        self.assertEqual(match_corpus.display_tokens(["2026"]), ["2026"])
 
 
 class ScorePairTestCase(unittest.TestCase):
