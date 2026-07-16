@@ -76,12 +76,28 @@ def _url_title(url: str) -> str:
     return f"{domain} ▸ {segments[-1]}"
 
 
+# Sentence/clause boundary for _clip_clause (review fix). The old
+# ``[。！？!?；;.]\s*`` matched a BARE mid-word ASCII dot (\s* matches empty),
+# so "config.json" / "v0.33.1" / "domain.com" inside the first 48 chars became
+# a "sentence end" and legacy long titles projected as garbage ("把 config").
+#  - CJK enders 。！？； are unconditional boundaries;
+#  - ASCII . needs whitespace/EOL after AND ≥3 word chars before (skips
+#    abbreviations like "Dr." / "Mr." — a real sentence rarely ends in a
+#    1-2 letter word);
+#  - ASCII ! ? ; need whitespace/EOL after.
+_CLAUSE_BOUNDARY_RE = re.compile(
+    r"[。！？；]|(?<=\w\w\w)\.(?=\s|$)|[!?;](?=\s|$)")
+
+
 def _clip_clause(text: str) -> str:
-    """First sentence/clause of an overlong title, clipped to ~_CLIP_AT chars."""
-    # cut at the first sentence-ish boundary if one lands early enough
-    m = re.search(r"[。！？!?；;.]\s*", text)
+    """First sentence/clause of an overlong title, clipped to ~_CLIP_AT chars.
+
+    Both branches append "…" — the result is always a truncation of a longer
+    title, and the ellipsis is the honest signal for it (review fix: the
+    boundary branch used to return without one)."""
+    m = _CLAUSE_BOUNDARY_RE.search(text)
     if m and 0 < m.start() <= _CLIP_AT:
-        return text[: m.start()]
+        return text[: m.start()] + "…"
     clipped = text[:_CLIP_AT].rstrip()
     # prefer breaking at the last comma/space inside the window
     m2 = re.search(r"^(.{12,}?)[，,、\s][^，,、\s]*$", clipped)

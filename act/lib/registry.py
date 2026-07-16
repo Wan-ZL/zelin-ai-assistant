@@ -917,6 +917,9 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
         thread_id=parent.thread_id or parent.id,
         thread_key=new_req.thread_key or parent.thread_key,
         summary=f"既往卡 {parent.id} 的后续：{summary}",
+        # §37: the candidate's LLM display title carries over (fresh card,
+        # no user pin / former names inherited)
+        display_title=new_req.display_title,
         notes=(f"[radar] {note}" if note else ""),
     )
     return "follow_up", upsert(child)
@@ -994,6 +997,9 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
                     improvement_of=parent.id,
                     thread_id=parent.thread_id or parent.id,
                     thread_key=new_req.thread_key or parent.thread_key,
+                    # §37: keep the candidate's LLM display title on the
+                    # increment child (fresh card, no pin/former inherited)
+                    display_title=new_req.display_title,
                     notes=new_req.notes or "",
                 )
                 return upsert(child)

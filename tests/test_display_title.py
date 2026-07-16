@@ -52,7 +52,43 @@ class SanitizeTitleTestCase(unittest.TestCase):
              "顺手把上周遗留的两个问题也标注清楚")
         self.assertGreater(len(t), 60)   # long enough to take the clip branch
         out = titles.sanitize_title(t)
-        self.assertEqual(out, "把周报的三个亮点整理出来")
+        # review fix: the boundary branch appends "…" too — the result is a
+        # truncation of a longer title, and the ellipsis says so honestly.
+        self.assertEqual(out, "把周报的三个亮点整理出来…")
+
+    def test_mid_word_ascii_dot_is_not_a_sentence_boundary(self):
+        # review fix: the old regex treated a BARE mid-word dot as a sentence
+        # end ("把 config" / "升级 v0" / "Follow up with Dr" garbage).
+        cases = [
+            ("把 config.json 里的三个字段改成新的命名并同步更新所有引用的地方，"
+             "另外再检查部署脚本里的路径是否也需要一起调整", "config.json"),
+            ("升级 v0.33.1 之后把所有旧的配置项逐一迁移到新的结构里，并验证"
+             "每一台机器上的实际行为都保持一致、确认没有任何回归再收工",
+             "v0.33.1"),
+            ("看一下 domain.com 上面的三份报价，然后挑出最合适的一份写进对比"
+             "表格里，发给团队里的所有人做最终确认之后再定下来", "domain.com"),
+        ]
+        for t, token in cases:
+            self.assertGreater(len(t), 60, msg=token)
+            out = titles.sanitize_title(t)
+            # the dotted token survives intact — never split at its dot
+            self.assertIn(token, out, msg=f"{token} split: {out!r}")
+            self.assertTrue(out.endswith("…"), msg=out)
+
+    def test_abbreviation_dot_is_not_a_sentence_boundary(self):
+        t = ("Follow up with Dr. Smith about the three recommendation letters "
+             "and the timeline for the EB-1A filing next month")
+        out = titles.sanitize_title(t)
+        # "Dr." must not terminate the clause ("Follow up with Dr" garbage)
+        self.assertNotEqual(out, "Follow up with Dr")
+        self.assertIn("Dr. Smith", out)
+        self.assertTrue(out.endswith("…"))
+
+    def test_real_ascii_sentence_boundary_still_clips(self):
+        t = ("Ship the draft today. Then collect feedback from the reviewers "
+             "and fold every actionable comment into the second revision")
+        out = titles.sanitize_title(t)
+        self.assertEqual(out, "Ship the draft today…")
 
     def test_long_text_without_sentence_boundary_clips_with_ellipsis(self):
         t = "a" * 200
@@ -237,6 +273,53 @@ class LLMPiggybackTestCase(unittest.TestCase):
                       quick_capture.build_capture_prompt("一句话"))
         self.assertIn("display_title",
                       quick_capture.build_triage_prompt("候选"))
+
+    def test_increment_child_inherits_display_title(self):
+        # non-blocking review note: the LLM display_title of a candidate must
+        # survive merge_or_new when it files an increment child of an OPEN
+        # parent (the child is what lands on the board).
+        parent = Requirement(id="R-933", title="同一件事的标题很长很长很长",
+                             status=State.DETECTED.value, hardness="soft")
+        registry.save(parent)
+        cand = Requirement(id="", title="同一件事的标题很长很长很长",
+                           hardness="hard", deadline="2026-08-01")
+        registry.set_display_title(cand, "推进这件事的下一步")
+        child = registry.merge_or_new(cand)
+        self.assertNotEqual(child.id, parent.id)   # increment → child card
+        self.assertEqual(child.display_title, "推进这件事的下一步")
+
+
+class MergeCarriesDisplayNamesTestCase(unittest.TestCase):
+    """§37 review fix: 采纳合并 must not orphan the secondary's display names —
+    merged is TERMINAL (no un-merge), and the old name has to stay findable
+    through the primary's searchable notes_text."""
+
+    def setUp(self):
+        config.ensure_state_dirs()
+        for p in config.REGISTRY_DIR.glob("*.yaml"):
+            p.unlink()
+
+    def test_merge_folds_secondary_display_names_into_primary_notes(self):
+        from act import actd
+        primary = Requirement(id="R-935", title="主卡", status="card_sent")
+        registry.save(primary)
+        sec = Requirement(id="R-936", title="副卡内部标题", status="card_sent")
+        registry.set_display_title(sec, "LLM 起的旧名")
+        registry.set_display_title(sec, "用户改的名", by_user=True)
+        registry.save(sec)
+
+        actd._merge_into_primary("R-935", ["R-936"])
+
+        merged_primary = registry.load("R-935")
+        self.assertIn("用户改的名", merged_primary.notes)
+        self.assertIn("LLM 起的旧名", merged_primary.notes)
+        # the searchable projection carries them (notes → notes_text)
+        dash = dashboard.build_dashboard(
+            reqs=[merged_primary], agents=[], cfg=config.Config(), archived=[])
+        row = dash["needs_approval"][0]
+        self.assertIn("用户改的名", row["notes_text"])
+        # secondary is terminal merged, its names archived on the primary
+        self.assertEqual(registry.load("R-936").status, State.MERGED.value)
 
 
 if __name__ == "__main__":

@@ -886,7 +886,17 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
                                      + int(sec.repeated_mentions or 1))
         summary = " ".join(
             str(sec_ex.get("delivered_summary") or sec.title or "").split()).strip()
-        tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}"
+        # §37 review fix: carry the secondary's DISPLAY names into the
+        # primary's notes — notes project as searchable notes_text, so a
+        # user-named secondary stays findable by its old name after this
+        # IRREVERSIBLE merge (merged is terminal; the frozen sec.title alone
+        # broke the "旧名仍可搜索" promise exactly here).
+        sec_names = [str(n).strip() for n in
+                     ([getattr(sec, "display_title", None)]
+                      + list(getattr(sec, "former_titles", None) or []))
+                     if n and str(n).strip()]
+        names_part = f"（曾用名：{' · '.join(sec_names)}）" if sec_names else ""
+        tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}{names_part}"
         primary.notes = (primary.notes + "\n" + tag).strip() if primary.notes else tag
         # Preserve a delivered secondary's FULL deliverable on the primary.
         # MERGED is terminal + UI-unreachable (no un-merge), so a finished
@@ -905,6 +915,11 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             carried.append({
                 "id": sec.id,
                 "title": sec.title or "",
+                # §37: display names ride along too (same review fix as the
+                # notes tag above — the deliverable must stay attributable
+                # to the name the user knew the card by).
+                "display_title": getattr(sec, "display_title", None),
+                "former_titles": list(getattr(sec, "former_titles", None) or []) or None,
                 "delivered_summary": sec_ex.get("delivered_summary"),
                 "final_draft": sec_ex.get("final_draft"),
                 "merged_at": _iso_now(),

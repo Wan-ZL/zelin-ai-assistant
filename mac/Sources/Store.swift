@@ -273,8 +273,13 @@ final class DashboardStore: ObservableObject {
                 // §37 rename echoes clear on the REAL signal — the backend row
                 // now carries the new display title (not on a generated_at
                 // bump: actd rewrites the dashboard every pass regardless).
+                // Belt+braces: compare whitespace-NORMALIZED forms — actd
+                // stores the collapsed title, and an exact-equality compare
+                // against a differently-spaced pending value was the false
+                // 「改名超时」 loop (review finding; submit normalizes too).
                 pendingTitles = pendingTitles.filter { id, p in
-                    Self.backendDisplayTitle(of: id, in: db) != p.title
+                    Self.backendDisplayTitle(of: id, in: db).map(Self.normalizedTitle)
+                        != Self.normalizedTitle(p.title)
                 }
                 // sticky hides release once the id has LEFT its source list —
                 // moving to ANOTHER list no longer keeps it hidden forever.
@@ -812,6 +817,19 @@ final class DashboardStore: ObservableObject {
                 CapturePending(id: "capture-" + UUID().uuidString, text: text,
                                created: Date(), run: run))
         }
+    }
+
+    /// §37: collapse internal whitespace runs exactly like actd's
+    /// `" ".join(title.split())` (Character.isWhitespace covers U+3000, the
+    /// full-width space Chinese IMEs produce). Review fix: the Mac used to
+    /// trim ENDS only while actd collapsed internal whitespace — a double
+    /// space / 全角空格 in the typed title meant the rename LANDED on disk
+    /// but the echo-clear's exact-equality compare never matched, leaving a
+    /// permanent FALSE 「改名超时未确认，卡片名字未变化」 notice (and a retry
+    /// no-oped into the same loop). Submit path and clear compare both go
+    /// through this.
+    static func normalizedTitle(_ s: String) -> String {
+        s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
     /// §37: the set_title inbox write succeeded — echo the new display name on
