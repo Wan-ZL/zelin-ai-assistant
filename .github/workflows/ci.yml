@@ -200,6 +200,12 @@ jobs:
         # executable check on the hand-rolled binary protocol.
         run: bash ios/tests/captions/run.sh
 
+      - name: Swift board-diff tests (BoardDiff, plain swiftc)
+        # v0.43 手感 gate: the pure snapshot differ driving the kanban flight
+        # layer (mac/Sources/BoardDiff.swift) — first-load, moves vs reorder
+        # noise, inserts/removals, and the >6-change crossfade cap.
+        run: bash ios/tests/boarddiff/run.sh
+
       - name: Swift↔Python E2E crypto interop
         # The ONLY check that ios/Sources/E2E.swift byte-interops with
         # act/lib/e2e.py (tests/test_e2e.py is Python↔Python only): the frozen

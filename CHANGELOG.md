@@ -27,6 +27,47 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.43.0] - 2026-07-16
+
+### Added
+
+- **手感版 / Board motion (Mac)** — game-quality card animations on the kanban,
+  so cause and effect is *visible*: until now a card changed lanes by
+  teleporting on the next 5 s snapshot repaint. Board window only; pure
+  display layer (zero wire/state changes — CONTRACT §43).
+  - **Lane-change flights**: when a card moves columns (批准/打回/验收/暂缓,
+    or the backend moving it between snapshots), a lightweight proxy — rounded
+    card silhouette with the card's title, tinted with the destination lane's
+    accent — lifts off, flies a curved path above the board, and lands with a
+    small spring settle; the real row fades in underneath as it lands.
+    Optimistic echoes count as the card they stand in for, so the flight
+    launches on your *click*, and the later real snapshot doesn't re-animate.
+  - **Deal-in for new cards**: fresh proposals/captures slide in from the lane
+    top with a slight rotation settle, staggered 40 ms when several arrive.
+  - **Off-board removals** (trash / force-merge): the card shrinks and fades
+    toward the lane edge instead of vanishing. Honest limits: a card absorbed
+    by an *accepted merge suggestion*, or silently rotated off the
+    completed/archived lists' newest-50 cap, leaves WITHOUT animation — those
+    aren't board actions, and pretending otherwise would mislead; a title the
+    app can no longer resolve shows a generic 「卡片/Card」 label, never a raw
+    internal id.
+  - **Collapsed-strip arrivals**: a card landing in a folded 潜在任务/永久性完成
+    strip flies to the strip itself and pops its count badge once (1.0→1.25→1.0).
+  - **Micro-juice**: board cards get a subtle hover lift (2 pt raise, 120 ms).
+  - **Restraint & control**: everything is short springs (≤ ~350 ms) that never
+    block input; no animation on first load / window open, on search-filter
+    changes, or on strip expand/collapse; more than 6 changes in one snapshot
+    degrade to a plain crossfade. New 设置 → 通用 「看板动画」 toggle (default
+    on, stored locally), and the system Reduce Motion setting force-disables
+    all of it regardless of the toggle.
+  - Engine: a pure Foundation snapshot differ (`mac/Sources/BoardDiff.swift`,
+    moves/inserts/removals per lane) with its own swiftc harness in CI
+    (`ios/tests/boarddiff/`), plus a SwiftUI flight overlay
+    (`mac/Sources/BoardMotion.swift`).
+- **iOS: deliberately skipped** — the phone board pages one lane at a time, so
+  a cross-lane flight has nowhere to be seen; nothing changes there beyond the
+  version number. The menu-bar popover also stays still (board window only).
+
 ## [0.42.0] - 2026-07-16
 
 Display-only release（卡面大扫除）— no wire, state-machine, or analytics-id
@@ -1688,7 +1729,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.39.0...v0.40.0

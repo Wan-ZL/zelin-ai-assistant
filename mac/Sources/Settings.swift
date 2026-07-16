@@ -182,6 +182,8 @@ struct SettingsFormView: View {
     // v0.10.3 契约一: 卡片排序 — UserDefaults only (pure UI pref, NOT
     // settings_overrides.json). "newest" | "oldest" | "deadline".
     @State private var cardSortOrder = "newest"
+    // v0.43 手感: 看板动画 — UserDefaults only, same rationale.
+    @State private var boardAnimations = true
     // 终端应用 for double-click run-in-terminal — UserDefaults only, same
     // rationale (TerminalLauncher owns default + fallback).
     @State private var terminalApp = TerminalApp.terminal.rawValue
@@ -321,7 +323,7 @@ struct SettingsFormView: View {
         [
             SettingsSectionDescriptor(
                 id: "general", titleZh: "通用", titleEn: "General",
-                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 交付物格式 输出格式 deliverable format output format markdown html 标记语言 卡片排序 card sorting 排序 newest oldest deadline 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 笔记库访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
+                keywords: "通用 general 登录时启动 launch at login 登录项 login items 界面语言 interface language 中文 english 语言 交付物格式 输出格式 deliverable format output format markdown html 标记语言 卡片排序 card sorting 排序 newest oldest deadline 看板动画 board animations 动画 飞行 motion 减少动态效果 reduce motion 终端应用 terminal app 权限体检 permissions checkup 屏幕录制 通知 笔记库访问 初始设置向导 setup wizard 重新运行 re-run 自动检查新版本 检查更新 check for updates github",
                 anchor: nil, content: AnyView(generalGroup)),
             SettingsSectionDescriptor(
                 id: "menuBar", titleZh: "菜单栏", titleEn: "Menu Bar",
@@ -519,6 +521,25 @@ struct SettingsFormView: View {
             }
             Text(L("纯界面偏好（存本机），弹窗与看板同时生效；提案列顶的处理中占位卡不参与排序。",
                    "UI-only preference (stored locally); applies to the popover and the board alike — processing placeholders stay pinned atop the Proposals column."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+            Divider()
+            // v0.43 手感: kanban flight layer master switch — UserDefaults
+            // only (pure UI pref, the pipeline never reads it).
+            Toggle(L("看板动画", "Board animations"), isOn: Binding(
+                get: { boardAnimations },
+                set: { v in
+                    boardAnimations = v
+                    UserDefaults.standard.set(v, forKey: "boardAnimations")
+                    // frame reporting is gated on this pref (off = zero cost)
+                    // — republish so the board re-renders and arms/disarms it
+                    // NOW, not on the next dashboard tick (same helper the
+                    // sort picker uses: a plain objectWillChange.send()).
+                    (NSApp.delegate as? AppDelegate)?.store.sortOrderChanged()
+                    Analytics.log("mw_setting_change", fields: ["key": "boardAnimations"])
+                }))
+            Text(L("卡片换列/新出现时的飞行与入场动画（仅看板窗口）。跟随系统「减少动态效果」自动停用；一次刷新超过 6 张变化时退化为淡入淡出。纯界面偏好（存本机）。",
+                   "Flight and deal-in animations when cards change lanes or appear (board window only). Auto-disabled by the system Reduce Motion setting; more than 6 changes in one refresh degrade to a crossfade. UI-only preference (stored locally)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Divider()
@@ -1252,6 +1273,7 @@ struct SettingsFormView: View {
                   overrides: ov)
         showMenuBarIcon = Prefs.bool("showMenuBarIcon", default: true)
         cardSortOrder = Prefs.cardSortOrder
+        boardAnimations = Prefs.boardAnimations
         // preferred validates the stored choice against installed apps
         terminalApp = TerminalLauncher.preferred.rawValue
         launchAtLogin = SMAppService.mainApp.status == .enabled

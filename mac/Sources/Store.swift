@@ -200,6 +200,21 @@ final class DashboardStore: ObservableObject {
     private var lastRawData: Data?
     private var lastGeneratedAt: String?
 
+    // MARK: board motion (v0.43 手感 — display-only, BoardDiff/BoardMotion.swift)
+
+    /// One-shot motion event for the kanban flight layer, published in the
+    /// SAME transaction as the lane change that caused it (row transitions
+    /// must see both in one render pass). Auto-clears ~0.8 s later so a row
+    /// inserted by anything else (strip expand, search) never re-triggers a
+    /// stale deal-in. nil ⇒ nothing is animating.
+    @Published private(set) var boardMotion: BoardMotionEvent?
+    /// Previous per-lane snapshot (BoardDiff baseline). Maintained even while
+    /// the 看板动画 pref is off / Reduce Motion is on (only the diff+publish
+    /// is skipped then — the view gates consumption too, belt and suspenders),
+    /// so re-enabling never animates a stale mega-diff.
+    private var lastBoardLanes: [BoardLaneList]?
+    private var boardMotionSeq = 0
+
     func reload() {
         // local placeholder timeouts tick on every refresh, even when the
         // dashboard file itself is unchanged (actd down = file frozen).
@@ -216,6 +231,10 @@ final class DashboardStore: ObservableObject {
                 loadError = nil
                 lastRawData = nil
                 lastRefresh = Date()
+                // v0.43: board gone → drop the motion baseline, so the next
+                // dashboard.json appearing counts as a first load (no animation).
+                lastBoardLanes = nil
+                boardMotion = nil
             }
             return
         }
@@ -351,6 +370,10 @@ final class DashboardStore: ObservableObject {
                         $0.ts == ts && $0.splitInto != nil
                     }
                 }
+                // v0.43: diff the freshly-applied snapshot against the previous
+                // one — must be the LAST line of this block so the lane lists
+                // it reads are final for this pass.
+                updateBoardMotion()
             }
         } catch {
             // Keep the previously good dashboard rather than blanking the UI.
@@ -576,6 +599,9 @@ final class DashboardStore: ObservableObject {
                     created: now))
             }
             for n in expiredNotices { notices.removeAll { $0.id == n.id } }
+            // v0.43: expiries un-hide cards / drop placeholders — lane lists
+            // changed, so the flight layer gets its event in this transaction.
+            updateBoardMotion()
         }
     }
 
@@ -599,6 +625,66 @@ final class DashboardStore: ObservableObject {
             return L("去待验收超时，卡片仍在运行中列，可重试（检查 actd 是否在运行）",
                      "Stop-to-review timed out — the card is still in Running, try again (check that actd is running)")
         }
+    }
+
+    // MARK: board motion diffing (v0.43 手感)
+
+    /// Diff the CURRENT per-lane lists against the previous snapshot and, when
+    /// something moved/appeared/left, publish a one-shot BoardMotionEvent for
+    /// the kanban flight layer. Called as the last line of every mutating
+    /// withAnimation block (reload / sweepTimeouts / applyAction / hide /
+    /// beginRaising / beginCapture) so the event lands in the SAME transaction
+    /// as the lane change — row transitions read both in one render pass.
+    /// First snapshot (nil baseline) records the baseline and animates nothing.
+    private func updateBoardMotion() {
+        let lanes = currentBoardLanes()
+        defer { lastBoardLanes = lanes }
+        guard lastBoardLanes != nil else { return }
+        // Toggle-off / Reduce Motion pays nothing past this line: no diff, no
+        // publish (an extra objectWillChange per mutation), no delayed
+        // nil-clear. The baseline above DOES keep updating, so re-enabling
+        // mid-session never animates a stale mega-diff.
+        guard BoardMotionPolicy.animationsEnabled else { return }
+        let diff = BoardDiff.compute(previous: lastBoardLanes, current: lanes)
+        guard !diff.isEmpty else { return }
+        boardMotionSeq += 1
+        let seq = boardMotionSeq
+        boardMotion = BoardMotionEvent(seq: seq, diff: diff)
+        // one-shot: clear after the flights are done (≤ 0.05 launch + 6×0.04
+        // stagger + ~0.42 flight) so later unrelated row insertions — strip
+        // expand, search-filter edits — can never match a stale deal-in.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self, self.boardMotion?.seq == seq else { return }
+            self.boardMotion = nil
+        }
+    }
+
+    /// The per-lane id lists as the BOARD renders them — the UNFILTERED
+    /// visible* projections plus placeholder/echo rows, echoes riding under
+    /// their sourceID so a button press diffs as the move it represents (and
+    /// the later snapshot that swaps echo→real row diffs as no change).
+    /// Search (board*) is deliberately NOT applied: query edits change what
+    /// renders, but they are not causality and must never fire motion.
+    /// Trash is off-board — ids leaving for it surface as removals.
+    private func currentBoardLanes() -> [BoardLaneList] {
+        [
+            BoardLaneList(lane: "debt",
+                          ids: echoes(for: .debt).map { $0.sourceID }
+                              + visibleDebt.map { $0.id }),
+            BoardLaneList(lane: "approval", ids: visibleApprovals.map { $0.id }),
+            BoardLaneList(lane: "running",
+                          ids: visibleRunCaptures.map { $0.id }
+                              + echoes(for: .running).map { $0.sourceID }
+                              + visibleNeedsInput.map { $0.id }
+                              + visibleRunning.map { $0.id }),
+            BoardLaneList(lane: "review", ids: visibleReview.map { $0.id }),
+            BoardLaneList(lane: "completed",
+                          ids: echoes(for: .completed).map { $0.sourceID }
+                              + visibleCompleted.map { $0.id }),
+            BoardLaneList(lane: "archived",
+                          ids: echoes(for: .archived).map { $0.sourceID }
+                              + visibleArchived.map { $0.id }),
+        ]
     }
 
     // MARK: pipeline health (P1-4)
@@ -762,6 +848,9 @@ final class DashboardStore: ObservableObject {
                 // (the raisingLocal placeholder is planted by beginRaising)
                 hideSticky(id, from: currentList(of: id))
             }
+            // v0.43: the optimistic hide/echo IS the causal moment — diff now
+            // so the flight launches on the click, not on the next snapshot.
+            updateBoardMotion()
         }
     }
 
@@ -857,12 +946,14 @@ final class DashboardStore: ObservableObject {
             } else {
                 hiddenOnce.insert(id)
             }
+            updateBoardMotion()
         }
     }
 
     func beginRaising(_ id: String, summary: String) {
         withAnimation(.easeOut(duration: 0.2)) {
             raisingLocal[id] = RaisingEntry(summary: summary, created: Date())
+            updateBoardMotion()
         }
     }
 
@@ -881,6 +972,7 @@ final class DashboardStore: ObservableObject {
             capturePending.append(
                 CapturePending(id: "capture-" + UUID().uuidString, text: text,
                                created: Date(), run: run))
+            updateBoardMotion()
         }
     }
 
