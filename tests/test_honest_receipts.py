@@ -9,10 +9,11 @@ Pinned here:
   disabled retention / unparsable trashed_at — exactly the rows
   actd.purge_trash skips, so the countdown never promises a purge that
   isn't coming;
-- capture receipt chooser (§40.2): capture decision (res["action"]) ->
-  emoji reaction on the captured self-DM message; the receipt fires only
-  after apply_result returned; off-switch; failure is analytics-only and
-  never raises into the capture;
+- capture receipt chooser (§40.2): apply_result_with_kind outcome ->
+  emoji reaction on the captured self-DM message (the additive seam:
+  apply_result's public string surface is frozen and delegates); the
+  receipt fires only after the registry write returned; off-switch;
+  failure is analytics-only and never raises into the capture;
 - radar give-up diagnostic card (§40.3): filed in 备选 on give-up, deduped
   by note path forever (incl. trashed duplicates), end-to-end through
   radar.scan;
@@ -150,33 +151,29 @@ class CaptureReceiptTestCase(unittest.TestCase):
             radar_slack._ack_capture("xoxp-t", self.msg, kind, self.cfg)
         return calls
 
-    def test_receipt_kind_mirrors_the_normalized_decision(self):
-        # capture() normalizes action to exactly new_proposal/relates_to/
-        # ignore; anything else (defensive) must read as ignored, never filed.
-        self.assertEqual(radar_slack._receipt_kind({"action": "new_proposal"}),
-                         "new_proposal")
-        self.assertEqual(radar_slack._receipt_kind({"action": "relates_to"}),
-                         "relates_to")
-        self.assertEqual(radar_slack._receipt_kind({"action": "ignore"}),
-                         "ignored")
-        self.assertEqual(radar_slack._receipt_kind({}), "ignored")
-        self.assertEqual(radar_slack._receipt_kind(None), "ignored")
+    def test_every_seam_kind_has_an_emoji(self):
+        # apply_result_with_kind's full vocabulary (= apply_triage's) — a new
+        # kind without a mapping would silently drop its receipt.
+        for kind in ("proposed", "folded", "follow_up", "reraised", "ignored"):
+            self.assertIn(kind, radar_slack._RECEIPT_EMOJI)
 
-    def test_filed_decisions_get_inbox_tray(self):
-        for kind in ("new_proposal", "relates_to"):
+    def test_filed_kinds_get_inbox_tray(self):
+        for kind in ("proposed", "folded", "follow_up"):
             (call,) = self._ack(kind)
             self.assertEqual(call[0], "reactions.add")
             self.assertEqual(call[1]["name"], "inbox_tray")
             self.assertEqual(call[1]["channel"], "D123")
             self.assertEqual(call[1]["timestamp"], "1700.42")
 
-    def test_ignored_gets_no_entry_sign(self):
+    def test_ignored_gets_no_entry_and_reraised_gets_hook(self):
         (call,) = self._ack("ignored")
         self.assertEqual(call[1]["name"], "no_entry_sign")
+        (call,) = self._ack("reraised")
+        self.assertEqual(call[1]["name"], "leftwards_arrow_with_hook")
 
     def test_off_switch_posts_nothing(self):
         self.cfg.slack_capture_receipts = False
-        self.assertEqual(self._ack("new_proposal"), [])
+        self.assertEqual(self._ack("proposed"), [])
 
     def test_unknown_kind_posts_nothing(self):
         self.assertEqual(self._ack("banana"), [])
@@ -185,7 +182,7 @@ class CaptureReceiptTestCase(unittest.TestCase):
         events = []
         with mock.patch.object(radar_slack.analytics, "log_event",
                                lambda name, **kw: events.append((name, kw))):
-            self._ack("new_proposal",
+            self._ack("proposed",
                       resp={"ok": False, "error": "missing_scope"})
         self.assertEqual(events[0][0], "capture_receipt_failed")
         self.assertEqual(events[0][1]["error"], "missing_scope")
@@ -194,7 +191,7 @@ class CaptureReceiptTestCase(unittest.TestCase):
         events = []
         with mock.patch.object(radar_slack.analytics, "log_event",
                                lambda name, **kw: events.append(name)):
-            self._ack("new_proposal",
+            self._ack("proposed",
                       resp={"ok": False, "error": "already_reacted"})
         self.assertEqual(events, [])
 
@@ -224,22 +221,55 @@ class CaptureReceiptTestCase(unittest.TestCase):
         self.assertEqual(len(registry.load_all()), 1)
         self.assertEqual(calls[0][1]["name"], "inbox_tray")
 
-    def test_apply_result_raising_means_no_receipt(self):
+    def test_apply_raising_means_no_receipt(self):
         # unknown outcome must not be acked as filed — the receipt only fires
-        # after apply_result returned.
+        # after the registry write returned.
         extractor = lambda prompt: subprocess.CompletedProcess(  # noqa: E731
             args=["fake"], returncode=0,
             stdout=json.dumps({"action": "new_proposal", "title": "t",
                                "summary": "t"}))
         calls = []
         from act.lib import quick_capture
-        with mock.patch.object(quick_capture, "apply_result",
+        with mock.patch.object(quick_capture, "apply_result_with_kind",
                                side_effect=RuntimeError("boom")), \
              mock.patch.object(radar_slack, "slack_api",
                                lambda m, t, p=None: calls.append(m) or {"ok": True}):
             radar_slack._handle_self_message(self.msg, "xoxp-t", self.cfg,
                                              extractor=extractor)
         self.assertEqual(calls, [])
+
+    def test_seam_reports_follow_up_then_folded_on_resolved_parent(self):
+        # the outcome the receipt hinges on is decided INSIDE
+        # apply_result_with_kind (reraise_or_followup) — it is not derivable
+        # from the decision dict, which is why the seam exists.
+        from act.lib import quick_capture
+        parent = Requirement(id="R-019", title="给 Quinton 开通 PRD 文档编辑权限",
+                             status="delivered")
+        registry.save(parent)
+        kind, saved, reply = quick_capture.apply_result_with_kind(
+            {"action": "relates_to", "req": "R-019",
+             "note": "Quinton 已设我为 editor，继续把文档补完"}, self.cfg)
+        self.assertEqual(kind, "follow_up")
+        self.assertEqual(saved.improvement_of, "R-019")
+        self.assertIn("后续卡", reply)          # legacy reply string intact
+        kind2, saved2, _reply2 = quick_capture.apply_result_with_kind(
+            {"action": "relates_to", "req": "R-019", "note": "再补一句"},
+            self.cfg)
+        self.assertEqual(kind2, "folded")       # second lands in the open follow-up
+        self.assertEqual(saved2.id, saved.id)
+
+    def test_legacy_apply_result_is_a_pure_delegate(self):
+        # apply_result's public surface is frozen: same reply string the seam
+        # returns, no second write (ignore files nothing, so calling both is
+        # safe here).
+        from act.lib import quick_capture
+        res = {"action": "ignore", "reason": "闲聊"}
+        reply = quick_capture.apply_result(res, self.cfg)
+        kind, saved, seam_reply = quick_capture.apply_result_with_kind(
+            res, self.cfg)
+        self.assertEqual(reply, seam_reply)
+        self.assertEqual((kind, saved), ("ignored", None))
+        self.assertTrue(reply.startswith("先不建卡：闲聊"))
 
 
 # --------------------------------------------------------------------------- #

@@ -25,10 +25,10 @@ mac/build/framegrab; neither -> the video is skipped).
 Capture receipts (§40) — each captured self-DM message gets ONE emoji
 reaction as its ack (reactions.add on the message itself, never a chat
 reply — the v0.21 no-post decision stands): 📥 the thought landed in the
-registry (new card / folded into an existing one / re-raised), 🚫 judged
-not actionable (nothing filed). Best-effort: a failed reaction only logs
-(analytics) and never blocks the capture. Off switch:
-``sources.slack_capture_receipts: false``.
+registry (new card / folded into an existing one / follow-up), ↩️ an
+accepted card was re-raised, 🚫 judged not actionable (nothing filed).
+Best-effort: a failed reaction only logs (analytics) and never blocks the
+capture. Off switch: ``sources.slack_capture_receipts: false``.
 
 Design notes / landmines:
 - Reading YOUR OWN DMs + mentions needs a Slack **user token** (xoxp-), NOT a
@@ -705,22 +705,18 @@ def _collect_media(token: str, files: list, ts: str) -> tuple[list[Path], list[s
 # --------------------------------------------------------------------------- #
 # self-DM quick capture (capture-only; no approval/command surface as of v0.21)
 # --------------------------------------------------------------------------- #
-# §40 receipt emoji, chosen from the capture DECISION (res["action"]) — NOT
-# from apply_result's reply, which stays untouched here (quick_capture.py is
-# another branch's ground). capture() normalizes action to exactly these
-# three, and apply_result files nothing only for "ignore"; every other
-# outcome (new card / folded note / follow-up / re-raise) reads 📥 "your
-# capture landed somewhere" — the finer distinctions live on the board.
+# §40 receipt emoji per apply_result_with_kind outcome (apply_triage's exact
+# vocabulary). The OUTCOME is decided inside quick_capture (reraise_or_followup,
+# sealed-id fall-throughs) — the decision dict alone can't tell ↩️ from 📥,
+# which is why the additive seam exists. filed/folded variants all read 📥
+# ("your capture landed somewhere"); the finer distinctions live on the board.
 _RECEIPT_EMOJI = {
-    "new_proposal": "inbox_tray",   # 📥 new card (incl. fallback / backlog)
-    "relates_to": "inbox_tray",     # 📥 folded / follow-up / re-raised
-    "ignored": "no_entry_sign",     # 🚫 judged not actionable, nothing filed
+    "proposed": "inbox_tray",                   # 📥 new card / merged restatement
+    "folded": "inbox_tray",                     # 📥 folded into an existing card
+    "follow_up": "inbox_tray",                  # 📥 lineage card under a closed one
+    "reraised": "leftwards_arrow_with_hook",    # ↩️ accepted card back to 提案
+    "ignored": "no_entry_sign",                 # 🚫 judged not actionable
 }
-
-
-def _receipt_kind(res: dict) -> str:
-    action = str((res or {}).get("action") or "")
-    return action if action in ("new_proposal", "relates_to") else "ignored"
 
 
 def _ack_capture(token: str, m: dict, kind: str, cfg: config.Config) -> None:
@@ -779,15 +775,15 @@ def _handle_self_message(m: dict, token: str, cfg: config.Config,
     try:
         # typed_text: only the words the user typed — the synthetic media
         # prompt + local file paths in desc stay out of telemetry.
-        # apply_result performs the registry write; the returned reply string
-        # is unused now that there is no self-DM reply surface. The §40 emoji
-        # receipt fires only AFTER apply_result returned (registry write
-        # happened); if it raises, the catch-all swallows and no receipt is
-        # posted — an unknown outcome must not be acked as filed.
+        # apply_result_with_kind performs the registry write (same write as
+        # apply_result — the reply string has had no consumer since v0.21);
+        # its kind drives the §40 emoji receipt, and the receipt fires only
+        # AFTER the write returned: if it raises, the catch-all swallows and
+        # no receipt is posted — an unknown outcome must not be acked as filed.
         res = quick_capture.capture(desc, cfg, extractor=extractor,
                                     typed_text=text)
-        quick_capture.apply_result(res, cfg)
-        _ack_capture(token, m, _receipt_kind(res), cfg)
+        kind, _saved, _reply = quick_capture.apply_result_with_kind(res, cfg)
+        _ack_capture(token, m, kind, cfg)
     except Exception:  # noqa: BLE001 - one bad message must not kill the scan
         pass
 

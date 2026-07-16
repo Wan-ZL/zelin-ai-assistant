@@ -12,7 +12,10 @@ Zelin 发给自己的 Slack self-DM（一句话 / 一张图的描述）进来后
 key 解析；``extractor`` 可注入做测试）并返回解析后的决策 dict。LLM 失败时兜底成一张
 最小 new_proposal（快速捕获宁可多建一张卡，也不能把 Zelin 随手记的东西弄丢）。
 
-``apply_result()`` 把决策落到注册表并返回一条发回 self-DM 的中文回执字符串。
+``apply_result()`` 把决策落到注册表并返回一条发回 self-DM 的中文回执字符串
+（签名/文案冻结）。§40 起 :func:`apply_result_with_kind` 是它的 additive seam，
+额外返回 ``(kind, saved)``——与 :func:`apply_triage` 同一词表——供 radar_slack
+在被捕获消息上打 emoji 回执（📥/🚫/↩️）。
 
 v0.17 —— 本模块同时是**所有雷达候选需求的统一入库闸门**（共享位置，勿另起炉灶）：
 Slack 原生路径 / Slack MCP 兜底路径 (act/radar_slack.py) 和 Obsidian 提取项
@@ -496,7 +499,35 @@ def apply_triage(
 
 
 def apply_result(res: dict, cfg: Optional[config.Config] = None) -> str:
-    """Fold a capture decision into the registry; return the self-DM reply."""
+    """Fold a capture decision into the registry; return the self-DM reply.
+
+    Signature and reply strings are frozen (pre-§40 behavior, byte-for-byte);
+    callers that need the outcome KIND use :func:`apply_result_with_kind`.
+    """
+    return apply_result_with_kind(res, cfg)[2]
+
+
+def apply_result_with_kind(
+    res: dict, cfg: Optional[config.Config] = None,
+) -> tuple[str, Optional[registry.Requirement], str]:
+    """§40 additive seam: apply_result plus the OUTCOME of the write.
+
+    Returns ``(kind, saved, reply)``. ``kind`` uses :func:`apply_triage`'s
+    exact vocabulary — the outcome is decided in here (reraise_or_followup,
+    sealed-id fall-throughs), NOT derivable from the decision dict:
+
+    - ``proposed``  — new card filed (card_sent or 备选/backlog), a merged
+      restatement, or an unknown/sealed-id fall-through's fresh card;
+    - ``folded``    — note folded into an existing card (incl. a resolved
+      parent's already-open follow-up, and detected→expand raises);
+    - ``follow_up`` — new lineage card under a resolved parent;
+    - ``reraised``  — an accepted card flipped back to 提案;
+    - ``ignored``   — judged not actionable, nothing filed.
+
+    ``reply`` is the legacy self-DM string, unchanged — :func:`apply_result`
+    delegates here, so its public surface is untouched (the §40 receipt is
+    the only consumer of ``kind``; radar_slack maps it to an emoji).
+    """
     if cfg is None:
         cfg = config.load_config()
     action = (res or {}).get("action")
@@ -512,10 +543,12 @@ def apply_result(res: dict, cfg: Optional[config.Config] = None) -> str:
     # ignore (or anything unrecognized — capture() already normalized)
     reason = str((res or {}).get("reason") or "").strip() or "看起来不需要行动"
     analytics.log_event("quick_capture", action="ignore", text=tele_text)
-    return f"先不建卡：{reason}（要建的话再发一条明确点的）"
+    return "ignored", None, f"先不建卡：{reason}（要建的话再发一条明确点的）"
 
 
-def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
+def _apply_new_proposal(
+    res: dict, tele_text: Optional[str] = None,
+) -> tuple[str, Optional[registry.Requirement], str]:
     quote = str(res.get("_text") or res.get("summary") or "").strip()
     title = str(res.get("title") or res.get("summary") or quote or "quick capture").strip()
     # confidence="low" = 不紧急的备忘（含未来条件性）——落备选/Backlog 而不是
@@ -568,15 +601,19 @@ def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
                         confidence="low" if low_conf else None, text=tele_text)
     if saved.id != req.id and not saved.improvement_of:
         # merged into an existing entry as a restatement
-        return f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1"
+        return ("proposed", saved,
+                f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1")
     if low_conf and saved.status == registry.State.DETECTED.value:
-        return (f"已记入潜在任务 {saved.id}：{saved.summary or saved.title}"
+        return ("proposed", saved,
+                f"已记入潜在任务 {saved.id}：{saved.summary or saved.title}"
                 f"（不紧急，先存着不打扰）/ parked in backlog {saved.id}")
-    return f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）"
+    return ("proposed", saved,
+            f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）")
 
 
-def _apply_relates_to(res: dict, cfg: config.Config,
-                      tele_text: Optional[str] = None) -> str:
+def _apply_relates_to(
+    res: dict, cfg: config.Config, tele_text: Optional[str] = None,
+) -> tuple[str, Optional[registry.Requirement], str]:
     rid = str(res.get("req") or "").strip()
     req = registry.load(rid) if rid else None
     sealed_hit = False
@@ -611,10 +648,11 @@ def _apply_relates_to(res: dict, cfg: config.Config,
         fb.pop("_fallback", None)
         fb["_relates_to_miss"] = rid or "?"
         fb["_text"] = raw
-        reply = _apply_new_proposal(fb, tele_text)
+        kind, saved, reply = _apply_new_proposal(fb, tele_text)
         if sealed_hit:
-            return (f"{rid} 已封存（拒绝/回收站/归档），重述按新卡处理——{reply}")
-        return f"没找到条目 {rid or '?'}；为了不丢先按新卡记下——{reply}"
+            return (kind, saved,
+                    f"{rid} 已封存（拒绝/回收站/归档），重述按新卡处理——{reply}")
+        return kind, saved, f"没找到条目 {rid or '?'}；为了不丢先按新卡记下——{reply}"
     note = str(res.get("note") or "").strip() or str(res.get("_text") or "").strip()
     if registry.is_resolved(req):
         # 统一口径：已交付/已合并的既往卡不追加备注了事——走 reraise_or_followup
@@ -642,12 +680,15 @@ def _apply_relates_to(res: dict, cfg: config.Config,
                             req=(saved.id if saved is not None else None),
                             text=tele_text)
         if kind == "reraised":
-            return (f"{req.id} 之前已验收；来了新信息，已回锅重新提案，进待审批 / "
+            return ("reraised", saved,
+                    f"{req.id} 之前已验收；来了新信息，已回锅重新提案，进待审批 / "
                     f"{req.id} was accepted; re-raised as a proposal (pending approval)")
         if kind == "follow_up":
-            return (f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
+            return ("follow_up", saved,
+                    f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
                     f"{req.id} is closed; filed follow-up {saved.id} (pending approval)")
-        return (f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
+        return ("folded", saved,
+                f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
                 f"folded into {req.id}'s open follow-up {saved.id}")
     if note:
         tag = f"[quick] {note}"
@@ -657,7 +698,7 @@ def _apply_relates_to(res: dict, cfg: config.Config,
         analyze.expand_debt(req, cfg)  # saves + status=card_sent
         analytics.log_event("quick_capture", action="relates_to", req=req.id,
                             text=tele_text)
-        return f"已关联 {req.id}，已提案（扩成完整建议，进待审批）"
+        return "folded", req, f"已关联 {req.id}，已提案（扩成完整建议，进待审批）"
     registry.save(req)
     analytics.log_event("quick_capture", action="relates_to", req=req.id,
                         text=tele_text)
@@ -668,4 +709,4 @@ def _apply_relates_to(res: dict, cfg: config.Config,
         registry.State.REVIEW.value: "已交付待你验收，备注已追加",
         registry.State.DELIVERED.value: "之前已交付，备注已追加",
     }.get(str(req.status), f"状态 {req.status}，备注已追加")
-    return f"已关联 {req.id}：{phrase}"
+    return "folded", req, f"已关联 {req.id}：{phrase}"

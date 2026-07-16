@@ -39,7 +39,7 @@ other file needs editing. To cut a release:
   确认对话框现在也带金额（或「成本未知」）。iOS/网页的展示是后续跟进——字段已
   在共享契约里解码，只是还没有视图用它。
 - **手机捕获有回执了** — 在 Slack 里给自己发的每条消息，处理完会打上一个 emoji
-  回执：📥 已记下（建卡/并入已有卡/回锅重提都算——细分去 App 面板看）、
+  回执：📥 已记下（建卡/并入已有卡/挂后续卡）、↩️ 你验收过的事回锅重新提案、
   🚫 判定不用行动（没建卡）。只打 reaction、绝不回帖；关闭开关
   `sources.slack_capture_receipts: false`。老 app 需重新粘贴 manifest 加
   `reactions:write` 权限——缺了也只是没回执，捕获照常。
@@ -67,6 +67,8 @@ other file needs editing. To cut a release:
   （card_sent/review/…）换成通道显示名（待审批/待验收/进行中/潜在任务…，随
   界面语言）；「双向承诺账本（manager 欠的）」改为中性表述并按 `owner.name`
   参数化（`[MANAGER-OWES]` 标签本身冻结兼容，仍被识别）。
+- `quick_capture` 新增 additive seam `apply_result_with_kind`（回执 emoji 的
+  依据；公共 `apply_result` 签名与回执字符串逐字冻结，纯委托）。
 - 数据契约见 docs/CONTRACT.md §40（全部 add-only：老 App 忽略新键、老
   payload 照常解码）。
 

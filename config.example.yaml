@@ -32,8 +32,8 @@ sources:                               # 需求雷达监控的增量源
   slack_mcp_fallback: true             # 无 token 时改走 Slack MCP 只读兜底扫描（见 docs/SLACK_SETUP.md）
   slack_mcp_interval_minutes: 30       # MCP 兜底最小间隔（launchd 每 3 分钟触发，靠 state/slack_mcp.marker 节流）
   # slack_capture_receipts: true       # 快速捕获回执（默认开）：给自己发的每条消息上打一个 emoji reaction
-  #                                    # （📥 已记下 · 🚫 判定无需行动没建卡）。只打 reaction、
-  #                                    # 绝不回帖；token 需 reactions:write scope（缺了只少回执，捕获不受影响）
+  #                                    # （📥 已记下/折叠 · ↩️ 回锅重提案 · 🚫 判定无需行动没建卡）。只打
+  #                                    # reaction、绝不回帖；token 需 reactions:write scope（缺了只少回执，捕获不受影响）
   watch_people:   # 你主要盯的人（第一个当作直属经理）。当前仅用于：设置页人物
                   # 勾选 + 派生「追踪对象」显示名（config.requester_display 取
                   # 第一个）。注意：这【不是】硬过滤——雷达仍会看所有 DM/@提及/

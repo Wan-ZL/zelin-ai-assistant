@@ -1205,14 +1205,18 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 - 每条被捕获的 self-DM 消息上打**一个** `reactions.add` 回执（打在消息本身，
   **绝不回帖**——v0.21 只进不出的决定不变）：
-  - 📥 `inbox_tray` = 已记下（新卡 / 并入已有卡 / 折叠备注 / 后续卡 / 回锅——
-    细分在 App 面板上看）；
+  - 📥 `inbox_tray` = 已记下（新卡 / 并入已有卡 / 折叠备注 / 后续卡）；
+  - ↩️ `leftwards_arrow_with_hook` = 命中已验收卡，回锅重新提案；
   - 🚫 `no_entry_sign` = 判定无需行动，**没有**建卡。
-- emoji 由**捕获决策**（`capture()` 归一化后的 `res["action"]`）推导
-  （`radar_slack._RECEIPT_EMOJI`）：`ignore` → 🚫，`new_proposal`/`relates_to`
-  → 📥。`quick_capture.apply_result` 的签名与回执字符串**原样未动**（该文件属
-  并行分支 feat/less-cards 的边界）；回执只在 apply_result 正常返回**之后**发
-  ——注册表写入结果未知时绝不打 📥。
+- emoji 由**入库结果**推导：`quick_capture.apply_result_with_kind`（§40 新增的
+  **additive seam**）返回 `(kind, saved, reply)`，kind 与 `apply_triage` 完全
+  同一词表（proposed/folded/follow_up/reraised/ignored）；`radar_slack.
+  _RECEIPT_EMOJI` 按 kind 映射。结果（↩️ vs 📥、sealed-id fall-through 实建新卡）
+  在 apply_result 内部（`registry.reraise_or_followup`）才决定，**不可**从
+  决策 dict 推导。公共 `apply_result(res, cfg) -> str` 的签名与回执字符串
+  **逐字冻结**（纯委托 seam 的第三元）——并行分支（feat/less-cards）rebase 时
+  只需围绕这一个新增函数，不涉及签名变更。
+- 回执只在入库调用正常返回**之后**发——注册表写入结果未知时绝不打 📥。
 - Best-effort 红线：reaction 失败（缺 `reactions:write`、网络）只记 analytics
   （`capture_receipt_failed`），**绝不**阻塞或失败捕获；`already_reacted` 视为
   成功回声。开关 `sources.slack_capture_receipts`（默认 true）。manifest 增补
