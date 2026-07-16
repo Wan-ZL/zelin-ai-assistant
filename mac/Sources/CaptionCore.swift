@@ -357,16 +357,27 @@ enum VolcanoSpeechCredential: Equatable {
     /// has this digits+separator prefix shape.
     private static let legacyOneLine = try! NSRegularExpression(
         pattern: #"^(\d{6,12})[\s:：,;，；]+(\S{20,})$"#)
+    /// Labeled one-line variant: covers a labeled two-line paste that a
+    /// single-line field flattened (newline → space, or dropped outright) —
+    /// the console's own labels survive the flattening and mark the boundary
+    /// the lost newline used to. The token label is REQUIRED here (an
+    /// unlabeled flattened pair already matches legacyOneLine above).
+    private static let legacyLabeledOneLine = try! NSRegularExpression(
+        pattern: #"^(?:app[\s_-]*(?:id|key)\s*[:：])?\s*(\d{6,12})\s*[\s:：,;，；]*(?:access[\s_-]*token|token|secret)\s*[:：]\s*(\S{20,})$"#,
+        options: [.caseInsensitive])
 
     var isLegacy: Bool {
         if case .legacy = self { return true }
         return false
     }
 
-    /// Auto-detect a user paste. Legacy shapes: two non-empty lines (App ID
-    /// first — labeled lines from our own stored format also round-trip), or
-    /// one "AppID<sep>Token" line. Everything else is a new-console API key,
-    /// passed through unchanged. nil = nothing pasted.
+    /// Auto-detect a user paste. Legacy shapes: two non-empty lines whose
+    /// halves actually LOOK like the pair (App ID first; the console's
+    /// "App ID:" / "Access Token:" labels — and our own stored labels — are
+    /// stripped first), or one "AppID<sep>Token" line, labeled or not.
+    /// Everything else is a new-console API key, passed through unchanged —
+    /// including a hard-wrapped key, which re-joins instead of being torn
+    /// into a bogus pair. nil = nothing pasted.
     static func parse(_ input: String) -> VolcanoSpeechCredential? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -374,27 +385,51 @@ enum VolcanoSpeechCredential: Equatable {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         if lines.count >= 2 {
-            return .legacy(appID: stripLabel(lines[0], "appid"),
-                           accessToken: stripLabel(lines[1], "token"))
+            let id = stripLabel(lines[0])
+            let token = stripLabel(lines[1])
+            if isAppID(id), looksLikeToken(token) {
+                return .legacy(appID: id, accessToken: token)
+            }
+            // not a credential pair — most plausibly one key hard-wrapped
+            // across lines; joining restores it
+            return .apiKey(lines.joined())
         }
-        let whole = NSRange(trimmed.startIndex..., in: trimmed)
-        if let m = legacyOneLine.firstMatch(in: trimmed, range: whole),
-           let idRange = Range(m.range(at: 1), in: trimmed),
-           let tokenRange = Range(m.range(at: 2), in: trimmed) {
-            return .legacy(appID: String(trimmed[idRange]),
-                           accessToken: String(trimmed[tokenRange]))
+        for regex in [legacyOneLine, legacyLabeledOneLine] {
+            let whole = NSRange(trimmed.startIndex..., in: trimmed)
+            if let m = regex.firstMatch(in: trimmed, range: whole),
+               let idRange = Range(m.range(at: 1), in: trimmed),
+               let tokenRange = Range(m.range(at: 2), in: trimmed) {
+                return .legacy(appID: String(trimmed[idRange]),
+                               accessToken: String(trimmed[tokenRange]))
+            }
         }
         return .apiKey(trimmed)
     }
 
-    /// "appid: 123" / "token：xyz" → the bare value; unlabeled lines pass.
-    private static func stripLabel(_ line: String, _ label: String) -> String {
-        let lower = line.lowercased()
-        for sep in [":", "："] where lower.hasPrefix(label + sep) {
-            return String(line.dropFirst(label.count + sep.count))
-                .trimmingCharacters(in: .whitespaces)
-        }
-        return line
+    /// 6–12 ASCII digits — the old console's App ID shape.
+    private static func isAppID(_ s: String) -> Bool {
+        (6...12).contains(s.count) && s.allSatisfy { $0.isASCII && $0.isNumber }
+    }
+
+    /// One long opaque token (the console's Access Tokens are 32 chars).
+    private static func looksLikeToken(_ s: String) -> Bool {
+        s.count >= 20 && !s.contains(where: \.isWhitespace)
+    }
+
+    /// "App ID: 321…" / "ACCESS_TOKEN：2tz…" / "appid:321…" → the bare value.
+    /// The prefix before the first colon is normalized (lowercased; spaces,
+    /// underscores and dashes dropped) and must be a KNOWN credential label —
+    /// any other prefix leaves the line untouched, because a raw key may
+    /// legitimately contain a colon.
+    private static func stripLabel(_ line: String) -> String {
+        guard let colon = line.firstIndex(where: { $0 == ":" || $0 == "：" })
+        else { return line }
+        let label = line[..<colon].lowercased()
+            .filter { !$0.isWhitespace && $0 != "_" && $0 != "-" }
+        let known = ["appid", "appkey", "accesstoken", "token", "secret"]
+        guard known.contains(label) else { return line }
+        return String(line[line.index(after: colon)...])
+            .trimmingCharacters(in: .whitespaces)
     }
 
     /// Content stored in config/secrets/volcano-speech-key.txt (CONTRACT §36
@@ -498,6 +533,13 @@ enum DoubaoProbeLogic {
 
     /// The WS upgrade itself was refused (HTTP status, no frames exchanged).
     static func verdict(upgradeStatus: Int, message: String) -> CaptionKeyVerdict {
+        // 101 = the upgrade already SUCCEEDED — a transport failure carrying
+        // it is a connection dropped AFTER the handshake, not a service
+        // refusal; the credential's verdict is unknown.
+        if upgradeStatus == 101 {
+            return .network(detail: message.isEmpty
+                ? "connection lost after handshake" : message)
+        }
         if upgradeStatus == 401 || upgradeStatus == 403 {
             if mentionsResource(message) {
                 return .resourceNotEnabled(code: "HTTP \(upgradeStatus)",

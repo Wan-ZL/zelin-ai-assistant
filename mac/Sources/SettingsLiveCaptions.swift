@@ -71,8 +71,8 @@ struct LiveCaptionsSettingsSection: View {
                 links: [(L("语音控制台", "Speech console"),
                          "https://console.volcengine.com/speech/app")],
                 kind: .volcanoSpeech)
-            Text(L("支持两种：新版控制台的 API Key，或旧版的 App ID + Access Token（粘 \"AppID:Token\" 或分两行）。",
-                   "Two formats work: the new-console API key, or the legacy App ID + Access Token (paste \"AppID:Token\" or two lines)."))
+            Text(L("支持两种：新版控制台的 API Key，或旧版的 App ID + Access Token——最稳是粘成一行 \"AppID:Token\"（带 \"App ID:\"、\"Access Token:\" 等标签也认）；直接粘两行通常也行（取决于粘贴时换行是否保留）。",
+                   "Two formats work: the new-console API key, or the legacy App ID + Access Token — most reliable as one \"AppID:Token\" line (labels like \"App ID:\" / \"Access Token:\" are recognized too); pasting the two lines usually works as well (depends on the paste keeping the line break)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

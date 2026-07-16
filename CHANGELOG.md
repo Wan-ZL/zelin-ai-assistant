@@ -33,11 +33,15 @@ other file needs editing. To cut a release:
 
 ### Added
 - **旧版火山凭证支持**：豆包语音凭证输入框现在也接受旧版语音控制台的
-  App ID + Access Token（粘 `AppID:Token` 单行或分两行都行，自动识别）；
-  引擎握手按代际发对应鉴权头（旧版 `X-Api-App-Key` + `X-Api-Access-Key`，
-  新版单个 `X-Api-Key` 不变）。存储格式：旧版凭证存为两行带标签内容
-  （`appid:` / `token:`），单行裸内容一律按新版 API Key 解读——已保存的
-  Key 无需迁移（CONTRACT §36 add-only）。
+  App ID + Access Token，自动识别。**最稳的粘法是一行 `AppID:Token`**；
+  带控制台原样标签（`App ID:` / `Access Token:`，大小写/空格/下划线不敏感）
+  的一行或两行也认；直接粘两行通常可用，但依赖粘贴时输入框保留换行——
+  失败就改用一行形式。形状校验防误伤：两行内容只有在"第一行 6–12 位数字
+  + 第二行 ≥20 位无空白 token"时才按旧版凭证解析，被硬折行的新版单 Key
+  会重新拼回而不是被撕成假凭证对。引擎握手按代际发对应鉴权头（旧版
+  `X-Api-App-Key` + `X-Api-Access-Key`，新版单个 `X-Api-Key` 不变）。
+  存储格式：旧版凭证存为两行带标签内容（`appid:` / `token:`），单行裸内容
+  一律按新版 API Key 解读——已保存的 Key 无需迁移（CONTRACT §36 add-only）。
 - **「检测」按钮（两个凭证行都有）**：点一下做一次**真实**最小连接——语音
   凭证走一次 Doubao WebSocket 握手（发会话配置、读首帧、即断，不发音频、
   不产生计费），Ark Key 向所配翻译模型发一条 `max_tokens=1` 的请求。结果

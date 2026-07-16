@@ -760,9 +760,12 @@ enum CaptionKeyProbe {
 
     /// WS transport failure → verdict: the HTTP status when the server
     /// refused the upgrade handshake, otherwise a plain network problem.
+    /// A stored 101 means the upgrade SUCCEEDED and the connection dropped
+    /// afterwards — that is a network verdict, and the transport error (not
+    /// the meaningless "HTTP 101") is the detail worth showing.
     private static func transportVerdict(
         _ error: Error, task: URLSessionWebSocketTask) -> CaptionKeyVerdict {
-        if let http = task.response as? HTTPURLResponse {
+        if let http = task.response as? HTTPURLResponse, http.statusCode != 101 {
             // Volcano's speech gateway explains upgrade refusals here
             let message = http.value(forHTTPHeaderField: "X-Api-Message") ?? ""
             return DoubaoProbeLogic.verdict(upgradeStatus: http.statusCode,

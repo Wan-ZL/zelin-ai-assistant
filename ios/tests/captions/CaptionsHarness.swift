@@ -271,6 +271,31 @@ check(VolcanoSpeechCredential.parse("12345:\(tok32)")
 check(VolcanoSpeechCredential.parse("1234567890:shorttoken")
       == .apiKey("1234567890:shorttoken"), "token under 20 chars → NOT legacy")
 
+print("[19b] console-labeled pastes (the owner's real file shape):")
+let ownerLegacy = VolcanoSpeechCredential.legacy(appID: "3217834950",
+                                                 accessToken: tok32)
+check(VolcanoSpeechCredential.parse("App ID: 3217834950\nAccess Token: \(tok32)")
+      == ownerLegacy, "console's 'App ID:' + 'Access Token:' two-line form")
+check(VolcanoSpeechCredential.parse("APP_ID：3217834950\nACCESS_TOKEN：\(tok32)")
+      == ownerLegacy, "label case/underscore/full-width-colon tolerance")
+check(VolcanoSpeechCredential.parse("App ID: 3217834950 Access Token: \(tok32)")
+      == ownerLegacy, "labeled pair flattened to ONE line (newline → space)")
+check(VolcanoSpeechCredential.parse("3217834950Access Token: \(tok32)")
+      == ownerLegacy, "labeled pair flattened with the newline dropped outright")
+check(VolcanoSpeechCredential.parse("app id: 3217834950\ntoken: \(tok32)")
+      == ownerLegacy, "mixed label spellings across the two lines")
+
+print("[19c] two-line shape guards (a wrapped key is NOT a pair):")
+check(VolcanoSpeechCredential.parse("sk-1234567890abcdefgh\nijklmnopqrstuvwx")
+      == .apiKey("sk-1234567890abcdefghijklmnopqrstuvwx"),
+      "hard-wrapped new-console key re-joins instead of parsing as legacy")
+check(VolcanoSpeechCredential.parse("1234567890\ntooshort")
+      == .apiKey("1234567890tooshort"),
+      "digits + short second line fails the token guard → not a pair")
+check(VolcanoSpeechCredential.parse("notdigits\n\(tok32)")
+      == .apiKey("notdigits\(tok32)"),
+      "non-digit first line fails the App ID guard → not a pair")
+
 print("[20] stored-file format: encode/decode + pre-0.37.1 compat:")
 check(wantLegacy.fileRepresentation == "appid:1234567890\ntoken:\(tok32)",
       "legacy stores as two labeled lines")
@@ -333,6 +358,12 @@ check(DoubaoProbeLogic.verdict(upgradeStatus: 403, message: "服务未开通")
 check(DoubaoProbeLogic.verdict(upgradeStatus: 503, message: "busy")
       == .serviceError(code: "HTTP 503", message: "busy"),
       "upgrade 5xx → raw service error")
+check(DoubaoProbeLogic.verdict(upgradeStatus: 101, message: "tcp reset")
+      == .network(detail: "tcp reset"),
+      "101 = handshake SUCCEEDED — a later drop is a network verdict")
+check(DoubaoProbeLogic.verdict(upgradeStatus: 101, message: "")
+      == .network(detail: "connection lost after handshake"),
+      "101 with no transport detail still never claims a service error")
 
 print("[23] ArkProbeLogic: chat-completion probe classification:")
 check(ArkProbeLogic.verdict(status: 200, errorCode: "", errorMessage: "")
