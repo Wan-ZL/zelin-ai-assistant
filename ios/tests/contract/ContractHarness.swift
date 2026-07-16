@@ -141,6 +141,41 @@ if let d = decodeDashboard(#"{"device_label": 42}"#) {
     check(d.device_label == nil, "non-string → nil, payload still decodes")
 } else { check(false, "decode", "junk device_label must not fail the payload") }
 
+// ---- 8. §40 add-only fields: cost_state (needs_approval) + purge_at (trash) ----
+// Old actd payloads lack both keys — they must decode to nil (the render sites
+// then derive: cost from cost_usd presence, no countdown). Junk values must
+// never fail the row.
+print("[8] §40 cost_state + purge_at decode:")
+let hon = """
+{"needs_approval": [
+   {"id": "P-1", "title": "known", "cost_usd": 3.5, "show_cost": false, "cost_state": "estimated"},
+   {"id": "P-2", "title": "unknown", "cost_usd": null, "show_cost": false, "cost_state": "unknown"}
+ ],
+ "trash": [
+   {"id": "T-1", "title": "counting down", "kind": "debt", "purge_at": "2026-08-30T00:00:00Z"},
+   {"id": "T-2", "title": "pinned", "kind": "debt", "permanent": true, "purge_at": null}
+ ]}
+"""
+if let d = decodeDashboard(hon) {
+    check(d.needs_approval.map(\.cost_state) == ["estimated", "unknown"],
+          "cost_state decodes per row", "got \(d.needs_approval.map(\.cost_state))")
+    check(d.needs_approval[0].cost_usd == 3.5, "cost_usd rides alongside cost_state")
+    check(d.trash[0].purge_at == "2026-08-30T00:00:00Z", "purge_at decodes",
+          "got \(String(describing: d.trash[0].purge_at))")
+    check(d.trash[1].purge_at == nil && d.trash[1].permanent, "pinned row → null purge_at")
+    check(d.decodeDrops.isEmpty, "§40 fields are not drops", "got \(d.decodeDrops)")
+} else { check(false, "decode", "§40 payload must decode") }
+let honOld = #"{"needs_approval": [{"id": "P-1", "title": "old"}], "trash": [{"id": "T-1", "title": "old", "kind": "debt"}]}"#
+if let d = decodeDashboard(honOld) {
+    check(d.needs_approval[0].cost_state == nil, "absent cost_state → nil (old actd)")
+    check(d.trash[0].purge_at == nil, "absent purge_at → nil (old actd)")
+} else { check(false, "decode", "old payload must decode") }
+if let d = decodeDashboard(#"{"needs_approval": [{"id": "P-1", "title": "junk", "cost_state": 42}], "trash": [{"id": "T-1", "title": "junk", "kind": "debt", "purge_at": 42}]}"#) {
+    check(d.needs_approval.first?.cost_state == nil && d.trash.first?.purge_at == nil,
+          "junk §40 values → nil, rows survive",
+          "drops \(d.decodeDrops)")
+} else { check(false, "decode", "junk §40 values must not fail the payload") }
+
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))
     exit(1)

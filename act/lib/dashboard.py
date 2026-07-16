@@ -279,21 +279,48 @@ def _target_view(req: Requirement, cfg: config.Config) -> tuple[str, str, str]:
     return str(default), default.name, "existing"
 
 
-def _cost_view(req: Requirement, cfg: config.Config) -> tuple[Optional[float], bool]:
+def _cost_view(req: Requirement, cfg: config.Config
+               ) -> tuple[Optional[float], bool, str]:
+    """(cost_usd, show_cost, cost_state) for a proposal card (§40).
+
+    ``cost_state`` is the honesty bit: "estimated" when a number exists,
+    "unknown" when there is none (direct-run promotions, capture fallbacks,
+    digest suggestions, corrupt values) — the app says 成本未知 instead of
+    letting a missing estimate read as free. ``show_cost`` keeps gating only
+    the collapsed badge (≥ show_cost_above_usd); the expanded detail always
+    states the money story regardless of the threshold."""
     cost = req.cost_estimate_usd
     if cost is None:
-        return None, False
+        return None, False, "unknown"
     try:
         c = float(cost)
     except (TypeError, ValueError):
         # ``cost_estimate_usd: cheap`` 之类的坏值：字段降级成"无成本估算"，
         # 卡片其余部分照常投影（单字段损坏不丢整卡，更不丢整个 pass）。
-        return None, False
-    return c, c >= cfg.show_cost_above_usd
+        return None, False, "unknown"
+    return c, c >= cfg.show_cost_above_usd, "estimated"
 
 
 def _iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
+    """ISO hard-delete deadline for a trash row (§40): trashed_at + retention.
+
+    None (key emitted as null) when the row is pinned, retention is disabled
+    (``trash_retention_days <= 0``), or ``trashed_at`` is unparsable — exactly
+    the conditions under which actd.purge_trash skips the row, so the countdown
+    never promises a purge that isn't coming."""
+    days = int(cfg.trash_retention_days or 0)
+    if days <= 0 or req.permanent:
+        return None
+    ts = _epoch(req.trashed_at)
+    if ts is None:
+        return None
+    dt = (_dt.datetime.fromtimestamp(ts, _dt.timezone.utc)
+          + _dt.timedelta(days=days))
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _epoch(ts: Any) -> Optional[int]:
@@ -449,7 +476,7 @@ def build_dashboard(
             return
 
         if req.status == State.CARD_SENT.value:
-            cost, show_cost = _cost_view(req, cfg)
+            cost, show_cost, cost_state = _cost_view(req, cfg)
             target_repo, target_name, target_kind = _target_view(req, cfg)
             # 手改 YAML 把 execution 写成字符串时按"无 execution"降级（同
             # executing 分支的 isinstance 守卫）——不炸整卡。
@@ -470,6 +497,9 @@ def build_dashboard(
                     "repeated": _int_or(req.repeated_mentions, 1) or 1,
                     "cost_usd": cost,
                     "show_cost": show_cost,
+                    # §40 add-only: "estimated"|"unknown" — the app renders
+                    # 成本未知 for unknown instead of an implied $0.
+                    "cost_state": cost_state,
                     "green_sign": bool(req.green_sign_required),
                     "disagreement": req.disagreement,
                     "improvement_of": req.improvement_of,
@@ -528,6 +558,9 @@ def build_dashboard(
                     "trashed_at": req.trashed_at,
                     "trash_reason": req.trash_reason,
                     "permanent": bool(req.permanent),
+                    # §40 add-only: when actd WILL hard-delete this row (null =
+                    # pinned / retention off / unparsable trashed_at = never).
+                    "purge_at": _purge_at(req, cfg),
                     "type": req.type,
                     "hardness": req.hardness,
                 }

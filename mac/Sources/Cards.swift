@@ -986,6 +986,16 @@ struct ApprovalCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
 
+            // §40 honest cost — the expanded detail ALWAYS states the money
+            // story: the estimate when there is one (show_cost keeps gating
+            // only the collapsed badge), 成本未知 when there isn't (direct-run
+            // promotions, capture fallbacks, digest suggestions used to read
+            // as free here). Old payloads lack cost_state → derive from
+            // cost_usd presence.
+            Text(costText)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+
             // 「需求来自」— sources
             if !card.sources.isEmpty {
                 Text(L("💬 需求来自", "💬 Requested by"))
@@ -1033,6 +1043,17 @@ struct ApprovalCardView: View {
             return "\(card.tier) · \(hint)"
         }
         return card.tier
+    }
+
+    /// §40 expanded-detail money line. Shared derivation with the T2 dialog
+    /// (AppDelegate.confirmT2): a number that isn't flagged unknown is an
+    /// estimate; everything else is honestly 成本未知.
+    private var costText: String {
+        if let cost = card.cost_usd, card.cost_state != "unknown" {
+            return L("💰 预计费用: \(Self.money(cost))",
+                     "💰 Estimated cost: \(Self.money(cost))")
+        }
+        return L("💰 成本未知", "💰 Cost unknown")
     }
 
     private static func money(_ v: Double) -> String {
@@ -1991,6 +2012,22 @@ struct TrashRow: View {
 
     private var isPinned: Bool { item.permanent || pinnedLocally }
 
+    private static let isoParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// §40 purge countdown: whole days until purge_at (ceiling — a row purged
+    /// tomorrow morning says 1 天, never 0 while still alive). nil = no known
+    /// purge (pinned / retention off / older actd) → no countdown shown.
+    private var daysUntilPurge: Int? {
+        guard let s = item.purge_at, let d = Self.isoParser.date(from: s)
+        else { return nil }
+        let secs = d.timeIntervalSinceNow
+        return max(0, Int(ceil(secs / 86400)))
+    }
+
     var body: some View {
         CardSurface {
             Button {
@@ -2023,7 +2060,7 @@ struct TrashRow: View {
                 }
             }
 
-            // tag line: kind · reason · relative age
+            // tag line: kind · reason · relative age · §40 purge countdown
             HStack(spacing: 6) {
                 if let k = item.kind, !k.isEmpty { Badge(text: k, color: .gray) }
                 if let r = item.trash_reason, !r.isEmpty {
@@ -2035,6 +2072,17 @@ struct TrashRow: View {
                     Text(age)
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                }
+                // §40: the 60-day hard delete was invisible — say when it
+                // lands (red inside a week), or that a pinned row never goes.
+                if isPinned {
+                    Text(L("已永久保留", "Kept forever"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.teal)
+                } else if let days = daysUntilPurge {
+                    Text(L("\(days) 天后永久删除", "Deleted for good in \(days)d"))
+                        .font(.system(size: 10, weight: days <= 7 ? .semibold : .regular))
+                        .foregroundColor(days <= 7 ? .red : .secondary)
                 }
                 Spacer()
             }
