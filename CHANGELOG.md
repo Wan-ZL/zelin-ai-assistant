@@ -53,7 +53,7 @@ other file needs editing. To cut a release:
     internal id.
   - **Collapsed-strip arrivals**: a card landing in a folded 潜在任务/永久性完成
     strip flies to the strip itself and pops its count badge once (1.0→1.25→1.0).
-  - **Micro-juice**: board cards get a subtle hover lift (2 pt raise, 120 ms).
+  - **Micro-juice**: board cards get a subtle hover lift (1 pt raise, 120 ms).
   - **Restraint & control**: everything is short springs (≤ ~350 ms) that never
     block input; no animation on first load / window open, on search-filter
     changes, or on strip expand/collapse; more than 6 changes in one snapshot
@@ -1739,11 +1739,7 @@ release workflows
 [0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
-
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD
 [0.35.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.35.0
-
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.34.0...HEAD
 [0.34.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.32.0...v0.33.0
