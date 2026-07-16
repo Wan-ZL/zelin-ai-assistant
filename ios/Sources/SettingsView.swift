@@ -52,7 +52,7 @@ struct SettingsView: View {
                 }
 
                 // --- paired Macs (channels) ---
-                Section(L("已配对设备", "Paired devices")) {
+                Section {
                     if state.channels.isEmpty {
                         Text(L("还没有配对任何 Mac。", "No Macs paired yet.")).foregroundStyle(.secondary)
                     }
@@ -75,6 +75,12 @@ struct SettingsView: View {
                             Text(L("擦除所有配对密钥", "Wipe all pairing keys"))
                         }
                     }
+                } header: {
+                    Text(L("已配对设备", "Paired devices"))
+                } footer: {
+                    // §41: the ●◐○ legend the device switcher never explains.
+                    Text(L("● 在线 · ◐ 可能陈旧 · ○ 离线/未知（按看板最近更新时间）",
+                           "● online · ◐ possibly stale · ○ offline/unknown (by the board's last update)"))
                 }
 
                 // --- language ---

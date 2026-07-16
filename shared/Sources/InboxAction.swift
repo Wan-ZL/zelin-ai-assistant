@@ -77,6 +77,35 @@ enum InboxAction {
         return encode(obj)
     }
 
+    /// §39 回答需输入: {action:"answer_input", id, text, ts} — the owner's typed
+    /// answer for a blocked (needs_input) session; actd validates text 1..4000
+    /// and delivers it via executor.answer (stop-idle-then-resume). Synced
+    /// clients pin `expectedStatus:"executing"` (需输入 rows only ever project
+    /// executing cards) so a stale tap no-ops on the Mac; nil omits the key
+    /// (the local Mac-app convention).
+    static func answerInput(id: String, text: String,
+                            expectedStatus: String? = nil,
+                            ts: String = InboxAction.nowTimestamp()) -> Data {
+        var obj: [String: Any] = ["action": "answer_input", "id": id,
+                                  "text": text, "ts": ts]
+        if let expectedStatus { obj["expected_status"] = expectedStatus }
+        return encode(obj)
+    }
+
+    /// §39.2: clip an answer to the contract's 4000-char ceiling counting
+    /// UNICODE SCALARS, not Characters — actd validates ``len(text)`` in
+    /// Python code points, and a Character-based ``prefix(4000)`` can keep
+    /// well over 4000 code points (emoji / combining marks), which actd
+    /// would then bounce as oversize AFTER the UI already showed success.
+    /// Swift unicode scalars ≈ Python code points, so this bound holds on
+    /// both sides.
+    static func clipAnswer(_ text: String, max: Int = 4000) -> String {
+        guard text.unicodeScalars.count > max else { return text }
+        var v = String.UnicodeScalarView()
+        v.append(contentsOf: text.unicodeScalars.prefix(max))
+        return String(v)
+    }
+
     // merge-review 契约 §21 — suggestion-level actions (not card verbs): the
     // `id` is the MS- suggestion id; merge_force instead carries the raw card
     // ids + the user-chosen primary. actd reads decision["id"] / ["ids"]+["primary"].

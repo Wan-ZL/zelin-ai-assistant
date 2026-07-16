@@ -49,10 +49,12 @@ class ManifestTestCase(unittest.TestCase):
 
     def test_scopes_cover_the_radar_and_pickers(self):
         scopes = set(slack_setup.REQUIRED_USER_SCOPES)
-        # the radar's hard requirements (act/radar_slack.py docstring)
+        # the radar's hard requirements (act/radar_slack.py docstring) —
+        # reactions:write = the §40 capture receipt (emoji ack, fail-soft)
         radar = {"search:read", "im:history", "im:read", "mpim:history",
                  "mpim:read", "channels:history", "groups:history",
-                 "users:read", "files:read", "chat:write", "reactions:read"}
+                 "users:read", "files:read", "chat:write", "reactions:read",
+                 "reactions:write"}
         # the Settings pickers (conversations.list public+private)
         pickers = {"channels:read", "groups:read", "users:read"}
         self.assertTrue(radar <= scopes)

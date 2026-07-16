@@ -368,22 +368,37 @@ def run(force: bool = False, runner=None,
 
     material = _notes_material(notes)
     prompt = build_prompt(cfg, material)
+
+    def fail(reason: str, error: str, zh_cause: str, en_cause: str) -> dict:
+        # §40: error exits on a MANUAL run (force=True, the Settings
+        # 「现在生成一份」 button) NOTIFY — the press detaches
+        # (actd._spawn_weekly_digest), so without this it just goes quiet
+        # while the no-data path DOES notify: a silent failure next to a
+        # loud skip. Scheduled runs stay print+analytics only, mirroring the
+        # no-data gate — a failed Monday never advances the marker, so due()
+        # keeps firing hourly and an unconditional notify would ping all day.
+        summary["ok"] = False
+        summary["error"] = error
+        print(f"weekly digest: {error}")
+        analytics.log_event("weekly_digest_skip", reason=reason)
+        if force:
+            notify.notify(
+                _lang(cfg, "本周摘要生成失败", "Weekly digest failed"),
+                _lang(cfg,
+                      f"{zh_cause}——可在设置页「现在生成一份」重试。",
+                      f"{en_cause} — retry from Settings (\"Generate now\")."))
+        return summary
+
     try:
         raw = _run_claude(prompt, runner=runner)
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:
-        summary["ok"] = False
-        summary["error"] = f"{type(e).__name__}: {str(e)[:160]}"
-        print(f"weekly digest: claude -p failed: {summary['error']}")
-        analytics.log_event("weekly_digest_skip", reason="claude_failed")
-        return summary
+        return fail("claude_failed", f"{type(e).__name__}: {str(e)[:160]}",
+                    "AI 调用失败", "the AI call failed")
 
     data = parse_output(raw)
     if data is None:
-        summary["ok"] = False
-        summary["error"] = f"unparseable output: {(raw or '')[:120]!r}"
-        print(f"weekly digest: {summary['error']}")
-        analytics.log_event("weekly_digest_skip", reason="unparseable")
-        return summary
+        return fail("unparseable", f"unparseable output: {(raw or '')[:120]!r}",
+                    "AI 返回的内容无法解析", "the AI reply couldn't be parsed")
 
     today = now.date()
     digest_card = _file_digest_card(cfg, str(data["digest"]).strip(),

@@ -221,11 +221,16 @@ struct DeviceSwitcher: View {
         Menu {
             ForEach(sortedChannels) { c in
                 Button {
-                    state.selectedChannelId = c.channelId
+                    // §41: selectChannel drops the old channel's board first, so
+                    // Mac A's cards never render under Mac B's label mid-fetch.
+                    state.selectChannel(c.channelId)
                     Task { await state.refreshBoard() }
                 } label: {
+                    // §41: Menu rows strip color, so the ●◐○ glyph alone is
+                    // indistinguishable — spell the freshness out per row.
                     let mark = c.channelId == state.selectedChannelId ? "✓ " : ""
-                    Text("\(mark)\(state.freshness(for: c.channelId).glyph)  \(c.label)")
+                    let f = state.freshness(for: c.channelId)
+                    Text("\(mark)\(f.glyph)  \(c.label) · \(f.label)")
                 }
             }
             Divider()
@@ -251,8 +256,8 @@ struct ExpiryBanner: View {
         let n = CertExpiry.daysLeft() ?? 0
         return HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-            Text(L("此试用版还有 \(n) 天到期。在 Xcode 重新运行一次即可续 7 天，或升级 $99/年长期使用。",
-                   "This trial build expires in \(n) day(s). Re-run once from Xcode to renew 7 days, or upgrade ($99/yr) for good."))
+            Text(L("此试用版还有 \(n) 天到期。在 Xcode 重新运行一次即可续 7 天；想长期使用，可在 App 外加入 Apple Developer Program（$99/年）。",
+                   "This trial build expires in \(n) day(s). Re-run once from Xcode to renew 7 days; for a long-term build, join the Apple Developer Program ($99/yr) — done outside this app."))
                 .font(.caption)
             Spacer(minLength: 0)
         }

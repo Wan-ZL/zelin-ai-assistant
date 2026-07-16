@@ -22,12 +22,21 @@ approval surface). Attachments are downloaded via url_private (files:read) to
 state/media/<ts>/; videos are split into <=12 frames (ffmpeg if present, else
 mac/build/framegrab; neither -> the video is skipped).
 
+Capture receipts (§40) — each captured self-DM message gets ONE emoji
+reaction as its ack (reactions.add on the message itself, never a chat
+reply — the v0.21 no-post decision stands): 📥 the thought landed in the
+registry (new card / folded into an existing one / follow-up), ↩️ an
+accepted card was re-raised, 🚫 judged not actionable (nothing filed).
+Best-effort: a failed reaction only logs (analytics) and never blocks the
+capture. Off switch: ``sources.slack_capture_receipts: false``.
+
 Design notes / landmines:
 - Reading YOUR OWN DMs + mentions needs a Slack **user token** (xoxp-), NOT a
   bot token (xoxb-): bots can't see a user's DMs and can't call search.messages.
   Required user-token scopes: search:read, im:history, im:read, mpim:history,
   mpim:read, channels:history, groups:history, users:read, files:read,
-  chat:write, reactions:read.
+  chat:write, reactions:read, reactions:write (§40 capture receipts — missing
+  it only costs the emoji ack; capture itself is unaffected).
 - Token resolution (CONTRACT §19, via act/lib/secrets.resolve_credential):
   config/secrets/slack-user-token.txt (App 设置窗口保存) -> config
   sources.slack_token_path -> legacy ~/Desktop/Keys/slack-user-token.txt.
@@ -696,13 +705,50 @@ def _collect_media(token: str, files: list, ts: str) -> tuple[list[Path], list[s
 # --------------------------------------------------------------------------- #
 # self-DM quick capture (capture-only; no approval/command surface as of v0.21)
 # --------------------------------------------------------------------------- #
+# §40 receipt emoji per apply_result_with_kind outcome (apply_triage's exact
+# vocabulary). The OUTCOME is decided inside quick_capture (reraise_or_followup,
+# sealed-id fall-throughs) — the decision dict alone can't tell ↩️ from 📥,
+# which is why the additive seam exists. filed/folded variants all read 📥
+# ("your capture landed somewhere"); the finer distinctions live on the board.
+_RECEIPT_EMOJI = {
+    "proposed": "inbox_tray",                   # 📥 new card / merged restatement
+    "folded": "inbox_tray",                     # 📥 folded into an existing card
+    "follow_up": "inbox_tray",                  # 📥 lineage card under a closed one
+    "reraised": "leftwards_arrow_with_hook",    # ↩️ accepted card back to 提案
+    "ignored": "no_entry_sign",                 # 🚫 judged not actionable
+}
+
+
+def _ack_capture(token: str, m: dict, kind: str, cfg: config.Config) -> None:
+    """§40 capture receipt: one emoji reaction on the captured self-DM message.
+
+    A reaction marks the message itself without posting anything — the v0.21
+    no-post decision (self-DM is capture-only) stands. Best-effort by design:
+    any failure (missing reactions:write scope, network, unknown kind) only
+    logs and must never block or fail the capture. ``already_reacted`` is the
+    retry-pass echo of success, not a failure.
+    """
+    if not getattr(cfg, "slack_capture_receipts", True):
+        return
+    emoji = _RECEIPT_EMOJI.get(kind)
+    channel, ts = m.get("channel"), m.get("ts")
+    if not emoji or not channel or not ts:
+        return
+    resp = slack_api("reactions.add", token,
+                     {"channel": channel, "timestamp": ts, "name": emoji})
+    if not resp.get("ok") and resp.get("error") != "already_reacted":
+        analytics.log_event("capture_receipt_failed",
+                            error=str(resp.get("error") or "")[:80])
+
+
 def _handle_self_message(m: dict, token: str, cfg: config.Config,
                          extractor: Optional[Callable] = None) -> None:
     """One self-DM message -> quick capture (text and/or photos/videos).
 
     Folds the message into the registry via the shared three-way quick_capture
     gate (new_proposal / relates_to / ignore). Capture-only: no reply is posted
-    back into Slack (the phone approval/command surface was removed in v0.21).
+    back into Slack (the phone approval/command surface was removed in v0.21);
+    the ack is the §40 emoji reaction on the message (see _ack_capture).
     """
     text = (m.get("text") or "").strip()
 
@@ -729,11 +775,15 @@ def _handle_self_message(m: dict, token: str, cfg: config.Config,
     try:
         # typed_text: only the words the user typed — the synthetic media
         # prompt + local file paths in desc stay out of telemetry.
-        # apply_result performs the registry write; the returned reply string
-        # is unused now that there is no self-DM reply surface.
+        # apply_result_with_kind performs the registry write (same write as
+        # apply_result — the reply string has had no consumer since v0.21);
+        # its kind drives the §40 emoji receipt, and the receipt fires only
+        # AFTER the write returned: if it raises, the catch-all swallows and
+        # no receipt is posted — an unknown outcome must not be acked as filed.
         res = quick_capture.capture(desc, cfg, extractor=extractor,
                                     typed_text=text)
-        quick_capture.apply_result(res, cfg)
+        kind, _saved, _reply = quick_capture.apply_result_with_kind(res, cfg)
+        _ack_capture(token, m, kind, cfg)
     except Exception:  # noqa: BLE001 - one bad message must not kill the scan
         pass
 

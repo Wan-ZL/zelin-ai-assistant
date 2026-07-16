@@ -705,13 +705,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // re-prompts (with a "didn't match" note) instead of silently failing;
     // Cancel is the only way out with false.
     func confirmT2(id: String, summary: String) -> Bool {
+        // §40 money visibility: this dialog is the last stop before spending,
+        // so it names the amount (or admits the cost is unknown) instead of
+        // leaving the money buried in the card. Looked up from the store so
+        // call sites stay unchanged; same derivation as the card detail.
+        let card = store.dashboard?.needs_approval.first { $0.id == id }
+        let costLine: String
+        if let cost = card?.cost_usd, card?.cost_state != "unknown" {
+            let money = cost == cost.rounded()
+                ? "$\(Int(cost))" : String(format: "$%.2f", cost)
+            costLine = L("预计费用：\(money)", "Estimated cost: \(money)")
+        } else {
+            costLine = L("成本未知", "Cost unknown")
+        }
         var mismatched = false
         while true {
             let alert = NSAlert()
             alert.messageText = L("T2 · 高影响操作确认", "T2 · High-Impact Action Confirmation")
             var info = L(
-                "批准 \(id)：\(summary)\n\n请输入 确认 或 go 后再点「批准」。",
-                "Approve \(id): \(summary)\n\nType 确认 or go, then click \"Approve\".")
+                "批准 \(id)：\(summary)\n\(costLine)\n\n请输入 确认 或 go 后再点「批准」。",
+                "Approve \(id): \(summary)\n\(costLine)\n\nType 确认 or go, then click \"Approve\".")
             if mismatched {
                 info += "\n" + L("上次输入不匹配。", "Previous input didn't match.")
             }
@@ -773,6 +786,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         var dict: [String: Any] = ["id": id, "action": action, "ts": ts]
         dict["comment"] = comment ?? NSNull()
         return writeInboxFile(dict)
+    }
+
+    /// §38 拆成新卡（fold undo）: a fold-note line's button →
+    /// {"action":"split_note","id":"R-xxx","note_ts":"<ts>"} inbox file. Same
+    /// atomic-write + failure-alert path as card actions (writeInboxFile); on
+    /// success the line shows 拆分中… (store.beginSplitNote; cleared by the
+    /// origin line flipping to 已拆出, 180 s honest fallback). The apply is
+    /// counted python-side (split_note analytics) — only the card_action
+    /// intent is logged here.
+    @discardableResult
+    func submitSplitNote(id: String, noteTs: String) -> Bool {
+        guard !id.isEmpty, !noteTs.isEmpty else { return false }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["id": id, "action": "split_note",
+                                   "note_ts": noteTs, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("split_note")
+        Analytics.log("card_action", fields: ["action": "split_note", "req": id])
+        store.beginSplitNote(cardID: id, ts: noteTs)
+        return true
+    }
+
+    /// §37 set_title: rename a card's DISPLAY title (user sovereignty — the
+    /// frozen internal title never changes; actd re-validates fail-closed and
+    /// pins user_titled so LLM/harvest titles never overwrite it). Same
+    /// atomic-write + failure-alert path as card actions (writeInboxFile); on
+    /// success the new name echoes immediately (store.beginTitleEdit).
+    @discardableResult
+    func submitSetTitle(id: String, title: String) -> Bool {
+        // review fix: normalize EXACTLY like actd (collapse internal
+        // whitespace incl. U+3000), or the stored title differs from the
+        // pending echo and the clear never fires (false 改名超时 notice).
+        let t = DashboardStore.normalizedTitle(title)
+        guard !t.isEmpty, t.count <= 64 else { return false }
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["id": id, "action": "set_title",
+                                   "title": t, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("set_title")
+        // the typed title is user content — attached ONLY behind the
+        // capture_input gate (docs/TELEMETRY.md), clipped.
+        var fields: [String: Any] = ["action": "set_title", "req": id]
+        if Telemetry.contentCaptureActive() {
+            fields["title"] = Analytics.clip(t)
+        }
+        Analytics.log("card_action", fields: fields)
+        store.beginTitleEdit(id, title: t)
+        return true
     }
 
     /// merge-review 契约一/七: 多选「请求合并建议」→
@@ -847,6 +908,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Analytics.log("feedback_submit", fields: ["ids": ids.count])
         store.noteFeedbackRecorded()
         return true
+    }
+
+    /// §39 回答需输入: {"action":"answer_input","id":…,"text":…} inbox file —
+    /// the owner's typed answer for a blocked session (actd validates 1..4000
+    /// and delivers it via executor.answer). Same atomic-write + failure-alert
+    /// path as every other action (writeInboxFile); on success the card gets
+    /// the 「回答发送中…」echo (store.beginAnswer, cleared when it leaves
+    /// 需输入 or the 180 s honest timeout fires). The answer TEXT is user
+    /// content — python-side inbox_answer_input records it capture_input-gated;
+    /// only metadata is counted here.
+    func submitAnswer(id: String, text: String) -> Bool {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["id": id, "action": "answer_input",
+                                   "text": text, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("answer_input")
+        Analytics.log("card_action", fields: ["action": "answer_input", "req": id,
+                                              "chars": text.count])
+        store.beginAnswer(id)
+        return true
+    }
+
+    /// §39 回答弹窗: the pending QUESTION (read-only, scrollable) above the
+    /// multiline answer editor — the promptText pattern with a question pane.
+    /// Returns the trimmed answer, or nil when cancelled/empty.
+    func promptAnswer(question: String?) -> String? {
+        let alert = NSAlert()
+        alert.messageText = L("💬 回答 AI 的问题", "💬 Answer the AI's question")
+        alert.informativeText = L("答案会送回原 session（上下文保留），任务继续跑。",
+                                  "Your answer goes back into the original session (context kept); the task continues.")
+            + "\n" + L("↩ 发送 · ⇧↩ 换行", "↩ send · ⇧↩ newline")
+        alert.addButton(withTitle: L("发送", "Send"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+
+        let container = NSStackView(frame: NSRect(x: 0, y: 0, width: 420, height: 0))
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 6
+
+        let q = (question ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !q.isEmpty {
+            // read-only question pane (scrolls past ~8 lines)
+            let qScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 140))
+            let qView = NSTextView(frame: qScroll.bounds)
+            qView.isRichText = false
+            qView.isEditable = false
+            qView.font = .systemFont(ofSize: 12)
+            qView.textColor = .secondaryLabelColor
+            qView.autoresizingMask = [.width]
+            qView.textContainerInset = NSSize(width: 4, height: 6)
+            qView.string = q
+            qScroll.documentView = qView
+            qScroll.hasVerticalScroller = true
+            qScroll.borderType = .bezelBorder
+            qScroll.translatesAutoresizingMaskIntoConstraints = false
+            qScroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
+            qScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+            container.addArrangedSubview(qScroll)
+        }
+
+        // multi-line answer editor — same setup as promptText's editor
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 96))
+        let tv = NSTextView(frame: scroll.bounds)
+        tv.isRichText = false
+        tv.font = .systemFont(ofSize: 13)
+        tv.autoresizingMask = [.width]
+        tv.textContainerInset = NSSize(width: 4, height: 6)
+        tv.allowsUndo = true
+        let sendDelegate = PromptSendDelegate()
+        sendDelegate.sendButton = alert.buttons.first
+        tv.delegate = sendDelegate
+        scroll.documentView = tv
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        container.addArrangedSubview(scroll)
+
+        // NSAlert sizes the accessory by its FRAME — derive it from the
+        // autolayout fitting size or the panel collapses to zero height.
+        container.layoutSubtreeIfNeeded()
+        container.frame = NSRect(x: 0, y: 0, width: 420,
+                                 height: container.fittingSize.height)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = tv
+        let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }
+        guard resp == .alertFirstButtonReturn else { return nil }
+        let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        // empty = nothing to deliver (actd would drop it anyway — §39 1..4000);
+        // clip by UNICODE SCALARS to the 4000 ceiling actd enforces in code
+        // points (a Character-based prefix can smuggle >4000 code points and
+        // get bounced server-side after the UI showed success).
+        if text.isEmpty { return nil }
+        return InboxAction.clipAnswer(text)
     }
 
     /// The ONE atomic inbox write + failure alert (card actions + merge_review

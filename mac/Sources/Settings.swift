@@ -1791,14 +1791,22 @@ struct SettingsFormView: View {
 // One credential row in 设置·凭证 — status dot + SecureField paste + save +
 // helper link buttons (http URL or repo-relative doc path).
 //
-// v0.14 (audit 6.1/6.4): EVERY row verifies on save with a real probe —
-// Anthropic → GET /v1/models, Slack → auth.test, Gmail app password → IMAP
-// LOGIN via the runtime python. The dot is green ONLY after a successful
-// verification; a failed probe shows the classified plain-language reason
-// inline. Gmail passwords are stripped of ALL whitespace before storing
-// (Google renders them as "abcd efgh ijkl mnop"; pasting that used to fail).
+// v0.14 (audit 6.1/6.4): anthropic/slack/gmail rows verify on save with a
+// real probe — Anthropic → GET /v1/models, Slack → auth.test, Gmail app
+// password → IMAP LOGIN via the runtime python. The dot is green ONLY after
+// a successful verification; a failed probe shows the classified
+// plain-language reason inline. Gmail passwords are stripped of ALL
+// whitespace before storing (Google renders them as "abcd efgh ijkl mnop";
+// pasting that used to fail).
+//
+// v0.37.1: the two 实时字幕 volcano rows work differently, and their copy
+// says so — save only stores locally (no probe), while the 检测 button does
+// one real handshake (CaptionKeyProbe) and reports the ✅/❌/⚠️ verdict
+// inline. The speech row auto-detects the legacy App ID + Access Token pair
+// on save (VolcanoSpeechCredential.parse) and normalizes it to the labeled
+// two-line stored format.
 struct CredentialRowView: View {
-    enum Kind { case plain, anthropic, slack, gmail }
+    enum Kind { case plain, anthropic, slack, gmail, volcanoSpeech, volcanoArk }
 
     let title: String
     let secretName: String                       // file name under config/secrets/
@@ -1831,8 +1839,11 @@ struct CredentialRowView: View {
                 }
             }
             HStack(spacing: 8) {
-                SecureField(L("粘贴后点保存（只存本机，保存即验证）",
-                              "Paste, then Save (stored locally; verified on save)"),
+                SecureField(isVolcano
+                                ? L("粘贴后点保存（只存本机，不联网）",
+                                    "Paste, then Save (stored locally; no network)")
+                                : L("粘贴后点保存（只存本机，保存即验证）",
+                                    "Paste, then Save (stored locally; verified on save)"),
                             text: $input)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
@@ -1843,7 +1854,9 @@ struct CredentialRowView: View {
                 if kind != .plain {
                     // probe the pasted credential (or the stored one when the
                     // field is empty) — inline ok/fail with the reason.
-                    Button(validating ? L("验证中…", "Verifying…") : L("验证", "Verify")) {
+                    Button(validating
+                            ? (isVolcano ? L("检测中…", "Testing…") : L("验证中…", "Verifying…"))
+                            : (isVolcano ? L("检测", "Test") : L("验证", "Verify"))) {
                         verify()
                     }
                     .controlSize(.small)
@@ -1860,7 +1873,16 @@ struct CredentialRowView: View {
         }
         .padding(.vertical, 2)
         .onAppear { refreshState() }
+        .onChange(of: input) { _, newValue in
+            // a fresh edit invalidates the previous probe/save note (the dot
+            // keeps the last verified state until the next save/test); the
+            // guards keep save()'s field-clear and an in-flight probe's
+            // status text intact
+            if !newValue.isEmpty, !validating { note = "" }
+        }
     }
+
+    private var isVolcano: Bool { kind == .volcanoSpeech || kind == .volcanoArk }
 
     private var dotColor: Color {
         switch state {
@@ -1899,6 +1921,15 @@ struct CredentialRowView: View {
             // mnop" — inner whitespace is never part of the password.
             token = token.filter { !$0.isWhitespace }
         }
+        var detectedLegacy = false
+        if kind == .volcanoSpeech,
+           let credential = VolcanoSpeechCredential.parse(token) {
+            // auto-detect the old-console App ID + Access Token pair and
+            // normalize to the labeled stored format (CONTRACT §36 add-only);
+            // a new-console key passes through as a bare line, unchanged
+            detectedLegacy = credential.isLegacy
+            token = credential.fileRepresentation
+        }
         guard !token.isEmpty else { return }
         do {
             try SecretsIO.save(secretName, token: token)
@@ -1915,8 +1946,20 @@ struct CredentialRowView: View {
                           "Heads-up: app passwords are usually 16 letters — check you pasted the right thing. Verifying anyway…"),
                         .orange)
             }
-            // never leave an invalid credential looking green — probe right away
-            runVerify(token, savedFirst: true)
+            if isVolcano {
+                // the row's copy promises save = store only, no network —
+                // the 检测 button is the one real connection, on demand
+                setNote((detectedLegacy
+                            ? L("已保存 ✓（识别为旧版 App ID + Access Token）",
+                                "Saved ✓ (detected legacy App ID + Access Token)")
+                            : L("已保存 ✓", "Saved ✓"))
+                        + L("——点「检测」可真连服务器验证一次",
+                            " — click Test for one real server check"),
+                        .secondary)
+            } else {
+                // never leave an invalid credential looking green — probe right away
+                runVerify(token, savedFirst: true)
+            }
         } catch {
             setNote(L("保存失败: ", "Save failed: ") + error.localizedDescription, .red)
         }
@@ -1934,10 +1977,17 @@ struct CredentialRowView: View {
         noteColor = color
     }
 
-    /// 验证 button: probe the field content; empty field → the stored secret.
+    /// 验证/检测 button: probe the field content; empty field → the stored
+    /// secret (so users can test BEFORE saving, or re-test what's on disk).
     private func verify() {
         var candidate = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if kind == .gmail { candidate = candidate.filter { !$0.isWhitespace } }
+        if kind == .volcanoSpeech, !candidate.isEmpty,
+           let credential = VolcanoSpeechCredential.parse(candidate) {
+            // field text is paste-shaped; normalize so runVerify only ever
+            // sees the stored format (same as reading the file back)
+            candidate = credential.fileRepresentation
+        }
         let secret: String
         if !candidate.isEmpty {
             secret = candidate
@@ -1978,6 +2028,22 @@ struct CredentialRowView: View {
             // legacy stored values may still carry inner spaces — normalize
             KeyProbe.gmailIMAP(address: address,
                                password: secret.filter { !$0.isWhitespace }, done: done)
+        case .volcanoSpeech:
+            // secret is in stored format here (verify()/save() normalized);
+            // decode's fallback keeps hand-edited files behaving like a key
+            let credential = VolcanoSpeechCredential.decode(secret) ?? .apiKey(secret)
+            beginValidating(savedFirst)
+            CaptionKeyProbe.speech(credential: credential) { verdict in
+                validating = false
+                applyCaptionVerdict(verdict)
+            }
+        case .volcanoArk:
+            beginValidating(savedFirst)
+            CaptionKeyProbe.ark(key: secret,
+                                model: LiveCaptionsController.shared.arkModel) { verdict in
+                validating = false
+                applyCaptionVerdict(verdict)
+            }
         case .plain:
             setNote(L("已保存 ✓", "Saved ✓"), .secondary)
         }
@@ -1985,8 +2051,59 @@ struct CredentialRowView: View {
 
     private func beginValidating(_ savedFirst: Bool) {
         validating = true
-        setNote(savedFirst ? L("已保存，验证中…", "Saved — verifying…")
-                           : L("验证中…", "Verifying…"), .secondary)
+        if isVolcano {
+            setNote(L("检测中（真连一次服务器）…", "Testing (one real server connection)…"),
+                    .secondary)
+        } else {
+            setNote(savedFirst ? L("已保存，验证中…", "Saved — verifying…")
+                               : L("验证中…", "Verifying…"), .secondary)
+        }
+    }
+
+    /// 检测 result for the volcano rows: honest ✅/❌/⚠️ line, raw codes kept.
+    /// Dot: green only on a verified success; red when the credential (or the
+    /// resource behind it) is the problem; back to yellow "saved, unverified"
+    /// when the verdict is unknowable (network) or about the model field.
+    private func applyCaptionVerdict(_ verdict: CaptionKeyVerdict) {
+        let result: String
+        switch verdict {
+        case .ok:
+            state = 3
+            setNote(L("✅ 有效（连接成功）", "✅ Valid (connected)"), .green)
+            result = "ok"
+        case .badKey(let detail):
+            state = 4
+            setNote(L("❌ Key 无效或未开通（\(detail)）",
+                      "❌ Key invalid or service not activated (\(detail))"), .red)
+            result = "unauthorized"
+        case .resourceNotEnabled(let code, let message):
+            state = 4
+            setNote(L("❌ 资源未开通（\(code)：\(message)）——去语音控制台开通流式语音识别",
+                      "❌ Resource not activated (\(code): \(message)) — enable streaming ASR in the speech console"),
+                    .red)
+            result = "unauthorized"
+        case .modelNotFound(let detail):
+            // the key may be fine — the fix is the model-ID field above
+            if state == 3 || state == 4 { state = 2 }
+            setNote(L("❌ 模型 ID 不存在或未开通（\(detail)）——检查「翻译模型」填的 ID",
+                      "❌ Model ID not found or not opened (\(detail)) — check the translation-model field"),
+                    .red)
+            result = "model_not_found"
+        case .serviceError(let code, let message):
+            if state == 3 || state == 4 { state = 2 }
+            setNote(L("❌ 服务返回错误 \(code)\(message.isEmpty ? "" : "：" + message)",
+                      "❌ Service error \(code)\(message.isEmpty ? "" : ": " + message)"),
+                    .orange)
+            result = "error"
+        case .network(let detail):
+            if state == 3 || state == 4 { state = 2 }
+            setNote(L("⚠️ 网络不通（\(detail)）——稍后再点「检测」",
+                      "⚠️ Network unreachable (\(detail)) — click Test again later"),
+                    .orange)
+            result = "error"
+        }
+        Analytics.log("mw_key_validate",
+                      fields: ["name": secretName, "result": result])
     }
 
     private func handleOutcome(_ outcome: KeyProbe.Outcome, savedFirst: Bool) {
@@ -2045,7 +2162,9 @@ struct CredentialRowView: View {
         case .anthropic:
             return L("key 无效——到 console.anthropic.com 重新生成，回来粘贴保存（\(raw)）",
                      "The key is invalid — regenerate it at console.anthropic.com, then paste and save (\(raw))")
-        case .plain:
+        case .plain, .volcanoSpeech, .volcanoArk:
+            // volcano rows never reach here — their 检测 renders through
+            // applyCaptionVerdict instead of handleOutcome
             return raw
         }
     }

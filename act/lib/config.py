@@ -140,6 +140,9 @@ class Config:
     # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
     slack_mcp_fallback: bool = True
     slack_mcp_interval_minutes: int = 30
+    # §40 capture receipts — emoji reaction ack on captured self-DM messages
+    # (📥 filed / 🚫 ignored / ↩️ re-raised). Best-effort; default ON.
+    slack_capture_receipts: bool = True
     watch_people: list = field(default_factory=list)
     # gmail capture (CONTRACT §14) — app password file missing => radar no-ops
     gmail_address: Optional[str] = None
@@ -376,6 +379,10 @@ def load_config() -> Config:
     cfg.slack_mcp_interval_minutes = _int_or(
         sources.get("slack_mcp_interval_minutes", cfg.slack_mcp_interval_minutes),
         cfg.slack_mcp_interval_minutes,
+    )
+    cfg.slack_capture_receipts = _bool_or(
+        sources.get("slack_capture_receipts", cfg.slack_capture_receipts),
+        cfg.slack_capture_receipts,
     )
     cfg.watch_people = sources.get("watch_people", []) or []
 

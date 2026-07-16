@@ -73,6 +73,11 @@ except Exception:  # pragma: no cover - update check must not kill daemon
     update_check = None  # type: ignore
 
 try:
+    from act.lib import auto_merge
+except Exception:  # pragma: no cover - auto merge hints must not kill daemon
+    auto_merge = None  # type: ignore
+
+try:
     from act.lib import feedback
 except Exception:  # pragma: no cover - feedback import must not kill daemon
     feedback = None  # type: ignore
@@ -158,6 +163,18 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
+            # §38 split_note (拆成新卡): carries id + note_ts (the fold-note
+            # line's ts tag) — the reversible-fold undo, own branch because of
+            # the extra field (triple-validated: syncd shape gate + webui 400
+            # + the honest no-ops inside).
+            if action == "split_note":
+                result = _apply_split_note(decision.get("id"),
+                                           decision.get("note_ts"))
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
             # §29 feedback（建议上报）: carries "ids" (0..n R-/MS- ids), never a
             # requirement-level "id" — validated + recorded by act/lib/feedback.py.
             if action == "feedback":
@@ -191,6 +208,15 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
+            # §39 回答需输入: carries "id" + "text" (not comment) — the owner's
+            # typed answer for a blocked session, delivered via executor.answer.
+            if action == "answer_input":
+                result = _apply_answer_input(decision)
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
             # §22 one-shot Claude Code session import — no requirement-level id.
             if action == "import_claude_sessions":
                 result = _apply_claude_import(decision)
@@ -217,8 +243,13 @@ def process_inbox() -> int:
                 # (result_status=unknown), never left guessing on a stuck 'delivered'.
                 _write_applied_ack(path.stem, "unknown")
             else:
-                result_status = _apply_decision(
-                    req, action, comment, expected_status, board_seq)
+                if action == "set_title":
+                    # §37: carries a `title` field the generic decision path
+                    # doesn't know about — validated fail-closed in the helper.
+                    result_status = _apply_set_title(req, decision.get("title"))
+                else:
+                    result_status = _apply_decision(
+                        req, action, comment, expected_status, board_seq)
                 # the comment (打回反馈/修改方向) is user-typed content —
                 # attached only behind the capture_input gate, clipped.
                 c = (comment or "").strip()
@@ -521,6 +552,129 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
     return "running"
 
 
+def _apply_split_note(req_id, note_ts) -> str:
+    """§38 拆成新卡 — the fold undo. ``{"action":"split_note","id":"R-xxx",
+    "note_ts":"<ts tag>"}`` takes the fold-note line tagged ``[@note_ts]`` on
+    card ``id`` and re-files its text as a NEW card via the normal capture
+    path (detected→raising→AI expansion→proposal, default routing), then
+    tags the origin line 已拆出 → 新卡 id (append-only, history preserved).
+
+    Deliberately NOT ``merge_or_new``: the user just said this note does NOT
+    belong to that card — a deterministic re-fold would undo the undo. Same
+    boundary doctrine as capture (§33): poison payloads / unknown ts /
+    already-split lines are honest no-ops (a replayed split must never mint a
+    second card). Returns the §5.4 result_status.
+    """
+    if not isinstance(req_id, str) or not isinstance(note_ts, str):
+        _log(f"inbox: split_note with non-string fields "
+             f"(id={type(req_id).__name__}, note_ts={type(note_ts).__name__}) — ignored")
+        return "noop"
+    rid, ts = req_id.strip(), note_ts.strip()
+    req = load(rid) if rid else None
+    if req is None:
+        _log(f"inbox: split_note for unknown req {req_id!r} — dropped")
+        return "unknown"
+    if str(req.status) in _MERGE_DEAD_STATES or req.is_merged:
+        # terminal-state doctrine (§32.2, same set the merge machinery
+        # refuses): a stale detail panel must not mint a live card (+1 expand
+        # LLM run) out of a card that meanwhile trashed/merged/rejected/
+        # archived. Notes stay untouched; honest noop ack.
+        _log(f"inbox: {req.id} split_note on terminal card "
+             f"({req.status}) — no-op")
+        return "noop"
+    entry = next((e for e in registry.parse_fold_notes(req.notes)
+                  if e["ts"] == ts and not e["split_into"] and e["text"]), None)
+    if entry is None:
+        _log(f"inbox: {req.id} split_note ts {note_ts!r} not found / already "
+             f"split — no-op")
+        return "noop"
+    text = entry["text"]
+    new = Requirement(
+        id=registry.next_id(),
+        title=text[:80],
+        type=req.type or "other",
+        tier=req.tier or "T1",
+        status=State.RAISING.value,   # capture path: AI expands it next pass
+        hardness="soft",
+        summary=text[:120],
+        sources=[{
+            "who": "zelin",
+            "channel": "split",
+            "date": _dt.date.today().isoformat(),
+            "quote": text,
+        }],
+        notes=f"[拆自 {req.id}] 从其折叠备注拆出",
+        # machine-readable lineage: the new card's text ≈ the origin note by
+        # construction, and auto_merge would otherwise suggest merging it
+        # straight back — one 采纳 destroying the undo (§38.3 _linked).
+        split_from=req.id,
+    )
+    # new card FIRST, origin tag second (archive()'s crash-mid-move doctrine:
+    # a crash between the two leaves the split recoverable, never lost).
+    save(new)
+    if registry.mark_note_split(req, ts, new.id):
+        save(req)
+    _log(f"inbox: {req.id} split_note [@{ts}] -> {new.id} (raising)")
+    analytics.log_event("split_note", req=req.id, new=new.id)
+    return "running"
+
+
+def _apply_set_title(req: Requirement, title) -> str:
+    """§37 set_title — the user renames a card's DISPLAY title (the frozen
+    internal ``title`` never changes; it anchors dedupe/re-raise identity).
+
+    Fail-closed validation (v0.33.1 boundary doctrine): non-string / empty /
+    >64-char titles are logged no-ops — a poison payload must never become a
+    board title. Sets ``user_titled`` so LLM/harvest titles never overwrite
+    the user's choice; the previous display name lands in ``former_titles``
+    (still searchable). Archived cards stay sealed (unarchive first), same as
+    the central _apply_decision gate. Returns the §5.4 result_status.
+    """
+    if str(req.status) == State.ARCHIVED.value:
+        _log(f"inbox: {req.id} set_title on archived card — no-op (unarchive first)")
+        return "noop"
+    if not isinstance(title, str):
+        _log(f"inbox: {req.id} set_title with non-string title "
+             f"({type(title).__name__}) — ignored")
+        return "noop"
+    t = " ".join(title.split()).strip()
+    if not t or len(t) > 64:
+        _log(f"inbox: {req.id} set_title invalid title "
+             f"(empty or >64 chars, got {len(t)}) — ignored")
+        return "noop"
+    if not registry.set_display_title(req, t, by_user=True):
+        _log(f"inbox: {req.id} set_title no-op (title unchanged)")
+        return "noop"
+    save(req)
+    _log(f"inbox: {req.id} set_title -> {t!r} (user pinned)")
+    return "running"
+
+
+def _apply_harvest_title(req: Requirement, harvested: dict) -> None:
+    """§37: apply a harvested ``CARD TITLE:`` line at the same promotion points
+    where delivered_summary lands (round boundaries only). Best-effort; a
+    user-pinned title wins inside set_display_title. Caller saves ``req``."""
+    try:
+        t = (harvested or {}).get("card_title")
+        if t and registry.set_display_title(req, t):
+            _log(f"inbox/reconcile: {req.id} display title refreshed from "
+                 f"CARD TITLE line: {str(t)[:64]!r}")
+    except Exception as e:  # noqa: BLE001 - titles must never block delivery
+        _log(f"harvest title apply failed for {getattr(req, 'id', '?')}: {e}")
+
+
+def _update_search_index(card_id, session_id) -> None:
+    """§37 Mac-local session-content search layer: refresh one card's entry at
+    the existing settle/harvest touchpoints. Best-effort, never raises."""
+    if not session_id:
+        return
+    try:
+        from act.lib import search_index
+        search_index.update_card(str(card_id), str(session_id))
+    except Exception as e:  # noqa: BLE001 - indexing must never break the pass
+        _log(f"search index update failed for {card_id}: {e}")
+
+
 def _apply_feedback(decision: dict) -> str:
     """建议上报 (CONTRACT §29) — explicit user report to the maintainer.
 
@@ -550,6 +704,162 @@ def _apply_feedback(decision: dict) -> str:
     analytics.log_event("inbox_feedback", n=len(ids),
                         uploaded=rec.get("uploaded"))
     return "running"
+
+
+# §39.2 answer cooldown: a second answer landing this soon after a successful
+# one is a race (second device / double-submit), not a reply to a NEW question
+# — the resumed session may not even be on the roster yet, so the roster probe
+# alone can't see it. 120s covers the resume startup gap plus a phone round
+# trip; a genuinely new question normally arrives well past it (and the
+# archived-text notice tells the answerer to resend after the window).
+_ANSWER_COOLDOWN_S = 120
+
+
+def _answer_not_delivered(req: Requirement, text: str, kind: str) -> str:
+    """§39.2: a VALIDATED answer that cannot be delivered because the moment
+    has passed — the card left needs_input (promotion race), the session is
+    actively working (someone else answered it first), an answer landed
+    moments ago (cooldown), or the text exceeds the wire bound. Both UIs
+    already accepted the send as success, so a bare logged no-op silently
+    swallows the owner's typed text: archive it in notes + notify instead.
+    Returns the §5.4 "noop" ack (nothing was started)."""
+    reasons = {
+        "working": "会话正在工作中，可能已被回答",
+        "review": "任务已完成进了待验收",
+        "recent": "刚有一条回答送达，可能还在生效中",
+        "oversize": "回答超过 4000 字上限",
+    }
+    reason = reasons.get(kind, f"卡片已不在需输入状态（现为 {req.status}）")
+    stamp = _dt.date.today().isoformat()
+    tag = f"[{stamp} 回答未投递] {reason}；原文：{text[:200]}"
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    save(req)
+    notify.notify(*notify.msg_answer_not_delivered(req.title or req.id, kind),
+                  req=req.id)
+    _log(f"inbox: {req.id} answer_input NOT delivered ({kind}: {reason}) — "
+         f"noop, text archived in notes")
+    analytics.log_event("inbox_answer_input", req=req.id, ok=False,
+                        reason=kind, chars=len(text))
+    return "noop"
+
+
+def _apply_answer_input(decision: dict) -> str:
+    """回答需输入 (CONTRACT §39) — deliver the owner's typed answer into a
+    blocked session via executor.answer (stop-idle-then-resume, the rework
+    plumbing with an ``OWNER ANSWER:`` prefix instead of the 打回 preamble).
+
+    ``{"action":"answer_input","id":"R-001","text":"…"}`` — boundary
+    validation here (§33 house pattern, fail-closed): ``text`` must be a str
+    whose trimmed length is 1..4000 (non-str / empty / oversize -> logged
+    drop — junk must never relaunch a session); unknown card -> "unknown";
+    a phone-pinned ``expected_status`` mismatch OR a card no longer EXECUTING
+    (需输入 rows only ever project executing cards) -> stale, NOT silent:
+    the validated text is archived via _answer_not_delivered.
+
+    §39.2 pre-delivery roster probe: on-disk EXECUTING covers roster working
+    AND blocked, and executor.answer STOPS the session before resuming — so
+    without a fresh roster read, a stale second device's 「回答…」(or a webui
+    answer_input aimed at any executing card) would kill a MID-RUN session at
+    an arbitrary tool call and resume it with a duplicate answer. A session
+    with a live pid whose state is not blocked is therefore never touched:
+    no stop, no resume — archive + notify (the second answerer must learn
+    the first answer likely won). Only a genuinely blocked session — or a
+    dead/absent one (the existing resume-a-dead-session path) — receives
+    stop+resume.
+
+    Honest acks (§5.4): "running" ONLY when the answer genuinely reached the
+    session (notes tag [回答已送达]); every other outcome is "noop" AND
+    visible — [回答未投递] (stale/working, text archived) or [回答送达失败]
+    (launch failure) + notification + the card's last_error (dashboard §39)
+    — never silent.
+    """
+    if executor is None:
+        _log("inbox: answer_input requested but executor unavailable — dropped")
+        return "noop"
+    text = decision.get("text")
+    if not isinstance(text, str):
+        _log(f"inbox: answer_input with non-string text "
+             f"({type(text).__name__}) — dropped")
+        return "noop"
+    t = text.strip()
+    if not t:
+        _log("inbox: answer_input with empty text — dropped")
+        return "noop"
+    req_id = decision.get("id")
+    req = load(req_id) if req_id else None
+    if req is None:
+        _log(f"inbox: answer_input for unknown req {req_id!r} — dropped")
+        return "unknown"
+    # From here on there is TEXT and a card — any non-delivery must archive
+    # the text + notify (§39.2), never a bare logged no-op. Oversize included:
+    # the clients clip to 4000 unicode scalars, so landing here means a buggy/
+    # raw client — the head of the text is still worth saving.
+    if len(t) > 4000:
+        return _answer_not_delivered(req, t, "oversize")
+    expected_status = decision.get("expected_status")
+    if (not _precondition_ok(req, expected_status)
+            or str(req.status) != State.EXECUTING.value):
+        # stale pin and status-moved collapse to one surface: the phone only
+        # ever pins "executing", so a pin mismatch implies the card moved —
+        # most commonly _promote_if_delivered's executing→review promotion
+        # racing the inbox pass.
+        _log(f"inbox: {req.id} answer_input stale "
+             f"(expected {expected_status}, is {req.status})")
+        kind = ("review" if str(req.status) in (State.REVIEW.value,
+                                                State.DELIVERED.value)
+                else "moved")
+        return _answer_not_delivered(req, t, kind)
+    # §39.2 pre-delivery roster probe (see docstring): never stop a session
+    # that is actively WORKING with a live process.
+    ex_now = req.execution if isinstance(req.execution, dict) else {}
+    sid = ex_now.get("session_id")
+    if sid:
+        try:
+            agent = _index_agents(_run_claude_agents()).get(str(sid))
+        except Exception:  # noqa: BLE001 - roster probe is best-effort
+            agent = None
+        state = (agent or {}).get("state", "") if agent else ""
+        if agent is not None and agent.get("pid") and state not in _BLOCKED_STATES:
+            return _answer_not_delivered(req, t, "working")
+    # §39.2 cooldown (belt+braces with the probe): a successful answer's
+    # resumed session may not be on the roster yet — during that gap the probe
+    # sees "absent" and a racing second answer would stop-kill the fresh
+    # session. Within the window, reject UNLESS the last attempt demonstrably
+    # failed (execution.last_error survives a failed answer and is cleared by
+    # a clean one) — a retry after failure must never be blocked.
+    last_answer = _parse_iso(ex_now.get("last_answer_at"))
+    if (last_answer is not None and not ex_now.get("last_error")
+            and (_dt.datetime.now(_dt.timezone.utc) - last_answer).total_seconds()
+                < _ANSWER_COOLDOWN_S):
+        return _answer_not_delivered(req, t, "recent")
+    ok = False
+    try:
+        ok = bool(executor.answer(req, t))
+    except Exception as e:  # noqa: BLE001 - answer must never kill the pass
+        _log(f"inbox: {req.id} answer_input crashed: {e}")
+    stamp = _dt.date.today().isoformat()
+    if ok:
+        tag = f"[{stamp} 回答已送达] {t[:200]}"
+        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        save(req)
+        _log(f"inbox: {req.id} answer_input delivered into session")
+        analytics.log_event(
+            "inbox_answer_input", req=req.id, ok=True, chars=len(t),
+            text=(analytics.clip_content(t)
+                  if analytics.content_gate() else None))
+        return "running"
+    # executor.answer recorded execution.last_error — surface the failure
+    # everywhere the owner can see it (§39: never a silent drop).
+    reason = str((req.execution or {}).get("last_error") or "启动失败")[:160]
+    tag = f"[{stamp} 回答送达失败] {reason}"
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    save(req)
+    notify.notify(*notify.msg_answer_failed(req.title or req.id, reason),
+                  req=req.id)
+    _log(f"inbox: {req.id} answer_input NOT delivered ({reason}) — acking noop")
+    analytics.log_event("inbox_answer_input", req=req.id, ok=False,
+                        reason="launch_failed", chars=len(t))
+    return "noop"
 
 
 def _apply_claude_import(decision: dict) -> str:
@@ -825,7 +1135,17 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
                                      + int(sec.repeated_mentions or 1))
         summary = " ".join(
             str(sec_ex.get("delivered_summary") or sec.title or "").split()).strip()
-        tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}"
+        # §37 review fix: carry the secondary's DISPLAY names into the
+        # primary's notes — notes project as searchable notes_text, so a
+        # user-named secondary stays findable by its old name after this
+        # IRREVERSIBLE merge (merged is terminal; the frozen sec.title alone
+        # broke the "旧名仍可搜索" promise exactly here).
+        sec_names = [str(n).strip() for n in
+                     ([getattr(sec, "display_title", None)]
+                      + list(getattr(sec, "former_titles", None) or []))
+                     if n and str(n).strip()]
+        names_part = f"（曾用名：{' · '.join(sec_names)}）" if sec_names else ""
+        tag = f"[merged] {sec.id} 并入：{summary[:200] or '(无摘要)'}{names_part}"
         primary.notes = (primary.notes + "\n" + tag).strip() if primary.notes else tag
         # Preserve a delivered secondary's FULL deliverable on the primary.
         # MERGED is terminal + UI-unreachable (no un-merge), so a finished
@@ -844,6 +1164,11 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             carried.append({
                 "id": sec.id,
                 "title": sec.title or "",
+                # §37: display names ride along too (same review fix as the
+                # notes tag above — the deliverable must stay attributable
+                # to the name the user knew the card by).
+                "display_title": getattr(sec, "display_title", None),
+                "former_titles": list(getattr(sec, "former_titles", None) or []) or None,
                 "delivered_summary": sec_ex.get("delivered_summary"),
                 "final_draft": sec_ex.get("final_draft"),
                 "merged_at": _iso_now(),
@@ -1181,6 +1506,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
                     ex["delivered_summary"] = harvested["delivered_summary"]
                 if harvested.get("final_draft"):
                     ex["final_draft"] = harvested["final_draft"]
+                _apply_harvest_title(req, harvested)   # §37, round boundary
             except Exception as e:  # noqa: BLE001 - harvest is best-effort
                 _log(f"inbox: {req.id} done_external — "
                      f"harvest_delivery({sid}) failed (ignored): {e}")
@@ -1190,6 +1516,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
             except Exception as e:  # noqa: BLE001 - best-effort, never block delivery
                 _log(f"inbox: {req.id} done_external — "
                      f"stop_session({sid}) failed (ignored): {e}")
+            _update_search_index(req.id, sid)          # §37 session-content layer
         ex["accepted_at"] = _iso_now()
         req.execution = ex
         tag = "[done outside] Zelin 在系统外完成"
@@ -1257,6 +1584,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
                     ex["delivered_summary"] = harvested["delivered_summary"]
                 if harvested.get("final_draft"):
                     ex["final_draft"] = harvested["final_draft"]
+                _apply_harvest_title(req, harvested)   # §37, round boundary
             except Exception as e:  # noqa: BLE001 - harvest is best-effort
                 _log(f"inbox: {req.id} stop_to_review — "
                      f"harvest_delivery({sid}) failed (ignored): {e}")
@@ -1266,6 +1594,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
             except Exception as e:  # noqa: BLE001 - best-effort, never block review write
                 _log(f"inbox: {req.id} stop_to_review — "
                      f"stop_session({sid}) failed (ignored): {e}")
+            _update_search_index(req.id, sid)          # §37 session-content layer
         # mirror the natural executing->review transition's review fields
         # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
         # renders (dashboard reads execution.review_at) and a later purge is
@@ -1631,12 +1960,21 @@ def cleanup_merge_jobs() -> int:
 # --------------------------------------------------------------------------- #
 # (d) transition detection
 # --------------------------------------------------------------------------- #
+# §40: more than this many fresh proposals in one pass collapse to one
+# notification (msg_new_cards_batch). At 1-2 the per-card copy is still the
+# more useful one — it names the ask.
+_NEW_CARD_BATCH_ABOVE = 2
+
+
 def _by_id(items: list[dict]) -> dict[str, dict]:
     return {i["id"]: i for i in items if i.get("id")}
 
 
-def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]]:
-    """Return (title, body) notifications for prev->curr transitions."""
+def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str, Optional[str]]]:
+    """Return (title, body, req_id) notifications for prev->curr transitions.
+
+    req_id is None for the §40 batched new-cards entry (it names no single
+    card); every other class carries the card id."""
     msgs: list[tuple[str, str]] = []
     if prev is None:
         return msgs
@@ -1650,13 +1988,34 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
     # phone ✅-reaction approval surface was removed in v0.21 — Mac app only).
     # new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
     # so Zelin knows it's a card he already accepted, not a brand-new find.
+    # §40 batching: >2 fresh (non-reraised) proposals in one pass collapse to
+    # ONE 「新增 N 张待审批卡」 — a radar backfill used to fire n pings in a
+    # row. 回锅 stays per-card (each names a prior decision of the user's), as
+    # do the 需输入/待验收 classes below. The §28 relay queue's 10-min stale
+    # sweep is untouched — one batched entry ages out like any other.
+    # Cards filed by the weekly digest are skipped entirely: its own
+    # notification already announced them by count (「另有 N 条自动化建议进了
+    # 待审批」) — re-announcing them here (per-card or batched) was a
+    # duplicate ping every suggestion-bearing Monday. Seam = the row's source
+    # channel (weekly_digest.SOURCE_CHANNEL rides the dashboard projection).
+    fresh: list[tuple[str, dict]] = []
     for rid, item in c_na.items():
         if rid not in p_na:
             if item.get("reraised"):
                 t, b = notify.msg_reraised(item.get("title", rid),
                                            item.get("reraised_note") or "")
+                msgs.append((t, b, rid))
+            elif any(isinstance(s, dict) and s.get("channel") == "weekly-digest"
+                     for s in item.get("sources") or []):
+                continue  # announced by the digest's own notification
             else:
-                t, b = notify.msg_new_card(item.get("title", rid))
+                fresh.append((rid, item))
+    if len(fresh) > _NEW_CARD_BATCH_ABOVE:
+        t, b = notify.msg_new_cards_batch(len(fresh))
+        msgs.append((t, b, None))
+    else:
+        for rid, item in fresh:
+            t, b = notify.msg_new_card(item.get("title", rid))
             msgs.append((t, b, rid))
 
     # executing -> review (§11 draft ready, awaiting acceptance)
@@ -1672,10 +2031,12 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
             t, b = notify.msg_review_ready(item.get("name") or rid)
             msgs.append((t, b, rid))
 
-    # executing -> blocked (newly needs_input, previously running)
+    # executing -> blocked (newly needs_input, previously running). §39: the
+    # notification carries a snippet of the QUESTION the agent is asking.
     for rid, item in c_ni.items():
         if rid not in p_ni and rid in p_run:
-            t, b = notify.msg_needs_input(item.get("name") or rid)
+            t, b = notify.msg_needs_input(item.get("name") or rid,
+                                          item.get("question"))
             msgs.append((t, b, rid))
 
     return msgs
@@ -1748,9 +2109,11 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
                     ex["delivered_summary"] = harvested["delivered_summary"]
                 if harvested.get("final_draft"):
                     ex["final_draft"] = harvested["final_draft"]
+                _apply_harvest_title(req, harvested)   # §37, round boundary
             ex.pop("_review_active", None)
             req.execution = ex
             registry.save(req)
+            _update_search_index(req.id, sid)          # §37 session-content layer
             _log(f"reconcile: {req.id} 会话活动结束，已重新收割交付物（attach 回流）")
             analytics.log_event("review_reharvested", req=req.id)
     except Exception as e:  # noqa: BLE001 - must never break the daemon pass
@@ -1793,9 +2156,11 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     if harvested.get("delivered_summary"):
         ex["delivered_summary"] = harvested["delivered_summary"]
     ex["final_draft"] = harvested["final_draft"]
+    _apply_harvest_title(req, harvested)   # §37, round boundary
     req.execution = ex
     req.set_status(registry.State.REVIEW)
     registry.save(req)
+    _update_search_index(req.id, sid)      # §37 session-content layer
     exec_s = None
     disp_dt = _parse_iso(ex.get("dispatched_at"))
     if disp_dt is not None:
@@ -1872,6 +2237,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                         ex["delivered_summary"] = harvested["delivered_summary"]
                     if harvested.get("final_draft"):
                         ex["final_draft"] = harvested["final_draft"]
+                    _apply_harvest_title(req, harvested)   # §37, round boundary
                 except Exception as e:  # noqa: BLE001 - harvest is best-effort
                     _log(f"reconcile: harvest_delivery {req.id} failed: {e}")
                 req.execution = ex
@@ -1879,6 +2245,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。
                 req.set_status(registry.State.REVIEW)
                 registry.save(req)
+                _update_search_index(req.id, sid)          # §37 session-content layer
                 # exec_s (metadata): dispatch -> delivery wall time. No
                 # summary excerpt anymore (v0.18): delivered_summary is MODEL
                 # OUTPUT, which telemetry never stores at any setting
@@ -2008,6 +2375,18 @@ def run_once(
     purge_trash(cfg)
     archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
+    if auto_merge is not None:
+        # §38: deterministic near-dupe hints for newly appeared open cards
+        # (radar cron files cards from outside this process, so "new" is
+        # detected by ledger diff, not an in-process creation hook).
+        auto_merge.scan_new_cards()
+    try:
+        # §37 session-content search layer: drop terminal/absent cards. Cheap:
+        # returns immediately when state/search_index.json doesn't exist.
+        from act.lib import search_index
+        search_index.prune()
+    except Exception as e:  # noqa: BLE001 - housekeeping must not kill the pass
+        _log(f"search index prune failed: {e}")
     if feedback is not None:
         # §29: retry pending feedback uploads ONCE, then give up (uploaded:
         # false). Records created THIS pass (process_inbox above already did
