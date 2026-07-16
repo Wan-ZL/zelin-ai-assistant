@@ -78,13 +78,22 @@ struct ActionBar: View {
     @State private var composer: LaneAction?
     @State private var confirm: LaneAction?
     @State private var fork: LaneAction?
+    @State private var busy = false
 
     var body: some View {
         HStack(spacing: 8) {
-            ForEach(actions) { a in
-                Button(role: a.destructive ? .destructive : nil) { tap(a) } label: { Text(a.title) }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .tint(a.tint)
+            // §41: submitted/busy state (same as MergeSuggestionCard) — the bar
+            // disables into 「已提交…」 until the post-submit refresh lands, so a
+            // second tap can't double-file the action.
+            if busy {
+                ProgressView().controlSize(.mini)
+                Text(L("已提交…", "Submitted…")).font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(actions) { a in
+                    Button(role: a.destructive ? .destructive : nil) { tap(a) } label: { Text(a.title) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .tint(a.tint)
+                }
             }
         }
         .sheet(item: $composer) { a in
@@ -123,6 +132,7 @@ struct ActionBar: View {
     }
 
     private func fire(_ verb: InboxVerb, comment: String?) {
+        busy = true
         Task {
             let ok = await state.submit(cardId: cardId, verb: verb, comment: comment)
             onFired?()
@@ -130,6 +140,7 @@ struct ActionBar: View {
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
                 await state.refreshBoard()
             }
+            busy = false
         }
     }
 
@@ -190,6 +201,25 @@ struct ComposerSheet: View {
     }
 }
 
+/// §41 T2 gate — the Mac requires a typed 确认/go before approving a T2
+/// (high-impact) card (AppDelegate.confirmT2). On the phone that flow is a
+/// named confirm dialog instead: the dialog carries the Mac's title and names
+/// the card (+ cost when shown), so T2 is never a bare one-tap 批准. Same
+/// threshold source as the Mac: `tier == "T2"`.
+func approveAction(card: ApprovalCard) -> LaneAction {
+    guard card.tier == "T2" else {
+        return LaneAction(title: L("批准", "Approve"), verb: .approve, tint: .green)
+    }
+    var msg = L("批准 \(card.id)：\(card.displaySummary)", "Approve \(card.id): \(card.displaySummary)")
+    if card.show_cost, let c = card.cost_usd {
+        msg += "\n" + L("预计成本 ", "Estimated cost ") + String(format: "$%.2f", c)
+    }
+    return LaneAction(title: L("批准", "Approve"), tint: .green,
+                      fork: [ForkChoice(title: L("确认批准", "Confirm approve"), verb: .approve)],
+                      forkTitle: L("T2 · 高影响操作确认", "T2 · High-Impact Action Confirmation"),
+                      forkMessage: msg)
+}
+
 /// §41 reject fork — mirrors the Mac v0.10.3 two-choice reject dialog. The
 /// split is functional: trash entries leave merge_or_new matching (the same
 /// ask re-raises fresh) while 已办完 (done_external → delivered) folds later
@@ -228,7 +258,7 @@ struct ProposalCardRow: View {
 
                 if !card.processing {
                     ActionBar(cardId: card.id, actions: [
-                        LaneAction(title: L("批准", "Approve"), verb: .approve, tint: .green),
+                        approveAction(card: card),
                         LaneAction(title: L("修改", "Comment"), verb: .comment, textNeed: .optional,
                                    placeholder: L("补充方向 / 修改意见…", "Add direction / changes…")),
                         LaneAction(title: L("暂缓", "Later"), verb: .defer),
@@ -382,7 +412,7 @@ struct CardDetailSheet: View {
                     // and the sheet dismisses once an action fires so the board's
                     // ack/error — not a stale sheet — is what the user sees next.
                     ActionBar(cardId: card.id, actions: [
-                        LaneAction(title: L("批准", "Approve"), verb: .approve, tint: .green),
+                        approveAction(card: card),
                         LaneAction(title: L("修改", "Comment"), verb: .comment, textNeed: .optional,
                                    placeholder: L("补充方向 / 修改意见…", "Add direction / changes…")),
                         LaneAction(title: L("暂缓", "Later"), verb: .defer),

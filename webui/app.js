@@ -17,6 +17,9 @@ const LANES = [
   {
     key: "debt", zh: "潜在任务", en: "Backlog",
     parts: ["debt"],
+    // lane help = the shared LaneHelp copy (shared/Sources/Lanes.swift) —
+    // webui is JS so the zh strings are mirrored verbatim here (§41).
+    help: "真实但不着急的事都先停在这里：雷达低置信度捕获、导入的旧会话、你暂缓的提案。不会自动执行、永不过期；再次提起会自动合并计数。点「研究并提议」升级成提案。",
     actions: [
       { action: "raise", label: "研究并提议" },
       { action: "trash", label: "删除", cls: "danger", confirm: true,
@@ -26,6 +29,7 @@ const LANES = [
   {
     key: "needs_approval", zh: "提案", en: "Proposals",
     parts: ["needs_approval"],
+    help: "需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；暂缓=先不做，放进潜在任务。灰色卡是 AI 正在研究的占位。",
     actions: [
       { action: "approve", label: "✅ 批准", cls: "primary" },
       // 拒绝 asks which kind (Mac v0.10.3 parity): trash entries leave
@@ -46,6 +50,7 @@ const LANES = [
     key: "running", zh: "运行中", en: "Running",
     parts: ["running", "needs_input"],
     directRun: true,
+    help: "已批准的任务由 AI 在后台执行（排队中显示灰卡）。橙色「需输入」= AI 卡住等你回答，排在最前。",
     actions: [
       // §41 parity (Mac v0.21): one 停止 → explicit two-choice fork. 系统外完成
       // left the running card in v0.21 — it lives on the 拒绝 fork instead.
@@ -62,6 +67,7 @@ const LANES = [
   {
     key: "review", zh: "待验收", en: "Review",
     parts: ["review"],
+    help: "AI 认为做完了：看交付摘要或 draft PR。验收=进入「阶段性完成」；打回=带你的反馈继续改。",
     actions: [
       { action: "accept", label: "✓ 验收", cls: "primary" },
       { action: "rework", label: "↩︎ 打回", needs: "打回反馈（必填）" },
@@ -70,10 +76,11 @@ const LANES = [
   {
     key: "completed", zh: "阶段性完成", en: "Done for now",
     parts: ["completed"],
+    help: "本轮完成——可能还在等对方反馈，可随时退回待验收；确认彻底结束就点「永久完成」。徽章数字是真实总数，列表只显示最近 50 条。",
     actions: [
       { action: "revert_review", label: "退回待验收" },
       { action: "archive", label: "永久完成", confirm: true,
-        note: "归档后可在页面底部「永久性完成」区放回看板。" },
+        note: "永久完成后可在页面底部「永久性完成」区放回看板。" },
     ],
   },
 ];
@@ -601,6 +608,8 @@ function render(data) {
     laneEl.appendChild(el("div", "lane-head",
       `<span class="name">${esc(lane.zh)} · ${esc(lane.en)}</span>` +
       `<span class="count">${esc(count)}</span>`));
+    // §41: the one-line lane definition every other surface shows (LaneHelp).
+    if (lane.help) laneEl.appendChild(el("p", "lane-help", esc(lane.help)));
     const body = el("div", "lane-body");
     // §41: the Running lane hosts the direct-run box (v0.34 dual input).
     if (lane.directRun) body.appendChild(directRunEl());

@@ -1201,6 +1201,16 @@ capture `mode:"run"`），Mac/iOS 早已在写。
 - **iOS 拒绝 fork（对齐 Mac v0.10.3）**：提案卡与详情页的「拒绝」打开两选弹窗：
   不想做（进回收站，reject）/ 已办完（记为已交付，done_external）/ 取消，弹窗
   正文是卡片摘要。
+- **iOS T2 闸门（对齐 Mac 的 confirmT2 语义）**：`tier=="T2"` 的卡在手机上不再
+  一键批准——「批准」先打开具名确认弹窗（Mac 同款标题「T2 · 高影响操作确认」，
+  正文点名卡片 id/摘要与预计成本）。Mac 的键入 确认/go 流程在触屏上以具名确认
+  弹窗等价（阈值来源同 Mac：tier 字符串）。
+- **iOS ActionBar 已提交态**：任一动作发出后按钮条整体切换为「已提交…」加载
+  态，直到提交后的刷新落地——复用合并建议卡既有的 busy 模式，杜绝双击重复
+  提交。
+- **iOS 设备切换器图例**：菜单行在 ●◐○ 后追加 Freshness.label 文字（Menu 会
+  剥掉颜色，只剩字形无法区分）；设置页「已配对设备」区补一行图例
+  （● 在线 · ◐ 可能陈旧 · ○ 离线/未知）。
 - **iOS 详情页补齐**：补上第四颗决策按钮「暂缓」（与卡片行一致）；任一动作发出
   后详情页自动关闭——用户接下来看到的是看板的回执/错误横幅，而不是一张过时的
   详情页。
@@ -1223,6 +1233,12 @@ capture `mode:"run"`），Mac/iOS 早已在写。
 - **网页直跑输入框（对齐 §34）**：运行中列顶部常驻直跑输入框，提交
   `{action:"capture", text, mode:"run"}`；IME 回车守卫与草稿保留（仅确认成功
   后清空——顶部快速捕获框同样改为仅成功后清空）同 Mac/iOS。
+- **网页 lane help（对齐 LaneHelp）**：每列列头下方渲染共享 LaneHelp 的一行
+  定义文案（zh 逐字镜像自 shared/Sources/Lanes.swift；网页有「永久完成」按钮，
+  故 done 列用 macOS 变体）。确认弹窗残留的「归档」字样统一为「永久完成」。
+- **iOS 文案对齐**：Onboarding zh「这台 Mac」↔ en "your Mac" 不一致处统一为
+  你的 Mac；试用到期横幅点名 Apple Developer Program（$99/年）且注明在 App 外
+  办理，删除悬空的「升级」动词。
 - **webui 入站闸门（act/webui.py，加法）**：
   - `ALLOWED_ACTIONS` += `merge_force`；`_INBOX_KEYS` += `primary`、`mode`。
   - `primary` 无论随何种 action 出现，均须通过与 `id` 相同的防穿越 allow-list。

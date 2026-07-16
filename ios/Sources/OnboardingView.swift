@@ -23,7 +23,7 @@ private struct ConsentView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text(L("开启多设备同步", "Turn on multi-device sync"))
                     .font(.title2).bold()
-                Text(L("默认关闭。开启后，你的任务卡片会离开这台 Mac，经 Supabase 服务器中转并存储，你的 iPhone 才能看到同一块看板。",
+                Text(L("默认关闭。开启后，你的任务卡片会离开你的 Mac，经 Supabase 服务器中转并存储，你的 iPhone 才能看到同一块看板。",
                        "Off by default. Once on, your task cards leave your Mac, relay + store through Supabase, and your iPhone can see the same board."))
                     .foregroundStyle(.secondary)
 

@@ -50,6 +50,15 @@ gate only, no new dashboard/inbox fields).
   Enter guard and clear-only-on-success draft protection as the capture box.
 - **iOS: 暂缓 on the detail sheet** — the sheet now carries the same four
   decisions as the card row (批准 · 修改 · 暂缓 · 拒绝).
+- **iOS: T2 gate** — approving a T2 (high-impact) card is no longer a bare
+  one-tap: 批准 opens a named confirm dialog (the Mac's 「T2 · 高影响操作确认」
+  title, naming the card and its estimated cost) before submitting.
+- **iOS: device-switcher legend** — each menu row spells the freshness out
+  (「● Mac mini · 在线 · 最新」; Menu strips color, so the glyph alone was
+  indistinguishable), and the paired-devices settings section gains a one-line
+  ●◐○ legend.
+- **Web: lane help** — every lane head shows the same one-line definition the
+  Mac/iOS boards show (shared LaneHelp copy).
 - **webui inbound gate**: `merge_force` allowed (ids deduped ≥2 safe ids,
   primary ∈ ids — fail closed, actd still re-validates) and capture `mode`
   forwarded (only the literal `"run"` passes; anything else is a 400 and never
@@ -79,6 +88,13 @@ gate only, no new dashboard/inbox fields).
   (v0.21 parity).
 - **Web: quick capture clears only on confirmed success** — a failed submit
   keeps your draft in the field (the toast explains), matching iOS.
+- **iOS: ActionBar shows a submitted state** — after any action the button row
+  becomes 「已提交…」 until the post-submit refresh lands (same busy pattern as
+  the merge-suggestion card), so a second tap can't double-file the action.
+- **Copy fixes** — onboarding zh/en now agree (你的 Mac ↔ your Mac); the trial
+  expiry banner names the Apple Developer Program ($99/yr, done outside the
+  app) instead of a dangling 「升级」; the web archive confirm says 永久完成
+  instead of the retired 归档 wording.
 
 ## [0.36.0] - 2026-07-15
 

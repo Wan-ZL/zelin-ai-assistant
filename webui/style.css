@@ -108,6 +108,7 @@ html, body {
   padding: 1px 9px;
   font-size: 12px;
 }
+.lane-help { margin: 8px 14px 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
 .lane-body { overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
 .lane-empty { color: var(--muted); font-size: 12px; padding: 10px 4px; }
 
