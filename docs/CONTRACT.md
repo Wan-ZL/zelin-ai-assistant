@@ -1184,3 +1184,89 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+## 40. v0.40.0 钱看得见、事有回执（add-only）
+
+> 一批诚实性/反馈欠账。全部 add-only：老 App 忽略新键（`decodeIfPresent`）、
+> 老 payload 照常解码；merge 顺序在 v0.36 系列之后（先合者占号，后合者 rebase）。
+
+### 40.1 `cost_state`（needs_approval 每项，add-only）
+
+- `"estimated"`：`cost_estimate_usd` 能解析成数字——数值照旧发 `cost_usd`；
+- `"unknown"`：无估算或坏值（direct-run 提升卡、capture 兜底卡、weekly-digest
+  建议卡、`cost_estimate_usd: cheap` 之类）——之前这些卡在 UI 上**看起来免费**。
+- 展示语义：**展开详情永远说钱**——有数显「预计费用: $X」，无数显「成本未知」；
+  `show_cost`（≥ `show_cost_above_usd` 阈值）继续**只**门控收起态的 cost badge，
+  语义不变。T2 打字确认对话框同样带金额（或「成本未知」）。
+- 老 payload 缺 `cost_state`：App 端按 `cost_usd` 有无派生（有数=estimated）。
+- iOS/webui 的展示是后续跟进：字段在共享 Contract.swift 里已解码，尚无视图消费。
+
+### 40.2 快速捕获 emoji 回执（Slack self-DM）
+
+- 每条被捕获的 self-DM 消息上打**一个** `reactions.add` 回执（打在消息本身，
+  **绝不回帖**——v0.21 只进不出的决定不变）：
+  - 📥 `inbox_tray` = 已记下（新卡 / 并入已有卡 / 折叠备注 / 后续卡 / 回锅——
+    细分在 App 面板上看）；
+  - 🚫 `no_entry_sign` = 判定无需行动，**没有**建卡。
+- emoji 由**捕获决策**（`capture()` 归一化后的 `res["action"]`）推导
+  （`radar_slack._RECEIPT_EMOJI`）：`ignore` → 🚫，`new_proposal`/`relates_to`
+  → 📥。`quick_capture.apply_result` 的签名与回执字符串**原样未动**（该文件属
+  并行分支 feat/less-cards 的边界）；回执只在 apply_result 正常返回**之后**发
+  ——注册表写入结果未知时绝不打 📥。
+- Best-effort 红线：reaction 失败（缺 `reactions:write`、网络）只记 analytics
+  （`capture_receipt_failed`），**绝不**阻塞或失败捕获；`already_reacted` 视为
+  成功回声。开关 `sources.slack_capture_receipts`（默认 true）。manifest 增补
+  `reactions:write` scope（json/yaml/slack_setup.py 三处同步）。
+
+### 40.3 雷达 give-up 诊断卡
+
+- `radar.py` 对一篇 note 放弃重试（`FAILED_MAX_ATTEMPTS`）时，除既有 skipped
+  行 + `radar_give_up` analytics + 台账案底外，**落一张可见的诊断卡**：
+  `status=detected`（备选列）、`type=diagnostic`、标题「有一篇笔记我处理不了：
+  <文件名>」、summary 指回原文件（原文还在 <路径>，你可以手动处理或删掉它）、
+  notes 带 `[radar-give-up]` 标签 + 最后错误 + 路径。
+- 按 note 路径去重（sources 里 `channel="radar-diagnostic"` + `ref=<路径>` 为
+  身份，扫描含 trashed/archived）：一篇 note 一辈子至多一张卡，mtime 重置后再
+  次 give-up 也不重发。systemic-failure 回滚的 pass 不发卡（账目作废）。
+- 入库走 `registry.upsert`（身份=路径，不走 merge_or_new 的标题匹配）。
+
+### 40.4 weekly digest 失败通知（手动跑）
+
+- `weekly_digest.run(force=True)`（设置页「现在生成一份」，detach 后原本无声）
+  的两个错误出口（`claude_failed` / `unparseable`）现在**发通知**：「本周摘要
+  生成失败——<一句话原因>，可在设置页『现在生成一份』重试」（`_lang` 双语，
+  同 no-data 路径的通知通道）。
+- **定时跑失败不通知**（镜像 no-data 的 force 门控）：失败不写 marker，`due()`
+  持续为真，launchd 每小时重跑——无条件通知会刷一整天屏。定时失败仍记
+  print + analytics（`weekly_digest_skip`）。
+
+### 40.5 `purge_at`（trash 每项，add-only）
+
+- `trash[]` 每项新增 `purge_at`（ISO8601 或 null）= `trashed_at` +
+  `trash.retention_days`。null = 不会被自动清（pinned / retention_days≤0 /
+  trashed_at 不可解析）——与 `actd.purge_trash` 的实际跳过条件严格一致，
+  倒计时绝不许诺一次不会发生的删除。
+- Mac 回收站行显示「X 天后永久删除」（≤7 天红色、天数向上取整），pinned 行显示
+  「已永久保留」；`purge_at` 缺失/null 时不显示倒计时。iOS/webui 没有回收站
+  列表面（只有「删除」动作），无处可显示——本节不涉及。
+
+### 40.6 通知合批（fresh proposals）
+
+- `detect_transitions`：一个 pass 内**新增（非回锅）提案 > 2 张**时合并为一条
+  「雷达新增 N 张待审批卡」（`notify.msg_new_cards_batch`；3-tuple 的 req 位为
+  null）。≤2 张、回锅（各自点名一个你做过的决定）、需输入、待验收等类保持逐卡
+  通知。§28 中继队列的 10 分钟 stale sweep 语义不变。
+
+### 40.7 周一 digest 落卡（不再落盘）+ 页面用通道显示名
+
+- `act/digest.py` 不再写工作台文件（`digests/digest-YYYY-MM-DD.md`）、通知里
+  不再携带文件路径；digest 以 **待验收聊天卡** 落地，与 `act/weekly_digest`
+  同一 filing pattern：`status=review`、`delivery_mode=chat`、
+  `final_draft`=全文 markdown、`delivered_summary`=开头摘要、按「周一 digest ·
+  <日期>」标题 merge_or_new 去重（当天重跑刷新同一张卡）。通知 body 指向
+  待验收列。进化建议维持 `status=detected`（潜在任务）——digest.py 自述规则，
+  测试钉死。1:1 准备页（`act/oneonone`，独立面）照常写盘、在 digest 正文链接。
+- 页面诚实（audit #19 的 digest/oneonone 半边）：条目行用通道显示名
+  （`oneonone.lane_name`，随界面语言）而非 registry 原词；承诺账本表述
+  owner-neutral 并按 `owner.name` 参数化（`oneonone.ledger_header`）；
+  `[MANAGER-OWES]` notes 标签**冻结**兼容，仍被识别与提示。
