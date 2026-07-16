@@ -31,7 +31,9 @@ const LANES = [
     parts: ["needs_approval"],
     help: "需要你现在拍板的卡：AI 已附上计划、成本和验收标准。批准=后台开始执行；修改=补充方向重提；暂缓=先不做，放进潜在任务。灰色卡是 AI 正在研究的占位。",
     actions: [
-      { action: "approve", label: "✅ 批准", cls: "primary" },
+      // t2Gate: tier=="T2" cards get the named confirm (§41) — same dialog
+      // title as the Mac/iOS T2 gate, never a bare one-click approve.
+      { action: "approve", label: "✅ 批准", cls: "primary", t2Gate: true },
       // 拒绝 asks which kind (Mac v0.10.3 parity): trash entries leave
       // merge_or_new matching (the same ask re-raises fresh), 已办完
       // (done_external → delivered) folds later restatements into this thread.
@@ -48,7 +50,9 @@ const LANES = [
   },
   {
     key: "running", zh: "运行中", en: "Running",
-    parts: ["running", "needs_input"],
+    // needs_input first: blocked cards sort to the top, the order the lane
+    // help promises (parity with shared BoardModel.runningLane).
+    parts: ["needs_input", "running"],
     directRun: true,
     help: "已批准的任务由 AI 在后台执行（排队中显示灰卡）。橙色「需输入」= AI 卡住等你回答，排在最前。",
     actions: [
@@ -179,6 +183,18 @@ async function doAction(spec, item) {
   if (item && item.id) payload.id = item.id;
   // Name the target so a board refresh mid-aim can't silently swap it.
   const title = String((item && (item.title || item.name || item.id)) || "").slice(0, 80);
+  // §41 T2 gate — the web mirror of the Mac confirmT2 / iOS named confirm:
+  // a tier=="T2" approve must pass a dialog naming the card (+ cost) first.
+  if (spec.t2Gate && item && item.tier === "T2") {
+    let msg = "批准 " + (item.id || "") + "：" + (item.summary || title);
+    if (item.show_cost && item.cost_usd != null) msg += "\n预计成本 $" + item.cost_usd;
+    const chosen = await forkDialog("T2 · 高影响操作确认", msg,
+      [{ label: "确认批准", value: spec.action }]);
+    if (!chosen) return;
+    payload.action = chosen;
+    postInbox(payload);
+    return;
+  }
   if (spec.fork) {
     const msg = spec.fork.message || (item && item.summary) || title;
     const chosen = await forkDialog(spec.fork.title, msg,
@@ -410,7 +426,10 @@ async function forceMerge(s, titleOf) {
 // -------------------------------------------------- direct-run capture (§41)
 // v0.34 dual input (CONTRACT §34) parity: the Running lane's resident
 // direct-run box — type here and it runs now, skipping the proposal gate.
-// The draft survives board rebuilds and a failed submit (toast explains).
+// The committed draft survives board rebuilds via directRunDraft; the caret
+// and any un-committed IME composition survive because render() defers
+// entirely while an in-board input is focused (see boardInputBusy). A failed
+// submit keeps the draft (toast explains).
 let directRunDraft = "";
 function directRunEl() {
   const wrap = el("div", "runcap");
@@ -561,16 +580,26 @@ function renderBookends(data) {
 // Rebuilding the board swaps the DOM under the cursor, so an aimed click can
 // land on a different card. Guard: only rebuild when the data actually changed
 // (generated_at ticks every poll, so it is excluded from the comparison), and
-// never while a pointer is held down — defer to just after release.
+// never while a pointer is held down OR an in-board input is focused (§41 —
+// rebuilding would drop the caret and any un-committed IME composition
+// mid-typing). Deferred renders flush on pointer release / input blur.
 let lastBoardKey = null;
 let pendingData = null;
 let pointerHeld = false;
 window.addEventListener("pointerdown", () => { pointerHeld = true; }, true);
 window.addEventListener("pointerup", flushRender, true);
 window.addEventListener("pointercancel", flushRender, true);
+// focusout fires before focus settles on the next element — defer a tick so
+// boardInputBusy() sees the final activeElement.
+window.addEventListener("focusout", () => { setTimeout(flushRender, 0); }, true);
+function boardInputBusy() {
+  const a = document.activeElement;
+  return !!(a && a.closest && (a.tagName === "INPUT" || a.tagName === "TEXTAREA")
+            && (a.closest("#board") || a.closest("#bookends")));
+}
 function flushRender() {
   pointerHeld = false;
-  if (pendingData) {
+  if (pendingData && !boardInputBusy()) {
     const d = pendingData;
     pendingData = null;
     // setTimeout so the click event for this release dispatches first.
@@ -580,7 +609,10 @@ function flushRender() {
 
 function render(data) {
   freshness(data.generated_at);
-  if (pointerHeld) { pendingData = data; return; }
+  // Defer the rebuild while a pointer is held OR an in-board input is focused
+  // (§41) — the poll calls render() directly, so the guard must live here, not
+  // only in flushRender. pendingData flushes on release / blur.
+  if (pointerHeld || boardInputBusy()) { pendingData = data; return; }
   const key = JSON.stringify(data, (k, v) => (k === "generated_at" ? undefined : v));
   if (key === lastBoardKey) return;
   lastBoardKey = key;
