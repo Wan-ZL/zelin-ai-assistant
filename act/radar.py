@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - exercised only on Windows CI
     fcntl = None
 
 from act.executor import _runner_env
-from act.lib import analytics, config, health, registry, sanitize, secrets
+from act.lib import analytics, config, failures, health, registry, sanitize, secrets
 from act.lib.registry import Requirement
 
 MARKER_PATH_NAME = "radar.marker"
@@ -182,6 +182,8 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
     reset) must not re-file, or the honesty fix becomes a nag. Never raises;
     filing goes through registry.upsert, NOT merge_or_new (no LLM matching —
     identity is the path). Returns the card, or None (dup / filing failed).
+    Copy is bilingual via failures.pick (§15 single language switch) — safe
+    because the dedup identity is the source ref, never the title.
     """
     try:
         ref = str(note)
@@ -193,14 +195,21 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
         error = str(entry.get("last_error") or "")
         req = Requirement(
             id=registry.next_id(),
-            title=f"有一篇笔记我处理不了：{note.name}"[:80],
+            title=failures.pick(f"有一篇笔记我处理不了：{note.name}",
+                                f"A note I couldn't process: {note.name}")[:80],
             type="diagnostic",
             tier="T0",
             status=registry.State.DETECTED.value,
             hardness="soft",
-            summary=f"原文还在 {ref}，你可以手动处理或删掉它。",
-            notes=(f"[radar-give-up] 连续提取失败 {attempts} 次后放弃\n"
-                   f"last error: {error}\nfile: {ref}"),
+            summary=failures.pick(
+                f"原文还在 {ref}，你可以手动处理或删掉它。",
+                f"The original file is still at {ref} — handle it by hand "
+                "or delete it."),
+            notes=(failures.pick(
+                f"[radar-give-up] 连续提取失败 {attempts} 次后放弃",
+                f"[radar-give-up] gave up after {attempts} failed "
+                "extraction attempts")
+                + f"\nlast error: {error}\nfile: {ref}"),
             sources=[{
                 "who": "assistant",
                 "channel": GIVE_UP_CHANNEL,

@@ -121,6 +121,33 @@ class PurgeAtTestCase(unittest.TestCase):
         row = self._row(trashed_at="not-a-date")
         self.assertIsNone(row["purge_at"])
 
+    def test_numeric_trashed_at_means_no_deadline(self):
+        # docs-review finding (PR #61): actd._parse_iso REJECTS bare numerics
+        # (fromisoformat/strptime both fail) so purge_trash never purges such
+        # a row — the old _epoch-based parse showed a red countdown for a
+        # purge that would never happen.
+        row = self._row(trashed_at=1752600000)
+        self.assertIsNone(row["purge_at"])
+
+    def test_purge_at_null_exactly_when_purge_trash_would_skip(self):
+        # parity pin: _purge_at's null conditions must mirror the parser
+        # purge_trash actually uses (actd._parse_iso) — value by value.
+        from act import actd
+        for value in ("2026-07-01T00:00:00Z", "2026-07-01T08:00:00+08:00",
+                      1752600000, "not-a-date", None):
+            row = self._row(trashed_at=value)
+            purger_parses = actd._parse_iso(value) is not None
+            self.assertEqual(
+                row["purge_at"] is not None, purger_parses,
+                f"drift for trashed_at={value!r}: purge_at="
+                f"{row['purge_at']!r} vs purge_trash parses={purger_parses}")
+
+    def test_purge_at_normalizes_offset_timestamps_to_utc(self):
+        # +08:00 wall time = 00:00 UTC — purge_trash purges it, so the
+        # countdown must show, expressed in the payload's UTC convention.
+        row = self._row(trashed_at="2026-07-01T08:00:00+08:00")
+        self.assertEqual(row["purge_at"], "2026-08-30T00:00:00Z")
+
 
 # --------------------------------------------------------------------------- #
 # §40.2 capture receipt chooser (emoji reaction ack)
@@ -313,6 +340,8 @@ class GiveUpCardTestCase(unittest.TestCase):
                 p.unlink()
         if config.CONFIG_PATH.exists():
             config.CONFIG_PATH.unlink()
+        if config.SETTINGS_OVERRIDES_PATH.exists():
+            config.SETTINGS_OVERRIDES_PATH.unlink()
 
     def test_give_up_files_visible_diagnostic_card(self):
         saved = radar.file_give_up_card(Path("/vault/2026-07-10 sync.md"),
@@ -329,6 +358,17 @@ class GiveUpCardTestCase(unittest.TestCase):
         self.assertEqual(saved.sources[0]["channel"], radar.GIVE_UP_CHANNEL)
         self.assertEqual(saved.sources[0]["ref"], "/vault/2026-07-10 sync.md")
 
+    def test_en_locale_gets_an_english_card(self):
+        # docs-review finding (PR #61): the card copy follows the single UI
+        # language switch (§15) like every other v0.40 string.
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"language": "en"}), encoding="utf-8")
+        saved = radar.file_give_up_card(Path("/vault/en note.md"), self.entry)
+        self.assertEqual(saved.title, "A note I couldn't process: en note.md")
+        self.assertIn("still at /vault/en note.md", saved.summary)
+        self.assertIn("[radar-give-up] gave up after 5", saved.notes)
+
     def test_dedup_by_note_path_never_refiles(self):
         note = Path("/vault/poison.md")
         first = radar.file_give_up_card(note, self.entry)
@@ -336,6 +376,13 @@ class GiveUpCardTestCase(unittest.TestCase):
         # a later give-up round (e.g. after an mtime reset) must not re-file
         again = radar.file_give_up_card(note, dict(self.entry, attempts=5))
         self.assertIsNone(again)
+        self.assertEqual(len(registry.load_all()), 1)
+        # …not even after a UI language switch: dedup identity is the source
+        # ref, not the (language-dependent) title.
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"language": "en"}), encoding="utf-8")
+        self.assertIsNone(radar.file_give_up_card(note, self.entry))
         self.assertEqual(len(registry.load_all()), 1)
 
     def test_dedup_survives_the_user_trashing_the_card(self):

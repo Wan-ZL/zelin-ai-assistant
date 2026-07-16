@@ -1235,6 +1235,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   身份，扫描含 trashed/archived）：一篇 note 一辈子至多一张卡，mtime 重置后再
   次 give-up 也不重发。systemic-failure 回滚的 pass 不发卡（账目作废）。
 - 入库走 `registry.upsert`（身份=路径，不走 merge_or_new 的标题匹配）。
+- 卡片文案随界面语言双语（`failures.pick`，§15 单一语言开关）——去重身份是
+  source ref 而非标题，切语言不会导致重发。
 
 ### 40.4 weekly digest 失败通知（手动跑）
 

@@ -309,17 +309,31 @@ def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
     """ISO hard-delete deadline for a trash row (§40): trashed_at + retention.
 
     None (key emitted as null) when the row is pinned, retention is disabled
-    (``trash_retention_days <= 0``), or ``trashed_at`` is unparsable — exactly
+    (``trash_retention_days <= 0``), or ``trashed_at`` doesn't parse — EXACTLY
     the conditions under which actd.purge_trash skips the row, so the countdown
-    never promises a purge that isn't coming."""
+    never promises a purge that isn't coming. The parse below mirrors
+    actd._parse_iso byte-for-byte (NOT the laxer _epoch, which accepts bare
+    numerics purge_trash rejects — a numeric trashed_at used to show a red
+    countdown for a purge that would never happen)."""
     days = int(cfg.trash_retention_days or 0)
     if days <= 0 or req.permanent:
         return None
-    ts = _epoch(req.trashed_at)
-    if ts is None:
+    ts = req.trashed_at
+    if not ts:
         return None
-    dt = (_dt.datetime.fromtimestamp(ts, _dt.timezone.utc)
-          + _dt.timedelta(days=days))
+    s = str(ts).strip().replace("Z", "+00:00")
+    try:
+        trashed = _dt.datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        try:
+            trashed = _dt.datetime.strptime(str(ts).strip(),
+                                            "%Y-%m-%dT%H:%M:%SZ")
+            trashed = trashed.replace(tzinfo=_dt.timezone.utc)
+        except (TypeError, ValueError):
+            return None
+    if trashed.tzinfo is None:
+        trashed = trashed.replace(tzinfo=_dt.timezone.utc)
+    dt = trashed.astimezone(_dt.timezone.utc) + _dt.timedelta(days=days)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
