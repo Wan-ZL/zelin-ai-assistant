@@ -234,6 +234,10 @@ struct RunningRow: View {
                         Text(w).font(.caption).foregroundStyle(.secondary)
                     }
                     AnswerInputBar(cardId: task.id)
+                    // stopping and answering are the two things you can do to
+                    // a blocked agent — the stop fork lives right here too
+                    // (Mac parity: blocked rows carry 停止 since v0.21).
+                    NeedsInputStopButton(cardId: task.id)
                 } else {
                     ActionBar(cardId: task.id, actions: [
                         LaneAction(title: L("停止", "Stop"), verb: .abort_execution, destructive: true, tint: .red),
@@ -298,6 +302,57 @@ private struct AnswerInputBar: View {
             // nothing is lost (state.lastError explains).
             if await state.submitAnswer(cardId: cardId, text: t) {
                 text = ""
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                await state.refreshBoard()
+            }
+            busy = false
+        }
+    }
+}
+
+/// §39.3: the stop fork on a BLOCKED agent — Mac has carried it on blocked
+/// rows since v0.21 (Cards.swift showsStop), the phone's needs-input rows
+/// were answer-only. Verbatim Mac labels and dialog copy: 退回提案 discards
+/// this run (abort_execution → back to 提案), 去待验收 keeps what the agent
+/// produced (stop_to_review → 待验收). The fork dialog IS the explicit
+/// confirmation; both verbs are idempotent v0.10.2 inverse actions (stale
+/// taps no-op on the Mac), so the merge-card 3.5s refresh pattern is safe
+/// here — unlike answer_input.
+private struct NeedsInputStopButton: View {
+    let cardId: String
+    @EnvironmentObject var state: AppState
+    @State private var showFork = false
+    @State private var busy = false
+
+    var body: some View {
+        if busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(L("已提交…", "Submitted…")).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            Button {
+                showFork = true
+            } label: { Label(L("停止", "Stop"), systemImage: "stop.circle") }
+                .buttonStyle(.bordered).controlSize(.small).tint(.orange)
+                .confirmationDialog(L("停止这个任务？", "Stop this task?"),
+                                    isPresented: $showFork, titleVisibility: .visible) {
+                    Button(L("退回提案", "Discard & re-propose"), role: .destructive) {
+                        fire(.abort_execution)
+                    }
+                    Button(L("去待验收", "Keep for review")) { fire(.stop_to_review) }
+                    Button(L("取消", "Cancel"), role: .cancel) {}
+                } message: {
+                    Text(L("退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
+                           "Discard & re-propose = throw away this run and start over; Keep for review = keep what it made and I'll check it"))
+                }
+        }
+    }
+
+    private func fire(_ verb: InboxVerb) {
+        busy = true
+        Task {
+            if await state.submit(cardId: cardId, verb: verb) {
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
                 await state.refreshBoard()
             }

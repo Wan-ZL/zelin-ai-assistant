@@ -1292,7 +1292,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   「回答已发送，等待送达…」直到该卡在 board 刷新中**真正离开 needs_input**，
   180s 未动过期重新解锁（诚实重试）。运行中行渲染 `last_error`（红色紧凑行）
   ——投递失败在手机上必须与成功可区分（§39.1 的字段本就在 wire 上）。
-  「手机对需输入只读」的旧注记（plan §6.2）就此作废。
+  需输入行同时带**「停止」二选一**（退回提案=`abort_execution` /
+  去待验收=`stop_to_review`，Mac v0.21 blocked 行同款文案）——停止与回答
+  是对被阻塞 agent 仅有的两个操作，同属本行；两个 verb 都是 v0.10.2 幂等
+  逆向动作，走普通 submit 通道。「手机对需输入只读」的旧注记（plan §6.2）
+  就此作废。
 - **webui**：ALLOWED_ACTIONS 加入 `answer_input`（API 可用）；本期不做 web
   输入框 UI。
 
