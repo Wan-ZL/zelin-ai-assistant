@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config, failures
+from act.lib import config, failures, titles
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
@@ -249,6 +249,7 @@ def _archived_view(req: Requirement) -> dict:
         "id": _s(req.id),
         "title": _s(req.title),
         "summary": req.summary or _s(req.title),
+        **_title_fields(req),
         "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
         "archived_at": req.archived_at,
         "archive_reason": req.archive_reason,
@@ -325,6 +326,40 @@ def _delivery_mode(req: Requirement) -> str:
     """"chat" | "repo" — missing/legacy objects count as "repo" (§20)."""
     dm = getattr(req, "delivery_mode", None)
     return dm if dm in ("chat", "repo") else "repo"
+
+
+# notes fold user comments / radar updates that used to be unsearchable on the
+# board — projected capped so one chatty card can't bloat the ~10s rewrite
+# (and the E2E board payload) unboundedly.
+_NOTES_TEXT_CAP = 2000
+
+
+def _display_title(req: Requirement) -> str:
+    """§37 fallback chain at projection time: stored display_title (user-pinned
+    or LLM) → deterministic sanitize(title) → title. Always non-empty for a
+    titled card, so a raw URL/path never renders as a board title — zero
+    migration for legacy cards."""
+    dt = str(getattr(req, "display_title", "") or "").strip()
+    if dt:
+        return dt[:titles.MAX_DISPLAY_TITLE]
+    return titles.sanitize_title(_s(req.title)) or _s(req.title)
+
+
+def _title_fields(req: Requirement) -> dict:
+    """The §37 add-only row fields shared by every lane projection. Empty
+    optionals are omitted (not null) so the payload only grows where there is
+    something to say; Swift reads them with decodeIfPresent."""
+    out: dict = {"display_title": _display_title(req)}
+    if getattr(req, "user_titled", False):
+        out["user_titled"] = True
+    former = [str(x) for x in (getattr(req, "former_titles", None) or [])
+              if str(x).strip()]
+    if former:
+        out["former_titles"] = former
+    notes = str(req.notes or "").strip()
+    if notes:
+        out["notes_text"] = notes[:_NOTES_TEXT_CAP]
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -459,6 +494,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "target_repo": target_repo,
                     "target_name": target_name,
                     "target_kind": target_kind,
@@ -495,6 +531,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "tier": _s(req.tier),
                     "tier_hint": "AI 研究中",
                     "processing": True,
@@ -512,6 +549,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "hardness": req.hardness,
                     "type": req.type,
                     "sources": _source_view(req, cfg),
@@ -524,6 +562,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
                     "trashed_at": req.trashed_at,
                     "trash_reason": req.trash_reason,
@@ -542,6 +581,7 @@ def build_dashboard(
                 {
                     "id": _s(req.id),
                     "name": _s(req.title or req.id),
+                    **_title_fields(req),
                     "state": "queued",
                     "summary": req.summary or None,
                     "plan": _as_list(req.plan),
@@ -601,6 +641,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -629,6 +670,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -669,6 +711,7 @@ def build_dashboard(
                         "id": _s(req.id),
                         "name": name,
                         "summary": req.summary or None,
+                        **_title_fields(req),
                         "dod": list(req.definition_of_done or []),
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -692,6 +735,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -706,6 +750,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,

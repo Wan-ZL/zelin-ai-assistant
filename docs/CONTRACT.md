@@ -1184,3 +1184,88 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+## 37. v0.37.0 找得到、看得懂 — 看板搜索全量化 + 活标题（add-only）
+
+### 37.1 活标题 display_title
+
+- **内部 `title` 冻结不变**：它是 `merge_or_new`/`_same_source_and_title`/
+  re-raise 的**身份锚点**，任何机制都不得改写。人看的名字走新字段。
+- 注册表 Requirement 新增三个 optional 字段（add-only，`to_dict` 空值不序列化）：
+  - `display_title`（str）——看板显示名；
+  - `user_titled`（bool）——用户钦定标记：为真时 LLM/harvest 标题**永不覆盖**；
+  - `former_titles`（list[str]，cap **3**，去重，最新在后）——display_title 每次
+    变更把旧名追加进来（`registry.FORMER_TITLES_CAP`），改名后旧名仍可搜索、
+    并在展开详情显示一行「曾用名: …」。
+  唯一落笔点 = `registry.set_display_title(req, title, by_user=)`（fail-closed：
+  非 str/空/collapse 后为空一律 no-op；接受值 whitespace-collapse + 截断
+  `titles.MAX_DISPLAY_TITLE`=64）。
+- **投影期 fallback 链**（`act/lib/dashboard.py` `_display_title`，每个 pass
+  对所有卡生效——legacy 卡零迁移）：存量 `display_title`（用户钦定或 LLM）→
+  确定性 `titles.sanitize_title(title)` → `title`。sanitizer（纯函数，
+  `act/lib/titles.py`）：http(s) URL → `domain ▸ 最后有意义的路径段/视频id`；
+  文件系统路径 → 最后一段；>60 字长文本 → 首句/首分句截 ~48 字加 …；空白折叠。
+  **结果：裸 URL/路径永远不会再作为看板标题出现。**
+- **dashboard 行新增 add-only 字段**（全部 optional，Swift `decodeIfPresent`；
+  空值整键省略、不发 null）：**所有**分区行统一加 `display_title`（恒非空）
+  + `user_titled` + `former_titles` + `notes_text`（notes 折叠，cap 2000 字，
+  含评论/radar 备注——为搜索投影）。Swift 侧 needs_approval/running 族(含
+  queued/needs_input/completed)/review/debt 全量解码；trash/archived 行只解码
+  `display_title` + `user_titled`（其余键照 add-only 约定忽略）。running 的
+  from_review 行既有 `final_draft` 继续携带（搜索用）。
+  展示优先级（Swift 侧 `displaySummary`/`rowTitle`/`displayHeadline`）：
+  用户钦定名 > summary（摘要优先面）/ display_title（名字优先面）> 冻结 title。
+- **LLM 生成只搭现有便车（零新增调用）**：quick_capture 的 capture/triage
+  prompt 与 analyze 的扩写 prompt 新增 optional 输出键 `display_title`
+  （≤40 字中文大白话、动词开头）；缺失/坏类型静默降级，绝不影响父解析。
+- **`CARD TITLE:` 收割线（标题随讨论演化）**：executor 的收尾指令（三种交付
+  closing + rework gate line）允许在结束总结里给**单独一行**
+  `CARD TITLE: <≤40字新标题>`（chat 模式放在 `FINAL DRAFT:` 之前）。
+  `harvest_delivery` 返回值新增 add-only 键 `card_title`（fence 纪律与
+  FINAL DRAFT 相同：``` 围栏内的 marker 不算；最后一条 marker 生效；超长截
+  64；该行从 delivered_summary/final_draft **剥除**）。actd 在
+  delivered_summary 落账的同一批 promotion 点（done_external / stop_to_review
+  / attach 回流 re-harvest / _promote_if_delivered / reconcile done 分支）经
+  `set_display_title` 应用——只在轮次边界刷新，user_titled 钦定优先。
+- **inbox 动作全集（§10）新增 `set_title`**：
+  ```json
+  {"id":"R-xxx","action":"set_title","title":"<新显示名>","ts":"<ISO8601>"}
+  ```
+  三重 fail-closed 校验（v0.33.1 边界原则）：syncd 形状闸门把 `title` 纳入
+  str-or-absent 字段表；webui 400（须 str 且 1–64 字符）；actd 侧非 str/空/
+  >64/archived 卡一律 no-op + log（ack `noop`），成功置 `display_title` +
+  `user_titled: true`（ack `running`）。Mac UI = 各车道卡片展开详情里的
+  ✏️「改名」行内编辑（正常 submit 管道 + 乐观回显 `pendingTitles`，180s 兜底
+  橙条）。iOS 本期**只显示**（经 shared `displayHeadline`/`rowTitle`/
+  `BoardModel.title(of:)`），无改名入口。
+
+### 37.2 看板搜索全量化（Mac）
+
+- **归一化匹配**（`shared/Sources/SearchMatch.swift`，Foundation-only 纯函数，
+  contract harness 锁定）：两侧 lowercase 并剥掉 `-`/`_`/`.`/空白后做子串比较
+  （"eb1" 命中 "EB-1A"、"h1b" 命中 "H-1B"，"eb2" 不误命中 "EB-1A"）；CJK 原样
+  子串；查询按空白切词 = **AND 语义**；空查询 = 直通。
+- **词表扩展**（`DashboardStore.searchFields`，per lane 按行有什么搜什么）：
+  id + 冻结 title/name + display_title + former_titles + summary + notes_text
+  + plan/dod + delivered_summary/final_draft + source quotes + agent_name。
+  占位卡/建议卡直通规则不变。
+- **会话内容层（LAST layer）**：`state/search_index.json`
+  （`{card_id: {updated_at, text}}`，原子写）——actd 在上条的既有 harvest/
+  promotion 触点用 `executor.transcript_plain_text`（主线程 user+assistant
+  纯文本，沿用 v0.33.1 sidechain/isMeta/tool-result 纪律；**首条 user turn
+  跳过**——那是每张卡都相同的派发 prompt 样板，收进索引会让「命中会话」
+  对 卡片/draft 这类词全板亮起，其真实内容 title/plan/sources 已在行字段可搜；
+  后续 user turns（打回反馈/attach 输入）保留；尾部截 ~50KB/卡）维护。
+  每 pass 顺带 prune——**只清不可逆消失的卡**（merged 终态、遗留裸
+  rejected、registry 里已硬删的），trashed/archived 可恢复（restore/
+  unarchive）所以条目保留（文件不存在时零开销）。**该文件是 Mac-local
+  非契约面：永不进 dashboard.json（E2E 看板负载不得增长），手机端不感知。**
+  Mac Store 按 (mtime,size) 懒加载并预归一化缓存；**命中语义 = 跨层合并
+  AND**——每个查询词可由行字段**或**会话文本满足（"推荐信 chen" 命中
+  标题含推荐信、只有会话里提过 chen 的卡）；「命中会话」badge = 命中且
+  仅靠行字段不命中（诚实条件）。输入框即时回显、过滤 ~200ms 去抖，
+  归一化字段/会话文本与逐卡命中结果均按 (dashboard 解码, 查询, 索引
+  mtime) 记忆化——纯 Mac 端实现细节，无契约形状。索引缺失/损坏 = 该层
+  静默缺席（字段搜索照常），绝不崩。
+- **iOS 本期无搜索 UI**（诚实声明）：搜索仍是 Mac 看板专属；iOS 自动获得的只
+  是行渲染上的 display_title。webui 搜索面不变。
