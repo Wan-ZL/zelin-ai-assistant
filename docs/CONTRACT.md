@@ -1184,3 +1184,7 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+## 43. v0.43.0 看板动画（display-only）
+
+纯 Mac 展示层：看板卡片动画（`mac/Sources/BoardDiff.swift` 快照差分 + `BoardMotion.swift` 飞行层）只消费既有 `dashboard.json` 快照与 App 本地乐观状态，对 wire/state/inbox/registry 的任何形状**零改动**；开关 `boardAnimations` 为 UserDefaults 纯界面偏好（同 `cardSortOrder`，pipeline 永不读取）。
