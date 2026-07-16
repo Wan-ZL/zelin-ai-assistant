@@ -1219,10 +1219,25 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   （§32.2）。三重边界校验（§33 house pattern）：手机→syncd 形状闸门（`text`
   已在 str-or-absent 词表）、web→webui ALLOWED_ACTIONS、actd 侧
   fail-closed——`text` 非 str / 去空白后长度不在 **1..4000** → logged noop
-  （垃圾绝不 relaunch session）；未知卡 → `unknown`；`expected_status` 不符 →
-  stale noop；**仅 EXECUTING 卡可回答**（needs_input 行只投影 executing 卡，
-  其它状态=看板已经移动）。iPhone 钉 `expected_status:"executing"`；Mac 本地
-  不钉（既有惯例）。
+  （垃圾绝不 relaunch session）；未知卡 → `unknown`；**仅 EXECUTING 卡可回答**
+  （needs_input 行只投影 executing 卡）。iPhone 钉
+  `expected_status:"executing"`；Mac 本地不钉（既有惯例）。
+- **stale ≠ silent（合法 text + 卡存在之后的任何未投递都必须可见）**：
+  `expected_status` 不符 / 卡已不是 EXECUTING（最常见 = `_promote_if_delivered`
+  的 executing→review 提升与 inbox pass 赛跑）→ ack `noop`，**且**把打的字
+  存档进 notes：`[<date> 回答未投递] <原因>；原文：<text 截 200>` + 通知
+  `msg_answer_not_delivered`（「你的回答没有送出去——你打的文字已存进卡片
+  备注，没有丢」）。两端 UI 的乐观回显都把发送当成功，裸 logged no-op 就是
+  静默吞字——这是 §39.2 自己的红线。
+- **投递前 roster 探测（绝不 stop 正在工作的会话）**：磁盘上的 EXECUTING 同时
+  覆盖 roster working 和 blocked，而投递管线先 `claude stop` 再 resume——
+  不加这道闸，第二台设备的迟到「回答…」（或 webui 对任意 executing 卡发的
+  answer_input）会把**正在跑**的 session 在任意 tool call 中间杀掉、再灌一份
+  重复答案。规则：actd 投递前 fresh 读 roster；session **有活 pid 且 state ∉
+  blocked-states** → 一律不碰（不 stop 不 resume），按上一条的
+  `[回答未投递]`（原因=「会话正在工作中，可能已被回答」）存档 + 通知，
+  ack `noop`。只有真正 blocked 的会话——或 dead/缺席的（既有的复活路径）——
+  才收 stop+resume。
 - **投递（executor.answer）**：与 rework 同一条 stop-idle-then-resume 管线
   （blocked 活进程拒绝 --resume，先 `claude stop`；full-UUID + transcript 最后
   cwd；无 transcript → 不启动直接失败），resume prompt = `OWNER ANSWER:\n` +
@@ -1237,8 +1252,10 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **诚实处置（§5.4）**：session 成功 resumed → ack `running` + notes 追加
   `[<date> 回答已送达] <text 截 200>`；投递失败（transcript 没了 / 启动失败）
   → ack `noop` **且三处可见**：notes 追加 `[<date> 回答送达失败] <原因>`、
-  `notify.msg_answer_failed` 通知、卡上 `last_error`（39.1）——绝不静默吞答案。
-  analytics：`inbox_answer_input`(ok/chars + capture_input 门控的 text)、
+  `notify.msg_answer_failed` 通知、卡上 `last_error`（39.1）；stale/working
+  未投递 → 上两条的 `[回答未投递]` 存档 + `msg_answer_not_delivered` 通知
+  ——任何路径都绝不静默吞答案。analytics：`inbox_answer_input`(ok/chars/
+  reason∈working|review|moved|launch_failed + capture_input 门控的 text)、
   executor 侧 `answer_launch`/`answer_failed`（feedback 同款形制）。
 
 ### 39.3 UI（Mac + iPhone 同权；终端降级为次要通道）

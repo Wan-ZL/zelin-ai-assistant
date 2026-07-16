@@ -197,6 +197,16 @@ class NeedsInputNotifyTestCase(unittest.TestCase):
         self.assertIn("transcript missing", b)
         self.assertIn("在终端接管会话", b)
 
+    def test_msg_answer_not_delivered_names_cause_and_where_the_text_went(self):
+        # §39.2 stale ≠ silent: every variant must say the text is SAVED
+        for kind, needle in (("working", "正在工作"),
+                             ("review", "待验收"),
+                             ("moved", "不在需输入")):
+            t, b = notify.msg_answer_not_delivered("写周报", kind)
+            self.assertIn("没有送出去", t)
+            self.assertIn(needle, b)
+            self.assertIn("备注", b)  # the archived-in-notes promise
+
     def test_transition_notification_carries_question(self):
         prev = {"needs_approval": [], "running": [{"id": "R-9", "name": "任务"}],
                 "needs_input": [], "review": []}

@@ -160,6 +160,28 @@ def msg_needs_input(title: str, question: Optional[str] = None) -> tuple[str, st
             _pick(f"{title} —— {where}", f"{title} — {where}"))
 
 
+def msg_answer_not_delivered(title: str, kind: str = "moved") -> tuple[str, str]:
+    """§39.2: a VALID answer arrived but the moment had passed — the session is
+    actively working (someone else may have answered it already) or the card
+    already left needs_input (e.g. promoted to review between the board render
+    and the inbox pass). The typed text is archived in the card's notes; the
+    answerer must be told, or both UIs' optimistic sends read as success while
+    the text silently vanished. ``kind`` ∈ working | review | moved."""
+    if kind == "working":
+        why = _pick("会话正在工作中，可能已被回答",
+                    "the session is actively working — it may already have been answered")
+    elif kind == "review":
+        why = _pick("任务已完成进了待验收",
+                    "the task already finished and moved to Review")
+    else:
+        why = _pick("卡片已不在需输入状态",
+                    "the card is no longer waiting for input")
+    return (_pick("你的回答没有送出去", "Your answer was not delivered"),
+            _pick(f"{title}：{why}——你打的文字已存进卡片备注，没有丢。",
+                  f"{title}: {why} — your text is saved in the card's notes,"
+                  " nothing is lost."))
+
+
 def msg_answer_failed(title: str, reason: str) -> tuple[str, str]:
     """§39: the owner's answer could not be delivered into the blocked session
     (transcript purged / relaunch failed) — never silent. Names the fallback:

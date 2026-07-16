@@ -561,6 +561,31 @@ def _apply_feedback(decision: dict) -> str:
     return "running"
 
 
+def _answer_not_delivered(req: Requirement, text: str, kind: str) -> str:
+    """§39.2: a VALIDATED answer that cannot be delivered because the moment
+    has passed — the card left needs_input (promotion race) or the session is
+    actively working (someone else answered it first). Both UIs already
+    accepted the send as success, so a bare logged no-op silently swallows
+    the owner's typed text: archive it in notes + notify instead. Returns
+    the §5.4 "noop" ack (nothing was started)."""
+    reasons = {
+        "working": "会话正在工作中，可能已被回答",
+        "review": "任务已完成进了待验收",
+    }
+    reason = reasons.get(kind, f"卡片已不在需输入状态（现为 {req.status}）")
+    stamp = _dt.date.today().isoformat()
+    tag = f"[{stamp} 回答未投递] {reason}；原文：{text[:200]}"
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    save(req)
+    notify.notify(*notify.msg_answer_not_delivered(req.title or req.id, kind),
+                  req=req.id)
+    _log(f"inbox: {req.id} answer_input NOT delivered ({kind}: {reason}) — "
+         f"noop, text archived in notes")
+    analytics.log_event("inbox_answer_input", req=req.id, ok=False,
+                        reason=kind, chars=len(text))
+    return "noop"
+
+
 def _apply_answer_input(decision: dict) -> str:
     """回答需输入 (CONTRACT §39) — deliver the owner's typed answer into a
     blocked session via executor.answer (stop-idle-then-resume, the rework
@@ -570,14 +595,26 @@ def _apply_answer_input(decision: dict) -> str:
     validation here (§33 house pattern, fail-closed): ``text`` must be a str
     whose trimmed length is 1..4000 (non-str / empty / oversize -> logged
     drop — junk must never relaunch a session); unknown card -> "unknown";
-    a phone-pinned ``expected_status`` mismatch -> stale no-op; only an
-    EXECUTING card is answerable (需输入 rows only ever project executing
-    cards — any other status means the board moved since the tap).
+    a phone-pinned ``expected_status`` mismatch OR a card no longer EXECUTING
+    (需输入 rows only ever project executing cards) -> stale, NOT silent:
+    the validated text is archived via _answer_not_delivered.
+
+    §39.2 pre-delivery roster probe: on-disk EXECUTING covers roster working
+    AND blocked, and executor.answer STOPS the session before resuming — so
+    without a fresh roster read, a stale second device's 「回答…」(or a webui
+    answer_input aimed at any executing card) would kill a MID-RUN session at
+    an arbitrary tool call and resume it with a duplicate answer. A session
+    with a live pid whose state is not blocked is therefore never touched:
+    no stop, no resume — archive + notify (the second answerer must learn
+    the first answer likely won). Only a genuinely blocked session — or a
+    dead/absent one (the existing resume-a-dead-session path) — receives
+    stop+resume.
 
     Honest acks (§5.4): "running" ONLY when the answer genuinely reached the
-    session (notes tag [回答已送达]); every delivery failure is "noop" AND
-    visible — notes tag [回答送达失败] + notification + the card's last_error
-    (dashboard §39) — never silent.
+    session (notes tag [回答已送达]); every other outcome is "noop" AND
+    visible — [回答未投递] (stale/working, text archived) or [回答送达失败]
+    (launch failure) + notification + the card's last_error (dashboard §39)
+    — never silent.
     """
     if executor is None:
         _log("inbox: answer_input requested but executor unavailable — dropped")
@@ -596,14 +633,32 @@ def _apply_answer_input(decision: dict) -> str:
     if req is None:
         _log(f"inbox: answer_input for unknown req {req_id!r} — dropped")
         return "unknown"
+    # From here on the text is valid and the card exists — any non-delivery
+    # must archive the text + notify (§39.2), never a bare logged no-op.
     expected_status = decision.get("expected_status")
-    if not _precondition_ok(req, expected_status):
+    if (not _precondition_ok(req, expected_status)
+            or str(req.status) != State.EXECUTING.value):
+        # stale pin and status-moved collapse to one surface: the phone only
+        # ever pins "executing", so a pin mismatch implies the card moved —
+        # most commonly _promote_if_delivered's executing→review promotion
+        # racing the inbox pass.
         _log(f"inbox: {req.id} answer_input stale "
-             f"(expected {expected_status}, is {req.status}) — no-op")
-        return "noop"
-    if str(req.status) != State.EXECUTING.value:
-        _log(f"inbox: {req.id} answer_input ignored (status={req.status}) — no-op")
-        return "noop"
+             f"(expected {expected_status}, is {req.status})")
+        kind = ("review" if str(req.status) in (State.REVIEW.value,
+                                                State.DELIVERED.value)
+                else "moved")
+        return _answer_not_delivered(req, t, kind)
+    # §39.2 pre-delivery roster probe (see docstring): never stop a session
+    # that is actively WORKING with a live process.
+    sid = (req.execution or {}).get("session_id") if isinstance(req.execution, dict) else None
+    if sid:
+        try:
+            agent = _index_agents(_run_claude_agents()).get(str(sid))
+        except Exception:  # noqa: BLE001 - roster probe is best-effort
+            agent = None
+        state = (agent or {}).get("state", "") if agent else ""
+        if agent is not None and agent.get("pid") and state not in _BLOCKED_STATES:
+            return _answer_not_delivered(req, t, "working")
     ok = False
     try:
         ok = bool(executor.answer(req, t))
@@ -629,7 +684,8 @@ def _apply_answer_input(decision: dict) -> str:
     notify.notify(*notify.msg_answer_failed(req.title or req.id, reason),
                   req=req.id)
     _log(f"inbox: {req.id} answer_input NOT delivered ({reason}) — acking noop")
-    analytics.log_event("inbox_answer_input", req=req.id, ok=False, chars=len(t))
+    analytics.log_event("inbox_answer_input", req=req.id, ok=False,
+                        reason="launch_failed", chars=len(t))
     return "noop"
 
 

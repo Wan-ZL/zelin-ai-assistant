@@ -130,6 +130,18 @@ class ApplyAnswerInputTestCase(unittest.TestCase):
         patcher = mock.patch.object(actd.notify, "notify", return_value=True)
         self.notify = patcher.start()
         self.addCleanup(patcher.stop)
+        # §39.2 pre-delivery roster probe: never shell out to `claude agents`
+        # from tests. Default = empty roster (dead/absent session — delivery
+        # proceeds via the existing resume-a-dead-session path); individual
+        # tests override with self._roster(...).
+        roster = mock.patch.object(actd, "_run_claude_agents", return_value=[])
+        self.roster = roster.start()
+        self.addCleanup(roster.stop)
+
+    def _roster(self, state, pid=4242):
+        self.roster.return_value = [{
+            "id": "beefcafe", "sessionId": FULL_SID, "state": state, "pid": pid,
+        }]
 
     def _mk_req(self, status=State.EXECUTING.value):
         req = Requirement(id="R-971", title="回答测试", status=status,
@@ -196,11 +208,56 @@ class ApplyAnswerInputTestCase(unittest.TestCase):
         self.assertEqual(
             actd._apply_answer_input(self._decision(id=None)), "unknown")
 
-    def test_non_executing_status_is_noop(self):
+    def test_promoted_to_review_archives_text_and_notifies(self):
+        # §39.2 promotion race: a blocked chat session with FINAL DRAFT gets
+        # promoted executing→review between the board render and the inbox
+        # pass — the owner's answer must not vanish while both UIs show
+        # success: noop + notes carry the text + notification.
         self._mk_req(status=State.REVIEW.value)
         with mock.patch.object(actd.executor, "answer") as ans:
             self.assertEqual(actd._apply_answer_input(self._decision()), "noop")
         ans.assert_not_called()
+        notes = registry.load("R-971").notes or ""
+        self.assertIn("回答未投递", notes)
+        self.assertIn("用 A 方案", notes)   # the typed text is archived, not lost
+        self.assertIn("待验收", notes)
+        self.notify.assert_called_once()
+
+    def test_working_session_with_live_pid_is_never_stopped(self):
+        # §39.2 roster probe: on-disk EXECUTING covers roster working too —
+        # a stale second device's answer must NOT stop+redirect a session
+        # that is actively running (it may already have been answered).
+        self._mk_req()
+        self._roster("working")
+        with mock.patch.object(actd.executor, "answer") as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "noop")
+        ans.assert_not_called()   # no stop, no resume — the session runs on
+        notes = registry.load("R-971").notes or ""
+        self.assertIn("回答未投递", notes)
+        self.assertIn("正在工作", notes)
+        self.assertIn("用 A 方案", notes)
+        self.notify.assert_called_once()
+
+    def test_genuinely_blocked_session_receives_delivery(self):
+        self._mk_req()
+        self._roster("blocked")
+        with mock.patch.object(actd.executor, "answer", return_value=True) as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "running")
+        ans.assert_called_once()
+        self.notify.assert_not_called()
+
+    def test_dead_or_absent_session_still_goes_through_answer(self):
+        # roster empty (default) = session vanished: delivery proceeds via the
+        # existing resume-a-dead-session path (executor.answer handles it)
+        self._mk_req()
+        with mock.patch.object(actd.executor, "answer", return_value=True) as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "running")
+        ans.assert_called_once()
+        # alive-but-not-on-pid (roster row without pid) is dead too
+        self._roster("working", pid=None)
+        with mock.patch.object(actd.executor, "answer", return_value=True) as ans:
+            self.assertEqual(actd._apply_answer_input(self._decision()), "running")
+        ans.assert_called_once()
 
     def test_stale_expected_status_is_noop(self):
         self._mk_req()
@@ -209,11 +266,13 @@ class ApplyAnswerInputTestCase(unittest.TestCase):
                 actd._apply_answer_input(
                     self._decision(expected_status="review")), "noop")
             ans.assert_not_called()
-            # the phone's pin matches the projected lane → applies
-            with mock.patch.object(actd.executor, "answer", return_value=True):
-                self.assertEqual(
-                    actd._apply_answer_input(
-                        self._decision(expected_status="executing")), "running")
+        # the stale pin archives the text too (§39.2: stale ≠ silent)
+        self.assertIn("回答未投递", registry.load("R-971").notes or "")
+        # the phone's pin matches the projected lane → applies
+        with mock.patch.object(actd.executor, "answer", return_value=True):
+            self.assertEqual(
+                actd._apply_answer_input(
+                    self._decision(expected_status="executing")), "running")
 
     def test_process_inbox_consumes_answer_file(self):
         self._mk_req()
