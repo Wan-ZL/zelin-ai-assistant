@@ -1198,6 +1198,9 @@ capture `mode:"run"`），Mac/iOS 早已在写。
   abort_execution——一颗停止按钮打开与 Mac 相同的两选弹窗：退回提案
   （abort_execution，destructive）/ 去待验收（stop_to_review）/ 取消，弹窗
   副标题解释分叉。done_external 随 v0.21 语义离开运行中卡（它住在拒绝弹窗里）。
+  **范围注**：本分支只覆盖非 needs-input 行；needs-input 行的停止 fork 随
+  §39（feat/answer-input 的回答输入条）在同一处 RunningRow 块落地——两分支
+  合并后运行中列所有行才与 Mac 完全对齐。
 - **iOS 拒绝 fork（对齐 Mac v0.10.3）**：提案卡与详情页的「拒绝」打开两选弹窗：
   不想做（进回收站，reject）/ 已办完（记为已交付，done_external）/ 取消，弹窗
   正文是卡片摘要。
