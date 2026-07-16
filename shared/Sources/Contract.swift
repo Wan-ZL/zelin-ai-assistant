@@ -46,8 +46,14 @@ struct ApprovalCard: Decodable, Hashable {
     // the new ask, shown inline (新增:<note>).
     let reraised: Bool
     let reraisedNote: String?
-    // §38: capped notes projection — the 展开详情 fold-note lines (each with
-    // its 拆成新卡 handle) parse out of this. Absent on older payloads.
+    // §37 living display titles — projection already resolves the fallback
+    // chain (user pin → LLM → sanitize(title) → title), so display_title is
+    // never a raw URL/path. user_titled marks a user-pinned name (wins over
+    // summary in displaySummary); former_titles = searchable previous names;
+    // notes_text = capped notes fold (comments/radar updates), search-only.
+    let display_title: String?
+    let user_titled: Bool
+    let former_titles: [String]?
     let notes_text: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -58,7 +64,7 @@ struct ApprovalCard: Decodable, Hashable {
         case delivery_mode
         case reraised
         case reraisedNote = "reraised_note"
-        case notes_text
+        case display_title, user_titled, former_titles, notes_text
     }
 
     init(from decoder: Decoder) throws {
@@ -88,12 +94,19 @@ struct ApprovalCard: Decodable, Hashable {
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
         reraised = (try? c.decodeIfPresent(Bool.self, forKey: .reraised)) ?? false
         reraisedNote = try? c.decodeIfPresent(String.self, forKey: .reraisedNote)
+        display_title = try? c.decodeIfPresent(String.self, forKey: .display_title)
+        user_titled = (try? c.decodeIfPresent(Bool.self, forKey: .user_titled)) ?? false
+        former_titles = try? c.decodeIfPresent([String].self, forKey: .former_titles)
         notes_text = try? c.decodeIfPresent(String.self, forKey: .notes_text)
     }
 
-    /// Plain-language headline shown by default.
+    /// Plain-language headline shown by default (§37: a user-pinned name wins;
+    /// display_title backstops a missing summary so a raw URL/path title never
+    /// renders).
     var displaySummary: String {
+        if user_titled, let t = display_title, !t.isEmpty { return t }
         if let s = summary, !s.isEmpty { return s }
+        if let t = display_title, !t.isEmpty { return t }
         return title
     }
 
@@ -197,6 +210,29 @@ struct RunningTask: Decodable, Hashable {
     // §30 v0.28.1: true when a 待验收 card is projected into 运行中 because its
     // session was reactivated via attach (on-disk status is still review).
     let from_review: Bool?
+    // §37 living display titles (see ApprovalCard) — plus the from_review rows'
+    // final_draft carried while a delivered card re-runs (search needs it).
+    let display_title: String?
+    let user_titled: Bool?
+    let former_titles: [String]?
+    let notes_text: String?
+    let final_draft: String?
+
+    /// §37 row title for name-first surfaces (Mac lanes): the projected
+    /// display title (fallback chain already resolved) over the raw name.
+    var rowTitle: String {
+        if let t = display_title, !t.isEmpty { return t }
+        return name
+    }
+
+    /// §37 headline for summary-first surfaces (iOS rows, BoardModel.title):
+    /// user-pinned name → summary → display title → name.
+    var displayHeadline: String {
+        if user_titled == true, let t = display_title, !t.isEmpty { return t }
+        if let s = summary, !s.isEmpty { return s }
+        if let t = display_title, !t.isEmpty { return t }
+        return name
+    }
 }
 
 struct DebtItem: Decodable, Hashable {
@@ -206,11 +242,17 @@ struct DebtItem: Decodable, Hashable {
     let hardness: String?
     let type: String?
     let sources: [Source]?   // v0.10 contract B: provenance quotes (same shape as approval card)
-    let notes_text: String?  // §38: fold-note lines (拆成新卡 handles)
+    // §37 living display titles (see ApprovalCard).
+    let display_title: String?
+    let user_titled: Bool?
+    let former_titles: [String]?
+    let notes_text: String?
 
-    /// Plain-language headline shown by default.
+    /// Plain-language headline shown by default (§37 rules — see ApprovalCard).
     var displaySummary: String {
+        if user_titled == true, let t = display_title, !t.isEmpty { return t }
         if let s = summary, !s.isEmpty { return s }
+        if let t = display_title, !t.isEmpty { return t }
         return title
     }
 }
@@ -226,9 +268,13 @@ struct TrashItem: Decodable, Hashable {
     let permanent: Bool
     let type: String?
     let hardness: String?
+    // §37 living display titles (see ApprovalCard).
+    let display_title: String?
+    let user_titled: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, kind, trashed_at, trash_reason, permanent, type, hardness
+        case display_title, user_titled
     }
 
     init(from decoder: Decoder) throws {
@@ -241,14 +287,18 @@ struct TrashItem: Decodable, Hashable {
         permanent = (try? c.decodeIfPresent(Bool.self, forKey: .permanent)) ?? false
         type = try? c.decodeIfPresent(String.self, forKey: .type)
         hardness = try? c.decodeIfPresent(String.self, forKey: .hardness)
+        display_title = try? c.decodeIfPresent(String.self, forKey: .display_title)
+        user_titled = (try? c.decodeIfPresent(Bool.self, forKey: .user_titled)) ?? false
         // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
         id = (try? c.decode(String.self, forKey: .id))
             ?? stableFallbackID("trash", title, summary, kind, trashed_at, trash_reason)
     }
 
-    /// Plain-language headline shown by default.
+    /// Plain-language headline shown by default (§37 rules — see ApprovalCard).
     var displaySummary: String {
+        if user_titled, let t = display_title, !t.isEmpty { return t }
         if let s = summary, !s.isEmpty { return s }
+        if let t = display_title, !t.isEmpty { return t }
         return title
     }
 }
@@ -271,10 +321,14 @@ struct ArchivedItem: Decodable, Hashable {
     let archived_at: String?     // ISO8601 — sort key + relative-age display
     let archive_reason: String?  // "user" (你封存) | "auto" (自动封存)
     let prev_status: String?     // lane to restore into on unarchive (usually delivered)
+    // §37 living display titles (see ApprovalCard).
+    let display_title: String?
+    let user_titled: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, kind, trashed_at, trash_reason, permanent, type, hardness
         case archived_at, archive_reason, prev_status
+        case display_title, user_titled
     }
 
     init(from decoder: Decoder) throws {
@@ -290,14 +344,18 @@ struct ArchivedItem: Decodable, Hashable {
         archived_at = try? c.decodeIfPresent(String.self, forKey: .archived_at)
         archive_reason = try? c.decodeIfPresent(String.self, forKey: .archive_reason)
         prev_status = try? c.decodeIfPresent(String.self, forKey: .prev_status)
+        display_title = try? c.decodeIfPresent(String.self, forKey: .display_title)
+        user_titled = (try? c.decodeIfPresent(Bool.self, forKey: .user_titled)) ?? false
         // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
         id = (try? c.decode(String.self, forKey: .id))
             ?? stableFallbackID("archived", title, summary, kind, archived_at, prev_status)
     }
 
-    /// Plain-language headline shown by default.
+    /// Plain-language headline shown by default (§37 rules — see ApprovalCard).
     var displaySummary: String {
+        if user_titled, let t = display_title, !t.isEmpty { return t }
         if let s = summary, !s.isEmpty { return s }
+        if let t = display_title, !t.isEmpty { return t }
         return title
     }
 }
@@ -327,14 +385,17 @@ struct ReviewItem: Decodable, Hashable {
     // §30: live working agent on this review card = user attach / organic
     // session activity — NOT a rework round. Absent (older actd) = false.
     let session_active: Bool
-    // §38: capped notes projection (fold-note lines, 拆成新卡 handles).
+    // §37 living display titles (see ApprovalCard).
+    let display_title: String?
+    let user_titled: Bool
+    let former_titles: [String]?
     let notes_text: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, summary, dod, session_id, short_id, copy_cmd, cwd, agent_name
         case delivered_summary, final_draft, plan, sources, log, dispatched_at, review_at, delivery_mode
         case session_active
-        case notes_text
+        case display_title, user_titled, former_titles, notes_text
     }
 
     init(from decoder: Decoder) throws {
@@ -356,11 +417,28 @@ struct ReviewItem: Decodable, Hashable {
         review_at = try? c.decodeIfPresent(Int.self, forKey: .review_at)
         delivery_mode = try? c.decodeIfPresent(String.self, forKey: .delivery_mode)
         session_active = (try? c.decodeIfPresent(Bool.self, forKey: .session_active)) ?? false
+        display_title = try? c.decodeIfPresent(String.self, forKey: .display_title)
+        user_titled = (try? c.decodeIfPresent(Bool.self, forKey: .user_titled)) ?? false
+        former_titles = try? c.decodeIfPresent([String].self, forKey: .former_titles)
         notes_text = try? c.decodeIfPresent(String.self, forKey: .notes_text)
         // 缺 id → 内容派生的确定性 id（随机 UUID 会让身份每次 reload 漂移）
         id = (try? c.decode(String.self, forKey: .id))
             ?? stableFallbackID("review", name, summary, session_id,
                                 dispatched_at.map(String.init))
+    }
+
+    /// §37 row title for name-first surfaces (Mac review lane).
+    var rowTitle: String {
+        if let t = display_title, !t.isEmpty { return t }
+        return name
+    }
+
+    /// §37 headline for summary-first surfaces (iOS rows, BoardModel.title).
+    var displayHeadline: String {
+        if user_titled, let t = display_title, !t.isEmpty { return t }
+        if let s = summary, !s.isEmpty { return s }
+        if let t = display_title, !t.isEmpty { return t }
+        return name
     }
 }
 

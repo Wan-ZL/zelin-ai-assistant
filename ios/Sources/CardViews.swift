@@ -207,7 +207,8 @@ struct RunningRow: View {
                     if task.state == "queued" { MetaChip(text: L("排队中", "Queued")) }
                     Spacer()
                 }
-                Text(task.summary ?? task.name).font(.subheadline).fontWeight(.medium)
+                // §37: displayHeadline = user-pinned name → summary → display title → name
+                Text(task.displayHeadline).font(.subheadline).fontWeight(.medium)
                 if needsInput, let w = task.waiting_for {
                     Text(w).font(.caption).foregroundStyle(.secondary)
                 }
@@ -229,7 +230,8 @@ struct ReviewRow: View {
     var body: some View {
         CardChrome {
             VStack(alignment: .leading, spacing: 8) {
-                Text(item.summary ?? item.name).font(.subheadline).fontWeight(.medium)
+                // §37: displayHeadline = user-pinned name → summary → display title → name
+                Text(item.displayHeadline).font(.subheadline).fontWeight(.medium)
                 if let ds = item.delivered_summary { Text(ds).font(.caption).foregroundStyle(.secondary) }
                 if !item.dod.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
@@ -252,7 +254,7 @@ struct DoneRow: View {
     var body: some View {
         CardChrome {
             VStack(alignment: .leading, spacing: 8) {
-                Text(task.delivered_summary ?? task.summary ?? task.name)
+                Text(task.delivered_summary ?? task.displayHeadline)
                     .font(.subheadline).foregroundStyle(.secondary)
                 ActionBar(cardId: task.id, actions: [
                     LaneAction(title: L("退回待验收", "Reopen review"), verb: .revert_review),
@@ -309,7 +311,7 @@ struct CardDetailSheet: View {
                     ])
                 }
             }
-            .navigationTitle(card.title)
+            .navigationTitle(card.display_title ?? card.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("完成", "Done")) { dismiss() } } }
         }

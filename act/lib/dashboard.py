@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config, failures
+from act.lib import config, failures, titles
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
@@ -249,6 +249,7 @@ def _archived_view(req: Requirement) -> dict:
         "id": _s(req.id),
         "title": _s(req.title),
         "summary": req.summary or _s(req.title),
+        **_title_fields(req),
         "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
         "archived_at": req.archived_at,
         "archive_reason": req.archive_reason,
@@ -327,33 +328,59 @@ def _delivery_mode(req: Requirement) -> str:
     return dm if dm in ("chat", "repo") else "repo"
 
 
-# §38: notes projected (capped) so the Mac 展开详情 can render fold-note lines
-# with their 拆成新卡 buttons. Same key + cap as §37's notes_text (PR #55 puts
-# it on every row via _title_fields) — after both merge, ONE implementation
-# survives. Clip semantics DIFFER deliberately: #55 keeps the HEAD, but fold
-# lines append at the TAIL — a head clip silently drops the newest folds'
-# [@ts] handles, exactly the ones 拆成新卡 exists for (review blocker 4). On
-# reconciliation keep THIS tail-aligned clip.
+# notes fold user comments / radar updates that used to be unsearchable on the
+# board — projected capped so one chatty card can't bloat the ~10s rewrite
+# (and the E2E board payload) unboundedly.
 _NOTES_TEXT_CAP = 2000
 _NOTES_CLIP_MARKER = "…（更早的备注已省略）"
 
 
-def _notes_view(req: Requirement) -> dict:
-    """``{"notes_text": ...}`` or ``{}`` — empty notes omit the key entirely
-    (add-only: Swift decodeIfPresent, old payloads unchanged). Over the cap,
-    the LAST ~2000 chars survive, snapped forward to a line boundary so
-    Swift's FoldNote.parse only ever sees intact lines; an ellipsis marker
-    line says honestly that older notes were dropped."""
+def _display_title(req: Requirement) -> str:
+    """§37 fallback chain at projection time: stored display_title (user-pinned
+    or LLM) → deterministic sanitize(title) → title. Always non-empty for a
+    titled card, so a raw URL/path never renders as a board title — zero
+    migration for legacy cards."""
+    dt = str(getattr(req, "display_title", "") or "").strip()
+    if dt:
+        return dt[:titles.MAX_DISPLAY_TITLE]
+    return titles.sanitize_title(_s(req.title)) or _s(req.title)
+
+
+def _notes_text(req: Requirement):
+    """§38 clip semantics for the notes projection: line-aligned TAIL. Fold
+    lines append at the TAIL — a head clip would silently drop the newest
+    folds' [@ts] handles (and can cut an 已拆出 flip mid-tag), exactly what
+    拆成新卡 needs. Over the cap the LAST ~2000 chars survive, snapped
+    forward to a line boundary so Swift's FoldNote.parse only ever sees
+    intact lines; an ellipsis marker line says honestly that older notes
+    were dropped. None when the card has no notes."""
     notes = str(req.notes or "").strip()
     if not notes:
-        return {}
+        return None
     if len(notes) > _NOTES_TEXT_CAP:
         clipped = notes[-_NOTES_TEXT_CAP:]
         nl = clipped.find("\n")
         if nl >= 0:   # drop the partial first line (a giant single line stays)
             clipped = clipped[nl + 1:]
         notes = f"{_NOTES_CLIP_MARKER}\n{clipped}"
-    return {"notes_text": notes}
+    return notes
+
+
+def _title_fields(req: Requirement) -> dict:
+    """The §37 add-only row fields shared by every lane projection. Empty
+    optionals are omitted (not null) so the payload only grows where there is
+    something to say; Swift reads them with decodeIfPresent."""
+    out: dict = {"display_title": _display_title(req)}
+    if getattr(req, "user_titled", False):
+        out["user_titled"] = True
+    former = [str(x) for x in (getattr(req, "former_titles", None) or [])
+              if str(x).strip()]
+    if former:
+        out["former_titles"] = former
+    notes = _notes_text(req)   # §38: tail-aligned clip (fold handles survive)
+    if notes:
+        out["notes_text"] = notes
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -488,6 +515,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "target_repo": target_repo,
                     "target_name": target_name,
                     "target_kind": target_kind,
@@ -508,7 +536,6 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "processing": False,
                     "delivery_mode": _delivery_mode(req),
-                    **_notes_view(req),   # §38: fold-note lines for 拆成新卡
                     # v0.20.0 §5: 「回锅」marker — this proposal came from a
                     # re-raise of a card the user had already accepted; the app
                     # shows an amber Returned badge + the new ask.
@@ -525,6 +552,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "tier": _s(req.tier),
                     "tier_hint": "AI 研究中",
                     "processing": True,
@@ -542,10 +570,10 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "hardness": req.hardness,
                     "type": req.type,
                     "sources": _source_view(req, cfg),
-                    **_notes_view(req),   # §38: fold-note lines for 拆成新卡
                 }
             )
 
@@ -555,6 +583,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
                     "trashed_at": req.trashed_at,
                     "trash_reason": req.trash_reason,
@@ -573,6 +602,7 @@ def build_dashboard(
                 {
                     "id": _s(req.id),
                     "name": _s(req.title or req.id),
+                    **_title_fields(req),
                     "state": "queued",
                     "summary": req.summary or None,
                     "plan": _as_list(req.plan),
@@ -632,6 +662,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -660,6 +691,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -700,6 +732,7 @@ def build_dashboard(
                         "id": _s(req.id),
                         "name": name,
                         "summary": req.summary or None,
+                        **_title_fields(req),
                         "dod": list(req.definition_of_done or []),
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -716,7 +749,6 @@ def build_dashboard(
                         "review_at": _epoch(ex.get("review_at")),
                         "delivery_mode": _delivery_mode(req),
                         "session_active": state in _RUNNING_STATES,
-                        **_notes_view(req),   # §38: fold visibility (display)
                     }
                 )
             elif state in _BLOCKED_STATES:
@@ -724,6 +756,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -738,6 +771,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,

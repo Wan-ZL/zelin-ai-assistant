@@ -459,7 +459,7 @@ def _default_transport(sync_cfg: dict) -> HttpTransport:
 # but BEFORE ack+unlink, so the same file re-crashes (and re-applies) every
 # 10s pass forever — the whole board freezes until it is removed by hand.
 _INBOX_STR_FIELDS = ("action", "id", "comment", "text", "primary", "mode",
-                     "note_ts")
+                     "title", "note_ts")
 
 
 def _inbox_shape_error(action: dict) -> Optional[str]:

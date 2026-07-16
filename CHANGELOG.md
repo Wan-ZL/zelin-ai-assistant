@@ -51,6 +51,100 @@ other file needs editing. To cut a release:
   会自动弹一条「规则判定」合并建议——不是 AI 分析，是确定性规则，卡上有紫色
   「规则判定」徽章说明来源。点「接受」走既有合并流程，点「取消」就再也不会
   对这两张卡重复提示；同时最多挂 3 条，绝不刷屏。
+## [0.37.1] - 2026-07-16
+
+实时字幕 credential usability（Mac 展示层，契约 add-only）。
+
+### Added
+- **旧版火山凭证支持**：豆包语音凭证输入框现在也接受旧版语音控制台的
+  App ID + Access Token，自动识别。**最稳的粘法是一行 `AppID:Token`**；
+  带控制台原样标签（`App ID:` / `Access Token:`，大小写/空格/下划线不敏感）
+  的一行或两行也认；直接粘两行通常可用，但依赖粘贴时输入框保留换行——
+  失败就改用一行形式。形状校验防误伤：两行内容只有在"第一行 6–12 位数字
+  + 第二行 ≥20 位无空白 token"时才按旧版凭证解析，被硬折行的新版单 Key
+  会重新拼回而不是被撕成假凭证对。引擎握手按代际发对应鉴权头（旧版
+  `X-Api-App-Key` + `X-Api-Access-Key`，新版单个 `X-Api-Key` 不变）。
+  存储格式：旧版凭证存为两行带标签内容（`appid:` / `token:`），单行裸内容
+  一律按新版 API Key 解读——已保存的 Key 无需迁移（CONTRACT §36 add-only）。
+- **「检测」按钮（两个凭证行都有）**：点一下做一次**真实**最小连接——语音
+  凭证走一次 Doubao WebSocket 握手（发会话配置、读首帧、即断，不发音频、
+  不产生计费），Ark Key 向所配翻译模型发一条 `max_tokens=1` 的请求。结果
+  就地诚实显示：✅ 有效（连接成功）/ ❌ Key 无效或未开通 / ❌ 资源未开通 /
+  ❌ 模型 ID 不存在（Ark 独立情形）/ ⚠️ 网络不通；未收录的错误码原样展示
+  （码 + 服务器消息），不猜测。检测可在保存前直接测输入框内容；凭证永不
+  写日志、永不回显。
+
+### Changed
+- 字幕两行凭证的文案与真实行为对齐：保存**只存本机、不联网**；点「检测」
+  才真连一次对应服务器（其余凭证行"保存即验证"的行为不变）。引擎侧的
+  致命鉴权错误提示改为指向「检测」按钮排查。
+
+## [0.37.0] - 2026-07-16
+
+「找得到、看得懂」— board search that actually finds things, and card titles
+that stay readable and evolve with the work (CONTRACT §37, add-only).
+
+### Added
+
+- **看板搜索全量化 (Mac)** — the board search box now matches far more than
+  title/summary/plan/dod/id:
+  - **normalized matching** (`shared/Sources/SearchMatch.swift`): "eb1" finds
+    "EB-1A", "h1b" finds "H-1B" (`-`/`_`/`.`/spaces are stripped from both
+    sides before comparing), CJK matches as a plain substring, and a
+    multi-word query is AND — every word must hit the card. "eb2" still does
+    NOT match "EB-1A".
+  - **expanded word list per lane**: display/former titles, notes (comments &
+    radar updates, newly projected as a capped `notes_text` row field),
+    delivered summaries and final drafts, source quotes, and the agent name.
+  - **session-content layer**: actd maintains `state/search_index.json`
+    (per-card main-thread transcript text — the boilerplate dispatch prompt
+    of the first user turn is excluded — tail-capped ~50KB, refreshed only
+    at the existing harvest/promotion touchpoints — zero new LLM calls) and
+    the Mac app searches it as the LAST layer with cross-layer AND: each
+    query word may be satisfied by a row field OR the transcript, so
+    "推荐信 chen" finds the card whose title says 推荐信 while only the
+    session mentions chen. Cards that matched but not on their visible
+    fields alone get a purple 「命中会话」 badge. Pruning removes only
+    irreversibly-gone cards (merged / hard-purged) — a trashed-then-restored
+    card keeps its session search. The file is Mac-local and never enters
+    dashboard.json (the E2E board payload does not grow); missing/corrupt
+    index = the layer is silently absent. Typing stays smooth on large
+    boards: the input echoes instantly, filtering debounces ~200 ms, and
+    normalized card/session text plus per-card hit results are memoized per
+    dashboard decode / query / index reload.
+- **活标题 display_title (§37)** — the internal `title` stays FROZEN (it is
+  the dedupe/re-raise identity anchor); a new optional `display_title` +
+  `user_titled` + `former_titles` ride the registry and every dashboard row:
+  - **fallback chain at projection time** — stored display_title (user or
+    LLM) → deterministic `sanitize(title)` (URL → "domain ▸ segment", path →
+    last component, overlong text → first-clause clip with …) → title. A raw
+    URL/path can never appear as a board title again, with zero migration
+    for legacy cards.
+  - **LLM titles piggyback on existing calls only**: quick-capture/triage and
+    debt-expansion prompts gain an optional `display_title` output key
+    (≤40 字中文大白话, 动词开头); executor closing prompts allow an optional
+    standalone `CARD TITLE: <new name>` line that `harvest_delivery` parses
+    (same fence discipline as `FINAL DRAFT:`, stripped from both outputs)
+    and actd applies at the same promotion points as delivered_summary —
+    titles refresh at round boundaries as the discussion evolves.
+  - **user sovereignty**: new `set_title` inbox action (fail-closed ≤64-char
+    validation at syncd/webui/actd, v0.33.1 boundary doctrine) pins
+    `user_titled` — a user-chosen name is NEVER overwritten by LLM/harvest
+    titles. Mac: ✏️「改名」inline editor in every card's 展开详情, with an
+    optimistic name echo (180 s honest timeout notice). Renamed cards stay
+    findable: previous names land in `former_titles` (capped 3, searched,
+    shown as 「曾用名: …」in the detail).
+  - iOS displays the new titles automatically via the shared row helpers
+    (`displayHeadline`/`rowTitle`/`BoardModel.title(of:)`).
+
+### Honest scope cuts
+
+- **iOS has no board search UI this release** — search (including the new
+  normalized matching and session layer) stays Mac-only; the phone only gains
+  the readable display titles on its rows.
+- **iOS has no rename entry this release** — `set_title` can be written by
+  the Mac app (and webui API); the phone renders `display_title` read-only.
+- webui's own search/filter surface is unchanged.
 
 ## [0.36.0] - 2026-07-15
 
@@ -1395,7 +1489,10 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.1...v0.38.0
+[0.37.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.37.0...v0.37.1
+[0.37.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD

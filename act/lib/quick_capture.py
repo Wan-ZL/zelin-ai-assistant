@@ -90,33 +90,15 @@ def _inventory_reqs() -> list:
 
 def _display_name(r) -> str:
     """§37/§38 display name for an inventory line: stored ``display_title``
-    when present, else a deterministic readable fallback for the frozen title.
-
-    Prefers §37's ``titles.sanitize_title`` (PR #55) when that module exists;
-    until it merges, a MINIMAL local fallback covers the two unmatchable title
-    shapes (URL / filesystem path) so the matcher LLM at least sees the slug
-    instead of protocol noise. Never raises."""
+    when present, else §37's deterministic ``titles.sanitize_title`` fallback
+    for the frozen title (URL → slug, path → basename, long text → clause) so
+    the matcher LLM can recognize the card. Never raises."""
     dt = str(getattr(r, "display_title", "") or "").strip()
     if dt:
         return dt
     title = " ".join(str(r.title or "").split()).strip()
-    try:
-        from act.lib import titles  # §37 sanitizer once PR #55 lands
-        return titles.sanitize_title(title) or title
-    except ImportError:
-        pass
-    if re.match(r"^https?://\S+$", title, re.IGNORECASE):
-        try:
-            from urllib.parse import urlparse
-            p = urlparse(title)
-            seg = [s for s in (p.path or "").split("/") if s]
-            host = (p.netloc or "").split("@")[-1].split(":")[0]
-            return f"{host} ▸ {seg[-1]}" if seg else (host or title)
-        except ValueError:
-            return title
-    if re.match(r"^(?:~|/)[^ ]*/[^ ]+$", title):
-        return title.rstrip("/").rsplit("/", 1)[-1] or title
-    return title
+    from act.lib import titles   # lazy, like registry.set_display_title
+    return titles.sanitize_title(title) or title
 
 
 def registry_inventory_text(reqs: Optional[list] = None,
@@ -208,6 +190,8 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
         '   {"action": "new_proposal",\n'
         '    "summary": "大白话一句话：这是什么、批了会发生什么（不用行话）",\n'
         '    "title": "短标题（<=80 字符）",\n'
+        '    "display_title": "看板显示名（<=40 字中文大白话，动词开头，说清'
+        '这卡在干什么，如"整理 EB-1A 推荐信清单"）",\n'
         '    "type": "code|comms|paperwork|research|review|training|other",\n'
         '    "tier": "T0|T1|T2"（T0 纯调研/草稿/自动，T1 一键，T2 要花钱/大事）,\n'
         '    "plan": ["具体步骤", ...],\n'
@@ -373,7 +357,8 @@ def build_triage_prompt(desc: str, cfg: Optional[config.Config] = None) -> str:
         f"{_likely_related_block(_prepass_text(desc), inv, cfg)}"
         f"{_TRIAGE_BAR.format(owner=owner)}\n"
         "三选一。只输出**一个** JSON 对象（无多余文字、无 code fence）：\n"
-        '1) 全新的需求 -> {"action": "new_proposal", "confidence": "high|low"}\n'
+        '1) 全新的需求 -> {"action": "new_proposal", "confidence": "high|low",\n'
+        '    "display_title": "看板显示名（<=40 字中文大白话，动词开头，说清这卡在干什么）"}\n'
         "   （high=现在就需要行动/决策，进提案列；low=真实但不紧急，进潜在任务/Backlog）\n"
         "2) 与清单里某条相关（后续/进展/重述/补充）->\n"
         '   {"action": "relates_to", "req": "R-xxx", "note": "它补充了什么",\n'
@@ -584,6 +569,9 @@ def apply_triage(
         high_confidence = False
         if req.status == registry.State.CARD_SENT.value:
             req.set_status(registry.State.DETECTED)
+    # §37 display_title: optional triage key — absent/malformed is a silent
+    # no-op (projection falls back to sanitize(title)).
+    registry.set_display_title(req, (decision or {}).get("display_title"))
     saved = registry.merge_or_new(req, high_confidence=high_confidence)
     analytics.log_event("radar_triage", action="new_proposal", req=saved.id)
     return "proposed", saved
@@ -657,6 +645,9 @@ def _apply_new_proposal(res: dict, tele_text: Optional[str] = None) -> str:
     # attribute-set so this works even before the registry field lands).
     dm = str(res.get("delivery_mode") or "").strip().lower()
     req.delivery_mode = dm if dm in ("chat", "repo") else "repo"
+    # §37 display_title: optional LLM key — absent/malformed degrades to the
+    # projection-time sanitize(title) fallback, never fails the capture.
+    registry.set_display_title(req, res.get("display_title"))
     saved = registry.merge_or_new(req, high_confidence=not low_conf)
     analytics.log_event("quick_capture", action="new_proposal", req=saved.id,
                         confidence="low" if low_conf else None, text=tele_text)
