@@ -96,10 +96,10 @@ struct BoardModel {
     /// Falls back to the bare id when the card isn't on the board.
     func title(of id: String) -> String {
         if let c = dashboard.needs_approval.first(where: { $0.id == id }) { return c.displaySummary }
-        if let r = dashboard.review.first(where: { $0.id == id }) { return r.summary ?? r.name }
+        if let r = dashboard.review.first(where: { $0.id == id }) { return r.displayHeadline }
         if let d = dashboard.debt.first(where: { $0.id == id }) { return d.displaySummary }
         if let t = (dashboard.running + dashboard.needs_input + dashboard.completed)
-            .first(where: { $0.id == id }) { return t.summary ?? t.name }
+            .first(where: { $0.id == id }) { return t.displayHeadline }
         return id
     }
 }

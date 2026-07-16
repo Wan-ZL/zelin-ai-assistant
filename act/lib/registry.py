@@ -100,6 +100,11 @@ _OPTIONAL_ORDER = [
     # (above) is reused to remember the restore target for unarchive.
     "archived_at",
     "archive_reason",
+    # v0.37 living display titles (§37) — the frozen `title` above stays the
+    # dedupe/re-raise identity anchor; these carry the human-facing name.
+    "display_title",
+    "user_titled",
+    "former_titles",
 ]
 
 
@@ -147,6 +152,16 @@ class Requirement:
     # v0.20.0 archive bookkeeping (§4) — set once archived (prev_status reused).
     archived_at: Optional[str] = None
     archive_reason: Optional[str] = None
+
+    # v0.37 living display titles (§37). `title` above is FROZEN (identity
+    # anchor for merge_or_new/_same_source_and_title/re-raise) — display_title
+    # is the human-facing name shown on board rows. user_titled=True pins a
+    # user-chosen name: LLM/harvest updates never overwrite it. former_titles
+    # keeps the last few previous display names (searchable, so a renamed card
+    # is still findable by its old name).
+    display_title: Optional[str] = None
+    user_titled: bool = False
+    former_titles: Optional[list] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -429,6 +444,47 @@ def pin(req: Requirement) -> Requirement:
     req.permanent = True
     save(req)
     return req
+
+
+# --------------------------------------------------------------------------- #
+# Display title (CONTRACT §37) — the frozen `title` never changes; this does.
+# --------------------------------------------------------------------------- #
+FORMER_TITLES_CAP = 3
+
+
+def set_display_title(req: Requirement, title, *, by_user: bool = False) -> bool:
+    """Set ``req.display_title`` (in memory only — the caller saves).
+
+    Returns True when the requirement changed. Rules (§37):
+    - fail-closed input: non-str / empty-after-collapse / no-op values change
+      nothing; anything accepted is whitespace-collapsed + clipped to
+      ``titles.MAX_DISPLAY_TITLE``;
+    - a user-pinned title (``user_titled``) is NEVER overwritten by an LLM /
+      harvest title (``by_user=False``);
+    - the previous display_title is appended to ``former_titles`` (deduped,
+      newest last, capped at FORMER_TITLES_CAP) so a renamed card stays
+      findable under its old name.
+    """
+    from act.lib import titles  # lazy: keep registry import-light
+    t = titles.clip_title(title)
+    if t is None:
+        return False
+    if req.user_titled and not by_user:
+        return False
+    changed = False
+    prev = str(req.display_title or "").strip()
+    if t != prev:
+        if prev:
+            former = [str(x) for x in (req.former_titles or []) if str(x).strip()]
+            former = [x for x in former if x != prev]
+            former.append(prev)
+            req.former_titles = former[-FORMER_TITLES_CAP:]
+        req.display_title = t
+        changed = True
+    if by_user and not req.user_titled:
+        req.user_titled = True
+        changed = True
+    return changed
 
 
 def delete(req: Requirement) -> bool:

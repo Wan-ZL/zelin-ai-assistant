@@ -217,8 +217,13 @@ def process_inbox() -> int:
                 # (result_status=unknown), never left guessing on a stuck 'delivered'.
                 _write_applied_ack(path.stem, "unknown")
             else:
-                result_status = _apply_decision(
-                    req, action, comment, expected_status, board_seq)
+                if action == "set_title":
+                    # §37: carries a `title` field the generic decision path
+                    # doesn't know about — validated fail-closed in the helper.
+                    result_status = _apply_set_title(req, decision.get("title"))
+                else:
+                    result_status = _apply_decision(
+                        req, action, comment, expected_status, board_seq)
                 # the comment (打回反馈/修改方向) is user-typed content —
                 # attached only behind the capture_input gate, clipped.
                 c = (comment or "").strip()
@@ -519,6 +524,62 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
         text=(analytics.clip_content(t)
               if analytics.content_gate() else None))
     return "running"
+
+
+def _apply_set_title(req: Requirement, title) -> str:
+    """§37 set_title — the user renames a card's DISPLAY title (the frozen
+    internal ``title`` never changes; it anchors dedupe/re-raise identity).
+
+    Fail-closed validation (v0.33.1 boundary doctrine): non-string / empty /
+    >64-char titles are logged no-ops — a poison payload must never become a
+    board title. Sets ``user_titled`` so LLM/harvest titles never overwrite
+    the user's choice; the previous display name lands in ``former_titles``
+    (still searchable). Archived cards stay sealed (unarchive first), same as
+    the central _apply_decision gate. Returns the §5.4 result_status.
+    """
+    if str(req.status) == State.ARCHIVED.value:
+        _log(f"inbox: {req.id} set_title on archived card — no-op (unarchive first)")
+        return "noop"
+    if not isinstance(title, str):
+        _log(f"inbox: {req.id} set_title with non-string title "
+             f"({type(title).__name__}) — ignored")
+        return "noop"
+    t = " ".join(title.split()).strip()
+    if not t or len(t) > 64:
+        _log(f"inbox: {req.id} set_title invalid title "
+             f"(empty or >64 chars, got {len(t)}) — ignored")
+        return "noop"
+    if not registry.set_display_title(req, t, by_user=True):
+        _log(f"inbox: {req.id} set_title no-op (title unchanged)")
+        return "noop"
+    save(req)
+    _log(f"inbox: {req.id} set_title -> {t!r} (user pinned)")
+    return "running"
+
+
+def _apply_harvest_title(req: Requirement, harvested: dict) -> None:
+    """§37: apply a harvested ``CARD TITLE:`` line at the same promotion points
+    where delivered_summary lands (round boundaries only). Best-effort; a
+    user-pinned title wins inside set_display_title. Caller saves ``req``."""
+    try:
+        t = (harvested or {}).get("card_title")
+        if t and registry.set_display_title(req, t):
+            _log(f"inbox/reconcile: {req.id} display title refreshed from "
+                 f"CARD TITLE line: {str(t)[:64]!r}")
+    except Exception as e:  # noqa: BLE001 - titles must never block delivery
+        _log(f"harvest title apply failed for {getattr(req, 'id', '?')}: {e}")
+
+
+def _update_search_index(card_id, session_id) -> None:
+    """§37 Mac-local session-content search layer: refresh one card's entry at
+    the existing settle/harvest touchpoints. Best-effort, never raises."""
+    if not session_id:
+        return
+    try:
+        from act.lib import search_index
+        search_index.update_card(str(card_id), str(session_id))
+    except Exception as e:  # noqa: BLE001 - indexing must never break the pass
+        _log(f"search index update failed for {card_id}: {e}")
 
 
 def _apply_feedback(decision: dict) -> str:
@@ -1181,6 +1242,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
                     ex["delivered_summary"] = harvested["delivered_summary"]
                 if harvested.get("final_draft"):
                     ex["final_draft"] = harvested["final_draft"]
+                _apply_harvest_title(req, harvested)   # §37, round boundary
             except Exception as e:  # noqa: BLE001 - harvest is best-effort
                 _log(f"inbox: {req.id} done_external — "
                      f"harvest_delivery({sid}) failed (ignored): {e}")
@@ -1190,6 +1252,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
             except Exception as e:  # noqa: BLE001 - best-effort, never block delivery
                 _log(f"inbox: {req.id} done_external — "
                      f"stop_session({sid}) failed (ignored): {e}")
+            _update_search_index(req.id, sid)          # §37 session-content layer
         ex["accepted_at"] = _iso_now()
         req.execution = ex
         tag = "[done outside] Zelin 在系统外完成"
@@ -1257,6 +1320,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
                     ex["delivered_summary"] = harvested["delivered_summary"]
                 if harvested.get("final_draft"):
                     ex["final_draft"] = harvested["final_draft"]
+                _apply_harvest_title(req, harvested)   # §37, round boundary
             except Exception as e:  # noqa: BLE001 - harvest is best-effort
                 _log(f"inbox: {req.id} stop_to_review — "
                      f"harvest_delivery({sid}) failed (ignored): {e}")
@@ -1266,6 +1330,7 @@ def _apply_decision(req: Requirement, action: Optional[str],
             except Exception as e:  # noqa: BLE001 - best-effort, never block review write
                 _log(f"inbox: {req.id} stop_to_review — "
                      f"stop_session({sid}) failed (ignored): {e}")
+            _update_search_index(req.id, sid)          # §37 session-content layer
         # mirror the natural executing->review transition's review fields
         # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
         # renders (dashboard reads execution.review_at) and a later purge is
@@ -1748,9 +1813,11 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
                     ex["delivered_summary"] = harvested["delivered_summary"]
                 if harvested.get("final_draft"):
                     ex["final_draft"] = harvested["final_draft"]
+                _apply_harvest_title(req, harvested)   # §37, round boundary
             ex.pop("_review_active", None)
             req.execution = ex
             registry.save(req)
+            _update_search_index(req.id, sid)          # §37 session-content layer
             _log(f"reconcile: {req.id} 会话活动结束，已重新收割交付物（attach 回流）")
             analytics.log_event("review_reharvested", req=req.id)
     except Exception as e:  # noqa: BLE001 - must never break the daemon pass
@@ -1793,9 +1860,11 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     if harvested.get("delivered_summary"):
         ex["delivered_summary"] = harvested["delivered_summary"]
     ex["final_draft"] = harvested["final_draft"]
+    _apply_harvest_title(req, harvested)   # §37, round boundary
     req.execution = ex
     req.set_status(registry.State.REVIEW)
     registry.save(req)
+    _update_search_index(req.id, sid)      # §37 session-content layer
     exec_s = None
     disp_dt = _parse_iso(ex.get("dispatched_at"))
     if disp_dt is not None:
@@ -1872,6 +1941,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                         ex["delivered_summary"] = harvested["delivered_summary"]
                     if harvested.get("final_draft"):
                         ex["final_draft"] = harvested["final_draft"]
+                    _apply_harvest_title(req, harvested)   # §37, round boundary
                 except Exception as e:  # noqa: BLE001 - harvest is best-effort
                     _log(f"reconcile: harvest_delivery {req.id} failed: {e}")
                 req.execution = ex
@@ -1879,6 +1949,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。
                 req.set_status(registry.State.REVIEW)
                 registry.save(req)
+                _update_search_index(req.id, sid)          # §37 session-content layer
                 # exec_s (metadata): dispatch -> delivery wall time. No
                 # summary excerpt anymore (v0.18): delivered_summary is MODEL
                 # OUTPUT, which telemetry never stores at any setting
@@ -2008,6 +2079,13 @@ def run_once(
     purge_trash(cfg)
     archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
+    try:
+        # §37 session-content search layer: drop terminal/absent cards. Cheap:
+        # returns immediately when state/search_index.json doesn't exist.
+        from act.lib import search_index
+        search_index.prune()
+    except Exception as e:  # noqa: BLE001 - housekeeping must not kill the pass
+        _log(f"search index prune failed: {e}")
     if feedback is not None:
         # §29: retry pending feedback uploads ONCE, then give up (uploaded:
         # false). Records created THIS pass (process_inbox above already did

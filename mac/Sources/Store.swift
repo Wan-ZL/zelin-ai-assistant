@@ -37,6 +37,14 @@ struct PendingReturn {
     let created: Date
 }
 
+/// §37: a set_title rename in flight — the new name echoes on the row at
+/// once; cleared once the backend row carries it (reload), or the 180 s sweep
+/// gives up with an honest notice.
+struct PendingTitle {
+    let title: String
+    let created: Date
+}
+
 /// A 修改方向 comment in flight (blue "修改意见合并中…" line). `fingerprint`
 /// snapshots the card's plan at submit time — the entry clears once the plan
 /// actually CHANGED (actd folded the comment in, _fold_comment appends the
@@ -159,6 +167,9 @@ final class DashboardStore: ObservableObject {
     @Published var pendingMergeActions: [String: PendingMergeAction] = [:]
     // timed-out placeholder notices (capture = yellow, raise = orange)
     @Published var notices: [LocalNotice] = []
+    // §37 rename echoes: id → the in-flight display title (row shows it at
+    // once); cleared when the backend row carries the new name, 180 s sweep.
+    @Published var pendingTitles: [String: PendingTitle] = [:]
 
     // v0.33 collapsed bookend strips (Mac kanban): 潜在任务 (far left) and
     // 永久性完成 (far right) render as narrow strips until expanded. Expansion
@@ -256,6 +267,12 @@ final class DashboardStore: ObservableObject {
                 mergeForcingLocal.removeAll { batch in
                     batch.secondaries.allSatisfy { currentList(of: $0) == nil }
                 }
+                // §37 rename echoes clear on the REAL signal — the backend row
+                // now carries the new display title (not on a generated_at
+                // bump: actd rewrites the dashboard every pass regardless).
+                pendingTitles = pendingTitles.filter { id, p in
+                    Self.backendDisplayTitle(of: id, in: db) != p.title
+                }
                 // sticky hides release once the id has LEFT its source list —
                 // moving to ANOTHER list no longer keeps it hidden forever.
                 hiddenSticky = hiddenSticky.filter { id, kind in
@@ -346,12 +363,14 @@ final class DashboardStore: ObservableObject {
         let expiredForceBadges = mergeForcingLocal.filter {
             now.timeIntervalSince($0.created) > 180
         }
+        // §37 rename echoes: 180 s without the backend adopting the new name
+        let expiredTitles = pendingTitles.filter { now.timeIntervalSince($0.value.created) > 180 }
         // notices themselves fade after 120 s
         let expiredNotices = notices.filter { now.timeIntervalSince($0.created) > 120 }
         guard !expiredCaptures.isEmpty || !expiredRaises.isEmpty || !expiredEchoes.isEmpty
             || !expiredComments.isEmpty || !expiredReturns.isEmpty
             || !expiredMergeBadges.isEmpty || !expiredMergeActions.isEmpty
-            || !expiredForceBadges.isEmpty
+            || !expiredForceBadges.isEmpty || !expiredTitles.isEmpty
             || !expiredNotices.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             for c in expiredCaptures {
@@ -462,6 +481,19 @@ final class DashboardStore: ObservableObject {
                     id: noticeID, kind: .raiseTimeout, lane: .approval,
                     text: L("强制合并未确认，卡片未变化，请重试（检查 actd 是否在运行）",
                             "Force-merge never confirmed — nothing changed, try again (check that actd is running)"),
+                    created: now))
+            }
+            // §37: a rename that never landed must not vanish silently — the
+            // row falls back to its old name, say so (audit honesty standard).
+            for (id, _) in expiredTitles {
+                pendingTitles.removeValue(forKey: id)
+                let noticeID = "notice-title-" + id
+                notices.removeAll { $0.id == noticeID }
+                notices.append(LocalNotice(
+                    id: noticeID, kind: .raiseTimeout,
+                    lane: currentList(of: id) ?? .approval,
+                    text: L("改名超时未确认，卡片名字未变化，请重试（检查 actd 是否在运行）",
+                            "Rename timed out — the card name is unchanged, try again (check that actd is running)"),
                     created: now))
             }
             for (id, entry) in expiredReturns {
@@ -734,11 +766,11 @@ final class DashboardStore: ObservableObject {
     private func title(of id: String) -> String {
         guard let db = dashboard else { return id }
         if let c = db.needs_approval.first(where: { $0.id == id }) { return c.displaySummary }
-        if let r = db.review.first(where: { $0.id == id }) { return r.name }
+        if let r = db.review.first(where: { $0.id == id }) { return r.rowTitle }
         if let d = db.debt.first(where: { $0.id == id }) { return d.displaySummary }
         if let t = db.trash.first(where: { $0.id == id }) { return t.displaySummary }
         if let t = (db.running + db.needs_input + db.completed).first(where: { $0.id == id }) {
-            return t.name
+            return t.rowTitle
         }
         return id
     }
@@ -777,6 +809,27 @@ final class DashboardStore: ObservableObject {
                 CapturePending(id: "capture-" + UUID().uuidString, text: text,
                                created: Date(), run: run))
         }
+    }
+
+    /// §37: the set_title inbox write succeeded — echo the new display name on
+    /// the row immediately. ONLY call site: AppDelegate.submitSetTitle.
+    func beginTitleEdit(_ id: String, title: String) {
+        withAnimation(.easeOut(duration: 0.2)) {
+            pendingTitles[id] = PendingTitle(title: title, created: Date())
+        }
+    }
+
+    /// The in-flight rename for a row, if any (views overlay it on the title).
+    func pendingTitle(_ id: String) -> String? { pendingTitles[id]?.title }
+
+    /// Backend display_title of a row (§37 rename-echo clear signal).
+    private static func backendDisplayTitle(of id: String, in db: Dashboard) -> String? {
+        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.display_title }
+        if let r = db.review.first(where: { $0.id == id }) { return r.display_title }
+        if let d = db.debt.first(where: { $0.id == id }) { return d.display_title }
+        if let t = (db.running + db.needs_input + db.completed)
+            .first(where: { $0.id == id }) { return t.display_title }
+        return nil
     }
 
     /// merge-review 契约七: the merge_review inbox write succeeded — badge
@@ -1048,21 +1101,116 @@ final class DashboardStore: ObservableObject {
     /// filter can never silently hide cards elsewhere.
     @Published var boardQuery: String = ""
 
-    /// Normalized needle ("" = filtering off).
+    /// Trimmed needle ("" = filtering off); SearchMatch handles case/separators.
     private var boardNeedle: String {
-        boardQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        boardQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Case-insensitive substring match over one card's searchable text —
-    /// 词表冻结: id + title/summary (scalar) + dod/plan (lists). Kept private
-    /// so every lane filters by exactly the same rule.
-    private static func searchMatches(_ needle: String, id: String,
-                                      texts: [String?], lists: [[String]?]) -> Bool {
-        if id.lowercased().contains(needle) { return true }
-        for t in texts where t?.lowercased().contains(needle) == true { return true }
-        for list in lists where list?.contains(
-            where: { $0.lowercased().contains(needle) }) == true { return true }
-        return false
+    // §37 词表 (v0.37, per lane where the row carries the field): id + frozen
+    // title/name + display_title + former_titles + summary + notes fold +
+    // plan/dod + delivered_summary/final_draft + source quotes + agent name.
+    // Matching itself is SearchMatch (shared/Sources): separator-free
+    // latin/digit runs ("eb1" finds "EB-1A"), CJK substring, AND terms.
+    private static func searchFields(of c: ApprovalCard) -> [String] {
+        var f = [c.id, c.title, c.summary ?? "", c.display_title ?? "",
+                 c.notes_text ?? ""]
+        f += c.former_titles ?? []
+        f += c.plan
+        f += c.dod
+        f += c.sources.map { $0.quote }
+        return f
+    }
+
+    private static func searchFields(of t: RunningTask) -> [String] {
+        var f = [t.id, t.name, t.summary ?? "", t.display_title ?? "",
+                 t.notes_text ?? "", t.delivered_summary ?? "",
+                 t.final_draft ?? "", t.agent_name ?? ""]
+        f += t.former_titles ?? []
+        f += t.plan ?? []
+        f += t.dod ?? []
+        return f
+    }
+
+    private static func searchFields(of r: ReviewItem) -> [String] {
+        var f = [r.id, r.name, r.summary ?? "", r.display_title ?? "",
+                 r.notes_text ?? "", r.delivered_summary ?? "",
+                 r.final_draft ?? "", r.agent_name ?? ""]
+        f += r.former_titles ?? []
+        f += r.plan ?? []
+        f += r.dod
+        f += (r.sources ?? []).map { $0.quote }
+        return f
+    }
+
+    private static func searchFields(of d: DebtItem) -> [String] {
+        var f = [d.id, d.title, d.summary ?? "", d.display_title ?? "",
+                 d.notes_text ?? ""]
+        f += d.former_titles ?? []
+        f += (d.sources ?? []).map { $0.quote }
+        return f
+    }
+
+    /// §37 two-layer hit: normalized field match first, then the Mac-local
+    /// session-content index (state/search_index.json) as the LAST layer.
+    private func searchHit(_ q: String, id: String, fields: [String]) -> Bool {
+        if SearchMatch.matches(q, in: fields) { return true }
+        guard let text = sessionText(id) else { return false }
+        return SearchMatch.matches(q, in: [text])
+    }
+
+    /// §37 badge: a VISIBLE (already matched) row that matched the query only
+    /// through its session transcript — the row itself shows none of the words.
+    private func sessionOnly(_ id: String, _ fields: [String]) -> Bool {
+        let q = boardNeedle
+        guard !q.isEmpty else { return false }
+        if SearchMatch.matches(q, in: fields) { return false }
+        guard let text = sessionText(id) else { return false }
+        return SearchMatch.matches(q, in: [text])
+    }
+
+    func sessionOnlyHit(_ c: ApprovalCard) -> Bool { sessionOnly(c.id, Self.searchFields(of: c)) }
+    func sessionOnlyHit(_ t: RunningTask) -> Bool { sessionOnly(t.id, Self.searchFields(of: t)) }
+    func sessionOnlyHit(_ r: ReviewItem) -> Bool { sessionOnly(r.id, Self.searchFields(of: r)) }
+    func sessionOnlyHit(_ d: DebtItem) -> Bool { sessionOnly(d.id, Self.searchFields(of: d)) }
+
+    // §37 session-content layer — state/search_index.json (actd-maintained,
+    // Mac-local, NEVER part of dashboard.json). Lazy-loaded and revalidated by
+    // (mtime, size) so the ~10s tick never re-parses an unchanged file;
+    // missing/corrupt = the layer is silently absent (field search still works).
+    private var searchIndexText: [String: String] = [:]
+    private var searchIndexStamp: (mtime: Date, size: Int)?
+
+    private func sessionText(_ id: String) -> String? {
+        reloadSearchIndexIfNeeded()
+        return searchIndexText[id]
+    }
+
+    private func reloadSearchIndexIfNeeded() {
+        let path = AppPaths.stateRoot + "/state/search_index.json"
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date else {
+            searchIndexText = [:]
+            searchIndexStamp = nil
+            return
+        }
+        let size = (attrs[.size] as? Int) ?? 0
+        if let stamp = searchIndexStamp, stamp.mtime == mtime, stamp.size == size {
+            return
+        }
+        searchIndexStamp = (mtime, size)
+        guard let data = FileManager.default.contents(atPath: path),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
+            searchIndexText = [:]   // corrupt → layer absent, never a crash
+            return
+        }
+        var out: [String: String] = [:]
+        for (k, v) in obj {
+            if let entry = v as? [String: Any], let text = entry["text"] as? String {
+                out[k] = text
+            }
+        }
+        searchIndexText = out
     }
 
     /// visibleApprovals + search. 占位卡不参与过滤隐藏: the grey processing
@@ -1074,9 +1222,7 @@ final class DashboardStore: ObservableObject {
         let q = boardNeedle
         guard !q.isEmpty else { return visibleApprovals }
         return visibleApprovals.filter {
-            $0.processing || Self.searchMatches(q, id: $0.id,
-                                                texts: [$0.title, $0.summary],
-                                                lists: [$0.dod, $0.plan])
+            $0.processing || searchHit(q, id: $0.id, fields: Self.searchFields(of: $0))
         }
     }
 
@@ -1085,33 +1231,24 @@ final class DashboardStore: ObservableObject {
     var boardCompleted: [RunningTask] { searchTasks(visibleCompleted) }
 
     /// Shared RunningTask filter (running / needs_input / completed reuse the
-    /// struct); `name` is the row's title-equivalent field.
+    /// struct).
     private func searchTasks(_ tasks: [RunningTask]) -> [RunningTask] {
         let q = boardNeedle
         guard !q.isEmpty else { return tasks }
-        return tasks.filter {
-            Self.searchMatches(q, id: $0.id, texts: [$0.name, $0.summary],
-                               lists: [$0.dod, $0.plan])
-        }
+        return tasks.filter { searchHit(q, id: $0.id, fields: Self.searchFields(of: $0)) }
     }
 
     var boardReview: [ReviewItem] {
         let q = boardNeedle
         guard !q.isEmpty else { return visibleReview }
-        return visibleReview.filter {
-            Self.searchMatches(q, id: $0.id, texts: [$0.name, $0.summary],
-                               lists: [$0.dod, $0.plan])
-        }
+        return visibleReview.filter { searchHit(q, id: $0.id, fields: Self.searchFields(of: $0)) }
     }
 
     /// 潜在任务 (backlog, dashboard key `debt`) — DebtItem has no dod/plan fields.
     var boardDebt: [DebtItem] {
         let q = boardNeedle
         guard !q.isEmpty else { return visibleDebt }
-        return visibleDebt.filter {
-            Self.searchMatches(q, id: $0.id, texts: [$0.title, $0.summary],
-                               lists: [])
-        }
+        return visibleDebt.filter { searchHit(q, id: $0.id, fields: Self.searchFields(of: $0)) }
     }
 }
 

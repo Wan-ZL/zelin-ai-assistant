@@ -141,6 +141,70 @@ if let d = decodeDashboard(#"{"device_label": 42}"#) {
     check(d.device_label == nil, "non-string → nil, payload still decodes")
 } else { check(false, "decode", "junk device_label must not fail the payload") }
 
+// ---- 8. §37 living display titles: add-only decode + headline preference ----
+print("[8] display_title / user_titled / former_titles decode:")
+let titled = """
+{"needs_approval": [
+   {"id": "P-1", "title": "https://example.com/a/b", "summary": "人话摘要",
+    "display_title": "整理推荐信", "former_titles": ["旧名一", "旧名二"],
+    "notes_text": "评论折叠"},
+   {"id": "P-2", "title": "raw", "summary": "摘要",
+    "display_title": "用户钉的名", "user_titled": true}
+ ],
+ "review": [{"id": "V-1", "name": "raw internal name",
+             "display_title": "起草绿卡推荐信", "user_titled": true}],
+ "running": [{"id": "R-1", "name": "raw", "display_title": "跑着的显示名",
+              "final_draft": "草稿正文"}],
+ "debt": [{"id": "D-1", "title": "raw", "display_title": "潜在任务显示名"}]}
+"""
+if let d = decodeDashboard(titled) {
+    let p1 = d.needs_approval[0]
+    check(p1.display_title == "整理推荐信", "display_title decodes")
+    check(p1.former_titles == ["旧名一", "旧名二"], "former_titles decode")
+    check(p1.notes_text == "评论折叠", "notes_text decodes")
+    check(p1.displaySummary == "人话摘要", "summary still wins when not user-titled")
+    let p2 = d.needs_approval[1]
+    check(p2.user_titled && p2.displaySummary == "用户钉的名",
+          "user-pinned name wins over summary", "got \(p2.displaySummary)")
+    let v1 = d.review[0]
+    check(v1.rowTitle == "起草绿卡推荐信", "review rowTitle prefers display_title")
+    check(v1.displayHeadline == "起草绿卡推荐信", "user-pinned review headline")
+    let r1 = d.running[0]
+    check(r1.rowTitle == "跑着的显示名", "running rowTitle prefers display_title")
+    check(r1.final_draft == "草稿正文", "running final_draft decodes (§37 search)")
+    let m = BoardModel(d)
+    check(m.title(of: "V-1") == "起草绿卡推荐信", "BoardModel.title uses displayHeadline")
+    check(m.title(of: "D-1") == "潜在任务显示名",
+          "debt displaySummary backstops with display_title")
+} else { check(false, "decode", "titled payload must decode") }
+if let d = decodeDashboard(#"{"needs_approval": [{"id": "P-1", "title": "t"}]}"#) {
+    let c = d.needs_approval[0]
+    check(c.display_title == nil && !c.user_titled && c.former_titles == nil,
+          "absent §37 fields decode to nil/false (old actd payloads)")
+    check(c.displaySummary == "t", "fallback chain bottoms out at title")
+} else { check(false, "decode", "legacy payload must decode") }
+if let d = decodeDashboard(
+    #"{"trash": [{"id":"T-1","title":"raw","display_title":"回收站显示名","user_titled":true}]}"#) {
+    check(d.trash[0].displaySummary == "回收站显示名", "trash row honors user pin")
+} else { check(false, "decode", "trash titled payload must decode") }
+
+// ---- 9. §37 SearchMatch: separator-free latin runs + CJK + AND terms ----
+print("[9] SearchMatch normalized matching:")
+check(SearchMatch.matches("eb1", in: ["准备 EB-1A 的推荐信"]), "eb1 → EB-1A")
+check(SearchMatch.matches("h1b", in: ["H-1B transfer timeline"]), "h1b → H-1B")
+check(!SearchMatch.matches("eb2", in: ["准备 EB-1A 的推荐信"]),
+      "no false positive: eb2 must NOT match EB-1A")
+check(SearchMatch.matches("绿卡", in: ["下一步是绿卡材料清单"]), "CJK substring")
+check(SearchMatch.matches("绿卡 推荐信", in: ["整理绿卡材料", "三封推荐信"]),
+      "multi-term AND across fields")
+check(!SearchMatch.matches("绿卡 报税", in: ["整理绿卡材料", "三封推荐信"]),
+      "AND semantics: one missing term fails the card")
+check(SearchMatch.matches("EB1A", in: ["eb-1a petition"]), "case-insensitive both ways")
+check(SearchMatch.matches("v0.33", in: ["v0_33 release notes"]),
+      "underscore/dot separators strip the same way")
+check(SearchMatch.matches("", in: ["anything"]), "empty query = passthrough")
+check(!SearchMatch.matches("x", in: []), "no fields = no match")
+
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))
     exit(1)
