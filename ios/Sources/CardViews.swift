@@ -468,6 +468,8 @@ struct MergeSuggestionCard: View {
         case "high":   MetaChip(text: L("置信 高", "Conf: high"), color: .green)
         case "medium": MetaChip(text: L("置信 中", "Conf: med"), color: .orange)
         case "low":    MetaChip(text: L("置信 低", "Conf: low"), color: .gray)
+        // §38 auto suggestions: deterministic rule, not an AI analysis
+        case "deterministic": MetaChip(text: L("规则判定", "Rule-based"), color: .purple)
         default:       MetaChip(text: c, color: .gray)
         }
     }

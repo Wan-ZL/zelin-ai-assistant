@@ -12,6 +12,7 @@
 		000000000000000000000008 /* I18n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* I18n.swift */; };
 		000000000000000000000009 /* InboxAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* InboxAction.swift */; };
 		00000000000000000000000A /* Lanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005 /* Lanes.swift */; };
+		00000000000000000000003D /* FoldNote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000003C /* FoldNote.swift */; };
 		00000000000000000000001A /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000B /* App.swift */; };
 		00000000000000000000001B /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000C /* AppState.swift */; };
 		00000000000000000000001C /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000000D /* BoardView.swift */; };
@@ -35,6 +36,7 @@
 		000000000000000000000003 /* I18n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = I18n.swift; sourceTree = "<group>"; };
 		000000000000000000000004 /* InboxAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxAction.swift; sourceTree = "<group>"; };
 		000000000000000000000005 /* Lanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lanes.swift; sourceTree = "<group>"; };
+		00000000000000000000003C /* FoldNote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoldNote.swift; sourceTree = "<group>"; };
 		00000000000000000000000B /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		00000000000000000000000C /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		00000000000000000000000D /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
@@ -83,6 +85,7 @@
 				000000000000000000000003 /* I18n.swift */,
 				000000000000000000000004 /* InboxAction.swift */,
 				000000000000000000000005 /* Lanes.swift */,
+				00000000000000000000003C /* FoldNote.swift */,
 			);
 			name = Shared;
 			path = "../shared/Sources";
@@ -191,6 +194,7 @@
 				000000000000000000000008 /* I18n.swift in Sources */,
 				000000000000000000000009 /* InboxAction.swift in Sources */,
 				00000000000000000000000A /* Lanes.swift in Sources */,
+				00000000000000000000003D /* FoldNote.swift in Sources */,
 				00000000000000000000001A /* App.swift in Sources */,
 				00000000000000000000001B /* AppState.swift in Sources */,
 				00000000000000000000001C /* BoardView.swift in Sources */,
@@ -254,7 +258,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				MARKETING_VERSION = 0.37.1;
+				MARKETING_VERSION = 0.38.0;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -275,7 +279,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				MARKETING_VERSION = 0.37.1;
+				MARKETING_VERSION = 0.38.0;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
 				GENERATE_INFOPLIST_FILE = NO;

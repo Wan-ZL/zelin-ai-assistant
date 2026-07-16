@@ -332,6 +332,7 @@ def _delivery_mode(req: Requirement) -> str:
 # board — projected capped so one chatty card can't bloat the ~10s rewrite
 # (and the E2E board payload) unboundedly.
 _NOTES_TEXT_CAP = 2000
+_NOTES_CLIP_MARKER = "…（更早的备注已省略）"
 
 
 def _display_title(req: Requirement) -> str:
@@ -345,6 +346,26 @@ def _display_title(req: Requirement) -> str:
     return titles.sanitize_title(_s(req.title)) or _s(req.title)
 
 
+def _notes_text(req: Requirement):
+    """§38 clip semantics for the notes projection: line-aligned TAIL. Fold
+    lines append at the TAIL — a head clip would silently drop the newest
+    folds' [@ts] handles (and can cut an 已拆出 flip mid-tag), exactly what
+    拆成新卡 needs. Over the cap the LAST ~2000 chars survive, snapped
+    forward to a line boundary so Swift's FoldNote.parse only ever sees
+    intact lines; an ellipsis marker line says honestly that older notes
+    were dropped. None when the card has no notes."""
+    notes = str(req.notes or "").strip()
+    if not notes:
+        return None
+    if len(notes) > _NOTES_TEXT_CAP:
+        clipped = notes[-_NOTES_TEXT_CAP:]
+        nl = clipped.find("\n")
+        if nl >= 0:   # drop the partial first line (a giant single line stays)
+            clipped = clipped[nl + 1:]
+        notes = f"{_NOTES_CLIP_MARKER}\n{clipped}"
+    return notes
+
+
 def _title_fields(req: Requirement) -> dict:
     """The §37 add-only row fields shared by every lane projection. Empty
     optionals are omitted (not null) so the payload only grows where there is
@@ -356,9 +377,9 @@ def _title_fields(req: Requirement) -> dict:
               if str(x).strip()]
     if former:
         out["former_titles"] = former
-    notes = str(req.notes or "").strip()
+    notes = _notes_text(req)   # §38: tail-aligned clip (fold handles survive)
     if notes:
-        out["notes_text"] = notes[:_NOTES_TEXT_CAP]
+        out["notes_text"] = notes
     return out
 
 

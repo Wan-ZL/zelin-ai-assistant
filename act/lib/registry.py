@@ -100,11 +100,15 @@ _OPTIONAL_ORDER = [
     # (above) is reused to remember the restore target for unarchive.
     "archived_at",
     "archive_reason",
-    # v0.37 living display titles (§37) — the frozen `title` above stays the
+# v0.37 living display titles (§37) — the frozen `title` above stays the
     # dedupe/re-raise identity anchor; these carry the human-facing name.
     "display_title",
     "user_titled",
     "former_titles",
+    # §38 split lineage — set once on a card minted by the split_note undo;
+    # machine-readable so auto_merge never suggests merging the split back
+    # (the [拆自 R-xxx] notes breadcrumb is prose, not a signal).
+    "split_from",
 ]
 
 
@@ -152,6 +156,8 @@ class Requirement:
     # v0.20.0 archive bookkeeping (§4) — set once archived (prev_status reused).
     archived_at: Optional[str] = None
     archive_reason: Optional[str] = None
+    # §38 split lineage (see _OPTIONAL_ORDER note) — origin card of a split.
+    split_from: Optional[str] = None
 
     # v0.37 living display titles (§37). `title` above is FROZEN (identity
     # anchor for merge_or_new/_same_source_and_title/re-raise) — display_title
@@ -769,6 +775,91 @@ def _dedupe_sources(existing: list, incoming: list) -> tuple[list, int]:
     return merged, added
 
 
+# --------------------------------------------------------------------------- #
+# fold notes (§38) — timestamped so a fold is REVERSIBLE (inbox split_note).
+# Line shape: "[radar|quick] <text> [@<ts>]" (+ " [已拆出 R-yyy]" once split).
+# The "[kind] <text>" prefix is FROZEN (pre-§38 tests anchor it); the ts tag
+# rides at the END so legacy substring assertions keep passing. Swift's fold-
+# note parser in mac/Sources/Cards.swift mirrors this shape — keep in lockstep.
+# --------------------------------------------------------------------------- #
+_FOLD_LINE_RE = re.compile(r"^\[(?P<kind>radar|quick)\] (?P<body>.*)$")
+_FOLD_TS_RE = re.compile(r" \[@(?P<ts>[^\]\s]+)\]$")
+_FOLD_SPLIT_RE = re.compile(r" \[已拆出 (?P<rid>[^\]\s]+)\]$")
+
+
+def parse_fold_notes(notes) -> list[dict]:
+    """Parse the fold-note lines out of a notes blob.
+
+    Returns ``[{"kind", "text", "ts", "split_into"}, ...]`` in line order;
+    legacy un-timestamped lines come back with ``ts=None`` (they predate §38
+    and cannot be split — no stable handle). Non-fold lines are skipped."""
+    out: list[dict] = []
+    for line in str(notes or "").split("\n"):
+        m = _FOLD_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        body = m.group("body")
+        split_into = None
+        sm = _FOLD_SPLIT_RE.search(body)
+        if sm:
+            split_into = sm.group("rid")
+            body = body[: sm.start()]
+        ts = None
+        tm = _FOLD_TS_RE.search(body)
+        if tm:
+            ts = tm.group("ts")
+            body = body[: tm.start()]
+        out.append({"kind": m.group("kind"), "text": body.strip(),
+                    "ts": ts, "split_into": split_into})
+    return out
+
+
+def append_fold_note(req: Requirement, note, kind: str = "radar") -> Optional[str]:
+    """Append a timestamped fold-note line to ``req.notes`` (in memory only —
+    the caller saves). Returns the ts tag used, or None when nothing was added.
+
+    Dedup is on ``(kind, note text)`` — the radar's failed-note retry queue
+    re-folds the same hit on every retry, and an identical note must not
+    accumulate on the user-visible card ("retry is harmless", pre-§38
+    invariant). Legacy un-timestamped ``[kind] note`` lines count as already
+    present. Same-second folds get a ``#n`` suffix so every ts tag on one card
+    stays a unique split handle."""
+    text = " ".join(str(note or "").split()).strip()
+    if not text:
+        return None
+    existing = parse_fold_notes(req.notes)
+    if any(e["kind"] == kind and e["text"] == text for e in existing):
+        return None
+    base = _iso_now()
+    used = {e["ts"] for e in existing if e["ts"]}
+    ts, n = base, 2
+    while ts in used:
+        ts = f"{base}#{n}"
+        n += 1
+    line = f"[{kind}] {text} [@{ts}]"
+    req.notes = (req.notes + "\n" + line).strip() if req.notes else line
+    return ts
+
+
+def mark_note_split(req: Requirement, note_ts, new_id: str) -> bool:
+    """Tag the fold-note line carrying ``[@note_ts]`` as 已拆出 → ``new_id``
+    (append-only — the original text stays as history; in memory only, the
+    caller saves). False when no un-split line carries that ts (unknown ts,
+    legacy line, or an idempotent replay of an already-split note)."""
+    ts = str(note_ts or "").strip()
+    if not ts:
+        return False
+    lines = str(req.notes or "").split("\n")
+    for i, line in enumerate(lines):
+        m = _FOLD_LINE_RE.match(line.strip())
+        if m is None or f"[@{ts}]" not in line or "[已拆出 " in line:
+            continue
+        lines[i] = f"{line} [已拆出 {new_id}]"
+        req.notes = "\n".join(lines)
+        return True
+    return False
+
+
 def _carries_increment(parent: Requirement, new: Requirement) -> bool:
     """Does the new mention add a real increment vs. a pure restatement?
 
@@ -798,9 +889,7 @@ def _fold_hit(target: Requirement, new_req: Optional[Requirement],
     target.sources = merged
     if added:
         target.repeated_mentions = int(target.repeated_mentions or 1) + added
-    if note:
-        tag = f"[radar] {note}"
-        target.notes = (target.notes + "\n" + tag).strip() if target.notes else tag
+    append_fold_note(target, note, "radar")   # §38: timestamped + deduped
     save(target)
     return target
 

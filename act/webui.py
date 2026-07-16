@@ -57,12 +57,14 @@ ALLOWED_ACTIONS = frozenset({
     # no-requirement / suggestion-level (actd.process_inbox dispatch)
     "capture", "feedback", "merge_review", "merge_apply", "merge_dismiss",
     "import_claude_sessions", "weekly_digest_now",
+    # §38 拆成新卡 (fold undo): id + note_ts
+    "split_note",
 })
 
 # Fields we accept from a POST body and forward into the inbox file. Everything
 # else is dropped; ``ts`` is always (re)stamped server-side so the client can
 # never spoof it. This mirrors the Mac app's inbox payload shapes (§3/§10/§21).
-_INBOX_KEYS = ("id", "action", "comment", "text", "ids", "title")
+_INBOX_KEYS = ("id", "action", "comment", "text", "ids", "title", "note_ts")
 
 # A scalar ``id`` in a POST body is forwarded verbatim into the inbox file and
 # ends up in merge_review.job_path() as ``MERGE_DIR / f"{id}.json"`` (via
@@ -333,7 +335,7 @@ class _Handler(BaseHTTPRequestHandler):
         # null/absent — the Mac app writes ``comment: null``). A non-string
         # forwarded verbatim would poison the inbox file and wedge actd's
         # ``(comment or "").strip()``-style handling every pass.
-        for key in ("comment", "text"):
+        for key in ("comment", "text", "note_ts"):
             if payload.get(key) is not None and not isinstance(payload[key], str):
                 self._json(400, {"error": f"{key} must be a string"})
                 return

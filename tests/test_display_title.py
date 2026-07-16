@@ -196,7 +196,14 @@ class ProjectionTestCase(unittest.TestCase):
         self.assertEqual(row["display_title"], "钉住的名字")
         self.assertIs(row["user_titled"], True)
         self.assertEqual(row["former_titles"], ["旧名"])
-        self.assertEqual(len(row["notes_text"]), 2000)  # capped
+        # §38 clip semantics: line-aligned TAIL behind an honest marker line
+        # (fold-note [@ts] handles live at the tail — the head clip this
+        # asserted originally silently dropped them; merge reconciliation
+        # kept the tail clip, see CONTRACT §38.2).
+        nt = row["notes_text"]
+        self.assertTrue(nt.endswith("n" * 100))          # tail survives
+        self.assertIn("更早的备注已省略", nt.split("\n")[0])
+        self.assertLessEqual(len(nt), 2000 + 30)          # cap + marker line
 
     def test_optionals_omitted_when_empty(self):
         req = Requirement.from_dict({

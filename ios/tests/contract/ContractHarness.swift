@@ -222,6 +222,39 @@ check(SearchMatch.matchesNormalized("推荐信 chen", in: hay)
 check(SearchMatch.matchesNormalized("eb1", in: SearchMatch.normalizedHaystack(["EB-1A"])),
       "normalizedHaystack strips separators once, matches still hit")
 
+// ---- 10. FoldNote.parse (§38): notes_text fold-line parsing ----
+// Lockstep twin of act/lib/registry.py's fold-line regexes. The projection is
+// line-aligned TAIL-clipped (python side), so the parser only ever sees whole
+// lines — but a straddle-shaped partial line must still degrade safely (no
+// crash, no phantom split marker), and the 已拆出 real-signal line must parse
+// exactly (the Mac Store clears its optimistic 拆分中… off it).
+print("[10] FoldNote.parse:")
+let foldNotes = """
+…（更早的备注已省略）
+plain non-fold note line
+[radar] 邮件又催了一遍 [@2026-07-16T08:00:00Z]
+[quick] 老格式没有句柄
+[radar] 已拆出去的那条 [@2026-07-16T08:00:01Z] [已拆出 R-045]
+"""
+let parsed = FoldNote.parse(foldNotes)
+check(parsed.count == 3, "non-fold lines (marker, prose) skipped", "got \(parsed.count)")
+check(parsed[0].kind == "radar" && parsed[0].text == "邮件又催了一遍"
+        && parsed[0].ts == "2026-07-16T08:00:00Z" && parsed[0].splitInto == nil,
+      "timestamped line → text + ts handle")
+check(parsed[1].ts == nil && parsed[1].splitInto == nil,
+      "legacy un-timestamped line → display-only (no handle)")
+check(parsed[2].splitInto == "R-045" && parsed[2].ts == "2026-07-16T08:00:01Z",
+      "已拆出 line → splitInto (the Store's real-signal read)",
+      "got \(String(describing: parsed[2].splitInto))")
+// straddle shape: a HEAD-clipped partial tag (the pre-fix projection bug)
+// must not parse as a split marker — and must not crash.
+let straddle = FoldNote.parse("[radar] 拆过的 [@t1] [已拆出 R")
+check(straddle.count == 1 && straddle[0].splitInto == nil,
+      "truncated 已拆出 tag → no phantom split marker",
+      "got \(String(describing: straddle.first?.splitInto))")
+check(FoldNote.parse(nil).isEmpty && FoldNote.parse("").isEmpty,
+      "nil/empty notes → empty")
+
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))
     exit(1)

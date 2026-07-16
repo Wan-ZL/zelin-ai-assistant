@@ -73,6 +73,11 @@ except Exception:  # pragma: no cover - update check must not kill daemon
     update_check = None  # type: ignore
 
 try:
+    from act.lib import auto_merge
+except Exception:  # pragma: no cover - auto merge hints must not kill daemon
+    auto_merge = None  # type: ignore
+
+try:
     from act.lib import feedback
 except Exception:  # pragma: no cover - feedback import must not kill daemon
     feedback = None  # type: ignore
@@ -153,6 +158,18 @@ def process_inbox() -> int:
             # gate — the card is filed straight into the approved queue.
             if action == "capture":
                 result = _apply_capture(decision.get("text"), decision.get("mode"))
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
+            # §38 split_note (拆成新卡): carries id + note_ts (the fold-note
+            # line's ts tag) — the reversible-fold undo, own branch because of
+            # the extra field (triple-validated: syncd shape gate + webui 400
+            # + the honest no-ops inside).
+            if action == "split_note":
+                result = _apply_split_note(decision.get("id"),
+                                           decision.get("note_ts"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -523,6 +540,73 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
         "inbox_capture", req=saved.id, status=str(saved.status), chars=len(t),
         text=(analytics.clip_content(t)
               if analytics.content_gate() else None))
+    return "running"
+
+
+def _apply_split_note(req_id, note_ts) -> str:
+    """§38 拆成新卡 — the fold undo. ``{"action":"split_note","id":"R-xxx",
+    "note_ts":"<ts tag>"}`` takes the fold-note line tagged ``[@note_ts]`` on
+    card ``id`` and re-files its text as a NEW card via the normal capture
+    path (detected→raising→AI expansion→proposal, default routing), then
+    tags the origin line 已拆出 → 新卡 id (append-only, history preserved).
+
+    Deliberately NOT ``merge_or_new``: the user just said this note does NOT
+    belong to that card — a deterministic re-fold would undo the undo. Same
+    boundary doctrine as capture (§33): poison payloads / unknown ts /
+    already-split lines are honest no-ops (a replayed split must never mint a
+    second card). Returns the §5.4 result_status.
+    """
+    if not isinstance(req_id, str) or not isinstance(note_ts, str):
+        _log(f"inbox: split_note with non-string fields "
+             f"(id={type(req_id).__name__}, note_ts={type(note_ts).__name__}) — ignored")
+        return "noop"
+    rid, ts = req_id.strip(), note_ts.strip()
+    req = load(rid) if rid else None
+    if req is None:
+        _log(f"inbox: split_note for unknown req {req_id!r} — dropped")
+        return "unknown"
+    if str(req.status) in _MERGE_DEAD_STATES or req.is_merged:
+        # terminal-state doctrine (§32.2, same set the merge machinery
+        # refuses): a stale detail panel must not mint a live card (+1 expand
+        # LLM run) out of a card that meanwhile trashed/merged/rejected/
+        # archived. Notes stay untouched; honest noop ack.
+        _log(f"inbox: {req.id} split_note on terminal card "
+             f"({req.status}) — no-op")
+        return "noop"
+    entry = next((e for e in registry.parse_fold_notes(req.notes)
+                  if e["ts"] == ts and not e["split_into"] and e["text"]), None)
+    if entry is None:
+        _log(f"inbox: {req.id} split_note ts {note_ts!r} not found / already "
+             f"split — no-op")
+        return "noop"
+    text = entry["text"]
+    new = Requirement(
+        id=registry.next_id(),
+        title=text[:80],
+        type=req.type or "other",
+        tier=req.tier or "T1",
+        status=State.RAISING.value,   # capture path: AI expands it next pass
+        hardness="soft",
+        summary=text[:120],
+        sources=[{
+            "who": "zelin",
+            "channel": "split",
+            "date": _dt.date.today().isoformat(),
+            "quote": text,
+        }],
+        notes=f"[拆自 {req.id}] 从其折叠备注拆出",
+        # machine-readable lineage: the new card's text ≈ the origin note by
+        # construction, and auto_merge would otherwise suggest merging it
+        # straight back — one 采纳 destroying the undo (§38.3 _linked).
+        split_from=req.id,
+    )
+    # new card FIRST, origin tag second (archive()'s crash-mid-move doctrine:
+    # a crash between the two leaves the split recoverable, never lost).
+    save(new)
+    if registry.mark_note_split(req, ts, new.id):
+        save(req)
+    _log(f"inbox: {req.id} split_note [@{ts}] -> {new.id} (raising)")
+    analytics.log_event("split_note", req=req.id, new=new.id)
     return "running"
 
 
@@ -2094,6 +2178,11 @@ def run_once(
     purge_trash(cfg)
     archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
+    if auto_merge is not None:
+        # §38: deterministic near-dupe hints for newly appeared open cards
+        # (radar cron files cards from outside this process, so "new" is
+        # detected by ledger diff, not an in-process creation hook).
+        auto_merge.scan_new_cards()
     try:
         # §37 session-content search layer: drop terminal/absent cards. Cheap:
         # returns immediately when state/search_index.json doesn't exist.
