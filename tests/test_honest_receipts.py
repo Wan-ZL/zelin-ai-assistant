@@ -19,7 +19,9 @@ Pinned here:
 - weekly-digest failure exits notify on MANUAL runs (§40.4) — the detached
   「现在生成一份」 press must never fail silently; scheduled runs stay
   quiet (a failed Monday re-fires hourly — an unconditional notify would
-  ping all day).
+  ping all day);
+- notification batching (§40.6): >2 fresh proposals in one pass collapse
+  to one 「雷达新增 N 张待审批卡」; 回锅 and ≤2 fresh stay per-card.
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no
 LLM subprocess is ever spawned (runners/extractors injected).
@@ -36,8 +38,8 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import radar, radar_slack, weekly_digest
-from act.lib import config, dashboard, registry
+from act import actd, radar, radar_slack, weekly_digest
+from act.lib import config, dashboard, notify, registry
 from act.lib.registry import Requirement, State
 
 
@@ -391,6 +393,47 @@ class DigestFailureNotifyTestCase(unittest.TestCase):
         summary = weekly_digest.run(force=False, runner=boom, now=due_now)
         self.assertFalse(summary["ok"])
         self.notify.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# §40.6 notification batching (fresh proposals only)
+# --------------------------------------------------------------------------- #
+def _dash(needs_approval=()):
+    return {"needs_approval": [dict(i) for i in needs_approval],
+            "running": [], "needs_input": [], "review": []}
+
+
+class BatchNotifyTestCase(unittest.TestCase):
+    def test_three_fresh_cards_collapse_to_one(self):
+        prev = _dash()
+        curr = _dash(needs_approval=[{"id": f"R-{i}", "title": f"卡{i}"}
+                                     for i in range(3)])
+        msgs = actd.detect_transitions(prev, curr)
+        self.assertEqual(len(msgs), 1)
+        title, _body, rid = msgs[0]
+        self.assertIn("3", title)
+        self.assertEqual(title, notify.msg_new_cards_batch(3)[0])
+        self.assertIsNone(rid)   # a batch names no single card
+
+    def test_two_fresh_cards_stay_per_card(self):
+        prev = _dash()
+        curr = _dash(needs_approval=[{"id": "R-1", "title": "卡一"},
+                                     {"id": "R-2", "title": "卡二"}])
+        msgs = actd.detect_transitions(prev, curr)
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual({m[2] for m in msgs}, {"R-1", "R-2"})
+
+    def test_reraised_stays_per_card_next_to_a_batch(self):
+        prev = _dash()
+        curr = _dash(needs_approval=(
+            [{"id": f"R-{i}", "title": f"卡{i}"} for i in range(3)]
+            + [{"id": "R-9", "title": "回锅卡", "reraised": True,
+                "reraised_note": "新信息"}]))
+        msgs = actd.detect_transitions(prev, curr)
+        self.assertEqual(len(msgs), 2)
+        by_rid = {m[2] for m in msgs}
+        self.assertIn("R-9", by_rid)   # 回锅 keeps its own notification
+        self.assertIn(None, by_rid)    # the 3 fresh ones collapsed
 
 
 if __name__ == "__main__":
