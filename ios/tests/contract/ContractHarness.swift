@@ -141,6 +141,28 @@ if let d = decodeDashboard(#"{"device_label": 42}"#) {
     check(d.device_label == nil, "non-string → nil, payload still decodes")
 } else { check(false, "decode", "junk device_label must not fail the payload") }
 
+// ---- 8. question (§39 v0.39): needs_input rows carry the pending question ----
+// Old actd payloads lack the key (nil → UI falls back to waiting_for); the
+// InboxAction side of §39 (answer_input encoding) is locked by the interop
+// harness's byte-determinism discipline, decode compat is locked here.
+print("[8] needs_input question decode:")
+let questionBoard = """
+{"needs_input": [
+   {"id": "N-1", "name": "asker", "state": "blocked",
+    "question": "A 方案还是 B 方案？", "waiting_for": null},
+   {"id": "N-2", "name": "legacy", "state": "blocked", "waiting_for": "input"}
+ ]}
+"""
+if let d = decodeDashboard(questionBoard) {
+    check(d.needs_input.first?.question == "A 方案还是 B 方案？",
+          "present → decoded", "got \(String(describing: d.needs_input.first?.question))")
+    check(d.needs_input.first?.waiting_for == nil,
+          "null waiting_for beside a question → nil")
+    check(d.needs_input.last?.question == nil, "absent → nil (old actd payloads)")
+    check(d.needs_input.last?.waiting_for == "input", "legacy fallback row intact")
+    check(d.decodeDrops.isEmpty, "question is not a drop", "got \(d.decodeDrops)")
+} else { check(false, "decode", "question payload must decode") }
+
 if !allOK {
     FileHandle.standardError.write(Data("CONTRACT TESTS: FAILURES\n".utf8))
     exit(1)

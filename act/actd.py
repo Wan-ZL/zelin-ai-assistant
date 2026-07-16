@@ -191,6 +191,15 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
+            # §39 回答需输入: carries "id" + "text" (not comment) — the owner's
+            # typed answer for a blocked session, delivered via executor.answer.
+            if action == "answer_input":
+                result = _apply_answer_input(decision)
+                processed += 1
+                _write_applied_ack(path.stem, result)
+                _safe_unlink(path)
+                continue
+
             # §22 one-shot Claude Code session import — no requirement-level id.
             if action == "import_claude_sessions":
                 result = _apply_claude_import(decision)
@@ -550,6 +559,78 @@ def _apply_feedback(decision: dict) -> str:
     analytics.log_event("inbox_feedback", n=len(ids),
                         uploaded=rec.get("uploaded"))
     return "running"
+
+
+def _apply_answer_input(decision: dict) -> str:
+    """回答需输入 (CONTRACT §39) — deliver the owner's typed answer into a
+    blocked session via executor.answer (stop-idle-then-resume, the rework
+    plumbing with an ``OWNER ANSWER:`` prefix instead of the 打回 preamble).
+
+    ``{"action":"answer_input","id":"R-001","text":"…"}`` — boundary
+    validation here (§33 house pattern, fail-closed): ``text`` must be a str
+    whose trimmed length is 1..4000 (non-str / empty / oversize -> logged
+    drop — junk must never relaunch a session); unknown card -> "unknown";
+    a phone-pinned ``expected_status`` mismatch -> stale no-op; only an
+    EXECUTING card is answerable (需输入 rows only ever project executing
+    cards — any other status means the board moved since the tap).
+
+    Honest acks (§5.4): "running" ONLY when the answer genuinely reached the
+    session (notes tag [回答已送达]); every delivery failure is "noop" AND
+    visible — notes tag [回答送达失败] + notification + the card's last_error
+    (dashboard §39) — never silent.
+    """
+    if executor is None:
+        _log("inbox: answer_input requested but executor unavailable — dropped")
+        return "noop"
+    text = decision.get("text")
+    if not isinstance(text, str):
+        _log(f"inbox: answer_input with non-string text "
+             f"({type(text).__name__}) — dropped")
+        return "noop"
+    t = text.strip()
+    if not t or len(t) > 4000:
+        _log(f"inbox: answer_input text length {len(t)} outside 1..4000 — dropped")
+        return "noop"
+    req_id = decision.get("id")
+    req = load(req_id) if req_id else None
+    if req is None:
+        _log(f"inbox: answer_input for unknown req {req_id!r} — dropped")
+        return "unknown"
+    expected_status = decision.get("expected_status")
+    if not _precondition_ok(req, expected_status):
+        _log(f"inbox: {req.id} answer_input stale "
+             f"(expected {expected_status}, is {req.status}) — no-op")
+        return "noop"
+    if str(req.status) != State.EXECUTING.value:
+        _log(f"inbox: {req.id} answer_input ignored (status={req.status}) — no-op")
+        return "noop"
+    ok = False
+    try:
+        ok = bool(executor.answer(req, t))
+    except Exception as e:  # noqa: BLE001 - answer must never kill the pass
+        _log(f"inbox: {req.id} answer_input crashed: {e}")
+    stamp = _dt.date.today().isoformat()
+    if ok:
+        tag = f"[{stamp} 回答已送达] {t[:200]}"
+        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        save(req)
+        _log(f"inbox: {req.id} answer_input delivered into session")
+        analytics.log_event(
+            "inbox_answer_input", req=req.id, ok=True, chars=len(t),
+            text=(analytics.clip_content(t)
+                  if analytics.content_gate() else None))
+        return "running"
+    # executor.answer recorded execution.last_error — surface the failure
+    # everywhere the owner can see it (§39: never a silent drop).
+    reason = str((req.execution or {}).get("last_error") or "启动失败")[:160]
+    tag = f"[{stamp} 回答送达失败] {reason}"
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    save(req)
+    notify.notify(*notify.msg_answer_failed(req.title or req.id, reason),
+                  req=req.id)
+    _log(f"inbox: {req.id} answer_input NOT delivered ({reason}) — acking noop")
+    analytics.log_event("inbox_answer_input", req=req.id, ok=False, chars=len(t))
+    return "noop"
 
 
 def _apply_claude_import(decision: dict) -> str:
@@ -1672,10 +1753,12 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str]
             t, b = notify.msg_review_ready(item.get("name") or rid)
             msgs.append((t, b, rid))
 
-    # executing -> blocked (newly needs_input, previously running)
+    # executing -> blocked (newly needs_input, previously running). §39: the
+    # notification carries a snippet of the QUESTION the agent is asking.
     for rid, item in c_ni.items():
         if rid not in p_ni and rid in p_run:
-            t, b = notify.msg_needs_input(item.get("name") or rid)
+            t, b = notify.msg_needs_input(item.get("name") or rid,
+                                          item.get("question"))
             msgs.append((t, b, rid))
 
     return msgs

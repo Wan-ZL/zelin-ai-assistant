@@ -128,7 +128,7 @@ debt item 新增 `summary`（同上，大白话）。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
-`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下)。actd 读后删 inbox 文件。
+`approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -1184,3 +1184,89 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+# v0.39.0 additions（需输入卡可直接回答 — 问题上卡 + 应用内作答）
+
+## 39. 需输入的 `question` 字段 + `answer_input` 动作（add-only）
+
+**背景**：agent 卡在 needs_input 时，看板只显示 `waiting_for: "input"`——用户
+既看不到 AI 在问什么，也没有任何 App 内回答入口，唯一出路是复制命令去终端。
+本节把「问题」投影上卡、把「回答」做成一等 inbox 动作，Mac 与 iPhone 同权。
+
+### 39.1 dashboard `needs_input[]` 行新增字段（add-only，Swift `decodeIfPresent`）
+
+- `question`(str，≤500 字)：被阻塞 session 的**最后一条 assistant 正文**（
+  `executor.extract_question`——与 harvest 同一套 transcript 纪律：短 id glob、
+  跳过 sidechain/isMeta/tool-result 行、只取**最后一个真实 user turn 之后**的
+  文本，rework/answer 注入即 user turn，绝不把上一轮的话当成当前问题）。无
+  transcript / 无正文时**整键缺失**（不是 null）。热路径防线：按
+  (sid, transcript 签名) 记忆化（`dashboard._QUESTION_CACHE`，v0.33.1 tinfo
+  memo 同款 (path, mtime_ns, size) 签名）——空闲阻塞的 transcript 每 pass 只付
+  stat 成本，绝不重复整文件 json-parse。
+- `waiting_for` 语义收紧：roster 给出的原因照旧透传；**兜底 `"input"` 只在
+  没有任何 transcript 正文（question 缺失）时保留**——真问题旁边的裸
+  "input" 是噪音。有 question 且 roster 无原因时 `waiting_for` 为 null。
+- `last_error`(str|null) + `last_error_id`(str|null)：与 running 行同源（§25
+  分类）——回答送达失败必须在卡上可见，不只在通知里。
+
+### 39.2 inbox 动作 `answer_input`（§10 全集追加）
+
+```json
+{"action":"answer_input","id":"R-001","text":"用 A 方案，预算 $50 以内","ts":"…"}
+```
+
+- **形状**：`id` + `text`（不是 `comment`）；同步端可钉 `expected_status`
+  （§32.2）。三重边界校验（§33 house pattern）：手机→syncd 形状闸门（`text`
+  已在 str-or-absent 词表）、web→webui ALLOWED_ACTIONS、actd 侧
+  fail-closed——`text` 非 str / 去空白后长度不在 **1..4000** → logged noop
+  （垃圾绝不 relaunch session）；未知卡 → `unknown`；`expected_status` 不符 →
+  stale noop；**仅 EXECUTING 卡可回答**（needs_input 行只投影 executing 卡，
+  其它状态=看板已经移动）。iPhone 钉 `expected_status:"executing"`；Mac 本地
+  不钉（既有惯例）。
+- **投递（executor.answer）**：与 rework 同一条 stop-idle-then-resume 管线
+  （blocked 活进程拒绝 --resume，先 `claude stop`；full-UUID + transcript 最后
+  cwd；无 transcript → 不启动直接失败），resume prompt = `OWNER ANSWER:\n` +
+  原文——极简前缀，让 session 知道这是对它问题的回答，不是新任务也不是打回。
+- **账目（区别于 rework_count，绝不混记）**：`execution.answer_count`(int 累计)
+  + `last_answer_at`(UTC ISO)。**成功启动同时重置 auto-resume 退避**：
+  `resume_attempts=0`、删 `resume_exhausted`、且**不计**一次 resume_attempt
+  （不双记）。理由：reconciler 只在恰好**看见** session 活着时才清零 attempts，
+  而 `resume_exhausted` 从不自清——不删的话，一张曾放弃自动恢复的卡在 owner
+  亲手救活它之后，未来中断仍被静默拒绝 auto-resume。状态机不动：卡保持
+  EXECUTING（resume 铸新 sid 照旧收养，root_session_id 锚定不变）。
+- **诚实处置（§5.4）**：session 成功 resumed → ack `running` + notes 追加
+  `[<date> 回答已送达] <text 截 200>`；投递失败（transcript 没了 / 启动失败）
+  → ack `noop` **且三处可见**：notes 追加 `[<date> 回答送达失败] <原因>`、
+  `notify.msg_answer_failed` 通知、卡上 `last_error`（39.1）——绝不静默吞答案。
+  analytics：`inbox_answer_input`(ok/chars + capture_input 门控的 text)、
+  executor 侧 `answer_launch`/`answer_failed`（feedback 同款形制）。
+
+### 39.3 UI（Mac + iPhone 同权；终端降级为次要通道）
+
+- **Mac**：needs_input 卡主按钮 **「回答…/Answer…」**（橙）→ NSAlert 弹层：
+  问题全文（只读可滚动）+ 多行输入（↩ 发送 · ⇧↩ 换行，promptText 同款）；
+  发出后卡上原地显示橙色「回答发送中…」（`store.answerPending`），**真信号
+  清除** = 卡离开 needs_input（答案送达 session 恢复 working；或投递失败带
+  last_error 改投 running）——generated_at bump 不清（§21bis 先例）；180 s
+  未动 → 诚实橙色超时条。卡正文显示 question（≤8 行，弹层里看全文）；
+  「单击复制·双击终端」的命令回显行从需输入卡正文**降级进 展开详情**（
+  「在终端接管会话」+ 命令，点击复制）——回答是主通道，终端是次要通道。
+- **iPhone**：RunningRow 需输入变体显示 question（缺失时回退 waiting_for）+
+  **回答输入框**（TextField + 发送，走 `InboxAction.answerInput` → 既有
+  sealAndPost 密文通道；busy/已提交态照 MergeSuggestionCard 模式；失败保留
+  草稿）。「手机对需输入只读」的旧注记（plan §6.2）就此作废。
+- **webui**：ALLOWED_ACTIONS 加入 `answer_input`（API 可用）；本期不做 web
+  输入框 UI。
+
+### 39.4 通知与角标
+
+- **needs-input 通知带问题摘录**（§5 文案修订）：`msg_needs_input(title,
+  question)` body = `<title> 在问：<question 截 120>` + 真实位置指引——看板
+  上卡在「运行中」列**顶部**、橙色「需输入」badge、点「回答…」直接回（
+  popover 保留独立「需输入」区）。逐卡通知，不合批（既有行为）。
+- **iOS 角标语义变更**：badge = `needs_approval + needs_input`（此前只数
+  needs_approval）——被阻塞的 agent 正在烧墙钟时间，是最紧急的 owner 决策。
+  新增逐卡本地通知 `notifyNeedsInput`（带 question 摘录；首次拉取该 channel
+  只记账不通知，防启动风暴）。
+- **回答失败通知**：`msg_answer_failed(title, reason)` —— 指向卡上错误详情与
+  展开详情里的「在终端接管会话」兜底。

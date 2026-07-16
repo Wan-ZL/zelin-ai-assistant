@@ -195,7 +195,7 @@ struct DebtRow: View {
     }
 }
 
-// MARK: - Running (+needs_input, read-only) -----------------------------------
+// MARK: - Running (+needs_input, answerable since §39) -------------------------
 struct RunningRow: View {
     let task: RunningTask
     let needsInput: Bool
@@ -208,17 +208,77 @@ struct RunningRow: View {
                     Spacer()
                 }
                 Text(task.summary ?? task.name).font(.subheadline).fontWeight(.medium)
-                if needsInput, let w = task.waiting_for {
-                    Text(w).font(.caption).foregroundStyle(.secondary)
-                }
-                // needs_input has no phone reply path (plan §6.2) — read-only.
-                if !needsInput {
+                if needsInput {
+                    // §39: the question the agent is blocked on (falls back to
+                    // the bare waiting_for reason on older actd payloads) + an
+                    // in-app answer path — the platform gap is closed for real.
+                    if let q = task.question, !q.isEmpty {
+                        Text(q).font(.caption).foregroundStyle(.primary)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.10),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                    } else if let w = task.waiting_for {
+                        Text(w).font(.caption).foregroundStyle(.secondary)
+                    }
+                    AnswerInputBar(cardId: task.id)
+                } else {
                     ActionBar(cardId: task.id, actions: [
                         LaneAction(title: L("停止", "Stop"), verb: .abort_execution, destructive: true, tint: .red),
                         LaneAction(title: L("已在别处完成", "Done elsewhere"), verb: .done_external),
                     ])
                 }
             }
+        }
+    }
+}
+
+/// §39: the needs-input answer composer — TextField + 发送 through the normal
+/// sealed-action plumbing (AppState.submitAnswer → answer_input inbox action).
+/// Busy/submitted state mirrors MergeSuggestionCard: while in flight the bar
+/// swaps to a spinner + 已提交…, then the board refresh moves the card out of
+/// needs_input once the Mac delivered the answer into the session.
+private struct AnswerInputBar: View {
+    let cardId: String
+    @EnvironmentObject var state: AppState
+    @State private var text = ""
+    @State private var busy = false
+
+    var body: some View {
+        if busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(L("回答已提交…", "Answer submitted…"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 8) {
+                TextField(L("回答它的问题…", "Answer its question…"),
+                          text: $text, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...4)
+                    .font(.caption)
+                Button(L("发送", "Send")) { send() }
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.orange)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func send() {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !busy else { return }
+        busy = true
+        Task {
+            // success → clear the draft and refresh (the card leaves
+            // needs_input once the Mac delivered the answer); failure → keep
+            // the typed text so nothing is lost (state.lastError explains).
+            if await state.submitAnswer(cardId: cardId, text: t) {
+                text = ""
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                await state.refreshBoard()
+            }
+            busy = false
         }
     }
 }

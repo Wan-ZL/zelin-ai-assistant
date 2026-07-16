@@ -27,6 +27,29 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.39.0] - 2026-07-16
+
+### Added
+
+- **需输入的卡能直接回答了（Mac + iPhone）** — 以前 AI 卡住等你输入时，卡片
+  只写一句「等待: input」：你看不到它在问什么，也没法在 App 里回它，只能复制
+  命令去终端。现在：
+  - **卡片直接显示 AI 的问题**（它最后说的那段话，最多 500 字）——Mac 看板、
+    菜单栏面板、iPhone「运行中」页都能看到；通知里也带上问题摘录，并告诉你
+    卡片就在「运行中」列顶部（橙色「需输入」）。
+  - **Mac：卡上新增主按钮「回答…」** —— 弹层里上面是问题全文（可滚动）、下面
+    是输入框，↩ 发送。答案原路送回那个 session（上下文都在），任务接着跑。
+    发送后卡上显示「回答发送中…」，送达后卡自动回到「运行中」；3 分钟没动静
+    会诚实提示超时。终端路径没删——降级到「展开详情」里的「在终端接管会话」。
+  - **iPhone：需输入卡也有了输入框** —— 直接打字点「发送」，走既有的端到端
+    加密通道送回 Mac。手机对需输入「只读」的时代结束。
+  - **送不到就明说**：session 已经没了/启动失败时，卡上显示错误、通知告诉你
+    原因和终端兜底入口，绝不静默吞掉你打的字。
+  - iPhone 角标现在 = 待审批 + 需输入（被卡住的 agent 是最急的事），新增
+    逐卡的需输入本地通知。
+  - 回答成功会顺便把这张卡的自动恢复（auto-resume）配额清零重来——你亲手救活
+    的 session，之后再断线仍然享受自动恢复。
+
 ## [0.36.0] - 2026-07-15
 
 ### Added
@@ -1370,7 +1393,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.36.0...v0.39.0
 [0.36.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.33.1...v0.36.0
 
 [Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.35.0...HEAD

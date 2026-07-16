@@ -37,6 +37,11 @@ final class AppState: ObservableObject {
     /// only on a rise within that channel (switching channels is not "new").
     private var lastApprovalCount: [String: Int] = [:]
 
+    /// §39: needs_input card ids per channel — per-card (not batched) local
+    /// notifications fire only for NEWLY blocked cards within that channel.
+    /// nil (channel never fetched) stays silent, like the approval counter.
+    private var lastNeedsInputIDs: [String: Set<String>] = [:]
+
     let client = SupabaseClient()
 
     private let channelPrefix = "channel."
@@ -162,12 +167,27 @@ final class AppState: ObservableObject {
     }
 
     private func maybeNotify(_ dash: Dashboard, channelId: String) {
+        // §39: the badge counts BOTH decisions waiting on the owner — proposals
+        // to approve AND blocked agents waiting for an answer (the latter is
+        // the more urgent signal: an agent is burning wall-clock on it).
         let n = dash.counts.needs_approval
+        let badge = n + dash.counts.needs_input
         let last = lastApprovalCount[channelId] ?? 0
         if n > last {
-            LocalNotifications.notifyNewProposals(delta: n - last, total: n)
+            LocalNotifications.notifyNewProposals(delta: n - last, total: badge)
         }
-        LocalNotifications.setBadge(n)
+        // §39 per-card needs-input notifications (not batched — each names its
+        // card + question). First fetch of a channel seeds silently: replaying
+        // every already-blocked card on app start would be a notification storm.
+        let blocked = dash.needs_input
+        if let seen = lastNeedsInputIDs[channelId] {
+            for t in blocked where !seen.contains(t.id) {
+                LocalNotifications.notifyNeedsInput(
+                    name: t.name, question: t.question, badge: badge)
+            }
+        }
+        lastNeedsInputIDs[channelId] = Set(blocked.map { $0.id })
+        LocalNotifications.setBadge(badge)
         lastApprovalCount[channelId] = n
     }
 
@@ -221,6 +241,20 @@ final class AppState: ObservableObject {
             try await self.client.postInboxAction(actionId: actionId, channelId: target,
                                                   writeSecret: channel.writeSecret,
                                                   boardSeq: seq, blob: blob, clientTs: ts)
+        }
+    }
+
+    /// §39 回答需输入: seal {"action":"answer_input","id","text"} and POST it —
+    /// the same transport as every other inbox action. Pins
+    /// expected_status:"executing" (需输入 rows only ever project executing
+    /// cards) so a stale tap no-ops honestly on the Mac. Trims + clips to the
+    /// contract's 4000-char ceiling; empty after trimming = nothing to send.
+    func submitAnswer(cardId: String, text: String) async -> Bool {
+        let t = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
+        guard !t.isEmpty else { return false }
+        return await sealAndPost { ts in
+            InboxAction.answerInput(id: cardId, text: t,
+                                    expectedStatus: "executing", ts: ts)
         }
     }
 

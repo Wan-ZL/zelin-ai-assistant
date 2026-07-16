@@ -77,6 +77,21 @@ enum InboxAction {
         return encode(obj)
     }
 
+    /// §39 回答需输入: {action:"answer_input", id, text, ts} — the owner's typed
+    /// answer for a blocked (needs_input) session; actd validates text 1..4000
+    /// and delivers it via executor.answer (stop-idle-then-resume). Synced
+    /// clients pin `expectedStatus:"executing"` (需输入 rows only ever project
+    /// executing cards) so a stale tap no-ops on the Mac; nil omits the key
+    /// (the local Mac-app convention).
+    static func answerInput(id: String, text: String,
+                            expectedStatus: String? = nil,
+                            ts: String = InboxAction.nowTimestamp()) -> Data {
+        var obj: [String: Any] = ["action": "answer_input", "id": id,
+                                  "text": text, "ts": ts]
+        if let expectedStatus { obj["expected_status"] = expectedStatus }
+        return encode(obj)
+    }
+
     // merge-review 契约 §21 — suggestion-level actions (not card verbs): the
     // `id` is the MS- suggestion id; merge_force instead carries the raw card
     // ids + the user-chosen primary. actd reads decision["id"] / ["ids"]+["primary"].

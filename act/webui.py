@@ -54,6 +54,8 @@ ALLOWED_ACTIONS = frozenset({
     "approve", "reject", "comment", "raise", "trash", "restore", "pin",
     "accept", "rework", "done_external", "abort_execution", "stop_to_review",
     "revert_review", "defer", "archive", "unarchive",
+    # requirement-level with a `text` payload (actd._apply_answer_input, §39)
+    "answer_input",
     # no-requirement / suggestion-level (actd.process_inbox dispatch)
     "capture", "feedback", "merge_review", "merge_apply", "merge_dismiss",
     "import_claude_sessions", "weekly_digest_now",

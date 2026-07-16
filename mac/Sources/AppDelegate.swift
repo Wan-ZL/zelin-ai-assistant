@@ -849,6 +849,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return true
     }
 
+    /// §39 回答需输入: {"action":"answer_input","id":…,"text":…} inbox file —
+    /// the owner's typed answer for a blocked session (actd validates 1..4000
+    /// and delivers it via executor.answer). Same atomic-write + failure-alert
+    /// path as every other action (writeInboxFile); on success the card gets
+    /// the 「回答发送中…」echo (store.beginAnswer, cleared when it leaves
+    /// 需输入 or the 180 s honest timeout fires). The answer TEXT is user
+    /// content — python-side inbox_answer_input records it capture_input-gated;
+    /// only metadata is counted here.
+    func submitAnswer(id: String, text: String) -> Bool {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let dict: [String: Any] = ["id": id, "action": "answer_input",
+                                   "text": text, "ts": ts]
+        guard writeInboxFile(dict) else { return false }
+        Analytics.firstReach("answer_input")
+        Analytics.log("card_action", fields: ["action": "answer_input", "req": id,
+                                              "chars": text.count])
+        store.beginAnswer(id)
+        return true
+    }
+
+    /// §39 回答弹窗: the pending QUESTION (read-only, scrollable) above the
+    /// multiline answer editor — the promptText pattern with a question pane.
+    /// Returns the trimmed answer, or nil when cancelled/empty.
+    func promptAnswer(question: String?) -> String? {
+        let alert = NSAlert()
+        alert.messageText = L("💬 回答 AI 的问题", "💬 Answer the AI's question")
+        alert.informativeText = L("答案会送回原 session（上下文保留），任务继续跑。",
+                                  "Your answer goes back into the original session (context kept); the task continues.")
+            + "\n" + L("↩ 发送 · ⇧↩ 换行", "↩ send · ⇧↩ newline")
+        alert.addButton(withTitle: L("发送", "Send"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+
+        let container = NSStackView(frame: NSRect(x: 0, y: 0, width: 420, height: 0))
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 6
+
+        let q = (question ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !q.isEmpty {
+            // read-only question pane (scrolls past ~8 lines)
+            let qScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 140))
+            let qView = NSTextView(frame: qScroll.bounds)
+            qView.isRichText = false
+            qView.isEditable = false
+            qView.font = .systemFont(ofSize: 12)
+            qView.textColor = .secondaryLabelColor
+            qView.autoresizingMask = [.width]
+            qView.textContainerInset = NSSize(width: 4, height: 6)
+            qView.string = q
+            qScroll.documentView = qView
+            qScroll.hasVerticalScroller = true
+            qScroll.borderType = .bezelBorder
+            qScroll.translatesAutoresizingMaskIntoConstraints = false
+            qScroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
+            qScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+            container.addArrangedSubview(qScroll)
+        }
+
+        // multi-line answer editor — same setup as promptText's editor
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 96))
+        let tv = NSTextView(frame: scroll.bounds)
+        tv.isRichText = false
+        tv.font = .systemFont(ofSize: 13)
+        tv.autoresizingMask = [.width]
+        tv.textContainerInset = NSSize(width: 4, height: 6)
+        tv.allowsUndo = true
+        let sendDelegate = PromptSendDelegate()
+        sendDelegate.sendButton = alert.buttons.first
+        tv.delegate = sendDelegate
+        scroll.documentView = tv
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        container.addArrangedSubview(scroll)
+
+        // NSAlert sizes the accessory by its FRAME — derive it from the
+        // autolayout fitting size or the panel collapses to zero height.
+        container.layoutSubtreeIfNeeded()
+        container.frame = NSRect(x: 0, y: 0, width: 420,
+                                 height: container.fittingSize.height)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = tv
+        let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }
+        guard resp == .alertFirstButtonReturn else { return nil }
+        let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        // empty = nothing to deliver (actd would drop it anyway — §39 1..4000);
+        // clip to the same 4000-char ceiling so the write can never be dropped
+        // server-side for length.
+        if text.isEmpty { return nil }
+        return String(text.prefix(4000))
+    }
+
     /// The ONE atomic inbox write + failure alert (card actions + merge_review
     /// share it). Contract: on false the caller must NOT apply optimistic UI.
     private func writeInboxFile(_ dict: [String: Any]) -> Bool {

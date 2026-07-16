@@ -192,6 +192,11 @@ struct RunningTask: Decodable, Hashable {
     // §30 v0.28.1: true when a 待验收 card is projected into 运行中 because its
     // session was reactivated via attach (on-disk status is still review).
     let from_review: Bool?
+    // §39 needs_input rows only: the blocked session's pending question (last
+    // assistant text after the last user turn, ≤500 chars). Absent on older
+    // actd payloads and on rows whose transcript carries no text — the UI
+    // falls back to waiting_for.
+    let question: String?
 }
 
 struct DebtItem: Decodable, Hashable {

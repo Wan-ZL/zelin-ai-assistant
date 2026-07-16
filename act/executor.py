@@ -1067,6 +1067,41 @@ def harvest_delivery(session_id: str) -> dict:
         return dict(empty)
 
 
+# needs_input question cap (§39) — same order as delivered_summary's 500.
+_QUESTION_MAX = 500
+
+
+def extract_question(session_id: str) -> Optional[str]:
+    """The blocked session's pending question (CONTRACT §39): the last
+    assistant TEXT after the last real user turn, clipped to 500 chars.
+
+    Same transcript discipline as harvest_delivery — short-id glob over
+    ~/.claude/projects, sidechain/isMeta/tool-result-aware via
+    _assistant_texts(since_last_user=True) — so a rework/answer injection (a
+    real user turn) resets the scope and a previous round's text is never
+    surfaced as the current question. Returns None when there is no
+    transcript or no post-user assistant text (the dashboard's bare
+    ``waiting_for: "input"`` fallback then stays). Never raises.
+    """
+    try:
+        short = str(session_id or "").split("-")[0]
+        # _transcript_info's guard: anything shorter globs EVERY transcript
+        # and would surface an unrelated session's text as this card's question.
+        if len(short) < 8:
+            return None
+        proj_root = Path("~/.claude/projects").expanduser()
+        for f in sorted(proj_root.glob(f"*/{short}*.jsonl")):
+            try:
+                texts = _assistant_texts(f, since_last_user=True)
+            except OSError:
+                continue
+            if texts:
+                return texts[-1][:_QUESTION_MAX]
+        return None
+    except Exception:  # noqa: BLE001 - a projection helper must never raise
+        return None
+
+
 def _agent_info(sid: str) -> dict:
     """{'pid':..., 'cwd':...} for this session from claude agents; {} if unknown."""
     try:
@@ -1241,6 +1276,126 @@ def rework(
                         round=ex["rework_count"],
                         feedback=(analytics.clip_content(feedback)
                                   if analytics.content_gate(cfg) else None))
+    return ok
+
+
+def _answer_abort(req: Requirement, ex: dict, err: str) -> bool:
+    """An owner answer that could not even launch: persist the reason so the
+    card (and actd's failure notification, §39) can surface it instead of
+    silently dropping the typed answer. Same execution.last_error shape as
+    _rework_abort; always returns False."""
+    ex["last_error"] = err[:500]
+    ex["last_error_at"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    req.execution = ex
+    save(req)
+    analytics.log_event("answer_failed", req=req.id, error=err[:120])
+    return False
+
+
+def answer(
+    req: Requirement,
+    text: str,
+    cfg: Optional[config.Config] = None,
+    runner: Optional[Callable[[str], subprocess.CompletedProcess]] = None,
+) -> bool:
+    """回答需输入 (§39): deliver the owner's typed answer INTO the blocked
+    session so it can continue — no terminal needed.
+
+    Same stop-idle-then-resume plumbing as rework(): a blocked bg process
+    rejects --resume while its process is alive, so stop it first (safe: the
+    transcript is preserved), then ``claude --bg --resume <sid>`` with the
+    answer as the resume prompt, minimally prefixed ``OWNER ANSWER:`` so the
+    session reads it as the reply to its pending question — not a new task
+    and not a 打回 (bookkeeping is deliberately separate from rework_count:
+    execution.answer_count / last_answer_at).
+
+    A clean launch also resets the auto-resume machinery (resume_attempts=0,
+    resume_exhausted dropped, NOT counted as a resume attempt): the reconciler
+    re-zeroes attempts only when it happens to SEE the session live again, and
+    resume_exhausted never clears on its own — leaving it set would silently
+    disable auto-resume for the very session the owner just revived by hand.
+
+    Returns True on a clean launch. Never raises.
+    """
+    if cfg is None:
+        cfg = config.load_config()
+    ex = dict(req.execution or {})
+    sid = ex.get("session_id")
+    if not (text or "").strip():
+        return False  # actd validates 1..4000 first — belt and braces
+    if not sid:
+        return _answer_abort(req, ex, "answer failed: no session to answer "
+                                      "(card has no session_id)")
+    # full UUID + the transcript's LAST cwd — both REQUIRED for --resume
+    # (see _transcript_info). No transcript anywhere -> resuming is
+    # impossible; give up WITHOUT launching (a launch would mint new ids).
+    info = _agent_info(sid)
+    tinfo = _transcript_info(sid)
+    if tinfo is None and ex.get("root_session_id"):
+        tinfo = _transcript_info(str(ex["root_session_id"]))
+    if tinfo is None:
+        return _answer_abort(req, ex, "answer failed: transcript missing — "
+                                      "cannot resume the session")
+    sid, target = tinfo
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return _answer_abort(req, ex, f"answer failed: cannot recreate "
+                                      f"session cwd {target}")
+    ex.setdefault("root_session_id", sid)
+
+    prompt = "OWNER ANSWER:\n" + text.strip()
+
+    if runner is None:
+        def runner(p: str) -> subprocess.CompletedProcess:
+            # a blocked-but-alive bg process rejects --resume: stop it first
+            # (the exact rework recipe).
+            stop_session(sid, info=info)
+            return subprocess.run(
+                _bg_base_cmd(cfg) + ["--name", session_name(req),
+                                     "--resume", str(sid), sanitize.scrub(p)[0]],
+                cwd=str(target),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=_runner_env(),
+            )
+
+    try:
+        proc = runner(prompt)
+        ok = getattr(proc, "returncode", 1) == 0
+        out = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
+    except (OSError, subprocess.SubprocessError):
+        ok, out = False, ""
+
+    ex["answer_count"] = int(ex.get("answer_count", 0)) + 1
+    ex["last_answer_at"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not ok:
+        # launch failed — the card keeps its state; persist the error so the
+        # dashboard row / actd notification can surface it (never silent, §39).
+        err = (out or "").strip() or "answer launch failed (no output)"
+        ex["last_error"] = err[:500]
+        ex["last_error_at"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        req.execution = ex
+        save(req)
+        analytics.log_event("answer_launch", req=req.id, ok=False,
+                            round=ex["answer_count"])
+        analytics.log_event("answer_failed", req=req.id, error=err[:120])
+        return False
+    ex.pop("last_error", None)                # clean relaunch clears stale errors
+    ex.pop("last_error_at", None)
+    ex["resume_attempts"] = 0                 # fresh backoff for the revived session
+    ex.pop("resume_exhausted", None)          # see docstring: never self-clears
+    new_sid = _parse_session_id(out)          # a resume mints a new id
+    if new_sid:
+        ex["session_id"] = new_sid
+    req.execution = ex
+    save(req)                                 # status untouched — stays EXECUTING
+    # the typed answer is user content — capture_input-gated, clipped.
+    analytics.log_event("answer_launch", req=req.id, ok=ok,
+                        round=ex["answer_count"],
+                        answer=(analytics.clip_content(text)
+                                if analytics.content_gate(cfg) else None))
     return ok
 
 

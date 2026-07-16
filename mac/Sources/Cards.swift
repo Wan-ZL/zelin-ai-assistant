@@ -1103,7 +1103,14 @@ struct TaskRow: View {
             || !(task.dod ?? []).isEmpty
             || (task.log?.isEmpty == false)
             || errorText != nil
+            // §39: needs-input rows keep the terminal takeover as a SECONDARY
+            // path inside 展开详情 (the primary affordance is 「回答…」).
+            || (lane == .needsInput && cmd != nil)
     }
+
+    // §39: answer in flight (store echo) — cleared when the card leaves
+    // needs_input or the 180 s honest timeout fires.
+    private var answerSending: Bool { app.store.answerPending[task.id] != nil }
 
     private var isDelivered: Bool { lane == .completed }
 
@@ -1137,6 +1144,27 @@ struct TaskRow: View {
     // v0.10.2 action row — Buttons win over the whole-card copy tap (ReviewRow
     // 先例); CardSurface applies the unified font/bordered/small styling.
     @ViewBuilder private var actionButtons: some View {
+        // §39 primary affordance on a blocked card: answer the question
+        // IN-APP — the sheet shows the question + a multiline editor, and the
+        // answer resumes the original session (no terminal needed).
+        if lane == .needsInput {
+            if answerSending {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    Text(L("回答发送中…", "Sending answer…"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.orange)
+                }
+            } else {
+                Button {
+                    if let a = app.promptAnswer(question: task.question) {
+                        app.submitAnswer(id: task.id, text: a)
+                    }
+                } label: { Label(L("回答…", "Answer…"),
+                                 systemImage: "arrowshape.turn.up.left.fill") }
+                    .tint(.orange)
+            }
+        }
         if showsStop {
             // v0.21: one 停止 opens a 2-choice dialog so the fork is explicit —
             // 退回提案 discards this run (abort_execution → back to 提案), 去待验收
@@ -1237,6 +1265,18 @@ struct TaskRow: View {
                         Badge(text: (cwd as NSString).lastPathComponent, color: .secondary)
                     }
                 }
+                // §39: WHAT the agent is asking — the reason this card is
+                // blocked, front and center (the 回答… sheet shows it in full).
+                if showsInputBadge, let q = task.question, !q.isEmpty {
+                    Text(q)
+                        .font(.system(size: 11))
+                        .foregroundColor(.primary)
+                        .lineLimit(8)
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
                 // completed lane: what actually got delivered (one line)
                 if let ds = task.delivered_summary, !ds.isEmpty {
                     Text(ds)
@@ -1245,7 +1285,9 @@ struct TaskRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                if let cmd {
+                // §39: on needs-input rows the terminal command demotes to the
+                // detail block (在终端接管会话) — 回答… is the primary path.
+                if let cmd, lane != .needsInput {
                     Text(L("单击复制 · 双击在终端运行：", "Click to copy · double-click runs: ") + cmd)
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.secondary)
@@ -1313,6 +1355,12 @@ struct TaskRow: View {
     @ViewBuilder private var detailBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let err = errorText { ErrorTextBlock(text: err) }
+            // §39: secondary path for a blocked card — take the session over
+            // in a terminal (copies the state-correct attach/--resume command).
+            if lane == .needsInput, let cmd {
+                CopyPathLine(label: L("在终端接管会话：", "Take over in terminal: "),
+                             path: cmd)
+            }
             if let s = task.summary, !s.isEmpty {
                 Text(s)
                     .font(.system(size: 11))
