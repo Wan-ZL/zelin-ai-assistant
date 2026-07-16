@@ -50,22 +50,28 @@ from act.lib import config
 # ``_apply_decision()`` elif whitelist. Keep in sync with actd; anything not in
 # here is rejected with 400 before an inbox file is ever written.
 ALLOWED_ACTIONS = frozenset({
-    # requirement-level (actd._apply_decision elif chain)
+    # requirement-level (actd._apply_decision elif chain + §37 set_title)
     "approve", "reject", "comment", "raise", "trash", "restore", "pin",
     "accept", "rework", "done_external", "abort_execution", "stop_to_review",
-    "revert_review", "defer", "archive", "unarchive",
+    "revert_review", "defer", "archive", "unarchive", "set_title",
+    # requirement-level with a `text` payload (actd._apply_answer_input, §39)
+    "answer_input",
     # no-requirement / suggestion-level (actd.process_inbox dispatch)
     "capture", "feedback", "merge_review", "merge_apply", "merge_dismiss",
     "merge_force",
     "import_claude_sessions", "weekly_digest_now",
+    # §38 拆成新卡 (fold undo): id + note_ts
+    "split_note",
 })
 
 # Fields we accept from a POST body and forward into the inbox file. Everything
 # else is dropped; ``ts`` is always (re)stamped server-side so the client can
 # never spoof it. This mirrors the Mac app's inbox payload shapes (§3/§10/§21).
-# §41 adds ``primary`` (merge_force, §21bis) and ``mode`` (capture mode:"run",
-# §34) so the web client is no longer locked out of those flows.
-_INBOX_KEYS = ("id", "action", "comment", "text", "ids", "primary", "mode")
+# §37/§38 add ``title`` (set_title) and ``note_ts`` (split_note); §41 adds
+# ``primary`` (merge_force, §21bis) and ``mode`` (capture mode:"run", §34) so
+# the web client is no longer locked out of those flows.
+_INBOX_KEYS = ("id", "action", "comment", "text", "ids", "title", "note_ts",
+               "primary", "mode")
 
 # A scalar ``id`` in a POST body is forwarded verbatim into the inbox file and
 # ends up in merge_review.job_path() as ``MERGE_DIR / f"{id}.json"`` (via
@@ -336,10 +342,17 @@ class _Handler(BaseHTTPRequestHandler):
         # null/absent — the Mac app writes ``comment: null``). A non-string
         # forwarded verbatim would poison the inbox file and wedge actd's
         # ``(comment or "").strip()``-style handling every pass.
-        for key in ("comment", "text"):
+        for key in ("comment", "text", "note_ts"):
             if payload.get(key) is not None and not isinstance(payload[key], str):
                 self._json(400, {"error": f"{key} must be a string"})
                 return
+        # §37 set_title: title must be a short string — fail closed here so a
+        # poison/oversize value never reaches the inbox file (actd re-checks).
+        title = payload.get("title")
+        if title is not None and not (isinstance(title, str)
+                                      and 0 < len(title) <= 64):
+            self._json(400, {"error": "title must be a string of 1-64 chars"})
+            return
         ids = payload.get("ids")
         if ids is not None and not (isinstance(ids, list)
                                     and all(isinstance(x, str) for x in ids)):
@@ -367,6 +380,15 @@ class _Handler(BaseHTTPRequestHandler):
         if mode is not None and (action != "capture" or mode != "run"):
             self._json(400, {"error": "mode is only capture mode:\"run\""})
             return
+        # §39.2: answer_input's text is bounded 1..4000 (code points) — reject
+        # here with a 400 so an oversize/empty answer never reaches the inbox
+        # (actd would archive-and-noop it, but the API caller deserves the
+        # immediate error).
+        if action == "answer_input":
+            t = payload.get("text")
+            if not isinstance(t, str) or not (1 <= len(t.strip()) <= 4000):
+                self._json(400, {"error": "text must be 1..4000 chars"})
+                return
         try:
             name = write_inbox(payload)
         except OSError as e:

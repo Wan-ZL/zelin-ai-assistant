@@ -19,7 +19,8 @@
         "users:read",
         "files:read",
         "chat:write",
-        "reactions:read"
+        "reactions:read",
+        "reactions:write"
       ]
     }
   },

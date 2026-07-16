@@ -158,8 +158,10 @@ struct KanbanView: View {
 
     // MARK: - board search (搜索过滤)
 
-    /// Header search box. Matching is case-insensitive over
-    /// title/summary/dod/plan/id (DashboardStore.board* projections);
+    /// Header search box. §37 normalized matching (SearchMatch) over the
+    /// expanded per-lane word list — titles (incl. display/former), summary,
+    /// notes, plan/dod, delivered content, source quotes, agent name — plus
+    /// the Mac-local session-content index as the last layer (命中会话 badge);
     /// 占位卡/建议卡 never hide. Esc is staged (IME-safe): non-empty clears
     /// the query (native search-field behavior — a filter, not a draft);
     /// already empty defocuses, and a further Esc (field no longer focused,
@@ -320,7 +322,8 @@ struct KanbanView: View {
                         // v0.21 契约七: 潜在任务卡也可多选参与合并（selectableIDs 已含 debt）。
                         ForEach(debt, id: \.id) { d in
                             selectableCard(d.id) {
-                                DebtRow(item: d, app: app)
+                                DebtRow(item: d, app: app,
+                                        sessionHit: store.sessionOnlyHit(d))
                             }
                         }
                     }
@@ -366,7 +369,8 @@ struct KanbanView: View {
                             // 不参与多选（契约七: 不含占位/建议卡）
                             selectableCard(card.id, selectable: !card.processing) {
                                 ApprovalCardView(card: card, app: app,
-                                                 commentPending: store.pendingComment[card.id] != nil)
+                                                 commentPending: store.pendingComment[card.id] != nil,
+                                                 sessionHit: store.sessionOnlyHit(card))
                             }
                         }
                     }
@@ -399,7 +403,8 @@ struct KanbanView: View {
                         ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
                         ForEach(needsInput, id: \.id) { t in
                             selectableCard(t.id) {
-                                TaskRow(task: t, app: app, lane: .needsInput)
+                                TaskRow(task: t, app: app, lane: .needsInput,
+                                        sessionHit: store.sessionOnlyHit(t))
                             }
                         }
                         if !needsInput.isEmpty && !running.isEmpty {
@@ -407,7 +412,8 @@ struct KanbanView: View {
                         }
                         ForEach(running, id: \.id) { t in
                             selectableCard(t.id) {
-                                TaskRow(task: t, app: app, lane: .running)
+                                TaskRow(task: t, app: app, lane: .running,
+                                        sessionHit: store.sessionOnlyHit(t))
                             }
                         }
                     }
@@ -420,7 +426,8 @@ struct KanbanView: View {
                         ForEach(reviewNotices) { NoticeRow(notice: $0) }
                         ForEach(reviews, id: \.id) { r in
                             selectableCard(r.id) {
-                                ReviewRow(item: r, app: app)
+                                ReviewRow(item: r, app: app,
+                                          sessionHit: store.sessionOnlyHit(r))
                             }
                         }
                     }
@@ -441,7 +448,8 @@ struct KanbanView: View {
                         // v0.21 契约七: 阶段性完成卡也可多选参与合并（selectableIDs 已含 completed）。
                         ForEach(completed, id: \.id) { t in
                             selectableCard(t.id) {
-                                TaskRow(task: t, app: app, lane: .completed)
+                                TaskRow(task: t, app: app, lane: .completed,
+                                        sessionHit: store.sessionOnlyHit(t))
                             }
                         }
                     }

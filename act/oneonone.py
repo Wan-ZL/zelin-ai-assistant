@@ -1,13 +1,15 @@
-"""1:1 prep page — Manager pack ② (CONTRACT §17).
+"""1:1 prep page (CONTRACT §17).
 
-Builds a one-line-per-item snapshot of the registry for Zelin's 1:1 with
-the manager, grouped by readiness:
+Builds a one-line-per-item snapshot of the registry for the owner's next
+1:1 / check-in, grouped by readiness:
 
   - ready      : status=review（待验收） + delivered within the last 7 days
   - in-flight  : card_sent / approved / executing
   - not-ready  : detected（欠账/低置信度）
 
-plus the 双向承诺账本 — every ``[MANAGER-OWES]`` line found in registry notes.
+plus the 双向承诺账本 — every ``[MANAGER-OWES]`` line found in registry notes
+(the tag name is frozen for compat with existing notes; §40 removed the
+"manager 欠的" framing from the rendered pages, not the tag).
 
 Output: ``<execution.default_target_repo>/oneonone/prep-YYYY-MM-DD.md``, or
 ``state/oneonone/`` while no target repo has been configured.
@@ -21,7 +23,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from act.lib import analytics, config
+from act.lib import analytics, config, failures
 from act.lib.registry import Requirement, State, load_all
 
 
@@ -46,6 +48,23 @@ _STATUS_ICON = {
     State.REVIEW.value: "🔍",
     State.DELIVERED.value: "✅",
 }
+
+
+def lane_name(status) -> str:
+    """§40 (#19): user-facing pages say lane display names, not raw registry
+    status words — 「card_sent」 means nothing to the owner; 「待审批」 does.
+    Unknown/terminal statuses fall back to the raw word (these pages filter
+    them out anyway)."""
+    return {
+        State.DETECTED.value: failures.pick("潜在任务", "backlog"),
+        State.RAISING.value: failures.pick("提案生成中", "raising"),
+        State.CARD_SENT.value: failures.pick("待审批", "awaiting approval"),
+        State.APPROVED.value: failures.pick("已批准待派发", "approved, queued"),
+        State.EXECUTING.value: failures.pick("进行中", "in progress"),
+        State.REVIEW.value: failures.pick("待验收", "awaiting review"),
+        State.DELIVERED.value: failures.pick("已交付", "delivered"),
+    }.get(str(status), str(status))
+
 
 _MANAGER_OWES_TAG = "[MANAGER-OWES]"
 _DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -114,14 +133,16 @@ def _age_str(req: Requirement, today: _dt.date) -> str:
 def _line(req: Requirement, today: _dt.date) -> str:
     icon = _STATUS_ICON.get(req.status, "•")
     age = _age_str(req, today)
-    tail = f"（{req.status}，{age}）" if age else f"（{req.status}）"
+    lane = lane_name(req.status)
+    tail = f"（{lane}，{age}）" if age else f"（{lane}）"
     return f"- {icon} {req.id} · {req.title or '(untitled)'} {tail}"
 
 
 # --------------------------------------------------------------------------- #
-# 双向承诺账本 — [MANAGER-OWES] lines in registry notes
+# 双向承诺账本 — [MANAGER-OWES]-tagged lines in registry notes. The tag NAME is
+# frozen (existing notes carry it); the rendered framing is owner-neutral (§40).
 # --------------------------------------------------------------------------- #
-def manager_owes(reqs: list[Requirement]) -> list[str]:
+def promises_owed(reqs: list[Requirement]) -> list[str]:
     """Every note line carrying the [MANAGER-OWES] tag, prefixed with its req id."""
     out: list[str] = []
     for r in reqs:
@@ -129,6 +150,22 @@ def manager_owes(reqs: list[Requirement]) -> list[str]:
             if _MANAGER_OWES_TAG.lower() in line.lower():
                 out.append(f"- {r.id} · {line.strip()}")
     return out
+
+
+def ledger_header(cfg: Optional[config.Config] = None) -> str:
+    """§40 (#19): the promise-ledger section header, parameterized on the
+    configured owner name instead of the old hardcoded 「manager 欠的」."""
+    if cfg is None:
+        cfg = config.load_config()
+    owner = cfg.owner_name or "you"
+    return failures.pick(f"## 🤝 双向承诺账本（别人答应 {owner} 的事）",
+                         f"## 🤝 Promise ledger (owed to {owner})")
+
+
+def ledger_empty() -> str:
+    return failures.pick(
+        "- （无 —— 在卡片 notes 里用 [MANAGER-OWES] 标记对方答应的事）",
+        "- (none — tag a promise with [MANAGER-OWES] in a card's notes)")
 
 
 # --------------------------------------------------------------------------- #
@@ -168,8 +205,7 @@ def build_prep(today: Optional[_dt.date] = None) -> str:
                    [_line(r, today) for r in in_flight])
     out += section(f"## 📡 Not ready（欠账/未确认，{len(not_ready)}）",
                    [_line(r, today) for r in not_ready])
-    out += section("## 🤝 双向承诺账本（manager 欠的）", manager_owes(reqs),
-                   empty="- （无 —— notes 里用 [MANAGER-OWES] 标记他的承诺）")
+    out += section(ledger_header(), promises_owed(reqs), empty=ledger_empty())
     return "\n".join(out)
 
 

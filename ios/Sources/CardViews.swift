@@ -290,7 +290,7 @@ struct DebtRow: View {
     }
 }
 
-// MARK: - Running (+needs_input, read-only) -----------------------------------
+// MARK: - Running (+needs_input, answerable since §39) -------------------------
 struct RunningRow: View {
     let task: RunningTask
     let needsInput: Bool
@@ -302,12 +302,39 @@ struct RunningRow: View {
                     if task.state == "queued" { MetaChip(text: L("排队中", "Queued")) }
                     Spacer()
                 }
-                Text(task.summary ?? task.name).font(.subheadline).fontWeight(.medium)
-                if needsInput, let w = task.waiting_for {
-                    Text(w).font(.caption).foregroundStyle(.secondary)
+                // §37: displayHeadline = user-pinned name → summary → display title → name
+                Text(task.displayHeadline).font(.subheadline).fontWeight(.medium)
+                // §39: a failed answer delivery reroutes the card here with
+                // last_error — without this line the phone shows the exact
+                // same card for success and failure (Mac renders it already).
+                if task.state != "queued", let err = task.last_error, !err.isEmpty {
+                    Label {
+                        Text(err).font(.caption2)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.caption2)
+                    }
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
                 }
-                // needs_input has no phone reply path (plan §6.2) — read-only.
-                if !needsInput {
+                if needsInput {
+                    // §39: the question the agent is blocked on (falls back to
+                    // the bare waiting_for reason on older actd payloads) + an
+                    // in-app answer path — the platform gap is closed for real.
+                    if let q = task.question, !q.isEmpty {
+                        Text(q).font(.caption).foregroundStyle(.primary)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.10),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                    } else if let w = task.waiting_for {
+                        Text(w).font(.caption).foregroundStyle(.secondary)
+                    }
+                    AnswerInputBar(cardId: task.id)
+                    // stopping and answering are the two things you can do to
+                    // a blocked agent — the stop fork lives right here too
+                    // (Mac parity: blocked rows carry 停止 since v0.21).
+                    NeedsInputStopButton(cardId: task.id)
+                } else {
                     // §41 parity (Mac v0.21): one 停止 → explicit two-choice fork
                     // (退回提案 discards this run, 去待验收 keeps its output for
                     // review). done_external left the running card in v0.21 —
@@ -330,13 +357,133 @@ struct RunningRow: View {
     }
 }
 
+/// §39: the needs-input answer composer — TextField + 发送 through the normal
+/// sealed-action plumbing (AppState.submitAnswer → answer_input inbox action).
+///
+/// answer_input is NOT idempotent (a second send stop-kills the first
+/// answer's freshly-resumed session), so unlike the merge cards' 3.5s echo
+/// this bar stays in its 已发送 state until the card actually LEAVES
+/// needs_input on a board refresh — state.answerPending (the Mac
+/// answerPending semantics; per-card, survives row rebuilds) with a 180s
+/// expiry so a dead backend re-arms the bar for an honest retry.
+private struct AnswerInputBar: View {
+    let cardId: String
+    @EnvironmentObject var state: AppState
+    @State private var text = ""
+    @State private var busy = false
+
+    private var sent: Bool {
+        guard let at = state.answerPending[cardId] else { return false }
+        return Date().timeIntervalSince(at) < 180
+    }
+
+    var body: some View {
+        if busy || sent {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(L("回答已发送，等待送达…（送达后这张卡会回到运行中）",
+                       "Answer sent, delivering… (the card returns to Running once it lands)"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 8) {
+                TextField(L("回答它的问题…", "Answer its question…"),
+                          text: $text, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...4)
+                    .font(.caption)
+                Button(L("发送", "Send")) { send() }
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.orange)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func send() {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !busy, !sent else { return }
+        busy = true
+        Task {
+            // success → clear the draft; answerPending (set inside
+            // submitAnswer) keeps the bar in 已发送 across refreshes until
+            // the card leaves needs_input. Failure → keep the typed text so
+            // nothing is lost (state.lastError explains).
+            if await state.submitAnswer(cardId: cardId, text: t) {
+                text = ""
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                await state.refreshBoard()
+            }
+            busy = false
+        }
+    }
+}
+
+/// §39.3: the stop fork on a BLOCKED agent — Mac has carried it on blocked
+/// rows since v0.21 (Cards.swift showsStop), the phone's needs-input rows
+/// were answer-only. Verbatim Mac labels and dialog copy: 退回提案 discards
+/// this run (abort_execution → back to 提案), 去待验收 keeps what the agent
+/// produced (stop_to_review → 待验收). The fork dialog IS the explicit
+/// confirmation; both verbs are idempotent v0.10.2 inverse actions (stale
+/// taps no-op on the Mac), so the merge-card 3.5s refresh pattern is safe
+/// here — unlike answer_input.
+///
+/// NOTE (§39/§41 merge): this intentionally duplicates the running-row stop
+/// fork that RunningRow's else branch gets via ActionBar's LaneAction fork —
+/// same title/choices/message, keep the strings in sync by hand. It stays a
+/// separate view because this row pairs the button with AnswerInputBar and
+/// keeps its stop-circle icon; folding it into ActionBar would change §39's
+/// shipped look for no behavioral gain.
+private struct NeedsInputStopButton: View {
+    let cardId: String
+    @EnvironmentObject var state: AppState
+    @State private var showFork = false
+    @State private var busy = false
+
+    var body: some View {
+        if busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(L("已提交…", "Submitted…")).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            Button {
+                showFork = true
+            } label: { Label(L("停止", "Stop"), systemImage: "stop.circle") }
+                .buttonStyle(.bordered).controlSize(.small).tint(.orange)
+                .confirmationDialog(L("停止这个任务？", "Stop this task?"),
+                                    isPresented: $showFork, titleVisibility: .visible) {
+                    Button(L("退回提案", "Discard & re-propose"), role: .destructive) {
+                        fire(.abort_execution)
+                    }
+                    Button(L("去待验收", "Keep for review")) { fire(.stop_to_review) }
+                    Button(L("取消", "Cancel"), role: .cancel) {}
+                } message: {
+                    Text(L("退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
+                           "Discard & re-propose = throw away this run and start over; Keep for review = keep what it made and I'll check it"))
+                }
+        }
+    }
+
+    private func fire(_ verb: InboxVerb) {
+        busy = true
+        Task {
+            if await state.submit(cardId: cardId, verb: verb) {
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                await state.refreshBoard()
+            }
+            busy = false
+        }
+    }
+}
+
 // MARK: - Review --------------------------------------------------------------
 struct ReviewRow: View {
     let item: ReviewItem
     var body: some View {
         CardChrome {
             VStack(alignment: .leading, spacing: 8) {
-                Text(item.summary ?? item.name).font(.subheadline).fontWeight(.medium)
+                // §37: displayHeadline = user-pinned name → summary → display title → name
+                Text(item.displayHeadline).font(.subheadline).fontWeight(.medium)
                 if let ds = item.delivered_summary { Text(ds).font(.caption).foregroundStyle(.secondary) }
                 if !item.dod.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
@@ -359,7 +506,7 @@ struct DoneRow: View {
     var body: some View {
         CardChrome {
             VStack(alignment: .leading, spacing: 8) {
-                Text(task.delivered_summary ?? task.summary ?? task.name)
+                Text(task.delivered_summary ?? task.displayHeadline)
                     .font(.subheadline).foregroundStyle(.secondary)
                 ActionBar(cardId: task.id, actions: [
                     LaneAction(title: L("退回待验收", "Reopen review"), verb: .revert_review),
@@ -420,7 +567,7 @@ struct CardDetailSheet: View {
                     ], onFired: { dismiss() })
                 }
             }
-            .navigationTitle(card.title)
+            .navigationTitle(card.display_title ?? card.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("完成", "Done")) { dismiss() } } }
         }
@@ -577,6 +724,8 @@ struct MergeSuggestionCard: View {
         case "high":   MetaChip(text: L("置信 高", "Conf: high"), color: .green)
         case "medium": MetaChip(text: L("置信 中", "Conf: med"), color: .orange)
         case "low":    MetaChip(text: L("置信 低", "Conf: low"), color: .gray)
+        // §38 auto suggestions: deterministic rule, not an AI analysis
+        case "deterministic": MetaChip(text: L("规则判定", "Rule-based"), color: .purple)
         default:       MetaChip(text: c, color: .gray)
         }
     }

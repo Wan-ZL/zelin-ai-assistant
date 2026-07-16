@@ -112,6 +112,8 @@ def build_expand_prompt(req: Requirement, cfg=None) -> str:
         "these keys:\n"
         '  "summary": string — one plain-language sentence, NO jargon, saying what '
         "this is and what happens once it's approved.\n"
+        '  "display_title": string — 看板显示名：<=40 字中文大白话，动词开头，'
+        '说清这卡在干什么（如"整理 EB-1A 推荐信清单"）。\n'
         '  "plan": array of strings — the concrete steps to deliver it.\n'
         '  "cost_estimate_usd": number or null — rough API/compute cost, null if ~0.\n'
         '  "target_repo": string (REQUIRED) — absolute path chosen per the routing '
@@ -238,6 +240,12 @@ def _apply_expansion(req: Requirement, data: dict) -> None:
         req.summary = summary
     elif not req.summary:
         req.summary = req.title
+
+    # §37 display_title: optional key — absent/malformed degrades silently
+    # (projection falls back to sanitize(title)); a user-pinned title is
+    # never overwritten (set_display_title honors user_titled).
+    from act.lib.registry import set_display_title
+    set_display_title(req, data.get("display_title"))
 
     plan = _coerce_plan(data.get("plan"))
     if plan:

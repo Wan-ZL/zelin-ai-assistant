@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config, failures
+from act.lib import config, failures, titles
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
@@ -86,6 +86,34 @@ def _transcript_info_cached(sid: str) -> Optional[tuple]:
         _TINFO_CACHE.clear()
     _TINFO_CACHE[sid] = (sig, info)
     return info
+
+
+# --------------------------------------------------------------------------- #
+# needs_input question memoization (§39)
+# --------------------------------------------------------------------------- #
+# executor.extract_question reads + json-parses the FULL transcript, and a
+# genuinely blocked agent sits with an unchanged transcript for hours — so the
+# ~10s pass must never re-parse an idle one. Same (path, mtime, size)
+# freshness-signature scheme as _TINFO_CACHE (the v0.33.1 tinfo memo
+# precedent): an appended transcript (the agent said more / got answered)
+# invalidates immediately, an idle one costs only the stat calls.
+_QUESTION_CACHE: dict[str, tuple[tuple, Optional[str]]] = {}
+_QUESTION_CACHE_MAX = 512
+
+
+def _question_cached(sid: str) -> Optional[str]:
+    from act.executor import extract_question  # lazy: keep dashboard import-light
+    sig = _transcript_sig(sid)
+    if sig is None:
+        return extract_question(sid)
+    hit = _QUESTION_CACHE.get(sid)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    q = extract_question(sid)
+    if len(_QUESTION_CACHE) >= _QUESTION_CACHE_MAX:
+        _QUESTION_CACHE.clear()
+    _QUESTION_CACHE[sid] = (sig, q)
+    return q
 
 
 # --------------------------------------------------------------------------- #
@@ -249,6 +277,7 @@ def _archived_view(req: Requirement) -> dict:
         "id": _s(req.id),
         "title": _s(req.title),
         "summary": req.summary or _s(req.title),
+        **_title_fields(req),
         "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
         "archived_at": req.archived_at,
         "archive_reason": req.archive_reason,
@@ -279,21 +308,62 @@ def _target_view(req: Requirement, cfg: config.Config) -> tuple[str, str, str]:
     return str(default), default.name, "existing"
 
 
-def _cost_view(req: Requirement, cfg: config.Config) -> tuple[Optional[float], bool]:
+def _cost_view(req: Requirement, cfg: config.Config
+               ) -> tuple[Optional[float], bool, str]:
+    """(cost_usd, show_cost, cost_state) for a proposal card (§40).
+
+    ``cost_state`` is the honesty bit: "estimated" when a number exists,
+    "unknown" when there is none (direct-run promotions, capture fallbacks,
+    digest suggestions, corrupt values) — the app says 成本未知 instead of
+    letting a missing estimate read as free. ``show_cost`` keeps gating only
+    the collapsed badge (≥ show_cost_above_usd); the expanded detail always
+    states the money story regardless of the threshold."""
     cost = req.cost_estimate_usd
     if cost is None:
-        return None, False
+        return None, False, "unknown"
     try:
         c = float(cost)
     except (TypeError, ValueError):
         # ``cost_estimate_usd: cheap`` 之类的坏值：字段降级成"无成本估算"，
         # 卡片其余部分照常投影（单字段损坏不丢整卡，更不丢整个 pass）。
-        return None, False
-    return c, c >= cfg.show_cost_above_usd
+        return None, False, "unknown"
+    return c, c >= cfg.show_cost_above_usd, "estimated"
 
 
 def _iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
+    """ISO hard-delete deadline for a trash row (§40): trashed_at + retention.
+
+    None (key emitted as null) when the row is pinned, retention is disabled
+    (``trash_retention_days <= 0``), or ``trashed_at`` doesn't parse — EXACTLY
+    the conditions under which actd.purge_trash skips the row, so the countdown
+    never promises a purge that isn't coming. The parse below mirrors
+    actd._parse_iso byte-for-byte (NOT the laxer _epoch, which accepts bare
+    numerics purge_trash rejects — a numeric trashed_at used to show a red
+    countdown for a purge that would never happen)."""
+    days = int(cfg.trash_retention_days or 0)
+    if days <= 0 or req.permanent:
+        return None
+    ts = req.trashed_at
+    if not ts:
+        return None
+    s = str(ts).strip().replace("Z", "+00:00")
+    try:
+        trashed = _dt.datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        try:
+            trashed = _dt.datetime.strptime(str(ts).strip(),
+                                            "%Y-%m-%dT%H:%M:%SZ")
+            trashed = trashed.replace(tzinfo=_dt.timezone.utc)
+        except (TypeError, ValueError):
+            return None
+    if trashed.tzinfo is None:
+        trashed = trashed.replace(tzinfo=_dt.timezone.utc)
+    dt = trashed.astimezone(_dt.timezone.utc) + _dt.timedelta(days=days)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _epoch(ts: Any) -> Optional[int]:
@@ -325,6 +395,61 @@ def _delivery_mode(req: Requirement) -> str:
     """"chat" | "repo" — missing/legacy objects count as "repo" (§20)."""
     dm = getattr(req, "delivery_mode", None)
     return dm if dm in ("chat", "repo") else "repo"
+
+
+# notes fold user comments / radar updates that used to be unsearchable on the
+# board — projected capped so one chatty card can't bloat the ~10s rewrite
+# (and the E2E board payload) unboundedly.
+_NOTES_TEXT_CAP = 2000
+_NOTES_CLIP_MARKER = "…（更早的备注已省略）"
+
+
+def _display_title(req: Requirement) -> str:
+    """§37 fallback chain at projection time: stored display_title (user-pinned
+    or LLM) → deterministic sanitize(title) → title. Always non-empty for a
+    titled card, so a raw URL/path never renders as a board title — zero
+    migration for legacy cards."""
+    dt = str(getattr(req, "display_title", "") or "").strip()
+    if dt:
+        return dt[:titles.MAX_DISPLAY_TITLE]
+    return titles.sanitize_title(_s(req.title)) or _s(req.title)
+
+
+def _notes_text(req: Requirement):
+    """§38 clip semantics for the notes projection: line-aligned TAIL. Fold
+    lines append at the TAIL — a head clip would silently drop the newest
+    folds' [@ts] handles (and can cut an 已拆出 flip mid-tag), exactly what
+    拆成新卡 needs. Over the cap the LAST ~2000 chars survive, snapped
+    forward to a line boundary so Swift's FoldNote.parse only ever sees
+    intact lines; an ellipsis marker line says honestly that older notes
+    were dropped. None when the card has no notes."""
+    notes = str(req.notes or "").strip()
+    if not notes:
+        return None
+    if len(notes) > _NOTES_TEXT_CAP:
+        clipped = notes[-_NOTES_TEXT_CAP:]
+        nl = clipped.find("\n")
+        if nl >= 0:   # drop the partial first line (a giant single line stays)
+            clipped = clipped[nl + 1:]
+        notes = f"{_NOTES_CLIP_MARKER}\n{clipped}"
+    return notes
+
+
+def _title_fields(req: Requirement) -> dict:
+    """The §37 add-only row fields shared by every lane projection. Empty
+    optionals are omitted (not null) so the payload only grows where there is
+    something to say; Swift reads them with decodeIfPresent."""
+    out: dict = {"display_title": _display_title(req)}
+    if getattr(req, "user_titled", False):
+        out["user_titled"] = True
+    former = [str(x) for x in (getattr(req, "former_titles", None) or [])
+              if str(x).strip()]
+    if former:
+        out["former_titles"] = former
+    notes = _notes_text(req)   # §38: tail-aligned clip (fold handles survive)
+    if notes:
+        out["notes_text"] = notes
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -449,7 +574,7 @@ def build_dashboard(
             return
 
         if req.status == State.CARD_SENT.value:
-            cost, show_cost = _cost_view(req, cfg)
+            cost, show_cost, cost_state = _cost_view(req, cfg)
             target_repo, target_name, target_kind = _target_view(req, cfg)
             # 手改 YAML 把 execution 写成字符串时按"无 execution"降级（同
             # executing 分支的 isinstance 守卫）——不炸整卡。
@@ -459,6 +584,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "target_repo": target_repo,
                     "target_name": target_name,
                     "target_kind": target_kind,
@@ -470,6 +596,9 @@ def build_dashboard(
                     "repeated": _int_or(req.repeated_mentions, 1) or 1,
                     "cost_usd": cost,
                     "show_cost": show_cost,
+                    # §40 add-only: "estimated"|"unknown" — the app renders
+                    # 成本未知 for unknown instead of an implied $0.
+                    "cost_state": cost_state,
                     "green_sign": bool(req.green_sign_required),
                     "disagreement": req.disagreement,
                     "improvement_of": req.improvement_of,
@@ -495,6 +624,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "tier": _s(req.tier),
                     "tier_hint": "AI 研究中",
                     "processing": True,
@@ -512,6 +642,7 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "hardness": req.hardness,
                     "type": req.type,
                     "sources": _source_view(req, cfg),
@@ -524,10 +655,14 @@ def build_dashboard(
                     "id": _s(req.id),
                     "title": _s(req.title),
                     "summary": req.summary or _s(req.title),
+                    **_title_fields(req),
                     "kind": "debt" if req.prev_status == State.DETECTED.value else "suggestion",
                     "trashed_at": req.trashed_at,
                     "trash_reason": req.trash_reason,
                     "permanent": bool(req.permanent),
+                    # §40 add-only: when actd WILL hard-delete this row (null =
+                    # pinned / retention off / unparsable trashed_at = never).
+                    "purge_at": _purge_at(req, cfg),
                     "type": req.type,
                     "hardness": req.hardness,
                 }
@@ -542,6 +677,7 @@ def build_dashboard(
                 {
                     "id": _s(req.id),
                     "name": _s(req.title or req.id),
+                    **_title_fields(req),
                     "state": "queued",
                     "summary": req.summary or None,
                     "plan": _as_list(req.plan),
@@ -601,6 +737,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -629,6 +766,7 @@ def build_dashboard(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
@@ -669,6 +807,7 @@ def build_dashboard(
                         "id": _s(req.id),
                         "name": name,
                         "summary": req.summary or None,
+                        **_title_fields(req),
                         "dod": list(req.definition_of_done or []),
                         "session_id": resume_sid,
                         "short_id": short_id,
@@ -688,24 +827,41 @@ def build_dashboard(
                     }
                 )
             elif state in _BLOCKED_STATES:
-                needs_input.append(
-                    {
-                        "id": _s(req.id),
-                        "name": name,
-                        "session_id": resume_sid,
-                        "short_id": short_id,
-                        "copy_cmd": copy_cmd,
-                        "agent_name": agent_name,
-                        "state": "blocked",
-                        "waiting_for": (agent or {}).get("waiting_for") or "input",
-                    }
-                )
+                # §39: surface WHAT the agent is asking — the transcript's
+                # last assistant text after the last real user turn (the same
+                # fence/sidechain-disciplined extraction harvest uses), cached
+                # per (sid, transcript signature) above.
+                question = (_question_cached(str(resume_sid or sid))
+                            if sid else None)
+                row = {
+                    "id": _s(req.id),
+                    "name": name,
+                    **_title_fields(req),
+                    "session_id": resume_sid,
+                    "short_id": short_id,
+                    "copy_cmd": copy_cmd,
+                    "agent_name": agent_name,
+                    "state": "blocked",
+                    # §39: the bare "input" fallback stays ONLY when no
+                    # transcript text exists — next to a real question it
+                    # was pure noise.
+                    "waiting_for": ((agent or {}).get("waiting_for")
+                                    or (None if question else "input")),
+                    # §39: an undeliverable answer (executor.answer failure)
+                    # must be visible ON the card, not just in a notification.
+                    "last_error": ex.get("last_error"),
+                    "last_error_id": failures.classify(ex.get("last_error")),
+                }
+                if question:
+                    row["question"] = question
+                needs_input.append(row)
             else:
                 # running, or agent not found yet -> still consider it running
                 running.append(
                     {
                         "id": _s(req.id),
                         "name": name,
+                        **_title_fields(req),
                         "session_id": resume_sid,
                         "short_id": short_id,
                         "copy_cmd": copy_cmd,
