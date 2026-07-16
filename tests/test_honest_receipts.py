@@ -15,11 +15,16 @@ Pinned here:
   never raises into the capture;
 - radar give-up diagnostic card (§40.3): filed in 备选 on give-up, deduped
   by note path forever (incl. trashed duplicates), end-to-end through
-  radar.scan.
+  radar.scan;
+- weekly-digest failure exits notify on MANUAL runs (§40.4) — the detached
+  「现在生成一份」 press must never fail silently; scheduled runs stay
+  quiet (a failed Monday re-fires hourly — an unconditional notify would
+  ping all day).
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no
 LLM subprocess is ever spawned (runners/extractors injected).
 """
+import datetime as _dt
 import json
 import os
 import shutil
@@ -31,7 +36,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import radar, radar_slack
+from act import radar, radar_slack, weekly_digest
 from act.lib import config, dashboard, registry
 from act.lib.registry import Requirement, State
 
@@ -322,6 +327,70 @@ class GiveUpCardTestCase(unittest.TestCase):
         radar.scan(runner=runner)
         self.assertEqual(
             len([r for r in registry.load_all() if r.type == "diagnostic"]), 1)
+
+
+# --------------------------------------------------------------------------- #
+# §40.4 weekly-digest failure notifies (manual runs)
+# --------------------------------------------------------------------------- #
+class DigestFailureNotifyTestCase(unittest.TestCase):
+    def setUp(self):
+        config.ensure_state_dirs()
+        self._cleanup()
+        self.addCleanup(self._cleanup)
+        self.tmp = tempfile.TemporaryDirectory(prefix="wd40-vault-")
+        self.addCleanup(self.tmp.cleanup)
+        self.raw = Path(self.tmp.name) / "2 - raw"
+        self.raw.mkdir(parents=True)
+        config.CONFIG_PATH.write_text(
+            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n',
+            encoding="utf-8")
+        note = self.raw / "2026-07-15 work.md"
+        note.write_text("did things", encoding="utf-8")
+        patcher = mock.patch.object(weekly_digest.notify, "notify",
+                                    return_value=True)
+        self.notify = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _cleanup():
+        if config.CONFIG_PATH.exists():
+            config.CONFIG_PATH.unlink()
+        marker = config.STATE_DIR / weekly_digest.MARKER_PATH_NAME
+        if marker.exists():
+            marker.unlink()
+        if config.REGISTRY_DIR.exists():
+            shutil.rmtree(config.REGISTRY_DIR)
+
+    def test_claude_failure_notifies_with_retry_pointer(self):
+        def boom(prompt):
+            raise RuntimeError("claude down")
+        summary = weekly_digest.run(force=True, runner=boom)
+        self.assertFalse(summary["ok"])
+        self.notify.assert_called_once()
+        title, body = self.notify.call_args[0][:2]
+        self.assertIn("本周摘要生成失败", title)
+        self.assertIn("重试", body)
+
+    def test_unparseable_output_notifies_too(self):
+        summary = weekly_digest.run(force=True,
+                                    runner=lambda p: "not json at all")
+        self.assertFalse(summary["ok"])
+        self.notify.assert_called_once()
+        title, body = self.notify.call_args[0][:2]
+        self.assertIn("本周摘要生成失败", title)
+        self.assertIn("无法解析", body)
+
+    def test_scheduled_failure_stays_quiet(self):
+        # mirror of the no-data gate: due() keeps returning True after a
+        # failed Monday (the marker never advanced), so the hourly launchd
+        # re-run would otherwise notify all day long.
+        def boom(prompt):
+            raise RuntimeError("claude down")
+        cfg = config.load_config()
+        due_now = _dt.datetime(2026, 7, 13, cfg.weekly_digest_hour + 1)  # Mon
+        summary = weekly_digest.run(force=False, runner=boom, now=due_now)
+        self.assertFalse(summary["ok"])
+        self.notify.assert_not_called()
 
 
 if __name__ == "__main__":
