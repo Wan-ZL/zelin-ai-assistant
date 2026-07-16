@@ -458,6 +458,12 @@ enum Prefs {
     /// 卡片排序 (v0.10.3 契约一) — pure UI preference, deliberately NOT in
     /// settings_overrides.json. "newest" (default) | "oldest" | "deadline".
     static var cardSortOrder: String { string("cardSortOrder", default: "newest") }
+
+    /// 看板动画 (v0.43 手感) — the kanban flight layer's master switch, pure
+    /// UI preference like cardSortOrder. Default ON; the system Reduce Motion
+    /// setting additionally force-disables at consumption time
+    /// (BoardMotionPolicy.animationsEnabled).
+    static var boardAnimations: Bool { bool("boardAnimations", default: true) }
 }
 
 // MARK: - Secrets (contract: <AIASSISTANT_HOME>/config/secrets/, dir 0700 file 0600)

@@ -49,6 +49,9 @@ struct KanbanView: View {
     // as ONE board_search event when the caret leaves the box / page switches
     // (never per keystroke). Query text itself is capture_input-gated.
     @State private var searchSessionQuery = ""
+    // v0.43 手感: consumes the store's BoardMotionEvents — owns the flight
+    // proxies, row frames, landing gates, strip pulses (BoardMotion.swift).
+    @StateObject private var flights = BoardFlightController()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -291,6 +294,10 @@ struct KanbanView: View {
             let debtNotices = laneNotices(.debt)
             let completedNotices = laneNotices(.completed)
             let archivedNotices = laneNotices(.archived)
+            // v0.43 手感: the flight layer sits ABOVE the board scroll view in
+            // a shared named coordinate space; rows/lanes report their frames
+            // into it, proxies fly across it, and it never intercepts clicks.
+            ZStack(alignment: .topLeading) {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
                     // 潜在任务/Backlog leftmost (v0.18 flow order): display
@@ -314,14 +321,22 @@ struct KanbanView: View {
                                && debtNotices.isEmpty,
                            quiet: true,
                            expanded: searching && !debt.isEmpty
-                               ? .constant(true) : $store.backlogStripExpanded) {
+                               ? .constant(true) : $store.backlogStripExpanded,
+                           motionKey: "debt") {
                         ForEach(debtNotices) { NoticeRow(notice: $0) }
-                        ForEach(debtEchoes) { PendingEchoRow(echo: $0) }
+                        // v0.43: echo rows report under their sourceID — the
+                        // differ tracks the CARD id, so a 暂缓 flight can land
+                        // on the echo that stands in for it.
+                        ForEach(debtEchoes) {
+                            PendingEchoRow(echo: $0)
+                                .boardCardMotion($0.sourceID, lane: "debt", store: store, flights: flights)
+                        }
                         // v0.21 契约七: 潜在任务卡也可多选参与合并（selectableIDs 已含 debt）。
                         ForEach(debt, id: \.id) { d in
                             selectableCard(d.id) {
                                 DebtRow(item: d, app: app)
                             }
+                            .boardCardMotion(d.id, lane: "debt", store: store, flights: flights)
                         }
                     }
                     // isEmpty: false — the resident composer means this lane
@@ -335,7 +350,7 @@ struct KanbanView: View {
                            emptyText: laneEmptyText(
                                L("没有等你拍板的事。想到什么，直接在上面输入框里说一句",
                                  "Nothing needs your decision. Capture a thought in the box above")),
-                           isEmpty: false) {
+                           isEmpty: false, motionKey: "approval") {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
@@ -353,6 +368,7 @@ struct KanbanView: View {
                         ForEach(Array(placeholderPrefix), id: \.id) { card in
                             ApprovalCardView(card: card, app: app,
                                              commentPending: store.pendingComment[card.id] != nil)
+                                .boardCardMotion(card.id, lane: "approval", store: store, flights: flights)
                         }
                         ForEach(suggestions, id: \.id) { s in
                             // dismiss-pending 的建议卡已被投影过滤（即时消失），
@@ -368,6 +384,7 @@ struct KanbanView: View {
                                 ApprovalCardView(card: card, app: app,
                                                  commentPending: store.pendingComment[card.id] != nil)
                             }
+                            .boardCardMotion(card.id, lane: "approval", store: store, flights: flights)
                         }
                     }
                     // needs_input merges into 运行中 — listed first with a
@@ -382,7 +399,7 @@ struct KanbanView: View {
                            emptyText: laneEmptyText(
                                L("没有正在执行的任务。批准一个提案，AI 就开始干活",
                                  "Nothing running — approve a proposal to start")),
-                           isEmpty: false) {
+                           isEmpty: false, motionKey: "running") {
                         // resident direct-run composer (Composer.swift, v0.34)
                         KanbanComposer(app: app, mode: .run)
                         if running.isEmpty && needsInput.isEmpty
@@ -395,12 +412,17 @@ struct KanbanView: View {
                         ForEach(runningNotices) { NoticeRow(notice: $0) }
                         ForEach(runCaptures, id: \.id) { c in
                             RunCapturePendingRow(pending: c, app: app)
+                                .boardCardMotion(c.id, lane: "running", store: store, flights: flights)
                         }
-                        ForEach(runningEchoes) { PendingEchoRow(echo: $0) }
+                        ForEach(runningEchoes) {
+                            PendingEchoRow(echo: $0)
+                                .boardCardMotion($0.sourceID, lane: "running", store: store, flights: flights)
+                        }
                         ForEach(needsInput, id: \.id) { t in
                             selectableCard(t.id) {
                                 TaskRow(task: t, app: app, lane: .needsInput)
                             }
+                            .boardCardMotion(t.id, lane: "running", store: store, flights: flights)
                         }
                         if !needsInput.isEmpty && !running.isEmpty {
                             Divider().opacity(0.5)
@@ -409,6 +431,7 @@ struct KanbanView: View {
                             selectableCard(t.id) {
                                 TaskRow(task: t, app: app, lane: .running)
                             }
+                            .boardCardMotion(t.id, lane: "running", store: store, flights: flights)
                         }
                     }
                     column(title: L("待验收 · review", "Review"),
@@ -416,12 +439,14 @@ struct KanbanView: View {
                            help: LaneHelp.review,
                            emptyText: laneEmptyText(
                                L("没有等你验收的交付", "No drafts waiting for your review")),
-                           isEmpty: reviews.isEmpty && reviewNotices.isEmpty) {
+                           isEmpty: reviews.isEmpty && reviewNotices.isEmpty,
+                           motionKey: "review") {
                         ForEach(reviewNotices) { NoticeRow(notice: $0) }
                         ForEach(reviews, id: \.id) { r in
                             selectableCard(r.id) {
                                 ReviewRow(item: r, app: app)
                             }
+                            .boardCardMotion(r.id, lane: "review", store: store, flights: flights)
                         }
                     }
                     // 阶段性完成/Done for now (display-only): delivery happens
@@ -435,14 +460,19 @@ struct KanbanView: View {
                            emptyText: laneEmptyText(
                                L("还没有验收过的交付", "Nothing accepted yet")),
                            isEmpty: completed.isEmpty && completedEchoes.isEmpty
-                               && completedNotices.isEmpty) {
+                               && completedNotices.isEmpty,
+                           motionKey: "completed") {
                         ForEach(completedNotices) { NoticeRow(notice: $0) }
-                        ForEach(completedEchoes) { PendingEchoRow(echo: $0) }
+                        ForEach(completedEchoes) {
+                            PendingEchoRow(echo: $0)
+                                .boardCardMotion($0.sourceID, lane: "completed", store: store, flights: flights)
+                        }
                         // v0.21 契约七: 阶段性完成卡也可多选参与合并（selectableIDs 已含 completed）。
                         ForEach(completed, id: \.id) { t in
                             selectableCard(t.id) {
                                 TaskRow(task: t, app: app, lane: .completed)
                             }
+                            .boardCardMotion(t.id, lane: "completed", store: store, flights: flights)
                         }
                     }
                     // v0.33 far-right bookend: 永久性完成/Done for good — the
@@ -461,13 +491,24 @@ struct KanbanView: View {
                            emptyText: L("还没有永久完成的卡", "Nothing here yet"),
                            isEmpty: false,
                            quiet: true,
-                           expanded: $store.archiveStripExpanded) {
+                           expanded: $store.archiveStripExpanded,
+                           motionKey: "archived") {
                         ForEach(archivedNotices) { NoticeRow(notice: $0) }
                         ArchiveLaneContent(store: store, app: app)
                     }
                 }
                 .padding(16)
             }
+            BoardFlightOverlay(controller: flights)
+            }
+            .coordinateSpace(name: BoardMotionPolicy.space)
+            .onPreferenceChange(BoardFramesKey.self) { flights.frames = $0 }
+            .onChange(of: store.boardMotion) { _, event in
+                if let event { flights.handle(event, store: store) }
+            }
+            // first render after the window (re)opens: mark the current event
+            // seen — no animation on the first snapshot a fresh board shows.
+            .onAppear { flights.baseline(store.boardMotion?.seq) }
         }
     }
 
@@ -660,10 +701,13 @@ struct KanbanView: View {
     // quieting on the header (backlog + archive, so proposals keep the eye).
     // collapse ≠ nil → this is an expanded strip: clicking the header (or its
     // ⟨⟨ hint) collapses it back to collapsedStrip (v0.33).
+    // motionKey (v0.43): lane key under which the column reports its frame —
+    // the flight layer's fallback landing zone when the target row isn't
+    // laid out (scrolled away / archive content).
     private func column<Content: View>(
         title: String, count: Int, help: String? = nil,
         emptyText: String, isEmpty: Bool, quiet: Bool = false,
-        collapse: (() -> Void)? = nil,
+        collapse: (() -> Void)? = nil, motionKey: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -702,6 +746,7 @@ struct KanbanView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.primary.opacity(0.018))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .boardMotionFrame("lane:\(motionKey ?? title)")
     }
 
     // v0.33 bookend strips: a lane that renders as a narrow 44pt strip until
@@ -712,7 +757,7 @@ struct KanbanView: View {
     private func collapsibleColumn<Content: View>(
         title: String, count: Int, help: String? = nil,
         emptyText: String, isEmpty: Bool, quiet: Bool = false,
-        expanded: Binding<Bool>,
+        expanded: Binding<Bool>, motionKey: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         Group {
@@ -723,9 +768,9 @@ struct KanbanView: View {
                            withAnimation(.easeInOut(duration: 0.15)) {
                                expanded.wrappedValue = false
                            }
-                       }, content: content)
+                       }, motionKey: motionKey, content: content)
             } else {
-                collapsedStrip(title: title, count: count) {
+                collapsedStrip(title: title, count: count, motionKey: motionKey) {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         expanded.wrappedValue = true
                     }
@@ -736,7 +781,11 @@ struct KanbanView: View {
 
     /// The collapsed form: count badge on top, lane title rotated 90°.
     /// Click anywhere to expand back into the normal 400pt column.
+    /// v0.43: reports its frame as "strip:<key>" (flights land ON the strip
+    /// when their target lane is folded away) and the count badge does its
+    /// single 1.0→1.25→1.0 pop when one does.
     private func collapsedStrip(title: String, count: Int,
+                                motionKey: String? = nil,
                                 expand: @escaping () -> Void) -> some View {
         Button(action: expand) {
             VStack(spacing: 8) {
@@ -751,6 +800,8 @@ struct KanbanView: View {
                     .padding(.vertical, 1)
                     .background(Color.secondary.opacity(0.18))
                     .clipShape(Capsule())
+                    .scaleEffect(motionKey.map { flights.pulsing.contains($0) } == true
+                                 ? 1.25 : 1.0)
                 // rotated title: the unrotated layout box stays text-sized, so
                 // give it an explicit tall frame the rotated glyphs fit into.
                 Text(title)
@@ -770,6 +821,7 @@ struct KanbanView: View {
         }
         .buttonStyle(.plain)
         .help(L("点击展开", "Click to expand"))
+        .boardMotionFrame("strip:\(motionKey ?? title)")
     }
 
     // centered ghost placeholder (the popover keeps EmptyRow) — shared by the
