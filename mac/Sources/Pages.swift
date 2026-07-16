@@ -957,7 +957,8 @@ struct IngestView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(L("录制与 ingest", "Recording & Ingest"))
+            // v0.42 (audit #15): match the sidebar — "ingest" is jargon.
+            Text(L("录制与数据接入", "Recording & Data Sources"))
                 .font(.system(size: 18, weight: .semibold))
 
             // Screenpipe control — mode picker + engine status (RecordingController)
