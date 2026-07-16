@@ -10,7 +10,9 @@ const POLL_MS = 5000;
 // The five board lanes (CONTRACT §6). Each maps to dashboard.json partition(s)
 // and the actd actions reachable from that lane (§10). `needs` = action prompts
 // for text (comment / rework feedback); `confirm` = ask before firing; `note` =
-// extra warning line appended to the confirm dialog.
+// extra warning line appended to the confirm dialog; `fork` = the button opens
+// an explicit multi-choice dialog and each choice carries its own action
+// (§41 — mirrors the Mac v0.21 停止 fork and the v0.10.3 拒绝 fork).
 const LANES = [
   {
     key: "debt", zh: "潜在任务", en: "Backlog",
@@ -18,7 +20,7 @@ const LANES = [
     actions: [
       { action: "raise", label: "研究并提议" },
       { action: "trash", label: "删除", cls: "danger", confirm: true,
-        note: "删除后在网页端无法恢复（Mac 应用里可以找回）。" },
+        note: "删除后可在页面底部「回收站」找回。" },
     ],
   },
   {
@@ -26,7 +28,16 @@ const LANES = [
     parts: ["needs_approval"],
     actions: [
       { action: "approve", label: "✅ 批准", cls: "primary" },
-      { action: "reject", label: "❌ 拒绝", cls: "danger", confirm: true },
+      // 拒绝 asks which kind (Mac v0.10.3 parity): trash entries leave
+      // merge_or_new matching (the same ask re-raises fresh), 已办完
+      // (done_external → delivered) folds later restatements into this thread.
+      { label: "❌ 拒绝", cls: "danger", fork: {
+          title: "这张卡不需要执行？",
+          choices: [
+            { label: "不想做（进回收站）", action: "reject", danger: true },
+            { label: "已办完（记为已交付）", action: "done_external" },
+          ],
+        } },
       { action: "comment", label: "💬 修改方向", needs: "修改方向 / 反馈" },
       { action: "defer", label: "暂缓" },
     ],
@@ -34,10 +45,18 @@ const LANES = [
   {
     key: "running", zh: "运行中", en: "Running",
     parts: ["running", "needs_input"],
+    directRun: true,
     actions: [
-      { action: "stop_to_review", label: "去待验收" },
-      { action: "abort_execution", label: "停止·退回", confirm: true },
-      { action: "done_external", label: "系统外完成", confirm: true },
+      // §41 parity (Mac v0.21): one 停止 → explicit two-choice fork. 系统外完成
+      // left the running card in v0.21 — it lives on the 拒绝 fork instead.
+      { label: "⏹ 停止", fork: {
+          title: "停止这个任务？",
+          message: "退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
+          choices: [
+            { label: "退回提案", action: "abort_execution", danger: true },
+            { label: "去待验收", action: "stop_to_review" },
+          ],
+        } },
     ],
   },
   {
@@ -54,7 +73,7 @@ const LANES = [
     actions: [
       { action: "revert_review", label: "退回待验收" },
       { action: "archive", label: "永久完成", confirm: true,
-        note: "归档后在网页端无法恢复（Mac 应用里可以找回）。" },
+        note: "归档后可在页面底部「永久性完成」区放回看板。" },
     ],
   },
 ];
@@ -112,16 +131,62 @@ async function postInbox(payload) {
   }
 }
 
-function doAction(spec, item) {
-  const payload = { action: spec.action };
+// §41 fork dialog — a native <dialog> replacing window.confirm where the Mac
+// shows a multi-choice alert (停止 fork, 拒绝 fork, force-merge primary pick).
+// Resolves the chosen `value`, or null on cancel/Esc. Lives on <body>, so the
+// 5s board rebuild can't swap it out from under the pointer.
+function forkDialog(title, message, choices) {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    const dlg = document.createElement("dialog");
+    dlg.className = "fork";
+    const h = el("p", "fork-title");
+    h.textContent = title;
+    dlg.appendChild(h);
+    if (message) {
+      const m = el("p", "fork-msg");
+      m.textContent = message;
+      dlg.appendChild(m);
+    }
+    const row = el("div", "fork-actions");
+    choices.forEach(c => {
+      const b = el("button", c.danger ? "danger" : "");
+      b.textContent = c.label;
+      b.addEventListener("click", () => { done(c.value); dlg.close(); });
+      row.appendChild(b);
+    });
+    const cancel = el("button", "cancel");
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", () => dlg.close());
+    row.appendChild(cancel);
+    dlg.appendChild(row);
+    dlg.addEventListener("close", () => { done(null); dlg.remove(); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+  });
+}
+
+async function doAction(spec, item) {
+  const payload = {};
   if (item && item.id) payload.id = item.id;
+  // Name the target so a board refresh mid-aim can't silently swap it.
+  const title = String((item && (item.title || item.name || item.id)) || "").slice(0, 80);
+  if (spec.fork) {
+    const msg = spec.fork.message || (item && item.summary) || title;
+    const chosen = await forkDialog(spec.fork.title, msg,
+      spec.fork.choices.map(c => ({ label: c.label, value: c.action, danger: c.danger })));
+    if (!chosen) return;
+    payload.action = chosen;
+    postInbox(payload);
+    return;
+  }
+  payload.action = spec.action;
   if (spec.needs) {
     const text = window.prompt(spec.needs + "：");
     if (text == null || !text.trim()) return;
     payload.comment = text.trim();
   } else if (spec.confirm) {
-    // Name the target so a board refresh mid-aim can't silently swap it.
-    const title = String((item && (item.title || item.name || item.id)) || "").slice(0, 80);
     let msg = "确认 " + spec.label + (title ? "「" + title + "」" : "") + "？";
     if (spec.note) msg += "\n\n" + spec.note;
     if (!window.confirm(msg)) return;
@@ -237,6 +302,255 @@ function cardEl(item, lane) {
   return c;
 }
 
+// ---------------------------------------------------- merge suggestions (§41)
+// The AI merge-suggestion card mirrored on the web (契约 §21/§21bis, same as
+// Mac Cards.swift MergeSuggestionCard / iOS CardViews.swift): analyzing / done
+// / failed, 接受 (merge_apply) / 取消 (merge_dismiss), and — when the AI did
+// NOT land on 「合并」or the analysis failed — 仍然合并 (merge_force with a
+// user-chosen primary). Rendered at the top of the 提案 lane.
+const MS_VERDICT = {
+  merge: "建议合并：副卡并入主卡",
+  link_improvement: "建议挂为主卡的改进卡",
+  keep_separate: "建议保持独立，不合并",
+  close_secondary: "建议关闭副卡（进回收站）",
+};
+const MS_CONFIDENCE = { high: "置信 高", medium: "置信 中", low: "置信 低" };
+
+function buildTitleIndex(data) {
+  const map = {};
+  ["debt", "needs_approval", "running", "needs_input", "review", "completed"]
+    .forEach(p => {
+      (Array.isArray(data[p]) ? data[p] : []).forEach(it => {
+        if (it && it.id) map[it.id] = it.title || it.name || it.summary || it.id;
+      });
+    });
+  return id => map[id] || id;
+}
+
+function mergeSuggestionEl(s, titleOf) {
+  const c = el("div", "card msug");
+  const involved = (s.ids || []).map(titleOf).join("  +  ");
+  let inner = "";
+  if (s.status === "failed") {
+    inner += `<p class="title">⚠ 合并分析失败</p>`;
+    inner += `<p class="summary dim">${esc(involved)}</p>`;
+    if (s.error) inner += `<p class="summary dim">${esc(s.error)}</p>`;
+  } else if (s.status === "done") {
+    const head = MS_VERDICT[s.verdict] || s.verdict || "分析完成";
+    inner += `<p class="title">⤞ ${esc(head)}</p>`;
+    if (s.confidence) {
+      inner += `<div class="badges"><span class="badge">${esc(MS_CONFIDENCE[s.confidence] || s.confidence)}</span></div>`;
+    }
+    if (s.primary) {
+      inner += `<p class="summary">主卡：${esc(titleOf(s.primary))}</p>`;
+      (s.ids || []).filter(i => i !== s.primary).forEach(i => {
+        inner += `<p class="summary dim">副卡：${esc(titleOf(i))}</p>`;
+      });
+    } else {
+      (s.ids || []).forEach(i => { inner += `<p class="summary dim">• ${esc(titleOf(i))}</p>`; });
+    }
+    if (s.rationale) inner += `<p class="summary dim">${esc(s.rationale)}</p>`;
+    if (Array.isArray(s.action_plan) && s.action_plan.length) {
+      const li = s.action_plan.map(p => `<li>${esc(p)}</li>`).join("");
+      inner += `<div class="block"><h4>接受后将执行</h4><ol>${li}</ol></div>`;
+    }
+  } else { // analyzing
+    inner += `<p class="title"><span class="spin"></span> 合并分析中…</p>`;
+    inner += `<p class="summary dim">${esc(involved)}</p>`;
+  }
+  c.innerHTML = inner;
+
+  // Buttons only once the analysis settled (done/failed) — same as Mac/iOS.
+  if (s.status === "done" || s.status === "failed") {
+    const acts = el("div", "actions");
+    if (s.status === "done") {
+      const acc = el("button", "primary", "接受");
+      acc.addEventListener("click", () => postInbox({ action: "merge_apply", id: s.id }));
+      acts.appendChild(acc);
+    }
+    if (s.status === "failed" || s.verdict !== "merge") {
+      const force = el("button", "", "仍然合并");
+      force.addEventListener("click", () => forceMerge(s, titleOf));
+      acts.appendChild(force);
+    }
+    const dis = el("button", "", "取消");
+    dis.addEventListener("click", () => postInbox({ action: "merge_dismiss", id: s.id }));
+    acts.appendChild(dis);
+    c.appendChild(acts);
+  }
+  return c;
+}
+
+// 契约 §21bis 强制合并: pick the primary, then merge_force; on success the
+// superseded suggestion is dismissed (same follow-up as Mac/iOS).
+async function forceMerge(s, titleOf) {
+  const ids = s.ids || [];
+  if (ids.length < 2) return;
+  const choices = ids.map(id => ({
+    label: String(titleOf(id) || id).slice(0, 60),
+    value: id,
+    danger: false,
+  }));
+  const primary = await forkDialog(
+    "强制合并 " + ids.length + " 张卡片 — 选一张作为主卡保留，其余全部并入它",
+    "副卡会停止运行、进入「已合并」——不可撤销。来源与交付物保留在主卡上。",
+    choices);
+  if (!primary) return;
+  const ok = await postInbox({ action: "merge_force", ids: ids, primary: primary });
+  if (ok) postInbox({ action: "merge_dismiss", id: s.id });
+}
+
+// -------------------------------------------------- direct-run capture (§41)
+// v0.34 dual input (CONTRACT §34) parity: the Running lane's resident
+// direct-run box — type here and it runs now, skipping the proposal gate.
+// The draft survives board rebuilds and a failed submit (toast explains).
+let directRunDraft = "";
+function directRunEl() {
+  const wrap = el("div", "runcap");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.autocomplete = "off";
+  input.placeholder = "一句话，直接开跑（跳过提案）…";
+  input.value = directRunDraft;
+  input.addEventListener("input", () => { directRunDraft = input.value; });
+  const btn = el("button", "", "开跑");
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text || btn.disabled) return;
+    btn.disabled = true;
+    const ok = await postInbox({ action: "capture", text: text, mode: "run" });
+    btn.disabled = false;
+    if (ok) { directRunDraft = ""; input.value = ""; }
+  };
+  btn.addEventListener("click", submit);
+  input.addEventListener("keydown", e => {
+    // IME composition Enter must not submit (same guard as the capture box).
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") submit();
+  });
+  wrap.appendChild(input);
+  wrap.appendChild(btn);
+  return wrap;
+}
+
+// ------------------------------------------------- trash + archived bookends
+// §41: the two default-collapsed bookend strips the Mac board grew in v0.33 —
+// deleted cards are restorable and sealed cards can be put back RIGHT HERE,
+// so the web confirm dialogs no longer claim web can't undo.
+function relTime(v) {
+  if (v == null || v === "") return "";
+  const t = typeof v === "number" ? v * 1000 : Date.parse(v);
+  if (isNaN(t)) return "";
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 60) return secs + "s前";
+  if (secs < 3600) return Math.round(secs / 60) + "m前";
+  if (secs < 86400) return Math.round(secs / 3600) + "h前";
+  return Math.round(secs / 86400) + "d前";
+}
+
+function actionRow(buttons) {
+  const acts = el("div", "actions");
+  buttons.forEach(b => {
+    const btn = el("button", b.cls || "", esc(b.label));
+    if (b.disabled) btn.disabled = true;
+    else btn.addEventListener("click", b.onClick);
+    acts.appendChild(btn);
+  });
+  return acts;
+}
+
+function trashRowEl(it) {
+  const c = el("div", "card");
+  let inner = `<div class="id">${esc(it.id || "")}</div>`;
+  inner += `<p class="title">${esc(it.title || it.summary || it.id || "(untitled)")}</p>`;
+  if (it.summary && it.summary !== it.title) inner += `<p class="summary dim">${esc(it.summary)}</p>`;
+  const b = [];
+  if (it.permanent) b.push(`<span class="badge">📌 永久</span>`);
+  if (it.kind) b.push(`<span class="badge">${esc(it.kind)}</span>`);
+  if (it.trash_reason) b.push(`<span class="badge">${esc(String(it.trash_reason).slice(0, 40))}</span>`);
+  const ago = relTime(it.trashed_at);
+  if (ago) b.push(`<span class="badge">${esc(ago)}</span>`);
+  if (b.length) inner += `<div class="badges">${b.join("")}</div>`;
+  c.innerHTML = inner;
+  const buttons = [
+    { label: "恢复", cls: "primary", disabled: !it.id,
+      onClick: () => postInbox({ action: "restore", id: it.id }) },
+  ];
+  if (!it.permanent) {
+    buttons.push({ label: "永久保存", disabled: !it.id,
+      onClick: () => postInbox({ action: "pin", id: it.id }) });
+  }
+  c.appendChild(actionRow(buttons));
+  return c;
+}
+
+function archiveRowEl(it) {
+  const c = el("div", "card");
+  let inner = `<div class="id">${esc(it.id || "")}</div>`;
+  inner += `<p class="title">${esc(it.title || it.summary || it.id || "(untitled)")}</p>`;
+  if (it.summary && it.summary !== it.title) inner += `<p class="summary dim">${esc(it.summary)}</p>`;
+  const b = [];
+  if (it.archive_reason === "user") b.push(`<span class="badge">你封存</span>`);
+  else if (it.archive_reason === "auto") b.push(`<span class="badge">自动封存</span>`);
+  const ago = relTime(it.archived_at);
+  if (ago) b.push(`<span class="badge">${esc(ago)}</span>`);
+  if (b.length) inner += `<div class="badges">${b.join("")}</div>`;
+  c.innerHTML = inner;
+  c.appendChild(actionRow([
+    { label: "放回看板", cls: "primary", disabled: !it.id,
+      onClick: () => postInbox({ action: "unarchive", id: it.id }) },
+  ]));
+  return c;
+}
+
+const BOOKENDS = [
+  { key: "trash", title: "🗑 回收站 · trash", empty: "回收站为空",
+    help: "删掉的卡放在这里，「恢复」回到原状态列。回收站条目不参与匹配——同一需求会重新出卡。",
+    rows: data => Array.isArray(data.trash) ? data.trash : [],
+    row: trashRowEl },
+  { key: "archived", title: "🗄 永久性完成 · done for good", empty: "还没有永久完成的卡",
+    help: "彻底结束、封存的线程（你点的永久完成 + 自动封存的冷交付）。封存=不再参与匹配，后续相关信息会开新卡而不是回锅这张。可随时「放回看板」回到原状态列。",
+    rows: data => Array.isArray(data.archived) ? data.archived : [],
+    row: archiveRowEl },
+];
+
+function renderBookends(data) {
+  const host = document.getElementById("bookends");
+  if (!host) return;
+  // Keep the user's open/closed state across the rebuild (like 展开详情).
+  const open = new Set();
+  host.querySelectorAll("details.bookend").forEach(d => {
+    if (d.open && d.dataset.key) open.add(d.dataset.key);
+  });
+  host.innerHTML = "";
+  const counts = data.counts || {};
+  BOOKENDS.forEach(bk => {
+    const rows = bk.rows(data);
+    const total = counts[bk.key] != null ? counts[bk.key] : rows.length;
+    const d = document.createElement("details");
+    d.className = "bookend";
+    d.dataset.key = bk.key;
+    if (open.has(bk.key)) d.open = true;
+    d.appendChild(el("summary", null,
+      `<span class="name">${esc(bk.title)}</span><span class="count">${esc(total)}</span>`));
+    d.appendChild(el("p", "bookend-help", esc(bk.help)));
+    const body = el("div", "bookend-body");
+    if (!rows.length) {
+      body.appendChild(el("div", "lane-empty", esc(bk.empty)));
+    } else {
+      rows.forEach(it => body.appendChild(bk.row(it)));
+      // archived[] is capped in dashboard.json while counts.archived stays the
+      // TRUE total (§2) — say so instead of silently under-showing.
+      if (total > rows.length) {
+        body.appendChild(el("div", "lane-empty",
+          `仅显示最近 ${rows.length} 条（共 ${esc(total)} 条）`));
+      }
+    }
+    d.appendChild(body);
+    host.appendChild(d);
+  });
+}
+
 // Rebuilding the board swaps the DOM under the cursor, so an aimed click can
 // land on a different card. Guard: only rebuild when the data actually changed
 // (generated_at ticks every poll, so it is excluded from the comparison), and
@@ -264,6 +578,7 @@ function render(data) {
   if (key === lastBoardKey) return;
   lastBoardKey = key;
   const board = document.getElementById("board");
+  const titleOf = buildTitleIndex(data);
   // Keep the user's 展开详情 open across the rebuild.
   const openIds = new Set();
   board.querySelectorAll(".card").forEach(c => {
@@ -287,6 +602,13 @@ function render(data) {
       `<span class="name">${esc(lane.zh)} · ${esc(lane.en)}</span>` +
       `<span class="count">${esc(count)}</span>`));
     const body = el("div", "lane-body");
+    // §41: the Running lane hosts the direct-run box (v0.34 dual input).
+    if (lane.directRun) body.appendChild(directRunEl());
+    // §41: AI merge suggestions at the top of 提案, mirroring Mac/iOS.
+    if (lane.key === "needs_approval") {
+      (Array.isArray(data.merge_suggestions) ? data.merge_suggestions : [])
+        .forEach(s => body.appendChild(mergeSuggestionEl(s, titleOf)));
+    }
     if (!items.length) {
       body.appendChild(el("div", "lane-empty", "空"));
     } else {
@@ -302,6 +624,7 @@ function render(data) {
     laneEl.appendChild(body);
     board.appendChild(laneEl);
   });
+  renderBookends(data);
 }
 
 // --------------------------------------------------------------------- poll
@@ -325,11 +648,15 @@ async function refresh() {
 function wireCapture() {
   const input = document.getElementById("captureInput");
   const btn = document.getElementById("captureBtn");
-  const submit = () => {
+  const submit = async () => {
     const text = input.value.trim();
-    if (!text) return;
-    postInbox({ action: "capture", text: text });
-    input.value = "";
+    if (!text || btn.disabled) return;
+    // §41: clear only on confirmed success — a failed submit (daemon down,
+    // server error) keeps the typed capture in the field, the toast explains.
+    btn.disabled = true;
+    const ok = await postInbox({ action: "capture", text: text });
+    btn.disabled = false;
+    if (ok) input.value = "";
   };
   btn.addEventListener("click", submit);
   input.addEventListener("keydown", e => {

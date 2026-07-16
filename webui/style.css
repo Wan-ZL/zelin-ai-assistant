@@ -160,6 +160,110 @@ details.more .block h4 { margin: 8px 0 3px; font-size: 11px; color: var(--muted)
 details.more .block p, details.more .block li { color: var(--muted); font-size: 12.5px; margin: 2px 0; }
 details.more ol { margin: 2px 0; padding-left: 18px; }
 
+/* §41 fork dialog — the Mac multi-choice alert, as a native <dialog>. */
+dialog.fork {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  max-width: 420px;
+  width: calc(100vw - 48px);
+}
+dialog.fork::backdrop { background: rgba(0, 0, 0, 0.55); }
+dialog.fork .fork-title { margin: 0 0 6px; font-weight: 600; }
+dialog.fork .fork-msg { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; white-space: pre-wrap; }
+dialog.fork .fork-actions { display: flex; flex-direction: column; gap: 7px; }
+dialog.fork .fork-actions button {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+dialog.fork .fork-actions button:hover { border-color: var(--accent); }
+dialog.fork .fork-actions button.danger { color: var(--red); }
+dialog.fork .fork-actions button.danger:hover { border-color: var(--red); }
+dialog.fork .fork-actions button.cancel { color: var(--muted); text-align: center; }
+
+/* §41 merge-suggestion card (契约 §21/§21bis) — same purple accent as Mac/iOS. */
+.card.msug { border-color: rgba(163, 113, 247, 0.45); background: rgba(163, 113, 247, 0.07); }
+.card.msug .block h4 { margin: 8px 0 3px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.card.msug .block li { color: var(--muted); font-size: 12.5px; margin: 2px 0; }
+.card.msug .block ol { margin: 2px 0; padding-left: 18px; }
+.spin {
+  display: inline-block;
+  width: 11px; height: 11px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* §41 direct-run capture (v0.34 dual input) at the top of the Running lane. */
+.runcap { display: flex; gap: 6px; }
+.runcap input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+.runcap input:focus { outline: none; border-color: var(--accent); }
+.runcap button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.runcap button:disabled { opacity: 0.5; cursor: default; }
+
+/* §41 bookends: 回收站 + 永久性完成 (default-collapsed, like the Mac strips). */
+.bookends { padding: 0 18px 40px; display: flex; flex-direction: column; gap: 12px; }
+details.bookend {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 14px 0;
+}
+details.bookend summary {
+  cursor: pointer;
+  padding: 12px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  list-style: revert;
+}
+details.bookend summary .count {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 12px;
+  font-weight: 400;
+}
+details.bookend .bookend-help { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+details.bookend .bookend-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+  padding-bottom: 14px;
+}
+
 .toast {
   position: fixed;
   left: 50%;

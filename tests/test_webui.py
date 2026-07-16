@@ -203,6 +203,69 @@ class WebUITestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(list(config.INBOX_DIR.glob("*.json"))), 1)
 
+    # -- §41 parity additions (merge_force + capture mode:"run") ------------ #
+    def _post(self, payload):
+        return self._req(
+            "POST", "/api/inbox", token=self.token, origin=self._good_origin(),
+            content_type="application/json", body=json.dumps(payload))
+
+    def test_merge_force_accepted_and_written(self):
+        status, _ = self._post(
+            {"action": "merge_force", "ids": ["R-1", "R-2"], "primary": "R-1"})
+        self.assertEqual(status, 200)
+        files = list(config.INBOX_DIR.glob("*.json"))
+        self.assertEqual(len(files), 1)
+        rec = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(rec["action"], "merge_force")
+        self.assertEqual(rec["ids"], ["R-1", "R-2"])
+        self.assertEqual(rec["primary"], "R-1")
+        self.assertIn("ts", rec)
+        self.assertNotIn("comment", rec)  # no scalar id -> no comment default
+
+    def test_merge_force_bad_shapes_rejected(self):
+        bad = [
+            {"action": "merge_force", "ids": ["R-1"], "primary": "R-1"},          # <2 ids
+            {"action": "merge_force", "ids": ["R-1", "R-1"], "primary": "R-1"},   # dupes only
+            {"action": "merge_force", "ids": ["R-1", "R-2"], "primary": "R-3"},   # primary not in ids
+            {"action": "merge_force", "ids": ["R-1", "R-2"]},                     # no primary
+            {"action": "merge_force", "primary": "R-1"},                          # no ids
+            {"action": "merge_force", "ids": ["R-1", "../x"], "primary": "R-1"},  # unsafe id
+            {"action": "merge_force", "ids": ["R-1", "R-2"], "primary": "../x"},  # unsafe primary
+            {"action": "merge_force", "ids": ["R-1", "R-2"], "primary": 7},       # non-str primary
+        ]
+        for payload in bad:
+            status, _ = self._post(payload)
+            self.assertEqual(status, 400, f"expected 400 for {payload!r}")
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
+    def test_primary_on_other_actions_still_shape_checked(self):
+        # ``primary`` rides only with a safe shape no matter the action.
+        status, _ = self._post({"id": "R-1", "action": "approve", "primary": "../x"})
+        self.assertEqual(status, 400)
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
+    def test_capture_mode_run_forwarded(self):
+        status, _ = self._post(
+            {"action": "capture", "text": "run it now", "mode": "run"})
+        self.assertEqual(status, 200)
+        files = list(config.INBOX_DIR.glob("capture-*.json"))
+        self.assertEqual(len(files), 1)
+        rec = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(rec["mode"], "run")
+        self.assertEqual(rec["text"], "run it now")
+
+    def test_capture_mode_fails_closed(self):
+        # Only the §34-defined value passes; junk never rides into the inbox.
+        for payload in (
+            {"action": "capture", "text": "x", "mode": "walk"},
+            {"action": "capture", "text": "x", "mode": 5},
+            {"action": "capture", "text": "x", "mode": ["run"]},
+            {"id": "R-1", "action": "approve", "mode": "run"},  # mode ⇒ capture only
+        ):
+            status, _ = self._post(payload)
+            self.assertEqual(status, 400, f"expected 400 for {payload!r}")
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
     def test_static_and_traversal(self):
         status, data = self._req("GET", "/style.css")
         self.assertEqual(status, 200)
