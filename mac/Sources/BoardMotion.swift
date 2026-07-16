@@ -424,7 +424,7 @@ private struct BoardCardMotionModifier: ViewModifier {
             .opacity(flights.isAwaitingLanding(id, event: store.boardMotion) ? 0 : 1)
             .transition(.asymmetric(insertion: insertion, removal: .opacity))
             // micro-juice: hover lift (none existed — CardSurface only tints).
-            // 2 pt raise + soft shadow, 120 ms; skipped under Reduce Motion /
+            // 1 pt raise + soft shadow, 120 ms; skipped under Reduce Motion /
             // toggle-off like every other motion here.
             .offset(y: hovering ? -1 : 0)
             .shadow(color: .black.opacity(hovering ? 0.14 : 0),

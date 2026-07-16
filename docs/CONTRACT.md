@@ -1161,8 +1161,6 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   看板通道送达；服务器 `channels.label_enc` 仍是 INSERT-only 死角，不参与）。
   重新扫码路径不变（`addChannel` 照旧覆盖 label）。
 
-## 34. v0.36.0 实时字幕（add-only，Mac 展示层）
-
 ## 36. v0.36.0 实时字幕（add-only，Mac 展示层）
 
 实时字幕是**纯 Mac 本机展示层功能**，对既有契约零改动，本节只登记新增面：
@@ -1682,14 +1680,18 @@ capture `mode:"run"`），Mac/iOS 早已在写。
     未定义的 mode 永不落进 inbox 文件（§34 的 str-or-absent 闸门在 webui 前移
     为白名单）。
 
-## 42. v0.42.0 卡面大扫除（display-only）
+## 42. v0.42.0 卡面大扫除（display-only + 一项 radar 提取范围变化）
 
-纯展示层修订，**wire 契约与状态机零改动**：dashboard.json/board payload 的字段、
+展示层修订为主，**wire 契约与状态机零改动**：dashboard.json/board payload 的字段、
 枚举值、analytics id 全部原样（`MainSection.ingest` rawValue 冻结）；Mac 端仅改
 渲染（原始指令/会话 ID/agents 名下沉到展开详情、枚举 chips 本地化大白话、doctor
-文案走 `failures.pick` §15 单开关、radar 提取提示词参数化 `owner.name` 且来源
-`who` 不再虚构 "manager"——`who` 现为来源笔记名，属新写入卡片的展示字段值变化，
-不是形状变化）。
+文案走 `failures.pick` §15 单开关）。
+
+**一项 python 管线行为变化（非渲染）**：radar 提取提示词参数化 `owner.name`，
+提取语义从「manager 对 owner 的要求」放宽为「笔记中任何人对 {owner} 的请求」——
+同一批笔记可能比旧版提出更多候选卡；来源 `who` 不再虚构 "manager"，现为来源
+笔记名（新写入卡片的字段值变化，不是形状变化；注意 `who` 拼进 quick_capture 的
+candidate 描述，参与 triage LLM 输入）。
 
 **§15 语言解析顺序补充（add-only）**：python 侧 `failures.ui_lang()` 依次取
 ① 环境变量 `AIASSISTANT_UI_LANG`（`zh`|`en`——Mac App spawn 有用户可见输出的
