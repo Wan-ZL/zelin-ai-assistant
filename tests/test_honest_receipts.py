@@ -12,7 +12,10 @@ Pinned here:
 - capture receipt chooser (§40.2): capture decision (res["action"]) ->
   emoji reaction on the captured self-DM message; the receipt fires only
   after apply_result returned; off-switch; failure is analytics-only and
-  never raises into the capture.
+  never raises into the capture;
+- radar give-up diagnostic card (§40.3): filed in 备选 on give-up, deduped
+  by note path forever (incl. trashed duplicates), end-to-end through
+  radar.scan.
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no
 LLM subprocess is ever spawned (runners/extractors injected).
@@ -23,13 +26,14 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import radar_slack
+from act import radar, radar_slack
 from act.lib import config, dashboard, registry
-from act.lib.registry import Requirement
+from act.lib.registry import Requirement, State
 
 
 # --------------------------------------------------------------------------- #
@@ -229,6 +233,95 @@ class CaptureReceiptTestCase(unittest.TestCase):
             radar_slack._handle_self_message(self.msg, "xoxp-t", self.cfg,
                                              extractor=extractor)
         self.assertEqual(calls, [])
+
+
+# --------------------------------------------------------------------------- #
+# §40.3 radar give-up diagnostic card + dedup
+# --------------------------------------------------------------------------- #
+class GiveUpCardTestCase(unittest.TestCase):
+    def setUp(self):
+        _clean_registry()
+        self.addCleanup(_clean_registry)
+        self.addCleanup(self._clean_radar_state)
+        self._clean_radar_state()
+        self.entry = {"mtime": 1.0, "attempts": 5, "gave_up": True,
+                      "last_error": "claude exit 1: boom"}
+
+    @staticmethod
+    def _clean_radar_state():
+        for name in (radar.MARKER_PATH_NAME, radar.FAILED_QUEUE_NAME):
+            p = config.STATE_DIR / name
+            if p.exists():
+                p.unlink()
+        if config.CONFIG_PATH.exists():
+            config.CONFIG_PATH.unlink()
+
+    def test_give_up_files_visible_diagnostic_card(self):
+        saved = radar.file_give_up_card(Path("/vault/2026-07-10 sync.md"),
+                                        self.entry)
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved.status, State.DETECTED.value)  # 备选, visible
+        self.assertEqual(saved.type, "diagnostic")
+        self.assertEqual(saved.title, "有一篇笔记我处理不了：2026-07-10 sync.md")
+        self.assertIn("/vault/2026-07-10 sync.md", saved.summary)
+        self.assertIn("手动处理", saved.summary)
+        self.assertIn("[radar-give-up]", saved.notes)
+        self.assertIn("claude exit 1: boom", saved.notes)
+        self.assertIn("/vault/2026-07-10 sync.md", saved.notes)
+        self.assertEqual(saved.sources[0]["channel"], radar.GIVE_UP_CHANNEL)
+        self.assertEqual(saved.sources[0]["ref"], "/vault/2026-07-10 sync.md")
+
+    def test_dedup_by_note_path_never_refiles(self):
+        note = Path("/vault/poison.md")
+        first = radar.file_give_up_card(note, self.entry)
+        self.assertIsNotNone(first)
+        # a later give-up round (e.g. after an mtime reset) must not re-file
+        again = radar.file_give_up_card(note, dict(self.entry, attempts=5))
+        self.assertIsNone(again)
+        self.assertEqual(len(registry.load_all()), 1)
+
+    def test_dedup_survives_the_user_trashing_the_card(self):
+        note = Path("/vault/poison.md")
+        card = radar.file_give_up_card(note, self.entry)
+        registry.trash(card, "deleted")
+        self.assertIsNone(radar.file_give_up_card(note, self.entry))
+
+    def test_scan_files_the_card_after_the_retry_budget_burns_out(self):
+        tmp = tempfile.TemporaryDirectory(prefix="giveup-vault-")
+        self.addCleanup(tmp.cleanup)
+        raw = Path(tmp.name) / "2 - raw"
+        raw.mkdir(parents=True)
+        config.CONFIG_PATH.write_text(
+            f'sources:\n  obsidian_raw: "{raw.as_posix()}"\n', encoding="utf-8")
+
+        base = 1_700_000_000.0
+        bad = raw / "poison.md"
+        bad.write_text("BAD note", encoding="utf-8")
+        os.utime(bad, (base, base))
+
+        def runner(text):
+            if "BAD" in text:
+                raise RuntimeError("extract boom")
+            return "[]"
+
+        # each pass needs a succeeding sibling, or the all-failed pass is
+        # (correctly) judged systemic and charges no retry budget.
+        for i in range(radar.FAILED_MAX_ATTEMPTS):
+            ok = raw / f"ok-{i}.md"
+            ok.write_text("fine", encoding="utf-8")
+            os.utime(ok, (base + 10 * (i + 1), base + 10 * (i + 1)))
+            radar.scan(runner=runner)
+
+        cards = [r for r in registry.load_all() if r.type == "diagnostic"]
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0].title, "有一篇笔记我处理不了：poison.md")
+        # one more pass with a fresh sibling — still exactly one card
+        extra = raw / "ok-extra.md"
+        extra.write_text("fine", encoding="utf-8")
+        os.utime(extra, (base + 100, base + 100))
+        radar.scan(runner=runner)
+        self.assertEqual(
+            len([r for r in registry.load_all() if r.type == "diagnostic"]), 1)
 
 
 if __name__ == "__main__":
