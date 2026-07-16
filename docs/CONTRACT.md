@@ -1212,10 +1212,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   **additive seam**）返回 `(kind, saved, reply)`，kind 与 `apply_triage` 完全
   同一词表（proposed/folded/follow_up/reraised/ignored）；`radar_slack.
   _RECEIPT_EMOJI` 按 kind 映射。结果（↩️ vs 📥、sealed-id fall-through 实建新卡）
-  在 apply_result 内部（`registry.reraise_or_followup`）才决定，**不可**从
-  决策 dict 推导。公共 `apply_result(res, cfg) -> str` 的签名与回执字符串
-  **逐字冻结**（纯委托 seam 的第三元）——并行分支（feat/less-cards）rebase 时
-  只需围绕这一个新增函数，不涉及签名变更。
+  在 apply_result 内部才决定，**不可**从决策 dict 推导——包括 **new_proposal
+  决策内部触发回锅**的情形（卡片命中已验收母卡时 merge_or_new 会 re-raise），
+  这条路径经同形 additive seam `registry.merge_or_new_with_kind`（公共
+  `merge_or_new` 签名冻结、纯委托）如实上报。公共 `apply_result(res, cfg) ->
+  str` 的签名与回执字符串**逐字冻结**（纯委托 seam 的第三元）——并行分支
+  （feat/less-cards）rebase 时只需围绕这两个新增函数，不涉及签名变更。
 - 回执只在入库调用正常返回**之后**发——注册表写入结果未知时绝不打 📥。
 - Best-effort 红线：reaction 失败（缺 `reactions:write`、网络）只记 analytics
   （`capture_receipt_failed`），**绝不**阻塞或失败捕获；`already_reacted` 视为
@@ -1257,9 +1259,14 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 ### 40.6 通知合批（fresh proposals）
 
 - `detect_transitions`：一个 pass 内**新增（非回锅）提案 > 2 张**时合并为一条
-  「雷达新增 N 张待审批卡」（`notify.msg_new_cards_batch`；3-tuple 的 req 位为
+  「新增 N 张待审批卡」（`notify.msg_new_cards_batch`；3-tuple 的 req 位为
   null）。≤2 张、回锅（各自点名一个你做过的决定）、需输入、待验收等类保持逐卡
   通知。§28 中继队列的 10 分钟 stale sweep 语义不变。
+- 文案 **source-neutral**（不写「雷达」）：actd 只看 board diff，新卡可能来自
+  任何入库方（雷达/周摘要/捕获），点名雷达会在非雷达批次上撒谎。
+- **weekly digest 落的建议卡整体跳过**（逐卡与合批都不发）：其 §24 通知已按
+  数量点名（「另有 N 条自动化建议进了待审批」），再发一遍是重复轰炸。seam =
+  行内 `sources[].channel == "weekly-digest"`（dashboard 投影自带）。
 
 ### 40.7 周一 digest 落卡（不再落盘）+ 页面用通道显示名
 

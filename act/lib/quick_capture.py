@@ -513,13 +513,17 @@ def apply_result_with_kind(
     """§40 additive seam: apply_result plus the OUTCOME of the write.
 
     Returns ``(kind, saved, reply)``. ``kind`` uses :func:`apply_triage`'s
-    exact vocabulary — the outcome is decided in here (reraise_or_followup,
-    sealed-id fall-throughs), NOT derivable from the decision dict:
+    exact vocabulary — the outcome is decided in here and inside
+    :func:`registry.merge_or_new_with_kind` / ``reraise_or_followup``
+    (BOTH actions can re-raise or fold: a new_proposal decision whose card
+    matches a resolved parent re-raises it too), NOT derivable from the
+    decision dict:
 
-    - ``proposed``  — new card filed (card_sent or 备选/backlog), a merged
-      restatement, or an unknown/sealed-id fall-through's fresh card;
-    - ``folded``    — note folded into an existing card (incl. a resolved
-      parent's already-open follow-up, and detected→expand raises);
+    - ``proposed``  — new card filed (card_sent or 备选/backlog, incl. an
+      increment child or an unknown/sealed-id fall-through's fresh card);
+    - ``folded``    — absorbed into an existing card, no new card (open-
+      parent restatement, note fold, a resolved parent's already-open
+      follow-up, detected→expand raises);
     - ``follow_up`` — new lineage card under a resolved parent;
     - ``reraised``  — an accepted card flipped back to 提案;
     - ``ignored``   — judged not actionable, nothing filed.
@@ -596,18 +600,25 @@ def _apply_new_proposal(
     # attribute-set so this works even before the registry field lands).
     dm = str(res.get("delivery_mode") or "").strip().lower()
     req.delivery_mode = dm if dm in ("chat", "repo") else "repo"
-    saved = registry.merge_or_new(req, high_confidence=not low_conf)
+    # §40.2: the receipt kind is merge_or_new's ACTUAL outcome — a
+    # new_proposal decision can internally RE-RAISE a resolved parent
+    # (reraise_or_followup), and that must read ↩️, not 📥. The reply
+    # strings below stay byte-frozen (chosen by the same conditions as
+    # pre-§40); only the kind is outcome-derived.
+    kind, saved = registry.merge_or_new_with_kind(req, high_confidence=not low_conf)
+    if kind not in ("reraised", "follow_up", "folded"):
+        kind = "proposed"
     analytics.log_event("quick_capture", action="new_proposal", req=saved.id,
                         confidence="low" if low_conf else None, text=tele_text)
     if saved.id != req.id and not saved.improvement_of:
         # merged into an existing entry as a restatement
-        return ("proposed", saved,
+        return (kind, saved,
                 f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1")
     if low_conf and saved.status == registry.State.DETECTED.value:
-        return ("proposed", saved,
+        return (kind, saved,
                 f"已记入潜在任务 {saved.id}：{saved.summary or saved.title}"
                 f"（不紧急，先存着不打扰）/ parked in backlog {saved.id}")
-    return ("proposed", saved,
+    return (kind, saved,
             f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）")
 
 

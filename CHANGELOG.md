@@ -54,8 +54,10 @@ other file needs editing. To cut a release:
 - **回收站有倒计时了** — Mac 回收站每行显示「X 天后永久删除」（≤7 天变红），
   点过「永久保存」的行显示「已永久保留」。60 天自动清理不再是暗地里发生的事。
   iOS/网页无回收站列表面，不涉及。
-- **通知不刷屏了** — 雷达一次冒出 3 张以上新提案时，合并成一条「雷达新增 N 张
-  待审批卡」；需要你逐个处理的（需输入、回锅、失败、待验收）保持一事一条。
+- **通知不刷屏了** — 一次冒出 3 张以上新提案时，合并成一条「新增 N 张待审批卡」
+  （文案不点名来源——新卡可能来自雷达/周摘要/捕获任何一方）；周摘要落的建议卡
+  由它自己的通知点名数量，不再被重复播报；需要你逐个处理的（需输入、回锅、
+  失败、待验收）保持一事一条。
 
 ### Changed
 
@@ -67,8 +69,10 @@ other file needs editing. To cut a release:
   （card_sent/review/…）换成通道显示名（待审批/待验收/进行中/潜在任务…，随
   界面语言）；「双向承诺账本（manager 欠的）」改为中性表述并按 `owner.name`
   参数化（`[MANAGER-OWES]` 标签本身冻结兼容，仍被识别）。
-- `quick_capture` 新增 additive seam `apply_result_with_kind`（回执 emoji 的
-  依据；公共 `apply_result` 签名与回执字符串逐字冻结，纯委托）。
+- `quick_capture` 新增 additive seam `apply_result_with_kind`、`registry`
+  新增同形 `merge_or_new_with_kind`（回执 emoji 的依据——new_proposal 内部
+  触发的回锅也如实上报 ↩️；公共 `apply_result`/`merge_or_new` 签名与行为
+  逐字冻结，纯委托）。
 - 数据契约见 docs/CONTRACT.md §40（全部 add-only：老 App 忽略新键、老
   payload 照常解码）。
 

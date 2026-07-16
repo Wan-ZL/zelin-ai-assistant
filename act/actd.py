@@ -1660,10 +1660,15 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str,
     # new card_sent — a re-raised card (v0.20.0「回锅」) uses the Returned copy
     # so Zelin knows it's a card he already accepted, not a brand-new find.
     # §40 batching: >2 fresh (non-reraised) proposals in one pass collapse to
-    # ONE 「雷达新增 N 张待审批卡」 — a radar backfill used to fire n pings in a
+    # ONE 「新增 N 张待审批卡」 — a radar backfill used to fire n pings in a
     # row. 回锅 stays per-card (each names a prior decision of the user's), as
     # do the 需输入/待验收 classes below. The §28 relay queue's 10-min stale
     # sweep is untouched — one batched entry ages out like any other.
+    # Cards filed by the weekly digest are skipped entirely: its own
+    # notification already announced them by count (「另有 N 条自动化建议进了
+    # 待审批」) — re-announcing them here (per-card or batched) was a
+    # duplicate ping every suggestion-bearing Monday. Seam = the row's source
+    # channel (weekly_digest.SOURCE_CHANNEL rides the dashboard projection).
     fresh: list[tuple[str, dict]] = []
     for rid, item in c_na.items():
         if rid not in p_na:
@@ -1671,6 +1676,9 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str,
                 t, b = notify.msg_reraised(item.get("title", rid),
                                            item.get("reraised_note") or "")
                 msgs.append((t, b, rid))
+            elif any(isinstance(s, dict) and s.get("channel") == "weekly-digest"
+                     for s in item.get("sources") or []):
+                continue  # announced by the digest's own notification
             else:
                 fresh.append((rid, item))
     if len(fresh) > _NEW_CARD_BATCH_ABOVE:

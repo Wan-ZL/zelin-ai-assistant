@@ -238,6 +238,27 @@ class CaptureReceiptTestCase(unittest.TestCase):
                                              extractor=extractor)
         self.assertEqual(calls, [])
 
+    def test_new_proposal_that_reraises_reads_hook_not_inbox(self):
+        # review finding (PR #61): a new_proposal decision whose card matches
+        # a resolved parent is internally RE-RAISED by merge_or_new — the
+        # receipt must read ↩️, not 📥. The outcome now rides
+        # registry.merge_or_new_with_kind (additive seam, same pattern).
+        from act.lib import quick_capture
+        parent = Requirement(id="R-050", title="给 Quinton 开通 PRD 文档编辑权限",
+                             status="delivered")
+        registry.save(parent)
+        kind, saved, _reply = quick_capture.apply_result_with_kind(
+            {"action": "new_proposal",
+             "title": "给 Quinton 开通 PRD 文档编辑权限",
+             "summary": "权限又要开一次", "type": "other", "tier": "T1",
+             "cost_estimate_usd": 3}, self.cfg)   # cost = the increment
+        self.assertEqual(kind, "reraised")
+        self.assertEqual(saved.id, "R-050")       # the ORIGINAL card flipped
+        self.assertEqual(registry.load("R-050").status,
+                         State.CARD_SENT.value)
+        self.assertEqual(radar_slack._RECEIPT_EMOJI[kind],
+                         "leftwards_arrow_with_hook")
+
     def test_seam_reports_follow_up_then_folded_on_resolved_parent(self):
         # the outcome the receipt hinges on is decided INSIDE
         # apply_result_with_kind (reraise_or_followup) — it is not derivable
@@ -464,6 +485,28 @@ class BatchNotifyTestCase(unittest.TestCase):
         by_rid = {m[2] for m in msgs}
         self.assertIn("R-9", by_rid)   # 回锅 keeps its own notification
         self.assertIn(None, by_rid)    # the 3 fresh ones collapsed
+
+    def test_digest_filed_cards_are_not_reannounced(self):
+        # review finding (PR #61): the weekly digest already announced its
+        # suggestions by count in its own notification — actd re-pinging them
+        # (per-card or batched) was a duplicate every suggestion-bearing
+        # Monday. Seam = the row's source channel.
+        prev = _dash()
+        wd = [{"id": f"R-{i}", "title": f"建议{i}",
+               "sources": [{"who": "assistant", "channel": "weekly-digest",
+                            "date": "2026-07-13", "quote": "q"}]}
+              for i in range(3)]
+        curr = _dash(needs_approval=wd + [{"id": "R-9", "title": "雷达卡"}])
+        msgs = actd.detect_transitions(prev, curr)
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0][2], "R-9")   # only the non-digest card pings
+
+    def test_batch_copy_is_source_neutral(self):
+        # actd only sees the board diff — fresh cards may come from any
+        # filer, so the batch copy must not claim 雷达.
+        title, _body = notify.msg_new_cards_batch(4)
+        self.assertNotIn("雷达", title)
+        self.assertIn("4", title)
 
 
 if __name__ == "__main__":
