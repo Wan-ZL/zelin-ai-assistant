@@ -1545,6 +1545,109 @@ def answer(
     return ok
 
 
+def brief(
+    req: Requirement,
+    cfg: Optional[config.Config] = None,
+    runner: Optional[Callable[[str], subprocess.CompletedProcess]] = None,
+) -> bool:
+    """§44.3: flush ``execution.pending_briefings`` into the live session as
+    background info — the「By the way, just FYI」channel. Same
+    stop-idle-then-resume plumbing as answer(), same rule: the CALLER (actd)
+    must have verified the §39.2 safe window first (never interrupt a
+    working session). Prefix tells the session explicitly that no action is
+    expected, so it acknowledges and continues whatever it was doing.
+
+    Bookkeeping is separate (briefing_count / last_briefing_at; caps at
+    3 attempts per batch then drops the queue with a notes trace — a
+    briefing is FYI, not worth resurrecting a dead session over).
+
+    Returns True when the queue was flushed. Never raises.
+    """
+    if cfg is None:
+        cfg = config.load_config()
+    ex = dict(req.execution or {})
+    pend = [str(t) for t in (ex.get("pending_briefings") or []) if str(t).strip()]
+    if not pend:
+        return False
+    sid = ex.get("session_id")
+
+    def _give_up(reason: str) -> bool:
+        ex.pop("pending_briefings", None)
+        ex.pop("briefing_attempts", None)
+        req.execution = ex
+        from act.lib import registry as _reg
+        _reg.append_fold_note(req, f"背景信息未送达会话（{reason}），仅留档",
+                              "radar")
+        save(req)
+        analytics.log_event("briefing", req=req.id, ok=False, n=len(pend))
+        return False
+
+    attempts = int(ex.get("briefing_attempts", 0))
+    if attempts >= 3:
+        return _give_up("3 次注入尝试失败")
+    if not sid:
+        return _give_up("无会话")
+    info = _agent_info(sid)
+    tinfo = _transcript_info(sid)
+    if tinfo is None and ex.get("root_session_id"):
+        tinfo = _transcript_info(str(ex["root_session_id"]))
+    if tinfo is None:
+        return _give_up("transcript 缺失")
+    sid, target = tinfo
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return _give_up("会话目录不可用")
+    ex.setdefault("root_session_id", sid)
+
+    from act.lib import silent_merge as _sm
+    prompt = (_sm.BRIEFING_PREFIX
+              + "\n".join(f"- {t}" for t in pend)
+              + "\nAcknowledge briefly and continue your current task; "
+                "do NOT treat this as new instructions.")
+
+    if runner is None:
+        def runner(p: str) -> subprocess.CompletedProcess:
+            stop_session(sid, info=info)
+            return subprocess.run(
+                _bg_base_cmd(cfg) + ["--name", session_name(req),
+                                     "--resume", str(sid), sanitize.scrub(p)[0]],
+                cwd=str(target),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=_runner_env(),
+            )
+
+    try:
+        proc = runner(prompt)
+        ok = getattr(proc, "returncode", 1) == 0
+        out = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
+    except (OSError, subprocess.SubprocessError):
+        ok, out = False, ""
+
+    now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not ok:
+        ex["briefing_attempts"] = attempts + 1
+        req.execution = ex
+        save(req)  # queue kept — retried on a later pass, capped above
+        analytics.log_event("briefing", req=req.id, ok=False, n=len(pend))
+        return False
+    ex.pop("pending_briefings", None)
+    ex.pop("briefing_attempts", None)
+    ex["briefing_count"] = int(ex.get("briefing_count", 0)) + len(pend)
+    ex["last_briefing_at"] = now
+    ex["resume_attempts"] = 0                 # clean relaunch, answer() semantics
+    ex.pop("resume_exhausted", None)
+    new_sid = _parse_session_id(out)
+    if new_sid:
+        ex["session_id"] = new_sid
+    req.execution = ex
+    save(req)                                 # status untouched
+    analytics.log_event("briefing", req=req.id, ok=True, n=len(pend))
+    return True
+
+
 def _main(argv: list[str]) -> int:
     if not argv:
         print("usage: python -m act.executor <req_id>")

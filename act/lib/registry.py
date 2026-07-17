@@ -109,6 +109,10 @@ _OPTIONAL_ORDER = [
     # machine-readable so auto_merge never suggests merging the split back
     # (the [拆自 R-xxx] notes breadcrumb is prose, not a signal).
     "split_from",
+    # §44 silent merge — how many duplicate cards were folded in silently
+    # (distinct from repeated_mentions, which also counts restatements and
+    # user-approved merges). Only present once >0.
+    "silent_merge_count",
 ]
 
 
@@ -158,6 +162,9 @@ class Requirement:
     archive_reason: Optional[str] = None
     # §38 split lineage (see _OPTIONAL_ORDER note) — origin card of a split.
     split_from: Optional[str] = None
+    # §44 silent merge counter — fold-in events only (see _OPTIONAL_ORDER
+    # note). 0 is skipped by to_dict (0 == False), so files stay clean.
+    silent_merge_count: int = 0
 
     # v0.37 living display titles (§37). `title` above is FROZEN (identity
     # anchor for merge_or_new/_same_source_and_title/re-raise) — display_title

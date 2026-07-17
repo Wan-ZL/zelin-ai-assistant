@@ -465,6 +465,18 @@ def _follow_up_card(parent: "registry.Requirement", child: "registry.Requirement
     return registry.upsert(fu), True
 
 
+def _silent_fold_target(req: "registry.Requirement",
+                        cfg) -> Optional["registry.Requirement"]:
+    """§44.2 pre-filing check, isolated so tests can stub it and an import
+    problem in silent_merge can never break triage. Returns fold target or
+    None (file normally)."""
+    try:
+        from act.lib import silent_merge
+        return silent_merge.find_fold_target(req)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def apply_triage(
     decision: dict,
     req: "registry.Requirement",
@@ -575,6 +587,25 @@ def apply_triage(
     # §37 display_title: optional triage key — absent/malformed is a silent
     # no-op (projection falls back to sanitize(title)).
     registry.set_display_title(req, (decision or {}).get("display_title"))
+    # §44.2: before filing, one focused check against the near-dupe rule's
+    # best hit — same thing → fold into it silently, no new card. Skipped
+    # when triage itself already failed over (_fallback: the LLM is down,
+    # a second call would just burn the retry budget).
+    if not (decision or {}).get("_fallback"):
+        target = _silent_fold_target(req, cfg)
+        if target is not None:
+            brief = str(getattr(req, "_silent_brief", "") or "")
+            note = req.title if not brief or brief == "无新增信息" \
+                else f"{req.title}（{brief}）"
+            _fold_into(target, req, note)
+            if target.status == registry.State.EXECUTING.value:
+                from act.lib import silent_merge
+                silent_merge.queue_briefing(
+                    target, f"新信息并入：{note}（无需行动）")
+                registry.save(target)
+            analytics.log_event("silent_merge", primary=target.id,
+                                secondary=None, outcome="pre_filing_fold")
+            return "folded", target
     saved = registry.merge_or_new(req, high_confidence=high_confidence)
     analytics.log_event("radar_triage", action="new_proposal", req=saved.id)
     return "proposed", saved

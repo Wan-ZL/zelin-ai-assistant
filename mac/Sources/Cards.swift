@@ -1217,6 +1217,13 @@ struct ApprovalCardView: View {
                     .help(L("这件事被提起过 \(r) 次，重述已合并进这张卡",
                             "This came up \(r) times — restatements were merged into this card"))
             }
+            if let sm = card.silent_merged, sm >= 1 {
+                // §44: silent fold-ins are visible (never hidden bookkeeping)
+                // and reversible — the fold note in 展开详情 has a 拆出 button.
+                Badge(text: L("已并入×\(sm)", "Folded ×\(sm)"), color: .purple)
+                    .help(L("\(sm) 张重复卡片已静默并入这张卡；详情里的并入记录可一键拆回独立卡片",
+                            "\(sm) duplicate card(s) were silently folded in; each fold note in the details can be split back out"))
+            }
             if card.green_sign == true {
                 Badge(text: L("需 manager green-sign（只出草稿）",
                               "Needs manager green-sign (draft only)"), color: .orange)
