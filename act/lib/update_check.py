@@ -275,11 +275,15 @@ def cli_status(force: bool = False, *,
     """§26 CLI payload behind ``python3 -m act.lib.update_check [--force]``.
 
     Unlike :func:`check`, this reports a transport failure honestly
-    (``ok=False, error="network"``) so the About page's manual check can say
+    (``ok=False`` plus ``error``) so the About page's manual check can say
     "check failed" instead of pretending freshness — while the state file
     semantics stay identical (the failed attempt consumes the budget and the
-    cached answer is kept). With ``updates.check_enabled`` off it never
-    touches the network, force or not: ``ok=True, enabled=False`` plus
+    cached answer is kept). ``error`` distinguishes the two failure worlds a
+    user can actually act on differently: ``"rate_limited"`` (HTTP 403/429 —
+    the unauthenticated per-IP GitHub API budget is spent; it self-heals
+    within the hour and the network is FINE) vs ``"network"`` (everything
+    else — offline, DNS, timeout). With ``updates.check_enabled`` off it
+    never touches the network, force or not: ``ok=True, enabled=False`` plus
     whatever the cache last knew.
     """
     if cfg is None:
@@ -310,7 +314,9 @@ def cli_status(force: bool = False, *,
         "checked_at": state.get("checked_at"),
     }
     if errors:
-        out["error"] = "network"
+        out["error"] = ("rate_limited" if any(
+            isinstance(e, urllib.error.HTTPError) and e.code in (403, 429)
+            for e in errors) else "network")
     return out
 
 

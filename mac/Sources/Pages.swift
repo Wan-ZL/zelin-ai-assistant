@@ -1168,6 +1168,7 @@ struct IngestView: View {
 final class UpdateCheckModel: ObservableObject {
     @Published var checking = false
     @Published var failed = false     // last manual attempt hit the network and lost
+    @Published var errorKind: String? // §26 CLI `error`: "rate_limited" vs "network"
     @Published var cooldown = false   // ~10s re-click guard after each attempt
     @Published var enabled = true     // updates.check_enabled effective value
     @Published var updateAvailable = false
@@ -1213,6 +1214,7 @@ final class UpdateCheckModel: ObservableObject {
         guard !checking, !cooldown, enabled else { return }
         checking = true
         failed = false
+        errorKind = nil
         Analytics.log("update_check_now", fields: ["source": "about"])
         let py = RuntimePython.resolve()
         let root = AppPaths.stateRoot
@@ -1255,10 +1257,12 @@ final class UpdateCheckModel: ObservableObject {
         }
         guard !obj.isEmpty else {
             failed = true  // CLI never launched / printed garbage
+            errorKind = nil
             return
         }
         enabled = (obj["enabled"] as? Bool) ?? enabled
         failed = (obj["ok"] as? Bool) != true
+        errorKind = failed ? (obj["error"] as? String) : nil
         if let c = obj["current"] as? String, !c.isEmpty { current = c }
         latest = (obj["latest"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         if let u = obj["url"] as? String, !u.isEmpty { url = u }
@@ -1397,6 +1401,13 @@ struct AboutView: View {
     private var updateStatus: String {
         if upd.checking { return L("正在检查…", "Checking…") }
         if upd.failed {
+            // §26: HTTP 403/429 = the anonymous per-IP GitHub API budget is
+            // spent — the network is fine and it self-heals within the hour.
+            // Blaming "network unavailable" here sent users to check Wi-Fi.
+            if upd.errorKind == "rate_limited" {
+                return L("检查失败——GitHub 接口暂时限流，约一小时内自动恢复；你的网络没有问题。",
+                         "Check failed — GitHub API rate limit hit; it resets within the hour. Your network is fine.")
+            }
             return L("检查失败——网络不可用，稍后再试。",
                      "Check failed — network unavailable; try again later.")
         }
