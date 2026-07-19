@@ -55,6 +55,8 @@ def is_darwin() -> bool:
 def is_windows() -> bool:
     return sys.platform.startswith("win")
 
+def is_linux() -> bool:
+    return sys.platform.startswith("linux") or "linux" in sys.platform
 
 def _run(argv: List[str], timeout: float) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
@@ -88,15 +90,27 @@ def notify_user(title: str, body: str, subtitle: Optional[str] = None,
                   .replace("@TITLE@", psq(title))
                   .replace("@BODY@", psq(text)))
         argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
-    elif sys.platform.startswith("linux"):
+    elif is_linux():
         text = f"{subtitle}\n{body}" if subtitle else str(body)
         argv = ["notify-send", str(title), text]
     else:
-        return False
+        try:
+            import pymsgbox
+            text = f"{subtitle}\n{body}" if subtitle else str(body)
+            pymsgbox.alert(text, str(title))
+            return True
+        except:
+            return False
     try:
         return (runner or _run)(argv, 10).returncode == 0
     except Exception:  # noqa: BLE001 - a notification must never break a caller
-        return False
+        try:
+            import pymsgbox
+            text = f"{subtitle}\n{body}" if subtitle else str(body)
+            pymsgbox.alert(text, str(title))
+            return True
+        except:
+            return False
 
 
 def open_path(path, runner: Optional[Runner] = None) -> bool:
@@ -107,7 +121,7 @@ def open_path(path, runner: Optional[Runner] = None) -> bool:
     os.startfile.
     """
     p = str(path)
-    if sys.platform.startswith("win"):
+    if is_windows():
         try:
             os.startfile(p)  # noqa: S606 # nosec B606 - the whole point of this function
             return True
@@ -140,7 +154,7 @@ def service_list_text(runner: Optional[Runner] = None) -> str:
         argv = ["launchctl", "list"]
     elif is_windows():
         argv = ["schtasks", "/query", "/fo", "LIST", "/v"]
-    elif sys.platform.startswith("linux"):
+    elif is_linux():
         argv = ["systemctl", "--user", "list-units", "--type=service,timer",
                 "--all", "--no-legend", "--no-pager"]
     else:
