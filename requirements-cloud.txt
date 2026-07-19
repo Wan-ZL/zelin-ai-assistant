@@ -18,3 +18,4 @@
 # skipping. The existing floor jobs stay PyYAML-only, so test_e2e skips there.
 
 cryptography>=42
+pymsgbox
