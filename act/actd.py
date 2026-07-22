@@ -2390,8 +2390,11 @@ def run_once(
     archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     try:
-        # §44: fail stuck silent-merge checks + purge expired job files
+        # §44: execute same-thing verdicts in THIS thread (the daemon is the
+        # single merge writer — the detached judge is registry-read-only),
+        # then fail stuck checks + purge expired job files.
         from act.lib import silent_merge
+        silent_merge.consume_judged()
         silent_merge.sweep()
     except Exception:  # noqa: BLE001 - sweep must not kill the daemon
         pass

@@ -197,7 +197,17 @@ class AutoSuggestTestCase(unittest.TestCase):
         with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
             self.assertEqual(auto_merge.scan_new_cards(), 0)
             self.assertEqual(_silent_jobs(), [])
+            # REAL finality: bounce a card out of the open set and back —
+            # it re-enters as "new", and only the PAIR ledger can block it
+            # (the scanned ledger alone cannot; review finding).
+            r2 = registry.load("R-002")
+            r2.set_status(State.DELIVERED.value)
+            registry.save(r2)
+            auto_merge.scan_new_cards()
+            r2.set_status(State.REVIEW.value)
+            registry.save(r2)
             self.assertEqual(auto_merge.scan_new_cards(), 0)   # pair is final
+            self.assertEqual(_silent_jobs(), [])
 
     def test_invested_primary_light_secondary_still_checks(self):
         # invested + light → the light card is the secondary regardless of id

@@ -186,6 +186,11 @@ def sweep(now=None) -> int:
                 removed += 1
             except OSError:
                 pass
+            # the twin per-job judge log would otherwise accumulate forever
+            try:
+                (config.LOG_DIR / f"{p.stem}.log").unlink()
+            except OSError:
+                pass
     return removed
 
 
@@ -268,14 +273,53 @@ def judge(primary: registry.Requirement, secondary: registry.Requirement,
         out = (proc.stdout or "") if hasattr(proc, "stdout") else str(proc)
         if hasattr(proc, "returncode") and proc.returncode != 0:
             return None
-        from act import analyze
-        obj = analyze._extract_json(out)
-        if not isinstance(obj, dict) or "same_thing" not in obj:
+        obj = _parse_verdict(out)
+        if obj is None:
             return None
-        return {"same_thing": bool(obj.get("same_thing")),
+        return {"same_thing": _strict_true(obj.get("same_thing")),
                 "brief": str(obj.get("brief") or "").strip()}
     except Exception:  # noqa: BLE001 - judge failure = conservative no-merge
         return None
+
+
+def _strict_true(v) -> bool:
+    """ONLY bool True / string "true" count as a merge verdict. The whole
+    §44 safety argument rests on the unsure→false bias — a model answering
+    the STRING "false"/"no" must never parse as same-thing (bool("false")
+    is True; review finding)."""
+    return v is True or (isinstance(v, str) and v.strip().lower() == "true")
+
+
+def _parse_verdict(out: str) -> Optional[dict]:
+    """Extract the judge's JSON, hijack-resistant: prefer the whole output
+    as JSON (the stated contract), else the LAST balanced object carrying
+    BOTH verdict keys — card material echoed by a chatty model earlier in
+    the output can never be mistaken for the verdict (review finding)."""
+    text = (out or "").strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "same_thing" in obj:
+            return obj
+    except ValueError:
+        pass
+    best = None
+    depth, start = 0, -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    obj = json.loads(text[start:i + 1])
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and "same_thing" in obj \
+                        and "brief" in obj:
+                    best = obj      # keep scanning — LAST qualifying wins
+    return best
 
 
 # --------------------------------------------------------------------------- #
@@ -353,7 +397,11 @@ def find_fold_target(req: registry.Requirement,
             if verdict and verdict.get("same_thing"):
                 req._silent_brief = verdict.get("brief") or ""  # type: ignore
                 return other
-            return None  # rule's best shot judged different — file normally
+            # rule's best shot judged different — file normally, and let the
+            # caller ledger the pair post-filing (one-shot per pair EVER;
+            # without it actd's scan would re-judge the identical pair).
+            req._silent_separate_from = other.id  # type: ignore
+            return None
         return None
     except Exception:  # noqa: BLE001 - never break the radar over this
         return None
@@ -363,6 +411,12 @@ def find_fold_target(req: registry.Requirement,
 # CLI: python -m act.lib.silent_merge SM-xxxxxxxx  (the detached judge)
 # --------------------------------------------------------------------------- #
 def _main(job_id: str) -> int:
+    """The detached judge: READ-ONLY on the registry. It writes its verdict
+    back to the job file and exits — execution (the registry writes) happens
+    in actd's single writer thread via :func:`consume_judged`. A detached
+    process racing actd's load→save windows was review finding #1: the fold
+    could land and be silently clobbered by a stale actd save AFTER the
+    secondary was already trashed."""
     job = _load_job(job_id)
     if not job or job.get("status") != "pending":
         return 0
@@ -382,16 +436,46 @@ def _main(job_id: str) -> int:
         analytics.log_event("silent_merge", primary=primary.id,
                             secondary=secondary.id, outcome="separate")
         return 0
-    # re-load fresh right before executing (the check ran for a while)
-    primary = registry.load(primary.id) or primary
-    secondary = registry.load(secondary.id) or secondary
-    ok = execute(primary, secondary, verdict["brief"])
-    _finish(job_id, "done", verdict="merged" if ok else "skipped",
-            brief=verdict["brief"])
-    if not ok:
-        analytics.log_event("silent_merge", primary=primary.id,
-                            secondary=secondary.id, outcome="state_moved")
+    _finish(job_id, "judged", brief=verdict["brief"])
     return 0
+
+
+def consume_judged() -> int:
+    """actd every pass: execute same-thing verdicts inside the daemon's own
+    writer thread (fresh loads; execute() re-checks both states). Never
+    raises. Returns merges performed."""
+    merged = 0
+    try:
+        paths = list(SILENT_DIR.glob("SM-*.json"))
+    except OSError:
+        return 0
+    for p in paths:
+        try:
+            job = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(job, dict) or job.get("status") != "judged":
+            continue
+        job_id = str(job.get("id") or p.stem)
+        primary = registry.load(str(job.get("primary") or ""))
+        secondary = registry.load(str(job.get("secondary") or ""))
+        if primary is None or secondary is None:
+            _finish(job_id, "failed", error="card vanished before execute")
+            continue
+        try:
+            ok = execute(primary, secondary, str(job.get("brief") or ""))
+        except Exception as e:  # noqa: BLE001 - a half-merge must be visible
+            _finish(job_id, "failed", error=f"execute failed: {e}")
+            analytics.log_event("silent_merge", primary=primary.id,
+                                secondary=secondary.id, outcome="execute_failed")
+            continue
+        _finish(job_id, "done", verdict="merged" if ok else "skipped")
+        if ok:
+            merged += 1
+        else:
+            analytics.log_event("silent_merge", primary=primary.id,
+                                secondary=secondary.id, outcome="state_moved")
+    return merged
 
 
 if __name__ == "__main__":

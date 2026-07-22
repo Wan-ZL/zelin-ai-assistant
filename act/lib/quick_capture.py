@@ -591,22 +591,46 @@ def apply_triage(
     # best hit — same thing → fold into it silently, no new card. Skipped
     # when triage itself already failed over (_fallback: the LLM is down,
     # a second call would just burn the retry budget).
+    separate_from = None
     if not (decision or {}).get("_fallback"):
         target = _silent_fold_target(req, cfg)
+        separate_from = getattr(req, "_silent_separate_from", None)
         if target is not None:
-            brief = str(getattr(req, "_silent_brief", "") or "")
-            note = req.title if not brief or brief == "无新增信息" \
-                else f"{req.title}（{brief}）"
-            _fold_into(target, req, note)
-            if target.status == registry.State.EXECUTING.value:
-                from act.lib import silent_merge
-                silent_merge.queue_briefing(
-                    target, f"新信息并入：{note}（无需行动）")
-                registry.save(target)
-            analytics.log_event("silent_merge", primary=target.id,
-                                secondary=None, outcome="pre_filing_fold")
-            return "folded", target
+            # TOCTOU guard (review finding): the judge ran a real LLM for up
+            # to minutes — re-load the target and re-check it is still open
+            # before folding; a whole-object save of the stale copy would
+            # clobber concurrent actd writes (or resurrect a trashed card).
+            from act.lib import auto_merge as _am
+            target = registry.load(target.id)
+            if target is not None and target.status in _am.OPEN_STATES:
+                brief = str(getattr(req, "_silent_brief", "") or "")
+                note = req.title if not brief or brief == "无新增信息" \
+                    else f"{req.title}（{brief}）"
+                _fold_into(target, req, note)
+                if target.status == registry.State.DETECTED.value \
+                        and req.status == registry.State.CARD_SENT.value:
+                    # act-now signal (rides req.status, radar.py:698) — same
+                    # promotion the relates_to fold path guarantees: an
+                    # urgent item must not vanish into the backlog lane.
+                    target.set_status(registry.State.CARD_SENT)
+                    registry.save(target)
+                if target.status == registry.State.EXECUTING.value:
+                    from act.lib import silent_merge
+                    silent_merge.queue_briefing(
+                        target, f"新信息并入：{note}（无需行动）")
+                    registry.save(target)
+                analytics.log_event("silent_merge", primary=target.id,
+                                    secondary=None, outcome="pre_filing_fold")
+                return "folded", target
     saved = registry.merge_or_new(req, high_confidence=high_confidence)
+    if separate_from:
+        # the judge already ruled this pair separate — enter it in the pair
+        # ledger so actd's scan never re-judges it (one-shot per pair EVER).
+        try:
+            from act.lib import auto_merge as _am
+            _am.record_pair_final(saved.id, str(separate_from))
+        except Exception:  # noqa: BLE001 - ledger miss = duplicate check, not data loss
+            pass
     analytics.log_event("radar_triage", action="new_proposal", req=saved.id)
     return "proposed", saved
 

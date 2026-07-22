@@ -148,6 +148,20 @@ def _idnum(rid: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def record_pair_final(a_id: str, b_id: str) -> None:
+    """§44.2: a pair already judged (separate) at triage time enters the
+    ledger so the daemon scan never re-judges it. Best-effort, never raises
+    (a miss costs one duplicate LLM check, not data)."""
+    try:
+        state = _load_state()
+        suggested = {str(x) for x in state.get("suggested") or []}
+        suggested.add(pair_key(a_id, b_id))
+        state["suggested"] = sorted(suggested)
+        _save_state(state)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _request_silent_check(primary, secondary) -> Optional[str]:
     """§44: rule hit → detached two-card LLM check (act/lib/silent_merge).
 
