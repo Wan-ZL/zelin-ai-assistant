@@ -27,6 +27,22 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.43.2] - 2026-07-22
+
+### Fixed
+
+- **radar 提取慢性超时/截断（一个根因的三张脸）** — 大 OCR 笔记（27-70KB）单篇
+  提取正常耗时 100-360s+，而 timeout=300 卡在延迟分布正中间，制造出慢性
+  TimeoutExpired、流中断的 JSON 截断（exit 0 但数组断在中途）与 exit 143 三种
+  表象。四件套：① timeout 300→600；② **截断抢救**——数组被截断时把完整的
+  leading 对象照常落库（merge_or_new 保证重跑去重），笔记本身留在重试队列等
+  一次完整提取，不再整篇作废；③ **solo-note systemic 误判修正**——单篇笔记
+  独自失败（超时/截断/不可读等 note 级错误）不再被误判为系统性故障（此前
+  5 次重试上限对它永不生效，每 30min 白烧一轮 300s）；仅 API/网络/key 等
+  通道级错误才作废本轮账目；④ 解析失败的完整原始输出落 `state/radar_debug/`
+  （保留最近 20 份）供定罪，cron 日志行新增 `ts` 时间戳（此前无法回答
+  「这行是几点」）。
+
 ## [0.43.1] - 2026-07-16
 
 ### Fixed
@@ -1748,7 +1764,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.2...HEAD
+[0.43.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.41.0...v0.42.0

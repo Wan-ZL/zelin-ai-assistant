@@ -26,7 +26,7 @@ settings:
     # this target straight from the project with no stamping step, so bump
     # this value TOGETHER with act.__version__ — here AND in the committed
     # project.pbxproj (2 build configurations). ci.yml fails on drift.
-    MARKETING_VERSION: "0.43.1"
+    MARKETING_VERSION: "0.43.2"
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1"          # iPhone only
     CODE_SIGN_STYLE: Automatic
