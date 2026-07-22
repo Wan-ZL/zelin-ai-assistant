@@ -429,7 +429,8 @@ class ReconcileBriefingTestCase(unittest.TestCase):
         self.cfg = config.Config()
         p = mock.patch.object(actd.notify, "notify",
                               mock.Mock(return_value=True))
-        p.start(); self.addCleanup(p.stop)
+        p.start()
+        self.addCleanup(p.stop)
 
     def _agent(self, state, pid=None):
         a = {"id": "d1a1beef", "sessionId": self.SID, "state": state,
