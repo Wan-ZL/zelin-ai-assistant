@@ -148,6 +148,9 @@ class Config:
     gmail_address: Optional[str] = None
     gmail_app_password_path: str = "~/Desktop/Keys/gmail-app-password.txt"
     gmail_enabled: bool = True
+    # §14bis: user-owned fetcher CLI (Workspace 禁 app password/IMAP 的后备)。
+    # Non-empty => wins over IMAP. Contract: radar_gmail.fetch_via_command.
+    gmail_fetch_command: Optional[str] = None
     # weekly ingest digest (CONTRACT §24) — reads the last 7 days of Obsidian
     # ingest output and turns it into a review-lane digest card + automation
     # proposal cards. Skips itself (cheap, no claude call) when there is no
@@ -393,6 +396,9 @@ def load_config() -> Config:
     )
     cfg.gmail_enabled = _bool_or(
         gmail.get("enabled", cfg.gmail_enabled), cfg.gmail_enabled
+    )
+    cfg.gmail_fetch_command = gmail.get(
+        "fetch_command", cfg.gmail_fetch_command
     )
 
     wd = sources.get("weekly_digest", {}) or {}
@@ -662,6 +668,7 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_address": str,
     "gmail_app_password_path": str,
     "gmail_enabled": _coerce_bool,
+    "gmail_fetch_command": str,
     "weekly_digest_enabled": _coerce_bool,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
@@ -750,6 +757,8 @@ def _apply_settings_overrides(cfg: Config) -> None:
                         cfg.gmail_enabled = _coerce_bool(value["enabled"])
                     except (TypeError, ValueError):
                         pass  # 坏 enabled 不能连累同 dict 的 address/path
+                if value.get("fetch_command") is not None:
+                    cfg.gmail_fetch_command = str(value["fetch_command"])
             elif key == "cost_thresholds" and isinstance(value, dict):
                 # nested form mirroring config.yaml approval.cost_thresholds
                 if value.get("show_cost_above_usd") is not None:

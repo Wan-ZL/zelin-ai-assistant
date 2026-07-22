@@ -11,6 +11,11 @@ Design notes / landmines:
   sources.gmail.app_password_path -> legacy ~/Desktop/Keys/gmail-app-password.txt.
   Never printed/logged. No password anywhere => silent no-op (return 0), same
   as the Slack radar.
+- §14bis fallback: when the Workspace admin blocks app passwords/IMAP, config
+  ``sources.gmail.fetch_command`` names a user-owned CLI (MCP client, Gmail
+  API script, …) that prints new mail as a JSON array — see
+  :func:`fetch_via_command` for the exact contract. Configured command wins
+  over IMAP; triage downstream of the fetch is identical.
 - Marker = last processed IMAP UID in state/gmail_radar.json, so mail that is
   unread-but-already-triaged is not re-processed on the next pass.
 - Pre-filters (never reach the LLM): noreply/no-reply senders, obvious
@@ -28,7 +33,10 @@ import email.policy
 import html as _html
 import imaplib
 import json
+import os
 import re
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
@@ -40,6 +48,9 @@ IMAP_HOST = "imap.gmail.com"
 DEFAULT_APP_PASSWORD_PATH = "~/Desktop/Keys/gmail-app-password.txt"  # nosec B105 - file PATH, not a secret
 STATE_FILE = "gmail_radar.json"        # {"last_uid": <int>} marker
 BODY_TRUNCATE = 2000
+# §14bis command backend: MCP/CLI fetchers may themselves be LLM-backed and
+# slow — same ceiling as a radar extraction call, not the 30 s of an IMAP RTT.
+COMMAND_TIMEOUT = 300
 
 
 # --------------------------------------------------------------------------- #
@@ -270,6 +281,92 @@ def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int
 
 
 # --------------------------------------------------------------------------- #
+# §14bis command backend — 主动抓取的后备通道
+# --------------------------------------------------------------------------- #
+def _should_skip_dict(m: dict) -> bool:
+    """Pre-filters for command-mode messages (plain dicts): mirrors
+    :func:`_should_skip` minus the MIME-only signals (List-Unsubscribe /
+    METHOD:REPLY need raw headers a fetcher command may not forward)."""
+    sender = str(m.get("from") or "")
+    subject = str(m.get("subject") or "").lower()
+    if re.search(r"no[-_.]?reply", sender, re.IGNORECASE):
+        return True
+    if subject.startswith(("accepted:", "已接受:", "已接受：")):
+        return True
+    return False
+
+
+def fetch_via_command(cmd: str, last_uid: int
+                      ) -> tuple[Optional[list[dict]], int, Optional[str]]:
+    """Run the user-configured fetcher command and parse its stdout.
+
+    Contract with the command (config ``sources.gmail.fetch_command``): it
+    gets the marker in ``$GMAIL_RADAR_LAST_UID`` and prints a JSON array of
+    ``{"uid": int, "from": str, "subject": str, "date": str, "message_id":
+    str, "body": str, "gmail_thread_id": str?}`` — mail NEWER than the marker
+    (a superset is fine; ``uid <= marker`` is dropped here). ``uid`` must be
+    monotonically increasing per mailbox (Gmail API ``internalDate`` in
+    seconds, or ``historyId``, both qualify). Parsed with ``shlex`` — a plain
+    argv, no shell — so pipes/redirects belong inside the target script.
+
+    Returns ``(messages, newest_uid, err)``; ``messages is None`` on a failed
+    run with ``err`` one of ``command_failed`` / ``command_bad_output``, so
+    the caller can health-mark the pass without conflating "broken fetcher"
+    with "no new mail".
+    """
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return None, last_uid, "command_failed"
+    if not argv:
+        return None, last_uid, "command_failed"
+    argv[0] = str(Path(argv[0]).expanduser())
+    env = dict(os.environ, GMAIL_RADAR_LAST_UID=str(last_uid))
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=COMMAND_TIMEOUT, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None, last_uid, "command_failed"
+    if proc.returncode != 0:
+        return None, last_uid, "command_failed"
+    text = (proc.stdout or "").strip()
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end < start:
+        return None, last_uid, "command_bad_output"
+    try:
+        arr = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None, last_uid, "command_bad_output"
+    if not isinstance(arr, list):
+        return None, last_uid, "command_bad_output"
+
+    out: list[dict] = []
+    newest = last_uid
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        try:
+            uid = int(item.get("uid"))
+        except (TypeError, ValueError):
+            continue
+        newest = max(newest, uid)
+        # pre-filtered noise still advances the marker — same rule as IMAP
+        if uid <= last_uid or _should_skip_dict(item):
+            continue
+        thrid = item.get("gmail_thread_id")
+        out.append({
+            "uid": uid,
+            "from": str(item.get("from") or ""),
+            "subject": str(item.get("subject") or ""),
+            "date": str(item.get("date") or ""),
+            "message_id": str(item.get("message_id") or "").strip(),
+            "gm_thrid": str(thrid).strip() if thrid else None,
+            "body": str(item.get("body") or "")[:BODY_TRUNCATE],
+        })
+    return out, newest, None
+
+
+# --------------------------------------------------------------------------- #
 # LLM extraction -> requirements
 # --------------------------------------------------------------------------- #
 _EXTRACT_PROMPT = """你在帮 Zelin 从 Gmail 邮件里挑出"需要他处理的事"。下面是若干封未读邮件（发件人 / 主题 / 正文节选）。
@@ -380,13 +477,23 @@ def scan(cfg: Optional[config.Config] = None,
     if not _flag_enabled(cfg) or not getattr(cfg, "gmail_enabled", True):
         _note_skip("disabled")
         return 0
+    fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
     password = get_app_password(cfg)
-    if not password:                      # no app-password file -> silent no-op
+    if not password and not fetch_cmd:    # neither auth branch -> silent no-op
         _note_skip("no_credentials")
         return 0
 
     last_uid = _load_last_uid()
-    if fetcher is None:
+    if fetcher is not None:
+        messages, newest_uid = fetcher(cfg, last_uid)
+    elif fetch_cmd:
+        # §14bis: Workspace 禁 app password/IMAP 时的主动抓取通道。配置了
+        # fetch_command 就是明确的选择，优先于 IMAP（两者都配时命令赢）。
+        messages, newest_uid, err = fetch_via_command(fetch_cmd, last_uid)
+        if messages is None:
+            _note_skip(err or "command_failed")
+            return 0
+    else:
         conn, reason = connect_ex(cfg, password)
         if conn is None:
             _note_skip(reason or "connect_failed")
@@ -398,8 +505,6 @@ def scan(cfg: Optional[config.Config] = None,
                 conn.logout()
             except Exception:  # noqa: BLE001
                 pass
-    else:
-        messages, newest_uid = fetcher(cfg, last_uid)
 
     # v0.17 统一口径: route every Gmail candidate through the SAME three-way
     # triage gate (act/lib/quick_capture.triage — the one radar_slack and the
@@ -472,6 +577,18 @@ def scan(cfg: Optional[config.Config] = None,
 # --------------------------------------------------------------------------- #
 def _check(cfg: config.Config) -> int:
     """Login test — like radar_slack --check. Prints a one-line JSON verdict."""
+    fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
+    if fetch_cmd:
+        # §14bis command mode: no login to test — verify the executable resolves.
+        try:
+            argv = shlex.split(fetch_cmd)
+        except ValueError:
+            argv = []
+        exe = str(Path(argv[0]).expanduser()) if argv else ""
+        ok = bool(exe) and (Path(exe).exists() or shutil.which(exe) is not None)
+        print(json.dumps({"ok": ok, "mode": "command", "command": fetch_cmd},
+                         ensure_ascii=False))
+        return 0 if ok else 1
     password = get_app_password(cfg)
     if not password:
         print("no app password at",

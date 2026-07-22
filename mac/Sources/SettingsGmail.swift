@@ -425,6 +425,12 @@ struct GmailSettingsSection: View {
         case "connect_failed":
             return L("连不上 Gmail（网络问题）——稍后点「立即测试一轮」重试",
                      "Can't reach Gmail (network trouble) — click \"Test one round now\" again later")
+        case "command_failed":
+            return L("抓取命令没跑成（fetch_command 报错/超时）——在终端手动跑一次它看报错",
+                     "The fetch command failed (error/timeout) — run it by hand in a terminal to see why")
+        case "command_bad_output":
+            return L("抓取命令的输出不是 JSON 数组——检查 fetch_command 的输出格式",
+                     "The fetch command didn't print a JSON array — check its output format")
         default:
             return r
         }
