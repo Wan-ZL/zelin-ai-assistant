@@ -25,12 +25,40 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.44.0] - 2026-07-22
+
 ### Fixed
 
 - **重开录制不再丢音频档位** — 权限体检页的「开启」按钮此前硬编码回「仅屏幕」：
   7-21 一次手动重开后音频采集静默停了一天，没人主动选过这个降级。现在关闭时
   记住当时的档位（`lastActiveRecordingMode`），重开按钮恢复它并如实显示
   「开启(屏幕+音频)」/「开启(仅屏幕)」；screen_audio 的 ffmpeg 预检照常把关。
+
+### Changed
+
+- **静默并入：重复信息不再请示（§44，改写 §38.3 第二步）** — Zelin 裁定二分法：
+  重复/重合信息要么静默补进主卡，要么常规建新卡，任何需要人工点「接受」的
+  合并建议卡从此消失。规则命中（§38.3 双信号原文沿用）后改为一次聚焦两卡的
+  tool-less LLM 复核（detached 子进程，`state/silent_merge/SM-*.json`）：判
+  同一件事 → 立即可逆并入——主卡吃进 fold note（带 §38.2 拆出句柄）+ 来源
+  去重合并 + 提及数累加，副卡进回收站（`prev_status` 保留，可恢复）——**绝不
+  使用不可逆的 `merged` 终态**；判不同/不确定/LLM 失败 → 一律什么都不做。
+  卡对无论结局终生只查一次。副卡限轻状态（detected/raising/card_sent）：
+  已投入执行的卡永不被静默移除。
+- **建卡前拦截（§44.2）** — radar triage 判 `new_proposal` 后落库前跑同一
+  规则+复核，同一件事直接折进既有卡，新卡根本不建。
+- **会话捎话（§44.3）** — 并入目标正在执行时，增量信息经 `executor.brief()`
+  以「BACKGROUND INFO (no action needed)」前缀注入其 Claude Code 会话
+  （§39.2 安全窗口：working 会话绝不打断，排队等 blocked/重启时机；3 次
+  失败放弃并留痕）。
+
+### Added
+
+- 卡面「已并入×N」紫色 chip（Mac + webui，`silent_merged` add-only 字段）；
+  周一 digest 总览行「· 静默并入 N」；analytics 元数据事件
+  `silent_merge_requested` / `silent_merge` / `briefing`。
 
 ## [0.43.2] - 2026-07-22
 
@@ -1769,7 +1797,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.2...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.2...v0.44.0
 [0.43.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.42.0...v0.43.0

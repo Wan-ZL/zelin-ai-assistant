@@ -242,6 +242,7 @@ function badges(item) {
     out.push(`<span class="badge">📅 ${esc(item.deadline)}${esc(dl)}</span>`);
   }
   if (item.repeated) out.push(`<span class="badge">×${esc(item.repeated)}</span>`);
+  if (item.silent_merged) out.push(`<span class="badge">已并入×${esc(item.silent_merged)}</span>`);
   if (item.show_cost && item.cost_usd != null) out.push(`<span class="badge">$${esc(item.cost_usd)}</span>`);
   if (item.delivery_mode) out.push(`<span class="badge">${esc(item.delivery_mode)}</span>`);
   if (item.target_name) {

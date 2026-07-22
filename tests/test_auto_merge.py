@@ -1,17 +1,19 @@
-"""§38.3 规则合并提示 — deterministic auto merge suggestions + throttles.
+"""§38.3/§44 规则近重复检测 — deterministic rule → silent two-card check.
 
-Pins: creation on the two strong signals (high overlap; shared contact +
-moderate overlap), the §21 job shape (so the existing merge_apply path
-consumes it unchanged), and all three throttles — one suggestion per pair
-EVER, max 3 outstanding, never across terminal/linked cards.
+Pins: the rule fires on the two strong signals (high overlap; shared contact
++ moderate overlap) and now REQUESTS A SILENT CHECK (§44 — no suggestion
+card, nobody is asked), plus all three throttles — one check per pair EVER,
+max 3 pending checks, never across terminal/linked cards. The check's own
+judge/execute logic lives in tests/test_silent_merge.py.
 """
 import json
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd, merge_review
-from act.lib import auto_merge, config, registry
+from act.lib import auto_merge, config, registry, silent_merge
 from act.lib.dashboard import _merge_suggestions
 from act.lib.registry import Requirement, State
 
@@ -25,6 +27,9 @@ def _clean():
             p.unlink()
     if auto_merge.STATE_PATH.exists():
         auto_merge.STATE_PATH.unlink()
+    if silent_merge.SILENT_DIR.exists():
+        for p in silent_merge.SILENT_DIR.glob("*.json"):
+            p.unlink()
 
 
 def _seed(rid, summary, status=State.CARD_SENT.value, **kw):
@@ -38,6 +43,22 @@ def _jobs():
             for p in sorted(merge_review.MERGE_DIR.glob("*.json"))]
 
 
+def _silent_jobs():
+    if not silent_merge.SILENT_DIR.exists():
+        return []
+    return [json.loads(p.read_text(encoding="utf-8"))
+            for p in sorted(silent_merge.SILENT_DIR.glob("SM-*.json"))]
+
+
+class _NoSpawn:
+    """Patch for silent_merge's detached judge Popen — the job file is
+    written for real (the budget counts pending files), the subprocess
+    never launches (tests drive the judge directly)."""
+
+    def __init__(self, *a, **k):
+        pass
+
+
 DUP_A = "整理 EB-1A 推荐信 recommendation letters 清单 wegreened"
 DUP_B = "EB-1A 推荐信 recommendation letters wegreened 跟进"
 
@@ -47,24 +68,21 @@ class AutoSuggestTestCase(unittest.TestCase):
         _clean()
         self.addCleanup(_clean)
 
-    def test_high_overlap_creates_21_shaped_done_job(self):
+    def test_high_overlap_requests_silent_check(self):
+        # §44: rule hit → pending SM- check, NO §21 suggestion card, and
+        # nothing reaches the board (the whole point).
         _seed("R-001", DUP_A)
         _seed("R-002", DUP_B)
-        created = auto_merge.scan_new_cards()
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            created = auto_merge.scan_new_cards()
         self.assertEqual(created, 1)
-        (job,) = _jobs()
-        # exact §21 consumer contract: done + merge + primary ∈ ids
-        self.assertEqual(job["status"], "done")
-        self.assertEqual(job["verdict"], "merge")
-        self.assertEqual(job["ids"], ["R-001", "R-002"])
+        (job,) = _silent_jobs()
+        self.assertEqual(job["status"], "pending")
         self.assertEqual(job["primary"], "R-001")     # older card wins
-        self.assertEqual(job["confidence"], "deterministic")
-        self.assertTrue(job["auto"])
-        self.assertTrue(str(job["id"]).startswith("MS-"))
-        self.assertIn("规则判定", job["rationale"])
-        self.assertIn("高度相似", job["rationale"])   # the HIGH path's honest copy
-        self.assertTrue(job.get("expires_at"))
-        self.assertTrue(job.get("action_plan"))
+        self.assertEqual(job["secondary"], "R-002")
+        self.assertTrue(str(job["id"]).startswith("SM-"))
+        self.assertEqual(_jobs(), [])                 # no MS- suggestion card
+        self.assertEqual(_merge_suggestions(), [])    # nothing on the board
 
     def test_unrelated_cards_do_not_fire(self):
         _seed("R-001", "修 login oauth bug")
@@ -82,7 +100,8 @@ class AutoSuggestTestCase(unittest.TestCase):
                   "quote": "q"}]
         _seed("R-001", self._MOD_A, sources=src_q)
         _seed("R-002", self._MOD_B, sources=src_q)
-        self.assertEqual(auto_merge.scan_new_cards(), 1)
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            self.assertEqual(auto_merge.scan_new_cards(), 1)
 
     def test_moderate_overlap_without_contact_does_not_fire(self):
         _seed("R-001", self._MOD_A,
@@ -93,23 +112,24 @@ class AutoSuggestTestCase(unittest.TestCase):
                         "date": "2026-07-16", "quote": "q"}])
         self.assertEqual(auto_merge.scan_new_cards(), 0)
 
-    def test_pair_only_ever_suggested_once_even_after_dismiss(self):
+    def test_pair_only_ever_checked_once_whatever_the_outcome(self):
         _seed("R-001", DUP_A)
         _seed("R-002", DUP_B)
-        self.assertEqual(auto_merge.scan_new_cards(), 1)
-        (job,) = _jobs()
-        # user dismisses; the job file later TTL-purges — simulate both
-        merge_review.dismiss_job(job)
-        merge_review.job_path(job["id"]).unlink()
-        # cards leave and re-enter the open set (delivered → re-raised)
-        r2 = registry.load("R-002")
-        r2.set_status(State.DELIVERED.value)
-        registry.save(r2)
-        auto_merge.scan_new_cards()
-        r2.set_status(State.CARD_SENT.value)
-        registry.save(r2)
-        self.assertEqual(auto_merge.scan_new_cards(), 0)   # pair is final
-        self.assertEqual(_jobs(), [])
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            self.assertEqual(auto_merge.scan_new_cards(), 1)
+            (job,) = _silent_jobs()
+            # the check concludes "separate" and its file later TTL-purges
+            silent_merge._finish(job["id"], "done", verdict="separate")
+            silent_merge._job_path(job["id"]).unlink()
+            # cards leave and re-enter the open set (delivered → re-raised)
+            r2 = registry.load("R-002")
+            r2.set_status(State.DELIVERED.value)
+            registry.save(r2)
+            auto_merge.scan_new_cards()
+            r2.set_status(State.CARD_SENT.value)
+            registry.save(r2)
+            self.assertEqual(auto_merge.scan_new_cards(), 0)   # pair is final
+            self.assertEqual(_silent_jobs(), [])
 
     # five near-dupe pairs with DISTINCT topics (no cross-pair overlap): the
     # budget tests below need "5 real pairs" to mean exactly 5 suggestions.
@@ -121,23 +141,25 @@ class AutoSuggestTestCase(unittest.TestCase):
         ("newsletter mailchimp campaign 邮件模板 草稿", "newsletter mailchimp campaign 邮件模板 终稿"),
     ]
 
-    def test_max_three_outstanding_and_deferred_pairs_survive(self):
-        # review blocker 5: over-budget pairs must survive until the board
-        # clears — through the REAL re-scan path, no ledger surgery.
+    def test_max_three_pending_and_deferred_pairs_survive(self):
+        # review blocker 5 semantics carried into §44: the budgeted resource
+        # is now concurrent pending checks (detached LLM subprocesses) —
+        # over-budget pairs survive until the checks drain, through the REAL
+        # re-scan path, no ledger surgery.
         for i, (a, b) in enumerate(self._FIVE_PAIRS, start=1):
             _seed(f"R-{2 * i - 1:03d}", a)
             _seed(f"R-{2 * i:03d}", b)
-        self.assertEqual(auto_merge.scan_new_cards(), 3)     # cap
-        self.assertEqual(auto_merge.scan_new_cards(), 0)     # still capped
-        # user clears the board (dismisses all three suggestions) …
-        for job in _jobs():
-            if job.get("auto") and str(job.get("status")) == "done":
-                merge_review.dismiss_job(job)
-        # … and the NEXT regular pass surfaces the two deferred pairs.
-        self.assertEqual(auto_merge.scan_new_cards(), 2)
-        self.assertEqual(auto_merge.scan_new_cards(), 0)     # all pairs done
-        self.assertEqual(
-            len([j for j in _jobs() if j.get("auto")]), 5)
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            self.assertEqual(auto_merge.scan_new_cards(), 3)     # cap
+            self.assertEqual(auto_merge.scan_new_cards(), 0)     # still capped
+            # the three checks conclude …
+            for job in _silent_jobs():
+                if job["status"] == "pending":
+                    silent_merge._finish(job["id"], "done", verdict="separate")
+            # … and the NEXT regular pass files the two deferred pairs.
+            self.assertEqual(auto_merge.scan_new_cards(), 2)
+            self.assertEqual(auto_merge.scan_new_cards(), 0)     # all pairs done
+            self.assertEqual(len(_silent_jobs()), 5)
 
     def test_terminal_and_linked_cards_never_suggested(self):
         # three near-dupe pairs, DISTINCT topics (no cross-pair overlap) —
@@ -166,17 +188,37 @@ class AutoSuggestTestCase(unittest.TestCase):
         self.assertEqual(auto_merge.scan_new_cards(), 0)
         self.assertEqual(_jobs(), [])
 
-    def test_rationale_says_which_rule_fired(self):
-        # contact path (0.4 band) must not claim 高度相似
-        src = [{"who": "Quinton", "channel": "slack", "date": "2026-07-16",
-                "quote": "q"}]
-        _seed("R-001", self._MOD_A, sources=src)
-        _seed("R-002", self._MOD_B, sources=src)
-        auto_merge.scan_new_cards()
-        (job,) = _jobs()
-        self.assertIn("同一联系人", job["rationale"])
-        self.assertIn("中等重合", job["rationale"])
-        self.assertNotIn("高度相似", job["rationale"])
+    def test_both_invested_cards_are_left_alone(self):
+        # §44: the folded-away secondary must be a LIGHT card. Two invested
+        # cards (approved/executing/review) that trip the rule are simply
+        # left alone — no check, no card, pair final.
+        _seed("R-001", DUP_A, status=State.EXECUTING.value)
+        _seed("R-002", DUP_B, status=State.REVIEW.value)
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            self.assertEqual(auto_merge.scan_new_cards(), 0)
+            self.assertEqual(_silent_jobs(), [])
+            # REAL finality: bounce a card out of the open set and back —
+            # it re-enters as "new", and only the PAIR ledger can block it
+            # (the scanned ledger alone cannot; review finding).
+            r2 = registry.load("R-002")
+            r2.set_status(State.DELIVERED.value)
+            registry.save(r2)
+            auto_merge.scan_new_cards()
+            r2.set_status(State.REVIEW.value)
+            registry.save(r2)
+            self.assertEqual(auto_merge.scan_new_cards(), 0)   # pair is final
+            self.assertEqual(_silent_jobs(), [])
+
+    def test_invested_primary_light_secondary_still_checks(self):
+        # invested + light → the light card is the secondary regardless of id
+        # order (the invested side is kept).
+        _seed("R-001", DUP_A)                                  # light (card_sent)
+        _seed("R-002", DUP_B, status=State.EXECUTING.value)    # invested
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            self.assertEqual(auto_merge.scan_new_cards(), 1)
+        (job,) = _silent_jobs()
+        self.assertEqual(job["primary"], "R-002")   # invested card is kept
+        self.assertEqual(job["secondary"], "R-001") # light card folds away
 
     def test_split_card_never_suggested_against_origin(self):
         # review blocker 7: split a note → the new card's text ≈ the origin
@@ -210,28 +252,22 @@ class AutoSuggestTestCase(unittest.TestCase):
     def test_steady_state_pass_is_incremental(self):
         _seed("R-001", DUP_A)
         _seed("R-002", DUP_B)
-        auto_merge.scan_new_cards()
-        # nothing new → no work, no extra jobs
-        self.assertEqual(auto_merge.scan_new_cards(), 0)
-        self.assertEqual(len(_jobs()), 1)
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            auto_merge.scan_new_cards()
+            # nothing new → no work, no extra checks
+            self.assertEqual(auto_merge.scan_new_cards(), 0)
+            self.assertEqual(len(_silent_jobs()), 1)
 
-    def test_accept_runs_existing_merge_apply_path(self):
+    def test_rule_hits_never_reach_the_board(self):
+        # §44 headline behavior: whatever the rule finds, the board stays
+        # clean — SM- checks live in their own directory, the §21
+        # merge_suggestions projection never sees them, and no MS- job is
+        # ever minted by the rule path (the manual multi-select §21 flow
+        # is untouched and covered by test_merge_review.py).
         _seed("R-001", DUP_A)
         _seed("R-002", DUP_B)
-        auto_merge.scan_new_cards()
-        (job,) = _jobs()
-        self.assertEqual(actd._apply_merge_decision("merge_apply", job["id"]),
-                         "running")
-        sec = registry.load("R-002")
-        self.assertEqual(sec.status, State.MERGED.value)
-        self.assertEqual(sec.merged_into, "R-001")
-        self.assertIn("[merged] R-002", registry.load("R-001").notes)
-
-    def test_dashboard_projects_auto_job_with_deterministic_confidence(self):
-        _seed("R-001", DUP_A)
-        _seed("R-002", DUP_B)
-        auto_merge.scan_new_cards()
-        (row,) = _merge_suggestions()
-        self.assertEqual(row["status"], "done")
-        self.assertEqual(row["verdict"], "merge")
-        self.assertEqual(row["confidence"], "deterministic")
+        with mock.patch.object(silent_merge.subprocess, "Popen", _NoSpawn):
+            auto_merge.scan_new_cards()
+        self.assertEqual(len(_silent_jobs()), 1)
+        self.assertEqual(_jobs(), [])
+        self.assertEqual(_merge_suggestions(), [])

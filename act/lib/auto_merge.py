@@ -35,11 +35,6 @@ from typing import Optional
 
 from act.lib import analytics, config, match_corpus, registry
 
-try:
-    from act import merge_review
-except Exception:  # pragma: no cover - mirrors actd's guarded import
-    merge_review = None  # type: ignore
-
 STATE_PATH = config.STATE_DIR / "auto_merge_seen.json"
 
 # Open (non-terminal) card states — the only ones auto suggestions may touch.
@@ -139,22 +134,13 @@ def is_near_dupe(a, b, cfg=None) -> tuple[bool, list[str], str]:
 
 
 def _outstanding_auto() -> int:
-    if merge_review is None:
-        return MAX_OUTSTANDING  # can't create jobs anyway — report saturated
-    n = 0
+    """§44: outstanding = pending silent checks (concurrent LLM subprocesses
+    are the budgeted resource now — no suggestion cards sit on a board)."""
     try:
-        files = list(merge_review.MERGE_DIR.glob("*.json"))
-    except OSError:
-        return 0
-    for path in files:
-        try:
-            job = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if (isinstance(job, dict) and job.get("auto")
-                and str(job.get("status") or "") == "done"):
-            n += 1
-    return n
+        from act.lib import silent_merge
+        return silent_merge.pending_count()
+    except Exception:  # noqa: BLE001 - can't create checks anyway
+        return MAX_OUTSTANDING
 
 
 def _idnum(rid: str) -> int:
@@ -162,62 +148,49 @@ def _idnum(rid: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _make_suggestion(primary, secondary, matched: list,
-                     reason: str) -> Optional[str]:
-    """Write the §21-shaped MS- job (status=done, verdict=merge). The existing
-    merge_apply / merge_dismiss / dashboard projection paths consume it with
-    zero changes; ``auto`` + ``confidence="deterministic"`` mark provenance
-    (the apps render an unknown confidence string as a plain badge)."""
-    if merge_review is None:
+def record_pair_final(a_id: str, b_id: str) -> None:
+    """§44.2: a pair already judged (separate) at triage time enters the
+    ledger so the daemon scan never re-judges it. Best-effort, never raises
+    (a miss costs one duplicate LLM check, not data)."""
+    try:
+        state = _load_state()
+        suggested = {str(x) for x in state.get("suggested") or []}
+        suggested.add(pair_key(a_id, b_id))
+        state["suggested"] = sorted(suggested)
+        _save_state(state)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _request_silent_check(primary, secondary) -> Optional[str]:
+    """§44: rule hit → detached two-card LLM check (act/lib/silent_merge).
+
+    Replaces §38.3 step 2 (the human-confirm MS- suggestion card). The
+    check's outcome is silent either way: same-thing → reversible fold +
+    trash, different/unsure → nothing. Nobody is asked."""
+    try:
+        from act.lib import silent_merge
+        return silent_merge.request(str(primary.id), str(secondary.id))
+    except Exception:  # noqa: BLE001 - never raise into the daemon pass
         return None
-    # display filter: whole-run keywords only, long digit runs never print
-    words = "、".join(match_corpus.display_tokens(matched)[:6])
-    if reason == "contact":
-        # honesty: the 0.4 contact path is NOT 高度相似 — say what fired.
-        finding = (f"规则判定：{secondary.id} 和 {primary.id} 来自同一联系人，"
-                   f"且内容中等重合（重合关键词：{words}），可能是同一件事建了两张卡。")
-    else:
-        finding = (f"规则判定：{secondary.id} 和 {primary.id} 的标题/内容高度相似"
-                   f"（重合关键词：{words}），可能是同一件事建了两张卡。")
-    job = {
-        "id": merge_review.new_suggestion_id(),
-        "ids": [str(primary.id), str(secondary.id)],
-        "requested_at": merge_review._iso_now(),
-        "status": "done",
-        "verdict": "merge",
-        "primary": str(primary.id),
-        "rationale": finding + "这是确定性规则触发的提示，不是 AI 分析。",
-        "action_plan": [
-            f"接受后：副卡 {secondary.id} 并入主卡 {primary.id}——来源去重合并、"
-            "提及次数累加、主卡 notes 留痕；副卡置「已合并」（终态，可见性同回收站）。",
-            "主卡若在待验收，副卡成果会作为反馈注入其会话；其他状态只在 notes 留痕。",
-            "不确定就点「取消」——取消后不会再对这两张卡重复提示。",
-        ],
-        "confidence": "deterministic",
-        "auto": True,
-        "expires_at": merge_review._iso_in(merge_review.TTL_HOURS),
-    }
-    merge_review.write_job(job)
-    return str(job["id"])
 
 
 def scan_new_cards() -> int:
-    """One incremental §38 auto-suggestion pass. Returns suggestions created.
+    """One incremental §38/§44 pass. Returns silent checks requested.
 
     Never raises (actd calls it every pass); all ledger writes are atomic and
     best-effort. Cards that vanished from the open set are dropped from the
     ``scanned`` ledger so a later re-raise re-enters as new — the pair ledger
-    still blocks every already-suggested pair.
+    still blocks every already-checked pair (a check is one-shot per pair
+    EVER, whatever its outcome: merged, judged-separate, or judge failure).
 
     Budget deferral (review blocker 5): a card whose comparisons were cut
     short by the max-outstanding budget is NOT marked scanned — it re-enters
     as new on the next pass, so its pairs genuinely stay eligible until the
-    board clears; only fully-evaluated cards retire into the ledger. (Cheap:
+    checks drain; only fully-evaluated cards retire into the ledger. (Cheap:
     once the budget is gone the remaining new cards defer WITHOUT comparing.)
     """
     try:
-        if merge_review is None:
-            return 0
         cfg = config.load_config()   # one scrub config for the whole pass
         state = _load_state()
         scanned = {str(x) for x in state.get("scanned") or []}
@@ -256,13 +229,23 @@ def scan_new_cards() -> int:
                     # the duplicate should fold into.
                     a, b = ((other, new)
                             if _idnum(other.id) <= _idnum(new.id) else (new, other))
-                    sid = _make_suggestion(a, b, matched, reason)
+                    # §44: the folded-away secondary must be a LIGHT card
+                    # (nothing invested). Prefer keeping the invested side;
+                    # both invested → leave both alone, pair final.
+                    from act.lib import silent_merge as _sm
+                    if b.status not in _sm.LIGHT_STATES:
+                        if a.status in _sm.LIGHT_STATES:
+                            a, b = b, a
+                        else:
+                            suggested.add(key)
+                            continue
+                    sid = _request_silent_check(a, b)
                     if sid is None:
                         continue
                     suggested.add(key)
                     budget -= 1
                     created += 1
-                    analytics.log_event("auto_merge_suggested", suggestion=sid,
+                    analytics.log_event("silent_merge_requested", job=sid,
                                         primary=str(a.id), secondary=str(b.id))
 
         new_scanned = ((scanned & open_ids)

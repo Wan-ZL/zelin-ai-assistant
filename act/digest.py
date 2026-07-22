@@ -238,14 +238,26 @@ def build_digest(today: Optional[_dt.date] = None,
     def section(header: str, lines: list[str], empty: str = "- （无）") -> list[str]:
         return [header] + (lines if lines else [empty]) + [""]
 
+    # §44: silent fold-ins since the last digest (7 days) — the ONLY place
+    # they are surfaced besides the card chip; metadata events, never content.
+    try:
+        week_ago = now - _dt.timedelta(days=7)
+        folded = sum(1 for e in analytics.read_events(since=week_ago)
+                     if e.get("event") == "silent_merge"
+                     and str(e.get("outcome") or "") in ("ok", "pre_filing_fold"))
+    except Exception:  # noqa: BLE001 - a digest must never die over a count
+        folded = 0
+
     out: list[str] = [f"# 周一 digest · {today.isoformat()}", ""]
     # one-line overview right under the title — doubles as the review-lane
     # card's summary (_file_digest_card picks the first non-header line).
+    folded_zh = f" · 静默并入 {folded}" if folded else ""
+    folded_en = f" · {folded} silently folded" if folded else ""
     out += [failures.pick(
         f"待审批 {len(card_sent)} · 待验收 {len(review)} · 卡住 {len(stuck)}"
-        f" · 潜在任务 {len(detected)}",
+        f" · 潜在任务 {len(detected)}{folded_zh}",
         f"{len(card_sent)} awaiting approval · {len(review)} in review ·"
-        f" {len(stuck)} stuck · {len(detected)} in backlog"), ""]
+        f" {len(stuck)} stuck · {len(detected)} in backlog{folded_en}"), ""]
     out += section(f"## 📨 待审批积压（{len(card_sent)}）",
                    [_fmt(r, today) for r in card_sent])
     out += section(f"## 🔍 待验收（{len(review)}）",

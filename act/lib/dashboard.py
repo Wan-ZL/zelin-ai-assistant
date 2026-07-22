@@ -594,6 +594,9 @@ def build_dashboard(
                     "deadline": req.deadline,
                     "days_left": days_left(req.deadline),
                     "repeated": _int_or(req.repeated_mentions, 1) or 1,
+                    # §44 add-only: silent fold-in events (0 = never)
+                    "silent_merged": _int_or(
+                        getattr(req, "silent_merge_count", 0), 0) or 0,
                     "cost_usd": cost,
                     "show_cost": show_cost,
                     # §40 add-only: "estimated"|"unknown" — the app renders

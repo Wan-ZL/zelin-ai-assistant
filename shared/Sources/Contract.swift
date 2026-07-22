@@ -29,6 +29,7 @@ struct ApprovalCard: Decodable, Hashable {
     let deadline: String?
     let days_left: Int?
     let repeated: Int?
+    let silent_merged: Int?    // §44 add-only: silent fold-in events
     let cost_usd: Double?
     let show_cost: Bool
     // §40 add-only: "estimated" | "unknown". unknown → the expanded detail
@@ -63,7 +64,8 @@ struct ApprovalCard: Decodable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, target_repo, target_name, target_kind
         case tier, tier_hint, hardness, deadline, days_left
-        case repeated, cost_usd, show_cost, cost_state, green_sign, disagreement
+        case repeated, silent_merged
+        case cost_usd, show_cost, cost_state, green_sign, disagreement
         case improvement_of, sources, plan, outputs, dod, processing
         case delivery_mode
         case reraised
@@ -85,6 +87,7 @@ struct ApprovalCard: Decodable, Hashable {
         deadline = try? c.decodeIfPresent(String.self, forKey: .deadline)
         days_left = try? c.decodeIfPresent(Int.self, forKey: .days_left)
         repeated = try? c.decodeIfPresent(Int.self, forKey: .repeated)
+        silent_merged = try? c.decodeIfPresent(Int.self, forKey: .silent_merged)
         cost_usd = try? c.decodeIfPresent(Double.self, forKey: .cost_usd)
         show_cost = (try? c.decodeIfPresent(Bool.self, forKey: .show_cost)) ?? false
         cost_state = try? c.decodeIfPresent(String.self, forKey: .cost_state)

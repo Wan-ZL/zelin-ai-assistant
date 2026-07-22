@@ -2219,6 +2219,15 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             # transcript while the board said 需输入.
             if not ex.get("done") and _promote_if_delivered(req, ex, sid):
                 continue
+            # §44.3: a blocked session is the safe injection window — flush
+            # any queued silent-merge briefings (stop-idle-then-resume, the
+            # answer() plumbing; the resumed session un-blocks as a bonus).
+            if ex.get("pending_briefings") and executor is not None:
+                try:
+                    executor.brief(req, cfg)
+                except Exception as e:  # noqa: BLE001 - FYI only, never fatal
+                    _log(f"reconcile: brief {req.id} failed: {e}")
+                continue
             if ex.get("resume_attempts"):
                 ex["resume_attempts"] = 0
                 req.execution = ex
@@ -2300,7 +2309,12 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
         if executor is None:
             continue
         try:
-            ok = executor.resume(req, cfg)
+            # §44.3: a dead session with queued briefings — resume WITH the
+            # briefing prompt instead of a bare resume (one launch, two jobs).
+            if ex.get("pending_briefings"):
+                ok = executor.brief(req, cfg)
+            else:
+                ok = executor.resume(req, cfg)
             if not ok:
                 # executor.resume's early-return paths (transcript purged, mkdir
                 # failed) record NO bookkeeping — without it attempts stays 0
@@ -2375,10 +2389,19 @@ def run_once(
     purge_trash(cfg)
     archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
+    try:
+        # §44: execute same-thing verdicts in THIS thread (the daemon is the
+        # single merge writer — the detached judge is registry-read-only),
+        # then fail stuck checks + purge expired job files.
+        from act.lib import silent_merge
+        silent_merge.consume_judged()
+        silent_merge.sweep()
+    except Exception:  # noqa: BLE001 - sweep must not kill the daemon
+        pass
     if auto_merge is not None:
-        # §38: deterministic near-dupe hints for newly appeared open cards
-        # (radar cron files cards from outside this process, so "new" is
-        # detected by ledger diff, not an in-process creation hook).
+        # §38/§44: deterministic near-dupe rule for newly appeared open cards
+        # → detached silent two-card check (radar cron files cards from
+        # outside this process, so "new" is detected by ledger diff).
         auto_merge.scan_new_cards()
     try:
         # §37 session-content search layer: drop terminal/absent cards. Cheap:
