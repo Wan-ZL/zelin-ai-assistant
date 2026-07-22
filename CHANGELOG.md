@@ -27,6 +27,21 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.45.0] - 2026-07-22
+
+### Added
+
+- **卡片收起状态显示编号（R-xxx / MS-xxx）** — v0.42 卡面大扫除把「claude agents
+  列表名」挪进展开详情后，收起的卡片上没有任何可定位的编号了。现在每张卡
+  右上角常驻一枚小号等宽 ID 徽章（提案/待拍板/执行中/待验收/阶段性完成/
+  回收站/永久归档/合并建议全部生效），找卡不再需要逐张展开。
+- **Gmail 主动抓取后备通道（§14bis）** — Workspace 管理员禁用 app password/
+  IMAP 时的第二条路：`sources.gmail.fetch_command` 配置一条用户自有的抓取
+  命令（Gmail API 脚本 / MCP 客户端皆可），env 传入增量 marker，stdout 回
+  JSON 数组，之后的 LLM triage 管线与 IMAP 路径完全同一条。命令失败/输出
+  非法进健康状态行（`command_failed` / `command_bad_output`），与「没有新
+  邮件」严格区分；配置了命令即赢过 IMAP，且不再要求 app password 存在。
+
 ## [0.44.0] - 2026-07-22
 
 ### Fixed
@@ -1797,7 +1812,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.2...v0.44.0
 [0.43.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.0...v0.43.1
