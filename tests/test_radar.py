@@ -315,6 +315,60 @@ class WatermarkTestCase(RadarScanBase):
         self.assertEqual(ok["files_scanned"], 2)
         self.assertEqual(radar._read_marker(), BASE + 10)
 
+    def test_solo_note_timeout_still_burns_retry_budget(self):
+        # 2026-07-22 review: a lone note timing out (note-level error) must
+        # NOT be mistaken for a systemic outage — sparse night traffic makes
+        # single-note passes routine, and the systemic void kept the 5-try
+        # cap from ever engaging (a 300s burn every 30min, forever).
+        import subprocess as _sp
+        self._note("solo.md", "big dense note", BASE)
+
+        def timeout_runner(t):
+            raise _sp.TimeoutExpired(cmd="claude", timeout=600)
+
+        s = radar.scan(runner=timeout_runner)
+        self.assertFalse(any("systemic" in x for x in s["skipped"]))
+        (entry,) = self._queue().values()
+        self.assertEqual(entry["attempts"], 1)           # budget charged
+        self.assertEqual(radar._read_marker(), BASE)     # marker advances
+
+    def test_truncated_array_salvages_complete_items_and_stays_queued(self):
+        # exit-0 truncation rescue: complete leading objects file NOW, the
+        # note stays queued so the tail gets a full retry (merge_or_new
+        # dedups the survivors on the re-run).
+        debug_dir = config.STATE_DIR / radar.DEBUG_DIR_NAME
+        if debug_dir.exists():
+            for p in debug_dir.glob("*.txt"):
+                p.unlink()
+        note = self._note("cut.md", "meeting with asks", BASE)
+        truncated = ('[{"title": "完整的第一条任务 alpha", "type": "task", '
+                     '"tier": "T1", "hardness": "soft", "deadline": null, '
+                     '"cost_estimate_usd": null, "urgent": false, '
+                     '"quote": "q1"}, {"title": "被截断的第二')
+        s = radar.scan(runner=lambda t: truncated)
+        self.assertEqual(s["extracted"], 1)              # the whole item filed
+        self.assertIn(str(note), self._queue())          # note stays queued
+        self.assertTrue(any("salvaged 1 complete item" in x
+                            for x in s["skipped"]))
+        titles = [r.title for r in registry.load_all()]
+        self.assertIn("完整的第一条任务 alpha", titles)
+        # forensics: the full raw landed in state/radar_debug/
+        debug = list((config.STATE_DIR / radar.DEBUG_DIR_NAME).glob("*.txt"))
+        self.assertEqual(len(debug), 1)
+        self.assertIn("被截断的第二", debug[0].read_text(encoding="utf-8"))
+
+    def test_unsalvageable_garbage_still_plain_unparseable(self):
+        note = self._note("junk.md", "junk", BASE)
+        s = radar.scan(runner=lambda t: "no json here at all")
+        self.assertTrue(any(x.startswith("unparseable extraction")
+                            and "salvaged" not in x for x in s["skipped"]))
+        self.assertIn(str(note), self._queue())
+
+    def test_scan_summary_carries_timestamp(self):
+        self._note("t.md", "x", BASE)
+        s = radar.scan(runner=lambda t: "[]")
+        self.assertRegex(s["ts"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
     def test_valid_empty_array_advances_marker(self):
         # "[]" is the prompt's own no-requirements answer — NOT a failure
         self._note("quiet note.md", "nothing new here", BASE)

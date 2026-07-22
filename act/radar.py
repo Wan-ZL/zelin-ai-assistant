@@ -23,7 +23,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -170,6 +170,17 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
     return entry
 
 
+def _is_note_level_error(error: str) -> bool:
+    """Note-level failures (this note's own extraction stumbled) vs
+    channel-level ones (API/network/key — nothing would have succeeded).
+    Only channel-level sweeps may void a pass as systemic; a lone note
+    timing out at 3am must burn its own retry budget (2026-07-22 review)."""
+    e = str(error or "")
+    return (e.startswith(("unparseable extraction", "unreadable note",
+                          "filing failed"))
+            or "TimeoutExpired" in e)
+
+
 # give-up diagnostic card (§40) — dedup marker in sources[0]["channel"]
 GIVE_UP_CHANNEL = "radar-diagnostic"
 
@@ -261,7 +272,9 @@ def _run_extract(note_text: str, runner=None) -> str:
         [_claude_bin(), "-p", "--output-format", "text", _extract_prompt(note_text)],
         capture_output=True,
         text=True,
-        timeout=300,  # 180s starves hour-long dense notes (2026-07-08 replay evidence)
+        timeout=600,  # dense-OCR notes legitimately take 100-360s+ to extract
+                      # (2026-07-22 replay: 32KB note = 277s success) — 300 sat
+                      # mid-distribution and manufactured chronic timeouts
         env=_runner_env(),
     )
     if proc.returncode != 0:
@@ -296,6 +309,57 @@ def _find_json_array(text: str) -> Optional[list]:
         if fallback is None:
             fallback = data
     return fallback
+
+
+DEBUG_DIR_NAME = "radar_debug"
+_DEBUG_KEEP = 20
+
+
+def _dump_debug_raw(note: Path, raw: str) -> None:
+    """Parse failure forensics: the cron log keeps only raw[:80], which has
+    made truncation impossible to prove from the scene (2026-07-22 review).
+    Keep the last ~20 full outputs under state/radar_debug/. Best-effort."""
+    try:
+        debug_dir = config.STATE_DIR / DEBUG_DIR_NAME
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        (debug_dir / f"{ts}-{note.stem[:80]}.txt").write_text(
+            raw or "", encoding="utf-8")
+        stale = sorted(debug_dir.glob("*.txt"),
+                       key=lambda p: p.name, reverse=True)[_DEBUG_KEEP:]
+        for p in stale:
+            p.unlink()
+    except OSError:
+        pass
+
+
+def _salvage_truncated_array(text: str) -> list[dict]:
+    """Rescue the COMPLETE objects from a JSON array whose tail got cut
+    (claude -p exit 0 with the stream stopping mid-object — 9 occurrences
+    in the 07-16..07-21 cron log). Walks object-by-object from the first
+    ``[``; the broken tail object is simply not reached. Returns [] when
+    nothing whole is recoverable."""
+    start = (text or "").find("[")
+    if start < 0:
+        return []
+    decoder = json.JSONDecoder()
+    out: list[dict] = []
+    i, n = start + 1, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "{":
+            try:
+                obj, end = decoder.raw_decode(text, i)
+            except (json.JSONDecodeError, ValueError):
+                break
+            if isinstance(obj, dict):
+                out.append(obj)
+            i = end
+        elif ch == "]":
+            break
+        else:
+            i += 1
+    return out
 
 
 def _parse_extraction(raw: str) -> Optional[list[dict]]:
@@ -515,7 +579,8 @@ def scan(runner=None, triager=None) -> dict:
     sources never re-merge）。
     """
     cfg = config.load_config()
-    summary = {"files_scanned": 0, "extracted": 0, "reconciled": 0, "cards": 0, "skipped": []}
+    summary = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "files_scanned": 0, "extracted": 0, "reconciled": 0, "cards": 0, "skipped": []}
 
     lock = _acquire_pass_lock()
     if lock is None:
@@ -561,6 +626,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     marker = _read_marker()
     newest_done = marker
     any_failed = False  # ≥1 note 本轮提取失败（进了重试台账）-> health not ok
+    pass_errors: list[str] = []  # error strings this pass (systemic triage)
     failed = _load_failed_queue()
 
     # 文件级容错：glob 会捡到叫 *.md 的目录、悬空软链；stat 也可能撞上
@@ -612,6 +678,7 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
             summary["skipped"].append(error)
             entry = _record_failure(failed, note, mtime, error)
             any_failed = True
+            pass_errors.append(error)
             if entry["gave_up"]:
                 summary["skipped"].append(
                     f"giving up on {note.name} after {entry['attempts']} attempts "
@@ -625,9 +692,13 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
         # 它既不再钉死后续 note（无限重烧），也不会被同 mtime 的成功者越过而丢失。
         newest_done = max(newest_done, mtime)
 
-    if any_failed and succeeded_this_pass == 0 and summary["files_scanned"] > 0:
-        # 全军覆没 = systemic（见上）：本轮的账全部作废——marker 不动、
-        # attempts 不扣，下一轮从同一起点重来。
+    if (any_failed and succeeded_this_pass == 0 and summary["files_scanned"] > 0
+            and any(not _is_note_level_error(e) for e in pass_errors)):
+        # 全军覆没且含通道级错误（API/网络/key）= systemic：本轮的账全部
+        # 作废——marker 不动、attempts 不扣，下一轮从同一起点重来。
+        # 纯 note 级错误（超时/截断/不可读）即使全军覆没也照常扣账——夜间
+        # note 流稀疏时单篇 note 独自成 pass 是常态，把它的超时当系统故障
+        # 会让 5 次上限永不生效、每 30min 白烧一轮（2026-07-22 review）。
         summary["skipped"].append(
             "systemic extraction failure (every attempted note failed) — "
             "marker pinned, no retry budget charged")
@@ -678,8 +749,22 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:
         return f"claude -p failed on {note.name}: {type(e).__name__}: {str(e)[:160]}"
     items = _parse_extraction(raw)
+    salvage_error: Optional[str] = None
     if items is None:
-        return f"unparseable extraction on {note.name}: {(raw or '')[:80]!r}"
+        # Truncation rescue (2026-07-22 review): the model's stream can stop
+        # mid-array with exit 0. Complete leading objects are REAL
+        # extractions — file them now so they aren't hostage to the retry
+        # cycle, but still return an error so the note stays queued (the
+        # re-run re-extracts everything; merge_or_new dedups the survivors,
+        # so the tail items get their chance with zero double-filing).
+        _dump_debug_raw(note, raw or "")
+        salvaged = _salvage_truncated_array(raw or "")
+        if not salvaged:
+            return f"unparseable extraction on {note.name}: {(raw or '')[:80]!r}"
+        items = salvaged
+        salvage_error = (f"unparseable extraction on {note.name} — salvaged "
+                         f"{len(salvaged)} complete item(s), note stays "
+                         "queued for retry")
     summary["extracted"] += len(items)
     item_error: Optional[str] = None
     for item in items:
@@ -723,8 +808,9 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
                 and saved.status == registry.State.CARD_SENT.value):
             summary["cards"] += 1
     # 有 item 落库失败 -> 整篇 note 进重试台账重跑（merge_or_new 会去重已成功
-    # 落库的兄弟项），比只丢这一条更诚实。
-    return item_error
+    # 落库的兄弟项），比只丢这一条更诚实。salvage 场景同理：已救出的落了库，
+    # note 本身留在重试队列等一次完整提取。
+    return item_error or salvage_error
 
 
 def main(argv: Optional[list[str]] = None) -> int:
