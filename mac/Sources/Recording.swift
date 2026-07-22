@@ -176,6 +176,14 @@ final class RecordingController: ObservableObject {
         }
     }
 
+    /// The mode the re-enable button should restore: the last non-off mode
+    /// the user actually ran (default "screen" for fresh installs). The
+    /// screen_audio ffmpeg precheck in setMode still guards the restore.
+    var resumeMode: String {
+        let last = UserDefaults.standard.string(forKey: "lastActiveRecordingMode") ?? ""
+        return ["screen", "screen_audio"].contains(last) ? last : "screen"
+    }
+
     func setMode(_ newMode: String) {
         guard ["off", "screen", "screen_audio"].contains(newMode) else { return }
         modeGen += 1
@@ -220,6 +228,13 @@ final class RecordingController: ObservableObject {
     /// applyMode's rollback so a switch that cannot start falls back instead
     /// of leaving recording dead.
     private func commitMode(_ newMode: String, rollbackTo previous: String) {
+        if newMode == "off", mode != "off" {
+            // remember what was on: the re-enable button restores THIS, so
+            // an off→on round-trip no longer silently drops the audio tier
+            // (2026-07-21: a manual restart landed on "screen" and audio
+            // capture stayed dead for a day without anyone choosing that).
+            UserDefaults.standard.set(mode, forKey: "lastActiveRecordingMode")
+        }
         UserDefaults.standard.set(newMode, forKey: "recordingMode")
         let changed = newMode != mode
         mode = newMode

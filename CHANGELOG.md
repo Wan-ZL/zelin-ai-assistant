@@ -25,7 +25,12 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **重开录制不再丢音频档位** — 权限体检页的「开启」按钮此前硬编码回「仅屏幕」：
+  7-21 一次手动重开后音频采集静默停了一天，没人主动选过这个降级。现在关闭时
+  记住当时的档位（`lastActiveRecordingMode`），重开按钮恢复它并如实显示
+  「开启(屏幕+音频)」/「开启(仅屏幕)」；screen_audio 的 ffmpeg 预检照常把关。
 
 ## [0.43.2] - 2026-07-22
 

@@ -486,11 +486,15 @@ struct RecordingConsentSection: View {
             }
             Spacer()
             if rec.mode == "off" {
-                Button(L("开启(仅屏幕)", "Turn On (screen only)")) {
+                // restore the last mode that was actually on — a hardcoded
+                // "screen" here silently dropped the audio tier (2026-07-21)
+                Button(rec.resumeMode == "screen_audio"
+                       ? L("开启(屏幕+音频)", "Turn On (screen + audio)")
+                       : L("开启(仅屏幕)", "Turn On (screen only)")) {
                     if !RecordingController.hasScreenPermission() {
                         RecordingController.requestScreenPermission()
                     }
-                    rec.setMode("screen")
+                    rec.setMode(rec.resumeMode)
                 }
                 .controlSize(.small)
             } else {
