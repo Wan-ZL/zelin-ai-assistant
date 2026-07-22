@@ -338,8 +338,10 @@ class BriefTestCase(unittest.TestCase):
         p1 = mock.patch.object(executor, "_agent_info", lambda sid: {})
         p2 = mock.patch.object(executor, "_briefing_window_open",
                                lambda sid: True)
-        p1.start(); self.addCleanup(p1.stop)
-        p2.start(); self.addCleanup(p2.stop)
+        p1.start()
+        self.addCleanup(p1.stop)
+        p2.start()
+        self.addCleanup(p2.stop)
 
     def _executing(self, pend):
         return _seed("R-001", DUP_A, status=State.EXECUTING.value,
