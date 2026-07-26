@@ -157,6 +157,14 @@ debt item 新增 `summary`（同上，大白话）。
 ```
 actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="quick_capture"`，sources 里保留原话）→ 置状态 `raising` → 复用 process_raising 每轮扩写一条 → 变 card_sent 正式提案卡。快速、不堵轮询。幂等：同 text 重复文件不重复建卡（merge_or_new 按 title 合并）。
 
+**§10bis 输入框贴图 `images` 字段（v0.46，add-only；用户建议 #4/#5）**：`capture` 与 `feedback` 动作可携带 `images` = 本机 PNG 绝对路径数组。App 侧先把粘贴的图片降采样（最长边 2560px）落成 PNG——capture / answer 附图 → `state/attachments/<uuid>-<n>.png`，feedback 附图 → `state/feedback/attachments/<uuid>-<n>.png`（`<uuid>` 每次发送一批、`n` 从 1 起）；UI 上限 4 张；inbox 写失败时 App 删除本批 PNG（孤儿兜底见下方 GC）。actd 边界校验（§33 口径，fail-closed）：非 list 整体忽略，仅收非空字符串、去重、上限 4。`answer_input` **无新键**——附图以尾行 `[附图，用 Read 工具查看] <路径>` 拼进 `text`（前缀常量两侧逐字一致：`act/actd.py` 的 `ANSWER_ATTACHMENT_PREFIX` = `mac/Sources/PastedImages.swift` 的 `answerLinePrefix`；附图行连同正文一起受 §39.2 的 4000 上限约束，App 先给附图行留位再裁剪正文）。
+
+**执行侧**：capture 的 `images` add-only 去重并入卡片 `execution.attachments`（折叠进既有卡时不覆盖旧附件，跨轮次累积）；`executor.build_prompt` 在 Sources 块后追加 `## 用户附图（用 Read 工具打开查看）` 段落，路径每行一个；无附件时 prompt 逐字不变。
+
+**附件 GC（actd housekeeping，日频）**：marker `state/attachments_gc_marker` 的 mtime 节流 24h（尝试即消耗当日预算，§26 同款）；删两个附件目录中「**无引用且 mtime > 30 天**」的文件。引用源 = registry 全部卡（含 trash 状态与 `archive/`——归档卡是真实工作数据）的 `execution.attachments` + `state/feedback/*.json` 的 `images`（realpath 归一，容忍 symlink home）。**fail safe（引用不可见就不删）**：registry 侧逐文件 strict 解析（不走 load_all 的静默跳过），任一 yaml 读不出/解析失败 → 本 pass **整体零删除**；feedback 侧任一记录读不出（IO/坏 JSON/非 dict）→ 本 pass 跳过 `state/feedback/attachments/` 的清扫（`state/attachments/` 照常）。
+
+**telemetry 边界**：图片与本机路径**永不上传**——feedback 上传 payload 只追加 `image_count`（见 §29bis）；`inbox_answer_input` 的 capture_input-gated `text` 先剔除附图行再入账（附图行是机器生成、含本机用户名/目录结构，不属于 docs/TELEMETRY.md 承诺的「用户输入文本」；投递给 session 的原文不动）。
+
 ---
 
 # v0.4 additions（手机端/快速捕获/Gmail/主窗口/进化）
@@ -895,6 +903,16 @@ repo 烧不起重复 issue，创建做成 effectively once-only 三件套：①*
 （4xx、响应解析失败等，等下去也不会自愈）计入 `MAX_SYNC_ATTEMPTS`(3)，累计
 3 次即永久放弃（API burn guard）。状态单向（v1）：维护者在 GitHub 关闭/打标
 签，本地不回拉。
+
+**§29ter 贴图（v0.46，add-only；用户建议 #4）**：inbox 动作可携带 `images` =
+本机 PNG 绝对路径数组（`state/feedback/attachments/`，落盘/校验/GC 口径见
+§10bis）。**text 约束修订（v0.46 起）**：上文「`text` 必填非空」改为「`text`
+与 `images` **至少其一非空**」——图片-only 报告合法（App 侧「只贴图不打字」
+照常提交；App 在 PNG 全部保存失败时不写 inbox 而是明确报错，绝不落一条双空
+记录），两者皆空才 log 丢弃整条。本地记录新增 `images` 字段（清洗后的路径
+数组，可空）。上传 row 的 `props` 只追加 `image_count`（int）——**图片本身与
+本机路径永不上传**（维护者即机主，本地留档即可）；上报入口文案须明示
+「粘贴的图片只保存在本机，不会上传」。
 
 ---
 

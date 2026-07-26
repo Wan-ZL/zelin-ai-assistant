@@ -922,25 +922,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         alert.messageText = ids.isEmpty
             ? L("💡 提建议（对整体）", "💡 Send feedback (overall)")
             : L("💡 提建议（\(ids.count) 张卡）", "💡 Send feedback (\(ids.count) cards)")
+        // 贴图（建议 #4）: 弹窗编辑器接受 ⌘V 图片，发送时落 PNG；图片本身
+        // 永不上传（上传 payload 只带 image_count），文案必须说清楚。
+        let images = PastedImagesModel()
         // CONTRACT §29 明示条款：内容（建议全文 + 所选卡片标题快照）会上传给
         // 维护者，且不受「产品改进计划」开关/首启 consent 限制——入口文案必须
         // 把这一点讲清楚，不得暗示是本地闭环。勾选公开时更进一步：建议会出现
         // 在公开 repo 的 issue 列表里，任何人可见——旁边的提醒必须常驻。
-        alert.informativeText = L("说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。",
-                                  "What's off / could be better. On send, your feedback text and the selected cards' title snapshots are uploaded to the maintainer to improve the product (even with anonymous stats off) — avoid sensitive details.")
+        alert.informativeText = L("说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。粘贴的图片只保存在本机，不会上传。",
+                                  "What's off / could be better. On send, your feedback text and the selected cards' title snapshots are uploaded to the maintainer to improve the product (even with anonymous stats off) — avoid sensitive details. Pasted images stay on this Mac and are never uploaded.")
             + "\n" + L("建议内容…", "Your feedback…") + "\n"
             + L("↩ 发送 · ⇧↩ 换行", "↩ send · ⇧↩ newline")
         alert.addButton(withTitle: L("发送", "Send"))
         alert.addButton(withTitle: L("取消", "Cancel"))
 
-        // editor + publish checkbox stacked (promptAnswer 的 NSStackView 模式)
+        // editor + 缩略图槽 + publish checkbox stacked (promptAnswer 的
+        // NSStackView 模式；NSAlert 不会 mid-modal 重排，槽位固定高度)
         let container = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 0))
         container.orientation = .vertical
         container.alignment = .leading
         container.spacing = 6
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 96))
-        let tv = NSTextView(frame: scroll.bounds)
+        let tv = ImagePasteTextView(frame: scroll.bounds)
+        tv.imagesModel = images
         tv.isRichText = false
         tv.font = .systemFont(ofSize: 13)
         tv.autoresizingMask = [.width]
@@ -956,6 +961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
         scroll.widthAnchor.constraint(equalToConstant: 360).isActive = true
         container.addArrangedSubview(scroll)
+        container.addArrangedSubview(pastedImagesAccessory(images, width: 360))
 
         // 建议公开跟踪表: publish opt-in — actd 侧 feedback_sync 只对显式
         // true 的记录建 GitHub issue。默认态记住上次选择。
@@ -985,10 +991,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }
         guard resp == .alertFirstButtonReturn else { return false }
         let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
+        // 只贴图不打字也是合法提交（answer 弹窗同款）——只有「取消」或真正
+        // 一无所有才作罢，图不再被静默丢弃。
+        if text.isEmpty && images.isEmpty { return false }   // truly nothing
         let publish = publishBox.state == .on
         Self.rememberFeedbackPublishDefault(publish)
-        return submitFeedback(ids: ids, text: text, publish: publish)
+        return submitFeedback(ids: ids, text: text, publish: publish,
+                              images: images.images)
     }
 
     /// 建议公开跟踪表: the checkbox's remembered default — override 键
@@ -1013,17 +1022,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 建议上报（照 submitMergeReview 模式）:
-    /// {"action":"feedback","ids":[…],"text":…,"publish":…} inbox 文件 — ids
-    /// sorted 保持 payload 确定性，允许为空（对整体提建议）；publish = 用户
-    /// 勾选的「同时公开到 GitHub 建议跟踪表」（actd 只对显式 true 公开建
-    /// issue）。同一 atomic-write + failure-alert 路径（writeInboxFile）；
-    /// 成功后乐观回显一条绿色「已记录建议，感谢」信息条
-    /// （store.noteFeedbackRecorded）。
-    func submitFeedback(ids: [String], text: String, publish: Bool = false) -> Bool {
+    /// {"action":"feedback","ids":[…],"text":…,"publish":…} inbox 文件 —
+    /// ids sorted 保持 payload 确定性，允许为空（对整体提建议）。同一
+    /// atomic-write + failure-alert 路径（writeInboxFile）；成功后乐观回显
+    /// 一条绿色「已记录建议，感谢」信息条（store.noteFeedbackRecorded）。
+    /// 贴图（建议 #4，add-only）: images 先落 PNG 到
+    /// state/feedback/attachments/，路径随 action 进 feedback 记录 —— 只在
+    /// 本机留档，Python 侧上传 payload 仅带 image_count。
+    func submitFeedback(ids: [String], text: String, publish: Bool = false,
+                        images: [NSImage] = []) -> Bool {
         let ts = ISO8601DateFormatter().string(from: Date())
-        let dict: [String: Any] = ["action": "feedback", "ids": ids.sorted(),
-                                   "text": text, "ts": ts, "publish": publish]
-        guard writeInboxFile(dict) else { return false }
+        var dict: [String: Any] = ["action": "feedback", "ids": ids.sorted(),
+                                   "text": text, "publish": publish, "ts": ts]
+        let paths = PastedImages.savePNGs(
+            images, toDir: AppPaths.stateRoot + "/state/feedback/attachments")
+        if !paths.isEmpty { dict["images"] = paths }
+        // PNG 全军覆没（磁盘满/编码失败）绝不假装成功：图片-only 时 inbox
+        // 里将是一条双空记录（actd 只会丢弃）——不写、明确报错；带文字则照常
+        // 提交文字，但明说图片没跟上。
+        let imagesLost = !images.isEmpty && paths.isEmpty
+        if imagesLost && text.isEmpty {
+            alertImagesNotSaved(textStillSubmitted: false)
+            return false
+        }
+        guard writeInboxFile(dict) else {
+            // the action never landed — a retry saves a fresh uuid batch, so
+            // this one would be a permanent orphan
+            PastedImages.deleteFiles(paths)
+            return false
+        }
+        if imagesLost { alertImagesNotSaved(textStillSubmitted: true) }
         Analytics.firstReach("feedback")
         Analytics.log("feedback_submit", fields: ["ids": ids.count,
                                                   "publish": publish])
@@ -1043,7 +1071,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let ts = ISO8601DateFormatter().string(from: Date())
         let dict: [String: Any] = ["id": id, "action": "answer_input",
                                    "text": text, "ts": ts]
-        guard writeInboxFile(dict) else { return false }
+        guard writeInboxFile(dict) else {
+            // the answer never landed — clean up ITS just-saved PNGs (paths
+            // recovered from the 附图 lines). Deletion stays confined to our
+            // attachments dir: standardize + resolve symlinks on BOTH sides
+            // BEFORE the prefix check, so a hand-typed `..`/symlink segment
+            // can never traverse the filter and delete elsewhere.
+            let dir = URL(fileURLWithPath: AppPaths.stateRoot + "/state/attachments",
+                          isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath().path + "/"
+            PastedImages.deleteFiles(
+                PastedImages.answerAttachmentPaths(in: text)
+                    .map { URL(fileURLWithPath: $0)
+                        .standardizedFileURL.resolvingSymlinksInPath().path }
+                    .filter { $0.hasPrefix(dir) })
+            return false
+        }
         Analytics.firstReach("answer_input")
         Analytics.log("card_action", fields: ["action": "answer_input", "req": id,
                                               "chars": text.count])
@@ -1089,9 +1132,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             container.addArrangedSubview(qScroll)
         }
 
-        // multi-line answer editor — same setup as promptText's editor
+        // multi-line answer editor — same setup as promptText's editor;
+        // 贴图（建议 #5 顺手项）: the editor takes ⌘V images too, appended as
+        // 附图 lines on send (the §39 answer channel stays plain text).
+        let images = PastedImagesModel()
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 96))
-        let tv = NSTextView(frame: scroll.bounds)
+        let tv = ImagePasteTextView(frame: scroll.bounds)
+        tv.imagesModel = images
         tv.isRichText = false
         tv.font = .systemFont(ofSize: 13)
         tv.autoresizingMask = [.width]
@@ -1107,6 +1154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
         scroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
         container.addArrangedSubview(scroll)
+        container.addArrangedSubview(pastedImagesAccessory(images, width: 420))
 
         // NSAlert sizes the accessory by its FRAME — derive it from the
         // autolayout fitting size or the panel collapses to zero height.
@@ -1118,12 +1166,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }
         guard resp == .alertFirstButtonReturn else { return nil }
         let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 附图先落 PNG，再作为尾行随答案文本回原 session（answer 通道 shape
+        // 不变）；只贴图不打字也是合法回答（「看这张截图」场景）。
+        let saved = PastedImages.savePNGs(
+            images.images, toDir: AppPaths.stateRoot + "/state/attachments")
+        // PNG 全军覆没绝不假装成功（feedback 路径同款）：image-only 时静默
+        // 返回 nil 形同取消——blocked session 会永远等不到输入；带文字则明说
+        // 图片没跟上，文字照常送。
+        let imagesLost = !images.isEmpty && saved.isEmpty
+        if imagesLost {
+            alertImagesNotSaved(textStillSubmitted: !text.isEmpty)
+            if text.isEmpty { return nil }
+        }
+        let suffix = PastedImages.answerLines(saved)
         // empty = nothing to deliver (actd would drop it anyway — §39 1..4000);
         // clip by UNICODE SCALARS to the 4000 ceiling actd enforces in code
         // points (a Character-based prefix can smuggle >4000 code points and
-        // get bounced server-side after the UI showed success).
-        if text.isEmpty { return nil }
-        return InboxAction.clipAnswer(text)
+        // get bounced server-side after the UI showed success). The 附图 lines
+        // must fit INSIDE that ceiling, so the typed text yields them room.
+        if text.isEmpty { return suffix.isEmpty ? nil : suffix }
+        if suffix.isEmpty { return InboxAction.clipAnswer(text) }
+        let budget = max(1, 4000 - suffix.unicodeScalars.count - 1)
+        return InboxAction.clipAnswer(text, max: budget) + "\n" + suffix
+    }
+
+    /// 贴图 PNG 全部保存失败时的用户提示（writeInboxFile 失败弹窗同款样式）
+    /// — 磁盘满/编码失败绝不假装成功。
+    private func alertImagesNotSaved(textStillSubmitted: Bool) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("图片保存失败", "Images Could Not Be Saved")
+        alert.informativeText = textStillSubmitted
+            ? L("粘贴的图片未能保存（磁盘空间或编码问题），已只提交文字部分。",
+                "The pasted images could not be saved (disk space or encoding issue); only your text was submitted.")
+            : L("粘贴的图片未能保存（磁盘空间或编码问题），建议未提交——请重试。",
+                "The pasted images could not be saved (disk space or encoding issue); nothing was submitted — please try again.")
+        alert.addButton(withTitle: L("好", "OK"))
+        alert.runModal()
+    }
+
+    /// Fixed-height hosted thumbnails row for the NSAlert editors (提建议 /
+    /// 回答). NSAlert never re-lays-out mid-modal, so the slot reserves its
+    /// height up front and shows the ⌘V hint while empty.
+    private func pastedImagesAccessory(_ model: PastedImagesModel,
+                                       width: CGFloat) -> NSView {
+        let host = NSHostingView(rootView:
+            PastedImagesRow(model: model, showsHintWhenEmpty: true))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        host.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return host
     }
 
     /// The ONE atomic inbox write + failure alert (card actions + merge_review
@@ -1169,21 +1261,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// carries `mode:"run"` (CONTRACT §34) and actd queues it straight for
     /// dispatch, skipping the proposal gate; the placeholder echoes in the
     /// running lane instead.
+    /// 贴图（建议 #5，add-only）: `images` land as PNGs in state/attachments/
+    /// and their absolute paths ride the capture file as `images` — actd folds
+    /// them into the card's execution.attachments for the dispatch prompt.
     @discardableResult
     func submitCapture(_ text: String, source: String, runCommands: Bool = true,
-                       directRun: Bool = false) -> Bool {
+                       directRun: Bool = false, images: [NSImage] = []) -> Bool {
         if runCommands && SlashCommands.isCommand(text) {
             let ok = SlashCommands.run(text, app: self)
             if ok { CaptureHistory.push(text) }   // item 5: commands count too
             return ok
         }
         let fm = FileManager.default
+        // outside the do: the catch must clean up the batch already on disk
+        var paths: [String] = []
         do {
             try fm.createDirectory(atPath: AppPaths.inboxDir,
                                    withIntermediateDirectories: true)
             let ts = ISO8601DateFormatter().string(from: Date())
             var dict: [String: Any] = ["action": "capture", "text": text, "ts": ts]
             if directRun { dict["mode"] = "run" }
+            paths = PastedImages.savePNGs(
+                images, toDir: AppPaths.stateRoot + "/state/attachments")
+            if !paths.isEmpty { dict["images"] = paths }
             let data = try JSONSerialization.data(withJSONObject: dict,
                                                   options: [.prettyPrinted, .sortedKeys])
             let path = AppPaths.inboxDir + "/capture-" + UUID().uuidString + ".json"
@@ -1200,7 +1300,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             Analytics.log("capture_submit", fields: fields)
         } catch {
             // wave 2: surface the IO failure — the caller keeps the input and
-            // shows 提交失败 (bucket A's non-command false branch).
+            // shows 提交失败 (bucket A's non-command false branch). The PNGs
+            // of THIS batch never got referenced — remove them (a retry
+            // writes a fresh uuid batch).
+            PastedImages.deleteFiles(paths)
             NSLog("capture write failed: \(error.localizedDescription)")
             return false
         }
@@ -1231,8 +1334,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return t
     }
 
+    /// `images` non-nil = the editor also accepts ⌘V image pastes into that
+    /// model (提建议 only for now) — the caller reads the collected images
+    /// after a successful send; cancel discards them with the model.
     private func promptText(title: String, info: String, placeholder: String,
-                            allowEmpty: Bool = false) -> String? {
+                            allowEmpty: Bool = false,
+                            images: PastedImagesModel? = nil) -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = info + "\n" + placeholder + "\n"
@@ -1242,7 +1349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // multi-line editor (scrolls past ~5 lines); ⌘C/⌘V/⌘A work via the
         // Edit main menu installed at launch
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 96))
-        let tv = NSTextView(frame: scroll.bounds)
+        let tv = ImagePasteTextView(frame: scroll.bounds)
+        tv.imagesModel = images
         tv.isRichText = false
         tv.font = .systemFont(ofSize: 13)
         tv.autoresizingMask = [.width]
@@ -1256,7 +1364,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         scroll.documentView = tv
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
-        alert.accessoryView = scroll
+        if let images {
+            // promptAnswer's container pattern: editor + fixed-height
+            // thumbnails slot (NSAlert never re-lays-out mid-modal).
+            let container = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 0))
+            container.orientation = .vertical
+            container.alignment = .leading
+            container.spacing = 6
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+            scroll.widthAnchor.constraint(equalToConstant: 360).isActive = true
+            container.addArrangedSubview(scroll)
+            container.addArrangedSubview(pastedImagesAccessory(images, width: 360))
+            container.layoutSubtreeIfNeeded()
+            container.frame = NSRect(x: 0, y: 0, width: 360,
+                                     height: container.fittingSize.height)
+            alert.accessoryView = container
+        } else {
+            alert.accessoryView = scroll
+        }
         alert.window.initialFirstResponder = tv
         // keep the delegate alive for the whole modal session
         let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }

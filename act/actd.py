@@ -32,6 +32,8 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 from act.lib import analytics, config, notify, registry
 from act.lib.agent_states import (
     _BLOCKED_STATES,
@@ -156,8 +158,11 @@ def process_inbox() -> int:
             # §10 capture: no req id — the app popover's one-liner quick capture.
             # v0.34.0: optional mode="run" (运行中 lane input) skips the proposal
             # gate — the card is filed straight into the approved queue.
+            # 贴图 (建议 #5, add-only): optional images = absolute PNG paths the
+            # app saved under state/attachments/.
             if action == "capture":
-                result = _apply_capture(decision.get("text"), decision.get("mode"))
+                result = _apply_capture(decision.get("text"), decision.get("mode"),
+                                        decision.get("images"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -405,7 +410,46 @@ def _spawn_weekly_digest() -> str:
         return "noop"
 
 
-def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
+def _clean_image_paths(images) -> list:
+    """Boundary validation for an inbox ``images`` list (§33 house pattern):
+    keep only non-empty string paths, deduped, capped at the app's 4-image
+    UI bound — junk entries must never poison a card or the dispatch prompt.
+    """
+    if not isinstance(images, list):
+        return []
+    seen: set = set()
+    out: list = []
+    for item in images:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:4]
+
+
+def _attach_capture_images(req: Requirement, images) -> None:
+    """贴图 (建议 #5, add-only): fold the capture's PNG paths into
+    ``execution.attachments`` — the card-level 附图清单 executor.build_prompt
+    turns into a「用户附图」Read block. Append-only + deduped, so a capture
+    folding into an existing card keeps that card's earlier attachments."""
+    paths = _clean_image_paths(images)
+    if not paths:
+        return
+    ex = dict(req.execution) if isinstance(req.execution, dict) else {}
+    have = ex.get("attachments")
+    have = [str(p) for p in have] if isinstance(have, list) else []
+    new = [p for p in paths if p not in have]
+    if not new:
+        return
+    ex["attachments"] = have + new
+    req.execution = ex
+    save(req)
+
+
+def _apply_capture(text: Optional[str], mode: Optional[str] = None,
+                   images=None) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
@@ -531,6 +575,7 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
             _log(f"inbox: capture[run] merged into {saved.id} "
                  f"(status={saved.status}) — no run filed, acking noop")
             result = "noop"
+        _attach_capture_images(saved, images)
         analytics.log_event(
             "capture_direct_run", req=saved.id, status=str(saved.status),
             chars=len(t),
@@ -543,6 +588,7 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
         _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion)")
     else:
         _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
+    _attach_capture_images(saved, images)
     # the typed capture text is content — capture_input-gated, clipped;
     # chars stays metadata (usage signal without the words).
     analytics.log_event(
@@ -679,12 +725,16 @@ def _apply_feedback(decision: dict) -> str:
     """建议上报 (CONTRACT §29) — explicit user report to the maintainer.
 
     ``{"action":"feedback","ids":["R-001","MS-ab12cd34"],"text":"…",
-    "publish":true|false}`` — validation here: non-empty text is REQUIRED
-    (empty -> logged drop); ``ids`` may be missing/empty/garbage (bad ids
-    degrade to "unknown" snapshots inside the record — the text must never be
-    lost over them); ``publish`` is the app checkbox「同时公开到 GitHub 建议
-    跟踪表」and only an explicit JSON ``true`` counts (absent/garbage — e.g.
-    an older app — stays private; act/lib/feedback_sync.py syncs later).
+    "publish":true|false}`` — validation here: the report must carry
+    SOMETHING — text, or images (贴图 建议 #4: an image-only report is
+    legal, answer 弹窗同款); both empty -> logged drop. ``ids`` may be
+    missing/empty/garbage (bad ids degrade to "unknown" snapshots inside the
+    record — the content must never be lost over them). ``publish`` is the
+    app checkbox「同时公开到 GitHub 建议跟踪表」and only an explicit JSON
+    ``true`` counts (absent/garbage — e.g. an older app — stays private;
+    act/lib/feedback_sync.py syncs later). ``images`` = local PNG paths under
+    state/feedback/attachments/ — recorded in the local file only; the
+    upload carries just their count (feedback.clean_images validates).
     Recording + best-effort upload live in act/lib/feedback.py; only event
     METADATA reaches the local analytics log — the report text travels solely
     inside the feedback record itself. Returns the §5.4 result_status
@@ -694,12 +744,13 @@ def _apply_feedback(decision: dict) -> str:
         _log("inbox: feedback requested but module unavailable — dropped")
         return "noop"
     text = str(decision.get("text") or "").strip()
-    if not text:
-        _log("inbox: feedback with empty text — dropped")
+    images = feedback.clean_images(decision.get("images"))
+    if not text and not images:
+        _log("inbox: feedback with no text and no images — dropped")
         return "noop"
     ids = feedback.clean_ids(decision.get("ids"))
     publish = decision.get("publish") is True
-    rec = feedback.record_feedback(ids, text, publish=publish)
+    rec = feedback.record_feedback(ids, text, publish=publish, images=images)
     if rec is None:
         _log("inbox: feedback record FAILED — dropped")
         return "noop"
@@ -708,6 +759,26 @@ def _apply_feedback(decision: dict) -> str:
     analytics.log_event("inbox_feedback", n=len(ids), publish=publish,
                         uploaded=rec.get("uploaded"))
     return "running"
+
+
+# 附图行前缀（贴图 建议#5）— the Swift side generates these lines with the SAME
+# literal (mac/Sources/PastedImages.swift, PastedImages.answerLinePrefix); keep
+# the two in sync. The lines are MACHINE-generated and carry local absolute
+# paths (macOS username / directory layout), so they must be stripped from the
+# capture_input-gated analytics text (docs/TELEMETRY.md: content fields only
+# ever carry what the user actually typed) — the text delivered into the
+# session keeps them untouched.
+ANSWER_ATTACHMENT_PREFIX = "[附图，用 Read 工具查看] "
+
+
+def _strip_attachment_lines(text: str) -> str:
+    """Analytics-only scrub: drop the machine-generated 附图 lines (must run
+    BEFORE clip_content — its whitespace collapse merges lines, after which a
+    prefix match can't find them)."""
+    return "\n".join(
+        line for line in str(text or "").splitlines()
+        if not line.startswith(ANSWER_ATTACHMENT_PREFIX)
+    ).strip()
 
 
 # §39.2 answer cooldown: a second answer landing this soon after a successful
@@ -847,10 +918,13 @@ def _apply_answer_input(decision: dict) -> str:
         req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
         save(req)
         _log(f"inbox: {req.id} answer_input delivered into session")
+        # 附图行剔除后再进 analytics（本机绝对路径不属于「用户输入文本」，
+        # 见 ANSWER_ATTACHMENT_PREFIX）；chars 仍计投递原文的长度。
+        scrubbed = _strip_attachment_lines(t)
         analytics.log_event(
             "inbox_answer_input", req=req.id, ok=True, chars=len(t),
-            text=(analytics.clip_content(t)
-                  if analytics.content_gate() else None))
+            text=(analytics.clip_content(scrubbed)
+                  if scrubbed and analytics.content_gate() else None))
         return "running"
     # executor.answer recorded execution.last_error — surface the failure
     # everywhere the owner can see it (§39: never a silent drop).
@@ -2476,6 +2550,119 @@ def process_raising(cfg: config.Config) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# 贴图附件 GC (建议 #4/#5) — state/attachments/ + state/feedback/attachments/
+# 只写不删会按 5-15MB/张无限增长；这里删「无引用且 mtime>30 天」的孤儿。
+# 引用源 = 全部 registry 卡（含 trash 状态与 archive/——归档卡是真实工作数据）
+# 的 execution.attachments + state/feedback/*.json 的 images。fail safe：引用
+# 扫描不完整（坏 yaml / 坏 feedback 记录）就按 _sweep_attachment_dirs 文档的
+# 口径缩范围或整体零删除。
+# --------------------------------------------------------------------------- #
+_ATTACH_GC_MARKER = config.STATE_DIR / "attachments_gc_marker"
+_ATTACH_GC_INTERVAL_S = 24 * 3600        # daily, marker-throttled (update_check 模式)
+_ATTACH_GC_MAX_AGE_S = 30 * 24 * 3600    # young orphans get 30 天 grace
+
+
+def _registry_attachment_refs() -> set:
+    """引用收集（registry 侧）——逐文件 STRICT 解析（single-doc 与 list 文件
+    都认，archive/ 一并扫，R-000-example.yaml 照 _iter_files 规则跳过）。
+    刻意不用 registry.load_all：它对单个坏文件是静默跳过，坏卡引用的 >30 天
+    附图会被当孤儿删掉——这里任一 yaml 读不出/解析失败都直接 raise，让本
+    pass 整体零删除（fail safe：引用不可见就不删）。"""
+    refs: set = set()
+    reg_files = [p for p in config.REGISTRY_DIR.glob("*.yaml")
+                 if p.name != "R-000-example.yaml"]
+    if registry.ARCHIVE_DIR.exists():
+        reg_files += list(registry.ARCHIVE_DIR.glob("*.yaml"))
+    for path in reg_files:
+        docs = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for doc in docs if isinstance(docs, list) else [docs]:
+            ex = doc.get("execution") if isinstance(doc, dict) else None
+            atts = ex.get("attachments") if isinstance(ex, dict) else None
+            if isinstance(atts, list):
+                refs.update(p.strip() for p in atts
+                            if isinstance(p, str) and p.strip())
+    return refs
+
+
+def _sweep_attachment_dirs(now: Optional[float] = None) -> int:
+    """Delete unreferenced attachment files older than 30 days; returns the
+    number removed.
+
+    Fail-safe 口径（契约 §10 v0.46 追记）——引用不可见就不删：
+    - registry 侧任一 yaml 坏形 -> _registry_attachment_refs raises，the
+      throttled wrapper turns it into a logged no-op（本 pass 整体零删除）；
+    - feedback 侧任一记录读不出（IO / 坏 JSON / 非 dict）-> 跳过
+      state/feedback/attachments/ 的清扫；state/attachments/ 不受影响
+      （feedback 的 images 只落自己的目录，capture/answer 只落另一边）。
+    """
+    now = time.time() if now is None else now
+    refs = _registry_attachment_refs()
+    # feedback 模块可降级为 None（守护导入）——此时它的 images 引用整体不可见，
+    # 与坏记录同款处理：本 pass 不动 feedback 附件目录。
+    feedback_dir_ok = feedback is not None
+    if feedback is not None:
+        for rec_path in feedback.FEEDBACK_DIR.glob("*.json"):
+            try:
+                rec = json.loads(rec_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                rec = None
+            if not isinstance(rec, dict):
+                # 这条记录的 images 引用不可见 —— 本 pass 不动 feedback 目录
+                feedback_dir_ok = False
+                continue
+            imgs = rec.get("images")
+            if isinstance(imgs, list):
+                refs.update(p.strip() for p in imgs
+                            if isinstance(p, str) and p.strip())
+    # tolerate symlinked homes: compare both the recorded string and realpath
+    refs |= {str(Path(p).resolve()) for p in list(refs)}
+    dirs = [config.STATE_DIR / "attachments"]
+    if feedback_dir_ok:
+        dirs.append(config.STATE_DIR / "feedback" / "attachments")
+    else:
+        _log("attachments gc: unreadable feedback record — skipping the "
+             "feedback attachments dir this pass")
+    removed = 0
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for f in d.iterdir():
+            try:
+                if not f.is_file():
+                    continue
+                if str(f) in refs or str(f.resolve()) in refs:
+                    continue
+                if now - f.stat().st_mtime < _ATTACH_GC_MAX_AGE_S:
+                    continue   # young orphan: in-flight inbox actions get time
+                f.unlink()
+                removed += 1
+            except OSError:
+                continue   # one bad file must not stop the sweep
+    return removed
+
+
+def gc_attachments() -> int:
+    """Daily-throttled orphan sweep (marker-file mtime — update_check's 24h
+    budget pattern; the attempt consumes the budget, success or not). Returns
+    files removed (0 when throttled or on failure). Never raises."""
+    try:
+        try:
+            if time.time() - _ATTACH_GC_MARKER.stat().st_mtime < _ATTACH_GC_INTERVAL_S:
+                return 0
+        except OSError:
+            pass   # no marker yet -> run
+        _ATTACH_GC_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _ATTACH_GC_MARKER.touch()
+        removed = _sweep_attachment_dirs()
+        if removed:
+            _log(f"attachments gc: removed {removed} orphaned file(s)")
+        return removed
+    except Exception as e:  # noqa: BLE001 - GC must never kill the pass
+        _log(f"attachments gc FAILED: {e}")
+        return 0
+
+
+# --------------------------------------------------------------------------- #
 # one pass + loop
 # --------------------------------------------------------------------------- #
 def run_once(
@@ -2537,6 +2724,11 @@ def run_once(
         from act.lib import feedback_sync
         feedback_sync.sweep(cfg)
     except Exception:  # noqa: BLE001 - sweep must not kill the daemon
+        pass
+    try:
+        # 贴图附件孤儿清理 — 日频节流；被节流的 pass 只付一次 marker stat()
+        gc_attachments()
+    except Exception:  # noqa: BLE001 - housekeeping must not kill the pass
         pass
     dash = build_dashboard(cfg=cfg)
     # §26 in-app update check: cheap (ETag-cached, at most one network attempt
