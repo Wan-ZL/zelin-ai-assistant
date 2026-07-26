@@ -23,7 +23,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd, executor
-from act.lib import config, registry
+from act.lib import analytics, config, registry
 from act.lib.registry import Requirement, State
 
 FULL_SID = "beefcafe-0000-4000-8000-000000000002"
@@ -178,6 +178,46 @@ class ApplyAnswerInputTestCase(unittest.TestCase):
         self.assertEqual(ans.call_args[0][1], "用 A 方案")
         self.assertIn("回答已送达", registry.load("R-971").notes or "")
         self.notify.assert_not_called()
+
+    def test_attachment_lines_never_reach_analytics_text(self):
+        # 贴图（建议 #5）× TELEMETRY.md: the 附图 lines are MACHINE-generated
+        # and carry local absolute paths — the capture_input-gated event text
+        # must not include them (content fields only ever carry what the user
+        # typed); delivery into the session keeps the full text untouched.
+        self._mk_req()
+        png = str(config.STATE_DIR / "attachments" / "deadbeef-1.png")
+        text = "按截图里的方案 B 来\n" + actd.ANSWER_ATTACHMENT_PREFIX + png
+        if analytics.EVENTS_PATH.exists():
+            analytics.EVENTS_PATH.unlink()
+        with mock.patch.object(actd.executor, "answer",
+                               return_value=True) as ans, \
+                mock.patch.object(actd.analytics, "content_gate",
+                                  return_value=True):
+            result = actd._apply_answer_input(self._decision(text=text))
+        self.assertEqual(result, "running")
+        self.assertEqual(ans.call_args[0][1], text)  # delivery untouched
+        (event,) = [e for e in analytics.read_events()
+                    if e.get("event") == "inbox_answer_input"]
+        self.assertEqual(event.get("text"), "按截图里的方案 B 来")
+        self.assertNotIn("attachments",
+                         json.dumps(event, ensure_ascii=False))
+
+    def test_image_only_answer_logs_no_text_at_all(self):
+        # nothing typed = nothing to capture: an answer that is ONLY 附图
+        # lines must produce an event with no text field, even gate-open.
+        self._mk_req()
+        text = actd.ANSWER_ATTACHMENT_PREFIX + "/tmp/att/only-1.png"
+        if analytics.EVENTS_PATH.exists():
+            analytics.EVENTS_PATH.unlink()
+        with mock.patch.object(actd.executor, "answer", return_value=True), \
+                mock.patch.object(actd.analytics, "content_gate",
+                                  return_value=True):
+            result = actd._apply_answer_input(self._decision(text=text))
+        self.assertEqual(result, "running")
+        (event,) = [e for e in analytics.read_events()
+                    if e.get("event") == "inbox_answer_input"]
+        self.assertNotIn("text", event)
+        self.assertNotIn("/tmp/att", json.dumps(event, ensure_ascii=False))
 
     def test_delivery_failure_is_noop_and_visible(self):
         self._mk_req()

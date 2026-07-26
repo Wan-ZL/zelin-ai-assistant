@@ -154,6 +154,10 @@ struct KanbanComposer: View {
         // synchronous request races the insertion and silently falls back
         // to the board's 搜索卡片 field (keystrokes then go to search).
         .onAppear { DispatchQueue.main.async { focused = true } }
+        // feeds pasted.hostWindow — the monitor only claims ⌘V events that
+        // belong to THIS composer's window while it is key (a stale focus
+        // state in a non-key window must never steal another window's paste).
+        .background(HostingWindowReader(model: pasted))
         // ⌘V image monitor lives exactly as long as the caret is here — with
         // four composer instances alive (board ×2 + popover), only the focused
         // one may claim an image paste.

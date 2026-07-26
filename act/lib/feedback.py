@@ -262,14 +262,16 @@ def record_feedback(ids, text, cfg: Optional[config.Config] = None,
     payload from app versions that never asked — stays private.
     ``images`` (贴图, 建议 #4): local PNG paths the app saved under
     state/feedback/attachments/ — kept verbatim in the record, never uploaded
-    (the row carries only image_count; see :func:`_to_row`).
+    (the row carries only image_count; see :func:`_to_row`). An image-only
+    report (empty text, >=1 image) is legal — 只贴图不打字 must not be lost.
 
-    Returns the record dict (with its upload outcome), or None when the text
-    is empty/whitespace or the local write itself failed. Never raises.
+    Returns the record dict (with its upload outcome), or None when there is
+    neither text nor an image, or the local write itself failed. Never raises.
     """
     try:
         body = str(text or "").strip()
-        if not body:
+        image_list = clean_images(images)
+        if not body and not image_list:
             return None
         cfg = cfg or config.load_config()
         id_list = clean_ids(ids)
@@ -279,7 +281,7 @@ def record_feedback(ids, text, cfg: Optional[config.Config] = None,
             "ids": id_list,
             "cards": [_snapshot(i) for i in id_list],
             "text": body[:TEXT_CAP],
-            "images": clean_images(images),
+            "images": image_list,
             "app_version": __version__,
             "publish": publish is True,  # explicit opt-in only (公开跟踪表)
             "uploaded": None,       # null = pending; true/false are terminal

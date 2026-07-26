@@ -312,6 +312,43 @@ class ImagesTestCase(_StubTransportMixin, unittest.TestCase):
         (row,) = self.rows
         self.assertEqual(row["props"]["image_count"], 1)
 
+    def test_image_only_report_is_recorded(self):
+        # 只贴图不打字也是合法提交 — the empty text must not drop the report.
+        rec = feedback.record_feedback([], "", cfg=_cfg(),
+                                       transport=self._transport,
+                                       images=["/tmp/fb/only-1.png"])
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["text"], "")
+        self.assertEqual(rec["images"], ["/tmp/fb/only-1.png"])
+        (row,) = self.rows
+        self.assertEqual(row["props"]["image_count"], 1)
+
+    def test_inbox_action_image_only_is_recorded(self):
+        (config.INBOX_DIR / "feedback-imgonly.json").write_text(
+            json.dumps({"action": "feedback", "ids": [], "text": "",
+                        "images": ["/tmp/fb/only-2.png"]},
+                       ensure_ascii=False), encoding="utf-8")
+        with mock.patch.object(feedback, "_default_transport",
+                               lambda cfg: self._transport):
+            actd.process_inbox()
+        (rec,) = _records()
+        self.assertEqual(rec["images"], ["/tmp/fb/only-2.png"])
+
+    def test_no_text_and_no_images_still_drops(self):
+        # the empty-report guard survives P2-3: junk images do NOT rescue an
+        # otherwise empty report.
+        self.assertIsNone(feedback.record_feedback(
+            [], "  ", cfg=_cfg(), transport=self._transport,
+            images=[42, ""]))
+        (config.INBOX_DIR / "feedback-empty.json").write_text(
+            json.dumps({"action": "feedback", "ids": [], "text": " ",
+                        "images": "junk"}), encoding="utf-8")
+        with mock.patch.object(feedback, "_default_transport",
+                               lambda cfg: self._transport):
+            actd.process_inbox()
+        self.assertEqual(_records(), [])
+        self.assertEqual(self.rows, [])
+
 
 class RetryLifecycleTestCase(_StubTransportMixin, unittest.TestCase):
     """Upload lifecycle: fail -> pending (null) -> one LATER retry -> true|false."""

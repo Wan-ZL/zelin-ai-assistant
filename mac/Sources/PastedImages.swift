@@ -2,10 +2,14 @@
 // 直接开跑输入框、回答弹窗三处共用的粘贴收集器 + 缩略图行。
 //
 // 交互契约：⌘V 时剪贴板里有位图或图片文件 URL 才收下（其余剪贴板内容一律走
-// 原有文本粘贴路径，绝不拦截）；缩略图行每张可 ✕ 移除；上限 4 张。发送时由
-// 调用方把图片落成 PNG（savePNGs → <uuid>-<n>.png）并把绝对路径写进 inbox
-// action —— 图片本身永不上传，路径只在本机管线里流转（feedback 记录 / 卡片
-// execution.attachments / answer 附图行）。
+// 原有文本粘贴路径）；一旦剪贴板确认是图片内容，事件必被吞掉——满员/解码失败
+// 也只 beep 提示，绝不落回文本粘贴（图片文件的文本形态是本机绝对路径，插进
+// 会上传的提建议正文就是路径泄漏）。缩略图行每张可 ✕ 移除；上限 4 张。
+// 发送时由调用方把图片落成 PNG（savePNGs → <uuid>-<n>.png，落盘前统一降采样
+// 到最长边 2560px）并把绝对路径写进 inbox action —— 图片本身永不上传，路径只
+// 在本机管线里流转（feedback 记录 / 卡片 execution.attachments / answer 附图
+// 行）。inbox 写失败时调用方删除本批 PNG（deleteFiles / answerAttachmentPaths
+// 反解），actd 的日频附件 GC 只是兜底。
 
 import AppKit
 import SwiftUI
@@ -15,8 +19,7 @@ import Foundation
 /// owns its own instance (a draft's images must never leak into another box).
 @MainActor
 final class PastedImagesModel: ObservableObject {
-    /// 三处输入统一的上限；满员后的图片粘贴不再收（takeFromPasteboard 返回
-    /// false，事件走回普通文本粘贴 —— 对位图这是无害的 no-op，不吞事件）。
+    /// 三处输入统一的上限。
     static let maxCount = 4
 
     struct Item: Identifiable {
@@ -26,19 +29,34 @@ final class PastedImagesModel: ObservableObject {
 
     @Published private(set) var items: [Item] = []
 
+    /// The window hosting the input this model serves (HostingWindowReader
+    /// keeps it current). The ⌘V key monitor only claims events belonging to
+    /// this window WHILE IT IS KEY — @FocusState never flips false when a
+    /// window merely loses key (AppKit keeps a non-key window's first
+    /// responder), so without this a stale monitor in a background board
+    /// window would steal the popover composer's paste (local monitors fire
+    /// in install order and a nil return swallows the event).
+    weak var hostWindow: NSWindow?
+
     var isEmpty: Bool { items.isEmpty }
     var images: [NSImage] { items.map { $0.image } }
 
-    /// ⌘V hook: appends the pasteboard's bitmap / image-file content up to
-    /// the cap. Returns true when at least one image was taken — the caller
-    /// then swallows the paste; false = not an image paste (or already full),
-    /// so the normal text paste must proceed untouched.
+    /// ⌘V handler. Returns true when the pasteboard holds IMAGE content —
+    /// the caller must then swallow the paste, ALWAYS: at capacity (or on a
+    /// decode failure) nothing is added and beep says "not taken", but the
+    /// event never falls back to text paste — a Finder image file's text
+    /// fallback would insert its local ABSOLUTE PATH into the draft (feedback
+    /// text uploads → path leak). false = not an image paste, text paste
+    /// proceeds untouched.
     @discardableResult
     func takeFromPasteboard(_ pb: NSPasteboard = .general) -> Bool {
-        guard items.count < Self.maxCount else { return false }
-        let read = PastedImages.readImages(from: pb)
-        guard !read.isEmpty else { return false }
-        for img in read.prefix(Self.maxCount - items.count) {
+        guard PastedImages.hasImages(in: pb) else { return false }
+        let room = Self.maxCount - items.count
+        let read = room > 0 ? PastedImages.readImages(from: pb) : []
+        if read.isEmpty || read.count > room {
+            NSSound.beep()   // full / decode failed / overflow truncated
+        }
+        for img in read.prefix(max(0, room)) {
             items.append(Item(image: img))
         }
         return true
@@ -50,29 +68,78 @@ final class PastedImagesModel: ObservableObject {
 
 @MainActor
 enum PastedImages {
-    /// Pasteboard → images. Only two flavors count: image FILE URLs (Finder
-    /// copy — content-checked against public.image, so a .txt path stays a
-    /// text paste) and in-memory bitmaps (截图 / 浏览器图片复制，即使旁边还
-    /// 带着 URL 文本也按图收 —— 聊天框的惯例). Everything else returns [].
+    /// Downsample bound: longest edge in pixels before an image is stored or
+    /// encoded. tiffRepresentation materializes the UNCOMPRESSED bitmap (an
+    /// 8000×6000 screenshot ≈ 190MB), so both the resident composer model and
+    /// the send-time PNG encode must only ever see capped bitmaps — this
+    /// keeps the synchronous main-thread encode of 4 images bounded.
+    static let maxPixelDimension = 2560
+
+    private static let urlReadingOptions: [NSPasteboard.ReadingOptionKey: Any] = [
+        .urlReadingFileURLsOnly: true,
+        .urlReadingContentsConformToTypes: ["public.image"],
+    ]
+
+    /// Cheap "is this an image paste?" probe — no decode, safe to call when
+    /// the model is already full.
+    static func hasImages(in pb: NSPasteboard) -> Bool {
+        pb.canReadObject(forClasses: [NSURL.self], options: urlReadingOptions)
+            || pb.canReadObject(forClasses: [NSImage.self], options: [:])
+    }
+
+    /// Pasteboard → images (downsampled on the way in, so the resident
+    /// composer never keeps a full-size original in memory). Only two flavors
+    /// count: image FILE URLs (Finder copy — content-checked against
+    /// public.image, so a .txt path stays a text paste) and in-memory bitmaps
+    /// (截图 / 浏览器图片复制，即使旁边还带着 URL 文本也按图收 —— 聊天框的
+    /// 惯例). Everything else returns [].
     static func readImages(from pb: NSPasteboard) -> [NSImage] {
-        let urlOpts: [NSPasteboard.ReadingOptionKey: Any] = [
-            .urlReadingFileURLsOnly: true,
-            .urlReadingContentsConformToTypes: ["public.image"],
-        ]
         if let urls = pb.readObjects(forClasses: [NSURL.self],
-                                     options: urlOpts) as? [URL],
+                                     options: urlReadingOptions) as? [URL],
            !urls.isEmpty {
-            return urls.compactMap { NSImage(contentsOf: $0) }
+            return urls.compactMap { NSImage(contentsOf: $0) }.map(downsampled)
         }
         if let imgs = pb.readObjects(forClasses: [NSImage.self],
                                      options: [:]) as? [NSImage] {
-            return imgs
+            return imgs.map(downsampled)
         }
         return []
     }
 
+    /// Scale so the longest pixel edge fits maxPixelDimension; within-bound
+    /// images pass through untouched. Falls back to the original on any
+    /// rendering failure (an unbounded image beats a lost one).
+    static func downsampled(_ image: NSImage) -> NSImage {
+        var rect = NSRect(origin: .zero, size: image.size)
+        guard let cg = image.cgImage(forProposedRect: &rect, context: nil,
+                                     hints: nil) else { return image }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let longest = max(w, h)
+        guard longest > CGFloat(maxPixelDimension) else { return image }
+        let scale = CGFloat(maxPixelDimension) / longest
+        let tw = max(1, Int(w * scale)), th = max(1, Int(h * scale))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: tw, pixelsHigh: th,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0)
+        else { return image }
+        rep.size = NSSize(width: tw, height: th)
+        guard let ctx = NSGraphicsContext(bitmapImageRep: rep) else { return image }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = ctx
+        ctx.imageInterpolation = .high
+        ctx.cgContext.draw(cg, in: CGRect(x: 0, y: 0,
+                                          width: CGFloat(tw), height: CGFloat(th)))
+        NSGraphicsContext.restoreGraphicsState()
+        let out = NSImage(size: rep.size)
+        out.addRepresentation(rep)
+        return out
+    }
+
     /// Flatten to PNG under `dir` as <uuid>-<n>.png (one uuid per send batch,
     /// n = 1-based position); returns the absolute paths actually written.
+    /// Downsampled first (maxPixelDimension) so the encode cost is bounded.
     /// Best-effort per image — a broken bitmap is skipped, never fails the
     /// whole send (the text must still go out).
     static func savePNGs(_ images: [NSImage], toDir dir: String) -> [String] {
@@ -82,7 +149,8 @@ enum PastedImages {
         let batch = UUID().uuidString
         var paths: [String] = []
         for (i, image) in images.enumerated() {
-            guard let tiff = image.tiffRepresentation,
+            let bounded = downsampled(image)
+            guard let tiff = bounded.tiffRepresentation,
                   let rep = NSBitmapImageRep(data: tiff),
                   let png = rep.representation(using: .png, properties: [:])
             else { continue }
@@ -97,11 +165,35 @@ enum PastedImages {
         return paths
     }
 
+    /// Best-effort cleanup of just-saved PNGs when the inbox write failed —
+    /// a retry saves a fresh batch, so these would be permanent orphans
+    /// (actd's daily attachments GC is only the backstop).
+    static func deleteFiles(_ paths: [String]) {
+        for p in paths {
+            try? FileManager.default.removeItem(atPath: p)
+        }
+    }
+
+    /// §39 attachment-line prefix. The python side defines the SAME literal
+    /// (act/actd.py, ANSWER_ATTACHMENT_PREFIX) to scrub these machine-
+    /// generated lines — they carry local absolute paths — out of the
+    /// capture_input-gated analytics text; keep the two in sync.
+    static let answerLinePrefix = "[附图，用 Read 工具查看] "
+
     /// §39 answer channel stays plain text — attachments ride as trailing
     /// lines the agent can Read. One line per saved PNG; the format is agent
     /// payload (like the rework standing order), deliberately not L()-ized.
     static func answerLines(_ paths: [String]) -> String {
-        paths.map { "[附图，用 Read 工具查看] " + $0 }.joined(separator: "\n")
+        paths.map { answerLinePrefix + $0 }.joined(separator: "\n")
+    }
+
+    /// Recover the PNG paths from an answer's 附图 lines — the failed-submit
+    /// cleanup only has the final text in hand (promptAnswer already returned).
+    static func answerAttachmentPaths(in text: String) -> [String] {
+        text.components(separatedBy: "\n").compactMap { line in
+            line.hasPrefix(answerLinePrefix)
+                ? String(line.dropFirst(answerLinePrefix.count)) : nil
+        }
     }
 }
 
@@ -168,6 +260,29 @@ final class ImagePasteTextView: NSTextView {
     }
 }
 
+/// Reports the hosting NSWindow into the model (PastedImagesModel.hostWindow)
+/// so the ⌘V monitor can verify an event belongs to ITS window. Setting a
+/// plain (non-@Published) reference during attach is deliberate — no SwiftUI
+/// state mutation mid-layout, and the monitor reads it live at event time.
+struct HostingWindowReader: NSViewRepresentable {
+    let model: PastedImagesModel
+
+    func makeNSView(context: Context) -> WindowProbeView {
+        let v = WindowProbeView()
+        v.model = model
+        return v
+    }
+    func updateNSView(_ nsView: WindowProbeView, context: Context) {}
+
+    final class WindowProbeView: NSView {
+        weak var model: PastedImagesModel?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            model?.hostWindow = window
+        }
+    }
+}
+
 /// ⌘V hook for SwiftUI TextFields (the composer): a focus-scoped local key
 /// monitor — installed while the field owns the caret, removed on defocus /
 /// disappear. Local monitors fire BEFORE the Edit menu's ⌘V key equivalent,
@@ -187,6 +302,12 @@ enum PasteImageKeyMonitor {
                 // a monitor left alive by a stale focus state must never
                 // steal the alert's ⌘V into the composer's model.
                 guard NSApp.modalWindow == nil else { return }
+                // only the KEY window's own composer may claim a paste — a
+                // stale monitor (focused state alive in a non-key window)
+                // must pass the event through untouched (hostWindow doc).
+                guard let owner = model.hostWindow,
+                      event.window === owner,
+                      NSApp.keyWindow === owner else { return }
                 handled = model.takeFromPasteboard()
             }
             return handled ? nil : event

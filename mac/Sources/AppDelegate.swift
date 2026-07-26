@@ -991,7 +991,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }
         guard resp == .alertFirstButtonReturn else { return false }
         let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
+        // 只贴图不打字也是合法提交（answer 弹窗同款）——只有「取消」或真正
+        // 一无所有才作罢，图不再被静默丢弃。
+        if text.isEmpty && images.isEmpty { return false }   // truly nothing
         let publish = publishBox.state == .on
         Self.rememberFeedbackPublishDefault(publish)
         return submitFeedback(ids: ids, text: text, publish: publish,
@@ -1014,7 +1016,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let paths = PastedImages.savePNGs(
             images, toDir: AppPaths.stateRoot + "/state/feedback/attachments")
         if !paths.isEmpty { dict["images"] = paths }
-        guard writeInboxFile(dict) else { return false }
+        guard writeInboxFile(dict) else {
+            // the action never landed — a retry saves a fresh uuid batch, so
+            // this one would be a permanent orphan
+            PastedImages.deleteFiles(paths)
+            return false
+        }
         Analytics.firstReach("feedback")
         Analytics.log("feedback_submit", fields: ["ids": ids.count,
                                                   "publish": publish])
@@ -1034,7 +1041,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let ts = ISO8601DateFormatter().string(from: Date())
         let dict: [String: Any] = ["id": id, "action": "answer_input",
                                    "text": text, "ts": ts]
-        guard writeInboxFile(dict) else { return false }
+        guard writeInboxFile(dict) else {
+            // the answer never landed — clean up ITS just-saved PNGs (paths
+            // recovered from the 附图 lines; only files under our attachments
+            // dir, so a hand-typed line can never delete elsewhere)
+            let dir = AppPaths.stateRoot + "/state/attachments/"
+            PastedImages.deleteFiles(
+                PastedImages.answerAttachmentPaths(in: text)
+                    .filter { $0.hasPrefix(dir) })
+            return false
+        }
         Analytics.firstReach("answer_input")
         Analytics.log("card_action", fields: ["action": "answer_input", "req": id,
                                               "chars": text.count])
@@ -1197,13 +1213,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return ok
         }
         let fm = FileManager.default
+        // outside the do: the catch must clean up the batch already on disk
+        var paths: [String] = []
         do {
             try fm.createDirectory(atPath: AppPaths.inboxDir,
                                    withIntermediateDirectories: true)
             let ts = ISO8601DateFormatter().string(from: Date())
             var dict: [String: Any] = ["action": "capture", "text": text, "ts": ts]
             if directRun { dict["mode"] = "run" }
-            let paths = PastedImages.savePNGs(
+            paths = PastedImages.savePNGs(
                 images, toDir: AppPaths.stateRoot + "/state/attachments")
             if !paths.isEmpty { dict["images"] = paths }
             let data = try JSONSerialization.data(withJSONObject: dict,
@@ -1222,7 +1240,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             Analytics.log("capture_submit", fields: fields)
         } catch {
             // wave 2: surface the IO failure — the caller keeps the input and
-            // shows 提交失败 (bucket A's non-command false branch).
+            // shows 提交失败 (bucket A's non-command false branch). The PNGs
+            // of THIS batch never got referenced — remove them (a retry
+            // writes a fresh uuid batch).
+            PastedImages.deleteFiles(paths)
             NSLog("capture write failed: \(error.localizedDescription)")
             return false
         }
