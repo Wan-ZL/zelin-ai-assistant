@@ -124,18 +124,6 @@ class ScreenOriginationBlockedTestCase(EchoGateBase):
         self.assertEqual(registry.load_all(), [])          # 零新卡
         self.assertEqual(radar._read_marker(), BASE)       # 拦截不是失败
 
-    def test_screen_triage_ignore_stays_out_of_echo_blocked(self):
-        # triage 判 ignore 的项本来就不会成卡——混进 echo_blocked 会抬高政策
-        # 审计口径。它走原有 ignore 路径（照旧零卡），拦截计数保持 0。
-        self._note()
-        summary = self._scan(
-            [_item("纯 FYI 的屏幕回声", provenance="screen",
-                   speaker="assistant")],
-            {"action": "ignore", "reason": "纯 FYI"})
-        self.assertEqual(summary["echo_blocked"], 0)
-        self.assertEqual(summary["cards"], 0)
-        self.assertEqual(registry.load_all(), [])
-
     def test_screen_blocks_even_the_triage_fallback(self):
         # triage 挂了 -> quick_capture 的宁可打扰回退是 new_proposal；对
         # screen 来源，这个回退同样无出生权。
@@ -167,6 +155,21 @@ class ScreenOriginationBlockedTestCase(EchoGateBase):
         self.assertIn("[radar] 屏幕上又见到一次", reqs[0].notes or "")
         # §45：屏幕佐证不得借 act-now 把目标卡提升进提案列以外的状态
         self.assertEqual(reqs[0].status, "card_sent")
+
+    def test_screen_ignore_is_not_counted_as_echo_blocked(self):
+        # P2-8：triage 判 ignore 的项本来就不会成卡——混进 echo_blocked 会
+        # 虚高拦截率的审计口径。它走常规 ignore 路径与留痕。
+        self._note()
+        summary = self._scan(
+            [_item("纯信息性的屏幕内容", provenance="screen", speaker="human")],
+            {"action": "ignore", "reason": "纯信息"})
+        self.assertEqual(summary["echo_blocked"], 0)
+        self.assertEqual(summary["reconciled"], 0)
+        self.assertEqual(registry.load_all(), [])
+        self.assertEqual(self._new_events("radar_echo_blocked"), [])
+        self.assertEqual(
+            [e.get("action") for e in self._new_events("radar_triage")],
+            ["ignore"])
 
     def test_screen_relates_to_resolved_card_is_blocked(self):
         done = registry.Requirement(
