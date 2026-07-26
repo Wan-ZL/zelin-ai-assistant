@@ -399,6 +399,11 @@ struct SettingsFormView: View {
                 titleEn: "Product improvement program",
                 keywords: "产品改进计划 product improvement telemetry 遥测 匿名 anonymous 行为事件级别 behavior event level 基础 basic 详细 detailed 上传文本 upload text capture input 隐私 privacy",
                 anchor: "telemetry", content: AnyView(telemetryGroup)),
+            SettingsSectionDescriptor(
+                id: "maintainer", titleZh: "开发者 · 开发会话",
+                titleEn: "Developer session",
+                keywords: "开发者 developer 开发会话 维护 maintenance 会话 session claude code 修 bug fix 修改软件 modify 加功能 feature 提 PR pull request 二次开发 hack 终端 terminal 仓库 repo repository 源码 source code resume 会话 id session id",
+                anchor: nil, content: AnyView(MaintainerSettingsSection())),
         ]
     }
 

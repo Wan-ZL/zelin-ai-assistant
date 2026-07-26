@@ -34,10 +34,14 @@
 // ("…wants access to control Terminal.app"); Info.plist carries
 // NSAppleEventsUsageDescription for it.
 //
-// SECURITY: only APP-GENERATED command strings may reach launch() — the
-// pipeline's copy_cmd or the Swift-built "claude --resume <id>". Never wire
-// user-typed or remote content into it: the string becomes a shell command
-// line. The quoting below is defense in depth, not an injection gate.
+// SECURITY: only APP-ASSEMBLED command strings may reach launch() — the
+// pipeline's copy_cmd or the Swift-built maintainer-session command. The
+// string becomes a shell command line, so user CONFIGURATION values may ride
+// in it only validated-and-quoted at the assembly site (SettingsMaintainer:
+// the repo path becomes one shell word via shellSingleQuoted; the session id
+// passed the [A-Za-z0-9-] allowlist and may not start with "-"). Free-form
+// user-typed or remote content must never be wired in. The quoting below is
+// defense in depth, not an injection gate.
 //
 // This file is deliberately self-contained (Foundation/AppKit only, own
 // osascript runner, UserDefaults read instead of Prefs) so the CLI
