@@ -116,19 +116,33 @@ class SweepTestCase(unittest.TestCase):
         self.assertFalse(orphan.exists())
         self.assertGreater(actd._ATTACH_GC_MARKER.stat().st_mtime, stale)
 
-    def test_reference_scan_failure_aborts_without_deleting(self):
-        # fail SAFE: a broken registry read must never turn referenced files
-        # into "orphans" — gc_attachments logs and removes nothing.
-        orphan = _mk_file(ATT_DIR / "protected.png", OLD)
+    def test_corrupt_card_file_aborts_the_whole_sweep(self):
+        # fail SAFE: load_all silently SKIPS a corrupt card file, so its
+        # attachment references would be invisible and the files "orphans" —
+        # the GC parses strictly instead and removes NOTHING this pass.
+        orphan_a = _mk_file(ATT_DIR / "protected-a.png", OLD)
+        orphan_b = _mk_file(FB_ATT_DIR / "protected-b.png", OLD)
+        (config.REGISTRY_DIR / "R-9304.yaml").write_text(
+            "{{{ this is not yaml ::", encoding="utf-8")
         try:
             actd._ATTACH_GC_MARKER.unlink()
         except OSError:
             pass
-        from unittest import mock
-        with mock.patch.object(actd.registry, "load_all",
-                               side_effect=OSError("disk gone")):
-            self.assertEqual(actd.gc_attachments(), 0)
-        self.assertTrue(orphan.exists())
+        self.assertEqual(actd.gc_attachments(), 0)
+        self.assertTrue(orphan_a.exists())
+        self.assertTrue(orphan_b.exists())
+
+    def test_corrupt_feedback_record_skips_only_the_feedback_dir(self):
+        # one unreadable feedback record hides ITS images — the feedback
+        # attachments dir is left alone this pass, while state/attachments/
+        # (guarded by the intact registry scan) is still swept.
+        fb_orphan = _mk_file(FB_ATT_DIR / "protected-fb.png", OLD)
+        att_orphan = _mk_file(ATT_DIR / "true-orphan.png", OLD)
+        (feedback.FEEDBACK_DIR / "broken.json").write_text(
+            "{not json", encoding="utf-8")
+        self.assertEqual(actd._sweep_attachment_dirs(), 1)
+        self.assertTrue(fb_orphan.exists())
+        self.assertFalse(att_orphan.exists())
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -32,6 +32,8 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 from act.lib import analytics, config, notify, registry
 from act.lib.agent_states import (
     _BLOCKED_STATES,
@@ -2550,44 +2552,76 @@ def process_raising(cfg: config.Config) -> int:
 # --------------------------------------------------------------------------- #
 # 贴图附件 GC (建议 #4/#5) — state/attachments/ + state/feedback/attachments/
 # 只写不删会按 5-15MB/张无限增长；这里删「无引用且 mtime>30 天」的孤儿。
-# 引用源 = 全部 registry 卡 (trash 含在 load_all 里；archive 显式带上——归档卡
-# 是真实工作数据) 的 execution.attachments + state/feedback/*.json 的 images。
+# 引用源 = 全部 registry 卡（含 trash 状态与 archive/——归档卡是真实工作数据）
+# 的 execution.attachments + state/feedback/*.json 的 images。fail safe：引用
+# 扫描不完整（坏 yaml / 坏 feedback 记录）就按 _sweep_attachment_dirs 文档的
+# 口径缩范围或整体零删除。
 # --------------------------------------------------------------------------- #
 _ATTACH_GC_MARKER = config.STATE_DIR / "attachments_gc_marker"
 _ATTACH_GC_INTERVAL_S = 24 * 3600        # daily, marker-throttled (update_check 模式)
 _ATTACH_GC_MAX_AGE_S = 30 * 24 * 3600    # young orphans get 30 天 grace
 
 
+def _registry_attachment_refs() -> set:
+    """引用收集（registry 侧）——逐文件 STRICT 解析（single-doc 与 list 文件
+    都认，archive/ 一并扫，R-000-example.yaml 照 _iter_files 规则跳过）。
+    刻意不用 registry.load_all：它对单个坏文件是静默跳过，坏卡引用的 >30 天
+    附图会被当孤儿删掉——这里任一 yaml 读不出/解析失败都直接 raise，让本
+    pass 整体零删除（fail safe：引用不可见就不删）。"""
+    refs: set = set()
+    reg_files = [p for p in config.REGISTRY_DIR.glob("*.yaml")
+                 if p.name != "R-000-example.yaml"]
+    if registry.ARCHIVE_DIR.exists():
+        reg_files += list(registry.ARCHIVE_DIR.glob("*.yaml"))
+    for path in reg_files:
+        docs = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for doc in docs if isinstance(docs, list) else [docs]:
+            ex = doc.get("execution") if isinstance(doc, dict) else None
+            atts = ex.get("attachments") if isinstance(ex, dict) else None
+            if isinstance(atts, list):
+                refs.update(p.strip() for p in atts
+                            if isinstance(p, str) and p.strip())
+    return refs
+
+
 def _sweep_attachment_dirs(now: Optional[float] = None) -> int:
     """Delete unreferenced attachment files older than 30 days; returns the
-    number removed. Raises if the REFERENCE scan itself fails — the throttled
-    wrapper turns that into a logged no-op (fail safe: a broken registry read
-    must never make a referenced file look like an orphan). One unreadable
-    feedback record only orphans ITS OWN images (skipped, not fatal — a
-    permanently corrupt record must not disable the GC forever)."""
+    number removed.
+
+    Fail-safe 口径（契约 §10 v0.46 追记）——引用不可见就不删：
+    - registry 侧任一 yaml 坏形 -> _registry_attachment_refs raises，the
+      throttled wrapper turns it into a logged no-op（本 pass 整体零删除）；
+    - feedback 侧任一记录读不出（IO / 坏 JSON / 非 dict）-> 跳过
+      state/feedback/attachments/ 的清扫；state/attachments/ 不受影响
+      （feedback 的 images 只落自己的目录，capture/answer 只落另一边）。
+    """
     now = time.time() if now is None else now
-    refs: set = set()
-    for req in registry.load_all(include_archived=True):
-        ex = req.execution if isinstance(req.execution, dict) else {}
-        atts = ex.get("attachments")
-        if isinstance(atts, list):
-            refs.update(p.strip() for p in atts
-                        if isinstance(p, str) and p.strip())
+    refs = _registry_attachment_refs()
+    feedback_dir_ok = True
     if feedback is not None:
         for rec_path in feedback.FEEDBACK_DIR.glob("*.json"):
             try:
                 rec = json.loads(rec_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
+                rec = None
+            if not isinstance(rec, dict):
+                # 这条记录的 images 引用不可见 —— 本 pass 不动 feedback 目录
+                feedback_dir_ok = False
                 continue
-            imgs = rec.get("images") if isinstance(rec, dict) else None
+            imgs = rec.get("images")
             if isinstance(imgs, list):
                 refs.update(p.strip() for p in imgs
                             if isinstance(p, str) and p.strip())
     # tolerate symlinked homes: compare both the recorded string and realpath
     refs |= {str(Path(p).resolve()) for p in list(refs)}
+    dirs = [config.STATE_DIR / "attachments"]
+    if feedback_dir_ok:
+        dirs.append(config.STATE_DIR / "feedback" / "attachments")
+    else:
+        _log("attachments gc: unreadable feedback record — skipping the "
+             "feedback attachments dir this pass")
     removed = 0
-    for d in (config.STATE_DIR / "attachments",
-              config.STATE_DIR / "feedback" / "attachments"):
+    for d in dirs:
         if not d.is_dir():
             continue
         for f in d.iterdir():

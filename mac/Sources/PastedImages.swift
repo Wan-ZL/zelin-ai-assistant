@@ -1,10 +1,12 @@
 // PastedImages.swift — 输入框贴图（用户建议 #4/#5）：提建议弹窗、快速捕获/
 // 直接开跑输入框、回答弹窗三处共用的粘贴收集器 + 缩略图行。
 //
-// 交互契约：⌘V 时剪贴板里有位图或图片文件 URL 才收下（其余剪贴板内容一律走
-// 原有文本粘贴路径）；一旦剪贴板确认是图片内容，事件必被吞掉——满员/解码失败
-// 也只 beep 提示，绝不落回文本粘贴（图片文件的文本形态是本机绝对路径，插进
-// 会上传的提建议正文就是路径泄漏）。缩略图行每张可 ✕ 移除；上限 4 张。
+// 交互契约：⌘V 认领规则（isImagePaste）——图片文件 URL = 明确的贴图意图，
+// 无条件认领（旁带文件名字符串也照收）；纯位图（截图）认领；**位图 + 非空
+// 文本双 flavor**（Excel/Numbers 复制单元格）不认领，文本粘贴优先——否则这
+// 类文本在输入框里彻底无法粘贴。一旦认领，事件必被吞掉——满员/解码失败也只
+// beep 提示，绝不落回文本粘贴（图片文件的文本形态是本机绝对路径，插进会上传
+// 的提建议正文就是路径泄漏）。缩略图行每张可 ✕ 移除；上限 4 张。
 // 发送时由调用方把图片落成 PNG（savePNGs → <uuid>-<n>.png，落盘前统一降采样
 // 到最长边 2560px）并把绝对路径写进 inbox action —— 图片本身永不上传，路径只
 // 在本机管线里流转（feedback 记录 / 卡片 execution.attachments / answer 附图
@@ -41,16 +43,16 @@ final class PastedImagesModel: ObservableObject {
     var isEmpty: Bool { items.isEmpty }
     var images: [NSImage] { items.map { $0.image } }
 
-    /// ⌘V handler. Returns true when the pasteboard holds IMAGE content —
-    /// the caller must then swallow the paste, ALWAYS: at capacity (or on a
-    /// decode failure) nothing is added and beep says "not taken", but the
-    /// event never falls back to text paste — a Finder image file's text
-    /// fallback would insert its local ABSOLUTE PATH into the draft (feedback
-    /// text uploads → path leak). false = not an image paste, text paste
-    /// proceeds untouched.
+    /// ⌘V handler. Returns true when the pasteboard is an image paste
+    /// (isImagePaste's 认领规则) — the caller must then swallow the event,
+    /// ALWAYS: at capacity (or on a decode failure) nothing is added and beep
+    /// says "not taken", but the event never falls back to text paste — a
+    /// Finder image file's text fallback would insert its local ABSOLUTE PATH
+    /// into the draft (feedback text uploads → path leak). false = not an
+    /// image paste, text paste proceeds untouched.
     @discardableResult
     func takeFromPasteboard(_ pb: NSPasteboard = .general) -> Bool {
-        guard PastedImages.hasImages(in: pb) else { return false }
+        guard PastedImages.isImagePaste(pb) else { return false }
         let room = Self.maxCount - items.count
         let read = room > 0 ? PastedImages.readImages(from: pb) : []
         if read.isEmpty || read.count > room {
@@ -81,18 +83,28 @@ enum PastedImages {
     ]
 
     /// Cheap "is this an image paste?" probe — no decode, safe to call when
-    /// the model is already full.
-    static func hasImages(in pb: NSPasteboard) -> Bool {
-        pb.canReadObject(forClasses: [NSURL.self], options: urlReadingOptions)
-            || pb.canReadObject(forClasses: [NSImage.self], options: [:])
+    /// the model is already full. 认领规则：
+    /// - image FILE URL（Finder copy，content-checked against public.image）
+    ///   = 明确的贴图意图，无条件认领（旁边的文件名字符串 flavor 不算数）；
+    /// - 纯位图（截图等）认领；
+    /// - 位图 + 非空文本双 flavor（Excel/Numbers 复制单元格连图带字）**不
+    ///   认领**——吞掉 ⌘V 会让这类文本彻底无法粘贴，文本粘贴优先。
+    static func isImagePaste(_ pb: NSPasteboard) -> Bool {
+        if pb.canReadObject(forClasses: [NSURL.self], options: urlReadingOptions) {
+            return true
+        }
+        guard pb.canReadObject(forClasses: [NSImage.self], options: [:]) else {
+            return false
+        }
+        let text = pb.string(forType: .string) ?? ""
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Pasteboard → images (downsampled on the way in, so the resident
-    /// composer never keeps a full-size original in memory). Only two flavors
-    /// count: image FILE URLs (Finder copy — content-checked against
-    /// public.image, so a .txt path stays a text paste) and in-memory bitmaps
-    /// (截图 / 浏览器图片复制，即使旁边还带着 URL 文本也按图收 —— 聊天框的
-    /// 惯例). Everything else returns [].
+    /// composer never keeps a full-size original in memory). Callers gate on
+    /// isImagePaste first — this only decodes the two claimed flavors: image
+    /// FILE URLs (Finder copy) and in-memory bitmaps (截图). Everything else
+    /// returns [].
     static func readImages(from pb: NSPasteboard) -> [NSImage] {
         if let urls = pb.readObjects(forClasses: [NSURL.self],
                                      options: urlReadingOptions) as? [URL],

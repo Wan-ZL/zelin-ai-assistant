@@ -1016,12 +1016,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let paths = PastedImages.savePNGs(
             images, toDir: AppPaths.stateRoot + "/state/feedback/attachments")
         if !paths.isEmpty { dict["images"] = paths }
+        // PNG 全军覆没（磁盘满/编码失败）绝不假装成功：图片-only 时 inbox
+        // 里将是一条双空记录（actd 只会丢弃）——不写、明确报错；带文字则照常
+        // 提交文字，但明说图片没跟上。
+        let imagesLost = !images.isEmpty && paths.isEmpty
+        if imagesLost && text.isEmpty {
+            alertImagesNotSaved(textStillSubmitted: false)
+            return false
+        }
         guard writeInboxFile(dict) else {
             // the action never landed — a retry saves a fresh uuid batch, so
             // this one would be a permanent orphan
             PastedImages.deleteFiles(paths)
             return false
         }
+        if imagesLost { alertImagesNotSaved(textStillSubmitted: true) }
         Analytics.firstReach("feedback")
         Analytics.log("feedback_submit", fields: ["ids": ids.count,
                                                   "publish": publish])
@@ -1143,6 +1152,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if suffix.isEmpty { return InboxAction.clipAnswer(text) }
         let budget = max(1, 4000 - suffix.unicodeScalars.count - 1)
         return InboxAction.clipAnswer(text, max: budget) + "\n" + suffix
+    }
+
+    /// 贴图 PNG 全部保存失败时的用户提示（writeInboxFile 失败弹窗同款样式）
+    /// — 磁盘满/编码失败绝不假装成功。
+    private func alertImagesNotSaved(textStillSubmitted: Bool) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("图片保存失败", "Images Could Not Be Saved")
+        alert.informativeText = textStillSubmitted
+            ? L("粘贴的图片未能保存（磁盘空间或编码问题），已只提交文字部分。",
+                "The pasted images could not be saved (disk space or encoding issue); only your text was submitted.")
+            : L("粘贴的图片未能保存（磁盘空间或编码问题），建议未提交——请重试。",
+                "The pasted images could not be saved (disk space or encoding issue); nothing was submitted — please try again.")
+        alert.addButton(withTitle: L("好", "OK"))
+        alert.runModal()
     }
 
     /// Fixed-height hosted thumbnails row for the NSAlert editors (提建议 /
