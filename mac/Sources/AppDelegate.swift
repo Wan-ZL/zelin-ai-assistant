@@ -1000,6 +1000,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                               images: images.images)
     }
 
+    /// 建议公开跟踪表: the checkbox's remembered default — override 键
+    /// feedback_publish_default（settings_overrides.json；config.py 同名
+    /// override，出厂 false：公开是逐条 opt-in，预勾会让「打字→↩」的肌肉
+    /// 记忆把建议直接发进公开 repo）。
+    static func feedbackPublishDefault() -> Bool {
+        if let v = SettingsIO.readOverrides()["feedback_publish_default"] as? Bool {
+            return v
+        }
+        return false
+    }
+
+    /// Remember the checkbox choice for next time — best-effort（writeOverrides
+    /// 对无法解析的 overrides 文件 fail-closed 抛错；记不住只影响下次默认态，
+    /// 不能挡发送本身，照 L10n language 的 try? 先例吞掉）。
+    static func rememberFeedbackPublishDefault(_ value: Bool) {
+        var merged = SettingsIO.readOverrides()
+        if (merged["feedback_publish_default"] as? Bool) == value { return }
+        merged["feedback_publish_default"] = value
+        try? SettingsIO.writeOverrides(merged)
+    }
+
     /// 建议上报（照 submitMergeReview 模式）:
     /// {"action":"feedback","ids":[…],"text":…,"publish":…} inbox 文件 —
     /// ids sorted 保持 payload 确定性，允许为空（对整体提建议）。同一
