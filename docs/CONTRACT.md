@@ -267,6 +267,19 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 
 **v0.19 追加（add-only，生命周期里程碑遥测,docs/TELEMETRY.md）**:新增 5 个**每装机至多一条**的里程碑事件,喂 `scripts/insights_report.py` 的激活漏斗。产出统一走**去重一次**写法——App 侧 `Analytics.firstReach(feature)`(UserDefaults 标记,`mac/Sources/Utils.swift`,事件 `feature_first_reach{feature}`)、daemon 侧 `analytics.log_first(event, **fields)`(标记文件 `state/analytics/first/<event>`,emit-then-mark、never raises)。App 端:`feature_first_reach{feature:"app_launch"}`(首启)、`feature_first_reach{feature:"ingest_configured"}`(首个 ingest 源可用)。daemon 端:`milestone_first_card{req}`(`registry.save()` 单一 choke,首张进 card_sent lane)、`milestone_first_approval{req}`(actd approve 分支)、`milestone_first_delivery{req}`(executor dispatch 成功)。全部**仅行为字段**(`req`=需求 id / 计数),绝不含卡片标题/链接/摘要等内容,沿用既有 `analytics.content_gate` 隐私边界,无 schema 迁移(走既有 `event`/`props` 列)。报告侧另派生 retention(按 `client_ts`)与 abandonment 两视图,**不新增事件**,只输出聚合计数/比例,device id 永不外泄;跨所有装机的匿名 device 合并计,per-tenant 区分标记暂缓。
 
+**§15 v0.46 追记（add-only，用户建议批）**：① 反射性 ⌘Q 守卫——主窗口开着
+（可见或最小化）时，**裸 ⌘Q 键盘事件**（无 Shift/Option/Control，事件距今
+<2s——`NSEvent.timestamp` 对 `systemUptime`）转为关窗而非退出；菜单点退出、
+状态栏右键退出、系统注销/关机（含 ⌘⇧Q/⌥⌘⇧Q）照旧直通。② 菜单栏徽章计数 =
+**一切等你动作的卡**（待拍板 + 需输入 + 待验收），一律取 isHidden 过滤后的
+visible 投影与弹窗同步。③ 设置新增三个区：Skills（列出/新建 Claude Code
+技能）、MCP servers（只读列表，env 值绝不显示）、开发者·开发会话（一键
+`cd <repo> && claude [--resume]`，maintainer.* 支持 config.yaml 块 +
+override）；「通用」区新增任务完成提醒三档（见 §28 追记）。overrides 白名单
+新增键：`review_notify`、`maintainer_repo_path`、`maintainer_session_id`
+（`feedback_publish_default` 见 §29bis，`gmail_fetch_command` 见 §14bis）。
+
+
 ## 16. Feature flags + 自我进化
 - config `features: {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics, manager_pack}`，默认全 on；各模块入口检查 flag，off 则 no-op。overrides 可改。
 - 周一 digest 末尾加**进化建议**节：基于 analytics（30 天未用的功能→建议关；重复风暴/高拒绝率→建议改），生成 type=self-improvement 的卡片（target_repo=本 repo），批准后照常 claude --bg 实现并以 **draft PR** 交付——app 更新永远走 PR。
@@ -425,6 +438,22 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 ---
 
 # v0.13.x additions（Claude Code 会话导入 — 空看板冷启动）
+
+**§21ter partition——多对多分组合并（v0.46，add-only；用户建议 #1）**：复核 LLM 的
+verdict 词表新增第 5 种 `partition`——N 张选中卡其实是 k 件事时给出分组方案
+`groups: [{primary, ids, reason}…]`（每组 ≥1 张；未列入任何组的选中卡 = 保持
+独立）。解析防劫持：全文 JSON 优先，否则取**最后一个**带 verdict 键的平衡对象
+（字符串感知括号扫描，遇字符串内不配对 `{` 跳过继续扫而非放弃）；`groups` 坏形
+（越界 id / 跨组重复 / 全单张组 / 非法结构）一律整体降级 `keep_separate`，绝无
+半执行。作业文件与 dashboard 投影新增 add-only 键 `groups`（仅 partition 携带；
+旧 payload 解码为 nil）与执行回执 `group_results`。执行仍走既有 `merge_apply`
+（方案存作业文件，inbox 只传 MS- id——确定性执行边界不变）：逐组调用既有单合并
+机器，执行前逐成员（含 primary）复检可合并状态，**任一成员失效 = 整组跳过留痕**；
+**任一组 skipped/failed → 作业走 `mark_failed` 可见失败卡**（fail reason 带逐组
+回执，已完成组明示；无自动重试——后续动作是「仍然合并」或关闭），全组 ok 才
+dismiss(applied)。卡面渲染分组清单 + 未入组卡的「保持独立」行，主按钮
+「按分组合并（k 组）」。
+
 
 ## 22. import_claude_sessions（一键导入 Claude Code 近期工作）
 
@@ -836,6 +865,15 @@ add 静默 no-op、文件照删——权限真相在权限体检页，队列不�
 > 「备选/Backlog」（双语 `L("备选 · backlog", "Backlog")`）。只是展示层改名：
 > registry `status=detected` 与 dashboard.json 的 `debt` key **一律不变**
 > （§6/§8/§22 等处「欠账」按此括注理解）。
+
+**§28 v0.46 追记（add-only）**：队列条目新增可选 `kind` 键（写方 `notify.notify(...,
+kind=…)` 透传；今日唯一取值 `"review_ready"` = 卡片进待验收的完成提醒；无 kind
+的条目行为逐字不变，消费方对未知 kind 视同无）。消费方新增**完成提醒三档偏好**
+`review_notify`（override-only 扁平键，词表 `off|banner|sound`，默认 `sound`；
+App 设置·通用「任务完成提醒」写入，diff-write：sound=删键）——`off` 档对
+kind==review_ready 的条目**消费即删、不弹**（上文「剩余按 created_at 升序弹出」
+的显式例外），`sound` 档为其附加系统提示音；其余 kind 不受该偏好影响。
+
 
 ## 29. feedback（建议上报）— inbox 动作 + `state/feedback/<uuid>.json` + 上传
 
@@ -1669,8 +1707,9 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 ### 40.6 通知合批（fresh proposals）
 
 - `detect_transitions`：一个 pass 内**新增（非回锅）提案 > 2 张**时合并为一条
-  「新增 N 张待审批卡」（`notify.msg_new_cards_batch`；3-tuple 的 req 位为
-  null）。≤2 张、回锅（各自点名一个你做过的决定）、需输入、待验收等类保持逐卡
+  「新增 N 张待审批卡」（`notify.msg_new_cards_batch`；tuple 的 req 位为
+  null；v0.46 起 detect_transitions 产 4-tuple `(title, body, req, kind)`——
+  kind 今日仅 `"review_ready"`（完成提醒偏好用），其余类为 None，add-only）。≤2 张、回锅（各自点名一个你做过的决定）、需输入、待验收等类保持逐卡
   通知。§28 中继队列的 10 分钟 stale sweep 语义不变。
 - 文案 **source-neutral**（不写「雷达」）：actd 只看 board diff，新卡可能来自
   任何入库方（雷达/周摘要/捕获），点名雷达会在非雷达批次上撒谎。

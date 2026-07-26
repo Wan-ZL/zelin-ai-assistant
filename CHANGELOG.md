@@ -25,6 +25,41 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.46.0] - 2026-07-26
+
+用户建议批：「提建议」入口收到的建议 + 口头拍板，一夜之间全部落地。每个功能
+PR 都过了双 AI review（Claude Fable 5 行级 + Codex 汇总）与多轮对抗审查，
+确认的 30+ 问题在合并前全部修复。
+
+### Added
+
+- **合并支持多对多**（建议 #1，#74）——合并建议可给出分组方案：10 张卡并成
+  3 张而不是只能全并成一张。逐组执行、任一组出问题变成可见的失败卡（带逐组
+  回执），卡面列出未入组的「保持独立」卡。
+- **建议公开跟踪表**（建议 #3，#75）——提建议弹窗新增「同时公开到 GitHub
+  建议跟踪表」勾选（出厂不勾、记住上次选择）：勾选的建议自动开成公开 issue，
+  做没做一目了然。重复防护 effectively once-only（预写计数 + 隐形对账标记 +
+  重试先对账），公开正文用 UTC 时间不泄时区。
+- **三处输入框支持贴图**（建议 #4 #5，#76）——提建议、直接开跑、回答 AI 提问
+  都能 ⌘V 粘贴截图（上限 4 张、自动降采样）。提建议的图只留本机（上传仅
+  计数）；任务附图由工作会话用 Read 工具直接查看；30 天无引用孤儿自动清理。
+- **Skills 管理**（建议 #7，#72）——设置里列出用户级/项目级 Claude Code 技能，
+  可新建（frontmatter 防呆：多行描述折叠、绝不覆盖已有目录）。
+- **MCP servers 管理**（建议 #10，#79）——设置里只读列出两个作用域的 MCP
+  配置（传输类型徽章、概要脱敏、env 值绝不显示）。
+- **开发者·开发会话**（建议 #6，#73）——设置里一键在终端打开对着本软件源码的
+  全功能 Claude 会话：修 bug、加功能、提 PR 都行；repo 路径与会话 id 可配
+  （flag 形状的 id 被拒，防参数走私）。
+- **任务完成提醒**（建议 #8，#71）——卡片进待验收时可响铃：设置·通用三档
+  「关 / 横幅 / 横幅+声音」（默认响铃——静音横幅在全屏视频下等于没通知）。
+- **菜单栏徽章 = 一切等你动作的卡**（建议 #9，#78）——待拍板 + 需输入 +
+  待验收三类计数（与弹窗的可见投影严格同步），不再只算待拍板。
+- **每个 PR 自动双 AI review**（#77 #81-#86，repo 基建）——Claude（Fable 5，
+  行级评论 + 必发总评）与 Codex（read-only 沙箱第二意见）；外部 fork PR 自动
+  跳过，secret 未配置时绿色空跑。
+
 ### Changed
 
 - **屏幕 OCR 不再发起卡片（§45 来源角色决策表，回声环的一刀）** — screenpipe
@@ -40,6 +75,11 @@ other file needs editing. To cut a release:
   contract-reminder 软门（改 act// mac/Sources/ 未动 CONTRACT.md 时警告，
   不阻塞）。新增 `act/golden_eval.py` 回测工具：用历史卡的真实结局评估
   triage 政策的误杀/拦截率（数据集只写 state/golden/，永不进 repo）。
+
+### Fixed
+
+- **反射性 ⌘Q 不再误杀后台**（建议 #2，#71）——主窗口开着（含最小化）时按
+  裸 ⌘Q 只关窗口；系统注销/关机（含 ⌘⇧Q）与菜单退出照旧直通，绝不阻塞。
 
 ## [0.45.0] - 2026-07-22
 
@@ -1828,7 +1868,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.2...v0.44.0
 [0.43.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.1...v0.43.2
