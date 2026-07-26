@@ -49,6 +49,10 @@ jobs:
           # with — hand the action the workflow's own token for PR comments
           # (first live run failed on exactly this: "Failed to get OIDC token").
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # One visible comment per PR, updated in place on re-runs — without
+          # it a clean review ("一切正常") evaporates into the run log and the
+          # user can't tell reviewed-and-fine from never-reviewed.
+          use_sticky_comment: true
           prompt: |
             用中文 review 这个 PR。这是一个 macOS 菜单栏 app（mac/Sources/*.swift）+
             Python 管线（act/）的个人 AI 助理项目。重点：
