@@ -33,10 +33,15 @@ from act.lib import config, registry
 BASE = 1_760_000_000.0  # fixed epoch — deterministic mtimes
 
 
-def _item(title, hardness="soft", deadline=None, quote="do the thing"):
+def _item(title, hardness="soft", deadline=None, quote="do the thing",
+          provenance="audio", speaker="human"):
+    # provenance/speaker 默认「会议音频里的真人」——§45 决策表的 FULL 行，
+    # 保持这些老测试钉住的提取->落库行为不因出生资格闸而改变语义；
+    # 闸本身的行为由 tests/test_radar_echo_gate.py 专门钉。
     return {"title": title, "type": "report", "tier": "T1",
             "hardness": hardness, "deadline": deadline,
-            "cost_estimate_usd": None, "quote": quote}
+            "cost_estimate_usd": None, "quote": quote,
+            "provenance": provenance, "speaker": speaker}
 
 
 class RadarScanBase(unittest.TestCase):

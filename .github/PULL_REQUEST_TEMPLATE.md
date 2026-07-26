@@ -2,6 +2,14 @@
 
 Closes #
 
+## The three questions (constitution check — answer in the description above)
+
+Read [`CLAUDE.md`](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/CLAUDE.md) and [`docs/CONTRACT.md` §0](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/CONTRACT.md) first.
+
+1. Which CONTRACT §§ does this change touch? (New behavior ⇒ which section is added/amended in this same PR — or state "none, because…")
+2. Which §0 constitution articles does it relate to? Does it break one? (Breaking one ⇒ amend the constitution explicitly in this PR, or change the approach.)
+3. Does an existing mechanism already do something similar? (Search the contract before inventing a parallel one.)
+
 ## The three gates
 
 CI runs the same three on every PR; please run them locally first.

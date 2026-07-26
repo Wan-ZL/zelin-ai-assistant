@@ -903,8 +903,9 @@ def _fold_hit(target: Requirement, new_req: Optional[Requirement],
 
 def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
                         same_task: bool, actionable: Optional[bool] = None,
-                        sources: Optional[list] = None,
-                        note: str = "") -> tuple[Optional[str], Optional[Requirement]]:
+                        sources: Optional[list] = None, note: str = "",
+                        cap_detected: bool = False,
+                        ) -> tuple[Optional[str], Optional[Requirement]]:
     """Unified re-raise / follow-up for a candidate matching a RESOLVED card
     (卡片生命周期 §3.3). Shared by ``merge_or_new`` (deterministic) and
     ``apply_triage`` / ``_apply_relates_to`` (LLM) so both apply ONE门槛.
@@ -929,6 +930,9 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
     (the merge_or_new path); an explicit bool is the LLM's ``needs_action``.
     ``same_task`` = the titles align (a genuine restatement of the same task),
     vs a thread-only match (same email/slack thread, different matter/task).
+    ``cap_detected`` = §45 LIMITED 天花板：re-raise 的翻回与 follow-up 子卡都
+    只落 detected/备选（不通知、自然过期），不得借完结卡命中把候选抬进提案列
+    ——出生资格 gate 非 FULL 时由调用方传 True，fold 类结果不受影响。
     """
     parent = canonical(parent)                       # merged 副卡 -> 主卡
     if parent.status in (State.REJECTED.value, State.TRASHED.value,
@@ -991,7 +995,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
             ex.pop("session_id", None)
         ex.pop("done", None)
         parent.execution = ex
-        parent.set_status(State.CARD_SENT)
+        parent.set_status(State.DETECTED if cap_detected else State.CARD_SENT)
         return "reraised", upsert(parent)
 
     # different task, same thread -> distinct follow-up child (card_sent),
@@ -1002,7 +1006,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
         title=(new_req.title or note or parent.title)[:80],
         type=new_req.type or parent.type,
         tier=new_req.tier or parent.tier,
-        status=State.CARD_SENT.value,
+        status=State.DETECTED.value if cap_detected else State.CARD_SENT.value,
         hardness=new_req.hardness or "soft",
         deadline=new_req.deadline,
         repeated_mentions=1,
@@ -1021,17 +1025,21 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
     return "follow_up", upsert(child)
 
 
-def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = False) -> Requirement:
+def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = False,
+                 cap_detected: bool = False) -> Requirement:
     """Reconcile a freshly-extracted requirement against the registry.
 
-    Signature frozen (pre-§40); pure delegate — callers that need the
-    reconciliation OUTCOME use :func:`merge_or_new_with_kind`.
+    Signature frozen (pre-§40; ``cap_detected`` is a §45 add-only kwarg with
+    a no-op default); pure delegate — callers that need the reconciliation
+    OUTCOME use :func:`merge_or_new_with_kind`.
     """
-    return merge_or_new_with_kind(new_req, high_confidence=high_confidence)[1]
+    return merge_or_new_with_kind(
+        new_req, high_confidence=high_confidence, cap_detected=cap_detected)[1]
 
 
 def merge_or_new_with_kind(
     new_req: Union[Requirement, dict], *, high_confidence: bool = False,
+    cap_detected: bool = False,
 ) -> tuple[str, Requirement]:
     """:func:`merge_or_new` plus the reconciliation OUTCOME (§40 additive seam).
 
@@ -1039,7 +1047,8 @@ def merge_or_new_with_kind(
     first, then the legacy title heuristic. When the matched parent is RESOLVED
     (delivered/merged, non-archived) the reconciliation is delegated to
     :func:`reraise_or_followup` (re-raise the card, or open a thread-lineage
-    follow-up for a different task in the same thread). Open parents keep the
+    follow-up for a different task in the same thread; ``cap_detected`` rides
+    along — §45 非 FULL 来源的天花板同样约束这条内部路径). Open parents keep the
     existing increment-child / restatement-bump behavior (never pulled back).
 
     - Pure restatement of an OPEN entry (same source+title, no increment):
@@ -1091,10 +1100,14 @@ def merge_or_new_with_kind(
     if parent is not None:
         if is_resolved(parent):
             # is_resolved MUST be decided here (before _carries_increment).
+            # cap_detected 必须跟进：§45 LIMITED 的 new_proposal 命中完结卡标题
+            # 时走的就是这条内部 re-raise/follow-up——没有它，LIMITED 的天花板
+            # 会被这条路径穿透（P1-2b，正好复活 R-020/R-093 回声环）。
             kind, res = reraise_or_followup(
                 parent, new_req, same_task=same_task,
                 sources=new_req.sources,
-                note=(new_req.summary or new_req.title))
+                note=(new_req.summary or new_req.title),
+                cap_detected=cap_detected)
             if res is not None:
                 return kind or "folded", res
             # dead-end (canonical trashed/rejected/archived) -> fresh card below

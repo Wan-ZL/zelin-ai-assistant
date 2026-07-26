@@ -50,7 +50,7 @@ import subprocess
 from typing import Callable, Optional
 
 from act import analyze
-from act.lib import analytics, config, match_corpus, registry, sanitize
+from act.lib import analytics, config, match_corpus, provenance, registry, sanitize
 
 _VALID_ACTIONS = ("new_proposal", "relates_to", "ignore")
 _VALID_TIERS = ("T0", "T1", "T2")
@@ -237,6 +237,7 @@ def _default_extractor(prompt: str) -> subprocess.CompletedProcess:
         text=True,
         timeout=300,
         env=_runner_env(),
+        cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
 
 
@@ -483,6 +484,7 @@ def apply_triage(
     cfg: Optional[config.Config] = None,
     *,
     high_confidence: bool = False,
+    gate: Optional[str] = None,
 ) -> tuple[str, Optional["registry.Requirement"]]:
     """File one radar candidate per the three-way ``decision``.
 
@@ -506,10 +508,26 @@ def apply_triage(
     A relates_to hit is canonicalized to its merge cluster's primary first;
     REJECTED/TRASHED targets are treated like unknown ids (决策6: 拒绝 ≠
     已办完 — the candidate re-cards via merge_or_new instead of being buried).
+
+    ``gate``（§45 出生资格裁决，:mod:`act.lib.provenance` 的 verdict）：None =
+    显式设计的发起渠道（slack/gmail/quick capture），等同 FULL，行为不变。
+    非 FULL 时闸门跟着候选走完全程——triage LLM 的 ``needs_action`` 不是出生
+    资格的豁免通道：
+
+    - LIMITED/CORROBORATE：fold 进 detected 卡的 act-now 提升被压平（佐证照常
+      落卡，目标卡留在备选）；命中完结卡的 re-raise/follow-up 天花板压到
+      detected（不通知、自然过期）；
+    - CORROBORATE 另加一刀：只许 fold 进**开着的**卡。radar 在闸门口已按
+      :func:`act.radar._fold_onto_open` 预判拦截，这里是同一法条的落库侧执法
+      （预判与落库之间目标卡可能换状态/消失——TOCTOU），拦截走
+      ``radar_echo_blocked`` 留痕（纯元数据），返回 ``("ignored", None)``。
     """
     if cfg is None:
         cfg = config.load_config()
     action = (decision or {}).get("action")
+    # §45：非 FULL 来源无提升权——fold 本身合法（佐证是正职），但既有备选卡
+    # 不得借这次 fold 被推进提案列，完结卡的 re-raise/follow-up 也封顶备选。
+    promote_ok = gate in (None, provenance.FULL)
 
     if action == "ignore":
         analytics.log_event("radar_triage", action="ignore")
@@ -538,6 +556,14 @@ def apply_triage(
             note = (str(decision.get("note") or "").strip()
                     or str(req.summary or req.title).strip())
             if registry.is_resolved(target):
+                if gate == provenance.CORROBORATE:
+                    # §45：屏幕来源只许 fold 进开着的卡。完结卡命中的三条出路
+                    # （re-raise / follow-up / fold 进关卡）全是回声的标准形态
+                    # ——radar 预判后目标卡状态可能已变（TOCTOU），落库侧同法
+                    # 拦截留痕（gate/req 元数据，绝不带内容）。
+                    analytics.log_event("radar_echo_blocked", stage="filing",
+                                        gate=gate, req=target.id)
+                    return "ignored", None
                 # missing needs_action on a resolved parent defaults to True:
                 # losing an actionable follow-up inside a closed card is the
                 # 例1/2/3 failure mode; a needless follow-up card is cheap.
@@ -549,7 +575,8 @@ def apply_triage(
                     same_task = registry._same_source_and_title(target, req)
                     kind, saved = registry.reraise_or_followup(
                         target, req, same_task=same_task, actionable=True,
-                        sources=req.sources, note=note)
+                        sources=req.sources, note=note,
+                        cap_detected=not promote_ok)
                     if saved is not None:
                         analytics.log_event("radar_triage", action=kind,
                                             req=saved.id, parent=target.id)
@@ -566,17 +593,33 @@ def apply_triage(
                 if target.status == registry.State.DETECTED.value and (
                         _needs_action(decision, default=False)
                         or req.status == registry.State.CARD_SENT.value):
-                    # 统一口径：现在需要行动 -> 提案列。An act-now candidate must
-                    # not stay invisible in the 备选/backlog lane just because it
-                    # folded into a detected card — promote the card it fed.
-                    target.set_status(registry.State.CARD_SENT)
-                    registry.save(target)
+                    if promote_ok:
+                        # 统一口径：现在需要行动 -> 提案列。An act-now candidate
+                        # must not stay invisible in the 备选/backlog lane just
+                        # because it folded into a detected card — promote the
+                        # card it fed.
+                        target.set_status(registry.State.CARD_SENT)
+                        registry.save(target)
+                    else:
+                        # §45：非 FULL 来源的 act-now 提升一并压平——triage LLM
+                        # 的 needs_action 不在闸门豁免之列（P1-1）。fold 已经
+                        # 落卡（佐证合法），提升被拦下要留痕，绝不静默。
+                        analytics.log_event("radar_echo_blocked",
+                                            stage="fold_promotion",
+                                            gate=gate, req=target.id)
                 analytics.log_event("radar_triage", action="relates_to", req=target.id)
                 return "folded", target
         if not rejected_hit:
             analytics.log_event("radar_triage", action="relates_to_miss",
                                 req=rid or None)
         # unknown/rejected id -> fall through to new_proposal: never lose a candidate
+
+    if gate == provenance.CORROBORATE:
+        # §45 落库侧执法：屏幕来源无出生权，new_proposal（含 relates_to 目标
+        # 消失/被拒后的 fall-through）一律拦截留痕。radar 在闸门口已拦下常规
+        # 形态，能走到这里 = 预判后世界变了（TOCTOU）——同一刀补在出口。
+        analytics.log_event("radar_echo_blocked", stage="filing", gate=gate)
+        return "ignored", None
 
     if str((decision or {}).get("confidence") or "").strip().lower() == "low":
         # 统一口径第四出口：真实但不紧急 -> 备选/Backlog（宁可 debt 不可 ignore）。
@@ -622,7 +665,10 @@ def apply_triage(
                 analytics.log_event("silent_merge", primary=target.id,
                                     secondary=None, outcome="pre_filing_fold")
                 return "folded", target
-    saved = registry.merge_or_new(req, high_confidence=high_confidence)
+    # cap_detected（§45）：LIMITED 的 new_proposal 命中完结卡标题时，merge_or_new
+    # 内部走 reraise_or_followup——天花板必须一路跟到那里（P1-2b）。
+    saved = registry.merge_or_new(req, high_confidence=high_confidence,
+                                  cap_detected=not promote_ok)
     if separate_from:
         # the judge already ruled this pair separate — enter it in the pair
         # ledger so actd's scan never re-judges it (one-shot per pair EVER).

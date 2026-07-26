@@ -25,7 +25,21 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Changed
+
+- **屏幕 OCR 不再发起卡片（§45 来源角色决策表，回声环的一刀）** — screenpipe
+  拍到的系统自身输出（AI 会话、看板、报告）曾被 radar 再铸成新卡（回声）。
+  radar 提取新增 `provenance`/`speaker` 两个 add-only 字段，出生资格由显式
+  决策表裁决：屏幕来源只能佐证已有卡（fold），永不发起新卡（含 triage 失败
+  回退与命中已完结卡的 follow-up 路径）；会议音频（真人）照常发起；来历不明
+  最高落备选。拦截计 `echo_blocked` + analytics 留痕。决策表以穷举证明完备
+  无矛盾，Hypothesis 性质测试钉死「屏幕永不发起 / assistant 永达不到直发」。
+- **治理包（§0 设计宪法）** — `docs/CONTRACT.md` 顶部新增 11 条不变原则
+  （修宪必须显式）；repo 根新增 `CLAUDE.md`（AI session 入职必读：三份必读
+  文件 + 添加功能前必答三问 + 高频雷区）；PR 模板增设宪法三问；CI 增加
+  contract-reminder 软门（改 act// mac/Sources/ 未动 CONTRACT.md 时警告，
+  不阻塞）。新增 `act/golden_eval.py` 回测工具：用历史卡的真实结局评估
+  triage 政策的误杀/拦截率（数据集只写 state/golden/，永不进 repo）。
 
 ## [0.45.0] - 2026-07-22
 

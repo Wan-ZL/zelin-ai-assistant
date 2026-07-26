@@ -176,6 +176,7 @@ def _run_claude(prompt: str, runner=None) -> str:
         text=True,
         timeout=420,  # a week of notes can be dense
         env=_runner_env(),
+        cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
     if proc.returncode != 0:
         raise RuntimeError(

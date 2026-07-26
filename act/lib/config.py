@@ -116,6 +116,20 @@ def ensure_state_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+def headless_cwd() -> str:
+    """判官/提取类 headless ``claude -p`` 子进程的统一中性 cwd。
+
+    actd/launchd 的 WorkingDirectory 是 repo 根；子进程不传 cwd 就继承它，
+    claude 会自动把根下的 CLAUDE.md（指挥性入职文档）注进每一次管线调用——
+    token/延迟膨胀（radar 有 v0.43.2 慢性超时前科），还把「先读 CONTRACT」
+    之类与提取任务无关的指令喂给判官。STATE_DIR 没有 CLAUDE.md、也不对应
+    任何 Claude 项目 memory，是干净的落脚点。executor 派发的真工作会话不用
+    这个——那些本来就该在目标 repo 里跑。
+    """
+    ensure_state_dirs()
+    return str(STATE_DIR)
+
+
 # --------------------------------------------------------------------------- #
 # Config object
 # --------------------------------------------------------------------------- #

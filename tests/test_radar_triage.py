@@ -532,10 +532,12 @@ class ObsidianTriageTestCase(TriageBase):
         runner = self._items(
             {"title": "Ship the Q3 quarterly report", "type": "report",
              "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
-             "cost_estimate_usd": None, "quote": "ship by July 20"},
+             "cost_estimate_usd": None, "quote": "ship by July 20",
+             "provenance": "audio", "speaker": "human"},
             {"title": "Maybe tidy the team wiki sometime", "type": "other",
              "tier": "T1", "hardness": "soft", "deadline": None,
-             "cost_estimate_usd": None, "quote": "tidy the wiki"})
+             "cost_estimate_usd": None, "quote": "tidy the wiki",
+             "provenance": "audio", "speaker": "human"})
         triager = _FakeLLM(decision={"action": "new_proposal"})
         summary = radar.scan(runner=runner, triager=triager)
         self.assertEqual(summary["reconciled"], 2)
@@ -545,11 +547,14 @@ class ObsidianTriageTestCase(TriageBase):
         self.assertEqual(by_title["Maybe tidy the team wiki sometime"].status, "detected")
 
     def test_obsidian_hit_on_delivered_card_becomes_followup(self):
+        # audio×human = FULL（§45）：缺 provenance 的老式输出如今是 LIMITED，
+        # follow-up 会被天花板压到备选——那条判例在 test_radar_echo_gate.py。
         _seed("R-019", "给 Quinton 开通 PRD 文档编辑权限", "delivered")
         self._note("2026-07-09 1on1.md", "quinton set zelin as editor")
         runner = self._items({"title": "确认 editor 权限并继续补文档", "type": "comms",
                               "tier": "T1", "hardness": "soft", "deadline": None,
-                              "cost_estimate_usd": None, "quote": "set you as editor"})
+                              "cost_estimate_usd": None, "quote": "set you as editor",
+                              "provenance": "audio", "speaker": "human"})
         triager = _FakeLLM(decision={"action": "relates_to", "req": "R-019",
                                      "note": "权限已开", "needs_action": True})
         summary = radar.scan(runner=runner, triager=triager)
@@ -566,7 +571,8 @@ class ObsidianTriageTestCase(TriageBase):
         self._note("2026-07-09 sync.md", "ship it")
         item = {"title": "Ship the Q3 quarterly report", "type": "report",
                 "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
-                "cost_estimate_usd": None, "quote": "ship by July 20"}
+                "cost_estimate_usd": None, "quote": "ship by July 20",
+                "provenance": "audio", "speaker": "human"}
         summary = radar.scan(runner=lambda text: json.dumps([item]))
         self.assertEqual(summary["reconciled"], 1)
         self.assertEqual(summary["cards"], 1)
@@ -597,7 +603,8 @@ class ObsidianTriageTestCase(TriageBase):
         self._note("2026-07-09 sync.md", "ship it")
         item = {"title": "Ship the Q3 quarterly report", "type": "report",
                 "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
-                "cost_estimate_usd": None, "quote": "ship by July 20"}
+                "cost_estimate_usd": None, "quote": "ship by July 20",
+                "provenance": "audio", "speaker": "human"}
         radar.scan(runner=lambda text: json.dumps([item]))
         (req,) = registry.load_all()
         self.assertEqual(req.sources[0]["who"], "2026-07-09 sync")
