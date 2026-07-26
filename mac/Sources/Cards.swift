@@ -2103,6 +2103,16 @@ struct MergeSuggestionCard: View {
                     ForEach(Array(groups.enumerated()), id: \.offset) { i, g in
                         groupLines(index: i, group: g)
                     }
+                    // 分组方案没点名的选中卡 = 保持独立。拍板不可逆操作前每张
+                    // 卡的去向都得可见，一张都不能凭空消失。
+                    let loose = ungroupedIds(groups)
+                    if !loose.isEmpty {
+                        Text(L("保持独立：", "Stays separate: ")
+                             + loose.map { nameLine($0) }.joined(separator: L("、", ", ")))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 1) {
@@ -2248,6 +2258,12 @@ struct MergeSuggestionCard: View {
         guard suggestion.verdict == "partition",
               let groups = suggestion.groups, !groups.isEmpty else { return nil }
         return groups
+    }
+
+    /// 建议涉及、但分组方案没点名的卡（契约语义 = 保持独立，系统不动它们）。
+    private func ungroupedIds(_ groups: [MergeGroup]) -> [String] {
+        let grouped = Set(groups.flatMap { $0.ids } + groups.map { $0.primary })
+        return suggestion.ids.filter { !grouped.contains($0) }
     }
 
     /// 一个分组的清单块：主卡 + 并入成员 + AI 理由一句（单张组 = 保持独立）。

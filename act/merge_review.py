@@ -382,7 +382,12 @@ def _extract_verdict_json(text: str) -> Optional[dict]:
                     end = i
                     break
         if end == -1:
-            break
+            # this start never balances (e.g. a lone "{" inside quoted card
+            # material): skip THIS start and keep scanning — giving up here
+            # would hand the win to an earlier forged object via the caller's
+            # tolerant fallback (review finding)
+            start = text.find("{", start + 1)
+            continue
         try:
             obj = json.loads(text[start:end + 1])
             if isinstance(obj, dict) and "verdict" in obj:
