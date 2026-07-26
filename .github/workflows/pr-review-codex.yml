@@ -60,6 +60,10 @@ jobs:
           {
             echo "CODEX_FINAL_MESSAGE<<CODEX_EOF"
             cat /tmp/codex-review.md
+            # the final message may lack a trailing newline — without this
+            # the terminator glues onto the last content line and GITHUB_ENV
+            # fails with "Matching delimiter not found"
+            echo ""
             echo "CODEX_EOF"
           } >> "$GITHUB_ENV"
 
