@@ -235,6 +235,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let e = NSApp.currentEvent, e.type == .keyDown,
            e.modifierFlags.contains(.command),
+           // ⌘ alone: ⌘⇧Q / ⌥⌘⇧Q are the SYSTEM LOGOUT shortcuts —
+           // charactersIgnoringModifiers keeps the "Q" and lowercased()
+           // folds it back, so without this exclusion a logout initiated
+           // from the keyboard would be cancelled into a window close.
+           e.modifierFlags.intersection([.shift, .option, .control]).isEmpty,
            (e.charactersIgnoringModifiers ?? "").lowercased() == "q",
            ProcessInfo.processInfo.systemUptime - e.timestamp < 2,
            MainWindowController.shared.isWindowOpen {
