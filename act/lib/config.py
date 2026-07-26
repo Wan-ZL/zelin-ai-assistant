@@ -261,8 +261,9 @@ class Config:
     # App 写入的 override-only 键（提建议弹窗「同时公开」勾选框记住的上次
     # 选择，settings_overrides.json 扁平键 feedback_publish_default）——yaml
     # 不提供此旋钮：读它的只有 App 弹窗，config.yaml 拼一个出来不会有任何
-    # 消费者，等于文档上有效实际无效的隐私开关，宁可不收。
-    feedback_publish_default: bool = True
+    # 消费者，等于文档上有效实际无效的隐私开关，宁可不收。出厂 false：公开
+    # 是逐条 opt-in，预勾会让「打字→↩」的肌肉记忆把建议直接发进公开 repo。
+    feedback_publish_default: bool = False
 
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"

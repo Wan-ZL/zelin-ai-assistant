@@ -54,6 +54,8 @@
 | 12 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
 | 13 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |
 | 14 | 建议上报（feedback） | **你点「提建议」发送时** | 维护者的 Supabase（同 telemetry 通道/表；**不受** telemetry 开关限制） | — | 不发送即不触发；fork 设 `telemetry.supabase_url: ""` 硬关 |
+| 15 | 实时字幕（Live Captions） | 你开启菜单栏「实时字幕」期间（流式） | 火山引擎（**你自己 key** 对应的账户端点） | **关**（BYO-key，App 不内置 key） | 字幕开关即断流；不存 key 则「豆包」引擎不可选 |
+| 16 | 建议公开跟踪表 | **你在「提建议」勾选「同时公开」并发送时**；actd 后台建 issue | GitHub 公开 issue（`feedback_sync.repo`，**任何人可见**） | **关**（逐条 opt-in，出厂不预勾） | 不勾选即不触发；`features.feedback_sync: false` / 不配 token 文件整体停用 |
 
 ### 1. Ingest 加工 → Anthropic
 
@@ -253,6 +255,19 @@
   连接无法外移到 python 管线。
 - **关闭**：字幕开关即断流；删掉 key 则引擎不可选。与 screenpipe 录制引擎
   完全独立（各自采音频，互不影响）。
+
+### 16. 建议公开跟踪表 → GitHub 公开 issue（**逐条 opt-in，默认关**）
+
+- **触发**：只在你发送建议时勾选了「同时公开到 GitHub 建议跟踪表」——**逐条
+  生效**，勾选框出厂不预勾（只记住你上次的选择）。actd 随后在后台把这一条
+  发布为 `feedback_sync.repo`（默认本项目 repo）上的公开 issue
+  （CONTRACT §29bis）。
+- **Payload**：建议**全文** + 提交时间 + app 版本，写进**任何人可见**的 issue
+  正文（**不含**卡片标题快照——快照只走第 14 行的 Supabase 通道）。发布是
+  公开行为：issue 一旦建出，删除/编辑都在 GitHub 上留痕。
+- **关闭**：不勾选即不触发；`features.feedback_sync: false` 或不存在 token
+  文件（`feedback_sync.token_path`）则整个同步器静默停用（已勾选的记录
+  留在本地不外发）。
 
 ## 什么永不离开你的 Mac
 

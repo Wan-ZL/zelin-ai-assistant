@@ -14,25 +14,32 @@ Covers the feature's whole surface:
 (e) the duplicate guard is effectively once-only — AtMostOnceTestCase:
     预写计数 (a failed pre-write sends ZERO network requests), 重试先对账
     (a lost POST response is reconciled by body marker on the next pass, no
-    second POST), GET failure skips the pass instead of blindly re-posting,
-    and the fresh-record fast path never lists;
+    second POST — the scan pages past the first 100 issues, caps at 3 pages,
+    and never matches a pull_request entry), GET failure skips the pass
+    instead of blindly re-posting, and the fresh-record fast path never lists;
 (f) a 422 on create (label missing on the target repo) retries ONCE without
     the labels field — LabelRetryTestCase;
 (g) failures bump sync_attempts and the record is left alone for good after
     MAX_SYNC_ATTEMPTS (API burn guard) — GiveUpTestCase;
 (h) the actd run_once hook calls sweep best-effort and an exploding sweep
     never leaks out of the pass — ActdHookTestCase;
+(i) retries are spaced by MIN_RETRY_AGE_SECONDS: back-to-back daemon passes
+    burn ONE attempt, the record retries normally once aged, and a garbage
+    last_sync_attempt_at fails open — RetrySpacingTestCase;
 plus the config wiring for feedback_sync.repo / token_path and the
-override-ONLY feedback_publish_default key (the yaml/nested spellings must
-stay dead: no documented-but-unread privacy switch) — ConfigWiringTestCase.
+override-ONLY feedback_publish_default key (factory default false — 公开是
+逐条 opt-in; the yaml/nested spellings must stay dead: no
+documented-but-unread privacy switch) — ConfigWiringTestCase.
 
 Transports are injected/stubbed — no test ever touches the network.
 Everything lives under the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
+import datetime as _dt
 import json
 import tempfile
 import unittest
 import urllib.error
+import urllib.parse
 import uuid
 from pathlib import Path
 from unittest import mock
@@ -63,6 +70,17 @@ def _records() -> list:
             for p in sorted(feedback.FEEDBACK_DIR.glob("*.json"))]
 
 
+def _age_last_attempt(seconds: int = None) -> None:
+    """Backdate every record's last_sync_attempt_at past the retry cooldown —
+    the on-disk equivalent of waiting MIN_RETRY_AGE_SECONDS between passes."""
+    if seconds is None:
+        seconds = feedback_sync.MIN_RETRY_AGE_SECONDS + 5
+    then = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=seconds)
+    for rec in _records():
+        rec["last_sync_attempt_at"] = then.strftime("%Y-%m-%dT%H:%M:%SZ")
+        feedback._write_record(rec)
+
+
 def _mk_record(text: str = "把建议表公开出去", publish=True, **extra) -> dict:
     """A minimal on-disk feedback record (bypasses the upload path)."""
     record = {
@@ -85,6 +103,7 @@ class _FakeGitHub:
     """Injectable Transport double: a tiny in-memory "repo".
 
     POST creates an issue (kept in self.issues so a later GET lists it);
+    GET honors ``per_page``/``page`` so the reconcile's pagination is real;
     ``lose_response = True`` simulates the half-success shape — the issue IS
     created server-side but the response comes back unparseable ({}).
     """
@@ -104,7 +123,11 @@ class _FakeGitHub:
         if method == "GET":
             if self.fail_get_with is not None:
                 raise self.fail_get_with
-            return list(self.issues)
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+            per = int(qs.get("per_page", ["100"])[0])
+            page = int(qs.get("page", ["1"])[0])
+            start = (page - 1) * per
+            return list(self.issues[start:start + per])
         if self.fail_with is not None:
             raise self.fail_with
         if self.reject_labels and "labels" in payload:
@@ -253,6 +276,7 @@ class SyncTestCase(_SweepBase):
         self.assertEqual(rec["issue_url"], "https://github.com/x/y/issues/101")
         self.assertTrue(rec["issue_synced_at"])
         self.assertEqual(rec["sync_attempts"], 1)   # the 预写 counter
+        self.assertTrue(rec["last_sync_attempt_at"])  # the retry-spacing clock
         self.assertNotIn("sync_error", rec)
 
     def test_second_sweep_is_idempotent(self):
@@ -389,6 +413,7 @@ class AtMostOnceTestCase(_SweepBase):
         self.assertEqual(len(self.github.issues), 1)      # it DID get created
 
         self.github.lose_response = False
+        _age_last_attempt()                    # past the cooldown, next pass
         self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                              transport=self.github), 1)
         self.assertEqual(len(self.github.posts), 1)       # still just one POST
@@ -437,6 +462,49 @@ class AtMostOnceTestCase(_SweepBase):
         (rec,) = _records()
         self.assertEqual(rec["issue_number"], 101)        # not 7
 
+    def test_reconcile_scans_past_the_first_page(self):
+        # an active repo can push a day-old half-success past the first 100
+        # entries — page 1 alone would miss it and unlock a duplicate POST.
+        rec = _mk_record(publish=True, sync_attempts=1)
+        for i in range(feedback_sync.LIST_PAGE_SIZE):
+            self.github.issues.append({"number": i + 1, "body": f"filler {i}"})
+        self.github.issues.append(
+            {"number": 999, "html_url": "https://github.com/x/y/issues/999",
+             "body": f"半成功的那条\n<!-- feedback-id: {rec['id']} -->"})
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(len(self.github.gets), 2)        # page 1 + page 2
+        self.assertEqual(self.github.posts, [])           # reconciled, no POST
+        (on_disk,) = _records()
+        self.assertEqual(on_disk["issue_number"], 999)
+
+    def test_reconcile_never_matches_a_pull_request(self):
+        # the /issues endpoint interleaves PRs — a PR whose body quotes the
+        # marker (say, a fix PR citing the issue text) must not be written
+        # back as this record's issue; a real issue still gets created.
+        rec = _mk_record(publish=True, sync_attempts=1)
+        self.github.issues.append(
+            {"number": 55, "html_url": "https://github.com/x/y/pull/55",
+             "pull_request": {"url": "https://api.github.com/x/y/pulls/55"},
+             "body": f"fixes 建议\n<!-- feedback-id: {rec['id']} -->"})
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(len(self.github.posts), 1)       # created a real one
+        (on_disk,) = _records()
+        self.assertEqual(on_disk["issue_number"], 101)    # not the PR's 55
+
+    def test_reconcile_caps_at_three_pages_then_creates(self):
+        # beyond LIST_MAX_PAGES the window is treated as fully scanned —
+        # bounded API cost, and only then is a re-POST allowed.
+        _mk_record(publish=True, sync_attempts=1)
+        depth = feedback_sync.LIST_PAGE_SIZE * feedback_sync.LIST_MAX_PAGES
+        for i in range(depth + 10):
+            self.github.issues.append({"number": i + 1, "body": f"filler {i}"})
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(len(self.github.gets), 3)        # hard page cap
+        self.assertEqual(len(self.github.posts), 1)
+
 
 class LabelRetryTestCase(_SweepBase):
     """(f) 422 (label missing on the repo) => one retry without labels."""
@@ -471,14 +539,17 @@ class GiveUpTestCase(_SweepBase):
         self.github.fail_with = OSError("github unreachable")
         _mk_record(publish=True)
         for expected in (1, 2, 3):
+            _age_last_attempt()   # each sweep = a pass outside the cooldown
             self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                                  transport=self.github), 0)
             (rec,) = _records()
             self.assertEqual(rec["sync_attempts"], expected)
         calls_after_three = len(self.github.calls)
         # sweep #4: at MAX_SYNC_ATTEMPTS the record is no longer pending —
-        # even a now-healthy transport is not consulted (防死循环烧 API)
+        # even a now-healthy transport is not consulted (防死循环烧 API).
+        # Aged past the cooldown so the attempts cap is what gates here.
         self.github.fail_with = None
+        _age_last_attempt()
         self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                              transport=self.github), 0)
         self.assertEqual(len(self.github.calls), calls_after_three)
@@ -491,6 +562,7 @@ class GiveUpTestCase(_SweepBase):
         _mk_record(publish=True)
         feedback_sync.sweep(cfg=_cfg(), transport=self.github)
         self.github.fail_with = None
+        _age_last_attempt()
         self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                              transport=self.github), 1)
         (rec,) = _records()
@@ -503,6 +575,44 @@ class GiveUpTestCase(_SweepBase):
         (feedback.FEEDBACK_DIR / "torn.json").write_text("{{{ torn",
                                                          encoding="utf-8")
         _mk_record(publish=True)
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+
+
+class RetrySpacingTestCase(_SweepBase):
+    """(i) MIN_RETRY_AGE_SECONDS: back-to-back passes burn ONE attempt."""
+
+    def test_back_to_back_passes_burn_only_one_attempt(self):
+        # actd 每 ~10s 一个 pass：断网时若每 pass 都计次，半分钟就烧光
+        # MAX_SYNC_ATTEMPTS 永久放弃。冷却期内的 pass 必须整个跳过——
+        # 不发请求、不计次。
+        self.github.fail_with = OSError("offline")
+        _mk_record(publish=True)
+        for _ in range(4):   # 连续 daemon pass，全部落在同一冷却窗口内
+            self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                                 transport=self.github), 0)
+        (rec,) = _records()
+        self.assertEqual(rec["sync_attempts"], 1)         # 只烧了一次机会
+        self.assertEqual(len(self.github.posts), 1)       # 也只发了一次请求
+        self.assertTrue(rec["last_sync_attempt_at"])
+
+    def test_retry_resumes_after_the_cooldown(self):
+        self.github.fail_with = OSError("offline")
+        _mk_record(publish=True)
+        feedback_sync.sweep(cfg=_cfg(), transport=self.github)
+        self.github.fail_with = None
+        _age_last_attempt()
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        (rec,) = _records()
+        self.assertEqual(rec["issue_number"], 101)
+        self.assertEqual(rec["sync_attempts"], 2)
+
+    def test_unparseable_last_attempt_fails_open(self):
+        # a garbage timestamp must not freeze the record forever — retry
+        # proceeds, and the attempts cap still bounds the total.
+        _mk_record(publish=True, sync_attempts=1,
+                   last_sync_attempt_at="not-a-time")
         self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                              transport=self.github), 1)
 
@@ -574,7 +684,8 @@ class ConfigWiringTestCase(unittest.TestCase):
         self.assertEqual(cfg.feedback_sync_repo, "Wan-ZL/zelin-ai-assistant")
         self.assertEqual(cfg.feedback_sync_token_path,
                          "config/secrets/github-feedback-token.txt")
-        self.assertTrue(cfg.feedback_publish_default)
+        # 出厂不勾选 — 公开是逐条 opt-in，「打字→↩」不能把建议发进公开 repo
+        self.assertFalse(cfg.feedback_publish_default)
         self.assertTrue(cfg.feature("feedback_sync"))
         self.assertIn("feedback_sync", config.DEFAULT_FEATURES)
 
@@ -583,37 +694,39 @@ class ConfigWiringTestCase(unittest.TestCase):
             "feedback_sync:\n"
             "  repo: someone/fork\n"
             "  token_path: ~/tokens/gh.txt\n"
-            "  publish_default: false\n"))
+            "  publish_default: true\n"))
         self.assertEqual(cfg.feedback_sync_repo, "someone/fork")
         self.assertEqual(cfg.feedback_sync_token_path, "~/tokens/gh.txt")
         # override-only key: the yaml spelling is deliberately NOT a knob —
         # nothing reads it, so accepting it would be a silently-dead switch
-        self.assertTrue(cfg.feedback_publish_default)
+        # (yaml says true; the factory-false default must survive it)
+        self.assertFalse(cfg.feedback_publish_default)
 
     def test_flat_overrides_win_over_yaml(self):
         cfg = self._load(
-            {"feedback_publish_default": False,
+            {"feedback_publish_default": True,
              "feedback_sync_repo": "override/repo",
              "feedback_sync_token_path": "elsewhere/tok.txt"},
             yaml_body="feedback_sync:\n  repo: yaml/repo\n")
         self.assertEqual(cfg.feedback_sync_repo, "override/repo")
         self.assertEqual(cfg.feedback_sync_token_path, "elsewhere/tok.txt")
-        self.assertFalse(cfg.feedback_publish_default)
+        # the flat override (the App's remembered choice) DOES flip it
+        self.assertTrue(cfg.feedback_publish_default)
 
     def test_nested_override_form_repo_and_token_path_only(self):
         cfg = self._load({"feedback_sync": {
             "repo": "nested/repo",
             "token_path": "nested/tok.txt",
-            "publish_default": False,   # non-key here too (flat key only)
+            "publish_default": True,   # non-key here too (flat key only)
         }})
         self.assertEqual(cfg.feedback_sync_repo, "nested/repo")
         self.assertEqual(cfg.feedback_sync_token_path, "nested/tok.txt")
-        self.assertTrue(cfg.feedback_publish_default)
+        self.assertFalse(cfg.feedback_publish_default)
 
     def test_bad_values_keep_defaults(self):
         cfg = self._load({"feedback_publish_default": "maybe",
                           "feedback_sync": {"repo": "   "}})
-        self.assertTrue(cfg.feedback_publish_default)   # bad value skipped
+        self.assertFalse(cfg.feedback_publish_default)  # bad value skipped
         self.assertEqual(cfg.feedback_sync_repo, "Wan-ZL/zelin-ai-assistant")
 
     def test_features_flag_override(self):

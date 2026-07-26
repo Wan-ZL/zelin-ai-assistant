@@ -914,7 +914,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 建议上报入口（看板 header 直点 = ids 空 → 对整体；多选操作条 = 针对
     /// 所选卡）: 多行文本框（promptText 同款编辑器——↩ 发送 · ⇧↩ 换行）+
     /// 「同时公开到 GitHub 建议跟踪表」勾选（默认态 = 上次选择，override 键
-    /// feedback_publish_default，出厂 true），提交走 submitFeedback。返回
+    /// feedback_publish_default，出厂 false），提交走 submitFeedback。返回
     /// true = 已写入 inbox（调用方据此退出多选）；取消 / 空文本 / 写失败 =
     /// false，选择保持原样。
     func promptFeedback(ids: [String]) -> Bool {
@@ -993,12 +993,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 建议公开跟踪表: the checkbox's remembered default — override 键
     /// feedback_publish_default（settings_overrides.json；config.py 同名
-    /// override，出厂 true）。
+    /// override，出厂 false：公开是逐条 opt-in，预勾会让「打字→↩」的肌肉
+    /// 记忆把建议直接发进公开 repo）。
     static func feedbackPublishDefault() -> Bool {
         if let v = SettingsIO.readOverrides()["feedback_publish_default"] as? Bool {
             return v
         }
-        return true
+        return false
     }
 
     /// Remember the checkbox choice for next time — best-effort（writeOverrides
