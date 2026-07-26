@@ -179,6 +179,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 ## 14. Gmail 捕获
 `act/radar_gmail.py`：imaplib SSL 轮询 INBOX 未读（只读、不改已读状态优先用 BODY.PEEK）→ LLM 三选一（需要 Zelin 处理→卡片 / FYI 跳过）。config: `sources.gmail: {address, app_password_path?, enabled}`；密码按 §19 三级顺序解析（`config/secrets/gmail-app-password.txt` → config 显式 `app_password_path` → 旧默认 `~/Desktop/Keys/gmail-app-password.txt`），任一处都没有则静默 no-op。launchd 每 5 分钟（纯网络，TCC 安全）。marker=最后处理的 UID（state/gmail_radar.json）。docs/GMAIL_SETUP.md 写建应用专用密码步骤。
 
+**§14bis 命令后备通道（v0.45，Zelin 2026-07-22 拍板「app password 可用就配置；不可用就定时走 MCP/CLI 主动抓取」的第二分支）**：config 新增 `sources.gmail: {fetch_command?}`（override 键 `gmail_fetch_command`，扁平 + 嵌套两形皆收）。非空即赢过 IMAP——配置了命令就是明确选择；此时**无 app password 也不再 `no_credentials` no-op**。契约（`fetch_via_command`）：命令经 `shlex` 解析为 argv 直接执行（不过 shell；管道写进目标脚本里），env 带 `GMAIL_RADAR_LAST_UID`=当前 marker，stdout 输出 JSON 数组 `{uid:int 单调递增, from, subject, date, message_id, body, gmail_thread_id?}`；`uid <= marker` 在雷达侧丢弃但仍推进 marker（与 IMAP 同规）；dict 层预过滤 = noreply 发件人 + `Accepted:` 日历回执（List-Unsubscribe 等 MIME-only 信号由命令侧自理）。超时 300s。失败分类进健康词表（add-only）：`command_failed`（跑不起来/非零退出/超时）/ `command_bad_output`（stdout 不是 JSON 数组）——绝不与「没有新邮件」混淆，App 设置页照 §15.3 映射成大白话。`--check` 在命令模式下只验证可执行文件可解析（无登录可测）。抓取之后的 triage 管线与 IMAP 路径逐字同一条。
+
 ## 15. 主窗口（menu bar 之外的正经窗口）
 菜单栏加"打开主窗口"；窗口可关（app 继续后台跑，accessory 不变）。四个区：
 1) **依赖检查**：逐行 Node/npx 与录制引擎存活（引擎经 `npx screenpipe@<pin>` 运行，v0.11 起不再检查 /Applications/Screenpipe.app）、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。

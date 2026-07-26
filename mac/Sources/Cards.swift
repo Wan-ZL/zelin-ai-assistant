@@ -190,6 +190,8 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
                                     //   whose copyText is an app-generated claude command —
                                     //   never enable it for paths/drafts/error text.
     let trailingIcon: (name: String, color: Color)?  // ignored when copyText != nil
+    let idTag: String?              // v0.45: card id (R-xxx/MS-xxx) pinned top-right on the
+                                    //   collapsed face — 快速定位卡片，不用展开详情
     let pending: Bool               // content at 0.75 + no tap + no stroke (actions stay full)
     let expandedBinding: Binding<Bool>?   // nil → internal @State drives the detail slot
     private let detail: (() -> Detail)?  // nil → no expandable detail
@@ -214,7 +216,8 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
     fileprivate init(accent: Color?, bgOpacity: Double, padding: CGFloat,
                      cornerRadius: CGFloat, stroked: Bool, copyText: String?,
                      doubleClickRuns: Bool,
-                     trailingIcon: (name: String, color: Color)?, pending: Bool,
+                     trailingIcon: (name: String, color: Color)?, idTag: String?,
+                     pending: Bool,
                      expandedBinding: Binding<Bool>?,
                      detailOrNil: (() -> Detail)?,
                      actions: @escaping () -> Actions,
@@ -227,6 +230,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
         self.copyText = copyText
         self.doubleClickRuns = doubleClickRuns
         self.trailingIcon = trailingIcon
+        self.idTag = idTag
         self.pending = pending
         self.expandedBinding = expandedBinding
         self.detail = detailOrNil
@@ -244,6 +248,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
          copyText: String? = nil,
          doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
+         idTag: String? = nil,
          pending: Bool = false,
          expanded: Binding<Bool>? = nil,
          @ViewBuilder actions: @escaping () -> Actions,
@@ -252,7 +257,7 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
                   doubleClickRuns: doubleClickRuns,
-                  trailingIcon: trailingIcon, pending: pending,
+                  trailingIcon: trailingIcon, idTag: idTag, pending: pending,
                   expandedBinding: expanded, detailOrNil: detail,
                   actions: actions, content: content)
     }
@@ -291,10 +296,19 @@ struct CardSurface<Content: View, Actions: View, Detail: View>: View {
             // pending dims the content only — the actions row below stays at
             // full opacity so a queued card's escape hatch reads as tappable.
             Group {
-                if copyText != nil || trailingIcon != nil {
+                if copyText != nil || trailingIcon != nil || idTag != nil {
                     HStack(alignment: .top, spacing: 8) {
                         VStack(alignment: .leading, spacing: 8) { content() }
                         Spacer(minLength: 4)
+                        if let tag = idTag {
+                            // v0.45: 收起状态可见的卡片 ID（原来只能展开详情才
+                            // 看到）——等宽小字，不与 copy/终端反馈图标抢注意力。
+                            Text(tag)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(Color.secondary.opacity(0.85))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                         if copyText != nil {
                             if launchFailed {
                                 HStack(spacing: 3) {
@@ -413,13 +427,14 @@ extension CardSurface where Detail == EmptyView {
          copyText: String? = nil,
          doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
+         idTag: String? = nil,
          pending: Bool = false,
          @ViewBuilder actions: @escaping () -> Actions,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
                   doubleClickRuns: doubleClickRuns,
-                  trailingIcon: trailingIcon, pending: pending,
+                  trailingIcon: trailingIcon, idTag: idTag, pending: pending,
                   expandedBinding: nil, detailOrNil: nil,
                   actions: actions, content: content)
     }
@@ -435,12 +450,13 @@ extension CardSurface where Actions == EmptyView, Detail == EmptyView {
          copyText: String? = nil,
          doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
+         idTag: String? = nil,
          pending: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
                   doubleClickRuns: doubleClickRuns,
-                  trailingIcon: trailingIcon, pending: pending,
+                  trailingIcon: trailingIcon, idTag: idTag, pending: pending,
                   expandedBinding: nil, detailOrNil: nil,
                   actions: { EmptyView() }, content: content)
     }
@@ -456,6 +472,7 @@ extension CardSurface where Actions == EmptyView {
          copyText: String? = nil,
          doubleClickRuns: Bool = false,
          trailingIcon: (name: String, color: Color)? = nil,
+         idTag: String? = nil,
          pending: Bool = false,
          expanded: Binding<Bool>? = nil,
          @ViewBuilder detail: @escaping () -> Detail,
@@ -463,7 +480,7 @@ extension CardSurface where Actions == EmptyView {
         self.init(accent: accent, bgOpacity: bgOpacity, padding: padding,
                   cornerRadius: cornerRadius, stroked: stroked, copyText: copyText,
                   doubleClickRuns: doubleClickRuns,
-                  trailingIcon: trailingIcon, pending: pending,
+                  trailingIcon: trailingIcon, idTag: idTag, pending: pending,
                   expandedBinding: expanded, detailOrNil: detail,
                   actions: { EmptyView() }, content: content)
     }
@@ -941,7 +958,8 @@ struct ApprovalCardView: View {
     }
 
     private var normalBody: some View {
-        CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, stroked: true) {
+        CardSurface(bgOpacity: 0.04, padding: 10, cornerRadius: 8, stroked: true,
+                    idTag: card.id) {
             // v0.21 拍板：四个 2 字决策按钮回到一排（批准·拒绝·修改·暂缓），每个
             // .lineLimit(1)+.fixedSize，2 字标签四颗在 ~400pt 卡宽绰绰有余、绝不
             // 截断。「展开详情」移出决策行 —— 右对齐的 plain 灰链接（disclosure，
@@ -1436,11 +1454,13 @@ struct TaskRow: View {
         // "claude --resume <id>") — the TerminalLauncher security precondition.
         // §37: the detail slot is unconditional now (rename affordance).
         if hasButtons {
-            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
+            CardSurface(copyText: cmd, doubleClickRuns: true, idTag: task.id,
+                        pending: isQueued,
                         actions: { actionButtons },
                         detail: { detailBlock }, content: { rowContent })
         } else {
-            CardSurface(copyText: cmd, doubleClickRuns: true, pending: isQueued,
+            CardSurface(copyText: cmd, doubleClickRuns: true, idTag: task.id,
+                        pending: isQueued,
                         detail: { detailBlock }, content: { rowContent })
         }
     }
@@ -1743,6 +1763,7 @@ struct ReviewRow: View {
         // TerminalLauncher security precondition. §37: the detail slot is
         // unconditional now (rename affordance).
         CardSurface(accent: .teal, copyText: item.copy_cmd, doubleClickRuns: true,
+                    idTag: item.id,
                     actions: { actionButtons },
                     detail: { detailBlock },
                     content: { rowContent })
@@ -1922,7 +1943,8 @@ struct DebtRow: View {
     // §37: the detail slot always has content now (rename affordance), with
     // the source quotes above it when the card carries any.
     @ViewBuilder private var surface: some View {
-        CardSurface(actions: { actionButtons },
+        CardSurface(idTag: item.id,
+                    actions: { actionButtons },
                     detail: { detailBlock },
                     content: { rowContent })
     }
@@ -2069,6 +2091,7 @@ struct MergeSuggestionCard: View {
 
     private var doneBody: some View {
         CardSurface(accent: .purple, padding: 10, cornerRadius: 8,
+                    idTag: suggestion.id,
                     pending: actionPending, actions: { doneButtons }) {
             headline
 
@@ -2150,6 +2173,7 @@ struct MergeSuggestionCard: View {
 
     private var failedBody: some View {
         CardSurface(accent: .orange, padding: 10, cornerRadius: 8,
+                    idTag: suggestion.id,
                     pending: actionPending, actions: { failedButtons }) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -2441,7 +2465,7 @@ struct TrashRow: View {
     }
 
     var body: some View {
-        CardSurface {
+        CardSurface(idTag: item.id) {
             Button {
                 app.submit(id: item.id, action: "restore", comment: nil)
             } label: { Label(L("恢复", "Restore"), systemImage: "arrow.uturn.left") }
@@ -2582,7 +2606,7 @@ struct ArchiveRow: View {
     }
 
     var body: some View {
-        CardSurface {
+        CardSurface(idTag: item.id) {
             Button {
                 app.submit(id: item.id, action: "unarchive", comment: nil)
             } label: { Label(L("放回看板", "Put back"), systemImage: "arrow.uturn.left") }
