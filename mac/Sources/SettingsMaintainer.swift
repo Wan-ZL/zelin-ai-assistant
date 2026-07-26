@@ -6,20 +6,24 @@
 // claude what to fix in plain language — no docs, no manual cd, no CLI
 // knowledge required.
 //
-// - repo path row: `maintainer_repo_path` override, diff-write (empty or
-//   equal to the resolved default ⇒ key removed). Default =
+// - Both rows resolve §15-style: override → config.yaml `maintainer:` block
+//   → built-in default. The placeholder shows the effective default, the
+//   button acts on the effective value, and the diff-write compares against
+//   the effective default (empty or equal ⇒ override key removed).
+// - repo path row: `maintainer_repo_path` override; built-in default =
 //   AppPaths.stateRoot — the CONTRACT §19 repo-root resolution the whole
-//   app already uses; the placeholder shows the resolved value.
-// - session id row: `maintainer_session_id` override (empty = fresh session,
-//   no --resume). Allowlist [A-Za-z0-9-] — claude session ids are UUIDs, and
-//   the allowlist doubles as the injection gate since the id later rides on
-//   a shell command line.
+//   app already uses.
+// - session id row: `maintainer_session_id` override (effective empty =
+//   fresh session, no --resume). Allowlist [A-Za-z0-9-], and a leading "-"
+//   is rejected — the id later rides on a shell command line, so the
+//   allowlist doubles as the injection gate and the leading-hyphen check
+//   keeps a value from being parsed as a CLI flag.
 // - SECURITY (TerminalLauncher precondition: app-generated commands only):
 //   the command is assembled HERE from validated parts — the path becomes a
 //   single shell word via shellSingleQuoted (the same quoting the pipeline
 //   uses for copy_cmd's `cd '<path>' && claude --resume <sid>`), and the
-//   session id passed the character allowlist, so user-typed text can never
-//   smuggle a second command into the line.
+//   session id passed the allowlist + no-leading-hyphen gate, so user-typed
+//   text can never smuggle a second command or a CLI flag into the line.
 
 import AppKit
 import SwiftUI
@@ -40,15 +44,32 @@ final class MaintainerSettingsModel: ObservableObject {
 
     private var loaded = false
 
-    /// Default = the repo this very app runs from (CONTRACT §19 resolution).
-    nonisolated static var defaultRepoPath: String { AppPaths.stateRoot }
+    /// config.yaml `maintainer:` layer, read once alongside the overrides —
+    /// the middle of the override → config.yaml → built-in stack.
+    private var configRepoPath: String?
+    private var configSessionID: String?
+
+    /// Effective default when the field is empty: config.yaml
+    /// maintainer.repo_path, else the repo this very app runs from
+    /// (CONTRACT §19 resolution).
+    var defaultRepoPath: String { configRepoPath ?? AppPaths.stateRoot }
+
+    /// Effective default when the field is empty: config.yaml
+    /// maintainer.session_id ("" = fresh session).
+    var defaultSessionID: String { configSessionID ?? "" }
 
     /// Effective repo path: non-empty field (tilde-expanded) else the default.
     /// The open button acts on THIS — what the field shows is what runs.
     var effectiveRepoPath: String {
         let v = repoPath.trimmingCharacters(in: .whitespaces)
-        return v.isEmpty ? Self.defaultRepoPath
+        return v.isEmpty ? defaultRepoPath
                          : (v as NSString).expandingTildeInPath
+    }
+
+    /// Effective session id: non-empty field else the config.yaml layer.
+    var effectiveSessionID: String {
+        let v = sessionID.trimmingCharacters(in: .whitespaces)
+        return v.isEmpty ? defaultSessionID : v
     }
 
     /// Gate for the open button: the effective path must be an existing folder.
@@ -65,15 +86,21 @@ final class MaintainerSettingsModel: ObservableObject {
         let ov = SettingsIO.readOverrides()
         repoPath = (ov["maintainer_repo_path"] as? String) ?? ""
         sessionID = (ov["maintainer_session_id"] as? String) ?? ""
+        configRepoPath = SettingsIO.configNestedScalar(block: "maintainer",
+                                                       key: "repo_path")
+            .map { ($0 as NSString).expandingTildeInPath }
+        configSessionID = SettingsIO.configNestedScalar(block: "maintainer",
+                                                        key: "session_id")
     }
 
-    // MARK: repo path (diff-write: empty / equal to default ⇒ key removed)
+    // MARK: repo path (diff-write: empty / equal to the effective default
+    // ⇒ key removed)
 
     func saveRepoPath() {
         let v = repoPath.trimmingCharacters(in: .whitespaces)
         repoPath = v
         var merged = SettingsIO.readOverrides()
-        if v.isEmpty || (v as NSString).expandingTildeInPath == Self.defaultRepoPath {
+        if v.isEmpty || (v as NSString).expandingTildeInPath == defaultRepoPath {
             merged.removeValue(forKey: "maintainer_repo_path")
         } else {
             merged["maintainer_repo_path"] = v
@@ -104,10 +131,16 @@ final class MaintainerSettingsModel: ObservableObject {
     // MARK: session id (empty = fresh session; [A-Za-z0-9-] only)
 
     /// nil = ok; otherwise a plain-language fix message. The allowlist is the
-    /// injection gate — the id is embedded in a shell command line later.
+    /// injection gate — the id is embedded in a shell command line later —
+    /// and a leading "-" is rejected so the value can't be parsed as a CLI
+    /// flag (e.g. --dangerously-skip-permissions is all allowlist characters).
     nonisolated static func validateSessionID(_ raw: String) -> String? {
         let s = raw.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return nil }
+        if s.hasPrefix("-") {
+            return L("会话 ID 不能以连字符（-）开头——那是命令行选项的形状，不是会话 ID。",
+                     "A session id may not start with a hyphen (-) — that's the shape of a command-line flag, not a session id.")
+        }
         let allowed = CharacterSet(charactersIn:
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")
         if s.unicodeScalars.allSatisfy({ allowed.contains($0) }) { return nil }
@@ -124,7 +157,7 @@ final class MaintainerSettingsModel: ObservableObject {
             return
         }
         var merged = SettingsIO.readOverrides()
-        if v.isEmpty {
+        if v.isEmpty || v == defaultSessionID {
             merged.removeValue(forKey: "maintainer_session_id")
         } else {
             merged["maintainer_session_id"] = v
@@ -137,11 +170,16 @@ final class MaintainerSettingsModel: ObservableObject {
             sessionNoteIsError = true
             return
         }
-        sessionNote = v.isEmpty
-            ? L("已清空——按钮每次开一个全新会话。",
-                "Cleared — the button starts a fresh session each time.")
-            : L("已保存 ✓ 按钮会用 --resume 接着这个会话聊。",
-                "Saved ✓ The button resumes this session with --resume.")
+        if !v.isEmpty {
+            sessionNote = L("已保存 ✓ 按钮会用 --resume 接着这个会话聊。",
+                            "Saved ✓ The button resumes this session with --resume.")
+        } else if defaultSessionID.isEmpty {
+            sessionNote = L("已清空——按钮每次开一个全新会话。",
+                            "Cleared — the button starts a fresh session each time.")
+        } else {
+            sessionNote = L("已清空——按钮用 config.yaml 里的会话 ID（灰字）。",
+                            "Cleared — the button uses the session id from config.yaml (the greyed-out one).")
+        }
         sessionNoteIsError = false
         Analytics.log("mw_maintainer_session_save", fields: ["set": !v.isEmpty])
     }
@@ -149,7 +187,9 @@ final class MaintainerSettingsModel: ObservableObject {
     // MARK: open the session
 
     func openSession() {
-        let sid = sessionID.trimmingCharacters(in: .whitespaces)
+        // The effective id may come from config.yaml, so it re-passes the
+        // same gate the save path uses before touching the command line.
+        let sid = effectiveSessionID
         if let err = Self.validateSessionID(sid) {
             sessionNote = err
             sessionNoteIsError = true
@@ -221,7 +261,7 @@ struct MaintainerSettingsSection: View {
             Text(L("代码仓库目录（留空 = 默认）", "Code repo folder (empty = default)"))
                 .font(.system(size: 12, weight: .medium))
             HStack(spacing: 8) {
-                TextField(MaintainerSettingsModel.defaultRepoPath,
+                TextField(model.defaultRepoPath,
                           text: $model.repoPath)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
@@ -229,8 +269,8 @@ struct MaintainerSettingsSection: View {
                 Button(L("保存", "Save")) { model.saveRepoPath() }
                     .controlSize(.small)
             }
-            Text(L("默认就是本软件自己的仓库（灰字显示的路径）；只有开发者克隆到别处时才需要改。",
-                   "The default is this software's own repo (the greyed-out path); only developers with a clone elsewhere need to change it."))
+            Text(L("灰字是当前默认（config.yaml 的 maintainer.repo_path，否则本软件自己的仓库）；只有开发者克隆到别处时才需要改。",
+                   "The greyed-out path is the current default (config.yaml's maintainer.repo_path, else this software's own repo); only developers with a clone elsewhere need to change it."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -249,8 +289,10 @@ struct MaintainerSettingsSection: View {
                    "Session id (optional; empty = a fresh session each time)"))
                 .font(.system(size: 12, weight: .medium))
             HStack(spacing: 8) {
-                TextField(L("例：6f9619ff-8b86-d011-b42d-00cf4fc964ff",
-                            "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
+                TextField(model.defaultSessionID.isEmpty
+                              ? L("例：6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+                                  "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff")
+                              : model.defaultSessionID,
                           text: $model.sessionID)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12, design: .monospaced))
