@@ -54,5 +54,6 @@ jobs:
             4. 并发与守护进程安全——actd 是单写者，detached 子进程只读。
             只报有具体失败场景的真问题，按 P0/P1/P2 分级；没有问题就明说一切正常。
           claude_args: |
-            --model claude-sonnet-5
+            --model claude-fable-5
+            --fallback-model claude-sonnet-5
             --max-turns 12

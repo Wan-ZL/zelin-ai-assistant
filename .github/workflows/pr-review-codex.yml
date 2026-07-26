@@ -48,6 +48,10 @@ jobs:
           prompt-file: .github/codex/prompts/review.md
           output-file: /tmp/codex-review.md
           sandbox: read-only
+          # empty model = Codex 自选当前默认（跟着官方最新走，owner 要求）;
+          # 想钉住某个具体模型时取消下一行注释（API 模型 id 以 OpenAI 文档为准）
+          # model: gpt-5.6
+          effort: high
 
       - if: steps.key.outputs.present == 'true'
         name: Load the review into env
