@@ -256,10 +256,12 @@ class Config:
     # (act/lib/feedback_sync.py). repo = "owner/name" slug the issues land on;
     # token_path resolves against the pipeline root when relative, and the
     # file simply not existing turns the whole sync off (no health complaint).
-    # feedback_publish_default = the app checkbox's remembered state（override
-    # 键；the dialog rewrites it after every send）.
     feedback_sync_repo: str = "Wan-ZL/zelin-ai-assistant"
     feedback_sync_token_path: str = "config/secrets/github-feedback-token.txt"
+    # App 写入的 override-only 键（提建议弹窗「同时公开」勾选框记住的上次
+    # 选择，settings_overrides.json 扁平键 feedback_publish_default）——yaml
+    # 不提供此旋钮：读它的只有 App 弹窗，config.yaml 拼一个出来不会有任何
+    # 消费者，等于文档上有效实际无效的隐私开关，宁可不收。
     feedback_publish_default: bool = True
 
     # UI language (§15) — stored value only for now ("zh" | "en")
@@ -579,6 +581,8 @@ def load_config() -> Config:
         _msid = maint_block.get("session_id")
         if _msid is not None and str(_msid).strip():
             cfg.maintainer_session_id = str(_msid).strip()
+    # NB: feedback_publish_default is deliberately NOT read from yaml — it is
+    # the App-managed checkbox memory (override-only; see the dataclass field).
     fsync = _dict_or(data.get("feedback_sync"))
     _fs_repo = str(fsync.get("repo", cfg.feedback_sync_repo) or "").strip()
     if _fs_repo:
@@ -588,10 +592,6 @@ def load_config() -> Config:
     ).strip()
     if _fs_token:
         cfg.feedback_sync_token_path = _fs_token
-    cfg.feedback_publish_default = _bool_or(
-        fsync.get("publish_default", cfg.feedback_publish_default),
-        cfg.feedback_publish_default,
-    )
 
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
@@ -819,18 +819,14 @@ def _apply_settings_overrides(cfg: Config) -> None:
                 if value.get("fetch_command") is not None:
                     cfg.gmail_fetch_command = str(value["fetch_command"])
             elif key == "feedback_sync" and isinstance(value, dict):
-                # nested form mirroring config.yaml feedback_sync
+                # nested form mirroring config.yaml feedback_sync (repo +
+                # token_path only — the checkbox memory is the FLAT
+                # feedback_publish_default key the App writes; a nested
+                # spelling has no writer and stays a non-key, like in yaml)
                 if str(value.get("repo") or "").strip():
                     cfg.feedback_sync_repo = str(value["repo"]).strip()
                 if str(value.get("token_path") or "").strip():
                     cfg.feedback_sync_token_path = str(value["token_path"]).strip()
-                if value.get("publish_default") is not None:
-                    try:
-                        cfg.feedback_publish_default = _coerce_bool(
-                            value["publish_default"]
-                        )
-                    except (TypeError, ValueError):
-                        pass  # 坏值不能连累同 dict 的 repo/token_path
             elif key == "cost_thresholds" and isinstance(value, dict):
                 # nested form mirroring config.yaml approval.cost_thresholds
                 if value.get("show_cost_above_usd") is not None:

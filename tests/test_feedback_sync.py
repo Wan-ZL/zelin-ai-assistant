@@ -9,17 +9,22 @@ Covers the feature's whole surface:
 (c) with a token (fake transport) the issue is created, number/url are written
     back atomically, and a second sweep is idempotent — SyncTestCase;
 (d) issue payload: 60-char title, body carries the full text + LOCAL-timezone
-    submit time + app_version + the fixed origin line (storage stays UTC) —
-    PayloadTestCase;
-(e) a 422 on create (label missing on the target repo) retries ONCE without
+    submit time + app_version + the fixed origin line + the feedback-id
+    marker (storage stays UTC) — PayloadTestCase;
+(e) the duplicate guard is effectively once-only — AtMostOnceTestCase:
+    预写计数 (a failed pre-write sends ZERO network requests), 重试先对账
+    (a lost POST response is reconciled by body marker on the next pass, no
+    second POST), GET failure skips the pass instead of blindly re-posting,
+    and the fresh-record fast path never lists;
+(f) a 422 on create (label missing on the target repo) retries ONCE without
     the labels field — LabelRetryTestCase;
-(f) failures bump sync_attempts and the record is left alone for good after
+(g) failures bump sync_attempts and the record is left alone for good after
     MAX_SYNC_ATTEMPTS (API burn guard) — GiveUpTestCase;
-(g) the actd run_once hook calls sweep best-effort and an exploding sweep
+(h) the actd run_once hook calls sweep best-effort and an exploding sweep
     never leaks out of the pass — ActdHookTestCase;
-plus the config wiring for feedback_sync.repo / token_path /
-feedback_publish_default (yaml + settings_overrides, flat and nested forms) —
-ConfigWiringTestCase.
+plus the config wiring for feedback_sync.repo / token_path and the
+override-ONLY feedback_publish_default key (the yaml/nested spellings must
+stay dead: no documented-but-unread privacy switch) — ConfigWiringTestCase.
 
 Transports are injected/stubbed — no test ever touches the network.
 Everything lives under the sandbox AIASSISTANT_HOME (tests/__init__.py).
@@ -77,16 +82,29 @@ def _mk_record(text: str = "把建议表公开出去", publish=True, **extra) ->
 
 
 class _FakeGitHub:
-    """Injectable Transport double: records calls, returns issue payloads."""
+    """Injectable Transport double: a tiny in-memory "repo".
+
+    POST creates an issue (kept in self.issues so a later GET lists it);
+    ``lose_response = True`` simulates the half-success shape — the issue IS
+    created server-side but the response comes back unparseable ({}).
+    """
 
     def __init__(self):
-        self.calls: list = []
+        self.calls: list = []        # (method, url, payload-or-None)
+        self.issues: list = []       # what GET /issues returns
         self.next_number = 101
-        self.fail_with = None        # Exception to raise on every call
+        self.fail_with = None        # exception every POST raises
+        self.fail_get_with = None    # exception every GET raises
         self.reject_labels = False   # 422 while the payload carries "labels"
+        self.lose_response = False   # POST creates the issue but returns {}
 
-    def __call__(self, url: str, payload: dict) -> dict:
-        self.calls.append((url, dict(payload)))
+    def __call__(self, method, url, payload=None):
+        self.calls.append((method, url,
+                           dict(payload) if payload is not None else None))
+        if method == "GET":
+            if self.fail_get_with is not None:
+                raise self.fail_get_with
+            return list(self.issues)
         if self.fail_with is not None:
             raise self.fail_with
         if self.reject_labels and "labels" in payload:
@@ -94,8 +112,21 @@ class _FakeGitHub:
                                          None, None)
         n = self.next_number
         self.next_number += 1
-        return {"number": n,
-                "html_url": f"https://github.com/x/y/issues/{n}"}
+        issue = {"number": n,
+                 "html_url": f"https://github.com/x/y/issues/{n}",
+                 "body": str(payload.get("body") or "")}
+        self.issues.append(issue)
+        if self.lose_response:
+            return {}   # 201 landed, body lost — what _make_transport degrades to
+        return {"number": n, "html_url": issue["html_url"]}
+
+    @property
+    def posts(self) -> list:
+        return [c for c in self.calls if c[0] == "POST"]
+
+    @property
+    def gets(self) -> list:
+        return [c for c in self.calls if c[0] == "GET"]
 
 
 class _SweepBase(unittest.TestCase):
@@ -212,7 +243,8 @@ class SyncTestCase(_SweepBase):
         _mk_record(publish=True)
         n = feedback_sync.sweep(cfg=_cfg(), transport=self.github)
         self.assertEqual(n, 1)
-        (url, payload) = self.github.calls[0]
+        ((method, url, payload),) = self.github.calls
+        self.assertEqual(method, "POST")
         self.assertEqual(
             url, "https://api.github.com/repos/Wan-ZL/zelin-ai-assistant/issues")
         self.assertEqual(payload["labels"], ["suggestion"])
@@ -220,6 +252,7 @@ class SyncTestCase(_SweepBase):
         self.assertEqual(rec["issue_number"], 101)
         self.assertEqual(rec["issue_url"], "https://github.com/x/y/issues/101")
         self.assertTrue(rec["issue_synced_at"])
+        self.assertEqual(rec["sync_attempts"], 1)   # the 预写 counter
         self.assertNotIn("sync_error", rec)
 
     def test_second_sweep_is_idempotent(self):
@@ -246,7 +279,7 @@ class SyncTestCase(_SweepBase):
         cfg.feedback_sync_repo = "someone/fork"
         _mk_record(publish=True)
         feedback_sync.sweep(cfg=cfg, transport=self.github)
-        (url, _) = self.github.calls[0]
+        (_, url, _) = self.github.posts[0]
         self.assertEqual(url, "https://api.github.com/repos/someone/fork/issues")
 
     def test_default_transport_path_reads_the_token_file(self):
@@ -268,8 +301,8 @@ class SyncTestCase(_SweepBase):
 
     def test_missing_number_in_response_counts_as_failure(self):
         _mk_record(publish=True)
-        n = feedback_sync.sweep(cfg=_cfg(),
-                                transport=lambda url, payload: {"ok": True})
+        n = feedback_sync.sweep(
+            cfg=_cfg(), transport=lambda method, url, payload: {"ok": True})
         self.assertEqual(n, 0)
         (rec,) = _records()
         self.assertNotIn("issue_number", rec)
@@ -284,20 +317,20 @@ class PayloadTestCase(_SweepBase):
         long_text = "这条建议开头有点长\n换行也要压平  多余空白合一 " + "字" * 80
         _mk_record(text=long_text, publish=True)
         feedback_sync.sweep(cfg=_cfg(), transport=self.github)
-        (_, payload) = self.github.calls[0]
+        (_, _, payload) = self.github.posts[0]
         collapsed = " ".join(long_text.split())
         self.assertEqual(payload["title"], collapsed[:60] + "…")
 
     def test_short_title_is_not_ellipsized(self):
         _mk_record(text="短建议", publish=True)
         feedback_sync.sweep(cfg=_cfg(), transport=self.github)
-        (_, payload) = self.github.calls[0]
+        (_, _, payload) = self.github.posts[0]
         self.assertEqual(payload["title"], "短建议")
 
-    def test_body_carries_text_localtime_version_and_origin_line(self):
+    def test_body_carries_text_localtime_version_origin_and_marker(self):
         rec = _mk_record(text="正文要完整出现\n包括第二行", publish=True)
         feedback_sync.sweep(cfg=_cfg(), transport=self.github)
-        (_, payload) = self.github.calls[0]
+        (_, _, payload) = self.github.posts[0]
         body = payload["body"]
         self.assertIn("正文要完整出现\n包括第二行", body)
         # submit time rendered in the SYSTEM LOCAL timezone…
@@ -306,22 +339,116 @@ class PayloadTestCase(_SweepBase):
         self.assertIn(local, body)
         self.assertIn("0.45.0", body)
         self.assertIn("来自 Zelin's AI Assistant 内置提建议入口", body)
+        # duplicate-guard piece 2: the attribution marker rides every body
+        self.assertIn(f"<!-- feedback-id: {rec['id']} -->", body)
         # …while the stored record keeps the UTC form untouched
         (on_disk,) = _records()
         self.assertEqual(on_disk["ts"], "2026-07-20T10:11:12Z")
 
 
+class AtMostOnceTestCase(_SweepBase):
+    """(e) duplicate guard: 预写计数 + 重试先对账 + GET 失败宁可晚发."""
+
+    def test_prewrite_failure_sends_zero_network_requests(self):
+        # scenario (b): the disk cannot even record the attempt (full/EPERM)
+        # — an issue created now could never be remembered, so NOTHING may
+        # be sent, or every later pass would mint another public duplicate.
+        _mk_record(publish=True)
+        with mock.patch.object(feedback, "_write_record",
+                               side_effect=OSError("read-only fs")):
+            self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                                 transport=self.github), 0)
+        self.assertEqual(self.github.calls, [])           # zero requests
+        (rec,) = _records()
+        self.assertNotIn("sync_attempts", rec)            # disk unchanged too
+
+    def test_attempt_counter_is_persisted_before_the_post(self):
+        # even a hard-crashing transport leaves the attempt already counted
+        _mk_record(publish=True)
+
+        def exploding(method, url, payload=None):
+            (rec,) = _records()
+            self.assertEqual(rec["sync_attempts"], 1)     # on disk BEFORE send
+            raise OSError("boom mid-flight")
+
+        feedback_sync.sweep(cfg=_cfg(), transport=exploding)
+        (rec,) = _records()
+        self.assertEqual(rec["sync_attempts"], 1)
+
+    def test_lost_response_then_retry_reconciles_without_reposting(self):
+        # scenario (a): the POST lands but its response is torn/times out —
+        # pass 1 records a failure; pass 2 must find the issue by its body
+        # marker and just write the number back, never POSTing again.
+        rec = _mk_record(publish=True)
+        self.github.lose_response = True
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 0)
+        (on_disk,) = _records()
+        self.assertNotIn("issue_number", on_disk)
+        self.assertEqual(on_disk["sync_attempts"], 1)
+        self.assertEqual(len(self.github.issues), 1)      # it DID get created
+
+        self.github.lose_response = False
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(len(self.github.posts), 1)       # still just one POST
+        self.assertEqual(len(self.github.gets), 1)        # reconciled via GET
+        self.assertEqual(len(self.github.issues), 1)      # NO duplicate issue
+        (on_disk,) = _records()
+        self.assertEqual(on_disk["issue_number"], 101)
+        self.assertEqual(on_disk["issue_url"],
+                         "https://github.com/x/y/issues/101")
+        self.assertNotIn("sync_error", on_disk)
+        self.assertIn(f"<!-- feedback-id: {rec['id']} -->",
+                      self.github.issues[0]["body"])
+
+    def test_reconcile_get_failure_skips_the_pass_without_posting(self):
+        # 宁可晚发不可重发: when the record may already have an issue and the
+        # listing cannot be read, a blind POST is the one duplicating move.
+        _mk_record(publish=True, sync_attempts=1)
+        self.github.fail_get_with = OSError("list unreachable")
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 0)
+        self.assertEqual(len(self.github.gets), 1)
+        self.assertEqual(self.github.posts, [])           # never POSTed
+        (rec,) = _records()
+        self.assertEqual(rec["sync_attempts"], 2)
+        self.assertIn("unreachable", rec["sync_error"])
+
+    def test_fresh_record_goes_straight_to_post_without_listing(self):
+        # 正常路径不受影响: no prior attempt => no reconcile round-trip
+        _mk_record(publish=True)
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(self.github.gets, [])
+        self.assertEqual(len(self.github.posts), 1)
+
+    def test_reconcile_ignores_other_records_markers(self):
+        # a marker hit must be THIS record's — someone else's feedback-id
+        # (or a markerless issue) never satisfies the reconcile.
+        self.github.issues.append(
+            {"number": 7, "html_url": "https://github.com/x/y/issues/7",
+             "body": "别的建议\n<!-- feedback-id: deadbeef -->"})
+        _mk_record(publish=True, sync_attempts=1)
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(len(self.github.gets), 1)        # looked first
+        self.assertEqual(len(self.github.posts), 1)       # then created anew
+        (rec,) = _records()
+        self.assertEqual(rec["issue_number"], 101)        # not 7
+
+
 class LabelRetryTestCase(_SweepBase):
-    """(e) 422 (label missing on the repo) => one retry without labels."""
+    """(f) 422 (label missing on the repo) => one retry without labels."""
 
     def test_422_retries_once_without_labels(self):
         self.github.reject_labels = True
         _mk_record(publish=True)
         n = feedback_sync.sweep(cfg=_cfg(), transport=self.github)
         self.assertEqual(n, 1)
-        self.assertEqual(len(self.github.calls), 2)
-        self.assertIn("labels", self.github.calls[0][1])
-        self.assertNotIn("labels", self.github.calls[1][1])
+        self.assertEqual(len(self.github.posts), 2)
+        self.assertIn("labels", self.github.posts[0][2])
+        self.assertNotIn("labels", self.github.posts[1][2])
         (rec,) = _records()
         self.assertEqual(rec["issue_number"], 101)
 
@@ -331,14 +458,14 @@ class LabelRetryTestCase(_SweepBase):
         _mk_record(publish=True)
         n = feedback_sync.sweep(cfg=_cfg(), transport=self.github)
         self.assertEqual(n, 0)
-        self.assertEqual(len(self.github.calls), 1)   # no second attempt
+        self.assertEqual(len(self.github.posts), 1)   # no second attempt
         (rec,) = _records()
         self.assertEqual(rec["sync_attempts"], 1)
         self.assertIn("401", rec["sync_error"])
 
 
 class GiveUpTestCase(_SweepBase):
-    """(f) three failed sweeps => the record is never tried again."""
+    """(g) three failed sweeps => the record is never tried again."""
 
     def test_three_failures_then_hands_off(self):
         self.github.fail_with = OSError("github unreachable")
@@ -368,6 +495,7 @@ class GiveUpTestCase(_SweepBase):
                                              transport=self.github), 1)
         (rec,) = _records()
         self.assertEqual(rec["issue_number"], 101)
+        self.assertEqual(rec["sync_attempts"], 2)
         self.assertNotIn("sync_error", rec)
 
     def test_one_bad_record_does_not_block_the_rest(self):
@@ -380,7 +508,7 @@ class GiveUpTestCase(_SweepBase):
 
 
 class ActdHookTestCase(_SweepBase):
-    """(g) run_once calls sweep best-effort; a raising sweep never escapes."""
+    """(h) run_once calls sweep best-effort; a raising sweep never escapes."""
 
     def _run_once_stubbed(self):
         """actd.run_once with every heavy/networked stage stubbed out — only
@@ -423,7 +551,13 @@ class ActdHookTestCase(_SweepBase):
 
 
 class ConfigWiringTestCase(unittest.TestCase):
-    """feedback_sync.* yaml keys + the app override keys (flat and nested)."""
+    """feedback_sync.* yaml keys + the app override keys.
+
+    feedback_publish_default is override-ONLY (the App's checkbox memory):
+    its only reader is the feedback dialog, which consults
+    settings_overrides.json — so the yaml/nested spellings must stay
+    non-keys. A documented-but-unread privacy switch is worse than none.
+    """
 
     def _load(self, overrides: dict, yaml_body: str = "") -> config.Config:
         tmp = Path(tempfile.mkdtemp(prefix="cfg-fbsync-"))
@@ -444,7 +578,7 @@ class ConfigWiringTestCase(unittest.TestCase):
         self.assertTrue(cfg.feature("feedback_sync"))
         self.assertIn("feedback_sync", config.DEFAULT_FEATURES)
 
-    def test_yaml_block(self):
+    def test_yaml_block_loads_repo_and_token_path_only(self):
         cfg = self._load({}, yaml_body=(
             "feedback_sync:\n"
             "  repo: someone/fork\n"
@@ -452,7 +586,9 @@ class ConfigWiringTestCase(unittest.TestCase):
             "  publish_default: false\n"))
         self.assertEqual(cfg.feedback_sync_repo, "someone/fork")
         self.assertEqual(cfg.feedback_sync_token_path, "~/tokens/gh.txt")
-        self.assertFalse(cfg.feedback_publish_default)
+        # override-only key: the yaml spelling is deliberately NOT a knob —
+        # nothing reads it, so accepting it would be a silently-dead switch
+        self.assertTrue(cfg.feedback_publish_default)
 
     def test_flat_overrides_win_over_yaml(self):
         cfg = self._load(
@@ -464,22 +600,20 @@ class ConfigWiringTestCase(unittest.TestCase):
         self.assertEqual(cfg.feedback_sync_token_path, "elsewhere/tok.txt")
         self.assertFalse(cfg.feedback_publish_default)
 
-    def test_nested_override_form(self):
+    def test_nested_override_form_repo_and_token_path_only(self):
         cfg = self._load({"feedback_sync": {
             "repo": "nested/repo",
             "token_path": "nested/tok.txt",
-            "publish_default": "false",   # string spelling must work
+            "publish_default": False,   # non-key here too (flat key only)
         }})
         self.assertEqual(cfg.feedback_sync_repo, "nested/repo")
         self.assertEqual(cfg.feedback_sync_token_path, "nested/tok.txt")
-        self.assertFalse(cfg.feedback_publish_default)
+        self.assertTrue(cfg.feedback_publish_default)
 
     def test_bad_values_keep_defaults(self):
         cfg = self._load({"feedback_publish_default": "maybe",
-                          "feedback_sync": {"repo": "   ",
-                                            "publish_default": "kinda"}},
-                         yaml_body="feedback_sync:\n  publish_default: 也许\n")
-        self.assertTrue(cfg.feedback_publish_default)   # bad values skipped
+                          "feedback_sync": {"repo": "   "}})
+        self.assertTrue(cfg.feedback_publish_default)   # bad value skipped
         self.assertEqual(cfg.feedback_sync_repo, "Wan-ZL/zelin-ai-assistant")
 
     def test_features_flag_override(self):

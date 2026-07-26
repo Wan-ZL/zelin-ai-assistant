@@ -14,11 +14,29 @@ pipeline root) simply not existing means the whole module is a silent no-op —
 no health complaint, no log spam. The token needs only ``issues: write`` on
 the target repo.
 
-Anti-loop guard: every failed create bumps ``sync_attempts`` on the record;
-records at :data:`MAX_SYNC_ATTEMPTS` are never tried again (a schema mistake
-or revoked token must not burn the GitHub API forever). ``publish`` absent or
-false — including every record written before this feature existed — is never
-synced: publishing is an explicit per-report opt-in.
+Duplicate guard (公开 repo 烧不起重复 issue) — a bare POST-retry loop is
+at-least-once, and two real failure shapes turn that into duplicates: the POST
+lands but the RESPONSE is lost (timeout/torn body → no number recorded), and
+the issue gets created but the write-back to disk fails (disk full / EPERM —
+this repo has TCC/EPERM 前科), leaving nothing that even counts the attempt.
+Three cooperating pieces make creation effectively once-only:
+
+1. 预写计数: ``sync_attempts`` is bumped and PERSISTED **before** any network
+   request; if that pre-write fails the record is skipped without sending
+   anything — an issue the bookkeeping can't remember must never be created,
+   or every later pass would create another.
+2. body 标记: every issue body ends with ``<!-- feedback-id: <record id> -->``
+   so an issue is always attributable to its record after the fact.
+3. 重试先对账: a retry (``sync_attempts >= 1`` and still no ``issue_number``
+   — the previous POST may have half-succeeded) first LISTS recent issues and
+   scans for the marker; a hit just writes the number back (no second POST),
+   and a failed list skips the record this pass（宁可晚发不可重发）.
+
+Anti-loop guard on top: records at :data:`MAX_SYNC_ATTEMPTS` are never tried
+again (a schema mistake or revoked token must not burn the GitHub API
+forever). ``publish`` absent or false — including every record written before
+this feature existed — is never synced: publishing is an explicit per-report
+opt-in.
 
 The network call is an injection seam (``transport`` argument, same pattern as
 feedback.Transport) so tests never touch the real API. Nothing here may raise
@@ -43,11 +61,13 @@ TITLE_CAP = 60         # issue title = first chars of the suggestion text
 ERROR_CAP = 200        # like feedback.py: first 200 chars of the last error
 TIMEOUT_SECONDS = 10   # inline in the daemon pass — keep the block bounded
 MAX_SYNC_ATTEMPTS = 3  # terminal: never retried past this (API burn guard)
+LIST_PAGE_SIZE = 100   # 对账扫描窗口：最近 100 条 issue（半成功都是刚发生的）
 
-# (url, payload) -> parsed response dict, raises on any transport failure.
-# A 422 must surface as an exception with ``code == 422`` (urllib's HTTPError
-# already does) so the labels-retry below can recognize it.
-Transport = Callable[[str, dict], dict]
+# (method, url, payload) -> parsed JSON: dict for POST, list for GET (payload
+# is None for GET). Raises on any transport failure. A 422 must surface as an
+# exception with ``code == 422`` (urllib's HTTPError already does) so the
+# labels-retry below can recognize it.
+Transport = Callable[[str, str, Optional[dict]], object]
 
 
 def _iso_now() -> str:
@@ -98,6 +118,13 @@ def _local_ts(ts: str) -> str:
     return dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
 
 
+def _marker(record: dict) -> str:
+    """Invisible-in-render attribution line: ties an issue back to its local
+    record, and lets the retry reconcile (below) recognize a half-created
+    issue instead of posting a duplicate."""
+    return f"<!-- feedback-id: {record.get('id')} -->"
+
+
 def _issue_payload(record: dict) -> dict:
     text = str(record.get("text") or "")
     body = (
@@ -105,6 +132,7 @@ def _issue_payload(record: dict) -> dict:
         f"提交时间 / Submitted: {_local_ts(str(record.get('ts') or ''))}\n"
         f"App 版本 / App version: {record.get('app_version') or 'unknown'}\n"
         "来自 Zelin's AI Assistant 内置提建议入口。\n"
+        f"{_marker(record)}\n"
     )
     return {"title": _title(text), "body": body, "labels": [ISSUE_LABEL]}
 
@@ -113,12 +141,14 @@ def _issue_payload(record: dict) -> dict:
 # Transport — plain urllib POST to api.github.com (no new dependency)
 # --------------------------------------------------------------------------- #
 def _make_transport(token: str) -> Transport:
-    def send(url: str, payload: dict) -> dict:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    def send(method: str, url: str, payload: Optional[dict] = None) -> object:
+        body = None
+        if payload is not None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url,
             data=body,
-            method="POST",
+            method=method,
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/vnd.github+json",
@@ -131,27 +161,48 @@ def _make_transport(token: str) -> Transport:
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # nosec B310
             data = resp.read()
         try:
-            parsed = json.loads(data.decode("utf-8"))
-        except Exception:  # noqa: BLE001 - a 201 with odd body still parsed below
-            parsed = None
-        return parsed if isinstance(parsed, dict) else {}
+            # a 201 whose body was lost/torn parses to {} → "no number" →
+            # counted as a failure, and the NEXT pass reconciles by marker
+            # instead of re-posting (the duplicate-guard docstring, piece 3)
+            return json.loads(data.decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return {}
 
     return send
 
 
-def _create_issue(send: Transport, repo: str, record: dict) -> dict:
+def _create_issue(send: Transport, repo: str, record: dict) -> object:
     """POST the issue; on a 422 (typically: the `suggestion` label does not
     exist on the target repo) retry ONCE without the labels field — an
     unlabeled public issue beats a lost report."""
     url = f"{API_BASE}/repos/{repo}/issues"
     payload = _issue_payload(record)
     try:
-        return send(url, payload)
+        return send("POST", url, payload)
     except Exception as e:  # noqa: BLE001 - only the 422 shape is retried
         if getattr(e, "code", None) != 422:
             raise
         payload.pop("labels", None)
-        return send(url, payload)
+        return send("POST", url, payload)
+
+
+def _find_existing(send: Transport, repo: str, record: dict) -> Optional[dict]:
+    """重试先对账: scan the newest issues for this record's body marker.
+
+    Deliberately NOT filtered by the ``suggestion`` label: the 422 fallback
+    above creates label-less issues, and a ``labels=`` filter would miss
+    exactly the half-created issue this reconcile exists to find. Raises on
+    any transport/shape failure — the caller must then SKIP the record this
+    pass (a blind re-POST is the one thing that can duplicate)."""
+    url = f"{API_BASE}/repos/{repo}/issues?state=all&per_page={LIST_PAGE_SIZE}"
+    resp = send("GET", url, None)
+    if not isinstance(resp, list):
+        raise ValueError("issue list response was not a list")
+    marker = _marker(record)
+    for item in resp:
+        if isinstance(item, dict) and marker in str(item.get("body") or ""):
+            return item
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -173,10 +224,32 @@ def _is_pending(record) -> bool:
 
 
 def _sync_one(send: Transport, repo: str, record: dict) -> bool:
-    """One create attempt; rewrites the record with the outcome (atomic
-    tmp+replace via feedback._write_record). True = issue created."""
+    """One publish attempt; True = the record now has its GitHub issue.
+    All record rewrites are atomic tmp+replace via feedback._write_record.
+
+    预写计数 (duplicate-guard piece 1): ``sync_attempts`` is bumped and
+    persisted BEFORE any network call. If even that write fails (disk full,
+    EPERM) the record is skipped with ZERO requests sent — an issue created
+    now could never be remembered, and every later pass would mint another
+    public duplicate, unbounded.
+    """
+    already_tried = int(record.get("sync_attempts") or 0)
     try:
-        resp = _create_issue(send, repo, record)
+        record["sync_attempts"] = already_tried + 1
+        feedback._write_record(record)
+    except Exception:  # noqa: BLE001 - no bookkeeping => no network, period
+        return False
+    try:
+        resp: Optional[dict] = None
+        if already_tried >= 1:
+            # duplicate-guard piece 3: the previous POST may have half-
+            # succeeded (response lost) — reconcile by body marker first; a
+            # failed listing raises => this record is skipped this pass
+            # (宁可晚发不可重发).
+            resp = _find_existing(send, repo, record)
+        if resp is None:
+            created = _create_issue(send, repo, record)
+            resp = created if isinstance(created, dict) else {}
         number = resp.get("number")
         if not isinstance(number, int):
             raise ValueError("issue create response carried no number")
@@ -187,8 +260,7 @@ def _sync_one(send: Transport, repo: str, record: dict) -> bool:
         feedback._write_record(record)
         return True
     except Exception as e:  # noqa: BLE001 - one bad record must not stop the sweep
-        record["sync_attempts"] = int(record.get("sync_attempts") or 0) + 1
-        record["sync_error"] = str(e)[:ERROR_CAP]
+        record["sync_error"] = str(e)[:ERROR_CAP]  # attempts already counted
         try:
             feedback._write_record(record)
         except Exception:  # noqa: BLE001 - bookkeeping is best-effort too

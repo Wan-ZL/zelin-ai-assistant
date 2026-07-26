@@ -129,8 +129,8 @@ digest:
 #   # token_path 默认 config/secrets/github-feedback-token.txt（相对管线根）；文件不存在 = 整个同步
 #   # 静默关闭（同 gmail 无凭证哲学，健康检查不报错）。token 只需目标 repo 的 issues:write。
 #   # token_path: "config/secrets/github-feedback-token.txt"
-#   # publish_default: true            # 提建议弹窗勾选框的默认态（App 会记住上次选择，写 settings_overrides）
-#   # 总开关走 features.feedback_sync（默认开）；每条建议是否公开由弹窗勾选逐条决定。
+#   # 总开关走 features.feedback_sync（默认开）；每条建议是否公开由弹窗勾选逐条决定，
+#   # 勾选框默认态 = App 记住的上次选择（settings_overrides.json，yaml 无此旋钮）。
 
 redaction:                             # 发给 AI 前的本地脱敏
   enabled: false                       # 词表脱敏开关（默认关；打开会改变 AI 看到的内容，也可在 app 设置里切）
