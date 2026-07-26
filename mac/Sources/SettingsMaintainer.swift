@@ -201,8 +201,8 @@ struct MaintainerSettingsSection: View {
     // CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("软件有问题、或想改它？点下面的按钮会在终端打开一个 Claude 会话，工作目录就是这个软件的代码仓库——直接用中文告诉它要修什么。",
-                   "Something broken, or want to change this software? The button below opens a Claude session in a terminal whose working directory is this software's own code repo — just tell it what to fix, in plain language."))
+            Text(L("这是一个对着本软件源码的全功能 Claude 开发会话：修 bug、加功能、跑测试、提 PR 都可以——点下面的按钮在终端打开，直接用中文告诉它你想要什么。",
+                   "A full Claude development session over this software's own source: fix bugs, add features, run tests, open PRs — the button below opens it in a terminal; just say what you want, in plain language."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -275,7 +275,7 @@ struct MaintainerSettingsSection: View {
     private var launchRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Button(L("在终端打开维护会话", "Open a maintenance session in the terminal")) {
+                Button(L("在终端打开开发会话", "Open a development session in the terminal")) {
                     model.openSession()
                 }
                 .disabled(!model.repoPathExists)
