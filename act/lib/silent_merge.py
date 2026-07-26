@@ -355,7 +355,18 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
     note = f"静默并入 {secondary.id}「{secondary.display_title or secondary.title}」"
     if brief and brief != "无新增信息":
         note += f"：{brief}"
-    registry.append_fold_note(primary, note, "radar")
+    if registry.append_fold_note(primary, note, "radar") is None:
+        # crash-retry（TLA+ 模型检查发现，docs/design/SilentMerge.tla）：上一次
+        # execute 在 save(primary) 之后、trash(secondary) 之前死掉，job 文件仍是
+        # "judged"，重启后走到这里。fold note 按 (kind, 文本) 去重返回 None ==
+        # fold 半程已落过盘——计数（repeated_mentions/silent_merge_count）绝不能
+        # 翻倍，只把 trash 半程补完。note 文本由 (secondary, brief) 决定性生成，
+        # 且 pair ledger 终生一次 + LIGHT 复检挡住了「同 pair 二次合并」，所以
+        # None 只可能是本 job 的重跑。
+        registry.trash(secondary, f"silent-merge: 已并入 {primary.id}")
+        analytics.log_event("silent_merge", primary=primary.id,
+                            secondary=secondary.id, outcome="ok_retry")
+        return True
     merged, added = registry._dedupe_sources(
         primary.sources or [], secondary.sources or [])
     primary.sources = merged

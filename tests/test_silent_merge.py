@@ -136,6 +136,38 @@ class ExecuteTestCase(unittest.TestCase):
         silent_merge.queue_briefing(r, "同一句话")
         self.assertEqual(r.execution["pending_briefings"], ["同一句话"])
 
+    def test_crash_retry_never_doubles_the_fold(self):
+        """TLA+ 反例（docs/design/SilentMerge.tla, FixEnabled=FALSE）的判例：
+        actd 死在 save(primary) 之后、trash(secondary) 之前 -> job 文件仍是
+        judged -> 重启重跑 execute。计数绝不能翻倍，trash 半程要补完。"""
+        primary = _seed("R-001", DUP_A, sources=[
+            {"who": "a", "channel": "slack", "date": "2026-07-16", "quote": "x"}])
+        secondary = _seed("R-002", DUP_B, sources=[
+            {"who": "b", "channel": "gmail", "date": "2026-07-17", "quote": "y"}])
+        # 模拟 crash：第一跑在 trash 落盘前死掉（save(primary) 已落）
+        real_trash = registry.trash
+        def dying_trash(req, reason):
+            raise RuntimeError("simulated crash between the two writes")
+        registry.trash = dying_trash
+        try:
+            with self.assertRaises(RuntimeError):
+                silent_merge.execute(primary, secondary, "补充了预算数字")
+        finally:
+            registry.trash = real_trash
+        # 重启后 consume_judged 会 fresh-load 再跑一遍 execute
+        p2 = registry.load("R-001")
+        s2 = registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p2, s2, "补充了预算数字"))
+        p = registry.load("R-001")
+        s = registry.load("R-002")
+        # 计数只算一次（重跑走 ok_retry 幂等路径）
+        self.assertEqual(p.repeated_mentions, 2)
+        self.assertEqual(p.silent_merge_count, 1)
+        self.assertEqual(p.notes.count("静默并入 R-002"), 1)
+        # trash 半程补完：可恢复、reason 指向主卡
+        self.assertEqual(s.status, State.TRASHED.value)
+        self.assertEqual(s.prev_status, State.CARD_SENT.value)
+
 
 class CliMainTestCase(unittest.TestCase):
     def setUp(self):

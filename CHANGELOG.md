@@ -25,7 +25,15 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **静默并入 crash-retry 不再翻倍计数（TLA+ 模型检查发现）** — actd 死在
+  execute() 两笔写之间（主卡 fold 已落盘、副卡 trash 未落）时，job 文件仍是
+  judged，重启重跑会把 `repeated_mentions`/`silent_merge_count` 二次施加。
+  `docs/design/SilentMerge.tla` 用 TLC 穷举出 5 步反例；修复用 fold note 的
+  (kind, 文本) 去重作天然幂等标记——重跑只补完 trash 半程（`ok_retry`）。
+  §44 协议的三条安全不变量（不吞已投入卡 / 永不丢信息 / fold 至多一次）
+  修复后全状态空间通过，跑法见 docs/design/silent-merge-model.md。
 
 ## [0.46.1] - 2026-07-27
 
