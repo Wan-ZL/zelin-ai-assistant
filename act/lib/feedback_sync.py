@@ -27,9 +27,11 @@ Three cooperating pieces make creation effectively once-only:
    or every later pass would create another.
 2. body 标记: every issue body ends with ``<!-- feedback-id: <record id> -->``
    so an issue is always attributable to its record after the fact.
-3. 重试先对账: a retry (``sync_attempts >= 1`` and still no ``issue_number``
-   — the previous POST may have half-succeeded) first LISTS recent issues
-   (up to :data:`LIST_MAX_PAGES` pages, ``pull_request`` entries skipped — the
+3. 重试先对账: a retry (the record carries EVIDENCE of an earlier send — a
+   counted attempt, or just ``last_sync_attempt_at`` left by a rolled-back
+   transient failure — and still no ``issue_number``: the previous POST may
+   have half-succeeded) first LISTS recent issues (up to
+   :data:`LIST_MAX_PAGES` pages, ``pull_request`` entries skipped — the
    /issues endpoint interleaves PRs) and scans for the marker; a hit just
    writes the number back (no second POST), and a failed list skips the
    record this pass（宁可晚发不可重发）.
@@ -37,11 +39,16 @@ Three cooperating pieces make creation effectively once-only:
 Anti-loop guards on top: retries are SPACED — a record attempted less than
 :data:`MIN_RETRY_AGE_SECONDS` ago is skipped without burning an attempt
 (feedback.retry_pending 先例; actd passes come every ~10s, so without the
-spacing one offline minute would eat every attempt), and records at
-:data:`MAX_SYNC_ATTEMPTS` are never tried again (a schema mistake or revoked
-token must not burn the GitHub API forever). ``publish`` absent or false —
-including every record written before this feature existed — is never synced:
-publishing is an explicit per-report opt-in.
+spacing one offline minute would eat every attempt) — and only NON-TRANSIENT
+failures (4xx, response-shape surprises) count toward
+:data:`MAX_SYNC_ATTEMPTS`, past which a record is never tried again (a schema
+mistake or revoked token must not burn the GitHub API forever). Transient
+trouble (connection errors, timeouts, HTTP 5xx) rolls the counter back and
+costs only the spacing: the whole budget is ~2 minutes, and one sleep/wake or
+captive-portal window must not permanently give up an opt-in the user
+explicitly checked. ``publish`` absent or false — including every record
+written before this feature existed — is never synced: publishing is an
+explicit per-report opt-in.
 
 The network call is an injection seam (``transport`` argument, same pattern as
 feedback.Transport) so tests never touch the real API. Nothing here may raise
@@ -51,6 +58,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
@@ -115,14 +123,17 @@ def _title(text: str) -> str:
     return t or "用户建议"
 
 
-def _local_ts(ts: str) -> str:
-    """Stored UTC 'ts' rendered in the SYSTEM LOCAL timezone for display —
-    the issue reader shouldn't have to do UTC math. Unparseable ts falls back
-    to the raw string (storage stays UTC either way)."""
+def _utc_ts(ts: str) -> str:
+    """Stored 'ts' normalized to UTC ISO ("…Z") for the PUBLIC issue body.
+    Deliberately NOT the system-local rendering: %Z would print the user's
+    timezone abbreviation — a coarse location signal — on a page anyone can
+    read (PRIVACY §16 promises text+time+version only). Local-time display
+    belongs to private surfaces. Unparseable ts falls back to the raw
+    string."""
     dt = analytics.parse_ts(str(ts or ""))
     if dt is None:
         return str(ts or "")
-    return dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    return dt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _marker(record: dict) -> str:
@@ -136,7 +147,7 @@ def _issue_payload(record: dict) -> dict:
     text = str(record.get("text") or "")
     body = (
         f"{text}\n\n---\n"
-        f"提交时间 / Submitted: {_local_ts(str(record.get('ts') or ''))}\n"
+        f"提交时间 / Submitted (UTC): {_utc_ts(str(record.get('ts') or ''))}\n"
         f"App 版本 / App version: {record.get('app_version') or 'unknown'}\n"
         "来自 Zelin's AI Assistant 内置提建议入口。\n"
         f"{_marker(record)}\n"
@@ -254,6 +265,21 @@ def _is_pending(record) -> bool:
     return True
 
 
+def _is_transient(e: Exception) -> bool:
+    """Transient = the next pass may genuinely succeed on its own: connection
+    trouble (sleep/wake, captive portal, DNS, timeouts) and HTTP 5xx. These
+    must not burn the MAX_SYNC_ATTEMPTS budget — the whole budget is
+    ~2 minutes of wall clock, one bad-network window would permanently and
+    silently drop a publish the user explicitly checked. Everything else
+    (4xx, response-shape surprises) is counted: it won't heal by waiting,
+    and the burn guard must stay bounded."""
+    code = getattr(e, "code", None)  # urllib's HTTPError carries the status
+    if isinstance(code, int):
+        return code >= 500
+    # URLError subclasses OSError; socket timeouts/ConnectionError are OSError
+    return isinstance(e, (OSError, urllib.error.URLError))
+
+
 def _sync_one(send: Transport, repo: str, record: dict) -> bool:
     """One publish attempt; True = the record now has its GitHub issue.
     All record rewrites are atomic tmp+replace via feedback._write_record.
@@ -264,8 +290,17 @@ def _sync_one(send: Transport, repo: str, record: dict) -> bool:
     EPERM) the record is skipped with ZERO requests sent — an issue created
     now could never be remembered, and every later pass would mint another
     public duplicate, unbounded.
+
+    Transient failures roll ``sync_attempts`` back afterwards (they don't
+    burn the budget), but ``last_sync_attempt_at`` STAYS — it is both the
+    60s spacing clock and the evidence that a request may have reached
+    GitHub, which is what routes the next pass through the reconcile below
+    instead of the fresh-POST fast path.
     """
     already_tried = int(record.get("sync_attempts") or 0)
+    # Evidence of an earlier send — a counted attempt, or the timestamp a
+    # rolled-back transient left behind. Read BEFORE the 预写 overwrites it.
+    ever_sent = already_tried >= 1 or bool(record.get("last_sync_attempt_at"))
     try:
         record["sync_attempts"] = already_tried + 1
         record["last_sync_attempt_at"] = _iso_now()
@@ -274,11 +309,11 @@ def _sync_one(send: Transport, repo: str, record: dict) -> bool:
         return False
     try:
         resp: Optional[dict] = None
-        if already_tried >= 1:
+        if ever_sent:
             # duplicate-guard piece 3: the previous POST may have half-
-            # succeeded (response lost) — reconcile by body marker first; a
-            # failed listing raises => this record is skipped this pass
-            # (宁可晚发不可重发).
+            # succeeded (response lost / timed out) — reconcile by body
+            # marker first; a failed listing raises => this record is
+            # skipped this pass (宁可晚发不可重发).
             resp = _find_existing(send, repo, record)
         if resp is None:
             created = _create_issue(send, repo, record)
@@ -293,7 +328,11 @@ def _sync_one(send: Transport, repo: str, record: dict) -> bool:
         feedback._write_record(record)
         return True
     except Exception as e:  # noqa: BLE001 - one bad record must not stop the sweep
-        record["sync_error"] = str(e)[:ERROR_CAP]  # attempts already counted
+        if _is_transient(e):
+            # 瞬态不烧预算: roll the counter back to what it was — the
+            # record stays fully pending and pays only the 60s spacing.
+            record["sync_attempts"] = already_tried
+        record["sync_error"] = str(e)[:ERROR_CAP]
         try:
             feedback._write_record(record)
         except Exception:  # noqa: BLE001 - bookkeeping is best-effort too

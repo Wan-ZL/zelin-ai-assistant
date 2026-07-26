@@ -262,9 +262,10 @@
   生效**，勾选框出厂不预勾（只记住你上次的选择）。actd 随后在后台把这一条
   发布为 `feedback_sync.repo`（默认本项目 repo）上的公开 issue
   （CONTRACT §29bis）。
-- **Payload**：建议**全文** + 提交时间 + app 版本，写进**任何人可见**的 issue
-  正文（**不含**卡片标题快照——快照只走第 14 行的 Supabase 通道）。发布是
-  公开行为：issue 一旦建出，删除/编辑都在 GitHub 上留痕。
+- **Payload**：建议**全文** + 提交时间（**UTC**——不用本地时区渲染，时区
+  缩写是粗粒度位置信号，不进公开页面） + app 版本，写进**任何人可见**的
+  issue 正文（**不含**卡片标题快照——快照只走第 14 行的 Supabase 通道）。
+  发布是公开行为：issue 一旦建出，删除/编辑都在 GitHub 上留痕。
 - **关闭**：不勾选即不触发；`features.feedback_sync: false` 或不存在 token
   文件（`feedback_sync.token_path`）则整个同步器静默停用（已勾选的记录
   留在本地不外发）。

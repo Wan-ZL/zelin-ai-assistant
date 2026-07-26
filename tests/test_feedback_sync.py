@@ -8,9 +8,10 @@ Covers the feature's whole surface:
     philosophy) and when features.feedback_sync is off — NoTokenTestCase;
 (c) with a token (fake transport) the issue is created, number/url are written
     back atomically, and a second sweep is idempotent — SyncTestCase;
-(d) issue payload: 60-char title, body carries the full text + LOCAL-timezone
-    submit time + app_version + the fixed origin line + the feedback-id
-    marker (storage stays UTC) — PayloadTestCase;
+(d) issue payload: 60-char title, body carries the full text + UTC (ISO "Z")
+    submit time — never the system-local %Z rendering, a timezone
+    abbreviation on a public page is a location signal — + app_version + the
+    fixed origin line + the feedback-id marker — PayloadTestCase;
 (e) the duplicate guard is effectively once-only — AtMostOnceTestCase:
     预写计数 (a failed pre-write sends ZERO network requests), 重试先对账
     (a lost POST response is reconciled by body marker on the next pass, no
@@ -19,12 +20,15 @@ Covers the feature's whole surface:
     instead of blindly re-posting, and the fresh-record fast path never lists;
 (f) a 422 on create (label missing on the target repo) retries ONCE without
     the labels field — LabelRetryTestCase;
-(g) failures bump sync_attempts and the record is left alone for good after
-    MAX_SYNC_ATTEMPTS (API burn guard) — GiveUpTestCase;
+(g) NON-TRANSIENT failures bump sync_attempts and the record is left alone
+    for good after MAX_SYNC_ATTEMPTS (API burn guard) — GiveUpTestCase —
+    while transient trouble (connection/timeout/5xx) rolls the counter back
+    and a timed-out POST still reconciles before any re-POST —
+    TransientTestCase;
 (h) the actd run_once hook calls sweep best-effort and an exploding sweep
     never leaks out of the pass — ActdHookTestCase;
 (i) retries are spaced by MIN_RETRY_AGE_SECONDS: back-to-back daemon passes
-    burn ONE attempt, the record retries normally once aged, and a garbage
+    send ONE request, the record retries normally once aged, and a garbage
     last_sync_attempt_at fails open — RetrySpacingTestCase;
 plus the config wiring for feedback_sync.repo / token_path and the
 override-ONLY feedback_publish_default key (factory default false — 公开是
@@ -351,21 +355,23 @@ class PayloadTestCase(_SweepBase):
         (_, _, payload) = self.github.posts[0]
         self.assertEqual(payload["title"], "短建议")
 
-    def test_body_carries_text_localtime_version_origin_and_marker(self):
+    def test_body_carries_text_utc_time_version_origin_and_marker(self):
         rec = _mk_record(text="正文要完整出现\n包括第二行", publish=True)
         feedback_sync.sweep(cfg=_cfg(), transport=self.github)
         (_, _, payload) = self.github.posts[0]
         body = payload["body"]
         self.assertIn("正文要完整出现\n包括第二行", body)
-        # submit time rendered in the SYSTEM LOCAL timezone…
+        # 公开 issue 的提交时间必须是 UTC ISO——%Z 的本地时区缩写是粗粒度
+        # 位置信号，不得出现在任何人可见的页面上 (PRIVACY §16)
+        self.assertIn("提交时间 / Submitted (UTC): 2026-07-20T10:11:12Z", body)
         local = analytics.parse_ts(rec["ts"]).astimezone() \
             .strftime("%Y-%m-%d %H:%M %Z")
-        self.assertIn(local, body)
+        self.assertNotIn(local, body)
         self.assertIn("0.45.0", body)
         self.assertIn("来自 Zelin's AI Assistant 内置提建议入口", body)
         # duplicate-guard piece 2: the attribution marker rides every body
         self.assertIn(f"<!-- feedback-id: {rec['id']} -->", body)
-        # …while the stored record keeps the UTC form untouched
+        # the stored record keeps its UTC form untouched too
         (on_disk,) = _records()
         self.assertEqual(on_disk["ts"], "2026-07-20T10:11:12Z")
 
@@ -387,7 +393,9 @@ class AtMostOnceTestCase(_SweepBase):
         self.assertNotIn("sync_attempts", rec)            # disk unchanged too
 
     def test_attempt_counter_is_persisted_before_the_post(self):
-        # even a hard-crashing transport leaves the attempt already counted
+        # even a hard-crashing transport sends with the attempt already
+        # counted on disk; a transient crash then rolls the counter back
+        # but keeps the spacing clock (the evidence a POST may have landed)
         _mk_record(publish=True)
 
         def exploding(method, url, payload=None):
@@ -397,7 +405,8 @@ class AtMostOnceTestCase(_SweepBase):
 
         feedback_sync.sweep(cfg=_cfg(), transport=exploding)
         (rec,) = _records()
-        self.assertEqual(rec["sync_attempts"], 1)
+        self.assertEqual(rec["sync_attempts"], 0)   # transient: rolled back
+        self.assertTrue(rec["last_sync_attempt_at"])
 
     def test_lost_response_then_retry_reconciles_without_reposting(self):
         # scenario (a): the POST lands but its response is torn/times out —
@@ -437,7 +446,8 @@ class AtMostOnceTestCase(_SweepBase):
         self.assertEqual(len(self.github.gets), 1)
         self.assertEqual(self.github.posts, [])           # never POSTed
         (rec,) = _records()
-        self.assertEqual(rec["sync_attempts"], 2)
+        # an unreachable listing is transient too — the counter rolls back
+        self.assertEqual(rec["sync_attempts"], 1)
         self.assertIn("unreachable", rec["sync_error"])
 
     def test_fresh_record_goes_straight_to_post_without_listing(self):
@@ -533,10 +543,13 @@ class LabelRetryTestCase(_SweepBase):
 
 
 class GiveUpTestCase(_SweepBase):
-    """(g) three failed sweeps => the record is never tried again."""
+    """(g) three NON-TRANSIENT failures => the record is never tried again."""
 
     def test_three_failures_then_hands_off(self):
-        self.github.fail_with = OSError("github unreachable")
+        # 404 = the configured repo slug is wrong — waiting won't heal it,
+        # so every try counts toward the budget (unlike transient trouble)
+        self.github.fail_with = urllib.error.HTTPError(
+            "https://api.github.com", 404, "Not Found", None, None)
         _mk_record(publish=True)
         for expected in (1, 2, 3):
             _age_last_attempt()   # each sweep = a pass outside the cooldown
@@ -558,7 +571,8 @@ class GiveUpTestCase(_SweepBase):
         self.assertNotIn("issue_number", rec)
 
     def test_success_after_a_failure_clears_the_error(self):
-        self.github.fail_with = OSError("flaky")
+        self.github.fail_with = urllib.error.HTTPError(
+            "https://api.github.com", 404, "Not Found", None, None)
         _mk_record(publish=True)
         feedback_sync.sweep(cfg=_cfg(), transport=self.github)
         self.github.fail_with = None
@@ -579,21 +593,94 @@ class GiveUpTestCase(_SweepBase):
                                              transport=self.github), 1)
 
 
+class TransientTestCase(_SweepBase):
+    """瞬态不烧预算: connection/timeout/5xx roll the counter back — a
+    sleep/wake or captive-portal window (3 × 60s ≈ 2 分钟总预算) must not
+    permanently give up a publish the user explicitly checked."""
+
+    def test_transient_failures_never_exhaust_the_budget(self):
+        self.github.fail_with = urllib.error.URLError("network is down")
+        _mk_record(publish=True)
+        for _ in range(feedback_sync.MAX_SYNC_ATTEMPTS + 2):
+            _age_last_attempt()
+            self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                                 transport=self.github), 0)
+            (rec,) = _records()
+            self.assertEqual(rec["sync_attempts"], 0)   # rolled back each time
+        self.github.fail_with = None                    # 网络恢复
+        _age_last_attempt()
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        (rec,) = _records()
+        self.assertEqual(rec["issue_number"], 101)      # 照常发布
+        self.assertEqual(rec["sync_attempts"], 1)
+        self.assertNotIn("sync_error", rec)
+
+    def test_http_5xx_is_transient(self):
+        self.github.fail_with = urllib.error.HTTPError(
+            "https://api.github.com", 503, "Service Unavailable", None, None)
+        _mk_record(publish=True)
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 0)
+        (rec,) = _records()
+        self.assertEqual(rec["sync_attempts"], 0)       # not counted
+        self.assertIn("503", rec["sync_error"])
+
+    def test_http_4xx_burns_the_budget(self):
+        # the 500 boundary: a 4xx won't heal by waiting — it must count,
+        # or a schema mistake would retry every 60s forever
+        self.github.fail_with = urllib.error.HTTPError(
+            "https://api.github.com", 400, "Bad Request", None, None)
+        _mk_record(publish=True)
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 0)
+        (rec,) = _records()
+        self.assertEqual(rec["sync_attempts"], 1)
+
+    def test_timed_out_post_reconciles_before_reposting(self):
+        # POST 超时 = 半成功的典型形态（请求到了，响应没回来）。瞬态回滚把
+        # 计数退回 0，但绝不能让下一轮走 fresh-POST 快道——盘上留下的
+        # last_sync_attempt_at 就是「曾有在途请求」的证据，先对账。
+        rec = _mk_record(publish=True)
+        real = self.github
+
+        def timing_out(method, url, payload=None):
+            resp = real(method, url, payload)
+            if method == "POST":
+                raise TimeoutError("response never came back")
+            return resp
+
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=timing_out), 0)
+        (on_disk,) = _records()
+        self.assertEqual(on_disk["sync_attempts"], 0)   # transient, no burn
+        self.assertEqual(len(real.issues), 1)           # 但对面已经建成了
+
+        _age_last_attempt()
+        self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
+                                             transport=self.github), 1)
+        self.assertEqual(len(real.posts), 1)            # 没有第二次 POST
+        self.assertEqual(len(real.issues), 1)           # 没有重复 issue
+        (on_disk,) = _records()
+        self.assertEqual(on_disk["issue_number"], 101)
+        self.assertIn(f"<!-- feedback-id: {rec['id']} -->",
+                      real.issues[0]["body"])
+
+
 class RetrySpacingTestCase(_SweepBase):
     """(i) MIN_RETRY_AGE_SECONDS: back-to-back passes burn ONE attempt."""
 
-    def test_back_to_back_passes_burn_only_one_attempt(self):
-        # actd 每 ~10s 一个 pass：断网时若每 pass 都计次，半分钟就烧光
-        # MAX_SYNC_ATTEMPTS 永久放弃。冷却期内的 pass 必须整个跳过——
-        # 不发请求、不计次。
+    def test_back_to_back_passes_send_only_one_request(self):
+        # actd 每 ~10s 一个 pass：冷却期内的 pass 必须整个跳过——不发请求、
+        # 不计次。断网（瞬态）本身也不烧预算：计数回滚到 0。
         self.github.fail_with = OSError("offline")
         _mk_record(publish=True)
         for _ in range(4):   # 连续 daemon pass，全部落在同一冷却窗口内
             self.assertEqual(feedback_sync.sweep(cfg=_cfg(),
                                                  transport=self.github), 0)
         (rec,) = _records()
-        self.assertEqual(rec["sync_attempts"], 1)         # 只烧了一次机会
-        self.assertEqual(len(self.github.posts), 1)       # 也只发了一次请求
+        self.assertEqual(rec["sync_attempts"], 0)         # 瞬态：预算未动
+        self.assertEqual(len(self.github.posts), 1)       # 但只发了一次请求
         self.assertTrue(rec["last_sync_attempt_at"])
 
     def test_retry_resumes_after_the_cooldown(self):
@@ -606,7 +693,7 @@ class RetrySpacingTestCase(_SweepBase):
                                              transport=self.github), 1)
         (rec,) = _records()
         self.assertEqual(rec["issue_number"], 101)
-        self.assertEqual(rec["sync_attempts"], 2)
+        self.assertEqual(rec["sync_attempts"], 1)   # 瞬态那次没有计入
 
     def test_unparseable_last_attempt_fails_open(self):
         # a garbage timestamp must not freeze the record forever — retry
