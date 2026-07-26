@@ -41,6 +41,8 @@ other file needs editing. To cut a release:
   JSON 数组，之后的 LLM triage 管线与 IMAP 路径完全同一条。命令失败/输出
   非法进健康状态行（`command_failed` / `command_bad_output`），与「没有新
   邮件」严格区分；配置了命令即赢过 IMAP，且不再要求 app password 存在。
+  设置页 Gmail 区新增「抓取方式」分段选择器（A 应用专用密码 / B 自定义
+  命令），B 模式就地填命令即时生效，A/B 切换即改即生效、命令文本保留。
 
 ## [0.44.0] - 2026-07-22
 

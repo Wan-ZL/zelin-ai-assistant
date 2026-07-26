@@ -32,6 +32,12 @@ final class GmailSettingsModel: ObservableObject {
     @Published var address = ""
     @Published var addressNote = ""
     @Published var addressNoteIsError = false
+    // §14bis 抓取方式：false = A 应用专用密码(IMAP)，true = B 自定义抓取命令。
+    // 生效判据与管线一致：gmail_fetch_command override 非空 ⇔ B 在跑。
+    @Published var useCommand = false
+    @Published var fetchCommand = ""
+    @Published var fetchCommandNote = ""
+    @Published var fetchCommandNoteIsError = false
     // launchd agent + radar health (state/radar_health.json "gmail")
     @Published var agentLoaded: Bool? = nil
     @Published var healthHasData = false
@@ -52,6 +58,10 @@ final class GmailSettingsModel: ObservableObject {
         enabled = (ov["gmail_enabled"] as? Bool) ?? true
         address = (ov["gmail_address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? SettingsIO.configScalar("address") ?? ""
+        // §14bis: override-only read（和 enabled 一样，naive scanner 读不到
+        // config.yaml 的两级嵌套；App 写的永远是 override，UI==生效值成立）。
+        fetchCommand = (ov["gmail_fetch_command"] as? String) ?? ""
+        useCommand = !fetchCommand.trimmingCharacters(in: .whitespaces).isEmpty
         refreshStatus()
     }
 
@@ -87,6 +97,65 @@ final class GmailSettingsModel: ObservableObject {
                 "Saved ✓ Paste the app password below and the whole path gets verified automatically.")
         addressNoteIsError = false
         Analytics.log("mw_gmail_address_save")
+    }
+
+    // MARK: §14bis fetch path (A = app password / B = fetch command)
+
+    /// Picker handler. A: deactivate the command override (IMAP takes over).
+    /// B: activate the saved command if there is one, else prompt for it.
+    func setUseCommand(_ on: Bool) {
+        useCommand = on
+        if !on {
+            var merged = SettingsIO.readOverrides()
+            merged.removeValue(forKey: "gmail_fetch_command")
+            do { try SettingsIO.writeOverrides(merged) } catch {
+                fetchCommandNote = L("保存设置失败: ", "Failed to save settings: ")
+                    + error.localizedDescription
+                fetchCommandNoteIsError = true
+                return
+            }
+            fetchCommandNote = L("已切回 A：走应用专用密码通道（抓取命令已停用，命令文本保留着，切回 B 随时恢复）。",
+                                 "Back on path A: the app-password channel (the fetch command is deactivated; its text is kept — switch back to B anytime).")
+            fetchCommandNoteIsError = false
+            Analytics.log("mw_gmail_fetch_path", fields: ["command": false])
+            return
+        }
+        Analytics.log("mw_gmail_fetch_path", fields: ["command": true])
+        if fetchCommand.trimmingCharacters(in: .whitespaces).isEmpty {
+            fetchCommandNote = L("填好下面的抓取命令并点「保存」即生效。",
+                                 "Fill in the fetch command below and click Save to activate.")
+            fetchCommandNoteIsError = false
+        } else {
+            saveFetchCommand()
+        }
+    }
+
+    /// Diff-write the `gmail_fetch_command` override（非空即赢过 IMAP——见
+    /// CONTRACT §14bis；空 = 删键回落 A）。
+    func saveFetchCommand() {
+        let v = fetchCommand.trimmingCharacters(in: .whitespaces)
+        fetchCommand = v
+        var merged = SettingsIO.readOverrides()
+        if v.isEmpty {
+            merged.removeValue(forKey: "gmail_fetch_command")
+        } else {
+            merged["gmail_fetch_command"] = v
+        }
+        do {
+            try SettingsIO.writeOverrides(merged)
+        } catch {
+            fetchCommandNote = L("保存设置失败: ", "Failed to save settings: ")
+                + error.localizedDescription
+            fetchCommandNoteIsError = true
+            return
+        }
+        useCommand = !v.isEmpty
+        fetchCommandNote = v.isEmpty
+            ? L("已清空——回到 A：应用专用密码通道。", "Cleared — back on path A (app password).")
+            : L("已保存 ✓ 下一轮（≤5 分钟）起雷达改走这条命令抓邮件；跑没跑成看下面「运行状态」。",
+                "Saved ✓ From the next round (≤5 min) the radar fetches mail via this command; see \"Run status\" below for the truth.")
+        fetchCommandNoteIsError = false
+        Analytics.log("mw_gmail_fetch_command_save", fields: ["set": !v.isEmpty])
     }
 
     /// nil = ok; otherwise a plain-language fix message.
@@ -252,7 +321,12 @@ struct GmailSettingsSection: View {
                 }
             }
 
-            stepCard
+            pathPicker
+            if model.useCommand {
+                commandCard
+            } else {
+                stepCard
+            }
 
             if model.enabled {
                 Divider()
@@ -263,6 +337,64 @@ struct GmailSettingsSection: View {
         .font(.system(size: 12))
         .onAppear { model.loadIfNeeded() }
         .onChange(of: i18n.lang) { _, _ in model.refreshStatus() }
+    }
+
+    // MARK: §14bis path picker (A app password / B fetch command)
+
+    private var pathPicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker(L("抓取方式", "Fetch path"), selection: Binding(
+                get: { model.useCommand },
+                set: { model.setUseCommand($0) })) {
+                Text(L("A · 应用专用密码（推荐）", "A · App password (recommended)")).tag(false)
+                Text(L("B · 自定义抓取命令", "B · Custom fetch command")).tag(true)
+            }
+            .pickerStyle(.segmented)
+            Text(L("公司 Workspace 禁用了应用专用密码时走 B——雷达定时调你自己的命令去抓邮件，抓回来的分诊完全相同。",
+                   "Use B when a Workspace admin has disabled app passwords — the radar periodically runs your own command to fetch mail; triage downstream is identical."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // switching to A hides the command card — its confirmation note
+            // must survive the switch, so it renders here on the A side too
+            if !model.useCommand, !model.fetchCommandNote.isEmpty {
+                Text(model.fetchCommandNote)
+                    .font(.system(size: 10))
+                    .foregroundColor(model.fetchCommandNoteIsError ? .orange : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var commandCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L("抓取命令（§14bis 契约）", "Fetch command (the §14bis contract)"))
+                .font(.system(size: 12, weight: .medium))
+            Text(L("雷达每轮直接执行它（不走 shell），环境变量 GMAIL_RADAR_LAST_UID 带上次进度，命令在 stdout 打印一个 JSON 数组：{uid（单调递增）, from, subject, date, message_id, body}。Gmail API 脚本、MCP 客户端都可以。",
+                   "The radar executes it directly each round (no shell). $GMAIL_RADAR_LAST_UID carries the progress marker; the command prints a JSON array to stdout: {uid (monotonic), from, subject, date, message_id, body}. A Gmail-API script or an MCP client both qualify."))
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                TextField(L("例：/Users/you/bin/gmail-fetch.sh", "e.g. /Users/you/bin/gmail-fetch.sh"),
+                          text: $model.fetchCommand)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit { model.saveFetchCommand() }
+                Button(L("保存", "Save")) { model.saveFetchCommand() }
+                    .controlSize(.small)
+            }
+            if !model.fetchCommandNote.isEmpty {
+                Text(model.fetchCommandNote)
+                    .font(.system(size: 10))
+                    .foregroundColor(model.fetchCommandNoteIsError ? .orange : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: guided card
