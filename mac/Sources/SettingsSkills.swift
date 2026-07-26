@@ -107,7 +107,9 @@ final class SkillsSettingsModel: ObservableObject {
         while i < lines.count {
             let t = lines[i].trimmingCharacters(in: .whitespaces)
             if t == "---" { break }
-            if t.hasPrefix("description:") {
+            // Top-level keys are flush-left; a trimmed prefix check would also
+            // match a nested mapping's indented `description:`.
+            if lines[i].hasPrefix("description:") {
                 var v = String(t.dropFirst("description:".count))
                     .trimmingCharacters(in: .whitespaces)
                 if v.isEmpty || ["|", "|-", ">", ">-"].contains(v) {
@@ -159,7 +161,11 @@ final class SkillsSettingsModel: ObservableObject {
             createNoteIsError = true
             return
         }
-        let desc = newDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A pasted multi-line description would break the single-line
+        // `description:` scalar — fold newlines into spaces before quoting.
+        let desc = newDescription
+            .replacingOccurrences(of: "[\r\n]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
         let body = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
         var content = "---\nname: \(name)\ndescription: \(Self.yamlScalar(desc))\n---\n"
         if !body.isEmpty { content += "\n" + body + "\n" }
