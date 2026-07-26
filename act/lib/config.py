@@ -238,6 +238,14 @@ class Config:
     # `python3 -m act.ask` (exit 2) and the app's Ask page input.
     ask_enabled: bool = True
 
+    # 设置「开发者 · 维护会话」— the one-click claude session over THIS
+    # software's own repo (App 设置区 diff-write; None = the app falls back
+    # to its resolved repo root / a fresh session). The Python pipeline never
+    # launches it; the fields live here so the §15 override allowlist covers
+    # the app's writes.
+    maintainer_repo_path: Optional[str] = None
+    maintainer_session_id: Optional[str] = None
+
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"
     # §15 default output format for drafted deliverables ("markdown" | "html").
@@ -545,6 +553,17 @@ def load_config() -> Config:
             ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
         )
 
+    # 设置「开发者 · 维护会话」— optional config.yaml block; blank/absent
+    # values keep the defaults (app repo root / fresh session).
+    maint_block = data.get("maintainer", {}) or {}
+    if isinstance(maint_block, dict):
+        _mrp = maint_block.get("repo_path")
+        if _mrp is not None and str(_mrp).strip():
+            cfg.maintainer_repo_path = str(_mrp).strip()
+        _msid = maint_block.get("session_id")
+        if _msid is not None and str(_msid).strip():
+            cfg.maintainer_session_id = str(_msid).strip()
+
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
 
@@ -692,6 +711,10 @@ _OVERRIDE_FIELDS: dict = {
     # v0.14 (§15.3 add-only, Slack in-app setup): auth.test auto-fills the
     # owner identity — the user never types a Uxxxx id by hand.
     "owner_slack_user_id": str,
+    # 设置「开发者 · 维护会话」(App diff-write): repo the app opens a claude
+    # maintenance session in + the optional session id it resumes.
+    "maintainer_repo_path": str,
+    "maintainer_session_id": str,
 }
 
 # List-valued override keys (§15.3 add-only, Slack in-app setup) — the scalar
