@@ -281,10 +281,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // from the menu bar); all lanes would overcount (running cards need
         // nothing from anyone). 待拍板 keeps the render-array count (visible
         // cards + local placeholders), in sync with what the popover shows.
-        let db = store.dashboard
+        // visible* projections (isHidden-filtered), NOT raw dashboard
+        // partitions — an optimistically hidden card (✓验收 clicked, actd
+        // not yet re-projected) must leave the badge with the popover.
         let n = store.visibleApprovals.count
-            + (db?.needs_input.count ?? 0)
-            + (db?.review.count ?? 0)
+            + store.visibleNeedsInput.count
+            + store.visibleReview.count
         if n > 0 {
             button.title = " \(n)"
         } else {
