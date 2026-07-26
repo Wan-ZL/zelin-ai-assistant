@@ -487,23 +487,41 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 
         ids = data.get("ids")
         action_plan = data.get("action_plan")
-        out.append(
-            {
-                "id": str(data.get("id") or path.stem),
-                "ids": [str(i) for i in ids] if isinstance(ids, list) else [],
-                "status": status,
-                "verdict": _opt_str("verdict"),
-                "primary": _opt_str("primary"),
-                "rationale": _opt_str("rationale"),
-                "action_plan": (
-                    [str(s) for s in action_plan]
-                    if isinstance(action_plan, list) else []
-                ),
-                "confidence": _opt_str("confidence"),
-                "error": _opt_str("error"),
-                "requested_at": _epoch(data.get("requested_at")),
-            }
-        )
+        item = {
+            "id": str(data.get("id") or path.stem),
+            "ids": [str(i) for i in ids] if isinstance(ids, list) else [],
+            "status": status,
+            "verdict": _opt_str("verdict"),
+            "primary": _opt_str("primary"),
+            "rationale": _opt_str("rationale"),
+            "action_plan": (
+                [str(s) for s in action_plan]
+                if isinstance(action_plan, list) else []
+            ),
+            "confidence": _opt_str("confidence"),
+            "error": _opt_str("error"),
+            "requested_at": _epoch(data.get("requested_at")),
+        }
+        # partition（§21 多对多分组）的分组方案 — add-only key：只在作业带着
+        # 合法形状时外发（老作业/其余 verdict 连键都没有，Swift decodeIfPresent
+        # 向后兼容）；坏形条目逐个跳过，同本分区"损坏跳过"的既有约定。
+        groups = data.get("groups")
+        if isinstance(groups, list):
+            g_out = []
+            for g in groups:
+                if not isinstance(g, dict):
+                    continue
+                gids = g.get("ids")
+                reason = g.get("reason")
+                g_out.append({
+                    "primary": str(g.get("primary") or ""),
+                    "ids": ([str(i) for i in gids]
+                            if isinstance(gids, list) else []),
+                    "reason": str(reason) if reason not in (None, "") else None,
+                })
+            if g_out:
+                item["groups"] = g_out
+        out.append(item)
     # newest request first (stable: filename order breaks ties)
     out.sort(key=lambda s: s.get("requested_at") or 0, reverse=True)
     return out

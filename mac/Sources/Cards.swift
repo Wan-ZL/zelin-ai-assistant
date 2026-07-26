@@ -2095,25 +2095,35 @@ struct MergeSuggestionCard: View {
                     pending: actionPending, actions: { doneButtons }) {
             headline
 
-            // 主卡/副卡名（keep_separate 等无 primary 时列出全部涉及卡）
-            VStack(alignment: .leading, spacing: 1) {
-                if let p = suggestion.primary, !p.isEmpty {
-                    Text(L("主卡：", "Primary: ") + nameLine(p))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ForEach(suggestion.ids.filter { $0 != p }, id: \.self) { sid in
-                        Text(L("副卡：", "Secondary: ") + nameLine(sid))
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+            // 主/副卡名。partition（多对多分组）按分组渲染：每组主卡 + 成员 +
+            // 理由一句；其余 verdict 沿用主卡/副卡两级（keep_separate 等无
+            // primary 时列出全部涉及卡）。
+            if let groups = partitionGroups {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { i, g in
+                        groupLines(index: i, group: g)
                     }
-                } else {
-                    ForEach(suggestion.ids, id: \.self) { sid in
-                        Text("• " + nameLine(sid))
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 1) {
+                    if let p = suggestion.primary, !p.isEmpty {
+                        Text(L("主卡：", "Primary: ") + nameLine(p))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.primary)
                             .fixedSize(horizontal: false, vertical: true)
+                        ForEach(suggestion.ids.filter { $0 != p }, id: \.self) { sid in
+                            Text(L("副卡：", "Secondary: ") + nameLine(sid))
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        ForEach(suggestion.ids, id: \.self) { sid in
+                            Text("• " + nameLine(sid))
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
@@ -2147,13 +2157,26 @@ struct MergeSuggestionCard: View {
         if actionPending {
             submittedLine
         } else {
-            Button {
-                app.submit(id: suggestion.id, action: "merge_apply", comment: nil)
-            } label: { Label(L("接受", "Accept"), systemImage: "checkmark.circle.fill") }
-                .tint(.green)
+            // partition 时主按钮点名分组数；提交的仍是同一个 merge_apply ——
+            // 分组方案在作业文件里，actd 逐组确定性执行（不新增 inbox 动作）。
+            if let groups = partitionGroups {
+                Button {
+                    app.submit(id: suggestion.id, action: "merge_apply", comment: nil)
+                } label: {
+                    Label(L("按分组合并（\(groups.count) 组）",
+                            "Merge by groups (\(groups.count))"),
+                          systemImage: "checkmark.circle.fill")
+                }
+                    .tint(.green)
+            } else {
+                Button {
+                    app.submit(id: suggestion.id, action: "merge_apply", comment: nil)
+                } label: { Label(L("接受", "Accept"), systemImage: "checkmark.circle.fill") }
+                    .tint(.green)
+            }
 
-            // 契约 §21bis: AI 没判「合并」（保持独立 / 挂改进卡 / 关副卡）时，
-            // 给不认同的用户一个直断入口——钦定主卡强制合并（走确认弹窗）。
+            // 契约 §21bis: AI 没判「合并」（保持独立 / 挂改进卡 / 关副卡 / 分组）
+            // 时，给不认同的用户一个直断入口——钦定主卡强制合并（走确认弹窗）。
             if suggestion.verdict != "merge" {
                 Button {
                     showForceMerge = true
@@ -2163,7 +2186,12 @@ struct MergeSuggestionCard: View {
 
             Button {
                 app.submit(id: suggestion.id, action: "merge_dismiss", comment: nil)
-            } label: { Label(L("取消", "Dismiss"), systemImage: "xmark.circle") }
+            } label: {
+                // partition 的次按钮语义就是「全部保持独立」，点名说清
+                partitionGroups != nil
+                    ? Label(L("保持独立", "Keep separate"), systemImage: "xmark.circle")
+                    : Label(L("取消", "Dismiss"), systemImage: "xmark.circle")
+            }
                 .tint(.gray)
         }
         Spacer()
@@ -2214,6 +2242,45 @@ struct MergeSuggestionCard: View {
 
     // MARK: shared bits
 
+    /// partition（多对多分组）的分组方案；其余 verdict / 缺 groups 的老 payload
+    /// 一律 nil —— 渲染与按钮都回落既有单-primary 路径。
+    private var partitionGroups: [MergeGroup]? {
+        guard suggestion.verdict == "partition",
+              let groups = suggestion.groups, !groups.isEmpty else { return nil }
+        return groups
+    }
+
+    /// 一个分组的清单块：主卡 + 并入成员 + AI 理由一句（单张组 = 保持独立）。
+    @ViewBuilder private func groupLines(index: Int, group: MergeGroup) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if group.ids.count > 1 {
+                Text(L("第 \(index + 1) 组 · 主卡：", "Group \(index + 1) · primary: ")
+                     + nameLine(group.primary))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(group.ids.filter { $0 != group.primary }, id: \.self) { sid in
+                    Text(L("　　并入：", "    folds in: ") + nameLine(sid))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(L("第 \(index + 1) 组 · 保持独立：", "Group \(index + 1) · stays separate: ")
+                     + nameLine(group.primary))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let r = group.reason, !r.isEmpty {
+                Text(r)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     /// 🔀 + verdict 一句话结论 + confidence 徽章（done 态首行）。
     private var headline: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -2232,7 +2299,8 @@ struct MergeSuggestionCard: View {
         }
     }
 
-    /// verdict 本地化 —— 契约 §三 的四枚举；未知值原样透出（不吞信息）。
+    /// verdict 本地化 —— 契约 §三 的枚举（含 partition 多对多分组）；未知值
+    /// 原样透出（不吞信息）。
     private var verdictHeadline: String {
         switch suggestion.verdict {
         case "merge":
@@ -2243,6 +2311,11 @@ struct MergeSuggestionCard: View {
             return L("建议保持独立，不合并", "Suggest keeping them separate")
         case "close_secondary":
             return L("建议关闭副卡（进回收站）", "Suggest closing the secondary (to trash)")
+        case "partition":
+            if let k = suggestion.groups?.count, k > 0 {
+                return L("建议分成 \(k) 组分别合并", "Suggest merging as \(k) separate groups")
+            }
+            return L("建议按分组分别合并", "Suggest merging by groups")
         default:
             return suggestion.verdict ?? L("分析完成", "Analysis complete")
         }

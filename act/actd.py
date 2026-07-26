@@ -1069,6 +1069,10 @@ def _apply_merge_verdict(job: dict) -> None:
     primary_id = str(job.get("primary") or "")
     if verdict == "keep_separate":
         return
+    if verdict == "partition":
+        # 多对多分组：作业文件自带分组方案，顶层 primary 无执行语义。
+        _apply_merge_partition(job)
+        return
     secondaries = [i for i in ids if i != primary_id]
     if (verdict not in ("merge", "link_improvement", "close_secondary")
             or primary_id not in ids or not secondaries):
@@ -1099,6 +1103,72 @@ def _apply_merge_verdict(job: dict) -> None:
         return
 
     _merge_into_primary(primary_id, secondaries)
+
+
+def _apply_merge_partition(job: dict) -> None:
+    """契约 四 partition（多对多分组）：逐组复用 :func:`_merge_into_primary` —
+    每组就是一次现有单-primary 合并（语义逐字一致），单张组 = 保持独立不动。
+
+    动作面复用既有 ``merge_apply``（不新增 inbox 动作）：分组方案与 primary/
+    verdict 一样是分析子进程写进作业文件的结论，inbox 只携带建议 id ——app 侧
+    没有注入分组的通道，确定性执行的边界与 §21 其余 verdict 完全相同。
+
+    每组执行前重新校验全组成员仍存在且不在终态（done 建议在 24h TTL 内可执行，
+    期间用户可能已 trash/合并组员——此时整组跳过留痕，绝不半合）；某组失败不
+    阻塞其余组；逐组结果如实写回作业文件 ``group_results``（dismiss 后文件留到
+    TTL，可追查）。作业的 groups 坏形/没有 ≥2 张的组 → ValueError（unusable
+    job，调用方按既有路径记 outcome=fail、作业留在 done 可重试/取消）。"""
+    ids = [str(i) for i in job.get("ids") or []]
+    groups = (merge_review._validate_groups(job.get("groups"), ids)
+              if merge_review is not None else None)
+    if not groups:
+        raise ValueError(
+            f"unusable partition job: groups={job.get('groups')!r} ids={ids}")
+    results: list[dict] = []
+    for g in groups:
+        primary_id = str(g["primary"])
+        members = [str(i) for i in g["ids"]]
+        entry: dict = {"primary": primary_id, "ids": members}
+        if len(members) < 2:
+            entry["outcome"] = "independent"   # 单张组：契约语义 = 不动它
+            results.append(entry)
+            continue
+        stale = []
+        for rid in members:
+            req = load(rid)
+            if req is None:
+                stale.append(f"{rid} missing")
+            elif str(req.status) in _MERGE_DEAD_STATES:
+                stale.append(f"{rid} {req.status}")
+        if stale:
+            entry["outcome"] = "skipped"
+            entry["error"] = "; ".join(stale)[:200]
+            results.append(entry)
+            _log(f"merge: partition group primary={primary_id} skipped "
+                 f"({entry['error']})")
+            continue
+        try:
+            _merge_into_primary(primary_id,
+                                [i for i in members if i != primary_id])
+        except Exception as e:  # noqa: BLE001 - 某组失败不阻塞其余组
+            entry["outcome"] = "failed"
+            entry["error"] = str(e)[:200]
+            results.append(entry)
+            _log(f"merge: partition group primary={primary_id} FAILED: {e}\n"
+                 f"{traceback.format_exc()}")
+            continue
+        entry["outcome"] = "ok"
+        results.append(entry)
+        _log(f"merge: partition group primary={primary_id} absorbed "
+             f"{len(members) - 1} secondaries")
+    # honest per-group receipts on the job file itself; the caller's
+    # dismiss_job(applied=True) rewrites the same (mutated) dict afterwards
+    job["group_results"] = results
+    try:
+        if merge_review is not None:
+            merge_review.write_job(job)
+    except OSError as e:
+        _log(f"merge: partition group_results write failed (ignored): {e}")
 
 
 def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
