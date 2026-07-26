@@ -11,6 +11,7 @@ Hermetic: everything under the sandbox AIASSISTANT_HOME (tests/__init__.py).
 import os
 import time
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
@@ -131,6 +132,18 @@ class SweepTestCase(unittest.TestCase):
         self.assertEqual(actd.gc_attachments(), 0)
         self.assertTrue(orphan_a.exists())
         self.assertTrue(orphan_b.exists())
+
+    def test_missing_feedback_module_skips_the_feedback_dir(self):
+        # actd tolerates the feedback module failing to import (guarded
+        # import -> None). Its images references are then INVISIBLE — the
+        # feedback attachments dir must be left alone this pass, while
+        # state/attachments/ (guarded by the registry scan) is still swept.
+        fb_kept = _mk_file(FB_ATT_DIR / "kept-nomodule.png", OLD)
+        att_orphan = _mk_file(ATT_DIR / "orphan-nomodule.png", OLD)
+        with mock.patch.object(actd, "feedback", None):
+            self.assertEqual(actd._sweep_attachment_dirs(), 1)
+        self.assertTrue(fb_kept.exists())
+        self.assertFalse(att_orphan.exists())
 
     def test_corrupt_feedback_record_skips_only_the_feedback_dir(self):
         # one unreadable feedback record hides ITS images — the feedback

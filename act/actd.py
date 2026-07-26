@@ -2597,7 +2597,9 @@ def _sweep_attachment_dirs(now: Optional[float] = None) -> int:
     """
     now = time.time() if now is None else now
     refs = _registry_attachment_refs()
-    feedback_dir_ok = True
+    # feedback 模块可降级为 None（守护导入）——此时它的 images 引用整体不可见，
+    # 与坏记录同款处理：本 pass 不动 feedback 附件目录。
+    feedback_dir_ok = feedback is not None
     if feedback is not None:
         for rec_path in feedback.FEEDBACK_DIR.glob("*.json"):
             try:

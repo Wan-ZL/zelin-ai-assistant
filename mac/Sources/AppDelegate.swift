@@ -1052,11 +1052,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                    "text": text, "ts": ts]
         guard writeInboxFile(dict) else {
             // the answer never landed — clean up ITS just-saved PNGs (paths
-            // recovered from the 附图 lines; only files under our attachments
-            // dir, so a hand-typed line can never delete elsewhere)
-            let dir = AppPaths.stateRoot + "/state/attachments/"
+            // recovered from the 附图 lines). Deletion stays confined to our
+            // attachments dir: standardize + resolve symlinks on BOTH sides
+            // BEFORE the prefix check, so a hand-typed `..`/symlink segment
+            // can never traverse the filter and delete elsewhere.
+            let dir = URL(fileURLWithPath: AppPaths.stateRoot + "/state/attachments",
+                          isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath().path + "/"
             PastedImages.deleteFiles(
                 PastedImages.answerAttachmentPaths(in: text)
+                    .map { URL(fileURLWithPath: $0)
+                        .standardizedFileURL.resolvingSymlinksInPath().path }
                     .filter { $0.hasPrefix(dir) })
             return false
         }
@@ -1141,8 +1147,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
         // 附图先落 PNG，再作为尾行随答案文本回原 session（answer 通道 shape
         // 不变）；只贴图不打字也是合法回答（「看这张截图」场景）。
-        let suffix = PastedImages.answerLines(PastedImages.savePNGs(
-            images.images, toDir: AppPaths.stateRoot + "/state/attachments"))
+        let saved = PastedImages.savePNGs(
+            images.images, toDir: AppPaths.stateRoot + "/state/attachments")
+        // PNG 全军覆没绝不假装成功（feedback 路径同款）：image-only 时静默
+        // 返回 nil 形同取消——blocked session 会永远等不到输入；带文字则明说
+        // 图片没跟上，文字照常送。
+        let imagesLost = !images.isEmpty && saved.isEmpty
+        if imagesLost {
+            alertImagesNotSaved(textStillSubmitted: !text.isEmpty)
+            if text.isEmpty { return nil }
+        }
+        let suffix = PastedImages.answerLines(saved)
         // empty = nothing to deliver (actd would drop it anyway — §39 1..4000);
         // clip by UNICODE SCALARS to the 4000 ceiling actd enforces in code
         // points (a Character-based prefix can smuggle >4000 code points and
