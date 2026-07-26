@@ -45,6 +45,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # API-key mode has no Claude GitHub App to exchange an OIDC token
+          # with — hand the action the workflow's own token for PR comments
+          # (first live run failed on exactly this: "Failed to get OIDC token").
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             用中文 review 这个 PR。这是一个 macOS 菜单栏 app（mac/Sources/*.swift）+
             Python 管线（act/）的个人 AI 助理项目。重点：
