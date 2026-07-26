@@ -225,11 +225,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // key event converts: menu clicks (app menu / status-item 退出) and
     // system logout/shutdown terminate as usual, so quitting stays one
     // right-click away and OS shutdown is never blocked.
+    // NSApp.currentEvent is merely the *last* event this app processed and
+    // can be arbitrarily stale: after a ⌘Q closed the window, re-opening it
+    // via a path with no NSEvent (notification click → show()) leaves the
+    // old ⌘Q keyDown in place — a later logout/shutdown Apple Event would
+    // see it and be wrongly cancelled. NSEvent.timestamp and systemUptime
+    // share the same clock (seconds since boot), so a small delta means
+    // "this ⌘Q is the event being handled right now".
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let e = NSApp.currentEvent, e.type == .keyDown,
            e.modifierFlags.contains(.command),
            (e.charactersIgnoringModifiers ?? "").lowercased() == "q",
-           MainWindowController.shared.isWindowVisible {
+           ProcessInfo.processInfo.systemUptime - e.timestamp < 2,
+           MainWindowController.shared.isWindowOpen {
             MainWindowController.shared.closeWindow()
             return .terminateCancel
         }
