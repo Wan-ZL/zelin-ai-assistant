@@ -41,6 +41,13 @@ struct KanbanComposer: View {
     // item 5 (moved from KanbanView): index into CaptureHistory.items
     @State private var historyIndex: Int?
     @FocusState private var focused: Bool
+    // 贴图（建议 #5）: pasted screenshots ride the capture as PNG attachment
+    // paths. @StateObject so drafted images survive Esc-defocus like the text.
+    @StateObject private var pasted = PastedImagesModel()
+    // ⌘V image hook — focus-scoped local monitor (PastedImages.swift); a
+    // SwiftUI TextField's shared field editor can't be subclassed, and the
+    // Edit menu's key equivalent would eat ⌘V before .onKeyPress ever fires.
+    @State private var pasteMonitor: Any?
 
     private var placeholder: String {
         mode == .run
@@ -122,6 +129,8 @@ struct KanbanComposer: View {
                 .buttonStyle(.plain)
                 .disabled(trimmed.isEmpty)
             }
+            // 贴图缩略图行（空时不占位；每张可 ✕ 移除）
+            PastedImagesRow(model: pasted)
             // item 3: slash-command hint / error; otherwise a keys hint line
             if let err = slashError {
                 Text(err)
@@ -133,8 +142,8 @@ struct KanbanComposer: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             } else {
-                Text(L("↩ 发送 · ⇧↩ 换行 · Esc 退出",
-                       "↩ send · ⇧↩ newline · Esc dismiss"))
+                Text(L("↩ 发送 · ⇧↩ 换行 · Esc 退出 · ⌘V 可贴图",
+                       "↩ send · ⇧↩ newline · Esc dismiss · ⌘V pastes images"))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary.opacity(0.7))
             }
@@ -145,6 +154,23 @@ struct KanbanComposer: View {
         // synchronous request races the insertion and silently falls back
         // to the board's 搜索卡片 field (keystrokes then go to search).
         .onAppear { DispatchQueue.main.async { focused = true } }
+        // ⌘V image monitor lives exactly as long as the caret is here — with
+        // four composer instances alive (board ×2 + popover), only the focused
+        // one may claim an image paste.
+        .onChange(of: focused) { _, f in
+            if f {
+                if pasteMonitor == nil {
+                    pasteMonitor = PasteImageKeyMonitor.install(for: pasted)
+                }
+            } else {
+                PasteImageKeyMonitor.remove(pasteMonitor)
+                pasteMonitor = nil
+            }
+        }
+        .onDisappear {
+            PasteImageKeyMonitor.remove(pasteMonitor)
+            pasteMonitor = nil
+        }
     }
 
     private var trimmed: String {
@@ -178,13 +204,18 @@ struct KanbanComposer: View {
     private func submit() {
         let t = trimmed
         guard !t.isEmpty else { return }
+        // 贴图只随真正的 capture 走；slash 命令不消费图片（跑完后缩略图原样
+        // 留着，绝不静默丢弃）。
+        let isCommand = SlashCommands.isCommand(t)
         // 契约F: submitCapture 内部按 source 打 capture_submit（且 slash
         // 命令不计入 capture），这里只传 source，不再重复打点。
-        if app.submitCapture(t, source: source, directRun: mode == .run) {
+        if app.submitCapture(t, source: source, directRun: mode == .run,
+                             images: isCommand ? [] : pasted.images) {
             text = ""
+            if !isCommand { pasted.clear() }
             slashError = nil
             historyIndex = nil
-            collapse()   // 成功后折叠回一行
+            if pasted.isEmpty { collapse() }   // 成功后折叠回一行（有未发送贴图则保持展开）
         } else if SlashCommands.isCommand(t) {
             // slash command failed: IO error (lastErrorLine) vs typed wrong
             slashError = SlashCommands.lastErrorLine
@@ -201,9 +232,9 @@ struct KanbanComposer: View {
     private func escKey() -> KeyPress.Result {
         if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
            tv.hasMarkedText() { return .ignored }
-        if !text.isEmpty {
+        if !text.isEmpty || !pasted.isEmpty {
             focused = false      // draft present: defocus only, stay expanded
-            return .handled      // (collapsing would hide the unsent draft)
+            return .handled      // (collapsing would hide the unsent draft/贴图)
         }
         collapse()               // empty: fold back to one line
         return .handled

@@ -119,6 +119,20 @@ class AnswerExecutorTestCase(unittest.TestCase):
         ex = registry.load("R-970").execution or {}
         self.assertNotIn("answer_count", ex)  # nothing was attempted
 
+    def test_attachment_lines_ride_the_answer_verbatim(self):
+        # 贴图（用户建议 #5）: the app appends 附图 lines to the answer text —
+        # the §39 channel stays plain text, so they must reach the session
+        # untouched (the agent Reads the listed paths itself).
+        req = self._mk_req()
+        text = ("报错在截图里\n"
+                "[附图，用 Read 工具查看] /tmp/att/ans-1.png\n"
+                "[附图，用 Read 工具查看] /tmp/att/ans-2.png")
+        runner = mock.Mock(return_value=_proc(0, stdout="backgrounded · deadbeef"))
+        with self._tinfo():
+            ok = executor.answer(req, text, self.cfg, runner=runner)
+        self.assertTrue(ok)
+        self.assertEqual(runner.call_args[0][0], "OWNER ANSWER:\n" + text)
+
 
 class ApplyAnswerInputTestCase(unittest.TestCase):
     """actd._apply_answer_input — boundary validation + honest acks (§5.4)."""

@@ -156,8 +156,11 @@ def process_inbox() -> int:
             # §10 capture: no req id — the app popover's one-liner quick capture.
             # v0.34.0: optional mode="run" (运行中 lane input) skips the proposal
             # gate — the card is filed straight into the approved queue.
+            # 贴图 (建议 #5, add-only): optional images = absolute PNG paths the
+            # app saved under state/attachments/.
             if action == "capture":
-                result = _apply_capture(decision.get("text"), decision.get("mode"))
+                result = _apply_capture(decision.get("text"), decision.get("mode"),
+                                        decision.get("images"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -405,7 +408,46 @@ def _spawn_weekly_digest() -> str:
         return "noop"
 
 
-def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
+def _clean_image_paths(images) -> list:
+    """Boundary validation for an inbox ``images`` list (§33 house pattern):
+    keep only non-empty string paths, deduped, capped at the app's 4-image
+    UI bound — junk entries must never poison a card or the dispatch prompt.
+    """
+    if not isinstance(images, list):
+        return []
+    seen: set = set()
+    out: list = []
+    for item in images:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:4]
+
+
+def _attach_capture_images(req: Requirement, images) -> None:
+    """贴图 (建议 #5, add-only): fold the capture's PNG paths into
+    ``execution.attachments`` — the card-level 附图清单 executor.build_prompt
+    turns into a「用户附图」Read block. Append-only + deduped, so a capture
+    folding into an existing card keeps that card's earlier attachments."""
+    paths = _clean_image_paths(images)
+    if not paths:
+        return
+    ex = dict(req.execution) if isinstance(req.execution, dict) else {}
+    have = ex.get("attachments")
+    have = [str(p) for p in have] if isinstance(have, list) else []
+    new = [p for p in paths if p not in have]
+    if not new:
+        return
+    ex["attachments"] = have + new
+    req.execution = ex
+    save(req)
+
+
+def _apply_capture(text: Optional[str], mode: Optional[str] = None,
+                   images=None) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
@@ -531,6 +573,7 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
             _log(f"inbox: capture[run] merged into {saved.id} "
                  f"(status={saved.status}) — no run filed, acking noop")
             result = "noop"
+        _attach_capture_images(saved, images)
         analytics.log_event(
             "capture_direct_run", req=saved.id, status=str(saved.status),
             chars=len(t),
@@ -543,6 +586,7 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None) -> str:
         _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion)")
     else:
         _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
+    _attach_capture_images(saved, images)
     # the typed capture text is content — capture_input-gated, clipped;
     # chars stays metadata (usage signal without the words).
     analytics.log_event(
@@ -685,6 +729,9 @@ def _apply_feedback(decision: dict) -> str:
     lost over them); ``publish`` is the app checkbox「同时公开到 GitHub 建议
     跟踪表」and only an explicit JSON ``true`` counts (absent/garbage — e.g.
     an older app — stays private; act/lib/feedback_sync.py syncs later).
+    贴图 (建议 #4, add-only): optional ``images`` = local PNG paths under
+    state/feedback/attachments/ — recorded in the local file only; the upload
+    carries just their count (feedback.clean_images validates).
     Recording + best-effort upload live in act/lib/feedback.py; only event
     METADATA reaches the local analytics log — the report text travels solely
     inside the feedback record itself. Returns the §5.4 result_status
@@ -699,7 +746,8 @@ def _apply_feedback(decision: dict) -> str:
         return "noop"
     ids = feedback.clean_ids(decision.get("ids"))
     publish = decision.get("publish") is True
-    rec = feedback.record_feedback(ids, text, publish=publish)
+    rec = feedback.record_feedback(ids, text, publish=publish,
+                                   images=decision.get("images"))
     if rec is None:
         _log("inbox: feedback record FAILED — dropped")
         return "noop"

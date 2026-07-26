@@ -256,6 +256,63 @@ class BadIdsTestCase(_StubTransportMixin, unittest.TestCase):
         self.assertEqual(rec["text"], "ids 是字符串也不能崩")
 
 
+class ImagesTestCase(_StubTransportMixin, unittest.TestCase):
+    """贴图（用户建议 #4）: local PNG paths land in the record; the upload row
+    carries only image_count — the images themselves never leave the Mac."""
+
+    def test_images_land_in_record_and_only_count_uploads(self):
+        paths = ["/tmp/fb/a-1.png", "/tmp/fb/a-2.png"]
+        rec = feedback.record_feedback([], "缩略图行挡住了按钮（见截图）",
+                                       cfg=_cfg(), transport=self._transport,
+                                       images=paths)
+        self.assertEqual(rec["images"], paths)
+        self.assertTrue(rec["uploaded"])
+        (row,) = self.rows
+        self.assertEqual(row["props"]["image_count"], 2)
+        # the paths stay LOCAL — never in the uploaded row
+        self.assertNotIn("images", row["props"])
+        self.assertNotIn("/tmp/fb/a-1.png",
+                         json.dumps(row, ensure_ascii=False))
+        # on-disk record round-trips the paths
+        (disk,) = _records()
+        self.assertEqual(disk["images"], paths)
+
+    def test_no_images_records_empty_list_and_zero_count(self):
+        feedback.record_feedback([], "无图建议", cfg=_cfg(),
+                                 transport=self._transport)
+        (rec,) = _records()
+        self.assertEqual(rec["images"], [])
+        (row,) = self.rows
+        self.assertEqual(row["props"]["image_count"], 0)
+
+    def test_junk_images_are_tolerated_never_lose_the_text(self):
+        rec = feedback.record_feedback([], "坏 images 也不能丢正文",
+                                       cfg=_cfg(), transport=self._transport,
+                                       images="not-a-list")
+        self.assertEqual(rec["images"], [])
+        self.assertEqual(rec["text"], "坏 images 也不能丢正文")
+        # entry-level junk: non-str/empty dropped, dupes deduped, capped at 4
+        self.assertEqual(
+            feedback.clean_images(["/a.png", "", None, 7, "/a.png",
+                                   "/b.png", "/c.png", "/d.png", "/e.png"]),
+            ["/a.png", "/b.png", "/c.png", "/d.png"])
+
+    def test_inbox_action_carries_images_into_the_record(self):
+        (config.INBOX_DIR / "feedback-img.json").write_text(
+            json.dumps({"action": "feedback", "ids": [],
+                        "text": "提案卡截图有错位",
+                        "images": ["/tmp/fb/inbox-1.png"]},
+                       ensure_ascii=False), encoding="utf-8")
+        with mock.patch.object(feedback, "_default_transport",
+                               lambda cfg: self._transport):
+            n = actd.process_inbox()
+        self.assertEqual(n, 1)
+        (rec,) = _records()
+        self.assertEqual(rec["images"], ["/tmp/fb/inbox-1.png"])
+        (row,) = self.rows
+        self.assertEqual(row["props"]["image_count"], 1)
+
+
 class RetryLifecycleTestCase(_StubTransportMixin, unittest.TestCase):
     """Upload lifecycle: fail -> pending (null) -> one LATER retry -> true|false."""
 

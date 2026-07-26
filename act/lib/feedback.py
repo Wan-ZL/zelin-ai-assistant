@@ -88,6 +88,25 @@ def clean_ids(raw) -> list:
     return out
 
 
+def clean_images(raw) -> list:
+    """Coerce the inbox ``images`` value into a deduped list of non-empty
+    path strings (same tolerance as :func:`clean_ids` — bad entries must
+    never lose the report), capped at the app's 4-image UI bound. The paths
+    stay LOCAL: the upload row carries only their count (``image_count``)."""
+    if not isinstance(raw, list):
+        return []
+    seen: set = set()
+    out: list = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:4]
+
+
 def _snapshot(rid: str) -> dict:
     """Best-effort {id, kind, type, title, status} for one R-/MS- id.
 
@@ -146,9 +165,13 @@ def _write_record(record: dict) -> None:
 def _to_row(record: dict) -> dict:
     """Map a local record to an analytics_events row (same column shape as
     analytics_sync._to_row; props = the report content, no upload bookkeeping).
+    贴图 (建议 #4): the images themselves never upload — the maintainer IS the
+    machine owner, so the local paths in the record suffice; the row carries
+    only ``image_count``.
     """
     props = {k: record.get(k)
              for k in ("id", "ts", "ids", "cards", "text", "app_version")}
+    props["image_count"] = len(record.get("images") or [])
     ts = record.get("ts")
     return {
         "device_id": analytics_sync._device_id(),
@@ -229,13 +252,17 @@ def _attempt_upload(record: dict, cfg: config.Config,
 # --------------------------------------------------------------------------- #
 def record_feedback(ids, text, cfg: Optional[config.Config] = None,
                     transport: Optional[Transport] = None,
-                    publish: bool = False) -> Optional[dict]:
+                    publish: bool = False,
+                    images=None) -> Optional[dict]:
     """Persist one feedback report locally, then try the upload once.
 
     ``publish`` (add-only) records the user's「同时公开到 GitHub 建议跟踪表」
     checkbox: True marks the record for act/lib/feedback_sync.py to create a
     public GitHub issue from. Anything but an explicit True — including every
     payload from app versions that never asked — stays private.
+    ``images`` (贴图, 建议 #4): local PNG paths the app saved under
+    state/feedback/attachments/ — kept verbatim in the record, never uploaded
+    (the row carries only image_count; see :func:`_to_row`).
 
     Returns the record dict (with its upload outcome), or None when the text
     is empty/whitespace or the local write itself failed. Never raises.
@@ -252,6 +279,7 @@ def record_feedback(ids, text, cfg: Optional[config.Config] = None,
             "ids": id_list,
             "cards": [_snapshot(i) for i in id_list],
             "text": body[:TEXT_CAP],
+            "images": clean_images(images),
             "app_version": __version__,
             "publish": publish is True,  # explicit opt-in only (公开跟踪表)
             "uploaded": None,       # null = pending; true/false are terminal

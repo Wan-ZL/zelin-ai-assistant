@@ -301,6 +301,19 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
         + sanitize.fence_untrusted(_sources_text(req.sources))
     )
 
+    # 贴图 (建议 #5): capture 随手贴的截图/图片 — app 已落成 PNG，actd 把
+    # 绝对路径记在 execution.attachments；这里列出来让 agent 用 Read 打开看。
+    ex_atts = (req.execution or {}).get("attachments") \
+        if isinstance(req.execution, dict) else None
+    attachments = [p.strip() for p in ex_atts
+                   if isinstance(p, str) and p.strip()] \
+        if isinstance(ex_atts, list) else []
+    if attachments:
+        blocks.append(
+            "\n## 用户附图（用 Read 工具打开查看）\n"
+            + "\n".join(attachments)
+        )
+
     if cfg.memory_inject:
         mem = _read_memory_head()
         if mem:
