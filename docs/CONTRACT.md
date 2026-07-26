@@ -865,6 +865,37 @@ publishable key，RLS 仅 INSERT）。**不建新表**——anon 的 INSERT poli
 - 本地 analytics 事件（`inbox_feedback`）只记元数据（ids 数量 + 上传结果），
   **text 绝不进 events.jsonl**——报告原文只经 feedback 自己的通道走。
 
+**§29bis 建议公开跟踪表（v0.46，逐条 opt-in 公开为 GitHub issue）**：inbox
+payload 新增 `publish` 键——App「提建议」弹窗的「同时公开到 GitHub 建议跟踪表」
+勾选框，只有 JSON 字面 `true` 算数（缺失/字符串/数字一律按 false：旧 App 与
+垃圾值永不公开）；勾选框默认态 = 记住的上次选择（override-only 扁平键
+`feedback_publish_default`，**出厂 false**——公开是逐条 opt-in，出厂预勾会让
+「打字→↩」的肌肉记忆把第一条建议直接发进公开 repo）。本地记录随之新增字段
+（add-only）：`publish`（bool，落盘定格）；同步簿记 `sync_attempts` /
+`last_sync_attempt_at`（预写，见下）；成功后 `issue_number` / `issue_url` /
+`issue_synced_at`；失败时 `sync_error`（前 200 字，成功即清）。issue 正文 =
+建议全文 + **UTC 提交时间（ISO 带 Z，绝不用 `%Z` 本地时区缩写——那是写进
+公开页面的粗粒度位置信号）** + app 版本 + 来源行（**不含**卡片标题快照——
+快照只走上面的 Supabase 通道）。
+
+同步器 = `act/lib/feedback_sync.py`（actd housekeeping 段每 pass `sweep()`，
+never raises；token 文件 `feedback_sync.token_path` 不存在 = 模块整体静默关闭，
+§14bis 同款无凭据哲学；目标 repo = `feedback_sync.repo`，默认本项目）。公开
+repo 烧不起重复 issue，创建做成 effectively once-only 三件套：①**预写计数**——
+`sync_attempts` + `last_sync_attempt_at` 先落盘再碰网络，预写失败则本轮零请求
+（簿记记不住的 issue 绝不能建）；②**body 标记**——issue 正文末尾恒带
+`<!-- feedback-id: <记录 id> -->`；③**重试先对账**——重试（记录带「曾有在途请求」的证据：计过次，或瞬态回滚
+留下的 `last_sync_attempt_at`——且无 `issue_number`）先 GET issue 列表按标记
+找半成功 issue（至多 3 页 × 100 条，跳过 `/issues` 端点混含的 `pull_request`
+条目；翻完没找到才允许重发），命中只回写编号不再 POST，列表读不到 = 本轮跳过
+（宁可晚发不可重发）。节流与放弃：距上次尝试不足 60s
+（`MIN_RETRY_AGE_SECONDS`）跳过本 pass 且**不计次**——10s 轮询下断网不得半分
+钟烧光机会；失败按**瞬态/非瞬态**分类——连接层错误、超时、HTTP 5xx 属瞬态，
+事后把计数回滚（只吃 60s 间隔，睡眠唤醒/captive portal 不烧预算），只有非瞬态
+（4xx、响应解析失败等，等下去也不会自愈）计入 `MAX_SYNC_ATTEMPTS`(3)，累计
+3 次即永久放弃（API burn guard）。状态单向（v1）：维护者在 GitHub 关闭/打标
+签，本地不回拉。
+
 ---
 
 # v0.17.2 additions（attach ≠ 打回：review 卡会话活动的诚实投影）

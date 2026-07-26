@@ -912,38 +912,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 建议上报入口（看板 header 直点 = ids 空 → 对整体；多选操作条 = 针对
-    /// 所选卡）: 弹多行文本框（promptText 复用——↩ 发送 · ⇧↩ 换行 同款），
-    /// 提交走 submitFeedback。返回 true = 已写入 inbox（调用方据此退出多选）；
-    /// 取消 / 空文本 / 写失败 = false，选择保持原样。
+    /// 所选卡）: 多行文本框（promptText 同款编辑器——↩ 发送 · ⇧↩ 换行）+
+    /// 「同时公开到 GitHub 建议跟踪表」勾选（默认态 = 上次选择，override 键
+    /// feedback_publish_default，出厂 false），提交走 submitFeedback。返回
+    /// true = 已写入 inbox（调用方据此退出多选）；取消 / 空文本 / 写失败 =
+    /// false，选择保持原样。
     func promptFeedback(ids: [String]) -> Bool {
-        let title = ids.isEmpty
+        let alert = NSAlert()
+        alert.messageText = ids.isEmpty
             ? L("💡 提建议（对整体）", "💡 Send feedback (overall)")
             : L("💡 提建议（\(ids.count) 张卡）", "💡 Send feedback (\(ids.count) cards)")
         // CONTRACT §29 明示条款：内容（建议全文 + 所选卡片标题快照）会上传给
         // 维护者，且不受「产品改进计划」开关/首启 consent 限制——入口文案必须
-        // 把这一点讲清楚，不得暗示是本地闭环。
-        guard let text = promptText(
-            title: title,
-            info: L("说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。",
-                    "What's off / could be better. On send, your feedback text and the selected cards' title snapshots are uploaded to the maintainer to improve the product (even with anonymous stats off) — avoid sensitive details."),
-            placeholder: L("建议内容…", "Your feedback…")),
-            !text.isEmpty
-        else { return false }
-        return submitFeedback(ids: ids, text: text)
+        // 把这一点讲清楚，不得暗示是本地闭环。勾选公开时更进一步：建议会出现
+        // 在公开 repo 的 issue 列表里，任何人可见——旁边的提醒必须常驻。
+        alert.informativeText = L("说说哪里不对 / 可以更好。发送后，建议全文与所选卡片的标题快照会上传给维护者用于改进产品（即使你关闭了匿名统计）——请勿包含敏感信息。",
+                                  "What's off / could be better. On send, your feedback text and the selected cards' title snapshots are uploaded to the maintainer to improve the product (even with anonymous stats off) — avoid sensitive details.")
+            + "\n" + L("建议内容…", "Your feedback…") + "\n"
+            + L("↩ 发送 · ⇧↩ 换行", "↩ send · ⇧↩ newline")
+        alert.addButton(withTitle: L("发送", "Send"))
+        alert.addButton(withTitle: L("取消", "Cancel"))
+
+        // editor + publish checkbox stacked (promptAnswer 的 NSStackView 模式)
+        let container = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 0))
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 6
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 96))
+        let tv = NSTextView(frame: scroll.bounds)
+        tv.isRichText = false
+        tv.font = .systemFont(ofSize: 13)
+        tv.autoresizingMask = [.width]
+        tv.textContainerInset = NSSize(width: 4, height: 6)
+        tv.allowsUndo = true
+        let sendDelegate = PromptSendDelegate()
+        sendDelegate.sendButton = alert.buttons.first
+        tv.delegate = sendDelegate
+        scroll.documentView = tv
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        container.addArrangedSubview(scroll)
+
+        // 建议公开跟踪表: publish opt-in — actd 侧 feedback_sync 只对显式
+        // true 的记录建 GitHub issue。默认态记住上次选择。
+        let publishBox = NSButton(
+            checkboxWithTitle: L("同时公开到 GitHub 建议跟踪表",
+                                 "Also publish to the public GitHub suggestion tracker"),
+            target: nil, action: nil)
+        publishBox.state = Self.feedbackPublishDefault() ? .on : .off
+        container.addArrangedSubview(publishBox)
+
+        let publicNote = NSTextField(
+            wrappingLabelWithString: L("公开后任何人可见，别含敏感信息。",
+                                       "Public — visible to anyone; leave out anything sensitive."))
+        publicNote.font = .systemFont(ofSize: 11)
+        publicNote.textColor = .secondaryLabelColor
+        publicNote.translatesAutoresizingMaskIntoConstraints = false
+        publicNote.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        container.addArrangedSubview(publicNote)
+
+        // NSAlert sizes the accessory by its FRAME — derive it from the
+        // autolayout fitting size or the panel collapses to zero height.
+        container.layoutSubtreeIfNeeded()
+        container.frame = NSRect(x: 0, y: 0, width: 360,
+                                 height: container.fittingSize.height)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = tv
+        let resp = withExtendedLifetime(sendDelegate) { alert.runModal() }
+        guard resp == .alertFirstButtonReturn else { return false }
+        let text = tv.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        let publish = publishBox.state == .on
+        Self.rememberFeedbackPublishDefault(publish)
+        return submitFeedback(ids: ids, text: text, publish: publish)
+    }
+
+    /// 建议公开跟踪表: the checkbox's remembered default — override 键
+    /// feedback_publish_default（settings_overrides.json；config.py 同名
+    /// override，出厂 false：公开是逐条 opt-in，预勾会让「打字→↩」的肌肉
+    /// 记忆把建议直接发进公开 repo）。
+    static func feedbackPublishDefault() -> Bool {
+        if let v = SettingsIO.readOverrides()["feedback_publish_default"] as? Bool {
+            return v
+        }
+        return false
+    }
+
+    /// Remember the checkbox choice for next time — best-effort（writeOverrides
+    /// 对无法解析的 overrides 文件 fail-closed 抛错；记不住只影响下次默认态，
+    /// 不能挡发送本身，照 L10n language 的 try? 先例吞掉）。
+    static func rememberFeedbackPublishDefault(_ value: Bool) {
+        var merged = SettingsIO.readOverrides()
+        if (merged["feedback_publish_default"] as? Bool) == value { return }
+        merged["feedback_publish_default"] = value
+        try? SettingsIO.writeOverrides(merged)
     }
 
     /// 建议上报（照 submitMergeReview 模式）:
-    /// {"action":"feedback","ids":[…],"text":…} inbox 文件 — ids sorted 保持
-    /// payload 确定性，允许为空（对整体提建议）。同一 atomic-write +
-    /// failure-alert 路径（writeInboxFile）；成功后乐观回显一条绿色
-    /// 「已记录建议，感谢」信息条（store.noteFeedbackRecorded）。
-    func submitFeedback(ids: [String], text: String) -> Bool {
+    /// {"action":"feedback","ids":[…],"text":…,"publish":…} inbox 文件 — ids
+    /// sorted 保持 payload 确定性，允许为空（对整体提建议）；publish = 用户
+    /// 勾选的「同时公开到 GitHub 建议跟踪表」（actd 只对显式 true 公开建
+    /// issue）。同一 atomic-write + failure-alert 路径（writeInboxFile）；
+    /// 成功后乐观回显一条绿色「已记录建议，感谢」信息条
+    /// （store.noteFeedbackRecorded）。
+    func submitFeedback(ids: [String], text: String, publish: Bool = false) -> Bool {
         let ts = ISO8601DateFormatter().string(from: Date())
         let dict: [String: Any] = ["action": "feedback", "ids": ids.sorted(),
-                                   "text": text, "ts": ts]
+                                   "text": text, "ts": ts, "publish": publish]
         guard writeInboxFile(dict) else { return false }
         Analytics.firstReach("feedback")
-        Analytics.log("feedback_submit", fields: ["ids": ids.count])
+        Analytics.log("feedback_submit", fields: ["ids": ids.count,
+                                                  "publish": publish])
         store.noteFeedbackRecorded()
         return true
     }

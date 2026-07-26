@@ -678,10 +678,13 @@ def _update_search_index(card_id, session_id) -> None:
 def _apply_feedback(decision: dict) -> str:
     """建议上报 (CONTRACT §29) — explicit user report to the maintainer.
 
-    ``{"action":"feedback","ids":["R-001","MS-ab12cd34"],"text":"…"}`` —
-    validation here: non-empty text is REQUIRED (empty -> logged drop);
-    ``ids`` may be missing/empty/garbage (bad ids degrade to "unknown"
-    snapshots inside the record — the text must never be lost over them).
+    ``{"action":"feedback","ids":["R-001","MS-ab12cd34"],"text":"…",
+    "publish":true|false}`` — validation here: non-empty text is REQUIRED
+    (empty -> logged drop); ``ids`` may be missing/empty/garbage (bad ids
+    degrade to "unknown" snapshots inside the record — the text must never be
+    lost over them); ``publish`` is the app checkbox「同时公开到 GitHub 建议
+    跟踪表」and only an explicit JSON ``true`` counts (absent/garbage — e.g.
+    an older app — stays private; act/lib/feedback_sync.py syncs later).
     Recording + best-effort upload live in act/lib/feedback.py; only event
     METADATA reaches the local analytics log — the report text travels solely
     inside the feedback record itself. Returns the §5.4 result_status
@@ -695,13 +698,14 @@ def _apply_feedback(decision: dict) -> str:
         _log("inbox: feedback with empty text — dropped")
         return "noop"
     ids = feedback.clean_ids(decision.get("ids"))
-    rec = feedback.record_feedback(ids, text)
+    publish = decision.get("publish") is True
+    rec = feedback.record_feedback(ids, text, publish=publish)
     if rec is None:
         _log("inbox: feedback record FAILED — dropped")
         return "noop"
     _log(f"inbox: feedback {rec['id']} recorded "
-         f"(ids={ids or []}, uploaded={rec.get('uploaded')})")
-    analytics.log_event("inbox_feedback", n=len(ids),
+         f"(ids={ids or []}, publish={publish}, uploaded={rec.get('uploaded')})")
+    analytics.log_event("inbox_feedback", n=len(ids), publish=publish,
                         uploaded=rec.get("uploaded"))
     return "running"
 
@@ -2525,6 +2529,15 @@ def run_once(
         # single retry lands on a genuinely later pass, not seconds later
         # inside the same outage. Cheap when state/feedback/ is empty.
         feedback.retry_pending(cfg)
+    try:
+        # 建议公开跟踪表: opted-in feedback records -> GitHub issues. Zero
+        # cost with nothing pending; silent no-op without a token file; a
+        # broken sync must never take the pass down (same try/except shape
+        # as the silent_merge sweep above).
+        from act.lib import feedback_sync
+        feedback_sync.sweep(cfg)
+    except Exception:  # noqa: BLE001 - sweep must not kill the daemon
+        pass
     dash = build_dashboard(cfg=cfg)
     # §26 in-app update check: cheap (ETag-cached, at most one network attempt
     # per 24h) and never raises — the field is simply absent when no newer
