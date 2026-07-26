@@ -461,6 +461,24 @@ struct ReviewItem: Decodable, Hashable {
     }
 }
 
+// 契约 §21 partition（多对多分组）：一条合并建议把 N 张卡分成 k 组分别合并。
+// 每组一个 primary、其余成员并入它；单张组 = 该卡保持独立。groups 只在
+// verdict=="partition" 时有意义；整链 add-only（老 actd 不发、老 app 不解）。
+struct MergeGroup: Decodable, Hashable {
+    let primary: String        // 本组主卡（保留的那张）
+    let ids: [String]          // 全组成员（primary 在首位）
+    let reason: String?        // AI 的一句话分组理由
+
+    private enum CodingKeys: String, CodingKey { case primary, ids, reason }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        primary = (try? c.decodeIfPresent(String.self, forKey: .primary)) ?? ""
+        ids = (try? c.decodeIfPresent([String].self, forKey: .ids)) ?? []
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
 // 契约 merge-review §六: dashboard.json 的 merge_suggestions[] 分区 —
 // actd 发 analyzing/done/failed 三态（dismissed 不发）。除 id 外全部
 // decodeIfPresent 向后兼容（老 actd 不发该分区时 Dashboard 照常解码）。
@@ -475,10 +493,11 @@ struct MergeSuggestion: Decodable, Hashable {
     let confidence: String?    // "high" | "medium" | "low"
     let error: String?         // failed 时的原因
     let requested_at: Int?     // epoch seconds
+    let groups: [MergeGroup]?  // verdict=="partition"（多对多分组）时才有；老 payload 缺席 → nil
 
     private enum CodingKeys: String, CodingKey {
         case id, ids, status, verdict, primary, rationale
-        case action_plan, confidence, error, requested_at
+        case action_plan, confidence, error, requested_at, groups
     }
 
     init(from decoder: Decoder) throws {
@@ -492,6 +511,7 @@ struct MergeSuggestion: Decodable, Hashable {
         confidence = try? c.decodeIfPresent(String.self, forKey: .confidence)
         error = try? c.decodeIfPresent(String.self, forKey: .error)
         requested_at = try? c.decodeIfPresent(Int.self, forKey: .requested_at)
+        groups = try? c.decodeIfPresent([MergeGroup].self, forKey: .groups)
         // 缺 id → 内容派生的确定性 id。注意不掺 status/verdict：analyzing→done
         // 的状态推进不应换身份（否则 pendingMergeActions 记账又会失配）。
         id = (try? c.decode(String.self, forKey: .id))

@@ -1069,6 +1069,10 @@ def _apply_merge_verdict(job: dict) -> None:
     primary_id = str(job.get("primary") or "")
     if verdict == "keep_separate":
         return
+    if verdict == "partition":
+        # 多对多分组：作业文件自带分组方案，顶层 primary 无执行语义。
+        _apply_merge_partition(job)
+        return
     secondaries = [i for i in ids if i != primary_id]
     if (verdict not in ("merge", "link_improvement", "close_secondary")
             or primary_id not in ids or not secondaries):
@@ -1099,6 +1103,107 @@ def _apply_merge_verdict(job: dict) -> None:
         return
 
     _merge_into_primary(primary_id, secondaries)
+
+
+def _apply_merge_partition(job: dict) -> None:
+    """契约 四 partition（多对多分组）：逐组复用 :func:`_merge_into_primary` —
+    每组就是一次现有单-primary 合并（语义逐字一致），单张组 = 保持独立不动。
+
+    动作面复用既有 ``merge_apply``（不新增 inbox 动作）：分组方案与 primary/
+    verdict 一样是分析子进程写进作业文件的结论，inbox 只携带建议 id ——app 侧
+    没有注入分组的通道，确定性执行的边界与 §21 其余 verdict 完全相同。
+
+    每组执行前重新校验全组成员仍存在且不在终态（done 建议在 24h TTL 内可执行，
+    期间用户可能已 trash/合并组员——此时整组跳过留痕，绝不半合）；某组失败不
+    阻塞其余组；逐组结果如实写回作业文件 ``group_results``（文件留到 TTL，
+    可追查）。
+
+    结果判定（不许把没并上的组吞成"成功"——legacy merge 主卡死亡置可见 failed
+    的同一先例，audit 2026-07-15）：全部组 ok/独立 → 正常返回，调用方照旧
+    dismiss(applied) + outcome=ok；**任一组 skipped/failed** → 作业经
+    mark_failed 变成看板上可见的失败卡（error = 逐组结果汇总，点名哪些组已
+    并成——已成的组不回滚也绝不自动重试，用户的后续动作是「仍然合并」或关闭）
+    并 raise，调用方按既有失败路径记 outcome=fail、绝不 dismiss。作业的
+    groups 坏形/没有 ≥2 张的组 → ValueError（unusable job，调用方按既有路径
+    记 outcome=fail、作业留在 done 可重试/取消）。"""
+    ids = [str(i) for i in job.get("ids") or []]
+    groups = (merge_review._validate_groups(job.get("groups"), ids)
+              if merge_review is not None else None)
+    if not groups:
+        raise ValueError(
+            f"unusable partition job: groups={job.get('groups')!r} ids={ids}")
+    results: list[dict] = []
+    for g in groups:
+        primary_id = str(g["primary"])
+        members = [str(i) for i in g["ids"]]
+        entry: dict = {"primary": primary_id, "ids": members}
+        if len(members) < 2:
+            entry["outcome"] = "independent"   # 单张组：契约语义 = 不动它
+            results.append(entry)
+            continue
+        stale = []
+        for rid in members:
+            req = load(rid)
+            if req is None:
+                stale.append(f"{rid} 已不存在")
+            elif str(req.status) in _MERGE_DEAD_STATES:
+                stale.append(f"{rid} 已不在可合并状态（{req.status}）")
+        if stale:
+            entry["outcome"] = "skipped"
+            entry["error"] = "; ".join(stale)[:200]
+            results.append(entry)
+            _log(f"merge: partition group primary={primary_id} skipped "
+                 f"({entry['error']})")
+            continue
+        try:
+            _merge_into_primary(primary_id,
+                                [i for i in members if i != primary_id])
+        except Exception as e:  # noqa: BLE001 - 某组失败不阻塞其余组
+            entry["outcome"] = "failed"
+            entry["error"] = str(e)[:200]
+            results.append(entry)
+            _log(f"merge: partition group primary={primary_id} FAILED: {e}\n"
+                 f"{traceback.format_exc()}")
+            continue
+        entry["outcome"] = "ok"
+        results.append(entry)
+        _log(f"merge: partition group primary={primary_id} absorbed "
+             f"{len(members) - 1} secondaries")
+    # honest per-group receipts on the job file itself; on full success the
+    # caller's dismiss_job(applied=True) rewrites the same (mutated) dict
+    job["group_results"] = results
+    try:
+        if merge_review is not None:
+            merge_review.write_job(job)
+    except OSError as e:
+        _log(f"merge: partition group_results write failed (ignored): {e}")
+    if any(r.get("outcome") in ("skipped", "failed") for r in results):
+        # 没并上的组绝不能被吞成"成功"：作业置 failed（可见橙色失败卡），
+        # error 汇总逐组结果；raise 让调用方走既有失败路径（outcome=fail、
+        # 不 dismiss）。已并成的组如实点名——不回滚、不自动重试。
+        summary = _partition_results_summary(results)
+        if merge_review is not None:
+            merge_review.mark_failed(str(job.get("id") or ""), summary)
+        raise RuntimeError(summary)
+
+
+def _partition_results_summary(results: list[dict]) -> str:
+    """把逐组结果拼成一句可读的失败原因（mark_failed 截前 200 字；完整账目
+    在作业文件 group_results 里）。已完成的组必须点名——失败卡不会自动重试，
+    用户得知道哪些已并、哪些没并。"""
+    parts: list[str] = []
+    for n, r in enumerate(results, 1):
+        prim = r.get("primary")
+        outcome = r.get("outcome")
+        if outcome == "ok":
+            parts.append(f"组{n}（主卡 {prim}）已合并")
+        elif outcome == "independent":
+            parts.append(f"组{n}（{prim}）保持独立")
+        elif outcome == "skipped":
+            parts.append(f"组{n}（主卡 {prim}）跳过：{r.get('error') or ''}")
+        else:
+            parts.append(f"组{n}（主卡 {prim}）失败：{r.get('error') or ''}")
+    return "；".join(parts)
 
 
 def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
