@@ -228,8 +228,14 @@ def _attempt_upload(record: dict, cfg: config.Config,
 # Public API — both functions swallow everything (daemon-safe)
 # --------------------------------------------------------------------------- #
 def record_feedback(ids, text, cfg: Optional[config.Config] = None,
-                    transport: Optional[Transport] = None) -> Optional[dict]:
+                    transport: Optional[Transport] = None,
+                    publish: bool = False) -> Optional[dict]:
     """Persist one feedback report locally, then try the upload once.
+
+    ``publish`` (add-only) records the user's「同时公开到 GitHub 建议跟踪表」
+    checkbox: True marks the record for act/lib/feedback_sync.py to create a
+    public GitHub issue from. Anything but an explicit True — including every
+    payload from app versions that never asked — stays private.
 
     Returns the record dict (with its upload outcome), or None when the text
     is empty/whitespace or the local write itself failed. Never raises.
@@ -247,6 +253,7 @@ def record_feedback(ids, text, cfg: Optional[config.Config] = None,
             "cards": [_snapshot(i) for i in id_list],
             "text": body[:TEXT_CAP],
             "app_version": __version__,
+            "publish": publish is True,  # explicit opt-in only (公开跟踪表)
             "uploaded": None,       # null = pending; true/false are terminal
             "upload_attempts": 0,
         }
