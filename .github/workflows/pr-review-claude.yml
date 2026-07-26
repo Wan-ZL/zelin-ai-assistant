@@ -49,19 +49,21 @@ jobs:
           # with — hand the action the workflow's own token for PR comments
           # (first live run failed on exactly this: "Failed to get OIDC token").
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # One visible comment per PR, updated in place on re-runs — without
-          # it a clean review ("一切正常") evaporates into the run log and the
-          # user can't tell reviewed-and-fine from never-reviewed.
-          use_sticky_comment: true
           prompt: |
-            用中文 review 这个 PR。这是一个 macOS 菜单栏 app（mac/Sources/*.swift）+
-            Python 管线（act/）的个人 AI 助理项目。重点：
+            用中文 review 这个 PR（REPO: ${{ github.repository }}，PR #${{ github.event.pull_request.number }}）。
+            这是一个 macOS 菜单栏 app（mac/Sources/*.swift）+ Python 管线（act/）
+            的个人 AI 助理项目。重点：
             1. 正确性——具体失败场景，不要风格意见；
             2. 回归——改动是否破坏既有语义（docs/CONTRACT.md 是行为契约的记账）；
             3. 安全与隐私——任何把本机路径/密钥/用户数据带出本机的路径都是红线；
             4. 并发与守护进程安全——actd 是单写者，detached 子进程只读。
-            只报有具体失败场景的真问题，按 P0/P1/P2 分级；没有问题就明说一切正常。
+            只报有具体失败场景的真问题，按 P0/P1/P2 分级。
+            投递方式（必须执行）：行级问题用 inline comment 工具挂到对应行；
+            **无论有没有问题，最后都必须用 `gh pr comment` 发一条中文总评**
+            （问题分级汇总，或明确写「未发现需要修改的问题」）——审过没留言
+            等于没审。
           claude_args: |
             --model claude-fable-5
             --fallback-model claude-sonnet-5
             --max-turns 40
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
