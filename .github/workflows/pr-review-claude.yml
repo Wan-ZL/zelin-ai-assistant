@@ -60,4 +60,4 @@ jobs:
           claude_args: |
             --model claude-fable-5
             --fallback-model claude-sonnet-5
-            --max-turns 12
+            --max-turns 40
