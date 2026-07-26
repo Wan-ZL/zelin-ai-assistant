@@ -31,6 +31,21 @@ enum NotifyRelay {
         let body: String
         let subtitle: String?
         let createdAt: TimeInterval
+        // v0.46: writer-tagged transition class ("review_ready" today);
+        // absent on old/other entries — those keep the pre-v0.46 behavior.
+        let kind: String?
+    }
+
+    /// v0.46 完成提醒 preference（override key `review_notify`）:
+    /// "off" drops review_ready entries, "banner" posts them silently,
+    /// "sound" (default) posts them with the system sound. Only entries
+    /// tagged kind=="review_ready" are affected.
+    static func reviewNotifyMode() -> String {
+        let v = SettingsIO.readOverrides()["review_notify"] as? String
+        switch v {
+        case "off", "banner", "sound": return v!
+        default: return "sound"
+        }
     }
 
     /// Scan → post → delete. Runs on the 5 s refresh tick (the same cadence
@@ -63,20 +78,25 @@ enum NotifyRelay {
             }
             entries.append(Entry(path: path, id: id, title: title, body: body,
                                  subtitle: obj["subtitle"] as? String,
-                                 createdAt: created))
+                                 createdAt: created,
+                                 kind: obj["kind"] as? String))
         }
         guard !entries.isEmpty else { return }
 
         let now = Date().timeIntervalSince1970
         let center = UNUserNotificationCenter.current()
-        // stale entries (closed-app backlog) are silently consumed first
+        let reviewMode = reviewNotifyMode()
+        // stale entries (closed-app backlog) are silently consumed first;
+        // review_ready entries honor the 完成提醒 switch (off = consume unposted)
         var fresh: [Entry] = []
         for e in entries {
-            if now - e.createdAt <= staleAfter {
-                fresh.append(e)
-            } else {
+            if now - e.createdAt > staleAfter {
                 NSLog("notify_queue: stale entry dropped: \(e.id)")
                 try? fm.removeItem(atPath: e.path)
+            } else if e.kind == "review_ready" && reviewMode == "off" {
+                try? fm.removeItem(atPath: e.path)
+            } else {
+                fresh.append(e)
             }
         }
         // oldest first, so a burst posts in the order it was produced; the
@@ -87,6 +107,11 @@ enum NotifyRelay {
             content.title = e.title
             content.body = e.body
             if let s = e.subtitle { content.subtitle = s }
+            // v0.46: 完成提醒 rings by default — a silent banner is invisible
+            // under a fullscreen video, which was the whole complaint.
+            if e.kind == "review_ready" && reviewMode == "sound" {
+                content.sound = .default
+            }
             // ungranted permission → add() silently no-ops; the truth
             // lives in the Permissions page — the queue never retries.
             center.add(UNNotificationRequest(identifier: e.id,

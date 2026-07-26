@@ -151,6 +151,9 @@ class Config:
     # §14bis: user-owned fetcher CLI (Workspace 禁 app password/IMAP 的后备)。
     # Non-empty => wins over IMAP. Contract: radar_gmail.fetch_via_command.
     gmail_fetch_command: Optional[str] = None
+    # v0.46 完成提醒 (off|banner|sound)。App(NotifyRelay) 是唯一读者——管线只
+    # 负责给 review_ready 队列条目打 kind；键收进 overrides 白名单以便记账。
+    review_notify: str = "sound"
     # weekly ingest digest (CONTRACT §24) — reads the last 7 days of Obsidian
     # ingest output and turns it into a review-lane digest card + automation
     # proposal cards. Skips itself (cheap, no claude call) when there is no
@@ -669,6 +672,7 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_app_password_path": str,
     "gmail_enabled": _coerce_bool,
     "gmail_fetch_command": str,
+    "review_notify": str,
     "weekly_digest_enabled": _coerce_bool,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,

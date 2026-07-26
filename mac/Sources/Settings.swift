@@ -208,6 +208,8 @@ struct SettingsFormView: View {
     @State private var language = "zh"
     // §15: default output format for drafted deliverables ("markdown" | "html").
     @State private var outputFormat = "markdown"
+    // v0.46 完成提醒（override `review_notify`）: off | banner | sound(默认)
+    @State private var reviewNotify = "sound"
     // v0.14 (audit 7.1/7.3): execution keys promoted from config.yaml-only.
     @State private var targetRepo = ""
     @State private var targetRepoExists = true
@@ -494,6 +496,33 @@ struct SettingsFormView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 220)
+                Spacer()
+            }
+            Divider()
+            // v0.46 完成提醒: 任务进待验收时的通知形态 — relay 侧过滤/加声
+            // (NotifyRelay.reviewNotifyMode)，off 连横幅都不弹。
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("任务完成提醒", "Task-done alert"))
+                        .font(.system(size: 12))
+                    Text(L("卡片进「待验收」时怎么提醒你（看视频也能听见）",
+                           "How to alert you when a card reaches review (audible even over a video)"))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 220, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { reviewNotify },
+                    set: { v in
+                        reviewNotify = ["off", "banner", "sound"].contains(v) ? v : "sound"
+                        persistReviewNotify()
+                    })) {
+                    Text(L("关", "Off")).tag("off")
+                    Text(L("横幅", "Banner")).tag("banner")
+                    Text(L("横幅+声音", "Banner + sound")).tag("sound")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 260)
                 Spacer()
             }
             Divider()
@@ -1311,6 +1340,12 @@ struct SettingsFormView: View {
                         fallback: "markdown").lowercased()
             return v == "html" ? "html" : "markdown"
         }()
+        // v0.46 完成提醒 — override-only (the pipeline never reads it; the
+        // relay filters/rings on the Swift side), default sound.
+        reviewNotify = {
+            let v = ov["review_notify"] as? String
+            return ["off", "banner", "sound"].contains(v ?? "") ? v! : "sound"
+        }()
         // §16 flags — effective: overrides → config.yaml features: → default on
         // (audit 5.2: reading overrides only made config.yaml choices look wrong
         // and get clobbered on the next save).
@@ -1486,6 +1521,19 @@ struct SettingsFormView: View {
             merged["default_output_format"] = val
         }
         Analytics.log("mw_setting_change", fields: ["key": "default_output_format"])
+        writeMerged(merged)
+    }
+
+    /// v0.46 完成提醒: diff-write — "sound" is the default, so it rides as the
+    /// absent key; off/banner are written explicitly.
+    private func persistReviewNotify() {
+        var merged = SettingsIO.readOverrides()
+        if reviewNotify == "sound" {
+            merged.removeValue(forKey: "review_notify")
+        } else {
+            merged["review_notify"] = reviewNotify
+        }
+        Analytics.log("mw_setting_change", fields: ["key": "review_notify"])
         writeMerged(merged)
     }
 

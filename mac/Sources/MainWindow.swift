@@ -97,6 +97,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
     }
+
+    // v0.46 (#2): seams for AppDelegate.applicationShouldTerminate — a ⌘Q
+    // aimed at the open window closes it instead of killing the daemon.
+    var isWindowVisible: Bool { window?.isVisible ?? false }
+    func closeWindow() { window?.performClose(nil) }
 }
 
 enum MainSection: String, CaseIterable, Identifiable {

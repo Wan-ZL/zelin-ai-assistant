@@ -515,7 +515,7 @@ class BatchNotifyTestCase(unittest.TestCase):
                                      for i in range(3)])
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual(len(msgs), 1)
-        title, _body, rid = msgs[0]
+        title, _body, rid, _kind = msgs[0]
         self.assertIn("3", title)
         self.assertEqual(title, notify.msg_new_cards_batch(3)[0])
         self.assertIsNone(rid)   # a batch names no single card

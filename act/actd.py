@@ -1970,12 +1970,15 @@ def _by_id(items: list[dict]) -> dict[str, dict]:
     return {i["id"]: i for i in items if i.get("id")}
 
 
-def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str, Optional[str]]]:
-    """Return (title, body, req_id) notifications for prev->curr transitions.
+def detect_transitions(prev: Optional[dict], curr: dict
+                       ) -> list[tuple[str, str, Optional[str], Optional[str]]]:
+    """Return (title, body, req_id, kind) notifications for prev->curr transitions.
 
     req_id is None for the §40 batched new-cards entry (it names no single
-    card); every other class carries the card id."""
-    msgs: list[tuple[str, str]] = []
+    card); every other class carries the card id. kind (v0.46, add-only) tags
+    the transition class for per-event user preferences — today only
+    "review_ready" (the 完成提醒 off/banner/sound switch); the rest ride None."""
+    msgs: list[tuple[str, str, Optional[str], Optional[str]]] = []
     if prev is None:
         return msgs
 
@@ -2004,7 +2007,7 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str,
             if item.get("reraised"):
                 t, b = notify.msg_reraised(item.get("title", rid),
                                            item.get("reraised_note") or "")
-                msgs.append((t, b, rid))
+                msgs.append((t, b, rid, None))
             elif any(isinstance(s, dict) and s.get("channel") == "weekly-digest"
                      for s in item.get("sources") or []):
                 continue  # announced by the digest's own notification
@@ -2012,11 +2015,11 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str,
                 fresh.append((rid, item))
     if len(fresh) > _NEW_CARD_BATCH_ABOVE:
         t, b = notify.msg_new_cards_batch(len(fresh))
-        msgs.append((t, b, None))
+        msgs.append((t, b, None, None))
     else:
         for rid, item in fresh:
             t, b = notify.msg_new_card(item.get("title", rid))
-            msgs.append((t, b, rid))
+            msgs.append((t, b, rid, None))
 
     # executing -> review (§11 draft ready, awaiting acceptance)
     for rid, item in c_rev.items():
@@ -2029,7 +2032,7 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str,
             if p_run.get(rid, {}).get("from_review"):
                 continue
             t, b = notify.msg_review_ready(item.get("name") or rid)
-            msgs.append((t, b, rid))
+            msgs.append((t, b, rid, "review_ready"))
 
     # executing -> blocked (newly needs_input, previously running). §39: the
     # notification carries a snippet of the QUESTION the agent is asking.
@@ -2037,7 +2040,7 @@ def detect_transitions(prev: Optional[dict], curr: dict) -> list[tuple[str, str,
         if rid not in p_ni and rid in p_run:
             t, b = notify.msg_needs_input(item.get("name") or rid,
                                           item.get("question"))
-            msgs.append((t, b, rid))
+            msgs.append((t, b, rid, None))
 
     return msgs
 
@@ -2425,8 +2428,8 @@ def run_once(
         dash = update_check.attach(dash, cfg)
     write_dashboard(dash)
 
-    for title, body, rid in detect_transitions(prev_dash, dash):
-        notify.notify(title, body, req=rid)
+    for title, body, rid, kind in detect_transitions(prev_dash, dash):
+        notify.notify(title, body, req=rid, kind=kind)
     for title, body in _check_auth_failures(auth_notified):
         notify.notify(title, body)
 

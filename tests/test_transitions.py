@@ -1,7 +1,9 @@
-"""actd.detect_transitions — dashboard diff -> notification triples (P1-11).
+"""actd.detect_transitions — dashboard diff -> notification tuples (P1-11).
 
-Three transition classes produce (title, body, req_id) 3-tuples (the req id is
-what lets the Slack ✅-reaction approve the right R-id):
+Three transition classes produce (title, body, req_id, kind) 4-tuples (the req
+id is what lets the Slack ✅-reaction approve the right R-id; kind tags the
+class for per-event preferences — "review_ready" for fresh deliveries, None
+everywhere else):
 
   ∅ -> needs_approval          "有新需求待审批"     (notify.msg_new_card)
   running -> review            "待验收：AI 已交付草稿"
@@ -60,7 +62,7 @@ class NewCardTestCase(unittest.TestCase):
         prev = _dash()
         curr = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_new_card("写周报"), "R-1")])
+                         [(*_new_card("写周报"), "R-1", None)])
 
     def test_existing_card_stays_silent(self):
         prev = _dash(needs_approval=[{"id": "R-1", "title": "写周报"}])
@@ -71,7 +73,7 @@ class NewCardTestCase(unittest.TestCase):
         prev = _dash()
         curr = _dash(needs_approval=[{"id": "R-1"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_new_card("R-1"), "R-1")])
+                         [(*_new_card("R-1"), "R-1", None)])
 
 
 class ReviewTransitionTestCase(unittest.TestCase):
@@ -79,7 +81,7 @@ class ReviewTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-2", "name": "任务二"}])
         curr = _dash(review=[{"id": "R-2", "name": "任务二"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_review_ready("任务二"), "R-2")])
+                         [(*_review_ready("任务二"), "R-2", "review_ready")])
 
     def test_review_without_prior_running_is_silent(self):
         # e.g. actd restarted while the item already sat in review upstream
@@ -103,7 +105,7 @@ class ReviewTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-2", "name": "任务二"}])
         curr = _dash(review=[{"id": "R-2", "name": "任务二"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_review_ready("任务二"), "R-2")])
+                         [(*_review_ready("任务二"), "R-2", "review_ready")])
 
     def test_review_persisting_is_silent(self):
         prev = _dash(review=[{"id": "R-2", "name": "任务二"}])
@@ -114,7 +116,7 @@ class ReviewTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-2"}])
         curr = _dash(review=[{"id": "R-2"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_review_ready("R-2"), "R-2")])
+                         [(*_review_ready("R-2"), "R-2", "review_ready")])
 
 
 class NeedsInputTransitionTestCase(unittest.TestCase):
@@ -122,7 +124,7 @@ class NeedsInputTransitionTestCase(unittest.TestCase):
         prev = _dash(running=[{"id": "R-3", "name": "任务三"}])
         curr = _dash(needs_input=[{"id": "R-3", "name": "任务三"}])
         self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_needs_input("任务三"), "R-3")])
+                         [(*_needs_input("任务三"), "R-3", None)])
 
     def test_needs_input_persisting_is_silent(self):
         prev = _dash(needs_input=[{"id": "R-3", "name": "任务三"}])
@@ -144,9 +146,9 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
                      needs_input=[{"id": "R-3", "name": "任务三"}])
         msgs = actd.detect_transitions(prev, curr)
         self.assertEqual(set(msgs), {
-            (*_new_card("写周报"), "R-1"),
-            (*_review_ready("任务二"), "R-2"),
-            (*_needs_input("任务三"), "R-3"),
+            (*_new_card("写周报"), "R-1", None),
+            (*_review_ready("任务二"), "R-2", "review_ready"),
+            (*_needs_input("任务三"), "R-3", None),
         })
 
     def test_approval_to_running_is_silent(self):
@@ -159,7 +161,7 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
         # prev written by an older build without some partitions
         msgs = actd.detect_transitions({}, _dash(
             needs_approval=[{"id": "R-1", "title": "写周报"}]))
-        self.assertEqual(msgs, [(*_new_card("写周报"), "R-1")])
+        self.assertEqual(msgs, [(*_new_card("写周报"), "R-1", None)])
 
     def test_items_without_id_are_ignored(self):
         prev = _dash()

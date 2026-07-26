@@ -220,6 +220,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // "Secure coding is not enabled for restorable state" launch warning).
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
+    // v0.46 (#2): a reflexive ⌘Q aimed at the open main window must not kill
+    // the menu-bar daemon — convert it to "close the window". ONLY the ⌘Q
+    // key event converts: menu clicks (app menu / status-item 退出) and
+    // system logout/shutdown terminate as usual, so quitting stays one
+    // right-click away and OS shutdown is never blocked.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let e = NSApp.currentEvent, e.type == .keyDown,
+           e.modifierFlags.contains(.command),
+           (e.charactersIgnoringModifiers ?? "").lowercased() == "q",
+           MainWindowController.shared.isWindowVisible {
+            MainWindowController.shared.closeWindow()
+            return .terminateCancel
+        }
+        return .terminateNow
+    }
+
     func refresh() {
         store.reload()
         updateStatusTitle()
