@@ -38,9 +38,12 @@ def _read_obsidian() -> dict:
 
 
 def _item(title, hardness="soft", deadline=None, quote="do the thing"):
+    # §45 默认「会议音频里的真人」（FULL 行）——这些测试钉的是 health 记账，
+    # 不是出生资格闸（那在 tests/test_radar_echo_gate.py）。
     return {"title": title, "type": "report", "tier": "T1",
             "hardness": hardness, "deadline": deadline,
-            "cost_estimate_usd": None, "quote": quote}
+            "cost_estimate_usd": None, "quote": quote,
+            "provenance": "audio", "speaker": "human"}
 
 
 # --------------------------------------------------------------------------- #

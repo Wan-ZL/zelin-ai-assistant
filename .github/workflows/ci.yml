@@ -71,14 +71,41 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install PyYAML
-        run: python3 -m pip install "pyyaml>=6,<7"
+      - name: Install PyYAML + hypothesis
+        # hypothesis = dev/test-only（§0 宪法第 7 条：运行时白名单不变）——
+        # 驱动 tests/test_provenance.py 的宪法性质测试；没装时那些测试自动 skip。
+        run: python3 -m pip install "pyyaml>=6,<7" hypothesis
 
       - name: Compile Python sources
         run: python3 -m compileall -q act ingest
 
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
+
+  contract-reminder:
+    name: Contract reminder (soft gate)
+    # 软门（§0 宪法配套）：act/ 或 mac/Sources/ 的行为改动通常应伴随
+    # docs/CONTRACT.md 的同 PR 修法。只提醒（::warning::），永不阻塞——
+    # 纯重构/修 typo 不该被一个文档门拦住，判断力在 reviewer。
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Warn when code changed without a contract update
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git fetch --quiet origin "${{ github.base_ref }}"
+          CHANGED="$(git diff --name-only "$(git merge-base "$BASE" HEAD)"...HEAD)"
+          if echo "$CHANGED" | grep -qE '^(act/|mac/Sources/)' \
+             && ! echo "$CHANGED" | grep -q '^docs/CONTRACT.md$'; then
+            echo "::warning title=CONTRACT.md untouched::This PR changes act/ or mac/Sources/ without updating docs/CONTRACT.md. If it changes behavior, amend the matching § (or §0) in this PR; if it's a pure refactor/fix, say so in the description. See CLAUDE.md."
+          else
+            echo "contract check: ok"
+          fi
 
   tests-windows:
     name: Tests on windows (Python ${{ matrix.python-version }})

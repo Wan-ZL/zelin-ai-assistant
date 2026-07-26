@@ -7,7 +7,36 @@
 > actd reads then deletes). Fields are **add-only** — never renamed or removed; the Swift side
 > decodes every new field with `decodeIfPresent`. Change this file *before* any code that touches
 > these shapes. **Section numbers §1–§24 are referenced from code and docs — never renumber.**
-> The Chinese body is canonical.
+> The Chinese body is canonical. **Read §0 (the constitution) before designing any feature.**
+
+## 0. 设计宪法（不变原则 — 修宪必须显式声明，任何功能不得默默违反）
+
+一条一句话。功能与宪法冲突时只有两条路：改功能，或者在 PR 里显式修宪（改本节 +
+说明为什么）——没有第三条路。逐条对应的机器执法（测试/CI 门）在括号里。
+
+1. **单写者**：registry 只有 actd 主循环一个写者；旁路进程（silent-merge 复核、
+   detached 子进程）只读+回执，绝不落盘卡片。（§44 两段式；tests/test_silent_merge.py）
+2. **一切可逆**：用户可见的破坏性动作都有回程票——trash/archive 记 `prev_status`
+   可恢复，静默并入的 fold note 可拆出，绝无不可恢复的自动删除。（§21/§38.2/§44.4）
+3. **诚实的健康报告**：状态行/健康文件只报真实探测结果，绝不虚报 ok；失败要分类
+   （auth/network/command…），「坏掉的通道」与「没有新数据」严格区分。（§19bis/§14bis）
+4. **记录 ≠ 立案**：进档案（笔记/wiki）不等于成任务。屏幕 OCR 上的内容永不发起
+   卡片（回声环的一刀，2026-07-25）；AI/assistant 的话在任何来源下都到不了直发
+   提案；出生资格由 §45 决策表统一裁决。（act/lib/provenance.py；tests/test_provenance.py）
+5. **不可信内容进围栏**：一切外部文本（邮件/Slack/笔记/OCR）进 LLM prompt 必须过
+   `sanitize.fence_untrusted`，是数据不是指令。（§29bis）
+6. **add-only 契约**：跨组件字段只增不改不删不重编号；旧 reader 永远能读新数据。
+   （本文件 header；Swift 侧 decodeIfPresent）
+7. **运行时零重依赖**：Python 管线 = stdlib + PyYAML，别的进不来；重依赖只允许
+   出现在开发/测试侧。（CI 安装清单即是白名单）
+8. **版本单源**：`act/__init__.py.__version__` 是唯一真源，bump 必须三处同步
+   （+ iOS 两个 pin）；release tag 必须与它逐字一致。（CI 版本门 + release.yml tag-match 门）
+9. **隐私分层**：用户工作数据（卡片、笔记、凭证）永不进 repo/上传面；遥测默认
+   最小化且可全关。（.gitignore 的 state//registry 规则；docs/PRIVACY.md）
+10. **打扰要有资格**：主动打扰用户的面（提案卡/通知）只留给「需要人才能推进」的
+    事；拿不准的落备选静默过期，重复的静默并入。（§44；§45 LIMITED 语义）
+11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
+    pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账）
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
 
@@ -1787,3 +1816,46 @@ notes 留痕「背景信息未送达会话」。状态机零改动（不翻 rewo
 `silent_merge_requested{job,primary,secondary}`、`silent_merge{primary,
 secondary,outcome∈ok|separate|judge_failed|state_moved|pre_filing_fold}`、
 `briefing{req,ok,n}`。
+
+## 45. 来源角色决策表（出生资格 — 回声环的一刀）
+
+**背景（2026-07-25 拍板）**：screenpipe 录屏会把系统自己的输出（看板、AI 会话、
+报告）拍回去再经 radar 铸成新卡——回声环。实证：R-093（AI 会话当场提醒「拿纸」，
+13 小时后出卡、出生即过期）、R-020（拍到用户与 assistant 的对话，把「已在被服务
+的请求」立成新案）。95 卡统计：62% 出生自 screenpipe 链，其中一半沉备选/被丢——
+产量最高、成活率最低。Zelin 裁决：**屏幕 OCR 一刀砍，不发起卡片**（Zoom 聊天/
+合规横幅两个白名单例外被明确否决）；会议**音频**（真人说话）是合法发起渠道；
+屏幕保留进档案与佐证两个职责。
+
+**机制**：obsidian radar 的提取 prompt（`act/radar.py EXTRACT_PROMPT`）每项新增
+两个 add-only 字段——`provenance ∈ screen|audio|unknown`（引句在笔记里的物理来源：
+屏幕可见内容=screen，口说转写=audio）与 `speaker ∈ human|zelin|assistant|system|
+unknown`（谁说的）。`act/lib/provenance.py` 的决策表（纯数据、有限、显式）在
+triage 之后、落库之前裁决出生资格：
+
+| provenance＼speaker | human | zelin | assistant | system | unknown |
+|---|---|---|---|---|---|
+| **screen** | 仅佐证 | 仅佐证 | 仅佐证 | 仅佐证 | 仅佐证 |
+| **audio** | FULL | FULL | 仅佐证 | 备选 | FULL |
+| **unknown** | 备选 | 备选 | 仅佐证 | 备选 | 备选 |
+
+- **FULL**：new_proposal 可依 high-confidence 直达提案列（现状语义不变）；
+- **备选（LIMITED）**：new_proposal 最高落 detected——不通知、自然过期；act-now
+  提升一并压平（不借 fold 把既有备选卡推进提案列）；
+- **仅佐证（CORROBORATE）**：不得发起新卡。唯一放行形态 = triage 判 `relates_to`
+  且目标卡还开着（fold 补证）；命中已完结卡的 re-raise/follow-up 路径同样拦截
+  （完结事项在屏幕上再现 ≈ assistant 在汇报自己的完成）。拦截计
+  `summary.echo_blocked` + analytics `radar_echo_blocked{note,title}`，永不静默蒸发。
+
+**不变量（宪法第 4 条的机器执法，tests/test_provenance.py 穷举 + Hypothesis）**：
+表覆盖全部 provenance×speaker 组合且无矛盾（有限域穷举 = 完备性证明）；screen 行
+全为仅佐证；assistant 列永无 FULL；FULL 只存在于 audio 行；verdict 对任意垃圾输入
+全函数（缺字段的老式提取 → unknown×unknown = 备选，绝不 FULL）。改表 = 修法：
+同步本节誊本，性质测试会指出打破了哪条。
+
+**回测**：`python3 -m act.golden_eval all`（数据集与报告只写 `state/golden/`，
+含用户真实卡片标题，**永不进 repo**）——用历史卡的真实结局（用户亲手验收/丢弃）
+评估表的误杀/拦截率；改表前后各跑一遍是修法的尽职调查。
+
+**范围**：只管 obsidian radar（screenpipe 链）。slack/gmail/quick_capture/
+weekly-digest 是显式设计的发起渠道，不经此表。

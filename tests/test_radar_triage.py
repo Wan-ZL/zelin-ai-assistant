@@ -532,10 +532,12 @@ class ObsidianTriageTestCase(TriageBase):
         runner = self._items(
             {"title": "Ship the Q3 quarterly report", "type": "report",
              "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
-             "cost_estimate_usd": None, "quote": "ship by July 20"},
+             "cost_estimate_usd": None, "quote": "ship by July 20",
+             "provenance": "audio", "speaker": "human"},
             {"title": "Maybe tidy the team wiki sometime", "type": "other",
              "tier": "T1", "hardness": "soft", "deadline": None,
-             "cost_estimate_usd": None, "quote": "tidy the wiki"})
+             "cost_estimate_usd": None, "quote": "tidy the wiki",
+             "provenance": "audio", "speaker": "human"})
         triager = _FakeLLM(decision={"action": "new_proposal"})
         summary = radar.scan(runner=runner, triager=triager)
         self.assertEqual(summary["reconciled"], 2)
@@ -566,7 +568,8 @@ class ObsidianTriageTestCase(TriageBase):
         self._note("2026-07-09 sync.md", "ship it")
         item = {"title": "Ship the Q3 quarterly report", "type": "report",
                 "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
-                "cost_estimate_usd": None, "quote": "ship by July 20"}
+                "cost_estimate_usd": None, "quote": "ship by July 20",
+                "provenance": "audio", "speaker": "human"}
         summary = radar.scan(runner=lambda text: json.dumps([item]))
         self.assertEqual(summary["reconciled"], 1)
         self.assertEqual(summary["cards"], 1)
@@ -597,7 +600,8 @@ class ObsidianTriageTestCase(TriageBase):
         self._note("2026-07-09 sync.md", "ship it")
         item = {"title": "Ship the Q3 quarterly report", "type": "report",
                 "tier": "T1", "hardness": "hard", "deadline": "2026-07-20",
-                "cost_estimate_usd": None, "quote": "ship by July 20"}
+                "cost_estimate_usd": None, "quote": "ship by July 20",
+                "provenance": "audio", "speaker": "human"}
         radar.scan(runner=lambda text: json.dumps([item]))
         (req,) = registry.load_all()
         self.assertEqual(req.sources[0]["who"], "2026-07-09 sync")
