@@ -1,0 +1,71 @@
+# Codex PR review — second-opinion advisory review on every same-repo PR.
+#
+# Same design rules as pr-review-claude.yml: fork PRs skipped, missing
+# OPENAI_API_KEY = green no-op, superseded runs cancelled, never a required
+# check. Codex runs read-only over the checkout (safety guidance from the
+# action docs); the diff is pre-materialized so the sandbox never needs
+# network or git writes. The final message is posted as one PR comment.
+name: Codex PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - id: key
+        run: echo "present=${{ secrets.OPENAI_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - if: steps.key.outputs.present == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - if: steps.key.outputs.present == 'true'
+        name: Materialize the PR diff for the sandboxed review
+        run: |
+          set -euo pipefail
+          git diff "origin/${{ github.base_ref }}...HEAD" > /tmp/pr.diff
+          wc -c /tmp/pr.diff
+
+      - if: steps.key.outputs.present == 'true'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/prompts/review.md
+          output-file: /tmp/codex-review.md
+          sandbox: read-only
+
+      - if: steps.key.outputs.present == 'true'
+        name: Load the review into env
+        run: |
+          set -euo pipefail
+          {
+            echo "CODEX_FINAL_MESSAGE<<CODEX_EOF"
+            cat /tmp/codex-review.md
+            echo "CODEX_EOF"
+          } >> "$GITHUB_ENV"
+
+      - if: steps.key.outputs.present == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: "## Codex review\n\n" + process.env.CODEX_FINAL_MESSAGE,
+            })

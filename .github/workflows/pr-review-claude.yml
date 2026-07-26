@@ -1,0 +1,58 @@
+# Claude PR review — advisory inline review on every same-repo PR.
+#
+# Design (mirrors ci.yml conventions):
+# - Fork PRs are skipped outright (the job-level guard): on `pull_request`
+#   they get no secrets anyway, and a guaranteed-red advisory job on outside
+#   contributions is pure noise.
+# - Missing ANTHROPIC_API_KEY (secret not configured yet) = green no-op via
+#   the step-level presence probe — an advisory bot must never look like a
+#   broken build.
+# - concurrency cancels the superseded run on rapid pushes: reviewing a
+#   commit that is no longer the head is wasted spend.
+# - The review is advisory by definition — never a required check.
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - id: key
+        # secrets are not readable in job-level `if` on all runner versions —
+        # the step-level probe is the portable gate
+        run: echo "present=${{ secrets.ANTHROPIC_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - if: steps.key.outputs.present == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - if: steps.key.outputs.present == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            用中文 review 这个 PR。这是一个 macOS 菜单栏 app（mac/Sources/*.swift）+
+            Python 管线（act/）的个人 AI 助理项目。重点：
+            1. 正确性——具体失败场景，不要风格意见；
+            2. 回归——改动是否破坏既有语义（docs/CONTRACT.md 是行为契约的记账）；
+            3. 安全与隐私——任何把本机路径/密钥/用户数据带出本机的路径都是红线；
+            4. 并发与守护进程安全——actd 是单写者，detached 子进程只读。
+            只报有具体失败场景的真问题，按 P0/P1/P2 分级；没有问题就明说一切正常。
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 12
