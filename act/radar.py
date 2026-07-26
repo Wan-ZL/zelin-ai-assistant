@@ -289,6 +289,7 @@ def _run_extract(note_text: str, runner=None) -> str:
                       # (2026-07-22 replay: 32KB note = 277s success) — 300 sat
                       # mid-distribution and manufactured chronic timeouts
         env=_runner_env(),
+        cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
     if proc.returncode != 0:
         raise RuntimeError(
@@ -839,19 +840,36 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
                 req.title, quote=quote if isinstance(quote, str) else None,
                 who=note.stem, channel="meeting", date=_note_date(note))
             decision = quick_capture.triage(desc, cfg, extractor=triager)
-            if gate == provenance.CORROBORATE and not _fold_onto_open(decision):
+            # triage 判 ignore 的项走原有 ignore 路径与留痕（radar_triage
+            # action=ignore）——它本来就不会成卡，混进 echo_blocked 会抬高
+            # 政策审计口径：echo_blocked 只计「会成卡/会提升但被 §45 拦下」。
+            if (gate == provenance.CORROBORATE
+                    and str(decision.get("action") or "") != "ignore"
+                    and not _fold_onto_open(decision)):
                 # §45：屏幕来源不发起卡片。唯一放行的形态是「补进一张还开着
                 # 的卡」（佐证是屏幕的正职）；其余一律拦——包括 triage 失败时
                 # 宁可打扰的 new_proposal 回退，以及 relates_to 命中已完结卡
                 # 的 re-raise/follow-up 路径（那也会产出新卡，而完结事项在屏
                 # 幕上再现几乎必是助手在汇报自己的完成——回声的标准形态）。
-                # 计数 + analytics 留痕，绝不静默蒸发。
+                # triage 判 ignore 的项不进这里：它本来就不会成卡，计进
+                # echo_blocked 会虚高拦截率的审计口径——放行给 apply_triage
+                # 走常规 ignore 留痕（radar_triage{action=ignore}）。
+                # echo_blocked 只计「本会成卡/会提升但被闸拦下」的项。
+                # 计数 + analytics 留痕，绝不静默蒸发。事件只带元数据——title
+                # 是 LLM 从屏幕 OCR 提出来的文本，进 telemetry 就违反宪法第 9
+                # 条 / docs/TELEMETRY.md 红线；本地排查去 registry/notes 看。
                 summary["echo_blocked"] += 1
-                analytics.log_event("radar_echo_blocked", source="obsidian",
-                                    note=note.name, title=req.title[:60])
+                analytics.log_event(
+                    "radar_echo_blocked", source="obsidian", stage="birth",
+                    gate=gate,
+                    provenance=provenance.normalize(
+                        item.get("provenance"), provenance.PROVENANCES),
+                    speaker=provenance.normalize(
+                        item.get("speaker"), provenance.SPEAKERS),
+                    action=str(decision.get("action") or ""))
                 continue
             kind, saved = quick_capture.apply_triage(
-                decision, req, cfg, high_confidence=hc)
+                decision, req, cfg, high_confidence=hc, gate=gate)
         except Exception as e:  # noqa: BLE001 - 单条候选落库失败不许炸全 pass
             item_error = (f"filing failed on {note.name}: "
                           f"{type(e).__name__}: {str(e)[:120]}")
@@ -860,11 +878,12 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
             continue
         summary["reconciled"] += 1
         # hard+deadline 分流保留：new_proposal 只有真落到提案列才计卡——triage
-        # 低置信降级（apply_triage 内部改 status）时不能再拿本地 hc 虚报；
-        # follow-up 卡按统一口径直接是 card_sent。
-        if kind in ("follow_up", "reraised") or (
-                hc and kind == "proposed" and saved is not None
-                and saved.status == registry.State.CARD_SENT.value):
+        # 低置信降级（apply_triage 内部改 status）时不能再拿本地 hc 虚报。
+        # follow-up/re-raise 同一把尺：§45 非 FULL 来源的天花板会把它们压到
+        # detected/备选，那不是一张提案卡，不许虚报。
+        if saved is not None and saved.status == registry.State.CARD_SENT.value \
+                and (kind in ("follow_up", "reraised")
+                     or (hc and kind == "proposed")):
             summary["cards"] += 1
     # 有 item 落库失败 -> 整篇 note 进重试台账重跑（merge_or_new 会去重已成功
     # 落库的兄弟项），比只丢这一条更诚实。salvage 场景同理：已救出的落了库，

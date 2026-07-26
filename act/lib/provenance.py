@@ -16,8 +16,10 @@ radar；关掉屏幕的「出生权」，回声环断在源头。屏幕内容保
 
 - ``FULL``        — new_proposal 可依 high-confidence 直达提案列（card_sent）
 - ``LIMITED``     — new_proposal 最高落备选（detected）；不通知、自然过期
-- ``CORROBORATE`` — 不得发起新卡：triage 判 relates_to 就 fold，其余一律丢
-                    （radar 记 echo_blocked 计数 + analytics 事件留痕）
+- ``CORROBORATE`` — 不得发起新卡：triage 判 relates_to 且目标还开着就 fold；
+                    判 ignore 走常规 ignore 留痕（本来就不会成卡，不算拦截）；
+                    其余一律拦（radar 记 echo_blocked 计数 + analytics 事件
+                    留痕——审计口径只计「本会成卡/会提升但被闸拦下」的项）
 
 维度取值由 :func:`normalize` 收敛——LLM 提取器给的字段不可信（None/大写/
 臆造值都真实可能），一切不认识的输入落 ``unknown``，表对 unknown 行有

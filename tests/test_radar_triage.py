@@ -547,11 +547,14 @@ class ObsidianTriageTestCase(TriageBase):
         self.assertEqual(by_title["Maybe tidy the team wiki sometime"].status, "detected")
 
     def test_obsidian_hit_on_delivered_card_becomes_followup(self):
+        # audio×human = FULL（§45）：缺 provenance 的老式输出如今是 LIMITED，
+        # follow-up 会被天花板压到备选——那条判例在 test_radar_echo_gate.py。
         _seed("R-019", "给 Quinton 开通 PRD 文档编辑权限", "delivered")
         self._note("2026-07-09 1on1.md", "quinton set zelin as editor")
         runner = self._items({"title": "确认 editor 权限并继续补文档", "type": "comms",
                               "tier": "T1", "hardness": "soft", "deadline": None,
-                              "cost_estimate_usd": None, "quote": "set you as editor"})
+                              "cost_estimate_usd": None, "quote": "set you as editor",
+                              "provenance": "audio", "speaker": "human"})
         triager = _FakeLLM(decision={"action": "relates_to", "req": "R-019",
                                      "note": "权限已开", "needs_action": True})
         summary = radar.scan(runner=runner, triager=triager)

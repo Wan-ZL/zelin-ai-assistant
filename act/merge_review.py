@@ -339,6 +339,7 @@ def _default_runner(prompt: str) -> subprocess.CompletedProcess:
         text=True,
         timeout=CLAUDE_TIMEOUT,
         env=_runner_env(),
+        cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
 
 

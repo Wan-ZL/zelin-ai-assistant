@@ -19,12 +19,14 @@
 2. **一切可逆**：用户可见的破坏性动作都有回程票——trash/archive 记 `prev_status`
    可恢复，静默并入的 fold note 可拆出，绝无不可恢复的自动删除。（§21/§38.2/§44.4）
 3. **诚实的健康报告**：状态行/健康文件只报真实探测结果，绝不虚报 ok；失败要分类
-   （auth/network/command…），「坏掉的通道」与「没有新数据」严格区分。（§19bis/§14bis）
+   （auth/network/command…），「坏掉的通道」与「没有新数据」严格区分。
+   （§25 失败分类层；§14bis 命令通道词表；act/lib/health.py 的 skip_reason 语义）
 4. **记录 ≠ 立案**：进档案（笔记/wiki）不等于成任务。屏幕 OCR 上的内容永不发起
    卡片（回声环的一刀，2026-07-25）；AI/assistant 的话在任何来源下都到不了直发
    提案；出生资格由 §45 决策表统一裁决。（act/lib/provenance.py；tests/test_provenance.py）
 5. **不可信内容进围栏**：一切外部文本（邮件/Slack/笔记/OCR）进 LLM prompt 必须过
-   `sanitize.fence_untrusted`，是数据不是指令。（§29bis）
+   `sanitize.fence_untrusted`，是数据不是指令。（docs/SANITIZATION.md；§21/§24 的
+   出站材料条款；tests/test_prompt_fencing.py）
 6. **add-only 契约**：跨组件字段只增不改不删不重编号；旧 reader 永远能读新数据。
    （本文件 header；Swift 侧 decodeIfPresent）
 7. **运行时零重依赖**：Python 管线 = stdlib + PyYAML，别的进不来；重依赖只允许
@@ -1841,11 +1843,24 @@ triage 之后、落库之前裁决出生资格：
 
 - **FULL**：new_proposal 可依 high-confidence 直达提案列（现状语义不变）；
 - **备选（LIMITED）**：new_proposal 最高落 detected——不通知、自然过期；act-now
-  提升一并压平（不借 fold 把既有备选卡推进提案列）；
+  提升一并压平（不借 fold 把既有备选卡推进提案列，triage LLM 的 `needs_action`
+  不是豁免通道）；relates_to 命中完结卡、或 new_proposal 撞上完结卡标题时，
+  内部 re-raise/follow-up 的天花板同样是 detected（不通知）；
 - **仅佐证（CORROBORATE）**：不得发起新卡。唯一放行形态 = triage 判 `relates_to`
-  且目标卡还开着（fold 补证）；命中已完结卡的 re-raise/follow-up 路径同样拦截
-  （完结事项在屏幕上再现 ≈ assistant 在汇报自己的完成）。拦截计
-  `summary.echo_blocked` + analytics `radar_echo_blocked{note,title}`，永不静默蒸发。
+  且目标卡还开着（fold 补证，同样无提升权）；命中已完结卡的 re-raise/follow-up
+  路径同样拦截（完结事项在屏幕上再现 ≈ assistant 在汇报自己的完成）。拦截计
+  `summary.echo_blocked` + analytics `radar_echo_blocked{stage,gate,provenance,
+  speaker,action[,req]}`——**纯元数据**，绝不携带标题/引句/note 文件名等屏幕内容
+  （宪法第 9 条，docs/TELEMETRY.md 红线；本地排查去 registry/notes 看），永不
+  静默蒸发。
+
+**执法位置（一张表，三处执法）**：裁决结果 `gate` 不止用在 radar 的闸门口——它
+随候选一路传进 `quick_capture.apply_triage(gate=…)` 与 `registry.merge_or_new(
+cap_detected=…)` / `reraise_or_followup(cap_detected=…)`，fold 的 act-now 提升、
+完结卡命中的 re-raise/follow-up 在**落库侧**受同一张表约束（radar 预判与落库之间
+目标卡可能换状态/消失——TOCTOU 由落库侧兜住）。`radar_echo_blocked.stage` 词表
+（add-only）：`birth`（radar 闸门口拦下出生）/ `filing`（落库侧拦下 CORROBORATE
+的完结卡命中或 fall-through）/ `fold_promotion`（fold 落卡但非 FULL 提升被压平）。
 
 **不变量（宪法第 4 条的机器执法，tests/test_provenance.py 穷举 + Hypothesis）**：
 表覆盖全部 provenance×speaker 组合且无矛盾（有限域穷举 = 完备性证明）；screen 行
