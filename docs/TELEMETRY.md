@@ -57,6 +57,8 @@ truth，上传只读不改不删。
 | `card_action.has_comment` / `inbox_*.has_comment` | 该操作是否带了评论（布尔；评论文本属内容，见下表） |
 | `capture_submit.chars` / `ask_submit.chars` / `inbox_capture.chars` / `capture_direct_run.chars` | 输入长度（只有**数字**） |
 | `capture_submit.mode` / `composer_open.mode` | v0.34 add-only：值恒为 `"run"`，仅出现在运行中列的直接开跑输入框（缺席 = 提案输入框；source/trigger 词表不变） |
+| `mw_mcp_scan{user,project}` | 设置页扫描 MCP server 配置：两个作用域各解析出的 server **数量**（只有计数——server 名/命令/URL 都留在本机） |
+| `mw_mcp_reveal{scope}` | 点「在 Finder 显示」定位 MCP 配置文件：只有作用域枚举（`user` \| `project`） |
 
 （v0.18 同时移除：首启页勾选框及其 `telemetry_consent` 事件——首启改为一行
 披露 + 「详情与关闭在设置」链接，开关全部集中在设置页，写同一个 override 键。）

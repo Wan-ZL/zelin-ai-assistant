@@ -368,6 +368,11 @@ struct SettingsFormView: View {
                 keywords: "skills skill 技能 claude code 管理 manage 新建 create new skill.md frontmatter 描述 description 用户级 user 项目级 project 作用域 scope kebab-case 在 finder 显示 reveal in finder 指令 instructions 刷新 refresh",
                 anchor: nil, content: AnyView(SkillsSettingsSection())),
             SettingsSectionDescriptor(
+                id: "mcp", titleZh: "MCP servers（Claude Code 外接工具）",
+                titleEn: "MCP servers (Claude Code external tools)",
+                keywords: "mcp servers model context protocol 外接工具 工具服务器 tool servers claude code stdio http sse transport 传输 用户级 项目级 user project scope 作用域 claude.json mcp.json claude mcp add 只读 read-only env finder 刷新 refresh",
+                anchor: nil, content: AnyView(MCPSettingsSection())),
+            SettingsSectionDescriptor(
                 id: "sync", titleZh: "同步 / 配对", titleEn: "Sync / Pairing",
                 keywords: "同步 配对 二维码 手机 iphone sync pairing QR qr code device 看板 board 远程 remote 扫码 scan 端到端加密 e2e",
                 anchor: nil, content: AnyView(SyncSettingsSection())),
