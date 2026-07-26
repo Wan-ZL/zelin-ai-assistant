@@ -361,6 +361,11 @@ struct SettingsFormView: View {
                 keywords: "导入 import claude code 工作 会话 session 看板卡片 board card 扫描 scan 最近 7 天 last 7 days 等你回复 waiting",
                 anchor: "claude_import", content: AnyView(ClaudeImportSettingsSection())),
             SettingsSectionDescriptor(
+                id: "skills", titleZh: "Skills（Claude Code 技能）",
+                titleEn: "Skills (Claude Code)",
+                keywords: "skills skill 技能 claude code 管理 manage 新建 create new skill.md frontmatter 描述 description 用户级 user 项目级 project 作用域 scope kebab-case 在 finder 显示 reveal in finder 指令 instructions 刷新 refresh",
+                anchor: nil, content: AnyView(SkillsSettingsSection())),
+            SettingsSectionDescriptor(
                 id: "sync", titleZh: "同步 / 配对", titleEn: "Sync / Pairing",
                 keywords: "同步 配对 二维码 手机 iphone sync pairing QR qr code device 看板 board 远程 remote 扫码 scan 端到端加密 e2e",
                 anchor: nil, content: AnyView(SyncSettingsSection())),
