@@ -13,6 +13,9 @@
 // unrelated per-user Claude Code state. Parse ONLY the mcpServers subtree —
 // never render or log anything else from the file. A server's `env` block may
 // carry tokens, so it surfaces as a key COUNT only ("env ×3"), never values.
+// Args/URLs can carry tokens too (`--token xoxb-…`, keys in query strings):
+// summaries pass Analytics.maskSecrets and a URL keeps only scheme+host+path
+// — the query/fragment is masked whole before it ever reaches the view.
 
 import AppKit
 import SwiftUI
@@ -125,9 +128,10 @@ final class MCPSettingsModel: ObservableObject {
             if transport == "stdio" {
                 let cmd = (v["command"] as? String) ?? ""
                 let args = (v["args"] as? [Any])?.compactMap { $0 as? String } ?? []
-                summary = ([cmd] + args).filter { !$0.isEmpty }.joined(separator: " ")
+                summary = Analytics.maskSecrets(
+                    ([cmd] + args).filter { !$0.isEmpty }.joined(separator: " "))
             } else {
-                summary = (v["url"] as? String) ?? ""
+                summary = maskedURL((v["url"] as? String) ?? "")
             }
             return Server(
                 name: name,
@@ -137,6 +141,15 @@ final class MCPSettingsModel: ObservableObject {
                 envCount: (v["env"] as? [String: Any])?.count ?? 0)
         }
         return ("", servers, true)
+    }
+
+    /// A remote URL keeps only scheme+host+path — the query (and anything
+    /// after it) often carries keys, so it is masked whole, not per-pattern.
+    nonisolated private static func maskedURL(_ raw: String) -> String {
+        guard let cut = raw.firstIndex(of: "?") else {
+            return Analytics.maskSecrets(raw)
+        }
+        return Analytics.maskSecrets(String(raw[..<cut])) + "?●●●"
     }
 
     /// Explicit `type` wins (incl. "streamable-http" variants); otherwise a
@@ -161,8 +174,8 @@ struct MCPSettingsSection: View {
     // the shared CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L("MCP server 是 Claude Code 能调用的外接工具服务器——如果说 skill 是菜谱，MCP 就是外接厨具（数据库、浏览器、Slack 这类能力）。这里只读展示，增删改在终端用 `claude mcp add` / `claude mcp remove`，或直接编辑配置文件。",
-                   "MCP servers are external tool servers Claude Code can call — if a skill is a recipe, an MCP server is a plug-in kitchen appliance (databases, browsers, Slack and the like). This list is read-only; add or remove servers with `claude mcp add` / `claude mcp remove` in a terminal, or edit the config files directly."))
+            Text(L("MCP server 是 Claude Code 能调用的外接工具服务器——如果说 skill 是菜谱，MCP 就是外接厨具（数据库、浏览器、Slack 这类能力）。本列表显示 user 与 project 两个作用域（CLI 默认的 local 作用域不在此列）。这里只读展示，增删改在终端用 `claude mcp add` / `claude mcp remove`，或直接编辑配置文件。",
+                   "MCP servers are external tool servers Claude Code can call — if a skill is a recipe, an MCP server is a plug-in kitchen appliance (databases, browsers, Slack and the like). This list covers the user and project scopes (the CLI's default local scope is not shown here). It is read-only; add or remove servers with `claude mcp add` / `claude mcp remove` in a terminal, or edit the config files directly."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -201,7 +214,9 @@ struct MCPSettingsSection: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("claude mcp add <name> -- <command>")
+                    // -s user on purpose: the CLI default (local scope) lands in
+                // a subtree v1 doesn't scan — the list would stay empty.
+                Text("claude mcp add -s user <name> -- <command>")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)

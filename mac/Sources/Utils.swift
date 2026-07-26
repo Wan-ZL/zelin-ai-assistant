@@ -124,13 +124,22 @@ enum Analytics {
     /// through half-masked). Call sites must already be behind
     /// Telemetry.contentCaptureActive().
     static func clip(_ text: String) -> String {
-        var s = text.split(whereSeparator: { $0.isWhitespace })
+        let s = text.split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
+        return String(maskSecrets(s, replacement: "[脱敏]").prefix(500))
+    }
+
+    /// Secret masking alone, for UI display (MCP server args/URLs etc.) —
+    /// same patterns as clip, so the UI and telemetry can't drift on what
+    /// counts as a secret. Matched fragments render as ●●●.
+    static func maskSecrets(_ text: String,
+                            replacement: String = "●●●") -> String {
+        var s = text
         for pattern in secretPatterns {
-            s = s.replacingOccurrences(of: pattern, with: "[脱敏]",
+            s = s.replacingOccurrences(of: pattern, with: replacement,
                                        options: .regularExpression)
         }
-        return String(s.prefix(500))
+        return s
     }
 }
 
