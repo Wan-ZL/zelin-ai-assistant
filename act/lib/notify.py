@@ -35,14 +35,17 @@ from act.lib import platform
 # raw notification
 # --------------------------------------------------------------------------- #
 def notify(title: str, body: str, subtitle: Optional[str] = None,
-           req: Optional[str] = None) -> bool:
+           req: Optional[str] = None, kind: Optional[str] = None) -> bool:
     """Fire a native notification via the app relay queue (§28).
 
     Never raises — a failed notification must not break the daemon loop.
     ``req`` (an R-xxx id, optional) is accepted for caller compatibility but is
     no longer used (v0.21 removed the phone mirror / reaction-approval surface).
+    ``kind`` (add-only, v0.46) rides into the queue entry so the app relay can
+    apply per-event user preferences (today: "review_ready" ↔ the 完成提醒
+    三档开关 off/banner/sound); entries without kind behave exactly as before.
     """
-    return _native_notify(title, body, subtitle)
+    return _native_notify(title, body, subtitle, kind=kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -57,7 +60,8 @@ def notify(title: str, body: str, subtitle: Optional[str] = None,
 STALE_AFTER_S = 600.0   # §28 stale storm guard (both sides, 10 min)
 
 
-def _native_notify(title: str, body: str, subtitle: Optional[str] = None) -> bool:
+def _native_notify(title: str, body: str, subtitle: Optional[str] = None,
+                   kind: Optional[str] = None) -> bool:
     """§28 relay-only native notification. Never raises.
 
     darwin: queue for the app — its 5 s tick posts and deletes the entry;
@@ -67,10 +71,11 @@ def _native_notify(title: str, body: str, subtitle: Optional[str] = None) -> boo
     """
     if not platform.is_darwin():
         return platform.notify_user(title, body, subtitle)
-    return _queue_write(title, body, subtitle) is not None
+    return _queue_write(title, body, subtitle, kind=kind) is not None
 
 
 def _queue_write(title: str, body: str, subtitle: Optional[str] = None,
+                 kind: Optional[str] = None,
                  now: Optional[float] = None) -> Optional[Path]:
     """Write one §28 queue entry (atomic .json.tmp + rename).
 
@@ -88,6 +93,8 @@ def _queue_write(title: str, body: str, subtitle: Optional[str] = None,
                  "created_at": int(now if now is not None else time.time())}
         if subtitle:
             entry["subtitle"] = str(subtitle)
+        if kind:
+            entry["kind"] = str(kind)
         target = qdir / (nid + ".json")
         tmp = qdir / (nid + ".json.tmp")   # the app only ever matches *.json
         try:

@@ -97,6 +97,20 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
     }
+
+    // v0.46 (#2): seams for AppDelegate.applicationShouldTerminate — a ⌘Q
+    // aimed at the open window closes it instead of killing the daemon.
+    // "Open" includes minimized-to-Dock: isVisible is false then, but the
+    // app is still .regular and ⌘Tab-reachable, so a reflexive ⌘Q must
+    // still mean "close the window", not "kill the daemon".
+    var isWindowOpen: Bool { window.map { $0.isVisible || $0.isMiniaturized } ?? false }
+    func closeWindow() {
+        guard let window else { return }
+        // A minimized window has no on-screen close button for performClose
+        // to simulate — close() it directly; that still posts willClose, so
+        // windowWillClose drops the activation policy back to .accessory.
+        if window.isMiniaturized { window.close() } else { window.performClose(nil) }
+    }
 }
 
 enum MainSection: String, CaseIterable, Identifiable {

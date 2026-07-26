@@ -90,7 +90,19 @@ class NativeNotifyRoutingTestCase(unittest.TestCase):
     def test_notify_routes_through_relay(self):
         with mock.patch("act.lib.notify._native_notify", return_value=True) as nn:
             self.assertTrue(notify.notify("t", "b", subtitle="s"))
-        nn.assert_called_once_with("t", "b", "s")
+        nn.assert_called_once_with("t", "b", "s", kind=None)
+
+    def test_kind_rides_into_the_queue_entry(self):
+        # v0.46 完成提醒: the writer-side tag the app relay filters/rings on.
+        # Untagged entries must NOT grow a kind key (old-reader compatibility).
+        with mock.patch("sys.platform", "darwin"), \
+             mock.patch("act.lib.platform.notify_user"):
+            self.assertTrue(notify.notify("t", "b", kind="review_ready"))
+            self.assertTrue(notify.notify("t2", "b2"))
+        entries = [json.loads(p.read_text(encoding="utf-8"))
+                   for p in config.NOTIFY_QUEUE_DIR.glob("*.json")]
+        kinds = {e["title"]: e.get("kind") for e in entries}
+        self.assertEqual(kinds, {"t": "review_ready", "t2": None})
 
 
 class StaleSweepTestCase(unittest.TestCase):

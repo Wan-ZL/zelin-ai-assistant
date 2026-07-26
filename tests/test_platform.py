@@ -154,7 +154,7 @@ class NotifyDelegationTestCase(unittest.TestCase):
         with mock.patch.object(notify, "_native_notify",
                                return_value=True) as native:
             self.assertTrue(notify.notify("标题", "正文", subtitle="sub"))
-        native.assert_called_once_with("标题", "正文", "sub")
+        native.assert_called_once_with("标题", "正文", "sub", kind=None)
 
     def test_native_path_reaches_the_seam_off_darwin(self):
         from act.lib import notify

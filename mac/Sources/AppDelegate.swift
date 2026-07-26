@@ -220,6 +220,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // "Secure coding is not enabled for restorable state" launch warning).
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
+    // v0.46 (#2): a reflexive ⌘Q aimed at the open main window must not kill
+    // the menu-bar daemon — convert it to "close the window". ONLY the ⌘Q
+    // key event converts: menu clicks (app menu / status-item 退出) and
+    // system logout/shutdown terminate as usual, so quitting stays one
+    // right-click away and OS shutdown is never blocked.
+    // NSApp.currentEvent is merely the *last* event this app processed and
+    // can be arbitrarily stale: after a ⌘Q closed the window, re-opening it
+    // via a path with no NSEvent (notification click → show()) leaves the
+    // old ⌘Q keyDown in place — a later logout/shutdown Apple Event would
+    // see it and be wrongly cancelled. NSEvent.timestamp and systemUptime
+    // share the same clock (seconds since boot), so a small delta means
+    // "this ⌘Q is the event being handled right now".
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let e = NSApp.currentEvent, e.type == .keyDown,
+           e.modifierFlags.contains(.command),
+           // ⌘ alone: ⌘⇧Q / ⌥⌘⇧Q are the SYSTEM LOGOUT shortcuts —
+           // charactersIgnoringModifiers keeps the "Q" and lowercased()
+           // folds it back, so without this exclusion a logout initiated
+           // from the keyboard would be cancelled into a window close.
+           e.modifierFlags.intersection([.shift, .option, .control]).isEmpty,
+           (e.charactersIgnoringModifiers ?? "").lowercased() == "q",
+           ProcessInfo.processInfo.systemUptime - e.timestamp < 2,
+           MainWindowController.shared.isWindowOpen {
+            MainWindowController.shared.closeWindow()
+            return .terminateCancel
+        }
+        return .terminateNow
+    }
+
     func refresh() {
         store.reload()
         updateStatusTitle()
