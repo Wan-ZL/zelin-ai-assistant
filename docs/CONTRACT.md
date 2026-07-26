@@ -1852,7 +1852,9 @@ triage 之后、落库之前裁决出生资格：
   `summary.echo_blocked` + analytics `radar_echo_blocked{stage,gate,provenance,
   speaker,action[,req]}`——**纯元数据**，绝不携带标题/引句/note 文件名等屏幕内容
   （宪法第 9 条，docs/TELEMETRY.md 红线；本地排查去 registry/notes 看），永不
-  静默蒸发。
+  静默蒸发。审计口径：`echo_blocked` 只计「本会成卡/会提升但被闸拦下」的项——
+  triage 判 `ignore` 的项本来就不会成卡，走常规 ignore 留痕
+  （`radar_triage{action=ignore}`），不进此计数。
 
 **执法位置（一张表，三处执法）**：裁决结果 `gate` 不止用在 radar 的闸门口——它
 随候选一路传进 `quick_capture.apply_triage(gate=…)` 与 `registry.merge_or_new(
