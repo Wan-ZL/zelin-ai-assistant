@@ -275,9 +275,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func updateStatusTitle() {
         guard let button = statusItem?.button else { return }
-        // render-array count (visible cards + local placeholders), NOT the raw
-        // backend counter — keeps the badge in sync with what the popover shows
+        // v0.46 (owner call, suggestion #9): the badge counts everything
+        // WAITING ON THE USER — 待拍板 + 需要输入 + 待验收. Proposals-only
+        // undercounted (a blocked agent or a finished draft was invisible
+        // from the menu bar); all lanes would overcount (running cards need
+        // nothing from anyone). 待拍板 keeps the render-array count (visible
+        // cards + local placeholders), in sync with what the popover shows.
+        let db = store.dashboard
         let n = store.visibleApprovals.count
+            + (db?.needs_input.count ?? 0)
+            + (db?.review.count ?? 0)
         if n > 0 {
             button.title = " \(n)"
         } else {
