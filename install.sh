@@ -540,5 +540,8 @@ cat <<'EOF'
     menu-bar icon → quick capture → approve ✅ → a reviewable draft arrives minutes later
     (needs only claude + API key — no screenpipe/Obsidian material required).
  6. Anything off later? Re-run diagnostics anytime: bash install.sh --check
+ 7. Upgrading an existing install? One-command post-deploy smoke check:
+    bash scripts/smoke-deploy.sh
+    （版本匹配 / 二进制本版特征 / actd 活性 / doctor —— 任一不对就非零退出）
 ==============================================
 EOF

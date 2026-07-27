@@ -18,7 +18,7 @@ radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`
    要么改功能，要么在 PR 里显式修宪。没有第三条路。
 2. **`docs/CONTRACT.md` 相关章节** — 你要动的每个模块在这里都有一节法条
    （§1-§45，编号永不复用）。改行为 = 同步修法，同一个 PR 里。
-3. **`CONTRIBUTING.md`** — 三道本地门（compileall / unittest / build），
+3. **`CONTRIBUTING.md`** — 四道本地门（compileall / unittest / build / swift 逻辑测试），
    PR 前自己跑过。
 
 ## 添加任何功能前，必答三问（答案写进 PR 描述）

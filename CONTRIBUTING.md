@@ -40,13 +40,17 @@ Note that `install.sh` is the *end-user* installer — it installs the app to /A
 - **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI; see the "Select newest Xcode" comment in `.github/workflows/ci.yml`). `mac/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash mac/build.sh` is the whole build.
 - Only needed for full-pipeline work: [Claude Code CLI](https://claude.com/claude-code) + API key, Node.js LTS, Obsidian — setup in [docs/INSTALL.md](docs/INSTALL.md).
 
-## The three gates
+## The four gates
 
-Every change batch must pass all three before merging — CI runs exactly these on every PR:
+Every change batch must pass all four before merging — CI runs exactly these on every PR:
 
 1. `python3 -m compileall act ingest`
 2. `AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests`
 3. `bash mac/build.sh`
+4. `bash mac/LogicTests/test.sh` — Swift pure-logic unit tests. With full Xcode
+   this is exactly `swift test --package-path mac/LogicTests`; the wrapper only
+   adds framework search paths on Command-Line-Tools-only machines (the CLT
+   ships Swift Testing but hides it — details at the top of the script).
 
 They are cheap; run them locally before pushing.
 
@@ -62,7 +66,7 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
 ## External contributors
 
 - Fork the repo, branch from `main`, open a pull request against `main`.
-- CI runs the three gates automatically on every PR, including PRs from forks.
+- CI runs the four gates automatically on every PR, including PRs from forks.
 - Definition of done: **green CI + the checklist in the PR template**. The worktree / fast-forward-merge convention below is a maintainer concern — it does not apply to your fork.
 - One logical change per PR. If the PR resolves an issue, include `Closes #XX` in the body.
 
@@ -70,7 +74,11 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
 
 - **Always work in a git worktree and fast-forward-merge back to `main`.** The main working tree can be a live daemon runtime — actd and cron execute files straight from it, and half-edited files have caused real breakage (HANDOFF §4).
 - After merging, verify HEAD actually moved (`git log -1`) — a failed `--ff-only` merge prints "Aborting" to stderr, which pipelines can swallow.
-- External PRs can't be ff-merged as-is; rebase them onto `main` (keeping the linear history) and run the three gates before the merge lands.
+- External PRs can't be ff-merged as-is; rebase them onto `main` (keeping the linear history) and run the four gates before the merge lands.
+- After any deploy to a real machine (`bash mac/build.sh --install` / .pkg /
+  Sparkle), verify it landed with `bash scripts/smoke-deploy.sh` — version
+  match, binary feature markers, actd liveness, and the full doctor in one
+  command (also printed as step 7 at the end of `install.sh`).
 
 ## Versioning
 
