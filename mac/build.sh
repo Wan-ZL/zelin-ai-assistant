@@ -104,6 +104,18 @@ if [ -d "$SHARED_DIR" ]; then
     fi
 fi
 
+# --- compile-failure policy: ANY swiftc failure = red build ---
+# 曾经 helper 编译失败只 WARN 着继续、照样打 DONE——发版差点把缺 helper 的旧
+# 产物当新构建发出去。现在任何 swiftc 步骤非零：立刻 BUILD FAILED + 非零退出，
+# 绝不打 DONE。mac/build/ 里残留的上一次产物不是本次构建的结果。（运行时对缺失
+# helper 二进制的 fallback 不变——旧安装仍照常降级，只是构建期错误不再被吞。）
+build_failed() {   # $1 = which compile step broke
+    echo "" >&2
+    echo "BUILD FAILED: $1" >&2
+    echo "  anything under $BUILD_DIR is from an EARLIER build — do not install or ship it." >&2
+    exit 1
+}
+
 # --- compile ---
 echo "==> Compiling $SRC_DIR/*.swift + $SHARED_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
@@ -114,7 +126,8 @@ mkdir -p "$BUILD_DIR"
 swiftc -O "$SRC_DIR"/*.swift "$SHARED_DIR"/*.swift -o "$BIN" \
     -framework AppKit -framework SwiftUI -framework Foundation \
     -framework AVFoundation -framework ScreenCaptureKit \
-    ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"}
+    ${SPARKLE_FLAGS[@]+"${SPARKLE_FLAGS[@]}"} \
+    || build_failed "app compile (swiftc) exited non-zero — errors above"
 echo "    built binary: $BIN"
 
 # --- compile vault-sync helper (claude TCC isolation, 2026-07-14) ---
@@ -122,28 +135,27 @@ echo "    built binary: $BIN"
 # the user grants Documents access once via the app (one GUI prompt), and this
 # courier reuses that grant from cron forever — claude/python/bash never touch
 # the vault again, so a claude CLI update can no longer re-prompt or EPERM.
-# Failure is non-fatal: the ingest chain falls back to legacy direct-vault mode.
+# A compile ERROR here is fatal (build_failed) — the runtime fallback (legacy
+# direct-vault mode when the helper binary is absent) covers old installs, not
+# a broken source file riding a release.
 VAULTSYNC_SRC="$SCRIPT_DIR/VaultSyncHelper.swift"
 if [ -f "$VAULTSYNC_SRC" ]; then
     echo "==> Compiling vault-sync-helper"
-    if swiftc -O "$VAULTSYNC_SRC" -o "$BUILD_DIR/vault-sync-helper" -framework Foundation; then
-        echo "    built binary: $BUILD_DIR/vault-sync-helper"
-    else
-        echo "WARN: vault-sync-helper compile failed — ingest keeps legacy direct-vault access."
-    fi
+    swiftc -O "$VAULTSYNC_SRC" -o "$BUILD_DIR/vault-sync-helper" -framework Foundation \
+        || build_failed "vault-sync-helper compile (swiftc) exited non-zero — errors above"
+    echo "    built binary: $BUILD_DIR/vault-sync-helper"
 fi
 
 # --- compile framegrab helper (§13: video → evenly spaced JPEG frames) ---
-# Failure here is non-fatal: Slack video capture falls back to ffmpeg.
+# A compile ERROR here is fatal too — the ffmpeg fallback exists for machines
+# without the binary, not for shipping a release that silently dropped it.
 FRAMEGRAB_SRC="$SCRIPT_DIR/framegrab.swift"
 if [ -f "$FRAMEGRAB_SRC" ]; then
     echo "==> Compiling framegrab"
-    if swiftc -O "$FRAMEGRAB_SRC" -o "$BUILD_DIR/framegrab" \
-        -framework AVFoundation -framework CoreImage -framework Foundation; then
-        echo "    built binary: $BUILD_DIR/framegrab"
-    else
-        echo "WARN: framegrab compile failed — video frame extraction will rely on ffmpeg."
-    fi
+    swiftc -O "$FRAMEGRAB_SRC" -o "$BUILD_DIR/framegrab" \
+        -framework AVFoundation -framework CoreImage -framework Foundation \
+        || build_failed "framegrab compile (swiftc) exited non-zero — errors above"
+    echo "    built binary: $BUILD_DIR/framegrab"
 fi
 
 # --- assemble .app bundle ---

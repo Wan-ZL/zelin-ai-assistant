@@ -214,6 +214,15 @@ jobs:
       - name: Build macOS app (with Sparkle, like a release build)
         run: bash mac/build.sh
 
+      - name: Swift logic tests (mac/LogicTests, swift test)
+        # 本地第四道门（CONTRIBUTING.md）：⌘V 认领矩阵
+        # (PastedImages.isImagePaste/readImages) — a Swift Testing package
+        # whose sources are SYMLINKS into mac/Sources, so the code under test
+        # is the real file. The wrapper is exactly
+        # `swift test --package-path mac/LogicTests` under full Xcode; it only
+        # adds framework search flags on Xcode-less CLT machines (see test.sh).
+        run: bash mac/LogicTests/test.sh
+
       - name: Swift contract tests (shared/Sources, plain swiftc)
         # Behavior tests for the lossy dashboard.json row decode (Contract.swift)
         # and the board-lane merge/badge logic (BoardModel.swift) — shared logic
