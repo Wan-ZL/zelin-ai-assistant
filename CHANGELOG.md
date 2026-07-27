@@ -27,6 +27,25 @@ other file needs editing. To cut a release:
 
 (nothing yet)
 
+## [0.46.1] - 2026-07-27
+
+### Fixed
+
+- **贴图被伴生文本挡住**（生产首日事故）——浏览器拷图/聊天工具截图的剪贴板
+  里位图旁边总带一段 URL 文本，v0.46.0 的「图文混合让文字优先」规则（防
+  Excel）把这类 ⌘V 误判成文字粘贴、图被放走。现在：单个无空白的 URL/路径
+  token（大小写不敏感）视为图片元数据 → 照常贴图；另有三个确定性入口兜底
+  ——**⌥⌘V 强制贴图、⇧⌘V 强制文本、缩略图行常驻 📎 按钮**；⌘V 让路给文本
+  但剪贴板确有图时给 3 秒指路提示。
+
+### Added
+
+- **发布安全三件套**（防复发基建）——`mac/build.sh` 任何编译失败必红退
+  （辅助二进制的「WARN 后继续」路径堵死）；新增 Swift 纯逻辑单元测试
+  （`mac/LogicTests`，首批 7 条钉死贴图认领矩阵，CI macOS 腿必跑，本地
+  三道门变四道门）；新增部署后冒烟脚本 `scripts/smoke-deploy.sh`（版本
+  匹配 / 二进制特征标记 / actd 心跳 / doctor 全绿，任一不对即报警）。
+
 ## [0.46.0] - 2026-07-26
 
 用户建议批：「提建议」入口收到的建议 + 口头拍板，一夜之间全部落地。每个功能
@@ -1868,7 +1887,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.1...HEAD
+[0.46.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.43.2...v0.44.0
