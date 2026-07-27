@@ -2,9 +2,13 @@
 // 直接开跑输入框、回答弹窗三处共用的粘贴收集器 + 缩略图行。
 //
 // 交互契约：⌘V 认领规则（isImagePaste）——图片文件 URL = 明确的贴图意图，
-// 无条件认领（旁带文件名字符串也照收）；纯位图（截图）认领；**位图 + 非空
-// 文本双 flavor**（Excel/Numbers 复制单元格）不认领，文本粘贴优先——否则这
-// 类文本在输入框里彻底无法粘贴。一旦认领，事件必被吞掉——满员/解码失败也只
+// 无条件认领（旁带文件名字符串也照收）；纯位图（截图）认领；**位图 + 文本双
+// flavor** 分两档：单行 URL/文件路径形态的文本（浏览器「拷贝图像」、微信等
+// 聊天工具的截图——位图旁几乎总带图片地址/文件引用）= 图片的伴生元数据，
+// 认领贴图；多行或实质性非 URL 文本（Excel/Numbers 复制单元格连图带字）不
+// 认领，文本粘贴优先——否则这类文本在输入框里彻底无法粘贴。确定性旁路：
+// **⌥⌘V** 与缩略图行常驻的 **📎 按钮** = 强制贴图（force，跳过文本让路判定，
+// 剪贴板无图只 beep）。一旦认领，事件必被吞掉——满员/解码失败也只
 // beep 提示，绝不落回文本粘贴（图片文件的文本形态是本机绝对路径，插进会上传
 // 的提建议正文就是路径泄漏）。缩略图行每张可 ✕ 移除；上限 4 张。
 // 发送时由调用方把图片落成 PNG（savePNGs → <uuid>-<n>.png，落盘前统一降采样
@@ -40,6 +44,12 @@ final class PastedImagesModel: ObservableObject {
     /// in install order and a nil return swallows the event).
     weak var hostWindow: NSWindow?
 
+    /// 瞬时提示（3 秒）：⌘V 走了文本优先、但剪贴板里其实还有位图——Row 借它
+    /// 提示「点 📎 或 ⌥⌘V 贴图」。composer 的 monitor 路径专用（NSAlert
+    /// 编辑器的 📎 按钮常驻可见，不额外提示）。
+    @Published private(set) var clipboardImageHint = false
+    private var hintDismissal: DispatchWorkItem?
+
     var isEmpty: Bool { items.isEmpty }
     var images: [NSImage] { items.map { $0.image } }
 
@@ -50,9 +60,21 @@ final class PastedImagesModel: ObservableObject {
     /// Finder image file's text fallback would insert its local ABSOLUTE PATH
     /// into the draft (feedback text uploads → path leak). false = not an
     /// image paste, text paste proceeds untouched.
+    /// `force`（⌥⌘V / 📎 按钮）= 用户明说「我要贴图」：跳过 isImagePaste 的
+    /// 文本让路判定，剪贴板里有可读图片 flavor 就收（上限/降采样照旧），
+    /// 没有则 beep 返回 false——force 的 false 只表示「没图可贴」，调用方
+    /// 不得回退文本粘贴。
     @discardableResult
-    func takeFromPasteboard(_ pb: NSPasteboard = .general) -> Bool {
-        guard PastedImages.isImagePaste(pb) else { return false }
+    func takeFromPasteboard(_ pb: NSPasteboard = .general,
+                            force: Bool = false) -> Bool {
+        if force {
+            guard PastedImages.hasReadableImage(pb) else {
+                NSSound.beep()   // chord/按钮语义就是要图，无图 beep 作答
+                return false
+            }
+        } else if !PastedImages.isImagePaste(pb) {
+            return false
+        }
         let room = Self.maxCount - items.count
         let read = room > 0 ? PastedImages.readImages(from: pb) : []
         if read.isEmpty || read.count > room {
@@ -61,7 +83,22 @@ final class PastedImagesModel: ObservableObject {
         for img in read.prefix(max(0, room)) {
             items.append(Item(image: img))
         }
+        if !read.isEmpty {
+            hintDismissal?.cancel()
+            clipboardImageHint = false   // 图已贴上，指路提示即刻退场
+        }
         return true
+    }
+
+    /// 亮起 3 秒的「剪贴板里还有图片」提示；重复触发重置倒计时。
+    func flashClipboardImageHint() {
+        clipboardImageHint = true
+        hintDismissal?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.clipboardImageHint = false
+        }
+        hintDismissal = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
     func remove(_ id: UUID) { items.removeAll { $0.id == id } }
@@ -87,8 +124,12 @@ enum PastedImages {
     /// - image FILE URL（Finder copy，content-checked against public.image）
     ///   = 明确的贴图意图，无条件认领（旁边的文件名字符串 flavor 不算数）；
     /// - 纯位图（截图等）认领；
-    /// - 位图 + 非空文本双 flavor（Excel/Numbers 复制单元格连图带字）**不
-    ///   认领**——吞掉 ⌘V 会让这类文本彻底无法粘贴，文本粘贴优先。
+    /// - 位图 + 文本双 flavor 分两档（两个真实场景）：
+    ///   1. 浏览器「拷贝图像」/微信等聊天工具的截图——位图旁几乎总带一段
+    ///      单行 URL/文件路径（图片地址、file 引用）。那是图片的伴生元数据，
+    ///      **认领**贴图（此前一刀切让路，最常见的真贴图被放走 = 生产事故）；
+    ///   2. Excel/Numbers 复制单元格（连图带字）——多行或实质性非 URL 文本，
+    ///      **不认领**，文本粘贴优先，否则这类文本彻底无法粘贴。
     static func isImagePaste(_ pb: NSPasteboard) -> Bool {
         if pb.canReadObject(forClasses: [NSURL.self], options: urlReadingOptions) {
             return true
@@ -96,8 +137,26 @@ enum PastedImages {
         guard pb.canReadObject(forClasses: [NSImage.self], options: [:]) else {
             return false
         }
-        let text = pb.string(forType: .string) ?? ""
-        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let text = (pb.string(forType: .string) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty || isCompanionURLText(text)
+    }
+
+    /// 位图旁带文本的判别：trim 后单行、URL/文件路径前缀（http(s):// 、
+    /// file:// 或 /）且 ≤2048 字符 = 图片的伴生元数据；其余算实质性文本。
+    private static func isCompanionURLText(_ trimmed: String) -> Bool {
+        guard trimmed.count <= 2048,
+              !trimmed.contains("\n"), !trimmed.contains("\r")
+        else { return false }
+        return trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
+            || trimmed.hasPrefix("file://") || trimmed.hasPrefix("/")
+    }
+
+    /// force 贴图（⌥⌘V / 📎 按钮）的探针：剪贴板里有没有可读的图片 flavor
+    /// （图片文件 URL 或位图），完全不看文本 flavor。
+    static func hasReadableImage(_ pb: NSPasteboard) -> Bool {
+        pb.canReadObject(forClasses: [NSURL.self], options: urlReadingOptions)
+            || pb.canReadObject(forClasses: [NSImage.self], options: [:])
     }
 
     /// Pasteboard → images (downsampled on the way in, so the resident
@@ -209,66 +268,112 @@ enum PastedImages {
     }
 }
 
-/// Thumbnail strip shared by the three inputs. Renders nothing when empty
-/// unless `showsHintWhenEmpty`: the NSAlert accessories reserve a fixed-height
-/// slot (NSAlert never re-lays-out mid-modal, so the row must not change the
-/// panel's height when the first image lands) and show the ⌘V hint in it.
+/// Thumbnail strip shared by the three inputs. 常驻一个 📎 强制贴图按钮
+/// （= takeFromPasteboard(force:)，剪贴板无图 beep），空态也在——它是文本
+/// 让路判定误伤时的确定性入口。`showsHintWhenEmpty`（NSAlert accessories，
+/// 固定高度槽位——NSAlert never re-lays-out mid-modal）空态附带 ⌘V/⌥⌘V
+/// 提示文案；clipboardImageHint 亮时两种状态都插 3 秒指路提示。
 struct PastedImagesRow: View {
     @ObservedObject var model: PastedImagesModel
     var showsHintWhenEmpty = false
 
     var body: some View {
-        if model.isEmpty {
-            if showsHintWhenEmpty {
-                Text(L("可 ⌘V 粘贴图片（最多 \(PastedImagesModel.maxCount) 张，仅保存在本机）",
-                       "⌘V pastes images (up to \(PastedImagesModel.maxCount); kept on this Mac)"))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary.opacity(0.7))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            HStack(spacing: 8) {
-                ForEach(model.items) { item in
-                    ZStack(alignment: .topTrailing) {
-                        Image(nsImage: item.image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 40, height: 40)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.primary.opacity(0.15)))
-                        Button {
-                            model.remove(item.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                                .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
-                        }
-                        .buttonStyle(.plain)
-                        .help(L("移除这张图", "Remove this image"))
-                        .offset(x: 5, y: -5)
+        HStack(spacing: 8) {
+            ForEach(model.items) { item in
+                ZStack(alignment: .topTrailing) {
+                    Image(nsImage: item.image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.primary.opacity(0.15)))
+                    Button {
+                        model.remove(item.id)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
                     }
-                    // room so the offset ✕ stays inside the row's hit bounds
-                    .padding(.top, 5)
-                    .padding(.trailing, 5)
+                    .buttonStyle(.plain)
+                    .help(L("移除这张图", "Remove this image"))
+                    .offset(x: 5, y: -5)
                 }
-                Spacer(minLength: 0)
+                // room so the offset ✕ stays inside the row's hit bounds
+                .padding(.top, 5)
+                .padding(.trailing, 5)
             }
+            pasteButton
+            if model.clipboardImageHint {
+                hint(L("剪贴板里还有图片：点 📎 或 ⌥⌘V 贴图",
+                       "The clipboard also holds an image: click 📎 or press ⌥⌘V"))
+            } else if model.isEmpty && showsHintWhenEmpty {
+                hint(L("可 ⌘V 粘贴图片（最多 \(PastedImagesModel.maxCount) 张，仅保存在本机），或按 ⌥⌘V 强制贴图",
+                       "⌘V pastes images (up to \(PastedImagesModel.maxCount); kept on this Mac); ⌥⌘V force-pastes"))
+            }
+            Spacer(minLength: 0)
         }
+    }
+
+    /// 常驻的强制贴图入口——与 ⌥⌘V 同一条路：剪贴板有可读图就收，无图 beep。
+    private var pasteButton: some View {
+        Button {
+            model.takeFromPasteboard(force: true)
+        } label: {
+            Image(systemName: "paperclip")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(L("把剪贴板中的图片贴进来（⌥⌘V）",
+                "Paste the clipboard image (⌥⌘V)"))
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10))
+            .foregroundColor(.secondary.opacity(0.7))
+            .lineLimit(2)
     }
 }
 
 /// NSTextView that diverts ⌘V to the images model when the pasteboard holds
-/// image content; every other paste runs the inherited path. Used by the
-/// NSAlert editors (提建议 / 回答) — the SwiftUI composer can't subclass its
-/// shared field editor, so it uses PasteImageKeyMonitor instead.
+/// image content, and takes ⌥⌘V as the force-paste chord; every other paste
+/// runs the inherited path. Used by the NSAlert editors (提建议 / 回答) — the
+/// SwiftUI composer can't subclass its shared field editor, so it uses
+/// PasteImageKeyMonitor instead.
 final class ImagePasteTextView: NSTextView {
     var imagesModel: PastedImagesModel?
 
     override func paste(_ sender: Any?) {
-        if let model = imagesModel, model.takeFromPasteboard() { return }
+        if let model = imagesModel {
+            // 按住 ⌥ 触发的粘贴（菜单派发到 paste(_:) 时事件还在手上）
+            // 一律走强制贴图——⌥⌘V 语义的兜底路径。
+            let mods = NSApp.currentEvent?.modifierFlags
+                .intersection(.deviceIndependentFlagsMask) ?? []
+            if mods.contains(.option) {
+                model.takeFromPasteboard(force: true)
+                return
+            }
+            if model.takeFromPasteboard() { return }
+        }
         super.paste(sender)
+    }
+
+    /// ⌥⌘V 强制贴图 chord。它不匹配 Edit 菜单 ⌘V 的 key equivalent，NSAlert
+    /// 模态下没人接手，只能在这里截；无论收没收（无图 beep 作答）都返回
+    /// true 吞掉——这个 chord 在输入框里没有别的合法含义。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if let model = imagesModel,
+           mods.contains(.command), mods.contains(.option),
+           mods.isDisjoint(with: [.shift, .control]),
+           event.charactersIgnoringModifiers?.lowercased() == "v" {
+            model.takeFromPasteboard(force: true)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }
 
@@ -295,8 +400,8 @@ struct HostingWindowReader: NSViewRepresentable {
     }
 }
 
-/// ⌘V hook for SwiftUI TextFields (the composer): a focus-scoped local key
-/// monitor — installed while the field owns the caret, removed on defocus /
+/// ⌘V / ⌥⌘V hook for SwiftUI TextFields (the composer): a focus-scoped local
+/// key monitor — installed while the field owns the caret, removed on defocus /
 /// disappear. Local monitors fire BEFORE the Edit menu's ⌘V key equivalent,
 /// so an image paste never reaches the field editor; anything else passes
 /// through untouched (shiftReturnMonitor 同款红线).
@@ -305,9 +410,10 @@ enum PasteImageKeyMonitor {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods.contains(.command),
-                  mods.isDisjoint(with: [.shift, .option, .control]),
+                  mods.isDisjoint(with: [.shift, .control]),
                   event.charactersIgnoringModifiers?.lowercased() == "v"
             else { return event }
+            let force = mods.contains(.option)   // ⌥⌘V = 强制贴图
             var handled = false
             MainActor.assumeIsolated {
                 // a modal alert owns its own paste path (ImagePasteTextView);
@@ -320,7 +426,19 @@ enum PasteImageKeyMonitor {
                 guard let owner = model.hostWindow,
                       event.window === owner,
                       NSApp.keyWindow === owner else { return }
-                handled = model.takeFromPasteboard()
+                if force {
+                    // 无论收没收（无图 beep 作答）都吞掉——⌥⌘V 是本 app 的
+                    // 贴图 chord，落进输入框没有别的合法含义。
+                    model.takeFromPasteboard(force: true)
+                    handled = true
+                } else {
+                    handled = model.takeFromPasteboard()
+                    // ⌘V 让路给文本、但剪贴板确有图：亮 3 秒提示指路
+                    // 📎 / ⌥⌘V（NSAlert 路径按钮常驻可见，不需要）。
+                    if !handled, PastedImages.hasReadableImage(.general) {
+                        model.flashClipboardImageHint()
+                    }
+                }
             }
             return handled ? nil : event
         }

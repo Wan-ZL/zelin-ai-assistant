@@ -129,7 +129,7 @@ struct KanbanComposer: View {
                 .buttonStyle(.plain)
                 .disabled(trimmed.isEmpty)
             }
-            // 贴图缩略图行（空时不占位；每张可 ✕ 移除）
+            // 贴图缩略图行（常驻 📎 强制贴图按钮，空态也在；每张可 ✕ 移除）
             PastedImagesRow(model: pasted)
             // item 3: slash-command hint / error; otherwise a keys hint line
             if let err = slashError {
