@@ -3,12 +3,13 @@
 //
 // 交互契约：⌘V 认领规则（isImagePaste）——图片文件 URL = 明确的贴图意图，
 // 无条件认领（旁带文件名字符串也照收）；纯位图（截图）认领；**位图 + 文本双
-// flavor** 分两档：单行 URL/文件路径形态的文本（浏览器「拷贝图像」、微信等
-// 聊天工具的截图——位图旁几乎总带图片地址/文件引用）= 图片的伴生元数据，
-// 认领贴图；多行或实质性非 URL 文本（Excel/Numbers 复制单元格连图带字）不
-// 认领，文本粘贴优先——否则这类文本在输入框里彻底无法粘贴。确定性旁路：
-// **⌥⌘V** 与缩略图行常驻的 **📎 按钮** = 强制贴图（force，跳过文本让路判定，
-// 剪贴板无图只 beep）。一旦认领，事件必被吞掉——满员/解码失败也只
+// flavor** 分两档：单个 URL/文件路径 token 形态的文本（浏览器「拷贝图像」、
+// 微信等聊天工具的截图——位图旁几乎总带图片地址/文件引用）= 图片的伴生元
+// 数据，认领贴图；含空白/多行或实质性非 URL 文本（Excel/Numbers 复制单元格
+// 连图带字）不认领，文本粘贴优先——否则这类文本在输入框里彻底无法粘贴。
+// 确定性旁路：**⌥⌘V** 与缩略图行常驻的 **📎 按钮** = 强制贴图（force，跳过
+// 文本让路判定，剪贴板无图只 beep）；**⇧⌘V** = 强制文本（跳过贴图认领——
+// URL 伴生文本的对称出口）。一旦认领，事件必被吞掉——满员/解码失败也只
 // beep 提示，绝不落回文本粘贴（图片文件的文本形态是本机绝对路径，插进会上传
 // 的提建议正文就是路径泄漏）。缩略图行每张可 ✕ 移除；上限 4 张。
 // 发送时由调用方把图片落成 PNG（savePNGs → <uuid>-<n>.png，落盘前统一降采样
@@ -125,11 +126,11 @@ enum PastedImages {
     ///   = 明确的贴图意图，无条件认领（旁边的文件名字符串 flavor 不算数）；
     /// - 纯位图（截图等）认领；
     /// - 位图 + 文本双 flavor 分两档（两个真实场景）：
-    ///   1. 浏览器「拷贝图像」/微信等聊天工具的截图——位图旁几乎总带一段
-    ///      单行 URL/文件路径（图片地址、file 引用）。那是图片的伴生元数据，
+    ///   1. 浏览器「拷贝图像」/微信等聊天工具的截图——位图旁几乎总带单个
+    ///      URL/文件路径 token（图片地址、file 引用）。那是图片的伴生元数据，
     ///      **认领**贴图（此前一刀切让路，最常见的真贴图被放走 = 生产事故）；
-    ///   2. Excel/Numbers 复制单元格（连图带字）——多行或实质性非 URL 文本，
-    ///      **不认领**，文本粘贴优先，否则这类文本彻底无法粘贴。
+    ///   2. Excel/Numbers 复制单元格（连图带字）——含空白/多行或实质性非
+    ///      URL 文本，**不认领**，文本粘贴优先，否则这类文本彻底无法粘贴。
     static func isImagePaste(_ pb: NSPasteboard) -> Bool {
         if pb.canReadObject(forClasses: [NSURL.self], options: urlReadingOptions) {
             return true
@@ -142,14 +143,18 @@ enum PastedImages {
         return text.isEmpty || isCompanionURLText(text)
     }
 
-    /// 位图旁带文本的判别：trim 后单行、URL/文件路径前缀（http(s):// 、
-    /// file:// 或 /）且 ≤2048 字符 = 图片的伴生元数据；其余算实质性文本。
+    /// 位图旁带文本的判别：trim 后恰好一个 URL/文件路径 token 才算图片的
+    /// 伴生元数据——不含任何空白（Excel 复制一行「URL⇥备注」属实质文本，
+    /// 必须让路）、scheme 大小写不敏感（FILE:// 也是本机路径，漏判会让路径
+    /// 进可上传正文）、≤2048 字符；其余让文本粘贴优先。
     private static func isCompanionURLText(_ trimmed: String) -> Bool {
         guard trimmed.count <= 2048,
-              !trimmed.contains("\n"), !trimmed.contains("\r")
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
         else { return false }
-        return trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
-            || trimmed.hasPrefix("file://") || trimmed.hasPrefix("/")
+        if trimmed.hasPrefix("/") { return true }
+        let lower = trimmed.lowercased()
+        return lower.hasPrefix("http://") || lower.hasPrefix("https://")
+            || lower.hasPrefix("file://")
     }
 
     /// force 贴图（⌥⌘V / 📎 按钮）的探针：剪贴板里有没有可读的图片 flavor
@@ -348,11 +353,12 @@ final class ImagePasteTextView: NSTextView {
 
     override func paste(_ sender: Any?) {
         if let model = imagesModel {
-            // 按住 ⌥ 触发的粘贴（菜单派发到 paste(_:) 时事件还在手上）
-            // 一律走强制贴图——⌥⌘V 语义的兜底路径。
-            let mods = NSApp.currentEvent?.modifierFlags
-                .intersection(.deviceIndependentFlagsMask) ?? []
-            if mods.contains(.option) {
+            // ⌥⌘V 落到 paste(_:) 的兜底路径——只认**键盘事件**上的 ⌥：
+            // 右键菜单/Edit▸粘贴时恰好按着 ⌥（currentEvent 是鼠标事件）
+            // 是普通文本粘贴，转成强制贴图会在无图时 beep+吞掉文本。
+            if let event = NSApp.currentEvent, event.type == .keyDown,
+               event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                   .contains(.option) {
                 model.takeFromPasteboard(force: true)
                 return
             }
@@ -361,17 +367,24 @@ final class ImagePasteTextView: NSTextView {
         super.paste(sender)
     }
 
-    /// ⌥⌘V 强制贴图 chord。它不匹配 Edit 菜单 ⌘V 的 key equivalent，NSAlert
-    /// 模态下没人接手，只能在这里截；无论收没收（无图 beep 作答）都返回
-    /// true 吞掉——这个 chord 在输入框里没有别的合法含义。
+    /// ⌥⌘V = 强制贴图，⇧⌘V = 强制文本。两个 chord 都不匹配 Edit 菜单 ⌘V
+    /// 的 key equivalent，NSAlert 模态下没人接手，只能在这里截。⌥⌘V 无论
+    /// 收没收（无图 beep 作答）都吞掉——它在输入框里没有别的合法含义；
+    /// ⇧⌘V 是 URL 伴生场景下文本方向的对称出口（那段文本 ⌘V 贴不进来），
+    /// 绕开本类 paste(_:) 的贴图认领直接走文本粘贴。
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if let model = imagesModel,
-           mods.contains(.command), mods.contains(.option),
-           mods.isDisjoint(with: [.shift, .control]),
+        if imagesModel != nil,
+           mods.contains(.command),
            event.charactersIgnoringModifiers?.lowercased() == "v" {
-            model.takeFromPasteboard(force: true)
-            return true
+            if mods.contains(.option), mods.isDisjoint(with: [.shift, .control]) {
+                imagesModel?.takeFromPasteboard(force: true)
+                return true
+            }
+            if mods.contains(.shift), mods.isDisjoint(with: [.option, .control]) {
+                super.paste(self)
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -400,20 +413,23 @@ struct HostingWindowReader: NSViewRepresentable {
     }
 }
 
-/// ⌘V / ⌥⌘V hook for SwiftUI TextFields (the composer): a focus-scoped local
-/// key monitor — installed while the field owns the caret, removed on defocus /
-/// disappear. Local monitors fire BEFORE the Edit menu's ⌘V key equivalent,
-/// so an image paste never reaches the field editor; anything else passes
-/// through untouched (shiftReturnMonitor 同款红线).
+/// ⌘V / ⌥⌘V / ⇧⌘V hook for SwiftUI TextFields (the composer): a focus-scoped
+/// local key monitor — installed while the field owns the caret, removed on
+/// defocus / disappear. Local monitors fire BEFORE the Edit menu's ⌘V key
+/// equivalent, so an image paste never reaches the field editor; anything
+/// else passes through untouched (shiftReturnMonitor 同款红线).
 enum PasteImageKeyMonitor {
     static func install(for model: PastedImagesModel) -> Any? {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods.contains(.command),
-                  mods.isDisjoint(with: [.shift, .control]),
+                  mods.isDisjoint(with: [.control]),
                   event.charactersIgnoringModifiers?.lowercased() == "v"
             else { return event }
-            let force = mods.contains(.option)   // ⌥⌘V = 强制贴图
+            let force = mods.contains(.option)      // ⌥⌘V = 强制贴图
+            let plainText = mods.contains(.shift)   // ⇧⌘V = 强制文本
+            // ⌥⇧⌘V（Paste and Match Style 形态）不抢，照常放行
+            guard !(force && plainText) else { return event }
             var handled = false
             MainActor.assumeIsolated {
                 // a modal alert owns its own paste path (ImagePasteTextView);
@@ -430,6 +446,11 @@ enum PasteImageKeyMonitor {
                     // 无论收没收（无图 beep 作答）都吞掉——⌥⌘V 是本 app 的
                     // 贴图 chord，落进输入框没有别的合法含义。
                     model.takeFromPasteboard(force: true)
+                    handled = true
+                } else if plainText {
+                    // ⇧⌘V：URL 伴生场景下文本方向的对称出口——绕开贴图
+                    // 认领，把粘贴动作直接送给第一响应者（field editor）。
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
                     handled = true
                 } else {
                     handled = model.takeFromPasteboard()
