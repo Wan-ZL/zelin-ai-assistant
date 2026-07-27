@@ -93,13 +93,30 @@ struct PastedImagesClaimMatrixTests {
         #expect(!PastedImages.isImagePaste(pb))
     }
 
-    /// 位图 + 单行 URL 文本 = 当前实现不认领（非空文本一律让给文本粘贴）。
-    /// 注意：这条钉的是「当前行为」——另一分支正在改这条规则；规则演进时
-    /// 允许（且应该）更新本判例，其余矩阵格不受影响。
-    @Test func bitmapWithSingleLineURLTextPinnedToCurrentBehavior() {
+    /// 位图 + 单行 URL 伴生文本 = 认领（v0.46.1 规则：浏览器拷图/聊天截图
+    /// 的伴生 URL 是图片元数据，不是要粘贴的内容）。
+    @Test func bitmapWithCompanionURLTextIsClaimed() {
         let pb = freshPasteboard()
         defer { pb.releaseGlobally() }
         writeBitmap(pb, withText: "https://example.com/cat.png")
+        #expect(PastedImages.isImagePaste(pb))
+    }
+
+    /// 大写 scheme 同样认领（review P1：FILE:// 曾绕过小写前缀判定，
+    /// 本机路径文本会漏进可上传正文）。
+    @Test func uppercaseSchemeCompanionIsClaimed() {
+        let pb = freshPasteboard()
+        defer { pb.releaseGlobally() }
+        writeBitmap(pb, withText: "FILE:///Users/someone/private.png")
+        #expect(PastedImages.isImagePaste(pb))
+    }
+
+    /// URL 后面跟着 TAB/空格与备注（Excel 一行）= 实质文本，让给文本粘贴
+    ///（review P2：伴生元数据必须是恰好一个无空白的 token）。
+    @Test func urlWithTrailingNoteYieldsToText() {
+        let pb = freshPasteboard()
+        defer { pb.releaseGlobally() }
+        writeBitmap(pb, withText: "https://example.com\t待确认")
         #expect(!PastedImages.isImagePaste(pb))
     }
 
