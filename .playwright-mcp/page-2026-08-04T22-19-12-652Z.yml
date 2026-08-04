@@ -1,0 +1,2145 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner:
+      - generic [ref=e3]:
+        - generic [ref=e4]:
+          - link [ref=e5] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e6]:
+              - img "Logo for LIVE by Po-Shen Loh" [ref=e8]
+              - paragraph [ref=e9]: LIVE
+          - separator [ref=e10]
+          - paragraph [ref=e12] [cursor=pointer]: English
+        - link "apply" [ref=e16] [cursor=pointer]:
+          - /url: /jobs/star
+    - main [ref=e18]:
+      - generic [ref=e19]:
+        - heading "STARRING" [level=1] [ref=e20]
+        - heading "Meet our LIVE math cohosts" [level=5] [ref=e22]
+        - generic:
+          - paragraph: scroll to see
+      - generic [ref=e27]:
+        - heading "Math + Performance" [level=3] [ref=e29]
+        - generic [ref=e30]:
+          - paragraph [ref=e31]: Our stars come from our new program, in which professional entertainers teach performance skills to outstanding math scholars.
+          - link "more info" [ref=e33] [cursor=pointer]:
+            - /url: /jobs/star
+      - generic [ref=e34]:
+        - heading "Admin" [level=3] [ref=e36]
+        - generic [ref=e38]:
+          - generic [ref=e40]:
+            - img "Profile picture for Melody Chen" [ref=e42]
+            - heading [level=6] [ref=e43]:
+              - strong [ref=e44]: MELODY CHEN
+            - paragraph [ref=e45]: AIME Qualifier • MATHCOUNTS Nationals Qualifier • Enjoys Playing Violin and Tetris
+            - generic [ref=e47] [cursor=pointer]:
+              - generic [ref=e48]:
+                - paragraph [ref=e53]: 68 hr taught
+                - separator [ref=e54]
+              - paragraph [ref=e55]: click for more
+          - generic [ref=e57]:
+            - img "Profile picture for Gloria Chi" [ref=e59]
+            - heading [level=6] [ref=e60]:
+              - strong [ref=e61]: GLORIA CHI
+            - paragraph [ref=e62]: Qualified for AIME since 7th grade • 2x Texas ARML Team (2024, 2025) • MATHCOUNTS coach • 2x HSMC camper • JSMC counselor • Officer of multiple clubs • Student Council representative
+            - generic [ref=e64] [cursor=pointer]:
+              - generic [ref=e65]:
+                - paragraph [ref=e70]: 144 hr taught
+                - separator [ref=e71]
+              - paragraph [ref=e72]: click for more
+          - generic [ref=e74]:
+            - img "Profile picture for Luke Furness" [ref=e76]
+            - heading [level=6] [ref=e77]:
+              - strong [ref=e78]: LUKE FURNESS
+            - paragraph [ref=e79]: AMC 8 Perfect Scorer • National MATHCOUNTS Qualifier from Michigan • Founded and coaches a homeschool MATHCOUNTS team • Founded Love of Math • Loves to play the guitar
+            - generic [ref=e81] [cursor=pointer]:
+              - generic [ref=e82]:
+                - paragraph [ref=e87]: 103 hr taught
+                - separator [ref=e88]
+              - paragraph [ref=e89]: click for more
+          - generic [ref=e91]:
+            - img "Profile picture for Eli Gold" [ref=e93]
+            - heading [level=6] [ref=e94]:
+              - strong [ref=e95]: ELI GOLD
+            - paragraph [ref=e96]: Princeton Class of '29 • US Presidential Scholar • Two-time USAMTS Perfect-Scorer • Marimba Extraordinare • Change-Ringer • Proficient in Mandarin • Terrible at Ping Pong
+            - generic [ref=e98] [cursor=pointer]:
+              - generic [ref=e99]:
+                - paragraph [ref=e104]: 141 hr taught
+                - separator [ref=e105]
+              - paragraph [ref=e106]: click for more
+          - generic [ref=e108]:
+            - img "Profile picture for Sam Kovi" [ref=e110]
+            - heading [level=6] [ref=e111]:
+              - strong [ref=e112]: SAM KOVI
+            - paragraph [ref=e113]: 4x AIME Qualifier • 1st Place at Wharton Data Science Competition • 2x Georgia ARML Team
+            - generic [ref=e115] [cursor=pointer]:
+              - generic [ref=e116]:
+                - paragraph [ref=e121]: 145 hr taught
+                - separator [ref=e122]
+              - paragraph [ref=e123]: click for more
+          - generic [ref=e125]:
+            - img "Profile picture for Sylvia Lee" [ref=e127]
+            - heading [level=6] [ref=e128]:
+              - strong [ref=e129]: SYLVIA LEE
+            - paragraph [ref=e130]: USAJMO qualifier in 2023 and 2024 • AIME qualifier since 7th grade • 15th at MP4G 2024 • 2024 MAA Young Women in Mathematics Award recipient • Attended G2 in 2023 and 2024
+            - generic [ref=e132] [cursor=pointer]:
+              - generic [ref=e133]:
+                - paragraph [ref=e138]: 142 hr taught
+                - separator [ref=e139]
+              - paragraph [ref=e140]: click for more
+          - generic [ref=e142]:
+            - img "Profile picture for Siddharth Senthil" [ref=e144]
+            - heading [level=6] [ref=e145]:
+              - strong [ref=e146]: SIDDHARTH SENTHIL
+            - paragraph [ref=e147]: AIME Qualifier • 2x MathCounts State Participant • MathCon 8th Grade Silver Medalist • Team captain of school's International Math Bowl team who tied for 5th • Enjoys chess and tennis
+            - generic [ref=e149] [cursor=pointer]:
+              - generic [ref=e150]:
+                - paragraph [ref=e155]: 64 hr taught
+                - separator [ref=e156]
+              - paragraph [ref=e157]: click for more
+          - generic [ref=e159]:
+            - img "Profile picture for Alan Sheng" [ref=e161]
+            - heading [level=6] [ref=e162]:
+              - strong [ref=e163]: ALAN SHENG
+            - paragraph [ref=e164]: 2023 Alabama Mathcounts State Champion • 2024 Alabama Statewide Geometry Champion • Ala-La-Miss Math League Winner • Enjoys track and field and playing fingerstyle guitar
+            - generic [ref=e166] [cursor=pointer]:
+              - generic [ref=e167]:
+                - paragraph [ref=e172]: 124 hr taught
+                - separator [ref=e173]
+              - paragraph [ref=e174]: click for more
+          - generic [ref=e176]:
+            - img "Profile picture for Vivian Tang" [ref=e178]
+            - heading [level=6] [ref=e179]:
+              - strong [ref=e180]: VIVIAN TANG
+            - paragraph [ref=e181]: AIME Qualifier • M3 Challenge Champion • MP4G Invitee MATHCOUNTS Coach • Passionate dancer and teacher
+            - generic [ref=e183] [cursor=pointer]:
+              - generic [ref=e184]:
+                - paragraph [ref=e189]: 157 hr taught
+                - separator [ref=e190]
+              - paragraph [ref=e191]: click for more
+          - generic [ref=e193]:
+            - img "Profile picture for Aiden Wen" [ref=e195]
+            - heading [level=6] [ref=e196]:
+              - strong [ref=e197]: AIDEN WEN
+            - paragraph [ref=e198]: National MATHCOUNTS Texas team • 4-time USA(J)MO Qualifier • DECA Chapter President • Loves teaching!
+            - generic [ref=e200] [cursor=pointer]:
+              - generic [ref=e201]:
+                - paragraph [ref=e206]: 229 hr taught
+                - separator [ref=e207]
+              - paragraph [ref=e208]: click for more
+      - generic [ref=e209]:
+        - heading "Profiles" [level=3] [ref=e211]
+        - generic [ref=e213]:
+          - generic [ref=e215]:
+            - img "Profile picture for Arjun Agarwal" [ref=e217]
+            - heading [level=6] [ref=e218]:
+              - strong [ref=e219]: ARJUN AGARWAL
+            - paragraph [ref=e220]: 2024 USAJMO Honorable Mention • 2x MIT-PRIMES USA Research Scholar • Attended Ross and Canada/USA Mathcamp • Attended Mathcounts Nationals
+            - generic [ref=e222] [cursor=pointer]:
+              - generic [ref=e223]:
+                - paragraph [ref=e228]: 24 hr taught
+                - separator [ref=e229]
+              - paragraph [ref=e230]: click for more
+          - generic [ref=e232]:
+            - img "Profile picture for Samarth Agarwal" [ref=e234]
+            - heading [level=6] [ref=e235]:
+              - strong [ref=e236]: SAMARTH AGARWAL
+            - paragraph [ref=e237]: 3x AIME qualifier • School Mu Alpha Theta officer • Enjoys reading and table tennis
+            - generic [ref=e239] [cursor=pointer]:
+              - generic [ref=e240]:
+                - paragraph [ref=e245]: 45 hr taught
+                - separator [ref=e246]
+              - paragraph [ref=e247]: click for more
+          - generic [ref=e249]:
+            - img "Profile picture for Zvonko Andrijević" [ref=e251]
+            - heading [level=6] [ref=e252]:
+              - strong [ref=e253]: ZVONKO ANDRIJEVIĆ
+            - paragraph [ref=e254]: 1-time Croatian National Olympiad • First-year university student at the Faculty of Electrical Engineering and Computing in Zagreb, Croatia • Knows German • Enjoys swimming, watching quizzes, and geography
+            - generic [ref=e256] [cursor=pointer]:
+              - generic [ref=e257]:
+                - paragraph [ref=e261]: New
+                - separator [ref=e262]
+              - paragraph [ref=e263]: click for more
+          - generic [ref=e265]:
+            - img "Profile picture for Anshul Arul" [ref=e267]
+            - heading [level=6] [ref=e268]:
+              - strong [ref=e269]: ANSHUL ARUL
+            - paragraph [ref=e270]: 2025 USAJMO qualifier • 2x AIME qualifier • School Math Club Officer • 2023 Mathcounts state Washington qualifier
+            - generic [ref=e272] [cursor=pointer]:
+              - generic [ref=e273]:
+                - paragraph [ref=e278]: 35 hr taught
+                - separator [ref=e279]
+              - paragraph [ref=e280]: click for more
+          - generic [ref=e282]:
+            - img "Profile picture for Shruti Arun" [ref=e284]
+            - heading [level=6] [ref=e285]:
+              - strong [ref=e286]: SHRUTI ARUN
+            - paragraph [ref=e287]: 2025 EGMO Gold Medalist for the USA • MOP and USA IMO TST Qualifier • 2022 Mathcounts Nationals Countdown Participant • Tied for 1st at MP4G 2024
+            - generic [ref=e289] [cursor=pointer]:
+              - generic [ref=e290]:
+                - paragraph [ref=e295]: 33 hr taught
+                - separator [ref=e296]
+              - paragraph [ref=e297]: click for more
+          - generic [ref=e299]:
+            - img "Profile picture for Armin Asgari" [ref=e301]
+            - heading [level=6] [ref=e302]:
+              - strong [ref=e303]: ARMIN ASGARI
+            - paragraph [ref=e304]: Bronze Medal, International Tournament of Informatics, 2021-22 • Multiple Gold, Silver and Bronze Medals, National Romanian Olympiad in Informatics • Yale Young Global Scholar • Made a phone app, Youni4Youth, to be launched soon on the Apple App Store •
+            - generic [ref=e306] [cursor=pointer]:
+              - generic [ref=e307]:
+                - paragraph [ref=e312]: 14 hr taught
+                - separator [ref=e313]
+              - paragraph [ref=e314]: click for more
+          - generic [ref=e316]:
+            - img "Profile picture for Sara Berghea" [ref=e318]
+            - heading [level=6] [ref=e319]:
+              - strong [ref=e320]: SARA BERGHEA
+            - paragraph [ref=e321]: JBMO silver medalist, 2023 • National Romanian Mathematics Olympiad bronze and silver medalist 2019-2025 • National Romanian Physics Olympiad bronze and gold medalist 2022-2023 • Math teacher since 2021
+            - generic [ref=e323] [cursor=pointer]:
+              - generic [ref=e324]:
+                - paragraph [ref=e329]: 152 hr taught
+                - separator [ref=e330]
+              - paragraph [ref=e331]: click for more
+          - generic [ref=e333]:
+            - img "Profile picture for Arav Chand" [ref=e335]
+            - heading [level=6] [ref=e336]:
+              - strong [ref=e337]: ARAV CHAND
+            - paragraph [ref=e338]: 4x AIME Qualifier • ISEF '24, '25 Math Category • Published Proactive Safety app "Halt Hate"
+            - generic [ref=e340] [cursor=pointer]:
+              - generic [ref=e341]:
+                - paragraph [ref=e346]: 70 hr taught
+                - separator [ref=e347]
+              - paragraph [ref=e348]: click for more
+          - generic [ref=e350]:
+            - img "Profile picture for Meilin Chen" [ref=e352]
+            - heading [level=6] [ref=e353]:
+              - strong [ref=e354]: MEILIN CHEN
+            - paragraph [ref=e355]: Ross ’25 • Physics Bowl National Gold • Enjoys physics, computer science, and linguistics • Loves Burr puzzles, composing music, calligraphy, watercolor, and swimming
+            - generic [ref=e357] [cursor=pointer]:
+              - generic [ref=e358]:
+                - paragraph [ref=e362]: New
+                - separator [ref=e363]
+              - paragraph [ref=e364]: click for more
+          - generic [ref=e366]:
+            - img "Profile picture for Himank Chhaya" [ref=e368]
+            - heading [level=6] [ref=e369]:
+              - strong [ref=e370]: HIMANK CHHAYA
+            - paragraph [ref=e371]: AIME Qualifier • Lead Director of Rickards Math Invitational • Director of Rickards Science Olympiad Invitational • President of Florida Chapter of Robotics for All • Florida Sunshine State Scholar • LASP International Guitar Festival Winner • Plays basketball and watches baseball
+            - generic [ref=e373] [cursor=pointer]:
+              - generic [ref=e374]:
+                - paragraph [ref=e379]: 78 hr taught
+                - separator [ref=e380]
+              - paragraph [ref=e381]: click for more
+          - generic [ref=e383]:
+            - img "Profile picture for Teya Chobanova" [ref=e385]
+            - heading [level=6] [ref=e386]:
+              - strong [ref=e387]: TEYA CHOBANOVA
+            - paragraph [ref=e388]: Valedictorian of Baba Tonka High School of Mathematics • Bulgarian extended national team for EGMO '24 and '25 • Gold medals, Thailand IMO '20 and '21 • Champion, 2021 PIMSO • Silver awards - AIMO '22 and '21 • Gym enthusiast with a PhD-level appreciation for a perfect cup of cold coffee and a good book
+            - generic [ref=e390] [cursor=pointer]:
+              - generic [ref=e391]:
+                - paragraph [ref=e396]: 42 hr taught
+                - separator [ref=e397]
+              - paragraph [ref=e398]: click for more
+          - generic [ref=e400]:
+            - img "Profile picture for Brayden Choi" [ref=e402]
+            - heading [level=6] [ref=e403]:
+              - strong [ref=e404]: BRAYDEN CHOI
+            - paragraph [ref=e405]: AMC 10 Distinguished Honor Roll • 4x AIME qualifier • PUMAC individual finalist • Varsity Soccer & Track
+            - generic [ref=e407] [cursor=pointer]:
+              - generic [ref=e408]:
+                - paragraph [ref=e412]: New
+                - separator [ref=e413]
+              - paragraph [ref=e414]: click for more
+          - generic [ref=e416]:
+            - img "Profile picture for Dorothy Chrisman" [ref=e418]
+            - heading [level=6] [ref=e419]:
+              - strong [ref=e420]: DOROTHY CHRISMAN
+            - paragraph [ref=e421]: 4x AIME qualifier • MMSS ’23 • HCSSiM ’24 • Enjoys music, sports, and activities that start with the letter "C"
+            - generic [ref=e423] [cursor=pointer]:
+              - generic [ref=e424]:
+                - paragraph [ref=e429]: 71 hr taught
+                - separator [ref=e430]
+              - paragraph [ref=e431]: click for more
+          - generic [ref=e433]:
+            - img "Profile picture for Yulu (Kiana) Dai" [ref=e435]
+            - heading [level=6] [ref=e436]:
+              - strong [ref=e437]: YULU (KIANA) DAI
+            - paragraph [ref=e438]: Three-time AIME qualifier • USAJMO qualifier • Physics enthusiast • Enjoys chess, reading, and music
+            - generic [ref=e440] [cursor=pointer]:
+              - generic [ref=e441]:
+                - paragraph [ref=e446]: 55 hr taught
+                - separator [ref=e447]
+              - paragraph [ref=e448]: click for more
+          - generic [ref=e450]:
+            - img "Profile picture for Alexander Dang" [ref=e452]
+            - heading [level=6] [ref=e453]:
+              - strong [ref=e454]: ALEXANDER DANG
+            - paragraph [ref=e455]: 3-time AIME Qualifier • Math Club Leader • Enjoys Tennis, Writing, Drawing, Dabate and Origami
+            - generic [ref=e457] [cursor=pointer]:
+              - generic [ref=e458]:
+                - paragraph [ref=e463]: 41 hr taught
+                - separator [ref=e464]
+              - paragraph [ref=e465]: click for more
+          - generic [ref=e467]:
+            - img "Profile picture for Daniel Dimitrov" [ref=e469]
+            - heading [level=6] [ref=e470]:
+              - strong [ref=e471]: DANIEL DIMITROV
+            - paragraph [ref=e472]: 3x AIME Qualifier • MATHCOUNTS Coach • 2023, 2024 North Carolina MATHCOUNTS State Qualifier • Plays tennis competitively
+            - generic [ref=e474] [cursor=pointer]:
+              - generic [ref=e475]:
+                - paragraph [ref=e480]: 11 hr taught
+                - separator [ref=e481]
+              - paragraph [ref=e482]: click for more
+          - generic [ref=e484]:
+            - img "Profile picture for Aarit Dixit" [ref=e486]
+            - heading [level=6] [ref=e487]:
+              - strong [ref=e488]: AARIT DIXIT
+            - paragraph [ref=e489]: 3× AIME Qualifier • Top 12 Individuals at Mu Alpha Theta Nationals • Science Olympiad Nationals Qualifier • Designs and builds custom drones
+            - generic [ref=e491] [cursor=pointer]:
+              - generic [ref=e492]:
+                - paragraph [ref=e497]: 27 hr taught
+                - separator [ref=e498]
+              - paragraph [ref=e499]: click for more
+          - generic [ref=e501]:
+            - img "Profile picture for Leo Elieson" [ref=e503]
+            - heading [level=6] [ref=e504]:
+              - strong [ref=e505]: LEO ELIESON
+            - paragraph [ref=e506]: 2-time AIME Qualifier • Frisbee player and coach • Quiz Bowl Captain • Enjoys coding and origami
+            - generic [ref=e508] [cursor=pointer]:
+              - generic [ref=e509]:
+                - paragraph [ref=e514]: 45 hr taught
+                - separator [ref=e515]
+              - paragraph [ref=e516]: click for more
+          - generic [ref=e518]:
+            - img "Profile picture for Ian Finotti" [ref=e520]
+            - heading [level=6] [ref=e521]:
+              - strong [ref=e522]: IAN FINOTTI
+            - paragraph [ref=e523]: Programmer • Gamer • Multivariable Calculus TA • National Merit Scholarship Finalist
+            - generic [ref=e525] [cursor=pointer]:
+              - generic [ref=e526]:
+                - paragraph [ref=e530]: New
+                - separator [ref=e531]
+              - paragraph [ref=e532]: click for more
+          - generic [ref=e534]:
+            - img "Profile picture for Warren Fu" [ref=e536]
+            - heading [level=6] [ref=e537]:
+              - strong [ref=e538]: WARREN FU
+            - paragraph [ref=e539]: 3-time AIME qualifier • USABO semifinalist • Likes growing algae and breakdancing
+            - generic [ref=e541] [cursor=pointer]:
+              - generic [ref=e542]:
+                - paragraph [ref=e547]: 89 hr taught
+                - separator [ref=e548]
+              - paragraph [ref=e549]: click for more
+          - generic [ref=e551]:
+            - img "Profile picture for Simona Gagarova" [ref=e553]
+            - heading [level=6] [ref=e554]:
+              - strong [ref=e555]: SIMONA GAGAROVA
+            - paragraph [ref=e556]: Scholar at the University of Cambridge • EGMO Bronze medalist • APMO 205 Bronze medal, WMTC 2024 Gold medal • Published a research paper in Combinatorics • Passionate ballet dancer, teacher, and volunteer
+            - generic [ref=e558] [cursor=pointer]:
+              - generic [ref=e559]:
+                - paragraph [ref=e563]: New
+                - separator [ref=e564]
+              - paragraph [ref=e565]: click for more
+          - generic [ref=e567]:
+            - img "Profile picture for Tina Gao" [ref=e569]
+            - heading [level=6] [ref=e570]:
+              - strong [ref=e571]: TINA GAO
+            - paragraph [ref=e572]: AIME Qualifier since 8th grade • Mathcounts Nationals Qualifier • AMC8 DHR • Debates • Writes stories •
+            - generic [ref=e574] [cursor=pointer]:
+              - generic [ref=e575]:
+                - paragraph [ref=e580]: 80 hr taught
+                - separator [ref=e581]
+              - paragraph [ref=e582]: click for more
+          - generic [ref=e584]:
+            - img "Profile picture for Adya Garg" [ref=e586]
+            - heading [level=6] [ref=e587]:
+              - strong [ref=e588]: ADYA GARG
+            - paragraph [ref=e589]: 4x AIME Qualifier • Math Prize Olympiad Bronze Medalist • Ross '24 and G2 '24/'25 • FRC competitor
+            - generic [ref=e591] [cursor=pointer]:
+              - generic [ref=e592]:
+                - paragraph [ref=e597]: 16 hr taught
+                - separator [ref=e598]
+              - paragraph [ref=e599]: click for more
+          - generic [ref=e601]:
+            - img "Profile picture for Adam Ge" [ref=e603]
+            - heading [level=6] [ref=e604]:
+              - strong [ref=e605]: ADAM GE
+            - paragraph [ref=e606]: USAJMO Honorable Mention • Mathcounts Nationals Countdown Participant • MIT PRIMES Researcher • Mycology Enthusiast
+            - generic [ref=e608] [cursor=pointer]:
+              - generic [ref=e609]:
+                - paragraph [ref=e613]: New
+                - separator [ref=e614]
+              - paragraph [ref=e615]: click for more
+          - generic [ref=e617]:
+            - img "Profile picture for Rithik Gumpu" [ref=e619]
+            - heading [level=6] [ref=e620]:
+              - strong [ref=e621]: RITHIK GUMPU
+            - paragraph [ref=e622]: 4 time AIME qualifier (AMC Distinguished Honor Roll) • 2022 Mathcounts Nationals Team Round Winner • Top 50 Harvard-MIT Mathematics Tournament • PuMAC Finalist • Creator of Zyte (Phone Time Management App)
+            - generic [ref=e624] [cursor=pointer]:
+              - generic [ref=e625]:
+                - paragraph [ref=e630]: 69 hr taught
+                - separator [ref=e631]
+              - paragraph [ref=e632]: click for more
+          - generic [ref=e634]:
+            - img "Profile picture for Melody Han" [ref=e636]
+            - heading [level=6] [ref=e637]:
+              - strong [ref=e638]: MELODY HAN
+            - paragraph [ref=e639]: AIME qualifier with distinction • Received D.E. Shaw Group AMC 8 Certificate of Excellence • MATHCOUNTS State Participant • Enjoys piano, reading, and listening to music
+            - generic [ref=e641] [cursor=pointer]:
+              - generic [ref=e642]:
+                - paragraph [ref=e647]: 49 hr taught
+                - separator [ref=e648]
+              - paragraph [ref=e649]: click for more
+          - generic [ref=e651]:
+            - img "Profile picture for Angela Ho" [ref=e653]
+            - heading [level=6] [ref=e654]:
+              - strong [ref=e655]: ANGELA HO
+            - paragraph [ref=e656]: 2024 MPFG 7th Place Winner • Canada/USA Mathcamp & G2 Math Program Alumna • 5x AIME Qualifier • 2021 Illinois Mathcounts National Qualifier • Chicago INTEGIRLS Leader • Enjoys music, running, and traveling
+            - generic [ref=e658] [cursor=pointer]:
+              - generic [ref=e659]:
+                - paragraph [ref=e664]: 173 hr taught
+                - separator [ref=e665]
+              - paragraph [ref=e666]: click for more
+          - generic [ref=e668]:
+            - img "Profile picture for Jennifer Hu" [ref=e670]
+            - heading [level=6] [ref=e671]:
+              - strong [ref=e672]: JENNIFER HU
+            - paragraph [ref=e673]: Tied for 6th at MP4G 2025 • 36th at the National MATHCOUNTS Competition • G2 2024 & 2025 • Enjoys crocheting and listening to music
+            - generic [ref=e675] [cursor=pointer]:
+              - generic [ref=e676]:
+                - paragraph [ref=e681]: 73 hr taught
+                - separator [ref=e682]
+              - paragraph [ref=e683]: click for more
+          - generic [ref=e685]:
+            - img "Profile picture for William Hua" [ref=e687]
+            - heading [level=6] [ref=e688]:
+              - strong [ref=e689]: WILLIAM HUA
+            - paragraph [ref=e690]: 2022 Massachusetts MATHCOUNTS State Champion • Two AMC8 Perfect Scores • 4 time AIME Qualifier • USAJMO Qualifier in 2022 and 2023 • Likes computer science and cybersecurity
+            - generic [ref=e692] [cursor=pointer]:
+              - generic [ref=e693]:
+                - paragraph [ref=e698]: 135 hr taught
+                - separator [ref=e699]
+              - paragraph [ref=e700]: click for more
+          - generic [ref=e702]:
+            - img "Profile picture for Angie Huang" [ref=e704]
+            - heading [level=6] [ref=e705]:
+              - strong [ref=e706]: ANGIE HUANG
+            - paragraph [ref=e707]: USAMO Honorable Mention • Math Prize for Girls 15th Place • 5th place at Minnesota MATHCOUNTS State • Minnesota Youth Math Outreach Founder • Enjoys debate, piano, and tennis
+            - generic [ref=e709] [cursor=pointer]:
+              - generic [ref=e710]:
+                - paragraph [ref=e715]: 132 hr taught
+                - separator [ref=e716]
+              - paragraph [ref=e717]: click for more
+          - generic [ref=e719]:
+            - img "Profile picture for Varyan Jain" [ref=e721]
+            - heading [level=6] [ref=e722]:
+              - strong [ref=e723]: VARYAN JAIN
+            - paragraph [ref=e724]: 3x AIME Qualifier • 2025 USAPHO Qualifier • 2023 MATHCOUNTS Nationals and Arizona Champion • Top 32 High School Science Bowl Team in the Nation
+            - generic [ref=e726] [cursor=pointer]:
+              - generic [ref=e727]:
+                - paragraph [ref=e732]: 45 hr taught
+                - separator [ref=e733]
+              - paragraph [ref=e734]: click for more
+          - generic [ref=e736]:
+            - img "Profile picture for Eamon Jia" [ref=e738]
+            - heading [level=6] [ref=e739]:
+              - strong [ref=e740]: EAMON JIA
+            - paragraph [ref=e741]: Australia AMO Silver • AMOC Senior Contest Silver • Australian Math Competition State Champion • UNSW School Math Competition Runner-Up • Varsity Tennis
+            - generic [ref=e743] [cursor=pointer]:
+              - generic [ref=e744]:
+                - paragraph [ref=e749]: 28 hr taught
+                - separator [ref=e750]
+              - paragraph [ref=e751]: click for more
+          - generic [ref=e753]:
+            - img "Profile picture for Connor Jiang" [ref=e755]
+            - heading [level=6] [ref=e756]:
+              - strong [ref=e757]: CONNOR JIANG
+            - paragraph [ref=e758]: HCSSiM ’25 Alum • AIME Qualifier • Table Tennis Enthusiast • HiMCM Honorable Mention
+            - generic [ref=e760] [cursor=pointer]:
+              - generic [ref=e761]:
+                - paragraph [ref=e766]: 20 hr taught
+                - separator [ref=e767]
+              - paragraph [ref=e768]: click for more
+          - generic [ref=e770]:
+            - img "Profile picture for Audrey Jing" [ref=e772]
+            - heading [level=6] [ref=e773]:
+              - strong [ref=e774]: AUDREY JING
+            - paragraph [ref=e775]: MPFG qualifier • 3x AIME qualifier with DHR • Captain of Math Team • FBLA chapter president • Attended PROMYS • HiMCM Outstanding Winner
+            - generic [ref=e777] [cursor=pointer]:
+              - generic [ref=e778]:
+                - paragraph [ref=e783]: 64 hr taught
+                - separator [ref=e784]
+              - paragraph [ref=e785]: click for more
+          - generic [ref=e787]:
+            - img "Profile picture for Benjamin Kaufman" [ref=e789]
+            - heading [level=6] [ref=e790]:
+              - strong [ref=e791]: BENJAMIN KAUFMAN
+            - paragraph [ref=e792]: 2x AIME Qualifier • UPSAHO Qualifier • USACO Gold Division • 2024 ICTM 1st Place Two-Person Contest • Top 200 Worldwide in Catan
+            - generic [ref=e794] [cursor=pointer]:
+              - generic [ref=e795]:
+                - paragraph [ref=e800]: 53 hr taught
+                - separator [ref=e801]
+              - paragraph [ref=e802]: click for more
+          - generic [ref=e804]:
+            - img "Profile picture for Abby Kesmodel" [ref=e806]
+            - heading [level=6] [ref=e807]:
+              - strong [ref=e808]: ABBY KESMODEL
+            - paragraph [ref=e809]: Mathcounts Nationals Qualifier • 2x AIME Qualifier • National Shakespeare Contest Semifinalist • Attended Mathcamp
+            - generic [ref=e811] [cursor=pointer]:
+              - generic [ref=e812]:
+                - paragraph [ref=e817]: 34 hr taught
+                - separator [ref=e818]
+              - paragraph [ref=e819]: click for more
+          - generic [ref=e821]:
+            - img "Profile picture for Rayan Kha" [ref=e823]
+            - heading [level=6] [ref=e824]:
+              - strong [ref=e825]: RAYAN KHA
+            - paragraph [ref=e826]: AIME Qualifier with distinction • USAMTS Silver • Florida Mu Alpha Theta President • Founder of a nonprofit called TechEase • Taekwondo 2nd Degree Black Belt
+            - generic [ref=e828] [cursor=pointer]:
+              - generic [ref=e829]:
+                - paragraph [ref=e834]: 84 hr taught
+                - separator [ref=e835]
+              - paragraph [ref=e836]: click for more
+          - generic [ref=e838]:
+            - img "Profile picture for Enan Khan" [ref=e840]
+            - heading [level=6] [ref=e841]:
+              - strong [ref=e842]: ENAN KHAN
+            - paragraph [ref=e843]: DHR (Distinguished Honor Roll) on the AMC 12 • 3x AIME Qualifier • Harvard Debate Finalist, 2x Yale Debate Finalist • USAMTS Silver • Pokemon Go Tournament Champion
+            - generic [ref=e845] [cursor=pointer]:
+              - generic [ref=e846]:
+                - paragraph [ref=e851]: 67 hr taught
+                - separator [ref=e852]
+              - paragraph [ref=e853]: click for more
+          - generic [ref=e855]:
+            - img "Profile picture for Jacob Khohayting" [ref=e857]
+            - heading [level=6] [ref=e858]:
+              - strong [ref=e859]: JACOB KHOHAYTING
+            - paragraph [ref=e860]: 2-time AMC 10 Distinguished Honor Roll • USACO Gold Qualifier • PUMaC Individual Finalist • HCSSiM Alum
+            - generic [ref=e862] [cursor=pointer]:
+              - generic [ref=e863]:
+                - paragraph [ref=e868]: 76 hr taught
+                - separator [ref=e869]
+              - paragraph [ref=e870]: click for more
+          - generic [ref=e872]:
+            - img "Profile picture for Arush Krisp" [ref=e874]
+            - heading [level=6] [ref=e875]:
+              - strong [ref=e876]: ARUSH KRISP
+            - paragraph [ref=e877]: Three-time AIME qualifier • Two-time Ohio MathCounts National Qualifier • Volunteers with the North South Foundation • Enjoys Pickleball
+            - generic [ref=e879] [cursor=pointer]:
+              - generic [ref=e880]:
+                - paragraph [ref=e885]: 37 hr taught
+                - separator [ref=e886]
+              - paragraph [ref=e887]: click for more
+          - generic [ref=e889]:
+            - img "Profile picture for Sashya Kumar" [ref=e891]
+            - heading [level=6] [ref=e892]:
+              - strong [ref=e893]: SASHYA KUMAR
+            - paragraph [ref=e894]: 5x Mathleague.org National Qualifier • Carnegie Hall Piano soloist • 1st and 2nd Place Georgia State Winner • 2nd place US International Open Piano Competition • AMC 8 Honor Roll
+            - generic [ref=e896] [cursor=pointer]:
+              - generic [ref=e897]:
+                - paragraph [ref=e901]: New
+                - separator [ref=e902]
+              - paragraph [ref=e903]: click for more
+          - generic [ref=e905]:
+            - img "Profile picture for Sneha Kundu" [ref=e907]
+            - heading [level=6] [ref=e908]:
+              - strong [ref=e909]: SNEHA KUNDU
+            - paragraph [ref=e910]: 2-time MATHCOUNTS Nationals Qualifier • AIME Qualifier • Science Olympiad & Science Bowl Participant • Enjoys playing cello
+            - generic [ref=e912] [cursor=pointer]:
+              - generic [ref=e913]:
+                - paragraph [ref=e918]: 159 hr taught
+                - separator [ref=e919]
+              - paragraph [ref=e920]: click for more
+          - generic [ref=e922]:
+            - img "Profile picture for Ryan Levens" [ref=e924]
+            - heading [level=6] [ref=e925]:
+              - strong [ref=e926]: RYAN LEVENS
+            - paragraph [ref=e927]: 2-time AIME Qualifier • Perfect Score on MOEMS • Public Forum Debater • Tennis Player
+            - generic [ref=e929] [cursor=pointer]:
+              - generic [ref=e930]:
+                - paragraph [ref=e935]: 67 hr taught
+                - separator [ref=e936]
+              - paragraph [ref=e937]: click for more
+          - generic [ref=e939]:
+            - img "Profile picture for Isabella Li" [ref=e941]
+            - heading [level=6] [ref=e942]:
+              - strong [ref=e943]: ISABELLA LI
+            - paragraph [ref=e944]: USAMO Qualifier • PROMYS '25 • MIT PRIMES scholar • Enjoys J-pop • Captain of the Lexington Math Team
+            - generic [ref=e946] [cursor=pointer]:
+              - generic [ref=e947]:
+                - paragraph [ref=e952]: 49 hr taught
+                - separator [ref=e953]
+              - paragraph [ref=e954]: click for more
+          - generic [ref=e956]:
+            - img "Profile picture for Joe Li" [ref=e958]
+            - heading [level=6] [ref=e959]:
+              - strong [ref=e960]: JOE LI
+            - paragraph [ref=e961]: 4 time AIME qualifier • USAPhO Distinction • Chapter Mu Alpha Theta President • Enjoys tennis, the cello, and strategy games
+            - generic [ref=e963] [cursor=pointer]:
+              - generic [ref=e964]:
+                - paragraph [ref=e969]: 36 hr taught
+                - separator [ref=e970]
+              - paragraph [ref=e971]: click for more
+          - generic [ref=e973]:
+            - img "Profile picture for Aaron Lin" [ref=e975]
+            - heading [level=6] [ref=e976]:
+              - strong [ref=e977]: AARON LIN
+            - paragraph [ref=e978]: 7-time AIME qualifier • 4-time USA(J)MO qualifier • MOP and USA TST qualifier • USAPhO Bronze
+            - generic [ref=e980] [cursor=pointer]:
+              - generic [ref=e981]:
+                - paragraph [ref=e986]: 64 hr taught
+                - separator [ref=e987]
+              - paragraph [ref=e988]: click for more
+          - generic [ref=e990]:
+            - img "Profile picture for Elma Liu" [ref=e992]
+            - heading [level=6] [ref=e993]:
+              - strong [ref=e994]: ELMA LIU
+            - paragraph [ref=e995]: Applied Maths Enthusiast • IMMC 2022 Regional Finalist • HiMCM 2021 Meritorious • HCSSiM 2024 • AIME qualifier • Artist, writer, Mafia player
+            - generic [ref=e997] [cursor=pointer]:
+              - generic [ref=e998]:
+                - paragraph [ref=e1003]: 94 hr taught
+                - separator [ref=e1004]
+              - paragraph [ref=e1005]: click for more
+          - generic [ref=e1007]:
+            - img "Profile picture for Yuheng (Anthony) Liu" [ref=e1009]
+            - heading [level=6] [ref=e1010]:
+              - strong [ref=e1011]: YUHENG (ANTHONY) LIU
+            - paragraph [ref=e1012]: 1x USAMO • 4x AIME Qualifier • Loves basketball, eating, and video games
+            - generic [ref=e1014] [cursor=pointer]:
+              - generic [ref=e1015]:
+                - paragraph [ref=e1020]: 17 hr taught
+                - separator [ref=e1021]
+              - paragraph [ref=e1022]: click for more
+          - generic [ref=e1024]:
+            - img "Profile picture for Aaron Loh" [ref=e1026]
+            - heading [level=6] [ref=e1027]:
+              - strong [ref=e1028]: AARON LOH
+            - paragraph [ref=e1029]: 2026 HSMC Camper • 2nd Place at Florida State Science Fair - Math and Computational Science • Top 300 Thermo Fisher Innovator • 2025 Mathcounts State Qualifier • Enjoys Piano and Content Creation
+            - generic [ref=e1031] [cursor=pointer]:
+              - generic [ref=e1032]:
+                - paragraph [ref=e1036]: New
+                - separator [ref=e1037]
+              - paragraph [ref=e1038]: click for more
+          - generic [ref=e1040]:
+            - img "Profile picture for Eric Min" [ref=e1042]
+            - heading [level=6] [ref=e1043]:
+              - strong [ref=e1044]: ERIC MIN
+            - paragraph [ref=e1045]: 6x AIME Qualifier • 2023, 2024 USAJMO Qualifier • 2025 USAMO Qualifier • USAMTS Perfect Score • 2026 MIT PRIMES-USA Scholar • USACO Gold • USAAIO Round 2 Qualifier
+            - generic [ref=e1047] [cursor=pointer]:
+              - generic [ref=e1048]:
+                - paragraph [ref=e1053]: 57 hr taught
+                - separator [ref=e1054]
+              - paragraph [ref=e1055]: click for more
+          - generic [ref=e1057]:
+            - img "Profile picture for Ishaan Nagireddi" [ref=e1059]
+            - heading [level=6] [ref=e1060]:
+              - strong [ref=e1061]: ISHAAN NAGIREDDI
+            - paragraph [ref=e1062]: Placed 10th in US Math Kangaroo • USACO Gold • Plays the drums • Misses his hair
+            - generic [ref=e1064] [cursor=pointer]:
+              - generic [ref=e1065]:
+                - paragraph [ref=e1070]: 52 hr taught
+                - separator [ref=e1071]
+              - paragraph [ref=e1072]: click for more
+          - generic [ref=e1074]:
+            - img "Profile picture for Song Han Ngo" [ref=e1076]
+            - heading [level=6] [ref=e1077]:
+              - strong [ref=e1078]: SONG HAN NGO
+            - paragraph [ref=e1079]: AIME qualifier • USACO gold • Loves Birdwatching and marine biology
+            - generic [ref=e1081] [cursor=pointer]:
+              - generic [ref=e1082]:
+                - paragraph [ref=e1087]: 42 hr taught
+                - separator [ref=e1088]
+              - paragraph [ref=e1089]: click for more
+          - generic [ref=e1091]:
+            - img "Profile picture for Shanaya Pal" [ref=e1093]
+            - heading [level=6] [ref=e1094]:
+              - strong [ref=e1095]: SHANAYA PAL
+            - paragraph [ref=e1096]: USACO Silver • 12th Place in Ohio Invitational Mathematics Olympiad Ciphering Competition • 2x Gold medal in Le Grand Concours • Avid coder and musician
+            - generic [ref=e1098] [cursor=pointer]:
+              - generic [ref=e1099]:
+                - paragraph [ref=e1104]: 41 hr taught
+                - separator [ref=e1105]
+              - paragraph [ref=e1106]: click for more
+          - generic [ref=e1108]:
+            - img "Profile picture for Arnav Patel" [ref=e1110]
+            - heading [level=6] [ref=e1111]:
+              - strong [ref=e1112]: ARNAV PATEL
+            - paragraph [ref=e1113]: 3x AIME Qualifier, 1x AMC 10 DHR • 2025 USNCO Qualifier • Top 10 at Georgia MATHCOUNTS • 3x NSB Qualifier • Loves research, music, working out, and community service
+            - generic [ref=e1115] [cursor=pointer]:
+              - generic [ref=e1116]:
+                - paragraph [ref=e1121]: 31 hr taught
+                - separator [ref=e1122]
+              - paragraph [ref=e1123]: click for more
+          - generic [ref=e1125]:
+            - img "Profile picture for Aarush Prasad" [ref=e1127]
+            - heading [level=6] [ref=e1128]:
+              - strong [ref=e1129]: AARUSH PRASAD
+            - paragraph [ref=e1130]: 2025 USAJMO Qualifier • 4x AIME Qualifier (*) • 2023 USACO Bronze Perfect Score • Science Olympiad Nationals Qualifier • Loves volleyball • Lifts regularly
+            - generic [ref=e1132] [cursor=pointer]:
+              - generic [ref=e1133]:
+                - paragraph [ref=e1138]: 25 hr taught
+                - separator [ref=e1139]
+              - paragraph [ref=e1140]: click for more
+          - generic [ref=e1142]:
+            - img "Profile picture for Abigail Qiu" [ref=e1144]
+            - heading [level=6] [ref=e1145]:
+              - strong [ref=e1146]: ABIGAIL QIU
+            - paragraph [ref=e1147]: 3x Math Prize for Girls Qualifier • MATHCOUNTS Nationals Qualifier • PROMYS Camper • Arizona Stockholm Junior Water Prize Winner
+            - generic [ref=e1149] [cursor=pointer]:
+              - generic [ref=e1150]:
+                - paragraph [ref=e1155]: 21 hr taught
+                - separator [ref=e1156]
+              - paragraph [ref=e1157]: click for more
+          - generic [ref=e1159]:
+            - img "Profile picture for Skanda Ramanathan" [ref=e1161]
+            - heading [level=6] [ref=e1162]:
+              - strong [ref=e1163]: SKANDA RAMANATHAN
+            - paragraph [ref=e1164]: BCA Math Team Member • Two-time AIME Qualifier • HCSSiM '25 • USACO Silver • Likes to play the tabla
+            - generic [ref=e1166] [cursor=pointer]:
+              - generic [ref=e1167]:
+                - paragraph [ref=e1172]: 13 hr taught
+                - separator [ref=e1173]
+              - paragraph [ref=e1174]: click for more
+          - generic [ref=e1176]:
+            - img "Profile picture for Tara Saini" [ref=e1178]
+            - heading [level=6] [ref=e1179]:
+              - strong [ref=e1180]: TARA SAINI
+            - paragraph [ref=e1181]: AIME Qualifier • SUMaC ‘25 • Math Club Vice President • Varsity soccer • Violin player
+            - generic [ref=e1183] [cursor=pointer]:
+              - generic [ref=e1184]:
+                - paragraph [ref=e1189]: 33 hr taught
+                - separator [ref=e1190]
+              - paragraph [ref=e1191]: click for more
+          - generic [ref=e1193]:
+            - img "Profile picture for Rio Schillmoeller" [ref=e1195]
+            - heading [level=6] [ref=e1196]:
+              - strong [ref=e1197]: RIO SCHILLMOELLER
+            - paragraph [ref=e1198]: 2024 USAJMO Honorable Mention • 4x AIME qualifier • Ross 23’ 24’ • Sumac 25’ • MIT PRIMES 24’ 25’
+            - generic [ref=e1200] [cursor=pointer]:
+              - generic [ref=e1201]:
+                - paragraph [ref=e1206]: 27 hr taught
+                - separator [ref=e1207]
+              - paragraph [ref=e1208]: click for more
+          - generic [ref=e1210]:
+            - img "Profile picture for Nicole Scholten" [ref=e1212]
+            - heading [level=6] [ref=e1213]:
+              - strong [ref=e1214]: NICOLE SCHOLTEN
+            - paragraph [ref=e1215]: USYD MaPS program participant • Plays the clarinet • 9 times regional cross-country qualifier • Passionate about First Aid volunteering
+            - generic [ref=e1217] [cursor=pointer]:
+              - generic [ref=e1218]:
+                - paragraph [ref=e1223]: 32 hr taught
+                - separator [ref=e1224]
+              - paragraph [ref=e1225]: click for more
+          - generic [ref=e1227]:
+            - img "Profile picture for Rohan Shah" [ref=e1229]
+            - heading [level=6] [ref=e1230]:
+              - strong [ref=e1231]: ROHAN SHAH
+            - paragraph [ref=e1232]: 2× AIME Qualifier; led math team to NEML title and created middle school competition • Published researcher in finance; explored quantum computing applications • Taught Python, statistics, math, and tennis to students across three continents • A drummer since kindergarten; performed internationally with a jazz band
+            - generic [ref=e1234] [cursor=pointer]:
+              - generic [ref=e1235]:
+                - paragraph [ref=e1240]: 48 hr taught
+                - separator [ref=e1241]
+              - paragraph [ref=e1242]: click for more
+          - generic [ref=e1244]:
+            - img "Profile picture for Eric Shao" [ref=e1246]
+            - heading [level=6] [ref=e1247]:
+              - strong [ref=e1248]: ERIC SHAO
+            - paragraph [ref=e1249]: AIME qualifier since 7th grade • MATHCOUNTS Nationals Qualifier • Enjoys reading, hiking, debate
+            - generic [ref=e1251] [cursor=pointer]:
+              - generic [ref=e1252]:
+                - paragraph [ref=e1257]: 53 hr taught
+                - separator [ref=e1258]
+              - paragraph [ref=e1259]: click for more
+          - generic [ref=e1261]:
+            - img "Profile picture for Neev Shaw" [ref=e1263]
+            - heading [level=6] [ref=e1264]:
+              - strong [ref=e1265]: NEEV SHAW
+            - paragraph [ref=e1266]: 2-time AIME Qualifier • AMC 8 Honor Roll • Attended HSMC and MathPath camps • USACO Silver
+            - generic [ref=e1268] [cursor=pointer]:
+              - generic [ref=e1269]:
+                - paragraph [ref=e1274]: 11 hr taught
+                - separator [ref=e1275]
+              - paragraph [ref=e1276]: click for more
+          - generic [ref=e1278]:
+            - img "Profile picture for Allison Shen" [ref=e1280]
+            - heading [level=6] [ref=e1281]:
+              - strong [ref=e1282]: ALLISON SHEN
+            - paragraph [ref=e1283]: Math Prize for Girls Qualifier • 3-Time AIME Qualifier • AMC 8 Perfect Score • School math club president • Indy Integirls Head Problem Writer • Indiana ARML A Team • Enjoys contemplating puzzles and books!
+            - generic [ref=e1285] [cursor=pointer]:
+              - generic [ref=e1286]:
+                - paragraph [ref=e1291]: 122 hr taught
+                - separator [ref=e1292]
+              - paragraph [ref=e1293]: click for more
+          - generic [ref=e1295]:
+            - img "Profile picture for Serena Shih" [ref=e1297]
+            - heading [level=6] [ref=e1298]:
+              - strong [ref=e1299]: SERENA SHIH
+            - paragraph [ref=e1300]: 2nd Place at Nassau Math Tournament • NYSML + ARML Competitor • Enjoys video editing, tennis, and listening to music
+            - generic [ref=e1302] [cursor=pointer]:
+              - generic [ref=e1303]:
+                - paragraph [ref=e1307]: New
+                - separator [ref=e1308]
+              - paragraph [ref=e1309]: click for more
+          - generic [ref=e1311]:
+            - img "Profile picture for Siddharth Singh" [ref=e1313]
+            - heading [level=6] [ref=e1314]:
+              - strong [ref=e1315]: SIDDHARTH SINGH
+            - paragraph [ref=e1316]: National Science Bowl qualifier • Science Olympiad State qualifier • Cryptograms and cooking enthusiast • Ohio ARML team member
+            - generic [ref=e1318] [cursor=pointer]:
+              - generic [ref=e1319]:
+                - paragraph [ref=e1324]: 93 hr taught
+                - separator [ref=e1325]
+              - paragraph [ref=e1326]: click for more
+          - generic [ref=e1328]:
+            - img "Profile picture for Akshay Subramanian" [ref=e1330]
+            - heading [level=6] [ref=e1331]:
+              - strong [ref=e1332]: AKSHAY SUBRAMANIAN
+            - paragraph [ref=e1333]: AIME qualifier • 2nd place IML (Illinois Math League Competition) • Mathcounts State qualifier from Illinois • Enjoys playing on high school tennis team •
+            - generic [ref=e1335] [cursor=pointer]:
+              - generic [ref=e1336]:
+                - paragraph [ref=e1341]: 92 hr taught
+                - separator [ref=e1342]
+              - paragraph [ref=e1343]: click for more
+          - generic [ref=e1345]:
+            - img "Profile picture for Audrey Sun" [ref=e1347]
+            - heading [level=6] [ref=e1348]:
+              - strong [ref=e1349]: AUDREY SUN
+            - paragraph [ref=e1350]: AIME qualifier • Math Prize for Girls qualifier • Enjoys dance and piano • Captain of Stuy Math Team
+            - generic [ref=e1352] [cursor=pointer]:
+              - generic [ref=e1353]:
+                - paragraph [ref=e1358]: 53 hr taught
+                - separator [ref=e1359]
+              - paragraph [ref=e1360]: click for more
+          - generic [ref=e1362]:
+            - img "Profile picture for Thomas Sun" [ref=e1364]
+            - heading [level=6] [ref=e1365]:
+              - strong [ref=e1366]: THOMAS SUN
+            - paragraph [ref=e1367]: AIME qualifier • USAPhO honorable mention • Physics Bowl National gold • S.T. Yau Finalist • Enjoys sports
+            - generic [ref=e1369] [cursor=pointer]:
+              - generic [ref=e1370]:
+                - paragraph [ref=e1375]: 88 hr taught
+                - separator [ref=e1376]
+              - paragraph [ref=e1377]: click for more
+          - generic [ref=e1379]:
+            - img "Profile picture for Lennox Tan" [ref=e1381]
+            - heading [level=6] [ref=e1382]:
+              - strong [ref=e1383]: LENNOX TAN
+            - paragraph [ref=e1384]: Full-time dual enrolled at the U of MN Twin Cities • SSP '25 Alum and/or UMTYMP '24 Alum • Public piano, astrophysics, and philosophy enthusiast • StartUp Club President; 2x JA North Company of the Year
+            - generic [ref=e1386] [cursor=pointer]:
+              - generic [ref=e1387]:
+                - paragraph [ref=e1392]: 29 hr taught
+                - separator [ref=e1393]
+              - paragraph [ref=e1394]: click for more
+          - generic [ref=e1396]:
+            - img "Profile picture for Anamaria Tanu" [ref=e1398]
+            - heading [level=6] [ref=e1399]:
+              - strong [ref=e1400]: ANAMARIA TANU
+            - paragraph [ref=e1401]: 5x Romanian National Mathematical Olympiad and bronze medal • Organized a regional mathematics competition for middle school students in western Romania to create more opportunities for young problem solvers • Strong believer in holistic development, with interests in physics, computer science, foreign languages, literature, philosophy, and rock music • Love working with curious, motivated, and eager to challenge themselves students
+            - generic [ref=e1403] [cursor=pointer]:
+              - generic [ref=e1404]:
+                - paragraph [ref=e1408]: New
+                - separator [ref=e1409]
+              - paragraph [ref=e1410]: click for more
+          - generic [ref=e1412]:
+            - img "Profile picture for Cynthia Tian" [ref=e1414]
+            - heading [level=6] [ref=e1415]:
+              - strong [ref=e1416]: CYNTHIA TIAN
+            - paragraph [ref=e1417]: AIME Qualifier • PROMYS Camper • MIT PRIMES Circle Scholar • Co-lead of a Lemelson-MIT InvenTeam • Plays violin
+            - generic [ref=e1419] [cursor=pointer]:
+              - generic [ref=e1420]:
+                - paragraph [ref=e1425]: 84 hr taught
+                - separator [ref=e1426]
+              - paragraph [ref=e1427]: click for more
+          - generic [ref=e1429]:
+            - img "Profile picture for Alex Wang" [ref=e1431]
+            - heading [level=6] [ref=e1432]:
+              - strong [ref=e1433]: ALEX WANG
+            - paragraph [ref=e1434]: AIME 6x qualifer • USA(J)MO 2x qualifer • Perfect score on AMC 12 • Plays volleyball and soccer
+            - generic [ref=e1436] [cursor=pointer]:
+              - generic [ref=e1437]:
+                - paragraph [ref=e1442]: 24 hr taught
+                - separator [ref=e1443]
+              - paragraph [ref=e1444]: click for more
+          - generic [ref=e1446]:
+            - img "Profile picture for Benny Wang" [ref=e1448]
+            - heading [level=6] [ref=e1449]:
+              - strong [ref=e1450]: BENNY WANG
+            - paragraph [ref=e1451]: EMCC Tournament Director • 2024 MOP Qualifier • 2025 USAMO Silver Medal • Attended Ross, Mathcamp
+            - generic [ref=e1453] [cursor=pointer]:
+              - generic [ref=e1454]:
+                - paragraph [ref=e1459]: 87 hr taught
+                - separator [ref=e1460]
+              - paragraph [ref=e1461]: click for more
+          - generic [ref=e1463]:
+            - img "Profile picture for David Wang" [ref=e1465]
+            - heading [level=6] [ref=e1466]:
+              - strong [ref=e1467]: DAVID WANG
+            - paragraph [ref=e1468]: 2x AIME qualifier • USACO platinum • Runs Hack Club at school • Enjoys programming and rhythm games
+            - generic [ref=e1470] [cursor=pointer]:
+              - generic [ref=e1471]:
+                - paragraph [ref=e1476]: 87 hr taught
+                - separator [ref=e1477]
+              - paragraph [ref=e1478]: click for more
+          - generic [ref=e1480]:
+            - img "Profile picture for Eric Wang" [ref=e1482]
+            - heading [level=6] [ref=e1483]:
+              - strong [ref=e1484]: ERIC WANG
+            - paragraph [ref=e1485]: National MATHCOUNTS Competitor • 4-time AIME qualifier • AMC DHR • USAMTS Bronze Medalist • LD Debater
+            - generic [ref=e1487] [cursor=pointer]:
+              - generic [ref=e1488]:
+                - paragraph [ref=e1493]: 84 hr taught
+                - separator [ref=e1494]
+              - paragraph [ref=e1495]: click for more
+          - generic [ref=e1497]:
+            - img "Profile picture for Daniel Wei" [ref=e1499]
+            - heading [level=6] [ref=e1500]:
+              - strong [ref=e1501]: DANIEL WEI
+            - paragraph [ref=e1502]: 3x AIME Qualifier • 2024 MATHCOUNTS Nationals Competitor • USNCO Honors • Enjoys Baseball, Piano, Working Out, and meeting other Daniels
+            - generic [ref=e1504] [cursor=pointer]:
+              - generic [ref=e1505]:
+                - paragraph [ref=e1509]: New
+                - separator [ref=e1510]
+              - paragraph [ref=e1511]: click for more
+          - generic [ref=e1513]:
+            - img "Profile picture for Michael Wei" [ref=e1515]
+            - heading [level=6] [ref=e1516]:
+              - strong [ref=e1517]: MICHAEL WEI
+            - paragraph [ref=e1518]: MATHCOUNTS National Countdown Round Qualifier • 5x AIME Qualifier • 2x Top 8 Science Bowl Team • USAPhO Silver Medalist • 2x USAAAO Silver Medalist • Global Physics Bowl Winner
+            - generic [ref=e1520] [cursor=pointer]:
+              - generic [ref=e1521]:
+                - paragraph [ref=e1526]: 107 hr taught
+                - separator [ref=e1527]
+              - paragraph [ref=e1528]: click for more
+          - generic [ref=e1530]:
+            - img "Profile picture for Cynthia Wen" [ref=e1532]
+            - heading [level=6] [ref=e1533]:
+              - strong [ref=e1534]: CYNTHIA WEN
+            - paragraph [ref=e1535]: 3x AIME Qualifier with Distinction • HiMCM Outstanding + NCTM Award Winner • Enjoys studying business and sleeping
+            - generic [ref=e1537] [cursor=pointer]:
+              - generic [ref=e1538]:
+                - paragraph [ref=e1543]: 29 hr taught
+                - separator [ref=e1544]
+              - paragraph [ref=e1545]: click for more
+          - generic [ref=e1547]:
+            - img "Profile picture for Immanuel Whang" [ref=e1549]
+            - heading [level=6] [ref=e1550]:
+              - strong [ref=e1551]: IMMANUEL WHANG
+            - paragraph [ref=e1552]: USAJMO Qualifier • AMC 10 Perfect Score • PROMYS '24 & '25 • Loves talking about math, manga, and more!
+            - generic [ref=e1554] [cursor=pointer]:
+              - generic [ref=e1555]:
+                - paragraph [ref=e1560]: 21 hr taught
+                - separator [ref=e1561]
+              - paragraph [ref=e1562]: click for more
+          - generic [ref=e1564]:
+            - img "Profile picture for Lucas Winetrout" [ref=e1566]
+            - heading [level=6] [ref=e1567]:
+              - strong [ref=e1568]: LUCAS WINETROUT
+            - paragraph [ref=e1569]: Sing in choir; 3x TPSMEA allstater • Attended HCSSiM 2025 • Founded my school’s STEM Club • Tutored for 6 years, School's Peer-Tutoring Lead
+            - generic [ref=e1571] [cursor=pointer]:
+              - generic [ref=e1572]:
+                - paragraph [ref=e1577]: 20 hr taught
+                - separator [ref=e1578]
+              - paragraph [ref=e1579]: click for more
+          - generic [ref=e1581]:
+            - img "Profile picture for Isaac Wu" [ref=e1583]
+            - heading [level=6] [ref=e1584]:
+              - strong [ref=e1585]: ISAAC WU
+            - paragraph [ref=e1586]: AIME qualifier (AMC 10 Distinction) • Non-trivial Fellowship '25 Alum • Enjoys programming and martial arts!
+            - generic [ref=e1588] [cursor=pointer]:
+              - generic [ref=e1589]:
+                - paragraph [ref=e1594]: 11 hr taught
+                - separator [ref=e1595]
+              - paragraph [ref=e1596]: click for more
+          - generic [ref=e1598]:
+            - img "Profile picture for Jiayi Wu" [ref=e1600]
+            - heading [level=6] [ref=e1601]:
+              - strong [ref=e1602]: JIAYI WU
+            - paragraph [ref=e1603]: 2-time AIME Qualifier • 2-time USAPhO Silver Medalist • 2-time NY, MD Physics Bowl Top Scorer • Karate Black Belt •
+            - generic [ref=e1605] [cursor=pointer]:
+              - generic [ref=e1606]:
+                - paragraph [ref=e1611]: 180 hr taught
+                - separator [ref=e1612]
+              - paragraph [ref=e1613]: click for more
+          - generic [ref=e1615]:
+            - img "Profile picture for Michael Wu" [ref=e1617]
+            - heading [level=6] [ref=e1618]:
+              - strong [ref=e1619]: MICHAEL WU
+            - paragraph [ref=e1620]: "4x AIME qualifier • SciOly National #1 (2024) • HOSA ILC #1 (2025) • Drum Major"
+            - generic [ref=e1622] [cursor=pointer]:
+              - generic [ref=e1623]:
+                - paragraph [ref=e1628]: 14 hr taught
+                - separator [ref=e1629]
+              - paragraph [ref=e1630]: click for more
+          - generic [ref=e1632]:
+            - img "Profile picture for Benjamin Xiao" [ref=e1634]
+            - heading [level=6] [ref=e1635]:
+              - strong [ref=e1636]: BENJAMIN XIAO
+            - paragraph [ref=e1637]: USAMO Qualifier • 2x AIME Qualifier • USACO Gold • Enjoys billiards and programming
+            - generic [ref=e1639] [cursor=pointer]:
+              - generic [ref=e1640]:
+                - paragraph [ref=e1645]: 34 hr taught
+                - separator [ref=e1646]
+              - paragraph [ref=e1647]: click for more
+          - generic [ref=e1649]:
+            - img "Profile picture for Daniel Xie" [ref=e1651]
+            - heading [level=6] [ref=e1652]:
+              - strong [ref=e1653]: DANIEL XIE
+            - paragraph [ref=e1654]: AIME Qualifier • 2x AMC 8 HR • Euclid Contest Honourable Mention • Honor Roll in numerous CEMC contests • Math Club • Junior Hockey • Enjoys Philosophy
+            - generic [ref=e1656] [cursor=pointer]:
+              - generic [ref=e1657]:
+                - paragraph [ref=e1662]: 54 hr taught
+                - separator [ref=e1663]
+              - paragraph [ref=e1664]: click for more
+          - generic [ref=e1666]:
+            - img "Profile picture for Lingyun Xie" [ref=e1668]
+            - heading [level=6] [ref=e1669]:
+              - strong [ref=e1670]: LINGYUN XIE
+            - paragraph [ref=e1671]: 3-time AIME qualifier • ARML participant • President of his school's physics club • Enjoys reading and biking
+            - generic [ref=e1673] [cursor=pointer]:
+              - generic [ref=e1674]:
+                - paragraph [ref=e1679]: 42 hr taught
+                - separator [ref=e1680]
+              - paragraph [ref=e1681]: click for more
+          - generic [ref=e1683]:
+            - img "Profile picture for Gabriel Xiong" [ref=e1685]
+            - heading [level=6] [ref=e1686]:
+              - strong [ref=e1687]: GABRIEL XIONG
+            - paragraph [ref=e1688]: 2x AIME qualifier • Math Club President • Varsity tennis • Science Olympiad and Robotics Participant • Enjoys listening to music, playing chess, and cubing
+            - generic [ref=e1690] [cursor=pointer]:
+              - generic [ref=e1691]:
+                - paragraph [ref=e1696]: 13 hr taught
+                - separator [ref=e1697]
+              - paragraph [ref=e1698]: click for more
+          - generic [ref=e1700]:
+            - img "Profile picture for Lillian Xu" [ref=e1702]
+            - heading [level=6] [ref=e1703]:
+              - strong [ref=e1704]: LILLIAN XU
+            - paragraph [ref=e1705]: 2-time USAMO qualifier • Ross Participant • SUMaC online Participant • HiMCM Outstanding Winner • Girls in Math @ Yale 4th place National • Integirls Shanghai co-founder • Ultimate Frisbee player
+            - generic [ref=e1707] [cursor=pointer]:
+              - generic [ref=e1708]:
+                - paragraph [ref=e1713]: 28 hr taught
+                - separator [ref=e1714]
+              - paragraph [ref=e1715]: click for more
+          - generic [ref=e1717]:
+            - img "Profile picture for Xiaoduo Xu" [ref=e1719]
+            - heading [level=6] [ref=e1720]:
+              - strong [ref=e1721]: XIAODUO XU
+            - paragraph [ref=e1722]: AIME Qualifier with Distinction • School math club founder who organizes school math competitions • Loves making coffee and teaching the coffee brewing process • Enjoy teaching emotional intelligence via World Children’s Day
+            - generic [ref=e1724] [cursor=pointer]:
+              - generic [ref=e1725]:
+                - paragraph [ref=e1730]: 36 hr taught
+                - separator [ref=e1731]
+              - paragraph [ref=e1732]: click for more
+          - generic [ref=e1734]:
+            - img "Profile picture for Owen Xuan" [ref=e1736]
+            - heading [level=6] [ref=e1737]:
+              - strong [ref=e1738]: OWEN XUAN
+            - paragraph [ref=e1739]: 2-time USAJMO Qualifier • AIME qualifier since 7th grade • Founder of Kids Teach Kids • Debate champion of National Online Forensics • Chess FIDE Candidate Master
+            - generic [ref=e1741] [cursor=pointer]:
+              - generic [ref=e1742]:
+                - paragraph [ref=e1747]: 20 hr taught
+                - separator [ref=e1748]
+              - paragraph [ref=e1749]: click for more
+          - generic [ref=e1751]:
+            - img "Profile picture for Hillary Yang" [ref=e1753]
+            - heading [level=6] [ref=e1754]:
+              - strong [ref=e1755]: HILLARY YANG
+            - paragraph [ref=e1756]: AIME qualifier • Ross attendee • 3rd fastest female pyraminx solver in US • Enjoys coding and cybersecurity
+            - generic [ref=e1758] [cursor=pointer]:
+              - generic [ref=e1759]:
+                - paragraph [ref=e1764]: 38 hr taught
+                - separator [ref=e1765]
+              - paragraph [ref=e1766]: click for more
+          - generic [ref=e1768]:
+            - img "Profile picture for Michael Yang" [ref=e1770]
+            - heading [level=6] [ref=e1771]:
+              - strong [ref=e1772]: MICHAEL YANG
+            - paragraph [ref=e1773]: AMC Honor Roll • ARML Qualifier • Board of school Math Team and Mu Alpha Theta • Enjoys robotics and distance running
+            - generic [ref=e1775] [cursor=pointer]:
+              - generic [ref=e1776]:
+                - paragraph [ref=e1781]: 30 hr taught
+                - separator [ref=e1782]
+              - paragraph [ref=e1783]: click for more
+          - generic [ref=e1785]:
+            - img "Profile picture for Isabella Yin" [ref=e1787]
+            - heading [level=6] [ref=e1788]:
+              - strong [ref=e1789]: ISABELLA YIN
+            - paragraph [ref=e1790]: SUMaC & SPARC '26 • HCSSiM '25 • Loves rock climbing, painting, and puzzle games • MPFG Qualifier
+            - generic [ref=e1792] [cursor=pointer]:
+              - generic [ref=e1793]:
+                - paragraph [ref=e1797]: New
+                - separator [ref=e1798]
+              - paragraph [ref=e1799]: click for more
+          - generic [ref=e1801]:
+            - img "Profile picture for Allan Yuan" [ref=e1803]
+            - heading [level=6] [ref=e1804]:
+              - strong [ref=e1805]: ALLAN YUAN
+            - paragraph [ref=e1806]: 2022 MATHCOUNTS Nationals Winner • 2023 MOP qualifier and 2024 IMO TST qualifier • Captain of school math team • Co-captain of computer science club • Aspiring forward (in soccer)
+            - generic [ref=e1808] [cursor=pointer]:
+              - generic [ref=e1809]:
+                - paragraph [ref=e1814]: 115 hr taught
+                - separator [ref=e1815]
+              - paragraph [ref=e1816]: click for more
+          - generic [ref=e1818]:
+            - img "Profile picture for Elaine Zeng" [ref=e1820]
+            - heading [level=6] [ref=e1821]:
+              - strong [ref=e1822]: ELAINE ZENG
+            - paragraph [ref=e1823]: National MATHCOUNTS Competitor • 2-time AIME qualifier • INTEGIRLS problem writer • Enjoys tennis and K-pop
+            - generic [ref=e1825] [cursor=pointer]:
+              - generic [ref=e1826]:
+                - paragraph [ref=e1831]: 78 hr taught
+                - separator [ref=e1832]
+              - paragraph [ref=e1833]: click for more
+          - generic [ref=e1835]:
+            - img "Profile picture for Grace Zhang" [ref=e1837]
+            - heading [level=6] [ref=e1838]:
+              - strong [ref=e1839]: GRACE ZHANG
+            - paragraph [ref=e1840]: 3x AIME qualifier • President of Natick High School Math Team and Science Team • Co-Captain of Girls’ Varsity Tennis Team • 2nd Place, State High School Girls’ Tennis Singles Championship
+            - generic [ref=e1842] [cursor=pointer]:
+              - generic [ref=e1843]:
+                - paragraph [ref=e1848]: 72 hr taught
+                - separator [ref=e1849]
+              - paragraph [ref=e1850]: click for more
+          - generic [ref=e1852]:
+            - img "Profile picture for Sophie Zhang" [ref=e1854]
+            - heading [level=6] [ref=e1855]:
+              - strong [ref=e1856]: SOPHIE ZHANG
+            - paragraph [ref=e1857]: 2026 EGMO Gold Medalist for Team Canada • Tied for 6th at MP4G 2025 • SUMaC '25 • Enjoys swimming, music, and philosophy
+            - generic [ref=e1859] [cursor=pointer]:
+              - generic [ref=e1860]:
+                - paragraph [ref=e1864]: New
+                - separator [ref=e1865]
+              - paragraph [ref=e1866]: click for more
+          - generic [ref=e1868]:
+            - img "Profile picture for Erica Zhao" [ref=e1870]
+            - heading [level=6] [ref=e1871]:
+              - strong [ref=e1872]: ERICA ZHAO
+            - paragraph [ref=e1873]: 3-time AIME Qualifier • 1st place sophomore Rose Hulman HSMC • Maryam Mirzakhani/Two Sigma Certificate of Excellence • BU RISE attendee • Enjoys reading, rollerblading, and climbing trees
+            - generic [ref=e1875] [cursor=pointer]:
+              - generic [ref=e1876]:
+                - paragraph [ref=e1881]: 52 hr taught
+                - separator [ref=e1882]
+              - paragraph [ref=e1883]: click for more
+          - generic [ref=e1885]:
+            - img "Profile picture for Erick Zhao" [ref=e1887]
+            - heading [level=6] [ref=e1888]:
+              - strong [ref=e1889]: ERICK ZHAO
+            - paragraph [ref=e1890]: National Mathcounts Competitor • 3x AIME Qualifier • Founder of Programming Club • LD Debater
+            - generic [ref=e1892] [cursor=pointer]:
+              - generic [ref=e1893]:
+                - paragraph [ref=e1898]: 53 hr taught
+                - separator [ref=e1899]
+              - paragraph [ref=e1900]: click for more
+          - generic [ref=e1902]:
+            - img "Profile picture for Yikai Zhao" [ref=e1904]
+            - heading [level=6] [ref=e1905]:
+              - strong [ref=e1906]: YIKAI ZHAO
+            - paragraph [ref=e1907]: USAMO qualifier • USACO Platinum • Chinese National Olympiad in Informatics in Provinces (NOIP) First Prize • Member of Student Council • Enjoys chess, reading, and tennis
+            - generic [ref=e1909] [cursor=pointer]:
+              - generic [ref=e1910]:
+                - paragraph [ref=e1915]: 58 hr taught
+                - separator [ref=e1916]
+              - paragraph [ref=e1917]: click for more
+          - generic [ref=e1919]:
+            - img "Profile picture for Daniel Zhou" [ref=e1921]
+            - heading [level=6] [ref=e1922]:
+              - strong [ref=e1923]: DANIEL ZHOU
+            - paragraph [ref=e1924]: USAJMO Honors Awardee • Garcia Research Scholar • PROMYS and HCSSiM Invitee • Student Action Senate President • Varsity Tennis Captain
+            - generic [ref=e1926] [cursor=pointer]:
+              - generic [ref=e1927]:
+                - paragraph [ref=e1932]: 16 hr taught
+                - separator [ref=e1933]
+              - paragraph [ref=e1934]: click for more
+          - generic [ref=e1936]:
+            - img "Profile picture for Nathan Zhou" [ref=e1938]
+            - heading [level=6] [ref=e1939]:
+              - strong [ref=e1940]: NATHAN ZHOU
+            - paragraph [ref=e1941]: 2024 Informatics Olympiad in Informatics Bronze • USACO Gold • 2024 Australian Intermediate Informatics Olympiad Silver • 2024 French and Australian Regional Informatics Olympiad Gold
+            - generic [ref=e1943] [cursor=pointer]:
+              - generic [ref=e1944]:
+                - paragraph [ref=e1949]: 34 hr taught
+                - separator [ref=e1950]
+              - paragraph [ref=e1951]: click for more
+          - generic [ref=e1953]:
+            - img "Profile picture for Sophia Zhu" [ref=e1955]
+            - heading [level=6] [ref=e1956]:
+              - strong [ref=e1957]: SOPHIA ZHU
+            - paragraph [ref=e1958]: MP4G Qualifier • AIME Qualifier • National Medalist in Scholastic Art & Writing Competition • Loves writing and golf
+            - generic [ref=e1960] [cursor=pointer]:
+              - generic [ref=e1961]:
+                - paragraph [ref=e1966]: 53 hr taught
+                - separator [ref=e1967]
+              - paragraph [ref=e1968]: click for more
+      - generic [ref=e1969]:
+        - heading "Alumni" [level=3] [ref=e1971]
+        - generic [ref=e1973]:
+          - generic [ref=e1975]:
+            - img "Profile picture for Srinivas Arun" [ref=e1977]
+            - heading [level=6] [ref=e1978]:
+              - strong [ref=e1979]: SRINIVAS ARUN
+            - paragraph [ref=e1980]: USA(J)MO Qualifier Since 8th Grade • 2019 National MATHCOUNTS Qualifier for Colorado • 2022 MOP (Math Olympiad Program) Qualifier • 2022 USA(J)MO Bronze Medal • 2021 ARML Perfect Score
+            - generic [ref=e1982] [cursor=pointer]:
+              - generic [ref=e1983]:
+                - paragraph [ref=e1988]: 83 hr taught
+                - separator [ref=e1989]
+              - paragraph [ref=e1990]: click for more
+          - generic [ref=e1992]:
+            - img "Profile picture for Elena Baskakova" [ref=e1994]
+            - heading [level=6] [ref=e1995]:
+              - strong [ref=e1996]: ELENA BASKAKOVA
+            - paragraph [ref=e1997]: 2022 USA(J)MO Winner and MOP attendee • Coach of local middle school math team • MIT PRIMES 2023
+            - generic [ref=e1999] [cursor=pointer]:
+              - generic [ref=e2000]:
+                - paragraph [ref=e2005]: 85 hr taught
+                - separator [ref=e2006]
+              - paragraph [ref=e2007]: click for more
+          - generic [ref=e2009]:
+            - img "Profile picture for Jesse Brodtman" [ref=e2011]
+            - heading [level=6] [ref=e2012]:
+              - strong [ref=e2013]: JESSE BRODTMAN
+            - paragraph [ref=e2014]: Harvard Class of 2028 • National President of Math Honor Society • AIME Qualifier • Placed top 4 in national math competitions • Perfect score on APCSA
+            - generic [ref=e2016] [cursor=pointer]:
+              - generic [ref=e2017]:
+                - paragraph [ref=e2022]: 252 hr taught
+                - separator [ref=e2023]
+              - paragraph [ref=e2024]: click for more
+          - generic [ref=e2026]:
+            - img "Profile picture for Michael Budd" [ref=e2028]
+            - heading [level=6] [ref=e2029]:
+              - strong [ref=e2030]: MICHAEL BUDD
+            - paragraph [ref=e2031]: National MATHCOUNTS competitor for Illinois • 4-time AIME qualifier • Plays piano • Elected president of his high school’s student government
+            - generic [ref=e2033] [cursor=pointer]:
+              - generic [ref=e2034]:
+                - paragraph [ref=e2039]: 102 hr taught
+                - separator [ref=e2040]
+              - paragraph [ref=e2041]: click for more
+          - generic [ref=e2043]:
+            - img "Profile picture for Mia Cadsby" [ref=e2045]
+            - heading [level=6] [ref=e2046]:
+              - strong [ref=e2047]: MIA CADSBY
+            - paragraph [ref=e2048]: Math Prize for Girls Qualifier • AIME Qualifier • Three years of experience teaching math • Executive of Math Society and Junior Math Club at her school
+            - generic [ref=e2050] [cursor=pointer]:
+              - generic [ref=e2051]:
+                - paragraph [ref=e2056]: 40 hr taught
+                - separator [ref=e2057]
+              - paragraph [ref=e2058]: click for more
+          - generic [ref=e2060]:
+            - img "Profile picture for Angela Cai" [ref=e2062]
+            - heading [level=6] [ref=e2063]:
+              - strong [ref=e2064]: ANGELA CAI
+            - paragraph [ref=e2065]: UPenn Class of 2026 • Co-President of INTEGIRLS-NYC chapter • MPFG qualifier • Self-taught competitive math
+            - generic [ref=e2067] [cursor=pointer]:
+              - generic [ref=e2068]:
+                - paragraph [ref=e2073]: 95 hr taught
+                - separator [ref=e2074]
+              - paragraph [ref=e2075]: click for more
+          - generic [ref=e2077]:
+            - img "Profile picture for Nityant Chandupatla" [ref=e2079]
+            - heading [level=6] [ref=e2080]:
+              - strong [ref=e2081]: NITYANT CHANDUPATLA
+            - paragraph [ref=e2082]: AIME Qualifier • Mathcounts National competitor • USABO semifinalist • Mathcounts Team Coach • Vice Captain of the Roboducks • Enjoys Gardening •
+            - generic [ref=e2084] [cursor=pointer]:
+              - generic [ref=e2085]:
+                - paragraph [ref=e2090]: 96 hr taught
+                - separator [ref=e2091]
+              - paragraph [ref=e2092]: click for more
+          - generic [ref=e2094]:
+            - img "Profile picture for Evan Chang" [ref=e2096]
+            - heading [level=6] [ref=e2097]:
+              - strong [ref=e2098]: EVAN CHANG
+            - paragraph [ref=e2099]: 2023 USAMO Gold Medalist • 2022 and 2023 MOP Attendee • OMMC founder and CEO • 2023 MIT PRIMES-USA
+            - generic [ref=e2101] [cursor=pointer]:
+              - generic [ref=e2102]:
+                - paragraph [ref=e2107]: 28 hr taught
+                - separator [ref=e2108]
+              - paragraph [ref=e2109]: click for more
+          - generic [ref=e2111]:
+            - img "Profile picture for Megan Davi" [ref=e2113]
+            - heading [level=6] [ref=e2114]:
+              - strong [ref=e2115]: MEGAN DAVI
+            - paragraph [ref=e2116]: National MATHCOUNTS competitor for Nevada • MPFG qualifier • Plays violin and speaks Spanish
+            - generic [ref=e2118] [cursor=pointer]:
+              - generic [ref=e2119]:
+                - paragraph [ref=e2124]: 57 hr taught
+                - separator [ref=e2125]
+              - paragraph [ref=e2126]: click for more
+          - generic [ref=e2128]:
+            - img "Profile picture for Eliana Du" [ref=e2130]
+            - heading [level=6] [ref=e2131]:
+              - strong [ref=e2132]: ELIANA DU
+            - paragraph [ref=e2133]: 4-time AIME Qualifier • School math club president • Varsity tennis • Dad joke connoisseur • Enjoys creative writing, reading, and fountain pens •
+            - generic [ref=e2135] [cursor=pointer]:
+              - generic [ref=e2136]:
+                - paragraph [ref=e2141]: 52 hr taught
+                - separator [ref=e2142]
+              - paragraph [ref=e2143]: click for more
+          - generic [ref=e2145]:
+            - img "Profile picture for Michelle Gao" [ref=e2147]
+            - heading [level=6] [ref=e2148]:
+              - strong [ref=e2149]: MICHELLE GAO
+            - paragraph [ref=e2150]: Univ of Maryland Math Competition Honorable Mention • Plays Violin and Volleyball • Enjoys Physics and Coding • •
+            - generic [ref=e2152] [cursor=pointer]:
+              - generic [ref=e2153]:
+                - paragraph [ref=e2158]: 175 hr taught
+                - separator [ref=e2159]
+              - paragraph [ref=e2160]: click for more
+          - generic [ref=e2162]:
+            - img "Profile picture for Aarya Garimella" [ref=e2164]
+            - heading [level=6] [ref=e2165]:
+              - strong [ref=e2166]: AARYA GARIMELLA
+            - paragraph [ref=e2167]: AIME qualifier • Coach of local middle school's MATHCOUNTS team • Enjoys listening to music, playing chess
+            - generic [ref=e2169] [cursor=pointer]:
+              - generic [ref=e2170]:
+                - paragraph [ref=e2175]: 111 hr taught
+                - separator [ref=e2176]
+              - paragraph [ref=e2177]: click for more
+          - generic [ref=e2179]:
+            - img "Profile picture for Anshul Gokul" [ref=e2181]
+            - heading [level=6] [ref=e2182]:
+              - strong [ref=e2183]: ANSHUL GOKUL
+            - paragraph [ref=e2184]: 4-time AIME qualifier • 2023 USAPHO qualifier • enjoys basketball and chess in his free time
+            - generic [ref=e2186] [cursor=pointer]:
+              - generic [ref=e2187]:
+                - paragraph [ref=e2192]: 121 hr taught
+                - separator [ref=e2193]
+              - paragraph [ref=e2194]: click for more
+          - generic [ref=e2196]:
+            - img "Profile picture for Sukeerth Goly" [ref=e2198]
+            - heading [level=6] [ref=e2199]:
+              - strong [ref=e2200]: SUKEERTH GOLY
+            - paragraph [ref=e2201]: 2024 USAMO Qualifier • President of FAMAT (Florida Association of Mu Alpha Theta) • President of his school's math team • Lead Director of James S. Rickards Fall Invitational
+            - generic [ref=e2203] [cursor=pointer]:
+              - generic [ref=e2204]:
+                - paragraph [ref=e2209]: 60 hr taught
+                - separator [ref=e2210]
+              - paragraph [ref=e2211]: click for more
+          - generic [ref=e2213]:
+            - img "Profile picture for Alex Gu" [ref=e2215]
+            - heading [level=6] [ref=e2216]:
+              - strong [ref=e2217]: ALEX GU
+            - paragraph [ref=e2218]: USAJMO Qualifier • 5x AIME Qualifier • 2021 Mathcounts Nationals Qualifier • Plays violin
+            - generic [ref=e2220] [cursor=pointer]:
+              - generic [ref=e2221]:
+                - paragraph [ref=e2226]: 49 hr taught
+                - separator [ref=e2227]
+              - paragraph [ref=e2228]: click for more
+          - generic [ref=e2230]:
+            - img "Profile picture for Angela Guo" [ref=e2232]
+            - heading [level=6] [ref=e2233]:
+              - strong [ref=e2234]: ANGELA GUO
+            - paragraph [ref=e2235]: Placed 2nd in Illinois State MATHCOUNTS Countdown Round • MPFG invitee • USESO camper, enjoys kayaking, playing viola, making videos
+            - generic [ref=e2237] [cursor=pointer]:
+              - generic [ref=e2238]:
+                - paragraph [ref=e2243]: 73 hr taught
+                - separator [ref=e2244]
+              - paragraph [ref=e2245]: click for more
+          - generic [ref=e2247]:
+            - img "Profile picture for Daniel He" [ref=e2249]
+            - heading [level=6] [ref=e2250]:
+              - strong [ref=e2251]: DANIEL HE
+            - paragraph [ref=e2252]: USA(J)MO Qualifier • MATHCOUNTS team coach • Plays cello
+            - generic [ref=e2254] [cursor=pointer]:
+              - generic [ref=e2255]:
+                - paragraph [ref=e2260]: 140 hr taught
+                - separator [ref=e2261]
+              - paragraph [ref=e2262]: click for more
+          - generic [ref=e2264]:
+            - img "Profile picture for Katie He" [ref=e2266]
+            - heading [level=6] [ref=e2267]:
+              - strong [ref=e2268]: KATIE HE
+            - paragraph [ref=e2269]: 2023 USAMO Honorable Mention • 4-time AIME qualifier • Math Prize for Girls Invitee • INTEGIRLS Chapter Head
+            - generic [ref=e2271] [cursor=pointer]:
+              - generic [ref=e2272]:
+                - paragraph [ref=e2277]: 71 hr taught
+                - separator [ref=e2278]
+              - paragraph [ref=e2279]: click for more
+          - generic [ref=e2281]:
+            - img "Profile picture for Joyce Huang" [ref=e2283]
+            - heading [level=6] [ref=e2284]:
+              - strong [ref=e2285]: JOYCE HUANG
+            - paragraph [ref=e2286]: 2023 USAJMO Honorable Mention • 2024 Math Prize for Girls Honorable Mention • Juggles
+            - generic [ref=e2288] [cursor=pointer]:
+              - generic [ref=e2289]:
+                - paragraph [ref=e2294]: 52 hr taught
+                - separator [ref=e2295]
+              - paragraph [ref=e2296]: click for more
+          - generic [ref=e2298]:
+            - img "Profile picture for Eesha Jain" [ref=e2300]
+            - heading [level=6] [ref=e2301]:
+              - strong [ref=e2302]: EESHA JAIN
+            - paragraph [ref=e2303]: Extensive Competitive Math Experience • Third place National Science Bowl team • Enjoys programming
+            - generic [ref=e2305] [cursor=pointer]:
+              - generic [ref=e2306]:
+                - paragraph [ref=e2311]: 195 hr taught
+                - separator [ref=e2312]
+              - paragraph [ref=e2313]: click for more
+          - generic [ref=e2315]:
+            - img "Profile picture for Benjamin Jeter" [ref=e2317]
+            - heading [level=6] [ref=e2318]:
+              - strong [ref=e2319]: BENJAMIN JETER
+            - paragraph [ref=e2320]: 2-time USAJMO Qualifier • MOP 2023 Qualifier • Arizona Mathcounts Champion and National Qualifier 2021 • Enjoys strategy games and coding
+            - generic [ref=e2322] [cursor=pointer]:
+              - generic [ref=e2323]:
+                - paragraph [ref=e2328]: 93 hr taught
+                - separator [ref=e2329]
+              - paragraph [ref=e2330]: click for more
+          - generic [ref=e2332]:
+            - img "Profile picture for David Jiang" [ref=e2334]
+            - heading [level=6] [ref=e2335]:
+              - strong [ref=e2336]: DAVID JIANG
+            - paragraph [ref=e2337]: 4-time AIME qualifier • New York City Math Team Team Captain • Musician for All-City Latin Ensemble • Varsity basketball and club volleyball •
+            - generic [ref=e2339] [cursor=pointer]:
+              - generic [ref=e2340]:
+                - paragraph [ref=e2345]: 29 hr taught
+                - separator [ref=e2346]
+              - paragraph [ref=e2347]: click for more
+          - generic [ref=e2349]:
+            - img "Profile picture for Henry Jiang" [ref=e2351]
+            - heading [level=6] [ref=e2352]:
+              - strong [ref=e2353]: HENRY JIANG
+            - paragraph [ref=e2354]: USA(J)MO qualifier since 8th grade • MOP qualifier in 2022, 2023 • 2023 USAMO Silver • 2019 National MATHCOUNTS qualifier from Michigan • USACO gold
+            - generic [ref=e2356] [cursor=pointer]:
+              - generic [ref=e2357]:
+                - paragraph [ref=e2362]: 94 hr taught
+                - separator [ref=e2363]
+              - paragraph [ref=e2364]: click for more
+          - generic [ref=e2366]:
+            - img "Profile picture for Michael Jiao" [ref=e2368]
+            - heading [level=6] [ref=e2369]:
+              - strong [ref=e2370]: MICHAEL JIAO
+            - paragraph [ref=e2371]: 3-time AIME Qualifier • IMMC Team USA, HiMCM Finalist • USAPhO Bronze Medalist • USAAAO Bronze Medalist
+            - generic [ref=e2373] [cursor=pointer]:
+              - generic [ref=e2374]:
+                - paragraph [ref=e2379]: 44 hr taught
+                - separator [ref=e2380]
+              - paragraph [ref=e2381]: click for more
+          - generic [ref=e2383]:
+            - img "Profile picture for Chinmay Jindal" [ref=e2385]
+            - heading [level=6] [ref=e2386]:
+              - strong [ref=e2387]: CHINMAY JINDAL
+            - paragraph [ref=e2388]: National Honor Roll in Canadian Math Competitions • AIME Qualifier • Developer • Enjoys swimming and guitar
+            - generic [ref=e2390] [cursor=pointer]:
+              - generic [ref=e2391]:
+                - paragraph [ref=e2396]: 93 hr taught
+                - separator [ref=e2397]
+              - paragraph [ref=e2398]: click for more
+          - generic [ref=e2400]:
+            - img "Profile picture for Haamiz Kabir" [ref=e2402]
+            - heading [level=6] [ref=e2403]:
+              - strong [ref=e2404]: HAAMIZ KABIR
+            - paragraph [ref=e2405]: National MATHCOUNTS competitor for Nebraska • State Science Olympiad competition • Likes coding and photography
+            - generic [ref=e2407] [cursor=pointer]:
+              - generic [ref=e2408]:
+                - paragraph [ref=e2413]: 17 hr taught
+                - separator [ref=e2414]
+              - paragraph [ref=e2415]: click for more
+          - generic [ref=e2417]:
+            - img "Profile picture for Aathreya Kadambi" [ref=e2419]
+            - heading [level=6] [ref=e2420]:
+              - strong [ref=e2421]: AATHREYA KADAMBI
+            - paragraph [ref=e2422]: Extensive contest experience (AMC, AIME, USAMTS, etc.) • Writes problems for school math club, mock contests • Likes music and doodling
+            - generic [ref=e2424] [cursor=pointer]:
+              - generic [ref=e2425]:
+                - paragraph [ref=e2430]: 19 hr taught
+                - separator [ref=e2431]
+              - paragraph [ref=e2432]: click for more
+          - generic [ref=e2434]:
+            - img "Profile picture for Maya Kalai" [ref=e2436]
+            - heading [level=6] [ref=e2437]:
+              - strong [ref=e2438]: MAYA KALAI
+            - paragraph [ref=e2439]: Enjoys math and CS • Has a massive sticker collection • Is the best sister ever (according to her sister)
+            - generic [ref=e2441] [cursor=pointer]:
+              - generic [ref=e2442]:
+                - paragraph [ref=e2447]: 16 hr taught
+                - separator [ref=e2448]
+              - paragraph [ref=e2449]: click for more
+          - generic [ref=e2451]:
+            - img "Profile picture for Sriram Kalki" [ref=e2453]
+            - heading [level=6] [ref=e2454]:
+              - strong [ref=e2455]: SRIRAM KALKI
+            - paragraph [ref=e2456]: 5-time AIME Qualifier • USACO Gold • Avid Taekwondo Enthusiast
+            - generic [ref=e2458] [cursor=pointer]:
+              - generic [ref=e2459]:
+                - paragraph [ref=e2464]: 251 hr taught
+                - separator [ref=e2465]
+              - paragraph [ref=e2466]: click for more
+          - generic [ref=e2468]:
+            - img "Profile picture for Tristan Kay" [ref=e2470]
+            - heading [level=6] [ref=e2471]:
+              - strong [ref=e2472]: TRISTAN KAY
+            - paragraph [ref=e2473]: 2021 MOP (Math Olympiad Program) Qualifier • 2022 USAMO Bronze Medal • Middle-School Math Club Coach • Enjoys coding, physics, reading and philosophy
+            - generic [ref=e2475] [cursor=pointer]:
+              - generic [ref=e2476]:
+                - paragraph [ref=e2481]: 34 hr taught
+                - separator [ref=e2482]
+              - paragraph [ref=e2483]: click for more
+          - generic [ref=e2485]:
+            - img "Profile picture for Eddie Kong" [ref=e2487]
+            - heading [level=6] [ref=e2488]:
+              - strong [ref=e2489]: EDDIE KONG
+            - paragraph [ref=e2490]: Ohio MATHCOUNTS Champion • Coaches MATHCOUNTS team • Passion for language learning
+            - generic [ref=e2492] [cursor=pointer]:
+              - generic [ref=e2493]:
+                - paragraph [ref=e2498]: 177 hr taught
+                - separator [ref=e2499]
+              - paragraph [ref=e2500]: click for more
+          - generic [ref=e2502]:
+            - img "Profile picture for Krishiv Kothari" [ref=e2504]
+            - heading [level=6] [ref=e2505]:
+              - strong [ref=e2506]: KRISHIV KOTHARI
+            - paragraph [ref=e2507]: Top 25 at the U.S. Sudoku Team Qualifying • 3x AIME Qualifier • Incoming Freshman at UC Berkeley studying EECS • Hobbies include speedcubing, table tennis, puzzles, biking, and classical piano
+            - generic [ref=e2509] [cursor=pointer]:
+              - generic [ref=e2510]:
+                - paragraph [ref=e2515]: 28 hr taught
+                - separator [ref=e2516]
+              - paragraph [ref=e2517]: click for more
+          - generic [ref=e2519]:
+            - img "Profile picture for Natasha Kulviwat" [ref=e2521]
+            - heading [level=6] [ref=e2522]:
+              - strong [ref=e2523]: NATASHA KULVIWAT
+            - paragraph [ref=e2524]: Math Prize for Girls Qualifier • 2x AIME Qualifier • Young Women in Mathematics Two-Sigma Award (Top 5 AMC scorer in NYS) • ISEF ‘22, ‘23 Gordon E. Moore Award Winner
+            - generic [ref=e2526] [cursor=pointer]:
+              - generic [ref=e2527]:
+                - paragraph [ref=e2532]: 60 hr taught
+                - separator [ref=e2533]
+              - paragraph [ref=e2534]: click for more
+          - generic [ref=e2536]:
+            - img "Profile picture for Pritika Lahiri" [ref=e2538]
+            - heading [level=6] [ref=e2539]:
+              - strong [ref=e2540]: PRITIKA LAHIRI
+            - paragraph [ref=e2541]: Honor roll in national Canadian math competitions such as Pascal, CIMC, Fryer • AIME qualifier • Plays basketball • Enjoys singing and playing instruments
+            - generic [ref=e2543] [cursor=pointer]:
+              - generic [ref=e2544]:
+                - paragraph [ref=e2549]: 146 hr taught
+                - separator [ref=e2550]
+              - paragraph [ref=e2551]: click for more
+          - generic [ref=e2553]:
+            - img "Profile picture for Carol Li" [ref=e2555]
+            - heading [level=6] [ref=e2556]:
+              - strong [ref=e2557]: CAROL LI
+            - paragraph [ref=e2558]: National MATHCOUNTS competitor for Alabama • MPFG qualifier • Enjoys watercolor painting
+            - generic [ref=e2560] [cursor=pointer]:
+              - generic [ref=e2561]:
+                - paragraph [ref=e2566]: 63 hr taught
+                - separator [ref=e2567]
+              - paragraph [ref=e2568]: click for more
+          - generic [ref=e2570]:
+            - img "Profile picture for Lucas Li" [ref=e2572]
+            - heading [level=6] [ref=e2573]:
+              - strong [ref=e2574]: LUCAS LI
+            - paragraph [ref=e2575]: 3x AIME Qualifier • Chapter Mu Alpha Theta President • Art of Problem Solving Club Officer • Student Government Officer • Varsity Swimming & Varsity Tennis • Enjoys Chess
+            - generic [ref=e2577] [cursor=pointer]:
+              - generic [ref=e2578]:
+                - paragraph [ref=e2583]: 41 hr taught
+                - separator [ref=e2584]
+              - paragraph [ref=e2585]: click for more
+          - generic [ref=e2587]:
+            - img "Profile picture for Thomas Li" [ref=e2589]
+            - heading [level=6] [ref=e2590]:
+              - strong [ref=e2591]: THOMAS LI
+            - paragraph [ref=e2592]: AIME Qualifier • 2x MathCounts State Participant • 1st Place Stevens Math Olympiad • Enjoys basketball •
+            - generic [ref=e2594] [cursor=pointer]:
+              - generic [ref=e2595]:
+                - paragraph [ref=e2600]: 44 hr taught
+                - separator [ref=e2601]
+              - paragraph [ref=e2602]: click for more
+          - generic [ref=e2604]:
+            - img "Profile picture for Michelle Liang" [ref=e2606]
+            - heading [level=6] [ref=e2607]:
+              - strong [ref=e2608]: MICHELLE LIANG
+            - paragraph [ref=e2609]: AIME Qualifier • Math Prize for Girls Invitee • Anatidaephiliac
+            - generic [ref=e2611] [cursor=pointer]:
+              - generic [ref=e2612]:
+                - paragraph [ref=e2617]: 17 hr taught
+                - separator [ref=e2618]
+              - paragraph [ref=e2619]: click for more
+          - generic [ref=e2621]:
+            - img "Profile picture for Audrey Lim" [ref=e2623]
+            - heading [level=6] [ref=e2624]:
+              - strong [ref=e2625]: AUDREY LIM
+            - paragraph [ref=e2626]: National MATHCOUNTS competitor for Nevada • USAMO qualifier • Principal violist at NYO2 2021
+            - generic [ref=e2628] [cursor=pointer]:
+              - generic [ref=e2629]:
+                - paragraph [ref=e2634]: 82 hr taught
+                - separator [ref=e2635]
+              - paragraph [ref=e2636]: click for more
+          - generic [ref=e2638]:
+            - img "Profile picture for Evan Lim" [ref=e2640]
+            - heading [level=6] [ref=e2641]:
+              - strong [ref=e2642]: EVAN LIM
+            - paragraph [ref=e2643]: MIT '29 • RSI '24 • Ross '22 • USAJMO 2x • USAPhO 3x • BAGELS 🥯
+            - generic [ref=e2645] [cursor=pointer]:
+              - generic [ref=e2646]:
+                - paragraph [ref=e2651]: 223 hr taught
+                - separator [ref=e2652]
+              - paragraph [ref=e2653]: click for more
+          - generic [ref=e2655]:
+            - img "Profile picture for Hailey Lin" [ref=e2657]
+            - heading [level=6] [ref=e2658]:
+              - strong [ref=e2659]: HAILEY LIN
+            - paragraph [ref=e2660]: AIME qualifier since 8th grade • Math Prize for Girls qualifier • High school math team officer
+            - generic [ref=e2662] [cursor=pointer]:
+              - generic [ref=e2663]:
+                - paragraph [ref=e2668]: 104 hr taught
+                - separator [ref=e2669]
+              - paragraph [ref=e2670]: click for more
+          - generic [ref=e2672]:
+            - img "Profile picture for Maggie Lin" [ref=e2674]
+            - heading [level=6] [ref=e2675]:
+              - strong [ref=e2676]: MAGGIE LIN
+            - paragraph [ref=e2677]: MIT Class of 2026 • Co-Head of INTEGIRLS St. Louis/Missouri Chapter • Attended PROMYS • Played tennis for 10 years
+            - generic [ref=e2679] [cursor=pointer]:
+              - generic [ref=e2680]:
+                - paragraph [ref=e2685]: 21 hr taught
+                - separator [ref=e2686]
+              - paragraph [ref=e2687]: click for more
+          - generic [ref=e2689]:
+            - img "Profile picture for Marina Lin" [ref=e2691]
+            - heading [level=6] [ref=e2692]:
+              - strong [ref=e2693]: MARINA LIN
+            - paragraph [ref=e2694]: USAJMO Qualifier • National MATHCOUNTS Competitor for Virginia • President, INTEGIRLS-DC Chapter • U.S. Kids Golf World Teen Championship Qualifier
+            - generic [ref=e2696] [cursor=pointer]:
+              - generic [ref=e2697]:
+                - paragraph [ref=e2702]: 2 hr taught
+                - separator [ref=e2703]
+              - paragraph [ref=e2704]: click for more
+          - generic [ref=e2706]:
+            - img "Profile picture for Sophia Lin" [ref=e2708]
+            - heading [level=6] [ref=e2709]:
+              - strong [ref=e2710]: SOPHIA LIN
+            - paragraph [ref=e2711]: USAJMO qualifier • Three-time AIME qualifier • Three-time winner of Music Teacher National Association Piano Virginia State Competition
+            - generic [ref=e2713] [cursor=pointer]:
+              - generic [ref=e2714]:
+                - paragraph [ref=e2719]: 10 hr taught
+                - separator [ref=e2720]
+              - paragraph [ref=e2721]: click for more
+          - generic [ref=e2723]:
+            - img "Profile picture for Sophie Liu" [ref=e2725]
+            - heading [level=6] [ref=e2726]:
+              - strong [ref=e2727]: SOPHIE LIU
+            - paragraph [ref=e2728]: 2022 MOP (Math Olympiad Program) Qualifier • 2022 USAMO Bronze Medal • 4-time Math Prize for Girls Qualifier, since 8th grade • 2-time MATHCOUNTS Nationals qualifier for Nevada
+            - generic [ref=e2730] [cursor=pointer]:
+              - generic [ref=e2731]:
+                - paragraph [ref=e2736]: 88 hr taught
+                - separator [ref=e2737]
+              - paragraph [ref=e2738]: click for more
+          - generic [ref=e2740]:
+            - img "Profile picture for Vivian Loh" [ref=e2742]
+            - heading [level=6] [ref=e2743]:
+              - strong [ref=e2744]: VIVIAN LOH
+            - paragraph [ref=e2745]: Pennsylvania MATHCOUNTS Champion • 2-time MOP qualifier • Member of US team at 2022, 2023 EGMO
+            - generic [ref=e2747] [cursor=pointer]:
+              - generic [ref=e2748]:
+                - paragraph [ref=e2753]: 163 hr taught
+                - separator [ref=e2754]
+              - paragraph [ref=e2755]: click for more
+          - generic [ref=e2757]:
+            - img "Profile picture for Jason Mao" [ref=e2759]
+            - heading [level=6] [ref=e2760]:
+              - strong [ref=e2761]: JASON MAO
+            - paragraph [ref=e2762]: 3x USAMO Qualifier • 1st place at HMMT • Co-president of school's Math Club • Enjoys writing mock contests •
+            - generic [ref=e2764] [cursor=pointer]:
+              - generic [ref=e2765]:
+                - paragraph [ref=e2770]: 37 hr taught
+                - separator [ref=e2771]
+              - paragraph [ref=e2772]: click for more
+          - generic [ref=e2774]:
+            - img "Profile picture for Razzi Masroor" [ref=e2776]
+            - heading [level=6] [ref=e2777]:
+              - strong [ref=e2778]: RAZZI MASROOR
+            - paragraph [ref=e2779]: Ohio MATHCOUNTS Champion • 2022, 2023 MOP (Math Olympiad Program) Qualifier • MIT PRIMES Research Track
+            - generic [ref=e2781] [cursor=pointer]:
+              - generic [ref=e2782]:
+                - paragraph [ref=e2787]: 73 hr taught
+                - separator [ref=e2788]
+              - paragraph [ref=e2789]: click for more
+          - generic [ref=e2791]:
+            - img "Profile picture for Teodor Melega" [ref=e2793]
+            - heading [level=6] [ref=e2794]:
+              - strong [ref=e2795]: TEODOR MELEGA
+            - paragraph [ref=e2796]: 4 gold medals and 1 bronze at the National Romanian Olympiad • Created and organized an informatics contest • Assembled a website including articles about mathematics, informatics, and chemistry • Sports fan •
+            - generic [ref=e2798] [cursor=pointer]:
+              - generic [ref=e2799]:
+                - paragraph [ref=e2804]: 14 hr taught
+                - separator [ref=e2805]
+              - paragraph [ref=e2806]: click for more
+          - generic [ref=e2808]:
+            - img "Profile picture for James Ngai" [ref=e2810]
+            - heading [level=6] [ref=e2811]:
+              - strong [ref=e2812]: JAMES NGAI
+            - paragraph [ref=e2813]: 4th place nationally at AMATYC nationals (1st in NW) • Studying CS at Carnegie Mellon • Interested in AI and cryptography
+            - generic [ref=e2815] [cursor=pointer]:
+              - generic [ref=e2816]:
+                - paragraph [ref=e2821]: 20 hr taught
+                - separator [ref=e2822]
+              - paragraph [ref=e2823]: click for more
+          - generic [ref=e2825]:
+            - img "Profile picture for Ramez Ortiz" [ref=e2827]
+            - heading [level=6] [ref=e2828]:
+              - strong [ref=e2829]: RAMEZ ORTIZ
+            - paragraph [ref=e2830]: 3-time AIME qualifier with DHR • Mu Alpha Theta Chapter President • Top 3 in HMMT Integration Bee • 4-time National 1st Place Individual in Mu Alpha Theta
+            - generic [ref=e2832] [cursor=pointer]:
+              - generic [ref=e2833]:
+                - paragraph [ref=e2838]: 8 hr taught
+                - separator [ref=e2839]
+              - paragraph [ref=e2840]: click for more
+          - generic [ref=e2842]:
+            - img "Profile picture for Jaansi Parsa" [ref=e2844]
+            - heading [level=6] [ref=e2845]:
+              - strong [ref=e2846]: JAANSI PARSA
+            - paragraph [ref=e2847]: Vice President of FAMAT • AIME qualifier • President of school's math team • Placed top 5 nationally • Coaches local Mathcounts team • Enjoys reading and spending time with friends
+            - generic [ref=e2849] [cursor=pointer]:
+              - generic [ref=e2850]:
+                - paragraph [ref=e2855]: 43 hr taught
+                - separator [ref=e2856]
+              - paragraph [ref=e2857]: click for more
+          - generic [ref=e2859]:
+            - img "Profile picture for Lyev Pitram" [ref=e2861]
+            - heading [level=6] [ref=e2862]:
+              - strong [ref=e2863]: LYEV PITRAM
+            - paragraph [ref=e2864]: Math Kangaroo 2x Nationally Ranked • Placed top 20 in French Math Kangaroo • Plays violin and baseball • Enjoys running
+            - generic [ref=e2866] [cursor=pointer]:
+              - generic [ref=e2867]:
+                - paragraph [ref=e2872]: 99 hr taught
+                - separator [ref=e2873]
+              - paragraph [ref=e2874]: click for more
+          - generic [ref=e2876]:
+            - img "Profile picture for Nicole Qian" [ref=e2878]
+            - heading [level=6] [ref=e2879]:
+              - strong [ref=e2880]: NICOLE QIAN
+            - paragraph [ref=e2881]: AIME & Math Prize for Girls qualifier • Synchronized swimming • Plays bridge
+            - generic [ref=e2883] [cursor=pointer]:
+              - generic [ref=e2884]:
+                - paragraph [ref=e2889]: 33 hr taught
+                - separator [ref=e2890]
+              - paragraph [ref=e2891]: click for more
+          - generic [ref=e2893]:
+            - img "Profile picture for Alon Ragoler" [ref=e2895]
+            - heading [level=6] [ref=e2896]:
+              - strong [ref=e2897]: ALON RAGOLER
+            - paragraph [ref=e2898]: National MATHCOUNTS competitor for Washington • Perfect score on AMC 8 • Enjoys web development, playing instruments (piano + snare drum)
+            - generic [ref=e2900] [cursor=pointer]:
+              - generic [ref=e2901]:
+                - paragraph [ref=e2906]: 293 hr taught
+                - separator [ref=e2907]
+              - paragraph [ref=e2908]: click for more
+          - generic [ref=e2910]:
+            - img "Profile picture for Kiran Reddy" [ref=e2912]
+            - heading [level=6] [ref=e2913]:
+              - strong [ref=e2914]: KIRAN REDDY
+            - paragraph [ref=e2915]: 3-time MATHCOUNTS Nationals qualifier • USAJMO qualifier since 8th grade • Tennis state champion
+            - generic [ref=e2917] [cursor=pointer]:
+              - generic [ref=e2918]:
+                - paragraph [ref=e2923]: 104 hr taught
+                - separator [ref=e2924]
+              - paragraph [ref=e2925]: click for more
+          - generic [ref=e2927]:
+            - img "Profile picture for McKayla Ro" [ref=e2929]
+            - heading [level=6] [ref=e2930]:
+              - strong [ref=e2931]: MCKAYLA RO
+            - paragraph [ref=e2932]: AIME qualifier since 7th grade • Competes in state and national Mu Alpha Theta competitions • Enjoys creating music playlists
+            - generic [ref=e2934] [cursor=pointer]:
+              - generic [ref=e2935]:
+                - paragraph [ref=e2940]: 47 hr taught
+                - separator [ref=e2941]
+              - paragraph [ref=e2942]: click for more
+          - generic [ref=e2944]:
+            - img "Profile picture for Carlos Rodriguez" [ref=e2946]
+            - heading [level=6] [ref=e2947]:
+              - strong [ref=e2948]: CARLOS RODRIGUEZ
+            - paragraph [ref=e2949]: Gold medalist, Puerto Rico Mathematics Olympics • Highest scores in PR IMO team selection tests (2022, 2023) • Silver medal, OMCC • Bronze medals, Iberoamerican Math Olympiad • Represented Puerto Rico in National Science Bowl, Washington, DC and IMO (2022, 2023) • President and founder, High School Math Club
+            - generic [ref=e2951] [cursor=pointer]:
+              - generic [ref=e2952]:
+                - paragraph [ref=e2957]: 14 hr taught
+                - separator [ref=e2958]
+              - paragraph [ref=e2959]: click for more
+          - generic [ref=e2961]:
+            - img "Profile picture for Sophia Rong" [ref=e2963]
+            - heading [level=6] [ref=e2964]:
+              - strong [ref=e2965]: SOPHIA RONG
+            - paragraph [ref=e2966]: Math Prize for Girls qualifier • MAO chapter president • Collects playing cards
+            - generic [ref=e2968] [cursor=pointer]:
+              - generic [ref=e2969]:
+                - paragraph [ref=e2974]: 55 hr taught
+                - separator [ref=e2975]
+              - paragraph [ref=e2976]: click for more
+          - generic [ref=e2978]:
+            - img "Profile picture for Nastia Rudenko" [ref=e2980]
+            - heading [level=6] [ref=e2981]:
+              - strong [ref=e2982]: NASTIA RUDENKO
+            - paragraph [ref=e2983]: Member of Ukranian nationals team for EGMO • Winner of Sharygin Geometry Olympaid
+            - generic [ref=e2985] [cursor=pointer]:
+              - generic [ref=e2986]:
+                - paragraph [ref=e2991]: 19 hr taught
+                - separator [ref=e2992]
+              - paragraph [ref=e2993]: click for more
+          - generic [ref=e2995]:
+            - img "Profile picture for Anshuman Seetharaman" [ref=e2997]
+            - heading [level=6] [ref=e2998]:
+              - strong [ref=e2999]: ANSHUMAN SEETHARAMAN
+            - paragraph [ref=e3000]: 3-time AIME Qualifier • Chapter Mu Alpha Theta President • Huge basketball and soccer fan • Harry Potter-lover
+            - generic [ref=e3002] [cursor=pointer]:
+              - generic [ref=e3003]:
+                - paragraph [ref=e3008]: 15 hr taught
+                - separator [ref=e3009]
+              - paragraph [ref=e3010]: click for more
+          - generic [ref=e3012]:
+            - img "Profile picture for Kevin Song" [ref=e3014]
+            - heading [level=6] [ref=e3015]:
+              - strong [ref=e3016]: KEVIN SONG
+            - paragraph [ref=e3017]: National MATHCOUNTS competitor for Wisconsin • 4-time AIME qualifier • Varsity volleyball, plays piano
+            - generic [ref=e3019] [cursor=pointer]:
+              - generic [ref=e3020]:
+                - paragraph [ref=e3025]: 89 hr taught
+                - separator [ref=e3026]
+              - paragraph [ref=e3027]: click for more
+          - generic [ref=e3029]:
+            - img "Profile picture for Antonia Tarfulea" [ref=e3031]
+            - heading [level=6] [ref=e3032]:
+              - strong [ref=e3033]: ANTONIA TARFULEA
+            - paragraph [ref=e3034]: Romanian National Mathematics Olympiad Participant - 2022 • Math Teacher - 2021,2022,2023 • Technovation Girls semifinalist - 2023 • Enjoys reading
+            - generic [ref=e3036] [cursor=pointer]:
+              - generic [ref=e3037]:
+                - paragraph [ref=e3042]: 55 hr taught
+                - separator [ref=e3043]
+              - paragraph [ref=e3044]: click for more
+          - generic [ref=e3046]:
+            - img "Profile picture for Vincent Trang" [ref=e3048]
+            - heading [level=6] [ref=e3049]:
+              - strong [ref=e3050]: VINCENT TRANG
+            - paragraph [ref=e3051]: 2022 MOP Qualifier • USAMO silver medalist, 2022 • AIME qualifier since 6th grade • Loves Rubik's cubes
+            - generic [ref=e3053] [cursor=pointer]:
+              - generic [ref=e3054]:
+                - paragraph [ref=e3059]: 124 hr taught
+                - separator [ref=e3060]
+              - paragraph [ref=e3061]: click for more
+          - generic [ref=e3063]:
+            - img "Profile picture for Aprameya Tripathy" [ref=e3065]
+            - heading [level=6] [ref=e3066]:
+              - strong [ref=e3067]: APRAMEYA TRIPATHY
+            - paragraph [ref=e3068]: 2023 and 2024 MOP Qualifier • 2023 USAMO Bronze Medal, 2024 USAMO Gold Medal • National Science Bowl Participant
+            - generic [ref=e3070] [cursor=pointer]:
+              - generic [ref=e3071]:
+                - paragraph [ref=e3076]: 21 hr taught
+                - separator [ref=e3077]
+              - paragraph [ref=e3078]: click for more
+          - generic [ref=e3080]:
+            - img "Profile picture for Noel Varco" [ref=e3082]
+            - heading [level=6] [ref=e3083]:
+              - strong [ref=e3084]: NOEL VARCO
+            - paragraph [ref=e3085]: Member of Minnesota All-State Math Team • ARML participant and AIME qualifier • Plays in Minnesota Youth Symphonies
+            - generic [ref=e3087] [cursor=pointer]:
+              - generic [ref=e3088]:
+                - paragraph [ref=e3093]: 86 hr taught
+                - separator [ref=e3094]
+              - paragraph [ref=e3095]: click for more
+          - generic [ref=e3097]:
+            - img "Profile picture for Karthik Vedula" [ref=e3099]
+            - heading [level=6] [ref=e3100]:
+              - strong [ref=e3101]: KARTHIK VEDULA
+            - paragraph [ref=e3102]: National MATHCOUNTS Countdown Round Qualifier • 2022 MOP Qualifier • 2022 USAMO Silver Medal • Top 10 in HMMT Invitational Competition (HMIC)
+            - generic [ref=e3104] [cursor=pointer]:
+              - generic [ref=e3105]:
+                - paragraph [ref=e3110]: 49 hr taught
+                - separator [ref=e3111]
+              - paragraph [ref=e3112]: click for more
+          - generic [ref=e3114]:
+            - img "Profile picture for Kevin Wan" [ref=e3116]
+            - heading [level=6] [ref=e3117]:
+              - strong [ref=e3118]: KEVIN WAN
+            - paragraph [ref=e3119]: National Mathcounts Qualifier • USAJMO Qualifier • USAJMO Honorable Mention • President of School Math Team • Piano and Violin • Classical Music
+            - generic [ref=e3121] [cursor=pointer]:
+              - generic [ref=e3122]:
+                - paragraph [ref=e3127]: 85 hr taught
+                - separator [ref=e3128]
+              - paragraph [ref=e3129]: click for more
+          - generic [ref=e3131]:
+            - img "Profile picture for Jessie Wang" [ref=e3133]
+            - heading [level=6] [ref=e3134]:
+              - strong [ref=e3135]: JESSIE WANG
+            - paragraph [ref=e3136]: USAJMO Qualifier • MPFG Qualifier • Attended MATHCOUNTS State (TX) twice • Enjoys watching hockey
+            - generic [ref=e3138] [cursor=pointer]:
+              - generic [ref=e3139]:
+                - paragraph [ref=e3144]: 234 hr taught
+                - separator [ref=e3145]
+              - paragraph [ref=e3146]: click for more
+          - generic [ref=e3148]:
+            - img "Profile picture for Kevin Wang" [ref=e3150]
+            - heading [level=6] [ref=e3151]:
+              - strong [ref=e3152]: KEVIN WANG
+            - paragraph [ref=e3153]: USAJMO winner • 2-time AMC 10 Distinguished Honor Roll winner • Likes teaching math and meeting new people
+            - generic [ref=e3155] [cursor=pointer]:
+              - generic [ref=e3156]:
+                - paragraph [ref=e3161]: 16 hr taught
+                - separator [ref=e3162]
+              - paragraph [ref=e3163]: click for more
+          - generic [ref=e3165]:
+            - img "Profile picture for Leonna Wang" [ref=e3167]
+            - heading [level=6] [ref=e3168]:
+              - strong [ref=e3169]: LEONNA WANG
+            - paragraph [ref=e3170]: 3x AMC Distinguished Honor Roll • Math Prize for Girls Qualifier • 3x PROMYS & 1x SUMaC Participant • Enjoys Sports
+            - generic [ref=e3172] [cursor=pointer]:
+              - generic [ref=e3173]:
+                - paragraph [ref=e3178]: 10 hr taught
+                - separator [ref=e3179]
+              - paragraph [ref=e3180]: click for more
+          - generic [ref=e3182]:
+            - img "Profile picture for Luke Wang" [ref=e3184]
+            - heading [level=6] [ref=e3185]:
+              - strong [ref=e3186]: LUKE WANG
+            - paragraph [ref=e3187]: AIME Qualifier since 6th grade • USA(J)MO Qualifier • PUMaC Individual Finalist • Nationally-ranked HS physics team officer
+            - generic [ref=e3189] [cursor=pointer]:
+              - generic [ref=e3190]:
+                - paragraph [ref=e3195]: 22 hr taught
+                - separator [ref=e3196]
+              - paragraph [ref=e3197]: click for more
+          - generic [ref=e3199]:
+            - img "Profile picture for Nathan Wei" [ref=e3201]
+            - heading [level=6] [ref=e3202]:
+              - strong [ref=e3203]: NATHAN WEI
+            - paragraph [ref=e3204]: 4-time AIME Qualifier • USNCO High Honors • USAPhO Bronze Medalist
+            - generic [ref=e3206] [cursor=pointer]:
+              - generic [ref=e3207]:
+                - paragraph [ref=e3212]: 33 hr taught
+                - separator [ref=e3213]
+              - paragraph [ref=e3214]: click for more
+          - generic [ref=e3216]:
+            - img "Profile picture for Athena Wu" [ref=e3218]
+            - heading [level=6] [ref=e3219]:
+              - strong [ref=e3220]: ATHENA WU
+            - paragraph [ref=e3221]: AIME Qualfier since 8th grade • Math Prize for Girls qualifier • Mathcounts Nationals Qualifier • Loves to draw
+            - generic [ref=e3223] [cursor=pointer]:
+              - generic [ref=e3224]:
+                - paragraph [ref=e3229]: 103 hr taught
+                - separator [ref=e3230]
+              - paragraph [ref=e3231]: click for more
+          - generic [ref=e3233]:
+            - img "Profile picture for Erik Wu" [ref=e3235]
+            - heading [level=6] [ref=e3236]:
+              - strong [ref=e3237]: ERIK WU
+            - paragraph [ref=e3238]: 2-time AIME Qualifier • Captain of school's math team • Math Tournament Organizer • Enjoys creating K-pop piano covers and playing tennis
+            - generic [ref=e3240] [cursor=pointer]:
+              - generic [ref=e3241]:
+                - paragraph [ref=e3246]: 33 hr taught
+                - separator [ref=e3247]
+              - paragraph [ref=e3248]: click for more
+          - generic [ref=e3250]:
+            - img "Profile picture for Filbert Wu" [ref=e3252]
+            - heading [level=6] [ref=e3253]:
+              - strong [ref=e3254]: FILBERT WU
+            - paragraph [ref=e3255]: International Mathematical Olympiad (IMO) 2023 Silver Medalist • International Olympiad in Informatics (IOI) 2023 Bronze Medalist • Philippine Mathematical Olympiad 2023 and 2024 National Champion • Codeforces Master Rank (2145 Maximum Rating) •
+            - generic [ref=e3257] [cursor=pointer]:
+              - generic [ref=e3258]:
+                - paragraph [ref=e3263]: 43 hr taught
+                - separator [ref=e3264]
+              - paragraph [ref=e3265]: click for more
+          - generic [ref=e3267]:
+            - img "Profile picture for Lillian Xia" [ref=e3269]
+            - heading [level=6] [ref=e3270]:
+              - strong [ref=e3271]: LILLIAN XIA
+            - paragraph [ref=e3272]: MPFG Invite • AIME Qualifier • Enjoys playing tennis
+            - generic [ref=e3274] [cursor=pointer]:
+              - generic [ref=e3275]:
+                - paragraph [ref=e3280]: 110 hr taught
+                - separator [ref=e3281]
+              - paragraph [ref=e3282]: click for more
+          - generic [ref=e3284]:
+            - img "Profile picture for Andy Xu" [ref=e3286]
+            - heading [level=6] [ref=e3287]:
+              - strong [ref=e3288]: ANDY XU
+            - paragraph [ref=e3289]: 3-time AIME qualifier • USAJMO qualifier • Member of track team
+            - generic [ref=e3291] [cursor=pointer]:
+              - generic [ref=e3292]:
+                - paragraph [ref=e3297]: 62 hr taught
+                - separator [ref=e3298]
+              - paragraph [ref=e3299]: click for more
+          - generic [ref=e3301]:
+            - img "Profile picture for Ethan Yang" [ref=e3303]
+            - heading [level=6] [ref=e3304]:
+              - strong [ref=e3305]: ETHAN YANG
+            - paragraph [ref=e3306]: 4-time AIME qualifier • Texas MATHCOUNTS State Qualifier • Middle School MATHCOUNTS Head Coach • Enjoys playing violin
+            - generic [ref=e3308] [cursor=pointer]:
+              - generic [ref=e3309]:
+                - paragraph [ref=e3314]: 18 hr taught
+                - separator [ref=e3315]
+              - paragraph [ref=e3316]: click for more
+          - generic [ref=e3318]:
+            - img "Profile picture for Leonard Yang" [ref=e3320]
+            - heading [level=6] [ref=e3321]:
+              - strong [ref=e3322]: LEONARD YANG
+            - paragraph [ref=e3323]: 5-time AIME qualifier • 3-time National Astronomy Competition qualifier • Loves teaching younger students math
+            - generic [ref=e3325] [cursor=pointer]:
+              - generic [ref=e3326]:
+                - paragraph [ref=e3331]: 135 hr taught
+                - separator [ref=e3332]
+              - paragraph [ref=e3333]: click for more
+          - generic [ref=e3335]:
+            - img "Profile picture for Shelly Yang" [ref=e3337]
+            - heading [level=6] [ref=e3338]:
+              - strong [ref=e3339]: SHELLY YANG
+            - paragraph [ref=e3340]: MIT '29 • Math Prize for Girls qualifier • 3-time AIME qualifier • National MATHCOUNTS competitor for Nevada • Enjoys producing videos, writing blog posts, and playing piano
+            - generic [ref=e3342] [cursor=pointer]:
+              - generic [ref=e3343]:
+                - paragraph [ref=e3348]: 218 hr taught
+                - separator [ref=e3349]
+              - paragraph [ref=e3350]: click for more
+          - generic [ref=e3352]:
+            - img "Profile picture for Eric Yee" [ref=e3354]
+            - heading [level=6] [ref=e3355]:
+              - strong [ref=e3356]: ERIC YEE
+            - paragraph [ref=e3357]: 3-time AIME qualifier • USA PRIMES 2024 • Math Club President • Toying with puzzles, swimming, trombone
+            - generic [ref=e3359] [cursor=pointer]:
+              - generic [ref=e3360]:
+                - paragraph [ref=e3365]: 32 hr taught
+                - separator [ref=e3366]
+              - paragraph [ref=e3367]: click for more
+          - generic [ref=e3369]:
+            - img "Profile picture for Emily Yu" [ref=e3371]
+            - heading [level=6] [ref=e3372]:
+              - strong [ref=e3373]: EMILY YU
+            - paragraph [ref=e3374]: MOP Qualifier 2023, 2024 • 5th Place at Math Prize for Girls • NYSML Winner 2024 • USAMTS Gold
+            - generic [ref=e3376] [cursor=pointer]:
+              - generic [ref=e3377]:
+                - paragraph [ref=e3382]: 59 hr taught
+                - separator [ref=e3383]
+              - paragraph [ref=e3384]: click for more
+          - generic [ref=e3386]:
+            - img "Profile picture for Jeffrey Yu" [ref=e3388]
+            - heading [level=6] [ref=e3389]:
+              - strong [ref=e3390]: JEFFREY YU
+            - paragraph [ref=e3391]: Two-time AIME Qualifier • National Mu Alpha Theta award winner • Teaches math for school team • Enjoys playing violin •
+            - generic [ref=e3393] [cursor=pointer]:
+              - generic [ref=e3394]:
+                - paragraph [ref=e3399]: 92 hr taught
+                - separator [ref=e3400]
+              - paragraph [ref=e3401]: click for more
+          - generic [ref=e3403]:
+            - img "Profile picture for Eric Zhan" [ref=e3405]
+            - heading [level=6] [ref=e3406]:
+              - strong [ref=e3407]: ERIC ZHAN
+            - paragraph [ref=e3408]: National MATHCOUNTS competitor for Washington • 2022 USAJMO winner • Likes to swim
+            - generic [ref=e3410] [cursor=pointer]:
+              - generic [ref=e3411]:
+                - paragraph [ref=e3416]: 170 hr taught
+                - separator [ref=e3417]
+              - paragraph [ref=e3418]: click for more
+          - generic [ref=e3420]:
+            - img "Profile picture for Owen Zhang" [ref=e3422]
+            - heading [level=6] [ref=e3423]:
+              - strong [ref=e3424]: OWEN ZHANG
+            - paragraph [ref=e3425]: USAJMO qualifier • 5-time AIME qualifier • 3 DHMs at Stanford and Berkeley Math Tournament • Head Coach of Middle School Math Club • Curriculum Development Lead at Mustang Math
+            - generic [ref=e3427] [cursor=pointer]:
+              - generic [ref=e3428]:
+                - paragraph [ref=e3433]: 27 hr taught
+                - separator [ref=e3434]
+              - paragraph [ref=e3435]: click for more
+          - generic [ref=e3437]:
+            - img "Profile picture for Angeline Zhao" [ref=e3439]
+            - heading [level=6] [ref=e3440]:
+              - strong [ref=e3441]: ANGELINE ZHAO
+            - paragraph [ref=e3442]: Two-time USAJMO qualifier • National MATHCOUNTS qualifier • Second-place winner at Yale Girls in Math • Editor and writer for The Teen Magazine
+            - generic [ref=e3444] [cursor=pointer]:
+              - generic [ref=e3445]:
+                - paragraph [ref=e3450]: 24 hr taught
+                - separator [ref=e3451]
+              - paragraph [ref=e3452]: click for more
+          - generic [ref=e3454]:
+            - img "Profile picture for Corey Zhao" [ref=e3456]
+            - heading [level=6] [ref=e3457]:
+              - strong [ref=e3458]: COREY ZHAO
+            - paragraph [ref=e3459]: AIME Qualifier since 7th grade • USAJMO Qualifier • Loves teaching, sports, and friends • Lexington High School Math Team
+            - generic [ref=e3461] [cursor=pointer]:
+              - generic [ref=e3462]:
+                - paragraph [ref=e3467]: 71 hr taught
+                - separator [ref=e3468]
+              - paragraph [ref=e3469]: click for more
+          - generic [ref=e3471]:
+            - img "Profile picture for Alicia Zhu" [ref=e3473]
+            - heading [level=6] [ref=e3474]:
+              - strong [ref=e3475]: ALICIA ZHU
+            - paragraph [ref=e3476]: 2-time AIME Qualifier • Co-leader and co-founder of school STEM Club • Neuroscience research
+            - generic [ref=e3478] [cursor=pointer]:
+              - generic [ref=e3479]:
+                - paragraph [ref=e3484]: 78 hr taught
+                - separator [ref=e3485]
+              - paragraph [ref=e3486]: click for more
+    - contentinfo [ref=e3487]:
+      - generic [ref=e3488]:
+        - link [ref=e3489] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e3490]:
+            - img "Logo for LIVE by Po-Shen Loh" [ref=e3492]
+            - heading "LIVE by Po-Shen Loh" [level=6] [ref=e3493]
+        - generic [ref=e3494]:
+          - generic [ref=e3495]:
+            - heading "Programs" [level=6] [ref=e3496]
+            - paragraph [ref=e3497]:
+              - link "LIVE Classes" [ref=e3498] [cursor=pointer]:
+                - /url: /enroll
+            - paragraph [ref=e3499]:
+              - link "Self-Paced Classes" [ref=e3500] [cursor=pointer]:
+                - /url: /enroll#self-paced
+            - paragraph [ref=e3501]:
+              - link "Stars" [ref=e3502] [cursor=pointer]:
+                - /url: /stars
+            - paragraph [ref=e3503]:
+              - link "Scholarship" [ref=e3504] [cursor=pointer]:
+                - /url: /scholarship
+          - generic [ref=e3505]:
+            - heading "Contest Math" [level=6] [ref=e3506]
+            - paragraph [ref=e3507]:
+              - link "MAA AMC 8/10/12 Problems" [ref=e3508] [cursor=pointer]:
+                - /url: /past-contests
+            - paragraph [ref=e3509]:
+              - link "LIVE Solves" [ref=e3510] [cursor=pointer]:
+                - /url: /live-solves
+            - paragraph [ref=e3511]:
+              - link "Math Contest List" [ref=e3512] [cursor=pointer]:
+                - /url: /math-contests
+            - paragraph [ref=e3513]:
+              - link "2024 MATHCOUNTS" [ref=e3514] [cursor=pointer]:
+                - /url: /2024-mathcounts-solutions
+            - paragraph [ref=e3515]:
+              - link "2025 AMC 8 Solutions" [ref=e3516] [cursor=pointer]:
+                - /url: /amc8-solutions/2025
+            - paragraph [ref=e3517]:
+              - link "Math Kangaroo" [ref=e3518] [cursor=pointer]:
+                - /url: /math-kangaroo
+            - paragraph [ref=e3519]:
+              - link "mathleague.org" [ref=e3520] [cursor=pointer]:
+                - /url: /mathleague
+          - generic [ref=e3521]:
+            - heading "About Us" [level=6] [ref=e3522]
+            - paragraph [ref=e3523]:
+              - link "Who Is Po-Shen Loh?" [ref=e3524] [cursor=pointer]:
+                - /url: https://poshenloh.com
+            - paragraph [ref=e3525]:
+              - link "Email Contact" [ref=e3526] [cursor=pointer]:
+                - /url: mailto:course-consulting@poshenloh.com
+            - paragraph [ref=e3527] [cursor=pointer]: WeChat Contact
+            - paragraph [ref=e3528]:
+              - link "Newsletter" [ref=e3529] [cursor=pointer]:
+                - /url: https://eepurl.com/gExYzT
+            - paragraph [ref=e3530]:
+              - link "Jobs" [ref=e3531] [cursor=pointer]:
+                - /url: /jobs
+            - paragraph [ref=e3532]:
+              - link "Become a Star" [ref=e3533] [cursor=pointer]:
+                - /url: /jobs/star
+          - generic [ref=e3534]:
+            - heading "Legal" [level=6] [ref=e3535]
+            - paragraph [ref=e3536]:
+              - link "Terms of Use" [ref=e3537] [cursor=pointer]:
+                - /url: /legal/terms
+            - paragraph [ref=e3538]:
+              - link "Privacy Policy" [ref=e3539] [cursor=pointer]:
+                - /url: /legal/privacy
+            - paragraph [ref=e3540]:
+              - link "COPPA Policy" [ref=e3541] [cursor=pointer]:
+                - /url: /legal/coppa
+        - paragraph [ref=e3542]:
+          - text: Copyright © 2026
+          - link "Expii, Inc." [ref=e3543] [cursor=pointer]:
+            - /url: https://www.expii.com
+          - text: All Rights Reserved.
+  - alert [ref=e3544]
