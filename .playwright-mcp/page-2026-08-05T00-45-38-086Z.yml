@@ -1,0 +1,1732 @@
+- generic [active] [ref=f1e1]:
+  - heading "Tier 1 — Shortlist (68 candidates)" [level=1] [ref=f1e2]
+  - paragraph [ref=f1e3]:
+    - link "← overview" [ref=f1e4] [cursor=pointer]:
+      - /url: ../index.html
+    - text: "· Ranked by consensus score (2–3 independent scoring passes, per-dimension median). Dimensions: A LLM post-training · B agents & evals · C software engineering · D rigor & drive · E safety bonus · F AI-leverage bonus. Each candidate's key claims were checked against the public web — expand \"Verification\" per candidate."
+  - generic [ref=f1e5]:
+    - strong [ref=f1e6]: "Before reaching out:"
+    - text: a human should read the resume (in
+    - code [ref=f1e7]: resumes/
+    - text: ) and the verification notes. "Claim failed verification" usually means over-compression, not lying — but check. 0 candidate(s) carry a fabrication flag; do not auto-reject them, review them.
+  - generic [ref=f1e8]:
+    - heading "#1 Mihir Agarwal — 14/15 A2 B3 C3 D3 E3 F0" [level=3] [ref=f1e9]:
+      - text: "#1 Mihir Agarwal — 14/15"
+      - generic "A" [ref=f1e10]: A2
+      - generic "B" [ref=f1e11]: B3
+      - generic "C" [ref=f1e12]: C3
+      - generic "D" [ref=f1e13]: D3
+      - generic "E" [ref=f1e14]: E3
+      - generic "F" [ref=f1e15]: F0
+    - paragraph [ref=f1e16]:
+      - text: Columbia MS DS (12/2026); 3yr Shell MLE; modified-Qwen memory-layer pretraining; 433-task agentic DB-safety benchmark (NeurIPS under review)
+      - generic [ref=f1e17]: A-is-pretraining-not-post-training-no-measured-benchmark-gain-yet
+      - generic [ref=f1e18]: neurips-paper-under-review-not-accepted
+    - paragraph [ref=f1e19]:
+      - strong [ref=f1e20]: "Evidence:"
+      - text: "A: \"Modified Qwen's transformer attention... Pretraining the model end-to-end on 20M+ synthetic QA pairs\" (no benchmark gain yet, not SFT/RL). B: \"Benchmarked 8 frontier LLMs in an agentic interaction loop (ReAct)... 433 tasks across 28 risk scenarios\". C: \"production RAG pipeline... 90,000+ employees... containerized microservice handling 1,000+ daily requests\". D: \"Springer (IF: 5.2, 37 citations)\", \"KS fidelity (0.16 vs. 0.28/0.44)\". E: \"Safety evaluation benchmark for autonomous database agents: NeurIPS 2026 (Under Review)\"."
+    - group [ref=f1e21]:
+      - generic [ref=f1e22]:
+        - strong [ref=f1e23]: Verification
+        - text: ": 100% of decidable claims held up. Real candidate with a consistent web footprint (personal site, Google Scholar, GitHub); no fabrication detected, but the strongest-sounding items are softer than they read. His only verifiable publication is a 3rd-author Springer survey (real, 47 citations, but IF overstated at 5.2 vs ~3.0-3.6, and he was not on the preprint author list), while the NeurIPS-under-review benchmark and Anthropic/Columbia-advised memory-layers project have no public artifacts and cannot be checked. GitHub shows only small undergrad projects, so his claimed LLM-systems depth rests on internships and unverifiable in-progress research; recommend probing the memory-layers and DB-agent-benchmark work technically in interview."
+    - paragraph [ref=f1e24]:
+      - link "resume" [ref=f1e25] [cursor=pointer]:
+        - /url: resumes/183426957003_192372339003_Mihir_Agarwal_Resume.pdf
+      - text: "· votes: 14/14 · file:"
+      - code [ref=f1e26]: 183426957003_192372339003_Mihir_Agarwal_Resume.pdf
+  - generic [ref=f1e27]:
+    - heading "#2 Matthew Okner — 14/15 A3 B3 C3 D3 E2 F0" [level=3] [ref=f1e28]:
+      - text: "#2 Matthew Okner — 14/15"
+      - generic "A" [ref=f1e29]: A3
+      - generic "B" [ref=f1e30]: B3
+      - generic "C" [ref=f1e31]: C3
+      - generic "D" [ref=f1e32]: D3
+      - generic "E" [ref=f1e33]: E2
+      - generic "F" [ref=f1e34]: F0
+    - paragraph [ref=f1e35]:
+      - text: Berkeley EECS BS May 2028, 4.0 GPA; pretrained+instruction-tuned 280M MoE LLM on 8xA100 with HellaSwag eval harness and ablations
+      - generic [ref=f1e36]: probe-AI-leverage
+    - paragraph [ref=f1e37]:
+      - strong [ref=f1e38]: "Evidence:"
+      - text: "A: \"Pretrained a 280M-parameter sparse mixture-of-experts LLM... 8xA100 GPUs with DDP\"; \"Instruction-tuned... SFT validation loss from 1.89 to 1.54\"; \"31.2% on HellaSwag, outperforming GPT-2\". B: \"Integrated Google Calendar tool calls so the agent books appointments\"; \"resumable multi-GPU evaluation pipeline\"; Warden guardTools middleware. C: \"Shipped a production content-synchronization pipeline\"; OSS repos linked, CLI scaffolder. D: routing ablations \"isolating a 6-point HellaSwag gain\"; released weights. E: Warden \"fail-closed approvals... secret redaction, JSONL audit logs\", risk-tiered YAML policy engine."
+    - group [ref=f1e39]:
+      - generic [ref=f1e40]:
+        - strong [ref=f1e41]: Verification
+        - text: ": 100% of decidable claims held up. The centerpiece claim — miniMoE, a from-scratch 280M sparse-MoE pretrain on 10B tokens — is solidly real: original repo, sustained commit history, published HuggingFace weights, and numbers matching the resume, which strongly supports the stage-1 score. Both internships pass existence checks (Wrodium is a real Berkeley startup doing exactly what's described; SJSU runs the described malware-ML research). Two cautions for interview probing: the linked Sage.ai repo belongs to a teammate and shows zero commits from the candidate despite the 'built the conversation engine' claim, and the Warden library has no public artifact at all."
+    - paragraph [ref=f1e42]:
+      - link "resume" [ref=f1e43] [cursor=pointer]:
+        - /url: resumes/183471938003_192417581003_Matthew_Okner_resume.pdf
+      - text: "· votes: 15/14 · file:"
+      - code [ref=f1e44]: 183471938003_192417581003_Matthew_Okner_resume.pdf
+  - generic [ref=f1e45]:
+    - heading "#3 Rishiraj Girmal — 14/15 A2 B3 C3 D3 E3 F0" [level=3] [ref=f1e46]:
+      - text: "#3 Rishiraj Girmal — 14/15"
+      - generic "A" [ref=f1e47]: A2
+      - generic "B" [ref=f1e48]: B3
+      - generic "C" [ref=f1e49]: C3
+      - generic "D" [ref=f1e50]: D3
+      - generic "E" [ref=f1e51]: E3
+      - generic "F" [ref=f1e52]: F0
+    - paragraph [ref=f1e53]: UMass MS CS May 2027; QLoRA post-training with benchmark gains, ICML workshop paper, Microsoft safety/interp externship, 2yr Barclays SWE.
+    - paragraph [ref=f1e54]:
+      - strong [ref=f1e55]: "Evidence:"
+      - text: "A: \"Boosted privacy scores by up to +25.21 via QLoRA fine-tuning... 5 open-weight models (7B–70B) with >95% utility retention\" — real post-training with benchmark, but privacy behavior not capability (tool-use/reasoning/codegen), so 2, flag borderline. B: \"PII-CoT-Bench, the first benchmark... 350 annotated samples\"; \"HarmBench... ~20K LLM-judged responses\"; agentic search service. C: Barclays production pipelines, \"FastAPI, asyncio... SSE\", GitHub repo. D: two arXiv papers, AUROC 0.86, quantified results. E: HarmBench, SAE/Gemma Scope interpretability, prompt injection categories."
+    - group [ref=f1e56]:
+      - generic [ref=f1e57]:
+        - strong [ref=f1e58]: Verification
+        - text: ": 100% of decidable claims held up. Both claimed papers exist on arXiv with Rishiraj Girmal as a genuine (middle) co-author, and the resume's technical descriptions match the papers closely; the GitHub project is real and matches its claimed stack, and the Barclays role is corroborated by third-party data. Two soft spots: the ICML 2026 AIWILD workshop acceptance could not be publicly confirmed (preprint-only as far as the web shows), and the 'Microsoft Research Extern' role is a UMass-side collaboration with Microsoft co-authors rather than a verifiable Microsoft position. No fabrication suspected; the resume slightly over-personalizes team work and polishes one equivocal SAE finding, but the substance checks out."
+    - paragraph [ref=f1e59]:
+      - link "resume" [ref=f1e60] [cursor=pointer]:
+        - /url: resumes/183481979003_192427689003_Rishiraj_Girmal_Resume.pdf
+      - text: "· votes: 15/14 · file:"
+      - code [ref=f1e61]: 183481979003_192427689003_Rishiraj_Girmal_Resume.pdf
+  - generic [ref=f1e62]:
+    - heading "#4 Aditi Kumaresan — 14/15 A2 B3 C3 D3 E3 F0" [level=3] [ref=f1e63]:
+      - text: "#4 Aditi Kumaresan — 14/15"
+      - generic "A" [ref=f1e64]: A2
+      - generic "B" [ref=f1e65]: B3
+      - generic "C" [ref=f1e66]: C3
+      - generic "D" [ref=f1e67]: D3
+      - generic "E" [ref=f1e68]: E3
+      - generic "F" [ref=f1e69]: F0
+    - paragraph [ref=f1e70]: "CMU MS IIS Dec 2027; DeepMind pre-doc: ProEval ICML '26 eval framework, RLHF reward design, LoRA pipeline for 12 LLMs."
+    - paragraph [ref=f1e71]:
+      - strong [ref=f1e72]: "Evidence:"
+      - text: "A: \"reference-guided critique reward signal for RLHF fine-tuning\"; \"LoRA fine-tuning+evaluation pipeline for 12 LLMs using PEFT\" (alignment/safety, not capability benchmark gain → 2, borderline). B: ProEval \"reduced evaluation cost by 65x...16 LLMs/VLMs\"; \"agentic, information-theoretic evaluation framework\". C: \"Prometheus–Grafana...GitLab CI/CD\"; \"production-ready RAG chat pipeline on Google Cloud\". D: ICML '26, EMNLP '24, 1st-author AAAI submission; \"1 of 12 from 30,000\". E: SEAHateCheck hate-speech benchmark; activation patching/steering vectors."
+    - group [ref=f1e73]:
+      - generic [ref=f1e74]:
+        - strong [ref=f1e75]: Verification
+        - text: ": 100% of decidable claims held up. Every load-bearing claim checks out: the ICML '26 ProEval paper (with DeepMind's Zi Wang, code under the google-deepmind org), main-conference EMNLP '24 co-first authorship (equal-contribution footnote confirmed), ACM MM '23 MATK, and a TALLIP-accepted SEAHateCheck paper are all real with her as a named author, and the GDM predoc affiliation is corroborated by DeepMind's own publications page. Minor inflation only: the SEAHateCheck co-first asterisk could not be corroborated (she is 2nd author) and ProEval bullets cite the best-case ends of the paper's reported ranges. No fabrication indicators; this is a genuinely strong, verifiable research resume."
+    - paragraph [ref=f1e76]:
+      - link "resume" [ref=f1e77] [cursor=pointer]:
+        - /url: resumes/183500418003_192446182003_Aditi_Kumaresan_Resume.pdf
+      - text: "· votes: 14/14 · file:"
+      - code [ref=f1e78]: 183500418003_192446182003_Aditi_Kumaresan_Resume.pdf
+  - generic [ref=f1e79]:
+    - heading "#5 Rustom Murgai Dubash — 14/15 A1 B3 C3 D3 E3 F1" [level=3] [ref=f1e80]:
+      - text: "#5 Rustom Murgai Dubash — 14/15"
+      - generic "A" [ref=f1e81]: A1
+      - generic "B" [ref=f1e82]: B3
+      - generic "C" [ref=f1e83]: C3
+      - generic "D" [ref=f1e84]: D3
+      - generic "E" [ref=f1e85]: E3
+      - generic "F" [ref=f1e86]: F1
+    - paragraph [ref=f1e87]:
+      - text: UPenn MSE (May 2028) / Haverford 2027; WebSci first author, agent+eval harness work, HyenaDNA 12x context, no LLM post-training
+      - generic [ref=f1e88]: no-LLM-post-training
+      - generic [ref=f1e89]: probe-AI-leverage
+    - paragraph [ref=f1e90]:
+      - strong [ref=f1e91]: "Evidence:"
+      - text: "A: \"Designed Transformer sequence models in PyTorch ... on genomic sequence data\" — pretraining non-LLM, caps at 1; no SFT/LoRA/RL. B: \"scored 63.75% on a blind-judged n=80 LOCOMO holdout against mem0's 61.7% on the identical harness\"; \"Benchmark automated cell-type annotation (SingleR, Garnett...)\"; MCP server + \"tool-calling orchestration\". C: \"custom MCP server on the client's VM\", FastAPI/Docker/Kubernetes/GitHub Actions, \"40+ microservice platform\". D: \"first-author study ... WebSci '26\"; \"extending context 12x ... no loss in next-token accuracy\"; TA for 80+ students. E: \"Self-Promotion in LLM Recommendations\"; \"pre-registered disguised-fact poisoning attack from 98.7% to 0%\"; Landlock/seccomp sandbox. F: no shipping-velocity-with-AI-tools evidence."
+    - group [ref=f1e92]:
+      - generic [ref=f1e93]:
+        - strong [ref=f1e94]: Verification
+        - text: ": 100% of decidable claims held up. Every load-bearing claim checked out: the WebSci '26 paper is real with him as first of two authors at a main conference, and the memsub repo is genuine code with a real week-long commit history whose README numbers match the resume line for line, caveats included. The three orgs (ContinuServe, Wan Lab UNMC, Equitech Futures ADI) all exist and do what he says they do, though internal impact figures ($2M deal, 97% accuracy) are uncheckable. No fabrication indicators; soft spots are the unevidenced 12x-context result from the Mathieson Lab work and two projects (Wayside, Nightshift) with no public artifacts - worth asking him to demo those in an interview."
+    - paragraph [ref=f1e95]:
+      - link "resume" [ref=f1e96] [cursor=pointer]:
+        - /url: resumes/183576356003_192523193003_DubashResumeInternJuly2026.docx
+      - text: "· votes: 15/13 · file:"
+      - code [ref=f1e97]: 183576356003_192523193003_DubashResumeInternJuly2026.docx
+  - generic [ref=f1e98]:
+    - heading "#6 Varun Sunkaraneni — 13/15 A2 B3 C3 D3 E2 F0" [level=3] [ref=f1e99]:
+      - text: "#6 Varun Sunkaraneni — 13/15"
+      - generic "A" [ref=f1e100]: A2
+      - generic "B" [ref=f1e101]: B3
+      - generic "C" [ref=f1e102]: C3
+      - generic "D" [ref=f1e103]: D3
+      - generic "E" [ref=f1e104]: E2
+      - generic "F" [ref=f1e105]: F0
+    - paragraph [ref=f1e106]:
+      - text: TAMU BS CS May 2028; built LLM pentesting eval platform (500+ runs), SWE-bench harness (67→76.4%), NeurIPS co-first submission, LoRA research.
+      - generic [ref=f1e107]: amazon-role-is-incoming-not-completed
+      - generic [ref=f1e108]: neurips-2026-is-a-submission-not-acceptance
+      - generic [ref=f1e109]: probe-AI-leverage
+    - paragraph [ref=f1e110]:
+      - strong [ref=f1e111]: "Evidence:"
+      - text: "A: \"Spectral LoRA... outperforming uniform LoRA... across GPT-2 Small and Medium\"; transformer from scratch w/ ablations — no TRL/RL/multi-GPU, so 2. B: \"500+ scored agent runs... deterministic differential oracle\"; \"491-task SWE-bench Verified... 67.0% to 76.4%\". C: \"Dockerized sandboxes on 256-core servers\"; \"schema-validated REST endpoints and async job queues\". D: \"Co-first author, NeurIPS 2026 submission (arXiv:2605.14163)\"; ablations, one-variable experiments. E: pentesting agent eval, \"benchmark-contamination controls\", verified exploit replay."
+    - group [ref=f1e112]:
+      - generic [ref=f1e113]:
+        - strong [ref=f1e114]: Verification
+        - text: ": 100% of decidable claims held up. The candidate's central claim checks out strongly: he is first-listed co-first author (equal-contribution footnote) on a real arXiv paper with MIT's Tomaso Poggio and TAMU's Tomer Galanti, and the paper's headline result matches his resume verbatim; the TAMU Deep Learning Fundamentals Lab and Cobalt Labs both exist and do what he describes. GitHub (V-Sun) shows real, non-forked supporting code, including a Qwen orchestration suite corroborating the paper work, though the RaceJudge public repo is partly stubbed and the Spectral LoRA project has no public trace. Main caution for HR: the NeurIPS 2026 line is a submission (preprint-only today), and the Cobalt/Amazon internal numbers are unverifiable — but nothing suggests fabrication."
+    - paragraph [ref=f1e115]:
+      - link "resume" [ref=f1e116] [cursor=pointer]:
+        - /url: resumes/183426393003_192371776003_Varun_Sunkaraneni_-_ML_Intern.pdf
+      - text: "· votes: 14/13 · file:"
+      - code [ref=f1e117]: 183426393003_192371776003_Varun_Sunkaraneni_-_ML_Intern.pdf
+  - generic [ref=f1e118]:
+    - heading "#7 Abhilasha Senapati — 13/15 A2 B3 C3 D3 E2 F0" [level=3] [ref=f1e119]:
+      - text: "#7 Abhilasha Senapati — 13/15"
+      - generic "A" [ref=f1e120]: A2
+      - generic "B" [ref=f1e121]: B3
+      - generic "C" [ref=f1e122]: C3
+      - generic "D" [ref=f1e123]: D3
+      - generic "E" [ref=f1e124]: E2
+      - generic "F" [ref=f1e125]: F0
+    - paragraph [ref=f1e126]:
+      - text: UMass MSCS May-2027; 3yr Microsoft SWE, production multi-agent system; COLM workshop LoRA+DPO hallucination paper with rigorous ablations
+      - generic [ref=f1e127]: probe-AI-leverage
+    - paragraph [ref=f1e128]:
+      - strong [ref=f1e129]: "Evidence:"
+      - text: "A: \"Trained a head-sliced LoRA adapter...DPO-style contrastive objective; Reduced CHAIRs 0.370→0.230\" (hallucination/faithfulness on VLM, not capability targets — capped at 2). B: \"multi-agent quote-to-contract...AutoGen\"; \"automated evaluation pipeline...LLM-as-judge rubric scoring\". C: \"Owned Azure Service Bus messaging across 15+ upstream systems; REST, GraphQL, OData APIs\". D: \"layer-matched random-head LoRA control; p<0.001; object recall 0.78→0.70 tradeoff\". E: \"attention-head-level intervention for hallucination reduction\" (interpretability). F: tool list only, no artifact."
+    - group [ref=f1e130]:
+      - generic [ref=f1e131]:
+        - strong [ref=f1e132]: Verification
+        - text: ": 100% of decidable claims held up. No fabrication was found, but little could be positively confirmed: the COLM 2026 Actionable Interpretability Workshop is real and its July 24 notification date makes the just-accepted paper claim plausible (a named co-author is a verifiable UMass MSCS student), yet the paper itself has no public record anywhere yet. The Microsoft employment is weakly corroborated by a 2023-vintage GitHub account named 'absenapati_microsoft', though one tooling claim (Microsoft Agent Framework before its Oct 2025 release) is anachronistic. Both personal projects are unlinked with zero public code, so the resume's strongest technical bullets are entirely self-reported; recommend asking for the paper PDF/OpenReview link and project repos at interview."
+    - paragraph [ref=f1e133]:
+      - link "resume" [ref=f1e134] [cursor=pointer]:
+        - /url: resumes/183442275003_192387731003_Abhilasha_Senapati_AIEngg_1_.pdf
+      - text: "· votes: 15/13 · file:"
+      - code [ref=f1e135]: 183442275003_192387731003_Abhilasha_Senapati_AIEngg_1_.pdf
+  - generic [ref=f1e136]:
+    - heading "#8 Timothy Ng — 13/15 A1 B3 C3 D3 E3 F0" [level=3] [ref=f1e137]:
+      - text: "#8 Timothy Ng — 13/15"
+      - generic "A" [ref=f1e138]: A1
+      - generic "B" [ref=f1e139]: B3
+      - generic "C" [ref=f1e140]: C3
+      - generic "D" [ref=f1e141]: D3
+      - generic "E" [ref=f1e142]: E3
+      - generic "F" [ref=f1e143]: F0
+    - paragraph [ref=f1e144]:
+      - text: Berkeley EECS BS May 2028; BAIR LLM red-teaming researcher, transformer-from-scratch ablation study, RAG eval framework, two SWE internships.
+      - generic [ref=f1e145]: "no-post-training-experience: trained LMs from scratch but no SFT/LoRA/RL post-training"
+      - generic [ref=f1e146]: probe-AI-leverage
+    - paragraph [ref=f1e147]:
+      - strong [ref=f1e148]: "Evidence:"
+      - text: "A: trained 33M decoder LMs, \"31.2 sacreBLEU\", vLLM 72B serving — but no SFT/LoRA/RL post-training, caps at 1. B: \"LLM-as-judge system...backtested on 69 WildChat\"; \"benchmarking 57 retrieval strategies\"; adversarial multi-agent red-teaming. C: \"REST API\", \"cohesive CI pipeline\", Electron port, full-stack Next.js/Supabase. D: \"+27.1 BLEU\", \"bootstrap CIs\", controlled token-matched ablations. E: \"red-team LLM safety features driven by a process reward model\" at BAIR."
+    - group [ref=f1e149]:
+      - generic [ref=f1e150]:
+        - strong [ref=f1e151]: Verification
+        - text: ": 90% of decidable claims held up. Timothy Ng's load-bearing claims check out well: both named BAIR/Simons Institute advisors (Ghosh, Gatmiry, under Bin Yu) and Eunice Yiu are real Berkeley researchers, both internship companies (Quikturn, AstraBreeze) exist and do exactly what the resume describes, and his GitHub transformer-reproduction repo matches the resume's numbers (31.2 BLEU, RAdam +27.1 fix, four-upgrade ablation) line-for-line. Mild inflation only: 'Built SmartReply' overstates his role in a founder-built product, and the RAPTOR/SolidChess projects plus the 72B/H200-scale red-teaming claims lack public evidence. No fabrication suspected; the verifiable evidence is consistent with an honest, technically strong sophomore.</verification_summary> </invoke>"
+    - paragraph [ref=f1e152]:
+      - link "resume" [ref=f1e153] [cursor=pointer]:
+        - /url: resumes/183458477003_192404028003_NgTimothy.pdf
+      - text: "· votes: 15/13 · file:"
+      - code [ref=f1e154]: 183458477003_192404028003_NgTimothy.pdf
+  - generic [ref=f1e155]:
+    - heading "#9 Osama Zafar — 13/15 A2 B3 C2 D3 E3 F0" [level=3] [ref=f1e156]:
+      - text: "#9 Osama Zafar — 13/15"
+      - generic "A" [ref=f1e157]: A2
+      - generic "B" [ref=f1e158]: B3
+      - generic "C" [ref=f1e159]: C2
+      - generic "D" [ref=f1e160]: D3
+      - generic "E" [ref=f1e161]: E3
+      - generic "F" [ref=f1e162]: F0
+    - paragraph [ref=f1e163]: CS PhD (CWRU, ongoing); multi-turn LLM agent eval harness (3,000+ interactions), RLHF/DPO/PPO pipelines, first-author NSPW 2026 safety paper.
+    - paragraph [ref=f1e164]:
+      - strong [ref=f1e165]: "Evidence:"
+      - text: "A: \"RLHF Reproduction... reward model trained from preference pairs, policy aligned via DPO and PPO\"; PPO adversarial-policy attacker — but no benchmark-measured capability gain, no TRL/DeepSpeed/vLLM. B: \"stateful, multi-turn evaluation harness for LLM agents (five... models, 3,000+ interactions)\"; \"300-case benchmark (3,000 evaluations)\". C: \"containerized science gateway... on production HPC clusters\"; AWS Nitro Enclaves. D: NSPW 2026 accepted first-author; ESORICS 2025; AI4ALL instructor. E: threat models, prompt-injection mitigations, red-teaming, PII exfiltration defenses."
+    - group [ref=f1e166]:
+      - generic [ref=f1e167]:
+        - strong [ref=f1e168]: Verification
+        - text: ": 100% of decidable claims held up. Identity and core record check out: Osama Zafar is a real CWRU PhD student under Erman Ayday with a verified first-author ESORICS 2025 paper, a first-author arXiv paper matching the NSPW 2026 claim (acceptance itself not yet publicly listed), and a confirmed TACC/SGX3 summer 2025 internship with published output. Main soft spots are inflation at the edges, not fabrication: the GitHub profile contains only old undergrad projects with no code backing the RLHF/PPO 'Selected Projects', the TACC 'Fellow' title is really an SGX3 internship, and half the publication list is under submission. Strong on privacy/security research credentials; the LLM/RL-alignment engineering depth the resume leads with is largely self-attested and worth probing in interview."
+    - paragraph [ref=f1e169]:
+      - link "resume" [ref=f1e170] [cursor=pointer]:
+        - /url: resumes/183480092003_192425792003_Resume_Google.pdf
+      - text: "· votes: 13/13 · file:"
+      - code [ref=f1e171]: 183480092003_192425792003_Resume_Google.pdf
+  - generic [ref=f1e172]:
+    - heading "#10 Keiichi Taketsuna — 13/15 A3 B3 C3 D3 E1 F0" [level=3] [ref=f1e173]:
+      - text: "#10 Keiichi Taketsuna — 13/15"
+      - generic "A" [ref=f1e174]: A3
+      - generic "B" [ref=f1e175]: B3
+      - generic "C" [ref=f1e176]: C3
+      - generic "D" [ref=f1e177]: D3
+      - generic "E" [ref=f1e178]: E1
+      - generic "F" [ref=f1e179]: F0
+    - paragraph [ref=f1e180]:
+      - text: UPenn BSE AI, May 2028; post-trained Llama-3.2-1B for function calling (+23-50 BFCL, SFT/DPO/GRPO ablation); shipped multi-agent systems.
+      - generic [ref=f1e181]: probe-AI-leverage
+    - paragraph [ref=f1e182]:
+      - strong [ref=f1e183]: "Evidence:"
+      - text: "A: \"Post-trained Llama-3.2-1B for function calling (LoRA SFT on xLAM), improving BFCL v4 by +23-50 points\"; \"Compared supervised, DPO, and GRPO\". B: \"multi-agent pipeline...raising eval ~33%\"; \"LangGraph (relevance gate, self-correction...)\"; \"+10% NDCG\". C: \"REST/SSE APIs...React/Vercel, FastAPI, serverless-GPU on Modal\"; \"beta with 100+ organizations\". D: quantified results throughout; \"1st at the intern hackathon\". E: only \"targeted refusal training\" + Ethical Algorithm Design course. F: tools listed only."
+    - group [ref=f1e184]:
+      - generic [ref=f1e185]:
+        - strong [ref=f1e186]: Verification
+        - text: ": 100% of decidable claims held up. All six load-bearing claims check out or are consistent with public evidence: the two flagship AI projects (Llama function-calling post-training and the deployed financial research agent) exist as substantive, well-documented own repos whose numbers match the resume, and all three employers (Farsight AI, RESTAR, NPO eboard) are real companies doing exactly the described work. No fabrication suspected; main caveats are a date mismatch on the Penne team app (spring vs fall 2025, and he was the secondary contributor), repos uploaded as short commit bursts rather than visible sustained history, and unverifiable internal metrics at Farsight/Eboard. Overall a strongly corroborated resume for an intern candidate."
+    - paragraph [ref=f1e187]:
+      - link "resume" [ref=f1e188] [cursor=pointer]:
+        - /url: resumes/183487765003_192433490003_Keiichi_Taketsuna_Resume_August_2026_2_.pdf
+      - text: "· votes: 13/13 · file:"
+      - code [ref=f1e189]: 183487765003_192433490003_Keiichi_Taketsuna_Resume_August_2026_2_.pdf
+  - generic [ref=f1e190]:
+    - heading "#11 Oliver Chou — 13/15 A1 B3 C3 D3 E3 F0" [level=3] [ref=f1e191]:
+      - text: "#11 Oliver Chou — 13/15"
+      - generic "A" [ref=f1e192]: A1
+      - generic "B" [ref=f1e193]: B3
+      - generic "C" [ref=f1e194]: C3
+      - generic "D" [ref=f1e195]: D3
+      - generic "E" [ref=f1e196]: E3
+      - generic "F" [ref=f1e197]: F0
+    - paragraph [ref=f1e198]:
+      - text: CMU MS AI-Security (May 2028); EMNLP 2025 paper, agentic security OSS, two hackathon wins; only QLoRA price-prediction fine-tune for A.
+      - generic [ref=f1e199]: probe-A-post-training-depth
+      - generic [ref=f1e200]: probe-AI-leverage
+    - paragraph [ref=f1e201]:
+      - strong [ref=f1e202]: "Evidence:"
+      - text: "A: \"Fine-tuned Llama 3.1-8B with PEFT/QLoRA for Amazon product-price prediction\" — not capability post-training, no benchmark gain. B: \"agentic network-traffic incident reporter using LangGraph and Llama 3.1-8B\"; \"MCP server exposing sandboxed containers to LLM agents\". C: Adobe intern \"Apollo federation connectors\"; \"Bun/TypeScript CLI, Go control-plane in Docker, Rust Merkle-tree ledger\"; K8s GitOps. D: \"EMNLP 2025 (Main Conference)\"; \"211x speedup\"; two 1st-place wins. E: \"firewall for AI coding agents... blocking destructive shell commands\"; \"jailbreak detection\"; watermarking."
+    - group [ref=f1e203]:
+      - generic [ref=f1e204]:
+        - strong [ref=f1e205]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing claims check out: a genuine EMNLP 2025 main-conference paper (3rd author, honestly listed), a first-author published MDPI JSAN journal paper, a verified first-place SVCC 2025 CyberWarrior team win, and a real multi-language OpenAgentLock repo with sustained commits. Minor caveats: OpenAgentLock is co-built (he is the #2 of two contributors) and the A10 hackathon Grand Prize is self-attested with a matching repo but no independent announcement. No fabrication signals; the resume if anything understates the JSAN paper (published, first author)."
+    - paragraph [ref=f1e206]:
+      - link "resume" [ref=f1e207] [cursor=pointer]:
+        - /url: resumes/183501249003_192447018003_Oliver_Chou_AI_Engineer_Intern.pdf
+      - text: "· votes: 14/13 · file:"
+      - code [ref=f1e208]: 183501249003_192447018003_Oliver_Chou_AI_Engineer_Intern.pdf
+  - generic [ref=f1e209]:
+    - heading "#12 Sparsh Gupta — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e210]:
+      - text: "#12 Sparsh Gupta — 12/15"
+      - generic "A" [ref=f1e211]: A1
+      - generic "B" [ref=f1e212]: B3
+      - generic "C" [ref=f1e213]: C3
+      - generic "D" [ref=f1e214]: D3
+      - generic "E" [ref=f1e215]: E2
+      - generic "F" [ref=f1e216]: F0
+    - paragraph [ref=f1e217]:
+      - text: USC MS CS Dec 2026; strong agent+eval projects (Litmus 7/8 paper repro, chess MCTS agent), LoRA pipeline, arXiv co-author.
+      - generic [ref=f1e218]: "A-task-unclear: distilgpt2 LoRA metrics (MCC/accuracy) suggest classification-style continual learning, not capability post-training"
+      - generic [ref=f1e219]: probe-AI-leverage
+    - paragraph [ref=f1e220]:
+      - strong [ref=f1e221]: "Evidence:"
+      - text: "A: \"LoRA trainer... 82.65% accuracy in one epoch (distilgpt2)\" — task looks classifier-like, not capability post-training. B: \"LLM as policy and evaluator inside MCTS\"; Litmus \"reproducing 7 of 8 benchmark papers\", \"bounded self-repair loop\". C: \"Containerized... Docker... AWS Lambda and ECS\"; Kafka services; \"56K+ MAU\". D: \"Ran ablation studies... hard-negative mining largest contributor\"; \"Co-author... arXiv:2506.08098\". E: HaluGuard hallucination resistance; \"survey of LLM watermarking and distillation privacy risks\"."
+    - group [ref=f1e222]:
+      - generic [ref=f1e223]:
+        - strong [ref=f1e224]: Verification
+        - text: ": 100% of decidable claims held up. Core claims largely check out: the arXiv paper is real with the candidate as a (middle, 6th/7) co-author, Litmus and HaluGuard are substantive original repos matching their resume descriptions, and Endgame.ai and USC ISI INK Lab both exist as described. Two soft spots: the Infinitune \"distributed streaming fine-tuning\" project is not publicly on GitHub despite a linked badge, and the EleutherAI SOAR bullet claims he \"built\" an algorithm that lives in a third-party repo where he has no visible commits. No fabrication suspected, but ask him to walk through Infinitune and his SOAR contribution live in an interview."
+    - paragraph [ref=f1e225]:
+      - link "resume" [ref=f1e226] [cursor=pointer]:
+        - /url: resumes/159504541003_192393576003_Sparsh_Gupta_Resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e227]: 159504541003_192393576003_Sparsh_Gupta_Resume.pdf
+  - generic [ref=f1e228]:
+    - heading "#13 Bodla Krishna Vamshi — 12/15 A1 B3 C2 D3 E3 F0" [level=3] [ref=f1e229]:
+      - text: "#13 Bodla Krishna Vamshi — 12/15"
+      - generic "A" [ref=f1e230]: A1
+      - generic "B" [ref=f1e231]: B3
+      - generic "C" [ref=f1e232]: C2
+      - generic "D" [ref=f1e233]: D3
+      - generic "E" [ref=f1e234]: E3
+      - generic "F" [ref=f1e235]: F0
+    - paragraph [ref=f1e236]:
+      - text: UMD CS PhD (started Jan 2026); MCTS agentic theorem prover evaluated on 4 benchmarks, reward-hacking characterization, multiple first-author papers.
+      - generic [ref=f1e237]: no-LLM-post-training
+      - generic [ref=f1e238]: probe-AI-leverage
+      - generic [ref=f1e239]: publications-under-review-not-accepted
+    - paragraph [ref=f1e240]:
+      - strong [ref=f1e241]: "Evidence:"
+      - text: "A: only non-LLM training (\"RL agent trajectories...six Gym environments\", CV models); hallucination work \"without requiring model fine-tuning\". B: \"three-role MCTS Agentic framework...Evaluated across four benchmarks...pass@16 to pass@256\". C: \"deployed optimized ensemble models on AWS EC2 for real-time inference\"; Docker/Flask listed. D: first-author papers (EMNLP/AACL under review, ACM MM workshop published), \"3.4x lower sampling budget\", hackathon 3rd/100. E: \"reward hacking...amplifies compiler exploit behavior by up to 76%\", hallucination detection, Grad-CAM interpretability."
+    - group [ref=f1e242]:
+      - generic [ref=f1e243]:
+        - strong [ref=f1e244]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing publication claims check out: the candidate is genuinely first author on three arXiv preprints (hallucination detection, code-generation interpretability, interpretable RL) co-authored with Prof. Haizhao Yang at UMD, confirming the research-assistant relationship, and is a middle author on a real ACM MM 2023 workshop survey exactly as stated. The main caveat is that nothing is accepted at a main venue yet — the portfolio is preprints under review plus one workshop paper — and the detailed theorem-prover bullet has no public artifact to verify. No fabrication suspected; minor sloppiness (duplicate DOI, malformed IEEE DOI) but the resume is otherwise honest about author positions and venues."
+    - paragraph [ref=f1e245]:
+      - link "resume" [ref=f1e246] [cursor=pointer]:
+        - /url: resumes/183431938003_192377352003_resume_c1.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e247]: 183431938003_192377352003_resume_c1.pdf
+  - generic [ref=f1e248]:
+    - heading "#14 Kartikeya Mandhar — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e249]:
+      - text: "#14 Kartikeya Mandhar — 12/15"
+      - generic "A" [ref=f1e250]: A1
+      - generic "B" [ref=f1e251]: B3
+      - generic "C" [ref=f1e252]: C3
+      - generic "D" [ref=f1e253]: D3
+      - generic "E" [ref=f1e254]: E2
+      - generic "F" [ref=f1e255]: F0
+    - paragraph [ref=f1e256]:
+      - text: UCLA MSBA Dec 2026; QLoRA fine-tune of Qwen2.5-1.5B deployed, built open-source agent benchmark (LedgerBench), strong production MLOps/SWE record.
+      - generic [ref=f1e257]: degree-is-business-analytics-not-CS
+      - generic [ref=f1e258]: probe-AI-leverage
+      - generic [ref=f1e259]: publications-in-minor-journal
+    - paragraph [ref=f1e260]:
+      - strong [ref=f1e261]: "Evidence:"
+      - text: "A: \"Qwen2.5-1.5B, QLoRA, PyTorch... separates deterministic facts from generated voice\" — real LoRA fine-tune but voice/faithfulness, no benchmark-measured capability gain, capped at 1. B: \"LedgerBench... open-source benchmark scoring agents on adversarial traps\"; \"10-agent system (FastAPI, React, TypeScript, Claude)\"; \"read-only Oracle MCP server\". C: \"CI/CD for 15+ production models with MLflow\"; \"inference API... FastAPI\"; Docker, AWS. D: \"Doubled model accuracy, 29% to 58%... ablation... walk-forward backtesting\"; two peer-reviewed papers. E: \"red-team report\"; \"adversarial traps\"; \"approved-query allowlist... audit logging\"."
+    - group [ref=f1e262]:
+      - generic [ref=f1e263]:
+        - strong [ref=f1e264]: Verification
+        - text: ": 100% of decidable claims held up. Every load-bearing claim checks out: both 2024 papers exist with Crossref DOIs and he is sole author (though the journal, JERR, is a low-tier pay-to-publish outlet, which the resume does not misrepresent), all four named projects are real original repos whose content matches the resume descriptions, and the Cover Drive fine-tuned-model demo is live and working. The projects are short-burst solo builds with zero external adoption, and internship metrics are unverifiable, but nothing is inflated or fabricated. Honest, well-linked resume; the genuine fine-tuning + eval-benchmark work is directly relevant to an AI Engineer intern role."
+    - paragraph [ref=f1e265]:
+      - link "resume" [ref=f1e266] [cursor=pointer]:
+        - /url: resumes/183439841003_192385295003_Kartikeya_Mandhar_Resume_Postman.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e267]: 183439841003_192385295003_Kartikeya_Mandhar_Resume_Postman.pdf
+  - generic [ref=f1e268]:
+    - heading "#15 Gauri Prabhakar — 12/15 A2 B2 C3 D3 E2 F0" [level=3] [ref=f1e269]:
+      - text: "#15 Gauri Prabhakar — 12/15"
+      - generic "A" [ref=f1e270]: A2
+      - generic "B" [ref=f1e271]: B2
+      - generic "C" [ref=f1e272]: C3
+      - generic "D" [ref=f1e273]: D3
+      - generic "E" [ref=f1e274]: E2
+      - generic "F" [ref=f1e275]: F0
+    - paragraph [ref=f1e276]:
+      - text: MS AI Northeastern Aug 2027; GRPO-post-trained Qwen2.5-0.5B on GSM8K (31%→49%), strong SWE background, VLM red-teaming eval suite.
+      - generic [ref=f1e277]: many-precise-percentage-claims-unverifiable
+      - generic [ref=f1e278]: probe-AI-leverage
+    - paragraph [ref=f1e279]:
+      - strong [ref=f1e280]: "Evidence:"
+      - text: "A: \"Fine-tuned Qwen2.5-0.5B via GRPO... NeMo-RL... vLLM rollout... ablated reward shaping... 31% to 49%\" — real RL post-training with benchmark gain, but small model, no multi-GPU/DeepSpeed. B: \"Responsible VLM Evaluation Suite... red-teamed... guardrails on 91% of adversarial prompts\"; RAG chatbot — evals yes, no agent tool loops. C: \"Azure DevOps CI/CD across 80+ APIs\", \"async FastAPI... 25k+ daily requests\", PyPI lib \"30,000+ downloads\". D: ablations, IEEE publication, TA CS6120, OSS. E: red-teaming bias/privacy/guardrails."
+    - group [ref=f1e281]:
+      - generic [ref=f1e282]:
+        - strong [ref=f1e283]: Verification
+        - text: ": 100% of decidable claims held up. The two concrete owned artifacts check out well: the streamlit-login-auth-ui PyPI library is real, original, and exceeds the claimed 30k downloads (though the 'Streamlit team acknowledgement' could not be substantiated), and she is first author on a real (low-tier) IEEE conference paper matching the Algorithm Visualizer bullet. The main caution is that all three headline AI/ML projects (GRPO post-training, job failure analyzer, VLM evaluation) have no public trace, and her own actively-updated portfolio lists entirely different projects for the same period — worth probing in depth at interview. No fabrication detected; verified claims are accurate or slightly understated."
+    - paragraph [ref=f1e284]:
+      - link "resume" [ref=f1e285] [cursor=pointer]:
+        - /url: resumes/183449363003_192394842003_GauriPrabhakar_Resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e286]: 183449363003_192394842003_GauriPrabhakar_Resume.pdf
+  - generic [ref=f1e287]:
+    - heading "#16 Bhanu Harsha Yanamadala — 12/15 A2 B3 C2 D3 E2 F0" [level=3] [ref=f1e288]:
+      - text: "#16 Bhanu Harsha Yanamadala — 12/15"
+      - generic "A" [ref=f1e289]: A2
+      - generic "B" [ref=f1e290]: B3
+      - generic "C" [ref=f1e291]: C2
+      - generic "D" [ref=f1e292]: D3
+      - generic "E" [ref=f1e293]: E2
+      - generic "F" [ref=f1e294]: F0
+    - paragraph [ref=f1e295]:
+      - text: MS CS Northeastern May 2027; QLoRA-tuned Qwen2.5 for JSON playbooks, published ACL-workshop eval paper, TAT-QA +12.1% multi-agent RAG.
+      - generic [ref=f1e296]: probe-AI-leverage
+      - generic [ref=f1e297]: vote-split-3-votes
+    - paragraph [ref=f1e298]:
+      - strong [ref=f1e299]: "Evidence:"
+      - text: "A: \"Fine-tuned Qwen2.5 LLM using QLoRA (4-bit PEFT) and Bayesian sweeps... 54-metric evaluation pipeline\" — capability tuning but no clear benchmark gain, no TRL/DeepSpeed/vLLM. B: \"12.1% relative gain over zero-shot baselines on TAT-QA\"; \"16-metric LLM evaluation framework\"; RAGAS CI regression tests. C: \"role-based authorization across Next.js, FastAPI, PostgreSQL\"; Docker, GCP, Airflow. D: \"ranked 3rd at LT-EDI@ACL 2026... paper published\"; 3rd Place MLOps Expo; Kaggle Top 20%. E: counter-narratives vs hate speech, Detoxify, hallucination reduction. F: only \"Cursor\" keyword."
+    - group [ref=f1e300]:
+      - generic [ref=f1e301]:
+        - strong [ref=f1e302]: Verification
+        - text: ": 100% of decidable claims held up. Strong verification: the headline research claim checks out — the ACL Anthology findings paper for the LT-EDI 2026 shared task confirms team NEUNI (candidate as 2nd author, lab PI as senior author) ranked 3rd in both English and Tamil counter-narrative generation using exactly the DSPy prompt-optimization method the resume describes. GitHub repos (AutoMend, GUARD-RAG) are real, non-forked, and their code/READMEs match the resume's tech-stack and metric claims in detail; InsightX Lab and Aosenuma both exist. Minor caveats only: the publication is a workshop system paper where the candidate is a middle author of a team effort, and the MLOps Expo 3rd place and Kaggle top-20% are self-reported and unconfirmable — no fabrication signals found."
+    - paragraph [ref=f1e303]:
+      - link "resume" [ref=f1e304] [cursor=pointer]:
+        - /url: resumes/183449850003_192395330003_YBhanuHarsha_Resume.pdf
+      - text: "· votes: 14/11/11 · file:"
+      - code [ref=f1e305]: 183449850003_192395330003_YBhanuHarsha_Resume.pdf
+  - generic [ref=f1e306]:
+    - heading "#17 Justin Jiang — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e307]:
+      - text: "#17 Justin Jiang — 12/15"
+      - generic "A" [ref=f1e308]: A1
+      - generic "B" [ref=f1e309]: B3
+      - generic "C" [ref=f1e310]: C3
+      - generic "D" [ref=f1e311]: D3
+      - generic "E" [ref=f1e312]: E2
+      - generic "F" [ref=f1e313]: F0
+    - paragraph [ref=f1e314]:
+      - text: CMU CS/ML BS May 2028; built hallucination benchmark + Anthropic tool-runner agent migration (-92%), IEEE primary author, strong AWS/Go infra
+      - generic [ref=f1e315]: no-LLM-post-training (only image-model LoRA + CV training)
+      - generic [ref=f1e316]: probe-AI-leverage
+    - paragraph [ref=f1e317]:
+      - strong [ref=f1e318]: "Evidence:"
+      - text: "A: \"Tuned Stable Diffusion using Low-Rank Adaptation (LoRA)\" + U-Net/YOLO — image models only, caps at 1. B: \"building a representative benchmark... migrating orchestration to Anthropic's SDK tool runner, reducing measured hallucinations by 92%\"; A/B testing across agent implementations. C: \"AWS ECS execution sandbox\", \"Kotlin to Go, reducing memory footprint by 54%\", FastAPI platform 27K users. D: \"Primary Author; Published... IEEE\"; ranked 3rd/316 malloc. E: \"discovered and demonstrated vulnerabilities\"; LoRA to evade detection; sandboxing malicious submissions; PHI redaction. F: Claude Code/Codex listed only."
+    - group [ref=f1e319]:
+      - generic [ref=f1e320]:
+        - strong [ref=f1e321]: Verification
+        - text: ": 100% of decidable claims held up. Every load-bearing claim checks out: the IEEE ICAIC 2025 paper exists on IEEE Xplore and arXiv with Justin Jiang as sole author and the abstract matches the resume description; the GitHub profile is real with original repos and org memberships that independently corroborate the TrueImage Labs and ACM@CMU roles; MCG Health's Seattle SWE intern program matches the claimed dates. Calibration notes: ICAIC is a minor IEEE conference (not top-tier), internal internship metrics (92% hallucination cut, $60K savings) are unverifiable, and the personal project repos are modest in scale. No fabrication signals; this resume is honest and slightly conservative (sole authorship claimed only as \"primary author\")."
+    - paragraph [ref=f1e322]:
+      - link "resume" [ref=f1e323] [cursor=pointer]:
+        - /url: resumes/183451697003_192397200003_Justin_Resume.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e324]: 183451697003_192397200003_Justin_Resume.pdf
+  - generic [ref=f1e325]:
+    - heading "#18 Bhargav Eranki — 12/15 A3 B3 C3 D2 E1 F0" [level=3] [ref=f1e326]:
+      - text: "#18 Bhargav Eranki — 12/15"
+      - generic "A" [ref=f1e327]: A3
+      - generic "B" [ref=f1e328]: B3
+      - generic "C" [ref=f1e329]: C3
+      - generic "D" [ref=f1e330]: D2
+      - generic "E" [ref=f1e331]: E1
+      - generic "F" [ref=f1e332]: F0
+    - paragraph [ref=f1e333]:
+      - text: "Berkeley BA CS/DS May 2028; rLLM maintainer: veRL GRPO/SFT post-training +10% SWE-bench, coding-agent benchmarks, multiple ML internships"
+      - generic [ref=f1e334]: many-concurrent-roles (Illumio + 2 BAIR labs + rLLM overlap
+      - generic [ref=f1e335]: verify depth of each)
+      - generic [ref=f1e336]: probe-AI-leverage
+      - generic [ref=f1e337]: verify rLLM maintainer claim on GitHub
+    - paragraph [ref=f1e338]:
+      - strong [ref=f1e339]: "Evidence:"
+      - text: "A: \"distributed GRPO/SFT training pipelines...improved SWE-bench performance by 10%\" (veRL, Modal, Tinker). B: \"coding-agent benchmarks...multi-turn rollouts, and agent trajectory evals\"; Illumio \"multi-stage evaluation pipelines...for LLM-powered security agents\". C: \"distributed event-driven system with Azure, ClickHouse...Redis...on Kubernetes\"; \"C++ benchmarking framework...80% reduction\". D: quantified results (10%, 92%, 27%, 80%), authored federated-learning paper (venue unstated), USACO Silver. E: \"adversarial attacks\" in federated learning sandbox only."
+    - group [ref=f1e340]:
+      - 'generic "Verification: 80% of decidable claims held up. Core identity checks out: real Berkeley student with a genuine GitHub, a real co-authored (4th of 9, alphabetical) Springer chapter on federated learning that matches his bullet, and an independently corroborated Illumio internship. The main red flag is the ''Maintainer, rLLM (Sky Computing Lab)'' title: the project is real but he is absent from its team page and has zero public commits/PRs — only an untouched fork — so the SWE-bench/GRPO infrastructure bullets rest on unverifiable private work. Recommend probing the rLLM and BAIR lab claims directly in interview (ask for specific PRs, advisors'' confirmation) before weighting them. claim failed verification — verify before advancing" [ref=f1e341]':
+        - strong [ref=f1e342]: Verification
+        - text: ": 80% of decidable claims held up. Core identity checks out: real Berkeley student with a genuine GitHub, a real co-authored (4th of 9, alphabetical) Springer chapter on federated learning that matches his bullet, and an independently corroborated Illumio internship. The main red flag is the 'Maintainer, rLLM (Sky Computing Lab)' title: the project is real but he is absent from its team page and has zero public commits/PRs — only an untouched fork — so the SWE-bench/GRPO infrastructure bullets rest on unverifiable private work. Recommend probing the rLLM and BAIR lab claims directly in interview (ask for specific PRs, advisors' confirmation) before weighting them."
+        - generic [ref=f1e343]: claim failed verification — verify before advancing
+    - paragraph [ref=f1e344]:
+      - link "resume" [ref=f1e345] [cursor=pointer]:
+        - /url: resumes/183473035003_192418682003_BhargavEranki_Resume.pdf
+      - text: "· votes: 14/12 · file:"
+      - code [ref=f1e346]: 183473035003_192418682003_BhargavEranki_Resume.pdf
+  - generic [ref=f1e347]:
+    - heading "#19 Masaki Allwardt — 12/15 A3 B2 C3 D3 E1 F0" [level=3] [ref=f1e348]:
+      - text: "#19 Masaki Allwardt — 12/15"
+      - generic "A" [ref=f1e349]: A3
+      - generic "B" [ref=f1e350]: B2
+      - generic "C" [ref=f1e351]: C3
+      - generic "D" [ref=f1e352]: D3
+      - generic "E" [ref=f1e353]: E1
+      - generic "F" [ref=f1e354]: F0
+    - paragraph [ref=f1e355]:
+      - text: Berkeley CS BA, Grad 2028; GRPO-fine-tuned Qwen2.5-0.5B (F1 0.17→0.87), $10k Meta OpenEnv prize, Capital One/Apple agent internships
+      - generic [ref=f1e356]: probe-AI-leverage
+    - paragraph [ref=f1e357]:
+      - strong [ref=f1e358]: "Evidence:"
+      - text: "A: \"Fine-tuned Qwen2.5-0.5B-Instruct via GRPO over 16,835 training steps... F1 from 0.17 → 0.87... Claude-powered binary reward judge\" (TRL). B: \"agentic validation platform\", \"LLM-driven orchestration engine\", Jenkins agent searching Slack/build history. C: \"CLI tool and MCP enabled automation, adopted across 3 organizations\", FastAPI, Docker. D: quantified gains throughout; $10,000 Meta OpenEnv prize; Cal Hacks Omi prize; double DQN + prioritized replay. E: \"Scalable Oversight track\" oversight environment inferring hidden agent strategies."
+    - group [ref=f1e359]:
+      - generic [ref=f1e360]:
+        - strong [ref=f1e361]: Verification
+        - text: ": 100% of decidable claims held up. The headline claim checks out: the $10k Meta OpenEnv Hackathon win (Diplomacy 'Overseer', scalable-oversight track, team of 3 Berkeley students) is independently corroborated by teammates' LinkedIn and the official PyTorch/Cerebral Valley event, and matches the resume description. The Rizzistant is a real Cal Hacks 12.0 project with a substantive FastAPI/Claude/Letta repo under his GitHub account, though the claimed Omi prize could not be confirmed on Devpost. Internships (Capital One, Apple contract, Khyron) are publicly unverifiable beyond company existence, and the public GitHub is thin — worth asking in interview for the Overseer training code and the Apple contract details."
+    - paragraph [ref=f1e362]:
+      - link "resume" [ref=f1e363] [cursor=pointer]:
+        - /url: resumes/183474375003_192420033003_Masaki_Allwardt_Resume_Unbolded_XYZ.pdf
+      - text: "· votes: 13/13 · file:"
+      - code [ref=f1e364]: 183474375003_192420033003_Masaki_Allwardt_Resume_Unbolded_XYZ.pdf
+  - generic [ref=f1e365]:
+    - heading "#20 William Han (Wai Han) — 12/15 A0 B3 C3 D3 E3 F0" [level=3] [ref=f1e366]:
+      - text: "#20 William Han (Wai Han) — 12/15"
+      - generic "A" [ref=f1e367]: A0
+      - generic "B" [ref=f1e368]: B3
+      - generic "C" [ref=f1e369]: C3
+      - generic "D" [ref=f1e370]: D3
+      - generic "E" [ref=f1e371]: E3
+      - generic "F" [ref=f1e372]: F0
+    - paragraph [ref=f1e373]:
+      - text: UIUC MS CS May 2028; core maintainer of MobileCyBench agent-security benchmark (219 PRs, CVE-2026-54318), zero model training experience.
+      - generic [ref=f1e374]: no model training experience
+      - generic [ref=f1e375]: no-post-training-experience
+      - generic [ref=f1e376]: probe-AI-leverage
+    - paragraph [ref=f1e377]:
+      - strong [ref=f1e378]: "Evidence:"
+      - text: "A: no training/fine-tuning anywhere. B: \"first end-to-end exploit runner\", \"adapters for Codex, Claude Code, and OpenCode\", \"token/cost telemetry\", fixed scoring bug \"fail-closed\". C: \"219 merged PRs\", \"Rebuilt CI... 47%\", Docker+JSON Schema, Squid sandboxes. D: \"45 to 20 minutes\", \"Reviewed 200+ contributor PRs\", paper co-author. E: \"cybersecurity benchmark... AI agents can exploit\", \"CVE-2026-54318 (CVSS 7.1)\", \"contain untrusted exploit execution\"."
+    - group [ref=f1e379]:
+      - generic [ref=f1e380]:
+        - strong [ref=f1e381]: Verification
+        - text: ": 100% of decidable claims held up. The centerpiece security claim checks out fully: Home Assistant's official advisory (GHSA-77r5-pw5w-mgj3 / CVE-2026-54318, CVSS 7.1 High) credits the candidate's GitHub handle @waihankan as the discoverer, matching the resume's description exactly. However, the MobileCyBench project itself — including the SAIL/BAIR affiliation, \"219 merged PRs,\" and \"paper co-author with Percy Liang\" — has no public repo, website, or paper anywhere, so those load-bearing claims are unverifiable (plausibly a private pre-release benchmark; the CVE work and a 128+-merged-PR GitHub badge are consistent with it being real). Recommend a brief reference or repo-access check on the MobileCyBench role before extending an offer; no fabrication is suspected."
+    - paragraph [ref=f1e382]:
+      - link "resume" [ref=f1e383] [cursor=pointer]:
+        - /url: resumes/183480259003_192425959003_Wai_Han_Resume.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e384]: 183480259003_192425959003_Wai_Han_Resume.pdf
+  - generic [ref=f1e385]:
+    - heading "#21 Sai Sandeep Kumar Vijayarao — 12/15 A2 B3 C3 D3 E1 F0" [level=3] [ref=f1e386]:
+      - text: "#21 Sai Sandeep Kumar Vijayarao — 12/15"
+      - generic "A" [ref=f1e387]: A2
+      - generic "B" [ref=f1e388]: B3
+      - generic "C" [ref=f1e389]: C3
+      - generic "D" [ref=f1e390]: D3
+      - generic "E" [ref=f1e391]: E1
+      - generic "F" [ref=f1e392]: F0
+    - paragraph [ref=f1e393]:
+      - text: MS CS Northeastern May 2027; DPO+LoRA fine-tuning with vLLM/W&B, eval harnesses, production K8s platform, IEEE paper, Swift Student Challenge winner.
+      - generic [ref=f1e394]: "A capped at 2: DPO 'alignment improvement' not tied to a named capability benchmark"
+      - generic [ref=f1e395]: probe-AI-leverage
+      - generic [ref=f1e396]: "repeated-metrics: identical 19% alignment / 3.2x throughput numbers appear in 3 separate entries (Trominosoft, Infosys, personal project) — likely one project re-described"
+    - paragraph [ref=f1e397]:
+      - strong [ref=f1e398]: "Evidence:"
+      - text: "A: \"Built one-command DPO + LoRA fine-tuning pipelines with W&B... 19% alignment improvement\"; \"INT4/INT8 quantization on 7B-parameter models via vLLM\". B: \"Evaluated on a 1000-case benchmark... 92.6% routing accuracy\"; \"evaluation harness... TruthfulQA and custom suites\". C: \"Docker/Kubernetes on GCP — load-tested to sustain 10K+ requests/day\"; \"full async test suite\". D: \"published at IEEE AISP 2024\"; \"Apple Swift Student Challenge 2026 Winner\". E: \"14-category reversible PII tokenization\"."
+    - group [ref=f1e399]:
+      - generic [ref=f1e400]:
+        - strong [ref=f1e401]: Verification
+        - text: ": 100% of decidable claims held up. Core claims check out: the IEEE AISP 2024 paper is real (though he is a middle author at a lower-tier conference, not the sole builder the bullet implies), and his GitHub is genuinely strong — 32 original, substantive repos whose metrics match the resume exactly, with sustained activity. The Swift Student Challenge 2026 win is self-reported but backed by a real, well-engineered app repo; Trominosoft exists but publicly looks like a small pharma-IT consultancy, so the production-scale claims there should be probed in interview. No fabrication suspected; the main inflation risk is authorship framing and internship substance, not invented artifacts."
+    - paragraph [ref=f1e402]:
+      - link "resume" [ref=f1e403] [cursor=pointer]:
+        - /url: resumes/183484493003_192430206003_01SaiSandeepKumarVijayaraoMaster.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e404]: 183484493003_192430206003_01SaiSandeepKumarVijayaraoMaster.pdf
+  - generic [ref=f1e405]:
+    - heading "#22 Niles Liu — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e406]:
+      - text: "#22 Niles Liu — 12/15"
+      - generic "A" [ref=f1e407]: A1
+      - generic "B" [ref=f1e408]: B3
+      - generic "C" [ref=f1e409]: C3
+      - generic "D" [ref=f1e410]: D3
+      - generic "E" [ref=f1e411]: E2
+      - generic "F" [ref=f1e412]: F0
+    - paragraph [ref=f1e413]:
+      - text: MIT BS then Harvard MS Data Science (Dec 2027); production ML/eval harness work at Starwood, OSS PyPI package, but no LLM fine-tuning.
+      - generic [ref=f1e414]: no-LLM-post-training
+      - generic [ref=f1e415]: probe-AI-leverage
+    - paragraph [ref=f1e416]:
+      - strong [ref=f1e417]: "Evidence:"
+      - text: "A: only CV training — \"Trained... StrikeNet, 79k-param 4-conv CNN... via self-distillation\" (non-LLM cap 1). B: \"multi-seed CV NDCG@10 evaluation framework\", \"offline benchmark and disagreement-adjudication harness\", \"held-out adversarial evals\". C: \"FastAPI + Flask + async workers... Kubernetes deployment\", \"pdf-strikethrough-detect (open source, MIT, PyPI + Hugging Face)\". D: \"paired sign and Wilcoxon tests\", \"noise-floor experiment\". E: \"prompt-injection... 100% injection-refusal, 4.4% false-block\"."
+    - group [ref=f1e418]:
+      - generic [ref=f1e419]:
+        - strong [ref=f1e420]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing claims verify: the flagship open-source package pdf-strikethrough-detect genuinely exists under his name on PyPI, GitHub (original, not forked), and Hugging Face, with technical details (79k-param ONNX StrikeNet CNN, 99.8% benchmark figure) matching the resume verbatim; both employers (Starwood Property Trust, Burmester & Vogel) and the ETH Zurich LAS lab with both named researchers are real and do exactly the claimed work. Two minor downgrades: his ETH advisor Ya-Ping Hsieh is a postdoc, not a professor as titled, and the OSS package has zero stars with self-reported benchmarks. No fabrication suspected; this is a high-consistency profile whose public artifacts corroborate the claimed skill level."
+    - paragraph [ref=f1e421]:
+      - link "resume" [ref=f1e422] [cursor=pointer]:
+        - /url: resumes/183486694003_192432412003_Niles_Liu_Resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e423]: 183486694003_192432412003_Niles_Liu_Resume.pdf
+  - generic [ref=f1e424]:
+    - heading "#23 Weijia Zhang — 12/15 A2 B3 C2 D3 E2 F0" [level=3] [ref=f1e425]:
+      - text: "#23 Weijia Zhang — 12/15"
+      - generic "A" [ref=f1e426]: A2
+      - generic "B" [ref=f1e427]: B3
+      - generic "C" [ref=f1e428]: C2
+      - generic "D" [ref=f1e429]: D3
+      - generic "E" [ref=f1e430]: E2
+      - generic "F" [ref=f1e431]: F0
+    - paragraph [ref=f1e432]:
+      - text: Yale MS CS (May 2028); first-author EMNLP x2, TikTok/Microsoft research intern, OpenManus-RL core contributor, LoRA/SFT hands-on
+      - generic [ref=f1e433]: inflated-metrics
+    - paragraph [ref=f1e434]:
+      - strong [ref=f1e435]: "Evidence:"
+      - text: "A: \"TextAnalysisSFT data pipeline... improved Office Scripts code-generation accuracy by 15%\"; \"50+ fine-tuning experiments using Llama-3.1... LoRA fine-tuning, and evaluation\"; B: \"ReAct agent... improve 10.5% overall f1\"; \"core contributor to OpenManus-RL\"; C: Tencent tool \"supporting 200+ partner teams\"; but \"reducing crash rate by 120%\" is impossible; D: two first-author EMNLP 2026 papers, ACL oral, 100+ citations; E: \"Mitigating the Bias Inheritance\", \"Moral Composition in Frontier LLMs\""
+    - group [ref=f1e436]:
+      - generic [ref=f1e437]:
+        - strong [ref=f1e438]: Verification
+        - text: ": 100% of decidable claims held up. Strong, largely genuine research profile: first-author SeeingEye and Every Act Has Its Price papers verified on arXiv, middle authorship on an ACL 2026 main-conference paper and an agent-failures paper confirmed, GitHub identity (CharlieDreemur) is a real OpenManus-RL contributor, and Scholar shows ~99 citations. Main soft spots: the two 'EMNLP 2026' acceptances cannot be publicly confirmed (CUADebug has no web trace), and 'core contributor' overstates 18 commits on OpenManus-RL. No fabrication suspected; resume is notably honest about author positions, and remaining gaps look like pending/unposted items rather than invention."
+    - paragraph [ref=f1e439]:
+      - link "resume" [ref=f1e440] [cursor=pointer]:
+        - /url: resumes/183497689003_192443437003_Weijia_Zhang_Resume.pdf
+      - text: "· votes: 14/12 · file:"
+      - code [ref=f1e441]: 183497689003_192443437003_Weijia_Zhang_Resume.pdf
+  - generic [ref=f1e442]:
+    - heading "#24 Lalitha Sravanti Dasu — 12/15 A2 B3 C3 D2 E2 F0" [level=3] [ref=f1e443]:
+      - text: "#24 Lalitha Sravanti Dasu — 12/15"
+      - generic "A" [ref=f1e444]: A2
+      - generic "B" [ref=f1e445]: B3
+      - generic "C" [ref=f1e446]: C3
+      - generic "D" [ref=f1e447]: D2
+      - generic "E" [ref=f1e448]: E2
+      - generic "F" [ref=f1e449]: F0
+    - paragraph [ref=f1e450]:
+      - text: UC Davis MS CS (Dec 2026); 2yr JPMorgan backend + EBFT reward fine-tuning sweeps, AlpacaEval/HumanEval eval pipelines, agent exposure research
+      - generic [ref=f1e451]: probe-AI-leverage
+      - generic [ref=f1e452]: "probe-EBFT-depth: single bullet on reward-based fine-tuning, no stated benchmark gain"
+    - paragraph [ref=f1e453]:
+      - strong [ref=f1e454]: "Evidence:"
+      - text: "A: \"Extended EBFT (energy/MMD-RBF/L-α rewards) via 33-job Ray sweeps on Delta HPC\" — real post-training but no measured gain stated. B: \"AlpacaEval 2 pipeline with vLLM-served Qwen3.5-9B judge; matched GPT-4 Turbo within 1%\"; \"LangChain tool-using agent... 300 runs\". C: \"Designed and deployed scalable RESTful APIs and Spring Boot microservices... 20+ apps\"; FastAPI dashboard. D: \"Published in Cybernetics and Information Technologies\"; AUC 0.804. E: \"network/jurisdictional exposure in agentic AI\"; Fortify remediation. F: Copilot use unverified."
+    - group [ref=f1e455]:
+      - generic [ref=f1e456]:
+        - strong [ref=f1e457]: Verification
+        - text: ": 100% of decidable claims held up. Everything load-bearing checks out at the artifact level: the 2023 journal paper is real with her as first author and matches its description, both UC Davis labs exist and do the claimed work, and public repos contain her own commits for the EBFT/preference-optimization training and eval work plus the ClariFi dashboard, whose exact metrics (AUC 0.804, Brier 0.063, 58K HMDA) appear verbatim in the repo README. The main caveat is credit scope rather than honesty: two of the three showcased projects are team course projects where she is the minority contributor, and the EBFT work extends another researcher's codebase rather than being built from scratch. The self-reported eval headlines (Qwen judge within 1% of GPT-4 Turbo, 33-job Ray sweep) leave no public trace and should be probed technically."
+    - paragraph [ref=f1e458]:
+      - link "resume" [ref=f1e459] [cursor=pointer]:
+        - /url: resumes/183505357003_192451154003_Lalitha_Dasu_Resume.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e460]: 183505357003_192451154003_Lalitha_Dasu_Resume.pdf
+  - generic [ref=f1e461]:
+    - heading "#25 Jigar Kanakhara — 12/15 A2 B3 C2 D3 E2 F0" [level=3] [ref=f1e462]:
+      - text: "#25 Jigar Kanakhara — 12/15"
+      - generic "A" [ref=f1e463]: A2
+      - generic "B" [ref=f1e464]: B3
+      - generic "C" [ref=f1e465]: C2
+      - generic "D" [ref=f1e466]: D3
+      - generic "E" [ref=f1e467]: E2
+      - generic "F" [ref=f1e468]: F0
+    - paragraph [ref=f1e469]:
+      - text: BU MS CS Dec 2026; SFT Olmo-2-7B safety research + LoRA Llama-3-8B, multi-agent FastAPI systems, first-author Springer paper.
+      - generic [ref=f1e470]: A-is-safety-attribution-not-capability-gain
+      - generic [ref=f1e471]: hackathon-heavy-projects
+      - generic [ref=f1e472]: probe-AI-leverage
+    - paragraph [ref=f1e473]:
+      - strong [ref=f1e474]: "Evidence:"
+      - text: "A: \"Ran supervised fine-tuning (SFT) on Olmo 2 7B Instruct over Tulu 3\", \"Fine-tuned Llama 3 8B Instruct with LoRA\" — real post-training but no capability-gain benchmark (MMLU/GSM8K held fixed). B: \"5 specialized agents...human-in-the-loop approval gates\", \"reproducible evaluation harness...26% lower cost\", \"vLLM tracer...2.4x speedup\". C: \"Async FastAPI backend...Deployed on AWS with Docker\". D: \"First-author paper...Springer\", TA, 3 hackathon prizes. E: \"empirical AI safety project on sycophancy...influence functions (EK-FAC)\"."
+    - group [ref=f1e475]:
+      - generic [ref=f1e476]:
+        - strong [ref=f1e477]: Verification
+        - text: ": 100% of decidable claims held up. Hackathon record is solid and honestly reported: HiveOps (YHack Spring 2026, Best Use of Hex API) is confirmed on Devpost with Jigar named on the team, CashMeIfYouCan is a confirmed ETHGlobal NY 2026 Hedera prize winner matching the resume verbatim, and PRGenie is a real NVIDIA-recognized vLLM hackathon project though his individual code contribution isn't visible. The BU research position under Prof. Aaron Mueller passes the existence check (real BU interpretability professor whose agenda fits the described EK-FAC work), but the claimed first-author CTSEM 2025 paper is unverifiable — the conference and Springer LNCE pipeline are real, yet the paper appears in no index, consistent with 'in press' but unconfirmed. No fabrication suspected; the main soft spots are the unindexed publication and the absence of any findable personal GitHub despite GitHub links on the resume."
+    - paragraph [ref=f1e478]:
+      - link "resume" [ref=f1e479] [cursor=pointer]:
+        - /url: resumes/183506917003_192452746003_resume.pdf
+      - text: "· votes: 14/12 · file:"
+      - code [ref=f1e480]: 183506917003_192452746003_resume.pdf
+  - generic [ref=f1e481]:
+    - heading "#26 Guan Ze Chow — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e482]:
+      - text: "#26 Guan Ze Chow — 12/15"
+      - generic "A" [ref=f1e483]: A1
+      - generic "B" [ref=f1e484]: B3
+      - generic "C" [ref=f1e485]: C3
+      - generic "D" [ref=f1e486]: D3
+      - generic "E" [ref=f1e487]: E2
+      - generic "F" [ref=f1e488]: F0
+    - paragraph [ref=f1e489]:
+      - text: Cornell CS/Math May 2028; shipped LLM red-teaming/eval platform (10k+ adversarial tests), CNN quantization tuner 14h→1h, AlphaZero RL bot; no LLM post-training.
+      - generic [ref=f1e490]: probe-AI-leverage
+    - paragraph [ref=f1e491]:
+      - strong [ref=f1e492]: "Evidence:"
+      - text: "A: \"Trained an AlphaZero-style reinforcement learning agent... 94% optimal play\" (non-LLM, caps at 1); B: \"red-teaming platform... 10,000+ adversarial tests per model\", \"Benchmarked 4 Kubernetes-deployed vision-LLMs... 2.05 to 4.25/5\"; C: \"full-stack... React, FastAPI, and PostgreSQL\", \"regression test suite with 100% branch coverage\"; D: \"gating every change on a statistically significant SPRT gain\", \"USACO Platinum\"; E: \"attack-success rates across 3 OWASP LLM risk categories\""
+    - group [ref=f1e493]:
+      - generic [ref=f1e494]:
+        - strong [ref=f1e495]: Verification
+        - text: ": 100% of decidable claims held up. The candidate checks out well: the GitHub profile matches the resume identity, and the two named public projects (chess engine, Connect Four RL bot) are real, original, and technically substantive, with READMEs matching the resume's claims closely. Both employers (Ensign InfoSecurity, OmniVision Singapore) exist and plausibly do the claimed work. Caveats for the interview: the order-book engine's impressive latency numbers have no public artifact, the Connect Four '94% optimal vs oracle' metric isn't in the repo, and the chess Elo is self-measured — all good probing topics, but nothing suggests fabrication."
+    - paragraph [ref=f1e496]:
+      - link "resume" [ref=f1e497] [cursor=pointer]:
+        - /url: resumes/183511141003_192457029003_Chow_Guan_Ze_Resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e498]: 183511141003_192457029003_Chow_Guan_Ze_Resume.pdf
+  - generic [ref=f1e499]:
+    - heading "#27 Soham Himanshubhai Padia — 12/15 A1 B3 C2 D3 E3 F0" [level=3] [ref=f1e500]:
+      - text: "#27 Soham Himanshubhai Padia — 12/15"
+      - generic "A" [ref=f1e501]: A1
+      - generic "B" [ref=f1e502]: B3
+      - generic "C" [ref=f1e503]: C2
+      - generic "D" [ref=f1e504]: D3
+      - generic "E" [ref=f1e505]: E3
+      - generic "F" [ref=f1e506]: F0
+    - paragraph [ref=f1e507]:
+      - text: MS AI Northeastern (Dec 2027); co-first-author sycophancy eval benchmark, deep mech-interp work, deployed steering platform; no LLM post-training.
+      - generic [ref=f1e508]: no-LLM-post-training-artifact
+      - generic [ref=f1e509]: probe-AI-leverage
+    - paragraph [ref=f1e510]:
+      - strong [ref=f1e511]: "Evidence:"
+      - text: "A: \"fine-tuning\" only in skills list; trained novel attention across \"40+ GPU training runs\" (from-scratch LM, not post-training). B: \"extended a sycophancy benchmark into a 5turn escalatingpressure pipeline\", \"LLM-as-judge labeling pipeline...~2,400 responses\", AUC 0.60-0.64. C: \"Prometheus metrics...non-root Docker container with CI/CD\"; deployed Steering Arena \"FastAPI + Supabase + HF Spaces\". D: \"Submitted to EACL 2027\", \"2,000-sample bootstrap confidence intervals\", negative result reported. E: activation patching, steering/ablation, \"confound audits and value-flip controls\". F: only \"AI-assisted dev (GitHub Copilot, Claude Code)\"."
+    - group [ref=f1e512]:
+      - generic [ref=f1e513]:
+        - strong [ref=f1e514]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing claims check out: the arXiv blockchain paper exists with Padia as first author, and the three flagship projects (Steering Arena, scout-refiner attention in minGPT, ml-prod-api) are real, original, substantive repos whose contents match the resume bullets closely - including an honestly-reported negative result. The headline sycophancy paper is under review so authorship order and venue are unconfirmable, and its repo says EMNLP 2026 vs the resume's EACL 2027 (worth one clarifying question); the two older Indian-college publications (Springer, KUEY) could not be located. No fabrication suspected; interpretability/eval skill set is well evidenced by public code."
+    - paragraph [ref=f1e515]:
+      - link "resume" [ref=f1e516] [cursor=pointer]:
+        - /url: resumes/183515206003_192461147003_Soham_Himanshubhai_Padia_20260803.pdf
+      - text: "· votes: 14/12 · file:"
+      - code [ref=f1e517]: 183515206003_192461147003_Soham_Himanshubhai_Padia_20260803.pdf
+  - generic [ref=f1e518]:
+    - heading "#28 Lareina Huang — 12/15 A3 B3 C2 D2 E2 F0" [level=3] [ref=f1e519]:
+      - text: "#28 Lareina Huang — 12/15"
+      - generic "A" [ref=f1e520]: A3
+      - generic "B" [ref=f1e521]: B3
+      - generic "C" [ref=f1e522]: C2
+      - generic "D" [ref=f1e523]: D2
+      - generic "E" [ref=f1e524]: E2
+      - generic "F" [ref=f1e525]: F0
+    - paragraph [ref=f1e526]:
+      - text: UCLA MSCS (June 2028); Qwen3-4B LoRA SFT + GRPO via TRL with measured benchmark gains; built agent harnesses and LM eval pipelines.
+      - generic [ref=f1e527]: publications-in-prep-not-accepted
+    - paragraph [ref=f1e528]:
+      - strong [ref=f1e529]: "Evidence:"
+      - text: "A: \"Post-trained Qwen3-4B... LoRA SFT reached 51.5% OOD... verifiable GRPO (TRL, LoRA)... full-trace accuracy 44.2% → 56.7%\". B: \"agent harness... 6 LLM agents over an 8-stage workflow... tool routing\"; \"benchmarked 10 LMs... via lm-evaluation-harness extensions\". C: \"Deployed a daily inference pipeline\"; Docker/Linux skills only. D: quantified results throughout; two co-first-author papers in preparation. E: \"adversarial scenario seeding... unsafe recommendations\"; \"Inherited Bias... in LLMs\"."
+    - group [ref=f1e530]:
+      - generic [ref=f1e531]:
+        - strong [ref=f1e532]: Verification
+        - text: ": 100% of decidable claims held up. All checkable institutional claims verify cleanly: Yuzhe Yang's UCLA Health Intelligence Lab exists and does exactly the multisensory-health-AI work SensorSim describes; Hirschberg/McKeown are real Columbia NLP professors and the listed co-authors are their real current PhD students; Berkeley Brothers (伯兄投资) is a real Shanghai quant fund whose NLP-driven A-share focus matches the internship bullets. However, both listed 'publications' are honestly labeled unpublished manuscripts with no public trace, and the candidate has no discoverable GitHub/Scholar footprint, so all technical results (training numbers, pipelines) rest on the resume's word. No fabrication signals — the profile is internally consistent and plausible, just thin on independently inspectable evidence."
+    - paragraph [ref=f1e533]:
+      - link "resume" [ref=f1e534] [cursor=pointer]:
+        - /url: resumes/183529048003_192475166003_Lareina_Huang_resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e535]: 183529048003_192475166003_Lareina_Huang_resume.pdf
+  - generic [ref=f1e536]:
+    - heading "#29 Meghanand Gejjela — 12/15 A2 B2 C2 D3 E3 F0" [level=3] [ref=f1e537]:
+      - text: "#29 Meghanand Gejjela — 12/15"
+      - generic "A" [ref=f1e538]: A2
+      - generic "B" [ref=f1e539]: B2
+      - generic "C" [ref=f1e540]: C2
+      - generic "D" [ref=f1e541]: D3
+      - generic "E" [ref=f1e542]: E3
+      - generic "F" [ref=f1e543]: F0
+    - paragraph [ref=f1e544]:
+      - text: UMich MS CSE May 2027; LoRA fine-tuned Qwen2.5-32B on 4xA40 for backdoor/interp research, from-scratch GPT+SFT, LLM-judge eval pipeline, Springer publication
+      - generic [ref=f1e545]: probe-AI-leverage
+    - paragraph [ref=f1e546]:
+      - strong [ref=f1e547]: "Evidence:"
+      - text: "A: \"Fine-tuned Qwen2.5-32B with LoRA on 9,623 samples... 4x A40 GPUs\"; \"Developed a SFT pipeline... selective token masking\" — real post-training but for backdoor research, no capability benchmark gain. B: \"3-stage evaluation pipeline... LLM-as-a-Judge... 11 demographic categories\"; probing N=500. C: FastAPI/WebSockets AI interviewer <200ms; iOS app; EHR pipeline 3M+ notes; no Docker/CI. D: p=1.78e-111, 93% AUROC, Springer LNEE publication, hackathon winner. E: backdoors, RLHF suppression, steering vectors, bias benchmarking."
+    - group [ref=f1e548]:
+      - generic [ref=f1e549]:
+        - strong [ref=f1e550]: Verification
+        - text: ": 100% of decidable claims held up. Identity, UMich enrollment, GitHub (62 real repos), Medium blog, and the Springer publication all check out, and the bias-analysis project is corroborated by both a repo and a detailed blog post — no fabrication suspected. However, the publication is overstated: he is second of six authors on a low-tier PEIS/LNEE proceedings paper, cited as 'Gejjela, M., et al.' as if first-authored. The most impressive resume items (Qwen2.5-32B backdoor research, GPT-from-scratch, Git-Hired hackathon win) have no public footprint at all, so the stage-1 score should rest on the verified UMich RA context and bias project rather than those claims; probe the backdoor project in interview."
+    - paragraph [ref=f1e551]:
+      - link "resume" [ref=f1e552] [cursor=pointer]:
+        - /url: resumes/183529918003_192476052003_Meghanand_Gejjela_resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e553]: 183529918003_192476052003_Meghanand_Gejjela_resume.pdf
+  - generic [ref=f1e554]:
+    - heading "#30 Abhinav Ala — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e555]:
+      - text: "#30 Abhinav Ala — 12/15"
+      - generic "A" [ref=f1e556]: A1
+      - generic "B" [ref=f1e557]: B3
+      - generic "C" [ref=f1e558]: C3
+      - generic "D" [ref=f1e559]: D3
+      - generic "E" [ref=f1e560]: E2
+      - generic "F" [ref=f1e561]: F0
+    - paragraph [ref=f1e562]:
+      - text: SCU BS CS Jun 2027; shipped live MCP memory product, multiple hackathon wins, GRPO/Unsloth RL training but no measured benchmark gain.
+      - generic [ref=f1e563]: "A: GRPO training real but no benchmark-measured gain reported"
+      - generic [ref=f1e564]: hackathon-heavy
+      - generic [ref=f1e565]: "hackathon-heavy: most AI depth is single-bullet hackathon projects"
+      - generic [ref=f1e566]: probe-AI-leverage
+      - generic [ref=f1e567]: vote-split-3-votes
+    - paragraph [ref=f1e568]:
+      - strong [ref=f1e569]: "Evidence:"
+      - text: "A: \"Trained a reinforcement-learning negotiation agent with GRPO on TinyLlama using Unsloth\" — real RL post-training but no benchmark gain reported, hackathon-scale. B: \"50-wide Modal agent swarm... held-out evaluation to reject reward-hacked candidates\"; \"RAGAS faithfulness/relevance evals\"; agentic Dev Angel pipeline. C: \"published @contextcloud/mcp-client to npm\"; deployed Vercel/Railway, pgvector, Clerk auth, RBAC. D: \"330x geomean speedup\", \"99.4%\", NVIDIA/AWS/OpenAIxModal wins, ACM teaching (nanoGPT). E: Warden \"MCP-native credential broker... agent security\"; reward-hack rejection."
+    - group [ref=f1e570]:
+      - generic [ref=f1e571]:
+        - strong [ref=f1e572]: Verification
+        - text: ": 100% of decidable claims held up. The two most load-bearing claims check out: Context Cloud is a real shipped product (live site + npm package @contextcloud/mcp-client published under his own npm account), and DevAngel is confirmed as a winning team entry at SCU's AWS x INRIX Hack 2025 with him on the roster. The NVIDIA x Dell 1st place and OpenAI x Modal RustForge wins could not be independently confirmed (the Modal/OpenAI/Antler event itself exists exactly as dated), and his public GitHub is real but modest, so quantitative engineering claims (99.4% eval, 330x speedup) are self-reported. No evidence of fabrication; treat hackathon placements and internal metrics as candidate-asserted and probe them in interview."
+    - paragraph [ref=f1e573]:
+      - link "resume" [ref=f1e574] [cursor=pointer]:
+        - /url: resumes/183559579003_192506114003_Abhinav_Ala_resume.pdf
+      - text: "· votes: 15/12/11 · file:"
+      - code [ref=f1e575]: 183559579003_192506114003_Abhinav_Ala_resume.pdf
+  - generic [ref=f1e576]:
+    - heading "#31 Feifan Liu — 12/15 A1 B3 C2 D3 E3 F0" [level=3] [ref=f1e577]:
+      - text: "#31 Feifan Liu — 12/15"
+      - generic "A" [ref=f1e578]: A1
+      - generic "B" [ref=f1e579]: B3
+      - generic "C" [ref=f1e580]: C2
+      - generic "D" [ref=f1e581]: D3
+      - generic "E" [ref=f1e582]: E3
+      - generic "F" [ref=f1e583]: F0
+    - paragraph [ref=f1e584]:
+      - text: UT Austin BS CS May 2028; interpretability/UQ research (probes, steering, grokking ablations), multi-agent pipeline + MCP server internship, Cambridge alignment fellow.
+      - generic [ref=f1e585]: "no-LLM-post-training: interp/probe training only, no SFT/LoRA/RL of language models"
+      - generic [ref=f1e586]: probe-AI-leverage
+    - paragraph [ref=f1e587]:
+      - strong [ref=f1e588]: "Evidence:"
+      - text: "A: \"Trained per-layer logistic-regression probes... PyTorch forward hooks\" (classifier training, caps at 1). B: \"multi-agent loop pipeline (swappable steps, LLM-judge, gating)... 50% improvement on text benchmarks\"; \"MCP server and 10 tools\". C: \"productionized MCP server... Azure DevOps\"; \"GraphQL backend and ASP.NET\". D: \"ablating... across 29 models (100 random-frequency controls), 99.9% -> 4.3%\"; Grand Prize $6,000. E: \"Quantifying Uncertainty in LLMs\"; \"Cambridge Bootcamp for Research in Interpretability and Alignment (1 of 13)\"; \"pre-inference PII redaction\"."
+    - group [ref=f1e589]:
+      - generic [ref=f1e590]:
+        - strong [ref=f1e591]: Verification
+        - text: ": 100% of decidable claims held up. Authentic candidate: GitHub, grokking interpretability project with his own technically sound blog post, Pandesco internship, and the CAMBRIA alignment bootcamp all check out, and the hackathon event/participation are corroborated (repo pushed on event day). Main caution: the grokking bullet's headline numbers (ablation across 29 models, 4.3% vs 77%) exceed what his published write-up documents, and the $6,000 grand prize and '1 of 13 fellows' figures are plausible but not publicly confirmable. No fabrication suspected — this reads as a real early-stage interpretability-focused student with some quantitative embellishment."
+    - paragraph [ref=f1e592]:
+      - link "resume" [ref=f1e593] [cursor=pointer]:
+        - /url: resumes/183560531003_192507073003_Feifan_Liu_resume.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e594]: 183560531003_192507073003_Feifan_Liu_resume.pdf
+  - generic [ref=f1e595]:
+    - heading "#32 Ria Patil — 12/15 A1 B3 C3 D3 E2 F0" [level=3] [ref=f1e596]:
+      - text: "#32 Ria Patil — 12/15"
+      - generic "A" [ref=f1e597]: A1
+      - generic "B" [ref=f1e598]: B3
+      - generic "C" [ref=f1e599]: C3
+      - generic "D" [ref=f1e600]: D3
+      - generic "E" [ref=f1e601]: E2
+      - generic "F" [ref=f1e602]: F0
+    - paragraph [ref=f1e603]:
+      - text: UW BS CS Jun 2027; LLM eval framework for 60K+ users, 10 shipped agents, ACM IUI 2026 best-paper-nominated research
+      - generic [ref=f1e604]: "fine-tune-method-unspecified: no SFT/LoRA/RL/TRL/benchmark-vs-baseline detail on warranty-claims fine-tune"
+      - generic [ref=f1e605]: probe-AI-leverage
+    - paragraph [ref=f1e606]:
+      - strong [ref=f1e607]: "Evidence:"
+      - text: "A: \"Fine-tuned an LLM on historical warranty claims\" (no method/benchmark detail, capped 1); B: \"AI evaluation framework in TypeScript... automated judge integration\", \"Shipped 10 production AI agents\", \"ground truth pipeline to benchmark RAG accuracy\"; C: \"FastAPI microservices with observability & authentication\", \"MCP server... GitHub Actions CI/CD\"; D: \"Published, ACM IUI 2026... nominated Best Paper\", \"84% agreement with human expert reviewers\"; E: \"adversarial prompt testing, and red-teaming through automated CI pipelines\""
+    - group [ref=f1e608]:
+      - generic [ref=f1e609]:
+        - strong [ref=f1e610]: Verification
+        - text: ": 100% of decidable claims held up. The anchor claims check out in substance: the IUI 2026 paper (RDoFlow) is real, in the main proceedings with top-tier co-authors, and the resume's technical description (dual-consensus multi-LLM, 84% human agreement) matches the actual paper; UW-IT's Purple AI platform and her DubHacks Executive Director role are also confirmed. Two caveats: she is a middle author (3rd of 8) rather than the system's lead developer, and the 'nominated Best Paper' claim has no public corroboration — worth asking her directly in an interview. PACCAR internships and the ServiceNow-Claude MCP project are internal enterprise work and unverifiable, but plausible; no fabrication suspected."
+    - paragraph [ref=f1e611]:
+      - link "resume" [ref=f1e612] [cursor=pointer]:
+        - /url: resumes/183561740003_192508293003_Ria_Patil_Resume.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e613]: 183561740003_192508293003_Ria_Patil_Resume.pdf
+  - generic [ref=f1e614]:
+    - heading "#33 MingYu Zhao — 12/15 A2 B3 C2 D3 E2 F0" [level=3] [ref=f1e615]:
+      - text: "#33 MingYu Zhao — 12/15"
+      - generic "A" [ref=f1e616]: A2
+      - generic "B" [ref=f1e617]: B3
+      - generic "C" [ref=f1e618]: C2
+      - generic "D" [ref=f1e619]: D3
+      - generic "E" [ref=f1e620]: E2
+      - generic "F" [ref=f1e621]: F0
+    - paragraph [ref=f1e622]:
+      - text: Rutgers CS PhD (May 2029); built MLLM tool-call benchmark, SFT+RL on LLaDA 1.5 (+32% tool-calling), first-author pubs.
+      - generic [ref=f1e623]: M3-Bench is 'Submitted to NeurIPS 2027', not accepted
+      - generic [ref=f1e624]: no DeepSpeed/vLLM/TRL/multi-GPU infra markers for A
+      - generic [ref=f1e625]: probe-AI-leverage
+    - paragraph [ref=f1e626]:
+      - strong [ref=f1e627]: "Evidence:"
+      - text: "A: \"supervised fine-tuning on LLaDA 1.5 using generated tool-call data... optimized with reinforcement learning, improving specified tool-call task performance by 32%\". B: \"MCP benchmark suite with 200+ tasks... evaluated GPT, Gemini, Claude, and 10+ MLLM models\". C: \"Engineered the backend inference pipeline... reducing model runtime from 5 min to 15 sec\". D: first-author LREC 2026 + ICME 2025 accepted; \"10 sets of ablation experiments\". E: \"CAPAA: Classifier-Agnostic Projector-Based Adversarial Attack\" (ICME 2025). F: skills-only \"Agentic Coding\"."
+    - group [ref=f1e628]:
+      - generic [ref=f1e629]:
+        - strong [ref=f1e630]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing claims verified: Rutgers CS PhD student under Metaxas with three real lead-author papers — CAPAA (co-first, IEEE ICME 2025, equal-contribution confirmed in-paper), MHB (sole first author, though it is the sign-lang workshop at LREC 2026 rather than LREC main as the resume implies), and M3-Bench (co-first, honestly labeled 'submitted'; an MCP tool-use benchmark directly relevant to Postman's agent/API work). No fabrication indicators; resume descriptions track the actual papers closely, with only minor venue inflation on the LREC entry and some unverifiable private-project metrics."
+    - paragraph [ref=f1e631]:
+      - link "resume" [ref=f1e632] [cursor=pointer]:
+        - /url: resumes/183615733003_192562875003_Mingyu_Zhao_Intern_Resume.pdf
+      - text: "· votes: 13/12 · file:"
+      - code [ref=f1e633]: 183615733003_192562875003_Mingyu_Zhao_Intern_Resume.pdf
+  - generic [ref=f1e634]:
+    - heading "#34 Dhruva Shekdar — 12/15 A1 B3 C3 D2 E3 F0" [level=3] [ref=f1e635]:
+      - text: "#34 Dhruva Shekdar — 12/15"
+      - generic "A" [ref=f1e636]: A1
+      - generic "B" [ref=f1e637]: B3
+      - generic "C" [ref=f1e638]: C3
+      - generic "D" [ref=f1e639]: D2
+      - generic "E" [ref=f1e640]: E3
+      - generic "F" [ref=f1e641]: F0
+    - paragraph [ref=f1e642]:
+      - text: Waterloo Mechatronics (AI minor), Apr 2028; LLM safety eval research (TamperBench, adversarial fine-tuning) + self-built Harbor agent benchmark; strong shipped SWE.
+      - generic [ref=f1e643]: probe-AI-leverage
+      - generic [ref=f1e644]: vote-split-3-votes
+    - paragraph [ref=f1e645]:
+      - strong [ref=f1e646]: "Evidence:"
+      - text: "A: \"measuring refusal behavior, attack success rates, and utility degradation under adversarial fine-tuning\" — safety eval, not capability post-training he owned; B: \"7-task Harbor benchmark... 60 FDA-label QA cases... 6-component deterministic fractional verifier... 0% pass@3\"; C: \"production Android app... 500+ structured scans/day across 12 operators\", ONNX/gRPC/Docker; D: quantified results (85% mismatch reduction, 300–600 ms latency), NeurIPS 2026 submission (not accepted); E: \"JoLA, SaLoRA, SafeLoRA, and LiSA... safety degradation\"; F: tool list only (Codex, Claude Code)."
+    - group [ref=f1e647]:
+      - generic [ref=f1e648]:
+        - strong [ref=f1e649]: Verification
+        - text: ": 100% of decidable claims held up. The candidate's flagship personal project checks out strongly: the FDA-label Harbor benchmark repo is real, original, and matches the resume bullet-for-bullet (5 pilot + 7 hard task suites, fractional verifier, Gemini runs), and the RBC AidenEdge program, Critical ML Lab, TamperBench, and WATonomous all exist exactly as described. The main soft spot is that his personal contributions to TamperBench (NeurIPS submission work) and WATonomous have no public footprint — plausible for private lab/team repos but worth a probe question in interview. No evidence of fabrication; claims are specific, internally consistent, and corroborated by GitHub activity timelines."
+    - paragraph [ref=f1e650]:
+      - link "resume" [ref=f1e651] [cursor=pointer]:
+        - /url: resumes/183645540003_192593079003_Dhruva_Shekdar_Resume.pdf
+      - text: "· votes: 15/12/12 · file:"
+      - code [ref=f1e652]: 183645540003_192593079003_Dhruva_Shekdar_Resume.pdf
+  - generic [ref=f1e653]:
+    - heading "#35 Robbie Walmsley — 12/15 A2 B3 C3 D3 E1 F0" [level=3] [ref=f1e654]:
+      - text: "#35 Robbie Walmsley — 12/15"
+      - generic "A" [ref=f1e655]: A2
+      - generic "B" [ref=f1e656]: B3
+      - generic "C" [ref=f1e657]: C3
+      - generic "D" [ref=f1e658]: D3
+      - generic "E" [ref=f1e659]: E1
+      - generic "F" [ref=f1e660]: F0
+    - paragraph [ref=f1e661]:
+      - text: UMass Amherst BS CS Dec 2027; KaSA LoRA-variant merged into HF PEFT with benchmark result; production multi-agent systems; 12 merged OSS PRs.
+      - generic [ref=f1e662]: probe-AI-leverage
+    - paragraph [ref=f1e663]:
+      - strong [ref=f1e664]: "Evidence:"
+      - text: "A: \"Implemented KaSA (ICLR 2025) as a fine-tuning method in HuggingFace PEFT... lowest forgetting (0.013) of any LoRA experiment in the maintainer's benchmark\" (no multi-GPU/TRL/RL, capability gain not shown → 2, borderline). B: \"multi-agent deck-generation system... agents visually verify their own work... 4× fewer vision calls\"; \"evaluating 6+ embedding models... improved tabular QA accuracy by 29%\". C: \"12 maintainer-merged PRs across 10 widely-used AI/ML & LLM-agent libraries (70k+ stars)\"; App Store app; AWS Lambda pipeline. D: quantified results throughout; shipped artifacts. E: \"safety pre-screen\"; TransformerLens/SAELens crash fixes only."
+    - group [ref=f1e665]:
+      - generic [ref=f1e666]:
+        - strong [ref=f1e667]: Verification
+        - text: ": 100% of decidable claims held up. Exceptionally verifiable resume: the flagship HuggingFace PEFT KaSA contribution is a real, merged, +1099-line PR authored by the candidate, and the \"lowest forgetting 0.013\" metric is a verbatim quote from the PEFT maintainer in the PR thread. All 6 named OSS contributions (microsoft/agent-framework, DocsGPT, TransformerLens, sparsify, pypdf, SAELens) were found merged as described — 14 merged PRs total vs 12 claimed — and the App Store app is live and matches its description. Minor framing caveats only: the KaSA PR builds on another contributor's earlier groundwork (credited in the PR), and the benchmark's accuracy (47%) was modest even though the forgetting score was best-in-class."
+    - paragraph [ref=f1e668]:
+      - link "resume" [ref=f1e669] [cursor=pointer]:
+        - /url: resumes/183696876003_192656173003_Resume.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e670]: 183696876003_192656173003_Resume.pdf
+  - generic [ref=f1e671]:
+    - heading "#36 Andrew Ma — 11/15 A1 B2 C3 D3 E2 F0" [level=3] [ref=f1e672]:
+      - text: "#36 Andrew Ma — 11/15"
+      - generic "A" [ref=f1e673]: A1
+      - generic "B" [ref=f1e674]: B2
+      - generic "C" [ref=f1e675]: C3
+      - generic "D" [ref=f1e676]: D3
+      - generic "E" [ref=f1e677]: E2
+      - generic "F" [ref=f1e678]: F0
+    - paragraph [ref=f1e679]:
+      - text: UT Austin BS CS May 2029; two IEEE publications, deepfake/spoofing detection with eval harnesses, strong shipped backend work; no LLM post-training.
+      - generic [ref=f1e680]: probe-AI-leverage
+    - paragraph [ref=f1e681]:
+      - strong [ref=f1e682]: "Evidence:"
+      - text: "A: \"Engineered BERT + few-shot transformer ensembles\", \"Fine-tuned ResNet-50/DenseNet\" — classifier/CV, caps at 1; no LLM SFT/RL. B: \"Designed an evaluation harness scoring detection precision and false-alarm rates across 4 models\"; \"Benchmarked Zero-Shot vs Few-Shot prompting across 5 tasks, F1 94%\". C: \"Redis-queued webhook pipeline... 1,200 events/min sub-90ms p99\"; Rust OSS libsbf-rs contributions. D: \"published in IEEE Access (2025)\", SLT 2026 co-author, USACO Gold. E: \"adversarial refinement... robustness under distribution shift\"; spoofing-attack benchmark."
+    - group [ref=f1e683]:
+      - generic [ref=f1e684]:
+        - strong [ref=f1e685]: Verification
+        - text: ": 100% of decidable claims held up. Andrew Ma's footprint is real but consistently inflated at the edges: the IEEE Access 2025 paper exists with him as 4th-of-5 middle author (not 'co-led'), the libsbf-rs OSS contributions are genuine (one merged PR, one still open), and GhostHive/WakeUp are real self-built repos though their scale claims (100+ agents, $2,000+ transactions) are unsupported by the live site and WakeUp is only a week old. The claimed SLT 2026 co-authored paper could not be found anywhere (lab, co-author pages, arXiv) and the venue hasn't occurred yet — treat it as unverified and ask for the manuscript in the interview. No fabrication suspected; labs, advisors, and employers all exist as described."
+    - paragraph [ref=f1e686]:
+      - link "resume" [ref=f1e687] [cursor=pointer]:
+        - /url: resumes/183427422003_192372804003_Andrew_Ma.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e688]: 183427422003_192372804003_Andrew_Ma.pdf
+  - generic [ref=f1e689]:
+    - heading "#37 Neel Bhattacharyya — 11/15 A2 B2 C2 D3 E2 F0" [level=3] [ref=f1e690]:
+      - text: "#37 Neel Bhattacharyya — 11/15"
+      - generic "A" [ref=f1e691]: A2
+      - generic "B" [ref=f1e692]: B2
+      - generic "C" [ref=f1e693]: C2
+      - generic "D" [ref=f1e694]: D3
+      - generic "E" [ref=f1e695]: E2
+      - generic "F" [ref=f1e696]: F0
+    - paragraph [ref=f1e697]: GT MS CS 12/2027, 4.0; Apple GenAI intern doing QLoRA/GRPO LLM fine-tuning; QLoRA'd Qwen2.5-VL with measured robustness gains; multiple publications.
+    - paragraph [ref=f1e698]:
+      - strong [ref=f1e699]: "Evidence:"
+      - text: "A: \"Fine-tuned encoder/LLMs with InfoNCE, QLoRA, and GRPO\"; \"Adapted Qwen2.5-VL...QLoRA...Improved driving robustness by 23%\" — real post-training but no language-capability benchmark gain, so 2 not 3. B: \"Reduced Agentic AI latency by 85%...LangGraph\"; \"Built perturbation benchmarks on Waymo data\". C: \"Built PyTorch pipeline (data loaders, training scripts, evaluation suite)\"; \"experiment-tracking...AWS S3\"; GT Best iOS app. D: Physical Review D, Circulation pubs; 5.1%, 2.2x, 32% quantified; iOS club instructor. E: OOD generalization, spurious-correlation loss, perturbation robustness."
+    - group [ref=f1e700]:
+      - generic [ref=f1e701]:
+        - strong [ref=f1e702]: Verification
+        - text: ": 100% of decidable claims held up. All major claims check out: the Physical Review D QCD paper is real (candidate is third of three authors, 2024), the Circulation AHA 2023 ML abstract is real with the candidate as first author, the Stockholm Junior Water Prize national 2nd place is confirmed by press coverage, and the Apple and AstraZeneca internships plus the GT ADDAPT-ML lab all exist and are corroborated by LinkedIn/lab pages. The main caveat is that none of the hands-on ML engineering claims (GRPO/QLoRA fine-tuning, distributed training, VLA project) have public code — the GitHub profile shows only iOS club and coursework projects. No fabrication suspected; this is an unusually well-evidenced student resume with slightly generous framing of author roles."
+    - paragraph [ref=f1e703]:
+      - link "resume" [ref=f1e704] [cursor=pointer]:
+        - /url: resumes/183428029003_192373415003_Neel_Bhattacharyya_2027.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e705]: 183428029003_192373415003_Neel_Bhattacharyya_2027.pdf
+  - generic [ref=f1e706]:
+    - heading "#38 Alex Eduardo Sanchez — 11/15 A2 B3 C2 D3 E1 F0" [level=3] [ref=f1e707]:
+      - text: "#38 Alex Eduardo Sanchez — 11/15"
+      - generic "A" [ref=f1e708]: A2
+      - generic "B" [ref=f1e709]: B3
+      - generic "C" [ref=f1e710]: C2
+      - generic "D" [ref=f1e711]: D3
+      - generic "E" [ref=f1e712]: E1
+      - generic "F" [ref=f1e713]: F0
+    - paragraph [ref=f1e714]:
+      - text: FIU MS AI Dec 2027; built EMAS multi-agent SWE framework (+66.7% SWE-Bench-Lite) and from-scratch JAX RLHF/DPO/GRPO implementations.
+      - generic [ref=f1e715]: probe-A-no-benchmark-gain
+      - generic [ref=f1e716]: probe-AI-leverage
+      - generic [ref=f1e717]: vote-split-3-votes
+    - paragraph [ref=f1e718]:
+      - strong [ref=f1e719]: "Evidence:"
+      - text: "A: \"Built 6 core LLM alignment and post-training algorithms (REINFORCE, STaR, PPO..., RLHF, DPO, GRPO) in JAX...40+ unit/integration tests\" — from-scratch toy transformer, no benchmark capability gain, so 2 not 3. B: \"EMAS...LLM-backed software engineering agents...outperforming static team baselines by 66.7% on SWE-Bench-Lite\". C: open-source code on GitHub, 40+ tests; Docker/FastAPI only in skills list. D: \"abstract accepted for oral presentation at NCUR 2026\"; 10-part YouTube series; mentoring 35+. E: Lean4 verification to \"eliminate model hallucinations\" only."
+    - group [ref=f1e720]:
+      - generic [ref=f1e721]:
+        - strong [ref=f1e722]: Verification
+        - text: ": 100% of decidable claims held up. Strong, largely authentic profile: the two flagship projects (JAX post-training suite and Lean 4 neuro-symbolic prover) are real, original, non-forked repos with sustained multi-month commit history, and the 'Road to Reasoning' YouTube series verifiably exists under his name. His FIU advisor (Yanzhao Wu) and the UChicago DSI Summer Lab program are real; the EMAS/NCUR research claim is consistent but has no public artifact and its SWE-Bench number cannot be checked. Two overstatements to probe in interview: the claimed '40+ tests' do not exist in the JAX repo, and the theorem prover is a 5-person team project described in solo language."
+    - paragraph [ref=f1e723]:
+      - link "resume" [ref=f1e724] [cursor=pointer]:
+        - /url: resumes/183428350003_192373752003_Sanchez_Alex_Resume.pdf
+      - text: "· votes: 14/11/11 · file:"
+      - code [ref=f1e725]: 183428350003_192373752003_Sanchez_Alex_Resume.pdf
+  - generic [ref=f1e726]:
+    - heading "#39 Anirudh Sekar — 11/15 A1 B2 C2 D3 E3 F0" [level=3] [ref=f1e727]:
+      - text: "#39 Anirudh Sekar — 11/15"
+      - generic "A" [ref=f1e728]: A1
+      - generic "B" [ref=f1e729]: B2
+      - generic "C" [ref=f1e730]: C2
+      - generic "D" [ref=f1e731]: D3
+      - generic "E" [ref=f1e732]: E3
+      - generic "F" [ref=f1e733]: F0
+    - paragraph [ref=f1e734]:
+      - text: Incoming UT Austin CS freshman (grad May 2030); first-author NeurIPS workshop paper on prompt-injection detector (93% on 51k cases).
+      - generic [ref=f1e735]: incoming-freshman-starts-Aug-2026
+      - generic [ref=f1e736]: probe-AI-leverage
+      - generic [ref=f1e737]: verify-publication-claims (ACL Anthology citations, ICML 2026 workshop)
+    - paragraph [ref=f1e738]:
+      - strong [ref=f1e739]: "Evidence:"
+      - text: "A: \"train/test detector using OpenAI API\" — classifier only, caps at 1. B: \">90% detection accuracy across four embedding models\"; \"3.0x mean speedup...vLLM/SGLang caching\". C: \"web apps with MongoDB, Node.js, Express.js\"; \"multi-tenant architecture in Next.js and Supabase\". D: \"First-authored...NeurIPS 2025 Lock LLM\"; \"Accepted to the ICML 2026 AgenticUQ Workshop\". E: \"detector for prompt-injection attacks...>93% accuracy on 51k+ test cases\"."
+    - group [ref=f1e740]:
+      - generic [ref=f1e741]:
+        - strong [ref=f1e742]: Verification
+        - text: ": 100% of decidable claims held up. The candidate's core claims are real: the ZEDD prompt-injection paper exists on arXiv, was presented at NeurIPS 2025 workshops (Lock-LLM per arXiv, BioSafe GenAI per neurips.cc), and has 3 citations including one ACL Findings paper; the sole-authored RKSC paper and its self-reported ICML 2026 workshop acceptance also check out on arXiv. Caveats: he is listed second (not first) author on the NeurIPS workshop page for ZEDD, both venues are workshop-tier reached via Algoverse (a paid mentored student research program), and the ZEDD/RKSC GitHub repos are single-notebook proof-of-concepts. No fabrication suspected — this is a strong-for-a-high-schooler research record, described with moderate inflation."
+    - paragraph [ref=f1e743]:
+      - link "resume" [ref=f1e744] [cursor=pointer]:
+        - /url: resumes/183430241003_192375649003_Resume.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e745]: 183430241003_192375649003_Resume.pdf
+  - generic [ref=f1e746]:
+    - heading "#40 Saksham Uboweja — 11/15 A2 B3 C2 D2 E2 F0" [level=3] [ref=f1e747]:
+      - text: "#40 Saksham Uboweja — 11/15"
+      - generic "A" [ref=f1e748]: A2
+      - generic "B" [ref=f1e749]: B3
+      - generic "C" [ref=f1e750]: C2
+      - generic "D" [ref=f1e751]: D2
+      - generic "E" [ref=f1e752]: E2
+      - generic "F" [ref=f1e753]: F0
+    - paragraph [ref=f1e754]:
+      - text: Berkeley Applied Math/CS BA (no grad date); TII post-training intern, BAIR agent/alignment benchmarks, NeurIPS-workshop DPO paper co-author.
+      - generic [ref=f1e755]: no-graduation-date
+      - generic [ref=f1e756]: overlapping-experience-dates
+      - generic [ref=f1e757]: overlapping-internship-dates
+      - generic [ref=f1e758]: probe-AI-leverage
+    - paragraph [ref=f1e759]:
+      - strong [ref=f1e760]: "Evidence:"
+      - text: "A: \"post-training a multi-turn agent\"; \"causal CoT interventions to create DPO preference pairs across 2 open-source LLMs\" (role partly validation; no TRL/DeepSpeed/vLLM). B: \"coding-agent... memory gate\" >10%; \"alignment benchmarks... sycophancy detection precision by 34%\". C: \"account-isolated RAG pipelines\"; \"shipping 2 connectors\" (no Docker/CI/repos). D: workshop co-author, \"3.4-point faithfulness gain\", placebo-controlled design. E: \"sycophancy... adversarial user pressure\"; CoT faithfulness."
+    - group [ref=f1e761]:
+      - generic [ref=f1e762]:
+        - strong [ref=f1e763]: Verification
+        - text: ": 100% of decidable claims held up. The headline publication checks out: FRIT (arXiv 2509.13334) is real, accepted at the FoRLM workshop @ NeurIPS 2025, the candidate is a genuine middle author (3rd of 10), and the resume's numbers match the paper exactly — though it is a workshop paper from a paid research program (Algoverse), not a main-conference NeurIPS paper. All named employers/mentors (Metalinked, TII, Oxford's Dr. Mushtukov, Berkeley's Prof. Bin Yu) exist and plausibly match the described work, but the BAIR affiliation could not be confirmed on the Yu Group roster and the Metalinked and TII internships fully overlap in dates. No fabrication suspected; recommend asking about the concurrent internships and the Bin Yu advising arrangement in interview."
+    - paragraph [ref=f1e764]:
+      - link "resume" [ref=f1e765] [cursor=pointer]:
+        - /url: resumes/183437014003_192382457003_Saksham_Uboweja_Resume.pdf
+      - text: "· votes: 13/11 · file:"
+      - code [ref=f1e766]: 183437014003_192382457003_Saksham_Uboweja_Resume.pdf
+  - generic [ref=f1e767]:
+    - heading "#41 Eashan Mahajan — 11/15 A1 B3 C3 D2 E2 F0" [level=3] [ref=f1e768]:
+      - text: "#41 Eashan Mahajan — 11/15"
+      - generic "A" [ref=f1e769]: A1
+      - generic "B" [ref=f1e770]: B3
+      - generic "C" [ref=f1e771]: C3
+      - generic "D" [ref=f1e772]: D2
+      - generic "E" [ref=f1e773]: E2
+      - generic "F" [ref=f1e774]: F0
+    - paragraph [ref=f1e775]:
+      - text: Berkeley DS BA May 2028; built adopted LLM eval harness + 9-agent ReAct RTL repair (91%/33 cases); no LLM fine-tuning.
+      - generic [ref=f1e776]: no-LLM-post-training
+      - generic [ref=f1e777]: probe-AI-leverage
+    - paragraph [ref=f1e778]:
+      - strong [ref=f1e779]: "Evidence:"
+      - text: "A: \"Trained a Deep Q-Network (DQN) trading agent in PyTorch\" — non-LLM training caps at 1; B: \"mutation-based LLM evaluation harness spanning 29 fault families... adopted by the engineering team\"; \"9 domain agents and a 10-turn ReAct loop... 91% repair rate on a 33-case benchmark\"; C: \"FastAPI/WebSocket backend; deployed to production\"; \"Docker and deployed on AWS via EC2, Fargate\"; D: \"matched-budget control revealed\" confound, ablations; E: \"gradient saliency, channel/row ablation, and temporal occlusion\" interpretability"
+    - group [ref=f1e780]:
+      - generic [ref=f1e781]:
+        - strong [ref=f1e782]: Verification
+        - text: ": 100% of decidable claims held up. All five load-bearing claims check out at the existence level: both internship companies are real and match the claimed work domains precisely (Wynd's 'airID' is its actual product; ChipChop really does AI RTL/FPGA debugging), the OrderBook repo genuinely contains everything the resume claims, and the 501(c)(3) nonprofit is registered with the candidate as CEO. One downgrade: the ResonanceAI bullet overstates the public repo's stack (no visible FastAPI/Docker/AWS; audio-only, not video). No fabrication suspected; internal metrics are self-reported and should be probed in interview."
+    - paragraph [ref=f1e783]:
+      - link "resume" [ref=f1e784] [cursor=pointer]:
+        - /url: resumes/183445379003_192390854003_Eashan_Mahajan_Resume.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e785]: 183445379003_192390854003_Eashan_Mahajan_Resume.pdf
+  - generic [ref=f1e786]:
+    - heading "#42 Rudrajit Banerjee — 11/15 A1 B3 C3 D2 E2 F0" [level=3] [ref=f1e787]:
+      - text: "#42 Rudrajit Banerjee — 11/15"
+      - generic "A" [ref=f1e788]: A1
+      - generic "B" [ref=f1e789]: B3
+      - generic "C" [ref=f1e790]: C3
+      - generic "D" [ref=f1e791]: D2
+      - generic "E" [ref=f1e792]: E2
+      - generic "F" [ref=f1e793]: F0
+    - paragraph [ref=f1e794]:
+      - text: MS CS Northeastern grad 08/2026; strong backend SWE + LangGraph agents/eval harnesses (hackathon winner), zero model training/fine-tuning.
+      - generic [ref=f1e795]: graduation-08/2026-coincides-with-reference-date
+      - generic [ref=f1e796]: graduation-aug-2026-same-month-as-cutoff
+      - generic [ref=f1e797]: no-LLM-post-training-experience
+      - generic [ref=f1e798]: probe-AI-leverage
+      - generic [ref=f1e799]: vote-split-3-votes
+    - paragraph [ref=f1e800]:
+      - strong [ref=f1e801]: "Evidence:"
+      - text: "B: \"LangGraph-based agent...reducing false alerts by 66%\"; \"harness that traces inter-agent coordination failures via Weave scorers\"; \"evaluation pipelines with token-based edit distance...75% improvement\". C: \"serverless API backend (AWS Lambda...) 99.9%+ uptime across 3+ years\"; \"ETL pipelines integrating 30+ EHR systems\". D: \"Winner, CoreWeave W&B Multi-Agent Hackathon (85 teams)\"; benchmarked C server \"6.6% latency reduction\". E: \"privacy-aware LLM framework\"; \"PHI de-identification logic\". A: no SFT/LoRA/RL anywhere. F: only keyword \"Claude Code, Cursor\"."
+    - group [ref=f1e802]:
+      - generic [ref=f1e803]:
+        - strong [ref=f1e804]: Verification
+        - text: ": 100% of decidable claims held up. All decidable load-bearing claims check out: the W&B/CoreWeave multi-agent hackathon at MIT is real and the candidate's LinkedIn confirms the win (85 teams, 450+ participants) — though it was the 'Best Use of Weave' category award rather than the overall grand prize. Both named GitHub repos are real, non-forked, and match their resume descriptions (the C web server is notably substantial but was a 4-person team project). The 'Veil' Northeastern research is unverifiable publicly; employment at Fidelity and Healthjump/Datavant passes existence checks. No fabrication suspected."
+    - paragraph [ref=f1e805]:
+      - link "resume" [ref=f1e806] [cursor=pointer]:
+        - /url: resumes/183445872003_192391347003_RB_resume_ai_ml.pdf
+      - text: "· votes: 12/9/11 · file:"
+      - code [ref=f1e807]: 183445872003_192391347003_RB_resume_ai_ml.pdf
+  - generic [ref=f1e808]:
+    - heading "#43 Nathan Ko — 11/15 A1 B3 C3 D2 E2 F0" [level=3] [ref=f1e809]:
+      - text: "#43 Nathan Ko — 11/15"
+      - generic "A" [ref=f1e810]: A1
+      - generic "B" [ref=f1e811]: B3
+      - generic "C" [ref=f1e812]: C3
+      - generic "D" [ref=f1e813]: D2
+      - generic "E" [ref=f1e814]: E2
+      - generic "F" [ref=f1e815]: F0
+    - paragraph [ref=f1e816]:
+      - text: MS CS Dec 2027; GRPO/LoRA/vLLM safety classifier 92%, NASA eval CLI, MCP agent backend, shipped Docker/AWS services.
+      - generic [ref=f1e817]: probe-AI-leverage
+      - generic [ref=f1e818]: vote-split-3-votes
+    - paragraph [ref=f1e819]:
+      - strong [ref=f1e820]: "Evidence:"
+      - text: "A: \"Fine-tuned a 3B model into a prompt-safety classifier via GRPO... 92%\" — LLM+RL but classifier, rubric caps at 1. B: \"config-driven evaluation CLI that pinned the dataset, model configuration, and reference labels\"; \"CI eval suite over 1,000+ adversarial prompts\"; \"voice agent over a remote MCP server\". C: \"Flask microservice... containerized with Docker\"; \"Lambda + DynamoDB service handling 10k+ daily requests\". D: \"Benchmarked... against 75+ annotators across 2,000+ files\"; Cal-Hacks project. E: \"Jailbreak Defense Model\"; adversarial prompt eval suite."
+    - group [ref=f1e821]:
+      - generic [ref=f1e822]:
+        - strong [ref=f1e823]: Verification
+        - text: ": 100% of decidable claims held up. All institutional claims check out at the existence level (NASA Ames, Cadence, UCSD ITS, UCSD LASR Lab all real and doing the claimed kind of work), and the linked GitHub is genuinely strong: 23 mostly-original repos with sustained 2022-2026 activity, including recent unlisted AI-agent and audio-ML projects that corroborate the claimed skill set. The main soft spot is that the two flagship personal projects (GRPO-trained jailbreak classifier, Cal-Hacks six-agent platform) have no public artifacts, so their specifics rest on the resume alone. No fabrication indicators; a live walkthrough of the GRPO project in interview would close the remaining gap."
+    - paragraph [ref=f1e824]:
+      - link "resume" [ref=f1e825] [cursor=pointer]:
+        - /url: resumes/183447693003_192393168003_nathan_ko_resume.docx
+      - text: "· votes: 14/11/10 · file:"
+      - code [ref=f1e826]: 183447693003_192393168003_nathan_ko_resume.docx
+  - generic [ref=f1e827]:
+    - heading "#44 Siddhesh More — 11/15 A2 B2 C3 D3 E1 F0" [level=3] [ref=f1e828]:
+      - text: "#44 Siddhesh More — 11/15"
+      - generic "A" [ref=f1e829]: A2
+      - generic "B" [ref=f1e830]: B2
+      - generic "C" [ref=f1e831]: C3
+      - generic "D" [ref=f1e832]: D3
+      - generic "E" [ref=f1e833]: E1
+      - generic "F" [ref=f1e834]: F0
+    - paragraph [ref=f1e835]:
+      - text: ASU MS CS May 2027; QLoRA+DPO on Qwen2.5-0.5B with LLM-judge eval, GPT-from-scratch, LangGraph agent evals, deployed FastAPI/AWS RAG.
+      - generic [ref=f1e836]: probe-AI-leverage
+      - generic [ref=f1e837]: small-eval-sets (20-question / 10-task / 40-query evals)
+      - generic [ref=f1e838]: small-eval-sizes (20 questions / 10 tasks)
+      - generic [ref=f1e839]: two ARR Aug 2026 papers are submissions, not acceptances
+      - generic [ref=f1e840]: vote-split-3-votes
+    - paragraph [ref=f1e841]:
+      - strong [ref=f1e842]: "Evidence:"
+      - text: "A: \"fine-tuned Qwen2.5-0.5B with QLoRA then DPO\", \"GPT-style transformer from raw PyTorch... Sol HPC (A100)\", but only 20-q eval, null result; B: \"stateful LangGraph multi-agent... 10-task CLEAR-framework eval... 90% tool-call accuracy\", \"pairwise LLM-judge eval\"; C: \"RAG pipeline on FastAPI and AWS Lambda serving 500+ daily queries\", \"GitHub Actions CI/CD\", \"P95... 800ms to 320ms\"; D: \"VecDB@VLDB 2026, Accepted\", \"IEEE ICCCNT 2025, Published\", \"reported an honest null result\"; E: \"Uncertainty-Aware Aggregation of LLMs\" (ARR submission only), human-in-the-loop tool gating."
+    - group [ref=f1e843]:
+      - generic [ref=f1e844]:
+        - strong [ref=f1e845]: Verification
+        - text: ": 100% of decidable claims held up. Strongest claim checks out: the VecDB@VLDB 2026 workshop paper is real and he is first author, and all three flagship AI projects have live working hosted demos, with a genuine multi-year GitHub history. The main gap is transparency, not truth: the flagship project repos are private (404 from his own links), the HuggingFace model card could not be found, and the IEEE ICCCNT 2025 \"Published\" paper is not yet indexed anywhere (plausibly Xplore lag). No fabrication suspected; in an interview, ask him to open the private repos and walk through the CLIP LoRA training and DPO eval numbers."
+    - paragraph [ref=f1e846]:
+      - link "resume" [ref=f1e847] [cursor=pointer]:
+        - /url: resumes/183449017003_192394497003_SiddheshMore_Resume.pdf
+      - text: "· votes: 14/10/11 · file:"
+      - code [ref=f1e848]: 183449017003_192394497003_SiddheshMore_Resume.pdf
+  - generic [ref=f1e849]:
+    - heading "#45 Albert (Ziyu) Zhao — 11/15 A2 B3 C3 D2 E1 F0" [level=3] [ref=f1e850]:
+      - text: "#45 Albert (Ziyu) Zhao — 11/15"
+      - generic "A" [ref=f1e851]: A2
+      - generic "B" [ref=f1e852]: B3
+      - generic "C" [ref=f1e853]: C3
+      - generic "D" [ref=f1e854]: D2
+      - generic "E" [ref=f1e855]: E1
+      - generic "F" [ref=f1e856]: F0
+    - paragraph [ref=f1e857]:
+      - text: CMU MS MLSys (May 2028); Tencent Hunyuan SFT/RFT/agent-harness infra, 2-bit quantization CUDA research, FlashInfer/Harbor OSS.
+      - generic [ref=f1e858]: "A-is-infra: SFT/RFT/distillation work is infrastructure contribution, no personally-measured benchmark gain cited"
+      - generic [ref=f1e859]: probe-AI-leverage
+      - generic [ref=f1e860]: "timeline-overlap: Tencent Beijing Jan-Apr 2026 overlaps UR senior spring"
+      - generic [ref=f1e861]: verify
+    - paragraph [ref=f1e862]:
+      - strong [ref=f1e863]: "Evidence:"
+      - text: "A: \"Evaluation/Distillation/SFT/RFT/Sandbox infrastructure to train and fine-tune the Hy3 model (295B MoE)\" — infra, no measured gain, capped 2. B: \"Agent Harness\"; Harbor \"anti-cheating... dirty work sandbox... evaluated in a separate clean sandbox\"; FlashInfer-Bench kernel eval. C: \"CUDA C++ kernels\", \"Docker... 2,500+ images\", gRPC/K8s gateway, 3.3k/6.0k-star OSS. D: \"5% vs 31% overhead\", Kaggle \"Silver (54/1,282)\"; no publications. E: anti-cheating sandbox for RL reward integrity."
+    - group [ref=f1e864]:
+      - generic [ref=f1e865]:
+        - strong [ref=f1e866]: Verification
+        - text: ": 90% of decidable claims held up. The hard verifiable wins check out: the Kaggle Silver Medal (54th place) is confirmed by an official certificate, and all four employers/labs (Cornell Abdelfattah lab, Tencent Hunyuan, RealKey, Haystack) exist and do what the resume says. However, the two open-source contribution claims (Harbor anti-cheating feature, FlashInfer-Bench DeepSeek-V4 kernels) could not be linked to the candidate despite searching contributor lists, commit authors, and PRs — no GitHub profile is provided, similar features were authored by others, and the FlashInfer star count is inflated by citing the wrong repo. Recommend asking the candidate for their GitHub handle and specific PR links before crediting the OSS and RealKey funding claims."
+    - paragraph [ref=f1e867]:
+      - link "resume" [ref=f1e868] [cursor=pointer]:
+        - /url: resumes/183454802003_192400313003_2026ZiyuZhao_Latest.pdf
+      - text: "· votes: 13/11 · file:"
+      - code [ref=f1e869]: 183454802003_192400313003_2026ZiyuZhao_Latest.pdf
+  - generic [ref=f1e870]:
+    - heading "#46 Rishit Agrawal — 11/15 A1 B2 C3 D3 E2 F0" [level=3] [ref=f1e871]:
+      - text: "#46 Rishit Agrawal — 11/15"
+      - generic "A" [ref=f1e872]: A1
+      - generic "B" [ref=f1e873]: B2
+      - generic "C" [ref=f1e874]: C3
+      - generic "D" [ref=f1e875]: D3
+      - generic "E" [ref=f1e876]: E2
+      - generic "F" [ref=f1e877]: F0
+    - paragraph [ref=f1e878]:
+      - text: UC Berkeley CS/DS incoming freshman (grad Jun 2029); Springer/ICISSP publications, revenue startup backend, agent stress-testing project; no LLM post-training.
+      - generic [ref=f1e879]: incoming-freshman
+      - generic [ref=f1e880]: incoming-freshman-no-college-coursework-completed
+      - generic [ref=f1e881]: no-LLM-post-training
+      - generic [ref=f1e882]: probe-AI-leverage
+      - generic [ref=f1e883]: vote-split-3-votes
+    - paragraph [ref=f1e884]:
+      - strong [ref=f1e885]: "Evidence:"
+      - text: "A: \"Trained 6 ML/DL models (LR to LSTM)... >99% accuracy\", \"CNN, RNN... with PyTorch\" — classifiers only, no LLM SFT/RL. B: Flamelog \"threat assurance of agentic systems... stress-testing\", Talkode \"rubric-based evaluation\" — no pass-rate metrics. C: \"backend API infrastructure on AWS... 100,000+ users... $30K+ in revenue\", FastAPI/Redis. D: two Springer chapters + ICISSP 2026, \"92 ML experiments\". E: malware classification research; Flamelog threat assurance."
+    - group [ref=f1e886]:
+      - generic [ref=f1e887]:
+        - strong [ref=f1e888]: Verification
+        - text: ": 100% of decidable claims held up. All three publications are real and verified (arXiv/DBLP/Crossref): he is first author on the Springer steganographic-capacity chapter and the ICISSP 2026 malware-imaging paper, and second author on the chatbot-detection chapter — unusually strong for a candidate entering UC Berkeley in Aug 2026. Cookr (co-founder/CTO) and Talkode are real, with genuine commit history, though Talkode is a team repo and Cookr's own README says ~30K users versus the resume's 100K+ claim; the Startup World Cup win and YC-top-10% claims could not be publicly verified. No fabrication suspected; the research record is the resume's strongest, fully confirmed pillar, while the startup traction numbers should be discounted or probed in interview."
+    - paragraph [ref=f1e889]:
+      - link "resume" [ref=f1e890] [cursor=pointer]:
+        - /url: resumes/183456721003_192402253003_Rishit_Postman.pdf
+      - text: "· votes: 11/8/11 · file:"
+      - code [ref=f1e891]: 183456721003_192402253003_Rishit_Postman.pdf
+  - generic [ref=f1e892]:
+    - heading "#47 Sudhanva Deshpande — 11/15 A1 B3 C3 D2 E2 F0" [level=3] [ref=f1e893]:
+      - text: "#47 Sudhanva Deshpande — 11/15"
+      - generic "A" [ref=f1e894]: A1
+      - generic "B" [ref=f1e895]: B3
+      - generic "C" [ref=f1e896]: C3
+      - generic "D" [ref=f1e897]: D2
+      - generic "E" [ref=f1e898]: E2
+      - generic "F" [ref=f1e899]: F0
+    - paragraph [ref=f1e900]:
+      - text: Purdue BS CompE Dec 2027; strong SWE/agents (MCP server, LangGraph platform, Cloud Run CI/CD) but no LLM capability post-training
+      - generic [ref=f1e901]: probe-AI-leverage
+      - generic [ref=f1e902]: vote-split-3-votes
+    - paragraph [ref=f1e903]:
+      - strong [ref=f1e904]: "Evidence:"
+      - text: "A: \"fine-tuned Sentence-BERT\" (embedding model, not LLM capability post-training; LoRA/RLHF skills-list only); B: \"guardrailed MCP server (9 tools)... Claude agent skills\", \"5-agent orchestration platform with LangGraph\"; C: \"deployed on GCP Cloud Run\", \"GitHub Actions CI/CD\", \"~2,000 JUnit tests\", \"227 tests, 84% coverage\"; D: \"Benchmarked 9 classifiers with K-fold CV... 85-90% accuracy\", \"Presented at Purdue's Spring Undergraduate Research Conference\", StarkHacks 2026; E: \"3-layer safety framework: citation enforcement, confidence gating, hallucination detection\" (no measurement)"
+    - group [ref=f1e905]:
+      - generic [ref=f1e906]:
+        - strong [ref=f1e907]: Verification
+        - text: ": 100% of decidable claims held up. Identity and the major anchors check out: both internships (Moody's summer 2026, Dexcom summer 2025) are corroborated by LinkedIn/GitHub, the SpatialBuild hackathon project is on Devpost with matching detail, and the Lattice repo exists with exactly the claimed LangGraph/ChromaDB/Neo4j/LangFuse stack — though it is an early-stage personal repo (9 commits, 0 stars), so treat its scale claims (227 tests, 5-agent platform) as self-reported. The Purdue research lab could not be found by its stated name and the journal paper is in-progress, so the research line rests on the candidate's word; no fabrication is suspected, but this is a strong sophomore resume whose most impressive numbers live inside private company/lab work."
+    - paragraph [ref=f1e908]:
+      - link "resume" [ref=f1e909] [cursor=pointer]:
+        - /url: resumes/183457599003_192403146003_Sudhanva_Deshpande_Resume_AI.pdf
+      - text: "· votes: 12/9/11 · file:"
+      - code [ref=f1e910]: 183457599003_192403146003_Sudhanva_Deshpande_Resume_AI.pdf
+  - generic [ref=f1e911]:
+    - heading "#48 Mohan Krishna G R — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e912]:
+      - text: "#48 Mohan Krishna G R — 11/15"
+      - generic "A" [ref=f1e913]: A1
+      - generic "B" [ref=f1e914]: B3
+      - generic "C" [ref=f1e915]: C3
+      - generic "D" [ref=f1e916]: D3
+      - generic "E" [ref=f1e917]: E1
+      - generic "F" [ref=f1e918]: F0
+    - paragraph [ref=f1e919]:
+      - text: Anna Univ integrated MTech CSE, grad Mar 2027; from-scratch BERT/Mamba retrieval training on H100, Airbus agentic platform, strong shipped SWE.
+      - generic [ref=f1e920]: metric-inflation-risk
+      - generic [ref=f1e921]: probe-AI-leverage
+      - generic [ref=f1e922]: probe-post-training-depth
+      - generic [ref=f1e923]: same-project-repeated (TextSumm in experience and projects)
+    - paragraph [ref=f1e924]:
+      - strong [ref=f1e925]: "Evidence:"
+      - text: "A: \"Trained BERT-base (12L) and Mamba (24L) bi-encoders from scratch on MS MARCO\"; encoder/summarization training only, no LLM capability post-training (DPO/GRPO only in skills list, \"DPO-style evaluator chains\" vague). B: \"GraphRAG + ReAct agent retrieval loop... 97% human-eval\"; \"multi-agent LLM workflows (LangGraph)\"; \"85% agreement with human interviewer scores\". C: \"Dockerized FastAPI microservices\", \"CI/CD (Docker, GitHub Actions, Azure ACI)\", merged NVFLARE PR. D: \"3 seeds and paired-bootstrap confidence intervals\", IEEE Xplore paper, hackathon wins. E: \"Constitutional AI safety guardrails\" — mention only."
+    - group [ref=f1e926]:
+      - generic [ref=f1e927]:
+        - strong [ref=f1e928]: Verification
+        - text: ": 100% of decidable claims held up. Every decidable claim checked out: the IEEE paper exists (though he is 5th of 7 authors at a regional conference), both merged open-source PRs (NVIDIA NVFlare, Andrew Ng's context-hub) are real under his GitHub account, and the TransformerTax retrieval study is substantive non-fork research code whose numbers match the resume exactly. Main caution: CertusHire's 'production-grade / 100+ concurrent sessions' language overstates a 19-commit proof-of-concept, and the Airbus internship awards are internal and unverifiable (company presence in Bengaluru is real). No fabrication suspected; the candidate slightly inflates scope wording but the underlying artifacts are genuine."
+    - paragraph [ref=f1e929]:
+      - link "resume" [ref=f1e930] [cursor=pointer]:
+        - /url: resumes/183464984003_192410566003_Mohan_Krishna_G_R_-_Resume.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e931]: 183464984003_192410566003_Mohan_Krishna_G_R_-_Resume.pdf
+  - generic [ref=f1e932]:
+    - heading "#49 Bernice Mercy Sharon Malaiarasu — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e933]:
+      - text: "#49 Bernice Mercy Sharon Malaiarasu — 11/15"
+      - generic "A" [ref=f1e934]: A1
+      - generic "B" [ref=f1e935]: B3
+      - generic "C" [ref=f1e936]: C3
+      - generic "D" [ref=f1e937]: D3
+      - generic "E" [ref=f1e938]: E1
+      - generic "F" [ref=f1e939]: F0
+    - paragraph [ref=f1e940]:
+      - text: MS AI Northeastern (May 2028); 2 yrs Thoughtworks building production ReAct multi-agent PRINCE at Bayer with RAGAS/DeepEval CI eval gates.
+      - generic [ref=f1e941]: "A-capped: LLaMA-3 fine-tune is a classifier and still in progress (no measured capability gain)"
+      - generic [ref=f1e942]: PRINCE spans many bullets — single project, though phases are distinct
+      - generic [ref=f1e943]: no TypeScript evidence for agent-harness work
+    - paragraph [ref=f1e944]:
+      - strong [ref=f1e945]: "Evidence:"
+      - text: "A: \"Fine-tuning LLaMA 3 on DeepSuiMind... building a classification pipeline\" — classifier, in progress, caps at 1. B: \"ReAct-based multi-agent system with tool calling, deployed in production... 18,000+ studies\"; \"RAGAS + DeepEval as a CI/CD gate... 5 metrics, Langfuse\". C: \"Terraform-managed pipelines\", \"Spark (Scala) + AWS Glue ETL\", Docker, production AWS. D: \"Speaker, XConf\", \"workshop... 50+ developers\", \"0.922 ROC-AUC\", Bayer GenAI Award. E: SHAP interpretability + self-harm classifier (safety-adjacent only)."
+    - group [ref=f1e946]:
+      - generic [ref=f1e947]:
+        - strong [ref=f1e948]: Verification
+        - text: ": 100% of decidable claims held up. Strong verification: the centerpiece claim (PRINCE, a Bayer/Thoughtworks multi-agent RAG + Text-to-SQL system over 18,000+ preclinical studies) is confirmed by a 2025 Frontiers in Artificial Intelligence paper that names her in its acknowledgments exactly as her resume states, and her XConf 2025 co-talk on the system is publicly corroborated. AIMES Lab and Husky AI at Northeastern exist as described; GitHub is real but light, and the self-harm classifier repo is early EDA-stage. Only soft spots: 'Led development' likely overstates (core contributor, not paper author), and the internal Bayer GenAI Award cannot be publicly verified. No fabrication suspected."
+    - paragraph [ref=f1e949]:
+      - link "resume" [ref=f1e950] [cursor=pointer]:
+        - /url: resumes/183479942003_192425641003_resumeBernice.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e951]: 183479942003_192425641003_resumeBernice.pdf
+  - generic [ref=f1e952]:
+    - heading "#50 Mohamed Abdelhamid — 11/15 A0 B3 C3 D3 E1 F1" [level=3] [ref=f1e953]:
+      - text: "#50 Mohamed Abdelhamid — 11/15"
+      - generic "A" [ref=f1e954]: A0
+      - generic "B" [ref=f1e955]: B3
+      - generic "C" [ref=f1e956]: C3
+      - generic "D" [ref=f1e957]: D3
+      - generic "E" [ref=f1e958]: E1
+      - generic "F" [ref=f1e959]: F1
+    - paragraph [ref=f1e960]:
+      - text: Minerva BS CS May 2028; deep LLM agent/tool-loop builder (PydanticAI/MCP/LangGraph, OSS repos, 750+ tests) but zero model training.
+      - generic [ref=f1e961]: "no-model-training-experience: zero SFT/LoRA/RL/quantization evidence — A dimension entirely absent for a role centered on fine-tuning"
+      - generic [ref=f1e962]: probe-AI-leverage
+    - paragraph [ref=f1e963]:
+      - strong [ref=f1e964]: "Evidence:"
+      - text: "B: \"per-turn PydanticAI/MCP harness with up to 57 auth-gated tools\"; \"10 MCP tools... bounded replanning\"; \"5/5 cross-ecosystem workflow evaluations\". C: \"Python/FastAPI, TypeScript/React, and Postgres platform\"; \"750+ backend tests\"; GitHub repos nexus/slingshot/pomozen; Docker, GitHub Actions. D: \"cut npm install 222.8 s → 5.8 s (38.3×)\"; \"~100× speedup\"; taught 6-week Python curriculum. E: \"role-scoped retrieval... SQLGlot AST validation\"; \"auth-gated tools\" (robustness only). A: no training; API/agent work only."
+    - group [ref=f1e965]:
+      - generic [ref=f1e966]:
+        - strong [ref=f1e967]: Verification
+        - text: ": 100% of decidable claims held up. All decidable load-bearing claims check out: the three named GitHub repos are real, original, and match their descriptions (Nexus in particular is a genuinely substantial full-stack agent codebase), and Ascensia Fellowship + its Counselle AI admissions platform exist with the candidate listed as CTO (under the name 'Saif Abdelhamid', whose linked LinkedIn is mohamedd-abdelhamid — same person). Calibration note: Ascensia is a small nonprofit fellowship, not a company of commercial scale, and quantitative claims (test counts, speedups, IPhR participant numbers, the local NASA Space Apps art award) are self-reported and unverifiable. No fabrication suspected; the resume slightly inflates scale framing but the underlying work is real."
+    - paragraph [ref=f1e968]:
+      - link "resume" [ref=f1e969] [cursor=pointer]:
+        - /url: resumes/183482565003_192428276003_Mohamed_Abdelhamid_resume.pdf
+      - text: "· votes: 12/10 · file:"
+      - code [ref=f1e970]: 183482565003_192428276003_Mohamed_Abdelhamid_resume.pdf
+  - generic [ref=f1e971]:
+    - heading "#51 Abhishek Dharmadhikari — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e972]:
+      - text: "#51 Abhishek Dharmadhikari — 11/15"
+      - generic "A" [ref=f1e973]: A1
+      - generic "B" [ref=f1e974]: B3
+      - generic "C" [ref=f1e975]: C3
+      - generic "D" [ref=f1e976]: D3
+      - generic "E" [ref=f1e977]: E1
+      - generic "F" [ref=f1e978]: F0
+    - paragraph [ref=f1e979]:
+      - text: GaTech MS CS May 2027; AAAI'26 workshop agentic-refinement eval (+16% SciEval/MMLU), strong prod SWE, but no verified LLM post-training
+      - generic [ref=f1e980]: probe-AI-leverage
+      - generic [ref=f1e981]: probe-fine-tuning-depth
+    - paragraph [ref=f1e982]:
+      - strong [ref=f1e983]: "Evidence:"
+      - text: "A: \"zero-shot, few-shot, and fine-tuning methodologies\" (vague; trained RoBERTa/Kim-CNN detectors = classifier cap 1); B: \"agentic framework of refinement agents...improving accuracy by up to 16% on SciEval and MMLU...AAAI'26 Workshop\"; \"Data Diff Agentic workflow using MCP, LangGraph\"; C: Wells Fargo \"Django...Jenkins (CI/CD)\", Intuit \"GCP, Airflow...Kubernetes, and Terraform\"; D: AAAI'26 workshop, \"thorough ablation study\", TA 1500+ students, hackathon lead; E: \"back-translation paraphrase attack, with AUROC, TPR@1%FPR\""
+    - group [ref=f1e984]:
+      - generic [ref=f1e985]:
+        - strong [ref=f1e986]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing claims check out: three real ML publications (arXiv + IEEE MIPR) tied to MIDAS Lab IIIT Delhi with 44 total citations, and genuine, substantive GitHub repos whose metrics match the resume verbatim. Two caveats: he is a middle author (3rd-5th) on all lab papers while the resume's \"devised\" phrasing implies ownership, and the AAAI'26 Workshop acceptance is corroborated only by his own portfolio blog; both course projects are 4-person team efforts. No fabrication suspected — this is an honest-to-slightly-embellished resume with verifiable substance."
+    - paragraph [ref=f1e987]:
+      - link "resume" [ref=f1e988] [cursor=pointer]:
+        - /url: resumes/183483805003_192429518003_ABHISHEK_DHARMADHIKARI_SAP_SWE.pdf
+      - text: "· votes: 12/12 · file:"
+      - code [ref=f1e989]: 183483805003_192429518003_ABHISHEK_DHARMADHIKARI_SAP_SWE.pdf
+  - generic [ref=f1e990]:
+    - heading "#52 Daniel He — 11/15 A1 B3 C3 D2 E2 F0" [level=3] [ref=f1e991]:
+      - text: "#52 Daniel He — 11/15"
+      - generic "A" [ref=f1e992]: A1
+      - generic "B" [ref=f1e993]: B3
+      - generic "C" [ref=f1e994]: C3
+      - generic "D" [ref=f1e995]: D2
+      - generic "E" [ref=f1e996]: E2
+      - generic "F" [ref=f1e997]: F0
+    - paragraph [ref=f1e998]:
+      - text: Western U CS, May 2028; HalluciBench LLM-judge eval of 29 LLMs (COLM submission), agent tool-calling projects, C++ inference server; no LLM post-training.
+      - generic [ref=f1e999]: canada-based-work-auth-unknown
+      - generic [ref=f1e1000]: no-LLM-post-training
+      - generic [ref=f1e1001]: probe-AI-leverage
+    - paragraph [ref=f1e1002]:
+      - strong [ref=f1e1003]: "Evidence:"
+      - text: "A: only CV fine-tune \"fine tuned MediaPipe model (~80% accuracy)\" — caps at 1. B: \"LLM-as-a-judge benchmarking pipeline...29 LLMs\", \"AI Agent Orchestration...Tool Calling\", \"error recovery loop salvaged ~90%\". C: \"C++ LLM inference server...2.5x throughput\", Docker, Terraform, CI/CD, 3 internships. D: co-authored COLM 2026 submission, MLH prize, quantified metrics. E: hallucination benchmark + \"refusal calibration\". F: lists Claude Code/Cursor only, no artifact."
+    - group [ref=f1e1004]:
+      - generic [ref=f1e1005]:
+        - strong [ref=f1e1006]: Verification
+        - text: ": 100% of decidable claims held up. Daniel He's footprint checks out: both flagship GitHub projects (Dex2 agent Chrome extension, mini-v C++ inference server) are real, original, and match their resume descriptions closely; the Hack Trent 2025 ElevenLabs prize is confirmed on Devpost; OpsGuru and advisor Dr. Apurva Narayan (Western CS) both exist and do the claimed work. The HalluciBench COLM 2026 paper is unverifiable (submitted, no public preprint) and should be weighted as research experience rather than a publication; mini-v slightly overstates ownership since continuous batching comes from an embedded llama.cpp server. No fabrication suspected — claims are modest and consistently corroborated for a second-year undergrad."
+    - paragraph [ref=f1e1007]:
+      - link "resume" [ref=f1e1008] [cursor=pointer]:
+        - /url: resumes/183485577003_192431290003_Daniel_He_Resume.pdf
+      - text: "· votes: 13/11 · file:"
+      - code [ref=f1e1009]: 183485577003_192431290003_Daniel_He_Resume.pdf
+  - generic [ref=f1e1010]:
+    - heading "#53 Sudhir Chebiyyam — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e1011]:
+      - text: "#53 Sudhir Chebiyyam — 11/15"
+      - generic "A" [ref=f1e1012]: A1
+      - generic "B" [ref=f1e1013]: B3
+      - generic "C" [ref=f1e1014]: C3
+      - generic "D" [ref=f1e1015]: D3
+      - generic "E" [ref=f1e1016]: E1
+      - generic "F" [ref=f1e1017]: F0
+    - paragraph [ref=f1e1018]:
+      - text: CMU CS BS May 2028; multi-agent LLM system at Humana (120k req/wk), robot policy training with measured success, from-scratch Rust driver.
+      - generic [ref=f1e1019]: graduates-May-2028-sophomore
+      - generic [ref=f1e1020]: no-LLM-post-training
+      - generic [ref=f1e1021]: probe-AI-leverage
+    - paragraph [ref=f1e1022]:
+      - strong [ref=f1e1023]: "Evidence:"
+      - text: "A: \"Trained ACT (Action Chunking Transformer) policies... 19/20 success\" — real training but non-LLM, caps at 1. B: \"orchestrator + two subagents on Google ADK... 120k requests per week\"; \"headless evaluation layer... four-task benchmark whose verifiers assert function\". C: \"from-scratch Rust driver... validated against golden vectors\"; Prefect, SLURM, Apptainer, PostgreSQL. D: \"Traced a plateau... ±2–5° of mechanical slack... discarded 160 trials\". E: \"Engineered guardrails... schema validation... audit logs... for oversight\"."
+    - group [ref=f1e1024]:
+      - generic [ref=f1e1025]:
+        - strong [ref=f1e1026]: Verification
+        - text: ": 100% of decidable claims held up. All decidable load-bearing claims check out: the SO-101 robot-arm project (including the exact 19/20 success rate), Design Harness, and money-os are real, original, actively-committed repos whose contents match the resume nearly point-for-point, and FRC Team 2910's 2025 world championship (winning alliance) is confirmed via Wikipedia with his team membership supported by his GitHub bio and old FRC code. Both CMU labs (Auton, Momentum) exist and research exactly what he describes; the Humana internship and the Rust servo-driver sub-claim are the only items with no public evidence (likely private/internal, not suspicious). No fabrication indicators — this candidate's public footprint is unusually consistent with the resume and shows genuine, self-documented engineering depth."
+    - paragraph [ref=f1e1027]:
+      - link "resume" [ref=f1e1028] [cursor=pointer]:
+        - /url: resumes/183486809003_192432527003_Sudhir_Chebiyyam_Resume.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e1029]: 183486809003_192432527003_Sudhir_Chebiyyam_Resume.pdf
+  - generic [ref=f1e1030]:
+    - heading "#54 Jacob Horne — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e1031]:
+      - text: "#54 Jacob Horne — 11/15"
+      - generic "A" [ref=f1e1032]: A1
+      - generic "B" [ref=f1e1033]: B3
+      - generic "C" [ref=f1e1034]: C3
+      - generic "D" [ref=f1e1035]: D3
+      - generic "E" [ref=f1e1036]: E1
+      - generic "F" [ref=f1e1037]: F0
+    - paragraph [ref=f1e1038]:
+      - text: UCI CS June 2028; LangGraph eval pipelines + ICLR workshop paper + Capital One prod ML infra; no LLM fine-tuning.
+      - generic [ref=f1e1039]: no-llm-post-training
+      - generic [ref=f1e1040]: probe-AI-leverage
+    - paragraph [ref=f1e1041]:
+      - strong [ref=f1e1042]: "Evidence:"
+      - text: "A: \"Trained PyTorch object-detection models...81% accuracy\", \"physics-informed PyTorch/GRU pipeline\" — non-LLM training only; B: \"LangGraph multi-agent evaluation pipelines with critic, advocate, and judge agents\", \"text-to-SQL evaluation for 25 tasks\", \"LangChain ReAct agents...10+ concurrent\"; C: \"Airflow DAG with 18 quality checks\", \"FastAPI services, Solidity...Next.js\"; D: \"co-authored an ICLR 2026 LLM Workshop paper\", \"multi-seed ablations...R2 = 0.99\"; E: \"token log-probability dynamics...confidence...failure modes\""
+    - group [ref=f1e1043]:
+      - generic [ref=f1e1044]:
+        - strong [ref=f1e1045]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing claims check out: the ICLR 2026 LLM-Reasoning Workshop paper is confirmed on OpenReview with Horne as 3rd of 4 authors under Mark Warschauer's UCI Digital Learning Lab, plus two follow-up arXiv papers, and both named projects exist as real non-fork repos with his commits. Main caveat: the Agonus bullets overstate his role — he contributed ~8% of commits (backend FastAPI routes) to a 13-person club project, with no evidence he built the claimed LangChain agent or Solidity layers, and Prop.Intel is a weekend hackathon build. No fabrication suspected; honest 'co-authored' phrasing on the paper is a good sign, and the Capital One/Calit2 internships are plausible but individually unverifiable."
+    - paragraph [ref=f1e1046]:
+      - link "resume" [ref=f1e1047] [cursor=pointer]:
+        - /url: resumes/183492975003_192438709003_JacobHorneResumePostman.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1048]: 183492975003_192438709003_JacobHorneResumePostman.pdf
+  - generic [ref=f1e1049]:
+    - heading "#55 Melody Zhao — 11/15 A3 B3 C3 D2 E0 F0" [level=3] [ref=f1e1050]:
+      - text: "#55 Melody Zhao — 11/15"
+      - generic "A" [ref=f1e1051]: A3
+      - generic "B" [ref=f1e1052]: B3
+      - generic "C" [ref=f1e1053]: C3
+      - generic "D" [ref=f1e1054]: D2
+      - generic "E" [ref=f1e1055]: E0
+      - generic "F" [ref=f1e1056]: F0
+    - paragraph [ref=f1e1057]:
+      - text: MS CSE Northeastern (Dec 2027); LoRA+GRPO/TRL tool-use agent with quantified 5-benchmark gains; FastAPI/Docker/AWS internships.
+      - generic [ref=f1e1058]: probe-AI-leverage
+      - generic [ref=f1e1059]: probe-agentflow-depth
+      - generic [ref=f1e1060]: self-project-benchmark-claims-unverified
+    - paragraph [ref=f1e1061]:
+      - strong [ref=f1e1062]: "Evidence:"
+      - text: "A: \"Trained with LoRA (r=8) + GRPO via TRL's GRPOTrainer... HotpotQA 8→30 (+22), 2Wiki 15→28\". B: \"4-role agent loop (Planner/Executor/Verifier/Generator)... evaluated with GPT-4o as LLM-judge\"; \"unseen SQL tool... 50% Spider\". C: \"Deployed Dockerized services to AWS ECS/ECR via CI/CD\"; \"RAG system serving 100+ biomedical researchers... vLLM... <500ms latency\". D: quantified baselines, JAX/HF/LangChain OSS PRs, TA rubric work — but no publications, OSS PRs are minor fixes."
+    - group [ref=f1e1063]:
+      - generic [ref=f1e1064]:
+        - strong [ref=f1e1065]: Verification
+        - text: ": 100% of decidable claims held up. Everything checkable exists and belongs to her: two MERGED PRs to Google/DeepMind's JAX plus merged PRs to HuggingFace transformers and LangGraph (all under github.com/Melody-coder923, the profile linked in the PDF), and a real, substantial AgentFlow LoRA+GRPO repo whose README numbers match the resume line-for-line — no fabrication. Two claims are materially overstated: the JAX work uses jit/NamedSharding rather than the 'shard_map and mesh' claimed, and the 4-role agent architecture is the upstream AgentFlow framework (arXiv:2510.05592) that her own README credits but the resume presents as hers. The 'Built ZeRO Stage 1/2/3 + MoE from scratch' line has no public backing (the only related repo just flips DeepSpeed's zero stage 2 in a config), so probe that plus who trained the AgentFlow adapter — it is published under a different person's HuggingFace account — in the interview."
+    - paragraph [ref=f1e1066]:
+      - link "resume" [ref=f1e1067] [cursor=pointer]:
+        - /url: resumes/183493762003_192439497003_Melody-MasterDegree-GPA4.0-2026_Intern_Ai.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1068]: 183493762003_192439497003_Melody-MasterDegree-GPA4.0-2026_Intern_Ai.pdf
+  - generic [ref=f1e1069]:
+    - heading "#56 Jean Marco Cruz — 11/15 A1 B2 C3 D3 E2 F0" [level=3] [ref=f1e1070]:
+      - text: "#56 Jean Marco Cruz — 11/15"
+      - generic "A" [ref=f1e1071]: A1
+      - generic "B" [ref=f1e1072]: B2
+      - generic "C" [ref=f1e1073]: C3
+      - generic "D" [ref=f1e1074]: D3
+      - generic "E" [ref=f1e1075]: E2
+      - generic "F" [ref=f1e1076]: F0
+    - paragraph [ref=f1e1077]:
+      - text: FIU BS CS 2027 (accel BS/MS Fall 2026); shipped two deployed ML products with rigorous stats; no LLM training executed, LoRA work proposal-only.
+      - generic [ref=f1e1078]: "A-is-research-proposal-only: Fyself LoRA work is 'Researched'/'Proposed', no training executed"
+      - generic [ref=f1e1079]: PyTorch listed as '(learning)'
+      - generic [ref=f1e1080]: probe-AI-leverage
+    - paragraph [ref=f1e1081]:
+      - strong [ref=f1e1082]: "Evidence:"
+      - text: "A: \"Researched...LoRA-based personality replication...Proposed Qwen3-4B\" (no training run); \"Trained XGBoost\" non-LLM caps at 1. B: \"Evaluated AI-generated text...against structured quality rubrics\"; \"automated parity gate\". C: \"C# ASP.NET Core API with API-key authentication...CI/CD...deployed on Fly.io...Docker Compose\". D: \"spurious AUC 1.000 → honest test AUC 0.703\"; IEEE COMPSAC 2026 publication; \"ρ≈0.2...rather than overfitting\". E: \"payload is rebuilt field-by-field to block injection\"; \"abstains on any unverifiable claim\"."
+    - group [ref=f1e1083]:
+      - generic [ref=f1e1084]:
+        - strong [ref=f1e1085]: Verification
+        - text: ": 100% of decidable claims held up. Every load-bearing claim verified: the IEEE COMPSAC 2026 paper exists at the cited FIU URL with Cruz as 2nd author in Prof. Mo Sha's (NSF CAREER) group, and both flagship projects (Risk Signal API, Cosmos Explorer) are live deployments backed by non-forked repos with sustained multi-week commit histories under his FIU email — commit messages match the resume's specific technical claims. Employers exist (FySelf does digital-clone AI as described; Handshake AI hires contract evaluators), though those roles are contract/early-stage rather than brand-name internships. No fabrication signals; an unusually honest and substantiated resume for an undergrad, with a bonus MCP security proxy repo relevant to Postman."
+    - paragraph [ref=f1e1086]:
+      - link "resume" [ref=f1e1087] [cursor=pointer]:
+        - /url: resumes/183496214003_192441955003_Resume_1_.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1088]: 183496214003_192441955003_Resume_1_.pdf
+  - generic [ref=f1e1089]:
+    - heading "#57 Zidane Virani — 11/15 A2 B3 C3 D3 E0 F0" [level=3] [ref=f1e1090]:
+      - text: "#57 Zidane Virani — 11/15"
+      - generic "A" [ref=f1e1091]: A2
+      - generic "B" [ref=f1e1092]: B3
+      - generic "C" [ref=f1e1093]: C3
+      - generic "D" [ref=f1e1094]: D3
+      - generic "E" [ref=f1e1095]: E0
+      - generic "F" [ref=f1e1096]: F0
+    - paragraph [ref=f1e1097]:
+      - text: Western SWE BEng Dec 2027; Qwen-0.6B fine-tune shipped at Shopify, MCP/LangGraph agent systems at Bloomberg, acquired RAG side project.
+      - generic [ref=f1e1098]: probe-AI-leverage
+      - generic [ref=f1e1099]: verify-experience
+      - generic [ref=f1e1100]: verify-experience-density
+    - paragraph [ref=f1e1101]:
+      - strong [ref=f1e1102]: "Evidence:"
+      - text: "A: \"Finetuned a Qwen-0.6B LLM for an autocomplete feature... PyTorch, and Hugging Face\" — real LLM SFT but no benchmark gain cited, no TRL/DeepSpeed/vLLM. B: \"agentic tool-calling system... MCP... reducing resolution time by 58%\"; \"replayed merchant conversations, evaluated tool selection\". C: \"Deployed a FastAPI REST API... p99 latency under 200 ms\"; Docker/GKE/K8s. D: acquired-for-$50K RAG platform, IBM award link, quantified results throughout. Flag: Bloomberg dated May–Aug 2026 with completed outcomes; 4 internships pre-junior — verify."
+    - group [ref=f1e1103]:
+      - generic [ref=f1e1104]:
+        - strong [ref=f1e1105]: Verification
+        - text: ": 100% of decidable claims held up. Real candidate with a genuine ML-internship track record: the Shopify autocomplete work is backed by public Hugging Face models/datasets, and the IBM Ponder This solver listing checks out; Bloomberg is consistent with his LinkedIn but only self-reported. However, the resume inflates the Vector Institute role (his own portfolio says the employer was affiliate startup Enabled Canada, with different dates), and the headline '$50K acquisition' is unverifiable — its evidence link goes to a Medium blog under a different name with no public tie to him. Recommend proceeding but probing the Vector/Enabled Canada employer and the acquisition claim directly in interview."
+    - paragraph [ref=f1e1106]:
+      - link "resume" [ref=f1e1107] [cursor=pointer]:
+        - /url: resumes/183496352003_192442097003_Zidane_Virani_Resume_Postman.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e1108]: 183496352003_192442097003_Zidane_Virani_Resume_Postman.pdf
+  - generic [ref=f1e1109]:
+    - heading "#58 Jacob Dang — 11/15 A2 B2 C1 D3 E3 F0" [level=3] [ref=f1e1110]:
+      - text: "#58 Jacob Dang — 11/15"
+      - generic "A" [ref=f1e1111]: A2
+      - generic "B" [ref=f1e1112]: B2
+      - generic "C" [ref=f1e1113]: C1
+      - generic "D" [ref=f1e1114]: D3
+      - generic "E" [ref=f1e1115]: E3
+      - generic "F" [ref=f1e1116]: F0
+    - paragraph [ref=f1e1117]:
+      - text: UCLA BS Math/CS Jun 2028; lead-authored ICLR-workshop AI safety paper with LoRA distillation pipelines measured on TerminalBench; Amazon SDE intern.
+      - generic [ref=f1e1118]: strong-candidate
+    - paragraph [ref=f1e1119]:
+      - strong [ref=f1e1120]: "Evidence:"
+      - text: "A: \"Llama 3.1-8B and LoRA fine-tuning...LoRA-based teacher–student distillation pipelines across Llama/Qwen\"; B: \"SICD, a controlled stress-testing framework...+7.7% TerminalBench permissive-mode transfer; POPE benchmark eval\"; C: \"Amazon Photos...photo upload pipeline; PowerShell script; BruinChat\"; D: \"Accepted to ICLR 2026 AIWILD Workshop; ICML GenBio Workshop; +95%, 90.53% accuracy\"; E: \"Lead-authored an empirical AI safety paper...unsafe behaviors transfer through keyword-sanitized trajectories; hallucination steering vectors\""
+    - group [ref=f1e1121]:
+      - generic [ref=f1e1122]:
+        - strong [ref=f1e1123]: Verification
+        - text: ": 100% of decidable claims held up. Strongest claim verified: Jacob Dang is first author of a real arXiv AI-safety paper (Subliminal Transfer of Unsafe Behaviors in AI Agent Distillation, 2604.15559) whose content matches the resume, with an original implementation repo; a matching ICLR 2026 'Agentic AI in the Wild' workshop exists though the acceptance itself couldn't be directly confirmed. The second (SICD/GenBio) paper and LVLM project are real but thinner than described — his visible code role in SICD is minor and the paper isn't publicly findable. Both 'internships' at Algoverse are actually a tuition-based mentored research program; no fabrication suspected, but calibrate seniority accordingly."
+    - paragraph [ref=f1e1124]:
+      - link "resume" [ref=f1e1125] [cursor=pointer]:
+        - /url: resumes/183502505003_192448279003_Jacob_Dang_UCLA_2028.pdf
+      - text: "· votes: 13/11 · file:"
+      - code [ref=f1e1126]: 183502505003_192448279003_Jacob_Dang_UCLA_2028.pdf
+  - generic [ref=f1e1127]:
+    - heading "#59 Vaibhav Wudaru — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e1128]:
+      - text: "#59 Vaibhav Wudaru — 11/15"
+      - generic "A" [ref=f1e1129]: A1
+      - generic "B" [ref=f1e1130]: B3
+      - generic "C" [ref=f1e1131]: C3
+      - generic "D" [ref=f1e1132]: D3
+      - generic "E" [ref=f1e1133]: E1
+      - generic "F" [ref=f1e1134]: F0
+    - paragraph [ref=f1e1135]:
+      - text: GT CS BS May 2028, 4.0; Claude+MCP 21-tool agent gated by 80+ case eval harness; probe training + ablations; no LLM post-training.
+      - generic [ref=f1e1136]: no-LLM-post-training
+      - generic [ref=f1e1137]: probe-AI-leverage
+      - generic [ref=f1e1138]: "verify-scope: three concurrent roles with very large claimed metrics (11,489 LOC, 3,053 tests) for a 2028 undergrad"
+    - paragraph [ref=f1e1139]:
+      - strong [ref=f1e1140]: "Evidence:"
+      - text: "A: \"training linear probes to 99.0%... XGBoost\", \"gradient-boosted classifiers (macro F1 0.758)\" — non-LLM training only, caps at 1. B: \"agent (Claude + MCP) that exposes 21 tools\", \"80+ case evaluation harness measuring... pass rates\", \"LLM-as-judge harness over 80+ labeled queries\". C: \"Flask inference API backed by Redis\", \"CI/CD on Linux\", \"3,053-test suite with CI regression gating\". D: \"TOST equivalence tests and clustered bootstrap over 1,152 judged samples\", ablation sweeps. E: \"PII-safe quality metrics\", linear-probe interpretability."
+    - group [ref=f1e1141]:
+      - generic [ref=f1e1142]:
+        - strong [ref=f1e1143]: Verification
+        - text: ": 100% of decidable claims held up. All six load-bearing claims check out: both employers, the Georgia Tech lab (PI Glen Chou), and the student org exist, and both flagship projects resolve to real, substantive GitHub repos with sustained commit history and the claimed stacks (LangGraph/LangSmith; Pinecone/Cohere/BM25) confirmed in code. His public research repo strongly corroborates the interpretability work described under the robotics lab. Main caveats are inflation of register, not substance: 'production' RAG pipeline is a student project, and all internal company metrics are self-reported and unverifiable. No fabrication suspected."
+    - paragraph [ref=f1e1144]:
+      - link "resume" [ref=f1e1145] [cursor=pointer]:
+        - /url: resumes/183508663003_192454504003_Vaibhav_Wudaru_Resume_Postman.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1146]: 183508663003_192454504003_Vaibhav_Wudaru_Resume_Postman.pdf
+  - generic [ref=f1e1147]:
+    - heading "#60 Jonathan Shanmuganantham — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e1148]:
+      - text: "#60 Jonathan Shanmuganantham — 11/15"
+      - generic "A" [ref=f1e1149]: A1
+      - generic "B" [ref=f1e1150]: B3
+      - generic "C" [ref=f1e1151]: C3
+      - generic "D" [ref=f1e1152]: D3
+      - generic "E" [ref=f1e1153]: E1
+      - generic "F" [ref=f1e1154]: F0
+    - paragraph [ref=f1e1155]:
+      - text: Waterloo BCS Dec 2027; built Shopify agentic harness from scratch (75+ daily users); trained PyTorch CV models but no LLM post-training.
+      - generic [ref=f1e1156]: metrics-unverifiable
+      - generic [ref=f1e1157]: probe-AI-leverage
+    - paragraph [ref=f1e1158]:
+      - strong [ref=f1e1159]: "Evidence:"
+      - text: "A: \"Trained PyTorch CORAL models on an NVIDIA T4... 0.85 QWK\" — CV only, caps at 1. B: \"built a domain-focused agentic AI harness from scratch... 75+ engineers daily\"; \"pluggable skills infrastructure... ~55% fewer input tokens\". C: \"Shipped Apple and Google Pay... Stripe/GraphQL across 14 currencies\"; \"Migrated harness file system tools to Rust\". D: quantified metrics throughout; \"Winner at Hack the North 2025\"; MicrogradCPP side project. E: \"security agent that eliminated 100+ CVE vulnerabilities\" — security eng, not AI safety."
+    - group [ref=f1e1160]:
+      - generic [ref=f1e1161]:
+        - strong [ref=f1e1162]: Verification
+        - text: ": 100% of decidable claims held up. Strong verification: GitHub profile (jshan9078) is real and substantive — both flagship projects (C++ autograd library, PSA card grader with live deployed site) are original, non-forked repos whose code matches the resume claims; Hamming AI (YC S24) and Dr. Jian Zhao's Waterloo lab both exist and match the claimed work domains. Two minor embellishments: ROSS was a Hack the North 2025 Finalist, not an outright 'Winner', and the grader's QWK is 0.84 in the repo vs 0.85 on the resume. Shopify internal-harness metrics are unverifiable by nature but consistent with his public open-source footprint; no fabrication suspected."
+    - paragraph [ref=f1e1163]:
+      - link "resume" [ref=f1e1164] [cursor=pointer]:
+        - /url: resumes/183510289003_192456162003_Jonathan_Shanmuganantham_Resume_AI.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1165]: 183510289003_192456162003_Jonathan_Shanmuganantham_Resume_AI.pdf
+  - generic [ref=f1e1166]:
+    - heading "#61 Chengze Li — 11/15 A2 B2 C2 D3 E2 F0" [level=3] [ref=f1e1167]:
+      - text: "#61 Chengze Li — 11/15"
+      - generic "A" [ref=f1e1168]: A2
+      - generic "B" [ref=f1e1169]: B2
+      - generic "C" [ref=f1e1170]: C2
+      - generic "D" [ref=f1e1171]: D3
+      - generic "E" [ref=f1e1172]: E2
+      - generic "F" [ref=f1e1173]: F0
+    - paragraph [ref=f1e1174]:
+      - text: UIC CS PhD (2028); SFT/DPO/offline-RL on multimodal LLM agent pipeline plus 5 publications incl. KDD/COLM co-author
+      - generic [ref=f1e1175]: arXiv link and 'NeurlPS' typo unverifiable
+      - generic [ref=f1e1176]: dense-jargon-single-project
+      - generic [ref=f1e1177]: internship dates 05/2026-08/2026 listed as if ongoing/future
+      - generic [ref=f1e1178]: probe-AI-leverage
+    - paragraph [ref=f1e1179]:
+      - strong [ref=f1e1180]: "Evidence:"
+      - text: "A: \"Optimized agent policies via SFT warm-start, DPO-style...KL-regularized offline RL over 20K logged tool-use rollouts\" — but no TRL/DeepSpeed/vLLM, no numeric benchmark gain. B: \"6-agent medical claim pipeline...planning, retrieval...critique\"; \"code pass rate\", \"no-RL ablations\". C: \"Architected the core geometry engine for the AccuContour system...daily clinical operations, reducing manual contouring workload by 35%\". D: KDD 2026, COLM 2026, first-author COPA 2026; \"28% reduction in shape drift\". E: \"ECE/Brier calibration\", conformal risk-audit paper, \"leakage checks\"."
+    - group [ref=f1e1181]:
+      - generic [ref=f1e1182]:
+        - strong [ref=f1e1183]: Verification
+        - text: ": 100% of decidable claims held up. Every checkable item holds up: the two first-author papers exist on arXiv with him listed first (ARC-STAR 2605.22222, conformal-triage 2605.20956), the COLM paper is real with him honestly shown as a middle (7th of 13) author, his UIC/Philip S. Yu affiliation and Manteia/AccuContour employer both check out, and his personal site matches the resume rather than contradicting it — no fabrication indicators. The main caveat is tier and depth, not honesty: the first-author work sits at a small venue (COPA) plus preprints under review, the strongest-sounding block (Shanghai AI Lab MedClaim-RL, an in-progress 3-month internship with a huge claimed system) has no public trace at all, and GitHub shows no substantive code to corroborate the engineering claims. Recommend interviewing hard on the Shanghai AI Lab RL pipeline and on what he personally built at Manteia, since those bullets carry most of the stage-1 score and only his word supports them."
+    - paragraph [ref=f1e1184]:
+      - link "resume" [ref=f1e1185] [cursor=pointer]:
+        - /url: resumes/183523498003_192469541003_Resume_Chengze_Li.pdf
+      - text: "· votes: 13/11 · file:"
+      - code [ref=f1e1186]: 183523498003_192469541003_Resume_Chengze_Li.pdf
+  - generic [ref=f1e1187]:
+    - heading "#62 Jeongwoo Lee — 11/15 A2 B3 C3 D3 E0 F0" [level=3] [ref=f1e1188]:
+      - text: "#62 Jeongwoo Lee — 11/15"
+      - generic "A" [ref=f1e1189]: A2
+      - generic "B" [ref=f1e1190]: B3
+      - generic "C" [ref=f1e1191]: C3
+      - generic "D" [ref=f1e1192]: D3
+      - generic "E" [ref=f1e1193]: E0
+      - generic "F" [ref=f1e1194]: F0
+    - paragraph [ref=f1e1195]: UCI MCS Dec 2027; LoRA/full fine-tuned 4 VLMs on 6xA6000 beating GPT-4o on ChartQA; built eval harnesses; ACL workshop Best Paper.
+    - paragraph [ref=f1e1196]:
+      - strong [ref=f1e1197]: "Evidence:"
+      - text: "A: \"Fine-tuned four VLM checkpoints... LoRA-based and full fine-tuning... Unsloth and HuggingFace PEFT on 6x A6000\", \"+11.2% on ChartQA\" — VLM/chart reasoning, not tool-calling/agentic LLM capability, so 2 not 3. B: \"benchmarking framework that unifies 6 SOTA table-reasoning methods\"; \"self-evaluation loop that executes generated SQL on a custom harness... +10% on WikiTQ\". C: \"Containerized the 12-service stack with Docker Compose... AWS EC2 with Prometheus-Grafana\"; Kubernetes/Airflow. D: \"ACL 2026 workshop, Best Paper Award\"; \"EACL Findings, 2026\"."
+    - group [ref=f1e1198]:
+      - generic [ref=f1e1199]:
+        - strong [ref=f1e1200]: Verification
+        - text: ": 100% of decidable claims held up. Both headline publications check out on ACL Anthology: first-author TabBridge at the ACL 2026 SURGeLLM workshop (accuracy claim matches the abstract verbatim) and second-author VisDoT in Findings of EACL 2026, with author positions represented honestly on the resume. GitHub work is real and substantive — Tablollama is an original 64-commit repo matching the claimed 6-baseline Ollama/Airflow/MLflow pipeline. Two soft spots, neither fabrication: the TabBridge 'Best Paper Award' is only self-reported (workshop site hasn't published awards), and E-MOJI is a 6-person bootcamp team fork where the 'Leader' role can't be publicly confirmed."
+    - paragraph [ref=f1e1201]:
+      - link "resume" [ref=f1e1202] [cursor=pointer]:
+        - /url: resumes/183529897003_192476030003_Resume_Jeongwoo_Lee_Engineer.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1203]: 183529897003_192476030003_Resume_Jeongwoo_Lee_Engineer.pdf
+  - generic [ref=f1e1204]:
+    - heading "#63 Abdul Mohammad — 11/15 A0 B2 C3 D3 E3 F0" [level=3] [ref=f1e1205]:
+      - text: "#63 Abdul Mohammad — 11/15"
+      - generic "A" [ref=f1e1206]: A0
+      - generic "B" [ref=f1e1207]: B2
+      - generic "C" [ref=f1e1208]: C3
+      - generic "D" [ref=f1e1209]: D3
+      - generic "E" [ref=f1e1210]: E3
+      - generic "F" [ref=f1e1211]: F0
+    - paragraph [ref=f1e1212]:
+      - text: Berkeley BA Math/DS/CS May 2028; quantization-safety eval on AgentDojo (2,065 paired runs) + LLM benchmark pipelines; no post-training.
+      - generic [ref=f1e1213]: internship-metrics-look-padded
+      - generic [ref=f1e1214]: no-post-training-experience
+      - generic [ref=f1e1215]: probe-AI-leverage
+      - generic [ref=f1e1216]: unverifiable-percentage-metrics
+      - generic [ref=f1e1217]: vote-split-3-votes
+    - paragraph [ref=f1e1218]:
+      - strong [ref=f1e1219]: "Evidence:"
+      - text: "B: \"analysis tooling for 2,065 paired AgentDojo runs\", \"evaluation pipelines...benchmark 15-18 LLMs across 600-1,200 queries\" — evals only, no agent/tool-loop built. C: \"four C++ and Python REST services backed by DynamoDB\", \"Docker, GitHub Actions...675 automated tests\", 26 commits to external repo. D: \"60.25% backtest accuracy...vs 58.44% raw Elo baseline\", first-author PAI 2026 (minor venue), \"0.6706 Cohen's kappa\". E: \"73 cases where quantization changed a safety decision\", AgentDojo (prompt-injection benchmark). A: no SFT/LoRA/RL training anywhere."
+    - group [ref=f1e1220]:
+      - generic [ref=f1e1221]:
+        - strong [ref=f1e1222]: Verification
+        - text: ": 100% of decidable claims held up. All load-bearing artifacts are real and owned by the candidate: three substantive non-forked GitHub repos whose READMEs match the resume's numbers exactly, verifiably 26 commits to the external alignment repo, and the Anketa app exists on Google Play with the claimed 10K+ downloads. The one material overstatement is the 'Selected Publication': the paper exists on OpenReview as a sole-authored posting, but no 'Conference on Physics and AI (PAI 2026)' could be found — treat it as a preprint, not a conference acceptance, and probe it in interview. No fabrication suspected; numbers were consistently accurate, though project framing ('shipped', 'Present') runs slightly ahead of the 0-star, short-window repos."
+    - paragraph [ref=f1e1223]:
+      - link "resume" [ref=f1e1224] [cursor=pointer]:
+        - /url: resumes/183557629003_192504132003_Abdul_Mohammad_General_SWE_Resume.pdf
+      - text: "· votes: 12/9/10 · file:"
+      - code [ref=f1e1225]: 183557629003_192504132003_Abdul_Mohammad_General_SWE_Resume.pdf
+  - generic [ref=f1e1226]:
+    - heading "#64 Bojro Das — 11/15 A1 B2 C3 D3 E2 F0" [level=3] [ref=f1e1227]:
+      - text: "#64 Bojro Das — 11/15"
+      - generic "A" [ref=f1e1228]: A1
+      - generic "B" [ref=f1e1229]: B2
+      - generic "C" [ref=f1e1230]: C3
+      - generic "D" [ref=f1e1231]: D3
+      - generic "E" [ref=f1e1232]: E2
+      - generic "F" [ref=f1e1233]: F0
+    - paragraph [ref=f1e1234]:
+      - text: Cornell CS/Math BA May 2028; MIB interpretability eval pipeline (12 combos, 126 tests), shipped Go telemetry system + revenue-generating iOS app.
+      - generic [ref=f1e1235]: early-year (sophomore, May 2028 grad)
+      - generic [ref=f1e1236]: probe-AI-leverage
+    - paragraph [ref=f1e1237]:
+      - strong [ref=f1e1238]: "Evidence:"
+      - text: "A: \"Trained GestureNet, a PyTorch MLP\" (non-LLM, caps 1); \"distilled local-LLM judge gate\" too vague for higher. B: \"first evaluation of PLOT-DAS...on MIB...all 12 task-model combinations\"; \"126-test suite\"; \"evaluation layers for an English-to-Cypher QA chatbot\". C: \"drone-fleet telemetry gateway in Go...Prometheus, Docker...AWS EC2\"; \"shipped a consumer iOS app solo...Live on the App Store\". D: quantified gains (\"43.8% to 63.8%\", \"5,000 writes/s\"), self-driven shipped projects. E: mechanistic interpretability benchmark work."
+    - group [ref=f1e1239]:
+      - generic [ref=f1e1240]:
+        - strong [ref=f1e1241]: Verification
+        - text: ": 100% of decidable claims held up. High-integrity resume: every load-bearing claim checked out on the open web. The Goldfeld-lab PLOT-DAS/MIB evaluation is backed by a real, substantive non-fork repo (126 tests, exact task list) tied to a real arXiv paper and a real Cornell professor, and the candidate honestly frames himself as evaluator rather than paper author; the Gait iOS app is live on the App Store under his own name, and the Go telemetry gateway repo matches its bullets except one throughput number (README shows ~1,200 msg/s vs the claimed 5,000 writes/s). No fabrication signals; only private metrics (internship accuracy figures, app ARR) remain unverifiable."
+    - paragraph [ref=f1e1242]:
+      - link "resume" [ref=f1e1243] [cursor=pointer]:
+        - /url: resumes/183569910003_192516579003_Bojro_Das_Resume.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1244]: 183569910003_192516579003_Bojro_Das_Resume.pdf
+  - generic [ref=f1e1245]:
+    - heading "#65 Sadiba Nusrat Nur — 11/15 A1 B3 C1 D3 E3 F0" [level=3] [ref=f1e1246]:
+      - text: "#65 Sadiba Nusrat Nur — 11/15"
+      - generic "A" [ref=f1e1247]: A1
+      - generic "B" [ref=f1e1248]: B3
+      - generic "C" [ref=f1e1249]: C1
+      - generic "D" [ref=f1e1250]: D3
+      - generic "E" [ref=f1e1251]: E3
+      - generic "F" [ref=f1e1252]: F0
+    - paragraph [ref=f1e1253]:
+      - text: UCSC MS NLP Dec 2026; safety/eval researcher — CoT-hijacking defense, LLM reasoning benchmark, SWE-bench agent memory work, 3 publications.
+      - generic [ref=f1e1254]: no-LLM-post-training-described
+      - generic [ref=f1e1255]: probe-AI-leverage
+    - paragraph [ref=f1e1256]:
+      - strong [ref=f1e1257]: "Evidence:"
+      - text: "A: \"trained two classifier achieving 95.21% accuracy\" (classifier caps at 1; LoRA/QLoRA only in skills list). B: \"diagnostic benchmark across eight reasoning categories evaluating six frontier models\"; \"RSPM... +9.1 pp on SWE-bench Full\". C: skills-list Docker/Git only, research code; no shipped services. D: SemEval-2026 (ACL), MLCAD 2025, ICML AIWILD papers; quantified results throughout. E: \"mechanistic interpretability on LLM behavior and safety... CoT hijacking, defenses\"; \"reducing mean attack success rate by 47.8pp\"."
+    - group [ref=f1e1258]:
+      - generic [ref=f1e1259]:
+        - strong [ref=f1e1260]: Verification
+        - text: ": 100% of decidable claims held up. All three claimed publications are real and the candidate is genuinely an author on each; her UCSC lab affiliation with Prof. Chenguang Wang and her GitHub also check out. However, there is a consistent pattern of author-position inflation: she flips a two-author SemEval-2026 paper to claim first authorship (official record lists her second) and promotes herself from 4th to 2nd author on the MIRAGE preprint, whose claimed ICML-workshop acceptance is also unconfirmed. Substance is real but the misstated author orders are an integrity concern worth raising directly in an interview."
+    - paragraph [ref=f1e1261]:
+      - link "resume" [ref=f1e1262] [cursor=pointer]:
+        - /url: resumes/183582950003_192529848003_resume-NurSadiba.pdf
+      - text: "· votes: 12/11 · file:"
+      - code [ref=f1e1263]: 183582950003_192529848003_resume-NurSadiba.pdf
+  - generic [ref=f1e1264]:
+    - heading "#66 Kyle Deliyannides — 11/15 A0 B2 C3 D2 E2 F2" [level=3] [ref=f1e1265]:
+      - text: "#66 Kyle Deliyannides — 11/15"
+      - generic "A" [ref=f1e1266]: A0
+      - generic "B" [ref=f1e1267]: B2
+      - generic "C" [ref=f1e1268]: C3
+      - generic "D" [ref=f1e1269]: D2
+      - generic "E" [ref=f1e1270]: E2
+      - generic "F" [ref=f1e1271]: F2
+    - paragraph [ref=f1e1272]:
+      - text: SFU BS CS Dec 2027; strong backend/infra co-ops + Parry agent-security guardrail OSS; zero model training/eval experience.
+      - generic [ref=f1e1273]: no-model-training
+      - generic [ref=f1e1274]: safety-adjacent-not-LLM-eval
+      - generic [ref=f1e1275]: vote-split-3-votes
+    - paragraph [ref=f1e1276]:
+      - strong [ref=f1e1277]: "Evidence:"
+      - text: "B: \"eval suite covering obfuscation and exfiltration patterns\" (policy tests, not LLM evals/agents built); C: \"Shipped a Java/Spring service ingesting 10M+ daily ActiveMQ payloads\", \"Homebrew-distributed Go binary\", Docker/K8s/AWS/CI; D: \"cutting test-suite runtime 40%...coverage from 40% to 80%+\", shipped OSS Parry + wayorca.com; E: \"runtime security layer for AI coding agents...blocks unauthorized actions before execution\"; F: \"resolved Playwright errors via a Claude Code Ralph loop\", \"highest PR volume in a 600+ engineer R&D org\" via automation."
+    - group [ref=f1e1278]:
+      - generic [ref=f1e1279]:
+        - strong [ref=f1e1280]: Verification
+        - text: ": 100% of decidable claims held up. All decidable claims verified: the flagship Parry project is a real, original, feature-complete Go repo that matches the resume's technical description exactly, both co-op employers (Clio, Absolute Security) exist and are corroborated by GitHub org memberships, and WayOrca exists as a pre-launch platform. No publications claimed, so nothing to check there; internal impact metrics at employers are unverifiable but plausible. No fabrication signals — this candidate's resume is accurate and, if anything, conservatively worded."
+    - paragraph [ref=f1e1281]:
+      - link "resume" [ref=f1e1282] [cursor=pointer]:
+        - /url: resumes/183614135003_192561250003_Kyle_Deliyannides_Resume_Software_Engineer_Intern.pdf
+      - text: "· votes: 13/10/11 · file:"
+      - code [ref=f1e1283]: 183614135003_192561250003_Kyle_Deliyannides_Resume_Software_Engineer_Intern.pdf
+  - generic [ref=f1e1284]:
+    - heading "#67 Noah Cylich — 11/15 A2 B2 C3 D3 E1 F0" [level=3] [ref=f1e1285]:
+      - text: "#67 Noah Cylich — 11/15"
+      - generic "A" [ref=f1e1286]: A2
+      - generic "B" [ref=f1e1287]: B2
+      - generic "C" [ref=f1e1288]: C3
+      - generic "D" [ref=f1e1289]: D3
+      - generic "E" [ref=f1e1290]: E1
+      - generic "F" [ref=f1e1291]: F0
+    - paragraph [ref=f1e1292]: UCLA BS CS Dec 2026; trained MoE LLMs with measured gains, 53 PRs to OSS inference engine, INT4 quantization, 4 workshop papers.
+    - paragraph [ref=f1e1293]:
+      - strong [ref=f1e1294]: "Evidence:"
+      - text: "A: \"trained MoEs under a rolling-residency constraint... Keeps 72–82% of the MoE-over-dense quality gain\" — real LM training w/ metrics but not SFT/LoRA/RL capability post-training. B: \"agentic game image extraction and generation pipeline using Gemini and SAM 2\"; \"agentic system for Cymetrx... shipped demo\"; no eval harness. C: \"3rd largest contributor across 53 merged PRs\"; \"Built the Go cloud backend\". D: first-author \"CLAWS... ICML 2026 AdaptFM Workshop\"; quantified gains (3x, 5.1x). E: \"Fixed a man-in-the-middle vulnerability in Entra\" — security, not AI safety."
+    - group [ref=f1e1295]:
+      - generic [ref=f1e1296]:
+        - strong [ref=f1e1297]: Verification
+        - text: ": 100% of decidable claims held up. Every decidable load-bearing claim checked out, several to the exact number: he is verifiably the #3 contributor with exactly 53 merged PRs to cactus-compute/cactus (5.5k-star on-device inference engine), and the PR titles independently corroborate the Gemma-4/ANE, INT8-FP16 kernel, and KV-compaction bullets. The first-author CLAWS paper at ICML 2026 AdaptFM workshop and the two ICLR 2026 workshop papers plus the arXiv preprint all exist with author positions matching the resume exactly. No inflation detected — venues and authorship are stated honestly; internships are existence-plausible but not publicly verifiable, as is normal."
+    - paragraph [ref=f1e1298]:
+      - link "resume" [ref=f1e1299] [cursor=pointer]:
+        - /url: resumes/183614496003_192561612003_Noah_Cylich_Resume.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e1300]: 183614496003_192561612003_Noah_Cylich_Resume.pdf
+  - generic [ref=f1e1301]:
+    - heading "#68 Zheng Liu — 11/15 A1 B3 C3 D3 E1 F0" [level=3] [ref=f1e1302]:
+      - text: "#68 Zheng Liu — 11/15"
+      - generic "A" [ref=f1e1303]: A1
+      - generic "B" [ref=f1e1304]: B3
+      - generic "C" [ref=f1e1305]: C3
+      - generic "D" [ref=f1e1306]: D3
+      - generic "E" [ref=f1e1307]: E1
+      - generic "F" [ref=f1e1308]: F0
+    - paragraph [ref=f1e1309]:
+      - text: Northeastern CS PhD (current), 8 pubs; strong agent pipelines + eval ablations + production infra, but no LLM post-training; available Summer 2027.
+      - generic [ref=f1e1310]: A-is-CV/multimodal-not-LLM-post-training
+      - generic [ref=f1e1311]: A-is-multimodal-not-LLM-posttraining
+      - generic [ref=f1e1312]: LoRA-keyword-only
+      - generic [ref=f1e1313]: availability-summer-2027-not-2026
+      - generic [ref=f1e1314]: probe-AI-leverage
+    - paragraph [ref=f1e1315]:
+      - strong [ref=f1e1316]: "Evidence:"
+      - text: "A: trained models are vision/captioning (\"ViT + Transformer decoder... CIDEr +13–34.4%\"), LoRA only in skills list. B: \"3-agent agentic architecture (Extraction → Quality Filter → Judge)... F1 from 24% to 83%\"; \"24-configuration factorial ablation... nDCG@10 0.723 (+63.9%)\". C: \"FastAPI... Docker Compose... GitHub Actions CI/CD... 500 req/s, p99 <48ms\"; AWS CDK serverless. D: \"8 publications (EMNLP, SIGIR, ISMB, EAAI)\", 1st-author SIGIR/ISMB. E: \"NLI-based groundedness error analysis... hallucination\"."
+    - group [ref=f1e1317]:
+      - generic [ref=f1e1318]:
+        - strong [ref=f1e1319]: Verification
+        - text: ": 100% of decidable claims held up. The research core checks out: the SIGIR 2023 first-author paper and the EMNLP 2023 MAIN co-first-author paper are both real, correctly attributed (the EMNLP PDF explicitly carries the equal-contribution footnote and names him corresponding author), and the described method matches the paper; the EAAI journal paper and EMNLP 2025 Findings paper are real too, and his PhD position in Benjamin Gyori's lab at Northeastern is confirmed on the lab site. Two things to probe in interview: the headline ISMB 2026 first-author paper (+27.7% AUC, 30M-edge graphs) has no trace in DBLP, Crossref, OpenAlex or Europe PMC as of Aug 2026 — likely indexing lag or a non-proceedings acceptance, but ask for the paper; and author position is consistently rounded up (SIGIR is a short paper, SMARTMiner is Findings/5th-of-9, EAAI is 2nd-of-4 with an unverifiable co-first asterisk). No fabrication: nothing claimed as owned was shown to belong to someone else. Every engineering/infrastructure metric (500 req/s, 8x speedup, AWS pipeline, Kaggle Expert) is link-free and unverifiable, so treat the \"production deployment\" half of the resume as unevidenced and test it live."
+    - paragraph [ref=f1e1320]:
+      - link "resume" [ref=f1e1321] [cursor=pointer]:
+        - /url: resumes/183740054003_192708900003_CV.pdf
+      - text: "· votes: 11/11 · file:"
+      - code [ref=f1e1322]: 183740054003_192708900003_CV.pdf
+  - paragraph [ref=f1e1323]:
+    - text: Generated 2026-08-04 by the AI screening pipeline defined in
+    - emphasis [ref=f1e1324]: AI Engineer Intern (Berkeley) — Resume Screening Guide
+    - text: . Internal use only.

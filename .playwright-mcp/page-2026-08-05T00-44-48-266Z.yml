@@ -1,0 +1,119 @@
+- generic [active] [ref=e1]:
+  - heading "AI Engineer Intern — Screening Results" [level=1] [ref=e2]
+  - paragraph [ref=e3]:
+    - text: 2,450 applications scored against the
+    - emphasis [ref=e4]: Resume Screening Guide
+    - text: rubric (hard filters + dimensions A–F), Aug 4, 2026. Shortlist claims verified against the public web.
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: 2,450
+      - generic [ref=e8]: applications screened
+    - generic [ref=e9]:
+      - generic [ref=e10]: "68"
+      - generic [ref=e11]: Tier 1 — reach out (2.8%)
+    - generic [ref=e12]:
+      - generic [ref=e13]: 1,136
+      - generic [ref=e14]: Tier 2 — review if capacity
+    - generic [ref=e15]:
+      - generic [ref=e16]: 1,246
+      - generic [ref=e17]: Tier 3 — not advanced
+    - generic [ref=e18]:
+      - generic [ref=e19]: "67"
+      - generic [ref=e20]: flagged for human review
+  - img "Histogram of screening scores for all 2450 applications" [ref=e21]:
+    - generic [ref=e22]: "0"
+    - generic [ref=e23]: "100"
+    - generic [ref=e24]: "200"
+    - generic [ref=e25]: "300"
+    - generic [ref=e26]: "400"
+    - 'generic "score 0: 4 candidates" [ref=e27]'
+    - generic [ref=e28]: "0"
+    - 'generic "score 1: 13 candidates" [ref=e29]'
+    - generic [ref=e30]: "1"
+    - 'generic "score 2: 61 candidates" [ref=e31]'
+    - generic [ref=e32]: "2"
+    - 'generic "score 3: 100 candidates" [ref=e33]'
+    - generic [ref=e34]: "3"
+    - 'generic "score 4: 195 candidates" [ref=e35]'
+    - generic [ref=e36]: "4"
+    - 'generic "score 5: 276 candidates" [ref=e37]'
+    - generic [ref=e38]: "5"
+    - 'generic "score 6: 360 candidates" [ref=e39]'
+    - generic [ref=e40]: "6"
+    - 'generic "score 7: 458 candidates" [ref=e41]'
+    - generic [ref=e42]: "458"
+    - generic [ref=e43]: "7"
+    - 'generic "score 8: 444 candidates" [ref=e44]'
+    - generic [ref=e45]: "8"
+    - 'generic "score 9: 338 candidates" [ref=e46]'
+    - generic [ref=e47]: "9"
+    - 'generic "score 10: 91 candidates" [ref=e48]'
+    - generic [ref=e49]: "10"
+    - 'generic "score 11: 47 candidates" [ref=e50]'
+    - generic [ref=e51]: "11"
+    - 'generic "score 12: 40 candidates" [ref=e52]'
+    - generic [ref=e53]: "12"
+    - 'generic "score 13: 17 candidates" [ref=e54]'
+    - generic [ref=e55]: "13"
+    - 'generic "score 14: 6 candidates" [ref=e56]'
+    - generic [ref=e57]: "14"
+    - generic [ref=e58]: "15"
+    - generic [ref=e59]: "Tier-1 zone: score ≥ 11 (plus A/B gate & hard filters)"
+    - generic [ref=e60]: Total score (0–15) — all 2,450 applications
+  - heading "Start here" [level=2] [ref=e61]
+  - table [ref=e62]:
+    - rowgroup [ref=e63]:
+      - row [ref=e64]:
+        - columnheader "Folder / file" [ref=e65]
+        - columnheader "What it is" [ref=e66]
+      - row [ref=e67]:
+        - cell [ref=e68]:
+          - link [ref=e69] [cursor=pointer]:
+            - /url: 1-tier1-shortlist/report.html
+            - strong [ref=e70]: 1-tier1-shortlist/report.html
+        - cell [ref=e71]:
+          - text: The 68 candidates worth reaching out to, ranked, with per-candidate explanations, resume evidence, and web-verification results. Resume PDFs are copied into
+          - code [ref=e72]: 1-tier1-shortlist/resumes/
+          - text: ". Spreadsheet version:"
+          - code [ref=e73]: tier1.csv
+          - text: .
+      - row [ref=e74]:
+        - cell [ref=e75]:
+          - link [ref=e76] [cursor=pointer]:
+            - /url: 2-tier2-review/report.html
+            - strong [ref=e77]: 2-tier2-review/report.html
+        - cell [ref=e78]:
+          - text: "1,136 borderline candidates, ranked with one-line summaries — dip in as far as your capacity allows. Spreadsheet:"
+          - code [ref=e79]: tier2.csv
+          - text: .
+      - row [ref=e80]:
+        - cell [ref=e81]:
+          - strong [ref=e82]: 3-tier3-rejected/
+        - cell [ref=e83]:
+          - code [ref=e84]: tier3.csv
+          - text: (1,246 candidates, each with the reject reason) ·
+          - code [ref=e85]: spot-check-50.csv
+          - text: (random sample to human-review before any rejection emails go out) ·
+          - code [ref=e86]: needs-human-review.csv
+          - text: (67 special cases — see below).
+      - row [ref=e87]:
+        - cell [ref=e88]:
+          - strong [ref=e89]: full-results.csv
+        - cell "Every candidate, every score, every evidence quote — the master sheet." [ref=e90]
+  - generic [ref=e91]:
+    - strong [ref=e92]: This is triage, not a decision.
+    - text: "Per the screening guide: a human reviews every Tier-1 and Tier-2 candidate before contact; the 50-row spot-check sample in"
+    - code [ref=e93]: 3-tier3-rejected/
+    - text: should be reviewed by a human before any rejection emails are sent; no protected attributes were used or inferred at any stage. Please confirm this workflow with Legal/People-Ops before acting on rejections.
+  - generic [ref=e94]:
+    - strong [ref=e95]: 67 candidates need a human eye
+    - text: (
+    - code [ref=e96]: 3-tier3-rejected/needs-human-review.csv
+    - text: "): mostly strong profiles (score ≥ 10) that failed a hard filter — typically \"already graduated\" read from resume dates, which can be stale or ambiguous — plus any unreadable files. A quick skim may rescue real candidates."
+  - generic [ref=e97]:
+    - strong [ref=e98]: How the scores were produced.
+    - text: "(1) Every resume was scored 0–3 on six dimensions (A: LLM post-training, B: agents & evals, C: software engineering, D: rigor & drive, E: safety bonus, F: AI-leverage bonus) with exact resume quotes required as evidence. (2) Every preliminary shortlist candidate was independently re-scored by a second reviewer pass; disagreements ≥ 3 points went to a third tie-breaking pass, and the per-dimension median was taken. (3) The Tier-1 threshold was set at consensus score ≥ 11 with A ≥ 2 or B ≥ 2, landing the shortlist at 68 (the guide targets 50–120). (4) Each Tier-1 candidate's load-bearing claims (papers, GitHub repos, projects) were then checked against the public web: 1 candidates had a claim fail verification (marked \"verify before advancing\" in the report), 0 flagged as possible fabrication for human review."
+  - paragraph [ref=e99]:
+    - text: Generated 2026-08-04 by the AI screening pipeline defined in
+    - emphasis [ref=e100]: AI Engineer Intern (Berkeley) — Resume Screening Guide
+    - text: . Internal use only.
