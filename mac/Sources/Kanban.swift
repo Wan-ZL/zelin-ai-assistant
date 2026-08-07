@@ -134,7 +134,9 @@ struct KanbanView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             // dashboard.json freshness — same semantics as the popover footer
-            FreshnessLabel(generatedAt: FreshnessLabel.parseISO(store.dashboard?.generated_at))
+            // (v0.46.x: 读 store.liveGeneratedAt —— 心跳假更新不 publish，
+            // dashboard.generated_at 会停在上次内容变化，标签自己 tick)
+            FreshnessLabel(store: store)
             Spacer()
             if store.dashboard != nil {
                 // 搜索过滤: non-empty → every lane filters in real time
@@ -331,7 +333,7 @@ struct KanbanView: View {
                         // on the echo that stands in for it.
                         ForEach(debtEchoes) {
                             PendingEchoRow(echo: $0)
-                                .boardCardMotion($0.sourceID, lane: "debt", store: store, flights: flights)
+                                .boardCardMotion($0.sourceID, lane: "debt", motion: rowMotion($0.sourceID))
                         }
                         // v0.21 契约七: 潜在任务卡也可多选参与合并（selectableIDs 已含 debt）。
                         ForEach(debt, id: \.id) { d in
@@ -339,7 +341,7 @@ struct KanbanView: View {
                                 DebtRow(item: d, app: app,
                                         sessionHit: store.sessionOnlyHit(d))
                             }
-                            .boardCardMotion(d.id, lane: "debt", store: store, flights: flights)
+                            .boardCardMotion(d.id, lane: "debt", motion: rowMotion(d.id))
                         }
                     }
                     // isEmpty: false — the resident composer means this lane
@@ -371,7 +373,7 @@ struct KanbanView: View {
                         ForEach(Array(placeholderPrefix), id: \.id) { card in
                             ApprovalCardView(card: card, app: app,
                                              commentPending: store.pendingComment[card.id] != nil)
-                                .boardCardMotion(card.id, lane: "approval", store: store, flights: flights)
+                                .boardCardMotion(card.id, lane: "approval", motion: rowMotion(card.id))
                         }
                         ForEach(suggestions, id: \.id) { s in
                             // dismiss-pending 的建议卡已被投影过滤（即时消失），
@@ -388,7 +390,7 @@ struct KanbanView: View {
                                                  commentPending: store.pendingComment[card.id] != nil,
                                                  sessionHit: store.sessionOnlyHit(card))
                             }
-                            .boardCardMotion(card.id, lane: "approval", store: store, flights: flights)
+                            .boardCardMotion(card.id, lane: "approval", motion: rowMotion(card.id))
                         }
                     }
                     // needs_input merges into 运行中 — listed first with a
@@ -416,18 +418,18 @@ struct KanbanView: View {
                         ForEach(runningNotices) { NoticeRow(notice: $0) }
                         ForEach(runCaptures, id: \.id) { c in
                             RunCapturePendingRow(pending: c, app: app)
-                                .boardCardMotion(c.id, lane: "running", store: store, flights: flights)
+                                .boardCardMotion(c.id, lane: "running", motion: rowMotion(c.id))
                         }
                         ForEach(runningEchoes) {
                             PendingEchoRow(echo: $0)
-                                .boardCardMotion($0.sourceID, lane: "running", store: store, flights: flights)
+                                .boardCardMotion($0.sourceID, lane: "running", motion: rowMotion($0.sourceID))
                         }
                         ForEach(needsInput, id: \.id) { t in
                             selectableCard(t.id) {
                                 TaskRow(task: t, app: app, lane: .needsInput,
                                         sessionHit: store.sessionOnlyHit(t))
                             }
-                            .boardCardMotion(t.id, lane: "running", store: store, flights: flights)
+                            .boardCardMotion(t.id, lane: "running", motion: rowMotion(t.id))
                         }
                         if !needsInput.isEmpty && !running.isEmpty {
                             Divider().opacity(0.5)
@@ -437,7 +439,7 @@ struct KanbanView: View {
                                 TaskRow(task: t, app: app, lane: .running,
                                         sessionHit: store.sessionOnlyHit(t))
                             }
-                            .boardCardMotion(t.id, lane: "running", store: store, flights: flights)
+                            .boardCardMotion(t.id, lane: "running", motion: rowMotion(t.id))
                         }
                     }
                     column(title: L("待验收 · review", "Review"),
@@ -453,7 +455,7 @@ struct KanbanView: View {
                                 ReviewRow(item: r, app: app,
                                           sessionHit: store.sessionOnlyHit(r))
                             }
-                            .boardCardMotion(r.id, lane: "review", store: store, flights: flights)
+                            .boardCardMotion(r.id, lane: "review", motion: rowMotion(r.id))
                         }
                     }
                     // 阶段性完成/Done for now (display-only): delivery happens
@@ -472,7 +474,7 @@ struct KanbanView: View {
                         ForEach(completedNotices) { NoticeRow(notice: $0) }
                         ForEach(completedEchoes) {
                             PendingEchoRow(echo: $0)
-                                .boardCardMotion($0.sourceID, lane: "completed", store: store, flights: flights)
+                                .boardCardMotion($0.sourceID, lane: "completed", motion: rowMotion($0.sourceID))
                         }
                         // v0.21 契约七: 阶段性完成卡也可多选参与合并（selectableIDs 已含 completed）。
                         ForEach(completed, id: \.id) { t in
@@ -480,7 +482,7 @@ struct KanbanView: View {
                                 TaskRow(task: t, app: app, lane: .completed,
                                         sessionHit: store.sessionOnlyHit(t))
                             }
-                            .boardCardMotion(t.id, lane: "completed", store: store, flights: flights)
+                            .boardCardMotion(t.id, lane: "completed", motion: rowMotion(t.id))
                         }
                     }
                     // v0.33 far-right bookend: 永久性完成/Done for good — the
@@ -528,6 +530,14 @@ struct KanbanView: View {
     /// Notices whose action happened in one of these lanes (P2-4 routing).
     private func laneNotices(_ lanes: ListKind...) -> [LocalNotice] {
         store.notices.filter { lanes.contains($0.lane) }
+    }
+
+    /// v0.46.x 布局风暴修复：每行的 motion 派生值在这里（泳道层）算好，以
+    /// Equatable 值传给行 modifier —— 行不再 @ObservedObject store/flights，
+    /// 单卡状态变化只重算该行（O(整板)→O(变化行)；2026-07-28 主线程 hang
+    /// 17 分钟的最大放大器）。纯逻辑见 BoardRowMotion.swift（判例钉死）。
+    private func rowMotion(_ id: String) -> BoardRowMotion {
+        flights.rowMotion(id, event: store.boardMotion)
     }
 
     // MARK: - multi-select (merge-review 契约七)

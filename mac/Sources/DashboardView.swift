@@ -505,7 +505,11 @@ struct DashboardView: View {
     }
 
     @ViewBuilder private func freshnessLabel(now: Date) -> some View {
-        if let gen = store.dashboard?.generated_at, let d = Self.parseISO(gen) {
+        // v0.46.x 布局风暴修复：读 store.liveGeneratedAt（心跳假更新也推进的
+        // 非发布属性）—— dashboard.generated_at 在假更新被跳过后会停在上次
+        // 内容变化，按它显示会假报「actd 可能未运行」。TimelineView tick 主动
+        // 重读，语义不变。
+        if let d = store.liveGeneratedAt {
             let age = now.timeIntervalSince(d)
             if age > 90 {
                 Text(L("数据生成于 \(max(1, Int(age / 60))) 分钟前，actd 可能未运行",
@@ -514,7 +518,7 @@ struct DashboardView: View {
                     .foregroundColor(.orange)
             } else {
                 Text(L("数据生成于 ", "Data generated ")
-                    + (RelativeTime.since(gen) ?? Self.timeFmt.string(from: d)))
+                    + FreshnessLabel.relative(age: age))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }

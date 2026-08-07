@@ -109,6 +109,45 @@ case "$DOCTOR_LAST" in
         ;;
 esac
 
+# --- 5. main-thread hang reports (布局风暴防复发哨) ---
+# 2026-07-28/29 两次看板布局风暴把主线程卡死 17min/70s，系统各写了一份
+# ZelinAIEngineer 的 .hang 取证到 DiagnosticReports。这里扫：比当前安装的
+# app 还新的 hang 报告 = 这个 build 卡死过主线程 → FAIL 报警；更老的报告
+# 只提示（历史事故的尸检，不阻塞本次部署）。目录同时看系统级与用户级
+# （macOS 对用户进程通常写 ~/Library，Retired/ 是系统轮转后的归档）。
+echo "==> 5. hang reports"
+HANG_DIRS=(
+    "/Library/Logs/DiagnosticReports"
+    "$HOME/Library/Logs/DiagnosticReports"
+    "$HOME/Library/Logs/DiagnosticReports/Retired"
+)
+if [ ! -f "$APP/Contents/Info.plist" ]; then
+    fail "hang scan skipped — no installed app to date reports against"
+else
+    NEW_HANGS=""
+    OLD_COUNT=0
+    for dir in "${HANG_DIRS[@]}"; do
+        [ -d "$dir" ] || continue
+        # ZelinAIEngineer-*.hang / ZelinAIEngineer_*.hang 两种命名都见过
+        while IFS= read -r report; do
+            [ -n "$report" ] || continue
+            if [ "$report" -nt "$APP/Contents/Info.plist" ]; then
+                NEW_HANGS="$NEW_HANGS$report"$'\n'
+            else
+                OLD_COUNT=$((OLD_COUNT + 1))
+            fi
+        done < <(find "$dir" -maxdepth 1 -name 'ZelinAIEngineer*.hang' 2>/dev/null)
+    done
+    if [ -n "$NEW_HANGS" ]; then
+        fail "main-thread HANG report(s) newer than the installed app — this build froze the UI (布局风暴回归？); read the report(s):"
+        printf '%s' "$NEW_HANGS" | sed 's/^/       /'
+    elif [ "$OLD_COUNT" -gt 0 ]; then
+        ok "no new hang reports (老报告 $OLD_COUNT 份，早于本次安装，仅存档)"
+    else
+        ok "no hang reports for ZelinAIEngineer"
+    fi
+fi
+
 # --- verdict ---
 echo ""
 if [ "$FAILS" -eq 0 ]; then

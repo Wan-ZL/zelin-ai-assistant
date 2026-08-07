@@ -124,7 +124,10 @@ final class BoardFlightController: ObservableObject {
     @Published var landed: Set<String> = []
     /// Strip keys currently doing their one count-badge pop.
     @Published var pulsing: Set<String> = []
-    private var lastSeq = 0
+    /// Event-consumption progress. private(set)：rowMotion（下方）要读它给
+    /// BoardRowMotionPlanner —— 非 @Published 是刻意的，baseline() 的赋值
+    /// 不触发重排（首帧本来就不动画）。
+    private(set) var lastSeq = 0
 
     /// Mark everything up to `seq` as already seen — first render after the
     /// window (re)opens must not animate the backlog of events.
@@ -132,14 +135,15 @@ final class BoardFlightController: ObservableObject {
         lastSeq = max(lastSeq, seq ?? 0)
     }
 
-    /// True while `id` is the destination of a not-yet-landed flight — its
-    /// real row renders at opacity 0 so the proxy is the only "card" visible.
-    func isAwaitingLanding(_ id: String, event: BoardMotionEvent?) -> Bool {
-        guard BoardMotionPolicy.animationsEnabled else { return false }
-        if pendingLanding.contains(id) { return true }
-        guard let event, event.seq == lastSeq, !event.crossfade,
-              !landed.contains(id) else { return false }
-        return event.diff.moves.contains { $0.id == id }
+    /// One row's motion value for THIS render pass（v0.46.x 布局风暴修复）：
+    /// KanbanView 在泳道层为每行调用，把结果以 Equatable 值传给行 modifier
+    /// —— 行不再订阅 store/flights，值没变就不重算（纯逻辑在
+    /// BoardRowMotion.swift，判例钉死「单卡变化只影响单行」）。
+    func rowMotion(_ id: String, event: BoardMotionEvent?) -> BoardRowMotion {
+        BoardRowMotionPlanner.state(
+            id: id, event: event, lastSeq: lastSeq,
+            pendingLanding: pendingLanding, landed: landed,
+            animationsEnabled: BoardMotionPolicy.animationsEnabled)
     }
 
     /// Consume one event (idempotent by seq). Phase A runs in the same render
@@ -399,29 +403,33 @@ extension View {
     /// move-proxy is still flying, deals it in when it's a fresh insert, and
     /// adds the hover lift. `id` must be the card id the differ sees (echo
     /// rows pass their sourceID); `lane` the row's board lane key.
-    func boardCardMotion(_ id: String, lane: String, store: DashboardStore,
-                         flights: BoardFlightController) -> some View {
-        modifier(BoardCardMotionModifier(id: id, lane: lane, store: store,
-                                         flights: flights))
+    /// v0.46.x 布局风暴修复：不再持 @ObservedObject store/flights —— 每行
+    /// 需要的派生值由泳道层算好、以 `motion`（Equatable 值）传入，任何
+    /// @Published 变化只重算值真正变了的行（O(整板) → O(变化行)）。
+    func boardCardMotion(_ id: String, lane: String,
+                         motion: BoardRowMotion) -> some View {
+        modifier(BoardCardMotionModifier(id: id, lane: lane, motion: motion))
     }
 }
 
 private struct BoardCardMotionModifier: ViewModifier {
     let id: String
     let lane: String
-    @ObservedObject var store: DashboardStore
-    @ObservedObject var flights: BoardFlightController
+    // 全值字段（无对象订阅）: SwiftUI 结构比较发现值没变即跳过 body/layout。
+    let motion: BoardRowMotion
     @State private var hovering = false
     // the motion-event generation this row was born under (0 = pre-motion):
     // lets the frame merge prefer the FRESH row over a same-key outgoing one
     // still fading through its removal transition (A→B→A within a window).
+    // motion.seq 只对当前事件涉及的行携带事件 seq（BoardRowMotion 注释）——
+    // 消歧只发生在被事件触及的行上，语义与原 store.boardMotion?.seq 等价。
     @State private var bornGen = 0
 
     func body(content: Content) -> some View {
         content
             .boardMotionFrame("row:\(lane):\(id)", generation: bornGen)
-            .onAppear { bornGen = store.boardMotion?.seq ?? 0 }
-            .opacity(flights.isAwaitingLanding(id, event: store.boardMotion) ? 0 : 1)
+            .onAppear { bornGen = motion.seq }
+            .opacity(motion.hidden ? 0 : 1)
             .transition(.asymmetric(insertion: insertion, removal: .opacity))
             // micro-juice: hover lift (none existed — CardSurface only tints).
             // 1 pt raise + soft shadow, 120 ms; skipped under Reduce Motion /
@@ -441,12 +449,10 @@ private struct BoardCardMotionModifier: ViewModifier {
     /// from the lane top with a slight rotation settle, 40 ms staggered. The
     /// store clears the event ~0.8 s after publishing, so a row (re)inserted
     /// by anything else — strip expand/collapse, search filter, scrolling —
-    /// falls through to the default opacity fade.
+    /// falls through to the default opacity fade.（守卫逻辑已提纯进
+    /// BoardRowMotionPlanner.dealInIndex —— 这里只消费算好的下标。）
     private var insertion: AnyTransition {
-        guard BoardMotionPolicy.animationsEnabled,
-              let event = store.boardMotion, !event.crossfade,
-              let index = event.diff.inserts.firstIndex(where: { $0.id == id })
-        else { return .opacity }
+        guard let index = motion.dealInIndex else { return .opacity }
         return .modifier(
             active: DealInModifier(active: true),
             identity: DealInModifier(active: false)

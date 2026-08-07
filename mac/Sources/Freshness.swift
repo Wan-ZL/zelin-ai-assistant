@@ -3,15 +3,19 @@
 //
 // 与 popover footer（DashboardView.freshnessLabel，只读参考）同语义：
 // generated_at 距今 >90s → 橙色「actd 可能未运行」警告；新鲜 → 灰色相对时间；
-// generatedAt == nil → 整个隐藏（popover 自己另有 lastRefresh 降级，这里不需要）。
-// TimelineView 每 15s 重算，文件没变（store 不 publish）时标签也保持活。
+// store.liveGeneratedAt == nil → 整个隐藏（popover 自己另有 lastRefresh 降级，
+// 这里不需要）。TimelineView 每 15s 重算并主动重读 —— 心跳假更新不 publish
+//（v0.46.x 布局风暴修复），标签靠自己的 tick 保持活。
 
 import AppKit
 import SwiftUI
 import Foundation
 
 struct FreshnessLabel: View {
-    let generatedAt: Date?
+    /// v0.46.x 布局风暴修复：直接持 store（非 @ObservedObject，不订阅
+    /// publish），在 TimelineView 的 15s tick 里主动读 liveGeneratedAt ——
+    /// 心跳假更新不再 publish，标签靠自己的 tick 保持活且不拖全板重排。
+    let store: DashboardStore
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
@@ -20,7 +24,7 @@ struct FreshnessLabel: View {
     }
 
     @ViewBuilder private func label(now: Date) -> some View {
-        if let d = generatedAt {
+        if let d = store.liveGeneratedAt {
             let age = now.timeIntervalSince(d)
             if age > 90 {
                 Text(L("数据生成于 \(max(1, Int(age / 60))) 分钟前，actd 可能未运行",
@@ -37,7 +41,9 @@ struct FreshnessLabel: View {
 
     // mirror of RelativeTime.since (Utils.swift — S5 名下，不动) starting from
     // an already-parsed Date; the fresh branch (≤90s) only ever hits 刚刚/1分钟前.
-    private static func relative(age: TimeInterval) -> String {
+    // internal：popover footer（DashboardView.freshnessLabel）改读
+    // liveGeneratedAt（Date）后复用这里，不再走字符串版 RelativeTime.since。
+    static func relative(age: TimeInterval) -> String {
         if age < 60 { return L("刚刚", "just now") }
         let mins = Int(age / 60)
         if mins < 60 { return L("\(mins)分钟前", "\(mins)m ago") }

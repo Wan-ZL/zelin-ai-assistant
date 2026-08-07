@@ -199,6 +199,15 @@ final class DashboardStore: ObservableObject {
     // short-circuits (no publish) when the file hasn't changed.
     private var lastRawData: Data?
     private var lastGeneratedAt: String?
+    // v0.46.x 布局风暴修复：剥掉 generated_at 后的内容指纹（ReloadGate.swift）
+    // —— actd 每 ~10s 重写 dashboard.json，心跳字段必变而内容常常不变；指纹
+    // 相同的「假更新」跳过 decode + publish（一次 publish = 全板重排）。
+    private var lastContentFingerprint: Data?
+    /// dashboard.json 最近一次成功读取的 generated_at（心跳假更新也推进）。
+    /// 刻意不 @Published：publish 会把整个看板拖去重排，这正是要修的风暴；
+    /// 新鲜度标签（FreshnessLabel / popover footer）在 TimelineView 的 15s
+    /// tick 里主动来读，健康裁决（computeHealth）同样从这里取真值。
+    private(set) var liveGeneratedAt: Date?
 
     // MARK: board motion (v0.43 手感 — display-only, BoardDiff/BoardMotion.swift)
 
@@ -230,6 +239,10 @@ final class DashboardStore: ObservableObject {
                 missing = true
                 loadError = nil
                 lastRawData = nil
+                // 指纹/新鲜度一并清：文件重新出现时必须走完整 decode+publish
+                //（dashboard 已被置 nil，指纹残留会让相同内容被误判假更新）。
+                lastContentFingerprint = nil
+                liveGeneratedAt = nil
                 lastRefresh = Date()
                 // v0.43: board gone → drop the motion baseline, so the next
                 // dashboard.json appearing counts as a first load (no animation).
@@ -254,9 +267,39 @@ final class DashboardStore: ObservableObject {
             if loadError != nil && (dashboard?.decodeDrops.isEmpty ?? true) { loadError = nil }
             return
         }
+        // v0.46.x 布局风暴修复（放大器 #2）：actd 每 ~10s 重写 dashboard.json，
+        // generated_at 心跳必变、卡片内容常常一字不变 —— 纯心跳的「假更新」
+        // 不重新 decode、不 withAnimation publish（一次 publish = 全板 ~128 行
+        // 重排，2026-07-28 主线程 hang 17 分钟的节拍器）。pendingXXX 的清除
+        // 信号全部盯内容变化（plan 指纹 / 卡片离列 / notes 行 / 后端标题），
+        // 内容没变即无事可清，跳过安全；hiddenOnce 是唯一盯 generated_at 的，
+        // 下面按原语义照常释放。
+        let reading = DashboardReloadGate.read(data)
+        if dashboard != nil, let fp = reading.fingerprint,
+           fp == lastContentFingerprint {
+            lastRawData = data
+            liveGeneratedAt = FreshnessLabel.parseISO(reading.generatedAt)
+            // one-shot hides 语义照旧：generated_at 变了 = 后端已重新生成 →
+            // 释放；字段缺失 → legacy 行为（任何 reload 都释放）。空集合不发
+            // publish（@Published 的无效突变也会触发 objectWillChange）。
+            if let gen = reading.generatedAt, !gen.isEmpty {
+                if gen != lastGeneratedAt {
+                    lastGeneratedAt = gen
+                    releaseOnceHidesIfAny()
+                }
+            } else {
+                releaseOnceHidesIfAny()
+            }
+            // 同 unchanged-bytes 分支：内容既已解码过且相同，陈旧 decode
+            // 错误可以清掉（坏行提示除外）。
+            if loadError != nil && (dashboard?.decodeDrops.isEmpty ?? true) { loadError = nil }
+            return
+        }
         do {
             let db = try JSONDecoder().decode(Dashboard.self, from: data)
             lastRawData = data
+            lastContentFingerprint = reading.fingerprint
+            liveGeneratedAt = FreshnessLabel.parseISO(db.generated_at)
             // §37 review fix (perf): a new dashboard invalidates the memoized
             // normalized field blobs + per-query hit results.
             invalidateSearchCaches()
@@ -381,6 +424,17 @@ final class DashboardStore: ObservableObject {
                 + error.localizedDescription
         }
         lastRefresh = Date()
+    }
+
+    /// 假更新路径的 one-shot hide 释放：非空才 publish（un-hide 改变泳道
+    /// 内容，需要动画 + 飞行层事件；空集合连 objectWillChange 都不能发 ——
+    /// @Published 的无效突变也会触发全板重排，正是本修复要挡的）。
+    private func releaseOnceHidesIfAny() {
+        guard !hiddenOnce.isEmpty else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            hiddenOnce.removeAll()
+            updateBoardMotion()
+        }
     }
 
     // MARK: timeouts (run every refresh tick, independent of file changes)
@@ -708,10 +762,12 @@ final class DashboardStore: ObservableObject {
     }
 
     private func computeHealth() -> PipelineHealth {
-        guard let db = dashboard else { return missing ? .missing : .ok }
+        guard dashboard != nil else { return missing ? .missing : .ok }
         // legacy dashboards without generated_at: no verdict (footer degrades
         // to the refresh stamp the same way)
-        guard let gen = FreshnessLabel.parseISO(db.generated_at) else { return .ok }
+        // v0.46.x: 真值取 liveGeneratedAt —— 假更新跳过 publish 后，
+        // dashboard.generated_at 会停在上次内容变化，按它裁决会误报 dead。
+        guard let gen = liveGeneratedAt else { return .ok }
         let age = Date().timeIntervalSince(gen)
         if age <= Self.staleAfter { return .ok }
         let mins = max(1, Int(age / 60))
