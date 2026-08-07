@@ -62,7 +62,6 @@ final class SlackSettingsModel: ObservableObject {
     @Published var users: [SlackDirEntry] = []
     @Published var directoryLoading = false
     @Published var directoryError = ""
-    @Published var directoryLoadedAt = ""
     @Published var selectedChannels: [String: String] = [:]   // id -> name
     @Published var selectedPeople: Set<String> = []           // @handles
     @Published var channelFilter = ""
@@ -294,14 +293,13 @@ final class SlackSettingsModel: ObservableObject {
         directoryError = ""
         Analytics.log("mw_slack_directory_load", fields: ["refresh": refresh])
         DispatchQueue.global(qos: .userInitiated).async {
-            let (ok, chans, members, message, fetchedAt) = Self.fetchDirectory(refresh: refresh)
+            let (ok, chans, members, message, _) = Self.fetchDirectory(refresh: refresh)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.directoryLoading = false
                     if ok {
                         self.channels = chans
                         self.users = members
-                        self.directoryLoadedAt = fetchedAt
                     } else {
                         self.directoryError = message
                     }

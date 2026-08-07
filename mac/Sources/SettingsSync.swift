@@ -31,7 +31,6 @@ final class SyncSettingsModel: ObservableObject {
         // bytes, so cap the editable field at 64 characters.
         didSet { if label.count > 64 { label = String(label.prefix(64)) } }
     }
-    @Published var qrBlob = ""
     @Published var qrImage: NSImage? = nil
 
     /// The name currently persisted in state/sync.json (and thus in the QR);
@@ -144,7 +143,6 @@ final class SyncSettingsModel: ObservableObject {
                     case let .ok(cid, blob, label, registered):
                         self.enabled = true
                         self.channelId = cid
-                        self.qrBlob = blob
                         self.label = label
                         self.savedLabel = label
                         self.qrImage = Self.qrImage(from: blob)
@@ -184,7 +182,6 @@ final class SyncSettingsModel: ObservableObject {
                     if code == 0 {
                         self.enabled = false
                         self.qrImage = nil
-                        self.qrBlob = ""
                         // Drop any uncommitted edit so re-enabling can never
                         // save a half-typed name (sync.json keeps savedLabel).
                         self.label = self.savedLabel.isEmpty

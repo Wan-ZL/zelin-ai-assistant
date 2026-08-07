@@ -849,7 +849,6 @@ final class LiveCaptionsController: ObservableObject {
     /// Why translation is off even though the toggle is on ("" = it works).
     @Published private(set) var translationNote = ""
     @Published private(set) var translationActive = false
-    @Published private(set) var activeEngineLabel = ""
 
     // MARK: prefs (UserDefaults; pure app-side — the Python layer never reads these)
 
@@ -1021,8 +1020,6 @@ final class LiveCaptionsController: ObservableObject {
         let eng = resolved.0
         engine = eng
         engineIsDoubao = resolved.1
-        activeEngineLabel = resolved.1 ? L("豆包在线", "Doubao (online)")
-                                       : L("Apple 本地", "Apple on-device")
         // ownership guard: callbacks from a replaced/stopped engine instance
         // (late WS receive, analyzer task wind-down) must apply nothing
         eng.onUpdate = { [weak self, weak eng] update in

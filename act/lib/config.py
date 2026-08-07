@@ -143,7 +143,6 @@ class Config:
     # owner
     owner_name: str = "Zelin"
     owner_slack_user_id: Optional[str] = None
-    display_name: str = "Zelin's AI Assistant"
 
     # sources
     obsidian_raw: Optional[str] = None
@@ -209,7 +208,6 @@ class Config:
     claude_bin: Optional[str] = None
     self_check: bool = True
     fresh_context_review: bool = True
-    system_card_per_ckpt: bool = True
 
     # trash / recycle bin
     trash_retention_days: int = 60
@@ -403,7 +401,6 @@ def load_config() -> Config:
     owner = _dict_or(data.get("owner"))
     cfg.owner_name = owner.get("name", cfg.owner_name)
     cfg.owner_slack_user_id = owner.get("slack_user_id", cfg.owner_slack_user_id)
-    cfg.display_name = owner.get("display_name", cfg.display_name)
 
     sources = _dict_or(data.get("sources"))
     cfg.obsidian_raw = sources.get("obsidian_raw", cfg.obsidian_raw)
@@ -510,12 +507,6 @@ def load_config() -> Config:
         qg.get("fresh_context_review", cfg.fresh_context_review),
         cfg.fresh_context_review,
     )
-    training = _dict_or(execution.get("training"))
-    cfg.system_card_per_ckpt = _bool_or(
-        training.get("system_card_per_ckpt", cfg.system_card_per_ckpt),
-        cfg.system_card_per_ckpt,
-    )
-
     trash = _dict_or(data.get("trash"))
     cfg.trash_retention_days = _int_or(
         trash.get("retention_days", cfg.trash_retention_days),
@@ -952,11 +943,6 @@ def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
                 f"AND NOT ({like('app_name', term)} OR {like('window_name', term)})"
             )
     return " ".join(clauses)
-
-
-# Module-level singleton for convenience (callers may also call load_config()).
-def get_config() -> Config:
-    return load_config()
 
 
 # --------------------------------------------------------------------------- #

@@ -2,7 +2,6 @@
 owner:
   name: Your Name
   slack_user_id: U01234ABCDE          # 审批 DM 发到这里（换成你自己的 Slack user id）
-  display_name: "Zelin's AI Assistant"
 
 # 凭证说明（CONTRACT §19）：token/密码路径字段都可省略——推荐直接在 App 设置窗口
 # 粘贴保存（写入 config/secrets/，目录 0700/文件 0600）。解析顺序：
@@ -71,8 +70,6 @@ execution:
   quality_gate:
     self_check: true                   # 可运行检查 + 证据
     fresh_context_review: true         # 交付前 fresh-context 审 diff
-  training:
-    system_card_per_ckpt: true         # 强制：训前设计卡 + 训后结果回填
 
 recording:                             # 屏幕采集的 sensitive-app 排除（隐私控制）
   # 命中的窗口在采集阶段就被录制引擎跳过（screenpipe --ignored-windows）——OCR/截图

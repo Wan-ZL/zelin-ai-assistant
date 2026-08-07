@@ -443,11 +443,6 @@ enum RuntimePython {
         return "/usr/bin/python3"
     }
 
-    /// FDA must be granted to the REAL binary — resolve symlinks (miniconda's
-    /// python3 usually symlinks python3.x).
-    nonisolated static func realBinary(of path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-    }
 }
 
 // MARK: - UserDefaults helpers

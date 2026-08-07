@@ -161,7 +161,6 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    var modeLabel: String { Self.label(forMode: mode) }
 
     /// Show `text` in recordingNote for 15 s (token: an older timer must not
     /// clear a newer note — same pattern as selfHealNote).

@@ -146,7 +146,7 @@ def dismiss_job(job_or_id, applied: bool = False) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 def _tail_messages(path: Path, limit: int) -> list:
     """Last ``limit`` non-empty assistant/user TEXT messages of a transcript
-    (same line-tolerant JSONL parsing as executor._last_assistant_text;
+    (same line-tolerant JSONL parsing as executor._assistant_texts;
     sidechain/subagent lines and tool blocks are skipped)."""
     msgs: list = []
     with open(path, encoding="utf-8") as fh:

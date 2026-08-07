@@ -56,9 +56,9 @@ recommendation letter 需要 review，系统没有把 **R-010 重新抬起来（
   低置信度被显式压回 `detected`（`act/lib/quick_capture.py:432-437`）。
 - **(c) 从 completed 项 re-raise 回来（prior acceptance = ownership）** —
   ⚠️ **只部分匹配**。当 radar 的 triage LLM 明确判定新信息 `relates_to` 一个已 resolved
-  的卡且 `needs_action=true` 时，`_follow_up_card` 确实会新建一张 **`card_sent`** 的
-  follow-up（`act/lib/quick_capture.py:310-339`，status 硬编码 `CARD_SENT` at :330，
-  带 `improvement_of` lineage）。**但**这依赖 LLM 认出关联；一旦走成 `new_proposal`
+  的卡且 `needs_action=true` 时，`registry.reraise_or_followup`（取代了历史上的
+  `quick_capture._follow_up_card`，后者已删除）确实会产出 **`card_sent`** 的
+  re-raise / follow-up（带 `improvement_of` lineage）。**但**这依赖 LLM 认出关联；一旦走成 `new_proposal`
   且标题没近似匹配上，就掉进 §3 的坑，落到 **备选**。这条 lane 语义里的
   "re-raise 一定进提案" 目前**没有一个统一强制的路由**。
 
@@ -148,8 +148,9 @@ if r.is_merged or r.status in (State.REJECTED.value, State.TRASHED.value):
 > (i) 匹配是标题近似，标题一变就不命中；(ii) 命中也只会生 improvement child /
 > bump，**从不把原卡抬回 `card_sent`(提案)**；(iii) 低置信路径一律落 `detected`。
 > 三者叠加，一件已验收的事被后续信息命中时，最常见的结局是**在备选里多一张卡**，
-> 而不是原事项被 re-raise 进提案。radar 的 `relates_to → _follow_up_card` 那条路
-> 本来会进 `card_sent`（`quick_capture.py:330`），但只在 LLM 认出关联时才走得到。
+> 而不是原事项被 re-raise 进提案。radar 的 `relates_to → registry.reraise_or_followup`
+> 那条路（历史实现 `_follow_up_card` 已删除）本来会进 `card_sent`，但只在 LLM
+> 认出关联时才走得到。
 
 ---
 
@@ -312,7 +313,8 @@ grounded 在 §3 的现状。这些都是**新功能 → minor release**，现�
    （`registry.py:542-558`）或纯 bump，而是把**原卡** `set_status(CARD_SENT)`
    （提案），并记 lineage（复用 `improvement_of` / notes 标注来源）。这条要
    **压过** `high_confidence`/urgency 路由（prior-accept overrides）。radar 侧
-   `_follow_up_card` 已经是 `card_sent`（`quick_capture.py:330`），可作为一致性参考。
+   `registry.reraise_or_followup`（历史实现 `_follow_up_card` 已删除）已经产出
+   `card_sent`，可作为一致性参考。
 5. **dashboard / Swift 露出「归档」视图** — dashboard 加一个 `archived` 分区
    （类似 `trash` :374-387 的处理），Swift 端加一个默认折叠的「归档」区 +「归档」按钮
    （已验收行）与可能的「取消归档」。config 层无需新增（archived 不做 retention purge）。

@@ -65,5 +65,4 @@ enum Keychain {
 
     // Convenience typed wrappers ------------------------------------------------
     static func setString(_ s: String, account: String) { set(Data(s.utf8), account: account) }
-    static func getString(_ account: String) -> String? { get(account).map { String(decoding: $0, as: UTF8.self) } }
 }
