@@ -32,7 +32,7 @@ from pathlib import Path
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import radar
-from act.lib import config, registry
+from act.lib import analytics, config, registry
 
 BASE = 1_760_000_000.0  # fixed epoch — deterministic mtimes
 
@@ -147,6 +147,11 @@ class ExtractionTestCase(RadarScanBase):
 class WatermarkTestCase(RadarScanBase):
     def _queue(self):
         return radar._load_failed_queue()
+
+    def _degraded(self):
+        return [r for r in registry.load_all()
+                if r.sources and r.sources[0].get("channel")
+                == radar.PARSE_DEGRADE_CHANNEL]
 
     def test_malformed_output_degrades_not_queues(self):
         # §47.2（改写 v2 老判例「malformed → 重试队列」）：解析失败先同 pass
@@ -427,6 +432,101 @@ class WatermarkTestCase(RadarScanBase):
         self.assertTrue(any(x.startswith("unparseable extraction on junk.md")
                             for x in s["skipped"]))
         self.assertIn(str(note), self._queue())
+
+    def test_resolved_degrade_card_does_not_swallow_edited_note(self):
+        # v0.47 review 判例：路径去重只对未完结卡生效。旧降级卡还开着时维持
+        # 「一篇一卡」；旧卡已完结（trashed/delivered/…）后，同路径 note 改动
+        # 再失败必须铸新卡——否则新内容被旧卡静默吞掉（内容双重丢失）。
+        note = self._note("junk.md", "junk v1", BASE)
+        radar.scan(runner=lambda t: "no json")
+        self.assertEqual(len(self._degraded()), 1)
+        # 卡还开着：note 改动再失败 → dedup 命中，不铸第二张
+        self._note("junk.md", "junk v2", BASE + 10)
+        radar.scan(runner=lambda t: "no json")
+        self.assertEqual(len(self._degraded()), 1)
+        # 卡完结（用户扔进回收站）：再改再失败 → 新卡兜住 v3 的新内容
+        registry.trash(self._degraded()[0], "deleted")
+        self._note("junk.md", "junk v3 brand new", BASE + 20)
+        radar.scan(runner=lambda t: "no json")
+        open_cards = [r for r in self._degraded() if r.status == "detected"]
+        self.assertEqual(len(open_cards), 1)
+        self.assertIn("junk v3 brand new", open_cards[0].notes)
+        self.assertNotIn(str(note), self._queue())   # 依旧 accounted，不进台账
+
+    def test_degrade_card_keeps_paths_off_the_card_face(self):
+        # v0.47 review P0 判例：绝对本机路径只在 sources[0].ref（与既有 radar
+        # 卡同位）；summary/notes 不带路径、notes 不带 LLM raw 输出片段
+        # （取证在 radar_debug/）；quote 非空占位——否则 analyze._sources_text
+        # 的 ``quote or ref`` 兜底会把路径带进「研究并提议」的出站 prompt。
+        note = self._note("junk.md", "junk body", BASE)
+        radar.scan(runner=lambda t: "raw prose the model said")
+        card = self._degraded()[0]
+        self.assertNotIn(str(note), card.summary or "")
+        self.assertNotIn(str(note), card.notes or "")
+        self.assertNotIn("last raw output", card.notes or "")
+        self.assertNotIn("raw prose the model said", card.notes or "")
+        src = card.sources[0]
+        self.assertEqual(src["ref"], str(note))      # 回指路径只在这里
+        self.assertTrue(src["quote"])                # 占住 quote-or-ref 兜底位
+
+    def test_salvage_prefers_richer_of_both_outputs(self):
+        # v0.47 review 判例：首跑截断但带完整前缀对象、重试返回纯 prose——
+        # 抢救必须两份输出都试取更优，首跑里的完整对象不许陪葬。
+        self._note("cut.md", "meeting with asks", BASE)
+        truncated = ('[{"title": "首跑里完整的对象", "type": "task", '
+                     '"tier": "T1", "hardness": "soft", "deadline": null, '
+                     '"cost_estimate_usd": null, "urgent": false, '
+                     '"quote": "q1"}, {"title": "被截断的第二')
+        outputs = [truncated, "sorry, no JSON this time"]
+
+        def runner(text):
+            if "meeting with asks" in text:
+                return outputs.pop(0)
+            return "triage fallback"
+
+        s = radar.scan(runner=runner)
+        self.assertEqual(s["extracted"], 1)          # 首跑的完整对象被救起
+        titles = [r.title for r in registry.load_all()]
+        self.assertIn("首跑里完整的对象", titles)
+        self.assertEqual(len(self._degraded()), 1)   # 尾部内容仍有降级卡兜底
+
+    def test_degrade_cap_judges_systemic_and_pins_marker(self):
+        # v0.47 review 判例：同 pass 降级达 PARSE_DEGRADE_PASS_CAP 即判
+        # systemic 阻尼——不再重试提取、不再铸卡，余下 unparseable 以 channel
+        # 级错误进账；全 pass 无真正解析成功 → 既有 systemic 回滚生效
+        # （marker 钉住、重试额度不扣），故障修复后积压自然重扫。
+        for i in range(5):
+            self._note(f"n{i}.md", f"note body {i}", BASE + i)
+        calls = []
+
+        def prose(text):
+            calls.append(text)
+            return "not json at all"
+
+        s = radar.scan(runner=prose)
+        self.assertEqual(s["parse_degraded"], radar.PARSE_DEGRADE_PASS_CAP)
+        self.assertEqual(len(self._degraded()), radar.PARSE_DEGRADE_PASS_CAP)
+        # 烧钱阻尼：cap 内的 3 篇原始+重试各 2 次；cap 后的 2 篇只烧 1 次
+        self.assertEqual(len(calls), radar.PARSE_DEGRADE_PASS_CAP * 2 + 2)
+        self.assertTrue(any("systemic extraction failure" in x
+                            for x in s["skipped"]))
+        self.assertEqual(radar._read_marker(), 0.0)  # marker 钉住
+        self.assertEqual(self._queue(), {})          # 回滚：额度不扣
+
+    def test_degrade_telemetry_carries_no_note_filename(self):
+        # 宪法第 9 条判例：note 文件名是用户笔记标题（可能含敏感词），不进
+        # 可上传 props——本 pass 的全部 radar_* 事件只带元数据。
+        analytics.EVENTS_PATH.unlink(missing_ok=True)
+        self._note("Acme-layoffs.md", "sensitive note body", BASE)
+        radar.scan(runner=lambda t: "no json")
+        events = [json.loads(line) for line in analytics.EVENTS_PATH
+                  .read_text(encoding="utf-8").splitlines() if line.strip()]
+        radar_events = [e for e in events
+                        if str(e.get("event", "")).startswith("radar_")]
+        self.assertTrue(any(e["event"] == "radar_parse_degraded"
+                            for e in radar_events))
+        for e in radar_events:
+            self.assertNotIn("Acme-layoffs", json.dumps(e, ensure_ascii=False))
 
     def test_scan_summary_carries_timestamp(self):
         self._note("t.md", "x", BASE)

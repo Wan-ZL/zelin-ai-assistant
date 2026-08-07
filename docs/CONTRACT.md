@@ -2158,7 +2158,8 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   ECONNREFUSED/ETIMEDOUT/…；或 **exit 143** = 子进程被外部 SIGTERM）→ 同 pass
   内退避 `TRANSIENT_BACKOFF_S`（5s）后重试，至多 `TRANSIENT_MAX_RETRIES`
   （1）次；重试仍失败才进既有跨 pass 重试台账（`state/radar_failed.json`，
-  水位语义 v2 不变）。analytics：`radar_transient_retry{note,attempt}`。
+  水位语义 v2 不变）。analytics：`radar_transient_retry{attempt}`——事件只带
+  元数据，note 文件名是用户笔记标题，不进可上传 props（宪法第 9 条）。
 - **TimeoutExpired 不做同 pass 重试**：600s 预算已烧完，再来一轮会把整个
   pass 拖过 30 分钟 cron 间隔——仍走跨 pass 台账（2026-07-22 review 的
   note-level 语义不变）。
@@ -2168,23 +2169,37 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
 ### 47.2 解析失败降级卡（`radar-parse-degraded`）
 
 - 提取输出 unparseable → **同 pass 重新提取一次**（LLM 非确定性，第二次常为
-  合法 JSON；analytics `radar_parse_retry_ok`）→ 仍 unparseable →**降级**：
-  先做既有截断抢救（完整前缀对象照常落库），再把整篇 note 原文落成一张
-  **低置信降级卡**（`file_parse_degraded_card`）——替代旧的「进队列跨 pass
-  空转直至 §40 give-up」路径（unparseable 类专属；claude 失败/不可读 note
-  仍走台账）。
+  合法 JSON；analytics `radar_parse_retry_ok`，只带元数据）→ 仍 unparseable
+  →**降级**：先做既有截断抢救（**两次输出各自抢救取更优**，平手取重试那
+  份——重试返回非空 prose 时首跑的完整前缀对象不陪葬；完整前缀对象照常
+  落库），再把整篇 note 原文落成一张**低置信降级卡**
+  （`file_parse_degraded_card`）——替代旧的「进队列跨 pass 空转直至 §40
+  give-up」路径（unparseable 类专属；claude 失败/不可读 note 仍走台账）。
 - 卡形态：`status=detected`（备选列，不通知——宪法第 10 条）、
   `type=diagnostic`、notes 首行 `[radar-parse-degraded]` 标签 + 「解析失败
   降级，原文未加工」；**原文经 `sanitize.fence_untrusted` 围栏后整段进
-  notes**（>10k 字符截断并标注，卡上保留 `file:` 回指路径）——卡片正文日后
-  可能被拼进 merge-review/rework prompt，不围栏即违宪法第 5 条。
+  notes**（>10k 字符截断并标注）——卡片正文日后可能被拼进 merge-review/
+  rework prompt，不围栏即违宪法第 5 条。**隐私口径**：绝对本机路径只留在
+  sources[0] `ref`（与既有 radar 卡同位），summary/notes 不带路径；notes 不
+  带 LLM raw 输出片段（那是模型对不可信 note 的输出，完整取证在
+  `state/radar_debug/`）；`quote` 为非空占位——`analyze._sources_text` 的
+  `quote or ref` 兜底会把空 quote 换成 ref，路径就进了「研究并提议」扩写
+  prompt。
 - **按 note 路径去重**（sources[0] `channel="radar-parse-degraded"` +
-  `ref=<路径>`，扫描含 trashed/archived）：一篇 note 一辈子至多一张降级卡；
-  入库走 `registry.upsert`，不走 merge_or_new 的 LLM 匹配。analytics：
-  `radar_parse_degraded{note,req}`。
-- 降级卡落库（或 dedup 命中）成功 → note 记 accounted（不进台账，summary
-  `skipped` 留痕）；降级卡本身落库失败 → 退回台账老路（兜底的兜底，note
-  绝不双重丢失）。
+  `ref=<路径>`）：去重只对**未完结**降级卡生效——命中已完结卡（delivered/
+  merged/rejected/trashed）照常铸新卡，否则同路径 note 改后再失败会被旧卡
+  静默吞掉；入库走 `registry.upsert`，不走 merge_or_new 的 LLM 匹配。
+  analytics：`radar_parse_degraded{req}`（不带 note 文件名）。
+- 降级卡落库（或 dedup 命中未完结卡）成功 → note 记 accounted（不进台账，
+  summary `skipped` 留痕）；降级卡本身落库失败 → 退回台账老路（兜底的兜底，
+  note 绝不双重丢失）。
+- **同 pass 降级上限（systemic 阻尼）**：`PARSE_DEGRADE_PASS_CAP`（3）——
+  claude exit-0 却每篇都输出错误文案的系统性故障下，无上限降级 = 一轮积压
+  全部翻倍烧调用 + 铸一板卡而 health 仍记 ok。达到上限后本 pass 不再重试
+  提取/不再铸卡，余下 unparseable 以 **channel 级**错误进账（summary 新增
+  计数键 `parse_degraded`，add-only）；且降级 accounted 不算「真正解析成功」
+  ——一轮无真成功时既有 systemic 回滚照常生效（marker 钉住、重试额度不扣），
+  health 按 any_failed 记 `extract_failed`。
 
 ### 47.3 `state/loop_health.json`（actd 写，Mac app 只读）
 
@@ -2194,8 +2209,10 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
 
 - **写者**：actd 主循环（`LoopHealthTracker`，原子写 .tmp+rename，绝不抛）。
   pass 失败每次都写（计数递增 + `last_error` ≤300 字）；成功仅在「上一状态
-  非零」时写一次清零回执——空闲稳态零磁盘写。`--once` 与测试直调
-  `run_once` 不经此账。
+  非零」时写一次清零回执——空闲稳态零磁盘写。**init 继承盘上计数**（文件
+  缺失/损坏/非法按 0）：重启恰是连崩的标准恢复路径，内存从 0 起算会让重启
+  后首个成功 pass 撞上稳态 early-return，盘上 ≥3 的计数永不清零、红横幅
+  永久挂着。`--once` 与测试直调 `run_once` 不经此账。
 - **读者**：Mac app（`mac/Sources/LoopHealth.swift`，纯 Foundation，
   LogicTests 直测）。仅当 dashboard **新鲜**（本会判 `.ok`）时参考：
   `consecutive_failures ≥ 3`（`LOOP_ALARM_AFTER`，两侧同值）→

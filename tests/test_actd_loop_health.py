@@ -60,6 +60,27 @@ class LoopHealthTrackerTestCase(unittest.TestCase):
         self.assertEqual(data["consecutive_failures"], 1)   # 不是 4——连续才算
         self.assertEqual(data["last_error"], "B: fresh streak")
 
+    def test_restart_inherits_disk_count_and_first_success_clears(self):
+        # v0.47 review 判例：重启恰是连崩的标准恢复路径。新进程 init 必须继承
+        # 盘上计数，否则首个成功 pass 撞稳态 early-return，盘上 ≥3 永不清零、
+        # 红横幅永久挂着。
+        t = actd.LoopHealthTracker()
+        for _ in range(actd.LOOP_ALARM_AFTER):
+            t.record_failure("NameError: boom")
+        t2 = actd.LoopHealthTracker()            # actd 重启
+        self.assertEqual(t2.consecutive_failures, actd.LOOP_ALARM_AFTER)
+        t2.record_success()                      # 重启后首个成功 pass
+        self.assertEqual(self._read()["consecutive_failures"], 0)  # 红点消
+
+    def test_corrupt_or_missing_health_file_starts_from_zero(self):
+        # 诊断文件缺失/损坏/非法计数 → init 按 0，绝不拦启动、绝不误报
+        self.assertEqual(actd.LoopHealthTracker().consecutive_failures, 0)
+        self.path.write_text("{not json", encoding="utf-8")
+        self.assertEqual(actd.LoopHealthTracker().consecutive_failures, 0)
+        self.path.write_text(json.dumps({"consecutive_failures": "3"}),
+                             encoding="utf-8")
+        self.assertEqual(actd.LoopHealthTracker().consecutive_failures, 0)
+
     def test_long_error_is_capped_and_writer_never_raises(self):
         t = actd.LoopHealthTracker()
         t.record_failure("E" * 5000)

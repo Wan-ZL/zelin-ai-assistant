@@ -2751,7 +2751,18 @@ class LoopHealthTracker:
     """
 
     def __init__(self) -> None:
+        # init 继承盘上计数（缺失/损坏/非法按 0）：重启恰是连崩的标准恢复
+        # 路径——从 0 起算会让重启后首个成功 pass 撞上 record_success 的稳态
+        # early-return，盘上 consecutive_failures≥3 永不清零、红横幅永久挂着。
         self.consecutive_failures = 0
+        try:
+            data = json.loads((config.STATE_DIR / LOOP_HEALTH_NAME)
+                              .read_text(encoding="utf-8"))
+            n = data.get("consecutive_failures")
+            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                self.consecutive_failures = n
+        except Exception:  # noqa: BLE001 - 诊断文件绝不反杀主循环启动
+            pass
 
     def _write(self, error: Optional[str]) -> None:
         try:
