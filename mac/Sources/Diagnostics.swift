@@ -31,6 +31,7 @@ enum DiagAction {
     case openCredentials      // 凭证/API key → 设置页 credentials 锚点
     case openDeps             // 链路报错 → 依赖检查页
     case openVaultSetting     // 没设 Obsidian 目录 → 设置页
+    case reinstallAgent(String)  // §46.6 源开着但 plist 缺失 → 原地重装调度
 
     /// ``app`` non-nil (popover context) also brings the main window forward;
     /// in the kanban (already the main window) it is passed too and is a no-op
@@ -42,6 +43,13 @@ enum DiagAction {
             return
         case .grantScreen:
             RecordingController.openScreenRecordingSettings()
+            return
+        case .reinstallAgent(let label):
+            // 与设置面板「重新安装」同一条路（LaunchAgents.install 渲染 +
+            // load）；装好后下一个 5s tick 卡片自然消失。
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = LaunchAgents.install(label: label)
+            }
             return
         case .openCredentials:
             MainNav.shared.pendingAnchor = "credentials"
@@ -84,6 +92,7 @@ final class DiagnosticsModel: ObservableObject {
     // alarms once the empty state has persisted ~one ingest cycle.
     private let firstSeenKey = "diagnosticsFirstSeen"
     private static let warmupSeconds: TimeInterval = 35 * 60   // 对齐 install.sh */30
+    private static let agentMissingWarmupSeconds: TimeInterval = 120   // §46.6 闪卡防抖
     private static let reappearAfter: TimeInterval = 7 * 86_400
 
     private init() {}
@@ -114,12 +123,16 @@ final class DiagnosticsModel: ObservableObject {
         // INTENDED it (§3.6 anti-nag). §46 起 intent 的真源在 Python
         // （act/lib/sources.py），经 dashboard 的 radar_sources 投影读到——
         // 不再猜「凭证文件非空」。投影缺失（旧 actd payload）时回退老判据。
+        // 该不该出卡的判断全在 DiagnosticsRules（LogicTests 钉住的纯逻辑）。
         let projected = Self.readRadarSources()
         let slackNonEmpty = SecretsIO.hasSecret(SecretsIO.slackFile)
         let slackStarted = FileManager.default.fileExists(
             atPath: SecretsIO.path(SecretsIO.slackFile))   // 存在但可能空 = 已开始配
-        let gmailIntent = (projected["gmail"]?["enabled"] as? Bool)
-            ?? SecretsIO.hasSecret(SecretsIO.gmailFile)
+        // setup 类卡的意愿信号：用户碰过开关（override 键存在，开或关都算）
+        // 或凭证文件已存在——「enabled 默认 true」本身不算 intent（§46.4）。
+        let gmailSwitchTouched = SettingsIO.readOverrides()["gmail_enabled"] != nil
+        let gmailCredFileExists = FileManager.default.fileExists(
+            atPath: SecretsIO.path(SecretsIO.gmailFile))
 
         var out: [DiagnosticCard] = []
         var liveSignatures = Set<String>()
@@ -132,13 +145,19 @@ final class DiagnosticsModel: ObservableObject {
             }
         }
 
-        // --- gmail (intent: §46 radar_sources.gmail.enabled) ---
-        // 告警资格由 Python 一处裁定：源开着 + skip_reason 非空 = 该报。手写
-        // 的 reason 白名单退役——Python 已不再产出 `disabled`（关掉的源条目
-        // 整个消失），这里只把升级瞬间可能残留的旧 `disabled` 记录排除掉。
-        if gmailIntent, let gm = health["gmail"], let reason = gm.skipReason,
-           reason != "disabled" {
-            let setup = ["no_credentials", "no_address"].contains(reason)
+        // --- gmail (intent: §46 radar_sources.gmail.enabled + 意愿信号) ---
+        // 告警资格 = DiagnosticsRules.gmailCardEligible：源开着 + skip_reason
+        // 非空，setup 类另需真实意愿（碰过开关/凭证文件存在）。手写的 reason
+        // 白名单退役——Python 已不再产出 `disabled`（关掉的源条目整个消失），
+        // 规则里只把升级瞬间可能残留的旧 `disabled` 记录排除掉。
+        if let gm = health["gmail"],
+           DiagnosticsRules.gmailCardEligible(
+               reason: gm.skipReason, projected: projected["gmail"],
+               legacyCredentialNonEmpty: SecretsIO.hasSecret(SecretsIO.gmailFile),
+               switchTouched: gmailSwitchTouched,
+               credentialFileExists: gmailCredFileExists),
+           let reason = gm.skipReason {
+            let setup = DiagnosticsRules.gmailSetupReasons.contains(reason)
             out.append(DiagnosticCard(
                 id: "diag.gmail", signature: "gmail:" + reason, path: .gmail,
                 title: setup
@@ -178,6 +197,37 @@ final class DiagnosticsModel: ObservableObject {
                     lastAttempt: sl.lastAttempt, lastOK: sl.lastOK))
                 liveSignatures.insert("slack:mcp_not_configured")
             }
+        }
+
+        // --- §46.6 雷达调度未安装（源开着但 launchd plist 缺失） ---
+        // 典型路径：关着时 .pkg 升级把 plist 退役 → 用户重新打开开关（功能
+        // 开关面板不装 plist）→ 配置 on 但没人再装，雷达永久静默且因 health
+        // 条目已被清、连 liveness 死亡告警都没有基线可响。修复动作与设置
+        // 面板「重新安装」同路。只认真实投影（旧 payload 不出卡）。
+        let agentBySource: [(String, IngestPath, String)] = [
+            ("gmail", .gmail, GmailSettingsModel.agentLabel),
+            ("slack", .slack, SlackSettingsModel.agentLabel),
+        ]
+        for (src, path, label) in agentBySource {
+            let plistExists = FileManager.default.fileExists(
+                atPath: LaunchAgents.plistDest(label))
+            guard DiagnosticsRules.schedulerMissing(
+                projected: projected[src], plistExists: plistExists),
+                  !out.contains(where: { $0.path == path })   // 每 path 至多一卡
+            else { continue }
+            let entry = health[src]
+            let card = DiagnosticCard(
+                id: "diag.\(src)", signature: "\(src):agent_missing", path: path,
+                title: src == "gmail"
+                    ? L("Gmail 雷达开着，但后台调度没装上", "The Gmail radar is on but its scheduler isn't installed")
+                    : L("Slack 雷达开着，但后台调度没装上", "The Slack radar is on but its scheduler isn't installed"),
+                detail: L("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
+                          "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
+                actionLabel: L("重装后台调度", "Reinstall the scheduler"),
+                action: .reinstallAgent(label),
+                lastAttempt: entry?.lastAttempt, lastOK: entry?.lastOK)
+            liveSignatures.insert(card.signature)
+            if !isDebounced(card) { out.append(card) }
         }
 
         pruneFirstSeen(keeping: liveSignatures)
@@ -261,19 +311,27 @@ final class DiagnosticsModel: ObservableObject {
         return true
     }
 
-    /// vault_empty warm-up: suppress a card until its state has persisted
-    /// ~one ingest cycle. Only vault_empty debounces (the fresh-setup false
-    /// alarm); everything else surfaces immediately.
+    /// warm-up: suppress a card until its state has persisted a while.
+    /// vault_empty waits ~one ingest cycle (the fresh-setup false alarm);
+    /// agent_missing waits ~2 min（开关切换的瞬间投影落后一个 actd pass、
+    /// 异步安装还在跑——闪卡防抖）; everything else surfaces immediately.
     private func isDebounced(_ card: DiagnosticCard) -> Bool {
-        guard card.signature.hasPrefix("screenpipe:vault_empty") else { return false }
+        let warmup: TimeInterval
+        if card.signature.hasPrefix("screenpipe:vault_empty") {
+            warmup = Self.warmupSeconds
+        } else if card.signature.hasSuffix(":agent_missing") {
+            warmup = Self.agentMissingWarmupSeconds
+        } else {
+            return false
+        }
         var seen = UserDefaults.standard.dictionary(forKey: firstSeenKey) as? [String: Double] ?? [:]
         let now = Date().timeIntervalSince1970
         if let first = seen[card.signature] {
-            return (now - first) < Self.warmupSeconds
+            return (now - first) < warmup
         }
         seen[card.signature] = now
         UserDefaults.standard.set(seen, forKey: firstSeenKey)
-        return true   // first sight — wait one cycle before alarming
+        return true   // first sight — wait out the warm-up before alarming
     }
 
     private func pruneFirstSeen(keeping live: Set<String>) {
@@ -287,14 +345,18 @@ final class DiagnosticsModel: ObservableObject {
     // MARK: dashboard.json radar_sources projection (§46, tolerant)
 
     /// state/dashboard.json 顶层 `radar_sources` map（actd 投影的源开关
-    /// intent + 健康摘要）。缺失/坏文件 → [:]（调用方回退老 intent 判据）。
-    private static func readRadarSources() -> [String: [String: Any]] {
+    /// intent + 健康摘要）。走 Contract.swift 的 `RadarSourceHealth` 解码
+    /// ——与 Store 同一套 wire 类型，不再维护第二条裸 JSONSerialization
+    /// 读法。缺失/坏文件/坏 map → [:]（调用方回退老 intent 判据）。
+    private static func readRadarSources() -> [String: RadarSourceHealth] {
+        struct Projection: Decodable {   // 只解顶层这一个键，别的分区不碰
+            let radar_sources: [String: RadarSourceHealth]?
+        }
         let path = AppPaths.stateRoot + "/state/dashboard.json"
         guard let data = FileManager.default.contents(atPath: path),
-              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let map = obj["radar_sources"] as? [String: Any]
+              let proj = try? JSONDecoder().decode(Projection.self, from: data)
         else { return [:] }
-        return map.compactMapValues { $0 as? [String: Any] }
+        return proj.radar_sources ?? [:]
     }
 
     // MARK: radar_health.json (tolerant — never crashes the tick)

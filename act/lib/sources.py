@@ -17,7 +17,11 @@ plist；删了 plist 下次 install.sh 又装回来），没有一处能回答�
 CLI（install.sh 防复活闸门用）::
 
     python3 -m act.lib.sources --enabled gmail
-    # exit 0 = enabled, 1 = disabled, 2 = unknown source / bad invocation
+    # exit 0 = enabled（stdout "on"）, 3 = disabled（stdout "off"）,
+    # 2 = unknown source / bad invocation
+    # exit 1 被刻意空出：那是 python 崩溃的环境码（ModuleNotFoundError、
+    # 缺 PyYAML、任何未捕获异常）——「关」必须独占一个不会被故障撞上的
+    # 出口码，install.sh 才能对所有故障类 fail-open（照常安装）。
 
 依赖只有 act.lib.config（stdlib+PyYAML 白名单内）；绝不触网、绝不写文件。
 """
@@ -54,8 +58,8 @@ def enabled(cfg: Optional[config.Config], source: str) -> bool:
     if cfg is None:
         cfg = config.load_config()
     flag = cfg.feature(f"{source}_radar") if hasattr(cfg, "feature") else True
-    # gmail 有 sources.gmail.enabled（cfg.gmail_enabled）；slack/obsidian 目前
-    # 没有对应字段 —— getattr 默认 True，将来加字段无需改这里（add-only）。
+    # 三个源都有 sources.<src>.enabled（cfg.<src>_enabled，config.py 解析）；
+    # getattr 默认 True 兜底老 Config 对象（add-only）。
     per_source = bool(getattr(cfg, f"{source}_enabled", True))
     return bool(flag) and per_source
 
@@ -73,19 +77,23 @@ def _parse_iso(value) -> Optional[_dt.datetime]:
 
 def is_stale(source: str, entry: Optional[dict],
              now: Optional[_dt.datetime] = None) -> bool:
-    """开着的源是否已「死亡」（超过 LIVENESS_THRESHOLDS 没有成功信号）。
+    """开着的源是否已「死亡」（超过 LIVENESS_THRESHOLDS 没有任何活动信号）。
 
-    信号取 ``last_ok``，从未成功过则退而取 ``last_attempt``（区分「配好后
-    一直失败」与「刚装上还没跑过」）；条目缺失或两个时间戳都没有 → False
-    （没有基线就不能诚实地宣布死亡——配置类静默失败由诊断卡负责，§0 第 3 条）。
+    信号取 ``last_ok`` 与 ``last_attempt`` 里**较新**的那个——真死亡（plist
+    被删/调度停摆）两个时间戳一起停；「配好后一直失败」的雷达 last_attempt
+    仍在前进，属诊断卡（skip_reason）的辖区而非死亡告警，合盖睡醒后的第一批
+    pass 也因此少一类误报。条目缺失或两个时间戳都没有 → False（没有基线就
+    不能诚实地宣布死亡——配置类静默失败由诊断卡负责，§0 第 3 条）。
     调用方自行保证只对 enabled 的源调用（关掉的源天然不进巡检循环）。
     """
     threshold = LIVENESS_THRESHOLDS.get(source)
     if threshold is None or not isinstance(entry, dict):
         return False
-    signal = _parse_iso(entry.get("last_ok")) or _parse_iso(entry.get("last_attempt"))
-    if signal is None:
+    stamps = [t for t in (_parse_iso(entry.get("last_ok")),
+                          _parse_iso(entry.get("last_attempt"))) if t]
+    if not stamps:
         return False
+    signal = max(stamps)
     if now is None:
         now = _dt.datetime.now(_dt.timezone.utc)
     return (now - signal).total_seconds() > threshold
@@ -99,8 +107,8 @@ def main(argv: Optional[list] = None) -> int:
         prog="act.lib.sources",
         description="query the source-switch single source of truth")
     parser.add_argument("--enabled", metavar="SOURCE",
-                        help="exit 0 if SOURCE is enabled, 1 if disabled, "
-                             "2 if unknown")
+                        help="exit 0 if SOURCE is enabled, 3 if disabled, "
+                             "2 if unknown (1 is reserved: python crash)")
     args = parser.parse_args(argv)
     if not args.enabled:
         parser.print_usage()
@@ -114,8 +122,10 @@ def main(argv: Optional[list] = None) -> int:
     except Exception:  # noqa: BLE001 - 坏 config 按默认（全开）处理，别拦安装
         cfg = config.Config()
     on = enabled(cfg, source)
+    # 「off」独占 exit 3 + stdout 字面量（install.sh 双重校验），exit 1 留给
+    # python 自身崩溃 —— 探针故障与「关」必须不同码，fail-open 才成立。
     print("on" if on else "off")
-    return 0 if on else 1
+    return 0 if on else 3
 
 
 if __name__ == "__main__":

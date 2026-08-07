@@ -579,8 +579,14 @@ def _radar_sources(cfg: config.Config) -> dict:
     ``enabled`` 来自真源 sources.enabled()（App 侧的 intent 判断自此读这里，
     不再猜「凭证文件非空」）；``last_ok``/``skip_reason`` 摘自 radar_health
     条目（关掉的源条目已被清除 → null）；``stale`` = 开着且超 liveness 阈值
-    没有成功信号（告警的看板投影，恢复后自动变回 false）。Never raises。
+    没有成功信号（告警的看板投影，恢复后自动变回 false）。配置**现读**——
+    actd 启动时冻结的 cfg 在 App 翻开关后失真，投影必须跟着磁盘上的真值走
+    （load_config 失败才回退传入的 cfg）。Never raises。
     """
+    try:
+        cfg = config.load_config()
+    except Exception:  # noqa: BLE001 - 坏 config 回退调用方快照，不崩投影
+        pass
     out: dict = {}
     try:
         data = health.load_radar_health()

@@ -598,6 +598,16 @@ struct RadarSourceHealth: Decodable, Hashable {
         skip_reason = try? c.decodeIfPresent(String.self, forKey: .skip_reason)
         stale = (try? c.decodeIfPresent(Bool.self, forKey: .stale)) ?? false
     }
+
+    // 显式 memberwise init（自定义 init(from:) 会吃掉编译器合成的那份）——
+    // DiagnosticsRules 的判例直接构造投影值用。
+    init(enabled: Bool, last_ok: String? = nil,
+         skip_reason: String? = nil, stale: Bool = false) {
+        self.enabled = enabled
+        self.last_ok = last_ok
+        self.skip_reason = skip_reason
+        self.stale = stale
+    }
 }
 
 struct Counts: Decodable {

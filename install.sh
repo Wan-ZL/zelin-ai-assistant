@@ -400,12 +400,16 @@ rm -f "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist"
 # (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
 # A disabled source gets the RETIRED treatment above (unload + rm) instead,
 # so a re-run of install.sh can no longer resurrect a switched-off radar.
-# Probe failures (no PyYAML etc.) fail OPEN — install as before.
+# "off" is ONLY the dedicated exit code 3 + the literal stdout "off" — every
+# other outcome (exit 1 python crash / ModuleNotFoundError / no PyYAML / exit
+# 2 bad invocation) fails OPEN and installs as before. The probe runs from
+# $REPO_ROOT like every other `-m act.*` call in this file: a pkg postinstall
+# cwd is an Installer temp dir where `-m act.lib.sources` can't import at all.
 radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
     rc=0
-    AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -m act.lib.sources \
-        --enabled "$1" >/dev/null 2>&1 || rc=$?
-    [ "$rc" -ne 1 ]
+    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
+        "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
+    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
 }
 for plist in "$REPO_ROOT"/act/launchd/*.plist; do
     [ -e "$plist" ] || continue

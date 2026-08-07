@@ -2251,19 +2251,50 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
     return msgs
 
 
-def _check_radar_liveness(cfg: config.Config,
-                          notified: set[str]) -> list[tuple[str, str]]:
+# §46 睡醒宽限：合盖 ≥ 阈值的睡眠唤醒后，actd 的第一批 pass 必然早于雷达补跑
+# （launchd/cron 也刚醒），health 时间戳整体超期 —— 没有宽限就是每天醒来一轮
+# 假「源死亡」告警，anti-nag 台账防不了这种每日重置。检测 wall-clock 跳变
+# （相邻 pass 间隔远大于 poll interval = 刚睡醒/长停顿），宽限一个最大雷达
+# 周期（obsidian cron */30 = 1800s）+ 余量，让雷达先补跑再恢复评判。
+_WAKE_JUMP_FACTOR = 6            # 跳变 > interval×6 视为睡醒
+_WAKE_JUMP_FLOOR_SECONDS = 300   # interval 很小时的跳变判定下限
+_WAKE_GRACE_SECONDS = 35 * 60    # 最大雷达周期 1800s + 余量（对齐 Diagnostics）
+_wake_state: dict = {"last_pass": None, "grace_until": 0.0}
+
+
+def _wake_grace(cfg: config.Config, wall: float) -> bool:
+    """记录本 pass 的 wall-clock 并判断是否处于睡醒宽限期。"""
+    interval = int(getattr(cfg, "poll_interval_seconds", 10) or 10)
+    last = _wake_state["last_pass"]
+    _wake_state["last_pass"] = wall
+    jump = max(interval * _WAKE_JUMP_FACTOR, _WAKE_JUMP_FLOOR_SECONDS)
+    if last is not None and (wall - last) > jump:
+        _wake_state["grace_until"] = wall + _WAKE_GRACE_SECONDS
+    return wall < _wake_state["grace_until"]
+
+
+def _check_radar_liveness(notified: set[str],
+                          now: Optional[_dt.datetime] = None
+                          ) -> list[tuple[str, str]]:
     """§46 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
 
-    对每个 ``sources.enabled()`` 为真的源，比较 health 的 last_ok（从未成功
-    则 last_attempt）与 ``sources.LIVENESS_THRESHOLDS``，超期 = 源死亡 →
-    notify 一次。anti-nag 台账（``notified``，与 auth_notified 同款进程内
-    set）：同一源只在**跨过**阈值那一刻报一次，恢复（不再 stale）即出账，
-    下次再死才会再响。关掉的源不进循环，且顺手清掉残留 health 条目（生产上
-    手删 plist 留下的僵尸 last_attempt 记录）。Never raises。
+    配置**每次调用现读**（load_config 自身防崩）——actd 启动时冻结的 cfg 在
+    App 翻开关后双向失真：关→开会每 pass 清掉活雷达刚写的 health 还复活假
+    存活信号，开→关会对用户刚关的源发死亡告警。对每个 ``sources.enabled()``
+    为真的源，比较 health 的 last_ok/last_attempt（取较新者）与
+    ``sources.LIVENESS_THRESHOLDS``，超期 = 源死亡 → notify 一次。anti-nag
+    台账（``notified``，与 auth_notified 同款进程内 set）：同一源只在**跨过**
+    阈值那一刻报一次，恢复（不再 stale）即出账，下次再死才会再响。睡醒宽限
+    （``_wake_grace``）期间不评判 stale、也不动台账。关掉的源不进循环，且
+    顺手清掉残留 health 条目（生产上手删 plist 留下的僵尸 last_attempt
+    记录）。``now`` 是测试注入缝。Never raises。
     """
     msgs: list[tuple[str, str]] = []
     try:
+        cfg = config.load_config()
+        if now is None:
+            now = _dt.datetime.now(_dt.timezone.utc)
+        graced = _wake_grace(cfg, now.timestamp())
         data = health.load_radar_health()
         for src in sources.SOURCES:
             if not sources.enabled(cfg, src):
@@ -2271,7 +2302,9 @@ def _check_radar_liveness(cfg: config.Config,
                 health.remove_radar_health(src)
                 notified.discard(src)
                 continue
-            if sources.is_stale(src, data.get(src)):
+            if graced:
+                continue    # 睡醒宽限：雷达还没来得及补跑，本 pass 不评判
+            if sources.is_stale(src, data.get(src), now):
                 if src not in notified:
                     notified.add(src)
                     hours = sources.LIVENESS_THRESHOLDS[src] // 3600
@@ -2905,8 +2938,9 @@ def run_once(
         notify.notify(title, body)
     # §46 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
     # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
+    # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
     for title, body in _check_radar_liveness(
-            cfg, radar_dead_notified if radar_dead_notified is not None else set()):
+            radar_dead_notified if radar_dead_notified is not None else set()):
         notify.notify(title, body)
 
     return dash

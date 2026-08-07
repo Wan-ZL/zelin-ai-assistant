@@ -159,6 +159,10 @@ class Config:
     # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
     slack_mcp_fallback: bool = True
     slack_mcp_interval_minutes: int = 30
+    # §46 源开关（sources.<src>.enabled）— gmail 的同款开关，三源对齐；
+    # sources.enabled() 拿它与 features.<src>_radar 做合取。
+    slack_enabled: bool = True
+    obsidian_enabled: bool = True
     # §40 capture receipts — emoji reaction ack on captured self-DM messages
     # (📥 filed / 🚫 ignored / ↩️ re-raised). Best-effort; default ON.
     slack_capture_receipts: bool = True
@@ -442,6 +446,15 @@ def load_config() -> Config:
     cfg.gmail_fetch_command = gmail.get(
         "fetch_command", cfg.gmail_fetch_command
     )
+
+    # §46: slack/obsidian 的 sources.<src>.enabled — gmail 上面同款的嵌套
+    # 写法，此前静默无效（半个开关）；三源对齐后 sources.enabled() 的合取
+    # 对每个源都成立。
+    for _src in ("slack", "obsidian"):
+        _blk = _dict_or(sources.get(_src))
+        _cur = getattr(cfg, f"{_src}_enabled")
+        setattr(cfg, f"{_src}_enabled",
+                _bool_or(_blk.get("enabled", _cur), _cur))
 
     wd = sources.get("weekly_digest", {}) or {}
     if isinstance(wd, dict):
@@ -733,6 +746,10 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_app_password_path": str,
     "gmail_enabled": _coerce_bool,
     "gmail_fetch_command": str,
+    # §46 三源开关对齐 — App 侧未来的 slack/obsidian 面板写这两个扁平键
+    # （与 gmail_enabled 同款）。
+    "slack_enabled": _coerce_bool,
+    "obsidian_enabled": _coerce_bool,
     "review_notify": str,
     "weekly_digest_enabled": _coerce_bool,
     "show_cost_above_usd": float,
