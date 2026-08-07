@@ -292,12 +292,16 @@ final class DashboardStore: ObservableObject {
                 } else {
                     for r in db.fold_receipts where !seenFoldReceipts.contains(r.id) {
                         seenFoldReceipts.insert(r.id)
-                        let what = String(r.text.prefix(30))
+                        // 隐私红线（§44.6）：回执不携带被并入内容原文——文案
+                        // 只由目标卡 id + 显示名拼成；目标卡已消失则只报 R-xxx。
+                        let name = r.title.isEmpty
+                            ? "" : L("「\(String(r.title.prefix(20)))」",
+                                     " \"\(String(r.title.prefix(20)))\"")
                         notices.append(LocalNotice(
                             id: "notice-fold-" + r.id, kind: .info,
                             lane: .approval,
-                            text: L("「\(what)」已并入 \(r.req)「\(String(r.title.prefix(20)))」（没有建新卡）",
-                                    "\"\(what)\" was merged into \(r.req) \"\(String(r.title.prefix(20)))\" (no new card filed)"),
+                            text: L("刚才的输入已并入 \(r.req)\(name)（没有建新卡）",
+                                    "Your input was merged into \(r.req)\(name) (no new card filed)"),
                             created: Date()))
                     }
                     // 过期出投影的回执从 seen-set 剪掉（同一 id 不会复活，

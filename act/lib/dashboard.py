@@ -531,9 +531,26 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 # build
 # --------------------------------------------------------------------------- #
 def _fold_receipts() -> list[dict]:
-    """§44.6 并入回执投影——纯委托 :mod:`act.lib.fold_receipts`（never raises）。"""
-    from act.lib import fold_receipts
-    return fold_receipts.load_recent()
+    """§44.6 并入回执投影（never raises）。
+
+    回执文件只存 channel + 目标卡 id（隐私红线：dashboard 整包上云，被并入
+    内容原文不得出机）——投影文案所需的主卡显示名在这里由 registry 现查
+    （``title`` = §37 display_title 链，本就已随卡片行进 dashboard，不是
+    新增外泄面）；目标卡已消失（归档/回收）则留空，App 端只报 R-xxx。
+    """
+    from act.lib import fold_receipts, registry
+    out: list[dict] = []
+    for e in fold_receipts.load_recent():
+        title = ""
+        try:
+            req = registry.load(e["req"])
+            if req is not None:
+                title = _display_title(req)
+        except Exception:  # noqa: BLE001 - 回执是尽力而为的观测面（宪法 11）
+            title = ""
+        e["title"] = title
+        out.append(e)
+    return out
 
 
 def _device_label() -> Optional[str]:

@@ -372,8 +372,7 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
     # §44.6 看板回执：§44.1 的跨卡静默并入同样要在看板留一行可消失的痕
     # （§44.5 的「已并入×N」chip 是累计数，回执补"刚刚发生了什么"）。
     from act.lib import fold_receipts
-    fold_receipts.record(primary.id, primary.display_title or primary.title,
-                         "radar", note)
+    fold_receipts.record(primary.id, "radar", note)
     return True
 
 

@@ -162,7 +162,8 @@ def process_inbox() -> int:
             # app saved under state/attachments/.
             if action == "capture":
                 result = _apply_capture(decision.get("text"), decision.get("mode"),
-                                        decision.get("images"))
+                                        decision.get("images"),
+                                        inbox_stem=path.stem)
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -449,7 +450,7 @@ def _attach_capture_images(req: Requirement, images) -> None:
 
 
 def _apply_capture(text: Optional[str], mode: Optional[str] = None,
-                   images=None) -> str:
+                   images=None, inbox_stem: Optional[str] = None) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
@@ -507,6 +508,21 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         # 入在跑的卡：文本没送达会话、看板零回执）。撞开卡/完结卡都视为用户
         # 要起一个新任务；后续多渠道防重复照常由 radar/普通 capture 通道兜住。
         #
+        # crash-replay 幂等（§34.1）：process_inbox 是 at-least-once（先 apply
+        # 后删文件）——[run] 绕开判重后，apply 与 unlink 之间 crash 的同一
+        # inbox 文件重放会铸第二张 approved 卡、起两个 agent。幂等键 = inbox
+        # 文件 stem（execution add-only 字段）：同 stem 已有卡 → 诚实 ack
+        # running 跳过。两个不同文件（用户两次显式输入）stem 不同，照常两张卡。
+        if inbox_stem:
+            dup = next(
+                (r for r in registry.load_all()
+                 if isinstance(r.execution, dict)
+                 and r.execution.get("inbox_stem") == inbox_stem), None)
+            if dup is not None:
+                _log(f"inbox: capture[run] replay of {inbox_stem} -> "
+                     f"{dup.id} already filed — skip")
+                return "running"
+        #
         # direct-run skips LLM routing entirely — chat delivery at the default
         # workbench is the only no-preview-safe default (§34): no branch/PR
         # lands in a repo the user never confirmed; the FINAL DRAFT (or a
@@ -515,8 +531,11 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         req.thread_id = req.id            # self-root（同 merge_or_new 新卡语义）
         req.status = State.APPROVED.value
         # same bookkeeping as the approve action — dispatch reports wait_s
-        # (approve → launch latency) off this stamp.
+        # (approve → launch latency) off this stamp. inbox_stem = 上面那道
+        # 重放闸的幂等键（直接来自 process_inbox 的文件名，纯元数据）。
         req.execution = {"approved_at": _iso_now()}
+        if inbox_stem:
+            req.execution["inbox_stem"] = inbox_stem
         saved = registry.upsert(req)
         _attach_capture_images(saved, images)
         _log(f"inbox: capture[run] -> {saved.id} approved "
@@ -531,9 +550,9 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     if kind == "folded":
         # §44.6：capture 静默并入必须留看板回执——卡片转圈后"消失"而文本
         # 不知去向，是 8-07 事故的另一半。best-effort，绝不打断 fold。
+        # 原话 t 只进内容键散列，不落盘（隐私红线：dashboard 整包上云）。
         from act.lib import fold_receipts
-        fold_receipts.record(saved.id, saved.display_title or saved.title,
-                             "quick_capture", t)
+        fold_receipts.record(saved.id, "quick_capture", t)
     if saved.status == State.DETECTED.value:
         saved.set_status(State.RAISING)
         save(saved)

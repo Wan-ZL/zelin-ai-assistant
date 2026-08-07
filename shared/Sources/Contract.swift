@@ -523,16 +523,17 @@ struct MergeSuggestion: Decodable, Hashable {
 // CONTRACT §44.6 — 静默并入回执。radar/普通 capture 通道 fold 进已有卡时留在
 // state/fold_receipts/ 的短暂回执，dashboard add-only 顶层键 fold_receipts；
 // App 端渲染为一行可消失的「已并入 R-xxx」提示（LocalNotice 复用）。
+// 隐私红线：回执永不携带被并入内容原文（dashboard 会整包上云同步）——
+// title 是投影时由 registry 补齐的主卡显示名（本就在卡片行里，非新增外泄面）。
 struct FoldReceipt: Decodable, Hashable, Identifiable {
-    let id: String        // 回执 uuid（Store 端 seen-set 去重的身份）
+    let id: String        // 内容键（channel|卡|条目指纹 sha1 前 32；seen-set 去重身份）
     let req: String       // 并入目标（主卡）R-xxx
-    let title: String     // 主卡显示名（≤80）
+    let title: String     // 主卡显示名（投影时补齐；目标卡已消失则空）
     let channel: String   // quick_capture | quick | radar
-    let text: String      // 被并入内容摘要（≤120）
     let at: Int?          // epoch seconds
 
     private enum CodingKeys: String, CodingKey {
-        case id, req, title, channel, text, at
+        case id, req, title, channel, at
     }
 
     init(from decoder: Decoder) throws {
@@ -540,7 +541,6 @@ struct FoldReceipt: Decodable, Hashable, Identifiable {
         req = (try? c.decodeIfPresent(String.self, forKey: .req)) ?? ""
         title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
         channel = (try? c.decodeIfPresent(String.self, forKey: .channel)) ?? ""
-        text = (try? c.decodeIfPresent(String.self, forKey: .text)) ?? ""
         at = try? c.decodeIfPresent(Int.self, forKey: .at)
         id = (try? c.decode(String.self, forKey: .id))
             ?? stableFallbackID("fold", req, at.map(String.init))

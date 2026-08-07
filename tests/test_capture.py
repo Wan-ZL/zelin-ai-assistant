@@ -234,6 +234,28 @@ class DirectRunCaptureTestCase(unittest.TestCase):
             self.assertEqual(req.status, State.APPROVED.value)
             self.assertEqual(req.delivery_mode, "chat")
 
+    def test_run_mode_same_inbox_file_replay_files_one_card(self):
+        # §34.1 crash-replay 幂等：process_inbox 先 apply 后删文件（at-least-
+        # once）——apply 与 unlink 之间 crash，同一 inbox 文件重放绝不铸第二张
+        # approved 卡（否则一次 crash = 起两个 agent）。幂等键 = 文件 stem
+        # （execution.inbox_stem）。两个不同文件 = 两张卡的判例在上面
+        # （test_run_mode_same_text_twice_files_two_cards）。
+        _activate_sync()
+        text = "crash 后同一文件重放只此一卡"
+        aid = self._write_capture(text)
+        payload = (config.INBOX_DIR / f"{aid}.json").read_text(encoding="utf-8")
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual((entries[0].execution or {}).get("inbox_stem"), aid)
+        # 模拟 crash-replay：同名同内容的文件再次出现在 inbox
+        (config.INBOX_DIR / f"{aid}.json").write_text(payload, encoding="utf-8")
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)          # 没有第二张卡
+        self.assertEqual(_ack_for(aid), "running")  # 诚实 ack：这单确实在队里
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
     def test_run_mode_never_touches_a_matching_open_proposal(self):
         # §34.1: a title hit on an open proposal no longer promotes that card —
         # the proposal keeps its state AND its LLM-chosen repo routing; the

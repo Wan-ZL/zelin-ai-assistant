@@ -1305,6 +1305,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   **全都一样**：用户在运行框打字 = 起一个新任务。
 - **ack 恒为 `running`**（真的排上了一轮新运行）；空/非法 `text` 仍按 §5.4
   诚实 ack `noop`。旧处置表的 review-命中 `noop` 分支随并入一起作废。
+- **crash-replay 幂等**：`process_inbox` 是 at-least-once（先 apply 后删
+  文件）——[run] 绕开判重后失去重放保护（apply 与 unlink 之间 crash，同一
+  inbox 文件重放 = 第二张 approved 卡起两个 agent）。幂等键 = inbox 文件
+  stem，建卡时落 `execution.inbox_stem`（add-only，纯元数据）；apply 前查
+  同 stem 卡已存在 → 诚实 ack `running` 跳过。**不碰**「用户两次显式输入 =
+  两张卡」语义——两次输入是两个不同 inbox 文件、stem 不同。
 - **交付强制不变**：新卡显式 `delivery_mode="chat"`、`target_repo` 空（派发
   回退默认 workbench）——direct-run 依旧没有人审预览，不得进任何 repo。
 - **重复防线不塌**：多渠道防重复仍由 radar / 普通 capture 通道的静默并入承担
@@ -1936,18 +1942,29 @@ secondary,outcome∈ok|separate|judge_failed|state_moved|pre_filing_fold}`、
   必须给可见回执——"卡片转圈后消失、文本不知去向"不再被允许。机制（复用
   §28 notify_queue 的 one-file-per-entry 形制，免并发写竞态）：
   - fold 执行点（actd capture 折叠、`quick_capture._fold_into`、triage 的
-    merge_or_new restatement 吸收、self-DM 捕获吸收、§44.1 execute）调
-    `act/lib/fold_receipts.record` → `state/fold_receipts/<uuid>.json` 原子落
-    `{"id","req","title","channel","text","at"}`（title=主卡显示名截 80、
-    text=被并入内容摘要截 120、at=epoch int）；写入顺手清扫超 TTL（600 s）
-    的兄弟条目。回执 best-effort：record 失败绝不打断 fold（宪法 11）。
+    merge_or_new restatement 吸收、self-DM 捕获吸收、self-DM relates_to 备注
+    折叠、§44.1 execute）调 `act/lib/fold_receipts.record` →
+    `state/fold_receipts/<key>.json` 原子落 `{"id","req","channel","at"}`
+    （at=epoch int）；写入顺手清扫超 TTL（600 s）的兄弟条目。回执
+    best-effort：record 失败绝不打断 fold（宪法 11）。
+  - **隐私红线**：回执文件与投影**永不携带被并入内容原文**（capture 原话可能
+    含密钥/本机路径，而 dashboard.json 被 syncd 整包上云同步）——只存
+    channel + 目标卡 id；被并入内容只进内容键散列。
+  - **内容键去重**：`id` = sha1(`channel|req|条目指纹`) 前 32 位（条目指纹 =
+    被并入内容的空白规范化文本，只散列不落盘）。TTL 窗口内同键已有回执 →
+    不重发不刷新（radar failed-note 重试队列对同一条目的反复 re-fold 不得
+    让用户反复看到假「刚刚并入」）；过期清扫后同键可再发。
   - **dashboard add-only 顶层键 `fold_receipts`**：`load_recent()` 取 TTL 内
-    条目按 `at` 降序 cap 10。Swift 侧 `decodeIfPresent` 向后兼容；旧 payload
-    缺键解码为 []。
+    条目按 `at` 降序 cap 10；投影时（`dashboard._fold_receipts`）由 registry
+    现查目标卡补 `title`（§37 display_title 链，本就随卡片行在 dashboard 里，
+    非新增外泄面；目标卡已消失则空串）→ 投影行
+    `{"id","req","title","channel","at"}`。Swift 侧 `decodeIfPresent` 向后
+    兼容；旧 payload 缺键解码为 []；落盘的旧格式回执（曾含 `title`/`text`）
+    读取时多余字段一律忽略（缺字段跳过，原文不再进投影）。
   - **Mac 展示**：Store 按回执 id 去重（seen-set；首次加载 prime 不回放旧
     回执——app 关着=没看见，§28 同款语义），每条新回执发一行绿色 info
-    LocalNotice「已并入 R-xxx（没有建新卡）」，120 s 自动淡出（NoticeRow
-    机制复用，不造新轮子）。
+    LocalNotice「刚才的输入已并入 R-xxx「标题」（没有建新卡）」，120 s 自动
+    淡出（NoticeRow 机制复用，不造新轮子）。
   - 与 §44.5 的分工：`silent_merged` chip 是主卡上的**累计**记账，回执是
     "刚刚发生了什么"的**瞬时**通知面；§21 人工合并路径（用户自己按的按钮，
     自带乐观回显与确认弹窗）不产生回执。
