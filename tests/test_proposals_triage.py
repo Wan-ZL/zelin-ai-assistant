@@ -15,6 +15,7 @@ import json
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
@@ -72,10 +73,13 @@ class PlanConstantTests(TriageBase):
         # 只读红线：不改 registry、不写 inbox（用户指令通道）
         self.assertIn("只读", blob)
         self.assertIn("state/inbox", blob)
-        # 审阅口径：提案态三状态 + 三选一判断
-        for kw in ("detected", "card_sent", "raising",
+        # 审阅口径 = 提案列（card_sent/raising，与看板装载口径一致）+ 三选一
+        # 判断。detected 属潜在任务列 —— 混入会让用户拿着清单在提案列找不到
+        # 卡号（§34bis 口径条款），钉死不出现。
+        for kw in ("card_sent", "raising",
                    "仍值得做", "已过时", "重复"):
             self.assertIn(kw, blob)
+        self.assertNotIn("detected", blob)
         # 交付物：三组建议清单 + FINAL DRAFT（chat 收割钩子）
         for kw in ("保留", "建议丢弃", "建议合并", "FINAL DRAFT"):
             self.assertIn(kw, blob)
@@ -150,6 +154,124 @@ class PresetFailSafeTests(TriageBase):
         card = self._only_card()
         self.assertEqual(str(card.status), State.APPROVED.value)
         self.assertFalse(card.plan)
+
+
+class RegistryGuardTests(TriageBase):
+    """§34bis 机械护栏判例：只读红线不止 prompt 级 —— 起止快照比对兜底。
+
+    会话带 --dangerously-skip-permissions 且拿到 registry 绝对路径，物理上
+    写得进；护栏 = dispatch 拍快照、收割比对，非 actd 写入 → notes 警告 +
+    notify 告警（检测型，不改会话权限模型、不阻塞提升）。
+    """
+
+    def _preset_card(self):
+        _drop(_button_payload())
+        actd.process_inbox()
+        return self._only_card()
+
+    def _dispatched_preset_card(self):
+        """经真实 dispatch_approved 起跑（注入假 executor）的 preset 卡。"""
+        card = self._preset_card()
+
+        class _FakeExecutor:
+            DispatchError = RuntimeError
+
+            @staticmethod
+            def dispatch(req, cfg):
+                req.execution = {"session_id": "sid-guard",
+                                 "dispatched_at": "2026-08-07T00:00:00Z"}
+                req.set_status(State.EXECUTING)
+                registry.save(req)
+                return req
+
+        with mock.patch.object(actd, "executor", _FakeExecutor):
+            actd.dispatch_approved(config.Config())
+        return registry.load(card.id)
+
+    def test_preset_marker_lands_on_card(self):
+        # 顶层 preset 标记（add-only）——护栏认卡的依据；execution 会被
+        # dispatch 重建，标记必须活在卡顶层。
+        card = self._preset_card()
+        self.assertEqual(card.preset, "proposals_triage")
+
+    def test_dispatch_stamps_registry_snapshot(self):
+        card = self._dispatched_preset_card()
+        snap = (card.execution or {}).get("registry_snapshot")
+        self.assertIsInstance(snap, dict)
+        self.assertIn(f"{card.id}.yaml", snap)
+        for v in snap.values():                    # 形状 "size:mtime_ns"
+            self.assertRegex(str(v), r"^\d+:\d+$")
+
+    def test_plain_direct_run_gets_no_snapshot(self):
+        # 非 preset 的普通 direct-run 起跑不拍快照 —— 护栏只属于清理卡。
+        _drop({"action": "capture", "text": "普通任务", "mode": "run",
+               "ts": "2026-08-07T00:00:00Z"})
+        actd.process_inbox()
+        card = self._only_card()
+
+        class _FakeExecutor:
+            DispatchError = RuntimeError
+
+            @staticmethod
+            def dispatch(req, cfg):
+                req.execution = {"session_id": "sid-plain"}
+                req.set_status(State.EXECUTING)
+                registry.save(req)
+                return req
+
+        with mock.patch.object(actd, "executor", _FakeExecutor):
+            actd.dispatch_approved(config.Config())
+        card = registry.load(card.id)
+        self.assertNotIn("registry_snapshot", card.execution or {})
+
+    def test_snapshot_mismatch_warns_and_notifies(self):
+        card = self._dispatched_preset_card()
+        ex = dict(card.execution or {})
+        # 会话越权模拟：绕过 registry.save 直接落盘（不进单写者写入台账）
+        rogue = config.REGISTRY_DIR / "R-rogue.yaml"
+        rogue.write_text("id: R-rogue\ntitle: tampered\n", encoding="utf-8")
+        with mock.patch.object(actd.notify, "notify",
+                               mock.Mock(return_value=True)) as ntf:
+            actd._check_triage_registry_guard(card, ex)
+        self.assertIn("[§34bis 护栏]", card.notes)
+        self.assertIn("R-rogue.yaml", card.notes)
+        ntf.assert_called_once()
+        # 快照用后即焚 —— 同一轮不重复告警
+        self.assertNotIn("registry_snapshot", ex)
+
+    def test_actd_own_writes_do_not_alarm(self):
+        card = self._dispatched_preset_card()
+        ex = dict(card.execution or {})
+        # actd 单写者的合法写入：经 registry 落盘（进写入台账）→ 不算嫌疑
+        registry.upsert(registry.Requirement(
+            id=registry.next_id(), title="清理会话期间管线正常新卡"))
+        with mock.patch.object(actd.notify, "notify",
+                               mock.Mock(return_value=True)) as ntf:
+            actd._check_triage_registry_guard(card, ex)
+        ntf.assert_not_called()
+        self.assertNotIn("[§34bis 护栏]", card.notes or "")
+
+    def test_guard_fires_on_review_promotion_path(self):
+        # 集成判例：收割提升（reconcile done 分支）真的挂着护栏 —— 越权
+        # 差异在提升待验收的同一轮被写进 notes，卡照常进 review 不被阻塞。
+        card = self._dispatched_preset_card()
+        rogue = config.REGISTRY_DIR / "R-rogue2.yaml"
+        rogue.write_text("id: R-rogue2\n", encoding="utf-8")
+        agent = {"id": "sid-guard", "sessionId": "sid-guard", "state": "done",
+                 "cwd": "/tmp/wt", "name": "bg agent",
+                 "startedAt": "2026-08-07T00:00:00Z"}
+        fake_harvest = mock.Mock(return_value={"delivered_summary": "清单",
+                                               "final_draft": "FINAL DRAFT"})
+        with mock.patch.object(actd, "_run_claude_agents",
+                               return_value=[agent]), \
+             mock.patch.object(actd.executor, "harvest_delivery", fake_harvest), \
+             mock.patch.object(actd.notify, "notify",
+                               mock.Mock(return_value=True)) as ntf:
+            actd.reconcile_executing(config.Config(), set())
+        saved = registry.load(card.id)
+        self.assertEqual(str(saved.status), State.REVIEW.value)   # 不阻塞提升
+        self.assertIn("R-rogue2.yaml", saved.notes)
+        ntf.assert_called()
 
 
 if __name__ == "__main__":

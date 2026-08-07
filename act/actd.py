@@ -171,9 +171,11 @@ def process_inbox() -> int:
                 if decision.get("preset") == PROPOSALS_TRIAGE_PRESET \
                         and decision.get("mode") == "run":
                     cap_plan = _proposals_triage_plan()
-                result = _apply_capture(decision.get("text"), decision.get("mode"),
-                                        decision.get("images"), plan=cap_plan,
-                                        inbox_stem=path.stem)
+                result = _apply_capture(
+                    decision.get("text"), decision.get("mode"),
+                    decision.get("images"), plan=cap_plan,
+                    preset=PROPOSALS_TRIAGE_PRESET if cap_plan else None,
+                    inbox_stem=path.stem)
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -484,8 +486,9 @@ def _proposals_triage_plan() -> list:
         "这是一次「提案积压清理」会话：帮用户审阅看板提案列积压的全部卡片，"
         "产出一份清理建议清单。你对注册表**只有只读权限** —— 注册表（唯一"
         f"真源）在 {reg}/*.yaml。",
-        "第一步：读取该目录下全部 YAML 卡片，筛出提案态的卡"
-        "（status ∈ detected / card_sent / raising），逐张看 title、"
+        "第一步：读取该目录下全部 YAML 卡片，筛出提案列的卡"
+        "（status ∈ card_sent / raising —— 与看板提案列的装载口径一致；"
+        "其余状态包括潜在任务列的卡都不在本次清理范围），逐张看 title、"
         "summary、sources、notes 与时间信息。",
         "第二步：逐张判断，三选一：仍值得做 / 已过时（信息陈旧、时机已过、"
         "前提已消失）/ 与另一张卡重复（写明对方卡号）。",
@@ -500,8 +503,61 @@ def _proposals_triage_plan() -> list:
     ]
 
 
+def _registry_snapshot() -> dict:
+    """§34bis 机械护栏起点：registry 目录清单快照（文件名 → "size:mtime_ns"）。"""
+    snap: dict = {}
+    try:
+        for p in config.REGISTRY_DIR.glob("*.yaml"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            snap[p.name] = f"{st.st_size}:{st.st_mtime_ns}"
+    except OSError:
+        pass
+    return snap
+
+
+def _check_triage_registry_guard(req, ex: dict) -> None:
+    """§34bis 机械护栏终点：收割提升待验收时做起止快照比对（检测型）。
+
+    plan 的只读红线只是 prompt 级约束——清理会话带
+    --dangerously-skip-permissions 且拿到 REGISTRY_DIR 绝对路径，物理上
+    写得进。这里比对 dispatch 时留在 execution.registry_snapshot 的快照：
+    排除本进程（actd 单写者）的合法写入（registry.process_writes() 台账）
+    与本卡自身文件后仍有差异 = 疑似会话越权 → 卡 notes 记警告 + notify
+    告警，交人工核查。只告警不回滚、绝不阻塞提升（宪法第 11 条：检测
+    失败不许崩 pass）；权限模型不变。
+    """
+    snap = ex.pop("registry_snapshot", None)   # 用后即焚：一轮只比对一次
+    if not isinstance(snap, dict):
+        return
+    try:
+        now_snap = _registry_snapshot()
+        ours = registry.process_writes()
+        own = {f"{req.id}.yaml"}               # 本卡自身随收割必然变动
+        suspicious = sorted(
+            name for name in set(snap) | set(now_snap)
+            if name not in ours and name not in own
+            and snap.get(name) != now_snap.get(name))
+        if not suspicious:
+            return
+        shown = ", ".join(suspicious[:5]) + ("…" if len(suspicious) > 5 else "")
+        tag = (f"[§34bis 护栏] 清理会话期间 registry 出现非 actd 写入：{shown}"
+               " —— 会话按律只读，请核查")
+        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+        notify.notify(*notify.msg_registry_guard(req.title or req.id, shown),
+                      req=req.id)
+        analytics.log_event("triage_registry_guard", req=req.id,
+                            files=len(suspicious))
+        _log(f"guard: {req.id} registry snapshot mismatch: {shown}")
+    except Exception as e:  # noqa: BLE001 - 护栏自身故障绝不阻塞收割
+        _log(f"guard: registry snapshot check failed for {req.id}: {e}")
+
+
 def _apply_capture(text: Optional[str], mode: Optional[str] = None,
                    images=None, plan: Optional[list] = None,
+                   preset: Optional[str] = None,
                    inbox_stem: Optional[str] = None) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
@@ -527,9 +583,12 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     普通 capture（mode 缺省）的静默并入保留（多渠道防重复的核心），但 fold
     发生时经 :mod:`act.lib.fold_receipts` 留看板回执（§44.6）。
 
-    §34bis ``plan``（add-only）: preset capture（提案积压清理按钮）注入的
-    固定 plan —— 只在建**新卡**时随卡落盘；命中既有卡的折叠/提升分支不改写
-    对方的 plan（判重逻辑零改动）。
+    §34bis ``plan``/``preset``（add-only）: preset capture（提案积压清理
+    按钮）注入的固定 plan + 卡片顶层 preset 标记 —— 只在建**新卡**时随卡
+    落盘；命中既有卡的折叠/提升分支不改写对方的 plan/preset（判重逻辑零
+    改动）。preset 标记是快照护栏（_check_triage_registry_guard）认卡的
+    依据。
+
 
     Returns the §5.4 result_status — the phone's ledger must never show
     已生效 for a capture that filed nothing.
@@ -555,6 +614,7 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         # plan 不进 _carries_increment 的增量口径 —— 重复点击命中自己已
         # approved/executing 的清理卡时仍走「只并 sources 不双开」的折叠分支。
         plan=list(plan) if plan else None,
+        preset=preset if plan else None,
         sources=[{
             "who": "zelin",
             "channel": "quick_capture",
@@ -1949,9 +2009,19 @@ def dispatch_approved(cfg: config.Config) -> int:
             # session is a FAILURE, and wiping last_error here would erase the
             # only trace the queued card can show as dispatch_error.
             ex = dict(req.execution or {})
+            changed = False
             if ex.get("session_id") and ("last_error" in ex or "last_error_at" in ex):
                 ex.pop("last_error", None)
                 ex.pop("last_error_at", None)
+                changed = True
+            # §34bis 机械护栏起点：preset 清理卡起跑成功即拍 registry 快照，
+            # 收割提升时比对（_check_triage_registry_guard）。只能在这里补
+            # 打：executor.dispatch 的成功路径整个重建了 execution。
+            if ex.get("session_id") \
+                    and getattr(req, "preset", None) == PROPOSALS_TRIAGE_PRESET:
+                ex["registry_snapshot"] = _registry_snapshot()
+                changed = True
+            if changed:
                 req.execution = ex
                 save(req)
         except Exception as e:  # noqa: BLE001 - keep the loop alive
@@ -2404,6 +2474,8 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
         ex["delivered_summary"] = harvested["delivered_summary"]
     ex["final_draft"] = harvested["final_draft"]
     _apply_harvest_title(req, harvested)   # §37, round boundary
+    # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
+    _check_triage_registry_guard(req, ex)
     req.execution = ex
     req.set_status(registry.State.REVIEW)
     registry.save(req)
@@ -2522,6 +2594,8 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                     _apply_harvest_title(req, harvested)   # §37, round boundary
                 except Exception as e:  # noqa: BLE001 - harvest is best-effort
                     _log(f"reconcile: harvest_delivery {req.id} failed: {e}")
+                # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
+                _check_triage_registry_guard(req, ex)
                 req.execution = ex
                 # §11: agent done = 草稿就绪，进入待验收（Zelin ✓验收/↩︎打回）。
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。

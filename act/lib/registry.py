@@ -113,6 +113,10 @@ _OPTIONAL_ORDER = [
     # (distinct from repeated_mentions, which also counts restatements and
     # user-approved merges). Only present once >0.
     "silent_merge_count",
+    # §34bis preset 卡标记 — 按钮注入固定 plan 的卡（词表目前仅
+    # "proposals_triage"）。顶层字段而非 execution 键：executor.dispatch
+    # 成功路径会整个重建 execution，标记放那里活不过起跑。
+    "preset",
 ]
 
 
@@ -175,6 +179,10 @@ class Requirement:
     display_title: Optional[str] = None
     user_titled: bool = False
     former_titles: Optional[list] = None
+
+    # §34bis preset 卡标记（add-only，见 _OPTIONAL_ORDER 注）——快照护栏靠它
+    # 在 dispatch/收割时认出提案清理卡。
+    preset: Optional[str] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -330,11 +338,25 @@ def _dump_yaml(obj: Any) -> str:
     return yaml.safe_dump(obj, allow_unicode=True, sort_keys=False, width=100)
 
 
+# §34bis 快照护栏的排除表：本进程（actd = registry 单写者）写/删过的卡片
+# 文件名。起止快照比对时命中这里的变动 = actd 自己的合法写入，不算嫌疑——
+# 没有这张台账，清理会话期间管线的任何正常落盘（radar 新卡、fold、状态
+# 迁移）都会触发假警。进程内存态：actd 中途重启则台账清零，重启前的合法
+# 写入可能被误报——护栏是检测型 + 人工核查兜底，宁可偶发误报不漏报。
+_PROC_WRITES: set = set()
+
+
+def process_writes() -> frozenset:
+    """本进程写/删过的 registry 文件名集合（§34bis 快照护栏的排除表）。"""
+    return frozenset(_PROC_WRITES)
+
+
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
+    _PROC_WRITES.add(path.name)
 
 
 def save(req: Requirement) -> None:
@@ -538,9 +560,11 @@ def delete(req: Requirement) -> bool:
                 path.unlink()
             except OSError:
                 return False
+            _PROC_WRITES.add(path.name)   # §34bis 台账：本进程的合法删除
         return True
     try:
         path.unlink()
+        _PROC_WRITES.add(path.name)       # §34bis 台账：本进程的合法删除
         return True
     except OSError:
         return False
@@ -600,6 +624,7 @@ def unarchive(req: Requirement) -> Requirement:
     if orig and Path(orig) != Path(req._file):
         try:
             Path(orig).unlink(missing_ok=True)
+            _PROC_WRITES.add(Path(orig).name)   # §34bis 台账：搬迁删除原件
         except OSError:
             pass
     return req

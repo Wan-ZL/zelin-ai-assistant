@@ -1349,6 +1349,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **词表**：目前仅 `proposals_triage`。其它任何值/类型、或缺 `mode:"run"` =
   **完全忽略 preset**（该 capture 走它本来的路径）——垃圾 preset 绝不静默替换
   任务内容（§34 fail-safe 哲学的延伸）。
+- **审阅口径 = 提案列**：固定 plan 让会话只筛 `status ∈ card_sent / raising`
+  ——与看板提案列的装载口径逐字一致（`detected` 属潜在任务列，不在本按钮
+  承诺范围；混入会让用户在提案列找不到清单里的卡号）。按钮 `.help`、
+  captureText、plan 三处文案必须同口径（tests/test_proposals_triage.py 钉住
+  plan 不含 detected）。
 - **prompt 单一真源在 Python 侧**：命中词表时 actd 在 `_apply_capture` 前把
   固定 plan（`act/actd.py _proposals_triage_plan()`，每次点击按当前部署解析
   `REGISTRY_DIR` 绝对路径）注入**新建的卡**；Swift 只发 preset 信号 + 短标签
@@ -1362,6 +1367,18 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   由用户在看板上亲手执行。理由：registry 单写者（§44/宪法）+ LLM 输出不可信
   ——会话既不写 registry，也不得写 `state/inbox/` 伪造用户动作（inbox 是
   用户指令通道；plan 红线明文禁止两者）。
+- **机械护栏（起止快照，检测型）**：plan 的只读红线只是 prompt 级约束——
+  会话带 `--dangerously-skip-permissions` 且拿到 registry 绝对路径，物理上
+  写得进。故：① 卡片新增 add-only 顶层字段 `preset`（str，词表同上；顶层
+  而非 execution 键，因 dispatch 成功路径重建 execution）；② dispatch 成功
+  即拍 registry 目录快照（文件名 → `size:mtime_ns`，存 add-only 键
+  `execution.registry_snapshot`）；③ 收割提升待验收时（reconcile 的 done
+  分支与 FINAL DRAFT 探针两条路）比对快照，排除 actd 本进程的合法写入
+  （registry 单写者的进程内写入台账 `registry.process_writes()`）与本卡
+  自身后仍有差异 → 卡 notes 记 `[§34bis 护栏]` 警告 + notify「清理会话
+  疑似改动了 registry，请核查」。**只检测告警、不回滚、绝不阻塞提升**——
+  权限模型不变，人工核查兜底；actd 中途重启会清空台账，可能偶发误报
+  （检测型护栏宁误报不漏报）。
 - **判重照旧**（§34 处置表原文适用，判重逻辑零改动）：preset 注入的 plan 不进
   `_carries_increment` 的增量口径——重复点击命中自己已 approved/executing 的
   清理卡 → 只并 sources 不双开；命中既有卡的折叠/提升分支不改写对方 plan。
