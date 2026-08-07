@@ -2239,3 +2239,72 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   dashboard 已 stale/dead 时**不**看此文件（那两个 verdict 更严重且已有
   横幅与修复路径）；文件缺失/损坏/清零 → 不报警（诊断文件绝不自己成为
   报警源）。
+---
+
+# v0.47 additions（源开关归一 + 源死亡告警）
+
+## 46. 源开关真源（`act/lib/sources.py`）+ 关闭真静默 + liveness 告警（add-only）
+
+**动机（2026-08-07 审计）**：「一个源开没开」曾有四套并存判据——
+`features.<source>_radar` flag（§16）、`sources.gmail.enabled`（§14）、Swift 端
+「凭证文件非空」的 intent 猜测（Diagnostics）、launchd plist 是否存在。四套互相
+打架：生产上手删了 gmailradar plist 表达「关」，下次 install.sh 无条件把它装回来
+（会自愈的关闭）；同时被关掉的源每 5 分钟往 `radar_health.json` 写 `disabled`
+条目 + `radar_skip` analytics 事件，App 用该文件 mtime 判管线存活——**关掉的源
+在报假活**（踩宪法第 3 条）。
+
+**46.1 真源函数**：`act.lib.sources.enabled(cfg, source)` =
+`cfg.feature("<source>_radar") AND cfg.<source>_enabled`（合取；无对应
+`<source>_enabled` 字段的源按 True，flag 单独裁决；未知源 fail-closed 返回
+False）。`SOURCES = ("gmail","slack","obsidian")`。三个雷达入口 gate、actd
+liveness 巡检、dashboard 投影、install.sh 闸门**只**从这里读；radar_slack 的
+`feature_on` / radar_gmail 的 `_flag_enabled` 两份复制品已删除。CLI：
+`python3 -m act.lib.sources --enabled <src>`（exit 0 开 / 1 关 / 2 未知源）。
+
+**46.2 关闭真静默（宪法第 3 条的加强，非削弱）**：关掉的源在雷达入口直接
+return——**不写 health、不发 analytics**，且清除该源既有的 health 条目
+（`health.remove_radar_health`；条目不存在时不写文件，保住「mtime 只随真实
+雷达活动前进」的语义——`Store.radarsRecentlyAlive` 依赖它）。obsidian 的清除
+沿用 `_owns_health` cron 单写者门。skip_reason 词表的 `disabled` 码
+**deprecated**（add-only：码保留在词表里让旧文件仍可解析，但任何雷达不再
+产出它）。声明：这是对宪法第 3 条「诚实健康报告」的加强——关着的路不再
+虚报任何信号；「坏掉的通道」与「被关掉的通道」自此严格区分。
+
+**46.3 源死亡告警（liveness）**：actd `run_once` 每 pass 巡检
+（`_check_radar_liveness`）：对每个 `sources.enabled()` 为真的源，比较 health
+`last_ok`（从未成功则退取 `last_attempt`；两者皆无 = 无基线，静默——配置类
+静默失败归 §15.4 诊断卡管）与阈值 `sources.LIVENESS_THRESHOLDS`：gmail 6h
+（launchd StartInterval=300s）、slack 6h（180s）、obsidian 36h（cron */30 +
+合盖停摆是常态，72x 比例防周末误报）。超期 = 源死亡 → 走既有 §28 notify 通道
+报**一次**（anti-nag：进程内台账 `radar_dead_notified` set，与 auth_notified
+同款——只在跨过阈值那刻响，恢复出账、再死才再响）；关掉的源天然不进循环，
+且巡检顺手清它的残留 health 条目（生产上手删 plist 留下的僵尸记录）。
+
+**46.4 `radar_sources` 投影（§2 顶层 add-only 字段）**：
+
+```json
+"radar_sources": {
+  "gmail":    {"enabled": true,  "last_ok": "2026-08-01T00:00:00Z",
+               "skip_reason": "auth_failed", "stale": true},
+  "slack":    {"enabled": true,  "last_ok": "...", "skip_reason": null, "stale": false},
+  "obsidian": {"enabled": false, "last_ok": null,  "skip_reason": null, "stale": false}
+}
+```
+
+每个 SOURCES 成员一条、键恒在。`enabled` = 真源判据（App 侧的 intent 判断自此
+读这里，Diagnostics 不再猜「凭证文件非空」；投影缺失的旧 payload 回退老判据）；
+`last_ok` / `skip_reason` 摘自 health 条目（关着 = null）；`stale` = 开着且超
+liveness 阈值（46.3 告警的看板可见半边，恢复自动变回 false）。Swift 侧
+`shared/Sources/Contract.swift` `RadarSourceHealth`，全部 decodeIfPresent，
+坏 map 降级空、绝不 fail 整个 dashboard。App 的 gmail 诊断卡告警资格自此由
+Python 一处裁定（源开着 + skip_reason 非空），Diagnostics 手写的 reason 白名单
+退役（仅升级瞬间可能残留的旧 `disabled` 记录被显式排除）。
+
+**46.5 install.sh 防复活闸门**：step 5 的 plist 渲染循环装每个 radar plist 前经
+46.1 的 CLI 查真源（`radar_source_enabled()`），关着 → 照 RETIRED_RADAR_LABEL
+先例 unload + rm 并跳过安装；CLI 探针本身失败（缺 PyYAML 等）fail-open 照旧
+安装。自此「关掉一个源」在 install.sh 重跑后**保持关闭**。
+
+**判例**：tests/test_sources.py（真值表 / 关闭真静默 / liveness+anti-nag+恢复 /
+投影形状 / CLI 出口码 / install.sh 闸门 drift-guard）、
+mac/LogicTests ContractRadarSourcesTests（Swift 解码向后兼容）。

@@ -110,12 +110,16 @@ final class DiagnosticsModel: ObservableObject {
         let rec = RecordingController.shared
         let recOn = rec.mode != "off"
 
-        // intent signals (all from already-read data): a path is only eligible
-        // for a card when the user INTENDED it (§3.6 anti-nag).
+        // intent signals: a path is only eligible for a card when the user
+        // INTENDED it (§3.6 anti-nag). §46 起 intent 的真源在 Python
+        // （act/lib/sources.py），经 dashboard 的 radar_sources 投影读到——
+        // 不再猜「凭证文件非空」。投影缺失（旧 actd payload）时回退老判据。
+        let projected = Self.readRadarSources()
         let slackNonEmpty = SecretsIO.hasSecret(SecretsIO.slackFile)
         let slackStarted = FileManager.default.fileExists(
             atPath: SecretsIO.path(SecretsIO.slackFile))   // 存在但可能空 = 已开始配
-        let gmailNonEmpty = SecretsIO.hasSecret(SecretsIO.gmailFile)
+        let gmailIntent = (projected["gmail"]?["enabled"] as? Bool)
+            ?? SecretsIO.hasSecret(SecretsIO.gmailFile)
 
         var out: [DiagnosticCard] = []
         var liveSignatures = Set<String>()
@@ -128,15 +132,23 @@ final class DiagnosticsModel: ObservableObject {
             }
         }
 
-        // --- gmail (intent: credential non-empty) ---
-        if gmailNonEmpty, let gm = health["gmail"], let reason = gm.skipReason,
-           ["auth_failed", "no_address", "invalid_credentials", "connect_failed"]
-               .contains(reason) {
+        // --- gmail (intent: §46 radar_sources.gmail.enabled) ---
+        // 告警资格由 Python 一处裁定：源开着 + skip_reason 非空 = 该报。手写
+        // 的 reason 白名单退役——Python 已不再产出 `disabled`（关掉的源条目
+        // 整个消失），这里只把升级瞬间可能残留的旧 `disabled` 记录排除掉。
+        if gmailIntent, let gm = health["gmail"], let reason = gm.skipReason,
+           reason != "disabled" {
+            let setup = ["no_credentials", "no_address"].contains(reason)
             out.append(DiagnosticCard(
                 id: "diag.gmail", signature: "gmail:" + reason, path: .gmail,
-                title: L("Gmail 雷达连不上", "The Gmail radar can't connect"),
-                detail: L("存了应用密码，但雷达没法用它登录——多半是密码过期或邮箱地址没填对。",
-                          "An app password is saved but the radar can't log in — the password likely expired or the address is off."),
+                title: setup
+                    ? L("Gmail 雷达开着但还没配好", "The Gmail radar is on but not set up")
+                    : L("Gmail 雷达连不上", "The Gmail radar can't connect"),
+                detail: setup
+                    ? L("开关开着，但缺应用密码或邮箱地址——补上它雷达才能开始扫。",
+                        "The switch is on but the app password or address is missing — add it so the radar can scan.")
+                    : L("存了应用密码，但雷达没法用它登录——多半是密码过期或邮箱地址没填对。",
+                        "An app password is saved but the radar can't log in — the password likely expired or the address is off."),
                 actionLabel: L("检查 Gmail 设置", "Check Gmail settings"),
                 action: .openCredentials,
                 lastAttempt: gm.lastAttempt, lastOK: gm.lastOK))
@@ -270,6 +282,19 @@ final class DiagnosticsModel: ObservableObject {
         if kept.count != seen.count {
             UserDefaults.standard.set(kept, forKey: firstSeenKey)
         }
+    }
+
+    // MARK: dashboard.json radar_sources projection (§46, tolerant)
+
+    /// state/dashboard.json 顶层 `radar_sources` map（actd 投影的源开关
+    /// intent + 健康摘要）。缺失/坏文件 → [:]（调用方回退老 intent 判据）。
+    private static func readRadarSources() -> [String: [String: Any]] {
+        let path = AppPaths.stateRoot + "/state/dashboard.json"
+        guard let data = FileManager.default.contents(atPath: path),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let map = obj["radar_sources"] as? [String: Any]
+        else { return [:] }
+        return map.compactMapValues { $0 as? [String: Any] }
     }
 
     // MARK: radar_health.json (tolerant — never crashes the tick)

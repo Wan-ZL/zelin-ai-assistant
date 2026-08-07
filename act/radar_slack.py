@@ -75,7 +75,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import radar
-from act.lib import analytics, config, health, registry, sanitize, secrets
+from act.lib import analytics, config, health, registry, sanitize, secrets, sources
 
 SLACK_API = "https://slack.com/api/"
 STATE_FILE = "slack_radar.json"        # per-channel last-seen ts markers
@@ -90,17 +90,6 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 VIDEO_EXTS = {".mp4", ".mov"}
 
 _ssl_ctx = ssl.create_default_context()
-
-
-# --------------------------------------------------------------------------- #
-# feature flag (§16)
-# --------------------------------------------------------------------------- #
-def feature_on(cfg: config.Config, name: str = "slack_radar") -> bool:
-    """features.<name> (CONTRACT §16); default on when absent."""
-    feats = getattr(cfg, "features", None)
-    if not isinstance(feats, dict):
-        feats = (getattr(cfg, "raw", None) or {}).get("features") or {}
-    return bool(feats.get(name, True))
 
 
 # --------------------------------------------------------------------------- #
@@ -814,8 +803,11 @@ def scan(cfg: Optional[config.Config] = None,
     """
     if cfg is None:
         cfg = config.load_config()
-    if not feature_on(cfg, "slack_radar"):
-        _note_skip("disabled")
+    if not sources.enabled(cfg, "slack"):
+        # §46 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着——写
+        # `disabled` 条目会撑起假的管线存活信号，踩 §0 第 3 条）；顺手清掉
+        # 历史条目。判据统一走 act.lib.sources（源开关真源）。
+        health.remove_radar_health("slack")
         return 0
     token = get_token(cfg)
     if not token:

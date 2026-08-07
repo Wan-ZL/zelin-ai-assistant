@@ -222,6 +222,20 @@ def msg_answer_failed(title: str, reason: str) -> tuple[str, str]:
                   " use \"Take over in terminal\" to step in"))
 
 
+def msg_radar_dead(source: str, hours: int) -> tuple[str, str]:
+    """§46 源死亡告警：开着的源超过 liveness 阈值没有成功过一次。
+
+    只对 enabled 的源发（关掉的源全静默）；actd 侧有 anti-nag 台账保证
+    同一次死亡只响一次（恢复后再死才会再响）。"""
+    names = {"gmail": "Gmail", "slack": "Slack", "obsidian": "Obsidian"}
+    name = names.get(source, source)
+    return (_pick(f"{name} 雷达停摆了", f"The {name} radar has gone quiet"),
+            _pick(f"开着的 {name} 源已 {hours} 小时没有成功扫过一次"
+                  f" —— 打开 App 设置页对应源区看运行状态与失败原因",
+                  f"The {name} source is on but hasn't completed a scan in "
+                  f"{hours}h — check its status row in the app's Settings"))
+
+
 def msg_auth(service: str) -> tuple[str, str]:
     return (_pick("需要重新登录", "Login needed again"),
             _pick(f"{service} —— 打开 App 设置页重新粘贴对应的 key/密码",

@@ -10,11 +10,16 @@ on every scan attempt; read by the Mac app to surface "radar 多久没成功跑�
 in the UI and to synthesize board-level diagnostic cards (v0.19.0).
 
 Source keys and their skip_reason vocabulary (the app maps each code to a
-concrete next action):
-- gmail:    disabled / no_credentials / no_address / auth_failed / connect_failed
-- slack:    disabled / no_credentials / connect_failed / mcp_failed:… (transient)
+concrete next action). ``disabled`` is DEPRECATED since §46 (add-only: the
+code stays in the vocabulary so old files still parse, but no radar produces
+it anymore — a disabled source is truly silent and its entry is REMOVED, see
+:func:`remove_radar_health`):
+- gmail:    disabled(deprecated) / no_credentials / no_address / auth_failed
+            / connect_failed
+- slack:    disabled(deprecated) / no_credentials / connect_failed
+            / mcp_failed:… (transient)
             / mcp_not_configured (fallback on, no token, no Slack MCP in the CLI)
-- obsidian: disabled / vault_missing (dir unset or gone) / vault_empty (dir there
+- obsidian: disabled(deprecated) / vault_missing (dir unset or gone) / vault_empty (dir there
             but zero .md) / no_api_key (extraction failed, no resolvable Anthropic
             key) / extract_failed (claude -p failed on ≥1 note). A pass that
             scanned but found nothing newer than the marker is ok=True with
@@ -102,6 +107,39 @@ def update_radar_health(source: str, ok: bool,
             else:
                 entry["skip_reason"] = skip_reason
             data[source] = entry
+            tmp = HEALTH_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            os.replace(tmp, HEALTH_PATH)
+    except Exception:  # noqa: BLE001 - health must never break a radar pass
+        pass
+
+
+def load_radar_health() -> dict:
+    """Read-only view of the whole health dict（actd liveness 巡检 / dashboard
+    ``radar_sources`` 投影用）。Unreadable/missing -> {}. Never raises."""
+    return _load()
+
+
+def remove_radar_health(source: str) -> None:
+    """源被关掉（sources.enabled 为 False，§46）时删除它的 health 条目。
+
+    关掉的源不产出、也不保留 health 记录——留着一条 last_attempt 冻结的僵尸
+    条目会让 App 侧把「关着」误读成「坏着」或「活着」（§0 第 3 条诚实健康
+    报告）。条目本就不存在时**不写文件**（保持 mtime 语义：radar_health.json
+    的 mtime 只在真实雷达活动时前进——Store.radarsRecentlyAlive 依赖这一点）。
+    Never raises。
+    """
+    try:
+        if not HEALTH_PATH.exists():
+            return
+        with open(_LOCK_PATH, "w") as lock_fh:
+            if fcntl is not None:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            data = _load()
+            if source not in data:
+                return
+            del data[source]
             tmp = HEALTH_PATH.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                            encoding="utf-8")

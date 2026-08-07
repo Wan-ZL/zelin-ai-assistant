@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - exercised only on Windows CI
 
 from act.executor import _runner_env
 from act.lib import (analytics, config, failures, health, provenance, registry,
-                     sanitize, secrets)
+                     sanitize, secrets, sources)
 from act.lib.registry import Requirement
 
 MARKER_PATH_NAME = "radar.marker"
@@ -811,9 +811,14 @@ def scan(runner=None, triager=None) -> dict:
 
 def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dict:
     scan_started = time.monotonic()
-    if not cfg.feature("obsidian_radar"):
-        summary["skipped"].append("features.obsidian_radar is off")
-        _note_health(False, "disabled")
+    if not sources.enabled(cfg, "obsidian"):
+        # §46 关闭真静默：不写 health（关着 ≠ 坏着，`disabled` 条目已退役）；
+        # 清条目沿用 cron 单写者门（_owns_health）——手动/launchd 语境连删
+        # 都不许碰，防止误删 cron 的真实健康。summary 行保留（本地观测，
+        # 不进 health/analytics）。
+        summary["skipped"].append("source obsidian is off (act.lib.sources)")
+        if _owns_health():
+            health.remove_radar_health("obsidian")
         return summary
 
     # mirror-aware (claude TCC isolation): reads the repo-local vault mirror

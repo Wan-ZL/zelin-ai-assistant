@@ -779,7 +779,9 @@ class PreflightTestCase(RadarScanBase):
             "features:\n  obsidian_radar: false\n", encoding="utf-8")
         self._note("n.md", "x", BASE)
         summary = radar.scan(runner=lambda t: self.fail("scanned while off"))
-        self.assertIn("features.obsidian_radar is off", summary["skipped"])
+        # §46: 关闭真静默 — summary 行仅本地观测（不进 health/analytics）
+        self.assertIn("source obsidian is off (act.lib.sources)",
+                      summary["skipped"])
         self.assertEqual(summary["files_scanned"], 0)
 
     def test_missing_vault_dir_is_reported_not_fatal(self):

@@ -36,7 +36,7 @@ from typing import Optional
 
 import yaml
 
-from act.lib import analytics, config, notify, registry
+from act.lib import analytics, config, health, notify, registry, sources
 from act.lib.agent_states import (
     _BLOCKED_STATES,
     _DONE_STATES,
@@ -2251,6 +2251,38 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
     return msgs
 
 
+def _check_radar_liveness(cfg: config.Config,
+                          notified: set[str]) -> list[tuple[str, str]]:
+    """§46 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
+
+    对每个 ``sources.enabled()`` 为真的源，比较 health 的 last_ok（从未成功
+    则 last_attempt）与 ``sources.LIVENESS_THRESHOLDS``，超期 = 源死亡 →
+    notify 一次。anti-nag 台账（``notified``，与 auth_notified 同款进程内
+    set）：同一源只在**跨过**阈值那一刻报一次，恢复（不再 stale）即出账，
+    下次再死才会再响。关掉的源不进循环，且顺手清掉残留 health 条目（生产上
+    手删 plist 留下的僵尸 last_attempt 记录）。Never raises。
+    """
+    msgs: list[tuple[str, str]] = []
+    try:
+        data = health.load_radar_health()
+        for src in sources.SOURCES:
+            if not sources.enabled(cfg, src):
+                # 关着：清残留条目（条目不存在时 no-op、不写文件），出账
+                health.remove_radar_health(src)
+                notified.discard(src)
+                continue
+            if sources.is_stale(src, data.get(src)):
+                if src not in notified:
+                    notified.add(src)
+                    hours = sources.LIVENESS_THRESHOLDS[src] // 3600
+                    msgs.append(notify.msg_radar_dead(src, hours))
+            else:
+                notified.discard(src)   # 恢复（或尚无基线）→ 出账
+    except Exception as e:  # noqa: BLE001 - 巡检绝不干掉主循环
+        _log(f"radar liveness check FAILED: {e}")
+    return msgs
+
+
 # --------------------------------------------------------------------------- #
 # auto-resume interrupted executing tasks
 # --------------------------------------------------------------------------- #
@@ -2798,6 +2830,7 @@ def run_once(
     prev_dash: Optional[dict],
     auth_notified: set[str],
     resume_notified: Optional[set[str]] = None,
+    radar_dead_notified: Optional[set[str]] = None,
 ) -> dict:
     config.ensure_state_dirs()
     n_inbox = process_inbox()
@@ -2870,6 +2903,11 @@ def run_once(
         notify.notify(title, body, req=rid, kind=kind)
     for title, body in _check_auth_failures(auth_notified):
         notify.notify(title, body)
+    # §46 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
+    # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
+    for title, body in _check_radar_liveness(
+            cfg, radar_dead_notified if radar_dead_notified is not None else set()):
+        notify.notify(title, body)
 
     return dash
 
@@ -2889,10 +2927,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     interval = args.interval or cfg.poll_interval_seconds or 10
     auth_notified: set[str] = set()
     resume_notified: set[str] = set()
+    radar_dead_notified: set[str] = set()   # §46 anti-nag：每源一次，恢复出账
 
     if args.once:
         try:
-            run_once(cfg, None, auth_notified, resume_notified)
+            run_once(cfg, None, auth_notified, resume_notified,
+                     radar_dead_notified)
         except Exception as e:  # noqa: BLE001
             _log(f"run_once FAILED: {e}\n{traceback.format_exc()}")
             return 1
@@ -2903,7 +2943,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
     while True:
         try:
-            prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified)
+            prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
+                                 radar_dead_notified)
             loop_health.record_success()
         except Exception as e:  # noqa: BLE001 - one bad pass must not kill loop
             loop_health.record_failure(f"{type(e).__name__}: {e}")
