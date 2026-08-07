@@ -1416,8 +1416,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   - **条件强制（v0.46+）**：dispatch prompt 的 CARD TITLE 段分两档——卡还
     **没有** `display_title` 且满足「冻结 title 不可读（URL/文件系统路径/
     超长截断文本，判定唯一真源 = `titles.is_unreadable_title`，与
-    `sanitize_title` 共用同一组正则）**或** 是 direct-run 卡（notes 带
-    `[direct-run]` 标签，§34：完全不过 LLM，title=用户原话截 80）」时，
+    `sanitize_title` 共用同一组正则，另对含空格路径单向放宽：首字符 / 或
+    ~ 且含 ≥2 个 /；显示 fallback 的 `_PATH_RE` 不动）**或** 是 direct-run
+    卡（notes **首行**以 `[direct-run]` 创建标签开头，§34：完全不过 LLM，
+    title=用户原话截 80；提升追加的 tag 行、fold 嵌入的用户原文不算——
+    notes 面包屑是 prose 不是信号）」时，
     文案升级为**本轮交付必须**包含 `CARD TITLE:` 行（direct-run 额外明说
     「请在第一轮交付就给出」）；其余卡维持自愿制原文案（byte-identical，
     零回归）。这只提高该行出现的概率——**收割/刷新时机不变**（仍只在轮次

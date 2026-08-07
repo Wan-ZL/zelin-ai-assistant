@@ -388,7 +388,10 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     # 本轮交付必须给 CARD TITLE 行；其余卡维持自愿制原文案。刷新时机不变
     # （§37.1：harvest 仍只在轮次边界收割），这里只提高该行出现的概率。
     from act.lib import titles
-    direct_run = "[direct-run]" in (req.notes or "")
+    # direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
+    # 首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
+    # 里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
+    direct_run = (req.notes or "").lstrip().startswith("[direct-run]")
     if not getattr(req, "display_title", None) \
             and (titles.is_unreadable_title(req.title) or direct_run):
         reason = ("这张卡由 direct-run 直接开跑，名字目前是用户原文截断，"
