@@ -163,8 +163,16 @@ def process_inbox() -> int:
             # 贴图 (建议 #5, add-only): optional images = absolute PNG paths the
             # app saved under state/attachments/.
             if action == "capture":
+                # §34bis 提案积压清理按钮：preset 只认词表内的值且必须携带
+                # mode:"run" —— 任何其它 preset 值/类型、或缺 run，一律
+                # 完全忽略 preset（fail-safe 走该 capture 原本的路径，
+                # 垃圾 preset 绝不静默替换任务内容）。
+                cap_plan = None
+                if decision.get("preset") == PROPOSALS_TRIAGE_PRESET \
+                        and decision.get("mode") == "run":
+                    cap_plan = _proposals_triage_plan()
                 result = _apply_capture(decision.get("text"), decision.get("mode"),
-                                        decision.get("images"),
+                                        decision.get("images"), plan=cap_plan,
                                         inbox_stem=path.stem)
                 processed += 1
                 _write_applied_ack(path.stem, result)
@@ -451,8 +459,50 @@ def _attach_capture_images(req: Requirement, images) -> None:
     save(req)
 
 
+# --------------------------------------------------------------------------- #
+# §34bis 提案积压清理按钮（proposals backlog triage preset）
+# --------------------------------------------------------------------------- #
+# 提案泳道头按钮 = 一次固定 prompt 的 direct-run capture（§34 mode:"run" 同
+# 机制）。固定 prompt 的**单一真源在 Python 侧**：Mac 只在 capture 文件里发
+# add-only 键 `preset`（词表键与 mac/Sources/ProposalsTriage.swift 的
+# presetKey 逐字一致）+ 短标签 text —— 防跨端 prompt 漂移。
+# prompt 走卡片 plan（build_prompt 的 ## Plan 可信指令区）：sources 围栏是
+# untrusted DATA，指令写进围栏会被 agent 按律忽略（executor.build_prompt）。
+PROPOSALS_TRIAGE_PRESET = "proposals_triage"
+
+
+def _proposals_triage_plan() -> list:
+    """§34bis 固定清理 plan（每次点击时构造 —— registry 路径按当前部署解析）。
+
+    落地档位 = **建议报告**（advisory report, chat 交付）：会话对 registry
+    只读，产出 保留/建议丢弃/建议合并 三组清单作为 FINAL DRAFT；一切丢弃/
+    合并动作由用户在看板上亲手执行。理由：registry 单写者（§44）+ LLM 输出
+    不可信 —— 会话既不写 registry，也不得写 state/inbox 伪造用户动作。
+    """
+    reg = str(config.REGISTRY_DIR)
+    return [
+        "这是一次「提案积压清理」会话：帮用户审阅看板提案列积压的全部卡片，"
+        "产出一份清理建议清单。你对注册表**只有只读权限** —— 注册表（唯一"
+        f"真源）在 {reg}/*.yaml。",
+        "第一步：读取该目录下全部 YAML 卡片，筛出提案态的卡"
+        "（status ∈ detected / card_sent / raising），逐张看 title、"
+        "summary、sources、notes 与时间信息。",
+        "第二步：逐张判断，三选一：仍值得做 / 已过时（信息陈旧、时机已过、"
+        "前提已消失）/ 与另一张卡重复（写明对方卡号）。",
+        "第三步：这是可交互会话 —— 把拿不准的卡集中列出来问用户，等用户确认"
+        "后再定稿；用户想保留哪些提案，以用户的话为准。",
+        "第四步：产出结构化清理建议清单，按【保留 / 建议丢弃 / 建议合并】"
+        "三组，每张卡一行：卡号 | 标题 | 判断 | 一句话理由。这份清单就是"
+        "最终交付物（FINAL DRAFT）——用户会拿着它在看板上亲手执行。",
+        "红线：你不能替用户执行任何清理动作 —— 绝不修改/移动/删除 registry "
+        "里的任何文件，也绝不往 state/inbox/ 写任何动作文件（那是用户指令"
+        "通道）；你的全部产出只有这份建议清单。",
+    ]
+
+
 def _apply_capture(text: Optional[str], mode: Optional[str] = None,
-                   images=None, inbox_stem: Optional[str] = None) -> str:
+                   images=None, plan: Optional[list] = None,
+                   inbox_stem: Optional[str] = None) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
@@ -476,6 +526,11 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
 
     普通 capture（mode 缺省）的静默并入保留（多渠道防重复的核心），但 fold
     发生时经 :mod:`act.lib.fold_receipts` 留看板回执（§44.6）。
+
+    §34bis ``plan``（add-only）: preset capture（提案积压清理按钮）注入的
+    固定 plan —— 只在建**新卡**时随卡落盘；命中既有卡的折叠/提升分支不改写
+    对方的 plan（判重逻辑零改动）。
+
     Returns the §5.4 result_status — the phone's ledger must never show
     已生效 for a capture that filed nothing.
     """
@@ -496,6 +551,10 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         tier="T1",
         status=State.DETECTED.value,
         hardness="soft",
+        # §34bis add-only: preset 注入的固定 plan（目前仅 proposals_triage）。
+        # plan 不进 _carries_increment 的增量口径 —— 重复点击命中自己已
+        # approved/executing 的清理卡时仍走「只并 sources 不双开」的折叠分支。
+        plan=list(plan) if plan else None,
         sources=[{
             "who": "zelin",
             "channel": "quick_capture",

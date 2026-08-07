@@ -355,7 +355,10 @@ struct KanbanView: View {
                            emptyText: laneEmptyText(
                                L("没有等你拍板的事。想到什么，直接在上面输入框里说一句",
                                  "Nothing needs your decision. Capture a thought in the box above")),
-                           isEmpty: false, motionKey: "approval") {
+                           isEmpty: false, motionKey: "approval",
+                           // §34bis 积压清理按钮：泳道头右侧，点击 = 固定
+                           // prompt 的 direct-run 清理会话（运行中列出卡）。
+                           accessory: AnyView(ProposalsTriageButton(app: app))) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
@@ -731,11 +734,15 @@ struct KanbanView: View {
         title: String, count: Int, help: String? = nil,
         emptyText: String, isEmpty: Bool, quiet: Bool = false,
         collapse: (() -> Void)? = nil, motionKey: String? = nil,
+        accessory: AnyView? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
+                // SectionHeader 内置尾部 Spacer —— accessory（§34bis 提案列的
+                // 清理积压按钮）天然靠右 align，不喧宾夺主。
                 SectionHeader(title: title, count: count, help: help)
+                if let accessory { accessory }
                 if collapse != nil {
                     Image(systemName: "chevron.left.2")
                         .font(.system(size: 10, weight: .semibold))
@@ -894,5 +901,39 @@ private struct ArchiveLaneContent: View {
                 ArchiveRow(item: it, app: app)
             }
         }
+    }
+}
+
+// MARK: - §34bis 提案积压清理按钮（proposals lane header accessory）
+//
+// 点击 = app.submitProposalsTriage()：一次固定 prompt 的 direct-run capture
+// （§34 mode:"run" 同机制）——运行中列随即出现清理会话卡，用户可 attach 参与
+// 决定保留哪些提案；会话对 registry 只读，交付一份 保留/丢弃/合并 建议清单
+// （chat 交付进待验收）。prompt 正文在 Python 侧（actd 的 preset 表）。
+private struct ProposalsTriageButton: View {
+    let app: AppDelegate
+    /// 防连点冷却（2s）。真正的防双开由 actd 兜底：同文重复 capture 命中
+    /// 自己已 approved/executing 的清理卡只并 sources，不再排队（§34 处置表）。
+    @State private var cooling = false
+
+    var body: some View {
+        Button {
+            guard !cooling else { return }
+            cooling = true
+            _ = app.submitProposalsTriage()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { cooling = false }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 9))
+                Text(L("清理积压", "Clean up"))
+                    .font(.system(size: 10, weight: .medium))
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(cooling)
+        .help(L("启动一个临时 Claude 会话审阅本列全部积压提案：逐张判断仍值得做/过时/重复，和你对话确认后交付一份保留/丢弃/合并建议清单（会话出现在运行中列，可随时打开参与；它不会直接改动任何卡片）",
+                "Launch a temporary Claude session to review this lane's backlog: it judges each proposal (keep / stale / duplicate), confirms with you in conversation, and delivers a keep/drop/merge recommendation list. The session appears in Running — join anytime; it never modifies cards directly."))
     }
 }

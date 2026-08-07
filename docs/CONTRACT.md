@@ -1334,6 +1334,45 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **二分法（§44，2026-07-17）维持**：仍然绝不出人工确认卡——[run] 的答案从
   「静默并入」改为「一律新卡」，两者都无人工确认环节。
 
+### 34bis. 提案积压清理按钮 — capture 的 `preset` 键（add-only，Zelin 2026-08-07 拍板）
+
+提案泳道头（「提案 · proposals」标题行）右侧新增小按钮「清理积压」：点击 =
+**一次固定 prompt 的 direct-run capture**（§34 mode:"run" 同机制）——运行中列
+随即出现清理会话卡，用户可 attach 参与，决定保留哪些提案。
+
+**inbox 形状（add-only）**：capture 文件新增可选键 `"preset"`（str）。
+
+```json
+{"action":"capture","text":"清理提案积压：…","mode":"run","preset":"proposals_triage","ts":"<ISO8601>"}
+```
+
+- **词表**：目前仅 `proposals_triage`。其它任何值/类型、或缺 `mode:"run"` =
+  **完全忽略 preset**（该 capture 走它本来的路径）——垃圾 preset 绝不静默替换
+  任务内容（§34 fail-safe 哲学的延伸）。
+- **prompt 单一真源在 Python 侧**：命中词表时 actd 在 `_apply_capture` 前把
+  固定 plan（`act/actd.py _proposals_triage_plan()`，每次点击按当前部署解析
+  `REGISTRY_DIR` 绝对路径）注入**新建的卡**；Swift 只发 preset 信号 + 短标签
+  text（`mac/Sources/ProposalsTriage.swift`，presetKey/captureText 两侧逐字
+  一致，§10bis 双侧常量先例）——防跨端 prompt 漂移。plan 必须走
+  `build_prompt` 的 **## Plan 可信指令区**：sources 围栏是 untrusted DATA，
+  指令写进围栏会被 agent 按律忽略（tests/test_proposals_triage.py 钉序）。
+- **清理决定落地 = 建议报告档（钦定，非直接执行）**：会话对 registry
+  **只读**，产出【保留 / 建议丢弃 / 建议合并】三组清单作为 chat 交付的
+  FINAL DRAFT（§34 direct-run 强制 chat 不变，清单进待验收）；一切丢弃/合并
+  由用户在看板上亲手执行。理由：registry 单写者（§44/宪法）+ LLM 输出不可信
+  ——会话既不写 registry，也不得写 `state/inbox/` 伪造用户动作（inbox 是
+  用户指令通道；plan 红线明文禁止两者）。
+- **判重照旧**（§34 处置表原文适用，判重逻辑零改动）：preset 注入的 plan 不进
+  `_carries_increment` 的增量口径——重复点击命中自己已 approved/executing 的
+  清理卡 → 只并 sources 不双开；命中既有卡的折叠/提升分支不改写对方 plan。
+- **Mac UI**：按钮右对齐于提案列头（SectionHeader 尾部 Spacer 之后），
+  bordered 小尺寸不喧宾夺主；`.help` 说明用途（临时会话、可参与、不直接改卡）；
+  点击后 2 s 冷却防连点（后端判重是真正的防双开）；乐观回显 = §34 的运行中列
+  顶灰色排队占位卡（text=短标签=卡标题，归一匹配天然清除）。analytics：App 侧
+  `capture_submit` 增加 add-only 字段 `preset`（source/mode 词表不变）。
+- **iOS / webui**：本期不发 `preset`（键 add-only；旧 actd 收到带 preset 的
+  capture 会当普通 direct-run 处理，向后安全）。
+
 ## 35. v0.35.0 设备名称（add-only）
 
 - **`dashboard.json` 新增可选顶层 `device_label`**（§2 的兄弟字段，同

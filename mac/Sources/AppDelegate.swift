@@ -1310,6 +1310,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return true
     }
 
+    /// §34bis 提案积压清理按钮：一次固定 prompt 的 direct-run capture。
+    /// 载荷形状由 ProposalsTriage.payload 构造（纯逻辑，LogicTests 钉形状）；
+    /// 固定 prompt 正文在 Python 侧（actd 的 preset 表），这里只发信号。
+    /// 乐观回显复用 §34 direct-run 占位卡（运行中列顶灰色排队卡，text =
+    /// 短标签 = 后端卡标题，归一匹配天然清除）。false = inbox 写失败
+    /// （writeInboxFile 已弹窗），调用方不得应用乐观 UI。
+    @discardableResult
+    func submitProposalsTriage() -> Bool {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        guard writeInboxFile(ProposalsTriage.payload(ts: ts)) else { return false }
+        store.beginCapture(ProposalsTriage.captureText, run: true)
+        Analytics.firstReach("capture")
+        // §34bis add-only analytics 字段 preset（source/mode 词表不变；
+        // 文案是固定标签非用户输入，仍只记 chars —— 内容侧由 python 端
+        // capture_input 门控统一处理）。
+        Analytics.log("capture_submit", fields: [
+            "source": "kanban", "chars": ProposalsTriage.captureText.count,
+            "mode": "run", "preset": ProposalsTriage.presetKey])
+        return true
+    }
+
     func promptComment() -> String? {
         promptText(title: L("💬 修改方向", "💬 Comment / Change Direction"),
                    info: L("会并入需求的 plan/notes，卡片留在提案列等你批准。",
