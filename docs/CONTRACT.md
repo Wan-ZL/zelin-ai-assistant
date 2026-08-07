@@ -1243,7 +1243,9 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   （补记 `execution.approved_at`，与 approve 动作同一账目），下一轮
   `dispatch_approved` 照常派发。notes 打 `[direct-run] 用户直接开跑` 标签。
   执行会话的第一件事是自行分析上下文再干活；交付物仍落**待验收**由人验收，
-  模糊的任务靠既有**需输入**机制自行澄清。
+  模糊的任务靠既有**需输入**机制自行澄清。direct-run 卡起点没有可读显示名
+  （不过 LLM），dispatch prompt 强制首轮交付给 `CARD TITLE:` 行（§37.1
+  条件强制档）。
 - **诚实声明：direct-run 跳过了 plan/费用预估的人审预览**——没有提案卡、没有
   cost 提示，任务直接进入派发队列。UI 文案不得暗示有预估。
 - **处置表（按 text 命中什么，穷尽分支；治理原则：没有真的排上一轮运行就绝不
@@ -1411,6 +1413,15 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   delivered_summary 落账的同一批 promotion 点（done_external / stop_to_review
   / attach 回流 re-harvest / _promote_if_delivered / reconcile done 分支）经
   `set_display_title` 应用——只在轮次边界刷新，user_titled 钦定优先。
+  - **条件强制（v0.46+）**：dispatch prompt 的 CARD TITLE 段分两档——卡还
+    **没有** `display_title` 且满足「冻结 title 不可读（URL/文件系统路径/
+    超长截断文本，判定唯一真源 = `titles.is_unreadable_title`，与
+    `sanitize_title` 共用同一组正则）**或** 是 direct-run 卡（notes 带
+    `[direct-run]` 标签，§34：完全不过 LLM，title=用户原话截 80）」时，
+    文案升级为**本轮交付必须**包含 `CARD TITLE:` 行（direct-run 额外明说
+    「请在第一轮交付就给出」）；其余卡维持自愿制原文案（byte-identical，
+    零回归）。这只提高该行出现的概率——**收割/刷新时机不变**（仍只在轮次
+    边界，user_titled 钦定仍不可覆盖），rework gate line 维持自愿制。
 - **inbox 动作全集（§10）新增 `set_title`**：
   ```json
   {"id":"R-xxx","action":"set_title","title":"<新显示名>","ts":"<ISO8601>"}

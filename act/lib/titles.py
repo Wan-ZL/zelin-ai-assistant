@@ -106,6 +106,22 @@ def _clip_clause(text: str) -> str:
     return clipped + "…"
 
 
+def is_unreadable_title(title) -> bool:
+    """§37.1 条件强制判定 — 冻结 title 是否属于三种不可读形态之一。
+
+    True = URL / 文件系统路径 / 超长截断文本（>_LONG_TEXT，direct-run 的
+    「用户原话截 80」即落在这档）——executor.build_prompt 据此把 CARD TITLE
+    从自愿改为本轮强制。与 sanitize_title 共用同一组判定正则（单一口径，
+    不另造轮子）；非 str / 空白 title 返回 False（fail 向自愿制，绝不因坏
+    输入硬性打扰 agent）。纯函数，不抛异常。"""
+    if not isinstance(title, str):
+        return False
+    t = " ".join(title.split()).strip()
+    if not t:
+        return False
+    return bool(_URL_RE.match(t) or _PATH_RE.match(t)) or len(t) > _LONG_TEXT
+
+
 def sanitize_title(title) -> str:
     """Deterministic readable fallback for a frozen registry title (§37).
 
