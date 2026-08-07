@@ -1307,6 +1307,58 @@ def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
     return True
 
 
+# stop 确认重试次数（§46）：stop_session_confirmed 在首次探测/停止之外最多再重试
+# 这么多轮（每轮前退避 2s·4s…），仍存活才判失败——生产日志里 stop_session→False
+# 一天出现 4 次而无人跟进（2026-08-07），失败必须留痕而不是只打一行日志。
+STOP_CONFIRM_RETRIES = 2
+
+
+def stop_session_confirmed(
+    session_id: str,
+    retries: int = STOP_CONFIRM_RETRIES,
+    prober: Optional[Callable[[str], dict]] = None,
+    stopper: Optional[Callable[..., bool]] = None,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> tuple[bool, bool, str]:
+    """带确认与有限重试的 stop（§46）——:func:`stop_session` 的可靠性外壳。
+
+    旧 stop_session 的 True 只代表「stop 命令发出去了」，False 只代表「roster 上
+    没看到活 pid」——两者都没验证进程真的死了。这里改成 verify-first 循环：
+    每轮先探 roster（``prober``，默认 :func:`_agent_info`），没有活 pid 即视为
+    已停（确认成功）；有 pid 则发 stop（``stopper``，默认 :func:`stop_session`，
+    自带 2s 等死窗口），下一轮前按 2s·4s… 退避（``sleeper`` 可注入，测试传
+    no-op）。三个 seam 全部可注入——测试绝不 spawn 真 ``claude``。
+
+    Returns ``(stopped, issued, detail)``：
+    - ``stopped``: 结束时会话已确认不在 roster 上跑（True 含「本来就没在跑」）。
+    - ``issued``: 至少真的发过一次 stop 命令（区分「我们停掉的」和「本来就死
+      的」——_stop_live_session 只在前者时才收走 session_id，restore 不丢线索）。
+    - ``detail``: 人话结论，失败时给台账/通知用。Never raises。
+    """
+    if prober is None:
+        prober = _agent_info
+    if stopper is None:
+        stopper = stop_session
+    issued = False
+    for attempt in range(int(retries) + 1):
+        if attempt:
+            sleeper(2.0 * attempt)   # 退避 2s / 4s / …
+        info = prober(session_id)
+        if not (info or {}).get("pid"):
+            return True, issued, ("stopped" if issued else "not running")
+        try:
+            stopper(session_id, info=info)   # 内含 2s 等死窗口
+            issued = True
+        except (OSError, subprocess.SubprocessError):
+            pass                              # 失败进下一轮重探
+    info = prober(session_id)
+    pid = (info or {}).get("pid")
+    if not pid:
+        return True, issued, "stopped"
+    return False, issued, (f"session {session_id} still alive (pid {pid}) "
+                           f"after {int(retries) + 1} stop attempts")
+
+
 def _rework_abort(req: Requirement, ex: dict, err: str) -> bool:
     """A 打回 that could not even launch: persist the reason so the card
     surfaces it instead of silently staying in review with Zelin's feedback
@@ -1550,6 +1602,9 @@ def answer(
     ex.pop("last_error_at", None)
     ex["resume_attempts"] = 0                 # fresh backoff for the revived session
     ex.pop("resume_exhausted", None)          # see docstring: never self-clears
+    # §46: owner 亲手救活 = 风暴计数清零——否则下一次正常 auto-resume 会立刻
+    # 撞上残留的 resume_history 再次降级（brief() 是自动路径，刻意不清）。
+    ex.pop("resume_history", None)
     new_sid = _parse_session_id(out)          # a resume mints a new id
     if new_sid:
         ex["session_id"] = new_sid

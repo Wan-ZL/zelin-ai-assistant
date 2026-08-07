@@ -870,11 +870,17 @@ def build_dashboard(
                         "session_active": state in _RUNNING_STATES,
                     }
                 )
-            elif state in _BLOCKED_STATES:
+            elif state in _BLOCKED_STATES or (
+                    agent is None and ex.get("resume_exhausted")
+                    and not ex.get("done")):
                 # §39: surface WHAT the agent is asking — the transcript's
                 # last assistant text after the last real user turn (the same
                 # fence/sidechain-disciplined extraction harvest uses), cached
                 # per (sid, transcript signature) above.
+                # §46 第二臂：auto-resume 已放弃（resume_exhausted，含 resume
+                # 风暴降级）且会话已不在 roster 上的 executing 卡 —— 事实上就是
+                # 「需要人才能推进」，投影进 需输入 列（回答…/停止 都在这里），
+                # 不再顶着 unknown 状态在 运行中 列装忙（宪法 3：诚实的健康报告）。
                 question = (_question_cached(str(resume_sid or sid))
                             if sid else None)
                 row = {
@@ -898,6 +904,11 @@ def build_dashboard(
                 }
                 if question:
                     row["question"] = question
+                if agent is None and ex.get("resume_exhausted"):
+                    # §46 add-only：告诉 App（和 detect_transitions）这行是
+                    # 降级卡，不是 agent 真的在提问 —— 老 App decodeIfPresent
+                    # 直接忽略。
+                    row["resume_exhausted"] = True
                 needs_input.append(row)
             else:
                 # running, or agent not found yet -> still consider it running

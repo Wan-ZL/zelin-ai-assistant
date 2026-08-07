@@ -1331,14 +1331,12 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             primary.execution = prim_ex
             _log(f"merge: {sec.id} deliverable carried onto {primary.id} "
                  f"(execution.merged_deliverables, n={len(carried)})")
-        # 副卡活 session best-effort 停止（失败只记日志，绝不阻塞合并落账）
+        # 副卡活 session best-effort 停止（§46 确认式：失败落台账，绝不阻塞合并落账）
         sec_sid = sec_ex.get("session_id")
         if sec_sid and executor is not None:
-            try:
-                stopped = executor.stop_session(str(sec_sid))
-                _log(f"merge: {sec.id} stop_session({sec_sid}) -> {stopped}")
-            except Exception as e:  # noqa: BLE001 - best-effort
-                _log(f"merge: {sec.id} stop_session({sec_sid}) failed (ignored): {e}")
+            _stop_session_tracked(sec, sec_ex, sec_sid, "merge-stop",
+                                  log_prefix="merge")
+            sec.execution = sec_ex   # 台账字段随副卡一起落盘（下方 save(sec)）
         # Persist the primary's absorption BEFORE marking the secondary as
         # merged: retries skip already-merged secondaries, so a crash between
         # the two saves must never leave the absorbed sources/mentions/notes
@@ -1371,6 +1369,44 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
     # 主卡其他状态：notes 已留痕，不动其 session（契约 四）。
 
 
+def _stop_session_tracked(req: Requirement, ex: dict, sid, why: str,
+                          log_prefix: str = "inbox") -> tuple[bool, bool]:
+    """确认式停止 + 失败台账（§46）——所有 actd 侧 stop_session 调用点的统一外壳。
+
+    走 executor.stop_session_confirmed（有限重试 + roster 验证），仍是 best-effort
+    （吞异常、绝不阻塞调用方的状态落账），但失败不再只打一行日志：
+    - execution.stop_failed_at / stop_failed_error 落台账（add-only 字段）；
+    - notes 追加 [stop-failed] 标签（notes_text 投影，看板上可见可搜）；
+    - notify.msg_stop_failed 通知 + analytics `stop_failed` 打点。
+    确认停掉时清掉旧台账字段。只改内存里的 req/ex——落盘仍由调用方 save（单写者
+    路径不变，§44）。Returns (stopped, issued)，语义见 stop_session_confirmed。
+    """
+    stopped, issued, detail = False, False, ""
+    if executor is None:
+        return False, False
+    try:
+        stopped, issued, detail = executor.stop_session_confirmed(str(sid))
+        _log(f"{log_prefix}: {req.id} {why} — stop_session({sid}) -> {stopped}"
+             f" ({detail})")
+    except Exception as e:  # noqa: BLE001 - best-effort, never block the caller
+        detail = f"{type(e).__name__}: {e}"
+        _log(f"{log_prefix}: {req.id} {why} — stop_session({sid}) failed "
+             f"(ignored): {e}")
+    if stopped:
+        # 这次确认停掉了：清掉此前留下的失败台账（台账只描述当前事实）
+        ex.pop("stop_failed_at", None)
+        ex.pop("stop_failed_error", None)
+        return True, issued
+    ex["stop_failed_at"] = _iso_now()
+    ex["stop_failed_error"] = str(detail)[:300] or "stop failed"
+    tag = (f"[stop-failed] 停止会话 {sid} 失败（重试后进程仍存活），"
+           f"可能仍在后台运行——请在终端 `claude stop` 手动停止")
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id)
+    analytics.log_event("stop_failed", req=req.id, error=str(detail)[:120])
+    return False, issued
+
+
 def _stop_live_session(req: Requirement, why: str) -> None:
     """Best-effort stop of a card's live agent before a destructive action
     (reject/trash on an approved/executing/review card — nightly audit
@@ -1384,19 +1420,17 @@ def _stop_live_session(req: Requirement, why: str) -> None:
     sid = ex.get("session_id")
     if not sid:
         return
-    stopped = False
+    stopped, issued = False, False
     if executor is not None:
-        try:
-            stopped = bool(executor.stop_session(str(sid)))
-            _log(f"inbox: {req.id} {why} — stop_session({sid}) -> {stopped}")
-        except Exception as e:  # noqa: BLE001 - best-effort, never block
-            _log(f"inbox: {req.id} {why} — stop_session({sid}) failed (ignored): {e}")
+        stopped, issued = _stop_session_tracked(req, ex, sid, why)
     ex["aborted_session_id"] = sid
-    if stopped:
+    if stopped and issued:
         # only a session we actually killed loses its id — when the stop
         # failed (or executor is unavailable) the agent may still be alive,
         # and a later trash→restore round-trip must be able to re-attach
         # (audit review 2026-07-14: unconditional pop made restore lossy).
+        # §46: issued 门再收紧一档——「本来就死」的会话保留 id，restore 后
+        # 还能凭 transcript 复活（旧 stop_session 对这种情况返回 False，行为一致）。
         ex.pop("session_id", None)
     req.execution = ex
 
@@ -1592,13 +1626,9 @@ def _apply_decision(req: Requirement, action: Optional[str],
             # a chat-mode delivery promoted from blocked leaves its bg session
             # alive waiting for input FOREVER (a bg session never exits on its
             # own) — mirror done_external: best-effort stop the reaped agent,
-            # never block the delivered write (audit 2026-07-15).
-            try:
-                stopped = executor.stop_session(str(sid))
-                _log(f"inbox: {req.id} accept — stop_session({sid}) -> {stopped}")
-            except Exception as e:  # noqa: BLE001 - best-effort, never block delivery
-                _log(f"inbox: {req.id} accept — stop_session({sid}) failed "
-                     f"(ignored): {e}")
+            # never block the delivered write (audit 2026-07-15). §46 确认式：
+            # 停不掉的落台账，不再静默。
+            _stop_session_tracked(req, ex, sid, "accept")
         req.set_status(State.DELIVERED)
         ex["accepted_at"] = _iso_now()
         req.execution = ex
@@ -1664,12 +1694,8 @@ def _apply_decision(req: Requirement, action: Optional[str],
             except Exception as e:  # noqa: BLE001 - harvest is best-effort
                 _log(f"inbox: {req.id} done_external — "
                      f"harvest_delivery({sid}) failed (ignored): {e}")
-            try:
-                stopped = executor.stop_session(str(sid))
-                _log(f"inbox: {req.id} done_external — stop_session({sid}) -> {stopped}")
-            except Exception as e:  # noqa: BLE001 - best-effort, never block delivery
-                _log(f"inbox: {req.id} done_external — "
-                     f"stop_session({sid}) failed (ignored): {e}")
+            # §46 确认式停止：失败落台账，绝不阻塞交付落账
+            _stop_session_tracked(req, ex, sid, "done_external")
             _update_search_index(req.id, sid)          # §37 session-content layer
         ex["accepted_at"] = _iso_now()
         req.execution = ex
@@ -1693,11 +1719,8 @@ def _apply_decision(req: Requirement, action: Optional[str],
         ex = dict(req.execution or {})
         sid = ex.get("session_id")
         if sid and executor is not None:
-            try:
-                stopped = executor.stop_session(str(sid))
-                _log(f"inbox: {req.id} abort — stop_session({sid}) -> {stopped}")
-            except Exception as e:  # noqa: BLE001 - best-effort, never block rollback
-                _log(f"inbox: {req.id} abort — stop_session({sid}) failed (ignored): {e}")
+            # §46 确认式停止：失败落台账，绝不阻塞状态回退
+            _stop_session_tracked(req, ex, sid, "abort")
         if sid:
             ex["aborted_session_id"] = sid
             ex.pop("session_id", None)
@@ -1742,12 +1765,8 @@ def _apply_decision(req: Requirement, action: Optional[str],
             except Exception as e:  # noqa: BLE001 - harvest is best-effort
                 _log(f"inbox: {req.id} stop_to_review — "
                      f"harvest_delivery({sid}) failed (ignored): {e}")
-            try:
-                stopped = executor.stop_session(str(sid))
-                _log(f"inbox: {req.id} stop_to_review — stop_session({sid}) -> {stopped}")
-            except Exception as e:  # noqa: BLE001 - best-effort, never block review write
-                _log(f"inbox: {req.id} stop_to_review — "
-                     f"stop_session({sid}) failed (ignored): {e}")
+            # §46 确认式停止：失败落台账，绝不阻塞状态落 review
+            _stop_session_tracked(req, ex, sid, "stop_to_review")
             _update_search_index(req.id, sid)          # §37 session-content layer
         # mirror the natural executing->review transition's review fields
         # (reconcile_executing §2/§11): done flag + review_at, so the 待验收 card
@@ -2192,6 +2211,11 @@ def detect_transitions(prev: Optional[dict], curr: dict
     # notification carries a snippet of the QUESTION the agent is asking.
     for rid, item in c_ni.items():
         if rid not in p_ni and rid in p_run:
+            if item.get("resume_exhausted"):
+                # §46 降级卡进 需输入 列：reconcile 已发过精确文案
+                # （msg_resume_storm / msg_auto_resume_exhausted），这里再发
+                # 「任务需要你输入」是重复 ping，且 agent 并没有在提问。
+                continue
             t, b = notify.msg_needs_input(item.get("name") or rid,
                                           item.get("question"))
             msgs.append((t, b, rid, None))
@@ -2329,6 +2353,31 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     return True
 
 
+# §46 resume 风暴降级：同一张卡在短窗口内被自动救活（resume/brief 启动）达阈值
+# 次仍再死 —— 卡死→救→再死的循环没有出口（生产 2026-08-07：R-187 4 分钟三连救；
+# 2026-07-29：R-142 13 分钟四连救，attempts 每次被「见到活着」清零，退避永远
+# 从零开始）。达阈值即置 resume_exhausted（复用既有放弃机制），投影进 需输入
+# 列请人看一眼。窗口内的启动记录在 execution.resume_history（ISO 列表，封顶）。
+RESUME_STORM_THRESHOLD = 3          # 窗口内自动救活次数达此值 → 降级
+RESUME_STORM_WINDOW_S = 30 * 60     # 风暴判定窗口：30 分钟
+RESUME_HISTORY_CAP = 10             # resume_history 保留最近 N 条，防无限增长
+
+
+def _recent_resume_count(ex: dict, now: Optional[_dt.datetime] = None) -> int:
+    """execution.resume_history 里落在风暴窗口内的启动次数（坏条目静默跳过）。"""
+    if now is None:
+        now = _dt.datetime.now(_dt.timezone.utc)
+    hist = ex.get("resume_history")
+    if not isinstance(hist, list):
+        return 0
+    n = 0
+    for h in hist:
+        dt = _parse_iso(h if isinstance(h, str) else None)
+        if dt is not None and 0 <= (now - dt).total_seconds() <= RESUME_STORM_WINDOW_S:
+            n += 1
+    return n
+
+
 def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
     """Auto-resume executing tasks whose background agent died (sleep / network
     loss / crash). Skips tasks that already finished. Exponential backoff so a
@@ -2443,6 +2492,23 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
         # -> resume w/ backoff
         if ex.get("resume_exhausted"):
             continue
+        # §46 resume 风暴降级：窗口内已救活 N 次还是死了 —— 停止无限救活。
+        # 与下方 attempts>=5 的「连续失败」放弃互补：风暴计数按启动次数算
+        # （成功启动后短命再死也算），attempts 被「见到活着」清零骗不过它。
+        storm_n = _recent_resume_count(ex)
+        if storm_n >= RESUME_STORM_THRESHOLD:
+            ex["resume_exhausted"] = True
+            ex["resume_storm_at"] = _iso_now()
+            req.execution = ex
+            tag = (f"[resume-storm] 30 分钟内自动救活 {storm_n} 次后会话再次"
+                   "中断，已停止自动恢复——resume 风暴降级，需人工看一眼"
+                   "（需输入列：回答… / 停止）")
+            req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+            registry.save(req)
+            notify.notify(*notify.msg_resume_storm(req.title or req.id, storm_n),
+                          req=req.id)
+            analytics.log_event("resume_storm_degraded", req=req.id, n=storm_n)
+            continue
         attempts = int(ex.get("resume_attempts", 0))
         if attempts >= 5:
             ex["resume_exhausted"] = True
@@ -2472,6 +2538,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 ok = executor.brief(req, cfg)
             else:
                 ok = executor.resume(req, cfg)
+            ex_after = dict(req.execution or {})
             if not ok:
                 # executor.resume's early-return paths (transcript purged, mkdir
                 # failed) record NO bookkeeping — without it attempts stays 0
@@ -2479,13 +2546,18 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # resume+log+analytics burst repeats every 10s pass with zero
                 # backoff (audit 2026-07-15). Count the failed attempt here iff
                 # resume didn't already (its post-launch bookkeeping did).
-                ex_after = dict(req.execution or {})
                 if int(ex_after.get("resume_attempts", 0) or 0) == attempts:
                     ex_after["resume_attempts"] = attempts + 1
                     ex_after["last_resume_at"] = _iso_now()
                     ex_after["last_resume_ok"] = False
-                    req.execution = ex_after
-                    registry.save(req)
+            # §46 风暴台账：每次自动救活启动（成功与否、resume 或 brief）都记
+            # 一条 —— 存活即被清零的 resume_attempts 骗得过退避、骗不过这本账。
+            hist = [str(h) for h in (ex_after.get("resume_history") or [])
+                    if h] if isinstance(ex_after.get("resume_history"), list) else []
+            hist.append(_iso_now())
+            ex_after["resume_history"] = hist[-RESUME_HISTORY_CAP:]
+            req.execution = ex_after
+            registry.save(req)
             resumed += 1
             _log(f"reconcile: resume {req.id} attempt {attempts + 1} ok={ok}")
             analytics.log_event("auto_resume", req=req.id, ok=ok, attempt=attempts + 1)

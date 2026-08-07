@@ -93,7 +93,7 @@ class DoneExternalTestCase(InverseActionsBase):
         _mk_req(status=State.REVIEW.value,
                 execution={"session_id": "sess-9", "done": True})
         stub = mock.Mock()
-        with mock.patch.object(actd.executor, "stop_session", stub):
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("done_external")
         stub.assert_not_called()  # 有活 session 不动它
         self.assertEqual(req.status, State.DELIVERED.value)
@@ -140,7 +140,7 @@ class DoneExternalTestCase(InverseActionsBase):
 class DoneExternalExtendedTestCase(InverseActionsBase):
     def _run_with_executor(self, harvest, stop, req_id="R-800"):
         with mock.patch.object(actd.executor, "harvest_delivery", harvest), \
-             mock.patch.object(actd.executor, "stop_session", stop):
+             mock.patch.object(actd.executor, "stop_session_confirmed", stop):
             return self._run("done_external", req_id=req_id)
 
     def test_from_executing_harvests_stops_and_delivers(self):
@@ -148,7 +148,7 @@ class DoneExternalExtendedTestCase(InverseActionsBase):
                 execution={"session_id": "sess-11", "log": "/tmp/x.log"})
         harvest = mock.Mock(return_value={"delivered_summary": "交付小结",
                                           "final_draft": "FINAL 全文草稿"})
-        stop = mock.Mock(return_value=True)
+        stop = mock.Mock(return_value=(True, True, "stopped"))
         req = self._run_with_executor(harvest, stop)
         harvest.assert_called_once_with("sess-11")   # 先收割……
         stop.assert_called_once_with("sess-11")      # ……再清掉挂着的 agent
@@ -168,7 +168,7 @@ class DoneExternalExtendedTestCase(InverseActionsBase):
                            "final_draft": "旧草稿"})
         harvest = mock.Mock(return_value={"delivered_summary": None,
                                           "final_draft": None})
-        req = self._run_with_executor(harvest, mock.Mock(return_value=True))
+        req = self._run_with_executor(harvest, mock.Mock(return_value=(True, True, "stopped")))
         self.assertEqual(req.status, State.DELIVERED.value)
         ex = req.execution or {}
         self.assertEqual(ex.get("delivered_summary"), "旧小结")  # 非空才写
@@ -179,7 +179,7 @@ class DoneExternalExtendedTestCase(InverseActionsBase):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-13"})
         harvest = mock.Mock(side_effect=RuntimeError("transcript exploded"))
-        stop = mock.Mock(return_value=True)
+        stop = mock.Mock(return_value=(True, True, "stopped"))
         req = self._run_with_executor(harvest, stop)
         harvest.assert_called_once_with("sess-13")   # harvest 炸了……
         stop.assert_called_once_with("sess-13")      # ……stop 照跑
@@ -237,8 +237,8 @@ class AbortExecutionTestCase(InverseActionsBase):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-1", "done": True,
                            "log": "/tmp/x.log"})
-        stub = mock.Mock(return_value=True)
-        with mock.patch.object(actd.executor, "stop_session", stub):
+        stub = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_called_once_with("sess-1")
         self.assertEqual(req.status, State.CARD_SENT.value)
@@ -253,7 +253,7 @@ class AbortExecutionTestCase(InverseActionsBase):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-2"})
         stub = mock.Mock(side_effect=RuntimeError("claude stop exploded"))
-        with mock.patch.object(actd.executor, "stop_session", stub):
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_called_once_with("sess-2")    # stop 被调……
         self.assertEqual(req.status, State.CARD_SENT.value)  # ……失败不阻塞回退
@@ -265,7 +265,7 @@ class AbortExecutionTestCase(InverseActionsBase):
     def test_from_approved_without_session_skips_stop(self):
         _mk_req(status=State.APPROVED.value, execution=None)
         stub = mock.Mock()
-        with mock.patch.object(actd.executor, "stop_session", stub):
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_not_called()                  # 还没派发，无 session 可停
         self.assertEqual(req.status, State.CARD_SENT.value)
@@ -283,7 +283,7 @@ class AbortExecutionTestCase(InverseActionsBase):
             rid = f"R-82{i}"
             _mk_req(req_id=rid, status=st, execution={"session_id": "keep-me"})
             stub = mock.Mock()
-            with mock.patch.object(actd.executor, "stop_session", stub):
+            with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
                 req = self._run("abort_execution", req_id=rid)
             stub.assert_not_called()
             self.assertEqual(req.status, st, msg=st)
@@ -298,8 +298,8 @@ class AbortExecutionTestCase(InverseActionsBase):
         # for a fresh decision (the reattached run is discarded).
         _mk_req(status=State.REVIEW.value,
                 execution={"session_id": "sess-rv2", "done": True})
-        stub = mock.Mock(return_value=True)
-        with mock.patch.object(actd.executor, "stop_session", stub):
+        stub = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             req = self._run("abort_execution")
         stub.assert_called_once_with("sess-rv2")
         self.assertEqual(req.status, State.CARD_SENT.value)
@@ -311,8 +311,8 @@ class AbortExecutionTestCase(InverseActionsBase):
     def test_double_abort_second_is_noop(self):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-3"})
-        stub = mock.Mock(return_value=True)
-        with mock.patch.object(actd.executor, "stop_session", stub):
+        stub = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stub):
             self._run("abort_execution")
             req = self._run("abort_execution")   # 连点第二下
         self.assertEqual(stub.call_count, 1)
@@ -327,7 +327,7 @@ class AbortExecutionTestCase(InverseActionsBase):
 class StopToReviewTestCase(InverseActionsBase):
     def _run_with_executor(self, harvest, stop, req_id="R-800"):
         with mock.patch.object(actd.executor, "harvest_delivery", harvest), \
-             mock.patch.object(actd.executor, "stop_session", stop):
+             mock.patch.object(actd.executor, "stop_session_confirmed", stop):
             return self._run("stop_to_review", req_id=req_id)
 
     def test_from_executing_harvests_stops_and_lands_in_review(self):
@@ -335,7 +335,7 @@ class StopToReviewTestCase(InverseActionsBase):
                 execution={"session_id": "sess-70", "log": "/tmp/x.log"})
         harvest = mock.Mock(return_value={"delivered_summary": "阶段成果",
                                           "final_draft": "半成品草稿"})
-        stop = mock.Mock(return_value=True)
+        stop = mock.Mock(return_value=(True, True, "stopped"))
         req = self._run_with_executor(harvest, stop)
         harvest.assert_called_once_with("sess-70")   # 先收下成果……
         stop.assert_called_once_with("sess-70")      # ……再停掉跑着的 agent
@@ -370,7 +370,7 @@ class StopToReviewTestCase(InverseActionsBase):
                            "final_draft": "旧草稿"})
         harvest = mock.Mock(return_value={"delivered_summary": None,
                                           "final_draft": None})
-        req = self._run_with_executor(harvest, mock.Mock(return_value=True))
+        req = self._run_with_executor(harvest, mock.Mock(return_value=(True, True, "stopped")))
         self.assertEqual(req.status, State.REVIEW.value)
         ex = req.execution or {}
         self.assertEqual(ex.get("delivered_summary"), "旧小结")  # 非空才写
@@ -380,7 +380,7 @@ class StopToReviewTestCase(InverseActionsBase):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-72"})
         harvest = mock.Mock(side_effect=RuntimeError("transcript exploded"))
-        stop = mock.Mock(return_value=True)
+        stop = mock.Mock(return_value=(True, True, "stopped"))
         req = self._run_with_executor(harvest, stop)
         harvest.assert_called_once_with("sess-72")   # harvest 炸了……
         stop.assert_called_once_with("sess-72")      # ……stop 照跑
@@ -430,7 +430,7 @@ class StopToReviewTestCase(InverseActionsBase):
                            "review_at": "2026-07-08T01:00:00Z"})
         harvest = mock.Mock(return_value={"delivered_summary": "重跑后的新稿",
                                           "final_draft": "新草稿全文"})
-        stop = mock.Mock(return_value=True)
+        stop = mock.Mock(return_value=(True, True, "stopped"))
         req = self._run_with_executor(harvest, stop)
         harvest.assert_called_once_with("sess-rv")   # 活 session -> 收割
         stop.assert_called_once_with("sess-rv")      # ……并停掉 attach 回流会话
@@ -445,7 +445,7 @@ class StopToReviewTestCase(InverseActionsBase):
         _mk_req(req_id="R-859", status=State.EXECUTING.value,
                 execution={"session_id": "s"})
         self._run_with_executor(mock.Mock(return_value={}),
-                                mock.Mock(return_value=True), req_id="R-859")
+                                mock.Mock(return_value=(True, True, "stopped")), req_id="R-859")
         events = [(e.get("event"), e.get("req")) for e in analytics.read_events()]
         self.assertIn(("inbox_stop_to_review", "R-859"), events)
 
@@ -501,8 +501,8 @@ class AnalyticsCoverageTestCase(InverseActionsBase):
 
         _mk_req(req_id="R-841", status=State.EXECUTING.value,
                 execution={"session_id": "s"})
-        with mock.patch.object(actd.executor, "stop_session",
-                               mock.Mock(return_value=True)):
+        with mock.patch.object(actd.executor, "stop_session_confirmed",
+                               mock.Mock(return_value=(True, True, "stopped"))):
             self._run("abort_execution", req_id="R-841")
 
         _mk_req(req_id="R-842", status=State.DELIVERED.value)
@@ -513,8 +513,8 @@ class AnalyticsCoverageTestCase(InverseActionsBase):
                 execution={"session_id": "s2"})
         with mock.patch.object(actd.executor, "harvest_delivery",
                                mock.Mock(return_value={})), \
-             mock.patch.object(actd.executor, "stop_session",
-                               mock.Mock(return_value=True)):
+             mock.patch.object(actd.executor, "stop_session_confirmed",
+                               mock.Mock(return_value=(True, True, "stopped"))):
             self._run("done_external", req_id="R-843")
 
         events = [(e.get("event"), e.get("req")) for e in analytics.read_events()]
