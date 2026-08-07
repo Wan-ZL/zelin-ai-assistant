@@ -2263,12 +2263,18 @@ _wake_state: dict = {"last_pass": None, "grace_until": 0.0}
 
 
 def _wake_grace(cfg: config.Config, wall: float) -> bool:
-    """记录本 pass 的 wall-clock 并判断是否处于睡醒宽限期。"""
+    """记录本 pass 的 wall-clock 并判断是否处于睡醒/冷启动宽限期。
+
+    进程首 pass（``last_pass`` 为 None）同睡醒对待：``_wake_state`` 是进程内
+    存，actd 重启后没有跳变可测，而关机 ≥ 阈值后开机（RunAtLoad）的第一个
+    pass 同样必然早于雷达落笔——不宽限就是每源一条假死亡通知。代价只是
+    重启/升级后真死亡多等一个宽限窗才报，可接受。
+    """
     interval = int(getattr(cfg, "poll_interval_seconds", 10) or 10)
     last = _wake_state["last_pass"]
     _wake_state["last_pass"] = wall
     jump = max(interval * _WAKE_JUMP_FACTOR, _WAKE_JUMP_FLOOR_SECONDS)
-    if last is not None and (wall - last) > jump:
+    if last is None or (wall - last) > jump:
         _wake_state["grace_until"] = wall + _WAKE_GRACE_SECONDS
     return wall < _wake_state["grace_until"]
 
@@ -2298,7 +2304,11 @@ def _check_radar_liveness(notified: set[str],
         data = health.load_radar_health()
         for src in sources.SOURCES:
             if not sources.enabled(cfg, src):
-                # 关着：清残留条目（条目不存在时 no-op、不写文件），出账
+                # 关着：清残留条目（条目不存在时 no-op、不写文件），出账。
+                # 纪律豁免（radar.py _owns_health 的 cron 单写者门）：那道门
+                # 防的是手动/launchd 语境误删 cron 的**真实健康**；源 disabled
+                # 时 cron 写者自己也已静默（§46.2 入口 gate），条目只剩僵尸
+                # ——actd 作为清理仲裁者收尾不与单写者门冲突。
                 health.remove_radar_health(src)
                 notified.discard(src)
                 continue

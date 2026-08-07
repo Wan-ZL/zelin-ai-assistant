@@ -154,8 +154,11 @@ class LivenessAlertTestCase(unittest.TestCase):
         config.ensure_state_dirs()
         _clean_state()
         self.addCleanup(_clean_state)
-        # 睡醒宽限的进程内时钟：每个判例从干净状态起步
-        actd._wake_state.update({"last_pass": None, "grace_until": 0.0})
+        # 睡醒/冷启动宽限的进程内时钟：默认判例在「已跑热的 daemon」形态下
+        # 走（last_pass = 现在，无宽限）；冷启动判例自己把 last_pass 归 None
+        actd._wake_state.update(
+            {"last_pass": _dt.datetime.now(_dt.timezone.utc).timestamp(),
+             "grace_until": 0.0})
         self.addCleanup(actd._wake_state.update,
                         {"last_pass": None, "grace_until": 0.0})
 
@@ -271,6 +274,31 @@ class LivenessAlertTestCase(unittest.TestCase):
             t += 250                                   # 正常节奏推进，无新跳变
             collected += actd._check_radar_liveness(notified, now=self._now(t))
         self.assertEqual(len(collected), 1)            # 宽限一过恢复评判、只响一次
+
+    def test_cold_start_first_pass_does_not_false_alarm(self):
+        # actd 重启（关机 ≥ 阈值后开机 RunAtLoad / 升级重启）：_wake_state 是
+        # 进程内存，首 pass 没有跳变可测，但雷达同样还没落笔——首 pass 视同
+        # 睡醒种一次宽限，不评判、不污染台账
+        actd._wake_state.update({"last_pass": None, "grace_until": 0.0})
+        self._seed("gmail", _iso(7 * 3600))
+        notified: set = set()
+        self.assertEqual(
+            actd._check_radar_liveness(notified, now=self._now()), [])
+        self.assertNotIn("gmail", notified)
+
+    def test_cold_start_grace_expires_then_real_death_alarms(self):
+        # 冷启动宽限过后（正常节奏推进，无新跳变）真死亡照样告警、只响一次
+        actd._wake_state.update({"last_pass": None, "grace_until": 0.0})
+        self._seed("gmail", _iso(7 * 3600))
+        notified: set = set()
+        t = 0
+        self.assertEqual(
+            actd._check_radar_liveness(notified, now=self._now(t)), [])
+        collected: list = []
+        while t < actd._WAKE_GRACE_SECONDS + 300:
+            t += 250
+            collected += actd._check_radar_liveness(notified, now=self._now(t))
+        self.assertEqual(len(collected), 1)
 
     def test_plist_deleted_death_still_alarms(self):
         # 真死亡形态（plist 被删/调度停摆）：pass 以正常节奏推进（无跳变），

@@ -2288,12 +2288,18 @@ StartInterval=300s）、slack 6h（180s）、obsidian 36h（cron */30 + 合盖�
 是常态，72x 比例防周末误报）。超期 = 源死亡 → 走既有 §28 notify 通道报
 **一次**（anti-nag：进程内台账 `radar_dead_notified` set，与 auth_notified
 同款——只在跨过阈值那刻响，恢复出账、再死才再响）；关掉的源天然不进循环，
-且巡检顺手清它的残留 health 条目（生产上手删 plist 留下的僵尸记录）。
+且巡检顺手清它的残留 health 条目（生产上手删 plist 留下的僵尸记录）——这里
+对 radar.py `_owns_health` 的 cron 单写者门是一条**显式豁免**：那道门防的是
+手动/launchd 语境误删 cron 的真实健康，而源 disabled 时 cron 写者按 46.2
+自己也已静默、条目只剩僵尸，actd 是唯一的清理仲裁者，收尾不与单写者门冲突。
 **睡醒宽限**：actd 记录相邻 pass 的 wall-clock（`_wake_state`），跳变 >
 max(interval×6, 300s) 视为刚从合盖睡眠唤醒——此刻 health 时间戳整体超期是
 睡眠不是死亡（anti-nag 台账防不了这种每日重置），宽限一个最大雷达周期 +
 余量（`_WAKE_GRACE_SECONDS` = 35min，对齐 Diagnostics warmup）内不评判
 stale、不动台账，让雷达先补跑；宽限过后照常评判（plist 真被删仍会告警）。
+进程**首 pass 同睡醒对待**（`_wake_state` 是进程内存，重启后没有跳变可测，
+而关机 ≥ 阈值后开机 RunAtLoad 的第一个 pass 同样早于雷达落笔）——冷启动也
+种一次宽限；代价只是 actd 重启/升级后真死亡多等一个宽限窗才报。
 
 **46.4 `radar_sources` 投影（§2 顶层 add-only 字段）**：
 
