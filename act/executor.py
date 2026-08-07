@@ -764,6 +764,11 @@ def dispatch(
         "dispatched_at": dispatched_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "log": str(log_path),
     }
+    if ex.get("inbox_stem"):
+        # §34.1 crash-replay 幂等键必须活过派发：inbox 文件 unlink 失败时同一
+        # 文件跨 pass 重放，重放闸靠这个键认出"这单已经建过卡"——整体重建
+        # execution 抹掉它 = 每 pass 铸一张新卡、起一个新 agent（无上界）。
+        req.execution["inbox_stem"] = ex["inbox_stem"]
     req.set_status(State.EXECUTING)
     save(req)
     # capture_input gating (docs/TELEMETRY.md): the instruction summary is

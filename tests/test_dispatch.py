@@ -89,6 +89,20 @@ class DispatchSuccessTestCase(DispatchBase):
         self.assertTrue(any(e.get("event") == "dispatch"
                             for e in _events("R-950")))
 
+    def test_direct_run_inbox_stem_survives_execution_rebuild(self):
+        # §34.1 crash-replay 幂等键：dispatch 成功后整体重建 execution（甩掉
+        # 重试台账）——inbox_stem 必须被保留，否则 inbox 文件 unlink 失败跨
+        # pass 重放时重放闸失明，每 pass 铸一张新卡（终审 P1）。
+        req = self._mk_req("R-951")
+        req.execution = {"approved_at": "2026-08-07T00:00:00Z",
+                         "inbox_stem": "capture-abc123"}
+        registry.save(req)
+        runner = mock.Mock(return_value=_proc(0, stdout="backgrounded · e88561e5\n"))
+        executor.dispatch(req, self.cfg, runner=runner)
+        ex = (registry.load("R-951").execution or {})
+        self.assertEqual(ex.get("session_id"), "e88561e5")
+        self.assertEqual(ex.get("inbox_stem"), "capture-abc123")
+
 
 # --------------------------------------------------------------------------- #
 # launch failure — stays approved, error recorded, DispatchError raised

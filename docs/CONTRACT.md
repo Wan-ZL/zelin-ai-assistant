@@ -1309,8 +1309,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   文件）——[run] 绕开判重后失去重放保护（apply 与 unlink 之间 crash，同一
   inbox 文件重放 = 第二张 approved 卡起两个 agent）。幂等键 = inbox 文件
   stem，建卡时落 `execution.inbox_stem`（add-only，纯元数据）；apply 前查
-  同 stem 卡已存在 → 诚实 ack `running` 跳过。**不碰**「用户两次显式输入 =
-  两张卡」语义——两次输入是两个不同 inbox 文件、stem 不同。
+  同 stem 卡已存在 → 诚实 ack `running` 跳过。**键必须活过派发**：
+  `executor.dispatch` 成功后整体重建 `execution`（甩掉重试台账）时保留
+  `inbox_stem`——unlink 持续失败（`_safe_unlink` 吞 OSError）时 inbox 文件
+  跨 pass 存活，键一丢重放闸就失明，每 pass 铸一张新卡起一个新 agent。
+  **不碰**「用户两次显式输入 = 两张卡」语义——两次输入是两个不同 inbox
+  文件、stem 不同。
 - **交付强制不变**：新卡显式 `delivery_mode="chat"`、`target_repo` 空（派发
   回退默认 workbench）——direct-run 依旧没有人审预览，不得进任何 repo。
 - **重复防线不塌**：多渠道防重复仍由 radar / 普通 capture 通道的静默并入承担

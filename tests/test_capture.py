@@ -6,6 +6,7 @@ Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no LLM
 is invoked (process_raising is NOT called here; dispatch is stubbed).
 """
 import json
+import subprocess
 import unittest
 import uuid
 from unittest import mock
@@ -254,6 +255,37 @@ class DirectRunCaptureTestCase(unittest.TestCase):
         entries = [r for r in registry.load_all() if r.title == text]
         self.assertEqual(len(entries), 1)          # 没有第二张卡
         self.assertEqual(_ack_for(aid), "running")  # 诚实 ack：这单确实在队里
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
+    def test_run_mode_unlink_failure_replay_after_dispatch_files_one_card(self):
+        # 终审 P1 判例：_safe_unlink 吞 OSError——unlink 持续失败时同一 inbox
+        # 文件跨 pass 存活，且 pass 间卡片已被派发（dispatch 整体重建
+        # execution）。幂等键必须活过派发，否则每 pass 铸一张新卡、起一个
+        # 新 agent（旧标题判重兜底已随 §34.1 拆除，重放闸是唯一防线）。
+        _activate_sync()
+        text = "unlink 失败跨 pass 重放不铸第二张卡"
+        aid = self._write_capture(text)
+        with mock.patch.object(actd, "_safe_unlink", new=lambda p: None):
+            actd.process_inbox()
+        self.assertTrue((config.INBOX_DIR / f"{aid}.json").exists())
+        req = [r for r in registry.load_all() if r.title == text][0]
+        # 真 executor.dispatch（runner 注入，绝不 spawn claude）——execution
+        # 被重建为 {session_id, dispatched_at, log, inbox_stem}
+        cfg = config.Config()
+        cfg.memory_inject = False
+        with mock.patch.object(executor, "has_remote", return_value=False), \
+             mock.patch.object(executor.notify, "notify",
+                               new=mock.Mock(return_value=True)):
+            runner = mock.Mock(return_value=subprocess.CompletedProcess(
+                ["claude"], 0, stdout="backgrounded · e88561e5\n", stderr=""))
+            executor.dispatch(req, cfg, runner=runner)
+        dispatched = registry.load(req.id)
+        self.assertEqual(dispatched.status, State.EXECUTING.value)
+        self.assertEqual((dispatched.execution or {}).get("inbox_stem"), aid)
+        # 下一 pass：同一文件重放——重放闸认出 stem，不铸第二张卡
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
         self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
 
     def test_run_mode_never_touches_a_matching_open_proposal(self):
