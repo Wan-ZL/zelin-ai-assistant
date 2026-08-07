@@ -113,7 +113,10 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         self.addCleanup(setattr, radar, "_has_anthropic_key",
                         radar._has_anthropic_key)
         radar._has_anthropic_key = lambda: False
-        radar.scan(runner=lambda t: "not json at all")  # -> extract failure
+        # §47.2 后 unparseable 会降级成功（health ok）——提取失败的 fixture
+        # 改用真 claude 失败（非瞬时形态，避免 §47.1 的同 pass 重试）
+        radar.scan(runner=lambda t: (_ for _ in ()).throw(
+            RuntimeError("claude exit 1: EPERM")))
         self.assertEqual(_read_obsidian()["skip_reason"], "no_api_key")
 
     def test_extraction_failure_with_key_is_extract_failed(self):
@@ -121,7 +124,9 @@ class ObsidianHealthTestCase(ObsidianHealthBase):
         self.addCleanup(setattr, radar, "_has_anthropic_key",
                         radar._has_anthropic_key)
         radar._has_anthropic_key = lambda: True
-        radar.scan(runner=lambda t: "not json at all")  # -> extract failure
+        # 同上：unparseable 已由 §47.2 降级兜住，这里钉的是 claude 本体失败
+        radar.scan(runner=lambda t: (_ for _ in ()).throw(
+            RuntimeError("claude exit 1: EPERM")))
         self.assertEqual(_read_obsidian()["skip_reason"], "extract_failed")
 
     def test_healthy_scan_records_ok_and_card_count(self):

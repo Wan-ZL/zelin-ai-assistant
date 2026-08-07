@@ -38,7 +38,8 @@
 10. **打扰要有资格**：主动打扰用户的面（提案卡/通知）只留给「需要人才能推进」的
     事；拿不准的落备选静默过期，重复的静默并入。（§44；§45 LIMITED 语义）
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
-    pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账）
+    pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账；§47 瞬时重试/
+    解析降级卡/loop_health）
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
 
@@ -2141,3 +2142,67 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   `msg_auto_resume_exhausted` 文案指「回答…/停止」两个出口，但只承诺
   「已停止自动拉起」、不断言卡在哪一列——pid 仍活的 exhausted 卡照常留在
   运行中（上条 roster 事实优先），「已移到需输入列」在该边缘态是撒谎。
+# v0.47 additions（管线静默失效止血）
+
+## 47. radar/管线可靠性三件套（add-only）
+
+> 三处「失败只打日志、用户看不见」的静默失效同批止血：radar 提取的瞬时失败、
+> LLM 输出解析失败、actd 主循环连崩。全部 add-only：一个新 state 文件
+> （§47.3）、既有台账/建卡机制的语义补丁，无跨组件字段变更。宪法对应：
+> 第 11 条（失败不外溢，放弃留痕）、第 5 条（降级卡原文过围栏）、第 3 条
+> （诚实的健康报告——「每轮都在崩」不许显示绿灯）。
+
+### 47.1 radar 提取瞬时失败：同 pass 退避重试
+
+- 单篇 note 的 `claude -p` 提取失败且错误呈**瞬时形态**（网络类：ENOTFOUND/
+  ECONNREFUSED/ETIMEDOUT/…；或 **exit 143** = 子进程被外部 SIGTERM）→ 同 pass
+  内退避 `TRANSIENT_BACKOFF_S`（5s）后重试，至多 `TRANSIENT_MAX_RETRIES`
+  （1）次；重试仍失败才进既有跨 pass 重试台账（`state/radar_failed.json`，
+  水位语义 v2 不变）。analytics：`radar_transient_retry{note,attempt}`。
+- **TimeoutExpired 不做同 pass 重试**：600s 预算已烧完，再来一轮会把整个
+  pass 拖过 30 分钟 cron 间隔——仍走跨 pass 台账（2026-07-22 review 的
+  note-level 语义不变）。
+- systemic-failure（全军覆没回滚）判定不变；瞬时重试发生在单 note 内部，
+  对台账/marker 的账目无感知。
+
+### 47.2 解析失败降级卡（`radar-parse-degraded`）
+
+- 提取输出 unparseable → **同 pass 重新提取一次**（LLM 非确定性，第二次常为
+  合法 JSON；analytics `radar_parse_retry_ok`）→ 仍 unparseable →**降级**：
+  先做既有截断抢救（完整前缀对象照常落库），再把整篇 note 原文落成一张
+  **低置信降级卡**（`file_parse_degraded_card`）——替代旧的「进队列跨 pass
+  空转直至 §40 give-up」路径（unparseable 类专属；claude 失败/不可读 note
+  仍走台账）。
+- 卡形态：`status=detected`（备选列，不通知——宪法第 10 条）、
+  `type=diagnostic`、notes 首行 `[radar-parse-degraded]` 标签 + 「解析失败
+  降级，原文未加工」；**原文经 `sanitize.fence_untrusted` 围栏后整段进
+  notes**（>10k 字符截断并标注，卡上保留 `file:` 回指路径）——卡片正文日后
+  可能被拼进 merge-review/rework prompt，不围栏即违宪法第 5 条。
+- **按 note 路径去重**（sources[0] `channel="radar-parse-degraded"` +
+  `ref=<路径>`，扫描含 trashed/archived）：一篇 note 一辈子至多一张降级卡；
+  入库走 `registry.upsert`，不走 merge_or_new 的 LLM 匹配。analytics：
+  `radar_parse_degraded{note,req}`。
+- 降级卡落库（或 dedup 命中）成功 → note 记 accounted（不进台账，summary
+  `skipped` 留痕）；降级卡本身落库失败 → 退回台账老路（兜底的兜底，note
+  绝不双重丢失）。
+
+### 47.3 `state/loop_health.json`（actd 写，Mac app 只读）
+
+```json
+{"consecutive_failures": 3, "last_error": "NameError: …", "updated_at": "2026-08-07T00:00:00Z"}
+```
+
+- **写者**：actd 主循环（`LoopHealthTracker`，原子写 .tmp+rename，绝不抛）。
+  pass 失败每次都写（计数递增 + `last_error` ≤300 字）；成功仅在「上一状态
+  非零」时写一次清零回执——空闲稳态零磁盘写。`--once` 与测试直调
+  `run_once` 不经此账。
+- **读者**：Mac app（`mac/Sources/LoopHealth.swift`，纯 Foundation，
+  LogicTests 直测）。仅当 dashboard **新鲜**（本会判 `.ok`）时参考：
+  `consecutive_failures ≥ 3`（`LOOP_ALARM_AFTER`，两侧同值）→
+  `PipelineHealth.failing` → 菜单栏警示图标（复用既有 ≠ok 通道）+ 看板/
+  popover 红色横幅（PipelineHealthBanner 新 case）。恢复清零 → 自动消。
+- 为什么不用新鲜度兜底：run_once 的 write-early 会在 pass 崩溃前更新
+  `generated_at`——2026-07-06 NameError 连崩 15+ pass 期间看板一路绿灯。
+  dashboard 已 stale/dead 时**不**看此文件（那两个 verdict 更严重且已有
+  横幅与修复路径）；文件缺失/损坏/清零 → 不报警（诊断文件绝不自己成为
+  报警源）。

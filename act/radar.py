@@ -49,6 +49,21 @@ FAILED_QUEUE_NAME = "radar_failed.json"
 # skipped+analytics 都有记录）——毒 note 不再无限重烧 claude，也绝不静默消失。
 FAILED_MAX_ATTEMPTS = 5
 
+# §47.1 瞬时失败（transient）同 pass 退避重试：网络类（DNS/连接/claude API 抖动）
+# 与外部 SIGTERM（exit 143）几秒内通常自愈——生产台账里 9.4% 的提取轮失败绝大
+# 多数属此类，等 30 min 下一轮 cron 太浪费。1 次重试、5s 退避；重试仍失败才走
+# 既有跨 pass 重试台账（radar_failed.json）。TimeoutExpired 不在此列：600s 已经
+# 烧掉了，同 pass 再烧 600s 会把整轮拖过 cron 间隔（跨 pass 台账管它）。
+TRANSIENT_MAX_RETRIES = 1
+TRANSIENT_BACKOFF_S = 5.0
+# 子串匹配 claude CLI 的 stderr/exit 描述（RuntimeError 文本，见 _run_extract）。
+_TRANSIENT_PATTERNS = (
+    "ENOTFOUND", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "EAI_AGAIN",
+    "ENETUNREACH", "EHOSTUNREACH", "EPIPE", "getaddrinfo",
+    "socket hang up", "fetch failed", "Connection error", "connection error",
+    "timed out", "network", "exit 143",
+)
+
 # v0.42: parameterized on cfg.owner_name ({owner} slots, substituted in
 # _extract_prompt via str.replace — .format would trip on the JSON braces)
 # and reframed from "what the manager is asking" to "asks directed at the
@@ -183,6 +198,14 @@ def _record_failure(queue: dict, note: Path, mtime: float, error: str) -> dict:
     return entry
 
 
+def _is_transient_error(error: str) -> bool:
+    """§47.1：这条提取失败像不像「等几秒就会好」的瞬时故障（网络类 / 外部
+    SIGTERM）。只用于同 pass 退避重试的放行判据——判错的代价是多烧一次
+    claude 或多等一轮 cron，两边都无害。"""
+    e = str(error or "")
+    return any(p in e for p in _TRANSIENT_PATTERNS)
+
+
 def _is_note_level_error(error: str) -> bool:
     """Note-level failures (this note's own extraction stumbled) vs
     channel-level ones (API/network/key — nothing would have succeeded).
@@ -256,6 +279,72 @@ def file_give_up_card(note: Path, entry: dict) -> Optional[Requirement]:
         return None
 
 
+# §47.2 解析失败降级卡 — dedup marker in sources[0]["channel"]（同 §40 形态）
+PARSE_DEGRADE_CHANNEL = "radar-parse-degraded"
+# 原文进卡 notes 的截断上限：绝大多数 note 远小于此（完整保留）；超长 note
+# 截断后卡里仍有回指路径（file: <ref>），不许一张卡撑爆 registry YAML。
+_PARSE_DEGRADE_RAW_CAP = 10_000
+
+
+def file_parse_degraded_card(note: Path, note_text: str,
+                             last_raw: str) -> Optional[Requirement]:
+    """§47.2：提取输出同 pass 重试一次后仍不可解析 → 原文降级为一张低置信
+    待办卡（备选/detected 列），绝不静默丢弃。
+
+    生产日志里 "unparseable extraction" 丢过 6 条真实待办——宪法第 11 条保证
+    了不崩 pass，但「不崩」不等于「不丢」。降级卡把未加工的原文整段带进
+    notes（过 ``sanitize.fence_untrusted`` 围栏：这段文本是不可信外部内容，
+    卡片正文日后可能被拼进任何 LLM prompt——merge-review/rework 注入——先围
+    起来才符合宪法第 5 条），用户随时可以人工处理。
+
+    入库走 ``registry.upsert``（身份 = note 路径，channel=PARSE_DEGRADE_CHANNEL，
+    同 §40 give-up 卡的去重形态，不走 merge_or_new 的 LLM 匹配）：一篇 note
+    一辈子至多一张降级卡。返回落库/命中的卡（新建或既有 dup 都算「内容有
+    兜底」）；落库异常向上抛，由调用方退回跨 pass 重试台账兜底。
+    """
+    ref = str(note)
+    for r in registry.load_all(include_archived=True):
+        if any(isinstance(s, dict) and s.get("channel") == PARSE_DEGRADE_CHANNEL
+               and s.get("ref") == ref for s in (r.sources or [])):
+            return r  # already filed for this note — dedup, still "accounted"
+    raw_txt = (note_text or "")[:_PARSE_DEGRADE_RAW_CAP]
+    truncated = len(note_text or "") > _PARSE_DEGRADE_RAW_CAP
+    req = Requirement(
+        id=registry.next_id(),
+        title=failures.pick(f"一篇笔记提取解析失败，原文待处理：{note.name}",
+                            f"Extraction unparseable — raw note kept: "
+                            f"{note.name}")[:80],
+        type="diagnostic",
+        tier="T0",
+        status=registry.State.DETECTED.value,
+        hardness="soft",
+        summary=failures.pick(
+            f"LLM 提取输出两次都解析不出来，原文已原样保留在这张卡里"
+            f"（也还在 {ref}）。",
+            f"The LLM extraction output was unparseable twice; the raw note "
+            f"is preserved on this card (and still at {ref})."),
+        notes=(failures.pick(
+            "[radar-parse-degraded] 解析失败降级，原文未加工（同 pass 重试一次后仍不可解析）",
+            "[radar-parse-degraded] degraded on parse failure — raw text "
+            "unprocessed (still unparseable after an in-pass retry)")
+            + f"\nlast raw output (head): {(last_raw or '')[:160]!r}"
+            + f"\nfile: {ref}\n"
+            + sanitize.fence_untrusted(
+                raw_txt + ("\n…(truncated)" if truncated else ""))),
+        sources=[{
+            "who": note.stem,
+            "channel": PARSE_DEGRADE_CHANNEL,
+            "date": _note_date(note),
+            "quote": None,
+            "ref": ref,
+        }],
+    )
+    saved = registry.upsert(req)
+    analytics.log_event("radar_parse_degraded", source="obsidian",
+                        note=note.name, req=saved.id)
+    return saved
+
+
 # --------------------------------------------------------------------------- #
 # claude -p extraction
 # --------------------------------------------------------------------------- #
@@ -296,6 +385,27 @@ def _run_extract(note_text: str, runner=None) -> str:
             f"claude exit {proc.returncode}: {(proc.stderr or proc.stdout or '')[-160:]}"
         )
     return proc.stdout or ""
+
+
+def _extract_with_retry(note_text: str, note: Path, runner=None) -> str:
+    """§47.1：带瞬时失败退避重试的 ``_run_extract``。
+
+    网络类错误 / exit 143（外部 SIGTERM）→ 同 pass 退避 TRANSIENT_BACKOFF_S 秒
+    后重试（至多 TRANSIENT_MAX_RETRIES 次）；其余错误与重试耗尽照旧抛出，由
+    调用方按原路进跨 pass 重试台账。TimeoutExpired（SubprocessError）不重试——
+    600s 预算已烧完，再来一轮会把整个 pass 拖过 30 min 的 cron 间隔。
+    """
+    attempt = 0
+    while True:
+        try:
+            return _run_extract(note_text, runner=runner)
+        except (OSError, RuntimeError) as e:
+            if attempt >= TRANSIENT_MAX_RETRIES or not _is_transient_error(str(e)):
+                raise
+            attempt += 1
+            analytics.log_event("radar_transient_retry", source="obsidian",
+                                note=note.name, attempt=attempt)
+            time.sleep(TRANSIENT_BACKOFF_S)
 
 
 def _find_json_array(text: str) -> Optional[list]:
@@ -576,12 +686,17 @@ def scan(runner=None, triager=None) -> dict:
     水位语义 v2（marker + 失败重试台账）: the marker advances over every note the
     pass has ACCOUNTED FOR — successfully processed OR recorded as failed in
     state/radar_failed.json. A note whose extraction fails (claude error,
-    unreadable file, unparseable output) goes to that retry queue and is
+    unreadable file) goes to that retry queue and is
     re-tried once per pass, up to FAILED_MAX_ATTEMPTS, then given up WITH a
     visible trace (skipped line + radar_give_up analytics + the queue entry
     stays as the case file + a §40 diagnostic card in 备选, deduped by note
     path) — silently losing a note is the radar's worst failure mode. Editing
     the note (mtime change) resets its attempt budget.
+
+    §47 复述（详见各函数 docstring）：瞬时失败（网络/exit 143）先同 pass 退避
+    重试一次（_extract_with_retry）才进台账；解析失败（unparseable）同 pass 重
+    新提取一次，仍失败则降级成低置信卡兜住原文（file_parse_degraded_card），
+    note 记 accounted 不进台账——只有降级卡本身落库失败才退回台账老路。
 
     为什么不再让失败 note 钉死 marker（旧语义）——旧语义自相矛盾：
     ① 失败 note 与更早成功的 note 共享同一 mtime 时，marker 已被成功者推到
@@ -787,26 +902,33 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
         # note 曾让整个 pass 崩掉、marker/health 全部停摆。
         return f"unreadable note {note.name}: {e}"
     try:
-        raw = _run_extract(text, runner=runner)
+        raw = _extract_with_retry(text, note, runner=runner)
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:
         return f"claude -p failed on {note.name}: {type(e).__name__}: {str(e)[:160]}"
     items = _parse_extraction(raw)
-    salvage_error: Optional[str] = None
+    degraded = False
     if items is None:
-        # Truncation rescue (2026-07-22 review): the model's stream can stop
-        # mid-array with exit 0. Complete leading objects are REAL
-        # extractions — file them now so they aren't hostage to the retry
-        # cycle, but still return an error so the note stays queued (the
-        # re-run re-extracts everything; merge_or_new dedups the survivors,
-        # so the tail items get their chance with zero double-filing).
+        # §47.2 解析失败兜底：先同 pass 重新提取一次（LLM 非确定性，第二次
+        # 常常就是合法 JSON）；重试仍解析失败 → 不再交给跨 pass 重试队列空
+        # 转，而是【降级】——先做截断抢救（2026-07-22 review：exit 0 的流可
+        # 能停在对象中间，完整的前缀对象是真提取，照常落库），再把整篇原文
+        # 落成一张低置信降级卡（file_parse_degraded_card，按路径去重）。
+        # 降级卡兜住了内容，note 就算 accounted（返回 None），不进台账。
         _dump_debug_raw(note, raw or "")
-        salvaged = _salvage_truncated_array(raw or "")
-        if not salvaged:
-            return f"unparseable extraction on {note.name}: {(raw or '')[:80]!r}"
-        items = salvaged
-        salvage_error = (f"unparseable extraction on {note.name} — salvaged "
-                         f"{len(salvaged)} complete item(s), note stays "
-                         "queued for retry")
+        retry_raw: Optional[str] = None
+        try:
+            retry_raw = _extract_with_retry(text, note, runner=runner)
+        except (OSError, subprocess.SubprocessError, RuntimeError):
+            retry_raw = None  # 重试提取本身失败 → 按解析仍失败走降级
+        items = _parse_extraction(retry_raw) if retry_raw is not None else None
+        if items is None:
+            if retry_raw is not None:
+                _dump_debug_raw(note, retry_raw)
+            items = _salvage_truncated_array(retry_raw or raw or "")
+            degraded = True
+        else:
+            analytics.log_event("radar_parse_retry_ok", source="obsidian",
+                                note=note.name)
     summary["extracted"] += len(items)
     item_error: Optional[str] = None
     for item in items:
@@ -885,10 +1007,24 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
                 and (kind in ("follow_up", "reraised")
                      or (hc and kind == "proposed")):
             summary["cards"] += 1
+    if degraded:
+        # §47.2：降级卡成功落库（或按路径 dedup 命中既有卡）→ 内容有兜底，
+        # note 记为 accounted（skipped 里留痕但不进重试台账）；降级卡本身
+        # 落库失败 → 退回老路：unparseable 进跨 pass 重试台账（兜底的兜底）。
+        salvage_note = f" (salvaged {len(items)} complete item(s))" if items else ""
+        try:
+            card = file_parse_degraded_card(note, text, raw or "")
+        except Exception:  # noqa: BLE001 - 降级失败不许炸 pass，退回台账
+            card = None
+        if card is None:
+            return (f"unparseable extraction on {note.name}: "
+                    f"{(raw or '')[:80]!r}")
+        summary["skipped"].append(
+            f"unparseable extraction on {note.name} — degraded to "
+            f"low-confidence card {card.id}{salvage_note}")
     # 有 item 落库失败 -> 整篇 note 进重试台账重跑（merge_or_new 会去重已成功
-    # 落库的兄弟项），比只丢这一条更诚实。salvage 场景同理：已救出的落了库，
-    # note 本身留在重试队列等一次完整提取。
-    return item_error or salvage_error
+    # 落库的兄弟项），比只丢这一条更诚实。
+    return item_error
 
 
 def main(argv: Optional[list[str]] = None) -> int:

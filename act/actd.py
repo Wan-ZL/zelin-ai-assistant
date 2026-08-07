@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import os
 import re
 import subprocess
 import sys
@@ -2730,6 +2731,55 @@ def gc_attachments() -> int:
 
 
 # --------------------------------------------------------------------------- #
+# §47.3 loop health — 连续 pass 崩溃的可见化（state/loop_health.json）
+# --------------------------------------------------------------------------- #
+LOOP_HEALTH_NAME = "loop_health.json"
+# 连续失败达到该阈值 App 侧才报警（Mac Store 的 PipelineHealth.failing 同一
+# 数值，mac/Sources/LoopHealth.swift）：单次失败可能是瞬时抖动，连续 3 次
+# （~30s）说明每轮都在同一处崩（2026-07-06 的 NameError 连崩 15+ pass，只有
+# 日志一条 log，用户一周后才发现——这个文件就是那次事故的止血带）。
+LOOP_ALARM_AFTER = 3
+
+
+class LoopHealthTracker:
+    """记录主循环 pass 成败并投影到 state/loop_health.json（原子写，绝不抛）。
+
+    形状（add-only，Mac app 只读）：
+      {"consecutive_failures": int, "last_error": str|null, "updated_at": iso}
+    写盘策略：失败每次都写（计数在涨）；成功只在「上一状态非零」时写一次
+    （清零回执）——空闲稳态一个字节都不写，不给 10s 心跳加磁盘开销。
+    """
+
+    def __init__(self) -> None:
+        self.consecutive_failures = 0
+
+    def _write(self, error: Optional[str]) -> None:
+        try:
+            config.ensure_state_dirs()
+            path = config.STATE_DIR / LOOP_HEALTH_NAME
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps({
+                "consecutive_failures": self.consecutive_failures,
+                "last_error": (error or "")[:300] or None,
+                "updated_at": _dt.datetime.now(_dt.timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:  # noqa: BLE001 - health 投影绝不反杀主循环
+            pass
+
+    def record_failure(self, error: str) -> None:
+        self.consecutive_failures += 1
+        self._write(error)
+
+    def record_success(self) -> None:
+        if self.consecutive_failures == 0:
+            return  # 稳态不写盘
+        self.consecutive_failures = 0
+        self._write(None)  # 恢复回执 → App 侧红点自动消
+
+
+# --------------------------------------------------------------------------- #
 # one pass + loop
 # --------------------------------------------------------------------------- #
 def run_once(
@@ -2839,10 +2889,13 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     _log(f"actd starting (interval={interval}s, home={config.HOME})")
     prev_dash: Optional[dict] = None
+    loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
     while True:
         try:
             prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified)
+            loop_health.record_success()
         except Exception as e:  # noqa: BLE001 - one bad pass must not kill loop
+            loop_health.record_failure(f"{type(e).__name__}: {e}")
             _log(f"loop pass FAILED: {e}\n{traceback.format_exc()}")
         time.sleep(interval)
 
