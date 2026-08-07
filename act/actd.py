@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import re
 import subprocess
 import sys
 import time
@@ -1403,7 +1404,12 @@ def _stop_session_tracked(req: Requirement, ex: dict, sid, why: str,
            f"可能仍在后台运行——请在终端 `claude stop` 手动停止")
     req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
     notify.notify(*notify.msg_stop_failed(req.title or req.id), req=req.id)
-    analytics.log_event("stop_failed", req=req.id, error=str(detail)[:120])
+    # analytics 打点脱敏（TELEMETRY 红线，对齐 answer_failed 的截断 error 口径）：
+    # 会话 UUID 只留前 8 位、PID 不出机——detail 里两者都可能出现（"session
+    # <uuid> still alive (pid N)"），全量只进本机台账（stop_failed_error/notes）。
+    safe = str(detail).replace(str(sid), str(sid)[:8])
+    safe = re.sub(r"\bpid\s+\d+", "pid ?", safe)
+    analytics.log_event("stop_failed", req=req.id, error=safe[:120])
     return False, issued
 
 
@@ -2353,12 +2359,13 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     return True
 
 
-# §46 resume 风暴降级：同一张卡在短窗口内被自动救活（resume/brief 启动）达阈值
-# 次仍再死 —— 卡死→救→再死的循环没有出口（生产 2026-08-07：R-187 4 分钟三连救；
-# 2026-07-29：R-142 13 分钟四连救，attempts 每次被「见到活着」清零，退避永远
-# 从零开始）。达阈值即置 resume_exhausted（复用既有放弃机制），投影进 需输入
-# 列请人看一眼。窗口内的启动记录在 execution.resume_history（ISO 列表，封顶）。
-RESUME_STORM_THRESHOLD = 3          # 窗口内自动救活次数达此值 → 降级
+# §46 resume 风暴降级：同一张卡在短窗口内被成功救活（resume/brief 成功启动）
+# 达阈值次仍再死 —— 卡死→救→再死的循环没有出口（生产 2026-08-07：R-187 4 分钟
+# 三连救；2026-07-29：R-142 13 分钟四连救，attempts 每次被「见到活着」清零，
+# 退避永远从零开始）。达阈值即置 resume_exhausted（复用既有放弃机制），投影进
+# 需输入列请人看一眼。成功启动记录在 execution.resume_history（ISO 列表，封顶）；
+# 失败的启动尝试不入账——那是 attempts>=5 连续失败分支的地盘（§46.2）。
+RESUME_STORM_THRESHOLD = 3          # 窗口内成功救活次数达此值 → 降级
 RESUME_STORM_WINDOW_S = 30 * 60     # 风暴判定窗口：30 分钟
 RESUME_HISTORY_CAP = 10             # resume_history 保留最近 N 条，防无限增长
 
@@ -2492,9 +2499,10 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
         # -> resume w/ backoff
         if ex.get("resume_exhausted"):
             continue
-        # §46 resume 风暴降级：窗口内已救活 N 次还是死了 —— 停止无限救活。
-        # 与下方 attempts>=5 的「连续失败」放弃互补：风暴计数按启动次数算
-        # （成功启动后短命再死也算），attempts 被「见到活着」清零骗不过它。
+        # §46 resume 风暴降级：窗口内已成功救活 N 次还是死了 —— 停止无限救活。
+        # 与下方 attempts>=5 的「连续失败」放弃互补：风暴计数只数成功启动
+        # （救活后短命再死也算），attempts 被「见到活着」清零骗不过它；
+        # 连续失败启动则只走 attempts 路径，网络抖动 3 连败不该永久降级。
         storm_n = _recent_resume_count(ex)
         if storm_n >= RESUME_STORM_THRESHOLD:
             ex["resume_exhausted"] = True
@@ -2536,6 +2544,11 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             # briefing prompt instead of a bare resume (one launch, two jobs).
             if ex.get("pending_briefings"):
                 ok = executor.brief(req, cfg)
+                # brief 内部走 _rebook（重读卡片再落盘新 session_id/清队列），
+                # 传入的 req 仍是启动前的旧快照——必须从盘上重读再记账，否则
+                # 下面的 save 会用旧 execution 把 brief 刚写的账整个回滚
+                # （旧 session_id 复活 → 每个 pass 重复起会话）。
+                req = registry.load(req.id) or req
             else:
                 ok = executor.resume(req, cfg)
             ex_after = dict(req.execution or {})
@@ -2550,12 +2563,15 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                     ex_after["resume_attempts"] = attempts + 1
                     ex_after["last_resume_at"] = _iso_now()
                     ex_after["last_resume_ok"] = False
-            # §46 风暴台账：每次自动救活启动（成功与否、resume 或 brief）都记
-            # 一条 —— 存活即被清零的 resume_attempts 骗得过退避、骗不过这本账。
-            hist = [str(h) for h in (ex_after.get("resume_history") or [])
-                    if h] if isinstance(ex_after.get("resume_history"), list) else []
-            hist.append(_iso_now())
-            ex_after["resume_history"] = hist[-RESUME_HISTORY_CAP:]
+            else:
+                # §46 风暴台账：只记「成功启动」（resume 或 brief）——存活即被
+                # 清零的 resume_attempts 骗得过退避、骗不过这本账。失败的启动
+                # 尝试归上面 attempts>=5 的连续失败分支管：把失败也记进风暴账，
+                # 一次网络抖动 3 连败就永久降级，5 连败分支也成了死代码。
+                hist = [str(h) for h in (ex_after.get("resume_history") or [])
+                        if h] if isinstance(ex_after.get("resume_history"), list) else []
+                hist.append(_iso_now())
+                ex_after["resume_history"] = hist[-RESUME_HISTORY_CAP:]
             req.execution = ex_after
             registry.save(req)
             resumed += 1

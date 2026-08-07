@@ -4,15 +4,21 @@
 继续烧钱/占资源。判例：
 
 executor.stop_session_confirmed(sid) -> (stopped, issued, detail)
-  - roster 无活 pid：确认成功 (True, False, "not running")，一次 stop 都不发；
+  - roster 确认无活 pid：成功 (True, False, "not running")，一次 stop 都不发；
   - 有 pid、stop 后死掉：(True, True, ...)；重试轮之间退避（sleeper 可注入）；
-  - 重试打满仍存活：(False, ...)——这是要留痕的失败。
-  三个 seam（prober/stopper/sleeper）全部可注入，绝不 spawn 真 claude。
+  - 重试打满仍存活：(False, ...)——这是要留痕的失败；
+  - 探测失败（prober None/抛异常，CLI 超时）≠「不在 roster」：立即判失败、
+    不发 stop、不重试——绝不误判成「已停」清台账（PR #97 review P1）；
+  - 超总预算 STOP_CONFIRM_BUDGET_S（clock 可注入）：立即判失败——单线程
+    actd 主循环不能被一次 stop 挂死 ~218s（PR #97 review P2）。
+  seam（prober/stopper/sleeper/budget_s/clock）全部可注入，绝不 spawn 真 claude。
 
 actd._stop_session_tracked（所有 inbox stop 调用点的统一外壳）：
   - stop 确认失败 -> execution.stop_failed_at/stop_failed_error 台账 +
     notes [stop-failed] 标签（notes_text 投影到看板）+ notify.msg_stop_failed
     + analytics `stop_failed`，但绝不阻塞调用方的状态落账；
+  - analytics 打点脱敏：error 里会话 UUID 只留前 8 位、PID 脱掉（TELEMETRY
+    红线）——全量 detail 只进本机台账；
   - 之后一次确认成功 -> 清掉台账字段。
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
@@ -83,6 +89,51 @@ class StopSessionConfirmedTestCase(unittest.TestCase):
             SID, retries=2, prober=prober, stopper=stopper, sleeper=mock.Mock())
         self.assertTrue(stopped)
         self.assertTrue(issued)                   # 第二发成功过
+
+    def test_probe_failure_is_a_failure_not_a_confirmed_stop(self):
+        # CLI 超时/崩溃（prober None）≠「不在 roster」：进程可能还活着 ——
+        # 判失败留痕，不发 stop、不再重试（重试打的还是同一个挂死的 CLI）
+        prober = mock.Mock(return_value=None)
+        stopper = mock.Mock()
+        stopped, issued, detail = executor.stop_session_confirmed(
+            SID, prober=prober, stopper=stopper, sleeper=mock.Mock())
+        self.assertFalse(stopped)
+        self.assertFalse(issued)
+        self.assertIn("roster query failed", detail)
+        stopper.assert_not_called()
+        prober.assert_called_once()               # 不重试
+
+    def test_probe_exception_is_a_failure_not_a_confirmed_stop(self):
+        prober = mock.Mock(side_effect=RuntimeError("roster exploded"))
+        stopped, _, detail = executor.stop_session_confirmed(
+            SID, prober=prober, stopper=mock.Mock(), sleeper=mock.Mock())
+        self.assertFalse(stopped)
+        self.assertIn("roster query failed", detail)
+
+    def test_budget_exceeded_is_a_reported_failure(self):
+        # 总预算 60s：超时立即判失败返回，单线程 actd 不被一次 stop 挂死
+        clock = mock.Mock(side_effect=[0.0, 100.0])   # deadline 计算后即超预算
+        prober = mock.Mock()
+        stopped, issued, detail = executor.stop_session_confirmed(
+            SID, prober=prober, stopper=mock.Mock(), sleeper=mock.Mock(),
+            budget_s=60.0, clock=clock)
+        self.assertFalse(stopped)
+        self.assertFalse(issued)
+        self.assertIn("budget", detail)
+        prober.assert_not_called()
+
+    def test_budget_cuts_off_between_retry_rounds(self):
+        # 首轮在预算内正常探测+发 stop；第二轮开场已超预算 -> 判失败不再打
+        clock = mock.Mock(side_effect=[0.0, 1.0, 5.0, 100.0])
+        prober = mock.Mock(return_value={"pid": 42})
+        stopper = mock.Mock(return_value=True)
+        stopped, issued, detail = executor.stop_session_confirmed(
+            SID, retries=2, prober=prober, stopper=stopper,
+            sleeper=mock.Mock(), budget_s=60.0, clock=clock)
+        self.assertFalse(stopped)
+        self.assertTrue(issued)                   # 首轮那发算数
+        self.assertIn("budget", detail)
+        self.assertEqual(stopper.call_count, 1)
 
 
 def _drop_inbox(action, req_id):
@@ -156,6 +207,29 @@ class StopFailureLedgerTestCase(unittest.TestCase):
         req = self._accept(mock.Mock(side_effect=RuntimeError("roster exploded")))
         self.assertEqual(req.status, State.DELIVERED.value)
         self.assertIn("[stop-failed]", req.notes or "")
+
+    def test_analytics_detail_carries_no_full_uuid_or_pid(self):
+        # TELEMETRY 红线：analytics 默认上传——error 里全量会话 UUID 只留
+        # 前 8 位、PID 脱掉；全量 detail 只进本机台账（stop_failed_error/notes）
+        req = Requirement(id="R-902", title="打点脱敏测试",
+                          status=State.REVIEW.value,
+                          execution={"session_id": SID, "done": True})
+        registry.save(req)
+        _drop_inbox("accept", "R-902")
+        with mock.patch.object(actd.executor, "stop_session_confirmed",
+                               mock.Mock(return_value=(
+                                   False, True,
+                                   f"session {SID} still alive (pid 7)"))):
+            actd.process_inbox()
+        req = registry.load("R-902")
+        self.assertIn(SID, (req.execution or {}).get("stop_failed_error") or "")
+        errs = [e.get("error") or "" for e in analytics.read_events()
+                if e.get("event") == "stop_failed" and e.get("req") == "R-902"]
+        self.assertTrue(errs)
+        for err in errs:
+            self.assertNotIn(SID, err)            # 全量 UUID 不出机
+            self.assertNotIn("pid 7", err)        # PID 不出机
+            self.assertIn(SID[:8], err)           # 前 8 位留作关联线索
 
 
 if __name__ == "__main__":

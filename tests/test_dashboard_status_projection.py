@@ -12,6 +12,8 @@
     executing        done                  review
     executing        缺席 (roster 无此 sid)  running (state unknown)
     executing        缺席 + resume_exhausted needs_input   ← §46 降级卡
+    executing        死条目(无 pid) + exhausted needs_input ← 死 = 无活 pid，
+                                              不是「不在 roster」（--all 留死条目）
     approved         —                     running (queued)
     review           缺席/idle             review
     review           working (live)        running (from_review)
@@ -97,6 +99,16 @@ class StatusProjectionMatrixTestCase(unittest.TestCase):
         row = dash["needs_input"][0]
         self.assertIs(row.get("resume_exhausted"), True)   # add-only 标记
         self.assertEqual(row["state"], "blocked")
+
+    def test_executing_exhausted_dead_roster_entry_projects_needs_input(self):
+        # §46：roster --all 会给 failed/stopped 留死条目（无 pid）——死的判据
+        # 是「无活 pid」（copy_cmd 的既有活性判据），不是「不在 roster」；
+        # 按缺席判会让降级卡顶着死条目继续在 running 里装忙
+        req = Requirement(id="R-5b", title="t", status=State.EXECUTING.value,
+                          execution={"session_id": SID, "resume_exhausted": True})
+        dash = _build(req, [_agent("failed", pid=None)])
+        self._assert_single_lane(dash, "R-5b", "needs_input")
+        self.assertIs(dash["needs_input"][0].get("resume_exhausted"), True)
 
     def test_executing_exhausted_but_live_agent_stays_running(self):
         # 降级标记残留 + agent 实际活着在干活 -> 以 roster 事实为准，照常 running

@@ -2052,31 +2052,44 @@ reconcile「见到活着」把 `resume_attempts` 清零，退避永远从零开�
 统一可靠性外壳（旧 `stop_session` 原样保留，rework/answer/brief 的
 stop-idle-then-resume 内部路径不变）：
 
-- **verify-first 循环**：每轮先探 roster；无活 pid 即确认已停（含「本来就没
-  在跑」）；有 pid 则发 `claude stop`（自带 2s 等死窗口），重试轮之间退避
-  2s·4s；打满 `retries=2` 次重试仍存活 → 判失败。返回
+- **verify-first 循环**：每轮先探 roster；**确认**无活 pid 即视为已停（含
+  「本来就没在跑」）；有 pid 则发 `claude stop`（自带 2s 等死窗口），重试轮
+  之间退避 2s·4s；打满 `retries=2` 次重试仍存活 → 判失败。返回
   `(stopped, issued, detail)`——`issued` 区分「我们停掉的」与「本来就死的」
   （`_stop_live_session` 只在 stopped∧issued 时收走 session_id，restore
-  不丢线索）。三个 seam（prober/stopper/sleeper）可注入，测试绝不 spawn 真
-  claude。
+  不丢线索）。seam（prober/stopper/sleeper/budget_s/clock）全部可注入，
+  测试绝不 spawn 真 claude。
+- **探测失败 ≠ 已停**：roster 查询失败（CLI 超时/崩溃/非零退出/坏 JSON，
+  prober 返回 None 或抛异常）与「roster 里真没有」是两回事——前者进程可能还
+  活着，**立即判 stop 失败落台账**、不再重试（重试打的还是同一个无响应的
+  CLI）；只有确认查到「无活 pid」才算已停。
+- **总预算**：一次确认全程限 `STOP_CONFIRM_BUDGET_S=60s`（调用方是单线程
+  actd 主循环，无预算最坏串行 ~218s）；超预算立即按失败返回、落台账。
 - **actd `_stop_session_tracked`**（merge/accept/done_external/abort_execution/
   stop_to_review/reject·trash 全部调用点改走此壳）：仍 best-effort（吞异常、
   **绝不阻塞**调用方的状态落账——§10 各条款的「stop 失败不阻塞」语义不变），
   但失败不再静默：`execution.stop_failed_at`/`stop_failed_error`（add-only
   字段）落台账 + notes 追加 `[stop-failed]` 标签（经 §38 notes_text 投影，
   看板可见可搜）+ `notify.msg_stop_failed` 通知 + analytics `stop_failed`
-  打点。之后一次确认成功 → 清台账字段（台账只描述当前事实）。
+  打点。之后一次确认成功 → 清台账字段（台账只描述当前事实）。**打点脱敏**
+  （TELEMETRY 红线）：analytics 的 error 字段里会话 UUID 只留前 8 位、PID
+  一律脱掉；全量 detail 只进本机台账（stop_failed_error/notes）。
 - 单写者不破（宪法 1）：外壳只改内存 req/ex，落盘仍由 actd 调用方 save。
 
 ### 46.2 resume 风暴降级
 
-reconcile 的 auto-resume 增加一本**按启动次数计的风暴台账**（与既有「连续
-失败 ≥5 次 → resume_exhausted」互补——后者被「见到活着即清零」骗过，前者
-骗不过）：
+reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账**（与既有「连续
+失败 ≥5 次 → resume_exhausted」互补且分工明确——后者管「救不活」（连续失败
+启动），被「见到活着即清零」骗过；前者管「救活了又死」，骗不过）：
 
-- 每次自动救活启动（`executor.resume` 或 brief 合并启动，成功与否都算）在
-  `execution.resume_history`（ISO 时间戳列表，add-only，封顶
-  `RESUME_HISTORY_CAP=10` 条）记一条；
+- 每次**成功**的自动救活启动（`executor.resume` 或 brief 合并启动，ok=True）
+  在 `execution.resume_history`（ISO 时间戳列表，add-only，封顶
+  `RESUME_HISTORY_CAP=10` 条）记一条——数「救活成功」不数「尝试」：失败启动
+  只走既有 resume_attempts 路径，否则一次网络抖动 3 连败就永久降级、5 连败
+  分支也成死代码；
+- brief 启动的记账基于 brief **落盘后重读**的卡片（brief 内部已重载 registry
+  保存新 session_id/清空队列，reconcile 不得用启动前的旧 execution 快照覆盖
+  回滚它——否则旧会话 id 复活，每个 pass 重复起会话）；
 - 死会话准备救活前先数窗口：`RESUME_STORM_WINDOW_S=30min` 内启动数 ≥
   `RESUME_STORM_THRESHOLD=3` → **降级**：置 `resume_exhausted`（复用既有
   放弃机制，从不自清的语义不变）+ `resume_storm_at`（add-only）+ notes 追加
@@ -2091,8 +2104,10 @@ reconcile 的 auto-resume 增加一本**按启动次数计的风暴台账**（�
 ### 46.3 投影判例（§2 needs_input 语义补充）
 
 - **§2 add-only 修订**：needs_input 分区除「executing × roster blocked」外，
-  新收「executing × `resume_exhausted` × 会话不在 roster 上（且无 done）」的
-  降级卡——需要人才能推进的卡不再在 running 里装 unknown（宪法 3/10）。该行
+  新收「executing × `resume_exhausted` × 会话无活 pid（且无 done）」的
+  降级卡——「死」按活 pid 判（copy_cmd 的既有活性判据），不按「不在 roster」
+  判：roster --all 会给 failed/stopped 留死条目，按缺席判会让这些卡继续在
+  running 里装忙。需要人才能推进的卡不再在 running 里装 unknown（宪法 3/10）。该行
   带 add-only 字段 `resume_exhausted: true`（老 App decodeIfPresent 忽略）；
   `detect_transitions` 对带此标记的行**不发** msg_needs_input（reconcile 已发
   过精确文案，且 agent 并没有在提问）。roster 上实际活着（working/idle）的
