@@ -156,6 +156,65 @@ class PresetFailSafeTests(TriageBase):
         self.assertFalse(card.plan)
 
 
+class InFlightDedupTests(TriageBase):
+    """§34bis 在途判重判例：同类清理会话同时只跑一个。
+
+    不依赖 merge_or_new 的折叠分支 —— §34.1（[run] 一律新卡）合入后该分支
+    不存在，这里的防双开必须在 _apply_capture 之前（process_inbox）拦下。
+    """
+
+    def _click(self, ts="2026-08-07T00:00:00Z"):
+        _drop(_button_payload(ts=ts))
+        actd.process_inbox()
+
+    def test_in_flight_helper_status_matrix(self):
+        # 只有 approved/executing 算在途；review/delivered/无 preset 卡都不算
+        self.assertFalse(actd._proposals_triage_in_flight())
+        self._click()
+        card = self._only_card()                     # approved
+        self.assertTrue(actd._proposals_triage_in_flight())
+        card.set_status(State.EXECUTING)
+        registry.save(card)
+        self.assertTrue(actd._proposals_triage_in_flight())
+        card.set_status(State.REVIEW)
+        registry.save(card)
+        self.assertFalse(actd._proposals_triage_in_flight())
+        card.set_status(State.DELIVERED)
+        registry.save(card)
+        self.assertFalse(actd._proposals_triage_in_flight())
+
+    def test_second_click_while_queued_files_no_twin(self):
+        self._click()
+        self._click(ts="2026-08-07T00:01:00Z")
+        card = self._only_card()                     # 仍只有一张
+        self.assertEqual(str(card.status), State.APPROVED.value)
+        self.assertFalse(list(config.INBOX_DIR.glob("*.json")))  # 消费了不留尾
+
+    def test_second_click_while_executing_files_no_twin(self):
+        self._click()
+        card = self._only_card()
+        card.set_status(State.EXECUTING)
+        card.execution = {"session_id": "sid-x"}
+        registry.save(card)
+        self._click(ts="2026-08-07T00:02:00Z")
+        card = self._only_card()
+        self.assertEqual(str(card.status), State.EXECUTING.value)
+
+    def test_click_after_delivery_queues_a_fresh_round(self):
+        # 完结（delivered）后再点 = 用户要新开一轮 —— 在途判重放行，队列里
+        # 重新出现一张 approved 的清理卡（新卡或 §3.5 re-raise 的新一轮，
+        # 两种世界都成立；#96 合入后恒为新卡）。
+        self._click()
+        card = self._only_card()
+        card.set_status(State.DELIVERED)
+        registry.save(card)
+        self._click(ts="2026-08-07T00:03:00Z")
+        approved = [c for c in registry.load_all()
+                    if str(c.status) == State.APPROVED.value
+                    and c.preset == "proposals_triage"]
+        self.assertEqual(len(approved), 1)
+
+
 class RegistryGuardTests(TriageBase):
     """§34bis 机械护栏判例：只读红线不止 prompt 级 —— 起止快照比对兜底。
 

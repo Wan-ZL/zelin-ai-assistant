@@ -1379,12 +1379,22 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   疑似改动了 registry，请核查」。**只检测告警、不回滚、绝不阻塞提升**——
   权限模型不变，人工核查兜底；actd 中途重启会清空台账，可能偶发误报
   （检测型护栏宁误报不漏报）。
+- **在途判重（真正的防双开，不依赖判重分支）**：actd 应用 preset capture
+  **之前**先扫 registry——已存在 `preset` 相同且 `status ∈ approved /
+  executing` 的未完结清理卡 → **不铸新卡**，ack `running`（那轮清理真在
+  队列/在跑，诚实回执）。同类清理会话同时只跑一个：preset 固定任务的文案/
+  plan 每次点击都相同，连点的意图只可能是「催」——与 [run] 通道「每句话都是
+  新任务」的语义刚好相反，故这是 preset 的特例，普通 [run] capture 不受
+  影响。卡进 review/delivered 或被丢弃后再点 = 新开一轮，正常铸新卡。该
+  护栏独立于 `merge_or_new` 的折叠分支——§34.1（[run] 一律新卡）合入后依旧
+  成立；Swift 2s 冷却只是 UI 层辅助。
 - **判重照旧**（§34 处置表原文适用，判重逻辑零改动）：preset 注入的 plan 不进
-  `_carries_increment` 的增量口径——重复点击命中自己已 approved/executing 的
-  清理卡 → 只并 sources 不双开；命中既有卡的折叠/提升分支不改写对方 plan。
+  `_carries_increment` 的增量口径——在途判重放行后若仍命中既有卡的折叠/提升
+  分支，不改写对方 plan。（§34.1 合入后 [run] 不再判重，此条自然只剩历史
+  意义；在途判重是长期防线。）
 - **Mac UI**：按钮右对齐于提案列头（SectionHeader 尾部 Spacer 之后），
   bordered 小尺寸不喧宾夺主；`.help` 说明用途（临时会话、可参与、不直接改卡）；
-  点击后 2 s 冷却防连点（后端判重是真正的防双开）；乐观回显 = §34 的运行中列
+  点击后 2 s 冷却防连点（后端在途判重是真正的防双开）；乐观回显 = §34 的运行中列
   顶灰色排队占位卡（text=短标签=卡标题，归一匹配天然清除）。analytics：App 侧
   `capture_submit` 增加 add-only 字段 `preset`（source/mode 词表不变）。
 - **iOS / webui**：本期不发 `preset`（键 add-only；旧 actd 收到带 preset 的

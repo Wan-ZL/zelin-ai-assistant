@@ -912,8 +912,8 @@ private struct ArchiveLaneContent: View {
 // （chat 交付进待验收）。prompt 正文在 Python 侧（actd 的 preset 表）。
 private struct ProposalsTriageButton: View {
     let app: AppDelegate
-    /// 防连点冷却（2s）。真正的防双开由 actd 兜底：同文重复 capture 命中
-    /// 自己已 approved/executing 的清理卡只并 sources，不再排队（§34 处置表）。
+    /// 防连点冷却（2s）。真正的防双开由 actd 的在途判重兜底：已有
+    /// approved/executing 的清理卡时，preset capture 不铸新卡（§34bis）。
     @State private var cooling = false
 
     var body: some View {

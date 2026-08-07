@@ -170,6 +170,18 @@ def process_inbox() -> int:
                 cap_plan = None
                 if decision.get("preset") == PROPOSALS_TRIAGE_PRESET \
                         and decision.get("mode") == "run":
+                    # §34bis 在途判重：已有未完结的清理会话卡（approved/
+                    # executing）→ 不铸新卡，ack "running"（那轮清理真在
+                    # 队列/在跑，诚实回执）。独立于 merge_or_new 的折叠
+                    # 分支 —— §34.1（[run] 一律新卡）合入后依旧成立；
+                    # Swift 2s 冷却只是 UI 层辅助，这里才是真防双开。
+                    if _proposals_triage_in_flight():
+                        _log("inbox: preset capture skipped — a proposals-"
+                             "triage session is already queued/running")
+                        processed += 1
+                        _write_applied_ack(path.stem, "running")
+                        _safe_unlink(path)
+                        continue
                     cap_plan = _proposals_triage_plan()
                 result = _apply_capture(
                     decision.get("text"), decision.get("mode"),
@@ -503,6 +515,22 @@ def _proposals_triage_plan() -> list:
     ]
 
 
+def _proposals_triage_in_flight() -> bool:
+    """§34bis 在途判重：是否已有未完结的清理会话卡（同类同时只跑一个）。
+
+    preset 固定任务的特例语义：文案/plan 每次点击都相同，连点的意图只可能
+    是「催」而不是「再开一个」——与普通 [run] capture（用户打的每句话都算
+    新任务）刚好相反。只看 approved/executing：卡进了 review/delivered 或
+    被丢弃后再点 = 用户要新开一轮，正常铸新卡。
+    """
+    for req in registry.load_all():
+        if getattr(req, "preset", None) != PROPOSALS_TRIAGE_PRESET:
+            continue
+        if str(req.status) in (State.APPROVED.value, State.EXECUTING.value):
+            return True
+    return False
+
+
 def _registry_snapshot() -> dict:
     """§34bis 机械护栏起点：registry 目录清单快照（文件名 → "size:mtime_ns"）。"""
     snap: dict = {}
@@ -611,8 +639,9 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         status=State.DETECTED.value,
         hardness="soft",
         # §34bis add-only: preset 注入的固定 plan（目前仅 proposals_triage）。
-        # plan 不进 _carries_increment 的增量口径 —— 重复点击命中自己已
-        # approved/executing 的清理卡时仍走「只并 sources 不双开」的折叠分支。
+        # 防双开在上游：process_inbox 的在途判重已拦下「还有 approved/
+        # executing 清理卡」的重复点击 —— 走到这里的 preset capture 必然
+        # 该铸新卡（plan 也不进 _carries_increment 的增量口径）。
         plan=list(plan) if plan else None,
         preset=preset if plan else None,
         sources=[{
