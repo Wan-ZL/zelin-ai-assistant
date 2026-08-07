@@ -25,6 +25,7 @@ MARKERS=(
 
 FAILS=0
 ok()   { printf "  [ ok ] %s\n" "$1"; }
+warn() { printf "  [warn] %s\n" "$1"; }
 fail() { printf "  [FAIL] %s\n" "$1"; FAILS=$((FAILS + 1)); }
 
 # --- locate the installed app (install.sh falls back to ~/Applications) ---
@@ -111,40 +112,68 @@ esac
 
 # --- 5. main-thread hang reports (布局风暴防复发哨) ---
 # 2026-07-28/29 两次看板布局风暴把主线程卡死 17min/70s，系统各写了一份
-# ZelinAIEngineer 的 .hang 取证到 DiagnosticReports。这里扫：比当前安装的
-# app 还新的 hang 报告 = 这个 build 卡死过主线程 → FAIL 报警；更老的报告
-# 只提示（历史事故的尸检，不阻塞本次部署）。目录同时看系统级与用户级
-# （macOS 对用户进程通常写 ~/Library，Retired/ 是系统轮转后的归档）。
+# ZelinAIEngineer 的 .hang 取证到 DiagnosticReports。归因按报告里记录的
+# app 版本，不按文件 mtime：.hang 在挂起「结束」时才落盘，而部署要杀旧
+# 实例——旧 build 正卡着时装新版，尸检的 mtime 必然晚于 Info.plist，会被
+# 算到新 build 头上（review P2 的假阳性）。版本 == 当前安装版本 → FAIL；
+# 版本解析不出 → WARN 请人工看；其余 = 老版本的历史尸检，只计数。
+# 目录同时看系统级与用户级（macOS 对用户进程通常写 ~/Library，Retired/
+# 是系统轮转后的归档）。
 echo "==> 5. hang reports"
 HANG_DIRS=(
     "/Library/Logs/DiagnosticReports"
     "$HOME/Library/Logs/DiagnosticReports"
     "$HOME/Library/Logs/DiagnosticReports/Retired"
 )
-if [ ! -f "$APP/Contents/Info.plist" ]; then
-    fail "hang scan skipped — no installed app to date reports against"
+
+# .hang 报告里的 app 版本：新格式（macOS 12+）首行 JSON 头带 "app_version"；
+# 旧文本格式是 "Version: x.y.z (build)" 行。两种都试，解析不出输出空串。
+hang_report_version() {
+    local v
+    v="$(LC_ALL=C grep -m1 -o '"app_version" *: *"[^"]*"' "$1" 2>/dev/null \
+         | sed 's/.*"app_version" *: *"\([^"]*\)".*/\1/')"
+    if [ -z "$v" ]; then
+        v="$(LC_ALL=C sed -n 's/^Version:[[:space:]]*\([^ ][^ ]*\).*/\1/p' "$1" 2>/dev/null | head -n 1)"
+    fi
+    printf '%s' "$v"
+}
+
+CUR_VER="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ -z "$CUR_VER" ]; then
+    fail "hang scan skipped — cannot read the installed app's version to attribute reports against"
 else
-    NEW_HANGS=""
+    THIS_HANGS=""
+    UNKNOWN_HANGS=""
     OLD_COUNT=0
     for dir in "${HANG_DIRS[@]}"; do
         [ -d "$dir" ] || continue
         # ZelinAIEngineer-*.hang / ZelinAIEngineer_*.hang 两种命名都见过
         while IFS= read -r report; do
             [ -n "$report" ] || continue
-            if [ "$report" -nt "$APP/Contents/Info.plist" ]; then
-                NEW_HANGS="$NEW_HANGS$report"$'\n'
+            REPORT_VER="$(hang_report_version "$report")"
+            if [ "$REPORT_VER" = "$CUR_VER" ]; then
+                THIS_HANGS="$THIS_HANGS$report"$'\n'
+            elif [ -z "$REPORT_VER" ]; then
+                UNKNOWN_HANGS="$UNKNOWN_HANGS$report"$'\n'
             else
                 OLD_COUNT=$((OLD_COUNT + 1))
             fi
         done < <(find "$dir" -maxdepth 1 -name 'ZelinAIEngineer*.hang' 2>/dev/null)
     done
-    if [ -n "$NEW_HANGS" ]; then
-        fail "main-thread HANG report(s) newer than the installed app — this build froze the UI (布局风暴回归？); read the report(s):"
-        printf '%s' "$NEW_HANGS" | sed 's/^/       /'
-    elif [ "$OLD_COUNT" -gt 0 ]; then
-        ok "no new hang reports (老报告 $OLD_COUNT 份，早于本次安装，仅存档)"
-    else
-        ok "no hang reports for ZelinAIEngineer"
+    if [ -n "$THIS_HANGS" ]; then
+        fail "main-thread HANG report(s) from the installed version $CUR_VER — this build froze the UI (布局风暴回归？); read the report(s):"
+        printf '%s' "$THIS_HANGS" | sed 's/^/       /'
+    fi
+    if [ -n "$UNKNOWN_HANGS" ]; then
+        warn "hang report(s) with no parseable app version — not counted against $CUR_VER, check by hand:"
+        printf '%s' "$UNKNOWN_HANGS" | sed 's/^/       /'
+    fi
+    if [ -z "$THIS_HANGS" ]; then
+        if [ "$OLD_COUNT" -gt 0 ]; then
+            ok "no hang reports for version $CUR_VER (其他版本的老尸检 $OLD_COUNT 份，仅存档)"
+        elif [ -z "$UNKNOWN_HANGS" ]; then
+            ok "no hang reports for ZelinAIEngineer"
+        fi
     fi
 fi
 

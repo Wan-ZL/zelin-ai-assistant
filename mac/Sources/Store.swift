@@ -7,78 +7,9 @@ import Foundation
 // MARK: - Local instant-feedback types (契约2)
 
 // enum ListKind moved to shared/Sources/Lanes.swift (shared with iOS).
-
-/// Optimistic "the action is in flight" placeholder rendered in the TARGET
-/// list right after a button press, before actd rewrites dashboard.json.
-struct PendingEcho: Identifiable, Hashable {
-    let id: String        // "echo-" + sourceID
-    let sourceID: String  // original item id
-    let title: String     // original item title (self-looked-up from dashboard)
-    let target: ListKind  // which list renders it
-    let source: ListKind  // where the action happened (P2-4 notice routing)
-    let label: String     // greyed status label (契约4)
-    let created: Date
-}
-
-/// A raise-placeholder ("研究并提议") with its creation time for the timeout.
-struct RaisingEntry {
-    let summary: String
-    let created: Date
-}
-
-/// v0.10.2: a "card returns to another lane" action in flight. restore /
-/// abort_execution / revert_review share the one pending+timeout mechanism
-/// that restore introduced in v0.10 (契约: 信息条 instead of an echo);
-/// `kind` picks the per-action timeout wording.
-struct PendingReturn {
-    enum Kind { case restore, abort, revert, unarchive, stopToReview }
-    let kind: Kind
-    let source: ListKind  // lane the action was taken in (P2-4 notice routing)
-    let created: Date
-}
-
-/// §37: a set_title rename in flight — the new name echoes on the row at
-/// once; cleared once the backend row carries it (reload), or the 180 s sweep
-/// gives up with an honest notice.
-struct PendingTitle {
-    let title: String
-    let created: Date
-}
-
-/// A 修改方向 comment in flight (blue "修改意见合并中…" line). `fingerprint`
-/// snapshots the card's plan at submit time — the entry clears once the plan
-/// actually CHANGED (actd folded the comment in, _fold_comment appends the
-/// tag to plan), NOT on a generated_at bump: actd rewrites the dashboard
-/// every pass regardless, which would drop the line before the comment file
-/// was even consumed (§21bis force-merge batch-clear precedent).
-struct PendingComment {
-    let fingerprint: String?   // nil = card wasn't in the proposal lane
-    let created: Date
-}
-
-/// merge-review 契约七: a merge_apply / merge_dismiss pressed on a suggestion
-/// card. apply → the card greys out in place; dismiss → it disappears at once
-/// (visibleMergeSuggestions filter). Cleared on reload once the suggestion has
-/// left dashboard.merge_suggestions (actd consumed the action) — plus the
-/// standard 180 s fallback in sweepTimeouts.
-struct PendingMergeAction {
-    enum Kind { case apply, dismiss }
-    let kind: Kind
-    let created: Date
-}
-
-/// 契约 §21bis: one in-flight force-merge (合并中… badge). Tracked as a BATCH so
-/// the badge clears on the REAL signal — every secondary has left its lane
-/// (become terminal `merged`, invisible everywhere) — NOT on a generated_at
-/// bump (actd rewrites the dashboard every pass regardless of merges, which
-/// would clear the badge before the merge actually lands).
-struct PendingForceMerge: Identifiable {
-    let id = UUID()
-    let primary: String
-    let secondaries: [String]
-    let created: Date
-    var involved: [String] { [primary] + secondaries }
-}
+// PendingEcho / RaisingEntry / PendingReturn / PendingTitle / PendingComment /
+// PendingMergeAction / PendingForceMerge 与全部清除谓词 moved to
+// PendingSweep.swift（Foundation-only，LogicTests 第四道门可测）。
 
 /// Timed-out placeholder notice (capture → yellow, raise → orange) or a
 /// positive info strip (info → green, e.g. 建议上报的「已记录建议」回执).
@@ -293,6 +224,21 @@ final class DashboardStore: ObservableObject {
             // 同 unchanged-bytes 分支：内容既已解码过且相同，陈旧 decode
             // 错误可以清掉（坏行提示除外）。
             if loadError != nil && (dashboard?.decodeDrops.isEmpty ?? true) { loadError = nil }
+            // review P1：内容没变 ≠ 无事可清 —— 清除谓词是 (db × pending) 的
+            // 联合函数，闸门跳过期间新建的 pending 可能一出生就满足清除条件
+            //（同值改名：set_title 落盘写同值，dashboard 内容永远不再变化，
+            // 只在这里清才躲得过 180s 假「改名超时」）。对缓存的上次 decode
+            // 结果照跑 sweep；真清掉东西才动画 publish（无变化零 publish，
+            // 布局风暴的约束不破）。
+            if let cached = dashboard {
+                let swept = pendingSweepState.cleared(by: cached)
+                if swept.differs(from: pendingSweepState) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        adoptPendingClears(swept)
+                        updateBoardMotion()
+                    }
+                }
+            }
             return
         }
         do {
@@ -323,96 +269,10 @@ final class DashboardStore: ObservableObject {
                 } else {
                     hiddenOnce.removeAll()
                 }
-                // pending comments clear on the REAL signal — the card's plan
-                // changed (actd folded the comment in) or the card left the
-                // proposal lane. A generated_at bump alone must NOT clear: a
-                // comment sent mid-pass lands in the inbox AFTER that pass's
-                // drain, yet the pass still rewrites the dashboard (§21bis).
-                // A dropped/failed comment never clears here → the 180 s
-                // sweep fires an honest timeout notice.
-                pendingComment = pendingComment.filter { id, entry in
-                    Self.commentFingerprint(of: id, in: db) == entry.fingerprint
-                }
-                // 契约 §21bis: a force-merge batch is done once EVERY secondary has
-                // left its lane (terminal `merged` → invisible). This is the real
-                // "it landed" signal; clearing on generated_at alone would drop the
-                // badge on any pass's dashboard rewrite, before the merge_force
-                // inbox file was even consumed. A dropped/failed request never
-                // clears here → the 180 s sweep fallback fires the honest notice.
-                mergeForcingLocal.removeAll { batch in
-                    batch.secondaries.allSatisfy { currentList(of: $0) == nil }
-                }
-                // §37 rename echoes clear on the REAL signal — the backend row
-                // now carries the new display title (not on a generated_at
-                // bump: actd rewrites the dashboard every pass regardless).
-                // Belt+braces: compare whitespace-NORMALIZED forms — actd
-                // stores the collapsed title, and an exact-equality compare
-                // against a differently-spaced pending value was the false
-                // 「改名超时」 loop (review finding; submit normalizes too).
-                pendingTitles = pendingTitles.filter { id, p in
-                    Self.backendDisplayTitle(of: id, in: db).map(Self.normalizedTitle)
-                        != Self.normalizedTitle(p.title)
-                }
-                // sticky hides release once the id has LEFT its source list —
-                // moving to ANOTHER list no longer keeps it hidden forever.
-                hiddenSticky = hiddenSticky.filter { id, kind in
-                    ids(in: kind, of: db).contains(id)
-                }
-                // return bookkeeping (restore/abort/revert) clears once its
-                // sticky hide released (the id left its source list — actd
-                // actually moved the card).
-                returningLocal = returningLocal.filter { hiddenSticky[$0.key] != nil }
-                // echoes clear once the item shows up in its target list.
-                // v0.10: running[] now mixes in state=="queued" items — they
-                // decode into db.running like any other row, so an approve echo
-                // is replaced the moment its queued twin appears (verified: the
-                // "sourceID in target list" match below needs no special case).
-                pendingEchoes.removeAll { ids(in: $0.target, of: db).contains($0.sourceID) }
-                // drop local raise-placeholders once the backend shows the item
-                // anywhere in needs_approval (raising card or finished card).
-                let backendApproval = Set(db.needs_approval.map { $0.id })
-                for id in Array(raisingLocal.keys) where backendApproval.contains(id) {
-                    raisingLocal.removeValue(forKey: id)
-                }
-                // drop capture placeholders once a needs_approval card matches
-                // (normalized, bidirectional contains on the first 10 chars);
-                // direct-run placeholders match the running lane instead.
-                capturePending.removeAll { pending in
-                    Self.captureMatches(pending.text, in: db, run: pending.run)
-                }
-                // backend confirmed permanent → local pin marker is redundant
-                pinnedLocal.subtract(db.trash.filter { $0.permanent }.map { $0.id })
-                // merge-review 契约六/七: local analyzing badges drop once the
-                // backend shows a suggestion covering the id (the suggestion
-                // card takes over as the visible signal); apply/dismiss echoes
-                // drop once their suggestion has left merge_suggestions (actd
-                // consumed the action / TTL-cleaned the job file).
-                let suggestions = db.merge_suggestions
-                mergeAnalyzingLocal = mergeAnalyzingLocal.filter { id, _ in
-                    !suggestions.contains { $0.ids.contains(id) }
-                }
-                let suggestionIDs = Set(suggestions.map { $0.id })
-                pendingMergeActions = pendingMergeActions.filter {
-                    suggestionIDs.contains($0.key)
-                }
-                // §39: an answer echo clears on the REAL signal — the card
-                // left needs_input (resumed to running, or the failed delivery
-                // rerouted it there with last_error + a notification). A
-                // generated_at bump alone must NOT clear it (§21bis precedent).
-                let blockedIDs = Set(db.needs_input.map { $0.id })
-                answerPending = answerPending.filter { blockedIDs.contains($0.key) }
-                // §38: a split clears on the REAL signal — the origin fold
-                // line now carries 已拆出 in the card's projected notes_text.
-                // Card not found / lane without notes → keep until the sweep.
-                pendingSplits = pendingSplits.filter { key, _ in
-                    guard let sep = key.firstIndex(of: "|") else { return false }
-                    let cid = String(key[..<sep])
-                    let ts = String(key[key.index(after: sep)...])
-                    guard let notes = Self.notesText(of: cid, in: db) else { return true }
-                    return !FoldNote.parse(notes).contains {
-                        $0.ts == ts && $0.splitInto != nil
-                    }
-                }
+                // pending 清除 sweep：全部谓词在 PendingSweep.swift（review P1
+                // 抽取——决定「什么信号算 REAL signal」的逐段注释随谓词走；
+                // 指纹闸门跳过路径共用同一份，判例在 LogicTests）。
+                adoptPendingClears(pendingSweepState.cleared(by: db))
                 // v0.43: diff the freshly-applied snapshot against the previous
                 // one — must be the LAST line of this block so the lane lists
                 // it reads are final for this pass.
@@ -888,7 +748,7 @@ final class DashboardStore: ObservableObject {
                 // no hide — blue in-place line; cleared once the card's plan
                 // actually changes (the comment landed), 180 s sweep fallback
                 pendingComment[id] = PendingComment(
-                    fingerprint: dashboard.flatMap { Self.commentFingerprint(of: id, in: $0) },
+                    fingerprint: dashboard.flatMap { PendingSweep.commentFingerprint(of: id, in: $0) },
                     created: Date())
             case "merge_apply":
                 // merge-review 契约七: 接受 — the suggestion card greys out in
@@ -954,23 +814,50 @@ final class DashboardStore: ObservableObject {
 
     /// Which list currently holds this id (self-lookup for source recording).
     private func currentList(of id: String) -> ListKind? {
-        guard let db = dashboard else { return nil }
-        for kind in [ListKind.approval, .review, .debt, .trash, .running, .completed, .archived]
-        where ids(in: kind, of: db).contains(id) { return kind }
-        return nil
+        dashboard.flatMap { PendingSweep.currentList(of: id, in: $0) }
     }
 
     private func ids(in kind: ListKind, of db: Dashboard) -> Set<String> {
-        switch kind {
-        case .approval: return Set(db.needs_approval.map { $0.id })
-        // .running spans running (incl. v0.10 queued rows) + needs_input
-        case .running: return Set(db.running.map { $0.id }).union(db.needs_input.map { $0.id })
-        case .review: return Set(db.review.map { $0.id })
-        case .debt: return Set(db.debt.map { $0.id })
-        case .trash: return Set(db.trash.map { $0.id })
-        case .completed: return Set(db.completed.map { $0.id })
-        case .archived: return Set(db.archived.map { $0.id })
+        PendingSweep.ids(in: kind, of: db)
+    }
+
+    // MARK: pending 清除 sweep（谓词在 PendingSweep.swift，两条 reload 路径共用）
+
+    /// 当前全部本地 pending 的快照（喂给 PendingSweepState.cleared(by:)）。
+    private var pendingSweepState: PendingSweepState {
+        PendingSweepState(
+            capturePending: capturePending, hiddenSticky: hiddenSticky,
+            raisingLocal: raisingLocal, pendingEchoes: pendingEchoes,
+            pinnedLocal: pinnedLocal, pendingComment: pendingComment,
+            returningLocal: returningLocal, mergeAnalyzingLocal: mergeAnalyzingLocal,
+            mergeForcingLocal: mergeForcingLocal, pendingMergeActions: pendingMergeActions,
+            pendingSplits: pendingSplits, answerPending: answerPending,
+            pendingTitles: pendingTitles)
+    }
+
+    /// sweep 结果写回 @Published —— 只在集合真变小时赋值（sweep 只删不改，
+    /// count 比较即等价比较；无效突变也触发 objectWillChange = 全板重排，
+    /// 正是布局风暴修复要挡的）。
+    private func adoptPendingClears(_ new: PendingSweepState) {
+        if new.capturePending.count != capturePending.count { capturePending = new.capturePending }
+        if new.hiddenSticky.count != hiddenSticky.count { hiddenSticky = new.hiddenSticky }
+        if new.raisingLocal.count != raisingLocal.count { raisingLocal = new.raisingLocal }
+        if new.pendingEchoes.count != pendingEchoes.count { pendingEchoes = new.pendingEchoes }
+        if new.pinnedLocal.count != pinnedLocal.count { pinnedLocal = new.pinnedLocal }
+        if new.pendingComment.count != pendingComment.count { pendingComment = new.pendingComment }
+        if new.returningLocal.count != returningLocal.count { returningLocal = new.returningLocal }
+        if new.mergeAnalyzingLocal.count != mergeAnalyzingLocal.count {
+            mergeAnalyzingLocal = new.mergeAnalyzingLocal
         }
+        if new.mergeForcingLocal.count != mergeForcingLocal.count {
+            mergeForcingLocal = new.mergeForcingLocal
+        }
+        if new.pendingMergeActions.count != pendingMergeActions.count {
+            pendingMergeActions = new.pendingMergeActions
+        }
+        if new.pendingSplits.count != pendingSplits.count { pendingSplits = new.pendingSplits }
+        if new.answerPending.count != answerPending.count { answerPending = new.answerPending }
+        if new.pendingTitles.count != pendingTitles.count { pendingTitles = new.pendingTitles }
     }
 
     private func title(of id: String) -> String {
@@ -1032,19 +919,6 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    /// §37: collapse internal whitespace runs exactly like actd's
-    /// `" ".join(title.split())` (Character.isWhitespace covers U+3000, the
-    /// full-width space Chinese IMEs produce). Review fix: the Mac used to
-    /// trim ENDS only while actd collapsed internal whitespace — a double
-    /// space / 全角空格 in the typed title meant the rename LANDED on disk
-    /// but the echo-clear's exact-equality compare never matched, leaving a
-    /// permanent FALSE 「改名超时未确认，卡片名字未变化」 notice (and a retry
-    /// no-oped into the same loop). Submit path and clear compare both go
-    /// through this.
-    static func normalizedTitle(_ s: String) -> String {
-        s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-    }
-
     /// §37: the set_title inbox write succeeded — echo the new display name on
     /// the row immediately. ONLY call site: AppDelegate.submitSetTitle.
     func beginTitleEdit(_ id: String, title: String) {
@@ -1055,16 +929,6 @@ final class DashboardStore: ObservableObject {
 
     /// The in-flight rename for a row, if any (views overlay it on the title).
     func pendingTitle(_ id: String) -> String? { pendingTitles[id]?.title }
-
-    /// Backend display_title of a row (§37 rename-echo clear signal).
-    private static func backendDisplayTitle(of id: String, in db: Dashboard) -> String? {
-        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.display_title }
-        if let r = db.review.first(where: { $0.id == id }) { return r.display_title }
-        if let d = db.debt.first(where: { $0.id == id }) { return d.display_title }
-        if let t = (db.running + db.needs_input + db.completed)
-            .first(where: { $0.id == id }) { return t.display_title }
-        return nil
-    }
 
     /// merge-review 契约七: the merge_review inbox write succeeded — badge
     /// every involved card with 合并分析中… (local optimistic; cleared on
@@ -1100,16 +964,6 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    /// §38: the projected notes_text of a card, wherever its lane carries one
-    /// (needs_approval / debt / review — the fold-note surfaces). nil = the
-    /// card isn't visible on a notes-carrying row right now.
-    static func notesText(of id: String, in db: Dashboard) -> String? {
-        if let c = db.needs_approval.first(where: { $0.id == id }) { return c.notes_text }
-        if let d = db.debt.first(where: { $0.id == id }) { return d.notes_text }
-        if let r = db.review.first(where: { $0.id == id }) { return r.notes_text }
-        return nil
-    }
-
     /// 建议上报: the feedback inbox write succeeded → optimistic green
     /// 「已记录建议，感谢」info strip in the proposal lane (fixed id — a
     /// second submit replaces, not stacks). Fades with the standard 120 s
@@ -1129,46 +983,8 @@ final class DashboardStore: ObservableObject {
         hiddenSticky[id] != nil || hiddenOnce.contains(id)
     }
 
-    // MARK: capture ↔ backend matching (relaxed: normalize + bidirectional)
-
-    /// Lowercase and strip whitespace/punctuation/symbols so cosmetic rewrites
-    /// by the backend (quotes, dashes, spacing) don't break the match.
-    private static func normalized(_ s: String) -> String {
-        s.lowercased().filter { !($0.isWhitespace || $0.isPunctuation || $0.isSymbol) }
-    }
-
-    /// Plan snapshot for the pendingComment clear signal: actd's _fold_comment
-    /// appends the 修改方向 tag to the card's plan, so a changed plan is the
-    /// proof the comment landed. nil = the card is not in the proposal lane
-    /// (comment buttons only exist there).
-    private static func commentFingerprint(of id: String, in db: Dashboard) -> String? {
-        db.needs_approval.first { $0.id == id }.map { $0.plan.joined(separator: "\n") }
-    }
-
-    private static func captureMatches(_ text: String, in db: Dashboard,
-                                       run: Bool = false) -> Bool {
-        let p = normalized(text)
-        guard !p.isEmpty else { return false }
-        let pKey = String(p.prefix(10))
-        // v0.34 direct-run: a filed run lands as a queued/running row (title =
-        // the typed text, truncated) — clear ONLY against rows that can
-        // represent THIS submit. Deliberately NOT review: a week-old 待验收
-        // card with the same words would clear the placeholder into a fake
-        // "launched" look while actd acked noop (nothing started); letting
-        // the 180 s timeout fire with its honest notice is the correct outcome.
-        let fields: [[String]] = run
-            ? (db.running + db.needs_input).map { [$0.name, $0.summary ?? ""] }
-            : db.needs_approval.map { [$0.title, $0.summary ?? ""] }
-        for row in fields {
-            for field in row {
-                let t = normalized(field)
-                guard !t.isEmpty else { continue }
-                let tKey = String(t.prefix(10))
-                if t.contains(pKey) || p.contains(tKey) { return true }
-            }
-        }
-        return false
-    }
+    // capture ↔ backend matching / commentFingerprint 等清除信号 helper
+    // moved to PendingSweep.swift（LogicTests 可测）。
 
     // MARK: card sorting (v0.10.3 契约一 — Prefs.cardSortOrder projection)
 

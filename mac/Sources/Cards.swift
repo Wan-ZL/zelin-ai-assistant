@@ -619,6 +619,13 @@ fileprivate struct TitleEditRow: View {
 
     private func save() {
         guard valid else { return }
+        // review P1: 归一化后与当前显示名相同 = 同值改名 —— actd 会写同值、
+        // dashboard 内容零变化，pending 只能等 180s 假「改名超时」。直接
+        // 收起编辑器，不写 inbox、不建 pending（PendingSweep.renameIsNoOp）。
+        if PendingSweep.renameIsNoOp(draft: trimmed, current: current) {
+            editing = false
+            return
+        }
         if app.submitSetTitle(id: id, title: trimmed) { editing = false }
     }
 }

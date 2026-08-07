@@ -856,7 +856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // review fix: normalize EXACTLY like actd (collapse internal
         // whitespace incl. U+3000), or the stored title differs from the
         // pending echo and the clear never fires (false 改名超时 notice).
-        let t = DashboardStore.normalizedTitle(title)
+        let t = PendingSweep.normalizedTitle(title)
         guard !t.isEmpty, t.count <= 64 else { return false }
         let ts = ISO8601DateFormatter().string(from: Date())
         let dict: [String: Any] = ["id": id, "action": "set_title",
