@@ -1417,7 +1417,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
     **没有** `display_title` 且满足「冻结 title 不可读（URL/文件系统路径/
     超长截断文本，判定唯一真源 = `titles.is_unreadable_title`，与
     `sanitize_title` 共用同一组正则，另对含空格路径单向放宽：首字符 / 或
-    ~ 且含 ≥2 个 /；显示 fallback 的 `_PATH_RE` 不动）**或** 是 direct-run
+    ~、首个空格前的段除首字符外还含 /、全串 ≥2 个 /——「~3 天完成 A/B
+    测试」这类约数开头的 prose 不算；显示 fallback 的 `_PATH_RE` 不动）**或** 是 direct-run
     卡（notes **首行**以 `[direct-run]` 创建标签开头，§34：完全不过 LLM，
     title=用户原话截 80；提升追加的 tag 行、fold 嵌入的用户原文不算——
     notes 面包屑是 prose 不是信号）」时，

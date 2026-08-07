@@ -57,6 +57,8 @@ class IsUnreadableTitleTestCase(unittest.TestCase):
             "config.json 解析报错",              # 含点号但不是路径/URL
             "/tmp",                              # 单段：不足两个分隔符
             "对比 A/B 方案 word/excel 两版",      # 含 / 但不以路径开头
+            # ~ 是约数不是 home：首段 "~3" 自身无路径结构 → 不算路径
+            "~3 天完成 A/B 测试 x/y 对比",
             "",                                  # 空
             "   ",                               # 全空白
             None,                                # 非 str
@@ -129,6 +131,13 @@ class PromptEnforcementTestCase(unittest.TestCase):
         prompt = self._prompt(Requirement(
             id="R-109", title="排查提示词问题",
             notes="fold: 用户说「帮我查下 [direct-run] 标签为什么没生效」"))
+        self.assertIn(_VOLUNTARY, prompt)
+        self.assertNotIn(_MANDATORY, prompt)
+
+    def test_non_str_notes_does_not_crash(self):
+        # 手写卡 notes: 123（YAML 解析成 int）——str() 防御，不许崩 dispatch
+        prompt = self._prompt(Requirement(
+            id="R-110", title="修复登录 bug", notes=123))
         self.assertIn(_VOLUNTARY, prompt)
         self.assertNotIn(_MANDATORY, prompt)
 

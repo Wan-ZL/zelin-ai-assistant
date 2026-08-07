@@ -112,16 +112,18 @@ def is_unreadable_title(title) -> bool:
     True = URL / 文件系统路径 / 超长截断文本（>_LONG_TEXT，direct-run 的
     「用户原话截 80」即落在这档）——executor.build_prompt 据此把 CARD TITLE
     从自愿改为本轮强制。与 sanitize_title 共用同一组判定正则，另对含空格
-    路径（"/Users/z/My Files/a.pdf"）单向放宽：首字符是 / 或 ~ 且含 ≥2 个
-    / 即视为路径——_PATH_RE 本身不动（它兼任显示 fallback 的截段依据，放宽
-    会牵连 sanitize_title 的输出）。非 str / 空白 title 返回 False（fail 向
-    自愿制，绝不因坏输入硬性打扰 agent）。纯函数，不抛异常。"""
+    路径（"/Users/z/My Files/a.pdf"）单向放宽：首字符是 / 或 ~、首个空格前
+    的段除首字符外还含 /（首段自身呈现路径结构，排除「~3 天完成 A/B 测试」
+    这类约数开头的 prose）、全串 ≥2 个 / 即视为路径——_PATH_RE 本身不动
+    （它兼任显示 fallback 的截段依据，放宽会牵连 sanitize_title 的输出）。
+    非 str / 空白 title 返回 False（fail 向自愿制，绝不因坏输入硬性打扰
+    agent）。纯函数，不抛异常。"""
     if not isinstance(title, str):
         return False
     t = " ".join(title.split()).strip()
     if not t:
         return False
-    if t[0] in "/~" and t.count("/") >= 2:
+    if t[0] in "/~" and "/" in t.split()[0][1:] and t.count("/") >= 2:
         return True
     return bool(_URL_RE.match(t) or _PATH_RE.match(t)) or len(t) > _LONG_TEXT
 

@@ -391,7 +391,8 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     # direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
     # 首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
     # 里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
-    direct_run = (req.notes or "").lstrip().startswith("[direct-run]")
+    # str() 防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。
+    direct_run = str(req.notes or "").lstrip().startswith("[direct-run]")
     if not getattr(req, "display_title", None) \
             and (titles.is_unreadable_title(req.title) or direct_run):
         reason = ("这张卡由 direct-run 直接开跑，名字目前是用户原文截断，"
