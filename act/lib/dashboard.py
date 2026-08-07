@@ -530,6 +530,12 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
+def _fold_receipts() -> list[dict]:
+    """§44.6 并入回执投影——纯委托 :mod:`act.lib.fold_receipts`（never raises）。"""
+    from act.lib import fold_receipts
+    return fold_receipts.load_recent()
+
+
 def _device_label() -> Optional[str]:
     """This Mac's user-facing device name — the pairing label the owner set in
     设置 · 同步/配对 (``state/sync.json``, the same value the QR carries).
@@ -959,6 +965,10 @@ def build_dashboard(
         # merge-review 契约 六 — new partition; Swift reads decodeIfPresent so
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),
+        # §44.6 静默并入回执 — add-only 顶层键（decodeIfPresent 向后兼容）：
+        # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
+        # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
+        "fold_receipts": _fold_receipts(),
     }
     # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
     # paired phone adopt a Mac rename from the board payload without re-scanning

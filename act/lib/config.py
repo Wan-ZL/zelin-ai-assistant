@@ -38,6 +38,7 @@ STATE_DIR: Path = HOME / "state"
 REGISTRY_DIR: Path = HOME / "act" / "registry"
 INBOX_DIR: Path = STATE_DIR / "inbox"
 NOTIFY_QUEUE_DIR: Path = STATE_DIR / "notify_queue"  # §28 app notification relay
+FOLD_RECEIPTS_DIR: Path = STATE_DIR / "fold_receipts"  # §44.6 静默并入看板回执
 DASHBOARD_PATH: Path = STATE_DIR / "dashboard.json"
 LOG_DIR: Path = STATE_DIR / "logs"
 

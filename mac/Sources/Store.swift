@@ -139,6 +139,13 @@ final class DashboardStore: ObservableObject {
     /// 新鲜度标签（FreshnessLabel / popover footer）在 TimelineView 的 15s
     /// tick 里主动来读，健康裁决（computeHealth）同样从这里取真值。
     private(set) var liveGeneratedAt: Date?
+    // §44.6 静默并入回执：已经变成 notice 的回执 id（回执在 dashboard 里带
+    // TTL 存活 ~10 分钟，每次 reload 都会再出现——只在首次见到时发一行提示）。
+    // 首次成功加载先 prime（不发）：app 刚启动时躺在文件里的旧回执不是"刚刚
+    // 发生"的事，回放会撒谎（§28 notify_queue 的 app-closed=no-notification
+    // 同款语义）。
+    private var seenFoldReceipts: Set<String> = []
+    private var foldReceiptsPrimed = false
 
     // MARK: board motion (v0.43 手感 — display-only, BoardDiff/BoardMotion.swift)
 
@@ -273,6 +280,30 @@ final class DashboardStore: ObservableObject {
                 // 抽取——决定「什么信号算 REAL signal」的逐段注释随谓词走；
                 // 指纹闸门跳过路径共用同一份，判例在 LogicTests）。
                 adoptPendingClears(pendingSweepState.cleared(by: db))
+                // §44.6 静默并入回执 → 一行可消失的 info 提示（NoticeRow 绿色
+                // 机制复用，120 s 自动淡出）。seen-set 保证每条回执只提示一次；
+                // 首启 prime：文件里躺着的旧回执不回放。回执不是 pending（无
+                // 清除谓词/超时），刻意不进 PendingSweep；指纹闸门跳过路径也
+                // 不需要它——回执内容变化必然改变指纹，走全量 decode。
+                let receiptIDs = Set(db.fold_receipts.map { $0.id })
+                if !foldReceiptsPrimed {
+                    foldReceiptsPrimed = true
+                    seenFoldReceipts = receiptIDs
+                } else {
+                    for r in db.fold_receipts where !seenFoldReceipts.contains(r.id) {
+                        seenFoldReceipts.insert(r.id)
+                        let what = String(r.text.prefix(30))
+                        notices.append(LocalNotice(
+                            id: "notice-fold-" + r.id, kind: .info,
+                            lane: .approval,
+                            text: L("「\(what)」已并入 \(r.req)「\(String(r.title.prefix(20)))」（没有建新卡）",
+                                    "\"\(what)\" was merged into \(r.req) \"\(String(r.title.prefix(20)))\" (no new card filed)"),
+                            created: Date()))
+                    }
+                    // 过期出投影的回执从 seen-set 剪掉（同一 id 不会复活，
+                    // 集合不随长会话无界增长）。
+                    seenFoldReceipts.formIntersection(receiptIDs)
+                }
                 // v0.43: diff the freshly-applied snapshot against the previous
                 // one — must be the LAST line of this block so the lane lists
                 // it reads are final for this pass.
@@ -358,16 +389,15 @@ final class DashboardStore: ObservableObject {
                 // direct-run: after 180 s with no queued row the task really
                 // did NOT start — orange, and say so (audit honesty standard);
                 // a proposal capture is usually just slow analysis — yellow.
-                // The run copy names BOTH causes: actd acks noop when the line
-                // matched an existing 待验收/提案 card (fold, nothing runs) —
-                // indistinguishable from a dead backend at this distance.
+                // §34 修订后 [run] 一律新建卡（不再判重并入），排除了"命中已有
+                // 卡所以没开跑"的分支——超时只剩一个诚实解释：后台没在跑。
                 notices.append(LocalNotice(
                     id: "notice-" + c.id,
                     kind: c.run ? .raiseTimeout : .captureTimeout,
                     lane: c.run ? .running : .approval,
                     text: c.run
-                        ? L("「\(String(c.text.prefix(20)))」任务没有开始——可能这句话命中了已有的卡（看看待验收/提案），或后台没在跑（检查 actd）",
-                            "\"\(String(c.text.prefix(20)))\" did not start — the line may have matched an existing card (check Review/Proposals), or the backend isn't running (check actd)")
+                        ? L("「\(String(c.text.prefix(20)))」任务没有开始——后台可能没在跑（检查 actd）",
+                            "\"\(String(c.text.prefix(20)))\" did not start — the backend may not be running (check actd)")
                         : L("分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log",
                             "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log"),
                     created: now))

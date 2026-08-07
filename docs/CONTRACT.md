@@ -365,6 +365,11 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
 
 ## 21. merge-review（多选卡片 → AI 合并建议 → 确定性执行）
 
+> **v0.47 追记（2026-08-07）**：合并体系两条新法见 §34.1 与 §44.6——
+> ① capture `mode:"run"` 通道退出一切**自动**判重并入（一律新卡直接开跑）；
+> ② radar/普通 capture 通道的静默并入负**看板回执义务**（`fold_receipts`）。
+> 本节的人工多选合并路径（用户显式动作，自带确认弹窗与乐观回显）不受影响。
+
 看板多选 ≥2 张真实卡（待审批/运行中/待验收列）→ 请求 AI 分析这批卡该如何归并 → 建议卡展示结论与"接受后将执行"清单 → 接受时由 actd **确定性**执行（AI 的 `action_plan` 仅作展示解释，不驱动执行）。
 
 **inbox 动作**（app 写，actd 消费；三个动作都不携带需求级 `id` 语义，不走 §3 的 req 查找）：
@@ -1215,6 +1220,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 ## 34. capture 的 `mode:"run"`（add-only；§10 capture 语义扩展）
 
+> **v0.47 修订（2026-08-07 拍板）**：本节的「处置表」与所有判重并入条款**作废**，
+> 由节末 **§34.1** 取代——`mode:"run"` 彻底不做判重并入，**一律新建卡直接开跑**。
+> inbox 形状、fail-safe 语义、交付强制（chat + 默认 workbench）、analytics 与
+> 三端 UI 约定不变，仍以本节为准。
+
 在提案和运行中分别提供输入框，**用户在哪输入就进入哪个 slot**：提案列输入 =
 今天的 capture（雷达 triage → 提案/备选，人批准才跑）；运行中列输入 = 直接开跑。
 
@@ -1278,6 +1288,32 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   `shared/InboxAction.capture(text:mode:)`（additive key，sortedKeys 编码不变）
   经 syncd 通用透传落 actd inbox。
 - **webui**：本期不加运行中输入框（web 端 capture 仍只有提案路径）。
+
+### 34.1 v0.47 修订：`mode:"run"` 一律新卡，不判重并入（2026-08-07 拍板）
+
+产品裁定（Zelin，逐字）：「『静默并入』应该要删除，特别是从 running 中开的卡片，
+因为用户默认会以为这个就是创建新的卡片。」实证事故（2026-08-07）：用户在运行中
+输入框连发两条以同一 URL 打头的消息（title=原话截 80 → 标题即 URL），
+`_same_source_and_title` 纯文本判重命中正在执行的卡 → 旧处置表只并 sources、
+不重新排队——新文本没有递给会话，卡片转圈后消失，看板零回执，用户以为消息丢了。
+
+- **新语义**：`mode:"run"` 的 capture **绝不经过 `merge_or_new` / 判重 /
+  折叠 / 提升 / re-raise**——一律新建卡（title=原话截 80、channel=quick_capture、
+  原话进 sources、notes 打 `[direct-run]` 标签、thread_id 自根），直接落
+  `approved`（补记 `execution.approved_at`，与 approve 动作同一账目），下一轮
+  `dispatch_approved` 照常派发。撞未结卡、在跑卡、待验收卡、已交付/已合并卡
+  **全都一样**：用户在运行框打字 = 起一个新任务。
+- **ack 恒为 `running`**（真的排上了一轮新运行）；空/非法 `text` 仍按 §5.4
+  诚实 ack `noop`。旧处置表的 review-命中 `noop` 分支随并入一起作废。
+- **交付强制不变**：新卡显式 `delivery_mode="chat"`、`target_repo` 空（派发
+  回退默认 workbench）——direct-run 依旧没有人审预览，不得进任何 repo。
+- **重复防线不塌**：多渠道防重复仍由 radar / 普通 capture 通道的静默并入承担
+  （§44，含 §44.6 回执义务）；[run] 通道的"重复"是用户的显式意图，不拦。
+  同一句话连发两次 = 两张卡、两轮运行——这是特性不是 bug。
+- **Mac 占位卡**：匹配/清除机制不变；180 s 超时条文案删去「可能命中了已有的
+  卡」分支（该分支已不存在），只剩「后台可能没在跑（检查 actd）」。
+- **二分法（§44，2026-07-17）维持**：仍然绝不出人工确认卡——[run] 的答案从
+  「静默并入」改为「一律新卡」，两者都无人工确认环节。
 
 ## 35. v0.35.0 设备名称（add-only）
 
@@ -1890,6 +1926,31 @@ notes 留痕「背景信息未送达会话」。状态机零改动（不翻 rewo
 `silent_merge_requested{job,primary,secondary}`、`silent_merge{primary,
 secondary,outcome∈ok|separate|judge_failed|state_moved|pre_filing_fold}`、
 `briefing{req,ok,n}`。
+
+**§44.6 并入回执 + [run] 例外（v0.47，2026-08-07 拍板；add-only）**：
+
+- **[run] 例外**：capture `mode:"run"` 通道**整体退出**静默并入体系——不判重、
+  不折叠、一律新卡直接开跑（语义与事故背景见 §34.1）。本节（§44.1-§44.5）与
+  `merge_or_new` 的静默并入只适用于 radar 与普通 capture 通道。
+- **回执义务**：radar / 普通 capture 通道的每次静默并入（fold）发生时，看板
+  必须给可见回执——"卡片转圈后消失、文本不知去向"不再被允许。机制（复用
+  §28 notify_queue 的 one-file-per-entry 形制，免并发写竞态）：
+  - fold 执行点（actd capture 折叠、`quick_capture._fold_into`、triage 的
+    merge_or_new restatement 吸收、self-DM 捕获吸收、§44.1 execute）调
+    `act/lib/fold_receipts.record` → `state/fold_receipts/<uuid>.json` 原子落
+    `{"id","req","title","channel","text","at"}`（title=主卡显示名截 80、
+    text=被并入内容摘要截 120、at=epoch int）；写入顺手清扫超 TTL（600 s）
+    的兄弟条目。回执 best-effort：record 失败绝不打断 fold（宪法 11）。
+  - **dashboard add-only 顶层键 `fold_receipts`**：`load_recent()` 取 TTL 内
+    条目按 `at` 降序 cap 10。Swift 侧 `decodeIfPresent` 向后兼容；旧 payload
+    缺键解码为 []。
+  - **Mac 展示**：Store 按回执 id 去重（seen-set；首次加载 prime 不回放旧
+    回执——app 关着=没看见，§28 同款语义），每条新回执发一行绿色 info
+    LocalNotice「已并入 R-xxx（没有建新卡）」，120 s 自动淡出（NoticeRow
+    机制复用，不造新轮子）。
+  - 与 §44.5 的分工：`silent_merged` chip 是主卡上的**累计**记账，回执是
+    "刚刚发生了什么"的**瞬时**通知面；§21 人工合并路径（用户自己按的按钮，
+    自带乐观回显与确认弹窗）不产生回执。
 
 ## 45. 来源角色决策表（出生资格 — 回声环的一刀）
 

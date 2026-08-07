@@ -458,28 +458,21 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     proposal. Fast: no LLM call here, the poll loop is never blocked.
 
     v0.34.0 ``mode="run"`` (the 运行中 lane's second input, CONTRACT §34): the
-    SAME minimal card, but instead of the raising→proposal loop it is promoted
-    straight to APPROVED so dispatch_approved launches it on the next pass —
+    SAME minimal card, but instead of the raising→proposal loop it is filed
+    straight as APPROVED so dispatch_approved launches it on the next pass —
     no plan/cost preview; the deliverable still lands in 待验收. Any other
     ``mode`` value (absent, junk, wrong type) fail-safes to today's proposal
     path — junk must never silently start an agent.
 
-    Direct-run dispositions by what the text matched (CONTRACT §34; governing
-    rule: ack "running" ONLY when a run is genuinely queued/in motion, and a
-    promoted card NEVER inherits repo routing — no preview happened):
-      - no match             -> fresh card, approved, chat + default workbench;
-      - open pre-approval    -> THAT card promoted (never a twin), delivery
-        (detected/card_sent/   FORCED to chat + workbench regardless of what
-        raising)               routing it carried;
-      - approved/executing   -> fold sources only — the ask is genuinely in
-                               motion, ack "running", routing untouched;
-      - review (待验收)      -> fold sources only, NOTHING started -> ack
-                               "noop" (a silent fake success is the audit's
-                               red line);
-      - delivered/merged     -> §3.5 re-raise FORCED (the run-box gesture IS
-                               the actionable signal merge_or_new's increment
-                               gate can't see) -> the new round is promoted
-                               like any pre-approval card.
+    §34 修订（2026-08-07 拍板）：direct-run **彻底不做判重并入**——用户在运行
+    框打字 = 起一个新任务，一律新卡直接开跑。撞开卡不折叠/不提升、撞完结卡不
+    re-raise（旧处置表作废：8-07 事故里两条 [run] 输入的标题撞上 executing 卡
+    被静默并入，新文本没递给会话、看板零回执——用户默认这就是建新卡）。新卡
+    强制 chat 交付 + 默认 workbench（no-preview-safe，§34 语义不变），ack 恒为
+    "running"（空/非法 text 仍按 §5.4 诚实 ack "noop"）。
+
+    普通 capture（mode 缺省）的静默并入保留（多渠道防重复的核心），但 fold
+    发生时经 :mod:`act.lib.fold_receipts` 留看板回执（§44.6）。
     Returns the §5.4 result_status — the phone's ledger must never show
     已生效 for a capture that filed nothing.
     """
@@ -509,79 +502,38 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         notes="[direct-run] 用户直接开跑" if run else "from app quick capture",
     )
     if run:
+        # §34 修订（2026-08-07 拍板）：[run] 一律新卡直接开跑——绝不经过
+        # merge_or_new 的判重/折叠/提升/re-raise（旧行为把撞标题的输入静默并
+        # 入在跑的卡：文本没送达会话、看板零回执）。撞开卡/完结卡都视为用户
+        # 要起一个新任务；后续多渠道防重复照常由 radar/普通 capture 通道兜住。
+        #
         # direct-run skips LLM routing entirely — chat delivery at the default
         # workbench is the only no-preview-safe default (§34): no branch/PR
         # lands in a repo the user never confirmed; the FINAL DRAFT (or a
         # deliverables/ file artifact, §33) still reaches 待验收 for acceptance.
         req.delivery_mode = "chat"
-    saved = registry.merge_or_new(req)
-    if run:
-        if registry.is_resolved(saved):
-            # the text matched a CLOSED (delivered/merged) card. merge_or_new's
-            # deterministic increment gate saw a bare capture (no deadline/
-            # cost/hardness) and only folded — but typing into the RUN box IS
-            # the actionable signal, so force the §3.5 re-raise for a new
-            # round (actionable=True is the explicit-override seam the LLM
-            # paths use). An open follow-up of the cluster dedupes the hit
-            # (the fold target is then promoted below instead).
-            _kind, reraised = registry.reraise_or_followup(
-                saved, req, same_task=True, actionable=True,
-                sources=req.sources, note="direct-run 重开一轮（运行中输入框）")
-            if reraised is None:
-                # canonical dead-end (rejected/trashed/archived primary):
-                # re-card from scratch — never bury a direct-run in a dead card.
-                saved = registry.upsert(req)
-            else:
-                saved = reraised
-        if str(saved.status) in (State.DETECTED.value, State.CARD_SENT.value,
-                                 State.RAISING.value):
-            saved.set_status(State.APPROVED)
-            # same bookkeeping as the approve action — dispatch reports wait_s
-            # (approve → launch latency) off this stamp.
-            ex = dict(saved.execution or {})
-            ex["approved_at"] = _iso_now()
-            # a re-raised card still carries the FINISHED round's session_id,
-            # and dispatch_approved skips any card with one ("already
-            # dispatched") — archive it or the new round never launches.
-            sid = ex.get("session_id")
-            if sid:
-                ex["reraised_session_id"] = sid
-                ex.pop("session_id", None)
-                ex.pop("done", None)
-            saved.execution = ex
-            # NEVER inherit repo routing on a direct-run promotion: the match
-            # may carry an LLM-routed repo (or raising's implicit repo
-            # default), and dispatching that runs the branch/draft-PR prompt
-            # with zero preview. Force the §34 no-preview-safe delivery.
-            if (getattr(saved, "delivery_mode", None) or "repo") != "chat" \
-                    or saved.target_repo:
-                saved.delivery_mode = "chat"
-                saved.target_repo = None
-                tag = "[direct-run] 交付改为 chat（跳过预览，不动 repo）"
-                saved.notes = (saved.notes + "\n" + tag).strip() if saved.notes else tag
-            save(saved)
-            _log(f"inbox: capture[run] -> {saved.id} approved (queued for dispatch)")
-            result = "running"
-        elif str(saved.status) in (State.APPROVED.value, State.EXECUTING.value):
-            # fold into a card already queued/running: no twin agent, but the
-            # ask genuinely is in motion — "running" is the honest ack.
-            _log(f"inbox: capture[run] merged into {saved.id} "
-                 f"(status={saved.status}) — already queued/running, not re-queued")
-            result = "running"
-        else:
-            # fold into 待验收 (review) or any other non-running shape: only
-            # bookkeeping changed, NOTHING started — acking "running" here is
-            # the silent-fake-success the audit forbids.
-            _log(f"inbox: capture[run] merged into {saved.id} "
-                 f"(status={saved.status}) — no run filed, acking noop")
-            result = "noop"
+        req.thread_id = req.id            # self-root（同 merge_or_new 新卡语义）
+        req.status = State.APPROVED.value
+        # same bookkeeping as the approve action — dispatch reports wait_s
+        # (approve → launch latency) off this stamp.
+        req.execution = {"approved_at": _iso_now()}
+        saved = registry.upsert(req)
         _attach_capture_images(saved, images)
+        _log(f"inbox: capture[run] -> {saved.id} approved "
+             f"(new card, queued for dispatch)")
         analytics.log_event(
             "capture_direct_run", req=saved.id, status=str(saved.status),
             chars=len(t),
             text=(analytics.clip_content(t)
                   if analytics.content_gate() else None))
-        return result
+        return "running"
+    kind, saved = registry.merge_or_new_with_kind(req)
+    if kind == "folded":
+        # §44.6：capture 静默并入必须留看板回执——卡片转圈后"消失"而文本
+        # 不知去向，是 8-07 事故的另一半。best-effort，绝不打断 fold。
+        from act.lib import fold_receipts
+        fold_receipts.record(saved.id, saved.display_title or saved.title,
+                             "quick_capture", t)
     if saved.status == State.DETECTED.value:
         saved.set_status(State.RAISING)
         save(saved)
