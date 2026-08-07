@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re as _re
+import time as _time
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -131,19 +132,77 @@ def clip_content(text) -> Optional[str]:
     return s[:CONTENT_CLIP] or None
 
 
-def feature_gate() -> bool:
-    """§16 feature gate for the local event log: ``features.analytics``.
+# feature_gate 的进程内短缓存：radar/actd 循环逐事件 emit，不该每条都付一次
+# config parse。TTL 短到用户拧开关几秒内生效；测试用 reset_feature_gate_cache()
+# 保证判例之间互不串味。
+GATE_TTL: float = 5.0
+_gate_cache: Optional[tuple] = None  # (monotonic 过期时刻, bool 结果)
 
-    False ⇒ log_event 全静默——本地 events.jsonl 一行不写，上传侧
-    (act.analytics_sync / feedback 附带的事件) 读的正是这份文件，所以关掉
-    即「不落盘也不上报」。判定自身失败按默认全开处理（§16 flags default
-    ON；load_config 对坏 yaml 已经返回全默认，不会 raise）——gate 绝不能
-    因为读配置出岔子而反过来弄崩管线（宪法第 11 条）。
+
+def reset_feature_gate_cache() -> None:
+    """清空 gate 缓存（测试注入缝；生产无人调用也无妨）。"""
+    global _gate_cache
+    _gate_cache = None
+
+
+def _config_sources_intact() -> bool:
+    """两份配置源是否处于「存在但读不懂」的损坏态（隐私 fail-closed 用）。
+
+    load_config 对坏 yaml / 坏 overrides 的惯例是静默退回默认（宪法第 11
+    条），但 §16 默认 = analytics on——损坏期间用户已写下的显式退出会被
+    无声顶掉。这里单独探测损坏；文件**不存在**不算损坏（用户从未表达过
+    退出，默认 on 是诚实的）。
     """
     try:
-        return bool(config.load_config().feature("analytics"))
-    except Exception:  # noqa: BLE001 - fail open to the §16 default (all on)
-        return True
+        if config.yaml is not None and config.CONFIG_PATH.exists():
+            loaded = config.yaml.safe_load(
+                config.CONFIG_PATH.read_text(encoding="utf-8"))
+            if loaded is not None and not isinstance(loaded, dict):
+                return False
+    except Exception:  # noqa: BLE001 - 读不到 = 按损坏处理
+        return False
+    try:
+        if config.SETTINGS_OVERRIDES_PATH.exists():
+            data = json.loads(
+                config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return False
+    except Exception:  # noqa: BLE001 - 读不到 = 按损坏处理
+        return False
+    return True
+
+
+def feature_gate(cfg: Optional["config.Config"] = None) -> bool:
+    """§16 feature gate for the local event log: ``features.analytics``.
+
+    False ⇒ log_event/log_first 全静默——本地 events.jsonl 一行不写，上传侧
+    (act.analytics_sync / feedback 附带的事件) 读的正是这份文件，且上传端
+    自己也过同一 gate（关 = 积压也不上传）。
+
+    隐私特例（§16 追记）：与其它 flag 的 fail-open 惯例相反，本 gate 在
+    「配置读不到 / 存在但损坏」时 **fail-closed**（= 不记）——用户显式退出
+    的隐私承诺压过功能可用性默认，否则坏一份 yaml 就能让退出静默失效。
+    判定自身绝不 raise（宪法第 11 条），只会返回 False。
+
+    ``cfg`` 注入缝：上传端一次 run 已持有 Config 时直接传入，跳过缓存与
+    重复 load；无 cfg 的高频 emit 路径走 GATE_TTL 进程内缓存。
+    """
+    if cfg is not None:
+        try:
+            return bool(cfg.feature("analytics")) and _config_sources_intact()
+        except Exception:  # noqa: BLE001 - privacy flag: unreadable = off
+            return False
+    global _gate_cache
+    now = _time.monotonic()
+    if _gate_cache is not None and now < _gate_cache[0]:
+        return _gate_cache[1]
+    try:
+        value = (bool(config.load_config().feature("analytics"))
+                 and _config_sources_intact())
+    except Exception:  # noqa: BLE001 - privacy flag: unreadable = off
+        value = False
+    _gate_cache = (now + GATE_TTL, value)
+    return value
 
 
 def log_event(event: str, **fields) -> None:
@@ -190,7 +249,13 @@ def log_first(event: str, **fields) -> None:
     consumer of these milestones (scripts/insights_report.py) counts DISTINCT
     devices, and multiple processes (radar cron vs. actd) racing the check can
     likewise only cause a few harmless duplicates. Never raises.
+
+    Gate BEFORE the marker (§16): flag off 期间不许 touch marker——否则
+    里程碑被标记「已发」却从未落盘，重新开启后 once-per-install 事件永久
+    丢失；off 期间整个函数 no-op，里程碑留到 flag 重开后首次触发再发。
     """
+    if not feature_gate():
+        return
     try:
         name = _MARKER_SAFE.sub("_", str(event)).strip("._") or "event"
         marker = FIRST_DIR / name

@@ -146,6 +146,22 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         self.assertEqual(analytics.EVENTS_PATH.read_text(encoding="utf-8"),
                          before)
 
+    def test_analytics_flag_off_skips_upload_including_backlog(self):
+        # §16 隐私 gate（上传端）：features.analytics off ⇒ 本地写者已停，
+        # 关闭前积压在 events.jsonl 里的事件也不上传，游标不动
+        _write_events(_event_line("inbox_approve"))
+        before = analytics.EVENTS_PATH.read_text(encoding="utf-8")
+
+        off = _cfg()
+        off.features["analytics"] = False
+        stats = sync.sync_once(cfg=off, transport=self._transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(self.batches, [])
+        self.assertFalse(sync.CURSOR_PATH.exists())
+        # 与 telemetry.enabled=false 同样静默：连 telemetry_sync 事件都没有
+        self.assertEqual(analytics.EVENTS_PATH.read_text(encoding="utf-8"),
+                         before)
+
     def test_default_config_uploads_by_default(self):
         # default-on telemetry (docs/TELEMETRY.md): a plain Config() has
         # enabled=True + the maintainer URL, so events upload out of the box

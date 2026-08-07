@@ -249,6 +249,11 @@ def sync_once(cfg: Optional[config.Config] = None,
             stats["skipped"] = "consent_pending"
             return stats
         cfg = cfg or config.load_config()
+        if not analytics.feature_gate(cfg):
+            # features.analytics off（§16 隐私 gate）：本地写者已停，关闭前
+            # 积压在 events.jsonl 里的事件也不上传——关 = 彻底不出本机。
+            stats["skipped"] = "analytics_off"
+            return stats
         url = str(cfg.telemetry_supabase_url or "").strip()
         if not (cfg.telemetry_enabled and url):
             stats["skipped"] = "disabled"

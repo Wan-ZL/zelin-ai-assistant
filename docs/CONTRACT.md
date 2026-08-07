@@ -293,12 +293,24 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 **v0.14 追记（add-only；随 §17 v0.14 修订）**：`manager_pack` 随 manager pack ①的移除退出 flag 集合——`DEFAULT_FEATURES` 与设置窗口均不再包含它，代码中无任何调用点检查；config.yaml/overrides 里遗留的 `features.manager_pack` 键按「未知 flag」语义被静默忽略。现行集合 = {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics}。1:1 准备页（`act.oneonone`）随 §17 digest 生成，受 `features.digest` 门控，无独立 flag。
 
 **死开关修复追记（add-only；本节「各模块入口检查 flag」的两处落地澄清）**：
-- **`features.analytics`**：gate 落在 emit 单点 `act/lib/analytics.py:log_event`
-  （`analytics.feature_gate()`）——flag 为 false 时本地 `state/analytics/events.jsonl`
-  一行不写；上传侧（`act.analytics_sync`）读的正是这份文件，因此关 = 不落盘也不上报。
-  该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：analytics off 连本地记录
-  都没有。gate 判定失败按默认 on 处理（宪法第 11 条：gate 自身绝不崩管线）。
-  判例：tests/test_analytics_feature_gate.py。
+- **`features.analytics`**：flag 为 false 时事件**不产生也不出本机**——gate 拦在
+  全部三个环节：① Python 写者 `act/lib/analytics.py:log_event`/`log_first`
+  （`analytics.feature_gate()`；log_first 在 gate off 时连 once-per-install
+  marker 也不写，里程碑留到重开后再发，绝不被吞）；② Swift 写者
+  `mac/Sources/Utils.swift Analytics.log`/`firstReach`（`Analytics.featureEnabled()`，
+  同一优先级读 overrides → config.yaml → 默认 on）——两个写者共用同一份
+  `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
+  `act.analytics_sync.sync_once` 上传前再查一次（skipped="analytics_off"），
+  所以关闭前积压在 events.jsonl 里的事件也不上传。该 flag 与 §15 的
+  `telemetry.enabled`（上传开关）是两层：analytics off 连本地记录都没有。
+  **隐私 fail-closed 特例**：与本节其它 flag 的 fail-open（默认 on）惯例相反，
+  gate 在「配置读不到 / 存在但损坏」时按 **off** 处理——用户显式退出的隐私
+  承诺压过功能可用性默认，否则一份坏 yaml/坏 overrides 就能让退出静默失效；
+  配置文件**不存在**不算损坏（从未表达过退出，默认 on 诚实）。gate 判定自身
+  绝不 raise（宪法第 11 条），Python 侧带 GATE_TTL（5s）进程内缓存以免高频
+  emit 逐条付 config parse。判例：tests/test_analytics_feature_gate.py、
+  tests/test_analytics_sync.py（上传端）、mac/LogicTests AnalyticsGateTests
+  （Swift 写者）。
 - **`features.auto_resume`**：历史上存在**两个键**——config.yaml `execution.auto_resume`
   （`Config.auto_resume`）与 feature flag `features.auto_resume`（Settings 窗口开关写的
   是后者，经 overrides 落 `Config.features`）；此前 actd `reconcile_executing` 只读前者，

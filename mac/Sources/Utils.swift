@@ -57,11 +57,35 @@ enum Analytics {
     private static let queue = DispatchQueue(label: "zelin.assistant.analytics",
                                              qos: .utility)
 
+    /// §16 privacy gate — features.analytics（Settings「用量统计」开关）。
+    /// 读取优先级与 Telemetry.level() 同款：overrides（嵌套 features 块 →
+    /// 平铺 features.analytics）→ config.yaml `features:` 块 → 默认 on。
+    /// 隐私特例（fail-closed，镜像 act/lib/analytics.feature_gate）：
+    /// overrides 文件存在但解析不了时按关处理——用户的显式退出可能正躺在
+    /// 那份读不懂的文件里，宁可少记也不违背退出承诺。
+    static func featureEnabled() -> Bool {
+        guard !SettingsIO.overridesUnparseable() else { return false }
+        let ov = SettingsIO.readOverrides()
+        if let f = ov["features"] as? [String: Any],
+           let v = f["analytics"] as? Bool {
+            return v
+        }
+        if let v = ov["features.analytics"] as? Bool { return v }
+        if let s = SettingsIO.configNestedScalar(block: "features",
+                                                 key: "analytics") {
+            return s.lowercased() != "false"
+        }
+        return true
+    }
+
     /// Append one event line to state/analytics/events.jsonl. Failures are
-    /// swallowed — analytics must never break the app.
+    /// swallowed — analytics must never break the app. Gated on
+    /// features.analytics (§16): flag off ⇒ this writer emits nothing, same
+    /// as the Python writer's log_event gate.
     static func log(_ event: String, fields: [String: Any] = [:]) {
         let dir = AppPaths.analyticsDir
         queue.async {
+            guard Self.featureEnabled() else { return }
             var rec: [String: Any] = ["ts": Self.utcNow(), "event": event,
                                       "sid": Self.sid, "v": Self.version]
             for (k, v) in fields { rec[k] = v }
@@ -97,7 +121,10 @@ enum Analytics {
     /// Once-per-install feature-reach marker (docs/TELEMETRY.md): the FIRST
     /// time a feature is used, one `feature_first_reach` event fires; the
     /// UserDefaults flag suppresses every later call. Metadata only.
+    /// Gate BEFORE the marker (§16, 镜像 Python log_first)：flag off 时连
+    /// UserDefaults marker 也不写，否则重开后里程碑永久丢失。
     static func firstReach(_ feature: String) {
+        guard featureEnabled() else { return }
         let key = "analytics.firstReach." + feature
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
