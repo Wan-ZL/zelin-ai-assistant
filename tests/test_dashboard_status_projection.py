@@ -110,6 +110,22 @@ class StatusProjectionMatrixTestCase(unittest.TestCase):
         self._assert_single_lane(dash, "R-5b", "needs_input")
         self.assertIs(dash["needs_input"][0].get("resume_exhausted"), True)
 
+    def test_exhausted_row_question_is_fixed_copy_not_transcript_text(self):
+        # §46：降级卡的 question 用固定文案——死 transcript 的最后一条
+        # assistant 文本不是提问（agent 并没有在等答案），拿来展示是误导
+        req = Requirement(id="R-5c", title="t", status=State.EXECUTING.value,
+                          execution={"session_id": SID, "resume_exhausted": True})
+        cfg = config.Config()
+        sentinel = "请问下一步我该改哪个文件？"   # 死会话的最后一句话
+        with mock.patch.object(dashboard, "_question_cached",
+                               return_value=sentinel):
+            dash = dashboard.build_dashboard(reqs=[req], agents=[], cfg=cfg,
+                                             archived=[])
+        row = dash["needs_input"][0]
+        q = row.get("question") or ""
+        self.assertNotIn(sentinel, q)             # transcript 文本不冒充提问
+        self.assertTrue("停止" in q or "Stop" in q)   # 固定文案指现存出口
+
     def test_executing_exhausted_but_live_agent_stays_running(self):
         # 降级标记残留 + agent 实际活着在干活 -> 以 roster 事实为准，照常 running
         req = Requirement(id="R-6", title="t", status=State.EXECUTING.value,

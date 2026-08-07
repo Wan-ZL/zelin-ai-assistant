@@ -2548,7 +2548,15 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # 传入的 req 仍是启动前的旧快照——必须从盘上重读再记账，否则
                 # 下面的 save 会用旧 execution 把 brief 刚写的账整个回滚
                 # （旧 session_id 复活 → 每个 pass 重复起会话）。
-                req = registry.load(req.id) or req
+                fresh = registry.load(req.id)
+                if fresh is None:
+                    # 重读失败（坏 yaml/竞态）也不许拿旧快照垫底——save 同样
+                    # 会回滚 brief 的账。本轮跳过记账（风暴账少记一条无害），
+                    # 下 pass 重试。
+                    _log(f"reconcile: {req.id} reload after brief failed — "
+                         "skipping bookkeeping this pass")
+                    continue
+                req = fresh
             else:
                 ok = executor.resume(req, cfg)
             ex_after = dict(req.execution or {})

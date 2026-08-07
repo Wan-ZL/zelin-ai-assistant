@@ -188,6 +188,28 @@ class BriefRebookTestCase(ResumeStormBase):
         self.assertNotIn("pending_briefings", ex)          # 队列保持已清
         self.assertEqual(len(ex.get("resume_history") or []), 1)  # 成功启动入账
 
+    def test_brief_reload_failure_skips_bookkeeping_not_rollback(self):
+        # 重读失败（坏 yaml/竞态）不许拿旧快照垫底 save——那同样会复活旧
+        # session_id/pending_briefings；正确姿势是本轮跳过记账、下 pass 重试
+        self._mk_req(execution={"session_id": SID,
+                                "pending_briefings": ["fyi 一条背景信息"]})
+
+        def fake_brief(req, cfg):
+            # 不经 registry.load（下面把它 patch 成 None）直接落盘新账
+            fresh = Requirement(id=req.id, title=req.title, status=req.status,
+                                execution={"session_id": NEW_SID})
+            registry.save(fresh)
+            return True
+
+        with mock.patch.object(actd, "_run_claude_agents", return_value=[]), \
+             mock.patch.object(actd.executor, "brief", fake_brief), \
+             mock.patch.object(actd.registry, "load", return_value=None):
+            actd.reconcile_executing(self.cfg, set())
+        ex = registry.load("R-950").execution or {}
+        self.assertEqual(ex.get("session_id"), NEW_SID)   # 盘上新账原样保留
+        self.assertNotIn("pending_briefings", ex)          # 旧队列没有复活
+        self.assertNotIn("resume_history", ex)             # 本轮没记账（下 pass 补）
+
 
 class AnswerClearsStormTestCase(ResumeStormBase):
     def test_owner_answer_resets_resume_history(self):

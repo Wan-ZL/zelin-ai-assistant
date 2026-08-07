@@ -2118,5 +2118,11 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   （registry 没有 needs_input 状态，它是 executing+blocked 的投影），不是
   状态分叉 bug。配套判例：`tests/test_stop_confirmed.py`、
   `tests/test_resume_storm.py`。
+- 降级行的 `question` 用**固定文案**（「自动救活多次后仍中断，需要人工确认：
+  点「回答…」…或点「停止」」，经 failures.pick 双语）——死 transcript 的最后
+  一条 assistant 文本不是提问，agent 并没有在等那个答案，拿来当 question
+  展示是误导；§39 的 transcript 抽取只用于真 blocked（roster 活着在提问）行。
 - §5 通知 builder 全集追加：`msg_resume_storm` / `msg_stop_failed`；
-  `msg_auto_resume_exhausted` 文案随投影改指「需输入」列（回答…/停止）。
+  `msg_auto_resume_exhausted` 文案指「回答…/停止」两个出口，但只承诺
+  「已停止自动拉起」、不断言卡在哪一列——pid 仍活的 exhausted 卡照常留在
+  运行中（上条 roster 事实优先），「已移到需输入列」在该边缘态是撒谎。

@@ -884,8 +884,20 @@ def build_dashboard(
                 # 死的判据 = 无活 pid（本文件 copy_cmd 的既有活性判据），不是
                 # 「不在 roster」——roster --all 会给 failed/stopped 留死条目，
                 # agent is None 判死会让这些卡继续在 running 里装忙。
-                question = (_question_cached(str(resume_sid or sid))
-                            if sid else None)
+                degraded = (not (agent or {}).get("pid")
+                            and ex.get("resume_exhausted"))
+                # 降级卡的 question 用固定文案：死 transcript 的最后一条
+                # assistant 文本不是提问（agent 并没有在等这个答案），拿来
+                # 当 question 展示是误导——固定文案说清事实和两个现存出口。
+                if degraded:
+                    question = failures.pick(
+                        "自动救活多次后仍中断，需要人工确认：点「回答…」给它"
+                        "指示继续，或点「停止」",
+                        'Auto-resume kept failing; needs a human call — press '
+                        '"Answer…" to instruct it onward, or "Stop"')
+                else:
+                    question = (_question_cached(str(resume_sid or sid))
+                                if sid else None)
                 row = {
                     "id": _s(req.id),
                     "name": name,
@@ -907,7 +919,7 @@ def build_dashboard(
                 }
                 if question:
                     row["question"] = question
-                if not (agent or {}).get("pid") and ex.get("resume_exhausted"):
+                if degraded:
                     # §46 add-only：告诉 App（和 detect_transitions）这行是
                     # 降级卡，不是 agent 真的在提问 —— 老 App decodeIfPresent
                     # 直接忽略。

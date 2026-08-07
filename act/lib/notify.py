@@ -270,12 +270,14 @@ def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
 
     v0.21 起运行中卡只有一个「停止/Stop」→ 二选一对话框（退回提案 / 去待验收），
     文案必须指向现存按钮（审计：旧文案引用已删除的「停止并退回」「已办完」）。
-    §46 起放弃自动恢复的卡投影进「需输入」列（不再假装 运行中），文案随之指路。"""
+    §46 起放弃自动恢复的**死**卡投影进「需输入」列——但 pid 仍活的 exhausted
+    卡照常留在 运行中（§46.3 以 roster 事实为准），所以文案只承诺永远为真的
+    「已停止自动拉起」，不断言卡在哪一列。"""
     return (_pick("自动恢复已放弃（连续失败 5 次）",
                   "Auto-recovery gave up (5 straight failures)"),
-            _pick(f"{title} —— 打开 App，这张卡已移到「需输入」列：点「回答…」"
+            _pick(f"{title} —— 已停止自动拉起。打开 App：点「回答…」"
                   "给它指示继续，或点「停止」选「退回提案」/「去待验收」",
-                  f"{title} — open the app: this card is now in Needs input —"
+                  f"{title} — auto-relaunch stopped. Open the app:"
                   " press \"Answer…\" to instruct it onward, or \"Stop\" and"
                   " pick \"Discard & re-propose\" / \"Keep for review\""))
 
