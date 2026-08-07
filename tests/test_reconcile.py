@@ -285,6 +285,17 @@ class GuardsTestCase(ReconcileBase):
         self.assertEqual(n, 0)
         resume.assert_not_called()
 
+    def test_feature_flag_auto_resume_off_disables_resume(self):
+        # 死开关修复（CONTRACT §16 追记）：Settings 窗口的 auto_resume 开关写的
+        # 是 features.auto_resume（经 overrides 落 cfg.features），actd 必须
+        # 看得见——两键 AND，任一 false 即关。
+        self._mk_req()
+        self.cfg.auto_resume = True                 # execution.auto_resume 仍开
+        self.cfg.features["auto_resume"] = False    # Settings 开关关
+        n, resume = self._reconcile([])
+        self.assertEqual(n, 0)
+        resume.assert_not_called()
+
     def test_non_executing_statuses_ignored(self):
         for i, st in enumerate((State.CARD_SENT.value, State.APPROVED.value,
                                 State.DELIVERED.value, State.TRASHED.value)):

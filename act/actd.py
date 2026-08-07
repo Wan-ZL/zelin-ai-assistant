@@ -2402,7 +2402,11 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
         if req.status == registry.State.REVIEW.value:
             _reconcile_review_attach(req, agents)
 
-    if not getattr(cfg, "auto_resume", True):
+    # 开关取两处的 AND（键位漂移修复）：config.yaml `execution.auto_resume`
+    # 与 §16 feature flag `features.auto_resume`（Settings 开关写的是后者，
+    # 经 settings_overrides 落进 cfg.features）——任一为 false 即关。两键默认
+    # 都是 true，老配置行为不变（add-only 精神）。
+    if not (getattr(cfg, "auto_resume", True) and cfg.feature("auto_resume")):
         return 0
 
     resumed = 0

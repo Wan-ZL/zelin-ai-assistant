@@ -131,8 +131,29 @@ def clip_content(text) -> Optional[str]:
     return s[:CONTENT_CLIP] or None
 
 
+def feature_gate() -> bool:
+    """§16 feature gate for the local event log: ``features.analytics``.
+
+    False ⇒ log_event 全静默——本地 events.jsonl 一行不写，上传侧
+    (act.analytics_sync / feedback 附带的事件) 读的正是这份文件，所以关掉
+    即「不落盘也不上报」。判定自身失败按默认全开处理（§16 flags default
+    ON；load_config 对坏 yaml 已经返回全默认，不会 raise）——gate 绝不能
+    因为读配置出岔子而反过来弄崩管线（宪法第 11 条）。
+    """
+    try:
+        return bool(config.load_config().feature("analytics"))
+    except Exception:  # noqa: BLE001 - fail open to the §16 default (all on)
+        return True
+
+
 def log_event(event: str, **fields) -> None:
-    """Append one event. Non-None fields only. Never raises."""
+    """Append one event. Non-None fields only. Never raises.
+
+    Gated on ``features.analytics`` (§16): with the flag off this is a no-op —
+    nothing is written locally, hence nothing can ever be uploaded.
+    """
+    if not feature_gate():
+        return
     try:
         ANALYTICS_DIR.mkdir(parents=True, exist_ok=True)
         rec = {

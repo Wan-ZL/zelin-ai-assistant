@@ -292,6 +292,20 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 
 **v0.14 追记（add-only；随 §17 v0.14 修订）**：`manager_pack` 随 manager pack ①的移除退出 flag 集合——`DEFAULT_FEATURES` 与设置窗口均不再包含它，代码中无任何调用点检查；config.yaml/overrides 里遗留的 `features.manager_pack` 键按「未知 flag」语义被静默忽略。现行集合 = {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics}。1:1 准备页（`act.oneonone`）随 §17 digest 生成，受 `features.digest` 门控，无独立 flag。
 
+**死开关修复追记（add-only；本节「各模块入口检查 flag」的两处落地澄清）**：
+- **`features.analytics`**：gate 落在 emit 单点 `act/lib/analytics.py:log_event`
+  （`analytics.feature_gate()`）——flag 为 false 时本地 `state/analytics/events.jsonl`
+  一行不写；上传侧（`act.analytics_sync`）读的正是这份文件，因此关 = 不落盘也不上报。
+  该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：analytics off 连本地记录
+  都没有。gate 判定失败按默认 on 处理（宪法第 11 条：gate 自身绝不崩管线）。
+  判例：tests/test_analytics_feature_gate.py。
+- **`features.auto_resume`**：历史上存在**两个键**——config.yaml `execution.auto_resume`
+  （`Config.auto_resume`）与 feature flag `features.auto_resume`（Settings 窗口开关写的
+  是后者，经 overrides 落 `Config.features`）；此前 actd `reconcile_executing` 只读前者，
+  Settings 开关是死的。现行语义 = **两键 AND**（任一 false 即关）；两键默认都 true，
+  未配置过的老安装行为不变（add-only）。判例：tests/test_reconcile.py 的
+  feature-flag off 用例。
+
 ## 17. 周一 digest + Manager pack
 - `python -m act.digest`：待审批积压、待验收积压、needs_input/resume_exhausted 卡住项、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
 - Manager pack（flag: manager_pack）：①obsidian radar 扫到含 manager（watch_people 首项的 first-name token）的新会议记录时，额外派 T0 任务生成**会后 action-item 清单草稿**（workbench/meetings/<date>-action-items.md，通知）；②`python -m act.oneonone` 生成 1:1 准备页（ready/not-ready per registry + 双向欠账 + 上次以来 delta），digest 周一自动附带。

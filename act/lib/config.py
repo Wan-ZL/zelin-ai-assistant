@@ -152,7 +152,6 @@ class Config:
     obsidian_change_summary: Optional[str] = None
     obsidian_wiki: Optional[str] = None
     slack_channels: list = field(default_factory=list)
-    slack_dms: list = field(default_factory=list)
     slack_token_path: Optional[str] = None
     # Slack MCP fallback (v0.11) — 没有 xoxp token（卡在管理员审批）时，radar_slack
     # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
@@ -412,7 +411,10 @@ def load_config() -> Config:
     )
     cfg.obsidian_wiki = sources.get("obsidian_wiki", cfg.obsidian_wiki)
     cfg.slack_channels = sources.get("slack_channels", []) or []
-    cfg.slack_dms = sources.get("slack_dms", []) or []
+    # NOTE: 历史 key `sources.slack_dms` 已诚实下线（配了从来没有任何效果）：
+    # radar_slack.fetch_new_messages 本来就无条件扫全部 im/mpim 会话
+    # （conversations.list types=im,mpim），无需任何 DM 白名单。旧 config 里
+    # 遗留的 slack_dms 键按「未知 key」语义被静默忽略，不会破坏加载。
     cfg.slack_token_path = sources.get("slack_token_path", cfg.slack_token_path)
     cfg.slack_mcp_fallback = _bool_or(
         sources.get("slack_mcp_fallback", cfg.slack_mcp_fallback),

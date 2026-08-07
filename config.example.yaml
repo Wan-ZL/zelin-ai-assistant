@@ -25,9 +25,7 @@ sources:                               # 需求雷达监控的增量源
       name: your-team-channel
     - id: C01234FGHIJ                  # <your-weekly-report-channel>（周报所在）
       name: your-weekly-report-channel
-  slack_dms:
-    - id: D01234ABCDE                  # manager DM
-      name: manager
+  # （DM 无需配置：radar 自动扫描全部 DM / group DM，见 act/radar_slack.py）
   slack_mcp_fallback: true             # 无 token 时改走 Slack MCP 只读兜底扫描（见 docs/SLACK_SETUP.md）
   slack_mcp_interval_minutes: 30       # MCP 兜底最小间隔（launchd 每 3 分钟触发，靠 state/slack_mcp.marker 节流）
   # slack_capture_receipts: true       # 快速捕获回执（默认开）：给自己发的每条消息上打一个 emoji reaction
