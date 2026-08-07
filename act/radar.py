@@ -61,7 +61,9 @@ _TRANSIENT_PATTERNS = (
     "ENOTFOUND", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "EAI_AGAIN",
     "ENETUNREACH", "EHOSTUNREACH", "EPIPE", "getaddrinfo",
     "socket hang up", "fetch failed", "Connection error", "connection error",
-    "timed out", "network", "exit 143",
+    # SIGTERM 的两种上报形态：shell 包装 = exit 143（128+15）；subprocess
+    # 直接拿到信号 = returncode -15（_run_extract 的 RuntimeError 文本）。
+    "timed out", "network", "exit 143", "exit -15",
 )
 
 # v0.42: parameterized on cfg.owner_name ({owner} slots, substituted in
@@ -292,6 +294,34 @@ _PARSE_DEGRADE_RAW_CAP = 10_000
 PARSE_DEGRADE_PASS_CAP = 3
 
 
+def _is_screen_note(note: Path, text: str) -> bool:
+    """§45×§47.2：note 级的 screen 来源判定（解析已失败，没有 LLM 的逐项
+    provenance 标注可用）。screenpipe ingest 档案的文件名与头部标记由 ingest
+    skill 固定产出（`YYYY-MM-DD-screenpipe-*.md`、首行 `# Screenpipe
+    Session`、`> Source dump: screenpipe_*`）。判错代价不对称：漏判 screen
+    （铸带 OCR 原文的卡）= 回声环重开；误判 screen 只少带一段原文（路径
+    仍回指）——宁可保守。"""
+    if "screenpipe" in note.name.lower():
+        return True
+    head = (text or "")[:500].lower()
+    return "screenpipe session" in head or "source dump: screenpipe" in head
+
+
+def _open_degrade_card(ref: str) -> Optional[Requirement]:
+    """按 note 路径找**未完结**的降级卡（delivered/merged/rejected/trashed
+    不算）。§47.2 的落卡 dedup 与提取前省钱检查共用这一个判据。"""
+    for r in registry.load_all(include_archived=True):
+        if not any(isinstance(s, dict)
+                   and s.get("channel") == PARSE_DEGRADE_CHANNEL
+                   and s.get("ref") == ref for s in (r.sources or [])):
+            continue
+        if registry.is_resolved(r) or str(r.status) in (
+                registry.State.REJECTED.value, registry.State.TRASHED.value):
+            continue  # 已完结的旧降级卡不吞新失败
+        return r
+    return None
+
+
 def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement]:
     """§47.2：提取输出同 pass 重试一次后仍不可解析 → 原文降级为一张低置信
     待办卡（备选/detected 列），绝不静默丢弃。
@@ -299,6 +329,12 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
     卡上刻意不带 LLM 的 raw 输出片段（v0.47 review）：那是模型对不可信 note
     的输出（常复读原文），放围栏外会被 silent_merge 的 notes[:1200] 取走拼进
     prompt；完整取证已有 state/radar_debug/。
+
+    §45 出生闸（v0.47 review 升级为必修）：screen 来源的 note（screenpipe
+    ingest 档案，`_is_screen_note` 判定）不许把 OCR 原文带进新卡——「屏幕不
+    发起卡片」的一刀对降级路径同样有效，否则解析失败反而成了 OCR 内容的出生
+    旁路。screen note 的降级卡退化为 §40 give-up 形态：只带路径 + 错误说明，
+    原文留在原笔记；截断抢救出的 item 照常走 _process_note 的逐项 §45 闸。
 
     生产日志里 "unparseable extraction" 丢过 6 条真实待办——宪法第 11 条保证
     了不崩 pass，但「不崩」不等于「不丢」。降级卡把未加工的原文整段带进
@@ -319,17 +355,44 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
     ``quote or ref`` 兜底意味着 quote 必须非空，否则 ref 里的路径照样进 prompt。
     """
     ref = str(note)
-    for r in registry.load_all(include_archived=True):
-        if not any(isinstance(s, dict)
-                   and s.get("channel") == PARSE_DEGRADE_CHANNEL
-                   and s.get("ref") == ref for s in (r.sources or [])):
-            continue
-        if registry.is_resolved(r) or str(r.status) in (
-                registry.State.REJECTED.value, registry.State.TRASHED.value):
-            continue  # 已完结的旧降级卡不吞新失败——这次照常铸新卡
-        return r  # open degrade card already owns this note — accounted
-    raw_txt = (note_text or "")[:_PARSE_DEGRADE_RAW_CAP]
-    truncated = len(note_text or "") > _PARSE_DEGRADE_RAW_CAP
+    existing = _open_degrade_card(ref)
+    if existing is not None:
+        return existing  # open degrade card already owns this note — accounted
+    screen = _is_screen_note(note, note_text)
+    if screen:
+        summary_txt = failures.pick(
+            "LLM 提取输出两次都解析不出来。这篇笔记来自屏幕录制（§45：屏幕"
+            "内容不进卡面），原文留在原笔记里，路径见卡片来源。",
+            "The LLM extraction output was unparseable twice. This note is a "
+            "screen recording capture (§45: screen content never rides a "
+            "card); the raw text stays in the note, path in the card's "
+            "sources.")
+        body = failures.pick(
+            "§45：screenpipe 屏幕来源——OCR 原文不随卡携带（留在原笔记）",
+            "§45: screenpipe screen source — OCR text withheld from the card "
+            "(kept in the note)")
+        quote = failures.pick(
+            "（解析失败降级卡——§45 屏幕来源，原文留在原笔记）",
+            "(parse-failure degrade card — §45 screen source, raw text stays "
+            "in the note)")
+    else:
+        summary_txt = failures.pick(
+            "LLM 提取输出两次都解析不出来，原文已原样保留在这张卡里"
+            "（原始笔记路径见卡片来源）。",
+            "The LLM extraction output was unparseable twice; the raw note "
+            "text is preserved on this card (source path in the card's "
+            "sources).")
+        raw_txt = (note_text or "")[:_PARSE_DEGRADE_RAW_CAP]
+        truncated = len(note_text or "") > _PARSE_DEGRADE_RAW_CAP
+        body = sanitize.fence_untrusted(
+            raw_txt + ("\n…(truncated)" if truncated else ""))
+        quote = failures.pick("（解析失败降级卡——原文见本卡 notes）",
+                              "(parse-failure degrade card — raw text in "
+                              "card notes)")
+    try:
+        note_mtime = note.stat().st_mtime
+    except OSError:
+        note_mtime = None
     req = Requirement(
         id=registry.next_id(),
         title=failures.pick(f"一篇笔记提取解析失败，原文待处理：{note.name}",
@@ -339,29 +402,23 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
         tier="T0",
         status=registry.State.DETECTED.value,
         hardness="soft",
-        summary=failures.pick(
-            "LLM 提取输出两次都解析不出来，原文已原样保留在这张卡里"
-            "（原始笔记路径见卡片来源）。",
-            "The LLM extraction output was unparseable twice; the raw note "
-            "text is preserved on this card (source path in the card's "
-            "sources)."),
+        summary=summary_txt,
         notes=(failures.pick(
             "[radar-parse-degraded] 解析失败降级，原文未加工（同 pass 重试一次后仍不可解析）",
             "[radar-parse-degraded] degraded on parse failure — raw text "
             "unprocessed (still unparseable after an in-pass retry)")
-            + "\n"
-            + sanitize.fence_untrusted(
-                raw_txt + ("\n…(truncated)" if truncated else ""))),
+            + "\n" + body),
         sources=[{
             "who": note.stem,
             "channel": PARSE_DEGRADE_CHANNEL,
             "date": _note_date(note),
             # 非空占位（不是原话）：占住 analyze._sources_text 的
             # ``quote or ref`` 兜底位，路径永不进扩写 prompt。
-            "quote": failures.pick("（解析失败降级卡——原文见本卡 notes）",
-                                   "(parse-failure degrade card — raw text "
-                                   "in card notes)"),
+            "quote": quote,
             "ref": ref,
+            # add-only：铸卡时的 note mtime——_process_note 的提取前省钱检查
+            # 靠它区分「没改过（跳提取）」与「改过（照常提取，恢复路径）」。
+            "note_mtime": note_mtime,
         }],
     )
     saved = registry.upsert(req)
@@ -934,6 +991,25 @@ def _process_note(note: Path, cfg: config.Config, summary: dict,
         # UnicodeDecodeError 是 ValueError 而非 OSError——一个非 UTF-8 的
         # note 曾让整个 pass 崩掉、marker/health 全部停摆。
         return f"unreadable note {note.name}: {e}"
+    # §47.2 提取前省钱检查：未完结降级卡已按**当前 mtime** 兜住这篇 note
+    # （systemic 回滚钉住 marker 后的重扫是常客）→ 不再烧 2 次提取，直接
+    # accounted。note 被改过（mtime 变 / 旧卡无 note_mtime）照常提取——内容
+    # 修好后正常铸卡的恢复路径不能被旧卡挡死。计入 parse_degraded：它既占
+    # cap 名额（同一批系统性故障不再翻倍降级），也不算「真正解析成功」。
+    try:
+        cur_mtime = note.stat().st_mtime
+    except OSError:
+        cur_mtime = None
+    if cur_mtime is not None:
+        owner = _open_degrade_card(str(note))
+        if owner is not None and any(
+                isinstance(s, dict) and s.get("note_mtime") == cur_mtime
+                for s in (owner.sources or [])):
+            summary["parse_degraded"] = summary.get("parse_degraded", 0) + 1
+            summary["skipped"].append(
+                f"unparseable extraction on {note.name} — already degraded to "
+                f"card {owner.id} (note unchanged), extraction skipped")
+            return None
     try:
         raw = _extract_with_retry(text, runner=runner)
     except (OSError, subprocess.SubprocessError, RuntimeError) as e:

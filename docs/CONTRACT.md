@@ -2155,7 +2155,8 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
 ### 47.1 radar 提取瞬时失败：同 pass 退避重试
 
 - 单篇 note 的 `claude -p` 提取失败且错误呈**瞬时形态**（网络类：ENOTFOUND/
-  ECONNREFUSED/ETIMEDOUT/…；或 **exit 143** = 子进程被外部 SIGTERM）→ 同 pass
+  ECONNREFUSED/ETIMEDOUT/…；或 **exit 143 / exit -15** = 子进程被外部
+  SIGTERM——shell 包装上报 128+15，subprocess 直接拿信号上报 -15）→ 同 pass
   内退避 `TRANSIENT_BACKOFF_S`（5s）后重试，至多 `TRANSIENT_MAX_RETRIES`
   （1）次；重试仍失败才进既有跨 pass 重试台账（`state/radar_failed.json`，
   水位语义 v2 不变）。analytics：`radar_transient_retry{attempt}`——事件只带
@@ -2185,11 +2186,24 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   `state/radar_debug/`）；`quote` 为非空占位——`analyze._sources_text` 的
   `quote or ref` 兜底会把空 quote 换成 ref，路径就进了「研究并提议」扩写
   prompt。
+- **与 §45 的关系（宪法第 4 条，必须项）**：screen 来源的 note **不许把
+  OCR 原文带进新卡**——「屏幕不发起卡片」对降级路径同样有效，否则解析失败
+  反而成了屏幕内容的出生旁路。note 级判定 `_is_screen_note`（解析已失败、
+  无逐项 LLM 标注可用）：文件名含 `screenpipe`，或头部 500 字含
+  `Screenpipe Session` / `Source dump: screenpipe` 标记（ingest skill 固定
+  产出）；判错代价不对称，宁可误判 screen（只少带原文，路径仍回指）。
+  screen note 的降级卡退化为 **§40 give-up 形态**：只带路径 + 错误说明，
+  原文留在原笔记；截断抢救出的 item 照常走 `_process_note` 的逐项 §45 闸。
 - **按 note 路径去重**（sources[0] `channel="radar-parse-degraded"` +
   `ref=<路径>`）：去重只对**未完结**降级卡生效——命中已完结卡（delivered/
   merged/rejected/trashed）照常铸新卡，否则同路径 note 改后再失败会被旧卡
   静默吞掉；入库走 `registry.upsert`，不走 merge_or_new 的 LLM 匹配。
   analytics：`radar_parse_degraded{req}`（不带 note 文件名）。
+- **提取前省钱检查**：sources[0] 新增 add-only 字段 `note_mtime`（float，
+  铸卡时 note 的 mtime）。未完结降级卡命中路径 **且 mtime 未变** → 提取前
+  直接 accounted（不烧 claude，计入 `parse_degraded`，不算真正解析成功）；
+  mtime 变了 / 旧卡缺该字段 → 照常提取——内容修好后正常铸卡的恢复路径不被
+  旧卡挡死。systemic 回滚钉住 marker 后的重扫因此不再翻倍烧提取。
 - 降级卡落库（或 dedup 命中未完结卡）成功 → note 记 accounted（不进台账，
   summary `skipped` 留痕）；降级卡本身落库失败 → 退回台账老路（兜底的兜底，
   note 绝不双重丢失）。
@@ -2199,7 +2213,9 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   提取/不再铸卡，余下 unparseable 以 **channel 级**错误进账（summary 新增
   计数键 `parse_degraded`，add-only）；且降级 accounted 不算「真正解析成功」
   ——一轮无真成功时既有 systemic 回滚照常生效（marker 钉住、重试额度不扣），
-  health 按 any_failed 记 `extract_failed`。
+  health 按 any_failed 记 `extract_failed`。回滚**不作废**本轮已落库的 ≤cap
+  张降级卡（卡是即时 upsert 的）——路径 dedup + 提取前省钱检查保证钉住
+  marker 后的重扫既不重复铸卡也不重复烧提取。
 
 ### 47.3 `state/loop_health.json`（actd 写，Mac app 只读）
 

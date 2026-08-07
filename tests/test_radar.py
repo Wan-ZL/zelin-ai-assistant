@@ -513,6 +513,58 @@ class WatermarkTestCase(RadarScanBase):
         self.assertEqual(radar._read_marker(), 0.0)  # marker 钉住
         self.assertEqual(self._queue(), {})          # 回滚：额度不扣
 
+    def test_screen_note_degrade_withholds_ocr_content(self):
+        # §45×§47.2 判例（对齐 test_radar_echo_gate 的性质：屏幕不发起带内容
+        # 的卡）：screenpipe 屏幕来源的 note 解析失败 → 降级卡退化为 §40
+        # give-up 形态——只带路径+错误说明，OCR 原文绝不随卡出生。
+        note = self._note("2026-07-25-screenpipe-x.md",
+                          "OCR body: the board says do X", BASE)
+        radar.scan(runner=lambda t: "no json")
+        card = self._degraded()[0]
+        self.assertNotIn("OCR body", card.notes or "")
+        self.assertNotIn("OCR body", card.summary or "")
+        self.assertIn("[radar-parse-degraded]", card.notes)
+        self.assertEqual(card.sources[0]["ref"], str(note))  # 回指仍在
+        self.assertNotIn(str(note), self._queue())           # 仍 accounted
+
+    def test_head_marker_screen_note_is_also_withheld(self):
+        # 文件名不含 screenpipe、但头部带 ingest skill 的固定标记——同判 screen
+        self._note("generic-name.md",
+                   "# Screenpipe Session — 2026-07-25 10:00\nOCR body text",
+                   BASE)
+        radar.scan(runner=lambda t: "no json")
+        self.assertNotIn("OCR body text", self._degraded()[0].notes or "")
+
+    def test_open_degrade_card_preempts_reextraction(self):
+        # §47.2 省钱判例：未完结降级卡 + note 未改（note_mtime 一致）→ 提取
+        # 前直接 accounted，不再烧 claude（systemic 回滚钉 marker 后的重扫
+        # 是常客）。
+        note = self._note("junk.md", "junk body", BASE)
+        radar.scan(runner=lambda t: "no json")
+        self.assertEqual(len(self._degraded()), 1)
+        radar._write_marker(0)   # 模拟 systemic 回滚钉住 marker → 强制重扫
+        s = radar.scan(runner=lambda t: self.fail("re-extracted a degraded, "
+                                                  "unchanged note"))
+        self.assertEqual(s["files_scanned"], 1)
+        self.assertEqual(s["parse_degraded"], 1)   # 占 cap 名额、不算真成功
+        self.assertTrue(any("extraction skipped" in x for x in s["skipped"]))
+        self.assertEqual(len(self._degraded()), 1)  # 不重复铸卡
+        self.assertNotIn(str(note), self._queue())
+
+    def test_edited_note_reextracts_despite_open_degrade_card(self):
+        # 恢复路径判例：note 改过（mtime 变）→ 照常提取；内容修好后正常铸卡
+        # 不被旧降级卡挡死。
+        self._note("junk.md", "junk v1", BASE)
+        radar.scan(runner=lambda t: "no json")
+        self.assertEqual(len(self._degraded()), 1)
+        self._note("junk.md", "fixed content with a real ask", BASE + 10)
+        s = radar.scan(runner=lambda t: json.dumps(
+            [_item("Recovered after edit", hardness="hard",
+                   deadline="2026-09-01")]))
+        self.assertEqual(s["reconciled"], 1)
+        self.assertEqual(s["cards"], 1)            # 正常提案卡照发
+        self.assertEqual(len(self._degraded()), 1)  # 旧降级卡保留，不新增
+
     def test_degrade_telemetry_carries_no_note_filename(self):
         # 宪法第 9 条判例：note 文件名是用户笔记标题（可能含敏感词），不进
         # 可上传 props——本 pass 的全部 radar_* 事件只带元数据。
@@ -580,6 +632,23 @@ class TransientRetryTestCase(RadarScanBase):
             calls.append(text)
             if len(calls) == 1:
                 raise RuntimeError("claude exit 143: Execution error")
+            return "[]"
+
+        s = radar.scan(runner=runner)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self._queue(), {})
+        self.assertFalse(any("claude -p failed" in x for x in s["skipped"]))
+
+    def test_exit_minus_15_is_retried_as_transient(self):
+        # v0.47 review 判例：subprocess 直接拿到 SIGTERM 时 returncode=-15
+        # （不经 shell 的 128+15 包装）——与 exit 143 同判瞬时
+        self._note("n.md", "meeting note", BASE)
+        calls = []
+
+        def runner(text):
+            calls.append(text)
+            if len(calls) == 1:
+                raise RuntimeError("claude exit -15: Execution error")
             return "[]"
 
         s = radar.scan(runner=runner)
