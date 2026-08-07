@@ -75,4 +75,64 @@ struct AnalyticsGateTests {
         writeOverrides("{broken json")
         #expect(!Analytics.featureEnabled())
     }
+
+    @Test func pyyamlBoolSpellingsAllDisable() {
+        // 布尔拼写集对齐 PyYAML（act/lib/config._coerce_bool）：Python 认
+        // no/off/0 为关，Swift 侧不能只认 "false"
+        for spelling in ["false", "no", "off", "0", "False", "NO", "Off"] {
+            reset()
+            try? "features:\n  analytics: \(spelling)\n"
+                .write(toFile: configPath, atomically: true, encoding: .utf8)
+            #expect(!Analytics.featureEnabled(), "spelling: \(spelling)")
+        }
+    }
+
+    @Test func inlineFlowMappingFormIsParsed() {
+        // 单行内联花括号形——Python 侧 yaml 认，Swift 行扫描也必须认
+        reset()
+        try? "features: {slack_radar: true, analytics: false}\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+        // 同形但值为 on：不许把「出现在内联块里」本身当成 off
+        try? "features: {analytics: yes}\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(Analytics.featureEnabled())
+    }
+
+    @Test func unparseableFlagValueFailsClosed() {
+        // 值写了但判不动布尔 ⇒ 按损坏 off（Python _config_sources_intact
+        // 同一保守探测）；键不存在才落默认 on
+        reset()
+        try? "features:\n  analytics: banana\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+    }
+
+    @Test func firstReachMarkerOnlyAfterSuccessfulWrite() {
+        // P2 时序：flag off 期间 firstReach 连 UserDefaults marker 也不落
+        // （gate/查重/写入/marker 整链在 serial queue 内，写入成功才 mark）；
+        // 重开后同一里程碑恰好发一次
+        reset()
+        let feature = "gate-test-" + UUID().uuidString
+        let key = "analytics.firstReach." + feature
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let events = Self.home + "/state/analytics/events.jsonl"
+        try? FileManager.default.removeItem(atPath: events)
+
+        writeOverrides(#"{"features": {"analytics": false}}"#)
+        Analytics.firstReach(feature)
+        Analytics.flush()
+        #expect(!UserDefaults.standard.bool(forKey: key))
+        #expect(!FileManager.default.fileExists(atPath: events))
+
+        reset()  // flag 回到默认 on
+        Analytics.firstReach(feature)
+        Analytics.firstReach(feature)  // 第二次被 marker 挡住
+        Analytics.flush()
+        #expect(UserDefaults.standard.bool(forKey: key))
+        let text = (try? String(contentsOfFile: events, encoding: .utf8)) ?? ""
+        let hits = text.components(separatedBy: "\n")
+            .filter { $0.contains(feature) }
+        #expect(hits.count == 1)
+    }
 }

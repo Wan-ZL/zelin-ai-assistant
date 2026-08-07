@@ -278,12 +278,23 @@ def sync_once(cfg: Optional[config.Config] = None,
                 batch.append(row)
             batch_end = end
             if len(batch) >= BATCH_SIZE:
+                # TOCTOU（§16 追记）：run 开始后用户可能已关 flag——每个
+                # batch 送出前重查**新鲜** gate（feature_gate 自带 5s TTL，
+                # 代价可忽略；不能复用本次 run 冻结的 cfg，冻结值看不见
+                # 中途翻动），关了立即停，余下积压留在本机。已送 batch 的
+                # 游标已保存，不回滚——送出的收不回来，只能不再送。
+                if not analytics.feature_gate():
+                    stats["skipped"] = "analytics_off"
+                    return stats
                 send(batch)
                 _save_cursor(file_name, batch_end)
                 stats["uploaded"] += len(batch)
                 stats["batches"] += 1
                 batch = []
         if batch:
+            if not analytics.feature_gate():  # 同上：尾批送出前重查
+                stats["skipped"] = "analytics_off"
+                return stats
             send(batch)
             stats["uploaded"] += len(batch)
             stats["batches"] += 1

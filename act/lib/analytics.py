@@ -151,7 +151,10 @@ def _config_sources_intact() -> bool:
     load_config 对坏 yaml / 坏 overrides 的惯例是静默退回默认（宪法第 11
     条），但 §16 默认 = analytics on——损坏期间用户已写下的显式退出会被
     无声顶掉。这里单独探测损坏；文件**不存在**不算损坏（用户从未表达过
-    退出，默认 on 是诚实的）。
+    退出，默认 on 是诚实的）。损坏也包括 flag 值本身写了但判不动布尔
+    （"banana" 之类的手改坏值）——load_config 会把它静默退回默认 on，
+    可用户写下它时想表达的很可能是退出，宁可按 off 处理（Swift 侧
+    Analytics.featureEnabled 同一保守探测）。
     """
     try:
         if config.yaml is not None and config.CONFIG_PATH.exists():
@@ -159,7 +162,10 @@ def _config_sources_intact() -> bool:
                 config.CONFIG_PATH.read_text(encoding="utf-8"))
             if loaded is not None and not isinstance(loaded, dict):
                 return False
-    except Exception:  # noqa: BLE001 - 读不到 = 按损坏处理
+            feats = loaded.get("features") if isinstance(loaded, dict) else None
+            if isinstance(feats, dict) and "analytics" in feats:
+                config._coerce_bool(feats["analytics"])  # 判不动 → except
+    except Exception:  # noqa: BLE001 - 读不到/判不动 = 按损坏处理
         return False
     try:
         if config.SETTINGS_OVERRIDES_PATH.exists():
@@ -167,7 +173,12 @@ def _config_sources_intact() -> bool:
                 config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 return False
-    except Exception:  # noqa: BLE001 - 读不到 = 按损坏处理
+            feats = data.get("features")
+            if isinstance(feats, dict) and "analytics" in feats:
+                config._coerce_bool(feats["analytics"])
+            if "features.analytics" in data:  # 平铺形（§15）
+                config._coerce_bool(data["features.analytics"])
+    except Exception:  # noqa: BLE001 - 读不到/判不动 = 按损坏处理
         return False
     return True
 

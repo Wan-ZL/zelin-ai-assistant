@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -622,6 +623,31 @@ def load_config() -> Config:
     # derived pipeline dirs too (explicitly-set dirs are left untouched).
     _derive_obsidian_dirs(cfg)
 
+    return cfg
+
+
+# load_config 的 TTL 缓存版：长寿命循环（actd pass）里想看到 Settings 的
+# 即时翻动、又不想逐次付全量 parse 时用（analytics.feature_gate 同款模式）。
+# 只给「必须新鲜」的判定点用；其余 startup-frozen cfg 语义保持不变。
+FRESH_TTL: float = 5.0
+_fresh_cache: Optional[tuple] = None  # (monotonic 过期时刻, Config)
+
+
+def reset_fresh_config_cache() -> None:
+    """清空 load_config_fresh 缓存（测试注入缝）。"""
+    global _fresh_cache
+    _fresh_cache = None
+
+
+def load_config_fresh() -> Config:
+    """当前配置的新鲜视图，最多 FRESH_TTL 秒的陈旧度。Never raises
+    beyond what load_config does（即：不 raise）。"""
+    global _fresh_cache
+    now = _time.monotonic()
+    if _fresh_cache is not None and now < _fresh_cache[0]:
+        return _fresh_cache[1]
+    cfg = load_config()
+    _fresh_cache = (now + FRESH_TTL, cfg)
     return cfg
 
 

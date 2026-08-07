@@ -61,21 +61,99 @@ enum Analytics {
     /// 读取优先级与 Telemetry.level() 同款：overrides（嵌套 features 块 →
     /// 平铺 features.analytics）→ config.yaml `features:` 块 → 默认 on。
     /// 隐私特例（fail-closed，镜像 act/lib/analytics.feature_gate）：
-    /// overrides 文件存在但解析不了时按关处理——用户的显式退出可能正躺在
-    /// 那份读不懂的文件里，宁可少记也不违背退出承诺。
+    /// overrides 文件存在但解析不了、或 flag 值写了但判不动布尔，一律按
+    /// 关处理——用户的显式退出可能正躺在那份读不懂的文件/值里，宁可少记
+    /// 也不违背退出承诺。键**不存在**才落默认 on。
     static func featureEnabled() -> Bool {
         guard !SettingsIO.overridesUnparseable() else { return false }
         let ov = SettingsIO.readOverrides()
-        if let f = ov["features"] as? [String: Any],
-           let v = f["analytics"] as? Bool {
-            return v
+        if let f = ov["features"] as? [String: Any], let raw = f["analytics"] {
+            return Self.coerceBool(raw) ?? false
         }
-        if let v = ov["features.analytics"] as? Bool { return v }
-        if let s = SettingsIO.configNestedScalar(block: "features",
-                                                 key: "analytics") {
-            return s.lowercased() != "false"
+        if let raw = ov["features.analytics"] {
+            return Self.coerceBool(raw) ?? false
+        }
+        for file in [AppPaths.stateRoot + "/config.yaml",
+                     AppPaths.stateRoot + "/config.example.yaml"] {
+            if let raw = Self.configFeaturesAnalyticsRaw(file: file) {
+                return Self.parseBool(raw) ?? false
+            }
         }
         return true
+    }
+
+    /// PyYAML 1.1 布尔拼写集，对齐 act/lib/config._coerce_bool：Python 认
+    /// no/off/0 为关，Swift 侧不能只认 "false"。判不动 = nil（调用方按
+    /// fail-closed 处理）。
+    private static func parseBool(_ raw: String) -> Bool? {
+        let v = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        if ["true", "yes", "on", "1"].contains(v) { return true }
+        if ["false", "no", "off", "0"].contains(v) { return false }
+        return nil
+    }
+
+    /// overrides（JSON）里的 flag 值：真布尔 / 0/1 / 字符串拼写，与
+    /// config._coerce_bool 同一接受集。
+    private static func coerceBool(_ raw: Any) -> Bool? {
+        if let b = raw as? Bool { return b }
+        if let n = raw as? Int, n == 0 || n == 1 { return n == 1 }
+        if let s = raw as? String { return parseBool(s) }
+        return nil
+    }
+
+    /// 单个 yaml 文件里 features.analytics 的原始标量。块形（缩进子键）之外
+    /// 还认单行内联花括号形 `features: {analytics: false}`——Python 侧 yaml
+    /// 两种都认，行扫描不能只认其一。注释/引号处理对齐
+    /// SettingsIO.configNestedScalar。
+    private static func configFeaturesAnalyticsRaw(file: String) -> String? {
+        guard let text = try? String(contentsOfFile: file, encoding: .utf8)
+        else { return nil }
+        var inBlock = false
+        for rawLine in text.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if !inBlock {
+                guard rawLine.hasPrefix("features:") else { continue }
+                let rest = String(rawLine.dropFirst("features:".count))
+                    .trimmingCharacters(in: .whitespaces)
+                if rest.hasPrefix("{") {
+                    // 内联 flow mapping（单行）：{slack_radar: true, analytics: false}
+                    var body = String(rest.dropFirst())
+                    if let close = body.firstIndex(of: "}") {
+                        body = String(body[..<close])
+                    }
+                    for pair in body.split(separator: ",") {
+                        let kv = pair.split(separator: ":", maxSplits: 1)
+                        guard kv.count == 2 else { continue }
+                        let k = kv[0].trimmingCharacters(in: .whitespaces)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                        guard k == "analytics" else { continue }
+                        let v = kv[1].trimmingCharacters(in: .whitespaces)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                        return v.isEmpty ? nil : v
+                    }
+                    return nil  // 内联块里没有 analytics 键
+                }
+                inBlock = true
+                continue
+            }
+            if !rawLine.hasPrefix(" ") && !rawLine.hasPrefix("\t") {
+                if line.isEmpty || line.hasPrefix("#") { continue }
+                break  // next top-level key ends the block
+            }
+            guard line.hasPrefix("analytics:") else { continue }
+            var v = String(line.dropFirst("analytics:".count))
+                .trimmingCharacters(in: .whitespaces)
+            if v.hasPrefix("\"") {
+                let inner = String(v.dropFirst())
+                v = inner.firstIndex(of: "\"").map { String(inner[..<$0]) } ?? inner
+            } else if v.hasPrefix("#") {
+                v = ""
+            } else if let hash = v.range(of: " #") {
+                v = String(v[..<hash.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            return v.isEmpty ? nil : v
+        }
+        return nil
     }
 
     /// Append one event line to state/analytics/events.jsonl. Failures are
@@ -83,30 +161,42 @@ enum Analytics {
     /// features.analytics (§16): flag off ⇒ this writer emits nothing, same
     /// as the Python writer's log_event gate.
     static func log(_ event: String, fields: [String: Any] = [:]) {
-        let dir = AppPaths.analyticsDir
         queue.async {
             guard Self.featureEnabled() else { return }
-            var rec: [String: Any] = ["ts": Self.utcNow(), "event": event,
-                                      "sid": Self.sid, "v": Self.version]
-            for (k, v) in fields { rec[k] = v }
-            guard JSONSerialization.isValidJSONObject(rec),
-                  let data = try? JSONSerialization.data(withJSONObject: rec,
-                                                         options: [.sortedKeys])
-            else { return }
-            var line = data
-            line.append(0x0A)  // "\n"
-            try? FileManager.default.createDirectory(
-                atPath: dir, withIntermediateDirectories: true)
-            // O_APPEND + a single write(2) per line: appends < PIPE_BUF are
-            // atomic, so lines can't shear even against the Python writer.
-            let fd = Darwin.open(dir + "/events.jsonl",
-                                 O_WRONLY | O_APPEND | O_CREAT, 0o644)
-            guard fd >= 0 else { return }
-            defer { _ = Darwin.close(fd) }
-            line.withUnsafeBytes { buf in
-                guard let base = buf.baseAddress else { return }
-                _ = Darwin.write(fd, base, buf.count)
-            }
+            _ = Self.appendLine(event: event, fields: fields)
+        }
+    }
+
+    /// 排空写入队列（serial queue 的同步屏障）：测试用；app 侧需要「此前的
+    /// 事件都已落盘」的时点（如退出前）也可用。
+    static func flush() {
+        queue.sync {}
+    }
+
+    /// 序列 queue 内执行的实际写入；true = 整行确实落盘（firstReach 拿返回
+    /// 值决定 marker——没写成就不 mark，里程碑下次再试）。
+    private static func appendLine(event: String, fields: [String: Any]) -> Bool {
+        let dir = AppPaths.analyticsDir
+        var rec: [String: Any] = ["ts": Self.utcNow(), "event": event,
+                                  "sid": Self.sid, "v": Self.version]
+        for (k, v) in fields { rec[k] = v }
+        guard JSONSerialization.isValidJSONObject(rec),
+              let data = try? JSONSerialization.data(withJSONObject: rec,
+                                                     options: [.sortedKeys])
+        else { return false }
+        var line = data
+        line.append(0x0A)  // "\n"
+        try? FileManager.default.createDirectory(
+            atPath: dir, withIntermediateDirectories: true)
+        // O_APPEND + a single write(2) per line: appends < PIPE_BUF are
+        // atomic, so lines can't shear even against the Python writer.
+        let fd = Darwin.open(dir + "/events.jsonl",
+                             O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        guard fd >= 0 else { return false }
+        defer { _ = Darwin.close(fd) }
+        return line.withUnsafeBytes { buf in
+            guard let base = buf.baseAddress else { return false }
+            return Darwin.write(fd, base, buf.count) == buf.count
         }
     }
 
@@ -121,14 +211,20 @@ enum Analytics {
     /// Once-per-install feature-reach marker (docs/TELEMETRY.md): the FIRST
     /// time a feature is used, one `feature_first_reach` event fires; the
     /// UserDefaults flag suppresses every later call. Metadata only.
-    /// Gate BEFORE the marker (§16, 镜像 Python log_first)：flag off 时连
-    /// UserDefaults marker 也不写，否则重开后里程碑永久丢失。
+    /// Gate BEFORE the marker（§16，镜像 Python log_first），且 gate/查重/
+    /// 写入/落 marker 整链都在 serial queue 内、marker 只在写入**成功后**
+    /// 落笔——否则「enqueue 时 flag 还开、队列执行前被关」的窗口里事件被
+    /// 丢弃而 marker 已写，里程碑永久丢失。serial queue 保证两个并发
+    /// firstReach 也不会双发。
     static func firstReach(_ feature: String) {
-        guard featureEnabled() else { return }
         let key = "analytics.firstReach." + feature
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
-        log("feature_first_reach", fields: ["feature": feature])
+        queue.async {
+            guard Self.featureEnabled() else { return }
+            guard !UserDefaults.standard.bool(forKey: key) else { return }
+            guard Self.appendLine(event: "feature_first_reach",
+                                  fields: ["feature": feature]) else { return }
+            UserDefaults.standard.set(true, forKey: key)
+        }
     }
 
     /// Secret-mask regexes for content fields — MUST mirror

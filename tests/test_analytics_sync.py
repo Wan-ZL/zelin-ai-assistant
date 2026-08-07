@@ -65,6 +65,11 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         for p in (analytics.EVENTS_PATH, sync.CURSOR_PATH):
             if p.exists():
                 p.unlink()
+        # per-batch TOCTOU 重查走新鲜 feature_gate（§16 追记）——判例前后
+        # 清 gate 缓存 + 真实配置文件，防串味/泄漏
+        analytics.reset_feature_gate_cache()
+        self.addCleanup(analytics.reset_feature_gate_cache)
+        self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
         self.batches: list = []
 
     def _transport(self, rows):
@@ -161,6 +166,29 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         # 与 telemetry.enabled=false 同样静默：连 telemetry_sync 事件都没有
         self.assertEqual(analytics.EVENTS_PATH.read_text(encoding="utf-8"),
                          before)
+
+    def test_flag_flipped_off_mid_run_stops_remaining_batches(self):
+        # TOCTOU（§16 追记）：run 开始时 flag 开、第一个 batch 送出后用户
+        # 关掉——每个 batch 送出前重查新鲜 gate，余下积压立即停送；已送
+        # batch 的游标保留（送出的收不回来），未送的行留待将来
+        n = sync.BATCH_SIZE + 7
+        _write_events(*[_event_line("card_sent", i=i) for i in range(n)])
+
+        def transport(rows):
+            self.batches.append(list(rows))
+            # 模拟用户在 batch 1 在途时关掉开关（写真实 config.yaml）；
+            # reset 模拟 5s TTL 已过
+            config.CONFIG_PATH.write_text(
+                "features:\n  analytics: false\n", encoding="utf-8")
+            analytics.reset_feature_gate_cache()
+
+        stats = sync.sync_once(cfg=_cfg(), transport=transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
+        self.assertEqual(len(self.batches), 1)  # 尾批 7 条没送出去
+        saved = _cursor_offset()                # 游标停在 batch 1 末尾
+        self.assertGreater(saved, 0)
+        self.assertLess(saved, analytics.EVENTS_PATH.stat().st_size)
 
     def test_default_config_uploads_by_default(self):
         # default-on telemetry (docs/TELEMETRY.md): a plain Config() has

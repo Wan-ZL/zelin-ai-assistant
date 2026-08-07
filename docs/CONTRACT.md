@@ -298,25 +298,35 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
   （`analytics.feature_gate()`；log_first 在 gate off 时连 once-per-install
   marker 也不写，里程碑留到重开后再发，绝不被吞）；② Swift 写者
   `mac/Sources/Utils.swift Analytics.log`/`firstReach`（`Analytics.featureEnabled()`，
-  同一优先级读 overrides → config.yaml → 默认 on）——两个写者共用同一份
+  同一优先级读 overrides → config.yaml → 默认 on；布尔拼写集对齐 PyYAML
+  （false/no/off/0 都算关），config.yaml 的 `features:` 块形与单行内联
+  `features: {analytics: false}` 花括号形都认）——两个写者共用同一份
   `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
-  `act.analytics_sync.sync_once` 上传前再查一次（skipped="analytics_off"），
-  所以关闭前积压在 events.jsonl 里的事件也不上传。该 flag 与 §15 的
-  `telemetry.enabled`（上传开关）是两层：analytics off 连本地记录都没有。
+  `act.analytics_sync.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
+  gate**（skipped="analytics_off"；防 TOCTOU——run 中途关掉 flag，余下积压
+  立即停送，已送 batch 的游标保留不回滚），所以关闭前积压在 events.jsonl
+  里的事件也不上传。该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：
+  analytics off 连本地记录都没有。
   **隐私 fail-closed 特例**：与本节其它 flag 的 fail-open（默认 on）惯例相反，
   gate 在「配置读不到 / 存在但损坏」时按 **off** 处理——用户显式退出的隐私
   承诺压过功能可用性默认，否则一份坏 yaml/坏 overrides 就能让退出静默失效；
-  配置文件**不存在**不算损坏（从未表达过退出，默认 on 诚实）。gate 判定自身
-  绝不 raise（宪法第 11 条），Python 侧带 GATE_TTL（5s）进程内缓存以免高频
-  emit 逐条付 config parse。判例：tests/test_analytics_feature_gate.py、
-  tests/test_analytics_sync.py（上传端）、mac/LogicTests AnalyticsGateTests
-  （Swift 写者）。
+  「损坏」包括 flag 值本身写了但判不动布尔（两侧同一保守探测）；配置文件
+  **不存在**不算损坏（从未表达过退出，默认 on 诚实）。gate 判定自身绝不
+  raise（宪法第 11 条），Python 侧带 GATE_TTL（5s）进程内缓存以免高频 emit
+  逐条付 config parse。Swift 侧 firstReach 的 once-per-install marker 只在
+  事件**确实落盘之后**才落笔（gate/查重/写入/marker 整链在同一 serial queue
+  内）——enqueue 与执行之间被关 flag 也吞不掉里程碑。判例：
+  tests/test_analytics_feature_gate.py、tests/test_analytics_sync.py（上传端
+  + TOCTOU）、mac/LogicTests AnalyticsGateTests（Swift 写者）。
 - **`features.auto_resume`**：历史上存在**两个键**——config.yaml `execution.auto_resume`
   （`Config.auto_resume`）与 feature flag `features.auto_resume`（Settings 窗口开关写的
   是后者，经 overrides 落 `Config.features`）；此前 actd `reconcile_executing` 只读前者，
   Settings 开关是死的。现行语义 = **两键 AND**（任一 false 即关）；两键默认都 true，
-  未配置过的老安装行为不变（add-only）。判例：tests/test_reconcile.py 的
-  feature-flag off 用例。
+  未配置过的老安装行为不变（add-only）。该判定每个 reconcile pass 走
+  `config.load_config_fresh()`（5s TTL）**新鲜读取**，不吃 actd 启动时冻结的
+  cfg——Settings 翻开关（两个方向）下一 pass 即生效，无需重启 actd；actd 其余
+  startup-frozen cfg 语义不变，只有这一个判定点吃新鲜值。判例：
+  tests/test_reconcile.py 的 flag off 用例 + 「进程内翻开关下一 pass 生效」用例。
 
 ## 17. 周一 digest + Manager pack
 - `python -m act.digest`：待审批积压、待验收积压、needs_input/resume_exhausted 卡住项、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。

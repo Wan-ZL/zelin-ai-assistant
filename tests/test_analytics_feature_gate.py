@@ -125,6 +125,16 @@ class AnalyticsFeatureGateTestCase(unittest.TestCase):
         analytics.log_event("gate_probe_corrupt_overrides")
         self.assertEqual(_events_lines(), before)
 
+    def test_unparseable_flag_value_zero_output(self):
+        # flag 值写了但判不动布尔（"banana"）⇒ 按损坏 fail-closed：
+        # load_config 会把它静默退回默认 on，但用户写下它时想表达的很可能
+        # 是退出（Swift 侧 featureEnabled 同一保守探测）
+        config.CONFIG_PATH.write_text(
+            "features:\n  analytics: banana\n", encoding="utf-8")
+        before = _events_lines()
+        analytics.log_event("gate_probe_bad_value")
+        self.assertEqual(_events_lines(), before)
+
     def test_absent_config_files_default_on(self):
         # 不存在 ≠ 损坏：全新 checkout 没写过任何配置，按 §16 默认 on
         config.CONFIG_PATH.unlink(missing_ok=True)
