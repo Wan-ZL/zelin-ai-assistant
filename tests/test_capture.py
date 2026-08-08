@@ -6,6 +6,7 @@ Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py); no LLM
 is invoked (process_raising is NOT called here; dispatch is stubbed).
 """
 import json
+import subprocess
 import unittest
 import uuid
 from unittest import mock
@@ -213,20 +214,84 @@ class DirectRunCaptureTestCase(unittest.TestCase):
         req = [r for r in registry.load_all() if r.title == text][0]
         self.assertEqual(req.status, State.RAISING.value)
 
-    def test_run_mode_same_text_twice_never_double_cards(self):
-        text = "同一句话不重复开跑"
+    # ------------------------------------------------------------------ #
+    # §34.1 (v0.47, 2026-08-07 拍板): mode:"run" NEVER dedup-merges — every
+    # run-box line files a FRESH approved card. The old disposition table
+    # (promote / fold / re-raise) is abolished; these tests pin the new law.
+    # ------------------------------------------------------------------ #
+
+    def test_run_mode_same_text_twice_files_two_cards(self):
+        # §34.1: repeating a line in the run box is the user's explicit intent
+        # to run it again — two cards, two runs (the old single-card fold hid
+        # the second ask entirely).
+        text = "同一句话连发两次各开一跑"
         self._write_capture(text)
         actd.process_inbox()
         self._write_capture(text)
         actd.process_inbox()
         entries = [r for r in registry.load_all() if r.title == text]
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].status, State.APPROVED.value)
+        self.assertEqual(len(entries), 2)
+        for req in entries:
+            self.assertEqual(req.status, State.APPROVED.value)
+            self.assertEqual(req.delivery_mode, "chat")
 
-    def test_run_mode_promotes_matching_open_proposal_instead_of_twin(self):
-        # the matched proposal carries LLM-chosen REPO routing — promotion must
-        # strip it (direct-run skipped the preview, so no branch/PR may land in
-        # that repo) and leave an honest notes tag about the reroute.
+    def test_run_mode_same_inbox_file_replay_files_one_card(self):
+        # §34.1 crash-replay 幂等：process_inbox 先 apply 后删文件（at-least-
+        # once）——apply 与 unlink 之间 crash，同一 inbox 文件重放绝不铸第二张
+        # approved 卡（否则一次 crash = 起两个 agent）。幂等键 = 文件 stem
+        # （execution.inbox_stem）。两个不同文件 = 两张卡的判例在上面
+        # （test_run_mode_same_text_twice_files_two_cards）。
+        _activate_sync()
+        text = "crash 后同一文件重放只此一卡"
+        aid = self._write_capture(text)
+        payload = (config.INBOX_DIR / f"{aid}.json").read_text(encoding="utf-8")
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual((entries[0].execution or {}).get("inbox_stem"), aid)
+        # 模拟 crash-replay：同名同内容的文件再次出现在 inbox
+        (config.INBOX_DIR / f"{aid}.json").write_text(payload, encoding="utf-8")
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)          # 没有第二张卡
+        self.assertEqual(_ack_for(aid), "running")  # 诚实 ack：这单确实在队里
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
+    def test_run_mode_unlink_failure_replay_after_dispatch_files_one_card(self):
+        # 终审 P1 判例：_safe_unlink 吞 OSError——unlink 持续失败时同一 inbox
+        # 文件跨 pass 存活，且 pass 间卡片已被派发（dispatch 整体重建
+        # execution）。幂等键必须活过派发，否则每 pass 铸一张新卡、起一个
+        # 新 agent（旧标题判重兜底已随 §34.1 拆除，重放闸是唯一防线）。
+        _activate_sync()
+        text = "unlink 失败跨 pass 重放不铸第二张卡"
+        aid = self._write_capture(text)
+        with mock.patch.object(actd, "_safe_unlink", new=lambda p: None):
+            actd.process_inbox()
+        self.assertTrue((config.INBOX_DIR / f"{aid}.json").exists())
+        req = [r for r in registry.load_all() if r.title == text][0]
+        # 真 executor.dispatch（runner 注入，绝不 spawn claude）——execution
+        # 被重建为 {session_id, dispatched_at, log, inbox_stem}
+        cfg = config.Config()
+        cfg.memory_inject = False
+        with mock.patch.object(executor, "has_remote", return_value=False), \
+             mock.patch.object(executor.notify, "notify",
+                               new=mock.Mock(return_value=True)):
+            runner = mock.Mock(return_value=subprocess.CompletedProcess(
+                ["claude"], 0, stdout="backgrounded · e88561e5\n", stderr=""))
+            executor.dispatch(req, cfg, runner=runner)
+        dispatched = registry.load(req.id)
+        self.assertEqual(dispatched.status, State.EXECUTING.value)
+        self.assertEqual((dispatched.execution or {}).get("inbox_stem"), aid)
+        # 下一 pass：同一文件重放——重放闸认出 stem，不铸第二张卡
+        actd.process_inbox()
+        entries = [r for r in registry.load_all() if r.title == text]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
+
+    def test_run_mode_never_touches_a_matching_open_proposal(self):
+        # §34.1: a title hit on an open proposal no longer promotes that card —
+        # the proposal keeps its state AND its LLM-chosen repo routing; the
+        # run-box line files its own fresh chat-delivery card.
         text = "已有提案卡的同一句话"
         existing = Requirement(id=registry.next_id(), title=text,
                                status=State.CARD_SENT.value,
@@ -238,18 +303,22 @@ class DirectRunCaptureTestCase(unittest.TestCase):
 
         self._write_capture(text)
         actd.process_inbox()
-        entries = [r for r in registry.load_all() if r.title == text]
-        self.assertEqual(len(entries), 1)
-        got = entries[0]
-        self.assertEqual(got.id, existing.id)
-        self.assertEqual(got.status, State.APPROVED.value)
-        self.assertEqual(got.delivery_mode, "chat")
-        self.assertIsNone(got.target_repo)
-        self.assertIn("[direct-run] 交付改为 chat", got.notes or "")
+        entries = {r.id: r for r in registry.load_all() if r.title == text}
+        self.assertEqual(len(entries), 2)
+        untouched = entries[existing.id]
+        self.assertEqual(untouched.status, State.CARD_SENT.value)
+        self.assertEqual(untouched.delivery_mode, "repo")
+        self.assertEqual(untouched.target_repo, "/tmp/llm-routed-repo")
+        fresh = next(r for rid, r in entries.items() if rid != existing.id)
+        self.assertEqual(fresh.status, State.APPROVED.value)
+        self.assertEqual(fresh.delivery_mode, "chat")
+        self.assertIsNone(fresh.target_repo)
+        self.assertIn("[direct-run]", fresh.notes or "")
 
-    def test_run_mode_promoted_raising_card_forced_to_chat(self):
-        # a plain-capture card mid-expansion defaults to delivery_mode="repo";
-        # a direct-run of the same text must promote it AND force chat.
+    def test_run_mode_leaves_raising_card_alone_and_files_new(self):
+        # §34.1: a plain capture mid-expansion is NOT hijacked by a direct-run
+        # of the same text — the raising card keeps expanding toward a
+        # proposal; the run gets its own fresh approved chat card.
         text = "先普通捕获再直接开跑的同一句话"
         self._write_capture(text, mode=None)
         actd.process_inbox()
@@ -259,15 +328,22 @@ class DirectRunCaptureTestCase(unittest.TestCase):
 
         self._write_capture(text)
         actd.process_inbox()
-        entries = [r for r in registry.load_all() if r.title == text]
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].status, State.APPROVED.value)
-        self.assertEqual(entries[0].delivery_mode, "chat")
-        self.assertIsNone(entries[0].target_repo)
+        entries = {r.id: r for r in registry.load_all() if r.title == text}
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[req.id].status, State.RAISING.value)
+        fresh = next(r for rid, r in entries.items() if rid != req.id)
+        self.assertEqual(fresh.status, State.APPROVED.value)
+        self.assertEqual(fresh.delivery_mode, "chat")
+        self.assertIsNone(fresh.target_repo)
 
-    def test_run_mode_never_requeues_a_card_already_running(self):
+    def test_run_mode_title_hit_on_executing_card_files_new_card(self):
+        # THE 2026-08-07 incident, pinned: two run-box messages led by the same
+        # URL title-matched the EXECUTING card and were silently folded — the
+        # new text never reached the session, the board showed nothing. §34.1:
+        # the running card is untouched and the line files a fresh approved
+        # card (a new run genuinely queues → "running" stays the honest ack).
         _activate_sync()
-        text = "正在跑的卡不再重复排队"
+        text = "正在跑的卡再发一次开新跑"
         running = Requirement(id=registry.next_id(), title=text,
                               status=State.EXECUTING.value,
                               execution={"session_id": "live1234"},
@@ -277,19 +353,21 @@ class DirectRunCaptureTestCase(unittest.TestCase):
 
         aid = self._write_capture(text)
         actd.process_inbox()
-        entries = [r for r in registry.load_all() if r.title == text]
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].status, State.EXECUTING.value)
-        self.assertEqual((entries[0].execution or {}).get("session_id"), "live1234")
-        # the ask genuinely is in motion — "running" is the honest ack here
+        entries = {r.id: r for r in registry.load_all() if r.title == text}
+        self.assertEqual(len(entries), 2)
+        untouched = entries[running.id]
+        self.assertEqual(untouched.status, State.EXECUTING.value)
+        self.assertEqual((untouched.execution or {}).get("session_id"), "live1234")
+        fresh = next(r for rid, r in entries.items() if rid != running.id)
+        self.assertEqual(fresh.status, State.APPROVED.value)
+        self.assertEqual(fresh.delivery_mode, "chat")
+        self.assertTrue((fresh.execution or {}).get("approved_at"))
         self.assertEqual(_ack_for(aid), "running")
 
-    def test_run_mode_reraises_delivered_card_as_new_queued_round(self):
-        # CONTRACT §34: the run box must be able to re-run a finished task —
-        # the resolved match forces the §3.5 re-raise (merge_or_new's increment
-        # gate alone would silently fold) and the new round actually queues:
-        # the finished round's session_id is archived so dispatch_approved
-        # does not skip the card as "already dispatched".
+    def test_run_mode_title_hit_on_delivered_card_files_new_card(self):
+        # §34.1: re-running a finished task = a FRESH card, not a re-raise of
+        # the old one — the delivered card keeps its history/acceptance intact
+        # and the new round dispatches from the new card on the next pass.
         _activate_sync()
         text = "重跑上次已交付的那个任务"
         delivered = Requirement(id=registry.next_id(), title=text,
@@ -304,18 +382,17 @@ class DirectRunCaptureTestCase(unittest.TestCase):
 
         aid = self._write_capture(text)
         actd.process_inbox()
-        entries = [r for r in registry.load_all() if r.title == text]
-        self.assertEqual(len(entries), 1)
-        got = entries[0]
-        self.assertEqual(got.id, delivered.id)          # same card, new round
-        self.assertEqual(got.status, State.APPROVED.value)
-        self.assertEqual(got.delivery_mode, "chat")
-        self.assertIsNone(got.target_repo)
-        ex = got.execution or {}
-        self.assertTrue(ex.get("reraised_at"))
-        self.assertEqual(ex.get("reraised_session_id"), "oldround1")
-        self.assertNotIn("session_id", ex)
-        self.assertNotIn("done", ex)
+        entries = {r.id: r for r in registry.load_all() if r.title == text}
+        self.assertEqual(len(entries), 2)
+        untouched = entries[delivered.id]
+        self.assertEqual(untouched.status, State.DELIVERED.value)
+        ex = untouched.execution or {}
+        self.assertEqual(ex.get("session_id"), "oldround1")   # history intact
+        self.assertTrue(ex.get("done"))
+        fresh = next(r for rid, r in entries.items() if rid != delivered.id)
+        self.assertEqual(fresh.status, State.APPROVED.value)
+        self.assertEqual(fresh.delivery_mode, "chat")
+        self.assertIsNone(fresh.target_repo)
         self.assertEqual(_ack_for(aid), "running")
 
         fake = mock.Mock()
@@ -330,13 +407,14 @@ class DirectRunCaptureTestCase(unittest.TestCase):
         fake.dispatch.side_effect = _dispatch
         with mock.patch.object(actd, "executor", fake):
             self.assertEqual(actd.dispatch_approved(config.Config()), 1)
-        self.assertEqual(registry.load(delivered.id).status, State.EXECUTING.value)
+        self.assertEqual(registry.load(fresh.id).status, State.EXECUTING.value)
+        # the OLD card never re-enters the pipeline
+        self.assertEqual(registry.load(delivered.id).status, State.DELIVERED.value)
 
-    def test_run_mode_fold_into_review_card_is_acked_noop(self):
-        # a 待验收 match files no run: sources fold, the card stays in review,
-        # and the ack must say so — "running" here would be a silent fake
-        # success (the Mac placeholder deliberately does not clear against
-        # review rows for the same reason).
+    def test_run_mode_title_hit_on_review_card_files_new_card(self):
+        # §34.1: a 待验收 match no longer folds-and-noops — the review card is
+        # untouched and a fresh run queues, so "running" is now the honest ack
+        # (something genuinely started; the old noop covered the fold-only case).
         _activate_sync()
         text = "命中一张待验收卡的同一句话"
         review = Requirement(id=registry.next_id(), title=text,
@@ -348,11 +426,14 @@ class DirectRunCaptureTestCase(unittest.TestCase):
 
         aid = self._write_capture(text)
         actd.process_inbox()
-        entries = [r for r in registry.load_all() if r.title == text]
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].status, State.REVIEW.value)
-        self.assertEqual((entries[0].execution or {}).get("session_id"), "rev1")
-        self.assertEqual(_ack_for(aid), "noop")
+        entries = {r.id: r for r in registry.load_all() if r.title == text}
+        self.assertEqual(len(entries), 2)
+        untouched = entries[review.id]
+        self.assertEqual(untouched.status, State.REVIEW.value)
+        self.assertEqual((untouched.execution or {}).get("session_id"), "rev1")
+        fresh = next(r for rid, r in entries.items() if rid != review.id)
+        self.assertEqual(fresh.status, State.APPROVED.value)
+        self.assertEqual(_ack_for(aid), "running")
 
 
 if __name__ == "__main__":

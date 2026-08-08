@@ -520,6 +520,33 @@ struct MergeSuggestion: Decodable, Hashable {
     }
 }
 
+// CONTRACT §44.6 — 静默并入回执。radar/普通 capture 通道 fold 进已有卡时留在
+// state/fold_receipts/ 的短暂回执，dashboard add-only 顶层键 fold_receipts；
+// App 端渲染为一行可消失的「已并入 R-xxx」提示（LocalNotice 复用）。
+// 隐私红线：回执永不携带被并入内容原文（dashboard 会整包上云同步）——
+// title 是投影时由 registry 补齐的主卡显示名（本就在卡片行里，非新增外泄面）。
+struct FoldReceipt: Decodable, Hashable, Identifiable {
+    let id: String        // 内容键（channel|卡|条目指纹 sha1 前 32；seen-set 去重身份）
+    let req: String       // 并入目标（主卡）R-xxx
+    let title: String     // 主卡显示名（投影时补齐；目标卡已消失则空）
+    let channel: String   // quick_capture | quick | radar
+    let at: Int?          // epoch seconds
+
+    private enum CodingKeys: String, CodingKey {
+        case id, req, title, channel, at
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        req = (try? c.decodeIfPresent(String.self, forKey: .req)) ?? ""
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        channel = (try? c.decodeIfPresent(String.self, forKey: .channel)) ?? ""
+        at = try? c.decodeIfPresent(Int.self, forKey: .at)
+        id = (try? c.decode(String.self, forKey: .id))
+            ?? stableFallbackID("fold", req, at.map(String.init))
+    }
+}
+
 // CONTRACT §26 — optional top-level dashboard field. Present ONLY when actd
 // knows a strictly newer release (updates.check_enabled on); absent = no
 // known update. The app only ever OPENS the release page — never downloads.
@@ -596,6 +623,8 @@ struct Dashboard: Decodable {
     let archived: [ArchivedItem]
     // 契约 merge-review §六 — optional 分区，缺失时解码为 []（向后兼容）。
     let merge_suggestions: [MergeSuggestion]
+    // §44.6 — optional 分区：静默并入的短暂回执，缺失时解码为 []（向后兼容）。
+    let fold_receipts: [FoldReceipt]
     // §26 — optional; nil = no known update (older actd never emits it).
     let update_available: UpdateInfo?
     // §35 v0.35 — optional; the Mac's user-set device name (mirrors the
@@ -611,6 +640,7 @@ struct Dashboard: Decodable {
         case generated_at, counts, needs_approval, running, needs_input, review, completed, debt, trash
         case archived
         case merge_suggestions, update_available, device_label
+        case fold_receipts
     }
 
     init(from decoder: Decoder) throws {
@@ -628,6 +658,7 @@ struct Dashboard: Decodable {
         trash = decodeLossyRows(c, CodingKeys.trash, drops: &drops)
         archived = decodeLossyRows(c, CodingKeys.archived, drops: &drops)
         merge_suggestions = decodeLossyRows(c, CodingKeys.merge_suggestions, drops: &drops)
+        fold_receipts = decodeLossyRows(c, CodingKeys.fold_receipts, drops: &drops)
         // an empty latest is meaningless — treat as "no known update"
         let upd = try? c.decodeIfPresent(UpdateInfo.self, forKey: .update_available)
         update_available = (upd?.latest.isEmpty == false) ? upd : nil

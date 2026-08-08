@@ -530,6 +530,29 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
+def _fold_receipts() -> list[dict]:
+    """§44.6 并入回执投影（never raises）。
+
+    回执文件只存 channel + 目标卡 id（隐私红线：dashboard 整包上云，被并入
+    内容原文不得出机）——投影文案所需的主卡显示名在这里由 registry 现查
+    （``title`` = §37 display_title 链，本就已随卡片行进 dashboard，不是
+    新增外泄面）；目标卡已消失（归档/回收）则留空，App 端只报 R-xxx。
+    """
+    from act.lib import fold_receipts, registry
+    out: list[dict] = []
+    for e in fold_receipts.load_recent():
+        title = ""
+        try:
+            req = registry.load(e["req"])
+            if req is not None:
+                title = _display_title(req)
+        except Exception:  # noqa: BLE001 - 回执是尽力而为的观测面（宪法 11）
+            title = ""
+        e["title"] = title
+        out.append(e)
+    return out
+
+
 def _device_label() -> Optional[str]:
     """This Mac's user-facing device name — the pairing label the owner set in
     设置 · 同步/配对 (``state/sync.json``, the same value the QR carries).
@@ -959,6 +982,10 @@ def build_dashboard(
         # merge-review 契约 六 — new partition; Swift reads decodeIfPresent so
         # older apps simply ignore it.
         "merge_suggestions": _merge_suggestions(merge_dir),
+        # §44.6 静默并入回执 — add-only 顶层键（decodeIfPresent 向后兼容）：
+        # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
+        # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
+        "fold_receipts": _fold_receipts(),
     }
     # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
     # paired phone adopt a Mac rename from the board payload without re-scanning

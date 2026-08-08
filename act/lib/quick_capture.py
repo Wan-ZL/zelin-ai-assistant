@@ -432,6 +432,10 @@ def _fold_into(target: "registry.Requirement", child: Optional["registry.Require
     if added:
         target.repeated_mentions = int(target.repeated_mentions or 1) + added
     registry.save(target)
+    # §44.6 看板回执：静默并入不许无声——best-effort，绝不打断 fold。
+    # note 只进回执的内容键散列（radar 重试重放同键不重发），不落盘。
+    from act.lib import fold_receipts
+    fold_receipts.record(target.id, "radar", note)
 
 
 def _follow_up_card(parent: "registry.Requirement", child: "registry.Requirement",
@@ -667,8 +671,14 @@ def apply_triage(
                 return "folded", target
     # cap_detected（§45）：LIMITED 的 new_proposal 命中完结卡标题时，merge_or_new
     # 内部走 reraise_or_followup——天花板必须一路跟到那里（P1-2b）。
-    saved = registry.merge_or_new(req, high_confidence=high_confidence,
-                                  cap_detected=not promote_ok)
+    kind_mn, saved = registry.merge_or_new_with_kind(
+        req, high_confidence=high_confidence, cap_detected=not promote_ok)
+    if kind_mn == "folded":
+        # §44.6 看板回执：merge_or_new 内部把 restatement 静默吸收进已有卡时
+        # 同样要留痕（返回值仍按本函数冻结词表报 "proposed"——absorbed
+        # restatement 的既有语义，只加观测面不改行为）。
+        from act.lib import fold_receipts
+        fold_receipts.record(saved.id, "radar", req.summary or req.title)
     if separate_from:
         # the judge already ruled this pair separate — enter it in the pair
         # ledger so actd's scan never re-judges it (one-shot per pair EVER).
@@ -794,6 +804,11 @@ def _apply_new_proposal(
     kind, saved = registry.merge_or_new_with_kind(req, high_confidence=not low_conf)
     if kind not in ("reraised", "follow_up", "folded"):
         kind = "proposed"
+    if kind == "folded":
+        # §44.6 看板回执：self-DM 捕获被静默并入已有卡时，除 Slack emoji 回执
+        # （§40.2）外看板也要有痕——best-effort。
+        from act.lib import fold_receipts
+        fold_receipts.record(saved.id, "quick", quote or title)
     analytics.log_event("quick_capture", action="new_proposal", req=saved.id,
                         confidence="low" if low_conf else None, text=tele_text)
     if saved.id != req.id and not saved.improvement_of:
@@ -888,6 +903,10 @@ def _apply_relates_to(
                 f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
                 f"folded into {req.id}'s open follow-up {saved.id}")
     registry.append_fold_note(req, note, "quick")   # §38: timestamped + deduped
+    # §44.6 看板回执：self-DM 的 relates_to 备注折叠与其他 fold 点同口径——
+    # Slack 有文字答复不豁免看板留痕（用户可能只看板不看 DM）。best-effort。
+    from act.lib import fold_receipts
+    fold_receipts.record(req.id, "quick", note)
     if req.status == registry.State.DETECTED.value:
         # a quick mention of a debt item = raise it into a full proposal
         analyze.expand_debt(req, cfg)  # saves + status=card_sent
