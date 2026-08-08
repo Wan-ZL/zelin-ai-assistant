@@ -2262,15 +2262,22 @@ _WAKE_GRACE_SECONDS = 35 * 60    # 最大雷达周期 1800s + 余量（对齐 Di
 _wake_state: dict = {"last_pass": None, "grace_until": 0.0}
 
 
-def _wake_grace(cfg: config.Config, wall: float) -> bool:
+def _wake_grace(cfg: config.Config, wall: float,
+                interval: Optional[int] = None) -> bool:
     """记录本 pass 的 wall-clock 并判断是否处于睡醒/冷启动宽限期。
 
     进程首 pass（``last_pass`` 为 None）同睡醒对待：``_wake_state`` 是进程内
     存，actd 重启后没有跳变可测，而关机 ≥ 阈值后开机（RunAtLoad）的第一个
     pass 同样必然早于雷达落笔——不宽限就是每源一条假死亡通知。代价只是
     重启/升级后真死亡多等一个宽限窗才报，可接受。
+
+    ``interval`` = 主循环的**真实** pass 间隔（main 里 ``--interval`` 优先于
+    config）——跳变判定必须吃它：只按 config 的 poll_interval_seconds 算的话，
+    ``--interval 600`` 形态下每个正常 pass 都被判成睡醒、宽限永不结束、
+    liveness 被静默饿死。缺省才回退 config 值。
     """
-    interval = int(getattr(cfg, "poll_interval_seconds", 10) or 10)
+    if interval is None:
+        interval = int(getattr(cfg, "poll_interval_seconds", 10) or 10)
     last = _wake_state["last_pass"]
     _wake_state["last_pass"] = wall
     jump = max(interval * _WAKE_JUMP_FACTOR, _WAKE_JUMP_FLOOR_SECONDS)
@@ -2280,7 +2287,8 @@ def _wake_grace(cfg: config.Config, wall: float) -> bool:
 
 
 def _check_radar_liveness(notified: set[str],
-                          now: Optional[_dt.datetime] = None
+                          now: Optional[_dt.datetime] = None,
+                          interval: Optional[int] = None
                           ) -> list[tuple[str, str]]:
     """§46 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
 
@@ -2300,7 +2308,7 @@ def _check_radar_liveness(notified: set[str],
         cfg = config.load_config()
         if now is None:
             now = _dt.datetime.now(_dt.timezone.utc)
-        graced = _wake_grace(cfg, now.timestamp())
+        graced = _wake_grace(cfg, now.timestamp(), interval)
         data = health.load_radar_health()
         for src in sources.SOURCES:
             if not sources.enabled(cfg, src):
@@ -2874,6 +2882,7 @@ def run_once(
     auth_notified: set[str],
     resume_notified: Optional[set[str]] = None,
     radar_dead_notified: Optional[set[str]] = None,
+    interval: Optional[int] = None,   # 主循环真实 pass 间隔（--interval 优先）
 ) -> dict:
     config.ensure_state_dirs()
     n_inbox = process_inbox()
@@ -2950,7 +2959,8 @@ def run_once(
     # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
     # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
     for title, body in _check_radar_liveness(
-            radar_dead_notified if radar_dead_notified is not None else set()):
+            radar_dead_notified if radar_dead_notified is not None else set(),
+            interval=interval):
         notify.notify(title, body)
 
     return dash
@@ -2976,7 +2986,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.once:
         try:
             run_once(cfg, None, auth_notified, resume_notified,
-                     radar_dead_notified)
+                     radar_dead_notified, interval=interval)
         except Exception as e:  # noqa: BLE001
             _log(f"run_once FAILED: {e}\n{traceback.format_exc()}")
             return 1
@@ -2988,7 +2998,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     while True:
         try:
             prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
-                                 radar_dead_notified)
+                                 radar_dead_notified, interval=interval)
             loop_health.record_success()
         except Exception as e:  # noqa: BLE001 - one bad pass must not kill loop
             loop_health.record_failure(f"{type(e).__name__}: {e}")

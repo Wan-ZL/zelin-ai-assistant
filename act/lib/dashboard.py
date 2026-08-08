@@ -606,6 +606,10 @@ def _radar_sources(cfg: config.Config) -> dict:
             "enabled": on,
             "last_ok": last_ok if isinstance(last_ok, str) and last_ok else None,
             "skip_reason": skip if isinstance(skip, str) and skip else None,
+            # stale **不吃** actd 的睡醒/冷启动宽限（§46.4）：投影是无状态的
+            # 磁盘真值函数（`python -m act.lib.dashboard` 一次性进程也在跑，
+            # 进程级宽限状态会让 CLI 构建永远压掉 stale）；告警宽限是通知侧
+            # 的关切。睡醒后的一轮假 stale 随雷达补跑自愈，消费者自行防抖。
             "stale": bool(on and sources.is_stale(src, entry, now)),
         }
     return out

@@ -46,9 +46,17 @@ enum DiagAction {
             return
         case .reinstallAgent(let label):
             // 与设置面板「重新安装」同一条路（LaunchAgents.install 渲染 +
-            // load）；装好后下一个 5s tick 卡片自然消失。
+            // load）。结果必须回执给 DiagnosticsModel：plist 写成但 launchctl
+            // load 失败时雷达照样死，丢弃结果 = 卡片消失 + 永远没人再响。
+            // 成功则下一个 5s tick 卡片自然消失。
             DispatchQueue.global(qos: .userInitiated).async {
-                _ = LaunchAgents.install(label: label)
+                let (ok, msg) = LaunchAgents.install(label: label)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        DiagnosticsModel.shared.noteAgentRepair(
+                            label: label, ok: ok, message: msg)
+                    }
+                }
             }
             return
         case .openCredentials:
@@ -84,6 +92,35 @@ final class DiagnosticsModel: ObservableObject {
     static let shared = DiagnosticsModel()
 
     @Published private(set) var cards: [DiagnosticCard] = []
+
+    // §46.6 卡上重装的失败回执（label → 错误信息）。plist 可能写成了但
+    // launchctl load 失败——只看「plist 存在」会把失败吞成成功；有回执时
+    // 卡留着并亮失败原因。成功回执/后台复核发现已 loaded 时出账。
+    private(set) var agentRepairFailure: [String: String] = [:]
+
+    func noteAgentRepair(label: String, ok: Bool, message: String) {
+        if ok {
+            agentRepairFailure.removeValue(forKey: label)
+        } else {
+            agentRepairFailure[label] =
+                message.isEmpty ? "launchctl load failed" : message
+        }
+        rebuild()
+    }
+
+    /// 失败态的后台复核：设置面板「重新安装」等旁路把 agent 装好后自动
+    /// 出账（launchctl print 只在失败态才跑，不进平时 5s tick 的成本）。
+    fileprivate func revalidateRepairFailure(label: String) {
+        DispatchQueue.global(qos: .utility).async {
+            guard LaunchAgents.isLoaded(label: label) else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    _ = DiagnosticsModel.shared.agentRepairFailure
+                        .removeValue(forKey: label)
+                }
+            }
+        }
+    }
 
     // dismissal: signature → epoch seconds dismissed. Mirrors the board's
     // hiddenOnce/hiddenSticky idiom (UserDefaults, survives relaunch).
@@ -157,17 +194,27 @@ final class DiagnosticsModel: ObservableObject {
                switchTouched: gmailSwitchTouched,
                credentialFileExists: gmailCredFileExists),
            let reason = gm.skipReason {
-            let setup = DiagnosticsRules.gmailSetupReasons.contains(reason)
+            // 文案按 failure 形态分组（DiagnosticsRules.gmailCardKind）——
+            // command 类（§14bis 抓取命令）跟应用密码无关，说成密码问题是
+            // 把用户往错误的修复路上引。
+            let title: String, detail: String
+            switch DiagnosticsRules.gmailCardKind(reason: reason) {
+            case .setup:
+                title = L("Gmail 雷达开着但还没配好", "The Gmail radar is on but not set up")
+                detail = L("开关开着，但缺应用密码或邮箱地址——补上它雷达才能开始扫。",
+                           "The switch is on but the app password or address is missing — add it so the radar can scan.")
+            case .command:
+                title = L("Gmail 抓取命令没跑成", "The Gmail fetch command is failing")
+                detail = L("邮件走的是你的自定义抓取命令（gmail_fetch_command），它在报错或输出不是雷达能读的格式——去 Gmail 设置里检查那条命令。",
+                           "Mail comes via your custom fetch command (gmail_fetch_command), and it's erroring or emitting output the radar can't read — check that command in Gmail settings.")
+            case .connection:
+                title = L("Gmail 雷达连不上", "The Gmail radar can't connect")
+                detail = L("存了应用密码，但雷达没法用它登录——多半是密码过期或邮箱地址没填对。",
+                           "An app password is saved but the radar can't log in — the password likely expired or the address is off.")
+            }
             out.append(DiagnosticCard(
                 id: "diag.gmail", signature: "gmail:" + reason, path: .gmail,
-                title: setup
-                    ? L("Gmail 雷达开着但还没配好", "The Gmail radar is on but not set up")
-                    : L("Gmail 雷达连不上", "The Gmail radar can't connect"),
-                detail: setup
-                    ? L("开关开着，但缺应用密码或邮箱地址——补上它雷达才能开始扫。",
-                        "The switch is on but the app password or address is missing — add it so the radar can scan.")
-                    : L("存了应用密码，但雷达没法用它登录——多半是密码过期或邮箱地址没填对。",
-                        "An app password is saved but the radar can't log in — the password likely expired or the address is off."),
+                title: title, detail: detail,
                 actionLabel: L("检查 Gmail 设置", "Check Gmail settings"),
                 action: .openCredentials,
                 lastAttempt: gm.lastAttempt, lastOK: gm.lastOK))
@@ -204,6 +251,10 @@ final class DiagnosticsModel: ObservableObject {
         // 开关面板不装 plist）→ 配置 on 但没人再装，雷达永久静默且因 health
         // 条目已被清、连 liveness 死亡告警都没有基线可响。修复动作与设置
         // 面板「重新安装」同路。只认真实投影（旧 payload 不出卡）。
+        // 撤卡判据：plist 存在**且**没有失败回执——重装可能写成 plist 但
+        // launchctl load 失败（agentRepairFailure 记着），那时卡留着并亮出
+        // 失败原因；失败态每 tick 后台复核 launchctl（设置面板等旁路修好
+        // 后自动出账）。
         let agentBySource: [(String, IngestPath, String)] = [
             ("gmail", .gmail, GmailSettingsModel.agentLabel),
             ("slack", .slack, SlackSettingsModel.agentLabel),
@@ -211,8 +262,11 @@ final class DiagnosticsModel: ObservableObject {
         for (src, path, label) in agentBySource {
             let plistExists = FileManager.default.fileExists(
                 atPath: LaunchAgents.plistDest(label))
+            let failMsg = agentRepairFailure[label]
+            if failMsg != nil { revalidateRepairFailure(label: label) }
             guard DiagnosticsRules.schedulerMissing(
-                projected: projected[src], plistExists: plistExists),
+                projected: projected[src], plistExists: plistExists,
+                repairFailed: failMsg != nil),
                   !out.contains(where: { $0.path == path })   // 每 path 至多一卡
             else { continue }
             let entry = health[src]
@@ -221,9 +275,13 @@ final class DiagnosticsModel: ObservableObject {
                 title: src == "gmail"
                     ? L("Gmail 雷达开着，但后台调度没装上", "The Gmail radar is on but its scheduler isn't installed")
                     : L("Slack 雷达开着，但后台调度没装上", "The Slack radar is on but its scheduler isn't installed"),
-                detail: L("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
-                          "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
-                actionLabel: L("重装后台调度", "Reinstall the scheduler"),
+                detail: failMsg.map {
+                    L("上次重装失败：", "The last reinstall failed: ") + $0
+                } ?? L("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
+                       "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
+                actionLabel: failMsg == nil
+                    ? L("重装后台调度", "Reinstall the scheduler")
+                    : L("再试一次", "Try again"),
                 action: .reinstallAgent(label),
                 lastAttempt: entry?.lastAttempt, lastOK: entry?.lastOK)
             liveSignatures.insert(card.signature)

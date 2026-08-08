@@ -115,4 +115,39 @@ struct DiagnosticsRulesTests {
         #expect(!DiagnosticsRules.schedulerMissing(
             projected: nil, plistExists: false))
     }
+
+    @Test func failedReinstallKeepsTheCard() {
+        // P1：plist 写成了但 launchctl load 失败——仅凭「plist 存在」撤卡
+        // 会把失败吞成成功（health 已清空时 liveness 也永远不响）；失败
+        // 回执在场时卡必须留着
+        #expect(DiagnosticsRules.schedulerMissing(
+            projected: projected(true), plistExists: true, repairFailed: true))
+        // 失败回执出账（重装成功/后台复核 loaded）后恢复正常撤卡
+        #expect(!DiagnosticsRules.schedulerMissing(
+            projected: projected(true), plistExists: true, repairFailed: false))
+    }
+
+    @Test func repairFailureNeverCardsADisabledSource(){
+        // 失败回执不给关掉的源续命——关了就全静默
+        #expect(!DiagnosticsRules.schedulerMissing(
+            projected: projected(false), plistExists: true, repairFailed: true))
+    }
+
+    // MARK: - §46.4 gmail 文案分组（reason → 修复引导）
+
+    @Test func commandReasonsRouteToFetchCommand() {
+        // command 类（§14bis 自定义抓取命令）跟应用密码无关——不许把用户
+        // 引去查密码
+        #expect(DiagnosticsRules.gmailCardKind(reason: "command_failed") == .command)
+        #expect(DiagnosticsRules.gmailCardKind(reason: "command_bad_output") == .command)
+    }
+
+    @Test func setupAndConnectionReasonsKeepTheirGroups() {
+        #expect(DiagnosticsRules.gmailCardKind(reason: "no_credentials") == .setup)
+        #expect(DiagnosticsRules.gmailCardKind(reason: "no_address") == .setup)
+        #expect(DiagnosticsRules.gmailCardKind(reason: "auth_failed") == .connection)
+        #expect(DiagnosticsRules.gmailCardKind(reason: "connect_failed") == .connection)
+        // 未知 reason 落 connection（诚实兜底：凭证类文案 + 设置入口）
+        #expect(DiagnosticsRules.gmailCardKind(reason: "mystery") == .connection)
+    }
 }

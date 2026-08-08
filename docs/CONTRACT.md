@@ -2316,7 +2316,11 @@ stale、不动台账，让雷达先补跑；宽限过后照常评判（plist 真
 读这里，Diagnostics 不再猜「凭证文件非空」；投影缺失的旧 payload 回退老判据）；
 投影的配置与 46.3 同款**现读**（`load_config()` 失败才回退调用方传入的 cfg
 快照）。`last_ok` / `skip_reason` 摘自 health 条目（关着 = null）；`stale` =
-开着且超 liveness 阈值（46.3 告警的看板可见半边，恢复自动变回 false）。Swift 侧
+开着且超 liveness 阈值（46.3 告警的看板可见半边，恢复自动变回 false）。
+`stale` **不吃 46.3 的睡醒/冷启动宽限**——投影是无状态的磁盘真值函数（同
+输入同输出，`python -m act.lib.dashboard` 一次性进程也在产出它，进程级宽限
+状态会让 CLI 构建永远压掉 stale），宽限只属于通知侧；睡醒后的一轮假 stale
+随雷达补跑自愈，**消费者自行防抖**（App 侧目前无常驻 UI 直读该位）。Swift 侧
 `shared/Sources/Contract.swift` `RadarSourceHealth`，全部 decodeIfPresent，
 坏 map 降级空、绝不 fail 整个 dashboard；Diagnostics 读投影**必须**经这套
 Contract 类型解码（不许维护第二条裸 JSONSerialization 读法）。App 的 gmail
@@ -2326,8 +2330,12 @@ Contract 类型解码（不许维护第二条裸 JSONSerialization 读法）。A
 里存在 `gmail_enabled` 键（用户碰过开关，开或关都算）**或**凭证文件存在
 （配到一半）——「enabled 默认 true」本身不是 intent，否则全新安装用户永久
 吃一张「开着但没配好」常驻卡（§3.6 anti-nag 反例）；连接类 reason
-（auth_failed 等）维持投影判据。手写 reason 白名单退役（仅升级瞬间可能残留
-的旧 `disabled` 记录被显式排除）。
+（auth_failed 等）维持投影判据。卡片**文案按 failure 形态分组**
+（`DiagnosticsRules.gmailCardKind`）：setup 类引导补凭证/地址；command 类
+（§14bis `command_failed`/`command_bad_output`）引导检查
+`gmail_fetch_command`——抓取命令的失败与应用密码无关，统一说成密码问题是
+误导；其余（auth_failed/connect_failed/未知码兜底）走凭证类文案。手写
+reason 白名单退役（仅升级瞬间可能残留的旧 `disabled` 记录被显式排除）。
 
 **46.5 install.sh 防复活闸门**：step 5 的 plist 渲染循环装每个 radar plist 前经
 46.1 的 CLI 查真源（`radar_source_enabled()`）。探针从 `$REPO_ROOT` 跑
@@ -2347,10 +2355,16 @@ ModuleNotFoundError）。「关」的判定 = **exit 3 且 stdout 字面量 `off
 launchd plist 文件缺失；旧 payload 无投影不出卡，宁漏勿误），修复动作 =
 `LaunchAgents.install`（与设置面板「重新安装」同一条路）；signature
 `<src>:agent_missing`，~2min warmup 防开关切换瞬间（投影落后一个 actd
-pass）的闪卡。设置面板的 gmail/slack 总开关翻 on 本就自装 plist，不经此卡。
+pass）的闪卡。**重装结果必须回执**：plist 可能写成但 `launchctl load` 失败
+（雷达照样死、health 已清空时 liveness 也没有基线可响），所以撤卡判据 =
+plist 存在**且**无失败回执（`agentRepairFailure`）——失败时卡留着、文案换
+失败详情 + 「再试一次」；失败态每 tick 后台复核 `launchctl print`（设置
+面板等旁路修好后自动出账；该复核只在失败态运行，不进平时 5s tick 的成本）。
+设置面板的 gmail/slack 总开关翻 on 本就自装 plist，不经此卡。
 
 **判例**：tests/test_sources.py（真值表含 slack/obsidian enabled / 关闭真静默 /
-liveness+anti-nag+恢复+现读配置+睡醒宽限+plist 死亡 / 投影形状+现读 / CLI
-出口码 0-3-2 / install.sh 闸门 drift-guard + 非 repo cwd 探针 fail-open）、
-mac/LogicTests ContractRadarSourcesTests（Swift 解码向后兼容）+
-DiagnosticsRulesTests（46.4 意愿信号矩阵 / 46.6 修复卡判据）。
+liveness+anti-nag+恢复+现读配置+睡醒/冷启动宽限+真实 interval+plist 死亡 /
+投影形状+现读+stale 不吃宽限 / CLI 出口码 0-3-2 / install.sh 闸门
+drift-guard + 非 repo cwd 探针 fail-open）、mac/LogicTests
+ContractRadarSourcesTests（Swift 解码向后兼容）+ DiagnosticsRulesTests
+（46.4 意愿信号矩阵+文案分组 / 46.6 修复卡判据+失败回执保卡）。

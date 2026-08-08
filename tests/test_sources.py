@@ -300,6 +300,17 @@ class LivenessAlertTestCase(unittest.TestCase):
             collected += actd._check_radar_liveness(notified, now=self._now(t))
         self.assertEqual(len(collected), 1)
 
+    def test_slow_interval_passes_are_not_wake_jumps(self):
+        # 跳变判定必须吃主循环的**真实** interval（--interval 优先于 config）
+        # ——否则 `--interval 600` 形态下每个正常 pass 都被判睡醒、宽限永不
+        # 结束、liveness 被静默饿死
+        notified: set = set()
+        actd._check_radar_liveness(notified, now=self._now(), interval=600)
+        self._seed("gmail", _iso(7 * 3600))
+        msgs = actd._check_radar_liveness(
+            notified, now=self._now(600), interval=600)   # 600s 是常态节奏
+        self.assertEqual(len(msgs), 1)                    # 照常评判、照常告警
+
     def test_plist_deleted_death_still_alarms(self):
         # 真死亡形态（plist 被删/调度停摆）：pass 以正常节奏推进（无跳变），
         # last_ok 与 last_attempt 一起停摆 → 照样告警，宽限不误伤
@@ -358,6 +369,19 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         gm = self._build(_cfg())["radar_sources"]["gmail"]
         self.assertFalse(gm["stale"])
         self.assertIsNotNone(gm["last_ok"])
+
+    def test_stale_ignores_wake_grace(self):
+        # §46.4：stale 不吃通知侧的睡醒/冷启动宽限——投影是无状态的磁盘
+        # 真值函数（一次性 `python -m act.lib.dashboard` 进程也在产出它），
+        # 即便 actd 侧正处于冷启动宽限，投影照报 stale
+        actd._wake_state.update({"last_pass": None, "grace_until": 0.0})
+        self.addCleanup(actd._wake_state.update,
+                        {"last_pass": None, "grace_until": 0.0})
+        LivenessAlertTestCase._seed("gmail", _iso(7 * 3600))
+        self.assertEqual(
+            actd._check_radar_liveness(set()), [])        # 通知侧：宽限静默
+        self.assertTrue(
+            self._build(_cfg())["radar_sources"]["gmail"]["stale"])  # 投影照报
 
     def test_health_entry_fields_flow_through(self):
         health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
