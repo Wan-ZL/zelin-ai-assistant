@@ -16,6 +16,13 @@ enum ProposalsTriage {
     /// （actd 不改写 text —— 占位卡 ↔ 后端行的归一匹配天然成立）。
     static let captureText = "清理提案积压：审阅提案列的积压卡片，给出保留/丢弃/合并建议"
 
+    /// 按钮可用性（§34bis）：提案列没有积压（count==0）时禁用——空列开
+    /// 清理会话只会交付一张空清单。cooling = 2s 防连点（UI 层辅助；真正
+    /// 的防双开是 actd 的在途判重）。
+    static func buttonEnabled(backlogCount: Int, cooling: Bool) -> Bool {
+        backlogCount > 0 && !cooling
+    }
+
     /// inbox capture 载荷（§34bis 形状）：§10 capture + §34 mode:"run"
     /// + preset 信号。字段 add-only，缺 preset 的老 actd 把它当普通 direct-run。
     static func payload(ts: String) -> [String: Any] {

@@ -11,6 +11,7 @@ the debt batch R-002..R-006). Both shapes round-trip through ``save``.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -338,17 +339,64 @@ def _dump_yaml(obj: Any) -> str:
     return yaml.safe_dump(obj, allow_unicode=True, sort_keys=False, width=100)
 
 
-# §34bis 快照护栏的排除表：本进程（actd = registry 单写者）写/删过的卡片
-# 文件名。起止快照比对时命中这里的变动 = actd 自己的合法写入，不算嫌疑——
-# 没有这张台账，清理会话期间管线的任何正常落盘（radar 新卡、fold、状态
-# 迁移）都会触发假警。进程内存态：actd 中途重启则台账清零，重启前的合法
-# 写入可能被误报——护栏是检测型 + 人工核查兜底，宁可偶发误报不漏报。
+# §34bis 快照护栏的排除表（写入台账）：经本模块写/删过的卡片文件名。
+# 起止快照比对时命中台账的变动 = 管线自己的合法写入，不算嫌疑——没有它，
+# 清理会话期间任何正常落盘（radar 新卡、fold、状态迁移）都会触发假警。
+# **跨进程持久**：radar（slack 180s / gmail 300s / obsidian cron）是独立
+# 进程、也经本模块直写 registry，进程内存集合看不见它们；台账落成
+# state/registry_writes.jsonl（append-only，一行一条 {"f","ts"}），guard
+# 按快照起始 ts 过滤读取——actd 中途重启也不再丢账。进程内集合只留作
+# 落盘失败（磁盘满等）时的兜底：宁多记一笔（漏报该笔）不少记（假警）。
 _PROC_WRITES: set = set()
+_WRITES_JOURNAL_MAX_BYTES = 1 << 20     # 超过 ~1MB 压缩到最近半数行
 
 
-def process_writes() -> frozenset:
-    """本进程写/删过的 registry 文件名集合（§34bis 快照护栏的排除表）。"""
-    return frozenset(_PROC_WRITES)
+def _writes_journal_path() -> Path:
+    return config.STATE_DIR / "registry_writes.jsonl"
+
+
+def _journal_write(name: str) -> None:
+    _PROC_WRITES.add(name)
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        path = _writes_journal_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"f": name, "ts": ts},
+                                ensure_ascii=False) + "\n")
+        # 压缩（best-effort）：append-only 台账会无限增长；超限时只留后半。
+        # 多进程下 rewrite 可能吞掉并发的一条 append——代价只是那笔合法写入
+        # 可能被误报（检测型护栏 + 人工核查，可接受），绝不多排除。
+        if path.stat().st_size > _WRITES_JOURNAL_MAX_BYTES:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            keep = lines[len(lines) // 2:]
+            tmp = path.with_suffix(".jsonl.tmp")
+            tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
+            tmp.replace(path)
+    except OSError:
+        pass
+
+
+def writes_since(ts: str) -> frozenset:
+    """§34bis 快照护栏的排除表：``ts`` 起（含）的合法写入文件名集合。
+
+    = 持久台账中 ts 之后的条目 ∪ 本进程内存集合（落盘失败的兜底）。ts 与
+    台账条目同为 UTC "%Y-%m-%dT%H:%M:%SZ"——字符串比较即时间比较。
+    """
+    names = set(_PROC_WRITES)
+    try:
+        for line in _writes_journal_path().read_text(
+                encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("f") \
+                    and str(rec.get("ts", "")) >= str(ts):
+                names.add(str(rec["f"]))
+    except OSError:
+        pass
+    return frozenset(names)
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -356,7 +404,7 @@ def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
-    _PROC_WRITES.add(path.name)
+    _journal_write(path.name)
 
 
 def save(req: Requirement) -> None:
@@ -560,11 +608,11 @@ def delete(req: Requirement) -> bool:
                 path.unlink()
             except OSError:
                 return False
-            _PROC_WRITES.add(path.name)   # §34bis 台账：本进程的合法删除
+            _journal_write(path.name)    # §34bis 台账：管线的合法删除
         return True
     try:
         path.unlink()
-        _PROC_WRITES.add(path.name)       # §34bis 台账：本进程的合法删除
+        _journal_write(path.name)        # §34bis 台账：管线的合法删除
         return True
     except OSError:
         return False
@@ -624,7 +672,7 @@ def unarchive(req: Requirement) -> Requirement:
     if orig and Path(orig) != Path(req._file):
         try:
             Path(orig).unlink(missing_ok=True)
-            _PROC_WRITES.add(Path(orig).name)   # §34bis 台账：搬迁删除原件
+            _journal_write(Path(orig).name)     # §34bis 台账：搬迁删除原件
         except OSError:
             pass
     return req

@@ -546,23 +546,62 @@ def _registry_snapshot() -> dict:
     return snap
 
 
+def _triage_snapshot_path(req_id: str) -> Path:
+    """快照落 state/ 侧文件——全 registry 清单写进卡 YAML 会让卡膨胀且
+    用户在看板/编辑器里直接看见一坨账本；execution 只留 add-only 引用
+    ``registry_snapshot_ref``。"""
+    return config.STATE_DIR / "triage_snapshots" / f"{req_id}.json"
+
+
+def _stamp_triage_snapshot(req_id: str) -> Optional[str]:
+    """§34bis 机械护栏起点：拍快照落 state 文件，返回引用路径（失败 None）。"""
+    path = _triage_snapshot_path(req_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"at": _iso_now(),
+                                   "files": _registry_snapshot()},
+                                  ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+        return str(path)
+    except OSError as e:
+        _log(f"guard: snapshot stamp failed for {req_id}: {e}")
+        return None
+
+
 def _check_triage_registry_guard(req, ex: dict) -> None:
     """§34bis 机械护栏终点：收割提升待验收时做起止快照比对（检测型）。
 
     plan 的只读红线只是 prompt 级约束——清理会话带
     --dangerously-skip-permissions 且拿到 REGISTRY_DIR 绝对路径，物理上
-    写得进。这里比对 dispatch 时留在 execution.registry_snapshot 的快照：
-    排除本进程（actd 单写者）的合法写入（registry.process_writes() 台账）
-    与本卡自身文件后仍有差异 = 疑似会话越权 → 卡 notes 记警告 + notify
-    告警，交人工核查。只告警不回滚、绝不阻塞提升（宪法第 11 条：检测
-    失败不许崩 pass）；权限模型不变。
+    写得进。这里比对 dispatch 时留在 state/triage_snapshots/ 的快照
+    （execution.registry_snapshot_ref 引用）：排除管线的合法写入
+    （registry.writes_since(快照 ts)——跨进程持久台账，radar 独立进程的
+    落卡也在账上）与本卡自身文件后仍有差异 = 疑似会话越权 → 卡 notes 记
+    警告 + notify 告警，交人工核查。只告警不回滚、绝不阻塞提升（宪法第
+    11 条：检测失败不许崩 pass）；权限模型不变。
     """
-    snap = ex.pop("registry_snapshot", None)   # 用后即焚：一轮只比对一次
-    if not isinstance(snap, dict):
+    ref = ex.pop("registry_snapshot_ref", None)   # 用后即焚：一轮只比对一次
+    if not ref:
         return
     try:
+        snap_path = Path(str(ref))
+        try:
+            payload = json.loads(snap_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            _log(f"guard: snapshot unreadable for {req.id}: {e}")
+            return
+        finally:
+            try:
+                snap_path.unlink(missing_ok=True)   # 快照随本轮消费
+            except OSError:
+                pass
+        snap = payload.get("files") if isinstance(payload, dict) else None
+        at = str(payload.get("at", "")) if isinstance(payload, dict) else ""
+        if not isinstance(snap, dict) or not at:
+            return
         now_snap = _registry_snapshot()
-        ours = registry.process_writes()
+        ours = registry.writes_since(at)
         own = {f"{req.id}.yaml"}               # 本卡自身随收割必然变动
         suspicious = sorted(
             name for name in set(snap) | set(now_snap)
@@ -612,10 +651,11 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     发生时经 :mod:`act.lib.fold_receipts` 留看板回执（§44.6）。
 
     §34bis ``plan``/``preset``（add-only）: preset capture（提案积压清理
-    按钮）注入的固定 plan + 卡片顶层 preset 标记 —— 只在建**新卡**时随卡
-    落盘；命中既有卡的折叠/提升分支不改写对方的 plan/preset（判重逻辑零
-    改动）。preset 标记是快照护栏（_check_triage_registry_guard）认卡的
-    依据。
+    按钮）注入的固定 plan + 卡片顶层 preset 标记，随新卡落盘。防双开在
+    上游（process_inbox 的在途判重）——走到这里的 preset capture 必然该
+    铸新卡；若判重命中既有卡（§34.1 前的世界），折叠/提升分支也不改写
+    对方的 plan/preset。preset 标记是快照护栏
+    （_check_triage_registry_guard）认卡的依据。
 
 
     Returns the §5.4 result_status — the phone's ledger must never show
@@ -2043,13 +2083,16 @@ def dispatch_approved(cfg: config.Config) -> int:
                 ex.pop("last_error", None)
                 ex.pop("last_error_at", None)
                 changed = True
-            # §34bis 机械护栏起点：preset 清理卡起跑成功即拍 registry 快照，
-            # 收割提升时比对（_check_triage_registry_guard）。只能在这里补
-            # 打：executor.dispatch 的成功路径整个重建了 execution。
+            # §34bis 机械护栏起点：preset 清理卡起跑成功即拍 registry 快照
+            # （落 state/triage_snapshots/，卡上只留引用），收割提升时比对
+            # （_check_triage_registry_guard）。只能在这里补打：
+            # executor.dispatch 的成功路径整个重建了 execution。
             if ex.get("session_id") \
                     and getattr(req, "preset", None) == PROPOSALS_TRIAGE_PRESET:
-                ex["registry_snapshot"] = _registry_snapshot()
-                changed = True
+                snap_ref = _stamp_triage_snapshot(req.id)
+                if snap_ref:
+                    ex["registry_snapshot_ref"] = snap_ref
+                    changed = True
             if changed:
                 req.execution = ex
                 save(req)

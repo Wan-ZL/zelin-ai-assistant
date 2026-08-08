@@ -35,4 +35,13 @@ struct ProposalsTriagePayloadTests {
         #expect(JSONSerialization.isValidJSONObject(
             ProposalsTriage.payload(ts: "2026-08-07T00:00:00Z")))
     }
+
+    /// 可用性矩阵（§34bis）：没有积压（count==0）或冷却中 → 禁用；
+    /// 有积压且未冷却 → 可用。
+    @Test func buttonEnabledMatrix() {
+        #expect(!ProposalsTriage.buttonEnabled(backlogCount: 0, cooling: false))
+        #expect(!ProposalsTriage.buttonEnabled(backlogCount: 0, cooling: true))
+        #expect(!ProposalsTriage.buttonEnabled(backlogCount: 3, cooling: true))
+        #expect(ProposalsTriage.buttonEnabled(backlogCount: 3, cooling: false))
+    }
 }

@@ -358,7 +358,10 @@ struct KanbanView: View {
                            isEmpty: false, motionKey: "approval",
                            // §34bis 积压清理按钮：泳道头右侧，点击 = 固定
                            // prompt 的 direct-run 清理会话（运行中列出卡）。
-                           accessory: AnyView(ProposalsTriageButton(app: app))) {
+                           // count==0 时禁用（空列没东西可清理）。
+                           accessory: AnyView(ProposalsTriageButton(
+                               app: app,
+                               backlogCount: approvals.count + suggestions.count))) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
@@ -912,13 +915,17 @@ private struct ArchiveLaneContent: View {
 // （chat 交付进待验收）。prompt 正文在 Python 侧（actd 的 preset 表）。
 private struct ProposalsTriageButton: View {
     let app: AppDelegate
+    /// 提案列在列卡数（§34bis）——0 = 没有积压，按钮禁用（可用性纯逻辑
+    /// 在 ProposalsTriage.buttonEnabled，LogicTests 钉判例）。
+    let backlogCount: Int
     /// 防连点冷却（2s）。真正的防双开由 actd 的在途判重兜底：已有
     /// approved/executing 的清理卡时，preset capture 不铸新卡（§34bis）。
     @State private var cooling = false
 
     var body: some View {
         Button {
-            guard !cooling else { return }
+            guard ProposalsTriage.buttonEnabled(backlogCount: backlogCount,
+                                                cooling: cooling) else { return }
             cooling = true
             _ = app.submitProposalsTriage()
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { cooling = false }
@@ -932,8 +939,12 @@ private struct ProposalsTriageButton: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .disabled(cooling)
-        .help(L("启动一个临时 Claude 会话审阅本列全部积压提案：逐张判断仍值得做/过时/重复，和你对话确认后交付一份保留/丢弃/合并建议清单（会话出现在运行中列，可随时打开参与；它不会直接改动任何卡片）",
-                "Launch a temporary Claude session to review this lane's backlog: it judges each proposal (keep / stale / duplicate), confirms with you in conversation, and delivers a keep/drop/merge recommendation list. The session appears in Running — join anytime; it never modifies cards directly."))
+        .disabled(!ProposalsTriage.buttonEnabled(backlogCount: backlogCount,
+                                                 cooling: cooling))
+        .help(backlogCount > 0
+            ? L("启动一个临时 Claude 会话审阅本列全部积压提案：逐张判断仍值得做/过时/重复，和你对话确认后交付一份保留/丢弃/合并建议清单（会话出现在运行中列，可随时打开参与；它不会直接改动任何卡片）",
+                "Launch a temporary Claude session to review this lane's backlog: it judges each proposal (keep / stale / duplicate), confirms with you in conversation, and delivers a keep/drop/merge recommendation list. The session appears in Running — join anytime; it never modifies cards directly.")
+            : L("提案列没有积压——有卡片堆起来时再用",
+                "No backlog in Proposals — come back when cards pile up"))
     }
 }

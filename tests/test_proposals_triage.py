@@ -254,8 +254,16 @@ class RegistryGuardTests(TriageBase):
         self.assertEqual(card.preset, "proposals_triage")
 
     def test_dispatch_stamps_registry_snapshot(self):
+        # P2-1：快照落 state/triage_snapshots/ 侧文件，卡 YAML 只留引用
+        # （全 registry 清单进卡会膨胀且用户直接看见账本）。
         card = self._dispatched_preset_card()
-        snap = (card.execution or {}).get("registry_snapshot")
+        ref = (card.execution or {}).get("registry_snapshot_ref")
+        self.assertTrue(ref)
+        snap_file = Path(ref)
+        self.assertTrue(snap_file.is_file())
+        payload = json.loads(snap_file.read_text(encoding="utf-8"))
+        self.assertRegex(payload["at"], r"^\d{4}-\d{2}-\d{2}T")
+        snap = payload["files"]
         self.assertIsInstance(snap, dict)
         self.assertIn(f"{card.id}.yaml", snap)
         for v in snap.values():                    # 形状 "size:mtime_ns"
@@ -281,12 +289,13 @@ class RegistryGuardTests(TriageBase):
         with mock.patch.object(actd, "executor", _FakeExecutor):
             actd.dispatch_approved(config.Config())
         card = registry.load(card.id)
-        self.assertNotIn("registry_snapshot", card.execution or {})
+        self.assertNotIn("registry_snapshot_ref", card.execution or {})
 
     def test_snapshot_mismatch_warns_and_notifies(self):
         card = self._dispatched_preset_card()
         ex = dict(card.execution or {})
-        # 会话越权模拟：绕过 registry.save 直接落盘（不进单写者写入台账）
+        snap_file = Path(ex["registry_snapshot_ref"])
+        # 会话越权模拟：绕过 registry API 直接落盘（不进写入台账）
         rogue = config.REGISTRY_DIR / "R-rogue.yaml"
         rogue.write_text("id: R-rogue\ntitle: tampered\n", encoding="utf-8")
         with mock.patch.object(actd.notify, "notify",
@@ -295,15 +304,49 @@ class RegistryGuardTests(TriageBase):
         self.assertIn("[§34bis 护栏]", card.notes)
         self.assertIn("R-rogue.yaml", card.notes)
         ntf.assert_called_once()
-        # 快照用后即焚 —— 同一轮不重复告警
-        self.assertNotIn("registry_snapshot", ex)
+        # 快照用后即焚（引用 pop + 侧文件删）—— 同一轮不重复告警
+        self.assertNotIn("registry_snapshot_ref", ex)
+        self.assertFalse(snap_file.exists())
 
-    def test_actd_own_writes_do_not_alarm(self):
+    def test_pipeline_writes_do_not_alarm(self):
         card = self._dispatched_preset_card()
         ex = dict(card.execution or {})
-        # actd 单写者的合法写入：经 registry 落盘（进写入台账）→ 不算嫌疑
+        # 管线的合法写入：经 registry API 落盘（进写入台账）→ 不算嫌疑
         registry.upsert(registry.Requirement(
             id=registry.next_id(), title="清理会话期间管线正常新卡"))
+        with mock.patch.object(actd.notify, "notify",
+                               mock.Mock(return_value=True)) as ntf:
+            actd._check_triage_registry_guard(card, ex)
+        ntf.assert_not_called()
+        self.assertNotIn("[§34bis 护栏]", card.notes or "")
+
+    def test_cross_process_pipeline_writes_do_not_alarm(self):
+        # P1 假警面：radar（slack/gmail/obsidian cron）是独立进程直写
+        # registry——台账必须跨进程（state/registry_writes.jsonl），否则
+        # 清理会话十几分钟里 radar 任何落卡都会假警。模拟 = 绕开本进程
+        # 内存集合：直接落卡文件 + 手写台账行（另一个进程会这么留痕）。
+        card = self._dispatched_preset_card()
+        ex = dict(card.execution or {})
+        other = config.REGISTRY_DIR / "R-radar.yaml"
+        other.write_text("id: R-radar\ntitle: radar 落卡\n", encoding="utf-8")
+        self.assertNotIn("R-radar.yaml", registry._PROC_WRITES)
+        ts = "2999-01-01T00:00:00Z"      # 必然 >= 快照起始 ts
+        with registry._writes_journal_path().open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"f": "R-radar.yaml", "ts": ts}) + "\n")
+        with mock.patch.object(actd.notify, "notify",
+                               mock.Mock(return_value=True)) as ntf:
+            actd._check_triage_registry_guard(card, ex)
+        ntf.assert_not_called()
+        self.assertNotIn("[§34bis 护栏]", card.notes or "")
+
+    def test_journal_survives_actd_restart(self):
+        # 台账持久化的另一半收益：actd 中途重启（内存集合清零）不再把
+        # 重启前的管线合法写入误报成会话越权。
+        card = self._dispatched_preset_card()
+        ex = dict(card.execution or {})
+        registry.upsert(registry.Requirement(
+            id=registry.next_id(), title="重启前的管线正常新卡"))
+        registry._PROC_WRITES.clear()    # 模拟 actd 重启
         with mock.patch.object(actd.notify, "notify",
                                mock.Mock(return_value=True)) as ntf:
             actd._check_triage_registry_guard(card, ex)

@@ -1371,14 +1371,21 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   会话带 `--dangerously-skip-permissions` 且拿到 registry 绝对路径，物理上
   写得进。故：① 卡片新增 add-only 顶层字段 `preset`（str，词表同上；顶层
   而非 execution 键，因 dispatch 成功路径重建 execution）；② dispatch 成功
-  即拍 registry 目录快照（文件名 → `size:mtime_ns`，存 add-only 键
-  `execution.registry_snapshot`）；③ 收割提升待验收时（reconcile 的 done
-  分支与 FINAL DRAFT 探针两条路）比对快照，排除 actd 本进程的合法写入
-  （registry 单写者的进程内写入台账 `registry.process_writes()`）与本卡
-  自身后仍有差异 → 卡 notes 记 `[§34bis 护栏]` 警告 + notify「清理会话
-  疑似改动了 registry，请核查」。**只检测告警、不回滚、绝不阻塞提升**——
-  权限模型不变，人工核查兜底；actd 中途重启会清空台账，可能偶发误报
-  （检测型护栏宁误报不漏报）。
+  即拍 registry 目录快照（文件名 → `size:mtime_ns`），落
+  `state/triage_snapshots/<R-id>.json`（含起始 ts），卡上只留 add-only 引用
+  `execution.registry_snapshot_ref`——全清单写进卡 YAML 会让卡膨胀且用户在
+  看板/编辑器里直接看见账本；③ 收割提升待验收时（reconcile 的 done 分支与
+  FINAL DRAFT 探针两条路）比对快照（用后即焚：引用 pop + 侧文件删），排除
+  **管线的合法写入**与本卡自身后仍有差异 → 卡 notes 记 `[§34bis 护栏]`
+  警告 + notify「清理会话疑似改动了 registry，请核查」。合法写入的判据 =
+  **跨进程持久写入台账** `state/registry_writes.jsonl`：`act/lib/registry`
+  的每次写/删都 append 一行 `{"f":文件名,"ts":UTC}`——radar（slack 180s /
+  gmail 300s / obsidian cron）作为独立进程也经该模块落卡，同样上账；guard
+  用 `registry.writes_since(快照起始 ts)` 过滤读取，actd 中途重启不丢账
+  （进程内存集合只作台账落盘失败时的兜底）。台账超 ~1MB 压缩到后半（多
+  进程并发下 rewrite 可能吞掉一条并发 append——代价只是该笔合法写入被误
+  报，绝不多排除）。**只检测告警、不回滚、绝不阻塞提升**——权限模型不变，
+  人工核查兜底（检测型护栏宁误报不漏报）。
 - **在途判重（真正的防双开，不依赖判重分支）**：actd 应用 preset capture
   **之前**先扫 registry——已存在 `preset` 相同且 `status ∈ approved /
   executing` 的未完结清理卡 → **不铸新卡**，ack `running`（那轮清理真在
@@ -1394,6 +1401,8 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   意义；在途判重是长期防线。）
 - **Mac UI**：按钮右对齐于提案列头（SectionHeader 尾部 Spacer 之后），
   bordered 小尺寸不喧宾夺主；`.help` 说明用途（临时会话、可参与、不直接改卡）；
+  提案列 count==0 时按钮禁用、`.help` 换「没有积压」文案（空列开会话只会交付
+  空清单；可用性纯逻辑 `ProposalsTriage.buttonEnabled`，LogicTests 钉判例）；
   点击后 2 s 冷却防连点（后端在途判重是真正的防双开）；乐观回显 = §34 的运行中列
   顶灰色排队占位卡（text=短标签=卡标题，归一匹配天然清除）。analytics：App 侧
   `capture_submit` 增加 add-only 字段 `preset`（source/mode 词表不变）。
