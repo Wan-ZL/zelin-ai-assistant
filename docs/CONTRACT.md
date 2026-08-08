@@ -38,7 +38,8 @@
 10. **打扰要有资格**：主动打扰用户的面（提案卡/通知）只留给「需要人才能推进」的
     事；拿不准的落备选静默过期，重复的静默并入。（§44；§45 LIMITED 语义）
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
-    pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账）
+    pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账；§47 瞬时重试/
+    解析降级卡/loop_health）
 
 ## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
 
@@ -2141,3 +2142,100 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   `msg_auto_resume_exhausted` 文案指「回答…/停止」两个出口，但只承诺
   「已停止自动拉起」、不断言卡在哪一列——pid 仍活的 exhausted 卡照常留在
   运行中（上条 roster 事实优先），「已移到需输入列」在该边缘态是撒谎。
+# v0.47 additions（管线静默失效止血）
+
+## 47. radar/管线可靠性三件套（add-only）
+
+> 三处「失败只打日志、用户看不见」的静默失效同批止血：radar 提取的瞬时失败、
+> LLM 输出解析失败、actd 主循环连崩。全部 add-only：一个新 state 文件
+> （§47.3）、既有台账/建卡机制的语义补丁，无跨组件字段变更。宪法对应：
+> 第 11 条（失败不外溢，放弃留痕）、第 5 条（降级卡原文过围栏）、第 3 条
+> （诚实的健康报告——「每轮都在崩」不许显示绿灯）。
+
+### 47.1 radar 提取瞬时失败：同 pass 退避重试
+
+- 单篇 note 的 `claude -p` 提取失败且错误呈**瞬时形态**（网络类：ENOTFOUND/
+  ECONNREFUSED/ETIMEDOUT/…；或 **exit 143 / exit -15** = 子进程被外部
+  SIGTERM——shell 包装上报 128+15，subprocess 直接拿信号上报 -15）→ 同 pass
+  内退避 `TRANSIENT_BACKOFF_S`（5s）后重试，至多 `TRANSIENT_MAX_RETRIES`
+  （1）次；重试仍失败才进既有跨 pass 重试台账（`state/radar_failed.json`，
+  水位语义 v2 不变）。analytics：`radar_transient_retry{attempt}`——事件只带
+  元数据，note 文件名是用户笔记标题，不进可上传 props（宪法第 9 条）。
+- **TimeoutExpired 不做同 pass 重试**：600s 预算已烧完，再来一轮会把整个
+  pass 拖过 30 分钟 cron 间隔——仍走跨 pass 台账（2026-07-22 review 的
+  note-level 语义不变）。
+- systemic-failure（全军覆没回滚）判定不变；瞬时重试发生在单 note 内部，
+  对台账/marker 的账目无感知。
+
+### 47.2 解析失败降级卡（`radar-parse-degraded`）
+
+- 提取输出 unparseable → **同 pass 重新提取一次**（LLM 非确定性，第二次常为
+  合法 JSON；analytics `radar_parse_retry_ok`，只带元数据）→ 仍 unparseable
+  →**降级**：先做既有截断抢救（**两次输出各自抢救取更优**，平手取重试那
+  份——重试返回非空 prose 时首跑的完整前缀对象不陪葬；完整前缀对象照常
+  落库），再把整篇 note 原文落成一张**低置信降级卡**
+  （`file_parse_degraded_card`）——替代旧的「进队列跨 pass 空转直至 §40
+  give-up」路径（unparseable 类专属；claude 失败/不可读 note 仍走台账）。
+- 卡形态：`status=detected`（备选列，不通知——宪法第 10 条）、
+  `type=diagnostic`、notes 首行 `[radar-parse-degraded]` 标签 + 「解析失败
+  降级，原文未加工」；**原文经 `sanitize.fence_untrusted` 围栏后整段进
+  notes**（>10k 字符截断并标注）——卡片正文日后可能被拼进 merge-review/
+  rework prompt，不围栏即违宪法第 5 条。**隐私口径**：绝对本机路径只留在
+  sources[0] `ref`（与既有 radar 卡同位），summary/notes 不带路径；notes 不
+  带 LLM raw 输出片段（那是模型对不可信 note 的输出，完整取证在
+  `state/radar_debug/`）；`quote` 为非空占位——`analyze._sources_text` 的
+  `quote or ref` 兜底会把空 quote 换成 ref，路径就进了「研究并提议」扩写
+  prompt。
+- **与 §45 的关系（宪法第 4 条，必须项）**：screen 来源的 note **不许把
+  OCR 原文带进新卡**——「屏幕不发起卡片」对降级路径同样有效，否则解析失败
+  反而成了屏幕内容的出生旁路。note 级判定 `_is_screen_note`（解析已失败、
+  无逐项 LLM 标注可用）：文件名含 `screenpipe`，或头部 500 字含
+  `Screenpipe Session` / `Source dump: screenpipe` 标记（ingest skill 固定
+  产出）；判错代价不对称，宁可误判 screen（只少带原文，路径仍回指）。
+  screen note 的降级卡退化为 **§40 give-up 形态**：只带路径 + 错误说明，
+  原文留在原笔记；截断抢救出的 item 照常走 `_process_note` 的逐项 §45 闸。
+- **按 note 路径去重**（sources[0] `channel="radar-parse-degraded"` +
+  `ref=<路径>`）：去重只对**未完结**降级卡生效——命中已完结卡（delivered/
+  merged/rejected/trashed）照常铸新卡，否则同路径 note 改后再失败会被旧卡
+  静默吞掉；入库走 `registry.upsert`，不走 merge_or_new 的 LLM 匹配。
+  analytics：`radar_parse_degraded{req}`（不带 note 文件名）。
+- **提取前省钱检查**：sources[0] 新增 add-only 字段 `note_mtime`（float，
+  铸卡时 note 的 mtime）。未完结降级卡命中路径 **且 mtime 未变** → 提取前
+  直接 accounted（不烧 claude，计入 `parse_degraded`，不算真正解析成功）；
+  mtime 变了 / 旧卡缺该字段 → 照常提取——内容修好后正常铸卡的恢复路径不被
+  旧卡挡死。systemic 回滚钉住 marker 后的重扫因此不再翻倍烧提取。
+- 降级卡落库（或 dedup 命中未完结卡）成功 → note 记 accounted（不进台账，
+  summary `skipped` 留痕）；降级卡本身落库失败 → 退回台账老路（兜底的兜底，
+  note 绝不双重丢失）。
+- **同 pass 降级上限（systemic 阻尼）**：`PARSE_DEGRADE_PASS_CAP`（3）——
+  claude exit-0 却每篇都输出错误文案的系统性故障下，无上限降级 = 一轮积压
+  全部翻倍烧调用 + 铸一板卡而 health 仍记 ok。达到上限后本 pass 不再重试
+  提取/不再铸卡，余下 unparseable 以 **channel 级**错误进账（summary 新增
+  计数键 `parse_degraded`，add-only）；且降级 accounted 不算「真正解析成功」
+  ——一轮无真成功时既有 systemic 回滚照常生效（marker 钉住、重试额度不扣），
+  health 按 any_failed 记 `extract_failed`。回滚**不作废**本轮已落库的 ≤cap
+  张降级卡（卡是即时 upsert 的）——路径 dedup + 提取前省钱检查保证钉住
+  marker 后的重扫既不重复铸卡也不重复烧提取。
+
+### 47.3 `state/loop_health.json`（actd 写，Mac app 只读）
+
+```json
+{"consecutive_failures": 3, "last_error": "NameError: …", "updated_at": "2026-08-07T00:00:00Z"}
+```
+
+- **写者**：actd 主循环（`LoopHealthTracker`，原子写 .tmp+rename，绝不抛）。
+  pass 失败每次都写（计数递增 + `last_error` ≤300 字）；成功仅在「上一状态
+  非零」时写一次清零回执——空闲稳态零磁盘写。**init 继承盘上计数**（文件
+  缺失/损坏/非法按 0）：重启恰是连崩的标准恢复路径，内存从 0 起算会让重启
+  后首个成功 pass 撞上稳态 early-return，盘上 ≥3 的计数永不清零、红横幅
+  永久挂着。`--once` 与测试直调 `run_once` 不经此账。
+- **读者**：Mac app（`mac/Sources/LoopHealth.swift`，纯 Foundation，
+  LogicTests 直测）。仅当 dashboard **新鲜**（本会判 `.ok`）时参考：
+  `consecutive_failures ≥ 3`（`LOOP_ALARM_AFTER`，两侧同值）→
+  `PipelineHealth.failing` → 菜单栏警示图标（复用既有 ≠ok 通道）+ 看板/
+  popover 红色横幅（PipelineHealthBanner 新 case）。恢复清零 → 自动消。
+- 为什么不用新鲜度兜底：run_once 的 write-early 会在 pass 崩溃前更新
+  `generated_at`——2026-07-06 NameError 连崩 15+ pass 期间看板一路绿灯。
+  dashboard 已 stale/dead 时**不**看此文件（那两个 verdict 更严重且已有
+  横幅与修复路径）；文件缺失/损坏/清零 → 不报警（诊断文件绝不自己成为
+  报警源）。

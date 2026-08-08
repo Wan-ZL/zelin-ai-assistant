@@ -124,6 +124,14 @@ struct PipelineHealthBanner: View {
                             "Data \(mins) min stale — the background service may be slow or just stopped"),
                    reason: L("卡片操作仍会写入队列，后台服务恢复后照常生效。",
                              "Card actions still land in the queue and apply once the service recovers."))
+        case .failing(let n):
+            // §47.3: 服务活着、数据也新鲜，但每轮 pass 都在崩（loop_health.json
+            // 连续失败 ≥ 阈值）——处理链路实际停摆，必须亮红而不是绿灯。
+            banner(color: .red,
+                   title: L("后台服务连续 \(n) 轮处理失败——数据可能停止更新",
+                            "Background service failed \(n) passes in a row — processing has likely stalled"),
+                   reason: L("服务还在运行但每一轮都崩溃。点「查看日志」搜 loop pass FAILED 看堆栈；恢复后此提示自动消失。",
+                             "The service is alive but every pass crashes. \"View log\" and search for loop pass FAILED; this clears itself once passes recover."))
         case .dead(let mins, let why):
             banner(color: .red,
                    title: L("后台服务已停止：数据 \(mins) 分钟没更新",

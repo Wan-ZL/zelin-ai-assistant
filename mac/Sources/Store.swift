@@ -44,6 +44,10 @@ enum PipelineHealth: Equatable {
     case stale(minutes: Int)
     case dead(minutes: Int, reason: PipelineDeadReason)
     case missing
+    // §47.3: dashboard 仍新鲜但 actd 每轮 pass 都在崩（write-early 会让
+    // generated_at 保持更新，光看新鲜度是绿灯）——loop_health.json 连续
+    // 失败 ≥ LoopHealth.alarmThreshold 时亮红；恢复清零后自动消。
+    case failing(failures: Int)
 }
 
 // MARK: - Store (@MainActor => Sendable, safe to capture in Timer block)
@@ -663,7 +667,16 @@ final class DashboardStore: ObservableObject {
         // dashboard.generated_at 会停在上次内容变化，按它裁决会误报 dead。
         guard let gen = liveGeneratedAt else { return .ok }
         let age = Date().timeIntervalSince(gen)
-        if age <= Self.staleAfter { return .ok }
+        if age <= Self.staleAfter {
+            // §47.3: 新鲜 ≠ 健康——actd 的 write-early 在 pass 崩溃前就更新了
+            // generated_at。loop_health.json 连续失败达阈值时亮 .failing；
+            // 文件缺失/损坏/已清零 → .ok（诊断文件绝不自己成为报警源）。
+            if let lh = LoopHealth.load(path: AppPaths.stateRoot + "/state/loop_health.json"),
+               lh.failing {
+                return .failing(failures: lh.consecutiveFailures)
+            }
+            return .ok
+        }
         let mins = max(1, Int(age / 60))
         if age <= Self.deadAfter { return .stale(minutes: mins) }
         return .dead(minutes: mins,
