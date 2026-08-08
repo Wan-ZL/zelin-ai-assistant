@@ -1284,16 +1284,24 @@ def extract_question(session_id: str) -> Optional[str]:
         return None
 
 
-def _agent_info(sid: str) -> dict:
-    """{'pid':..., 'cwd':...} for this session from claude agents; {} if unknown."""
+def _agent_info_strict(sid: str) -> Optional[dict]:
+    """roster 探测的严格版：查询失败（CLI 超时/崩溃/非零退出/坏 JSON）返回
+    None，与「roster 里真没有这个会话」（{}）区分开——stop 确认必须把前者当
+    失败留痕：CLI 挂了不等于进程停了，把查询失败当「已停」会清台账、不发
+    stop、不通知（§46.1）。"""
     try:
         proc = subprocess.run(
             [_claude_bin(), "agents", "--json", "--all"],
             capture_output=True, text=True, timeout=30,
         )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
         data = json.loads(proc.stdout) if proc.stdout.strip() else []
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
-        return {}
+    except json.JSONDecodeError:
+        return None
     short = str(sid).split("-")[0]
     for a in data if isinstance(data, list) else []:
         if not isinstance(a, dict):
@@ -1301,6 +1309,16 @@ def _agent_info(sid: str) -> dict:
         if str(a.get("id", "")) == short or str(a.get("sessionId", "")).startswith(short):
             return {"pid": a.get("pid"), "cwd": a.get("cwd")}
     return {}
+
+
+def _agent_info(sid: str) -> dict:
+    """{'pid':..., 'cwd':...} for this session from claude agents; {} if unknown.
+
+    宽松版（历史契约）：查询失败与「不在 roster」同样给 {}——resume/rework 等
+    调用方本来就把两者当同一回事处理。要区分的走 :func:`_agent_info_strict`。
+    """
+    info = _agent_info_strict(sid)
+    return info if info is not None else {}
 
 
 def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
@@ -1327,6 +1345,96 @@ def stop_session(session_id: str, info: Optional[dict] = None) -> bool:
                    capture_output=True, text=True, timeout=30)
     time.sleep(2)
     return True
+
+
+# stop 确认重试次数（§46）：stop_session_confirmed 在首次探测/停止之外最多再重试
+# 这么多轮（每轮前退避 2s·4s…），仍存活才判失败——生产日志里 stop_session→False
+# 一天出现 4 次而无人跟进（2026-08-07），失败必须留痕而不是只打一行日志。
+STOP_CONFIRM_RETRIES = 2
+# stop 确认总预算（§46.1）：调用方是单线程 actd 主循环，无预算时最坏串行
+# ~218s（每轮 roster 探测 30s + stop 30s + 退避）——一次 stop 挂住整个守护
+# 不可接受；超预算按失败落台账，让人跟进而不是让 daemon 等。
+STOP_CONFIRM_BUDGET_S = 60.0
+
+
+def stop_session_confirmed(
+    session_id: str,
+    retries: int = STOP_CONFIRM_RETRIES,
+    prober: Optional[Callable[[str], Optional[dict]]] = None,
+    stopper: Optional[Callable[..., bool]] = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    budget_s: float = STOP_CONFIRM_BUDGET_S,
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[bool, bool, str]:
+    """带确认与有限重试的 stop（§46）——:func:`stop_session` 的可靠性外壳。
+
+    旧 stop_session 的 True 只代表「stop 命令发出去了」，False 只代表「roster 上
+    没看到活 pid」——两者都没验证进程真的死了。这里改成 verify-first 循环：
+    每轮先探 roster（``prober``，默认 :func:`_agent_info_strict`），确认没有活
+    pid 即视为已停；有 pid 则发 stop（``stopper``，默认 :func:`stop_session`，
+    自带 2s 等死窗口），下一轮前按 2s·4s… 退避（``sleeper`` 可注入，测试传
+    no-op）。两条失败快路（§46.1）：
+
+    - **探测失败 ≠ 已停**：prober 返回 None / 抛异常（CLI 超时、崩溃）时进程
+      可能还活着，立即判失败留痕——绝不当「不在 roster」清台账；也不重试，
+      重试打的还是同一个无响应的 CLI。
+    - **总预算 ``budget_s``**（默认 60s，``clock`` 可注入）：超预算立即按失败
+      返回，不让单线程 actd 主循环被一次 stop 挂死。
+
+    五个 seam（prober/stopper/sleeper/budget_s/clock）全部可注入——测试绝不
+    spawn 真 ``claude``。
+
+    Returns ``(stopped, issued, detail)``：
+    - ``stopped``: 结束时会话已**确认**不在 roster 上跑（True 含「本来就没在
+      跑」）；探测失败/超预算一律 False——没确认就不算停。
+    - ``issued``: 至少真的发过一次 stop 命令（区分「我们停掉的」和「本来就死
+      的」——_stop_live_session 只在前者时才收走 session_id，restore 不丢线索）。
+    - ``detail``: 人话结论，失败时给台账/通知用。Never raises。
+    """
+    if prober is None:
+        prober = _agent_info_strict
+    if stopper is None:
+        stopper = stop_session
+    deadline = clock() + float(budget_s)
+    over_msg = (f"stop not confirmed within {budget_s:.0f}s budget — "
+                "treated as failed")
+    probe_failed_msg = ("roster query failed — cannot confirm whether "
+                        "the session stopped")
+
+    def _probe() -> Optional[dict]:
+        try:
+            return prober(session_id)
+        except Exception:  # noqa: BLE001 - probe failure is a result, not a crash
+            return None
+
+    issued = False
+    for attempt in range(int(retries) + 1):
+        if attempt:
+            sleeper(2.0 * attempt)   # 退避 2s / 4s / …
+        if clock() >= deadline:
+            return False, issued, over_msg
+        info = _probe()
+        if info is None:
+            return False, issued, probe_failed_msg
+        if not info.get("pid"):
+            return True, issued, ("stopped" if issued else "not running")
+        if clock() >= deadline:
+            return False, issued, over_msg
+        try:
+            stopper(session_id, info=info)   # 内含 2s 等死窗口
+            issued = True
+        except (OSError, subprocess.SubprocessError):
+            pass                              # 失败进下一轮重探
+    if clock() >= deadline:
+        return False, issued, over_msg
+    info = _probe()
+    if info is None:
+        return False, issued, probe_failed_msg
+    pid = info.get("pid")
+    if not pid:
+        return True, issued, "stopped"
+    return False, issued, (f"session {session_id} still alive (pid {pid}) "
+                           f"after {int(retries) + 1} stop attempts")
 
 
 def _rework_abort(req: Requirement, ex: dict, err: str) -> bool:
@@ -1572,6 +1680,9 @@ def answer(
     ex.pop("last_error_at", None)
     ex["resume_attempts"] = 0                 # fresh backoff for the revived session
     ex.pop("resume_exhausted", None)          # see docstring: never self-clears
+    # §46: owner 亲手救活 = 风暴计数清零——否则下一次正常 auto-resume 会立刻
+    # 撞上残留的 resume_history 再次降级（brief() 是自动路径，刻意不清）。
+    ex.pop("resume_history", None)
     new_sid = _parse_session_id(out)          # a resume mints a new id
     if new_sid:
         ex["session_id"] = new_sid

@@ -137,8 +137,8 @@ class LateCommentTestCase(GuardsBase):
 class DestructiveActionsStopAgentTestCase(GuardsBase):
     def _run_with_stop(self, action, status):
         _mk_req(status=status, execution={"session_id": "abcd1234"})
-        stop = mock.Mock(return_value=True)
-        with mock.patch.object(actd.executor, "stop_session", stop):
+        stop = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stop):
             _drop(action)
             actd.process_inbox()
         return stop, registry.load("R-810")
@@ -159,7 +159,7 @@ class DestructiveActionsStopAgentTestCase(GuardsBase):
     def test_stop_failure_never_blocks_the_trash(self):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "abcd1234"})
-        with mock.patch.object(actd.executor, "stop_session",
+        with mock.patch.object(actd.executor, "stop_session_confirmed",
                                mock.Mock(side_effect=RuntimeError("boom"))):
             _drop("reject")
             actd.process_inbox()

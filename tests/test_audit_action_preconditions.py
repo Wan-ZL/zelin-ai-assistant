@@ -109,8 +109,8 @@ class AcceptReapsSessionTestCase(PreconditionBase):
         _mk_req(status=State.REVIEW.value,
                 execution={"session_id": "sess-52", "done": True,
                            "final_draft": "成稿全文"})
-        stop = mock.Mock(return_value=True)
-        with mock.patch.object(actd.executor, "stop_session", stop):
+        stop = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stop):
             _drop("accept")
             actd.process_inbox()
         stop.assert_called_once_with("sess-52")
@@ -125,7 +125,7 @@ class AcceptReapsSessionTestCase(PreconditionBase):
     def test_stop_failure_never_blocks_the_delivery(self):
         _mk_req(status=State.REVIEW.value,
                 execution={"session_id": "sess-52"})
-        with mock.patch.object(actd.executor, "stop_session",
+        with mock.patch.object(actd.executor, "stop_session_confirmed",
                                mock.Mock(side_effect=RuntimeError("boom"))):
             _drop("accept")
             actd.process_inbox()
@@ -134,7 +134,7 @@ class AcceptReapsSessionTestCase(PreconditionBase):
     def test_accept_without_session_never_touches_stop(self):
         _mk_req(status=State.REVIEW.value)
         stop = mock.Mock()
-        with mock.patch.object(actd.executor, "stop_session", stop):
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stop):
             _drop("accept")
             actd.process_inbox()
         stop.assert_not_called()
@@ -153,8 +153,8 @@ class ExpectedReviewProjectionAliasTestCase(PreconditionBase):
     def test_synced_accept_on_executing_agent_done_card_applies(self):
         _mk_req(status=State.EXECUTING.value,
                 execution={"session_id": "sess-1", "done": True})
-        stop = mock.Mock(return_value=True)
-        with mock.patch.object(actd.executor, "stop_session", stop):
+        stop = mock.Mock(return_value=(True, True, "stopped"))
+        with mock.patch.object(actd.executor, "stop_session_confirmed", stop):
             _drop("accept", expected_status="review")
             actd.process_inbox()
         req = registry.load("R-860")

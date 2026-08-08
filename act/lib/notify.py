@@ -269,14 +269,41 @@ def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
     """5 straight resume failures — actd gives up; name the exact buttons.
 
     v0.21 起运行中卡只有一个「停止/Stop」→ 二选一对话框（退回提案 / 去待验收），
-    文案必须指向现存按钮（审计：旧文案引用已删除的「停止并退回」「已办完」）。"""
+    文案必须指向现存按钮（审计：旧文案引用已删除的「停止并退回」「已办完」）。
+    §46 起放弃自动恢复的**死**卡投影进「需输入」列——但 pid 仍活的 exhausted
+    卡照常留在 运行中（§46.3 以 roster 事实为准），所以文案只承诺永远为真的
+    「已停止自动拉起」，不断言卡在哪一列。"""
     return (_pick("自动恢复已放弃（连续失败 5 次）",
                   "Auto-recovery gave up (5 straight failures)"),
-            _pick(f"{title} —— 打开 App，在「运行中」列对这张卡点「停止」，"
-                  "选「退回提案」重新批准，或选「去待验收」留下已产出的结果由你验收",
-                  f"{title} — open the app: on this card in Running, press"
-                  " \"Stop\", then \"Discard & re-propose\" to re-approve or"
-                  " \"Keep for review\" to keep what it produced for your check"))
+            _pick(f"{title} —— 已停止自动拉起。打开 App：点「回答…」"
+                  "给它指示继续，或点「停止」选「退回提案」/「去待验收」",
+                  f"{title} — auto-relaunch stopped. Open the app:"
+                  " press \"Answer…\" to instruct it onward, or \"Stop\" and"
+                  " pick \"Discard & re-propose\" / \"Keep for review\""))
+
+
+def msg_resume_storm(title: str, n: int) -> tuple[str, str]:
+    """§46 resume 风暴降级：短窗口内自动救活 n 次后会话又死了 —— 卡死→救→再死
+    的循环没有出口，actd 停止无限救活，把卡投影进「需输入」列请人看一眼。"""
+    return (_pick(f"任务反复中断（30 分钟内已自动救活 {n} 次）",
+                  f"Task keeps dying ({n} auto-recoveries in 30 min)"),
+            _pick(f"{title} —— 自动恢复已暂停，需要你看一眼：这张卡在「需输入」列，"
+                  "点「回答…」给它新指示，或点「停止」选「退回提案」/「去待验收」",
+                  f"{title} — auto-recovery paused; please take a look: the card"
+                  " is in Needs input — press \"Answer…\" with fresh directions,"
+                  " or \"Stop\" and pick \"Discard & re-propose\" /"
+                  " \"Keep for review\""))
+
+
+def msg_stop_failed(title: str) -> tuple[str, str]:
+    """§46 stop 确认失败：重试后会话进程仍存活——可能还在后台烧钱/占资源，
+    绝不静默；卡片 notes 同步留 [stop-failed] 台账。"""
+    return (_pick("会话没停住（可能仍在后台运行）",
+                  "Session didn't stop (may still be running)"),
+            _pick(f"{title} —— 已重试仍存活；在终端跑 `claude agents` 找到它，"
+                  "再 `claude stop <id>` 手动停止",
+                  f"{title} — still alive after retries; run `claude agents`"
+                  " in a terminal to find it, then `claude stop <id>`"))
 
 
 # --------------------------------------------------------------------------- #

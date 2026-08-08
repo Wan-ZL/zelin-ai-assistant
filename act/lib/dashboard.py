@@ -870,13 +870,34 @@ def build_dashboard(
                         "session_active": state in _RUNNING_STATES,
                     }
                 )
-            elif state in _BLOCKED_STATES:
+            elif state in _BLOCKED_STATES or (
+                    not (agent or {}).get("pid") and ex.get("resume_exhausted")
+                    and not ex.get("done")):
                 # §39: surface WHAT the agent is asking — the transcript's
                 # last assistant text after the last real user turn (the same
                 # fence/sidechain-disciplined extraction harvest uses), cached
                 # per (sid, transcript signature) above.
-                question = (_question_cached(str(resume_sid or sid))
-                            if sid else None)
+                # §46 第二臂：auto-resume 已放弃（resume_exhausted，含 resume
+                # 风暴降级）且会话已无活 pid 的 executing 卡 —— 事实上就是
+                # 「需要人才能推进」，投影进 需输入 列（回答…/停止 都在这里），
+                # 不再顶着 unknown 状态在 运行中 列装忙（宪法 3：诚实的健康报告）。
+                # 死的判据 = 无活 pid（本文件 copy_cmd 的既有活性判据），不是
+                # 「不在 roster」——roster --all 会给 failed/stopped 留死条目，
+                # agent is None 判死会让这些卡继续在 running 里装忙。
+                degraded = (not (agent or {}).get("pid")
+                            and ex.get("resume_exhausted"))
+                # 降级卡的 question 用固定文案：死 transcript 的最后一条
+                # assistant 文本不是提问（agent 并没有在等这个答案），拿来
+                # 当 question 展示是误导——固定文案说清事实和两个现存出口。
+                if degraded:
+                    question = failures.pick(
+                        "自动救活多次后仍中断，需要人工确认：点「回答…」给它"
+                        "指示继续，或点「停止」",
+                        'Auto-resume kept failing; needs a human call — press '
+                        '"Answer…" to instruct it onward, or "Stop"')
+                else:
+                    question = (_question_cached(str(resume_sid or sid))
+                                if sid else None)
                 row = {
                     "id": _s(req.id),
                     "name": name,
@@ -898,6 +919,11 @@ def build_dashboard(
                 }
                 if question:
                     row["question"] = question
+                if degraded:
+                    # §46 add-only：告诉 App（和 detect_transitions）这行是
+                    # 降级卡，不是 agent 真的在提问 —— 老 App decodeIfPresent
+                    # 直接忽略。
+                    row["resume_exhausted"] = True
                 needs_input.append(row)
             else:
                 # running, or agent not found yet -> still consider it running
