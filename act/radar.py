@@ -812,7 +812,7 @@ def scan(runner=None, triager=None) -> dict:
 def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dict:
     scan_started = time.monotonic()
     if not sources.enabled(cfg, "obsidian"):
-        # §46 关闭真静默：不写 health（关着 ≠ 坏着，`disabled` 条目已退役）；
+        # §48 关闭真静默：不写 health（关着 ≠ 坏着，`disabled` 条目已退役）；
         # 清条目沿用 cron 单写者门（_owns_health）——手动/launchd 语境连删
         # 都不许碰，防止误删 cron 的真实健康。summary 行保留（本地观测，
         # 不进 health/analytics）。

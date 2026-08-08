@@ -31,7 +31,7 @@ enum DiagAction {
     case openCredentials      // 凭证/API key → 设置页 credentials 锚点
     case openDeps             // 链路报错 → 依赖检查页
     case openVaultSetting     // 没设 Obsidian 目录 → 设置页
-    case reinstallAgent(String)  // §46.6 源开着但 plist 缺失 → 原地重装调度
+    case reinstallAgent(String)  // §48.6 源开着但 plist 缺失 → 原地重装调度
 
     /// ``app`` non-nil (popover context) also brings the main window forward;
     /// in the kanban (already the main window) it is passed too and is a no-op
@@ -93,7 +93,7 @@ final class DiagnosticsModel: ObservableObject {
 
     @Published private(set) var cards: [DiagnosticCard] = []
 
-    // §46.6 卡上重装的失败回执（label → 错误信息）。plist 可能写成了但
+    // §48.6 卡上重装的失败回执（label → 错误信息）。plist 可能写成了但
     // launchctl load 失败——只看「plist 存在」会把失败吞成成功；有回执时
     // 卡留着并亮失败原因。成功回执/后台复核发现已 loaded 时出账。
     private(set) var agentRepairFailure: [String: String] = [:]
@@ -129,7 +129,7 @@ final class DiagnosticsModel: ObservableObject {
     // alarms once the empty state has persisted ~one ingest cycle.
     private let firstSeenKey = "diagnosticsFirstSeen"
     private static let warmupSeconds: TimeInterval = 35 * 60   // 对齐 install.sh */30
-    private static let agentMissingWarmupSeconds: TimeInterval = 120   // §46.6 闪卡防抖
+    private static let agentMissingWarmupSeconds: TimeInterval = 120   // §48.6 闪卡防抖
     private static let reappearAfter: TimeInterval = 7 * 86_400
 
     private init() {}
@@ -157,7 +157,7 @@ final class DiagnosticsModel: ObservableObject {
         let recOn = rec.mode != "off"
 
         // intent signals: a path is only eligible for a card when the user
-        // INTENDED it (§3.6 anti-nag). §46 起 intent 的真源在 Python
+        // INTENDED it (§3.6 anti-nag). §48 起 intent 的真源在 Python
         // （act/lib/sources.py），经 dashboard 的 radar_sources 投影读到——
         // 不再猜「凭证文件非空」。投影缺失（旧 actd payload）时回退老判据。
         // 该不该出卡的判断全在 DiagnosticsRules（LogicTests 钉住的纯逻辑）。
@@ -166,7 +166,7 @@ final class DiagnosticsModel: ObservableObject {
         let slackStarted = FileManager.default.fileExists(
             atPath: SecretsIO.path(SecretsIO.slackFile))   // 存在但可能空 = 已开始配
         // setup 类卡的意愿信号：用户碰过开关（override 键存在，开或关都算）
-        // 或凭证文件已存在——「enabled 默认 true」本身不算 intent（§46.4）。
+        // 或凭证文件已存在——「enabled 默认 true」本身不算 intent（§48.4）。
         let gmailSwitchTouched = SettingsIO.readOverrides()["gmail_enabled"] != nil
         let gmailCredFileExists = FileManager.default.fileExists(
             atPath: SecretsIO.path(SecretsIO.gmailFile))
@@ -182,7 +182,7 @@ final class DiagnosticsModel: ObservableObject {
             }
         }
 
-        // --- gmail (intent: §46 radar_sources.gmail.enabled + 意愿信号) ---
+        // --- gmail (intent: §48 radar_sources.gmail.enabled + 意愿信号) ---
         // 告警资格 = DiagnosticsRules.gmailCardEligible：源开着 + skip_reason
         // 非空，setup 类另需真实意愿（碰过开关/凭证文件存在）。手写的 reason
         // 白名单退役——Python 已不再产出 `disabled`（关掉的源条目整个消失），
@@ -246,7 +246,7 @@ final class DiagnosticsModel: ObservableObject {
             }
         }
 
-        // --- §46.6 雷达调度未安装（源开着但 launchd plist 缺失） ---
+        // --- §48.6 雷达调度未安装（源开着但 launchd plist 缺失） ---
         // 典型路径：关着时 .pkg 升级把 plist 退役 → 用户重新打开开关（功能
         // 开关面板不装 plist）→ 配置 on 但没人再装，雷达永久静默且因 health
         // 条目已被清、连 liveness 死亡告警都没有基线可响。修复动作与设置
@@ -400,7 +400,7 @@ final class DiagnosticsModel: ObservableObject {
         }
     }
 
-    // MARK: dashboard.json radar_sources projection (§46, tolerant)
+    // MARK: dashboard.json radar_sources projection (§48, tolerant)
 
     /// state/dashboard.json 顶层 `radar_sources` map（actd 投影的源开关
     /// intent + 健康摘要）。走 Contract.swift 的 `RadarSourceHealth` 解码

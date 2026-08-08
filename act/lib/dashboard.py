@@ -569,7 +569,7 @@ def _device_label() -> Optional[str]:
 
 
 def _radar_sources(cfg: config.Config) -> dict:
-    """§46 add-only 投影 ``radar_sources``：源开关 intent + 健康摘要一处出。
+    """§48 add-only 投影 ``radar_sources``：源开关 intent + 健康摘要一处出。
 
     形状（每个 act.lib.sources.SOURCES 成员一条，键恒在）::
 
@@ -606,7 +606,7 @@ def _radar_sources(cfg: config.Config) -> dict:
             "enabled": on,
             "last_ok": last_ok if isinstance(last_ok, str) and last_ok else None,
             "skip_reason": skip if isinstance(skip, str) and skip else None,
-            # stale **不吃** actd 的睡醒/冷启动宽限（§46.4）：投影是无状态的
+            # stale **不吃** actd 的睡醒/冷启动宽限（§48.4）：投影是无状态的
             # 磁盘真值函数（`python -m act.lib.dashboard` 一次性进程也在跑，
             # 进程级宽限状态会让 CLI 构建永远压掉 stale）；告警宽限是通知侧
             # 的关切。睡醒后的一轮假 stale 随雷达补跑自愈，消费者自行防抖。
@@ -1059,7 +1059,7 @@ def build_dashboard(
         # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
         # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
         "fold_receipts": _fold_receipts(),
-        # §46 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
+        # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
         # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
         "radar_sources": _radar_sources(cfg),
     }

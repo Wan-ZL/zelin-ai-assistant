@@ -1,4 +1,4 @@
-"""源开关真源（single source of truth for source on/off）— CONTRACT §46.
+"""源开关真源（single source of truth for source on/off）— CONTRACT §48.
 
 历史上「一个源开没开」有四套并存的判据：``features.<source>_radar`` flag、
 ``sources.gmail.enabled``（→ ``cfg.gmail_enabled``）、Swift 端「凭证文件非空」
@@ -11,7 +11,7 @@ plist；删了 plist 下次 install.sh 又装回来），没有一处能回答�
 （合取——两个既有开关一个都不废除，任一为 false 即关；没有对应
 ``<source>_enabled`` 字段的源按 True 处理，flag 单独裁决。）
 
-读者：三个雷达的入口 gate、actd 的 liveness 巡检（§46）、dashboard 的
+读者：三个雷达的入口 gate、actd 的 liveness 巡检（§48）、dashboard 的
 ``radar_sources`` 投影、install.sh 的 plist 安装闸门（经本模块的 CLI 入口）。
 
 CLI（install.sh 防复活闸门用）::
@@ -36,7 +36,7 @@ from act.lib import config
 SOURCES: tuple = ("gmail", "slack", "obsidian")
 
 # liveness 阈值（秒）：开着的源 last_ok（缺失时 last_attempt）比现在早超过
-# 这个数 → 判「源死亡」（§46）。取值 ≈ 调度间隔 × 大余量，避开正常抖动：
+# 这个数 → 判「源死亡」（§48）。取值 ≈ 调度间隔 × 大余量，避开正常抖动：
 # - gmail  launchd StartInterval=300s  → 6h（72 个周期没成功一次才算死）
 # - slack  launchd StartInterval=180s  → 6h（同量级，统一 6h 好记）
 # - obsidian cron */30（且随 Mac 合盖/夜间停摆是常态）→ 36h（沿用 72x 比例，

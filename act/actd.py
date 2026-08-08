@@ -2251,7 +2251,7 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
     return msgs
 
 
-# §46 睡醒宽限：合盖 ≥ 阈值的睡眠唤醒后，actd 的第一批 pass 必然早于雷达补跑
+# §48 睡醒宽限：合盖 ≥ 阈值的睡眠唤醒后，actd 的第一批 pass 必然早于雷达补跑
 # （launchd/cron 也刚醒），health 时间戳整体超期 —— 没有宽限就是每天醒来一轮
 # 假「源死亡」告警，anti-nag 台账防不了这种每日重置。检测 wall-clock 跳变
 # （相邻 pass 间隔远大于 poll interval = 刚睡醒/长停顿），宽限一个最大雷达
@@ -2290,7 +2290,7 @@ def _check_radar_liveness(notified: set[str],
                           now: Optional[_dt.datetime] = None,
                           interval: Optional[int] = None
                           ) -> list[tuple[str, str]]:
-    """§46 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
+    """§48 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
 
     配置**每次调用现读**（load_config 自身防崩）——actd 启动时冻结的 cfg 在
     App 翻开关后双向失真：关→开会每 pass 清掉活雷达刚写的 health 还复活假
@@ -2315,7 +2315,7 @@ def _check_radar_liveness(notified: set[str],
                 # 关着：清残留条目（条目不存在时 no-op、不写文件），出账。
                 # 纪律豁免（radar.py _owns_health 的 cron 单写者门）：那道门
                 # 防的是手动/launchd 语境误删 cron 的**真实健康**；源 disabled
-                # 时 cron 写者自己也已静默（§46.2 入口 gate），条目只剩僵尸
+                # 时 cron 写者自己也已静默（§48.2 入口 gate），条目只剩僵尸
                 # ——actd 作为清理仲裁者收尾不与单写者门冲突。
                 health.remove_radar_health(src)
                 notified.discard(src)
@@ -2955,7 +2955,7 @@ def run_once(
         notify.notify(title, body, req=rid, kind=kind)
     for title, body in _check_auth_failures(auth_notified):
         notify.notify(title, body)
-    # §46 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
+    # §48 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
     # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
     # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
     for title, body in _check_radar_liveness(
@@ -2981,7 +2981,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     interval = args.interval or cfg.poll_interval_seconds or 10
     auth_notified: set[str] = set()
     resume_notified: set[str] = set()
-    radar_dead_notified: set[str] = set()   # §46 anti-nag：每源一次，恢复出账
+    radar_dead_notified: set[str] = set()   # §48 anti-nag：每源一次，恢复出账
 
     if args.once:
         try:

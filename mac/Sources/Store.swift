@@ -686,7 +686,7 @@ final class DashboardStore: ObservableObject {
     /// radar_health.json is rewritten on every gmail/slack radar attempt
     /// (contract E) — a fresh mtime while the dashboard is old means the
     /// scheduled half of the pipeline still runs and actd alone is down.
-    /// §46 起 mtime 语义更诚实了：关掉的源真静默（不写 health、条目被清除），
+    /// §48 起 mtime 语义更诚实了：关掉的源真静默（不写 health、条目被清除），
     /// 不会再用每 5 分钟一次的 `disabled` 记录冒充管线存活（§0 第 3 条）。
     private static func radarsRecentlyAlive() -> Bool {
         let path = AppPaths.stateRoot + "/state/radar_health.json"

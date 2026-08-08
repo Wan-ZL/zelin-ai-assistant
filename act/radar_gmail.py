@@ -54,7 +54,7 @@ COMMAND_TIMEOUT = 300
 
 
 # --------------------------------------------------------------------------- #
-# credentials（源开关判据统一走 act.lib.sources.enabled — CONTRACT §46）
+# credentials（源开关判据统一走 act.lib.sources.enabled — CONTRACT §48）
 # --------------------------------------------------------------------------- #
 def get_app_password(cfg: Optional[config.Config] = None) -> Optional[str]:
     """Resolve the app password per CONTRACT §19:
@@ -468,7 +468,7 @@ def scan(cfg: Optional[config.Config] = None,
     if cfg is None:
         cfg = config.load_config()
     if not sources.enabled(cfg, "gmail"):
-        # §46 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着，写
+        # §48 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着，写
         # `disabled` 条目会让 App 把关掉的源当成还活着的管线信号——踩 §0
         # 第 3 条）；顺手清掉历史条目，僵尸 last_attempt 不再冒充存活。
         health.remove_radar_health("gmail")

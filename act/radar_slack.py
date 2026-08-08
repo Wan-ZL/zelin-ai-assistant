@@ -804,7 +804,7 @@ def scan(cfg: Optional[config.Config] = None,
     if cfg is None:
         cfg = config.load_config()
     if not sources.enabled(cfg, "slack"):
-        # §46 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着——写
+        # §48 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着——写
         # `disabled` 条目会撑起假的管线存活信号，踩 §0 第 3 条）；顺手清掉
         # 历史条目。判据统一走 act.lib.sources（源开关真源）。
         health.remove_radar_health("slack")

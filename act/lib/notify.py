@@ -223,7 +223,7 @@ def msg_answer_failed(title: str, reason: str) -> tuple[str, str]:
 
 
 def msg_radar_dead(source: str, hours: int) -> tuple[str, str]:
-    """§46 源死亡告警：开着的源超过 liveness 阈值没有成功过一次。
+    """§48 源死亡告警：开着的源超过 liveness 阈值没有成功过一次。
 
     只对 enabled 的源发（关掉的源全静默）；actd 侧有 anti-nag 台账保证
     同一次死亡只响一次（恢复后再死才会再响）。"""

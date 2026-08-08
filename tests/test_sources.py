@@ -1,4 +1,4 @@
-"""源开关真源 + 源死亡告警（CONTRACT §46）判例。
+"""源开关真源 + 源死亡告警（CONTRACT §48）判例。
 
 五组契约（全部注入缝 mock，不 spawn 真 claude、不触网）：
 
@@ -87,7 +87,7 @@ class EnabledTruthTableTestCase(unittest.TestCase):
         self.assertFalse(sources.enabled(_cfg(), "screenpipe"))
 
     def test_slack_obsidian_enabled_fields(self):
-        # §46 三源对齐：sources.slack/obsidian.enabled 不再是半个开关
+        # §48 三源对齐：sources.slack/obsidian.enabled 不再是半个开关
         self.assertFalse(sources.enabled(_cfg(slack_enabled=False), "slack"))
         self.assertFalse(sources.enabled(_cfg(obsidian_enabled=False), "obsidian"))
         self.assertTrue(sources.enabled(_cfg(slack_enabled=True), "slack"))
@@ -371,7 +371,7 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         self.assertIsNotNone(gm["last_ok"])
 
     def test_stale_ignores_wake_grace(self):
-        # §46.4：stale 不吃通知侧的睡醒/冷启动宽限——投影是无状态的磁盘
+        # §48.4：stale 不吃通知侧的睡醒/冷启动宽限——投影是无状态的磁盘
         # 真值函数（一次性 `python -m act.lib.dashboard` 进程也在产出它），
         # 即便 actd 侧正处于冷启动宽限，投影照报 stale
         actd._wake_state.update({"last_pass": None, "grace_until": 0.0})

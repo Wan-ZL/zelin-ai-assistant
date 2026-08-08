@@ -83,7 +83,7 @@ class ObsidianHealthBase(unittest.TestCase):
 
 class ObsidianHealthTestCase(ObsidianHealthBase):
     def test_feature_off_is_truly_silent(self):
-        # §46 改判（原判例：off → skip_reason="disabled"）：关掉的源不产出
+        # §48 改判（原判例：off → skip_reason="disabled"）：关掉的源不产出
         # health 条目——写 `disabled` 会让 App 把「关着」误读成管线存活信号
         # （§0 第 3 条）。既有条目还要被清除（僵尸 last_attempt 不再冒充活）。
         health.update_radar_health("obsidian", ok=False, skip_reason="vault_empty")

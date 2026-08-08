@@ -574,12 +574,12 @@ struct UpdateInfo: Decodable, Hashable {
     }
 }
 
-// CONTRACT §46 — optional top-level `radar_sources` map: per-source switch
+// CONTRACT §48 — optional top-level `radar_sources` map: per-source switch
 // intent + health digest, projected by actd from act/lib/sources.py (the
 // single source of truth) + state/radar_health.json. `enabled` REPLACES the
 // old Swift-side intent guesses (credential-file-non-empty etc.); `stale`
 // = the source is on but has had no success within its liveness threshold
-// (the board-visible half of the §46 dead-source alert — clears on recovery).
+// (the board-visible half of the §48 dead-source alert — clears on recovery).
 // All fields decodeIfPresent → older payloads simply lack the map.
 struct RadarSourceHealth: Decodable, Hashable {
     let enabled: Bool
@@ -667,7 +667,7 @@ struct Dashboard: Decodable {
     // pairing-QR label via state/sync.json). iOS adopts it after a board
     // refresh so a rename needs no re-scan; nil on older actd payloads.
     let device_label: String?
-    // §46 — optional map; empty on older actd payloads. Per-source switch
+    // §48 — optional map; empty on older actd payloads. Per-source switch
     // intent (`enabled`, the single source of truth) + health digest.
     let radar_sources: [String: RadarSourceHealth]
     // 非 wire 字段：行级解码时被跳过的坏行清单（如 "running[1]"）。空 = 全部
@@ -703,7 +703,7 @@ struct Dashboard: Decodable {
         let upd = try? c.decodeIfPresent(UpdateInfo.self, forKey: .update_available)
         update_available = (upd?.latest.isEmpty == false) ? upd : nil
         device_label = try? c.decodeIfPresent(String.self, forKey: .device_label)
-        // §46 — a torn/bad map degrades to empty, never fails the decode.
+        // §48 — a torn/bad map degrades to empty, never fails the decode.
         radar_sources = (try? c.decodeIfPresent(
             [String: RadarSourceHealth].self, forKey: .radar_sources)) ?? [:]
         decodeDrops = drops

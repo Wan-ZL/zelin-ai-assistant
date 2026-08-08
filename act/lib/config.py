@@ -159,7 +159,7 @@ class Config:
     # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
     slack_mcp_fallback: bool = True
     slack_mcp_interval_minutes: int = 30
-    # §46 源开关（sources.<src>.enabled）— gmail 的同款开关，三源对齐；
+    # §48 源开关（sources.<src>.enabled）— gmail 的同款开关，三源对齐；
     # sources.enabled() 拿它与 features.<src>_radar 做合取。
     slack_enabled: bool = True
     obsidian_enabled: bool = True
@@ -447,7 +447,7 @@ def load_config() -> Config:
         "fetch_command", cfg.gmail_fetch_command
     )
 
-    # §46: slack/obsidian 的 sources.<src>.enabled — gmail 上面同款的嵌套
+    # §48: slack/obsidian 的 sources.<src>.enabled — gmail 上面同款的嵌套
     # 写法，此前静默无效（半个开关）；三源对齐后 sources.enabled() 的合取
     # 对每个源都成立。
     for _src in ("slack", "obsidian"):
@@ -746,7 +746,7 @@ _OVERRIDE_FIELDS: dict = {
     "gmail_app_password_path": str,
     "gmail_enabled": _coerce_bool,
     "gmail_fetch_command": str,
-    # §46 三源开关对齐 — App 侧未来的 slack/obsidian 面板写这两个扁平键
+    # §48 三源开关对齐 — App 侧未来的 slack/obsidian 面板写这两个扁平键
     # （与 gmail_enabled 同款）。
     "slack_enabled": _coerce_bool,
     "obsidian_enabled": _coerce_bool,

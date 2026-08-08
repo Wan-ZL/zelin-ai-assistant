@@ -395,7 +395,7 @@ rm -f "$LA_DIR/$RETIRED_RADAR_LABEL.plist"
 RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
 launchd_unload "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist" "$RETIRED_IMESSAGE_LABEL"
 rm -f "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist"
-# v0.47 (CONTRACT §46): per-source switch gate — a radar agent is installed
+# v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
 # ONLY when its source is enabled per the single source of truth
 # (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
 # A disabled source gets the RETIRED treatment above (unload + rm) instead,

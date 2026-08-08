@@ -10,7 +10,7 @@ on every scan attempt; read by the Mac app to surface "radar 多久没成功跑�
 in the UI and to synthesize board-level diagnostic cards (v0.19.0).
 
 Source keys and their skip_reason vocabulary (the app maps each code to a
-concrete next action). ``disabled`` is DEPRECATED since §46 (add-only: the
+concrete next action). ``disabled`` is DEPRECATED since §48 (add-only: the
 code stays in the vocabulary so old files still parse, but no radar produces
 it anymore — a disabled source is truly silent and its entry is REMOVED, see
 :func:`remove_radar_health`):
@@ -122,7 +122,7 @@ def load_radar_health() -> dict:
 
 
 def remove_radar_health(source: str) -> None:
-    """源被关掉（sources.enabled 为 False，§46）时删除它的 health 条目。
+    """源被关掉（sources.enabled 为 False，§48）时删除它的 health 条目。
 
     关掉的源不产出、也不保留 health 记录——留着一条 last_attempt 冻结的僵尸
     条目会让 App 侧把「关着」误读成「坏着」或「活着」（§0 第 3 条诚实健康

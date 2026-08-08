@@ -1,4 +1,4 @@
-// DiagnosticsRulesTests.swift — §46.4/§46.6 诊断卡资格纯逻辑的判例。
+// DiagnosticsRulesTests.swift — §48.4/§48.6 诊断卡资格纯逻辑的判例。
 // DiagnosticsRules.swift 经符号链接进入 MacLogic（被测代码是真文件），
 // 消费的投影类型 = Contract.swift 的 RadarSourceHealth（真实读路径同款）。
 
@@ -12,7 +12,7 @@ struct DiagnosticsRulesTests {
         RadarSourceHealth(enabled: enabled)
     }
 
-    // MARK: - §46.4 gmail setup 卡需要真实意愿信号
+    // MARK: - §48.4 gmail setup 卡需要真实意愿信号
 
     @Test func freshInstallNeverGetsSetupCard() {
         // 全新安装：enabled 默认 true、没碰过开关、没有凭证文件 —— 不出卡
@@ -91,7 +91,7 @@ struct DiagnosticsRulesTests {
             switchTouched: true, credentialFileExists: true))
     }
 
-    // MARK: - §46.6 「调度未安装」修复卡
+    // MARK: - §48.6 「调度未安装」修复卡
 
     @Test func onButPlistMissingAlarms() {
         // 关着时升级退役了 plist → 用户重新打开 → 配置 on 但 plist 缺失
@@ -105,7 +105,7 @@ struct DiagnosticsRulesTests {
     }
 
     @Test func offNeverAlarms() {
-        // 关着的源没 plist 是正常形态（§46.5 防复活闸门的产物）
+        // 关着的源没 plist 是正常形态（§48.5 防复活闸门的产物）
         #expect(!DiagnosticsRules.schedulerMissing(
             projected: projected(false), plistExists: false))
     }
@@ -133,7 +133,7 @@ struct DiagnosticsRulesTests {
             projected: projected(false), plistExists: true, repairFailed: true))
     }
 
-    // MARK: - §46.4 gmail 文案分组（reason → 修复引导）
+    // MARK: - §48.4 gmail 文案分组（reason → 修复引导）
 
     @Test func commandReasonsRouteToFetchCommand() {
         // command 类（§14bis 自定义抓取命令）跟应用密码无关——不许把用户

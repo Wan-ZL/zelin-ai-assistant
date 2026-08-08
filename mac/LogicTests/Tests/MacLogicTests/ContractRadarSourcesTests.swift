@@ -1,4 +1,4 @@
-// ContractRadarSourcesTests.swift — CONTRACT §46 `radar_sources` 投影的
+// ContractRadarSourcesTests.swift — CONTRACT §48 `radar_sources` 投影的
 // Swift 侧解码判例：add-only 字段（decodeIfPresent），旧 payload 缺字段时
 // 解码为空 map、绝不 fail；坏行降级不炸整个 dashboard。
 // Contract.swift 经符号链接进入 MacLogic（Package.swift 顶部的约定——被测
@@ -36,7 +36,7 @@ struct ContractRadarSourcesTests {
     }
 
     @Test func missingMapDecodesEmpty() throws {
-        // 旧 actd payload（§46 之前）没有 radar_sources —— 空 map，不 fail
+        // 旧 actd payload（§48 之前）没有 radar_sources —— 空 map，不 fail
         let dash = try decode(#"{"generated_at": null, "counts": {}}"#)
         #expect(dash.radar_sources.isEmpty)
     }
