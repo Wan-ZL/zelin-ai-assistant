@@ -381,16 +381,38 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
         "filename)."
     )
 
-    # §37 living display title — OPTIONAL, all delivery modes: the work often
-    # outgrows the card's original name; the harvest side parses this line at
-    # the same promotion points that pick up delivered_summary.
-    blocks.append(
-        "\n## CARD TITLE (optional)\n"
-        "如果这轮工作让卡片现在的名字过时了（讨论演化出了新的实质），在结束总结里"
-        "加**单独一行** `CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头，说清"
-        "这卡现在在干什么；chat 交付时放在 FINAL DRAFT: 行之前）。名字仍然贴切就"
-        "省略这一行。"
-    )
+    # §37.1 living display title — 条件强制：卡还没有可读显示名（无
+    # display_title）且 (a) 冻结 title 属于三种不可读形态（URL/路径/超长截断，
+    # titles.is_unreadable_title 与 sanitize_title 同一口径），或 (b) direct-run
+    # 卡（§34 完全不过 LLM，title=用户原话截 80，起点就没有显示名）——这两种卡
+    # 本轮交付必须给 CARD TITLE 行；其余卡维持自愿制原文案。刷新时机不变
+    # （§37.1：harvest 仍只在轮次边界收割），这里只提高该行出现的概率。
+    from act.lib import titles
+    # direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
+    # 首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
+    # 里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
+    # str() 防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。
+    direct_run = str(req.notes or "").lstrip().startswith("[direct-run]")
+    if not getattr(req, "display_title", None) \
+            and (titles.is_unreadable_title(req.title) or direct_run):
+        reason = ("这张卡由 direct-run 直接开跑，名字目前是用户原文截断，"
+                  "请在第一轮交付就给出 CARD TITLE" if direct_run else
+                  "这张卡当前没有人类可读的名字（原始标题是 URL、文件路径或"
+                  "超长截断文本）")
+        blocks.append(
+            "\n## CARD TITLE (required this round)\n"
+            f"{reason}。本轮交付**必须**在结束总结里包含**单独一行** "
+            "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头，概括任务本身；"
+            "chat 交付时放在 FINAL DRAFT: 行之前）。"
+        )
+    else:
+        blocks.append(
+            "\n## CARD TITLE (optional)\n"
+            "如果这轮工作让卡片现在的名字过时了（讨论演化出了新的实质），在结束总结里"
+            "加**单独一行** `CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头，说清"
+            "这卡现在在干什么；chat 交付时放在 FINAL DRAFT: 行之前）。名字仍然贴切就"
+            "省略这一行。"
+        )
 
     if delivery_mode == "chat":
         blocks.append(
