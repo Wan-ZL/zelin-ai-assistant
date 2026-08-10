@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zelin's AI Assistant · 设计确认轮：回答与增量</title>
+<style>
+  :root {
+    --good:#16a34a; --warn:#ca8a04; --bad:#dc2626; --info:#2563eb; --teach:#7c3aed;
+    --good-bg:#f0fdf4; --warn-bg:#fefce8; --bad-bg:#fef2f2; --info-bg:#eff6ff; --teach-bg:#f5f3ff;
+    --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --code-bg:#f3f4f6;
+  }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+         font-size:15px; line-height:1.6; color:var(--ink); max-width:1000px; margin:0 auto; padding:32px 24px 80px; }
+  h1 { font-size:26px; line-height:1.3; margin:0 0 4px; }
+  .sub { color:var(--muted); margin-bottom:20px; font-size:13.5px; }
+  h2 { font-size:20px; margin:44px 0 12px; padding-top:12px; border-top:2px solid var(--line); }
+  h3 { font-size:16.5px; margin:24px 0 8px; }
+  .nav { position:sticky; top:0; background:rgba(255,255,255,.96); backdrop-filter:blur(6px);
+         padding:10px 0; border-bottom:1px solid var(--line); z-index:10; font-size:13px;
+         display:flex; flex-wrap:wrap; gap:6px 14px; }
+  .nav a { color:var(--info); text-decoration:none; white-space:nowrap; }
+  .nav a:hover { text-decoration:underline; }
+  .card { border:1px solid var(--line); border-left:4px solid var(--info); background:var(--info-bg);
+          border-radius:8px; padding:14px 18px; margin:14px 0; }
+  .card.good  { border-left-color:var(--good);  background:var(--good-bg); }
+  .card.warn  { border-left-color:var(--warn);  background:var(--warn-bg); }
+  .card.bad   { border-left-color:var(--bad);   background:var(--bad-bg); }
+  .card.teach { border-left-color:var(--teach); background:var(--teach-bg); }
+  .card h3 { margin:0 0 6px; }
+  .star { background:#fff7ed; border:1px solid #fdba74; border-radius:8px; padding:12px 16px; margin:14px 0; }
+  .star::before { content:"⭐ "; }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:14px; }
+  th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f9fafb; font-weight:600; white-space:nowrap; }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px;
+                background:var(--code-bg); border-radius:4px; padding:1px 5px; }
+  pre { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:16px 18px; overflow-x:auto;
+        font-size:13px; line-height:1.55; }
+  pre code { background:none; color:inherit; padding:0; }
+  .tag { display:inline-block; font-size:12px; font-weight:600; border-radius:99px; padding:1px 10px; margin-right:4px; }
+  .tag.g { background:var(--good-bg); color:var(--good); border:1px solid var(--good); }
+  .tag.w { background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn); }
+  .tag.b { background:var(--bad-bg);  color:var(--bad);  border:1px solid var(--bad); }
+  .tag.i { background:var(--info-bg); color:var(--info); border:1px solid var(--info); }
+  ul, ol { padding-left:24px; }
+  li { margin:4px 0; }
+  .muted { color:var(--muted); }
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+  @media (max-width:760px){ .two-col{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Zelin's AI Assistant · 设计确认轮</h1>
+<div class="sub">2026-07-06 · 对你 15 点反馈的吸收 + 4 个问题的回答 + 更新后的产品设计 · 上一轮：<a href="req-pipeline-top-level-design-2026-07-06-1130.html">顶层设计 v1</a></div>
+
+<div class="nav">
+  <a href="#tldr">TL;DR</a>
+  <a href="#absorb">15 点吸收</a>
+  <a href="#suite">产品重构：双 pipeline 套件</a>
+  <a href="#ingest">摄取链路摸底</a>
+  <a href="#ccagents">claude agents 调研</a>
+  <a href="#review">Anthropic 式 review</a>
+  <a href="#arash">顺毛 Arash SOP</a>
+  <a href="#defaults">默认决策声明</a>
+  <a href="#next">下一步</a>
+</div>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="card good">
+<ul>
+<li><b>你的 15 点全部吸收</b>，设计更新为：电脑主审批面（手机只是离机遥控）、训练按成本分级但每 ckpt 强制 system card、低成本不显示成本、"重复"与"改进"区分发卡、改名 <b>Zelin's AI Assistant</b>。</li>
+<li><b>产品升级为双 pipeline 套件</b>：你已运转的 screenpipe→Obsidian <b>Ingest</b>（感知）+ 新建的需求雷达→审批→执行 <b>Act</b>（行动），一个 repo 收编，天然上下游。</li>
+<li><b>架构大幅简化</b>：执行层直接用官方 <code>claude --bg</code> + <code>claude agents --json</code>（有 working/blocked/done 状态机和 JSON 输出），不自建任务管理；你现有 cron+API-key 模式解决了 headless 认证。<b>要自建的只剩：需求雷达、注册表、审批通知回传、菜单栏显示。</b></li>
+<li><b>Anthropic 式 review 的答案</b>：你那种"试功能"是 review 的一层（验收测试），但不是全部——他们靠"自动测试 + agent 自查 + 按风险分级的人类抽查"三层防线换来的快，详见 §Anthropic。</li>
+<li><b>顺毛 Arash 的核心洞察</b>：他的不满几乎全来自"不可见"而非"不够好"——让 AI 承担全部可见性劳动（ack/delta/action-item/standing artifacts），你只做决策和真工程。</li>
+</ul>
+</div>
+
+<h2 id="absorb">你的 15 点 → 设计更新</h2>
+<table>
+<tr><th>#</th><th>你的反馈</th><th>设计更新</th></tr>
+<tr><td>1</td><td>电脑也要能审批，且是完整功能；手机只是离机时的提醒</td><td><b>主审批面 = 电脑</b>。v0 用 Slack 恰好天然双端（桌面 app 点 ✅ + 手机推送点 ✅ 同一条消息）；Mac 端另有 <code>claude agents</code> TUI 看全部任务；v2 Mac app 聚合两者</td></tr>
+<tr><td>2</td><td>用 <code>claude agents</code> 查看后台任务</td><td>✅ 调研完毕（见 §claude agents）——直接复用，执行层改为 <code>claude --bg</code> 派发</td></tr>
+<tr><td>3</td><td>想"把 Arash 毛理顺"，他满意 + 你轻松</td><td>见 §顺毛 SOP：7 件全自动的可见性劳动</td></tr>
+<tr><td>4</td><td>Anthropic 到底怎么 review AI 代码</td><td>见 §Anthropic 式 review</td></tr>
+<tr><td>5</td><td>训练成本不高也可 T1；但每 ckpt 要 system card（训练前设计/目的 + 训练后结果）</td><td>训练不再一律 T2，按成本阈值分级；<b>system card per ckpt 成为训练执行器的强制后处理</b>（训练前生成设计卡，训练后回填结果）——顺手清掉 Arash 的 system card 欠账</td></tr>
+<tr><td>6</td><td>改名 + 把 screenpipe→Obsidian 摄取 pipeline 并入</td><td>名字 = <b>Zelin's AI Assistant</b>（repo 名建议中性 <code>ai-assistant</code>，显示名走 config，方便分享）；摄取链路已摸底并入（见 §摄取链路）</td></tr>
+<tr><td>7</td><td>iOS = 纯遥控器 ✓</td><td>维持：iOS 永不持密钥，只收卡片 + 回传 ✅/❌/💬</td></tr>
+<tr><td>8</td><td>成本只在高时才告诉你</td><td>双阈值：<b>&lt;$5 卡片不显示成本；$5–$50 显示一行；&gt;$50 升 T2 要文字确认</b>（数字可调）</td></tr>
+<tr><td>9-10, 12-15</td><td>质量门 / 证据回显 / 记忆注入 / 凭证告警 / 周报兜底 / 提速三来源 ✓</td><td>维持原设计；凭证失效时明确 DM "需要你重新登录 X"</td></tr>
+<tr><td>11</td><td>跨源合并 ✓，但"改进"要和"重复"区分</td><td>注册表规则：新证据匹配已有条目 → <b>纯重述（无新要求）= 合并不发卡</b>；<b>含增量（改进/扩展/新 deadline）= 发"改进卡"</b>，标注父条目和 delta</td></tr>
+</table>
+
+<h2 id="suite">产品重构：一个套件，两条 pipeline</h2>
+<div class="card teach">
+把你的工作流看成一个人的"感知—行动"回路：<b>Ingest 是眼睛和记忆</b>（看到的一切变成 wiki），<b>Act 是手</b>（需求变成交付物）。眼睛已经长好了（screenpipe 链路稳定运转一个多月），现在长手，而且手依赖眼睛的输出（会议记录源 = Ingest 的 <code>2 - raw/</code>）。放一个 repo 里不是打包售卖的方便，而是它们本来就是一个系统。
+</div>
+<pre><code>ai-assistant/                        # 显示名 "Zelin's AI Assistant"（config 决定 owner）
+├── ingest/                          # ← 收编现有链路（已运转，只做搬家+版本控制）
+│   ├── screenpipe-export.sh         #   ~/Applications/ 现有脚本
+│   ├── screenpipe-cleanup.sh
+│   ├── process-screenpipe.sh        #   ~/.local/bin/ 现有脚本
+│   ├── launchd/*.plist              #   现有 watch + prune
+│   └── skills/unprocessed-ingest/   #   vault 里的 skill（symlink 或同步）
+├── act/                             # ← 新建：需求雷达 → 审批 → 执行
+│   ├── radar/                       #   扫描 2-raw 增量 + Slack + Confluence
+│   ├── registry/                    #   需求注册表 YAML（状态机 + 跨源合并 + 改进卡规则）
+│   ├── approve/                     #   卡片生成 + Slack 收发 + reaction 轮询
+│   └── execute/                     #   claude --bg 派发器 + 记忆注入 + 质量门 + system card 生成
+├── dashboard/                       #   v2: SwiftBar 菜单栏（读 claude agents --json + registry）→ Mac app
+├── ios/                             #   v3: 遥控器
+├── install.sh                       #   依赖检测向导（claude/screenpipe/obsidian/gh/slack）
+└── config.example.yaml              #   owner、监控源、成本阈值、审批渠道
+</code></pre>
+<div class="star">给 Xiaoxiao 打包过的 <code>screenpipe-obsidian-kit</code> 证明了 Ingest 半边已经"可分享化"过一次——这次收编进 repo 是把那次手工打包变成常态。</div>
+
+<h2 id="ingest">摄取链路摸底（点 6 的"全面了解"）</h2>
+<table>
+<tr><th>环节</th><th>现状</th><th>并入后的改动</th></tr>
+<tr><td>采集</td><td>Screenpipe.app 常驻：屏幕（a11y+OCR 合并进 <code>full_text</code>）+ 音频 → <code>~/.screenpipe/db.sqlite</code></td><td>不动</td></tr>
+<tr><td>导出</td><td>crontab 每 :00/:30：<code>export.sh</code>（marker 增量、无新数据即退出）→ <code>1 - unprocessed/screenpipe_*.md</code></td><td>脚本入 repo，crontab 行由 install.sh 生成</td></tr>
+<tr><td>清理</td><td><code>cleanup.sh</code> 删 1h+ 的 jpg/mp4；launchd 每日 4am prune a11y</td><td>不动，入 repo</td></tr>
+<tr><td>加工</td><td><code>process-screenpipe.sh</code>：lockfile 防并发 + sleep 90 + headless claude 跑 <code>/unprocessed-ingest</code>（全自动 dispatch 全文件类型 → raw→wiki→change-summary→log，永不提问）</td><td>不动；<b>Act 的雷达挂在它下游</b>：ingest 完成后触发雷达扫新 raw 文件</td></tr>
+<tr><td>手动入口</td><td>桌面 <code>Screenpipe-Export.command</code></td><td>保留，改为调 repo 内脚本</td></tr>
+</table>
+<div class="card good">
+<h3>三笔现成的工程遗产（直接抵掉 v1 风险项）</h3>
+<ol>
+<li><b>headless 认证已解</b>：cron 的 daemon session 读不了 Keychain OAuth → 你已用 <code>ANTHROPIC_API_KEY</code> 环境变量方案（key 放 <code>~/.config/</code>，因为 cron 的 FDA 覆盖 ~/Documents 不覆盖 ~/Desktop）。雷达定时器照抄。</li>
+<li><b>TCC 地雷图已画好</b>：launchd 读不了 ~/Documents（所以你从 launchd watcher 切到了 cron-chain）——新组件不再重踩。</li>
+<li><b>防并发/增量/日志模式</b>：lockfile + stale 检测、marker 文件、/tmp 日志——雷达和执行器直接复用同一套。</li>
+</ol>
+⚠️ 遗留待验：Slack/Atlassian <b>MCP</b> 的 OAuth 在 cron 下是否可用（与 ANTHROPIC_API_KEY 是两回事）。v1 首跑验证；兜底 = Keys 里的 Atlassian API token + Slack 改发通知的备用通道。
+</div>
+
+<h2 id="ccagents">claude agents 调研（点 2）</h2>
+<div class="card">
+<b>它是什么</b>：官方后台会话仪表盘（TUI，v2.1.139+，research preview）。分组显示 Pinned / Ready for review / <b>Needs input</b> / Working / Completed；支持派发新任务、attach 进会话、stop/respawn。<code>--dangerously-skip-permissions</code> 的作用是让从这个面板派发的会话免权限确认（等价 bypassPermissions）。
+</div>
+<table>
+<tr><th>你关心的</th><th>结论</th></tr>
+<tr><td>能看到什么</td><td><code>claude --bg</code> 启动的后台会话、背景化的 shell 任务、/loop 循环。状态含 <b>needs input</b>（等你回复或等权限）——正是你要的"需要我输入的东西"。<span class="muted">不含 subagents 和 cron 任务。</span></td></tr>
+<tr><td>程序化读取</td><td>✅ <code>claude agents --json</code>（state = working/blocked/done/failed/stopped + <code>waitingFor</code> 字段）；文件级 <code>~/.claude/daemon/roster.json</code> + 各 job 的 state.json 可被 fswatch 监听</td></tr>
+<tr><td>对产品的意义</td><td><b>执行层不自建</b>：执行器 = 用 <code>claude --bg</code> 派任务（自动 worktree 隔离）；<b>状态监控不自建</b>：轮询 <code>--json</code>；<b>Mac 查看面 v0 现成</b>：你直接开 <code>claude agents</code> TUI</td></tr>
+<tr><td>仍要自建</td><td>①雷达+注册表（它不管需求从哪来）②审批流（它没有远程审批——blocked 会话只能本机回复）③手机通知回传（监控脚本发现 needs-input/completed → Slack DM 你）④菜单栏计数（SwiftBar 读 --json，Level 1 一小时能做出来）</td></tr>
+</table>
+
+<h2 id="review">Anthropic 式 review 到底是什么（点 4）</h2>
+<div class="card good">
+<b>直接回答你：你那种"试一下功能有没有弄出来、能不能跑"，在 Anthropic 的体系里是一层正式的 review，学名"行为验证"。</b>Erik Schluntz（Anthropic 研究员、agents 负责人之一）原话："Instead of asking 'Is this code good?', ask 'Does this system behave correctly?'"，以及 "<b>When doing vibe coding, the only code I usually look at is the test code.</b> Only when the tests pass do I feel confident."——他也不逐行读实现。Boris Cherny（Claude Code 作者）同样不逐行读，前端改动让 Claude 自己开浏览器截图对比迭代到对为止。<b>你的直觉不是偷懒，是他们也在用的方法。</b>
+</div>
+<div class="card warn">
+<b>但关键区别：Anthropic 从不让"跑一下"做唯一的一层。</b>他们的 review 是五层防线，人只出现在最后两层的高风险处：
+</div>
+<table>
+<tr><th>层</th><th>做法</th><th>证据</th></tr>
+<tr><td>1 · 可运行的验证器</td><td>每个任务先给 Claude 测试/构建/截图对比，"If you can't verify it, don't ship it"</td><td>官方 best practices 第一条；Boris："有验证回路质量 2-3x"</td></tr>
+<tr><td>2 · 自动 AI 审查（合并门禁）</td><td>所有进 codebase 的改动先过自动 Claude reviewer（bug/安全/缺陷）</td><td>官方披露：能拦下 claude.ai 历史事故背后约 1/3 的 bug；2026-05 起其生产代码 <b>80%+ 由 Claude 编写</b></td></tr>
+<tr><td>3 · fresh-context AI 互审</td><td>合并前用干净上下文的第二个 Claude 审 diff（"不会偏袒自己刚写的代码"）</td><td>官方 best practices 的 Writer/Reviewer 模式</td></tr>
+<tr><td>4 · 人审——按风险分级</td><td>生产合并仍有 human in the loop，但人只深入核心逻辑/强观点处；人审已被官方称为"新瓶颈"</td><td>Boris（Latent Space）；著名的一天合 22,000 行 RL 代码案例：改动限定叶子节点 + <b>核心逻辑仍严格人审</b> + 离线无安全风险才敢做</td></tr>
+<tr><td>5 · Dogfooding + 灰度</td><td>内部一天发多版、feature flag 灰度、soak period</td><td>也失灵过：2026 年 3-4 月质量回退一个多月才定位，postmortem 的整改是加灰度和评测——<b>不是加逐行人审</b></td></tr>
+</table>
+<div class="star"><b>"第二天 ship"的速度来源</b>：并行 agent（Boris 一天 20-30 个 PR，5 个并行实例）、前置规划换一次成型（"once there is a good plan, it will one-shot almost every time"）、自动验证回路（人不再是每个错误的发现者）、小步+可回滚（撤回便宜所以敢快）。<b>不是"不 review"，是把 review 从人逐行读改造成"机器和第二个 AI 先筛，人只看刀刃"。</b></div>
+<div class="card teach">
+<b>落到你身上（= Assistant 质量门的出处）</b>：①每个任务给执行器一个可运行检查，要它交证据；②你只花 5 分钟读测试断言是不是真需求，不读实现；③合并前 fresh-context 子代理审 diff（一条命令的成本）；④按风险分级——内部只读工具试功能即可合，碰生产数据/不可逆/凭证的那一小块核心才人肉读；⑤draft PR + git checkpoint 让撤回便宜。<br><br>
+<b>回 Arash 的弹药</b>：Anthropic 语境的 next-day ship = 前置规划 + 自动化验证兜底 + 小爆炸半径 + 人审只盯核心——他们自己也为速度交过一个月的学费，整改方向是加灰度评测而非加人审。你要对齐的是这套系统，而不是"更拼"。（来源：anthropic.com "When AI builds itself"、Claude Code best practices、April 23 postmortem、Boris Cherny 访谈 ×3、Erik Schluntz "Vibe coding in prod"）
+</div>
+
+<h2 id="arash">顺毛 Arash SOP（点 3）</h2>
+<div class="card teach">
+<b>核心洞察（来自画像的全部证据）：他的不满几乎从不来自"活不够好"，而来自"看不见"。</b>他所有的催促都发生在下达后 24h 无回音的窗口里；他最痛的抱怨是"讨论看起来 aligned 但没落成 action item"；他重复提第二遍的事全是第一次没收到闭环信号的。反过来，他对准备充分的 draft 秒批、对坦诚的 postmortem 明确欣赏、当面夸过 "really good design, actually. Honestly."——活本身他是认可的。<br><br>
+所以"顺毛"的正确姿势不是加班干更多活，而是<b>把"可见性劳动"外包给 AI</b>：让他在每个他习惯性检查的时点，都发现你已经在那里了。你的时间只花在两处：点 ✅，和真正的工程。
+</div>
+<h3>七件全自动的可见性劳动（Assistant 的 arash 模块）</h3>
+<table>
+<tr><th>#</th><th>自动动作</th><th>对应他的哪根毛</th></tr>
+<tr><td>1</td><td>每条新 directive <b>24h 内 ack 草稿</b>（"captured, plan by 周X"）——你过目后发</td><td>他的实测催办窗口 &lt;24h（5/27→5/28 "any update?"）；ack 一到，催促消失</td></tr>
+<tr><td>2</td><td><b>会后 2h action-item 清单</b>草稿（发他确认）</td><td>直击 7/1 抱怨"讨论不落 action item"；还制造他喜欢的 documentation</td></tr>
+<tr><td>3</td><td>交付模板自动带 <b>delta + cost + insight→decision</b> 三行</td><td>"share the delta" / "Let me know the cost" / "这样才是 data-driven"——全是他原话</td></tr>
+<tr><td>4</td><td><b>1:1 前一天</b>自动生成 ready/not-ready 清单 + 双向欠账清单（含他欠你的：doc、dedicated engineer、hire）</td><td>他教过："define priorities... come back and say this is ready, this is not ready"；他也期待被 remind</td></tr>
+<tr><td>5</td><td><b>大额消耗当天</b>主动附产出说明</td><td>他盯 Redash、追过 $18-19K 账单——抢在 telemetry 追问之前</td></tr>
+<tr><td>6</td><td><b>standing artifacts 自动维护</b>：training log、system card per ckpt、R&amp;D weekly page</td><td>他说一次就算数且会复查（system card 催过 ×2）；这三件流程债自动清零</td></tr>
+<tr><td>7</td><td><b>deadline 前 1-2 天</b>自动 progress-delta 报告草稿</td><td>他的 deadline 语义 = "届时要有 tangible progress"，不是要完美（"two quarters is fine"的前提是过程可见）</td></tr>
+</table>
+<div class="star">两条人工纪律（AI 替不了）：① <b>分歧要显式对齐，不能静默处理</b>——structured-output 之争、Raja 分工都属于"待他拍板"，卡片会单独标色；② <b>语气≠严重性</b>——"Good work!" 开头的消息照样可能全是整改项，判级看词典（"needs to be fixed" vs "you may want to consider"），别看表情。</div>
+
+<h2 id="defaults">默认决策声明（你没答的 3 处，我按"带方案不带问题"处理）</h2>
+<div class="card warn">
+<ol>
+<li><b>Jira 台账：默认关</b>。注册表（repo 内 YAML）是唯一台账；Jira ZW 集成做成可选模块。理由：自动建票 = 给你多一个要维护的界面，违背"减少大脑处理的信息"。想开随时说。</li>
+<li><b>成本阈值：$5 / $50</b>。&lt;$5 不提成本，$5–$50 显示一行，&gt;$50 文字确认。训练同规则 + 无条件 system card。</li>
+<li><b>v0 种子现在就跑</b>。下一步我会建 repo 并发出第一张审批卡片（VALUES-DESTROY，T1，July 14 还剩 8 天）——发卡片本身就是审批请求，你点 ✅ 才会开工，所以这一步不需要预先批准。</li>
+</ol>
+</div>
+
+<h2 id="next">下一步（我马上开始做的）</h2>
+<table>
+<tr><th>步骤</th><th>内容</th><th>产出</th></tr>
+<tr><td>1 · 建 repo</td><td><code>~/Projects/ai-assistant</code>：目录骨架 + config + 收编 ingest 脚本（先 copy 不切换，现有 cron 不动，验证后再切）</td><td>repo + 首个 commit</td></tr>
+<tr><td>2 · v0 雷达（手动版）</td><td>radar prompt + 注册表 schema + 卡片模板；把已扫出的需求（VALUES-DESTROY + 欠账清单 top 项）录入注册表</td><td>registry 里的第一批条目</td></tr>
+<tr><td>3 · 第一张审批卡片</td><td>Slack DM 你：VALUES-DESTROY 骨架开工申请（T1，卡片按新字段规范）</td><td>你在电脑或手机点 ✅/❌/💬</td></tr>
+<tr><td>4 · ✅ 后执行</td><td><code>claude --bg</code> 开工 benchmark 骨架（复用 APIFlow mock-API 环境 + VALUES-DESTROY 的 5 个 scenario family + 动作级评分）；质量门自检后交付</td><td>draft PR + 样例报告 + 给 Arash 的进展草稿</td></tr>
+<tr><td>5 · v1 定时化</td><td>雷达接入 cron-chain（复用 API-key 模式）；审批轮询；周报 digest</td><td>无人值守运转</td></tr>
+</table>
+
+<div class="sub" style="margin-top:40px">本轮依据：你的 15 点反馈 · claude agents 官方文档调研（子代理）· Anthropic review 实践公开资料调研（子代理）· 现有 screenpipe 链路实地摸底（crontab/launchd/脚本/skill 全读）· Arash 画像（上一轮）。</div>
+
+</body>
+</html>

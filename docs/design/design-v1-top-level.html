@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>需求直达生产线 · 顶层设计（待确认）</title>
+<style>
+  :root {
+    --good:#16a34a; --warn:#ca8a04; --bad:#dc2626; --info:#2563eb; --teach:#7c3aed;
+    --good-bg:#f0fdf4; --warn-bg:#fefce8; --bad-bg:#fef2f2; --info-bg:#eff6ff; --teach-bg:#f5f3ff;
+    --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --code-bg:#f3f4f6;
+  }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+         font-size:15px; line-height:1.6; color:var(--ink); max-width:1000px; margin:0 auto; padding:32px 24px 80px; }
+  h1 { font-size:26px; line-height:1.3; margin:0 0 4px; }
+  .sub { color:var(--muted); margin-bottom:20px; font-size:13.5px; }
+  h2 { font-size:20px; margin:44px 0 12px; padding-top:12px; border-top:2px solid var(--line); }
+  h3 { font-size:16.5px; margin:24px 0 8px; }
+  .nav { position:sticky; top:0; background:rgba(255,255,255,.96); backdrop-filter:blur(6px);
+         padding:10px 0; border-bottom:1px solid var(--line); z-index:10; font-size:13px;
+         display:flex; flex-wrap:wrap; gap:6px 14px; }
+  .nav a { color:var(--info); text-decoration:none; white-space:nowrap; }
+  .nav a:hover { text-decoration:underline; }
+  .card { border:1px solid var(--line); border-left:4px solid var(--info); background:var(--info-bg);
+          border-radius:8px; padding:14px 18px; margin:14px 0; }
+  .card.good  { border-left-color:var(--good);  background:var(--good-bg); }
+  .card.warn  { border-left-color:var(--warn);  background:var(--warn-bg); }
+  .card.bad   { border-left-color:var(--bad);   background:var(--bad-bg); }
+  .card.teach { border-left-color:var(--teach); background:var(--teach-bg); }
+  .card h3 { margin:0 0 6px; }
+  .star { background:#fff7ed; border:1px solid #fdba74; border-radius:8px; padding:12px 16px; margin:14px 0; }
+  .star::before { content:"⭐ "; }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:14px; }
+  th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f9fafb; font-weight:600; white-space:nowrap; }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px;
+                background:var(--code-bg); border-radius:4px; padding:1px 5px; }
+  pre { background:#0f172a; color:#e2e8f0; border-radius:8px; padding:16px 18px; overflow-x:auto;
+        font-size:13px; line-height:1.55; }
+  pre code { background:none; color:inherit; padding:0; }
+  .tag { display:inline-block; font-size:12px; font-weight:600; border-radius:99px; padding:1px 10px; margin-right:4px; }
+  .tag.g { background:var(--good-bg); color:var(--good); border:1px solid var(--good); }
+  .tag.w { background:var(--warn-bg); color:var(--warn); border:1px solid var(--warn); }
+  .tag.b { background:var(--bad-bg);  color:var(--bad);  border:1px solid var(--bad); }
+  .tag.i { background:var(--info-bg); color:var(--info); border:1px solid var(--info); }
+  ul, ol { padding-left:24px; }
+  li { margin:4px 0; }
+  .muted { color:var(--muted); }
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+  @media (max-width:760px){ .two-col{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<h1>需求直达生产线 · 顶层设计</h1>
+<div class="sub">2026-07-06 · 给 Zelin 确认方向用 · 细节选型在你确认后用 workflow 深挖 · 内部代号提案：<b>Overkill</b>（可改）</div>
+
+<div class="nav">
+  <a href="#tldr">TL;DR</a>
+  <a href="#profile">Arash 需求画像</a>
+  <a href="#arch">顶层架构</a>
+  <a href="#approve">分级审批</a>
+  <a href="#matrix">任务类型矩阵</a>
+  <a href="#app">App 产品形态</a>
+  <a href="#gaps">你没考虑到的点</a>
+  <a href="#feasible">可行性与约束</a>
+  <a href="#roadmap">落地路线</a>
+  <a href="#decisions">待你确认</a>
+</div>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="card good">
+<b>结论：能实现，而且大部分环节今天就已验证可用。</b>
+<ul>
+  <li><b>一句话定义</b>：把「Arash（或任何会议/Slack）说过的每一句需求」变成「第二天早上等你 review 的 draft PR / 实验报告 / 训练结果」，而你只需要在手机上点 ✅ 或 ❌。</li>
+  <li><b>六段流水线</b>：捕获 → 提取合并 → 提案（带成本预估）→ 手机一键审批 → 分级自动执行 → 交付闭环。</li>
+  <li><b>产品形态</b>：单 repo 三层（<code>core</code> 引擎 / <code>mac</code> 完整版 / <code>ios</code> 轻量审批版），一键安装脚本 + 依赖检测向导，别人 clone 即用。</li>
+  <li><b>落地策略</b>：引擎先行、UI 后行——v0 本周就能用 Slack DM 当"临时审批界面"跑通全流程（零新 UI 开发），Mac/iOS app 壳在流程验证后再包。</li>
+  <li><b>设计有依据</b>：基于近 6 周 Arash 全部 Slack 消息 + 33 份会议记录的需求画像（见下节）——他自己就是"先报成本再批准"的管理风格，这个 pipeline 就是把他管理你的方式反过来产品化。</li>
+</ul>
+</div>
+<div class="star">最重要的三个设计判断：<b>①审批必须分级</b>（一次点击不能同时授权 $500 训练和一行 README 修改）；<b>②质量门是速度的前提</b>（Anthropic 快是因为 review 文化，自动交付的东西必须先过自检，否则烧掉的是 Arash 的信任）；<b>③审批卡片必须回显原话证据</b>（单麦转录会把 "agent harm" 听成 "agent hardware"，你点 ✅ 的同时就完成了人工核实）。</div>
+
+<h2 id="profile">设计依据：Arash 需求画像（近 6 周）</h2>
+<div class="card teach">
+<b>画像怎么来的（三路独立、交叉验证）</b>：① 12 代理 workflow 并行精读 33 份 raw 会议记录；② 独立子代理读 wiki 人物页（1296 行）+ 3 份 1on1 wiki + 25 份 raw；③ 主会话对近 6 周 Arash 全部 Slack 消息全量检索。三路结论一致。完整画像（A/B 两版全文）：<a href="arash-demand-profile-2026-07-06.md">arash-demand-profile-2026-07-06.md</a>
+</div>
+<div class="star">核心数字：6 周 <b>≈95 条去重 directive</b>（≈每工作日 3 条）；4 条下达通道（DM 短令三连发 / #llm-training 千字 brief / 1:1 口头 / Confluence 设计页）；实测首次回音 SLA <b>&lt; 24h</b>（5/27 13:16 下达 → 5/28 10:08 就催）；一条长消息 = 5-8 个子需求；<b>同一要求说第二遍 = 上次没闭环 = 不满前兆</b>。他的原话就是这个 pipeline 的出生证明："<b>We are not even at Anthropic level yet</b>"（feature → production 以天计）。</div>
+
+<h3>他的行为模式 → pipeline 功能（一一对应）</h3>
+<table>
+<tr><th>行为模式</th><th>实测证据</th><th>pipeline 对应功能</th></tr>
+<tr><td>新 directive ~24h 就催</td><td>5/27 下达 → 5/28 "any update on ☝️?"</td><td><b>24h 自动回音</b>：捕获当天生成 "captured, plan by X" ack 草稿</td></tr>
+<tr><td>长 brief 一条埋 5-8 个需求</td><td>6/2 战略、6/23 十二条反馈、6/24 1:1</td><td>长消息<b>自动按编号拆分</b>入注册表，逐条追踪，防整条当一件事漏项</td></tr>
+<tr><td>先报成本再批准；看账单追问</td><td>"Let me know the cost"；$18-19K 账单主动追</td><td>审批卡自带成本预估；<b>大额消耗当天自动生成产出说明</b>（抢在他的 telemetry 追问前）</td></tr>
+<tr><td>说过的规矩会回头查</td><td>system card 要求 ×2（audit + 税收抵免两个理由）</td><td><b>repeated-mention 检测</b>：第二次出现自动升优先级；standing artifacts（training log / system card / R&amp;D page）自动维护</td></tr>
+<tr><td>口头 directive 最易散失</td><td>R&amp;D page、consolidation、tradeoff 曲线全丢在会议口头</td><td><b>会后 2h 自动 action-item 清单</b>——直击他 7/1 的抱怨"讨论看起来 aligned 但没落成 action item"</td></tr>
+<tr><td>语气 ≠ 严重性</td><td>"Good work!" 开头，后面 5 大点全是整改项</td><td>硬/软<b>分级词典</b>："needs to be fixed / make sure" = 硬；"you may want to consider" = 软</td></tr>
+<tr><td>模糊 deadline 会被当场逼具体</td><td>"'Next few days' means how long?"</td><td>捕获 "soon / quickly / next few days" 时强制换算成日期</td></tr>
+<tr><td>对外/花钱动作零容忍先斩后奏</td><td>让删已发消息；"without me reviewing first" ×5</td><td><b>green-sign 状态位</b>：对外 / 花钱 / partner 分享类任务硬 gate，pipeline 只能 draft 不能 send</td></tr>
+<tr><td>他自己也掉球（期待被 remind）</td><td>"我明天给你 doc"（7/4 才兑现）、dedicated engineer 未落地</td><td><b>双向承诺账本</b>：他欠的输入超时自动生成礼貌 nudge 草稿</td></tr>
+<tr><td>休假 ≠ 暂停</td><td>7/4 "keep things moving/done while I'm out"</td><td>他 out 期间自动记进度日志，回来当天一键生成汇报</td></tr>
+</table>
+
+<div class="card bad">
+<h3>画像顺手扫出的当前欠账（pipeline 上线第一天的工作清单）</h3>
+<ul>
+<li>🔴 <b>AgentHarm / VALUES-DESTROY proposal — July 14 出结果，还剩 8 天</b>（他 7/4 已交 doc，球全在你侧；他休假回来第一件事就查这个）</li>
+<li>🔴 convergence 专门讨论落 action item（7/1）——不做正好坐实他"讨论不落地"的批评</li>
+<li>🔴 70% leaderboard threshold justification（launch 路径上的 gate，他有 "I told you this, right?" 的 callback 习惯）</li>
+<li>🟠 privacy disclosures 核实（合规红线，"you need to verify this"）；费用资源梳理报备（5/27 至今无回复痕迹，成本是他最高敏感项）</li>
+<li>🟠 system card 模板 publish + share Abhijit；R&amp;D weekly page 未每周执行</li>
+<li>🟡 GPT-5.6 Azure access、VibeThinker-3B 分析、API Bible 外联、size-vs-perf 曲线 等 10+ 条（完整排序见画像全文 §5）</li>
+</ul>
+<b>注意</b>：一个子代理认为 "Arash 的 safety doc 没交付"——那是因为 vault 只 ingest 到 7/2，而 Slack 显示他 7/4 已交。<b>这个误判恰好证明了跨源合并环节的必要性</b>（设计里的组件②）。
+</div>
+
+<div class="star"><b>Overkill 的四个最短路径</b>（超额满足他期望的杠杆点，全部可自动化）：① 每次会后 2 小时内 action-item 清单发他确认；② 每条新 directive 24h 内有回音；③ 大额消耗当天主动附产出说明；④ training log / system card / R&amp;D page 三件流程债自动维护清零。</div>
+
+<h2 id="arch">顶层架构</h2>
+<svg viewBox="0 0 960 300" style="width:100%;height:auto;margin:10px 0;" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+  <!-- Row 1: sources -->
+  <g font-size="12">
+    <rect x="10" y="18" width="130" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="75" y="39" text-anchor="middle" fill="#1e3a8a">会议 (screenpipe→Obsidian)</text>
+    <rect x="10" y="60" width="130" height="30" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="75" y="79" text-anchor="middle" fill="#1e3a8a">Slack (频道+DM)</text>
+    <rect x="10" y="98" width="130" height="30" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="75" y="117" text-anchor="middle" fill="#1e3a8a">Confluence / Jira</text>
+  </g>
+  <!-- Scanner -->
+  <rect x="185" y="52" width="120" height="52" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="245" y="73" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a8a">① 需求雷达</text>
+  <text x="245" y="92" text-anchor="middle" font-size="11" fill="#475569">定时扫描增量</text>
+  <!-- Registry -->
+  <rect x="350" y="52" width="120" height="52" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="410" y="73" text-anchor="middle" font-size="13" font-weight="600" fill="#4c1d95">② 需求注册表</text>
+  <text x="410" y="92" text-anchor="middle" font-size="11" fill="#475569">去重·合并·追踪</text>
+  <!-- Proposal -->
+  <rect x="515" y="52" width="120" height="52" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="575" y="73" text-anchor="middle" font-size="13" font-weight="600" fill="#4c1d95">③ 提案生成</text>
+  <text x="575" y="92" text-anchor="middle" font-size="11" fill="#475569">计划+成本预估</text>
+  <!-- Approve -->
+  <rect x="680" y="40" width="130" height="76" rx="10" fill="#fefce8" stroke="#ca8a04" stroke-width="2"/>
+  <text x="745" y="63" text-anchor="middle" font-size="13" font-weight="600" fill="#713f12">④ 你：手机审批</text>
+  <text x="745" y="82" text-anchor="middle" font-size="12" fill="#713f12">✅ 开工 / ❌ 不做</text>
+  <text x="745" y="100" text-anchor="middle" font-size="12" fill="#713f12">💬 回复=改方向</text>
+  <!-- Executor -->
+  <rect x="680" y="170" width="130" height="56" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="745" y="192" text-anchor="middle" font-size="13" font-weight="600" fill="#14532d">⑤ 自动执行</text>
+  <text x="745" y="211" text-anchor="middle" font-size="11" fill="#475569">后台 Claude jobs</text>
+  <!-- Quality gate -->
+  <rect x="515" y="170" width="120" height="56" rx="8" fill="#fefce8" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="575" y="192" text-anchor="middle" font-size="13" font-weight="600" fill="#713f12">⑥ 质量门</text>
+  <text x="575" y="211" text-anchor="middle" font-size="11" fill="#475569">自检·review·verify</text>
+  <!-- Deliver -->
+  <rect x="350" y="170" width="120" height="56" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="410" y="192" text-anchor="middle" font-size="13" font-weight="600" fill="#14532d">⑦ 交付</text>
+  <text x="410" y="211" text-anchor="middle" font-size="11" fill="#475569">draft PR·报告·结果</text>
+  <!-- Close loop -->
+  <rect x="140" y="170" width="165" height="56" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="222" y="192" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a8a">⑧ 闭环</text>
+  <text x="222" y="211" text-anchor="middle" font-size="11" fill="#475569">DM 结果·Jira·周报·汇报草稿</text>
+  <!-- arrows row1 -->
+  <line x1="140" y1="35" x2="180" y2="66" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="140" y1="75" x2="180" y2="76" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="140" y1="113" x2="180" y2="88" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="305" y1="78" x2="345" y2="78" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="470" y1="78" x2="510" y2="78" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="635" y1="78" x2="675" y2="78" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <!-- approve -> executor -->
+  <line x1="745" y1="116" x2="745" y2="165" stroke="#16a34a" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="758" y="146" font-size="12" fill="#16a34a" font-weight="600">✅</text>
+  <!-- executor -> gate -> deliver -> loop -->
+  <line x1="680" y1="198" x2="640" y2="198" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="515" y1="198" x2="475" y2="198" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="350" y1="198" x2="310" y2="198" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <!-- loop back to you -->
+  <path d="M 140 198 C 60 198 60 260 222 260 C 500 260 745 260 745 232" fill="none" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <text x="440" y="252" font-size="11" fill="#94a3b8">结果不合格 → 打回重做 / 你补充方向后重跑</text>
+  <!-- gate fail loop -->
+  <path d="M 575 170 C 575 140 660 140 690 165" fill="none" stroke="#ca8a04" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#arr)"/>
+  <text x="600" y="150" font-size="11" fill="#ca8a04">自检不过→重做</text>
+</svg>
+
+<table>
+<tr><th>组件</th><th>职责</th><th>实现</th></tr>
+<tr><td><b>① 需求雷达</b></td><td>定时（默认 30 分钟）扫描三类源的<b>增量</b>：新会议记录、监控频道/DM 的新消息、Confluence 新分享。无新内容立即退出（控制成本）。</td><td>launchd 定时器 + headless Claude（<code>claude -p</code>），复用现有 Slack/Atlassian MCP</td></tr>
+<tr><td><b>② 需求注册表</b></td><td>每条需求一个条目：证据引用、来源链接、置信度、状态机（检测→提案→审批→执行→交付/拒绝）。<b>跨源合并</b>：同一需求在会议+Slack+Confluence 出现合并为一条（AgentHarm 那条横跨 3 个源）。</td><td>git repo 里的 YAML/JSON 文件，版本控制天然免费</td></tr>
+<tr><td><b>③ 提案生成</b></td><td>对高置信度新需求：快速调研 → 实现计划 → <b>成本预估</b>（API $、GPU $、预计时长）→ 生成审批卡片；低置信度进周报不打扰。</td><td>同一个 headless Claude 会话</td></tr>
+<tr><td><b>④ 审批</b></td><td>手机推送通知 → 一键 ✅ 开工 / ❌ 不做 / 💬 文字回复修改方向。分级见下节。</td><td>v0=Slack DM（自带手机推送）；v3=iOS app</td></tr>
+<tr><td><b>⑤ 执行器</b></td><td>按任务类型分发：代码→worktree+draft PR；实验→跑评测出报告；训练→firectl/AWS 带预算上限；调研→HTML 报告。自动注入你的项目记忆（program map、地雷清单、规矩）。</td><td>后台 Claude Code jobs（本回复就是一个，能力已验证）</td></tr>
+<tr><td><b>⑥ 质量门</b></td><td>交付前强制自检：code-review / verify / 实验结果 sanity check，自检结论附在完成通知里。不过门自动打回重做一轮。</td><td>现有 /code-review、/verify skill</td></tr>
+<tr><td><b>⑦⑧ 交付+闭环</b></td><td>DM 结果摘要+链接 → Jira 票状态流转 → 周一 digest（做了什么/待审批/低置信度疑似需求兜底）→ <b>给 Arash 的汇报草稿</b>（永远你手动发）。</td><td>Slack MCP + Atlassian MCP</td></tr>
+</table>
+
+<h2 id="approve">分级审批：不是所有事都值得一次点击</h2>
+<div class="card teach">
+<b>为什么要分级</b>：你说"所有 LLM 检测到的都做太浪费"——反过来，如果每件事都要你点一下，你一天要点 30 次，审批就成了新的瓶颈。解法是像机场安检分快慢通道：无害的自动放行，普通的一键批，烧钱/有风险的要看明细。
+</div>
+<table>
+<tr><th>级别</th><th>范围</th><th>你要做什么</th><th>例子</th></tr>
+<tr><td><span class="tag g">T0 自动</span></td><td>只读、无成本、无外部影响：调研、分析、草稿、报告生成</td><td>不打扰，产物进周报</td><td>"帮我看看 OPSD 论文方法" → 直接出报告</td></tr>
+<tr><td><span class="tag i">T1 一键</span></td><td>写代码（worktree+draft PR，永不 merge）、跑预算内实验（如 &lt;$20）、建新 repo</td><td>点一下 ✅</td><td>"modify AgentHarm 用于 API task" → ✅ 后开工</td></tr>
+<tr><td><span class="tag w">T2 看明细</span></td><td>训练 run、超预算实验、动共享基建、新云资源</td><td>卡片带成本/风险明细，<b>文字回复确认</b>（如 "go"）</td><td>"SFT qwen3.6-27b" → 卡片列 GPU 时长×单价 ≈ $X，回复确认</td></tr>
+<tr><td><span class="tag b">永不自动</span></td><td>对外发消息（Arash/频道/partner）、merge PR、删资源、动 prod、外发任何数据</td><td>只出草稿，永远你亲手发</td><td>给 Arash 的进展汇报 → 出草稿，你复制粘贴</td></tr>
+</table>
+
+<h3>审批卡片长这样（手机上收到的）</h3>
+<pre><code>🔔 新需求提案 #R-007        [T1 · 一键可批]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+来源: Arash · 7/1 会议 11:26 + 7/4 Slack + Confluence 草稿
+原话: "我想让你们把 agent harm 这块、alignment research
+      idea 拿去做，带一个 proposal 回来" (7/1 会议)
+      "keep things moving/done while I'm out" (7/4 Slack)
+
+需求: 把 AgentHarm 改造成 API-task 安全评测
+      (= Arash 的 VALUES-DESTROY 草稿, 动作级评分)
+计划: ① 复用 APIFlow mock-API 环境
+      ② 5 个 scenario family 各出 4 个种子任务
+      ③ 动作级评分器 (attempted/completed harm)
+预估: 3 个后台 job · API 成本 ~$15 · 明早出骨架
+关联: ⏰ July 14 要出 safety 结果 · Jira ZW-xx
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ = 开工   ❌ = 不做   💬 回复 = 修改方向</code></pre>
+<div class="star">卡片必须包含<b>原话引用 + 来源链接 + 成本预估 + 关联 deadline</b>。原话回显是防误听的关键（screenpipe 是单麦 ASR，"agent harm" 曾被听成 "agent hardware"）；成本预估直接对齐 Arash 自己的管理习惯（"assuming the cost is less than $120? Let me know the cost"）。画像还补充了 4 个字段：<b>硬/软分级</b>（他的语气词典）、<b>repeated-mention 标记</b>（第二次提 = 升优先级）、<b>需 Arash green-sign 位</b>（对外/花钱类）、<b>已声明分歧标记</b>（如 structured-output 之争——分歧项不能被当普通任务静默执行）。</div>
+
+<h2 id="matrix">任务类型矩阵（覆盖你说的"不只是软件"）</h2>
+<table>
+<tr><th>任务类型</th><th>自动化程度</th><th>审批级</th><th>产出物</th><th>质量门</th></tr>
+<tr><td>调研 / 分析 / 文档</td><td>全自动</td><td><span class="tag g">T0</span></td><td>HTML 报告 / 草稿</td><td>来源引用完整性</td></tr>
+<tr><td>新工具 / benchmark 制作</td><td>一键后全自动</td><td><span class="tag i">T1</span></td><td>新 repo + draft PR + 样例产出</td><td>code-review + verify + 样例人检</td></tr>
+<tr><td>现有 repo 更新</td><td>一键后全自动</td><td><span class="tag i">T1</span></td><td>worktree + draft PR（永不 merge）</td><td>code-review + 现有测试</td></tr>
+<tr><td>评测实验（如 APIFlow 加模型）</td><td>一键后全自动</td><td><span class="tag i">T1</span>/<span class="tag w">T2</span> 按成本</td><td>结果报告 + leaderboard 更新草稿</td><td>结果 sanity check（如 runaway tool_call 检查）</td></tr>
+<tr><td>模型训练（SFT/RL/蒸馏）</td><td>确认明细后全自动</td><td><span class="tag w">T2</span></td><td>训练 job + 每 epoch val + <b>system card 草稿 + training log 条目</b>（Arash 硬要求）+ 资源清理清单</td><td>per-epoch val bench（loss≠capability 教训）</td></tr>
+<tr><td>对外沟通 / 发布</td><td>只出草稿</td><td><span class="tag b">永不自动</span></td><td>draft 文本（按你的 comms 风格）</td><td>你本人</td></tr>
+</table>
+<div class="card good">
+训练类任务的执行器天然带上你已有的护栏记忆：数据只放 <code>~/Projects/data</code>、eval 只走 apiflow CLI（eval_protocol 路径低 8 倍的坑）、Fireworks DNS-1123 命名、Crusoe 用完确认 vms list 为空、AWS SSO 过期要 DM 你重新登录而不是静默失败。<b>这是这个 pipeline 相对任何通用工具的护城河：它长在你的记忆系统上。</b>
+</div>
+
+<h2 id="app">App 产品形态（顶层）</h2>
+<div class="card">
+<b>单 repo 三层结构</b>——引擎与壳分离，没有 UI 引擎也能独立运行（这保证 v0 本周就能用）：
+<pre><code>overkill/
+├── core/          # pipeline 引擎: 雷达/注册表/提案/执行调度 (CLI, 无 UI 依赖)
+│   ├── prompts/   # 各环节的 Claude prompt 模板
+│   ├── registry/  # 需求注册表 (YAML, git 版本控制)
+│   └── config.example.yaml   # 监控源/审批阈值/预算线 (配置与代码分离)
+├── mac/           # Mac 完整版: menu-bar app = 仪表盘+注册表浏览+审批+配置+依赖向导
+├── ios/           # iOS 轻量版: 查看提案卡 + ✅/❌/💬 + 推送
+├── install.sh     # 一键安装: 检测 claude/gh/obsidian/jira → 缺什么引导装什么
+└── docs/</code></pre>
+</div>
+<h3>三条硬原则</h3>
+<ul>
+  <li><b>本地优先</b>：所有密钥、会议记录、公司数据只存在于你的 Mac；执行也全部发生在 Mac 上。</li>
+  <li><b>iOS 端永不持有密钥</b>：手机只接收提案卡片、回传 ✅/❌/💬 三种决定，是纯"遥控器"。</li>
+  <li><b>配置与代码分离</b>：同事 clone 后跑 <code>install.sh</code>，填自己的 config（自己的 Slack 频道、自己的 vault 路径、自己的 Jira 项目），依赖缺失时向导提示安装——Obsidian/screenpipe 没有也能跑（少一个源而已，源是插件化的）。</li>
+</ul>
+<h3>技术路线候选（待你确认方向后用 workflow 深挖对比）</h3>
+<table>
+<tr><th>决策点</th><th>候选</th><th>顶层判断</th></tr>
+<tr><td>iOS ↔ Mac 通道</td><td>CloudKit 同步 / 自托管 relay / PWA+推送服务 / Slack 兜底</td><td>CloudKit 免服务器且苹果生态内，但要 Apple Developer 账号；PWA 最快但推送体验略差。<b>v0 一律先用 Slack 当遥控器，不阻塞。</b></td></tr>
+<tr><td>Mac 壳</td><td>SwiftUI menu-bar / Tauri</td><td>menu-bar 常驻形态最贴合"雷达"产品；Tauri 可复用 web 技能、跨端。你不是 app 开发者——哪条学习成本低、Claude Code 写起来顺，深挖阶段定。</td></tr>
+<tr><td>分发</td><td>Homebrew tap + TestFlight / 纯 GitHub</td><td>Mac 侧 <code>brew install</code> 或 <code>git clone + install.sh</code>；iOS 侧 TestFlight 内测链接（不上 App Store，避免 review 暴露内部工具）。</td></tr>
+</table>
+
+<h2 id="gaps">你没考虑到的 8 个点</h2>
+<div class="two-col">
+<div class="card warn"><h3>1 · 审批要分级 + 成本预览</h3>一次点击不能同时授权 $500 训练和一行 README 修改。卡片必须带成本预估——这也正是 Arash 对你的管理方式（"let me know the cost"），你只是把它产品化。</div>
+<div class="card warn"><h3>2 · 质量门是速度的前提</h3>Arash 同一场会里说的另一半话："be most proud of the work"、"早点拿 external feedback"、"leaderboard 必须 truly representative"。没有自检门的自动化 = 快速产出垃圾 = 烧信任，和目标背道而驰。他 6/30 还在问 "Was this reviewed internally?"</div>
+<div class="card warn"><h3>3 · 证据回显防误听</h3>screenpipe 单麦 ASR 会错（实录: "agent harm"→"agent hardware"）。如果 pipeline 根据听错的需求干了一晚上活，浪费远大于省下的。卡片回显原话 = 你点 ✅ 时顺手完成人工核实，零额外成本。</div>
+<div class="card warn"><h3>4 · 需求会演化、会跨源出现</h3>AgentHarm 这一条横跨 7/1 会议 → 7/4 Slack → Confluence 草稿三个源。注册表必须做跨源合并与状态更新，否则你会收到三张重复卡片，审批疲劳三倍。</div>
+<div class="card warn"><h3>5 · 执行器要吃你的记忆</h3>裸的执行 agent 会踩遍你记忆里的全部地雷（eval 路径 8 倍坑、loss≠capability、Fireworks 命名、数据目录规矩）。执行器启动时自动注入 program map + 相关约束——你已有的 auto-memory 正好是 pipeline 的知识库。</div>
+<div class="card warn"><h3>6 · 凭证寿命与静默失败</h3>AWS SSO 90 天过期、OAuth token 失效、Crusoe VM 忘删。执行器必须能识别"这需要 Zelin 重新登录/决定"，DM 你而不是静默失败或蛮干。周报里列"卡住的任务"。</div>
+<div class="card warn"><h3>7 · 漏检兜底（谁看着雷达）</h3>LLM 提取有假阴性——低置信度"疑似需求"不建卡片，但进周一 digest 让你扫一眼。宁可周报里多 5 条噪音，不可漏掉 Arash 的一句"顺便把 X 也弄一下"。</div>
+<div class="card warn"><h3>8 · 提速的真正来源</h3>这个 pipeline 快在：捕获零遗漏、审批零摩擦、执行在你睡觉时并行跑（Arash 原话就在推 "parallel runs"）。你仍然在环上——Arash 要的是"第二天出结果"，不是"没人看过就出结果"。人不下环，是 feature 不是 bug。</div>
+</div>
+
+<h2 id="feasible">可行性结论与关键约束</h2>
+<table>
+<tr><th>环节</th><th>方案</th><th>状态</th></tr>
+<tr><td>会议→文本</td><td>screenpipe → Obsidian <code>2 - raw/</code></td><td><span class="tag g">已在运行</span></td></tr>
+<tr><td>Slack / Confluence / Jira 读写</td><td>现有 MCP</td><td><span class="tag g">本次会话已验证</span>（读了 thread、页面全文、搜了 6 周消息）</td></tr>
+<tr><td>需求提取与提案</td><td>headless Claude 定时扫描</td><td><span class="tag g">能力已验证</span>（本回复即后台 job；今天已人工演示了一遍提取+合并）</td></tr>
+<tr><td>手机通知+一键审批</td><td>v0: Slack DM 推送 + ✅ reaction，雷达轮询读取</td><td><span class="tag g">工具全就绪</span>（send_message / get_reactions 都在）</td></tr>
+<tr><td>自动执行（代码/实验）</td><td>后台 Claude jobs + worktree + draft PR</td><td><span class="tag g">日常在用</span></td></tr>
+<tr><td>自动执行（训练）</td><td>firectl / AWS + 预算上限 + 清理检查</td><td><span class="tag w">可行，必须 T2 + 护栏</span></td></tr>
+<tr><td>定时器</td><td>macOS launchd 每 30 分钟</td><td><span class="tag w">唯一要新搭的基建</span>（很小）</td></tr>
+<tr><td>Mac / iOS app 壳</td><td>见上节候选</td><td><span class="tag i">v2/v3 再包</span>，不阻塞流程价值</td></tr>
+</table>
+<div class="card bad">
+<h3>三个要诚实说的约束</h3>
+<ol>
+<li><b>没有真·按钮推送</b>：v0 的"点击通知"实际是：手机收到 Slack DM 推送 → 点开 → 按 ✅ emoji。体验相差无几，但不是 iOS 原生按钮（那是 v3 的事）。</li>
+<li><b>审批生效有分钟级延迟</b>：雷达是轮询制（默认 30 分钟一轮，工作时间可加密到 5-10 分钟）。你点 ✅ 后不是秒开工。事件驱动的即时触发留给 app 阶段。</li>
+<li><b>headless 下 MCP 认证待验证</b>：Slack/Atlassian MCP 的 OAuth 在 launchd 进程里是否可用，要在 v1 第一次跑时验证；兜底 = Atlassian API token（Keys 里已有）+ Slack 改走 Jira 通知。</li>
+</ol>
+</div>
+
+<h2 id="roadmap">落地路线：引擎先行，UI 后行</h2>
+<table>
+<tr><th>阶段</th><th>时间</th><th>内容</th><th>你得到什么</th></tr>
+<tr><td><b>v0 · 种子验证</b></td><td>本周（今天可开始）</td><td>不搭任何新基建：把 <b>VALUES-DESTROY / AgentHarm-API</b> 作为第一条需求走全流程——建 Jira 票 → 发你审批卡片 DM → 你点 ✅ → 后台开工建 benchmark 骨架 → 质量门 → 交付</td><td>体验完整审批手感 + <b>顺手推进 July 14 的真实任务</b>（pipeline 的第一个产出就是 Arash 正在等的东西）</td></tr>
+<tr><td><b>v1 · 无人值守雷达</b></td><td>本周末前</td><td>launchd 定时器 + 注册表 repo + 提案生成 + reaction 轮询 + Jira 同步 + 周报 digest</td><td>从此开会/收 Slack 不用记 todo，需求自动变卡片</td></tr>
+<tr><td><b>v2 · Mac app</b></td><td>下周+</td><td>menu-bar 壳：仪表盘（在跑什么/等审批什么/花了多少钱）+ 注册表浏览 + 配置界面 + 依赖向导 + install.sh</td><td>可分享给 Xiaoxiao 等同事的产品形态</td></tr>
+<tr><td><b>v3 · iOS 遥控器</b></td><td>再下周+</td><td>轻量 app：提案卡片流 + 推送 + ✅/❌/💬；通道选型（CloudKit/relay/PWA）在 v2 期间用 workflow 深挖定案</td><td>原生手机审批体验</td></tr>
+</table>
+
+<h2 id="decisions">待你确认的决策点</h2>
+<div class="card">
+<ol>
+<li><b>顶层方向</b>：六段流水线 + 分级审批 + 引擎先行/UI 后行——这个骨架符合你的想法吗？</li>
+<li><b>v0 审批面用 Slack DM</b>（零开发、手机推送现成）——可接受吗？还是你想等 app 形态一起做？</li>
+<li><b>Jira 作为需求台账</b>：自动在你的 ZW 项目建票/流转——要吗？（也可以只用注册表，Jira 后加）</li>
+<li><b>监控源起步范围</b>：Obsidian <code>2 - raw/</code> + #llm-training + Arash DM——够吗？要加别的频道吗？</li>
+<li><b>T1/T2 成本分界线</b>：$20？（低于一键批，高于看明细回文字）</li>
+<li><b>v0 种子现在就跑？</b>：我可以立刻建票+发第一张审批卡片，你点 ✅ 就开工 VALUES-DESTROY 骨架。</li>
+<li><b>代号</b>：<b>Overkill</b>（取自你说的"我希望 overkill Arash 的需求"）——用这个还是换？</li>
+</ol>
+</div>
+
+<div class="sub" style="margin-top:40px">依据：7/1 两场 Arash 会议记录（Obsidian）· 7/4 Slack thread + VALUES-DESTROY Confluence 草稿全文 · 近 6 周 Arash 全部 Slack 消息全量检索 · 12 代理 workflow 精读 33 份会议记录 · 独立子代理扫 wiki 人物页/1on1 wiki/25 份 raw · 本 harness 工具能力实测。完整画像：<a href="arash-demand-profile-2026-07-06.md">arash-demand-profile-2026-07-06.md</a></div>
+
+</body>
+</html>
