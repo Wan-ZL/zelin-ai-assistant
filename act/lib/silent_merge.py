@@ -366,6 +366,10 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
         registry.trash(secondary, f"silent-merge: 已并入 {primary.id}")
         analytics.log_event("silent_merge", primary=primary.id,
                             secondary=secondary.id, outcome="ok_retry")
+        # §44.6 回执：补完路径的合并同样发生了——不留回执用户就看不到这次
+        # 并入。note 决定性生成 → 内容键与成功路径同键，TTL 内去重保证只一条。
+        from act.lib import fold_receipts
+        fold_receipts.record(primary.id, "radar", note)
         return True
     merged, added = registry._dedupe_sources(
         primary.sources or [], secondary.sources or [])

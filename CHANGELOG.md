@@ -33,7 +33,9 @@ other file needs editing. To cut a release:
   `docs/design/SilentMerge.tla` 用 TLC 穷举出 5 步反例；修复用 fold note 的
   (kind, 文本) 去重作天然幂等标记——重跑只补完 trash 半程（`ok_retry`）。
   §44 协议的三条安全不变量（不吞已投入卡 / 永不丢信息 / fold 至多一次）
-  修复后全状态空间通过，跑法见 docs/design/silent-merge-model.md。
+  修复后全状态空间通过，跑法见 docs/design/silent-merge-model.md。补完路径
+  （`ok_retry`）同样落 §44.6 看板回执——note 决定性生成，与成功路径同内容键，
+  去重语义保证只一条。
 
 ## [0.46.1] - 2026-07-27
 

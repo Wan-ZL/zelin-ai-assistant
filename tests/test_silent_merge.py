@@ -9,6 +9,7 @@ LLM touchpoint is an injected runner.
 """
 import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -28,6 +29,10 @@ def _clean():
         p.unlink()
     if silent_merge.SILENT_DIR.exists():
         for p in silent_merge.SILENT_DIR.glob("*.json"):
+            p.unlink()
+    frdir = Path(config.FOLD_RECEIPTS_DIR)
+    if frdir.exists():
+        for p in frdir.glob("*.json"):
             p.unlink()
 
 
@@ -167,6 +172,18 @@ class ExecuteTestCase(unittest.TestCase):
         # trash 半程补完：可恢复、reason 指向主卡
         self.assertEqual(s.status, State.TRASHED.value)
         self.assertEqual(s.prev_status, State.CARD_SENT.value)
+        # §44.6：补完路径也要看板回执——且只一条（note 决定性生成 → 与成功
+        # 路径同内容键，去重语义保证重放不翻倍）
+        from act.lib import fold_receipts
+        receipts = [e for e in fold_receipts.load_recent()
+                    if e.get("req") == "R-001"]
+        self.assertEqual(len(receipts), 1)
+        # 同键重放（record 直接重放 == retry 分支再进一次）不产生第二条
+        fold_receipts.record("R-001", "radar",
+                             "静默并入 R-002「R-002」：补充了预算数字")
+        receipts = [e for e in fold_receipts.load_recent()
+                    if e.get("req") == "R-001"]
+        self.assertEqual(len(receipts), 1)
 
 
 class CliMainTestCase(unittest.TestCase):
