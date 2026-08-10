@@ -142,6 +142,68 @@ struct DiagnosticsRulesTests {
         #expect(DiagnosticsRules.gmailCardKind(reason: "command_bad_output") == .command)
     }
 
+    @Test func schedulerMissingSuppressesCredentialCard() {
+        // §48.6 优先级：调度都不在，skip_reason 必然陈旧——同 path 冲突时
+        // agent_missing 修复卡赢，凭证卡让位
+        #expect(!DiagnosticsRules.gmailCardEligible(
+            reason: "auth_failed", projected: projected(true),
+            legacyCredentialNonEmpty: true,
+            switchTouched: true, credentialFileExists: true,
+            schedulerMissing: true))
+        #expect(DiagnosticsRules.gmailCardEligible(
+            reason: "auth_failed", projected: projected(true),
+            legacyCredentialNonEmpty: true,
+            switchTouched: true, credentialFileExists: true,
+            schedulerMissing: false))
+    }
+
+    // MARK: - §48.1 设置面板有效值
+
+    @Test func effectiveEnabledPrefersProjection() {
+        // yaml sources.<src>.enabled:false → 投影 false 必须压过面板的
+        // 单键判据（否则面板显示「开启」而雷达永远静默）
+        #expect(!DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(false), fallback: true))
+        #expect(DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(true), fallback: false))
+        // 投影缺失（actd 还没跑/旧 payload）回退面板原有判据
+        #expect(DiagnosticsRules.effectiveSourceEnabled(
+            projected: nil, fallback: true))
+        #expect(!DiagnosticsRules.effectiveSourceEnabled(
+            projected: nil, fallback: false))
+    }
+
+    // MARK: - §48.6 重装失败回执持久化（RepairReceiptStore）
+
+    private func freshSuite(_ name: String) -> UserDefaults {
+        let d = UserDefaults(suiteName: name)!
+        d.removePersistentDomain(forName: name)
+        return d
+    }
+
+    @Test func repairReceiptSurvivesRestart() {
+        // 回执只放内存的话 App 重启即清空 → plist 又在 → 卡永久消失且
+        // liveness 无基线——持久化后「新实例」（= 重启后的 App）仍能读到
+        let suite = "logictests.repair-receipts.restart"
+        let d = freshSuite(suite)
+        RepairReceiptStore(defaults: d)
+            .recordFailure(label: "com.x.gmailradar", message: "load failed: 5")
+        let reborn = RepairReceiptStore(defaults: UserDefaults(suiteName: suite)!)
+        #expect(reborn.failure(label: "com.x.gmailradar") == "load failed: 5")
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
+
+    @Test func repairReceiptClearsAndDefaultsMessage() {
+        let suite = "logictests.repair-receipts.clear"
+        let store = RepairReceiptStore(defaults: freshSuite(suite))
+        store.recordFailure(label: "com.x.slackradar", message: "")
+        #expect(store.failure(label: "com.x.slackradar") == "launchctl load failed")
+        store.clear(label: "com.x.slackradar")
+        #expect(store.failure(label: "com.x.slackradar") == nil)
+        #expect(store.all.isEmpty)
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+    }
+
     @Test func setupAndConnectionReasonsKeepTheirGroups() {
         #expect(DiagnosticsRules.gmailCardKind(reason: "no_credentials") == .setup)
         #expect(DiagnosticsRules.gmailCardKind(reason: "no_address") == .setup)

@@ -797,6 +797,17 @@ def scan(runner=None, triager=None) -> dict:
                "files_scanned": 0, "extracted": 0, "reconciled": 0, "cards": 0,
                "echo_blocked": 0, "parse_degraded": 0, "skipped": []}
 
+    # §48 关闭真静默：disabled 早退必须先于锁竞争的 radar_skip analytics——
+    # 否则锁被别的 pass 占着时，关掉的源照样发 lock_held 事件（假活信号）。
+    # 不写 health（关着 ≠ 坏着，`disabled` 条目已退役）；清条目沿用 cron
+    # 单写者门（_owns_health）——手动/launchd 语境连删都不许碰，防止误删
+    # cron 的真实健康。summary 行保留（本地观测，不进 health/analytics）。
+    if not sources.enabled(cfg, "obsidian"):
+        summary["skipped"].append("source obsidian is off (act.lib.sources)")
+        if _owns_health():
+            health.remove_radar_health("obsidian")
+        return summary
+
     lock = _acquire_pass_lock()
     if lock is None:
         summary["skipped"].append(
@@ -811,16 +822,6 @@ def scan(runner=None, triager=None) -> dict:
 
 def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dict:
     scan_started = time.monotonic()
-    if not sources.enabled(cfg, "obsidian"):
-        # §48 关闭真静默：不写 health（关着 ≠ 坏着，`disabled` 条目已退役）；
-        # 清条目沿用 cron 单写者门（_owns_health）——手动/launchd 语境连删
-        # 都不许碰，防止误删 cron 的真实健康。summary 行保留（本地观测，
-        # 不进 health/analytics）。
-        summary["skipped"].append("source obsidian is off (act.lib.sources)")
-        if _owns_health():
-            health.remove_radar_health("obsidian")
-        return summary
-
     # mirror-aware (claude TCC isolation): reads the repo-local vault mirror
     # when the ingest chain maintains one, the real vault otherwise.
     root = config.effective_obsidian_raw(cfg)

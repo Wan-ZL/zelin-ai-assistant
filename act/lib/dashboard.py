@@ -600,8 +600,16 @@ def _radar_sources(cfg: config.Config) -> dict:
             on = False
         entry = data.get(src) if isinstance(data, dict) else None
         entry = entry if isinstance(entry, dict) else {}
+        # 关掉的源不带健康摘要：清理僵尸条目发生在 liveness 巡检（同 pass 的
+        # dashboard 构建在它之前）——不在这里屏蔽的话，关源后的第一个 pass
+        # 会把旧 last_ok/skip_reason 投影出去（关着 = null 的契约被破一拍）。
+        if not on:
+            entry = {}
         last_ok = entry.get("last_ok")
-        skip = entry.get("skip_reason")
+        # §48.4 出机清洗：skip_reason 只放行闭集词表码（词表外折叠 "error"，
+        # mcp_failed:<detail> 去尾）——dashboard 随 syncd 出机，radar 写进
+        # health 的自由文本（错误摘录/本机路径）不许跟着出去。
+        skip = health.public_skip_reason(entry.get("skip_reason"))
         out[src] = {
             "enabled": on,
             "last_ok": last_ok if isinstance(last_ok, str) and last_ok else None,

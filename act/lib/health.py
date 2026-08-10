@@ -61,6 +61,34 @@ HEALTH_PATH: Path = config.STATE_DIR / "radar_health.json"
 # update). flock auto-releases on process exit, so no stale-lock hang risk.
 _LOCK_PATH: Path = config.STATE_DIR / "radar_health.lock"
 
+# §48.4 词表投影纪律：允许进 dashboard 投影（可随 syncd 出机）的 skip_reason
+# **闭集**。radar_health.json 本身是本机文件，radar 可以往 skip_reason 写带
+# 细节的串（如 `mcp_failed: <错误摘录>`——Settings 面板要看细节）；但
+# dashboard 会云同步，任意错误串（Slack MCP 非法输出片段、本机路径）不许
+# 出机——词表外一律折叠。add-only：加新码要同步进 docstring 词表。
+SKIP_REASON_CODES: frozenset = frozenset({
+    "disabled",                                     # deprecated（§48.2）
+    "no_credentials", "no_address", "auth_failed", "connect_failed",
+    "command_failed", "command_bad_output",         # gmail §14bis
+    "mcp_not_configured", "mcp_failed",             # slack
+    "vault_missing", "vault_empty", "no_api_key", "extract_failed",  # obsidian
+})
+
+
+def public_skip_reason(raw) -> Optional[str]:
+    """skip_reason 的出机清洗（dashboard `radar_sources` 投影专用）。
+
+    词表码原样放行；`mcp_failed: <detail>` 去掉自由文本尾巴只留裸码；
+    其余任何串（未知码/错误摘录/路径）折叠为 ``"error"``；非字符串/空 → None。
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw in SKIP_REASON_CODES:
+        return raw
+    if raw.startswith("mcp_failed"):
+        return "mcp_failed"
+    return "error"
+
 
 def _iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

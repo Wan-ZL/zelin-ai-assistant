@@ -77,9 +77,14 @@ final class SlackSettingsModel: ObservableObject {
         guard !loaded else { refreshStatus(); return }
         loaded = true
         let ov = SettingsIO.readOverrides()
-        // effective flag: overrides features dict → config.yaml → default on
+        // effective：§48.1 真源投影（radar_sources.slack.enabled = flag 与
+        // sources.slack.enabled 的合取）——只读 flag 的话，yaml 里
+        // sources.slack.enabled:false 时面板显示「开启」、重新开关也只写
+        // flag，雷达永远静默。投影缺失（actd 还没跑）回退原有 flag 判据。
         let feats = ov["features"] as? [String: Any] ?? [:]
-        enabled = (feats["slack_radar"] as? Bool) ?? Self.configFlagLayer()
+        enabled = DiagnosticsRules.effectiveSourceEnabled(
+            projected: DiagnosticsModel.readRadarSources()["slack"],
+            fallback: (feats["slack_radar"] as? Bool) ?? Self.configFlagLayer())
         // token presence
         refreshTokenState()
         // saved pickers (override layer only — config.yaml stays live when unset)
@@ -430,7 +435,14 @@ final class SlackSettingsModel: ObservableObject {
     private func persistFlag(_ on: Bool) {
         var merged = SettingsIO.readOverrides()
         var feats = merged["features"] as? [String: Any] ?? [:]
-        if on == Self.configFlagLayer() {
+        if on {
+            // 打开 = 用户显式动作，把合取的**两个键**都写 true（§48.1）：
+            // 只写 flag 的话 yaml 里 sources.slack.enabled:false 仍压着雷达
+            // ——「已开启+装了 agent」却永远静默。显式写 true 不做 drop-when-
+            // default（App 读不到两级嵌套的 config 层，必须保证 UI==生效）。
+            feats["slack_radar"] = true
+            merged["slack_enabled"] = true
+        } else if on == Self.configFlagLayer() {
             feats.removeValue(forKey: "slack_radar")
         } else {
             feats["slack_radar"] = on

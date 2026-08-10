@@ -95,15 +95,17 @@ final class DiagnosticsModel: ObservableObject {
 
     // §48.6 卡上重装的失败回执（label → 错误信息）。plist 可能写成了但
     // launchctl load 失败——只看「plist 存在」会把失败吞成成功；有回执时
-    // 卡留着并亮失败原因。成功回执/后台复核发现已 loaded 时出账。
-    private(set) var agentRepairFailure: [String: String] = [:]
+    // 卡留着并亮失败原因。**持久化**（RepairReceiptStore / UserDefaults）：
+    // 只放内存的话 App 重启即清空，plist 又在 → 卡永久消失且 health 已清、
+    // liveness 没有基线——重启后必须仍进「失败态复核」路径，launchctl
+    // 确认真跑起来才出账。成功回执/后台复核发现已 loaded 时出账。
+    private let repairReceipts = RepairReceiptStore()
 
     func noteAgentRepair(label: String, ok: Bool, message: String) {
         if ok {
-            agentRepairFailure.removeValue(forKey: label)
+            repairReceipts.clear(label: label)
         } else {
-            agentRepairFailure[label] =
-                message.isEmpty ? "launchctl load failed" : message
+            repairReceipts.recordFailure(label: label, message: message)
         }
         rebuild()
     }
@@ -111,14 +113,9 @@ final class DiagnosticsModel: ObservableObject {
     /// 失败态的后台复核：设置面板「重新安装」等旁路把 agent 装好后自动
     /// 出账（launchctl print 只在失败态才跑，不进平时 5s tick 的成本）。
     fileprivate func revalidateRepairFailure(label: String) {
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [repairReceipts] in
             guard LaunchAgents.isLoaded(label: label) else { return }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    _ = DiagnosticsModel.shared.agentRepairFailure
-                        .removeValue(forKey: label)
-                }
-            }
+            repairReceipts.clear(label: label)
         }
     }
 
@@ -182,6 +179,51 @@ final class DiagnosticsModel: ObservableObject {
             }
         }
 
+        // --- §48.6 雷达调度未安装（源开着但 launchd plist 缺失） ---
+        // 先于凭证卡构建：调度都不在，skip_reason 必然陈旧——同 path 冲突时
+        // agent_missing 赢（凭证卡经 schedulerMissing flag 让位）。
+        // 典型路径：关着时 .pkg 升级把 plist 退役 → 用户重新打开开关（功能
+        // 开关面板不装 plist）→ 配置 on 但没人再装，雷达永久静默且因 health
+        // 条目已被清、连 liveness 死亡告警都没有基线可响。修复动作与设置
+        // 面板「重新安装」同路。只认真实投影（旧 payload 不出卡）。
+        // 撤卡判据：plist 存在**且**没有失败回执（RepairReceiptStore，
+        // UserDefaults 持久化——App 重启不丢）——重装可能写成 plist 但
+        // launchctl load 失败，那时卡留着并亮出失败原因；失败态每 tick
+        // 后台复核 launchctl（设置面板等旁路修好后自动出账）。
+        let agentBySource: [(String, IngestPath, String)] = [
+            ("gmail", .gmail, GmailSettingsModel.agentLabel),
+            ("slack", .slack, SlackSettingsModel.agentLabel),
+        ]
+        var schedulerMissingBySource: [String: Bool] = [:]
+        for (src, path, label) in agentBySource {
+            let plistExists = FileManager.default.fileExists(
+                atPath: LaunchAgents.plistDest(label))
+            let failMsg = repairReceipts.failure(label: label)
+            if failMsg != nil { revalidateRepairFailure(label: label) }
+            let missing = DiagnosticsRules.schedulerMissing(
+                projected: projected[src], plistExists: plistExists,
+                repairFailed: failMsg != nil)
+            schedulerMissingBySource[src] = missing
+            guard missing else { continue }
+            let entry = health[src]
+            let card = DiagnosticCard(
+                id: "diag.\(src)", signature: "\(src):agent_missing", path: path,
+                title: src == "gmail"
+                    ? L("Gmail 雷达开着，但后台调度没装上", "The Gmail radar is on but its scheduler isn't installed")
+                    : L("Slack 雷达开着，但后台调度没装上", "The Slack radar is on but its scheduler isn't installed"),
+                detail: failMsg.map {
+                    L("上次重装失败：", "The last reinstall failed: ") + $0
+                } ?? L("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
+                       "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
+                actionLabel: failMsg == nil
+                    ? L("重装后台调度", "Reinstall the scheduler")
+                    : L("再试一次", "Try again"),
+                action: .reinstallAgent(label),
+                lastAttempt: entry?.lastAttempt, lastOK: entry?.lastOK)
+            liveSignatures.insert(card.signature)
+            if !isDebounced(card) { out.append(card) }
+        }
+
         // --- gmail (intent: §48 radar_sources.gmail.enabled + 意愿信号) ---
         // 告警资格 = DiagnosticsRules.gmailCardEligible：源开着 + skip_reason
         // 非空，setup 类另需真实意愿（碰过开关/凭证文件存在）。手写的 reason
@@ -192,7 +234,8 @@ final class DiagnosticsModel: ObservableObject {
                reason: gm.skipReason, projected: projected["gmail"],
                legacyCredentialNonEmpty: SecretsIO.hasSecret(SecretsIO.gmailFile),
                switchTouched: gmailSwitchTouched,
-               credentialFileExists: gmailCredFileExists),
+               credentialFileExists: gmailCredFileExists,
+               schedulerMissing: schedulerMissingBySource["gmail"] ?? false),
            let reason = gm.skipReason {
             // 文案按 failure 形态分组（DiagnosticsRules.gmailCardKind）——
             // command 类（§14bis 抓取命令）跟应用密码无关，说成密码问题是
@@ -222,7 +265,9 @@ final class DiagnosticsModel: ObservableObject {
         }
 
         // --- slack (intent: credential non-empty; mcp fallback: file exists) ---
-        if let sl = health["slack"], let reason = sl.skipReason {
+        // 调度缺失时凭证卡让位（同 gmail：skip_reason 必然陈旧，先修调度）
+        if !(schedulerMissingBySource["slack"] ?? false),
+           let sl = health["slack"], let reason = sl.skipReason {
             if reason == "connect_failed" && slackNonEmpty {
                 out.append(DiagnosticCard(
                     id: "diag.slack", signature: "slack:connect_failed", path: .slack,
@@ -244,48 +289,6 @@ final class DiagnosticsModel: ObservableObject {
                     lastAttempt: sl.lastAttempt, lastOK: sl.lastOK))
                 liveSignatures.insert("slack:mcp_not_configured")
             }
-        }
-
-        // --- §48.6 雷达调度未安装（源开着但 launchd plist 缺失） ---
-        // 典型路径：关着时 .pkg 升级把 plist 退役 → 用户重新打开开关（功能
-        // 开关面板不装 plist）→ 配置 on 但没人再装，雷达永久静默且因 health
-        // 条目已被清、连 liveness 死亡告警都没有基线可响。修复动作与设置
-        // 面板「重新安装」同路。只认真实投影（旧 payload 不出卡）。
-        // 撤卡判据：plist 存在**且**没有失败回执——重装可能写成 plist 但
-        // launchctl load 失败（agentRepairFailure 记着），那时卡留着并亮出
-        // 失败原因；失败态每 tick 后台复核 launchctl（设置面板等旁路修好
-        // 后自动出账）。
-        let agentBySource: [(String, IngestPath, String)] = [
-            ("gmail", .gmail, GmailSettingsModel.agentLabel),
-            ("slack", .slack, SlackSettingsModel.agentLabel),
-        ]
-        for (src, path, label) in agentBySource {
-            let plistExists = FileManager.default.fileExists(
-                atPath: LaunchAgents.plistDest(label))
-            let failMsg = agentRepairFailure[label]
-            if failMsg != nil { revalidateRepairFailure(label: label) }
-            guard DiagnosticsRules.schedulerMissing(
-                projected: projected[src], plistExists: plistExists,
-                repairFailed: failMsg != nil),
-                  !out.contains(where: { $0.path == path })   // 每 path 至多一卡
-            else { continue }
-            let entry = health[src]
-            let card = DiagnosticCard(
-                id: "diag.\(src)", signature: "\(src):agent_missing", path: path,
-                title: src == "gmail"
-                    ? L("Gmail 雷达开着，但后台调度没装上", "The Gmail radar is on but its scheduler isn't installed")
-                    : L("Slack 雷达开着，但后台调度没装上", "The Slack radar is on but its scheduler isn't installed"),
-                detail: failMsg.map {
-                    L("上次重装失败：", "The last reinstall failed: ") + $0
-                } ?? L("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
-                       "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
-                actionLabel: failMsg == nil
-                    ? L("重装后台调度", "Reinstall the scheduler")
-                    : L("再试一次", "Try again"),
-                action: .reinstallAgent(label),
-                lastAttempt: entry?.lastAttempt, lastOK: entry?.lastOK)
-            liveSignatures.insert(card.signature)
-            if !isDebounced(card) { out.append(card) }
         }
 
         pruneFirstSeen(keeping: liveSignatures)
@@ -406,7 +409,7 @@ final class DiagnosticsModel: ObservableObject {
     /// intent + 健康摘要）。走 Contract.swift 的 `RadarSourceHealth` 解码
     /// ——与 Store 同一套 wire 类型，不再维护第二条裸 JSONSerialization
     /// 读法。缺失/坏文件/坏 map → [:]（调用方回退老 intent 判据）。
-    private static func readRadarSources() -> [String: RadarSourceHealth] {
+    nonisolated static func readRadarSources() -> [String: RadarSourceHealth] {
         struct Projection: Decodable {   // 只解顶层这一个键，别的分区不碰
             let radar_sources: [String: RadarSourceHealth]?
         }

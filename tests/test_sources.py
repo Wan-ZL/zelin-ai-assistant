@@ -92,6 +92,24 @@ class EnabledTruthTableTestCase(unittest.TestCase):
         self.assertFalse(sources.enabled(_cfg(obsidian_enabled=False), "obsidian"))
         self.assertTrue(sources.enabled(_cfg(slack_enabled=True), "slack"))
 
+    def test_flat_override_wins_over_yaml_nested_enabled(self):
+        # App 面板「打开」= 用户显式动作 → 写扁平 override（gmail_enabled /
+        # slack_enabled），必须压过 yaml 的 sources.<src>.enabled:false——
+        # 否则面板提示已开启+装了 agent，雷达却永远静默（§48.1 面板对齐）
+        config.ensure_state_dirs()
+        self.addCleanup(_clean_state)
+        config.CONFIG_PATH.write_text(
+            "sources:\n  slack:\n    enabled: false\n"
+            "  gmail:\n    enabled: false\n", encoding="utf-8")
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"slack_enabled": True, "gmail_enabled": True}),
+            encoding="utf-8")
+        self.addCleanup(
+            lambda: config.SETTINGS_OVERRIDES_PATH.unlink(missing_ok=True))
+        cfg = config.load_config()
+        self.assertTrue(sources.enabled(cfg, "slack"))
+        self.assertTrue(sources.enabled(cfg, "gmail"))
+
     def test_config_yaml_parses_slack_obsidian_enabled(self):
         # config.py 真的解析嵌套写法（此前 slack/obsidian 的同款写法静默无效）
         config.ensure_state_dirs()
@@ -143,6 +161,21 @@ class DisabledSilenceTestCase(unittest.TestCase):
         # 条目本就不存在时连文件都不写（mtime 语义：只有真实雷达活动才动文件）
         cfg = _cfg(gmail_enabled=False)
         radar_gmail.scan(cfg, fetcher=self._fail_fetch)
+        self.assertFalse(health.HEALTH_PATH.exists())
+
+    def test_obsidian_off_skips_before_lock_analytics(self):
+        # disabled 早退必须先于锁竞争的 radar_skip 信标——锁被别的 pass 占着
+        # 时，关掉的源也不许发 lock_held analytics（真静默无竞争窗）
+        from act import radar
+        config.CONFIG_PATH.write_text(
+            "features:\n  obsidian_radar: false\n", encoding="utf-8")
+        held = radar._acquire_pass_lock()   # 模拟另一个 pass 正持锁
+        if held is not None:
+            self.addCleanup(held.close)
+        summary = radar.scan(runner=lambda t: self.fail("scanned while off"))
+        self.assertIn("source obsidian is off (act.lib.sources)",
+                      summary["skipped"])
+        self.assertEqual(_events(), [])                  # 无 lock_held 信标
         self.assertFalse(health.HEALTH_PATH.exists())
 
 
@@ -370,6 +403,34 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         self.assertFalse(gm["stale"])
         self.assertIsNotNone(gm["last_ok"])
 
+    def test_skip_reason_projection_is_vocabulary_gated(self):
+        # §48.4 词表投影纪律：radar 写进 health 的自由文本（错误摘录/本机
+        # 路径）不许随 dashboard 出机——mcp_failed:<detail> 去尾留裸码
+        health.update_radar_health(
+            "slack", ok=False,
+            skip_reason="mcp_failed: OSError: /Users/zelin/secret/token.txt")
+        dash = self._build(_cfg())
+        self.assertEqual(dash["radar_sources"]["slack"]["skip_reason"],
+                         "mcp_failed")
+        self.assertNotIn("zelin", json.dumps(dash))       # 路径没跟着出去
+        # 词表外的任意奇串一律折叠为 "error"
+        health.update_radar_health(
+            "slack", ok=False, skip_reason="weird /private/tmp fragment")
+        dash = self._build(_cfg())
+        self.assertEqual(dash["radar_sources"]["slack"]["skip_reason"], "error")
+        self.assertNotIn("fragment", json.dumps(dash))
+
+    def test_disabled_source_hides_stale_health_same_pass(self):
+        # 关源后的第一个 pass：liveness 清理还没跑（它在 dashboard 构建之
+        # 后），投影就必须已经不带健康摘要——「关着 = null」当 pass 生效
+        health.update_radar_health("gmail", ok=False, skip_reason="auth_failed")
+        config.CONFIG_PATH.write_text(
+            "sources:\n  gmail:\n    enabled: false\n", encoding="utf-8")
+        gm = self._build(_cfg())["radar_sources"]["gmail"]
+        self.assertFalse(gm["enabled"])
+        self.assertIsNone(gm["last_ok"])
+        self.assertIsNone(gm["skip_reason"])
+
     def test_stale_ignores_wake_grace(self):
         # §48.4：stale 不吃通知侧的睡醒/冷启动宽限——投影是无状态的磁盘
         # 真值函数（一次性 `python -m act.lib.dashboard` 进程也在产出它），
@@ -388,6 +449,31 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         gm = self._build(_cfg())["radar_sources"]["gmail"]
         self.assertTrue(gm["enabled"])
         self.assertEqual(gm["skip_reason"], "auth_failed")
+
+
+# --------------------------------------------------------------------------- #
+# 4b — skip_reason 出机清洗（§48.4 词表投影纪律）
+# --------------------------------------------------------------------------- #
+class PublicSkipReasonTestCase(unittest.TestCase):
+    def test_vocabulary_codes_pass_through(self):
+        for code in ("auth_failed", "no_credentials", "vault_empty",
+                     "command_bad_output", "mcp_not_configured"):
+            self.assertEqual(health.public_skip_reason(code), code)
+
+    def test_mcp_failed_detail_is_stripped(self):
+        self.assertEqual(
+            health.public_skip_reason("mcp_failed: exit 1: /Users/x/y"),
+            "mcp_failed")
+        self.assertEqual(health.public_skip_reason("mcp_failed"), "mcp_failed")
+
+    def test_out_of_vocab_folds_to_error(self):
+        self.assertEqual(health.public_skip_reason("OSError: boom"), "error")
+        self.assertEqual(health.public_skip_reason("/Users/zelin/p"), "error")
+
+    def test_empty_and_non_string_are_none(self):
+        self.assertIsNone(health.public_skip_reason(None))
+        self.assertIsNone(health.public_skip_reason(""))
+        self.assertIsNone(health.public_skip_reason(42))
 
 
 # --------------------------------------------------------------------------- #

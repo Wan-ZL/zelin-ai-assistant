@@ -39,12 +39,16 @@ enum DiagnosticsRules {
     ///   碰过）**或**凭证文件已存在（配到一半）；
     /// - 连接类 reason（auth_failed 等）维持投影判据即可（有凭证在报错 =
     ///   用户显然配过）；
-    /// - `disabled` 是退役码（仅升级瞬间的残留记录），永不出卡。
+    /// - `disabled` 是退役码（仅升级瞬间的残留记录），永不出卡；
+    /// - `schedulerMissing`（§48.6 修复卡的判据为真）时凭证卡让位——调度都
+    ///   不在，skip_reason 必然陈旧，先修调度再谈凭证。
     static func gmailCardEligible(reason: String?,
                                   projected: RadarSourceHealth?,
                                   legacyCredentialNonEmpty: Bool,
                                   switchTouched: Bool,
-                                  credentialFileExists: Bool) -> Bool {
+                                  credentialFileExists: Bool,
+                                  schedulerMissing: Bool = false) -> Bool {
+        guard !schedulerMissing else { return false }
         guard let reason, !reason.isEmpty, reason != "disabled" else { return false }
         let enabled = projected?.enabled ?? legacyCredentialNonEmpty
         guard enabled else { return false }
@@ -67,5 +71,43 @@ enum DiagnosticsRules {
                                  repairFailed: Bool = false) -> Bool {
         guard let projected, projected.enabled else { return false }
         return !plistExists || repairFailed
+    }
+
+    /// 设置面板启停 UI 的**有效值**（§48.1 合取的真源投影）：只读 feature
+    /// flag 的话，yaml 里 sources.<src>.enabled:false 时面板显示「开启」、
+    /// 重新开关也只写 flag——提示已开启 + 装了 agent，雷达却永远静默。
+    /// 投影缺失（旧 payload / actd 还没跑）回退面板原有判据。
+    static func effectiveSourceEnabled(projected: RadarSourceHealth?,
+                                       fallback: Bool) -> Bool {
+        projected?.enabled ?? fallback
+    }
+}
+
+/// §48.6 重装失败回执的持久化（UserDefaults 背书）。回执只放内存的话 App
+/// 重启即清空——plist 又存在 → 修复卡永久消失，而 health 已被清、liveness
+/// 没有基线，一条静默死路。重启后回执仍在 → 继续走「失败态复核」路径，
+/// launchctl 确认真跑起来才出账。suite 可注入（LogicTests 用独立 suite）。
+struct RepairReceiptStore {
+    static let defaultsKey = "agentRepairFailures"
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    var all: [String: String] {
+        defaults.dictionary(forKey: Self.defaultsKey) as? [String: String] ?? [:]
+    }
+
+    func failure(label: String) -> String? { all[label] }
+
+    func recordFailure(label: String, message: String) {
+        var d = all
+        d[label] = message.isEmpty ? "launchctl load failed" : message
+        defaults.set(d, forKey: Self.defaultsKey)
+    }
+
+    func clear(label: String) {
+        var d = all
+        guard d.removeValue(forKey: label) != nil else { return }
+        defaults.set(d, forKey: Self.defaultsKey)
     }
 }

@@ -52,10 +52,13 @@ final class GmailSettingsModel: ObservableObject {
         guard !loaded else { refreshStatus(); return }
         loaded = true
         let ov = SettingsIO.readOverrides()
-        // effective: override → config.yaml sources.gmail.enabled (the naive
-        // one-level scanner can't reach the two-level nest, so config-layer
-        // reads fall back to the product default: on)
-        enabled = (ov["gmail_enabled"] as? Bool) ?? true
+        // effective：§48.1 真源投影（radar_sources.gmail.enabled = flag 与
+        // sources.gmail.enabled 的合取）——只读 override 的话，yaml 里
+        // enabled:false 或 features.gmail_radar:false 时面板会显示「开启」
+        // 而雷达永远静默。投影缺失（actd 还没跑）回退 override → 默认开。
+        enabled = DiagnosticsRules.effectiveSourceEnabled(
+            projected: DiagnosticsModel.readRadarSources()["gmail"],
+            fallback: (ov["gmail_enabled"] as? Bool) ?? true)
         address = (ov["gmail_address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? SettingsIO.configScalar("address") ?? ""
         // §14bis: override-only read（和 enabled 一样，naive scanner 读不到
@@ -176,8 +179,16 @@ final class GmailSettingsModel: ObservableObject {
         // config layer, and the toggle IS a user change — the override must
         // guarantee UI == effective (dropping "true" could silently leave a
         // config.yaml `enabled: false` in charge while the switch shows on).
+        // 打开时把合取的**两个键**都写 true（§48.1）：只写 gmail_enabled 的
+        // 话，yaml 里 features.gmail_radar:false 仍压着雷达——用户显式动作
+        // 允许覆盖 yaml。关闭只写 gmail_enabled=false（合取，单键足以关）。
         var merged = SettingsIO.readOverrides()
         merged["gmail_enabled"] = on
+        if on {
+            var feats = merged["features"] as? [String: Any] ?? [:]
+            feats["gmail_radar"] = true
+            merged["features"] = feats
+        }
         do {
             try SettingsIO.writeOverrides(merged)
         } catch {

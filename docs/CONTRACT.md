@@ -2265,6 +2265,13 @@ fail-closed 返回 False）。三个源的 `sources.<src>.enabled` 都由 config
 （exit 0 开 + stdout `on` / **3** 关 + stdout `off` / 2 未知源；exit 1
 刻意空出——那是 python 崩溃的环境码（ModuleNotFoundError、缺 PyYAML），
 「关」必须独占一个故障撞不上的出口码，48.5 的 fail-open 才成立）。
+**App 设置面板对齐**：gmail/slack 面板的启停 UI 显示**有效值**
+（`DiagnosticsRules.effectiveSourceEnabled`：真源投影 `radar_sources.<src>
+.enabled`，投影缺失回退面板原有判据）——只读单键的话，yaml 里另一个键为
+false 时面板显示「开启」而雷达永远静默；用户在面板里**打开** = 显式动作，
+把合取的两个键都写进 override（gmail：`gmail_enabled` + `features.gmail_radar`；
+slack：`features.slack_radar` + 扁平 `slack_enabled`，override 层压过 yaml），
+关闭仍只写单键（合取，一票否决）。
 
 **48.2 关闭真静默（宪法第 3 条的加强，非削弱）**：关掉的源在雷达入口直接
 return——**不写 health、不发 analytics**，且清除该源既有的 health 条目
@@ -2299,7 +2306,10 @@ max(interval×6, 300s) 视为刚从合盖睡眠唤醒——此刻 health 时间�
 stale、不动台账，让雷达先补跑；宽限过后照常评判（plist 真被删仍会告警）。
 进程**首 pass 同睡醒对待**（`_wake_state` 是进程内存，重启后没有跳变可测，
 而关机 ≥ 阈值后开机 RunAtLoad 的第一个 pass 同样早于雷达落笔）——冷启动也
-种一次宽限；代价只是 actd 重启/升级后真死亡多等一个宽限窗才报。
+种一次宽限；代价只是 actd 重启/升级后真死亡多等一个宽限窗才报。推论：
+`--once` / cron 形态每次都是新进程、每次都吃冷启动宽限——该形态**不承诺**
+liveness 通知这半边（本就没有常驻进程可持续告警）；诚实性由 48.4 的
+dashboard `stale` 兜底（无状态、不吃宽限，一次性构建照报）。
 
 **48.4 `radar_sources` 投影（§2 顶层 add-only 字段）**：
 
@@ -2315,7 +2325,15 @@ stale、不动台账，让雷达先补跑；宽限过后照常评判（plist 真
 每个 SOURCES 成员一条、键恒在。`enabled` = 真源判据（App 侧的 intent 判断自此
 读这里，Diagnostics 不再猜「凭证文件非空」；投影缺失的旧 payload 回退老判据）；
 投影的配置与 48.3 同款**现读**（`load_config()` 失败才回退调用方传入的 cfg
-快照）。`last_ok` / `skip_reason` 摘自 health 条目（关着 = null）；`stale` =
+快照）。`last_ok` / `skip_reason` 摘自 health 条目（**关着 = null 且当 pass
+即生效**：投影对 disabled 源直接屏蔽 health 摘要，不等 48.3 巡检清条目——
+巡检在 dashboard 构建之后，不屏蔽的话关源后第一个 pass 仍投影旧数据）。
+**词表投影纪律**：`skip_reason` 出机前必过 `health.public_skip_reason`
+清洗——radar_health.json 是本机文件，radar 可写带细节的串（`mcp_failed:
+<错误摘录>`，Settings 面板要看细节）；但 dashboard 会随 syncd 云同步，任意
+错误串（Slack MCP 非法输出片段、本机路径）不许出机：只放行
+`health.SKIP_REASON_CODES` 闭集码，`mcp_failed:*` 去尾留裸码，其余一律折叠
+为 `error`（加新码 = 同步修词表，add-only）。`stale` =
 开着且超 liveness 阈值（48.3 告警的看板可见半边，恢复自动变回 false）。
 `stale` **不吃 48.3 的睡醒/冷启动宽限**——投影是无状态的磁盘真值函数（同
 输入同输出，`python -m act.lib.dashboard` 一次性进程也在产出它，进程级宽限
@@ -2355,16 +2373,23 @@ ModuleNotFoundError）。「关」的判定 = **exit 3 且 stdout 字面量 `off
 launchd plist 文件缺失；旧 payload 无投影不出卡，宁漏勿误），修复动作 =
 `LaunchAgents.install`（与设置面板「重新安装」同一条路）；signature
 `<src>:agent_missing`，~2min warmup 防开关切换瞬间（投影落后一个 actd
-pass）的闪卡。**重装结果必须回执**：plist 可能写成但 `launchctl load` 失败
-（雷达照样死、health 已清空时 liveness 也没有基线可响），所以撤卡判据 =
-plist 存在**且**无失败回执（`agentRepairFailure`）——失败时卡留着、文案换
-失败详情 + 「再试一次」；失败态每 tick 后台复核 `launchctl print`（设置
-面板等旁路修好后自动出账；该复核只在失败态运行，不进平时 5s tick 的成本）。
+pass）的闪卡。**重装结果必须回执且持久**：plist 可能写成但 `launchctl load`
+失败（雷达照样死、health 已清空时 liveness 也没有基线可响），所以撤卡判据 =
+plist 存在**且**无失败回执——失败时卡留着、文案换失败详情 + 「再试一次」。
+回执落 `RepairReceiptStore`（UserDefaults，与 dismissal 持久化同款）：只放
+内存的话 App 重启即清空、plist 又在 → 卡永久消失，一条静默死路；重启后回执
+仍在，继续走失败态复核，`launchctl` 确认真跑起来才出账。失败态每 tick 后台
+复核 `launchctl print`（设置面板等旁路修好后自动出账；该复核只在失败态运行，
+不进平时 5s tick 的成本）。**同 path 冲突时修复卡赢过凭证卡**（调度都不在，
+skip_reason 必然陈旧）：agent_missing 判据为真即让 gmail/slack 凭证卡让位
+（`gmailCardEligible` 的 `schedulerMissing` 参数 / slack 块同款 guard）。
 设置面板的 gmail/slack 总开关翻 on 本就自装 plist，不经此卡。
 
-**判例**：tests/test_sources.py（真值表含 slack/obsidian enabled / 关闭真静默 /
-liveness+anti-nag+恢复+现读配置+睡醒/冷启动宽限+真实 interval+plist 死亡 /
-投影形状+现读+stale 不吃宽限 / CLI 出口码 0-3-2 / install.sh 闸门
-drift-guard + 非 repo cwd 探针 fail-open）、mac/LogicTests
+**判例**：tests/test_sources.py（真值表含 slack/obsidian enabled + 扁平
+override 压过 yaml / 关闭真静默含 obsidian 锁前早退 / liveness+anti-nag+
+恢复+现读配置+睡醒/冷启动宽限+真实 interval+plist 死亡 / 投影形状+现读+
+stale 不吃宽限+词表出机清洗+关源当 pass 屏蔽 / CLI 出口码 0-3-2 /
+install.sh 闸门 drift-guard + 非 repo cwd 探针 fail-open）、mac/LogicTests
 ContractRadarSourcesTests（Swift 解码向后兼容）+ DiagnosticsRulesTests
-（48.4 意愿信号矩阵+文案分组 / 48.6 修复卡判据+失败回执保卡）。
+（48.4 意愿信号矩阵+文案分组 / 48.6 修复卡判据+失败回执保卡+持久化往返+
+优先级让位 / 48.1 面板有效值）。
