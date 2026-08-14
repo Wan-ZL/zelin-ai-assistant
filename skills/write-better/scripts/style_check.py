@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic style linter for the precise-writing skill (Singh-standard).
+"""Deterministic style linter for the write-better skill (Singh-standard).
 
 Usage:
     python3 style_check.py <file> [<file> ...]

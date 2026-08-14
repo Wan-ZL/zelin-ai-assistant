@@ -43,4 +43,4 @@ New skills are welcome via pull request:
 
 | Skill | What it does | Default |
 |---|---|---|
-| `precise-writing` | Precision-first formal English (emails, papers, articles, CVs) modeled on Munindar P. Singh's editorial standards, with a deterministic style linter (`scripts/style_check.py`) | off |
+| `write-better` | Precision-first formal English (emails, papers, articles, CVs) modeled on Munindar P. Singh's editorial standards, with a deterministic style linter (`scripts/style_check.py`) | off |

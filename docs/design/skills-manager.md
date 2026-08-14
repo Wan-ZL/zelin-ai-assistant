@@ -1,6 +1,6 @@
 # Design proposal: skills manager in Settings
 
-Status: proposal (shipped alongside the first bundled skill, `skills/precise-writing`).
+Status: proposal (shipped alongside the first bundled skill, `skills/write-better`).
 
 ## Problem
 
@@ -24,7 +24,7 @@ A "Skills" section in the settings UI (menu-bar app and webui):
 
   ```yaml
   skills:
-    precise-writing: true   # everything absent from this map is off
+    write-better: true   # everything absent from this map is off
   ```
 
 - **Enable = symlink** `skills/<name>` into `~/.claude/skills/<name>`
