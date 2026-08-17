@@ -341,7 +341,9 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
     """Fold ``secondary`` into ``primary`` and trash it. Reversible on both
     ends: the fold note carries a [@ts] split handle, the secondary keeps
     ``prev_status`` for restore. Returns False when the states no longer
-    qualify (registry moved since the check was filed)."""
+    qualify (registry moved since the check was filed). Crash-retry safe:
+    a rerun after a mid-fold crash detects the already-applied fold note
+    and skips straight to trashing the secondary (outcome ``ok_retry``)."""
     if secondary.status not in LIGHT_STATES:
         return False
     # primary must still be an open card (the check ran detached for a while)

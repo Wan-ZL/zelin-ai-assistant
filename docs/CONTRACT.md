@@ -1956,7 +1956,7 @@ notes 留痕「背景信息未送达会话」。状态机零改动（不翻 rewo
 详情里的并入记录可一键拆回）+ webui 同款 badge；周一 digest 总览行追加
 「· 静默并入 N」（近 7 天，仅计数）。analytics 事件（元数据，永不含内容）：
 `silent_merge_requested{job,primary,secondary}`、`silent_merge{primary,
-secondary,outcome∈ok|separate|judge_failed|state_moved|pre_filing_fold}`、
+secondary,outcome∈ok|ok_retry|separate|judge_failed|state_moved|execute_failed|pre_filing_fold}`、
 `briefing{req,ok,n}`。
 
 **§44.6 并入回执 + [run] 例外（v0.47，2026-08-07 拍板；add-only）**：
