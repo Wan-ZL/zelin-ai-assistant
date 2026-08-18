@@ -362,12 +362,13 @@ struct KanbanView: View {
                            // 后端提案卡（card_sent/raising = needs_approval），
                            // 与固定 plan 的审阅范围逐字一致：不吃搜索过滤
                            // （filter 只是视图，卡还在积压里，别误禁用）、
-                           // 不算灰色占位卡与合并建议卡（都不是会话能审的
-                           // 提案卡——只剩它们时开会话只会交付空清单）。
+                           // 不算本地乐观占位卡与合并建议卡（不是后端提案
+                           // 卡）；后端 raising 卡（processing 灰显）在清理
+                           // 范围内，必须计入——绝不按 processing 过滤。
                            accessory: AnyView(ProposalsTriageButton(
                                app: app,
-                               backlogCount: store.visibleApprovals
-                                   .filter { !$0.processing }.count))) {
+                               backlogCount: ProposalsTriage.backlogCount(
+                                   backendCards: store.backendApprovals)))) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty

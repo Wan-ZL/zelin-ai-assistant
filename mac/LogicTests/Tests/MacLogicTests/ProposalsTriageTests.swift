@@ -36,6 +36,20 @@ struct ProposalsTriagePayloadTests {
             ProposalsTriage.payload(ts: "2026-08-07T00:00:00Z")))
     }
 
+    /// 积压口径（§34bis）：后端 raising 卡（processing=true 灰显）在固定
+    /// plan 的清理范围（card_sent/raising）内，必须计入积压 —— 提案列只剩
+    /// 正在扩写的卡时按钮不得禁用。绝不按 processing 过滤后端清单。
+    @Test func backlogCountsBackendRaisingCards() {
+        let raising = try! JSONDecoder().decode(ApprovalCard.self, from: Data(
+            #"{"id":"R-9","title":"扩写中","tier":"","show_cost":false,"processing":true}"#.utf8))
+        let sent = try! JSONDecoder().decode(ApprovalCard.self, from: Data(
+            #"{"id":"R-8","title":"已成卡","tier":"T2","show_cost":false,"processing":false}"#.utf8))
+        #expect(raising.processing)
+        #expect(ProposalsTriage.backlogCount(backendCards: [raising]) == 1)
+        #expect(ProposalsTriage.backlogCount(backendCards: [raising, sent]) == 2)
+        #expect(ProposalsTriage.backlogCount(backendCards: []) == 0)
+    }
+
     /// 可用性矩阵（§34bis）：没有积压（count==0）或冷却中 → 禁用；
     /// 有积压且未冷却 → 可用。
     @Test func buttonEnabledMatrix() {

@@ -1394,9 +1394,27 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   永久免检。台账超 ~1MB 压缩到后半（多
   进程并发下 rewrite 可能吞掉一条并发 append——代价只是该笔合法写入被误
   报，绝不多排除）。**只检测告警、不回滚、绝不阻塞提升**——权限模型不变，
-  人工核查兜底（检测型护栏宁误报不漏报）。没走到收割就离场的卡（executing
-  中被 abort/trash、done_external 直落 delivered）留下的快照侧文件由 actd
-  每 pass 清扫：对应卡不在 approved/executing 即删（目录空时零开销）。
+  人工核查兜底（检测型护栏宁误报不漏报）。④ **attach 复活轮同样有基线**：
+  首轮快照随收割消费（用后即焚），review 卡被 attach 复活（§30 回流）时
+  actd 在标记 `_review_active` 的同一轮**重拍快照**挂回
+  `registry_snapshot_ref`，复活轮收割（活动结束的 re-harvest 或手动
+  stop_to_review）同样比对并消费——每一轮「活跃 → 收割」都有基线。复活轮
+  是会话先活、快照后拍的 best-effort 基线（夹缝里的写入进基线），与首轮的
+  启动前快照不同——属下述覆盖边界。没走到收割就离场的卡（executing 中被
+  abort/trash、done_external 直落 delivered）留下的快照侧文件由 actd 每
+  pass 清扫：对应卡不在 approved/executing/review 即删（review 在列保护
+  复活轮重拍的快照；目录空时零开销）。
+- **护栏覆盖边界（检测型的既定粒度，不是待修 bug）**：① 排除表按
+  **文件名 + ts** 记账——快照窗口内某卡既被管线合法写过、又被会话篡改时，
+  该文件命中排除表而漏报：文件级台账分不出同一文件上的两个写者（按写入
+  事件记内容哈希才能分辨，成本与检测型定位不成比例），人工核查兜底；
+  ② 护栏只看 `REGISTRY_DIR/*.yaml`——注入若得手，会话不碰 registry 的
+  动作（改 registry 外的文件、经网络外带卡片内容）不在比对范围，防线是
+  plan 数据红线 + 与既有执行通道相同的信任边界（每张已批准卡的
+  build_prompt 本就把卡内容送进同一会话通道）；③ 复活轮基线是 best-effort
+  （见上）。v-next 方向（非本节承诺）：actd 在 dispatch 前把提案卡经
+  `sanitize.fence_untrusted` 预转储成 workbench 只读快照、plan 指向它——
+  会话不再拿活的 registry 路径，注入原文也不再以裸文件姿态被读取。
 - **在途判重（真正的防双开，不依赖判重分支）**：actd 应用 preset capture
   **之前**先扫 registry——已存在 `preset` 相同且 `status ∈ approved /
   executing` 的未完结清理卡 → **不铸新卡**，ack `running`（那轮清理真在
@@ -1416,9 +1434,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   空清单；可用性纯逻辑 `ProposalsTriage.buttonEnabled`，LogicTests 钉判例）。
   **禁用口径 = 后端提案卡数**（`needs_approval`，即 card_sent/raising，与
   固定 plan 的审阅范围逐字一致）：不吃搜索过滤（filter 只是视图，卡还在
-  积压里）、不算灰色占位卡与合并建议卡（不是会话能审的提案卡——只剩它们
-  时开会话只会交付空清单）；泳道头显示的 count 仍按「所见即所数」跟随
-  渲染行，两者口径 deliberately 不同；
+  积压里）、不算本地乐观占位卡与合并建议卡（不是后端提案卡——只剩它们
+  时开会话只会交付空清单）；后端 raising 卡（processing 只是灰显）在清理
+  范围内，**必须计入**——绝不按 processing 过滤后端清单（纯逻辑
+  `ProposalsTriage.backlogCount`，LogicTests 钉判例）；泳道头显示的 count
+  仍按「所见即所数」跟随渲染行，两者口径 deliberately 不同；
   点击后 2 s 冷却防连点（后端在途判重是真正的防双开）；乐观回显 = §34 的运行中列
   顶灰色排队占位卡（text=短标签=卡标题，归一匹配天然清除）。analytics：App 侧
   `capture_submit` 增加 add-only 字段 `preset`（source/mode 词表不变）。

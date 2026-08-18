@@ -632,9 +632,10 @@ def _check_triage_registry_guard(req, ex: dict) -> None:
 def _sweep_triage_snapshots() -> None:
     """§34bis 快照残留清扫：卡没走到收割就离场（executing 中被 abort/trash、
     done_external 直落 delivered）时，state/triage_snapshots/ 的侧文件没人
-    消费。存活判据 = 对应卡（文件名 stem = R-id）仍在 approved/executing
-    ——起跑前预拍的快照卡还是 approved，天然受保护；其余一律删（再开新一轮
-    会重拍）。每 pass 一次，目录为空时零开销。"""
+    消费。存活判据 = 对应卡（文件名 stem = R-id）仍在 approved/executing/
+    review——起跑前预拍的快照卡还是 approved，天然受保护；review 在列因为
+    attach 复活轮会重拍快照（_reconcile_review_attach），等复活轮收割消费；
+    其余一律删（再开新一轮会重拍）。每 pass 一次，目录为空时零开销。"""
     root = config.STATE_DIR / "triage_snapshots"
     try:
         files = list(root.glob("*.json"))
@@ -643,7 +644,8 @@ def _sweep_triage_snapshots() -> None:
     if not files:
         return
     live = {req.id for req in load_all()
-            if str(req.status) in (State.APPROVED.value, State.EXECUTING.value)}
+            if str(req.status) in (State.APPROVED.value, State.EXECUTING.value,
+                                   State.REVIEW.value)}
     for p in files:
         if p.stem not in live:
             _safe_unlink(p)
@@ -2522,6 +2524,16 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
         if agent and state in _RUNNING_STATES:
             if not ex.get("_review_active"):
                 ex["_review_active"] = True
+                # §34bis 复活轮重拍基线：首轮快照已随收割消费（用后即焚），
+                # attach 复活的仍是同一个带 skip-permissions、握着 registry
+                # 路径的会话——不重拍，本轮活动期间的越权写零告警。复活轮
+                # 是会话先活、快照后拍（夹缝写入进基线）的 best-effort 边界
+                # （CONTRACT §34bis 记账），与首轮的启动前快照不同。
+                if getattr(req, "preset", None) == PROPOSALS_TRIAGE_PRESET \
+                        and not ex.get("registry_snapshot_ref"):
+                    ref = _stamp_triage_snapshot(req.id)
+                    if ref:
+                        ex["registry_snapshot_ref"] = ref
                 req.execution = ex
                 registry.save(req)
                 _log(f"reconcile: {req.id} session-active（attach/会话有新活动，非打回返工）")
@@ -2542,6 +2554,9 @@ def _reconcile_review_attach(req: Requirement, agents: dict[str, dict]) -> None:
                     ex["final_draft"] = harvested["final_draft"]
                 _apply_harvest_title(req, harvested)   # §37, round boundary
             ex.pop("_review_active", None)
+            # §34bis 复活轮收割同样过护栏——比对并消费复活时重拍的快照，
+            # 每一轮「活跃→收割」都有基线（非 preset 卡无 ref，零开销）。
+            _check_triage_registry_guard(req, ex)
             req.execution = ex
             registry.save(req)
             _update_search_index(req.id, sid)          # §37 session-content layer

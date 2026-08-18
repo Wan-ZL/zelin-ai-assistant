@@ -472,6 +472,55 @@ class RegistryGuardTests(TriageBase):
         self.assertTrue(live.exists())
         self.assertFalse(orphan.exists())
 
+    def test_attach_revival_restamps_snapshot(self):
+        # 判例（bot review P2）：首轮快照随收割消费后，review 卡被 attach
+        # 复活（§30 回流）→ actd 在标记 _review_active 的同一轮重拍快照
+        # 挂回 registry_snapshot_ref —— 复活轮不再是护栏盲区。快照侧文件
+        # 属 review 卡，每 pass 清扫不得误删（等复活轮收割消费）。
+        card = self._dispatched_preset_card()
+        ex = dict(card.execution or {})
+        ex.pop("registry_snapshot_ref", None)      # 模拟首轮已收割消费
+        card.execution = ex
+        card.set_status(State.REVIEW)
+        registry.save(card)
+        actd._triage_snapshot_path(card.id).unlink(missing_ok=True)
+        actd._reconcile_review_attach(card, {"sid-guard": {"state": "working"}})
+        saved = registry.load(card.id)
+        ref = (saved.execution or {}).get("registry_snapshot_ref")
+        self.assertTrue(ref)
+        self.assertTrue(Path(ref).is_file())
+        self.assertTrue((saved.execution or {}).get("_review_active"))
+        actd._sweep_triage_snapshots()             # review 卡的快照受保护
+        self.assertTrue(Path(ref).is_file())
+
+    def test_revival_round_end_runs_guard(self):
+        # 判例（bot review P2）：复活轮活动结束（会话 done）的重新收割同样
+        # 过护栏 —— 复活期间的非 actd 写入进 notes 告警，快照用后即焚。
+        card = self._dispatched_preset_card()
+        ex = dict(card.execution or {})
+        ex.pop("registry_snapshot_ref", None)
+        card.execution = ex
+        card.set_status(State.REVIEW)
+        registry.save(card)
+        actd._reconcile_review_attach(card, {"sid-guard": {"state": "working"}})
+        card = registry.load(card.id)
+        snap_file = actd._triage_snapshot_path(card.id)
+        self.assertTrue(snap_file.exists())
+        rogue = config.REGISTRY_DIR / "R-rogue4.yaml"
+        rogue.write_text("id: R-rogue4\n", encoding="utf-8")
+        harvest = mock.Mock(return_value={"delivered_summary": "复活轮清单",
+                                          "final_draft": "FINAL DRAFT"})
+        with mock.patch.object(actd.executor, "harvest_delivery", harvest), \
+             mock.patch.object(actd.notify, "notify",
+                               mock.Mock(return_value=True)) as ntf:
+            actd._reconcile_review_attach(card, {"sid-guard": {"state": "done"}})
+        saved = registry.load(card.id)
+        self.assertIn("R-rogue4.yaml", saved.notes or "")
+        self.assertNotIn("registry_snapshot_ref", saved.execution or {})
+        self.assertNotIn("_review_active", saved.execution or {})
+        self.assertFalse(snap_file.exists())       # 用后即焚
+        ntf.assert_called()
+
     def test_guard_fires_on_review_promotion_path(self):
         # 集成判例：收割提升（reconcile done 分支）真的挂着护栏 —— 越权
         # 差异在提升待验收的同一轮被写进 notes，卡照常进 review 不被阻塞。

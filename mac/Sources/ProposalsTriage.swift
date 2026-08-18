@@ -23,6 +23,15 @@ enum ProposalsTriage {
         backlogCount > 0 && !cooling
     }
 
+    /// 积压口径（§34bis）：后端提案卡（needs_approval = card_sent/raising）
+    /// **全数计入**，与固定 plan 的审阅范围逐字一致 —— raising 卡的
+    /// `processing` 只是灰显，卡本身在清理范围内，绝不按 processing 过滤
+    /// （否则提案列只剩正在扩写的卡时按钮被误禁用）。本地乐观占位卡/合并
+    /// 建议卡不在后端清单里，天然不经此函数。
+    static func backlogCount(backendCards: [ApprovalCard]) -> Int {
+        backendCards.count
+    }
+
     /// inbox capture 载荷（§34bis 形状）：§10 capture + §34 mode:"run"
     /// + preset 信号。字段 add-only，缺 preset 的老 actd 把它当普通 direct-run。
     static func payload(ts: String) -> [String: Any] {
