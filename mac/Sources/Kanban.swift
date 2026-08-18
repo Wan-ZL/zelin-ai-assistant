@@ -358,10 +358,16 @@ struct KanbanView: View {
                            isEmpty: false, motionKey: "approval",
                            // §34bis 积压清理按钮：泳道头右侧，点击 = 固定
                            // prompt 的 direct-run 清理会话（运行中列出卡）。
-                           // count==0 时禁用（空列没东西可清理）。
+                           // count==0 时禁用（空列没东西可清理）。口径 =
+                           // 后端提案卡（card_sent/raising = needs_approval），
+                           // 与固定 plan 的审阅范围逐字一致：不吃搜索过滤
+                           // （filter 只是视图，卡还在积压里，别误禁用）、
+                           // 不算灰色占位卡与合并建议卡（都不是会话能审的
+                           // 提案卡——只剩它们时开会话只会交付空清单）。
                            accessory: AnyView(ProposalsTriageButton(
                                app: app,
-                               backlogCount: approvals.count + suggestions.count))) {
+                               backlogCount: store.visibleApprovals
+                                   .filter { !$0.processing }.count))) {
                         // resident quick-capture composer (Composer.swift)
                         KanbanComposer(app: app)
                         if approvals.isEmpty && approvalNotices.isEmpty
@@ -915,8 +921,10 @@ private struct ArchiveLaneContent: View {
 // （chat 交付进待验收）。prompt 正文在 Python 侧（actd 的 preset 表）。
 private struct ProposalsTriageButton: View {
     let app: AppDelegate
-    /// 提案列在列卡数（§34bis）——0 = 没有积压，按钮禁用（可用性纯逻辑
-    /// 在 ProposalsTriage.buttonEnabled，LogicTests 钉判例）。
+    /// 后端提案卡数（§34bis：needs_approval = card_sent/raising，与固定
+    /// plan 的审阅口径一致；不含搜索过滤/占位卡/建议卡）——0 = 没有积压，
+    /// 按钮禁用（可用性纯逻辑在 ProposalsTriage.buttonEnabled，LogicTests
+    /// 钉判例）。
     let backlogCount: Int
     /// 防连点冷却（2s）。真正的防双开由 actd 的在途判重兜底：已有
     /// approved/executing 的清理卡时，preset capture 不铸新卡（§34bis）。

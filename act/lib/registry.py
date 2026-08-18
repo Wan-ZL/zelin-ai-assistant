@@ -345,9 +345,12 @@ def _dump_yaml(obj: Any) -> str:
 # **跨进程持久**：radar（slack 180s / gmail 300s / obsidian cron）是独立
 # 进程、也经本模块直写 registry，进程内存集合看不见它们；台账落成
 # state/registry_writes.jsonl（append-only，一行一条 {"f","ts"}），guard
-# 按快照起始 ts 过滤读取——actd 中途重启也不再丢账。进程内集合只留作
-# 落盘失败（磁盘满等）时的兜底：宁多记一笔（漏报该笔）不少记（假警）。
-_PROC_WRITES: set = set()
+# 按快照起始 ts 过滤读取——actd 中途重启也不再丢账。进程内映射只留作
+# 落盘失败（磁盘满等）时的兜底，且**同样带 ts、同样按快照起始 ts 过滤**：
+# 无条件豁免会让本进程写过的每张卡（包括清理会话正在审阅的提案卡——最
+# 现实的篡改目标）永久免检，护栏对它们失明。宁多记一笔（漏报该笔）不
+# 少记（假警），但绝不豁免快照前的历史写入。
+_PROC_WRITES: dict = {}     # 文件名 -> 本进程最近一次写入 ts（UTC 字符串）
 _WRITES_JOURNAL_MAX_BYTES = 1 << 20     # 超过 ~1MB 压缩到最近半数行
 
 
@@ -356,8 +359,8 @@ def _writes_journal_path() -> Path:
 
 
 def _journal_write(name: str) -> None:
-    _PROC_WRITES.add(name)
     ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _PROC_WRITES[name] = ts     # 兜底映射带 ts（writes_since 按 ts 过滤）
     try:
         path = _writes_journal_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -380,10 +383,12 @@ def _journal_write(name: str) -> None:
 def writes_since(ts: str) -> frozenset:
     """§34bis 快照护栏的排除表：``ts`` 起（含）的合法写入文件名集合。
 
-    = 持久台账中 ts 之后的条目 ∪ 本进程内存集合（落盘失败的兜底）。ts 与
-    台账条目同为 UTC "%Y-%m-%dT%H:%M:%SZ"——字符串比较即时间比较。
+    = 持久台账 ∪ 本进程内存映射（落盘失败的兜底）中 ts 之后（含）的条目。
+    **两路都按 ts 过滤**——快照前的历史写入绝不豁免（否则本进程写过的卡被
+    会话篡改将永不告警）。ts 与台账条目同为 UTC "%Y-%m-%dT%H:%M:%SZ"——
+    字符串比较即时间比较。
     """
-    names = set(_PROC_WRITES)
+    names = {n for n, t in _PROC_WRITES.items() if str(t) >= str(ts)}
     try:
         for line in _writes_journal_path().read_text(
                 encoding="utf-8").splitlines():
