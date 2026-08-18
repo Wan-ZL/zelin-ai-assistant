@@ -244,7 +244,8 @@ def build_digest(today: Optional[_dt.date] = None,
         week_ago = now - _dt.timedelta(days=7)
         folded = sum(1 for e in analytics.read_events(since=week_ago)
                      if e.get("event") == "silent_merge"
-                     and str(e.get("outcome") or "") in ("ok", "pre_filing_fold"))
+                     and str(e.get("outcome") or "")
+                     in ("ok", "ok_retry", "pre_filing_fold"))
     except Exception:  # noqa: BLE001 - a digest must never die over a count
         folded = 0
 

@@ -185,6 +185,93 @@ class ExecuteTestCase(unittest.TestCase):
                     if e.get("req") == "R-001"]
         self.assertEqual(len(receipts), 1)
 
+    def _crash_mid_execute(self, primary, secondary, brief="补充了预算数字"):
+        """第一跑死在 trash 落盘前（save(primary) 已落）——crash 窗口模拟。"""
+        real_trash = registry.trash
+        def dying_trash(req, reason):
+            raise RuntimeError("simulated crash between the two writes")
+        registry.trash = dying_trash
+        try:
+            with self.assertRaises(RuntimeError):
+                silent_merge.execute(primary, secondary, brief)
+        finally:
+            registry.trash = real_trash
+
+    def test_crash_retry_survives_title_drift(self):
+        """review finding（2026-08-18）：幂等键=副卡 id，不含可变标题。crash 与
+        retry 之间 display_title 被改写（process_inbox 用户改名 /
+        process_raising analyze 重写，都先于 consume_judged 跑）时，全文判重
+        会落空——fold 计数与回执都不许翻倍。"""
+        primary = _seed("R-001", DUP_A, sources=[
+            {"who": "a", "channel": "slack", "date": "2026-07-16", "quote": "x"}])
+        secondary = _seed("R-002", DUP_B, sources=[
+            {"who": "b", "channel": "gmail", "date": "2026-07-17", "quote": "y"}])
+        self._crash_mid_execute(primary, secondary)
+        # 重启 pass 早段改写了副卡标题（analyze/用户改名的最小模拟）
+        s_mid = registry.load("R-002")
+        s_mid.display_title = "跟进 wegreened 推荐信（新标题）"
+        registry.save(s_mid)
+        p2, s2 = registry.load("R-001"), registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p2, s2, "补充了预算数字"))
+        p, s = registry.load("R-001"), registry.load("R-002")
+        self.assertEqual(p.repeated_mentions, 2)
+        self.assertEqual(p.silent_merge_count, 1)
+        self.assertEqual(p.notes.count("静默并入 R-002"), 1)
+        self.assertEqual(s.status, State.TRASHED.value)
+        # §44.6：回执用第一跑的原 note 文本 → 同内容键，仍只一条
+        from act.lib import fold_receipts
+        receipts = [e for e in fold_receipts.load_recent()
+                    if e.get("req") == "R-001"]
+        self.assertEqual(len(receipts), 1)
+
+    def test_crash_retry_keeps_window_gained_sources(self):
+        """review finding（2026-08-18）：crash 窗口内副卡又吸了新 capture
+        （§44.2 pre-filing fold 先于 consume_judged）——retry 不许把窗口增量
+        跟着副卡埋进回收站：sources 幂等补并、新增来源按 _fold_hit 语义计
+        mentions，但 silent_merge_count 仍只算一次。"""
+        primary = _seed("R-001", DUP_A, sources=[
+            {"who": "a", "channel": "slack", "date": "2026-07-16", "quote": "x"}])
+        secondary = _seed("R-002", DUP_B, sources=[
+            {"who": "b", "channel": "gmail", "date": "2026-07-17", "quote": "y"}])
+        self._crash_mid_execute(primary, secondary)
+        # 窗口内新 capture 折进仍在世的副卡（pre-filing fold 的最小模拟）
+        s_mid = registry.load("R-002")
+        s_mid.sources = list(s_mid.sources or []) + [
+            {"who": "c", "channel": "capture", "date": "2026-07-18", "quote": "z"}]
+        s_mid.repeated_mentions = int(s_mid.repeated_mentions or 1) + 1
+        registry.save(s_mid)
+        p2, s2 = registry.load("R-001"), registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p2, s2, "补充了预算数字"))
+        p = registry.load("R-001")
+        quotes = {str(s.get("quote")) for s in (p.sources or [])}
+        self.assertEqual(quotes, {"x", "y", "z"})     # 窗口增量进了主卡
+        self.assertEqual(p.repeated_mentions, 3)      # 2（第一跑）+ 1 新来源
+        self.assertEqual(p.silent_merge_count, 1)     # 合并本身仍只计一次
+        self.assertEqual(p.notes.count("静默并入 R-002"), 1)
+        self.assertEqual(registry.load("R-002").status, State.TRASHED.value)
+
+    def test_crash_retry_briefs_a_freshly_dispatched_primary(self):
+        """review finding（2026-08-18）：主卡在 crash 窗口被批准、重启 pass 里
+        dispatch_approved（先于 consume_judged）把它派进 EXECUTING——retry 分支
+        必须与成功路径对称地排 §44.3 briefing（queue_briefing 按文本去重，
+        重放无害）。"""
+        primary = _seed("R-001", DUP_A, sources=[
+            {"who": "a", "channel": "slack", "date": "2026-07-16", "quote": "x"}])
+        secondary = _seed("R-002", DUP_B)
+        self._crash_mid_execute(primary, secondary)
+        p_mid = registry.load("R-001")
+        p_mid.status = State.EXECUTING.value
+        p_mid.execution = dict(p_mid.execution or {}, session_id="abc123")
+        registry.save(p_mid)
+        p2, s2 = registry.load("R-001"), registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p2, s2, "补充了预算数字"))
+        p = registry.load("R-001")
+        pend = (p.execution or {}).get("pending_briefings") or []
+        self.assertEqual(len(pend), 1)
+        self.assertIn("R-002", pend[0])
+        self.assertEqual(p.silent_merge_count, 1)
+        self.assertEqual(registry.load("R-002").status, State.TRASHED.value)
+
 
 class CliMainTestCase(unittest.TestCase):
     def setUp(self):

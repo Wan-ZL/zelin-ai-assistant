@@ -30,12 +30,15 @@ other file needs editing. To cut a release:
 - **静默并入 crash-retry 不再翻倍计数（TLA+ 模型检查发现）** — actd 死在
   execute() 两笔写之间（主卡 fold 已落盘、副卡 trash 未落）时，job 文件仍是
   judged，重启重跑会把 `repeated_mentions`/`silent_merge_count` 二次施加。
-  `docs/design/SilentMerge.tla` 用 TLC 穷举出 5 步反例；修复用 fold note 的
-  (kind, 文本) 去重作天然幂等标记——重跑只补完 trash 半程（`ok_retry`）。
-  §44 协议的三条安全不变量（不吞已投入卡 / 永不丢信息 / fold 至多一次）
-  修复后全状态空间通过，跑法见 docs/design/silent-merge-model.md。补完路径
-  （`ok_retry`）同样落 §44.6 看板回执——note 决定性生成，与成功路径同内容键，
-  去重语义保证只一条。
+  `docs/design/SilentMerge.tla` 用 TLC 穷举出 5 步反例；修复以主卡 fold note
+  的「静默并入 {副卡id}「」前缀作幂等标记（键=副卡 id——全文含可变
+  display_title，crash 窗口内被 process_inbox/process_raising 改写会让全文
+  判重落空，review 发现）。重跑不再累加计数，但收敛到 §44.4 终态：窗口内
+  副卡新吸的 sources 幂等补并、EXECUTING 主卡补 §44.3 briefing、补完 trash
+  （`ok_retry`）。§44 协议的三条安全不变量（不吞已投入卡 / 永不丢信息 /
+  fold 至多一次）修复后全状态空间通过，跑法见 docs/design/silent-merge-model.md。
+  补完路径同样落 §44.6 看板回执——用第一跑的原 note 文本，与成功路径同内容键，
+  去重语义保证只一条；周一 digest 的「静默并入 N」计数补认 `ok_retry`。
 
 ## [0.46.1] - 2026-07-27
 

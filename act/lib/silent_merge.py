@@ -336,6 +336,22 @@ def queue_briefing(req: registry.Requirement, text: str) -> None:
         req.execution = ex
 
 
+def _applied_merge_note(primary: registry.Requirement,
+                        secondary_id: str) -> Optional[str]:
+    """crash-retry 探测：主卡上已有本副卡的静默并入 fold note 时返回其原文，
+    否则 None。幂等键是**副卡 id**（不可变）而不是 note 全文——note 嵌着
+    display_title，而重启 pass 里 process_inbox（用户改名）/process_raising
+    （analyze 重写 display_title）都跑在 consume_judged 之前，标题在 crash 与
+    retry 之间可以漂移，按全文判重会落空导致 fold 翻倍（review finding，
+    2026-08-18）。「静默并入 {id}「」前缀是 §44.4 冻结行文法，且 §44.2
+    pre-filing fold 的 note 是 req.title 原文，不会撞上这个前缀。"""
+    prefix = f"静默并入 {secondary_id}「"
+    for e in registry.parse_fold_notes(primary.notes):
+        if e["kind"] == "radar" and e["text"].startswith(prefix):
+            return e["text"]
+    return None
+
+
 def execute(primary: registry.Requirement, secondary: registry.Requirement,
             brief: str = "") -> bool:
     """Fold ``secondary`` into ``primary`` and trash it. Reversible on both
@@ -343,7 +359,8 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
     ``prev_status`` for restore. Returns False when the states no longer
     qualify (registry moved since the check was filed). Crash-retry safe:
     a rerun after a mid-fold crash detects the already-applied fold note
-    and skips straight to trashing the secondary (outcome ``ok_retry``)."""
+    (keyed on the immutable secondary id) and converges to the §44.4 end
+    state without re-counting (outcome ``ok_retry``)."""
     if secondary.status not in LIGHT_STATES:
         return False
     # primary must still be an open card (the check ran detached for a while)
@@ -354,25 +371,43 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
     )
     if primary.status not in open_states:
         return False
-    note = f"静默并入 {secondary.id}「{secondary.display_title or secondary.title}」"
-    if brief and brief != "无新增信息":
-        note += f"：{brief}"
-    if registry.append_fold_note(primary, note, "radar") is None:
+    applied = _applied_merge_note(primary, secondary.id)
+    if applied is not None:
         # crash-retry（TLA+ 模型检查发现，docs/design/SilentMerge.tla）：上一次
         # execute 在 save(primary) 之后、trash(secondary) 之前死掉，job 文件仍是
-        # "judged"，重启后走到这里。fold note 按 (kind, 文本) 去重返回 None ==
-        # fold 半程已落过盘——计数（repeated_mentions/silent_merge_count）绝不能
-        # 翻倍，只把 trash 半程补完。note 文本由 (secondary, brief) 决定性生成，
-        # 且 pair ledger 终生一次 + LIGHT 复检挡住了「同 pair 二次合并」，所以
-        # None 只可能是本 job 的重跑。
+        # "judged"，重启后走到这里。fold 半程已落盘——计数增量
+        # （silent_merge_count、副卡整体的 repeated_mentions 累加）绝不能二次
+        # 施加；pair ledger 终生一次 + LIGHT 复检挡住了「同 pair 二次合并」，
+        # 所以命中只可能是本 job 的重跑。但 crash 窗口内副卡可能又吸了新
+        # capture（§44.2 pre-filing fold 跑在 consume_judged 之前）——sources
+        # 去重合并幂等，补上，别把窗口增量跟着副卡埋进回收站（review
+        # finding，2026-08-18）；只为窗口内的**新增**来源计 mentions
+        # （_fold_hit 同款 added 语义，重放时 added=0 天然幂等）。
+        merged, added = registry._dedupe_sources(
+            primary.sources or [], secondary.sources or [])
+        primary.sources = merged
+        if added:
+            primary.repeated_mentions = (int(primary.repeated_mentions or 1)
+                                         + added)
+        if primary.status == registry.State.EXECUTING.value:
+            # 主卡可能在 crash 窗口被批准并于本 pass 早段派发（dispatch_approved
+            # 先于 consume_judged）——§44.3 briefing 与成功路径对称；
+            # queue_briefing 按文本去重，重放无害（review finding，2026-08-18）。
+            queue_briefing(primary, f"{applied}（原卡已进回收站，可恢复）")
+        registry.save(primary)      # 与成功路径同序：主卡先落盘
         registry.trash(secondary, f"silent-merge: 已并入 {primary.id}")
         analytics.log_event("silent_merge", primary=primary.id,
                             secondary=secondary.id, outcome="ok_retry")
         # §44.6 回执：补完路径的合并同样发生了——不留回执用户就看不到这次
-        # 并入。note 决定性生成 → 内容键与成功路径同键，TTL 内去重保证只一条。
+        # 并入。回执用第一跑落盘的原 note 文本 → 内容键与成功路径同键，
+        # TTL 内去重保证只一条（标题漂移时新拼的 note 会另开内容键，不能用）。
         from act.lib import fold_receipts
-        fold_receipts.record(primary.id, "radar", note)
+        fold_receipts.record(primary.id, "radar", applied)
         return True
+    note = f"静默并入 {secondary.id}「{secondary.display_title or secondary.title}」"
+    if brief and brief != "无新增信息":
+        note += f"：{brief}"
+    registry.append_fold_note(primary, note, "radar")
     merged, added = registry._dedupe_sources(
         primary.sources or [], secondary.sources or [])
     primary.sources = merged

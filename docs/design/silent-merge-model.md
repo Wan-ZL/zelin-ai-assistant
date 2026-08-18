@@ -46,14 +46,29 @@ java -cp ~/.local/tla/tla2tools.jar tlc2.TLC -deadlock -config SilentMerge_bug.c
 （fold note 本身早有 (kind, 文本) 去重；sources 合并幂等），但用户可见的计数会
 说谎。
 
-**修复**（`act/lib/silent_merge.py::execute`）：把 `append_fold_note` 的去重返回
-值用作天然幂等标记——返回 None ⇔ fold 半程已在前一次（crash 前）落盘 ⇒ 跳过全部
-计数增量，只补完 trash 半程（analytics 记 `outcome="ok_retry"`）。判例：
-`tests/test_silent_merge.py::test_crash_retry_never_doubles_the_fold`。
+**修复**（`act/lib/silent_merge.py::execute`）：主卡 fold notes 里已有
+`静默并入 {副卡id}「` 前缀的 `[radar]` note ⇔ fold 半程已在前一次（crash 前）
+落盘 ⇒ 跳过计数增量（`silent_merge_count`、副卡整体 mentions 累加），把 trash
+半程补完并收敛到 §44.4 终态（crash 窗口内副卡新吸的 sources 幂等补并、EXECUTING
+主卡补 briefing；analytics 记 `outcome="ok_retry"`）。幂等键是**副卡 id**而非
+note 全文——第一版实现用 `append_fold_note` 的 (kind, 全文) 去重当标记，但 note
+嵌着可变的 `display_title`，重启 pass 里 process_inbox / process_raising 先于
+consume_judged 改写标题时全文判重落空、fold 照样翻倍（2026-08-18 review 发现的
+model-fidelity gap：模型里的 fold 标记是稳定抽象量，实现必须选一个同样稳定的
+键才配得上模型的结论）。判例：
+`tests/test_silent_merge.py::test_crash_retry_never_doubles_the_fold`、
+`test_crash_retry_survives_title_drift`、
+`test_crash_retry_keeps_window_gained_sources`、
+`test_crash_retry_briefs_a_freshly_dispatched_primary`。
 
 ## 模型的边界（诚实声明)
 
 - 单 pair 单 job：`MAX_OUTSTANDING` 并发上限没有建模（它是节流不是安全性）。
+- fold 标记在模型里是稳定抽象量（每 job 一个布尔），卡片**内容**的并发漂移
+  （标题被 analyze/用户改写、副卡在 crash 窗口内再吸新 capture）不在状态空间
+  里。实现侧的幂等标记必须锚在不随内容漂移的键上（现为副卡 id 前缀）——
+  凡把标记搭在可变文本上，模型的 `FoldOnce` 结论对实现不成立
+  （2026-08-18 review 判例）。
 - 时间被抽象成非确定的 sweep 触发；PENDING_TIMEOUT_MIN 的具体数值不影响安全性。
 - §44.2 triage 内联复核与 §44.3 briefing 投递窗不在此模型内——它们各有测试判例；
   下次改这两段协议时值得扩展模型。
