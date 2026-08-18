@@ -472,15 +472,26 @@ def set_display_title(req: Requirement, title, *, by_user: bool = False) -> bool
     - fail-closed input: non-str / empty-after-collapse / no-op values change
       nothing; anything accepted is whitespace-collapsed + clipped to
       ``titles.MAX_DISPLAY_TITLE``;
+    - a candidate containing ``sanitize.MASK`` is rejected here, at the single
+      write point — the board and ``former_titles`` never show a redaction
+      mask, whichever side path the candidate came in through (§37.1);
     - a user-pinned title (``user_titled``) is NEVER overwritten by an LLM /
       harvest title (``by_user=False``);
     - the previous display_title is appended to ``former_titles`` (deduped,
       newest last, capped at FORMER_TITLES_CAP) so a renamed card stays
       findable under its old name.
     """
-    from act.lib import titles  # lazy: keep registry import-light
+    from act.lib import sanitize, titles  # lazy: keep registry import-light
     t = titles.clip_title(title)
     if t is None:
+        return False
+    # 掩码拒收在唯一落笔点（§37.1）：display_title 的每条便车路径（analyze
+    # 扩写、quick_capture capture/triage、CARD TITLE 收割）outbound prompt
+    # 都过 sanitize.scrub，LLM 都可能把围栏里的 [脱敏] 抄进标题键——含掩码
+    # 的候选一律 no-op（与 clip 后为空同待遇，fail 向保留旧名），保证看板
+    # 显示名与 former_titles 永不出现掩码，不管候选从哪条口进来。harvest
+    # 侧的同款检查保留为提前拒收（marker 行照剥的语义在那边）。
+    if sanitize.MASK in t:
         return False
     if req.user_titled and not by_user:
         return False
@@ -492,8 +503,11 @@ def set_display_title(req: Requirement, title, *, by_user: bool = False) -> bool
     # ——否则一次假 rename 把旧值追进 former_titles。经本函数落笔的存量值
     # 本就是 clip 规范形，prev_norm == prev，行为不变；真改名时
     # former_titles 记录的仍是磁盘上的原始 prev（可搜索性不受规范化影响）。
+    # 规范化短路只作用于 LLM/harvest 回流（by_user=False）：用户主动改名按
+    # 原始形态比较——存量「整理\n合同」、用户给「整理 合同」是真改名（否则
+    # 异常存量被永久钉死、user_titled 却已置位），旧形态照记 former_titles。
     prev_norm = titles.clip_title(prev) if prev else None
-    if t != prev and t != prev_norm:
+    if t != prev and (by_user or t != prev_norm):
         if prev:
             former = [str(x) for x in (req.former_titles or []) if str(x).strip()]
             former = [x for x in former if x != prev]

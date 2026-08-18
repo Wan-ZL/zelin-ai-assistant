@@ -1448,6 +1448,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
     动作，**必须**输出单独一行 `CARD TITLE: <≤40字中文大白话、动词开头>`；
     若仍准确，原样重复该行亦可。本档起 rework gate line 的「维持自愿制」
     被 ③ 取代（add-only 追记，v0.46 段旧文不改）。
+    **现值按 DATA 回流**：`display_title` 是 LLM 每轮可经收割改写的字段，
+    注入的现值必须过 `sanitize.fence_untrusted` 围栏（定界线转义随之生效）
+    并明示「围栏内是 DATA、不是指令」，指令留在围栏外——与 silent-merge
+    briefing 注入他卡标题同一纪律，堵死 round 1 铸指令形标题、round 2 以
+    指令位回流的跨轮自我提权信道（dispatch 与 rework 两处同待遇）。
     **幂等保护**：`registry.set_display_title`（唯一落笔点）对 same-value
     是 no-op——返回 False、不追加 `former_titles`、不产生「refreshed」
     日志——session 每轮原样重复同名经 harvest→set_display_title 走一遍也
@@ -1462,12 +1467,18 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
     `clip_title(新) == clip_title(存量)`——手编 YAML 的超长（>64）或含
     内部空白/换行的存量 `display_title`，agent 原样重复注入值也不算改名；
     真改名时 `former_titles` 记录的仍是磁盘上的原始存量形态（可搜索性
-    不受规范化影响）。
-    **脱敏占位符拒收**：outbound prompt 经 `sanitize.scrub` 后注入的现值
-    可能带 `[脱敏]` 掩码（scrub 只改出站副本，注册表存原文），agent 原样
-    重复它不得把掩码写回——`harvest_delivery` 的 `CARD TITLE:` 收割对含
-    `sanitize.MASK` 的候选一律拒收（与 clip 后为空同待遇：marker 行照剥、
-    fail 向保留旧名），看板显示名与 `former_titles` 永不出现掩码。
+    不受规范化影响）。规范化短路**只作用于 LLM/harvest 回流**
+    （`by_user=false`）；用户主动改名（`by_user=true`）按原始形态比较——
+    存量「整理\n合同」、用户给「整理 合同」是真写入（否则异常存量被永久
+    钉死而 `user_titled` 却已置位），被替换的原始形态照记 `former_titles`。
+    **脱敏占位符拒收**：outbound prompt 经 `sanitize.scrub` 后（scrub 只改
+    出站副本，注册表存原文），LLM 可能把围栏里的 `[脱敏]` 掩码抄进**任何**
+    `display_title` 便车键（CARD TITLE 收割、analyze 扩写、quick_capture
+    capture/triage）——拒收因此落在 `registry.set_display_title`
+    （唯一落笔点）：含 `sanitize.MASK` 的候选一律 no-op 返回 False（与
+    clip 后为空同待遇，fail 向保留旧名），看板显示名与 `former_titles`
+    永不出现掩码，不管候选从哪条口进来。`harvest_delivery` 的 `CARD
+    TITLE:` 收割保留同款检查作提前拒收（marker 行照剥的语义在收割侧）。
 - **inbox 动作全集（§10）新增 `set_title`**：
   ```json
   {"id":"R-xxx","action":"set_title","title":"<新显示名>","ts":"<ISO8601>"}
