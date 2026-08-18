@@ -16,6 +16,11 @@ long material so a skill costs little context until its details are needed.
 Scripts must be dependency-free (Python 3.9+ standard library only) so they run
 on a stock install.
 
+Size budget: `SKILL.md` plus `references/` together must stay under ~35KB —
+these are the files the model reads into context. `scripts/` are executed, not
+loaded, so they are exempt from the budget; keep them lean anyway, include
+their tests beside them, and never commit build artifacts (`__pycache__/`).
+
 ## Default-off policy
 
 Bundled skills ship **disabled**. A skill changes how the assistant writes or
@@ -32,7 +37,9 @@ New skills are welcome via pull request:
 1. One directory under `skills/`, following the structure above.
 2. No personal data: no real names, private paths, or owner-specific facts.
    Use placeholders (`<your name>`) and repo-relative paths
-   (`config/voice-profile.default.md`).
+   (`config/voice-profile.default.md`). First-party skills maintained by the
+   repo owner are exempt: they may reference the owner's absolute paths and
+   sibling skills, since they run only on the owner's machines.
 3. Quote external sources with attribution and retrieval date.
 4. If the skill includes a script, include a way to test it (a sample input in
    the PR description is enough) and keep it standard-library only.

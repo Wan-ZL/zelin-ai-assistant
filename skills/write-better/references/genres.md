@@ -1,6 +1,6 @@
 # Genre playbook
 
-Apply the grammar rules everywhere; this file sets what varies by document type.
+Apply the grammar rules everywhere; this file sets what varies by document type. Where a genre entry conflicts with a grammar rule (e.g., heading case in blog posts), the genre entry wins.
 
 ## Professional email
 
@@ -12,15 +12,24 @@ Apply the grammar rules everywhere; this file sets what varies by document type.
 - Close with "Thank you!" or "Thank you so much for X!" — no "Best regards" except first formal contact ("Best, <first name>" is the standing signature).
 - Never ask a referee or reviewer for a specific score; give them material instead.
 
+## Referral / recommendation blurb
+
+- Lead with the relationship ("I worked with X for two years on Y") and a one-line hook — the single strongest claim about the person.
+- Expand acronyms the recipient may not know; the reader is outside the sender's org.
+- Name concrete artifacts (the paper, the system, the launch), not abstract virtues.
+- Keep sentences short.
+- Singular "they" for a named individual is acceptable when their pronouns are unknown; repeat the name where a pronoun would blur reference.
+
 ## Academic paper / thesis
 
 - Everything in grammar-rules.md is mandatory; also read typography-latex.md.
+- For structure — the motivation funnel, related-work verdicts, and the running example — follow paper-logic.md.
 - "We" for authors. Present tense for what the paper does ("Section 5 evaluates...").
 - Contributions as a numbered, parallel list ("The contribution of this paper is twofold. First, ... Second, ...").
 - Claims carry evidence in the same sentence or the next. No claim outruns the experiments.
 - Terminology: define once, in italics, then use the same term forever — no elegant variation for technical nouns.
 
-## Article / blog post / announcement
+## Article / blog post / announcement (non-Slack: blog or email — Slack announcements belong to zelin-slack-voice)
 
 - Open with the result or the artifact, not the journey. First paragraph = what exists now and why the reader cares.
 - Concrete numbers with sources; every external claim linkable.

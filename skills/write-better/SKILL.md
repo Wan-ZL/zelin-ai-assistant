@@ -1,44 +1,47 @@
 ---
 name: write-better
-description: Write and edit the owner's formal English output (emails, papers, articles, docs, reports) in a precision-first style modeled on Munindar P. Singh's editorial standards. Use whenever drafting or revising any email, academic paper, blog article, README, report, or professional message. Also use when the user says "写邮件", "improve this email", "polish this paragraph", "去 AI 味", or asks for writing in "Singh style" / "precise style".
+description: Write and edit the owner's formal English output (emails, papers, articles, docs, reports, CV/resume) in a precision-first style modeled on Munindar P. Singh's editorial standards. Use whenever drafting or revising any email, academic paper, blog article, README, report, professional message, or CV/resume. Also use when the user says "写邮件", "improve this email", "polish this paragraph", "polish my paper", "润色", "改论文", "论文润色", "改简历", "update my CV", "去 AI 味", or asks for writing in "Singh style" / "precise style".
 ---
 
 # Precise Writing (Singh-standard)
 
-Write formal English the way a career journal editor would: active voice, concrete nouns, zero filler, zero vagueness, punctuation and numbers handled by rule rather than habit. The standard is modeled on Munindar P. Singh (NCSU; former EiC of IEEE Internet Computing), whose published peeves and editing rules are captured verbatim in `references/`.
+This skill simulates Munindar P. Singh (NCSU; former EiC of IEEE Internet Computing) as an editor of the owner's drafts, so they carry more Singh and less AI flavor. The simulation has three layers:
+
+1. **Core — the simulated Singh**: `references/paper-logic.md` (how his papers argue: structure, moves, and the "Reviewing as Singh" stance) and `references/prose-model.md` (how his sentences sound). These are derived from his published papers; anything that goes beyond what his papers show is labeled as an extension, never attributed to him.
+2. **Rule layer — his own words**: `references/grammar-rules.md` and `references/typography-latex.md` quote his public editorial advice pages verbatim.
+3. **Mechanical net**: `scripts/style_check.py`, a deterministic, sentence-aware linter that catches the subset of rules a program can check.
 
 ## Routing — decide before writing
 
-1. **Casual personal messaging** (WeChat/iMessage to friends and family, quick Slack pings): this skill does NOT apply. Defer to the owner's voice profile at `state/voice-profile.md (falling back to config/voice-profile.default.md)`. Precision rules would make those messages sound stiff.
-2. **Professional email** (professors, colleagues, recruiters, lawyers, customer service): apply `references/grammar-rules.md` + the email section of `references/genres.md`. Keep the owner's brevity habits (1–5 sentences, no pleasantry openers) — precision and brevity are compatible.
-3. **Academic paper / thesis / review**: apply everything, including `references/typography-latex.md`.
-4. **Article / blog post / README / report**: apply `references/grammar-rules.md` + the matching section of `references/genres.md`.
+1. **Slack — any text, professional or casual**: the `zelin-slack-voice` skill owns it; this skill contributes nothing.
+2. **Casual personal messaging** (WeChat/iMessage to friends and family): this skill does NOT apply. Defer to the owner's voice profile at `/Users/zelin/Projects/zelin-ai-assistant/state/voice-profile.md` (fallback: `config/voice-profile.default.md` in the same repo). If neither file exists, say so — never improvise the owner's casual voice.
+3. **Professional email or referral/recommendation blurb** (professors, colleagues, recruiters, lawyers, customer service): `references/grammar-rules.md` + the matching section (email, or referral blurb) of `references/genres.md`. Keep the owner's brevity habits (1–6 sentences, no pleasantry openers) — precision and brevity are compatible.
+4. **Academic paper / thesis**: apply everything, adding `references/typography-latex.md` AND `references/paper-logic.md`.
+5. **Article / blog post / README / report**: `references/grammar-rules.md` + the matching section of `references/genres.md`.
+6. **CV / resume**: the CV section of `references/genres.md` + grammar rules.
+7. **Chinese or mixed-language documents**: apply structure, given→new order, and the AI-tell scan only; skip English diction rules. The linter skips CJK lines automatically.
+8. **Review mode — text the owner did NOT write**: do not rewrite. Report violations as review comments — rule + quote + suggested fix — in the "Reviewing as Singh" tone from `references/paper-logic.md`, and skip the linter-fix loop.
 
 When genre is ambiguous, ask nothing; pick the nearest genre and state the assumption in one line.
 
 ## Workflow (mandatory, in order)
 
-1. Read `references/grammar-rules.md` and `references/prose-model.md` (short files; read fully). For papers also read `references/typography-latex.md`. Read the matching genre section in `references/genres.md`.
-2. Draft the text following the prose model: given→new sentence order, active voice, concrete subjects, numbers under ten spelled out, formal dates (August 17, not 8/17), no contractions in formal registers, serial comma.
-3. Write the draft to a temp file and run the linter:
-   `python3 skills/write-better/scripts/style_check.py <file>`
-   (or pipe via stdin: `... style_check.py -` ). It flags rule violations with line numbers.
-4. Fix every ERROR. Fix each WARN or consciously overrule it — an overrule needs a reason you could say out loud (e.g., "8/17 kept because the quoted form itself says 8/17").
-5. Re-run the linter until clean, then run the human-read pass in `references/prose-model.md` §Final-read checklist (AI-tell scan: no inflated abstractions, no "systematic confound" register mismatch, no throat-clearing).
-6. Deliver. When the user gave their own draft, preserve their sentence order and word choices wherever they already comply; change the minimum.
+In review mode (routing 8), replace steps 2–6 with rule-citing comments; the linter may be run diagnostically, but its findings are reported, not fixed.
 
-## Hard rules (memorize; full list in references)
+1. Read `references/grammar-rules.md` and `references/prose-model.md` (short files; read fully). For papers also read `references/typography-latex.md` and `references/paper-logic.md`. Read the matching genre section in `references/genres.md`.
+2. Draft the text following the prose model: given→new sentence order, active voice, concrete subjects, numbers under ten spelled out, formal dates (August 17, not 8/17), no contractions in formal registers, serial comma.
+3. Write the draft to a temp file and run the linter: run `python3 <skill-dir>/scripts/style_check.py <file>`, where `<skill-dir>` is the directory containing this SKILL.md (you just read it from there). For papers, name the temp file `.tex` or pass `--latex`. The linter is sentence-aware, emits ERRORs and WARNs (WARNs for context-dependent rules), and honors inline `lint-ok:<rule-id>` suppressions.
+4. Fix every ERROR. An ERROR may be overruled ONLY by quoting the reference rule or placing a `lint-ok:<rule-id>` suppression that licenses the exception, stated out loud (e.g., "8/17 kept via `lint-ok:numeric-date` because the quoted form itself says 8/17"). Fix each WARN or consciously overrule it — an overrule needs a reason you could say out loud (e.g., "passive kept because the actor is unknown and naming one would mislead").
+5. Re-run the linter until clean, then run the human-read pass in `references/prose-model.md`: §AI-tell scan (no inflated abstractions, no register mismatch, no throat-clearing), then §Final-read checklist (read aloud, verify every number and name, first sentence carries the point).
+6. Deliver. When the user gave their own draft, preserve their sentence order and word choices wherever they already comply; change the minimum. Tie-break: AI-tell fixes override minimal-change; mechanical preferences do not.
+
+## Hard rules (highest-frequency; references/ are the source of truth)
 
 - Active voice almost always; "we" not "I" in papers.
-- Never "very", "etc." (formal), "more like", "sort of", "we feel".
+- Never "very", "etc." (formal), "sort of", "we feel".
 - No slashes in prose ("and/or", "w/", numeric dates like 8/17) — slash "indicates a profound carelessness of thought".
 - "centered on" and "focused on", never "around".
-- Don't start a sentence with a numeral, a citation, a lowercase identifier, or a bare "This ..." whose referent is not obvious.
-- Spell out numbers under ten; numerals for 157; commas in 1,000+; years bare.
-- No contractions in formal writing (it is, do not, I have).
-- Serial comma: "A, B, and C".
-- No footnotes: if it is worth saying, say it in the text.
-- Introduce new terms in italics, not quotes; use quotes only when essential.
+- Spell out numbers under ten; no contractions in formal writing; serial comma.
 - Minimal pronouns ("this", "it") — repeat the noun or restructure.
-- Capitalize "Figure 4", "Section 3"; never "the Figure 3".
-- Lowercase discipline names ("computer science") — capitalization makes concepts appear more grand than they are.
+
+The full rules live in `references/`; the linter implements a SUBSET — "linter clean" never means "rules satisfied".
