@@ -19,7 +19,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
 from act import executor
-from act.lib import titles
+from act.lib import sanitize, titles
 
 SID = "bbbb2222-0000-4000-8000-000000000002"  # short id = bbbb2222
 
@@ -107,6 +107,25 @@ class HarvestCardTitleTestCase(unittest.TestCase):
         out = executor.harvest_delivery(SID)
         self.assertEqual(out["card_title"], "第二个")
         self.assertEqual(out["delivered_summary"], "总结")
+
+    def test_masked_title_rejected(self):
+        # PR #103 review P1 判例：outbound prompt 经 sanitize.scrub 注入的
+        # 现值可能带 [脱敏] 掩码，agent 原样重复不得把掩码写回看板——含
+        # sanitize.MASK 的候选拒收（card_title None），marker 行照剥
+        self._write([_assistant(
+            f"总结\nCARD TITLE: 整理 {sanitize.MASK} 合同\nFINAL DRAFT:\n正文")])
+        out = executor.harvest_delivery(SID)
+        self.assertIsNone(out["card_title"])
+        self.assertEqual(out["delivered_summary"], "总结")
+        self.assertEqual(out["final_draft"], "正文")
+
+    def test_masked_last_marker_does_not_clobber_earlier_clean_one(self):
+        # 掩码候选与 clip 后为空同待遇：不生效也不顶掉前面干净的候选
+        self._write([_assistant(
+            f"CARD TITLE: 起草合同审阅清单\n总结\n"
+            f"CARD TITLE: 整理 {sanitize.MASK} 合同\nFINAL DRAFT:\n正文")])
+        out = executor.harvest_delivery(SID)
+        self.assertEqual(out["card_title"], "起草合同审阅清单")
 
 
 if __name__ == "__main__":

@@ -486,7 +486,14 @@ def set_display_title(req: Requirement, title, *, by_user: bool = False) -> bool
         return False
     changed = False
     prev = str(req.display_title or "").strip()
-    if t != prev:
+    # same-value 判定比较侧同口径规范化（PR #103 review P2）：手编 YAML 的
+    # 超长（>64）或含内部空白/换行的存量 display_title，agent 原样重复注入
+    # 现值（executor._current_display_name 注入的就是 clip 规范形）不算改名
+    # ——否则一次假 rename 把旧值追进 former_titles。经本函数落笔的存量值
+    # 本就是 clip 规范形，prev_norm == prev，行为不变；真改名时
+    # former_titles 记录的仍是磁盘上的原始 prev（可搜索性不受规范化影响）。
+    prev_norm = titles.clip_title(prev) if prev else None
+    if t != prev and t != prev_norm:
         if prev:
             former = [str(x) for x in (req.former_titles or []) if str(x).strip()]
             former = [x for x in former if x != prev]

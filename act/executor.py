@@ -299,11 +299,15 @@ def _current_display_name(req: Requirement) -> str:
     第三档收尾指令注入「现值」用：agent 对照它判断名字是否过时。纯函数，
     不抛异常（sanitize_title 对任意输入 total）。"""
     from act.lib import titles
-    stored = str(getattr(req, "display_title", None) or "").strip()
-    # 存量值与 dashboard._display_title 同口径截断：手编 YAML 的超长 display_title
-    # 若全量注入，agent「原样重复」经 harvest 的 clip_title 折叠后 != 存量值，
-    # 会被 set_display_title 判为改名——旧长名被追进 former_titles（假 rename）。
-    stored = stored[:titles.MAX_DISPLAY_TITLE]
+    # 存量值注入前过 titles.clip_title 规范化（whitespace collapse + 超长截
+    # 63 加 …）——与 harvest 回读、set_display_title 比较侧**同一个**规范化
+    # 函数（clip_title 幂等），保证「agent 原样重复注入值」在任何存量形态
+    # （手编 YAML 超长 / 含内部换行）下都判为 same-value no-op，不产生假
+    # rename、不污染 former_titles（PR #103 review P2）。经 set_display_title
+    # 落笔的正常存量值本就是 clip 规范形，此处 no-op；仅手编异常值有差异
+    # （dashboard 投影对这类值裸截 64，宽度同、省略号有无异——显示面不受
+    # 本函数影响）。
+    stored = titles.clip_title(str(getattr(req, "display_title", None) or "")) or ""
     return stored or titles.sanitize_title(req.title) or str(req.title or "")
 
 
@@ -1175,7 +1179,13 @@ def _extract_card_title(lines: list[str]) -> tuple[Optional[str], list[str]]:
             continue
         if not in_fence and s.startswith(_CARD_TITLE_MARKER):
             cand = titles.clip_title(s[len(_CARD_TITLE_MARKER):])
-            if cand is not None:
+            # 候选里带脱敏占位符 = agent 在复读 scrub 后的 outbound prompt
+            # 文本（sanitize.scrub 只改出站副本，注册表存原文）——写回会把
+            # 脱敏词条从看板名里顶成 [脱敏] 并制造假 rename 污染
+            # former_titles，打破「原样重复幂等」承诺（PR #103 review P1）。
+            # 与 clip_title 返回 None 同待遇：拒收候选、marker 行照剥，
+            # fail 方向 = 保留旧名。
+            if cand is not None and sanitize.MASK not in cand:
                 title = cand
             continue  # strip the line either way — it is metadata, not content
         kept.append(ln)

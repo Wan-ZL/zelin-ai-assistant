@@ -1456,6 +1456,18 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
     `display_title`（一次真写入 + 一条 refreshed 日志；看板显示名不变、
     `former_titles` 不受影响），自第二轮起才是严格 no-op。收割/刷新时机仍
     只在轮次边界，user_titled 钦定仍不可覆盖。
+    **same-value 判定两侧同口径规范化**：注入的现值本身即
+    `titles.clip_title` 规范形（whitespace collapse + 超长截 64 加 …，对
+    自身幂等；`executor._current_display_name`），唯一落笔点的比较为
+    `clip_title(新) == clip_title(存量)`——手编 YAML 的超长（>64）或含
+    内部空白/换行的存量 `display_title`，agent 原样重复注入值也不算改名；
+    真改名时 `former_titles` 记录的仍是磁盘上的原始存量形态（可搜索性
+    不受规范化影响）。
+    **脱敏占位符拒收**：outbound prompt 经 `sanitize.scrub` 后注入的现值
+    可能带 `[脱敏]` 掩码（scrub 只改出站副本，注册表存原文），agent 原样
+    重复它不得把掩码写回——`harvest_delivery` 的 `CARD TITLE:` 收割对含
+    `sanitize.MASK` 的候选一律拒收（与 clip 后为空同待遇：marker 行照剥、
+    fail 向保留旧名），看板显示名与 `former_titles` 永不出现掩码。
 - **inbox 动作全集（§10）新增 `set_title`**：
   ```json
   {"id":"R-xxx","action":"set_title","title":"<新显示名>","ts":"<ISO8601>"}

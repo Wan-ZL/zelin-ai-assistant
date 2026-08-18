@@ -184,15 +184,31 @@ class PromptEnforcementTestCase(unittest.TestCase):
             id="R-113", title="整理  EB-1A   推荐信材料清单"))
         self.assertIn("「整理 EB-1A 推荐信材料清单」", prompt)
 
-    def test_overlong_stored_display_title_clipped_to_dashboard_width(self):
-        # 手编 YAML 的超长存量名注入前按 MAX_DISPLAY_TITLE 截断（与 dashboard
-        # 投影同口径）——否则「原样重复」经 clip_title 折叠会被判改名，旧长名
-        # 被追进 former_titles（假 rename）
+    def test_overlong_stored_display_title_injected_in_clip_form(self):
+        # 手编 YAML 的超长存量名注入前过 clip_title 规范化（63 字 + …，对自身
+        # 幂等）——与 harvest 回读、set_display_title 比较侧同一个规范化函数，
+        # 「原样重复注入值」才能判成 same-value no-op（PR #103 review P2）
         long_name = "长" * 80
         prompt = self._prompt(Requirement(
             id="R-114", title="修复登录 bug", display_title=long_name))
-        self.assertIn("「" + "长" * 64 + "」", prompt)
+        injected = titles.clip_title(long_name)
+        self.assertEqual(injected, "长" * 63 + "…")
+        self.assertIn("「" + injected + "」", prompt)
         self.assertNotIn(long_name, prompt)
+
+    def test_verbatim_repeat_of_injected_value_is_noop_for_hand_edited_yaml(self):
+        # 端到端幂等判例：注入现值 → agent 原样重复 → harvest clip_title →
+        # set_display_title 必须 no-op——覆盖超长与含换行两种手编存量形态
+        for raw in ["长" * 80, "整理 EB-1A\n 推荐信\t材料"]:
+            req = Requirement(id="R-115", title="修复登录 bug",
+                              display_title=raw)
+            injected = executor._current_display_name(req)
+            harvested = titles.clip_title(injected)  # harvest 侧同款折叠
+            self.assertFalse(
+                registry.set_display_title(req, harvested),
+                f"原样重复注入值被判改名（存量 {raw!r}）")
+            self.assertEqual(req.display_title, raw)  # 磁盘形态原样保留
+            self.assertIsNone(req.former_titles)
 
     # ---- v0.47 第一档：user_titled 钦定卡收尾指令完全不提 CARD TITLE ----
 
@@ -300,6 +316,23 @@ class SameValueNoOpTestCase(unittest.TestCase):
         # clip_title 折叠空白后同值 → 仍是 no-op
         self.assertFalse(registry.set_display_title(req, "重跑  数据\n脚本"))
         self.assertIsNone(req.former_titles)
+
+    def test_hand_edited_overlong_stored_value_noop_on_normalized_repeat(self):
+        # 比较侧规范化（PR #103 review P2）：存量是手编 80 字长名，重复其
+        # clip 规范形不算改名（旧行为会假 rename、把 80 字长名追进曾用名）
+        raw = "长" * 80
+        req = Requirement(id="R-983", title="t", display_title=raw)
+        self.assertFalse(registry.set_display_title(req, titles.clip_title(raw)))
+        self.assertEqual(req.display_title, raw)
+        self.assertIsNone(req.former_titles)
+
+    def test_real_rename_records_raw_stored_value_in_former_titles(self):
+        # 真改名不受规范化影响：former_titles 记录磁盘上的原始存量形态
+        raw = "长" * 80
+        req = Requirement(id="R-984", title="t", display_title=raw)
+        self.assertTrue(registry.set_display_title(req, "换了个新方向"))
+        self.assertEqual(req.display_title, "换了个新方向")
+        self.assertEqual(req.former_titles, [raw])
 
     def test_different_value_still_appends_with_cap(self):
         req = Requirement(id="R-982", title="t")
