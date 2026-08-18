@@ -2268,7 +2268,14 @@ fail-closed 返回 False）。三个源的 `sources.<src>.enabled` 都由 config
 **App 设置面板对齐**：gmail/slack 面板的启停 UI 显示**有效值**
 （`DiagnosticsRules.effectiveSourceEnabled`：真源投影 `radar_sources.<src>
 .enabled`，投影缺失回退面板原有判据）——只读单键的话，yaml 里另一个键为
-false 时面板显示「开启」而雷达永远静默；用户在面板里**打开** = 显式动作，
+false 时面板显示「开启」而雷达永远静默。**投影新鲜度（fresher-wins）**：
+投影可能落后于用户刚写的 override（刚翻开关就重启 App / actd 停摆时无限期
+落后）——settings_overrides.json 的 mtime 比 dashboard.json 新即视为投影
+过期（`DiagnosticsModel.projectionFresh()`），有效值回退 override 判据
+（那正是用户最新意图）；actd 跑过一个 pass 后投影现读 config 必然吸收
+override，恢复投影裁决。有效值**随面板每次 refreshStatus 重算**（不是
+加载一次永不再读——否则 actd 在面板打开后才重建投影时面板长期停在旧值；
+toggle 在飞（busy）时不回写，防瞬时竞态）。用户在面板里**打开** = 显式动作，
 把合取的两个键都写进 override（gmail：`gmail_enabled` + `features.gmail_radar`；
 slack：`features.slack_radar` + 扁平 `slack_enabled`，override 层压过 yaml），
 关闭仍只写单键（合取，一票否决）。
@@ -2299,11 +2306,18 @@ StartInterval=300s）、slack 6h（180s）、obsidian 36h（cron */30 + 合盖�
 对 radar.py `_owns_health` 的 cron 单写者门是一条**显式豁免**：那道门防的是
 手动/launchd 语境误删 cron 的真实健康，而源 disabled 时 cron 写者按 48.2
 自己也已静默、条目只剩僵尸，actd 是唯一的清理仲裁者，收尾不与单写者门冲突。
-**睡醒宽限**：actd 记录相邻 pass 的 wall-clock（`_wake_state`），跳变 >
+**睡醒宽限**：actd 记录相邻 pass 的 wall-clock 与 monotonic 双时钟
+（`_wake_state`），**挂起时长**（wall 前进量 − monotonic 前进量；
+`time.monotonic()` 在 macOS 走 mach_absolute_time，睡眠期间停摆）>
 max(interval×6, 300s) 视为刚从合盖睡眠唤醒——此刻 health 时间戳整体超期是
 睡眠不是死亡（anti-nag 台账防不了这种每日重置），宽限一个最大雷达周期 +
 余量（`_WAKE_GRACE_SECONDS` = 35min，对齐 Diagnostics warmup）内不评判
 stale、不动台账，让雷达先补跑；宽限过后照常评判（plist 真被删仍会告警）。
+只看 wall 跳变的旧判据被**长 pass** 击穿：`process_raising` 的 claude 调用
+连续吃满 420s 超时时，默认 10s interval 下每轮 pass 间隔都 > 300s、每轮都
+被判成睡醒、`grace_until` 每轮重置——宽限永不结束，真死亡的源永远不告警。
+双时钟判据下长 pass 两钟同步前进、差值 ≈ 0，照常评判；mono 基线缺失
+（首 pass）回退 wall 差值判据。
 进程**首 pass 同睡醒对待**（`_wake_state` 是进程内存，重启后没有跳变可测，
 而关机 ≥ 阈值后开机 RunAtLoad 的第一个 pass 同样早于雷达落笔）——冷启动也
 种一次宽限；代价只是 actd 重启/升级后真死亡多等一个宽限窗才报。推论：
@@ -2383,13 +2397,19 @@ plist 存在**且**无失败回执——失败时卡留着、文案换失败详�
 不进平时 5s tick 的成本）。**同 path 冲突时修复卡赢过凭证卡**（调度都不在，
 skip_reason 必然陈旧）：agent_missing 判据为真即让 gmail/slack 凭证卡让位
 （`gmailCardEligible` 的 `schedulerMissing` 参数 / slack 块同款 guard）。
-设置面板的 gmail/slack 总开关翻 on 本就自装 plist，不经此卡。
+设置面板的 gmail/slack 总开关翻 on 本就自装 plist，不经此卡——但**面板
+install 的结果（总开关翻 on / 面板「重新安装」）同样必须落回执**（同一
+`RepairReceiptStore`，成功出账、失败持久化）：面板路径的 load 失败只留在
+statusNote（内存态）的话，App 重启即失忆，而 plist 已写成 → 修复卡不出、
+health 已被 48.2 清空 → liveness 无基线——与卡上重装完全同款的静默死路，
+回执纪律对所有 install 旁路一视同仁。
 
 **判例**：tests/test_sources.py（真值表含 slack/obsidian enabled + 扁平
 override 压过 yaml / 关闭真静默含 obsidian 锁前早退 / liveness+anti-nag+
-恢复+现读配置+睡醒/冷启动宽限+真实 interval+plist 死亡 / 投影形状+现读+
+恢复+现读配置+睡醒/冷启动宽限+真实 interval+长 pass 不算睡醒（双时钟）+
+真睡眠 mono 停摆照宽限+plist 死亡 / 投影形状+现读+
 stale 不吃宽限+词表出机清洗+关源当 pass 屏蔽 / CLI 出口码 0-3-2 /
 install.sh 闸门 drift-guard + 非 repo cwd 探针 fail-open）、mac/LogicTests
 ContractRadarSourcesTests（Swift 解码向后兼容）+ DiagnosticsRulesTests
 （48.4 意愿信号矩阵+文案分组 / 48.6 修复卡判据+失败回执保卡+持久化往返+
-优先级让位 / 48.1 面板有效值）。
+优先级让位 / 48.1 面板有效值+过期投影让位于更新的 override）。

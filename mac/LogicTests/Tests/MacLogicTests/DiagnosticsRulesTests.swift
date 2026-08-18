@@ -173,6 +173,21 @@ struct DiagnosticsRulesTests {
             projected: nil, fallback: false))
     }
 
+    @Test func staleProjectionYieldsToFresherOverride() {
+        // P2：刚翻开关就重启 App（或 actd 停摆）——override 比 dashboard 新，
+        // 旧投影的 enabled=false 不许长期盖住已生效的 override；反向同理
+        #expect(DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(false), fallback: true, projectionFresh: false))
+        #expect(!DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(true), fallback: false, projectionFresh: false))
+        // 投影新鲜（actd 已跑过一个 pass、吸收了 override）→ 投影裁决如常
+        #expect(!DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(false), fallback: true, projectionFresh: true))
+        // 投影既缺失又不新鲜 → 仍是 fallback（不 crash、不掉 nil 分支）
+        #expect(DiagnosticsRules.effectiveSourceEnabled(
+            projected: nil, fallback: true, projectionFresh: false))
+    }
+
     // MARK: - §48.6 重装失败回执持久化（RepairReceiptStore）
 
     private func freshSuite(_ name: String) -> UserDefaults {

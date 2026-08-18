@@ -2253,18 +2253,20 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
 
 # §48 睡醒宽限：合盖 ≥ 阈值的睡眠唤醒后，actd 的第一批 pass 必然早于雷达补跑
 # （launchd/cron 也刚醒），health 时间戳整体超期 —— 没有宽限就是每天醒来一轮
-# 假「源死亡」告警，anti-nag 台账防不了这种每日重置。检测 wall-clock 跳变
-# （相邻 pass 间隔远大于 poll interval = 刚睡醒/长停顿），宽限一个最大雷达
-# 周期（obsidian cron */30 = 1800s）+ 余量，让雷达先补跑再恢复评判。
-_WAKE_JUMP_FACTOR = 6            # 跳变 > interval×6 视为睡醒
-_WAKE_JUMP_FLOOR_SECONDS = 300   # interval 很小时的跳变判定下限
+# 假「源死亡」告警，anti-nag 台账防不了这种每日重置。检测**挂起时长**
+# （wall-clock 前进量减去 monotonic 前进量——真睡眠 wall 走 mono 停；长 pass
+# 两钟同进、差值 ≈ 0，不会被误判成睡醒），宽限一个最大雷达周期
+# （obsidian cron */30 = 1800s）+ 余量，让雷达先补跑再恢复评判。
+_WAKE_JUMP_FACTOR = 6            # 挂起 > interval×6 视为睡醒
+_WAKE_JUMP_FLOOR_SECONDS = 300   # interval 很小时的挂起判定下限
 _WAKE_GRACE_SECONDS = 35 * 60    # 最大雷达周期 1800s + 余量（对齐 Diagnostics）
-_wake_state: dict = {"last_pass": None, "grace_until": 0.0}
+_wake_state: dict = {"last_pass": None, "last_mono": None, "grace_until": 0.0}
 
 
 def _wake_grace(cfg: config.Config, wall: float,
-                interval: Optional[int] = None) -> bool:
-    """记录本 pass 的 wall-clock 并判断是否处于睡醒/冷启动宽限期。
+                interval: Optional[int] = None,
+                mono: Optional[float] = None) -> bool:
+    """记录本 pass 的时钟并判断是否处于睡醒/冷启动宽限期。
 
     进程首 pass（``last_pass`` 为 None）同睡醒对待：``_wake_state`` 是进程内
     存，actd 重启后没有跳变可测，而关机 ≥ 阈值后开机（RunAtLoad）的第一个
@@ -2272,23 +2274,40 @@ def _wake_grace(cfg: config.Config, wall: float,
     重启/升级后真死亡多等一个宽限窗才报，可接受。
 
     ``interval`` = 主循环的**真实** pass 间隔（main 里 ``--interval`` 优先于
-    config）——跳变判定必须吃它：只按 config 的 poll_interval_seconds 算的话，
+    config）——挂起判定必须吃它：只按 config 的 poll_interval_seconds 算的话，
     ``--interval 600`` 形态下每个正常 pass 都被判成睡醒、宽限永不结束、
     liveness 被静默饿死。缺省才回退 config 值。
+
+    ``mono`` = 本 pass 的 monotonic 时钟读数（``time.monotonic()``，macOS 走
+    mach_absolute_time，**睡眠期间停摆**；测试注入缝）。睡醒判据 = wall 前进
+    量与 mono 前进量的**差值**（≈ 真实挂起时长）超过 max(interval×6, 300s)。
+    只看 wall 跳变的旧判据会把「长 pass」（如 process_raising 的 claude 调用
+    连续吃满 420s 超时）误判成睡醒——每轮都重置 ``grace_until``，宽限永不
+    结束，真死亡的源永远不告警。长 pass 两个时钟同步前进，差值 ≈ 0，照常
+    评判。任一侧 mono 读数缺失（首 pass / 旧状态）回退 wall 差值判据。
     """
     if interval is None:
         interval = int(getattr(cfg, "poll_interval_seconds", 10) or 10)
+    if mono is None:
+        mono = time.monotonic()
     last = _wake_state["last_pass"]
+    last_mono = _wake_state.get("last_mono")
     _wake_state["last_pass"] = wall
+    _wake_state["last_mono"] = mono
     jump = max(interval * _WAKE_JUMP_FACTOR, _WAKE_JUMP_FLOOR_SECONDS)
-    if last is None or (wall - last) > jump:
+    if last_mono is not None:
+        suspended = (wall - (last or wall)) - (mono - last_mono)
+    else:
+        suspended = wall - (last or wall)   # 旧判据兜底（无 mono 基线可比）
+    if last is None or suspended > jump:
         _wake_state["grace_until"] = wall + _WAKE_GRACE_SECONDS
     return wall < _wake_state["grace_until"]
 
 
 def _check_radar_liveness(notified: set[str],
                           now: Optional[_dt.datetime] = None,
-                          interval: Optional[int] = None
+                          interval: Optional[int] = None,
+                          mono: Optional[float] = None
                           ) -> list[tuple[str, str]]:
     """§48 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
 
@@ -2301,14 +2320,14 @@ def _check_radar_liveness(notified: set[str],
     阈值那一刻报一次，恢复（不再 stale）即出账，下次再死才会再响。睡醒宽限
     （``_wake_grace``）期间不评判 stale、也不动台账。关掉的源不进循环，且
     顺手清掉残留 health 条目（生产上手删 plist 留下的僵尸 last_attempt
-    记录）。``now`` 是测试注入缝。Never raises。
+    记录）。``now`` / ``mono`` 是测试注入缝。Never raises。
     """
     msgs: list[tuple[str, str]] = []
     try:
         cfg = config.load_config()
         if now is None:
             now = _dt.datetime.now(_dt.timezone.utc)
-        graced = _wake_grace(cfg, now.timestamp(), interval)
+        graced = _wake_grace(cfg, now.timestamp(), interval, mono)
         data = health.load_radar_health()
         for src in sources.SOURCES:
             if not sources.enabled(cfg, src):

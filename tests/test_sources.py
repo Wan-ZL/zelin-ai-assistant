@@ -191,9 +191,10 @@ class LivenessAlertTestCase(unittest.TestCase):
         # 走（last_pass = 现在，无宽限）；冷启动判例自己把 last_pass 归 None
         actd._wake_state.update(
             {"last_pass": _dt.datetime.now(_dt.timezone.utc).timestamp(),
-             "grace_until": 0.0})
+             "last_mono": None, "grace_until": 0.0})
         self.addCleanup(actd._wake_state.update,
-                        {"last_pass": None, "grace_until": 0.0})
+                        {"last_pass": None, "last_mono": None,
+                         "grace_until": 0.0})
 
     @staticmethod
     def _seed(source: str, last_ok: str, last_attempt: str = None):
@@ -344,6 +345,35 @@ class LivenessAlertTestCase(unittest.TestCase):
             notified, now=self._now(600), interval=600)   # 600s 是常态节奏
         self.assertEqual(len(msgs), 1)                    # 照常评判、照常告警
 
+    def test_long_pass_is_not_a_wake_jump(self):
+        # 长 pass（如 process_raising 连续吃满 420s 的 claude 超时）：wall 与
+        # monotonic 两个时钟**同步前进**、差值 ≈ 0 ——不是睡醒，不得续宽限。
+        # 只看 wall 跳变的旧判据会把每轮长 pass 都判成睡醒、grace_until 每轮
+        # 重置、真死亡的源永远不告警（liveness 被静默饿死）
+        notified: set = set()
+        t, m = 0.0, 1000.0
+        actd._check_radar_liveness(notified, now=self._now(t), mono=m)
+        self._seed("gmail", _iso(7 * 3600))
+        collected: list = []
+        for _ in range(5):                     # 连续 5 轮 ~430s 的慢 pass
+            t += 430.0
+            m += 430.0
+            collected += actd._check_radar_liveness(
+                notified, now=self._now(t), mono=m)
+        self.assertEqual(len(collected), 1)    # 第一轮就照常评判、只响一次
+
+    def test_real_sleep_mono_frozen_is_still_graced(self):
+        # 真睡眠：wall 前进而 monotonic 停摆（macOS mach_absolute_time 睡眠
+        # 不计时）——差值 = 真实挂起时长，照旧进宽限、不污染台账
+        notified: set = set()
+        self._seed("gmail", _iso(60))
+        actd._check_radar_liveness(notified, now=self._now(), mono=500.0)
+        self._seed("gmail", _iso(7 * 3600))
+        msgs = actd._check_radar_liveness(
+            notified, now=self._now(8 * 3600), mono=510.0)  # mono 只走 10s
+        self.assertEqual(msgs, [])
+        self.assertNotIn("gmail", notified)
+
     def test_plist_deleted_death_still_alarms(self):
         # 真死亡形态（plist 被删/调度停摆）：pass 以正常节奏推进（无跳变），
         # last_ok 与 last_attempt 一起停摆 → 照样告警，宽限不误伤
@@ -435,9 +465,11 @@ class RadarSourcesProjectionTestCase(unittest.TestCase):
         # §48.4：stale 不吃通知侧的睡醒/冷启动宽限——投影是无状态的磁盘
         # 真值函数（一次性 `python -m act.lib.dashboard` 进程也在产出它），
         # 即便 actd 侧正处于冷启动宽限，投影照报 stale
-        actd._wake_state.update({"last_pass": None, "grace_until": 0.0})
+        actd._wake_state.update(
+            {"last_pass": None, "last_mono": None, "grace_until": 0.0})
         self.addCleanup(actd._wake_state.update,
-                        {"last_pass": None, "grace_until": 0.0})
+                        {"last_pass": None, "last_mono": None,
+                         "grace_until": 0.0})
         LivenessAlertTestCase._seed("gmail", _iso(7 * 3600))
         self.assertEqual(
             actd._check_radar_liveness(set()), [])        # 通知侧：宽限静默

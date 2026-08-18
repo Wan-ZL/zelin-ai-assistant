@@ -77,9 +77,17 @@ enum DiagnosticsRules {
     /// flag 的话，yaml 里 sources.<src>.enabled:false 时面板显示「开启」、
     /// 重新开关也只写 flag——提示已开启 + 装了 agent，雷达却永远静默。
     /// 投影缺失（旧 payload / actd 还没跑）回退面板原有判据。
+    /// `projectionFresh` = 投影产出时间不早于 settings_overrides 最后一次
+    /// 写入（调用方按文件 mtime 判，`DiagnosticsModel.projectionFresh()`）：
+    /// 投影**落后于**用户刚写的 override 时（刚翻开关就重启 App / actd 停摆）
+    /// 无条件信投影会用旧的 enabled=false 长期盖住已生效的 override——此时
+    /// 回退 fallback（override 判据正是用户最新意图）；actd 跑过一个 pass
+    /// 后投影现读 config 必然吸收 override，恢复投影裁决。
     static func effectiveSourceEnabled(projected: RadarSourceHealth?,
-                                       fallback: Bool) -> Bool {
-        projected?.enabled ?? fallback
+                                       fallback: Bool,
+                                       projectionFresh: Bool = true) -> Bool {
+        guard projectionFresh else { return fallback }
+        return projected?.enabled ?? fallback
     }
 }
 

@@ -420,6 +420,24 @@ final class DiagnosticsModel: ObservableObject {
         return proj.radar_sources ?? [:]
     }
 
+    /// §48.1 投影新鲜度：dashboard.json 的 mtime 是否不早于
+    /// settings_overrides.json 的 mtime。投影每 pass 现读 config 重建——
+    /// mtime 更新的投影必然已吸收 override；反之（用户刚写 override、actd
+    /// 还没跑 / 已停摆）投影是旧世界的快照，设置面板的有效值判定要回退
+    /// override 判据（`DiagnosticsRules.effectiveSourceEnabled` 的
+    /// `projectionFresh` 入参）。dashboard 缺失 → false（没有投影可信）；
+    /// overrides 缺失 → true（用户从没写过，投影不可能落后于它）。
+    nonisolated static func projectionFresh() -> Bool {
+        func mtime(_ path: String) -> Date? {
+            (try? FileManager.default.attributesOfItem(atPath: path))?[
+                .modificationDate] as? Date
+        }
+        guard let dash = mtime(AppPaths.stateRoot + "/state/dashboard.json")
+        else { return false }
+        guard let ov = mtime(AppPaths.settingsOverridesPath) else { return true }
+        return dash >= ov
+    }
+
     // MARK: radar_health.json (tolerant — never crashes the tick)
 
     private static func readHealth() -> [String: HealthEntry] {
