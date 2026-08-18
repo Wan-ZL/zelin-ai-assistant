@@ -2317,7 +2317,9 @@ def _check_radar_liveness(notified: set[str],
     为真的源，比较 health 的 last_ok/last_attempt（取较新者）与
     ``sources.LIVENESS_THRESHOLDS``，超期 = 源死亡 → notify 一次。anti-nag
     台账（``notified``，与 auth_notified 同款进程内 set）：同一源只在**跨过**
-    阈值那一刻报一次，恢复（不再 stale）即出账，下次再死才会再响。睡醒宽限
+    阈值那一刻报一次，恢复（不再 stale）即出账，下次再死才会再响。告警
+    **落笔前再复核一次 enabled**（现读 config）——巡检开头到 notify 之间
+    用户可能刚关掉该源（TOCTOU），关掉的源全静默优先于省一次盘读。睡醒宽限
     （``_wake_grace``）期间不评判 stale、也不动台账。关掉的源不进循环，且
     顺手清掉残留 health 条目（生产上手删 plist 留下的僵尸 last_attempt
     记录）。``now`` / ``mono`` 是测试注入缝。Never raises。
@@ -2343,6 +2345,14 @@ def _check_radar_liveness(notified: set[str],
                 continue    # 睡醒宽限：雷达还没来得及补跑，本 pass 不评判
             if sources.is_stale(src, data.get(src), now):
                 if src not in notified:
+                    # 告警落笔前复核 enabled（TOCTOU 收窄）：巡检开头读的
+                    # cfg 与 notify 之间用户可能刚关掉本源——关掉的源全
+                    # 静默是 §48.2 的硬承诺，宁可多读一次盘也不发这条。
+                    # 复核只走「即将告警」的罕见分支（源死亡 + 未在台账），
+                    # 稳态零额外 IO；关了就本 pass 静默，残留 health 条目
+                    # 留给下一 pass 的清理分支收尾。
+                    if not sources.enabled(config.load_config(), src):
+                        continue
                     notified.add(src)
                     hours = sources.LIVENESS_THRESHOLDS[src] // 3600
                     msgs.append(notify.msg_radar_dead(src, hours))

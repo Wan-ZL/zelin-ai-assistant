@@ -188,6 +188,27 @@ struct DiagnosticsRulesTests {
             projected: nil, fallback: true, projectionFresh: false))
     }
 
+    @Test func staleFromUnrelatedWriteTrustsProjection() {
+        // P2 粒度：overrides 是所有设置共用的一个文件——无关写入（语言、
+        // 提醒方式）推新 mtime 时，yaml 关掉的源（override 无本源键、
+        // fallback 只是面板缺省 true）不许回显「开启」→ 仍信投影
+        #expect(!DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(false), fallback: true,
+            projectionFresh: false, overrideHasKey: false))
+        // override 真有本源键（刚翻的开关）→ 回退 fallback 如常
+        #expect(DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(false), fallback: true,
+            projectionFresh: false, overrideHasKey: true))
+        // 无键 + 投影也缺失 → 最后仍落回 fallback（不 crash）
+        #expect(DiagnosticsRules.effectiveSourceEnabled(
+            projected: nil, fallback: true,
+            projectionFresh: false, overrideHasKey: false))
+        // 新鲜投影不受 overrideHasKey 影响（只在过期路径参与裁决）
+        #expect(!DiagnosticsRules.effectiveSourceEnabled(
+            projected: projected(false), fallback: true,
+            projectionFresh: true, overrideHasKey: false))
+    }
+
     // MARK: - §48.6 重装失败回执持久化（RepairReceiptStore）
 
     private func freshSuite(_ name: String) -> UserDefaults {

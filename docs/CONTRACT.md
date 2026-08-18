@@ -2273,7 +2273,14 @@ false 时面板显示「开启」而雷达永远静默。**投影新鲜度（fre
 落后）——settings_overrides.json 的 mtime 比 dashboard.json 新即视为投影
 过期（`DiagnosticsModel.projectionFresh()`），有效值回退 override 判据
 （那正是用户最新意图）；actd 跑过一个 pass 后投影现读 config 必然吸收
-override，恢复投影裁决。有效值**随面板每次 refreshStatus 重算**（不是
+override，恢复投影裁决。**回退按源收窄粒度**（`overrideHasKey`）：
+settings_overrides.json 是所有设置共用的一个文件，无关写入（语言、提醒
+方式）同样推新 mtime——只有 override 里**真有**本源的开关键才允许回退
+（gmail：`gmail_enabled`；slack：`features.slack_radar`）；无键 = override
+层从没表达过本源意图，过期写入必与本源开关无关，仍信投影——否则 actd
+停摆窗口里 yaml 关掉的源会被面板缺省 true 回显成「开启」。有键回退无害：
+override 键在 config 合成里压过 yaml，投影要么已吸收该键（回退同值），
+要么落后于刚写的键（回退正是最新意图）。有效值**随面板每次 refreshStatus 重算**（不是
 加载一次永不再读——否则 actd 在面板打开后才重建投影时面板长期停在旧值；
 toggle 在飞（busy）时不回写，防瞬时竞态）。用户在面板里**打开** = 显式动作，
 把合取的两个键都写进 override（gmail：`gmail_enabled` + `features.gmail_radar`；
@@ -2301,7 +2308,10 @@ return——**不写 health、不发 analytics**，且清除该源既有的 heal
 StartInterval=300s）、slack 6h（180s）、obsidian 36h（cron */30 + 合盖停摆
 是常态，72x 比例防周末误报）。超期 = 源死亡 → 走既有 §28 notify 通道报
 **一次**（anti-nag：进程内台账 `radar_dead_notified` set，与 auth_notified
-同款——只在跨过阈值那刻响，恢复出账、再死才再响）；关掉的源天然不进循环，
+同款——只在跨过阈值那刻响，恢复出账、再死才再响）。告警**落笔前复核一次
+enabled**（再 `load_config()` 现读）：巡检开头读 cfg 到 notify 之间用户可能
+刚关掉该源（TOCTOU）——48.2 的真静默优先于省一次盘读；复核只在「即将告警」
+的罕见分支发生，稳态零额外 IO。关掉的源天然不进循环，
 且巡检顺手清它的残留 health 条目（生产上手删 plist 留下的僵尸记录）——这里
 对 radar.py `_owns_health` 的 cron 单写者门是一条**显式豁免**：那道门防的是
 手动/launchd 语境误删 cron 的真实健康，而源 disabled 时 cron 写者按 48.2

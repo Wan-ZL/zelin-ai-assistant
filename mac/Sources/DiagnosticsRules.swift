@@ -83,10 +83,18 @@ enum DiagnosticsRules {
     /// 无条件信投影会用旧的 enabled=false 长期盖住已生效的 override——此时
     /// 回退 fallback（override 判据正是用户最新意图）；actd 跑过一个 pass
     /// 后投影现读 config 必然吸收 override，恢复投影裁决。
+    /// `overrideHasKey` = override 层**真有**本源的开关键（粒度收窄）：
+    /// settings_overrides.json 是所有设置共用的一个文件，mtime 变新可能是
+    /// 无关写入（语言、提醒方式）——此时 fallback 只是面板缺省，回退它会
+    /// 让 yaml 关掉的源在 actd 停摆窗口里回显「开启」。无键 → override 层
+    /// 从没表达过本源意图，过期写入必与本源开关无关 → 仍信投影。有键 →
+    /// 回退无害且必要：override 键在 config 合成里本就压过 yaml，投影要么
+    /// 已吸收该键（回退同值），要么落后于刚写的键（回退正是最新意图）。
     static func effectiveSourceEnabled(projected: RadarSourceHealth?,
                                        fallback: Bool,
-                                       projectionFresh: Bool = true) -> Bool {
-        guard projectionFresh else { return fallback }
+                                       projectionFresh: Bool = true,
+                                       overrideHasKey: Bool = true) -> Bool {
+        if !projectionFresh && overrideHasKey { return fallback }
         return projected?.enabled ?? fallback
     }
 }

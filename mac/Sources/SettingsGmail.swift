@@ -182,7 +182,11 @@ final class GmailSettingsModel: ObservableObject {
         return DiagnosticsRules.effectiveSourceEnabled(
             projected: DiagnosticsModel.readRadarSources()["gmail"],
             fallback: (ov["gmail_enabled"] as? Bool) ?? true,
-            projectionFresh: DiagnosticsModel.projectionFresh())
+            projectionFresh: DiagnosticsModel.projectionFresh(),
+            // 粒度收窄（§48.1）：overrides 是共用文件，无关写入也会推 mtime
+            // ——只有 override 里真有 gmail 的开关键才允许回退 fallback
+            //（toggle 两个方向都写 gmail_enabled，键存在即覆盖用户意图）。
+            overrideHasKey: ov["gmail_enabled"] is Bool)
     }
 
     func setEnabled(_ on: Bool) {

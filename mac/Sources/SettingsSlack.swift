@@ -407,7 +407,12 @@ final class SlackSettingsModel: ObservableObject {
         return DiagnosticsRules.effectiveSourceEnabled(
             projected: DiagnosticsModel.readRadarSources()["slack"],
             fallback: (feats["slack_radar"] as? Bool) ?? Self.configFlagLayer(),
-            projectionFresh: DiagnosticsModel.projectionFresh())
+            projectionFresh: DiagnosticsModel.projectionFresh(),
+            // 粒度收窄（§48.1）：overrides 是共用文件，无关写入也会推 mtime
+            // ——只有 override 里真有 slack 的 flag 键才允许回退 fallback
+            //（persistFlag 关到 config 层同值时会删键：删键即「无 override
+            // 意图」，回到投影裁决，语义自洽）。
+            overrideHasKey: feats["slack_radar"] is Bool)
     }
 
     func setEnabled(_ on: Bool) {

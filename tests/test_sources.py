@@ -239,6 +239,32 @@ class LivenessAlertTestCase(unittest.TestCase):
         data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
         self.assertNotIn("gmail", data)               # 残留条目被清（防僵尸）
 
+    def test_alert_recheck_silences_just_disabled_source(self):
+        # TOCTOU 收窄（§48.3）：巡检开头读到「开」、告警落笔前用户关掉本源
+        # ——落笔前的 enabled 复核必须拦下这条通知（关掉的源全静默 §48.2）。
+        # 注入缝：包一层 load_config，首读之后立刻把开关写成关。
+        self._seed("gmail", _iso(7 * 3600))
+        orig = actd.config.load_config
+        calls = {"n": 0}
+
+        def flipping(*a, **kw):
+            cfg = orig(*a, **kw)
+            calls["n"] += 1
+            if calls["n"] == 1:     # 首读（巡检开头）后模拟用户翻开关
+                config.CONFIG_PATH.write_text(
+                    "sources:\n  gmail:\n    enabled: false\n",
+                    encoding="utf-8")
+            return cfg
+
+        actd.config.load_config = flipping
+        try:
+            notified: set = set()
+            self.assertEqual(actd._check_radar_liveness(notified), [])
+            self.assertNotIn("gmail", notified)   # 没落台账：之后重开再死会响
+            self.assertGreaterEqual(calls["n"], 2)  # 复核真的读了第二次
+        finally:
+            actd.config.load_config = orig
+
     def test_config_reloaded_every_call(self):
         # 冻结 cfg 回归：同一进程内翻开关，下一次巡检立刻改判——
         # 开→关：不再对刚关的源发死亡告警；关→开：恢复巡检不清活雷达的 health
