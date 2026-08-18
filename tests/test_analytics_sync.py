@@ -18,6 +18,7 @@ import io
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
@@ -208,6 +209,28 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         self.assertEqual(stats["skipped"], "analytics_off")
         self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
         self.assertEqual(len(self.batches), 1)  # 尾批 7 条没送出去
+
+    def test_presend_check_reads_file_snapshot_not_load_config(self):
+        # 单快照钉子（§16 追记）：送出前判定必须出自配置文件本身的一次读取
+        # ——旧实现 feature_gate(load_config()) 里，load 读到旧值 on、intact
+        # 检查确认的是刚原子写入的新文件（语法有效），两读混用会把刚退出的
+        # 用户的余批送出去。这里把 load_config mock 成陈旧的 on 快照，磁盘
+        # 上真文件已翻关：新实现（feature_gate_fresh 直读文件）必须停送
+        n = sync.BATCH_SIZE + 7
+        _write_events(*[_event_line("card_sent", i=i) for i in range(n)])
+
+        stale_on = _cfg()  # analytics 默认 on = 陈旧快照
+
+        def transport(rows):
+            self.batches.append(list(rows))
+            config.CONFIG_PATH.write_text(
+                "features:\n  analytics: false\n", encoding="utf-8")
+
+        with mock.patch.object(config, "load_config", return_value=stale_on):
+            stats = sync.sync_once(cfg=_cfg(), transport=transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
+        self.assertEqual(len(self.batches), 1)
 
     def test_default_config_uploads_by_default(self):
         # default-on telemetry (docs/TELEMETRY.md): a plain Config() has

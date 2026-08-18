@@ -2,7 +2,8 @@
 // （CONTRACT §16 追记）。Analytics.log / firstReach 与 Python 写者共用同一份
 // state/analytics/events.jsonl，所以 Swift 侧必须有对称的 gate：
 // 优先级 overrides（嵌套 → 平铺）→ config.yaml features: 块 → 默认 on；
-// 隐私 fail-closed 特例：overrides 存在但解析不了 = 按关处理。
+// 隐私 fail-closed 特例：overrides 存在但解析不了、真 config.yaml 存在但
+// 读不出/行扫描认不动（非 UTF-8、跨行 flow mapping、空值）= 按关处理。
 //
 // AppPaths.stateRoot 每进程只解析一次（static let），所以整个 suite 共用
 // 一个临时 HOME，用例之间靠改写/删除该目录下的文件切换场景——必须串行。
@@ -129,6 +130,59 @@ struct AnalyticsGateTests {
         // 同一保守探测）；键不存在才落默认 on
         reset()
         try? "features:\n  analytics: banana\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+    }
+
+    @Test func unreadableConfigYamlFailsClosed() {
+        // 真 config.yaml 存在但读不出（非 UTF-8）⇒ off，绝不回退默认 on
+        // ——原配置可能正是 analytics: false，损坏 ≠ 未配置（§16 隐私特例，
+        // 镜像 Python _config_sources_intact 对损坏 config.yaml 的探测）
+        reset()
+        FileManager.default.createFile(
+            atPath: configPath, contents: Data([0xC3, 0x28, 0xA0, 0xA1]))
+        #expect(!Analytics.featureEnabled())
+    }
+
+    @Test func multilineFlowMappingFailsClosed() {
+        // `features: {` 换行接键值是合法 YAML（PyYAML 照样读出 false），
+        // 单行扫描认不动 ⇒ fail-closed，两个读者对同一份文件同答案
+        reset()
+        try? "features: {\n  analytics: false}\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+    }
+
+    @Test func singleQuotedBoolSpellingsMatchPyyaml() {
+        // PyYAML 把 'false' 解析成字符串 "false"，_coerce_bool 照判——
+        // Swift 只剥双引号就分叉：'false' 判 nil → off 碰巧对，'true' 判
+        // nil → off 则是开关静默失效（fail-closed 方向，但仍是分叉）
+        reset()
+        try? "features:\n  analytics: 'false'\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+        try? "features:\n  analytics: 'true'\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(Analytics.featureEnabled())
+    }
+
+    @Test func crlfLineEndingsMatchPyyaml() {
+        // CRLF 行尾的 \r 不算布尔拼写的一部分（PyYAML 照样解析）：
+        // "false\r" 必须判关，"true\r" 必须判开（不许静默 off）
+        reset()
+        try? "features:\r\n  analytics: false\r\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+        try? "features:\r\n  analytics: true\r\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(Analytics.featureEnabled())
+    }
+
+    @Test func bareAnalyticsKeyFailsClosed() {
+        // `analytics:` 空值：PyYAML 解析成 None，Python 判不动 → off；
+        // Swift 不能把空值当「键不存在」落回默认 on
+        reset()
+        try? "features:\n  analytics:\n"
             .write(toFile: configPath, atomically: true, encoding: .utf8)
         #expect(!Analytics.featureEnabled())
     }

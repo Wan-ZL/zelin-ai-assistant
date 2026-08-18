@@ -133,16 +133,33 @@ def clip_content(text) -> Optional[str]:
 
 
 # feature_gate 的进程内短缓存：radar/actd 循环逐事件 emit，不该每条都付一次
-# config parse。TTL 短到用户拧开关几秒内生效；测试用 reset_feature_gate_cache()
-# 保证判例之间互不串味。
+# config parse。缓存以两份配置源的 mtime+size 指纹为键——配置文件一变（含
+# Settings 的原子写 temp+rename），下一条事件就重判，「关闭后 TTL 内照记」的
+# 盲窗不存在；TTL 只是指纹失灵（罕见文件系统）时的兜底。每事件的常态开销
+# = 两次 stat(2)。测试用 reset_feature_gate_cache() 保证判例之间互不串味。
 GATE_TTL: float = 5.0
-_gate_cache: Optional[tuple] = None  # (monotonic 过期时刻, bool 结果)
+_gate_cache: Optional[tuple] = None  # (monotonic 过期时刻, bool 结果, 源指纹)
 
 
 def reset_feature_gate_cache() -> None:
     """清空 gate 缓存（测试注入缝；生产无人调用也无妨）。"""
     global _gate_cache
     _gate_cache = None
+
+
+def _sources_fingerprint() -> tuple:
+    """两份配置源的 (mtime_ns, size) 指纹；文件不存在记 None。
+
+    指纹一变即视为配置可能已改（缓存作废）；stat 失败按 None 处理——与
+    「文件消失」同款，宁可多算一次也不给出陈旧的 gate 结果。"""
+    fp = []
+    for p in (config.CONFIG_PATH, config.SETTINGS_OVERRIDES_PATH):
+        try:
+            st = p.stat()
+            fp.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            fp.append(None)
+    return tuple(fp)
 
 
 def _config_sources_intact() -> bool:
@@ -195,8 +212,10 @@ def feature_gate(cfg: Optional["config.Config"] = None) -> bool:
     的隐私承诺压过功能可用性默认，否则坏一份 yaml 就能让退出静默失效。
     判定自身绝不 raise（宪法第 11 条），只会返回 False。
 
-    ``cfg`` 注入缝：上传端一次 run 已持有 Config 时直接传入，跳过缓存与
-    重复 load；无 cfg 的高频 emit 路径走 GATE_TTL 进程内缓存。
+    ``cfg`` 注入缝：run 开始时已持有 Config 的调用方（sync_once 早退检查）
+    直接传入，跳过缓存与重复 load；无 cfg 的高频 emit 路径走进程内缓存
+    ——缓存键含两份配置源的指纹（_sources_fingerprint），配置一变下一条
+    事件即重判，TTL 只兜指纹失灵的底。
     """
     if cfg is not None:
         try:
@@ -205,25 +224,72 @@ def feature_gate(cfg: Optional["config.Config"] = None) -> bool:
             return False
     global _gate_cache
     now = _time.monotonic()
-    if _gate_cache is not None and now < _gate_cache[0]:
+    fp = _sources_fingerprint()
+    if (_gate_cache is not None and now < _gate_cache[0]
+            and fp == _gate_cache[2]):
         return _gate_cache[1]
     try:
         value = (bool(config.load_config().feature("analytics"))
                  and _config_sources_intact())
     except Exception:  # noqa: BLE001 - privacy flag: unreadable = off
         value = False
-    _gate_cache = (now + GATE_TTL, value)
+    _gate_cache = (now + GATE_TTL, value, fp)
     return value
 
 
-def log_event(event: str, **fields) -> None:
+def feature_gate_fresh() -> bool:
+    """单快照新鲜判定——上传端每个 batch 送出前的最后一道检查用。
+
+    与 feature_gate 的「load_config + _config_sources_intact 各读一遍文件」
+    不同，这里每份配置源只读**一次** bytes：flag 值与「存在但读不懂 = off」
+    的损坏判定出自同一份快照。否则 load_config 读到旧值（on）、intact 检查
+    确认的却是用户刚原子写入的新文件（语法有效），这个 TOCTOU 窗口会把刚
+    退出的用户的积压送出去。优先级与 load_config 一致：overrides（嵌套
+    features 块 → 平铺 features.* 键）→ config.yaml features 块 → 默认 on。
+    不读不写 GATE_TTL 缓存；绝不 raise，判不动一律 False（隐私 fail-closed，
+    宪法第 11 条）。
+    """
+    value = True  # §16 默认 on：键不存在 = 用户从未表达过退出
+    try:
+        if config.yaml is not None and config.CONFIG_PATH.exists():
+            loaded = config.yaml.safe_load(
+                config.CONFIG_PATH.read_text(encoding="utf-8"))
+            if loaded is not None and not isinstance(loaded, dict):
+                return False
+            feats = loaded.get("features") if isinstance(loaded, dict) else None
+            if isinstance(feats, dict) and "analytics" in feats:
+                value = config._coerce_bool(feats["analytics"])
+    except Exception:  # noqa: BLE001 - 存在但读不懂/判不动 = off
+        return False
+    try:
+        if config.SETTINGS_OVERRIDES_PATH.exists():
+            data = json.loads(
+                config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return False
+            feats = data.get("features")
+            if isinstance(feats, dict) and "analytics" in feats:
+                value = config._coerce_bool(feats["analytics"])
+            elif "features.analytics" in data:  # 平铺形（§15），嵌套形优先
+                value = config._coerce_bool(data["features.analytics"])
+    except Exception:  # noqa: BLE001 - 存在但读不懂/判不动 = off
+        return False
+    return value
+
+
+def log_event(event: str, **fields) -> bool:
     """Append one event. Non-None fields only. Never raises.
 
     Gated on ``features.analytics`` (§16): with the flag off this is a no-op —
     nothing is written locally, hence nothing can ever be uploaded.
+
+    Returns True only when the line was actually appended（镜像 Swift
+    Analytics.appendLine 的返回值语义）：log_first 拿它决定 marker——gate
+    中途翻关 / 磁盘错被吞时返回 False，marker 不落笔，里程碑不会「已标记
+    却从未落盘」。既有调用点全部忽略返回值，add-only。
     """
     if not feature_gate():
-        return
+        return False
     try:
         ANALYTICS_DIR.mkdir(parents=True, exist_ok=True)
         rec = {
@@ -239,8 +305,9 @@ def log_event(event: str, **fields) -> None:
                 rec[k] = v
         with open(EVENTS_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
     except Exception:  # noqa: BLE001 - analytics must never break the pipeline
-        pass
+        return False
 
 
 _MARKER_SAFE = _re.compile(r"[^A-Za-z0-9_.-]+")
@@ -255,11 +322,12 @@ def log_first(event: str, **fields) -> None:
     — NEVER card content — so this fits the existing content_gate/privacy scope
     without touching it.
 
-    Emit-then-mark: the event is logged first and the marker written after, so a
-    crash in between at worst double-emits. That is harmless because every
-    consumer of these milestones (scripts/insights_report.py) counts DISTINCT
-    devices, and multiple processes (radar cron vs. actd) racing the check can
-    likewise only cause a few harmless duplicates. Never raises.
+    Write-success-then-mark（镜像 Swift Analytics.firstReach）：log_event 返回
+    写入是否真的落盘，成功才落 marker——事件在内部被吞（gate 在两次检查之间
+    翻关、磁盘错）时 marker 不写，里程碑留到下次触发再发。反向的 crash 窗口
+    （写成功、marker 没落）至多 double-emit，无害：消费方
+    (scripts/insights_report.py) 按 DISTINCT device 计数，多进程（radar cron
+    vs. actd）竞态同理只多几条重复。Never raises.
 
     Gate BEFORE the marker (§16): flag off 期间不许 touch marker——否则
     里程碑被标记「已发」却从未落盘，重新开启后 once-per-install 事件永久
@@ -272,7 +340,8 @@ def log_first(event: str, **fields) -> None:
         marker = FIRST_DIR / name
         if marker.exists():
             return
-        log_event(event, **fields)
+        if not log_event(event, **fields):
+            return  # 事件没真正落盘 → 不 mark，下次再试
         FIRST_DIR.mkdir(parents=True, exist_ok=True)
         marker.touch()
     except Exception:  # noqa: BLE001 - analytics must never break the pipeline

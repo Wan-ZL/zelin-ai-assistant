@@ -11,7 +11,11 @@ fail-closed 特例 + GATE_TTL 缓存：
 - 隐私特例：配置读不到 / 存在但损坏 ⇒ gate 按 off 处理（fail-closed，
   与 §16 其它 flag 的 fail-open 惯例相反）；判定自身绝不 raise（宪法第
   11 条）。文件不存在不算损坏——默认 on。
-- gate 结果带 GATE_TTL 进程内缓存（可 reset，判例不许 flaky）。
+- gate 结果带进程内缓存：缓存键含两份配置源的 mtime+size 指纹——配置
+  文件一变下一条事件即重判（关闭后不存在「TTL 内照记」的盲窗），TTL 只
+  兜指纹失灵的底（可 reset，判例不许 flaky）。
+- feature_gate_fresh：上传端每 batch 送出前的单快照判定——每份配置源只
+  读一次 bytes，值与损坏判定同快照，不吃缓存。
 """
 import unittest
 from unittest import mock
@@ -207,6 +211,81 @@ class AnalyticsFeatureGateTestCase(unittest.TestCase):
         off.features["analytics"] = False
         self.assertFalse(analytics.feature_gate(off))
         self.assertTrue(analytics.feature_gate())  # 缓存未被注入调用污染
+
+    def test_config_change_invalidates_cache_immediately(self):
+        # 缓存键含配置源指纹：关闭开关（写真实 config.yaml）后**下一条事件
+        # 就停**——不 reset、不拨钟、不等 TTL。否则「关闭后 5s 内 Ask 写入
+        # 的问题文本照记、日后重开随积压上传」就是隐私洞
+        self.assertTrue(analytics.feature_gate())  # 预热缓存：True 且未过期
+        config.CONFIG_PATH.write_text(
+            "features:\n  analytics: false\n", encoding="utf-8")
+        before = _events_lines()
+        analytics.log_event("gate_probe_flip_no_wait")
+        self.assertEqual(_events_lines(), before)
+        self.assertFalse(analytics.feature_gate())
+
+    # ------------------------------------------------------------------ #
+    # feature_gate_fresh：上传端每 batch 送出前的单快照判定
+    # ------------------------------------------------------------------ #
+
+    def test_fresh_gate_ignores_warm_cache(self):
+        self.assertTrue(analytics.feature_gate())  # 预热缓存：True
+        config.CONFIG_PATH.write_text(
+            "features:\n  analytics: false\n", encoding="utf-8")
+        self.assertFalse(analytics.feature_gate_fresh())
+
+    def test_fresh_gate_reads_files_not_load_config(self):
+        # 单快照语义的钉子：值来自配置文件本身的一次读取，而不是
+        # load_config 的另一次读取——旧实现「load 到旧值 on + intact 确认
+        # 新文件语法有效」的两读混用窗口在这里不存在
+        stale_on = config.Config()  # 默认 analytics on（模拟陈旧快照）
+        config.CONFIG_PATH.write_text(
+            "features:\n  analytics: false\n", encoding="utf-8")
+        with mock.patch.object(config, "load_config", return_value=stale_on):
+            self.assertFalse(analytics.feature_gate_fresh())
+
+    def test_fresh_gate_fail_closed_and_precedence(self):
+        # 缺省 on；损坏/坏值 off；overrides 嵌套形压平铺形（与键序无关）
+        self.assertTrue(analytics.feature_gate_fresh())
+        config.CONFIG_PATH.write_text("\t:{ not yaml ][", encoding="utf-8")
+        self.assertFalse(analytics.feature_gate_fresh())
+        config.CONFIG_PATH.write_text(
+            "features:\n  analytics: banana\n", encoding="utf-8")
+        self.assertFalse(analytics.feature_gate_fresh())
+        config.CONFIG_PATH.unlink()
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text("{broken", encoding="utf-8")
+        self.assertFalse(analytics.feature_gate_fresh())
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            '{"features.analytics": true, "features": {"analytics": false}}',
+            encoding="utf-8")
+        self.assertFalse(analytics.feature_gate_fresh())
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            '{"features.analytics": false, "features": {"digest": true}}',
+            encoding="utf-8")
+        self.assertFalse(analytics.feature_gate_fresh())
+
+    # ------------------------------------------------------------------ #
+    # log_first：write-success-then-mark（镜像 Swift firstReach）
+    # ------------------------------------------------------------------ #
+
+    def test_log_first_marks_only_after_successful_write(self):
+        # 事件写入失败（这里用「events.jsonl 位置被目录占住」逼 open 失败）
+        # ⇒ marker 不落笔，里程碑留到下次；恢复后同一里程碑恰好发一次
+        marker = analytics.FIRST_DIR / "gate_probe_write_fail"
+        marker.unlink(missing_ok=True)
+        analytics.EVENTS_PATH.unlink(missing_ok=True)
+        analytics.EVENTS_PATH.mkdir(parents=True, exist_ok=True)
+        try:
+            analytics.log_first("gate_probe_write_fail")
+            self.assertFalse(marker.exists())
+        finally:
+            analytics.EVENTS_PATH.rmdir()
+        analytics.log_first("gate_probe_write_fail")
+        self.assertTrue(marker.exists())
+        events = [e for e in analytics.read_events()
+                  if e.get("event") == "gate_probe_write_fail"]
+        self.assertEqual(len(events), 1)
 
 
 if __name__ == "__main__":

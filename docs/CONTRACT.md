@@ -308,19 +308,32 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
   `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
   `act.analytics_sync.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
   gate**（skipped="analytics_off"；防 TOCTOU——run 中途关掉 flag，余下积压
-  立即停送，已送 batch 的游标保留不回滚；重查**绕过 GATE_TTL 进程内缓存**、
-  直接重读配置——那缓存是给高频 emit 省 parse 的，隐私重查吃它就是 5s
-  盲窗），所以关闭前积压在 events.jsonl 里的事件也不上传。该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：
+  立即停送，已送 batch 的游标保留不回滚。重查走
+  `analytics.feature_gate_fresh()`：不吃 GATE_TTL 进程内缓存——那缓存是给
+  高频 emit 省 parse 的，隐私重查吃它就是盲窗——且**每份配置源只读一次
+  bytes，flag 值与损坏判定出自同一份快照**；「load_config 读到旧值 on +
+  intact 检查确认的是刚原子写入的新文件」这种两次读取混用的 TOCTOU 窗口
+  不存在），所以关闭前积压在 events.jsonl 里的事件也不上传。该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：
   analytics off 连本地记录都没有。
   **隐私 fail-closed 特例**：与本节其它 flag 的 fail-open（默认 on）惯例相反，
   gate 在「配置读不到 / 存在但损坏」时按 **off** 处理——用户显式退出的隐私
   承诺压过功能可用性默认，否则一份坏 yaml/坏 overrides 就能让退出静默失效；
-  「损坏」包括 flag 值本身写了但判不动布尔（两侧同一保守探测）；配置文件
-  **不存在**不算损坏（从未表达过退出，默认 on 诚实）。gate 判定自身绝不
-  raise（宪法第 11 条），Python 侧带 GATE_TTL（5s）进程内缓存以免高频 emit
-  逐条付 config parse。Swift 侧 firstReach 的 once-per-install marker 只在
-  事件**确实落盘之后**才落笔（gate/查重/写入/marker 整链在同一 serial queue
-  内）——enqueue 与执行之间被关 flag 也吞不掉里程碑。判例：
+  「损坏」包括 flag 值本身写了但判不动布尔、以及 Swift 侧真 config.yaml
+  **存在但读不出/行扫描认不动的形态**（非 UTF-8、跨行 flow mapping、
+  `analytics:` 空值——PyYAML 那边可能正读出用户的退出）；配置文件
+  **不存在**不算损坏（从未表达过退出，默认 on 诚实）。两侧保守探测的边界：
+  布尔拼写集、引号（单/双）、CRLF、冒号旁空白、块形/单行内联形已对齐并有
+  判例钉死；Swift 行扫描**判不动全文 YAML 合法性**，极端损坏形态下两读者
+  可能分叉——但分叉只影响本地落盘方向，上传端唯一出口是 Python 侧
+  sync_once 的 gate，数据不出本机。gate 判定自身绝不
+  raise（宪法第 11 条），Python 侧带进程内缓存以免高频 emit 逐条付 config
+  parse——缓存键含两份配置源的 mtime+size 指纹，**配置文件一变下一条事件
+  即重判**（关闭后不存在「TTL 内照记」的盲窗），GATE_TTL 只兜指纹失灵的
+  底。两侧 once-per-install 里程碑都是 write-success-then-mark：Swift
+  firstReach 的 marker 只在事件**确实落盘之后**才落笔（gate/查重/写入/
+  marker 整链在同一 serial queue 内），Python log_first 同款（log_event 返回
+  写入是否成功，没写成不 mark）——enqueue 与执行之间被关 flag、或磁盘错
+  被吞，都吞不掉里程碑。判例：
   tests/test_analytics_feature_gate.py、tests/test_analytics_sync.py（上传端
   + TOCTOU）、mac/LogicTests AnalyticsGateTests（Swift 写者）。
 - **`features.auto_resume`**：历史上存在**两个键**——config.yaml `execution.auto_resume`
