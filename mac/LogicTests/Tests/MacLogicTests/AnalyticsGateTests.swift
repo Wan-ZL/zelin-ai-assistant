@@ -99,6 +99,31 @@ struct AnalyticsGateTests {
         #expect(Analytics.featureEnabled())
     }
 
+    @Test func spaceBeforeColonIsValidYaml() {
+        // `analytics : false` 是合法 YAML（PyYAML 解析成 analytics 键）——
+        // Swift 行扫描不认它就与 Python gate 分叉：Python 停记、App 继续记
+        reset()
+        try? "features:\n  analytics : false\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+        // 顶层键同款：`features :` 块形 + 内联花括号形（键旁空白）
+        try? "features :\n  analytics: false\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+        try? "features : {analytics : off}\n"
+            .write(toFile: configPath, atomically: true, encoding: .utf8)
+        #expect(!Analytics.featureEnabled())
+    }
+
+    @Test func nestedOverridesBeatStaleFlatKey() {
+        // 嵌套形 vs 平铺形同文件冲突：嵌套形优先（Python
+        // _apply_settings_overrides 同序、与键序无关）——两侧对同一份
+        // overrides 必须给出同一个 gate 答案
+        reset()
+        writeOverrides(#"{"features.analytics": true, "features": {"analytics": false}}"#)
+        #expect(!Analytics.featureEnabled())
+    }
+
     @Test func unparseableFlagValueFailsClosed() {
         // 值写了但判不动布尔 ⇒ 按损坏 off（Python _config_sources_intact
         // 同一保守探测）；键不存在才落默认 on

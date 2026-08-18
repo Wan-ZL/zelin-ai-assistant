@@ -101,10 +101,23 @@ enum Analytics {
         return nil
     }
 
+    /// 行首键匹配，容忍冒号前空白：`analytics : false` 是合法 YAML（PyYAML
+    /// 照样解析出 analytics 键），Swift 行扫描不认它就与 Python gate 分叉
+    /// ——Python 停记、App 继续记。返回冒号后的原始剩余串；键不匹配 /
+    /// 键与冒号之间混入其它字符 = nil。
+    private static func valueAfterKey(_ line: String, key: String) -> String? {
+        guard line.hasPrefix(key) else { return nil }
+        let rest = String(line.dropFirst(key.count))
+        let ws = rest.prefix(while: { $0 == " " || $0 == "\t" })
+        let afterWS = String(rest.dropFirst(ws.count))
+        guard afterWS.hasPrefix(":") else { return nil }
+        return String(afterWS.dropFirst())
+    }
+
     /// 单个 yaml 文件里 features.analytics 的原始标量。块形（缩进子键）之外
     /// 还认单行内联花括号形 `features: {analytics: false}`——Python 侧 yaml
-    /// 两种都认，行扫描不能只认其一。注释/引号处理对齐
-    /// SettingsIO.configNestedScalar。
+    /// 两种都认，行扫描不能只认其一；冒号前空白（`analytics : false`）同理
+    /// （valueAfterKey）。注释/引号处理对齐 SettingsIO.configNestedScalar。
     private static func configFeaturesAnalyticsRaw(file: String) -> String? {
         guard let text = try? String(contentsOfFile: file, encoding: .utf8)
         else { return nil }
@@ -112,9 +125,9 @@ enum Analytics {
         for rawLine in text.components(separatedBy: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if !inBlock {
-                guard rawLine.hasPrefix("features:") else { continue }
-                let rest = String(rawLine.dropFirst("features:".count))
-                    .trimmingCharacters(in: .whitespaces)
+                guard let after = Self.valueAfterKey(rawLine, key: "features")
+                else { continue }
+                let rest = after.trimmingCharacters(in: .whitespaces)
                 if rest.hasPrefix("{") {
                     // 内联 flow mapping（单行）：{slack_radar: true, analytics: false}
                     var body = String(rest.dropFirst())
@@ -140,9 +153,9 @@ enum Analytics {
                 if line.isEmpty || line.hasPrefix("#") { continue }
                 break  // next top-level key ends the block
             }
-            guard line.hasPrefix("analytics:") else { continue }
-            var v = String(line.dropFirst("analytics:".count))
-                .trimmingCharacters(in: .whitespaces)
+            guard let after = Self.valueAfterKey(line, key: "analytics")
+            else { continue }
+            var v = after.trimmingCharacters(in: .whitespaces)
             if v.hasPrefix("\"") {
                 let inner = String(v.dropFirst())
                 v = inner.firstIndex(of: "\"").map { String(inner[..<$0]) } ?? inner

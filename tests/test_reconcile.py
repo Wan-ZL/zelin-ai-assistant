@@ -49,10 +49,8 @@ class ReconcileBase(unittest.TestCase):
         for p in config.REGISTRY_DIR.glob("*.yaml"):
             p.unlink()
         self.cfg = config.Config()
-        # auto_resume 判定走 load_config_fresh 新鲜读取（§16 追记）——判例
-        # 之间清缓存 + 清真实配置文件，互不串味也不泄漏给后续 suite
-        config.reset_fresh_config_cache()
-        self.addCleanup(config.reset_fresh_config_cache)
+        # auto_resume 判定每 pass 直接重读配置（§16 追记，无缓存）——判例
+        # 之间清真实配置文件，互不串味也不泄漏给后续 suite
         self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
         self.addCleanup(
             lambda: config.SETTINGS_OVERRIDES_PATH.unlink(missing_ok=True))
@@ -292,7 +290,6 @@ class GuardsTestCase(ReconcileBase):
         self._mk_req()
         config.CONFIG_PATH.write_text(
             "execution:\n  auto_resume: false\n", encoding="utf-8")
-        config.reset_fresh_config_cache()
         n, resume = self._reconcile([])
         self.assertEqual(n, 0)
         resume.assert_not_called()
@@ -305,30 +302,29 @@ class GuardsTestCase(ReconcileBase):
         config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
         config.SETTINGS_OVERRIDES_PATH.write_text(
             json.dumps({"features": {"auto_resume": False}}), encoding="utf-8")
-        config.reset_fresh_config_cache()
         n, resume = self._reconcile([])
         self.assertEqual(n, 0)
         resume.assert_not_called()
 
     def test_auto_resume_flip_takes_effect_next_pass_without_restart(self):
-        # §16 追记：判定每 pass 走 load_config_fresh——进程不重启，Settings
-        # 翻开关下一个 reconcile pass 就生效，两个方向都测（「拧了没反应
-        # 要等重启」正是本 flag 修死开关时要杀掉的 bug 形态）
+        # §16 追记：判定每 pass 直接重读配置（无 TTL 缓存——interval 可以配
+        # 得比任何 TTL 短，缓存会把「下一 pass 生效」变成盲窗）——进程不
+        # 重启，Settings 翻开关下一个 reconcile pass 就生效，两个方向都测
+        # （「拧了没反应要等重启」正是本 flag 修死开关时要杀掉的 bug 形态）。
+        # 判例故意不做任何缓存清理/等待：写完文件立刻跑下一 pass 就得生效。
         self._mk_req()
         n, resume = self._reconcile([])         # pass 1：开着，真的 resume 了
         resume.assert_called_once()
-        # 翻关（写真实 overrides；reset 模拟 5s TTL 已过）
+        # 翻关（写真实 overrides，紧接着就是下一 pass——中间零等待）
         config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
         config.SETTINGS_OVERRIDES_PATH.write_text(
             json.dumps({"features": {"auto_resume": False}}), encoding="utf-8")
-        config.reset_fresh_config_cache()
         self._mk_req()                          # 重置 resume_attempts，排除 backoff 干扰
         n, resume = self._reconcile([])         # pass 2：关了，同进程立即停
         self.assertEqual(n, 0)
         resume.assert_not_called()
         # 翻回开：又能 resume（off→on 同样不需要重启）
         config.SETTINGS_OVERRIDES_PATH.unlink()
-        config.reset_fresh_config_cache()
         self._mk_req()
         n, resume = self._reconcile([])         # pass 3
         resume.assert_called_once()

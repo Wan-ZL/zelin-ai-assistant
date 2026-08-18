@@ -2406,10 +2406,12 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
     # 与 §16 feature flag `features.auto_resume`（Settings 开关写的是后者，
     # 经 settings_overrides 落进 cfg.features）——任一为 false 即关。两键默认
     # 都是 true，老配置行为不变（add-only 精神）。
-    # 判定走新鲜读取（load_config_fresh，5s TTL）而非 actd 启动时冻结的
-    # cfg——Settings 翻开关下一个 reconcile pass 就生效，无需重启（§16 追记）；
-    # 其余 startup-frozen 语义不动，只有这一个判定点吃新鲜值。
-    fresh = config.load_config_fresh()
+    # 判定走新鲜读取（每 pass 直接重读一次配置）而非 actd 启动时冻结的
+    # cfg——Settings 翻开关下一个 reconcile pass 就生效、对任意 --interval
+    # 成立，无需重启（§16 追记）。不走任何 TTL 缓存：interval 可以小于任何
+    # TTL，缓存会把「下一 pass 生效」变成盲窗；一 pass 一次 parse 代价可
+    # 忽略。其余 startup-frozen 语义不动，只有这一个判定点吃新鲜值。
+    fresh = config.load_config()
     if not (getattr(fresh, "auto_resume", True) and fresh.feature("auto_resume")):
         return 0
 

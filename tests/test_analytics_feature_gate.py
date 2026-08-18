@@ -92,6 +92,34 @@ class AnalyticsFeatureGateTestCase(unittest.TestCase):
         analytics.log_event("gate_probe_yaml_off")
         self.assertEqual(_events_lines(), before)
 
+    def test_nested_features_beats_stale_flat_key_regardless_of_order(self):
+        # 嵌套形 vs 平铺形同文件冲突（App 只写嵌套形、且不清理手写/历史
+        # 遗留的平铺键）：嵌套形优先、与 JSON 键序无关——镜像 Swift
+        # Analytics.featureEnabled 的读取顺序（嵌套 → 平铺），两侧对同一份
+        # overrides 必须给出同一个 gate 答案，否则 Swift 判关停写、Python
+        # 判开继续把积压传出本机
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            '{"features": {"analytics": false}, "features.analytics": true}',
+            encoding="utf-8")
+        self.assertFalse(config.load_config().feature("analytics"))
+        # 平铺键在前、嵌套块在后：结果一致（与文件键序无关）
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            '{"features.analytics": true, "features": {"analytics": false}}',
+            encoding="utf-8")
+        self.assertFalse(config.load_config().feature("analytics"))
+        # 平铺形单独存在时照常生效（合法的历史拼写不作废）
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            '{"features.analytics": false}', encoding="utf-8")
+        self.assertFalse(config.load_config().feature("analytics"))
+        # 嵌套块存在但没写同名 flag：平铺键照常生效（只让位给真冲突）
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            '{"features.analytics": false, "features": {"digest": false}}',
+            encoding="utf-8")
+        cfg = config.load_config()
+        self.assertFalse(cfg.feature("analytics"))
+        self.assertFalse(cfg.feature("digest"))
+
     # ------------------------------------------------------------------ #
     # 隐私 fail-closed 特例（§16 追记）：读不到配置 = 不记，绝不 raise
     # ------------------------------------------------------------------ #

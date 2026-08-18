@@ -190,6 +190,25 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         self.assertGreater(saved, 0)
         self.assertLess(saved, analytics.EVENTS_PATH.stat().st_size)
 
+    def test_mid_run_flip_stops_even_with_warm_gate_cache(self):
+        # 每 batch 重查必须**绕过 GATE_TTL 进程内缓存**（§16 追记）：缓存里
+        # 躺着 5s 内的 True 时中途翻关也要立即停送——否则隐私重查有一个
+        # TTL 长度的盲窗，「关 = 立即停」的承诺在小积压/快网络下全程失效
+        n = sync.BATCH_SIZE + 7
+        _write_events(*[_event_line("card_sent", i=i) for i in range(n)])
+        self.assertTrue(analytics.feature_gate())  # 预热缓存：True 且未过期
+
+        def transport(rows):
+            self.batches.append(list(rows))
+            # 关掉开关但**不** reset 缓存——模拟 TTL 尚未过期的窗口
+            config.CONFIG_PATH.write_text(
+                "features:\n  analytics: false\n", encoding="utf-8")
+
+        stats = sync.sync_once(cfg=_cfg(), transport=transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
+        self.assertEqual(len(self.batches), 1)  # 尾批 7 条没送出去
+
     def test_default_config_uploads_by_default(self):
         # default-on telemetry (docs/TELEMETRY.md): a plain Config() has
         # enabled=True + the maintainer URL, so events upload out of the box

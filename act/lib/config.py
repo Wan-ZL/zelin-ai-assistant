@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -626,31 +625,6 @@ def load_config() -> Config:
     return cfg
 
 
-# load_config 的 TTL 缓存版：长寿命循环（actd pass）里想看到 Settings 的
-# 即时翻动、又不想逐次付全量 parse 时用（analytics.feature_gate 同款模式）。
-# 只给「必须新鲜」的判定点用；其余 startup-frozen cfg 语义保持不变。
-FRESH_TTL: float = 5.0
-_fresh_cache: Optional[tuple] = None  # (monotonic 过期时刻, Config)
-
-
-def reset_fresh_config_cache() -> None:
-    """清空 load_config_fresh 缓存（测试注入缝）。"""
-    global _fresh_cache
-    _fresh_cache = None
-
-
-def load_config_fresh() -> Config:
-    """当前配置的新鲜视图，最多 FRESH_TTL 秒的陈旧度。Never raises
-    beyond what load_config does（即：不 raise）。"""
-    global _fresh_cache
-    now = _time.monotonic()
-    if _fresh_cache is not None and now < _fresh_cache[0]:
-        return _fresh_cache[1]
-    cfg = load_config()
-    _fresh_cache = (now + FRESH_TTL, cfg)
-    return cfg
-
-
 def resolve_claude_bin(cfg: Optional[Config] = None) -> str:
     """The claude CLI every subprocess site launches (executor/radar/ask/...).
 
@@ -829,6 +803,14 @@ def _apply_settings_overrides(cfg: Config) -> None:
     if not isinstance(data, dict):
         return
 
+    # features 的嵌套形 vs 平铺形同文件冲突（App 只写嵌套形、且不清理手写/
+    # 历史遗留的平铺 features.* 键）：嵌套形优先，且与 JSON 键序无关——镜像
+    # Swift Analytics.featureEnabled 的读取顺序（嵌套 → 平铺）。否则同一份
+    # overrides 两侧读出相反的 analytics gate（§16 隐私 gate 两个读者必须
+    # 给出同一个答案）。
+    _nested_feats = data.get("features")
+    _nested_feats = _nested_feats if isinstance(_nested_feats, dict) else {}
+
     for key, value in data.items():
         try:
             if key == "features" and isinstance(value, dict):
@@ -838,8 +820,11 @@ def _apply_settings_overrides(cfg: Config) -> None:
                     except (TypeError, ValueError):
                         continue  # 单个坏 flag 跳过，别拖累同 dict 的其它 flag
             elif key.startswith("features."):
-                # flat form: {"features.digest": false}
-                cfg.features[key.split(".", 1)[1]] = _coerce_bool(value)
+                # flat form: {"features.digest": false}——嵌套 features 块里
+                # 已有同名 flag 时让位（嵌套形优先，见循环前的注释）
+                flag = key.split(".", 1)[1]
+                if flag not in _nested_feats:
+                    cfg.features[flag] = _coerce_bool(value)
             elif key == "gmail" and isinstance(value, dict):
                 # nested form mirroring config.yaml sources.gmail
                 if value.get("address") is not None:

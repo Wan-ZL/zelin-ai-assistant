@@ -300,12 +300,17 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
   `mac/Sources/Utils.swift Analytics.log`/`firstReach`（`Analytics.featureEnabled()`，
   同一优先级读 overrides → config.yaml → 默认 on；布尔拼写集对齐 PyYAML
   （false/no/off/0 都算关），config.yaml 的 `features:` 块形与单行内联
-  `features: {analytics: false}` 花括号形都认）——两个写者共用同一份
+  `features: {analytics: false}` 花括号形都认，冒号前空白（`analytics :
+  false`，合法 YAML，PyYAML 照样解析）也认；overrides 里嵌套 `features` 块
+  与平铺 `features.*` 键同文件冲突时**嵌套形优先、与键序无关**——两个读者
+  对同一份文件必须给出同一个 gate 答案，Python `_apply_settings_overrides`
+  与 Swift 同序）——两个写者共用同一份
   `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
   `act.analytics_sync.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
   gate**（skipped="analytics_off"；防 TOCTOU——run 中途关掉 flag，余下积压
-  立即停送，已送 batch 的游标保留不回滚），所以关闭前积压在 events.jsonl
-  里的事件也不上传。该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：
+  立即停送，已送 batch 的游标保留不回滚；重查**绕过 GATE_TTL 进程内缓存**、
+  直接重读配置——那缓存是给高频 emit 省 parse 的，隐私重查吃它就是 5s
+  盲窗），所以关闭前积压在 events.jsonl 里的事件也不上传。该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：
   analytics off 连本地记录都没有。
   **隐私 fail-closed 特例**：与本节其它 flag 的 fail-open（默认 on）惯例相反，
   gate 在「配置读不到 / 存在但损坏」时按 **off** 处理——用户显式退出的隐私
@@ -322,9 +327,11 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
   （`Config.auto_resume`）与 feature flag `features.auto_resume`（Settings 窗口开关写的
   是后者，经 overrides 落 `Config.features`）；此前 actd `reconcile_executing` 只读前者，
   Settings 开关是死的。现行语义 = **两键 AND**（任一 false 即关）；两键默认都 true，
-  未配置过的老安装行为不变（add-only）。该判定每个 reconcile pass 走
-  `config.load_config_fresh()`（5s TTL）**新鲜读取**，不吃 actd 启动时冻结的
-  cfg——Settings 翻开关（两个方向）下一 pass 即生效，无需重启 actd；actd 其余
+  未配置过的老安装行为不变（add-only）。该判定每个 reconcile pass **直接重读
+  一次配置**（`config.load_config()`，无 TTL 缓存——`--interval` 可以配得比
+  任何 TTL 短，缓存会把「下一 pass 生效」变成盲窗；一 pass 一次 parse 代价
+  可忽略），不吃 actd 启动时冻结的 cfg——Settings 翻开关（两个方向）下一
+  pass 即生效、对任意 interval 成立，无需重启 actd；actd 其余
   startup-frozen cfg 语义不变，只有这一个判定点吃新鲜值。判例：
   tests/test_reconcile.py 的 flag off 用例 + 「进程内翻开关下一 pass 生效」用例。
 

@@ -279,11 +279,14 @@ def sync_once(cfg: Optional[config.Config] = None,
             batch_end = end
             if len(batch) >= BATCH_SIZE:
                 # TOCTOU（§16 追记）：run 开始后用户可能已关 flag——每个
-                # batch 送出前重查**新鲜** gate（feature_gate 自带 5s TTL，
-                # 代价可忽略；不能复用本次 run 冻结的 cfg，冻结值看不见
-                # 中途翻动），关了立即停，余下积压留在本机。已送 batch 的
-                # 游标已保存，不回滚——送出的收不回来，只能不再送。
-                if not analytics.feature_gate():
+                # batch 送出前重查**新鲜** gate：重新 load_config 传给
+                # feature_gate，绕过 GATE_TTL 进程内缓存（那 5s 缓存是给
+                # 高频 emit 省 parse 的，隐私重查吃它就成了 5s 盲窗）；也
+                # 不能复用本次 run 冻结的 cfg，冻结值看不见中途翻动。每
+                # 500 行付一次 parse，代价可忽略。关了立即停，余下积压留
+                # 在本机；已送 batch 的游标已保存，不回滚——送出的收不
+                # 回来，只能不再送。
+                if not analytics.feature_gate(config.load_config()):
                     stats["skipped"] = "analytics_off"
                     return stats
                 send(batch)
@@ -292,7 +295,8 @@ def sync_once(cfg: Optional[config.Config] = None,
                 stats["batches"] += 1
                 batch = []
         if batch:
-            if not analytics.feature_gate():  # 同上：尾批送出前重查
+            # 同上：尾批送出前重查（同样绕过 GATE_TTL 缓存）
+            if not analytics.feature_gate(config.load_config()):
                 stats["skipped"] = "analytics_off"
                 return stats
             send(batch)
