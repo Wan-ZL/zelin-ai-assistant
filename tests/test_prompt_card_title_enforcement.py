@@ -17,8 +17,10 @@
   仍准确原样重复亦可（旧自愿制「名字仍然贴切就省略」文案退役）。
 - user_titled=true 的卡 → 收尾指令**完全不提** CARD TITLE（用户钦定 LLM
   永不覆盖，连请求都不发）。
-- rework gate line 同一分档：非 user_titled 注入现值 + 必须重新审视；
-  user_titled 无 CARD TITLE 请求。
+- rework gate line 同一分档（三档齐全，判定收敛在 executor._card_title_tier）：
+  user_titled 无 CARD TITLE 请求；无 display_title 且冻结 title 不可读 /
+  direct-run → 强制给行、无「原样重复」豁免（首轮没给 CARD TITLE 被打回的卡
+  落此档）；其余注入现值 + 必须重新审视、原样重复亦可。
 """
 import subprocess
 import tempfile
@@ -213,7 +215,8 @@ class ReworkGateTitleTierTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _rework_prompt(self, **fields) -> str:
-        req = Requirement(id="R-970", title="打回测试",
+        fields.setdefault("title", "打回测试")
+        req = Requirement(id="R-970",
                           status=State.REVIEW.value,
                           execution={"session_id": "feedc0de", "done": True},
                           **fields)
@@ -238,6 +241,30 @@ class ReworkGateTitleTierTestCase(unittest.TestCase):
         prompt = self._rework_prompt(display_title="用户钉的名字",
                                      user_titled=True)
         self.assertNotIn("CARD TITLE", prompt)
+
+    # ---- 强制档：首轮交付没给 CARD TITLE 行、harvest 落空后被打回的卡 ----
+
+    def test_rework_prompt_unreadable_title_forces_no_repeat_exemption(self):
+        prompt = self._rework_prompt(
+            title="https://www.youtube.com/watch?v=abc123")
+        self.assertIn("必须", prompt)
+        self.assertIn("CARD TITLE", prompt)
+        self.assertNotIn(_REPEAT, prompt)          # 强制档无「原样重复」豁免
+        self.assertNotIn("重新审视卡片显示名", prompt)
+
+    def test_rework_prompt_direct_run_forces_no_repeat_exemption(self):
+        prompt = self._rework_prompt(
+            title="帮我看下这个报错", notes="[direct-run] 用户直接开跑")
+        self.assertIn("CARD TITLE", prompt)
+        self.assertNotIn(_REPEAT, prompt)
+
+    def test_rework_prompt_forced_tier_yields_to_existing_display_title(self):
+        # 上一轮已 harvest 到显示名的不可读卡 → 回到第三档（与 dispatch 同判例）
+        prompt = self._rework_prompt(
+            title="https://example.com/a/b", display_title="整理供应商对比表")
+        self.assertIn("必须重新审视卡片显示名", prompt)
+        self.assertIn("「整理供应商对比表」", prompt)
+        self.assertIn(_REPEAT, prompt)
 
 
 class SameValueNoOpTestCase(unittest.TestCase):

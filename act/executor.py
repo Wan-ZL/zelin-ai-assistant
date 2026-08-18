@@ -266,6 +266,32 @@ def _training_block() -> str:
     )
 
 
+def _card_title_tier(req: Requirement) -> tuple[str, bool]:
+    """§37.1 v0.47 CARD TITLE 三档分档 — dispatch 与 rework 的**唯一判定点**
+    （法条明文「build_prompt / rework 同一分档逻辑」，共用这一个函数保证
+    两边永不漂移）。返回 (tier, direct_run)：
+
+    - ``"user"``：user_titled 钦定卡 → 收尾指令完全不提 CARD TITLE；
+    - ``"forced"``：无 display_title 且「冻结 title 不可读（唯一真源 =
+      titles.is_unreadable_title）或 direct-run 卡」→ 本轮交付必须给
+      CARD TITLE 行，无「原样重复」豁免；
+    - ``"recheck"``：其余卡 → 注入现值 + 每轮必须重新审视，仍准确原样
+      重复亦可。
+
+    direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
+    首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
+    里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
+    str() 防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。"""
+    from act.lib import titles
+    direct_run = str(req.notes or "").lstrip().startswith("[direct-run]")
+    if getattr(req, "user_titled", False):
+        return "user", direct_run
+    if not getattr(req, "display_title", None) \
+            and (titles.is_unreadable_title(req.title) or direct_run):
+        return "forced", direct_run
+    return "recheck", direct_run
+
+
 def _current_display_name(req: Requirement) -> str:
     """卡片此刻在看板上的显示名 — 与 dashboard 投影同一条 fallback 链（§37.1）：
 
@@ -401,17 +427,11 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     # 原样重复亦可（same-value 由 registry.set_display_title 的 no-op 兜底，不
     # 污染 former_titles）。user_titled 钦定卡收尾指令完全不提 CARD TITLE（§37.1
     # 用户钦定 LLM 永不覆盖——连请求都不该发）。刷新时机不变（§37.1：harvest 仍
-    # 只在轮次边界收割）。
-    from act.lib import titles
-    # direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
-    # 首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
-    # 里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
-    # str() 防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。
-    direct_run = str(req.notes or "").lstrip().startswith("[direct-run]")
-    if getattr(req, "user_titled", False):
+    # 只在轮次边界收割）。分档判定收敛在 _card_title_tier（rework 同源）。
+    tier, direct_run = _card_title_tier(req)
+    if tier == "user":
         pass  # 用户钦定名：不发任何 CARD TITLE 请求
-    elif not getattr(req, "display_title", None) \
-            and (titles.is_unreadable_title(req.title) or direct_run):
+    elif tier == "forced":
         reason = ("这张卡由 direct-run 直接开跑，名字目前是用户原文截断，"
                   "请在第一轮交付就给出 CARD TITLE" if direct_run else
                   "这张卡当前没有人类可读的名字（原始标题是 URL、文件路径或"
@@ -1507,12 +1527,20 @@ def rework(
                                       f"session cwd {target}")
     ex.setdefault("root_session_id", sid)
 
-    # §37.1 v0.47 第三档（与 build_prompt 同一分档）：rework 收尾也强制重新
-    # 审视显示名——user_titled 钦定卡完全不提 CARD TITLE（连请求都不发），
+    # §37.1 v0.47 三档（与 build_prompt 共用 _card_title_tier，同一分档逻辑）：
+    # user_titled 钦定卡完全不提 CARD TITLE（连请求都不发）；强制档（无
+    # display_title 且冻结 title 不可读 / direct-run——首轮交付没给 CARD TITLE
+    # 行、harvest 落空后被打回即落此档）本轮必须给行、无「原样重复」豁免；
     # 其余卡注入现值 + 「过时必须换、仍准确原样重复亦可」（same-value 由
     # set_display_title no-op 兜底）。
-    if getattr(req, "user_titled", False):
+    tier, _ = _card_title_tier(req)
+    if tier == "user":
         title_line = ""
+    elif tier == "forced":
+        title_line = (
+            "这张卡还没有人类可读的显示名：本轮交付**必须**在总结里加单独一行 "
+            "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头，概括任务本身）。"
+        )
     else:
         title_line = (
             f"收尾必须重新审视卡片显示名（当前是「{_current_display_name(req)}」）："
