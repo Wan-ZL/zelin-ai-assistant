@@ -266,6 +266,17 @@ def _training_block() -> str:
     )
 
 
+def _current_display_name(req: Requirement) -> str:
+    """卡片此刻在看板上的显示名 — 与 dashboard 投影同一条 fallback 链（§37.1）：
+
+    存量 display_title → titles.sanitize_title(title) → 冻结 title。给 v0.47
+    第三档收尾指令注入「现值」用：agent 对照它判断名字是否过时。纯函数，
+    不抛异常（sanitize_title 对任意输入 total）。"""
+    from act.lib import titles
+    stored = str(getattr(req, "display_title", None) or "").strip()
+    return stored or titles.sanitize_title(req.title) or str(req.title or "")
+
+
 def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
                  target: Optional[Path] = None) -> str:
     """``target`` = dispatch 已解析的实际 cwd（含 chat 模式目录不存在时的回退）；
@@ -385,15 +396,21 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     # display_title）且 (a) 冻结 title 属于三种不可读形态（URL/路径/超长截断，
     # titles.is_unreadable_title 与 sanitize_title 同一口径），或 (b) direct-run
     # 卡（§34 完全不过 LLM，title=用户原话截 80，起点就没有显示名）——这两种卡
-    # 本轮交付必须给 CARD TITLE 行；其余卡维持自愿制原文案。刷新时机不变
-    # （§37.1：harvest 仍只在轮次边界收割），这里只提高该行出现的概率。
+    # 本轮交付必须给 CARD TITLE 行。v0.47 第三档：其余非 user_titled 卡由自愿制
+    # 升级为「每轮必须重新审视」——prompt 注入当前显示名，名字过时必须换、仍准确
+    # 原样重复亦可（same-value 由 registry.set_display_title 的 no-op 兜底，不
+    # 污染 former_titles）。user_titled 钦定卡收尾指令完全不提 CARD TITLE（§37.1
+    # 用户钦定 LLM 永不覆盖——连请求都不该发）。刷新时机不变（§37.1：harvest 仍
+    # 只在轮次边界收割）。
     from act.lib import titles
     # direct-run 判定只看 notes **首行**是否以创建标签开头（actd 铸卡时写的
     # 首行是「[direct-run] 用户直接开跑」）——提升/fold 都只追加行，用户原文
     # 里出现字面 [direct-run] 也永远进不了首行，避免 prose 面包屑被当信号。
     # str() 防御非 str notes（手写卡 notes: 123，对齐 registry 同款写法）。
     direct_run = str(req.notes or "").lstrip().startswith("[direct-run]")
-    if not getattr(req, "display_title", None) \
+    if getattr(req, "user_titled", False):
+        pass  # 用户钦定名：不发任何 CARD TITLE 请求
+    elif not getattr(req, "display_title", None) \
             and (titles.is_unreadable_title(req.title) or direct_run):
         reason = ("这张卡由 direct-run 直接开跑，名字目前是用户原文截断，"
                   "请在第一轮交付就给出 CARD TITLE" if direct_run else
@@ -407,11 +424,12 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
         )
     else:
         blocks.append(
-            "\n## CARD TITLE (optional)\n"
-            "如果这轮工作让卡片现在的名字过时了（讨论演化出了新的实质），在结束总结里"
-            "加**单独一行** `CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头，说清"
-            "这卡现在在干什么；chat 交付时放在 FINAL DRAFT: 行之前）。名字仍然贴切就"
-            "省略这一行。"
+            "\n## CARD TITLE (re-check required)\n"
+            f"这张卡当前的看板显示名是「{_current_display_name(req)}」。收尾时"
+            "**必须**重新审视它：若它已不能准确概括本卡当前的核心动作，必须在"
+            "结束总结里输出**单独一行** `CARD TITLE: <新标题>`（<=40 字中文"
+            "大白话，动词开头，说清这卡现在在干什么；chat 交付时放在 "
+            "FINAL DRAFT: 行之前）；若仍准确，原样重复该行亦可。"
         )
 
     if delivery_mode == "chat":
@@ -1489,6 +1507,20 @@ def rework(
                                       f"session cwd {target}")
     ex.setdefault("root_session_id", sid)
 
+    # §37.1 v0.47 第三档（与 build_prompt 同一分档）：rework 收尾也强制重新
+    # 审视显示名——user_titled 钦定卡完全不提 CARD TITLE（连请求都不发），
+    # 其余卡注入现值 + 「过时必须换、仍准确原样重复亦可」（same-value 由
+    # set_display_title no-op 兜底）。
+    if getattr(req, "user_titled", False):
+        title_line = ""
+    else:
+        title_line = (
+            f"收尾必须重新审视卡片显示名（当前是「{_current_display_name(req)}」）："
+            "若已不能准确概括本卡当前核心动作，必须在总结里加单独一行 "
+            "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头）；"
+            "若仍准确，原样重复该行亦可。"
+        )
+
     # v0.10: gate reminder follows the requirement's delivery mode.
     if (getattr(req, "delivery_mode", None) or "repo") == "chat":
         # CONTRACT §33: file-type deliverables live under the WORKBENCH
@@ -1503,14 +1535,12 @@ def rework(
             f"文件型交付物（HTML 等）例外：写到 {repo_target}/deliverables/ 下的"
             "文件并在 FINAL DRAFT: 后报绝对路径，不贴源码。"
             "提到任何文件一律用绝对路径。"
-            "若这轮改动让卡片名字过时了，可在总结里加单独一行 "
-            "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头）更新看板显示名。"
+            + title_line
         )
     else:
         gate_line = ("原有 QUALITY GATE 规则不变（draft 交付、不 merge、不对外发消息）。"
                      "提到任何文件一律用绝对路径。"
-                     "若这轮改动让卡片名字过时了，可在总结里加单独一行 "
-                     "`CARD TITLE: <新标题>`（<=40 字中文大白话，动词开头）更新看板显示名。")
+                     + title_line)
     prompt = (
         "Zelin 验收后打回了这次交付，追加要求如下（在原有上下文上继续，不要重做已完成的部分）：\n"
         f"{feedback.strip()}\n\n"

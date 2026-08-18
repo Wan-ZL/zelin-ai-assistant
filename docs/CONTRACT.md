@@ -1433,6 +1433,26 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
     「请在第一轮交付就给出」）；其余卡维持自愿制原文案（byte-identical，
     零回归）。这只提高该行出现的概率——**收割/刷新时机不变**（仍只在轮次
     边界，user_titled 钦定仍不可覆盖），rework gate line 维持自愿制。
+  - **每轮强制刷新（v0.47，第三档，add-only）**：dispatch prompt 与 rework
+    gate line 的 CARD TITLE 段按卡分三档（`executor.build_prompt` /
+    `executor.rework` 同一分档逻辑）：
+    ① `user_titled=true` → 收尾指令**完全不提** CARD TITLE——用户钦定名
+    LLM/harvest 永不覆盖（本节既有法条），连请求都不该发；
+    ② v0.46 的强制两档条件与文案**不变**（无 `display_title` 且「冻结 title
+    不可读 或 direct-run」→ 本轮交付必须给 `CARD TITLE:` 行，无「原样重复」
+    豁免）；
+    ③ 其余卡：自愿制升级为**每轮必须重新审视**——prompt 注入当前显示名
+    （现值 = 与 dashboard 投影同一条 fallback 链：存量 `display_title` →
+    `titles.sanitize_title(title)` → 冻结 `title`；
+    `executor._current_display_name`），若现值已不能准确概括本卡当前核心
+    动作，**必须**输出单独一行 `CARD TITLE: <≤40字中文大白话、动词开头>`；
+    若仍准确，原样重复该行亦可。本档起 rework gate line 的「维持自愿制」
+    被 ③ 取代（add-only 追记，v0.46 段旧文不改）。
+    **幂等保护**：`registry.set_display_title`（唯一落笔点）对 same-value
+    是 no-op——返回 False、不追加 `former_titles`、不产生「refreshed」
+    日志——session 每轮原样重复同名经 harvest→set_display_title 走一遍也
+    不污染曾用名、不制造假变更。收割/刷新时机仍只在轮次边界，user_titled
+    钦定仍不可覆盖。
 - **inbox 动作全集（§10）新增 `set_title`**：
   ```json
   {"id":"R-xxx","action":"set_title","title":"<新显示名>","ts":"<ISO8601>"}
