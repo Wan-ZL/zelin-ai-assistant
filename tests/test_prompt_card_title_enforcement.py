@@ -177,11 +177,22 @@ class PromptEnforcementTestCase(unittest.TestCase):
         self.assertIn(_RECHECK, prompt)
         self.assertNotIn(_MANDATORY, prompt)
 
-    def test_unreadable_title_without_display_falls_back_sanitized(self):
-        # 第三档现值链：URL title 无存量名时注入 sanitize_title 的可读投影
+    def test_whitespace_title_without_display_injects_sanitized(self):
+        # 第三档现值链的 sanitize 环节真实做功：可读 title 的内部多空白被折叠
+        # 后注入（URL/路径/超长 title 无存量名走第②强制档不注入，不在此链上）
         prompt = self._prompt(Requirement(
-            id="R-113", title="整理 EB-1A 推荐信材料清单"))
+            id="R-113", title="整理  EB-1A   推荐信材料清单"))
         self.assertIn("「整理 EB-1A 推荐信材料清单」", prompt)
+
+    def test_overlong_stored_display_title_clipped_to_dashboard_width(self):
+        # 手编 YAML 的超长存量名注入前按 MAX_DISPLAY_TITLE 截断（与 dashboard
+        # 投影同口径）——否则「原样重复」经 clip_title 折叠会被判改名，旧长名
+        # 被追进 former_titles（假 rename）
+        long_name = "长" * 80
+        prompt = self._prompt(Requirement(
+            id="R-114", title="修复登录 bug", display_title=long_name))
+        self.assertIn("「" + "长" * 64 + "」", prompt)
+        self.assertNotIn(long_name, prompt)
 
     # ---- v0.47 第一档：user_titled 钦定卡收尾指令完全不提 CARD TITLE ----
 

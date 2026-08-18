@@ -1451,8 +1451,11 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
     **幂等保护**：`registry.set_display_title`（唯一落笔点）对 same-value
     是 no-op——返回 False、不追加 `former_titles`、不产生「refreshed」
     日志——session 每轮原样重复同名经 harvest→set_display_title 走一遍也
-    不污染曾用名、不制造假变更。收割/刷新时机仍只在轮次边界，user_titled
-    钦定仍不可覆盖。
+    不污染曾用名、不制造假变更。边界：**无存量 `display_title` 的第三档卡
+    首轮**，注入的现值是 sanitize 投影——agent 原样重复它会把投影**物化**为
+    `display_title`（一次真写入 + 一条 refreshed 日志；看板显示名不变、
+    `former_titles` 不受影响），自第二轮起才是严格 no-op。收割/刷新时机仍
+    只在轮次边界，user_titled 钦定仍不可覆盖。
 - **inbox 动作全集（§10）新增 `set_title`**：
   ```json
   {"id":"R-xxx","action":"set_title","title":"<新显示名>","ts":"<ISO8601>"}

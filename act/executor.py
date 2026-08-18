@@ -300,6 +300,10 @@ def _current_display_name(req: Requirement) -> str:
     不抛异常（sanitize_title 对任意输入 total）。"""
     from act.lib import titles
     stored = str(getattr(req, "display_title", None) or "").strip()
+    # 存量值与 dashboard._display_title 同口径截断：手编 YAML 的超长 display_title
+    # 若全量注入，agent「原样重复」经 harvest 的 clip_title 折叠后 != 存量值，
+    # 会被 set_display_title 判为改名——旧长名被追进 former_titles（假 rename）。
+    stored = stored[:titles.MAX_DISPLAY_TITLE]
     return stored or titles.sanitize_title(req.title) or str(req.title or "")
 
 
