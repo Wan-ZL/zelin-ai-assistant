@@ -53,6 +53,14 @@ LIGHT_STATES = (
     registry.State.CARD_SENT.value,
 )
 
+# Primary must still be an open card at execute time (the check ran detached
+# for a while) — module-level so the crash-retry convergence shares the tuple.
+_OPEN_STATES = (
+    registry.State.DETECTED.value, registry.State.RAISING.value,
+    registry.State.CARD_SENT.value, registry.State.APPROVED.value,
+    registry.State.EXECUTING.value, registry.State.REVIEW.value,
+)
+
 PENDING_TIMEOUT_MIN = 20   # a check stuck "pending" this long is failed (sweep)
 TTL_HOURS = 24             # done/failed job files are purged after this
 
@@ -330,57 +338,90 @@ def queue_briefing(req: registry.Requirement, text: str) -> None:
     the §39.2 safe window (working sessions are never interrupted)."""
     ex = dict(req.execution or {})
     pend = list(ex.get("pending_briefings") or [])
-    if text and text not in pend:
+    # 已投递台账（executor.brief 落账）也算重复——crash-retry 重放时第一跑
+    # 排队的同文本可能已被 reconcile_executing（先于 consume_judged 跑）
+    # flush 并清队，只查 pending 会二次入队、会话收到两遍同一段背景信息
+    # （review finding，2026-08-18 第二轮）。
+    delivered = [str(t) for t in (ex.get("delivered_briefings") or [])]
+    if text and text not in pend and text not in delivered:
         pend.append(text)
         ex["pending_briefings"] = pend
         req.execution = ex
 
 
 def _applied_merge_note(primary: registry.Requirement,
-                        secondary_id: str) -> Optional[str]:
-    """crash-retry 探测：主卡上已有本副卡的静默并入 fold note 时返回其原文，
-    否则 None。幂等键是**副卡 id**（不可变）而不是 note 全文——note 嵌着
-    display_title，而重启 pass 里 process_inbox（用户改名）/process_raising
-    （analyze 重写 display_title）都跑在 consume_judged 之前，标题在 crash 与
-    retry 之间可以漂移，按全文判重会落空导致 fold 翻倍（review finding，
-    2026-08-18）。「静默并入 {id}「」前缀是 §44.4 冻结行文法，且 §44.2
-    pre-filing fold 的 note 是 req.title 原文，不会撞上这个前缀。"""
+                        secondary_id: str) -> Optional[dict]:
+    """crash-retry 探测：主卡上已有本副卡的静默并入 fold note 时返回该
+    parse_fold_notes 条目（text/ts/split_into），否则 None。幂等键是**副卡
+    id**（不可变）而不是 note 全文——note 嵌着 display_title，而重启 pass 里
+    process_inbox（用户改名）/process_raising（analyze 重写 display_title）
+    都跑在 consume_judged 之前，标题在 crash 与 retry 之间可以漂移，按全文
+    判重会落空导致 fold 翻倍（review finding，2026-08-18）。「静默并入 {id}「」
+    前缀是 §44.4 冻结行文法，且 §44.2 pre-filing fold 的 note 是 req.title
+    原文，不会撞上这个前缀。已拆出的 note 也算命中——用户在窗口内拆出时，
+    绝不能让 fresh 路径把同一副卡再 fold 一遍。"""
     prefix = f"静默并入 {secondary_id}「"
     for e in registry.parse_fold_notes(primary.notes):
         if e["kind"] == "radar" and e["text"].startswith(prefix):
-            return e["text"]
+            return e
     return None
 
 
-def execute(primary: registry.Requirement, secondary: registry.Requirement,
-            brief: str = "") -> bool:
-    """Fold ``secondary`` into ``primary`` and trash it. Reversible on both
-    ends: the fold note carries a [@ts] split handle, the secondary keeps
-    ``prev_status`` for restore. Returns False when the states no longer
-    qualify (registry moved since the check was filed). Crash-retry safe:
-    a rerun after a mid-fold crash detects the already-applied fold note
-    (keyed on the immutable secondary id) and converges to the §44.4 end
-    state without re-counting (outcome ``ok_retry``)."""
-    if secondary.status not in LIGHT_STATES:
-        return False
-    # primary must still be an open card (the check ran detached for a while)
-    open_states = (
-        registry.State.DETECTED.value, registry.State.RAISING.value,
-        registry.State.CARD_SENT.value, registry.State.APPROVED.value,
-        registry.State.EXECUTING.value, registry.State.REVIEW.value,
-    )
-    if primary.status not in open_states:
-        return False
-    applied = _applied_merge_note(primary, secondary.id)
-    if applied is not None:
-        # crash-retry（TLA+ 模型检查发现，docs/design/SilentMerge.tla）：上一次
-        # execute 在 save(primary) 之后、trash(secondary) 之前死掉，job 文件仍是
-        # "judged"，重启后走到这里。fold 半程已落盘——计数增量
-        # （silent_merge_count、副卡整体的 repeated_mentions 累加）绝不能二次
-        # 施加；pair ledger 终生一次 + LIGHT 复检挡住了「同 pair 二次合并」，
-        # 所以命中只可能是本 job 的重跑。但 crash 窗口内副卡可能又吸了新
-        # capture（§44.2 pre-filing fold 跑在 consume_judged 之前）——sources
-        # 去重合并幂等，补上，别把窗口增量跟着副卡埋进回收站（review
+def _merge_event_logged(primary_id: str, secondary_id: str) -> bool:
+    """crash-retry 收敛专用：本 pair 的 ok/ok_retry 事件是否已落过。只扫
+    最近 48h（job TTL 24h 的两倍裕量，retry 实际发生在重启后的下一个 pass）
+    ——events.jsonl 只追加，全量扫不进 daemon pass。读失败按未落处理：宁可
+    digest 多计一次，也不让收敛路径崩 pass（宪法第 11 条）。"""
+    import datetime as _dt
+    since = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=48)
+    try:
+        for e in analytics.read_events(since=since):
+            if e.get("event") == "silent_merge" \
+                    and e.get("primary") == primary_id \
+                    and e.get("secondary") == secondary_id \
+                    and e.get("outcome") in ("ok", "ok_retry"):
+                return True
+    except Exception:  # noqa: BLE001 - observability probe must not raise
+        pass
+    return False
+
+
+def _converge_half_fold(primary: registry.Requirement,
+                        secondary: registry.Requirement,
+                        entry: dict) -> bool:
+    """crash-retry 收敛（TLA+ 模型检查发现，docs/design/SilentMerge.tla）：
+    上一次 execute 半程死掉、job 仍是 "judged"，重跑在主卡上检出本副卡的
+    fold 标记后进到这里。pair ledger 终生一次挡住了「同 pair 二次合并」，
+    命中只可能是本 job 的重跑。按双卡当前状态三分收敛，绝不静默 done：
+
+    1. 副卡已被本次合并 trash（reason 指向主卡）→ 数据侧终态已达成，只补
+       观测面（analytics + §44.6 回执）；
+    2. 卡对仍满足 §44.4 前置（副卡 LIGHT、主卡 open）→ 补完合并；
+    3. 其余（副卡在窗口内被批准/派发/被别的动作收走，或主卡不再 open）→
+       §44.4 铁律：已投入的卡绝不静默移除 ⇒ 合并中止，主卡半程记账按拆出
+       语义收敛（与用户 split_note 判例一致：note 打 [已拆出 →副卡]，
+       累计计数不回滚）并留审计 note，analytics 记 retry_aborted。
+    """
+    applied = str(entry.get("text") or "")
+    my_reason = f"silent-merge: 已并入 {primary.id}"
+    if secondary.status == registry.State.TRASHED.value \
+            and str(secondary.trash_reason or "") == my_reason:
+        # 情形 1：第一跑死在 trash 落盘之后、log_event/回执之前（review
+        # finding，2026-08-18 第二轮）——旧序在 LIGHT 复检处 False，本次
+        # 合并从 digest 计数与 §44.6 回执里整个消失，还留一条说谎的
+        # state_moved。事件先查后补（更晚的 crash 点已落过 ok 就不再记，
+        # 防 digest 双计）；回执 record 自带 TTL 同键去重，直接重放。
+        if not _merge_event_logged(primary.id, secondary.id):
+            analytics.log_event("silent_merge", primary=primary.id,
+                                secondary=secondary.id, outcome="ok_retry")
+        from act.lib import fold_receipts
+        fold_receipts.record(primary.id, "radar", applied)
+        return True
+    if secondary.status in LIGHT_STATES and primary.status in _OPEN_STATES:
+        # 情形 2：fold 半程已落盘——计数增量（silent_merge_count、副卡整体的
+        # repeated_mentions 累加）绝不能二次施加。但 crash 窗口内副卡可能又
+        # 吸了新 capture（§44.2 pre-filing fold 跑在 consume_judged 之前）——
+        # sources 去重合并幂等，补上，别把窗口增量跟着副卡埋进回收站（review
         # finding，2026-08-18）；只为窗口内的**新增**来源计 mentions
         # （_fold_hit 同款 added 语义，重放时 added=0 天然幂等）。
         merged, added = registry._dedupe_sources(
@@ -392,10 +433,11 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
         if primary.status == registry.State.EXECUTING.value:
             # 主卡可能在 crash 窗口被批准并于本 pass 早段派发（dispatch_approved
             # 先于 consume_judged）——§44.3 briefing 与成功路径对称；
-            # queue_briefing 按文本去重，重放无害（review finding，2026-08-18）。
+            # queue_briefing 按 pending+已投递台账去重，重放无害（review
+            # finding，2026-08-18）。
             queue_briefing(primary, f"{applied}（原卡已进回收站，可恢复）")
         registry.save(primary)      # 与成功路径同序：主卡先落盘
-        registry.trash(secondary, f"silent-merge: 已并入 {primary.id}")
+        registry.trash(secondary, my_reason)
         analytics.log_event("silent_merge", primary=primary.id,
                             secondary=secondary.id, outcome="ok_retry")
         # §44.6 回执：补完路径的合并同样发生了——不留回执用户就看不到这次
@@ -404,6 +446,46 @@ def execute(primary: registry.Requirement, secondary: registry.Requirement,
         from act.lib import fold_receipts
         fold_receipts.record(primary.id, "radar", applied)
         return True
+    # 情形 3：合并中止（review finding，2026-08-18 第二轮：旧序先做状态复检，
+    # 这里会静默 return False → job 标 done，主卡带着半程合并记账、副卡却
+    # 活着执行——永久半 fold）。收敛 = 把半程 fold note 打上 [已拆出 →副卡]
+    # （副卡本人就是活着的那张卡，正是拆出语义；mark_note_split 已拆过返回
+    # False，天然幂等）+ 审计 note 留痕。计数不回滚：与 §38.2 用户 split_note
+    # 判例一致，「已并入×N」chip 是累计账，拆出不减账。
+    changed = False
+    if entry.get("ts") and not entry.get("split_into"):
+        changed = registry.mark_note_split(primary, entry["ts"], secondary.id)
+    audit = (f"并入中止：卡对状态已变（主卡 {primary.status} / "
+             f"副卡 {secondary.status}），{secondary.id} 保留为独立卡")
+    if registry.append_fold_note(primary, audit, "radar"):
+        changed = True
+    if changed:
+        registry.save(primary)
+    analytics.log_event("silent_merge", primary=primary.id,
+                        secondary=secondary.id, outcome="retry_aborted")
+    return False
+
+
+def execute(primary: registry.Requirement, secondary: registry.Requirement,
+            brief: str = "") -> bool:
+    """Fold ``secondary`` into ``primary`` and trash it. Reversible on both
+    ends: the fold note carries a [@ts] split handle, the secondary keeps
+    ``prev_status`` for restore. Returns False when the states no longer
+    qualify (registry moved since the check was filed). Crash-retry safe:
+    a rerun after a mid-fold crash detects the already-applied fold note
+    (keyed on the immutable secondary id) and converges — the marker probe
+    runs BEFORE the state re-checks, because the crash window can also move
+    the cards (review finding, 2026-08-18 第二轮). All non-ok exits log
+    their own analytics outcome (state_moved / retry_aborted) — the caller
+    only keeps the job ledger."""
+    applied = _applied_merge_note(primary, secondary.id)
+    if applied is not None:
+        return _converge_half_fold(primary, secondary, applied)
+    if secondary.status not in LIGHT_STATES \
+            or primary.status not in _OPEN_STATES:
+        analytics.log_event("silent_merge", primary=primary.id,
+                            secondary=secondary.id, outcome="state_moved")
+        return False
     note = f"静默并入 {secondary.id}「{secondary.display_title or secondary.title}」"
     if brief and brief != "无新增信息":
         note += f"：{brief}"
@@ -525,12 +607,11 @@ def consume_judged() -> int:
             analytics.log_event("silent_merge", primary=primary.id,
                                 secondary=secondary.id, outcome="execute_failed")
             continue
+        # analytics outcome（state_moved/retry_aborted/ok*）由 execute 自记
+        # ——它才分得清「普通状态挪动」和「半程合并被中止」；这里只管 job 台账。
         _finish(job_id, "done", verdict="merged" if ok else "skipped")
         if ok:
             merged += 1
-        else:
-            analytics.log_event("silent_merge", primary=primary.id,
-                                secondary=secondary.id, outcome="state_moved")
     return merged
 
 

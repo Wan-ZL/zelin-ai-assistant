@@ -61,6 +61,25 @@ model-fidelity gap：模型里的 fold 标记是稳定抽象量，实现必须�
 `test_crash_retry_keeps_window_gained_sources`、
 `test_crash_retry_briefs_a_freshly_dispatched_primary`。
 
+**同日第二轮收敛**（review 发现，实现侧补漏、模型状态空间不变）：
+
+- **标记探测先于状态复检**：crash 窗口不止改标题，还能挪状态——副卡在重启
+  pass 早段被批准派发（dispatch_approved 先于 consume_judged）时，旧序在
+  LIGHT 复检处直接 False → job 标 done，主卡带着半程合并记账、副卡活着执行，
+  **永久半 fold**。现改为检出标记后按双卡现状三分收敛（§44.4：补观测面 /
+  补完 / 按拆出语义中止 + `retry_aborted`），绝不静默 done。判例：
+  `test_crash_retry_aborts_when_secondary_got_invested`。
+- **trash 之后、log_event/回执之前的 crash 窗口**：数据侧终态已达成但观测面
+  全丢（digest 少计、§44.6 回执永不发、留一条说谎的 state_moved）。现由
+  三分收敛的情形 1 补齐（事件先查后补，防「死在 log_event 与回执之间」的
+  更小窗口造成 digest 双计）。判例：
+  `test_crash_retry_after_trash_reemits_observability`。
+- **briefing 重放**：第一跑排队的 briefing 可能已被 reconcile（先于
+  consume_judged）flush 清队，retry 仅查 pending 的去重失效 → 同文本二次
+  投递。现 executor.brief 落 `delivered_briefings` 台账（环形 20 条），
+  queue_briefing 双重去重。判例：
+  `test_retry_briefing_not_requeued_after_flush`。
+
 ## 模型的边界（诚实声明)
 
 - 单 pair 单 job：`MAX_OUTSTANDING` 并发上限没有建模（它是节流不是安全性）。
@@ -70,5 +89,11 @@ model-fidelity gap：模型里的 fold 标记是稳定抽象量，实现必须�
   凡把标记搭在可变文本上，模型的 `FoldOnce` 结论对实现不成立
   （2026-08-18 review 判例）。
 - 时间被抽象成非确定的 sweep 触发；PENDING_TIMEOUT_MIN 的具体数值不影响安全性。
+- **crash 只建模了进程死亡**（kill/断电——写序中断，job 留在 judged 可重跑）。
+  `registry.trash` **抛异常**（磁盘满/权限）是另一种失败形态：consume_judged
+  记 `execute_failed` 并把 job 钉成 failed，无重试——save(primary) 已落盘时
+  留下半程合并（主卡带记账、副卡活着）。这是本模型之外的既有姿态；execute
+  幂等化之后对 execute_failed job 做**有界重试**已经安全（重跑会走同一套
+  三分收敛），记为 follow-up，本轮不动。
 - §44.2 triage 内联复核与 §44.3 briefing 投递窗不在此模型内——它们各有测试判例；
   下次改这两段协议时值得扩展模型。

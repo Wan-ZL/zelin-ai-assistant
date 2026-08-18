@@ -16,7 +16,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env before act imports
 
 from act import executor
-from act.lib import config, quick_capture, registry, silent_merge
+from act.lib import analytics, config, quick_capture, registry, silent_merge
 from act.lib.registry import Requirement, State
 
 DUP_A = "整理 EB-1A 推荐信 recommendation letters 清单 wegreened"
@@ -185,6 +185,17 @@ class ExecuteTestCase(unittest.TestCase):
                     if e.get("req") == "R-001"]
         self.assertEqual(len(receipts), 1)
 
+    def _isolate_analytics(self):
+        """事件文件整体隔离（digest 判例同款）：events.jsonl 跨测试共享，
+        既污染断言又会让 _merge_event_logged 误认先前测试的 ok 事件。"""
+        import tempfile
+        d = Path(tempfile.mkdtemp(dir=str(config.STATE_DIR)))
+        for attr, val in (("ANALYTICS_DIR", d),
+                          ("EVENTS_PATH", d / "events.jsonl")):
+            p = mock.patch.object(analytics, attr, val)
+            p.start()
+            self.addCleanup(p.stop)
+
     def _crash_mid_execute(self, primary, secondary, brief="补充了预算数字"):
         """第一跑死在 trash 落盘前（save(primary) 已落）——crash 窗口模拟。"""
         real_trash = registry.trash
@@ -270,6 +281,114 @@ class ExecuteTestCase(unittest.TestCase):
         self.assertEqual(len(pend), 1)
         self.assertIn("R-002", pend[0])
         self.assertEqual(p.silent_merge_count, 1)
+        self.assertEqual(registry.load("R-002").status, State.TRASHED.value)
+
+    def test_crash_retry_aborts_when_secondary_got_invested(self):
+        """review finding（2026-08-18 第二轮）：crash 窗口里副卡被批准派发
+        （dispatch_approved 先于 consume_judged）——旧序先做 LIGHT 复检会静默
+        return False，留下永久半 fold（主卡带记账、副卡活着执行）。现改为
+        标记探测先行：合并中止，半程 note 打 [已拆出 →副卡]、留审计 note、
+        analytics 记 retry_aborted，绝不 trash 已投入的卡。"""
+        self._isolate_analytics()
+        primary = _seed("R-001", DUP_A)
+        secondary = _seed("R-002", DUP_B)
+        self._crash_mid_execute(primary, secondary)
+        # 重启 pass 早段把副卡批准并派发（invested 的最小模拟）
+        s_mid = registry.load("R-002")
+        s_mid.set_status(State.EXECUTING)
+        registry.save(s_mid)
+        p2, s2 = registry.load("R-001"), registry.load("R-002")
+        self.assertFalse(silent_merge.execute(p2, s2, "补充了预算数字"))
+        p, s = registry.load("R-001"), registry.load("R-002")
+        # 副卡毫发无损（§44.4 铁律：invested 永不静默移除）
+        self.assertEqual(s.status, State.EXECUTING.value)
+        # 半程 fold note 收敛为拆出语义 + 审计 note；累计计数不回滚（§38.2
+        # split_note 判例同款）
+        entry = next(e for e in registry.parse_fold_notes(p.notes)
+                     if e["text"].startswith("静默并入 R-002「"))
+        self.assertEqual(entry["split_into"], "R-002")
+        self.assertIn("并入中止", p.notes)
+        self.assertEqual(p.silent_merge_count, 1)
+        self.assertEqual(
+            [e.get("outcome") for e in analytics.read_events()
+             if e.get("event") == "silent_merge"
+             and e.get("secondary") == "R-002"],
+            ["retry_aborted"])
+        # 幂等：再跑一遍不再改卡、不 trash（mark_note_split 已拆过 False，
+        # 审计 note 按 (kind, 文本) 去重）
+        p3, s3 = registry.load("R-001"), registry.load("R-002")
+        self.assertFalse(silent_merge.execute(p3, s3, "补充了预算数字"))
+        self.assertEqual(registry.load("R-002").status, State.EXECUTING.value)
+        self.assertEqual(registry.load("R-001").notes.count("并入中止"), 1)
+
+    def test_crash_retry_after_trash_reemits_observability(self):
+        """review finding（2026-08-18 第二轮）：crash 落在 trash 落盘之后、
+        log_event/回执之前——数据侧终态已达成，旧序在 LIGHT 复检处 False，
+        本次合并从 digest 计数与 §44.6 回执里整个消失。现由收敛情形 1 补齐：
+        补记 ok_retry + 回执并 return True；事件先查后补，「死在 log_event
+        与回执之间」的更小窗口不会造成 digest 双计。"""
+        from act.lib import fold_receipts
+        self._isolate_analytics()
+        # 第一跑死在 log_event（trash 已落盘）——ok 事件与回执都没来得及留
+        primary = _seed("R-001", DUP_A)
+        secondary = _seed("R-002", DUP_B)
+        real_log = analytics.log_event
+        def dying_log(event, **fields):
+            raise RuntimeError("simulated crash after trash, before log_event")
+        analytics.log_event = dying_log
+        try:
+            with self.assertRaises(RuntimeError):
+                silent_merge.execute(primary, secondary, "补充了预算数字")
+        finally:
+            analytics.log_event = real_log
+        self.assertEqual(registry.load("R-002").status, State.TRASHED.value)
+        p2, s2 = registry.load("R-001"), registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p2, s2, "补充了预算数字"))
+        # 观测面补齐：恰好一条 ok_retry + 恰好一条回执；计数未再动
+        outcomes = [e.get("outcome") for e in analytics.read_events()
+                    if e.get("event") == "silent_merge"
+                    and e.get("secondary") == "R-002"]
+        self.assertEqual(outcomes, ["ok_retry"])
+        receipts = [e for e in fold_receipts.load_recent()
+                    if e.get("req") == "R-001"]
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(registry.load("R-001").silent_merge_count, 1)
+        # 更小窗口的等价重放（死在 log_event 之后、回执之前 == 事件已在盘上
+        # 再进一次收敛）：事件先查后补 → 不产生第二条 ok*，回执同键去重
+        p3, s3 = registry.load("R-001"), registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p3, s3, "补充了预算数字"))
+        outcomes = [e.get("outcome") for e in analytics.read_events()
+                    if e.get("event") == "silent_merge"
+                    and e.get("secondary") == "R-002"]
+        self.assertEqual(outcomes, ["ok_retry"])
+        receipts = [e for e in fold_receipts.load_recent()
+                    if e.get("req") == "R-001"]
+        self.assertEqual(len(receipts), 1)
+
+    def test_retry_briefing_not_requeued_after_flush(self):
+        """review finding（2026-08-18 第二轮）：主卡 EXECUTING 时第一跑已排
+        briefing，crash 后重启 pass 里 reconcile（先于 consume_judged）flush
+        送达并清队——retry 仅查 pending 的去重失效，同文本会二次入队投递。
+        现 queue_briefing 对 delivered_briefings 台账（executor.brief 落账）
+        也去重。"""
+        primary = _seed("R-001", DUP_A, status=State.EXECUTING.value,
+                        execution={"session_id": "abc123"})
+        secondary = _seed("R-002", DUP_B)
+        self._crash_mid_execute(primary, secondary)
+        p_mid = registry.load("R-001")
+        queued = (p_mid.execution or {}).get("pending_briefings") or []
+        self.assertEqual(len(queued), 1)          # 第一跑的 briefing 已入队
+        # reconcile flush 的最小模拟：清队 + 落已投递台账（m_ok 的记账语义）
+        ex = dict(p_mid.execution)
+        ex.pop("pending_briefings")
+        ex["delivered_briefings"] = list(queued)
+        p_mid.execution = ex
+        registry.save(p_mid)
+        p2, s2 = registry.load("R-001"), registry.load("R-002")
+        self.assertTrue(silent_merge.execute(p2, s2, "补充了预算数字"))
+        p = registry.load("R-001")
+        # 已投递的同文本不再入队——会话不会收到第二遍
+        self.assertNotIn("pending_briefings", p.execution or {})
         self.assertEqual(registry.load("R-002").status, State.TRASHED.value)
 
 
@@ -501,6 +620,12 @@ class BriefTestCase(unittest.TestCase):
         ex = registry.load("R-001").execution
         self.assertNotIn("pending_briefings", ex)
         self.assertEqual(ex["briefing_count"], 1)
+        # §44.3 已投递台账：flush 落账，queue_briefing 据此挡 crash-retry
+        # 重放的二次入队（review finding，2026-08-18 第二轮）
+        self.assertEqual(ex["delivered_briefings"], ["静默并入 R-002「x」"])
+        fresh = registry.load("R-001")
+        silent_merge.queue_briefing(fresh, "静默并入 R-002「x」")
+        self.assertNotIn("pending_briefings", fresh.execution or {})
         # status untouched — a briefing is not a rework
         self.assertEqual(registry.load("R-001").status, State.EXECUTING.value)
 

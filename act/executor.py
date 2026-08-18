@@ -1818,6 +1818,13 @@ def brief(
         fex.pop("briefing_attempts", None)
         fex["briefing_count"] = int(fex.get("briefing_count", 0)) + len(pend)
         fex["last_briefing_at"] = now
+        # §44.3 已投递台账（add-only 键）：queue_briefing 靠它挡 crash-retry
+        # 重放的二次入队——flush 之后 pending 已清，仅查 pending 的去重会让
+        # 同一段背景信息进会话两遍（review finding，2026-08-18 第二轮）。
+        # briefing 是低频 FYI，环形留最近 20 条足以覆盖 retry 窗口。
+        seen = [t for t in (fex.get("delivered_briefings") or [])
+                if str(t) not in sent]
+        fex["delivered_briefings"] = (seen + list(pend))[-20:]
         fex["resume_attempts"] = 0            # clean relaunch, answer() semantics
         fex.pop("resume_exhausted", None)
         fex.setdefault("root_session_id", sid)

@@ -39,6 +39,19 @@ other file needs editing. To cut a release:
   fold 至多一次）修复后全状态空间通过，跑法见 docs/design/silent-merge-model.md。
   补完路径同样落 §44.6 看板回执——用第一跑的原 note 文本，与成功路径同内容键，
   去重语义保证只一条；周一 digest 的「静默并入 N」计数补认 `ok_retry`。
+- **crash-retry 收敛补漏（第二轮 review）** — 三条：(1) 幂等标记探测挪到状态
+  复检**之前**——crash 窗口里副卡可能已被批准派发（dispatch_approved 先于
+  consume_judged），旧序在 LIGHT 复检处静默 return False，留下永久半 fold
+  （主卡带合并记账、副卡活着执行）；现按双卡现状三分收敛：副卡已被本次合并
+  trash → 只补观测面（`ok_retry` 事件先查后补 + §44.6 回执），卡对仍合格 →
+  补完合并，其余 → 合并中止（半程 note 打 `[已拆出 →副卡]`、留「并入中止」
+  审计 note、记 `retry_aborted`，§44.5 枚举 add-only 追加），绝不静默 done。
+  (2) trash 落盘之后、log_event/回执之前的 crash 窗口——合并实际完成却从
+  digest 计数与看板回执里消失，由三分收敛的情形 1 补齐。(3) briefing 重放
+  ——第一跑排队的 briefing 已被 reconcile flush 清队后，retry 仅查 pending
+  的去重失效、同文本二次投递；executor.brief 现落 `execution.
+  delivered_briefings` 台账（add-only 键，环形 20 条），queue_briefing 双重
+  去重（§44.3 追记）。
 
 ## [0.46.1] - 2026-07-27
 
