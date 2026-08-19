@@ -154,6 +154,37 @@ class SetDisplayTitleTestCase(unittest.TestCase):
         self.assertFalse(registry.set_display_title(req, "同名"))
         self.assertIsNone(req.former_titles)
 
+    def test_masked_candidate_rejected_at_single_write_point(self):
+        # PR #103 round-2 判例：掩码拒收下沉到唯一落笔点——analyze 扩写 /
+        # quick_capture 便车键抄回 [脱敏] 也进不了看板（不只 harvest 一条口），
+        # fail 向保留旧名；§37.1「看板显示名与 former_titles 永不出现掩码」
+        from act.lib import sanitize
+        req = Requirement(id="R-905", title="t", display_title="旧名")
+        self.assertFalse(registry.set_display_title(
+            req, f"整理 {sanitize.MASK} 合同条款"))
+        self.assertEqual(req.display_title, "旧名")
+        self.assertIsNone(req.former_titles)
+        # by_user 同样拒收（法条的「永不」不分来路），user_titled 也不置位
+        self.assertFalse(registry.set_display_title(
+            req, f"钉住 {sanitize.MASK}", by_user=True))
+        self.assertEqual(req.display_title, "旧名")
+        self.assertFalse(req.user_titled)
+
+    def test_user_rename_wins_over_normalized_same_value(self):
+        # PR #103 round-2 判例：规范化 same-value 短路只挡 LLM/harvest 回流
+        # ——用户主动改名（by_user）按原始形态比较，手编换行存量不被钉死
+        # （旧行为：不更新标题却置位 user_titled 还返回 True）
+        req = Requirement(id="R-906", title="t", display_title="整理\n合同")
+        self.assertTrue(registry.set_display_title(req, "整理 合同",
+                                                   by_user=True))
+        self.assertEqual(req.display_title, "整理 合同")
+        self.assertTrue(req.user_titled)
+        self.assertEqual(req.former_titles, ["整理\n合同"])
+        # 真正的原样重复（原始形态也相同）仍是 no-op
+        self.assertFalse(registry.set_display_title(req, "整理 合同",
+                                                    by_user=True))
+        self.assertEqual(req.former_titles, ["整理\n合同"])
+
     def test_round_trips_through_yaml(self):
         req = Requirement(id="R-904", title="t", status=State.CARD_SENT.value)
         registry.set_display_title(req, "旧名")
