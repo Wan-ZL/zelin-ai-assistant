@@ -2304,7 +2304,7 @@ return——**不写 health、不发 analytics**，且清除该源既有的 heal
 `sources.enabled()` 为真的源，取 health `last_ok` 与 `last_attempt` 里
 **较新**的时间戳（真死亡——plist 被删/调度停摆——两个一起停；雷达活着但
 一直失败的形态 last_attempt 仍前进，归 §15.4 诊断卡管；两者皆无 = 无基线，
-静默）与阈值 `sources.LIVENESS_THRESHOLDS` 比较：gmail 6h（launchd
+走下述兜底台账而非永久静默）与阈值 `sources.LIVENESS_THRESHOLDS` 比较：gmail 6h（launchd
 StartInterval=300s）、slack 6h（180s）、obsidian 36h（cron */30 + 合盖停摆
 是常态，72x 比例防周末误报）。超期 = 源死亡 → 走既有 §28 notify 通道报
 **一次**（anti-nag：进程内台账 `radar_dead_notified` set，与 auth_notified
@@ -2328,6 +2328,16 @@ stale、不动台账，让雷达先补跑；宽限过后照常评判（plist 真
 被判成睡醒、`grace_until` 每轮重置——宽限永不结束，真死亡的源永远不告警。
 双时钟判据下长 pass 两钟同步前进、差值 ≈ 0，照常评判；mono 基线缺失
 （首 pass）回退 wall 差值判据。
+**无基线兜底**（`_no_baseline_since`，进程内首见台账）：源开着、health 却
+从无任何可解析时间戳（`sources.has_baseline` 为假）时记下首见时刻，持续
+无基线超过同一 liveness 阈值也按死亡告警（同一 anti-nag 台账）。堵的是
+「plist 写成但 launchctl load 失败、雷达从未落笔」的安装死角——install.sh
+吞掉 load 的 stderr，§48.6 修复回执只有设置面板安装路径会写，App 侧只见
+plist 在 → 无修复卡，纯 `is_stale` 无基线又返回 False → 两侧同时静默。
+首个阈值窗内仍静默（新装机不能凭空宣布死亡，anti-nag）；基线一旦出现即出
+台账、改走正常判据；台账是进程内存 → actd 重启重置、`--once`/cron 形态
+不承诺（与下述冷启动宽限同款免责）。`is_stale` 本身保持无基线 = False
+（§48.4 的无状态 `stale` 投影不受影响）。
 进程**首 pass 同睡醒对待**（`_wake_state` 是进程内存，重启后没有跳变可测，
 而关机 ≥ 阈值后开机 RunAtLoad 的第一个 pass 同样早于雷达落笔）——冷启动也
 种一次宽限；代价只是 actd 重启/升级后真死亡多等一个宽限窗才报。推论：

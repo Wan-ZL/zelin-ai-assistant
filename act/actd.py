@@ -2262,6 +2262,15 @@ _WAKE_JUMP_FLOOR_SECONDS = 300   # interval 很小时的挂起判定下限
 _WAKE_GRACE_SECONDS = 35 * 60    # 最大雷达周期 1800s + 余量（对齐 Diagnostics）
 _wake_state: dict = {"last_pass": None, "last_mono": None, "grace_until": 0.0}
 
+# §48.3 无基线首见台账（进程内，src → wall ts）：源开着、health 却从无任何
+# 时间戳时记下首见时刻——持续无基线超 liveness 阈值同样按死亡告警。堵的是
+# 「plist 写成但 launchctl load 失败」的安装死角：install.sh 吞掉 load 的
+# stderr、修复回执只有设置面板路径会写，App 侧只见 plist 在 → 无修复卡，
+# 而 is_stale 无基线返回 False → 告警侧也永久静默。新装机首个阈值窗内仍
+# 静默（不能凭空宣布死亡，anti-nag 保留）；进程内存 → actd 重启重置，
+# --once/cron 形态不承诺（与冷启动宽限同款免责）。
+_no_baseline_since: dict = {}
+
 
 def _wake_grace(cfg: config.Config, wall: float,
                 interval: Optional[int] = None,
@@ -2307,7 +2316,8 @@ def _wake_grace(cfg: config.Config, wall: float,
 def _check_radar_liveness(notified: set[str],
                           now: Optional[_dt.datetime] = None,
                           interval: Optional[int] = None,
-                          mono: Optional[float] = None
+                          mono: Optional[float] = None,
+                          missing_since: Optional[dict] = None
                           ) -> list[tuple[str, str]]:
     """§48 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
 
@@ -2322,9 +2332,14 @@ def _check_radar_liveness(notified: set[str],
     用户可能刚关掉该源（TOCTOU），关掉的源全静默优先于省一次盘读。睡醒宽限
     （``_wake_grace``）期间不评判 stale、也不动台账。关掉的源不进循环，且
     顺手清掉残留 health 条目（生产上手删 plist 留下的僵尸 last_attempt
-    记录）。``now`` / ``mono`` 是测试注入缝。Never raises。
+    记录）。**无基线兜底**：开着却从无 health 时间戳的源记首见时刻
+    （``_no_baseline_since``），持续无基线超同一阈值也按死亡告警——覆盖
+    「plist 写成但 launchctl load 失败、雷达从未落笔」的安装死角。
+    ``now`` / ``mono`` / ``missing_since`` 是测试注入缝。Never raises。
     """
     msgs: list[tuple[str, str]] = []
+    if missing_since is None:
+        missing_since = _no_baseline_since
     try:
         cfg = config.load_config()
         if now is None:
@@ -2340,10 +2355,23 @@ def _check_radar_liveness(notified: set[str],
                 # ——actd 作为清理仲裁者收尾不与单写者门冲突。
                 health.remove_radar_health(src)
                 notified.discard(src)
+                missing_since.pop(src, None)
                 continue
             if graced:
                 continue    # 睡醒宽限：雷达还没来得及补跑，本 pass 不评判
-            if sources.is_stale(src, data.get(src), now):
+            entry = data.get(src)
+            if sources.has_baseline(entry):
+                missing_since.pop(src, None)
+                dead = sources.is_stale(src, entry, now)
+            else:
+                # 无基线兜底（§48.3）：is_stale 对无基线诚实地返回 False，
+                # 但源开着却**持续**无基线本身就是死亡形态——首见即记账，
+                # 超过同一 liveness 阈值仍无落笔则告警；首个阈值窗内静默
+                # （新装机不误报，anti-nag）。
+                first = missing_since.setdefault(src, now.timestamp())
+                dead = (now.timestamp() - first
+                        ) > sources.LIVENESS_THRESHOLDS[src]
+            if dead:
                 if src not in notified:
                     # 告警落笔前复核 enabled（TOCTOU 收窄）：巡检开头读的
                     # cfg 与 notify 之间用户可能刚关掉本源——关掉的源全
@@ -2357,7 +2385,7 @@ def _check_radar_liveness(notified: set[str],
                     hours = sources.LIVENESS_THRESHOLDS[src] // 3600
                     msgs.append(notify.msg_radar_dead(src, hours))
             else:
-                notified.discard(src)   # 恢复（或尚无基线）→ 出账
+                notified.discard(src)   # 恢复（或基线/无基线未超窗）→ 出账
     except Exception as e:  # noqa: BLE001 - 巡检绝不干掉主循环
         _log(f"radar liveness check FAILED: {e}")
     return msgs

@@ -195,6 +195,10 @@ class LivenessAlertTestCase(unittest.TestCase):
         self.addCleanup(actd._wake_state.update,
                         {"last_pass": None, "last_mono": None,
                          "grace_until": 0.0})
+        # 无基线首见台账（§48.3 兜底）也是进程内状态：跨判例串味会让「首见」
+        # 时刻提前、把别的判例误推过阈值
+        actd._no_baseline_since.clear()
+        self.addCleanup(actd._no_baseline_since.clear)
 
     @staticmethod
     def _seed(source: str, last_ok: str, last_attempt: str = None):
@@ -281,12 +285,48 @@ class LivenessAlertTestCase(unittest.TestCase):
         self.assertIn("gmail", data)                  # 活雷达的 health 没被误清
 
     def test_no_baseline_no_alert(self):
-        # 从未跑过（无条目/无时间戳）不能诚实宣布死亡 —— 静默
+        # 从未跑过（无条目/无时间戳）首个阈值窗内不能宣布死亡 —— 静默
+        # （持续无基线超窗的告警见 test_no_baseline_overdue_alarms）
         self.assertEqual(actd._check_radar_liveness(set()), [])
         health.HEALTH_PATH.write_text(
             json.dumps({"gmail": {"last_attempt": None, "last_ok": None,
                                   "skip_reason": None}}), encoding="utf-8")
         self.assertEqual(actd._check_radar_liveness(set()), [])
+
+    def test_no_baseline_overdue_alarms(self):
+        # §48.3 无基线兜底：plist 写成但 launchctl load 失败（install.sh 吞
+        # stderr、面板修复回执不覆盖脚本路径）→ 雷达从未落笔。开着 + 持续
+        # 无基线超 liveness 阈值 = 死亡告警（首见台账注入缝 missing_since）
+        now = _dt.datetime.now(_dt.timezone.utc)
+        missing = {"gmail": now.timestamp() - 7 * 3600}   # 首见于 7h 前 > 6h
+        notified: set = set()
+        msgs = actd._check_radar_liveness(notified, now=now,
+                                          missing_since=missing)
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("Gmail", msgs[0][0] + msgs[0][1])
+        # anti-nag：第二个 pass 不重复响
+        self.assertEqual(actd._check_radar_liveness(
+            notified, now=now, missing_since=missing), [])
+
+    def test_no_baseline_ledger_clears_when_radar_writes(self):
+        # 雷达终于落笔（哪怕只有 last_attempt）→ 出无基线台账，改走
+        # is_stale 正常判据；新鲜时间戳 = 静默，台账里的旧首见时刻作废
+        now = _dt.datetime.now(_dt.timezone.utc)
+        missing = {"gmail": now.timestamp() - 7 * 3600}
+        self._seed("gmail", _iso(60))
+        self.assertEqual(actd._check_radar_liveness(
+            set(), now=now, missing_since=missing), [])
+        self.assertNotIn("gmail", missing)
+
+    def test_no_baseline_disabled_source_stays_silent(self):
+        # 关掉的源不吃无基线兜底（§48.2 真静默优先），台账条目一并清掉
+        now = _dt.datetime.now(_dt.timezone.utc)
+        missing = {"gmail": now.timestamp() - 7 * 3600}
+        config.CONFIG_PATH.write_text(
+            "sources:\n  gmail:\n    enabled: false\n", encoding="utf-8")
+        self.assertEqual(actd._check_radar_liveness(
+            set(), now=now, missing_since=missing), [])
+        self.assertNotIn("gmail", missing)
 
     def test_never_ok_falls_back_to_last_attempt(self):
         # 配好后一直失败到停摆（last_attempt 也超期、没 last_ok）算死亡基线
@@ -322,7 +362,11 @@ class LivenessAlertTestCase(unittest.TestCase):
         self.assertNotIn("gmail", notified)            # 台账没被污染
 
     def test_wake_grace_expires_then_real_death_still_alarms(self):
-        # 宽限只有一个最大雷达周期 + 余量：醒来后雷达真不补跑 → 照样告警
+        # 宽限只有一个最大雷达周期 + 余量：醒来后雷达真不补跑 → 照样告警。
+        # 本判例只考 gmail：时间推进超过 8h，从未落笔的 slack 会吃 §48.3
+        # 无基线兜底（6h）跟着响——关掉它，别让两条告警混在一起数
+        config.CONFIG_PATH.write_text(
+            "sources:\n  slack:\n    enabled: false\n", encoding="utf-8")
         notified: set = set()
         actd._check_radar_liveness(notified, now=self._now())
         self._seed("gmail", _iso(3600))                # 睡前 1h 就停摆了

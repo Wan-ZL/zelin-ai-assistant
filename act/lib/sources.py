@@ -75,6 +75,19 @@ def _parse_iso(value) -> Optional[_dt.datetime]:
         return None
 
 
+def has_baseline(entry: Optional[dict]) -> bool:
+    """health 条目是否带任何可解析的活动时间戳（liveness 的评判基线）。
+
+    False = 雷达从未落笔（条目缺失或两个时间戳皆空/坏）——``is_stale`` 对这种
+    形态返回 False（没有基线不能诚实宣布死亡），但「开着却持续无基线」本身
+    是另一条死路（plist 写成而 launchctl load 失败，§48.3 的兜底台账消费方）。
+    """
+    if not isinstance(entry, dict):
+        return False
+    return any(_parse_iso(entry.get(k)) is not None
+               for k in ("last_ok", "last_attempt"))
+
+
 def is_stale(source: str, entry: Optional[dict],
              now: Optional[_dt.datetime] = None) -> bool:
     """开着的源是否已「死亡」（超过 LIVENESS_THRESHOLDS 没有任何活动信号）。
