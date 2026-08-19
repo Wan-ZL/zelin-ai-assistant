@@ -208,12 +208,20 @@ def encrypt_board(k_i: bytes, epoch: int, device_id: str, seq: int, plaintext: b
 
 
 def decrypt_board(k_i: bytes, epoch: int, device_id: str, seq: int, blob: bytes) -> bytes:
-    """Decrypt a board blob. Raises if tampered / wrong key / wrong metadata."""
+    """Decrypt a board blob. Raises if tampered / wrong key / wrong metadata.
+
+    Intentionally test-only: golden reference for the Swift port
+    (ios/Sources/E2E.swift) — do not delete on a "no production callers" sweep.
+    """
     return _open(k_i, epoch, _INFO_BOARD, lambda e: _aad_board(device_id, seq, e), blob)
 
 
 def encrypt_action(k_i: bytes, epoch: int, device_id: str, action_id: str, board_seq, plaintext: bytes) -> bytes:
-    """Encrypt an approval action addressed to ``device_id`` (target Mac)."""
+    """Encrypt an approval action addressed to ``device_id`` (target Mac).
+
+    Intentionally test-only: golden reference for the Swift port
+    (ios/Sources/E2E.swift) — do not delete on a "no production callers" sweep.
+    """
     return _seal(k_i, epoch, _INFO_ACTION, _aad_action(device_id, action_id, board_seq, epoch), plaintext)
 
 
@@ -330,6 +338,9 @@ def build_pairing_blob(device_id: str, epoch: int, k_i: bytes, label: str) -> st
     encrypted under ``K_i`` (the phone decrypts it after reading the key), so no
     plaintext label rides the QR either. Returns a base64 string with no scheme
     prefix — the app parses it, it is never registered as an ``actd://`` URL.
+
+    Intentionally test-only: golden reference for the Swift port
+    (ios/Sources/E2E.swift) — do not delete on a "no production callers" sweep.
     """
     _check_key(k_i)
     epoch = _check_epoch(epoch)

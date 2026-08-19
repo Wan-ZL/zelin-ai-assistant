@@ -57,32 +57,188 @@ enum Analytics {
     private static let queue = DispatchQueue(label: "zelin.assistant.analytics",
                                              qos: .utility)
 
-    /// Append one event line to state/analytics/events.jsonl. Failures are
-    /// swallowed — analytics must never break the app.
-    static func log(_ event: String, fields: [String: Any] = [:]) {
-        let dir = AppPaths.analyticsDir
-        queue.async {
-            var rec: [String: Any] = ["ts": Self.utcNow(), "event": event,
-                                      "sid": Self.sid, "v": Self.version]
-            for (k, v) in fields { rec[k] = v }
-            guard JSONSerialization.isValidJSONObject(rec),
-                  let data = try? JSONSerialization.data(withJSONObject: rec,
-                                                         options: [.sortedKeys])
-            else { return }
-            var line = data
-            line.append(0x0A)  // "\n"
-            try? FileManager.default.createDirectory(
-                atPath: dir, withIntermediateDirectories: true)
-            // O_APPEND + a single write(2) per line: appends < PIPE_BUF are
-            // atomic, so lines can't shear even against the Python writer.
-            let fd = Darwin.open(dir + "/events.jsonl",
-                                 O_WRONLY | O_APPEND | O_CREAT, 0o644)
-            guard fd >= 0 else { return }
-            defer { _ = Darwin.close(fd) }
-            line.withUnsafeBytes { buf in
-                guard let base = buf.baseAddress else { return }
-                _ = Darwin.write(fd, base, buf.count)
+    /// §16 privacy gate — features.analytics（Settings「用量统计」开关）。
+    /// 读取优先级与 Telemetry.level() 同款：overrides（嵌套 features 块 →
+    /// 平铺 features.analytics）→ config.yaml `features:` 块 → 默认 on。
+    /// 隐私特例（fail-closed，镜像 act/lib/analytics.feature_gate）：
+    /// overrides 文件存在但解析不了、flag 值写了但判不动布尔、或真
+    /// config.yaml **存在但读不出/行扫描认不动**（非 UTF-8、跨行 flow
+    /// mapping），一律按关处理——用户的显式退出可能正躺在那份读不懂的
+    /// 文件/值里，宁可少记也不违背退出承诺。键/文件**不存在**才落默认 on。
+    static func featureEnabled() -> Bool {
+        guard !SettingsIO.overridesUnparseable() else { return false }
+        let ov = SettingsIO.readOverrides()
+        if let f = ov["features"] as? [String: Any], let raw = f["analytics"] {
+            return Self.coerceBool(raw) ?? false
+        }
+        if let raw = ov["features.analytics"] {
+            return Self.coerceBool(raw) ?? false
+        }
+        // 真 config.yaml：损坏 ≠ 未配置——存在但读不出/扫不动 = off（镜像
+        // Python _config_sources_intact 的同一保守探测，绝不回退默认 on）
+        switch Self.configFeaturesAnalyticsScan(
+            file: AppPaths.stateRoot + "/config.yaml") {
+        case .value(let raw): return Self.parseBool(raw) ?? false
+        case .unreadable: return false
+        case .absent: break
+        }
+        // example 是随 app 发行的模板，装不下用户的退出——读不出只当缺席
+        if case .value(let raw) = Self.configFeaturesAnalyticsScan(
+            file: AppPaths.stateRoot + "/config.example.yaml") {
+            return Self.parseBool(raw) ?? false
+        }
+        return true
+    }
+
+    /// PyYAML 1.1 布尔拼写集，对齐 act/lib/config._coerce_bool：Python 认
+    /// no/off/0 为关，Swift 侧不能只认 "false"。判不动 = nil（调用方按
+    /// fail-closed 处理）。trim 含换行符：CRLF 文件的行尾 \r 不算拼写的
+    /// 一部分（PyYAML 照样解析，Swift 不能因此判 nil 把开关静默失效）。
+    private static func parseBool(_ raw: String) -> Bool? {
+        let v = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if ["true", "yes", "on", "1"].contains(v) { return true }
+        if ["false", "no", "off", "0"].contains(v) { return false }
+        return nil
+    }
+
+    /// overrides（JSON）里的 flag 值：真布尔 / 0/1 / 字符串拼写，与
+    /// config._coerce_bool 同一接受集。
+    private static func coerceBool(_ raw: Any) -> Bool? {
+        if let b = raw as? Bool { return b }
+        if let n = raw as? Int, n == 0 || n == 1 { return n == 1 }
+        if let s = raw as? String { return parseBool(s) }
+        return nil
+    }
+
+    /// 行首键匹配，容忍冒号前空白：`analytics : false` 是合法 YAML（PyYAML
+    /// 照样解析出 analytics 键），Swift 行扫描不认它就与 Python gate 分叉
+    /// ——Python 停记、App 继续记。返回冒号后的原始剩余串；键不匹配 /
+    /// 键与冒号之间混入其它字符 = nil。
+    private static func valueAfterKey(_ line: String, key: String) -> String? {
+        guard line.hasPrefix(key) else { return nil }
+        let rest = String(line.dropFirst(key.count))
+        let ws = rest.prefix(while: { $0 == " " || $0 == "\t" })
+        let afterWS = String(rest.dropFirst(ws.count))
+        guard afterWS.hasPrefix(":") else { return nil }
+        return String(afterWS.dropFirst())
+    }
+
+    /// 单个 yaml 文件的行扫描结果：absent（文件/键不存在 → 用下一层默认）
+    /// 与 unreadable（存在但读不出/扫不动 → 调用方 fail-closed）必须分开
+    /// ——混为一谈就是「损坏 = 回退默认 on」的隐私洞（§16）。
+    private enum ConfigScan {
+        case value(String)  // features.analytics 的原始标量（可为空串 → off）
+        case absent         // 文件不存在 / analytics 键不存在
+        case unreadable     // 存在但非 UTF-8 / 跨行 flow mapping 等扫不动的形态
+    }
+
+    /// 单个 yaml 文件里 features.analytics 的原始标量。块形（缩进子键）之外
+    /// 还认单行内联花括号形 `features: {analytics: false}`——Python 侧 yaml
+    /// 两种都认，行扫描不能只认其一；冒号前空白（`analytics : false`）同理
+    /// （valueAfterKey）。注释/引号处理对齐 SettingsIO.configNestedScalar。
+    /// 认不动但可能藏着退出的形态（跨行 flow mapping、非 UTF-8）返回
+    /// .unreadable 而不是当没看见——PyYAML 那边可能正读出用户的 false。
+    private static func configFeaturesAnalyticsScan(file: String) -> ConfigScan {
+        guard FileManager.default.fileExists(atPath: file) else { return .absent }
+        guard let text = try? String(contentsOfFile: file, encoding: .utf8)
+        else { return .unreadable }
+        var inBlock = false
+        for rawLine in text.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if !inBlock {
+                guard let after = Self.valueAfterKey(rawLine, key: "features")
+                else { continue }
+                let rest = after.trimmingCharacters(in: .whitespacesAndNewlines)
+                if rest.hasPrefix("{") {
+                    // 内联 flow mapping（单行）：{slack_radar: true, analytics: false}
+                    let body = String(rest.dropFirst())
+                    guard let close = body.firstIndex(of: "}") else {
+                        // `features: {` 换行接键值是合法 YAML（PyYAML 照认），
+                        // 单行扫描认不动 ⇒ fail-closed，两个读者同答案
+                        return .unreadable
+                    }
+                    for pair in body[..<close].split(separator: ",") {
+                        let kv = pair.split(separator: ":", maxSplits: 1)
+                        guard kv.count == 2 else { continue }
+                        let k = kv[0].trimmingCharacters(in: .whitespaces)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                        guard k == "analytics" else { continue }
+                        let v = kv[1].trimmingCharacters(in: .whitespaces)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                        return .value(v)  // 空值（analytics: }）= 判不动 → off
+                    }
+                    return .absent  // 内联块里没有 analytics 键
+                }
+                inBlock = true
+                continue
             }
+            if !rawLine.hasPrefix(" ") && !rawLine.hasPrefix("\t") {
+                if line.isEmpty || line.hasPrefix("#") { continue }
+                break  // next top-level key ends the block
+            }
+            guard let after = Self.valueAfterKey(line, key: "analytics")
+            else { continue }
+            var v = after.trimmingCharacters(in: .whitespacesAndNewlines)
+            if v.hasPrefix("\"") || v.hasPrefix("'") {
+                // 双/单引号同待遇：PyYAML 把 'true' 解析成字符串 "true"，
+                // _coerce_bool 照判——Swift 只剥双引号就与 Python 分叉
+                let quote = v.first!
+                let inner = String(v.dropFirst())
+                v = inner.firstIndex(of: quote).map { String(inner[..<$0]) } ?? inner
+            } else if v.hasPrefix("#") {
+                v = ""
+            } else if let hash = v.range(of: " #") {
+                v = String(v[..<hash.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            // 空值（`analytics:` 裸键/纯注释值）：PyYAML 解析成 None，
+            // Python 侧 _coerce_bool(None) 判不动 → off；这里同样返回
+            // .value("")，parseBool 判 nil → off，不再落到下一层默认
+            return .value(v)
+        }
+        return .absent
+    }
+
+    /// Append one event line to state/analytics/events.jsonl. Failures are
+    /// swallowed — analytics must never break the app. Gated on
+    /// features.analytics (§16): flag off ⇒ this writer emits nothing, same
+    /// as the Python writer's log_event gate.
+    static func log(_ event: String, fields: [String: Any] = [:]) {
+        queue.async {
+            guard Self.featureEnabled() else { return }
+            _ = Self.appendLine(event: event, fields: fields)
+        }
+    }
+
+    /// 排空写入队列（serial queue 的同步屏障）：测试用；app 侧需要「此前的
+    /// 事件都已落盘」的时点（如退出前）也可用。
+    static func flush() {
+        queue.sync {}
+    }
+
+    /// 序列 queue 内执行的实际写入；true = 整行确实落盘（firstReach 拿返回
+    /// 值决定 marker——没写成就不 mark，里程碑下次再试）。
+    private static func appendLine(event: String, fields: [String: Any]) -> Bool {
+        let dir = AppPaths.analyticsDir
+        var rec: [String: Any] = ["ts": Self.utcNow(), "event": event,
+                                  "sid": Self.sid, "v": Self.version]
+        for (k, v) in fields { rec[k] = v }
+        guard JSONSerialization.isValidJSONObject(rec),
+              let data = try? JSONSerialization.data(withJSONObject: rec,
+                                                     options: [.sortedKeys])
+        else { return false }
+        var line = data
+        line.append(0x0A)  // "\n"
+        try? FileManager.default.createDirectory(
+            atPath: dir, withIntermediateDirectories: true)
+        // O_APPEND + a single write(2) per line: appends < PIPE_BUF are
+        // atomic, so lines can't shear even against the Python writer.
+        let fd = Darwin.open(dir + "/events.jsonl",
+                             O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        guard fd >= 0 else { return false }
+        defer { _ = Darwin.close(fd) }
+        return line.withUnsafeBytes { buf in
+            guard let base = buf.baseAddress else { return false }
+            return Darwin.write(fd, base, buf.count) == buf.count
         }
     }
 
@@ -97,11 +253,20 @@ enum Analytics {
     /// Once-per-install feature-reach marker (docs/TELEMETRY.md): the FIRST
     /// time a feature is used, one `feature_first_reach` event fires; the
     /// UserDefaults flag suppresses every later call. Metadata only.
+    /// Gate BEFORE the marker（§16，镜像 Python log_first），且 gate/查重/
+    /// 写入/落 marker 整链都在 serial queue 内、marker 只在写入**成功后**
+    /// 落笔——否则「enqueue 时 flag 还开、队列执行前被关」的窗口里事件被
+    /// 丢弃而 marker 已写，里程碑永久丢失。serial queue 保证两个并发
+    /// firstReach 也不会双发。
     static func firstReach(_ feature: String) {
         let key = "analytics.firstReach." + feature
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
-        log("feature_first_reach", fields: ["feature": feature])
+        queue.async {
+            guard Self.featureEnabled() else { return }
+            guard !UserDefaults.standard.bool(forKey: key) else { return }
+            guard Self.appendLine(event: "feature_first_reach",
+                                  fields: ["feature": feature]) else { return }
+            UserDefaults.standard.set(true, forKey: key)
+        }
     }
 
     /// Secret-mask regexes for content fields — MUST mirror
@@ -443,11 +608,6 @@ enum RuntimePython {
         return "/usr/bin/python3"
     }
 
-    /// FDA must be granted to the REAL binary — resolve symlinks (miniconda's
-    /// python3 usually symlinks python3.x).
-    nonisolated static func realBinary(of path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-    }
 }
 
 // MARK: - UserDefaults helpers

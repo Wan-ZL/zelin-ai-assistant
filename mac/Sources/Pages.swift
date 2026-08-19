@@ -1178,11 +1178,6 @@ final class UpdateCheckModel: ObservableObject {
     @Published var url: String?       // release page behind the download button
     @Published var checkedAt: String? // ISO, straight from state/update_check.json
 
-    /// Release page to open (§26: open, never auto-download).
-    var releaseURL: URL? {
-        URL(string: url ?? "https://github.com/Wan-ZL/zelin-ai-assistant/releases")
-    }
-
     func reload(dashboard: Dashboard?) {
         let path = AppPaths.stateRoot + "/state/update_check.json"
         var state: [String: Any] = [:]

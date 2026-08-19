@@ -292,6 +292,65 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 
 **v0.14 追记（add-only；随 §17 v0.14 修订）**：`manager_pack` 随 manager pack ①的移除退出 flag 集合——`DEFAULT_FEATURES` 与设置窗口均不再包含它，代码中无任何调用点检查；config.yaml/overrides 里遗留的 `features.manager_pack` 键按「未知 flag」语义被静默忽略。现行集合 = {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics}。1:1 准备页（`act.oneonone`）随 §17 digest 生成，受 `features.digest` 门控，无独立 flag。
 
+**死开关修复追记（add-only；本节「各模块入口检查 flag」的两处落地澄清）**：
+- **`features.analytics`**：flag 为 false 时事件**不产生也不出本机**——gate 拦在
+  全部三个环节：① Python 写者 `act/lib/analytics.py:log_event`/`log_first`
+  （`analytics.feature_gate()`；log_first 在 gate off 时连 once-per-install
+  marker 也不写，里程碑留到重开后再发，绝不被吞）；② Swift 写者
+  `mac/Sources/Utils.swift Analytics.log`/`firstReach`（`Analytics.featureEnabled()`，
+  同一优先级读 overrides → config.yaml → 默认 on；布尔拼写集对齐 PyYAML
+  （false/no/off/0 都算关），config.yaml 的 `features:` 块形与单行内联
+  `features: {analytics: false}` 花括号形都认，冒号前空白（`analytics :
+  false`，合法 YAML，PyYAML 照样解析）也认；overrides 里嵌套 `features` 块
+  与平铺 `features.*` 键同文件冲突时**嵌套形优先、与键序无关**——两个读者
+  对同一份文件必须给出同一个 gate 答案，Python `_apply_settings_overrides`
+  与 Swift 同序）——两个写者共用同一份
+  `state/analytics/events.jsonl`，缺任何一边 gate 都是漏洞；③ 上传端
+  `act.analytics_sync.sync_once` 上传前查、且**每个 batch 送出前重查新鲜
+  gate**（skipped="analytics_off"；防 TOCTOU——run 中途关掉 flag，余下积压
+  立即停送，已送 batch 的游标保留不回滚。重查走
+  `analytics.feature_gate_fresh()`：不吃 GATE_TTL 进程内缓存——那缓存是给
+  高频 emit 省 parse 的，隐私重查吃它就是盲窗——且**每份配置源只读一次
+  bytes，flag 值与损坏判定出自同一份快照**；「load_config 读到旧值 on +
+  intact 检查确认的是刚原子写入的新文件」这种两次读取混用的 TOCTOU 窗口
+  不存在），所以关闭前积压在 events.jsonl 里的事件也不上传。该 flag 与 §15 的 `telemetry.enabled`（上传开关）是两层：
+  analytics off 连本地记录都没有。
+  **隐私 fail-closed 特例**：与本节其它 flag 的 fail-open（默认 on）惯例相反，
+  gate 在「配置读不到 / 存在但损坏」时按 **off** 处理——用户显式退出的隐私
+  承诺压过功能可用性默认，否则一份坏 yaml/坏 overrides 就能让退出静默失效；
+  「损坏」包括 flag 值本身写了但判不动布尔、Python 侧 **PyYAML 缺失而
+  config.yaml 在场**（无解析器 = 文件读不出，退出可能就写在里面；运行时
+  依赖白名单本含 PyYAML，走到这说明环境已残，但 fail-closed 不赌可达性）、
+  以及 Swift 侧真 config.yaml
+  **存在但读不出/行扫描认不动的形态**（非 UTF-8、跨行 flow mapping、
+  `analytics:` 空值——PyYAML 那边可能正读出用户的退出）；配置文件
+  **不存在**不算损坏（从未表达过退出，默认 on 诚实）。两侧保守探测的边界：
+  布尔拼写集、引号（单/双）、CRLF、冒号旁空白、块形/单行内联形已对齐并有
+  判例钉死；Swift 行扫描**判不动全文 YAML 合法性**，极端损坏形态下两读者
+  可能分叉——但分叉只影响本地落盘方向，上传端唯一出口是 Python 侧
+  sync_once 的 gate，数据不出本机。gate 判定自身绝不
+  raise（宪法第 11 条），Python 侧带进程内缓存以免高频 emit 逐条付 config
+  parse——缓存键含两份配置源的 mtime+size 指纹，**配置文件一变下一条事件
+  即重判**（关闭后不存在「TTL 内照记」的盲窗），GATE_TTL 只兜指纹失灵的
+  底。两侧 once-per-install 里程碑都是 write-success-then-mark：Swift
+  firstReach 的 marker 只在事件**确实落盘之后**才落笔（gate/查重/写入/
+  marker 整链在同一 serial queue 内），Python log_first 同款（log_event 返回
+  写入是否成功，没写成不 mark）——enqueue 与执行之间被关 flag、或磁盘错
+  被吞，都吞不掉里程碑。判例：
+  tests/test_analytics_feature_gate.py、tests/test_analytics_sync.py（上传端
+  + TOCTOU）、mac/LogicTests AnalyticsGateTests（Swift 写者）。
+- **`features.auto_resume`**：历史上存在**两个键**——config.yaml `execution.auto_resume`
+  （`Config.auto_resume`）与 feature flag `features.auto_resume`（Settings 窗口开关写的
+  是后者，经 overrides 落 `Config.features`）；此前 actd `reconcile_executing` 只读前者，
+  Settings 开关是死的。现行语义 = **两键 AND**（任一 false 即关）；两键默认都 true，
+  未配置过的老安装行为不变（add-only）。该判定每个 reconcile pass **直接重读
+  一次配置**（`config.load_config()`，无 TTL 缓存——`--interval` 可以配得比
+  任何 TTL 短，缓存会把「下一 pass 生效」变成盲窗；一 pass 一次 parse 代价
+  可忽略），不吃 actd 启动时冻结的 cfg——Settings 翻开关（两个方向）下一
+  pass 即生效、对任意 interval 成立，无需重启 actd；actd 其余
+  startup-frozen cfg 语义不变，只有这一个判定点吃新鲜值。判例：
+  tests/test_reconcile.py 的 flag off 用例 + 「进程内翻开关下一 pass 生效」用例。
+
 ## 17. 周一 digest + Manager pack
 - `python -m act.digest`：待审批积压、待验收积压、needs_input/resume_exhausted 卡住项、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
 - Manager pack（flag: manager_pack）：①obsidian radar 扫到含 manager（watch_people 首项的 first-name token）的新会议记录时，额外派 T0 任务生成**会后 action-item 清单草稿**（workbench/meetings/<date>-action-items.md，通知）；②`python -m act.oneonone` 生成 1:1 准备页（ready/not-ready per registry + 双向欠账 + 上次以来 delta），digest 周一自动附带。

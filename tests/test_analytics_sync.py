@@ -18,6 +18,7 @@ import io
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
@@ -65,6 +66,11 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         for p in (analytics.EVENTS_PATH, sync.CURSOR_PATH):
             if p.exists():
                 p.unlink()
+        # per-batch TOCTOU 重查走新鲜 feature_gate（§16 追记）——判例前后
+        # 清 gate 缓存 + 真实配置文件，防串味/泄漏
+        analytics.reset_feature_gate_cache()
+        self.addCleanup(analytics.reset_feature_gate_cache)
+        self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
         self.batches: list = []
 
     def _transport(self, rows):
@@ -145,6 +151,86 @@ class AnalyticsSyncTestCase(unittest.TestCase):
         # silent: not even a telemetry_sync event is logged
         self.assertEqual(analytics.EVENTS_PATH.read_text(encoding="utf-8"),
                          before)
+
+    def test_analytics_flag_off_skips_upload_including_backlog(self):
+        # §16 隐私 gate（上传端）：features.analytics off ⇒ 本地写者已停，
+        # 关闭前积压在 events.jsonl 里的事件也不上传，游标不动
+        _write_events(_event_line("inbox_approve"))
+        before = analytics.EVENTS_PATH.read_text(encoding="utf-8")
+
+        off = _cfg()
+        off.features["analytics"] = False
+        stats = sync.sync_once(cfg=off, transport=self._transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(self.batches, [])
+        self.assertFalse(sync.CURSOR_PATH.exists())
+        # 与 telemetry.enabled=false 同样静默：连 telemetry_sync 事件都没有
+        self.assertEqual(analytics.EVENTS_PATH.read_text(encoding="utf-8"),
+                         before)
+
+    def test_flag_flipped_off_mid_run_stops_remaining_batches(self):
+        # TOCTOU（§16 追记）：run 开始时 flag 开、第一个 batch 送出后用户
+        # 关掉——每个 batch 送出前重查新鲜 gate，余下积压立即停送；已送
+        # batch 的游标保留（送出的收不回来），未送的行留待将来
+        n = sync.BATCH_SIZE + 7
+        _write_events(*[_event_line("card_sent", i=i) for i in range(n)])
+
+        def transport(rows):
+            self.batches.append(list(rows))
+            # 模拟用户在 batch 1 在途时关掉开关（写真实 config.yaml）；
+            # reset 模拟 5s TTL 已过
+            config.CONFIG_PATH.write_text(
+                "features:\n  analytics: false\n", encoding="utf-8")
+            analytics.reset_feature_gate_cache()
+
+        stats = sync.sync_once(cfg=_cfg(), transport=transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
+        self.assertEqual(len(self.batches), 1)  # 尾批 7 条没送出去
+        saved = _cursor_offset()                # 游标停在 batch 1 末尾
+        self.assertGreater(saved, 0)
+        self.assertLess(saved, analytics.EVENTS_PATH.stat().st_size)
+
+    def test_mid_run_flip_stops_even_with_warm_gate_cache(self):
+        # 每 batch 重查必须**绕过 GATE_TTL 进程内缓存**（§16 追记）：缓存里
+        # 躺着 5s 内的 True 时中途翻关也要立即停送——否则隐私重查有一个
+        # TTL 长度的盲窗，「关 = 立即停」的承诺在小积压/快网络下全程失效
+        n = sync.BATCH_SIZE + 7
+        _write_events(*[_event_line("card_sent", i=i) for i in range(n)])
+        self.assertTrue(analytics.feature_gate())  # 预热缓存：True 且未过期
+
+        def transport(rows):
+            self.batches.append(list(rows))
+            # 关掉开关但**不** reset 缓存——模拟 TTL 尚未过期的窗口
+            config.CONFIG_PATH.write_text(
+                "features:\n  analytics: false\n", encoding="utf-8")
+
+        stats = sync.sync_once(cfg=_cfg(), transport=transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
+        self.assertEqual(len(self.batches), 1)  # 尾批 7 条没送出去
+
+    def test_presend_check_reads_file_snapshot_not_load_config(self):
+        # 单快照钉子（§16 追记）：送出前判定必须出自配置文件本身的一次读取
+        # ——旧实现 feature_gate(load_config()) 里，load 读到旧值 on、intact
+        # 检查确认的是刚原子写入的新文件（语法有效），两读混用会把刚退出的
+        # 用户的余批送出去。这里把 load_config mock 成陈旧的 on 快照，磁盘
+        # 上真文件已翻关：新实现（feature_gate_fresh 直读文件）必须停送
+        n = sync.BATCH_SIZE + 7
+        _write_events(*[_event_line("card_sent", i=i) for i in range(n)])
+
+        stale_on = _cfg()  # analytics 默认 on = 陈旧快照
+
+        def transport(rows):
+            self.batches.append(list(rows))
+            config.CONFIG_PATH.write_text(
+                "features:\n  analytics: false\n", encoding="utf-8")
+
+        with mock.patch.object(config, "load_config", return_value=stale_on):
+            stats = sync.sync_once(cfg=_cfg(), transport=transport)
+        self.assertEqual(stats["skipped"], "analytics_off")
+        self.assertEqual(stats["uploaded"], sync.BATCH_SIZE)
+        self.assertEqual(len(self.batches), 1)
 
     def test_default_config_uploads_by_default(self):
         # default-on telemetry (docs/TELEMETRY.md): a plain Config() has

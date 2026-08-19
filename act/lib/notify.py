@@ -357,19 +357,3 @@ def detect_auth_failure(log_text: str) -> bool:
     if not log_text:
         return False
     return bool(_AUTH_RE.search(_LOG_HEADER_RE.sub("", log_text)))
-
-
-def notify_new_card(title: str, req: Optional[str] = None) -> bool:
-    return notify(*msg_new_card(title), req=req)
-
-
-def notify_done(title: str, req: Optional[str] = None) -> bool:
-    return notify(*msg_done(title), req=req)
-
-
-def notify_needs_input(title: str, req: Optional[str] = None) -> bool:
-    return notify(*msg_needs_input(title), req=req)
-
-
-def notify_auth(service: str) -> bool:
-    return notify(*msg_auth(service))

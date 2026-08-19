@@ -143,7 +143,6 @@ class Config:
     # owner
     owner_name: str = "Zelin"
     owner_slack_user_id: Optional[str] = None
-    display_name: str = "Zelin's AI Assistant"
 
     # sources
     obsidian_raw: Optional[str] = None
@@ -153,7 +152,6 @@ class Config:
     obsidian_change_summary: Optional[str] = None
     obsidian_wiki: Optional[str] = None
     slack_channels: list = field(default_factory=list)
-    slack_dms: list = field(default_factory=list)
     slack_token_path: Optional[str] = None
     # Slack MCP fallback (v0.11) — 没有 xoxp token（卡在管理员审批）时，radar_slack
     # 每 slack_mcp_interval_minutes 用 headless claude + 用户级 Slack MCP 扫一遍
@@ -213,7 +211,6 @@ class Config:
     claude_bin: Optional[str] = None
     self_check: bool = True
     fresh_context_review: bool = True
-    system_card_per_ckpt: bool = True
 
     # trash / recycle bin
     trash_retention_days: int = 60
@@ -407,7 +404,6 @@ def load_config() -> Config:
     owner = _dict_or(data.get("owner"))
     cfg.owner_name = owner.get("name", cfg.owner_name)
     cfg.owner_slack_user_id = owner.get("slack_user_id", cfg.owner_slack_user_id)
-    cfg.display_name = owner.get("display_name", cfg.display_name)
 
     sources = _dict_or(data.get("sources"))
     cfg.obsidian_raw = sources.get("obsidian_raw", cfg.obsidian_raw)
@@ -419,7 +415,10 @@ def load_config() -> Config:
     )
     cfg.obsidian_wiki = sources.get("obsidian_wiki", cfg.obsidian_wiki)
     cfg.slack_channels = sources.get("slack_channels", []) or []
-    cfg.slack_dms = sources.get("slack_dms", []) or []
+    # NOTE: 历史 key `sources.slack_dms` 已诚实下线（配了从来没有任何效果）：
+    # radar_slack.fetch_new_messages 本来就无条件扫全部 im/mpim 会话
+    # （conversations.list types=im,mpim），无需任何 DM 白名单。旧 config 里
+    # 遗留的 slack_dms 键按「未知 key」语义被静默忽略，不会破坏加载。
     cfg.slack_token_path = sources.get("slack_token_path", cfg.slack_token_path)
     cfg.slack_mcp_fallback = _bool_or(
         sources.get("slack_mcp_fallback", cfg.slack_mcp_fallback),
@@ -523,12 +522,6 @@ def load_config() -> Config:
         qg.get("fresh_context_review", cfg.fresh_context_review),
         cfg.fresh_context_review,
     )
-    training = _dict_or(execution.get("training"))
-    cfg.system_card_per_ckpt = _bool_or(
-        training.get("system_card_per_ckpt", cfg.system_card_per_ckpt),
-        cfg.system_card_per_ckpt,
-    )
-
     trash = _dict_or(data.get("trash"))
     cfg.trash_retention_days = _int_or(
         trash.get("retention_days", cfg.trash_retention_days),
@@ -827,6 +820,14 @@ def _apply_settings_overrides(cfg: Config) -> None:
     if not isinstance(data, dict):
         return
 
+    # features 的嵌套形 vs 平铺形同文件冲突（App 只写嵌套形、且不清理手写/
+    # 历史遗留的平铺 features.* 键）：嵌套形优先，且与 JSON 键序无关——镜像
+    # Swift Analytics.featureEnabled 的读取顺序（嵌套 → 平铺）。否则同一份
+    # overrides 两侧读出相反的 analytics gate（§16 隐私 gate 两个读者必须
+    # 给出同一个答案）。
+    _nested_feats = data.get("features")
+    _nested_feats = _nested_feats if isinstance(_nested_feats, dict) else {}
+
     for key, value in data.items():
         try:
             if key == "features" and isinstance(value, dict):
@@ -836,8 +837,11 @@ def _apply_settings_overrides(cfg: Config) -> None:
                     except (TypeError, ValueError):
                         continue  # 单个坏 flag 跳过，别拖累同 dict 的其它 flag
             elif key.startswith("features."):
-                # flat form: {"features.digest": false}
-                cfg.features[key.split(".", 1)[1]] = _coerce_bool(value)
+                # flat form: {"features.digest": false}——嵌套 features 块里
+                # 已有同名 flag 时让位（嵌套形优先，见循环前的注释）
+                flag = key.split(".", 1)[1]
+                if flag not in _nested_feats:
+                    cfg.features[flag] = _coerce_bool(value)
             elif key == "gmail" and isinstance(value, dict):
                 # nested form mirroring config.yaml sources.gmail
                 if value.get("address") is not None:
@@ -969,11 +973,6 @@ def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
                 f"AND NOT ({like('app_name', term)} OR {like('window_name', term)})"
             )
     return " ".join(clauses)
-
-
-# Module-level singleton for convenience (callers may also call load_config()).
-def get_config() -> Config:
-    return load_config()
 
 
 # --------------------------------------------------------------------------- #

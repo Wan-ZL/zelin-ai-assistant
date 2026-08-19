@@ -55,10 +55,6 @@ _TOKENS = (TOKEN_PYTHON, TOKEN_REPO_ROOT, TOKEN_CLAUDE_BIN_DIR)
 TASK_FOLDER = "ZelinAIAssistant"
 TASK_PATH_PREFIX = "\\" + TASK_FOLDER + "\\"
 
-# The resident tasks (AtLogOn + restart-on-failure) — the Windows mirror of the
-# systemd SYSTEMD_RESIDENT set; the rest are repetition-driven radars/digest.
-RESIDENT_LEAVES = ("actd", "webui")
-
 
 def task_leaf(filename: str) -> str:
     """``zelin-gmail-radar.xml`` -> ``gmail-radar`` (the registered leaf name)."""

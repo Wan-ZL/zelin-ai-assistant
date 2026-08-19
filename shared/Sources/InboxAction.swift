@@ -15,11 +15,13 @@ import Foundation
 
 /// The action verbs actd.process_inbox / _apply_decision accept. Raw values are
 /// the exact strings written into the `action` field (verified against
-/// act/actd.py). `.defer` needs backticks (Swift keyword).
+/// act/actd.py). `.defer` needs backticks (Swift keyword). Note: actd also
+/// accepts "pin", but no Swift client builds it through this enum (the Mac app
+/// sends the raw string) — the unused case was removed, not the actd verb.
 enum InboxVerb: String, CaseIterable {
     case approve, reject, comment
     case `defer`
-    case raise, trash, restore, pin
+    case raise, trash, restore
     case accept, rework
     case done_external
     case abort_execution, stop_to_review

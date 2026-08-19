@@ -249,6 +249,11 @@ def sync_once(cfg: Optional[config.Config] = None,
             stats["skipped"] = "consent_pending"
             return stats
         cfg = cfg or config.load_config()
+        if not analytics.feature_gate(cfg):
+            # features.analytics off（§16 隐私 gate）：本地写者已停，关闭前
+            # 积压在 events.jsonl 里的事件也不上传——关 = 彻底不出本机。
+            stats["skipped"] = "analytics_off"
+            return stats
         url = str(cfg.telemetry_supabase_url or "").strip()
         if not (cfg.telemetry_enabled and url):
             stats["skipped"] = "disabled"
@@ -273,12 +278,28 @@ def sync_once(cfg: Optional[config.Config] = None,
                 batch.append(row)
             batch_end = end
             if len(batch) >= BATCH_SIZE:
+                # TOCTOU（§16 追记）：run 开始后用户可能已关 flag——每个
+                # batch 送出前重查**新鲜单快照** gate（feature_gate_fresh）：
+                # 不吃 GATE_TTL 进程内缓存（那缓存是给高频 emit 省 parse
+                # 的，隐私重查吃它就成了盲窗）、不复用本次 run 冻结的 cfg
+                # （冻结值看不见中途翻动），且每份配置源只读一次——flag 值
+                # 与损坏判定出自同一份 bytes，「load 到旧值 + intact 确认新
+                # 文件」的两次读取混用窗口不存在。每 500 行付一次 parse，
+                # 代价可忽略。关了立即停，余下积压留在本机；已送 batch 的
+                # 游标已保存，不回滚——送出的收不回来，只能不再送。
+                if not analytics.feature_gate_fresh():
+                    stats["skipped"] = "analytics_off"
+                    return stats
                 send(batch)
                 _save_cursor(file_name, batch_end)
                 stats["uploaded"] += len(batch)
                 stats["batches"] += 1
                 batch = []
         if batch:
+            # 同上：尾批送出前重查（同样走新鲜单快照，不吃缓存）
+            if not analytics.feature_gate_fresh():
+                stats["skipped"] = "analytics_off"
+                return stats
             send(batch)
             stats["uploaded"] += len(batch)
             stats["batches"] += 1

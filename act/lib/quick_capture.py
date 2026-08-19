@@ -438,38 +438,6 @@ def _fold_into(target: "registry.Requirement", child: Optional["registry.Require
     fold_receipts.record(target.id, "radar", note)
 
 
-def _follow_up_card(parent: "registry.Requirement", child: "registry.Requirement",
-                    note: str = "") -> tuple["registry.Requirement", bool]:
-    """File a follow-up of a resolved (delivered/merged) parent. Returns
-    ``(saved, created)``.
-
-    Cross-pass / cross-source dedup: when the parent already has an OPEN
-    follow-up (registry.find_open_follow_up), the hit folds into it instead
-    of producing a second card — the second radar source of the same event
-    only adds a note + source.
-    """
-    existing = registry.find_open_follow_up(parent.id)
-    if existing is not None:
-        _fold_into(existing, child, note)
-        return existing, False
-    summary = str(child.summary or child.title or note).strip()
-    fu = registry.Requirement(
-        id=registry.next_id(),
-        title=(child.title or note or parent.title)[:80],
-        type=child.type or parent.type,
-        tier=child.tier or parent.tier,
-        status=registry.State.CARD_SENT.value,
-        hardness=child.hardness or "soft",
-        deadline=child.deadline,
-        sources=list(child.sources or []),
-        plan=child.plan or [],
-        improvement_of=parent.id,
-        summary=f"既往卡 {parent.id} 的后续：{summary}",
-        notes=(f"[radar] {note}" if note else ""),
-    )
-    return registry.upsert(fu), True
-
-
 def _silent_fold_target(req: "registry.Requirement",
                         cfg) -> Optional["registry.Requirement"]:
     """§44.2 pre-filing check, isolated so tests can stub it and an import

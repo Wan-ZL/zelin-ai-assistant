@@ -997,12 +997,6 @@ def _assistant_texts(path: Path, since_last_user: bool = False) -> list[str]:
     return out
 
 
-def _last_assistant_text(path: Path) -> Optional[str]:
-    """Last non-empty assistant TEXT message in a transcript JSONL, else None."""
-    texts = _assistant_texts(path)
-    return texts[-1] if texts else None
-
-
 def _plain_texts(path: Path) -> list[str]:
     """Main-thread USER + ASSISTANT plain texts of a transcript, in order.
 

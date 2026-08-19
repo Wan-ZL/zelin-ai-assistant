@@ -25,3 +25,6 @@ promo/node_modules/
 promo/package.json
 promo/package-lock.json
 .coverage
+
+# Playwright MCP browser-debug dumps (never commit)
+.playwright-mcp/
