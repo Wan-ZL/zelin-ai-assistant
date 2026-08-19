@@ -18,6 +18,7 @@ Everything runs inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
 import datetime as _dt
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,24 @@ class DigestCardTestCase(unittest.TestCase):
         prep = oneonone.build_prep()
         self.assertIn("R-101 · 写周报 （待审批", prep)
         self.assertNotIn("（card_sent", prep)
+
+    def test_digest_folded_count_includes_ok_retry(self):
+        """§44.5：周一 digest 的「静默并入 N」必须计入 crash-retry 补完的合并
+        （ok_retry）——crash 场景第一跑死在 log_event("ok") 之前，唯一事件就是
+        ok_retry，漏计会让真实完成的合并从周报里消失（review finding，
+        2026-08-18）。事件文件整体隔离，免受同轮其他测试落的事件污染。"""
+        from act.lib import analytics
+        tmp = Path(tempfile.mkdtemp(prefix="ev-"))
+        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        with mock.patch.object(analytics, "ANALYTICS_DIR", tmp), \
+                mock.patch.object(analytics, "EVENTS_PATH",
+                                  tmp / "events.jsonl"):
+            analytics.log_event("silent_merge", primary="R-1",
+                                secondary="R-2", outcome="ok_retry")
+            analytics.log_event("silent_merge", primary="R-1",
+                                secondary="R-3", outcome="separate")  # 不计
+            md = digest.build_digest()
+        self.assertIn("静默并入 1", md)
 
     def test_ledger_is_owner_neutral_and_parameterized(self):
         md = digest.build_digest()

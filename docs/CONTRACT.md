@@ -2111,6 +2111,11 @@ stop-idle-then-resume 管道同 answer()，前缀 `BACKGROUND INFO (no action
 needed):`，明示"确认后继续原任务，不是新指令"。working+live pid 绝不打断；
 独立记账 `briefing_count`/`last_briefing_at`；每批注入失败 3 次后放弃，
 notes 留痕「背景信息未送达会话」。状态机零改动（不翻 rework、不动 status）。
+**已投递台账（2026-08-18 追记，add-only 键）**：flush 成功时把送达文本记入
+`execution.delivered_briefings`（环形，最近 20 条）；`queue_briefing` 对
+pending **与已投递台账**双重去重——crash-retry 重放时第一跑的 briefing 可能
+已被 reconcile（先于 consume_judged）flush 清队，仅查 pending 会让同一段
+背景信息进会话两遍。
 
 **§44.4 可逆并入（执行语义）**：副卡限**轻状态**（detected/raising/card_sent
 ——用户已投入的 approved/executing/review 卡永不被静默移除；两张都已投入 →
@@ -2119,14 +2124,32 @@ notes 留痕「背景信息未送达会话」。状态机零改动（不翻 rewo
 去重合并 + `repeated_mentions` 累加 + 新计数字段 `silent_merge_count` +1，
 主卡先落盘；副卡走 `registry.trash`（`prev_status` 完整保留，回收站可恢复/
 可 pin）——**绝不使用 §21 的 `merged` 终态**。双向可逆 = 拆出 fold note +
-恢复副卡。
+恢复副卡。**crash-retry 幂等（2026-08-18 追记，同日第二轮修订）**：daemon 死在合并
+半途时 job 仍为 judged、重启重跑——重跑以主卡上「静默并入 {副卡id}「」
+前缀的 fold note 为幂等标记（键=副卡 id，**不含可变标题**——note 全文嵌着
+display_title，会在 crash 窗口被改写）。**标记探测先于状态复检**（crash 窗口
+同样能挪动卡片状态，先复检会把半程合并静默钉死），命中后按双卡现状三分收敛，
+绝不静默 done：
+1. 副卡已被本次合并 trash（reason 指向主卡）→ 数据侧终态已达成，只补观测面
+   （§44.6 回执 + analytics `ok_retry`，事件先查后补防双计）；
+2. 卡对仍满足本节前置（副卡 LIGHT、主卡 open）→ 补完合并：不再累加
+   `silent_merge_count` 与副卡整体 mentions，窗口内副卡新吸的 sources 幂等
+   补并（新增来源照 §38 计 mentions）、EXECUTING 主卡补 §44.3 briefing、
+   补完 trash、留 §44.6 回执（用原 note 文本保内容键一致），analytics 记
+   `ok_retry`；
+3. 其余（副卡在窗口内被批准/派发/被别的动作收走，或主卡不再 open）→ 本节
+   铁律优先（已投入的卡绝不静默移除）⇒ 合并中止：主卡半程 fold note 打
+   `[已拆出 →副卡id]`（副卡本人就是活着的那张卡——拆出语义；计数照 §38.2
+   split_note 判例不回滚，累计账），另留「并入中止」审计 note，analytics 记
+   `retry_aborted`。
+（形式化论证见 docs/design/silent-merge-model.md。）
 
 **§44.5 可见性与记账（add-only）**：dashboard `needs_approval[]` 新增
 `silent_merged`（int，0=从未）；Mac 卡面「已并入×N」紫色 chip（.help 指明
 详情里的并入记录可一键拆回）+ webui 同款 badge；周一 digest 总览行追加
 「· 静默并入 N」（近 7 天，仅计数）。analytics 事件（元数据，永不含内容）：
 `silent_merge_requested{job,primary,secondary}`、`silent_merge{primary,
-secondary,outcome∈ok|separate|judge_failed|state_moved|pre_filing_fold}`、
+secondary,outcome∈ok|ok_retry|retry_aborted|separate|judge_failed|state_moved|execute_failed|pre_filing_fold}`、
 `briefing{req,ok,n}`。
 
 **§44.6 并入回执 + [run] 例外（v0.47，2026-08-07 拍板；add-only）**：
