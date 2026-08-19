@@ -25,8 +25,54 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-08-18
+
+v0.47 合并列车：10 个 PR（#94-#98、#87、#99-#101、#103，另有 CI 调参 #104），
+每个 PR 过 CI + Claude/Codex 双 AI review 多轮 + 独立终审，共修复/反驳 60+ 条意见。
+
+### Added
+
+- **提案泳道「清理积压」按钮**（#100，§34bis）— 提案 lane header 一键起
+  固定 prompt 的 direct-run 清理会话，运行中泳道出现对应 session 卡，用户可
+  attach 挑选保留哪些提案。配套 registry 快照护栏（启动前快照 + 收割时比对 +
+  越权写入告警，检测型、不回滚）、跨进程写入台账 `state/registry_writes.jsonl`、
+  preset 在途判重（清理卡已在 approved/executing 时 ack running 不铸新卡）。
+- **活标题第三档：每轮强制重审**（#103，§37.1）— 非 user_titled 卡每轮收尾
+  注入当前显示名并要求重新审视：名字已不能概括当前核心动作就必须给
+  `CARD TITLE:` 新名（≤40 字动词开头），仍准确原样重复即可；user_titled 卡
+  连请求都不发。same-value no-op（注入/收割/落笔三侧同一 clip 规范化）、
+  含 `[脱敏]` 掩码的标题在唯一落笔点 `set_display_title` 一律拒收。
+- **CARD TITLE 条件强制**（#95，§37.1）— 冻结 title 不可读（URL/路径/超长）
+  且无显示名的卡、direct-run 卡，dispatch 首轮强制命名，无「原样重复」豁免。
+- **源开关归一 + 源死亡告警随开关**（#99，§48）— 四套并存的源开关判据收归
+  `act/lib/sources.py` 单一真源；关闭的源真静默（不写 health、不投影、不告警，
+  liveness/投影每 pass 现读配置）；开启的源死亡按阈值告警（睡醒双时钟宽限 +
+  last_ok/last_attempt 双停摆判死 + 无基线兜底台账——plist 在而 launchctl
+  load 失败的静默死角也能报）；skip_reason 出机词表清洗（闭集 +
+  `public_skip_reason()`）；install.sh 探针闸门防复活关闭的雷达；Mac 面板
+  install 失败落 `RepairReceiptStore` 持久回执，投影过期按源粒度回退。
+- **[run] 直跑一律新卡 + 静默并入看板回执**（#96，§34.1/§44.6）— 运行框
+  输入彻底绕开 merge_or_new 直落 approved（不再被并入旧卡）；radar/普通
+  capture 通道的每次静默并入在看板落可见回执（不存原文、内容键去重）。
+- **§44 静默并入协议的 TLA+ 机器验证**（#87）— `docs/design/SilentMerge.tla`
+  + TLC 配置与跑法文档，三条安全不变量（不吞已投入卡 / 永不丢信息 / fold
+  至多一次）全状态空间验证通过。
+
 ### Fixed
 
+- **看板布局风暴**（#94，两次实测卡死 17min/70s 的元凶）— 每行 Equatable
+  派生值取代全局监听、reload 剥 `generated_at` 指纹闸门、13 谓词共用纯函数，
+  smoke-deploy 第 5 检按报告内 app 版本归因 `.hang`。
+- **session 生命周期可靠化**（#97，§46）— stop 走 verify-first + 60s 预算
+  （探测失败≠已停）、resume 风暴只记成功救活、投影 pid 活性 + 固定 question
+  文案判例。
+- **radar 可靠性三件套**（#98，§47）— transient 失败重试（exit 143/-15）、
+  解析失败降级卡（screen 来源退化 §40 形态守 §45）、LoopHealth 盘上继承。
+- **三个死开关接线**（#101，§16）— `features.analytics` 全链路 gate（Swift
+  记录端 / 上传端每批新鲜快照 + mtime 指纹缓存失效 / log_first marker 时序），
+  fail-closed 隐私特例扩至损坏与缺 PyYAML 的 config.yaml；`sources.slack_dms`
+  接线；`features.auto_resume` 键位漂移修正（每 pass 现读）。另清理零引用
+  死代码 ~300 行 + 316KB 资产。
 - **静默并入 crash-retry 不再翻倍计数（TLA+ 模型检查发现）** — actd 死在
   execute() 两笔写之间（主卡 fold 已落盘、副卡 trash 未落）时，job 文件仍是
   judged，重启重跑会把 `repeated_mentions`/`silent_merge_count` 二次施加。
@@ -1913,7 +1959,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.44.0...v0.45.0
