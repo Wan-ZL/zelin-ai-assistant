@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from act import radar
-from act.lib import analytics, config, health, registry, sanitize, secrets
+from act.lib import analytics, config, health, registry, sanitize, secrets, sources
 
 IMAP_HOST = "imap.gmail.com"
 DEFAULT_APP_PASSWORD_PATH = "~/Desktop/Keys/gmail-app-password.txt"  # nosec B105 - file PATH, not a secret
@@ -54,16 +54,8 @@ COMMAND_TIMEOUT = 300
 
 
 # --------------------------------------------------------------------------- #
-# feature flag + credentials
+# credentials（源开关判据统一走 act.lib.sources.enabled — CONTRACT §48）
 # --------------------------------------------------------------------------- #
-def _flag_enabled(cfg: config.Config) -> bool:
-    """features.gmail_radar (CONTRACT §16); default on when absent."""
-    feats = getattr(cfg, "features", None)
-    if not isinstance(feats, dict):
-        feats = (cfg.raw or {}).get("features") or {}
-    return bool(feats.get("gmail_radar", True))
-
-
 def get_app_password(cfg: Optional[config.Config] = None) -> Optional[str]:
     """Resolve the app password per CONTRACT §19:
     config/secrets/gmail-app-password.txt -> config path -> legacy default."""
@@ -475,8 +467,11 @@ def scan(cfg: Optional[config.Config] = None,
     """One capture pass. Returns the number of new requirement cards created."""
     if cfg is None:
         cfg = config.load_config()
-    if not _flag_enabled(cfg) or not getattr(cfg, "gmail_enabled", True):
-        _note_skip("disabled")
+    if not sources.enabled(cfg, "gmail"):
+        # §48 关闭真静默：不写 health、不发 analytics（关着 ≠ 坏着，写
+        # `disabled` 条目会让 App 把关掉的源当成还活着的管线信号——踩 §0
+        # 第 3 条）；顺手清掉历史条目，僵尸 last_attempt 不再冒充存活。
+        health.remove_radar_health("gmail")
         return 0
     fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
     password = get_app_password(cfg)

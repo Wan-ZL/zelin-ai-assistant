@@ -31,6 +31,7 @@ enum DiagAction {
     case openCredentials      // 凭证/API key → 设置页 credentials 锚点
     case openDeps             // 链路报错 → 依赖检查页
     case openVaultSetting     // 没设 Obsidian 目录 → 设置页
+    case reinstallAgent(String)  // §48.6 源开着但 plist 缺失 → 原地重装调度
 
     /// ``app`` non-nil (popover context) also brings the main window forward;
     /// in the kanban (already the main window) it is passed too and is a no-op
@@ -42,6 +43,21 @@ enum DiagAction {
             return
         case .grantScreen:
             RecordingController.openScreenRecordingSettings()
+            return
+        case .reinstallAgent(let label):
+            // 与设置面板「重新安装」同一条路（LaunchAgents.install 渲染 +
+            // load）。结果必须回执给 DiagnosticsModel：plist 写成但 launchctl
+            // load 失败时雷达照样死，丢弃结果 = 卡片消失 + 永远没人再响。
+            // 成功则下一个 5s tick 卡片自然消失。
+            DispatchQueue.global(qos: .userInitiated).async {
+                let (ok, msg) = LaunchAgents.install(label: label)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        DiagnosticsModel.shared.noteAgentRepair(
+                            label: label, ok: ok, message: msg)
+                    }
+                }
+            }
             return
         case .openCredentials:
             MainNav.shared.pendingAnchor = "credentials"
@@ -77,6 +93,32 @@ final class DiagnosticsModel: ObservableObject {
 
     @Published private(set) var cards: [DiagnosticCard] = []
 
+    // §48.6 卡上重装的失败回执（label → 错误信息）。plist 可能写成了但
+    // launchctl load 失败——只看「plist 存在」会把失败吞成成功；有回执时
+    // 卡留着并亮失败原因。**持久化**（RepairReceiptStore / UserDefaults）：
+    // 只放内存的话 App 重启即清空，plist 又在 → 卡永久消失且 health 已清、
+    // liveness 没有基线——重启后必须仍进「失败态复核」路径，launchctl
+    // 确认真跑起来才出账。成功回执/后台复核发现已 loaded 时出账。
+    private let repairReceipts = RepairReceiptStore()
+
+    func noteAgentRepair(label: String, ok: Bool, message: String) {
+        if ok {
+            repairReceipts.clear(label: label)
+        } else {
+            repairReceipts.recordFailure(label: label, message: message)
+        }
+        rebuild()
+    }
+
+    /// 失败态的后台复核：设置面板「重新安装」等旁路把 agent 装好后自动
+    /// 出账（launchctl print 只在失败态才跑，不进平时 5s tick 的成本）。
+    fileprivate func revalidateRepairFailure(label: String) {
+        DispatchQueue.global(qos: .utility).async { [repairReceipts] in
+            guard LaunchAgents.isLoaded(label: label) else { return }
+            repairReceipts.clear(label: label)
+        }
+    }
+
     // dismissal: signature → epoch seconds dismissed. Mirrors the board's
     // hiddenOnce/hiddenSticky idiom (UserDefaults, survives relaunch).
     private let dismissKey = "dismissedDiagnostics"
@@ -84,6 +126,7 @@ final class DiagnosticsModel: ObservableObject {
     // alarms once the empty state has persisted ~one ingest cycle.
     private let firstSeenKey = "diagnosticsFirstSeen"
     private static let warmupSeconds: TimeInterval = 35 * 60   // 对齐 install.sh */30
+    private static let agentMissingWarmupSeconds: TimeInterval = 120   // §48.6 闪卡防抖
     private static let reappearAfter: TimeInterval = 7 * 86_400
 
     private init() {}
@@ -110,12 +153,20 @@ final class DiagnosticsModel: ObservableObject {
         let rec = RecordingController.shared
         let recOn = rec.mode != "off"
 
-        // intent signals (all from already-read data): a path is only eligible
-        // for a card when the user INTENDED it (§3.6 anti-nag).
+        // intent signals: a path is only eligible for a card when the user
+        // INTENDED it (§3.6 anti-nag). §48 起 intent 的真源在 Python
+        // （act/lib/sources.py），经 dashboard 的 radar_sources 投影读到——
+        // 不再猜「凭证文件非空」。投影缺失（旧 actd payload）时回退老判据。
+        // 该不该出卡的判断全在 DiagnosticsRules（LogicTests 钉住的纯逻辑）。
+        let projected = Self.readRadarSources()
         let slackNonEmpty = SecretsIO.hasSecret(SecretsIO.slackFile)
         let slackStarted = FileManager.default.fileExists(
             atPath: SecretsIO.path(SecretsIO.slackFile))   // 存在但可能空 = 已开始配
-        let gmailNonEmpty = SecretsIO.hasSecret(SecretsIO.gmailFile)
+        // setup 类卡的意愿信号：用户碰过开关（override 键存在，开或关都算）
+        // 或凭证文件已存在——「enabled 默认 true」本身不算 intent（§48.4）。
+        let gmailSwitchTouched = SettingsIO.readOverrides()["gmail_enabled"] != nil
+        let gmailCredFileExists = FileManager.default.fileExists(
+            atPath: SecretsIO.path(SecretsIO.gmailFile))
 
         var out: [DiagnosticCard] = []
         var liveSignatures = Set<String>()
@@ -128,15 +179,85 @@ final class DiagnosticsModel: ObservableObject {
             }
         }
 
-        // --- gmail (intent: credential non-empty) ---
-        if gmailNonEmpty, let gm = health["gmail"], let reason = gm.skipReason,
-           ["auth_failed", "no_address", "invalid_credentials", "connect_failed"]
-               .contains(reason) {
+        // --- §48.6 雷达调度未安装（源开着但 launchd plist 缺失） ---
+        // 先于凭证卡构建：调度都不在，skip_reason 必然陈旧——同 path 冲突时
+        // agent_missing 赢（凭证卡经 schedulerMissing flag 让位）。
+        // 典型路径：关着时 .pkg 升级把 plist 退役 → 用户重新打开开关（功能
+        // 开关面板不装 plist）→ 配置 on 但没人再装，雷达永久静默且因 health
+        // 条目已被清、连 liveness 死亡告警都没有基线可响。修复动作与设置
+        // 面板「重新安装」同路。只认真实投影（旧 payload 不出卡）。
+        // 撤卡判据：plist 存在**且**没有失败回执（RepairReceiptStore，
+        // UserDefaults 持久化——App 重启不丢）——重装可能写成 plist 但
+        // launchctl load 失败，那时卡留着并亮出失败原因；失败态每 tick
+        // 后台复核 launchctl（设置面板等旁路修好后自动出账）。
+        let agentBySource: [(String, IngestPath, String)] = [
+            ("gmail", .gmail, GmailSettingsModel.agentLabel),
+            ("slack", .slack, SlackSettingsModel.agentLabel),
+        ]
+        var schedulerMissingBySource: [String: Bool] = [:]
+        for (src, path, label) in agentBySource {
+            let plistExists = FileManager.default.fileExists(
+                atPath: LaunchAgents.plistDest(label))
+            let failMsg = repairReceipts.failure(label: label)
+            if failMsg != nil { revalidateRepairFailure(label: label) }
+            let missing = DiagnosticsRules.schedulerMissing(
+                projected: projected[src], plistExists: plistExists,
+                repairFailed: failMsg != nil)
+            schedulerMissingBySource[src] = missing
+            guard missing else { continue }
+            let entry = health[src]
+            let card = DiagnosticCard(
+                id: "diag.\(src)", signature: "\(src):agent_missing", path: path,
+                title: src == "gmail"
+                    ? L("Gmail 雷达开着，但后台调度没装上", "The Gmail radar is on but its scheduler isn't installed")
+                    : L("Slack 雷达开着，但后台调度没装上", "The Slack radar is on but its scheduler isn't installed"),
+                detail: failMsg.map {
+                    L("上次重装失败：", "The last reinstall failed: ") + $0
+                } ?? L("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
+                       "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
+                actionLabel: failMsg == nil
+                    ? L("重装后台调度", "Reinstall the scheduler")
+                    : L("再试一次", "Try again"),
+                action: .reinstallAgent(label),
+                lastAttempt: entry?.lastAttempt, lastOK: entry?.lastOK)
+            liveSignatures.insert(card.signature)
+            if !isDebounced(card) { out.append(card) }
+        }
+
+        // --- gmail (intent: §48 radar_sources.gmail.enabled + 意愿信号) ---
+        // 告警资格 = DiagnosticsRules.gmailCardEligible：源开着 + skip_reason
+        // 非空，setup 类另需真实意愿（碰过开关/凭证文件存在）。手写的 reason
+        // 白名单退役——Python 已不再产出 `disabled`（关掉的源条目整个消失），
+        // 规则里只把升级瞬间可能残留的旧 `disabled` 记录排除掉。
+        if let gm = health["gmail"],
+           DiagnosticsRules.gmailCardEligible(
+               reason: gm.skipReason, projected: projected["gmail"],
+               legacyCredentialNonEmpty: SecretsIO.hasSecret(SecretsIO.gmailFile),
+               switchTouched: gmailSwitchTouched,
+               credentialFileExists: gmailCredFileExists,
+               schedulerMissing: schedulerMissingBySource["gmail"] ?? false),
+           let reason = gm.skipReason {
+            // 文案按 failure 形态分组（DiagnosticsRules.gmailCardKind）——
+            // command 类（§14bis 抓取命令）跟应用密码无关，说成密码问题是
+            // 把用户往错误的修复路上引。
+            let title: String, detail: String
+            switch DiagnosticsRules.gmailCardKind(reason: reason) {
+            case .setup:
+                title = L("Gmail 雷达开着但还没配好", "The Gmail radar is on but not set up")
+                detail = L("开关开着，但缺应用密码或邮箱地址——补上它雷达才能开始扫。",
+                           "The switch is on but the app password or address is missing — add it so the radar can scan.")
+            case .command:
+                title = L("Gmail 抓取命令没跑成", "The Gmail fetch command is failing")
+                detail = L("邮件走的是你的自定义抓取命令（gmail_fetch_command），它在报错或输出不是雷达能读的格式——去 Gmail 设置里检查那条命令。",
+                           "Mail comes via your custom fetch command (gmail_fetch_command), and it's erroring or emitting output the radar can't read — check that command in Gmail settings.")
+            case .connection:
+                title = L("Gmail 雷达连不上", "The Gmail radar can't connect")
+                detail = L("存了应用密码，但雷达没法用它登录——多半是密码过期或邮箱地址没填对。",
+                           "An app password is saved but the radar can't log in — the password likely expired or the address is off.")
+            }
             out.append(DiagnosticCard(
                 id: "diag.gmail", signature: "gmail:" + reason, path: .gmail,
-                title: L("Gmail 雷达连不上", "The Gmail radar can't connect"),
-                detail: L("存了应用密码，但雷达没法用它登录——多半是密码过期或邮箱地址没填对。",
-                          "An app password is saved but the radar can't log in — the password likely expired or the address is off."),
+                title: title, detail: detail,
                 actionLabel: L("检查 Gmail 设置", "Check Gmail settings"),
                 action: .openCredentials,
                 lastAttempt: gm.lastAttempt, lastOK: gm.lastOK))
@@ -144,7 +265,9 @@ final class DiagnosticsModel: ObservableObject {
         }
 
         // --- slack (intent: credential non-empty; mcp fallback: file exists) ---
-        if let sl = health["slack"], let reason = sl.skipReason {
+        // 调度缺失时凭证卡让位（同 gmail：skip_reason 必然陈旧，先修调度）
+        if !(schedulerMissingBySource["slack"] ?? false),
+           let sl = health["slack"], let reason = sl.skipReason {
             if reason == "connect_failed" && slackNonEmpty {
                 out.append(DiagnosticCard(
                     id: "diag.slack", signature: "slack:connect_failed", path: .slack,
@@ -249,19 +372,27 @@ final class DiagnosticsModel: ObservableObject {
         return true
     }
 
-    /// vault_empty warm-up: suppress a card until its state has persisted
-    /// ~one ingest cycle. Only vault_empty debounces (the fresh-setup false
-    /// alarm); everything else surfaces immediately.
+    /// warm-up: suppress a card until its state has persisted a while.
+    /// vault_empty waits ~one ingest cycle (the fresh-setup false alarm);
+    /// agent_missing waits ~2 min（开关切换的瞬间投影落后一个 actd pass、
+    /// 异步安装还在跑——闪卡防抖）; everything else surfaces immediately.
     private func isDebounced(_ card: DiagnosticCard) -> Bool {
-        guard card.signature.hasPrefix("screenpipe:vault_empty") else { return false }
+        let warmup: TimeInterval
+        if card.signature.hasPrefix("screenpipe:vault_empty") {
+            warmup = Self.warmupSeconds
+        } else if card.signature.hasSuffix(":agent_missing") {
+            warmup = Self.agentMissingWarmupSeconds
+        } else {
+            return false
+        }
         var seen = UserDefaults.standard.dictionary(forKey: firstSeenKey) as? [String: Double] ?? [:]
         let now = Date().timeIntervalSince1970
         if let first = seen[card.signature] {
-            return (now - first) < Self.warmupSeconds
+            return (now - first) < warmup
         }
         seen[card.signature] = now
         UserDefaults.standard.set(seen, forKey: firstSeenKey)
-        return true   // first sight — wait one cycle before alarming
+        return true   // first sight — wait out the warm-up before alarming
     }
 
     private func pruneFirstSeen(keeping live: Set<String>) {
@@ -270,6 +401,41 @@ final class DiagnosticsModel: ObservableObject {
         if kept.count != seen.count {
             UserDefaults.standard.set(kept, forKey: firstSeenKey)
         }
+    }
+
+    // MARK: dashboard.json radar_sources projection (§48, tolerant)
+
+    /// state/dashboard.json 顶层 `radar_sources` map（actd 投影的源开关
+    /// intent + 健康摘要）。走 Contract.swift 的 `RadarSourceHealth` 解码
+    /// ——与 Store 同一套 wire 类型，不再维护第二条裸 JSONSerialization
+    /// 读法。缺失/坏文件/坏 map → [:]（调用方回退老 intent 判据）。
+    nonisolated static func readRadarSources() -> [String: RadarSourceHealth] {
+        struct Projection: Decodable {   // 只解顶层这一个键，别的分区不碰
+            let radar_sources: [String: RadarSourceHealth]?
+        }
+        let path = AppPaths.stateRoot + "/state/dashboard.json"
+        guard let data = FileManager.default.contents(atPath: path),
+              let proj = try? JSONDecoder().decode(Projection.self, from: data)
+        else { return [:] }
+        return proj.radar_sources ?? [:]
+    }
+
+    /// §48.1 投影新鲜度：dashboard.json 的 mtime 是否不早于
+    /// settings_overrides.json 的 mtime。投影每 pass 现读 config 重建——
+    /// mtime 更新的投影必然已吸收 override；反之（用户刚写 override、actd
+    /// 还没跑 / 已停摆）投影是旧世界的快照，设置面板的有效值判定要回退
+    /// override 判据（`DiagnosticsRules.effectiveSourceEnabled` 的
+    /// `projectionFresh` 入参）。dashboard 缺失 → false（没有投影可信）；
+    /// overrides 缺失 → true（用户从没写过，投影不可能落后于它）。
+    nonisolated static func projectionFresh() -> Bool {
+        func mtime(_ path: String) -> Date? {
+            (try? FileManager.default.attributesOfItem(atPath: path))?[
+                .modificationDate] as? Date
+        }
+        guard let dash = mtime(AppPaths.stateRoot + "/state/dashboard.json")
+        else { return false }
+        guard let ov = mtime(AppPaths.settingsOverridesPath) else { return true }
+        return dash >= ov
     }
 
     // MARK: radar_health.json (tolerant — never crashes the tick)

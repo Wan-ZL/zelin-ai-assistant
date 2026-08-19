@@ -77,9 +77,13 @@ final class SlackSettingsModel: ObservableObject {
         guard !loaded else { refreshStatus(); return }
         loaded = true
         let ov = SettingsIO.readOverrides()
-        // effective flag: overrides features dict → config.yaml → default on
-        let feats = ov["features"] as? [String: Any] ?? [:]
-        enabled = (feats["slack_radar"] as? Bool) ?? Self.configFlagLayer()
+        // effective：§48.1 真源投影（radar_sources.slack.enabled = flag 与
+        // sources.slack.enabled 的合取）——只读 flag 的话，yaml 里
+        // sources.slack.enabled:false 时面板显示「开启」、重新开关也只写
+        // flag，雷达永远静默。投影缺失（actd 还没跑）回退原有 flag 判据；
+        // 投影**过期**（override 比 dashboard 新：刚翻开关就重启 App / actd
+        // 停摆）同样回退——旧投影的 enabled=false 不许盖住刚写的 override。
+        enabled = Self.effectiveEnabledNow(overrides: ov)
         // token presence
         refreshTokenState()
         // saved pickers (override layer only — config.yaml stays live when unset)
@@ -393,6 +397,24 @@ final class SlackSettingsModel: ObservableObject {
 
     // MARK: enable toggle + launchd agent
 
+    /// §48.1 有效值（投影 + 新鲜度 + override 回退）——loadIfNeeded 与
+    /// refreshStatus 共用：面板打开后 actd 才重建投影的话，下一次刷新要
+    /// 跟上（「加载一次永不再读」会让面板长期停在旧值）。
+    nonisolated static func effectiveEnabledNow(
+        overrides ov: [String: Any]? = nil) -> Bool {
+        let ov = ov ?? SettingsIO.readOverrides()
+        let feats = ov["features"] as? [String: Any] ?? [:]
+        return DiagnosticsRules.effectiveSourceEnabled(
+            projected: DiagnosticsModel.readRadarSources()["slack"],
+            fallback: (feats["slack_radar"] as? Bool) ?? Self.configFlagLayer(),
+            projectionFresh: DiagnosticsModel.projectionFresh(),
+            // 粒度收窄（§48.1）：overrides 是共用文件，无关写入也会推 mtime
+            // ——只有 override 里真有 slack 的 flag 键才允许回退 fallback
+            //（persistFlag 关到 config 层同值时会删键：删键即「无 override
+            // 意图」，回到投影裁决，语义自洽）。
+            overrideHasKey: feats["slack_radar"] is Bool)
+    }
+
     func setEnabled(_ on: Bool) {
         guard !busy else { return }
         persistFlag(on)
@@ -413,6 +435,13 @@ final class SlackSettingsModel: ObservableObject {
                 MainActor.assumeIsolated {
                     self.busy = false
                     if on {
+                        // §48.6 旁路回执：面板 install 的结果与卡上重装同款
+                        // 落 RepairReceiptStore——load 失败只留 statusNote
+                        // 的话 App 重启即失忆：plist 在 → 修复卡不出，health
+                        // 已清 → liveness 无基线，雷达静默死路。
+                        DiagnosticsModel.shared.noteAgentRepair(
+                            label: Self.agentLabel, ok: failMsg.isEmpty,
+                            message: failMsg)
                         self.statusNote = failMsg.isEmpty
                             ? L("已开启 ✓ 后台雷达每 3 分钟看一次 DM / 群 / @提及。没保存 token 时走 MCP 只读兜底或静默待机。",
                                 "Enabled ✓ The background radar checks DMs / groups / @mentions every 3 minutes. Without a token it falls back to read-only MCP scanning or idles silently.")
@@ -430,7 +459,14 @@ final class SlackSettingsModel: ObservableObject {
     private func persistFlag(_ on: Bool) {
         var merged = SettingsIO.readOverrides()
         var feats = merged["features"] as? [String: Any] ?? [:]
-        if on == Self.configFlagLayer() {
+        if on {
+            // 打开 = 用户显式动作，把合取的**两个键**都写 true（§48.1）：
+            // 只写 flag 的话 yaml 里 sources.slack.enabled:false 仍压着雷达
+            // ——「已开启+装了 agent」却永远静默。显式写 true 不做 drop-when-
+            // default（App 读不到两级嵌套的 config 层，必须保证 UI==生效）。
+            feats["slack_radar"] = true
+            merged["slack_enabled"] = true
+        } else if on == Self.configFlagLayer() {
             feats.removeValue(forKey: "slack_radar")
         } else {
             feats["slack_radar"] = on
@@ -458,6 +494,9 @@ final class SlackSettingsModel: ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.busy = false
+                    // §48.6 旁路回执（同 setEnabled）：失败持久化、成功出账
+                    DiagnosticsModel.shared.noteAgentRepair(
+                        label: Self.agentLabel, ok: ok, message: ok ? "" : msg)
                     self.statusNote = ok ? L("已重新安装 ✓", "Reinstalled ✓") : msg
                     self.refreshStatus(afterDelay: 3)
                 }
@@ -471,6 +510,10 @@ final class SlackSettingsModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) {
             let loadedNow = LaunchAgents.isLoaded(label: Self.agentLabel)
             let health = Self.readHealth()
+            // §48.1 有效值随刷新重算：actd 在面板打开后才重建投影/用户在
+            // 别处翻了开关时跟上真值。fresher-wins：override 比投影新时回退
+            // override 判据，刚翻的开关不会被旧投影翻回去。
+            let effective = Self.effectiveEnabledNow()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.agentLoaded = loadedNow
@@ -479,6 +522,7 @@ final class SlackSettingsModel: ObservableObject {
                     self.lastAttempt = health?["last_attempt"] as? String
                     self.skipReason = health?["skip_reason"] as? String
                     self.refreshTokenState()
+                    if !self.busy { self.enabled = effective }
                 }
             }
         }

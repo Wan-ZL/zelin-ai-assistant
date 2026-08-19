@@ -10,11 +10,16 @@ on every scan attempt; read by the Mac app to surface "radar 多久没成功跑�
 in the UI and to synthesize board-level diagnostic cards (v0.19.0).
 
 Source keys and their skip_reason vocabulary (the app maps each code to a
-concrete next action):
-- gmail:    disabled / no_credentials / no_address / auth_failed / connect_failed
-- slack:    disabled / no_credentials / connect_failed / mcp_failed:… (transient)
+concrete next action). ``disabled`` is DEPRECATED since §48 (add-only: the
+code stays in the vocabulary so old files still parse, but no radar produces
+it anymore — a disabled source is truly silent and its entry is REMOVED, see
+:func:`remove_radar_health`):
+- gmail:    disabled(deprecated) / no_credentials / no_address / auth_failed
+            / connect_failed
+- slack:    disabled(deprecated) / no_credentials / connect_failed
+            / mcp_failed:… (transient)
             / mcp_not_configured (fallback on, no token, no Slack MCP in the CLI)
-- obsidian: disabled / vault_missing (dir unset or gone) / vault_empty (dir there
+- obsidian: disabled(deprecated) / vault_missing (dir unset or gone) / vault_empty (dir there
             but zero .md) / no_api_key (extraction failed, no resolvable Anthropic
             key) / extract_failed (claude -p failed on ≥1 note). A pass that
             scanned but found nothing newer than the marker is ok=True with
@@ -55,6 +60,34 @@ HEALTH_PATH: Path = config.STATE_DIR / "radar_health.json"
 # lock the read-modify-write below loses one side's update (classic lost
 # update). flock auto-releases on process exit, so no stale-lock hang risk.
 _LOCK_PATH: Path = config.STATE_DIR / "radar_health.lock"
+
+# §48.4 词表投影纪律：允许进 dashboard 投影（可随 syncd 出机）的 skip_reason
+# **闭集**。radar_health.json 本身是本机文件，radar 可以往 skip_reason 写带
+# 细节的串（如 `mcp_failed: <错误摘录>`——Settings 面板要看细节）；但
+# dashboard 会云同步，任意错误串（Slack MCP 非法输出片段、本机路径）不许
+# 出机——词表外一律折叠。add-only：加新码要同步进 docstring 词表。
+SKIP_REASON_CODES: frozenset = frozenset({
+    "disabled",                                     # deprecated（§48.2）
+    "no_credentials", "no_address", "auth_failed", "connect_failed",
+    "command_failed", "command_bad_output",         # gmail §14bis
+    "mcp_not_configured", "mcp_failed",             # slack
+    "vault_missing", "vault_empty", "no_api_key", "extract_failed",  # obsidian
+})
+
+
+def public_skip_reason(raw) -> Optional[str]:
+    """skip_reason 的出机清洗（dashboard `radar_sources` 投影专用）。
+
+    词表码原样放行；`mcp_failed: <detail>` 去掉自由文本尾巴只留裸码；
+    其余任何串（未知码/错误摘录/路径）折叠为 ``"error"``；非字符串/空 → None。
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw in SKIP_REASON_CODES:
+        return raw
+    if raw.startswith("mcp_failed"):
+        return "mcp_failed"
+    return "error"
 
 
 def _iso_now() -> str:
@@ -102,6 +135,39 @@ def update_radar_health(source: str, ok: bool,
             else:
                 entry["skip_reason"] = skip_reason
             data[source] = entry
+            tmp = HEALTH_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            os.replace(tmp, HEALTH_PATH)
+    except Exception:  # noqa: BLE001 - health must never break a radar pass
+        pass
+
+
+def load_radar_health() -> dict:
+    """Read-only view of the whole health dict（actd liveness 巡检 / dashboard
+    ``radar_sources`` 投影用）。Unreadable/missing -> {}. Never raises."""
+    return _load()
+
+
+def remove_radar_health(source: str) -> None:
+    """源被关掉（sources.enabled 为 False，§48）时删除它的 health 条目。
+
+    关掉的源不产出、也不保留 health 记录——留着一条 last_attempt 冻结的僵尸
+    条目会让 App 侧把「关着」误读成「坏着」或「活着」（§0 第 3 条诚实健康
+    报告）。条目本就不存在时**不写文件**（保持 mtime 语义：radar_health.json
+    的 mtime 只在真实雷达活动时前进——Store.radarsRecentlyAlive 依赖这一点）。
+    Never raises。
+    """
+    try:
+        if not HEALTH_PATH.exists():
+            return
+        with open(_LOCK_PATH, "w") as lock_fh:
+            if fcntl is not None:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            data = _load()
+            if source not in data:
+                return
+            del data[source]
             tmp = HEALTH_PATH.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                            encoding="utf-8")

@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config, failures, titles
+from act.lib import config, failures, health, sources, titles
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
@@ -568,6 +568,61 @@ def _device_label() -> Optional[str]:
     return label or None
 
 
+def _radar_sources(cfg: config.Config) -> dict:
+    """§48 add-only 投影 ``radar_sources``：源开关 intent + 健康摘要一处出。
+
+    形状（每个 act.lib.sources.SOURCES 成员一条，键恒在）::
+
+        {"gmail": {"enabled": bool, "last_ok": iso|null,
+                   "skip_reason": str|null, "stale": bool}, ...}
+
+    ``enabled`` 来自真源 sources.enabled()（App 侧的 intent 判断自此读这里，
+    不再猜「凭证文件非空」）；``last_ok``/``skip_reason`` 摘自 radar_health
+    条目（关掉的源条目已被清除 → null）；``stale`` = 开着且超 liveness 阈值
+    没有成功信号（告警的看板投影，恢复后自动变回 false）。配置**现读**——
+    actd 启动时冻结的 cfg 在 App 翻开关后失真，投影必须跟着磁盘上的真值走
+    （load_config 失败才回退传入的 cfg）。Never raises。
+    """
+    try:
+        cfg = config.load_config()
+    except Exception:  # noqa: BLE001 - 坏 config 回退调用方快照，不崩投影
+        pass
+    out: dict = {}
+    try:
+        data = health.load_radar_health()
+    except Exception:  # noqa: BLE001 - 健康文件坏了不许崩 dashboard
+        data = {}
+    now = _dt.datetime.now(_dt.timezone.utc)
+    for src in sources.SOURCES:
+        try:
+            on = sources.enabled(cfg, src)
+        except Exception:  # noqa: BLE001
+            on = False
+        entry = data.get(src) if isinstance(data, dict) else None
+        entry = entry if isinstance(entry, dict) else {}
+        # 关掉的源不带健康摘要：清理僵尸条目发生在 liveness 巡检（同 pass 的
+        # dashboard 构建在它之前）——不在这里屏蔽的话，关源后的第一个 pass
+        # 会把旧 last_ok/skip_reason 投影出去（关着 = null 的契约被破一拍）。
+        if not on:
+            entry = {}
+        last_ok = entry.get("last_ok")
+        # §48.4 出机清洗：skip_reason 只放行闭集词表码（词表外折叠 "error"，
+        # mcp_failed:<detail> 去尾）——dashboard 随 syncd 出机，radar 写进
+        # health 的自由文本（错误摘录/本机路径）不许跟着出去。
+        skip = health.public_skip_reason(entry.get("skip_reason"))
+        out[src] = {
+            "enabled": on,
+            "last_ok": last_ok if isinstance(last_ok, str) and last_ok else None,
+            "skip_reason": skip if isinstance(skip, str) and skip else None,
+            # stale **不吃** actd 的睡醒/冷启动宽限（§48.4）：投影是无状态的
+            # 磁盘真值函数（`python -m act.lib.dashboard` 一次性进程也在跑，
+            # 进程级宽限状态会让 CLI 构建永远压掉 stale）；告警宽限是通知侧
+            # 的关切。睡醒后的一轮假 stale 随雷达补跑自愈，消费者自行防抖。
+            "stale": bool(on and sources.is_stale(src, entry, now)),
+        }
+    return out
+
+
 def build_dashboard(
     reqs: Optional[list[Requirement]] = None,
     agents: Optional[list[dict]] = None,
@@ -1012,6 +1067,9 @@ def build_dashboard(
         # radar/capture 通道的 fold 发生时留在 state/fold_receipts/ 的短暂
         # 回执，App 端渲染为一行可消失的「已并入 R-xxx」提示。
         "fold_receipts": _fold_receipts(),
+        # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
+        # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
+        "radar_sources": _radar_sources(cfg),
     }
     # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
     # paired phone adopt a Mac rename from the board payload without re-scanning

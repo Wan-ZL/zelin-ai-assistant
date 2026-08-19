@@ -82,12 +82,17 @@ class ObsidianHealthBase(unittest.TestCase):
 
 
 class ObsidianHealthTestCase(ObsidianHealthBase):
-    def test_feature_off_is_disabled(self):
+    def test_feature_off_is_truly_silent(self):
+        # §48 改判（原判例：off → skip_reason="disabled"）：关掉的源不产出
+        # health 条目——写 `disabled` 会让 App 把「关着」误读成管线存活信号
+        # （§0 第 3 条）。既有条目还要被清除（僵尸 last_attempt 不再冒充活）。
+        health.update_radar_health("obsidian", ok=False, skip_reason="vault_empty")
         config.CONFIG_PATH.write_text(
             f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n'
             "features:\n  obsidian_radar: false\n", encoding="utf-8")
         radar.scan(runner=lambda t: self.fail("scanned while off"))
-        self.assertEqual(_read_obsidian()["skip_reason"], "disabled")
+        data = json.loads(health.HEALTH_PATH.read_text(encoding="utf-8"))
+        self.assertNotIn("obsidian", data)
 
     def test_unconfigured_vault_is_vault_missing(self):
         config.CONFIG_PATH.write_text("sources: {}\n", encoding="utf-8")

@@ -574,6 +574,42 @@ struct UpdateInfo: Decodable, Hashable {
     }
 }
 
+// CONTRACT §48 — optional top-level `radar_sources` map: per-source switch
+// intent + health digest, projected by actd from act/lib/sources.py (the
+// single source of truth) + state/radar_health.json. `enabled` REPLACES the
+// old Swift-side intent guesses (credential-file-non-empty etc.); `stale`
+// = the source is on but has had no success within its liveness threshold
+// (the board-visible half of the §48 dead-source alert — clears on recovery).
+// All fields decodeIfPresent → older payloads simply lack the map.
+struct RadarSourceHealth: Decodable, Hashable {
+    let enabled: Bool
+    let last_ok: String?
+    let skip_reason: String?
+    let stale: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, last_ok, skip_reason, stale
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        last_ok = try? c.decodeIfPresent(String.self, forKey: .last_ok)
+        skip_reason = try? c.decodeIfPresent(String.self, forKey: .skip_reason)
+        stale = (try? c.decodeIfPresent(Bool.self, forKey: .stale)) ?? false
+    }
+
+    // 显式 memberwise init（自定义 init(from:) 会吃掉编译器合成的那份）——
+    // DiagnosticsRules 的判例直接构造投影值用。
+    init(enabled: Bool, last_ok: String? = nil,
+         skip_reason: String? = nil, stale: Bool = false) {
+        self.enabled = enabled
+        self.last_ok = last_ok
+        self.skip_reason = skip_reason
+        self.stale = stale
+    }
+}
+
 struct Counts: Decodable {
     let needs_approval: Int
     let running: Int
@@ -631,6 +667,9 @@ struct Dashboard: Decodable {
     // pairing-QR label via state/sync.json). iOS adopts it after a board
     // refresh so a rename needs no re-scan; nil on older actd payloads.
     let device_label: String?
+    // §48 — optional map; empty on older actd payloads. Per-source switch
+    // intent (`enabled`, the single source of truth) + health digest.
+    let radar_sources: [String: RadarSourceHealth]
     // 非 wire 字段：行级解码时被跳过的坏行清单（如 "running[1]"）。空 = 全部
     // 解码成功。上层（Store/AppState）用它把「丢了哪些行」亮出来——honest
     // fallback：跳过 + 可观测，绝不静默丢数据。
@@ -641,6 +680,7 @@ struct Dashboard: Decodable {
         case archived
         case merge_suggestions, update_available, device_label
         case fold_receipts
+        case radar_sources
     }
 
     init(from decoder: Decoder) throws {
@@ -663,6 +703,9 @@ struct Dashboard: Decodable {
         let upd = try? c.decodeIfPresent(UpdateInfo.self, forKey: .update_available)
         update_available = (upd?.latest.isEmpty == false) ? upd : nil
         device_label = try? c.decodeIfPresent(String.self, forKey: .device_label)
+        // §48 — a torn/bad map degrades to empty, never fails the decode.
+        radar_sources = (try? c.decodeIfPresent(
+            [String: RadarSourceHealth].self, forKey: .radar_sources)) ?? [:]
         decodeDrops = drops
         if !drops.isEmpty {   // Foundation-only 契约内的兜底可观测（mac + iOS 都走这）
             NSLog("[Contract] dashboard.json 坏行已跳过: %@", drops.joined(separator: ", "))

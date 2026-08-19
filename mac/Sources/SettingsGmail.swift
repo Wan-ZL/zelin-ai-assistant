@@ -52,10 +52,13 @@ final class GmailSettingsModel: ObservableObject {
         guard !loaded else { refreshStatus(); return }
         loaded = true
         let ov = SettingsIO.readOverrides()
-        // effective: override → config.yaml sources.gmail.enabled (the naive
-        // one-level scanner can't reach the two-level nest, so config-layer
-        // reads fall back to the product default: on)
-        enabled = (ov["gmail_enabled"] as? Bool) ?? true
+        // effective：§48.1 真源投影（radar_sources.gmail.enabled = flag 与
+        // sources.gmail.enabled 的合取）——只读 override 的话，yaml 里
+        // enabled:false 或 features.gmail_radar:false 时面板会显示「开启」
+        // 而雷达永远静默。投影缺失（actd 还没跑）回退 override → 默认开；
+        // 投影**过期**（override 比 dashboard 新：刚翻开关就重启 App / actd
+        // 停摆）同样回退——旧投影的 enabled=false 不许盖住刚写的 override。
+        enabled = Self.effectiveEnabledNow(overrides: ov)
         address = (ov["gmail_address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? SettingsIO.configScalar("address") ?? ""
         // §14bis: override-only read（和 enabled 一样，naive scanner 读不到
@@ -170,14 +173,38 @@ final class GmailSettingsModel: ObservableObject {
 
     // MARK: enable toggle + launchd agent
 
+    /// §48.1 有效值（投影 + 新鲜度 + override 回退）——loadIfNeeded 与
+    /// refreshStatus 共用：面板打开后 actd 才重建投影的话，下一次刷新要
+    /// 跟上（「加载一次永不再读」会让面板长期停在旧值）。
+    nonisolated static func effectiveEnabledNow(
+        overrides ov: [String: Any]? = nil) -> Bool {
+        let ov = ov ?? SettingsIO.readOverrides()
+        return DiagnosticsRules.effectiveSourceEnabled(
+            projected: DiagnosticsModel.readRadarSources()["gmail"],
+            fallback: (ov["gmail_enabled"] as? Bool) ?? true,
+            projectionFresh: DiagnosticsModel.projectionFresh(),
+            // 粒度收窄（§48.1）：overrides 是共用文件，无关写入也会推 mtime
+            // ——只有 override 里真有 gmail 的开关键才允许回退 fallback
+            //（toggle 两个方向都写 gmail_enabled，键存在即覆盖用户意图）。
+            overrideHasKey: ov["gmail_enabled"] is Bool)
+    }
+
     func setEnabled(_ on: Bool) {
         guard !busy else { return }
         // explicit write both ways: the app can't read the two-level-nested
         // config layer, and the toggle IS a user change — the override must
         // guarantee UI == effective (dropping "true" could silently leave a
         // config.yaml `enabled: false` in charge while the switch shows on).
+        // 打开时把合取的**两个键**都写 true（§48.1）：只写 gmail_enabled 的
+        // 话，yaml 里 features.gmail_radar:false 仍压着雷达——用户显式动作
+        // 允许覆盖 yaml。关闭只写 gmail_enabled=false（合取，单键足以关）。
         var merged = SettingsIO.readOverrides()
         merged["gmail_enabled"] = on
+        if on {
+            var feats = merged["features"] as? [String: Any] ?? [:]
+            feats["gmail_radar"] = true
+            merged["features"] = feats
+        }
         do {
             try SettingsIO.writeOverrides(merged)
         } catch {
@@ -202,6 +229,13 @@ final class GmailSettingsModel: ObservableObject {
                 MainActor.assumeIsolated {
                     self.busy = false
                     if on {
+                        // §48.6 旁路回执：面板 install 的结果与卡上重装同款
+                        // 落 RepairReceiptStore——load 失败只留 statusNote
+                        // 的话 App 重启即失忆：plist 在 → 修复卡不出，health
+                        // 已清 → liveness 无基线，雷达静默死路。
+                        DiagnosticsModel.shared.noteAgentRepair(
+                            label: Self.agentLabel, ok: failMsg.isEmpty,
+                            message: failMsg)
                         self.statusNote = failMsg.isEmpty
                             ? L("已开启 ✓ 后台雷达每 5 分钟扫一次收件箱未读（只读，不会标已读）。没存密码时静默待机。",
                                 "Enabled ✓ The background radar scans unread inbox mail every 5 minutes (read-only — nothing gets marked read). Without a saved password it idles silently.")
@@ -231,6 +265,9 @@ final class GmailSettingsModel: ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.busy = false
+                    // §48.6 旁路回执（同 setEnabled）：失败持久化、成功出账
+                    DiagnosticsModel.shared.noteAgentRepair(
+                        label: Self.agentLabel, ok: ok, message: ok ? "" : msg)
                     self.statusNote = ok ? L("已重新安装 ✓", "Reinstalled ✓") : msg
                     self.refreshStatus(afterDelay: 3)
                 }
@@ -244,6 +281,10 @@ final class GmailSettingsModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + delay) {
             let loadedNow = LaunchAgents.isLoaded(label: Self.agentLabel)
             let health = Self.readHealth()
+            // §48.1 有效值随刷新重算：actd 在面板打开后才重建投影/用户在
+            // 别处翻了开关时跟上真值。fresher-wins：override 比投影新时回退
+            // override 判据，刚翻的开关不会被旧投影翻回去。
+            let effective = Self.effectiveEnabledNow()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.agentLoaded = loadedNow
@@ -251,6 +292,7 @@ final class GmailSettingsModel: ObservableObject {
                     self.lastOK = health?["last_ok"] as? String
                     self.lastAttempt = health?["last_attempt"] as? String
                     self.skipReason = health?["skip_reason"] as? String
+                    if !self.busy { self.enabled = effective }
                 }
             }
         }

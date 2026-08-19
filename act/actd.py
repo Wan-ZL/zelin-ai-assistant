@@ -36,7 +36,7 @@ from typing import Optional
 
 import yaml
 
-from act.lib import analytics, config, notify, registry
+from act.lib import analytics, config, health, notify, registry, sources
 from act.lib.agent_states import (
     _BLOCKED_STATES,
     _DONE_STATES,
@@ -2251,6 +2251,146 @@ def _check_auth_failures(notified: set[str]) -> list[tuple[str, str]]:
     return msgs
 
 
+# §48 睡醒宽限：合盖 ≥ 阈值的睡眠唤醒后，actd 的第一批 pass 必然早于雷达补跑
+# （launchd/cron 也刚醒），health 时间戳整体超期 —— 没有宽限就是每天醒来一轮
+# 假「源死亡」告警，anti-nag 台账防不了这种每日重置。检测**挂起时长**
+# （wall-clock 前进量减去 monotonic 前进量——真睡眠 wall 走 mono 停；长 pass
+# 两钟同进、差值 ≈ 0，不会被误判成睡醒），宽限一个最大雷达周期
+# （obsidian cron */30 = 1800s）+ 余量，让雷达先补跑再恢复评判。
+_WAKE_JUMP_FACTOR = 6            # 挂起 > interval×6 视为睡醒
+_WAKE_JUMP_FLOOR_SECONDS = 300   # interval 很小时的挂起判定下限
+_WAKE_GRACE_SECONDS = 35 * 60    # 最大雷达周期 1800s + 余量（对齐 Diagnostics）
+_wake_state: dict = {"last_pass": None, "last_mono": None, "grace_until": 0.0}
+
+# §48.3 无基线首见台账（进程内，src → wall ts）：源开着、health 却从无任何
+# 时间戳时记下首见时刻——持续无基线超 liveness 阈值同样按死亡告警。堵的是
+# 「plist 写成但 launchctl load 失败」的安装死角：install.sh 吞掉 load 的
+# stderr、修复回执只有设置面板路径会写，App 侧只见 plist 在 → 无修复卡，
+# 而 is_stale 无基线返回 False → 告警侧也永久静默。新装机首个阈值窗内仍
+# 静默（不能凭空宣布死亡，anti-nag 保留）；进程内存 → actd 重启重置，
+# --once/cron 形态不承诺（与冷启动宽限同款免责）。
+_no_baseline_since: dict = {}
+
+
+def _wake_grace(cfg: config.Config, wall: float,
+                interval: Optional[int] = None,
+                mono: Optional[float] = None) -> bool:
+    """记录本 pass 的时钟并判断是否处于睡醒/冷启动宽限期。
+
+    进程首 pass（``last_pass`` 为 None）同睡醒对待：``_wake_state`` 是进程内
+    存，actd 重启后没有跳变可测，而关机 ≥ 阈值后开机（RunAtLoad）的第一个
+    pass 同样必然早于雷达落笔——不宽限就是每源一条假死亡通知。代价只是
+    重启/升级后真死亡多等一个宽限窗才报，可接受。
+
+    ``interval`` = 主循环的**真实** pass 间隔（main 里 ``--interval`` 优先于
+    config）——挂起判定必须吃它：只按 config 的 poll_interval_seconds 算的话，
+    ``--interval 600`` 形态下每个正常 pass 都被判成睡醒、宽限永不结束、
+    liveness 被静默饿死。缺省才回退 config 值。
+
+    ``mono`` = 本 pass 的 monotonic 时钟读数（``time.monotonic()``，macOS 走
+    mach_absolute_time，**睡眠期间停摆**；测试注入缝）。睡醒判据 = wall 前进
+    量与 mono 前进量的**差值**（≈ 真实挂起时长）超过 max(interval×6, 300s)。
+    只看 wall 跳变的旧判据会把「长 pass」（如 process_raising 的 claude 调用
+    连续吃满 420s 超时）误判成睡醒——每轮都重置 ``grace_until``，宽限永不
+    结束，真死亡的源永远不告警。长 pass 两个时钟同步前进，差值 ≈ 0，照常
+    评判。任一侧 mono 读数缺失（首 pass / 旧状态）回退 wall 差值判据。
+    """
+    if interval is None:
+        interval = int(getattr(cfg, "poll_interval_seconds", 10) or 10)
+    if mono is None:
+        mono = time.monotonic()
+    last = _wake_state["last_pass"]
+    last_mono = _wake_state.get("last_mono")
+    _wake_state["last_pass"] = wall
+    _wake_state["last_mono"] = mono
+    jump = max(interval * _WAKE_JUMP_FACTOR, _WAKE_JUMP_FLOOR_SECONDS)
+    if last_mono is not None:
+        suspended = (wall - (last or wall)) - (mono - last_mono)
+    else:
+        suspended = wall - (last or wall)   # 旧判据兜底（无 mono 基线可比）
+    if last is None or suspended > jump:
+        _wake_state["grace_until"] = wall + _WAKE_GRACE_SECONDS
+    return wall < _wake_state["grace_until"]
+
+
+def _check_radar_liveness(notified: set[str],
+                          now: Optional[_dt.datetime] = None,
+                          interval: Optional[int] = None,
+                          mono: Optional[float] = None,
+                          missing_since: Optional[dict] = None
+                          ) -> list[tuple[str, str]]:
+    """§48 雷达 liveness 巡检：开着的源死了要响，关掉的源全静默。
+
+    配置**每次调用现读**（load_config 自身防崩）——actd 启动时冻结的 cfg 在
+    App 翻开关后双向失真：关→开会每 pass 清掉活雷达刚写的 health 还复活假
+    存活信号，开→关会对用户刚关的源发死亡告警。对每个 ``sources.enabled()``
+    为真的源，比较 health 的 last_ok/last_attempt（取较新者）与
+    ``sources.LIVENESS_THRESHOLDS``，超期 = 源死亡 → notify 一次。anti-nag
+    台账（``notified``，与 auth_notified 同款进程内 set）：同一源只在**跨过**
+    阈值那一刻报一次，恢复（不再 stale）即出账，下次再死才会再响。告警
+    **落笔前再复核一次 enabled**（现读 config）——巡检开头到 notify 之间
+    用户可能刚关掉该源（TOCTOU），关掉的源全静默优先于省一次盘读。睡醒宽限
+    （``_wake_grace``）期间不评判 stale、也不动台账。关掉的源不进循环，且
+    顺手清掉残留 health 条目（生产上手删 plist 留下的僵尸 last_attempt
+    记录）。**无基线兜底**：开着却从无 health 时间戳的源记首见时刻
+    （``_no_baseline_since``），持续无基线超同一阈值也按死亡告警——覆盖
+    「plist 写成但 launchctl load 失败、雷达从未落笔」的安装死角。
+    ``now`` / ``mono`` / ``missing_since`` 是测试注入缝。Never raises。
+    """
+    msgs: list[tuple[str, str]] = []
+    if missing_since is None:
+        missing_since = _no_baseline_since
+    try:
+        cfg = config.load_config()
+        if now is None:
+            now = _dt.datetime.now(_dt.timezone.utc)
+        graced = _wake_grace(cfg, now.timestamp(), interval, mono)
+        data = health.load_radar_health()
+        for src in sources.SOURCES:
+            if not sources.enabled(cfg, src):
+                # 关着：清残留条目（条目不存在时 no-op、不写文件），出账。
+                # 纪律豁免（radar.py _owns_health 的 cron 单写者门）：那道门
+                # 防的是手动/launchd 语境误删 cron 的**真实健康**；源 disabled
+                # 时 cron 写者自己也已静默（§48.2 入口 gate），条目只剩僵尸
+                # ——actd 作为清理仲裁者收尾不与单写者门冲突。
+                health.remove_radar_health(src)
+                notified.discard(src)
+                missing_since.pop(src, None)
+                continue
+            if graced:
+                continue    # 睡醒宽限：雷达还没来得及补跑，本 pass 不评判
+            entry = data.get(src)
+            if sources.has_baseline(entry):
+                missing_since.pop(src, None)
+                dead = sources.is_stale(src, entry, now)
+            else:
+                # 无基线兜底（§48.3）：is_stale 对无基线诚实地返回 False，
+                # 但源开着却**持续**无基线本身就是死亡形态——首见即记账，
+                # 超过同一 liveness 阈值仍无落笔则告警；首个阈值窗内静默
+                # （新装机不误报，anti-nag）。
+                first = missing_since.setdefault(src, now.timestamp())
+                dead = (now.timestamp() - first
+                        ) > sources.LIVENESS_THRESHOLDS[src]
+            if dead:
+                if src not in notified:
+                    # 告警落笔前复核 enabled（TOCTOU 收窄）：巡检开头读的
+                    # cfg 与 notify 之间用户可能刚关掉本源——关掉的源全
+                    # 静默是 §48.2 的硬承诺，宁可多读一次盘也不发这条。
+                    # 复核只走「即将告警」的罕见分支（源死亡 + 未在台账），
+                    # 稳态零额外 IO；关了就本 pass 静默，残留 health 条目
+                    # 留给下一 pass 的清理分支收尾。
+                    if not sources.enabled(config.load_config(), src):
+                        continue
+                    notified.add(src)
+                    hours = sources.LIVENESS_THRESHOLDS[src] // 3600
+                    msgs.append(notify.msg_radar_dead(src, hours))
+            else:
+                notified.discard(src)   # 恢复（或基线/无基线未超窗）→ 出账
+    except Exception as e:  # noqa: BLE001 - 巡检绝不干掉主循环
+        _log(f"radar liveness check FAILED: {e}")
+    return msgs
+
+
 # --------------------------------------------------------------------------- #
 # auto-resume interrupted executing tasks
 # --------------------------------------------------------------------------- #
@@ -2798,6 +2938,8 @@ def run_once(
     prev_dash: Optional[dict],
     auth_notified: set[str],
     resume_notified: Optional[set[str]] = None,
+    radar_dead_notified: Optional[set[str]] = None,
+    interval: Optional[int] = None,   # 主循环真实 pass 间隔（--interval 优先）
 ) -> dict:
     config.ensure_state_dirs()
     n_inbox = process_inbox()
@@ -2870,6 +3012,13 @@ def run_once(
         notify.notify(title, body, req=rid, kind=kind)
     for title, body in _check_auth_failures(auth_notified):
         notify.notify(title, body)
+    # §48 源死亡告警：开着的源超阈值没成功 → 报一次（anti-nag 台账在
+    # radar_dead_notified）；dashboard 侧的可见投影在 radar_sources.stale。
+    # 巡检内部现读配置（App 翻开关立即生效，不吃启动时冻结的 cfg）。
+    for title, body in _check_radar_liveness(
+            radar_dead_notified if radar_dead_notified is not None else set(),
+            interval=interval):
+        notify.notify(title, body)
 
     return dash
 
@@ -2889,10 +3038,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     interval = args.interval or cfg.poll_interval_seconds or 10
     auth_notified: set[str] = set()
     resume_notified: set[str] = set()
+    radar_dead_notified: set[str] = set()   # §48 anti-nag：每源一次，恢复出账
 
     if args.once:
         try:
-            run_once(cfg, None, auth_notified, resume_notified)
+            run_once(cfg, None, auth_notified, resume_notified,
+                     radar_dead_notified, interval=interval)
         except Exception as e:  # noqa: BLE001
             _log(f"run_once FAILED: {e}\n{traceback.format_exc()}")
             return 1
@@ -2903,7 +3054,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
     while True:
         try:
-            prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified)
+            prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
+                                 radar_dead_notified, interval=interval)
             loop_health.record_success()
         except Exception as e:  # noqa: BLE001 - one bad pass must not kill loop
             loop_health.record_failure(f"{type(e).__name__}: {e}")

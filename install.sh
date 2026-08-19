@@ -395,11 +395,38 @@ rm -f "$LA_DIR/$RETIRED_RADAR_LABEL.plist"
 RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
 launchd_unload "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist" "$RETIRED_IMESSAGE_LABEL"
 rm -f "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist"
+# v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
+# ONLY when its source is enabled per the single source of truth
+# (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
+# A disabled source gets the RETIRED treatment above (unload + rm) instead,
+# so a re-run of install.sh can no longer resurrect a switched-off radar.
+# "off" is ONLY the dedicated exit code 3 + the literal stdout "off" — every
+# other outcome (exit 1 python crash / ModuleNotFoundError / no PyYAML / exit
+# 2 bad invocation) fails OPEN and installs as before. The probe runs from
+# $REPO_ROOT like every other `-m act.*` call in this file: a pkg postinstall
+# cwd is an Installer temp dir where `-m act.lib.sources` can't import at all.
+radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
+    rc=0
+    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
+        "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
+    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
+}
 for plist in "$REPO_ROOT"/act/launchd/*.plist; do
     [ -e "$plist" ] || continue
     base="$(basename "$plist")"
     label="${base%.plist}"
     dest="$LA_DIR/$base"
+    case "$label" in
+        *.gmailradar) plist_source="gmail" ;;
+        *.slackradar) plist_source="slack" ;;
+        *) plist_source="" ;;
+    esac
+    if [ -n "$plist_source" ] && ! radar_source_enabled "$plist_source"; then
+        info "$plist_source source is switched off — not installing $label"
+        launchd_unload "$dest" "$label"
+        rm -f "$dest"
+        continue
+    fi
     # unload any previous version first (idempotent upgrades)
     launchd_unload "$dest" "$label"
     render_launchd_plist "$plist" "$dest"
