@@ -11,6 +11,7 @@ the debt batch R-002..R-006). Both shapes round-trip through ``save``.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -113,6 +114,10 @@ _OPTIONAL_ORDER = [
     # (distinct from repeated_mentions, which also counts restatements and
     # user-approved merges). Only present once >0.
     "silent_merge_count",
+    # §34bis preset 卡标记 — 按钮注入固定 plan 的卡（词表目前仅
+    # "proposals_triage"）。顶层字段而非 execution 键：executor.dispatch
+    # 成功路径会整个重建 execution，标记放那里活不过起跑。
+    "preset",
 ]
 
 
@@ -175,6 +180,10 @@ class Requirement:
     display_title: Optional[str] = None
     user_titled: bool = False
     former_titles: Optional[list] = None
+
+    # §34bis preset 卡标记（add-only，见 _OPTIONAL_ORDER 注）——快照护栏靠它
+    # 在 dispatch/收割时认出提案清理卡。
+    preset: Optional[str] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -330,11 +339,77 @@ def _dump_yaml(obj: Any) -> str:
     return yaml.safe_dump(obj, allow_unicode=True, sort_keys=False, width=100)
 
 
+# §34bis 快照护栏的排除表（写入台账）：经本模块写/删过的卡片文件名。
+# 起止快照比对时命中台账的变动 = 管线自己的合法写入，不算嫌疑——没有它，
+# 清理会话期间任何正常落盘（radar 新卡、fold、状态迁移）都会触发假警。
+# **跨进程持久**：radar（slack 180s / gmail 300s / obsidian cron）是独立
+# 进程、也经本模块直写 registry，进程内存集合看不见它们；台账落成
+# state/registry_writes.jsonl（append-only，一行一条 {"f","ts"}），guard
+# 按快照起始 ts 过滤读取——actd 中途重启也不再丢账。进程内映射只留作
+# 落盘失败（磁盘满等）时的兜底，且**同样带 ts、同样按快照起始 ts 过滤**：
+# 无条件豁免会让本进程写过的每张卡（包括清理会话正在审阅的提案卡——最
+# 现实的篡改目标）永久免检，护栏对它们失明。宁多记一笔（漏报该笔）不
+# 少记（假警），但绝不豁免快照前的历史写入。
+_PROC_WRITES: dict = {}     # 文件名 -> 本进程最近一次写入 ts（UTC 字符串）
+_WRITES_JOURNAL_MAX_BYTES = 1 << 20     # 超过 ~1MB 压缩到最近半数行
+
+
+def _writes_journal_path() -> Path:
+    return config.STATE_DIR / "registry_writes.jsonl"
+
+
+def _journal_write(name: str) -> None:
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _PROC_WRITES[name] = ts     # 兜底映射带 ts（writes_since 按 ts 过滤）
+    try:
+        path = _writes_journal_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"f": name, "ts": ts},
+                                ensure_ascii=False) + "\n")
+        # 压缩（best-effort）：append-only 台账会无限增长；超限时只留后半。
+        # 多进程下 rewrite 可能吞掉并发的一条 append——代价只是那笔合法写入
+        # 可能被误报（检测型护栏 + 人工核查，可接受），绝不多排除。
+        if path.stat().st_size > _WRITES_JOURNAL_MAX_BYTES:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            keep = lines[len(lines) // 2:]
+            tmp = path.with_suffix(".jsonl.tmp")
+            tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
+            tmp.replace(path)
+    except OSError:
+        pass
+
+
+def writes_since(ts: str) -> frozenset:
+    """§34bis 快照护栏的排除表：``ts`` 起（含）的合法写入文件名集合。
+
+    = 持久台账 ∪ 本进程内存映射（落盘失败的兜底）中 ts 之后（含）的条目。
+    **两路都按 ts 过滤**——快照前的历史写入绝不豁免（否则本进程写过的卡被
+    会话篡改将永不告警）。ts 与台账条目同为 UTC "%Y-%m-%dT%H:%M:%SZ"——
+    字符串比较即时间比较。
+    """
+    names = {n for n, t in _PROC_WRITES.items() if str(t) >= str(ts)}
+    try:
+        for line in _writes_journal_path().read_text(
+                encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("f") \
+                    and str(rec.get("ts", "")) >= str(ts):
+                names.add(str(rec["f"]))
+    except OSError:
+        pass
+    return frozenset(names)
+
+
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
+    _journal_write(path.name)
 
 
 def save(req: Requirement) -> None:
@@ -538,9 +613,11 @@ def delete(req: Requirement) -> bool:
                 path.unlink()
             except OSError:
                 return False
+            _journal_write(path.name)    # §34bis 台账：管线的合法删除
         return True
     try:
         path.unlink()
+        _journal_write(path.name)        # §34bis 台账：管线的合法删除
         return True
     except OSError:
         return False
@@ -600,6 +677,7 @@ def unarchive(req: Requirement) -> Requirement:
     if orig and Path(orig) != Path(req._file):
         try:
             Path(orig).unlink(missing_ok=True)
+            _journal_write(Path(orig).name)     # §34bis 台账：搬迁删除原件
         except OSError:
             pass
     return req

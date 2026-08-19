@@ -157,6 +157,16 @@ def msg_new_cards_batch(n: int) -> tuple[str, str]:
                   "Open the menu-bar panel to review them (✅ approve / ❌ reject)"))
 
 
+def msg_registry_guard(title: str, files: str) -> tuple[str, str]:
+    """§34bis 机械护栏：清理会话期间 registry 出现非 actd 的文件变动。"""
+    return (_pick("清理会话疑似改动了 registry，请核查",
+                  "Triage session may have modified the registry"),
+            _pick(f"{title} —— 快照比对发现非 actd 写入：{files}。会话按律只读，"
+                  "请人工核查这些卡片文件",
+                  f"{title} — snapshot diff found non-actd writes: {files}. "
+                  "The session is read-only by law; please inspect these card files"))
+
+
 def msg_done(title: str) -> tuple[str, str]:
     return (_pick("任务完成", "Task finished"),
             _pick(f"{title} —— 打开 App 验收或打回",

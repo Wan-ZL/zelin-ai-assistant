@@ -1126,6 +1126,14 @@ final class DashboardStore: ObservableObject {
         return captures + placeholders + backend
     }
 
+    /// §34bis 清理按钮口径：后端提案卡（needs_approval = card_sent/raising，
+    /// 与固定 plan 的审阅范围逐字一致）。后端 raising 卡（processing 灰显）
+    /// 在清理范围内必须计入；本地乐观占位卡（captures/raisingLocal 合成卡）
+    /// 还不是后端卡，不算积压。isHidden 跟随 visibleApprovals 的乐观离场。
+    var backendApprovals: [ApprovalCard] {
+        (dashboard?.needs_approval ?? []).filter { !isHidden($0.id) }
+    }
+
     /// v0.34 direct-run placeholders — grey queued rows pinned at the top of
     /// the 运行中 lane until the backend surfaces the matching queued/running
     /// card (or the 180 s sweep gives up, honestly). Like the proposal-lane
