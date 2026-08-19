@@ -318,7 +318,10 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
   **隐私 fail-closed 特例**：与本节其它 flag 的 fail-open（默认 on）惯例相反，
   gate 在「配置读不到 / 存在但损坏」时按 **off** 处理——用户显式退出的隐私
   承诺压过功能可用性默认，否则一份坏 yaml/坏 overrides 就能让退出静默失效；
-  「损坏」包括 flag 值本身写了但判不动布尔、以及 Swift 侧真 config.yaml
+  「损坏」包括 flag 值本身写了但判不动布尔、Python 侧 **PyYAML 缺失而
+  config.yaml 在场**（无解析器 = 文件读不出，退出可能就写在里面；运行时
+  依赖白名单本含 PyYAML，走到这说明环境已残，但 fail-closed 不赌可达性）、
+  以及 Swift 侧真 config.yaml
   **存在但读不出/行扫描认不动的形态**（非 UTF-8、跨行 flow mapping、
   `analytics:` 空值——PyYAML 那边可能正读出用户的退出）；配置文件
   **不存在**不算损坏（从未表达过退出，默认 on 诚实）。两侧保守探测的边界：

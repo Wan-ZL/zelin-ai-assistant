@@ -171,10 +171,15 @@ def _config_sources_intact() -> bool:
     退出，默认 on 是诚实的）。损坏也包括 flag 值本身写了但判不动布尔
     （"banana" 之类的手改坏值）——load_config 会把它静默退回默认 on，
     可用户写下它时想表达的很可能是退出，宁可按 off 处理（Swift 侧
-    Analytics.featureEnabled 同一保守探测）。
+    Analytics.featureEnabled 同一保守探测）。「读不懂」也包括 PyYAML 缺失
+    （config.yaml=None）而文件在场——退出可能就写在这份没人能读的文件里
+    （运行时依赖白名单本含 PyYAML，走到这说明环境已残，但 fail-closed
+    不赌可达性）。
     """
     try:
-        if config.yaml is not None and config.CONFIG_PATH.exists():
+        if config.CONFIG_PATH.exists():
+            if config.yaml is None:  # 文件在场却无解析器 = 损坏同款
+                return False
             loaded = config.yaml.safe_load(
                 config.CONFIG_PATH.read_text(encoding="utf-8"))
             if loaded is not None and not isinstance(loaded, dict):
@@ -251,7 +256,9 @@ def feature_gate_fresh() -> bool:
     """
     value = True  # §16 默认 on：键不存在 = 用户从未表达过退出
     try:
-        if config.yaml is not None and config.CONFIG_PATH.exists():
+        if config.CONFIG_PATH.exists():
+            if config.yaml is None:  # 文件在场却无解析器 = 损坏同款 off
+                return False
             loaded = config.yaml.safe_load(
                 config.CONFIG_PATH.read_text(encoding="utf-8"))
             if loaded is not None and not isinstance(loaded, dict):

@@ -167,6 +167,33 @@ class AnalyticsFeatureGateTestCase(unittest.TestCase):
         analytics.log_event("gate_probe_bad_value")
         self.assertEqual(_events_lines(), before)
 
+    def test_pyyaml_missing_with_config_present_zero_output(self):
+        # PyYAML 缺失（config.yaml=None）而 config.yaml 在场 ⇒「存在但读不
+        # 懂」同款 fail-closed：显式退出可能就写在这份没人能读的文件里。
+        # 运行时白名单本含 PyYAML，走到这说明环境已残——但 fail-closed
+        # 不赌可达性。两个读者（缓存 gate / 上传端单快照 gate）都得 off。
+        config.CONFIG_PATH.write_text(
+            "features:\n  analytics: false\n", encoding="utf-8")
+        with mock.patch.object(config, "yaml", None):
+            self.assertFalse(analytics.feature_gate())
+            self.assertFalse(analytics.feature_gate_fresh())
+            before = _events_lines()
+            analytics.log_event("gate_probe_no_yaml")
+            self.assertEqual(_events_lines(), before)
+
+    def test_pyyaml_missing_without_config_stays_default_on(self):
+        # PyYAML 缺失但 config.yaml 不存在 ⇒ 不算损坏：用户从未写过配置，
+        # §16 默认 on 依旧诚实；overrides 是 JSON，退出照常生效（不靠 yaml）
+        config.CONFIG_PATH.unlink(missing_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.unlink(missing_ok=True)
+        with mock.patch.object(config, "yaml", None):
+            self.assertTrue(analytics.feature_gate_fresh())
+            config.SETTINGS_OVERRIDES_PATH.parent.mkdir(
+                parents=True, exist_ok=True)
+            config.SETTINGS_OVERRIDES_PATH.write_text(
+                '{"features": {"analytics": false}}', encoding="utf-8")
+            self.assertFalse(analytics.feature_gate_fresh())
+
     def test_absent_config_files_default_on(self):
         # 不存在 ≠ 损坏：全新 checkout 没写过任何配置，按 §16 默认 on
         config.CONFIG_PATH.unlink(missing_ok=True)
