@@ -25,6 +25,17 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.2] - 2026-08-31
+
+真机部署 v0.48.1 时抓到的安装器缺陷:仓库在外置卷 + `~/Projects` 是符号链接时,后台服务装完起不来。
+
+### Fixed
+- **launchd 渲染改用物理路径**:`install.sh` 的 `SCRIPT_DIR` 走 bash 的**逻辑** pwd,会把进入时的符号链接原样烙进 `PYTHONPATH` / `AIASSISTANT_HOME` / app 的 home.txt 指针 / cron 行;launchd 会话通过该路径形状被 TCC 拒绝,守护以 `ModuleNotFoundError: No module named 'act'` 反复退出(本机实测)。三个渲染器(install.sh、Doctor.swift、SetupWizard.swift)现在一律先解析物理路径再替换,install.sh 额外在渲染函数内二次解析,`install-linux.sh` 同步(systemd 无 TCC 门,但符号链接从不更正确)。
+- **解释器选择加 PyYAML 校验**:此前 `$AIASSISTANT_PYTHON` 与最终兜底分支只检查可执行位,可能钉上一个装不了 PyYAML 的 python。现在统一走 pin → miniconda → 安装器所用 python → `/usr/bin/python3` 的候选链,取第一个能 `import yaml` 的(绝对路径,永不 `env`);全部候选失败即响亮报错并在安装报告里记 `runtime_python=fail`,绝不静默钉坏解释器。同一条链同时供给 runtime.json、plist、cron 与 `--check`。
+- **doctor 新增两个迁移探针**:已安装 plist 携带符号链接形状的仓库路径(仓库在 $HOME 外为 FAIL、之内为 WARN),以及解释器无法 import yaml(恒为 FAIL);两者都指向 `bash install.sh`。探针按解释器去重,读的是已安装 plist 而非配置里的 pin。CONTRACT §55 补齐物理路径与解释器校验两条,docs/TROUBLESHOOTING.md 补该症状的排查段。
+
+> 升级提示:修复只在**重跑 `bash install.sh`** 后落到本机——app 的「一键修复」只重渲染 actd,cron 行与其余 agent 需要完整安装流程。
+
 ## [0.48.1] - 2026-08-31
 
 v0.48 上线当晚的加固批。三条线（安全 / app 体验 / 结构健康）各自走完「建造 → 独立审核 → 修复 → 回归」闭环，累计修 1 CRITICAL + 8 MAJOR + 20 MINOR；测试 2243 → 2309（Python）、137 → 143（web）。
@@ -2007,7 +2018,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...HEAD
+[0.48.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.1...v0.47.0
