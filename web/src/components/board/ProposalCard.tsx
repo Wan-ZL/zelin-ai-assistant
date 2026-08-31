@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, openCardDetail, useSubmit } from "./boardActions";
+import { cardAction, costLine, effectiveTier, openCardDetail, useSubmit } from "./boardActions";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
 import { TextDialog } from "./TextDialog";
@@ -87,7 +87,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
           <button
             type="button"
             className="btn btn-success"
-            onClick={() => (card.tier === "T2" ? setDialog("t2") : decide("approve"))}
+            // W17（§50）：typed-confirm 闸门读 effective_tier——外部升档卡
+            // （声明 T1、生效 T2）也必须过确认词，绝不单击直批
+            onClick={() => (effectiveTier(card) === "T2" ? setDialog("t2") : decide("approve"))}
           >
             {text("批准", "Approve")}
           </button>
