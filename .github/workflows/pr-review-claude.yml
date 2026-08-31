@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
 
       - if: steps.key.outputs.present == 'true'
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # API-key mode has no Claude GitHub App to exchange an OIDC token
