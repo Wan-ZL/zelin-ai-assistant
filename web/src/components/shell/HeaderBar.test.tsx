@@ -91,6 +91,15 @@ describe("HeaderBar", () => {
     expect(window.localStorage.getItem("zai.theme")).toBe("light");
   });
 
+  it("回收站入口：链接指向 ?page=trash 深链（双语文案）", () => {
+    renderHeader();
+    const link = screen.getByRole("link", { name: "Trash" }) as HTMLAnchorElement;
+    expect(new URL(link.href).searchParams.get("page")).toBe("trash");
+    cleanup();
+    renderHeader("zh");
+    expect(screen.getByRole("link", { name: "回收站" })).toBeTruthy();
+  });
+
   it("语言切换：store.language 翻转 + 持久化 zai.lang", () => {
     renderHeader("zh");
     fireEvent.click(screen.getByRole("button", { name: "切换到英文" }));

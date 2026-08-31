@@ -119,3 +119,4 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 - TODO(contract): 宪法第 7 条的 react/react-dom「构建侧」定位措辞(8.2)需 owner 在修宪 PR 里确认——是写进 §49(推荐,条文不动)还是直接给第 7 条加括号执法注。
 - TODO(contract): `origin_trust` 字段(§3 信任矩阵)属 PR2/PR3 范围,字段名与取值枚举尚未进 CONTRACT——store2 接线的修宪案一并立法。
 - TODO(contract): NOTICE 中 fork 目的地路径按最终落地文件名 reconcile(integration agent 终裁)。
+- TODO(wiring): wiring PR must verify actd validates feedback/capture image paths are under state/attachments/ before LLM attachment (review-ui finding 7).

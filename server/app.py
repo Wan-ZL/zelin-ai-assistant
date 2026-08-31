@@ -120,8 +120,10 @@ class Handler(BaseHTTPRequestHandler):
             rest = path[len("/files/deliverables/"):].split("/")
             if len(rest) != 2:
                 raise NotFoundError("not found", {"path": path})
-            body, ctype = files.serve_deliverable(ctx.home, rest[0], rest[1])
-            self._send_bytes(200, body, ctype, {"Cache-Control": "no-store"})
+            body, ctype, extra = files.serve_deliverable(ctx.home, rest[0],
+                                                         rest[1])
+            extra["Cache-Control"] = "no-store"
+            self._send_bytes(200, body, ctype, extra)
         elif path.startswith("/api/") or path.startswith("/files/"):
             raise NotFoundError("not found", {"path": path})
         else:
@@ -211,6 +213,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # 客户端断开——正常退出
+        except Exception:
+            # 流已开：此刻 _dispatch 的兜底再写 500 envelope 只会污染
+            # event-stream——记日志、静默断流（客户端断线即全量 refetch + 重连）
+            traceback.print_exc(file=sys.stderr)
         finally:
             hub.unsubscribe(q)
 

@@ -7,7 +7,8 @@ const PAGE_QUERY_PARAM = "page";
 export type AppPage = "board" | "trash";
 
 export function readCardId(search: string): string | null {
-  const id = new URLSearchParams(search).get(CARD_QUERY_PARAM)?.trim().toUpperCase();
+  // 保留大小写：id 由 SAFE_ID_RE 界定（允许小写），匹配按原样精确比对——不做 case 折叠
+  const id = new URLSearchParams(search).get(CARD_QUERY_PARAM)?.trim();
   return id || null;
 }
 
@@ -21,7 +22,7 @@ export function buildAppUrl(href: string, page: AppPage, cardId: string | null):
   if (page !== "board") url.searchParams.set(PAGE_QUERY_PARAM, page);
   else url.searchParams.delete(PAGE_QUERY_PARAM);
 
-  if (cardId) url.searchParams.set(CARD_QUERY_PARAM, cardId.trim().toUpperCase());
+  if (cardId) url.searchParams.set(CARD_QUERY_PARAM, cardId.trim());
   else url.searchParams.delete(CARD_QUERY_PARAM);
 
   return url;

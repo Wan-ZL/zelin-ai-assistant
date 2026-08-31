@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import { buildAppUrl, readCardId, readPage } from "./route";
 
 describe("route", () => {
-  it("reads and normalizes the card deep link", () => {
-    expect(readCardId("?card=r-101")).toBe("R-101");
+  it("reads the card deep link preserving case", () => {
+    // SAFE_ID_RE 允许小写——id 按原样精确匹配，绝不 case 折叠
+    expect(readCardId("?card=r-101")).toBe("r-101");
+    expect(readCardId("?card=R-101")).toBe("R-101");
+    expect(readCardId("?card=%20R-101%20")).toBe("R-101"); // trim 保留
     expect(readCardId("?card=")).toBeNull();
     expect(readCardId("")).toBeNull();
   });
@@ -18,7 +21,7 @@ describe("route", () => {
   it("round-trips page + card through buildAppUrl", () => {
     const url = buildAppUrl("http://127.0.0.1:47820/?page=trash", "board", "r-101");
     expect(url.searchParams.get("page")).toBeNull(); // board 是缺省，不落 query
-    expect(url.searchParams.get("card")).toBe("R-101");
+    expect(url.searchParams.get("card")).toBe("r-101"); // 大小写原样保留
     expect(readPage(buildAppUrl(url.href, "trash", null).search)).toBe("trash");
   });
 });

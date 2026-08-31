@@ -60,6 +60,34 @@ class ServeDeliverableTestCase(_DeliverablesHome):
         self.assertEqual(headers.get("Cache-Control"), "no-store")
         self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
 
+    def test_csp_sandbox_on_all_deliverable_responses(self):
+        # 同源交付物绝不裸发：html 拿 sandbox allow-scripts（与 web 端
+        # iframe sandbox 属性同一约束面），其余类型裸 sandbox
+        status, headers, _body = http_request(
+            self.port, "GET", f"/files/deliverables/{HERO}/report.html")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Content-Security-Policy"),
+                         "sandbox allow-scripts")
+        self.assertNotIn("Content-Disposition", headers)  # html 由 UI 内嵌预览
+        status, headers, _body = http_request(
+            self.port, "GET", f"/files/deliverables/{HERO}/report.txt")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Content-Security-Policy"), "sandbox")
+
+    def test_attachment_disposition_on_non_previewed_types(self):
+        # 非内嵌预览类型（含可携带脚本的 svg）只下载不渲染
+        for name, body in (("report.pdf", b"%PDF-1.4 fake"),
+                           ("chart.svg", b"<svg xmlns='x'></svg>")):
+            (self.dlv / name).write_bytes(body)
+            with self.subTest(name=name):
+                status, headers, _body = http_request(
+                    self.port, "GET", f"/files/deliverables/{HERO}/{name}")
+                self.assertEqual(status, 200)
+                self.assertEqual(headers.get("Content-Disposition"),
+                                 "attachment")
+                self.assertEqual(headers.get("Content-Security-Policy"),
+                                 "sandbox")
+
     def test_missing_file_404(self):
         status, obj = get_json(self.port,
                                f"/files/deliverables/{HERO}/nope.txt")
@@ -147,6 +175,36 @@ class RevealTestCase(_DeliverablesHome):
     def test_empty_deliverables_dir_reveals_dir_itself(self):
         self.newer.unlink()
         self.older.unlink()
+        with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                mock.patch.object(files_mod.subprocess, "run") as run:
+            status, obj = post_json(self.port, "/api/reveal",
+                                    {"card_id": HERO})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj.get("revealed"), str(self.dlv))
+        self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.dlv)])
+
+    def test_newest_skips_symlink_pointing_outside(self):
+        # 指出 deliverables/ 的 symlink 哪怕 mtime 最新也绝不被 reveal——
+        # serve_deliverable 的 realpath 包含性在挑「最新交付物」时同样执法
+        outside = self.home / "outside-secret.txt"
+        outside.write_text("MUST-NOT-REVEAL", encoding="utf-8")
+        os.symlink(outside, self.dlv / "link.txt")
+        os.utime(outside, (1_900_000_000, 1_900_000_000))  # 比 newer 还新
+        with mock.patch.object(files_mod.sys, "platform", "darwin"), \
+                mock.patch.object(files_mod.subprocess, "run") as run:
+            status, obj = post_json(self.port, "/api/reveal",
+                                    {"card_id": HERO})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj.get("revealed"), str(self.newer))
+        self.assertEqual(run.call_args[0][0], ["open", "-R", str(self.newer)])
+
+    def test_only_outside_symlink_falls_back_to_dir(self):
+        # 目录里只剩外指 symlink：等同于无交付物——定位目录本身，绝不外指
+        self.newer.unlink()
+        self.older.unlink()
+        outside = self.home / "outside-secret.txt"
+        outside.write_text("MUST-NOT-REVEAL", encoding="utf-8")
+        os.symlink(outside, self.dlv / "link.txt")
         with mock.patch.object(files_mod.sys, "platform", "darwin"), \
                 mock.patch.object(files_mod.subprocess, "run") as run:
             status, obj = post_json(self.port, "/api/reveal",

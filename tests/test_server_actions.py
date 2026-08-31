@@ -1,9 +1,10 @@
 """POST /api/actions → state/inbox 落盘（BUILD-CONTRACT §2.1/§2.3 + F3 契约）。
 
-golden 对照（语义级）：payload 由 golden 反推（去 ts；卡片决策类去 null
-comment 交给 server 补齐——merge_apply/merge_dismiss 例外，Mac 客户端显式带
-``comment: null``，web 客户端照抄，两种 G1 实现口径下字节都成立）。产物与
-golden 做 **JSON 语义比较**（仅替换 ts 值；G6 的 web 侧才做逐字节比较）。
+golden 对照（语义级 + 字节级）：payload 由 golden 反推（去 ts；卡片决策类去
+null comment 交给 server 补齐——merge_apply/merge_dismiss 例外，Mac 客户端
+显式带 ``comment: null``，web 客户端照抄，两种 G1 实现口径下字节都成立）。
+产物与 golden 先做 JSON 语义比较，再做 **逐字节比较**（都仅替换 ts 值——
+mac_json_bytes 的 Mac JSONSerialization 复刻由此钉死）。
 
 G1 尚未落地时（inbox_writer 仍是 stub），golden/校验用例整组 skip，
 另有 StubTestCase 钉住诚实 501 行为；G1 落地后自动翻转激活。
@@ -136,6 +137,15 @@ class GoldenActionTestCase(_ActionsHomeMixin, unittest.TestCase):
                 normalized["ts"] = golden["ts"]  # 仅替换 ts 值做语义比较
                 self.assertEqual(normalized, golden,
                                  f"{gpath.name}: wire shape drifted")
+                # 字节级对照（Mac JSONSerialization 复刻是 G1 的硬承诺）：
+                # 仅替换 ts 值字节，其余必须与 golden 逐字节一致——`\/` 转义、
+                # 空数组三行、`" : "` 分隔、末尾无换行全部钉死
+                raw = (self.inbox / fname).read_bytes()
+                raw = raw.replace(
+                    f'"ts" : "{produced["ts"]}"'.encode("utf-8"),
+                    f'"ts" : "{golden["ts"]}"'.encode("utf-8"), 1)
+                self.assertEqual(raw, gpath.read_bytes(),
+                                 f"{gpath.name}: byte layout drifted")
 
     def test_same_action_twice_mints_two_stems(self):
         # §34.1 幂等键 = 文件 stem：每个逻辑动作必须铸新 stem
