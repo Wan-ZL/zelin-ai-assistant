@@ -1,0 +1,12 @@
+{
+  "action" : "feedback",
+  "ids" : [
+
+  ],
+  "images" : [
+    "\/tmp\/zai-demo\/state\/feedback\/attachments\/D2E0A1B4-1111-2222-3333-444455556666-1.png"
+  ],
+  "publish" : false,
+  "text" : "见截图：卡片角标重叠",
+  "ts" : "2026-08-30T12:00:00Z"
+}

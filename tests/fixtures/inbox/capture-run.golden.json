@@ -1,0 +1,6 @@
+{
+  "action" : "capture",
+  "mode" : "run",
+  "text" : "跑一下 tests 里挂掉的 test_dashboard 修掉",
+  "ts" : "2026-08-30T12:00:00Z"
+}
