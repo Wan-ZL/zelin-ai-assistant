@@ -2,11 +2,14 @@
 act.lib.registry.load_all（YAML 真源读法）与 store2（migrate 后 SQL 读法）
 双读，投影必须一致。
 
-范围注记：worktree 基于 8fd3b33，act/lib/registry.py 是老版本——不识
-archive/ 子目录、merged/archived 终态枚举、thread_*/display_title 等新
-optional 字段（from_dict 静默丢弃），也没有 id/title/tier 的 str() 归一。
-因此 parity 面 = 老 dataclass 认识的字段交集；archive 卡与 live-only 字段
-的等价性由 test_store2_migration.py 按 mapping 文档直接对 DB 断言。
+范围注记：本文件比的是**选定的投影面**——热列、payload 的省略语义键、
+sources 的顺序与 quote。fixture 不含 archive 卡（``with_archive=False``），
+archive 双份规则与热列推导的等价性由 test_store2_migration.py 按 mapping
+文档直接对 DB 断言；字段**词表覆盖面**（registry 加字段而 store2 漏补默认
+值 = 迁移静默丢字段）由 test_store2_field_parity.py 钉住——store2 的词表
+自 v0.48 起直接 import registry 的 CORE_ORDER/OPTIONAL_ORDER，不再手抄
+（早先这里注记过"worktree 基线 registry 是旧版、不可 import"，merge 后该
+理由已失效）。
 比对时的归一（str()/merged 前缀映射/词表外 tier 跳过）逐条对应 live
 registry.from_dict 与 schema CHECK 的既定语义，不是测试放水。
 """
