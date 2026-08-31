@@ -9,6 +9,7 @@
   * tombstone 进 revision 流（增量游标 WHERE board_rev > :since 学到删除）
   * notes/activities append-only、set-once 回执、sources 去重、one_active
 """
+import re
 import sqlite3
 import unittest
 from pathlib import Path
@@ -469,6 +470,20 @@ class DedupAndDispatchTestCase(unittest.TestCase):
             self.conn.execute(
                 "INSERT INTO dispatches (card_id, status, started_at)"
                 " VALUES ('R-001', 'completed', ?)", (NOW,))
+
+
+class SchemaLayoutTestCase(unittest.TestCase):
+    """版本钉扎必须是 schema.sql 的最后一条语句：executescript 建库途中崩溃时
+    user_version 必须还是 0，否则半截库会被版本门放行（crash window）。"""
+
+    def test_user_version_pragma_is_last_statement(self):
+        sql = SCHEMA_PATH.read_text(encoding="utf-8")
+        stripped = re.sub(r"--[^\n]*", "", sql)
+        statements = [s.strip() for s in stripped.split(";") if s.strip()]
+        self.assertEqual(statements[-1].upper().replace(" ", ""),
+                         "PRAGMAUSER_VERSION=1")
+        # 全文件只钉一次（注释除外）——出现第二处 = 有人把它挪回了前面
+        self.assertEqual(stripped.count("user_version"), 1)
 
 
 if __name__ == "__main__":

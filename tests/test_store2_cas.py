@@ -215,5 +215,47 @@ class OriginTrustStoreTestCase(_StoreFixture):
         self.assertEqual(card["origin_trust"], "hand")
 
 
+@unittest.skipUnless(_STORE_LANDED, _SKIP_REASON)
+class SchemaVersionGateTestCase(unittest.TestCase):
+    """版本门两面：crash window 重跑补全（版本尾钉的意义所在）；
+    版本号在场但表缺席的半截/伪造库 fail-closed 拒开。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="store2-gate-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_fake_version_without_tables_refused(self):
+        db = self.tmp / "half.db"
+        conn = sqlite3.connect(db)
+        conn.execute("PRAGMA user_version = 1")
+        conn.close()
+        with self.assertRaises(StoreError) as cm:
+            Store(db)
+        self.assertEqual(cm.exception.code, "SCHEMA_INCOMPLETE")
+
+    def test_crash_window_rerun_completes_schema(self):
+        # 模拟 executescript 崩在版本钉扎之前：表在、版本还是 0——
+        # 重开 Store 必须幂等补全并钉到 1，而不是带着半截库上路
+        db = self.tmp / "crash.db"
+        schema_path = (Path(__file__).resolve().parent.parent
+                       / "act" / "lib" / "store2" / "schema.sql")
+        sql = schema_path.read_text(encoding="utf-8")
+        cut = sql[:sql.rindex("PRAGMA user_version")]
+        conn = sqlite3.connect(db)
+        conn.executescript(cut)
+        conn.close()
+        store = Store(db, now_fn=lambda: NOW)
+        try:
+            store.create_card({"id": "R-001", "status": "detected",
+                               "title": "t"}, actor_type="system")
+            version = store._conn().execute(
+                "PRAGMA user_version").fetchone()[0]
+            self.assertEqual(version, 1)
+        finally:
+            store.close()
+
+
 if __name__ == "__main__":
     unittest.main()

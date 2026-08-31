@@ -191,14 +191,24 @@ class Store:
         conn = self._conn()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
-            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；末尾把 user_version 钉到 1
+            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；user_version=1 是
+            # 其**最后一条**语句——建库途中崩溃时版本仍是 0，这里重跑即补全
             conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-        elif version != SCHEMA_VERSION:
+            return
+        if version != SCHEMA_VERSION:
             # 未来版本的库 fail-closed：绝不带着不认识的 schema 盲写
             raise StoreError(
                 "SCHEMA_VERSION_MISMATCH",
                 f"db user_version={version}, store2 supports {SCHEMA_VERSION}",
                 {"db_version": version, "supported": SCHEMA_VERSION},
+            )
+        # 版本号对但核心表缺席 = 半截库/手写 pragma 伪装——版本门不许被绕过
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                        " AND name = 'cards'").fetchone() is None:
+            raise StoreError(
+                "SCHEMA_INCOMPLETE",
+                f"db user_version={version} but core tables are missing",
+                {"db_version": version},
             )
 
     def _conn(self) -> sqlite3.Connection:
