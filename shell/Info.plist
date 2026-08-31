@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>ZelinAIBoard</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.zelin.ai-board</string>
+	<key>CFBundleName</key>
+	<string>Zelin AI Board</string>
+	<key>CFBundleDisplayName</key>
+	<string>Zelin AI Board</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<!-- Fallback only: shell/build.sh stamps both version keys from
+	     act/__init__.py (single source of truth), same as mac/build.sh. -->
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Zelin. All rights reserved.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- ATS: WKWebView 只连 http://127.0.0.1:$ZAI_PORT，显式放行 localhost http。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Preview shell 默认 server repo（cwd of `python3 -m server`）。
+	     可用 `defaults write com.zelin.ai-board serverRepo <path>` 覆盖。 -->
+	<key>ZAIServerRepo</key>
+	<string>/Volumes/Storage/Server/Projects/.worktree/zelin-ai-assistant/wt-vnext-wire</string>
+</dict>
+</plist>
