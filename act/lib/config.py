@@ -126,6 +126,13 @@ class Config:
     # trash / recycle bin
     trash_retention_days: int = 60
 
+    # auto-archive（vnext W1 决议）：delivered 卡最后活动超过 N 天自动封存。
+    # live 树 v0.20.0 首发默认 0（off）；vnext 把默认改为 30（0 = 关闭）。
+    # 扫描器本身（live actd.archive_stale + registry.archive 家族）尚未在本
+    # v0.10.3 基线接线——actd 接线时按此默认值读取；见
+    # docs/design/vnext-amendments.md §W1.c。
+    archive_after_days: int = 30
+
     # local pre-send redaction (opt-in)
     redaction_enabled: bool = False
     redaction_terms_file: str = "config/redaction_terms.txt"
@@ -136,6 +143,12 @@ class Config:
     telemetry_enabled: bool = False
     telemetry_supabase_url: str = ""
     telemetry_key_path: Optional[str] = None
+
+    # W18 远程直跑闸门（vnext 决议）：webui/syncd 这类网络 ingress 是否放行
+    # capture mode:"run"（§34 direct-run 跳过人审预览）。默认关（fail-closed）；
+    # 仅 config.yaml `remote.allow_direct_run: true` 显式开启，settings_overrides
+    # 不可覆盖。见 docs/design/vnext-amendments.md §W18。
+    remote_allow_direct_run: bool = False
 
     # UI language (§15) — stored value only for now ("zh" | "en")
     language: str = "zh"
@@ -246,6 +259,11 @@ def load_config() -> Config:
         trash.get("retention_days", cfg.trash_retention_days)
     )
 
+    archive = data.get("archive", {}) or {}
+    cfg.archive_after_days = int(
+        archive.get("after_days", cfg.archive_after_days)
+    )
+
     tele = data.get("telemetry", {}) or {}
     cfg.telemetry_enabled = bool(tele.get("enabled", cfg.telemetry_enabled))
     cfg.telemetry_supabase_url = str(
@@ -260,6 +278,11 @@ def load_config() -> Config:
     _tf = cfg.redaction_terms_file
     if _tf and not str(_tf).startswith(("/", "~")):
         cfg.redaction_terms_file = str(HOME / _tf)
+
+    remote = data.get("remote", {}) or {}
+    cfg.remote_allow_direct_run = bool(
+        remote.get("allow_direct_run", cfg.remote_allow_direct_run)
+    )
 
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
