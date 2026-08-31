@@ -11,6 +11,7 @@ import { AppShell } from "./components/shell/AppShell";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
 import { BoardPage } from "./pages/BoardPage";
+import { StyleguidePage } from "./pages/StyleguidePage";
 import { TrashPage } from "./pages/TrashPage";
 
 export function App() {
@@ -33,9 +34,10 @@ export function App() {
 
   return (
     <LanguageContext.Provider value={language}>
-      {/* searchSlot = A8 过滤 chips + ⌘F 搜索（G4）；页面分发：?page=trash → 回收站页 */}
+      {/* searchSlot = A8 过滤 chips + ⌘F 搜索（G4）；页面分发：?page=trash → 回收站页，
+          ?page=styleguide → 活体样式指南（开发者页，URL 直达） */}
       <AppShell searchSlot={<FilterBar />}>
-        {page === "trash" ? <TrashPage /> : <BoardPage />}
+        {page === "trash" ? <TrashPage /> : page === "styleguide" ? <StyleguidePage /> : <BoardPage />}
         {/* 详情抽屉（G3）：无选中卡时渲染 null，任何页面下挂载都安全 */}
         <DetailDrawer />
       </AppShell>
