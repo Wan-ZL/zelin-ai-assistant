@@ -289,7 +289,9 @@ enum ActdAgent {
     /// the shared LaunchAgents.claudeBinDir resolver) and launchctl load it.
     /// Blocking — background queue only.
     nonisolated static func renderAndLoad() -> (Bool, String) {
-        let root = AppPaths.stateRoot
+        // PHYSICAL repo path + PyYAML-validated interpreter (CONTRACT §55) —
+        // same rule as LaunchAgents.install; see the incident note there.
+        let root = AppPaths.physicalStateRoot
         let template = root + "/act/launchd/\(label).plist"
         guard var text = try? String(contentsOfFile: template, encoding: .utf8) else {
             return (false, L("后台服务模板缺失(\(template))——repo 不完整?在 repo 目录运行 bash install.sh 可修复",

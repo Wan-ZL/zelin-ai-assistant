@@ -304,10 +304,114 @@ class DoctorTestCase(unittest.TestCase):
             installed_plists={LABELS[0]: self._fresh_plist()})
         results = doctor.run_checks(probes, fast=True)
         self.assertEqual(by_name(results, "launchd paths").status, doctor.OK)
+        self.assertNotIn("launchd python", [r.name for r in results])
         # nothing installed at all → no "launchd paths" row (unregistered is
         # already _check_launchd's finding; an OK here would be a lie)
         names = [r.name for r in doctor.run_checks(self.make_probes(), fast=True)]
         self.assertNotIn("launchd paths", names)
+
+    # -- §55 symlink 形状 + 解释器验证（2026-08-31 live 部署的两个症状）------- #
+    # owner 的 repo 实体在 /Volumes/… 上，另有 ~/Projects -> /Volumes/… 的便利
+    # symlink。渲染进 plist 的是 symlink 形状 → launchd 进程被 TCC 拒绝 →
+    # `No module named 'act'`；同一轮又挑中一个没有 PyYAML 的 python3。
+
+    def _symlinked_repo_path(self):
+        """沙箱里真造一条 symlink（不能靠 /var -> /private/var：Linux CI 上
+        tmp 不是 symlink，测试会静默失效）。"""
+        real = self.home / "physical" / "repo"
+        real.mkdir(parents=True, exist_ok=True)
+        link = self.home / "shortcut"
+        if not link.exists():
+            link.symlink_to(self.home / "physical")
+        linked = str(link / "repo")
+        self.assertNotEqual(os.path.realpath(linked), linked)  # fixture sanity
+        return linked
+
+    def _shim(self, name, exit_code):
+        """沙箱里的假解释器（真 python 一个都不起）——只为过 os.access。"""
+        p = self.home / name
+        self._touch(p, "#!/bin/sh\nexit %d\n" % exit_code)
+        p.chmod(0o755)
+        self._created.append(p)
+        return str(p)
+
+    def _plist_with(self, repo_path=None, interpreter=None):
+        """spawn 前的键一律指 /Users/u（干净），只让待测的值变脏。"""
+        interpreter = interpreter or self._shim("good-python3", 0)
+        return (
+            "<plist><dict>\n"
+            "<key>ProgramArguments</key>\n<array>\n<string>%s</string>\n"
+            "<string>-m</string>\n<string>act.actd</string>\n</array>\n"
+            "<key>WorkingDirectory</key>\n<string>/Users/u</string>\n"
+            "<key>StandardOutPath</key>\n"
+            "<string>/Users/u/Library/Logs/zelin-ai-assistant/actd.launchd.log</string>\n"
+            "<key>EnvironmentVariables</key>\n<dict>\n"
+            "<key>AIASSISTANT_HOME</key>\n<string>%s</string>\n"
+            "<key>PYTHONPATH</key>\n<string>%s</string>\n"
+            "</dict>\n</dict></plist>"
+            % (interpreter,
+               repo_path or "/Users/u/Projects/zelin-ai-assistant",
+               repo_path or "/Users/u/Projects/zelin-ai-assistant"))
+
+    def test_symlinked_repo_path_in_plist_is_flagged(self):
+        linked = self._symlinked_repo_path()
+        probes = self.make_probes(installed_plists={
+            LABELS[0]: self._plist_with(repo_path=linked),
+            LABELS[1]: self._plist_with(),
+        })
+        with mock.patch.object(doctor.Path, "home",
+                               return_value=Path("/nonexistent-home")):
+            results = doctor.run_checks(probes, fast=True)
+        r = by_name(results, "launchd paths")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("symlinked", r.detail)
+        self.assertIn("actd", r.detail)
+        self.assertNotIn("radar", r.detail)  # physical-path agent is not named
+        self.assertIn("No module named 'act'", r.detail)
+        self.assertIn("install.sh", r.fix)
+
+    def test_symlinked_repo_path_only_warns_when_the_repo_is_under_home(self):
+        probes = self.make_probes(installed_plists={
+            LABELS[0]: self._plist_with(repo_path=self._symlinked_repo_path())})
+        with mock.patch.object(doctor.Path, "home",
+                               return_value=self.home.parent):
+            results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.WARN)
+
+    def _no_yaml_interpreter(self):
+        """可执行的假解释器 + 一个让 `import yaml` 探针失败的 run。"""
+        py = self._shim("no-yaml-python3", 1)
+        base = FakeRun()
+
+        def run(cmd, env=None, timeout=None):
+            if cmd[0] == py:
+                return (1, "ModuleNotFoundError: No module named 'yaml'")
+            return base(cmd, env=env, timeout=timeout)
+
+        return py, run
+
+    def test_plist_interpreter_without_pyyaml_is_flagged(self):
+        py, run = self._no_yaml_interpreter()
+        probes = self.make_probes(run=run, installed_plists={
+            LABELS[0]: self._plist_with(interpreter=py),
+            LABELS[1]: self._plist_with(),
+        })
+        results = doctor.run_checks(probes, fast=True)
+        # paths themselves are clean — only the interpreter is broken
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.OK)
+        r = by_name(results, "launchd python")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("import yaml", r.detail)
+        self.assertIn("actd", r.detail)
+        self.assertNotIn("radar", r.detail)
+        self.assertIn(py, r.detail)
+        self.assertIn("install.sh", r.fix)
+
+    def test_missing_plist_interpreter_is_flagged_without_probing(self):
+        probes = self.make_probes(installed_plists={
+            LABELS[0]: self._plist_with(interpreter="/nonexistent/python3")})
+        results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd python").status, doctor.FAIL)
 
     # -- dashboard freshness ----------------------------------------------------- #
     def test_stale_dashboard_is_fail(self):

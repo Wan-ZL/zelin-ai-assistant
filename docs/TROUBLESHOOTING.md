@@ -26,6 +26,19 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **修复**:headless Claude 优先用文件形式的 API key——打开 app 设置窗口粘贴保存(写入 `config/secrets/anthropic-api-key.txt`,见 `docs/CONTRACT.md` §19);cron/launchd 里的 claude 调用一律用绝对路径。两个 key 文件都缺失时会回退到 claude CLI 自带凭证(常开的 Mac mini 上 cron 通常能用,但不可靠)。
 
+## 后台服务起不来:`ModuleNotFoundError: No module named 'act'`(或 `'yaml'`),KeepAlive 反复重启
+
+**症状**:`launchctl list | grep zelin` 显示 agent 状态非 0(常见 1),`~/Library/Logs/zelin-ai-assistant/actd.launchd.log` 里只有一行 `ModuleNotFoundError: No module named 'act'` 或 `No module named 'yaml'`;同一条命令在终端里手动跑完全正常。看板因此不再更新。
+
+**原因**(两个,常同时出现,CONTRACT §55):
+
+1. **plist 里烧进了 symlink 形状的路径**。repo 实体在外置卷上、而你习惯用一条便利 symlink 进去(例如 `~/Projects -> /Volumes/…`),install.sh 就会把 symlink 路径写进 `PYTHONPATH` / `AIASSISTANT_HOME`。launchd 起的进程经这个路径形状被 TCC 拒绝,于是 import 不到 `act`。
+2. **pin 的解释器没有 PyYAML**。`config/runtime.json` 指到一个 `import yaml` 会失败的 python3(Homebrew 新装的 3.14 最常见),agent 在写下任何日志之前就退出。
+
+**确认**:`python3 -m act.doctor` —— `launchd paths` 行会点名携带 symlink 路径的 agent,`launchd python` 行会点名 import 不了 yaml 的解释器。也可以直接看:`grep -A1 PYTHONPATH ~/Library/LaunchAgents/com.zelin.aiassistant.actd.plist`,里面的路径应当与 `cd <repo> && pwd -P` 完全一致。
+
+**修复**:在 repo 目录里重跑 `bash install.sh` —— 它用 `pwd -P` 解析物理路径、并且只 pin 验证过能 `import yaml` 的解释器,一次重渲染全部 agent(app 里的「一键修复」只重渲染 actd,所以命令行这一遍更彻底)。没有任何候选 python3 带 PyYAML 时 install.sh 会直接报 `[ERR ]` 并给出 pip 命令,不会静默装一个起不来的服务。
+
 ## launchd 任务读不到 ~/Documents:radar 扫到空 vault,零报错
 
 **症状**:vault 里明明有新笔记,radar 却什么都扫不出来,日志无报错。

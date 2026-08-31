@@ -22,7 +22,11 @@
 #   failing checks. Installs/changes nothing.
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `pwd -P` — the unit files bake this path into PYTHONPATH/AIASSISTANT_HOME, so
+# it must be the physical one (CONTRACT §55; on macOS a symlinked shape made
+# launchd TCC-deny the agents outright, and a symlink is never more correct
+# here either).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$SCRIPT_DIR"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 

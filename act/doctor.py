@@ -499,44 +499,119 @@ def _check_launchd(probes: Probes):
 # launchd 在 spawn 前触碰的 plist 键——任何一个指向 repo 都是 §55 之前的渲染
 _PLIST_SPAWN_PATH_KEYS = ("StandardOutPath", "StandardErrorPath",
                           "WorkingDirectory")
+# repo 路径唯一允许出现的地方（§55）——这两个值必须是 PHYSICAL 路径
+_PLIST_REPO_PATH_KEYS = ("AIASSISTANT_HOME", "PYTHONPATH")
+
+_INSTALL_SH_FIX = ("bash install.sh  # re-renders ALL agents; the app's"
+                   " one-click repair only re-renders actd")
+
+
+def _plist_string(text: str, key: str) -> Optional[str]:
+    m = re.search(r"<key>%s</key>\s*<string>([^<]+)</string>" % key, text)
+    return m.group(1) if m else None
+
+
+def _plist_interpreter(text: str) -> Optional[str]:
+    """ProgramArguments[0] —— launchd 真正 exec 的那个二进制。"""
+    m = re.search(r"<key>ProgramArguments</key>\s*<array>\s*<string>([^<]+)</string>",
+                  text)
+    return m.group(1) if m else None
 
 
 def _check_launchd_paths(probes: Probes):
-    """§55 迁移探测：已安装 plist 的 spawn 前路径键还指着 repo = pre-v0.48
-    渲染残留。repo 在外置卷（TCC-gated volume）上时 launchd 以 EX_CONFIG(78)
-    拒绝 spawn（2026-08-31 两次全线宕机的根因）——此时升级为 FAIL；repo 在
-    $HOME 下时 agent 还能跑，只 WARN。App 的「一键修复」只重渲染 actd，所以
-    这里点名每一个 stale agent，修复动作 = 重跑 install.sh（重渲染全部）。"""
+    """§55 渲染纪律探测，三种症状同一个修复动作（重跑 install.sh）：
+
+    1. spawn 前路径键还指着 repo = pre-v0.48 渲染残留。repo 在外置卷
+       （TCC-gated volume）上时 launchd 以 EX_CONFIG(78) 拒绝 spawn。
+    2. 携带 repo 的环境变量（AIASSISTANT_HOME / PYTHONPATH）是 **symlink 形
+       状**（≠ 自己的 realpath）。2026-08-31 live 事故：~/Projects ->
+       /Volumes/… 这条便利 symlink 被渲进 plist，launchd 会话经该路径形状被
+       TCC 拒绝，agent 每次 spawn 都以 `No module named 'act'` 退出 1。
+    3. plist 里的解释器 import 不了 yaml —— PyYAML 是守护进程唯一的非 stdlib
+       依赖，缺了它 agent 在写下任何日志之前就死（同一次事故的第二个症状：
+       /opt/homebrew/bin/python3 是 3.14，没装 PyYAML）。
+
+    repo 在 $HOME 下时 1/2 只让 agent 变慢/变脏而不致命，降级为 WARN；3 永远
+    是 FAIL。App 的「一键修复」只重渲染 actd，所以这里点名每一个坏 agent。
+    """
     labels = probes.launchd_labels
     if labels is None:
         labels = sorted(p.stem for p in (config.HOME / "act" / "launchd").glob("*.plist"))
     repo = str(config.HOME).rstrip("/")
-    stale, seen_any = [], False
+    stale, symlinked, seen_any = [], [], False
+    bad_py, verdicts = {}, {}
     for label in labels:
         text = probes.installed_plist_text(label)
         if not text:
             continue  # 没装——_check_launchd 已经报 unregistered
         seen_any = True
-        for key in _PLIST_SPAWN_PATH_KEYS:
-            m = re.search(r"<key>%s</key>\s*<string>([^<]+)</string>" % key, text)
-            if m and (m.group(1) == repo or m.group(1).startswith(repo + "/")):
-                stale.append(label.rsplit(".", 1)[-1])
-                break
+        short = label.rsplit(".", 1)[-1]
+        spawn = [_plist_string(text, key) for key in _PLIST_SPAWN_PATH_KEYS]
+        if any(v == repo or (v or "").startswith(repo + "/") for v in spawn):
+            stale.append(short)
+        elif any(_symlink_shaped(_plist_string(text, key))
+                 for key in _PLIST_REPO_PATH_KEYS):
+            symlinked.append(short)
+        py = _plist_interpreter(text)
+        if py:
+            # 同一个解释器只探一次——agent 有五个，别起五次进程
+            if py not in verdicts:
+                verdicts[py] = _interpreter_ok(probes, py)
+            if not verdicts[py]:
+                bad_py.setdefault(py, []).append(short)
     if not seen_any:
         return []
-    if not stale:
-        return CheckResult("launchd paths", OK,
-                           "installed plists keep spawn-time paths out of the repo")
     home = str(Path.home()).rstrip("/")
     severity = WARN if repo == home or repo.startswith(home + "/") else FAIL
-    return CheckResult(
-        "launchd paths", severity,
-        "installed plist still points at the repo (pre-v0.48 render): %s%s"
-        % (", ".join(stale),
-           "" if severity == WARN
-           else " - repo is on an external volume; launchd refuses to spawn (78)"),
-        "bash install.sh  # re-renders ALL agents; the app's one-click repair"
-        " only re-renders actd")
+    if stale:
+        paths = CheckResult(
+            "launchd paths", severity,
+            "installed plist still points at the repo (pre-v0.48 render): %s%s"
+            % (", ".join(stale),
+               "" if severity == WARN
+               else " - repo is on an external volume; launchd refuses to spawn (78)"),
+            _INSTALL_SH_FIX)
+    elif symlinked:
+        paths = CheckResult(
+            "launchd paths", severity,
+            "installed plist carries a symlinked repo path (%s): %s%s"
+            % (repo, ", ".join(symlinked),
+               "" if severity == WARN
+               else " - launchd is TCC-denied through that shape; the agents"
+                    " exit with \"No module named 'act'\""),
+            _INSTALL_SH_FIX)
+    else:
+        paths = CheckResult("launchd paths", OK,
+                            "installed plists keep spawn-time paths out of the "
+                            "repo and the repo path physical")
+    if not bad_py:
+        return [paths]
+    named = ", ".join(sorted({a for agents in bad_py.values() for a in agents}))
+    return [paths, CheckResult(
+        "launchd python", FAIL,
+        "the interpreter rendered into %s cannot `import yaml` (%s) - the "
+        "agents exit before they log anything"
+        % (named, ", ".join(sorted(bad_py))),
+        _INSTALL_SH_FIX)]
+
+
+def _symlink_shaped(value: Optional[str]) -> bool:
+    """该路径是否经过 symlink（≠ 自己的 realpath）。不存在的路径原样返回，
+    所以未安装/占位路径不会误报。"""
+    if not value or not value.startswith("/"):
+        return False
+    trimmed = value.rstrip("/") or "/"
+    try:
+        return os.path.realpath(trimmed) != trimmed
+    except OSError:  # noqa: BLE001 - 探针不许崩
+        return False
+
+
+def _interpreter_ok(probes: Probes, py: str) -> bool:
+    """plist 里的解释器能不能真的 `import yaml`（§55）。"""
+    if not py.startswith("/") or not os.access(py, os.X_OK):
+        return False
+    return probes.run([py, "-c", "import yaml"], timeout=20)[0] == 0
 
 
 def _systemd_units() -> List[str]:
