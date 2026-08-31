@@ -57,10 +57,14 @@ export interface SubmitState {
   clearError: () => void;
 }
 
+/** Mac Store.swift 同款 180s truth-timeout：回流迟迟不来 → 解锁 + 诚实报未确认 */
+export const CONFIRM_TIMEOUT_MS = 180_000;
+
 /**
  * 每张卡一个提交状态机：submit → pending=true；失败即解锁并给出可读错误；
  * 成功后保持「已提交…」直到看板 generated_at 变化（SSE 回流落地）才解锁——
- * 没有乐观更新，回流就是唯一的成功回执。
+ * 没有乐观更新，回流就是唯一的成功回执。180s 无回流 → 解锁并报「backend
+ * 未确认」（镜像 Mac 端 180s fallback，绝不永远挂在「已提交…」上装成功）。
  */
 export function useSubmit(): SubmitState {
   const { board } = useAppState();
@@ -76,6 +80,19 @@ export function useSubmit(): SubmitState {
       sentAt.current = null;
     }
   }, [generatedAt, pending]);
+
+  useEffect(() => {
+    if (!pending) return undefined;
+    const timer = window.setTimeout(() => {
+      setPending(false);
+      sentAt.current = null;
+      setError(text(
+        "已提交，但 180 秒内看板未回流——backend 未确认，请检查 actd 是否在运行。",
+        "Submitted, but the board never refreshed within 180s — backend unconfirmed; check that actd is running.",
+      ));
+    }, CONFIRM_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [pending, text]);
 
   const submit = async (body: Record<string, unknown>): Promise<boolean> => {
     setPending(true);
