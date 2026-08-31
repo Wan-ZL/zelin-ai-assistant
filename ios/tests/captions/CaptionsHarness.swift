@@ -199,8 +199,22 @@ check(CaptionRollup.tail("") == "", "empty in → empty out")
 let monster = String(repeating: "a", count: 400)
 check(CaptionRollup.tail(monster) == String(repeating: "a", count: 300),
       "punctuation-free monster falls back to the character budget")
+// v0.48.x review MINOR 7: a run of terminators/closers is ONE sentence
+// boundary — "？？" / "……" must not burn a rolling-window slot each
+check(CaptionRollup.tail("真的吗？？我不信。好。") == "我不信。好。",
+      "terminator run counts as one boundary",
+      "got \(CaptionRollup.tail("真的吗？？我不信。好。"))")
+check(CaptionRollup.tail("他说……停顿。继续。半句") == "继续。半句",
+      "ellipsis run is one boundary",
+      "got \(CaptionRollup.tail("他说……停顿。继续。半句"))")
+// v0.48.x review MINOR 8: tail() only scans a 2×maxCharacters window off the
+// end — pin that the windowed scan equals the full-scan result on an
+// over-budget sentence (the degraded full-text case the cap exists for)
+let longSentence = String(repeating: "字", count: 700) + "。收尾"
+check(CaptionRollup.tail(longSentence) == String(longSentence.suffix(300)),
+      "windowed scan ≡ full scan past the character budget")
 
-print("[14c] reducer: live/final/translation lines all pass the rolling cap:")
+print("[14c] reducer: live/final lines pass the rolling cap:")
 var roll = CaptionReducer()
 roll.partial("第一句。第二句。第三句还在说")
 check(roll.lines.liveText == "第二句。第三句还在说",
@@ -210,9 +224,18 @@ check(rollID == 1, "fresh reducer: first final id 1")
 check(roll.lines.finalText == "Beta. Gamma.",
       "multi-sentence final displays only its newest sentences",
       "got \(roll.lines.finalText)")
+// v0.48.x review MINOR 9 (documented pin change): the translation line is
+// NOT sentence-capped — it translates the already-capped original, and a
+// CJK→EN split (one 原文句 → two EN sentences) must not drop text the
+// original still shows. Only the character budget applies.
 roll.translation(1, "一。二。三。")
-check(roll.lines.finalTranslation == "二。三。",
-      "translation line capped the same way", "got \(roll.lines.finalTranslation)")
+check(roll.lines.finalTranslation == "一。二。三。",
+      "translation keeps every sentence of the capped original",
+      "got \(roll.lines.finalTranslation)")
+roll.translation(1, monster + "!")
+check(roll.lines.finalTranslation
+      == String((monster + "!").suffix(300)),
+      "translation still bounded by the character budget")
 
 // ---- 6. translation direction ----
 print("[15] TranslateDirection: fixed modes + auto script sniff:")

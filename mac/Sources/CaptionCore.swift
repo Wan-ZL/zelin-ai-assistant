@@ -263,31 +263,54 @@ enum CaptionRollup {
     private static let closers: Set<Character> =
         ["”", "’", "」", "』", "）", ")", "]", "\"", "'"]
 
+    /// Cost stays bounded no matter how long the input grows (the degraded
+    /// full-text server restates the whole session every frame — the very
+    /// case this cap exists for): only the last 2×maxCharacters characters
+    /// are ever scanned. Equivalent to a full scan: a result that would need
+    /// text beyond the window is longer than maxCharacters and gets cut to
+    /// its own suffix anyway, and boundary detection is purely local (钉在
+    /// 判例 [14b] 的 windowed ≡ full 检查).
     static func tail(_ text: String, maxSentences: Int = maxSentences) -> String {
-        // segment starts: startIndex + one after each sentence end that still
-        // has text behind it (the remainder is the in-progress fragment)
-        var starts = [text.startIndex]
-        var i = text.startIndex
-        while i < text.endIndex {
-            let c = text[i]
+        let windowStart = text.index(text.endIndex,
+                                     offsetBy: -(maxCharacters * 2),
+                                     limitedBy: text.startIndex)
+            ?? text.startIndex
+        let window = text[windowStart...]
+        // segment starts: window start + one after each sentence end that
+        // still has text behind it (the remainder is the live fragment)
+        var starts = [window.startIndex]
+        var i = window.startIndex
+        while i < window.endIndex {
+            let c = window[i]
             var ends = terminators.contains(c)
             if c == "." {
-                let next = text.index(after: i)
-                ends = next == text.endIndex || text[next].isWhitespace
+                let next = window.index(after: i)
+                ends = next == window.endIndex || window[next].isWhitespace
             }
-            i = text.index(after: i)
+            i = window.index(after: i)
             if ends {
-                while i < text.endIndex, closers.contains(text[i]) {
-                    i = text.index(after: i)
+                // 连串终止符/引号一起吃掉（"真的吗？？"、"……"）——一串
+                // 标点只算一个句界，不烧滚动窗的名额
+                while i < window.endIndex,
+                      closers.contains(window[i]) || terminators.contains(window[i]) {
+                    i = window.index(after: i)
                 }
-                if i < text.endIndex { starts.append(i) }
+                if i < window.endIndex { starts.append(i) }
             }
         }
-        var out = starts.count <= maxSentences ? text
-            : String(text[starts[starts.count - maxSentences]...])
+        let out = starts.count <= maxSentences ? String(window)
+            : String(window[starts[starts.count - maxSentences]...])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-        if out.count > maxCharacters { out = String(out.suffix(maxCharacters)) }
-        return out
+        return clampCharacters(out)
+    }
+
+    /// 字符预算兜底（punctuation-free monster）——tail() 末段与 translation
+    /// 行共用；index 走步，永不 O(全文) count。
+    static func clampCharacters(_ text: String) -> String {
+        guard let cut = text.index(text.endIndex, offsetBy: -maxCharacters,
+                                   limitedBy: text.startIndex),
+              cut > text.startIndex else { return text }
+        return String(text[cut...])
     }
 }
 
@@ -318,11 +341,14 @@ struct CaptionReducer {
     }
 
     /// Streaming translation update (full accumulated text so far) for the
-    /// sentence `id`. Dropped when the top line already moved on; capped to
-    /// the same rolling tail as the original it translates.
+    /// sentence `id`. Dropped when the top line already moved on. NOT
+    /// sentence-capped: the stream translates the already rolling-capped
+    /// original (LiveCaptions.apply passes the displayed tail), and a CJK→EN
+    /// split (一句 → two EN sentences) must not drop text the original still
+    /// shows. Only the character budget guards a rogue stream.
     mutating func translation(_ id: Int, _ text: String) {
         guard id == lines.finalID else { return }
-        lines.finalTranslation = CaptionRollup.tail(text)
+        lines.finalTranslation = CaptionRollup.clampCharacters(text)
     }
 
     /// Clear the display (pause/engine switch). Ids stay monotonic so stale
