@@ -381,6 +381,8 @@ def main(argv=None, *, stdout=None, stderr=None, environ=None) -> int:
         err_out.write(json.dumps(payload, ensure_ascii=False) + "\n")
         return err.exit_code
     except Exception as exc:  # 兜底：不泄栈（taskctl normalizeError 同款）
+        # exit 1 = §52.4 词表的「未预期内部崩溃」档：一切已分类错误必须走
+        # 2-5（CtlError），落到这里 = boardctl 自身的 bug 线索。
         payload = {"schemaVersion": SCHEMA_VERSION,
                    "error": {"code": "INTERNAL_ERROR",
                              "message": str(exc) or type(exc).__name__}}

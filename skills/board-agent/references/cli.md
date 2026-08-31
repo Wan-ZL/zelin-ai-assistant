@@ -10,7 +10,7 @@ python3 act/boardctl.py board --help
 python3 act/boardctl.py capture --help
 ```
 
-Every successful command writes one JSON object with `schemaVersion` to stdout. The current schema version is `1`. Errors write one JSON object `{"schemaVersion":1,"error":{"code","message","details"?}}` to stderr. Exit codes are `0` for success, `2` for invalid input, `3` when the service is unavailable, `4` for API or response errors, and `5` for conflicts.
+Every successful command writes one JSON object with `schemaVersion` to stdout. The current schema version is `1`. Errors write one JSON object `{"schemaVersion":1,"error":{"code","message","details"?}}` to stderr. Exit codes are `0` for success, `1` for an unexpected internal crash (catch-all `INTERNAL_ERROR` envelope, no traceback leaked — any classified error uses 2-5 instead), `2` for invalid input, `3` when the service is unavailable, `4` for API or response errors, and `5` for conflicts.
 
 Set `ZAI_PORT` to override the default port of the local API origin, `http://127.0.0.1:47820`. The server binds 127.0.0.1 only; there is no remote origin to configure.
 
@@ -58,6 +58,7 @@ Exactly one of `--body` / `--body-file`; the body must be non-empty. Success ret
 
 | code | exit | meaning |
 | --- | --- | --- |
+| `INTERNAL_ERROR` | 1 | unexpected internal crash (catch-all; classified errors never use this) |
 | `USAGE_ERROR` | 2 | bad subcommand, option, operand, or ID shape (client-side) |
 | `FILE_READ_FAILED` | 2 | `--text-file` / `--body-file` unreadable |
 | `SERVICE_UNAVAILABLE` | 3 | server not running / unreachable / timed out |

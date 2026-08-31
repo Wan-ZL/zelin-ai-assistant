@@ -3126,7 +3126,9 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
 4. **CLI 输出契约**：成功 = stdout 单个 JSON object 携带 `schemaVersion`
    （当前 = 1，add-only）；错误 = stderr 单个 JSON object
    `{"schemaVersion","error":{"code","message","details"?}}`；exit codes
-   0（成功）/ 2（输入非法，含本地文件读失败）/ 3（server 不可达/超时）/
+   0（成功）/ **1（未预期内部崩溃**——兜底 `INTERNAL_ERROR` envelope，不泄
+   栈；一切**已分类**错误必须走 2-5，落到 1 = boardctl 自身的 bug 线索）/
+   2（输入非法，含本地文件读失败）/ 3（server 不可达/超时）/
    4（HTTP 非 2xx 除 409 / 响应非法 JSON）/ 5（HTTP 409，留给 CAS 时代）。
    `--help` 是唯一纯文本成功输出。每请求带 `X-ZAI-Client: boardctl` 头——
    未来 actor 墙的辨识挂点（server 现阶段忽略；请求头可伪造，**不是**鉴别
