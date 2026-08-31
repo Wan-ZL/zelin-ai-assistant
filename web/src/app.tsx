@@ -1,0 +1,44 @@
+// App 壳（刻意薄）：只做三件事——语言接线、realtime 生命周期、页面分发。
+// 布局骨架/顶栏/离线横幅/整页空态在 components/shell/AppShell（G7）；
+// 一切业务 state 进 store.ts，一切板块 UI 进 pages/ 与 components/。禁止在这里堆 useState。
+import { useEffect } from "react";
+import { setApiText } from "./api";
+import { getI18n, LanguageContext } from "./i18n";
+import { readPage } from "./route";
+import { createBoardRealtime } from "./realtime";
+import { refreshBoard, setConnection, useAppState } from "./store";
+import { AppShell } from "./components/shell/AppShell";
+import { FilterBar } from "./components/chrome/FilterBar";
+import { DetailDrawer } from "./components/detail/DetailDrawer";
+import { BoardPage } from "./pages/BoardPage";
+import { TrashPage } from "./pages/TrashPage";
+
+export function App() {
+  // 语言真源在 store（初值解析 ?lang= > localStorage zai.lang > 浏览器；切换经 setLanguage）
+  const { language } = useAppState();
+  const page = readPage(window.location.search);
+
+  // api.ts 无 React：错误文案的语言经注入接线（语言切换后重注入，幂等）
+  setApiText(getI18n(language).text);
+
+  useEffect(() => {
+    void refreshBoard();
+    const realtime = createBoardRealtime({
+      onRefetch: () => void refreshBoard(),
+      onConnectionChange: setConnection,
+    });
+    realtime.start();
+    return () => realtime.stop();
+  }, []);
+
+  return (
+    <LanguageContext.Provider value={language}>
+      {/* searchSlot = A8 过滤 chips + ⌘F 搜索（G4）；页面分发：?page=trash → 回收站页 */}
+      <AppShell searchSlot={<FilterBar />}>
+        {page === "trash" ? <TrashPage /> : <BoardPage />}
+        {/* 详情抽屉（G3）：无选中卡时渲染 null，任何页面下挂载都安全 */}
+        <DetailDrawer />
+      </AppShell>
+    </LanguageContext.Provider>
+  );
+}
