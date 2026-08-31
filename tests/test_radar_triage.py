@@ -20,11 +20,12 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import radar, radar_slack
-from act.lib import config, quick_capture, registry, sanitize
+from act.lib import config, quick_capture, registry, sanitize, silent_merge
 
 BASE = 1_760_000_000.0  # fixed epoch — deterministic note mtimes
 
@@ -86,6 +87,16 @@ class TriageBase(unittest.TestCase):
         _clean_state()
         self.addCleanup(_clean_state)
         self.cfg = config.Config()
+        # §44.2 的 fold 判官坐在 apply_triage 底下好几层、没有可传的 runner
+        # 参数——不按住 JUDGE_RUNNER 就会真起 `claude -p`（模块头声称"绝不
+        # spawn 真 claude"，这一处之前是漏的，由 tests/__init__.py 的守卫抓出）。
+        # 恒判"不同"：本文件钉的是三选一闸门，判官自己的判例在
+        # tests/test_silent_merge.py。
+        judge = mock.patch.object(
+            silent_merge, "JUDGE_RUNNER",
+            lambda prompt: _proc('{"same_thing": false, "brief": "不同的事"}'))
+        judge.start()
+        self.addCleanup(judge.stop)
 
     def _followups_of(self, parent_id: str) -> list[registry.Requirement]:
         return [r for r in registry.load_all() if r.improvement_of == parent_id]
