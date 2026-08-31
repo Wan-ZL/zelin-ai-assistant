@@ -7,7 +7,6 @@ reveal 非 darwin 501。reveal 的 ``open -R`` 用注入缝 mock——测试绝�
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import unittest
@@ -22,6 +21,15 @@ from tests.test_server_common import (DEMO_SEED_PATH, assert_envelope,
 from server import files as files_mod
 
 HERO = "R-101"
+
+
+def _symlink_or_skip(case, target, link):
+    """建 symlink，不行就 skip——Windows 上 os.symlink 需要管理员或开发者
+    模式（无特权时抛 OSError），symlink 逃逸用例在那里跳过而不是假红。"""
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):  # pragma: no cover - windows-only
+        case.skipTest("os.symlink unsupported here (Windows needs admin/dev mode)")
 
 
 @unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
@@ -136,7 +144,7 @@ class ServeDeliverableTestCase(_DeliverablesHome):
     def test_symlink_escape_rejected(self):
         outside = self.home / "outside-secret.txt"
         outside.write_text("MUST-NOT-LEAK", encoding="utf-8")
-        os.symlink(outside, self.dlv / "link.txt")
+        _symlink_or_skip(self, outside, self.dlv / "link.txt")
         status, _h, body = http_request(
             self.port, "GET", f"/files/deliverables/{HERO}/link.txt")
         self.assertEqual(status, 404)  # realpath 包含性双保险
@@ -188,7 +196,7 @@ class RevealTestCase(_DeliverablesHome):
         # serve_deliverable 的 realpath 包含性在挑「最新交付物」时同样执法
         outside = self.home / "outside-secret.txt"
         outside.write_text("MUST-NOT-REVEAL", encoding="utf-8")
-        os.symlink(outside, self.dlv / "link.txt")
+        _symlink_or_skip(self, outside, self.dlv / "link.txt")
         os.utime(outside, (1_900_000_000, 1_900_000_000))  # 比 newer 还新
         with mock.patch.object(files_mod.sys, "platform", "darwin"), \
                 mock.patch.object(files_mod.subprocess, "run") as run:
@@ -204,7 +212,7 @@ class RevealTestCase(_DeliverablesHome):
         self.older.unlink()
         outside = self.home / "outside-secret.txt"
         outside.write_text("MUST-NOT-REVEAL", encoding="utf-8")
-        os.symlink(outside, self.dlv / "link.txt")
+        _symlink_or_skip(self, outside, self.dlv / "link.txt")
         with mock.patch.object(files_mod.sys, "platform", "darwin"), \
                 mock.patch.object(files_mod.subprocess, "run") as run:
             status, obj = post_json(self.port, "/api/reveal",
