@@ -866,8 +866,13 @@ def _scan_locked(cfg: config.Config, summary: dict, runner, triager=None) -> dic
     # 重试台账对账：note 已删除 -> 销案（没有内容可丢了）。本轮列表缺席
     # 不足为凭——mid-pass 的 stat 竞态/瞬时不可见会把台账里的活案误销，
     # 显式 exists() 复核后才销（audit review 2026-07-14）。
+    # 例外：``gmail:uid:*`` 是 radar_gmail 的毒邮件案底，不是 obsidian note
+    # 路径——按「note 已删除」对账会立刻误销别人的留痕；它的清理归
+    # radar_gmail 自理（_record_poison_message 自带条数上限）。
     existing = {str(p) for p, _ in md_files}
     for key in list(failed):
+        if key.startswith("gmail:uid:"):
+            continue
         if key not in existing and not Path(key).exists():
             failed.pop(key)
     # systemic-failure snapshot：本轮开始时的台账。若这轮"全军覆没"（所有

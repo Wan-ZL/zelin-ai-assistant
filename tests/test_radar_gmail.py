@@ -18,10 +18,11 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import radar_gmail
+from act import radar, radar_gmail
 from act.lib import config, registry
 
 
@@ -237,6 +238,102 @@ class GmailCommandBackendTestCase(unittest.TestCase):
         self.cfg.gmail_fetch_command = None
         self.assertEqual(radar_gmail.scan(self.cfg, extractor=_FakeLLM()), 0)
         self.assertEqual(registry.load_all(), [])
+
+
+# --------------------------------------------------------------------------- #
+# 毒邮件围栏（宪法 11）— fetch_new_messages 的 per-message try 围栏
+# --------------------------------------------------------------------------- #
+class _FakeConn:
+    """imaplib 形状的最小假连接：{uid: raw rfc822 bytes}。"""
+
+    def __init__(self, mails):
+        self.mails = dict(mails)
+
+    def uid(self, cmd, *args):
+        if cmd == "search":
+            joined = b" ".join(str(u).encode() for u in sorted(self.mails))
+            return "OK", [joined]
+        u = int(args[0])                                  # fetch
+        return "OK", [(f"{u} (UID {u})".encode(), self.mails[u])]
+
+
+# 畸形 Date 头：Python 3.9 的 email 库在 header 惰性解析处抛 TypeError
+# （parsedate_to_datetime，live 事故 2026-08 原样）；3.10+ 改记 defect 不抛。
+POISON_RAW = (b"From: hr@corp.com\r\nSubject: attend\r\n"
+              b"Date: not a real date at all\r\n"
+              b"Message-ID: <poison@x>\r\n\r\npoison body")
+GOOD_RAW = (b"From: boss@corp.com\r\nSubject: report\r\n"
+            b"Date: Fri, 11 Jul 2026 09:00:00 +0000\r\n"
+            b"Message-ID: <good@x>\r\n\r\ngood body")
+
+
+class PoisonMessageTestCase(unittest.TestCase):
+    """钉住的契约：一封解析不了的邮件只废自己——记入重试台账
+    （``gmail:uid:<n>`` gave_up 案底，上限 20 条），好邮件照常捕获、newest
+    照常推进，pass 绝不崩。obsidian 对账不销 gmail 案底的判例在
+    tests/test_radar.py::PoisonLedgerReconcileTestCase。"""
+
+    def setUp(self):
+        _clean_state()
+        self.addCleanup(_clean_state)
+        self._clear_ledger()
+        self.addCleanup(self._clear_ledger)
+
+    @staticmethod
+    def _clear_ledger():
+        p = config.STATE_DIR / radar.FAILED_QUEUE_NAME
+        if p.exists():
+            p.unlink()
+
+    def test_poisoned_date_fixture_never_kills_the_pass(self):
+        # live 形状复现：不 mock email 库，直接喂畸形 Date 头。
+        out, newest = radar_gmail.fetch_new_messages(
+            _FakeConn({5: POISON_RAW, 6: GOOD_RAW}), 0)
+        self.assertEqual(newest, 6)                       # marker 越过毒邮件
+        uids = [m["uid"] for m in out]
+        self.assertIn(6, uids)                            # 好邮件照常捕获
+        good = next(m for m in out if m["uid"] == 6)
+        self.assertEqual(good["from"], "boss@corp.com")
+        # 解释器分歧两种都合法（3.9 抛->留痕跳过；3.10+ 容忍->原样进列表），
+        # 钉住的是「绝不崩 pass、绝不静默丢」。
+        if 5 not in uids:
+            self.assertIn("gmail:uid:5", radar._load_failed_queue())
+
+    def test_per_message_failure_recorded_and_skipped(self):
+        # 确定性围栏测试（不依赖解释器版本）：header 惰性解析在 per-message
+        # 流程中段爆 TypeError —— 与 live 事故同型。
+        real_skip = radar_gmail._should_skip
+
+        def boom(msg, sender, subject):
+            if "poison" in str(msg.get("Message-ID", "")):
+                raise TypeError("cannot unpack non-iterable NoneType object")
+            return real_skip(msg, sender, subject)
+
+        with mock.patch.object(radar_gmail, "_should_skip", side_effect=boom):
+            out, newest = radar_gmail.fetch_new_messages(
+                _FakeConn({5: POISON_RAW, 6: GOOD_RAW}), 0)
+        self.assertEqual([m["uid"] for m in out], [6])    # pass 继续
+        self.assertEqual(newest, 6)
+        queue = radar._load_failed_queue()
+        self.assertIn("gmail:uid:5", queue)               # 留痕（放弃要留痕）
+        entry = queue["gmail:uid:5"]
+        self.assertTrue(entry["gave_up"])                 # marker 已越过，无重试语义
+        self.assertIn("TypeError", entry["last_error"])
+
+    def test_poison_ledger_is_capped(self):
+        for uid in range(1, 26):
+            radar_gmail._record_poison_message(uid, TypeError("boom"))
+        keys = [k for k in radar._load_failed_queue()
+                if k.startswith(radar_gmail.POISON_KEY_PREFIX)]
+        self.assertEqual(len(keys), radar_gmail._POISON_LEDGER_CAP)
+        self.assertNotIn("gmail:uid:1", keys)             # 最老的被挤出
+        self.assertIn("gmail:uid:25", keys)               # 最新的保留
+
+    def test_record_failure_never_raises_even_when_ledger_unwritable(self):
+        # 留痕绝不反噬 pass：台账读写全炸也只吞掉。
+        with mock.patch.object(radar, "_load_failed_queue",
+                               side_effect=OSError("disk full")):
+            radar_gmail._record_poison_message(9, TypeError("boom"))  # no raise
 
 
 if __name__ == "__main__":

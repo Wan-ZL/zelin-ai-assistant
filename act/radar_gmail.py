@@ -251,25 +251,67 @@ def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int
                 break
         if not raw_bytes:
             continue
+        # 毒邮件围栏（宪法 11）：policy=default 下 header 是**惰性解析**的——
+        # 畸形 Date 头直到 msg.get("Date") 才炸（Python 3.9 真实事故：
+        # parsedate_to_datetime 抛 TypeError），所以 message_from_bytes 单独
+        # try 不够，header 访问 / 预过滤 / 字段组装整段都要围起来。一封解析
+        # 不了的邮件只废自己：记入重试台账留痕（_record_poison_message），
+        # pass 照常继续。marker 已在上方推进（newest = max(...)），它不会被
+        # 无限重拉。
         try:
             msg = email.message_from_bytes(raw_bytes, policy=email.policy.default)
-        except Exception:  # noqa: BLE001
+            sender = str(msg.get("From", "") or "")
+            subject = str(msg.get("Subject", "") or "")
+            if _should_skip(msg, sender, subject):
+                continue
+            out.append({
+                "uid": uid,
+                "from": sender,
+                "subject": subject,
+                "date": str(msg.get("Date", "") or ""),
+                "message_id": str(msg.get("Message-ID", "") or "").strip(),
+                # Gmail thread id (external thread ref); None on a non-Gmail host.
+                "gm_thrid": _parse_gm_thrid(fetched),
+                "body": _body_text(msg),
+            })
+        except Exception as e:  # noqa: BLE001 - one poison message must not kill the pass
+            _record_poison_message(uid, e)
             continue
-        sender = str(msg.get("From", "") or "")
-        subject = str(msg.get("Subject", "") or "")
-        if _should_skip(msg, sender, subject):
-            continue
-        out.append({
-            "uid": uid,
-            "from": sender,
-            "subject": subject,
-            "date": str(msg.get("Date", "") or ""),
-            "message_id": str(msg.get("Message-ID", "") or "").strip(),
-            # Gmail thread id (external thread ref); None on a non-Gmail host.
-            "gm_thrid": _parse_gm_thrid(fetched),
-            "body": _body_text(msg),
-        })
     return out, newest
+
+
+# 台账里毒邮件条目的键前缀（radar.py 的 note 对账按它豁免，radar_gmail 自理清理）
+POISON_KEY_PREFIX = "gmail:uid:"
+_POISON_LEDGER_CAP = 20     # 只留最近 20 条毒邮件案底（uid 单调递增 = 时间序）
+
+
+def _record_poison_message(uid: int, err: Exception) -> None:
+    """毒邮件留痕（宪法 11 + §0「放弃要留痕（重试台账/诊断卡）」）。
+
+    marker 已越过这封邮件、永不重试，所以直接按已放弃（gave_up）记入既有
+    雷达重试台账 state/radar_failed.json（键 ``gmail:uid:<n>``），并发一条
+    analytics 事件。analytics props 只带 uid + 异常类型名——异常 message 可能
+    内嵌邮件头内容，不进可上传 props（宪法第 9 条）；完整错误只留在本地
+    台账 last_error。台账自带 20 条上限（uid 序），绝不无界膨胀。两路都
+    best-effort：留痕失败也不许影响本轮 pass。"""
+    error = f"poison message (unparseable headers): {type(err).__name__}: {err}"
+    try:
+        queue = radar._load_failed_queue()
+        entry = radar._record_failure(
+            queue, Path(f"{POISON_KEY_PREFIX}{uid}"), float(uid), error)
+        entry["gave_up"] = True     # marker 已推进——没有重试语义，只是案底
+        poison = sorted((k for k in queue if k.startswith(POISON_KEY_PREFIX)),
+                        key=lambda k: float(queue[k].get("mtime") or 0))
+        for k in poison[:-_POISON_LEDGER_CAP]:
+            queue.pop(k, None)
+        radar._save_failed_queue(queue)
+    except Exception:  # noqa: BLE001 - 留痕绝不反噬 pass
+        pass
+    try:
+        analytics.log_event("radar_message_failed", source="gmail", uid=uid,
+                            error=type(err).__name__)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # --------------------------------------------------------------------------- #
