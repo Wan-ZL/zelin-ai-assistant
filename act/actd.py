@@ -2,12 +2,16 @@
 
 Each pass:
   (a) drain STATE/inbox/*.json decisions
-        approve  -> status=approved
+        approve  -> status=approved（W17：外部出身未扩写 -> 转 raising）
         reject   -> status=rejected
         comment  -> fold text into plan/notes, keep card_sent (re-approval)
+                    ——除 EXECUTING 卡：comment = steer（§44.3-S 中途转向指令，
+                    入队等安全窗口 flush 进 live session，状态机零改动）
         merge_review / merge_apply / merge_dismiss -> merge-review 契约 一/四/五
       delete the decision file after reading it.
-  (b) dispatch every status=approved requirement that has no execution yet.
+  (a') auto-dispatch（§51）：hand 出身的 card_sent 卡过天花板即免批 approved。
+  (b) dispatch every status=approved requirement that has no execution yet
+      （并发上限内；超出留在合并运行列的 queued 子状态）。
   (b') merge-review housekeeping: TTL-sweep state/merge/ job files; fail
        'analyzing' jobs older than 20 minutes.
   (b'') feedback upload retry (§29): pending state/feedback/ records get ONE
@@ -36,7 +40,17 @@ from typing import Optional
 
 import yaml
 
-from act.lib import analytics, config, health, notify, registry, sources
+from act.lib import (
+    analytics,
+    config,
+    health,
+    notify,
+    policy,
+    registry,
+    risk,
+    sources,
+    steer,
+)
 from act.lib.agent_states import (
     _BLOCKED_STATES,
     _DONE_STATES,
@@ -168,8 +182,13 @@ def process_inbox() -> int:
                 # 完全忽略 preset（fail-safe 走该 capture 原本的路径，
                 # 垃圾 preset 绝不静默替换任务内容）。
                 cap_plan = None
+                # T-28：preset 注入固定 plan + 直跑，是 owner 特权面（Mac 按钮
+                # /本地看板）——agent/remote ingress 的 preset 一律当普通
+                # capture 处理（server 层对 actor+preset 已 400，这里是 actd
+                # 的 fail-closed 硬后盾）。
                 if decision.get("preset") == PROPOSALS_TRIAGE_PRESET \
-                        and decision.get("mode") == "run":
+                        and decision.get("mode") == "run" \
+                        and _is_owner_ingress(decision.get("via")):
                     # §34bis 在途判重：已有未完结的清理会话卡（approved/
                     # executing）→ 不铸新卡，ack "running"（那轮清理真在
                     # 队列/在跑，诚实回执）。独立于 merge_or_new 的折叠
@@ -187,7 +206,7 @@ def process_inbox() -> int:
                     decision.get("text"), decision.get("mode"),
                     decision.get("images"), plan=cap_plan,
                     preset=PROPOSALS_TRIAGE_PRESET if cap_plan else None,
-                    inbox_stem=path.stem)
+                    inbox_stem=path.stem, via=decision.get("via"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -278,8 +297,14 @@ def process_inbox() -> int:
                     # doesn't know about — validated fail-closed in the helper.
                     result_status = _apply_set_title(req, decision.get("title"))
                 else:
+                    # ts 透传（§44.3-S）：steer 的 dedup 键带时间戳——同一
+                    # inbox 文件重放（unlink 失败）同 ts 去重，owner 重申同文
+                    # 新 ts 是新指令。via 透传（T-28 ingress 落款）+ stem
+                    # （steer dedup 的文件 nonce）。
                     result_status = _apply_decision(
-                        req, action, comment, expected_status, board_seq)
+                        req, action, comment, expected_status, board_seq,
+                        ts=decision.get("ts"), via=decision.get("via"),
+                        stem=path.stem)
                 # the comment (打回反馈/修改方向) is user-typed content —
                 # attached only behind the capture_input gate, clipped.
                 c = (comment or "").strip()
@@ -651,10 +676,31 @@ def _sweep_triage_snapshots() -> None:
             _safe_unlink(p)
 
 
+# T-28 ingress 落款 → 捕获源 channel。无 via = Mac 等 owner-local 写者（HTTP
+# 层之外铸的文件才允许缺 via）；via:"web" = localhost 看板，同为 owner。除这
+# 两者外一律非 owner：agent 自报落 agent_capture，"remote" 与一切未知/畸形值
+# fail-closed 落 remote_capture——两者都是 PROPOSED 级（policy.CHANNEL_CLASS），
+# 调度侧出身从 sources 现算，agent/remote 捕获就此结构性关死自动派发。落款是
+# 礼仪 + 取证（同用户裸 HTTP 可不发 actor），硬后盾 = 天花板 + effective_tier
+# 强制扩写 + 人工审批列（T-28 诚实条款；收紧路径 T-29）。
+def _ingress_channel(via: object) -> str:
+    if via is None or via == "web":
+        return "quick_capture"
+    if via == "agent":
+        return "agent_capture"
+    return "remote_capture"
+
+
+def _is_owner_ingress(via: object) -> bool:
+    """owner-class ingress = Mac 文件（无 via）或 localhost 看板（via:"web"）。"""
+    return via is None or via == "web"
+
+
 def _apply_capture(text: Optional[str], mode: Optional[str] = None,
                    images=None, plan: Optional[list] = None,
                    preset: Optional[str] = None,
-                   inbox_stem: Optional[str] = None) -> str:
+                   inbox_stem: Optional[str] = None,
+                   via: Optional[object] = None) -> str:
     """Quick capture from the app popover (CONTRACT §10/§15; §34 mode="run").
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
@@ -686,6 +732,12 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     对方的 plan/preset。preset 标记是快照护栏
     （_check_triage_registry_guard）认卡的依据。
 
+    ``via`` 是 HTTP 写入面的 ingress 落款（T-28）：source channel 按
+    ``_ingress_channel`` 盖——owner ingress 照旧 quick_capture（HAND），
+    agent/remote 落 PROPOSED 级捕获通道，回人工审批；非 owner 的
+    ``mode:"run"`` 一并降级走提案管线（W18 的 actd 侧硬后盾——direct-run
+    是 owner 特权，伪造/绕过 HTTP 层的 mode 也开不了跑）。expansion
+    （process_raising）不改 sources，章随卡走到调度侧现算。
 
     Returns the §5.4 result_status — the phone's ledger must never show
     已生效 for a capture that filed nothing.
@@ -699,7 +751,11 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     if not t:
         _log("inbox: capture with empty text — ignored")
         return "noop"
-    run = mode == "run"
+    channel = _ingress_channel(via)
+    owner = channel == "quick_capture"
+    # T-28/W18 fail-closed：direct-run 是 owner 特权——非 owner ingress 的
+    # mode:"run" 一律降级为普通提案 capture（宁可少跑不可多跑）。
+    run = mode == "run" and owner
     req = Requirement(
         id=registry.next_id(),
         title=t[:80],
@@ -714,12 +770,14 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         plan=list(plan) if plan else None,
         preset=preset if plan else None,
         sources=[{
-            "who": "zelin",
-            "channel": "quick_capture",
+            "who": "zelin" if owner else
+                   ("agent" if channel == "agent_capture" else "remote"),
+            "channel": channel,
             "date": _dt.date.today().isoformat(),
             "quote": t,
         }],
-        notes="[direct-run] 用户直接开跑" if run else "from app quick capture",
+        notes=("[direct-run] 用户直接开跑" if run else
+               ("from app quick capture" if owner else f"from {channel}")),
     )
     if run:
         # §34 修订（2026-08-07 拍板）：[run] 一律新卡直接开跑——绝不经过
@@ -775,9 +833,11 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
     if saved.status == State.DETECTED.value:
         saved.set_status(State.RAISING)
         save(saved)
-        _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion)")
+        _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion, "
+             f"channel={channel})")
     else:
-        _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
+        _log(f"inbox: capture merged into {saved.id} (status={saved.status}, "
+             f"channel={channel})")
     _attach_capture_images(saved, images)
     # the typed capture text is content — capture_input-gated, clipped;
     # chars stays metadata (usage signal without the words).
@@ -1662,10 +1722,16 @@ def _stop_live_session(req: Requirement, why: str) -> None:
 def _apply_decision(req: Requirement, action: Optional[str],
                     comment: Optional[str],
                     expected_status: Optional[str] = None,
-                    board_seq=None) -> str:
+                    board_seq=None,
+                    ts: Optional[object] = None,
+                    via: Optional[object] = None,
+                    stem: Optional[str] = None) -> str:
     # Full inbox action set (CONTRACT §10) — this elif chain IS the action
     # whitelist/validation; anything else falls through to the logged no-op else:
     #   approve | reject(->trash) | comment | raise(debt->proposal)
+    #     approve：v-next W17 —— 外部出身未扩写的卡转 raising（先扩写再复批）
+    #     comment：v-next §44.3-S —— EXECUTING 卡 = steer 入队（owner ingress
+    #       限定；agent/remote 只上卡记录，T-28）
     #   | trash(->recycle) | restore(recycle->prev) | pin(recycle->permanent)
     #   | accept(review->delivered) | rework(review->executing)
     #   | done_external(card_sent|review|approved|executing->delivered)
@@ -1701,6 +1767,24 @@ def _apply_decision(req: Requirement, action: Optional[str],
         if str(req.status) not in (State.DETECTED.value, State.CARD_SENT.value):
             _log(f"inbox: {req.id} approve ignored (status={req.status})")
             return "noop"
+        # W17（amendments §W17/§50）：外部出身卡强制 plan expansion——未经展开
+        # （plan/DoD 双空）的 approve 转 raise 走既有扩写管线，绝不裸批。
+        et = risk.effective_tier(req)
+        if et.forced_expand and not (req.plan or req.definition_of_done):
+            if analyze is None:
+                # fail-closed：扩写管线不可用时宁可不批（外部卡裸跑正是 W17
+                # 要堵的洞）
+                _log(f"inbox: {req.id} approve blocked (W17 forced expansion, "
+                     f"analyze unavailable) — stays {req.status}")
+                return "noop"
+            if "[W17]" not in (req.notes or ""):
+                tag = "[W17] 外部来源强制展开：批准已转为先扩写、复批后才执行"
+                req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+            req.set_status(State.RAISING)
+            save(req)
+            _log(f"inbox: {req.id} approve -> raising (W17 forced expansion, "
+                 f"{et.reason})")
+            return "running"
         req.set_status(State.APPROVED)
         # approval timestamp (add-only bookkeeping, like accepted_at) — lets
         # the dispatch event report wait_s (approve -> launch latency).
@@ -1720,6 +1804,11 @@ def _apply_decision(req: Requirement, action: Optional[str],
         _log(f"inbox: {req.id} rejected -> trash")
         return "running"
     elif action == "comment":
+        # T-28 ingress 落款：steer（OWNER UPDATE 直发 live session）与「折叠 +
+        # 退回重批」都是 owner 专属动作——agent/remote ingress 的评论只上卡
+        # 记录，绝不 steer、绝不动状态机（trust-grant 时刻按 ingress 裁决）。
+        if not _is_owner_ingress(via):
+            return _record_nonowner_comment(req, comment, via)
         # §5.4 stale-guard (SYNC only): when the phone pinned an expected_status
         # that no longer matches, a stale 修改 must not rip a moved card back to
         # card_sent. LOCAL callers (Mac app / web) send no expected_status, so
@@ -1739,6 +1828,26 @@ def _apply_decision(req: Requirement, action: Optional[str],
             _log(f"inbox: {req.id} comment ignored (status={req.status} is "
                  f"terminal) — no-op")
             return "noop"
+        if str(req.status) == State.EXECUTING.value:
+            # §44.3-S steer relay：运行中卡上的评论是对 live session 的中途
+            # 转向指令，不再「折叠 + 记录即止」。入队等 reconcile 的安全窗口
+            # （roster blocked / dead-resume）flush；状态机零改动。
+            ts_str = (str(ts) if isinstance(ts, (str, int, float))
+                      and str(ts).strip() else None)
+            note = steer.enqueue_steer(req, comment, ts=ts_str, stem=stem)
+            if note is None:
+                _log(f"inbox: {req.id} steer noop（重放/空文本，未入队）")
+                return "noop"
+            # v0.47 判例保全（test_inbox_guards LateComment）：owner 在运行中
+            # 卡上打的字要在卡面（notes）留永久记录——steer 台账是环形（会
+            # 轮转掉），notes 不轮转。行文法刻意避开 [修改方向]：那是 fold
+            # 的印记，§44.3-S 明确 steer 不折叠、不触发重批。
+            tag = f"[{_dt.date.today().isoformat()} 追加指令] {note['text']}"
+            req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+            save(req)
+            _log(f"inbox: {req.id} comment -> steer queued (key={note['key']})")
+            analytics.log_event("inbox_steer", req=req.id)
+            return "running"
         _fold_comment(req, comment)
         # nightly audit 2026-07-14: a comment landing on a card that is
         # already past approval must NOT rip it back to card_sent — that
@@ -1752,13 +1861,13 @@ def _apply_decision(req: Requirement, action: Optional[str],
             save(req)
             _log(f"inbox: {req.id} comment folded (approved kept, pre-dispatch)")
             return "running"
-        if str(req.status) in (State.EXECUTING.value, State.REVIEW.value,
-                               State.DELIVERED.value):
+        if str(req.status) in (State.REVIEW.value, State.DELIVERED.value):
             # post-dispatch: nothing consumes the folded note — the live agent
             # never sees it. Fold for the record but ack "noop" so a phone's
             # §5.4 ledger never shows 已生效 for a direction change that had
             # no effect (audit review 2026-07-14). review 的正式改方向通道是
-            # rework（打回）。
+            # rework（打回）。EXECUTING 不再走这条记录即止——上面的 §44.3-S
+            # steer 分支把它接进了 live session。
             save(req)
             _log(f"inbox: {req.id} comment folded (status {req.status} kept — "
                  f"note is record-only, acking noop)")
@@ -2064,6 +2173,25 @@ def _apply_decision(req: Requirement, action: Optional[str],
         return "unknown"
 
 
+def _record_nonowner_comment(req: Requirement, comment: Optional[str],
+                             via: object) -> str:
+    """agent/remote 评论的记录面（T-28）：上卡可见（notes），但不折进 plan
+    （plan 是喂给 executor 的指令面——非 owner 文本进 plan 就是绕道 steer）、
+    不 enqueue steer、不改状态。空文本只记日志；via 进日志供取证。返回 §5.4
+    ack：记录落卡 = "running"（这就是该动作的全部效果），空文本 = "noop"。"""
+    body = comment.strip() if isinstance(comment, str) else ""
+    if not body:
+        _log(f"inbox: {req.id} comment (via={via!r}) empty — ignored")
+        return "noop"
+    label = "agent" if via == "agent" else "remote"
+    tag = f"[{_dt.date.today().isoformat()} {label} 备注] {body}"
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    save(req)
+    _log(f"inbox: {req.id} comment recorded (via={label}, no steer, "
+         f"status stays {req.status})")
+    return "running"
+
+
 def _fold_comment(req: Requirement, comment: Optional[str]) -> None:
     if not comment:
         return
@@ -2087,11 +2215,137 @@ def _safe_unlink(path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# (a') auto-dispatch（§51 · vnext-amendments M1.b/C-6）+ 当日花费台账
+# --------------------------------------------------------------------------- #
+_SPEND_LEDGER_FILE = "autodispatch_spend.json"
+
+
+def _load_spend_ledger() -> dict:
+    """当日 auto-dispatch 花费台账：``{"date": <本地 YYYY-MM-DD>, "cards":
+    {R-id: usd}}``。按本地日期滚动重置（M1.b 接线点②）；坏文件/隔日 = 空账。
+    按卡记账所以重启幂等——同卡重记不翻倍。actd 是唯一写者；dashboard 只读。"""
+    today = _dt.date.today().isoformat()
+    empty: dict = {"date": today, "cards": {}}
+    try:
+        raw = json.loads((config.STATE_DIR / _SPEND_LEDGER_FILE)
+                         .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return empty
+    if not isinstance(raw, dict) or raw.get("date") != today:
+        return empty
+    cards: dict = {}
+    if isinstance(raw.get("cards"), dict):
+        for k, v in raw["cards"].items():
+            try:
+                cards[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+    return {"date": today, "cards": cards}
+
+
+def _save_spend_ledger(ledger: dict) -> None:
+    try:
+        config.ensure_state_dirs()
+        path = config.STATE_DIR / _SPEND_LEDGER_FILE
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def _ledger_spend(ledger: dict, exclude: Optional[str] = None) -> float:
+    cards = ledger.get("cards") if isinstance(ledger, dict) else None
+    if not isinstance(cards, dict):
+        return 0.0
+    return float(sum(v for k, v in cards.items() if k != exclude))
+
+
+def _card_cost(req: Requirement) -> float:
+    try:
+        return float(str(req.cost_estimate_usd))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def auto_dispatch_pass(cfg: config.Config) -> int:
+    """信任矩阵免批通道（owner 拍板 + amendments §51）：hand 出身的 card_sent
+    卡全部天花板通过 → 直接 approved（actor=policy）。任一不过 → 留在待审批，
+    原因 token 上卡（``execution.auto_dispatch_block``，C-6 定名；origin:*/
+    disabled 两类常态原因不上卡不留痕）。并发上限不在资格闸里——那是排队问题，
+    归 dispatch_approved / queued_reason（M1.b）。"""
+    ad = policy.autodispatch_config(cfg)
+    ledger = _load_spend_ledger()
+    approved = 0
+    for req in sorted(load_all(), key=lambda r: r.id):
+        if req.status != State.CARD_SENT.value:
+            continue
+        try:
+            ok, reason = policy.may_auto_dispatch(req, cfg, _ledger_spend(ledger))
+            # W17 belt-and-braces：显式 external 章可能比 sources 现算更严
+            # （手改 YAML 等）——forced_expand 的卡绝不自动派发。
+            if ok and risk.effective_tier(req).forced_expand:
+                ok, reason = False, "origin:external"
+            ex = dict(req.execution or {})
+            if not ok:
+                routine = reason == "disabled" or reason.startswith("origin:")
+                if routine:
+                    if "auto_dispatch_block" in ex:
+                        ex.pop("auto_dispatch_block", None)   # 过期 token 清掉
+                        req.execution = ex
+                        save(req)
+                elif ex.get("auto_dispatch_block") != reason:
+                    ex["auto_dispatch_block"] = reason
+                    req.execution = ex
+                    tag = f"[{_dt.date.today().isoformat()} auto-dispatch 拦下] {reason}"
+                    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+                    save(req)
+                    _log(f"autodispatch: {req.id} blocked ({reason})")
+                    analytics.log_event("auto_dispatch_blocked", req=req.id,
+                                        reason=reason)
+                continue
+            cost = _card_cost(req)
+            ex.pop("auto_dispatch_block", None)
+            ex["auto_dispatched"] = True          # add-only：预算复核/投影用
+            req.execution = ex
+            tag = (f"[{_dt.date.today().isoformat()} auto-dispatch] "
+                   f"hand 出身免批自动派发（est ${cost:g}）")
+            req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+            req.set_status(State.APPROVED)
+            save(req)
+            ledger["cards"][req.id] = cost        # 预算预留在批准时刻
+            _save_spend_ledger(ledger)
+            approved += 1
+            _log(f"autodispatch: {req.id} card_sent -> approved "
+                 f"(est ${cost:g}, today ${_ledger_spend(ledger):g}"
+                 f"/{ad['daily_budget_usd']:g})")
+            analytics.log_event("auto_dispatch", req=req.id, cost=cost,
+                                today_spend=_ledger_spend(ledger))
+            if ad["notify"]:
+                # 观察模式：每次免批派发都出一条通知，owner 随时可关
+                # （autodispatch.notify=false）或全关（enabled=false）。
+                notify.notify("观察模式：手打卡已自动派发（免批）",
+                              req.title or req.id, req=req.id)
+        except Exception as e:  # noqa: BLE001 - one bad card must not kill the pass
+            _log(f"autodispatch: {getattr(req, 'id', '?')} FAILED: {e}")
+    return approved
+
+
+# --------------------------------------------------------------------------- #
 # (b) dispatch approved
 # --------------------------------------------------------------------------- #
 def dispatch_approved(cfg: config.Config) -> int:
     count = 0
-    for req in load_all():
+    ad = policy.autodispatch_config(cfg)
+    reqs = load_all()
+    # 并发口径（M1.b 接线点③）：EXECUTING 且带 session 的卡数。roster 实况
+    # reconcile 才查（子进程贵）；按状态机计数是保守方向——死会话短暂占位只
+    # 会让排队多等一个 pass。
+    live = sum(1 for r in reqs
+               if r.status == State.EXECUTING.value
+               and (r.execution or {}).get("session_id"))
+    for req in reqs:
         if req.status != State.APPROVED.value:
             continue
         if req.execution and req.execution.get("session_id"):
@@ -2099,6 +2353,18 @@ def dispatch_approved(cfg: config.Config) -> int:
         if executor is None:
             _log(f"dispatch: executor unavailable, cannot dispatch {req.id}")
             continue
+        # §51 合并运行列 queued 子状态：并发满 → 卡留 approved 排队（原因
+        # chip 由 dashboard 的 queued_reason 投影），槽位空出即派发。
+        if live >= int(ad["max_concurrent"]):
+            continue
+        # auto-dispatch 卡的预算复核：批准后 owner 调低预算/隔日翻账等边界，
+        # 派发前再验一次天花板。人批的卡不受预算闸——owner 显式点头即 override。
+        ex0 = req.execution if isinstance(req.execution, dict) else {}
+        if ex0.get("auto_dispatched"):
+            ledger = _load_spend_ledger()
+            if (_ledger_spend(ledger, exclude=req.id) + _card_cost(req)
+                    > float(ad["daily_budget_usd"])):
+                continue  # 排队等预算（queued_reason=waiting_budget）
         snap_ref = None
         try:
             # §34bis 机械护栏起点：preset 清理卡在会话启动**之前**拍 registry
@@ -2113,6 +2379,7 @@ def dispatch_approved(cfg: config.Config) -> int:
             _log(f"dispatch: {req.id} -> executing "
                  f"(session={ (req.execution or {}).get('session_id') })")
             count += 1
+            live += 1                    # 本 pass 内并发口径同步推进
             # retry succeeded -> clear the failure left by a previous attempt.
             # (dispatch rebuilds execution so this is usually a no-op; kept as a
             # belt-and-braces so a stale last_error never lingers on a live run.)
@@ -2217,7 +2484,8 @@ def purge_trash(cfg: config.Config) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# (c') auto-archive stale delivered matters (卡片生命周期 §4 / #10) — DEFAULT OFF
+# (c') auto-archive stale delivered matters (卡片生命周期 §4 / #10；
+#      v-next W1.c：默认 30 天，设 0 关闭)
 # --------------------------------------------------------------------------- #
 _ARCHIVE_SWEEP_MARKER = "last_archive_sweep"
 _OPEN_STATES = (
@@ -2289,12 +2557,14 @@ def _thread_last_activity(req: Requirement) -> Optional[_dt.datetime]:
 
 
 def archive_stale(cfg: config.Config) -> int:
-    """Auto-archive cold DELIVERED cards (§4 / #10). DEFAULT OFF.
+    """Auto-archive cold DELIVERED cards (§4 / #10; v-next W1.c 改默认值).
 
-    ``archive_after_days`` defaults to 0 (off) — long-silent immigration/EB-1A
-    matters must not be auto-sealed, or new mail re-opens a duplicate card (the
-    very bug this feature kills). When enabled it runs at most once per 24h and
-    skips cards with a future deadline or a live sibling in their cluster."""
+    ``archive_after_days`` 默认 30（W1.c；设 0 关闭）——W1.a 配额反转后冷卡
+    挤占 closed recency 槽位（20 个），30 天冷封存把窗口留给近期 closed 卡。
+    长静默的 immigration/EB-1A 里程碑由未来 deadline 保护罩住（新邮件到来
+    绝不撞上被封存的卡开出重复卡——那正是本功能要杀的 bug）。At most once
+    per 24h; skips cards with a future deadline, a live sibling in their
+    cluster, or unparseable timestamps."""
     days = int(getattr(cfg, "archive_after_days", 0) or 0)
     if days <= 0:
         return 0
@@ -2786,6 +3056,72 @@ def _recent_resume_count(ex: dict, now: Optional[_dt.datetime] = None) -> int:
     return n
 
 
+def _drop_steers(req: Requirement, pend: list, reason: str, why: str) -> None:
+    """诚实丢弃（§39 红线）：留痕 + save + notify + analytics——owner 打的字
+    绝不静默蒸发。``why`` 是 analytics 的机读原因（metadata only）。"""
+    steer.drop_trace(req, pend, reason)
+    registry.save(req)
+    notify.notify("追加指令未送达", f"{req.title or req.id}：{reason}", req=req.id)
+    analytics.log_event("steer_dropped", req=req.id, n=len(pend), reason=why)
+    _log(f"steer: {req.id} dropped {len(pend)} steer(s) — {reason}")
+
+
+def _flush_steers(req: Requirement, cfg: config.Config) -> None:
+    """§44.3-S 安全窗口①（roster blocked）的 steer flush。
+
+    经 rework 同款 stop-idle-then-resume 管道把 OWNER UPDATE 注入原会话：
+    blocked 的 bg 进程拒收 --resume，先 stop（安全：transcript 保留）再带
+    prompt resume（executor.resume 的 add-only ``prompt=``）。成功
+    mark_delivered、失败 record_attempt（3 次放弃 → drop 留痕 + 通知）。
+    任何异常都不许打断 reconcile pass。
+
+    与 §44.3 briefing 共用安全窗口但**永不混批混 prompt**（amendments
+    §44.3-S）：blocked 分支里 pending_briefings 先走 executor.brief 并
+    continue，steer 等下一个窗口。stop 前借 executor._briefing_window_open
+    做 last-moment fresh roster 探测（W-steer 基线差异的 v0.47 落法）——
+    pass-start 快照到此刻可能已 blocked→working，窗口关了就留队下 pass，
+    不烧尝试次数（那不是一次注入失败）。
+    """
+    if executor is None:
+        return
+    try:
+        pend = steer.pending_steers(req)
+        if not pend:
+            return
+        if steer.give_up_due(req):
+            _drop_steers(req, pend, "3 次注入尝试失败", "attempts")
+            return
+        sid = (req.execution or {}).get("session_id")
+        if sid:
+            try:
+                if not executor._briefing_window_open(sid):
+                    _log(f"steer: {req.id} 窗口已关（会话转回 working）— "
+                         f"留队下 pass")
+                    return
+            except Exception:  # noqa: BLE001 - 探测失败按窗口开放（同 brief 姿态）
+                pass
+            try:
+                executor.stop_session(str(sid))
+            except Exception as e:  # noqa: BLE001 - flush 失败留队，下 pass 重试
+                _log(f"steer: {req.id} stop_session failed（下 pass 重试）: {e}")
+                steer.record_attempt(req)
+                registry.save(req)
+                return
+        ok = executor.resume(req, cfg, prompt=steer.build_steer_prompt(pend))
+        if ok:
+            steer.mark_delivered(req, pend)
+            registry.save(req)
+            _log(f"steer: {req.id} delivered {len(pend)} steer(s)")
+            analytics.log_event("steer_delivered", req=req.id, n=len(pend))
+        else:
+            n = steer.record_attempt(req)
+            registry.save(req)
+            _log(f"steer: {req.id} flush failed "
+                 f"(attempt {n}/{steer.MAX_STEER_ATTEMPTS})")
+    except Exception as e:  # noqa: BLE001 - must never break the daemon pass
+        _log(f"steer: flush {getattr(req, 'id', '?')} failed: {e}")
+
+
 def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
     """Auto-resume executing tasks whose background agent died (sleep / network
     loss / crash). Skips tasks that already finished. Exponential backoff so a
@@ -2857,6 +3193,10 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 req.execution = ex
                 registry.save(req)
             resume_notified.discard(req.id)
+            # §44.3-S 安全窗口①：blocked = 会话停在等输入，此刻 flush steer
+            # 不会打断任何在做的工作（working + live pid 绝不打断）。briefing
+            # 在场时上面已 continue——steer 与 briefing 永不混批混 prompt。
+            _flush_steers(req, cfg)
             continue
         if agent and state in _DONE_STATES:
             if not ex.get("done"):                   # mark finished so a later
@@ -2876,6 +3216,17 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                 # §34bis 机械护栏终点：preset 清理卡收割时做起止快照比对。
                 _check_triage_registry_guard(req, ex)
                 req.execution = ex
+                # §44.3-S 诚实丢弃（窗口③）：会话已收工，未送达的转向指令再
+                # 无处送——留痕 + 通知（notes `[追加指令未送达]`），绝不静默
+                # 蒸发。
+                pend = steer.pending_steers(req)
+                if pend:
+                    steer.drop_trace(req, pend,
+                                     "会话已完成进入待验收，追加指令未及送达")
+                    notify.notify("追加指令未送达（任务已完成）",
+                                  req.title or req.id, req=req.id)
+                    analytics.log_event("steer_dropped", req=req.id,
+                                        n=len(pend), reason="done")
                 # §11: agent done = 草稿就绪，进入待验收（Zelin ✓验收/↩︎打回）。
                 # 通知由 detect_transitions 的 running->review diff 发，避免双发。
                 req.set_status(registry.State.REVIEW)
@@ -2971,7 +3322,29 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
                     continue
                 req = fresh
             else:
-                ok = executor.resume(req, cfg)
+                # §44.3-S 安全窗口②：会话已死的 resume 时机顺带 flush steer——
+                # OWNER UPDATE 直接作 resume 首条输入，零额外打断。briefing
+                # 分支在上面先行（永不混批）；steer 等它清完队再搭下一班车。
+                pend = steer.pending_steers(req)
+                if pend and steer.give_up_due(req):
+                    _drop_steers(req, pend, "3 次注入尝试失败", "attempts")
+                    pend = []
+                # 无 steer 时不带 prompt 形参——裸 resume 路径与从前逐字节
+                # 相同（add-only 纪律：老注入缝/老 mock 一概不受扰动）。
+                if pend:
+                    ok = executor.resume(
+                        req, cfg, prompt=steer.build_steer_prompt(pend))
+                else:
+                    ok = executor.resume(req, cfg)
+                if pend:
+                    if ok:
+                        steer.mark_delivered(req, pend)
+                        _log(f"steer: {req.id} delivered {len(pend)} steer(s) "
+                             f"via resume")
+                        analytics.log_event("steer_delivered", req=req.id,
+                                            n=len(pend))
+                    else:
+                        steer.record_attempt(req)
             ex_after = dict(req.execution or {})
             if not ok:
                 # executor.resume's early-return paths (transcript purged, mkdir
@@ -3215,12 +3588,13 @@ def run_once(
 ) -> dict:
     config.ensure_state_dirs()
     n_inbox = process_inbox()
+    n_auto = auto_dispatch_pass(cfg)   # §51：hand 卡免批通道（card_sent→approved）
     n_dispatched = dispatch_approved(cfg)
     # write-early：审批/派发刚落账就先写一次 dashboard，app 立刻看到 queued/executing
     # 回显，不用等 reconcile/raising（都可能慢）跑完；pass 尾部照常再写最终版。
     # 仅在真有变化时才写 —— 空闲 pass 不额外跑一次 build_dashboard（内含
     # `claude agents` 子进程 + 全量 registry 加载，白白翻倍热路径开销）。
-    if n_inbox or n_dispatched:
+    if n_inbox or n_auto or n_dispatched:
         try:
             write_dashboard(build_dashboard(cfg=cfg))
         except Exception as e:  # noqa: BLE001 - early write is best-effort
@@ -3229,7 +3603,7 @@ def run_once(
     process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
     purge_trash(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
-    archive_stale(cfg)       # §4 / #10: auto-archive cold delivered (DEFAULT OFF)
+    archive_stale(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     try:
         # §44: execute same-thing verdicts in THIS thread (the daemon is the

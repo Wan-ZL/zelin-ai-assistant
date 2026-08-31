@@ -215,6 +215,12 @@ class Config:
     # trash / recycle bin
     trash_retention_days: int = 60
 
+    # auto-archive（vnext W1.c 决议）：delivered 卡最后活动超过 N 天自动封存
+    # （actd.archive_stale 冷扫读取此值）。live v0.20.0 首发默认 0（off）；
+    # vnext 把默认改为 30（0 = 关闭，恢复永不自动归档）。见
+    # docs/design/vnext-amendments.md §W1.c。
+    archive_after_days: int = 30
+
     # screen-capture sensitive-app exclusion (P1-9) — key absent = defaults;
     # explicit `ignored_apps: []` in config.yaml = deliberate opt-out.
     recording_ignored_apps: list = field(
@@ -246,6 +252,13 @@ class Config:
     telemetry_capture_input_explicit: bool = False
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
+
+    # W18 远程直跑闸门（vnext 决议）：webui/syncd 这类网络 ingress 是否放行
+    # capture mode:"run"（§34 direct-run 跳过人审预览）。默认关（fail-closed）；
+    # 仅 config.yaml `remote.allow_direct_run: true` 显式开启，settings_overrides
+    # 不可覆盖（deliberately NOT in _OVERRIDE_FIELDS）。见
+    # docs/design/vnext-amendments.md §W18。
+    remote_allow_direct_run: bool = False
 
     # AI Doctor (§25) — "让 AI 修 / Fix with AI" escape hatch: generates a
     # Terminal .command that hands the scrubbed diagnostic bundle to claude.
@@ -528,6 +541,12 @@ def load_config() -> Config:
         cfg.trash_retention_days,
     )
 
+    archive = _dict_or(data.get("archive"))
+    cfg.archive_after_days = _int_or(
+        archive.get("after_days", cfg.archive_after_days),
+        cfg.archive_after_days,
+    )
+
     voice = _dict_or(data.get("voice"))
     cfg.voice_enabled = _bool_or(
         voice.get("enabled", cfg.voice_enabled), cfg.voice_enabled
@@ -572,6 +591,13 @@ def load_config() -> Config:
     _tf = cfg.redaction_terms_file
     if _tf and not str(_tf).startswith(("/", "~")):
         cfg.redaction_terms_file = str(HOME / _tf)
+
+    # W18：config.yaml 是这个闸门的唯一写入面（fail-closed；见 dataclass 注释）
+    remote = _dict_or(data.get("remote"))
+    cfg.remote_allow_direct_run = _bool_or(
+        remote.get("allow_direct_run", cfg.remote_allow_direct_run),
+        cfg.remote_allow_direct_run,
+    )
 
     doctor_block = data.get("doctor", {}) or {}
     if isinstance(doctor_block, dict):
@@ -777,6 +803,8 @@ _OVERRIDE_FIELDS: dict = {
     "feedback_publish_default": _coerce_bool,
     "feedback_sync_repo": str,
     "feedback_sync_token_path": str,
+    # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
+    # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }
 
 # List-valued override keys (§15.3 add-only, Slack in-app setup) — the scalar

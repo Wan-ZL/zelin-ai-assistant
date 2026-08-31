@@ -126,10 +126,14 @@ class PerFileCrashWrapperTestCase(PoisonBase):
 
         real_apply = actd._apply_decision
 
-        def exploding(req, action, comment, expected_status=None, board_seq=None):
+        def exploding(req, action, comment, expected_status=None, board_seq=None,
+                      **kw):
+            # **kw：跟随 _apply_decision 的 add-only 形参扩展（v-next ts/via/
+            # stem 透传）——本测试钉的是 per-file crash 围栏，不钉签名。
             if req.id == "R-830":
                 raise AttributeError("simulated field-type poison")
-            return real_apply(req, action, comment, expected_status, board_seq)
+            return real_apply(req, action, comment, expected_status, board_seq,
+                              **kw)
 
         with mock.patch.object(actd, "_apply_decision", side_effect=exploding):
             actd.process_inbox()  # must not raise

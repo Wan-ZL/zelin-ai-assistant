@@ -22,7 +22,8 @@ Pins the §7 test list from the implementation spec (worktree A · py-core):
     already-open follow-up folds a later hit into it — never a second proposal;
  8. archive/unarchive inbox actions: delivered/detected -> archived; illegal
     states are idempotent no-ops; unarchive restores prev_status + relocates;
- 9. archive_stale: default off (archive_after_days=0); when enabled it archives
+ 9. archive_stale: default 30 days since vnext §W1.c (was 0/off; 0 still
+    disables, a cfg without the field fails off); when enabled it archives
     only cold delivered cards (skips future-deadline / live-sibling / recent),
     relocates, and self-gates to once per 24h;
 10. dashboard: archived cards enter ONLY archived[] (not completed/debt/
@@ -32,8 +33,10 @@ Pins the §7 test list from the implementation spec (worktree A · py-core):
     byte-stable and loads without the new keys leaking in;
 12. loop safety: two candidates on the same archived thread in one batch yield
     one fresh card + a fold, never two;
-13. inventory pin: a delivered card stays pinned into the LLM window even when
-    the registry outgrows the cap.
+13. inventory window: since vnext §W1.a the quota is INVERTED — open cards
+    hold guaranteed slots and never drop out; delivered/merged only fill the
+    remaining room by recency (re-raise recall past the window rests on the
+    deterministic thread_key merge, items 3/4 above, not on LLM memory).
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
@@ -329,13 +332,26 @@ class ArchiveUnarchiveActionTestCase(LifecycleBase):
 
 
 # --------------------------------------------------------------------------- #
-# 9: archive_stale — default off + skip guards + daily gate
+# 9: archive_stale — default 30 (vnext §W1.c) / 0 = off + skip guards + daily gate
 # --------------------------------------------------------------------------- #
 class ArchiveStaleTestCase(LifecycleBase):
-    def test_disabled_by_default(self):
+    # 修法记录（vnext-amendments §W1.c，owner 已拍板）：原判例
+    # test_disabled_by_default 钉的 "default off (no attr -> off)" 中，默认值
+    # 一半已被修宪取代——archive_after_days 缺省 0 -> 30，新默认由
+    # tests/test_inventory_quota.py::ArchiveAfterDaysDefaultTestCase 钉住。
+    # 保留的另一半判例：0 仍是关闭开关；缺字段的 cfg 对象照旧 fail-off。
+    def test_zero_disables(self):
         self._seed("R-100", "t", State.DELIVERED.value,
                    execution={"accepted_at": _iso_days_ago(400)})
-        self.assertEqual(actd.archive_stale(self.cfg), 0)       # no attr -> off
+        self.assertEqual(actd.archive_stale(self._cfg_days(0)), 0)  # 0 -> off
+        self.assertEqual(registry.load("R-100").status, State.DELIVERED.value)
+
+    def test_missing_attr_fails_off(self):
+        class Bare:  # 老 Config / 任意对象：缺字段 = 冷扫关闭（getattr 兜底）
+            pass
+        self._seed("R-100", "t", State.DELIVERED.value,
+                   execution={"accepted_at": _iso_days_ago(400)})
+        self.assertEqual(actd.archive_stale(Bare()), 0)
         self.assertEqual(registry.load("R-100").status, State.DELIVERED.value)
 
     def _cfg_days(self, days):
@@ -463,17 +479,24 @@ class LoopSafetyTestCase(LifecycleBase):
 
 
 # --------------------------------------------------------------------------- #
-# 13: inventory pin — delivered survives the cap
+# 13: inventory window — W1 inverted quota (open guaranteed, closed yields)
 # --------------------------------------------------------------------------- #
 class InventoryPinTestCase(LifecycleBase):
-    def test_delivered_pinned_even_past_cap(self):
-        for i in range(1, 66):                                  # 65 detected cards
+    # 修法记录（vnext-amendments §W1.a，owner 已拍板）：原判例
+    # test_delivered_pinned_even_past_cap 钉的 v0.20.0 pinning（delivered 硬钉
+    # 进窗、open 卡抢剩余槽位）正是 W1 的病根——registry 长大后 open 卡（triage
+    # 唯一需要匹配的对象）被挤出窗口。反转后同一场景的新判例：open 全在窗
+    # （cap 对 open 非硬顶），delivered 无剩余空位时掉出窗口，re-raise 去重由
+    # 确定性 thread_key 归并兜底（本文件判例 3/4）。
+    def test_open_cards_never_dropped_delivered_yields(self):
+        for i in range(1, 66):                                  # 65 open (> cap)
             self._seed(f"R-{i:03d}", f"debt {i}", State.DETECTED.value)
         self._seed("R-500", "Ship the report", State.DELIVERED.value)
         text = quick_capture.registry_inventory_text()
-        self.assertIn("R-500 | delivered", text)                # pinned
-        self.assertLessEqual(len(text.splitlines()), quick_capture._INVENTORY_CAP)
-        self.assertNotIn("R-001 |", text)                       # oldest debt dropped
+        self.assertIn("R-001 |", text)                          # open 永不掉窗
+        self.assertIn("R-065 |", text)
+        self.assertEqual(len(text.splitlines()), 65)            # cap 对 open 非硬顶
+        self.assertNotIn("R-500 | delivered", text)             # room=0，closed 让位
 
 
 if __name__ == "__main__":

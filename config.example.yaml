@@ -56,6 +56,15 @@ approval:
 # 审批只在 Mac App 里做（v0.21 起）。iMessage 通道与 Slack 的手机审批角色都已移除；
 # Slack self-DM 仍保留为「给自己发一条 = 快速建卡」的手机端捕获入口（见 docs/SLACK_SETUP.md）。
 
+# 信任矩阵自动派发（v-next；见 docs/design/vnext-amendments.md §M1）——只有出身
+# hand（手打快速捕获 / Slack self-DM）的卡有资格免审批开跑；AI 自提、会议出生、
+# 外部 Slack/Gmail 一律照旧人工审批。全部键可省略（缺省如下）。
+autodispatch:
+  enabled: true                        # 总开关；false = 信任矩阵只分类，所有卡回人工审批
+  daily_budget_usd: 5                  # 每日自动派发预算上限（USD），也是单卡估价上限；超限的卡回落待审批并在卡上陈述原因
+  max_concurrent: 3                    # 自动派发并发上限；超出的卡留在「运行中」列 queued 子状态（原因 chip：concurrency）
+  notify: true                         # 观察模式：每次自动派发都发一条通知；false = 只有看板留痕
+
 execution:
   dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控
   memory_inject: true                  # 注入 auto-memory program maps + 约束
@@ -91,6 +100,12 @@ recording:                             # 屏幕采集的 sensitive-app 排除（
 
 trash:
   retention_days: 60                   # 回收站保留天数；超期且未标永久的硬删。设 0 = 永不自动清
+
+archive:
+  after_days: 30                       # 交付(delivered)卡最后活动超过 N 天自动封存进 archive。vnext 决议把 v0.20.0 的默认 0(off) 改为 30；设 0 = 恢复永不自动归档。只封存冷 delivered：带未来 deadline / cluster 内还有 open 兄弟卡 / 时间戳不可解析的卡一律不动
+
+remote:
+  allow_direct_run: false              # W18 远程直跑闸门：webui/syncd 等网络 ingress 收到 capture mode:"run"（直跑、跳过人审预览）时是否放行。默认 false = 自动降级为普通提案 capture（照进 triage，不报错）；只有明确要在手机/远端一键直跑才设 true
 
 integrations:
   jira: off                            # 默认关；开启后自动建票到 projectKey

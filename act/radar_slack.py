@@ -595,6 +595,9 @@ def mcp_scan(cfg: config.Config,
                 # "quick", or injected content, would otherwise pass the
                 # allowlist). Hardcode like the native path; the reported
                 # channel NAME rides in "ref" for display only.
+                # v-next（amendments §M1.d）：同一字段还喂 policy.channel_class
+                # 的 origin-trust 裁决——伪造 hand 信任在 auto-dispatch 世界里
+                # 是执行面漏洞，这条红线只会更硬。
                 "channel": "slack",
                 "date": r.get("date"),
                 "quote": r.get("quote") or r.get("summary"),

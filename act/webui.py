@@ -19,6 +19,10 @@ local web page doing CSRF / DNS-rebinding):
     Origin validation on POST (blocks cross-origin form/CSRF posts).
   * Static serving is a fixed allow-list of files — no path joining with the
     request path, so directory traversal is impossible.
+  * W18: capture ``mode:"run"`` (direct-run, skips the human preview §34) is
+    gated OFF by default for this network ingress — without the config opt-in
+    it silently downgrades to a plain propose capture (with a notice), never
+    an error.
 
 Stdlib only (http.server) — no new dependencies beyond PyYAML (unused here).
 This module deliberately does NOT wire into install.sh / launchd / the Swift
@@ -40,7 +44,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from act.lib import config
+from act.lib import config, risk
 
 # --------------------------------------------------------------------------- #
 # inbox action allow-list
@@ -99,6 +103,12 @@ _STATIC = {
     "/app.js": ("app.js", "application/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
+
+# W18 降级通知（响应字段 ``notice``，add-only）：远端提交方立即得知直跑被
+# 降级成提案——卡片照常进 triage，闸门不吞任务也不撒谎说「已开跑」。
+_RUN_DOWNGRADE_NOTICE = ("direct run is disabled for remote capture "
+                         "(remote.allow_direct_run=false); "
+                         "saved as a proposal instead")
 
 
 def _iso_now() -> str:
@@ -161,6 +171,11 @@ def write_inbox(payload: dict) -> str:
         rec.setdefault("comment", None)
     rec["action"] = action
     rec["ts"] = _iso_now()
+    # ingress 落款（vnext-amendments T-28，add-only）：本面是网络远程 ingress，
+    # 一律 via:"remote"——客户端不可 spoof（via 不在 _INBOX_KEYS 白名单，这里
+    # 无条件盖章）。actd 据此把 capture 落 remote_capture 通道（PROPOSED，
+    # 永不自动派发）、comment 只记录不 steer。
+    rec["via"] = "remote"
 
     # capture keeps the Mac app's ``capture-`` filename prefix (§10/§15); every
     # other action gets a plain uuid name.
@@ -380,6 +395,16 @@ class _Handler(BaseHTTPRequestHandler):
         if mode is not None and (action != "capture" or mode != "run"):
             self._json(400, {"error": "mode is only capture mode:\"run\""})
             return
+        # W18 远程直跑闸门（vnext-amendments §W18）：webui 是网络 ingress——
+        # direct-run 跳过人审预览（§34），默认不许从这里进来。闸门关着时
+        # **降级不报错**：去掉 ``mode`` 字段按普通 propose capture 落 inbox
+        # （提案照常进 triage），响应带 add-only ``notice`` 告知提交方。
+        # fail-closed：config 读不了/字段缺失 = 闸门关。
+        notice: Optional[str] = None
+        if action == "capture" and mode == "run" \
+                and not risk.remote_direct_run_allowed():
+            payload = {k: v for k, v in payload.items() if k != "mode"}
+            notice = _RUN_DOWNGRADE_NOTICE
         # §39.2: answer_input's text is bounded 1..4000 (code points) — reject
         # here with a 400 so an oversize/empty answer never reaches the inbox
         # (actd would archive-and-noop it, but the API caller deserves the
@@ -397,7 +422,10 @@ class _Handler(BaseHTTPRequestHandler):
             self.log_error("inbox write failed: %s", e)
             self._json(500, {"error": "internal error"})
             return
-        self._json(200, {"ok": True, "file": name})
+        resp = {"ok": True, "file": name}
+        if notice:
+            resp["notice"] = notice
+        self._json(200, resp)
 
     # quieter, single-line logging to stderr (default BaseHTTPRequestHandler is
     # noisy); keep it so a curl proof still shows requests.
