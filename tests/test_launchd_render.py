@@ -31,12 +31,17 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "act" / "launchd"
+
+# 模板形状那一组是纯字符串 + plistlib，三个平台都跑；真执行 install.sh 的那
+# 一组是 POSIX-only（见 InstallShRealRenderTestCase）。
+_WIN = sys.platform.startswith("win")
 
 # install.sh 里真正参与渲染的函数（顺序 = 依赖顺序）。测试执行的是从
 # install.sh 抠出来的**原文**，所以脚本改了而测试没改会立刻炸。
@@ -146,8 +151,15 @@ class LaunchdTemplateShapeTestCase(unittest.TestCase):
                                  % path.name)
 
 
+@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
 class InstallShRealRenderTestCase(unittest.TestCase):
     """真的跑 install.sh 的函数（不是镜像）——2026-08-31 live 部署判例。
+
+    整个 class 在 Windows 上跳过：这里的每一条都要么直接 `bash -c` 跑 install.sh
+    抠出来的函数、要么经 _render_from/_pick 间接跑，另有四条还要 os.symlink
+    （Windows 上要特权）。install.sh 只在 macOS/Linux 上运行——Windows 侧的
+    安装器是 install.ps1，它有自己的判例。上面那个 class 是纯字符串 + plistlib
+    的模板形状检查，三个平台照跑，不在跳过范围内。
 
     症状：owner 的 repo 实体在 /Volumes/Storage/Server/Projects/…，另有便利
     symlink ~/Projects -> /Volumes/Storage/Server/Projects。从 symlink 那侧
