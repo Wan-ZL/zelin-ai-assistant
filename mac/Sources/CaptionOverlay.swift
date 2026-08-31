@@ -12,6 +12,12 @@ final class CaptionOverlayController {
     static let shared = CaptionOverlayController()
     private var panel: NSPanel?
 
+    /// Hard ceiling for the panel height: the overlay shows a rolling
+    /// 2-sentence window (CaptionRollup), never a transcript — no content may
+    /// ever grow the panel past this. Sized for the max font (40 pt) bilingual
+    /// pair + live line, each wrapped to two lines.
+    static let maxPanelHeight: CGFloat = 300
+
     func show() {
         if panel == nil {
             let p = NSPanel(contentRect: Self.defaultFrame(),
@@ -28,12 +34,19 @@ final class CaptionOverlayController {
             p.becomesKeyOnlyIfNeeded = true
             p.isMovableByWindowBackground = true
             p.minSize = NSSize(width: 320, height: 72)
-            p.maxSize = NSSize(width: 2400, height: 480)
+            p.maxSize = NSSize(width: 2400, height: Self.maxPanelHeight)
             p.contentViewController = NSHostingController(rootView: CaptionOverlayView())
             // restores the user's dragged position/size across launches
             // (falls back to the bottom-center default frame above)
             p.setFrameAutosaveName("liveCaptionsPanel")
             panel = p
+        }
+        // maxSize only gates USER resizing — clamp a taller frame restored
+        // from before the height cap existed (the old ceiling was 480)
+        if let p = panel, p.frame.height > Self.maxPanelHeight {
+            var f = p.frame
+            f.size.height = Self.maxPanelHeight
+            p.setFrame(f, display: false)
         }
         panel?.orderFrontRegardless()
     }
@@ -100,7 +113,13 @@ struct CaptionOverlayView: View {
         }
         .background(RoundedRectangle(cornerRadius: 12)
             .fill(Color.black.opacity(cap.opacity)))
+        // belt-and-braces over CaptionRollup's sentence cap: the box never
+        // asks the panel for more than maxPanelHeight, and anything taller
+        // clips at the TOP — newest text stays bottom-anchored and visible
+        .clipped()
         .onHover { hovering = $0 }
+        .frame(maxHeight: CaptionOverlayController.maxPanelHeight,
+               alignment: .bottom)
     }
 
     static var pausedLabel: String {
