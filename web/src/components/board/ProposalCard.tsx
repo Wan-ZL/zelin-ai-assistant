@@ -50,6 +50,13 @@ export function ProposalCard({ card }: ProposalCardProps) {
       <div className="card-badges">
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
         <span className="chip chip-purple">{card.tier}{card.tier_hint ? ` · ${card.tier_hint}` : ""}</span>
+        {/* §50 W17：外部出身把声明档提级 T2 时点明——否则见 "T1" 却弹 T2
+            确认框会莫名其妙。origin_trust 也一并 surface（types.ts 已有字段）。 */}
+        {effectiveTier(card) === "T2" && card.tier !== "T2" && (
+          <span className="chip chip-warning" title={card.origin_trust ? `origin: ${card.origin_trust}` : undefined}>
+            {text("外部来源提级 T2", "External → T2")}
+          </span>
+        )}
         {card.delivery_mode === "chat" && (
           <span className="chip chip-purple">{text("交付：聊天成稿", "Deliver: chat draft")}</span>
         )}

@@ -88,6 +88,8 @@ describe("ProposalCard approve", () => {
     // 声明档 T1 也不许单击直批——弹窗拦住，确认词放行后 wire 与 T1 相同
     const card = { ...makeCard("T1"), effective_tier: "T2", origin_trust: "external" };
     render(<ProposalCard card={card} />);
+    // M8：卡面点明升档，别让用户见 "T1" 却弹 T2 确认框
+    expect(screen.getByText("External → T2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(postAction).not.toHaveBeenCalled();
     const input = screen.getByPlaceholderText("Type 确认 or go");
