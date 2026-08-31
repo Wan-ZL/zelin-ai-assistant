@@ -113,6 +113,11 @@ render_launchd_plist() {
     pydir="$(dirname "$py")"
     claudedir="$HOME/.local/bin"
     [ -n "${CLAUDE_LOGIN_BIN:-}" ] && claudedir="$(dirname "$CLAUDE_LOGIN_BIN")"
+    # launchd opens StandardOut/ErrorPath BEFORE exec — the templates point
+    # them at ~/Library/Logs/zelin-ai-assistant/ (never under the repo: an
+    # external-volume repo makes the spawn fail with EX_CONFIG 78), and the
+    # directory must exist or the spawn fails the same way.
+    mkdir -p "$HOME/Library/Logs/zelin-ai-assistant"
     sed -e "s|/Users/YOURUSERNAME/\.claude-bin|$(_sed_escape "$claudedir")|g" \
         -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
         -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$REPO_ROOT")|g" \
@@ -139,7 +144,7 @@ verify_launchd_agent() {
         ok "$label loaded (last run exited 0)"
     else
         echo "  [ERR ] $label loaded but its process exits with status $agent_status" >&2
-        info "fix: read $REPO_ROOT/state/${label##*.}.launchd.log — usual causes:"
+        info "fix: read ~/Library/Logs/zelin-ai-assistant/${label##*.}.launchd.log — usual causes:"
         info "  - PyYAML missing for the daemon python: ${RUNTIME_PY:-python3} -m pip install --user pyyaml"
         info "  - Anthropic API key file missing: paste it in the app's Settings window"
         info "then: launchctl unload $LA_DIR/$label.plist && launchctl load $LA_DIR/$label.plist"

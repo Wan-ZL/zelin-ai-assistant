@@ -15,7 +15,7 @@ One line per check — symptom first, then the one-line fix:
 
     [ ok ] actd: running (pid 4242)
     [FAIL] dashboard: stale (generated 23 min ago) - actd is not writing; ...
-           fix: launchctl list | grep aiassistant; tail -20 state/actd.launchd.log
+           fix: launchctl list | grep aiassistant; tail -20 ~/Library/Logs/zelin-ai-assistant/actd.launchd.log
 
 Never raises; exit code = number of FAILs (0 = healthy). Warnings cover
 optional or degraded-but-working states (no Obsidian vault, recording off,
@@ -477,7 +477,8 @@ def _check_launchd(probes: Probes):
             results.append(CheckResult(
                 short, severity,
                 "loaded but its process exits with status %s" % status,
-                "tail -20 state/%s.launchd.log  # usual causes: PyYAML missing "
+                "tail -20 ~/Library/Logs/zelin-ai-assistant/%s.launchd.log"
+                "  # usual causes: PyYAML missing "
                 "for the daemon python, missing API key" % short,
             ).with_failure("agent_unloaded"))
     return results
@@ -746,7 +747,8 @@ def _check_dashboard(probes: Probes):
     return CheckResult(
         "dashboard", FAIL,
         "stale (generated %d min ago) - actd is not writing; the app renders old data" % int(age // 60),
-        "launchctl list | grep aiassistant; tail -20 state/actd.launchd.log",
+        "launchctl list | grep aiassistant; "
+        "tail -20 ~/Library/Logs/zelin-ai-assistant/actd.launchd.log",
     ).with_failure("dashboard_stale")
 
 

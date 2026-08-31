@@ -306,7 +306,6 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 新增键：`review_notify`、`maintainer_repo_path`、`maintainer_session_id`
 （`feedback_publish_default` 见 §29bis，`gmail_fetch_command` 见 §14bis）。
 
-
 ## 16. Feature flags + 自我进化
 - config `features: {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics, manager_pack}`，默认全 on；各模块入口检查 flag，off 则 no-op。overrides 可改。
 - 周一 digest 末尾加**进化建议**节：基于 analytics（30 天未用的功能→建议关；重复风暴/高拒绝率→建议改），生成 type=self-improvement 的卡片（target_repo=本 repo），批准后照常 claude --bg 实现并以 **draft PR** 交付——app 更新永远走 PR。
@@ -3227,3 +3226,29 @@ migrate/export CLI 触碰。
   从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、`ZAIServerRepo` 以构建
   所在 repo root 盖章（可移植：换机器/换 worktree 重跑 build.sh 即自洽）、
   ad-hoc codesign。`shell/build/` 进 .gitignore（构建产物永不入库）。
+
+## 55. launchd 模板路径纪律（v0.48.x；live 事故 2026-08-31）
+
+「一键修复」/ 初始设置向导 / install.sh 三方共用 `act/launchd/*.plist` 模板与
+同一占位符替换序（`install.sh render_launchd_plist` ≡ `mac/Sources/Doctor.swift
+LaunchAgents.install` ≡ `mac/Sources/SetupWizard.swift ActdAgent.renderAndLoad`）。
+事故：模板曾把 StandardOut/ErrorPath 指到 `$REPO/state/*.launchd.log`、
+WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上时，launchd
+在 exec **之前**就要打开日志路径并 chdir，任一失败整个 agent 以 EX_CONFIG(78)
+拒绝 spawn；「一键修复」于是把手工救好的 plist 一键打回故障态、放倒全部后台
+服务。自本节起为不变式（判例 `tests/test_launchd_render.py` 钉死渲染形状）：
+
+- **launchd 在 spawn 前触碰的键永不指向 repo**：StandardOut/ErrorPath 固定
+  `~/Library/Logs/zelin-ai-assistant/<name>.launchd.log`（渲染方在写 plist 前
+  负责 mkdir 该目录——目录缺失同样导致 spawn 失败）；WorkingDirectory 固定
+  `$HOME`；`python3 -m act.*` 的模块解析改走 `EnvironmentVariables.PYTHONPATH`
+  （= repo 根）。repo 路径只允许出现在环境变量值里（`AIASSISTANT_HOME` /
+  `PYTHONPATH` / `PATH`）——那些是进程起来之后才被消费的。
+- **解释器 = §19 runtime 指针渲染出的绝对路径**，永不 `/usr/bin/env`（TCC 按
+  binary 计权限，env 间接层让授权漂移）。指针机制本身不变。
+- §32.4 的日志自压缩豁免语义不变：`*.launchd.log` 仍是 launchd 自管、不参与
+  进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。
+- 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧
+  `$REPO/state/*.launchd.log` 仅作诊断包的兜底读（迁移前安装还留着旧日志）。
+- `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
+  无 WorkingDirectory、bash 绝对路径）本就合规，不动。

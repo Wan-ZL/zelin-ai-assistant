@@ -46,6 +46,13 @@ enum LaunchAgents {
             try FileManager.default.createDirectory(
                 atPath: (dest as NSString).deletingLastPathComponent,
                 withIntermediateDirectories: true)
+            // launchd opens StandardOut/ErrorPath BEFORE exec — the templates
+            // point them at ~/Library/Logs/zelin-ai-assistant/ (never under
+            // the repo: an external-volume repo fails the spawn, EX_CONFIG
+            // 78), and the directory must exist or the spawn fails the same way.
+            try FileManager.default.createDirectory(
+                atPath: home + "/Library/Logs/zelin-ai-assistant",
+                withIntermediateDirectories: true)
             try text.write(toFile: dest, atomically: true, encoding: .utf8)
         } catch {
             return (false, L("写入 \(dest) 失败: ", "Failed to write \(dest): ")
