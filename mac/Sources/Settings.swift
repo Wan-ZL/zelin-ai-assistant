@@ -563,8 +563,8 @@ struct SettingsFormView: View {
                 .frame(width: 220)
                 Spacer()
             }
-            Text(L("纯界面偏好（存本机），弹窗与看板同时生效；提案列顶的处理中占位卡不参与排序。",
-                   "UI-only preference (stored locally); applies to the popover and the board alike — processing placeholders stay pinned atop the Proposals column."))
+            Text(L("纯界面偏好（存本机）；提案列顶的处理中占位卡不参与排序。",
+                   "UI-only preference (stored locally); processing placeholders stay pinned atop the Proposals column."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Divider()
@@ -723,7 +723,8 @@ struct SettingsFormView: View {
                 // refused / rolled-back mode switch (15 s transient): without
                 // this the segmented picker above just snaps back with no
                 // explanation on THIS page (the note otherwise renders only
-                // in the popover and the ingest page) — mirror of IngestView.
+                // in the board-header menu and the ingest page) — mirror of
+                // IngestView.
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .foregroundColor(.orange)

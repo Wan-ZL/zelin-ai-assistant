@@ -284,8 +284,9 @@ enum ActdAgent {
         Shell.run("/bin/launchctl", ["print", "gui/\(getuid())/\(label)"]).0 == 0
     }
 
-    /// Render the repo plist template (same 4 placeholder substitutions as
-    /// install.sh render_launchd_plist, same order) and launchctl load it.
+    /// Render the repo plist template (same 5 placeholder substitutions as
+    /// install.sh render_launchd_plist, same order; the claude dir comes from
+    /// the shared LaunchAgents.claudeBinDir resolver) and launchctl load it.
     /// Blocking — background queue only.
     nonisolated static func renderAndLoad() -> (Bool, String) {
         let root = AppPaths.stateRoot
@@ -298,6 +299,8 @@ enum ActdAgent {
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()
         text = text
+            .replacingOccurrences(of: "/Users/YOURUSERNAME/.claude-bin",
+                                  with: LaunchAgents.claudeBinDir())
             .replacingOccurrences(of: "/Users/YOURUSERNAME/miniconda3/bin/python3", with: py)
             .replacingOccurrences(of: "/Users/YOURUSERNAME/Projects/zelin-ai-assistant", with: root)
             .replacingOccurrences(of: "/Users/YOURUSERNAME/miniconda3/bin", with: pyDir)
@@ -306,6 +309,13 @@ enum ActdAgent {
         do {
             try FileManager.default.createDirectory(
                 atPath: (dest as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true)
+            // launchd opens StandardOut/ErrorPath BEFORE exec — the templates
+            // point them at ~/Library/Logs/zelin-ai-assistant/ (never under
+            // the repo: an external-volume repo fails the spawn, EX_CONFIG
+            // 78), and the directory must exist or the spawn fails the same way.
+            try FileManager.default.createDirectory(
+                atPath: home + "/Library/Logs/zelin-ai-assistant",
                 withIntermediateDirectories: true)
             try text.write(toFile: dest, atomically: true, encoding: .utf8)
         } catch {

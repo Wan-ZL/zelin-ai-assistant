@@ -24,6 +24,14 @@ struct ApprovalCard: Decodable, Hashable {
     let target_name: String?
     let target_kind: String?   // "new" | "existing"
     let tier: String
+    // §50 W17 (v0.48.1): 审批/调度层的生效档位。外部出身卡 = "T2"（显式
+    // origin_trust=external 或 sources 现算 external）；否则等于 tier。缺席
+    // （旧 actd）→ nil，effectiveTier 回落 tier。approve 闸门读 effectiveTier
+    // 而非 tier——否则外部升档卡（声明 T1、生效 T2）会被一键裸批。
+    let effective_tier: String?
+    // §50 四值出身章（hand/proposed/meeting/external）；缺章 nil。展示用
+    // （升档提示），信任裁决在服务端。
+    let origin_trust: String?
     let tier_hint: String?
     let hardness: String?
     let deadline: String?
@@ -63,7 +71,7 @@ struct ApprovalCard: Decodable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, summary, target_repo, target_name, target_kind
-        case tier, tier_hint, hardness, deadline, days_left
+        case tier, effective_tier, origin_trust, tier_hint, hardness, deadline, days_left
         case repeated, silent_merged
         case cost_usd, show_cost, cost_state, green_sign, disagreement
         case improvement_of, sources, plan, outputs, dod, processing
@@ -82,6 +90,8 @@ struct ApprovalCard: Decodable, Hashable {
         target_name = try? c.decodeIfPresent(String.self, forKey: .target_name)
         target_kind = try? c.decodeIfPresent(String.self, forKey: .target_kind)
         tier = (try? c.decode(String.self, forKey: .tier)) ?? "T?"
+        effective_tier = try? c.decodeIfPresent(String.self, forKey: .effective_tier)
+        origin_trust = try? c.decodeIfPresent(String.self, forKey: .origin_trust)
         tier_hint = try? c.decodeIfPresent(String.self, forKey: .tier_hint)
         hardness = try? c.decodeIfPresent(String.self, forKey: .hardness)
         deadline = try? c.decodeIfPresent(String.self, forKey: .deadline)
@@ -117,6 +127,17 @@ struct ApprovalCard: Decodable, Hashable {
         if let t = display_title, !t.isEmpty { return t }
         return title
     }
+
+    /// §50 W17: 审批闸门读的生效档位——投影 effective_tier 缺席（旧 actd）
+    /// 才回落声明 tier。T2 typed-confirm 用它，绝不用裸 tier。
+    var effectiveTier: String {
+        if let e = effective_tier, !e.isEmpty { return e }
+        return tier
+    }
+
+    /// 声明档被外部出身提级（tier != effectiveTier 且生效为 T2）——用于
+    /// 卡面「T1 · 外部来源提级 T2」提示，让弹窗不再突兀。
+    var isEscalated: Bool { effectiveTier == "T2" && tier != "T2" }
 
     /// Synthetic local placeholder while AI is expanding a just-raised debt,
     /// before the backend's `raising` card appears (covers the ≤10s gap).

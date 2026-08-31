@@ -12,6 +12,13 @@ final class CaptionOverlayController {
     static let shared = CaptionOverlayController()
     private var panel: NSPanel?
 
+    /// Hard ceiling for the panel height: the overlay shows a rolling
+    /// 2-sentence window (CaptionRollup), never a transcript — no content may
+    /// ever grow the panel past this. Sized for the max font (40 pt) bilingual
+    /// pair + live line at lineLimit(2) each (captionText enforces the two
+    /// lines, so this ceiling and the row cap agree by construction).
+    static let maxPanelHeight: CGFloat = 300
+
     func show() {
         if panel == nil {
             let p = NSPanel(contentRect: Self.defaultFrame(),
@@ -28,12 +35,19 @@ final class CaptionOverlayController {
             p.becomesKeyOnlyIfNeeded = true
             p.isMovableByWindowBackground = true
             p.minSize = NSSize(width: 320, height: 72)
-            p.maxSize = NSSize(width: 2400, height: 480)
+            p.maxSize = NSSize(width: 2400, height: Self.maxPanelHeight)
             p.contentViewController = NSHostingController(rootView: CaptionOverlayView())
             // restores the user's dragged position/size across launches
             // (falls back to the bottom-center default frame above)
             p.setFrameAutosaveName("liveCaptionsPanel")
             panel = p
+        }
+        // maxSize only gates USER resizing — clamp a taller frame restored
+        // from before the height cap existed (the old ceiling was 480)
+        if let p = panel, p.frame.height > Self.maxPanelHeight {
+            var f = p.frame
+            f.size.height = Self.maxPanelHeight
+            p.setFrame(f, display: false)
         }
         panel?.orderFrontRegardless()
     }
@@ -83,8 +97,10 @@ struct CaptionOverlayView: View {
                 }
                 finalBlock
                 if !cap.lines.liveText.isEmpty {
+                    // live line truncates at the HEAD: in a growing partial
+                    // the newest words are at the end and must stay visible
                     captionText(cap.lines.liveText, size: cap.fontSize * 0.8,
-                                color: .white.opacity(0.6))
+                                color: .white.opacity(0.6), truncation: .head)
                 }
                 if idle {
                     Text(L("实时字幕正在听…", "Live captions — listening…"))
@@ -101,6 +117,14 @@ struct CaptionOverlayView: View {
         .background(RoundedRectangle(cornerRadius: 12)
             .fill(Color.black.opacity(cap.opacity)))
         .onHover { hovering = $0 }
+        // belt-and-braces over CaptionRollup's sentence cap + the per-row
+        // lineLimit: the box never asks the panel for more than
+        // maxPanelHeight, and anything taller clips at the TOP — newest text
+        // stays bottom-anchored and visible (clipped AFTER the frame so the
+        // clip rect is the capped box itself)
+        .frame(maxHeight: CaptionOverlayController.maxPanelHeight,
+               alignment: .bottom)
+        .clipped()
     }
 
     static var pausedLabel: String {
@@ -135,11 +159,19 @@ struct CaptionOverlayView: View {
         }
     }
 
-    private func captionText(_ text: String, size: Double, color: Color) -> some View {
+    /// One caption row, hard-capped at two wrapped lines (review MAJOR 4: a
+    /// 300-char CJK tail at 40 pt once wrapped to ~16 lines and pushed the
+    /// original + translation off the clipped top — only the live partial
+    /// stayed visible). Final/translation rows truncate at the tail; the
+    /// live row passes .head so its newest words survive.
+    private func captionText(_ text: String, size: Double, color: Color,
+                             truncation: Text.TruncationMode = .tail) -> some View {
         Text(text)
             .font(.system(size: size, weight: .semibold))
             .foregroundColor(color)
             .shadow(color: .black.opacity(0.8), radius: 2, x: 0, y: 1)
+            .lineLimit(2)
+            .truncationMode(truncation)
             .fixedSize(horizontal: false, vertical: true)
     }
 

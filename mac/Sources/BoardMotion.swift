@@ -3,8 +3,8 @@
 // visible cause-and-effect — a card that changes lanes FLIES there instead of
 // teleporting on the next snapshot repaint.
 //
-// Board window only (KanbanView); the menu-bar popover and iOS deliberately
-// stay still. Pure display layer: nothing here writes state, files, or wire
+// Board window only (KanbanView); iOS deliberately stays still.
+// Pure display layer: nothing here writes state, files, or wire
 // payloads. All motion is short (≤ ~350 ms springs), never blocks input (the
 // overlay is hit-test transparent), and switches itself off with the system
 // Reduce Motion setting or the 设置 → 通用 「看板动画」 toggle.

@@ -23,12 +23,19 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import radar, radar_gmail
-from act.lib import config, registry
+from act.lib import config, registry, silent_merge
 
 
 def _proc(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
         args=["claude"], returncode=returncode, stdout=stdout, stderr="")
+
+
+def _judge_runner():
+    """§44.2 fold 判官的注入缝（silent_merge.JUDGE_RUNNER）：恒判"不同"，
+    落卡走正常路径——本文件钉的是 triage 闸门，不是判官（判官自己的判例在
+    tests/test_silent_merge.py）。"""
+    return lambda prompt: _proc('{"same_thing": false, "brief": "不同的事"}')
 
 
 class _FakeLLM:
@@ -87,6 +94,12 @@ class GmailTriageTestCase(unittest.TestCase):
         self._orig_pw = radar_gmail.get_app_password
         radar_gmail.get_app_password = lambda cfg=None: "app-pw"
         self.addCleanup(setattr, radar_gmail, "get_app_password", self._orig_pw)
+        # §44.2 的 fold 判官坐在 apply_triage 底下好几层、没有可传的 runner
+        # 参数——不按住 JUDGE_RUNNER 就会真起 `claude -p`（模块头声称"绝不
+        # spawn 真 claude"，这一处之前是漏的，由 tests/__init__.py 的守卫抓出）。
+        judge = mock.patch.object(silent_merge, "JUDGE_RUNNER", _judge_runner())
+        judge.start()
+        self.addCleanup(judge.stop)
 
     def _extraction(self, **over) -> list:
         item = {"summary": "回复 manager 的季度报告请求", "type": "comms",

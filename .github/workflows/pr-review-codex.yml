@@ -36,13 +36,18 @@ jobs:
 
       - if: steps.key.outputs.present == 'true'
         name: Materialize the PR diff for the sandboxed review
+        # base_ref 经 env 进 shell，绝不直接插值进 run 脚本体（zizmor
+        # template-injection：分支名是攻击者可控字符串，展开即代码）。
+        # 与 ci.yml 的 contract-reminder 同一处置。
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git diff "origin/${{ github.base_ref }}...HEAD" > /tmp/pr.diff
+          git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
           wc -c /tmp/pr.diff
 
       - if: steps.key.outputs.present == 'true'
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/prompts/review.md

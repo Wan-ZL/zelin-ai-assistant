@@ -222,6 +222,16 @@ def _s(v: Any) -> str:
     return "" if v is None else str(v)
 
 
+def _opt(key: str, value: Any) -> dict:
+    """可选 wire 字段的整键省略展开：``**_opt("origin_trust", v)``。
+
+    值为假（None/""/0/False）时返回空 dict——「缺章 = 整键不存在」是 add-only
+    字段的既定读侧语义（老 App 的 decodeIfPresent 与 web 的 `?? fallback` 都
+    按这个来，§50 origin_trust / §51 auto_dispatch_block / §M6.1 steers 同款）。
+    """
+    return {key: value} if value else {}
+
+
 def _int_or(v: Any, default: int) -> int:
     """损坏的数字字段（``repeated_mentions: abc``）降级成 default，不让一张
     坏卡把整个 dashboard pass 炸掉。"""
@@ -757,9 +767,11 @@ def build_dashboard(
                     "target_kind": target_kind,
                     "tier": _s(req.tier),
                     "tier_hint": TIER_HINTS.get(_s(req.tier), ""),
-                    # W17 add-only：生效档位（外部来源强制 T2；余同声明 tier）。
-                    # 存量卡无 origin_trust 字段 => 恒等于 tier，客户端可放心
-                    # decodeIfPresent。审批语义仍由 tier 决定，接线见 amendments §W17。
+                    # W17 add-only：生效档位（外部来源强制 T2；否则同声明 tier）。
+                    # v0.48.1（§50）：外部出身 = 显式 origin_trust=external 章
+                    # **或** sources 现算为 external——缺章卡也从 sources 现算，
+                    # 不再恒等于 tier。审批语义仍由 effective_tier 决定，
+                    # 客户端 decodeIfPresent 兼容（缺字段回落 tier）。
                     "effective_tier": risk.effective_tier(req).tier,
                     "hardness": req.hardness,
                     "deadline": req.deadline,
@@ -789,10 +801,8 @@ def build_dashboard(
                     "reraised_note": str(ex.get("reraised_note") or ""),
                     # v-next add-only（§50/§51/C-6）：出身章 + auto-dispatch
                     # 拦下原因（origin:*/disabled 常态原因不上卡，见 actd）。
-                    **({"origin_trust": getattr(req, "origin_trust", None)}
-                       if getattr(req, "origin_trust", None) else {}),
-                    **({"auto_dispatch_block": ex.get("auto_dispatch_block")}
-                       if ex.get("auto_dispatch_block") else {}),
+                    **_opt("origin_trust", getattr(req, "origin_trust", None)),
+                    **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
                 }
             )
 
@@ -814,8 +824,8 @@ def build_dashboard(
                     "dod": [],
                     "show_cost": False,
                     "delivery_mode": _delivery_mode(req),
-                    **({"origin_trust": getattr(req, "origin_trust", None)}
-                       if getattr(req, "origin_trust", None) else {}),   # v-next add-only（§50）
+                    # v-next add-only（§50）
+                    **_opt("origin_trust", getattr(req, "origin_trust", None)),
                 }
             )
 
@@ -881,9 +891,8 @@ def build_dashboard(
                     # §25: classification id alongside the raw text (None when
                     # unknown — Swift falls back to the raw string + AI fix).
                     "dispatch_error_id": failures.classify(ex.get("last_error")),
-                    **({"queued_reason": qr} if qr else {}),
-                    **({"origin_trust": getattr(req, "origin_trust", None)}
-                       if getattr(req, "origin_trust", None) else {}),
+                    **_opt("queued_reason", qr),
+                    **_opt("origin_trust", getattr(req, "origin_trust", None)),
                 }
             )
 
@@ -1079,10 +1088,8 @@ def build_dashboard(
                     row["resume_exhausted"] = True
                 # v-next §M6.1：steer 三态诚实回执（queued/delivered）
                 steers = _steers_view(req)
-                if steers:
-                    row["steers"] = steers
-                if getattr(req, "origin_trust", None):
-                    row["origin_trust"] = getattr(req, "origin_trust", None)
+                row.update(_opt("steers", steers))
+                row.update(_opt("origin_trust", getattr(req, "origin_trust", None)))
                 needs_input.append(row)
             else:
                 # running, or agent not found yet -> still consider it running
@@ -1110,9 +1117,8 @@ def build_dashboard(
                         "last_error_id": failures.classify(ex.get("last_error")),
                         # v-next §M6.1：steer 三态诚实回执（queued/delivered；
                         # dropped 不投影，notes 痕承担可见性——C-3）
-                        **({"steers": steers} if steers else {}),
-                        **({"origin_trust": getattr(req, "origin_trust", None)}
-                           if getattr(req, "origin_trust", None) else {}),
+                        **_opt("steers", steers),
+                        **_opt("origin_trust", getattr(req, "origin_trust", None)),
                     }
                 )
         # approved surfaces as a "queued" item inside running (branch above, §2)

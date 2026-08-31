@@ -66,7 +66,16 @@ export function looksLikeHtml(text: string | null | undefined): boolean {
 
 const TEXT_PREVIEW_CAP = 200_000;
 
-/** 拉取文本型交付物正文（markdown/text 预览用）。非 2xx 抛 Error(状态码信息)。 */
+/** 拉取文本型交付物正文（markdown/text 预览用）。非 2xx 抛 Error(状态码信息)。
+ *
+ * CONVENTIONS「服务端交互只经 api.ts」的**明示豁免**（全 web 唯一一处裸
+ * fetch）：`/files/` 服务的是交付物**文件本体**（markdown/纯文本），不是
+ * `{"error":{...}}` JSON 信封——api.ts 的 request() 一律 `response.json()`
+ * 解析并封 ApiError，套上来只会把每篇 markdown 解析失败成空 body。URL 仍
+ * 经 api.ts 的 deliverableUrl（base 解析与路径编码不另起一套）；错误按状态
+ * 码抛裸 Error，DeliverableViewer 直接 String(error) 展示。
+ * 若日后 /files 也要 ApiError 分类学与 GET 重试，正解是在 api.ts 里加一个
+ * 文本读取函数（requestText），而不是让本函数改吃 JSON。 */
 export async function fetchDeliverableText(cardId: string, name: string, signal?: AbortSignal): Promise<string> {
   const response = await fetch(deliverableUrl(cardId, name), { signal });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);

@@ -5,10 +5,15 @@
 - error envelope 统一 ``{"error":{"code","message","details"}}``（errors.py）。
 - POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（reveal 在
   本层校验，actions 的字段闸门归 inbox_writer/G1）。
-- PR1 无 token（localhost 单用户过渡）。
-  # TODO(PR3): instance token —— 在 _route_* 之前加统一鉴权挂点。
+- 鉴权四闸（原 PR3 TODO，v0.48.1 落地；机制与差异见 server/security.py）：
+  Host 回环白名单（每请求，anti-rebind）→ Origin 白名单（POST，present 才
+  查，anti-CSRF）→ Content-Type: application/json（POST，杀 simple-request
+  向量）→ per-install instance token（POST 一律必带 X-Zai-Token；token 由
+  server 注入被服务的 index.html）。GET 保持 token-light（同源纪律 + 永不
+  发 CORS 头，跨源页面读不到任何响应）。
 
-契约：docs/CONTRACT.md §49（路由/SSE/CSP/error envelope/localhost 例外的法源）。
+契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
+localhost 例外的法源）。
 """
 from __future__ import annotations
 
@@ -23,9 +28,10 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlsplit
 
-from server import board_source, files, inbox_writer, paths
-from server.errors import (ApiError, InvalidFieldError, NotFoundError,
-                           NotImplementedError501, UnknownFieldError)
+from server import board_source, files, inbox_writer, paths, security
+from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
+                           NotFoundError, NotImplementedError501,
+                           UnauthorizedError, UnknownFieldError)
 from server.sse import (CONNECTED_FRAME, HEARTBEAT_FRAME, HEARTBEAT_SECONDS,
                         EventHub)
 from server.watcher import BoardWatcher
@@ -51,12 +57,29 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     # 基础发送
     # ------------------------------------------------------------------ #
+    def _emit_security_headers(self, *, frameable: bool = False) -> None:
+        """每个响应（含 SSE 流）共用的安全头——单一真源，防某条路径漏发。
+
+        永不发 Access-Control-Allow-Origin（跨源页面不许读任何响应）。反嵌
+        （webui X-Frame-Options 同款）：token 注入页绝不进别人的 iframe；例外
+        = 交付物（详情抽屉经同源 <iframe sandbox> 预览，放行 SAMEORIGIN，其
+        CSP sandbox 由 files.py 自带，不叠 frame-ancestors）。"""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        if frameable:
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
+        else:
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy",
+                             "frame-ancestors 'none'")
+
     def _send_bytes(self, status: int, body: bytes, ctype: str,
-                    extra: Optional[dict] = None) -> None:
+                    extra: Optional[dict] = None, *,
+                    frameable: bool = False) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
+        self._emit_security_headers(frameable=frameable)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -88,6 +111,7 @@ class Handler(BaseHTTPRequestHandler):
             path = unquote(urlsplit(self.path).path)
             if "\x00" in path:
                 raise InvalidFieldError("NUL in path")
+            self._check_auth(method)
             if method == "GET":
                 self._route_get(path)
             else:
@@ -103,6 +127,35 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             traceback.print_exc(file=sys.stderr)
             self._send_api_error(ApiError("internal error"))
+
+    # ------------------------------------------------------------------ #
+    # 鉴权四闸（§49 auth model；机制与 webui 差异注在 server/security.py）
+    # ------------------------------------------------------------------ #
+    def _check_auth(self, method: str) -> None:
+        ctx = self.server.ctx  # type: ignore[attr-defined]
+        # Host 闸：每个请求（页面加载也算）——DNS-rebinding 防线。
+        # 拒绝路径 body 未读，残字节会污染 keep-alive——连接必须关。
+        if not security.host_ok(self.headers.get("Host")):
+            self.close_connection = True
+            raise ForbiddenError("bad host")
+        if method != "POST":
+            return  # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
+        origin = self.headers.get("Origin")
+        if origin is not None and not security.origin_ok(
+                origin, ctx.allowed_origins):
+            self.close_connection = True
+            raise ForbiddenError("bad origin")
+        if not security.content_type_is_json(
+                self.headers.get("Content-Type")):
+            # 415 复用 INVALID_FIELD（§49 的 413 先例：status 已表意，
+            # 不为 loopback 面扩词表）
+            self.close_connection = True
+            raise InvalidFieldError("Content-Type must be application/json",
+                                    status=415)
+        if not security.token_ok(self.headers.get(security.TOKEN_HEADER),
+                                 ctx.token):
+            self.close_connection = True
+            raise UnauthorizedError("missing or bad token")
 
     # ------------------------------------------------------------------ #
     # GET 路由
@@ -125,7 +178,7 @@ class Handler(BaseHTTPRequestHandler):
             body, ctype, extra = files.serve_deliverable(ctx.home, rest[0],
                                                          rest[1])
             extra["Cache-Control"] = "no-store"
-            self._send_bytes(200, body, ctype, extra)
+            self._send_bytes(200, body, ctype, extra, frameable=True)
         elif path.startswith("/api/") or path.startswith("/files/"):
             raise NotFoundError("not found", {"path": path})
         else:
@@ -207,6 +260,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-transform")
             self.send_header("X-Accel-Buffering", "no")
+            # M4：SSE 流也过同一套安全头（nosniff/Referrer-Policy/X-Frame/CSP）
+            # ——此前手写头漏发，事件流成了唯一无 nosniff 的响应面。
+            self._emit_security_headers()
             self.end_headers()
             self.wfile.write(CONNECTED_FRAME)
             self.wfile.flush()
@@ -257,8 +313,13 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         cache = ("public, max-age=31536000, immutable"
                  if "/assets/" in str(target) else "no-cache")
-        self._send_bytes(200, target.read_bytes(), ctype,
-                         {"Cache-Control": cache})
+        body = target.read_bytes()
+        if target.name == "index.html":
+            # instance token server 端注入（security.inject_token 的同源
+            # 纪律）：只有本面服务的页面拿得到，跨源端点永不外发
+            body = security.inject_token(
+                body, self.server.ctx.token)  # type: ignore[attr-defined]
+        self._send_bytes(200, body, ctype, {"Cache-Control": cache})
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         # 保留一行式访问日志到 stderr；SSE 心跳不经此处，噪音可控
@@ -268,10 +329,13 @@ class Handler(BaseHTTPRequestHandler):
 class _Context:
     """挂在 server 实例上的共享只读上下文（测试注入缝）。"""
 
-    def __init__(self, home: Path, hub: EventHub, static_dir: Path) -> None:
+    def __init__(self, home: Path, hub: EventHub, static_dir: Path,
+                 token: str, allowed_origins: frozenset) -> None:
         self.home = home
         self.hub = hub
         self.static_dir = static_dir
+        self.token = token
+        self.allowed_origins = allowed_origins
 
 
 def make_server(port: Optional[int] = None,
@@ -283,10 +347,14 @@ def make_server(port: Optional[int] = None,
     if port is None:
         port = int(os.environ.get("ZAI_PORT", DEFAULT_PORT))
     resolved_home = paths.home_dir(home)
+    # token 读不出也写不进（OSError）= fail-closed：宁可起不来，不裸奔
+    token = security.load_or_create_token(resolved_home)
     hub = EventHub()
     httpd = ThreadingHTTPServer((BIND_HOST, port), Handler)
+    bound_port = httpd.server_address[1]  # port=0 时这里才是真端口
     httpd.ctx = _Context(resolved_home, hub,  # type: ignore[attr-defined]
-                         static_dir or paths.web_dist_dir())
+                         static_dir or paths.web_dist_dir(),
+                         token, security.allowed_origins(bound_port))
     httpd.watcher = None  # type: ignore[attr-defined]
     if start_watcher:
         watcher = BoardWatcher(resolved_home, hub)

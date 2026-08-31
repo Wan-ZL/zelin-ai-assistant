@@ -2,22 +2,11 @@
 // 已知语义字段给专属版式；未知字段落「其他字段」兜底区（wire add-only，
 // 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）。
 import { useState, type ReactNode } from "react";
-import { useI18n } from "../../i18n";
+import { domainLabel, LANE_LABELS, useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
 import type { CardDetail, CardSource } from "../../types";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
-
-const LANE_LABELS: Record<string, [string, string]> = {
-  needs_approval: ["提案", "Proposal"],
-  running: ["运行中", "Running"],
-  needs_input: ["需输入", "Needs input"],
-  review: ["待验收", "In review"],
-  completed: ["阶段性完成", "Done"],
-  debt: ["潜在任务", "Backlog"],
-  trash: ["回收站", "Trash"],
-  archived: ["永久完成", "Archived"],
-};
 
 // 专属版式已覆盖的键——其余进「其他字段」兜底（渲染未知枚举值按字符串兜底，见 CONVENTIONS）
 const KNOWN_KEYS = new Set([
@@ -83,13 +72,12 @@ export interface DetailFieldsProps {
 }
 
 export function DetailFields({ detail }: DetailFieldsProps) {
-  const { text, locale } = useI18n();
+  const { text, locale, language } = useI18n();
 
   const chips: Array<{ key: string; label: string; tone?: string }> = [];
   const lane = str(detail.lane);
   if (lane) {
-    const pair = LANE_LABELS[lane];
-    chips.push({ key: "lane", label: pair ? text(pair[0], pair[1]) : lane, tone: `lane-${lane}` });
+    chips.push({ key: "lane", label: domainLabel(LANE_LABELS, language, lane), tone: `lane-${lane}` });
   }
   for (const key of ["tier", "state", "status", "type", "hardness", "delivery_mode"] as const) {
     const value = str(detail[key]);

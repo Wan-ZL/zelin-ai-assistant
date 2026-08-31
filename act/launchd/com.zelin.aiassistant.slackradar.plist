@@ -29,8 +29,12 @@
         <string>--once</string>
     </array>
 
+    <!-- $HOME, NEVER the repo: launchd performs chdir + log-file open
+         BEFORE exec, and a repo on an external (TCC-gated) volume makes
+         the spawn itself fail with EX_CONFIG (78). Module resolution
+         rides PYTHONPATH in EnvironmentVariables instead. -->
     <key>WorkingDirectory</key>
-    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+    <string>/Users/YOURUSERNAME</string>
 
     <!-- poll every 3 minutes -->
     <key>StartInterval</key>
@@ -42,13 +46,19 @@
     <dict>
         <key>AIASSISTANT_HOME</key>
         <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <!-- import path for `python3 -m act.*` now that
+             WorkingDirectory no longer points at the repo -->
+        <key>PYTHONPATH</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
         <key>PATH</key>
         <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
+    <!-- ~/Library/Logs, NEVER under the repo — same spawn-time rule as
+         WorkingDirectory above (launchd opens these paths pre-exec). -->
     <key>StandardOutPath</key>
-    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/slackradar.launchd.log</string>
+    <string>/Users/YOURUSERNAME/Library/Logs/zelin-ai-assistant/slackradar.launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant/state/slackradar.launchd.log</string>
+    <string>/Users/YOURUSERNAME/Library/Logs/zelin-ai-assistant/slackradar.launchd.log</string>
 </dict>
 </plist>

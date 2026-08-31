@@ -1,10 +1,10 @@
 // Freshness.swift — FreshnessLabel（dashboard.json 新鲜度小组件）
 // + PipelineHealthBanner / PipelineEmptyStateView（P1-4/P1-5 健康横幅与恢复路径）
 //
-// 与 popover footer（DashboardView.freshnessLabel，只读参考）同语义：
-// generated_at 距今 >90s → 橙色「actd 可能未运行」警告；新鲜 → 灰色相对时间；
-// store.liveGeneratedAt == nil → 整个隐藏（popover 自己另有 lastRefresh 降级，
-// 这里不需要）。TimelineView 每 15s 重算并主动重读 —— 心跳假更新不 publish
+// 语义（原与 popover footer 同款；popover 已于 v0.48.x 退役，本组件是唯一
+// 新鲜度展示面）：generated_at 距今 >90s → 橙色「actd 可能未运行」警告；
+// 新鲜 → 灰色相对时间；store.liveGeneratedAt == nil → 整个隐藏。
+// TimelineView 每 15s 重算并主动重读 —— 心跳假更新不 publish
 //（v0.46.x 布局风暴修复），标签靠自己的 tick 保持活。
 
 import AppKit
@@ -41,8 +41,6 @@ struct FreshnessLabel: View {
 
     // mirror of RelativeTime.since (Utils.swift — S5 名下，不动) starting from
     // an already-parsed Date; the fresh branch (≤90s) only ever hits 刚刚/1分钟前.
-    // internal：popover footer（DashboardView.freshnessLabel）改读
-    // liveGeneratedAt（Date）后复用这里，不再走字符串版 RelativeTime.since。
     static func relative(age: TimeInterval) -> String {
         if age < 60 { return L("刚刚", "just now") }
         let mins = Int(age / 60)
@@ -100,17 +98,17 @@ enum PipelineHealthUI {
 
 // MARK: - PipelineHealthBanner (P1-4) — slow vs broken, with a way out
 //
-// Shared by the popover (DashboardView) and the kanban header. Renders
-// nothing for .ok; .missing is owned by PipelineEmptyStateView (P1-5) so the
-// same message never shows twice.
+// Lives in the kanban header (was also mirrored in the popover until its
+// v0.48.x removal). Renders nothing for .ok; .missing is owned by
+// PipelineEmptyStateView (P1-5) so the same message never shows twice.
 
 struct PipelineHealthBanner: View {
     @ObservedObject var store: DashboardStore
     unowned let app: AppDelegate
     var horizontalPadding: CGFloat = 0
     var bottomPadding: CGFloat = 0
-    // §25 one-click repair state (shared: popover + kanban banner show the
-    // same spinner/result instead of a copy-this-command line).
+    // §25 one-click repair state (spinner/result shown in place instead of a
+    // copy-this-command line).
     @ObservedObject private var repair = PipelineRepair.shared
     @State private var aiFixStatus = ""
 
@@ -244,7 +242,7 @@ struct PipelineHealthBanner: View {
 
 // MARK: - PipelineEmptyStateView (P1-5) — "no dashboard.json" is not a dead end
 //
-// One copy of the first-launch empty state for the popover AND the kanban:
+// The first-launch empty state for the kanban:
 // what's missing, the canonical start command (click-to-copy), and a button
 // into the dependency check where TCC/npx/key blockers are diagnosed.
 

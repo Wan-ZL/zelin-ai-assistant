@@ -205,9 +205,10 @@ struct ComposerSheet: View {
 /// (high-impact) card (AppDelegate.confirmT2). On the phone that flow is a
 /// named confirm dialog instead: the dialog carries the Mac's title and names
 /// the card (+ cost when shown), so T2 is never a bare one-tap 批准. Same
-/// threshold source as the Mac: `tier == "T2"`.
+/// threshold source as the Mac (§50 W17, v0.48.1): `effectiveTier == "T2"`,
+/// so an external-origin card escalated from a declared T1 also gates.
 func approveAction(card: ApprovalCard) -> LaneAction {
-    guard card.tier == "T2" else {
+    guard card.effectiveTier == "T2" else {
         return LaneAction(title: L("批准", "Approve"), verb: .approve, tint: .green)
     }
     var msg = L("批准 \(card.id)：\(card.displaySummary)", "Approve \(card.id): \(card.displaySummary)")
@@ -246,6 +247,9 @@ struct ProposalCardRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     TierChip(tier: card.tier)
+                    // §50 W17：外部出身提级 T2 时点明，否则声明 T1 卡弹 T2
+                    // 确认框会莫名其妙（与 Mac/web 卡面一致）。
+                    if card.isEscalated { MetaChip(text: L("外部→T2", "External→T2"), color: .orange) }
                     if card.green_sign == true { MetaChip(text: L("低风险", "Low-risk"), color: .green) }
                     if let d = card.days_left { MetaChip(text: L("剩 \(d) 天", "\(d)d left"),
                                                          color: d <= 1 ? .red : .secondary) }

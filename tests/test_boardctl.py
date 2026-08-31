@@ -36,7 +36,10 @@ class _CtlBase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.board = common.seed_scene(self.home, self.scene)
         _httpd, self.port = common.start_server(self, self.home)
-        self.env = {"ZAI_PORT": str(self.port)}
+        # AIASSISTANT_HOME 指向 server 的 home——boardctl 从那里读写动作要带
+        # 的 instance token（§49 auth model；server 起动时已铸 server.token）
+        self.env = {"ZAI_PORT": str(self.port),
+                    "AIASSISTANT_HOME": str(self.home)}
 
     def run_ctl(self, *argv, env=None):
         out, err = io.StringIO(), io.StringIO()
@@ -173,6 +176,70 @@ class WriteVerbsTest(_CtlBase):
             err = self.err_json(2, verb, "R-101")
             self.assertEqual(err["code"], "USAGE_ERROR")
         self.assertEqual(self.inbox_files(), [])
+
+
+class TokenWallTest(_CtlBase):
+    """§49 auth model 的 boardctl 面：写动作带 instance token，读不需要。"""
+
+    def _env_with_home(self, home: Path) -> dict:
+        return {"ZAI_PORT": str(self.port), "AIASSISTANT_HOME": str(home)}
+
+    def test_write_without_token_file_gets_401_passthrough(self):
+        # home 指到没有 server.token 的空目录 → 不发头 → server 401，
+        # envelope 如实透传（exit 4），且 inbox 零落盘
+        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        err = self.err_json(4, "capture", "--text", "x",
+                            env=self._env_with_home(empty))
+        self.assertEqual(err["code"], "UNAUTHORIZED")
+        self.assertEqual(self.inbox_files(), [])
+
+    def test_reads_stay_token_light(self):
+        # 读路径不带 token 也通（GET token-light，§49）——空 home 照样能读板
+        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        out, errbuf = io.StringIO(), io.StringIO()
+        rc = boardctl.main(["board"], stdout=out, stderr=errbuf,
+                           environ=self._env_with_home(empty))
+        self.assertEqual(rc, 0, f"stderr: {errbuf.getvalue()!r}")
+
+
+class HomeDerivationDriftTest(unittest.TestCase):
+    """M7 drift-pin：boardctl._home_dir 必须与 server/paths.home_dir(None)
+    逐字同款——否则 boardctl 与 server 读写不同的 server.token → 永久 401。
+    含 empty/whitespace 边界（旧代码 .strip() or DEFAULT_HOME 正是在这里分叉）。"""
+
+    def test_matches_server_paths_across_env_values(self):
+        from server import paths
+        cases = [
+            {},                                    # env 缺席 → DEFAULT_HOME
+            {"AIASSISTANT_HOME": ""},              # 空串 → Path("")（=cwd）
+            {"AIASSISTANT_HOME": "   "},           # 纯空白 → Path("   ")
+            {"AIASSISTANT_HOME": "~/zai-home"},    # tilde 展开
+            {"AIASSISTANT_HOME": "/tmp/zai/home"}, # 普通绝对路径
+            {"AIASSISTANT_HOME": "relative/home"}, # 相对路径原样
+        ]
+        for env in cases:
+            with self.subTest(env=env):
+                # server 端：make_server(home=None) → paths.home_dir(None) 读 os.environ
+                import os
+                saved = os.environ.get("AIASSISTANT_HOME")
+                try:
+                    if "AIASSISTANT_HOME" in env:
+                        os.environ["AIASSISTANT_HOME"] = env["AIASSISTANT_HOME"]
+                    else:
+                        os.environ.pop("AIASSISTANT_HOME", None)
+                    server_home = paths.home_dir(None)
+                finally:
+                    if saved is None:
+                        os.environ.pop("AIASSISTANT_HOME", None)
+                    else:
+                        os.environ["AIASSISTANT_HOME"] = saved
+                self.assertEqual(boardctl._home_dir(env), server_home)
+
+    def test_default_home_constant_matches_server(self):
+        from server import paths
+        self.assertEqual(boardctl.DEFAULT_HOME, paths.DEFAULT_HOME)
 
 
 class TransportTest(unittest.TestCase):

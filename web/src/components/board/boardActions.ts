@@ -30,6 +30,11 @@ export function clipCodePoints(s: string, max: number): string {
   return points.length <= max ? s : points.slice(0, max).join("");
 }
 
+/** W17（§50）：审批闸门读生效档位——投影 effective_tier 缺席（旧 server）才回落声明 tier */
+export function effectiveTier(card: { tier: string; effective_tier?: string }): string {
+  return typeof card.effective_tier === "string" && card.effective_tier ? card.effective_tier : card.tier;
+}
+
 /** T2 确认弹窗的金额行——镜像 AppDelegate.confirmT2 的推导（cost_state=="unknown" 视为未知） */
 export function costLine(
   card: Record<string, unknown>,

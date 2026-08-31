@@ -18,10 +18,7 @@ macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack�
 
 ![任务台看板](docs/assets/kanban.png)
 
-<table><tr>
-<td width="38%" valign="top"><img src="docs/assets/popover.png" alt="菜单栏 popover：提案卡片"></td>
-<td valign="top"><img src="docs/assets/flow.gif" alt="审批 → 排队 → 执行 → 待验收 → 阶段性完成 全流程"><br><sub>一张卡片的一生：批准 → 排队 → 执行 → 待验收 → 阶段性完成（<a href="docs/assets/demo.mp4">mp4 版</a>；图中数据全部为虚构 demo 数据，由 <code>scripts/demo_seed.py</code> 生成）</sub></td>
-</tr></table>
+<p><img src="docs/assets/flow.gif" alt="审批 → 排队 → 执行 → 待验收 → 阶段性完成 全流程"><br><sub>一张卡片的一生：批准 → 排队 → 执行 → 待验收 → 阶段性完成（<a href="docs/assets/demo.mp4">mp4 版</a>；图中数据全部为虚构 demo 数据，由 <code>scripts/demo_seed.py</code> 生成）</sub></p>
 
 ## 工作原理
 
@@ -145,7 +142,7 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 
 - [x] v0:审批卡片 → ✅ → 执行任务闭环
 - [x] v1:三路雷达 cron/launchd 接入,审批回传,周一 digest
-- [x] v2:SwiftUI 菜单栏 app(popover + 看板主窗口 + 快速捕获 + 回收站 + 双语)
+- [x] v2:SwiftUI 菜单栏 app(看板主窗口 + 快速捕获 + 回收站 + 双语;v2 的 popover 面板已于 v0.48 移除——点菜单栏图标直接打开看板)
 - [ ] v3:iOS 遥控器(`ios/` 为占位)
 
 进行中与接下来的方向,见 [docs/ROADMAP.md](docs/ROADMAP.md)。

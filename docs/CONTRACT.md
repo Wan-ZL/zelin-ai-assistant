@@ -94,7 +94,7 @@
 - `needs_approval[]` 每项加 `reraised`(bool，= truthy `execution.reraised_at`) + `reraised_note`(str)——「回锅」marker：这张提案来自一张你已验收过的卡的 re-raise，App 显 amber「↩︎ Returned」badge + `reraised_note` 的新诉求。
 
 **v0.48 新增字段（v-next 修宪批次，全部 add-only optional；Swift `decodeIfPresent` / web 防御性解析）**：
-- `needs_approval[]`（含 raising 占位项）加 `effective_tier`(str，**恒在**：无 `origin_trust` 章时逐字等于 `tier`，`origin_trust=="external"` 时恒 `"T2"`，语义见 §50)、`origin_trust`(str，四值词表见 §50，缺章整键省略)、`auto_dispatch_block`(str = §51 reason token，无阻塞整键省略)。
+- `needs_approval[]`（含 raising 占位项）加 `effective_tier`(str，**恒在**：外部出身——显式 `origin_trust=="external"` 章**或** sources 现算(classify_origin)为 external（v0.48.1 修订，缺章不再放行）——时恒 `"T2"`，否则逐字等于 `tier`，语义见 §50)、`origin_trust`(str，四值词表见 §50，缺章整键省略)、`auto_dispatch_block`(str = §51 reason token，无阻塞整键省略)。
 - `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`waiting_budget`|`concurrency`，词表与映射见 §51）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
 - `running[]` / `needs_input[]` 行加 `steers: [{text, ts, status, delivered_at}]`（§44.3-S 投影）：`status ∈ {queued, delivered, dropped}` 开放枚举（dropped 现行不投影，值保留 forward-compat）；`status=="delivered"` 必带 ISO `delivered_at`，其余为 null——诚实投递状态，绝不虚报送达。**`ts` 为 ISO 字符串**——显式偏离本节「dashboard 输出 epoch int」惯例（M8.3 C-4）：ts 是 steer dedup 键的组成部分，投影保原文才能与 `execution.*` 台账逐字对账；web 端无 string ts 的行整行丢弃（绝不渲染无法对账的 steer）。
 
@@ -155,7 +155,7 @@ debt item 新增 `summary`（同上，大白话）。
 - "展开详情 ▸" 切换 → 显示带小标题的两块：**「需求来自」**(sources，灰字原话) 和 **「要做什么」**(plan，编号)。折叠为默认。
 - 目的：不展开就能一眼看懂；灰/黑差异由显式小标题承载，不靠颜色猜。
 
-**v0.48 引用注（W17，本文见 §50）**：审批与调度层的生效档位自 v0.48 起读派生值 `effective_tier`（`origin_trust=="external"` 的卡强制按 T2 对待 + 强制 plan expansion），声明字段 `tier` 在 registry YAML 里原样不动；T2 typed-confirm 闸门（Mac/web，§41）应读 `effective_tier` 而非 `tier`。
+**v0.48 引用注（W17，本文见 §50）**：审批与调度层的生效档位自 v0.48 起读派生值 `effective_tier`（外部出身——显式 `origin_trust=="external"` 章或 sources 现算为 external，v0.48.1 修订——的卡强制按 T2 对待 + 强制 plan expansion），声明字段 `tier` 在 registry YAML 里原样不动；T2 typed-confirm 闸门（Mac/web，§41）应读 `effective_tier` 而非 `tier`——web 客户端自 v0.48.1 已接线（ProposalCard 批准闸门），Mac 端接线是排期项（缺席期间 daemon 侧强制扩写是后盾）。
 
 ## 8. 欠账 → 建议 循环
 
@@ -306,6 +306,24 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 新增键：`review_notify`、`maintainer_repo_path`、`maintainer_session_id`
 （`feedback_publish_default` 见 §29bis，`gmail_fetch_command` 见 §14bis）。
 
+**§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
+① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
+= 打开/聚焦主窗口**（原 ⌥+click 直达主窗口的旧路径行为不变地并入）；右键
+菜单保留并新增「录制」子菜单（三态 off/screen/screen_audio + 实时字幕开关，
+语义同看板 header 的 RecordingMenuButton；`recordingMode` 词表照旧冻结）。
+快速捕获入口收敛到主窗口（⌘L + 看板 composer；`state/inbox/capture-*.json`
+契约与 §10 capture 动作**逐字不变**）。popover 专属面被主窗口既有等价物
+覆盖后移除：PipelineHealthBanner/一键修复、DiagnosticsStrip、Trash/Archive
+区、通知行——全部原样活在看板/侧栏页里。契约F 词表影响：`popover_open`
+事件**停发**（词表编号保留、永不复用）；`capture_submit` 的 `source` 词表
+popover|kanban 冻结不动——composer 只发 `"kanban"`，状态栏图标**拖放捕获
+继续发 `"popover"`**（同属菜单栏入口，既有归类不变）。② **关窗后台驻留
+（Slack 式）**：关闭主窗口后 app **保持 .regular（Dock 图标常驻）**、不再
+退回 .accessory——v0 的「关窗回 accessory」语义就此修订；点 Dock 图标或
+菜单栏图标重开主窗口（applicationShouldHandleReopen 原路径）。
+applicationShouldTerminateAfterLastWindowClosed 显式 false。退出语义不变：
+菜单退出/状态栏右键退出/系统注销关机照旧直通（v0.46 追记①的 ⌘Q 守卫不动）。
+launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后才进 Dock。
 
 ## 16. Feature flags + 自我进化
 - config `features: {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics, manager_pack}`，默认全 on；各模块入口检查 flag，off 则 no-op。overrides 可改。
@@ -2878,12 +2896,52 @@ server 静态托管；未构建时 "/" 返回占位页）。
 **网络面（§0 第 9 条 localhost 例外的执行细则，三道闸）**：bind **硬编码
 127.0.0.1**（常量，绝不做成可配置）；端口 env `ZAI_PORT` 默认 47820；交付物
 路径一律 server 端从卡片记录推导，绝不接受客户端原始路径；本面零上传、零云端。
-PR-current 无 token（localhost 单用户过渡态，代码留 `TODO(PR3): instance
-token` 挂点）；**server 现阶段不辨 actor**——localhost 上任何进程都能 POST
-approve，真正的 actor 墙是 store2 D3 trigger（§53）与 PR3 token（法条口径不许
-比实现更乐观，M8.2）。POST body 上限 1MiB（超限 = HTTP 413 + envelope code
-`INVALID_FIELD`——status 已表意，不为 loopback 面扩词表；M8.2 追认现状，
-`server/app.py` 的 TODO(contract) 就此关闭）。
+POST body 上限 1MiB（超限 = HTTP 413 + envelope code `INVALID_FIELD`——
+status 已表意，不为 loopback 面扩词表；M8.2 追认现状）。
+
+**auth model（v0.48.1，原 PR3 instance-token 挂点落地——A5 CSRF 审计的
+封堵）**：`server/security.py` 移植 `act/webui.py` 的防线（server/ 不 import
+act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之前**执行：
+1. **Host 回环白名单**（每个请求，GET/页面加载也查）——anti-DNS-rebinding。
+   与 webui 的「精确 host:port」不同，按 **hostname** 判（`127.0.0.1` /
+   `localhost` / `[::1]`，端口不参与）：vite dev proxy 原样转发
+   `Host: …:5173`，读路径不因此断；rebinding 防线只关乎 hostname。违者
+   403 `FORBIDDEN`。
+2. **Origin 白名单**（每个 POST，header **present 才查**）——anti-CSRF：
+   必须精确等于 `http://127.0.0.1:<port>` / `http://localhost:<port>`
+   （`"null"` 也拒）。缺席 = 非浏览器客户端（boardctl/curl），放行到
+   token 闸——浏览器的跨源写恒带 Origin，缺席通道不构成 CSRF 面；token
+   才是墙，Origin 是浏览器面的前置快拒。违者 403 `FORBIDDEN`。
+3. **`Content-Type: application/json`**（每个 POST）——把「无预检 simple
+   request」（`text/plain` 跨源 POST）这一 CSRF 向量整类杀掉。违者 415 +
+   `INVALID_FIELD`（413 同款词表纪律）。
+4. **per-install instance token**（每个 POST **必带** `X-Zai-Token`）：
+   `state/server.token`（0600，server 启动 load-or-create，跨启动稳定）；
+   serve `index.html` 时 server 端注入 `window.__ZAI_TOKEN__`（token 只进
+   同源页面；一切响应**永不发** `Access-Control-Allow-Origin`，跨源页面读
+   不到）；web 客户端（web/src/api.ts）对一切写请求回带；boardctl 从
+   `$AIASSISTANT_HOME/state/server.token` 读后回带（能读 0600 文件 = 同
+   用户本机进程，正是 token 墙要放行的对象）。违者 401 `UNAUTHORIZED`。
+   **GET/SSE 保持 token-light**（EventSource 发不了自定义头；读面靠
+   Host 闸 + 无 CORS 头兜底）——**一切写必须过全部四闸**。
+   非 HTML 静态资源不注入 token；注入页反嵌（`X-Frame-Options: DENY` +
+   CSP `frame-ancestors 'none'`），交付物例外为 `SAMEORIGIN`（详情抽屉的
+   同源 `<iframe sandbox>` 预览，§49 路由表）。
+   **直跑口径（A5 终裁）**：capture `mode:"run"`（§34 owner 特权）在本面
+   继续放行，依据 = 四闸鉴权证明「同源 owner 页面/同用户本机进程」，而非
+   裸信 localhost——曾经的 CSRF 路径（跨源 `text/plain` 直发 mode:"run"
+   被落款 `via:"web"` → owner ingress → APPROVED 直跑）在 body 被解析之前
+   就断，不需要额外 `remote.allow_direct_run` 闸（那是 webui/syncd 网络
+   ingress 的 W18 闸，语义不同：本面鉴权后就是 owner 本人）。**取舍留证
+   （M5）**：这条口径下，instance token 是「同源页面的一个 bug」与「无天花板
+   的 `mode:"run"` 直跑」之间**唯一**的一道墙——本面 direct-run 绕过
+   `may_auto_dispatch`（无 T2/cost/budget/outbound 天花板）。故 token 的
+   保密性即安全边界：注入只进同源页（`window.__ZAI_TOKEN__`）、永不发 CORS
+   头、注入前 JS 字面量转义（`<`/`/`）、落盘 0600 + 读回校验/权限收回/
+   symlink 拒跟随（server/security.py）。任何放宽（把 token 交给非同源面、
+   或 direct-run 接上 §51 天花板前扩大暴露面）都要重估这道墙。vite dev
+   server（:5173）不注入 token——带写路径的开发面走 `scripts/
+   dev-preview.sh` 服务的 dist。
 
 **路由全集**：
 - `GET /api/board`：dashboard.json **原样透传**（add-only 原则原样，零改写）。
@@ -2921,7 +2979,8 @@ approve，真正的 actor 墙是 store2 D3 trigger（§53）与 PR3 token（法�
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
-`NOT_IMPLEMENTED`（add-only）。
+`NOT_IMPLEMENTED` / `FORBIDDEN`(403，Host/Origin 闸) / `UNAUTHORIZED`
+(401，token 闸)（add-only；后两枚 v0.48.1 随 auth model 收编）。
 
 **UI 语义（web 看板）**：看板列 = 审批状态机的投影（分区 → 列映射见
 docs/design/vnext.md §4，含「待办与运行中合并」的 owner 决策：running 混
@@ -2944,13 +3003,18 @@ mermaid **不进**白名单，保持禁用降级（code block 展示，T-23）�
 triage 三选一闸门、T0/T1/T2 审批语义、可逆操作矩阵、registry 单写者、字段
 add-only。
 
-**判例**：test_server_actions.py（golden 字节面 + via 落款 + 未知字段 400 +
-`BindHostTestCase` 钉 bind 字面量 + `BodyGateTestCase` 钉 1MiB body 上限/413，
-tests/test_server_actions.py:333）、test_server_board.py（透传 + 详情 archive
-优先）、test_server_steer.py（steer 响应标注 + inbox 四键原形零新增）、
-test_server_files.py（穿越/CSP/disposition）、test_server_sse.py；envelope
-形状由 tests/test_server_common.py 的 `assert_envelope` 夹具在各 suite 里
-统一执法（该文件本身不含用例）。
+**判例**：test_server_auth.py（auth model 全套：CSRF 探针复放（跨源
+text/plain `mode:"run"` → 403 + 零落盘）、Host rebind、missing/bad token
+→ 401、owner 同源+token 面完好含直跑、token 铸造 0600/注入/资产不注入、
+纯函数真值表）、test_server_actions.py（golden 字节面 + via 落款 + 未知
+字段 400 + `BindHostTestCase` 钉 bind 字面量 + `BodyGateTestCase` 钉 1MiB
+body 上限/413，tests/test_server_actions.py:333）、test_server_board.py
+（透传 + 详情 archive 优先）、test_server_steer.py（steer 响应标注 + inbox
+四键原形零新增）、test_server_files.py（穿越/CSP/disposition）、
+test_server_sse.py；envelope 形状由 tests/test_server_common.py 的
+`assert_envelope` 夹具在各 suite 里统一执法（该文件本身不含用例；
+`auth_headers`/`post_json` 默认走 owner 合法面，拒绝路径判例集中在
+test_server_auth.py）。
 
 ## 50. 卡片出身信任矩阵（origin_trust + effective tier + ingress 落款）
 
@@ -2974,25 +3038,32 @@ capture_channel)`，全函数永不 raise）：① 逐条 sources 的 `channel` 
 
 **盖章（registry add-only optional 字段 `origin_trust`，T-4 提前入法）**：
 铸卡与一切 fold/re-raise 集中在 `registry.merge_or_new` 漏斗盖/刷新章
-（`_stamp_origin`；fold 并入后按并入结果**重算**，「章过期」由此直接解决）；
-存量卡缺章**不追溯**——缺章卡保持声明 tier、不强制 expansion，否则全部历史
-卡一夜抬成 T2、打破 1500+ 判例。章只服务投影/审计；**调度侧不读章、每次从
-sources 现算**（缺信息不得授予自主权，也不得追溯锁死人工流——两处方向相反
-是有意的）。
+（`_stamp_origin`；fold 并入后按并入结果**重算**，「章过期」由此直接解决）。
+章只服务投影/审计；**调度侧不读章、每次从 sources 现算**（缺信息不得授予
+自主权）。**缺章卡（v0.48.1 修订，F2）**：审批/投影层的 `effective_tier`
+同样**从 sources 现算**——缺章（手编/pre-v0.48 存量 YAML）不再等于「保持
+声明档放行」：sources 现算为 external 的缺章卡照样强制 T2 + expansion（章
+可以缺，出身不会缺；与调度侧同一条纪律）。「全部历史卡一夜抬成 T2」不会
+发生：空 sources 现算为 proposed、hand/meeting 来源照旧，抬档的只有真带
+slack/gmail/未知渠道来源的卡。
 
-**W17 effective tier（cheap layer）**：`origin_trust == "external"` 的卡在
-**审批与调度层**一律按 **T2（需文字确认）**对待，且**强制 plan expansion**
-——不允许跳过提案展开直接裸批。声明字段 `tier` 不改写（registry YAML 原样）；
-生效档位 = 投影/调度层派生值，判定函数 `act/lib/risk.py::effective_tier(card)
--> EffectiveTier(tier, forced_expand, reason)`（同时接受 dict 与
-`Requirement`）。**执法点**（actd `_apply_decision` approve 分支）：
-`forced_expand` 且 plan/DoD 双空 → approve 转 RAISING（走既有「研究并提议」
-扩写机制）+ notes `[W17] 外部来源强制展开` 痕（幂等只留一次）；analyze 不可
-用时**拒批**（fail-closed——外部卡裸跑正是 W17 要堵的洞）。belt-and-braces：
-显式 external 章即便 sources 现算为 hand（手改 YAML）也绝不自动派发。
-dashboard `needs_approval[]` 投影 `effective_tier` 恒在（§2 v0.48 字段块）；
-T2 typed-confirm 弹窗（Mac/web）读 `effective_tier` 而非 `tier`（§7/§41
-引用注）。
+**W17 effective tier（cheap layer）**：**外部出身**的卡在**审批与调度层**
+一律按 **T2（需文字确认）**对待，且**强制 plan expansion**——不允许跳过
+提案展开直接裸批。外部出身取**并集**判定（v0.48.1 修订，两个洗白方向都
+关死）：① 显式章 `origin_trust == "external"`（belt-and-braces——即便
+sources 被手改成 hand，章不被洗掉，reason token `origin_trust=external`）；
+② sources 现算（`policy.classify_origin`）为 external（缺章/被改章的卡
+照样抬档，reason token `sources=external`）。声明字段 `tier` 不改写
+（registry YAML 原样）；生效档位 = 投影/调度层派生值，判定函数
+`act/lib/risk.py::effective_tier(card) -> EffectiveTier(tier, forced_expand,
+reason)`（同时接受 dict 与 `Requirement`）。**执法点**（actd
+`_apply_decision` approve 分支）：`forced_expand` 且 plan/DoD 双空 →
+approve 转 RAISING（走既有「研究并提议」扩写机制）+ notes `[W17] 外部来源
+强制展开` 痕（幂等只留一次）；analyze 不可用时**拒批**（fail-closed——
+外部卡裸跑正是 W17 要堵的洞）。dashboard `needs_approval[]` 投影
+`effective_tier` 恒在（§2 v0.48 字段块）；T2 typed-confirm 弹窗（Mac/web）
+读 `effective_tier` 而非 `tier`（§7/§41 引用注；web 已接线 v0.48.1，Mac
+排期）。
 
 **ingress 落款（T-28，inbox 记录 add-only 键 `via`）**：HTTP 写入面落盘的
 每个 inbox 文件都带落款——`server/inbox_writer` 恒 `via:"web"`（capture/
@@ -3012,10 +3083,13 @@ remote 只进 notes、不进 plan（§32.2 修订）。
 但同一用户在裸 HTTP 层可**省略** `actor` 冒充 owner ingress——落款是**礼仪 +
 取证**（违规留 actd 日志），不是密码学墙。**硬后盾不依赖落款**（逐条枚举）：
 ① §51 预算/成本/repo/outbound 天花板（对一切自动派发候选生效）；②
-`effective_tier` 强制扩写（W17，外部章不可被落款洗掉）；③ 人工审批列（非
-hand 出身一律人批）；④ §34bis 级篡改取证。密码学收紧 = PR3 per-boot
-instance token（T-29：owner 面持 owner token、agent 面持独立 token，
-`X-ZAI-Client` 挂点已留——届时 via 从「自报礼仪」升级为「鉴权事实」）。
+`effective_tier` 强制扩写（W17，外部章/sources 现算不可被落款洗掉）；③
+人工审批列（非 hand 出身一律人批）；④ §34bis 级篡改取证。密码学收紧第一
+步已落（v0.48.1，§49 auth model）：per-install instance token 把**浏览器
+面**（CSRF/rebinding）关死——但单一 token 对同用户本机进程仍不辨 owner/
+agent（能读 0600 文件即过墙），落款在本机进程之间仍是礼仪。第二步 = T-29
+（owner 面持 owner token、agent 面持独立 token，`X-ZAI-Client` 挂点已留
+——届时 via 从「自报礼仪」升级为「鉴权事实」）。
 
 **安全前置（M1.d，已随本批次落地）**：`act/radar_slack.py` mcp_scan 的
 `sources[0].channel` **硬编码 `"slack"`**（提取 LLM 自报的频道名只进 `ref`
@@ -3026,8 +3100,11 @@ instance token（T-29：owner 面持 owner token、agent 面持独立 token，
 **判例**：tests/test_policy.py（分类真值表 + 混合最小信任 + fail-closed）、
 test_policy_trust_matrix.py（8 例逐漏斗：self-DM=hand 免批端到端 / gmail·
 slack=external 人批+强制扩写 / meeting=人批不强制扩写 / 空 sources=proposed /
-screen 纵深 / mcp_scan channel 伪造判例）、test_risk.py（effective_tier）、
-test_actd_wire.py（W17 执法点 + via 裁决）。
+screen 纵深 / mcp_scan channel 伪造判例）、test_risk.py（effective_tier，
+含 v0.48.1 缺章现算三判例：stamp-less slack 抬档 / hand 章洗不掉 gmail
+sources / 手打缺章不追溯）、test_actd_wire.py（W17 执法点含 stamp-less
+external approve→RAISING + via 裁决）、web ProposalCard.test.tsx（外部
+升档卡 tier=T1/effective_tier=T2 必过 typed-confirm）。
 
 ## 51. 自动派发天花板（may_auto_dispatch）+ 合并运行列 queued 子状态
 
@@ -3132,13 +3209,18 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
    4（HTTP 非 2xx 除 409 / 响应非法 JSON）/ 5（HTTP 409，留给 CAS 时代）。
    `--help` 是唯一纯文本成功输出。每请求带 `X-ZAI-Client: boardctl` 头——
    未来 actor 墙的辨识挂点（server 现阶段忽略；请求头可伪造，**不是**鉴别
-   边界——真正的墙是 D3/PR3）。
+   边界——真正的墙是 D3/PR3）。**v0.48.1（§49 auth model 随动）**：两个写
+   动词回带 per-install instance token（`X-Zai-Token`，读自
+   `$AIASSISTANT_HOME/state/server.token`——home 推导与 server/paths.py
+   逐字同款）；读不到就裸发、server 的 401 envelope 如实透传（exit 4）。
+   token 证明的是「同用户本机进程」（0600 文件可读性），不改变 agent 通道
+   的动词面/信任裁决——`actor:"agent"` 落款与决策动词禁区照旧。
 5. **skill 落位**：`skills/board-agent/SKILL.md` + `references/cli.md`
    （structure adapted from dashi-taskboard `manage-taskboard`，Apache-2.0，
    NOTICE 第 7 条登记）。
 
 **判例**：tests/test_boardctl.py（动词面收窄 / actor 恒发 / 输出契约 / exit
-codes）。
+codes / token 墙：无 token 写 → 401 透传零落盘，读 token-light）。
 
 ## 53. store2 — SQLite 休眠地基（schema v1 + CAS + YAML 迁移；**尚未接线**）
 
@@ -3227,3 +3309,29 @@ migrate/export CLI 触碰。
   从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、`ZAIServerRepo` 以构建
   所在 repo root 盖章（可移植：换机器/换 worktree 重跑 build.sh 即自洽）、
   ad-hoc codesign。`shell/build/` 进 .gitignore（构建产物永不入库）。
+
+## 55. launchd 模板路径纪律（v0.48.x；live 事故 2026-08-31）
+
+「一键修复」/ 初始设置向导 / install.sh 三方共用 `act/launchd/*.plist` 模板与
+同一占位符替换序（`install.sh render_launchd_plist` ≡ `mac/Sources/Doctor.swift
+LaunchAgents.install` ≡ `mac/Sources/SetupWizard.swift ActdAgent.renderAndLoad`）。
+事故：模板曾把 StandardOut/ErrorPath 指到 `$REPO/state/*.launchd.log`、
+WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上时，launchd
+在 exec **之前**就要打开日志路径并 chdir，任一失败整个 agent 以 EX_CONFIG(78)
+拒绝 spawn；「一键修复」于是把手工救好的 plist 一键打回故障态、放倒全部后台
+服务。自本节起为不变式（判例 `tests/test_launchd_render.py` 钉死渲染形状）：
+
+- **launchd 在 spawn 前触碰的键永不指向 repo**：StandardOut/ErrorPath 固定
+  `~/Library/Logs/zelin-ai-assistant/<name>.launchd.log`（渲染方在写 plist 前
+  负责 mkdir 该目录——目录缺失同样导致 spawn 失败）；WorkingDirectory 固定
+  `$HOME`；`python3 -m act.*` 的模块解析改走 `EnvironmentVariables.PYTHONPATH`
+  （= repo 根）。repo 路径只允许出现在环境变量值里（`AIASSISTANT_HOME` /
+  `PYTHONPATH` / `PATH`）——那些是进程起来之后才被消费的。
+- **解释器 = §19 runtime 指针渲染出的绝对路径**，永不 `/usr/bin/env`（TCC 按
+  binary 计权限，env 间接层让授权漂移）。指针机制本身不变。
+- §32.4 的日志自压缩豁免语义不变：`*.launchd.log` 仍是 launchd 自管、不参与
+  进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。
+- 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧
+  `$REPO/state/*.launchd.log` 仅作诊断包的兜底读（迁移前安装还留着旧日志）。
+- `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
+  无 WorkingDirectory、bash 绝对路径）本就合规，不动。

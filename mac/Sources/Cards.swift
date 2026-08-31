@@ -916,7 +916,7 @@ struct ApprovalCardView: View {
     // (parent passes store.pendingComment[card.id] != nil)
     var commentPending: Bool = false
     // §37: matched the board query only via session content (KanbanView passes
-    // store.sessionOnlyHit; the popover never filters → default false).
+    // store.sessionOnlyHit; surfaces without a search box keep the default).
     var sessionHit: Bool = false
     // v0.1 §7: collapsed by default. v0.10: the toggle itself renders in the
     // CardSurface base (detail slot); the binding stays here for the T2 gate.
@@ -975,14 +975,18 @@ struct ApprovalCardView: View {
             // .small 由 CardSurface 统一施加；detail 槽的共享 toggle 不使用。)
             HStack(spacing: 8) {
                 Button {
-                    if card.tier == "T2" {
+                    // §50 W17 (v0.48.1)：读 effectiveTier 而非裸 tier——外部
+                    // 出身升档卡（声明 T1、生效 T2）必须过 typed-confirm，绝不
+                    // 一键裸批。daemon 强制扩写只在 plan/DoD 双空时兜底，plan
+                    // 已填的外部卡靠的就是这道客户端闸。
+                    if card.effectiveTier == "T2" {
                         // typed confirmation (确认 / go) — anything else = no-op.
                         guard app.confirmT2(id: card.id, summary: card.displaySummary) else { return }
                     }
                     app.submit(id: card.id, action: "approve", comment: nil)
                 } label: { Label(L("批准", "Approve"), systemImage: "checkmark.circle.fill") }
                     .tint(.green)
-                    .disabled(card.tier == "T2" && !expanded)
+                    .disabled(card.effectiveTier == "T2" && !expanded)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
 
@@ -1117,7 +1121,9 @@ struct ApprovalCardView: View {
             }
 
             // T2 gate hint: approve unlocks only after expanding the details.
-            if card.tier == "T2" && !expanded {
+            // §50: 读 effectiveTier——外部升档卡（声明 T1、生效 T2）同样
+            // 先展开再批。
+            if card.effectiveTier == "T2" && !expanded {
                 Text(L("T2 需先展开看明细", "T2: expand details first"))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.orange)
@@ -1208,6 +1214,11 @@ struct ApprovalCardView: View {
     @ViewBuilder private var badgeRow: some View {
         HStack(spacing: 6) {
             Badge(text: tierText, color: .purple)
+            // §50 W17：外部出身把声明档提级到 T2——卡面显式说明，否则用户
+            // 见 "T1" 却弹 T2 确认框会莫名其妙。橙色与 T2 gate hint 同色系。
+            if card.isEscalated {
+                Badge(text: L("外部来源提级 T2", "External → T2"), color: .orange)
+            }
             if sessionHit { SessionHitBadge() }   // §37 search: matched via session
             // v0.10 chat delivery: draft lands in the reply, no repo/PR touched
             if card.delivery_mode == "chat" {
@@ -1366,8 +1377,8 @@ struct ApprovalCardView: View {
     }
 }
 
-/// Which lane a TaskRow renders in — passed explicitly by both call sites
-/// (popover sections + kanban columns). Behavior (delivered buttons, input
+/// Which lane a TaskRow renders in — passed explicitly by every call site
+/// (kanban columns). Behavior (delivered buttons, input
 /// badge) derives from this, never from the accent color (P2-2: the old
 /// `accent == .green` discriminator was a correctness trap dressed as style).
 enum TaskLane {
@@ -1383,7 +1394,7 @@ struct TaskRow: View {
     unowned let app: AppDelegate
     let lane: TaskLane
     // §37: matched the board query only via session content (KanbanView passes
-    // store.sessionOnlyHit; the popover never filters → default false).
+    // store.sessionOnlyHit; surfaces without a search box keep the default).
     var sessionHit: Bool = false
 
     // v0.21: 运行中卡上「停止」→ 2 选 confirmationDialog（退回提案/去待验收）。
@@ -1407,8 +1418,7 @@ struct TaskRow: View {
     }
 
     // kanban merges needs_input into the 运行中 column, where this badge is
-    // the only lane signal; the popover's 需输入 section shows it too
-    // (redundant under its header, but consistent across surfaces).
+    // the only lane signal.
     private var showsInputBadge: Bool { lane == .needsInput }
 
     // v0.10: status=approved tasks ride in running[] as state=="queued" —
@@ -1758,7 +1768,7 @@ struct ReviewRow: View {
     let item: ReviewItem
     unowned let app: AppDelegate
     // §37: matched the board query only via session content (KanbanView passes
-    // store.sessionOnlyHit; the popover never filters → default false).
+    // store.sessionOnlyHit; surfaces without a search box keep the default).
     var sessionHit: Bool = false
     // "复制成稿" clipboard→✓ feedback (1.5 s reset, same pattern as CardSurface)
     @State private var draftCopied = false
@@ -1938,7 +1948,7 @@ struct DebtRow: View {
     let item: DebtItem
     unowned let app: AppDelegate
     // §37: matched the board query only via session content (KanbanView passes
-    // store.sessionOnlyHit; the popover never filters → default false).
+    // store.sessionOnlyHit; surfaces without a search box keep the default).
     var sessionHit: Bool = false
 
     var body: some View {
@@ -2033,7 +2043,7 @@ struct DebtRow: View {
 
 // MARK: - MergeSuggestionCard — 契约 merge-review §七（analyzing / done / failed 三态）
 //
-// 紫色 accent 建议卡，宿主（kanban 待审批列顶 / popover 镜像）负责摆放；本视图
+// 紫色 accent 建议卡，宿主（kanban 待审批列顶）负责摆放；本视图
 // 只渲染 + 把 接受/取消 写进 inbox（merge_apply / merge_dismiss，经 app.submit
 // → card_action analytics 自动覆盖，契约 §八）。
 // actionPending: 宿主传 store 的乐观态（接受/取消已提交、等 actd 下一版
@@ -2484,7 +2494,7 @@ struct TrashSectionView: View {
     unowned let app: AppDelegate
     // v0.10.2 minimal parameterization: the main-window 回收站 page opens
     // expanded (a dedicated page shouldn't hide behind a disclosure); the
-    // popover keeps collapsed-by-default (v0.1 §9). No other layout deps.
+    // collapsed default (v0.1 §9) was the retired popover's. No other layout deps.
     var startExpanded: Bool = false
     @State private var expanded = false
     @State private var query = ""
@@ -2531,7 +2541,7 @@ struct TrashSectionView: View {
             }
         }
         // section recreated per page visit → @State is fresh, so this fires
-        // reliably; a no-op in the popover (startExpanded defaults false)
+        // reliably; a no-op for a startExpanded=false host
         .onAppear { if startExpanded { expanded = true } }
     }
 }
@@ -2624,14 +2634,14 @@ struct TrashRow: View {
 }
 
 // v0.20 card-lifecycle §5: 永久性完成 (archive) browse view — mirrors
-// TrashSectionView (collapsible, collapsed by default in the popover; search
-// box; per-row 「放回看板」→ unarchive). Archived cards are sealed & off-board
+// TrashSectionView (collapsible; search box; per-row 「放回看板」→
+// unarchive). Archived cards are sealed & off-board
 // (like trash), so this is a calm browse+restore surface, never a work queue.
 struct ArchiveSectionView: View {
     let items: [ArchivedItem]
     let count: Int
     unowned let app: AppDelegate
-    // main-window page opens expanded; popover keeps collapsed-by-default.
+    // main-window page opens expanded; collapsed default was the popover's.
     var startExpanded: Bool = false
     @State private var expanded = false
     @State private var query = ""

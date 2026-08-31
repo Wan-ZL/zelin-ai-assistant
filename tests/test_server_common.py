@@ -20,6 +20,7 @@ from typing import Optional
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env，防任何 act.* 触真库
 
 from server import app as app_mod
+from server import security as security_mod
 
 # 测试期间静音访问日志（只改测试进程内的 Handler 类，不动源码）
 app_mod.Handler.log_message = lambda self, fmt, *a: None  # type: ignore[method-assign]
@@ -75,6 +76,12 @@ def rewrite_board(home: Path, dash: dict) -> None:
 # --------------------------------------------------------------------------- #
 # server 生命周期
 # --------------------------------------------------------------------------- #
+# §49 auth model 的测试面：start_server 登记每个端口的合法 Origin + token，
+# post_json 默认走 owner 合法面（同源 + token）——闸门的拒绝路径由
+# tests/test_server_auth.py 用裸 http_request 显式探测。
+_SERVER_AUTH: dict = {}   # port -> (origin, token)
+
+
 def start_server(case, home: Path, *, start_watcher: bool = False):
     """port 0 起真 server，注册 cleanup；返回 (httpd, port)。
 
@@ -84,6 +91,8 @@ def start_server(case, home: Path, *, start_watcher: bool = False):
     httpd = app_mod.make_server(port=0, home=home,
                                 static_dir=home / "no-dist",
                                 start_watcher=start_watcher)
+    port = httpd.server_address[1]
+    _SERVER_AUTH[port] = (f"http://127.0.0.1:{port}", httpd.ctx.token)
     thread = threading.Thread(target=httpd.serve_forever,
                               kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
@@ -122,12 +131,18 @@ def get_json(port: int, path: str):
     return status, json.loads(data.decode("utf-8"))
 
 
+def auth_headers(port: int, content_type: str = "application/json") -> dict:
+    """本端口的 owner 合法写头（同源 Origin + instance token + Content-Type）。"""
+    origin, token = _SERVER_AUTH.get(port, (f"http://127.0.0.1:{port}", ""))
+    return {"Content-Type": content_type, "Origin": origin,
+            security_mod.TOKEN_HEADER: token}
+
+
 def post_json(port: int, path: str, payload: dict):
-    """POST JSON body；返回 (status, obj)。"""
+    """POST JSON body（默认 owner 合法面：同源 + token）；返回 (status, obj)。"""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     status, _headers, data = http_request(
-        port, "POST", path, body=body,
-        headers={"Content-Type": "application/json"})
+        port, "POST", path, body=body, headers=auth_headers(port))
     return status, json.loads(data.decode("utf-8"))
 
 

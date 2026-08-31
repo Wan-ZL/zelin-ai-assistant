@@ -241,17 +241,93 @@ struct CaptionLines: Equatable {
     var liveText = ""
 }
 
+/// Rolling-window cap for everything the overlay may display. ASR partials
+/// can restate an ever-growing transcript (degraded full-text servers, long
+/// speech with no VAD pause) and one definite utterance can carry many
+/// sentences — without a cap the 悬浮窗 grows with the transcript until it
+/// runs off the screen. Every string the reducer stores passes through
+/// `tail`: keep only the newest `maxSentences` sentences (a trailing
+/// unterminated fragment counts as one), plus a hard character budget for
+/// punctuation-free monsters. CaptionOverlay's max-height clamp is the
+/// belt-and-braces on top of this.
+enum CaptionRollup {
+    static let maxSentences = 2
+    static let maxCharacters = 300
+
+    /// Sentence terminators. ASCII '.' is handled separately: it only ends a
+    /// sentence before whitespace/end-of-string, so decimals ("2.5") and
+    /// URLs never split one.
+    private static let terminators: Set<Character> =
+        ["。", "！", "？", "…", "；", "!", "?", ";"]
+    /// Closing quotes/brackets stay glued to the sentence they close.
+    private static let closers: Set<Character> =
+        ["”", "’", "」", "』", "）", ")", "]", "\"", "'"]
+
+    /// Cost stays bounded no matter how long the input grows (the degraded
+    /// full-text server restates the whole session every frame — the very
+    /// case this cap exists for): only the last 2×maxCharacters characters
+    /// are ever scanned. Equivalent to a full scan: a result that would need
+    /// text beyond the window is longer than maxCharacters and gets cut to
+    /// its own suffix anyway, and boundary detection is purely local (钉在
+    /// 判例 [14b] 的 windowed ≡ full 检查).
+    static func tail(_ text: String, maxSentences: Int = maxSentences) -> String {
+        let windowStart = text.index(text.endIndex,
+                                     offsetBy: -(maxCharacters * 2),
+                                     limitedBy: text.startIndex)
+            ?? text.startIndex
+        let window = text[windowStart...]
+        // segment starts: window start + one after each sentence end that
+        // still has text behind it (the remainder is the live fragment)
+        var starts = [window.startIndex]
+        var i = window.startIndex
+        while i < window.endIndex {
+            let c = window[i]
+            var ends = terminators.contains(c)
+            if c == "." {
+                let next = window.index(after: i)
+                ends = next == window.endIndex || window[next].isWhitespace
+            }
+            i = window.index(after: i)
+            if ends {
+                // 连串终止符/引号一起吃掉（"真的吗？？"、"……"）——一串
+                // 标点只算一个句界，不烧滚动窗的名额
+                while i < window.endIndex,
+                      closers.contains(window[i]) || terminators.contains(window[i]) {
+                    i = window.index(after: i)
+                }
+                if i < window.endIndex { starts.append(i) }
+            }
+        }
+        let out = starts.count <= maxSentences ? String(window)
+            : String(window[starts[starts.count - maxSentences]...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        return clampCharacters(out)
+    }
+
+    /// 字符预算兜底（punctuation-free monster）——tail() 末段与 translation
+    /// 行共用；index 走步，永不 O(全文) count。
+    static func clampCharacters(_ text: String) -> String {
+        guard let cut = text.index(text.endIndex, offsetBy: -maxCharacters,
+                                   limitedBy: text.startIndex),
+              cut > text.startIndex else { return text }
+        return String(text[cut...])
+    }
+}
+
 struct CaptionReducer {
     private(set) var lines = CaptionLines()
     private var nextID = 1
 
     mutating func partial(_ text: String) {
-        lines.liveText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.liveText = CaptionRollup
+            .tail(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// A sentence closed: push it to the top line, clear the live line.
     /// Returns the sentence id for the translation stream to attach to;
     /// nil for whitespace-only finals (still clears the live line).
+    /// The stored top line is the ROLLING TAIL of the final (CaptionRollup) —
+    /// a multi-sentence final displays only its newest sentences.
     @discardableResult
     mutating func finalize(_ text: String) -> Int? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -259,16 +335,20 @@ struct CaptionReducer {
         guard !t.isEmpty else { return nil }
         lines.finalID = nextID
         nextID += 1
-        lines.finalText = t
+        lines.finalText = CaptionRollup.tail(t)
         lines.finalTranslation = ""
         return lines.finalID
     }
 
     /// Streaming translation update (full accumulated text so far) for the
-    /// sentence `id`. Dropped when the top line already moved on.
+    /// sentence `id`. Dropped when the top line already moved on. NOT
+    /// sentence-capped: the stream translates the already rolling-capped
+    /// original (LiveCaptions.apply passes the displayed tail), and a CJK→EN
+    /// split (一句 → two EN sentences) must not drop text the original still
+    /// shows. Only the character budget guards a rogue stream.
     mutating func translation(_ id: Int, _ text: String) {
         guard id == lines.finalID else { return }
-        lines.finalTranslation = text
+        lines.finalTranslation = CaptionRollup.clampCharacters(text)
     }
 
     /// Clear the display (pause/engine switch). Ids stay monotonic so stale

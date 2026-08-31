@@ -37,9 +37,24 @@ class TestClassifyOrigin(unittest.TestCase):
 
     def test_proposed_channels(self):
         for chan in ("analytics", "claude_code", "split",
-                     "radar-diagnostic", "radar-parse-degraded"):
+                     "radar-diagnostic", "radar-parse-degraded",
+                     # digest/weekly-digest 是 AI 自提建议卡的生产端 channel
+                     # （act/digest.py / act/weekly_digest.py SOURCE_CHANNEL）——
+                     # 必须 PROPOSED，绝不 fail-closed 成 external（否则 W17 从
+                     # sources 现算后会把存量 digest 卡错抬 T2+强制扩写，MAJOR-2）
+                     "digest", "weekly-digest"):
             self.assertEqual(
                 policy.classify_origin([{"channel": chan}]), policy.PROPOSED)
+
+    def test_digest_sources_do_not_force_expansion(self):
+        # 端到端钉死 MAJOR-2：digest 出身卡的 effective_tier 保持声明档，
+        # 不强制扩写（risk 从 sources 现算，digest 判 proposed 而非 external）
+        from act.lib import risk
+        for chan in ("digest", "weekly-digest"):
+            et = risk.effective_tier(
+                {"tier": "T1", "sources": [{"channel": chan}]})
+            self.assertEqual(et.tier, "T1", chan)
+            self.assertFalse(et.forced_expand, chan)
 
     def test_meeting_channels(self):
         for chan in ("meeting", "audio"):

@@ -9,7 +9,7 @@
 热列 = 看板投影、过滤、状态机执法要用的字段（id/status/prev_status/tier/type/title/origin_trust/target_repo/deadline/created/updated/version）；其余 YAML 字段（sources 冗余副本、plan、definition_of_done、card、execution、notes 文本、thread_id、display_title、silent_merge_count……）JSON 化后原样进 `payload` 冷列。理由：live CONTRACT 的字段是 add-only 长尾（§1 + 30 多节追加），逐列建模会让每次加字段都变 DDL migration；冷列让 add-only 字段继续零成本添加，热列只收「查询要用」的少数派。`json_valid(payload)` CHECK 挡住半截 JSON。
 
 - `version`：乐观锁 CAS 列，抄 dashi `tasks.version`（`CHECK (version > 0)`，写路径 `WHERE id=? AND version=?` + `changes!=1` 重查分 404/409——三件套在 B2）。
-- `origin_trust`：v-next 信任矩阵（owner 决策「手打自动/外部要批」）。词表 `hand|external`，默认 `external` fail-closed（出身不明一律走审批）。`// TODO(contract):` live CONTRACT 尚无此字段，词表与判定规则需在 docs/design/vnext.md 修宪落档。
+- `origin_trust`：v-next 信任矩阵（owner 决策「手打自动/外部要批」）。词表 = CONTRACT §50 的四值 canonical `hand|proposed|meeting|external`（判定规则同节；代码侧单一真源 = `act/lib/policy.py` 的 `ORIGINS`），默认 `external` fail-closed（出身不明一律走审批）。
 - `merged_into_id`：§21 merge 终态父指针，自引用 FK。legacy `merged_into:<id>` 状态串（registry.py `MERGED_PREFIX`）由 B3 归一为 `status='merged'` + `merged_into_id`。
 - `prev_status`：§9/§10 的回程票。CHECK 强制 trashed/archived 必带（宪法第 2 条「一切可逆」的 schema 化）；B3 对缺失的 legacy 卡按 live `registry.restore`/`unarchive` 的 fallback 回填（trashed→`'detected'`，archived→`'delivered'`）。
 - `last_actor_type`：状态机 trigger 的 actor 输入。SQLite trigger 无法看到「谁」在 UPDATE，所以 actor 随行入列——**B2 约定：任何 status UPDATE 必须同时 `SET last_actor_type`**。已知限制：writer 忘 SET 时 NEW 继承 OLD 值，trigger 按旧 actor 判——这是 backstop 不是唯一防线，真正的执法闭环 = B2 强制传参 + activities 全量审计 + B4 的 trigger 拒绝测试。
@@ -71,7 +71,7 @@ activities = dashi `task_activities` 同型审计流（`changes` JSON `[{field,b
 
 ## TODO(contract) 清单（修宪草案素材，A12/集成 agent 汇总）
 
-- `origin_trust` 词表（`hand|external`）与判定规则未入宪——需在 docs/design/vnext.md 落「信任矩阵」条款。
+- ~~`origin_trust` 词表与判定规则未入宪~~ **已闭环（v0.48）**：CONTRACT §50 立「信任矩阵」，四值词表 `hand|proposed|meeting|external` 与判定规则均已入宪，schema 的 CHECK 即该词表。
 - §24 digest 卡「其余状态一律拉回 review」只收录了 `delivered → review (system)`；detected/card_sent/approved/executing → review 的 digest 专属拉回未开白名单（现实中 digest 卡不经这些态），如接线后撞 `ILLEGAL_TRANSITION` 再按 add-only 补行。
 - `dispatches.status` 词表（`running|completed|failed|stopped`）为本 PR 拟定，live CONTRACT 无对应法条，接线 PR 需入宪。
 - queued（approved）卡的「取消排队」独立动作不存在（现行走 abort_execution），如 v-next UI 新增动词需同步补 whitelist 行。
