@@ -306,6 +306,24 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 新增键：`review_notify`、`maintainer_repo_path`、`maintainer_session_id`
 （`feedback_publish_default` 见 §29bis，`gmail_fetch_command` 见 §14bis）。
 
+**§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
+① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
+= 打开/聚焦主窗口**（原 ⌥+click 直达主窗口的旧路径行为不变地并入）；右键
+菜单保留并新增「录制」子菜单（三态 off/screen/screen_audio + 实时字幕开关，
+语义同看板 header 的 RecordingMenuButton；`recordingMode` 词表照旧冻结）。
+快速捕获入口收敛到主窗口（⌘L + 看板 composer；`state/inbox/capture-*.json`
+契约与 §10 capture 动作**逐字不变**）。popover 专属面被主窗口既有等价物
+覆盖后移除：PipelineHealthBanner/一键修复、DiagnosticsStrip、Trash/Archive
+区、通知行——全部原样活在看板/侧栏页里。契约F 词表影响：`popover_open`
+事件**停发**（词表编号保留、永不复用）；`capture_submit` 的 `source`
+取值不再出现 `"popover"`（词表本身 add-only 不动）。② **关窗后台驻留
+（Slack 式）**：关闭主窗口后 app **保持 .regular（Dock 图标常驻）**、不再
+退回 .accessory——v0 的「关窗回 accessory」语义就此修订；点 Dock 图标或
+菜单栏图标重开主窗口（applicationShouldHandleReopen 原路径）。
+applicationShouldTerminateAfterLastWindowClosed 显式 false。退出语义不变：
+菜单退出/状态栏右键退出/系统注销关机照旧直通（v0.46 追记①的 ⌘Q 守卫不动）。
+launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后才进 Dock。
+
 ## 16. Feature flags + 自我进化
 - config `features: {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics, manager_pack}`，默认全 on；各模块入口检查 flag，off 则 no-op。overrides 可改。
 - 周一 digest 末尾加**进化建议**节：基于 analytics（30 天未用的功能→建议关；重复风暴/高拒绝率→建议改），生成 type=self-improvement 的卡片（target_repo=本 repo），批准后照常 claude --bg 实现并以 **draft PR** 交付——app 更新永远走 PR。

@@ -63,15 +63,13 @@ struct KanbanComposer: View {
                 collapsedRow
             }
         }
-        // ⌘L route: AppDelegate posts .focusCaptureField (popover open →
-        // the popover field takes it; otherwise main window + this composer).
-        // The notification is global: when the popover is open its field owns
-        // the caret — this composer must NOT also expand invisibly, steal
-        // focus, or log a spurious composer_open. ⌘L stays a PROPOSE-only
-        // affordance: the run composer never answers it (two composers
-        // expanding on one hotkey would race for focus).
+        // ⌘L route: AppDelegate posts .focusCaptureField (main window + this
+        // composer — the popover field it once had to yield to is gone,
+        // §15 v0.48.x). ⌘L stays a PROPOSE-only affordance: the run composer
+        // never answers it (two composers expanding on one hotkey would race
+        // for focus).
         .onReceive(NotificationCenter.default.publisher(for: .focusCaptureField)) { _ in
-            guard mode == .propose, !app.popoverIsShown else { return }
+            guard mode == .propose else { return }
             expand(via: "hotkey")
         }
     }

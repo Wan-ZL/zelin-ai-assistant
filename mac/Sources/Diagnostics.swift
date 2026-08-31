@@ -460,9 +460,9 @@ final class DiagnosticsModel: ObservableObject {
 
 // MARK: - view
 
-/// The strip inserted after PipelineHealthBanner in both the popover
-/// (DashboardView) and the kanban header. Renders nothing when there are no
-/// unhealthy INTENDED paths (the fresh-user default).
+/// The strip inserted after PipelineHealthBanner in the kanban header (was
+/// also mirrored in the popover until its v0.48.x removal). Renders nothing
+/// when there are no unhealthy INTENDED paths (the fresh-user default).
 struct DiagnosticsStrip: View {
     @ObservedObject private var model = DiagnosticsModel.shared
     @ObservedObject private var i18n = LanguageStore.shared

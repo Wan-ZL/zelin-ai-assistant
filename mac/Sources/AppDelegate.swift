@@ -1,5 +1,6 @@
-// AppDelegate.swift — AppDelegate（状态栏/popover/主菜单/inbox 写入/prompt 弹窗）/ StatusDropView / PromptSendDelegate
-// Mechanically split from main.swift — zero logic changes.
+// AppDelegate.swift — AppDelegate（状态栏/主菜单/inbox 写入/prompt 弹窗）/ StatusDropView / PromptSendDelegate
+// (v0.48.x) 菜单栏 popover 面板已移除（§15 v0.48.x 追记）：图标左键直接
+// 打开/聚焦主窗口，右键菜单新增「录制」子菜单。
 
 import AppKit
 import SwiftUI
@@ -16,7 +17,7 @@ extension Notification.Name {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = DashboardStore()
 #if canImport(Sparkle)
     // Sparkle updater: startingUpdater:true begins scheduled background checks per
@@ -27,13 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 #endif
     private var statusItem: NSStatusItem?
-    private let popover = NSPopover()
-    /// Read-only popover visibility for views outside this file (e.g. the
-    /// kanban composer ignores .focusCaptureField while the popover is open).
-    var popoverIsShown: Bool { popover.isShown }
     private var refreshTimer: Timer?
-    private var popoverClickMonitor: Any?
-    private var popoverKeyMonitor: Any?
     // item 1: app-lifetime local monitor — Shift+Return inserts a newline in
     // field-editor-backed (SwiftUI) text fields; plain Return keeps submitting.
     private var shiftReturnMonitor: Any?
@@ -57,16 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // §28: relayed-notification clicks open the main window; banners keep
         // showing while the app is frontmost.
         NotifyRelayDelegate.install()
-
-        popover.behavior = .transient
-        popover.contentSize = NSSize(width: 400, height: 560)
-        popover.contentViewController = NSHostingController(
-            rootView: DashboardView(store: store, app: self)
-        )
-        // Single choke point for popover-close cleanup: no matter HOW the
-        // popover closes (toggle, outside click, Esc, ⌘W), popoverDidClose
-        // removes the global click + local key monitors.
-        popover.delegate = self
 
         // recording engine: keep the menu-bar icon in sync + autostart per mode.
         // P0-11: a fresh install must not capture anything before the one-time
@@ -141,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Click-outside defocus: AppKit keeps the first responder when a
         // click lands on dead space, so a focused field's caret survives
         // clicks anywhere outside it. Expected macOS feel: click outside =
-        // defocus. Watch mouseDown app-wide (main window, popover, panels):
+        // defocus. Watch mouseDown app-wide (main window, panels):
         // when a field editor owns the caret and the click doesn't land on a
         // text input, end editing — @FocusState bindings sync to false and
         // drafts stay in their bindings. The event is ALWAYS returned
@@ -173,10 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         refresh()
-        // Schedule in .common run-loop mode so the timer keeps firing while the
-        // popover is open. A .default-mode timer (Timer.scheduledTimer) is
-        // suspended during status-item/popover event tracking — that was the bug
-        // where the open popover only updated after close+reopen.
+        // Schedule in .common run-loop mode so the timer keeps firing during
+        // status-item event tracking (a .default-mode Timer.scheduledTimer is
+        // suspended while the status menu is up).
         let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refresh()
@@ -194,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // IfNeeded above), which fires at most once per user, ever.
     }
 
-    // P1-5 first-launch UX: with no dashboard.json the popover is a dead end
+    // P1-5 first-launch UX: with no dashboard.json the board is a dead end
     // ("waiting for pipeline") — open the main window ON the Dependencies page
     // exactly once, so the first thing a new user sees is the checklist that
     // names what's missing. hasCompletedFirstRun is set on the first launch
@@ -214,6 +198,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                        hasVisibleWindows flag: Bool) -> Bool {
         if !flag { MainWindowController.shared.show() }
         return true
+    }
+
+    // §15 v0.48.x: Slack 式后台驻留 — closing the last window keeps the app
+    // resident (menu-bar icon + Dock; MainWindowController no longer drops the
+    // activation policy). AppKit's default is already false; stated explicitly
+    // so the survival behavior is pinned in code, not inherited.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     // Modern-AppKit standard: opt in to secure state restoration (silences the
@@ -269,8 +261,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let showMain = Prefs.bool("showMenuBarIcon", default: true)
         if showMain, statusItem == nil { makeMainStatusItem() }
         if !showMain, let item = statusItem {
-            if popover.isShown { popover.performClose(nil) }
-            removePopoverClickMonitor()
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
         }
@@ -289,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                    accessibilityDescription: "Zelin's AI Assistant")
             button.imagePosition = .imageLeading
             button.target = self
-            button.action = #selector(togglePopover(_:))
+            button.action = #selector(statusItemClicked(_:))
             // §15: right-click on the status item opens a small menu (main window / quit).
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             // item 7c: transparent drop overlay — drag selected text from any
@@ -309,10 +299,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // undercounted (a blocked agent or a finished draft was invisible
         // from the menu bar); all lanes would overcount (running cards need
         // nothing from anyone). 待拍板 keeps the render-array count (visible
-        // cards + local placeholders), in sync with what the popover shows.
+        // cards + local placeholders), in sync with what the board shows.
         // visible* projections (isHidden-filtered), NOT raw dashboard
         // partitions — an optimistically hidden card (✓验收 clicked, actd
-        // not yet re-projected) must leave the badge with the popover.
+        // not yet re-projected) must leave the badge with the board.
         let n = store.visibleApprovals.count
             + store.visibleNeedsInput.count
             + store.visibleReview.count
@@ -321,8 +311,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             button.title = ""
         }
-        // P1-4: unhealthy pipeline → warning triangle in the menu bar itself;
-        // the 10pt footer note alone was invisible until the popover opened.
+        // P1-4: unhealthy pipeline → warning triangle in the menu bar itself
+        // (visible without opening any window).
         let symbol = store.pipelineHealth == .ok ? "checklist" : "exclamationmark.triangle"
         if symbol != statusSymbolShown {
             statusSymbolShown = symbol
@@ -331,102 +321,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    @objc private func togglePopover(_ sender: Any?) {
+    // §15 v0.48.x: the popover is gone — left-click = open/focus the main
+    // window (the old ⌥+click fast path, now the only path); right-click =
+    // context menu. 契约F: popover_open is no longer emitted (vocabulary
+    // retired, never reused); the open lands in mw_open as usual.
+    @objc private func statusItemClicked(_ sender: Any?) {
         guard statusItem?.button != nil else { return }
-        // §15: right-click = context menu (main window / quit); left-click = popover.
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
             showStatusMenu()
             return
         }
-        // item 7a: ⌥+click on the icon = straight to the main window
-        if let event = NSApp.currentEvent, event.modifierFlags.contains(.option) {
-            openMainWindow(sender)
-            return
-        }
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            showPopover(source: "click")
-        }
+        openMainWindow(sender)
     }
 
-    /// Open the popover on the status item and install the outside-click +
-    /// Esc monitors.
-    /// 契约F: every successful show logs popover_open{source}; the source
-    /// vocabulary is click|hotkey|menu|reopen. hotkey retired in v0.15 (the
-    /// Carbon global hotkey was removed with its settings UI); menu/reopen
-    /// are reserved — no menu item opens the popover today, and a Dock/Finder
-    /// reopen goes to the main window (applicationShouldHandleReopen).
-    private func showPopover(source: String) {
-        guard let button = statusItem?.button else { return }
-        Analytics.log("popover_open", fields: ["source": source])
-        refresh()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
-        // .transient alone can't detect outside clicks for a menu-bar app
-        // (we never become the active app) — watch globally and close.
-        popoverClickMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if self.popover.isShown { self.popover.performClose(nil) }
-                self.removePopoverClickMonitor()
-            }
-        }
-        // Esc in the popover (item 6): non-empty capture draft → clear it
-        // first; empty → close. The app never activates, so the standard
-        // transient cancelOperation path is unreliable (and a focused
-        // SwiftUI TextField can swallow Esc) — a local monitor is robust.
-        popoverKeyMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }  // 53 = Esc
-            var handled = false
-            MainActor.assumeIsolated {
-                guard let self, self.popover.isShown else { return }
-                // IME red line: Esc cancels a live pinyin composition —
-                // the input method owns it, pass through.
-                if let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
-                   tv.hasMarkedText() { return }
-                if !CaptureDraft.popover.text.isEmpty {
-                    CaptureDraft.popover.text = ""   // 1st Esc: clear draft
-                } else {
-                    self.popover.performClose(nil)   // 2nd Esc: close
-                }
-                handled = true
-            }
-            return handled ? nil : event
-        }
-    }
-
-    // NSPopoverDelegate — the ONE cleanup path for every close route
-    // (toggle click, outside click, Esc, ⌘W): drop both event monitors.
-    func popoverDidClose(_ notification: Notification) {
-        removePopoverClickMonitor()
-        removePopoverKeyMonitor()
-    }
-
-    private func removePopoverClickMonitor() {
-        if let m = popoverClickMonitor {
-            NSEvent.removeMonitor(m)
-            popoverClickMonitor = nil
-        }
-    }
-
-    private func removePopoverKeyMonitor() {
-        if let m = popoverKeyMonitor {
-            NSEvent.removeMonitor(m)
-            popoverKeyMonitor = nil
-        }
-    }
-
-    // File > Close Window (⌘W). Route by context: an open popover closes
-    // first; otherwise close the key window. Never send performClose to the
-    // borderless popover window directly — it has no close button and beeps.
+    // File > Close Window (⌘W): close the key window.
     @objc func closeKeyWindow(_ sender: Any?) {
-        if popover.isShown {
-            popover.performClose(sender)
-            return
-        }
         NSApp.keyWindow?.performClose(sender)
     }
 
@@ -440,7 +349,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // page anytime (权限体检 — Screen Recording / Notifications / Full Disk
     // Access, live statuses).
     @objc func openPermissionsWindow(_ sender: Any?) {
-        if popover.isShown { popover.performClose(sender) }
         PermissionsWindowController.shared.show(firstRun: false)
     }
 
@@ -468,17 +376,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MainNav.shared.toggleSidebar()
     }
 
-    // View menu (item 7b): ⌘L — put the caret in the quick-capture field
-    // (popover when open, else the main-window board header).
+    // View menu (item 7b): ⌘L — put the caret in the main-window board
+    // header's quick-capture field.
     @objc func focusCaptureField(_ sender: Any?) {
-        // 契约F: ⌘L counts as a nav gesture too — dest "capture" whether the
-        // caret lands in the popover field or the main-window board header.
+        // 契约F: ⌘L counts as a nav gesture too — dest "capture".
         Analytics.log("mw_nav", fields: ["dest": "capture"])
-        if popover.isShown {
-            popover.contentViewController?.view.window?.makeKey()
-            NotificationCenter.default.post(name: .focusCaptureField, object: nil)
-            return
-        }
         openMainWindow(sender)
         // let the window / hosting view land first on a cold open
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -534,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         keyEquivalent: "q")
         appItem.submenu = appMenu
 
-        // File menu — Close Window ⌘W (popover-aware, see closeKeyWindow).
+        // File menu — Close Window ⌘W (see closeKeyWindow).
         let fileItem = NSMenuItem()
         main.addItem(fileItem)
         let file = NSMenu(title: L("文件", "File"))
@@ -612,7 +514,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     // Transient-menu trick: assign the menu, synthesize a click so AppKit shows
-    // it, then detach so normal left-clicks keep toggling the popover.
+    // it, then detach so normal left-clicks keep opening the main window.
     private func showStatusMenu() {
         guard let item = statusItem else { return }
         let menu = NSMenu()
@@ -621,6 +523,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                  keyEquivalent: "")
         mainWin.target = self
         menu.addItem(mainWin)
+        // §15 v0.48.x: 录制开关子菜单 — the popover's RecordingMenuButton
+        // equivalent for the menu bar (recordingMode 三态 + 实时字幕 独立开关,
+        // frozen vocabulary untouched).
+        let recItem = NSMenuItem(title: L("录制", "Recording"),
+                                 action: nil, keyEquivalent: "")
+        let recMenu = NSMenu()
+        for (mode, label) in [("off", L("关", "Off")),
+                              ("screen", L("仅屏幕", "Screen only")),
+                              ("screen_audio", L("屏幕+音频", "Screen + audio"))] {
+            let mi = NSMenuItem(title: label,
+                                action: #selector(setRecordingMode(_:)),
+                                keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = mode
+            mi.state = RecordingController.shared.mode == mode ? .on : .off
+            recMenu.addItem(mi)
+        }
+        recMenu.addItem(.separator())
+        let capItem = NSMenuItem(title: L("实时字幕", "Live captions"),
+                                 action: #selector(toggleLiveCaptions(_:)),
+                                 keyEquivalent: "")
+        capItem.target = self
+        capItem.state = LiveCaptionsController.shared.enabled ? .on : .off
+        recMenu.addItem(capItem)
+        recItem.submenu = recMenu
+        menu.addItem(recItem)
         let settings = NSMenuItem(title: L("设置…", "Settings…"),
                                   action: #selector(openSettingsPage(_:)),
                                   keyEquivalent: "")
@@ -671,9 +599,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc func openMainWindow(_ sender: Any?) {
-        if popover.isShown { popover.performClose(sender) }
-        removePopoverClickMonitor()
         MainWindowController.shared.show()
+    }
+
+    // 状态栏「录制」子菜单 actions — same semantics as the board header's
+    // RecordingMenuButton (setMode logs/rolls back refusals itself).
+    @objc private func setRecordingMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? String else { return }
+        RecordingController.shared.setMode(mode)
+    }
+
+    @objc private func toggleLiveCaptions(_ sender: Any?) {
+        let cap = LiveCaptionsController.shared
+        cap.setEnabled(!cap.enabled)
     }
 
     // §26: repurposed one-click update action shared by the menu-bar line and
@@ -1244,7 +1182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    /// Quick capture (popover input): state/inbox/capture-<uuid>.json with
+    /// Quick capture (board composer / icon drop): state/inbox/capture-<uuid>.json with
     /// {"action":"capture","text":…,"ts":ISO8601} — contract #4. A local grey
     /// spinner card covers the gap until actd surfaces the proposal.
     /// Item 3: a leading /rec | /open | /lang runs as a command instead —

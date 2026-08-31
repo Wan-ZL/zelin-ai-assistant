@@ -7,7 +7,8 @@ import SwiftUI
 import Combine
 import Foundation
 
-// MARK: - Main window (§15) — singleton NSWindow; closing hides, app stays .accessory
+// MARK: - Main window (§15) — singleton NSWindow; closing hides the window,
+// app stays resident in menu bar + Dock (.regular kept — §15 v0.48.x 追记)
 
 @MainActor
 final class MainWindowController: NSObject, NSWindowDelegate {
@@ -25,7 +26,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
                 defer: false)
             win.title = "Zelin's AI Assistant"
             // Closing must NOT deallocate (we re-show the same window) and must
-            // NOT quit (no applicationShouldTerminateAfterLastWindowClosed).
+            // NOT quit (applicationShouldTerminateAfterLastWindowClosed = false
+            // in AppDelegate — §15 v0.48.x Slack 式后台驻留).
             win.isReleasedWhenClosed = false
             // belt & suspenders with MainWindowView's .frame(minWidth/minHeight)
             win.contentMinSize = NSSize(width: 720, height: 480)
@@ -92,11 +94,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
     }
 
-    // Window closed -> back to menu-bar-only (.accessory): no Dock icon, app
-    // keeps running in the background behind the status item.
-    func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
-    }
+    // §15 v0.48.x（owner 拍板）: closing the window NO LONGER drops back to
+    // .accessory — the Dock icon vanishing read as "the app died". Slack 式:
+    // the app stays .regular (menu bar + Dock), and a Dock/status-item click
+    // reopens the board (applicationShouldHandleReopen). Launch is still
+    // LSUIElement-quiet: .regular only begins with the first show().
+    // NSWindowDelegate stays wired for future close-time hooks.
 
     // v0.46 (#2): seams for AppDelegate.applicationShouldTerminate — a ⌘Q
     // aimed at the open window closes it instead of killing the daemon.
