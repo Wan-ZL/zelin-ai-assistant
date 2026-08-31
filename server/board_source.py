@@ -119,6 +119,25 @@ def _projection_row(board: dict, card_id: str) -> "tuple[Optional[str], Optional
     return None, None
 
 
+def is_executing(home: Path, card_id: str) -> bool:
+    """卡是否「正在执行」= running 分区的非 queued 行，或 needs_input 分区行。
+
+    steer 判定用（M6，docs/design/vnext-amendments.md §M6.1）：executing
+    卡上的 owner comment 会被 actd 按 steer 类经 §44.3 briefing 机制转投递给
+    活会话——app.py 据此在 POST /api/actions 响应里做 add-only 标注（inbox
+    文件本体仍是 §3 comment 原形，一个字段都不加）。只读投影，任何异常按
+    False 兜底（fail-safe：宁可漏标 steer，不误标）。
+    """
+    try:
+        lane, row = _projection_row(_board_dict(home), card_id)
+    except Exception:
+        return False
+    if lane == "needs_input":
+        return True
+    return (lane == "running" and isinstance(row, dict)
+            and row.get("state") != "queued")
+
+
 def card_detail(home: Path, card_id: str) -> dict:
     """详情 = 投影行字段（原样） + ``lane``（所在分区名） + YAML 的其余字段
     （plan/definition_of_done/sources/notes/execution/…，add-only：投影已有

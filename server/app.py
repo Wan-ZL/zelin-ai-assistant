@@ -136,7 +136,16 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_json_body()
             # 字段级白名单 + 动词闸门在 inbox_writer（G1）——单一职责，
             # 校验规则只写一处（module docstring 已冻结）
-            self._send_json(200, inbox_writer.write_action(payload, home=ctx.home))
+            result = inbox_writer.write_action(payload, home=ctx.home)
+            # steer 标注（M6，add-only 响应键；inbox 文件形状零改动）：
+            # executing 卡上的 comment 会被 actd 按 steer 类经 §44.3 briefing
+            # 机制转投递——这里只诚实报「queued」（落盘即排队），delivered/
+            # dropped 状态由投影回流（vnext-amendments.md §M6.1）。
+            if result.get("action") == "comment" and board_source.is_executing(
+                    ctx.home, str(payload.get("id") or "")):
+                result["steer"] = True
+                result["steer_status"] = "queued"
+            self._send_json(200, result)
         elif path == "/api/reveal":
             payload = self._read_json_body()
             unknown = set(payload) - {"card_id"}
