@@ -23,6 +23,10 @@ exclude_patterns = [
   "**/bower_components/**",
   "**/build/**",
   "**/cache/**",
+  # NOTE: this qlty-init default collides with this repo's real `config/` dir
+  # (Slack app manifests today — no code, so harmless). If a config/*.py or
+  # config/*.sh ever lands there it would silently escape every linter: narrow
+  # this pattern then instead of adding a per-file ignore.
   "**/config/**",
   "**/db/**",
   "**/deps/**",
@@ -77,6 +81,12 @@ mode = "comment"
 
 [[plugin]]
 name = "ruff"
+# lint driver only: the repo's Python gate is `ruff check` (ruff.toml, CI + the
+# four local gates in CONTRIBUTING.md) — formatting is deliberately NOT
+# legislated, so the fmt driver reports ~60 phantom "issues" no gate asks for.
+drivers = [
+  "lint",
+]
 
 [[plugin]]
 name = "shellcheck"
@@ -97,6 +107,10 @@ name = "zizmor"
 
 # --------------------------------------------------------------------------
 # Triaged rule ignores — every block carries its reason (chore/qlty-cleanup).
+#
+# EVERY block needs `file_patterns` (`["**"]` for repo-wide): qlty >= 0.643
+# SILENTLY DROPS an [[ignore]] that has none (`qlty check` prints a warning and
+# moves on), which resurrected all the rules below on every PR until v0.48.
 # --------------------------------------------------------------------------
 
 # bandit audits production code. Tests deliberately hardcode fake tokens
@@ -113,16 +127,29 @@ plugins = ["bandit"]
 # (PR #49). B404 (import subprocess) and B603 (subprocess without shell) flag
 # every use unconditionally, so they are pure noise here.
 [[ignore]]
+file_patterns = ["**"]
 rules = ["bandit:B404", "bandit:B603"]
 
 # Tools are resolved from PATH on purpose: user machines have homebrew /
 # system / pyenv layouts, and a hardcoded absolute path broke real installs
 # before (ffmpeg, PR #42).
 [[ignore]]
+file_patterns = ["**"]
 rules = ["bandit:B607"]
 
 # try/except/pass|continue is the documented best-effort idiom in the
 # daemons: one bad record or a missing optional tool must never crash a
 # radar/sync loop. Sites were reviewed in the v0.33.1 whole-repo audit.
 [[ignore]]
+file_patterns = ["**"]
 rules = ["bandit:B110", "bandit:B112"]
+
+# store2's SQL interpolates COLUMN / TABLE NAMES drawn from module-level
+# whitelists (_CARD_COLUMNS, _MUTABLE_FIELDS, the notes receipt columns) while
+# every VALUE stays parameter-bound — the one shape B608
+# (hardcoded_sql_expressions) cannot tell apart from real injection. Scoped to
+# store2 so a genuine f-string query elsewhere still fails the gate. (Sites
+# carry `# noqa: S608` for ruff; that pragma does not silence bandit.)
+[[ignore]]
+file_patterns = ["act/lib/store2/**"]
+rules = ["bandit:B608"]
