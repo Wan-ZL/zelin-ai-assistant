@@ -9,9 +9,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${ZAI_PORT:-47820}"
 
-# --- 参数解析：--real 或一个 scene 名，二者互斥 ---
+# --- 参数解析：--real 或一个 scene 名，二者互斥（与参数顺序无关：先记
+# scene-seen 旗标，循环结束后统一校验——`initial --real` 也必须被拒）---
 REAL_MODE=0
 SCENE="initial"
+SCENE_SEEN=0
 for arg in "$@"; do
   case "$arg" in
     --real) REAL_MODE=1 ;;
@@ -20,14 +22,15 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      if [ "$REAL_MODE" = 1 ]; then
-        echo "dev-preview: scene 参数仅用于 demo 模式，不能与 --real 同用" >&2
-        exit 1
-      fi
       SCENE="$arg"
+      SCENE_SEEN=1
       ;;
   esac
 done
+if [ "$REAL_MODE" = 1 ] && [ "$SCENE_SEEN" = 1 ]; then
+  echo "dev-preview: scene 参数仅用于 demo 模式，不能与 --real 同用" >&2
+  exit 1
+fi
 
 # --- web/dist 自愈：缺席则现场 build（首次 clone 后无需手动步骤）---
 DIST="$ROOT/web/dist/index.html"
