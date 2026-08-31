@@ -216,6 +216,37 @@ class CompositePermissionWallTestCase(unittest.TestCase):
         self.assertEqual(row["status"], "approved")
 
 
+class OriginTrustWallTestCase(unittest.TestCase):
+    """origin_trust 信任档只许用户拨（trigger 面）：agent/system 改档 = 自提权。"""
+
+    def setUp(self):
+        self.conn = open_db()
+        insert_card(self.conn, "R-001", "detected")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_non_user_flip_raises_user_passes(self):
+        for actor in ("agent", "system"):
+            with self.assertRaises(sqlite3.IntegrityError) as cm:
+                self.conn.execute(
+                    "UPDATE cards SET origin_trust = 'hand',"
+                    " last_actor_type = ? WHERE id = 'R-001'", (actor,))
+            self.assertIn("ORIGIN_TRUST_USER_ONLY", str(cm.exception))
+        self.conn.execute(
+            "UPDATE cards SET origin_trust = 'hand', last_actor_type = 'user'"
+            " WHERE id = 'R-001'")
+        row = self.conn.execute(
+            "SELECT origin_trust FROM cards WHERE id = 'R-001'").fetchone()
+        self.assertEqual(row["origin_trust"], "hand")
+
+    def test_same_value_rewrite_is_allowed(self):
+        # 幂等 retry 无害：system 重写同值不算改档、放行
+        self.conn.execute(
+            "UPDATE cards SET origin_trust = 'external',"
+            " last_actor_type = 'system' WHERE id = 'R-001'")
+
+
 class CasConflictTestCase(unittest.TestCase):
     """(c) CAS 冲突：WHERE id AND version 三件套（dashi database.mjs 模式）。
     B2 store.py 的 helper 落地后应复用同一语义；这里钉住 SQL 层的对错基线。"""

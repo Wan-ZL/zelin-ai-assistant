@@ -51,7 +51,7 @@ _DISPATCH_END_STATES = ("completed", "failed", "stopped")
 
 # schema trigger 的 RAISE 码 → 归类（消息即码，见 schema.sql 各 trigger）
 _TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "AGENT_FIELD_FORBIDDEN",
-                     "ILLEGAL_TRANSITION")
+                     "ORIGIN_TRUST_USER_ONLY", "ILLEGAL_TRANSITION")
 _INTEGRITY_CODES = (
     "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE",
     "NOTES_APPEND_ONLY", "NOTES_RECEIPT_SET_ONCE",
@@ -446,6 +446,12 @@ class Store:
         if bad:
             raise StoreError("UNKNOWN_FIELD",
                              f"fields not updatable here: {sorted(bad)}", {"fields": sorted(bad)})
+        if "origin_trust" in fields and actor_type != "user":
+            # 信任档只许用户拨（cards_origin_trust_user_only trigger 兜底 SQL 面）：
+            # agent/system 把外部卡自封 hand = 绕过审批闸门的自提权
+            raise TransitionDenied("ORIGIN_TRUST_USER_ONLY",
+                                   "origin_trust can only be changed by the user",
+                                   {"actor_type": actor_type})
         with self._write() as conn:
             row = self._cas_precheck(conn, card_id, expected_version)
             changes, assigns, args = [], [], []

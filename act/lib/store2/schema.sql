@@ -330,6 +330,15 @@ BEGIN
   );
 END;
 
+-- origin_trust 信任档只许用户拨（hand = 免审批快车道；agent/system 自封 hand
+-- = 信任矩阵自提权）。同值重写放行——幂等 retry 无害
+CREATE TRIGGER IF NOT EXISTS cards_origin_trust_user_only
+BEFORE UPDATE ON cards
+WHEN NEW.origin_trust <> OLD.origin_trust AND NEW.last_actor_type <> 'user'
+BEGIN
+  SELECT RAISE(ABORT, 'ORIGIN_TRUST_USER_ONLY');
+END;
+
 -- 身份锚点不可改写（§37：title 都不许动身份，id 更不行）
 CREATE TRIGGER IF NOT EXISTS cards_id_immutable
 BEFORE UPDATE OF id ON cards

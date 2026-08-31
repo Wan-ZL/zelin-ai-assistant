@@ -199,5 +199,21 @@ class PurgeVsDispatchTestCase(_StoreFixture):
         self.assertIsNotNone(note["acked_at"])
 
 
+class OriginTrustStoreTestCase(_StoreFixture):
+    """origin_trust 信任档（store API 面）：update_card_fields 只收 user actor。"""
+
+    def test_agent_or_system_cannot_flip_origin_trust(self):
+        self._mint()
+        for actor in ("agent", "system"):
+            with self.assertRaises(TransitionDenied) as cm:
+                self.store.update_card_fields(
+                    "R-001", None, {"origin_trust": "hand"}, actor_type=actor)
+            self.assertEqual(cm.exception.code, "ORIGIN_TRUST_USER_ONLY")
+        self.assertEqual(self.store.get_card("R-001")["origin_trust"], "external")
+        card = self.store.update_card_fields(
+            "R-001", None, {"origin_trust": "hand"}, actor_type="user")
+        self.assertEqual(card["origin_trust"], "hand")
+
+
 if __name__ == "__main__":
     unittest.main()
