@@ -29,13 +29,62 @@ _VALID_TIERS = ("T0", "T1", "T2")
 # --------------------------------------------------------------------------- #
 # prompt
 # --------------------------------------------------------------------------- #
-def registry_inventory_text() -> str:
-    """One line per non-trashed requirement: ``R-xxx | status | title``."""
-    lines = []
-    for r in registry.load_all():
-        if r.status == registry.State.TRASHED.value:
-            continue
-        lines.append(f"{r.id} | {r.status} | {r.title}")
+# Inventory window cap (vnext W1). The prompt can't carry an unbounded
+# registry, so the window is capped — with the quota INVERTED versus the live
+# tree's v0.20.0 pinning (which hard-pinned delivered/merged and made open
+# cards compete for leftovers): open cards are exactly what triage must match
+# against, so THEY get the guaranteed slots and are never dropped, while
+# delivered/merged only fill the remaining room by recency under their own
+# hard cap. See docs/design/vnext-amendments.md §W1.
+_INVENTORY_CAP = 60
+# delivered/merged 在窗口里的份额硬上限：它们只是 follow-up 认卡的回忆辅助，
+# 不许把 open 卡挤出窗口（W1 的病根就是反过来）。
+_CLOSED_RECENCY_CAP = 20
+
+
+def _inventory_reqs() -> list:
+    """The capped card selection the capture prompt sees (W1 inverted quota).
+
+    Open cards（detected/card_sent/raising/approved/executing/review，含
+    rejected——与 live 树同一分割线：closed 侧只有 delivered/merged）全部保留，
+    永不掉出窗口（即使总数超过 ``_INVENTORY_CAP``，cap 对 open 卡只是目标值不是
+    硬顶）；delivered/merged 按 recency（R-号降序）填剩余空位，且绝不超过
+    ``_CLOSED_RECENCY_CAP``。
+
+    Thread-key backstop（determinism note）：被 recency 挤出窗口的 delivered/
+    merged 卡不靠 LLM 记忆兜底——re-raise 去重的安全网是确定性的 thread_key
+    归并（live 树 v0.20+ ``registry.derive_thread_key`` 在 merge_or_new 里对同
+    一外部 thread 确定性归并；store2 侧对应 ``sources(channel, origin_key)``
+    partial-unique 键）。本 worktree 的 v0.10.3 基线尚无 thread_key 字段——
+    材料性差异，记录在 docs/design/vnext-amendments.md §W1.b，不在此处擅补。
+    """
+    reqs = [r for r in registry.load_all()
+            if r.status != registry.State.TRASHED.value]
+
+    def _idnum(r) -> int:
+        # str() 防御：一张遗留 int-id 卡不能让清单窗口整个 TypeError。
+        m = registry._ID_RE.match(str(r.id or ""))
+        return int(m.group(1)) if m else 0
+
+    def _closed(r) -> bool:
+        return r.is_merged or r.status == registry.State.DELIVERED.value
+
+    opened = [r for r in reqs if not _closed(r)]
+    closed = sorted((r for r in reqs if _closed(r)), key=_idnum, reverse=True)
+    room = min(max(0, _INVENTORY_CAP - len(opened)), _CLOSED_RECENCY_CAP)
+    return sorted(opened + closed[:room], key=_idnum)
+
+
+def registry_inventory_text(reqs: Optional[list] = None) -> str:
+    """One line per selected requirement: ``R-xxx | status | title``.
+
+    Deliberately INCLUDES delivered/merged cards — the LLM must be able to
+    relate a follow-up to an already-closed card — but under the W1 inverted
+    quota (:func:`_inventory_reqs`): open cards get guaranteed slots first,
+    delivered/merged fill the remainder by recency with a hard cap.
+    """
+    selected = _inventory_reqs() if reqs is None else reqs
+    lines = [f"{r.id} | {r.status} | {r.title}" for r in selected]
     return "\n".join(lines) or "(registry is empty)"
 
 
