@@ -1,0 +1,136 @@
+NOTICE — third-party attribution
+================================
+
+Zelin's AI Assistant is licensed under the Functional Source License,
+Version 1.1, MIT Future License (see LICENSE.md). The portions listed
+below were forked from a third-party project and remain available under
+their original license, the Apache License, Version 2.0.
+
+--------------------------------------------------------------------
+dashi-taskboard
+--------------------------------------------------------------------
+Upstream:   https://github.com/chuspeeism/dashi-taskboard
+Version:    v1.1.14 (commit 9c0972605ed6da8f14c2cd8e2f74aa52411c7922)
+Copyright:  (c) chuspeeism and the dashi-taskboard contributors
+License:    Apache License, Version 2.0
+            http://www.apache.org/licenses/LICENSE-2.0
+
+Files and code blocks forked verbatim or near-verbatim (per the v-next
+build contract §2.2 fork list). "Upstream" paths are relative to the
+dashi-taskboard repository root; "here" paths are relative to this
+repository root. Every forked unit carries its own behavior tests in
+this repository; the upstream regex-based UI test files were
+deliberately NOT imported.
+
+1. Design token table + dark-theme variable swap
+   Upstream: web/src/styles.css lines 1-83 (plus the data-theme wiring
+             pattern from web/src/App.tsx)
+   Here:     web/src/styles/tokens.css
+   Changes:  color palette rebranded (teal accent); variable names and
+             token layering kept verbatim; one repo-local variable
+             (--on-accent) added on top of the forked table, marked
+             non-fork in a comment.
+
+2. Animation CSS blocks
+   Upstream: web/src/styles.css lines 2363-2409 + 2438-2447 (shared
+             easing cubic-bezier(0.2,0.8,0.2,1), .is-moving/
+             .is-settling, settle keyframes), lines 9371-9494 +
+             9560-9562 (working-card sheen + conic progress ring),
+             lines 8590-8599 (prefers-reduced-motion nuke)
+   Here:     web/src/styles/animations.css
+   Changes:  drag-and-drop-specific rules dropped (this board has no
+             drag-to-change-state); four hardcoded green color values
+             replaced with --accent/--accent-soft tokens.
+
+3. MarkdownDocument component (markdown rendering + mermaid sandbox,
+   including all security hooks: strict securityLevel, DOMPurify
+   hooks, external-resource/CSS detectors, external-link blocking)
+   Upstream: web/src/components/MarkdownDocument.tsx (599 lines)
+   Here:     web/src/components/detail/MarkdownDocument.tsx and
+             web/src/components/detail/MermaidDiagram.tsx
+   Changes:  fork-adapted, not verbatim. The upstream dependencies
+             (react-markdown/remark-gfm/js-yaml/dompurify/mermaid) are
+             outside this repo's npm runtime whitelist, so the
+             markdown body is parsed by an in-repo zero-dependency
+             escape-first parser (web/src/components/detail/
+             markdown.ts, original work) while MarkdownDocument.tsx
+             keeps the upstream component surface, URL/link discipline
+             and HTML-comment-strip semantics. MermaidDiagram.tsx
+             keeps all upstream mermaid security hooks (external-
+             resource regexes verbatim, DOMPurify uponSanitize hooks,
+             strict securityLevel, style scrubbing) behind runtime
+             dynamic imports with a safe show-source fallback when the
+             dependencies are absent; js-yaml-based metadata checks
+             replaced with stricter literal detection. Codex-specific
+             attachment/composer-reference code removed; zh/en strings
+             adapted.
+
+4. TaskPropertyPicker popover primitive
+   Upstream: web/src/components/TaskPropertyPicker.tsx (220 lines)
+   Here:     web/src/components/chrome/TaskPropertyPicker.tsx
+   Changes:  domain types swapped for this repo's card/filter model;
+             upstream LinearIcon dependency replaced with a local
+             inline CheckIcon SVG; option.icon made optional; a
+             selectedValues multi-select mode added (single-select
+             behavior unchanged from upstream). Upstream
+             composer-popover/task-property-* class names kept and
+             re-styled with this repo's tokens in
+             web/src/components/chrome/chrome.css.
+
+5. URL deep-link routing + filter serialization patterns
+   Upstream: web/src/issueRoute.ts (22 lines) and
+             web/src/taskFilters.ts (129 lines)
+   Here:     web/src/route.ts and web/src/taskFilters.ts
+   Changes:  route keys and filter fields renamed to this repo's
+             card domain (page/card deep link; tier/type/channel/
+             deadline/reraised filters + client-side search).
+
+6. Inline zh/en i18n pair pattern
+   Upstream: web/src/i18n.tsx (98 lines)
+   Here:     web/src/i18n.ts
+   Changes:  string catalog replaced with this repo's copy; JSX
+             provider replaced with a plain React context module.
+
+7. manage-taskboard agent skill (progressive-disclosure structure:
+   short SKILL.md + on-demand references/cli.md) and taskctl CLI
+   output contract
+   Upstream: skills/manage-taskboard/SKILL.md,
+             skills/manage-taskboard/references/cli.md,
+             cli/taskctl.mjs (output contract: one JSON object with
+             schemaVersion on stdout, one error JSON object on
+             stderr, exit codes 0/2/3/4/5, help-is-the-only-plain-
+             text-success discipline, hand-rolled option allowlist
+             parser)
+   Here:     skills/board-agent/SKILL.md,
+             skills/board-agent/references/cli.md,
+             act/boardctl.py
+   Changes:  domain rewritten from Codex Taskboard issues to this
+             repo's card board; command surface reduced to the
+             scoped agent channel (board/card/capture/comment — no
+             status moves, claims, thread bindings, attachments, or
+             cloud/companion machinery); taskctl's JS implementation
+             re-expressed in Python stdlib against this repo's
+             /api/board + /api/actions wire.
+
+Pattern-level references (re-implemented in this repository, not
+copied verbatim; attribution given in good faith):
+- SSE consume + 120ms debounce merged refetch (web/src/App.tsx
+  lines 582-705) and the injectable-timer testable structure of
+  web/src/revisionPolling.mjs -> web/src/realtime.ts
+- api.ts error-classification taxonomy (web/src/api.ts)
+  -> web/src/api.ts
+- SSE EventHub (server/) -> server/sse.py; error envelope
+  {error:{code,message,details}}, UNKNOWN_FIELD zero-tolerance
+  request validation -> server/errors.py; path-traversal/NUL
+  rejection discipline -> server/paths.py (all rebuilt in Python
+  stdlib)
+
+Convention: every file containing forked dashi-taskboard code carries
+a header comment "Forked from dashi-taskboard (Apache-2.0) — see
+NOTICE", and files with substantial modifications state so in that
+header (Apache-2.0 §4(b)).
+
+Maintenance note: this list must stay accurate to what actually ships.
+The integration agent reconciles it against the final file tree before
+merge; additions/removals of forked material must update this NOTICE
+in the same PR.

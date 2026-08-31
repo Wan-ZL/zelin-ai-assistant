@@ -59,16 +59,35 @@ _VALID_TIERS = ("T0", "T1", "T2")
 # --------------------------------------------------------------------------- #
 # prompt
 # --------------------------------------------------------------------------- #
-# Inventory window cap (v0.20.0 §2, critique high #5). The prompt can't carry an
-# unbounded registry, but capping must never drop a closed card the LLM needs to
-# relate a follow-up to — so all non-archived delivered/merged are HARD-PINNED
-# into the window and only the *other* cards compete for the remaining slots.
+# Inventory window cap (v0.20.0 §2 -> vnext W1). The prompt can't carry an
+# unbounded registry, so the window is capped — with the quota INVERTED versus
+# v0.20.0's pinning (critique high #5 hard-pinned delivered/merged and made
+# open cards compete for leftovers): open cards are exactly what triage must
+# match against, so THEY get the guaranteed slots and are never dropped, while
+# delivered/merged only fill the remaining room by recency under their own
+# hard cap. See docs/design/vnext-amendments.md §W1.
 _INVENTORY_CAP = 60
+# delivered/merged 在窗口里的份额硬上限：它们只是 follow-up 认卡的回忆辅助，
+# 不许把 open 卡挤出窗口（W1 的病根就是反过来）。
+_CLOSED_RECENCY_CAP = 20
 
 
 def _inventory_reqs() -> list:
-    """The capped card selection the triage/capture prompts see (see
-    :func:`registry_inventory_text` for the pinning semantics)."""
+    """The capped card selection the triage/capture prompts see (W1 inverted
+    quota).
+
+    Open cards（非 delivered/merged/trashed/archived，含 rejected——与 v0.20.0
+    的 pinning 同一分割线：closed 侧只有 delivered/merged）全部保留，永不掉出
+    窗口（即使总数超过 ``_INVENTORY_CAP``，cap 对 open 卡只是目标值不是硬顶）；
+    delivered/merged 按 recency（R-号降序）填剩余空位，且绝不超过
+    ``_CLOSED_RECENCY_CAP``。
+
+    Thread-key backstop（determinism note）：被 recency 挤出窗口的 delivered/
+    merged 卡不靠 LLM 记忆兜底——re-raise 去重的安全网是确定性的
+    ``registry.derive_thread_key`` 归并（merge_or_new 对同一外部 thread 确定性
+    归并；store2 侧对应 ``sources(channel, origin_key)`` partial-unique 键）。
+    见 docs/design/vnext-amendments.md §W1.b。
+    """
     reqs = [r for r in registry.load_all()
             if r.status not in (registry.State.TRASHED.value,
                                 registry.State.ARCHIVED.value)]
@@ -80,15 +99,15 @@ def _inventory_reqs() -> list:
         m = registry._ID_RE.match(str(r.id or ""))
         return int(m.group(1)) if m else 0
 
-    def _pinned(r) -> bool:
+    def _closed(r) -> bool:
         return (r.is_merged
                 or r.status in (registry.State.DELIVERED.value,
                                 registry.State.MERGED.value))
 
-    pinned = [r for r in reqs if _pinned(r)]
-    others = sorted((r for r in reqs if not _pinned(r)), key=_idnum, reverse=True)
-    room = max(0, _INVENTORY_CAP - len(pinned))
-    return sorted(pinned + others[:room], key=_idnum)
+    opened = [r for r in reqs if not _closed(r)]
+    closed = sorted((r for r in reqs if _closed(r)), key=_idnum, reverse=True)
+    room = min(max(0, _INVENTORY_CAP - len(opened)), _CLOSED_RECENCY_CAP)
+    return sorted(opened + closed[:room], key=_idnum)
 
 
 def _display_name(r) -> str:
@@ -106,18 +125,22 @@ def _display_name(r) -> str:
 
 def registry_inventory_text(reqs: Optional[list] = None,
                             cfg: Optional[config.Config] = None) -> str:
-    """Up to ``_INVENTORY_CAP`` lines for the triage/capture LLM, each
-    ``R-xxx | status | title`` plus the card's display-corpus (§38): a
-    readable 显示名 (when it differs from the frozen title) and up to
-    ~6 deterministic keyword aliases — so a card whose title is a URL/path
-    is still recognizable to the matcher.
+    """One line per selected requirement (W1-capped window) for the triage/
+    capture LLM, each ``R-xxx | status | title`` plus the card's
+    display-corpus (§38): a readable 显示名 (when it differs from the frozen
+    title) and up to ~6 deterministic keyword aliases — so a card whose title
+    is a URL/path is still recognizable to the matcher.
 
     Deliberately INCLUDES delivered/merged cards — the LLM must be able to
     relate a follow-up to an already-closed card (统一口径：相关既往卡挂血缘
     follow-up / re-raise，不发孤立新卡). Trashed + archived cards are sealed and
-    excluded (§3.2). When the registry outgrows the cap, non-archived
-    delivered/merged are HARD-PINNED so re-raise recall never silently fails
-    (critique high #5); the remaining slots go to the most-recent other cards.
+    excluded (§3.2). When the registry outgrows the cap, the W1 inverted quota
+    (:func:`_inventory_reqs`) applies: open cards hold guaranteed slots and
+    never drop out — they are what triage must match against — while
+    delivered/merged fill the remainder by recency under
+    ``_CLOSED_RECENCY_CAP``; re-raise recall past that window rests on the
+    deterministic thread_key merge, not LLM memory
+    (docs/design/vnext-amendments.md §W1).
     """
     selected = _inventory_reqs() if reqs is None else reqs
     token_sets = [match_corpus.corpus_tokens(r, cfg) for r in selected]

@@ -3,8 +3,9 @@
 - execution.create_github_repo (PRIVACY.md egress row 8): approving a card
   must NOT silently create GitHub repos for new users — default False.
 - telemetry (PRIVACY.md egress row 10, docs/TELEMETRY.md): default ON at
-  level "detailed" with capture_input on (v0.18 shipped defaults — the
-  disclosure copy must say typed text is included) and the maintainer URL;
+  level "detailed" with capture_input OFF (v0.48 opt-in revision — typed
+  text uploads only after the user checks the first-run checkbox / Settings
+  toggle, which writes the explicit override key) and the maintainer URL;
   opt-out via config.yaml or the settings_overrides.json telemetry keys
   (§15).
 
@@ -52,12 +53,12 @@ class TelemetryDefaultsTestCase(unittest.TestCase):
             return config.load_config()
 
     def test_dataclass_defaults_on_detailed_maintainer_url(self):
-        # v0.18 shipped defaults: on / detailed / capture_input on — the
-        # disclosure copy states typed text is included BECAUSE of these.
+        # v0.48 shipped defaults: on / detailed / capture_input OFF — typed
+        # text is opt-in (first-run checkbox / Settings toggle / yaml key).
         cfg = config.Config()
         self.assertTrue(cfg.telemetry_enabled)
         self.assertEqual(cfg.telemetry_level, "detailed")
-        self.assertTrue(cfg.telemetry_capture_input)
+        self.assertFalse(cfg.telemetry_capture_input)
         self.assertEqual(cfg.telemetry_supabase_url,
                          config.DEFAULT_TELEMETRY_SUPABASE_URL)
 
@@ -65,7 +66,7 @@ class TelemetryDefaultsTestCase(unittest.TestCase):
         cfg = self._load_with_yaml("owner:\n  name: X\n")
         self.assertTrue(cfg.telemetry_enabled)
         self.assertEqual(cfg.telemetry_level, "detailed")
-        self.assertTrue(cfg.telemetry_capture_input)
+        self.assertFalse(cfg.telemetry_capture_input)
         self.assertEqual(cfg.telemetry_supabase_url,
                          config.DEFAULT_TELEMETRY_SUPABASE_URL)
 
@@ -166,7 +167,7 @@ class LoadConfigRobustnessTestCase(unittest.TestCase):
 
     def test_garbage_capture_input_is_not_an_informed_choice(self):
         cfg = self._load_with_yaml("telemetry:\n  capture_input: banana\n")
-        self.assertTrue(cfg.telemetry_capture_input)          # 保留默认
+        self.assertFalse(cfg.telemetry_capture_input)         # 保留默认（v0.48 起默认关）
         self.assertFalse(cfg.telemetry_capture_input_explicit)  # 坏值≠知情
 
 

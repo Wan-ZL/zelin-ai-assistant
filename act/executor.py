@@ -870,6 +870,7 @@ def resume(
     req: Requirement,
     cfg: Optional[config.Config] = None,
     runner: Optional[Callable[[], subprocess.CompletedProcess]] = None,
+    prompt: Optional[str] = None,
 ) -> bool:
     """Resume a previously-dispatched background session (CONTRACT auto-resume).
 
@@ -877,6 +878,10 @@ def resume(
     interrupted by sleep / network loss / crash picks up where it left off.
     Records resume bookkeeping on req.execution. ``runner`` is injectable for
     tests. Returns True on a clean launch. Never raises.
+
+    ``prompt``（v-next steer relay，add-only）：非空时作为 resume 的首条输入
+    随会话注入（经 sanitize.scrub 防泄密——owner 亲打文本不围栏，见
+    steer.build_steer_prompt 的信任级别注）。缺省 None = 行为与从前逐字节相同。
     """
     if cfg is None:
         cfg = config.load_config()
@@ -902,8 +907,12 @@ def resume(
 
     if runner is None:
         def runner() -> subprocess.CompletedProcess:
+            cmd = _bg_base_cmd(cfg) + ["--name", session_name(req),
+                                       "--resume", str(sid)]
+            if prompt and str(prompt).strip():
+                cmd.append(sanitize.scrub(str(prompt))[0])
             return subprocess.run(
-                _bg_base_cmd(cfg) + ["--name", session_name(req), "--resume", str(sid)],
+                cmd,
                 cwd=str(target),
                 capture_output=True,
                 text=True,

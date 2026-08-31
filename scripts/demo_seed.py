@@ -20,6 +20,25 @@ the app, which defeats the whole point):
   generated_at / trashed_at are ISO-8601 strings;
 - queued running items carry NO session_id/copy_cmd keys (no session yet).
 
+v-next add-only fields (信任矩阵/排队原因/捎话；wire 真源 =
+docs/design/vnext-amendments.md 的 ratification-ready 草案 + 已落仓实现——
+``act/lib/risk.py`` 词表、``act/lib/store2/schema.sql`` CHECK 集合、
+``web/src/steer.ts`` 解析器；出入以它们为准)：
+
+- ``origin_trust``（可选 string，``hand``/``external``）：信任矩阵档位——
+  ``hand`` = owner 亲笔（quick capture / 直跑框 / Slack self-DM），可
+  auto-dispatch；``external`` = 外部渠道铸卡，永不自动派发且强制 plan
+  展开（W17）；**缺席** = AI 提案/会议音频等中间档（要人批、不提级）；
+- ``effective_tier``（可选 string）：审批时生效档位——external 卡提到 T2，
+  **只升不降**（低于声明 tier 视为违约；声明 ``tier`` 字段永不改写）；
+- ``queued_reason``（可选，仅 queued 行）：结构化排队原因
+  ``{kind, detail?, blocking_id?}``——``waiting_card`` 必带 ``blocking_id``
+  （被等卡 id）；过渡期也接受纯字符串形（web/src/steer.ts 双兼容）；
+- ``steers``（可选 list，运行行）：owner 捎话（steer）回执台账，每条
+  ``{text, ts, status, delivered_at}``——``ts`` 为 ISO 字符串（带时间戳的
+  dedup key，重复文本合法），status=delivered 必带 ISO delivered_at，
+  其余状态必须为 null（诚实投递状态，绝不假装送达）。
+
 All names, repos, quotes and drafts below are fictional (example-bench,
 inkweld, alex.doe, sam.rivera…) — never real coworker or company data.
 
@@ -33,11 +52,20 @@ import json
 import sys
 from pathlib import Path
 
-SCENES = ("captured", "initial", "approved", "running", "review", "done")
+SCENES = ("captured", "initial", "approved", "running", "steer", "review", "done")
 
 HERO_ID = "R-101"  # the card the --scene flag walks through the pipeline
 
 HOME = "~/Projects/zelin-ai-assistant"
+
+# v-next 词表（TODO(contract): 尚未入 CONTRACT，以 docs/design/vnext-amendments.md
+# 草案为准；validator 与 demo 数据共用这一份，改这里两边同步）。
+# origin_trust 与 act/lib/risk.py TRUST_* / store2 schema.sql CHECK 集合对齐
+# （信任矩阵更细的 self_dm/meeting/ai 档在 wire 上折叠为 hand/external/缺席）。
+ORIGIN_TRUST = ("hand", "external")
+TIER_RANK = {"T0": 0, "T1": 1, "T2": 2}
+QUEUED_REASON_KINDS = ("waiting_card", "waiting_budget")   # web/src/steer.ts 词表
+STEER_STATUSES = ("queued", "delivered", "dropped")
 
 
 def _iso(t: dt.datetime) -> str:
@@ -68,6 +96,8 @@ def _hero_card(now: dt.datetime) -> dict:
         "target_kind": "existing",
         "tier": "T1",
         "tier_hint": "一键可批",
+        # meeting/audio-born → 信任矩阵中间档：要人批但不提级——wire 上表现为
+        # 「无 origin_trust 字段」（词表只有 hand/external，缺席即中间档）
         "hardness": "hard",
         "deadline": deadline,
         "days_left": (dt.date.fromisoformat(deadline) - now.date()).days,
@@ -117,6 +147,9 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
             "target_kind": "new",
             "tier": "T2",
             "tier_hint": "需文字确认",
+            # 外部渠道催生（sales/客户）→ external；声明已是 T2，提级无感
+            "origin_trust": "external",
+            "effective_tier": "T2",
             "hardness": "hard",
             "deadline": deadline_t2,
             "days_left": (dt.date.fromisoformat(deadline_t2) - now.date()).days,
@@ -155,7 +188,12 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
             "target_name": "workbench",
             "target_kind": "existing",
             "tier": "T1",
-            "tier_hint": "一键可批",
+            "tier_hint": "外部来源提级，需文字确认",
+            # W17 展示位：gmail（外部渠道）铸卡 → effective_tier 提到 T2 且
+            # 强制 plan 展开（act/lib/risk.py effective_tier）；声明 tier 保持
+            # T1 不被改写（add-only，不动老字段语义）
+            "origin_trust": "external",
+            "effective_tier": "T2",
             "hardness": "soft",
             "deadline": _date(now, 3),
             "days_left": 3,
@@ -208,6 +246,8 @@ def _running(now: dt.datetime) -> list[dict]:
             "agent_name": "fix flaky e2e retries",
             "cwd": "~/Projects/example-bench",
             "state": "working",
+            # 手打卡（quick capture 直跑框）→ 信任矩阵 auto-dispatch 档
+            "origin_trust": "hand",
             "started_at": e - 1500,
             "summary": "e2e 套件里 3 个用例偶发超时，加统一的 retry + 诊断日志。",
             "plan": [
@@ -231,6 +271,11 @@ def _running(now: dt.datetime) -> list[dict]:
             "dod": ["新人照 README 十分钟内跑起来"],
             "delivery_mode": "repo",
             "dispatch_error": None,
+            # Slack self-DM 铸卡 = owner 亲笔 → 盖 hand（auto-dispatch 档）；
+            # 今日预算耗尽先排队，UI 由 kind 渲染「排队中 · 等预算」chip
+            # （结构化原因走闭集 kind，非自由文本——web/src/steer.ts 词表）
+            "origin_trust": "hand",
+            "queued_reason": {"kind": "waiting_budget"},
         },
         {
             "id": "R-107",
@@ -241,6 +286,7 @@ def _running(now: dt.datetime) -> list[dict]:
             "agent_name": "dataset v2 loader shim",
             "cwd": "~/Projects/example-bench",
             "state": "working",
+            "origin_trust": "hand",
             "started_at": e - 7200,
             "summary": "数据集 v2 换了 schema，加兼容层让老评测脚本不用改。",
             "plan": ["对比 v1/v2 schema 差异", "写字段映射兼容层", "老脚本回归全过"],
@@ -468,6 +514,9 @@ def _hero_queued(now: dt.datetime) -> dict:
         "dod": h["dod"],
         "delivery_mode": "repo",
         "dispatch_error": None,
+        # 同仓 R-105 还在跑 → 排队等它；UI chip「排队中 · 等 R-105」
+        # （meeting-born 卡无 origin_trust 字段——中间档，人批后照常排队派发）
+        "queued_reason": {"kind": "waiting_card", "blocking_id": "R-105"},
     }
 
 
@@ -492,6 +541,33 @@ def _hero_running(now: dt.datetime) -> dict:
         "delivery_mode": "repo",
         "last_error": None,
     }
+
+
+def _hero_steer(now: dt.datetime) -> dict:
+    """scene=steer——R-101 executing 途中 owner 在卡上留了两条捎话（steer）：
+    第一条已经过 §44.3 送达点注入会话（delivered，带 ISO delivered_at），
+    第二条还在等安全窗口（queued，delivered_at 必须为 null）——投递状态诚实
+    可见，绝不假装已送达。ts 是 ISO 字符串（带时间戳的 dedup key：同文重申
+    是新指令，web/src/steer.ts 只认 string ts）。"""
+    card = _hero_running(now)
+    e = _epoch(now)
+    card["started_at"] = e - 900
+    card["dispatched_at"] = e - 960
+    card["steers"] = [
+        {
+            "text": "导出格式优先 markdown，png 可以放到后续 PR",
+            "ts": _iso(now - dt.timedelta(seconds=600)),
+            "status": "delivered",
+            "delivered_at": _iso(now - dt.timedelta(seconds=540)),
+        },
+        {
+            "text": "报告文件名里带上日期，方便归档",
+            "ts": _iso(now - dt.timedelta(seconds=60)),
+            "status": "queued",
+            "delivered_at": None,
+        },
+    ]
+    return card
 
 
 def _hero_review(now: dt.datetime) -> dict:
@@ -559,6 +635,8 @@ def build(scene: str, now: dt.datetime | None = None) -> dict:
         running = [_hero_queued(now)] + running
     elif scene == "running":
         running = [_hero_running(now)] + running
+    elif scene == "steer":
+        running = [_hero_steer(now)] + running
     elif scene == "review":
         review = [_hero_review(now)] + review
     elif scene == "done":
@@ -623,6 +701,86 @@ def _check_str(problems: list, where: str, item: dict, *keys: str) -> None:
             problems.append(f"{where}.{k}: required non-empty string")
 
 
+def _check_origin_trust(problems: list, where: str, item: dict) -> None:
+    # 可选字段（老 dashboard 没有）；一旦出现必须落在枚举内
+    v = item.get("origin_trust")
+    if v is not None and v not in ORIGIN_TRUST:
+        problems.append(f"{where}.origin_trust: must be one of {ORIGIN_TRUST}")
+
+
+def _check_effective_tier(problems: list, where: str, item: dict) -> None:
+    et = item.get("effective_tier")
+    if et is None:
+        return
+    if et not in TIER_RANK:
+        problems.append(f"{where}.effective_tier: must be one of "
+                        f"{tuple(TIER_RANK)}")
+        return
+    tier = item.get("tier")
+    if tier in TIER_RANK and TIER_RANK[et] < TIER_RANK[tier]:
+        problems.append(f"{where}.effective_tier={et} below tier={tier} — "
+                        f"W17 escalation is one-way (提级不降级)")
+
+
+def _check_queued_reason(problems: list, where: str, item: dict) -> None:
+    qr = item.get("queued_reason")
+    if qr is None:
+        return
+    if item.get("state") != "queued":
+        problems.append(f"{where}.queued_reason: only queued items may carry it")
+    if isinstance(qr, str):
+        # 过渡期纯字符串形（web/src/steer.ts 双兼容）——非空即可
+        if not qr.strip():
+            problems.append(f"{where}.queued_reason: string form must be "
+                            f"non-empty")
+        return
+    if not isinstance(qr, dict):
+        problems.append(f"{where}.queued_reason: must be an object "
+                        f"{{kind, detail?, blocking_id?}} or a string")
+        return
+    if qr.get("kind") not in QUEUED_REASON_KINDS:
+        problems.append(f"{where}.queued_reason.kind: must be one of "
+                        f"{QUEUED_REASON_KINDS} (closed list — UI 由 kind 渲染)")
+    for k in ("detail", "blocking_id"):
+        if qr.get(k) is not None and not isinstance(qr[k], str):
+            problems.append(f"{where}.queued_reason.{k}: string or null")
+    if qr.get("kind") == "waiting_card" and not (
+            isinstance(qr.get("blocking_id"), str) and qr["blocking_id"]):
+        problems.append(f"{where}.queued_reason.blocking_id: waiting_card "
+                        f"must carry the blocking card id")
+
+
+def _check_steers(problems: list, where: str, item: dict) -> None:
+    notes = item.get("steers")
+    if notes is None:
+        return
+    if not isinstance(notes, list):
+        problems.append(f"{where}.steers: must be a list")
+        return
+    for j, n in enumerate(notes):
+        nw = f"{where}.steers[{j}]"
+        if not isinstance(n, dict):
+            problems.append(f"{nw}: not a dict")
+            continue
+        if not isinstance(n.get("text"), str) or not n["text"]:
+            problems.append(f"{nw}.text: required non-empty string")
+        if not isinstance(n.get("ts"), str) or not n["ts"]:
+            problems.append(f"{nw}.ts: required ISO string — the "
+                            f"timestamp-bearing dedup key (verbatim repeats "
+                            f"are legitimate steers; web parser drops rows "
+                            f"without a string ts)")
+        status = n.get("status")
+        if status not in STEER_STATUSES:
+            problems.append(f"{nw}.status: must be one of {STEER_STATUSES}")
+        elif status == "delivered":
+            if not isinstance(n.get("delivered_at"), str) or not n["delivered_at"]:
+                problems.append(f"{nw}.delivered_at: delivered notes must "
+                                f"carry an ISO string (honest status)")
+        elif n.get("delivered_at") is not None:
+            problems.append(f"{nw}.delivered_at: must be null unless "
+                            f"status=delivered (honest status)")
+
+
 def validate(dash: dict) -> list[str]:
     problems: list[str] = []
     if not isinstance(dash, dict):
@@ -654,6 +812,8 @@ def validate(dash: dict) -> list[str]:
             if not isinstance(c.get(k), list):
                 problems.append(f"{w}.{k}: required list")
         _check_sources(problems, w, c.get("sources") or [])
+        _check_origin_trust(problems, w, c)
+        _check_effective_tier(problems, w, c)
         if c.get("cost_usd") is not None and not isinstance(c["cost_usd"], (int, float)):
             problems.append(f"{w}.cost_usd: number or null")
 
@@ -662,6 +822,9 @@ def validate(dash: dict) -> list[str]:
             w = f"{sec}[{i}]"
             _check_str(problems, w, t, "id", "name", "state")
             _check_epoch(problems, w, t, "started_at", "dispatched_at", "accepted_at")
+            _check_origin_trust(problems, w, t)
+            _check_queued_reason(problems, w, t)
+            _check_steers(problems, w, t)
             if t.get("state") == "queued":
                 for k in ("session_id", "copy_cmd", "short_id"):
                     if k in t:
@@ -679,6 +842,7 @@ def validate(dash: dict) -> list[str]:
         if not isinstance(r.get("dod"), list):
             problems.append(f"{w}.dod: required list")
         _check_sources(problems, w, r.get("sources") or [])
+        _check_origin_trust(problems, w, r)
         _check_epoch(problems, w, r, "dispatched_at", "review_at")
         if r.get("delivery_mode") not in ("chat", "repo"):
             problems.append(f"{w}.delivery_mode: must be 'chat' or 'repo'")

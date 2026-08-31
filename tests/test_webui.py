@@ -245,6 +245,15 @@ class WebUITestCase(unittest.TestCase):
         self.assertEqual(list(config.INBOX_DIR.glob("*.json")), [])
 
     def test_capture_mode_run_forwarded(self):
+        # v-next W18（修订 §41，docs/design/vnext-amendments.md）：webui 是
+        # 网络 ingress，mode:"run" 直跑默认降级为 propose——本判例的原始目的
+        # （web 客户端不被锁在 §34 直跑流之外）保留，但如今需要 config 显式
+        # opt-in 才放行。default-off 的降级行为由 tests/test_webui_remote_gate
+        # 全面钉死；这里只钉「开闸后原样转发」这半边。
+        config.CONFIG_PATH.write_text(
+            "remote:\n  allow_direct_run: true\n", encoding="utf-8")
+        self.addCleanup(lambda: config.CONFIG_PATH.exists()
+                        and config.CONFIG_PATH.unlink())
         status, _ = self._post(
             {"action": "capture", "text": "run it now", "mode": "run"})
         self.assertEqual(status, 200)

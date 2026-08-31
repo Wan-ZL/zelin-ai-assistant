@@ -35,6 +35,11 @@
    （+ iOS 两个 pin）；release tag 必须与它逐字一致。（CI 版本门 + release.yml tag-match 门）
 9. **隐私分层**：用户工作数据（卡片、笔记、凭证）永不进 repo/上传面；遥测默认
    最小化且可全关。（.gitignore 的 state//registry 规则；docs/PRIVACY.md）
+   **修宪（v0.48，2026-08-31，localhost 例外）**：本条隐含的「本机零监听端口」
+   原则新增唯一例外——`server/` 的 web 看板面：bind **硬编码 127.0.0.1**、零
+   上传、交付物路径 server 端推导（三道闸与全部边界见 §49）。任何非回环监听、
+   任何新增上传面仍属违宪。（tests/test_server_actions.py::BindHostTestCase
+   钉 bind 字面量）
 10. **打扰要有资格**：主动打扰用户的面（提案卡/通知）只留给「需要人才能推进」的
     事；拿不准的落备选静默过期，重复的静默并入。（§44；§45 LIMITED 语义）
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
@@ -88,12 +93,19 @@
 - 顶层新分区 `archived: [{id, title, summary, kind("debt"|"suggestion"), archived_at(str|null), archive_reason("user"|"auto"|null), prev_status(str|null), type, hardness}]`（`load_archived()`，按 `archived_at` 降序 cap 50，`act/lib/dashboard.py` `ARCHIVED_CAP`；镜像回收站 `trash[]` 行 + archive 三字段）；`counts.archived` = **真实总数**。archived 卡**不进**任何看板列（same as trash）。
 - `needs_approval[]` 每项加 `reraised`(bool，= truthy `execution.reraised_at`) + `reraised_note`(str)——「回锅」marker：这张提案来自一张你已验收过的卡的 re-raise，App 显 amber「↩︎ Returned」badge + `reraised_note` 的新诉求。
 
+**v0.48 新增字段（v-next 修宪批次，全部 add-only optional；Swift `decodeIfPresent` / web 防御性解析）**：
+- `needs_approval[]`（含 raising 占位项）加 `effective_tier`(str，**恒在**：无 `origin_trust` 章时逐字等于 `tier`，`origin_trust=="external"` 时恒 `"T2"`，语义见 §50)、`origin_trust`(str，四值词表见 §50，缺章整键省略)、`auto_dispatch_block`(str = §51 reason token，无阻塞整键省略)。
+- `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`waiting_budget`|`concurrency`，词表与映射见 §51）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
+- `running[]` / `needs_input[]` 行加 `steers: [{text, ts, status, delivered_at}]`（§44.3-S 投影）：`status ∈ {queued, delivered, dropped}` 开放枚举（dropped 现行不投影，值保留 forward-compat）；`status=="delivered"` 必带 ISO `delivered_at`，其余为 null——诚实投递状态，绝不虚报送达。**`ts` 为 ISO 字符串**——显式偏离本节「dashboard 输出 epoch int」惯例（M8.3 C-4）：ts 是 steer dedup 键的组成部分，投影保原文才能与 `execution.*` 台账逐字对账；web 端无 string ts 的行整行丢弃（绝不渲染无法对账的 steer）。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
 {"id":"R-001","action":"approve","comment":null,"ts":"2026-07-06T20:12:00Z"}
 ```
 `action` ∈ `approve` | `reject` | `comment`。`comment` 动作携带 `comment` 文本（= 💬 修改方向，actd 把它并入需求的 plan/notes 并保持 card_sent 等重新审批）。
+
+**v0.48 追记（T-17）**：上行动词清单是 v0.1 化石，形状示例仅作历史保留——动作**全集与语义见 §10**（+ `set_title`/`split_note` 特形分支；actd `_apply_decision` elif 链即白名单）；字节形以 Mac `JSONSerialization [.prettyPrinted, .sortedKeys]` 产物为准（golden 集 `tests/fixtures/inbox/`，33 件；提取稿 docs/design/inbox-actions.md）。HTTP 写入面落盘的文件另带 ingress 落款 `via`（add-only，见 §50）；Mac 文件无 `via` = owner-local。
 
 ## 4. 执行器派发（actd → claude）
 
@@ -143,6 +155,8 @@ debt item 新增 `summary`（同上，大白话）。
 - "展开详情 ▸" 切换 → 显示带小标题的两块：**「需求来自」**(sources，灰字原话) 和 **「要做什么」**(plan，编号)。折叠为默认。
 - 目的：不展开就能一眼看懂；灰/黑差异由显式小标题承载，不靠颜色猜。
 
+**v0.48 引用注（W17，本文见 §50）**：审批与调度层的生效档位自 v0.48 起读派生值 `effective_tier`（`origin_trust=="external"` 的卡强制按 T2 对待 + 强制 plan expansion），声明字段 `tier` 在 registry YAML 里原样不动；T2 typed-confirm 闸门（Mac/web，§41）应读 `effective_tier` 而非 `tier`。
+
 ## 8. 欠账 → 建议 循环
 
 - debt 行新增两个按钮：
@@ -184,6 +198,8 @@ debt item 新增 `summary`（同上，大白话）。
 
 **v0.20.0 archive/unarchive**：archive 仅允许 `delivered`/`detected`(Q2)→`archived`，记 `prev_status`+`archived_at`+`archive_reason`(`"user"`|`"auto"`)；其余状态幂等 no-op。`archived` 语义=完成且封存：排除 `merge_or_new` 匹配（同 trashed/rejected）、对 triage/capture LLM 不可见、relocate 到 `act/registry/archive/` 子目录（退出 hot `_iter_files` 扫描）、NEVER purge。后续相关信息开新卡而非 re-raise 本卡。`unarchive` 回 `prev_status`(usually delivered)，文件移回 active dir、清 archive 字段。**关键（数据安全）**：`next_id()` 与 `load()` 都用 `include_archived=True` 扫 archive 子目录，防新 id 碰撞覆盖归档卡；dashboard/matching 仍默认 `include_archived=False`。archived 进 dashboard 新分区 `archived[]`（`load_archived()`，按 `archived_at` newest-first cap，`counts.archived` 为真实总数），不进任何看板列（同回收站）；build-loop 有 archived skip guard 兜底。auto-archive(`archive_stale`)**首发默认 off**（`archive_after_days=0`）：只封存冷 `delivered`（跳过带未来 deadline / cluster 内有 open sibling / 近期活动的卡），daily gate 防重跑——长期静默的移民/EB-1A matter 默认不被自动封存。
 
+**v0.48 修订（W1.c，改上行 archive 条款的默认值，其余逐字保留）**：`archive_after_days` 内置默认 **0 → 30**（config `archive.after_days`；设 0 = 恢复永不自动封存的原行为）。依据 = §38.4 配额反转后，冷 delivered 卡留在 active registry 的代价变成挤占 closed recency 槽位（`_CLOSED_RECENCY_CAP=20`）——冷卡越多，近期 closed 卡越早被挤出匹配窗口。原有全部保护不动：只封存冷 `delivered`、跳过带未来 deadline / cluster 内有 open sibling 的卡、时间戳不可解析的卡永不自动归档（保守）、once-per-24h sweep gate、`unarchive` 可逆（宪法第 2 条）。（tests/test_actd_wire.py 的 archive_stale 判例）
+
 **v0.20.0 re-raise（prior-accept = ownership，Q3）**：新 actionable 信息命中未归档 completed（`delivered`/`merged`）线程 → same_task（title 对齐=真 restatement）则把**原卡翻回 `card_sent`（提案）**、折 source、`repeated_mentions`+1、记 `execution.reraised_at`+`reraised_note`、summary 追加「· 新增:…」；same_task=False（同 thread 不同任务，仅 `thread_key` 命中）则开继承 `thread_id` 的 follow-up 子卡（`card_sent`），**不翻原卡、不污染其标题**。pure restatement / `needs_action=false` / 无新增量 只 bump 不翻。re-raise 前先 `canonical` 到主卡重判 `is_resolved`，绝不把 running/queued/review 卡拽回 card_sent；canonical dead-end 在 trashed/rejected/archived 则回退开新卡。两入口（`merge_or_new` 确定性 backstop + `apply_triage`/`_apply_relates_to` LLM 路径）共用 `registry.reraise_or_followup`。dashboard 的 `needs_approval` 行带 `reraised: bool` + `reraised_note`，App 显「↩︎ 回锅」badge；通知走 `notify.msg_reraised`。（thread_key 只来自 external ref：`gmail:<X-GM-THRID>` / `slack:<thread_ts>`，无强信号=None、绝不 fuzzy——见 `registry.derive_thread_key`。）
 
 **v0.20.0 re-raise 修订（2026-07-15，add-only）**：翻回 `card_sent` 时同步把已完结轮次的 `execution.session_id` 归档为 `reraised_session_id` 并删除，连同删 `execution.done`——否则重新批准后 `dispatch_approved` 会把新一轮当 "already dispatched" 跳过，卡永远停在排队、没有 agent 也没有任何报错；其余轮次账目（`accepted_at`/`delivered_summary` 等）留作历史。两入口共用的 `registry.reraise_or_followup` in-place re-raise 分支为唯一落点。
@@ -201,6 +217,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 **附件 GC（actd housekeeping，日频）**：marker `state/attachments_gc_marker` 的 mtime 节流 24h（尝试即消耗当日预算，§26 同款）；删两个附件目录中「**无引用且 mtime > 30 天**」的文件。引用源 = registry 全部卡（含 trash 状态与 `archive/`——归档卡是真实工作数据）的 `execution.attachments` + `state/feedback/*.json` 的 `images`（realpath 归一，容忍 symlink home）。**fail safe（引用不可见就不删）**：registry 侧逐文件 strict 解析（不走 load_all 的静默跳过），任一 yaml 读不出/解析失败 → 本 pass **整体零删除**；feedback 侧任一记录读不出（IO/坏 JSON/非 dict）→ 本 pass 跳过 `state/feedback/attachments/` 的清扫（`state/attachments/` 照常）。
 
 **telemetry 边界**：图片与本机路径**永不上传**——feedback 上传 payload 只追加 `image_count`（见 §29bis）；`inbox_answer_input` 的 capture_input-gated `text` 先剔除附图行再入账（附图行是机器生成、含本机用户名/目录结构，不属于 docs/TELEMETRY.md 承诺的「用户输入文本」；投递给 session 的原文不动）。
+
+**v0.48 追记（T-18，`rework` 空反馈冻结字面量——客户端行为，三端逐字一致）**：`rework`（打回，`review → executing`，反馈经 `executor.rework` 送回原 session）在用户留空反馈时，**客户端**必须以下列固定自查指令替换空串再落 inbox（Mac AppDelegate 既有行为升格为法条；web/iOS 复刻同一字面量；actd **不做**此替换——不复刻则空打回被当空 comment 处理，语义走样）：「Zelin 打回了这次交付但没有写具体理由。请对照本需求的 definition_of_done 逐条自检：每一条是否真正达成、产出物是否在承诺的位置、质量是否达到可直接使用的程度。找出差距，自行改进后重新交付，并用两三句话说明这次改了什么。」
 
 ---
 
@@ -226,6 +244,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 
 **§14bis 命令后备通道（v0.45，Zelin 2026-07-22 拍板「app password 可用就配置；不可用就定时走 MCP/CLI 主动抓取」的第二分支）**：config 新增 `sources.gmail: {fetch_command?}`（override 键 `gmail_fetch_command`，扁平 + 嵌套两形皆收）。非空即赢过 IMAP——配置了命令就是明确选择；此时**无 app password 也不再 `no_credentials` no-op**。契约（`fetch_via_command`）：命令经 `shlex` 解析为 argv 直接执行（不过 shell；管道写进目标脚本里），env 带 `GMAIL_RADAR_LAST_UID`=当前 marker，stdout 输出 JSON 数组 `{uid:int 单调递增, from, subject, date, message_id, body, gmail_thread_id?}`；`uid <= marker` 在雷达侧丢弃但仍推进 marker（与 IMAP 同规）；dict 层预过滤 = noreply 发件人 + `Accepted:` 日历回执（List-Unsubscribe 等 MIME-only 信号由命令侧自理）。超时 300s。失败分类进健康词表（add-only）：`command_failed`（跑不起来/非零退出/超时）/ `command_bad_output`（stdout 不是 JSON 数组）——绝不与「没有新邮件」混淆，App 设置页照 §15.3 映射成大白话。`--check` 在命令模式下只验证可执行文件可解析（无登录可测）。抓取之后的 triage 管线与 IMAP 路径逐字同一条。
 
+**v0.48 追记（F1，毒邮件围栏——宪法第 11 条；live 事故 2026-08-31）**：一封 `Date` 头畸形的邮件曾让 email 库在 header 惰性解析处抛 `TypeError`，整个 gmail pass 崩掉且每轮卡在同一封上。自 v0.48 起 IMAP 路径的 **per-message 解析整段围栏**（`message_from_bytes`、header 访问、预过滤、字段组装）：任一步抛异常 → 该邮件按已放弃记入既有雷达重试台账 `state/radar_failed.json`（键 `gmail:uid:<n>`，`gave_up:true`——marker 已推进、无重试语义，纯案底）+ analytics `radar_message_failed{source,uid,error:<异常类型名>}`（error 只带类型名不带 message——异常文本可能内嵌邮件头内容，宪法第 9 条），pass 照常继续。案底键自带 20 条上限（uid 序挤最老）；obsidian 雷达的「note 已删除 → 销案」对账对 `gmail:uid:*` 前缀豁免（非 note 路径，销案 = 留痕形同虚设）。留痕两路皆 best-effort，失败只吞掉。判例：tests/test_radar_gmail.py::PoisonMessageTestCase、tests/test_radar.py::PoisonLedgerReconcileTestCase。
+
 ## 15. 主窗口（menu bar 之外的正经窗口）
 菜单栏加"打开主窗口"；窗口可关（app 继续后台跑，accessory 不变）。四个区：
 1) **依赖检查**：逐行 Node/npx 与录制引擎存活（引擎经 `npx screenpipe@<pin>` 运行，v0.11 起不再检查 /Applications/Screenpipe.app）、claude CLI、gh、PyYAML、Obsidian vault 路径、Slack token、Gmail 密码 —— ✅/⚠️ + 按钮（打开下载页 URL 或 reveal 路径）。"车跑之前轮子都得在"。
@@ -247,7 +267,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **Telemetry 覆写（add-only 补充，docs/TELEMETRY.md）**：设置页「产品改进计划」区写嵌套形式 `{"telemetry": {"enabled": …, "level": …}}`（与首启权限页同一 override 键；扁平 `"telemetry.enabled"` / `"telemetry.level"` 两个点号键 Python 侧同样接受），`config.load_config()` 最后合并（优先级最高，覆盖 config.yaml `telemetry:` 块）：
   - `enabled`（Bool）——匿名使用统计上传总开关。**默认 true（默认开 + 明确可关）**。
   - `level`（`"basic" | "detailed"`，默认 `"basic"`）——上传粒度。非法值一律按 `"basic"` 处理。只有 `"detailed"`（用户主动 opt-in）允许 dispatch / delivery 事件携带 ≤200 字符的指令/交付摘要字段（emit 端 gate：basic 级这些字段根本不写入 events.jsonl，因此也永不上传）。**v0.18 修订（见下条 capture_input 追加）**：detailed 单独不再附带任何内容字段——内容一律再要求 capture_input，本行仅作历史语义记录。
-  - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `sanitize._SECRET_PATTERNS` 掩码，独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。
+  - **v0.18 追加（add-only）**：`capture_input`（Bool，**默认 true**；level 的内置默认同时改为 **detailed**）——「输入文本上传」开关，第三个 telemetry 子键（嵌套 `{"telemetry": {"capture_input": …}}` 与扁平 `"telemetry.capture_input"` 均接受，`_apply_settings_overrides` 允许列表同步扩为 enabled / level / capture_input 三键；`supabase_url` / `key_path` 仍 config.yaml-only）。语义：`capture_input=true` **且** `level="detailed"`（出厂默认两者皆真；`Config.capture_input_active()` / Swift `Telemetry.contentCaptureActive()`，任一为假即关）时，用户**输入进本 App 的文本**字段（capture 文本、Ask 问题、卡片评论/打回反馈、看板搜索词、用户批准的派发摘要）以 `analytics.clip(…, CONTENT_CLIP=500)` 截断后附在对应事件上；`review_promoted.summary`（交付摘要 = 模型输出节选）自 v0.18 起**整体退役**、不迁入本开关（该事件只剩 exec_s 等元数据）；emit 端 gate，开关未同时打开时这些字段不写入 events.jsonl。**边界（真实性红线）**：收集范围只限用户亲手输入进本 App 的文字——模型输出、屏幕录制内容、邮件与 Slack/iMessage 消息正文（第三方私人通信）、密钥在任何设置下都不收集（字段表见 docs/TELEMETRY.md；因默认收集输入文本，一切披露文案不得声称「不含个人文本」，tests/test_telemetry_level.py 的 honesty drift-guard 检查 Permissions/Settings 文案）。首启呈现同步修订：v0.13 的「匿名使用统计」复选框改为**一行诚实披露（明说含你输入的文本）+ 「详情与关闭在设置」链接**（TelemetryBlockView；`telemetry_consent` 事件随复选框退役），开关全部集中在设置页「产品改进计划」（同一 override 键形状，含单独的「上传我输入的文本」开关）；consent-surface 标记文件 `state/telemetry_consent_shown` 的写入时机与语义不变（披露行首次展示时写入，展示前 analytics_sync 一律不上传）。四条收紧（同版）：①**内容 v2 consent 门**——输入文本字段额外要求标记 `state/telemetry_consent_shown_v2`（仅首启披露行/设置向导的披露块首次渲染时写，`TelemetryConsent.markSurfaceShownV2`；设置页**不**被动写标记——非 lazy VStack 的 .onAppear 在开页即触发、不代表该节真被看到），或 capture_input 被**显式**配置（`Config.telemetry_capture_input_explicit`；设置页「上传我输入的文本」开关被切动时以 captureTouched 始终写键、且该键不被无关保存 diff-drop——已记录的知情选择不可被静默撤销）；旧安装升级后行为遥测沿用 v1 标记、内容在 v2 面世或显式落键前一律不发（`analytics.content_gate`）。②**dispatch.instruction 按 provenance 白名单**——仅当卡片全部 sources 的 channel ∈ {quick, quick_capture}（`act/executor.py` `_USER_ORIGIN_CHANNELS`，fail-closed）才附**标题**（模型起草的 plan 退出该字段）；雷达/混合来源卡的派发事件纯元数据。③**内容字段无条件密钥掩码**——`analytics.clip_content`（Swift 侧 `Analytics.clip` 同模式，drift-guard 锁定）在截断前先按 `sanitize._SECRET_PATTERNS` 掩码，独立于一切 redaction 配置。④带媒体的 quick capture 只记用户打字部分（`_typed`），合成图片提示与本地路径不进 telemetry。**（v0.48 修订见下条：capture_input 默认已翻转为 false/opt-in、v2 标记不再单独作为内容同意来源——本条中与此冲突的默认值与文案要求表述仅作历史语义记录。）**
+  - **v0.48 修订（capture_input 默认翻转为 opt-in）**：`capture_input` 的内置默认由 true 改为 **false**——**输入文本上传自此严格 opt-in**（键形状、允许列表、双开关语义、字段表、红线与密钥掩码均不变；`telemetry.enabled` / `level` 的默认与语义不动）。开启的三个等效入口（全部落**显式**键，即 `Config.telemetry_capture_input_explicit`）：①首启「权限体检 / 设置向导」披露块（TelemetryBlockView）新增**默认未勾选**的复选框「分享输入文本以帮助改进产品 / Share typed text to improve the product」，勾选即写嵌套 override `{"telemetry": {"capture_input": true}}`（取消勾选写 false——切动过即为知情选择，同设置页 captureTouched 语义）；②设置页「上传我输入的文本」开关（原语义不变）；③config.yaml `telemetry.capture_input: true`。**consent 语义收紧**：内容收集的同意来源自此**只认显式 capture_input 键**——v0.18 的 v2 标记 `state/telemetry_consent_shown_v2` 继续在披露块渲染时写入（仅作「披露展示过」的记录），但其单独存在**不再**打开内容门（看到披露 ≠ 同意；`analytics.content_gate` / Swift `Telemetry.contentCaptureActive` 同步收紧，测试锁死）。从 v0.18–v0.47 升级且从未显式落键的安装：行为遥测照旧，内容上传自动停止，直到用户勾选/开启一次。首启披露文案同步修订为诚实的 opt-in 表述（行为统计默认开、仅元数据；输入文本默认不传），v0.18 的「因默认收集输入文本，文案必须明说包含」要求随默认翻转失效，替换为「文案不得声称输入文本默认上传」（tests/test_telemetry_level.py honesty drift-guard 同步改判）。v1 标记 `telemetry_consent_shown` 与 analytics_sync 的上传 consent 门（本节 v0.13 条）语义完全不变。
 
 **v0.13 补充（iPhone 联动 / iMessage 设置区，add-only）**：设置页新增「iPhone 联动（iMessage）」区（`mac/Sources/SettingsIMessage.swift`，改动即时生效、不走表单的保存按钮），写两个 §15.3 overrides 键：`phone_channel`（该区只写 `"imessage"` 或 `"none"`）与 `imessage_self_handle`（str，E.164 手机号或 iCloud 邮箱）——两键自 v0.12 起即在 `act/lib/config.py` `_OVERRIDE_FIELDS` 允许列表内，语义见 §13 通道可插拔。App 侧附带职责（不新增数据契约字段）：①开关 = 按 install.sh step 5 相同的占位符替换规则把 `act/launchd/com.zelin.aiassistant.imessageradar.plist` 渲染进 `~/Library/LaunchAgents/` 并 `launchctl load`/`unload`（先写 overrides 再 load，保证 RunAtLoad 首轮就能读到 `phone_channel: imessage`）；②状态行读 `state/radar_health.json` 的 `imessage` 条目（契约 E 同形，radar_imessage 每轮写入）+ `launchctl print gui/<uid>/…`，「立即测试一轮」= `launchctl kickstart`（Full Disk Access 的真值只能来自 launchd 语境下 python 的真实运行结果——TCC 按 responsible process 判权限，app 内直接探测会失真）；③「发送测试消息」经 runtime python（CONTRACT §19 指针）调 `act.radar_imessage` 的同一 osascript 发送路径。
 
@@ -1159,6 +1180,25 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   hash）、`delivered.jsonl`（L3 去重）、`applied_cursor.json`（ack-tail 游标）、
   `status.json`（UI 可读的暂停原因）、`pairing_registration.json`（配对产物）。
 - **网络全 best-effort**：任何 network 调用失败只 log、绝不 raise 进循环。
+- **W18 远程直跑闸门（v0.48 add-only，本文见 §41 修订）**：UP 落盘属**网络
+  ingress**——`_write_inbox_file` 在 `_inbox_shape_error` 通过之后、record 落盘
+  之前，对每个 record **恒盖 T-28 落款 `via:"remote"`**（**覆写**而非补缺：
+  payload 自带 `via` 即视为冒充 owner-class 写者，AEAD 只认字节不认身份）。
+  降级本身不在 syncd 做——actd 侧 W18 硬后盾（`_apply_capture`：非 owner
+  ingress 的 `mode:"run"` 一律降级为普通提案 capture）凭该落款执行。syncd 无
+  同步响应信道，诚实声明落在 actd log + 卡片本身照常出现在提案列——任务永不
+  被吞，也绝不谎报「已开跑」。
+- **v0.48 修订（F2，DOWN change-gate 摘要剔除易变字段；live 事故 2026-08-31）**：
+  dashboard.json 每次重建都重打 `generated_at`（内容零变化也打），而 change-gate
+  直接 sha256 原始字节——每次重建 = 一次全量加密快照推送（live 实测 2-4GB/天
+  重复上传）。自 v0.48 起闸门摘要改为「**剔除易变顶层键后的 canonical JSON
+  （sort_keys）**」的 sha256；易变键表 add-only（`_VOLATILE_DASH_KEYS`），首发
+  只含 `generated_at`。推送 payload **仍是原始字节**（`generated_at` 保留给
+  手机端），只有闸门摘要看剥离形；hash 只在本地、绝不上传（原语义不变）。
+  dashboard 不是 JSON object 时退回原始字节摘要（honest fallback：坏 dashboard
+  顶多退回旧的逢重建必推行为，绝不漏推真变化）。升级后首轮因摘要口径切换会多
+  推一次，一次性、无害。判例：tests/test_syncd.py::GateDigestTestCase /
+  DownTestCase::test_generated_at_only_rebuild_pushes_nothing。
 
 ### `state/sync.json`（opt-in 门 + 路由；不存在 = 纯本地）
 ```json
@@ -1198,6 +1238,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
    仅 `review`。防陈旧/重放动作撕走 running 卡 / 提前归档 / 重复返工。
    （`approve`/`done_external`/`abort_execution`/`revert_review`/`stop_to_review`/
    `defer`/`archive`/`unarchive` 早已有 guard，未改语义，只补 `result_status` 返回值。）
+   **v0.48 修订（§44.3-S）**：`comment` 的前置态白名单扩 **`executing`**——
+   owner ingress（Mac 本地 / web 看板落款）的 executing 卡评论不再「折叠 +
+   退回重批」，改走 steer 入队（§44.3-S，状态机零改动）；agent/remote ingress
+   的 comment 只进 notes、**不进 plan**、永不 steer（§50 落款裁决——plan 是喂
+   给 executor 的指令面，非 owner 文本进 plan 等于绕道 steer）。其余状态的
+   comment 语义不变。
 3. **inbox 文件名接受 `<action_id>.json`**：现有 `*.json` glob 已兼容，无需改动
    （`action_id` = 云端幂等键 = 文件名；文件内 `id` 仍是需求 id 如 `R-001`）。
 
@@ -1210,6 +1256,15 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   缺省 = 不做 expected 检查（保持 Mac app 老行为）。
 - `board_seq`(int|absent)：手机所见看板 revision（也进 `e2e` action AAD），provenance/
   staleness 信号；syncd 从 `inbox_actions.board_seq` 行值回填。
+
+**§32.4 常驻 daemon 日志自压缩（v0.48 / F3，add-only；live 事故 2026-08-31：
+`state/syncd.log` 涨到 74MB）**：`state/actd.log` 与 `state/syncd.log` 沿用
+`registry_writes.jsonl` 的既有自压缩模式（§34bis 写入台账）——每次 append 后
+检查，超过 ~1MB 只保留最近半数行（atomic tmp+replace）。实现收敛在
+`act/lib/logcap.cap`（stdlib only）；单写者语义（每个日志只有它自己的 daemon
+写）；压缩 best-effort，任何失败只吞掉、绝不反噬 daemon。launchd 自管的
+`*.launchd.log` / cron 重定向日志**不在此列**（launchd 持 fd，进程内 replace
+会写回旧 inode）。判例：tests/test_logcap.py。
 
 # v0.33.0 additions（车道展示层更名 + Mac 看板两条默认收起的书立条）
 
@@ -1290,6 +1345,15 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 > 由节末 **§34.1** 取代——`mode:"run"` 彻底不做判重并入，**一律新建卡直接开跑**。
 > inbox 形状、fail-safe 语义、交付强制（chat + 默认 workbench）、analytics 与
 > 三端 UI 约定不变，仍以本节为准。
+>
+> **v0.48 引用注（W18，本文见 §41 修订）**：本节的 direct-run 语义只对 Mac app /
+> owner 本机 loopback 输入无条件生效；**网络 ingress**（act/webui.py、
+> act/syncd.py 及未来任何非本进程 UI 信道）默认拒绝 `mode:"run"`——降级为普通
+> 提案 capture，开关 = config `remote.allow_direct_run`（默认 false，
+> settings_overrides **不可**覆盖）。§49 的 `server/`（服务本机浏览器看板的
+> 直跑框）暂不套此闸（M8.3 C-5：loopback 单用户面 = owner 本机输入，信任矩阵
+> hand 档；PR3 远端访问能力落地时同步复议——届时 server 若可从非本机到达，
+> 自动落入「网络 ingress」定义、本闸即刻适用）。
 
 在提案和运行中分别提供输入框，**用户在哪输入就进入哪个 slot**：提案列输入 =
 今天的 capture（雷达 triage → 提案/备选，人批准才跑）；运行中列输入 = 直接开跑。
@@ -1802,6 +1866,26 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - analytics：`auto_merge_suggested{suggestion,primary,secondary}`（metadata
   only）。
 
+### 38.4 喂给匹配器的清单配额反转（v0.48 / W1.a——修订 §2 v0.20.0 时代的 pinning 语义）
+
+- **旧法**：triage/capture LLM 的注册表清单窗口 cap=60；非归档 delivered/merged
+  卡 HARD-PINNED 全量进窗口，open 卡按 R-号 recency 竞争剩余槽位。**病灶**：
+  registry 长大后 closed 卡数量无界、吃满 60 槽，open 卡——triage 唯一真正需要
+  匹配的对象——被挤出窗口，LLM 看不见它们 → 重复建卡、该折叠的折不进去。
+- **新法（配额反转）**：open 卡（非 delivered/merged/trashed/archived）获得
+  **保证槽位**、永不掉窗——open 总数超 cap 时窗口整体超 cap（cap 对 open 卡是
+  目标值不是硬顶）；delivered/merged 按 recency（R-号降序）只填剩余空位，且受
+  独立硬上限 `_CLOSED_RECENCY_CAP = 20`。实现落点 `act/lib/quick_capture.py`
+  `_inventory_reqs()` / `_INVENTORY_CAP` / `_CLOSED_RECENCY_CAP`；§13 self-DM
+  捕获经同一 `_inventory_reqs` 自动继承，无需另改。
+- **recall 兜底改道**：掉出 recency 窗口的老 delivered/merged 卡收到 follow-up
+  时，re-raise 召回由**确定性 `thread_key` 归并**（`registry.derive_thread_key`
+  + `merge_or_new`，§10 v0.20.0 re-raise 条款）承担，不再依赖「LLM 窗口必见」；
+  无外部 thread 引用的冷卡走 §10 的正常出生路（重述从零出卡）。
+- **判例**：tests/test_inventory_quota.py——100 delivered + 8 open：open 永不
+  掉窗、closed 恰取 recency 最高的 20 张；55 open + 100 delivered：closed 份额
+  缩到 5（recency cap 是上限不是配额）。
+
 # v0.39.0 additions（需输入卡可直接回答 — 问题上卡 + 应用内作答）
 
 ## 39. 需输入的 `question` 字段 + `answer_input` 动作（add-only）
@@ -1889,6 +1973,14 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   reason∈working|review|recent|oversize|moved|launch_failed + capture_input
   门控的 text)、executor 侧 `answer_launch`/`answer_failed`（feedback 同款
   形制）。
+- **v0.48 追记（§44.3-S steer 家族，本节红线的延伸）**：本节「回答未投递」冻结
+  行文法新增 steer 变体 `[<date> 追加指令未送达] <原因>；原文：<截 200>`——
+  executing 卡评论（steer，§44.3-S）的任何丢弃路径（3 次注入失败 / 队列溢出
+  挤出 / 会话收工进 review 再无处送）都以该行留痕 + 通知 + analytics
+  `steer_dropped`。「owner 打的字绝不静默蒸发」自此同时覆盖 answer 与 steer；
+  文本上限 4000 code points（本节同款，超限截断保头部）。`OWNER UPDATE:` 前缀
+  与本节 `OWNER ANSWER:` 同一先例——owner 亲打文本不过 `fence_untrusted`
+  （围栏是给外部内容的），runner 侧 secrets scrub 照旧。
 
 ### 39.3 UI（Mac + iPhone 同权；终端降级为次要通道）
 
@@ -2099,6 +2191,34 @@ capture `mode:"run"`），Mac/iOS 早已在写。
   - `mode` 只在 `action=="capture"` 且值恰为 `"run"` 时放行，其余一律 400——
     未定义的 mode 永不落进 inbox 文件（§34 的 str-or-absent 闸门在 webui 前移
     为白名单）。
+  - **v0.48 修订（W18，remote direct-run 默认关）**：`mode` 通过白名单后再过
+    **远程直跑闸门**——`capture mode:"run"` 按 ingress 信道分级：Mac app /
+    owner 本机 loopback 输入照旧无条件放行；**网络 ingress（act/webui.py、
+    act/syncd.py 及未来任何非本进程 UI 信道）默认拒绝 direct-run**。开关 =
+    config.yaml `remote.allow_direct_run`（默认 `false`；
+    `Config.remote_allow_direct_run`），settings_overrides **不可覆盖**（防 UI
+    侧一键打开安全闸门）；判定 canonical = `act/lib/risk.py::
+    remote_direct_run_allowed(cfg)`，config 缺失/解析失败/字段缺失一律视为闸门
+    关（fail-closed），**每请求现读**（开合无需重启）。**拒绝语义 = 降级不报
+    错**：闸门关时收到 `mode:"run"` → 剥掉 `mode` 字段按普通 propose capture
+    落 inbox（提案照常进 triage 三选一闸门），HTTP 200 + add-only 响应字段
+    `notice`（`"direct run is disabled for remote capture
+    (remote.allow_direct_run=false); saved as a proposal"`）——任务永不被吞，
+    也绝不谎报「已开跑」。**opt-in=true 现行语义 = 保留而非放跑**（PR #106
+    终审修订）：闸门开时 `mode:"run"` 原样进 inbox 文件（§34 远端接线预留），
+    但 webui 恒盖 `via:"remote"`（下条 T-28），actd 侧 W18 硬后盾
+    （`_apply_capture`：非 owner ingress 的 `mode:"run"` 一律降级为普通提案）
+    现行**无条件降级**——因此 opt-in 路径的 200 **同样必带** add-only
+    `notice`（reserved 文案：`"remote direct run is reserved: actd downgrades
+    mode:\"run\" from remote ingress; saved as a proposal instead"`），绝不
+    谎报「已开跑」。§34 的 mode 词表校验不变：非 capture 带 mode、或
+    mode ≠ "run"，仍是 400 fail-closed。syncd UP 侧属同一网络 ingress 级：
+    落盘恒盖 `via:"remote"`、降级同样由 actd 硬后盾执行（见 §31 追记）；判例
+    tests/test_webui_remote_gate.py（含「default-deny 降级记录长成 RAISING
+    提案且 `executor.dispatch` 永不被叫」的端到端钉子）。
+  - **v0.48 修订（T-28 ingress 落款）**：webui 落盘的每个 inbox 文件恒带
+    add-only 键 `via:"remote"`（服务端盖章，`via` 不在 `_INBOX_KEYS` 白名单、
+    客户端直发即 400——不可 spoof）；语义与信任裁决见 §50。
 
 ## 42. v0.42.0 卡面大扫除（display-only + 一项 radar 提取范围变化）
 
@@ -2162,6 +2282,65 @@ notes 留痕「背景信息未送达会话」。状态机零改动（不翻 rewo
 pending **与已投递台账**双重去重——crash-retry 重放时第一跑的 briefing 可能
 已被 reconcile（先于 consume_judged）flush 清队，仅查 pending 会让同一段
 背景信息进会话两遍。
+
+**§44.3-S 追加指令中继（steer relay，v0.48 add-only 增补；模块 `act/lib/steer.py`）**：
+
+- **语义**：owner 在 EXECUTING 卡上的 `comment` 动作不再是「折叠评论 + 退回
+  重批」，而是对 live session 的中途转向指令（steer）：入队
+  `execution.pending_steers`，由 actd 在 §39.2 安全窗口经本节 §44.3 同一送达
+  机制 flush 进会话；working + live pid 绝不打断。**状态机零改动**（卡保持
+  EXECUTING，不翻 rework、不动 status，不折叠、不触发重批——判例
+  tests/test_steer_relay.py「EXECUTING 卡评论绝不触发基线 fold」）。仅 **owner
+  ingress**（Mac 本地 / web 看板落款）有 steer 资格；agent/remote ingress 的
+  comment 只进 notes（§50）。
+- **note 形状（新 steer class）**：`{class:"steer", text, ts, key}`，
+  `key = <ts>|<inbox stem>|<sha256(text)[:16]>`——**dedup 键带时间戳 + 文件
+  stem**：同一 inbox 文件重放（unlink 失败）→ 同键去重；同 text 新 ts（owner
+  重申/催促）或同秒两个 inbox 文件（stem 全局唯一）= **新指令**。与 §44.3
+  briefing 的纯文本去重语义就此分道。去重查 pending 与已投递台账
+  （`delivered_steers`）双份；无 stem 的历史/脏条目退回 `<ts>|<hash>` 双段形。
+  `class` 字段与 store2 `notes` 表词表（comment/steer/fold）对齐（§53，dormant
+  期字段先对齐）。
+- **信任级别**：steer 文本 owner 亲打（§50 信任矩阵 hand 起源）——投递 prompt
+  = `OWNER UPDATE:\n` + 逐条列点 + 尾注（course correction for CURRENT task /
+  not a new task / not a rework）；**不过 `fence_untrusted`**（宪法第 5 条附
+  澄清：owner 亲打文本不是「外部文本」，§39.2 `OWNER ANSWER:` 同一先例）；
+  runner 侧 secrets scrub 照旧（防泄密不防注入，两回事）。
+- **wire 字段（`execution.*`，全部 add-only）**：`pending_steers`（note 队列，
+  cap 10，溢出挤最老一条 + notes 留痕）、`delivered_steers`（环形 20，元素
+  `{key, text(截 200), ts, delivered_at}`——M8.3 C-3 定形；**读侧容忍旧裸 key
+  条目**：去重读 key、投影跳过无 text/ts 旧条目，crash 窗口混合形不许崩）、
+  `steer_queued` / `steer_delivered`（时间戳环形各 cap 10——投影「已排队/
+  已送达」的数据源）、`steer_count`（累计送达）、`last_steer_at`、
+  `steer_attempts`（每批 3 次放弃，§44.3 同款）。
+- **flush 窗口（actd reconcile，三处）**：① roster blocked——stop-idle-then-
+  resume 管道（`executor.resume` 的 add-only `prompt=` 形参；stop 前借
+  `executor._briefing_window_open` 做 last-moment fresh roster 探测，窗口已关
+  = 留队下 pass、**不烧尝试次数**）；② 会话已死的 resume 时机——OWNER UPDATE
+  直接作 resume 首条输入，零额外打断；③（丢弃路径）done 晋升 review 时
+  pending steers 再无处送——`drop_trace` 留痕 + 通知 + analytics
+  `steer_dropped{reason:"done"}`。
+- **诚实处置（§39.2 红线的 steer 变体）**：任何丢弃路径（3 次注入失败 / 队列
+  溢出 / 窗口③）都在卡 notes 留 `[<date> 追加指令未送达] <原因>；原文：
+  <截 200>` + 通知——owner 打的字绝不静默蒸发。文本上限 4000 code points
+  （§39.2 同款，超限截断保头部）；非 str / 空白 fail-closed 不入队。入队即在
+  notes 留 `[<date> 追加指令] <text>` 永久印记（steer 台账是环形会轮转掉，
+  notes 不轮转；行文法刻意避开 `[修改方向]`——那是 fold 的印记，steer 不折叠
+  不重批）。
+- **与 briefing 共存**：同一卡同时有 `pending_steers` 与 `pending_briefings`
+  → briefing 先走 `executor.brief` 并让位，steer 等下一个窗口；两批各自独立
+  stop+resume，**永不混进同一个 prompt**（信任级别不同，围栏边界不能混）。
+- **投影**：`steer.steer_status(req)` / dashboard `_steers_view` 给 running/
+  needs_input 行出 `steers[]`（形状见 §2 v0.48 字段块；delivered 环在前 +
+  pending 在后，**dropped 不投影**——可见性由 notes 痕 + notify 承担，
+  `STEER_STATUSES` 保留 `dropped` 值 forward-compat）。server `POST
+  /api/actions` 对 executing 卡 comment 的响应标注见 §49。
+- **analytics**（全部 metadata only，title/正文不进遥测）：`inbox_steer` /
+  `steer_delivered{n}` / `steer_dropped{n, reason∈done|attempts}`。
+- **判例**：tests/test_steer.py（队列/去重/环形/丢弃 21 例）、
+  tests/test_steer_relay.py（外部可观察契约 8 例：flush 后重放去重、dropped
+  不进 `steers[]`、空评论 noop）、tests/test_actd_wire.py（接线 + 同文异 ts =
+  两条新指令）、tests/test_server_steer.py（响应面 + inbox 字节面）。
 
 **§44.4 可逆并入（执行语义）**：副卡限**轻状态**（detected/raising/card_sent
 ——用户已投入的 approved/executing/review 卡永不被静默移除；两张都已投入 →
@@ -2672,3 +2851,379 @@ install.sh 闸门 drift-guard + 非 repo cwd 探针 fail-open）、mac/LogicTest
 ContractRadarSourcesTests（Swift 解码向后兼容）+ DiagnosticsRulesTests
 （48.4 意愿信号矩阵+文案分组 / 48.6 修复卡判据+失败回执保卡+持久化往返+
 优先级让位 / 48.1 面板有效值+过期投影让位于更新的 override）。
+
+# v0.48 additions（v-next 修宪批次：web 看板 / 信任矩阵 / 自动派发 / agent 通道 / store2 地基 / 薄壳）
+
+> 本批次的设计证据链：docs/design/vnext.md（D1 誊本）、docs/design/
+> vnext-amendments.md（ratification-ready 草案 + M8 终裁表）、docs/design/
+> inbox-actions.md（wire 提取稿）、docs/design/transplant-notes.md（v0.47
+> 移植台账）。宪法触及总账见 vnext-amendments.md M8.5（十一条逐条自检）；
+> 唯一动宪法本文的是 §0 第 9 条的 localhost 例外（修宪段落已随本批次落入
+> §0）。同时随本批次入法的在位修订：§2 v0.48 字段块、§3 T-17 追记、§7 W17
+> 引用注、§10 W1.c 修订 + T-18 字面量、§14 F1 毒邮件围栏、§15 telemetry
+> capture_input 默认翻转（opt-in）、§31 W18 追记 + F2 change-gate 修订、
+> §32.2 comment 白名单扩 executing、§32.4 F3 日志自压缩、§34 W18 引用注、
+> §38.4 配额反转、§39.2 steer 家族追记、§41 W18 闸门 + via 落款、§44.3-S
+> steer relay。
+
+## 49. v-next web 面 — 两文件契约的又一客户端（server/ + web/）
+
+**地位**：`server/`（Python 纯 stdlib，独立进程，**非 actd**；`python3 -m
+server`）是 `state/dashboard.json` 的 reader + `state/inbox/*.json` 的 writer，
+与 Mac app / act/webui.py / iOS(syncd) / `act/boardctl.py`（经 server 中转，
+动词面收窄见 §52）同属**合法 inbox 客户端类**；**绝不写 registry/dashboard**
+（宪法第 1 条零触动）。`web/` 是其静态前端（React，构建产物 `web/dist`，由
+server 静态托管；未构建时 "/" 返回占位页）。
+
+**网络面（§0 第 9 条 localhost 例外的执行细则，三道闸）**：bind **硬编码
+127.0.0.1**（常量，绝不做成可配置）；端口 env `ZAI_PORT` 默认 47820；交付物
+路径一律 server 端从卡片记录推导，绝不接受客户端原始路径；本面零上传、零云端。
+PR-current 无 token（localhost 单用户过渡态，代码留 `TODO(PR3): instance
+token` 挂点）；**server 现阶段不辨 actor**——localhost 上任何进程都能 POST
+approve，真正的 actor 墙是 store2 D3 trigger（§53）与 PR3 token（法条口径不许
+比实现更乐观，M8.2）。POST body 上限 1MiB（超限 = HTTP 413 + envelope code
+`INVALID_FIELD`——status 已表意，不为 loopback 面扩词表；M8.2 追认现状，
+`server/app.py` 的 TODO(contract) 就此关闭）。
+
+**路由全集**：
+- `GET /api/board`：dashboard.json **原样透传**（add-only 原则原样，零改写）。
+- `GET /api/cards/{id}`：PyYAML **只读**解析 registry（archive/ **优先**于
+  active——crash-mid-move 残留时 archive 副本 authoritative，registry.load
+  判例）增补 plan/DoD/sources 引文/fold notes/execution 元数据，add-only 合并、
+  绝不覆盖投影字段名。
+- `GET /api/events`：SSE，事件词表仅 `board.updated {generated_at}`；25s
+  heartbeat 注释行；**无重连契约**——客户端断线后全量 refetch；触发 = 300ms
+  mtime 轮询 dashboard.json（`server/watcher.py`）。
+- `POST /api/actions`：动词白名单 = docs/design/inbox-actions.md §2+§3 目录
+  （T-2 终裁：实现即白名单）；JSON 形状/文件命名/stem 幂等/tmp+rename 原子写
+  与 Mac `Store.swift` 产物**逐字节等价**（golden 33 件 `tests/fixtures/
+  inbox/` 钉死；`\/` 转义与空数组三行渲染是最大雷点）；未知 JSON 字段一律
+  400 `UNKNOWN_FIELD`（zero-tolerance）；`ts` 由 server 重打防 spoof；落盘
+  文件恒带 `via:"web"`（capture/comment 带传输面字段 `actor:"agent"` 时改
+  `via:"agent"`，见 §50/§52——`actor` 不落盘，`via` 客户端直发 = 400）。
+  **响应 add-only 键 `steer`(bool)/`steer_status`**：`action=="comment"` 且
+  目标卡按投影判定为 executing 且 owner ingress → `steer:true,
+  steer_status:"queued"`——server 落盘即排队只能诚实报 queued，delivered/
+  dropped 由投影回流，**server 永不虚报送达**；agent ingress 的 comment →
+  `steer:false`（不 steer 是实际裁决）；投影读不到/卡不在 executing 面一律
+  不标（宁可漏标，不误标）。
+- `GET /files/deliverables/{card_id}/{name}`：交付物静态服务。`name` = 纯
+  basename（空/超长/NUL/任何路径分隔符/点号开头一律 400，dotfile 永不外发）；
+  card_id 过 SAFE_ID 白名单。**安全头（同源交付物绝不裸发）**：
+  `Content-Security-Policy: sandbox`（html/htm 额外 `allow-scripts`——直接
+  导航到交付物 URL 时文档落进 opaque origin，拿不到 /api 同源面）；非预览
+  类型（内嵌允许集 = html/htm/md/markdown/txt/png/jpg/jpeg/gif/webp）加
+  `Content-Disposition: attachment`；**svg 刻意不在内嵌集**（可携带脚本，
+  一律 attachment）。
+- `POST /api/reveal {card_id}`：server 端推导交付物目录后 `open -R`（macOS
+  访达定位——owner 决策「分享 = 访达定位拖拽」的实现面）；非 darwin = 501 +
+  envelope code `NOT_IMPLEMENTED`（词表 add-only 收编，M8.2 第 3 条）。
+
+**error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
+词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
+`NOT_IMPLEMENTED`（add-only）。
+
+**UI 语义（web 看板）**：看板列 = 审批状态机的投影（分区 → 列映射见
+docs/design/vnext.md §4，含「待办与运行中合并」的 owner 决策：running 混
+queued 灰卡 + needs_input 行排最前）；**没有拖拽换状态**——一切转移 = 显式
+按钮动词，一一对应 §10 全集；T2 批准走键入确认且**读 `effective_tier`**
+（§41 confirmT2 + §50）；rework 空反馈复刻 §10 T-18 冻结字面量；HTML 交付物
+只经 `<iframe sandbox="allow-scripts">` 渲染（**永不 `allow-same-origin`**）。
+过滤/搜索是纯客户端展示行为、不产生 wire 动作，不入本契约（T-21）。
+
+**依赖澄清（宪法第 7 条执法注，T-3 裁 A 案：条文零改动）**：web/ 的 npm 依赖
+（运行时仅 `react`/`react-dom`；dev 限 `vite`/`@vitejs/plugin-react`/
+`typescript`/`vitest`/`jsdom`/`@testing-library/react` + 纯类型包
+`@types/react`/`@types/react-dom`，T-20）属**构建/测试侧**，交付物为静态文件、
+由 server/（纯 stdlib）服务；Python 管线运行时白名单 stdlib + PyYAML 不变。
+mermaid **不进**白名单，保持禁用降级（code block 展示，T-23）。Fork 纪律：
+来源 `chuspeeism/dashi-taskboard`（Apache-2.0），凡搬运在根 `NOTICE` 登记。
+
+**随迁移保留的不变量**（本节存在不松动它们）：§45 屏幕永不铸卡（web 面无新
+发起渠道）、`sanitize.fence_untrusted`（web 面不组装 prompt，天然合规）、
+triage 三选一闸门、T0/T1/T2 审批语义、可逆操作矩阵、registry 单写者、字段
+add-only。
+
+**判例**：test_server_actions.py（golden 字节面 + via 落款 + 未知字段 400 +
+`BindHostTestCase` 钉 bind 字面量 + `BodyGateTestCase` 钉 1MiB body 上限/413，
+tests/test_server_actions.py:333）、test_server_board.py（透传 + 详情 archive
+优先）、test_server_steer.py（steer 响应标注 + inbox 四键原形零新增）、
+test_server_files.py（穿越/CSP/disposition）、test_server_sse.py；envelope
+形状由 tests/test_server_common.py 的 `assert_envelope` 夹具在各 suite 里
+统一执法（该文件本身不含用例）。
+
+## 50. 卡片出身信任矩阵（origin_trust + effective tier + ingress 落款）
+
+**四类出身（locked，M8.3 C-1 终裁四值为 canonical）**：`hand`（用户手打：
+quick capture / Slack self-DM——sources channel = `quick`/`quick_capture`）｜
+`proposed`（AI 自提：digest 建议 `analytics`、会话挖掘 `claude_code`、诊断
+降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`，以及 §50
+落款派生的 `agent_capture`/`remote_capture`）｜`meeting`（会议音频/笔记出生：
+`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。信任序 hand >
+proposed > meeting > external。
+
+**分类规则**（`act/lib/policy.py::classify_origin(card_sources,
+capture_channel)`，全函数永不 raise）：① 逐条 sources 的 `channel` 查
+`policy.CHANNEL_CLASS`（唯一映射真源，T-6——executor 遥测白名单
+`_USER_ORIGIN_CHANNELS` 与本表必须保持同步，收敛方向 = 从本表派生，T-25）；
+② 未知/畸形 channel（含 `screen`——§45 屏幕永不铸卡，真出现即异常）
+**fail-closed 落 external**（纵深防御，§45 本就不许它出生）；③ 混合来源取
+**最小信任**——手打卡被 slack/gmail 来源 fold 过即按 external 处理，外来
+文本已上卡则自动开跑资格随之消失；④ 空 sources 且无 capture_channel = AI
+自铸卡形态 → `proposed`。
+
+**盖章（registry add-only optional 字段 `origin_trust`，T-4 提前入法）**：
+铸卡与一切 fold/re-raise 集中在 `registry.merge_or_new` 漏斗盖/刷新章
+（`_stamp_origin`；fold 并入后按并入结果**重算**，「章过期」由此直接解决）；
+存量卡缺章**不追溯**——缺章卡保持声明 tier、不强制 expansion，否则全部历史
+卡一夜抬成 T2、打破 1500+ 判例。章只服务投影/审计；**调度侧不读章、每次从
+sources 现算**（缺信息不得授予自主权，也不得追溯锁死人工流——两处方向相反
+是有意的）。
+
+**W17 effective tier（cheap layer）**：`origin_trust == "external"` 的卡在
+**审批与调度层**一律按 **T2（需文字确认）**对待，且**强制 plan expansion**
+——不允许跳过提案展开直接裸批。声明字段 `tier` 不改写（registry YAML 原样）；
+生效档位 = 投影/调度层派生值，判定函数 `act/lib/risk.py::effective_tier(card)
+-> EffectiveTier(tier, forced_expand, reason)`（同时接受 dict 与
+`Requirement`）。**执法点**（actd `_apply_decision` approve 分支）：
+`forced_expand` 且 plan/DoD 双空 → approve 转 RAISING（走既有「研究并提议」
+扩写机制）+ notes `[W17] 外部来源强制展开` 痕（幂等只留一次）；analyze 不可
+用时**拒批**（fail-closed——外部卡裸跑正是 W17 要堵的洞）。belt-and-braces：
+显式 external 章即便 sources 现算为 hand（手改 YAML）也绝不自动派发。
+dashboard `needs_approval[]` 投影 `effective_tier` 恒在（§2 v0.48 字段块）；
+T2 typed-confirm 弹窗（Mac/web）读 `effective_tier` 而非 `tier`（§7/§41
+引用注）。
+
+**ingress 落款（T-28，inbox 记录 add-only 键 `via`）**：HTTP 写入面落盘的
+每个 inbox 文件都带落款——`server/inbox_writer` 恒 `via:"web"`（capture/
+comment 两动词接受传输面字段 `actor:"agent"`，唯一合法值、不落盘、boardctl
+硬编码恒发，present 时落 `via:"agent"`；`actor` 配 mode/preset 同请求 =
+400）；`act/webui.py` 恒 `via:"remote"`；Mac 文件**无 via** = owner-local
+（缺 via 只在非 HTTP 铸的文件上合法）。`via` 永远是 server 落款：入站 API
+直发 `via` = 400 `UNKNOWN_FIELD`。**actd 读侧裁决**（`_ingress_channel`）：
+按落款盖捕获源 channel——owner ingress（无 via / `"web"`）→ `quick_capture`
+（HAND 不变）；`"agent"` → `agent_capture`；`"remote"` 与一切未知/畸形值
+fail-closed → `remote_capture`（后两者 PROPOSED 入 `CHANNEL_CLASS`）——
+agent/remote 捕获的自动派发就此**结构性**关死（出身从 sources 现算）；
+executing 卡 comment **只有 owner ingress 才 steer**（§44.3-S），agent/
+remote 只进 notes、不进 plan（§32.2 修订）。
+
+**诚实条款（advisory for same-user agents）**：`via` 直发被 400、伪造被覆盖，
+但同一用户在裸 HTTP 层可**省略** `actor` 冒充 owner ingress——落款是**礼仪 +
+取证**（违规留 actd 日志），不是密码学墙。**硬后盾不依赖落款**（逐条枚举）：
+① §51 预算/成本/repo/outbound 天花板（对一切自动派发候选生效）；②
+`effective_tier` 强制扩写（W17，外部章不可被落款洗掉）；③ 人工审批列（非
+hand 出身一律人批）；④ §34bis 级篡改取证。密码学收紧 = PR3 per-boot
+instance token（T-29：owner 面持 owner token、agent 面持独立 token，
+`X-ZAI-Client` 挂点已留——届时 via 从「自报礼仪」升级为「鉴权事实」）。
+
+**安全前置（M1.d，已随本批次落地）**：`act/radar_slack.py` mcp_scan 的
+`sources[0].channel` **硬编码 `"slack"`**（提取 LLM 自报的频道名只进 `ref`
+展示位）——在 §51 的世界里 channel 可被 LLM 控制不再只是遥测泄露面而是
+**执行面**（注入文本骗 LLM 输出 channel=`quick` → 判 hand → 自动开跑攻击者
+措辞的任务）。provenance red line，测试钉死。
+
+**判例**：tests/test_policy.py（分类真值表 + 混合最小信任 + fail-closed）、
+test_policy_trust_matrix.py（8 例逐漏斗：self-DM=hand 免批端到端 / gmail·
+slack=external 人批+强制扩写 / meeting=人批不强制扩写 / 空 sources=proposed /
+screen 纵深 / mcp_scan channel 伪造判例）、test_risk.py（effective_tier）、
+test_actd_wire.py（W17 执法点 + via 裁决）。
+
+## 51. 自动派发天花板（may_auto_dispatch）+ 合并运行列 queued 子状态
+
+**语义（owner 拍板「手打自动/外部要批」的调度半边）**：只有出身 `hand` 的卡
+有资格免审批自动派发（card_sent → approved，actor=policy）；资格裁决 =
+`act/lib/policy.py::may_auto_dispatch(card, cfg, today_spend) -> (bool,
+reason)`，全部天花板通过才放行，任一不过 → **回落待审批 + 卡上陈述原因**
+（locked：over-ceiling ⇒ falls back to needs-approval with a stated
+reason）。原因 token 词表（机读稳定，UI 侧映射文案）：`disabled` /
+`origin:{proposed,meeting,external}` / `t2_confirm` / `outbound` /
+`repo:new` / `repo:none` / `repo:missing` / `cost:unknown` /
+`cost:over_ceiling` / `budget:unknown` / `budget:exhausted`。
+
+**天花板明细（locked + 保守解释）**：① `autodispatch.enabled=false` 全关；
+② 出身非 hand 不批——出身**从 sources 现算**（不依赖可能缺失/过期的章，
+§50）；③ §7/§41 审批语义不变：`effective_tier` 为 T2 / `green_sign_required`
+/ 估价超 `require_text_confirm_above_usd` 一律人批（`t2_confirm`，压过
+`cost:over_ceiling`——审批语义先于便宜天花板）；④ never outbound：
+`type=comms` 卡永不自动开跑（保守判据；更细的出站动词表 = T-24 另案，可误拦
+不可漏放）；⑤ existing repo only：`target_kind=new` 拒（绝不自动建 repo）、
+落点 repo（卡面 `target_repo`，缺省回落 `execution.default_target_repo`
+workbench 兜底，T-26 追认合法）必须磁盘已存在；⑥ 成本：估价缺失即拒（不可
+证明 ≤ 上限）、单卡估价 > `autodispatch.daily_budget_usd`（默认 **$5**，
+locked）拒、`today_spend + 估价 > 预算` 拒、today_spend 不可解析（台账坏）拒。
+
+**并发上限不在资格闸里**：`max_concurrent`（默认 3）是排队问题不是资格问题
+——超并发的卡照常 approved、留在合并运行列的 queued 子状态，槽位空出即派发。
+**并发上限约束全部派发**（manual 批的卡同样排队）；**预算天花板只约束
+policy 批的卡**——owner 显式点头 = override，人批卡被预算闸拦下才是谎报。
+auto 卡在**派发时刻**做预算复核（台账排除本卡自身预留，否则每张 auto 卡都
+饿死）：批准后 owner 调低预算/隔日翻账等边界，卡诚实留队（`waiting_budget`）
+而非硬跑。
+
+**当日花费台账** = `state/autodispatch_spend.json`（`{"date": 本地
+YYYY-MM-DD, "cards": {R-id: usd}}`；写者 = actd 单写；预留记在批准时刻；按卡
+键控故重启幂等；隔日/坏文件 = 空账。dashboard 有独立只读小读器——import
+actd 会循环依赖；文件名双处字面量，改名需同步两处）。**已知边界（接受）**：
+昨天 auto 批准、因并发排队跨日的卡，隔日翻账后预留消失、派发复核按新账通过
+——极端情形单日实际派发额可略超预算一次估价；预算是天花板不是审计账，实际
+成本核算另案（W-actd m2 口径）。
+
+**回落可见性（C-6）**：原因 token 落 `execution.auto_dispatch_block`
+（add-only，dashboard needs_approval 行透传，§2）+ notes
+`[<date> auto-dispatch 拦下] <token>`（仅 token 变化时留一次，防每 pass
+刷屏；解除即清 token——投影诚实）；`origin:*` / `disabled` 两类**常态**原因
+不上卡不留痕（逐卡留痕即噪音，宪法第 10 条口径），且会清掉既有过期 token。
+
+**queued 子状态原因词表（M1.c + M8.3 C-2 终裁）**：内部 token =
+`dependency`（有未完结依赖卡）｜`budget`｜`concurrency`，优先级
+dependency > budget > concurrency（chip 只有一个位置，报最「粘」的阻塞）；
+`None` = 无阻塞（纯粹没轮到 / 派发失败在退避——后者归 `dispatch_error`/
+`dispatch_error_id`，两族独立并存、生产端不得混写）。**wire canonical =
+结构化形**（§2 v0.48 字段块）：dashboard builder 把 token 映射
+`dependency → {kind:"waiting_card", blocking_id}`（取 blocked_by 首项）、
+`budget → {kind:"waiting_budget"}`、`concurrency → {kind:"concurrency"}`；
+web 端未知 kind 按原文降级展示（开放枚举不崩渲染）。**dependency 现无生产
+者**（`blocked_by` 无持久化形状，词表占位，T-26 另案）。
+
+**主循环顺序与观测**：inbox → `auto_dispatch_pass`（hand 免批通道）→
+`dispatch_approved` →（有变化才 early-write）→ reconcile（含 §44.3-S steer
+flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 30 天，
+§10 W1.c）→ build+write dashboard。analytics（全部 metadata only，title
+不进遥测——docs/TELEMETRY.md 红线）：`auto_dispatch` /
+`auto_dispatch_blocked`；`autodispatch.notify`（默认 true）= 观察模式：每次
+自动派发发一条通知（宪法第 10 条：自动化替 owner 做的事必须可见）。
+
+**config（add-only，`config.example.yaml` `autodispatch:` 块）**：
+`enabled`(true) / `daily_budget_usd`(5) / `max_concurrent`(3) /
+`notify`(true)；脏值逐键回退默认（宪法第 11 条口径），
+`policy.autodispatch_config(cfg)` 是唯一读取点。
+
+**判例**：tests/test_policy_ceilings.py（15 例：全部 token 逐条 + $5 精确
+边界 5.0 过/5.5 拦 + t2_confirm 压过 cost + token 换因重盖与解除即清 +
+并发=排队非拒绝 + 派发复核排除自身预留）、test_actd_wire.py（免批端到端 +
+队列 + 台账幂等）。
+
+## 52. agent 有界通道（boardctl + board-agent skill）
+
+1. **通道定义**：headless agent 面向看板的唯一合法接口是 `act/boardctl.py`
+   （读 = `GET /api/board`、`GET /api/cards/{id}`；写 = `POST /api/actions`
+   且动词**仅 `capture` 与 `comment`**）。agent 不得直接读写
+   `act/registry/*.yaml` 或 `state/inbox/*.json`——§44 单写者与既有 inbox
+   生产者清单不因本节扩大。
+2. **capture 即候选**：agent 通道投递的 capture 与手动 note 同权——进 triage
+   三选一闸门，由 owner 决定去留；信任矩阵中归 **proposed（需批准）**（§50
+   `agent_capture` 通道）。该通道**永久不提供** `mode:"run"` / `preset` 直跑
+   面（与 §41 W18 的 remote-run opt-in 是两回事：W18 开关只影响 owner 亲打的
+   远程 capture，agent 通道无论如何没有直跑；`actor:"agent"` 配 mode/preset
+   同请求 = 400）。两个写动词**恒带** `actor:"agent"`（硬编码非 flag，T-28
+   落款；省略 = 契约违规，取证语义见 §50 诚实条款）。
+3. **决策动词禁区**：agent 不得 approve/reject/accept/rework/move/archive/
+   merge/trash。执行分三层：(a) boardctl 动词面收窄（CLI 无这些子命令，测试
+   钉死）；(b) store2 接线后由 D3 权限墙执法（`actor_type='agent'` 的
+   approve/accept 类转移在 DB trigger 层 RAISE，§53）；(c)
+   `skills/board-agent/SKILL.md` 的行为规范仅是礼仪层，不是边界。
+4. **CLI 输出契约**：成功 = stdout 单个 JSON object 携带 `schemaVersion`
+   （当前 = 1，add-only）；错误 = stderr 单个 JSON object
+   `{"schemaVersion","error":{"code","message","details"?}}`；exit codes
+   0（成功）/ **1（未预期内部崩溃**——兜底 `INTERNAL_ERROR` envelope，不泄
+   栈；一切**已分类**错误必须走 2-5，落到 1 = boardctl 自身的 bug 线索）/
+   2（输入非法，含本地文件读失败）/ 3（server 不可达/超时）/
+   4（HTTP 非 2xx 除 409 / 响应非法 JSON）/ 5（HTTP 409，留给 CAS 时代）。
+   `--help` 是唯一纯文本成功输出。每请求带 `X-ZAI-Client: boardctl` 头——
+   未来 actor 墙的辨识挂点（server 现阶段忽略；请求头可伪造，**不是**鉴别
+   边界——真正的墙是 D3/PR3）。
+5. **skill 落位**：`skills/board-agent/SKILL.md` + `references/cli.md`
+   （structure adapted from dashi-taskboard `manage-taskboard`，Apache-2.0，
+   NOTICE 第 7 条登记）。
+
+**判例**：tests/test_boardctl.py（动词面收窄 / actor 恒发 / 输出契约 / exit
+codes）。
+
+## 53. store2 — SQLite 休眠地基（schema v1 + CAS + YAML 迁移；**尚未接线**）
+
+**地位（诚实声明，全节大前提）**：`act/lib/store2/` 是 owner 决策 D2 的数据
+层地基，**本版完全休眠**——actd/管线**零 import**（runtime 不碰 SQLite），
+registry YAML 仍是唯一真源（§1）。接线（读写切换、双写迁移、D3 墙生效）属
+**另案修宪**（PR3），届时本节 add-only 增补。休眠期它只被测试与手动
+migrate/export CLI 触碰。
+
+- **schema 版本纪律**：`PRAGMA user_version = 1`，且版本钉扎在 schema.sql
+  **文件末尾**——executescript 途中崩溃时版本必须还是 0，`_ensure_schema`
+  重跑才补全建表；版本号先行会把半截库伪装成完工库（crash window 判例）。
+  字段纪律与 YAML registry 同一条宪法：add-only，只增不改不删不重编号。
+- **结构**：cards 主表 = 热列（看板投影/过滤所需：status/prev_status/tier/
+  type/hardness/deadline/merged_into_id/version/board_rev/tombstone/
+  origin_trust/…）+ payload JSON 冷列（其余字段原样存 YAML 的 JSON 化全文）；
+  notes / sources / dispatches 独立子表（runtime 字段绝不焊进核心表；notes
+  的 kind 词表含 `steer`，与 §44.3-S note class 对齐）；`board_revision`
+  单行表 + 每卡 `board_rev` 支撑 `changes_since(cursor)` 增量读（tombstone
+  行让客户端学到删除——**硬删被 trigger 禁止**，回收站到期 = tombstone 化，
+  删除因此进 revision 流）。
+- **CAS**：`version` 乐观锁列，写路径 `UPDATE … WHERE id=? AND version=?`，
+  changes≠1 → 重查分 404（卡没了）/ 409（版本被别人推走）——§52 exit code 5
+  预留的对端。
+- **状态机进 DB（数据即法条）**：`transition_whitelist(old_status,
+  new_status, actor_type)` 表逐行收录 §1/§8/§9/§10/§21 的全部合法转移；
+  不在表里 = 非法（trigger fail-closed RAISE `ILLEGAL_TRANSITION`）。
+  **agent-transition 墙（D3 的数据库层）**：`actor_type='agent'` 在白名单里
+  **一行都没有**——agent 发起的任何状态转移 RAISE
+  `AGENT_TRANSITION_FORBIDDEN`，敏感字段写入 RAISE `AGENT_FIELD_FORBIDDEN`。
+  actor 语义：actor = 动作发起者而非写库进程——inbox 动作记 `user`，radar/
+  triage/digest 自主管线记 `system`，headless session 及旁路进程记 `agent`。
+  遗留缺口（digest 拉回等转移行）撞 `ILLEGAL_TRANSITION` 再 add-only 补行
+  （T-14）；`dispatches.status` 词表（`running|completed|failed|stopped`）随
+  接线 PR 入宪。
+- **origin_trust 列**：schema v1 的 CHECK 为 §50 四值 canonical
+  `('hand','proposed','meeting','external')` + DEFAULT 'external'（T-15
+  **已定并落地**，PR #106 终审：原二值 CHECK 与四值词表的冲突在 dormant 期
+  修复）；迁移的推导规则 = `policy.classify_origin`（全部 sources 取最小
+  信任，`policy.CHANNEL_CLASS` 单一真源，T-6）；payload 里的 `origin_trust`
+  权威章经 export/import round-trip 保真（shape 表含该键）。
+- **YAML 迁移终裁（migrate_yaml / export_yaml，round-trip 优先）**：`created`
+  无祖先 → sources[0].date 可解析优先、文件 mtime 兜底，dry-run 逐卡报取值
+  来源（T-7）；`outputs`/`card` 历史键 payload 原样保留（T-9）；plan str 形态
+  原样、畸形值尽量 verbatim，唯 cost 经 `_coerce_cost` 归 None 的偏离**追认**
+  （T-11）；`type` 值域永不归一、crash-mid-move residue 不清理只报告
+  （T-13）；trashed→archived 复位后 restore 补 `prev_status='delivered'`
+  （unarchive 兜底回程票，schema CHECK 要求封存卡必带——**追认实现**，接线
+  parity 以 store2 语义为准，T-16）；`merged_into` 提热列、`thread_key` 留
+  payload + 接线时建表达式索引（T-8）；notes blob 双写一致性随接线案立法
+  （T-12）；`execution.deliverables`（[str] 相对路径，writer = executor
+  harvest，server 只服务清单内文件）预留 add-only、随接线 PR 落 §33 家族
+  （T-19，此前 §49 的目录约定推导 + 穿越防护追认为过渡合法）。
+- **判例**：tests/test_store2_schema.py（白名单矩阵 + agent 墙 + tombstone）、
+  test_store2_cas.py、test_store2_migration.py（畸形值 round-trip 判例）、
+  test_store2_parity.py。
+
+## 54. 薄壳看板 app（shell/ — "Zelin AI Board"）
+
+`shell/` 是 §49 web 面的**桌面薄壳**（AppKit + WKWebView，单文件
+`shell/Sources/main.swift`）：职责刻意做薄——解析 PORT/HOME → 探活
+`/api/board` → 必要时拉起 `python3 -m server` → 一个 WKWebView 窗口加载
+`http://127.0.0.1:PORT/`。看板本体（React board）活在 `web/dist`、由 server/
+静态托管；**壳里没有业务逻辑**，不读 registry、不写 inbox（一切经浏览器面 =
+§49 客户端）。与 `mac/` 主 App 并存不替代（Mac app 降薄壳属 PR3 愿景，
+本版不动）。
+
+- **配置解析（启动期一次性，全部只读）**：PORT = env `ZAI_PORT` → 默认
+  47820（与 server 同一默认）；HOME = env `AIASSISTANT_HOME` → home 指针
+  `~/Library/Application Support/ZelinAIAssistant/home.txt`（§19 同一解析
+  顺序）→ **无兜底**——两者都缺时 spawn 不注入该 env，由 server 侧
+  canonical 默认（`server/paths.py DEFAULT_HOME`）接手，壳永不猜本机路径；
+  SERVER_REPO（`python3 -m server` 的 cwd）= defaults `serverRepo`
+  （`defaults write com.zelin.ai-board serverRepo <path>`）→ Info.plist
+  `ZAIServerRepo`（`shell/build.sh` 构建时以**实际 repo root** 盖进 staged
+  plist，同版本号机制；源 plist 留空）→ **无兜底**——需要 spawn 而解析不到
+  时礼貌弹窗（含日志路径与两条修复方式）+ log 落一行，绝不拿猜来的路径起
+  server（attach 既有 server 不受影响，探活成功照常加载）。
+- **生命周期诚实原则（本节红线）**：先探活——有人在班就直接 **attach**；
+  没有才 **spawn** child server（spawn 后每 0.5s 探一次，≤10s）。退出时
+  **只 terminate 自己 spawn 的 child**（SIGTERM；`spawned` 非 nil 是唯一
+  依据）；对仅仅 attach 上去的既有 server **绝不动手**——它可能属于 actd
+  或另一个 shell。每次 spawn 在 append-only log 里落一行时间戳横幅（切段
+  取证）。
+- **构建**：`shell/build.sh` 镜像 `mac/build.sh` 惯例——plutil lint、版本号
+  从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、`ZAIServerRepo` 以构建
+  所在 repo root 盖章（可移植：换机器/换 worktree 重跑 build.sh 即自洽）、
+  ad-hoc codesign。`shell/build/` 进 .gitignore（构建产物永不入库）。

@@ -1,0 +1,310 @@
+/* 详情抽屉 + 交付物 viewer——只引用 tokens.css 已有变量（CONVENTIONS §样式红线）。
+ * 动效克制（transform/opacity）；语义红线不涉及（抽屉纯展示，无状态转移交互）。 */
+.zai-drawer-root { position: fixed; inset: 0; z-index: 60; }
+
+.zai-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.zai-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(560px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border-left: var(--border-hairline) solid var(--border-strong);
+  box-shadow: var(--dialog-shadow);
+  outline: none;
+  animation: zai-drawer-in 160ms ease-out;
+}
+
+@keyframes zai-drawer-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zai-drawer { animation: none; }
+}
+
+.zai-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 10px;
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.zai-drawer-heading { min-width: 0; }
+
+.zai-drawer-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.zai-drawer-heading h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+.zai-drawer-tools { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.zai-drawer-close {
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.zai-drawer-close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.zai-drawer-tabbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 18px 0;
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.zai-drawer-tabbtn {
+  border: none;
+  background: none;
+  padding: 6px 10px 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.zai-drawer-tabbtn.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.zai-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px 24px;
+}
+
+.zai-drawer-menu {
+  position: fixed;
+  z-index: 70;
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--dialog-shadow);
+  padding: 4px;
+}
+
+.zai-drawer-menu button {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.zai-drawer-menu button:hover { background: var(--surface-hover); }
+
+/* —— 详情字段 —— */
+.zai-detail-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+
+.zai-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  color: var(--text-secondary);
+}
+
+.zai-chip--warn { color: var(--warning); border-color: var(--warning); }
+.zai-chip--danger { color: var(--danger); border-color: var(--danger); }
+.zai-chip--lane-needs_approval { color: var(--status-todo); }
+.zai-chip--lane-running,
+.zai-chip--lane-needs_input { color: var(--status-progress); }
+.zai-chip--lane-review { color: var(--status-review); }
+.zai-chip--lane-completed,
+.zai-chip--lane-archived { color: var(--status-done); }
+.zai-chip--lane-debt { color: var(--status-backlog); }
+/* lineage chips（Mac 卡面 badge 的抽屉版）：quiet tint 档——↳ 改进自 teal / 已并入 紫 */
+.zai-chip--improves { color: var(--accent); border-color: transparent; background: var(--accent-soft-quiet); }
+.zai-chip--merged { color: var(--purple); border-color: transparent; background: var(--purple-soft-quiet); }
+
+.zai-detail-callout {
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.zai-detail-callout--warn {
+  color: var(--warning);
+  border: var(--border-hairline) solid var(--warning);
+}
+
+.zai-detail-callout--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.zai-detail-summary { font-size: 14px; line-height: 1.6; margin: 8px 0; }
+
+.zai-detail-meta { margin: 10px 0; }
+
+.zai-detail-meta > div {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.zai-detail-meta dt { flex: 0 0 96px; color: var(--text-tertiary); }
+.zai-detail-meta dd { margin: 0; overflow-wrap: anywhere; }
+
+.zai-detail-section { margin: 14px 0; }
+
+.zai-detail-section > h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin: 0 0 6px;
+}
+
+.zai-detail-section ol,
+.zai-detail-section ul { margin: 4px 0; padding-left: 1.5em; font-size: 13px; }
+
+.zai-detail-dod li { list-style: "☐  "; }
+
+.zai-detail-source {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-muted);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+}
+
+.zai-detail-source-quote { margin: 0 0 4px; }
+.zai-detail-source footer { color: var(--text-tertiary); font-size: 12px; }
+.zai-detail-source-ref { overflow-wrap: anywhere; }
+
+.zai-detail-folds { list-style: none; padding-left: 0 !important; }
+.zai-detail-folds li { margin: 4px 0; }
+
+.zai-detail-dim { color: var(--text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
+
+.zai-detail-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.zai-detail-cmd code {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.zai-detail-copy {
+  border: var(--border-hairline) solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.zai-detail-copy:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.zai-detail-copy:disabled { opacity: 0.5; cursor: default; }
+
+/* —— 交付物 viewer —— */
+.zai-deliverable { display: flex; flex-direction: column; gap: 10px; min-height: 100%; }
+
+.zai-deliverable-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.zai-deliverable-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.zai-deliverable-tab {
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zai-deliverable-tab.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.zai-deliverable-frame {
+  width: 100%;
+  min-height: 420px;
+  flex: 1;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: #ffffff; /* 交付物 HTML 自带配色，浅底兜住透明页面 */
+}
+
+.zai-deliverable-image {
+  max-width: 100%;
+  border-radius: 8px;
+  border: var(--border-hairline) solid var(--border);
+}
+
+.zai-deliverable-text {
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}

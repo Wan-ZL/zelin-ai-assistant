@@ -25,6 +25,34 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-08-31
+
+v0.48 v-next 移植列车：把在 v0.10.3 公开导出基线上开发的 v-next 线（web 看板、store2、信任矩阵）整体移植回真 main（v0.47.0）——语义级重放而非补丁级套用，逐条判决记录在 docs/design/transplant-notes.md；配套修宪案与旧法→新法测试映射见 docs/design/vnext-amendments.md（W1/W17/W18/T-28/T-29/§44.3-S/§50/§51）。
+
+### Added
+
+- **Web 看板（localhost SPA）** — Vite + React + TypeScript：提案/运行中/评审/完成泳道、筛选、backlog 条、回收站页、卡片深链（id 大小写保持）；详情抽屉带交付物查看器（markdown/mermaid 渲染）、fold notes 与 steer-aware 评论输入框；v-next 投影可视化——steer 回执按诚实投递状态渲染、结构化 queued-reason chips、origin-trust / effective-tier（W17）徽章、T2 文本确认对话框；未确认提交 180s truth-timeout 后浮出；SSE 实时 + 断线重连；活样式指南页（`/?page=styleguide`）渲染真组件与 tokens，light/dark 主题继承 Mac app 配色（tonal ladders + state layering）；i18n（en/zh）带语言切换。137 条 vitest。部分改编自 dashi-taskboard（Apache-2.0，见 NOTICE）。
+- **localhost stdlib HTTP/SSE 服务器**（`server/`，§44）— `python3 -m server`（ZAI_PORT / AIASSISTANT_HOME 环境驱动），纯 stdlib。读侧：`/api/board`、`/api/cards/{id}` 原样投影 dashboard.json（v-next 字段透传不动）、`/api/events` SSE、`/files/deliverables/*` 带安全头 + symlink-safe 路径解析。写侧：`/api/actions` 只写 `state/inbox/*.json`——actd 仍是 registry 单写者（§44）；每条记录盖 `via`（web/agent，T-28 ingress 标记），executing 卡上的评论只在响应里标 steer/steer_status（inbox 文件保持 §3 四键评论形态）。与 Mac app 写入端的 inbox 同形由字节级 golden fixtures 判例钉死。
+- **Zelin AI Board.app 薄壳**（`shell/`）— swiftc 手装 bundle，镜像 mac/build.sh 惯例（plutil lint、版本从 act/__init__.py 盖章、ad-hoc codesign）；负责拉起/监控 localhost 服务器并用 WKWebView 渲染 web 看板，服务器死活如实呈现。
+- **信任矩阵 + 自动派发**（§50/§51、W17，`act/lib/policy.py` / `act/lib/risk.py`）— 卡片出身分类落 `origin_trust`（hand/external，add-only 字段，每个改 sources 的出口盖 min-trust；LLM 输出伪造不了 hand 信任）：只有 hand 出身（手打快速捕获 / Slack self-DM）的卡有资格免审批自动派发，AI 自提、会议出生、外部 Slack/Gmail 一律照旧人工审批；外部出身卡生效档位单向升 T2（申报 tier 永不改写）并在 approve 时强制 plan 扩写（W17）。自动派发受日预算 / 单卡估价 / 并发三重上限约束（`autodispatch:` 配置块，全部可省略），超限的卡回落待审批并在卡上陈述原因，花费台账落盘，dispatch 时预算复查。
+- **steer 中途转向接力**（§44.3-S，`act/lib/steer.py`）— 运行中卡上的 owner 评论作为 steer 排队，在 §44.3 的三个安全窗口（blocked / dead-resume / done-drop）flush 给会话（executor.resume 增可选 prompt=，基于 _bg_base_cmd 构建故保留 skip_permissions 开关，prompt 过 sanitize.scrub）；queued/delivered/dropped 回执按诚实投递状态记账，去重键含 ts（逐字重复的两条都算 steer）；每条已投递 steer 在卡 notes 落永久一行。
+- **boardctl：headless agent 的窄接口 CLI + board-agent skill**（`act/boardctl.py`）— 读 `/api/board`、`/api/cards/{id}`；写只有 capture（走 triage 闸门，等价一条手动笔记）与 comment——刻意没有决策动词（approve/reject/accept/move/archive/merge 归 owner）。两个写动词硬编码 actor:"agent"（T-28）：agent 通道的 capture 永不自动派发，comment 只记录不 steer。JSON 输出带 schemaVersion 与类型化退出码。改编自 dashi-taskboard cli/taskctl.mjs（Apache-2.0，见 NOTICE）。
+- **store2：SQLite 平行店 v1 地基（尚非写路径）**（`act/lib/store2/`）— registry YAML 仍是唯一真源。schema v1 带库内状态迁移白名单 triggers（origin_trust CHECK 集 = §50 四值 canonical，act/lib/policy.py ORIGINS 单一真源）、CAS 访问层与类型化 transitions（关死绕过审批的复合权限、origin_trust 只许 user actor 改、dispatch close / note 回执防已清除卡）、YAML 一次性迁移（回读 parity 校验，未知顶层键默认拒收）与快照导出。判例钉死 triggers、迁移告警、YAML↔DB parity、CAS 冲突与 tombstone。
+- **v-next 设计文档 + NOTICE** — docs/design/vnext.md（总设计）、vnext-amendments.md（修宪案 + 测试映射）、store2-mapping.md（YAML→SQLite 字段判决）、inbox-actions.md、transplant-notes.md（移植判决台账）；NOTICE 登记 web 看板与 agent CLI 复用的 dashi-taskboard fork（Apache-2.0）。
+
+### Changed
+
+- **打字内容遥测改为 opt-in**（`telemetry.capture_input`）— 默认 OFF（此前默认 ON）：输入文本要进遥测，需在 Mac app 首启权限页新增的默认不勾选 checkbox、或既有 Settings 开关里显式打开。总开关 `telemetry.enabled`（事件元数据）语义不变。
+- **W1：库存配额反转**（quick_capture）— open 卡永不被挤出库存投影；closed 卡只填剩余空间，上限 20（旧 delivered-pinned-past-cap 判例改钉新配额）。
+- **W1.c：自动归档默认 0→30**（`archive.after_days`）— delivered 卡最后活动超 30 天自动封存进 archive（设 0 恢复永不归档；只封存冷 delivered——带未来 deadline / cluster 内有 open 兄弟卡 / 时间戳不可解析的一律不动）。
+- **W18：远程直跑闸门，fail-closed 默认关**（`remote.allow_direct_run`，修 §41）— webui/syncd 等网络 ingress 的写入一律盖 via:"remote"（覆写不可 spoof），actd 的 T-28 硬后盾凭该落款把非 owner ingress 的 capture mode:"run" 一律降级为普通提案（照进 triage，不报错不吞任务）。webui 侧闸门关时另在落盘前剥掉 mode 并带 200 降级提示；opt-in=true 时 mode 原样进 inbox（§34 预留）但响应仍带 reserved 提示——actd 现行无条件降级，绝不谎报「已开跑」。开关刻意不接 owner-override；判例钉在 test_webui_remote_gate。
+
+### Fixed
+
+- **gmail radar：畸形 Date header 不再杀整个 scan pass** — 按信容错（宪法 11）：坏信记入 radar 失败台账后跳过，同批其余邮件照常提取。
+- **sync/analytics 上传去抖** — 变更闸门 hash 前剥离易变字段（`generated_at`），dashboard 每次重建不再触发内容未变的 no-op 推送（实测线上 ~2-4GB/天）。
+- **长寿命 daemon 日志自压实** — registry_writes.jsonl 的 1MB 自压实模式推广到 daemon 日志（syncd.log 实测已涨到 74MB）。
+
 ## [0.47.0] - 2026-08-18
 
 v0.47 合并列车：10 个 PR（#94-#98、#87、#99-#101、#103，另有 CI 调参 #104），
@@ -1959,7 +1987,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.45.0...v0.46.0

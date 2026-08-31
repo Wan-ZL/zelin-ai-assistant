@@ -21,7 +21,7 @@ from typing import Any, Iterable, Optional, Union
 
 import yaml
 
-from act.lib import config
+from act.lib import config, policy
 
 
 class State(str, Enum):
@@ -93,6 +93,10 @@ _OPTIONAL_ORDER = [
     "prev_status",
     "trash_reason",
     "permanent",
+    # v-next add-only（amendments §50 / M8.3 C-1）：出身信任章，铸卡/fold 时由
+    # policy.classify_origin 盖（hand/proposed/meeting/external）。调度侧不读
+    # 章、每次从 sources 现算（M1.a）；章只服务投影/审计。
+    "origin_trust",
     # v0.20.0 thread-level matching (卡片生命周期 §2) — appended so old YAML that
     # lacks them round-trips clean (to_dict skips None) and lazily backfills.
     "thread_id",
@@ -153,6 +157,10 @@ class Requirement:
     prev_status: Optional[str] = None
     trash_reason: Optional[str] = None
     permanent: bool = False
+
+    # v-next（amendments §50）：出身信任章；None = 存量卡未盖章（缺章不追溯
+    # 抬档、也不授予自动派发资格——两侧 fail-closed 分工见 risk.py/policy.py）。
+    origin_trust: Optional[str] = None
 
     # v0.20.0 thread-level matching (卡片生命周期 §2)
     # thread_id: the thread anchor = the R-id of the thread-root card (reuses the
@@ -983,6 +991,14 @@ def _carries_increment(parent: Requirement, new: Requirement) -> bool:
     return False
 
 
+def _stamp_origin(req: Requirement) -> None:
+    """盖/刷新出身信任章（amendments §50 / M1.a）：铸卡与一切 fold/re-raise
+    都经过本文件的漏斗，sources 一变章就重算——最小信任者定卡（手打卡被
+    slack/gmail 来源并入即降 external）。调度侧不读章、每次从 sources 现算
+    （policy.may_auto_dispatch）；章只服务投影/审计。"""
+    req.origin_trust = policy.classify_origin(req.sources)
+
+
 def _fold_hit(target: Requirement, new_req: Optional[Requirement],
               note: str = "", sources: Optional[list] = None) -> Requirement:
     """Fold a hit into ``target``: note + deduped sources + mentions bump.
@@ -995,6 +1011,7 @@ def _fold_hit(target: Requirement, new_req: Optional[Requirement],
     target.sources = merged
     if added:
         target.repeated_mentions = int(target.repeated_mentions or 1) + added
+    _stamp_origin(target)                     # 并入新来源 → 章过期，重盖
     append_fold_note(target, note, "radar")   # §38: timestamped + deduped
     save(target)
     return target
@@ -1056,6 +1073,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
             (sources if sources is not None else new_req.sources) or [])
         parent.sources = merged
         parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
+        _stamp_origin(parent)          # M1.a：fold 并入新来源后刷新信任章
         save(parent)
         return "folded", parent
 
@@ -1073,6 +1091,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
             (sources if sources is not None else new_req.sources) or [])
         parent.sources = merged
         parent.repeated_mentions = int(parent.repeated_mentions or 1) + 1
+        _stamp_origin(parent)          # M1.a：re-raise 折入新来源同样重盖
         if note:
             tag = f"[re-raised] {note}"
             parent.notes = (parent.notes + "\n" + tag).strip() if parent.notes else tag
@@ -1121,6 +1140,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
         display_title=new_req.display_title,
         notes=(f"[radar] {note}" if note else ""),
     )
+    _stamp_origin(child)               # §50：follow-up 子卡按自身 sources 盖章
     return "follow_up", upsert(child)
 
 
@@ -1233,17 +1253,24 @@ def merge_or_new_with_kind(
                     display_title=new_req.display_title,
                     notes=new_req.notes or "",
                 )
+                _stamp_origin(child)   # §50：增量子卡按自身 sources 盖章
                 return "proposed", upsert(child)
             # pure restatement -> merge sources, bump count, keep status
             merged, added = _dedupe_sources(parent.sources or [], new_req.sources or [])
             parent.sources = merged
             if added:
                 parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
+            # 盖章刷新（amendments M1.a）：fold 并入新来源后章会过期——最小
+            # 信任者定卡（手打卡被 slack/gmail 来源并入即降 external）。铸卡
+            # 与 fold 都走这个漏斗，章集中在这里盖：调度侧仍每次从 sources
+            # 现算，章只服务投影/审计。
+            _stamp_origin(parent)
             return "folded", upsert(parent)
 
     # brand new — self-root the thread on its own id
     new_req.id = new_req.id or next_id()
     new_req.thread_id = new_req.thread_id or new_req.id
+    _stamp_origin(new_req)             # §50：铸卡即盖出身信任章
     if not new_req.status or new_req.status == State.DETECTED.value:
         if high_confidence and new_req.hardness == "hard" and new_req.deadline:
             new_req.status = State.CARD_SENT.value

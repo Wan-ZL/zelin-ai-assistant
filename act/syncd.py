@@ -35,7 +35,10 @@ that never opted in therefore does ZERO network. Turning sync ON = writing
 DOWN (daemon → Supabase → phone):
   * poll ``dashboard.json`` mtime (≤10s), sha256 it LOCALLY as a change-gate
     (the hash is NEVER uploaded — a plaintext-hash column would be an equality
-    oracle on the server);
+    oracle on the server); the digest strips volatile fields (``generated_at``)
+    first — actd re-stamps that key on every rebuild, and hashing it meant one
+    full snapshot push per rebuild (live: ~305k pushes, 2-4GB/day, all
+    duplicates);
   * on change bump ``seq`` (seeded at startup to ``max(server row seq, local
     seq)+1`` so it never regresses under a device), ``e2e.encrypt_board`` the raw
     dashboard bytes, UPSERT ``board_snapshots`` on_conflict ``channel_id``;
@@ -75,7 +78,7 @@ import uuid
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from act.lib import config, e2e
+from act.lib import config, e2e, logcap
 
 # --------------------------------------------------------------------------- #
 # Paths (all env-driven, same layer as the rest of the project)
@@ -132,6 +135,9 @@ def _log(msg: str) -> None:
         line = f"{_dt.datetime.now().isoformat(timespec='seconds')}  {msg}\n"
         with (config.STATE_DIR / "syncd.log").open("a", encoding="utf-8") as fh:
             fh.write(line)
+        # 自压缩（best-effort）：KeepAlive 常驻进程的日志从不轮转会无限增长
+        # （live 事故：本文件 74MB）——超 ~1MB 只留后半，registry 台账同款。
+        logcap.cap(config.STATE_DIR / "syncd.log")
     except OSError:
         pass
 
@@ -481,6 +487,37 @@ def _inbox_shape_error(action: dict) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
+# DOWN change-gate digest (LOCAL ONLY, never uploaded)
+# --------------------------------------------------------------------------- #
+# dashboard.json 每次重建都会重打 generated_at（act/lib/dashboard.py），哪怕
+# 看板内容一个字节没变——直接 sha256 原始字节做闸门 = 每次重建都推一次全量
+# 加密快照（live 实测 ~30 万次推送、2-4GB/天，全是内容未变的重复上传）。
+# 闸门摘要因此看**剔除易变字段后的规范形**；推送 payload 仍是原始字节
+# （generated_at 保留给手机端）。字段表 add-only：只列「每次重建必变、与
+# 看板内容无关」的键。
+_VOLATILE_DASH_KEYS = ("generated_at",)
+
+
+def _gate_digest(raw: bytes) -> str:
+    """sha256 over the dashboard with volatile top-level keys stripped
+    (canonical sort_keys JSON). Falls back to hashing the raw bytes when the
+    payload is not a JSON object — honest fallback: a corrupt dashboard at
+    worst reverts to the old push-every-rebuild behaviour, never skips a real
+    change."""
+    try:
+        data = json.loads(raw.decode("utf-8"))
+        if isinstance(data, dict):
+            for key in _VOLATILE_DASH_KEYS:
+                data.pop(key, None)
+            canon = json.dumps(data, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"))
+            return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+    except (ValueError, UnicodeDecodeError):
+        pass
+    return hashlib.sha256(raw).hexdigest()
+
+
+# --------------------------------------------------------------------------- #
 # The daemon
 # --------------------------------------------------------------------------- #
 class Syncd:
@@ -633,7 +670,7 @@ class Syncd:
             raw = config.DASHBOARD_PATH.read_bytes()
         except OSError:
             return False  # no dashboard yet — nothing to push
-        digest = hashlib.sha256(raw).hexdigest()   # LOCAL ONLY, never uploaded
+        digest = _gate_digest(raw)   # LOCAL ONLY, never uploaded
         if digest == self._last_hash:
             return False
         self._seed_seq()
@@ -705,7 +742,11 @@ class Syncd:
         capture's ``text``) but fail CLOSED on field types — the AEAD
         authenticates the bytes, not the shape, and a poison payload (e.g. a
         dict-valued ``comment``) must die here, not wedge actd's whole inbox
-        pass forever. We guarantee ``ts`` and stamp the server-authoritative
+        pass forever. We guarantee ``ts``, force-stamp the T-28 ingress mark
+        ``via:"remote"`` (network ingress — overwrites any payload-supplied
+        ``via`` so a relayed blob can never impersonate an owner-class
+        writer; actd's W18 backstop then downgrades non-owner ``mode:"run"``
+        to a plain proposal), and stamp the server-authoritative
         ``board_seq`` when the row carried one (consumed by the actd §5.4
         guard). Returns False (skip) if the payload is not a usable inbox
         action or the write failed.
@@ -726,6 +767,11 @@ class Syncd:
             return False
         record = dict(action)
         record.setdefault("ts", _iso_now())
+        # T-28/W18 ingress 落款：syncd UP 落盘属网络 ingress，恒盖 via:"remote"
+        # ——**覆写**而非 setdefault（payload 自带 via:"web"/缺省即冒充 owner，
+        # AEAD 只认字节不认身份）。降级本身由 actd 侧硬后盾执行（actd.py
+        # _apply_capture：非 owner ingress 的 mode:"run" 一律降级为普通提案）。
+        record["via"] = "remote"
         if board_seq is not None and "board_seq" not in record:
             record["board_seq"] = board_seq
         path = config.INBOX_DIR / f"{action_id}.json"

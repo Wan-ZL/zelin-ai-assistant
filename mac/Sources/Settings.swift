@@ -240,13 +240,13 @@ struct SettingsFormView: View {
     @State private var voiceGenFailed = false
     // product improvement program (docs/TELEMETRY.md) — anonymous usage
     // stats, default ON; saved as the nested {"telemetry": {enabled, level,
-    // capture_input}} override (CONTRACT §15). capture_input (default ON
-    // since v0.18, like level=detailed) is the typed-text switch — only
-    // effective together with 详细 level; the copy above must keep saying
-    // typed text is included while these defaults hold.
+    // capture_input}} override (CONTRACT §15). capture_input (default OFF
+    // since v0.48 — typed text is opt-in via the first-run checkbox or the
+    // toggle here) is the typed-text switch — only effective together with
+    // 详细 level; the copy must keep saying typed text is opt-in.
     @State private var telemetryEnabled = true
     @State private var telemetryLevel = "detailed"
-    @State private var telemetryCaptureInput = true
+    @State private var telemetryCaptureInput = false
     // §26: in-app update check (GitHub releases API, at most once a day).
     @State private var updateCheckEnabled = true
     @State private var status = ""
@@ -1038,8 +1038,8 @@ struct SettingsFormView: View {
 
     private var telemetryGroup: some View {
         group {
-            Toggle(L("参与产品改进（默认开，默认含我输入的文本——可在下方单独关闭）",
-                     "Product improvement (on by default; includes text I type by default — separately switchable below)"),
+            Toggle(L("参与产品改进（默认开，仅事件元数据——输入文本需在下方单独勾选）",
+                     "Product improvement (on by default; event metadata only — typed text needs the separate opt-in below)"),
                    isOn: Binding(
                 get: { telemetryEnabled },
                 set: { v in
@@ -1069,8 +1069,8 @@ struct SettingsFormView: View {
                    "Both Basic and Detailed send anonymous event metadata — event name, time, page/action, timing counts, random device id, app version. Switching to Basic also stops the typed-text upload below (text requires Detailed)."))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Toggle(L("上传我输入的文本以更懂我（默认开：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
-                     "Upload the text I type, to know me better (on by default: captures, questions, rework feedback, search terms; ≤500 chars each)"),
+            Toggle(L("上传我输入的文本以更懂我（默认关，勾选即同意：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）",
+                     "Upload the text I type, to know me better (off by default — checking is opting in: captures, questions, rework feedback, search terms; ≤500 chars each)"),
                    isOn: Binding(
                 get: { telemetryCaptureInput },
                 set: { v in
@@ -1391,7 +1391,8 @@ struct SettingsFormView: View {
         // telemetry — mirror the effective config: overrides (nested form
         // shared with the first-run permissions page, flat keys accepted
         // too) → config.yaml telemetry block → built-in defaults (on /
-        // detailed / capture on, v0.18), same precedence as act/lib/config.py.
+        // detailed / capture OFF since v0.48 opt-in), same precedence as
+        // act/lib/config.py.
         let tele = ov["telemetry"] as? [String: Any] ?? [:]
         if let v = tele["enabled"] as? Bool {
             telemetryEnabled = v
@@ -1407,8 +1408,8 @@ struct SettingsFormView: View {
             ?? SettingsIO.configNestedScalar(block: "telemetry", key: "level")
             ?? "detailed").lowercased()
         telemetryLevel = level == "detailed" ? "detailed" : "basic"
-        // capture_input（输入文本上传，v0.18 起默认开）— same precedence
-        // chain; effective truth mirrored by Telemetry.captureInput().
+        // capture_input（输入文本上传，v0.48 起默认关、opt-in）— same
+        // precedence chain; effective truth mirrored by Telemetry.captureInput().
         if let v = tele["capture_input"] as? Bool {
             telemetryCaptureInput = v
         } else if let v = ov["telemetry.capture_input"] as? Bool {
@@ -1417,7 +1418,7 @@ struct SettingsFormView: View {
                                                         key: "capture_input") {
             telemetryCaptureInput = (v.lowercased() != "false")
         } else {
-            telemetryCaptureInput = true
+            telemetryCaptureInput = false
         }
     }
 

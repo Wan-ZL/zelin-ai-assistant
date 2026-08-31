@@ -38,6 +38,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -205,13 +206,19 @@ def _should_skip(msg: email.message.EmailMessage, sender: str, subject: str) -> 
     return False
 
 
-def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int
+def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int,
+                       stats: Optional[dict] = None
                        ) -> tuple[list[dict], int]:
     """UNSEEN mail with UID > marker.
 
     Returns (messages, newest_uid_seen). Each message dict:
     {uid, from, subject, date, message_id, body}. The pre-filtered noise
     (noreply / newsletters / accepted invites) still advances the marker.
+
+    ``stats``（可选 out-param，返回形不动——既有 2-tuple 判例保持）：调用方
+    传 dict 时累计 ``parsed``（成功过毒邮件围栏的封数，含被预过滤跳过的）与
+    ``poisoned``（倒在围栏上的封数）——scan 的全军覆没 void-pass 守卫用它
+    区分「几封各自的毒」和「整批全毒的通道级症状」。
     """
     out: list[dict] = []
     newest = last_uid
@@ -251,25 +258,113 @@ def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int
                 break
         if not raw_bytes:
             continue
+        # 毒邮件围栏（宪法 11）：policy=default 下 header 是**惰性解析**的——
+        # 畸形 Date 头直到 msg.get("Date") 才炸（Python 3.9 真实事故：
+        # parsedate_to_datetime 抛 TypeError），所以 message_from_bytes 单独
+        # try 不够，header 访问 / 预过滤 / 字段组装整段都要围起来。一封解析
+        # 不了的邮件只废自己：记入重试台账留痕（_record_poison_message），
+        # pass 照常继续。marker 已在上方推进（newest = max(...)），它不会被
+        # 无限重拉。
         try:
             msg = email.message_from_bytes(raw_bytes, policy=email.policy.default)
-        except Exception:  # noqa: BLE001
+            sender = str(msg.get("From", "") or "")
+            subject = str(msg.get("Subject", "") or "")
+            if _should_skip(msg, sender, subject):
+                # 预过滤跳过 ≠ 围栏失败：解析是成功的，通道健康
+                if stats is not None:
+                    stats["parsed"] = stats.get("parsed", 0) + 1
+                continue
+            out.append({
+                "uid": uid,
+                "from": sender,
+                "subject": subject,
+                "date": str(msg.get("Date", "") or ""),
+                "message_id": str(msg.get("Message-ID", "") or "").strip(),
+                # Gmail thread id (external thread ref); None on a non-Gmail host.
+                "gm_thrid": _parse_gm_thrid(fetched),
+                "body": _body_text(msg),
+            })
+            if stats is not None:
+                stats["parsed"] = stats.get("parsed", 0) + 1
+        except Exception as e:  # noqa: BLE001 - one poison message must not kill the pass
+            _record_poison_message(uid, e)
+            if stats is not None:
+                stats["poisoned"] = stats.get("poisoned", 0) + 1
             continue
-        sender = str(msg.get("From", "") or "")
-        subject = str(msg.get("Subject", "") or "")
-        if _should_skip(msg, sender, subject):
-            continue
-        out.append({
-            "uid": uid,
-            "from": sender,
-            "subject": subject,
-            "date": str(msg.get("Date", "") or ""),
-            "message_id": str(msg.get("Message-ID", "") or "").strip(),
-            # Gmail thread id (external thread ref); None on a non-Gmail host.
-            "gm_thrid": _parse_gm_thrid(fetched),
-            "body": _body_text(msg),
-        })
     return out, newest
+
+
+# 台账里毒邮件条目的键前缀（radar.py 的 note 对账按它豁免，radar_gmail 自理清理）
+POISON_KEY_PREFIX = "gmail:uid:"
+_POISON_LEDGER_CAP = 20     # 只留最近 20 条毒邮件案底（uid 单调递增 = 时间序）
+_LEDGER_LOCK_TRIES = 5      # 非阻塞重试 5×0.2s ≈ 1s：短竞争等一下，长 pass 不空耗
+_LEDGER_LOCK_INTERVAL = 0.2
+
+
+def _acquire_ledger_lock():
+    """flock state/radar.lock（radar.py 的 pass 锁同一文件），串住
+    radar_failed.json 的 read-modify-write：obsidian pass 与 gmail 毒邮件留痕
+    并发时（radar.py 整轮持锁期间也在改同一台账），load→modify→save 交错会把
+    对方的条目静默覆盖丢。拿不到（如 obsidian pass 正持锁数分钟）返回 None，
+    调用方**照写不误** + log 一声——两害相权：可能的 lost-update 好过确定丢掉
+    毒邮件案底。Windows 无 fcntl：直接返回句柄（重叠由调度层防）。"""
+    config.ensure_state_dirs()
+    fh = open(config.STATE_DIR / radar.LOCK_PATH_NAME, "w")
+    if radar.fcntl is None:  # pragma: no cover - Windows-only branch
+        return fh
+    for _ in range(_LEDGER_LOCK_TRIES):
+        try:
+            radar.fcntl.flock(fh, radar.fcntl.LOCK_EX | radar.fcntl.LOCK_NB)
+            return fh
+        except OSError:
+            time.sleep(_LEDGER_LOCK_INTERVAL)
+    fh.close()
+    return None
+
+
+def _record_poison_message(uid: int, err: Exception) -> None:
+    """毒邮件留痕（宪法 11 + §0「放弃要留痕（重试台账/诊断卡）」）。
+
+    marker 已越过这封邮件、永不重试，所以直接按已放弃（gave_up）记入既有
+    雷达重试台账 state/radar_failed.json（键 ``gmail:uid:<n>``），并发一条
+    analytics 事件。analytics props 只带 uid + 异常类型名——异常 message 可能
+    内嵌邮件头内容，不进可上传 props（宪法第 9 条）；完整错误只留在本地
+    台账 last_error。台账自带 20 条上限（uid 序），绝不无界膨胀。两路都
+    best-effort：留痕失败也不许影响本轮 pass。"""
+    error = f"poison message (unparseable headers): {type(err).__name__}: {err}"
+    lock = None
+    try:
+        try:
+            lock = _acquire_ledger_lock()
+        except Exception:  # noqa: BLE001 - 锁本身出问题也不许挡住留痕
+            lock = None
+        if lock is None:
+            # 拿不到锁照写不误（绝不静默丢案底），但要出声——写入没有被
+            # 串行化，另一个 pass 的台账条目可能被本次覆盖。
+            print(f"gmail radar: WARN radar.lock busy — recording poison "
+                  f"uid {uid} to {radar.FAILED_QUEUE_NAME} without the lock")
+        queue = radar._load_failed_queue()
+        entry = radar._record_failure(
+            queue, Path(f"{POISON_KEY_PREFIX}{uid}"), float(uid), error)
+        entry["gave_up"] = True     # marker 已推进——没有重试语义，只是案底
+        poison = sorted((k for k in queue if k.startswith(POISON_KEY_PREFIX)),
+                        key=lambda k: float(queue[k].get("mtime") or 0))
+        for k in poison[:-_POISON_LEDGER_CAP]:
+            queue.pop(k, None)
+        radar._save_failed_queue(queue)
+    except Exception:  # noqa: BLE001 - 留痕绝不反噬 pass
+        pass
+    finally:
+        if lock is not None:
+            try:
+                lock.close()   # 关 fd 即释放 flock
+            except OSError:
+                pass
+    try:
+        analytics.log_event("radar_message_failed", source="gmail", uid=uid,
+                            error=type(err).__name__)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -480,6 +575,9 @@ def scan(cfg: Optional[config.Config] = None,
         return 0
 
     last_uid = _load_last_uid()
+    # 毒邮件围栏统计（只有 IMAP 分支有解析围栏；注入 fetcher / command 模式
+    # 不产生 fence 失败，fence 保持零值、守卫永不触发）。
+    fence = {"parsed": 0, "poisoned": 0}
     if fetcher is not None:
         messages, newest_uid = fetcher(cfg, last_uid)
     elif fetch_cmd:
@@ -495,12 +593,26 @@ def scan(cfg: Optional[config.Config] = None,
             _note_skip(reason or "connect_failed")
             return 0
         try:
-            messages, newest_uid = fetch_new_messages(conn, last_uid)
+            messages, newest_uid = fetch_new_messages(conn, last_uid,
+                                                      stats=fence)
         finally:
             try:
                 conn.logout()
             except Exception:  # noqa: BLE001
                 pass
+
+    # 全军覆没 void pass（镜像 obsidian systemic 语义，§47）：批里 ≥3 封且
+    # **没有任何一封**通过毒邮件围栏——这不是几封各自的毒，而是通道级症状
+    # （编码风暴 / IMAP 响应形变）。marker 不越过这批（下轮重扫，故障修好后
+    # 积压自然归队），通道级告警走既有 skip/health 词表。毒案底已入台账
+    # （台账自带 cap，下轮重试要么恢复要么再次留痕——不作废，与 obsidian
+    # 「账全作废」的差异是刻意的：gmail 的围栏失败在 fetch 期即已记账）。
+    voided = fence["poisoned"] >= 3 and fence["parsed"] == 0
+    if voided:
+        _note_skip("all_poisoned")
+        print(f"gmail radar: void pass — all {fence['poisoned']} message(s) "
+              f"failed the poison fence; marker pinned at {last_uid}")
+        newest_uid = last_uid
 
     # v0.17 统一口径: route every Gmail candidate through the SAME three-way
     # triage gate (act/lib/quick_capture.triage — the one radar_slack and the
@@ -559,10 +671,11 @@ def scan(cfg: Optional[config.Config] = None,
 
     if newest_uid > last_uid:
         _save_last_uid(newest_uid)
-    try:
-        health.update_radar_health("gmail", ok=True)
-    except Exception:  # noqa: BLE001 - health must never break the pass
-        pass
+    if not voided:   # void pass 的 health 已由 _note_skip 记 not-ok，不许覆盖
+        try:
+            health.update_radar_health("gmail", ok=True)
+        except Exception:  # noqa: BLE001 - health must never break the pass
+            pass
     analytics.log_event("radar_scan", source="gmail", messages=len(messages),
                         new_cards=created)
     return created

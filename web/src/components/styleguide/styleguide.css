@@ -1,0 +1,191 @@
+/*
+ * 活体样式指南（?page=styleguide）的版面样式——只管布局与表格骨架。
+ * 纪律：颜色/阴影一律 var(--token)（CONVENTIONS §5）；唯一例外是参照表里
+ * 「老 app 色值」的字面 hex 色块，那是历史数据，由 palette.ts 数据驱动、内联渲染。
+ */
+
+.sg-page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 20px 48px;
+}
+
+.sg-back-link {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.sg-back-link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.sg-page h2 {
+  margin: 12px 0 4px;
+  font-size: 18px;
+}
+
+.sg-intro {
+  margin: 0 0 20px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.sg-section {
+  margin-top: 28px;
+}
+
+.sg-section > h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  border-bottom: var(--border-hairline) solid var(--border);
+  padding-bottom: 6px;
+}
+
+.sg-section-note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+}
+
+/* —— 第 1 节参照表 —— */
+.sg-ref-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.sg-ref-table th {
+  text-align: left;
+  padding: 6px 8px;
+  background: var(--column-header);
+  border-bottom: var(--border-hairline) solid var(--border-strong);
+  font-size: 11px;
+}
+
+.sg-ref-table td {
+  vertical-align: top;
+  padding: 8px;
+  border-bottom: var(--border-hairline) solid var(--border);
+  line-height: 1.5;
+}
+
+.sg-ref-row.is-flagged td:first-child {
+  color: var(--warning);
+}
+
+.sg-note {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.sg-value {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sg-swatch-row {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.sg-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: var(--border-hairline) solid var(--border-strong);
+}
+
+.sg-swatch-bordered {
+  border-color: var(--border-strong);
+}
+
+.sg-swatch-none {
+  color: var(--text-quaternary);
+}
+
+/* —— specimen 网格（第 2/3/4/5 节共用）—— */
+.sg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.sg-specimen {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: var(--border-hairline) dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.sg-caption {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.sg-caption code,
+.sg-ref-table code {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.sg-meta-text {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* —— 第 5 节标尺 —— */
+.sg-type-row {
+  margin: 0 0 6px;
+  line-height: 1.4;
+}
+
+.sg-spacing-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.sg-spacing-item {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.sg-spacing-bar {
+  height: 16px;
+  background: var(--accent-soft);
+  border: var(--border-hairline) solid var(--accent);
+  border-radius: 2px;
+}
+
+.sg-radius-chip {
+  padding: 8px 12px;
+  border: var(--border-hairline) solid var(--border-strong);
+  background: var(--surface);
+  font-size: 11px;
+}
+
+.sg-shadow-chip {
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 11px;
+}

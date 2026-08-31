@@ -1,0 +1,201 @@
+/*
+ * 看板动画块。fork 自 dashi web/src/styles.css（Apache-2.0，NOTICE 由 A12 登记）：
+ *   - L2363-2409 卡片 easing/hover/.is-moving/.is-settling + L2438-2447 task-card-settle keyframes
+ *   - L9371-9494 working 卡 sheen 文字 + conic 进度环 + 进度分段条 + L9560-9562 sheen keyframes
+ *   - L8590-8599 prefers-reduced-motion 全局降级
+ * 与源文件的差异（仅两类，其余逐字）：
+ *   ① 拖拽相关规则整体删除（cursor: grab/grabbing、.is-dragging、.is-drag-shifted、
+ *      view-transition 列规则）——本看板无拖拽换状态（BUILD-CONTRACT §0.8 语义红线）；
+ *   ② conic 环与进度分段的 4 个硬编码绿色（#00b978/#cfeee1/#00a558/rgba(0,165,88,.2)）
+ *      换成 --accent/--accent-soft token（rebrand 政策同 tokens.css，不造新色值）。
+ */
+
+/* —— L2363-2409：卡片过渡 easing + hover 抬升 + 移动/落定态 —— */
+.task-card {
+  transition: border-color 100ms ease, background-color 100ms ease, box-shadow 100ms ease, opacity 100ms ease, transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.task-card:hover {
+  z-index: 1;
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  box-shadow: 0 3px 6px -2px rgba(0, 0, 0, 0.035), 0 1px 2px rgba(0, 0, 0, 0.055);
+}
+
+.task-card.is-context-open {
+  z-index: 1;
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  box-shadow: 0 3px 6px -2px rgba(0, 0, 0, 0.035), 0 1px 2px rgba(0, 0, 0, 0.055);
+}
+
+:root[data-theme="dark"] .task-card:hover {
+  box-shadow: 0 3px 7px rgba(0, 0, 0, 0.48);
+}
+
+.task-card.is-moving {
+  opacity: 0.48;
+  pointer-events: none;
+  transform: scale(0.985);
+}
+
+.task-card.is-settling {
+  animation: task-card-settle 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* —— L2438-2447 —— */
+@keyframes task-card-settle {
+  from {
+    opacity: 0.38;
+    transform: translateY(-4px) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* —— L9371-9494：working 卡 conic 进度环 + sheen 扫光文字 + 进度分段条 —— */
+.task-processing-ring {
+  --task-progress: 0%;
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) var(--task-progress), var(--accent-soft) 0);
+}
+
+.task-processing-ring::after {
+  position: absolute;
+  inset: 3px;
+  border-radius: inherit;
+  background: var(--surface);
+  content: "";
+}
+
+.task-processing-ring > span {
+  display: none;
+}
+
+.task-processing.is-paused .task-processing-ring {
+  background: var(--accent-soft);
+}
+
+.task-processing-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-processing.is-running .task-processing-label {
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 35%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 65%,
+    var(--text-tertiary) 100%
+  );
+  background-position: 100% 0;
+  background-size: 220% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: task-processing-sheen 1.9s linear infinite;
+}
+
+.card-progress-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 3px;
+  height: 3px;
+}
+
+.task-progress-segments {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 3px;
+  gap: 2px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.task-progress-segments > span {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 3px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+}
+
+.task-progress-segments > span.is-complete {
+  background: var(--accent);
+}
+
+.task-processing-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 20px;
+  min-width: 0;
+  gap: 6px;
+}
+
+.task-processing-glyph {
+  display: block;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
+.task-processing-row .task-processing-label {
+  flex: 0 1 auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
+}
+
+.task-processing-row.is-running .task-processing-label {
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 35%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 65%,
+    var(--text-tertiary) 100%
+  );
+  background-position: 100% 0;
+  background-size: 220% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: task-processing-sheen 1.9s linear infinite;
+}
+
+/* —— L9560-9562 —— */
+@keyframes task-processing-sheen {
+  to { background-position: -120% 0; }
+}
+
+/* —— L8590-8599：系统减弱动效 = 全部动画即时完成 —— */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

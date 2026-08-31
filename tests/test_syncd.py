@@ -226,6 +226,55 @@ class DownTestCase(unittest.TestCase):
         self.assertFalse(d.push_down_if_changed())
         self.assertEqual(len(ft.board_upserts()), 1)
 
+    def test_generated_at_only_rebuild_pushes_nothing(self):
+        # actd 每次重建 dashboard 都重打 generated_at——内容没变时闸门必须
+        # 拦住（live 事故：~30 万次重复推送、2-4GB/天）。
+        ft = FakeTransport()
+        d = syncd.Syncd(_sync_cfg(), ft)
+        self.assertTrue(d._ensure_ready())
+        self.assertTrue(d.push_down_if_changed())
+        rebuilt = _BOARD.replace(b"2026-07-12T00:00:00Z", b"2026-07-12T00:05:00Z")
+        self.assertNotEqual(rebuilt, _BOARD)     # bytes DID change…
+        config.DASHBOARD_PATH.write_bytes(rebuilt)
+        self.assertFalse(d.push_down_if_changed())   # …but content did not
+        self.assertEqual(len(ft.board_upserts()), 1)
+        # a REAL content change still pushes
+        changed = json.loads(rebuilt.decode("utf-8"))
+        changed["needs_approval"] = []
+        config.DASHBOARD_PATH.write_bytes(
+            json.dumps(changed, ensure_ascii=False).encode("utf-8"))
+        self.assertTrue(d.push_down_if_changed())
+        self.assertEqual(len(ft.board_upserts()), 2)
+
+
+# --------------------------------------------------------------------------- #
+# DOWN change-gate digest (no crypto needed — module-level pure function)
+# --------------------------------------------------------------------------- #
+class GateDigestTestCase(unittest.TestCase):
+    def test_generated_at_is_stripped_from_the_digest(self):
+        a = b'{"generated_at":"2026-07-12T00:00:00Z","counts":{"debt":1}}'
+        b = b'{"generated_at":"2026-08-31T09:00:00Z","counts":{"debt":1}}'
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+
+    def test_content_change_changes_the_digest(self):
+        a = b'{"generated_at":"2026-07-12T00:00:00Z","counts":{"debt":1}}'
+        b = b'{"generated_at":"2026-07-12T00:00:00Z","counts":{"debt":2}}'
+        self.assertNotEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+
+    def test_key_order_does_not_change_the_digest(self):
+        # actd 重建时键序抖动不算内容变化（canonical sort_keys 形）
+        a = b'{"counts":{"debt":1},"running":[]}'
+        b = b'{"running":[],"counts":{"debt":1}}'
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+
+    def test_non_json_payload_falls_back_to_raw_hash(self):
+        raw = b"\xff\xfenot json at all"
+        self.assertEqual(syncd._gate_digest(raw),
+                         hashlib.sha256(raw).hexdigest())
+        top_level_list = b'[1, 2, 3]'
+        self.assertEqual(syncd._gate_digest(top_level_list),
+                         hashlib.sha256(top_level_list).hexdigest())
+
 
 # --------------------------------------------------------------------------- #
 # seq seed / anti-rollback
@@ -293,12 +342,32 @@ class UpTestCase(unittest.TestCase):
         self.assertEqual(rec["action"], "approve")
         self.assertEqual(rec["expected_status"], "card_sent")
         self.assertEqual(rec["board_seq"], 42)
+        # T-28：syncd UP 落盘属网络 ingress，每个 record 恒盖 via:"remote"
+        self.assertEqual(rec["via"], "remote")
         # delivered PATCH issued for this action_id, carrying the write_secret
         delivered = [(p, patch, ws) for (t, p, patch, ws) in ft.patches
                      if t == "inbox_actions" and patch.get("status") == "delivered"]
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0][0]["action_id"], f"eq.{aid}")
         self.assertEqual(delivered[0][2], _WRITE_TEXT)
+
+    def test_materialised_record_stamped_via_remote_even_when_spoofed(self):
+        # T-28/W18（PR #106 终审 MAJOR-2）：syncd UP 落盘恒盖 via:"remote"，
+        # **覆写**payload 自带的 via（"web" = 冒充 owner-class 写者）；capture
+        # 的 mode:"run" 原样透传——降级由 actd 的 T-28 硬后盾凭该落款执行
+        # （act/actd.py _apply_capture：非 owner ingress 一律降级为提案）。
+        aid = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        payload = {"action": "capture", "text": "remote run attempt",
+                   "mode": "run", "via": "web",
+                   "ts": "2026-07-12T01:00:00Z"}
+        ft = FakeTransport(inbox_rows=[self._pending_row(aid, payload)])
+        d = syncd.Syncd(_sync_cfg(), ft)
+        self.assertTrue(d._ensure_ready())
+        self.assertEqual(d.pull_up(), 1)
+        rec = json.loads((config.INBOX_DIR / f"{aid}.json")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual(rec["via"], "remote")
+        self.assertEqual(rec["mode"], "run")  # 透传；降级发生在 actd 侧
 
     def test_same_action_id_twice_is_one_inbox_file(self):
         aid = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"

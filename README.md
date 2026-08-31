@@ -98,7 +98,25 @@ bash install.sh                      # dependency checks → builds the app → 
 On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and a one-line anonymous-usage-stats disclosure (details & opt-out in Settings). Reopen it anytime via the app menu → Permissions Checkup. Then open the menu-bar app's Settings and paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in a `0600` file under `config/secrets/`).
 
 - Full walkthrough with per-step checkpoints, exact TCC permission paths, and a "first card in 5 minutes" exercise: **[docs/INSTALL.md](docs/INSTALL.md)** (also covers the `.pkg` installer route).
-- No API key yet? Preview the full UI with fictional data: `python3 scripts/demo_seed.py /tmp/assistant-demo` — see [docs/DEMO.md](docs/DEMO.md).
+- No API key yet? One command previews the full web board with fictional data: `bash scripts/dev-preview.sh` — see the section below and [docs/DEMO.md](docs/DEMO.md) (Mac-app demo & recording guide).
+
+## 🆕 Web 看板（v0.48）· 两分钟上手
+
+v0.48 adds a browser kanban: a stdlib-only local HTTP + SSE server (`server/`) serving a React board (`web/`) — another client of the same file contract the Mac app uses (reads `state/dashboard.json` + the registry, writes approvals to `state/inbox/`). Three ways in:
+
+```bash
+# ① Demo — fictional data, no API key, no install:
+git clone https://github.com/Wan-ZL/zelin-ai-assistant && cd zelin-ai-assistant
+bash scripts/dev-preview.sh              # builds web/ on first run, seeds demo data, opens your browser
+
+# ② Real data — after `bash install.sh` has run once (or with AIASSISTANT_HOME set):
+bash scripts/dev-preview.sh --real
+
+# ③ Native window — thin app shell that starts/stops the local server itself:
+bash shell/build.sh && open "shell/build/Zelin AI Board.app"
+```
+
+Building the web UI needs Node.js LTS — `dev-preview.sh` runs `npm install && npm run build` automatically when `web/dist` is missing. The app shell is ad-hoc signed: building it yourself needs no Apple developer account; a copy downloaded from the internet needs a one-time right-click → Open (Gatekeeper).
 
 ## Requirements
 
@@ -108,7 +126,7 @@ On first launch the app opens a bilingual **permissions & setup page**: one scre
 | Xcode / Swift toolchain | 6.x | building the app from source |
 | [Claude Code CLI](https://claude.com/claude-code) + Anthropic API key | latest | radars, proposal expansion, and execution all run on headless `claude` |
 | Python | 3.9+ with PyYAML | `actd` daemon, radars, digest |
-| Node.js | LTS (`npx`) | the screen-capture engine runs via `npx screenpipe` — no separate install |
+| Node.js | LTS (`npx`) | the screen-capture engine runs via `npx screenpipe`; building the web board (`web/`) |
 | Obsidian *(optional)* | — | radar scan source and wiki destination |
 | `gh` CLI *(optional)* | — | draft-PR delivery |
 
@@ -136,7 +154,7 @@ The Slack radar (incl. self-DM quick capture) is the cross-platform capture surf
 
 ## Telemetry
 
-> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. What's sent: event metadata (event names, timestamps, a random device id, app version) **and, by default, the text you type into the app** — captures, questions, rework feedback, search terms, each clipped to 500 chars (`telemetry.capture_input`, on by default). **Never sent at any setting**: the AI's answers, screen-recording content, email or Slack/iMessage message bodies, file contents, or keys. Opt out in Settings → "Product improvement program": one toggle stops just the typed text (`telemetry.capture_input: false`), the master toggle stops everything (`telemetry.enabled: false`). Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
+> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. What's sent: event metadata only (event names, timestamps, a random device id, app version). **The text you type into the app** — captures, questions, rework feedback, search terms, each clipped to 500 chars — is **NOT uploaded by default**: `telemetry.capture_input` is off (opt-in since v0.48) until you check "Share typed text to improve the product" on the first-run page, flip the Settings toggle, or set `telemetry.capture_input: true` yourself. **Never sent at any setting**: the AI's answers, screen-recording content, email or Slack/iMessage message bodies, file contents, or keys. Opt out in Settings → "Product improvement program": the typed-text toggle withdraws that consent (`telemetry.capture_input: false`), the master toggle stops everything (`telemetry.enabled: false`). Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
 
 ## Privacy & security
 

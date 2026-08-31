@@ -77,7 +77,7 @@ jobs:
         run: python3 -m pip install "pyyaml>=6,<7" hypothesis
 
       - name: Compile Python sources
-        run: python3 -m compileall -q act ingest
+        run: python3 -m compileall -q act ingest server
 
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
@@ -145,7 +145,7 @@ jobs:
         run: python -m pip install "pyyaml>=6,<7"
 
       - name: Compile Python sources
-        run: python -m compileall -q act ingest
+        run: python -m compileall -q act ingest server
 
       - name: Run unit tests
         # tests/__init__.py points AIASSISTANT_HOME at a throwaway tmp dir before
@@ -153,6 +153,34 @@ jobs:
         env:
           AIASSISTANT_HOME: ${{ runner.temp }}
         run: python -m unittest discover -s tests
+
+  web-tests:
+    name: Web tests (build + vitest)
+    # web/ 看板前端（v0.48 §49）：tsc --noEmit + vite build 抓类型/打包回归，
+    # vitest 跑 web/src/*.test.* 纯逻辑测试。ubuntu 上跑（无浏览器，jsdom）。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # no step pushes or uses git auth after checkout — don't leave the
+          # token in .git/config for later steps to read
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        run: npm run build
+
+      - name: Run vitest
+        run: npx vitest run
 
   ci:
     runs-on: macos-latest
@@ -178,7 +206,7 @@ jobs:
         run: python3 -m pip install --user "pyyaml>=6,<7" cryptography || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7" cryptography
 
       - name: Compile Python sources
-        run: python3 -m compileall -q act ingest
+        run: python3 -m compileall -q act ingest server
 
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests

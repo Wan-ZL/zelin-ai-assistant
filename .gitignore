@@ -11,6 +11,7 @@ act/registry/archive/
 .DS_Store
 state/
 mac/build/
+shell/build/
 # SwiftPM build dir of the logic-test package (mac/LogicTests/test.sh)
 mac/LogicTests/.build/
 # Sparkle.framework + bin/ tools — vendored on demand by mac/scripts/fetch-sparkle.sh,

@@ -1,0 +1,300 @@
+/*
+ * shell.css — app 外壳样式（G7，自写非 fork；只引用 tokens.css 已有变量，零新色值）。
+ * 覆盖：布局骨架 / 顶栏 / 离线横幅 / 空态 / 壳层按钮 / spinner / 响应式最小宽度。
+ * 组件样式（卡片/列/抽屉）归 A6/A7/A9，别往这里加。
+ */
+
+/* —— 布局骨架 —— */
+/* min-width：看板是桌面工具，顶栏窄于 640px 会塌；更窄时交给横向滚动而不是挤压 */
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-width: 640px;
+}
+
+.shell-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 整页空态/加载态的居中容器 */
+.shell-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+/* —— 顶栏 —— */
+.shell-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 16px;
+  height: 52px;
+  padding: 0 16px;
+  background: var(--header-bg);
+  border-bottom: var(--border-hairline) solid var(--border);
+}
+
+.shell-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.shell-logo {
+  display: inline-flex;
+  flex: none;
+}
+
+.shell-logo svg {
+  display: block;
+  border-radius: 5px;
+}
+
+.shell-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.shell-device {
+  padding: 1px 7px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  white-space: nowrap;
+}
+
+.shell-freshness {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.shell-freshness.is-stale {
+  color: var(--warning);
+}
+
+/* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定 */
+.shell-search-slot {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.shell-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 回收站入口：低调文本链接，与连接状态/切换钮同排 */
+.shell-trash-link {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.shell-trash-link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.shell-trash-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* 连接状态：小圆点 + 文本（live 只留点省空间，异常态才展开文字） */
+.shell-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.shell-connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-quaternary);
+}
+
+.shell-connection.is-live .shell-connection-dot { background: var(--success); }
+.shell-connection.is-connecting .shell-connection-dot { background: var(--warning); }
+.shell-connection.is-reconnecting .shell-connection-dot { background: var(--danger); }
+
+.shell-connection.is-live .shell-connection-text {
+  /* 正常态视觉降噪：文字仅供屏幕阅读器/tooltip，异常态才可见 */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* —— 壳层按钮 —— */
+.shell-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.shell-icon-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.shell-icon-button:active {
+  background: var(--surface-active);
+}
+
+.shell-icon-button:focus-visible,
+.shell-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.shell-button {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.shell-button:hover {
+  background: var(--accent-hover);
+}
+
+/* —— 离线横幅（有旧快照时的诚实降级声明）—— */
+.shell-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 16px;
+  background: var(--danger-soft);
+  color: var(--text-primary);
+  border-bottom: var(--border-hairline) solid var(--border);
+  font-size: 12px;
+}
+
+.shell-banner-icon {
+  flex: none;
+  align-self: center;
+  color: var(--danger);
+}
+
+.shell-banner-title {
+  color: var(--danger);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.shell-banner-detail {
+  color: var(--text-secondary);
+}
+
+/* —— 空态 —— */
+.shell-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  text-align: center;
+}
+
+.shell-empty-icon {
+  color: var(--text-tertiary);
+  margin-bottom: 2px;
+}
+
+.shell-empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.shell-empty-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.shell-empty-action {
+  margin-top: 8px;
+}
+
+/* —— 加载 spinner（壳层自用；转圈动画尊重 reduced-motion）—— */
+.shell-spinner {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: shell-spin 0.8s linear infinite;
+}
+
+@keyframes shell-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-spinner {
+    animation-duration: 2.4s; /* 不完全静止（仍需传达"在加载"），但显著放慢 */
+  }
+}
+
+/* —— 响应式：窄窗先收次要信息，再交给 .shell 的 min-width 横向滚动 —— */
+@media (max-width: 900px) {
+  .shell-device {
+    display: none;
+  }
+}
+
+@media (max-width: 780px) {
+  .shell-freshness {
+    display: none;
+  }
+
+  .shell-header {
+    gap: 10px;
+  }
+}

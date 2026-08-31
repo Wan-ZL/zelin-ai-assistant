@@ -1,0 +1,7 @@
+{
+  "action" : "capture",
+  "mode" : "run",
+  "preset" : "proposals_triage",
+  "text" : "清理提案积压：审阅提案列的积压卡片，给出保留\/丢弃\/合并建议",
+  "ts" : "2026-08-30T12:00:00Z"
+}

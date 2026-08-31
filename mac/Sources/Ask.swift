@@ -16,8 +16,8 @@
 //
 // Privacy: 👍/👎 feedback goes to the LOCAL analytics log — event name +
 // verdict always; the question text is attached only while the content gate
-// is open (capture_input AND level=detailed, both default ON — emit-side
-// gate, docs/TELEMETRY.md).
+// is open (capture_input AND level=detailed; capture_input defaults OFF
+// since v0.48, opt-in — emit-side gate, docs/TELEMETRY.md).
 
 import AppKit
 import SwiftUI
@@ -386,8 +386,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("有帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认开）",
-                    "Helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — the default)"))
+            .help(L("有帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认关）",
+                    "Helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — off by default)"))
             Button {
                 model.rate("down")
             } label: {
@@ -397,8 +397,8 @@ struct AskPageView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.feedback != nil)
-            .help(L("没帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认开）",
-                    "Not helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — the default)"))
+            .help(L("没帮助（记一条匿名事件，随使用统计上传；问题文本仅当设置里「上传我输入的文本」开启时附带，默认关）",
+                    "Not helpful (logs an anonymous event that uploads with usage stats; your question text is attached only while Settings' \"Upload the text I type\" is on — off by default)"))
         }
         .font(.system(size: 12))
     }

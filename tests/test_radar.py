@@ -733,6 +733,26 @@ class MarkerMiscTestCase(RadarScanBase):
 
 
 # --------------------------------------------------------------------------- #
+# 台账对账豁免 — gmail 毒邮件案底不是 obsidian note
+# --------------------------------------------------------------------------- #
+class PoisonLedgerReconcileTestCase(RadarScanBase):
+    def test_gmail_poison_entries_survive_note_reconciliation(self):
+        # radar_gmail._record_poison_message 写的 gmail:uid:* 案底不是 note
+        # 路径——「note 已删除 -> 销案」的对账若命中它，会立刻销掉别的雷达
+        # 刚留下的痕（留痕形同虚设）。真消失的 note 键照常销案不受影响。
+        gone = str(self.raw / "long-gone.md")   # 从未创建 -> 对账应销案
+        radar._save_failed_queue({
+            "gmail:uid:7": {"mtime": 7.0, "attempts": 1, "gave_up": True,
+                            "last_error": "poison message"},
+            gone: {"mtime": 1.0, "attempts": 1},
+        })
+        radar.scan(runner=lambda t: "[]")
+        queue = radar._load_failed_queue()
+        self.assertIn("gmail:uid:7", queue)     # 幸存
+        self.assertNotIn(gone, queue)           # 正常销案不受影响
+
+
+# --------------------------------------------------------------------------- #
 # file-level hazards — a bad path must never crash a pass
 # --------------------------------------------------------------------------- #
 class FileHazardTestCase(RadarScanBase):
