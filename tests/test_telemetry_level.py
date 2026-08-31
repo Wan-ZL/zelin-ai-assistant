@@ -2,9 +2,11 @@
 
 User-typed content fields (instruction summaries, capture text,
 Ask questions) require BOTH `telemetry.capture_input: true` AND
-level="detailed" — SHIPPED DEFAULTS since v0.18, which is why the disclosure
-copy must say typed text is included (DisclosureCopyHonestyTestCase guards
-that). The double gate lives at the EMIT site: with either switch off the
+level="detailed". Since v0.48 capture_input ships default OFF — typed text
+is strictly OPT-IN via the first-run checkbox / Settings toggle / config.yaml
+key (all explicit sources), and the disclosure copy must say so honestly
+(DisclosureCopyHonestyTestCase guards that). The double gate lives at the
+EMIT site: with either switch off the
 fields never reach events.jsonl, so they can never be uploaded either.
 Content fields are clipped to analytics.CONTENT_CLIP (500 chars). Scope
 boundary (RadarContentBoundaryTestCase): only text the user types into this
@@ -63,10 +65,10 @@ class ClipTestCase(unittest.TestCase):
 
 
 class CaptureInputConfigTestCase(unittest.TestCase):
-    """The capture_input switch: shipped default TRUE (v0.18, with
-    level=detailed — a vanilla install collects typed text and the docs say
-    so); explicit config values honored; §15 override plumbing (nested +
-    flat forms)."""
+    """The capture_input switch: shipped default FALSE since v0.48 (opt-in —
+    a vanilla install collects NO typed text until the user checks the
+    first-run checkbox / Settings toggle or writes the yaml key); explicit
+    config values honored; §15 override plumbing (nested + flat forms)."""
 
     def _load_with_yaml(self, body: str) -> config.Config:
         path = Path(tempfile.mkdtemp(prefix="cfg-capture-")) / "config.yaml"
@@ -74,13 +76,20 @@ class CaptureInputConfigTestCase(unittest.TestCase):
         with mock.patch.object(config, "CONFIG_PATH", path):
             return config.load_config()
 
-    def test_dataclass_default_is_true(self):
-        self.assertTrue(config.Config().telemetry_capture_input)
-        self.assertTrue(config.Config().capture_input_active())
+    def test_dataclass_default_is_false(self):
+        # v0.48 opt-in flip: a vanilla install has the gate CLOSED
+        self.assertFalse(config.Config().telemetry_capture_input)
+        self.assertFalse(config.Config().capture_input_active())
 
-    def test_missing_key_resolves_true(self):
+    def test_missing_key_resolves_false(self):
         cfg = self._load_with_yaml("telemetry:\n  level: detailed\n")
+        self.assertFalse(cfg.telemetry_capture_input)
+
+    def test_explicit_yaml_opt_in_is_honored(self):
+        cfg = self._load_with_yaml(
+            "telemetry:\n  level: detailed\n  capture_input: true\n")
         self.assertTrue(cfg.telemetry_capture_input)
+        self.assertTrue(cfg.capture_input_active())
 
     def test_explicit_yaml_false_is_honored(self):
         cfg = self._load_with_yaml(
@@ -89,9 +98,10 @@ class CaptureInputConfigTestCase(unittest.TestCase):
         self.assertFalse(cfg.capture_input_active())
 
     def test_basic_level_disables_content_even_with_capture_on(self):
-        cfg = self._load_with_yaml("telemetry:\n  level: basic\n")
-        self.assertTrue(cfg.telemetry_capture_input)  # switch untouched
-        self.assertFalse(cfg.capture_input_active())  # but the gate is shut
+        cfg = self._load_with_yaml(
+            "telemetry:\n  level: basic\n  capture_input: true\n")
+        self.assertTrue(cfg.telemetry_capture_input)  # switch on…
+        self.assertFalse(cfg.capture_input_active())  # …but the gate is shut
 
     def _load_with_overrides(self, data: dict) -> config.Config:
         config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -340,9 +350,9 @@ class QuickCaptureGateTestCase(unittest.TestCase):
 
 class InboxCaptureGateTestCase(unittest.TestCase):
     """actd._apply_capture resolves the gate via config (no cfg argument) —
-    chars is always-on metadata; the DEFAULT config (no config.yaml, v0.18
-    shipped defaults) has both gates open, so text IS recorded; an explicit
-    capture_input: false stops it."""
+    chars is always-on metadata; the DEFAULT config (no config.yaml, v0.48
+    opt-in defaults) records NO text even after the disclosure rendered;
+    only an explicit capture_input: true (checkbox/toggle/yaml) opens it."""
 
     def setUp(self):
         config.ensure_state_dirs()
@@ -364,12 +374,29 @@ class InboxCaptureGateTestCase(unittest.TestCase):
         self.addCleanup(lambda: analytics.CONSENT_V2_PATH.unlink(
             missing_ok=True))
 
-    def test_default_config_records_chars_and_text(self):
-        self._show_v2_disclosure()  # the new disclosure has been seen
+    def test_default_config_records_chars_only(self):
+        # v0.48 opt-in: even with the disclosure surface rendered (v2
+        # marker on disk), the default config uploads metadata only — the
+        # typed text must NOT be recorded until the user opts in.
+        self._show_v2_disclosure()
         ev = self._capture("默认配置下打的字")
         self.assertIsNotNone(ev)
         self.assertEqual(ev.get("chars"), len("默认配置下打的字"))
-        self.assertIn("默认配置下打的字", ev.get("text", ""))
+        self.assertNotIn("text", ev)
+
+    def test_opt_in_checkbox_override_records_text(self):
+        # the first-run checkbox / Settings toggle writes the nested
+        # explicit override — that alone (no v2 marker needed) opens the gate
+        config.SETTINGS_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.SETTINGS_OVERRIDES_PATH.write_text(
+            json.dumps({"telemetry": {"capture_input": True}}),
+            encoding="utf-8")
+        self.addCleanup(lambda: config.SETTINGS_OVERRIDES_PATH.unlink(
+            missing_ok=True))
+        ev = self._capture("勾选后打的字")
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev.get("chars"), len("勾选后打的字"))
+        self.assertIn("勾选后打的字", ev.get("text", ""))
 
     def test_upgraded_install_without_v2_disclosure_drops_text(self):
         # FIX 2 (CONTRACT §15 v0.18): a pre-v0.18 install has only the OLD
@@ -407,9 +434,9 @@ class InboxCaptureGateTestCase(unittest.TestCase):
 
 
 class ExampleConfigDefaultsTestCase(unittest.TestCase):
-    """The SHIPPED example config must resolve to content collection ON —
-    and actually produce content on an emit path (audit requirement: the
-    vanilla download collects the full set out of the box)."""
+    """The SHIPPED example config must resolve to content collection OFF
+    (v0.48 opt-in) — behavior telemetry on/detailed, but NO typed text may
+    leave a vanilla download until the user opts in."""
 
     REPO_EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.yaml"
 
@@ -420,16 +447,16 @@ class ExampleConfigDefaultsTestCase(unittest.TestCase):
                                self.REPO_EXAMPLE):
             return config.load_config()
 
-    def test_example_defaults_collect_content(self):
+    def test_example_defaults_do_not_collect_content(self):
         cfg = self._example_cfg()
         self.assertTrue(cfg.telemetry_enabled)
         self.assertEqual(cfg.telemetry_level, "detailed")
-        self.assertTrue(cfg.telemetry_capture_input)
-        self.assertTrue(cfg.capture_input_active())
+        self.assertFalse(cfg.telemetry_capture_input)
+        self.assertFalse(cfg.capture_input_active())
 
-    def test_example_defaults_produce_content_on_ask(self):
-        # the v2 disclosure has rendered (fresh installs see it on first
-        # run) — then the shipped defaults really do produce content
+    def test_example_defaults_produce_no_content_on_ask(self):
+        # even with the v2 disclosure rendered, the vanilla defaults must
+        # NOT attach the question text (opt-in only)
         analytics.CONSENT_V2_PATH.parent.mkdir(parents=True, exist_ok=True)
         analytics.CONSENT_V2_PATH.write_text("2026-07-11T00:00:00Z\n",
                                              encoding="utf-8")
@@ -445,34 +472,49 @@ class ExampleConfigDefaultsTestCase(unittest.TestCase):
         for e in analytics.read_events():
             if e.get("event") == "ask_answered" and e.get("ok"):
                 last = e
-        self.assertIn("出厂默认下打的问题", last.get("question", ""))
+        self.assertIsNotNone(last)
+        self.assertNotIn("question", last)
 
 
 class ConsentV2GateTestCase(unittest.TestCase):
-    """FIX 2 (CONTRACT §15 v0.18): the built-in default-on only arms after
-    the v2 disclosure marker exists; an EXPLICIT capture_input (config.yaml /
-    overrides) is its own informed choice and needs no marker."""
+    """CONTRACT §15 v0.48 (opt-in revision): ONLY an EXPLICIT capture_input
+    (first-run checkbox / Settings toggle / config.yaml) opens the content
+    gate; the v2 disclosure marker alone never does anymore (it remains a
+    record that the disclosure surface was shown)."""
 
     def tearDown(self):
         analytics.CONSENT_V2_PATH.unlink(missing_ok=True)
 
     def _default_cfg(self) -> config.Config:
-        cfg = config.Config()  # shipped defaults: detailed + capture on
+        cfg = config.Config()  # shipped defaults: detailed + capture OFF
         self.assertFalse(cfg.telemetry_capture_input_explicit)
         return cfg
 
     def test_defaults_without_marker_gate_closed(self):
         self.assertFalse(analytics.content_gate(self._default_cfg()))
 
-    def test_defaults_with_v2_marker_gate_open(self):
+    def test_defaults_with_v2_marker_gate_still_closed(self):
+        # v0.48: seeing the disclosure is NOT consent — the marker alone
+        # must never arm content collection under the opt-in default
         analytics.CONSENT_V2_PATH.parent.mkdir(parents=True, exist_ok=True)
         analytics.CONSENT_V2_PATH.write_text("x\n", encoding="utf-8")
-        self.assertTrue(analytics.content_gate(self._default_cfg()))
+        self.assertFalse(analytics.content_gate(self._default_cfg()))
 
-    def test_explicit_capture_input_needs_no_marker(self):
+    def test_explicit_opt_in_needs_no_marker(self):
         cfg = self._default_cfg()
+        cfg.telemetry_capture_input = True
         cfg.telemetry_capture_input_explicit = True
         self.assertTrue(analytics.content_gate(cfg))
+
+    def test_marker_without_explicit_true_stays_closed_even_captured_on(self):
+        # defense in depth: a capture_input=True that somehow did NOT come
+        # from an explicit source (impossible via load_config since v0.48)
+        # still fails the consent leg
+        analytics.CONSENT_V2_PATH.parent.mkdir(parents=True, exist_ok=True)
+        analytics.CONSENT_V2_PATH.write_text("x\n", encoding="utf-8")
+        cfg = self._default_cfg()
+        cfg.telemetry_capture_input = True
+        self.assertFalse(analytics.content_gate(cfg))
 
     def test_explicit_flag_set_by_yaml_and_overrides(self):
         path = Path(tempfile.mkdtemp(prefix="cfg-v2-")) / "config.yaml"
@@ -493,8 +535,8 @@ class ConsentV2GateTestCase(unittest.TestCase):
         missing = Path(tempfile.mkdtemp(prefix="cfg-v2-none-")) / "config.yaml"
         with mock.patch.object(config, "CONFIG_PATH", missing):
             cfg = config.load_config()
-        self.assertTrue(cfg.telemetry_capture_input)      # default on…
-        self.assertFalse(cfg.telemetry_capture_input_explicit)  # …but not consent
+        self.assertFalse(cfg.telemetry_capture_input)     # default off (v0.48)
+        self.assertFalse(cfg.telemetry_capture_input_explicit)  # and no consent
 
 
 class SecretMaskTestCase(unittest.TestCase):
@@ -581,11 +623,12 @@ class RadarContentBoundaryTestCase(unittest.TestCase):
 
 
 class DisclosureCopyHonestyTestCase(unittest.TestCase):
-    """Truth-in-labeling drift-guard (CONTRACT §15 v0.18): while
-    capture_input defaults ON, the first-run disclosure must SAY typed text
-    is included, and no consent/settings copy may claim no personal text is
-    collected. Checked against the Swift sources like the
-    tests/test_capture_exclusion.py drift-guard."""
+    """Truth-in-labeling drift-guard (CONTRACT §15; v0.48 opt-in revision):
+    the first-run disclosure must still MENTION typed text (now as the
+    opt-in checkbox), no consent/settings copy may claim no personal text
+    is ever collected (opting in collects it), and no copy may claim typed
+    text is on by default (it is not, since v0.48). Checked against the
+    Swift sources like the tests/test_capture_exclusion.py drift-guard."""
 
     ROOT = Path(__file__).resolve().parent.parent
     PERMISSIONS = ROOT / "mac" / "Sources" / "Permissions.swift"
@@ -599,6 +642,16 @@ class DisclosureCopyHonestyTestCase(unittest.TestCase):
         src = self.PERMISSIONS.read_text(encoding="utf-8")
         self.assertIn("你输入的文本", src)
         self.assertIn("text you type", src)
+
+    def test_first_run_opt_in_checkbox_present_and_explicit(self):
+        # v0.48: the first-run/setup page carries the UNCHECKED opt-in
+        # checkbox whose acceptance writes the explicit nested override
+        # (the only consent source content_gate accepts)
+        src = self.PERMISSIONS.read_text(encoding="utf-8")
+        self.assertIn("分享输入文本以帮助改进产品", src)
+        self.assertIn("Share typed text to improve the product", src)
+        self.assertIn('tele["capture_input"] = ', src)
+        self.assertIn("SettingsIO.writeOverrides", src)
 
     def test_no_copy_denies_text_collection(self):
         banned = ("绝不含屏幕内容、对话或任何个人文本",
@@ -615,13 +668,15 @@ class DisclosureCopyHonestyTestCase(unittest.TestCase):
                                   f"{path.name} still claims: {phrase!r}")
 
     def test_install_doc_current(self):
-        # FIX 4: the retired first-run checkbox must not be described, and
-        # the typed-text default must be disclosed
+        # v0.48 revision of the FIX-4 guard: the retired v0.13 stats
+        # checkbox ("取消勾选匿名…") must stay gone, and the doc must now
+        # describe the OPT-IN typed-text reality instead of a default-on one
         src = self.INSTALL.read_text(encoding="utf-8")
-        self.assertNotIn("checkbox", src.lower())
         self.assertNotIn("取消勾选匿名", src)
         self.assertIn("text you type", src)
         self.assertIn("你输入", src)
+        self.assertIn("opt in", src.lower())
+        self.assertNotIn("include the text you type", src)
 
     def test_ask_tooltips_current(self):
         # FIX 4: pre-capture_input tooltip wording ("Detailed attaches the
@@ -631,9 +686,12 @@ class DisclosureCopyHonestyTestCase(unittest.TestCase):
         self.assertNotIn("基础级不含问题内容", src)
         self.assertIn("上传我输入的文本", src)
 
-    def test_example_config_documents_default_on(self):
+    def test_example_config_documents_default_off(self):
+        # v0.48: the example must document capture_input as default-false
+        # opt-in — no line may still claim 默认 true
         src = self.EXAMPLE.read_text(encoding="utf-8")
-        self.assertIn("capture_input: true", src)
+        self.assertIn("capture_input: false", src)
+        self.assertNotIn("capture_input: true", src)
 
     def test_legacy_flat_capture_key_migrates_not_drops(self):
         # opt-out-safety guard (Swift has no unit harness — source-literal

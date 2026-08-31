@@ -203,8 +203,9 @@ final class PermissionsModel: ObservableObject {
 // MARK: - telemetry consent surface (marker only since v0.18)
 
 /// First-run disclosure IO. Since v0.18 the first-run surface is a one-line
-/// disclosure (TelemetryBlockView) — the on/off toggle, level picker and
-/// capture_input switch all live in Settings「产品改进计划」, which writes
+/// disclosure (TelemetryBlockView); v0.48 adds the unchecked typed-text
+/// opt-in checkbox to it. The on/off toggle and level picker still live in
+/// Settings「产品改进计划」, and checkbox + Settings capture toggle write
 /// the SAME override key shape ({"telemetry": {…}}, CONTRACT §15). What
 /// remains here is the consent-surface marker.
 enum TelemetryConsent {
@@ -217,19 +218,19 @@ enum TelemetryConsent {
     /// timestamp, written once.
     static func markSurfaceShown() {
         writeMarkerOnce(AppPaths.stateRoot + "/state/telemetry_consent_shown")
-        // the current disclosure copy states typed text is included, so
-        // showing it also satisfies the v2 (content) consent surface
+        // record that the typed-text disclosure surface rendered too (v2
+        // marker — historical record only since v0.48, see below)
         markSurfaceShownV2()
     }
 
-    /// v2 marker (CONTRACT §15 v0.18): gates CONTENT capture the way the v1
-    /// marker gates uploads — written ONLY when the first-run disclosure
-    /// line (whose copy states typed text is included) actually renders;
-    /// the Settings page deliberately does NOT write it passively (non-lazy
-    /// VStack .onAppear fires on page open, not section visibility — that
-    /// would silently arm upgraded installs). Upgraded installs keep
-    /// behavior telemetry on the v1 marker but send no content until this
-    /// exists or they flip the Settings capture toggle (explicit key).
+    /// v2 marker (CONTRACT §15 v0.18, DEMOTED in v0.48): historically it
+    /// armed CONTENT capture under the default-ON regime. Since v0.48
+    /// capture_input defaults OFF and content consent is ONLY the explicit
+    /// capture_input override key (the first-run「分享输入文本」checkbox or
+    /// the Settings toggle writes it) — this marker is kept as a record
+    /// that the disclosure surface rendered, and neither side's content
+    /// gate accepts it as consent anymore (analytics.content_gate /
+    /// Telemetry.contentCaptureActive).
     static func markSurfaceShownV2() {
         writeMarkerOnce(Telemetry.consentV2Path)
     }
@@ -629,38 +630,71 @@ struct CapabilityRowsView: View {
     }
 }
 
-/// First-run telemetry disclosure (v0.18): one low-key honest line — stats
-/// are ON by default and, per the shipped default, INCLUDE the text the
-/// user types into the app (truth in labeling: the copy below must never
-/// claim "no personal text" while capture_input defaults on; the honesty
-/// drift-guard in tests/test_telemetry_level.py checks this file). Plus a
-/// link to the Settings section that holds the full detail and the off
-/// switches. Low-key but NOT hidden: the link is right here, one click
-/// away. Rendering this block still writes the consent-surface marker the
+/// First-run telemetry disclosure (v0.18; v0.48 opt-in revision): one
+/// low-key honest line — behavior stats (event metadata only) are ON by
+/// default, and the text the user types is uploaded ONLY after they check
+/// the opt-in checkbox below (truth in labeling: the honesty drift-guard
+/// in tests/test_telemetry_level.py checks this file). Plus a link to the
+/// Settings section that holds the full detail and the off switches.
+/// The UNCHECKED「分享输入文本」checkbox writes the explicit nested
+/// capture_input override — the ONLY consent source content_gate accepts
+/// (CONTRACT §15 v0.48); the Settings toggle keeps working over the same
+/// key. Rendering this block still writes the consent-surface marker the
 /// Python uploader gates on (unchanged semantics — nothing uploads before
 /// this line has been shown).
 struct TelemetryBlockView: View {
     @ObservedObject private var i18n = LanguageStore.shared
+    // reflect an already-recorded choice on re-open (checkup page / wizard
+    // rerun); a fresh install has no explicit key → UNCHECKED
+    @State private var shareTypedText = Telemetry.explicitCaptureInput() ?? false
 
     var body: some View {
-        (Text(L("匿名使用统计（含你输入的文本，每条截断 500 字）默认开启以改进产品。",
-                "Anonymous usage stats (including the text you type, clipped to 500 chars each) are on by default to improve the product."))
-            + Text(" ")
-            + Text(L("详情与关闭在设置。", "Details & opt-out in Settings."))
-                .foregroundColor(.accentColor)
-                .underline())
-            .font(.system(size: 11))
-            .foregroundColor(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .onTapGesture {
-                MainNav.shared.pendingAnchor = "telemetry"
-                MainNav.shared.section = .settings
-                (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .onAppear { TelemetryConsent.markSurfaceShown() }
+        VStack(alignment: .leading, spacing: 8) {
+            (Text(L("匿名使用统计（仅事件元数据，如事件名/耗时/计数）默认开启以改进产品；你输入的文本默认不上传，仅在下方勾选后收集（每条截断 500 字）。",
+                    "Anonymous usage stats (event metadata only — event names, timings, counts) are on by default to improve the product; the text you type is NOT uploaded by default and is collected only if you opt in below (clipped to 500 chars each)."))
+                + Text(" ")
+                + Text(L("详情与关闭在设置。", "Details & opt-out in Settings."))
+                    .foregroundColor(.accentColor)
+                    .underline())
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .onTapGesture {
+                    MainNav.shared.pendingAnchor = "telemetry"
+                    MainNav.shared.section = .settings
+                    (NSApp.delegate as? AppDelegate)?.openMainWindow(nil)
+                }
+            Toggle(L("分享输入文本以帮助改进产品",
+                     "Share typed text to improve the product"),
+                   isOn: Binding(
+                get: { shareTypedText },
+                set: { v in
+                    shareTypedText = v
+                    persistCaptureInput(v)
+                }))
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onAppear { TelemetryConsent.markSurfaceShown() }
+    }
+
+    /// Checking (or unchecking) the box is the informed choice — write the
+    /// explicit nested override key, same shape as Settings' persistTelemetry
+    /// (CONTRACT §15: {"telemetry": {"capture_input": …}}; the legacy flat
+    /// spelling is cleaned so the two forms can never disagree). Failure is
+    /// fail-private: a write that didn't land simply leaves capture off.
+    private func persistCaptureInput(_ value: Bool) {
+        var merged = SettingsIO.readOverrides()
+        var tele = merged["telemetry"] as? [String: Any] ?? [:]
+        tele["capture_input"] = value
+        merged["telemetry"] = tele
+        merged.removeValue(forKey: "telemetry.capture_input")
+        // behavior telemetry: which key changed only — never the value
+        Analytics.log("mw_setting_change", fields: ["key": "telemetry"])
+        try? SettingsIO.writeOverrides(merged)
     }
 }

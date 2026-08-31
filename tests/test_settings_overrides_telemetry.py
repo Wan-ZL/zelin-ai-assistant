@@ -147,7 +147,7 @@ class StringBoolOverrideTestCase(_OverridesSandboxBase):
         })
         cfg = config.load_config()
         self.assertTrue(cfg.telemetry_enabled)             # 保留 yaml 值
-        self.assertTrue(cfg.telemetry_capture_input)       # 保留默认
+        self.assertFalse(cfg.telemetry_capture_input)      # 保留默认（v0.48 起默认关）
         self.assertFalse(cfg.telemetry_capture_input_explicit)  # 坏值≠知情选择
         self.assertTrue(cfg.skip_permissions)
 

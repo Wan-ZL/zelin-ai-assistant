@@ -312,8 +312,9 @@ enum Analytics {
 
 /// Effective telemetry.level / telemetry.capture_input: settings overrides
 /// (nested form, then legacy flat keys) → config.yaml `telemetry:` block →
-/// built-in defaults (detailed / true — BOTH default ON since v0.18, which
-/// is why every disclosure surface must say typed text is included). The
+/// built-in defaults (detailed / FALSE — capture_input defaults OFF since
+/// v0.48: typed text is opt-in via the first-run checkbox or the Settings
+/// toggle, both of which write the explicit override key). The
 /// content gate requires BOTH capture_input AND level=detailed
 /// (docs/TELEMETRY.md「输入文本收集」) — emit sites attach typed text ONLY
 /// behind contentCaptureActive(); with either switch off the text never
@@ -355,26 +356,27 @@ enum Telemetry {
     }
 
     /// Effective capture_input value (for the Settings mirror): explicit
-    /// source → built-in default ON (v0.18).
+    /// source → built-in default OFF (v0.48 opt-in).
     static func captureInput() -> Bool {
-        explicitCaptureInput() ?? true
+        explicitCaptureInput() ?? false
     }
 
     /// v2 consent-surface marker (CONTRACT §15 v0.18) — written when the
-    /// NEW disclosure (the one that says typed text is included) first
-    /// renders. Mirrors analytics.CONSENT_V2_PATH on the Python side.
+    /// typed-text disclosure surface first renders. Since v0.48 it is only
+    /// a record that the surface was shown; it NEVER arms content capture
+    /// by itself. Mirrors analytics.CONSENT_V2_PATH on the Python side.
     static var consentV2Path: String {
         AppPaths.stateRoot + "/state/telemetry_consent_shown_v2"
     }
 
-    /// Content gate (mirrors act/lib/analytics.content_gate): capture_input
-    /// AND detailed AND (v2 disclosure shown OR capture_input explicit).
-    /// Upgraded installs whose only marker predates v0.18 keep behavior
-    /// telemetry but send NO content until the new disclosure appears.
+    /// Content gate (mirrors act/lib/analytics.content_gate, v0.48 opt-in
+    /// revision): capture_input EXPLICITLY true (first-run checkbox /
+    /// Settings toggle / config.yaml) AND level=detailed. The v2 disclosure
+    /// marker alone no longer opens the gate — seeing a disclosure is not
+    /// consent; upgraded installs stop sending content until they opt in.
     static func contentCaptureActive() -> Bool {
         guard level() == "detailed" else { return false }
-        if let explicit = explicitCaptureInput() { return explicit }
-        return FileManager.default.fileExists(atPath: consentV2Path)
+        return explicitCaptureInput() ?? false
     }
 }
 

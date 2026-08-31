@@ -135,7 +135,7 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 
 ## 匿名使用统计(Telemetry)
 
-> **匿名使用统计默认开启**(像 VS Code 一样),用于驱动产品改进。发送的内容:事件元数据(事件名、时间戳、随机设备号、版本号)以及**默认包含你输入进本 App 的文本**——快速捕获、提问、打回反馈、搜索词,每条截断 500 字符(`telemetry.capture_input`,默认开)。**任何设置下都不发送**:AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息正文、文件内容、密钥。关闭在 设置 →「产品改进计划」:单关「上传我输入的文本」只停文本(`telemetry.capture_input: false`),关总开关全部停止(`telemetry.enabled: false`)。Fork 用户注意:不改 `telemetry.supabase_url` 时数据会传给本项目维护者——把 URL 置空(`""`)即彻底禁用上传。字段表与细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
+> **匿名使用统计默认开启**(像 VS Code 一样),用于驱动产品改进。发送的内容:仅事件元数据(事件名、时间戳、随机设备号、版本号)。**你输入进本 App 的文本**——快速捕获、提问、打回反馈、搜索词,每条截断 500 字符——**默认不上传**:`telemetry.capture_input` 默认关(v0.48 起 opt-in),只有你在首启页勾选「分享输入文本以帮助改进产品」、在设置里打开「上传我输入的文本」,或自己写 `telemetry.capture_input: true` 后才收集。**任何设置下都不发送**:AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息正文、文件内容、密钥。关闭在 设置 →「产品改进计划」:取消文本开关即收回同意(`telemetry.capture_input: false`),关总开关全部停止(`telemetry.enabled: false`)。Fork 用户注意:不改 `telemetry.supabase_url` 时数据会传给本项目维护者——把 URL 置空(`""`)即彻底禁用上传。字段表与细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
 
 ## 隐私与安全
 

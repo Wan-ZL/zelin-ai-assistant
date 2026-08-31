@@ -38,25 +38,25 @@ FIRST_DIR: Path = ANALYTICS_DIR / "first"
 CONTENT_CLIP: int = 500
 
 # v2 consent-surface marker (CONTRACT §15 v0.18): written by the app the
-# first time the NEW disclosure (the one that says typed text is included)
-# renders. Pre-v0.18 installs only have the old telemetry_consent_shown
-# marker, written when the copy still said "no personal text" — their
-# behavior telemetry keeps flowing on that old marker, but CONTENT stays off
-# until the new disclosure has been seen (or capture_input is set
-# explicitly, which is its own informed choice).
+# first time the NEW disclosure renders. Historical role: under the v0.18
+# default-ON regime it stood in for consent. Since v0.48 capture_input
+# defaults OFF (opt-in) and the marker alone NEVER arms content — only the
+# explicit capture_input key (first-run checkbox / Settings toggle /
+# config.yaml) does. The marker keeps being written as a record that the
+# disclosure surface was shown (the v1 marker still gates ALL uploads in
+# analytics_sync, unchanged).
 CONSENT_V2_PATH: Path = config.STATE_DIR / "telemetry_consent_shown_v2"
 
 
 def content_gate(cfg=None) -> bool:
     """Emit-side gate for user-typed content fields (docs/TELEMETRY.md).
 
-    ALL required:
+    ALL required (v0.48 opt-in revision, CONTRACT §15):
     1. telemetry.capture_input on AND level "detailed"
-       (Config.capture_input_active — both default ON since v0.18);
-    2. consent: the v2 disclosure marker exists, OR capture_input was set
-       EXPLICITLY (config.yaml / overrides — writing the key is an informed
-       choice; upgraded installs that never saw the new copy have neither,
-       so their content stays off while behavior telemetry continues);
+       (Config.capture_input_active — capture_input defaults OFF);
+    2. consent: capture_input was set EXPLICITLY (first-run checkbox /
+       Settings toggle / config.yaml — writing the key is the informed
+       choice; the v2 disclosure marker alone no longer opens the gate);
     3. nothing crashed — any failure means False (fail closed).
 
     Only text the user typed into THIS app may sit behind this gate — never
@@ -67,9 +67,7 @@ def content_gate(cfg=None) -> bool:
         cfg = cfg or config.load_config()
         if not cfg.capture_input_active():
             return False
-        if getattr(cfg, "telemetry_capture_input_explicit", False):
-            return True
-        return CONSENT_V2_PATH.exists()
+        return bool(getattr(cfg, "telemetry_capture_input_explicit", False))
     except Exception:  # noqa: BLE001 - fail closed, never break the pipeline
         return False
 

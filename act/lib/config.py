@@ -236,19 +236,21 @@ class Config:
     # carry event metadata (names, timings, counts, ids). Typed text THE USER
     # ENTERS INTO THIS APP (captures, Ask questions, card comments,
     # instruction summaries) is recorded when capture_input is true AND level
-    # is "detailed" (capture_input_active below) — BOTH ship default ON, so
-    # the disclosure copy (first-run line, Settings, docs) must say typed
-    # text is included; ingested third-party content (screen OCR, emails,
-    # Slack/iMessage messages) is NEVER telemetry, at any setting.
+    # is "detailed" (capture_input_active below). v0.48 flips capture_input
+    # to default OFF (opt-in): typed text uploads only after the user checks
+    # the first-run「分享输入文本」checkbox or the Settings toggle (both write
+    # the explicit override key), or writes the key in config.yaml. Ingested
+    # third-party content (screen OCR, emails, Slack/iMessage messages) is
+    # NEVER telemetry, at any setting.
     telemetry_enabled: bool = True
     voice_enabled: bool = True   # docs/VOICE.md voice-profile injection master switch
     telemetry_level: str = "detailed"
-    telemetry_capture_input: bool = True
+    telemetry_capture_input: bool = False
     # True only when capture_input came from an EXPLICIT source (config.yaml
-    # telemetry block or a Settings override) — writing the key is an
-    # informed choice, so analytics.content_gate accepts it in place of the
-    # v2 consent marker; the built-in default alone never does (upgraded
-    # installs must see the new disclosure first, CONTRACT §15 v0.18).
+    # telemetry block or a Settings/first-run-checkbox override) — writing
+    # the key is an informed choice, and since v0.48 it is the ONLY consent
+    # source analytics.content_gate accepts (the v2 disclosure marker alone
+    # no longer arms content; CONTRACT §15 v0.48 opt-in revision).
     telemetry_capture_input_explicit: bool = False
     telemetry_supabase_url: str = DEFAULT_TELEMETRY_SUPABASE_URL
     telemetry_key_path: Optional[str] = None
@@ -325,8 +327,9 @@ class Config:
         """Typed-text capture gate (docs/TELEMETRY.md「输入文本收集」).
 
         True only when BOTH `telemetry.capture_input` AND `telemetry.level:
-        detailed` are set — both default ON since v0.18 (the disclosure copy
-        says so), and either switch alone turns text capture off. Every emit
+        detailed` are set — capture_input defaults OFF since v0.48 (opt-in:
+        the first-run checkbox / Settings toggle / config.yaml key turn it
+        on), and either switch alone turns text capture off. Every emit
         site that attaches user-typed text must check this — when the gate is
         closed the text never reaches events.jsonl, so it can never upload
         either. Scope: only text the user types into THIS app — ingested
