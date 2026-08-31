@@ -204,6 +204,44 @@ class TokenWallTest(_CtlBase):
         self.assertEqual(rc, 0, f"stderr: {errbuf.getvalue()!r}")
 
 
+class HomeDerivationDriftTest(unittest.TestCase):
+    """M7 drift-pin：boardctl._home_dir 必须与 server/paths.home_dir(None)
+    逐字同款——否则 boardctl 与 server 读写不同的 server.token → 永久 401。
+    含 empty/whitespace 边界（旧代码 .strip() or DEFAULT_HOME 正是在这里分叉）。"""
+
+    def test_matches_server_paths_across_env_values(self):
+        from server import paths
+        cases = [
+            {},                                    # env 缺席 → DEFAULT_HOME
+            {"AIASSISTANT_HOME": ""},              # 空串 → Path("")（=cwd）
+            {"AIASSISTANT_HOME": "   "},           # 纯空白 → Path("   ")
+            {"AIASSISTANT_HOME": "~/zai-home"},    # tilde 展开
+            {"AIASSISTANT_HOME": "/tmp/zai/home"}, # 普通绝对路径
+            {"AIASSISTANT_HOME": "relative/home"}, # 相对路径原样
+        ]
+        for env in cases:
+            with self.subTest(env=env):
+                # server 端：make_server(home=None) → paths.home_dir(None) 读 os.environ
+                import os
+                saved = os.environ.get("AIASSISTANT_HOME")
+                try:
+                    if "AIASSISTANT_HOME" in env:
+                        os.environ["AIASSISTANT_HOME"] = env["AIASSISTANT_HOME"]
+                    else:
+                        os.environ.pop("AIASSISTANT_HOME", None)
+                    server_home = paths.home_dir(None)
+                finally:
+                    if saved is None:
+                        os.environ.pop("AIASSISTANT_HOME", None)
+                    else:
+                        os.environ["AIASSISTANT_HOME"] = saved
+                self.assertEqual(boardctl._home_dir(env), server_home)
+
+    def test_default_home_constant_matches_server(self):
+        from server import paths
+        self.assertEqual(boardctl.DEFAULT_HOME, paths.DEFAULT_HOME)
+
+
 class TransportTest(unittest.TestCase):
     def test_server_down_maps_to_exit_3(self):
         # 拿一个刚释放的空闲端口——连接必被拒

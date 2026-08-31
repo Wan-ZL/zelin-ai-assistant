@@ -9,18 +9,24 @@ simple request（Content-Type: text/plain、无预检）曾经能对 /api/action
 """
 from __future__ import annotations
 
+import http.client
 import json
+import os
 import stat
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - 先落沙箱 env
 from tests.test_server_common import (assert_envelope, auth_headers,
-                                      http_request, start_server)
+                                      http_request, rewrite_board, seed_scene,
+                                      start_server)
 
 from server import security
 from server import app as app_mod
+
+HERO = "R-101"
 
 
 def _run_payload() -> bytes:
@@ -195,7 +201,6 @@ class TokenLifecycleTestCase(unittest.TestCase):
             encoding="utf-8")
         httpd = app_mod.make_server(port=0, home=home, static_dir=dist,
                                     start_watcher=False)
-        import threading
         threading.Thread(target=httpd.serve_forever,
                          kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.addCleanup(httpd.server_close)
@@ -218,7 +223,6 @@ class TokenLifecycleTestCase(unittest.TestCase):
                                      encoding="utf-8")
         httpd = app_mod.make_server(port=0, home=home, static_dir=dist,
                                     start_watcher=False)
-        import threading
         threading.Thread(target=httpd.serve_forever,
                          kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.addCleanup(httpd.server_close)
@@ -258,6 +262,131 @@ class SecurityUnitTestCase(unittest.TestCase):
         for ct in ("text/plain", "multipart/form-data",
                    "application/x-www-form-urlencoded", "", None):
             self.assertFalse(security.content_type_is_json(ct), repr(ct))
+
+
+class TokenInjectionEscapeTestCase(unittest.TestCase):
+    """M1：inject_token 必须转义 ``<`` / ``/``，一个含 ``</script>`` 的 token
+    不得提前闭合脚本标签逃逸。"""
+
+    def test_script_close_in_token_is_escaped(self):
+        html = b"<html><head></head><body></body></html>"
+        # 人造毒 token（正常 token 过 _TOKEN_RE 不含这些字符——双保险测转义本身）
+        out = security.inject_token(html, "abc</script><script>evil//x").decode()
+        self.assertNotIn("</script><script>evil", out)
+        self.assertIn("\\u003c", out)      # < 被转义
+        self.assertIn("\\u002f", out)      # / 被转义
+        # 注入的 script 标签本身仍然只有一对（未被 token 内容劈开）
+        self.assertEqual(out.count("<script>"), 1)
+        self.assertEqual(out.count("</script>"), 1)
+
+
+class TokenFileHardeningTestCase(unittest.TestCase):
+    """M2/M3：既有 token 文件的权限收回、坏内容重铸、symlink 拒跟随。"""
+
+    def _home(self, prefix: str) -> Path:
+        home = Path(tempfile.mkdtemp(prefix=prefix))
+        (home / "state").mkdir(parents=True)
+        return home
+
+    def test_group_other_readable_token_is_rehardened(self):
+        # M2：历史 0644 token（任何本地账户可读）在读路径被 chmod 收回 0600
+        home = self._home("zai-tok-perm-")
+        p = security.token_path(home)
+        p.write_text("existingtoken123\n", encoding="utf-8")
+        os.chmod(p, 0o644)
+        tok = security.load_or_create_token(home)
+        self.assertEqual(tok, "existingtoken123")   # 合法值保留（不无谓换 token）
+        self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+
+    def test_malformed_token_is_discarded_and_reminted(self):
+        # M1 纵深：坏字符 token（含 </script>）读回即弃用、重铸干净值
+        home = self._home("zai-tok-bad-")
+        p = security.token_path(home)
+        p.write_text("abc</script>def\n", encoding="utf-8")
+        tok = security.load_or_create_token(home)
+        self.assertNotEqual(tok, "abc</script>def")
+        self.assertRegex(tok, r"^[A-Za-z0-9_-]+$")
+        self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+
+    def test_symlinked_token_is_not_followed(self):
+        # M3：state/server.token 是 symlink 时既不从它读、也不 truncate 目标
+        home = self._home("zai-tok-link-")
+        secret = home / "victim.txt"
+        secret.write_text("do-not-touch", encoding="utf-8")
+        p = security.token_path(home)
+        os.symlink(secret, p)
+        tok = security.load_or_create_token(home)
+        # 目标文件内容原封不动（没被当 token 覆写/截断）
+        self.assertEqual(secret.read_text(encoding="utf-8"), "do-not-touch")
+        # 铸出的是干净的新 token（不是 symlink 目标的内容）
+        self.assertRegex(tok, r"^[A-Za-z0-9_-]+$")
+        self.assertNotEqual(tok, "do-not-touch")
+
+
+class PreAuthAndCorsTestCase(_AuthHomeMixin, unittest.TestCase):
+    """审查补漏：鉴权先于 body 读取；OPTIONS 不发 CORS 头。"""
+
+    def setUp(self):
+        self._boot()
+
+    def test_body_stays_unread_when_auth_fails(self):
+        # (a) 声明超大 Content-Length 但只发几字节 + 坏 Host：若 server 在鉴权
+        # 前读 body，会阻塞到超时；正确行为是**先鉴权**、立刻 403，不碰 body。
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.putrequest("POST", "/api/actions", skip_host=True)
+            conn.putheader("Host", "evil.example")   # Host 闸先拒
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(10_000_000))
+            conn.endheaders()
+            conn.send(b"{}")                          # 远小于声明长度
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 403)        # 没读 body 就拒了
+            resp.read()
+        finally:
+            conn.close()
+        self.assertEqual(self._inbox_files(), set())
+
+    def test_options_emits_no_cors_headers(self):
+        # (b) OPTIONS（未实现方法）绝不回 Access-Control-Allow-* ——本面永不
+        # 让跨源页面读任何响应
+        status, headers, _body = http_request(
+            self.port, "OPTIONS", "/api/actions",
+            headers={"Origin": "http://evil.example"})
+        joined = " ".join(f"{k}:{v}" for k, v in headers.items()).lower()
+        self.assertNotIn("access-control-allow", joined)
+        self.assertNotEqual(status, 200)
+
+
+class DeliverableNotInjectedTestCase(unittest.TestCase):
+    """(c) /files/deliverables/* 绝不注入 token——否则 token 会漏进 agent 生成
+    的交付物 HTML（本面最该防的泄露路径）。"""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="zai-auth-dlv-"))
+        dash = seed_scene(self.home, "initial")
+        repo = self.home / "demo-repo"
+        dlv = repo / "deliverables"
+        dlv.mkdir(parents=True)
+        for row in dash["needs_approval"]:
+            if row["id"] == HERO:
+                row["target_repo"] = str(repo)
+        rewrite_board(self.home, dash)
+        # 交付物 HTML 刻意含 __ZAI_TOKEN__ 字样 + <head>——若走注入会被改写
+        (dlv / "out.html").write_text(
+            "<html><head></head><body>__ZAI_TOKEN__</body></html>",
+            encoding="utf-8")
+        _, self.port = start_server(self, self.home)
+
+    def test_deliverable_html_carries_no_token(self):
+        tok = security.load_or_create_token(self.home)
+        status, _h, body = http_request(
+            self.port, "GET", f"/files/deliverables/{HERO}/out.html")
+        self.assertEqual(status, 200)
+        text = body.decode("utf-8")
+        self.assertNotIn(tok, text)
+        self.assertNotIn("window.__ZAI_TOKEN__=", text)   # 注入片段绝不出现
+        self.assertIn("__ZAI_TOKEN__", text)              # 原文字样原样保留
 
 
 if __name__ == "__main__":

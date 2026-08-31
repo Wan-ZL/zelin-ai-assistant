@@ -29,7 +29,9 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets
+import stat
 from pathlib import Path
 
 # POST 鉴权头（web/src/api.ts 与 act/boardctl.py 同字面量）
@@ -41,24 +43,48 @@ _LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "[::1]"})
 # 注入进 index.html 的同源 token 载体（web/src/api.ts 读取端同字面量）
 _TOKEN_SNIPPET = "<script>window.__ZAI_TOKEN__=%s;</script>"
 
+# token 字符集——secrets.token_urlsafe 的产物恒在此集内（base64url 的
+# [A-Za-z0-9_-]）。读回时**校验**（belt-and-braces）：磁盘上的坏 token
+# （被人塞入 `</script>`、换行、引号）不许进注入路径——即便 M1 的转义漏了
+# 一环，一个畸形 token 也在铸造前就被拒、重铸干净值。
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
 
 def token_path(home: Path) -> Path:
     return home / "state" / "server.token"
 
 
+def _valid_token(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and bool(_TOKEN_RE.match(value))
+
+
 def load_or_create_token(home: Path) -> str:
-    """per-install token：读既有值，缺席则生成 + 0600 落盘（webui 同款）。"""
+    """per-install token：读既有值（校验 + 重新加固权限），否则生成 + 0600 落盘。
+
+    加固纪律（M2/M3 审计）：
+    - **权限**：既有文件必须 0600。历史上 0644 创建的 token（任何本地账户
+      可读 = RCE 级泄露）在读路径 chmod 收回；group/other 可读且 chmod 失败
+      时**拒用**该文件、重铸（宁可换 token 也不用一个别人读得到的）。
+    - **符号链接**：读与写都带 ``O_NOFOLLOW``——state/server.token 若是指向
+      他处的 symlink，绝不跟随（防被诱导 truncate/覆盖任意文件、或从攻击者
+      控制的路径读回 token）。
+    - **内容**：坏字符（``</script>``/换行/引号）的 token 一律弃用重铸。
+    """
     p = token_path(home)
-    try:
-        existing = p.read_text(encoding="utf-8").strip()
-        if existing:
-            return existing
-    except OSError:
-        pass
+    existing = _read_token_hardened(p)
+    if existing is not None:
+        return existing
     tok = secrets.token_urlsafe(32)
     p.parent.mkdir(parents=True, exist_ok=True)
-    # O_CREAT|O_TRUNC 带 0600 mode——umask 只会更严；chmod 兜底钉死
-    fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW：写路径也不跟随 symlink（先删既有非常规文件再建）。O_CREAT|
+    # O_TRUNC 带 0600 mode——umask 只会更严；chmod 兜底钉死。
+    try:
+        if p.is_symlink():
+            p.unlink()
+    except OSError:
+        pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(p), flags, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(tok + "\n")
@@ -68,6 +94,33 @@ def load_or_create_token(home: Path) -> str:
         except OSError:
             pass
     return tok
+
+
+def _read_token_hardened(p: Path) -> "str | None":
+    """读既有 token：symlink 拒跟随、权限收回、内容校验。坏则 None（触发重铸）。"""
+    try:
+        # O_NOFOLLOW：symlink 直接抛 OSError → None → 重铸（不跟随到他处）
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(p), flags)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        # group/other 任一可读/写 → 先尝试收回 0600；收不回就弃用重铸
+        if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError:
+                return None
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=True) as fh:
+            existing = fh.read().strip()
+    except OSError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return None
+    return existing if _valid_token(existing) else None
 
 
 def host_ok(host_header: object) -> bool:
@@ -92,7 +145,18 @@ def allowed_origins(port: int) -> frozenset:
 
 
 def origin_ok(origin_header: object, allowed: frozenset) -> bool:
-    """present 的 Origin 必须精确命中白名单（"null" 等一律 False）。"""
+    """present 的 Origin 必须精确命中白名单（"null" 等一律 False）。
+
+    **为什么 present-only 安全（M5/M6 审计留证，改闸前必读）**：缺 Origin 的
+    请求被放行到 token 闸，看似给了 CSRF 一条缝——但一个**跨源浏览器**发起的
+    写**必然带 Origin**（fetch/form/sendBeacon/no-cors 全部如此），所以缺
+    Origin = 非浏览器客户端（boardctl/curl），token 才是它们的墙。真正兜住
+    「缺 Origin 的浏览器写」这一类的是**Content-Type 闸**：跨源无预检
+    simple request 只能发 text/plain（等三种），被 CT 闸挡死；能发
+    application/json 的跨源请求必然触发预检 + 带 Origin，落回本函数。
+    **纪律**：一旦放宽 Content-Type 闸（接受 text/plain 等），present-only
+    的 Origin 判定会**静默失去**这层兜底——两闸是耦合的，动一个必须复核另一
+    个。"""
     if not isinstance(origin_header, str):
         return False
     return origin_header.strip().lower() in allowed
@@ -111,9 +175,22 @@ def token_ok(got: object, want: str) -> bool:
     return hmac.compare_digest(got, want)
 
 
+def _js_string_literal(token: str) -> str:
+    """token → 安全内联进 <script> 的 JS 字符串字面量。
+
+    json.dumps 不转义 ``<`` 或 ``/``，所以一个含 ``</script>`` 的 token 能
+    提前闭合脚本标签逃逸（M1，已复现）。转义 ``<``（挡 ``</script>`` 与
+    ``<!--``）与 ``/``（挡 ``</``）为 ``\\u003c`` / ``\\u002f``——都是合法
+    JSON/JS 转义，语义不变。token 本身已过 _TOKEN_RE（base64url，无这些
+    字符），双保险：即便字符集将来放宽，注入也不破。"""
+    return (json.dumps(token)
+            .replace("<", "\\u003c")
+            .replace("/", "\\u002f"))
+
+
 def inject_token(html: bytes, token: str) -> bytes:
     """把 token 注入被服务的 index.html（</head> 前；无 head 则前置）。"""
-    snippet = (_TOKEN_SNIPPET % json.dumps(token)).encode("utf-8")
+    snippet = (_TOKEN_SNIPPET % _js_string_literal(token)).encode("utf-8")
     marker = b"</head>"
     if marker in html:
         return html.replace(marker, snippet + marker, 1)

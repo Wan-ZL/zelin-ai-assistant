@@ -57,24 +57,29 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     # 基础发送
     # ------------------------------------------------------------------ #
-    def _send_bytes(self, status: int, body: bytes, ctype: str,
-                    extra: Optional[dict] = None, *,
-                    frameable: bool = False) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        # 永不发 Access-Control-Allow-Origin——跨源页面不许读任何响应
+    def _emit_security_headers(self, *, frameable: bool = False) -> None:
+        """每个响应（含 SSE 流）共用的安全头——单一真源，防某条路径漏发。
+
+        永不发 Access-Control-Allow-Origin（跨源页面不许读任何响应）。反嵌
+        （webui X-Frame-Options 同款）：token 注入页绝不进别人的 iframe；例外
+        = 交付物（详情抽屉经同源 <iframe sandbox> 预览，放行 SAMEORIGIN，其
+        CSP sandbox 由 files.py 自带，不叠 frame-ancestors）。"""
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        # 反嵌防线（webui X-Frame-Options 同款）：token 注入页绝不进别人的
-        # iframe。例外 = 交付物（详情抽屉经同源 <iframe sandbox> 预览，放行
-        # SAMEORIGIN；其 CSP sandbox 由 files.py 自带，不叠 frame-ancestors）。
         if frameable:
             self.send_header("X-Frame-Options", "SAMEORIGIN")
         else:
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Content-Security-Policy",
                              "frame-ancestors 'none'")
+
+    def _send_bytes(self, status: int, body: bytes, ctype: str,
+                    extra: Optional[dict] = None, *,
+                    frameable: bool = False) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self._emit_security_headers(frameable=frameable)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -255,6 +260,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache, no-transform")
             self.send_header("X-Accel-Buffering", "no")
+            # M4：SSE 流也过同一套安全头（nosniff/Referrer-Policy/X-Frame/CSP）
+            # ——此前手写头漏发，事件流成了唯一无 nosniff 的响应面。
+            self._emit_security_headers()
             self.end_headers()
             self.wfile.write(CONNECTED_FRAME)
             self.wfile.flush()

@@ -207,15 +207,28 @@ def _base_url(environ) -> str:
     return f"http://127.0.0.1:{port}"
 
 
+def _home_dir(environ) -> Path:
+    """home 推导——与 ``server/paths.py::home_dir(None)`` **逐字同款**。
+
+    刻意 NOT strip、NOT 把空串当缺省：server 端 ``explicit or environ.get(
+    "AIASSISTANT_HOME", DEFAULT_HOME)`` 在 explicit=None 时就是
+    ``environ.get("AIASSISTANT_HOME", DEFAULT_HOME)``——env 缺席 → DEFAULT_HOME，
+    env="" → ``Path("")``（=cwd），env="  " → ``Path("  ")``。boardctl 早先
+    做了 ``.strip() or DEFAULT_HOME``，于是 env=""/空白时它读 DEFAULT_HOME 而
+    server 写到别处 → 两边 token 文件分叉 → 永久 401（M7 审计）。drift-pin
+    见 tests/test_boardctl.py。"""
+    raw = environ.get("AIASSISTANT_HOME", DEFAULT_HOME)
+    return Path(raw).expanduser()
+
+
 def _instance_token(environ) -> "str | None":
     """读 per-install instance token（§49：server 对一切写动作要 token）。
 
-    home 推导与 server/paths.py::home_dir 逐字同款（AIASSISTANT_HOME →
-    默认 home）——两边同机同推导才拿得到同一个文件。读不到 = None（不发
-    头，server 会 401，错误 envelope 如实透传——绝不在客户端猜/造 token）。
+    home 推导与 server 端同款（_home_dir）——两边同机同推导才拿得到同一个
+    文件。读不到 = None（不发头，server 会 401，错误 envelope 如实透传——
+    绝不在客户端猜/造 token）。
     """
-    raw = (environ.get("AIASSISTANT_HOME") or "").strip() or DEFAULT_HOME
-    p = Path(raw).expanduser() / "state" / "server.token"
+    p = _home_dir(environ) / "state" / "server.token"
     try:
         tok = p.read_text(encoding="utf-8").strip()
     except OSError:
