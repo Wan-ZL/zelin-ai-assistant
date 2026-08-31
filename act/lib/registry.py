@@ -18,7 +18,7 @@ from typing import Any, Iterable, Optional, Union
 
 import yaml
 
-from act.lib import config
+from act.lib import config, policy
 
 
 class State(str, Enum):
@@ -34,6 +34,9 @@ class State(str, Enum):
     DELIVERED = "delivered"
     REJECTED = "rejected"
     TRASHED = "trashed"
+    # v-next（vnext-amendments W1.c，移植自 live v0.20.0 §4）：封存态。归档卡
+    # RELOCATE 到 archive/ 子目录，热路径 load_all 默认不见（include_archived）。
+    ARCHIVED = "archived"
 
     def __str__(self) -> str:  # so f-strings emit the bare value
         return self.value
@@ -76,6 +79,14 @@ _OPTIONAL_ORDER = [
     "prev_status",
     "trash_reason",
     "permanent",
+    # v-next add-only（amendments §50 / M8.3 C-1）：出身信任章，铸卡时由
+    # policy.classify_origin 盖（hand/proposed/meeting/external）。调度侧不读
+    # 章、每次从 sources 现算（M1.a）；章只服务投影/审计。
+    "origin_trust",
+    # v-next archive bookkeeping（W1.c，移植 live §4）— 封存后才出现；
+    # prev_status 复用为 unarchive 的回程票。
+    "archived_at",
+    "archive_reason",
 ]
 
 
@@ -111,6 +122,13 @@ class Requirement:
     prev_status: Optional[str] = None
     trash_reason: Optional[str] = None
     permanent: bool = False
+
+    # v-next（amendments §50）：出身信任章；None = 存量卡未盖章（缺章不追溯
+    # 抬档、也不授予自动派发资格——两侧 fail-closed 分工见 risk.py/policy.py）。
+    origin_trust: Optional[str] = None
+    # v-next archive bookkeeping（W1.c）— 封存后才出现
+    archived_at: Optional[str] = None
+    archive_reason: Optional[str] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -166,16 +184,30 @@ class Requirement:
 # --------------------------------------------------------------------------- #
 # Load
 # --------------------------------------------------------------------------- #
-def _iter_files() -> Iterable[Path]:
+# v-next（W1.c，移植 live §4）：归档卡 RELOCATE 到这个子目录，热路径的
+# glob("*.yaml") 非递归所以默认跳过；只有显式 include_archived=True 才载入。
+ARCHIVE_DIR: Path = config.REGISTRY_DIR / "archive"
+
+
+def _iter_files(include_archived: bool = False) -> Iterable[Path]:
     if not config.REGISTRY_DIR.exists():
         return []
-    return sorted(config.REGISTRY_DIR.glob("*.yaml"))
+    files = list(config.REGISTRY_DIR.glob("*.yaml"))
+    if include_archived and ARCHIVE_DIR.exists():
+        files += list(ARCHIVE_DIR.glob("*.yaml"))
+    return sorted(files)
 
 
-def load_all() -> list[Requirement]:
-    """Load every requirement across single-doc and list files."""
+def load_all(include_archived: bool = False) -> list[Requirement]:
+    """Load every requirement across single-doc and list files.
+
+    ``include_archived`` pulls in the relocated ``archive/`` cards too — used
+    by :func:`next_id` and :func:`load`（id 碰撞防线，live §4 判例）and by
+    :func:`load_archived`; dashboard/matching keep the default False so sealed
+    cards stay out of the hot path.
+    """
     reqs: list[Requirement] = []
-    for path in _iter_files():
+    for path in _iter_files(include_archived):
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError:
@@ -199,10 +231,24 @@ def load_all() -> list[Requirement]:
 
 
 def load(req_id: str) -> Optional[Requirement]:
-    for r in load_all():
-        if r.id == req_id:
+    # live §4 判例：必须连 archive 目录一起扫，否则归档卡对 load()/unarchive
+    # 隐形，next_id() 还会重分配它的 id（静默数据丢失）。crash-mid-move 残留
+    # （archive 先写新件、后删原件，中间崩了两份都在）以 archive 副本为权威。
+    found: Optional[Requirement] = None
+    for r in load_all(include_archived=True):
+        if r.id != req_id:
+            continue
+        if r._file and Path(r._file).parent == ARCHIVE_DIR:
             return r
-    return None
+        if found is None:
+            found = r
+    return found
+
+
+def load_archived() -> list[Requirement]:
+    """Every sealed (archived) card — ordering left to the caller."""
+    return [r for r in load_all(include_archived=True)
+            if r.status == State.ARCHIVED.value]
 
 
 # --------------------------------------------------------------------------- #
@@ -298,6 +344,65 @@ def pin(req: Requirement) -> Requirement:
     return req
 
 
+# --------------------------------------------------------------------------- #
+# Archive / unarchive（v-next W1.c，移植 live §4 的 RELOCATE 模型）
+# --------------------------------------------------------------------------- #
+def _delete_original(orig_file: str, in_list: bool, rid: str) -> None:
+    """Drop ``rid`` from its ORIGINAL location after relocation（复用 delete 的
+    single-doc / list-member 抽取；req._file 此时已指向 archive 路径）。"""
+    stub = Requirement(id=rid)
+    stub._file = orig_file
+    stub._in_list = in_list
+    try:
+        delete(stub)
+    except Exception:  # noqa: BLE001 - the relocated copy is already safe on disk
+        pass
+
+
+def archive(req: Requirement, reason: str) -> Requirement:
+    """Seal a card and RELOCATE it to ``archive/``.
+
+    ``reason`` = "user"（点归档）或 "auto"（archive_stale 冷扫）。prev_status
+    存回程票。先写 archive 新件、后删原件——crash mid-move 只留双份、绝不丢卡。
+    """
+    if req.status != State.ARCHIVED.value:
+        req.prev_status = req.status
+    req.set_status(State.ARCHIVED)
+    req.archived_at = _iso_now()
+    req.archive_reason = reason
+    orig, in_list = req._file, req._in_list
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    req._file = str(ARCHIVE_DIR / f"{req.id}.yaml")
+    req._in_list = False
+    save(req)
+    if orig and Path(orig) != Path(req._file):
+        _delete_original(orig, in_list, req.id)
+    return req
+
+
+def unarchive(req: Requirement) -> Requirement:
+    """Restore an archived card to ``prev_status``, file back to the active dir.
+
+    也修复 crash-mid-move 残留：save() 覆盖过期的 active 双胞胎、archive 副本
+    unlink（live §4 判例；本基线无 §34bis 台账，纯 unlink——材料性差异见
+    vnext-amendments WIRE 节）。
+    """
+    req.set_status(req.prev_status or State.DELIVERED.value)
+    req.prev_status = None
+    req.archived_at = None
+    req.archive_reason = None
+    orig = req._file
+    req._file = str(config.REGISTRY_DIR / f"{req.id}.yaml")
+    req._in_list = False
+    save(req)
+    if orig and Path(orig) != Path(req._file):
+        try:
+            Path(orig).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return req
+
+
 def delete(req: Requirement) -> bool:
     """Hard-delete a requirement (retention purge, §9).
 
@@ -347,8 +452,10 @@ _ID_RE = re.compile(r"^R-(\d+)$")
 
 
 def next_id() -> str:
+    # include_archived=True：不扫 archive 目录会把归档卡的 id 重新分配出去，
+    # unarchive 时旧卡覆盖新卡（live §4 判例——id 碰撞是静默数据丢失）。
     mx = 0
-    for r in load_all():
+    for r in load_all(include_archived=True):
         m = _ID_RE.match(r.id or "")
         if m:
             mx = max(mx, int(m.group(1)))
@@ -458,16 +565,23 @@ def merge_or_new(new_req: Union[Requirement, dict], *, high_confidence: bool = F
                 improvement_of=parent.id,
                 notes=new_req.notes or "",
             )
+            child.origin_trust = policy.classify_origin(child.sources)
             return upsert(child)
         # pure restatement -> merge sources, bump count, keep status
         merged, added = _dedupe_sources(parent.sources or [], new_req.sources or [])
         parent.sources = merged
         if added:
             parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
+        # 盖章刷新（amendments M1.a）：fold 并入新来源后章会过期——最小信任者
+        # 定卡（手打卡被 slack/gmail 来源并入即降 external）。铸卡与 fold 都
+        # 走这个漏斗，所以章集中在这里盖：调度侧仍每次从 sources 现算，章只
+        # 服务投影/审计。
+        parent.origin_trust = policy.classify_origin(parent.sources)
         return upsert(parent)
 
     # brand new
     new_req.id = new_req.id or next_id()
+    new_req.origin_trust = policy.classify_origin(new_req.sources)
     if not new_req.status or new_req.status == State.DETECTED.value:
         if high_confidence and new_req.hardness == "hard" and new_req.deadline:
             new_req.status = State.CARD_SENT.value
