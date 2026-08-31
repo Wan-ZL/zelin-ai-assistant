@@ -56,6 +56,17 @@ class CapTestCase(unittest.TestCase):
         logcap.cap(self.path)
         self.assertLess(self.path.stat().st_size, logcap.MAX_BYTES + 1)
 
+    def test_single_giant_line_byte_truncated_tail_kept(self):
+        # PR #106 终审 MINOR-10：单行 > cap 时行减半缩不动（旧实现 = 永远
+        # no-op，超限文件每轮被原样重写）；退化为按字节保尾 + 截断标记行。
+        giant = "x" * (2 * logcap.MAX_BYTES) + "TAIL-SENTINEL"
+        self.path.write_text(giant + "\n", encoding="utf-8")
+        logcap.cap(self.path)
+        self.assertLessEqual(self.path.stat().st_size, logcap.MAX_BYTES)
+        out = self.path.read_text(encoding="utf-8")
+        self.assertTrue(out.startswith(logcap._TRUNCATION_MARKER))
+        self.assertIn("TAIL-SENTINEL", out)               # 尾部（最新）保留
+
 
 class DaemonWiringTestCase(unittest.TestCase):
     """actd._log / syncd._log append 后自压缩真的触发（接线判例）。"""
