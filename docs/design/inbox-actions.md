@@ -13,6 +13,7 @@
 - **回执**：`state/sync/applied.jsonl`（`{action_id: <stem>, result_status, ts}`）**仅在云同步 ACTIVE 时追加**；本地纯 Mac 安装无 ack——「文件被删 + 投影变化」就是成功信号。result_status 词表：`running`（真实状态变更）| `noop`（守卫幂等）| `unknown`（卡不存在/动词不识）| `bad_json`（文件不可读/非 dict/apply 崩溃）。
 - **读侧宽容**：`comment` 非字符串一律 coerce 为 None；毒文件（坏 JSON、非 dict、apply 崩溃）ack `bad_json` 后删除，绝不卡死 inbox。server 端 API 是零容忍 400（BUILD-CONTRACT），但落盘后 actd 侧永远 fail-safe——两层纪律不要混淆。
 - **可选 add-only 键（Mac 不写，server PR1 也不写）**：`expected_status`（§32.2 手机端 stale-guard）、`board_seq`（provenance）。列在这里防 G1 把它们当未知字段拒掉 actd 方向的语义——它们只出现在 syncd 落的文件里，不在 web→server 的入站 API 上。
+- **ingress 落款 `via`（add-only，T-28）**：HTTP 写入面落盘的每个文件都带——server/inbox_writer 恒 `"web"`（capture/comment 带 `actor:"agent"` 时改 `"agent"`）、act/webui 恒 `"remote"`；Mac 文件**无 via**（缺 via = owner-local 的判据）。`via` 永远是 server 落款：web→server 入站 API 直发 `via` 是 400 UNKNOWN_FIELD；`actor` 是传输面字段（仅 capture/comment 两动词接受、唯一合法值 `"agent"`、不落盘）。actd 读侧按 via 盖捕获源 channel 并裁 comment 的 steer 资格（详见 vnext-amendments.md T-28/T-29——含诚实条款：落款是礼仪 + 取证，不是密码学墙）。golden fixtures 保持 Mac 落盘形（无 via）；server 产物 = golden + 尾键 via。
 
 ## 2. 卡片决策类（统一四键形状，`AppDelegate.writeInbox`）
 

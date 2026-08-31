@@ -41,9 +41,9 @@ python3 act/boardctl.py capture --text TEXT [--image /abs/path.png ...] [--json]
 python3 act/boardctl.py capture --text-file FILE [--json]
 ```
 
-Exactly one of `--text` / `--text-file`. `--image` may repeat, up to 4 absolute local paths, no duplicates. Success returns `{"ok":true,"file":"capture-<uuid>.json","action":"capture"}` — the file name is the inbox receipt, not a card ID; the card (if any) is minted later by triage.
+Exactly one of `--text` / `--text-file`. `--image` may repeat, up to 4 absolute local paths, no duplicates. Success returns `{"ok":true,"file":"capture-<uuid>.json","action":"capture","via":"agent"}` — the file name is the inbox receipt, not a card ID; the card (if any) is minted later by triage.
 
-There is deliberately no direct-run or preset option on this channel: agent captures always go through triage.
+There is deliberately no direct-run or preset option on this channel: agent captures always go through triage. Every write self-identifies — boardctl sends `actor:"agent"` unconditionally and the server stamps the record `via:"agent"`, so the capture lands on the `agent_capture` channel and is never eligible for auto-dispatch.
 
 ## Comment on a card
 
@@ -52,7 +52,7 @@ python3 act/boardctl.py comment CARD_ID --body TEXT [--json]
 python3 act/boardctl.py comment CARD_ID --body-file FILE [--json]
 ```
 
-Exactly one of `--body` / `--body-file`; the body must be non-empty. Success returns `{"ok":true,"file":"<uuid>.json","action":"comment"}`. A comment does not change the card's state.
+Exactly one of `--body` / `--body-file`; the body must be non-empty. Success returns `{"ok":true,"file":"<uuid>.json","action":"comment","via":"agent"}` (plus `steer:false` when the card is executing — agent comments are recorded on the card but never relayed into the live session). A comment does not change the card's state.
 
 ## Error codes you may see
 
