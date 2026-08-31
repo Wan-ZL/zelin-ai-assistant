@@ -4,6 +4,7 @@ B2 的真实写路径（test_store2_schema.py 钉的是同一批不变量的裸 
 """
 import importlib.util
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,14 +15,16 @@ _STORE_LANDED = importlib.util.find_spec("act.lib.store2.store") is not None
 _SKIP_REASON = "act.lib.store2.store (B2) not importable"
 
 if _STORE_LANDED:
-    from act.lib.store2 import (NotFound, Store, TransitionDenied,
-                                VersionConflict)
+    from act.lib.store2 import (IntegrityViolation, NotFound, Store,
+                                StoreError, TransitionDenied, VersionConflict)
 
 NOW = "2026-08-30T12:00:00Z"
 
 
 @unittest.skipUnless(_STORE_LANDED, _SKIP_REASON)
-class StoreApiTestCase(unittest.TestCase):
+class _StoreFixture(unittest.TestCase):
+    """共享脚手架：临时库 + 铸卡 helper（本类无测试方法，仅供继承）。"""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="store2-cas-"))
         self.store = Store(self.tmp / "store2.db", now_fn=lambda: NOW)
@@ -34,6 +37,9 @@ class StoreApiTestCase(unittest.TestCase):
         card = {"id": rid, "status": status, "title": f"card {rid}"}
         card.update(kw)
         return self.store.create_card(card, actor_type="system")
+
+
+class StoreApiTestCase(_StoreFixture):
 
     # -- (c) CAS 冲突 ------------------------------------------------------ #
     def test_stale_version_raises_conflict_first_writer_wins(self):
@@ -120,6 +126,187 @@ class StoreApiTestCase(unittest.TestCase):
         card = self.store.transition("R-001", "stop_to_review", "user", None)
         self.assertEqual(card["version"], before)
         self.assertEqual(self.store.current_revision(), rev)
+
+
+class AgentCreatePermissionTestCase(_StoreFixture):
+    """组合权限旁路（store API 面）：agent 铸卡不得带 prev_status 回程票，
+    也不得直接铸批准后各态；system（migration）与用户 restore 语义不受伤。"""
+
+    def test_agent_create_cannot_carry_prev_status(self):
+        with self.assertRaises(StoreError) as cm:
+            self.store.create_card(
+                {"id": "R-001", "status": "trashed", "title": "t",
+                 "prev_status": "approved"}, actor_type="agent")
+        self.assertEqual(cm.exception.code, "UNKNOWN_FIELD")
+        with self.assertRaises(NotFound):
+            self.store.get_card("R-001")
+
+    def test_agent_create_post_approval_status_denied(self):
+        for status in ("approved", "delivered", "executing", "review"):
+            with self.assertRaises(TransitionDenied) as cm:
+                self.store.create_card(
+                    {"id": f"R-{status}", "status": status, "title": "t"},
+                    actor_type="agent")
+            self.assertEqual(cm.exception.code, "AGENT_TRANSITION_FORBIDDEN")
+
+    def test_system_migration_shape_and_user_restore_stay_intact(self):
+        # migration（system actor）铸带票 trashed 卡 + 用户 restore 精确复位：
+        # 墙只挡 agent，合法回程票语义分毫不动
+        self.store.create_card(
+            {"id": "R-001", "status": "trashed", "title": "t",
+             "prev_status": "approved"}, actor_type="system")
+        card = self.store.transition("R-001", "restore", "user", None)
+        self.assertEqual(card["status"], "approved")
+
+
+class PurgeVsDispatchTestCase(_StoreFixture):
+    """purge 与运行中 dispatch 的互斥：卡先冻结会让收尾账无处落（曾是死锁），
+    两面都钉——purge 拒绝活 session，收尾账在卡已冻结时也照常落。"""
+
+    def test_purge_refused_while_dispatch_running(self):
+        self._mint("R-001", "trashed", prev_status="detected")
+        did = self.store.open_dispatch("R-001")
+        with self.assertRaises(IntegrityViolation) as cm:
+            self.store.purge_trashed("R-001")
+        self.assertEqual(cm.exception.code, "DISPATCH_ACTIVE")
+        self.assertEqual(self.store.get_card("R-001")["tombstone"], 0)
+        # 收尾后 purge 放行
+        self.store.close_dispatch(did, "stopped")
+        self.assertEqual(self.store.purge_trashed("R-001")["tombstone"], 1)
+
+    def test_close_dispatch_survives_purged_card(self):
+        # 模拟 crash-window 竞态：绕过 purge 闸门直接 tombstone（schema 对
+        # trashed 卡放行），close_dispatch 仍必须把台账收干净、不许炸
+        self._mint("R-001", "trashed", prev_status="detected")
+        did = self.store.open_dispatch("R-001")
+        self.store._conn().execute(
+            "UPDATE cards SET tombstone = 1, payload = '{}',"
+            " last_actor_type = 'system' WHERE id = 'R-001'")
+        self.store.close_dispatch(did, "failed", exit_code=1)
+        d = self.store.get_dispatches("R-001")[0]
+        self.assertEqual((d["status"], d["exit_code"]), ("failed", 1))
+        self.assertEqual(self.store.get_card("R-001")["tombstone"], 1)
+
+    def test_note_receipts_survive_purged_card(self):
+        # 回执 set-once 是诚实账（§32.2）：卡 purge 后补记也不许炸
+        self._mint("R-001", "trashed", prev_status="detected")
+        nid = self.store.add_note("R-001", "comment", "改方向", "user")
+        self.store.purge_trashed("R-001")
+        self.store.mark_note_delivered(nid)
+        self.store.mark_note_acked(nid)
+        note = self.store.get_notes("R-001")[0]
+        self.assertIsNotNone(note["delivered_at"])
+        self.assertIsNotNone(note["acked_at"])
+
+
+class OriginTrustStoreTestCase(_StoreFixture):
+    """origin_trust 信任档（store API 面）：update_card_fields 只收 user actor。"""
+
+    def test_agent_or_system_cannot_flip_origin_trust(self):
+        self._mint()
+        for actor in ("agent", "system"):
+            with self.assertRaises(TransitionDenied) as cm:
+                self.store.update_card_fields(
+                    "R-001", None, {"origin_trust": "hand"}, actor_type=actor)
+            self.assertEqual(cm.exception.code, "ORIGIN_TRUST_USER_ONLY")
+        self.assertEqual(self.store.get_card("R-001")["origin_trust"], "external")
+        card = self.store.update_card_fields(
+            "R-001", None, {"origin_trust": "hand"}, actor_type="user")
+        self.assertEqual(card["origin_trust"], "hand")
+
+
+class MergeGuardTestCase(_StoreFixture):
+    """merge 父指针卫兵：自并、并入幽灵（缺席/tombstone）父卡一律拒绝。"""
+
+    def test_merge_into_self_rejected(self):
+        self._mint("R-001", "detected")
+        with self.assertRaises(StoreError) as cm:
+            self.store.transition("R-001", "merge", "user", None,
+                                  merged_into_id="R-001")
+        self.assertEqual(cm.exception.code, "INVALID_FIELD")
+        self.assertEqual(self.store.get_card("R-001")["status"], "detected")
+
+    def test_merge_into_missing_or_tombstoned_parent_rejected(self):
+        self._mint("R-001", "detected")
+        with self.assertRaises(NotFound):
+            self.store.transition("R-001", "merge", "user", None,
+                                  merged_into_id="R-404")
+        self._mint("R-002", "trashed", prev_status="detected")
+        self.store.purge_trashed("R-002")
+        with self.assertRaises(NotFound):
+            self.store.transition("R-001", "merge", "user", None,
+                                  merged_into_id="R-002")
+        # 合法 merge 不受卫兵影响
+        self._mint("R-003", "detected")
+        card = self.store.transition("R-001", "merge", "user", None,
+                                     merged_into_id="R-003")
+        self.assertEqual((card["status"], card["merged_into_id"]),
+                         ("merged", "R-003"))
+
+
+class WriteTransactionHygieneTestCase(_StoreFixture):
+    """_write 卫生：任何失败（含 COMMIT 本身失败）后线程连接必须回到干净态，
+    绝不卡在半截事务里让后续写全部撞 'cannot start a transaction'。"""
+
+    def test_failed_write_leaves_connection_clean(self):
+        self._mint()
+        with self.assertRaises(TransitionDenied):
+            self.store.transition("R-001", "approve", "agent", None)
+        self.assertFalse(self.store._conn().in_transaction)
+        card = self.store.transition("R-001", "approve", "user", None)
+        self.assertEqual(card["status"], "approved")
+
+    def test_commit_failure_rolls_back_not_sticks(self):
+        # 模拟事务在 COMMIT 前被外力终结：COMMIT 抛 OperationalError——
+        # 连接必须落回干净态，后续写照常
+        with self.assertRaises(sqlite3.OperationalError):
+            with self.store._write() as conn:
+                conn.execute("ROLLBACK")
+        self.assertFalse(self.store._conn().in_transaction)
+        self._mint("R-002")
+        self.assertEqual(self.store.get_card("R-002")["status"], "card_sent")
+
+
+@unittest.skipUnless(_STORE_LANDED, _SKIP_REASON)
+class SchemaVersionGateTestCase(unittest.TestCase):
+    """版本门两面：crash window 重跑补全（版本尾钉的意义所在）；
+    版本号在场但表缺席的半截/伪造库 fail-closed 拒开。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="store2-gate-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_fake_version_without_tables_refused(self):
+        db = self.tmp / "half.db"
+        conn = sqlite3.connect(db)
+        conn.execute("PRAGMA user_version = 1")
+        conn.close()
+        with self.assertRaises(StoreError) as cm:
+            Store(db)
+        self.assertEqual(cm.exception.code, "SCHEMA_INCOMPLETE")
+
+    def test_crash_window_rerun_completes_schema(self):
+        # 模拟 executescript 崩在版本钉扎之前：表在、版本还是 0——
+        # 重开 Store 必须幂等补全并钉到 1，而不是带着半截库上路
+        db = self.tmp / "crash.db"
+        schema_path = (Path(__file__).resolve().parent.parent
+                       / "act" / "lib" / "store2" / "schema.sql")
+        sql = schema_path.read_text(encoding="utf-8")
+        cut = sql[:sql.rindex("PRAGMA user_version")]
+        conn = sqlite3.connect(db)
+        conn.executescript(cut)
+        conn.close()
+        store = Store(db, now_fn=lambda: NOW)
+        try:
+            store.create_card({"id": "R-001", "status": "detected",
+                               "title": "t"}, actor_type="system")
+            version = store._conn().execute(
+                "PRAGMA user_version").fetchone()[0]
+            self.assertEqual(version, 1)
+        finally:
+            store.close()
 
 
 if __name__ == "__main__":

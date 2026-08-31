@@ -2,7 +2,8 @@
 
 用法（repo 根目录运行）::
 
-    python3 -m act.lib.store2.migrate_yaml --registry act/registry --db /tmp/store2.db [--dry-run]
+    python3 -m act.lib.store2.migrate_yaml --registry act/registry --db /tmp/store2.db \
+        [--dry-run] [--allow-unknown]
 
 设计要点（依据 docs/design/store2-mapping.md + store2/schema.md「给 B3 的约定」）：
 
@@ -20,7 +21,9 @@
 - 容忍规则镜像 live registry（宪法第 11 条：解析失败不许崩 pass）：坏 YAML/
   空文件/非 dict 成员/缺 id 跳过 + 报告；archive 与 active 同 id 双份取 archive
   版（load() 的 crash-mid-move 语义）并报 residue；R-000-example.yaml 按文件名
-  排除；list 形 YAML 文件合法（逐成员迁移）。
+  排除；list 形 YAML 文件合法（逐成员迁移）。**例外：未知顶层键比 live registry
+  更严**——from_dict 是静默丢弃，一次性迁移丢字段不可逆，默认整体拒绝并点名
+  键名，--allow-unknown 才降回丢弃语义。
 - ids/时间戳 verbatim：id 原字符串入 PK；YAML 里的一切时间戳字段原样留在
   payload。热列 created/updated 是**新增合成列**（YAML 无祖先）：
   created = card.sent_at > sources[0].date > 文件 mtime（逐卡在 dry-run 标注
@@ -178,14 +181,21 @@ def scan_registry(reg_dir: Path):
 # --------------------------------------------------------------------------- #
 # 逐卡计划（热列推导 + 警告收集）
 # --------------------------------------------------------------------------- #
-def plan_card(rid: str, entry: dict):
+def plan_card(rid: str, entry: dict, *, allow_unknown: bool = False):
     """entry → {"hot": {...}, "norm": dict, "sources": [...], "created_from",
     "warnings": [...], "errors": [...]}。errors 非空 = 本卡无法忠实入库。"""
     warnings: list = []
     errors: list = []
     norm = normalize_card(entry["raw"])
     for k in dropped_keys(entry["raw"]):
-        warnings.append(f"未知顶层键 {k!r} 被丢弃（对齐 from_dict 语义）")
+        # 未知顶层键：入库即静默丢字段——默认整体拒绝（列出键名，人工核对
+        # 后修 export_yaml 词表或显式 --allow-unknown 降级为 from_dict 丢弃语义）
+        if allow_unknown:
+            warnings.append(f"未知顶层键 {k!r} 被丢弃（--allow-unknown 已放行，"
+                            "对齐 from_dict 语义）")
+        else:
+            errors.append(f"未知顶层键 {k!r}：入库即静默丢字段，拒绝"
+                          "（补进 export_yaml 词表，或 --allow-unknown 显式放行）")
 
     # -- status：legacy 'merged_into:<id>' 串热列归一成 merged（schema CHECK 只认
     #    11 词），payload 里保留 verbatim —— export 走 payload，round-trip 不失真
@@ -340,24 +350,28 @@ def check_target(db_path: Path) -> str:
         return "fresh"
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
-        tables = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
-        if not tables:
-            return "empty-file"
-        uv = con.execute("PRAGMA user_version").fetchone()[0]
-        if uv != 1 or not set(_DATA_TABLES) <= tables:
-            raise MigrateError(
-                f"refuse: {db_path} 已有非 store2-v1 内容（user_version={uv}）")
-        for t in _DATA_TABLES:
-            n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608 - 白名单表名
-            if n:
-                raise MigrateError(f"refuse: 目标库非空（{t} 有 {n} 行）——"
-                                   "一次性迁移只进全新库")
-        row = con.execute(
-            "SELECT value FROM board_revision WHERE id = 1").fetchone()
-        if row and row[0] != 0:
-            raise MigrateError(f"refuse: board_revision={row[0]}，目标库已被写过")
-        return "schema-only"
+        try:
+            tables = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if not tables:
+                return "empty-file"
+            uv = con.execute("PRAGMA user_version").fetchone()[0]
+            if uv != 1 or not set(_DATA_TABLES) <= tables:
+                raise MigrateError(
+                    f"refuse: {db_path} 已有非 store2-v1 内容（user_version={uv}）")
+            for t in _DATA_TABLES:
+                n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608 - 白名单表名
+                if n:
+                    raise MigrateError(f"refuse: 目标库非空（{t} 有 {n} 行）——"
+                                       "一次性迁移只进全新库")
+            row = con.execute(
+                "SELECT value FROM board_revision WHERE id = 1").fetchone()
+            if row and row[0] != 0:
+                raise MigrateError(f"refuse: board_revision={row[0]}，目标库已被写过")
+            return "schema-only"
+        except sqlite3.DatabaseError as e:
+            # 垃圾/损坏文件：连 sqlite_master 都读不了——干净 refuse，不落 traceback
+            raise MigrateError(f"refuse: {db_path} 不是可读的 SQLite 库（{e}）")
     finally:
         con.close()
 
@@ -421,13 +435,16 @@ def main(argv=None) -> int:
     ap.add_argument("--db", required=True, help="目标 SQLite 路径（必须为空库）")
     ap.add_argument("--dry-run", action="store_true",
                     help="对 :memory: 排演全程并逐卡打印计划，目标零接触")
+    ap.add_argument("--allow-unknown", action="store_true",
+                    help="把未知顶层键从整体拒绝降级为 WARN + 丢弃"
+                         "（from_dict 的静默丢弃语义，显式开关后才允许）")
     args = ap.parse_args(argv)
 
     try:
         by_id, scan_notes = scan_registry(Path(args.registry))
         plans, card_errors = [], []
         for rid in sorted(by_id):
-            p = plan_card(rid, by_id[rid])
+            p = plan_card(rid, by_id[rid], allow_unknown=args.allow_unknown)
             if p["errors"]:
                 card_errors += [f"{rid}: {e}" for e in p["errors"]]
             else:

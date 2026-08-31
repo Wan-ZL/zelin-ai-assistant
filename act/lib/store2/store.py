@@ -38,6 +38,9 @@ _CARD_COLUMNS = (
 )
 # create_card 允许显式传入的键（migration 需要完整控制出生形态；version/board_rev 由 store 管）
 _CREATE_KEYS = frozenset(_CARD_COLUMNS) - {"version", "board_rev", "tombstone", "last_actor_type"}
+# agent 出生面再收紧：prev_status 是 restore 的目的地，agent 铸卡带票 = 预埋
+# 「trashed→approved」组合旁路弹药；cards_agent_insert_wall trigger 兜底
+_AGENT_CREATE_KEYS = _CREATE_KEYS - {"prev_status"}
 _CREATE_REQUIRED = ("id", "status", "title")
 # update_card_fields 可改热列：title 是 FROZEN 身份锚（§37）不收；
 # status/prev_status/merged_into_id 只许走 transition（状态机口径唯一）
@@ -47,11 +50,12 @@ _ACTOR_TYPES = ("user", "agent", "system")
 _DISPATCH_END_STATES = ("completed", "failed", "stopped")
 
 # schema trigger 的 RAISE 码 → 归类（消息即码，见 schema.sql 各 trigger）
-_TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "ILLEGAL_TRANSITION")
+_TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "AGENT_FIELD_FORBIDDEN",
+                     "ORIGIN_TRUST_USER_ONLY", "ILLEGAL_TRANSITION")
 _INTEGRITY_CODES = (
     "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE",
     "NOTES_APPEND_ONLY", "NOTES_RECEIPT_SET_ONCE",
-    "ACTIVITIES_APPEND_ONLY", "REVISION_MONOTONIC",
+    "ACTIVITIES_APPEND_ONLY", "WHITELIST_APPEND_ONLY", "REVISION_MONOTONIC",
 )
 
 
@@ -187,14 +191,24 @@ class Store:
         conn = self._conn()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
-            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；末尾把 user_version 钉到 1
+            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；user_version=1 是
+            # 其**最后一条**语句——建库途中崩溃时版本仍是 0，这里重跑即补全
             conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-        elif version != SCHEMA_VERSION:
+            return
+        if version != SCHEMA_VERSION:
             # 未来版本的库 fail-closed：绝不带着不认识的 schema 盲写
             raise StoreError(
                 "SCHEMA_VERSION_MISMATCH",
                 f"db user_version={version}, store2 supports {SCHEMA_VERSION}",
                 {"db_version": version, "supported": SCHEMA_VERSION},
+            )
+        # 版本号对但核心表缺席 = 半截库/手写 pragma 伪装——版本门不许被绕过
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                        " AND name = 'cards'").fetchone() is None:
+            raise StoreError(
+                "SCHEMA_INCOMPLETE",
+                f"db user_version={version} but core tables are missing",
+                {"db_version": version},
             )
 
     def _conn(self) -> sqlite3.Connection:
@@ -218,19 +232,26 @@ class Store:
 
     @contextmanager
     def _write(self):
-        """写事务 helper：BEGIN IMMEDIATE 抢写锁；IntegrityError 翻译成类型化错误后回滚。"""
+        """写事务 helper：BEGIN IMMEDIATE 抢写锁；IntegrityError 翻译成类型化错误后回滚。
+        COMMIT 也在保护圈内——它失败同样回滚，线程连接绝不卡在半截事务里污染后续写。"""
         conn = self._conn()
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
+            conn.execute("COMMIT")
         except sqlite3.IntegrityError as e:
-            conn.execute("ROLLBACK")
+            self._rollback(conn)
             raise _translate_integrity(e) from e
         except BaseException:
-            conn.execute("ROLLBACK")
+            self._rollback(conn)
             raise
-        else:
-            conn.execute("COMMIT")
+
+    @staticmethod
+    def _rollback(conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass  # 事务已随失败的 COMMIT 终结时无账可回——连接此刻已是干净态
 
     @staticmethod
     def _bump_revision(conn: sqlite3.Connection) -> int:
@@ -310,11 +331,13 @@ class Store:
         """铸卡（migration 的整库 INSERT 也走这里）。
 
         出生状态不设限（schema.md：合法出生点很多，出生资格是应用层判断），
-        但 agent 铸 approved/delivered 会被 cards_agent_insert_wall 拦（权限墙 INSERT 面）。
+        但 agent 铸批准后各态的卡、或带 prev_status 回程票（restore 组合旁路的
+        弹药）在此拒收——cards_agent_insert_wall trigger 兜底同一道墙的 SQL 面。
         未知键 fail-closed 拒收（对齐 server 的 zero-tolerance 纪律）。
         """
         self._require_actor(actor_type)
-        unknown = set(card) - _CREATE_KEYS
+        allowed = _AGENT_CREATE_KEYS if actor_type == "agent" else _CREATE_KEYS
+        unknown = set(card) - allowed
         if unknown:
             raise StoreError("UNKNOWN_FIELD", f"unknown card fields: {sorted(unknown)}",
                              {"fields": sorted(unknown)})
@@ -388,8 +411,16 @@ class Store:
         if spec.needs_parent and not merged_into_id:
             raise StoreError("INVALID_FIELD", f"verb '{verb}' requires merged_into_id",
                              {"verb": verb})
+        if spec.needs_parent and merged_into_id == card_id:
+            raise StoreError("INVALID_FIELD", "card cannot merge into itself",
+                             {"verb": verb, "merged_into_id": merged_into_id})
         with self._write() as conn:
             row = self._cas_precheck(conn, card_id, expected_version)
+            if spec.needs_parent:
+                parent = self._get_row(conn, merged_into_id)
+                if parent is None or parent["tombstone"]:
+                    # 并入幽灵父卡 = lineage 断链；tombstone 对写路径一律视同不存在
+                    raise NotFound("card", merged_into_id)
             old_status, old_prev = row["status"], row["prev_status"]
 
             # —— 算目标状态与随行字段 ——
@@ -440,6 +471,12 @@ class Store:
         if bad:
             raise StoreError("UNKNOWN_FIELD",
                              f"fields not updatable here: {sorted(bad)}", {"fields": sorted(bad)})
+        if "origin_trust" in fields and actor_type != "user":
+            # 信任档只许用户拨（cards_origin_trust_user_only trigger 兜底 SQL 面）：
+            # agent/system 把外部卡自封 hand = 绕过审批闸门的自提权
+            raise TransitionDenied("ORIGIN_TRUST_USER_ONLY",
+                                   "origin_trust can only be changed by the user",
+                                   {"actor_type": actor_type})
         with self._write() as conn:
             row = self._cas_precheck(conn, card_id, expected_version)
             changes, assigns, args = [], [], []
@@ -491,6 +528,14 @@ class Store:
                 raise NotFound("card", card_id)
             if row["tombstone"]:
                 return self._row_to_card(row)
+            if conn.execute("SELECT 1 FROM dispatches WHERE card_id = ?"
+                            " AND status = 'running'", (card_id,)).fetchone():
+                # 活 session 还在跑：先 close_dispatch 收尾再 purge——卡先冻结
+                # 会让收尾账无处落（历史上曾造成台账永久挂账）
+                raise IntegrityViolation(
+                    "DISPATCH_ACTIVE",
+                    f"card '{card_id}' has a running dispatch; close it before purge",
+                    {"card_id": card_id})
             rev = self._bump_revision(conn)
             # 不走 CAS：purge 是 retention 的单方面动作，语义上无并发编辑者
             conn.execute(
@@ -508,9 +553,11 @@ class Store:
     # CAS 只护卡片行本身的编辑，子表追加不该把并发编辑者顶成 409）
     # ----------------------------------------------------------------- #
     def _touch_card(self, conn, card_id: str, rev: int) -> None:
-        """子表变更盖章所属卡：board_rev 推新让增量同步看见（tombstone 卡会被
-        trigger 拦下 TOMBSTONE_FROZEN，调用方已预检）。"""
-        conn.execute("UPDATE cards SET board_rev = ?, updated = ? WHERE id = ?",
+        """子表变更盖章所属卡：board_rev 推新让增量同步看见。tombstone 卡按
+        WHERE 跳过——骨架行冻结（trigger 会 RAISE），而 close_dispatch/回执
+        set-once 这类收尾账必须照常落账，不许因卡已 purge 而永久挂账。"""
+        conn.execute("UPDATE cards SET board_rev = ?, updated = ?"
+                     " WHERE id = ? AND tombstone = 0",
                      (rev, self._now(), card_id))
 
     def _require_live_card(self, conn, card_id: str) -> sqlite3.Row:

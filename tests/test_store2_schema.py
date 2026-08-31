@@ -9,6 +9,7 @@
   * tombstone 进 revision 流（增量游标 WHERE board_rev > :since 学到删除）
   * notes/activities append-only、set-once 回执、sources 去重、one_active
 """
+import re
 import sqlite3
 import unittest
 from pathlib import Path
@@ -158,6 +159,93 @@ class TransitionWallTestCase(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError) as cm:
             self.conn.execute("DELETE FROM cards WHERE id = 'R-001'")
         self.assertIn("USE_TOMBSTONE", str(cm.exception))
+
+
+class CompositePermissionWallTestCase(unittest.TestCase):
+    """组合权限旁路回归网：agent 直接 INSERT 批准后各态、或借毒化 prev_status
+    让用户一次无辜 restore 把卡送进 approved/delivered——出生/改写两面全钉死，
+    同时钉住合法路径（用户亲手 trash 的 approved 卡 restore 照常复位）。"""
+
+    def setUp(self):
+        self.conn = open_db()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_agent_insert_any_post_approval_status_raises(self):
+        for status in ("approved", "delivered", "executing", "review"):
+            with self.assertRaises(sqlite3.IntegrityError) as cm:
+                insert_card(self.conn, f"R-{status}", status, actor="agent")
+            self.assertIn("AGENT_TRANSITION_FORBIDDEN", str(cm.exception))
+
+    def test_agent_insert_poisoned_prev_status_raises(self):
+        # trashed + prev_status='approved'：restore 一下就落 approved——出生即拒
+        for prev in ("approved", "delivered", "executing", "review"):
+            with self.assertRaises(sqlite3.IntegrityError) as cm:
+                insert_card(self.conn, "R-001", "trashed", actor="agent",
+                            prev_status=prev)
+            self.assertIn("AGENT_TRANSITION_FORBIDDEN", str(cm.exception))
+        # 无毒回程票的 agent trashed 卡不受影响（出生资格是应用层判断）
+        insert_card(self.conn, "R-002", "trashed", actor="agent",
+                    prev_status="detected")
+
+    def test_agent_update_prev_status_or_merge_pointer_raises(self):
+        insert_card(self.conn, "R-001", "trashed", prev_status="detected")
+        insert_card(self.conn, "R-002", "detected")
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "UPDATE cards SET prev_status = 'approved',"
+                " last_actor_type = 'agent' WHERE id = 'R-001'")
+        self.assertIn("AGENT_FIELD_FORBIDDEN", str(cm.exception))
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "UPDATE cards SET merged_into_id = 'R-002',"
+                " last_actor_type = 'agent' WHERE id = 'R-001'")
+        self.assertIn("AGENT_FIELD_FORBIDDEN", str(cm.exception))
+        # 回程票未被污染 → 用户 restore 仍按原票精确复位
+        self.conn.execute(
+            "UPDATE cards SET status = 'detected', prev_status = NULL,"
+            " last_actor_type = 'user' WHERE id = 'R-001'")
+
+    def test_legitimate_user_restore_to_approved_stays_intact(self):
+        # 用户亲手 trash 一张 approved 卡再 restore：墙只挡 agent，不伤回程票语义
+        insert_card(self.conn, "R-001", "approved")
+        set_status(self.conn, "R-001", "trashed", "user", prev_status="approved")
+        set_status(self.conn, "R-001", "approved", "user")
+        row = self.conn.execute(
+            "SELECT status FROM cards WHERE id = 'R-001'").fetchone()
+        self.assertEqual(row["status"], "approved")
+
+
+class OriginTrustWallTestCase(unittest.TestCase):
+    """origin_trust 信任档只许用户拨（trigger 面）：agent/system 改档 = 自提权。"""
+
+    def setUp(self):
+        self.conn = open_db()
+        insert_card(self.conn, "R-001", "detected")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_non_user_flip_raises_user_passes(self):
+        for actor in ("agent", "system"):
+            with self.assertRaises(sqlite3.IntegrityError) as cm:
+                self.conn.execute(
+                    "UPDATE cards SET origin_trust = 'hand',"
+                    " last_actor_type = ? WHERE id = 'R-001'", (actor,))
+            self.assertIn("ORIGIN_TRUST_USER_ONLY", str(cm.exception))
+        self.conn.execute(
+            "UPDATE cards SET origin_trust = 'hand', last_actor_type = 'user'"
+            " WHERE id = 'R-001'")
+        row = self.conn.execute(
+            "SELECT origin_trust FROM cards WHERE id = 'R-001'").fetchone()
+        self.assertEqual(row["origin_trust"], "hand")
+
+    def test_same_value_rewrite_is_allowed(self):
+        # 幂等 retry 无害：system 重写同值不算改档、放行
+        self.conn.execute(
+            "UPDATE cards SET origin_trust = 'external',"
+            " last_actor_type = 'system' WHERE id = 'R-001'")
 
 
 class CasConflictTestCase(unittest.TestCase):
@@ -382,6 +470,46 @@ class DedupAndDispatchTestCase(unittest.TestCase):
             self.conn.execute(
                 "INSERT INTO dispatches (card_id, status, started_at)"
                 " VALUES ('R-001', 'completed', ?)", (NOW,))
+
+
+class WhitelistProtectionTestCase(unittest.TestCase):
+    """transition_whitelist 是法条表：add-only——UPDATE/DELETE 一律拒绝，
+    追加合法转移的 INSERT 面保持开放（与 notes/activities 同规）。"""
+
+    def setUp(self):
+        self.conn = open_db()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_update_and_delete_raise_insert_allowed(self):
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "UPDATE transition_whitelist SET actor_type = 'agent'"
+                " WHERE old_status = 'card_sent' AND new_status = 'approved'")
+        self.assertIn("WHITELIST_APPEND_ONLY", str(cm.exception))
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "DELETE FROM transition_whitelist WHERE old_status = 'card_sent'")
+        self.assertIn("WHITELIST_APPEND_ONLY", str(cm.exception))
+        # add-only：追加新法条照常（法条只增不改不删）
+        self.conn.execute(
+            "INSERT INTO transition_whitelist (old_status, new_status,"
+            " actor_type) VALUES ('rejected', 'detected', 'user')")
+
+
+class SchemaLayoutTestCase(unittest.TestCase):
+    """版本钉扎必须是 schema.sql 的最后一条语句：executescript 建库途中崩溃时
+    user_version 必须还是 0，否则半截库会被版本门放行（crash window）。"""
+
+    def test_user_version_pragma_is_last_statement(self):
+        sql = SCHEMA_PATH.read_text(encoding="utf-8")
+        stripped = re.sub(r"--[^\n]*", "", sql)
+        statements = [s.strip() for s in stripped.split(";") if s.strip()]
+        self.assertEqual(statements[-1].upper().replace(" ", ""),
+                         "PRAGMAUSER_VERSION=1")
+        # 全文件只钉一次（注释除外）——出现第二处 = 有人把它挪回了前面
+        self.assertEqual(stripped.count("user_version"), 1)
 
 
 if __name__ == "__main__":

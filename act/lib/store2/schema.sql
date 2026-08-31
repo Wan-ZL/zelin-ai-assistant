@@ -16,8 +16,10 @@
 --     （tombstone=1、payload='{}'、bump board_rev），删除因此进 revision 流
 --
 -- 字段纪律与 YAML registry 同一条宪法：add-only，只增不改不删不重编号。
-
-PRAGMA user_version = 1;
+--
+-- 版本钉扎在**文件末尾**：executescript 途中崩溃时版本必须还是 0，
+-- _ensure_schema 重跑才会补全建表——版本号先行会把半截库伪装成完工库，
+-- 击穿版本门（crash window）。
 
 -- ---------------------------------------------------------------------------
 -- cards — 卡片主表：热列（看板投影/过滤要用的）+ payload JSON 冷列（其余字段
@@ -288,13 +290,28 @@ INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) 
 -- triggers — 状态机 + 权限墙 + append-only 执法（dashi RAISE 惯用法）
 -- ---------------------------------------------------------------------------
 
--- 出生权限墙：agent 不得直接 INSERT 已批准/已交付的卡（migration/正常铸卡走
--- system/user；transition trigger 只管 UPDATE，这里补上 INSERT 面）
+-- 出生权限墙：agent 不得直接 INSERT 批准后各态的卡（migration/正常铸卡走
+-- system/user；transition trigger 只管 UPDATE，这里补上 INSERT 面）。
+-- prev_status 同查：带毒回程票（如 trashed + prev_status='approved'）经用户
+-- 一次无辜 restore 就精确复位进 approved——组合权限旁路，出生时一并拒收
 CREATE TRIGGER IF NOT EXISTS cards_agent_insert_wall
 BEFORE INSERT ON cards
-WHEN NEW.last_actor_type = 'agent' AND NEW.status IN ('approved', 'delivered')
+WHEN NEW.last_actor_type = 'agent' AND (
+  NEW.status IN ('approved', 'delivered', 'executing', 'review')
+  OR NEW.prev_status IN ('approved', 'delivered', 'executing', 'review'))
 BEGIN
   SELECT RAISE(ABORT, 'AGENT_TRANSITION_FORBIDDEN');
+END;
+
+-- 字段权限墙（UPDATE 面）：prev_status 是 restore 的目的地、merged_into_id 是
+-- lineage 父指针——agent 改写任一 = 给用户后续动作预埋弹药，与 status 墙同族
+CREATE TRIGGER IF NOT EXISTS cards_agent_field_wall
+BEFORE UPDATE ON cards
+WHEN NEW.last_actor_type = 'agent'
+  AND (NEW.prev_status IS NOT OLD.prev_status
+       OR NEW.merged_into_id IS NOT OLD.merged_into_id)
+BEGIN
+  SELECT RAISE(ABORT, 'AGENT_FIELD_FORBIDDEN');
 END;
 
 -- 状态机执法：①agent 的 approve/accept 类转移点名拒绝（清晰报错优先）；
@@ -313,6 +330,15 @@ BEGIN
       AND new_status = NEW.status
       AND actor_type = NEW.last_actor_type
   );
+END;
+
+-- origin_trust 信任档只许用户拨（hand = 免审批快车道；agent/system 自封 hand
+-- = 信任矩阵自提权）。同值重写放行——幂等 retry 无害
+CREATE TRIGGER IF NOT EXISTS cards_origin_trust_user_only
+BEFORE UPDATE ON cards
+WHEN NEW.origin_trust <> OLD.origin_trust AND NEW.last_actor_type <> 'user'
+BEGIN
+  SELECT RAISE(ABORT, 'ORIGIN_TRUST_USER_ONLY');
 END;
 
 -- 身份锚点不可改写（§37：title 都不许动身份，id 更不行）
@@ -373,6 +399,20 @@ BEGIN
   SELECT RAISE(ABORT, 'ACTIVITIES_APPEND_ONLY');
 END;
 
+-- transition_whitelist 只许追加（法条表 add-only）：UPDATE/DELETE = 篡改
+-- 状态机法条，与 notes/activities 同规执法；追加合法转移的 INSERT 面不设限
+CREATE TRIGGER IF NOT EXISTS transition_whitelist_no_update
+BEFORE UPDATE ON transition_whitelist
+BEGIN
+  SELECT RAISE(ABORT, 'WHITELIST_APPEND_ONLY');
+END;
+
+CREATE TRIGGER IF NOT EXISTS transition_whitelist_no_delete
+BEFORE DELETE ON transition_whitelist
+BEGIN
+  SELECT RAISE(ABORT, 'WHITELIST_APPEND_ONLY');
+END;
+
 -- 全局游标单调递增（回拨 = 客户端增量同步静默漏数据，直接拒绝）
 CREATE TRIGGER IF NOT EXISTS board_revision_monotonic
 BEFORE UPDATE ON board_revision
@@ -380,3 +420,9 @@ WHEN NEW.value <= OLD.value
 BEGIN
   SELECT RAISE(ABORT, 'REVISION_MONOTONIC');
 END;
+
+-- ---------------------------------------------------------------------------
+-- 版本钉扎 — 必须是本文件**最后一条语句**（测试钉死）：全部 DDL 落地后
+-- 版本号才生效，建库途中崩溃 = 版本仍 0 = 下次重跑幂等补全
+-- ---------------------------------------------------------------------------
+PRAGMA user_version = 1;
