@@ -140,13 +140,17 @@ class Handler(BaseHTTPRequestHandler):
             # 校验规则只写一处（module docstring 已冻结）
             result = inbox_writer.write_action(payload, home=ctx.home)
             # steer 标注（M6，add-only 响应键；inbox 文件形状零改动）：
-            # executing 卡上的 comment 会被 actd 按 steer 类经 §44.3 briefing
-            # 机制转投递——这里只诚实报「queued」（落盘即排队），delivered/
-            # dropped 状态由投影回流（vnext-amendments.md §M6.1）。
+            # executing 卡上的 **owner** comment 会被 actd 按 steer 类经
+            # §44.3 briefing 机制转投递——这里只诚实报「queued」（落盘即排
+            # 队），delivered/dropped 状态由投影回流（vnext-amendments.md
+            # §M6.1）。agent ingress（via:"agent"，T-28）的 comment 只记录
+            # 不 steer——标注必须反映实际裁决：steer:false、无 steer_status。
             if result.get("action") == "comment" and board_source.is_executing(
                     ctx.home, str(payload.get("id") or "")):
-                result["steer"] = True
-                result["steer_status"] = "queued"
+                owner = result.get("via") == "web"
+                result["steer"] = owner
+                if owner:
+                    result["steer_status"] = "queued"
             self._send_json(200, result)
         elif path == "/api/reveal":
             payload = self._read_json_body()

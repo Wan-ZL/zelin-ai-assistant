@@ -92,7 +92,7 @@ def process_inbox() -> int:
 
         # §10 capture: no req id — the app popover's one-liner quick capture.
         if action == "capture":
-            _apply_capture(decision.get("text"))
+            _apply_capture(decision.get("text"), via=decision.get("via"))
             processed += 1
             _safe_unlink(path)
             continue
@@ -104,7 +104,9 @@ def process_inbox() -> int:
         else:
             # ts 透传（§44.3-S）：steer 的 dedup 键带时间戳——同一 inbox 文件
             # 重放（unlink 失败）同 ts 去重，owner 重申同文新 ts 是新指令。
-            _apply_decision(req, action, comment, ts=decision.get("ts"))
+            # via 透传（T-28 ingress 落款）+ stem（steer dedup 的文件 nonce）。
+            _apply_decision(req, action, comment, ts=decision.get("ts"),
+                            via=decision.get("via"), stem=path.stem)
             analytics.log_event(f"inbox_{action or 'unknown'}", req=req.id,
                                 status=str(req.status))
             processed += 1
@@ -113,13 +115,38 @@ def process_inbox() -> int:
     return processed
 
 
-def _apply_capture(text: Optional[str]) -> None:
+# T-28 ingress 落款 → 捕获源 channel。无 via = Mac 等 owner-local 写者（HTTP
+# 层之外铸的文件才允许缺 via）；via:"web" = localhost 看板，同为 owner。除这
+# 两者外一律非 owner：agent 自报落 agent_capture，"remote" 与一切未知/畸形值
+# fail-closed 落 remote_capture——两者都是 PROPOSED 级（policy.CHANNEL_CLASS），
+# 调度侧出身从 sources 现算，agent/remote 捕获就此结构性关死自动派发。落款是
+# 礼仪 + 取证（同用户裸 HTTP 可不发 actor），硬后盾 = 天花板 + effective_tier
+# 强制扩写 + 人工审批列（T-28 诚实条款；收紧路径 T-29）。
+def _ingress_channel(via: object) -> str:
+    if via is None or via == "web":
+        return "quick_capture"
+    if via == "agent":
+        return "agent_capture"
+    return "remote_capture"
+
+
+def _is_owner_ingress(via: object) -> bool:
+    """owner-class ingress = Mac 文件（无 via）或 localhost 看板（via:"web"）。"""
+    return via is None or via == "web"
+
+
+def _apply_capture(text: Optional[str], via: Optional[object] = None) -> None:
     """Quick capture from the app popover (CONTRACT §10/§15).
 
     ``{"action":"capture","text":"...","ts":"..."}`` -> registry.merge_or_new
     (title=text, channel=quick_capture, 原话进 sources) -> status=raising, so the
     existing process_raising() expands it (one per pass) into a card_sent
     proposal. Fast: no LLM call here, the poll loop is never blocked.
+
+    ``via`` 是 HTTP 写入面的 ingress 落款（T-28）：source channel 按
+    ``_ingress_channel`` 盖——owner ingress 照旧 quick_capture（HAND），
+    agent/remote 落 PROPOSED 级捕获通道，回人工审批。expansion（process_
+    raising）不改 sources，章随卡走到调度侧现算。
 
     Idempotent: merge_or_new dedupes by title, so the same text arriving twice
     merges into the existing entry instead of creating a second card; an entry
@@ -129,6 +156,8 @@ def _apply_capture(text: Optional[str]) -> None:
     if not t:
         _log("inbox: capture with empty text — ignored")
         return
+    channel = _ingress_channel(via)
+    owner = channel == "quick_capture"
     req = Requirement(
         id=registry.next_id(),
         title=t[:80],
@@ -137,25 +166,29 @@ def _apply_capture(text: Optional[str]) -> None:
         status=State.DETECTED.value,
         hardness="soft",
         sources=[{
-            "who": "zelin",
-            "channel": "quick_capture",
+            "who": "zelin" if owner else
+                   ("agent" if channel == "agent_capture" else "remote"),
+            "channel": channel,
             "date": _dt.date.today().isoformat(),
             "quote": t,
         }],
-        notes="from app quick capture",
+        notes="from app quick capture" if owner else f"from {channel}",
     )
     saved = registry.merge_or_new(req)
     if saved.status == State.DETECTED.value:
         saved.set_status(State.RAISING)
         save(saved)
-        _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion)")
+        _log(f"inbox: capture -> {saved.id} raising (queued for AI expansion, "
+             f"channel={channel})")
     else:
-        _log(f"inbox: capture merged into {saved.id} (status={saved.status})")
+        _log(f"inbox: capture merged into {saved.id} (status={saved.status}, "
+             f"channel={channel})")
     analytics.log_event("inbox_capture", req=saved.id, status=str(saved.status))
 
 
 def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[str],
-                    ts: Optional[object] = None) -> None:
+                    ts: Optional[object] = None, via: Optional[object] = None,
+                    stem: Optional[str] = None) -> None:
     # Full inbox action set (CONTRACT §10) — this elif chain IS the action
     # whitelist/validation; anything else falls through to the logged no-op else:
     #   approve | reject(->trash) | comment | raise(debt->proposal)
@@ -202,12 +235,18 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         registry.trash(req, "rejected")  # recoverable, not a bare rejected status
         _log(f"inbox: {req.id} rejected -> trash")
     elif action == "comment":
+        # T-28 ingress 落款：steer（OWNER UPDATE 直发 live session）与「折叠 +
+        # 退回重批」都是 owner 专属动作——agent/remote ingress 的评论只上卡
+        # 记录，绝不 steer、绝不动状态机（trust-grant 时刻按 ingress 裁决）。
+        if not _is_owner_ingress(via):
+            _record_nonowner_comment(req, comment, via)
+            return
         if str(req.status) == State.EXECUTING.value:
             # §44.3-S steer relay：运行中卡上的评论是对 live session 的中途
             # 转向指令，不再「折叠 + 退回重批」。入队等 reconcile 的安全窗口
             # （roster blocked / dead-resume）flush；状态机零改动。
             ts_str = str(ts) if isinstance(ts, (str, int, float)) and str(ts).strip() else None
-            note = steer.enqueue_steer(req, comment, ts=ts_str)
+            note = steer.enqueue_steer(req, comment, ts=ts_str, stem=stem)
             if note is None:
                 _log(f"inbox: {req.id} steer noop（重放/空文本，未入队）")
                 return
@@ -326,6 +365,23 @@ def _apply_decision(req: Requirement, action: Optional[str], comment: Optional[s
         _log(f"inbox: {req.id} unarchived -> {req.status}")
     else:
         _log(f"inbox: {req.id} unknown action {action!r} — ignored")
+
+
+def _record_nonowner_comment(req: Requirement, comment: Optional[str],
+                             via: object) -> None:
+    """agent/remote 评论的记录面（T-28）：上卡可见（notes），但不折进 plan
+    （plan 是喂给 executor 的指令面——非 owner 文本进 plan 就是绕道 steer）、
+    不 enqueue steer、不改状态。空文本只记日志；via 进日志供取证。"""
+    body = comment.strip() if isinstance(comment, str) else ""
+    if not body:
+        _log(f"inbox: {req.id} comment (via={via!r}) empty — ignored")
+        return
+    label = "agent" if via == "agent" else "remote"
+    tag = f"[{_dt.date.today().isoformat()} {label} 备注] {body}"
+    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
+    save(req)
+    _log(f"inbox: {req.id} comment recorded (via={label}, no steer, "
+         f"status stays {req.status})")
 
 
 def _fold_comment(req: Requirement, comment: Optional[str]) -> None:

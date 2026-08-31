@@ -4,7 +4,9 @@ golden 对照（语义级 + 字节级）：payload 由 golden 反推（去 ts；
 null comment 交给 server 补齐——merge_apply/merge_dismiss 例外，Mac 客户端
 显式带 ``comment: null``，web 客户端照抄，两种 G1 实现口径下字节都成立）。
 产物与 golden 先做 JSON 语义比较，再做 **逐字节比较**（都仅替换 ts 值——
-mac_json_bytes 的 Mac JSONSerialization 复刻由此钉死）。
+mac_json_bytes 的 Mac JSONSerialization 复刻由此钉死）。T-28 起 server 落款
+add-only ``via``（sorted-keys 尾键）：golden 仍是 Mac 落盘形（无 via——Mac
+文件 = owner-local 的判据正是缺 via），对照前剥去 via 并单独钉死其值。
 
 G1 尚未落地时（inbox_writer 仍是 stub），golden/校验用例整组 skip，
 另有 StubTestCase 钉住诚实 501 行为；G1 落地后自动翻转激活。
@@ -135,15 +137,23 @@ class GoldenActionTestCase(_ActionsHomeMixin, unittest.TestCase):
                 self.assertRegex(produced.get("ts", ""), _TS_RE)
                 normalized = dict(produced)
                 normalized["ts"] = golden["ts"]  # 仅替换 ts 值做语义比较
+                # T-28 落款：browser 无 actor → via 必为 "web"（add-only 键，
+                # golden 前剥离并单独钉死）
+                self.assertEqual(normalized.pop("via", None), "web",
+                                 f"{gpath.name}: via stamp missing/wrong")
                 self.assertEqual(normalized, golden,
                                  f"{gpath.name}: wire shape drifted")
                 # 字节级对照（Mac JSONSerialization 复刻是 G1 的硬承诺）：
-                # 仅替换 ts 值字节，其余必须与 golden 逐字节一致——`\/` 转义、
-                # 空数组三行、`" : "` 分隔、末尾无换行全部钉死
+                # 仅替换 ts 值字节 + 剥去恒为尾键的 via 落款，其余必须与
+                # golden 逐字节一致——`\/` 转义、空数组三行、`" : "` 分隔、
+                # 末尾无换行全部钉死
                 raw = (self.inbox / fname).read_bytes()
                 raw = raw.replace(
                     f'"ts" : "{produced["ts"]}"'.encode("utf-8"),
                     f'"ts" : "{golden["ts"]}"'.encode("utf-8"), 1)
+                via_bytes = b',\n  "via" : "web"'
+                self.assertIn(via_bytes, raw, f"{gpath.name}: via bytes missing")
+                raw = raw.replace(via_bytes, b"", 1)
                 self.assertEqual(raw, gpath.read_bytes(),
                                  f"{gpath.name}: byte layout drifted")
 
@@ -230,6 +240,88 @@ class ActionValidationTestCase(_ActionsHomeMixin, unittest.TestCase):
         else:
             self.assertEqual(status, 400)
             self.assertEqual(self._inbox_files(), set())
+
+
+@unittest.skipIf(_STUB, "G1 inbox_writer not implemented yet")
+class IngressMarkerTestCase(_ActionsHomeMixin, unittest.TestCase):
+    """T-28 ingress 落款：via 恒由 server 盖章（不可 spoof）；actor 仅
+    capture/comment 接受、唯一合法值 "agent"；agent 通道无直跑面。"""
+
+    def setUp(self):
+        self._boot()
+
+    def _record(self):
+        files = list(self.inbox.glob("*.json"))
+        self.assertEqual(len(files), 1)
+        return json.loads(files[0].read_text(encoding="utf-8"))
+
+    def _clear_inbox(self):
+        for p in self.inbox.glob("*.json"):
+            p.unlink()
+
+    def test_default_ingress_stamps_via_web(self):
+        status, obj = post_json(self.port, "/api/actions",
+                                {"action": "capture", "text": "手打候选"})
+        self.assertEqual(status, 200)
+        self.assertEqual(obj.get("via"), "web")
+        self.assertEqual(self._record()["via"], "web")
+
+    def test_agent_actor_stamps_via_agent_and_never_persists_actor(self):
+        for payload in ({"action": "capture", "text": "agent 候选",
+                         "actor": "agent"},
+                        {"action": "comment", "id": "R-101",
+                         "comment": "progress note", "actor": "agent"}):
+            with self.subTest(action=payload["action"]):
+                self._clear_inbox()
+                status, obj = post_json(self.port, "/api/actions", payload)
+                self.assertEqual(status, 200, obj)
+                self.assertEqual(obj.get("via"), "agent")
+                rec = self._record()
+                self.assertEqual(rec["via"], "agent")
+                self.assertNotIn("actor", rec)  # 传输面字段，绝不落盘
+
+    def test_actor_rejected_on_non_write_verbs(self):
+        # actor 只在 boardctl 的动词面（capture/comment）上有意义——决策动词
+        # 带 actor 是 schema 外键，零容忍
+        for action in ("approve", "reject", "accept"):
+            with self.subTest(action=action):
+                status, obj = post_json(
+                    self.port, "/api/actions",
+                    {"action": action, "id": "R-101", "actor": "agent"})
+                self.assertEqual(status, 400)
+                assert_envelope(self, obj, "UNKNOWN_FIELD")
+        self.assertEqual(self._inbox_files(), set())
+
+    def test_unknown_actor_values_rejected(self):
+        for bad in ("owner", "web", "remote", "", True, 1, None):
+            with self.subTest(bad=bad):
+                status, obj = post_json(
+                    self.port, "/api/actions",
+                    {"action": "capture", "text": "x", "actor": bad})
+                self.assertEqual(status, 400)
+                assert_envelope(self, obj, "INVALID_FIELD")
+        self.assertEqual(self._inbox_files(), set())
+
+    def test_client_cannot_stamp_via_directly(self):
+        # via 是 server 落款：任何动词直发 via 都是 schema 外键 → 400
+        for payload in ({"action": "capture", "text": "x", "via": "web"},
+                        {"action": "comment", "id": "R-101",
+                         "comment": "x", "via": "agent"},
+                        {"action": "approve", "id": "R-101", "via": "web"}):
+            with self.subTest(action=payload["action"]):
+                status, obj = post_json(self.port, "/api/actions", payload)
+                self.assertEqual(status, 400)
+                assert_envelope(self, obj, "UNKNOWN_FIELD")
+        self.assertEqual(self._inbox_files(), set())
+
+    def test_agent_capture_cannot_request_direct_run(self):
+        status, obj = post_json(
+            self.port, "/api/actions",
+            {"action": "capture", "text": "x", "mode": "run",
+             "actor": "agent"})
+        self.assertEqual(status, 400)
+        assert_envelope(self, obj, "INVALID_FIELD")
+        self.assertEqual(self._inbox_files(), set())
 
 
 class BodyGateTestCase(_ActionsHomeMixin, unittest.TestCase):

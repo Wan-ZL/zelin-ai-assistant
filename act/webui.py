@@ -182,6 +182,11 @@ def write_inbox(payload: dict) -> str:
         rec.setdefault("comment", None)
     rec["action"] = action
     rec["ts"] = _iso_now()
+    # ingress 落款（vnext-amendments T-28，add-only）：本面是网络远程 ingress，
+    # 一律 via:"remote"——客户端不可 spoof（via 不在 _INBOX_KEYS 白名单，这里
+    # 无条件盖章）。actd 据此把 capture 落 remote_capture 通道（PROPOSED，
+    # 永不自动派发）、comment 只记录不 steer。
+    rec["via"] = "remote"
 
     # capture keeps the Mac app's ``capture-`` filename prefix (§10/§15); every
     # other action gets a plain uuid name.

@@ -44,14 +44,16 @@ class SteerFlagTestCase(unittest.TestCase):
         self.assertEqual(obj.get("steer_status"), "queued")
 
     def test_inbox_file_stays_plain_comment_shape(self):
-        # steer 标注绝不渗进 inbox 文件：§3 comment 四键形一字不多
+        # steer 标注绝不渗进 inbox 文件：§3 comment 四键形 + T-28 via 落款，
+        # 一字不多（steer/steer_status 只活在响应里）
         post_json(self.port, "/api/actions", _comment("R-105"))
         files = self._inbox_files()
         self.assertEqual(len(files), 1)
         rec = json.loads(files[0].read_bytes().decode("utf-8"))
-        self.assertEqual(set(rec), {"action", "comment", "id", "ts"})
+        self.assertEqual(set(rec), {"action", "comment", "id", "ts", "via"})
         self.assertEqual(rec["action"], "comment")
         self.assertEqual(rec["id"], "R-105")
+        self.assertEqual(rec["via"], "web")
 
     def test_comment_on_blocked_card_is_flagged_steer(self):
         # needs_input（blocked）也是 executing——会话活着，steer 可达
@@ -71,6 +73,17 @@ class SteerFlagTestCase(unittest.TestCase):
         status, obj = post_json(self.port, "/api/actions", _comment("R-109"))
         self.assertEqual(status, 200)
         self.assertNotIn("steer", obj)
+
+    def test_agent_comment_on_working_card_is_not_steer(self):
+        # T-28：agent ingress 的评论只记录不 steer——标注必须反映实际裁决
+        payload = dict(_comment("R-105"), actor="agent")
+        status, obj = post_json(self.port, "/api/actions", payload)
+        self.assertEqual(status, 200)
+        self.assertIs(obj.get("ok"), True)
+        self.assertIs(obj.get("steer"), False)
+        self.assertNotIn("steer_status", obj)
+        rec = json.loads(self._inbox_files()[0].read_bytes().decode("utf-8"))
+        self.assertEqual(rec["via"], "agent")
 
     def test_non_comment_verb_on_working_card_is_not_flagged(self):
         # steer 分类只跟 comment 动词走；停止/验收等动词不沾 steer 键

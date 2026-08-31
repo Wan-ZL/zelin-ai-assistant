@@ -42,6 +42,9 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 # 缺的行按 forward-compat 收录；出处见 vnext-amendments.md §M1.a/§M1.d）：
 #   quick / quick_capture — act/lib/quick_capture.py、actd 快速捕获（含 Slack
 #       self-DM 与 iMessage 自发通道：两者都经 quick_capture.capture 落卡）
+#   agent_capture / remote_capture — T-28 ingress 落款：HTTP 写入面 via 标记
+#       为 "agent"（boardctl 自报）/"remote"（act.webui 远程面）的 capture，
+#       actd 按落款盖捕获源 channel——AI/远程投递的候选一律回人工审批
 #   split — actd split_note：车主拆折叠备注成新卡（文本非手打，保守要审批）
 #   analytics / claude_code / radar-diagnostic / radar-parse-degraded — AI 自
 #       提形态（digest 建议卡、会话挖掘卡、§40/§47.2 诊断降级卡）
@@ -51,6 +54,8 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 CHANNEL_CLASS: dict = {
     "quick": HAND,
     "quick_capture": HAND,
+    "agent_capture": PROPOSED,
+    "remote_capture": PROPOSED,
     "split": PROPOSED,
     "analytics": PROPOSED,
     "claude_code": PROPOSED,

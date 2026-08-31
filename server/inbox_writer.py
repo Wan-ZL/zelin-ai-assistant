@@ -13,6 +13,14 @@ fixtures（``tests/fixtures/inbox/``）。字节形状逐字复刻 Mac
 - ``id``/``primary``/``ids[*]``/``session_ids[*]`` 全过 SAFE_ID_RE
   （board_source 同款，防 merge job_path 穿越）。
 - 落盘后 actd 侧永远 fail-safe——两层纪律不混淆（md §1）。
+
+ingress 落款（via，add-only；vnext-amendments T-28）：本 server 写的每个
+inbox 文件都带 ``via:"web"``；capture/comment 两动词接受可选 ``actor:"agent"``
+（唯一合法值，boardctl 恒发）——present 时落款改为 ``via:"agent"``。``via``
+本身不在任何入站 schema 里（client 直发 → 400 UNKNOWN_FIELD，落款不可
+spoof——golden 字节对照剥 via 后仍逐字节等价）。诚实条款：落款是礼仪 + 取证，
+不是密码学墙（同用户裸 HTTP 可不发 actor）；硬后盾在 actd 侧——出身从
+sources 现算、天花板、W17 强制扩写、人工审批列（收紧路径见 T-29）。
 """
 from __future__ import annotations
 
@@ -55,6 +63,12 @@ _SPECIAL_FIELDS = {
 }
 
 ALLOWED_ACTIONS = CARD_VERBS | frozenset(_SPECIAL_FIELDS)
+
+# ingress 落款（T-28）：本 server 落的文件恒带 via（Mac 文件无 via = owner-local）
+_VIA_WEB = "web"
+_VIA_AGENT = "agent"
+# actor 字段仅 boardctl 的动词面（capture/comment）接受；唯一合法值 "agent"
+_ACTOR_VERBS = frozenset({"capture", "comment"})
 
 # §34bis 双端字面量常量（Swift ProposalsTriage.presetKey = actd 同名常量）
 _CAPTURE_PRESET = "proposals_triage"
@@ -288,7 +302,8 @@ _SPECIAL_BUILDERS = {
 # --------------------------------------------------------------------------- #
 def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
     """校验 ``payload`` 并原子写入 ``$home/state/inbox/``；返回
-    ``{"ok": True, "file": "<写入的文件名>", "action": "<动词>"}``。
+    ``{"ok": True, "file": "<写入的文件名>", "action": "<动词>",
+    "via": "web"|"agent"}``。
 
     异常契约（app.py 依赖）：
     - UnknownFieldError —— payload 出现本动词 schema 外的键（零容忍）
@@ -301,21 +316,33 @@ def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
                                 {"action": str(action)[:100]})
 
     # 逐动词字段白名单：schema 外一律 400（含 ts/expected_status/board_seq——
-    # ts 由 server 重打防 spoof，后两者不在 web 入站面上）
+    # ts 由 server 重打防 spoof，后两者不在 web 入站面上；``via`` 永远是
+    # server 落款，任何动词直发都是 UNKNOWN_FIELD）
     if action in CARD_VERBS:
         allowed = {"action", "id", "comment"}
     else:
         required, optional = _SPECIAL_FIELDS[action]
         allowed = {"action"} | required | optional
+    if action in _ACTOR_VERBS:
+        allowed = allowed | {"actor"}
     unknown = set(payload) - allowed
     if unknown:
         raise UnknownFieldError("unknown field",
                                 {"fields": sorted(unknown)})
 
+    # actor 是传输面字段（不落盘）：只认 "agent"，其余取值 fail-closed 400
+    actor = payload.get("actor")
+    if "actor" in payload and actor != _VIA_AGENT:
+        raise InvalidFieldError('actor is only "agent"', {"field": "actor"})
+
     if action in CARD_VERBS:
         rec = _build_card(action, payload)
     else:
         rec = _SPECIAL_BUILDERS[action](payload)
+    if actor == _VIA_AGENT and ("mode" in rec or "preset" in rec):
+        # agent 通道无直跑面（boardctl 连 flag 都没有）——裸 HTTP 也 fail-closed
+        raise InvalidFieldError("agent capture cannot request direct run")
+    rec["via"] = _VIA_AGENT if actor == _VIA_AGENT else _VIA_WEB
     rec["ts"] = _iso_now()
 
     # 文件命名（md §1）：capture-<uuid>.json 是 Mac debug 习惯，照抄；
@@ -327,4 +354,6 @@ def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
     tmp = inbox / f"{stem}.json.tmp"
     tmp.write_bytes(mac_json_bytes(rec))
     os.replace(tmp, inbox / f"{stem}.json")
-    return {"ok": True, "file": f"{stem}.json", "action": action}
+    # via 回带（add-only 响应键）：app.py 的 steer 标注按实际 ingress 裁决
+    return {"ok": True, "file": f"{stem}.json", "action": action,
+            "via": rec["via"]}

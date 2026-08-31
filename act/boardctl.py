@@ -11,6 +11,11 @@ progress note。**刻意没有 approve/reject/accept/move/archive/merge 等
 - 读 = ``GET http://127.0.0.1:$ZAI_PORT/api/board`` / ``/api/cards/{id}``；
 - 写 = ``POST /api/actions``，仅 ``capture`` 与 ``comment`` 两动词——
   落的是 ``state/inbox/*.json``，消费与复验仍归 actd（§44 单写者不破）。
+- 自报家门（T-28 ingress 落款）：两个写动词**恒带** ``actor:"agent"``
+  （硬编码，不是 flag）——server 落款 ``via:"agent"``，actd 据此把 capture
+  落 agent_capture 通道（永不自动派发）、comment 只记录不 steer。省略
+  actor 是契约违规：落款供 owner 取证，硬后盾（天花板/强制扩写/人工
+  审批列）不依赖它。
 
 输出契约（adapted from dashi-taskboard cli/taskctl.mjs，Apache-2.0，见
 NOTICE）：成功 = stdout 单个 JSON object 带 ``schemaVersion``；错误 =
@@ -99,17 +104,20 @@ registry fields (plan, definition_of_done, sources, notes, ...) and a
     "capture": """Usage: boardctl capture (--text TEXT | --text-file FILE)
                         [--image /abs/path.png ...] [--json]
 
-Submits {"action":"capture","text":...} to POST /api/actions. The
-capture lands in the triage pipeline as a candidate — exactly like a
-note the owner typed — and never mints approved or running work.
---image may repeat (max 4 absolute paths). There is no direct-run
-option on this channel by design.""",
+Submits {"action":"capture","text":...,"actor":"agent"} to POST
+/api/actions. The capture enters the triage pipeline as a candidate
+and never mints approved or running work: it is stamped via:"agent"
+server-side, so it always lands on the agent_capture channel and is
+never eligible for auto-dispatch. --image may repeat (max 4 absolute
+paths). There is no direct-run option on this channel by design.""",
     "comment": """Usage: boardctl comment CARD_ID (--body TEXT | --body-file FILE)
                         [--json]
 
-Submits {"action":"comment","id":CARD_ID,"comment":...} to POST
-/api/actions. Use it for progress notes: what changed, how it was
-verified, outcome, remaining risks. The body must be non-empty.""",
+Submits {"action":"comment","id":CARD_ID,"comment":...,"actor":
+"agent"} to POST /api/actions. Use it for progress notes: what
+changed, how it was verified, outcome, remaining risks. The body must
+be non-empty. Agent comments are recorded on the card for the owner;
+they are never relayed into a live work session as owner steering.""",
 }
 
 
@@ -293,7 +301,9 @@ def cmd_capture(operands: list, options: dict, base_url: str) -> dict:
         raise _usage("capture text must not be empty")
     # scoped channel：刻意不提供 mode:"run"/preset——agent 的 capture 只进
     # triage 候选（信任矩阵：AI-proposed 需 owner 批准），直跑是 owner 动词。
-    payload = {"action": "capture", "text": text}
+    # actor:"agent" 硬编码（T-28 自报家门）：server 落款 via:"agent"，
+    # actd 落 agent_capture 通道——本 CLI 的每次写都自我标识，无开关。
+    payload = {"action": "capture", "text": text, "actor": "agent"}
     images = options.get("image") or []
     if images:
         if len(images) > CAPTURE_IMAGES_MAX:
@@ -314,8 +324,10 @@ def cmd_comment(operands: list, options: dict, base_url: str) -> dict:
     body = _text_source(options, "body", "body-file", "comment")
     if not body.strip():
         raise _usage("comment body must not be empty")
+    # actor:"agent" 硬编码（T-28）：agent 评论上卡记录、绝不转 OWNER UPDATE
     return _http(base_url, "POST", "/api/actions",
-                 {"action": "comment", "id": card_id, "comment": body})
+                 {"action": "comment", "id": card_id, "comment": body,
+                  "actor": "agent"})
 
 
 HANDLERS = {

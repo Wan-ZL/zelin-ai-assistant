@@ -91,6 +91,19 @@ class WebUIRemoteGateTestCase(unittest.TestCase):
         rec = self._single_capture_record()
         self.assertNotIn("mode", rec)
 
+    # -- T-28: 网络远程面恒落 via:"remote"（客户端不可 spoof） ---------------- #
+    def test_every_webui_record_stamped_via_remote(self):
+        self._post_inbox({"action": "capture", "text": "远程候选"})
+        rec = self._single_capture_record()
+        self.assertEqual(rec["via"], "remote")
+
+    def test_client_supplied_via_is_overwritten(self):
+        # via 不在 _INBOX_KEYS 白名单：客户端伪造 "web" 也会被无条件盖成 remote
+        status, _body = self._post_inbox(
+            {"action": "capture", "text": "伪造 owner 的候选", "via": "web"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self._single_capture_record()["via"], "remote")
+
     # -- W18: config opt-in forwards mode:"run" ------------------------------ #
     def test_mode_run_forwarded_when_opted_in(self):
         config.CONFIG_PATH.write_text(
@@ -150,7 +163,10 @@ class WebUIRemoteGateTestCase(unittest.TestCase):
         self.assertEqual(len(reqs), 1)
         req = reqs[0]
         self.assertEqual(req.status, registry.State.RAISING.value)  # 提案管线
-        self.assertEqual(req.origin_trust, "hand")   # 远端捕获仍是 owner 手打
+        # T-28 起远端捕获不再冒充 owner 手打：via:"remote" → remote_capture
+        # 通道 → PROPOSED 章——比旧 hand 语义更严，自动派发结构性关死
+        self.assertEqual(req.origin_trust, "proposed")
+        self.assertEqual(req.sources[0]["channel"], "remote_capture")
         ex_mock.dispatch.assert_not_called()         # 绝没有任何东西被直跑
 
     def test_gate_open_mode_run_still_plain_capture_in_actd(self):

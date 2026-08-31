@@ -48,8 +48,8 @@ def _executing(req_id="R-850", **kw):
     return req
 
 
-def _drop_comment(req_id, comment, ts="2026-08-30T01:00:00Z"):
-    path = config.INBOX_DIR / f"{uuid.uuid4()}.json"
+def _drop_comment(req_id, comment, ts="2026-08-30T01:00:00Z", name=None):
+    path = config.INBOX_DIR / f"{name or uuid.uuid4()}.json"
     path.write_text(json.dumps({"id": req_id, "action": "comment",
                                 "comment": comment, "ts": ts}),
                     encoding="utf-8")
@@ -137,7 +137,8 @@ class TestSteerTelemetry(SteerRelayBase):
 class TestReplayAfterFlush(SteerRelayBase):
     def test_replay_after_delivery_is_noop(self):
         _executing("R-854")
-        _drop_comment("R-854", "改标题", ts="2026-08-30T01:00:00Z")
+        _drop_comment("R-854", "改标题", ts="2026-08-30T01:00:00Z",
+                      name="replayed-file")
         actd.process_inbox()
         ex_mock = mock.MagicMock()
         ex_mock.resume.return_value = True
@@ -145,8 +146,10 @@ class TestReplayAfterFlush(SteerRelayBase):
         self._reconcile(ex_mock)                       # flush 清队 + 上台账
         req = registry.load("R-854")
         self.assertEqual(req.execution.get("steer_count"), 1)
-        # unlink 失败的第二命：同 id 同文同 ts 再进 inbox
-        _drop_comment("R-854", "改标题", ts="2026-08-30T01:00:00Z")
+        # unlink 失败的第二命：**同一个文件**（同 stem 同文同 ts）再进 inbox
+        # ——m1 起 dedup 键带 stem，只有真正的同文件重放才被台账去重
+        _drop_comment("R-854", "改标题", ts="2026-08-30T01:00:00Z",
+                      name="replayed-file")
         actd.process_inbox()
         req = registry.load("R-854")
         self.assertEqual(steer.pending_steers(req), [])     # 未再入队

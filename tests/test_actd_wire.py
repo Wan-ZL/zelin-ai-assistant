@@ -4,7 +4,10 @@
   auto_dispatch_pass — hand 卡免批通道、天花板回落 + auto_dispatch_block 上卡
       （origin:*/disabled 常态原因不上卡）、当日预算台账、观察模式通知钩子；
   dispatch_approved — 并发上限排队（queued 子状态）、auto 卡预算复核；
-  comment-on-EXECUTING — steer 入队（ts 带键 dedup）、其余状态保基线 fold；
+  comment-on-EXECUTING — steer 入队（ts+stem 带键 dedup，owner ingress 限定）、
+      agent/remote 评论只记录（T-28）、其余状态保基线 fold；
+  ingress marker（T-28）— capture via:"agent"/"remote"/未知值 → agent_capture/
+      remote_capture 通道（PROPOSED，结构性关死自动派发）、owner ingress 保 HAND；
   approve + W17 — 外部出身未扩写 → 转 raising 留 [W17] 痕；
   reconcile — blocked 窗口 flush（成功 mark_delivered / 失败计数 / 3 次放弃
       drop 留痕）、done 晋升时未送达 steer 诚实丢弃；
@@ -25,7 +28,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import actd
-from act.lib import config, registry, steer
+from act.lib import config, policy, registry, steer
 from act.lib.dashboard import build_dashboard
 from act.lib.registry import Requirement, State
 
@@ -182,11 +185,13 @@ class TestDispatchGates(WireBase):
 # comment：EXECUTING → steer；其余状态保基线 fold（§44.3-S）
 # --------------------------------------------------------------------------- #
 class TestCommentRouting(WireBase):
-    def _drop(self, req_id, comment, ts="2026-08-30T01:00:00Z"):
-        path = config.INBOX_DIR / f"{uuid.uuid4()}.json"
-        path.write_text(json.dumps({"id": req_id, "action": "comment",
-                                    "comment": comment, "ts": ts}),
-                        encoding="utf-8")
+    def _drop(self, req_id, comment, ts="2026-08-30T01:00:00Z", via=None,
+              name=None):
+        path = config.INBOX_DIR / f"{name or uuid.uuid4()}.json"
+        rec = {"id": req_id, "action": "comment", "comment": comment, "ts": ts}
+        if via is not None:
+            rec["via"] = via
+        path.write_text(json.dumps(rec), encoding="utf-8")
 
     def test_comment_on_executing_enqueues_steer(self):
         _mk("R-730", status=State.EXECUTING.value, plan=["原计划"],
@@ -201,14 +206,34 @@ class TestCommentRouting(WireBase):
         self.assertEqual(pend[0]["text"], "改用 B 方案")
         self.assertTrue(pend[0]["key"].startswith("2026-08-30T01:00:00Z|"))
 
-    def test_replayed_inbox_file_dedups_same_ts(self):
+    def test_replayed_inbox_file_dedups_by_stem(self):
+        # m1：dedup 键带 inbox stem——只有真正的同文件重放（unlink 失败：
+        # 同 stem 同 ts 同文）才去重
         _mk("R-731", status=State.EXECUTING.value,
             execution={"session_id": "sid-1"})
-        self._drop("R-731", "快一点", ts="t1")
-        self._drop("R-731", "快一点", ts="t1")   # unlink 失败重放：同 ts 同文
-        self._drop("R-731", "快一点", ts="t2")   # owner 重申：新 ts = 新指令
+        self._drop("R-731", "快一点", ts="t1", name="replayed-decision")
         actd.process_inbox()
-        self.assertEqual(len(steer.pending_steers(_reload("R-731"))), 2)
+        self._drop("R-731", "快一点", ts="t1", name="replayed-decision")  # 重放
+        actd.process_inbox()
+        self.assertEqual(len(steer.pending_steers(_reload("R-731"))), 1)
+
+    def test_identical_texts_in_same_second_are_two_steers(self):
+        # m1：同秒同文的两条指令是两个 inbox 文件（stem 不同）→ 两条 steer
+        _mk("R-736", status=State.EXECUTING.value,
+            execution={"session_id": "sid-1"})
+        self._drop("R-736", "快一点", ts="t1")
+        self._drop("R-736", "快一点", ts="t1")
+        actd.process_inbox()
+        self.assertEqual(len(steer.pending_steers(_reload("R-736"))), 2)
+
+    def test_same_text_new_ts_is_new_steer(self):
+        _mk("R-738", status=State.EXECUTING.value,
+            execution={"session_id": "sid-1"})
+        self._drop("R-738", "快一点", ts="t1", name="same-stem")
+        actd.process_inbox()
+        self._drop("R-738", "快一点", ts="t2", name="same-stem")  # owner 重申
+        actd.process_inbox()
+        self.assertEqual(len(steer.pending_steers(_reload("R-738"))), 2)
 
     def test_comment_on_card_sent_keeps_baseline_fold(self):
         _mk("R-732", status=State.CARD_SENT.value, plan=["step"])
@@ -217,6 +242,46 @@ class TestCommentRouting(WireBase):
         req = _reload("R-732")
         self.assertEqual(req.status, State.CARD_SENT.value)
         self.assertIn("修改方向", req.notes)
+
+    def test_owner_web_comment_on_executing_steers(self):
+        # via:"web" = localhost 看板，owner-class ingress——照旧 steer
+        _mk("R-734", status=State.EXECUTING.value,
+            execution={"session_id": "sid-1"})
+        self._drop("R-734", "改用 B 方案", via="web")
+        actd.process_inbox()
+        self.assertEqual(len(steer.pending_steers(_reload("R-734"))), 1)
+
+    def test_agent_comment_on_executing_recorded_never_steered(self):
+        # T-28：agent 评论上卡可见（notes），但绝不排进 OWNER UPDATE 队列、
+        # 不折进 plan（executor 指令面）、不动状态机
+        _mk("R-735", status=State.EXECUTING.value, plan=["原计划"],
+            execution={"session_id": "sid-1"})
+        self._drop("R-735", "progress: tests green", via="agent")
+        actd.process_inbox()
+        req = _reload("R-735")
+        self.assertEqual(req.status, State.EXECUTING.value)
+        self.assertEqual(steer.pending_steers(req), [])
+        self.assertIn("agent 备注", req.notes)
+        self.assertIn("progress: tests green", req.notes)
+        self.assertEqual(req.plan, ["原计划"])
+
+    def test_remote_comment_on_executing_recorded_never_steered(self):
+        _mk("R-739", status=State.EXECUTING.value,
+            execution={"session_id": "sid-1"})
+        self._drop("R-739", "远程补充", via="remote")
+        actd.process_inbox()
+        req = _reload("R-739")
+        self.assertEqual(steer.pending_steers(req), [])
+        self.assertIn("remote 备注", req.notes)
+
+    def test_agent_comment_never_knocks_card_back(self):
+        # 非 owner 评论不触发「打回重批」：approved 卡收 agent 评论状态不动
+        _mk("R-737", status=State.APPROVED.value)
+        self._drop("R-737", "补充信息", via="agent")
+        actd.process_inbox()
+        req = _reload("R-737")
+        self.assertEqual(req.status, State.APPROVED.value)
+        self.assertIn("补充信息", req.notes)
 
 
 # --------------------------------------------------------------------------- #
@@ -408,10 +473,77 @@ class TestOriginStamp(WireBase):
         self.assertEqual(saved.origin_trust, "proposed")
 
     def test_capture_path_stamps_hand(self):
+        # owner-ingress-only（T-28）：HAND 只属于 Mac 文件形（无 via）与
+        # localhost 看板（via:"web"）两个 owner ingress
         actd._apply_capture("给下周的评审准备材料")
+        actd._apply_capture("web 看板上手打的活", via="web")
+        reqs = registry.load_all()
+        self.assertEqual(len(reqs), 2)
+        for req in reqs:
+            self.assertEqual(req.origin_trust, "hand", req.title)
+            self.assertEqual(req.sources[0]["channel"], "quick_capture")
+
+
+# --------------------------------------------------------------------------- #
+# T-28 ingress 落款：via → 捕获源 channel → 信任裁决（结构性关死旁路自跑）
+# --------------------------------------------------------------------------- #
+class TestIngressMarker(WireBase):
+    def _capture_inbox(self, text, via=None):
+        rec = {"action": "capture", "text": text, "ts": "t"}
+        if via is not None:
+            rec["via"] = via
+        path = config.INBOX_DIR / f"capture-{uuid.uuid4()}.json"
+        path.write_text(json.dumps(rec), encoding="utf-8")
+        actd.process_inbox()
         reqs = registry.load_all()
         self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].origin_trust, "hand")
+        return reqs[0]
+
+    def test_agent_capture_lands_agent_channel_not_dispatchable(self):
+        # boardctl 形捕获（via:"agent"）：agent_capture 通道 + PROPOSED 章，
+        # may_auto_dispatch 从 sources 现算出身 → 结构性拒绝
+        req = self._capture_inbox("agent 发现的 follow-up", via="agent")
+        self.assertEqual(req.sources[0]["channel"], "agent_capture")
+        self.assertEqual(req.origin_trust, "proposed")
+        self.assertEqual(req.status, State.RAISING.value)  # 照旧进 triage 扩写
+        ok, reason = policy.may_auto_dispatch(req, _cfg(), 0.0)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "origin:proposed")
+
+    def test_remote_capture_lands_remote_channel_not_dispatchable(self):
+        req = self._capture_inbox("远程投的活", via="remote")
+        self.assertEqual(req.sources[0]["channel"], "remote_capture")
+        self.assertEqual(req.origin_trust, "proposed")
+        ok, reason = policy.may_auto_dispatch(req, _cfg(), 0.0)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "origin:proposed")
+
+    def test_unknown_via_fails_closed_to_remote_channel(self):
+        req = self._capture_inbox("伪造 via 的捕获", via="owner")
+        self.assertEqual(req.sources[0]["channel"], "remote_capture")
+        self.assertEqual(req.origin_trust, "proposed")
+
+    def test_owner_web_capture_stays_auto_dispatchable(self):
+        req = self._capture_inbox("web 手打的活", via="web")
+        self.assertEqual(req.origin_trust, "hand")
+        req.set_status(State.CARD_SENT)
+        req.cost_estimate_usd = 1.0
+        req.target_repo = TMP_HOME
+        registry.save(req)
+        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 1)
+        self.assertEqual(_reload(req.id).status, State.APPROVED.value)
+
+    def test_agent_capture_never_auto_dispatches_at_card_sent(self):
+        # origin:* 是常态回落：不批、不上 block 痕，留在人工审批列
+        req = self._capture_inbox("agent 投的候选", via="agent")
+        req.set_status(State.CARD_SENT)
+        req.cost_estimate_usd = 1.0
+        req.target_repo = TMP_HOME
+        registry.save(req)
+        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 0)
+        after = _reload(req.id)
+        self.assertEqual(after.status, State.CARD_SENT.value)
+        self.assertNotIn("auto_dispatch_block", after.execution or {})
 
 
 # --------------------------------------------------------------------------- #

@@ -118,6 +118,10 @@ class WriteVerbsTest(_CtlBase):
         self.assertIn("ts", rec)
         self.assertNotIn("mode", rec)    # agent 通道绝无直跑
         self.assertNotIn("preset", rec)
+        # T-28 自报家门：boardctl 恒发 actor:"agent" → server 落款 via:"agent"
+        # （actor 是传输面字段，绝不落盘）
+        self.assertEqual(rec["via"], "agent")
+        self.assertNotIn("actor", rec)
 
     def test_capture_text_file_source(self):
         src = self.home / "note.txt"
@@ -155,6 +159,8 @@ class WriteVerbsTest(_CtlBase):
         self.assertEqual(rec["action"], "comment")
         self.assertEqual(rec["id"], "R-101")
         self.assertEqual(rec["comment"], "progress: tests green, risk none")
+        self.assertEqual(rec["via"], "agent")   # T-28 自报家门（comment 同款）
+        self.assertNotIn("actor", rec)
 
     def test_comment_empty_body_fails_closed(self):
         self.err_json(2, "comment", "R-101", "--body", "   ")
