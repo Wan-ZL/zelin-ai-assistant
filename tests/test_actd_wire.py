@@ -316,6 +316,17 @@ class TestApproveW17(WireBase):
         self._approve("R-742")
         self.assertEqual(_reload("R-742").status, State.APPROVED.value)
 
+    def test_stampless_external_sources_approve_converts_to_raise(self):
+        # F2（v0.48.1 §50 修订）：缺章（手编/pre-v0.48 存量 YAML）但 sources
+        # 是 slack → 出身现算为 external，approve 同样转扩写——绝不裸批
+        if actd.analyze is None:
+            self.skipTest("analyze unavailable")
+        _mk("R-743", sources=_SLACK_SRC, plan=None, definition_of_done=None)
+        self._approve("R-743")
+        req = _reload("R-743")
+        self.assertEqual(req.status, State.RAISING.value)
+        self.assertIn("[W17]", req.notes)
+
 
 # --------------------------------------------------------------------------- #
 # reconcile：blocked 窗口 flush / done 晋升丢弃（§44.3-S 接线 2）

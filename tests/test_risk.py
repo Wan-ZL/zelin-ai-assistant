@@ -30,9 +30,34 @@ class EffectiveTierTestCase(unittest.TestCase):
         self.assertIsNone(et.reason)
 
     def test_missing_origin_trust_keeps_declared_tier(self):
-        # 存量卡(v0.10.3 registry 无 origin_trust)绝不被追溯抬档——见 §W17。
+        # 无 sources 的缺章卡:现算为 proposed → 保持声明档(v0.48.1 起缺章
+        # 卡从 sources 现算,抬档的只有真判 external 的——见 §50 修订)。
         et = risk.effective_tier({"tier": "T1"})
         self.assertEqual(et.tier, "T1")
+        self.assertFalse(et.forced_expand)
+
+    def test_stampless_external_sources_force_t2(self):
+        # F2(v0.48.1 §50 修订):缺章但 sources 是 slack → 出身现算 external,
+        # 强制 T2 + expansion——手改/存量 YAML 抹掉章也洗不回声明档
+        et = risk.effective_tier({"tier": "T1", "sources": [
+            {"who": "boss", "channel": "slack", "date": "2026-08-30",
+             "quote": "外部请求"}]})
+        self.assertEqual(et.tier, "T2")
+        self.assertTrue(et.forced_expand)
+        self.assertEqual(et.reason, "sources=external")
+
+    def test_hand_stamp_cannot_launder_external_sources(self):
+        # 章说 hand、sources 说 gmail → 取最不信任(与调度侧同纪律)
+        et = risk.effective_tier({"tier": "T1", "origin_trust": "hand",
+                                  "sources": [{"channel": "gmail"}]})
+        self.assertEqual(et.tier, "T2")
+        self.assertTrue(et.forced_expand)
+
+    def test_stampless_hand_sources_keep_declared(self):
+        # 手打出身的缺章卡不被追溯抬档——「历史卡一夜全 T2」不会发生
+        et = risk.effective_tier({"tier": "T0", "sources": [
+            {"channel": "quick_capture"}]})
+        self.assertEqual(et.tier, "T0")
         self.assertFalse(et.forced_expand)
 
     def test_missing_tier_defaults_t1_and_external_still_forces(self):
