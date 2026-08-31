@@ -1441,19 +1441,9 @@ final class DashboardStore: ObservableObject {
     }
 }
 
-// MARK: - Popover capture draft (item 6)
-//
-// The popover capture text lives here (not in DashboardView @State) so
-// non-SwiftUI code — the Esc key monitor, future hotkey logic — can observe
-// and clear it. Only the binding moved; the popover layout is untouched.
-
-@MainActor
-final class CaptureDraft: ObservableObject {
-    static let popover = CaptureDraft()
-    @Published var text = ""
-}
-
 // MARK: - Slash commands (item 3) + capture history (item 5)
+// (v0.48.x) CaptureDraft — the popover capture draft holder — left with the
+// popover (§15 v0.48.x 追记); the board composer keeps its drafts locally.
 
 /// item 3: only /rec, /open, /lang count as commands — anything else that
 /// starts with "/" (e.g. an absolute path "/Users/… 整理一下") is a normal

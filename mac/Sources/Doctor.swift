@@ -23,8 +23,25 @@ enum LaunchAgents {
         NSHomeDirectory() + "/Library/LaunchAgents/\(label).plist"
     }
 
-    /// Render the repo plist template (same 4 placeholder substitutions as
-    /// install.sh render_launchd_plist, same order) and launchctl load it.
+    /// The directory of the claude the LOGIN SHELL resolves — install.sh's
+    /// CLAUDE_LOGIN_BIN substitution (rendered FIRST on the plist PATH).
+    /// Review MAJOR 2: without this fifth substitution the generic $HOME
+    /// replacement left a nonexistent ~/.claude-bin at the head of PATH —
+    /// the exact two-installs condition the doctor daemon-claude check
+    /// exists for. Fallback mirrors install.sh's default (~/.local/bin).
+    nonisolated static func claudeBinDir() -> String {
+        let (code, out) = Shell.run("/bin/zsh", ["-lc", "command -v claude"])
+        let lines = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: "\n")
+        if code == 0, let found = lines.last, found.hasPrefix("/") {
+            return (found as NSString).deletingLastPathComponent
+        }
+        return NSHomeDirectory() + "/.local/bin"
+    }
+
+    /// Render the repo plist template (same 5 placeholder substitutions as
+    /// install.sh render_launchd_plist, same order — the rendered shape is
+    /// pinned by tests/test_launchd_render.py) and launchctl load it.
     /// Blocking — call from a background queue only.
     nonisolated static func install(label: String) -> (Bool, String) {
         let root = AppPaths.stateRoot
@@ -37,6 +54,7 @@ enum LaunchAgents {
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()
         text = text
+            .replacingOccurrences(of: "/Users/YOURUSERNAME/.claude-bin", with: claudeBinDir())
             .replacingOccurrences(of: "/Users/YOURUSERNAME/miniconda3/bin/python3", with: py)
             .replacingOccurrences(of: "/Users/YOURUSERNAME/Projects/zelin-ai-assistant", with: root)
             .replacingOccurrences(of: "/Users/YOURUSERNAME/miniconda3/bin", with: pyDir)
@@ -45,6 +63,13 @@ enum LaunchAgents {
         do {
             try FileManager.default.createDirectory(
                 atPath: (dest as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true)
+            // launchd opens StandardOut/ErrorPath BEFORE exec — the templates
+            // point them at ~/Library/Logs/zelin-ai-assistant/ (never under
+            // the repo: an external-volume repo fails the spawn, EX_CONFIG
+            // 78), and the directory must exist or the spawn fails the same way.
+            try FileManager.default.createDirectory(
+                atPath: home + "/Library/Logs/zelin-ai-assistant",
                 withIntermediateDirectories: true)
             try text.write(toFile: dest, atomically: true, encoding: .utf8)
         } catch {

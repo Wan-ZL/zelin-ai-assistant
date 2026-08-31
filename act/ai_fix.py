@@ -41,8 +41,13 @@ TAIL_LINES = 40
 
 def _log_candidates() -> List[tuple]:
     home = config.HOME
+    # launchd 自管日志自 v0.48.x 起在 ~/Library/Logs/zelin-ai-assistant/
+    # （launchd 在 exec 前打开日志路径，repo 在外置卷时旧位置会让 spawn
+    # 直接失败）；旧 repo 内位置保留为兜底——迁移前的安装还留着旧日志。
+    launchd_logs = Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
     return [
         ("state/actd.log", home / "state" / "actd.log"),
+        ("actd.launchd.log", launchd_logs / "actd.launchd.log"),
         ("state/actd.launchd.log", home / "state" / "actd.launchd.log"),
         ("state/radar.cron.log", home / "state" / "radar.cron.log"),
         ("engine.log", Path.home() / ".screenpipe" / "engine.log"),

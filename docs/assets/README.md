@@ -9,7 +9,7 @@ list and storyboard in [docs/DEMO.md](../DEMO.md).
 | File | Status | Content | Spec |
 |---|---|---|---|
 | `kanban.png` | ✅ | hero shot: kanban main window, five lanes populated (scene `initial`) | 2x Retina PNG, light mode, window ≈1280 pt wide (≈2560 px image) |
-| `popover.png` | ✅ | menu-bar popover: badge count, quick-capture field, collapsed cards (DEMO shot 1) | 2x Retina PNG, light mode |
+| `popover.png` | retired | the removed (v0.48) menu-bar popover — no longer embedded anywhere; kept for release-notes provenance | 2x Retina PNG, light mode |
 | `flow.gif` | ✅ | the life of one card: approve → queued → executing → review → accepted | **hard budget < 5 MB**; ≈800–1000 px wide, 10–15 fps; `demo.mp4` is the full-quality source |
 | `demo.mp4` | ✅ | 30-second storyboard (DEMO.md) | 1080p+; to play inline in the README use a GitHub *user-attachments* URL — bare `<video>` tags don't render on GitHub |
 | `t2-card.png` | slot | expanded T2 card: $85 cost, typed confirmation, disagreement, repeated ×3 (DEMO shot 3) | 2x PNG; fills README marker `<!-- screenshot slot: docs/assets/t2-card.png -->` |

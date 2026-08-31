@@ -60,7 +60,7 @@ step 5 (placeholder substitution). A port reproduces each agent:
 | `launchctl kickstart gui/$UID/<label>` | `systemctl --user restart <unit>` | `schtasks /Run` |
 | `launchctl list` (doctor probe) | `systemctl --user list-units --type=service` | `schtasks /Query` |
 | cron ingest chain (`crontab` lines, `install.sh` step 6) | systemd timers (preferred) or user crontab | Task Scheduler |
-| `state/<agent>.launchd.log` | journald (`journalctl --user -u ...`) or the same log files via `StandardOutput=append:` | log files |
+| `~/Library/Logs/zelin-ai-assistant/<agent>.launchd.log` | journald (`journalctl --user -u ...`) or the same log files via `StandardOutput=append:` | log files |
 
 Env parity matters: agents run with `AIASSISTANT_HOME` set and the pinned
 interpreter from `config/runtime.json` (CONTRACT §19) — keep both in unit files.

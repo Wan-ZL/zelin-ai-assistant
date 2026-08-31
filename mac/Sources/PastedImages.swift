@@ -41,7 +41,7 @@ final class PastedImagesModel: ObservableObject {
     /// this window WHILE IT IS KEY — @FocusState never flips false when a
     /// window merely loses key (AppKit keeps a non-key window's first
     /// responder), so without this a stale monitor in a background board
-    /// window would steal the popover composer's paste (local monitors fire
+    /// window would steal another window's paste (local monitors fire
     /// in install order and a nil return swallows the event).
     weak var hostWindow: NSWindow?
 

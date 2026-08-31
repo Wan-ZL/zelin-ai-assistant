@@ -33,9 +33,8 @@ enum DiagAction {
     case openVaultSetting     // 没设 Obsidian 目录 → 设置页
     case reinstallAgent(String)  // §48.6 源开着但 plist 缺失 → 原地重装调度
 
-    /// ``app`` non-nil (popover context) also brings the main window forward;
-    /// in the kanban (already the main window) it is passed too and is a no-op
-    /// beyond focusing.
+    /// ``app`` non-nil also brings the main window forward; in the kanban
+    /// (already the main window) that is a no-op beyond focusing.
     @MainActor func perform(app: AppDelegate?) {
         switch self {
         case .restartEngine:
@@ -460,9 +459,9 @@ final class DiagnosticsModel: ObservableObject {
 
 // MARK: - view
 
-/// The strip inserted after PipelineHealthBanner in both the popover
-/// (DashboardView) and the kanban header. Renders nothing when there are no
-/// unhealthy INTENDED paths (the fresh-user default).
+/// The strip inserted after PipelineHealthBanner in the kanban header (was
+/// also mirrored in the popover until its v0.48.x removal). Renders nothing
+/// when there are no unhealthy INTENDED paths (the fresh-user default).
 struct DiagnosticsStrip: View {
     @ObservedObject private var model = DiagnosticsModel.shared
     @ObservedObject private var i18n = LanguageStore.shared
