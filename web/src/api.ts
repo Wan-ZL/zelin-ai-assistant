@@ -39,11 +39,29 @@ export function resolveApiUrl(path: string): string {
   return new URL(path.replace(/^\//, ""), document.baseURI).href;
 }
 
+/**
+ * per-install instance token（CONTRACT §49 auth model）：server 把
+ * window.__ZAI_TOKEN__ 注入它服务的 index.html，一切写请求必须回带
+ * X-Zai-Token 头。vite dev server 不注入（写动作会被 server 401）——
+ * 带写路径的开发面走 scripts/dev-preview.sh 服务的 dist。
+ */
+const TOKEN_HEADER = "X-Zai-Token";
+
+function instanceToken(): string | null {
+  const token = (window as Window & { __ZAI_TOKEN__?: unknown }).__ZAI_TOKEN__;
+  return typeof token === "string" && token ? token : null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const method = (init?.method ?? "GET").toUpperCase();
   const readRequest = method === "GET" || method === "HEAD";
+  if (!readRequest) {
+    // 写请求带 instance token（读路径 token-light，头也不发——§49）
+    const token = instanceToken();
+    if (token && !headers.has(TOKEN_HEADER)) headers.set(TOKEN_HEADER, token);
+  }
 
   let response: Response;
   for (let attempt = 0; ; attempt += 1) {

@@ -129,6 +129,28 @@ describe("request shape", () => {
     expect(JSON.parse(init.body as string)).toEqual({ id: "R-101", action: "approve", comment: null });
   });
 
+  it("POST carries X-Zai-Token from the injected window.__ZAI_TOKEN__ (§49 auth model)", async () => {
+    (window as Window & { __ZAI_TOKEN__?: string }).__ZAI_TOKEN__ = "tok-123";
+    try {
+      fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
+      await postAction({ id: "R-101", action: "approve", comment: null });
+      const [, init] = fetchMock.mock.calls[0];
+      expect((init.headers as Headers).get("X-Zai-Token")).toBe("tok-123");
+    } finally {
+      delete (window as Window & { __ZAI_TOKEN__?: string }).__ZAI_TOKEN__;
+    }
+  });
+
+  it("GET never carries the token; POST without injection omits the header (server will 401)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
+    await fetchBoard();
+    await postAction({ id: "R-101", action: "approve", comment: null });
+    const getHeaders = (fetchMock.mock.calls[0][1] as RequestInit).headers as Headers;
+    const postHeaders = (fetchMock.mock.calls[1][1] as RequestInit).headers as Headers;
+    expect(getHeaders.has("X-Zai-Token")).toBe(false);
+    expect(postHeaders.has("X-Zai-Token")).toBe(false);
+  });
+
   it("deliverableUrl percent-encodes both segments (traversal text stays inert)", () => {
     expect(deliverableUrl("R-101", "report v1.html")).toBe(
       resolveApiUrl("/files/deliverables/R-101/report%20v1.html"),

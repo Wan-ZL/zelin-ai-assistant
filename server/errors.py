@@ -3,7 +3,8 @@
 所有 API 错误 → ``{"error":{"code":"...","message":"...","details":{}}}``。
 codes 词表（CONTRACT §49，v0.48 已入典）：UNKNOWN_FIELD / INVALID_FIELD /
 NOT_FOUND / INTERNAL_ERROR / NOT_IMPLEMENTED（501 专用，reveal 非 darwin——
-add-only 正式收编，原 TODO(contract) 关闭）。
+add-only 正式收编，原 TODO(contract) 关闭）/ FORBIDDEN / UNAUTHORIZED
+（§49 auth model 的 Host/Origin 闸与 instance token 闸，add-only 收编）。
 """
 from __future__ import annotations
 
@@ -46,6 +47,18 @@ class InvalidFieldError(ApiError):
 class NotFoundError(ApiError):
     status = 404
     code = "NOT_FOUND"
+
+
+class ForbiddenError(ApiError):
+    """Host/Origin 闸门拒绝（anti-rebind / anti-CSRF，server/security.py）→ 403。"""
+    status = 403
+    code = "FORBIDDEN"
+
+
+class UnauthorizedError(ApiError):
+    """instance token 缺失/不符（§49 auth model）→ 401。"""
+    status = 401
+    code = "UNAUTHORIZED"
 
 
 class NotImplementedError501(ApiError):

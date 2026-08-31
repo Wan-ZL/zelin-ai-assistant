@@ -36,7 +36,10 @@ class _CtlBase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.board = common.seed_scene(self.home, self.scene)
         _httpd, self.port = common.start_server(self, self.home)
-        self.env = {"ZAI_PORT": str(self.port)}
+        # AIASSISTANT_HOME 指向 server 的 home——boardctl 从那里读写动作要带
+        # 的 instance token（§49 auth model；server 起动时已铸 server.token）
+        self.env = {"ZAI_PORT": str(self.port),
+                    "AIASSISTANT_HOME": str(self.home)}
 
     def run_ctl(self, *argv, env=None):
         out, err = io.StringIO(), io.StringIO()
@@ -173,6 +176,32 @@ class WriteVerbsTest(_CtlBase):
             err = self.err_json(2, verb, "R-101")
             self.assertEqual(err["code"], "USAGE_ERROR")
         self.assertEqual(self.inbox_files(), [])
+
+
+class TokenWallTest(_CtlBase):
+    """§49 auth model 的 boardctl 面：写动作带 instance token，读不需要。"""
+
+    def _env_with_home(self, home: Path) -> dict:
+        return {"ZAI_PORT": str(self.port), "AIASSISTANT_HOME": str(home)}
+
+    def test_write_without_token_file_gets_401_passthrough(self):
+        # home 指到没有 server.token 的空目录 → 不发头 → server 401，
+        # envelope 如实透传（exit 4），且 inbox 零落盘
+        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        err = self.err_json(4, "capture", "--text", "x",
+                            env=self._env_with_home(empty))
+        self.assertEqual(err["code"], "UNAUTHORIZED")
+        self.assertEqual(self.inbox_files(), [])
+
+    def test_reads_stay_token_light(self):
+        # 读路径不带 token 也通（GET token-light，§49）——空 home 照样能读板
+        empty = Path(tempfile.mkdtemp(prefix="boardctl-no-token-"))
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        out, errbuf = io.StringIO(), io.StringIO()
+        rc = boardctl.main(["board"], stdout=out, stderr=errbuf,
+                           environ=self._env_with_home(empty))
+        self.assertEqual(rc, 0, f"stderr: {errbuf.getvalue()!r}")
 
 
 class TransportTest(unittest.TestCase):

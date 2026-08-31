@@ -325,18 +325,24 @@ class IngressMarkerTestCase(_ActionsHomeMixin, unittest.TestCase):
 
 
 class BodyGateTestCase(_ActionsHomeMixin, unittest.TestCase):
-    """app 层的 body 闸门（不依赖 G1，stub 期也生效）。"""
+    """app 层的 body 闸门（不依赖 G1，stub 期也生效）。
+
+    所有请求带 owner 合法写头（auth_headers）——§49 的鉴权四闸在 body 闸
+    之前，裸发只会看到 401/403（那些判例归 test_server_auth.py）。"""
 
     def setUp(self):
         self._boot()
 
     def test_oversize_body_rejected_413(self):
         import http.client
+
+        from tests.test_server_common import auth_headers
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         try:
             # 只发头不发体：server 看 Content-Length 即拒，不读 1MiB
             conn.putrequest("POST", "/api/actions")
-            conn.putheader("Content-Type", "application/json")
+            for k, v in auth_headers(self.port).items():
+                conn.putheader(k, v)
             conn.putheader("Content-Length", str((1 << 20) + 1))
             conn.endheaders()
             resp = conn.getresponse()
@@ -347,23 +353,27 @@ class BodyGateTestCase(_ActionsHomeMixin, unittest.TestCase):
             conn.close()
 
     def test_invalid_json_rejected(self):
+        from tests.test_server_common import auth_headers
         status, _h, data = http_request(
             self.port, "POST", "/api/actions", body=b"{not json",
-            headers={"Content-Type": "application/json"})
+            headers=auth_headers(self.port))
         self.assertEqual(status, 400)
         assert_envelope(self, json.loads(data.decode("utf-8")),
                         "INVALID_FIELD")
 
     def test_non_object_body_rejected(self):
+        from tests.test_server_common import auth_headers
         status, _h, data = http_request(
             self.port, "POST", "/api/actions", body=b"[1, 2]",
-            headers={"Content-Type": "application/json"})
+            headers=auth_headers(self.port))
         self.assertEqual(status, 400)
         assert_envelope(self, json.loads(data.decode("utf-8")),
                         "INVALID_FIELD")
 
     def test_missing_content_length_rejected(self):
-        status, _h, data = http_request(self.port, "POST", "/api/actions")
+        from tests.test_server_common import auth_headers
+        status, _h, data = http_request(self.port, "POST", "/api/actions",
+                                        headers=auth_headers(self.port))
         self.assertEqual(status, 400)
         assert_envelope(self, json.loads(data.decode("utf-8")),
                         "INVALID_FIELD")

@@ -80,10 +80,14 @@ class BoardPassthroughTestCase(unittest.TestCase):
         assert_envelope(self, obj, "NOT_FOUND")
 
     def test_unknown_post_route_404_envelope(self):
+        # 带 owner 合法写头——§49 鉴权先于路由，裸发只会看到 401/403
+        # （拒绝路径的判例归 test_server_auth.py）
         import json as _json
+
+        from tests.test_server_common import auth_headers
         status, _headers, data = http_request(
             self.port, "POST", "/api/nonsense", body=b"{}",
-            headers={"Content-Type": "application/json"})
+            headers=auth_headers(self.port))
         self.assertEqual(status, 404)
         assert_envelope(self, _json.loads(data.decode("utf-8")), "NOT_FOUND")
 

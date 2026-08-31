@@ -11,6 +11,10 @@ progress note。**刻意没有 approve/reject/accept/move/archive/merge 等
 - 读 = ``GET http://127.0.0.1:$ZAI_PORT/api/board`` / ``/api/cards/{id}``；
 - 写 = ``POST /api/actions``，仅 ``capture`` 与 ``comment`` 两动词——
   落的是 ``state/inbox/*.json``，消费与复验仍归 actd（§44 单写者不破）。
+  §49 auth model：写请求回带 per-install instance token（X-Zai-Token，
+  读自 ``$AIASSISTANT_HOME/state/server.token``——能读到这个 0600 文件
+  本身就是「同用户本机进程」的证明，token 墙要放行的正是这类客户端；
+  读不到就裸发，server 的 401 envelope 如实透传给调用方）。
 - 自报家门（T-28 ingress 落款）：两个写动词**恒带** ``actor:"agent"``
   （硬编码，不是 flag）——server 落款 ``via:"agent"``，actd 据此把 capture
   落 agent_capture 通道（永不自动派发）、comment 只记录不 steer。省略
@@ -32,9 +36,12 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 SCHEMA_VERSION = 1
 DEFAULT_PORT = 47820          # server/app.py DEFAULT_PORT 同值
+DEFAULT_HOME = "~/Projects/zelin-ai-assistant"  # server/paths.py DEFAULT_HOME 同值
+TOKEN_HEADER = "X-Zai-Token"  # server/security.py TOKEN_HEADER 同值
 TIMEOUT_SECONDS = 10
 
 # server/board_source.py SAFE_ID_RE 同款（id 参与 URL 路径拼接，先在客户端
@@ -83,6 +90,10 @@ verbs — card state transitions belong to the owner.
 Environment:
   ZAI_PORT   zai server port (default 47820); the server binds
              127.0.0.1 only.
+  AIASSISTANT_HOME
+             home dir holding state/server.token — the per-install
+             instance token every write must carry (missing file =>
+             the server answers 401 UNAUTHORIZED).
 
 Output: one JSON object with "schemaVersion" on stdout. Errors are one
 JSON object on stderr. Exit codes: 0 ok, 2 invalid input, 3 service
@@ -196,6 +207,22 @@ def _base_url(environ) -> str:
     return f"http://127.0.0.1:{port}"
 
 
+def _instance_token(environ) -> "str | None":
+    """读 per-install instance token（§49：server 对一切写动作要 token）。
+
+    home 推导与 server/paths.py::home_dir 逐字同款（AIASSISTANT_HOME →
+    默认 home）——两边同机同推导才拿得到同一个文件。读不到 = None（不发
+    头，server 会 401，错误 envelope 如实透传——绝不在客户端猜/造 token）。
+    """
+    raw = (environ.get("AIASSISTANT_HOME") or "").strip() or DEFAULT_HOME
+    p = Path(raw).expanduser() / "state" / "server.token"
+    try:
+        tok = p.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return tok or None
+
+
 def _api_error(status: int, raw: bytes) -> CtlError:
     """HTTP 非 2xx → CtlError：透传 server envelope 的 code/message/details，
     解析不了就退化为 HTTP_<status>（taskctl extractApiError 同款分层）。"""
@@ -218,7 +245,8 @@ def _api_error(status: int, raw: bytes) -> CtlError:
                     exit_code=EXIT_CONFLICT if status == 409 else EXIT_API)
 
 
-def _http(base_url: str, method: str, path: str, body=None) -> dict:
+def _http(base_url: str, method: str, path: str, body=None,
+          token: "str | None" = None) -> dict:
     # X-ZAI-Client 是未来 server 侧 actor 墙的辨识挂点（PR-current server
     # 忽略请求头）——不动 JSON wire，见 docs/design/vnext-amendments.md M5。
     headers = {"Accept": "application/json", "X-ZAI-Client": "boardctl"}
@@ -226,6 +254,8 @@ def _http(base_url: str, method: str, path: str, body=None) -> dict:
     if body is not None:
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
+        if token:
+            headers[TOKEN_HEADER] = token  # §49：写动作回带 instance token
     req = urllib.request.Request(base_url + path, data=data,
                                  headers=headers, method=method)
     try:
@@ -274,7 +304,8 @@ def _text_source(options: dict, inline_key: str, file_key: str,
 # --------------------------------------------------------------------------- #
 # 子命令
 # --------------------------------------------------------------------------- #
-def cmd_board(operands: list, options: dict, base_url: str) -> dict:
+def cmd_board(operands: list, options: dict, base_url: str,
+              token: "str | None" = None) -> dict:
     _expect_operands("board", operands, 0)
     doc = _http(base_url, "GET", "/api/board")
     lane = options.get("lane")
@@ -286,7 +317,8 @@ def cmd_board(operands: list, options: dict, base_url: str) -> dict:
     return {"lane": lane, "cards": rows if isinstance(rows, list) else []}
 
 
-def cmd_card(operands: list, options: dict, base_url: str) -> dict:
+def cmd_card(operands: list, options: dict, base_url: str,
+             token: "str | None" = None) -> dict:
     _expect_operands("card", operands, 1)
     card_id = operands[0]
     if not SAFE_ID_RE.match(card_id):
@@ -294,7 +326,8 @@ def cmd_card(operands: list, options: dict, base_url: str) -> dict:
     return {"card": _http(base_url, "GET", "/api/cards/" + card_id)}
 
 
-def cmd_capture(operands: list, options: dict, base_url: str) -> dict:
+def cmd_capture(operands: list, options: dict, base_url: str,
+                token: "str | None" = None) -> dict:
     _expect_operands("capture", operands, 0)
     text = _text_source(options, "text", "text-file", "capture")
     if not text.strip():
@@ -313,10 +346,11 @@ def cmd_capture(operands: list, options: dict, base_url: str) -> dict:
         if not all(p.startswith("/") for p in images):
             raise _usage("--image paths must be absolute")
         payload["images"] = list(images)
-    return _http(base_url, "POST", "/api/actions", payload)
+    return _http(base_url, "POST", "/api/actions", payload, token=token)
 
 
-def cmd_comment(operands: list, options: dict, base_url: str) -> dict:
+def cmd_comment(operands: list, options: dict, base_url: str,
+                token: "str | None" = None) -> dict:
     _expect_operands("comment", operands, 1)
     card_id = operands[0]
     if not SAFE_ID_RE.match(card_id):
@@ -327,7 +361,7 @@ def cmd_comment(operands: list, options: dict, base_url: str) -> dict:
     # actor:"agent" 硬编码（T-28）：agent 评论上卡记录、绝不转 OWNER UPDATE
     return _http(base_url, "POST", "/api/actions",
                  {"action": "comment", "id": card_id, "comment": body,
-                  "actor": "agent"})
+                  "actor": "agent"}, token=token)
 
 
 HANDLERS = {
@@ -369,7 +403,8 @@ def main(argv=None, *, stdout=None, stderr=None, environ=None) -> int:
         if unknown:
             raise _usage(f"unknown option(s) for {command}: "
                          + ", ".join("--" + n for n in sorted(unknown)))
-        result = HANDLERS[command](operands, options, _base_url(env))
+        result = HANDLERS[command](operands, options, _base_url(env),
+                                   _instance_token(env))
         result["schemaVersion"] = SCHEMA_VERSION
         out.write(json.dumps(result, ensure_ascii=False) + "\n")
         return EXIT_OK
