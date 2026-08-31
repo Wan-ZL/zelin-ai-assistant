@@ -47,3 +47,16 @@ radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`
 - 代码注释：中文说明 + 英文术语，密度对齐相邻代码（先读再写）。
 - CONTRACT 中文正文是 canonical；commit message 用英文 conventional commits。
 - 测试风格：unittest + 注入缝（runner/triager/extractor），绝不 spawn 真 `claude`。
+
+## 防腐十条（结构审查 2026-08-30 制定）
+
+1. **文件上限**：Python 单文件 ≤2,000 行、Swift ≤1,500 行、单函数 ≤300 行、单 class/struct ≤800 行——超线的 PR 必须附拆分计划或在 PR 描述里显式豁免一次。
+2. **import 方向**：`act/lib/` 只准 import stdlib+PyYAML+同层；entrypoint 互相不 import；跨模块引用 `_私名` = 当场升 public 或抽进共享模块。
+3. **唯一 LLM 边界**：所有模型调用走 `act/llm.py` 的 `run(prompt, runner=None)` 参数注入；**永久禁止 module-global 注入缝**（`JUDGE_RUNNER` 事故成法）。
+4. **数据不进包、日志必有帽**：Python 包目录内禁止运行时数据文件；任何新 append-only 文件出生当天就带 size-cap 或 retention（照 registry_writes.jsonl 的 1MB self-compaction）。
+5. **文档指针纪律**：模块 docstring 必须写明治它的 CONTRACT §§；文档里出现具体数字（版本/计数/§ 范围）必须写成 "truth = <文件路径>" 或由脚本生成，禁止手写字面量。
+6. **Tombstone 规则**：删功能 = 同一个 PR 里删代码 + 删/搬文档 + CONTRACT 留一行 tombstone（`§N（retired vX.Y，并入 §M）`）；§ 号永不复用、永不静默消失。
+7. **测试位置**：一个 behavior 一个文件，文件名说行为不说日期；docstring 引 §；unit/behavior 层禁真 subprocess 和网络；真 IO 只许住 integration/ 且有单文件时间预算。
+8. **目录同步只许 `rsync --delete` 或 git 驱动**；working tree 领先 VCS 不得超过一个 release——每次版本 bump 前先 commit。
+9. **命名单源**：新组件先定 canonical slug（`radar_gmail` 式），模块名/DB row key/service label/log 名/health key 全部从 slug 逐字派生；同一 basename 禁止出现在两个目录层级；子系统按 object 命名（`cloud_relay`），不按动词。
+10. **前端镜像纪律**：client model 字段逐字镜像 wire key，禁翻译层；lane 组成是 server 数据不是 client 代码；文案进 server-owned catalog，禁第二套双语机制。
