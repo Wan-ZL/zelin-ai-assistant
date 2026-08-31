@@ -16,15 +16,15 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple, Optional
 
-from act.lib import config
+from act.lib import config, policy
 
 # W17 强制档位 — 外部来源一律抬到最严的一档(T2 = 需文字确认,§7 语义不变)。
 FORCED_TIER = "T2"
 
-# origin_trust 档位常量(canonical 四值词表在 act/lib/policy.py ORIGINS =
-# store2 schema.sql CHECK 集;本模块只消费其中两档;add-only)。
-TRUST_HAND = "hand"
-TRUST_EXTERNAL = "external"
+# origin_trust 档位常量 — 转引 policy 的 canonical 四值词表(= store2
+# schema.sql 的 CHECK 集),本模块只消费其中两档;字面量不再各写一份。
+TRUST_HAND = policy.HAND
+TRUST_EXTERNAL = policy.EXTERNAL
 
 
 class EffectiveTier(NamedTuple):
@@ -48,10 +48,14 @@ def effective_tier(card: Any) -> EffectiveTier:
     只有**显式** ``origin_trust: external`` 触发强制——缺失该字段的存量卡
     (v0.10.3 registry 尚无此字段)保持声明 tier 不变,避免一夜之间把全部
     历史卡抬成 T2。fail-closed 的责任在铸卡侧(radar/capture 必须盖章)与
-    auto-dispatch 侧(缺 origin_trust 一律不许自动派发)——见 amendments
-    §W17 的 TODO(contract)。
+    auto-dispatch 侧(缺 origin_trust 一律不许自动派发)——两侧分工与四值
+    词表已入宪,见 CONTRACT §50。
     """
     declared = str(_field(card, "tier") or "T1").strip() or "T1"
+    # 注意:这里**故意不走** policy.normalize_origin —— 那个函数把一切不认识
+    # 的值收敛成 external(读侧 fail-closed),用在这里会把缺章/脏章的存量卡
+    # 一夜之间抬成 T2 并强制扩写,正是上面那段注释禁止的事。抬档只认显式
+    # external;fail-closed 的位置在铸卡侧与 auto-dispatch 侧(§50)。
     trust = str(_field(card, "origin_trust") or "").strip().lower()
     if trust == TRUST_EXTERNAL:
         return EffectiveTier(FORCED_TIER, True, "origin_trust=external")
