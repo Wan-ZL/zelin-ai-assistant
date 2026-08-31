@@ -1,0 +1,33 @@
+# Dependabot：只盯"会静默腐烂"的两处依赖面。
+#
+# github-actions —— ci.yml / release.yml / pr-review-*.yml 里的 action 全部按
+# commit SHA 固定（供应链纪律，见 CONTRACT §23 与 .github/workflows 的注释）。
+# SHA pin 不会随上游 tag 浮动，没有 dependabot 就永远停在钉下去的那一刻——
+# 安全补丁也进不来。让 dependabot 每周提 PR 抬 SHA，人来审。
+#
+# npm (web/) —— 运行时依赖只有 react/react-dom，其余是 dev 工具链；
+# 同样每周一次，PR 数量压到 5 以内，避免噪声淹没真正要看的 PR。
+#
+# Python 侧不在此列：运行时白名单是 stdlib + PyYAML（宪法第 7 条），
+# 没有 requirements 锁文件可供 dependabot 追踪。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    labels:
+      - dependencies
