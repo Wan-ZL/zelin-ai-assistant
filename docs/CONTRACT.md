@@ -2914,7 +2914,14 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
    裸信 localhost——曾经的 CSRF 路径（跨源 `text/plain` 直发 mode:"run"
    被落款 `via:"web"` → owner ingress → APPROVED 直跑）在 body 被解析之前
    就断，不需要额外 `remote.allow_direct_run` 闸（那是 webui/syncd 网络
-   ingress 的 W18 闸，语义不同：本面鉴权后就是 owner 本人）。vite dev
+   ingress 的 W18 闸，语义不同：本面鉴权后就是 owner 本人）。**取舍留证
+   （M5）**：这条口径下，instance token 是「同源页面的一个 bug」与「无天花板
+   的 `mode:"run"` 直跑」之间**唯一**的一道墙——本面 direct-run 绕过
+   `may_auto_dispatch`（无 T2/cost/budget/outbound 天花板）。故 token 的
+   保密性即安全边界：注入只进同源页（`window.__ZAI_TOKEN__`）、永不发 CORS
+   头、注入前 JS 字面量转义（`<`/`/`）、落盘 0600 + 读回校验/权限收回/
+   symlink 拒跟随（server/security.py）。任何放宽（把 token 交给非同源面、
+   或 direct-run 接上 §51 天花板前扩大暴露面）都要重估这道墙。vite dev
    server（:5173）不注入 token——带写路径的开发面走 `scripts/
    dev-preview.sh` 服务的 dist。
 
