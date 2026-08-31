@@ -192,11 +192,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openMainWindow(nil)
     }
 
-    // Double-clicking the app in Finder/Dock while it is already running
-    // (no windows visible) re-opens the main window instead of doing nothing.
+    // Clicking the Dock icon / double-clicking in Finder while the app runs
+    // re-opens the board. §15 v0.48.x review: check the BOARD window, not
+    // hasVisibleWindows — with the app staying .regular after a window close,
+    // any other visible window (the borderless live-caption panel, the
+    // permissions window, the setup wizard) makes the flag true and would
+    // turn the Dock click into a no-op. show() is idempotent.
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { MainWindowController.shared.show() }
+        if !MainWindowController.shared.isWindowOpen {
+            MainWindowController.shared.show()
+        }
         return true
     }
 
@@ -523,29 +529,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  keyEquivalent: "")
         mainWin.target = self
         menu.addItem(mainWin)
-        // §15 v0.48.x: 录制开关子菜单 — the popover's RecordingMenuButton
-        // equivalent for the menu bar (recordingMode 三态 + 实时字幕 独立开关,
-        // frozen vocabulary untouched).
+        // §15 v0.48.x: 录制开关子菜单 — a LIGHTWEIGHT menu-bar counterpart of
+        // the board header's RecordingMenuButton: mode 三态 + 实时字幕 开关
+        // only (recordingMode frozen vocabulary untouched). The full status
+        // lines and repair actions (recordingNote, 重启引擎, TCC/ffmpeg
+        // escapes) stay on the board button — one click away via 打开主窗口.
+        // Honesty rule mirrors the board button: a checked mode whose engine
+        // is not actually running, and a dead/paused captions engine, say so
+        // in the title instead of showing a clean checkmark.
         let recItem = NSMenuItem(title: L("录制", "Recording"),
                                  action: nil, keyEquivalent: "")
         let recMenu = NSMenu()
+        let rec = RecordingController.shared
         for (mode, label) in [("off", L("关", "Off")),
                               ("screen", L("仅屏幕", "Screen only")),
                               ("screen_audio", L("屏幕+音频", "Screen + audio"))] {
-            let mi = NSMenuItem(title: label,
+            var title = label
+            if rec.mode == mode, mode != "off", !rec.engineRunning {
+                title += L("（未在录制）", " (not recording)")
+            }
+            let mi = NSMenuItem(title: title,
                                 action: #selector(setRecordingMode(_:)),
                                 keyEquivalent: "")
             mi.target = self
             mi.representedObject = mode
-            mi.state = RecordingController.shared.mode == mode ? .on : .off
+            mi.state = rec.mode == mode ? .on : .off
             recMenu.addItem(mi)
         }
         recMenu.addItem(.separator())
-        let capItem = NSMenuItem(title: L("实时字幕", "Live captions"),
+        let cap = LiveCaptionsController.shared
+        let capTitle: String
+        let capState: NSControl.StateValue
+        if cap.enabled && cap.engineDead {
+            // engine failed fatally — a plain checkmark would lie (same rule
+            // as the board button's exclamation label)
+            capTitle = L("实时字幕（出错，见悬浮窗）", "Live captions (error — see overlay)")
+            capState = .mixed
+        } else if cap.enabled && cap.paused {
+            capTitle = L("实时字幕（已暂停）", "Live captions (paused)")
+            capState = .on
+        } else {
+            capTitle = L("实时字幕", "Live captions")
+            capState = cap.enabled ? .on : .off
+        }
+        let capItem = NSMenuItem(title: capTitle,
                                  action: #selector(toggleLiveCaptions(_:)),
                                  keyEquivalent: "")
         capItem.target = self
-        capItem.state = LiveCaptionsController.shared.enabled ? .on : .off
+        capItem.state = capState
         recMenu.addItem(capItem)
         recItem.submenu = recMenu
         menu.addItem(recItem)
@@ -641,9 +672,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: hello bubble (setup wizard finale — audit 2.5)
 
     // v0.14: after the wizard's 完成, point at the status item so users of
-    // this menu-bar-only app know where it lives (otherwise "nothing
-    // launched"). Separate NSPopover — the main dashboard popover, its click
-    // monitors and toggle logic stay untouched.
+    // this menu-bar-first app know where it lives (otherwise "nothing
+    // launched"). A small standalone NSPopover — the app's only one since the
+    // dashboard popover's v0.48.x removal.
     private var helloPopover: NSPopover?
 
     func showHelloBubble() {
