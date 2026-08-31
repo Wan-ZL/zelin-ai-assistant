@@ -226,6 +226,55 @@ class DownTestCase(unittest.TestCase):
         self.assertFalse(d.push_down_if_changed())
         self.assertEqual(len(ft.board_upserts()), 1)
 
+    def test_generated_at_only_rebuild_pushes_nothing(self):
+        # actd 每次重建 dashboard 都重打 generated_at——内容没变时闸门必须
+        # 拦住（live 事故：~30 万次重复推送、2-4GB/天）。
+        ft = FakeTransport()
+        d = syncd.Syncd(_sync_cfg(), ft)
+        self.assertTrue(d._ensure_ready())
+        self.assertTrue(d.push_down_if_changed())
+        rebuilt = _BOARD.replace(b"2026-07-12T00:00:00Z", b"2026-07-12T00:05:00Z")
+        self.assertNotEqual(rebuilt, _BOARD)     # bytes DID change…
+        config.DASHBOARD_PATH.write_bytes(rebuilt)
+        self.assertFalse(d.push_down_if_changed())   # …but content did not
+        self.assertEqual(len(ft.board_upserts()), 1)
+        # a REAL content change still pushes
+        changed = json.loads(rebuilt.decode("utf-8"))
+        changed["needs_approval"] = []
+        config.DASHBOARD_PATH.write_bytes(
+            json.dumps(changed, ensure_ascii=False).encode("utf-8"))
+        self.assertTrue(d.push_down_if_changed())
+        self.assertEqual(len(ft.board_upserts()), 2)
+
+
+# --------------------------------------------------------------------------- #
+# DOWN change-gate digest (no crypto needed — module-level pure function)
+# --------------------------------------------------------------------------- #
+class GateDigestTestCase(unittest.TestCase):
+    def test_generated_at_is_stripped_from_the_digest(self):
+        a = b'{"generated_at":"2026-07-12T00:00:00Z","counts":{"debt":1}}'
+        b = b'{"generated_at":"2026-08-31T09:00:00Z","counts":{"debt":1}}'
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+
+    def test_content_change_changes_the_digest(self):
+        a = b'{"generated_at":"2026-07-12T00:00:00Z","counts":{"debt":1}}'
+        b = b'{"generated_at":"2026-07-12T00:00:00Z","counts":{"debt":2}}'
+        self.assertNotEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+
+    def test_key_order_does_not_change_the_digest(self):
+        # actd 重建时键序抖动不算内容变化（canonical sort_keys 形）
+        a = b'{"counts":{"debt":1},"running":[]}'
+        b = b'{"running":[],"counts":{"debt":1}}'
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+
+    def test_non_json_payload_falls_back_to_raw_hash(self):
+        raw = b"\xff\xfenot json at all"
+        self.assertEqual(syncd._gate_digest(raw),
+                         hashlib.sha256(raw).hexdigest())
+        top_level_list = b'[1, 2, 3]'
+        self.assertEqual(syncd._gate_digest(top_level_list),
+                         hashlib.sha256(top_level_list).hexdigest())
+
 
 # --------------------------------------------------------------------------- #
 # seq seed / anti-rollback
