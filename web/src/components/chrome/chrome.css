@@ -1,0 +1,381 @@
+/*
+ * chrome 组件样式（G4：过滤 chips / 搜索 / 潜在任务侧条 / 回收站页）。
+ * 只引用 tokens.css 已有变量，不造新色值（web/CONVENTIONS.md §主题）。
+ * task-property-* / composer-popover 类名沿用 dashi fork（TaskPropertyPicker.tsx 头注释）。
+ */
+
+/* ----- popover（fork 类名，token 化实现） ---------------------------------- */
+.composer-popover {
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--dialog-shadow);
+  padding: 4px;
+  min-width: 160px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.task-property-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.task-property-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-property-option:hover,
+.task-property-option:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.task-property-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-property-option-check {
+  color: var(--accent);
+  display: inline-flex;
+}
+
+/* ----- 过滤 chip 条 + 搜索框 ------------------------------------------------ */
+.chrome-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.chrome-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chrome-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chrome-chip.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chrome-chip-count {
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.chrome-chip-clear {
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.chrome-chip-clear:hover {
+  color: var(--danger);
+  background: var(--surface-hover);
+}
+
+.chrome-search {
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  width: 200px;
+  min-width: 120px;
+}
+
+.chrome-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.chrome-search::placeholder {
+  color: var(--text-quaternary);
+}
+
+/* ----- 潜在任务折叠侧条（debt / Backlog strip） ----------------------------- */
+.backlog-strip {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.backlog-strip-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.backlog-strip-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 收起态：竖排窄条（列外侧，点击展开） */
+.backlog-strip.is-collapsed .backlog-strip-toggle {
+  writing-mode: vertical-rl;
+  padding: 12px 6px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.backlog-strip-count {
+  color: var(--status-backlog);
+  font-variant-numeric: tabular-nums;
+}
+
+.backlog-strip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+  overflow-y: auto;
+}
+
+.backlog-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: var(--border-hairline) solid var(--border);
+  border-left: 3px solid var(--status-backlog);
+  background: var(--surface);
+  border-radius: 8px;
+  box-shadow: var(--card-shadow);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.backlog-row:hover {
+  background: var(--surface-hover);
+}
+
+.backlog-row-title {
+  font-weight: 500;
+}
+
+.backlog-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* ----- 通用小徽章（chrome 内部；A6 有自己的卡徽章体系，不共享） -------------- */
+.chrome-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.chrome-badge.is-pinned {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ----- 回收站页 -------------------------------------------------------------- */
+.trash-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trash-page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.trash-page-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.trash-page-count {
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trash-back-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12.5px;
+}
+
+.trash-back-link:hover {
+  text-decoration: underline;
+}
+
+.trash-search {
+  width: 100%;
+}
+
+.trash-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 10px 12px;
+}
+
+.trash-row.is-restored {
+  opacity: 0.55;
+}
+
+.trash-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.trash-row-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.trash-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.trash-row-purge {
+  color: var(--text-tertiary);
+}
+
+.trash-row-purge.is-imminent {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.trash-row-purge.is-pinned {
+  color: var(--accent);
+}
+
+.trash-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trash-button {
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.trash-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.trash-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.trash-button.is-restore {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.trash-button.is-pin {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.trash-empty {
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  padding: 18px 0;
+  text-align: center;
+}
+
+.trash-action-error {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}

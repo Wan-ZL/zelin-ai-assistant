@@ -1,0 +1,234 @@
+/*
+ * 设计 token 表。结构 fork 自 dashi web/src/styles.css L1-83（Apache-2.0，NOTICE 登记）：
+ * 变量名/分层（bg→surface→text→border→accent→语义色→status→shadow）逐字保留，
+ * 配色整体 rebrand：dark 继承 Mac app（mac/Sources 全部用 SwiftUI 系统语义色，
+ * 故取 macOS dark 解析值：teal #6ac4dc / green #32d74b / red #ff453a / blue #0a84ff
+ * / purple #bf5af2 / orange #ff9f0a / gray #98989d / yellow #ffd60a；窗口底
+ * ~#1b1d23 蓝灰系）；light 为同色相家族按白底对比度加深（WCAG-ish ≥4.5 文本、≥3 大件）。
+ * 色值全表见 docs/design/vnext.md「Theme」节。
+ * 语义色阶梯（owner 验收单 sanctioned enrichment，hue 不变）：每个语义 hue 一套
+ *   --X / --X-hover / --X-active / --X-soft（+ lineage 用 --X-soft-quiet）——
+ *   filled 按钮 / tinted chip 底 / outline+文字 三档共用同一基色；
+ *   方向规则：light 逐级加深（hover→active 越按越深），dark 逐级提亮。
+ *   -soft 一律 rgba(基色, light .12 / dark .16)，-soft-quiet 为 .07 / .09
+ *  （例外：light --notice-soft 用暗黄 hue 的亮锚 #ffd60a 调底，纯暗黄调底发灰）。
+ * 主题规则：显式 [data-theme="dark"|"light"]（index.html 首帧从 localStorage zai.theme 设置）
+ * 覆写系统偏好；未设置 data-theme 时走 prefers-color-scheme。
+ * 列语义 → token 映射（组件层约定，别造新变量）：
+ *   潜在任务/queued 灰卡 → --status-backlog；提案 → --status-todo；
+ *   working → --status-progress；待验收 → --status-review；阶段性完成 → --status-done。
+ */
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --bg: #fafbfc;
+  --header-bg: #fafbfc;
+  --sidebar-bg: #f1f3f6;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-muted: #f1f3f6;
+  --surface-hover: #f4f6f9;
+  --surface-active: #e9ecf2;
+  --column-header: #f6f8fb;
+  --text-primary: #1a1c22;
+  --text-secondary: #5a5f6b;
+  --text-tertiary: #959ba7;
+  --text-quaternary: #b1b6c1;
+  --border: #e0e3e9;
+  --border-strong: #d2d6df;
+  --border-hairline: 0.5px;
+  --accent: #12758c;
+  --accent-hover: #10677b;
+  --accent-active: #0e596a;
+  --accent-soft: rgba(18, 117, 140, 0.12);
+  --accent-soft-quiet: rgba(18, 117, 140, 0.07);
+  --on-accent: #ffffff; /* 本 repo 追加（非 fork）：accent 底上的前景色，随主题取值（light 白字/dark 墨字） */
+  --danger: #d70015;
+  --danger-hover: #bd0012;
+  --danger-active: #a30010;
+  --danger-soft: #fcecec;
+  --warning: #c05d00;
+  --warning-hover: #a95200;
+  --warning-active: #924700;
+  --warning-soft: rgba(192, 93, 0, 0.12);
+  --warning-soft-quiet: rgba(192, 93, 0, 0.07);
+  --success: #218739;
+  --success-hover: #1d7732;
+  --success-active: #19672b;
+  --success-soft: rgba(33, 135, 57, 0.12);
+  --info: #0a66cc; /* Mac .blue（修改/研究并提议）——原表无 blue 槽位，验收单补齐 */
+  --info-hover: #095ab4;
+  --info-active: #084e9b;
+  --info-soft: rgba(10, 102, 204, 0.12);
+  --purple: #9440d6; /* Mac .purple（tier 章/交付/已并入）——与 --status-done 同 systemPurple 家族 */
+  --purple-hover: #8238bc;
+  --purple-active: #7031a3;
+  --purple-soft: rgba(148, 64, 214, 0.12);
+  --purple-soft-quiet: rgba(148, 64, 214, 0.07);
+  --notice: #8a6d00; /* Mac .yellow（等待/notice）暗化保白底对比；调底用亮锚（头注例外） */
+  --notice-hover: #796000;
+  --notice-active: #695300;
+  --notice-soft: rgba(255, 214, 10, 0.18);
+  --priority-urgent: #e5484d;
+  --priority-high: #c05d00;
+  --priority-medium: var(--text-tertiary);
+  --priority-low: var(--text-tertiary);
+  --priority-none: var(--text-tertiary);
+  --status-backlog: #8e8e93;
+  --status-todo: #8e8e93;
+  --status-progress: #c05d00;
+  --status-review: #218739;
+  --status-done: #9440d6;
+  --status-canceled: #8e8e93;
+  --scrollbar-thumb: rgba(26, 28, 34, 0.15);
+  --scrollbar-thumb-hover: rgba(26, 28, 34, 0.46);
+  --card-shadow: 0 3px 6px -2px rgba(0, 0, 0, 0.02), 0 1px 1px rgba(0, 0, 0, 0.04);
+  --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1d23;
+  --header-bg: #1f2229;
+  --sidebar-bg: #17191e;
+  --surface: #23262e;
+  --surface-raised: #282b34;
+  --surface-muted: #2a2d36;
+  --surface-hover: #313540;
+  --surface-active: #3a3f4b;
+  --column-header: #20232b;
+  --text-primary: #edeef2;
+  --text-secondary: #b4b9c2;
+  --text-tertiary: #858c99;
+  --text-quaternary: #636a78;
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --accent: #6ac4dc;
+  --accent-hover: #7ecfe4;
+  --accent-active: #8ed2e4;
+  --accent-soft: rgba(106, 196, 220, 0.16);
+  --accent-soft-quiet: rgba(106, 196, 220, 0.09);
+  --on-accent: #0c2a33; /* 本 repo 追加（非 fork）：accent 底上的前景色，随主题取值（light 白字/dark 墨字） */
+  --danger: #ff453a;
+  --danger-hover: #ff5b52;
+  --danger-active: #ff7269;
+  --danger-soft: rgba(255, 69, 58, 0.14);
+  --warning: #ff9f0a;
+  --warning-hover: #ffab27;
+  --warning-active: #ffb645;
+  --warning-soft: rgba(255, 159, 10, 0.16);
+  --warning-soft-quiet: rgba(255, 159, 10, 0.09);
+  --success: #32d74b;
+  --success-hover: #4bdc61;
+  --success-active: #63e176;
+  --success-soft: rgba(50, 215, 75, 0.16);
+  --info: #0a84ff; /* macOS dark systemBlue 解析值（Mac .blue 一比一） */
+  --info-hover: #2793ff;
+  --info-active: #45a2ff;
+  --info-soft: rgba(10, 132, 255, 0.16);
+  --purple: #bf5af2; /* macOS dark systemPurple——owner 口中的「粉紫」，tier 章本色 */
+  --purple-hover: #c76ef4;
+  --purple-active: #ce82f5;
+  --purple-soft: rgba(191, 90, 242, 0.16);
+  --purple-soft-quiet: rgba(191, 90, 242, 0.09);
+  --notice: #ffd60a; /* macOS dark systemYellow 解析值（Mac .yellow 一比一） */
+  --notice-hover: #ffdb27;
+  --notice-active: #ffe045;
+  --notice-soft: rgba(255, 214, 10, 0.16);
+  --status-backlog: #7c7c81;
+  --status-todo: #98989d;
+  --status-progress: #ff9f0a;
+  --status-review: #32d74b;
+  --status-done: #bf5af2;
+  --status-canceled: #85858a;
+  --scrollbar-thumb: rgba(237, 238, 242, 0.15);
+  --scrollbar-thumb-hover: rgba(237, 238, 242, 0.5);
+  --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* 系统偏好暗色 + 用户未显式选 light —— 与上面 dark 块保持逐值一致（改一处必改两处） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1b1d23;
+    --header-bg: #1f2229;
+    --sidebar-bg: #17191e;
+    --surface: #23262e;
+    --surface-raised: #282b34;
+    --surface-muted: #2a2d36;
+    --surface-hover: #313540;
+    --surface-active: #3a3f4b;
+    --column-header: #20232b;
+    --text-primary: #edeef2;
+    --text-secondary: #b4b9c2;
+    --text-tertiary: #858c99;
+    --text-quaternary: #636a78;
+    --border: rgba(255, 255, 255, 0.075);
+    --border-strong: rgba(255, 255, 255, 0.13);
+    --accent: #6ac4dc;
+    --accent-hover: #7ecfe4;
+    --accent-active: #8ed2e4;
+    --accent-soft: rgba(106, 196, 220, 0.16);
+    --accent-soft-quiet: rgba(106, 196, 220, 0.09);
+    --on-accent: #0c2a33; /* 本 repo 追加（非 fork）：accent 底上的前景色，随主题取值（light 白字/dark 墨字） */
+    --danger: #ff453a;
+    --danger-hover: #ff5b52;
+    --danger-active: #ff7269;
+    --danger-soft: rgba(255, 69, 58, 0.14);
+    --warning: #ff9f0a;
+    --warning-hover: #ffab27;
+    --warning-active: #ffb645;
+    --warning-soft: rgba(255, 159, 10, 0.16);
+    --warning-soft-quiet: rgba(255, 159, 10, 0.09);
+    --success: #32d74b;
+    --success-hover: #4bdc61;
+    --success-active: #63e176;
+    --success-soft: rgba(50, 215, 75, 0.16);
+    --info: #0a84ff; /* macOS dark systemBlue 解析值（Mac .blue 一比一） */
+    --info-hover: #2793ff;
+    --info-active: #45a2ff;
+    --info-soft: rgba(10, 132, 255, 0.16);
+    --purple: #bf5af2; /* macOS dark systemPurple——owner 口中的「粉紫」，tier 章本色 */
+    --purple-hover: #c76ef4;
+    --purple-active: #ce82f5;
+    --purple-soft: rgba(191, 90, 242, 0.16);
+    --purple-soft-quiet: rgba(191, 90, 242, 0.09);
+    --notice: #ffd60a; /* macOS dark systemYellow 解析值（Mac .yellow 一比一） */
+    --notice-hover: #ffdb27;
+    --notice-active: #ffe045;
+    --notice-soft: rgba(255, 214, 10, 0.16);
+    --status-backlog: #7c7c81;
+    --status-todo: #98989d;
+    --status-progress: #ff9f0a;
+    --status-review: #32d74b;
+    --status-done: #bf5af2;
+    --status-canceled: #85858a;
+    --scrollbar-thumb: rgba(237, 238, 242, 0.15);
+    --scrollbar-thumb-hover: rgba(237, 238, 242, 0.5);
+    --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+    --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* —— 以下为本 repo 自写的基础重置（非 fork）—— */
+* {
+  box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+#root {
+  min-height: 100vh;
+}
