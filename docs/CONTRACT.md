@@ -3196,7 +3196,14 @@ migrate/export CLI 触碰。
 - **配置解析（启动期一次性，全部只读）**：PORT = env `ZAI_PORT` → 默认
   47820（与 server 同一默认）；HOME = env `AIASSISTANT_HOME` → home 指针
   `~/Library/Application Support/ZelinAIAssistant/home.txt`（§19 同一解析
-  顺序）→ 本机 repo 兜底。
+  顺序）→ **无兜底**——两者都缺时 spawn 不注入该 env，由 server 侧
+  canonical 默认（`server/paths.py DEFAULT_HOME`）接手，壳永不猜本机路径；
+  SERVER_REPO（`python3 -m server` 的 cwd）= defaults `serverRepo`
+  （`defaults write com.zelin.ai-board serverRepo <path>`）→ Info.plist
+  `ZAIServerRepo`（`shell/build.sh` 构建时以**实际 repo root** 盖进 staged
+  plist，同版本号机制；源 plist 留空）→ **无兜底**——需要 spawn 而解析不到
+  时礼貌弹窗（含日志路径与两条修复方式）+ log 落一行，绝不拿猜来的路径起
+  server（attach 既有 server 不受影响，探活成功照常加载）。
 - **生命周期诚实原则（本节红线）**：先探活——有人在班就直接 **attach**；
   没有才 **spawn** child server（spawn 后每 0.5s 探一次，≤10s）。退出时
   **只 terminate 自己 spawn 的 child**（SIGTERM；`spawned` 非 nil 是唯一
@@ -3204,5 +3211,6 @@ migrate/export CLI 触碰。
   或另一个 shell。每次 spawn 在 append-only log 里落一行时间戳横幅（切段
   取证）。
 - **构建**：`shell/build.sh` 镜像 `mac/build.sh` 惯例——plutil lint、版本号
-  从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、ad-hoc codesign。
-  `shell/build/` 进 .gitignore（构建产物永不入库）。
+  从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、`ZAIServerRepo` 以构建
+  所在 repo root 盖章（可移植：换机器/换 worktree 重跑 build.sh 即自洽）、
+  ad-hoc codesign。`shell/build/` 进 .gitignore（构建产物永不入库）。

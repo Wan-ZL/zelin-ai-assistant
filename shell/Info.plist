@@ -40,9 +40,11 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- Preview shell 默认 server repo（cwd of `python3 -m server`）。
+	<!-- Server repo（cwd of `python3 -m server`）。源文件留空：shell/build.sh
+	     构建时以实际 repo root 盖章（同版本号机制）；未盖章 + 无 defaults 覆盖
+	     时壳会礼貌报错而非猜路径。
 	     可用 `defaults write com.zelin.ai-board serverRepo <path>` 覆盖。 -->
 	<key>ZAIServerRepo</key>
-	<string>/Volumes/Storage/Server/Projects/.worktree/zelin-ai-assistant/wt-vnext-wire</string>
+	<string></string>
 </dict>
 </plist>

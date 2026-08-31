@@ -101,6 +101,13 @@ else
     echo "WARN: could not read __version__ from act/__init__.py — bundle keeps the Info.plist fallback version."
 fi
 
+# server repo: stamp the ACTUAL repo root this shell is built from（same
+# staged-plist mechanism as the version stamp; 源 Info.plist 留空 = 未解析，
+# 壳在需要 spawn 时礼貌报错而非猜路径）。
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+plutil -replace ZAIServerRepo -string "$REPO_ROOT" "$APP_DIR/Contents/Info.plist"
+echo "    stamped ZAIServerRepo $REPO_ROOT"
+
 # app icon — 复用主 app 的 AppIcon.icns（构建期已 vendored 进 shell/）
 if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then
     cp "$SCRIPT_DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"

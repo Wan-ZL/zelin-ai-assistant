@@ -24,8 +24,10 @@ enum ShellConfig {
     }()
 
     /// HOME：env AIASSISTANT_HOME → home.txt pointer（CONTRACT §19，与
-    /// mac/Sources/Utils.swift AppPaths.stateRoot 同一解析顺序）→ 本机 repo 兜底。
-    static let homeDir: String = {
+    /// mac/Sources/Utils.swift AppPaths.stateRoot 同一解析顺序）。两者都缺 =
+    /// nil：spawn 时不注入 env，由 server 侧 canonical 默认值接手
+    /// （server/paths.py DEFAULT_HOME）——绝不在壳里猜一台机器的路径。
+    static let homeDir: String? = {
         if let env = ProcessInfo.processInfo.environment["AIASSISTANT_HOME"],
            !env.isEmpty {
             return (env as NSString).expandingTildeInPath
@@ -42,13 +44,15 @@ enum ShellConfig {
                 return home
             }
         }
-        return "/Volumes/Storage/Server/Projects/zelin-ai-assistant"
+        return nil
     }()
 
     /// SERVER_REPO（`python3 -m server` 的 cwd）：UserDefaults "serverRepo"
     /// （`defaults write com.zelin.ai-board serverRepo <path>` 可改）→
-    /// Info.plist ZAIServerRepo（preview shell 默认指向 v-next worktree）。
-    static let serverRepo: String = {
+    /// Info.plist ZAIServerRepo（shell/build.sh 构建时以实际 repo root 盖章，
+    /// 同版本号机制）。两者都缺 = nil：需要 spawn 时以礼貌弹窗收场（附日志
+    /// 与修复方式），绝不猜路径起 server。
+    static let serverRepo: String? = {
         if let d = UserDefaults.standard.string(forKey: "serverRepo"), !d.isEmpty {
             return (d as NSString).expandingTildeInPath
         }
@@ -56,7 +60,7 @@ enum ShellConfig {
             as? String, !p.isEmpty {
             return (p as NSString).expandingTildeInPath
         }
-        return "/Volumes/Storage/Server/Projects/zelin-ai-assistant"
+        return nil
     }()
 
     static var boardURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
@@ -85,9 +89,8 @@ final class ServerManager {
         }.resume()
     }
 
-    /// 拉起 `python3 -m server`：cwd=SERVER_REPO，env 注入 AIASSISTANT_HOME +
-    /// ZAI_PORT；child 的 stdout/err 追加进 board-shell.log（唯一排障入口）。
-    func spawnServer() {
+    /// 打开（必要时创建）append-only 排障日志，游标已在文件尾。
+    private func openLog() -> FileHandle? {
         let fm = FileManager.default
         try? fm.createDirectory(atPath: ShellConfig.logDir,
                                 withIntermediateDirectories: true)
@@ -96,18 +99,34 @@ final class ServerManager {
         }
         let log = FileHandle(forWritingAtPath: ShellConfig.logPath)
         log?.seekToEndOfFile()
+        return log
+    }
+
+    /// 落一行取证（弹窗被关掉之后 log 是唯一入口）。
+    func logLine(_ line: String) {
+        let log = openLog()
+        log?.write((line + "\n").data(using: .utf8)!)
+        try? log?.close()
+    }
+
+    /// 拉起 `python3 -m server`：cwd=repo（调用方已解析），env 注入
+    /// AIASSISTANT_HOME（解析到了才注入）+ ZAI_PORT；child 的 stdout/err
+    /// 追加进 board-shell.log（唯一排障入口）。
+    func spawnServer(repo: String) {
+        let log = openLog()
         // 启动横幅：每次 spawn 一行时间戳，方便在 append-only log 里切段。
         let banner = "\n==== board-shell spawn \(ISO8601DateFormatter().string(from: Date())) " +
-            "port=\(ShellConfig.port) home=\(ShellConfig.homeDir) repo=\(ShellConfig.serverRepo) ====\n"
+            "port=\(ShellConfig.port) home=\(ShellConfig.homeDir ?? "(server default)") repo=\(repo) ====\n"
         log?.write(banner.data(using: .utf8)!)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         p.arguments = ["-m", "server"]
-        p.currentDirectoryURL = URL(fileURLWithPath: ShellConfig.serverRepo,
-                                    isDirectory: true)
+        p.currentDirectoryURL = URL(fileURLWithPath: repo, isDirectory: true)
         var env = ProcessInfo.processInfo.environment
-        env["AIASSISTANT_HOME"] = ShellConfig.homeDir
+        if let home = ShellConfig.homeDir {
+            env["AIASSISTANT_HOME"] = home
+        }
         env["ZAI_PORT"] = String(ShellConfig.port)
         p.environment = env
         if let log = log {
@@ -158,13 +177,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         buildWindow()
         // 先探活：有人在班就直接 attach，否则 spawn + 最多 10s 轮询。
+        // SERVER_REPO 解析不到（无 defaults、Info.plist 未盖章）= 礼貌报错，
+        // 绝不猜一条本机路径去起 server。
         server.probe { [weak self] up in
             guard let self = self else { return }
             if up {
                 self.loadBoard()
-            } else {
-                self.server.spawnServer()
+            } else if let repo = ShellConfig.serverRepo {
+                self.server.spawnServer(repo: repo)
                 self.pollUntilUp(deadline: Date().addingTimeInterval(10.0))
+            } else {
+                self.showConfigFailure()
             }
         }
     }
@@ -234,8 +257,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         排障：
         • 日志：~/Library/Logs/zelin-ai-assistant/board-shell.log
-        • Server repo：\(ShellConfig.serverRepo)
+        • Server repo：\(ShellConfig.serverRepo ?? "(未配置)")
         • 手动试跑：cd 到 server repo 后执行 ZAI_PORT=\(ShellConfig.port) /usr/bin/python3 -m server
+        """
+        alert.addButton(withTitle: "好")
+        alert.runModal()
+    }
+
+    /// SERVER_REPO 解析不到 = 明说怎么修（弹窗 + log 各一份），绝不猜路径。
+    private func showConfigFailure() {
+        server.logLine("board-shell: no running server on 127.0.0.1:\(ShellConfig.port) "
+            + "and no server repo configured (defaults serverRepo / Info.plist ZAIServerRepo both empty) — not spawning.")
+        webView.loadHTMLString(splashHTML(
+            "找不到 board server 的 repo 路径。<br>日志：<code>~/Library/Logs/zelin-ai-assistant/board-shell.log</code>"),
+            baseURL: nil)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "找不到 board server 的 repo"
+        alert.informativeText = """
+        127.0.0.1:\(ShellConfig.port) 上没有在班的 server，而本壳不知道去哪里拉起 python3 -m server。
+
+        修复（任选其一）：
+        • defaults write com.zelin.ai-board serverRepo <repo 路径>
+        • 重新运行 shell/build.sh（构建时会把 repo 路径盖进 app）
+
+        日志：~/Library/Logs/zelin-ai-assistant/board-shell.log
         """
         alert.addButton(withTitle: "好")
         alert.runModal()
@@ -253,8 +299,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if up {
                     self.loadBoard()
                 } else if self.server.spawned == nil {
-                    self.server.spawnServer()
-                    self.pollUntilUp(deadline: Date().addingTimeInterval(10.0))
+                    if let repo = ShellConfig.serverRepo {
+                        self.server.spawnServer(repo: repo)
+                        self.pollUntilUp(deadline: Date().addingTimeInterval(10.0))
+                    } else {
+                        self.showConfigFailure()
+                    }
                 } else {
                     self.pollUntilUp(deadline: Date().addingTimeInterval(10.0))
                 }
