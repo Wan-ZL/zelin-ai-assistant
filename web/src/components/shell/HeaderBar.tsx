@@ -3,6 +3,7 @@
 // searchSlot 槽位，A8 把搜索组件经 app.tsx 传进来即可，不传则槽位为空但布局稳定。
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
+import { buildAppUrl } from "../../route";
 import { useAppState, type ConnectionState } from "../../store";
 import { FreshnessLabel } from "./FreshnessLabel";
 import { LanguageToggle } from "./LanguageToggle";
@@ -47,6 +48,13 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
       </div>
       <div className="shell-search-slot">{searchSlot ?? null}</div>
       <div className="shell-header-right">
+        {/* 回收站入口：TrashPage 只有 ?page=trash 深链——壳层导航走整页 <a>（同 trash-back-link 约定） */}
+        <a
+          className="shell-trash-link"
+          href={buildAppUrl(window.location.href, "trash", null).toString()}
+        >
+          {text("回收站", "Trash")}
+        </a>
         <span
           className={`shell-connection is-${connection}`}
           title={connectionLabel(connection, text)}
