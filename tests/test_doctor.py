@@ -146,7 +146,7 @@ class DoctorTestCase(unittest.TestCase):
                     json.dumps({"generated_at": _iso(generated_ts)}))
 
     def make_probes(self, run=None, launchctl=None, cron=None, which_map=None,
-                    now=None, db=None, legacy=None):
+                    now=None, db=None, legacy=None, installed_plists=None):
         if which_map is None:
             which_map = {"claude": "/fake/bin/claude",
                          "npx": "/fake/bin/npx",
@@ -161,10 +161,11 @@ class DoctorTestCase(unittest.TestCase):
             launchd_labels=LABELS,
             screenpipe_db=db or self.db_file,
             legacy_key_path=legacy or self.missing_legacy,
-            # hermetic: never read the REAL ~/Library/LaunchAgents plist or
+            # hermetic: never read the REAL ~/Library/LaunchAgents plists or
             # probe the real login shell from the sandboxed suite
             daemon_path_env=lambda: None,
             login_shell_claude=lambda: None,
+            installed_plist_text=lambda label: (installed_plists or {}).get(label),
         )
 
     def _main(self, probes, argv=None):
@@ -251,6 +252,62 @@ class DoctorTestCase(unittest.TestCase):
         results = doctor.run_checks(self.make_probes(launchctl=""), fast=True)
         self.assertEqual(by_name(results, "actd").status, doctor.FAIL)
         self.assertEqual(by_name(results, "radar").status, doctor.WARN)
+
+    # -- §55 迁移探测: pre-v0.48 plists still pointing at the repo ------------- #
+    # 2026-08-31 双次宕机根因: 已安装 plist 的 spawn 前路径键指着 repo，repo
+    # 在外置卷上时 launchd 以 EX_CONFIG(78) 拒绝 spawn；「一键修复」只重渲染
+    # actd，所以 doctor 必须点名每一个 stale agent 并指向 install.sh。
+
+    def _stale_plist(self):
+        repo = str(self.home)
+        return ("<plist><dict>\n"
+                "<key>StandardOutPath</key>\n"
+                "<string>%s/state/actd.launchd.log</string>\n"
+                "<key>WorkingDirectory</key>\n<string>%s</string>\n"
+                "</dict></plist>" % (repo, repo))
+
+    def _fresh_plist(self):
+        return ("<plist><dict>\n"
+                "<key>StandardOutPath</key>\n"
+                "<string>/Users/u/Library/Logs/zelin-ai-assistant/actd.launchd.log</string>\n"
+                "<key>WorkingDirectory</key>\n<string>/Users/u</string>\n"
+                "</dict></plist>")
+
+    def test_stale_plist_names_agent_and_points_at_install_sh(self):
+        probes = self.make_probes(installed_plists={
+            LABELS[0]: self._stale_plist(),
+            LABELS[1]: self._fresh_plist(),
+        })
+        # repo (TMP_HOME) NOT under home → the external-volume case → FAIL
+        with mock.patch.object(doctor.Path, "home",
+                               return_value=Path("/nonexistent-home")):
+            results = doctor.run_checks(probes, fast=True)
+        r = by_name(results, "launchd paths")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("actd", r.detail)
+        self.assertNotIn("radar", r.detail)  # fresh agent is NOT named
+        self.assertIn("external volume", r.detail)
+        self.assertIn("install.sh", r.fix)
+        self.assertIn("only re-renders actd", r.fix)
+
+    def test_stale_plist_with_repo_under_home_only_warns(self):
+        probes = self.make_probes(
+            installed_plists={LABELS[0]: self._stale_plist()})
+        # repo under home → agents still spawn → degraded-but-working WARN
+        with mock.patch.object(doctor.Path, "home",
+                               return_value=self.home.parent):
+            results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.WARN)
+
+    def test_fresh_plists_ok_and_nothing_installed_is_silent(self):
+        probes = self.make_probes(
+            installed_plists={LABELS[0]: self._fresh_plist()})
+        results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.OK)
+        # nothing installed at all → no "launchd paths" row (unregistered is
+        # already _check_launchd's finding; an OK here would be a lie)
+        names = [r.name for r in doctor.run_checks(self.make_probes(), fast=True)]
+        self.assertNotIn("launchd paths", names)
 
     # -- dashboard freshness ----------------------------------------------------- #
     def test_stale_dashboard_is_fail(self):

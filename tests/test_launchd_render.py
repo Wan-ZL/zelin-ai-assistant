@@ -13,9 +13,12 @@ EX_CONFIG(78) 拒绝 spawn，把手工修好的 plist 一键打回故障态。
   3. 解释器是渲染注入的绝对路径（CONTRACT §19 runtime 指针），永不
      /usr/bin/env —— TCC 按 binary 计权限，env 间接层会让授权漂移。
 
-三个渲染方（install.sh render_launchd_plist、mac/Sources/Doctor.swift
-LaunchAgents.install、mac/Sources/SetupWizard.swift ActdAgent.renderAndLoad）
-共享同一批模板与同一占位符替换序，所以钉「模板 + 替换序」= 钉全部三方。
+本文件直接执行的是 install.sh render_launchd_plist 替换序的手工镜像（见
+render()），所以它**直接**钉住的是「模板 + install.sh 的序」。另外两个渲染方
+（mac/Sources/Doctor.swift LaunchAgents.install、mac/Sources/SetupWizard.swift
+ActdAgent.renderAndLoad）是同一 5 条替换序的 Swift 手工镜像——注释互相指认、
+由 code review 保持同步；模板层的不变式（路径形状、占位符集合）对它们同样
+成立，但它们的 Swift 代码不在本测试的执行路径里。
 """
 import plistlib
 import re
@@ -88,6 +91,12 @@ class LaunchdTemplateShapeTestCase(unittest.TestCase):
             env = obj["EnvironmentVariables"]
             self.assertEqual(env["PYTHONPATH"], FAKE_REPO, path.name)
             self.assertEqual(env["AIASSISTANT_HOME"], FAKE_REPO, path.name)
+            # 登录 shell 的 claude 目录必须被替换进 PATH 且排头（2026-07-08
+            # 双 claude 事故）——漏掉这条替换 = 渲染出不存在的 ~/.claude-bin
+            self.assertTrue(
+                env["PATH"].startswith(FAKE_CLAUDE_DIR + ":"),
+                "%s: login-shell claude dir must lead PATH, got %s"
+                % (path.name, env["PATH"]))
 
     def test_interpreter_is_absolute_and_never_env(self):
         for path, text, obj in self.rendered():

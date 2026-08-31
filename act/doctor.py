@@ -159,6 +159,15 @@ def _login_shell_claude() -> Optional[str]:
     return last if last.startswith("/") else None
 
 
+def _installed_plist_text(label: str) -> Optional[str]:
+    """已安装（非模板）plist 的原文；None = 该 agent 没装。§55 迁移探测用。"""
+    p = Path.home() / "Library" / "LaunchAgents" / (label + ".plist")
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 @dataclass
 class Probes:
     which: Callable[[str], Optional[str]] = shutil.which
@@ -179,6 +188,8 @@ class Probes:
     # daemon-vs-shell claude comparison (the 2026-07-08 two-installs incident)
     daemon_path_env: Callable[[], Optional[str]] = _installed_actd_path_env
     login_shell_claude: Callable[[], Optional[str]] = _login_shell_claude
+    # §55 迁移探测：label → 已安装 plist 原文（None = 没装）；tests 注入保持 hermetic
+    installed_plist_text: Callable[[str], Optional[str]] = _installed_plist_text
 
 
 @dataclass
@@ -478,10 +489,54 @@ def _check_launchd(probes: Probes):
                 short, severity,
                 "loaded but its process exits with status %s" % status,
                 "tail -20 ~/Library/Logs/zelin-ai-assistant/%s.launchd.log"
+                " (pre-v0.48 installs: state/%s.launchd.log)"
                 "  # usual causes: PyYAML missing "
-                "for the daemon python, missing API key" % short,
+                "for the daemon python, missing API key" % (short, short),
             ).with_failure("agent_unloaded"))
     return results
+
+
+# launchd 在 spawn 前触碰的 plist 键——任何一个指向 repo 都是 §55 之前的渲染
+_PLIST_SPAWN_PATH_KEYS = ("StandardOutPath", "StandardErrorPath",
+                          "WorkingDirectory")
+
+
+def _check_launchd_paths(probes: Probes):
+    """§55 迁移探测：已安装 plist 的 spawn 前路径键还指着 repo = pre-v0.48
+    渲染残留。repo 在外置卷（TCC-gated volume）上时 launchd 以 EX_CONFIG(78)
+    拒绝 spawn（2026-08-31 两次全线宕机的根因）——此时升级为 FAIL；repo 在
+    $HOME 下时 agent 还能跑，只 WARN。App 的「一键修复」只重渲染 actd，所以
+    这里点名每一个 stale agent，修复动作 = 重跑 install.sh（重渲染全部）。"""
+    labels = probes.launchd_labels
+    if labels is None:
+        labels = sorted(p.stem for p in (config.HOME / "act" / "launchd").glob("*.plist"))
+    repo = str(config.HOME).rstrip("/")
+    stale, seen_any = [], False
+    for label in labels:
+        text = probes.installed_plist_text(label)
+        if not text:
+            continue  # 没装——_check_launchd 已经报 unregistered
+        seen_any = True
+        for key in _PLIST_SPAWN_PATH_KEYS:
+            m = re.search(r"<key>%s</key>\s*<string>([^<]+)</string>" % key, text)
+            if m and (m.group(1) == repo or m.group(1).startswith(repo + "/")):
+                stale.append(label.rsplit(".", 1)[-1])
+                break
+    if not seen_any:
+        return []
+    if not stale:
+        return CheckResult("launchd paths", OK,
+                           "installed plists keep spawn-time paths out of the repo")
+    home = str(Path.home()).rstrip("/")
+    severity = WARN if repo == home or repo.startswith(home + "/") else FAIL
+    return CheckResult(
+        "launchd paths", severity,
+        "installed plist still points at the repo (pre-v0.48 render): %s%s"
+        % (", ".join(stale),
+           "" if severity == WARN
+           else " - repo is on an external volume; launchd refuses to spawn (78)"),
+        "bash install.sh  # re-renders ALL agents; the app's one-click repair"
+        " only re-renders actd")
 
 
 def _systemd_units() -> List[str]:
@@ -748,7 +803,8 @@ def _check_dashboard(probes: Probes):
         "dashboard", FAIL,
         "stale (generated %d min ago) - actd is not writing; the app renders old data" % int(age // 60),
         "launchctl list | grep aiassistant; "
-        "tail -20 ~/Library/Logs/zelin-ai-assistant/actd.launchd.log",
+        "tail -20 ~/Library/Logs/zelin-ai-assistant/actd.launchd.log"
+        " (pre-v0.48 installs: state/actd.launchd.log)",
     ).with_failure("dashboard_stale")
 
 
@@ -885,7 +941,7 @@ def _checks_for_platform() -> List:
     scheduled tasks, so there is no crontab ingest chain to probe.
     """
     if platform.is_darwin():
-        middle = [_check_launchd, _check_cron]
+        middle = [_check_launchd, _check_launchd_paths, _check_cron]
         tail_extra = [_check_screenpipe, _check_npx]
     elif platform.is_windows():
         middle = [_check_scheduled_tasks]
