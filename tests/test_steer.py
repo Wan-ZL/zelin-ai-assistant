@@ -58,6 +58,28 @@ class TestEnqueue(unittest.TestCase):
         self.assertIsNotNone(steer.enqueue_steer(req, "快一点", ts="t2"))
         self.assertEqual(len(req.execution["pending_steers"]), 2)
 
+    def test_stem_nonce_separates_identical_texts_same_second(self):
+        # m1：键带 inbox 文件 stem——同秒同文的两个不同文件是两条指令，
+        # 只有同 stem（同文件重放）才去重
+        req = _card()
+        self.assertIsNotNone(steer.enqueue_steer(req, "快一点", ts="t1",
+                                                 stem="f1"))
+        self.assertIsNotNone(steer.enqueue_steer(req, "快一点", ts="t1",
+                                                 stem="f2"))
+        self.assertIsNone(steer.enqueue_steer(req, "快一点", ts="t1",
+                                              stem="f1"))
+        self.assertEqual(len(req.execution["pending_steers"]), 2)
+
+    def test_steer_key_stem_forms(self):
+        two_part = steer.steer_key("同文", "t1")
+        three_part = steer.steer_key("同文", "t1", "file-abc")
+        self.assertTrue(two_part.startswith("t1|"))
+        self.assertTrue(three_part.startswith("t1|file-abc|"))
+        self.assertNotEqual(two_part, three_part)
+        # 空白/非 str stem 退回双段形（历史调用/脏条目重建口径）
+        self.assertEqual(steer.steer_key("同文", "t1", "   "), two_part)
+        self.assertEqual(steer.steer_key("同文", "t1", None), two_part)
+
     def test_dedup_against_delivered_ledger(self):
         # crash-replay：第一跑已 flush 清队，仅查 pending 会二次入队
         req = _card()

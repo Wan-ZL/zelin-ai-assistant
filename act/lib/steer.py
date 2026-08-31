@@ -9,10 +9,12 @@ live pid 绝不打断。与 briefing 的三点差异：
 1. **信任级别**：steer 文本是 owner 亲手打的（trusted）——用 OWNER UPDATE
    前缀直发，**不过** ``sanitize.fence_untrusted``（briefing 行来自外部内容，
    必须围栏）。runner 侧的 secrets scrub 照旧（那是防泄密，不是防注入）。
-2. **dedup 键带时间戳**：同一句话隔十分钟再打一遍是**新指令**（owner 在催/
-   在重申），不是 crash-retry 重放——briefing 的纯文本去重语义在这里是错的。
-   键 = ``<ts>|<sha256(text)[:16]>``；同一 inbox 动作被重放（unlink 失败）时
-   ts 相同 → 同键 → 去重。
+2. **dedup 键带时间戳 + inbox 文件 stem**：同一句话隔十分钟再打一遍是**新指
+   令**（owner 在催/在重申），不是 crash-retry 重放——briefing 的纯文本去重
+   语义在这里是错的。键 = ``<ts>|<stem>|<sha256(text)[:16]>``；同一 inbox
+   文件被重放（unlink 失败）时 ts 与 stem 都相同 → 同键 → 去重；同一秒打的
+   两条同文指令是两个 inbox 文件（stem 全局唯一）→ 两条 steer，绝不误吞。
+   无 stem 的历史/脏条目退回 ``<ts>|<hash>`` 双段形。
 3. **class='steer'**：note dict 自带 class 字段，与 store2 的 notes 表
    （comment/steer/fold）形状对齐（本 PR store2 不接线，字段先对齐）。
 
@@ -79,9 +81,13 @@ def _ring_append(ex: dict, key: str, value: str, cap: int) -> None:
     ex[key] = items[-cap:]
 
 
-def steer_key(text: str, ts: str) -> str:
-    """时间戳承载的 dedup 键：同 (ts, text) = 重放，同 text 新 ts = 新指令。"""
+def steer_key(text: str, ts: str, stem: Optional[str] = None) -> str:
+    """时间戳 + inbox 文件 stem 承载的 dedup 键：同一文件重放（同 ts 同 stem
+    同文）= 重复；同秒同文的两个不同文件 = 两条指令。无 stem（历史调用/
+    脏条目重建）退回 ``ts|hash`` 双段形。"""
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    if isinstance(stem, str) and stem.strip():
+        return f"{ts}|{stem.strip()}|{digest}"
     return f"{ts}|{digest}"
 
 
@@ -104,12 +110,14 @@ def _delivered_keys(ex: dict) -> set:
 # --------------------------------------------------------------------------- #
 # 入队
 # --------------------------------------------------------------------------- #
-def enqueue_steer(req, text, ts: Optional[str] = None) -> Optional[dict]:
+def enqueue_steer(req, text, ts: Optional[str] = None,
+                  stem: Optional[str] = None) -> Optional[dict]:
     """把 owner 的追加指令排上卡片，等 actd 在安全窗口投递。
 
     fail-closed（§33 口径）：``text`` 非 str / 空白 → 返回 None 且不动卡片
     （垃圾值绝不入队）；超 ``MAX_STEER_CHARS`` 截断保头部。``ts`` 取 inbox
-    动作自带的时间戳（crash-replay 同键去重的关键）；缺失时用当前时刻。
+    动作自带的时间戳、``stem`` 取 inbox 文件名 stem（两者合成 crash-replay
+    同键去重的键——只有真正的同文件重放才去重）；缺失时 ts 用当前时刻。
 
     去重查 pending **与已投递台账**（§44.3 delivered_briefings 判例：flush
     之后 pending 已清，仅查 pending 会让重放的同一条指令进会话两遍）。
@@ -129,7 +137,7 @@ def enqueue_steer(req, text, ts: Optional[str] = None) -> Optional[dict]:
     if len(body) > MAX_STEER_CHARS:
         body = body[:MAX_STEER_CHARS]
     stamp = ts if isinstance(ts, str) and ts.strip() else _iso_now()
-    key = steer_key(body, stamp)
+    key = steer_key(body, stamp, stem)
 
     ex = dict(req.execution or {})
     pend = pending_steers(req)
