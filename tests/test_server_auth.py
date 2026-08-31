@@ -13,6 +13,7 @@ import http.client
 import json
 import os
 import stat
+import sys
 import tempfile
 import threading
 import unittest
@@ -27,6 +28,12 @@ from server import security
 from server import app as app_mod
 
 HERO = "R-101"
+
+# Windows 口径（CI 判例，2026-08-31）：st_mode 组/他人位在 Windows 是合成值
+# （可写文件一律 ~0o666），0600 断言只在 POSIX 有意义；权限收回在生产侧也是
+# POSIX-only 关切（server/security.py）。内容校验/重铸与 symlink 拒跟随是
+# 跨平台行为，照常在 Windows 上跑。
+_POSIX = os.name == "posix"
 
 
 def _run_payload() -> bytes:
@@ -189,7 +196,9 @@ class TokenLifecycleTestCase(unittest.TestCase):
         tok = security.load_or_create_token(home)
         p = security.token_path(home)
         self.assertTrue(p.is_file())
-        self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+        if _POSIX:  # 0600 是 POSIX mode-bit 语义；Windows 合成 0o666（文件头注）
+            self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+        # 跨启动稳定是跨平台契约——Windows 上也必须不换 token
         self.assertEqual(security.load_or_create_token(home), tok)
 
     def test_index_html_gets_token_injected(self):
@@ -288,6 +297,9 @@ class TokenFileHardeningTestCase(unittest.TestCase):
         (home / "state").mkdir(parents=True)
         return home
 
+    @unittest.skipIf(sys.platform == "win32",
+                     "权限收回是 POSIX mode-bit 语义——Windows 合成 mode 位、"
+                     "无 fchmod，生产侧按设计不收回（ACL 管真实访问）")
     def test_group_other_readable_token_is_rehardened(self):
         # M2：历史 0644 token（任何本地账户可读）在读路径被 chmod 收回 0600
         home = self._home("zai-tok-perm-")
@@ -299,22 +311,30 @@ class TokenFileHardeningTestCase(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
 
     def test_malformed_token_is_discarded_and_reminted(self):
-        # M1 纵深：坏字符 token（含 </script>）读回即弃用、重铸干净值
+        # M1 纵深：坏字符 token（含 </script>）读回即弃用、重铸干净值——
+        # 弃用/重铸是跨平台行为，Windows 也跑；只有 0600 断言是 POSIX 语义
         home = self._home("zai-tok-bad-")
         p = security.token_path(home)
         p.write_text("abc</script>def\n", encoding="utf-8")
         tok = security.load_or_create_token(home)
         self.assertNotEqual(tok, "abc</script>def")
         self.assertRegex(tok, r"^[A-Za-z0-9_-]+$")
-        self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+        if _POSIX:
+            self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
 
     def test_symlinked_token_is_not_followed(self):
-        # M3：state/server.token 是 symlink 时既不从它读、也不 truncate 目标
+        # M3：state/server.token 是 symlink 时既不从它读、也不 truncate 目标。
+        # 生产侧的拒绝是可移植的 is_symlink 检查（Windows 无 O_NOFOLLOW，CI
+        # 判例：只靠 flag 会真的跟随过去）——所以本测试在 Windows 也照常跑；
+        # 只有「符号链接创建本身」在无特权的 Windows 用户下不可用，届时跳过。
         home = self._home("zai-tok-link-")
         secret = home / "victim.txt"
         secret.write_text("do-not-touch", encoding="utf-8")
         p = security.token_path(home)
-        os.symlink(secret, p)
+        try:
+            os.symlink(secret, p)
+        except OSError:
+            self.skipTest("symlink creation not permitted for this user")
         tok = security.load_or_create_token(home)
         # 目标文件内容原封不动（没被当 token 覆写/截断）
         self.assertEqual(secret.read_text(encoding="utf-8"), "do-not-touch")

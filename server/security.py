@@ -61,14 +61,21 @@ def _valid_token(value: object) -> bool:
 def load_or_create_token(home: Path) -> str:
     """per-install token：读既有值（校验 + 重新加固权限），否则生成 + 0600 落盘。
 
-    加固纪律（M2/M3 审计）：
-    - **权限**：既有文件必须 0600。历史上 0644 创建的 token（任何本地账户
-      可读 = RCE 级泄露）在读路径 chmod 收回；group/other 可读且 chmod 失败
-      时**拒用**该文件、重铸（宁可换 token 也不用一个别人读得到的）。
-    - **符号链接**：读与写都带 ``O_NOFOLLOW``——state/server.token 若是指向
-      他处的 symlink，绝不跟随（防被诱导 truncate/覆盖任意文件、或从攻击者
-      控制的路径读回 token）。
-    - **内容**：坏字符（``</script>``/换行/引号）的 token 一律弃用重铸。
+    加固纪律（M2/M3 审计；平台口径见各条）：
+    - **权限（POSIX-only）**：既有文件必须 0600。历史上 0644 创建的 token
+      （任何本地账户可读 = RCE 级泄露）在读路径 chmod 收回；group/other 可读
+      且 chmod 失败时**拒用**该文件、重铸（宁可换 token 也不用一个别人读得到
+      的）。Windows 上 st_mode 的组/他人位是合成值（可写文件一律 ~0o666）、
+      真实访问控制在 ACL（继承自用户目录）且 ``os.fchmod`` 不存在——照 POSIX
+      逻辑执行会每次启动误判重铸 + AttributeError，故整块按 POSIX-only 关切
+      处理（Windows CI 判例钉过）。
+    - **符号链接（跨平台）**：读与写都先过可移植的 ``is_symlink()`` 拒绝，
+      POSIX 侧再叠 ``O_NOFOLLOW`` 补 check→open 的 TOCTOU 窗——state/
+      server.token 若是指向他处的 symlink，绝不跟随（防被诱导 truncate/覆盖
+      任意文件、或从攻击者控制的路径读回 token）。Windows 无 O_NOFOLLOW
+      （flag 为 0，只靠它会真的跟随过去），is_symlink 检查就是那里的防线。
+    - **内容（跨平台）**：坏字符（``</script>``/换行/引号）的 token 一律
+      弃用重铸。
     """
     p = token_path(home)
     existing = _read_token_hardened(p)
@@ -97,29 +104,40 @@ def load_or_create_token(home: Path) -> str:
 
 
 def _read_token_hardened(p: Path) -> "str | None":
-    """读既有 token：symlink 拒跟随、权限收回、内容校验。坏则 None（触发重铸）。"""
+    """读既有 token：symlink 拒跟随、权限收回（POSIX）、内容校验。
+    坏则 None（触发重铸）。平台口径见 load_or_create_token docstring。"""
+    # symlink 拒绝先走可移植检查（Windows 无 O_NOFOLLOW，flag 是 0——只靠
+    # flag 在那里会真的跟随过去）；POSIX 侧 O_NOFOLLOW 仍保留，补
+    # is_symlink→open 之间的 TOCTOU 窗。
     try:
-        # O_NOFOLLOW：symlink 直接抛 OSError → None → 重铸（不跟随到他处）
+        if p.is_symlink():
+            return None
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(str(p), flags)
     except OSError:
         return None
     try:
-        st = os.fstat(fd)
-        # group/other 任一可读/写 → 先尝试收回 0600；收不回就弃用重铸
-        if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-            try:
-                os.fchmod(fd, 0o600)
-            except OSError:
-                return None
+        # 权限收回是 POSIX-only 关切（Windows 合成 mode 位 + 无 fchmod，
+        # 见 load_or_create_token docstring 第一条）
+        if os.name == "posix":
+            st = os.fstat(fd)
+            # group/other 任一可读/写 → 先尝试收回 0600；收不回就弃用重铸
+            if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                try:
+                    os.fchmod(fd, 0o600)
+                except OSError:
+                    return None
         with os.fdopen(fd, "r", encoding="utf-8", closefd=True) as fh:
+            fd = -1  # fdopen 已接管关闭权
             existing = fh.read().strip()
     except OSError:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
         return None
+    finally:
+        if fd >= 0:  # 拒用/异常路径：fd 尚未交给 fdopen，必须亲手关
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     return existing if _valid_token(existing) else None
 
 
