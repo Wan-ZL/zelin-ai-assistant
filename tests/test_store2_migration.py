@@ -352,6 +352,68 @@ class MigrationRefusalTestCase(unittest.TestCase):
 
 
 @unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
+class UnknownKeyRefusalTestCase(unittest.TestCase):
+    """未知顶层键 = 入库即静默丢字段（不可逆）——默认整体拒绝并点名键；
+    --allow-unknown 显式降级为 WARN + 丢弃（from_dict 语义）。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="store2-unknown-"))
+        self.reg = self.tmp / "registry"
+        self.reg.mkdir(parents=True)
+        card = _card("R-301", "detected")
+        card["mystery_field"] = "从未见过的顶层键"
+        (self.reg / "R-301.yaml").write_text(
+            yaml.safe_dump(card, allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_unknown_key_refuses_whole_run(self):
+        import act.lib.store2.migrate_yaml as m
+        db = self.tmp / "s.db"
+        rc = m.main(["--registry", str(self.reg), "--db", str(db)])
+        self.assertNotEqual(rc, 0)
+        # fail-atomic：错误先于建库，绝不半库
+        if db.exists():
+            conn = sqlite3.connect(db)
+            try:
+                has_cards = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                    " AND name='cards'").fetchone()
+                if has_cards:
+                    self.assertEqual(conn.execute(
+                        "SELECT COUNT(*) FROM cards").fetchone()[0], 0)
+            finally:
+                conn.close()
+
+    def test_error_names_the_offending_key(self):
+        # 点名键名是可修复性的关键（CLI 只回 rc，plan 层直接验错误文案）
+        import act.lib.store2.migrate_yaml as m
+        by_id, _ = m.scan_registry(self.reg)
+        p = m.plan_card("R-301", by_id["R-301"])
+        self.assertTrue(any("mystery_field" in e for e in p["errors"]))
+        p2 = m.plan_card("R-301", by_id["R-301"], allow_unknown=True)
+        self.assertEqual(p2["errors"], [])
+        self.assertTrue(any("mystery_field" in w for w in p2["warnings"]))
+
+    def test_allow_unknown_downgrades_to_warn_and_drops(self):
+        import act.lib.store2.migrate_yaml as m
+        db = self.tmp / "s.db"
+        rc = m.main(["--registry", str(self.reg), "--db", str(db),
+                     "--allow-unknown"])
+        self.assertEqual(rc, 0)
+        conn = sqlite3.connect(db)
+        try:
+            payload = json.loads(conn.execute(
+                "SELECT payload FROM cards WHERE id = 'R-301'").fetchone()[0])
+            self.assertNotIn("mystery_field", payload)  # 丢弃 = from_dict 语义
+            self.assertEqual(payload.get("id"), "R-301")
+        finally:
+            conn.close()
+
+
+@unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
 class MigrationDryRunTestCase(unittest.TestCase):
     def test_dry_run_writes_no_rows(self):
         tmp = Path(tempfile.mkdtemp(prefix="store2-dryrun-"))
