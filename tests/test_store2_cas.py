@@ -159,5 +159,45 @@ class AgentCreatePermissionTestCase(_StoreFixture):
         self.assertEqual(card["status"], "approved")
 
 
+class PurgeVsDispatchTestCase(_StoreFixture):
+    """purge 与运行中 dispatch 的互斥：卡先冻结会让收尾账无处落（曾是死锁），
+    两面都钉——purge 拒绝活 session，收尾账在卡已冻结时也照常落。"""
+
+    def test_purge_refused_while_dispatch_running(self):
+        self._mint("R-001", "trashed", prev_status="detected")
+        did = self.store.open_dispatch("R-001")
+        with self.assertRaises(IntegrityViolation) as cm:
+            self.store.purge_trashed("R-001")
+        self.assertEqual(cm.exception.code, "DISPATCH_ACTIVE")
+        self.assertEqual(self.store.get_card("R-001")["tombstone"], 0)
+        # 收尾后 purge 放行
+        self.store.close_dispatch(did, "stopped")
+        self.assertEqual(self.store.purge_trashed("R-001")["tombstone"], 1)
+
+    def test_close_dispatch_survives_purged_card(self):
+        # 模拟 crash-window 竞态：绕过 purge 闸门直接 tombstone（schema 对
+        # trashed 卡放行），close_dispatch 仍必须把台账收干净、不许炸
+        self._mint("R-001", "trashed", prev_status="detected")
+        did = self.store.open_dispatch("R-001")
+        self.store._conn().execute(
+            "UPDATE cards SET tombstone = 1, payload = '{}',"
+            " last_actor_type = 'system' WHERE id = 'R-001'")
+        self.store.close_dispatch(did, "failed", exit_code=1)
+        d = self.store.get_dispatches("R-001")[0]
+        self.assertEqual((d["status"], d["exit_code"]), ("failed", 1))
+        self.assertEqual(self.store.get_card("R-001")["tombstone"], 1)
+
+    def test_note_receipts_survive_purged_card(self):
+        # 回执 set-once 是诚实账（§32.2）：卡 purge 后补记也不许炸
+        self._mint("R-001", "trashed", prev_status="detected")
+        nid = self.store.add_note("R-001", "comment", "改方向", "user")
+        self.store.purge_trashed("R-001")
+        self.store.mark_note_delivered(nid)
+        self.store.mark_note_acked(nid)
+        note = self.store.get_notes("R-001")[0]
+        self.assertIsNotNone(note["delivered_at"])
+        self.assertIsNotNone(note["acked_at"])
+
+
 if __name__ == "__main__":
     unittest.main()

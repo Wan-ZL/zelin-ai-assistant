@@ -497,6 +497,14 @@ class Store:
                 raise NotFound("card", card_id)
             if row["tombstone"]:
                 return self._row_to_card(row)
+            if conn.execute("SELECT 1 FROM dispatches WHERE card_id = ?"
+                            " AND status = 'running'", (card_id,)).fetchone():
+                # 活 session 还在跑：先 close_dispatch 收尾再 purge——卡先冻结
+                # 会让收尾账无处落（历史上曾造成台账永久挂账）
+                raise IntegrityViolation(
+                    "DISPATCH_ACTIVE",
+                    f"card '{card_id}' has a running dispatch; close it before purge",
+                    {"card_id": card_id})
             rev = self._bump_revision(conn)
             # 不走 CAS：purge 是 retention 的单方面动作，语义上无并发编辑者
             conn.execute(
@@ -514,9 +522,11 @@ class Store:
     # CAS 只护卡片行本身的编辑，子表追加不该把并发编辑者顶成 409）
     # ----------------------------------------------------------------- #
     def _touch_card(self, conn, card_id: str, rev: int) -> None:
-        """子表变更盖章所属卡：board_rev 推新让增量同步看见（tombstone 卡会被
-        trigger 拦下 TOMBSTONE_FROZEN，调用方已预检）。"""
-        conn.execute("UPDATE cards SET board_rev = ?, updated = ? WHERE id = ?",
+        """子表变更盖章所属卡：board_rev 推新让增量同步看见。tombstone 卡按
+        WHERE 跳过——骨架行冻结（trigger 会 RAISE），而 close_dispatch/回执
+        set-once 这类收尾账必须照常落账，不许因卡已 purge 而永久挂账。"""
+        conn.execute("UPDATE cards SET board_rev = ?, updated = ?"
+                     " WHERE id = ? AND tombstone = 0",
                      (rev, self._now(), card_id))
 
     def _require_live_card(self, conn, card_id: str) -> sqlite3.Row:
