@@ -335,6 +335,109 @@ class PoisonMessageTestCase(unittest.TestCase):
                                side_effect=OSError("disk full")):
             radar_gmail._record_poison_message(9, TypeError("boom"))  # no raise
 
+    # -- PR #106 终审 MAJOR-7：台账 read-modify-write 上 radar.lock ---------- #
+    @unittest.skipIf(radar.fcntl is None, "no fcntl on this platform")
+    def test_poison_record_takes_the_radar_lock(self):
+        calls = []
+        real_flock = radar.fcntl.flock
+
+        def spy(fd, op):
+            calls.append(op)
+            return real_flock(fd, op)
+
+        with mock.patch.object(radar.fcntl, "flock", side_effect=spy):
+            radar_gmail._record_poison_message(77, TypeError("boom"))
+        self.assertIn(radar.fcntl.LOCK_EX | radar.fcntl.LOCK_NB, calls)
+        self.assertIn("gmail:uid:77", radar._load_failed_queue())
+
+    @unittest.skipIf(radar.fcntl is None, "no fcntl on this platform")
+    def test_poison_record_survives_held_lock_loudly(self):
+        # 锁被另一个 pass 持有（obsidian 整轮持锁是常态）：留痕**照写不误**
+        # + stdout 出声——绝不因锁竞争把案底静默扔掉。
+        import io
+        from contextlib import redirect_stdout
+        with open(config.STATE_DIR / radar.LOCK_PATH_NAME, "w") as holder:
+            radar.fcntl.flock(holder, radar.fcntl.LOCK_EX)
+            buf = io.StringIO()
+            with mock.patch.object(radar_gmail, "_LEDGER_LOCK_TRIES", 1), \
+                    mock.patch.object(radar_gmail, "_LEDGER_LOCK_INTERVAL", 0), \
+                    redirect_stdout(buf):
+                radar_gmail._record_poison_message(88, TypeError("boom"))
+        self.assertIn("gmail:uid:88", radar._load_failed_queue())
+        self.assertIn("without the lock", buf.getvalue())
+
+
+# --------------------------------------------------------------------------- #
+# PR #106 终审 MINOR-8：全军覆没 void pass（镜像 obsidian systemic 语义）
+# --------------------------------------------------------------------------- #
+class VoidPassGuardTestCase(unittest.TestCase):
+    """批里 ≥3 封且**全部**倒在毒邮件围栏上 = 通道级症状：marker 不越过这批
+    （下轮重扫），通道级告警按既有 skip/health 词表记 ``all_poisoned``；
+    只要有一封解析成功（哪怕是预过滤噪音）或毒邮件不足 3 封，照旧推进。"""
+
+    def setUp(self):
+        _clean_state()
+        self.addCleanup(_clean_state)
+        for name in (radar.FAILED_QUEUE_NAME, "radar_health.json"):
+            p = config.STATE_DIR / name
+            if p.exists():
+                p.unlink()
+            self.addCleanup(lambda p=p: p.unlink(missing_ok=True))
+        self._orig_pw = radar_gmail.get_app_password
+        radar_gmail.get_app_password = lambda cfg=None: "app-pw"
+        self.addCleanup(setattr, radar_gmail, "get_app_password", self._orig_pw)
+
+    @staticmethod
+    def _boom(msg, sender, subject):
+        raise TypeError("cannot unpack non-iterable NoneType object")
+
+    def _scan_imap(self, mails, skip_fn):
+        conn = _FakeConn(mails)
+        with mock.patch.object(radar_gmail, "connect_ex",
+                               return_value=(conn, None)), \
+                mock.patch.object(radar_gmail, "_should_skip",
+                                  side_effect=skip_fn):
+            return radar_gmail.scan(config.Config(),
+                                    extractor=_FakeLLM(extraction=[]))
+
+    def test_all_poisoned_pass_leaves_marker_unmoved(self):
+        created = self._scan_imap(
+            {5: POISON_RAW, 6: POISON_RAW, 7: POISON_RAW}, self._boom)
+        self.assertEqual(created, 0)
+        # marker 未写（起点 0，void 后不越过这批）
+        self.assertFalse((config.STATE_DIR / radar_gmail.STATE_FILE).exists())
+        # 通道级告警落既有 health 词表
+        health = json.loads(
+            (config.STATE_DIR / "radar_health.json").read_text(encoding="utf-8"))
+        self.assertEqual(health["gmail"]["skip_reason"], "all_poisoned")
+        # 案底照记（fetch 期即入台账，不作废）
+        queue = radar._load_failed_queue()
+        for uid in (5, 6, 7):
+            self.assertIn(f"gmail:uid:{uid}", queue)
+
+    def test_partial_poison_still_advances_marker(self):
+        real_skip = radar_gmail._should_skip
+
+        def boom_poison_only(msg, sender, subject):
+            if "poison" in str(msg.get("Message-ID", "")):
+                raise TypeError("boom")
+            return real_skip(msg, sender, subject)
+
+        created = self._scan_imap(
+            {5: POISON_RAW, 6: POISON_RAW, 7: POISON_RAW, 8: GOOD_RAW},
+            boom_poison_only)
+        self.assertEqual(created, 0)                  # extraction 为空
+        marker = json.loads((config.STATE_DIR / radar_gmail.STATE_FILE)
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(marker["last_uid"], 8)       # 有幸存者：照常推进
+
+    def test_fewer_than_three_poison_not_void(self):
+        created = self._scan_imap({5: POISON_RAW, 6: POISON_RAW}, self._boom)
+        self.assertEqual(created, 0)
+        marker = json.loads((config.STATE_DIR / radar_gmail.STATE_FILE)
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(marker["last_uid"], 6)       # N<3：不判 systemic
+
 
 if __name__ == "__main__":
     unittest.main()
