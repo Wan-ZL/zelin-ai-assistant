@@ -91,6 +91,27 @@ deliberately NOT imported.
    Changes:  string catalog replaced with this repo's copy; JSX
              provider replaced with a plain React context module.
 
+7. manage-taskboard agent skill (progressive-disclosure structure:
+   short SKILL.md + on-demand references/cli.md) and taskctl CLI
+   output contract
+   Upstream: skills/manage-taskboard/SKILL.md,
+             skills/manage-taskboard/references/cli.md,
+             cli/taskctl.mjs (output contract: one JSON object with
+             schemaVersion on stdout, one error JSON object on
+             stderr, exit codes 0/2/3/4/5, help-is-the-only-plain-
+             text-success discipline, hand-rolled option allowlist
+             parser)
+   Here:     skills/board-agent/SKILL.md,
+             skills/board-agent/references/cli.md,
+             act/boardctl.py
+   Changes:  domain rewritten from Codex Taskboard issues to this
+             repo's card board; command surface reduced to the
+             scoped agent channel (board/card/capture/comment — no
+             status moves, claims, thread bindings, attachments, or
+             cloud/companion machinery); taskctl's JS implementation
+             re-expressed in Python stdlib against this repo's
+             /api/board + /api/actions wire.
+
 Pattern-level references (re-implemented in this repository, not
 copied verbatim; attribution given in good faith):
 - SSE consume + 120ms debounce merged refetch (web/src/App.tsx
