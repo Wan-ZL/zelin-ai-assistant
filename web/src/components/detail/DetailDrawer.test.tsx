@@ -1,0 +1,105 @@
+// 抽屉行为测试：开合（selectCard/Esc/背板）、?card= 深链同步、详情渲染、
+// 复制为 Markdown、交付物页签切换。fetch 全程 stub——绝不打真 server。
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DetailDrawer } from "./DetailDrawer";
+import { resetStoreForTests, selectCard } from "../../store";
+
+const DETAIL = {
+  id: "R-101",
+  title: "给 example-bench 加导出",
+  lane: "needs_approval",
+  tier: "T1",
+  summary: "一句话摘要。",
+  plan: ["step A", "step B"],
+  dod: ["有导出按钮"],
+  sources: [{ who: "manager", channel: "slack", date: "2026-08-20", quote: "要能导出" }],
+  final_draft: "# Draft heading",
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return { ok: status < 400, status, json: async () => body } as Response;
+}
+
+beforeEach(() => {
+  window.history.replaceState(null, "", "/");
+  resetStoreForTests();
+  vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+    if (String(url).includes("/api/cards/")) return jsonResponse(DETAIL);
+    return jsonResponse({ ok: true });
+  }));
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
+});
+
+describe("DetailDrawer", () => {
+  it("renders nothing until a card is selected, then shows enriched fields", async () => {
+    const { container } = render(<DetailDrawer />);
+    expect(container.firstChild).toBeNull();
+
+    act(() => selectCard("R-101"));
+    await screen.findByText("step A");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("给 example-bench 加导出")).toBeTruthy();
+    expect(screen.getByText("有导出按钮")).toBeTruthy();
+    expect(screen.getByText("要能导出")).toBeTruthy();
+    // ?card= 深链已同步
+    expect(new URLSearchParams(window.location.search).get("card")).toBe("R-101");
+  });
+
+  it("closes on Escape and clears the deep link", async () => {
+    render(<DetailDrawer />);
+    act(() => selectCard("R-101"));
+    await screen.findByRole("dialog");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(new URLSearchParams(window.location.search).get("card")).toBeNull();
+  });
+
+  it("restores a ?card= deep link on mount", async () => {
+    window.history.replaceState(null, "", "/?card=R-101");
+    render(<DetailDrawer />);
+    await screen.findByRole("dialog");
+  });
+
+  it("switches to the deliverable tab and renders the final draft", async () => {
+    render(<DetailDrawer />);
+    act(() => selectCard("R-101"));
+    await screen.findByText("step A");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Deliverable" }));
+    await screen.findByRole("heading", { level: 1, name: "Draft heading" });
+  });
+
+  it("copies the card as markdown from the header button", async () => {
+    const writeText = vi.fn(async (_value: string) => undefined);
+    vi.stubGlobal("navigator", { ...window.navigator, clipboard: { writeText } });
+    render(<DetailDrawer />);
+    act(() => selectCard("R-101"));
+    await screen.findByText("step A");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy as Markdown" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    const copied = writeText.mock.calls[0][0];
+    expect(copied).toContain("# 给 example-bench 加导出");
+    expect(copied).toContain("- [ ] 有导出按钮");
+  });
+
+  it("offers copy-as-markdown from the context menu", async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { ...window.navigator, clipboard: { writeText } });
+    render(<DetailDrawer />);
+    act(() => selectCard("R-101"));
+    await screen.findByText("step A");
+
+    fireEvent.contextMenu(screen.getByRole("dialog"));
+    const item = await screen.findByRole("menuitem", { name: "Copy as Markdown" });
+    fireEvent.click(item);
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+  });
+});

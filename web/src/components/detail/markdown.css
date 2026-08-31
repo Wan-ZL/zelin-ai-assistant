@@ -1,0 +1,110 @@
+/* MarkdownDocument 版式——只引用 tokens.css 已有变量（CONVENTIONS §样式红线） */
+.zai-markdown {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.zai-markdown h1,
+.zai-markdown h2,
+.zai-markdown h3,
+.zai-markdown h4,
+.zai-markdown h5,
+.zai-markdown h6 {
+  margin: 1.2em 0 0.45em;
+  line-height: 1.3;
+}
+
+.zai-markdown h1 { font-size: 1.45em; }
+.zai-markdown h2 { font-size: 1.25em; }
+.zai-markdown h3 { font-size: 1.1em; }
+
+.zai-markdown p { margin: 0.55em 0; }
+
+.zai-markdown a { color: var(--accent); }
+.zai-markdown a:hover { color: var(--accent-hover); }
+
+.zai-markdown code {
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.zai-markdown pre {
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.zai-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.zai-markdown blockquote {
+  margin: 0.7em 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.zai-markdown ul,
+.zai-markdown ol {
+  margin: 0.55em 0;
+  padding-left: 1.6em;
+}
+
+.zai-markdown li { margin: 0.2em 0; }
+
+.zai-markdown hr {
+  border: none;
+  border-top: var(--border-hairline) solid var(--border-strong);
+  margin: 1.2em 0;
+}
+
+.zai-markdown table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
+.zai-markdown th,
+.zai-markdown td {
+  border: var(--border-hairline) solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+}
+
+.zai-markdown th { background: var(--column-header); }
+
+.zai-markdown img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* mermaid 沙箱容器与 fallback */
+.zai-mermaid { margin: 0.7em 0; }
+.zai-mermaid svg { max-width: 100%; height: auto; }
+
+.zai-mermaid-fallback details {
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.zai-mermaid-fallback summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.zai-mermaid-fallback[role="alert"] > p { color: var(--warning); }

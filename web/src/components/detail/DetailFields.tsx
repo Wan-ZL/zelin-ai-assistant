@@ -1,0 +1,272 @@
+// 详情 tab：GET /api/cards/{id} 增补详情的全字段渲染。
+// 已知语义字段给专属版式；未知字段落「其他字段」兜底区（wire add-only，
+// 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）。
+import { useState, type ReactNode } from "react";
+import { useI18n } from "../../i18n";
+import type { CardDetail, CardSource } from "../../types";
+import { copyText } from "./copyText";
+import { parseFoldNotes } from "./foldNotes";
+
+const LANE_LABELS: Record<string, [string, string]> = {
+  needs_approval: ["提案", "Proposal"],
+  running: ["运行中", "Running"],
+  needs_input: ["需输入", "Needs input"],
+  review: ["待验收", "In review"],
+  completed: ["阶段性完成", "Done"],
+  debt: ["潜在任务", "Backlog"],
+  trash: ["回收站", "Trash"],
+  archived: ["永久完成", "Archived"],
+};
+
+// 专属版式已覆盖的键——其余进「其他字段」兜底（渲染未知枚举值按字符串兜底，见 CONVENTIONS）
+const KNOWN_KEYS = new Set([
+  "id", "lane", "title", "name", "tier", "tier_hint", "state", "status", "hardness", "type",
+  "delivery_mode", "deadline", "days_left", "repeated", "repeated_mentions",
+  "cost_usd", "cost_estimate_usd", "show_cost", "green_sign", "green_sign_required", "processing",
+  "summary", "plan", "dod", "definition_of_done", "outputs", "sources", "notes", "execution",
+  "copy_cmd", "log", "cwd", "target_repo", "session_id", "short_id", "agent_name",
+  "started_at", "dispatched_at", "accepted_at", "review_at", "created", "updated", "trashed_at",
+  "permanent", "disagreement", "improvement_of", "reraised", "reraised_note", "waiting_for",
+  "last_error", "dispatch_error", "resume_exhausted", "delivered_summary", "final_draft",
+  "merged_into", "prev_status",
+]);
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function strList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))) : [];
+}
+
+/** 投影里的时间戳是 epoch 秒（dispatched_at/review_at/…）；字符串时间原样展示 */
+function formatWhen(value: unknown, locale: string): string | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 1e9 && value < 1e11) {
+    return new Date(value * 1000).toLocaleString(locale);
+  }
+  return str(value);
+}
+
+function CopyChip({ value, label }: { value: string; label: string }) {
+  const { text } = useI18n();
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="zai-detail-copy"
+      onClick={() => {
+        void copyText(value).then((ok) => {
+          setCopied(ok);
+          if (ok) window.setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      {copied ? text("已复制", "Copied") : label}
+    </button>
+  );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="zai-detail-section">
+      <h3>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+export interface DetailFieldsProps {
+  detail: CardDetail;
+}
+
+export function DetailFields({ detail }: DetailFieldsProps) {
+  const { text, locale } = useI18n();
+
+  const chips: Array<{ key: string; label: string; tone?: string }> = [];
+  const lane = str(detail.lane);
+  if (lane) {
+    const pair = LANE_LABELS[lane];
+    chips.push({ key: "lane", label: pair ? text(pair[0], pair[1]) : lane, tone: `lane-${lane}` });
+  }
+  for (const key of ["tier", "state", "status", "type", "hardness", "delivery_mode"] as const) {
+    const value = str(detail[key]);
+    if (value) chips.push({ key, label: key === "delivery_mode" ? `${text("交付", "delivery")}: ${value}` : value });
+  }
+  if (detail.green_sign === true || detail.green_sign_required === true) {
+    chips.push({ key: "green_sign", label: text("需要绿灯", "Green light required"), tone: "warn" });
+  }
+  if (detail.processing === true) chips.push({ key: "processing", label: text("生成中…", "Processing…"), tone: "warn" });
+  if (detail.permanent === true) chips.push({ key: "permanent", label: text("已永久删除", "Permanently deleted"), tone: "danger" });
+
+  const warnings: Array<{ key: string; label: string; value: string; tone: "warn" | "danger" }> = [];
+  const warnDefs: Array<[string, string, string, "warn" | "danger"]> = [
+    ["disagreement", "分歧", "Disagreement", "warn"],
+    ["waiting_for", "等待输入", "Waiting for", "warn"],
+    ["reraised_note", "再提名说明", "Re-raise note", "warn"],
+    ["last_error", "最近错误", "Last error", "danger"],
+    ["dispatch_error", "派发错误", "Dispatch error", "danger"],
+  ];
+  for (const [key, zh, en, tone] of warnDefs) {
+    const value = str(detail[key]);
+    if (value) warnings.push({ key, label: text(zh, en), value, tone });
+  }
+  if (detail.resume_exhausted === true) {
+    warnings.push({ key: "resume_exhausted", label: text("重试", "Retries"), value: text("自动重试已用尽", "Automatic resume attempts exhausted"), tone: "danger" });
+  }
+
+  const meta: Array<[string, string]> = [];
+  const deadline = str(detail.deadline);
+  if (deadline) {
+    const daysLeft = typeof detail.days_left === "number" ? text(`（剩 ${detail.days_left} 天）`, ` (${detail.days_left}d left)`) : "";
+    meta.push([text("截止", "Deadline"), `${deadline}${daysLeft}`]);
+  }
+  const repeated = detail.repeated ?? detail.repeated_mentions;
+  if (typeof repeated === "number" && repeated > 1) meta.push([text("重复提及", "Mentions"), `×${repeated}`]);
+  const cost = detail.cost_usd ?? detail.cost_estimate_usd;
+  if (detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
+  const improvementOf = str(detail.improvement_of);
+  if (improvementOf) meta.push([text("改进自", "Improves"), improvementOf]);
+  const mergedInto = str(detail.merged_into);
+  if (mergedInto) meta.push([text("已并入", "Merged into"), mergedInto]);
+  const agent = str(detail.agent_name);
+  if (agent) meta.push([text("执行代号", "Agent"), agent]);
+  const session = str(detail.short_id) ?? str(detail.session_id);
+  if (session) meta.push(["Session", session]);
+  const repo = str(detail.target_repo) ?? str(detail.cwd);
+  if (repo) meta.push([text("工作目录", "Workdir"), repo]);
+  const timeDefs: Array<[string, string, unknown]> = [
+    [text("创建", "Created"), "created", detail.created],
+    [text("更新", "Updated"), "updated", detail.updated],
+    [text("起跑", "Started"), "started_at", detail.started_at],
+    [text("派发", "Dispatched"), "dispatched_at", detail.dispatched_at],
+    [text("接受", "Accepted"), "accepted_at", detail.accepted_at],
+    [text("交付", "Delivered"), "review_at", detail.review_at],
+    [text("入回收站", "Trashed"), "trashed_at", detail.trashed_at],
+  ];
+  for (const [label, , value] of timeDefs) {
+    const rendered = formatWhen(value, locale);
+    if (rendered) meta.push([label, rendered]);
+  }
+  const log = str(detail.log);
+
+  const plan = strList(detail.plan);
+  const dod = strList(detail.dod ?? detail.definition_of_done);
+  const outputs = strList(detail.outputs);
+  const sources = Array.isArray(detail.sources) ? (detail.sources as CardSource[]) : [];
+  const { folds, rest } = parseFoldNotes(detail.notes);
+  const execution = detail.execution && typeof detail.execution === "object" && !Array.isArray(detail.execution)
+    ? Object.entries(detail.execution as Record<string, unknown>)
+    : [];
+  const copyCmd = str(detail.copy_cmd);
+  const unknown = Object.entries(detail).filter(([key, value]) => !KNOWN_KEYS.has(key) && value != null);
+
+  return (
+    <div className="zai-detail-fields">
+      {chips.length > 0 && (
+        <div className="zai-detail-chips">
+          {chips.map((chip) => (
+            <span key={chip.key} className={`zai-chip${chip.tone ? ` zai-chip--${chip.tone}` : ""}`}>{chip.label}</span>
+          ))}
+        </div>
+      )}
+
+      {warnings.map((warning) => (
+        <p key={warning.key} className={`zai-detail-callout zai-detail-callout--${warning.tone}`}>
+          <strong>{warning.label}</strong> {warning.value}
+        </p>
+      ))}
+
+      {str(detail.summary) && <p className="zai-detail-summary">{str(detail.summary)}</p>}
+      {str(detail.delivered_summary) && (
+        <Section title={text("交付总结", "Delivered summary")}>
+          <p className="zai-detail-summary">{str(detail.delivered_summary)}</p>
+        </Section>
+      )}
+
+      {meta.length > 0 && (
+        <dl className="zai-detail-meta">
+          {meta.map(([label, value]) => (
+            <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+          ))}
+        </dl>
+      )}
+
+      {plan.length > 0 && (
+        <Section title={text("计划", "Plan")}>
+          <ol>{plan.map((step, index) => <li key={index}>{step}</li>)}</ol>
+        </Section>
+      )}
+      {dod.length > 0 && (
+        <Section title={text("验收标准", "Definition of done")}>
+          <ul className="zai-detail-dod">{dod.map((item, index) => <li key={index}>{item}</li>)}</ul>
+        </Section>
+      )}
+      {outputs.length > 0 && (
+        <Section title={text("产出", "Outputs")}>
+          <ul>{outputs.map((item, index) => <li key={index}>{item}</li>)}</ul>
+        </Section>
+      )}
+
+      {sources.length > 0 && (
+        <Section title={text("来源引文", "Sources")}>
+          {sources.map((source, index) => (
+            <blockquote key={index} className="zai-detail-source">
+              <p className="zai-detail-source-quote">{str(source?.quote) ?? text("（无引文）", "(no quote)")}</p>
+              <footer>
+                {[str(source?.who), str(source?.channel), str(source?.date)].filter(Boolean).join(" · ")}
+                {str(source?.ref) && <span className="zai-detail-source-ref"> · {source.ref}</span>}
+              </footer>
+            </blockquote>
+          ))}
+        </Section>
+      )}
+
+      {(folds.length > 0 || rest.length > 0) && (
+        <Section title={text("并入记录 / 备注", "Fold notes")}>
+          <ul className="zai-detail-folds">
+            {folds.map((fold, index) => (
+              <li key={`fold-${index}`}>
+                <span className="zai-chip">{fold.kind}</span> {fold.text}
+                {fold.ts && <span className="zai-detail-dim"> @{fold.ts}</span>}
+                {fold.splitInto && <span className="zai-detail-dim"> {text("已拆出", "split into")} {fold.splitInto}</span>}
+              </li>
+            ))}
+            {rest.map((line, index) => <li key={`rest-${index}`}>{line}</li>)}
+          </ul>
+        </Section>
+      )}
+
+      {(copyCmd || log) && (
+        <Section title={text("会话", "Session")}>
+          {copyCmd && (
+            <div className="zai-detail-cmd">
+              <code>{copyCmd}</code>
+              <CopyChip value={copyCmd} label={text("复制命令", "Copy command")} />
+            </div>
+          )}
+          {log && <p className="zai-detail-dim">{text("日志：", "Log: ")}{log}</p>}
+        </Section>
+      )}
+
+      {execution.length > 0 && (
+        <Section title={text("执行元数据", "Execution")}>
+          <dl className="zai-detail-meta">
+            {execution.map(([key, value]) => (
+              <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>
+            ))}
+          </dl>
+        </Section>
+      )}
+
+      {unknown.length > 0 && (
+        <Section title={text("其他字段", "Other fields")}>
+          <dl className="zai-detail-meta">
+            {unknown.map(([key, value]) => (
+              <div key={key}><dt>{key}</dt><dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>
+            ))}
+          </dl>
+        </Section>
+      )}
+    </div>
+  );
+}
