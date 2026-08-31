@@ -757,9 +757,11 @@ def build_dashboard(
                     "target_kind": target_kind,
                     "tier": _s(req.tier),
                     "tier_hint": TIER_HINTS.get(_s(req.tier), ""),
-                    # W17 add-only：生效档位（外部来源强制 T2；余同声明 tier）。
-                    # 存量卡无 origin_trust 字段 => 恒等于 tier，客户端可放心
-                    # decodeIfPresent。审批语义仍由 tier 决定，接线见 amendments §W17。
+                    # W17 add-only：生效档位（外部来源强制 T2；否则同声明 tier）。
+                    # v0.48.1（§50）：外部出身 = 显式 origin_trust=external 章
+                    # **或** sources 现算为 external——缺章卡也从 sources 现算，
+                    # 不再恒等于 tier。审批语义仍由 effective_tier 决定，
+                    # 客户端 decodeIfPresent 兼容（缺字段回落 tier）。
                     "effective_tier": risk.effective_tier(req).tier,
                     "hardness": req.hardness,
                     "deadline": req.deadline,

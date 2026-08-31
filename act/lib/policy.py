@@ -48,8 +48,14 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 #       为 "agent"（boardctl 自报）/"remote"（act.webui 远程面）的 capture，
 #       actd 按落款盖捕获源 channel——AI/远程投递的候选一律回人工审批
 #   split — actd split_note：车主拆折叠备注成新卡（文本非手打，保守要审批）
+#   digest / weekly-digest — AI 自提的 digest 建议卡（act/digest.py 与
+#       act/weekly_digest.py 的 SOURCE_CHANNEL 常量，逐字同款）：AI 从积累的
+#       ingest 里挖出的建议，天然是 proposed（需 owner 批准）。**遗漏即执行
+#       面 bug**：W17 自 sources 现算 effective_tier 后（§50 v0.48.1），漏收
+#       这两个 channel 会 fail-closed 成 external，把存量 digest 卡一夜错抬成
+#       T2+强制扩写——两个常量必须与本表同步。
 #   analytics / claude_code / radar-diagnostic / radar-parse-degraded — AI 自
-#       提形态（digest 建议卡、会话挖掘卡、§40/§47.2 诊断降级卡）
+#       提形态（会话挖掘卡、§40/§47.2 诊断降级卡；analytics 是遥测建议通道）
 #   meeting / audio — obsidian radar 的会议音频与笔记通道
 #   slack / gmail — 第三方消息（radar_slack 非 self-DM 路径、radar_gmail）
 #   screen — §45 防御行：屏幕永不铸卡，真出现即异常，按最不信任处理
@@ -59,6 +65,8 @@ CHANNEL_CLASS: dict = {
     "agent_capture": PROPOSED,
     "remote_capture": PROPOSED,
     "split": PROPOSED,
+    "digest": PROPOSED,
+    "weekly-digest": PROPOSED,
     "analytics": PROPOSED,
     "claude_code": PROPOSED,
     "radar-diagnostic": PROPOSED,

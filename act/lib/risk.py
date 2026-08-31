@@ -56,7 +56,12 @@ def effective_tier(card: Any) -> EffectiveTier:
         章可以缺,出身不会缺,与调度侧 may_auto_dispatch「不读章、每次从
         sources 现算」同一条纪律(堵 stamp-less 手改 YAML 裸批的洞)。
     空 sources 的存量卡现算为 proposed,声明档位保持不变——「全部历史卡
-    一夜抬成 T2」不会发生,抬档的只有真带 slack/gmail/未知渠道来源的卡。
+    一夜抬成 T2」不会发生,抬档的只有真判 external 的卡:slack/gmail,以及
+    **任何不在 policy.CHANNEL_CLASS 表内的 channel**(fail-closed)。后者是
+    刀刃:每一个真实的生产端 channel 都必须登记在表内,否则一个 proposed
+    级来源(如 digest/weekly-digest)会被静默错判 external、错抬 T2——所以
+    新增任何铸卡 channel 都要同步 CHANNEL_CLASS(v0.48.1 补收 digest/
+    weekly-digest 正是此雷,见 policy.py 表内注)。
     """
     declared = str(_field(card, "tier") or "T1").strip() or "T1"
     trust = str(_field(card, "origin_trust") or "").strip().lower()
