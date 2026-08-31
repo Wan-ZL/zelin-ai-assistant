@@ -77,6 +77,20 @@ FIELD_DEFAULTS = {
 assert set(CORE_ORDER) | set(OPTIONAL_ORDER) == set(FIELD_DEFAULTS)
 
 
+def say(msg: str, *, err: bool = False) -> None:
+    """store2 CLI 输出的 Windows 安全形：cp1252 等非 UTF-8 stdout/stderr 印
+    不出中文时降级 backslashreplace——绝不让一条进度行的 UnicodeEncodeError
+    崩掉迁移/导出本体（live CI 事故 2026-08-31：py3.9 Windows 管道默认
+    cp1252，migrate 的 NOTE/WARN 中文全数炸 setUpClass）。migrate_yaml 复用。"""
+    stream = sys.stderr if err else sys.stdout
+    try:
+        print(msg, file=stream)
+    except UnicodeEncodeError:
+        enc = getattr(stream, "encoding", None) or "ascii"
+        print(msg.encode(enc, "backslashreplace").decode(enc, "replace"),
+              file=stream)
+
+
 def dropped_keys(raw: dict) -> list:
     """from_dict 会静默丢弃的未知顶层键（`repo` 只在被当 target_repo 别名消费
     时不算丢弃）——migrate 的 dry-run 用它把丢弃报出来。"""
@@ -195,10 +209,10 @@ def export_db(db_path: Path, out_dir: Path, prune: bool = False) -> int:
                 p.unlink()
                 pruned += 1
 
-    print(f"export: {written} written, {unchanged} unchanged, "
-          f"{tombstones} tombstones skipped, {pruned} pruned -> {out_dir}")
+    say(f"export: {written} written, {unchanged} unchanged, "
+        f"{tombstones} tombstones skipped, {pruned} pruned -> {out_dir}")
     for msg in problems:
-        print(f"export: WARN {msg}", file=sys.stderr)
+        say(f"export: WARN {msg}", err=True)
     return 2 if problems else 0
 
 
@@ -213,7 +227,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     db = Path(args.db)
     if not db.exists():
-        print(f"export: DB 不存在: {db}", file=sys.stderr)
+        say(f"export: DB 不存在: {db}", err=True)
         return 1
     return export_db(db, Path(args.out), prune=args.prune)
 

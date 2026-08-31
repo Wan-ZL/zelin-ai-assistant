@@ -324,6 +324,25 @@ class MigrationTestCase(unittest.TestCase):
 
 
 @unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
+class SafePrintTestCase(unittest.TestCase):
+    """PR #106 追加（Windows CI 2026-08-31）：migrate/export 的进度行含中文，
+    py3.9 Windows 管道默认 cp1252——裸 print 直接 UnicodeEncodeError 崩掉
+    setUpClass（本文件全组 ERROR 的真凶）。say() 必须在印不出的流上降级
+    backslashreplace 而非 raise。"""
+
+    def test_say_survives_non_utf8_stream(self):
+        import io
+        from contextlib import redirect_stdout
+        from act.lib.store2.export_yaml import say
+        buf = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        with redirect_stdout(buf):
+            say("migrate: WARN 中文警告")           # 绝不 raise
+        buf.flush()
+        raw = buf.buffer.getvalue()
+        self.assertIn(b"migrate: WARN", raw)        # 内容降级后仍到达流
+
+
+@unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
 class OriginTrustRoundTripTestCase(unittest.TestCase):
     """PR #106 终审 MAJOR-3/MINOR-11：origin_trust 权威章的迁移与 round-trip。
     手打出生、后被 gmail 源 fold 过的卡（live 铸卡/fold 侧已盖章 external）：

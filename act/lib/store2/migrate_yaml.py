@@ -37,13 +37,12 @@ import email.utils
 import json
 import re
 import sqlite3
-import sys
 from pathlib import Path
 
 import yaml
 
 from ..policy import classify_origin
-from .export_yaml import dropped_keys, dump_card_yaml, normalize_card
+from .export_yaml import dropped_keys, dump_card_yaml, normalize_card, say
 
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _UTC = _dt.timezone.utc
@@ -447,7 +446,7 @@ def main(argv=None) -> int:
                 plans.append(p)
         if card_errors:
             for e in card_errors:
-                print(f"migrate: ERROR {e}", file=sys.stderr)
+                say(f"migrate: ERROR {e}", err=True)
             raise MigrateError(f"{len(card_errors)} 张卡无法忠实入库，整体拒绝"
                                "（修复源文件或修 schema 后重来）")
         plans = _topo_order(plans)
@@ -475,28 +474,28 @@ def main(argv=None) -> int:
             con.close()
 
         for msg in scan_notes:
-            print(f"migrate: NOTE {msg}")
+            say(f"migrate: NOTE {msg}")
         if args.dry_run:
             for p in plans:
                 h = p["hot"]
                 extra = "".join(f"\n    WARN {w}" for w in p["warnings"])
-                print(f"  {h['id']}: status={h['status']} tier={h['tier']} "
-                      f"origin_trust={h['origin_trust']} "
-                      f"created={h['created']}({p['created_from']}) "
-                      f"sources={len(p['sources'])}{extra}")
+                say(f"  {h['id']}: status={h['status']} tier={h['tier']} "
+                    f"origin_trust={h['origin_trust']} "
+                    f"created={h['created']}({p['created_from']}) "
+                    f"sources={len(p['sources'])}{extra}")
         else:
             for p in plans:
                 for w in p["warnings"]:
-                    print(f"migrate: WARN {p['hot']['id']}: {w}")
+                    say(f"migrate: WARN {p['hot']['id']}: {w}")
         n_src = sum(len(p["sources"]) for p in plans)
         n_warn = sum(len(p["warnings"]) for p in plans)
         mode = "DRY-RUN（:memory: 排演通过，目标零接触）" if args.dry_run else "DONE"
-        print(f"migrate: {mode} — {len(plans)} cards, {n_src} source rows, "
-              f"{n_warn} warnings, target={args.db}({target_state}), "
-              f"board_revision=1, readback 等价校验全过")
+        say(f"migrate: {mode} — {len(plans)} cards, {n_src} source rows, "
+            f"{n_warn} warnings, target={args.db}({target_state}), "
+            f"board_revision=1, readback 等价校验全过")
         return 0
     except MigrateError as e:
-        print(f"migrate: REFUSED/FAILED — {e}", file=sys.stderr)
+        say(f"migrate: REFUSED/FAILED — {e}", err=True)
         return 2
 
 
