@@ -1,10 +1,9 @@
 """统一 error envelope（BUILD-CONTRACT §2.1）。
 
 所有 API 错误 → ``{"error":{"code":"...","message":"...","details":{}}}``。
-codes 定案四个：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / INTERNAL_ERROR。
-// TODO(contract): 契约只点名四个 code，但 §2.1 要求非 darwin 的 reveal 返回
-// 501 —— 这里保守地补一个 NOT_IMPLEMENTED（501 专用），不复用语义不符的
-// 既有 code；如需收编进正式词表由修宪 PR 定夺。
+codes 词表（CONTRACT §49，v0.48 已入典）：UNKNOWN_FIELD / INVALID_FIELD /
+NOT_FOUND / INTERNAL_ERROR / NOT_IMPLEMENTED（501 专用，reveal 非 darwin——
+add-only 正式收编，原 TODO(contract) 关闭）。
 """
 from __future__ import annotations
 

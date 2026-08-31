@@ -1,5 +1,7 @@
 """store2 存取层 — SQLite 地基的唯一写入口（BUILD-CONTRACT §3；PR2 不接线，actd 不 import）。
 
+契约：docs/CONTRACT.md §53（休眠地基——schema 版本纪律 + agent 转移墙；NOT YET WIRED）。
+
 职责（B2，与 schema.md「给 B2/B3/B4 的接口约定」逐条对应）：
 * 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接
 * 写事务 helper：BEGIN IMMEDIATE → board_revision +1 → 新值盖到被触碰卡的 board_rev → COMMIT

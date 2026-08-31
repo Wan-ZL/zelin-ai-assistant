@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""boardctl — agent 侧看板 CLI（scoped channel，M5）。
+"""boardctl — agent 侧看板 CLI（scoped channel，M5；契约 docs/CONTRACT.md §52）。
 
 给 headless Claude-Code agent 用的窄接口：读看板/卡片详情，投 capture
 候选（走 triage 三选一闸门，等价一条手动 note），给卡片留 comment/

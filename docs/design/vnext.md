@@ -1,6 +1,6 @@
 # v-next 设计落档（repo 内契约誊本 + 修宪草案）
 
-状态:**DRAFT**(day-1 build,2026-08-30)。本文是外部 build contract(`dashi-research/BUILD-CONTRACT.md`)的 repo 内浓缩誊本 + D1 修宪草案。**本文不是法典**——与 `docs/CONTRACT.md` 冲突时以 CONTRACT 为准;本文草拟的 §49 在修宪 PR 合入 CONTRACT 之前无法律效力。证据链:`dashi-research/SRC-SYNTHESIS.md`、`src-verify.md`(源码级核验,repo 外)。
+状态:**已入典**(v0.48 修宪批次,2026-08-31)——本文 8.3 草案已落 `docs/CONTRACT.md` **§49**(web 面),宪法 localhost 例外落 §0 第 9 条修宪段,第 7 条走执法注 A 案(§49 内);全批次编号对照见 `docs/design/vnext-amendments.md` 头部状态块(§49-§54 + §44.3-S + 各在位修订)。本文是外部 build contract(`dashi-research/BUILD-CONTRACT.md`)的 repo 内浓缩誊本 + D1 修宪草案,自此转为历史证据链。**本文不是法典**——与 `docs/CONTRACT.md` 冲突时以 CONTRACT 为准。证据链:`dashi-research/SRC-SYNTHESIS.md`、`src-verify.md`(源码级核验,repo 外)。
 
 ## 1. Owner 决策(2026-08-30 锁定)
 
@@ -96,7 +96,7 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 - **第 9 条(隐私分层):触及但不破**——新增一个本地网络面。§49 固定三道闸:loopback-only 硬编码、交付物路径 server 端推导、零新增上传面。第 9 条本文不改(新面不出本机,不触「上传面」)。
 - 其余条款(2/3/4/5/6/8/10/11)不触及;第 5 条(围栏)与第 2 条(可逆)作为 §5 保留不变量随迁移显式带走。
 
-### 8.3 新 §49 提案措辞(DRAFT;编号 49 预留——CONTRACT 现行至 §48,编号永不复用)
+### 8.3 新 §49 提案措辞(已入典——正式文本见 docs/CONTRACT.md §49,含 M8.2 三处增补;以下保留 day-1 草案原文作历史)
 
 > ## 49. v-next web 面 — 两文件契约的又一客户端(server/ + web/)
 >
@@ -114,10 +114,10 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 
 ## 9. TODO(contract) 清单(本文自己的未决项)
 
-- TODO(contract): §49 编号已预留但**未写入** docs/CONTRACT.md——修宪 PR(集成之后、接线之前)才落法典;在那之前本文 8.3 仅为草案。
-- TODO(contract): server 动词白名单的最终集合以 A3(inbox_writer)读完 live §3/§10 + Store.swift 后的实现为准;若 A3 收窄为「PR1 UI 实际用到的动词子集」,本文 §6 与 §49 草案须同步收窄。
-- TODO(contract): 宪法第 7 条的 react/react-dom「构建侧」定位措辞(8.2)需 owner 在修宪 PR 里确认——是写进 §49(推荐,条文不动)还是直接给第 7 条加括号执法注。
-- TODO(contract): `origin_trust` 字段(§3 信任矩阵)属 PR2/PR3 范围,字段名与取值枚举尚未进 CONTRACT——store2 接线的修宪案一并立法。
+- ~~TODO(contract): §49 编号已预留但未写入 docs/CONTRACT.md~~ **已落**(v0.48 修宪批次,CONTRACT §49)。
+- ~~TODO(contract): server 动词白名单的最终集合~~ **已定**(T-2:= docs/design/inbox-actions.md §2+§3 目录,golden 33 件钉死;§49 引用之)。
+- ~~TODO(contract): 宪法第 7 条的 react/react-dom「构建侧」定位措辞~~ **已裁 A 案**(§49 执法注,第 7 条条文零改动;T-3/T-20)。
+- ~~TODO(contract): `origin_trust` 字段尚未进 CONTRACT~~ **已提前入宪**(T-4:四值词表随 §50 立法,registry add-only optional 字段;store2 CHECK 放宽留给接线迁移,T-15)。
 - TODO(contract): NOTICE 中 fork 目的地路径按最终落地文件名 reconcile(integration agent 终裁)。
 - TODO(wiring): wiring PR must verify actd validates feedback/capture image paths are under state/attachments/ before LLM attachment (review-ui finding 7).
 

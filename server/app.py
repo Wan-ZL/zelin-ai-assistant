@@ -7,6 +7,8 @@
   本层校验，actions 的字段闸门归 inbox_writer/G1）。
 - PR1 无 token（localhost 单用户过渡）。
   # TODO(PR3): instance token —— 在 _route_* 之前加统一鉴权挂点。
+
+契约：docs/CONTRACT.md §49（路由/SSE/CSP/error envelope/localhost 例外的法源）。
 """
 from __future__ import annotations
 
@@ -176,8 +178,8 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise InvalidFieldError("bad Content-Length")
         if length > MAX_BODY_BYTES:
-            # // TODO(contract): 413 的 envelope code 契约未点名，保守复用
-            # INVALID_FIELD（不新增词表项）
+            # CONTRACT §49（v0.48 追认）：413 复用 INVALID_FIELD——status 已
+            # 表意，不为 loopback 面扩词表
             raise InvalidFieldError("body too large",
                                     {"limit": MAX_BODY_BYTES}, status=413)
         raw = self.rfile.read(length)

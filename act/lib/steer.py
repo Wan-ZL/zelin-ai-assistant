@@ -1,6 +1,8 @@
 """追加指令中继（steer relay）——owner 对 executing 卡的评论送进 live session。
 
-背景（vnext 锁定决策 / §44.3-S 修宪草案，见 docs/design/vnext-amendments.md）：
+契约：docs/CONTRACT.md §44.3-S（已入典；起草稿 docs/design/vnext-amendments.md）。
+
+背景（vnext 锁定决策）：
 运行中卡片上的 owner 评论不再是「打回重批」，而是对正在执行的 session 的
 中途转向指令（steer）。投递复用既有 §44.3 briefing 机制的送达点——actd 只在
 §39.2 安全窗口（roster blocked，或会话已死的 resume 时机）flush，working +

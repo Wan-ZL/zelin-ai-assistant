@@ -1,6 +1,8 @@
 # vnext 修宪草案（ratification-ready）
 
-本文件收集 v-next wire 团队的全部法条改动草案。本 PR **不动 `docs/CONTRACT.md`**；每节按可直接并入 CONTRACT 的措辞书写，owner 批准后由 integrator 落入正文（编号沿 CONTRACT 惯例分配新 §，永不复用旧号）。各 builder 只追加自己的小节，不改别人的。
+> **状态：已入典（v0.48，2026-08-31）**。本文全部草案已按 M8.1 地图落进 `docs/CONTRACT.md`，编号对照：PR1/M8.2 → **§49**（web 面）；M1.a + W17 + T-28/T-29 → **§50**（信任矩阵 + effective tier + ingress 落款）；M1.b + M1.c + §M6.2 + C-2/C-6 → **§51**（自动派发天花板 + queued 词表）；M5 → **§52**（boardctl + board-agent skill）；store2（T-7~T-16 终裁）→ **§53**（休眠地基，NOT YET WIRED）；shell 薄壳 → **§54**；W-steer/M2 + §M6.1 + C-3/C-4 → **§44.3-S**（含 §2 v0.48 字段块、§32.2 comment 白名单扩 executing、§39.2 steer 家族追记）；W18 → **§41 修订**（+ §31 追记、§34 引用注）；W17 引用注 → **§7**；W1.a → **§38.4**；W1.c → **§10 修订**；T-17 → **§3 追记**；T-18 → **§10 追记**；F1/F2/F3 → **§14 追记 / §31 修订 / §32.4**；宪法 localhost 例外 → **§0 第 9 条修宪段**。本文自此转为历史证据链——与 CONTRACT 冲突时以 CONTRACT 为准。
+
+本文件收集 v-next wire 团队的全部法条改动草案。原 build PR **不动 `docs/CONTRACT.md`**；每节按可直接并入 CONTRACT 的措辞书写，owner 批准后由 integrator 落入正文（编号沿 CONTRACT 惯例分配新 §，永不复用旧号）。各 builder 只追加自己的小节，不改别人的。
 
 ---
 
@@ -315,3 +317,32 @@ M1/M2/W1/W17/W18/M6/M8 的裁决在本节全部接线完毕。落点：`act/actd
 - **steer relay 外部可观察契约**（`tests/test_steer_relay.py`，8 例）：遥测词表 `inbox_steer`/`steer_delivered(n)`/`steer_dropped(reason=done|attempts)`；flush **之后**重放同一 inbox 文件经 delivered 台账去重（steer_count 不涨、不二次送达）；dropped steer 不进 dashboard `steers[]`（C-4）、可见性由 notes `[追加指令未送达]` 承担；EXECUTING 卡评论绝不触发基线 fold（无 `[修改方向]`、不退 card_sent）；空评论 noop 不动卡。同文异 ts = 两条新指令的 dedup 判例已在 `test_steer.py`/`test_actd_wire.py` 钉死，此处不重复。
 - **W1 病根复现**（`tests/test_inventory_quota.py` +2 例）：critique 场景 = 100 张 delivered + 8 张 open——旧配额（live v0.20.0 硬钉 closed）下 open 全部被挤出 60 窗，反转后 open 永不掉窗、delivered 恰吃 recency 最高的 20 张；55 open + 100 delivered 时 closed 份额缩到 5（recency cap 是上限不是配额）。
 - **W18 端到端**（`tests/test_webui_remote_gate.py` +3 例）:闸门每请求热读 config（开合无需重启 server）；default-deny 的降级记录进 actd 长成 RAISING 提案（origin_trust=hand）且 `executor.dispatch` 永不被叫——「转 propose」钉到卡为止；**现状钉子**：闸开的 `mode:"run"` 目前仍按普通 capture 走提案管线（§34 actd 侧未接线，向后安全）——§34 落地的 session 必须更新 `test_gate_open_mode_run_still_plain_capture_in_actd`。
+
+---
+
+## F — fire fixes（live 运行实证的三处守护进程病灶，2026-08-31）
+
+三处都是 live 安装上直接观测到的事故，修复随本 PR 落地；法条按 ratification-ready 措辞给出，并入时挂靠既有 §。
+
+### F1 — §14 追记：gmail 毒邮件围栏（宪法 11）
+
+**live 事故**：一封 `Date` 头畸形的邮件让 email 库在 header 惰性解析处抛 `TypeError`（Python 3.9 的 `parsedate_to_datetime`，`radar_gmail.fetch_new_messages` 组装消息字段时触发），整个 gmail pass 崩掉且每轮卡在同一封邮件上。
+
+**新法条（挂 §14）**：IMAP 路径的 per-message 解析（`message_from_bytes`、header 访问、预过滤、字段组装）整段围栏：任一步抛异常 → 该邮件按已放弃记入既有雷达重试台账 `state/radar_failed.json`（键 `gmail:uid:<n>`，`gave_up:true`——marker 已推进、无重试语义，纯案底）+ analytics 事件 `radar_message_failed{source,uid,error:<异常类型名>}`（error 只带类型名不带 message——异常文本可能内嵌邮件头内容，宪法第 9 条），pass 照常继续。案底键自带 20 条上限（uid 序挤最老）；obsidian 雷达的「note 已删除 → 销案」对账对 `gmail:uid:*` 前缀豁免（它不是 note 路径，销了 = 留痕形同虚设）。留痕两路皆 best-effort，失败只吞掉。判例：`tests/test_radar_gmail.py::PoisonMessageTestCase`、`tests/test_radar.py::PoisonLedgerReconcileTestCase`。
+
+### F2 — §31 DOWN 追记：change-gate 摘要剔除易变字段
+
+**live 事故**：dashboard.json 每次重建都重打 `generated_at`（内容一个字节没变也打），而 DOWN change-gate 直接 sha256 原始字节——每次重建 = 一次全量加密快照推送（live 实测 ~30.5 万次推送、2-4GB/天，全是重复上传）。
+
+**新法条（修订 §31 DOWN 条目）**：change-gate 摘要改为「剔除易变顶层键后的 canonical JSON（sort_keys）」的 sha256；易变键表 add-only，首发只含 `generated_at`。推送 payload **仍是原始字节**（`generated_at` 保留给手机端），只有闸门摘要看剥离形；hash 只在本地、绝不上传（原语义不变）。dashboard 不是 JSON object 时退回原始字节摘要（honest fallback：坏 dashboard 顶多退回旧的逢重建必推行为，绝不漏推真变化）。升级后首轮因摘要口径切换会多推一次，一次性、无害。判例：`tests/test_syncd.py::GateDigestTestCase` / `DownTestCase::test_generated_at_only_rebuild_pushes_nothing`。
+
+### F3 — 新条目（挂 §31/§32 旁）：常驻 daemon 日志自压缩
+
+**live 事故**：`state/syncd.log` 涨到 74MB——actd / syncd 是 KeepAlive 常驻进程，进程内 `_log()` 逐行 append、从不轮转。
+
+**新法条**：`state/actd.log` 与 `state/syncd.log` 沿用 `registry_writes.jsonl` 的既有自压缩模式（§34bis 写入台账）：每次 append 后检查，超过 ~1MB 只保留最近半数行（atomic tmp+replace）。实现收敛在 `act/lib/logcap.cap`（stdlib only）；单写者语义（每个日志只有它自己的 daemon 写）；压缩 best-effort，任何失败只吞掉、绝不反噬 daemon。launchd 自管的 `*.launchd.log` / cron 重定向日志不在此列（launchd 持 fd，进程内 replace 会写回旧 inode）。判例：`tests/test_logcap.py`。
+
+### F4/F5 — 僵尸复核结论（无代码改动）
+
+- **radar_imessage**：本树 `import act.radar_imessage` = `ModuleNotFoundError`——模块在 v0.21 已整体退役（CONTRACT §13 v0.21 弃用说明），`act/launchd/` 亦无 imessage plist。live 观测到的 `AttributeError: radar_slack._CMD_RE` 崩溃来自旧安装残件（orphan-base artifact），v0.47/v-next 无此代码，不需要也不应在本 PR 动它。
+- **Models.swift 24 处重复声明**：本树 `mac/Sources/` 根本没有 Models.swift，`mac/build.sh` 全量编译 + 装配 + 签名通过（0.48.0）——该 finding 同为 orphan-base artifact，不做任何事。

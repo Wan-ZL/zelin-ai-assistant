@@ -1,5 +1,7 @@
 """policy — origin trust matrix + auto-dispatch ceilings（v-next 信任矩阵，纯函数）.
 
+契约：docs/CONTRACT.md §50（信任矩阵）/ §51（自动派发天花板 + queued 词表）。
+
 Owner 拍板（2026-08-30，见 docs/design/vnext-amendments.md 的修宪草案）：
 
 - 手打捕获与 Slack self-DM 的卡 **自动派发**（免审批开跑）；
@@ -23,7 +25,7 @@ channel 由各 radar/capture 写入端硬编码（quick/slack/gmail/meeting/...�
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 # --------------------------------------------------------------------------- #
 # 域：origin trust classes（四类，locked）

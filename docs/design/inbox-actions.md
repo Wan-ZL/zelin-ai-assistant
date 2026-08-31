@@ -1,5 +1,7 @@
 # inbox 动作 wire 契约（F3 提取稿 — G1 `server/inbox_writer.py` 与 G6 golden 测试的唯一真源）
 
+> **状态（v0.48，2026-08-31）**：本文 §2+§3 目录已被 CONTRACT **§49** 正式引用为 `POST /api/actions` 动词白名单（T-2 终裁）；R2 → CONTRACT §3 v0.48 追记（T-17）、R9 → CONTRACT §10 v0.48 追记（T-18）均已入典。
+
 提取自 live 树（只读，2026-08-30）：`docs/CONTRACT.md` §3/§10/§10bis/§21/§21bis/§22/§24/§29/§34/§34.1/§34bis/§37/§38.2/§39.2 + `mac/Sources/AppDelegate.swift`（`writeInboxFile` 与全部 `submit*`）+ `shared/Sources/InboxAction.swift` + `mac/Sources/ProposalsTriage.swift` + `mac/Sources/SettingsWeeklyDigest.swift` + `mac/Sources/SettingsClaudeImport.swift` + `mac/Sources/Utils.swift`（AppPaths）+ `act/actd.py`（`process_inbox` 读侧）。**Swift 写侧代码即字节真相；CONTRACT 散文与代码冲突处见 §6 风险备注（code wins）。**
 
 ## 1. 通用 wire 纪律（所有动词共享）
@@ -380,11 +382,11 @@ G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server
 ## 6. 风险备注（CONTRACT 散文 vs Swift 代码；code wins）
 
 - **R1 字节形状**：CONTRACT §3 示例是单行紧凑 JSON、key 序 `id,action,comment,ts`；Mac 实际落盘是 prettyPrinted+sortedKeys（`action,comment,id,ts`）。actd `json.loads` 两者通吃，但「与 Store.swift 产物逐字节等价」的验收以 pretty 形为准（本 golden 集）。
-- **R2 动词清单**：§3 散文 `action ∈ approve|reject|comment` 是 v0.1 化石；真全集 = §10 + `set_title`/`split_note` 特形分支（actd `_apply_decision` elif 链即白名单）。BUILD-CONTRACT 2.1 说「白名单 = live CONTRACT §3 现有清单」应读作「App 今天真实会发的动词」= 本文档目录。`TODO(contract)`：修宪草案（A12）应把 §3 的动词清单与 JSON 示例更新到现状。
+- **R2 动词清单**：§3 散文 `action ∈ approve|reject|comment` 是 v0.1 化石；真全集 = §10 + `set_title`/`split_note` 特形分支（actd `_apply_decision` elif 链即白名单）。BUILD-CONTRACT 2.1 说「白名单 = live CONTRACT §3 现有清单」应读作「App 今天真实会发的动词」= 本文档目录。~~TODO(contract)~~ **已落**：CONTRACT §3 的 v0.48 追记（T-17）把动词清单指向 §10 全集 + golden 字节形。
 - **R3 双编码器并存**：Mac `writeInboxFile`（pretty）与 shared `InboxAction.encode`（紧凑、仅 sortedKeys，iOS→syncd 路径）产出两种合法字节形。parity 目标按 BUILD-CONTRACT 指名 Mac 形；不要拿 shared encoder 当 golden 源。
 - **R4 merge_apply/merge_dismiss 的 comment 键**：Mac 走 generic card 路径带 `"comment": null`；shared encoder 省略该键。actd 无视。golden 带 null（Mac 形）。
 - **R5 `\/` 转义**：NSJSONSerialization 转义正斜杠、Python 默认不转——byte-parity 的最大陷阱，路径类字段（`images`、附图尾行）必踩。配方见 §4。
 - **R6 长度单位漂移**：`set_title` Swift 守卫按 Character（grapheme cluster）数 ≤64，actd 复验按 code points——emoji/组合字符标题可能 Swift 放行、actd 拒收（fail-closed no-op，无害但静默）。web 端按 code points 裁（JS `[...str].length`）比 Swift 更贴 actd。`answer_input` 的 4000 上限两侧都已按 code points（Swift 用 unicodeScalars），照抄即可。
 - **R7 `ts` 不被校验**：actd 今天不解析 inbox `ts`（provenance-only）。格式仍必须保持 `YYYY-MM-DDTHH:MM:SSZ`——registry/审计侧同格式假设。
 - **R8 无 `id` 动作**：`capture`/`feedback`/`weekly_digest_now`/`import_claude_sessions`/`merge_review`/`merge_force` 无卡片级 `id` 键——G1 校验器不得对它们强制 `id`。
-- **R9 rework 空反馈替换文案**：是 Mac 客户端行为（§2.10 字面量），actd 不做此替换；web 不复刻则空打回会被 actd 当空 comment 处理，语义走样。`TODO(contract)`：该字面量目前只活在 AppDelegate.swift 注释区之外的代码里，修宪草案宜把它落进 §10。
+- **R9 rework 空反馈替换文案**：是 Mac 客户端行为（§2.10 字面量），actd 不做此替换；web 不复刻则空打回会被 actd 当空 comment 处理，语义走样。~~TODO(contract)~~ **已落**：字面量随 CONTRACT §10 的 v0.48 追记（T-18）冻结入典。

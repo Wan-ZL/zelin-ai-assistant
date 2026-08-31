@@ -9,9 +9,9 @@
 ``deliverables/`` 的绝对路径文件）：
     card 的 target_repo（registry 增补后投影行也可能带 cwd）→ 展开 ``~`` →
     ``<root>/deliverables/``
-// TODO(contract): §33 只在散文里约定了 deliverables/ 落点，没有把「交付物
-// 目录」钉成结构化字段；这里选最保守的 target_repo/cwd 推导。若日后卡片记录
-// 新增显式交付物清单字段，应改读该字段。
+// CONTRACT §53 T-19（v0.48 裁决）：结构化清单字段 ``execution.deliverables``
+// 预留 add-only、随接线 PR 落法；在那之前本模块的「目录约定推导 + 穿越防护」
+// 追认为过渡合法（§49）。字段落地后应改读该字段。
 """
 from __future__ import annotations
 

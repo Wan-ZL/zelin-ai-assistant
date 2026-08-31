@@ -9,8 +9,8 @@
     网络 ingress 放行 capture ``mode:"run"`` 与否。默认 False(fail-closed),
     仅 config.yaml ``remote.allow_direct_run: true`` 显式开启。
 
-法源:docs/design/vnext-amendments.md §W17/§W18(ratification-ready 草案;
-CONTRACT.md 本 PR 不动)。stdlib only。
+契约:docs/CONTRACT.md §50(W17 effective tier)/§41 v0.48 修订(W18 远程直跑
+闸门)；起草稿 docs/design/vnext-amendments.md §W17/§W18。stdlib only。
 """
 from __future__ import annotations
 
