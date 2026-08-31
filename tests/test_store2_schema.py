@@ -160,6 +160,62 @@ class TransitionWallTestCase(unittest.TestCase):
         self.assertIn("USE_TOMBSTONE", str(cm.exception))
 
 
+class CompositePermissionWallTestCase(unittest.TestCase):
+    """组合权限旁路回归网：agent 直接 INSERT 批准后各态、或借毒化 prev_status
+    让用户一次无辜 restore 把卡送进 approved/delivered——出生/改写两面全钉死，
+    同时钉住合法路径（用户亲手 trash 的 approved 卡 restore 照常复位）。"""
+
+    def setUp(self):
+        self.conn = open_db()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_agent_insert_any_post_approval_status_raises(self):
+        for status in ("approved", "delivered", "executing", "review"):
+            with self.assertRaises(sqlite3.IntegrityError) as cm:
+                insert_card(self.conn, f"R-{status}", status, actor="agent")
+            self.assertIn("AGENT_TRANSITION_FORBIDDEN", str(cm.exception))
+
+    def test_agent_insert_poisoned_prev_status_raises(self):
+        # trashed + prev_status='approved'：restore 一下就落 approved——出生即拒
+        for prev in ("approved", "delivered", "executing", "review"):
+            with self.assertRaises(sqlite3.IntegrityError) as cm:
+                insert_card(self.conn, "R-001", "trashed", actor="agent",
+                            prev_status=prev)
+            self.assertIn("AGENT_TRANSITION_FORBIDDEN", str(cm.exception))
+        # 无毒回程票的 agent trashed 卡不受影响（出生资格是应用层判断）
+        insert_card(self.conn, "R-002", "trashed", actor="agent",
+                    prev_status="detected")
+
+    def test_agent_update_prev_status_or_merge_pointer_raises(self):
+        insert_card(self.conn, "R-001", "trashed", prev_status="detected")
+        insert_card(self.conn, "R-002", "detected")
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "UPDATE cards SET prev_status = 'approved',"
+                " last_actor_type = 'agent' WHERE id = 'R-001'")
+        self.assertIn("AGENT_FIELD_FORBIDDEN", str(cm.exception))
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "UPDATE cards SET merged_into_id = 'R-002',"
+                " last_actor_type = 'agent' WHERE id = 'R-001'")
+        self.assertIn("AGENT_FIELD_FORBIDDEN", str(cm.exception))
+        # 回程票未被污染 → 用户 restore 仍按原票精确复位
+        self.conn.execute(
+            "UPDATE cards SET status = 'detected', prev_status = NULL,"
+            " last_actor_type = 'user' WHERE id = 'R-001'")
+
+    def test_legitimate_user_restore_to_approved_stays_intact(self):
+        # 用户亲手 trash 一张 approved 卡再 restore：墙只挡 agent，不伤回程票语义
+        insert_card(self.conn, "R-001", "approved")
+        set_status(self.conn, "R-001", "trashed", "user", prev_status="approved")
+        set_status(self.conn, "R-001", "approved", "user")
+        row = self.conn.execute(
+            "SELECT status FROM cards WHERE id = 'R-001'").fetchone()
+        self.assertEqual(row["status"], "approved")
+
+
 class CasConflictTestCase(unittest.TestCase):
     """(c) CAS 冲突：WHERE id AND version 三件套（dashi database.mjs 模式）。
     B2 store.py 的 helper 落地后应复用同一语义；这里钉住 SQL 层的对错基线。"""

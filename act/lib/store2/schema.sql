@@ -288,13 +288,28 @@ INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) 
 -- triggers — 状态机 + 权限墙 + append-only 执法（dashi RAISE 惯用法）
 -- ---------------------------------------------------------------------------
 
--- 出生权限墙：agent 不得直接 INSERT 已批准/已交付的卡（migration/正常铸卡走
--- system/user；transition trigger 只管 UPDATE，这里补上 INSERT 面）
+-- 出生权限墙：agent 不得直接 INSERT 批准后各态的卡（migration/正常铸卡走
+-- system/user；transition trigger 只管 UPDATE，这里补上 INSERT 面）。
+-- prev_status 同查：带毒回程票（如 trashed + prev_status='approved'）经用户
+-- 一次无辜 restore 就精确复位进 approved——组合权限旁路，出生时一并拒收
 CREATE TRIGGER IF NOT EXISTS cards_agent_insert_wall
 BEFORE INSERT ON cards
-WHEN NEW.last_actor_type = 'agent' AND NEW.status IN ('approved', 'delivered')
+WHEN NEW.last_actor_type = 'agent' AND (
+  NEW.status IN ('approved', 'delivered', 'executing', 'review')
+  OR NEW.prev_status IN ('approved', 'delivered', 'executing', 'review'))
 BEGIN
   SELECT RAISE(ABORT, 'AGENT_TRANSITION_FORBIDDEN');
+END;
+
+-- 字段权限墙（UPDATE 面）：prev_status 是 restore 的目的地、merged_into_id 是
+-- lineage 父指针——agent 改写任一 = 给用户后续动作预埋弹药，与 status 墙同族
+CREATE TRIGGER IF NOT EXISTS cards_agent_field_wall
+BEFORE UPDATE ON cards
+WHEN NEW.last_actor_type = 'agent'
+  AND (NEW.prev_status IS NOT OLD.prev_status
+       OR NEW.merged_into_id IS NOT OLD.merged_into_id)
+BEGIN
+  SELECT RAISE(ABORT, 'AGENT_FIELD_FORBIDDEN');
 END;
 
 -- 状态机执法：①agent 的 approve/accept 类转移点名拒绝（清晰报错优先）；

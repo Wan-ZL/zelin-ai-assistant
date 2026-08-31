@@ -38,6 +38,9 @@ _CARD_COLUMNS = (
 )
 # create_card 允许显式传入的键（migration 需要完整控制出生形态；version/board_rev 由 store 管）
 _CREATE_KEYS = frozenset(_CARD_COLUMNS) - {"version", "board_rev", "tombstone", "last_actor_type"}
+# agent 出生面再收紧：prev_status 是 restore 的目的地，agent 铸卡带票 = 预埋
+# 「trashed→approved」组合旁路弹药；cards_agent_insert_wall trigger 兜底
+_AGENT_CREATE_KEYS = _CREATE_KEYS - {"prev_status"}
 _CREATE_REQUIRED = ("id", "status", "title")
 # update_card_fields 可改热列：title 是 FROZEN 身份锚（§37）不收；
 # status/prev_status/merged_into_id 只许走 transition（状态机口径唯一）
@@ -47,7 +50,8 @@ _ACTOR_TYPES = ("user", "agent", "system")
 _DISPATCH_END_STATES = ("completed", "failed", "stopped")
 
 # schema trigger 的 RAISE 码 → 归类（消息即码，见 schema.sql 各 trigger）
-_TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "ILLEGAL_TRANSITION")
+_TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "AGENT_FIELD_FORBIDDEN",
+                     "ILLEGAL_TRANSITION")
 _INTEGRITY_CODES = (
     "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE",
     "NOTES_APPEND_ONLY", "NOTES_RECEIPT_SET_ONCE",
@@ -310,11 +314,13 @@ class Store:
         """铸卡（migration 的整库 INSERT 也走这里）。
 
         出生状态不设限（schema.md：合法出生点很多，出生资格是应用层判断），
-        但 agent 铸 approved/delivered 会被 cards_agent_insert_wall 拦（权限墙 INSERT 面）。
+        但 agent 铸批准后各态的卡、或带 prev_status 回程票（restore 组合旁路的
+        弹药）在此拒收——cards_agent_insert_wall trigger 兜底同一道墙的 SQL 面。
         未知键 fail-closed 拒收（对齐 server 的 zero-tolerance 纪律）。
         """
         self._require_actor(actor_type)
-        unknown = set(card) - _CREATE_KEYS
+        allowed = _AGENT_CREATE_KEYS if actor_type == "agent" else _CREATE_KEYS
+        unknown = set(card) - allowed
         if unknown:
             raise StoreError("UNKNOWN_FIELD", f"unknown card fields: {sorted(unknown)}",
                              {"fields": sorted(unknown)})

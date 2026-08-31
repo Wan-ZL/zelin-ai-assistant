@@ -4,6 +4,7 @@ B2 的真实写路径（test_store2_schema.py 钉的是同一批不变量的裸 
 """
 import importlib.util
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,14 +15,16 @@ _STORE_LANDED = importlib.util.find_spec("act.lib.store2.store") is not None
 _SKIP_REASON = "act.lib.store2.store (B2) not importable"
 
 if _STORE_LANDED:
-    from act.lib.store2 import (NotFound, Store, TransitionDenied,
-                                VersionConflict)
+    from act.lib.store2 import (IntegrityViolation, NotFound, Store,
+                                StoreError, TransitionDenied, VersionConflict)
 
 NOW = "2026-08-30T12:00:00Z"
 
 
 @unittest.skipUnless(_STORE_LANDED, _SKIP_REASON)
-class StoreApiTestCase(unittest.TestCase):
+class _StoreFixture(unittest.TestCase):
+    """共享脚手架：临时库 + 铸卡 helper（本类无测试方法，仅供继承）。"""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="store2-cas-"))
         self.store = Store(self.tmp / "store2.db", now_fn=lambda: NOW)
@@ -34,6 +37,9 @@ class StoreApiTestCase(unittest.TestCase):
         card = {"id": rid, "status": status, "title": f"card {rid}"}
         card.update(kw)
         return self.store.create_card(card, actor_type="system")
+
+
+class StoreApiTestCase(_StoreFixture):
 
     # -- (c) CAS 冲突 ------------------------------------------------------ #
     def test_stale_version_raises_conflict_first_writer_wins(self):
@@ -120,6 +126,37 @@ class StoreApiTestCase(unittest.TestCase):
         card = self.store.transition("R-001", "stop_to_review", "user", None)
         self.assertEqual(card["version"], before)
         self.assertEqual(self.store.current_revision(), rev)
+
+
+class AgentCreatePermissionTestCase(_StoreFixture):
+    """组合权限旁路（store API 面）：agent 铸卡不得带 prev_status 回程票，
+    也不得直接铸批准后各态；system（migration）与用户 restore 语义不受伤。"""
+
+    def test_agent_create_cannot_carry_prev_status(self):
+        with self.assertRaises(StoreError) as cm:
+            self.store.create_card(
+                {"id": "R-001", "status": "trashed", "title": "t",
+                 "prev_status": "approved"}, actor_type="agent")
+        self.assertEqual(cm.exception.code, "UNKNOWN_FIELD")
+        with self.assertRaises(NotFound):
+            self.store.get_card("R-001")
+
+    def test_agent_create_post_approval_status_denied(self):
+        for status in ("approved", "delivered", "executing", "review"):
+            with self.assertRaises(TransitionDenied) as cm:
+                self.store.create_card(
+                    {"id": f"R-{status}", "status": status, "title": "t"},
+                    actor_type="agent")
+            self.assertEqual(cm.exception.code, "AGENT_TRANSITION_FORBIDDEN")
+
+    def test_system_migration_shape_and_user_restore_stay_intact(self):
+        # migration（system actor）铸带票 trashed 卡 + 用户 restore 精确复位：
+        # 墙只挡 agent，合法回程票语义分毫不动
+        self.store.create_card(
+            {"id": "R-001", "status": "trashed", "title": "t",
+             "prev_status": "approved"}, actor_type="system")
+        card = self.store.transition("R-001", "restore", "user", None)
+        self.assertEqual(card["status"], "approved")
 
 
 if __name__ == "__main__":
