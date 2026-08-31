@@ -975,14 +975,18 @@ struct ApprovalCardView: View {
             // .small 由 CardSurface 统一施加；detail 槽的共享 toggle 不使用。)
             HStack(spacing: 8) {
                 Button {
-                    if card.tier == "T2" {
+                    // §50 W17 (v0.48.1)：读 effectiveTier 而非裸 tier——外部
+                    // 出身升档卡（声明 T1、生效 T2）必须过 typed-confirm，绝不
+                    // 一键裸批。daemon 强制扩写只在 plan/DoD 双空时兜底，plan
+                    // 已填的外部卡靠的就是这道客户端闸。
+                    if card.effectiveTier == "T2" {
                         // typed confirmation (确认 / go) — anything else = no-op.
                         guard app.confirmT2(id: card.id, summary: card.displaySummary) else { return }
                     }
                     app.submit(id: card.id, action: "approve", comment: nil)
                 } label: { Label(L("批准", "Approve"), systemImage: "checkmark.circle.fill") }
                     .tint(.green)
-                    .disabled(card.tier == "T2" && !expanded)
+                    .disabled(card.effectiveTier == "T2" && !expanded)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
 
@@ -1117,7 +1121,9 @@ struct ApprovalCardView: View {
             }
 
             // T2 gate hint: approve unlocks only after expanding the details.
-            if card.tier == "T2" && !expanded {
+            // §50: 读 effectiveTier——外部升档卡（声明 T1、生效 T2）同样
+            // 先展开再批。
+            if card.effectiveTier == "T2" && !expanded {
                 Text(L("T2 需先展开看明细", "T2: expand details first"))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.orange)
@@ -1208,6 +1214,11 @@ struct ApprovalCardView: View {
     @ViewBuilder private var badgeRow: some View {
         HStack(spacing: 6) {
             Badge(text: tierText, color: .purple)
+            // §50 W17：外部出身把声明档提级到 T2——卡面显式说明，否则用户
+            // 见 "T1" 却弹 T2 确认框会莫名其妙。橙色与 T2 gate hint 同色系。
+            if card.isEscalated {
+                Badge(text: L("外部来源提级 T2", "External → T2"), color: .orange)
+            }
             if sessionHit { SessionHitBadge() }   // §37 search: matched via session
             // v0.10 chat delivery: draft lands in the reply, no repo/PR touched
             if card.delivery_mode == "chat" {

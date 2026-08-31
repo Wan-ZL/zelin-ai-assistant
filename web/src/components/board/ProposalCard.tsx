@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, openCardDetail, useSubmit } from "./boardActions";
+import { cardAction, costLine, effectiveTier, openCardDetail, useSubmit } from "./boardActions";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
 import { TextDialog } from "./TextDialog";
@@ -50,6 +50,13 @@ export function ProposalCard({ card }: ProposalCardProps) {
       <div className="card-badges">
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
         <span className="chip chip-purple">{card.tier}{card.tier_hint ? ` · ${card.tier_hint}` : ""}</span>
+        {/* §50 W17：外部出身把声明档提级 T2 时点明——否则见 "T1" 却弹 T2
+            确认框会莫名其妙。origin_trust 也一并 surface（types.ts 已有字段）。 */}
+        {effectiveTier(card) === "T2" && card.tier !== "T2" && (
+          <span className="chip chip-warning" title={card.origin_trust ? `origin: ${card.origin_trust}` : undefined}>
+            {text("外部来源提级 T2", "External → T2")}
+          </span>
+        )}
         {card.delivery_mode === "chat" && (
           <span className="chip chip-purple">{text("交付：聊天成稿", "Deliver: chat draft")}</span>
         )}
@@ -87,7 +94,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
           <button
             type="button"
             className="btn btn-success"
-            onClick={() => (card.tier === "T2" ? setDialog("t2") : decide("approve"))}
+            // W17（§50）：typed-confirm 闸门读 effective_tier——外部升档卡
+            // （声明 T1、生效 T2）也必须过确认词，绝不单击直批
+            onClick={() => (effectiveTier(card) === "T2" ? setDialog("t2") : decide("approve"))}
           >
             {text("批准", "Approve")}
           </button>

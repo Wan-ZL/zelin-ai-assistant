@@ -17,6 +17,10 @@ export interface ApprovalCard {
   id: string;
   title: string;
   tier: "T0" | "T1" | "T2" | string;
+  /** W17 生效档位（§50）：外部出身恒 "T2"；缺席 = 旧投影，消费端回落 tier */
+  effective_tier?: string;
+  /** 出身章四值词表（§50）；缺章整键省略 */
+  origin_trust?: string;
   tier_hint?: string;
   hardness?: string;
   deadline?: string | null;
