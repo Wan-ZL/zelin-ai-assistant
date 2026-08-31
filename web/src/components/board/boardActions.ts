@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, postAction } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readPage } from "../../route";
+import { steerAcknowledged } from "../../steer";
 import { selectCard, useAppState } from "../../store";
 
 /** 卡片决策类四键形（comment 键永远存在，无文本时 null——inbox-actions.md §2） */
@@ -53,6 +54,9 @@ export interface SubmitState {
   /** 已提交、等看板回流（按钮行整体禁用，杜绝双击重复提交——§41 iOS busy 模式的 web 等价） */
   pending: boolean;
   error: string | null;
+  /** 最近一次提交被 server 标注为 steer（executing 卡上的 comment，响应键 steer:true）——
+   *  pending 期间的「方向修正排队中」回执 chip 用；看板回流后以投影 steers[] 为准 */
+  steerQueued: boolean;
   submit: (body: Record<string, unknown>) => Promise<boolean>;
   clearError: () => void;
 }
@@ -68,11 +72,13 @@ export function useSubmit(): SubmitState {
   const generatedAt = board?.generated_at ?? null;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [steerQueued, setSteerQueued] = useState(false);
   const sentAt = useRef<string | null>(null);
 
   useEffect(() => {
     if (pending && generatedAt !== sentAt.current) {
       setPending(false);
+      setSteerQueued(false); // 回流后 steer 状态以投影 steers[] 为准，本地回执退场
       sentAt.current = null;
     }
   }, [generatedAt, pending]);
@@ -80,9 +86,11 @@ export function useSubmit(): SubmitState {
   const submit = async (body: Record<string, unknown>): Promise<boolean> => {
     setPending(true);
     setError(null);
+    setSteerQueued(false);
     sentAt.current = generatedAt;
     try {
-      await postAction(body);
+      const response = await postAction(body);
+      setSteerQueued(steerAcknowledged(response));
       return true;
     } catch (e) {
       setPending(false);
@@ -92,7 +100,7 @@ export function useSubmit(): SubmitState {
     }
   };
 
-  return { pending, error, submit, clearError: () => setError(null) };
+  return { pending, error, steerQueued, submit, clearError: () => setError(null) };
 }
 
 /** 动作失败的用户可读文案；501 = G1 inbox_writer 尚未接线（F1 约定的过渡语义） */

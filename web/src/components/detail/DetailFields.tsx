@@ -3,6 +3,7 @@
 // 新字段先能看见再谈专属 UI）。本组件只读不写——动作按钮归卡片组件（A6）。
 import { useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
+import { parseSteers, queuedReasonLabel, steerStatusLabel } from "../../steer";
 import type { CardDetail, CardSource } from "../../types";
 import { copyText } from "./copyText";
 import { parseFoldNotes } from "./foldNotes";
@@ -29,6 +30,8 @@ const KNOWN_KEYS = new Set([
   "permanent", "disagreement", "improvement_of", "reraised", "reraised_note", "waiting_for",
   "last_error", "dispatch_error", "resume_exhausted", "delivered_summary", "final_draft",
   "merged_into", "prev_status",
+  // M6（§M6.1/§M6.2）：steer 回执与结构化排队原因有专属版式
+  "queued_reason", "steers",
 ]);
 
 function str(value: unknown): string | null {
@@ -122,6 +125,9 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   }
   const repeated = detail.repeated ?? detail.repeated_mentions;
   if (typeof repeated === "number" && repeated > 1) meta.push([text("重复提及", "Mentions"), `×${repeated}`]);
+  // 结构化排队原因（§M6.2）：queued 卡「排队中 · 等 R-xx / 等预算」的详情行
+  const queuedReason = queuedReasonLabel(detail.queued_reason, text);
+  if (queuedReason) meta.push([text("排队原因", "Queued because"), queuedReason]);
   const cost = detail.cost_usd ?? detail.cost_estimate_usd;
   if (detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
   const improvementOf = str(detail.improvement_of);
@@ -149,6 +155,7 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   }
   const log = str(detail.log);
 
+  const steers = parseSteers(detail.steers);
   const plan = strList(detail.plan);
   const dod = strList(detail.dod ?? detail.definition_of_done);
   const outputs = strList(detail.outputs);
@@ -232,6 +239,31 @@ export function DetailFields({ detail }: DetailFieldsProps) {
               </li>
             ))}
             {rest.map((line, index) => <li key={`rest-${index}`}>{line}</li>)}
+          </ul>
+        </Section>
+      )}
+
+      {steers.length > 0 && (
+        // steer 回执历史（§M6.1）：每行 = 状态 chip + 正文 + 排队 ts（+ 送达 ts）。
+        // 诚实展示：dropped（注入 3 次失败放弃）标红——绝不把未送达装成已生效。
+        <Section title={text("方向修正", "Steer notes")}>
+          <ul className="zai-detail-folds">
+            {steers.map((note, index) => (
+              <li key={`steer-${index}`}>
+                <span
+                  className={`zai-chip${
+                    note.status === "dropped" ? " zai-chip--danger"
+                    : note.status === "delivered" ? "" : " zai-chip--warn"}`}
+                >
+                  {steerStatusLabel(note.status, text)}
+                </span>{" "}
+                {typeof note.text === "string" ? note.text : ""}
+                <span className="zai-detail-dim"> @{note.ts}</span>
+                {typeof note.delivered_at === "string" && note.delivered_at !== "" && (
+                  <span className="zai-detail-dim"> · {text("送达于", "delivered at")} {note.delivered_at}</span>
+                )}
+              </li>
+            ))}
           </ul>
         </Section>
       )}

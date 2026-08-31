@@ -38,6 +38,33 @@ export interface ApprovalCard {
   [key: string]: unknown;
 }
 
+/**
+ * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
+ * docs/design/vnext-amendments.md §M6.2（生产端未落地前可能缺席，
+ * 也可能是纯字符串——UI 经 steer.ts 双兼容解析）。kind 开放枚举：
+ * waiting_card（等前置卡，带 blocking_id="R-xx"）/ waiting_budget（等预算）。
+ */
+export interface QueuedReason {
+  kind: string;
+  detail?: string | null;
+  blocking_id?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * steer 回执行（executing 卡上的 owner 方向修正，经 §44.3 briefing 机制中继；
+ * add-only optional，wire 真源 = vnext-amendments.md §M6.1）。
+ * status 诚实三态：queued（已排队未注入）/ delivered（已送达会话）/
+ * dropped（3 次注入失败放弃，§39 trace 留痕）。
+ */
+export interface SteerNote {
+  ts: string;
+  text?: string;
+  status?: "queued" | "delivered" | "dropped" | string;
+  delivered_at?: string | null;
+  [key: string]: unknown;
+}
+
 /** 运行中/需输入/已完成 分区项（running 混入 state="queued" 的排队项，无 session_id） */
 export interface TaskRow {
   id: string;
@@ -60,6 +87,8 @@ export interface TaskRow {
   waiting_for?: string;
   resume_exhausted?: boolean;
   delivered_summary?: string;
+  queued_reason?: QueuedReason | string | null;
+  steers?: SteerNote[];
   [key: string]: unknown;
 }
 
