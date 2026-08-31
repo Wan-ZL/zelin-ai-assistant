@@ -583,10 +583,16 @@ def mcp_scan(cfg: config.Config,
             plan=[],
             sources=[{
                 "who": r.get("who") or "slack",
-                "channel": r.get("channel") or "slack",
+                # provenance red line（ported from live v0.47；vnext-amendments
+                # §M1.d 安全前置）："channel" 喂给 origin-trust 分类与遥测白名
+                # 单——绝不许 LLM 控制。r["channel"] 是提取 LLM 对第三方消息的
+                # 自由输出（频道名恰叫 "quick"、或注入内容，都会伪造 hand 信任
+                # ——auto-dispatch 世界里这是执行面漏洞）。硬编码同 native 路
+                # 径；LLM 报的频道名只进 "ref" 展示位。
+                "channel": "slack",
                 "date": r.get("date"),
                 "quote": r.get("quote") or r.get("summary"),
-                "ref": None,
+                "ref": (str(r.get("channel")) if r.get("channel") else None),
             }],
             notes="from Slack (MCP fallback)",
         )
