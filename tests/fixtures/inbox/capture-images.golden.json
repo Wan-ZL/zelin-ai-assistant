@@ -1,0 +1,8 @@
+{
+  "action" : "capture",
+  "images" : [
+    "\/tmp\/zai-demo\/state\/attachments\/ABCD1234-0000-0000-0000-000000000000-1.png"
+  ],
+  "text" : "按截图里的样式改下卡片布局",
+  "ts" : "2026-08-30T12:00:00Z"
+}
