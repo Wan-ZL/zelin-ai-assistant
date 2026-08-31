@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config
+from act.lib import config, policy, risk, steer
 from act.lib.registry import Requirement, State, load_all
 
 TIER_HINTS = {
@@ -203,6 +203,67 @@ def _delivery_mode(req: Requirement) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# v-next 投影辅助（amendments §51/§M6/M8.3 C-2·C-3·C-4，全部 add-only optional）
+# --------------------------------------------------------------------------- #
+def _spend_cards() -> dict:
+    """auto-dispatch 当日花费台账的只读镜像 {R-id: usd}。写者 = actd
+    （act/actd.py::_save_spend_ledger，文件名同 _SPEND_LEDGER_FILE）——import
+    actd 会循环依赖，故此处独立小读器。隔日/坏文件 = 空账（视同 $0）。"""
+    try:
+        raw = json.loads((config.STATE_DIR / "autodispatch_spend.json")
+                         .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict) or raw.get("date") != _today().isoformat():
+        return {}
+    out: dict = {}
+    if isinstance(raw.get("cards"), dict):
+        for k, v in raw["cards"].items():
+            try:
+                out[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
+    """M1.c token → 结构化 wire 形（M8.3 C-2 终裁为 canonical）：
+    dependency → {kind: waiting_card, blocking_id}｜budget → {kind:
+    waiting_budget}｜concurrency → {kind: concurrency}。None = 无阻塞
+    （纯粹没轮到/派发失败退避——后者由 dispatch_error 独立表达，不混写）。"""
+    token = policy.queued_reason(req, state)
+    if token == "dependency":
+        blocking = state.get("blocked_by")
+        first = blocking[0] if isinstance(blocking, list) and blocking else None
+        out = {"kind": "waiting_card"}
+        if first:
+            out["blocking_id"] = str(first)
+        return out
+    if token == "budget":
+        return {"kind": "waiting_budget"}
+    if token == "concurrency":
+        return {"kind": "concurrency"}
+    return None
+
+
+def _steers_view(req: Requirement) -> list:
+    """running/needs_input 行的 ``steers[]``（§M6.1 / C-3 / C-4）：delivered
+    环（带 delivered_at）在前、pending（status=queued）在后；dropped 不投影
+    ——可见性由 notes 痕 `[追加指令未送达]` 承担。ts 保台账 ISO 原文（C-4：
+    与 execution.* 逐字对账；web 端只认 string ts，无 ts 的行不投）。"""
+    out = []
+    for e in steer.delivered_entries(req):
+        out.append({"text": e["text"], "ts": e["ts"],
+                    "status": "delivered", "delivered_at": e["delivered_at"]})
+    for n in steer.pending_steers(req):
+        if not n.get("ts"):
+            continue
+        out.append({"text": n["text"][:steer.TRACE_CLIP], "ts": n["ts"],
+                    "status": "queued", "delivered_at": None})
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # build
 # --------------------------------------------------------------------------- #
 def build_dashboard(
@@ -218,6 +279,16 @@ def build_dashboard(
     if agents is None:
         agents = _run_claude_agents()
     agent_idx = _index_agents(agents)
+
+    # v-next queued_reason 快照（§51）：并发口径与 actd.dispatch_approved 一致
+    # （EXECUTING 且带 session 的卡数）；预算口径只对 auto_dispatched 卡生效
+    # ——人批的卡不受预算闸，chip 不许谎报「等预算」。
+    ad_cfg = policy.autodispatch_config(cfg)
+    spend_cards = _spend_cards()
+    live_sessions = sum(
+        1 for r in reqs
+        if r.status == State.EXECUTING.value
+        and isinstance(r.execution, dict) and r.execution.get("session_id"))
 
     needs_approval: list[dict] = []
     running: list[dict] = []
@@ -244,6 +315,10 @@ def build_dashboard(
                     "target_kind": target_kind,
                     "tier": req.tier,
                     "tier_hint": TIER_HINTS.get(req.tier, ""),
+                    # W17 add-only：生效档位（外部来源强制 T2；余同声明 tier）。
+                    # 存量卡无 origin_trust 字段 => 恒等于 tier，客户端可放心
+                    # decodeIfPresent。审批语义仍由 tier 决定，接线见 amendments §W17。
+                    "effective_tier": risk.effective_tier(req).tier,
                     "hardness": req.hardness,
                     "deadline": req.deadline,
                     "days_left": days_left(req.deadline),
@@ -259,6 +334,14 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "processing": False,
                     "delivery_mode": _delivery_mode(req),
+                    # v-next add-only（§50/§51/C-6）：出身章 + auto-dispatch
+                    # 拦下原因（origin:*/disabled 常态原因不上卡，见 actd）。
+                    **({"origin_trust": req.origin_trust}
+                       if req.origin_trust else {}),
+                    **({"auto_dispatch_block":
+                        (req.execution or {}).get("auto_dispatch_block")}
+                       if isinstance(req.execution, dict)
+                       and req.execution.get("auto_dispatch_block") else {}),
                 }
             )
 
@@ -271,6 +354,7 @@ def build_dashboard(
                     "title": req.title,
                     "summary": req.summary or req.title,
                     "tier": req.tier,
+                    "effective_tier": risk.effective_tier(req).tier,  # W17 add-only
                     "tier_hint": "AI 研究中",
                     "processing": True,
                     "sources": [],
@@ -278,6 +362,8 @@ def build_dashboard(
                     "dod": [],
                     "show_cost": False,
                     "delivery_mode": _delivery_mode(req),
+                    **({"origin_trust": req.origin_trust}
+                       if req.origin_trust else {}),   # v-next add-only（§50）
                 }
             )
 
@@ -313,6 +399,17 @@ def build_dashboard(
             # 下去立刻有回显。没有会话可 attach，所以无 session_id/copy_cmd；
             # dispatch_error = 上次派发失败原因（重试成功后消失）。
             ex = req.execution if isinstance(req.execution, dict) else {}
+            # v-next §51：排队原因 chip（结构化 wire 形，C-2）。快照口径与
+            # actd.dispatch_approved 的闸完全一致（预算只对 auto_dispatched
+            # 卡、且排除本卡自己的预留）；blocked_by 依赖字段未立法（T-26），
+            # 首版仅 budget/concurrency 两因。与 dispatch_error 并存不混写。
+            snap: dict = {"running": live_sessions,
+                          "max_concurrent": ad_cfg["max_concurrent"]}
+            if ex.get("auto_dispatched"):
+                snap["today_spend"] = sum(
+                    v for k, v in spend_cards.items() if k != req.id)
+                snap["daily_budget_usd"] = ad_cfg["daily_budget_usd"]
+            qr = _queued_reason_view(req, snap)
             running.append(
                 {
                     "id": req.id,
@@ -323,6 +420,9 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "delivery_mode": _delivery_mode(req),
                     "dispatch_error": ex.get("last_error") or None,
+                    **({"queued_reason": qr} if qr else {}),
+                    **({"origin_trust": req.origin_trust}
+                       if req.origin_trust else {}),
                 }
             )
 
@@ -433,6 +533,7 @@ def build_dashboard(
                     }
                 )
             elif state in _BLOCKED_STATES:
+                steers = _steers_view(req)
                 needs_input.append(
                     {
                         "id": req.id,
@@ -443,10 +544,15 @@ def build_dashboard(
                         "agent_name": agent_name,
                         "state": "blocked",
                         "waiting_for": (agent or {}).get("waiting_for") or "input",
+                        # v-next §M6.1：steer 三态诚实回执（queued/delivered）
+                        **({"steers": steers} if steers else {}),
+                        **({"origin_trust": req.origin_trust}
+                           if req.origin_trust else {}),
                     }
                 )
             else:
                 # running, or agent not found yet -> still consider it running
+                steers = _steers_view(req)
                 running.append(
                     {
                         "id": req.id,
@@ -465,6 +571,11 @@ def build_dashboard(
                         "dispatched_at": _epoch(ex.get("dispatched_at")),
                         "delivery_mode": _delivery_mode(req),
                         "last_error": ex.get("last_error"),
+                        # v-next §M6.1：steer 三态诚实回执（queued/delivered；
+                        # dropped 不投影，notes 痕承担可见性——C-3）
+                        **({"steers": steers} if steers else {}),
+                        **({"origin_trust": req.origin_trust}
+                           if req.origin_trust else {}),
                     }
                 )
         # approved surfaces as a "queued" item inside running (branch above, §2)
