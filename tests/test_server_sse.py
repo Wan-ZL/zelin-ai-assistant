@@ -139,5 +139,57 @@ class SseEndToEndTestCase(unittest.TestCase):
         self.fail(f"no board.updated within deadline; got: {lines!r}")
 
 
+class _PoisonQueue:
+    """get() 即炸——模拟已开流后的任意 mid-stream 异常。"""
+
+    def get(self, timeout=None):
+        raise RuntimeError("mid-stream boom")
+
+
+class _PoisonHub:
+    def __init__(self):
+        self.unsubscribed = False
+
+    def subscribe(self):
+        return _PoisonQueue()
+
+    def unsubscribe(self, q):
+        self.unsubscribed = True
+
+    def publish(self, event, data):
+        pass
+
+
+@unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
+class MidStreamErrorTestCase(unittest.TestCase):
+    """流已开后的非连接类异常：静默断流 + 退订，绝不把 500 envelope
+    行写进已开启的 event-stream（app.py _serve_events 的 except Exception）。"""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="zai-g5-sse-err-"))
+        seed_scene(self.home, "initial")
+        self.httpd, self.port = start_server(self, self.home)
+        self.hub = _PoisonHub()
+        self.httpd.ctx.hub = self.hub
+
+    def test_mid_stream_error_closes_stream_quietly(self):
+        import contextlib
+        import io
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
+        self.addCleanup(conn.close)
+        # 静音 server 线程的 traceback 日志（断言只看 wire 上的字节）
+        with contextlib.redirect_stderr(io.StringIO()):
+            conn.request("GET", "/api/events",
+                         headers={"Accept": "text/event-stream"})
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.fp.readline(), b": connected\n")
+            self.assertEqual(resp.fp.readline(), b"\n")
+            rest = resp.fp.read()  # 修复前这里会读到 500 status 行 + envelope
+        self.assertEqual(rest, b"")
+        self.assertTrue(self.hub.unsubscribed,
+                        "handler must unsubscribe on the way out")
+
+
 if __name__ == "__main__":
     unittest.main()
