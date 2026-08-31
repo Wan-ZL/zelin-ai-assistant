@@ -7,14 +7,14 @@
 1. **单文件单卡为主，但 list 文件是合法形态**：`registry.py` 明文支持一个 `.yaml` 装 YAML 列表（历史欠账批 R-002..R-006），`save()`/`delete()` 都有 list-member 分支。当前 173 卡 corpus 里 **0 个 list 文件**（已全部拆单），但 migrate 必须处理两种形态。
 2. **`to_dict()` 的省略语义**：`_CORE_ORDER` 13 个核心字段永远序列化（哪怕 null）；`_OPTIONAL_ORDER` 字段值 `in (None, "", [], False)` 时整键跳过。**quirk：`0 == False` 为真**，所以 `silent_merge_count: 0` 也被跳过（代码注释明示这是有意的）。→ DB 读侧「键缺失」与「零值/False/空」必须同义。
 3. **`delivery_mode` 只序列化非默认值**：磁盘上只会出现 `chat`（54 张）；缺失（119 张）== `repo`。migrate 时缺失一律落 `"repo"`。
-4. **未知键在 `from_dict` 被静默丢弃**（kwargs 过滤到 dataclass 已知字段），一次 save 回写即消失。census 确认 corpus 现存 31 个 top-level 键全部在已知集合内，**没有野键**；migrate 遇到野键时按同一语义丢弃即可与现行 round-trip 等价（但 `--dry-run` 应把丢弃报出来）。
+4. **未知键在 `from_dict` 被静默丢弃**（kwargs 过滤到 dataclass 已知字段），一次 save 回写即消失。census 确认 corpus 现存 31 个 top-level 键全部在已知集合内，**没有野键**。**已实现决定（migrate，比 live registry 更严）**：一次性迁移丢字段不可逆，野键默认**整体 refuse**（点名键名、非零退出、零写入）；`--allow-unknown` 才显式降级为 WARN + 丢弃（from_dict 语义）。
 
 ## 1. 热列（cards 表）← YAML 顶层字段
 
 | 热列 | YAML 来源 | 类型/空 | 事实与 quirk |
 |---|---|---|---|
 | `id` | `id` | TEXT PK, NOT NULL | 形如 `R-\d{3}` 但**无格式保证**：`from_dict` 对 int 手写值 `id: 4` str() 归一成 `"4"`；文件名还允许 `R-042-notes` 后缀形。存原字符串，勿加格式 CHECK。 |
-| `status` | `status` | TEXT NOT NULL | 词表见 §6。**legacy `merged_into:<id>` 是合法 status 字符串**（`is_merged` 前缀判定），corpus 现存 0 例但代码路径活着——trigger 转移表必须放行/白名单它，**不得**在 migrate 时静默归一成 `merged`（两者 matching 语义不同，见 §6）。 |
+| `status` | `status` | TEXT NOT NULL | 词表见 §6。**legacy `merged_into:<id>` 是合法 status 字符串**（`is_merged` 前缀判定），corpus 现存 0 例但代码路径活着。**已实现决定（B1/B3）**：热列是纯投影——legacy 串归一为 `merged` + `merged_into_id` 回填（schema 状态 CHECK 只认 11 词，verbatim 串无处安放）；**payload 真源保 verbatim 原串**，export 走 payload 逐字节还原，matching 语义差异（见 §6）由读 payload 的一侧按 `is_merged` 前缀判定。 |
 | `prev_status` | `prev_status` | TEXT NULL | **被 trash 与 archive 两条路径复用**作 restore 目标（corpus 值：detected 31 / card_sent 12 / delivered 5）。restore 缺失时兜底 detected（trash 路径）/ delivered（archive 路径）。 |
 | `tier` | `tier` | TEXT NOT NULL DEFAULT 'T1' | 名义枚举 T0/T1/T2（corpus：35/99/39，干净），但 `from_dict` 只做 int→str 归一**不校验值域**（`tier: 7` → `"7"` 会存活）。存 TEXT，勿加枚举 CHECK。 |
 | `type` | `type` | TEXT NOT NULL DEFAULT '' | **自由 folksonomy，不是枚举**：corpus 有 60+ 个不同值，含 `vendor-deadline (OpenAI, not manager)`、`monitoring (from R-010 premium decision)` 这类 LLM 长文值，以及 `code-review`/`code_review`、`evidence_upload`/`evidence-upload` 连字符/下划线双写。永不校验、永不归一。 |
@@ -27,7 +27,7 @@
 | `version` | **无 YAML 祖先** | INT NOT NULL | CAS 列，migrate 初值 1。 |
 | `payload` | 其余全部字段 | TEXT(JSON) NOT NULL | 见 §2。 |
 
-另有 BUILD-CONTRACT §3 点名的终态字段：`merged_into`（YAML 顶层，8 张 merged 卡全带）建议随 `status` 提升为热列或至少建索引——`_canonical_id` 的 lineage 跳转和 `find_open_follow_up` 都要按它查。若留 payload，需 B1 拍板（§9）。
+另有 BUILD-CONTRACT §3 点名的终态字段：`merged_into`（YAML 顶层，8 张 merged 卡全带）——**已实现：提升为热列 `merged_into_id`**（自引用 FK；migrate 从现代 `merged_into` 字段或 legacy status 串后缀回填），`_canonical_id` 的 lineage 跳转和 `find_open_follow_up` 接线时按它查。
 
 ## 2. payload JSON 字段（冷列）← 其余 YAML 顶层字段
 
@@ -80,7 +80,9 @@ corpus 388 条 source dict 的键 census：`channel`/`date`/`quote`/`who` 各 38
 | `gmail_thread_id` | str\|缺失 | 强 thread 信号（注意 YAML 里是引号字符串 `'1823324031954270241'`，勿转 int——超 int53 且是标识符）。 |
 | `slack_thread_ts` | str\|缺失 | 代码定义、corpus 0 例。 |
 
-**去重键必须逐字复刻 `registry._dedupe_sources`**：`(channel.lower(), str(date), (ref or quote).strip().lower())` —— 注意第三元是 **ref 优先、缺 ref 才退 quote** 的 fallback。schema 的 `(channel, origin_key)` partial-unique 中 `origin_key` 应 = 这个三元组的后两元（或直接存完整三元组指纹），否则 parity 测试会在多源卡上炸。source 行无自然主键、无时间序保证（list 顺序即到达顺序，**必须保序**——`sources[0]` 是 thread_key 推导的首选源）。
+**应用层去重键逐字复刻 `registry._dedupe_sources`**：`(channel.lower(), str(date), (ref or quote).strip().lower())` —— 注意第三元是 **ref 优先、缺 ref 才退 quote** 的 fallback。这个三元组是**应用层语义，不进 DB 键**。**已实现决定（B1/B3）**：schema 的 `origin_key` 只存外部强信号——`slack:<ts>` / `gmail:<message_id>` 两形，无强信号一律 NULL、绝不 fuzzy（对齐 §10 thread_key 纪律）；`(channel, origin_key)` partial-unique 只约束强信号行。**migration 一律写 NULL**（回溯推导强信号有同 thread 多卡撞 partial-unique 的风险，留给接线后的写路径）。source 行无自然主键、无时间序保证（list 顺序即到达顺序，**必须保序**——`sources[0]` 是 thread_key 推导的首选源）。
+
+**wiring PR checklist（PR3 接线必读）**：migration 后 `sources.origin_key` 全为 NULL → 在写路径接线并回填之前，**历史线程的 DB 级去重（同一条外部消息只喂一张卡）存在空窗**。接线时需：① 新写入立即带 origin_key；② 对历史行做一次防撞回填（撞 `(channel, origin_key)` 键的行保留 NULL 并报告，人工核对）；③ 回填完成前 thread 级 dedupe 仍走 payload.thread_key 的应用层查询，不得依赖 `sources_dedup` 索引。
 
 ## 4. `execution.*` 词表 → dispatches 表 vs payload
 
@@ -116,7 +118,7 @@ CONTRACT §1 状态机 + State enum 全集（11 值）与 corpus 分布：`detec
 
 - `approved`/`raising` 是**短命过渡态**（actd 快速消化），corpus 抓拍不到 ≠ 不存在，trigger 转移表必须包含。
 - `rejected` 0 例的原因：reject 动作实际走 `trash(reason="rejected")` 落 `trashed`——`rejected` 态在现行管线近乎理论态，但 enum/matchable 都还引用它，勿删。
-- legacy `merged_into:<id>` verbatim status：与终态 `merged` **matching 语义相反**——`matchable()` 排除 legacy（`is_merged`）但放行 `merged`（当 delivered 参与匹配压重述，决策 6）。migrate **禁止**互转，存原样字符串 + trigger 白名单前缀。
+- legacy `merged_into:<id>` verbatim status：与终态 `merged` **matching 语义相反**——`matchable()` 排除 legacy（`is_merged`）但放行 `merged`（当 delivered 参与匹配压重述，决策 6）。**已实现决定**：热列投影归一为 `merged` + `merged_into_id`（schema 状态 CHECK 只认 11 词，verbatim 串进不了热列，trigger 白名单也不含前缀形）；**payload 真源保留原字符串**，export 走 payload 不失真，matching 语义差异由消费 payload 的一侧按 `is_merged` 前缀判定——热列不承载这层区别。
 - 终态分立（schema 既有设计确认）：`rejected/trashed/merged/archived` 四终态 + `merged_into_id`；`trashed`/`archived` 可逆（restore/unarchive 走 `prev_status`），`merged` 不可逆（UI 明示）。
 - **archive 目录语义**：archived 卡物理搬到 `archive/`，热扫描（非递归 glob）天然跳过；crash-mid-move 会留**双份**，archive 副本权威（load() 明文规则）。migrate 扫描两目录时**同 id 冲突取 archive 版**，并在 dry-run 报 residue。`R-000-example.yaml` 按文件名排除（永不入库）。
 
