@@ -1,0 +1,5 @@
+# Golden inbox fixtures 是字节级钉死的判例（Mac JSONSerialization 落盘形，
+# tests/test_server_actions.py 逐字节对照）——绝不允许 checkout 改写它们的
+# 行尾（Windows runner 的 autocrlf 曾把 LF 转成 CRLF，33 个字节对照全数误红；
+# PR #106 CI 2026-08-31）。-text = 按二进制对待，任何平台零转换。
+tests/fixtures/inbox/*.golden.json -text

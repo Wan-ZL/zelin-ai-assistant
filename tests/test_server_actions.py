@@ -27,8 +27,8 @@ import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
-from tests.test_server_common import (GOLDEN_DIR, assert_envelope, http_request,
-                                      post_json, start_server)
+from tests.test_server_common import (GOLDEN_DIR, REPO_ROOT, assert_envelope,
+                                      http_request, post_json, start_server)
 
 from server import inbox_writer
 
@@ -367,6 +367,25 @@ class BodyGateTestCase(_ActionsHomeMixin, unittest.TestCase):
         self.assertEqual(status, 400)
         assert_envelope(self, json.loads(data.decode("utf-8")),
                         "INVALID_FIELD")
+
+
+class GoldenFixtureEolTestCase(unittest.TestCase):
+    """PR #106 追加（Windows CI 2026-08-31）：golden fixtures 是字节级钉死的
+    判例——Windows runner 的 autocrlf 把 checkout 出的 fixture 转成 CRLF，
+    33 个字节对照全数误红。.gitattributes 必须以 -text 钉住它们（任何平台
+    零转换），盘上本体必须保持 LF；字节对照本身已用 read_bytes（binary）。"""
+
+    def test_gitattributes_pins_golden_fixtures(self):
+        attrs = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        self.assertIn("tests/fixtures/inbox/*.golden.json -text", attrs)
+
+    def test_fixtures_carry_no_crlf_on_disk(self):
+        goldens = sorted(GOLDEN_DIR.glob("*.golden.json"))
+        self.assertGreaterEqual(len(goldens), 33, "golden fixtures missing?")
+        for p in goldens:
+            self.assertNotIn(b"\r", p.read_bytes(),
+                             f"{p.name}: CRLF on disk — re-checkout with the "
+                             f".gitattributes -text rule in place")
 
 
 class BindHostTestCase(unittest.TestCase):
