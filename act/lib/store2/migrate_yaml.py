@@ -350,24 +350,28 @@ def check_target(db_path: Path) -> str:
         return "fresh"
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
-        tables = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
-        if not tables:
-            return "empty-file"
-        uv = con.execute("PRAGMA user_version").fetchone()[0]
-        if uv != 1 or not set(_DATA_TABLES) <= tables:
-            raise MigrateError(
-                f"refuse: {db_path} 已有非 store2-v1 内容（user_version={uv}）")
-        for t in _DATA_TABLES:
-            n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608 - 白名单表名
-            if n:
-                raise MigrateError(f"refuse: 目标库非空（{t} 有 {n} 行）——"
-                                   "一次性迁移只进全新库")
-        row = con.execute(
-            "SELECT value FROM board_revision WHERE id = 1").fetchone()
-        if row and row[0] != 0:
-            raise MigrateError(f"refuse: board_revision={row[0]}，目标库已被写过")
-        return "schema-only"
+        try:
+            tables = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if not tables:
+                return "empty-file"
+            uv = con.execute("PRAGMA user_version").fetchone()[0]
+            if uv != 1 or not set(_DATA_TABLES) <= tables:
+                raise MigrateError(
+                    f"refuse: {db_path} 已有非 store2-v1 内容（user_version={uv}）")
+            for t in _DATA_TABLES:
+                n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608 - 白名单表名
+                if n:
+                    raise MigrateError(f"refuse: 目标库非空（{t} 有 {n} 行）——"
+                                       "一次性迁移只进全新库")
+            row = con.execute(
+                "SELECT value FROM board_revision WHERE id = 1").fetchone()
+            if row and row[0] != 0:
+                raise MigrateError(f"refuse: board_revision={row[0]}，目标库已被写过")
+            return "schema-only"
+        except sqlite3.DatabaseError as e:
+            # 垃圾/损坏文件：连 sqlite_master 都读不了——干净 refuse，不落 traceback
+            raise MigrateError(f"refuse: {db_path} 不是可读的 SQLite 库（{e}）")
     finally:
         con.close()
 

@@ -399,6 +399,20 @@ BEGIN
   SELECT RAISE(ABORT, 'ACTIVITIES_APPEND_ONLY');
 END;
 
+-- transition_whitelist 只许追加（法条表 add-only）：UPDATE/DELETE = 篡改
+-- 状态机法条，与 notes/activities 同规执法；追加合法转移的 INSERT 面不设限
+CREATE TRIGGER IF NOT EXISTS transition_whitelist_no_update
+BEFORE UPDATE ON transition_whitelist
+BEGIN
+  SELECT RAISE(ABORT, 'WHITELIST_APPEND_ONLY');
+END;
+
+CREATE TRIGGER IF NOT EXISTS transition_whitelist_no_delete
+BEFORE DELETE ON transition_whitelist
+BEGIN
+  SELECT RAISE(ABORT, 'WHITELIST_APPEND_ONLY');
+END;
+
 -- 全局游标单调递增（回拨 = 客户端增量同步静默漏数据，直接拒绝）
 CREATE TRIGGER IF NOT EXISTS board_revision_monotonic
 BEFORE UPDATE ON board_revision

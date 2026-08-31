@@ -215,6 +215,58 @@ class OriginTrustStoreTestCase(_StoreFixture):
         self.assertEqual(card["origin_trust"], "hand")
 
 
+class MergeGuardTestCase(_StoreFixture):
+    """merge 父指针卫兵：自并、并入幽灵（缺席/tombstone）父卡一律拒绝。"""
+
+    def test_merge_into_self_rejected(self):
+        self._mint("R-001", "detected")
+        with self.assertRaises(StoreError) as cm:
+            self.store.transition("R-001", "merge", "user", None,
+                                  merged_into_id="R-001")
+        self.assertEqual(cm.exception.code, "INVALID_FIELD")
+        self.assertEqual(self.store.get_card("R-001")["status"], "detected")
+
+    def test_merge_into_missing_or_tombstoned_parent_rejected(self):
+        self._mint("R-001", "detected")
+        with self.assertRaises(NotFound):
+            self.store.transition("R-001", "merge", "user", None,
+                                  merged_into_id="R-404")
+        self._mint("R-002", "trashed", prev_status="detected")
+        self.store.purge_trashed("R-002")
+        with self.assertRaises(NotFound):
+            self.store.transition("R-001", "merge", "user", None,
+                                  merged_into_id="R-002")
+        # 合法 merge 不受卫兵影响
+        self._mint("R-003", "detected")
+        card = self.store.transition("R-001", "merge", "user", None,
+                                     merged_into_id="R-003")
+        self.assertEqual((card["status"], card["merged_into_id"]),
+                         ("merged", "R-003"))
+
+
+class WriteTransactionHygieneTestCase(_StoreFixture):
+    """_write 卫生：任何失败（含 COMMIT 本身失败）后线程连接必须回到干净态，
+    绝不卡在半截事务里让后续写全部撞 'cannot start a transaction'。"""
+
+    def test_failed_write_leaves_connection_clean(self):
+        self._mint()
+        with self.assertRaises(TransitionDenied):
+            self.store.transition("R-001", "approve", "agent", None)
+        self.assertFalse(self.store._conn().in_transaction)
+        card = self.store.transition("R-001", "approve", "user", None)
+        self.assertEqual(card["status"], "approved")
+
+    def test_commit_failure_rolls_back_not_sticks(self):
+        # 模拟事务在 COMMIT 前被外力终结：COMMIT 抛 OperationalError——
+        # 连接必须落回干净态，后续写照常
+        with self.assertRaises(sqlite3.OperationalError):
+            with self.store._write() as conn:
+                conn.execute("ROLLBACK")
+        self.assertFalse(self.store._conn().in_transaction)
+        self._mint("R-002")
+        self.assertEqual(self.store.get_card("R-002")["status"], "card_sent")
+
+
 @unittest.skipUnless(_STORE_LANDED, _SKIP_REASON)
 class SchemaVersionGateTestCase(unittest.TestCase):
     """版本门两面：crash window 重跑补全（版本尾钉的意义所在）；

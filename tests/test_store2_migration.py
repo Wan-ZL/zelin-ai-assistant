@@ -414,6 +414,31 @@ class UnknownKeyRefusalTestCase(unittest.TestCase):
 
 
 @unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
+class GarbageTargetTestCase(unittest.TestCase):
+    """目标路径是垃圾/损坏文件时必须干净 refuse（MigrateError → rc 非零），
+    不是 sqlite3.DatabaseError traceback。"""
+
+    def test_garbage_target_file_is_clean_refusal(self):
+        import act.lib.store2.migrate_yaml as m
+        tmp = Path(tempfile.mkdtemp(prefix="store2-garbage-"))
+        try:
+            garbage = tmp / "not-a-db.db"
+            garbage.write_bytes(b"\x00\x01this is not sqlite\xff" * 40)
+            with self.assertRaises(m.MigrateError):
+                m.check_target(garbage)
+            # CLI 面同样干净 refuse
+            reg = tmp / "registry"
+            reg.mkdir()
+            (reg / "R-401.yaml").write_text(
+                yaml.safe_dump(_card("R-401", "detected"), allow_unicode=True,
+                               sort_keys=False), encoding="utf-8")
+            rc = m.main(["--registry", str(reg), "--db", str(garbage)])
+            self.assertNotEqual(rc, 0)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+@unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
 class MigrationDryRunTestCase(unittest.TestCase):
     def test_dry_run_writes_no_rows(self):
         tmp = Path(tempfile.mkdtemp(prefix="store2-dryrun-"))

@@ -55,7 +55,7 @@ _TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "AGENT_FIELD_FORBIDDEN",
 _INTEGRITY_CODES = (
     "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE",
     "NOTES_APPEND_ONLY", "NOTES_RECEIPT_SET_ONCE",
-    "ACTIVITIES_APPEND_ONLY", "REVISION_MONOTONIC",
+    "ACTIVITIES_APPEND_ONLY", "WHITELIST_APPEND_ONLY", "REVISION_MONOTONIC",
 )
 
 
@@ -232,19 +232,26 @@ class Store:
 
     @contextmanager
     def _write(self):
-        """写事务 helper：BEGIN IMMEDIATE 抢写锁；IntegrityError 翻译成类型化错误后回滚。"""
+        """写事务 helper：BEGIN IMMEDIATE 抢写锁；IntegrityError 翻译成类型化错误后回滚。
+        COMMIT 也在保护圈内——它失败同样回滚，线程连接绝不卡在半截事务里污染后续写。"""
         conn = self._conn()
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
+            conn.execute("COMMIT")
         except sqlite3.IntegrityError as e:
-            conn.execute("ROLLBACK")
+            self._rollback(conn)
             raise _translate_integrity(e) from e
         except BaseException:
-            conn.execute("ROLLBACK")
+            self._rollback(conn)
             raise
-        else:
-            conn.execute("COMMIT")
+
+    @staticmethod
+    def _rollback(conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass  # 事务已随失败的 COMMIT 终结时无账可回——连接此刻已是干净态
 
     @staticmethod
     def _bump_revision(conn: sqlite3.Connection) -> int:
@@ -404,8 +411,16 @@ class Store:
         if spec.needs_parent and not merged_into_id:
             raise StoreError("INVALID_FIELD", f"verb '{verb}' requires merged_into_id",
                              {"verb": verb})
+        if spec.needs_parent and merged_into_id == card_id:
+            raise StoreError("INVALID_FIELD", "card cannot merge into itself",
+                             {"verb": verb, "merged_into_id": merged_into_id})
         with self._write() as conn:
             row = self._cas_precheck(conn, card_id, expected_version)
+            if spec.needs_parent:
+                parent = self._get_row(conn, merged_into_id)
+                if parent is None or parent["tombstone"]:
+                    # 并入幽灵父卡 = lineage 断链；tombstone 对写路径一律视同不存在
+                    raise NotFound("card", merged_into_id)
             old_status, old_prev = row["status"], row["prev_status"]
 
             # —— 算目标状态与随行字段 ——

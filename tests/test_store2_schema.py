@@ -472,6 +472,32 @@ class DedupAndDispatchTestCase(unittest.TestCase):
                 " VALUES ('R-001', 'completed', ?)", (NOW,))
 
 
+class WhitelistProtectionTestCase(unittest.TestCase):
+    """transition_whitelist 是法条表：add-only——UPDATE/DELETE 一律拒绝，
+    追加合法转移的 INSERT 面保持开放（与 notes/activities 同规）。"""
+
+    def setUp(self):
+        self.conn = open_db()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_update_and_delete_raise_insert_allowed(self):
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "UPDATE transition_whitelist SET actor_type = 'agent'"
+                " WHERE old_status = 'card_sent' AND new_status = 'approved'")
+        self.assertIn("WHITELIST_APPEND_ONLY", str(cm.exception))
+        with self.assertRaises(sqlite3.IntegrityError) as cm:
+            self.conn.execute(
+                "DELETE FROM transition_whitelist WHERE old_status = 'card_sent'")
+        self.assertIn("WHITELIST_APPEND_ONLY", str(cm.exception))
+        # add-only：追加新法条照常（法条只增不改不删）
+        self.conn.execute(
+            "INSERT INTO transition_whitelist (old_status, new_status,"
+            " actor_type) VALUES ('rejected', 'detected', 'user')")
+
+
 class SchemaLayoutTestCase(unittest.TestCase):
     """版本钉扎必须是 schema.sql 的最后一条语句：executescript 建库途中崩溃时
     user_version 必须还是 0，否则半截库会被版本门放行（crash window）。"""
