@@ -14,7 +14,7 @@
 5. First launch is blocked by Gatekeeper (unsigned build): right-click the app in /Applications → Open. On macOS Sequoia+, also System Settings → Privacy & Security → "Open Anyway". Once open, the app shows a first-run **permissions & setup page**: answer the single screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings → Recording), grant Screen Recording / Notifications from the live checklist, and see the anonymous-usage-stats disclosure (behavior stats are on by default, event metadata only; the text you type into the app is uploaded only if you opt in via the unchecked "Share typed text to improve the product" box right there — details & switches live in Settings). Reopen it anytime via the app menu → **Permissions Checkup**.
 6. Menu-bar app → Settings → paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth; the key is stored as a `0600` file in `config/secrets/`).
 7. Grant permissions in System Settings → Privacy & Security: **Screen Recording** and **Microphone** for the app; **Full Disk Access** for `/usr/sbin/cron` (click "+", press ⌘⇧G, type `/usr/sbin/cron`).
-8. Expected state: the popover header says the dashboard was generated **≤10 s ago**. Then try the "first card in 5 minutes" exercise below (click the menu-bar icon → type a small task → ✅ → a reviewable draft arrives minutes later).
+8. Expected state: click the menu-bar icon — the board window opens, and its header freshness label says the dashboard was generated **≤10 s ago**. Then try the "first card in 5 minutes" exercise below (type a small task into the board's capture box → ✅ → a reviewable draft arrives minutes later).
 9. Anything off at any step: `bash install.sh --check` (= `python3 -m act.doctor`) re-validates the whole chain — deps, key resolution, launchd agents actually alive, cron lines, dashboard freshness — one `ok/warn/FAIL` line per check with the exact fix.
 
 No API key yet? `python3 scripts/demo_seed.py /tmp/assistant-demo` previews the entire UI with fictional data — see [docs/DEMO.md](DEMO.md).
@@ -109,7 +109,7 @@ app 未签名,首次启动被 Gatekeeper 拦:在 `/Applications` 里**右键 →
 
 打开后 app 会弹出首启**权限体检页**:回答唯一的屏幕记录 consent(默认**仅屏幕**,不录音频——语音转写之后可在「设置 → 录制」单独打开)、按清单授予 屏幕录制/通知(完全磁盘访问仅 iPhone 联动需要),并看到匿名使用统计披露(行为统计默认开启、仅事件元数据;你输入进本 App 的文本默认不上传,想帮忙改进可当场勾选「分享输入文本以帮助改进产品」opt in;详情与开关在 设置 →「产品改进计划」)。之后随时可从 菜单 → 权限体检 重开这一页。
 
-> ✅ **预期状态**:菜单栏出现图标,点击能打开 popover。
+> ✅ **预期状态**:菜单栏出现图标,点击能打开看板主窗口(v0.48 起 popover 已移除,图标左键直达看板)。
 
 ### 步骤 5 · Anthropic API key
 
@@ -129,13 +129,13 @@ app 未签名,首次启动被 Gatekeeper 拦:在 `/Applications` 里**右键 →
 
 ### 步骤 7 · 心跳验证
 
-> ✅ **预期状态**:popover header 显示"数据生成于 ≤10 秒前"并持续刷新——说明 actd 活着、契约两端接通。若显示橙色 "actd 可能未运行":`launchctl list | grep actd`、`tail state/actd.log`,并对照 TROUBLESHOOTING。
+> ✅ **预期状态**:看板 header 显示"数据生成于 ≤10 秒前"并持续刷新——说明 actd 活着、契约两端接通。若显示橙色 "actd 可能未运行":`launchctl list | grep actd`、`tail state/actd.log`,并对照 TROUBLESHOOTING。
 
 ## 第一张卡(5 分钟)
 
 radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先走快速捕获**——只要 claude CLI + API key + actd 在跑,就能体验完整闭环。
 
-1. 点**菜单栏图标**呼出快速捕获 popover(主窗口内也可按 ⌘L),或用看板列顶的输入框。
+1. 点**菜单栏图标**打开看板,用提案列顶的输入框(⌘L 直接聚焦)。
 2. 输入一个 starter task(可直接复制):
 
    > 在 ~/Projects/assistant-hello 新建一个小脚本:统计 ~/Downloads 里各扩展名的文件数,输出 markdown 表格,配一个单元测试。

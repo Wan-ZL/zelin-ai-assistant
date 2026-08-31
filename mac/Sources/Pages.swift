@@ -953,7 +953,7 @@ struct IngestView: View {
     @ObservedObject private var i18n = LanguageStore.shared
 
     // 契约4 recording terms — in-page status line uses the bare words
-    // (no 录制：/Rec: prefix; that prefix is popover-button-only).
+    // (no 录制：/Rec: prefix; that prefix is the board-header button's).
     private var engineStatusText: String {
         if rec.mode == "off" { return L("关", "Off") }
         if !rec.engineRunning { return L("未在录制", "Not recording") }

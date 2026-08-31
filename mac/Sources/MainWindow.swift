@@ -110,14 +110,15 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     func closeWindow() {
         guard let window else { return }
         // A minimized window has no on-screen close button for performClose
-        // to simulate — close() it directly; that still posts willClose, so
-        // windowWillClose drops the activation policy back to .accessory.
+        // to simulate — close() it directly (still posts willClose for any
+        // future delegate hook; the app stays .regular either way, v0.48.x).
         if window.isMiniaturized { window.close() } else { window.performClose(nil) }
     }
 }
 
 enum MainSection: String, CaseIterable, Identifiable {
-    // dashboard first: main window = full workbench, popover = quick preview
+    // dashboard first: the main window is the full workbench (and since the
+    // v0.48.x popover removal, the ONLY board surface)
     // v0.10.2: trash sits right before settings (契约); the kanban keeps
     // excluding trash — this page is where deleted cards live in the window.
     // v0.14 (§27): ask — in-app Q&A over the docs + this machine's state.
@@ -380,7 +381,6 @@ struct MainWindowView: View {
         if nav.section == .dashboard {
             // full workbench = Jira-style kanban board (KanbanView manages
             // its own scrolling: horizontal lanes, each scrolls vertically).
-            // The popover keeps the vertical DashboardView untouched.
             if let app = NSApp.delegate as? AppDelegate {
                 KanbanView(store: app.store, app: app)
             }

@@ -25,6 +25,14 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+### Changed
+- 菜单栏 popover 面板移除（owner 拍板）：点菜单栏图标直接打开/聚焦看板主窗口；右键菜单新增「录制」子菜单（三态模式 + 实时字幕开关）。快速捕获入口收敛到看板列顶输入框（⌘L）与图标拖放，capture 契约不变。
+- 关闭主窗口后 app 保持常驻（菜单栏 + Dock，Slack 式）——不再退回菜单栏-only、Dock 图标不再消失；点 Dock 图标或菜单栏图标随时重开看板。退出语义不变（菜单退出 / 系统注销照旧）。
+- launchd 后台服务日志迁至 `~/Library/Logs/zelin-ai-assistant/`，plist 模板 WorkingDirectory=$HOME + PYTHONPATH=repo：修复 repo 在外置卷时 launchd 以 EX_CONFIG(78) 拒绝 spawn、且「一键修复」把手工修好的 plist 打回故障态的问题（CONTRACT §55）。doctor 新增 stale plist 探测，逐个点名 pre-v0.48 渲染残留并指向 `bash install.sh`。
+
+### Fixed
+- 实时字幕悬浮窗不再随转写累积无限变高：显示层滚动窗只保留最近约 2 句（CaptionRollup），悬浮窗 300 pt 硬上限、每行至多两行，宽度行为不变。
+
 ## [0.48.0] - 2026-08-31
 
 v0.48 v-next 移植列车：把在 v0.10.3 公开导出基线上开发的 v-next 线（web 看板、store2、信任矩阵）整体移植回真 main（v0.47.0）——语义级重放而非补丁级套用，逐条判决记录在 docs/design/transplant-notes.md；配套修宪案与旧法→新法测试映射见 docs/design/vnext-amendments.md（W1/W17/W18/T-28/T-29/§44.3-S/§50/§51）。

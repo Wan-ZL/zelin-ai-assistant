@@ -315,8 +315,9 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 契约与 §10 capture 动作**逐字不变**）。popover 专属面被主窗口既有等价物
 覆盖后移除：PipelineHealthBanner/一键修复、DiagnosticsStrip、Trash/Archive
 区、通知行——全部原样活在看板/侧栏页里。契约F 词表影响：`popover_open`
-事件**停发**（词表编号保留、永不复用）；`capture_submit` 的 `source`
-取值不再出现 `"popover"`（词表本身 add-only 不动）。② **关窗后台驻留
+事件**停发**（词表编号保留、永不复用）；`capture_submit` 的 `source` 词表
+popover|kanban 冻结不动——composer 只发 `"kanban"`，状态栏图标**拖放捕获
+继续发 `"popover"`**（同属菜单栏入口，既有归类不变）。② **关窗后台驻留
 （Slack 式）**：关闭主窗口后 app **保持 .regular（Dock 图标常驻）**、不再
 退回 .accessory——v0 的「关窗回 accessory」语义就此修订；点 Dock 图标或
 菜单栏图标重开主窗口（applicationShouldHandleReopen 原路径）。

@@ -151,8 +151,9 @@ struct RecordingMenuButton: View {
         }
     }
 
-    // 契约4 recording terms — popover button carries the 录制：/Rec: prefix;
-    // in-page status lines (Pages side, 桶C) use the bare words.
+    // 契约4 recording terms — this board-header button carries the
+    // 录制：/Rec: prefix; in-page status lines (Pages side, 桶C) use the
+    // bare words.
     private var statusLabel: String {
         L("录制：", "Rec: ") + stateWord
     }

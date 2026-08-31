@@ -7,14 +7,13 @@ import Foundation
 
 // MARK: - Kanban board (main-window 任务台) — Jira-style lanes
 //
-// Main window only; the popover keeps the vertical DashboardView untouched.
-// Cards/rows are the popover components reused verbatim at their popover
-// width (fixed 400pt lanes); each lane scrolls vertically on its own.
+// Main window's board (the only board surface since the v0.48.x popover
+// removal). Cards/rows are the shared card components at their original
+// 400pt width (fixed-width lanes); each lane scrolls vertically on its own.
 // Columns: 潜在任务 | 提案 | 运行中(+需输入) | 待验收 | 阶段性完成 | 永久性完成
 // — trash stays out. (v0.18: backlog moved leftmost so the board reads as a
 // spatial flow — detected sits upstream of card_sent, and every action moves
-// a card exactly one column to the right. Display order ONLY; the menu-bar
-// popover keeps its own attention-ordered list. 潜在任务/Backlog is the
+// a card exactly one column to the right. Display order ONLY. 潜在任务/Backlog is the
 // DISPLAY name of the former 欠账/debt lane and 阶段性完成/Done for now of the
 // completed lane — registry status names and the dashboard.json keys are
 // unchanged, 纯展示层. v0.33: the backlog lane and the off-board archive
@@ -65,7 +64,7 @@ struct KanbanView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
             }
-            // P1-4: slow-vs-broken pipeline banner (shared with the popover)
+            // P1-4: slow-vs-broken pipeline banner (hosts the 一键修复 path)
             PipelineHealthBanner(store: store, app: app,
                                  horizontalPadding: 16, bottomPadding: 8)
             // v0.19.0: board-level ingest diagnostic cards — silent ingest
@@ -92,8 +91,8 @@ struct KanbanView: View {
         }
         .background {
             // 契约七: Esc 退出多选 — window-scoped hidden cancel action (no
-            // event monitor; keyboard shortcuts only fire while THIS window is
-            // key, so the popover's own Esc logic is untouched).
+            // event monitor; keyboard shortcuts only fire while THIS window
+            // is key, so other windows' Esc handling is untouched).
             if selectMode {
                 Button("") { setSelectMode(false) }
                     .keyboardShortcut(.cancelAction)
@@ -102,8 +101,8 @@ struct KanbanView: View {
                     .accessibilityHidden(true)
             }
             // 搜索过滤: ⌘F puts the caret in the board search box — same
-            // hidden-button pattern; window-scoped, so the popover (no board,
-            // no box) and the 设置 page's local shortcuts are untouched.
+            // hidden-button pattern; window-scoped, so the 设置 page's local
+            // shortcuts are untouched.
             Button("") { searchFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
                 .opacity(0)

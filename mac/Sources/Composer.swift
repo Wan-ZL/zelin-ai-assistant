@@ -1,6 +1,6 @@
 // Composer.swift — KanbanComposer（待审批列顶的常驻折叠捕获行；v0.34 起
-// 运行中列顶 + popover 运行中区还各驻一个 mode=.run 变体——同一行为，提交
-// 带 mode:"run" 直接开跑，跳过提案闸门）
+// 运行中列顶还驻一个 mode=.run 变体——同一行为，提交带 mode:"run" 直接开跑，
+// 跳过提案闸门。popover 里的第三个实例随 popover 一起退役，v0.48.x §15 追记）
 //
 // 折叠态：一行「＋ 一句话，AI 来研究并提案…」；点击或 ⌘L 路径发出的
 // .focusCaptureField 通知就地展开为多行输入区（自动增高，上限约 5 行）。
@@ -28,10 +28,12 @@ enum ComposerMode {
 
 struct KanbanComposer: View {
     unowned let app: AppDelegate
-    // v0.34: the 运行中 lane hosts a .run composer (board column top + the
-    // popover's Running section, which passes source "popover").
+    // v0.34: the 运行中 lane hosts a .run composer at the board column top.
     var mode: ComposerMode = .propose
-    var source: String = "kanban"   // 契约F capture_submit vocab: popover|kanban
+    // 契约F capture_submit vocab: popover|kanban (frozen). Composers only
+    // pass "kanban" since the popover's removal; "popover" is still emitted
+    // by the status-icon drag-drop (AppDelegate — same menu-bar entrance).
+    var source: String = "kanban"
     // observe the UI language so placeholder/hints re-render on switch
     @ObservedObject private var i18n = LanguageStore.shared
     @State private var expanded = false
@@ -157,8 +159,8 @@ struct KanbanComposer: View {
         // state in a non-key window must never steal another window's paste).
         .background(HostingWindowReader(model: pasted))
         // ⌘V image monitor lives exactly as long as the caret is here — with
-        // four composer instances alive (board ×2 + popover), only the focused
-        // one may claim an image paste.
+        // both board composer instances alive (propose + run), only the
+        // focused one may claim an image paste.
         .onChange(of: focused) { _, f in
             if f {
                 if pasteMonitor == nil {
