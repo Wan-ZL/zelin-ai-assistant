@@ -369,5 +369,14 @@ class BodyGateTestCase(_ActionsHomeMixin, unittest.TestCase):
                         "INVALID_FIELD")
 
 
+class BindHostTestCase(unittest.TestCase):
+    """宪法第 9 条 localhost 例外的字面量钉子（CONTRACT §0.9/§49 引用于此）：
+    server 的 bind 是硬编码回环常量，绝不做成可配置。"""
+
+    def test_bind_host_is_loopback_literal(self):
+        from server import app as app_mod
+        self.assertEqual(app_mod.BIND_HOST, "127.0.0.1")
+
+
 if __name__ == "__main__":
     unittest.main()

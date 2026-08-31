@@ -38,7 +38,8 @@
    **修宪（v0.48，2026-08-31，localhost 例外）**：本条隐含的「本机零监听端口」
    原则新增唯一例外——`server/` 的 web 看板面：bind **硬编码 127.0.0.1**、零
    上传、交付物路径 server 端推导（三道闸与全部边界见 §49）。任何非回环监听、
-   任何新增上传面仍属违宪。（tests/test_server_common.py 钉 bind 字面量）
+   任何新增上传面仍属违宪。（tests/test_server_actions.py::BindHostTestCase
+   钉 bind 字面量）
 10. **打扰要有资格**：主动打扰用户的面（提案卡/通知）只留给「需要人才能推进」的
     事；拿不准的落备选静默过期，重复的静默并入。（§44；§45 LIMITED 语义）
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
@@ -2943,11 +2944,13 @@ mermaid **不进**白名单，保持禁用降级（code block 展示，T-23）�
 triage 三选一闸门、T0/T1/T2 审批语义、可逆操作矩阵、registry 单写者、字段
 add-only。
 
-**判例**：tests/test_server_common.py（bind/envelope/body 上限）、
-test_server_board.py（透传 + 详情 archive 优先）、test_server_actions.py
-（golden 字节面 + via 落款 + 未知字段 400）、test_server_steer.py（steer
-响应标注 + inbox 四键原形零新增）、test_server_files.py（穿越/CSP/
-disposition）、test_server_sse.py。
+**判例**：test_server_actions.py（golden 字节面 + via 落款 + 未知字段 400 +
+`BindHostTestCase` 钉 bind 字面量 + `BodyGateTestCase` 钉 1MiB body 上限/413，
+tests/test_server_actions.py:333）、test_server_board.py（透传 + 详情 archive
+优先）、test_server_steer.py（steer 响应标注 + inbox 四键原形零新增）、
+test_server_files.py（穿越/CSP/disposition）、test_server_sse.py；envelope
+形状由 tests/test_server_common.py 的 `assert_envelope` 夹具在各 suite 里
+统一执法（该文件本身不含用例）。
 
 ## 50. 卡片出身信任矩阵（origin_trust + effective tier + ingress 落款）
 
