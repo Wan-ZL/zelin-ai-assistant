@@ -120,3 +120,28 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 - TODO(contract): `origin_trust` 字段(§3 信任矩阵)属 PR2/PR3 范围,字段名与取值枚举尚未进 CONTRACT——store2 接线的修宪案一并立法。
 - TODO(contract): NOTICE 中 fork 目的地路径按最终落地文件名 reconcile(integration agent 终裁)。
 - TODO(wiring): wiring PR must verify actd validates feedback/capture image paths are under state/attachments/ before LLM attachment (review-ui finding 7).
+
+## 10. Theme — 调色板继承（Task P：web 深色 = Mac app 现役外观）
+
+来源盘点：`mac/Sources` 全部颜色都是 SwiftUI 系统语义色（`.green/.red/.blue/.purple/.orange/.teal/.gray/.yellow` + `.primary/.secondary` 透明度层），无自定义 hex、无 asset catalog。因此 dark 主题取 macOS dark mode 的系统色解析值；窗口底色族按 owner 截图基准（蓝灰 ~#1b1d23）。light 主题保持原结构，同色相家族按白底对比度加深（chip 文字 WCAG-ish ≥4.5，大件 ≥3）。token 架构（dashi fork 的变量名/分层）不动，只改值；实现见 `web/src/styles/tokens.css` 三个块（light / `[data-theme="dark"]` / `prefers-color-scheme` 兜底，后两块逐值一致）。
+
+| 语义 | Mac 源（SwiftUI） | dark token 值 | light token 值 | token |
+|---|---|---|---|---|
+| 批准 / 验收通过 chip | `.green`（systemGreen） | `#32d74b` | `#218739`（加深保对比） | `--success`、`--status-review` |
+| 拒绝 / 危险 | `.red`（systemRed） | `#ff453a` | `#d70015` | `--danger`（soft: dark rgba(255,69,58,.14) / light #fcecec） |
+| 需输入 / 警告 / working | `.orange`（systemOrange） | `#ff9f0a` | `#c05d00` | `--warning`、`--status-progress`、`--priority-high` |
+| 交付 / done / tier 紫 | `.purple`（systemPurple） | `#bf5af2` | `#9440d6` | `--status-done` |
+| queued / backlog 灰 | `.gray`（systemGray） | `#7c7c81` / `#98989d` / `#85858a` | `#8e8e93`（三者同值） | `--status-backlog` / `--status-todo` / `--status-canceled` |
+| accent（会话活动 / 主按钮） | `.teal`（systemTeal） | `#6ac4dc`（hover `#7ecfe4`） | `#12758c`（hover `#15829b`） | `--accent` / `--accent-hover` / `--accent-soft` |
+| accent 底上前景 | — | `#0c2a33`（亮 teal 上白字对比不够 → 墨字） | `#ffffff` | `--on-accent`（自本次起随主题取值） |
+| 窗口底 | 截图基准 | `#1b1d23` | `#fafbfc` | `--bg` |
+| 侧栏（更暗） | 截图基准 | `#17191e` | `#f1f3f6` | `--sidebar-bg` |
+| 卡片面（略亮） | 截图基准 | `#23262e`（raised `#282b34`） | `#ffffff` | `--surface` / `--surface-raised` |
+| muted/hover/active 面 | — | `#2a2d36` / `#313540` / `#3a3f4b` | `#f1f3f6` / `#f4f6f9` / `#e9ecf2` | `--surface-muted/hover/active` |
+| 列头 / 顶栏 | — | `#20232b` / `#1f2229` | `#f6f8fb` / `#fafbfc` | `--column-header` / `--header-bg` |
+| 文字四层 | `.primary/.secondary` | `#edeef2` / `#b4b9c2` / `#858c99` / `#636a78` | `#1a1c22` / `#5a5f6b` / `#959ba7` / `#b1b6c1` | `--text-primary…quaternary` |
+| 紧急优先级 | `.red` 家族 | 两主题共享 `#e5484d`（:root 单点定义，dark 块历来不覆写 priority） | 同左 | `--priority-urgent` |
+
+语义核对（每个动作保色义）：approve=green ✓（chip-success / status-review）、reject=red ✓（btn-danger / chip-danger）、deliver tags=purple ✓（status-done）、needs-input/warning=orange ✓（chip-warning / status-progress）、queued=gray ✓（status-backlog/todo）、teal accents ✓（--accent）。两条架构注记：① dashi 架构里 `--status-progress` 同时供 running 与 needs_input 的 lane chip 用（detail.css），取 orange 保住 needs-input 色义；Mac 的 running=blue 无处安放——本 token 表没有 blue 槽位，「修改/comment」按钮在 web 端是中性 `.btn`（不占别的语义色，无冲突；若要 1:1 复刻 blue modify 需加组件级 class，超出 token-only 范围，留给 UI 侧）。② 批准按钮走 `btn-primary` = `--accent`（teal），与 Mac 的绿 tint 不同——这是 dashi「单主色按钮」架构决定，改它同样是组件级工程。
+
+token 旁路清理：`board.css` btn-primary 的 `color:#ffffff` → `var(--on-accent)`；`detail.css:289` iframe 白底为**有意保留**（交付物 HTML 自带配色，浅底兜住透明页面，与主题无关）；`animations.css` 无硬编码色（注释里的 hex 是 fork 差异说明）。

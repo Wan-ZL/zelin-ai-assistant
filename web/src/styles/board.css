@@ -192,7 +192,7 @@
 .btn.btn-primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent); /* dark 主题 accent 为亮 teal，白字对比不够 —— 统一走 on-accent token */
 }
 
 .btn.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
