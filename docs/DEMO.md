@@ -3,6 +3,8 @@
 **Demo 模式(无需真实数据)与录屏指南** —— 不需要 API key、screenpipe 或 Obsidian,
 就能跑起完整 UI;这也是贡献者预览界面改动的推荐方式(见 `CONTRIBUTING.md`)。
 
+> **最快路径（v0.48 web 看板）**：`bash scripts/dev-preview.sh` 一条命令 = 种 demo 数据 + 起本地 server + 浏览器打开 web 看板（缺 `web/dist` 会自动 `npm install && npm run build`，需 Node LTS）；`--real` 改用 §19 home 指针指向的真实数据。本文其余部分是 **Mac app** 的 demo 与录屏指南——seeder 和 `--scene` 两边通用（`bash scripts/dev-preview.sh approved`）。
+
 `scripts/demo_seed.py` 生成一份**完全虚构**的 `state/dashboard.json`（example-bench /
 inkweld / alex.doe / sam.rivera……全是编的，绝无真实人物或组织数据），让 app 指着一个
 假的 `AIASSISTANT_HOME` 跑，用于 README 截图和 demo 视频。五种卡片类型 + 边缘状态
