@@ -97,6 +97,8 @@
 - `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`waiting_budget`|`concurrency`，词表与映射见 §51）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
 - `running[]` / `needs_input[]` 行加 `steers: [{text, ts, status, delivered_at}]`（§44.3-S 投影）：`status ∈ {queued, delivered, dropped}` 开放枚举（dropped 现行不投影，值保留 forward-compat）；`status=="delivered"` 必带 ISO `delivered_at`，其余为 null——诚实投递状态，绝不虚报送达。**`ts` 为 ISO 字符串**——显式偏离本节「dashboard 输出 epoch int」惯例（M8.3 C-4）：ts 是 steer dedup 键的组成部分，投影保原文才能与 `execution.*` 台账逐字对账；web 端无 string ts 的行整行丢弃（绝不渲染无法对账的 steer）。
 
+## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
+
 ```json
 {"id":"R-001","action":"approve","comment":null,"ts":"2026-07-06T20:12:00Z"}
 ```
