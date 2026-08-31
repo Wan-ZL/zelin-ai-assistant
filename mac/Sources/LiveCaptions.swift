@@ -1220,7 +1220,10 @@ final class LiveCaptionsController: ObservableObject {
     private func apply(_ update: ASRUpdate) {
         for sentence in update.finals {
             if let id = reducer.finalize(sentence) {
-                maybeTranslate(sentence, id: id)
+                // translate what's DISPLAYED (the CaptionRollup tail), so the
+                // translation matches the visible original and a monster
+                // final can't burn tokens on text nobody can see
+                maybeTranslate(reducer.lines.finalText, id: id)
             }
         }
         reducer.partial(update.partial)

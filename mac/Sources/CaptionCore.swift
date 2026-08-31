@@ -241,17 +241,70 @@ struct CaptionLines: Equatable {
     var liveText = ""
 }
 
+/// Rolling-window cap for everything the overlay may display. ASR partials
+/// can restate an ever-growing transcript (degraded full-text servers, long
+/// speech with no VAD pause) and one definite utterance can carry many
+/// sentences — without a cap the 悬浮窗 grows with the transcript until it
+/// runs off the screen. Every string the reducer stores passes through
+/// `tail`: keep only the newest `maxSentences` sentences (a trailing
+/// unterminated fragment counts as one), plus a hard character budget for
+/// punctuation-free monsters. CaptionOverlay's max-height clamp is the
+/// belt-and-braces on top of this.
+enum CaptionRollup {
+    static let maxSentences = 2
+    static let maxCharacters = 300
+
+    /// Sentence terminators. ASCII '.' is handled separately: it only ends a
+    /// sentence before whitespace/end-of-string, so decimals ("2.5") and
+    /// URLs never split one.
+    private static let terminators: Set<Character> =
+        ["。", "！", "？", "…", "；", "!", "?", ";"]
+    /// Closing quotes/brackets stay glued to the sentence they close.
+    private static let closers: Set<Character> =
+        ["”", "’", "」", "』", "）", ")", "]", "\"", "'"]
+
+    static func tail(_ text: String, maxSentences: Int = maxSentences) -> String {
+        // segment starts: startIndex + one after each sentence end that still
+        // has text behind it (the remainder is the in-progress fragment)
+        var starts = [text.startIndex]
+        var i = text.startIndex
+        while i < text.endIndex {
+            let c = text[i]
+            var ends = terminators.contains(c)
+            if c == "." {
+                let next = text.index(after: i)
+                ends = next == text.endIndex || text[next].isWhitespace
+            }
+            i = text.index(after: i)
+            if ends {
+                while i < text.endIndex, closers.contains(text[i]) {
+                    i = text.index(after: i)
+                }
+                if i < text.endIndex { starts.append(i) }
+            }
+        }
+        var out = starts.count <= maxSentences ? text
+            : String(text[starts[starts.count - maxSentences]...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.count > maxCharacters { out = String(out.suffix(maxCharacters)) }
+        return out
+    }
+}
+
 struct CaptionReducer {
     private(set) var lines = CaptionLines()
     private var nextID = 1
 
     mutating func partial(_ text: String) {
-        lines.liveText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.liveText = CaptionRollup
+            .tail(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// A sentence closed: push it to the top line, clear the live line.
     /// Returns the sentence id for the translation stream to attach to;
     /// nil for whitespace-only finals (still clears the live line).
+    /// The stored top line is the ROLLING TAIL of the final (CaptionRollup) —
+    /// a multi-sentence final displays only its newest sentences.
     @discardableResult
     mutating func finalize(_ text: String) -> Int? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -259,16 +312,17 @@ struct CaptionReducer {
         guard !t.isEmpty else { return nil }
         lines.finalID = nextID
         nextID += 1
-        lines.finalText = t
+        lines.finalText = CaptionRollup.tail(t)
         lines.finalTranslation = ""
         return lines.finalID
     }
 
     /// Streaming translation update (full accumulated text so far) for the
-    /// sentence `id`. Dropped when the top line already moved on.
+    /// sentence `id`. Dropped when the top line already moved on; capped to
+    /// the same rolling tail as the original it translates.
     mutating func translation(_ id: Int, _ text: String) {
         guard id == lines.finalID else { return }
-        lines.finalTranslation = text
+        lines.finalTranslation = CaptionRollup.tail(text)
     }
 
     /// Clear the display (pause/engine switch). Ids stay monotonic so stale

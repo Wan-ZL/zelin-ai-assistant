@@ -174,6 +174,46 @@ reducer.reset()
 check(reducer.lines == CaptionLines(), "reset clears the display")
 check(reducer.finalize("第三句。") == 3, "ids stay monotonic across reset")
 
+// ---- 5b. rolling-window cap (v0.48.x): the overlay shows the newest ~2
+// sentences, never a transcript — partials that restate ever-growing text
+// (degraded full-text servers, long speech with no VAD pause) once grew the
+// 悬浮窗 past the screen edge ----
+print("[14b] CaptionRollup.tail: keeps only the newest sentences:")
+check(CaptionRollup.tail("第一句。第二句。第三句。") == "第二句。第三句。",
+      "CJK: last two closed sentences survive",
+      "got \(CaptionRollup.tail("第一句。第二句。第三句。"))")
+check(CaptionRollup.tail("One. Two! Three?") == "Two! Three?",
+      "ASCII terminators; leading whitespace of the tail trimmed",
+      "got \(CaptionRollup.tail("One. Two! Three?"))")
+check(CaptionRollup.tail("第一句。还在说的半句") == "第一句。还在说的半句",
+      "closed sentence + fragment = two segments → unchanged")
+check(CaptionRollup.tail("第一句。第二句。还在说的半句") == "第二句。还在说的半句",
+      "trailing fragment counts as a segment; the oldest sentence drops",
+      "got \(CaptionRollup.tail("第一句。第二句。还在说的半句"))")
+check(CaptionRollup.tail("version 2.5 is great") == "version 2.5 is great",
+      "'.' before a non-space never splits (decimals, URLs)")
+check(CaptionRollup.tail("他说：“好。”然后走了。就这样。") == "然后走了。就这样。",
+      "closing quote stays glued to the sentence it closes",
+      "got \(CaptionRollup.tail("他说：“好。”然后走了。就这样。"))")
+check(CaptionRollup.tail("") == "", "empty in → empty out")
+let monster = String(repeating: "a", count: 400)
+check(CaptionRollup.tail(monster) == String(repeating: "a", count: 300),
+      "punctuation-free monster falls back to the character budget")
+
+print("[14c] reducer: live/final/translation lines all pass the rolling cap:")
+var roll = CaptionReducer()
+roll.partial("第一句。第二句。第三句还在说")
+check(roll.lines.liveText == "第二句。第三句还在说",
+      "live line shows the rolling tail", "got \(roll.lines.liveText)")
+let rollID = roll.finalize("Alpha. Beta. Gamma.")
+check(rollID == 1, "fresh reducer: first final id 1")
+check(roll.lines.finalText == "Beta. Gamma.",
+      "multi-sentence final displays only its newest sentences",
+      "got \(roll.lines.finalText)")
+roll.translation(1, "一。二。三。")
+check(roll.lines.finalTranslation == "二。三。",
+      "translation line capped the same way", "got \(roll.lines.finalTranslation)")
+
 // ---- 6. translation direction ----
 print("[15] TranslateDirection: fixed modes + auto script sniff:")
 check(TranslateDirection.target(for: "hello", mode: "zh2en") == "en", "zh2en fixed")
