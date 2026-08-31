@@ -44,6 +44,7 @@ from act.lib import (
     analytics,
     config,
     health,
+    logcap,
     notify,
     policy,
     registry,
@@ -115,6 +116,9 @@ def _log(msg: str) -> None:
         with (config.STATE_DIR / "actd.log").open(
                 "a", encoding="utf-8", errors="replace") as fh:
             fh.write(line)
+        # 自压缩（best-effort）：KeepAlive 常驻进程的日志从不轮转会无限增长
+        # （live 事故：syncd.log 74MB）——超 ~1MB 只留后半，registry 台账同款。
+        logcap.cap(config.STATE_DIR / "actd.log")
     except (OSError, UnicodeError):
         pass
 
