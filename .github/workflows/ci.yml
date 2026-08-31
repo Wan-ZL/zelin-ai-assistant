@@ -95,10 +95,14 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Warn when code changed without a contract update
+        # base_ref 经 env 进 shell，绝不直接插值进 run 脚本体（zizmor
+        # template-injection：分支名是攻击者可控字符串，展开即代码）。
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          BASE="origin/${{ github.base_ref }}"
-          git fetch --quiet origin "${{ github.base_ref }}"
+          BASE="origin/${BASE_REF}"
+          git fetch --quiet origin "${BASE_REF}"
           CHANGED="$(git diff --name-only "$(git merge-base "$BASE" HEAD)"...HEAD)"
           if echo "$CHANGED" | grep -qE '^(act/|mac/Sources/)' \
              && ! echo "$CHANGED" | grep -q '^docs/CONTRACT.md$'; then
