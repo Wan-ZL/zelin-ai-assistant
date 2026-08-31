@@ -1181,11 +1181,12 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **网络全 best-effort**：任何 network 调用失败只 log、绝不 raise 进循环。
 - **W18 远程直跑闸门（v0.48 add-only，本文见 §41 修订）**：UP 落盘属**网络
   ingress**——`_write_inbox_file` 在 `_inbox_shape_error` 通过之后、record 落盘
-  之前，对 `capture` + `mode:"run"` 且 `risk.remote_direct_run_allowed()` 为假的
-  动作**剥掉 `mode` 键**、按普通提案 capture 落盘 + log 一行
-  `direct-run downgraded to propose (remote.allow_direct_run=false)`。syncd 无
-  同步响应信道，诚实声明落在 log + 卡片本身照常出现在提案列——任务永不被吞，
-  也绝不谎报「已开跑」。
+  之前，对每个 record **恒盖 T-28 落款 `via:"remote"`**（**覆写**而非补缺：
+  payload 自带 `via` 即视为冒充 owner-class 写者，AEAD 只认字节不认身份）。
+  降级本身不在 syncd 做——actd 侧 W18 硬后盾（`_apply_capture`：非 owner
+  ingress 的 `mode:"run"` 一律降级为普通提案 capture）凭该落款执行。syncd 无
+  同步响应信道，诚实声明落在 actd log + 卡片本身照常出现在提案列——任务永不
+  被吞，也绝不谎报「已开跑」。
 - **v0.48 修订（F2，DOWN change-gate 摘要剔除易变字段；live 事故 2026-08-31）**：
   dashboard.json 每次重建都重打 `generated_at`（内容零变化也打），而 change-gate
   直接 sha256 原始字节——每次重建 = 一次全量加密快照推送（live 实测 2-4GB/天

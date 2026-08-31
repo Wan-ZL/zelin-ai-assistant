@@ -45,7 +45,7 @@ v0.48 v-next 移植列车：把在 v0.10.3 公开导出基线上开发的 v-next
 - **打字内容遥测改为 opt-in**（`telemetry.capture_input`）— 默认 OFF（此前默认 ON）：输入文本要进遥测，需在 Mac app 首启权限页新增的默认不勾选 checkbox、或既有 Settings 开关里显式打开。总开关 `telemetry.enabled`（事件元数据）语义不变。
 - **W1：库存配额反转**（quick_capture）— open 卡永不被挤出库存投影；closed 卡只填剩余空间，上限 20（旧 delivered-pinned-past-cap 判例改钉新配额）。
 - **W1.c：自动归档默认 0→30**（`archive.after_days`）— delivered 卡最后活动超 30 天自动封存进 archive（设 0 恢复永不归档；只封存冷 delivered——带未来 deadline / cluster 内有 open 兄弟卡 / 时间戳不可解析的一律不动）。
-- **W18：远程直跑闸门，fail-closed 默认关**（`remote.allow_direct_run`，修 §41）— webui/syncd 等网络 ingress 收到 capture mode:"run" 时默认剥掉 mode 降级为普通提案（带提示，照进 triage，不报错），写入一律盖 via:"remote"；设 true 才放行，且刻意不接 owner-override。旧「mode:'run' 转发」判例改为 opt-in 形态，默认关的另一半钉在 test_webui_remote_gate。
+- **W18：远程直跑闸门，fail-closed 默认关**（`remote.allow_direct_run`，修 §41）— webui/syncd 等网络 ingress 的写入一律盖 via:"remote"（覆写不可 spoof），actd 的 T-28 硬后盾凭该落款把非 owner ingress 的 capture mode:"run" 一律降级为普通提案（照进 triage，不报错不吞任务）。webui 侧闸门关时另在落盘前剥掉 mode 并带 200 降级提示；opt-in=true 时 mode 原样进 inbox（§34 预留）但响应仍带 reserved 提示——actd 现行无条件降级，绝不谎报「已开跑」。开关刻意不接 owner-override；判例钉在 test_webui_remote_gate。
 
 ### Fixed
 

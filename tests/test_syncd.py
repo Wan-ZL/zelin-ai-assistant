@@ -342,12 +342,32 @@ class UpTestCase(unittest.TestCase):
         self.assertEqual(rec["action"], "approve")
         self.assertEqual(rec["expected_status"], "card_sent")
         self.assertEqual(rec["board_seq"], 42)
+        # T-28：syncd UP 落盘属网络 ingress，每个 record 恒盖 via:"remote"
+        self.assertEqual(rec["via"], "remote")
         # delivered PATCH issued for this action_id, carrying the write_secret
         delivered = [(p, patch, ws) for (t, p, patch, ws) in ft.patches
                      if t == "inbox_actions" and patch.get("status") == "delivered"]
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0][0]["action_id"], f"eq.{aid}")
         self.assertEqual(delivered[0][2], _WRITE_TEXT)
+
+    def test_materialised_record_stamped_via_remote_even_when_spoofed(self):
+        # T-28/W18（PR #106 终审 MAJOR-2）：syncd UP 落盘恒盖 via:"remote"，
+        # **覆写**payload 自带的 via（"web" = 冒充 owner-class 写者）；capture
+        # 的 mode:"run" 原样透传——降级由 actd 的 T-28 硬后盾凭该落款执行
+        # （act/actd.py _apply_capture：非 owner ingress 一律降级为提案）。
+        aid = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        payload = {"action": "capture", "text": "remote run attempt",
+                   "mode": "run", "via": "web",
+                   "ts": "2026-07-12T01:00:00Z"}
+        ft = FakeTransport(inbox_rows=[self._pending_row(aid, payload)])
+        d = syncd.Syncd(_sync_cfg(), ft)
+        self.assertTrue(d._ensure_ready())
+        self.assertEqual(d.pull_up(), 1)
+        rec = json.loads((config.INBOX_DIR / f"{aid}.json")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual(rec["via"], "remote")
+        self.assertEqual(rec["mode"], "run")  # 透传；降级发生在 actd 侧
 
     def test_same_action_id_twice_is_one_inbox_file(self):
         aid = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"

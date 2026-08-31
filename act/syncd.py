@@ -742,7 +742,11 @@ class Syncd:
         capture's ``text``) but fail CLOSED on field types — the AEAD
         authenticates the bytes, not the shape, and a poison payload (e.g. a
         dict-valued ``comment``) must die here, not wedge actd's whole inbox
-        pass forever. We guarantee ``ts`` and stamp the server-authoritative
+        pass forever. We guarantee ``ts``, force-stamp the T-28 ingress mark
+        ``via:"remote"`` (network ingress — overwrites any payload-supplied
+        ``via`` so a relayed blob can never impersonate an owner-class
+        writer; actd's W18 backstop then downgrades non-owner ``mode:"run"``
+        to a plain proposal), and stamp the server-authoritative
         ``board_seq`` when the row carried one (consumed by the actd §5.4
         guard). Returns False (skip) if the payload is not a usable inbox
         action or the write failed.
@@ -763,6 +767,11 @@ class Syncd:
             return False
         record = dict(action)
         record.setdefault("ts", _iso_now())
+        # T-28/W18 ingress 落款：syncd UP 落盘属网络 ingress，恒盖 via:"remote"
+        # ——**覆写**而非 setdefault（payload 自带 via:"web"/缺省即冒充 owner，
+        # AEAD 只认字节不认身份）。降级本身由 actd 侧硬后盾执行（actd.py
+        # _apply_capture：非 owner ingress 的 mode:"run" 一律降级为普通提案）。
+        record["via"] = "remote"
         if board_seq is not None and "board_seq" not in record:
             record["board_seq"] = board_seq
         path = config.INBOX_DIR / f"{action_id}.json"
