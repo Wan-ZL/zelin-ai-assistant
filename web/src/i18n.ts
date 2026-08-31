@@ -57,6 +57,22 @@ export const CHANNEL_LABELS: LabelTable = {
   en: { slack: "Slack", gmail: "Gmail", meeting: "Meeting", manual: "Manual", screen: "Screen" },
 };
 
+/** 看板列 lane（board 投影的 needs_approval/running/… 闭枚举）。
+ *  注：列头是复数形（"Proposals"，BoardLanes.tsx 的 Lane title 内联对），
+ *  这里是详情抽屉里指代**单张卡**所属列的 chip，故取单数。 */
+export const LANE_LABELS: LabelTable = {
+  zh: {
+    needs_approval: "提案", running: "运行中", needs_input: "需输入",
+    review: "待验收", completed: "阶段性完成", debt: "潜在任务",
+    trash: "回收站", archived: "永久完成",
+  },
+  en: {
+    needs_approval: "Proposal", running: "Running", needs_input: "Needs input",
+    review: "In review", completed: "Done", debt: "Backlog",
+    trash: "Trash", archived: "Archived",
+  },
+};
+
 /** 回收站行 kind —— 对齐 mac/Sources/Cards.swift kindLabel */
 export const TRASH_KIND_LABELS: LabelTable = {
   zh: { suggestion: "建议", debt: "潜在任务" },
