@@ -127,12 +127,14 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 
 | 语义 | Mac 源（SwiftUI） | dark token 值 | light token 值 | token |
 |---|---|---|---|---|
-| 批准 / 验收通过 chip | `.green`（systemGreen） | `#32d74b` | `#218739`（加深保对比） | `--success`、`--status-review` |
+| 批准 / 验收通过 | `.green`（systemGreen） | `#32d74b` | `#218739`（加深保对比） | `--success`（`.btn-success` / `.chip-success`）、`--status-review` |
 | 拒绝 / 危险 | `.red`（systemRed） | `#ff453a` | `#d70015` | `--danger`（soft: dark rgba(255,69,58,.14) / light #fcecec） |
-| 需输入 / 警告 / working | `.orange`（systemOrange） | `#ff9f0a` | `#c05d00` | `--warning`、`--status-progress`、`--priority-high` |
-| 交付 / done / tier 紫 | `.purple`（systemPurple） | `#bf5af2` | `#9440d6` | `--status-done` |
+| 需输入 / 警告 / working / 打回 / 停止 | `.orange`（systemOrange） | `#ff9f0a` | `#c05d00` | `--warning`（`.btn-warning` / `.chip-warning`）、`--status-progress`、`--priority-high` |
+| 修改 / 研究并提议 蓝 | `.blue`（systemBlue） | `#0a84ff` | `#0a66cc`（加深保对比） | `--info`（`.btn-info`）——验收单补齐的 blue 槽位 |
+| 交付 / done / tier 紫 | `.purple`（systemPurple；注：交付 badge 源码为 `.blue`，本表与 owner 验收单拍板紫） | `#bf5af2` | `#9440d6` | `--status-done`、`--purple`（`.chip-purple`） |
+| 等待 / notice 黄 | `.yellow`（systemYellow） | `#ffd60a` | `#8a6d00`（加深保对比；调底用亮锚） | `--notice`（`.chip-notice`）——验收单补齐的 yellow 槽位 |
 | queued / backlog 灰 | `.gray`（systemGray） | `#7c7c81` / `#98989d` / `#85858a` | `#8e8e93`（三者同值） | `--status-backlog` / `--status-todo` / `--status-canceled` |
-| accent（会话活动 / 主按钮） | `.teal`（systemTeal） | `#6ac4dc`（hover `#7ecfe4`） | `#12758c`（hover `#15829b`） | `--accent` / `--accent-hover` / `--accent-soft` |
+| accent（会话活动 / 主按钮） | `.teal`（systemTeal） | `#6ac4dc`（hover `#7ecfe4` / active `#8ed2e4`） | `#12758c`（hover `#10677b` / active `#0e596a`） | `--accent` / `--accent-hover` / `--accent-active` / `--accent-soft` |
 | accent 底上前景 | — | `#0c2a33`（亮 teal 上白字对比不够 → 墨字） | `#ffffff` | `--on-accent`（自本次起随主题取值） |
 | 窗口底 | 截图基准 | `#1b1d23` | `#fafbfc` | `--bg` |
 | 侧栏（更暗） | 截图基准 | `#17191e` | `#f1f3f6` | `--sidebar-bg` |
@@ -142,6 +144,6 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 | 文字四层 | `.primary/.secondary` | `#edeef2` / `#b4b9c2` / `#858c99` / `#636a78` | `#1a1c22` / `#5a5f6b` / `#959ba7` / `#b1b6c1` | `--text-primary…quaternary` |
 | 紧急优先级 | `.red` 家族 | 两主题共享 `#e5484d`（:root 单点定义，dark 块历来不覆写 priority） | 同左 | `--priority-urgent` |
 
-语义核对（每个动作保色义）：approve=green ✓（chip-success / status-review）、reject=red ✓（btn-danger / chip-danger）、deliver tags=purple ✓（status-done）、needs-input/warning=orange ✓（chip-warning / status-progress）、queued=gray ✓（status-backlog/todo）、teal accents ✓（--accent）。两条架构注记：① dashi 架构里 `--status-progress` 同时供 running 与 needs_input 的 lane chip 用（detail.css），取 orange 保住 needs-input 色义；Mac 的 running=blue 无处安放——本 token 表没有 blue 槽位，「修改/comment」按钮在 web 端是中性 `.btn`（不占别的语义色，无冲突；若要 1:1 复刻 blue modify 需加组件级 class，超出 token-only 范围，留给 UI 侧）。② 批准按钮走 `btn-primary` = `--accent`（teal），与 Mac 的绿 tint 不同——这是 dashi「单主色按钮」架构决定，改它同样是组件级工程。
+语义核对（每个动作保色义，owner 验收单一比一）：approve/accept=green ✓（btn-success / chip-success / status-review）、reject/delete/硬需求/紧急截止=red ✓（btn-danger / chip-danger，紧急截止走 chip-outline 红字档）、modify/raise=blue ✓（btn-info，--info）、defer/archive=gray ✓（中性 .btn）、send-back/stop/answer/needs-input=orange ✓（btn-warning / chip-warning / status-progress）、copy-draft/back-to-review=teal ✓（btn-accent）、tier 章/交付 tag/已并入=purple ✓（chip-purple / zai-chip--merged；交付 badge 源码为 .blue，验收单拍板紫，styleguide 第 1 节保留 ⚠️ 记录）、waiting=yellow ✓（chip-notice，--notice）、queued=gray ✓（status-backlog/todo）、lineage ↳ 改进=teal ✓（zai-chip--improves）。旧注记 ①（无 blue 槽位）与 ②（单主色按钮架构，批准走 teal）已被 owner 验收单 sanctioned enrichment 取代：每个语义 hue 一套三档阶梯（filled 按钮 / tinted chip 底 / outline+文字）+ token 化的 hover/active（light 逐级加深、dark 逐级提亮）+ 权重分层（状态 chip 重档 / lineage chip -soft-quiet 安静档），全部 hue 不变；filled 仍只保留 btn-primary（--accent），语义动词按钮用 outline 档。
 
 token 旁路清理：`board.css` btn-primary 的 `color:#ffffff` → `var(--on-accent)`；`detail.css:289` iframe 白底为**有意保留**（交付物 HTML 自带配色，浅底兜住透明页面，与主题无关）；`animations.css` 无硬编码色（注释里的 hex 是 fork 差异说明）。

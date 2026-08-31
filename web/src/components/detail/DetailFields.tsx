@@ -100,6 +100,15 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   }
   if (detail.processing === true) chips.push({ key: "processing", label: text("生成中…", "Processing…"), tone: "warn" });
   if (detail.permanent === true) chips.push({ key: "permanent", label: text("已永久删除", "Permanently deleted"), tone: "danger" });
+  // lineage chips（Mac 卡面 badge 同源：↳ 改进 teal / 已并入 紫）——quiet tint 档，排在状态 chip 之后
+  const improvementOf = str(detail.improvement_of);
+  if (improvementOf) {
+    chips.push({ key: "improvement_of", label: text(`↳ 改进自 ${improvementOf}`, `↳ Improves ${improvementOf}`), tone: "improves" });
+  }
+  const mergedInto = str(detail.merged_into);
+  if (mergedInto) {
+    chips.push({ key: "merged_into", label: text(`已并入 ${mergedInto}`, `Merged into ${mergedInto}`), tone: "merged" });
+  }
 
   const warnings: Array<{ key: string; label: string; value: string; tone: "warn" | "danger" }> = [];
   const warnDefs: Array<[string, string, string, "warn" | "danger"]> = [
@@ -130,10 +139,6 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   if (queuedReason) meta.push([text("排队原因", "Queued because"), queuedReason]);
   const cost = detail.cost_usd ?? detail.cost_estimate_usd;
   if (detail.show_cost !== false && typeof cost === "number") meta.push([text("成本", "Cost"), `$${cost}`]);
-  const improvementOf = str(detail.improvement_of);
-  if (improvementOf) meta.push([text("改进自", "Improves"), improvementOf]);
-  const mergedInto = str(detail.merged_into);
-  if (mergedInto) meta.push([text("已并入", "Merged into"), mergedInto]);
   const agent = str(detail.agent_name);
   if (agent) meta.push([text("执行代号", "Agent"), agent]);
   const session = str(detail.short_id) ?? str(detail.session_id);

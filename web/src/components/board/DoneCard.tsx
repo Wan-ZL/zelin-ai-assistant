@@ -36,9 +36,10 @@ export function DoneCard({ row }: DoneCardProps) {
         <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
       ) : (
         <div className="card-actions">
+          {/* 色相 = Mac tint：青退回待验收 · 灰永久完成 */}
           <button
             type="button"
-            className="btn"
+            className="btn btn-accent"
             onClick={() => void submit(cardAction(row.id, "revert_review"))}
           >
             {text("退回待验收", "Back to review")}

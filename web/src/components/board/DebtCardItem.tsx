@@ -29,9 +29,10 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
         </p>
       ) : (
         <div className="card-actions">
+          {/* 色相 = Mac DebtRow tint：蓝研究并提议 · 红删除 */}
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-info"
             onClick={() => void submit(cardAction(item.id, "raise"))}
           >
             {text("研究并提议", "Research & propose")}

@@ -54,7 +54,8 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
             {row.resume_exhausted && (
               <span className="chip chip-danger">{text("恢复已放弃", "Auto-resume exhausted")}</span>
             )}
-            {row.waiting_for && <span className="chip">{text(`等待：${row.waiting_for}`, `waiting: ${row.waiting_for}`)}</span>}
+            {/* 等待 chip = Mac .yellow notice（owner 验收单：黄等待）——--notice 槽位 */}
+            {row.waiting_for && <span className="chip chip-notice">{text(`等待：${row.waiting_for}`, `waiting: ${row.waiting_for}`)}</span>}
           </div>
           {question && <p className="card-line is-warning">{question}</p>}
         </>
@@ -113,8 +114,9 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </p>
       ) : (
         <div className="card-actions">
+          {/* 色相 = Mac tint：回答/停止都是橙（needs-input 家族）；评论是 web fork 动词，保持中性 */}
           {isBlocked && (
-            <button type="button" className="btn btn-primary" onClick={() => setDialog("answer")}>
+            <button type="button" className="btn btn-warning" onClick={() => setDialog("answer")}>
               {text("回答…", "Answer…")}
             </button>
           )}
@@ -123,7 +125,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
               {text("评论", "Comment")}
             </button>
           )}
-          <button type="button" className="btn" onClick={() => setDialog("stop")}>
+          <button type="button" className="btn btn-warning" onClick={() => setDialog("stop")}>
             {text("停止", "Stop")}
           </button>
         </div>

@@ -48,12 +48,14 @@ export function ProposalCard({ card }: ProposalCardProps) {
       <div className="card-id">{card.id}</div>
       <div className="card-summary">{summary}</div>
       <div className="card-badges">
-        <span className="chip chip-accent">{card.tier}{card.tier_hint ? ` · ${card.tier_hint}` : ""}</span>
+        {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
+        <span className="chip chip-purple">{card.tier}{card.tier_hint ? ` · ${card.tier_hint}` : ""}</span>
         {card.delivery_mode === "chat" && (
-          <span className="chip">{text("交付：聊天成稿", "Deliver: chat draft")}</span>
+          <span className="chip chip-purple">{text("交付：聊天成稿", "Deliver: chat draft")}</span>
         )}
+        {/* 紧急截止 = Mac 红字——outline 档红 chip（文字前置），非紧急保持中性 */}
         {card.deadline && (
-          <span className={typeof card.days_left === "number" && card.days_left <= 3 ? "chip chip-warning" : "chip"}>
+          <span className={typeof card.days_left === "number" && card.days_left <= 3 ? "chip chip-danger chip-outline" : "chip"}>
             {card.deadline}
             {typeof card.days_left === "number" ? text(`（剩 ${card.days_left} 天）`, ` (${card.days_left}d left)`) : ""}
           </span>
@@ -62,8 +64,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
           <span className="chip">${card.cost_usd}</span>
         )}
         {card.hardness === "hard" && <span className="chip chip-danger">{text("硬需求", "Hard")}</span>}
+        {/* 被提×N 是 lineage 计数——quiet 档，比状态 chip 安静 */}
         {typeof card.repeated === "number" && card.repeated > 1 && (
-          <span className="chip chip-warning">{text(`被提×${card.repeated}`, `Raised ×${card.repeated}`)}</span>
+          <span className="chip chip-warning chip-quiet">{text(`被提×${card.repeated}`, `Raised ×${card.repeated}`)}</span>
         )}
         {card.green_sign && (
           <span className="chip chip-warning">
@@ -80,9 +83,10 @@ export function ProposalCard({ card }: ProposalCardProps) {
         <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
       ) : (
         <div className="card-actions">
+          {/* 四动词色相 = Mac tint 一比一（Cards.swift normalBody）：绿批准 · 红拒绝 · 蓝修改 · 灰暂缓 */}
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-success"
             onClick={() => (card.tier === "T2" ? setDialog("t2") : decide("approve"))}
           >
             {text("批准", "Approve")}
@@ -90,7 +94,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
           <button type="button" className="btn btn-danger" onClick={() => setDialog("reject")}>
             {text("拒绝", "Reject")}
           </button>
-          <button type="button" className="btn" onClick={() => setDialog("comment")}>
+          <button type="button" className="btn btn-info" onClick={() => setDialog("comment")}>
             {text("修改", "Comment")}
           </button>
           <button type="button" className="btn" onClick={() => decide("defer")}>

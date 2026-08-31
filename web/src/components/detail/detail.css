@@ -146,6 +146,9 @@
 .zai-chip--lane-completed,
 .zai-chip--lane-archived { color: var(--status-done); }
 .zai-chip--lane-debt { color: var(--status-backlog); }
+/* lineage chips（Mac 卡面 badge 的抽屉版）：quiet tint 档——↳ 改进自 teal / 已并入 紫 */
+.zai-chip--improves { color: var(--accent); border-color: transparent; background: var(--accent-soft-quiet); }
+.zai-chip--merged { color: var(--purple); border-color: transparent; background: var(--purple-soft-quiet); }
 
 .zai-detail-callout {
   border-radius: 8px;

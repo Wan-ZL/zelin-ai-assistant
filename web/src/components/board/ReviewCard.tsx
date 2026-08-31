@@ -55,18 +55,19 @@ export function ReviewCard({ card }: ReviewCardProps) {
         <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
       ) : (
         <div className="card-actions">
+          {/* 三动词色相 = Mac tint 一比一：绿验收 · 橙打回 · 青复制成稿 */}
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-success"
             onClick={() => void submit(cardAction(card.id, "accept"))}
           >
             {text("验收", "Accept")}
           </button>
-          <button type="button" className="btn" onClick={() => setShowRework(true)}>
+          <button type="button" className="btn btn-warning" onClick={() => setShowRework(true)}>
             {text("打回", "Send Back")}
           </button>
           {card.final_draft && (
-            <button type="button" className="btn" onClick={copyDraft}>
+            <button type="button" className="btn btn-accent" onClick={copyDraft}>
               {copied ? text("已复制 ✓", "Copied ✓") : text("复制成稿", "Copy final draft")}
             </button>
           )}

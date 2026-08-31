@@ -158,10 +158,38 @@
   text-overflow: ellipsis;
 }
 
+/* 语义色 chip（阶梯第 2 档：tinted 底 + 同 hue 文字；状态 chip 加字重压过 lineage） */
 .chip.chip-accent { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
-.chip.chip-warning { color: var(--warning); }
-.chip.chip-danger { color: var(--danger); background: var(--danger-soft); }
-.chip.chip-success { color: var(--success); }
+.chip.chip-warning { color: var(--warning); border-color: var(--warning-soft); background: var(--warning-soft); }
+.chip.chip-danger { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
+.chip.chip-success { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
+.chip.chip-purple { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
+.chip.chip-notice { color: var(--notice); border-color: var(--notice-soft); background: var(--notice-soft); }
+
+.chip.chip-accent,
+.chip.chip-warning,
+.chip.chip-danger,
+.chip.chip-success,
+.chip.chip-purple,
+.chip.chip-notice {
+  font-weight: 500;
+}
+
+/* lineage 档（被提×N / 已并入）：更安静的 tint——去边、常规字重、-soft-quiet 底 */
+.chip.chip-quiet {
+  font-weight: 400;
+  border-color: transparent;
+}
+
+.chip.chip-warning.chip-quiet { background: var(--warning-soft-quiet); }
+.chip.chip-purple.chip-quiet { background: var(--purple-soft-quiet); }
+.chip.chip-accent.chip-quiet { background: var(--accent-soft-quiet); }
+
+/* 阶梯第 3 档：outline + 文字（无底，边随 hue 文字色）——紧急截止红字等文字前置语义 */
+.chip.chip-outline {
+  background: transparent;
+  border-color: currentColor;
+}
 
 /* —— 按钮行 —— */
 .card-actions {
@@ -196,14 +224,58 @@
 }
 
 .btn.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn.btn-primary:active:not(:disabled) { background: var(--accent-active); }
 
+/*
+ * 语义动词按钮（阶梯第 3 档 outline+文字，hover 升第 2 档 tinted 底）——
+ * 色相与 Mac tint 一比一：绿批准/验收 · 红拒绝/删除 · 蓝修改/研究 · 橙打回/停止/回答 ·
+ * 青复制成稿/退回待验收；暂缓/永久完成保持中性灰 .btn（Mac .gray tint）。
+ * hover/active 走 --X-hover/--X-active token（light 加深 / dark 提亮），不许 ad-hoc 调色。
+ */
 .btn.btn-danger {
   border-color: var(--danger);
   color: var(--danger);
   background: var(--surface);
 }
 
-.btn.btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
+.btn.btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger-hover); color: var(--danger-hover); }
+.btn.btn-danger:active:not(:disabled) { background: var(--danger-soft); border-color: var(--danger-active); color: var(--danger-active); }
+
+.btn.btn-success {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--surface);
+}
+
+.btn.btn-success:hover:not(:disabled) { background: var(--success-soft); border-color: var(--success-hover); color: var(--success-hover); }
+.btn.btn-success:active:not(:disabled) { background: var(--success-soft); border-color: var(--success-active); color: var(--success-active); }
+
+.btn.btn-info {
+  border-color: var(--info);
+  color: var(--info);
+  background: var(--surface);
+}
+
+.btn.btn-info:hover:not(:disabled) { background: var(--info-soft); border-color: var(--info-hover); color: var(--info-hover); }
+.btn.btn-info:active:not(:disabled) { background: var(--info-soft); border-color: var(--info-active); color: var(--info-active); }
+
+.btn.btn-warning {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: var(--surface);
+}
+
+.btn.btn-warning:hover:not(:disabled) { background: var(--warning-soft); border-color: var(--warning-hover); color: var(--warning-hover); }
+.btn.btn-warning:active:not(:disabled) { background: var(--warning-soft); border-color: var(--warning-active); color: var(--warning-active); }
+
+.btn.btn-accent {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface);
+}
+
+.btn.btn-accent:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-hover); color: var(--accent-hover); }
+.btn.btn-accent:active:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-active); color: var(--accent-active); }
 
 .card-pending-note {
   color: var(--text-tertiary);
