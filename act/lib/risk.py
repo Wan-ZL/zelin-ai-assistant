@@ -21,7 +21,8 @@ from act.lib import config
 # W17 强制档位 — 外部来源一律抬到最严的一档(T2 = 需文字确认,§7 语义不变)。
 FORCED_TIER = "T2"
 
-# origin_trust 词表(store2 schema.sql 同款 CHECK 集合;add-only)。
+# origin_trust 档位常量(canonical 四值词表在 act/lib/policy.py ORIGINS =
+# store2 schema.sql CHECK 集;本模块只消费其中两档;add-only)。
 TRUST_HAND = "hand"
 TRUST_EXTERNAL = "external"
 

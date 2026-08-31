@@ -3161,10 +3161,12 @@ migrate/export CLI 触碰。
   遗留缺口（digest 拉回等转移行）撞 `ILLEGAL_TRANSITION` 再 add-only 补行
   （T-14）；`dispatches.status` 词表（`running|completed|failed|stopped`）随
   接线 PR 入宪。
-- **origin_trust 列**：schema v1 的 CHECK 现为二值 `('hand','external')`
-  + DEFAULT 'external'——与 §50 的四值 canonical 冲突已裁（T-15/C-1）：
-  **接线迁移把 CHECK 放宽为四值**，休眠期无实害；迁移的推导规则 =
-  `policy.CHANNEL_CLASS` 单一真源（T-6）。
+- **origin_trust 列**：schema v1 的 CHECK 为 §50 四值 canonical
+  `('hand','proposed','meeting','external')` + DEFAULT 'external'（T-15
+  **已定并落地**，PR #106 终审：原二值 CHECK 与四值词表的冲突在 dormant 期
+  修复）；迁移的推导规则 = `policy.classify_origin`（全部 sources 取最小
+  信任，`policy.CHANNEL_CLASS` 单一真源，T-6）；payload 里的 `origin_trust`
+  权威章经 export/import round-trip 保真（shape 表含该键）。
 - **YAML 迁移终裁（migrate_yaml / export_yaml，round-trip 优先）**：`created`
   无祖先 → sources[0].date 可解析优先、文件 mtime 兜底，dry-run 逐卡报取值
   来源（T-7）；`outputs`/`card` 历史键 payload 原样保留（T-9）；plan str 形态

@@ -247,7 +247,7 @@ live 树 v0.20+ 的 `registry.derive_thread_key` 给带外部 thread 引用的�
 | T-12 | mapping §9.8 | notes blob 双写一致性 | 维持：PR2 一次性投影无一致性问题；接线 PR 单源化（fold 写路径单源或双写事务），随 store2 接线案立法。 |
 | T-13 | mapping §9.9/§9.10 | `type` 值域归一；crash-mid-move residue | 照准：type 永不归一（UI filter 按原字符串）；residue 不清理、dry-run 报告。 |
 | T-14 | schema.md | digest 拉回转移行缺口；`dispatches.status` 词表；queued 取消动词；notes.kind 扩 answer | 全部「接线时 add-only 补」：撞 `ILLEGAL_TRANSITION` 再补行；`running\|completed\|failed\|stopped` 随接线 PR 入宪；**不新增**取消排队动词（abort_execution 覆盖）；answer 值随 schema v2 定夺。 |
-| T-15 | schema.sql:43 | origin_trust CHECK 二值与四值词表冲突 | 已定（C-1）：接线迁移放宽 CHECK 为四值；PR2 dormant 期间无实害。 |
+| T-15 | schema.sql:43 | origin_trust CHECK 二值与四值词表冲突 | **settled**（C-1；PR #106 终审落地）：CHECK 已放宽为 §50 四值 canonical；migrate 推导 = `policy.classify_origin`（全 sources 取最小信任），export shape 表含 `origin_trust`（权威章 round-trip 保真）。 |
 | T-16 | store2/store.py:400 | trashed→archived 复位后的 prev_status 语义 | **追认实现**：restore 回 archived 态时补 `prev_status='delivered'`（unarchive 兜底值——schema CHECK 要求封存卡必带回程票）；接线 parity 以 store2 语义为准并入宪。 |
 | T-17 | inbox-actions R2 | §3 动词清单是 v0.1 化石 | 修宪 PR 把 §3 改为：形状示例保留 + 「动作全集与语义见 §10；字节形以 Mac prettyPrinted+sortedKeys 为准（golden 集 `tests/fixtures/inbox/`）」。 |
 | T-18 | inbox-actions R9 | rework 空反馈替换文案只活在 Swift 代码 | 落进 §10 rework 条目为冻结字面量（客户端行为，三端逐字一致）：「Zelin 打回了这次交付但没有写具体理由。请对照本需求的 definition_of_done 逐条自检：每一条是否真正达成、产出物是否在承诺的位置、质量是否达到可直接使用的程度。找出差距，自行改进后重新交付，并用两三句话说明这次改了什么。」web 复刻后空打回不再走样成空 comment。 |

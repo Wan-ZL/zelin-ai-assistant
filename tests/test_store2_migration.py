@@ -305,13 +305,78 @@ class MigrationTestCase(unittest.TestCase):
             self.assertEqual(row["version"], 1, row["id"])      # CAS 起点
             self.assertTrue(row["created"] and row["updated"], row["id"])
             self.assertEqual(row["tombstone"], 0, row["id"])
-        # origin_trust fail-closed：外部渠道（meeting）绝不能被判成 hand
-        self.assertEqual(self._row("R-101")["origin_trust"], "external")
+        # 测试即判例——原判例钉 sources[0] 二值启发式（meeting → external）。
+        # PR #106 终审 MAJOR-3 改判：迁移推导 = policy.classify_origin（§50
+        # 四值 canonical，全部 sources 取最小信任；T-15 settled）。原判例的
+        # 精神（外部渠道绝不能被判成 hand）由下面四条共同延续。
+        self.assertEqual(self._row("R-101")["origin_trust"], "meeting")
+        # slack+gmail 双外部源：min-trust = external
+        self.assertEqual(self._row("R-102")["origin_trust"], "external")
+        # 纯手打（quick_capture）：hand
+        self.assertEqual(self._row("R-105")["origin_trust"], "hand")
+        # sources 混入 non-dict 畸形项：该项 fail-closed 记 external，定卡
+        self.assertEqual(self._row("R-112")["origin_trust"], "external")
 
     def test_trash_bookkeeping_survives(self):
         p = self._payload("R-105")
         self.assertEqual(p.get("trash_reason"), "silent-merge: 已并入 R-102")
         self.assertEqual(p.get("trashed_at"), "2026-08-25T09:00:00Z")
+
+
+@unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
+class OriginTrustRoundTripTestCase(unittest.TestCase):
+    """PR #106 终审 MAJOR-3/MINOR-11：origin_trust 权威章的迁移与 round-trip。
+    手打出生、后被 gmail 源 fold 过的卡（live 铸卡/fold 侧已盖章 external）：
+    热列按 classify_origin 全 sources 取最小信任判 external（绝不被
+    sources[0]=quick_capture 骗成 hand）；payload 章保真（此前 origin_trust
+    不在 shape 表 = 未知顶层键，迁移会整体拒绝/丢章）；export→再 import
+    后章与热列都不走样。"""
+
+    def test_hand_first_card_folded_with_gmail_round_trips_external(self):
+        from act.lib.store2.export_yaml import export_db
+        tmp = Path(tempfile.mkdtemp(prefix="store2-origin-rt-"))
+        try:
+            reg = tmp / "registry"
+            reg.mkdir(parents=True)
+            card = _card(
+                "R-401", "card_sent",
+                sources=[
+                    {"channel": "quick_capture", "who": "zelin",
+                     "date": "2026-08-20", "quote": "手打先来"},
+                    {"channel": "gmail", "who": "hr@example.com",
+                     "date": "2026-08-21", "quote": "folded in later"}],
+                origin_trust="external")   # live 铸卡/fold 侧的权威章
+            (reg / "R-401.yaml").write_text(
+                yaml.safe_dump(card, allow_unicode=True, sort_keys=False,
+                               width=100), encoding="utf-8")
+
+            def _assert_external(db):
+                conn = sqlite3.connect(db)
+                conn.row_factory = sqlite3.Row
+                try:
+                    row = conn.execute(
+                        "SELECT origin_trust, payload FROM cards"
+                        " WHERE id = 'R-401'").fetchone()
+                    self.assertIsNotNone(row)
+                    self.assertEqual(row["origin_trust"], "external")
+                    self.assertEqual(
+                        json.loads(row["payload"]).get("origin_trust"),
+                        "external")
+                finally:
+                    conn.close()
+
+            db1 = tmp / "a.db"
+            _run_migrate(reg, db1)
+            _assert_external(db1)
+            out = tmp / "snapshot"
+            self.assertEqual(export_db(db1, out), 0)
+            text = (out / "R-401.yaml").read_text(encoding="utf-8")
+            self.assertIn("origin_trust: external", text)
+            db2 = tmp / "b.db"
+            _run_migrate(out, db2)
+            _assert_external(db2)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 @unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)

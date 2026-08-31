@@ -117,7 +117,7 @@ PR1 现状:**根本不存在 agent 写通道**——唯一写入身份是 127.0.
 - ~~TODO(contract): §49 编号已预留但未写入 docs/CONTRACT.md~~ **已落**(v0.48 修宪批次,CONTRACT §49)。
 - ~~TODO(contract): server 动词白名单的最终集合~~ **已定**(T-2:= docs/design/inbox-actions.md §2+§3 目录,golden 33 件钉死;§49 引用之)。
 - ~~TODO(contract): 宪法第 7 条的 react/react-dom「构建侧」定位措辞~~ **已裁 A 案**(§49 执法注,第 7 条条文零改动;T-3/T-20)。
-- ~~TODO(contract): `origin_trust` 字段尚未进 CONTRACT~~ **已提前入宪**(T-4:四值词表随 §50 立法,registry add-only optional 字段;store2 CHECK 放宽留给接线迁移,T-15)。
+- ~~TODO(contract): `origin_trust` 字段尚未进 CONTRACT~~ **已提前入宪**(T-4:四值词表随 §50 立法,registry add-only optional 字段;store2 CHECK 已放宽为四值,T-15 settled)。
 - TODO(contract): NOTICE 中 fork 目的地路径按最终落地文件名 reconcile(integration agent 终裁)。
 - TODO(wiring): wiring PR must verify actd validates feedback/capture image paths are under state/attachments/ before LLM attachment (review-ui finding 7).
 

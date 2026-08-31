@@ -42,6 +42,7 @@ from pathlib import Path
 
 import yaml
 
+from ..policy import classify_origin
 from .export_yaml import dropped_keys, dump_card_yaml, normalize_card
 
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -54,9 +55,6 @@ MERGED_PREFIX = "merged_into:"           # legacy verbatim 状态串（registry 
 _TIER_VOCAB = ("T0", "T1", "T2")         # schema CHECK；registry 本身不校验（mapping §1）
 _DEADLINE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _YMD_RE = _DEADLINE_RE
-# TODO(contract): origin_trust 推导规则未入宪（mapping §9.1）——channel 启发式，
-# 仅 quick/quick_capture（手打）判 hand，其余含缺失一律 external（fail-closed）
-_HAND_CHANNELS = frozenset(("quick", "quick_capture"))
 
 _CARD_COLS = ("id", "status", "prev_status", "tier", "type", "title",
               "origin_trust", "target_repo", "deadline", "created", "updated",
@@ -271,13 +269,11 @@ def plan_card(rid: str, entry: dict, *, allow_unknown: bool = False):
         warnings.append(f"deadline {dl!r} 不符 YYYY-MM-DD，热列置 NULL"
                         "（payload 保留原值）")
 
-    # -- origin_trust：channel 启发式（TODO(contract)，默认 external fail-closed）
-    origin_trust = "external"
+    # -- origin_trust：§50 canonical 裁决（T-15 已定）——policy.classify_origin
+    #    对**全部** sources 取最小信任（fold 进过外部渠道的手打卡判 external），
+    #    未知/畸形 channel fail-closed 落 external，与 live 铸卡侧同一真源
+    origin_trust = classify_origin(norm.get("sources"))
     srcs = norm.get("sources") or []
-    if isinstance(srcs, list) and srcs and isinstance(srcs[0], dict):
-        ch = str(srcs[0].get("channel") or "").strip().lower()
-        if ch in _HAND_CHANNELS:
-            origin_trust = "hand"
 
     created, created_from = _derive_created(norm, entry["mtime"])
     updated = _iso(_dt.datetime.fromtimestamp(entry["mtime"], tz=_UTC))

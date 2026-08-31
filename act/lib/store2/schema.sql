@@ -40,9 +40,10 @@ CREATE TABLE IF NOT EXISTS cards (
   type            TEXT NOT NULL DEFAULT '',
   title           TEXT NOT NULL,
   -- origin_trust：v-next 信任矩阵（手打自动 / 外部要批）。默认 external = fail-closed
-  -- （出身不明的卡一律走审批）。TODO(contract): 词表待修宪落档 docs/design/vnext.md
+  -- （出身不明的卡一律走审批）。词表 = §50 四值 canonical（act/lib/policy.py
+  -- ORIGINS 单一真源；T-15 已定，PR #106 终审落地放宽）
   origin_trust    TEXT NOT NULL DEFAULT 'external'
-                  CHECK (origin_trust IN ('hand', 'external')),
+                  CHECK (origin_trust IN ('hand', 'proposed', 'meeting', 'external')),
   target_repo     TEXT,
   deadline        TEXT CHECK (deadline IS NULL OR
                     deadline GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
