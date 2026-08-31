@@ -106,12 +106,20 @@ class WebUIRemoteGateTestCase(unittest.TestCase):
 
     # -- W18: config opt-in forwards mode:"run" ------------------------------ #
     def test_mode_run_forwarded_when_opted_in(self):
+        # 测试即判例——本判例的「opt-in 响应无 notice」半句被 PR #106 终审
+        # MAJOR-5 显式改判：webui 恒盖 via:"remote"，actd 的 T-28 硬后盾现行
+        # 对一切非 owner ingress 的 mode:"run" 无条件降级（act/actd.py
+        # _apply_capture），opt-in=true 的 200 不带 notice = 谎报「已开跑」。
+        # 自此 opt-in 放行 mode 进 inbox 文件（§34 预留）但响应必带 reserved
+        # notice（§41 修订同 PR）。
         config.CONFIG_PATH.write_text(
             "remote:\n  allow_direct_run: true\n", encoding="utf-8")
         status, body = self._post_inbox(
             {"action": "capture", "text": "run it now", "mode": "run"})
         self.assertEqual(status, 200)
-        self.assertNotIn("notice", body)
+        self.assertIn("notice", body)
+        self.assertIn("reserved", body["notice"])
+        self.assertIn("saved as a proposal", body["notice"])
         rec = self._single_capture_record()
         self.assertEqual(rec["mode"], "run")
         self.assertEqual(rec["text"], "run it now")
@@ -146,7 +154,10 @@ class WebUIRemoteGateTestCase(unittest.TestCase):
         status, body = self._post_inbox(
             {"action": "capture", "text": "第二发", "mode": "run"})
         self.assertEqual(status, 200)
-        self.assertNotIn("notice", body)                 # 同一 server：已放行
+        # PR #106 终审 MAJOR-5 改判：opt-in 放行也必带 reserved notice（actd
+        # 现行仍降级非 owner mode:"run"，无 notice = 谎报已开跑）。热读判据
+        # 改看 notice 内容：降级文案 → reserved 文案 = 闸门已翻转。
+        self.assertIn("reserved", body["notice"])        # 同一 server：已放行
         self.assertEqual(self._single_capture_record()["mode"], "run")
 
     # -- W18 端到端：default-deny 的降级记录在 actd 里长成普通提案 ------------ #

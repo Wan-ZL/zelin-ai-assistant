@@ -110,6 +110,14 @@ _RUN_DOWNGRADE_NOTICE = ("direct run is disabled for remote capture "
                          "(remote.allow_direct_run=false); "
                          "saved as a proposal instead")
 
+# W18 opt-in 保留通知：即便 remote.allow_direct_run=true 放行了 mode 进 inbox
+# 文件（预留给 §34 未来接线），actd 的 T-28 硬后盾现行仍对一切非 owner ingress
+# 的 mode:"run" 无条件降级为提案（act/actd.py _apply_capture）——200 响应必须
+# 如实带 notice，绝不谎报「已开跑」。
+_RUN_RESERVED_NOTICE = ("remote direct run is reserved: actd downgrades "
+                        "mode:\"run\" from remote ingress; "
+                        "saved as a proposal instead")
+
 
 def _iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -401,10 +409,14 @@ class _Handler(BaseHTTPRequestHandler):
         # （提案照常进 triage），响应带 add-only ``notice`` 告知提交方。
         # fail-closed：config 读不了/字段缺失 = 闸门关。
         notice: Optional[str] = None
-        if action == "capture" and mode == "run" \
-                and not risk.remote_direct_run_allowed():
-            payload = {k: v for k, v in payload.items() if k != "mode"}
-            notice = _RUN_DOWNGRADE_NOTICE
+        if action == "capture" and mode == "run":
+            if not risk.remote_direct_run_allowed():
+                payload = {k: v for k, v in payload.items() if k != "mode"}
+                notice = _RUN_DOWNGRADE_NOTICE
+            else:
+                # opt-in=true 放行 mode 进 inbox（§34 预留），但本面恒盖
+                # via:"remote"，actd 现行仍会降级——如实告知（见常量注释）。
+                notice = _RUN_RESERVED_NOTICE
         # §39.2: answer_input's text is bounded 1..4000 (code points) — reject
         # here with a 400 so an oversize/empty answer never reaches the inbox
         # (actd would archive-and-noop it, but the API caller deserves the

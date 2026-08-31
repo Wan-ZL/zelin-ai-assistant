@@ -2203,8 +2203,16 @@ capture `mode:"run"`），Mac/iOS 早已在写。
     落 inbox（提案照常进 triage 三选一闸门），HTTP 200 + add-only 响应字段
     `notice`（`"direct run is disabled for remote capture
     (remote.allow_direct_run=false); saved as a proposal"`）——任务永不被吞，
-    也绝不谎报「已开跑」。§34 的 mode 词表校验不变：非 capture 带 mode、或
-    mode ≠ "run"，仍是 400 fail-closed。syncd UP 侧同一闸门见 §31 追记；判例
+    也绝不谎报「已开跑」。**opt-in=true 现行语义 = 保留而非放跑**（PR #106
+    终审修订）：闸门开时 `mode:"run"` 原样进 inbox 文件（§34 远端接线预留），
+    但 webui 恒盖 `via:"remote"`（下条 T-28），actd 侧 W18 硬后盾
+    （`_apply_capture`：非 owner ingress 的 `mode:"run"` 一律降级为普通提案）
+    现行**无条件降级**——因此 opt-in 路径的 200 **同样必带** add-only
+    `notice`（reserved 文案：`"remote direct run is reserved: actd downgrades
+    mode:\"run\" from remote ingress; saved as a proposal instead"`），绝不
+    谎报「已开跑」。§34 的 mode 词表校验不变：非 capture 带 mode、或
+    mode ≠ "run"，仍是 400 fail-closed。syncd UP 侧属同一网络 ingress 级：
+    落盘恒盖 `via:"remote"`、降级同样由 actd 硬后盾执行（见 §31 追记）；判例
     tests/test_webui_remote_gate.py（含「default-deny 降级记录长成 RAISING
     提案且 `executor.dispatch` 永不被叫」的端到端钉子）。
   - **v0.48 修订（T-28 ingress 落款）**：webui 落盘的每个 inbox 文件恒带
