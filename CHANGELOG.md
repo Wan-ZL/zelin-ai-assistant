@@ -25,13 +25,25 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-08-31
+
+v0.48 上线当晚的加固批。三条线（安全 / app 体验 / 结构健康）各自走完「建造 → 独立审核 → 修复 → 回归」闭环，累计修 1 CRITICAL + 8 MAJOR + 20 MINOR；测试 2243 → 2309（Python）、137 → 143（web）。
+
+### Security
+- **本地看板服务补齐四道门（CRITICAL）**：`server/app.py` 此前无 Origin / Host / token / Content-Type 任何一道，跨源页面可借浏览器直接投递 `mode:"run"` 并绕过全部审批闸门在本机执行。现与 `act/webui.py` 同级——Host loopback 白名单（防 DNS rebinding）、POST Origin 白名单、强制 `Content-Type: application/json`（封死 simple-request 向量）、每装机 token（`state/server.token`：CSPRNG、0600、O_NOFOLLOW，仅注入同源 index.html，写操作必带）。GET/SSE 保持 token-light；交付物响应永不注入 token，agent 产出的 HTML 拿不到凭据。约 90 次真实攻击探测覆盖 null/伪造 Origin、sendBeacon/form/no-cors、DNS rebinding、token 越权与泄漏路径（CONTRACT §49）。
+- token 文件加固：预存文件权限过宽时重新收紧、无法收紧则轮换；符号链接不再被跟随覆盖。SSE 响应补齐安全响应头。
+- 外部来源提级（W17）现按**并集**判定：显式 `origin_trust: external` 章 **或** sources 现算为 external 都强制 T2 + 展开计划，堵住手改/缺章 YAML 裸批的洞；Mac 与 iOS 客户端也开始读 `effective_tier`（此前只有 web 读，gmail 来源卡在 Mac 上仍是一键批准），三端统一显示「外部来源 → T2」徽章。
+
 ### Changed
 - 菜单栏 popover 面板移除（owner 拍板）：点菜单栏图标直接打开/聚焦看板主窗口；右键菜单新增「录制」子菜单（三态模式 + 实时字幕开关）。快速捕获入口收敛到看板列顶输入框（⌘L）与图标拖放，capture 契约不变。
 - 关闭主窗口后 app 保持常驻（菜单栏 + Dock，Slack 式）——不再退回菜单栏-only、Dock 图标不再消失；点 Dock 图标或菜单栏图标随时重开看板。退出语义不变（菜单退出 / 系统注销照旧）。
-- launchd 后台服务日志迁至 `~/Library/Logs/zelin-ai-assistant/`，plist 模板 WorkingDirectory=$HOME + PYTHONPATH=repo：修复 repo 在外置卷时 launchd 以 EX_CONFIG(78) 拒绝 spawn、且「一键修复」把手工修好的 plist 打回故障态的问题（CONTRACT §55）。doctor 新增 stale plist 探测，逐个点名 pre-v0.48 渲染残留并指向 `bash install.sh`。
+- launchd 后台服务日志迁至 `~/Library/Logs/zelin-ai-assistant/`，plist 模板 WorkingDirectory=$HOME + PYTHONPATH=repo：修复 repo 在外置卷时 launchd 以 EX_CONFIG(78) 拒绝 spawn、且「一键修复」把手工修好的 plist 打回故障态的问题（CONTRACT §55）。doctor 新增 stale plist 探测，逐个点名 pre-v0.48 渲染残留并指向 `bash install.sh`；两个 Swift 渲染器补齐 install.sh 的第五处替换（claude bin 目录），不再渲染出指向空目录的 PATH。
 
 ### Fixed
-- 实时字幕悬浮窗不再随转写累积无限变高：显示层滚动窗只保留最近约 2 句（CaptionRollup），悬浮窗 300 pt 硬上限、每行至多两行，宽度行为不变。
+- 实时字幕悬浮窗不再随转写累积无限变高：显示层滚动窗只保留最近约 2 句（CaptionRollup），悬浮窗 300 pt 硬上限、每行至多两行，宽度行为不变；翻译改跟随可见尾巴，不再为不可见文本消耗额度。
+- **digest / weekly-digest 渠道未登记在信任词表内**，被 fail-closed 误判为 external：周报类自提案卡被错误提级 T2、无 plan/DoD 的还会把「批准」静默转成「研究中」。两个渠道补登为 proposed，并在词表注明「新增铸卡渠道必须同步登记」。
+- 测试套件不再偷偷调用付费模型：新增 subprocess 守卫,首次运行即抓出 `test_radar_gmail` / `test_radar_triage` 经 §44.2 fold judge 落到真实 `claude -p` 的路径（异常被吞导致长期无感知），改走既有 `JUDGE_RUNNER` 注入缝。
+- 结构健康 SAFE-NOW 批：store2 迁移工具不再手抄 registry 字段词表（改为单源 import + 覆盖率断言，杜绝「新增字段在迁移中静默消失」）、qlty ignore 作用域修复（安全告警 23 → 5、zizmor 全仓归零）、CI 模板注入加固与 action SHA 固定 + dependabot 续期、若干重复逻辑收敛与陈旧文档指针清理。
 
 ## [0.48.0] - 2026-08-31
 
@@ -1995,7 +2007,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.1...v0.47.0
 [0.46.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.46.0...v0.46.1
