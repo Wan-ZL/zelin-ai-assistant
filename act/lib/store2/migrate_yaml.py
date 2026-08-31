@@ -43,6 +43,9 @@ import yaml
 
 from ..policy import classify_origin
 from .export_yaml import dropped_keys, dump_card_yaml, normalize_card, say
+# 热列顺序同包单源：INSERT 的列表与回读校验的 SELECT 列表都从它派生，
+# schema 加列时迁移自动跟上（曾在这里手抄过一份 17 列 tuple）。
+from .store import CARD_COLUMNS
 
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _UTC = _dt.timezone.utc
@@ -54,11 +57,6 @@ MERGED_PREFIX = "merged_into:"           # legacy verbatim 状态串（registry 
 _TIER_VOCAB = ("T0", "T1", "T2")         # schema CHECK；registry 本身不校验（mapping §1）
 _DEADLINE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _YMD_RE = _DEADLINE_RE
-
-_CARD_COLS = ("id", "status", "prev_status", "tier", "type", "title",
-              "origin_trust", "target_repo", "deadline", "created", "updated",
-              "version", "merged_into_id", "board_rev", "tombstone",
-              "last_actor_type", "payload")
 
 
 class MigrateError(Exception):
@@ -379,7 +377,7 @@ def _apply_schema(con: sqlite3.Connection) -> None:
 def run_migration(con: sqlite3.Connection, plans: list, run_ts: str) -> None:
     """按 topo 序 INSERT + 逐卡回读等价校验。调用方持有事务与 rollback。"""
     card_sql = ("INSERT INTO cards ({}) VALUES ({})".format(
-        ", ".join(_CARD_COLS), ", ".join(":" + c for c in _CARD_COLS)))
+        ", ".join(CARD_COLUMNS), ", ".join(":" + c for c in CARD_COLUMNS)))
     for p in plans:
         con.execute(card_sql, p["hot"])
         for row in p["sources"]:
@@ -394,11 +392,11 @@ def run_migration(con: sqlite3.Connection, plans: list, run_ts: str) -> None:
     for p in plans:
         rid = p["hot"]["id"]
         row = con.execute(
-            "SELECT {} FROM cards WHERE id = ?".format(", ".join(_CARD_COLS)),
+            "SELECT {} FROM cards WHERE id = ?".format(", ".join(CARD_COLUMNS)),
             (rid,)).fetchone()
         if row is None:
             raise MigrateError(f"readback: {rid} 插入后查不到")
-        got = dict(zip(_CARD_COLS, row))
+        got = dict(zip(CARD_COLUMNS, row))
         back = json.loads(got.pop("payload"))
         if back != p["norm"]:
             raise MigrateError(

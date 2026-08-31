@@ -59,7 +59,11 @@ class State(str, Enum):
 MERGED_PREFIX = "merged_into:"
 
 # Core fields always serialized (in this order); optional fields appended when set.
-_CORE_ORDER = [
+# PUBLIC on purpose: these two lists are the card field vocabulary's single
+# source — store2's export/migrate import them so a new field can never be
+# add-only here and silently missing there (see act/lib/store2/export_yaml.py
+# and tests/test_store2_field_parity.py).
+CORE_ORDER = [
     "id",
     "title",
     "type",
@@ -76,7 +80,7 @@ _CORE_ORDER = [
 ]
 # Optional fields serialized only when set (keeps the YAML files clean).
 # ``summary`` is placed first so it reads right below the core block.
-_OPTIONAL_ORDER = [
+OPTIONAL_ORDER = [
     "summary",
     "definition_of_done",
     "outputs",
@@ -173,9 +177,9 @@ class Requirement:
     # v0.20.0 archive bookkeeping (§4) — set once archived (prev_status reused).
     archived_at: Optional[str] = None
     archive_reason: Optional[str] = None
-    # §38 split lineage (see _OPTIONAL_ORDER note) — origin card of a split.
+    # §38 split lineage (see OPTIONAL_ORDER note) — origin card of a split.
     split_from: Optional[str] = None
-    # §44 silent merge counter — fold-in events only (see _OPTIONAL_ORDER
+    # §44 silent merge counter — fold-in events only (see OPTIONAL_ORDER
     # note). 0 is skipped by to_dict (0 == False), so files stay clean.
     silent_merge_count: int = 0
 
@@ -189,7 +193,7 @@ class Requirement:
     user_titled: bool = False
     former_titles: Optional[list] = None
 
-    # §34bis preset 卡标记（add-only，见 _OPTIONAL_ORDER 注）——快照护栏靠它
+    # §34bis preset 卡标记（add-only，见 OPTIONAL_ORDER 注）——快照护栏靠它
     # 在 dispatch/收割时认出提案清理卡。
     preset: Optional[str] = None
 
@@ -223,9 +227,9 @@ class Requirement:
 
     def to_dict(self) -> dict:
         out: dict = {}
-        for k in _CORE_ORDER:
+        for k in CORE_ORDER:
             out[k] = getattr(self, k)
-        for k in _OPTIONAL_ORDER:
+        for k in OPTIONAL_ORDER:
             v = getattr(self, k)
             # skip unset optionals (incl. permanent=False) so files stay clean
             if v in (None, "", [], False):

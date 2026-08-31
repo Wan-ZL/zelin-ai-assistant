@@ -32,14 +32,15 @@ from typing import Any, NamedTuple, Optional
 SCHEMA_VERSION = 1
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
-# 卡片热列全集（schema.sql cards 表）——行↔dict 转换与 create_card 白名单的共同真源
-_CARD_COLUMNS = (
+# 卡片热列全集（schema.sql cards 表）——行↔dict 转换与 create_card 白名单的共同真源。
+# PUBLIC：migrate_yaml 的 INSERT/回读列表 import 本表，热列顺序只有一份
+CARD_COLUMNS = (
     "id", "status", "prev_status", "tier", "type", "title", "origin_trust",
     "target_repo", "deadline", "created", "updated", "version",
     "merged_into_id", "board_rev", "tombstone", "last_actor_type", "payload",
 )
 # create_card 允许显式传入的键（migration 需要完整控制出生形态；version/board_rev 由 store 管）
-_CREATE_KEYS = frozenset(_CARD_COLUMNS) - {"version", "board_rev", "tombstone", "last_actor_type"}
+_CREATE_KEYS = frozenset(CARD_COLUMNS) - {"version", "board_rev", "tombstone", "last_actor_type"}
 # agent 出生面再收紧：prev_status 是 restore 的目的地，agent 铸卡带票 = 预埋
 # 「trashed→approved」组合旁路弹药；cards_agent_insert_wall trigger 兜底
 _AGENT_CREATE_KEYS = _CREATE_KEYS - {"prev_status"}
@@ -282,7 +283,7 @@ class Store:
     # ----------------------------------------------------------------- #
     @staticmethod
     def _row_to_card(row: sqlite3.Row) -> dict:
-        card = {k: row[k] for k in _CARD_COLUMNS}
+        card = {k: row[k] for k in CARD_COLUMNS}
         card["payload"] = _parse_payload(card["payload"])
         return card
 

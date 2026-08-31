@@ -17,9 +17,11 @@
   旧快照文件（默认不删，保守）。
 
 本模块同时是 card 序列化形状的**单一落点**（migrate_yaml 从这里 import）：
-CORE/OPTIONAL 顺序、字段默认值、from_dict/to_dict 语义逐字对齐 live 树
-``act/lib/registry.py``（worktree 基线 8fd3b33 的 registry 是旧版、缺 §37/§38/
-§44 字段，**不可 import**——从它走会把 thread_id/display_title 等字段静默丢光）。
+字段词表直接 ``from ..registry import CORE_ORDER, OPTIONAL_ORDER``——真源只有
+一份，live 加字段时迁移/导出自动跟上（v0.48 前这里手抄了整套词表，因为当时的
+worktree 基线 registry 缺 §37/§38/§44 字段；merge 后理由失效，已去重）。
+``FIELD_DEFAULTS`` 与 from_dict/to_dict 语义仍是逐字复刻（dataclass 默认值不
+是可 import 的表），由 ``tests/test_store2_field_parity.py`` 逐字段钉住。
 """
 from __future__ import annotations
 
@@ -32,30 +34,15 @@ from pathlib import Path
 
 import yaml
 
-# --------------------------------------------------------------------------- #
-# card shape — 逐字对齐 live act/lib/registry.py（_CORE_ORDER/_OPTIONAL_ORDER/
-# dataclass 默认值/from_dict 归一/to_dict 省略语义）。add-only：live 加字段时
-# 这里同步追加，绝不改序改名（CONTRACT header 字段纪律）。
-# --------------------------------------------------------------------------- #
+from ..registry import CORE_ORDER, OPTIONAL_ORDER
 
-# 核心字段：永远序列化（哪怕 null），顺序即 YAML 顺序
-CORE_ORDER = [
-    "id", "title", "type", "tier", "status", "hardness", "deadline",
-    "repeated_mentions", "green_sign_required", "disagreement",
-    "cost_estimate_usd", "sources", "plan",
-]
-
-# 可选字段：值 in (None, "", [], False) 时整键跳过（0 == False 也被跳过——
-# silent_merge_count: 0 不落盘，registry 明示这是有意的）
-OPTIONAL_ORDER = [
-    "summary", "definition_of_done", "outputs", "card", "execution",
-    "improvement_of", "merged_into", "target_repo", "target_kind",
-    "delivery_mode", "notes", "trashed_at", "prev_status", "trash_reason",
-    "permanent", "origin_trust", "thread_id", "thread_key",
-    "archived_at", "archive_reason",
-    "display_title", "user_titled", "former_titles", "split_from",
-    "silent_merge_count", "preset",
-]
+# --------------------------------------------------------------------------- #
+# card shape — 词表 import 自 live act/lib/registry.py（单一真源）：
+# CORE_ORDER 永远序列化（哪怕 null），顺序即 YAML 顺序；OPTIONAL_ORDER 的值
+# in (None, "", [], False) 时整键跳过（0 == False 也被跳过——silent_merge_count: 0
+# 不落盘，registry 明示这是有意的）。下面的默认值/归一语义仍是复刻，加字段时
+# 必须同步补 FIELD_DEFAULTS——parity test 会红。
+# --------------------------------------------------------------------------- #
 
 # dataclass 默认值（sources 的 list 工厂在 normalize_card 里现做，防共享引用）
 FIELD_DEFAULTS = {
@@ -74,7 +61,13 @@ FIELD_DEFAULTS = {
     "former_titles": None, "preset": None,
 }
 
-assert set(CORE_ORDER) | set(OPTIONAL_ORDER) == set(FIELD_DEFAULTS)
+# import 期 fail-fast：registry 加了字段而这里漏补默认值 = 迁移静默丢字段。
+# 用显式 raise 而非 `assert`——`python -O` 会把 assert 整条蒸发，守卫就没了。
+_MISSING_DEFAULTS = (set(CORE_ORDER) | set(OPTIONAL_ORDER)) ^ set(FIELD_DEFAULTS)
+if _MISSING_DEFAULTS:
+    raise AssertionError(
+        "FIELD_DEFAULTS 与 registry 字段词表不一致（缺/多）: "
+        + ", ".join(sorted(_MISSING_DEFAULTS)))
 
 
 def say(msg: str, *, err: bool = False) -> None:
