@@ -120,8 +120,10 @@ class Handler(BaseHTTPRequestHandler):
             rest = path[len("/files/deliverables/"):].split("/")
             if len(rest) != 2:
                 raise NotFoundError("not found", {"path": path})
-            body, ctype = files.serve_deliverable(ctx.home, rest[0], rest[1])
-            self._send_bytes(200, body, ctype, {"Cache-Control": "no-store"})
+            body, ctype, extra = files.serve_deliverable(ctx.home, rest[0],
+                                                         rest[1])
+            extra["Cache-Control"] = "no-store"
+            self._send_bytes(200, body, ctype, extra)
         elif path.startswith("/api/") or path.startswith("/files/"):
             raise NotFoundError("not found", {"path": path})
         else:

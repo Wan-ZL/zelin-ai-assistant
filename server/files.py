@@ -27,6 +27,31 @@ from server.errors import (InvalidFieldError, NotFoundError,
 
 _NAME_MAX = 255
 
+# 内嵌预览允许集——对齐 web DeliverableViewer 实际渲染面（html iframe、
+# md/txt fetch 文本、位图 <img>）。svg 故意不在列：SVG 可携带脚本，一律
+# attachment（<img> 子资源加载不受 disposition 影响，防的是直接导航执行）。
+_INLINE_EXTS = frozenset({
+    "html", "htm", "md", "markdown", "txt",
+    "png", "jpg", "jpeg", "gif", "webp",
+})
+
+
+def _deliverable_headers(name: str) -> dict:
+    """/files/deliverables 响应的安全头：同源交付物绝不裸发。
+
+    - ``Content-Security-Policy: sandbox``：直接导航到交付物 URL 时文档落进
+      opaque origin，拿不到 /api 同源面；html 额外 allow-scripts——与
+      DeliverableViewer 的 ``<iframe sandbox="allow-scripts">`` 同一约束面，
+      预览行为不变。
+    - 非预览类型加 ``Content-Disposition: attachment``：浏览器只下载不渲染。
+    """
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    csp = "sandbox allow-scripts" if ext in ("html", "htm") else "sandbox"
+    headers = {"Content-Security-Policy": csp}
+    if ext not in _INLINE_EXTS:
+        headers["Content-Disposition"] = "attachment"
+    return headers
+
 
 def _validate_name(name: str) -> None:
     """交付物文件名 = 纯 basename。拒绝：空 / 超长 / NUL / 任何路径分隔符 /
@@ -51,8 +76,10 @@ def deliverables_dir(home: Path, card_id: str) -> Path:
     return Path(root).expanduser() / "deliverables"
 
 
-def serve_deliverable(home: Path, card_id: str, name: str) -> "tuple[bytes, str]":
-    """返回 (body, content_type)。找不到 / 越界 一律 404（不泄露目录结构）。"""
+def serve_deliverable(home: Path, card_id: str,
+                      name: str) -> "tuple[bytes, str, dict]":
+    """返回 (body, content_type, 安全响应头)。找不到 / 越界 一律 404
+    （不泄露目录结构）。"""
     _validate_card_id(card_id)
     _validate_name(name)
     base = deliverables_dir(home, card_id)
@@ -66,15 +93,27 @@ def serve_deliverable(home: Path, card_id: str, name: str) -> "tuple[bytes, str]
         raise NotFoundError("deliverable not found", {"id": card_id, "name": name})
     ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
     try:
-        return target.read_bytes(), ctype
+        return target.read_bytes(), ctype, _deliverable_headers(name)
     except OSError:
         raise NotFoundError("deliverable not found", {"id": card_id, "name": name})
 
 
 def _newest_deliverable(base: Path) -> Optional[Path]:
+    """挑最新交付物；serve_deliverable 同款 realpath 包含性——symlink 把文件
+    指出 deliverables/ 的一律跳过（reveal 绝不定位到目录外）。"""
     try:
-        files = [p for p in base.iterdir()
-                 if p.is_file() and not p.name.startswith(".")]
+        real_base = base.resolve(strict=True)
+        files = []
+        for p in base.iterdir():
+            if p.name.startswith("."):
+                continue
+            try:
+                real = p.resolve(strict=True)
+            except OSError:
+                continue
+            if real.parent != real_base or not real.is_file():
+                continue
+            files.append(p)
     except OSError:
         return None
     if not files:
