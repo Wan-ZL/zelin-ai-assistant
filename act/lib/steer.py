@@ -193,6 +193,19 @@ def build_steer_prompt(notes: list) -> str:
               "this is not a new task and not a rework.")
 
 
+def _remove_pending(req, ex: dict, keys: set) -> None:
+    """出队三步（送达记账与诚实丢弃共用）：``keys`` 命中的 note 移出 pending
+    队列、队空则整键删（execution 不留空 list，YAML 干净）、本批 steer_attempts
+    清零。重读 pending_steers 而不是就地过滤——flush 期间另一进程排入的新
+    steer 必须留在队里（§44.3 brief 的 sent-set 判例）。就地改 ``ex``，不落盘。"""
+    rest = [n for n in pending_steers(req) if n["key"] not in keys]
+    if rest:
+        ex["pending_steers"] = rest
+    else:
+        ex.pop("pending_steers", None)
+    ex.pop("steer_attempts", None)
+
+
 def mark_delivered(req, notes: list, delivered_at: Optional[str] = None) -> None:
     """flush 成功后的记账：只把**实际送达**的 note 移出队列（flush 期间另一
     进程排入的新 steer 留给下一轮——§44.3 brief 的 sent-set 判例），台账进
@@ -208,12 +221,7 @@ def mark_delivered(req, notes: list, delivered_at: Optional[str] = None) -> None
         return
     now = delivered_at or _iso_now()
     ex = dict(req.execution or {})
-    rest = [n for n in pending_steers(req) if n["key"] not in sent]
-    if rest:
-        ex["pending_steers"] = rest
-    else:
-        ex.pop("pending_steers", None)
-    ex.pop("steer_attempts", None)
+    _remove_pending(req, ex, sent)
     # 旧台账保留（裸 key 历史条目按 C-3 容忍原样携带），本批同键条目剔除
     old = ex.get("delivered_steers")
     ledger = []
@@ -278,12 +286,7 @@ def drop_trace(req, notes: list, reason: str) -> list:
     dropped = {n["key"] for n in notes}
     tags = [_append_trace(req, n, reason) for n in notes]
     ex = dict(req.execution or {})
-    rest = [n for n in pending_steers(req) if n["key"] not in dropped]
-    if rest:
-        ex["pending_steers"] = rest
-    else:
-        ex.pop("pending_steers", None)
-    ex.pop("steer_attempts", None)
+    _remove_pending(req, ex, dropped)
     req.execution = ex
     return tags
 
