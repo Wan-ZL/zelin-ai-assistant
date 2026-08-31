@@ -8,6 +8,7 @@ act/registry/R-*.yaml
 .DS_Store
 state/
 mac/build/
+shell/build/
 __pycache__/
 *.pyc
 config/runtime.json
