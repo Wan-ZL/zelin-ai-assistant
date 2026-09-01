@@ -15,6 +15,7 @@ Real server on a random port (tests/test_server_common.py); stdlib client.
 import json
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,7 @@ from tests.test_server_common import (assert_envelope, auth_headers, get_json,
 from server import settings as settings_mod
 
 OPUS = "claude-opus-5"
+_WIN = sys.platform.startswith("win")
 
 
 def put_json(port, path, payload, headers=None):
@@ -44,10 +46,13 @@ class _ServerCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
         (self.home / "state").mkdir(parents=True)
-        # HOME → tempdir: ~/.claude/settings.json lives under it for the case
+        # HOME → tempdir: ~/.claude/settings.json lives under it for the case.
+        # Path.home() reads HOME on POSIX and USERPROFILE on Windows — patch
+        # both so the Windows CI leg never touches the runner's real profile.
         self.user_home = Path(self.tmp.name) / "user"
         self.user_home.mkdir()
-        env = mock.patch.dict(os.environ, {"HOME": str(self.user_home)})
+        env = mock.patch.dict(os.environ, {"HOME": str(self.user_home),
+                                           "USERPROFILE": str(self.user_home)})
         env.start()
         self.addCleanup(env.stop)
         self.cc_path = self.user_home / ".claude" / "settings.json"
@@ -238,7 +243,8 @@ class ClaudeCodeDefaultTestCase(_ServerCase):
         after = json.loads(self.cc_path.read_text(encoding="utf-8"))
         self.assertEqual(after, {**original, "model": OPUS})
         self.assertEqual(list(after.keys()), list(original.keys()))   # key order kept
-        self.assertEqual(stat.S_IMODE(self.cc_path.stat().st_mode), 0o600)
+        if not _WIN:   # POSIX mode bits only; Windows chmod knows read-only alone
+            self.assertEqual(stat.S_IMODE(self.cc_path.stat().st_mode), 0o600)
         # the file is still what GET reads
         _s, got = get_json(self.port, "/api/claude-code/default-model")
         self.assertEqual(got["model"], OPUS)
