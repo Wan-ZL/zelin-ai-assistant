@@ -3339,21 +3339,63 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   `AppPaths.physicalStateRoot`（`resolvingSymlinksInPath`）。`stateRoot` 本身
   不动——App 自己的文件访问经 symlink 与经实体路径等价，只有 launchd 不是。
 - **解释器 = §19 runtime 指针渲染出的绝对路径**，永不 `/usr/bin/env`（TCC 按
-  binary 计权限，env 间接层让授权漂移），且**必须先验证它真能 `import yaml`**。
-  同一次部署的另一个症状：install.sh 挑中 `/opt/homebrew/bin/python3`（3.14，
-  没装 PyYAML），于是即便 PYTHONPATH 正确，agent 照样在写下任何日志之前就死。
-  候选链按序试、取第一个能 import yaml 的：`$AIASSISTANT_PYTHON` → 现有
-  `config/runtime.json` pin → `~/miniconda3/bin/python3` → install.sh 自己找到
-  的 python3 → `/usr/bin/python3`；一个都不过就**大声失败**（install.sh 打
-  `[ERR ]` 并把 `runtime_python=fail` 写进 §23 安装报告，绝不静默 pin 一个坏
-  解释器）。cron 链（§18）与 `install.sh --check` 的 doctor 解释器走同一条链。
-  Swift 侧对称实现：`RuntimePython.importsYAML` + `resolve()` 的惰性候选链。
-- **doctor 迁移探测覆盖以上三条**（`act/doctor.py _check_launchd_paths`）：
+  binary 计权限，env 间接层让授权漂移），且必须过**两道闸门**：
+
+  1. **真能 `import yaml`**。同一次部署的另一个症状：install.sh 挑中
+     `/opt/homebrew/bin/python3`（3.14，没装 PyYAML），于是即便 PYTHONPATH
+     正确，agent 照样在写下任何日志之前就死。
+  2. **launchd 可行性**——它被 **launchd** 起起来时真能从 repo import 到
+     `act`。yaml 是必要不充分条件：**TCC 按 binary 授文件访问权**，而 launchd
+     job 自己就是 responsible process，不继承任何终端/App 的授权。v0.48.2 修好
+     路径之后剩下的最后一幕：`/usr/bin/python3` 在 launchd 下读得了
+     `/Volumes/…` 上的 repo，`/opt/homebrew/bin/python3` 读不了（实测抛
+     `PermissionError: [Errno 1] Operation not permitted`，被 import 机制报成
+     `No module named 'act'`），**两个都能 import yaml**，所以单闸门恰好挑中
+     瞎的那个。两个解释器在交互 shell 里都读得好好的——差别只在 launchd 会话
+     里存在，因此**唯一诚实的探针是问 launchd 本人**：install.sh
+     `py_launchd_can_import_act` 起一个一次性 throwaway agent，跑
+     `sys.path.insert(0, repo); import act`，判决写进 sentinel 文件后读回并
+     `bootout`（亚秒级，自清理）。返回 0 可行 / 1 不可行 / 2 测不出——**2 永远
+     当「未知」，绝不当拒绝**（没有 launchd 的 Linux/CI、或
+     `AIASSISTANT_LAUNCHD_PROBE=0` 关掉时降级为只走 yaml 闸门，并把这个降级
+     如实说出来）。
+
+  **候选次序**（`daemon_python_candidates`）按 TCC 形状分两支：repo 在 `$HOME`
+  **之外**（外置卷、网络盘——正是 per-binary TCC 咬人的地方）时
+  `$AIASSISTANT_PYTHON` → **`/usr/bin/python3`** → 现有 pin →
+  `~/miniconda3/bin/python3` → install.sh 找到的 python3；repo 在 `$HOME`
+  **之内**没有 TCC 边界要跨，维持历史次序（`$AIASSISTANT_PYTHON` → pin →
+  miniconda → 找到的 python3 → `/usr/bin/python3`）。理由：`/usr/bin/python3`
+  是 Apple 随系统发的解释器，也是那个已经带着用户自己文件授权的 binary；
+  homebrew/miniconda 的 python 各自是独立 binary，各自需要独立授权。内外之分
+  一律比**物理路径**（symlink 不许把外置卷伪装成 `$HOME` 内）。
+  两道闸门全军覆没时退回第一个 yaml 候选并说明原因（yaml-capable 仍严格优于
+  裸 PATH 猜测）；连 yaml 都没有才**大声失败**（install.sh 打 `[ERR ]` 并把
+  `runtime_python=fail` 写进 §23 安装报告，绝不静默 pin 一个坏解释器）。
+  cron 链（§18）与 `install.sh --check` 的 doctor 解释器共用同一条候选次序。
+  Swift 侧对称实现：`RuntimePython.candidates()` / `importsYAML` /
+  `launchdCanImportAct` / `resolveForLaunchd`——`resolve()` 保持只走 yaml 闸门
+  （全 App 都在调它，不能每次起 launchd job），**两个 plist 渲染方专用
+  `resolveForLaunchd`**。
+- **doctor 迁移探测覆盖以上四条**（`act/doctor.py _check_launchd_paths`）：
   已安装 plist 的 spawn 前键指向 repo、`AIASSISTANT_HOME`/`PYTHONPATH` 是
-  symlink 形状（都记在 `launchd paths` 一行），或 `ProgramArguments[0]`
-  import 不了 yaml（`launchd python`，恒 FAIL）。修复动作统一是重跑
-  `bash install.sh`；App 的「一键修复」只重渲染 actd，所以 detail 必须点名
-  每一个坏 agent。
+  symlink 形状（都记在 `launchd paths` 一行），`ProgramArguments[0]`
+  import 不了 yaml（`launchd python`，恒 FAIL），或**路径全对 + yaml 也过、
+  agent 却此刻在崩且日志写着 `No module named 'act'`**（同样是 `launchd
+  python` 一行，`failure_id=interpreter_blind`，恒 FAIL）。最后这条三个条件
+  缺一不可——只看日志会把治好之后的陈旧日志当成现故障——且只在前两条干净时
+  才报（路径本身坏时重渲染就一并修了）。前三条的修复动作是重跑
+  `bash install.sh`；第四条的修复动作**不同**：重跑安装器（它现在会用 launchd
+  真实探针换掉瞎的那个）或给该解释器 binary 授「完全磁盘访问」，所以
+  `interpreter_blind` 不映射「一键修复」（重装 agent 只会把同一个瞎解释器再渲
+  一遍）。App 的「一键修复」只重渲染 actd，所以 detail 必须点名每一个坏 agent。
+- **两条 `ModuleNotFoundError` 必须从日志里分开归因**（同一段文字在
+  `launchctl list` 里长得一模一样，修复动作却相反）：`'yaml'` = 缺 PyYAML，
+  `'act'` = 解释器**看不见 repo**（TCC / PYTHONPATH），断言 PyYAML 是错的。
+  取日志里**最后**一次匹配（KeepAlive 把历次失败都留在同一个文件里）。读不到
+  日志时两个原因都摆出来，不许偏袒。执法点：install.sh
+  `launchd_failure_hint`、`act/doctor.py _check_launchd`、`act/ai_fix.py` 的
+  prompt「Known trap」段。
 - §32.4 的日志自压缩豁免语义不变：`*.launchd.log` 仍是 launchd 自管、不参与
   进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。
 - 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧

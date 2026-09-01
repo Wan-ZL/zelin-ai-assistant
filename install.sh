@@ -65,6 +65,148 @@ pick_python() {
     return 1
 }
 
+# CONTRACT §55 — LAUNCHD VIABILITY. `import yaml` is necessary but NOT
+# sufficient: TCC grants file access PER BINARY, and a launchd-spawned process
+# is its own responsible process (an interactive shell lends its own grant to
+# everything it starts, which is why every candidate reads the repo fine from
+# a terminal). 2026-08-31 live deployment: the repo sits on /Volumes/…,
+# /usr/bin/python3 could read it under launchd and /opt/homebrew/bin/python3
+# could not — both imported yaml, so the yaml-only gate pinned the blind one
+# and every agent died on "No module named 'act'" with a perfectly rendered
+# PYTHONPATH. Measured: the denied interpreter raises PermissionError(EPERM)
+# while scanning sys.path, which import machinery reports as the missing module.
+#
+# The only honest probe is to ask launchd itself, so this loads a throwaway
+# agent that does exactly what the daemons do — insert the repo on sys.path and
+# `import act` — and reads its verdict from a sentinel file (portable across
+# macOS versions; no `launchctl print` output parsing). Sub-second in practice.
+#   0 = viable, 1 = NOT viable, 2 = inconclusive (no launchd / probe disabled)
+# Callers must treat 2 as "unknown", never as a rejection.
+LAUNCHD_PROBE_DETAIL=""
+py_launchd_can_import_act() { # $1=interpreter $2=physical repo root
+    _py="$1"; _repo="$2"
+    LAUNCHD_PROBE_DETAIL=""
+    case "$_py" in /*) ;; *) return 1 ;; esac
+    [ -x "$_py" ] || return 1
+    [ "${AIASSISTANT_LAUNCHD_PROBE:-1}" = "0" ] && return 2
+    command -v launchctl >/dev/null 2>&1 || return 2
+    _probe_dir="$(mktemp -d 2>/dev/null)" || return 2
+    _probe_label="com.zelin.aiassistant.viability.$$"
+    _probe_pl="$_probe_dir/probe.plist"
+    _probe_verdict="$_probe_dir/verdict"
+    # The payload takes repo + sentinel as argv so no path is ever interpolated
+    # into python source; only the plist XML needs escaping.
+    cat > "$_probe_pl" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$_probe_label</string>
+  <key>ProgramArguments</key><array>
+    <string>$(_xml_escape "$_py")</string><string>-c</string>
+    <string>import sys
+try:
+    sys.path.insert(0, sys.argv[1]); import act; v = "ok"
+except BaseException as e:
+    v = "fail:%s: %s" % (type(e).__name__, e)
+open(sys.argv[2], "w").write(v)</string>
+    <string>$(_xml_escape "$_repo")</string>
+    <string>$(_xml_escape "$_probe_verdict")</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PYTHONPATH</key><string>$(_xml_escape "$_repo")</string>
+    <key>AIASSISTANT_HOME</key><string>$(_xml_escape "$_repo")</string>
+  </dict>
+  <key>WorkingDirectory</key><string>$(_xml_escape "$HOME")</string>
+  <key>RunAtLoad</key><true/>
+  <key>AbandonProcessGroup</key><true/>
+</dict></plist>
+EOF
+    launchctl bootout "gui/$UID_NUM/$_probe_label" >/dev/null 2>&1
+    if ! { launchctl bootstrap "gui/$UID_NUM" "$_probe_pl" >/dev/null 2>&1 \
+           || launchctl load "$_probe_pl" >/dev/null 2>&1; }; then
+        rm -rf "$_probe_dir"
+        return 2  # launchd refused the job itself — tells us nothing about $_py
+    fi
+    _probe_n=0
+    while [ ! -s "$_probe_verdict" ] && [ "$_probe_n" -lt 60 ]; do
+        sleep 0.25; _probe_n=$((_probe_n + 1))
+    done
+    LAUNCHD_PROBE_DETAIL="$(cat "$_probe_verdict" 2>/dev/null || true)"
+    launchctl bootout "gui/$UID_NUM/$_probe_label" >/dev/null 2>&1 \
+        || launchctl unload "$_probe_pl" >/dev/null 2>&1 || true
+    rm -rf "$_probe_dir"
+    # No sentinel at all = the interpreter never got far enough to write one
+    # (also a real failure: launchd could not run it).
+    [ "$LAUNCHD_PROBE_DETAIL" = "ok" ] && return 0
+    [ -z "$LAUNCHD_PROBE_DETAIL" ] && LAUNCHD_PROBE_DETAIL="fail: produced no verdict under launchd"
+    return 1
+}
+
+# Daemon interpreter candidates, most-preferred first (CONTRACT §55).
+#
+# ORDERING RATIONALE: /usr/bin/python3 is the Apple-shipped system interpreter,
+# and on a normally-used Mac it is the one binary that already holds the user's
+# file-access grants — Homebrew/miniconda pythons are separate binaries that
+# each need their OWN TCC grant before a launchd job spawned from them can read
+# anything outside $HOME. So when the repo lives outside $HOME (external volume,
+# network share — precisely where per-binary TCC bites), the system python is
+# ranked ABOVE them; inside $HOME the historical order is kept, because there is
+# no TCC boundary to cross and a user's richer python is the better default.
+# $AIASSISTANT_PYTHON stays first in both: an explicit override outranks a guess.
+daemon_python_candidates() {
+    if repo_outside_home; then
+        printf '%s\n' "${AIASSISTANT_PYTHON:-}" /usr/bin/python3 \
+            "$(pinned_python)" "$HOME/miniconda3/bin/python3" "${PY:-}"
+    else
+        printf '%s\n' "${AIASSISTANT_PYTHON:-}" "$(pinned_python)" \
+            "$HOME/miniconda3/bin/python3" "${PY:-}" /usr/bin/python3
+    fi
+}
+
+# Is the repo outside $HOME? That is the TCC-sensitive shape (see the ordering
+# rationale above). Compares PHYSICAL paths — a symlink into /Volumes must not
+# read as "inside $HOME".
+repo_outside_home() {
+    _rh="$(physical_path "$HOME")"
+    _rr="$(physical_path "$REPO_ROOT")"
+    case "$_rr" in "$_rh"|"$_rh"/*) return 1 ;; *) return 0 ;; esac
+}
+
+# The daemon interpreter: first candidate that passes BOTH gates (§55) —
+# `import yaml`, then "can actually import act when launchd spawns it".
+# Sets DAEMON_PY (the winner) and DAEMON_PY_NOTE (empty when both gates passed
+# cleanly); returns 1 when no candidate is usable at all. Globals rather than
+# stdout because the probe's verdict has to survive back to the caller, and a
+# command substitution would run the whole thing in a subshell.
+# When the launchd gate rejects every yaml-capable candidate (or cannot run at
+# all) we fall back to the first yaml-capable one and say why, rather than
+# pinning nothing: yaml-capable is still strictly better than a PATH guess.
+DAEMON_PY=""
+DAEMON_PY_NOTE=""
+pick_daemon_python() {
+    DAEMON_PY=""; DAEMON_PY_NOTE=""
+    _first_yaml=""
+    _repo_phys="$(physical_path "$REPO_ROOT")"
+    for _cand in "$@"; do
+        py_imports_yaml "$_cand" || continue
+        [ -n "$_first_yaml" ] || _first_yaml="$_cand"
+        py_launchd_can_import_act "$_cand" "$_repo_phys"
+        case "$?" in
+            0) DAEMON_PY="$_cand"; DAEMON_PY_NOTE=""; return 0 ;;
+            2) DAEMON_PY="$_cand"
+               DAEMON_PY_NOTE="launchd viability unverifiable here — used the PyYAML gate only"
+               return 0 ;;
+            *) DAEMON_PY_NOTE="$_cand imports yaml but cannot import act under launchd ($LAUNCHD_PROBE_DETAIL)" ;;
+        esac
+    done
+    if [ -n "$_first_yaml" ]; then
+        DAEMON_PY="$_first_yaml"
+        DAEMON_PY_NOTE="no candidate passed the launchd probe; fell back to $_first_yaml"
+        return 0
+    fi
+    return 1
+}
+
 # The interpreter pinned by a previous run (CONTRACT §19), "" when unpinned.
 pinned_python() {
     [ -f "$REPO_ROOT/config/runtime.json" ] || return 0
@@ -136,6 +278,9 @@ launchd_load() { # $1=plist path
 # escape a value for use on the replacement side of sed s|…|…| (delimiter |)
 _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
+# escape a value for a plist <string> body (the viability probe writes XML)
+_xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
 # Render a launchd plist template into place. The repo plists carry
 # /Users/YOURUSERNAME placeholders (plists don't expand ~) — substitute the
 # detected python interpreter, this repo root, $HOME, and the login shell's
@@ -147,9 +292,19 @@ render_launchd_plist() {
     src="$1"; dest="$2"
     # Validated interpreter, never a bare PATH guess: an interpreter without
     # PyYAML makes every agent exit 1 on `import yaml` before it can log.
+    # RUNTIME_PY already cleared both §55 gates; this is only the safety net for
+    # a caller that never ran the selection, so it reuses the same candidate
+    # ORDER (system python first when the repo is outside $HOME) with the cheap
+    # yaml gate — re-probing launchd once per plist would buy nothing.
     py="${RUNTIME_PY:-}"
-    py_imports_yaml "$py" || py="$(pick_python "$(command -v python3 || true)" \
-        /usr/bin/python3 || echo /usr/bin/python3)"
+    if ! py_imports_yaml "$py"; then
+        _saved_ifs="$IFS"
+        IFS='
+'
+        # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+        py="$(pick_python $(daemon_python_candidates) || echo /usr/bin/python3)"
+        IFS="$_saved_ifs"
+    fi
     pydir="$(dirname "$py")"
     # PHYSICAL repo path (CONTRACT §55): the rendered PYTHONPATH /
     # AIASSISTANT_HOME must not carry a symlink the launchd session cannot
@@ -188,12 +343,40 @@ verify_launchd_agent() {
         ok "$label loaded (last run exited 0)"
     else
         echo "  [ERR ] $label loaded but its process exits with status $agent_status" >&2
-        info "fix: read ~/Library/Logs/zelin-ai-assistant/${label##*.}.launchd.log — usual causes:"
-        info "  - PyYAML missing for the daemon python: ${RUNTIME_PY:-python3} -m pip install --user pyyaml"
-        info "  - Anthropic API key file missing: paste it in the app's Settings window"
+        launchd_failure_hint "${label##*.}"
         info "then: launchctl unload $LA_DIR/$label.plist && launchctl load $LA_DIR/$label.plist"
         return 1
     fi
+}
+
+# Name the ACTUAL cause from the agent's own log instead of guessing (§55).
+# The two ModuleNotFoundErrors look identical in `launchctl list` but have
+# opposite fixes, and asserting PyYAML at a repo the interpreter simply cannot
+# SEE is what sent the 2026-08-31 debugging session down the wrong path for
+# hours: /opt/homebrew/bin/python3 had PyYAML the whole time.
+launchd_failure_hint() { # $1 = short agent name (actd, radar, …)
+    _log="$HOME/Library/Logs/zelin-ai-assistant/$1.launchd.log"
+    _tail="$(tail -n 40 "$_log" 2>/dev/null || true)"
+    info "fix: read $_log —"
+    case "$_tail" in
+        *"No module named 'act'"*)
+            info "  its log says \"No module named 'act'\": the interpreter cannot SEE the repo."
+            info "  PyYAML is NOT the problem. Either the rendered PYTHONPATH is wrong, or"
+            info "  ${RUNTIME_PY:-the daemon python} lacks Full Disk Access (TCC is granted per"
+            info "  binary, and launchd jobs do not inherit your terminal's grant)."
+            info "  re-run: bash $REPO_ROOT/install.sh   # now picks a launchd-viable interpreter"
+            ;;
+        *"No module named 'yaml'"*)
+            info "  its log says \"No module named 'yaml'\": PyYAML is missing for the daemon python."
+            info "  fix: ${RUNTIME_PY:-python3} -m pip install --user --break-system-packages pyyaml"
+            ;;
+        *)
+            info "  usual causes:"
+            info "  - the interpreter cannot see the repo (\"No module named 'act'\"): re-run install.sh"
+            info "  - PyYAML missing (\"No module named 'yaml'\"): ${RUNTIME_PY:-python3} -m pip install --user pyyaml"
+            info "  - Anthropic API key file missing: paste it in the app's Settings window"
+            ;;
+    esac
 }
 
 echo "=============================================="
@@ -309,21 +492,33 @@ if [ ! -f "$REPO_ROOT/config/redaction_terms.txt" ]; then
 fi
 
 # runtime python pointer (CONTRACT §19) — the interpreter launchd, cron and the
-# Mac app all run. EVERY candidate is validated with `import yaml` before it is
-# pinned (§55): a python that cannot import yaml turns every background agent
-# into a KeepAlive crash loop, and the pointer is what the plists inherit.
-# Order: $AIASSISTANT_PYTHON env -> the existing pin -> miniconda -> the python3
-# this installer found -> /usr/bin/python3.
+# Mac app all run. EVERY candidate must clear TWO gates before it is pinned
+# (§55): `import yaml` (PyYAML is the daemons' only non-stdlib dependency) and
+# LAUNCHD VIABILITY (it can really import act from the repo when launchd — not
+# this shell — spawns it; TCC is per-binary). Candidate order comes from
+# daemon_python_candidates: system python first when the repo is outside $HOME.
 mkdir -p "$REPO_ROOT/config"
-RUNTIME_PY="$(pick_python "${AIASSISTANT_PYTHON:-}" "$(pinned_python)" \
-    "$HOME/miniconda3/bin/python3" "${PY:-}" /usr/bin/python3 || true)"
+RUNTIME_PY=""
+_saved_ifs="$IFS"
+IFS='
+'
+# shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+pick_daemon_python $(daemon_python_candidates) || true
+IFS="$_saved_ifs"
+RUNTIME_PY="$DAEMON_PY"
 if [ -n "${AIASSISTANT_PYTHON:-}" ] && [ "$RUNTIME_PY" != "$AIASSISTANT_PYTHON" ]; then
-    warn "AIASSISTANT_PYTHON=$AIASSISTANT_PYTHON cannot 'import yaml' — ignored"
+    warn "AIASSISTANT_PYTHON=$AIASSISTANT_PYTHON did not pass the daemon interpreter gates — ignored"
 fi
 if [ -n "$RUNTIME_PY" ]; then
     printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
-    ok "config/runtime.json -> $RUNTIME_PY (PyYAML importable)"
-    report_step "runtime_python" "ok" "$RUNTIME_PY"
+    if [ -n "$DAEMON_PY_NOTE" ]; then
+        ok "config/runtime.json -> $RUNTIME_PY (PyYAML importable)"
+        warn "$DAEMON_PY_NOTE"
+        report_step "runtime_python" "ok" "$RUNTIME_PY ($DAEMON_PY_NOTE)"
+    else
+        ok "config/runtime.json -> $RUNTIME_PY (PyYAML importable; imports act under launchd)"
+        report_step "runtime_python" "ok" "$RUNTIME_PY"
+    fi
 else
     echo "  [ERR ] no python3 with PyYAML found — the launchd agents would die on" >&2
     echo "         \"No module named 'yaml'\" the moment they spawn." >&2
@@ -513,8 +708,13 @@ chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || t
 # cron runs outside the login shell — same validated-interpreter rule as the
 # launchd plists (§55): -x alone once picked a miniconda python that had no
 # PyYAML, so every cron radar pass died on `import yaml`.
-CRON_PY="$(pick_python "${RUNTIME_PY:-}" "$HOME/miniconda3/bin/python3" \
-    "${PY:-}" /usr/bin/python3 || echo "${PY:-python3}")"
+_saved_ifs="$IFS"
+IFS='
+'
+# shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+CRON_PY="$(pick_python "${RUNTIME_PY:-}" $(daemon_python_candidates) \
+    || echo "${PY:-python3}")"
+IFS="$_saved_ifs"
 
 # cron's PATH is minimal AND user-customizable — pin the login shell's claude
 # dir first so process-screenpipe.sh's `command -v claude` and the radar's

@@ -46,7 +46,14 @@ _WIN = sys.platform.startswith("win")
 # install.sh 里真正参与渲染的函数（顺序 = 依赖顺序）。测试执行的是从
 # install.sh 抠出来的**原文**，所以脚本改了而测试没改会立刻炸。
 _RENDER_FNS = ("physical_path", "py_imports_yaml", "pick_python",
-               "_sed_escape", "render_launchd_plist")
+               "pinned_python", "repo_outside_home",
+               "daemon_python_candidates", "_sed_escape",
+               "render_launchd_plist")
+
+# 解释器挑选那一组（§55 双闸门：import yaml + launchd 可行性）。
+_PICK_FNS = ("physical_path", "py_imports_yaml", "pick_python",
+             "pinned_python", "repo_outside_home", "daemon_python_candidates",
+             "_xml_escape", "py_launchd_can_import_act", "pick_daemon_python")
 
 
 def install_sh_prelude(fns=_RENDER_FNS):
@@ -289,6 +296,185 @@ class InstallShRealRenderTestCase(unittest.TestCase):
                             "an interpreter that cannot import yaml must never "
                             "reach the plist")
         self.assertTrue(argv0.startswith("/"), argv0)
+
+
+@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+class DaemonInterpreterSelectionTestCase(unittest.TestCase):
+    """§55 双闸门解释器挑选——2026-08-31 live 部署的**最后**一幕判例。
+
+    v0.48.2 修好路径之后，agent 依旧全部 `No module named 'act'`：渲染出的
+    PYTHONPATH / AIASSISTANT_HOME 完全正确，plist 里那个
+    /opt/homebrew/bin/python3 也确实装着 PyYAML（所以老的 yaml 单闸门放它过
+    了），但 **macOS 按 binary 授文件权限**——它在 launchd 下读不了外置卷上的
+    repo，而 /usr/bin/python3 读得了。两个解释器在交互 shell 里都读得好好的
+    （shell 把自己的授权借给了子进程），差别只在 launchd 会话里存在。
+
+    所以这里钉两件事：
+      1. **候选次序**——repo 在 $HOME 之外时系统 python 排第一（它是那个已经
+         带着用户授权的 binary）；在 $HOME 之内维持历史次序。
+      2. **第二道闸门**——yaml 过了但 launchd 下 import 不到 act 的候选必须被
+         跳过，且一个都不过时要退回第一个 yaml 候选（而不是什么都不 pin）。
+
+    这里**绝不真的起 launchd**：真探针要么被 AIASSISTANT_LAUNCHD_PROBE=0 关掉、
+    要么被脚本里重定义的同名函数替掉（注入缝，与 runner/triager 同款）。
+    整个 class 在 Windows 上跳过，同 InstallShRealRenderTestCase。
+    """
+
+    def _tmpdir(self, prefix):
+        d = Path(tempfile.mkdtemp(prefix=prefix))
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def _fake_python(self, name, imports_yaml=True):
+        p = self._tmpdir("fakepy-") / name
+        p.write_text("#!/bin/sh\nexit %d\n" % (0 if imports_yaml else 1),
+                     encoding="utf-8")
+        p.chmod(0o755)
+        return str(p)
+
+    def _run(self, body, repo_root, home, env=None, pinned="", args=()):
+        """install.sh 的挑选函数原文 + 一段测试尾巴。绝不触碰真 launchd。
+        body 里 $1 = REPO_ROOT 已 shift 掉，剩下的位置参数来自 args。"""
+        if pinned:
+            (Path(repo_root) / "config").mkdir(parents=True, exist_ok=True)
+            (Path(repo_root) / "config" / "runtime.json").write_text(
+                '{"python": "%s"}\n' % pinned, encoding="utf-8")
+        script = ("set -u\n" + install_sh_prelude(_PICK_FNS)
+                  + 'REPO_ROOT="$1"; shift\n' + body)
+        base = {k: v for k, v in os.environ.items()
+                if k != "AIASSISTANT_PYTHON"}
+        proc = subprocess.run(
+            ["bash", "-c", script, "bash", repo_root, *args],
+            capture_output=True, text=True, timeout=60,
+            env={**base, "REPO": str(REPO), "HOME": home,
+                 # 默认关掉真探针：本 class 不许 bootstrap 任何 launchd job
+                 "AIASSISTANT_LAUNCHD_PROBE": "0", **(env or {})})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def _candidates(self, repo_root, home, env=None, pinned=""):
+        out = self._run("daemon_python_candidates\n", repo_root, home,
+                        env=env, pinned=pinned)
+        return [ln for ln in out.splitlines() if ln]
+
+    # -- 1. 候选次序 --------------------------------------------------------- #
+
+    def test_system_python_ranks_first_when_the_repo_is_outside_home(self):
+        home = str(self._tmpdir("home-"))
+        repo = str(self._tmpdir("repo-outside-"))  # 兄弟目录，不在 home 下
+        cands = self._candidates(repo, home, env={"PY": "/fake/shell/python3"})
+        self.assertEqual(
+            cands[0], "/usr/bin/python3",
+            "repo outside $HOME is the TCC-sensitive shape: the Apple-shipped "
+            "system python (the binary that already carries the user's file "
+            "grants) must be probed FIRST — a homebrew/miniconda python needs "
+            "its own grant before a launchd job can read an external volume")
+
+    def test_home_repo_keeps_the_historical_order(self):
+        home = str(self._tmpdir("home-"))
+        repo = os.path.join(home, "Projects", "zelin-ai-assistant")
+        os.makedirs(repo)
+        pin = self._fake_python("pinned-python3")
+        cands = self._candidates(repo, home, env={"PY": "/fake/shell/python3"},
+                                 pinned=pin)
+        self.assertEqual(cands[0], pin,
+                         "inside $HOME there is no TCC boundary to cross, so "
+                         "the existing pin still wins")
+        self.assertEqual(cands[-1], "/usr/bin/python3",
+                         "system python stays the last resort inside $HOME")
+
+    def test_explicit_override_outranks_the_system_python(self):
+        home = str(self._tmpdir("home-"))
+        repo = str(self._tmpdir("repo-outside-"))
+        cands = self._candidates(repo, home,
+                                 env={"AIASSISTANT_PYTHON": "/opt/mine/python3"})
+        self.assertEqual(cands[0], "/opt/mine/python3",
+                         "an explicit AIASSISTANT_PYTHON outranks every guess")
+
+    def test_outside_home_is_decided_on_physical_paths(self):
+        # 便利 symlink（事故的原始形状）不许把外置卷伪装成 $HOME 内
+        tmp = self._tmpdir("phys-")
+        home = tmp / "home"
+        (home / "Projects").mkdir(parents=True)
+        outside = tmp / "elsewhere" / "repo"
+        outside.mkdir(parents=True)
+        (home / "Projects" / "link").symlink_to(outside)
+        cands = self._candidates(str(home / "Projects" / "link"), str(home))
+        self.assertEqual(
+            cands[0], "/usr/bin/python3",
+            "a symlink from $HOME into an outside path is still outside — "
+            "the comparison must resolve both sides physically")
+
+    # -- 2. launchd 可行性闸门 ----------------------------------------------- #
+
+    def _pick_with_stub(self, candidates, viable):
+        """真的跑 pick_daemon_python，但把 launchd 探针换成注入的判决表
+        （注入缝，与 runner/triager 同款——测试绝不真起 agent）。
+        viable: {path: rc}，rc 同真探针（0 可行 / 1 不可行 / 2 测不出）。"""
+        cases = "".join(
+            '        %s) return %d ;;\n' % (c, rc) for c, rc in viable.items())
+        body = (
+            'py_launchd_can_import_act() {\n'
+            '    LAUNCHD_PROBE_DETAIL="stub:$1"\n'
+            '    case "$1" in\n' + cases +
+            '        *) return 1 ;;\n'
+            '    esac\n'
+            '}\n'
+            'pick_daemon_python "$@" || true\n'
+            'printf "%s\\n%s" "$DAEMON_PY" "$DAEMON_PY_NOTE"\n')
+        out = self._run(body, str(self._tmpdir("repo-")),
+                        str(self._tmpdir("home-")), args=candidates)
+        picked, _, note = out.partition("\n")
+        return picked, note
+
+    def test_a_yaml_capable_but_launchd_blind_interpreter_is_skipped(self):
+        # 事故本体：两个都 import 得了 yaml，只有一个在 launchd 下看得见 repo
+        blind = self._fake_python("blind-python3", imports_yaml=True)
+        seeing = self._fake_python("seeing-python3", imports_yaml=True)
+        picked, note = self._pick_with_stub([blind, seeing],
+                                            {blind: 1, seeing: 0})
+        self.assertEqual(picked, seeing,
+                         "the yaml gate alone cannot tell these apart — the "
+                         "launchd gate must reject the blind interpreter")
+        self.assertEqual(note, "", "a clean pick carries no caveat")
+
+    def test_the_yaml_gate_still_runs_first(self):
+        no_yaml = self._fake_python("no-yaml-python3", imports_yaml=False)
+        good = self._fake_python("good-python3", imports_yaml=True)
+        # no_yaml 会通过 launchd stub，但它连第一道闸门都过不了
+        picked, _ = self._pick_with_stub([no_yaml, good],
+                                         {no_yaml: 0, good: 0})
+        self.assertEqual(picked, good)
+
+    def test_falls_back_to_the_first_yaml_candidate_when_none_are_viable(self):
+        first = self._fake_python("first-python3", imports_yaml=True)
+        second = self._fake_python("second-python3", imports_yaml=True)
+        picked, note = self._pick_with_stub([first, second],
+                                            {first: 1, second: 1})
+        self.assertEqual(picked, first,
+                         "pin the first yaml-capable candidate rather than "
+                         "nothing — still strictly better than a PATH guess")
+        self.assertIn("launchd probe", note,
+                      "and say why, so the installer can warn instead of "
+                      "reporting a clean pin")
+
+    def test_an_unavailable_probe_degrades_to_the_yaml_gate(self):
+        # 没有 launchd（Linux/CI）或探针被关：rc=2 = 测不出，绝不当成拒绝
+        only = self._fake_python("only-python3", imports_yaml=True)
+        picked, note = self._pick_with_stub([only], {only: 2})
+        self.assertEqual(picked, only)
+        self.assertIn("unverifiable", note)
+
+    def test_the_real_probe_is_disabled_by_the_env_switch(self):
+        # 判例本身的安全带：AIASSISTANT_LAUNCHD_PROBE=0 时**真**探针必须直接
+        # 返回 2（测不出），一个 launchd job 都不许 bootstrap——上面每条用例
+        # 都靠这个开关保持 hermetic。
+        good = self._fake_python("good-python3", imports_yaml=True)
+        out = self._run('py_launchd_can_import_act "$1" "$REPO_ROOT"\n'
+                        'printf "%s" "$?"\n',
+                        str(self._tmpdir("repo-")), str(self._tmpdir("home-")),
+                        args=[good])
+        self.assertEqual(out, "2")
 
 
 if __name__ == "__main__":

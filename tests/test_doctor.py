@@ -146,7 +146,8 @@ class DoctorTestCase(unittest.TestCase):
                     json.dumps({"generated_at": _iso(generated_ts)}))
 
     def make_probes(self, run=None, launchctl=None, cron=None, which_map=None,
-                    now=None, db=None, legacy=None, installed_plists=None):
+                    now=None, db=None, legacy=None, installed_plists=None,
+                    launchd_logs=None):
         if which_map is None:
             which_map = {"claude": "/fake/bin/claude",
                          "npx": "/fake/bin/npx",
@@ -161,11 +162,16 @@ class DoctorTestCase(unittest.TestCase):
             launchd_labels=LABELS,
             screenpipe_db=db or self.db_file,
             legacy_key_path=legacy or self.missing_legacy,
-            # hermetic: never read the REAL ~/Library/LaunchAgents plists or
-            # probe the real login shell from the sandboxed suite
+            # hermetic: never read the REAL ~/Library/LaunchAgents plists, the
+            # REAL ~/Library/Logs agent logs, or the real login shell from the
+            # sandboxed suite. The log seam matters as much as the others: a
+            # developer whose own machine still carries a crashed agent's
+            # "No module named 'act'" log would otherwise flip the §55 log
+            # attribution branch under every unrelated test.
             daemon_path_env=lambda: None,
             login_shell_claude=lambda: None,
             installed_plist_text=lambda label: (installed_plists or {}).get(label),
+            launchd_log_tail=lambda short: (launchd_logs or {}).get(short, ""),
         )
 
     def _main(self, probes, argv=None):
@@ -412,6 +418,100 @@ class DoctorTestCase(unittest.TestCase):
             LABELS[0]: self._plist_with(interpreter="/nonexistent/python3")})
         results = doctor.run_checks(probes, fast=True)
         self.assertEqual(by_name(results, "launchd python").status, doctor.FAIL)
+
+    # -- §55 症状 4: 路径全对、yaml 也过，解释器却读不到 repo ------------------ #
+    # 2026-08-31 live 部署的最后一幕（v0.48.2 修好路径之后才露出来）：
+    # /opt/homebrew/bin/python3 装着 PyYAML、PYTHONPATH 也渲染正确，但 macOS
+    # 按 binary 授文件权限，它在 launchd 下读不了外置卷上的 repo，于是 agent
+    # 一直 `No module named 'act'` 退出 1。install.sh 当时把它误报成
+    # 「PyYAML missing」——两条 ModuleNotFoundError 必须从日志里分开。
+
+    CRASHED = "-\t1\tcom.zelin.aiassistant.actd\n-\t0\tcom.zelin.aiassistant.radar\n"
+
+    def test_missing_act_in_the_log_blames_the_interpreter_not_pyyaml(self):
+        probes = self.make_probes(
+            launchctl=self.CRASHED,
+            launchd_logs={"actd": "Traceback...\nModuleNotFoundError: "
+                                  "No module named 'act'\n"})
+        r = by_name(doctor.run_checks(probes, fast=True), "actd")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("cannot see the repo", r.detail)
+        self.assertIn("PyYAML is NOT the problem", r.detail)
+        self.assertNotIn("pip install", r.fix)
+        self.assertIn("install.sh", r.fix)
+        self.assertEqual(r.failure_id, "interpreter_blind")
+
+    def test_missing_yaml_in_the_log_still_blames_pyyaml(self):
+        probes = self.make_probes(
+            launchctl=self.CRASHED,
+            launchd_logs={"actd": "ModuleNotFoundError: No module named 'yaml'\n"})
+        r = by_name(doctor.run_checks(probes, fast=True), "actd")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("PyYAML is missing", r.detail)
+        self.assertIn("pip install", r.fix)
+        self.assertIn("pyyaml", r.fix)
+        self.assertEqual(r.failure_id, "agent_unloaded")
+
+    def test_an_unreadable_log_keeps_the_old_both_causes_pointer(self):
+        r = by_name(doctor.run_checks(
+            self.make_probes(launchctl=self.CRASHED), fast=True), "actd")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("actd.launchd.log", r.fix)
+        # 读不到日志时不许偏袒任何一边——两个原因都摆出来
+        self.assertIn("No module named 'act'", r.fix)
+        self.assertIn("No module named 'yaml'", r.fix)
+
+    def test_the_latest_log_line_wins(self):
+        # KeepAlive 把历次失败都留在同一个文件里：最新那条才是当前状态
+        probes = self.make_probes(
+            launchctl=self.CRASHED,
+            launchd_logs={"actd": "No module named 'yaml'\n"
+                                  "No module named 'act'\n"})
+        r = by_name(doctor.run_checks(probes, fast=True), "actd")
+        self.assertIn("cannot see the repo", r.detail)
+
+    def test_yaml_capable_interpreter_blind_to_the_repo_gets_its_own_row(self):
+        # 路径干净 + import yaml 通过 + 日志说没有 act = 症状 4，独立一行、
+        # 独立修法（换解释器 / 授 FDA），不是「重装 agent」。
+        probes = self.make_probes(
+            launchctl=self.CRASHED,
+            installed_plists={LABELS[0]: self._plist_with(),
+                              LABELS[1]: self._plist_with()},
+            launchd_logs={"actd": "ModuleNotFoundError: No module named 'act'\n"})
+        results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.OK)
+        r = by_name(results, "launchd python")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("imports yaml", r.detail)
+        self.assertIn("cannot READ", r.detail)
+        self.assertIn("per binary", r.detail)
+        self.assertIn("actd", r.detail)
+        self.assertNotIn("radar", r.detail)  # 只点名真在崩的那个
+        self.assertIn("install.sh", r.fix)
+        self.assertIn("Full Disk Access", r.fix)
+        self.assertEqual(r.failure_id, "interpreter_blind")
+
+    def test_a_healthy_agent_never_gets_the_blind_interpreter_row(self):
+        # 日志里有旧的 'act' 残留，但 agent 现在跑得好好的 → 不报
+        probes = self.make_probes(
+            installed_plists={LABELS[0]: self._plist_with()},
+            launchd_logs={"actd": "No module named 'act'\n"})
+        results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.OK)
+        self.assertNotIn("launchd python", [r.name for r in results])
+
+    def test_broken_paths_suppress_the_blind_interpreter_row(self):
+        # 路径本身坏时重渲染就一起修了；多报一行只会把人支去授一个其实
+        # 不需要的 FDA。
+        probes = self.make_probes(
+            launchctl=self.CRASHED,
+            installed_plists={LABELS[0]: self._stale_plist()},
+            launchd_logs={"actd": "No module named 'act'\n"})
+        with mock.patch.object(doctor.Path, "home",
+                               return_value=Path("/nonexistent-home")):
+            results = doctor.run_checks(probes, fast=True)
+        self.assertEqual(by_name(results, "launchd paths").status, doctor.FAIL)
+        self.assertNotIn("launchd python", [r.name for r in results])
 
     # -- dashboard freshness ----------------------------------------------------- #
     def test_stale_dashboard_is_fail(self):

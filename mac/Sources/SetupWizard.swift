@@ -297,7 +297,9 @@ enum ActdAgent {
             return (false, L("后台服务模板缺失(\(template))——repo 不完整?在 repo 目录运行 bash install.sh 可修复",
                              "Background-service template missing (\(template)) — incomplete repo? Running bash install.sh in the repo directory fixes it"))
         }
-        let py = RuntimePython.resolve()
+        // Both §55 interpreter gates, same as LaunchAgents.install: `import
+        // yaml` AND "can import act when launchd — not this app — spawns it".
+        let (py, _) = RuntimePython.resolveForLaunchd(repo: root)
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()
         text = text
