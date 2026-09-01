@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""夜间变异测试 runner —— stdlib-only，自制（CONTRACT §57.8 管辖）。
+"""夜间变异测试 runner —— stdlib-only，自制（CONTRACT §57 管辖）。
 
 干什么：对靶区模块（truth = qa/mutation_targets.toml）做确定性 operator flip
 （== ↔ !=、< ↔ <=、> ↔ >=、+ ↔ -、and ↔ or、True ↔ False、continue ↔ break、
@@ -58,7 +58,7 @@ DEFAULT_MUTANT_TIMEOUT = 60
 # 断电）最多丢 N 个变异体的账，绝不丢整夜。
 CHECKPOINT_EVERY = 20
 
-# 等价变异体高发区的跳过启发（§57.8）：logging 调用里的改动（级别名、拼串）
+# 等价变异体高发区的跳过启发（§57）：logging 调用里的改动（级别名、拼串）
 # 几乎不可能被行为测试杀死，全部不铸 site。
 _LOGGING_ATTRS = frozenset(
     {"debug", "info", "warning", "error", "exception", "critical", "log"})
@@ -241,7 +241,7 @@ def _node_sites(node, sites):
 
 
 def _walk(node, sites):
-    # 跳过整棵子树的规则（等价变异体高发区，§57.8 明文）：
+    # 跳过整棵子树的规则（等价变异体高发区，§57 明文）：
     #   __repr__ 函数体、`if __name__ == "__main__"` 守卫、logging 类调用。
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and \
             node.name == "__repr__":
@@ -627,7 +627,7 @@ def render_markdown(report):
                  f"budget {report['budget_seconds']}s · "
                  f"{report['executed_this_run']} mutants executed this run.")
     lines.append("")
-    lines.append("**Never a PR gate** (owner decision D5, CONTRACT §57.8). "
+    lines.append("**Never a PR gate** (owner decision D5, CONTRACT §57). "
                  "Surviving mutants are test-gap proposals for the daily "
                  "self-improvement loop — the JSON artifact `mutation-report` "
                  "on the workflow run is the machine-readable feed.")

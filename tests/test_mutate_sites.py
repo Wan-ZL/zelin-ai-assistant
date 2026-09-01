@@ -1,4 +1,4 @@
-"""scripts/qa/mutate.py 的判例（CONTRACT §57.8）—— site 生成 / 跳过规则 /
+"""scripts/qa/mutate.py 的判例（CONTRACT §57）—— site 生成 / 跳过规则 /
 TOML 子集 / 预算与续跑调度（注入假 runner 与假 clock，本文件零 subprocess）。
 
 真子进程的杀伤判定住 tests/integration/test_mutation_runner.py（防腐 #7）。

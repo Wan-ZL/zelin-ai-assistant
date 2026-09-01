@@ -1,4 +1,4 @@
-"""scripts/qa/mutation_issue.py 的判例（CONTRACT §57.8）—— pinned issue 的
+"""scripts/qa/mutation_issue.py 的判例（CONTRACT §57）—— pinned issue 的
 幂等 create-or-update：注入假 gh runner，零网络零 subprocess；dry-run 一次
 gh 都不许碰。与 insights.yml 的 shell 版同一语义（精确标题、open+closed 全集、
 绝不开第二张、pin 尽力而为）。

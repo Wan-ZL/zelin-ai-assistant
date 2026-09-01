@@ -1,4 +1,4 @@
-# 变异测试靶区 —— 模块 → 定向测试子集（CONTRACT §57.8；scripts/qa/mutate.py 读）。
+# 变异测试靶区 —— 模块 → 定向测试子集（CONTRACT §57；scripts/qa/mutate.py 读）。
 #
 # 语法是 mutate.parse_targets_toml 支持的 TOML 子集（table / 双引号字符串 /
 # 整数 / true·false / 单行字符串数组 / # 注释）——Python 3.9 floor 没有

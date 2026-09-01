@@ -26,7 +26,7 @@ promo/node_modules/
 promo/package.json
 promo/package-lock.json
 .coverage
-# QA instrument outputs (mutation state/reports — CONTRACT §57.8; 防腐 #4:
+# QA instrument outputs (mutation state/reports — CONTRACT §57; 防腐 #4:
 # data files are born gitignored, never inside a package)
 .qa/
 

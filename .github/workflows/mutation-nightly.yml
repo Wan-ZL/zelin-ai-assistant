@@ -1,6 +1,6 @@
 # Nightly mutation testing -> one pinned issue + a machine-readable artifact.
 #
-# NEVER a PR gate (owner decision D5 / CONTRACT §57.8): surviving mutants are
+# NEVER a PR gate (owner decision D5 / CONTRACT §57): surviving mutants are
 # test-gap *proposals* — input for the daily self-improvement loop (P5 reads
 # the pinned issue and the `mutation-report` JSON artifact), never a merge
 # veto. This workflow is not in the required-checks set and must stay out.

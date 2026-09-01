@@ -1,4 +1,4 @@
-"""变异 runner 的杀伤判定判例（CONTRACT §57.8）—— 真 python 子进程，住
+"""变异 runner 的杀伤判定判例（CONTRACT §57）—— 真 python 子进程，住
 integration/（防腐 #7）。
 
 剧本：一个 10-site 的小模块 + 一强一弱两份测试。强测试钉边界值 → 10/10 全歼；

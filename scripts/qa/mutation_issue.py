@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""「Nightly mutation report」pinned issue 的幂等 create-or-update（CONTRACT §57.8）。
+"""「Nightly mutation report」pinned issue 的幂等 create-or-update（CONTRACT §57）。
 
 与 insights.yml 的 shell 版同一模式（精确标题匹配 open+closed 全集、绝不
 开第二张、closed 先 reopen、pin 尽力而为）；Python 化的理由：更新逻辑要有
