@@ -3,7 +3,7 @@ act/lib/failures.pick 走 §15 的 UI 语言设置，且每条 body 必带下一
 （回归：English UI 用户每周一收到中文标题 + 纯路径 body 的通知。）
 
 §40.7 起 digest 落卡而非落盘——通知不再携带文件路径，body 指向待验收列。
-D19（v0.48.4）：文案去掉「周一/Monday」——digest.frequency 可设 daily，标题
+D19（v0.48.5）：文案去掉「周一/Monday」——digest.frequency 可设 daily，标题
 不能再暗示周几。
 
 Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py;

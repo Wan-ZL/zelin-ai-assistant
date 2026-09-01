@@ -428,6 +428,11 @@ def run(force: bool = False, today: Optional[_dt.date] = None) -> dict:
     events were 67% of all analytics ever). The marker advances on every
     successful publish, forced or not, so a manual ``--now`` restarts the
     interval from today.
+
+    A marker that cannot be written (perm/disk) is reported as ONE readable
+    line and the summary carries ``marker_error`` — never a traceback that
+    hides the fact the card WAS published, never silence: an absent marker
+    reads as due, so ``weekly`` would quietly degrade to a card a day.
     """
     cfg = config.load_config()
     today = today or _dt.date.today()
@@ -436,8 +441,15 @@ def run(force: bool = False, today: Optional[_dt.date] = None) -> dict:
     if not force and not due(cfg, _read_marker(), today):
         return {"skipped": "off" if cfg.digest_frequency == "off" else "not_due"}
     card = publish_digest(today)
-    _write_marker({"last_run": today.isoformat()})
-    return {"skipped": None, "id": card.id}
+    summary: dict = {"skipped": None, "id": card.id}
+    try:
+        _write_marker({"last_run": today.isoformat()})
+    except OSError as e:
+        summary["marker_error"] = f"{type(e).__name__}: {e}"
+        print(f"digest: marker write failed ({_marker_path()}): "
+              f"{type(e).__name__}: {e} — cadence will re-fire next run; "
+              "fix the state dir")
+    return summary
 
 
 def main(argv: Optional[list[str]] = None) -> int:

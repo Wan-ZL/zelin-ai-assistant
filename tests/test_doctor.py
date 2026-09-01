@@ -41,6 +41,15 @@ HEALTHY_LAUNCHCTL = (
 HEALTHY_CRON = (
     "*/30 * * * * cd /repo && ./ingest/screenpipe-export.sh && "
     "python3 -m act.radar --once\n"
+    # §17 D19: daily fire, NO --now — the module gates itself on
+    # digest.frequency. The pre-D19 Monday `--now` form is LEGACY_DIGEST_CRON.
+    "7 9 * * * cd /repo && python3 -m act.digest >> /repo/state/digest.log 2>&1\n"
+)
+# What every install before D19 left in the crontab: --now bypasses the
+# cadence gate, so this line forces a card every Monday past frequency=off.
+LEGACY_DIGEST_CRON = (
+    "*/30 * * * * cd /repo && ./ingest/screenpipe-export.sh && "
+    "python3 -m act.radar --once\n"
     "7 9 * * 1 cd /repo && python3 -m act.digest --now\n"
 )
 
@@ -754,6 +763,37 @@ class DoctorTestCase(unittest.TestCase):
         results = doctor.run_checks(self.make_probes(cron=""), fast=True)
         self.assertEqual(by_name(results, "cron ingest chain").status, doctor.FAIL)
         self.assertEqual(by_name(results, "cron digest").status, doctor.WARN)
+
+    def test_daily_digest_line_is_ok_and_names_the_cadence(self):
+        r = by_name(doctor.run_checks(self.make_probes(), fast=True), "cron digest")
+        self.assertEqual(r.status, doctor.OK)
+        # installed != cards appear: the row must point at the knob (§17 D19)
+        self.assertIn("digest.frequency", r.detail)
+
+    def test_legacy_monday_now_digest_line_warns(self):
+        # §17 D19 (review H1): the pre-D19 line still passes --now, which
+        # bypasses the cadence gate — reporting it as "installed (cadence =
+        # digest.frequency)" would be a lie while it mints a card every
+        # Monday against frequency=off. Only `bash install.sh` replaces it.
+        results = doctor.run_checks(self.make_probes(cron=LEGACY_DIGEST_CRON),
+                                    fast=True)
+        r = by_name(results, "cron digest")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("--now", r.detail)
+        self.assertIn("digest.frequency", r.detail)
+        self.assertIn("install.sh", r.fix)
+        self.assertEqual(r.failure_id, "cron_missing")
+        # the ingest chain half of the crontab is untouched by this verdict
+        self.assertEqual(by_name(results, "cron ingest chain").status, doctor.OK)
+
+    def test_commented_out_legacy_digest_line_is_missing_not_legacy(self):
+        # a `#`-disabled line is neither installed nor forcing anything
+        cron = ("*/30 * * * * cd /repo && ./ingest/screenpipe-export.sh\n"
+                "# 7 9 * * 1 cd /repo && python3 -m act.digest --now\n")
+        r = by_name(doctor.run_checks(self.make_probes(cron=cron), fast=True),
+                    "cron digest")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("missing", r.detail)
 
     # -- daemon python / PyYAML ------------------------------------------------ #
     def test_daemon_python_without_pyyaml_is_fail(self):

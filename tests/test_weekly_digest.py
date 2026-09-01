@@ -2,11 +2,15 @@
 The injectable ``runner`` replaces headless ``claude -p``.
 
 Pinned here:
-- D19 (v0.48.4): ``sources.weekly_digest.enabled`` defaults to **false** —
+- D19 (v0.48.5): ``sources.weekly_digest.enabled`` defaults to **false** —
   a scheduled fire on an unconfigured install skips "disabled" QUIETLY (no
   print, no analytics event); the fixtures below opt in explicitly;
-- D19 tombstone: automation-idea proposal cards are never minted anymore
-  (MAX_SUGGESTIONS == 0) — nothing from this module reaches card_sent;
+- D19 tombstone: automation-idea proposal cards are never minted anymore —
+  the plumbing is deleted (no MAX_SUGGESTIONS, no _file_suggestion_cards, no
+  `suggestions` field in the prompt); a model that volunteers one anyway is
+  ignored and nothing from this module reaches card_sent;
+- marker-write failure (perm/disk) is one readable log line + summary
+  ``marker_error``; the card is still filed, nothing raises (review M3);
 - cost guards: zero notes in the window / nothing new since the last run ->
   skip WITHOUT calling claude (runner must not fire);
 - strict-JSON output -> a review-lane digest card (status=review, final_draft
@@ -20,7 +24,9 @@ Pinned here:
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
+import contextlib
 import datetime as dt
+import io
 import json
 import os
 import tempfile
@@ -234,7 +240,7 @@ class CardsTestCase(WeeklyDigestBase):
         self.assertEqual(digest.status, "review")
 
     def test_suggestions_never_minted(self):
-        # Was "capped at three" until D19 (v0.48.4): 15 automation-idea cards
+        # Was "capped at three" until D19 (v0.48.5): 15 automation-idea cards
         # minted, 0 approved -> retired. Whatever the model returns, nothing
         # is filed and nothing reaches card_sent.
         self._note("2026-07-05-a.md", "busy week", age_days=1)
@@ -243,12 +249,45 @@ class CardsTestCase(WeeklyDigestBase):
         summary = weekly_digest.run(
             force=True, now=self.now,
             runner=lambda p: _payload(suggestions=five))
-        self.assertEqual(weekly_digest.MAX_SUGGESTIONS, 0)
         self.assertEqual(summary["suggestions"], 0)
+        self.assertEqual(summary["suggestion_ids"], [])
         self.assertFalse([r for r in registry.load_all()
                           if r.status == "card_sent"])
-        # the prompt stopped asking for ideas it would throw away
-        self.assertIn("always return an empty list", weekly_digest.PROMPT_HEADER)
+        self.assertEqual(len(registry.load_all()), 1, "recap only")
+
+    def test_suggestion_plumbing_is_deleted_not_parked(self):
+        # 防腐 #6: a retired feature loses its code in the same release — no
+        # MAX_SUGGESTIONS=0 switch, no dead _file_suggestion_cards, and the
+        # prompt no longer asks for (or mentions) a suggestions list.
+        self.assertFalse(hasattr(weekly_digest, "MAX_SUGGESTIONS"))
+        self.assertFalse(hasattr(weekly_digest, "_file_suggestion_cards"))
+        self.assertNotIn("suggestions", weekly_digest.PROMPT_HEADER)
+        self.assertIn('{"digest": "markdown text"}', weekly_digest.PROMPT_HEADER)
+        # parse_output tolerates a volunteered key without normalising it
+        data = weekly_digest.parse_output(_payload(suggestions="not-a-list"))
+        self.assertEqual(data["digest"], "这周主要在弄 telemetry 和审计修复。")
+        self.assertIsNone(weekly_digest.parse_output(json.dumps({"suggestions": []})))
+
+    def test_marker_write_failure_is_one_line_and_card_still_filed(self):
+        # review M3: state/weekly_digest.json unwritable (perm/disk). The
+        # card must still be filed + notified; the failure is ONE readable
+        # line + summary["marker_error"], not a traceback out of run().
+        self._note("2026-07-05-a.md", "busy week", age_days=1)
+        out = io.StringIO()
+        with mock.patch.object(weekly_digest, "_write_marker",
+                               side_effect=PermissionError(13, "denied")), \
+                contextlib.redirect_stdout(out):
+            summary = weekly_digest.run(force=True, now=self.now,
+                                        runner=lambda p: _payload())
+        self.assertTrue(summary["ok"])
+        self.assertIn("digest_id", summary)
+        self.assertIn("PermissionError", summary["marker_error"])
+        self.assertEqual(weekly_digest._read_marker(), {})
+        lines = [ln for ln in out.getvalue().splitlines() if "marker write failed" in ln]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("weekly_digest.json", lines[0])
+        self.assertTrue(self.notify.called)
+        self.assertEqual(len(registry.load_all()), 1)
 
     def test_malformed_output_files_nothing_and_keeps_marker(self):
         self._note("2026-07-05-a.md", "note", age_days=1)

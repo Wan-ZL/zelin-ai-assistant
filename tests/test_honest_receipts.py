@@ -448,7 +448,7 @@ class DigestFailureNotifyTestCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
-        # D19 (v0.48.4): weekly_digest is default-OFF; these §40.4 pins are
+        # D19 (v0.48.5): weekly_digest is default-OFF; these §40.4 pins are
         # about the failure paths of an ENABLED run, so opt in explicitly.
         config.CONFIG_PATH.write_text(
             'sources:\n'

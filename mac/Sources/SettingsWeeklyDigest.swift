@@ -9,7 +9,7 @@ import SwiftUI
 
 struct WeeklyDigestSettingsSection: View {
     @ObservedObject private var i18n = LanguageStore.shared
-    // D19 (v0.48.4): product default is OFF — mirrors Config.weekly_digest_enabled.
+    // D19 (v0.48.5): product default is OFF — mirrors Config.weekly_digest_enabled.
     @State private var enabled = false
     @State private var status = ""
     @State private var loaded = false

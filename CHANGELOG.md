@@ -30,12 +30,12 @@ other file needs editing. To cut a release:
 v-next-2 第一批（决议 D19）：两条 digest 通道出厂零卡片。Owner：「像这种每日摘要，好像在设置里面没法关，几天没看就攒起来了……能不能在设置里面让我能够改成一周或者两天摘要，或者完全关掉」；追问「摘要卡还需要吗」的采纳答案是**默认不以卡片形式出现**。
 
 ### Changed
-- **状态摘要（原「周一 digest」）新增节奏旋钮 `digest.frequency`**：`off | daily | every2days | weekly`，**默认 `off`**；设置层扁平键 `digest_frequency` 同步进 overrides 允许列表，供设置页 diff-write。crontab 行改为每天 09:07 唤醒且不再带 `--now`，模块按滚动间隔（距上次生成 ≥1/2/7 天，标记 `state/digest.json`）自行闸门——不钉周一，周一睡着的机器周二照样拿到本周那张；off / 未到期的定时 pass 完全静默（不打印、不打点），默认 off 不会在日志或 analytics 里留一行一天。`--now` 仍可手动立即生成。重跑 `bash install.sh` 会把旧的「周一 `--now`」cron 行替换掉（旧行会越过 off 继续每周强制铸卡）。多年出厂却从未被读取的 `digest.weekly: monday` 模板键随之移除。（CONTRACT §16/§17）
+- **状态摘要（原「周一 digest」）新增节奏旋钮 `digest.frequency`**：`off | daily | every2days | weekly`，**默认 `off`**；设置层扁平键 `digest_frequency` 同步进 overrides 允许列表——但本版**没有 UI 暴露它**（原生 Mac 设置页不再加功能，web 设置页要到 v-next-2 P4）；在此之前改 `config.yaml` 的 `digest.frequency` 或手写 `state/settings_overrides.json`。crontab 行改为每天 09:07 唤醒且不再带 `--now`，模块按滚动间隔（距上次生成 ≥1/2/7 天，标记 `state/digest.json`）自行闸门——不钉周一，周一睡着的机器周二照样拿到本周那张；off / 未到期的定时 pass 完全静默（不打印、不打点），默认 off 不会在日志或 analytics 里留一行一天。`--now` 仍可手动立即生成。重跑 `bash install.sh` 会把旧的「周一 `--now`」cron 行替换掉（旧行会越过 off 继续每周强制铸卡）；doctor 「cron digest」行看见 crontab 里还带 `--now` 的 digest 行即 **WARN** 指向 `bash install.sh`，不再把它报成「已安装、按节奏」。`state/digest.json` 标记写失败时卡已发布、只打印一行（不 traceback、不静默）——标记缺失会让 `weekly` 退化成一天一张，这一行是唯一让人看见的地方。多年出厂却从未被读取的 `digest.weekly: monday` 模板键随之移除。（CONTRACT §16/§17）
 - **文案去周几**：卡片标题「周一 digest · <日期>」→「状态摘要 · <日期>」（en "Status digest"），通知与正文首行同步——日频卡片带「周一」会撒谎。（§40.7）
-- **每周摘要（weekly digest）默认关**：`sources.weekly_digest.enabled` 出厂 `false`，显式写 true 才生成回顾卡；launchd 每小时的定时唤醒遇关闭态与「未到期」同款静默，不再每天 24 条 skip 事件。设置页「现在生成一份」按钮遇关闭态仍有回音。（§24）
+- **每周摘要（weekly digest）默认关**：`sources.weekly_digest.enabled` 出厂 `false`，显式写 true 才生成回顾卡；launchd 每小时的定时唤醒遇关闭态与「未到期」同款静默，不再每天 24 条 skip 事件。设置页「现在生成一份」按钮遇关闭态仍在日志与 analytics 留回音（无通知，v0.14 判例 `test_disabled_flag_no_ops` 不变）。标记 `state/weekly_digest.json` 写失败同 digest：卡已落、一行日志、不 traceback。（§24）
 
 ### Removed
-- **weekly digest 的「自动化建议」提案卡退役**（墓碑）：15 张从未获批一张、3 个 cluster 跨 4 周重铸。`MAX_SUGGESTIONS = 0`、prompt 改要 `suggestions: []`，无论模型返回什么都不再落 card_sent；通知不再宣称「另有 N 条自动化建议」。管道代码保留一个 release 便于回退，下一 release 删除；这类想法的新出口是 v-next-2 的每日自我改进循环（P5）。（§24）
+- **weekly digest 的「自动化建议」提案卡退役**（墓碑）：15 张从未获批一张、3 个 cluster 跨 4 周重铸。管道代码（`MAX_SUGGESTIONS`、`_file_suggestion_cards`、parser 分支、prompt 的 `suggestions` 字段）**同版删除**（防腐 #6），prompt 只要 `{"digest": ...}`，模型若仍自带 `suggestions` 键一律忽略；通知不再宣称「另有 N 条自动化建议」。summary / `weekly_digest_generated` 事件里的 `suggestions`（恒 0）、`suggestion_ids`（恒 []）作 add-only 常量保留。反悔 = `git revert`；这类想法的新出口是 v-next-2 的每日自我改进循环（P5）。（§24）
 
 > 升级提示：cron 行形态变了——**重跑 `bash install.sh`** 才会把旧的周一行替换成新的每日自闸门行。不重跑的话旧行仍会每周一强制生成一张（等价于 `weekly` 且忽略 `off`）。
 

@@ -3,7 +3,7 @@
 * §40.7 digest unify: the state digest lands as a review-lane chat card
   (same filing pattern as act/weekly_digest — final_draft = full markdown,
   merge_or_new dedup on the per-day title) and writes NO workbench file;
-  D19 (v0.48.4) renamed the copy 周一 digest → 状态摘要 because the card can
+  D19 (v0.48.5) renamed the copy 周一 digest → 状态摘要 because the card can
   now be daily (digest.frequency) — a weekday in the name would lie;
   the 1:1 prep page (its own module) still lands via oneonone.output_root
   (configured repo, STATE_DIR fallback — never the example placeholder).

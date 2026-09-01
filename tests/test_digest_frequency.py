@@ -12,7 +12,8 @@ Owner 2026-09-01: 「像这种每日摘要，好像在设置里面没法关，�
   print, no analytics) — the cron fires daily now, so a default-off knob
   must not leave a line a day in state/digest.log; ``force`` (``--now``)
   bypasses the cadence but not ``features.digest``; a successful publish
-  advances the marker;
+  advances the marker; a marker that cannot be written is one readable log
+  line + ``marker_error`` in the summary, never a traceback (review M3);
 - the install.sh crontab line fires daily WITHOUT ``--now`` (the pre-D19
   Monday-only ``--now`` line would have forced a weekly card past ``off``).
 
@@ -251,6 +252,31 @@ class RunTestCase(_Base):
                 summary, _out, _ev = self._quiet_run(force=force)
                 self.assertEqual(summary["skipped"], "disabled")
         self.publish.assert_not_called()
+
+    def test_marker_write_failure_is_one_line_and_card_still_published(self):
+        # review M3: state/digest.json unwritable (perm/disk). An absent
+        # marker reads as due, so `weekly` would degrade to a card a day —
+        # that cannot be fixed here, but it must be VISIBLE as one readable
+        # line (+ summary["marker_error"]) rather than a traceback that hides
+        # the fact the card WAS published, and `--now` must still print the id.
+        self._yaml("weekly")
+        with mock.patch.object(digest, "_write_marker",
+                               side_effect=PermissionError(13, "denied")):
+            summary, out, _ev = self._quiet_run()
+            self.assertIsNone(summary["skipped"])
+            self.assertEqual(summary["id"], "R-777")
+            self.assertIn("PermissionError", summary["marker_error"])
+            lines = [ln for ln in out.splitlines() if "marker write failed" in ln]
+            self.assertEqual(len(lines), 1)
+            self.assertIn(digest.MARKER_PATH_NAME, lines[0])
+            self.assertEqual(digest._read_marker(), {})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                self.assertEqual(digest.main(["--now"]), 0)
+            self.assertIn("R-777", buf.getvalue())
+        # a healthy write carries no marker_error key at all
+        summary, _out, _ev = self._quiet_run(force=True)
+        self.assertNotIn("marker_error", summary)
 
     def test_main_cli_exit_codes_and_output(self):
         # scheduled fire on default config: exit 0, nothing printed
