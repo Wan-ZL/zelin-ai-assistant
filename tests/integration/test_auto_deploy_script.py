@@ -16,6 +16,8 @@ launchd、不碰真 $HOME（HOME 指到临时目录）。
   - doctor 自身跑不出 JSON（import 崩 / 打印垃圾）= 致命而非 pre-existing：基线
     阶段就回滚且不装新版本；装完后才崩同样回滚；
   - 脏树拒绝（不动 HEAD、同一 sha 只通知一次）；不在 main 拒绝；
+  - 回滚前重验：部署期间 owner 改了 tracked 文件 → 回滚**被拒**（rollback_failed、
+    通知、改动保留、HEAD 留在新版本）；install.sh 自己的 +x 位翻转不算改动，照常回滚；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
   - 日志 1 MB 自压；ff-merge 途中脚本自身被替换也照常跑完（main 包裹）。
 """
@@ -48,6 +50,9 @@ if [ -n "${FAKE_INSTALL_RC_PLAN:-}" ] && [ -s "$FAKE_INSTALL_RC_PLAN" ]; then
     tail -n +2 "$FAKE_INSTALL_RC_PLAN" > "$FAKE_INSTALL_RC_PLAN.tmp" && mv "$FAKE_INSTALL_RC_PLAN.tmp" "$FAKE_INSTALL_RC_PLAN"
 fi
 [ -n "${FAKE_INSTALL_SLEEP:-}" ] && sleep "$FAKE_INSTALL_SLEEP"
+# simulate the owner editing a tracked file while the deploy runs / install.sh's own chmod
+[ -n "${FAKE_INSTALL_EDIT:-}" ] && printf 'owner edit mid-deploy\n' >> "$here/README.md"
+[ -n "${FAKE_INSTALL_CHMOD:-}" ] && chmod +x "$here/README.md"
 exit "$rc"
 """
 
@@ -374,6 +379,35 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("unparseable", st["detail"])
         self.assertEqual(len(self.installs()), 2, "install at NEW, then the rollback install at PREV")
 
+    def test_rollback_refuses_to_destroy_edits_made_during_the_deploy(self):
+        # P1（review）：step 4 的脏树检查到 reset --hard 之间隔着 install + settle +
+        # doctor；owner 在这几分钟里改了 tracked 文件，reset 会无声毁掉它（§0.2）。
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard"], env={"FAKE_INSTALL_EDIT": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "not reset: the owner's edit would be lost")
+        self.assertIn("owner edit mid-deploy", (self.live / "README.md").read_text(encoding="utf-8"))
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("refused", st["detail"])
+        self.assertIn("README.md", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install either")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("REFUSED", notes[0])
+        self.assertIn("rollback REFUSED", self.log_text())
+
+    def test_rollback_ignores_install_sh_own_mode_flips(self):
+        # install.sh 的 chmod +x 是它自己的脚印，不是 owner 的工作：不得阻止回滚
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard"], env={"FAKE_INSTALL_CHMOD": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "rolled back despite the mode-only change")
+        self.assertEqual(self.state()["status"], "rolled_back")
+        self.assertEqual(self.state()["failed_sha"], target)
+        self.assertEqual(len(self.installs()), 2)
+
     def test_install_timeout_counts_as_failure(self):
         self.push("0.48.4")
         proc = self.run_script(doctor_plan=["-"], install_rc=[0, 0],
@@ -454,6 +488,25 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # stale: the holder is gone
         sleeper.kill()
         sleeper.wait()
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("removing stale lock", self.log_text())
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertFalse(lock.exists())
+
+    def test_fresh_lock_without_pid_is_live_and_old_one_is_stale(self):
+        # P2（review）：mkdir 与写 pid 之间的另一实例看到「无 pid」不得当陈旧锁回收
+        self.push("0.48.4")
+        lock = self.live / "state" / "auto-deploy.lock"
+        lock.mkdir(parents=True)
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.installs(), [], "a fresh pid-less lock is a holder mid-mkdir")
+        self.assertIn("has not written its pid yet", self.log_text())
+        self.assertTrue(lock.exists())
+        # the same pid-less dir, but old: a crash between mkdir and printf → stale
+        old = time.time() - 600
+        os.utime(str(lock), (old, old))
         proc = self.run_script(doctor_plan=["-", "-"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("removing stale lock", self.log_text())

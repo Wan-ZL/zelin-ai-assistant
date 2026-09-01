@@ -23,9 +23,11 @@
 #      was green in the baseline is now FAIL. Pre-existing red is reported,
 #      not blamed on the new version (otherwise a machine with one stale
 #      finding could never update — including to the fix).
-#   8. rollback = `git reset --hard PREV` (tree is clean; stays on main so
-#      the next run can still fast-forward) + install.sh again + notify
-#      "auto-deploy rolled back to PREV"; that origin/main sha is then
+#   8. rollback = `git reset --hard PREV` (re-verified right before: still on
+#      main, no tracked content edits since step 4 — otherwise the rollback
+#      is REFUSED and notified rather than destroying the owner's work; stays
+#      on main so the next run can still fast-forward) + install.sh again +
+#      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
 #      remembered as failed and skipped until main moves (or --force).
 #   9. every outcome lands in state/deploy_state.json (dashboard add-only key
 #      `deploy_state`, doctor row `auto-deploy`, web header) and in
@@ -225,6 +227,15 @@ take_lock() {
         log "another auto-deploy run is active (pid $_holder) — skipping"
         return 1
     fi
+    if [ -z "$_holder" ] && [ -z "$(find "$LOCK_DIR" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+        # No pid file yet and the directory is fresh: the other instance won
+        # mkdir a moment ago and has not written its pid — a live holder, not
+        # a stale lock (reclaiming here would let two runs merge/install/reset
+        # at once). A pid-less lock is only stale once it is older than 2 min
+        # (a crash between mkdir and printf).
+        log "lock held by a run that has not written its pid yet — skipping"
+        return 1
+    fi
     log "removing stale lock (pid ${_holder:-?} is gone)"
     rm -rf "$LOCK_DIR"
     if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -235,10 +246,30 @@ take_lock() {
     return 1
 }
 
+# Tracked CONTENT changes (mode-only flips ignored: install.sh's own `chmod +x`
+# on ingest scripts is not the owner's work and a reset simply restores them).
+tracked_content_changes() {
+    git_q -c core.fileMode=false status --porcelain --untracked-files=no 2>/dev/null || true
+}
+
 rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 rollback itself failed
     log "ROLLBACK to $(short "$1"): $2"
-    _dirty="$(git_q status --porcelain --untracked-files=no 2>/dev/null || true)"
-    [ -n "$_dirty" ] && log "tracked changes discarded by the rollback: $(printf '%s' "$_dirty" | tr '\n' ' ')"
+    # Re-verify the checkout right before `reset --hard`: minutes have passed
+    # since step 4 (install + settle + doctor) and the owner may have edited a
+    # tracked file or switched branches in that window. `reset --hard` would
+    # silently destroy that work (宪法 §0.2: no irreversible automatic
+    # deletion) — so refuse, leave the new version in place, and say so.
+    _branch_now="$(git_q symbolic-ref --short -q HEAD 2>/dev/null || true)"
+    _dirty="$(tracked_content_changes)"
+    if [ "$_branch_now" != "$BRANCH" ] || [ -n "$_dirty" ]; then
+        _why="HEAD is on '${_branch_now:-detached}'"
+        [ -n "$_dirty" ] && _why="tracked edits since the deploy started: $(printf '%s' "$_dirty" | awk '{print $2}' | head -n 5 | tr '\n' ' ')"
+        log "rollback REFUSED — $_why; checkout left at $(git_q rev-parse HEAD 2>/dev/null)"
+        write_state "status=rollback_failed" "failed_sha=$3" "detail=rollback refused ($_why): $2"
+        notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
+               "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
+        return 1
+    fi
     if ! git_q reset --hard --quiet "$1"; then
         log "git reset --hard $1 FAILED — checkout left at $(git_q rev-parse HEAD 2>/dev/null)"
         write_state "status=rollback_failed" "failed_sha=$3" "detail=git reset --hard failed: $2"

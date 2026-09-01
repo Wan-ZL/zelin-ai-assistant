@@ -3714,7 +3714,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 **一次运行 = 有序七步**（`scripts/auto-deploy.sh`；全部函数化、末尾 `main "$@"`，bash 先整份解析——第 4 步的 ff-merge 会替换脚本自己）：
 
-1. 取锁 `state/auto-deploy.lock/`（`mkdir` 原子；`pid` 文件；持锁 PID 已死 = 陈旧锁可回收，活着 = 本轮跳过）；日志 `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 超 1 MB 自截一半（防腐 #4）。
+1. 取锁 `state/auto-deploy.lock/`（`mkdir` 原子；`pid` 文件；持锁 PID 已死 = 陈旧锁可回收，活着 = 本轮跳过；**尚无 `pid` 文件的新鲜锁目录（< 2 min）= 对方刚 mkdir 还没写 pid，视为活锁跳过**——否则 launchd 与手动运行并发时两个实例会同时 merge/install/reset；无 pid 且 > 2 min 才算 mkdir 与写 pid 之间崩了的陈旧锁）；日志 `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 超 1 MB 自截一半（防腐 #4）。
 2. **HEAD 必须在 `main`**（否则 `refused_branch`）；`git fetch origin main`（`GIT_TERMINAL_PROMPT=0`、ssh `BatchMode=yes`——永不提示；失败 = `fetch_failed`，下个 interval 再试，不通知）。
 3. HEAD == origin/main → `up_to_date`，退出；origin/main == 记账的 `failed_sha` → 只写一行日志退出（**不重试、不重装、不再通知**，直到 main 前进或 `--force`）。
 4. **脏树拒绝**：`git status --porcelain --untracked-files=no` 非空 → `refused_dirty` + 点名文件；**同一个待部署 sha 只通知一次**（`notified_sha`）；untracked 文件不算脏（state/、config/ 本就被 ignore）。树干净则 `PREV=HEAD`，`git merge --ff-only origin/main`——**不可 ff（本地 main 分叉）= `failed` + 通知一次，永不 reset 分叉的本地提交**。
@@ -3722,7 +3722,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 6. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装 Mac app**（56.5）——部署的是守护进程、cron、config、launchd 渲染，不是那个 .app。
 7. 静置 30 s（`AUTODEPLOY_DOCTOR_SETTLE`；一个 import 就死的 KeepAlive actd 会先亮 ~0.5 s 的 pid、再在 launchd 的 ~10 s 节流里消失——5 s 采样是抛硬币），doctor 再跑一次；**回滚判据 = 相对基线新增的 FAIL 名、或 `doctor:unparseable`**（或第 6 步退出码非 0 / 超时）。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。
 
-**回滚** = `git reset --hard PREV`（树在第 4 步已验证干净；install.sh 可能改动的只有 ingest 脚本的 +x 位，回滚前把丢弃的 tracked 改动写进日志）——**留在 `main` 分支上**而不是 `git checkout PREV`（detached HEAD 会让后续每一轮都撞上第 2 步的「不在 main」）——再 `install.sh --non-interactive` 一次，记 `rolled_back` + `failed_sha=<那个 origin/main sha>`，通知「auto-deploy rolled back to <PREV 短 sha>」并附原因与 `--force` 出口；回滚自身失败（reset 失败或重装非 0）= `rollback_failed`，同样通知。成功部署也通知一次（版本 + 前后 sha）。
+**回滚** = `git reset --hard PREV`——**reset 前重验**：HEAD 仍在 `main` **且** 无 tracked **内容**改动（`-c core.fileMode=false` 看 status：install.sh 自己对 ingest 脚本的 `+x` 翻转不算，reset 顺手复原即可）。第 4 步到这里隔着 install + 静置 + doctor，owner 在这几分钟里改了文件或切了分支，`reset --hard` 就是一次不可恢复的自动删除（宪法第 2 条）——因此**拒绝回滚**：不 reset、不重装，记 `rollback_failed`（detail `rollback refused (…)` 点名文件/分支）+ 通知「回滚被拒」，新版本留在原地由 owner 手动处理（判例 `test_rollback_refuses_to_destroy_edits_made_during_the_deploy` / `test_rollback_ignores_install_sh_own_mode_flips`）——**留在 `main` 分支上**而不是 `git checkout PREV`（detached HEAD 会让后续每一轮都撞上第 2 步的「不在 main」）——再 `install.sh --non-interactive` 一次，记 `rolled_back` + `failed_sha=<那个 origin/main sha>`，通知「auto-deploy rolled back to <PREV 短 sha>」并附原因与 `--force` 出口；回滚自身失败（reset 失败或重装非 0）= `rollback_failed`，同样通知。成功部署也通知一次（版本 + 前后 sha）。
 
 **退出码**：每种已处理结果都 `exit 0`（launchd 的 status 列保持 0——verdict 住在 `deploy_state.json`，由 doctor 的 `auto-deploy` 行说话，而不是让 `_check_launchd` 用通用的「exits with status N」误导排查）；1 = 环境坏（非 git checkout / 无 python）；2 = 用法错。`--force` = 忘掉 `failed_sha` / `notified_sha` 立刻重试。
 
