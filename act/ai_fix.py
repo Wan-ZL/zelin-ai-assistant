@@ -94,6 +94,14 @@ Your job, in order:
 1. Read the bundle and diagnose the most likely root cause. You may run
    read-only commands (launchctl list, crontab -l, tail of logs,
    python3 -m act.doctor --fast) to confirm.
+   Known trap — the two ModuleNotFoundErrors look alike and have OPPOSITE
+   fixes. "No module named 'yaml'" means PyYAML is missing for the daemon
+   interpreter. "No module named 'act'" does NOT mean that: it means the
+   interpreter cannot READ the repo when launchd spawns it — either the
+   rendered PYTHONPATH is wrong, or macOS is denying that interpreter file
+   access (granted per binary; launchd jobs do not inherit a terminal's
+   grant, so the same command working in your shell proves nothing). Read
+   which message the log actually carries before prescribing pip.
 2. Explain the problem in one plain-language sentence before fixing anything.
 3. Fix it locally with the smallest change possible. Ask before every
    modification (you are running WITHOUT permission bypass on purpose).

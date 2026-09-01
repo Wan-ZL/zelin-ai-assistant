@@ -102,6 +102,18 @@ FAILURES: dict = {
         "plain_en": "A background service is not loaded — its work has stopped",
         "action_id": "reload_agent",
     },
+    # §55 症状 4：解释器能 import yaml、plist 路径也对，但 macOS 按 binary 授
+    # 权文件访问，它在 launchd 下读不到 repo。重装 agent 没用（同一个解释器会
+    # 被再渲一遍）——要换解释器，所以动作是把人送到依赖页去重跑安装器。
+    "interpreter_blind": {
+        "plain_zh": "后台服务用的那个 Python 读不到项目文件夹（macOS 按程序单独授权，"
+                    "后台任务不继承终端的权限）——重跑一次安装器会换一个能读的",
+        "plain_en": "The Python the background services run cannot read the project "
+                    "folder (macOS grants file access per program, and background jobs "
+                    "do not inherit your terminal's grant) — re-running the installer "
+                    "picks one that can",
+        "action_id": "open_deps",
+    },
     "cron_missing": {
         "plain_zh": "定时任务没有安装——屏幕记录不会变成笔记和卡片",
         "plain_en": "The scheduled jobs are not installed — screen captures never become notes or cards",

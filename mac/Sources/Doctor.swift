@@ -54,8 +54,13 @@ enum LaunchAgents {
             return (false, L("找不到模板 \(template)——repo 不完整？",
                              "Template missing: \(template) — incomplete repo?"))
         }
-        // §55: PyYAML-validated absolute interpreter, never a bare PATH guess.
-        let py = RuntimePython.resolve()
+        // §55: absolute interpreter that clears BOTH gates — `import yaml` AND
+        // launchd viability (TCC is per-binary, so a python this app can read
+        // the repo through may still be blind to it once launchd spawns it).
+        // Never a bare PATH guess. The note is dropped on purpose: every caller
+        // gates on the Bool, and act/doctor.py's "launchd python" row is what
+        // reports a still-unverified interpreter to the user.
+        let (py, _) = RuntimePython.resolveForLaunchd(repo: root)
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()
         text = text
@@ -132,6 +137,9 @@ enum FailureCatalog {
         case "agent_unloaded":
             return L("一个后台服务没有装载——它负责的工作停了",
                      "A background service is not loaded — its work has stopped")
+        case "interpreter_blind":
+            return L("后台服务用的那个 Python 读不到项目文件夹（macOS 按程序单独授权，后台任务不继承终端的权限）——重跑一次安装器会换一个能读的",
+                     "The Python the background services run cannot read the project folder (macOS grants file access per program, and background jobs do not inherit your terminal's grant) — re-running the installer picks one that can")
         case "cron_missing":
             return L("定时任务没有安装——屏幕记录不会变成笔记和卡片",
                      "The scheduled jobs are not installed — screen captures never become notes or cards")
@@ -166,6 +174,8 @@ enum FailureCatalog {
         case "screen_tcc_lost": return L("去授权", "Grant…")
         case "agent_unloaded", "dashboard_stale": return L("一键修复", "Fix now")
         case "cron_missing": return L("查看修法", "How to fix")
+        // 不给「一键修复」：重装 agent 会把同一个瞎解释器再渲一遍，得重跑安装器
+        case "interpreter_blind": return L("去诊断", "Open diagnostics")
         case "cron_fda_blocked": return L("去授权", "Grant…")
         case "config_invalid": return L("显示文件", "Reveal file")
         default: return nil
@@ -204,9 +214,11 @@ enum FailureCatalog {
             RecordingController.openScreenRecordingSettings()
         case "agent_unloaded", "dashboard_stale":
             PipelineRepair.shared.restartActd()
-        case "claude_cli_outdated":
+        case "claude_cli_outdated", "interpreter_blind":
             // the doctor row on the diagnostics page names the two binaries
-            // and the fix — deep-link there (same rationale as cron_missing)
+            // and the fix — deep-link there (same rationale as cron_missing).
+            // interpreter_blind lands here too: its fix is re-running the
+            // installer, which the diagnostics page walks through.
             MainNav.shared.section = .deps
             app?.openMainWindow(nil)
         case "cron_missing":

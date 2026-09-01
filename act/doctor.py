@@ -168,6 +168,38 @@ def _installed_plist_text(label: str) -> Optional[str]:
         return None
 
 
+def _launchd_log_tail(short: str) -> str:
+    """agent 自管日志的末尾；"" = 读不到。v0.48 起住 ~/Library/Logs/，旧址兜底。"""
+    for p in (Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
+              / ("%s.launchd.log" % short),
+              config.HOME / "state" / ("%s.launchd.log" % short)):
+        try:
+            return p.read_text(encoding="utf-8", errors="replace")[-4000:]
+        except OSError:
+            continue
+    return ""
+
+
+# 两条 ModuleNotFoundError 在 `launchctl list` 里长得一模一样，修复动作却相反
+# （§55）。断言 PyYAML 而不读日志，正是 2026-08-31 那次把排查带偏几个小时的原因：
+# /opt/homebrew/bin/python3 全程都装着 PyYAML，缺的是对 repo 的读权限。
+MISSING_ACT = "act"      # 解释器看不见 repo（TCC per-binary / PYTHONPATH 错）
+MISSING_YAML = "yaml"    # 守护进程唯一的非 stdlib 依赖没装
+
+
+def _log_missing_module(tail: str) -> Optional[str]:
+    """日志里 `No module named 'X'` 的 X，只认我们分得清的两个；None = 没有。
+
+    取 **最后** 一次匹配：KeepAlive 会把历次失败都留在同一个文件里，最新那条
+    才是当前状态。
+    """
+    hits = re.findall(r"No module named '([A-Za-z_][A-Za-z0-9_]*)'", tail)
+    for name in reversed(hits):
+        if name in (MISSING_ACT, MISSING_YAML):
+            return name
+    return None
+
+
 @dataclass
 class Probes:
     which: Callable[[str], Optional[str]] = shutil.which
@@ -190,6 +222,8 @@ class Probes:
     login_shell_claude: Callable[[], Optional[str]] = _login_shell_claude
     # §55 迁移探测：label → 已安装 plist 原文（None = 没装）；tests 注入保持 hermetic
     installed_plist_text: Callable[[str], Optional[str]] = _installed_plist_text
+    # §55 日志归因：short name → 该 agent 自管日志的末尾（"" = 读不到）
+    launchd_log_tail: Callable[[str], str] = _launchd_log_tail
 
 
 @dataclass
@@ -485,14 +519,32 @@ def _check_launchd(probes: Probes):
         elif status == "0":
             results.append(CheckResult(short, OK, "loaded (last run exited 0)"))
         else:
-            results.append(CheckResult(
-                short, severity,
-                "loaded but its process exits with status %s" % status,
-                "tail -20 ~/Library/Logs/zelin-ai-assistant/%s.launchd.log"
-                " (pre-v0.48 installs: state/%s.launchd.log)"
-                "  # usual causes: PyYAML missing "
-                "for the daemon python, missing API key" % (short, short),
-            ).with_failure("agent_unloaded"))
+            # 名出真因，别猜（§55）：读它自己的日志，把两条 ModuleNotFoundError
+            # 分开——'act' = 解释器看不见 repo，'yaml' = 缺 PyYAML。
+            missing = _log_missing_module(probes.launchd_log_tail(short))
+            if missing == MISSING_ACT:
+                detail = ("loaded but exits with status %s - its log says "
+                          "\"No module named 'act'\": the interpreter cannot see "
+                          "the repo (PyYAML is NOT the problem)" % status)
+                fix = _INTERPRETER_BLIND_FIX
+            elif missing == MISSING_YAML:
+                detail = ("loaded but exits with status %s - its log says "
+                          "\"No module named 'yaml'\": PyYAML is missing for the "
+                          "daemon python" % status)
+                fix = "%s -m pip install --user --break-system-packages pyyaml" % (
+                    _pinned_interpreter(probes) or "python3")
+            else:
+                detail = "loaded but its process exits with status %s" % status
+                fix = ("tail -20 ~/Library/Logs/zelin-ai-assistant/%s.launchd.log"
+                       " (pre-v0.48 installs: state/%s.launchd.log)"
+                       "  # usual causes: the interpreter cannot see the repo"
+                       " (\"No module named 'act'\"), PyYAML missing"
+                       " (\"No module named 'yaml'\"), missing API key"
+                       % (short, short))
+            results.append(
+                CheckResult(short, severity, detail, fix)
+                .with_failure("interpreter_blind" if missing == MISSING_ACT
+                              else "agent_unloaded"))
     return results
 
 
@@ -504,6 +556,44 @@ _PLIST_REPO_PATH_KEYS = ("AIASSISTANT_HOME", "PYTHONPATH")
 
 _INSTALL_SH_FIX = ("bash install.sh  # re-renders ALL agents; the app's"
                    " one-click repair only re-renders actd")
+
+# 解释器「看得见 yaml、看不见 repo」时的唯一正确动作（§55）。install.sh 自
+# 起用 launchd 真实探针挑解释器（§55 第二道闸门），所以重跑就会换掉瞎的
+# 那个；换不掉
+# （比如只有一个 python）时才轮到手动授 FDA。
+_INTERPRETER_BLIND_FIX = (
+    "bash install.sh  # now probes launchd viability and picks an interpreter"
+    " that can actually read the repo; if it still fails, grant Full Disk"
+    " Access to that interpreter binary in System Settings > Privacy & Security")
+
+
+def _pinned_interpreter(probes: Probes) -> str:
+    """config/runtime.json 里 pin 的解释器；"" = 没 pin / 读不了。"""
+    try:
+        rj = config.HOME / "config" / "runtime.json"
+        return str(json.loads(rj.read_text(encoding="utf-8")).get("python") or "")
+    except Exception:  # noqa: BLE001 - 探针不许崩（宪法第 11 条）
+        return ""
+
+
+def _crashing_agents(probes: Probes) -> set:
+    """当前真的在崩的 agent（short name）：已注册、没有 PID、上次退出码非 0。
+
+    日志是历史，`launchctl list` 才是现状——KeepAlive 治好之后旧日志还躺在那
+    里，只看日志会给一个跑得好好的 agent 报故障。
+    """
+    crashing = set()
+    try:
+        lines = probes.launchctl_list().splitlines()
+    except Exception:  # noqa: BLE001 - 探针不许崩（宪法第 11 条）
+        # launchctl 坏了是 _check_launchd 的发现，不该连累路径检查；此时只是
+        # 确认不了「此刻在崩」，于是症状 4 沉默（少报 > 误报）。
+        return crashing
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == "-" and parts[1] not in ("0", "Status"):
+            crashing.add(parts[2].rsplit(".", 1)[-1])
+    return crashing
 
 
 def _plist_string(text: str, key: str) -> Optional[str]:
@@ -519,7 +609,7 @@ def _plist_interpreter(text: str) -> Optional[str]:
 
 
 def _check_launchd_paths(probes: Probes):
-    """§55 渲染纪律探测，三种症状同一个修复动作（重跑 install.sh）：
+    """§55 渲染纪律探测，四种症状：
 
     1. spawn 前路径键还指着 repo = pre-v0.48 渲染残留。repo 在外置卷
        （TCC-gated volume）上时 launchd 以 EX_CONFIG(78) 拒绝 spawn。
@@ -530,8 +620,14 @@ def _check_launchd_paths(probes: Probes):
     3. plist 里的解释器 import 不了 yaml —— PyYAML 是守护进程唯一的非 stdlib
        依赖，缺了它 agent 在写下任何日志之前就死（同一次事故的第二个症状：
        /opt/homebrew/bin/python3 是 3.14，没装 PyYAML）。
+    4. **路径全对、解释器也能 import yaml，agent 还是死在
+       `No module named 'act'`**——同一次事故的最后一幕，v0.48.2 修好 1/2 之后
+       才露出来：TCC 按 **binary** 授权，`/usr/bin/python3` 有权读外置卷而
+       `/opt/homebrew/bin/python3` 没有，两个都能 import yaml，所以老的 yaml
+       单闸门恰好挑中瞎的那个。这条的修复动作与 1-3 不同（换解释器 / 授 FDA），
+       所以自成一行，且只在 1/2 都干净时才报——否则先修路径。
 
-    repo 在 $HOME 下时 1/2 只让 agent 变慢/变脏而不致命，降级为 WARN；3 永远
+    repo 在 $HOME 下时 1/2 只让 agent 变慢/变脏而不致命，降级为 WARN；3/4 永远
     是 FAIL。App 的「一键修复」只重渲染 actd，所以这里点名每一个坏 agent。
     """
     labels = probes.launchd_labels
@@ -540,6 +636,8 @@ def _check_launchd_paths(probes: Probes):
     repo = str(config.HOME).rstrip("/")
     stale, symlinked, seen_any = [], [], False
     bad_py, verdicts = {}, {}
+    blind_py = {}
+    crashing = _crashing_agents(probes)
     for label in labels:
         text = probes.installed_plist_text(label)
         if not text:
@@ -559,6 +657,13 @@ def _check_launchd_paths(probes: Probes):
                 verdicts[py] = _interpreter_ok(probes, py)
             if not verdicts[py]:
                 bad_py.setdefault(py, []).append(short)
+            elif (short in crashing
+                  and _log_missing_module(probes.launchd_log_tail(short))
+                  == MISSING_ACT):
+                # yaml 过了、路径也对，agent 此刻在崩、日志说没有 act
+                # = 解释器读不到 repo。三个条件缺一不可：只看日志会把治好之后
+                # 的陈旧日志当成现故障。
+                blind_py.setdefault(py, []).append(short)
     if not seen_any:
         return []
     home = str(Path.home()).rstrip("/")
@@ -584,15 +689,27 @@ def _check_launchd_paths(probes: Probes):
         paths = CheckResult("launchd paths", OK,
                             "installed plists keep spawn-time paths out of the "
                             "repo and the repo path physical")
-    if not bad_py:
-        return [paths]
-    named = ", ".join(sorted({a for agents in bad_py.values() for a in agents}))
-    return [paths, CheckResult(
-        "launchd python", FAIL,
-        "the interpreter rendered into %s cannot `import yaml` (%s) - the "
-        "agents exit before they log anything"
-        % (named, ", ".join(sorted(bad_py))),
-        _INSTALL_SH_FIX)]
+    if bad_py:
+        named = ", ".join(sorted({a for agents in bad_py.values() for a in agents}))
+        return [paths, CheckResult(
+            "launchd python", FAIL,
+            "the interpreter rendered into %s cannot `import yaml` (%s) - the "
+            "agents exit before they log anything"
+            % (named, ", ".join(sorted(bad_py))),
+            _INSTALL_SH_FIX)]
+    # 症状 4 只在路径干净时才报：路径本身坏的时候，重渲染就把两件事一起修了，
+    # 多报一行只会让人先去授一个其实不需要的 FDA。
+    if blind_py and paths.status == OK:
+        named = ", ".join(sorted({a for agents in blind_py.values() for a in agents}))
+        return [paths, CheckResult(
+            "launchd python", FAIL,
+            "%s imports yaml and the rendered paths are correct, yet %s still "
+            "exit with \"No module named 'act'\" - that interpreter cannot READ "
+            "the repo when launchd spawns it (macOS grants file access per "
+            "binary, and launchd jobs do not inherit your terminal's grant)"
+            % (", ".join(sorted(blind_py)), named),
+            _INTERPRETER_BLIND_FIX).with_failure("interpreter_blind")]
+    return [paths]
 
 
 def _symlink_shaped(value: Optional[str]) -> bool:

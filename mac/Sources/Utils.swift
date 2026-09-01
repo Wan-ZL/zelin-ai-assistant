@@ -630,27 +630,173 @@ enum RuntimePython {
         return py
     }
 
-    /// The interpreter launchd runs: config/runtime.json pointer (CONTRACT
-    /// §19) → login-shell `command -v python3` → /usr/bin/python3, taking the
-    /// first that passes importsYAML. Candidates are probed lazily, so a
-    /// healthy pin costs one `-c "import yaml"` and no login shell.
-    /// When nothing validates we still return the pointer's answer: the
-    /// doctor's "daemon python" FAIL must stay the thing that reports it,
-    /// rather than the app silently running a different interpreter.
-    nonisolated static func resolve() -> String {
-        let pin = pinned()
-        if importsYAML(pin) { return pin }
+    /// Is `repo` outside `home`? The TCC-sensitive shape that decides candidate
+    /// order below. Compares PHYSICAL paths so a convenience symlink from $HOME
+    /// into /Volumes cannot masquerade as "inside $HOME".
+    nonisolated static func isOutsideHome(repo: String, home: String) -> Bool {
+        let h = AppPaths.physical(home)
+        let r = AppPaths.physical(repo)
+        return !(r == h || r.hasPrefix(h + "/"))
+    }
+
+    nonisolated static func repoOutsideHome() -> Bool {
+        isOutsideHome(repo: AppPaths.physicalStateRoot, home: NSHomeDirectory())
+    }
+
+    /// The pure ordering rule — the Swift mirror of install.sh's
+    /// daemon_python_candidates (CONTRACT §55), kept parameterised so the
+    /// LogicTests can pin it without a login shell or a real repo.
+    ///
+    /// ORDERING RATIONALE: TCC grants file access PER BINARY, and a
+    /// launchd-spawned job is its own responsible process (it does not inherit
+    /// the app's or a terminal's grant). /usr/bin/python3 is the Apple-shipped
+    /// system interpreter and is the one binary that already holds the user's
+    /// own file-access grants; Homebrew/miniconda pythons each need their OWN.
+    /// So when the repo is outside $HOME — external volume, network share,
+    /// exactly where per-binary TCC bites — the system python is ranked FIRST.
+    /// Inside $HOME there is no TCC boundary to cross, so the historical order
+    /// (the pinned interpreter first) is kept.
+    nonisolated static func candidateOrder(outsideHome: Bool, pin: String,
+                                           shellPython: String) -> [String] {
+        outsideHome
+            ? ["/usr/bin/python3", pin, shellPython]
+            : [pin, shellPython, "/usr/bin/python3"]
+    }
+
+    /// Daemon interpreter candidates for THIS machine, most-preferred first.
+    nonisolated static func candidates() -> [String] {
         var shellPy = ""
         let (code, out) = Shell.run("/bin/zsh", ["-lc", "command -v python3"])
         let lines = out.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: "\n")
         if code == 0, let found = lines.last, found.hasPrefix("/") { shellPy = found }
-        if importsYAML(shellPy) { return shellPy }
-        if importsYAML("/usr/bin/python3") { return "/usr/bin/python3" }
-        if !pin.isEmpty { return pin }
-        return shellPy.isEmpty ? "/usr/bin/python3" : shellPy
+        return candidateOrder(outsideHome: repoOutsideHome(), pin: pinned(),
+                              shellPython: shellPy)
     }
 
+    /// The interpreter launchd runs, cheap gate only: the first candidate that
+    /// passes importsYAML. Candidates are probed lazily, so a healthy pin costs
+    /// one `-c "import yaml"` and no login shell.
+    /// When nothing validates we still return the pointer's answer: the
+    /// doctor's "daemon python" FAIL must stay the thing that reports it,
+    /// rather than the app silently running a different interpreter.
+    /// This is the app-wide resolver (Ask, Pages, Settings, ingest); the two
+    /// plist renderers use resolveForLaunchd() instead.
+    nonisolated static func resolve() -> String {
+        let cands = candidates()
+        for c in cands where importsYAML(c) { return c }
+        let pin = pinned()
+        if !pin.isEmpty { return pin }
+        return cands.first(where: { !$0.isEmpty }) ?? "/usr/bin/python3"
+    }
+
+    /// Can this interpreter import `act` from the repo when LAUNCHD spawns it?
+    /// nil = inconclusive (launchd unavailable), which callers must treat as
+    /// "unknown", never as a rejection.
+    ///
+    /// `import yaml` is necessary but not sufficient (CONTRACT §55). TCC is
+    /// per-binary, and everything the app starts inherits the APP's grant — so
+    /// probing in-process always says yes. The only honest question is the one
+    /// launchd answers, so this loads a throwaway agent that does exactly what
+    /// the daemons do and reads its verdict from a sentinel file. 2026-08-31:
+    /// both interpreters imported yaml, only one could read the /Volumes repo
+    /// under launchd, and the blind one left every agent on
+    /// "No module named 'act'" with a perfectly rendered PYTHONPATH.
+    /// Blocking (up to ~15s) — background queue only.
+    nonisolated static func launchdCanImportAct(_ py: String, repo: String) -> Bool? {
+        guard py.hasPrefix("/"),
+              FileManager.default.isExecutableFile(atPath: py) else { return false }
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "aiassistant-viability-" + UUID().uuidString
+        guard (try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true))
+                != nil else { return nil }
+        defer { try? fm.removeItem(atPath: dir) }
+        let label = "com.zelin.aiassistant.viability." + UUID().uuidString.prefix(8)
+        let plistPath = dir + "/probe.plist"
+        let verdictPath = dir + "/verdict"
+        // repo + sentinel travel as argv, so no path is interpolated into the
+        // python source; PropertyListSerialization handles the XML escaping.
+        let payload = """
+        import sys
+        try:
+            sys.path.insert(0, sys.argv[1]); import act; v = "ok"
+        except BaseException as e:
+            v = "fail:%s: %s" % (type(e).__name__, e)
+        open(sys.argv[2], "w").write(v)
+        """
+        let job: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": [py, "-c", payload, repo, verdictPath],
+            "EnvironmentVariables": ["PYTHONPATH": repo, "AIASSISTANT_HOME": repo],
+            "WorkingDirectory": NSHomeDirectory(),
+            "RunAtLoad": true,
+            "AbandonProcessGroup": true,
+        ]
+        guard let data = try? PropertyListSerialization.data(
+                fromPropertyList: job, format: .xml, options: 0),
+              (try? data.write(to: URL(fileURLWithPath: plistPath))) != nil
+        else { return nil }
+        let domain = "gui/\(getuid())"
+        if Shell.run("/bin/launchctl", ["bootstrap", domain, plistPath]).0 != 0,
+           Shell.run("/bin/launchctl", ["load", plistPath]).0 != 0 {
+            return nil  // launchd refused the job itself — says nothing about py
+        }
+        defer {
+            if Shell.run("/bin/launchctl", ["bootout", "\(domain)/\(label)"]).0 != 0 {
+                _ = Shell.run("/bin/launchctl", ["unload", plistPath])
+            }
+        }
+        for _ in 0..<60 {
+            if let v = try? String(contentsOfFile: verdictPath, encoding: .utf8),
+               !v.isEmpty {
+                return v == "ok"
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return false  // never wrote a verdict — launchd could not run it either
+    }
+
+    /// The interpreter to render into a launchd plist: the first candidate that
+    /// clears BOTH §55 gates (`import yaml`, then launchd viability). Falls
+    /// back to the first yaml-capable candidate when the launchd gate rejects
+    /// everything or cannot run — yaml-capable is still better than a guess.
+    /// Renderers only; blocking. Returns the pick and a note (empty = clean).
+    ///
+    /// The two gates are injectable so the LogicTests can pin this selection
+    /// without ever bootstrapping a real launchd job (same seam idiom as the
+    /// python suite's runner/triager fakes).
+    nonisolated static func selectForLaunchd(
+        _ cands: [String],
+        yamlGate: (String) -> Bool,
+        launchdGate: (String) -> Bool?
+    ) -> (String, String) {
+        var firstYAML = ""
+        var note = ""
+        for c in cands where yamlGate(c) {
+            if firstYAML.isEmpty { firstYAML = c }
+            switch launchdGate(c) {
+            case .some(true):
+                return (c, "")
+            case .none:
+                return (c, "launchd viability unverifiable — used the PyYAML gate only")
+            case .some(false):
+                note = "\(c) imports yaml but cannot import act under launchd"
+            }
+        }
+        if firstYAML.isEmpty { return ("", note) }
+        if note.isEmpty { note = "no candidate passed the launchd probe" }
+        return (firstYAML, note)
+    }
+
+    nonisolated static func resolveForLaunchd(repo: String) -> (String, String) {
+        let (pick, note) = selectForLaunchd(
+            candidates(),
+            yamlGate: importsYAML,
+            launchdGate: { launchdCanImportAct($0, repo: repo) })
+        // Nothing cleared even the yaml gate — keep resolve()'s answer so the
+        // doctor's "daemon python" FAIL stays the thing that reports it.
+        return pick.isEmpty ? (resolve(), note) : (pick, note)
+    }
 }
 
 // MARK: - UserDefaults helpers

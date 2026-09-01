@@ -25,7 +25,17 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-## [0.48.2] - 2026-08-31
+## [0.48.3] - 2026-09-01
+
+真机部署 v0.48.2 时挖到的最后一层:plist 渲染全对、解释器也有 PyYAML,守护**仍然**起不来 —— 因为 macOS 的文件访问授权是**按二进制**发的。
+
+### Fixed
+- **解释器选择新增「launchd 可用性」闸门**:此前只验 `import yaml`,于是选中了一个交互式 shell 下一切正常、但在 launchd 会话里读不到外置卷仓库的 python(`import act` 失败)。现在装机时起一个**一次性 launchd agent** 实探 `import act` 是否成功 —— 这是唯一有判别力的探测:直接 spawn 与 `launchctl asuser` 都会继承终端的授权而给出假阴性(两者均已实测)。对照实验确认机制:同一个 python 在 `$HOME` 内的目录下正常,在外置卷上 `os.listdir` 抛 `PermissionError: Operation not permitted`,被 import 机制报成模块缺失。探测亚秒级、自清理,`AIASSISTANT_LAUNCHD_PROBE=0` 可关;结果分 通过/拒绝/**无法判定**三态,无法判定一律不作为拒绝依据。
+- **候选顺序按 TCC 敏感度分支**:仓库在 `$HOME` **之外**时 `/usr/bin/python3`(Apple 自带、随用户授权)优先于 homebrew/miniconda(各自需要单独授权);在 `$HOME` 之内维持原顺序。内外判定用**物理路径**比较,符号链接无法伪装成「在 $HOME 内」。全部候选都被 launchd 闸门拒绝时,回退到第一个 yaml 可用者并**显式说明原因**,绝不静默钉一个瞎的。
+- **错误归因不再张冠李戴**:`install.sh` / `doctor` / `ai_fix` 现在读 agent 自己的日志来判因 —— `No module named 'act'` = 解释器看不见仓库(TCC/路径),**与 PyYAML 无关**;`No module named 'yaml'` 才给 pip 命令;日志读不到则两因并列。旧代码把任何非零退出一律归咎 PyYAML,正是这次排查绕远路的原因。doctor 新增 `interpreter_blind` 判据(路径全对 + yaml 可用 + agent 当前确在崩溃 + 日志指向 `act`),修复指向「重跑安装器 / 给该解释器授予完全磁盘访问」,**不是**「重载 agent」(那只会用同一个瞎解释器再渲染一遍)。
+- Swift 侧两个渲染器同步(`RuntimePython.resolveForLaunchd`,双闸门 + 同款顺序);app 内通用的 `resolve()` 保持 yaml-only —— 全 app 都在调它,不能让它去起 launchd 任务。
+
+> 升级提示:同 v0.48.2 —— 修复需**重跑 `bash install.sh`** 才落到本机(它会同时改写 `config/runtime.json` 的解释器 pin 与全部 agent)。
 
 真机部署 v0.48.1 时抓到的安装器缺陷:仓库在外置卷 + `~/Projects` 是符号链接时,后台服务装完起不来。
 
@@ -2018,7 +2028,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...HEAD
+[0.48.3]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.47.0...v0.48.0
