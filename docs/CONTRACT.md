@@ -788,7 +788,15 @@ add-only）：
   的 ffmpeg 诊断行给「安装 ffmpeg」+「装好了，重启引擎」两个动作（死引擎的
   日志尾在装好后仍是旧错误行，就地重启是该页唯一的复活路径）。
 
-v0.48.4 追加（add-only；live 事故 2026-08-31，§4.1/§47.4/§55）三枚 failure id：
+v0.48.4 追加（add-only；live 事故 2026-08-31 + issue #89，§4.1/§47.4/§55）四枚
+failure id：
+- `claude_bypass_disclaimer`（#89）——`claude --bg --dangerously-skip-permissions`
+  在本机**一次性交互接受**免责声明之前拒启（原文 `bypassPermissions requires
+  accepting the disclaimer`，签名收窄到这一句）；Task Scheduler / launchd 会话
+  永远做不了那一步，所以新装机第一次派发几乎必撞。action_id `open_deps`。
+  doctor 的**预检**（装机时判断是否已接受）暂缺：claude 没有文档化的接受
+  标记可读，宁缺毋猜——§4.1 刹车 + 分类通知已把「静默死管线」变成一条点名
+  修法的通知。
 - `fd_limit`——launchd gui domain 默认 `ulimit -n 256`，`claude --bg` 拒启。
   分类签名收窄为 claude 自己的措辞 `low max file descriptors` + errno 拼法
   `EMFILE` / `too many open files`；排在 auth/network 规则之前（这段话没有别的

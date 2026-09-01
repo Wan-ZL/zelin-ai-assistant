@@ -67,6 +67,19 @@ FAILURES: dict = {
                     "every agent carries an 8192 ceiling, then approve the card again",
         "action_id": "restart_actd",
     },
+    # issue #89: `claude --bg --dangerously-skip-permissions` refuses to start
+    # until the bypassPermissions disclaimer has been accepted ONCE
+    # interactively on this machine — a Task Scheduler / launchd session can
+    # never do that, so a fresh install dispatches into a wall (49 attempts
+    # in the report). One-time human step, same shape as claude_cli_outdated.
+    "claude_bypass_disclaimer": {
+        "plain_zh": "claude 还没在这台机器上接受过「跳过权限确认」的免责声明——在终端里手动跑一次"
+                    " `claude --dangerously-skip-permissions` 并接受，后台派发才能启动",
+        "plain_en": "claude has not accepted the bypass-permissions disclaimer on this machine "
+                    "yet — run `claude --dangerously-skip-permissions` once in a terminal and "
+                    "accept it, then background dispatch can start",
+        "action_id": "open_deps",
+    },
     "claude_auth_failed": {
         "plain_zh": "AI 的 API key 无效或过期——去设置页重新粘贴一个",
         "plain_en": "The AI API key is invalid or expired — re-paste one in Settings",
@@ -202,6 +215,10 @@ _RULES: list = [
     ("fd_limit", re.compile(
         r"low max file descriptors|\bEMFILE\b|too many open files",
         re.IGNORECASE)),
+    # claude's exact refusal (issue #89); narrow on purpose — a card that merely
+    # talks about permissions or disclaimers must not classify.
+    ("claude_bypass_disclaimer", re.compile(
+        r"bypassPermissions requires accepting the disclaimer", re.IGNORECASE)),
     ("claude_auth_failed", re.compile(
         r"authentication_error|invalid (x-)?api[- _]?key|"
         r"\b401\b|OAuth token has expired|(?<![\w-])unauthorized|"

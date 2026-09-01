@@ -53,6 +53,16 @@ class FdLimitClassificationTestCase(unittest.TestCase):
                          "fd_limit")
         self.assertEqual(failures.action_id("fd_limit"), "restart_actd")
 
+    def test_bypass_disclaimer_refusal_classifies_narrowly(self):
+        # issue #89's exact text; prose about permissions/disclaimers must not
+        err = ("--bg with bypassPermissions requires accepting the disclaimer first. "
+               "Run `claude --dangerously-skip-permissions` once interactively.")
+        self.assertEqual(failures.classify(err), "claude_bypass_disclaimer")
+        self.assertIsNone(failures.classify(
+            "add a disclaimer to the permissions page of the docs"))
+        self.assertIn("--dangerously-skip-permissions",
+                      failures.user_message("claude_bypass_disclaimer", "en"))
+
     def test_dispatch_error_class_pools_unknown_text(self):
         self.assertEqual(executor.dispatch_error_class(FD_ERR), "fd_limit")
         self.assertEqual(executor.dispatch_error_class("boom pid 4242"), "unclassified")

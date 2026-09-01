@@ -154,6 +154,9 @@ enum FailureCatalog {
         case "fd_limit":
             return L("后台服务的打开文件上限太低（launchd 默认 256），claude 起不来——重跑一次安装器（bash install.sh）让每个后台服务带上 8192 的上限，再重新批准这张卡",
                      "The background service's open-file limit is too low (launchd defaults to 256) so claude cannot start — re-run the installer (bash install.sh) so every agent carries an 8192 ceiling, then approve the card again")
+        case "claude_bypass_disclaimer":
+            return L("claude 还没在这台机器上接受过「跳过权限确认」的免责声明——在终端里手动跑一次 `claude --dangerously-skip-permissions` 并接受，后台派发才能启动",
+                     "claude has not accepted the bypass-permissions disclaimer on this machine yet — run `claude --dangerously-skip-permissions` once in a terminal and accept it, then background dispatch can start")
         case "actd_stalled":
             return L("后台服务进程还活着，但已经停止心跳（不再跑循环）——强制重启它：launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
                      "The background service process is alive but its heartbeat stopped (the loop is no longer running) — force-restart it: launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd")
