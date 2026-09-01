@@ -64,6 +64,22 @@ class SpanCoverageTestCase(unittest.TestCase):
         self.assertEqual(qa_common.span_coverage(node, {1}, {2}), 1.0)
 
 
+class CanonicalPlatformTestCase(unittest.TestCase):
+    """coverage 派生的门只在 canonical 环境（linux = CI qa-gates）判卷；
+    别的平台判决照印、退出码归零（§58.2）。"""
+
+    def test_a_red_verdict_blocks_on_linux(self):
+        self.assertEqual(qa_common.soften_off_canonical(1, "linux", "crap"), 1)
+
+    def test_a_red_verdict_is_advisory_off_linux(self):
+        self.assertEqual(qa_common.soften_off_canonical(1, "darwin", "crap"), 0)
+        self.assertEqual(qa_common.soften_off_canonical(1, "win32", "crap"), 0)
+
+    def test_a_green_verdict_stays_green_everywhere(self):
+        self.assertEqual(qa_common.soften_off_canonical(0, "darwin", "crap"), 0)
+        self.assertEqual(qa_common.soften_off_canonical(0, "linux", "crap"), 0)
+
+
 class CoverageJsonMappingTestCase(unittest.TestCase):
     """crap.scan：coverage JSON ∩ AST 函数行段 → 每函数 CRAP。"""
 

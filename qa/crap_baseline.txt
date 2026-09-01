@@ -72,7 +72,7 @@ act/doctor.py::_check_heartbeat 9
 act/doctor.py::_check_launchd 17
 act/doctor.py::_check_launchd_claude 14
 act/doctor.py::_check_launchd_fd_limit 7
-act/doctor.py::_check_launchd_orphans 11.2
+act/doctor.py::_check_launchd_orphans 11.8
 act/doctor.py::_check_launchd_paths 23
 act/doctor.py::_check_runtime_python 14.3
 act/doctor.py::_check_scheduled_tasks 12.2
@@ -81,9 +81,10 @@ act/doctor.py::_check_systemd 13.1
 act/doctor.py::_installed_actd_path_env 24.5
 act/doctor.py::_launchd_claude_probe 248.4
 act/doctor.py::_launchd_log_tail 8.7
+act/doctor.py::_login_shell_claude 20.7
 act/doctor.py::_pid_alive 24.3
 act/doctor.py::_run 8.1
-act/executor.py::_agent_info_strict 15.9
+act/executor.py::_agent_info_strict 47.7
 act/executor.py::_assistant_texts 15.1
 act/executor.py::_briefing_window_open 23.8
 act/executor.py::_extract_card_title 7
@@ -199,7 +200,7 @@ act/lib/registry.py::reraise_or_followup 36
 act/lib/registry.py::save 19.1
 act/lib/registry.py::set_display_title 16
 act/lib/registry.py::writes_since 9.9
-act/lib/repos.py::_readme_hint 6.2
+act/lib/repos.py::_readme_hint 13.1
 act/lib/repos.py::inventory 8.5
 act/lib/risk.py::effective_tier 7
 act/lib/sanitize.py::_load_terms 14.9

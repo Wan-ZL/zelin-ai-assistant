@@ -86,8 +86,9 @@ def main(argv=None):
         qa_common.write_report(args.report, "crap_report.md",
                                "# CRAP top offenders\n\n"
                                + _offender_table(scores, details, args.top))
-    return qa_common.run_gate("crap", scores, BASELINE, threshold,
-                              tolerance=tolerance, report_dir=args.report)
+    rc = qa_common.run_gate("crap", scores, BASELINE, threshold,
+                            tolerance=tolerance, report_dir=args.report)
+    return qa_common.soften_off_canonical(rc, sys.platform, "crap")
 
 
 if __name__ == "__main__":

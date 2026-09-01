@@ -3978,7 +3978,7 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **公式**：`CRAP(f) = CC(f)² × (1 − cov(f))³ + CC(f)`，上限 = owner D4 拍板的值（truth = qa/gates.toml）。`cov(f)` = 函数 AST 行段内 coverage 认识的语句行中被执行的比例；覆盖率原料 = `scripts/qa/run_coverage.sh`（整套 unittest 在 coverage.py 下跑一遍，产出 JSON；coverage 是 dev/CI 侧依赖，宪法第 7 条白名单不动）。
 - **两类超标一眼可分**（审计 r6）：「没测」型（CC 低、cov ≈ 0——补一条注入缝测试就掉账）与「太复杂」型（CC 高、cov 高——只有拆分能救）。P3 清账按「先补测试网再拆」的顺序（R2.3.2）。
 - **覆盖率地板**：`act/ + server/` 的总行覆盖率必须 ≥ `qa/coverage_floor.txt`（单个数字）。地板**只经 PR 上调**：覆盖率涨过触发带时门自动打印建议新地板（= 当前值 − buffer，向下取 1 位小数），谁的 PR 涨的覆盖率谁顺手把地板拧上去；下调地板 = 显式的 owner 决定（删功能连带删测试的场景，R2.3.3 不设死数字的本意）。
-- **canonical 环境 = CI 的 `qa-gates` job**（ubuntu + 钉住的 Python 小版本 + 只装 pyyaml/coverage）：coverage 派生的分数带环境差（平台 skip、线程时序），账本按该环境收账；本地跑 `run_gates.sh` 是参考，darwin 上的偏差由 `[crap].tolerance` 抖动缓冲吸收，吸收不了的以 CI 为准。
+- **canonical 环境 = CI 的 `qa-gates` job**（ubuntu + 钉住的 Python 小版本 + 只装 pyyaml/coverage）：coverage 派生的分数带环境差（平台 skip、线程时序），账本按该环境收账。**两道 coverage 派生的门（crap / coverage-floor）只在 linux 上判卷**：非 linux 上判决全文照印、退出码归零（`qa_common.soften_off_canonical`，判例 `tests/test_qa_crap_formula.py::CanonicalPlatformTestCase`）——首日实测同一函数可以 darwin 干净、ubuntu 超标（`doctor._login_shell_claude` 5.1 vs 20.7），任何单一账本都无法同时满足两个平台的严格语义；小幅抖动另由 `[crap].tolerance` 缓冲。对账一律以 CI 的 `qa-report` artifact 为准。纯 AST 的三道门平台无关，处处硬判。
 
 ### 58.3 尺四：依赖方向 + 防腐十条机械化（scripts/qa/depgraph.py、hygiene.py）
 

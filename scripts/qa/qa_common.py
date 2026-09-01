@@ -341,6 +341,21 @@ def write_report(report_dir, filename, text):
     return path
 
 
+def soften_off_canonical(rc, platform, gate):
+    """coverage 派生的门（crap / coverage_floor）只在 canonical 环境判卷
+    （= CI 的 qa-gates job，linux；§58.2）。别的平台上平台守卫的 skip 会改变
+    函数/总体覆盖率——同一函数可以 darwin 干净、ubuntu 超标，反之亦然——
+    所以非 linux 上判决全文照印、退出码归零（只报不判）。对账以 CI 的
+    qa-report artifact 为准。纯 AST 的门（complexity/deps/hygiene）平台无关，
+    不走这里。"""
+    if rc != 0 and not platform.startswith("linux"):
+        print("[%s] non-canonical platform (%s): verdict above is advisory —"
+              " this gate judges on the CI qa-gates job (linux); reconcile"
+              " the qa/ ledger from its qa-report artifact" % (gate, platform))
+        return 0
+    return rc
+
+
 def run_gate(name, scores, ledger_path, threshold, tolerance=0.0, report_dir=None):
     """一道门的统一出口：比较、打印、写建议账本；返回进程退出码。
     建议账本 = 当前全部超阈值条目——CI 上 FAIL 时直接从 artifact 拷回

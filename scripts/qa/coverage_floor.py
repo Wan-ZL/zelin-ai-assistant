@@ -68,7 +68,7 @@ def main(argv=None):
     print(text)
     if args.report:
         qa_common.write_report(args.report, "coverage_floor_verdict.txt", text + "\n")
-    return 0 if ok else 1
+    return qa_common.soften_off_canonical(0 if ok else 1, sys.platform, "coverage-floor")
 
 
 if __name__ == "__main__":

@@ -232,6 +232,9 @@ jobs:
         with:
           name: qa-report
           path: .qa-report/
+          # v4 默认丢弃隐藏路径（CVE-2024-43784 后的安全默认）；.qa-report/
+          # 是点目录且内容只有本 job 生成的判决/榜单/建议账本，无秘密。
+          include-hidden-files: true
 
   qlty:
     name: qlty check (informational)
