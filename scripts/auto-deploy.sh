@@ -38,13 +38,26 @@
 #      coin: a KeepAlive actd that dies on import shows a pid ~0.5 s of every
 #      throttle cycle, and the old daemon's heartbeat/dashboard files stay
 #      "fresh" for 90 s.
-#  10. doctor again; rollback iff a check that was green in the baseline is
-#      now FAIL. Pre-existing red is reported, not blamed on the new version
-#      (otherwise a machine with one stale finding could never update —
-#      including to the fix).
+#  10. doctor again — as a settle-aware retry loop, not a single sample. A
+#      verdict taken seconds after install.sh restarted every daemon is a
+#      coin (first contact 2026-09-01: the verdict ran 12 s after restart,
+#      mid store2 first-run migration and inside a transient EPERM window on
+#      the external volume — 6 false "new FAIL"s, one spurious rollback):
+#      up to AUTODEPLOY_DOCTOR_RETRIES (3) runs, AUTODEPLOY_DOCTOR_SETTLE
+#      (45 s) apart, and only the FINAL run's new-vs-baseline FAILs are real
+#      → rollback (`doctor:unparseable` is never in the baseline — fatal
+#      there — so a transient one retries the same way). Pre-existing red is
+#      reported, not blamed on the new version (otherwise a machine with one
+#      stale finding could never update — including to the fix).
 #  11. rollback = `git reset --hard PREV` (re-verified right before: still on
 #      main, no tracked content edits since step 5 — otherwise the rollback
-#      is REFUSED and notified rather than destroying the owner's work; stays
+#      is REFUSED and notified rather than destroying the owner's work; a git
+#      that cannot even answer (EPERM window, volume offline) is reported as
+#      exactly that, never as "detached"; and if state/store2_truth.json
+#      APPEARED during this deploy, the rollback is REFUSED with a pointer to
+#      docs/TROUBLESHOOTING.md「store2 回滚」— resetting the code to a
+#      pre-store2 version would strand the SQLite ledger the new actd just
+#      made the registry truth; stays
 #      on main so the next run can still fast-forward) + install.sh again +
 #      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
 #      remembered as failed and skipped until main moves (or --force).
@@ -62,7 +75,8 @@
 #
 # Test seams (env, never set by the plist): AUTODEPLOY_LOG_DIR,
 # AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE, AUTODEPLOY_BRANCH,
-# AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS.
+# AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS,
+# AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE.
 set -uo pipefail
 
 # Everything lives in functions and runs from main "$@" at the very end: bash
@@ -83,6 +97,9 @@ HEARTBEAT_FILE="$REPO_ROOT/state/actd.heartbeat"        # §47.4, written by act
 HEARTBEAT_DEADLINE="${AUTODEPLOY_HEARTBEAT_DEADLINE:-180}"  # the restarted actd must finish ONE pass
                                                         # (a pass may run `claude agents --json`,
                                                         # >30 s on a loaded machine)
+DOCTOR_RETRIES="${AUTODEPLOY_DOCTOR_RETRIES:-3}"        # post-install doctor verdict: attempts (§56.3 step 10)
+DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-45}"         # seconds between those attempts
+STORE2_MARKER="$REPO_ROOT/state/store2_truth.json"      # §53 activation marker — rollback guard
 CI_API="${AUTODEPLOY_CI_API:-https://api.github.com}"
 CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that must be green on the
                                                         # deployed sha (comma-separated); `ci` is the
@@ -131,9 +148,13 @@ repo_version() {
 # value deletes the key. Values are all strings; readers type-check per field
 # (act/lib/deploy_state.py). Written on every run: `status`/`last_run` describe
 # THIS run, `last_deployed`/`prev` the last successful deploy (carried over).
+# On failure the child's stderr (last line = the exception, e.g. the live
+# 2026-09-01 `PermissionError: [Errno 1]` EPERM window) lands in OUR log —
+# stderr inherited from launchd goes to a different file with no timestamps,
+# which made the first live failure undiagnosable from here.
 write_state() {
-    mkdir -p "$(dirname "$STATE_FILE")"
-    "$PY" - "$STATE_FILE" "$@" <<'PY' || log "write_state failed (non-fatal)"
+    mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
+    _wserr="$("$PY" - "$STATE_FILE" "$@" 2>&1 1>/dev/null <<'PY'
 import json, os, sys
 path, pairs = sys.argv[1], sys.argv[2:]
 try:
@@ -155,6 +176,7 @@ with open(tmp, "w", encoding="utf-8") as fh:
     fh.write("\n")
 os.replace(tmp, path)
 PY
+)" || log "write_state failed (non-fatal): $(printf '%s' "$_wserr" | tail -n 1)"
 }
 
 read_state() { # $1=key → its string value, "" when absent/unreadable
@@ -170,13 +192,15 @@ except Exception:
 PY
 }
 
-# §28 relay queue — the app posts it with the product identity. Never fatal.
+# §28 relay queue — the app posts it with the product identity. Never fatal,
+# but the failure line carries the child's exception (same rationale as
+# write_state: the live EPERM window was invisible from this log).
 notify() { # $1=title $2=body
-    (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
+    _nerr="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
         "$PY" -c 'import sys
 from act.lib import notify
-notify.notify(sys.argv[1], sys.argv[2])' "$1" "$2") >/dev/null 2>&1 \
-        || log "notify failed (non-fatal): $1"
+notify.notify(sys.argv[1], sys.argv[2])' "$1" "$2") 2>&1 >/dev/null )" \
+        || log "notify failed (non-fatal): $1 — $(printf '%s' "$_nerr" | tail -n 1)"
 }
 
 # Sorted FAIL check names from `act.doctor --fast --json`, one per line. The
@@ -389,19 +413,44 @@ tracked_content_changes() {
     git_q -c core.fileMode=false status --porcelain --untracked-files=no 2>/dev/null || true
 }
 
-rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 rollback itself failed
+rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
+    # store2 guard (§53 / §56 rollback): the truth marker appearing during
+    # THIS deploy means the new actd just migrated the card ledger to SQLite;
+    # resetting the code to a pre-store2 version would leave that live ledger
+    # on a runtime that cannot read it. Refuse — the by-hand procedure
+    # (restore the YAML backup first) is docs/TROUBLESHOOTING.md「store2 回滚」.
+    if [ "${_store2_before:-1}" -eq 0 ] && [ -f "$STORE2_MARKER" ]; then
+        log "rollback REFUSED — store2 became the registry truth during this deploy ($STORE2_MARKER); a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
+        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
+                    "detail=rollback refused (store2 activated during this deploy — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2"
+        notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
+               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 已把卡片真源切到 SQLite —— 回退代码会让账本落在没有 store2 运行时的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT"
+        return 1
+    fi
     # Re-verify the checkout right before `reset --hard`: minutes have passed
     # since step 4 (install + settle + doctor) and the owner may have edited a
     # tracked file or switched branches in that window. `reset --hard` would
     # silently destroy that work (宪法 §0.2: no irreversible automatic
     # deletion) — so refuse, leave the new version in place, and say so.
-    _branch_now="$(git_q symbolic-ref --short -q HEAD 2>/dev/null || true)"
+    # symbolic-ref: rc 1 (with -q) = genuinely detached; rc >1 = git could not
+    # read the checkout at all (live 2026-09-01: an EPERM window made both
+    # git calls come back empty and the refusal blamed a phantom 'detached')
+    # — its own refusal, reported as a git failure, never as a branch verdict.
+    _brc=0
+    _branch_now="$(git_q symbolic-ref --short -q HEAD 2>/dev/null)" || _brc=$?
+    _head_now="$(git_q rev-parse --verify -q HEAD 2>/dev/null)" || true
     _dirty="$(tracked_content_changes)"
-    if [ "$_branch_now" != "$BRANCH" ] || [ -n "$_dirty" ]; then
+    _why=""
+    if [ "$_brc" -gt 1 ]; then
+        _why="git cannot read the checkout (symbolic-ref exit $_brc — volume/permissions hiccup?)"
+    elif [ -n "$_dirty" ]; then
+        _why="tracked edits since the deploy started: $(printf '%s' "$_dirty" | awk '{print $2}' | head -n 5 | tr '\n' ' ')"
+    elif [ "$_branch_now" != "$BRANCH" ]; then
         _why="HEAD is on '${_branch_now:-detached}'"
-        [ -n "$_dirty" ] && _why="tracked edits since the deploy started: $(printf '%s' "$_dirty" | awk '{print $2}' | head -n 5 | tr '\n' ' ')"
-        log "rollback REFUSED — $_why; checkout left at $(git_q rev-parse HEAD 2>/dev/null)"
+    fi
+    if [ -n "$_why" ]; then
+        log "rollback REFUSED — $_why; checkout left at ${_head_now:-unknown}"
         write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
                     "detail=rollback refused ($_why): $2"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
@@ -409,7 +458,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 rollback it
         return 1
     fi
     if ! git_q reset --hard --quiet "$1"; then
-        log "git reset --hard $1 FAILED — checkout left at $(git_q rev-parse HEAD 2>/dev/null)"
+        log "git reset --hard $1 FAILED — checkout left at ${_head_now:-unknown}"
         write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
                     "detail=git reset --hard failed: $2"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
@@ -458,7 +507,9 @@ main() {
     fi
 
     take_lock || exit 0
-    trap 'rm -rf "$LOCK_DIR"' EXIT
+    # A failed removal (live 2026-09-01: EPERM on the volume) leaves a lock
+    # the next run must reclaim as stale — say so instead of failing silently.
+    trap 'rm -rf "$LOCK_DIR" 2>/dev/null || log "could not remove state/auto-deploy.lock (non-fatal) — the next run reclaims it once pid $$ is gone"' EXIT
 
     _now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if [ "$FORCE" -eq 1 ]; then
@@ -466,11 +517,21 @@ main() {
         write_state "failed_sha=" "notified_sha="
     fi
 
-    _branch="$(git_q symbolic-ref --short -q HEAD 2>/dev/null || true)"
+    # rc 1 (with -q) = genuinely detached → refused_branch; rc >1 = git could
+    # not read the checkout (EPERM window / volume offline) — an environment
+    # hiccup, not a branch verdict: report it as such and retry next interval.
+    _brc=0
+    _branch="$(git_q symbolic-ref --short -q HEAD 2>>"$LOG")" || _brc=$?
+    if [ "$_brc" -gt 1 ]; then
+        log "git symbolic-ref failed (rc $_brc) — checkout unreadable right now (volume/permissions?); will retry next interval"
+        write_state "status=failed" "last_run=$_now" \
+                    "detail=git cannot read HEAD (symbolic-ref rc $_brc) — checkout unreadable, will retry"
+        exit 0
+    fi
     if [ "$_branch" != "$BRANCH" ]; then
         log "HEAD is not on $BRANCH (got '${_branch:-detached}') — refusing to touch this checkout"
         write_state "status=refused_branch" "last_run=$_now" \
-                    "head=$(git_q rev-parse HEAD)" "version=$(repo_version)" \
+                    "head=$(git_q rev-parse --verify -q HEAD 2>/dev/null)" "version=$(repo_version)" \
                     "detail=HEAD is on '${_branch:-detached}', not $BRANCH"
         exit 0
     fi
@@ -487,6 +548,10 @@ main() {
 
     PREV="$(git_q rev-parse HEAD)"
     TARGET="$(git_q rev-parse "refs/remotes/$REMOTE/$BRANCH" 2>/dev/null || git_q rev-parse FETCH_HEAD)"
+    # §53 marker as of this run's start: if it APPEARS during the deploy (the
+    # new actd migrated the registry truth to SQLite), rollback() refuses.
+    _store2_before=0
+    [ -f "$STORE2_MARKER" ] && _store2_before=1
 
     if [ "$PREV" = "$TARGET" ]; then
         write_state "status=up_to_date" "last_run=$_now" "head=$PREV" \
@@ -595,16 +660,26 @@ main() {
         exit 0
     fi
     log "actd v${VERSION:-?} completed a pass (heartbeat: $(heartbeat_fields))"
-    _after="$(doctor_fail_names)"
-    if has_line "$_after" "$UNPARSEABLE"; then
-        rollback "$PREV" "doctor unparseable after install of v${VERSION:-?} ($(short "$NEW"))" "$TARGET"
-        exit 0
-    fi
-    _new="$(new_names "$_baseline" "$_after")"
-    if [ -n "$_new" ]; then
-        rollback "$PREV" "doctor new FAIL after v${VERSION:-?}: $(printf '%s' "$_new" | tr '\n' ' ')" "$TARGET"
-        exit 0
-    fi
+    # Settle-before-verdict (§56.3 step 10): a doctor sample taken seconds
+    # after install.sh restarted every daemon is a coin — first contact
+    # 2026-09-01 (v0.48.8) took it 12 s in, mid store2 first-run migration and
+    # inside a transient EPERM window: 6 false "new FAIL"s, one spurious
+    # rollback. Only new FAILs that survive to the FINAL attempt are real.
+    # `doctor:unparseable` is never in the baseline (fatal there, above), so
+    # new_names carries a transient one through the same retries.
+    _attempt=1
+    while :; do
+        _after="$(doctor_fail_names)"
+        _new="$(new_names "$_baseline" "$_after")"
+        [ -z "$_new" ] && break
+        if [ "$_attempt" -ge "$DOCTOR_RETRIES" ]; then
+            rollback "$PREV" "doctor new FAIL after v${VERSION:-?} (persisted through $_attempt runs ${DOCTOR_SETTLE}s apart): $(printf '%s' "$_new" | tr '\n' ' ')" "$TARGET"
+            exit 0
+        fi
+        log "doctor new FAIL (attempt $_attempt/$DOCTOR_RETRIES): $(printf '%s' "$_new" | tr '\n' ' ')— daemons may still be settling; doctor again in ${DOCTOR_SETTLE}s"
+        sleep "$DOCTOR_SETTLE"
+        _attempt=$((_attempt + 1))
+    done
 
     _detail="deployed $(short "$PREV") -> $(short "$NEW")"
     if [ -n "$_after" ]; then
