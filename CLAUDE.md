@@ -21,6 +21,10 @@ radar 提取 → triage 三选一闸门 → 需求卡片（`act/registry/*.yaml`
 3. **`CONTRIBUTING.md`** — 四道本地门（compileall / unittest / build / swift 逻辑测试），
    PR 前自己跑过。
 
+## 当前进行中的大轮次(2026-09 起)
+
+**`docs/design/vnext2-plan.md` 是本轮(数据层换 SQLite、退役原生 Mac app、QA 仪表全上、每日自我改进循环、素材库、自动草稿 PR 通道)的总设计与 owner 决策台账,含 owner 原话。任何 session 或 agent 在这些方向上动手前必读;与它冲突的做法必须先改它。**
+
 ## 添加任何功能前，必答三问（答案写进 PR 描述）
 
 1. 这个改动**触及 CONTRACT 的哪些 §**？（新行为 → 新增/修订哪节法条？）
