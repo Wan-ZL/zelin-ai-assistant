@@ -32,9 +32,6 @@ def _clean_registry():
         p.unlink()
     for p in config.INBOX_DIR.glob("*.json"):
         p.unlink()
-    ledger = config.STATE_DIR / actd._SPEND_LEDGER_FILE
-    if ledger.exists():
-        ledger.unlink()
 
 
 def _mint(channel, req_id=None, **kw):

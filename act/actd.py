@@ -2239,51 +2239,11 @@ def _safe_unlink(path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# (a') auto-dispatch（§51 · vnext-amendments M1.b/C-6）+ 当日花费台账
+# (a') auto-dispatch（§51 · vnext-amendments M1.b/C-6）
 # --------------------------------------------------------------------------- #
-_SPEND_LEDGER_FILE = "autodispatch_spend.json"
-
-
-def _load_spend_ledger() -> dict:
-    """当日 auto-dispatch 花费台账：``{"date": <本地 YYYY-MM-DD>, "cards":
-    {R-id: usd}}``。按本地日期滚动重置（M1.b 接线点②）；坏文件/隔日 = 空账。
-    按卡记账所以重启幂等——同卡重记不翻倍。actd 是唯一写者；dashboard 只读。"""
-    today = _dt.date.today().isoformat()
-    empty: dict = {"date": today, "cards": {}}
-    try:
-        raw = json.loads((config.STATE_DIR / _SPEND_LEDGER_FILE)
-                         .read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return empty
-    if not isinstance(raw, dict) or raw.get("date") != today:
-        return empty
-    cards: dict = {}
-    if isinstance(raw.get("cards"), dict):
-        for k, v in raw["cards"].items():
-            try:
-                cards[str(k)] = float(v)
-            except (TypeError, ValueError):
-                continue
-    return {"date": today, "cards": cards}
-
-
-def _save_spend_ledger(ledger: dict) -> None:
-    try:
-        config.ensure_state_dirs()
-        path = config.STATE_DIR / _SPEND_LEDGER_FILE
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        pass
-
-
-def _ledger_spend(ledger: dict, exclude: Optional[str] = None) -> float:
-    cards = ledger.get("cards") if isinstance(ledger, dict) else None
-    if not isinstance(cards, dict):
-        return 0.0
-    return float(sum(v for k, v in cards.items() if k != exclude))
+# 当日花费台账 state/autodispatch_spend.json retired v0.48.7（owner decision D9，
+# docs/design/vnext2-plan.md）：没有预算就没有账要记；磁盘上残留的旧文件无人
+# 读写，属死数据。
 
 
 def _card_cost(req: Requirement) -> float:
@@ -2298,15 +2258,15 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
     卡全部天花板通过 → 直接 approved（actor=policy）。任一不过 → 留在待审批，
     原因 token 上卡（``execution.auto_dispatch_block``，C-6 定名；origin:*/
     disabled 两类常态原因不上卡不留痕）。并发上限不在资格闸里——那是排队问题，
-    归 dispatch_approved / queued_reason（M1.b）。"""
+    归 dispatch_approved / queued_reason（M1.b）。预算不存在（D9）：一天派多少
+    张、累计多少钱都不拦。"""
     ad = policy.autodispatch_config(cfg)
-    ledger = _load_spend_ledger()
     approved = 0
     for req in sorted(load_all(), key=lambda r: r.id):
         if req.status != State.CARD_SENT.value:
             continue
         try:
-            ok, reason = policy.may_auto_dispatch(req, cfg, _ledger_spend(ledger))
+            ok, reason = policy.may_auto_dispatch(req, cfg)
             # W17 belt-and-braces：显式 external 章可能比 sources 现算更严
             # （手改 YAML 等）——forced_expand 的卡绝不自动派发。
             if ok and risk.effective_tier(req).forced_expand:
@@ -2331,7 +2291,7 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
                 continue
             cost = _card_cost(req)
             ex.pop("auto_dispatch_block", None)
-            ex["auto_dispatched"] = True          # add-only：预算复核/投影用
+            ex["auto_dispatched"] = True          # add-only：审计痕（policy 批的，非 owner 点头）
             # §4.1：policy 批准与 owner 批准同权——进入 approved 即重新上膛。
             # 不清的话，刹车停下 → 退回提案 → 本 pass 免批再推进 approved 的
             # 卡会带着 dispatch_halted 直接停回「需输入」，无 UI 出口。
@@ -2341,14 +2301,9 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
             req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
             req.set_status(State.APPROVED)
             save(req)
-            ledger["cards"][req.id] = cost        # 预算预留在批准时刻
-            _save_spend_ledger(ledger)
             approved += 1
-            _log(f"autodispatch: {req.id} card_sent -> approved "
-                 f"(est ${cost:g}, today ${_ledger_spend(ledger):g}"
-                 f"/{ad['daily_budget_usd']:g})")
-            analytics.log_event("auto_dispatch", req=req.id, cost=cost,
-                                today_spend=_ledger_spend(ledger))
+            _log(f"autodispatch: {req.id} card_sent -> approved (est ${cost:g})")
+            analytics.log_event("auto_dispatch", req=req.id, cost=cost)
             if ad["notify"]:
                 # 观察模式：每次免批派发都出一条通知，owner 随时可关
                 # （autodispatch.notify=false）或全关（enabled=false）。
@@ -2388,14 +2343,7 @@ def dispatch_approved(cfg: config.Config) -> int:
         # chip 由 dashboard 的 queued_reason 投影），槽位空出即派发。
         if live >= int(ad["max_concurrent"]):
             continue
-        # auto-dispatch 卡的预算复核：批准后 owner 调低预算/隔日翻账等边界，
-        # 派发前再验一次天花板。人批的卡不受预算闸——owner 显式点头即 override。
-        ex0 = req.execution if isinstance(req.execution, dict) else {}
-        if ex0.get("auto_dispatched"):
-            ledger = _load_spend_ledger()
-            if (_ledger_spend(ledger, exclude=req.id) + _card_cost(req)
-                    > float(ad["daily_budget_usd"])):
-                continue  # 排队等预算（queued_reason=waiting_budget）
+        # （auto 卡派发时刻的预算复核 retired v0.48.7，D9：并发是唯一的排队原因。）
         snap_ref = None
         try:
             # §34bis 机械护栏起点：preset 清理卡在会话启动**之前**拍 registry

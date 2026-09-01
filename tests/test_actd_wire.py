@@ -2,8 +2,8 @@
 
 覆盖：
   auto_dispatch_pass — hand 卡免批通道、天花板回落 + auto_dispatch_block 上卡
-      （origin:*/disabled 常态原因不上卡）、当日预算台账、观察模式通知钩子；
-  dispatch_approved — 并发上限排队（queued 子状态）、auto 卡预算复核；
+      （origin:*/disabled 常态原因不上卡）、观察模式通知钩子、无预算（D9）；
+  dispatch_approved — 并发上限排队（queued 子状态）、无预算复核（D9）；
   comment-on-EXECUTING — steer 入队（ts+stem 带键 dedup，owner ingress 限定）、
       agent/remote 评论只记录（T-28）、其余状态保基线 fold；
   ingress marker（T-28）— capture via:"agent"/"remote"/未知值 → agent_capture/
@@ -37,6 +37,9 @@ _HAND_SRC = [{"who": "zelin", "channel": "quick_capture",
 _SLACK_SRC = [{"who": "boss", "channel": "slack",
                "date": "2026-08-30", "quote": "外部请求"}]
 
+# v0.48 当日花费台账文件名（retired v0.48.7，D9）：只用来钉「不再写它」。
+_LEGACY_LEDGER = "autodispatch_spend.json"
+
 
 def _mk(req_id="R-700", status=State.CARD_SENT.value, sources=None, **kw):
     base = dict(id=req_id, title=f"wire 测试 {req_id}", type="other", tier="T1",
@@ -61,7 +64,7 @@ def _clean_registry():
             p.unlink()
     for p in config.INBOX_DIR.glob("*.json"):
         p.unlink()
-    ledger = config.STATE_DIR / actd._SPEND_LEDGER_FILE
+    ledger = config.STATE_DIR / _LEGACY_LEDGER
     if ledger.exists():
         ledger.unlink()
     marker = config.STATE_DIR / actd._ARCHIVE_SWEEP_MARKER
@@ -84,7 +87,7 @@ class WireBase(unittest.TestCase):
 # auto_dispatch_pass（§51 / M1.b / C-6）
 # --------------------------------------------------------------------------- #
 class TestAutoDispatch(WireBase):
-    def test_hand_card_auto_approved_with_ledger_and_notify(self):
+    def test_hand_card_auto_approved_and_notified(self):
         _mk("R-700", cost_estimate_usd=2.0)
         n = actd.auto_dispatch_pass(_cfg())
         self.assertEqual(n, 1)
@@ -92,8 +95,10 @@ class TestAutoDispatch(WireBase):
         self.assertEqual(req.status, State.APPROVED.value)
         self.assertTrue(req.execution.get("auto_dispatched"))
         self.assertIn("auto-dispatch", req.notes)
-        ledger = actd._load_spend_ledger()
-        self.assertEqual(ledger["cards"], {"R-700": 2.0})
+        self.assertIn("est $2", req.notes)     # 估价仍作披露上卡（D9 只删预算）
+        # 当日花费台账 retired v0.48.7（D9）：原判例钉 ledger["cards"]=={"R-700":2.0}，
+        # 现在钉「根本不落这个文件」。
+        self.assertFalse((config.STATE_DIR / _LEGACY_LEDGER).exists())
         self.notify.assert_called_once()  # 观察模式钩子
 
     def test_notify_hook_respects_config(self):
@@ -110,28 +115,34 @@ class TestAutoDispatch(WireBase):
         self.assertNotIn("auto_dispatch_block", req.execution or {})
         self.assertNotIn("拦下", req.notes or "")
 
-    def test_over_ceiling_blocks_with_reason_once(self):
-        _mk("R-702", cost_estimate_usd=12.0)
+    def test_over_confirm_line_blocks_with_reason_once(self):
+        # D9 前这里用 $12 触发 cost:over_ceiling（已退役）；改用 $60 > 文字确认线
+        # 触发 t2_confirm，钉的仍是「token 上卡 + 留痕只一次」。
+        _mk("R-702", cost_estimate_usd=60.0)
         cfg = _cfg()
         actd.auto_dispatch_pass(cfg)
         actd.auto_dispatch_pass(cfg)   # 第二遍不得重复留痕
         req = _reload("R-702")
         self.assertEqual(req.status, State.CARD_SENT.value)
         self.assertEqual((req.execution or {}).get("auto_dispatch_block"),
-                         "cost:over_ceiling")
+                         "t2_confirm")
         self.assertEqual(req.notes.count("auto-dispatch 拦下"), 1)
 
-    def test_budget_exhausted_second_card_blocked(self):
+    def test_second_card_not_blocked_by_accumulated_spend_d9(self):
+        # 原判例 test_budget_exhausted_second_card_blocked 钉「$3 + $3 > $5 →
+        # 第二张 budget:exhausted」。owner decision D9（docs/design/vnext2-plan.md）
+        # retired v0.48.7：hand 出身 + 有估价的卡不管当天累计多少都自动派发。
         _mk("R-703", cost_estimate_usd=3.0)
         _mk("R-704", cost_estimate_usd=3.0)
-        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 1)
-        a, b = _reload("R-703"), _reload("R-704")
-        self.assertEqual(a.status, State.APPROVED.value)
-        self.assertEqual(b.status, State.CARD_SENT.value)
-        self.assertEqual((b.execution or {}).get("auto_dispatch_block"),
-                         "budget:exhausted")
+        _mk("R-705", cost_estimate_usd=30.0)
+        self.assertEqual(actd.auto_dispatch_pass(_cfg()), 3)
+        for rid in ("R-703", "R-704", "R-705"):
+            req = _reload(rid)
+            self.assertEqual(req.status, State.APPROVED.value, rid)
+            self.assertNotIn("auto_dispatch_block", req.execution)
 
     def test_disabled_clears_stale_block(self):
+        # （cost:over_ceiling 是 v0.48 遗留 token——D9 后只会以「旧卡残留」出现）
         _mk("R-705", cost_estimate_usd=12.0,
             execution={"auto_dispatch_block": "cost:over_ceiling"})
         actd.auto_dispatch_pass(_cfg(enabled=False))
@@ -147,7 +158,7 @@ class TestAutoDispatch(WireBase):
 
 
 # --------------------------------------------------------------------------- #
-# dispatch_approved：并发排队 + auto 卡预算复核（§51 / M1.c）
+# dispatch_approved：并发排队；无预算复核（§51 / M1.c；D9）
 # --------------------------------------------------------------------------- #
 class TestDispatchGates(WireBase):
     def test_concurrency_cap_queues_approved_card(self):
@@ -167,18 +178,18 @@ class TestDispatchGates(WireBase):
             actd.dispatch_approved(_cfg(max_concurrent=1))
         ex_mock.dispatch.assert_called_once()
 
-    def test_auto_card_waits_when_budget_tightened(self):
-        # 审批后 owner 调低预算：auto 卡复核不过 → 留队；人批卡不受预算闸
-        actd._save_spend_ledger({"date": _dt.date.today().isoformat(),
-                                 "cards": {"R-720": 4.0, "R-other": 3.0}})
-        _mk("R-720", status=State.APPROVED.value, cost_estimate_usd=4.0,
+    def test_auto_card_never_waits_on_budget_d9(self):
+        # 原判例 test_auto_card_waits_when_budget_tightened 钉「台账 3+4 > 5 →
+        # auto 卡留队、人批卡照发」。D9 retired v0.48.7：auto 卡与人批卡同等派发，
+        # 旧 config 里残留的 daily_budget_usd 键不起作用。
+        _mk("R-720", status=State.APPROVED.value, cost_estimate_usd=40.0,
             execution={"auto_dispatched": True})
         _mk("R-721", status=State.APPROVED.value, cost_estimate_usd=4.0)
         ex_mock = mock.MagicMock()
         with mock.patch.object(actd, "executor", ex_mock):
             actd.dispatch_approved(_cfg(daily_budget_usd=5))
-        dispatched = [c.args[0].id for c in ex_mock.dispatch.call_args_list]
-        self.assertEqual(dispatched, ["R-721"])
+        dispatched = sorted(c.args[0].id for c in ex_mock.dispatch.call_args_list)
+        self.assertEqual(dispatched, ["R-720", "R-721"])
 
 
 # --------------------------------------------------------------------------- #
@@ -523,7 +534,7 @@ class TestIngressMarker(WireBase):
         self.assertEqual(req.sources[0]["channel"], "agent_capture")
         self.assertEqual(req.origin_trust, "proposed")
         self.assertEqual(req.status, State.RAISING.value)  # 照旧进 triage 扩写
-        ok, reason = policy.may_auto_dispatch(req, _cfg(), 0.0)
+        ok, reason = policy.may_auto_dispatch(req, _cfg())
         self.assertFalse(ok)
         self.assertEqual(reason, "origin:proposed")
 
@@ -531,7 +542,7 @@ class TestIngressMarker(WireBase):
         req = self._capture_inbox("远程投的活", via="remote")
         self.assertEqual(req.sources[0]["channel"], "remote_capture")
         self.assertEqual(req.origin_trust, "proposed")
-        ok, reason = policy.may_auto_dispatch(req, _cfg(), 0.0)
+        ok, reason = policy.may_auto_dispatch(req, _cfg())
         self.assertFalse(ok)
         self.assertEqual(reason, "origin:proposed")
 
@@ -576,9 +587,14 @@ class TestDashboardProjection(WireBase):
         queued = [r for r in dash["running"] if r["state"] == "queued"]
         self.assertEqual(queued[0]["queued_reason"], {"kind": "concurrency"})
 
-    def test_queued_reason_budget_only_for_auto_cards(self):
-        actd._save_spend_ledger({"date": _dt.date.today().isoformat(),
-                                 "cards": {"R-other": 3.0, "R-780": 4.0}})
+    def test_queued_reason_never_waiting_budget_d9(self):
+        # 原判例 test_queued_reason_budget_only_for_auto_cards 钉「auto 卡台账
+        # 3+4 > 5 → {kind: waiting_budget}，人批卡无 chip」。D9 retired v0.48.7：
+        # 槽位有空时 auto 卡与人批卡都无 queued_reason——哪怕磁盘上还躺着一份
+        # 升级前的台账；waiting_budget 这个 kind 不再由任何生产端投出。
+        (config.STATE_DIR / _LEGACY_LEDGER).write_text(json.dumps({
+            "date": _dt.date.today().isoformat(),
+            "cards": {"R-other": 3.0, "R-780": 4.0}}), encoding="utf-8")
         auto = _mk("R-780", status=State.APPROVED.value, cost_estimate_usd=4.0,
                    execution={"auto_dispatched": True})
         manual = _mk("R-781", status=State.APPROVED.value,
@@ -586,9 +602,9 @@ class TestDashboardProjection(WireBase):
         dash = build_dashboard(reqs=[auto, manual], agents=[],
                                cfg=config.Config())
         by_id = {r["id"]: r for r in dash["running"]}
-        self.assertEqual(by_id["R-780"]["queued_reason"],
-                         {"kind": "waiting_budget"})
-        self.assertNotIn("queued_reason", by_id["R-781"])  # 人批卡不谎报等预算
+        self.assertNotIn("queued_reason", by_id["R-780"])
+        self.assertNotIn("queued_reason", by_id["R-781"])
+        self.assertNotIn("waiting_budget", json.dumps(dash))
 
     def test_steers_projection_delivered_then_queued(self):
         req = _mk("R-782", status=State.EXECUTING.value,
@@ -612,7 +628,7 @@ class TestDashboardProjection(WireBase):
 
     def test_needs_approval_carries_trust_and_block(self):
         _mk("R-783", origin_trust="external",
-            execution={"auto_dispatch_block": "cost:over_ceiling"})
+            execution={"auto_dispatch_block": "t2_confirm"})
         plain = _mk("R-784")
         plain.origin_trust = None
         registry.save(plain)
@@ -623,7 +639,7 @@ class TestDashboardProjection(WireBase):
         self.assertEqual(by_id["R-783"]["origin_trust"], "external")
         self.assertEqual(by_id["R-783"]["effective_tier"], "T2")  # W17 联动
         self.assertEqual(by_id["R-783"]["auto_dispatch_block"],
-                         "cost:over_ceiling")
+                         "t2_confirm")
         self.assertNotIn("origin_trust", by_id["R-784"])   # add-only：缺省不出
         self.assertNotIn("auto_dispatch_block", by_id["R-784"])
 

@@ -44,9 +44,9 @@ export interface ApprovalCard {
 
 /**
  * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
- * docs/design/vnext-amendments.md §M6.2（生产端未落地前可能缺席，
- * 也可能是纯字符串——UI 经 steer.ts 双兼容解析）。kind 开放枚举：
- * waiting_card（等前置卡，带 blocking_id="R-xx"）/ waiting_budget（等预算）。
+ * docs/CONTRACT.md §51（可能缺席，也可能是纯字符串——UI 经 steer.ts 双兼容
+ * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id="R-xx"）/
+ * concurrency（等并发位）；waiting_budget retired v0.48.7（D9）。
  */
 export interface QueuedReason {
   kind: string;

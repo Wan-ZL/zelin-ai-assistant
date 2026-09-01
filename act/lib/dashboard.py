@@ -540,32 +540,12 @@ def _merge_suggestions(merge_dir: Optional[Path] = None) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # v-next 投影辅助（amendments §51/§M6/M8.3 C-2·C-3·C-4，全部 add-only optional）
 # --------------------------------------------------------------------------- #
-def _spend_cards() -> dict:
-    """auto-dispatch 当日花费台账的只读镜像 {R-id: usd}。写者 = actd
-    （act/actd.py::_save_spend_ledger，文件名同 _SPEND_LEDGER_FILE）——import
-    actd 会循环依赖，故此处独立小读器。隔日/坏文件 = 空账（视同 $0）。"""
-    try:
-        raw = json.loads((config.STATE_DIR / "autodispatch_spend.json")
-                         .read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(raw, dict) or raw.get("date") != _today().isoformat():
-        return {}
-    out: dict = {}
-    if isinstance(raw.get("cards"), dict):
-        for k, v in raw["cards"].items():
-            try:
-                out[str(k)] = float(v)
-            except (TypeError, ValueError):
-                continue
-    return out
-
-
 def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
     """M1.c token → 结构化 wire 形（M8.3 C-2 终裁为 canonical）：
-    dependency → {kind: waiting_card, blocking_id}｜budget → {kind:
-    waiting_budget}｜concurrency → {kind: concurrency}。None = 无阻塞
-    （纯粹没轮到/派发失败退避——后者由 dispatch_error 独立表达，不混写）。"""
+    dependency → {kind: waiting_card, blocking_id}｜concurrency → {kind:
+    concurrency}。None = 无阻塞（纯粹没轮到/派发失败退避——后者由
+    dispatch_error 独立表达，不混写）。`waiting_budget` retired v0.48.7（D9），
+    kind 值永不复用。"""
     token = policy.queued_reason(req, state)
     if token == "dependency":
         blocking = state.get("blocked_by")
@@ -574,8 +554,6 @@ def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
         if first:
             out["blocking_id"] = str(first)
         return out
-    if token == "budget":
-        return {"kind": "waiting_budget"}
     if token == "concurrency":
         return {"kind": "concurrency"}
     return None
@@ -717,10 +695,8 @@ def build_dashboard(
     agent_idx = _index_agents(agents)
 
     # v-next queued_reason 快照（§51）：并发口径与 actd.dispatch_approved 一致
-    # （EXECUTING 且带 session 的卡数）；预算口径只对 auto_dispatched 卡生效
-    # ——人批的卡不受预算闸，chip 不许谎报「等预算」。
+    # （EXECUTING 且带 session 的卡数）。预算口径 retired v0.48.7（D9）。
     ad_cfg = policy.autodispatch_config(cfg)
-    spend_cards = _spend_cards()
     live_sessions = sum(
         1 for r in reqs
         if r.status == State.EXECUTING.value
@@ -904,15 +880,11 @@ def build_dashboard(
             # dispatch_error = 上次派发失败原因（重试成功后消失）。
             ex = req.execution if isinstance(req.execution, dict) else {}
             # v-next §51：排队原因 chip（结构化 wire 形，C-2）。快照口径与
-            # actd.dispatch_approved 的闸完全一致（预算只对 auto_dispatched
-            # 卡、且排除本卡自己的预留）；blocked_by 依赖字段未立法（T-26），
-            # 首版仅 budget/concurrency 两因。与 dispatch_error 并存不混写。
+            # actd.dispatch_approved 的闸完全一致；blocked_by 依赖字段未立法
+            # （T-26），现行只有 concurrency 一因（budget retired v0.48.7，D9）。
+            # 与 dispatch_error 并存不混写。
             snap: dict = {"running": live_sessions,
                           "max_concurrent": ad_cfg["max_concurrent"]}
-            if ex.get("auto_dispatched"):
-                snap["today_spend"] = sum(
-                    v for k, v in spend_cards.items() if k != req.id)
-                snap["daily_budget_usd"] = ad_cfg["daily_budget_usd"]
             qr = _queued_reason_view(req, snap)
             running.append(
                 {

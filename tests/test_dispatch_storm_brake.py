@@ -336,9 +336,8 @@ class ReapprovalRearmsTestCase(BrakeBase):
                                     "date": "2026-08-31", "quote": "原话"}])
         req.execution = dict(self._HALTED)
         registry.save(req)
-        ledger = config.STATE_DIR / actd._SPEND_LEDGER_FILE
-        if ledger.exists():
-            ledger.unlink()
+        # （原本还清一次 auto-dispatch 当日花费台账——台账随预算天花板 retired
+        # v0.48.7，D9；没有账要清。）
         return req
 
     def test_abort_execution_clears_the_streak(self):

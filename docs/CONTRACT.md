@@ -95,7 +95,7 @@
 
 **v0.48 新增字段（v-next 修宪批次，全部 add-only optional；Swift `decodeIfPresent` / web 防御性解析）**：
 - `needs_approval[]`（含 raising 占位项）加 `effective_tier`(str，**恒在**：外部出身——显式 `origin_trust=="external"` 章**或** sources 现算(classify_origin)为 external（v0.48.1 修订，缺章不再放行）——时恒 `"T2"`，否则逐字等于 `tier`，语义见 §50)、`origin_trust`(str，四值词表见 §50，缺章整键省略)、`auto_dispatch_block`(str = §51 reason token，无阻塞整键省略)。
-- `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`waiting_budget`|`concurrency`，词表与映射见 §51）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
+- `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`concurrency`，词表与映射见 §51；`waiting_budget` retired v0.48.7——D9，值永不复用，web 端按开放枚举原文降级）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
 - `running[]` / `needs_input[]` 行加 `steers: [{text, ts, status, delivered_at}]`（§44.3-S 投影）：`status ∈ {queued, delivered, dropped}` 开放枚举（dropped 现行不投影，值保留 forward-compat）；`status=="delivered"` 必带 ISO `delivered_at`，其余为 null——诚实投递状态，绝不虚报送达。**`ts` 为 ISO 字符串**——显式偏离本节「dashboard 输出 epoch int」惯例（M8.3 C-4）：ts 是 steer dedup 键的组成部分，投影保原文才能与 `execution.*` 台账逐字对账；web 端无 string ts 的行整行丢弃（绝不渲染无法对账的 steer）。
 
 **v0.48.4 新增（§4 派发风暴刹车的投影面，add-only optional）**：`execution.dispatch_halted` 为真的 approved 卡**不再**作 queued 项混入 `running[]`，改投影进 `needs_input[]`（blocked 行形：`session_id/short_id/copy_cmd/agent_name` 恒 null、`waiting_for` null、`question` = 固定文案「派发连续失败 N 次，已停止自动重试：<§25 目录句或原文>…」），行带 `dispatch_halted: true` + `dispatch_attempts`(int) + `last_error`/`last_error_id`。客户端据 `dispatch_halted` 隐藏「回答…」（没有会话可答）、只留「停止」；`detect_transitions` 对该行**不**发「任务需要你输入」（executor 已发 `msg_dispatch_halted`，同 §46.3 `resume_exhausted` 的去重规则）。server `is_executing` 对该行判 false（comment 不标 steer）。
@@ -3117,7 +3117,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
    ingress 的 W18 闸，语义不同：本面鉴权后就是 owner 本人）。**取舍留证
    （M5）**：这条口径下，instance token 是「同源页面的一个 bug」与「无天花板
    的 `mode:"run"` 直跑」之间**唯一**的一道墙——本面 direct-run 绕过
-   `may_auto_dispatch`（无 T2/cost/budget/outbound 天花板）。故 token 的
+   `may_auto_dispatch`（无 T2/cost/outbound 天花板）。故 token 的
    保密性即安全边界：注入只进同源页（`window.__ZAI_TOKEN__`）、永不发 CORS
    头、注入前 JS 字面量转义（`<`/`/`）、落盘 0600 + 读回校验/权限收回/
    symlink 拒跟随（server/security.py）。任何放宽（把 token 交给非同源面、
@@ -3267,7 +3267,8 @@ remote 只进 notes、不进 plan（§32.2 修订）。
 **诚实条款（advisory for same-user agents）**：`via` 直发被 400、伪造被覆盖，
 但同一用户在裸 HTTP 层可**省略** `actor` 冒充 owner ingress——落款是**礼仪 +
 取证**（违规留 actd 日志），不是密码学墙。**硬后盾不依赖落款**（逐条枚举）：
-① §51 预算/成本/repo/outbound 天花板（对一切自动派发候选生效）；②
+① §51 成本可见性/repo/outbound 天花板（对一切自动派发候选生效；预算天花板
+retired v0.48.7，D9）；②
 `effective_tier` 强制扩写（W17，外部章/sources 现算不可被落款洗掉）；③
 人工审批列（非 hand 出身一律人批）；④ §34bis 级篡改取证。密码学收紧第一
 步已落（v0.48.1，§49 auth model）：per-install instance token 把**浏览器
@@ -3295,41 +3296,46 @@ external approve→RAISING + via 裁决）、web ProposalCard.test.tsx（外部
 
 **语义（owner 拍板「手打自动/外部要批」的调度半边）**：只有出身 `hand` 的卡
 有资格免审批自动派发（card_sent → approved，actor=policy）；资格裁决 =
-`act/lib/policy.py::may_auto_dispatch(card, cfg, today_spend) -> (bool,
-reason)`，全部天花板通过才放行，任一不过 → **回落待审批 + 卡上陈述原因**
-（locked：over-ceiling ⇒ falls back to needs-approval with a stated
-reason）。原因 token 词表（机读稳定，UI 侧映射文案）：`disabled` /
+`act/lib/policy.py::may_auto_dispatch(card, cfg) -> (bool, reason)`，全部
+天花板通过才放行，任一不过 → **回落待审批 + 卡上陈述原因**（locked：
+over-ceiling ⇒ falls back to needs-approval with a stated reason）。原因
+token 词表（机读稳定，UI 侧映射文案）：`disabled` /
 `origin:{proposed,meeting,external}` / `t2_confirm` / `outbound` /
-`repo:new` / `repo:none` / `repo:missing` / `cost:unknown` /
-`cost:over_ceiling` / `budget:unknown` / `budget:exhausted`。
+`repo:new` / `repo:none` / `repo:missing` / `cost:unknown`。
+`cost:over_ceiling` / `budget:unknown` / `budget:exhausted` retired v0.48.7
+（见下方 tombstone；token 永不复用，旧卡上残留的值由 actd 按「解除即清」在
+下一 pass 清掉并放行）。
 
 **天花板明细（locked + 保守解释）**：① `autodispatch.enabled=false` 全关；
 ② 出身非 hand 不批——出身**从 sources 现算**（不依赖可能缺失/过期的章，
 §50）；③ §7/§41 审批语义不变：`effective_tier` 为 T2 / `green_sign_required`
-/ 估价超 `require_text_confirm_above_usd` 一律人批（`t2_confirm`，压过
-`cost:over_ceiling`——审批语义先于便宜天花板）；④ never outbound：
-`type=comms` 卡永不自动开跑（保守判据；更细的出站动词表 = T-24 另案，可误拦
-不可漏放）；⑤ existing repo only：`target_kind=new` 拒（绝不自动建 repo）、
-落点 repo（卡面 `target_repo`，缺省回落 `execution.default_target_repo`
-workbench 兜底，T-26 追认合法）必须磁盘已存在；⑥ 成本：估价缺失即拒（不可
-证明 ≤ 上限）、单卡估价 > `autodispatch.daily_budget_usd`（默认 **$5**，
-locked）拒、`today_spend + 估价 > 预算` 拒、today_spend 不可解析（台账坏）拒。
+/ 估价超 `require_text_confirm_above_usd` 一律人批（`t2_confirm`）——这条
+文字确认线是 D9 之后**唯一还看金额的闸**，语义是「钱要让 owner 看见并敲
+确认词」（披露/审批），不是预算；④ never outbound：`type=comms` 卡永不自动
+开跑（保守判据；更细的出站动词表 = T-24 另案，可误拦不可漏放）；⑤ existing
+repo only：`target_kind=new` 拒（绝不自动建 repo）、落点 repo（卡面
+`target_repo`，缺省回落 `execution.default_target_repo` workbench 兜底，
+T-26 追认合法）必须磁盘已存在；⑥ 成本：估价缺失即拒（`cost:unknown`——
+不可证明 ≤ ③ 的文字确认线，保守回人批）；估价存在则**金额本身不设上限**。
 
 **并发上限不在资格闸里**：`max_concurrent`（默认 3）是排队问题不是资格问题
 ——超并发的卡照常 approved、留在合并运行列的 queued 子状态，槽位空出即派发。
-**并发上限约束全部派发**（manual 批的卡同样排队）；**预算天花板只约束
-policy 批的卡**——owner 显式点头 = override，人批卡被预算闸拦下才是谎报。
-auto 卡在**派发时刻**做预算复核（台账排除本卡自身预留，否则每张 auto 卡都
-饿死）：批准后 owner 调低预算/隔日翻账等边界，卡诚实留队（`waiting_budget`）
-而非硬跑。
+**并发上限约束全部派发**（manual 批的卡同样排队），且是**唯一**的排队原因
+（dependency 词表占位见下）；auto 卡与人批卡在派发时刻同等对待，没有任何
+金额复核。
 
-**当日花费台账** = `state/autodispatch_spend.json`（`{"date": 本地
-YYYY-MM-DD, "cards": {R-id: usd}}`；写者 = actd 单写；预留记在批准时刻；按卡
-键控故重启幂等；隔日/坏文件 = 空账。dashboard 有独立只读小读器——import
-actd 会循环依赖；文件名双处字面量，改名需同步两处）。**已知边界（接受）**：
-昨天 auto 批准、因并发排队跨日的卡，隔日翻账后预留消失、派发复核按新账通过
-——极端情形单日实际派发额可略超预算一次估价；预算是天花板不是审计账，实际
-成本核算另案（W-actd m2 口径）。
+**预算天花板 retired v0.48.7（owner decision D9，docs/design/vnext2-plan.md）
+——tombstone**：v0.48 的 `autodispatch.daily_budget_usd`（默认 $5，兼单卡估价
+上限）、`may_auto_dispatch` 的 `today_spend` 参数、`state/autodispatch_spend.json`
+当日花费台账（actd 单写 + dashboard 只读小读器）、派发时刻的预算复核、
+`queued_reason` 的 `budget`/`waiting_budget`、以及 `cost:over_ceiling` /
+`budget:unknown` / `budget:exhausted` 三个原因 token，整套一并删除。owner
+原话：「自动派工作，要不先不要搞预算。把现有的手打卡自动派工每天 5 块钱的预算
+也取消吧。目前还没有遇到预算的问题，钱是足够的。」保留的是**披露**：卡上的
+`cost_estimate_usd` 照常展示（§2 `cost` 字段、auto-dispatch notes 的
+`est $N`），③ 的文字确认线照常拦。旧 config 里残留的 `daily_budget_usd` 键被
+静默忽略；磁盘上残留的台账文件无人读写，属死数据。实际成本核算若日后需要
+另立新 §，不复用本段任何名字。
 
 **回落可见性（C-6）**：原因 token 落 `execution.auto_dispatch_block`
 （add-only，dashboard needs_approval 行透传，§2）+ notes
@@ -3337,16 +3343,16 @@ actd 会循环依赖；文件名双处字面量，改名需同步两处）。**�
 刷屏；解除即清 token——投影诚实）；`origin:*` / `disabled` 两类**常态**原因
 不上卡不留痕（逐卡留痕即噪音，宪法第 10 条口径），且会清掉既有过期 token。
 
-**queued 子状态原因词表（M1.c + M8.3 C-2 终裁）**：内部 token =
-`dependency`（有未完结依赖卡）｜`budget`｜`concurrency`，优先级
-dependency > budget > concurrency（chip 只有一个位置，报最「粘」的阻塞）；
-`None` = 无阻塞（纯粹没轮到 / 派发失败在退避——后者归 `dispatch_error`/
-`dispatch_error_id`，两族独立并存、生产端不得混写）。**wire canonical =
-结构化形**（§2 v0.48 字段块）：dashboard builder 把 token 映射
-`dependency → {kind:"waiting_card", blocking_id}`（取 blocked_by 首项）、
-`budget → {kind:"waiting_budget"}`、`concurrency → {kind:"concurrency"}`；
-web 端未知 kind 按原文降级展示（开放枚举不崩渲染）。**dependency 现无生产
-者**（`blocked_by` 无持久化形状，词表占位，T-26 另案）。
+**queued 子状态原因词表（M1.c + M8.3 C-2 终裁；v0.48.7 去 budget）**：内部
+token = `dependency`（有未完结依赖卡）｜`concurrency`，优先级 dependency >
+concurrency（chip 只有一个位置，报最「粘」的阻塞）；`None` = 无阻塞（纯粹没
+轮到 / 派发失败在退避——后者归 `dispatch_error`/`dispatch_error_id`，两族
+独立并存、生产端不得混写）。**wire canonical = 结构化形**（§2 v0.48 字段块）：
+dashboard builder 把 token 映射 `dependency → {kind:"waiting_card",
+blocking_id}`（取 blocked_by 首项）、`concurrency → {kind:"concurrency"}`；
+web 端未知 kind 按原文降级展示（开放枚举不崩渲染——retired 的
+`waiting_budget` 若从旧快照冒出即走这条路，不再有专属文案）。**dependency
+现无生产者**（`blocked_by` 无持久化形状，词表占位，T-26 另案）。
 
 **主循环顺序与观测**：inbox → `auto_dispatch_pass`（hand 免批通道）→
 `dispatch_approved` →（有变化才 early-write）→ reconcile（含 §44.3-S steer
@@ -3357,14 +3363,15 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
 自动派发发一条通知（宪法第 10 条：自动化替 owner 做的事必须可见）。
 
 **config（add-only，`config.example.yaml` `autodispatch:` 块）**：
-`enabled`(true) / `daily_budget_usd`(5) / `max_concurrent`(3) /
-`notify`(true)；脏值逐键回退默认（宪法第 11 条口径），
-`policy.autodispatch_config(cfg)` 是唯一读取点。
+`enabled`(true) / `max_concurrent`(3) / `notify`(true)；脏值逐键回退默认
+（宪法第 11 条口径），`policy.autodispatch_config(cfg)` 是唯一读取点；
+`daily_budget_usd` retired v0.48.7（D9），出现即忽略。
 
-**判例**：tests/test_policy_ceilings.py（15 例：全部 token 逐条 + $5 精确
-边界 5.0 过/5.5 拦 + t2_confirm 压过 cost + token 换因重盖与解除即清 +
-并发=排队非拒绝 + 派发复核排除自身预留）、test_actd_wire.py（免批端到端 +
-队列 + 台账幂等）。
+**判例**：tests/test_policy_ceilings.py（全部 token 逐条 + 文字确认线是唯一
+金额闸 + 任意估价/任意当日累计放行 + 升级前残留 token 解除即清 + token 换因
+重盖 + 并发=排队非拒绝 + 派发时刻无金额复核）、test_actd_wire.py（免批端到端
++ 队列 + 不落台账文件 + queued_reason 永不 waiting_budget）、test_policy.py
+（`daily_budget_usd` 键忽略 + 退役 token 不在词表 + 旧签名第三位置参数不存在）。
 
 ## 52. agent 有界通道（boardctl + board-agent skill）
 

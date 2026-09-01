@@ -64,7 +64,8 @@ HOME = "~/Projects/zelin-ai-assistant"
 # （信任矩阵更细的 self_dm/meeting/ai 档在 wire 上折叠为 hand/external/缺席）。
 ORIGIN_TRUST = ("hand", "external")
 TIER_RANK = {"T0": 0, "T1": 1, "T2": 2}
-QUEUED_REASON_KINDS = ("waiting_card", "waiting_budget")   # web/src/steer.ts 词表
+# CONTRACT §51 词表（waiting_budget retired v0.48.7，D9——kind 值永不复用）
+QUEUED_REASON_KINDS = ("waiting_card", "concurrency")
 STEER_STATUSES = ("queued", "delivered", "dropped")
 
 
@@ -272,10 +273,10 @@ def _running(now: dt.datetime) -> list[dict]:
             "delivery_mode": "repo",
             "dispatch_error": None,
             # Slack self-DM 铸卡 = owner 亲笔 → 盖 hand（auto-dispatch 档）；
-            # 今日预算耗尽先排队，UI 由 kind 渲染「排队中 · 等预算」chip
+            # 并发位满先排队，UI 由 kind 渲染「排队中 · 等并发位」chip
             # （结构化原因走闭集 kind，非自由文本——web/src/steer.ts 词表）
             "origin_trust": "hand",
-            "queued_reason": {"kind": "waiting_budget"},
+            "queued_reason": {"kind": "concurrency"},
         },
         {
             "id": "R-107",
