@@ -28,6 +28,16 @@
 #
 # --check: run the post-install doctor (python -m act.doctor) and exit with
 #   the number of failing checks. Installs/changes nothing.
+#
+# --non-interactive: the mode scripts/auto-deploy.sh runs (CONTRACT §56). Same
+#   steps as the interactive run, but it can never stop to ask: a missing
+#   claude or Swift toolchain only warns (the Mac app build is skipped without
+#   a toolchain), the doctor step is left to the caller (it gates the deploy
+#   and decides on rollback), the closing "next steps" banner is replaced by a
+#   one-line summary, and the EXIT CODE is the number of failed steps — the
+#   frozen legacy Mac app (`app`, D3) excepted, since its build failing leaves
+#   the previously installed app untouched and a rollback would not fix it.
+#   The §23 report records mode "non-interactive".
 set -uo pipefail
 
 # Physical path of a directory — every symlink resolved (CONTRACT §55).
@@ -228,6 +238,10 @@ fi
 
 PKG_POSTINSTALL=0
 [ "${1:-}" = "--pkg-postinstall" ] && PKG_POSTINSTALL=1
+# CONTRACT §56 — never-prompting mode for scripts/auto-deploy.sh (see header).
+NON_INTERACTIVE=0
+[ "${1:-}" = "--non-interactive" ] && NON_INTERACTIVE=1
+SKIP_APP=0
 
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
@@ -243,6 +257,14 @@ report_step() { # $1=name $2=status [$3=detail]
 "
 }
 
+# --non-interactive verdict (§56): the report lines whose status is fail,
+# minus `app` — the frozen legacy Mac app (D3): its build failing leaves the
+# installed app untouched, and rolling the deploy back would not fix it.
+# Printed one per line; the exit code is their count.
+failed_deploy_steps() {
+    printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
+}
+
 write_install_report() {
     RPY="${RUNTIME_PY:-${PY:-}}"
     { [ -n "$RPY" ] && [ -x "$RPY" ]; } || RPY="$(command -v python3 || true)"
@@ -252,6 +274,7 @@ write_install_report() {
     fi
     MODE=interactive
     [ "$PKG_POSTINSTALL" -eq 1 ] && MODE=pkg-postinstall
+    [ "$NON_INTERACTIVE" -eq 1 ] && MODE=non-interactive
     if printf '%s' "$REPORT_STEPS" | (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
         "$RPY" -m act.lib.install_report --mode "$MODE" --steps-stdin \
         --agents "$LOADED_LABELS" >/dev/null 2>&1); then
@@ -436,9 +459,13 @@ if [ "$PKG_POSTINSTALL" -eq 1 ]; then
     info "pkg postinstall mode — dependency checks skipped"
 else
 
-# claude (required)
+# claude (required). --non-interactive (§56) cannot stop to ask: it warns and
+# keeps deploying the daemons — they only need claude at dispatch time, and
+# the claude_bin step of the §23 report records the gap.
 if command -v claude >/dev/null 2>&1; then
     ok "claude found: $(command -v claude)"
+elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    warn "claude CLI not found — daemons will fail to dispatch until Claude Code is installed"
 else
     echo "  [ERR ] claude CLI not found (REQUIRED). Install Claude Code first, then re-run." >&2
     exit 1
@@ -447,8 +474,12 @@ fi
 # swift toolchain (required to build the Mac app) — presence AND minimum
 # version. MIN_SWIFT lives in mac/build.sh (single source); on failure it
 # prints the exact fix (update Xcode, xcode-select) so we just exit.
+# --non-interactive skips the app build instead (the installed app stays).
 if bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
     ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
+elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    warn "Swift toolchain check failed — skipping the Mac app build (installed app kept)"
+    SKIP_APP=1
 else
     echo "  [ERR ] Swift toolchain check failed (see message above), then re-run this script." >&2
     exit 1
@@ -648,6 +679,9 @@ echo ""
 if [ "$PKG_POSTINSTALL" -eq 1 ]; then
     echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
     report_step "app" "skipped" "installed by the .pkg"
+elif [ "$SKIP_APP" -eq 1 ]; then
+    echo "==> 4. build + install Mac app — skipped (no usable Swift toolchain; installed app kept)"
+    report_step "app" "skipped" "no swift toolchain"
 else
     echo "==> 4. build + install Mac app"
     if bash "$REPO_ROOT/mac/build.sh" --install; then
@@ -714,6 +748,25 @@ radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
         "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
     ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
 }
+# CONTRACT §56: the self-updating deploy agent is installed ONLY for a git
+# checkout (a .pkg copy has no .git — nothing to fast-forward) whose
+# features.auto_deploy is on (default on). Same fail-open shape as the radar
+# gate: only the dedicated exit 3 + literal "off" means off.
+AUTODEPLOY_LABEL="com.zelin.aiassistant.autodeploy"
+autodeploy_wanted() {      # returns 0 wanted/probe-failed, 1 not wanted
+    git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    rc=0
+    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c '
+from act.lib import config
+try:
+    cfg = config.load_config()
+except Exception:
+    cfg = config.Config()
+on = cfg.feature("auto_deploy")
+print("on" if on else "off")
+raise SystemExit(0 if on else 3)') 2>/dev/null )" || rc=$?
+    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
+}
 for plist in "$REPO_ROOT"/act/launchd/*.plist; do
     [ -e "$plist" ] || continue
     base="$(basename "$plist")"
@@ -729,6 +782,22 @@ for plist in "$REPO_ROOT"/act/launchd/*.plist; do
         launchd_unload "$dest" "$label"
         rm -f "$dest"
         continue
+    fi
+    if [ "$label" = "$AUTODEPLOY_LABEL" ]; then
+        if ! autodeploy_wanted; then
+            info "auto-deploy is off (not a git checkout, or features.auto_deploy: false) — not installing $label"
+            launchd_unload "$dest" "$label"
+            rm -f "$dest"
+            continue
+        fi
+        if [ "${AIASSISTANT_AUTODEPLOY_ACTIVE:-0}" = "1" ]; then
+            # We ARE that agent's process tree right now: bootout would kill
+            # the deploy mid-flight. Re-render only; a changed template takes
+            # effect on the next manual `bash install.sh`.
+            render_launchd_plist "$plist" "$dest"
+            info "$label re-rendered; reload deferred (this install.sh runs inside it)"
+            continue
+        fi
     fi
     # unload any previous version first (idempotent upgrades)
     launchd_unload "$dest" "$label"
@@ -843,6 +912,8 @@ fi
 echo ""
 if [ "$PKG_POSTINSTALL" -eq 1 ]; then
     echo "==> 7. diagnostics — skipped (non-interactive pkg mode; run anytime: bash install.sh --check)"
+elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    echo "==> 7. diagnostics — left to the caller (auto-deploy runs the doctor and gates on it, §56)"
 elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
     echo "==> 7. post-install diagnostics (python -m act.doctor)"
     if ! (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.doctor); then
@@ -858,6 +929,20 @@ echo ""
 write_install_report
 
 # --------------------------------------------------------------------------
+# --non-interactive (§56): no banner; the exit code IS the verdict — one per
+# failed step, the legacy Mac app (`app`) excepted (see header). The caller
+# (scripts/auto-deploy.sh) rolls back on non-zero.
+if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    FAILED_STEPS="$(failed_deploy_steps)"
+    N_FAILED="$(printf '%s' "$FAILED_STEPS" | grep -c . || true)"
+    if [ "$N_FAILED" -gt 0 ]; then
+        echo "install.sh --non-interactive: $N_FAILED failed step(s): $(printf '%s' "$FAILED_STEPS" | cut -d= -f1 | tr '\n' ' ')"
+    else
+        echo "install.sh --non-interactive: ok (v$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$REPO_ROOT/act/__init__.py"))"
+    fi
+    exit "$N_FAILED"
+fi
+
 cat <<'EOF'
 
 ==============================================

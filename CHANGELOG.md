@@ -20,10 +20,26 @@ other file needs editing. To cut a release:
 2. Rename the `[Unreleased]` section below to `[X.Y.Z] - YYYY-MM-DD` and add a
    fresh empty `[Unreleased]` heading above it; update the compare links at the
    bottom.
-3. Commit (`chore: bump version to X.Y.Z`) and tag `vX.Y.Z`; pushing the tag
-   triggers the release workflow.
+3. Commit and merge the PR. **Nobody tags by hand anymore** (CONTRACT §56):
+   `tag-on-merge.yml` reads `act/__init__.py` on every push to `main`, creates
+   `vX.Y.Z` when it does not exist yet and dispatches the release workflow.
+   Every PR therefore bumps the patch version — a merge that does not bump is
+   silently not released. A hand-pushed `vX.Y.Z` tag still works as before.
 
 ## [Unreleased]
+
+## [0.48.6] - 2026-09-01
+
+合并即上岗（owner decision D17，CONTRACT §56）：合进 `main` 的 PR 自动打 tag、自动发版、自动部署到 owner 的 Mac；doctor 出现**新增**红项就自动回滚到上一个提交。人只做两件事——点合并、收通知。
+
+### Added
+- **tag-on-merge**：`.github/workflows/tag-on-merge.yml` 在每次 push to `main` 时读 `act/__init__.py`，`v<version>` 不存在就在该提交上建 tag 并显式 dispatch `release.yml`（GITHUB_TOKEN 建的 tag 不会触发 `on: push: tags`，所以 `release.yml` 新增 `workflow_dispatch` 入口；版本闸门两个入口都生效）。tag 已在 = 静默跳过；ruleset 只管分支，tag 不受影响。
+- **自动部署 agent** `com.zelin.aiassistant.autodeploy`（每 10 分钟；`python3 -m act.auto_deploy` → `scripts/auto-deploy.sh`）：HEAD 在 `main` 且树干净时 `git merge --ff-only origin/main` → `install.sh --non-interactive` → doctor 复查；install 失败或相对部署前基线**新增** FAIL → `git reset --hard` 回旧 sha + 重装 + 通知「auto-deploy rolled back to …」，该 sha 记账后不再重试（`--force` 才重试）。脏树只通知一次、不动 HEAD；不可 ff 的分叉本地 main 永不被 reset。锁 + 1 MB 自截日志（`~/Library/Logs/zelin-ai-assistant/auto-deploy.log`）。只装在 git checkout 上（.pkg 副本没有 `.git`），`features.auto_deploy: false` 可关。
+- **`install.sh --non-interactive`**（§23 第三个 mode）：永不提问——缺 claude 只警告、缺 Swift 工具链跳过 app 构建、doctor 留给调用方；退出码 = 失败 step 数（旧 Mac app 的 `app` 步骤除外，D3 已冻结它）。
+- **`state/deploy_state.json`** → dashboard add-only 顶层键 `deploy_state`、doctor 新行 `auto-deploy`、web 顶栏小字「v0.48.6 · deployed 12m ago」（非 healthy 状态切警告色并点名）。
+
+### Fixed
+- `ingest/vault-sync.sh` 在 git 里的可执行位（install.sh 每次 `chmod +x` 都把 live checkout 弄脏，自动部署的脏树检查会永远拒绝）。
 
 ## [0.48.5] - 2026-09-01
 
@@ -2057,7 +2073,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.5...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.6...HEAD
+[0.48.6]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.5...v0.48.6
 [0.48.5]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...v0.48.5
 [0.48.4]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...v0.48.3

@@ -43,7 +43,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, failures, heartbeat, platform, secrets, taskscheduler
+from act.lib import (
+    config,
+    deploy_state,
+    failures,
+    heartbeat,
+    platform,
+    secrets,
+    taskscheduler,
+)
 
 OK = "ok"
 WARN = "warn"
@@ -1406,6 +1414,35 @@ def _check_heartbeat(probes: Probes):
     ).with_failure("actd_stalled")
 
 
+def _check_auto_deploy(probes: Probes):
+    """§56 合并即上岗：最近一次自动部署的结果（state/deploy_state.json，
+    scripts/auto-deploy.sh 写）。文件不存在 = 这台机器不跑该 agent（.pkg 安装 /
+    Linux / features.auto_deploy 关）——不出行，不告警。deployed / up_to_date
+    之外的一切结果都是 WARN：回滚、脏树拒绝、fetch 失败……都是需要人看一眼
+    的事，而 launchd 的 status 列永远是 0（脚本对每种已处理结果都 exit 0）。"""
+    state = deploy_state.read()
+    if not state:
+        return []
+    status = state.get("status", "")
+    detail = state.get("detail", "")
+    version = state.get("version", "")
+    if status in deploy_state.HEALTHY:
+        when = state.get("last_deployed") or state.get("last_run") or ""
+        return CheckResult(
+            "auto-deploy", OK,
+            "%s (v%s%s)" % (status, version or "?", (" at " + when) if when else ""))
+    return CheckResult(
+        "auto-deploy", WARN,
+        "last run ended '%s'%s%s" % (
+            status or "?",
+            (" on v%s" % version) if version else "",
+            (": " + detail) if detail else ""),
+        _pick("tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
+              " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
+              "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
+              " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)"))
+
+
 def _check_obsidian(probes: Probes):
     cfg = config.load_config()
     raw = cfg.obsidian_raw
@@ -1552,7 +1589,7 @@ def _checks_for_platform() -> List:
     # OS: the two together tell "dead" (dashboard stale, no pid) from "stuck"
     # (pid alive, heartbeat stale).
     return (_CHECKS_COMMON_HEAD + middle
-            + [_check_dashboard, _check_heartbeat, _check_obsidian]
+            + [_check_dashboard, _check_heartbeat, _check_auto_deploy, _check_obsidian]
             + tail_extra + [_check_gh])
 
 
