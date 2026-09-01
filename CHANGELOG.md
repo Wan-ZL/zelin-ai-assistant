@@ -25,6 +25,20 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.5] - 2026-09-01
+
+v-next-2 第一批（决议 D19）：两条 digest 通道出厂零卡片。Owner：「像这种每日摘要，好像在设置里面没法关，几天没看就攒起来了……能不能在设置里面让我能够改成一周或者两天摘要，或者完全关掉」；追问「摘要卡还需要吗」的采纳答案是**默认不以卡片形式出现**。
+
+### Changed
+- **状态摘要（原「周一 digest」）新增节奏旋钮 `digest.frequency`**：`off | daily | every2days | weekly`，**默认 `off`**；设置层扁平键 `digest_frequency` 同步进 overrides 允许列表，供设置页 diff-write。crontab 行改为每天 09:07 唤醒且不再带 `--now`，模块按滚动间隔（距上次生成 ≥1/2/7 天，标记 `state/digest.json`）自行闸门——不钉周一，周一睡着的机器周二照样拿到本周那张；off / 未到期的定时 pass 完全静默（不打印、不打点），默认 off 不会在日志或 analytics 里留一行一天。`--now` 仍可手动立即生成。重跑 `bash install.sh` 会把旧的「周一 `--now`」cron 行替换掉（旧行会越过 off 继续每周强制铸卡）。多年出厂却从未被读取的 `digest.weekly: monday` 模板键随之移除。（CONTRACT §16/§17）
+- **文案去周几**：卡片标题「周一 digest · <日期>」→「状态摘要 · <日期>」（en "Status digest"），通知与正文首行同步——日频卡片带「周一」会撒谎。（§40.7）
+- **每周摘要（weekly digest）默认关**：`sources.weekly_digest.enabled` 出厂 `false`，显式写 true 才生成回顾卡；launchd 每小时的定时唤醒遇关闭态与「未到期」同款静默，不再每天 24 条 skip 事件。设置页「现在生成一份」按钮遇关闭态仍有回音。（§24）
+
+### Removed
+- **weekly digest 的「自动化建议」提案卡退役**（墓碑）：15 张从未获批一张、3 个 cluster 跨 4 周重铸。`MAX_SUGGESTIONS = 0`、prompt 改要 `suggestions: []`，无论模型返回什么都不再落 card_sent；通知不再宣称「另有 N 条自动化建议」。管道代码保留一个 release 便于回退，下一 release 删除；这类想法的新出口是 v-next-2 的每日自我改进循环（P5）。（§24）
+
+> 升级提示：cron 行形态变了——**重跑 `bash install.sh`** 才会把旧的周一行替换成新的每日自闸门行。不重跑的话旧行仍会每周一强制生成一张（等价于 `weekly` 且忽略 `off`）。
+
 ## [0.48.4] - 2026-09-01
 
 2026-08-31 live 审计挖出的三条静默失效(#89):launchd 起的 claude 读不到外置卷上的任务目录、每次派发都死却无限重试(claude 自己把 EPERM 猜成「low max file descriptors」,首版跟着猜错,09-01 审查证伪后修订)、actd 进程活着但循环卡死 2.5 小时无人知、v0.21 退役的 agent 又跑了 51 天。三条都各自加了「让它被看见 + 让它停下」的机制;第一条的修法在 owner 手里(TCC 开关),本版只保证它被诚实地看见、分类、指路。
@@ -2043,7 +2057,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.5...HEAD
+[0.48.5]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...v0.48.5
 [0.48.4]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...v0.48.2
