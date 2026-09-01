@@ -182,8 +182,8 @@ class ActivationTestCase(unittest.TestCase):
     def test_db_missing_half_state_fails_loud(self):
         _seed("R-001")
         activate.tick()
+        registry.reset_store_cache()     # 先关缓存连接（Windows 锁着删不掉）
         registry.store2_db_path().unlink()
-        registry.reset_store_cache()
         self.assertEqual(activate.status()["state"], "db_missing")
         self.assertEqual(registry.backend(), registry.BACKEND_SQLITE)
         with self.assertRaises(RuntimeError):
@@ -225,8 +225,8 @@ class DoctorRowTestCase(unittest.TestCase):
     def test_db_missing_reports_fail(self):
         _seed("R-001")
         activate.tick()
+        registry.reset_store_cache()     # 先关缓存连接（Windows 锁着删不掉）
         registry.store2_db_path().unlink()
-        registry.reset_store_cache()
         row = self._row()
         self.assertEqual(row.status, "fail")
         self.assertEqual(row.failure_id, "store2_db_missing")

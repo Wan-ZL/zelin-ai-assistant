@@ -13,7 +13,11 @@ from act.lib import config, registry
 
 
 def wipe_data_layer() -> None:
-    """清空两个后端的全部数据面（卡文件 / DB / 标记 / 备份 / 导出 / 台账）。"""
+    """清空两个后端的全部数据面（卡文件 / DB / 标记 / 备份 / 导出 / 台账）。
+
+    先 reset_store_cache 再删文件——Windows 对**打开中的** DB 文件 unlink 抛
+    PermissionError（POSIX 才允许删打开的文件），缓存连接必须先关。"""
+    registry.reset_store_cache()
     config.ensure_state_dirs()
     if config.REGISTRY_DIR.exists():
         shutil.rmtree(config.REGISTRY_DIR)
