@@ -110,15 +110,35 @@ class LiveAndBlockedTestCase(ReconcileBase):
         self.assertEqual(req.status, State.EXECUTING.value)
         self.assertEqual((req.execution or {}).get("resume_attempts"), 0)
 
-    def test_blocked_agent_not_resumed(self):
-        # waiting for the USER — resuming a blocked agent spawns duplicates
+    def test_blocked_agent_harvested_to_review(self):
+        # #119（§13/§46.3 v0.48.8）：受阻会话不再原地等回答——收割进待验收；
+        # 绝不 resume（resume 一个 blocked agent 会孵化重复会话）
         self._mk_req(execution={"session_id": "aaaa1111", "resume_attempts": 2})
         n, resume = self._reconcile([_agent("blocked")])
         self.assertEqual(n, 0)
         resume.assert_not_called()
         req = registry.load("R-900")
-        self.assertEqual(req.status, State.EXECUTING.value)
-        self.assertEqual((req.execution or {}).get("resume_attempts"), 0)
+        self.assertEqual(req.status, State.REVIEW.value)
+        ex = req.execution or {}
+        self.assertTrue(ex.get("done"))
+        self.assertTrue(ex.get("review_at"))
+        self.assertEqual(ex.get("interrupted_reason"), "blocked")
+        self.assertIn("[会话受阻]", req.notes or "")
+
+    def test_blocked_agent_with_pending_briefings_briefs_not_harvests(self):
+        # §44.3 安全窗口①保留：受阻 + 有待注入 briefing -> 先注入（会话可能
+        # 因此继续推进），本 pass 不收割
+        self._mk_req(execution={"session_id": "aaaa1111",
+                                "pending_briefings": ["fyi"]})
+        brief = mock.Mock(return_value=True)
+        with mock.patch.object(actd, "_run_claude_agents",
+                               return_value=[_agent("blocked")]), \
+             mock.patch.object(actd.executor, "brief", brief), \
+             mock.patch.object(actd.executor, "resume",
+                               mock.Mock(return_value=True)):
+            actd.reconcile_executing(self.cfg, set())
+        brief.assert_called_once()
+        self.assertEqual(registry.load("R-900").status, State.EXECUTING.value)
 
 
 # --------------------------------------------------------------------------- #
@@ -243,14 +263,18 @@ class ResumeBackoffTestCase(ReconcileBase):
         self.assertNotIn("R-900", notified)
         self.notify.assert_not_called()
 
-    def test_five_failures_gives_up_terminally(self):
+    def test_five_failures_gives_up_and_harvests_to_review(self):
+        # #119（§46.3 v0.48.8）：放弃自动恢复 = 收割进待验收，不再滞留 executing
         self._mk_req(execution={"session_id": "aaaa1111", "resume_attempts": 5})
         n, resume = self._reconcile([])
         self.assertEqual(n, 0)
         resume.assert_not_called()
         req = registry.load("R-900")
-        self.assertTrue((req.execution or {}).get("resume_exhausted"))
-        self.assertEqual(req.status, State.EXECUTING.value)  # 状态机不动，仅停恢复
+        ex = req.execution or {}
+        self.assertTrue(ex.get("resume_exhausted"))
+        self.assertEqual(req.status, State.REVIEW.value)
+        self.assertTrue(ex.get("done"))
+        self.assertEqual(ex.get("interrupted_reason"), "resume_exhausted")
         titles = [c.args[0] for c in self.notify.call_args_list]
         self.assertTrue(any("自动恢复已放弃" in t for t in titles))
         events = [e.get("event") for e in analytics.read_events()
@@ -261,6 +285,20 @@ class ResumeBackoffTestCase(ReconcileBase):
         n, resume = self._reconcile([])
         self.assertEqual(n, 0)
         resume.assert_not_called()
+        self.notify.assert_not_called()
+
+    def test_legacy_exhausted_executing_card_migrates_to_review(self):
+        # 升级路径：v0.48.7 以前降级后滞留 executing 的卡，首个 pass 收割出来；
+        # 迁移不重复 ping（降级当时已通知过）
+        self._mk_req(execution={"session_id": "aaaa1111",
+                                "resume_exhausted": True})
+        n, resume = self._reconcile([])
+        self.assertEqual(n, 0)
+        resume.assert_not_called()
+        req = registry.load("R-900")
+        self.assertEqual(req.status, State.REVIEW.value)
+        self.assertEqual((req.execution or {}).get("interrupted_reason"),
+                         "resume_exhausted")
         self.notify.assert_not_called()
 
     def test_resume_crash_never_kills_the_pass(self):
@@ -471,14 +509,17 @@ class DeliveredTranscriptPromotionTestCase(ReconcileBase):
         resume.assert_not_called()
         self.assertEqual(registry.load("R-900").status, State.REVIEW.value)
 
-    def test_blocked_probe_is_throttled_between_passes(self):
-        # a genuinely blocked agent must not get its transcript re-read on
-        # every 10 s daemon pass.
+    def test_blocked_harvests_once_then_leaves_executing(self):
+        # #119：受阻会话第一个 pass 就收割进待验收（probe 一次 + 收割一次），
+        # 之后不再是 executing——第二个 pass 零 transcript 读取
         self._mk_req(execution={"session_id": "d1a10004"})
         with self._harvest(final_draft=None) as harvest:
             self._reconcile([_agent("blocked", sid="d1a10004")])
+            first = harvest.call_count
             self._reconcile([_agent("blocked", sid="d1a10004")])
-        self.assertEqual(harvest.call_count, 1)
+        self.assertEqual(registry.load("R-900").status, State.REVIEW.value)
+        self.assertLessEqual(first, 2)
+        self.assertEqual(harvest.call_count, first)   # 第二 pass 不再读
 
 
 if __name__ == "__main__":

@@ -57,7 +57,7 @@ export function StyleguidePage() {
       <Section
         title={text("2 · Buttons（真组件）", "2 · Buttons (real components)")}
         note={text(
-          "全部动词按钮从真卡组件长出：批准/拒绝/修改/暂缓 · 回答/评论/停止 · 验收/打回/复制成稿 · 退回待验收/永久完成 · 研究并提议/删除 · 捕获/直跑；末格为三变体 class + disabled 态与 hover token 注。",
+          "全部动词按钮从真卡组件长出：批准/拒绝/修改/暂缓 · 评论/停止 · 验收/打回/复制成稿 · 退回待验收/永久完成 · 研究并提议/删除 · 捕获/直跑；末格为三变体 class + disabled 态与 hover token 注。",
           "Every verb button grows out of the real card components: approve/reject/comment/later · answer/comment/stop · accept/send-back/copy-draft · back-to-review/done-for-good · raise/delete · capture/run; the last cell shows the three variant classes with disabled states and hover-token notes.",
         )}
       >

@@ -19,6 +19,12 @@ def home_dir(explicit: "str | Path | None" = None) -> Path:
     return Path(raw).expanduser()
 
 
+def config_path(home: Path) -> Path:
+    # 镜像 act/lib/config.py CONFIG_PATH（HOME / "config.yaml"）——server 只读
+    # 一个键：`registry.backend` 回滚开关（§53.6，board_source 真源判定用）
+    return home / "config.yaml"
+
+
 def dashboard_path(home: Path) -> Path:
     return home / "state" / "dashboard.json"
 
@@ -30,6 +36,16 @@ def registry_dir(home: Path) -> Path:
 def archive_dir(home: Path) -> Path:
     # v0.20.0 §4：归档卡 RELOCATE 到 archive/ 子目录（registry.py ARCHIVE_DIR）
     return registry_dir(home) / "archive"
+
+
+def store2_db_path(home: Path) -> Path:
+    # §53：store2 SQLite 真源（registry.store2_db_path 镜像）
+    return home / "state" / "store2.db"
+
+
+def store2_truth_path(home: Path) -> Path:
+    # §53：激活标记——在 = SQLite 是真源，YAML 目录只是冻结工件/导出镜像
+    return home / "state" / "store2_truth.json"
 
 
 def inbox_dir(home: Path) -> Path:

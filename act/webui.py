@@ -58,8 +58,7 @@ ALLOWED_ACTIONS = frozenset({
     "approve", "reject", "comment", "raise", "trash", "restore", "pin",
     "accept", "rework", "done_external", "abort_execution", "stop_to_review",
     "revert_review", "defer", "archive", "unarchive", "set_title",
-    # requirement-level with a `text` payload (actd._apply_answer_input, §39)
-    "answer_input",
+    # （answer_input：retired v0.48.8（#119）——未知动作 400）
     # no-requirement / suggestion-level (actd.process_inbox dispatch)
     "capture", "feedback", "merge_review", "merge_apply", "merge_dismiss",
     "merge_force",
@@ -417,15 +416,6 @@ class _Handler(BaseHTTPRequestHandler):
                 # opt-in=true 放行 mode 进 inbox（§34 预留），但本面恒盖
                 # via:"remote"，actd 现行仍会降级——如实告知（见常量注释）。
                 notice = _RUN_RESERVED_NOTICE
-        # §39.2: answer_input's text is bounded 1..4000 (code points) — reject
-        # here with a 400 so an oversize/empty answer never reaches the inbox
-        # (actd would archive-and-noop it, but the API caller deserves the
-        # immediate error).
-        if action == "answer_input":
-            t = payload.get("text")
-            if not isinstance(t, str) or not (1 <= len(t.strip()) <= 4000):
-                self._json(400, {"error": "text must be 1..4000 chars"})
-                return
         try:
             name = write_inbox(payload)
         except OSError as e:

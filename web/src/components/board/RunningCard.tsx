@@ -1,5 +1,6 @@
 // 运行中合并列的卡（BUILD-CONTRACT §2.2）：三个子形态共用一个组件——
-//   blocked（needs_input 混排在最前，橙）：问题正文 + 「回答…」(answer_input) + 停止 fork；
+//   blocked（needs_input 混排在最前，橙）：v0.48.8（#119）起只剩 §4 派发刹车行
+//   （dispatch_halted），无「回答」入口——受阻会话由 actd 收割进待验收；
 //   queued（灰卡）：「排队中」chip + dispatch_error 原因 chip + 评论 + 停止 fork；
 //   working：sheen 动效行（fork 的 task-processing 块）+ 评论 + 停止 fork。
 // 停止 fork = Mac v0.21 两选弹窗：退回提案（abort_execution，destructive）/ 去待验收
@@ -10,7 +11,7 @@ import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
-import { ANSWER_MAX_CODE_POINTS, cardAction, openCardDetail, useSubmit } from "./boardActions";
+import { cardAction, openCardDetail, useSubmit } from "./boardActions";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -20,7 +21,7 @@ interface RunningCardProps {
   isBlocked?: boolean;
 }
 
-type DialogKind = "none" | "stop" | "comment" | "answer";
+type DialogKind = "none" | "stop" | "comment";
 
 export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
   const { text } = useI18n();
@@ -120,13 +121,8 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </p>
       ) : (
         <div className="card-actions">
-          {/* 色相 = Mac tint：回答/停止都是橙（needs-input 家族）；评论是 web fork 动词，保持中性。
-              刹车卡没有会话可答（answer_input 会落成 [回答未投递]），只留「停止」这一个出口。 */}
-          {isBlocked && !row.dispatch_halted && (
-            <button type="button" className="btn btn-warning" onClick={() => setDialog("answer")}>
-              {text("回答…", "Answer…")}
-            </button>
-          )}
+          {/* #119（v0.48.8）：「回答…」(answer_input) 退役——受阻会话由 actd 收割进
+              待验收，「打回 + 修改方向」覆盖回答语义；blocked 行只剩「停止」出口。 */}
           {!isBlocked && (
             <button type="button" className="btn" onClick={() => setDialog("comment")}>
               {text("评论", "Comment")}
@@ -173,17 +169,6 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           placeholder={text("想补充什么？", "What to add?")}
           submitLabel={text("提交", "Submit")}
           onSubmit={(t) => act(cardAction(row.id, "comment", t))}
-          onCancel={() => setDialog("none")}
-        />
-      )}
-      {dialog === "answer" && (
-        <TextDialog
-          title={text("回答需输入", "Answer the blocked agent")}
-          body={question ?? undefined}
-          placeholder={text("你的回答（送回原会话）", "Your answer (delivered to the session)")}
-          submitLabel={text("发送", "Send")}
-          maxCodePoints={ANSWER_MAX_CODE_POINTS}
-          onSubmit={(t) => act({ action: "answer_input", id: row.id, text: t })}
           onCancel={() => setDialog("none")}
         />
       )}

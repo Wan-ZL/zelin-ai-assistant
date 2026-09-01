@@ -3,7 +3,7 @@
 State transitions surfaced as native notifications:
   - new card_sent (radar found a new requirement)  -> "有新需求待审批：<title>"
   - executing -> done                              -> "任务完成：<title>"
-  - executing -> blocked (needs_input)             -> "任务需要你输入：<title>"
+  - executing 受阻/放弃救活 -> review（#119 收割）  -> "任务停下来了：<title>"
   - credential failure (log has auth/login words)  -> "需要重新登录：<service>"
 
 §28 (app identity relay): on darwin the native path never fires osascript —
@@ -173,63 +173,21 @@ def msg_done(title: str) -> tuple[str, str]:
                   f"{title} — open the app to accept or send back"))
 
 
-def msg_needs_input(title: str, question: Optional[str] = None) -> tuple[str, str]:
-    """§39: carry a snippet of WHAT is being asked, and name the real surface —
-    on the kanban the card sits at the top of the 运行中 column with the orange
-    「需输入」badge and a 「回答…」button (the popover keeps its 需输入 section)."""
-    q = " ".join(str(question or "").split()).strip()
-    where = _pick("打开 App：卡片在看板「运行中」列顶部（橙色「需输入」），点「回答…」直接回它",
-                  "open the app: the card sits at the top of the Running column"
-                  " (orange \"Input\") — press \"Answer…\" to reply")
-    if q:
-        snippet = q[:120] + ("…" if len(q) > 120 else "")
-        return (_pick("任务需要你输入", "A task needs your input"),
-                _pick(f"{title} 在问：{snippet} —— {where}",
-                      f"{title} asks: {snippet} — {where}"))
-    return (_pick("任务需要你输入", "A task needs your input"),
-            _pick(f"{title} —— {where}", f"{title} — {where}"))
+# （msg_needs_input / msg_answer_not_delivered / msg_answer_failed：retired
+# v0.48.8（#119）——受阻会话不再挂「需输入」等回答，收割进待验收由
+# msg_review_interrupted 通知。）
 
 
-def msg_answer_not_delivered(title: str, kind: str = "moved") -> tuple[str, str]:
-    """§39.2: a VALID answer arrived but the moment had passed — the session is
-    actively working (someone else may have answered it already) or the card
-    already left needs_input (e.g. promoted to review between the board render
-    and the inbox pass). The typed text is archived in the card's notes; the
-    answerer must be told, or both UIs' optimistic sends read as success while
-    the text silently vanished. ``kind`` ∈ working | review | recent |
-    oversize | moved."""
-    if kind == "working":
-        why = _pick("会话正在工作中，可能已被回答",
-                    "the session is actively working — it may already have been answered")
-    elif kind == "review":
-        why = _pick("任务已完成进了待验收",
-                    "the task already finished and moved to Review")
-    elif kind == "recent":
-        why = _pick("刚有一条回答送达（可能来自另一台设备），先等它生效；两分钟后还卡着再重发",
-                    "an answer was just delivered (maybe from another device) —"
-                    " let it settle; resend if it's still stuck in two minutes")
-    elif kind == "oversize":
-        why = _pick("回答超过 4000 字上限，请拆短重发",
-                    "the answer exceeds the 4000-char limit — split it and resend")
-    else:
-        why = _pick("卡片已不在需输入状态",
-                    "the card is no longer waiting for input")
-    return (_pick("你的回答没有送出去", "Your answer was not delivered"),
-            _pick(f"{title}：{why}——你打的文字已存进卡片备注，没有丢。",
-                  f"{title}: {why} — your text is saved in the card's notes,"
-                  " nothing is lost."))
-
-
-def msg_answer_failed(title: str, reason: str) -> tuple[str, str]:
-    """§39: the owner's answer could not be delivered into the blocked session
-    (transcript purged / relaunch failed) — never silent. Names the fallback:
-    the card's error text + the 展开详情「在终端接管会话」command."""
-    r = " ".join(str(reason or "").split()).strip()[:160] \
-        or _pick("原因未知", "unknown reason")
-    return (_pick("回答没有送达", "Your answer was not delivered"),
-            _pick(f"{title}：{r} —— 卡片上有错误详情；展开详情可用「在终端接管会话」直接接手",
-                  f"{title}: {r} — the card shows the error; expand details and"
-                  " use \"Take over in terminal\" to step in"))
+def msg_review_interrupted(title: str) -> tuple[str, str]:
+    """#119（§46.3 v0.48.8）：受阻/不再推进的会话被收割进待验收——不是一次
+    正常交付（msg_review_ready 的「已交付草稿」是虚报），文案指向现存出口：
+    验收 / 丢弃 / 打回附一句话（打回即回答，rework 管道继续会话）。"""
+    return (_pick("任务停下来了，去看看它做到哪了", "A task stopped — see where it got to"),
+            _pick(f"{title} —— 会话在等输入，已收下现有成果进「待验收」。"
+                  "验收、丢弃，或点「打回」附一句话回答它并继续",
+                  f"{title} — the session was waiting for input; its work so far"
+                  " is in Review. Accept, discard, or press Send back with a"
+                  " note to answer it and continue"))
 
 
 def msg_radar_dead(source: str, hours: int) -> tuple[str, str]:
@@ -309,33 +267,27 @@ def msg_resuming(title: str) -> tuple[str, str]:
 
 
 def msg_auto_resume_exhausted(title: str) -> tuple[str, str]:
-    """5 straight resume failures — actd gives up; name the exact buttons.
-
-    v0.21 起运行中卡只有一个「停止/Stop」→ 二选一对话框（退回提案 / 去待验收），
-    文案必须指向现存按钮（审计：旧文案引用已删除的「停止并退回」「已办完」）。
-    §46 起放弃自动恢复的**死**卡投影进「需输入」列——但 pid 仍活的 exhausted
-    卡照常留在 运行中（§46.3 以 roster 事实为准），所以文案只承诺永远为真的
-    「已停止自动拉起」，不断言卡在哪一列。"""
+    """5 straight resume failures — actd gives up and harvests to review
+    (#119, §46.3 v0.48.8); the copy names the exact Review-lane verbs."""
     return (_pick("自动恢复已放弃（连续失败 5 次）",
                   "Auto-recovery gave up (5 straight failures)"),
-            _pick(f"{title} —— 已停止自动拉起。打开 App：点「回答…」"
-                  "给它指示继续，或点「停止」选「退回提案」/「去待验收」",
-                  f"{title} — auto-relaunch stopped. Open the app:"
-                  " press \"Answer…\" to instruct it onward, or \"Stop\" and"
-                  " pick \"Discard & re-propose\" / \"Keep for review\""))
+            _pick(f"{title} —— 已停止自动拉起，现有成果收进了「待验收」。"
+                  "验收、丢弃，或点「打回」附一句话让它继续",
+                  f"{title} — auto-relaunch stopped; its work so far is in"
+                  " Review. Accept, discard, or press Send back with a note"
+                  " to keep it going"))
 
 
 def msg_resume_storm(title: str, n: int) -> tuple[str, str]:
     """§46 resume 风暴降级：短窗口内自动救活 n 次后会话又死了 —— 卡死→救→再死
-    的循环没有出口，actd 停止无限救活，把卡投影进「需输入」列请人看一眼。"""
+    的循环没有出口，actd 停止无限救活并收割进待验收（#119）请人看一眼。"""
     return (_pick(f"任务反复中断（30 分钟内已自动救活 {n} 次）",
                   f"Task keeps dying ({n} auto-recoveries in 30 min)"),
-            _pick(f"{title} —— 自动恢复已暂停，需要你看一眼：这张卡在「需输入」列，"
-                  "点「回答…」给它新指示，或点「停止」选「退回提案」/「去待验收」",
-                  f"{title} — auto-recovery paused; please take a look: the card"
-                  " is in Needs input — press \"Answer…\" with fresh directions,"
-                  " or \"Stop\" and pick \"Discard & re-propose\" /"
-                  " \"Keep for review\""))
+            _pick(f"{title} —— 自动恢复已暂停，现有成果收进了「待验收」列。"
+                  "验收、丢弃，或点「打回」附一句话给它新指示",
+                  f"{title} — auto-recovery paused; its work so far is in"
+                  " Review. Accept, discard, or press Send back with fresh"
+                  " directions"))
 
 
 def msg_stop_failed(title: str) -> tuple[str, str]:

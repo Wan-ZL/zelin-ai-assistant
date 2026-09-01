@@ -22,6 +22,10 @@ os.environ["AIASSISTANT_HOME"] = TMP_HOME
 # on. The suite injects fakes everywhere; this is the belt-and-braces so a
 # forgotten seam can never touch the developer's launchd from a test.
 os.environ.setdefault("AIASSISTANT_LAUNCHD_PROBE", "0")
+# §53 数据层后端：套件默认强制 YAML——测试沙箱里 ensure()/tick() 绝不偷偷迁移
+# （activate.py 只在 auto 下激活）。store2 侧的行为测试自己显式切 sqlite
+# （改 env + registry.reset_store_cache()，用完复原）。
+os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
 
 
 # --------------------------------------------------------------------------- #

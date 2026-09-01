@@ -1,9 +1,11 @@
 """Dashboard builder — produces ``state/dashboard.json`` (CONTRACT §2).
 
 actd writes this file; the Mac app reads it (never writes). The write is atomic
-(``.tmp`` then ``rename``). Running/needs_input/completed partitions come from
-joining registry ``status=executing`` items with ``claude agents --json --all``
-by ``session_id``.
+(``.tmp`` then ``rename``). Running/completed partitions come from joining
+registry ``status=executing`` items with ``claude agents --json --all`` by
+``session_id``. ``needs_input[]`` carries ONLY §4 dispatch-halted rows since
+v0.48.8 (#119 — the session blocked/waiting join is retired; wire key stays,
+add-only).
 
 merge_suggestions (merge-review 契约 六) is a pure projection of the job files
 under ``state/merge/*.json`` (actd/act.merge_review write them; we only read):
@@ -21,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import config, deploy_state, failures, health, policy, risk, sources, steer, titles
-from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
+from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
 TIER_HINTS = {
@@ -88,32 +90,8 @@ def _transcript_info_cached(sid: str) -> Optional[tuple]:
     return info
 
 
-# --------------------------------------------------------------------------- #
-# needs_input question memoization (§39)
-# --------------------------------------------------------------------------- #
-# executor.extract_question reads + json-parses the FULL transcript, and a
-# genuinely blocked agent sits with an unchanged transcript for hours — so the
-# ~10s pass must never re-parse an idle one. Same (path, mtime, size)
-# freshness-signature scheme as _TINFO_CACHE (the v0.33.1 tinfo memo
-# precedent): an appended transcript (the agent said more / got answered)
-# invalidates immediately, an idle one costs only the stat calls.
-_QUESTION_CACHE: dict[str, tuple[tuple, Optional[str]]] = {}
-_QUESTION_CACHE_MAX = 512
-
-
-def _question_cached(sid: str) -> Optional[str]:
-    from act.executor import extract_question  # lazy: keep dashboard import-light
-    sig = _transcript_sig(sid)
-    if sig is None:
-        return extract_question(sid)
-    hit = _QUESTION_CACHE.get(sid)
-    if hit is not None and hit[0] == sig:
-        return hit[1]
-    q = extract_question(sid)
-    if len(_QUESTION_CACHE) >= _QUESTION_CACHE_MAX:
-        _QUESTION_CACHE.clear()
-    _QUESTION_CACHE[sid] = (sig, q)
-    return q
+# （§39 needs_input question 记忆化：retired v0.48.8（#119）——受阻会话由
+# reconcile 直接收割进待验收，投影不再提取「会话在问什么」。）
 
 
 # --------------------------------------------------------------------------- #
@@ -1039,67 +1017,17 @@ def build_dashboard(
                         "review_at": _epoch(ex.get("review_at")),
                         "delivery_mode": _delivery_mode(req),
                         "session_active": state in _RUNNING_STATES,
+                        # #119 add-only：这行是「中断收割」而非正常交付（受阻/
+                        # 放弃救活被收进待验收）——detect_transitions 据此不发
+                        # 「AI 已交付草稿」，客户端 decodeIfPresent 可标注。
+                        **_opt("interrupted",
+                               bool(ex.get("interrupted_reason"))),
                     }
                 )
-            elif state in _BLOCKED_STATES or (
-                    not (agent or {}).get("pid") and ex.get("resume_exhausted")
-                    and not ex.get("done")):
-                # §39: surface WHAT the agent is asking — the transcript's
-                # last assistant text after the last real user turn (the same
-                # fence/sidechain-disciplined extraction harvest uses), cached
-                # per (sid, transcript signature) above.
-                # §46 第二臂：auto-resume 已放弃（resume_exhausted，含 resume
-                # 风暴降级）且会话已无活 pid 的 executing 卡 —— 事实上就是
-                # 「需要人才能推进」，投影进 需输入 列（回答…/停止 都在这里），
-                # 不再顶着 unknown 状态在 运行中 列装忙（宪法 3：诚实的健康报告）。
-                # 死的判据 = 无活 pid（本文件 copy_cmd 的既有活性判据），不是
-                # 「不在 roster」——roster --all 会给 failed/stopped 留死条目，
-                # agent is None 判死会让这些卡继续在 running 里装忙。
-                degraded = (not (agent or {}).get("pid")
-                            and ex.get("resume_exhausted"))
-                # 降级卡的 question 用固定文案：死 transcript 的最后一条
-                # assistant 文本不是提问（agent 并没有在等这个答案），拿来
-                # 当 question 展示是误导——固定文案说清事实和两个现存出口。
-                if degraded:
-                    question = failures.pick(
-                        "自动救活多次后仍中断，需要人工确认：点「回答…」给它"
-                        "指示继续，或点「停止」",
-                        'Auto-resume kept failing; needs a human call — press '
-                        '"Answer…" to instruct it onward, or "Stop"')
-                else:
-                    question = (_question_cached(str(resume_sid or sid))
-                                if sid else None)
-                row = {
-                    "id": _s(req.id),
-                    "name": name,
-                    **_title_fields(req),
-                    "session_id": resume_sid,
-                    "short_id": short_id,
-                    "copy_cmd": copy_cmd,
-                    "agent_name": agent_name,
-                    "state": "blocked",
-                    # §39: the bare "input" fallback stays ONLY when no
-                    # transcript text exists — next to a real question it
-                    # was pure noise.
-                    "waiting_for": ((agent or {}).get("waiting_for")
-                                    or (None if question else "input")),
-                    # §39: an undeliverable answer (executor.answer failure)
-                    # must be visible ON the card, not just in a notification.
-                    "last_error": ex.get("last_error"),
-                    "last_error_id": failures.classify(ex.get("last_error")),
-                }
-                if question:
-                    row["question"] = question
-                if degraded:
-                    # §46 add-only：告诉 App（和 detect_transitions）这行是
-                    # 降级卡，不是 agent 真的在提问 —— 老 App decodeIfPresent
-                    # 直接忽略。
-                    row["resume_exhausted"] = True
-                # v-next §M6.1：steer 三态诚实回执（queued/delivered）
-                steers = _steers_view(req)
-                row.update(_opt("steers", steers))
-                row.update(_opt("origin_trust", getattr(req, "origin_trust", None)))
-                needs_input.append(row)
+            # #119（v0.48.8）：受阻/放弃救活的会话不再投影「需输入」——
+            # reconcile 会在下一个 pass 把它们收割进待验收；投影间隙里它们
+            # 留在 运行中 列（state 原样，诚实呈现），不再有「回答…」入口。
+            # needs_input[] 只剩 §4 派发刹车行（上方 dispatch_halted 分支）。
             else:
                 # running, or agent not found yet -> still consider it running
                 steers = _steers_view(req)

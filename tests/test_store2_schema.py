@@ -114,12 +114,15 @@ class TransitionWallTestCase(unittest.TestCase):
             set_status(self.conn, "R-001", "raising", "agent")
         self.assertIn("ILLEGAL_TRANSITION", str(cm.exception))
 
-    def test_system_approve_is_illegal(self):
-        # 批准 = 用户专属（§3）：system 也不许替用户按批准键
+    def test_system_approve_is_listed_for_autodispatch(self):
+        # v0.48.8 接线修订：§51 hand 卡免批通道 = actd 自主管线（system）把
+        # card_sent 翻 approved 是真实管线转移——白名单补行（add-only）。
+        # 资格闸门在应用层（policy.may_auto_dispatch）；agent 仍零行（下测）。
         insert_card(self.conn, "R-001", "card_sent")
-        with self.assertRaises(sqlite3.IntegrityError) as cm:
-            set_status(self.conn, "R-001", "approved", "system")
-        self.assertIn("ILLEGAL_TRANSITION", str(cm.exception))
+        set_status(self.conn, "R-001", "approved", "system")
+        row = self.conn.execute(
+            "SELECT status FROM cards WHERE id = 'R-001'").fetchone()
+        self.assertEqual(row[0], "approved")
 
     def test_unlisted_transition_is_illegal(self):
         # fail-closed：表里没有的转移一律拒绝（delivered 不能直接回 executing）
@@ -240,6 +243,19 @@ class OriginTrustWallTestCase(unittest.TestCase):
         row = self.conn.execute(
             "SELECT origin_trust FROM cards WHERE id = 'R-001'").fetchone()
         self.assertEqual(row["origin_trust"], "hand")
+
+    def test_non_user_downgrade_is_allowed(self):
+        # v0.48.8 接线修订（§50 M1.a）：管线按 sources 重算章只可能降档——
+        # system/agent 的降档放行，升档（自提权）仍被墙拒（上测）。
+        self.conn.execute(
+            "UPDATE cards SET origin_trust = 'hand', last_actor_type = 'user'"
+            " WHERE id = 'R-001'")
+        self.conn.execute(
+            "UPDATE cards SET origin_trust = 'external',"
+            " last_actor_type = 'system' WHERE id = 'R-001'")
+        row = self.conn.execute(
+            "SELECT origin_trust FROM cards WHERE id = 'R-001'").fetchone()
+        self.assertEqual(row["origin_trust"], "external")
 
     def test_same_value_rewrite_is_allowed(self):
         # 幂等 retry 无害：system 重写同值不算改档、放行

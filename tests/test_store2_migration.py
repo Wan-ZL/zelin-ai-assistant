@@ -436,6 +436,42 @@ class MigrationRefusalTestCase(unittest.TestCase):
 
 
 @unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
+class NonSerializableValueRefusalTestCase(unittest.TestCase):
+    """B1 判例（CLI 面）：payload JSON 装不下的值（手编 YAML 未加引号的日期
+    → datetime.date）曾让 CLI 直接 traceback（TypeError 不在 MigrateError
+    网里）——必须与其他坏形态同路：干净 REFUSED（rc 非零）+ plan 层点名。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="store2-nonjson-"))
+        self.reg = self.tmp / "registry"
+        self.reg.mkdir(parents=True)
+        (self.reg / "R-070.yaml").write_text(
+            "id: R-070\ntitle: 手编日期卡\nstatus: detected\n"
+            "deadline: 2026-09-15\n", encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_unquoted_date_refuses_whole_run_without_traceback(self):
+        import act.lib.store2.migrate_yaml as m
+        db = self.tmp / "s.db"
+        rc = m.main(["--registry", str(self.reg), "--db", str(db)])   # 绝不抛
+        self.assertNotEqual(rc, 0)
+
+    def test_dry_run_refuses_too(self):
+        import act.lib.store2.migrate_yaml as m
+        rc = m.main(["--registry", str(self.reg),
+                     "--db", str(self.tmp / "s.db"), "--dry-run"])
+        self.assertNotEqual(rc, 0)
+
+    def test_plan_error_names_the_shape(self):
+        import act.lib.store2.migrate_yaml as m
+        by_id, _ = m.scan_registry(self.reg)
+        p = m.plan_card("R-070", by_id["R-070"])
+        self.assertTrue(any("JSON" in e for e in p["errors"]), p["errors"])
+
+
+@unittest.skipUnless(_MIGRATE_LANDED, _SKIP_REASON)
 class UnknownKeyRefusalTestCase(unittest.TestCase):
     """未知顶层键 = 入库即静默丢字段（不可逆）——默认整体拒绝并点名键；
     --allow-unknown 显式降级为 WARN + 丢弃（from_dict 语义）。"""

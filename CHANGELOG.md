@@ -28,6 +28,17 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.8] - 2026-09-01
+
+v-next-2 P1（决议 D2）：「切换时机：等 QA 网配好之后，现在就可以切。备份与回滚：在电脑上留个备份，如果切换失败，手动导回去。」卡片账本的真源从 YAML 文件切到 SQLite（store2），同版落地 owner 拍板的 #119（需输入状态退役）。
+
+### Changed
+- **store2 接线为真源（CONTRACT §53 从「休眠地基」改写；§0 宪法第 1 条显式精确化；§1/§44 同步修法）**：actd 首个 pass 自动执行激活协议——整目录备份 `act/registry/`（含 archive/，sha256 manifest，`state/backups/registry-<ts>/`，永不覆盖）→ 从备份迁移进 `state/store2.db` → 导出 `state/registry-export/` → 与备份**逐字段比对**→ 零差异且迁移窗口无并发 YAML 写才写真源标记 `state/store2_truth.json`；任何差异 = 删库拒绝 + `state/store2_activation.json` 台账 + doctor FAIL，YAML 照旧是真源（没有半态）。`act/lib/registry.py` 公开 API 两后端逐字一致（callers 零改动、永不见 SQL；判例 `tests/test_registry_backend_parity.py`）；激活后每本地日导出一份可 git-diff 的 YAML 镜像（prune 常开，目录大小 = 活卡数）。多进程写者（雷达/digest/capture）经同一门面走 BEGIN IMMEDIATE 事务（跨进程并发判例 `tests/integration/test_store2_concurrent_writers.py`）；「agent 不得批准/验收」的权限墙自此实际生效（DB trigger + 门面 Python 墙双层，actd 级判例）。doctor 新增 `store2` 行；回滚开关 `registry.backend: yaml` 保留一个版本，手动回滚步骤见 docs/TROUBLESHOOTING.md「store2 回滚」。白名单接线补行 5 条（§51 system 免批通道等）+ origin_trust 触发器改「只禁升档」（§53.2）。
+- **需输入状态退役（#119，CONTRACT §2/§5/§6/§13 语义、§39 tombstone、§46.3 修订）**：不再检测 session 是否需要输入——受阻/空闲/放弃救活的 running 会话由 reconcile 按既有 stop_to_review 收割路径直接落**待验收**（交付摘要保留会话最后的提问原文；review 行带 add-only `interrupted: true`，通知 `msg_review_interrupted`）；「回答」由既有「打回 + 修改方向」覆盖。`needs_input[]` 键 add-only 保留，唯一住户 = §4 派发刹车行。resume 风暴 / 5 连败放弃改为「降级即收割进待验收」，升级前滞留 executing 的历史降级卡首个 pass 自动迁出。
+
+### Removed
+- `answer_input` inbox 动作 + `executor.answer` + `extract_question` + `msg_needs_input`/`msg_answer_*` 通知 + web「回答…」按钮 + 两份 golden 样张（§39 tombstone；server/webui 对该动作按未知动作 400，actd 对迟到文件幂等 ack）。§39.2 的安全窗口 doctrine（stop-idle-then-resume、roster 探测、「owner 打的字绝不静默蒸发」）由 steer/briefing 继续执行，不在墓碑内。
+
 ## [0.48.7] - 2026-09-01
 
 v-next-2 P0 收尾(决议 D9):「自动派工作,要不先不要搞预算。把现有的手打卡自动派工每天 5 块钱的预算也取消吧。目前还没有遇到预算的问题,钱是足够的。」
@@ -2080,7 +2091,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.7...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.8...HEAD
+[0.48.8]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.7...v0.48.8
 [0.48.7]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.6...v0.48.7
 [0.48.6]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.5...v0.48.6
 [0.48.5]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...v0.48.5

@@ -130,9 +130,10 @@ describe("dispatch-halted blocked row (§4 storm brake)", () => {
     expect(screen.queryByRole("button", { name: "Answer…" })).toBeNull();
   });
 
-  it("a genuine blocked agent row still gets Answer…", () => {
+  it("blocked rows never offer Answer… (#119: answer_input retired)", () => {
     render(<RunningCard row={{ id: "R-1", name: "x", state: "blocked", question: "A or B?" }} isBlocked />);
-    expect(screen.getByRole("button", { name: "Answer…" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Answer…" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
     expect(screen.queryByText(/Launch stopped/)).toBeNull();
   });
 });

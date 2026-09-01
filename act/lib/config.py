@@ -99,6 +99,11 @@ OUTPUT_FORMATS: tuple = ("markdown", "html")
 # from the state/digest.json marker, not pinned to a weekday.
 DIGEST_FREQUENCIES: tuple = ("off", "daily", "every2days", "weekly")
 DEFAULT_DIGEST_FREQUENCY: str = "off"
+# §53 数据层后端（D2）：auto = 激活标记在则 SQLite 为真源（默认，首跑自动迁移）；
+# yaml / sqlite = 强制指定（yaml 是回滚开关，保留一个版本）。真解析在
+# registry.backend()——这里只是配置词表。
+REGISTRY_BACKENDS: tuple = ("auto", "yaml", "sqlite")
+DEFAULT_REGISTRY_BACKEND: str = "auto"
 
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
@@ -194,6 +199,10 @@ class Config:
     # Default off — the owner turns it on in Settings (overrides key
     # `digest_frequency`) or config.yaml `digest.frequency`.
     digest_frequency: str = DEFAULT_DIGEST_FREQUENCY
+
+    # §53 数据层后端开关（config.yaml `registry.backend`）——rollback 用；
+    # 词表外的值一律回落 auto（fail-safe：配错字不至于让真源判定翻车）。
+    registry_backend: str = DEFAULT_REGISTRY_BACKEND
 
     # approval / cost
     poll_interval_seconds: int = 10
@@ -424,6 +433,11 @@ def _coerce_digest_frequency(value) -> str:
     return v if v in DIGEST_FREQUENCIES else DEFAULT_DIGEST_FREQUENCY
 
 
+def _coerce_registry_backend(value) -> str:
+    v = str(value or "").strip().lower()
+    return v if v in REGISTRY_BACKENDS else DEFAULT_REGISTRY_BACKEND
+
+
 def load_config() -> Config:
     """Load ``config.yaml`` (falling back to ``config.example.yaml``).
 
@@ -585,6 +599,11 @@ def load_config() -> Config:
     digest_blk = _dict_or(data.get("digest"))
     if "frequency" in digest_blk:
         cfg.digest_frequency = _coerce_digest_frequency(digest_blk.get("frequency"))
+
+    # §53（D2）数据层后端开关——registry.backend() 的配置输入
+    registry_blk = _dict_or(data.get("registry"))
+    if "backend" in registry_blk:
+        cfg.registry_backend = _coerce_registry_backend(registry_blk.get("backend"))
 
     voice = _dict_or(data.get("voice"))
     cfg.voice_enabled = _bool_or(
@@ -1005,6 +1024,16 @@ def _apply_settings_overrides(cfg: Config) -> None:
 # one-line python call. One place builds the fragment so quoting/NULL handling
 # is testable and the shell never string-munges app names.
 # --------------------------------------------------------------------------- #
+def registry_backend_setting() -> str:
+    """§53：config 面的后端设定（auto|yaml|sqlite）。读 load_config（坏 config
+    回落 auto）；调用频度高的判定方（registry.backend）自带进程内 memo——
+    改 config.yaml 切换后端 = 重启守护进程生效（rollback 文档口径）。"""
+    try:
+        return load_config().registry_backend
+    except Exception:  # noqa: BLE001 - 坏 config 绝不让真源判定崩掉
+        return DEFAULT_REGISTRY_BACKEND
+
+
 def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
     """WHERE-clause fragment excluding frames whose app/window matches
     ``recording.ignored_apps``, mirroring the engine's --ignored-windows

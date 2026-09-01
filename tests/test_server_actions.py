@@ -15,7 +15,7 @@ G1 尚未落地时（inbox_writer 仍是 stub），golden/校验用例整组 ski
 - 字段全集按 F3 docs/design/inbox-actions.md（含 publish/images/session_ids/
   preset）——比 G1 stub docstring 的 webui _INBOX_KEYS 白名单宽，golden 是
   BUILD-CONTRACT 点名的验收物，以 golden 为准；
-- 特形动作（split_note/set_title/answer_input/capture/...）**无 comment 键**
+- 特形动作（split_note/set_title/capture/...）**无 comment 键**
   （F3 §3）——G1 不得照抄 webui 的「有 id 就补 comment」规则。
 """
 from __future__ import annotations
@@ -101,14 +101,14 @@ class StubNotImplementedTestCase(_ActionsHomeMixin, unittest.TestCase):
 @unittest.skipIf(_STUB, "G1 inbox_writer not implemented yet — "
                         "golden tests activate when it lands")
 class GoldenActionTestCase(_ActionsHomeMixin, unittest.TestCase):
-    """全部 33 个 golden：每个动词/变体 → 恰好一个新 inbox 文件，语义等于 golden。"""
+    """全部 31 个 golden：每个动词/变体 → 恰好一个新 inbox 文件，语义等于 golden。"""
 
     def setUp(self):
         self._boot()
 
     def test_every_golden_fixture_round_trips(self):
         goldens = sorted(GOLDEN_DIR.glob("*.golden.json"))
-        self.assertGreaterEqual(len(goldens), 33, "golden fixtures missing?")
+        self.assertGreaterEqual(len(goldens), 31, "golden fixtures missing?")
         seen_stems = set()
         for gpath in goldens:
             with self.subTest(golden=gpath.name):
@@ -382,7 +382,7 @@ class BodyGateTestCase(_ActionsHomeMixin, unittest.TestCase):
 class GoldenFixtureEolTestCase(unittest.TestCase):
     """PR #106 追加（Windows CI 2026-08-31）：golden fixtures 是字节级钉死的
     判例——Windows runner 的 autocrlf 把 checkout 出的 fixture 转成 CRLF，
-    33 个字节对照全数误红。.gitattributes 必须以 -text 钉住它们（任何平台
+    31 个字节对照全数误红。.gitattributes 必须以 -text 钉住它们（任何平台
     零转换），盘上本体必须保持 LF；字节对照本身已用 read_bytes（binary）。"""
 
     def test_gitattributes_pins_golden_fixtures(self):
@@ -391,7 +391,7 @@ class GoldenFixtureEolTestCase(unittest.TestCase):
 
     def test_fixtures_carry_no_crlf_on_disk(self):
         goldens = sorted(GOLDEN_DIR.glob("*.golden.json"))
-        self.assertGreaterEqual(len(goldens), 33, "golden fixtures missing?")
+        self.assertGreaterEqual(len(goldens), 31, "golden fixtures missing?")
         for p in goldens:
             self.assertNotIn(b"\r", p.read_bytes(),
                              f"{p.name}: CRLF on disk — re-checkout with the "

@@ -9,13 +9,14 @@
   失败启动不入账——数「救活成功」不数「尝试」，网络抖动 3 连败走既有
   resume_attempts>=5 的连续失败老路，不永久降级（PR #97 review P1）；
 - 30 分钟窗口（RESUME_STORM_WINDOW_S）内成功救活数达 RESUME_STORM_THRESHOLD=3
-  次后 session 又死了 -> 置 resume_exhausted（复用既有放弃机制）+
-  resume_storm_at + notes [resume-storm] 标签 + msg_resume_storm 通知 +
-  analytics `resume_storm_degraded`，本 pass 不再发起 resume；
+  次后 session 又死了 -> 置 resume_exhausted + resume_storm_at + notes
+  [resume-storm] 标签 + msg_resume_storm 通知 + analytics
+  `resume_storm_degraded`，并按 #119（§46.3 v0.48.8）收割进待验收（review），
+  不再发起 resume；
 - brief 内部已 _rebook 落盘（新 session_id/清队列）——reconcile 记账基于盘上
   重读的卡，绝不用启动前的旧 execution 快照覆盖回滚（PR #97 review P1）；
-- executor.answer（owner 亲手救活）清 resume_history，正常 auto-resume
-  不会撞上残留计数再次降级。
+（executor.answer 已随 #119 退役——「回答」语义由待验收「打回」承接，
+rework 起新一轮时 execution 整体重建，风暴账自然清零。）
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py).
 """
@@ -26,7 +27,7 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
-from act import actd, executor
+from act import actd
 from act.lib import analytics, config, registry
 from act.lib.registry import Requirement, State
 
@@ -105,6 +106,8 @@ class StormLedgerTestCase(ResumeStormBase):
         ex = registry.load("R-950").execution or {}
         self.assertTrue(ex.get("resume_exhausted"))
         self.assertTrue(ex.get("resume_storm_at"))
+        # #119：降级即收割进待验收
+        self.assertEqual(registry.load("R-950").status, State.REVIEW.value)
 
     def test_history_is_capped(self):
         old = [_iso_ago(99999)] * actd.RESUME_HISTORY_CAP   # 窗口外，不触发风暴
@@ -121,11 +124,14 @@ class StormLedgerTestCase(ResumeStormBase):
         self._reconcile(resume)
         resume.assert_not_called()                     # 停止救活
         ex = registry.load("R-950").execution or {}
-        self.assertTrue(ex.get("resume_exhausted"))    # 复用既有放弃机制
+        self.assertTrue(ex.get("resume_exhausted"))
         self.assertTrue(ex.get("resume_storm_at"))
         req = registry.load("R-950")
         self.assertIn("[resume-storm]", req.notes or "")
-        self.assertIn("需人工看一眼", req.notes or "")
+        # #119：降级不再指「需输入」，而是收割进待验收
+        self.assertEqual(req.status, State.REVIEW.value)
+        self.assertEqual(ex.get("interrupted_reason"), "resume_storm")
+        self.assertTrue(ex.get("done"))
         titles = [c.args[0] for c in self.notify.call_args_list]
         self.assertTrue(any("反复中断" in t for t in titles))
         events = [e.get("event") for e in analytics.read_events()]
@@ -144,9 +150,9 @@ class StormLedgerTestCase(ResumeStormBase):
         hist = [_iso_ago(1200), _iso_ago(600), _iso_ago(60)]
         self._mk_req(execution={"session_id": SID, "resume_history": hist})
         resume = mock.Mock(return_value=True)
-        self._reconcile(resume)                        # 降级
+        self._reconcile(resume)                        # 降级（并收割进待验收）
         self.notify.reset_mock()
-        self._reconcile(resume)                        # 后续 pass：exhausted 短路
+        self._reconcile(resume)                        # 后续 pass：review 卡短路
         resume.assert_not_called()
         self.notify.assert_not_called()                # 不重复 ping
 
@@ -209,26 +215,6 @@ class BriefRebookTestCase(ResumeStormBase):
         self.assertEqual(ex.get("session_id"), NEW_SID)   # 盘上新账原样保留
         self.assertNotIn("pending_briefings", ex)          # 旧队列没有复活
         self.assertNotIn("resume_history", ex)             # 本轮没记账（下 pass 补）
-
-
-class AnswerClearsStormTestCase(ResumeStormBase):
-    def test_owner_answer_resets_resume_history(self):
-        # answer() 清 resume_exhausted 的同时也清 resume_history —— 否则
-        # owner 亲手救活的卡下一次正常 auto-resume 立刻再次降级。
-        req = self._mk_req(execution={
-            "session_id": SID, "resume_exhausted": True, "resume_storm_at":
-            _iso_ago(60), "resume_history": [_iso_ago(600), _iso_ago(60)]})
-        with mock.patch.object(executor, "_transcript_info",
-                               return_value=(SID, config.STATE_DIR)), \
-             mock.patch.object(executor, "_agent_info", return_value={}):
-            ok = executor.answer(
-                req, "继续吧", cfg=config.Config(),
-                runner=mock.Mock(return_value=mock.Mock(
-                    returncode=0, stdout="backgrounded · dddd4444", stderr="")))
-        self.assertTrue(ok)
-        ex = registry.load("R-950").execution or {}
-        self.assertNotIn("resume_exhausted", ex)
-        self.assertNotIn("resume_history", ex)
 
 
 if __name__ == "__main__":

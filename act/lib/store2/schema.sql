@@ -1,4 +1,4 @@
--- store2 schema v1 — SQLite 地基（BUILD-CONTRACT §3；本 PR 不接线，actd 不 import）
+-- store2 schema v1 — SQLite 真源的 DDL（CONTRACT §53；v0.48.8 起接线，registry 门面是唯一调用者）
 --
 -- 设计根据（真源只读参考，勿改）：
 --   * live docs/CONTRACT.md §1 状态机 + §8/§9/§10/§21/§24/§30/§45 各转移法条
@@ -287,6 +287,23 @@ INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) 
   ('archived',  'detected',  'user'),
   ('archived',  'trashed',   'user');
 
+-- v0.48.8 接线补行（add-only，§53.2）：白名单首版从 CONTRACT/handlers 派生时
+-- 漏收的**真实管线转移**，接线 parity 测试逐条撞出（schema.md T-14 预案）：
+--   card_sent→approved(system)  = §51 hand 卡免批通道（policy.may_auto_dispatch
+--     是资格闸门；actor=system 因为发起者是 actd 自主管线，不是 agent——
+--     approve 的 user 独占语义收窄为「user 或过 §51 天花板的 system」，agent 仍零行）
+--   raising→detected(system)    = §8 扩写失败兜底退回欠账（actd.process_raising）
+--   delivered→detected(system)  = §45 LIMITED 天花板下的 re-raise 只落备选
+--     （registry.reraise_or_followup cap_detected）
+--   merged→card_sent/detected(system) = §3.3 canonical 链 dead-end 在 merged
+--     终态上的 re-raise（registry.canonical 跳链落空时的既有路径）
+INSERT OR IGNORE INTO transition_whitelist (old_status, new_status, actor_type) VALUES
+  ('card_sent', 'approved',  'system'),
+  ('raising',   'detected',  'system'),
+  ('delivered', 'detected',  'system'),
+  ('merged',    'card_sent', 'system'),
+  ('merged',    'detected',  'system');
+
 -- ---------------------------------------------------------------------------
 -- triggers — 状态机 + 权限墙 + append-only 执法（dashi RAISE 惯用法）
 -- ---------------------------------------------------------------------------
@@ -333,11 +350,20 @@ BEGIN
   );
 END;
 
--- origin_trust 信任档只许用户拨（hand = 免审批快车道；agent/system 自封 hand
--- = 信任矩阵自提权）。同值重写放行——幂等 retry 无害
+-- origin_trust 信任档：非用户只许**降档**（v0.48.8 接线修订）。§50 M1.a 的
+-- live 语义 = 管线在每次 fold/铸卡后按 sources 重算章（最小信任者定卡）——
+-- sources 只增不减，重算只可能降档或持平；升档（如自封 hand = 免审批快车道）
+-- 才是 M1.d 要堵的自提权，只许用户拨。首版 trigger 一刀切禁了非用户的一切
+-- 改动，把合法的 fold 降档也拦死（接线 parity 测试撞出）。同值重写放行——
+-- 幂等 retry 无害。信任序 = policy._TRUST_RANK（hand 3 > proposed 2 >
+-- meeting 1 > external 0）。
 CREATE TRIGGER IF NOT EXISTS cards_origin_trust_user_only
 BEFORE UPDATE ON cards
 WHEN NEW.origin_trust <> OLD.origin_trust AND NEW.last_actor_type <> 'user'
+  AND (CASE NEW.origin_trust WHEN 'hand' THEN 3 WHEN 'proposed' THEN 2
+       WHEN 'meeting' THEN 1 ELSE 0 END)
+    > (CASE OLD.origin_trust WHEN 'hand' THEN 3 WHEN 'proposed' THEN 2
+       WHEN 'meeting' THEN 1 ELSE 0 END)
 BEGIN
   SELECT RAISE(ABORT, 'ORIGIN_TRUST_USER_ONLY');
 END;
