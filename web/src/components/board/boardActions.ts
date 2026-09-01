@@ -22,9 +22,6 @@ export const REWORK_EMPTY_FALLBACK =
   "每一条是否真正达成、产出物是否在承诺的位置、质量是否达到可直接使用的程度。" +
   "找出差距，自行改进后重新交付，并用两三句话说明这次改了什么。";
 
-/** §39.2 answer_input 上限（code points；JS 展开即 code points，与 actd 复验同单位） */
-export const ANSWER_MAX_CODE_POINTS = 4000;
-
 export function clipCodePoints(s: string, max: number): string {
   const points = [...s];
   return points.length <= max ? s : points.slice(0, max).join("");

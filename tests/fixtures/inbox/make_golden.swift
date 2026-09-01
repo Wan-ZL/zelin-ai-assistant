@@ -75,15 +75,7 @@ write("feedback-images.golden.json",
        "text": "见截图：卡片角标重叠", "publish": false,
        "images": ["/tmp/zai-demo/state/feedback/attachments/D2E0A1B4-1111-2222-3333-444455556666-1.png"],
        "ts": TS])
-// §39 answer_input（无 comment 键；text ≤4000 unicode scalars）
-write("answer_input.golden.json",
-      ["id": "R-001", "action": "answer_input",
-       "text": "用方案 B，先跑通再优化", "ts": TS])
-// §10bis 附图走 text 尾行（前缀常量 = actd.ANSWER_ATTACHMENT_PREFIX，逐字）
-write("answer_input-attachment.golden.json",
-      ["id": "R-001", "action": "answer_input",
-       "text": "看这张截图\n[附图，用 Read 工具查看] /tmp/zai-demo/state/attachments/ABCD1234-0000-0000-0000-000000000000-1.png",
-       "ts": TS])
+// （§39 answer_input goldens：retired v0.48.8（#119））
 // §10 capture（文件名 capture-<UUID>.json；这里只钉字节形状）
 write("capture.golden.json",
       ["action": "capture", "text": "给 OpenReview 提交 rebuttal，提醒我周五前", "ts": TS])

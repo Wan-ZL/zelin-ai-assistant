@@ -56,7 +56,7 @@ _SPECIAL_FIELDS = {
     "merge_force": ({"ids", "primary"}, set()),
     # feedback：publish/ids 缺省补 Mac 恒在形（false / []）——见 _build_feedback
     "feedback": (set(), {"ids", "publish", "text", "images"}),
-    "answer_input": ({"id", "text"}, set()),
+    # answer_input：retired v0.48.8（#119）——未知动作按零容忍 400
     "capture": ({"text"}, {"mode", "images", "preset"}),
     "weekly_digest_now": (set(), set()),
     "import_claude_sessions": ({"session_ids"}, set()),
@@ -74,8 +74,6 @@ _ACTOR_VERBS = frozenset({"capture", "comment"})
 _CAPTURE_PRESET = "proposals_triage"
 # §10bis capture images 上限（actd 边界校验同值；这里 fail-closed 提前 400）
 _CAPTURE_IMAGES_MAX = 4
-# §39.2 answer_input text 上限（code points，Python len 即是）
-_ANSWER_MAX = 4000
 # §37 set_title 归一后上限（code points——比 Swift Character 计数更贴 actd 复验）
 _TITLE_MAX = 64
 
@@ -241,17 +239,6 @@ def _build_feedback(payload: dict) -> dict:
     return rec
 
 
-def _build_answer_input(payload: dict) -> dict:
-    # §39.2：trimmed 1..4000 code points（Python len 即 code points）；
-    # 附图尾行由客户端拼进 text，无新键——这里只按总长校验，原文照写。
-    text = _require_str(payload.get("text"), "text", allow_empty=True)
-    if not (1 <= len(text.strip()) <= _ANSWER_MAX):
-        raise InvalidFieldError(f"text must be 1..{_ANSWER_MAX} chars")
-    return {"action": "answer_input",
-            "id": _require_safe_id(payload.get("id"), "id"),
-            "text": text}
-
-
 def _build_capture(payload: dict) -> dict:
     rec = {"action": "capture",
            "text": _require_str(payload.get("text"), "text")}
@@ -290,7 +277,6 @@ _SPECIAL_BUILDERS = {
     "merge_review": _build_merge_review,
     "merge_force": _build_merge_force,
     "feedback": _build_feedback,
-    "answer_input": _build_answer_input,
     "capture": _build_capture,
     "weekly_digest_now": lambda payload: {"action": "weekly_digest_now"},
     "import_claude_sessions": _build_import_sessions,

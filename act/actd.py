@@ -262,14 +262,10 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
-            # §39 回答需输入: carries "id" + "text" (not comment) — the owner's
-            # typed answer for a blocked session, delivered via executor.answer.
-            if action == "answer_input":
-                result = _apply_answer_input(decision)
-                processed += 1
-                _write_applied_ack(path.stem, result)
-                _safe_unlink(path)
-                continue
+            # §39 answer_input：retired v0.48.8（issue #119）——受阻会话不再挂
+            # 「需输入」等回答，reconcile 直接收割进待验收；「回答」的语义由
+            # 待验收的「打回 + 修改方向」完整覆盖。迟到的 answer_input 文件走
+            # 下方 unknown-action 路径（幂等 ack "unknown"，绝不复活会话）。
 
             # §22 one-shot Claude Code session import — no requirement-level id.
             if action == "import_claude_sessions":
@@ -1014,185 +1010,6 @@ def _apply_feedback(decision: dict) -> str:
     analytics.log_event("inbox_feedback", n=len(ids), publish=publish,
                         uploaded=rec.get("uploaded"))
     return "running"
-
-
-# 附图行前缀（贴图 建议#5）— the Swift side generates these lines with the SAME
-# literal (mac/Sources/PastedImages.swift, PastedImages.answerLinePrefix); keep
-# the two in sync. The lines are MACHINE-generated and carry local absolute
-# paths (macOS username / directory layout), so they must be stripped from the
-# capture_input-gated analytics text (docs/TELEMETRY.md: content fields only
-# ever carry what the user actually typed) — the text delivered into the
-# session keeps them untouched.
-ANSWER_ATTACHMENT_PREFIX = "[附图，用 Read 工具查看] "
-
-
-def _strip_attachment_lines(text: str) -> str:
-    """Analytics-only scrub: drop the machine-generated 附图 lines (must run
-    BEFORE clip_content — its whitespace collapse merges lines, after which a
-    prefix match can't find them)."""
-    return "\n".join(
-        line for line in str(text or "").splitlines()
-        if not line.startswith(ANSWER_ATTACHMENT_PREFIX)
-    ).strip()
-
-
-# §39.2 answer cooldown: a second answer landing this soon after a successful
-# one is a race (second device / double-submit), not a reply to a NEW question
-# — the resumed session may not even be on the roster yet, so the roster probe
-# alone can't see it. 120s covers the resume startup gap plus a phone round
-# trip; a genuinely new question normally arrives well past it (and the
-# archived-text notice tells the answerer to resend after the window).
-_ANSWER_COOLDOWN_S = 120
-
-
-def _answer_not_delivered(req: Requirement, text: str, kind: str) -> str:
-    """§39.2: a VALIDATED answer that cannot be delivered because the moment
-    has passed — the card left needs_input (promotion race), the session is
-    actively working (someone else answered it first), an answer landed
-    moments ago (cooldown), or the text exceeds the wire bound. Both UIs
-    already accepted the send as success, so a bare logged no-op silently
-    swallows the owner's typed text: archive it in notes + notify instead.
-    Returns the §5.4 "noop" ack (nothing was started)."""
-    reasons = {
-        "working": "会话正在工作中，可能已被回答",
-        "review": "任务已完成进了待验收",
-        "recent": "刚有一条回答送达，可能还在生效中",
-        "oversize": "回答超过 4000 字上限",
-    }
-    reason = reasons.get(kind, f"卡片已不在需输入状态（现为 {req.status}）")
-    stamp = _dt.date.today().isoformat()
-    tag = f"[{stamp} 回答未投递] {reason}；原文：{text[:200]}"
-    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
-    save(req)
-    notify.notify(*notify.msg_answer_not_delivered(req.title or req.id, kind),
-                  req=req.id)
-    _log(f"inbox: {req.id} answer_input NOT delivered ({kind}: {reason}) — "
-         f"noop, text archived in notes")
-    analytics.log_event("inbox_answer_input", req=req.id, ok=False,
-                        reason=kind, chars=len(text))
-    return "noop"
-
-
-def _apply_answer_input(decision: dict) -> str:
-    """回答需输入 (CONTRACT §39) — deliver the owner's typed answer into a
-    blocked session via executor.answer (stop-idle-then-resume, the rework
-    plumbing with an ``OWNER ANSWER:`` prefix instead of the 打回 preamble).
-
-    ``{"action":"answer_input","id":"R-001","text":"…"}`` — boundary
-    validation here (§33 house pattern, fail-closed): ``text`` must be a str
-    whose trimmed length is 1..4000 (non-str / empty / oversize -> logged
-    drop — junk must never relaunch a session); unknown card -> "unknown";
-    a phone-pinned ``expected_status`` mismatch OR a card no longer EXECUTING
-    (需输入 rows only ever project executing cards) -> stale, NOT silent:
-    the validated text is archived via _answer_not_delivered.
-
-    §39.2 pre-delivery roster probe: on-disk EXECUTING covers roster working
-    AND blocked, and executor.answer STOPS the session before resuming — so
-    without a fresh roster read, a stale second device's 「回答…」(or a webui
-    answer_input aimed at any executing card) would kill a MID-RUN session at
-    an arbitrary tool call and resume it with a duplicate answer. A session
-    with a live pid whose state is not blocked is therefore never touched:
-    no stop, no resume — archive + notify (the second answerer must learn
-    the first answer likely won). Only a genuinely blocked session — or a
-    dead/absent one (the existing resume-a-dead-session path) — receives
-    stop+resume.
-
-    Honest acks (§5.4): "running" ONLY when the answer genuinely reached the
-    session (notes tag [回答已送达]); every other outcome is "noop" AND
-    visible — [回答未投递] (stale/working, text archived) or [回答送达失败]
-    (launch failure) + notification + the card's last_error (dashboard §39)
-    — never silent.
-    """
-    if executor is None:
-        _log("inbox: answer_input requested but executor unavailable — dropped")
-        return "noop"
-    text = decision.get("text")
-    if not isinstance(text, str):
-        _log(f"inbox: answer_input with non-string text "
-             f"({type(text).__name__}) — dropped")
-        return "noop"
-    t = text.strip()
-    if not t:
-        _log("inbox: answer_input with empty text — dropped")
-        return "noop"
-    req_id = decision.get("id")
-    req = load(req_id) if req_id else None
-    if req is None:
-        _log(f"inbox: answer_input for unknown req {req_id!r} — dropped")
-        return "unknown"
-    # From here on there is TEXT and a card — any non-delivery must archive
-    # the text + notify (§39.2), never a bare logged no-op. Oversize included:
-    # the clients clip to 4000 unicode scalars, so landing here means a buggy/
-    # raw client — the head of the text is still worth saving.
-    if len(t) > 4000:
-        return _answer_not_delivered(req, t, "oversize")
-    expected_status = decision.get("expected_status")
-    if (not _precondition_ok(req, expected_status)
-            or str(req.status) != State.EXECUTING.value):
-        # stale pin and status-moved collapse to one surface: the phone only
-        # ever pins "executing", so a pin mismatch implies the card moved —
-        # most commonly _promote_if_delivered's executing→review promotion
-        # racing the inbox pass.
-        _log(f"inbox: {req.id} answer_input stale "
-             f"(expected {expected_status}, is {req.status})")
-        kind = ("review" if str(req.status) in (State.REVIEW.value,
-                                                State.DELIVERED.value)
-                else "moved")
-        return _answer_not_delivered(req, t, kind)
-    # §39.2 pre-delivery roster probe (see docstring): never stop a session
-    # that is actively WORKING with a live process.
-    ex_now = req.execution if isinstance(req.execution, dict) else {}
-    sid = ex_now.get("session_id")
-    if sid:
-        try:
-            agent = _index_agents(_run_claude_agents()).get(str(sid))
-        except Exception:  # noqa: BLE001 - roster probe is best-effort
-            agent = None
-        state = (agent or {}).get("state", "") if agent else ""
-        if agent is not None and agent.get("pid") and state not in _BLOCKED_STATES:
-            return _answer_not_delivered(req, t, "working")
-    # §39.2 cooldown (belt+braces with the probe): a successful answer's
-    # resumed session may not be on the roster yet — during that gap the probe
-    # sees "absent" and a racing second answer would stop-kill the fresh
-    # session. Within the window, reject UNLESS the last attempt demonstrably
-    # failed (execution.last_error survives a failed answer and is cleared by
-    # a clean one) — a retry after failure must never be blocked.
-    last_answer = _parse_iso(ex_now.get("last_answer_at"))
-    if (last_answer is not None and not ex_now.get("last_error")
-            and (_dt.datetime.now(_dt.timezone.utc) - last_answer).total_seconds()
-                < _ANSWER_COOLDOWN_S):
-        return _answer_not_delivered(req, t, "recent")
-    ok = False
-    try:
-        ok = bool(executor.answer(req, t))
-    except Exception as e:  # noqa: BLE001 - answer must never kill the pass
-        _log(f"inbox: {req.id} answer_input crashed: {e}")
-    stamp = _dt.date.today().isoformat()
-    if ok:
-        tag = f"[{stamp} 回答已送达] {t[:200]}"
-        req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
-        save(req)
-        _log(f"inbox: {req.id} answer_input delivered into session")
-        # 附图行剔除后再进 analytics（本机绝对路径不属于「用户输入文本」，
-        # 见 ANSWER_ATTACHMENT_PREFIX）；chars 仍计投递原文的长度。
-        scrubbed = _strip_attachment_lines(t)
-        analytics.log_event(
-            "inbox_answer_input", req=req.id, ok=True, chars=len(t),
-            text=(analytics.clip_content(scrubbed)
-                  if scrubbed and analytics.content_gate() else None))
-        return "running"
-    # executor.answer recorded execution.last_error — surface the failure
-    # everywhere the owner can see it (§39: never a silent drop).
-    reason = str((req.execution or {}).get("last_error") or "启动失败")[:160]
-    tag = f"[{stamp} 回答送达失败] {reason}"
-    req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
-    save(req)
-    notify.notify(*notify.msg_answer_failed(req.title or req.id, reason),
-                  req=req.id)
-    _log(f"inbox: {req.id} answer_input NOT delivered ({reason}) — acking noop")
-    analytics.log_event("inbox_answer_input", req=req.id, ok=False,
-                        reason="launch_failed", chars=len(t))
-    return "noop"
 
 
 def _apply_claude_import(decision: dict) -> str:
@@ -2676,7 +2493,6 @@ def detect_transitions(prev: Optional[dict], curr: dict
 
     p_na, c_na = _by_id(prev.get("needs_approval", [])), _by_id(curr.get("needs_approval", []))
     p_run = _by_id(prev.get("running", []))
-    p_ni, c_ni = _by_id(prev.get("needs_input", [])), _by_id(curr.get("needs_input", []))
     p_rev, c_rev = _by_id(prev.get("review", [])), _by_id(curr.get("review", []))
 
     # 3-tuples (title, body, req); req is carried for caller compatibility (the
@@ -2723,22 +2539,18 @@ def detect_transitions(prev: Optional[dict], curr: dict
             # "待验收：AI 已交付草稿" on every working↔idle bounce is spurious spam.
             if p_run.get(rid, {}).get("from_review"):
                 continue
+            # #119（§46.3 v0.48.8）：interrupted 收割行（受阻/放弃救活收进
+            # 待验收）已由 reconcile 发过精确文案（msg_review_interrupted /
+            # msg_resume_storm / msg_auto_resume_exhausted）——「AI 已交付
+            # 草稿」对一次中断收割是虚报，跳过。
+            if item.get("interrupted"):
+                continue
             t, b = notify.msg_review_ready(item.get("name") or rid)
             msgs.append((t, b, rid, "review_ready"))
 
-    # executing -> blocked (newly needs_input, previously running). §39: the
-    # notification carries a snippet of the QUESTION the agent is asking.
-    for rid, item in c_ni.items():
-        if rid not in p_ni and rid in p_run:
-            if item.get("resume_exhausted") or item.get("dispatch_halted"):
-                # §46 降级卡 / §4 刹车卡进 需输入 列：reconcile / executor 已
-                # 发过精确文案（msg_resume_storm / msg_auto_resume_exhausted /
-                # msg_dispatch_halted），这里再发「任务需要你输入」是重复
-                # ping，且 agent 并没有在提问。
-                continue
-            t, b = notify.msg_needs_input(item.get("name") or rid,
-                                          item.get("question"))
-            msgs.append((t, b, rid, None))
+    # 「executing -> blocked」的需输入通知类：retired v0.48.8（#119）。受阻
+    # 会话不再投影「需输入」，msg_needs_input 随之退役；仍会出现在
+    # needs_input[] 的只剩 §4 派发刹车行（executor 已发 msg_dispatch_halted）。
 
     return msgs
 
@@ -3028,12 +2840,54 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
     return True
 
 
+def _harvest_to_review(req: Requirement, ex: dict, sid, note_tag: str,
+                       log_reason: str, interrupted_reason: str = "",
+                       agent: Optional[dict] = None) -> None:
+    """#119（§13/§46.3 v0.48.8）：把一个不再推进的 executing 会话按既有
+    stop_to_review 收割路径落进待验收——停 agent（确认式，仅当有活进程）、收下已有成果
+    （交付摘要保留会话最后的原话，受阻会话即它的提问原文）、done/review_at
+    落账、notes 留痕。``interrupted_reason``（add-only ``execution.
+    interrupted_reason``）让 review 投影行带 ``interrupted: true``，
+    detect_transitions 据此不再发「AI 已交付草稿」的常规文案（这不是一次
+    正常交付）。绝不抛：收割/停止失败都只记日志，状态照落 review。"""
+    if sid and executor is not None:
+        try:
+            harvested = executor.harvest_delivery(str(sid)) or {}
+            if harvested.get("delivered_summary"):
+                ex["delivered_summary"] = harvested["delivered_summary"]
+            if harvested.get("final_draft"):
+                ex["final_draft"] = harvested["final_draft"]
+            _apply_harvest_title(req, harvested)   # §37, round boundary
+        except Exception as e:  # noqa: BLE001 - harvest is best-effort
+            _log(f"reconcile: {req.id} harvest_delivery({sid}) failed "
+                 f"(ignored): {e}")
+        # 只对确有活进程的会话发确认式停止（受阻会话）——死会话没有可停的
+        # 进程，跑 stop 只会在 CI/无 claude 环境制造假 [stop-failed] 台账。
+        if (agent or {}).get("pid"):
+            _stop_session_tracked(req, ex, sid, log_reason,
+                                  log_prefix="reconcile")
+        _update_search_index(req.id, sid)          # §37 session-content layer
+    # §34bis 机械护栏终点：收割提升待验收也要比对起止快照（同 stop_to_review）
+    _check_triage_registry_guard(req, ex)
+    ex["done"] = True
+    ex["review_at"] = _iso_now()
+    if interrupted_reason:
+        ex["interrupted_reason"] = interrupted_reason
+    req.execution = ex
+    req.notes = (req.notes + "\n" + note_tag).strip() if req.notes else note_tag
+    req.set_status(registry.State.REVIEW)
+    registry.save(req)
+    _log(f"reconcile: {req.id} {log_reason} -> review（#119 收割）")
+    analytics.log_event("review_promoted", req=req.id, exec_s=None)
+
+
 # §46 resume 风暴降级：同一张卡在短窗口内被成功救活（resume/brief 成功启动）
 # 达阈值次仍再死 —— 卡死→救→再死的循环没有出口（生产 2026-08-07：R-187 4 分钟
 # 三连救；2026-07-29：R-142 13 分钟四连救，attempts 每次被「见到活着」清零，
-# 退避永远从零开始）。达阈值即置 resume_exhausted（复用既有放弃机制），投影进
-# 需输入列请人看一眼。成功启动记录在 execution.resume_history（ISO 列表，封顶）；
-# 失败的启动尝试不入账——那是 attempts>=5 连续失败分支的地盘（§46.2）。
+# 退避永远从零开始）。达阈值即置 resume_exhausted（放弃自动救活的既有账），
+# **收割进待验收**（#119：不再投影「需输入」等人回答）。成功启动记录在
+# execution.resume_history（ISO 列表，封顶）；失败的启动尝试不入账——那是
+# attempts>=5 连续失败分支的地盘（§46.2）。
 RESUME_STORM_THRESHOLD = 3          # 窗口内成功救活次数达此值 → 降级
 RESUME_STORM_WINDOW_S = 30 * 60     # 风暴判定窗口：30 分钟
 RESUME_HISTORY_CAP = 10             # resume_history 保留最近 N 条，防无限增长
@@ -3168,8 +3022,7 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             resume_notified.discard(req.id)
             continue
         if agent and state in _BLOCKED_STATES:
-            # waiting for the USER to answer (needs input) — usually NOT dead,
-            # and resuming a blocked agent spawns duplicates. But FIRST check
+            # 受阻会话（#119，v0.48.8）：不再挂「需输入」等人回答。FIRST check
             # for a completed delivery: a chat-mode agent that printed its
             # FINAL DRAFT block settles in exactly this waiting-input state
             # (a bg session never exits on its own), and 2026-07-14 R-041 sat
@@ -3178,23 +3031,31 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             if not ex.get("done") and _promote_if_delivered(req, ex, sid):
                 continue
             # §44.3: a blocked session is the safe injection window — flush
-            # any queued silent-merge briefings (stop-idle-then-resume, the
-            # answer() plumbing; the resumed session un-blocks as a bonus).
+            # any queued silent-merge briefings (stop-idle-then-resume; the
+            # resumed session un-blocks as a bonus). 注入队列非空时先注入——
+            # briefing/steer 本身就可能让会话继续推进，不急着收割。
             if ex.get("pending_briefings") and executor is not None:
                 try:
                     executor.brief(req, cfg)
                 except Exception as e:  # noqa: BLE001 - FYI only, never fatal
                     _log(f"reconcile: brief {req.id} failed: {e}")
                 continue
-            if ex.get("resume_attempts"):
-                ex["resume_attempts"] = 0
-                req.execution = ex
-                registry.save(req)
+            if steer.pending_steers(req):
+                # §44.3-S 安全窗口①：blocked 时 flush steer 不打断工作。
+                _flush_steers(req, cfg)
+                continue
+            # §13/§46.3 v0.48.8（#119）：没有任何待注入的内容、会话又不再
+            # 推进 —— 按既有 stop_to_review 收割路径落待验收：停 agent、
+            # 收下成果（交付摘要自然保留会话最后的提问原文），用户在待验收
+            # 用「打回 + 修改方向」回答并继续，或直接验收/丢弃。
+            _harvest_to_review(req, ex, sid,
+                               "[会话受阻] 会话停在等待输入，已收割进待验收——"
+                               "用「打回」附一句话即可回答并继续",
+                               "blocked, harvested to review",
+                               interrupted_reason="blocked", agent=agent)
+            notify.notify(*notify.msg_review_interrupted(req.title or req.id),
+                          req=req.id)
             resume_notified.discard(req.id)
-            # §44.3-S 安全窗口①：blocked = 会话停在等输入，此刻 flush steer
-            # 不会打断任何在做的工作（working + live pid 绝不打断）。briefing
-            # 在场时上面已 continue——steer 与 briefing 永不混批混 prompt。
-            _flush_steers(req, cfg)
             continue
         if agent and state in _DONE_STATES:
             if not ex.get("done"):                   # mark finished so a later
@@ -3260,6 +3121,15 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
             continue
         # -> resume w/ backoff
         if ex.get("resume_exhausted"):
+            # #119：历史上放弃救活的卡曾长期停在 executing 装「需输入」——
+            # 现在一律收割进待验收（升级前遗留的卡也在这条路上迁移出来）。
+            # 降级那一刻已发过精确通知（msg_resume_storm / exhausted），
+            # 这里不再重复 ping。
+            _harvest_to_review(req, ex, sid,
+                               "[自动恢复已放弃] 已收割进待验收——验收、丢弃，"
+                               "或「打回」附一句话让它继续",
+                               "resume exhausted, harvested to review",
+                               interrupted_reason="resume_exhausted")
             continue
         # §46 resume 风暴降级：窗口内已成功救活 N 次还是死了 —— 停止无限救活。
         # 与下方 attempts>=5 的「连续失败」放弃互补：风暴计数只数成功启动
@@ -3269,12 +3139,12 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
         if storm_n >= RESUME_STORM_THRESHOLD:
             ex["resume_exhausted"] = True
             ex["resume_storm_at"] = _iso_now()
-            req.execution = ex
             tag = (f"[resume-storm] 30 分钟内自动救活 {storm_n} 次后会话再次"
-                   "中断，已停止自动恢复——resume 风暴降级，需人工看一眼"
-                   "（需输入列：回答… / 停止）")
-            req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
-            registry.save(req)
+                   "中断，已停止自动恢复并收割进待验收（#119）——验收、丢弃，"
+                   "或「打回」附一句话让它继续")
+            _harvest_to_review(req, ex, sid, tag,
+                               f"resume storm ({storm_n} revivals)",
+                               interrupted_reason="resume_storm")
             notify.notify(*notify.msg_resume_storm(req.title or req.id, storm_n),
                           req=req.id)
             analytics.log_event("resume_storm_degraded", req=req.id, n=storm_n)
@@ -3282,8 +3152,12 @@ def reconcile_executing(cfg: config.Config, resume_notified: set[str]) -> int:
         attempts = int(ex.get("resume_attempts", 0))
         if attempts >= 5:
             ex["resume_exhausted"] = True
-            req.execution = ex
-            registry.save(req)
+            _harvest_to_review(req, ex, sid,
+                               "[自动恢复已放弃] 连续 5 次拉起失败，已收割进"
+                               "待验收（#119）——验收、丢弃，或「打回」附一句话"
+                               "让它继续",
+                               "auto-resume exhausted (5 failures)",
+                               interrupted_reason="resume_exhausted")
             # §5 v0.14 copy: bilingual + names the exact card buttons to press
             notify.notify(*notify.msg_auto_resume_exhausted(req.title or req.id),
                           req=req.id)

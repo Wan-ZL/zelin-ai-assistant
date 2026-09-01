@@ -7,11 +7,14 @@ everywhere else):
 
   ∅ -> needs_approval          "有新需求待审批"     (notify.msg_new_card)
   running -> review            "待验收：AI 已交付草稿"
-  running -> needs_input       "任务需要你输入"     (notify.msg_needs_input)
+
+「running -> needs_input」类：retired v0.48.8（#119）——受阻会话由 reconcile
+收割进待验收并当场发精确文案（msg_review_interrupted 等），diff 器对
+needs_input 分区不再发声；interrupted 收割行也不冒充「已交付草稿」。
 
 Everything else — first pass after daemon start (prev None), items persisting
-in a partition, review/needs_input appearing WITHOUT having been running —
-must stay silent (no notification storms on restart).
+in a partition, review appearing WITHOUT having been running — must stay
+silent (no notification storms on restart).
 
 Pure-function tests: no registry, no roster, no mocks.
 """
@@ -30,11 +33,6 @@ def _new_card(title):
 
 def _review_ready(name):
     t, b = notify.msg_review_ready(name)
-    return t, b
-
-
-def _needs_input(name):
-    t, b = notify.msg_needs_input(name)
     return t, b
 
 
@@ -120,11 +118,19 @@ class ReviewTransitionTestCase(unittest.TestCase):
 
 
 class NeedsInputTransitionTestCase(unittest.TestCase):
-    def test_running_to_needs_input_notifies(self):
+    def test_running_to_needs_input_is_silent(self):
+        # #119：needs_input 只剩 §4 刹车行，executor 已发 msg_dispatch_halted——
+        # diff 器对该分区零发声（msg_needs_input 已退役）
         prev = _dash(running=[{"id": "R-3", "name": "任务三"}])
         curr = _dash(needs_input=[{"id": "R-3", "name": "任务三"}])
-        self.assertEqual(actd.detect_transitions(prev, curr),
-                         [(*_needs_input("任务三"), "R-3", None)])
+        self.assertEqual(actd.detect_transitions(prev, curr), [])
+
+    def test_interrupted_review_row_is_silent(self):
+        # #119：中断收割（受阻/放弃救活 -> review）已由 reconcile 发过精确文案，
+        # 「AI 已交付草稿」对它是虚报——interrupted 标记行跳过
+        prev = _dash(running=[{"id": "R-4", "name": "任务四"}])
+        curr = _dash(review=[{"id": "R-4", "name": "任务四", "interrupted": True}])
+        self.assertEqual(actd.detect_transitions(prev, curr), [])
 
     def test_needs_input_persisting_is_silent(self):
         prev = _dash(needs_input=[{"id": "R-3", "name": "任务三"}])
@@ -145,10 +151,10 @@ class CombinedAndEdgeTestCase(unittest.TestCase):
                      review=[{"id": "R-2", "name": "任务二"}],
                      needs_input=[{"id": "R-3", "name": "任务三"}])
         msgs = actd.detect_transitions(prev, curr)
+        # #119：needs_input 类不再发声——只剩新卡与 review 两类
         self.assertEqual(set(msgs), {
             (*_new_card("写周报"), "R-1", None),
             (*_review_ready("任务二"), "R-2", "review_ready"),
-            (*_needs_input("任务三"), "R-3", None),
         })
 
     def test_approval_to_running_is_silent(self):

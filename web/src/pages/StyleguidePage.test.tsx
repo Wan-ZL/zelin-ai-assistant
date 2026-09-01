@@ -41,7 +41,8 @@ describe("StyleguidePage", () => {
     expect(screen.getAllByRole("button", { name: "Approve" }).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByRole("button", { name: "Reject" }).length).toBeGreaterThanOrEqual(2);
     // RunningCard blocked / working、ReviewCard、DoneCard、DebtCardItem
-    expect(screen.getAllByRole("button", { name: "Answer…" }).length).toBeGreaterThanOrEqual(1);
+    // （#119：「回答…」已退役——blocked 卡只剩「停止」出口）
+    expect(screen.queryAllByRole("button", { name: "Answer…" }).length).toBe(0);
     expect(screen.getAllByRole("button", { name: "Stop" }).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByRole("button", { name: "Accept" }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole("button", { name: "Send Back" }).length).toBeGreaterThanOrEqual(1);

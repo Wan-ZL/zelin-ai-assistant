@@ -294,16 +294,8 @@
 }
 ```
 
-### 3.6 answer_input（§39 回答需输入）
-`text` 客户端按 **unicode scalars（= Python code points）** 裁到 4000（`InboxAction.clipAnswer`）；actd 复验 trimmed 1..4000，卡必须 EXECUTING（需输入行只投影 executing 卡），roster 探针防杀 mid-run session。**附图无新键**：尾行 `[附图，用 Read 工具查看] <路径>` 拼进 `text`（前缀常量 = `act/actd.py` `ANSWER_ATTACHMENT_PREFIX`，两侧逐字一致；附图行占 4000 预算，正文让位）。
-```json
-{
-  "action" : "answer_input",
-  "id" : "R-001",
-  "text" : "用方案 B，先跑通再优化",
-  "ts" : "2026-08-30T12:00:00Z"
-}
-```
+### 3.6 answer_input（retired v0.48.8，#119）
+`answer_input` 动作退役：受阻会话由 actd 收割进待验收（§46.3），回答语义由「打回 + 修改方向」（rework）覆盖。server/webui 对该动作按未知动作 400；actd 对迟到文件按 unknown-action ack。golden 样张同版删除。
 
 ### 3.7 capture（§10 快速捕获；文件名 `capture-<UUID>.json`）
 无 `id`。可选 add-only 键：`mode:"run"`（§34 direct-run，跳过提案闸直落 `approved`，**一律新卡不判重**，幂等键 = 文件 stem，见 §34.1）；`images`（§10bis，`state/attachments/` PNG 绝对路径，actd 边界校验：非 list 整体忽略、仅收非空字符串、去重、上限 4）；`preset`（§34bis，仅 `"proposals_triage"` 且必须同时 `mode:"run"` 才生效，否则 preset 被 fail-safe 忽略、当普通 capture 处理）。
@@ -375,7 +367,7 @@ def mac_json_bytes(obj: dict) -> bytes:
 
 ## 5. golden fixtures（`tests/fixtures/inbox/`）
 
-33 个 `<verb>[-variant].golden.json`，由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `answer_input`(+`-attachment`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`。
+31 个 `<verb>[-variant].golden.json`，由 `make_golden.swift` 生成（`swift make_golden.swift <outdir>`，序列化调用与 App 逐字一致）：§2 全部 18 个动词 + `split_note` / `set_title` / `merge_review` / `merge_force` / `feedback`(+`-overall`,`-images`) / `capture`(+`-run`,`-images`,`-preset`) / `weekly_digest_now` / `import_claude_sessions`。
 
 G6 对照规则：固定输入（id/text/ids 用 golden 里的值）+ 把 server 产物的 `ts` 值替换为 `2026-08-30T12:00:00Z` 后**逐字节比较**；`images`/附图路径含 tmpdir 时同样先做值替换（golden 用 `/tmp/zai-demo/...` 占位）。替换只许动 JSON 值、不许 reserialize——reserialize 会洗掉 `\/` 与空数组渲染，测试就失去牙齿。
 

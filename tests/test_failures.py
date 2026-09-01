@@ -456,29 +456,31 @@ class NotifyCopyTestCase(unittest.TestCase):
         self.assertIn("自动恢复已放弃", title_zh)
 
     def test_auto_resume_exhausted_names_existing_buttons(self):
-        # 审计 2026-07: v0.21 把运行中卡的「停止并退回 + 已办完」按钮对换成了
-        # 单个「停止」→ 对话框（退回提案/去待验收），但通知文案还在指旧按钮。
-        # 文案必须逐字引用现存 UI（Cards.swift TaskRow 的 confirmationDialog）。
+        # 审计 2026-07 判例的 v0.48.8 更新（#119）：放弃救活的卡收割进待验收，
+        # 文案必须指向待验收列现存动词（验收/丢弃/打回），不再指「回答…」或
+        # 需输入列（两者已退役），也不能再出现 v0.21 已删除的旧按钮。
         from act.lib import notify
         self._set_lang("zh")
         _, body = notify.msg_auto_resume_exhausted("周报")
-        self.assertIn("「停止」", body)
-        self.assertIn("「退回提案」", body)
-        self.assertIn("「去待验收」", body)
+        self.assertIn("待验收", body)
+        self.assertIn("「打回」", body)
+        self.assertNotIn("「回答", body, "#119：回答入口已退役")
+        self.assertNotIn("需输入", body, "#119：需输入列已退役")
         self.assertNotIn("停止并退回", body, "v0.21 已删除的按钮不能再出现在文案里")
         self.assertNotIn("「已办完」", body)
         self._set_lang("en")
         _, body_en = notify.msg_auto_resume_exhausted("Weekly report")
-        self.assertIn('"Stop"', body_en)
-        self.assertIn("Discard & re-propose", body_en)
-        self.assertIn("Keep for review", body_en)
+        self.assertIn("Review", body_en)
+        self.assertIn("Send back", body_en)
+        self.assertNotIn("Answer", body_en)
         self.assertNotIn("Stop & return", body_en)
         self.assertNotIn("Done outside", body_en)
 
     def test_every_builder_body_names_a_next_step(self):
         from act.lib import notify
         self._set_lang("zh")
-        builders = [notify.msg_new_card, notify.msg_done, notify.msg_needs_input,
+        builders = [notify.msg_new_card, notify.msg_done,
+                    notify.msg_review_interrupted,
                     notify.msg_auth, notify.msg_review_ready,
                     notify.msg_dispatch_failed, notify.msg_resuming,
                     notify.msg_auto_resume_exhausted]

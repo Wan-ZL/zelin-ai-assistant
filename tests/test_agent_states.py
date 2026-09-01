@@ -19,8 +19,8 @@ from act.lib import agent_states, dashboard
 
 class SharedObjectsTestCase(unittest.TestCase):
     def test_dashboard_uses_the_shared_sets(self):
+        # #119：dashboard 不再消费 _BLOCKED_STATES（受阻投影退役）——只剩两组
         self.assertIs(dashboard._RUNNING_STATES, agent_states._RUNNING_STATES)
-        self.assertIs(dashboard._BLOCKED_STATES, agent_states._BLOCKED_STATES)
         self.assertIs(dashboard._DONE_STATES, agent_states._DONE_STATES)
 
     def test_actd_uses_the_shared_sets(self):
@@ -32,7 +32,6 @@ class SharedObjectsTestCase(unittest.TestCase):
     def test_actd_and_dashboard_sets_are_identical(self):
         # the P1-13 drift this refactor kills: two modules, two literals
         self.assertEqual(actd._RUNNING_STATES, dashboard._RUNNING_STATES)
-        self.assertEqual(actd._BLOCKED_STATES, dashboard._BLOCKED_STATES)
         self.assertEqual(actd._DONE_STATES, dashboard._DONE_STATES)
 
 

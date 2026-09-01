@@ -1,7 +1,7 @@
-// 文本输入弹窗：修改方向（comment）/ 打回反馈（rework）/ 回答需输入（answer_input）共用。
-//   - allowEmpty=false：空文本提交按钮禁用（comment / answer_input 必须有内容）；
+// 文本输入弹窗：修改方向（comment）/ 打回反馈（rework）共用。
+//   - allowEmpty=false：空文本提交按钮禁用（comment 必须有内容）；
 //   - allowEmpty=true：留空可提交，由调用方替换成固定字面量（rework 空反馈自查指令）；
-//   - maxCodePoints：按 code points 截断（answer_input 4000，§39.2；与 actd 复验同单位）。
+//   - maxCodePoints：按 code points 截断（与 actd 复验同单位）。
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { clipCodePoints } from "./boardActions";
