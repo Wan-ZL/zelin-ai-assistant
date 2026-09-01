@@ -44,7 +44,9 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
     返回 False 的路径同样记行；
   - 每轮都写 last_run（回滚路径、poisoned-sha 跳过也写）；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
-  - 日志 1 MB 自压；ff-merge 途中脚本自身被替换也照常跑完（main 包裹）。
+  - 日志 1 MB 自压；ff-merge 途中脚本自身被替换（哪怕换成执行即 exit 99 的
+    booby trap）也照常按旧逻辑跑完——main 包裹 + git rename 写文件；推论：
+    第 N 版新增的闸门保护的是 N 之后的部署，永远保护不了部署 N 自己的那一轮。
 """
 import json
 import os
@@ -409,16 +411,29 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(self.installs()), 1)
 
     def test_script_replaced_by_the_merge_still_completes(self):
-        # the ff-merge rewrites scripts/auto-deploy.sh on disk mid-run; bash must
-        # already hold the whole file (main "$@" wrapper) and finish normally
-        def touch_script(dev):
+        # the ff-merge rewrites scripts/auto-deploy.sh on disk mid-run; bash
+        # must finish on the OLD logic: the whole file was parsed before main
+        # ran (main "$@" wrapper), every main() path exits without returning
+        # to the reader, and git writes by rename so the running fd keeps the
+        # pre-merge inode. The replacement here is a booby trap that would
+        # exit 99 if ANY line of it executed — which also pins the flip side
+        # (Codex review P1 on #130): guards added in version N protect deploys
+        # FROM N onward, never the deploy OF N itself; no snapshot/exec trick
+        # changes that, because any copy taken before the merge IS the old
+        # script.
+        def swap_script(dev):
             p = dev / "scripts" / "auto-deploy.sh"
-            p.write_text(p.read_text(encoding="utf-8") + "\n# fixture edit\n", encoding="utf-8")
-        target = self.push("0.48.4", extra=touch_script)
+            p.write_text("#!/bin/bash\necho BOOBYTRAP-NEW-SCRIPT-EXECUTED >&2\nexit 99\n",
+                         encoding="utf-8")
+        target = self.push("0.48.4", extra=swap_script)
         proc = self.run_script(doctor_plan=["-", "-"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("BOOBYTRAP", proc.stderr, "no line of the merged-in script may run")
+        self.assertNotIn("BOOBYTRAP", self.log_text())
         self.assertEqual(self.head(), target)
         self.assertEqual(self.state()["status"], "deployed")
+        merged = (self.live / "scripts" / "auto-deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("BOOBYTRAP", merged, "the merge really did replace the script on disk")
 
     # -- 2b. the CI gate (B1) ------------------------------------------------- #
     # ruleset protect-main 是 non-strict：PR head 绿了就能合，合出来的 merge
