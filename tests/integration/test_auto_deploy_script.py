@@ -2,14 +2,26 @@
 
 住在 tests/integration/（防腐 #7：真 IO 只许住这里，单文件时间预算见
 BUDGET_SECONDS）。整套夹具是一个临时 bare origin + 一个 live clone，clone 里的
-install.sh / act/doctor.py / act/lib/notify.py 全是**记录调用、按剧本出退出码**
-的假货，只有 scripts/auto-deploy.sh 是真的（逐字拷进夹具并提交）。不出网、不起
-launchd、不碰真 $HOME（HOME 指到临时目录）。
+install.sh / act/doctor.py / act/lib/notify.py / act/auto_deploy.py 全是**记录
+调用、按剧本出退出码**的假货，PATH 前置一个假 `curl`（按剧本回 GitHub
+check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹具并提交）。
+不出网、不起 launchd、不碰真 $HOME（HOME 指到临时目录）。
 
 钉住的行为：
   - HEAD == origin/main → up_to_date，install 不跑；
-  - origin/main 前进 + 树干净 → ff、install --non-interactive、doctor 基线/复查、
-    deployed（state 文件 + 一条通知）；
+  - **CI 闸门**（PR #124 审查 B1）：ff 之前查 origin/main **那个 sha** 的 `ci`
+    check-run；success 才部署；in_progress / 尚无 run / API 不可达 → ci_pending
+    不动 HEAD 下轮再试；红 → ci_failed + failed_sha 记账 + 一条通知；只有
+    CI_CHECKS 里的名字算数；--force 跳过闸门；origin 不是 github.com 且没设
+    AUTODEPLOY_CI_REPO → failed + 通知一次，不猜；
+  - origin/main 前进 + 树干净 → ff、自检、install --non-interactive、等新 actd
+    心跳、doctor 基线/复查、deployed（state 文件 + 一条通知）；
+  - **自检**（B3）：合进来的 scripts/auto-deploy.sh 不能 `bash -n` 或
+    act.auto_deploy import 不了 → 不装、回滚；
+  - **就绪等待**（B2）：install 后必须等到 state/actd.heartbeat 由**新进程**
+    （pid 变了）写下**新版本** + phase=idle；旧 daemon 的心跳不算；超时 =
+    actd:no_heartbeat_from_new_version 回滚；新 daemon pass 抛 `failed` 只在旧
+    daemon 也 `failed` 时算 pre-existing；
   - install 失败 / doctor 出现**新增** FAIL → git reset --hard 回旧 sha + 再装 +
     rolled_back + failed_sha 记账，下一轮对同一 sha 不再重试，--force 才重试；
   - 部署前已红的 doctor 项不归咎新版本（deployed，detail 点名 pre-existing）；
@@ -18,6 +30,7 @@ launchd、不碰真 $HOME（HOME 指到临时目录）。
   - 脏树拒绝（不动 HEAD、同一 sha 只通知一次）；不在 main 拒绝；
   - 回滚前重验：部署期间 owner 改了 tracked 文件 → 回滚**被拒**（rollback_failed、
     通知、改动保留、HEAD 留在新版本）；install.sh 自己的 +x 位翻转不算改动，照常回滚；
+  - 每轮都写 last_run（回滚路径、poisoned-sha 跳过也写）；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
   - 日志 1 MB 自压；ff-merge 途中脚本自身被替换也照常跑完（main 包裹）。
 """
@@ -34,7 +47,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 120
+BUDGET_SECONDS = 180  # 35 runs of real bash+git; ~75 s on a 2024 Mac
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -53,8 +66,45 @@ fi
 # simulate the owner editing a tracked file while the deploy runs / install.sh's own chmod
 [ -n "${FAKE_INSTALL_EDIT:-}" ] && printf 'owner edit mid-deploy\n' >> "$here/README.md"
 [ -n "${FAKE_INSTALL_CHMOD:-}" ] && chmod +x "$here/README.md"
+# the restarted actd's heartbeat (§47.4): a NEW pid ($$ of this install run),
+# the checkout's version, phase per FAKE_INSTALL_HEARTBEAT (default idle = one
+# full pass done; "none" = the new daemon never writes one, e.g. dies on import)
+hb="${FAKE_INSTALL_HEARTBEAT:-idle}"
+if [ "$hb" != "none" ]; then
+    mkdir -p "$here/state"
+    printf '{"ts": "2026-09-01T00:00:00Z", "phase": "%s", "pid": %s, "interval": 10, "stale_after_s": 90, "version": "%s"}\n' \
+        "$hb" "$$" "$ver" > "$here/state/actd.heartbeat"
+fi
 exit "$rc"
 """
+
+FAKE_CURL = r"""#!/bin/bash
+# fake curl: record the URL, answer the check-runs API per FAKE_CURL_PLAN (one
+# word per line, consumed): success | failure | pending | missing | rerun |
+# UNREACHABLE | GARBAGE. Default success. The success body also carries a RED
+# non-required check (Lint) to pin that only CI_CHECKS names gate the deploy.
+set -u
+for a in "$@"; do case "$a" in http*) printf '%s\n' "$a" >> "$FAKE_CURL_LOG" ;; esac; done
+verdict=success
+if [ -n "${FAKE_CURL_PLAN:-}" ] && [ -s "$FAKE_CURL_PLAN" ]; then
+    verdict="$(head -n 1 "$FAKE_CURL_PLAN")"
+    tail -n +2 "$FAKE_CURL_PLAN" > "$FAKE_CURL_PLAN.tmp" && mv "$FAKE_CURL_PLAN.tmp" "$FAKE_CURL_PLAN"
+fi
+run() { printf '{"id": %s, "name": "%s", "status": "%s", "conclusion": %s}' "$1" "$2" "$3" "$4"; }
+case "$verdict" in
+    UNREACHABLE) exit 22 ;;
+    GARBAGE)  printf 'not json at all' ;;
+    missing)  printf '{"total_count": 0, "check_runs": []}' ;;
+    pending)  printf '{"check_runs": [%s]}' "$(run 1 ci in_progress null)" ;;
+    failure)  printf '{"check_runs": [%s]}' "$(run 1 ci completed '"failure"')" ;;
+    rerun)    printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"failure"')" "$(run 2 ci completed '"success"')" ;;
+    *)        printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"success"')" \
+                     "$(run 2 'Lint (shellcheck + ruff)' completed '"failure"')" ;;
+esac
+exit 0
+"""
+
+FAKE_SHIM = '"""fake act.auto_deploy: only has to import (the script self-checks it after the merge)."""\n'
 
 FAKE_DOCTOR = r'''"""fake act.doctor: FAIL names per call from FAKE_DOCTOR_PLAN (one line per call, consumed)."""
 import json, os, sys
@@ -121,6 +171,15 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.doctor_log = self.tmp / "doctor.log"
         self.doctor_plan = self.tmp / "doctor.plan"
         self.install_rc_plan = self.tmp / "install.rc"
+        self.curl_log = self.tmp / "curl.log"
+        self.curl_plan = self.tmp / "curl.plan"
+        # fake curl shadows the real one on PATH (the script only calls curl
+        # for the check-runs API)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        fake_curl = self.bin / "curl"
+        fake_curl.write_text(FAKE_CURL, encoding="utf-8")
+        fake_curl.chmod(0o755)
 
         # bare origin whose HEAD is main, seeded from a scratch clone
         self.origin = self.tmp / "origin.git"
@@ -151,6 +210,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         (root / "act" / "lib" / "__init__.py").write_text("", encoding="utf-8")
         (root / "act" / "lib" / "notify.py").write_text(FAKE_NOTIFY, encoding="utf-8")
         (root / "act" / "doctor.py").write_text(FAKE_DOCTOR, encoding="utf-8")
+        (root / "act" / "auto_deploy.py").write_text(FAKE_SHIM, encoding="utf-8")
         inst = root / "install.sh"
         inst.write_text(FAKE_INSTALL, encoding="utf-8")
         inst.chmod(0o755)
@@ -170,7 +230,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         _git(self.dev, "push", "-q", "origin", "main")
         return _git(self.dev, "rev-parse", "HEAD")
 
-    def run_script(self, *args, doctor_plan=None, install_rc=None, env=None):
+    def run_script(self, *args, doctor_plan=None, install_rc=None, ci=None, env=None):
         if doctor_plan is not None:
             self.doctor_plan.write_text("\n".join(doctor_plan) + "\n", encoding="utf-8")
         elif self.doctor_plan.exists():
@@ -179,20 +239,30 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             self.install_rc_plan.write_text("\n".join(str(r) for r in install_rc) + "\n", encoding="utf-8")
         elif self.install_rc_plan.exists():
             self.install_rc_plan.unlink()
+        if ci is not None:
+            self.curl_plan.write_text("\n".join(ci) + "\n", encoding="utf-8")
+        elif self.curl_plan.exists():
+            self.curl_plan.unlink()
         base = {k: v for k, v in os.environ.items()
                 if not k.startswith(("AIASSISTANT_", "AUTODEPLOY_", "FAKE_", "GIT_"))}
         full = {
             **base,
+            "PATH": str(self.bin) + os.pathsep + base.get("PATH", "/usr/bin:/bin"),
             "HOME": str(self.home),
             "AIASSISTANT_PYTHON": sys.executable,
             "AUTODEPLOY_LOG_DIR": str(self.logs),
-            "AUTODEPLOY_DOCTOR_SETTLE": "0",
+            "AUTODEPLOY_HEARTBEAT_DEADLINE": "1",
             "AUTODEPLOY_INSTALL_TIMEOUT": "30",
+            # the fixture origin is a local bare repo, not github.com: name the
+            # repo the fake curl "serves" so the CI gate runs like on the owner Mac
+            "AUTODEPLOY_CI_REPO": "fixture/repo",
             "FAKE_NOTIFY_LOG": str(self.notify_log),
             "FAKE_INSTALL_LOG": str(self.install_log),
             "FAKE_DOCTOR_LOG": str(self.doctor_log),
             "FAKE_DOCTOR_PLAN": str(self.doctor_plan),
             "FAKE_INSTALL_RC_PLAN": str(self.install_rc_plan),
+            "FAKE_CURL_LOG": str(self.curl_log),
+            "FAKE_CURL_PLAN": str(self.curl_plan),
             **(env or {}),
         }
         proc = subprocess.run(["bash", str(self.script), *args], cwd=str(self.tmp),
@@ -218,6 +288,20 @@ class AutoDeployScriptTestCase(unittest.TestCase):
     def notifications(self):
         return self.notify_log.read_text(encoding="utf-8").splitlines() if self.notify_log.exists() else []
 
+    def ci_queries(self):
+        return self.curl_log.read_text(encoding="utf-8").splitlines() if self.curl_log.exists() else []
+
+    def doctor_runs(self):
+        return self.doctor_log.read_text(encoding="utf-8").splitlines() if self.doctor_log.exists() else []
+
+    def seed_heartbeat(self, version, phase, pid=1):
+        """A heartbeat left by the daemon running BEFORE the deploy."""
+        hb = self.live / "state" / "actd.heartbeat"
+        hb.parent.mkdir(parents=True, exist_ok=True)
+        hb.write_text(json.dumps({"ts": "2026-09-01T00:00:00Z", "phase": phase, "pid": pid,
+                                  "interval": 10, "stale_after_s": 90, "version": version}),
+                      encoding="utf-8")
+
     # -- 1. nothing to do ---------------------------------------------------- #
 
     def test_up_to_date_runs_nothing_and_records_it(self):
@@ -230,6 +314,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(st["version"], "0.48.3")
         self.assertNotIn("last_deployed", st, "never deployed by this job → no last_deployed")
         self.assertEqual(self.notifications(), [])
+        self.assertEqual(self.ci_queries(), [], "nothing to deploy → the CI API is not asked")
         self.assertFalse((self.live / "state" / "auto-deploy.lock").exists(), "lock released")
 
     # -- 2. the happy path --------------------------------------------------- #
@@ -256,9 +341,14 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(notes), 1, notes)
         self.assertIn("v0.48.4", notes[0])
         # doctor ran twice, both times with the NEW code (baseline is pre-install, same doctor)
-        doc = self.doctor_log.read_text(encoding="utf-8").splitlines()
+        doc = self.doctor_runs()
         self.assertEqual(len(doc), 2, doc)
         self.assertTrue(all("version=0.48.4" in ln and "--fast --json" in ln for ln in doc), doc)
+        # the CI gate asked about THE sha being deployed, once, at the configured repo
+        queries = self.ci_queries()
+        self.assertEqual(len(queries), 1, queries)
+        self.assertIn("/repos/fixture/repo/commits/%s/check-runs" % target, queries[0])
+        self.assertIn("CI green on %s" % target[:7], self.log_text())
 
     def test_second_run_after_deploy_is_up_to_date_and_keeps_last_deployed(self):
         self.push("0.48.4")
@@ -284,6 +374,210 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(self.head(), target)
         self.assertEqual(self.state()["status"], "deployed")
 
+    # -- 2b. the CI gate (B1) ------------------------------------------------- #
+    # ruleset protect-main 是 non-strict：PR head 绿了就能合，合出来的 merge
+    # commit 的树没人测过；main 上的 `ci` 跑 ~8 min，这个 job 在 +10 min 开火。
+    # 所以部署前必须问 GitHub：**这个 sha** 的 ci 结束了且绿了吗。
+
+    def test_ci_still_running_defers_without_touching_the_checkout(self):
+        target = self.push("0.48.4")
+        for plan, why in (("pending", "in_progress"), ("missing", "no ci check-run yet"),
+                          ("UNREACHABLE", "unreachable"), ("GARBAGE", "no JSON")):
+            proc = self.run_script(ci=[plan])
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(self.head(), self.base_sha, plan)
+            self.assertEqual(self.installs(), [], plan)
+            st = self.state()
+            self.assertEqual(st["status"], "ci_pending", plan)
+            self.assertIn(target[:7], st["detail"], plan)
+            self.assertIn(why, st["detail"], plan)
+            self.assertEqual(st["head"], self.base_sha)
+            self.assertEqual(st["version"], "0.48.3")
+            self.assertNotIn("failed_sha", st, "pending is not a verdict — never poisons")
+        self.assertEqual(self.notifications(), [], "waiting for CI is not news")
+        self.assertEqual(len(self.ci_queries()), 4, "asked once per run")
+        # CI finishes green → the very next run deploys
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["success"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+
+    def test_red_ci_on_main_poisons_the_sha_notifies_once_and_never_merges(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["failure"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "a red sha is never fast-forwarded to")
+        self.assertEqual(self.installs(), [])
+        self.assertEqual(self.doctor_runs(), [], "no doctor either — nothing changed on disk")
+        st = self.state()
+        self.assertEqual(st["status"], "ci_failed")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("ci failure", st["detail"])
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("CI red", notes[0])
+        # next interval: poisoned → quiet, and the API is not even asked again
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        self.assertEqual(len(self.ci_queries()), 1)
+        self.assertEqual(len(self.notifications()), 1)
+        self.assertIn("already failed", self.log_text())
+        # a new commit on main is asked about normally
+        target2 = self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["success"])
+        self.assertEqual(self.head(), target2)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertNotIn("failed_sha", self.state())
+
+    def test_force_skips_the_ci_gate(self):
+        # --force = the owner asked for THIS sha: no API call, straight to the deploy
+        target = self.push("0.48.4")
+        self.run_script(ci=["failure"])
+        self.assertEqual(self.state()["status"], "ci_failed")
+        proc = self.run_script("--force", doctor_plan=["-", "-"], ci=["failure"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertEqual(len(self.ci_queries()), 1, "the forced run did not ask")
+        self.assertIn("CI gate skipped", self.log_text())
+
+    def test_rerun_of_a_red_check_the_newest_run_wins(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], ci=["rerun"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+
+    def test_only_the_configured_checks_gate(self):
+        # the default fake body carries a red Lint run next to the green ci run
+        # (the happy path deploys on it: Lint is not in CI_CHECKS); naming Lint
+        # as required turns that same body into a refusal
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"],
+                               env={"AUTODEPLOY_CI_CHECKS": "ci, Lint (shellcheck + ruff)"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "ci_failed")
+        self.assertIn("Lint (shellcheck + ruff) failure", st["detail"])
+        self.assertEqual(st["failed_sha"], target)
+
+    def test_non_github_origin_without_ci_repo_refuses_and_notifies_once(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"AUTODEPLOY_CI_REPO": ""})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "never deploys what it cannot verify")
+        self.assertEqual(self.installs(), [])
+        st = self.state()
+        self.assertEqual(st["status"], "failed")
+        self.assertIn("AUTODEPLOY_CI_REPO", st["detail"])
+        self.assertEqual(self.ci_queries(), [])
+        self.assertEqual(len(self.notifications()), 1)
+        self.run_script(doctor_plan=["-", "-"], env={"AUTODEPLOY_CI_REPO": ""})
+        self.assertEqual(len(self.notifications()), 1, "same pending sha: quiet")
+        # naming the repo unblocks it
+        self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(self.head(), target)
+
+    # -- 2c. self-check of the deploy agent (B3) ----------------------------- #
+
+    def test_merge_that_breaks_the_deploy_script_rolls_back_before_installing(self):
+        def break_script(dev):
+            p = dev / "scripts" / "auto-deploy.sh"
+            p.write_text(p.read_text(encoding="utf-8") + "\nif [ 1 -eq 1 ]; then\n", encoding="utf-8")
+        target = self.push("0.48.4", extra=break_script)
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "rolled back to PREV")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("self-check", st["detail"])
+        self.assertIn("bash -n", st["detail"])
+        inst = self.installs()
+        self.assertEqual(len(inst), 1, inst)
+        self.assertIn("head=%s" % self.base_sha, inst[0], "the only install is the rollback at PREV")
+        self.assertEqual(self.doctor_runs(), [], "self-check comes before the doctor baseline")
+        self.assertEqual(len(self.notifications()), 1)
+
+    def test_merge_that_breaks_the_launchd_shim_rolls_back_before_installing(self):
+        def break_shim(dev):
+            (dev / "act" / "auto_deploy.py").write_text("def (:\n", encoding="utf-8")
+        target = self.push("0.48.4", extra=break_shim)
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("act.auto_deploy does not import", st["detail"])
+        self.assertEqual(len(self.installs()), 1)
+
+    # -- 2d. readiness: the NEW actd must complete a pass (B2) ---------------- #
+    # 30 s 静置 + 一次 launchctl 采样是抛硬币：import 即死的 KeepAlive actd 每个
+    # ~10 s 节流周期亮 ~0.5 s 的 pid，旧 daemon 的 heartbeat/dashboard 文件又
+    # 90 s 内都算新鲜。心跳文件带 version + pid + phase（§47.4）——等它。
+
+    def test_new_actd_that_never_completes_a_pass_rolls_back(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_HEARTBEAT": "starting"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("actd:no_heartbeat_from_new_version", st["detail"])
+        self.assertIn("0.48.4", st["detail"])
+        self.assertEqual(len(self.installs()), 2, "install at NEW, rollback install at PREV")
+        self.assertEqual(len(self.doctor_runs()), 1, "no post-install doctor: not ready is already the verdict")
+
+    def test_the_old_daemons_heartbeat_does_not_count_even_with_the_same_version(self):
+        # no version bump (§56.1 says every PR bumps, but a merge that does not
+        # must still not be waved through by the OLD daemon's idle beat) and
+        # the new actd dies on import (writes nothing)
+        target = self.push("0.48.4")
+        self.seed_heartbeat("0.48.4", "idle", pid=1)
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_HEARTBEAT": "none"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("no_heartbeat_from_new_version", st["detail"])
+
+    def test_no_heartbeat_file_at_all_before_and_after_rolls_back(self):
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_HEARTBEAT": "none"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "rolled_back")
+        self.assertIn("no_heartbeat_from_new_version", self.state()["detail"])
+
+    def test_new_actd_whose_pass_throws_rolls_back_when_the_old_one_was_fine(self):
+        self.push("0.48.4")
+        self.seed_heartbeat("0.48.3", "idle")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_HEARTBEAT": "failed"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        self.assertEqual(self.state()["status"], "rolled_back")
+
+    def test_pre_existing_failing_pass_is_not_blamed_on_the_new_version(self):
+        # the old daemon was already throwing every pass: the new one doing the
+        # same is pre-existing (else the machine could never take the fix)
+        target = self.push("0.48.4")
+        self.seed_heartbeat("0.48.3", "failed")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_HEARTBEAT": "failed"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+
+    def test_ready_heartbeat_is_logged_and_the_doctor_runs_after_it(self):
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("completed a pass (heartbeat: 0.48.4 ", self.log_text())
+        self.assertEqual(len(self.doctor_runs()), 2)
+
     # -- 3. rollback --------------------------------------------------------- #
 
     def test_new_doctor_failure_rolls_back_and_poisons_that_sha(self):
@@ -302,16 +596,22 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(st["head"], self.base_sha)
         self.assertEqual(st["version"], "0.48.3")
         self.assertIn("dashboard", st["detail"])
+        self.assertIn("last_run", st, "§56.4: last_run describes THIS run, rollback included")
+        rolled_back_at = st["last_run"]
         notes = self.notifications()
         self.assertEqual(len(notes), 1, notes)
         self.assertIn("rolled back to %s" % self.base_sha[:7], notes[0])
         # next interval: same origin/main sha → no retry storm
+        time.sleep(1.1)  # last_run has 1 s resolution
         proc = self.run_script(doctor_plan=["-", "-"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(self.installs()), 2, "no third install for the poisoned sha")
         self.assertEqual(self.head(), self.base_sha)
-        self.assertIn("already failed deploy", self.log_text())
+        self.assertIn("already failed", self.log_text())
         self.assertEqual(len(self.notifications()), 1, "silent while waiting")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back", "verdict carried: still poisoned")
+        self.assertNotEqual(st["last_run"], rolled_back_at, "but the skip round still stamps last_run")
         # a new commit on main is tried normally
         target2 = self.push("0.48.5")
         proc = self.run_script(doctor_plan=["-", "-"])

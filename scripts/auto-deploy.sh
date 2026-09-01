@@ -6,30 +6,49 @@
 # act.auto_deploy` → this script). One run =
 #
 #   1. take the lock (state/auto-deploy.lock/, stale-PID aware), cap the log
-#   2. refuse unless HEAD is on `main` AND the tracked tree is clean
-#      (a dirty tree is the owner's work in progress — never touched; one
-#      notification per pending origin/main commit, then silence)
-#   3. `git fetch origin main`; HEAD == origin/main → record up_to_date, exit
-#   4. PREV=HEAD; `git merge --ff-only origin/main` (diverged local main =
+#   2. refuse unless HEAD is on `main`; `git fetch origin main`;
+#      HEAD == origin/main → record up_to_date, exit; origin/main is the
+#      remembered failed sha → one log line, exit (no retry storm)
+#   3. CI GATE on the exact origin/main sha: the GitHub check-runs API must
+#      say the `ci` run on THAT commit completed green. The ruleset only
+#      requires green on the PR head (non-strict), so a merge commit's tree
+#      may never have been tested; the `ci` run on main takes ~8 min and this
+#      job fires at +10 — not done yet / API unreachable = `ci_pending`, retry
+#      next interval; red = `ci_failed`, sha poisoned, one notification.
+#      `--force` skips the gate (the owner asked for THIS sha).
+#   4. refuse when the tracked tree is dirty (the owner's work in progress —
+#      never touched; one notification per pending commit, then silence)
+#   5. PREV=HEAD; `git merge --ff-only origin/main` (diverged local main =
 #      refuse + notify, never force)
-#   5. doctor BASELINE with the NEW code, before installing anything — a
-#      doctor that cannot even produce JSON (import error, no yaml) is fatal
-#      here, never "pre-existing": rollback without installing
-#   6. `bash install.sh --non-interactive` under a watchdog timeout — that
+#   6. SELF-CHECK the new deploy agent (`bash -n` this script, `import
+#      act.auto_deploy`): a merge that breaks either would silently end every
+#      future deploy — rollback before installing anything
+#   7. doctor BASELINE with the NEW code, still before installing — a doctor
+#      that cannot even produce JSON (import error, no yaml) is fatal here,
+#      never "pre-existing": rollback without installing
+#   8. `bash install.sh --non-interactive` under a watchdog timeout — that
 #      mode never rebuilds the frozen legacy Mac app (§56.5: build.sh would
 #      quit + relaunch it and take screenpipe / live captions down mid-use);
 #      only a hand-run `bash install.sh` does
-#   7. settle, doctor again; rollback iff the install failed or a check that
-#      was green in the baseline is now FAIL. Pre-existing red is reported,
-#      not blamed on the new version (otherwise a machine with one stale
-#      finding could never update — including to the fix).
-#   8. rollback = `git reset --hard PREV` (re-verified right before: still on
-#      main, no tracked content edits since step 4 — otherwise the rollback
+#   9. READINESS: wait until state/actd.heartbeat (§47.4) is written by a NEW
+#      actd process (pid changed), stamped with the NEW version, in phase
+#      `idle` = one full pass completed on the new code. Deadline
+#      (AUTODEPLOY_HEARTBEAT_DEADLINE, 180 s) → FAIL
+#      `actd:no_heartbeat_from_new_version` → rollback. A fixed settle was a
+#      coin: a KeepAlive actd that dies on import shows a pid ~0.5 s of every
+#      throttle cycle, and the old daemon's heartbeat/dashboard files stay
+#      "fresh" for 90 s.
+#  10. doctor again; rollback iff a check that was green in the baseline is
+#      now FAIL. Pre-existing red is reported, not blamed on the new version
+#      (otherwise a machine with one stale finding could never update —
+#      including to the fix).
+#  11. rollback = `git reset --hard PREV` (re-verified right before: still on
+#      main, no tracked content edits since step 5 — otherwise the rollback
 #      is REFUSED and notified rather than destroying the owner's work; stays
 #      on main so the next run can still fast-forward) + install.sh again +
 #      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
 #      remembered as failed and skipped until main moves (or --force).
-#   9. every outcome lands in state/deploy_state.json (dashboard add-only key
+#  12. every outcome lands in state/deploy_state.json (dashboard add-only key
 #      `deploy_state`, doctor row `auto-deploy`, web header) and in
 #      ~/Library/Logs/zelin-ai-assistant/auto-deploy.log (1 MB self-cap).
 #
@@ -39,10 +58,11 @@
 # (not a git checkout / no python), 2 for bad usage.
 #
 # Usage: bash scripts/auto-deploy.sh [--force]
-#   --force   forget the remembered failed sha and retry it now
+#   --force   forget the remembered failed sha, skip the CI gate, deploy now
 #
 # Test seams (env, never set by the plist): AUTODEPLOY_LOG_DIR,
-# AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_DOCTOR_SETTLE, AUTODEPLOY_BRANCH.
+# AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE, AUTODEPLOY_BRANCH,
+# AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS.
 set -uo pipefail
 
 # Everything lives in functions and runs from main "$@" at the very end: bash
@@ -59,9 +79,15 @@ LOG_CAP_BYTES=1048576                     # 防腐 #4：日志必有帽
 STATE_FILE="$REPO_ROOT/state/deploy_state.json"
 LOCK_DIR="$REPO_ROOT/state/auto-deploy.lock"
 INSTALL_TIMEOUT="${AUTODEPLOY_INSTALL_TIMEOUT:-1800}"   # no swift build in this mode; generous anyway
-DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-30}"         # a KeepAlive actd that dies on import
-                                                        # shows a pid for ~0.5 s, then nothing
-                                                        # for launchd's ~10 s throttle: sample late
+HEARTBEAT_FILE="$REPO_ROOT/state/actd.heartbeat"        # §47.4, written by actd at every phase boundary
+HEARTBEAT_DEADLINE="${AUTODEPLOY_HEARTBEAT_DEADLINE:-180}"  # the restarted actd must finish ONE pass
+                                                        # (a pass may run `claude agents --json`,
+                                                        # >30 s on a loaded machine)
+CI_API="${AUTODEPLOY_CI_API:-https://api.github.com}"
+CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that must be green on the
+                                                        # deployed sha (comma-separated); `ci` is the
+                                                        # macOS job: compileall + full unittest +
+                                                        # version tri-pin
 FORCE=0
 PY=""
 
@@ -216,6 +242,117 @@ run_install() {
         bash "$REPO_ROOT/install.sh" --non-interactive >> "$LOG" 2>&1
 }
 
+# owner/repo of the GitHub remote ("" when origin is not on github.com —
+# then the CI gate cannot run and main() refuses rather than guessing).
+github_repo() {
+    if [ -n "${AUTODEPLOY_CI_REPO:-}" ]; then
+        printf '%s' "$AUTODEPLOY_CI_REPO"
+        return 0
+    fi
+    git_q remote get-url "$REMOTE" 2>/dev/null \
+        | sed -n -E 's#/*$##; s#\.git$##; s#^.*github\.com[:/]([^/]+)/([^/]+)$#\1/\2#p'
+}
+
+# CI verdict for one commit from the GitHub check-runs API — unauthenticated
+# (public repo; ≤6 calls/h against the 60/h limit), `-f` so any HTTP error is
+# "unreachable". `filter=latest` (the API default) already collapses re-runs to
+# the newest run per check; the highest id wins if several still come back.
+# One line on stdout:
+#   success                       every name in CI_CHECKS completed green
+#   failure <name> <conclusion>   a required run completed non-green
+#   pending <why>                 no run yet / still running / API unreachable
+ci_verdict() { # $1=owner/repo $2=sha
+    _body="$(curl -fsS --max-time 30 -H 'Accept: application/vnd.github+json' \
+                  -H 'X-GitHub-Api-Version: 2022-11-28' \
+                  "$CI_API/repos/$1/commits/$2/check-runs?per_page=100" 2>>"$LOG")" \
+        || { printf 'pending check-runs API unreachable'; return 0; }
+    printf '%s' "$_body" | "$PY" -c 'import json, sys
+required = [n.strip() for n in sys.argv[1].split(",") if n.strip()]
+
+def verdict():
+    try:
+        runs = json.load(sys.stdin).get("check_runs", [])
+    except Exception:
+        return "pending check-runs API returned no JSON"
+    latest = {}
+    for run in runs:
+        name = str(run.get("name"))
+        if name not in required:
+            continue
+        try:
+            rid = int(run.get("id") or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        if name not in latest or rid > latest[name][0]:
+            latest[name] = (rid, run)
+    for name in required:
+        if name not in latest:
+            return "pending no %s check-run yet" % name
+        run = latest[name][1]
+        if run.get("status") != "completed":
+            return "pending %s is %s" % (name, run.get("status"))
+        if run.get("conclusion") != "success":
+            return "failure %s %s" % (name, run.get("conclusion"))
+    return "success"
+
+sys.stdout.write(verdict())' "$CI_CHECKS"
+}
+
+# The deploy agent must still be able to run its own successor: a merge that
+# breaks this script or the launchd shim would otherwise end every future
+# deploy silently (launchd's status column being the only witness). Prints the
+# first broken piece; "" when both are fine. `$BASH` = the very binary running
+# this script (the shim execs /bin/bash), not whatever bash PATH finds first.
+self_check() {
+    "${BASH:-bash}" -n "$REPO_ROOT/scripts/auto-deploy.sh" 2>>"$LOG" \
+        || { printf 'scripts/auto-deploy.sh does not parse (bash -n)'; return 0; }
+    (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
+        "$PY" -c 'import act.auto_deploy' 2>>"$LOG") \
+        || printf 'act.auto_deploy does not import'
+}
+
+# "<version> <pid> <phase>" of state/actd.heartbeat (§47.4); "-" per missing
+# field, "- - -" when the file is absent or torn.
+heartbeat_fields() {
+    "$PY" - "$HEARTBEAT_FILE" <<'PY' 2>/dev/null || printf -- '- - -'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        hb = json.load(fh)
+    sys.stdout.write("%s %s %s" % (hb.get("version") or "-", hb.get("pid") or "-",
+                                   hb.get("phase") or "-"))
+except Exception:
+    sys.stdout.write("- - -")
+PY
+}
+
+# Readiness of the actd that install.sh just restarted (§56.3 step 9): the
+# heartbeat must come from a NEW process (pid differs from the pre-install
+# beat — a same-version deploy would otherwise be satisfied by the OLD
+# daemon's file), carry the NEW version, and say `idle` = one full pass
+# completed on the new code. `failed` (the pass threw) counts only when the
+# pre-install daemon was already failing its passes — pre-existing, not the
+# new version's fault. Anything else until the deadline = not ready.
+wait_for_new_actd() { # $1=version $2=pre-install "<version> <pid> <phase>" → 0 ready, 1 deadline
+    _old_pid="$(printf '%s' "$2" | awk '{print $2}')"
+    _old_phase="$(printf '%s' "$2" | awk '{print $3}')"
+    _waited=0
+    while :; do
+        _hb="$(heartbeat_fields)"
+        _hb_version="${_hb%% *}"
+        _hb_rest="${_hb#* }"
+        _hb_pid="${_hb_rest%% *}"
+        _hb_phase="${_hb_rest#* }"
+        if [ "$_hb_version" = "$1" ] && [ "$_hb_pid" != "$_old_pid" ]; then
+            [ "$_hb_phase" = "idle" ] && return 0
+            [ "$_hb_phase" = "failed" ] && [ "$_old_phase" = "failed" ] && return 0
+        fi
+        [ "$_waited" -ge "$HEARTBEAT_DEADLINE" ] && return 1
+        sleep 1
+        _waited=$((_waited + 1))
+    done
+}
+
 take_lock() {
     mkdir -p "$(dirname "$LOCK_DIR")"
     if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -265,14 +402,16 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 rollback it
         _why="HEAD is on '${_branch_now:-detached}'"
         [ -n "$_dirty" ] && _why="tracked edits since the deploy started: $(printf '%s' "$_dirty" | awk '{print $2}' | head -n 5 | tr '\n' ' ')"
         log "rollback REFUSED — $_why; checkout left at $(git_q rev-parse HEAD 2>/dev/null)"
-        write_state "status=rollback_failed" "failed_sha=$3" "detail=rollback refused ($_why): $2"
+        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
+                    "detail=rollback refused ($_why): $2"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
                "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
         return 1
     fi
     if ! git_q reset --hard --quiet "$1"; then
         log "git reset --hard $1 FAILED — checkout left at $(git_q rev-parse HEAD 2>/dev/null)"
-        write_state "status=rollback_failed" "failed_sha=$3" "detail=git reset --hard failed: $2"
+        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
+                    "detail=git reset --hard failed: $2"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)"
         return 1
@@ -281,13 +420,13 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 rollback it
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
         log "install.sh at $(short "$1") exited $_rc after the rollback"
-        write_state "status=rollback_failed" "failed_sha=$3" "head=$1" \
+        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" "head=$1" \
                     "version=$(repo_version)" "detail=rolled back to $(short "$1") but install.sh exited $_rc: $2"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "已退回 $(short "$1") 但 install.sh 退出码 ${_rc}；请手动 bash install.sh ($2)"
         return 1
     fi
-    write_state "status=rolled_back" "failed_sha=$3" "head=$1" "prev=$1" \
+    write_state "status=rolled_back" "last_run=$_now" "failed_sha=$3" "head=$1" "prev=$1" \
                 "version=$(repo_version)" "detail=$2"
     notify "自动部署已回滚 / auto-deploy rolled back to $(short "$1")" \
            "$2 —— 已重装旧版；origin/main $(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交"
@@ -356,8 +495,48 @@ main() {
     fi
 
     if [ "$(read_state failed_sha)" = "$TARGET" ]; then
-        log "origin/$BRANCH $(short "$TARGET") already failed deploy and was rolled back — waiting for a new commit (or --force)"
+        log "origin/$BRANCH $(short "$TARGET") already failed (deploy rolled back, or CI red) — waiting for a new commit (or --force)"
+        write_state "last_run=$_now"
         exit 0
+    fi
+
+    # CI gate (§56.3 step 3): green on THIS sha, not on the PR head that
+    # produced it. Runs before the dirty-tree check so a red main is reported
+    # (and poisoned) whatever this machine's tree looks like.
+    if [ "$FORCE" -eq 1 ]; then
+        log "--force: CI gate skipped for $(short "$TARGET")"
+    else
+        _repo="$(github_repo)"
+        if [ -z "$_repo" ]; then
+            _remote_url="$(git_q remote get-url "$REMOTE" 2>/dev/null || true)"
+            log "cannot tell the GitHub repo from '$_remote_url' — CI gate impossible, not deploying (set AUTODEPLOY_CI_REPO=owner/repo)"
+            write_state "status=failed" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
+                        "detail=CI gate: $REMOTE is not a github.com remote; set AUTODEPLOY_CI_REPO=owner/repo"
+            if [ "$(read_state notified_sha)" != "$TARGET" ]; then
+                notify "自动部署无法验 CI / auto-deploy: cannot verify CI" \
+                       "origin/$BRANCH $(short "$TARGET") 待部署，但 $REMOTE 不是 github.com 远端，无法查 CI；请设 AUTODEPLOY_CI_REPO"
+                write_state "notified_sha=$TARGET"
+            fi
+            exit 0
+        fi
+        _ci="$(ci_verdict "$_repo" "$TARGET")"
+        case "$_ci" in
+            success)
+                log "CI green on $(short "$TARGET") ($CI_CHECKS)" ;;
+            failure*)
+                log "CI RED on origin/$BRANCH $(short "$TARGET"): ${_ci#failure } — not deploying; waiting for a new commit (or --force)"
+                write_state "status=ci_failed" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
+                            "failed_sha=$TARGET" \
+                            "detail=origin/$BRANCH $(short "$TARGET") failed CI (${_ci#failure }); not deployed"
+                notify "main 的 CI 红了，未部署 / auto-deploy: main CI red" \
+                       "origin/$BRANCH $(short "$TARGET") 的 ${_ci#failure }；未部署，等下一个绿的提交（或 bash scripts/auto-deploy.sh --force）"
+                exit 0 ;;
+            *)
+                log "CI not green yet on $(short "$TARGET"): ${_ci#pending } — will retry next interval"
+                write_state "status=ci_pending" "last_run=$_now" "head=$PREV" "version=$(repo_version)" \
+                            "detail=waiting for CI on origin/$BRANCH $(short "$TARGET"): ${_ci#pending }"
+                exit 0 ;;
+        esac
     fi
 
     _dirty="$(git_q status --porcelain --untracked-files=no)"
@@ -390,6 +569,12 @@ main() {
     VERSION="$(repo_version)"
     log "checkout now at $(short "$NEW") (v${VERSION:-?})"
 
+    _self="$(self_check)"
+    if [ -n "$_self" ]; then
+        rollback "$PREV" "self-check on v${VERSION:-?} ($(short "$NEW")): $_self — the deploy agent could not run again" "$TARGET"
+        exit 0
+    fi
+
     _baseline="$(doctor_fail_names)"
     [ -n "$_baseline" ] && log "doctor baseline (pre-install) FAIL: $(printf '%s' "$_baseline" | tr '\n' ' ')"
     if has_line "$_baseline" "$UNPARSEABLE"; then
@@ -397,6 +582,7 @@ main() {
         exit 0
     fi
 
+    _hb_before="$(heartbeat_fields)"
     run_install
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
@@ -404,7 +590,11 @@ main() {
         exit 0
     fi
 
-    [ "$DOCTOR_SETTLE" -gt 0 ] && sleep "$DOCTOR_SETTLE"
+    if ! wait_for_new_actd "$VERSION" "$_hb_before"; then
+        rollback "$PREV" "actd:no_heartbeat_from_new_version — actd on v${VERSION:-?} ($(short "$NEW")) completed no pass within ${HEARTBEAT_DEADLINE}s (heartbeat now: $(heartbeat_fields); before install: $_hb_before) — crash loop or stall" "$TARGET"
+        exit 0
+    fi
+    log "actd v${VERSION:-?} completed a pass (heartbeat: $(heartbeat_fields))"
     _after="$(doctor_fail_names)"
     if has_line "$_after" "$UNPARSEABLE"; then
         rollback "$PREV" "doctor unparseable after install of v${VERSION:-?} ($(short "$NEW"))" "$TARGET"

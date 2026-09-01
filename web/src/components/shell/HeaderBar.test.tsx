@@ -140,6 +140,23 @@ describe("HeaderBar", () => {
     expect(screen.getByText("v0.48.3 · 3小时前部署 · 已回滚")).toBeTruthy();
   });
 
+  it("§56 部署状态：ci_pending / ci_failed 是警告态，各有双语文案（B1 CI 闸门）", async () => {
+    await seedBoard(10, {
+      status: "ci_pending",
+      version: "0.48.6",
+      detail: "waiting for CI on origin/main abc1234: ci is in_progress",
+    });
+    renderHeader();
+    const pending = screen.getByText("v0.48.6 · waiting for CI on main");
+    expect(pending.className).toBe("shell-deploy is-warn");
+    expect(pending.getAttribute("title")).toContain("in_progress");
+    cleanup();
+    resetStoreForTests();
+    await seedBoard(10, { status: "ci_failed", version: "0.48.6", failed_sha: "abc1234" });
+    renderHeader("zh");
+    expect(screen.getByText("v0.48.6 · main 的 CI 红了，未部署").className).toBe("shell-deploy is-warn");
+  });
+
   it("§56 部署状态：只有 version、还没成功部署过（无 last_deployed）→ 只显示版本", async () => {
     await seedBoard(10, { status: "up_to_date", version: "0.48.4" });
     renderHeader();

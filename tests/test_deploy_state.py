@@ -147,8 +147,9 @@ class DoctorRowTestCase(unittest.TestCase):
         self.assertIn("--force", row.fix)
 
     def test_every_non_healthy_status_warns(self):
+        # ci_pending 也在这里（§56.4）：等待态必须看得见，卡住几小时的等待更要
         for status in ("refused_dirty", "refused_branch", "fetch_failed", "failed",
-                       "rollback_failed", "something_new"):
+                       "rollback_failed", "ci_pending", "ci_failed", "something_new"):
             self.path.write_text(json.dumps({"status": status, "version": "0.48.4"}),
                                  encoding="utf-8")
             (row,) = self._row()

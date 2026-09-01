@@ -96,10 +96,12 @@ version in `act/__init__.py` (+ the two iOS `MARKETING_VERSION` pins — CI
 enforces the tri-pin), and on push to `main` the `tag-on-merge` workflow
 creates `vX.Y.Z` and runs the release workflow. A merge that does not bump the
 version is silently not released. The maintainer's Mac then fast-forwards to
-`main` by itself (`scripts/auto-deploy.sh`, doctor-gated rollback) — daemons,
-cron and config only; the frozen legacy Mac app is never rebuilt unattended
-(a hand-run `bash install.sh` does that, §56.5). Changelog procedure at the
-top of [CHANGELOG.md](CHANGELOG.md).
+`main` by itself (`scripts/auto-deploy.sh`) once the `ci` check-run on that
+exact `main` commit is green — the branch ruleset only requires green on the
+PR head, so the merge commit itself is verified before it is installed — with a
+doctor-gated rollback; daemons, cron and config only; the frozen legacy Mac app
+is never rebuilt unattended (a hand-run `bash install.sh` does that, §56.5).
+Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).
 
 ## License of contributions
 

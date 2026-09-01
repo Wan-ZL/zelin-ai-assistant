@@ -1,7 +1,7 @@
 // §56 合并即上岗：顶栏小字「v0.48.4 · deployed 12m ago」——读 board.deploy_state
 // （dashboard add-only 顶层键，scripts/auto-deploy.sh 写、actd 投影）。healthy
 // （deployed / up_to_date）用第三级文字色；其余状态（rolled_back / refused_dirty /
-// fetch_failed…）切警告色并点名状态，title 挂 detail 原文。无 deploy_state 或无
+// fetch_failed / ci_pending / ci_failed…）切警告色并点名状态，title 挂 detail 原文。无 deploy_state 或无
 // version → 整个隐藏：这台机器不跑 auto-deploy（.pkg 安装 / Linux / flag 关）。
 // 相对时间与 FreshnessLabel 共用 relativeAge，60s tick 自驱重算。
 import { useEffect, useState } from "react";
@@ -24,6 +24,10 @@ function statusLabel(status: string, text: (zh: string, en: string) => string): 
       return text("不在 main，部署暂停", "deploy paused: not on main");
     case "fetch_failed":
       return text("fetch 失败", "fetch failed");
+    case "ci_pending":
+      return text("等 main 的 CI", "waiting for CI on main");
+    case "ci_failed":
+      return text("main 的 CI 红了，未部署", "main CI red, not deployed");
     case "failed":
       return text("部署失败", "deploy failed");
     default:
