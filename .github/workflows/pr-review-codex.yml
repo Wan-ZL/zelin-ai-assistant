@@ -73,7 +73,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - if: steps.key.outputs.present == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.createComment({
