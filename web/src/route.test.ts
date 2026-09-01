@@ -18,6 +18,13 @@ describe("route", () => {
     expect(readPage("?page=bogus")).toBe("board");
   });
 
+  it("recognizes the settings page (§57) and round-trips it", () => {
+    expect(readPage("?page=settings")).toBe("settings");
+    const url = buildAppUrl("http://127.0.0.1:47820/?card=R-1", "settings", null);
+    expect(url.searchParams.get("page")).toBe("settings");
+    expect(url.searchParams.get("card")).toBeNull();
+  });
+
   it("round-trips page + card through buildAppUrl", () => {
     const url = buildAppUrl("http://127.0.0.1:47820/?page=trash", "board", "r-101");
     expect(url.searchParams.get("page")).toBeNull(); // board 是缺省，不落 query

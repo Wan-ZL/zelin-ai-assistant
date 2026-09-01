@@ -4,7 +4,14 @@
 // server 端码：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / INTERNAL_ERROR；
 // 客户端合成码：READ_FAILED（读失败，UI 静默重试）/ SERVICE_UNAVAILABLE（写失败，UI 明确报错）。
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
-import type { Board, CardDetail, HealthSnapshot } from "./types";
+import type {
+  Board,
+  CardDetail,
+  ClaudeCodeDefault,
+  ClaudeCodeDefaultWrite,
+  HealthSnapshot,
+  ModelsSettings,
+} from "./types";
 
 interface ApiErrorBody {
   error?: {
@@ -143,4 +150,30 @@ export function postReveal(cardId: string): Promise<unknown> {
 /** 交付物静态 URL（iframe/链接用；server 端做路径推导与穿越校验） */
 export function deliverableUrl(cardId: string, name: string): string {
   return resolveApiUrl(`/files/deliverables/${encodeURIComponent(cardId)}/${encodeURIComponent(name)}`);
+}
+
+/** GET /api/settings/models — 两把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §57） */
+export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSettings> {
+  return request<ModelsSettings>("/api/settings/models", { signal });
+}
+
+/**
+ * PUT /api/settings/models — 保存旋钮（写请求：四闸同 POST，api.ts 自动带 token）。
+ * body 只许 dispatch / pipeline 两键（server UNKNOWN_FIELD 零容忍）；值 = "follow" 或模型 id。
+ */
+export function putModelsSettings(body: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
+  return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/claude-code/default-model — follow 模式继承的 Claude Code 全局默认 */
+export function fetchClaudeCodeDefault(signal?: AbortSignal): Promise<ClaudeCodeDefault> {
+  return request<ClaudeCodeDefault>("/api/claude-code/default-model", { signal });
+}
+
+/** POST /api/claude-code/default-model — owner 显式一键「设为 <id>」：server 只改 model 键、先备份 */
+export function postClaudeCodeDefault(model: string): Promise<ClaudeCodeDefaultWrite> {
+  return request<ClaudeCodeDefaultWrite>("/api/claude-code/default-model", {
+    method: "POST",
+    body: JSON.stringify({ model }),
+  });
 }
