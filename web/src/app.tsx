@@ -45,7 +45,7 @@ export function App() {
   return (
     <LanguageContext.Provider value={language}>
       {/* searchSlot = A8 过滤 chips + ⌘F 搜索（G4）；页面分发：?page=trash → 回收站页，
-          ?page=settings → 设置页（§57），?page=styleguide → 活体样式指南（开发者页，URL 直达） */}
+          ?page=settings → 设置页（§59），?page=styleguide → 活体样式指南（开发者页，URL 直达） */}
       <AppShell searchSlot={<FilterBar />}>
         {page === "trash" ? <TrashPage />
           : page === "settings" ? <SettingsPage />

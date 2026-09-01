@@ -279,7 +279,7 @@ def build_prompt(question: str, bundle: str, lang: Optional[str] = None) -> str:
 
 
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    # §57 single LLM boundary (act/llm.py): scrub + argv + --model live there.
+    # §59 single LLM boundary (act/llm.py): scrub + argv + --model live there.
     # No tools: a pure answer over the pre-gathered bundle (§27).
     return llm.run(
         prompt, mode=llm.MODE_PIPELINE,

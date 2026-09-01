@@ -1,4 +1,4 @@
-// 设置页 section「模型」（CONTRACT §57，owner 决策 D22）。
+// 设置页 section「模型」（CONTRACT §59，owner 决策 D22）。
 // 两把旋钮：dispatch（「手」——claude --bg 派工 agent）与 pipeline（「脑」——雷达提取/分诊/判官/问答
 // 的 headless claude -p）。每把 = 跟随 Claude Code 全局 | canonical id | 自定义。
 // 数据经 store（refreshSettings/saveModels/setClaudeCodeDefaultModel）；这里只存草稿 + toast 这类瞬态。

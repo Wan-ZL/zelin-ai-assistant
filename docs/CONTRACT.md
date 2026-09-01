@@ -382,7 +382,7 @@ override）；「通用」区新增任务完成提醒三档（见 §28 追记）
 新增键：`review_notify`、`maintainer_repo_path`、`maintainer_session_id`
 （`feedback_publish_default` 见 §29bis，`gmail_fetch_command` 见 §14bis）。
 
-**§15 v0.48.11 追记（add-only，§57 模型旋钮）**：overrides 允许列表新增两个扁平键
+**§15 v0.48.11 追记（add-only，§59 模型旋钮）**：overrides 允许列表新增两个扁平键
 `models_dispatch` / `models_pipeline`（语义 = config.yaml `models.dispatch` /
 `models.pipeline` 逐字一致；值 `"follow"` 或模型 id，坏形状按「wrong types are
 silently ignored」跳过）。**写入方自此多一个**：web 设置页经 `PUT
@@ -882,7 +882,7 @@ failure id：
   `restart_actd`。
 - `launchd_orphan`——带 `com.zelin.aiassistant.` 前缀、但 act/launchd 已无模板
   的 label（已装载或只剩 plist 文件）。action_id `open_deps`。
-- `model_unavailable`（**v0.48.11 追加，§57**）——设置里显式选的模型 id 一次最小
+- `model_unavailable`（**v0.48.11 追加，§59**）——设置里显式选的模型 id 一次最小
   活探针（`claude -p ok --model <id>`）非零退出：别名/后缀已下线、拼错、无权。
   只由 doctor `model dispatch` / `model pipeline` 两行产出（派发失败照旧带原文
   + 既有分类）；句子点名后果（派工/管线全败）与修法（设置页改回跟随或换
@@ -900,7 +900,7 @@ Bun 猜测句/EPERM → **FAIL `claude_blind`**，起了但 20s 不退出（无 
 → WARN 无 id，没装 actd plist 或默认 repo 不存在 → 无此行；`Probes.
 launchd_claude_probe` 注入缝，测试绝不真起 launchd——`tests/__init__.py` 兜底把
 开关设为 0）、`launchd orphans`（已装载孤儿 → FAIL `launchd_orphan`，只剩文件 →
-WARN；其他厂商前缀永不算）。**v0.48.11 追加（§57）**：`claude code model`（每次
+WARN；其他厂商前缀永不算）。**v0.48.11 追加（§59）**：`claude code model`（每次
 都跑，只读文件：Claude Code 全局默认 + 两把旋钮指向；永不 FAIL）、
 `model dispatch` / `model pipeline`（非 `--fast` 时：显式旋钮各一次最小活探针，
 非零 → FAIL `model_unavailable`；follow → OK 不探）；`Probes.claude_code_settings`
@@ -3184,7 +3184,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
    request」（`text/plain` 跨源 POST）这一 CSRF 向量整类杀掉。违者 415 +
    `INVALID_FIELD`（413 同款词表纪律）。
 4. **per-install instance token**（每个 POST **必带** `X-Zai-Token`；**v0.48.11
-   追记（§57）**：写请求 = POST **与 PUT**，四闸对 PUT 逐字同款——`_check_auth`
+   追记（§59）**：写请求 = POST **与 PUT**，四闸对 PUT 逐字同款——`_check_auth`
    对非 GET/HEAD 一律全闸，`do_PUT` 是第二个写动词入口）：
    `state/server.token`（0600，server 启动 load-or-create，跨启动稳定）；
    serve `index.html` 时 server 端注入 `window.__ZAI_TOKEN__`（token 只进
@@ -3249,7 +3249,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
 - `POST /api/reveal {card_id}`：server 端推导交付物目录后 `open -R`（macOS
   访达定位——owner 决策「分享 = 访达定位拖拽」的实现面）；非 darwin = 501 +
   envelope code `NOT_IMPLEMENTED`（词表 add-only 收编，M8.2 第 3 条）。
-- **v0.48.11 追加（§57 设置面，add-only）**：`GET /api/settings/models`（两把模型
+- **v0.48.11 追加（§59 设置面，add-only）**：`GET /api/settings/models`（两把模型
   旋钮的 effective 值 + server-owned canonical 下拉全集 + 非 canonical 整句
   warnings；token-light）、`PUT /api/settings/models {dispatch?, pipeline?}`
   （四闸；字段白名单 400 `UNKNOWN_FIELD`、形状坏 400 `INVALID_FIELD` 整句人话、
@@ -3258,13 +3258,13 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   `GET /api/claude-code/default-model`（`~/.claude/settings.json` 的 `model`，
   不可解析如实报 `parseable:false` 不 500）、`POST /api/claude-code/default-model
   {model}`（四闸；只改 `model` 键、先备份 `settings.json.bak-<UTC ts>`、其余键
-  与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §57.4。
+  与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §59.4。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
 `NOT_IMPLEMENTED` / `FORBIDDEN`(403，Host/Origin 闸) / `UNAUTHORIZED`
 (401，token 闸)（add-only；后两枚 v0.48.1 随 auth model 收编）/ `CONFLICT`
-(409，**v0.48.11 §57**：设置写入的目标文件不是合法 JSON——拒绝覆盖，让人手修)。
+(409，**v0.48.11 §59**：设置写入的目标文件不是合法 JSON——拒绝覆盖，让人手修)。
 
 **UI 语义（web 看板）**：看板列 = 审批状态机的投影（分区 → 列映射见
 docs/design/vnext.md §4，含「待办与运行中合并」的 owner 决策：running 混
@@ -3959,11 +3959,13 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - Mac app 构建失败（§23 `app=fail`，只可能来自手动 install.sh）从不进入自动部署的判据：`failed_deploy_steps` 不计 `app` 行——旧 app 原地保留，回滚也治不了它。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
-## 57. 模型选择：单一 LLM 边界 + 两把旋钮 + 全局默认（decision D22）
+## 59. 模型选择：单一 LLM 边界 + 两把旋钮 + 全局默认（decision D22）
+
+（§57 / §58：同轮并行 PR 已各自立法（夜间变异测试 / 质量仪表），本节取下一个空号；若它们最终未立法，两个号作废、永不复用。）
 
 owner 原话（2026-09-01）：「关于默认模型的选择，按照你的建议来。你先找机会把它 implement，然后我看看效果。」被采纳的建议：(a) 此前本产品**从不传 `--model`**——每一次 claude 调用都继承 `~/.claude/settings.json` 的 `model`（当时是 `claude-fable-5-1[1m]`），一个 EAP 别名退场曾让派工静默全败；(b) 两把旋钮而不是一把：`models.dispatch`（**手**——`claude --bg` 派工 agent）与 `models.pipeline`（**脑**——各处 headless `claude -p`：雷达提取 / 快速捕获分诊 / 并入判官 / merge review / ask / digest / voice / golden_eval），各 = `follow`（默认，什么都不传）或一个显式模型 id；(c) doctor 对显式旋钮做一次最小活探针，失败 = FAIL 一句人话；(d) **启动时绝不改写** `~/.claude/settings.json`——设置页显示当前全局默认，提供显式一键「设为 <id>」，只改 `model` 键、先备份；(e) 下拉只列 canonical id（`claude-fable-5` / `claude-opus-5` / `claude-sonnet-5` / `claude-haiku-4-5-20251001`），自由文本照收但附「别名/后缀（[1m]、-eap）随时会下线」的警告。执法：`act/llm.py`、`act/lib/config.py`、`act/doctor.py`、`server/settings.py`、`web/src/pages/SettingsPage.tsx` + `web/src/components/settings/`；判例 `tests/test_llm_boundary.py`、`tests/test_config_models.py`、`tests/test_doctor_models.py`、`tests/test_server_settings_models.py`、`tests/test_server_paths_mirror.py::ModelSettingsMirrorTestCase`、`web/src/components/settings/ModelsSection.test.tsx`。
 
-### 57.1 `act/llm.py` — 唯一 LLM 边界（防腐十条 #3 落地）
+### 59.1 `act/llm.py` — 唯一 LLM 边界（防腐十条 #3 落地）
 
 CLAUDE.md 第 3 条点名的 `act/llm.py` 自本版起**真实存在**。凡带 prompt 起 claude 的 argv 只在此处构造：
 
@@ -3976,18 +3978,18 @@ CLAUDE.md 第 3 条点名的 `act/llm.py` 自本版起**真实存在**。凡带 
 
 **不变量（判例钉死）**：两把旋钮都 `follow` 时，每个 call site 交给 `subprocess.run` 的 argv 与 kwargs（timeout / env / 中性 cwd / stdin 管道）与 v0.48.10 **逐字节相同**；显式旋钮时每个 site 只多出 `--model <id>` 两个 token，其它零变化。唯一有意的偏差：analyze / radar_gmail / radar_slack extractor / golden_eval / quick_capture 五处此前 argv[0] 是裸 `"claude"`（信任 daemon PATH），现统一经 `claude_bin()`——PATH 上有 claude 时解析到同一个二进制，cron/launchd PATH 缺 `~/.local/bin` 时从 FileNotFoundError 变为能跑（2026-07-08 事故的最后几处漏网），`execution.claude_bin` pin 自此对所有 site 生效（它的 docstring 本就这样承诺）。
 
-### 57.2 配置：两把旋钮的真源与优先级
+### 59.2 配置：两把旋钮的真源与优先级
 
 - config.yaml `models: {dispatch: follow, pipeline: follow}`（`config.example.yaml` 注释块）；overrides 扁平键 `models_dispatch` / `models_pipeline`（§15 v0.48.11 追记）；优先级 overrides → yaml → 默认 `follow`。
 - 值域：`follow`（大小写不敏感、空白/空 = follow）或形状合法的 id（`config.MODEL_ID_RE`：字母数字开头，`. _ - [ ]`，≤64 字符——只挡 argv 面上的垃圾，不猜模型名的未来拼法）。坏形状：yaml 路径回落 `follow`；overrides 路径按 §15「wrong types silently ignored」跳过、保留生效值。`config.coerce_model` 是唯一归一化函数；`config.CANONICAL_MODELS` 是 canonical 全集，`config.model_is_canonical` 是 WARN 判据。
 - **生效时机 = 下一次调用，无需重启**：独立进程 site（雷达 / ask / merge_review / 判官 / digest / golden_eval / voice）每次现读；actd 常驻进程在 `run_once` 开头把两个字段从磁盘刷到启动时冻结的 cfg 上（`_refresh_model_knobs`，同 §16 追记 auto_resume 的现读判定形状；其余 startup-frozen 语义不动）。设置页与 config.example.yaml 都这么承诺。
 
-### 57.3 doctor
+### 59.3 doctor
 
 - `claude code model`（每次都出，只读文件，**永不 FAIL**——§56 回滚判据不能被它翻）：`全局默认 <model|未设置>（dispatch: … · pipeline: …）`；文件存在但非合法 JSON → WARN；全局默认**非 canonical 且至少一把旋钮跟随它** → WARN（这正是 EAP 别名退场的形状），fix 指向设置页「设为 <canonical id>」或给旋钮选显式值。
 - `model dispatch` / `model pipeline`（非 `--fast`）：`follow` → OK「不探」；显式 → `probes.run(llm.probe_argv(...), env=llm.runner_env(), timeout=60)`，两把同一个 id 只探一次；非零 → **FAIL `model_unavailable`**，detail 形如「模型 X 不可用，派工会全部失败（exit N: 尾巴）」/「…雷达/分诊/判官/问答会全部失败」，fix「设置页『模型』改回『跟随 Claude Code 全局』或换一个 canonical id」；claude CLI 不在 PATH → WARN 跳过（`claude CLI` 行已 FAIL，不双罚）。`scripts/auto-deploy.sh` 用 `--fast`，活探针不进部署判据。
 
-### 57.4 server 设置面（路由见 §49）
+### 59.4 server 设置面（路由见 §49）
 
 `GET/PUT /api/settings/models` 形状（web `ModelsSettings` 逐字镜像，规则 10）：
 
@@ -4002,11 +4004,11 @@ PUT body 只许 `dispatch` / `pipeline`（各 `"follow"` 或 id；缺省 = 不�
 
 server 不 import act（§49）：`server/settings.py` **手抄** `MODEL_FOLLOW` / `MODEL_MODES` / `CANONICAL_MODELS` / `MODEL_ID_RE` / `coerce_model` / overrides 键名与路径，`tests/test_server_paths_mirror.py::ModelSettingsMirrorTestCase` 逐项钉漂移（含一张 coerce 真值表）。
 
-### 57.5 web 设置页
+### 59.5 web 设置页
 
 `?page=settings`（`route.ts` 第四页；顶栏齿轮 `shell-settings-link`），首个 section「模型」：两把 `<select>`（跟随 Claude Code 全局（当前 <全局默认>） / canonical ids / 自定义…）+ 自定义文本框与别名警告，每把配一句「手 / 脑」解释；「保存」= 一次 PUT 两键，成功 toast「已保存，下一次调用即生效，无需重启」，server 400 的整句原文以 `role=alert` toast 显示；「Claude Code 全局默认」一行显示 `model` + 路径，非 canonical 时提示「跟随它的旋钮会一起失败」，一键「设为 <id>」走原生 `<dialog>` 确认后 POST，toast 带备份路径；`settings.json` 不可解析时该按钮禁用并说明。数据经 `store.ts`（`refreshSettings` / `saveModels` / `setClaudeCodeDefaultModel`），组件只存草稿与 toast 瞬态。
 
-### 57.6 边界（明确不做）
+### 59.6 边界（明确不做）
 
 - 不改任何 site 的 prompt、超时、cwd、`--allowedTools`、围栏或解析——本节只收 argv 构造。
 - 不给 `--model` 之外的任何 claude 参数开旋钮（effort / fallback-model 等另案）。

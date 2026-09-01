@@ -330,7 +330,7 @@ def build_analysis_prompt(job: dict) -> str:
 # runner + validation
 # --------------------------------------------------------------------------- #
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    # §57 single LLM boundary (act/llm.py): scrub + argv + --model live there.
+    # §59 single LLM boundary (act/llm.py): scrub + argv + --model live there.
     # No tools: this is a pure judgment call over pre-gathered material.
     return llm.run(
         prompt, mode=llm.MODE_PIPELINE,

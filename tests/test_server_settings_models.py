@@ -1,4 +1,4 @@
-"""server/ settings face for the model knobs (CONTRACT §57, D22; §49 routes).
+"""server/ settings face for the model knobs (CONTRACT §59, D22; §49 routes).
 
 - GET /api/settings/models: effective knobs + server-owned canonical list.
 - PUT /api/settings/models: all four write gates (same as POST), field

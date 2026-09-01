@@ -570,7 +570,7 @@ def _claude_bin(cfg: Optional[config.Config] = None) -> str:
 
 def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
     """Base ``claude --bg`` argv shared by all launch sites (dispatch / resume /
-    rework / brief) — built by the §57 single LLM boundary (act/llm.py):
+    rework / brief) — built by the §59 single LLM boundary (act/llm.py):
     ``--dangerously-skip-permissions`` only while ``execution.skip_permissions``
     is on (default; P0-10 — off means the agent runs under claude's normal
     permission model; a blocked agent is harvested to review by actd's

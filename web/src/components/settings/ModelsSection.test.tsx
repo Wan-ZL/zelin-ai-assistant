@@ -1,4 +1,4 @@
-// 设置页「模型」section 行为（CONTRACT §57，D22）：
+// 设置页「模型」section 行为（CONTRACT §59，D22）：
 //   1) 两把旋钮从 server 快照水合，follow 选项标出 Claude Code 全局默认，下拉 = server 给的 canonical 全集；
 //   2) 保存 = 一次 PUT 两键、零多余字段，成功 toast 说明「下一次调用生效，无需重启」；
 //   3) server 校验失败（400 INVALID_FIELD）的整句原文以 toast(role=alert) 显示，不吞；

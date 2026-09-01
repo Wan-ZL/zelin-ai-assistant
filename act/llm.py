@@ -1,4 +1,4 @@
-"""act/llm.py — the single LLM boundary (CONTRACT §57; 防腐十条 #3).
+"""act/llm.py — the single LLM boundary (CONTRACT §59; 防腐十条 #3).
 
 Every ``claude`` invocation that carries a prompt is built here and only here:
 
@@ -15,7 +15,7 @@ resolution (``config.resolve_claude_bin``: execution.claude_bin pin → PATH →
 env (:func:`runner_env`), and **the one place ``--model`` is appended** —
 from ``cfg.models_dispatch`` / ``cfg.models_pipeline`` (D22: two knobs, "手"
 vs "脑"). ``follow`` (the default) appends nothing, so every site's argv is
-byte-identical to the pre-§57 shape (tests/test_llm_boundary.py pins each
+byte-identical to the pre-§59 shape (tests/test_llm_boundary.py pins each
 site's argv); an explicit id appends ``--model <id>`` right after
 ``--output-format <fmt>``.
 
@@ -58,7 +58,7 @@ CANONICAL_MODELS = config.CANONICAL_MODELS
 
 PROMPT_VIA = ("arg", "arg_last", "stdin")
 
-# The one prompt the doctor spends on an explicit knob (§57 model liveness).
+# The one prompt the doctor spends on an explicit knob (§59 model liveness).
 PROBE_PROMPT = "ok"
 
 
@@ -170,7 +170,7 @@ def dispatch_argv(cfg: Optional[config.Config] = None) -> list:
 
 
 def probe_argv(model: str, cfg: Optional[config.Config] = None) -> list:
-    """The doctor's minimal live call for an explicit knob (§57):
+    """The doctor's minimal live call for an explicit knob (§59):
     ``claude -p ok --model <id> --output-format text --max-turns 1``."""
     return [claude_bin(cfg), "-p", PROBE_PROMPT, "--model", str(model),
             "--output-format", "text", "--max-turns", "1"]

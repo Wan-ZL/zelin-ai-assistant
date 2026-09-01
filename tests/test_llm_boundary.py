@@ -1,8 +1,8 @@
-"""act/llm.py — the single LLM boundary (CONTRACT §57, D22; 防腐十条 #3).
+"""act/llm.py — the single LLM boundary (CONTRACT §59, D22; 防腐十条 #3).
 
 Pins, per call site, that routing through ``llm.run`` / ``llm.dispatch_argv``
 changed NOTHING while both knobs follow: the argv every headless site hands to
-``subprocess.run`` is byte-identical to its pre-§57 literal (binary resolution
+``subprocess.run`` is byte-identical to its pre-§59 literal (binary resolution
 patched to the bare ``"claude"`` so the pin reads like the old code), and so
 are the kwargs (timeout / env / neutral cwd / stdin piping). Then flips the
 pipeline knob through ``state/settings_overrides.json`` (the web's write path)
@@ -51,7 +51,7 @@ class _Sandbox(unittest.TestCase):
         self.addCleanup(lambda: config.CONFIG_PATH.unlink(missing_ok=True))
         config.SETTINGS_OVERRIDES_PATH.unlink(missing_ok=True)
         config.CONFIG_PATH.unlink(missing_ok=True)
-        # bare "claude" so the per-site pins read exactly like the pre-§57 code
+        # bare "claude" so the per-site pins read exactly like the pre-§59 code
         patcher = mock.patch("act.lib.config.resolve_claude_bin", return_value="claude")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -166,7 +166,7 @@ class RunSeamTestCase(_Sandbox):
 
 
 # --------------------------------------------------------------------------- #
-# per-site pins — argv byte-identical to the pre-§57 literals while following
+# per-site pins — argv byte-identical to the pre-§59 literals while following
 # --------------------------------------------------------------------------- #
 class PerSiteUnchangedArgvTestCase(_Sandbox):
     """Each entry: (site runner, expected argv, expected kwargs besides env)."""

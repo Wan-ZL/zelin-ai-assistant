@@ -20,7 +20,7 @@ works as a plain CLI too). One pass:
 Call-pattern notes (same landmines as act/radar_slack._default_mcp_runner):
 - prompt must come BEFORE --allowedTools (the claude CLI parses --allowedTools
   as variadic and would swallow a trailing positional prompt);
-- argv/binary/env via act/llm.py (§57 single LLM boundary: launchd/cron
+- argv/binary/env via act/llm.py (§59 single LLM boundary: launchd/cron
   PATH 兜底 + Keychain-less API-key fallback + the --model knob).
 
 The runner is injectable so tests never spawn a real claude.
@@ -99,7 +99,7 @@ def build_prompt(cfg: config.Config) -> str:
 
 
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    from act import llm  # §57 single LLM boundary (scrub / argv / --model)
+    from act import llm  # §59 single LLM boundary (scrub / argv / --model)
     # NOTE: prompt must come BEFORE --allowedTools — the claude CLI parses
     # --allowedTools as variadic and would swallow a trailing positional
     # prompt (same landmine as radar_slack._default_mcp_runner); llm.run's

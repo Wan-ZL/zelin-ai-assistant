@@ -102,7 +102,7 @@ describe("HeaderBar", () => {
     expect(screen.getByRole("link", { name: "回收站" })).toBeTruthy();
   });
 
-  it("设置入口（§57）：齿轮链接指向 ?page=settings 深链（双语可访问名）", () => {
+  it("设置入口（§59）：齿轮链接指向 ?page=settings 深链（双语可访问名）", () => {
     renderHeader();
     const link = screen.getByRole("link", { name: "Settings" }) as HTMLAnchorElement;
     expect(new URL(link.href).searchParams.get("page")).toBe("settings");

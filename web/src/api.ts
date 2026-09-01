@@ -152,7 +152,7 @@ export function deliverableUrl(cardId: string, name: string): string {
   return resolveApiUrl(`/files/deliverables/${encodeURIComponent(cardId)}/${encodeURIComponent(name)}`);
 }
 
-/** GET /api/settings/models — 两把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §57） */
+/** GET /api/settings/models — 两把模型旋钮的 effective 值 + canonical 下拉全集（CONTRACT §59） */
 export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { signal });
 }

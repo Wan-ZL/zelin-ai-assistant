@@ -107,7 +107,7 @@ DASHBOARD_FRESH_SECONDS = 90
 SCREENPIPE_STALE_SECONDS = 2 * 3600
 MIN_PYTHON = (3, 9)
 _PROBE_TIMEOUT = 90  # ceiling for the live claude call
-# §57 model liveness: one "ok" per explicit knob; a model that exists answers
+# §59 model liveness: one "ok" per explicit knob; a model that exists answers
 # in seconds, one that does not is rejected before any generation.
 _MODEL_PROBE_TIMEOUT = 60
 
@@ -381,7 +381,7 @@ class Probes:
     # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = 默认工作
     # repo）——终端看不见的 TCC 失败只能这样问出来；tests 注入，绝不真起 launchd
     launchd_claude_probe: Callable[[str, str], dict] = _launchd_claude_probe
-    # §57 (D22)：Claude Code 全局默认模型（~/.claude/settings.json `model`）——
+    # §59 (D22)：Claude Code 全局默认模型（~/.claude/settings.json `model`）——
     # follow 模式继承的就是它；tests 注入，绝不读开发者的真文件
     claude_code_settings: Callable[[], dict] = llm.read_claude_code_default_model
 
@@ -1656,7 +1656,7 @@ def _check_claude_auth(probes: Probes):
 
 
 # --------------------------------------------------------------------------- #
-# §57 (D22) model knobs — what "follow" inherits + does an explicit id answer
+# §59 (D22) model knobs — what "follow" inherits + does an explicit id answer
 # --------------------------------------------------------------------------- #
 def _model_knobs(cfg) -> dict:
     """{"dispatch": id|None, "pipeline": id|None} — None = follow."""
@@ -1801,7 +1801,7 @@ def run_checks(probes: Optional[Probes] = None, fast: bool = False) -> List[Chec
     checks = _checks_for_platform()
     if not fast:
         checks.append(_check_claude_auth)
-        checks.append(_check_model_liveness)   # §57: spends tokens only for explicit knobs
+        checks.append(_check_model_liveness)   # §59: spends tokens only for explicit knobs
     results: List[CheckResult] = []
     for fn in checks:
         results.extend(_safe(fn, probes))

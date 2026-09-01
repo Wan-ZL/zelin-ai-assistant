@@ -1,4 +1,4 @@
-// 「Claude Code 全局默认」一行（§57 D22 (d)）：显示 ~/.claude/settings.json 的 model，
+// 「Claude Code 全局默认」一行（§59 D22 (d)）：显示 ~/.claude/settings.json 的 model，
 // 提供显式一键「设为 <id>」（原生 <dialog> 确认 → POST；server 只改 model 键、先备份）。
 // 启动时永不改写那个文件——改动只发生在 owner 点确认之后。
 import { useState } from "react";

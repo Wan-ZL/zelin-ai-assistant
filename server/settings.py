@@ -1,4 +1,4 @@
-"""server/settings.py — the web Settings page's server side (CONTRACT §57, D22).
+"""server/settings.py — the web Settings page's server side (CONTRACT §59, D22).
 
 Two things, both stdlib (+ optional PyYAML for reading config.yaml):
 

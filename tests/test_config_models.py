@@ -1,5 +1,5 @@
 """config.yaml ``models:`` + overrides ``models_dispatch`` / ``models_pipeline``
-(CONTRACT §57, D22) — parsing, coercion and the canonical-list warning flag.
+(CONTRACT §59, D22) — parsing, coercion and the canonical-list warning flag.
 
 Both files live in the sandbox AIASSISTANT_HOME (tests/__init__.py) and are
 removed after every test so nothing leaks into the other suites.

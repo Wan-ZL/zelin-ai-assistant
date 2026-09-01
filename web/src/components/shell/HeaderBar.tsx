@@ -58,7 +58,7 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
         >
           {text("回收站", "Trash")}
         </a>
-        {/* 设置入口（§57）：齿轮 → ?page=settings 整页导航（同 trash 链接约定） */}
+        {/* 设置入口（§59）：齿轮 → ?page=settings 整页导航（同 trash 链接约定） */}
         <a
           className="shell-settings-link"
           href={buildAppUrl(window.location.href, "settings", null).toString()}

@@ -172,7 +172,7 @@ def build_prompt(cfg: config.Config, material: str) -> str:
 def _run_claude(prompt: str, runner=None) -> str:
     if runner is not None:
         return runner(prompt)
-    # §57 single LLM boundary (act/llm.py): binary resolution (launchd/cron
+    # §59 single LLM boundary (act/llm.py): binary resolution (launchd/cron
     # PATH may miss ~/.local/bin), scrub, --model all live there.
     proc = llm.run(
         prompt, mode=llm.MODE_PIPELINE,

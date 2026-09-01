@@ -1,4 +1,4 @@
-"""doctor rows for the model knobs (CONTRACT §57, D22).
+"""doctor rows for the model knobs (CONTRACT §59, D22).
 
 - ``claude code model`` (file reads only, runs under --fast): what follow
   inherits from ~/.claude/settings.json + where both knobs point; WARN when a

@@ -213,7 +213,7 @@ FAILURES: dict = {
                     "(bash install.sh), or launchctl bootout it by hand",
         "action_id": "open_deps",
     },
-    # §57 (D22): an explicit model knob names an id claude cannot serve
+    # §59 (D22): an explicit model knob names an id claude cannot serve
     # (alias/suffix retired, typo, no access). Only the doctor's liveness
     # probe produces it — dispatch failures keep their raw text.
     "model_unavailable": {

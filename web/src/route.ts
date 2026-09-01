@@ -1,7 +1,7 @@
 // 深链路由：URL query 序列化模式，fork 自 dashi web/src/issueRoute.ts（Apache-2.0，NOTICE 登记）。
 // 单页两个维度：?page=trash（回收站单独页，缺省 board）+ ?card=R-101（详情抽屉深链）。
 // ?page=styleguide = 活体样式指南（开发者页，仅 URL 直达——看板头部不放入口）。
-// ?page=settings = 设置页（§57 首个 section「模型」；顶栏齿轮入口）。
+// ?page=settings = 设置页（§59 首个 section「模型」；顶栏齿轮入口）。
 // 约定：路由只存"哪一页 + 哪张卡"，过滤器序列化由 A8 仿 dashi taskFilters.ts 在独立模块追加。
 const CARD_QUERY_PARAM = "card";
 const PAGE_QUERY_PARAM = "page";

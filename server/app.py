@@ -9,14 +9,14 @@
   Host 回环白名单（每请求，anti-rebind）→ Origin 白名单（写请求，present 才
   查，anti-CSRF）→ Content-Type: application/json（写请求，杀 simple-request
   向量）→ per-install instance token（写请求一律必带 X-Zai-Token；token 由
-  server 注入被服务的 index.html）。写请求 = POST 与 PUT（§57 设置面加的
+  server 注入被服务的 index.html）。写请求 = POST 与 PUT（§59 设置面加的
   第二个写动词，四闸逐字同款）。GET 保持 token-light（同源纪律 + 永不
   发 CORS 头，跨源页面读不到任何响应）。
-- 设置面（§57）：GET/PUT /api/settings/models、GET/POST
+- 设置面（§59）：GET/PUT /api/settings/models、GET/POST
   /api/claude-code/default-model，校验与落盘在 server/settings.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§57（设置面）。
+localhost 例外的法源）、§59（设置面）。
 """
 from __future__ import annotations
 
@@ -184,10 +184,10 @@ class Handler(BaseHTTPRequestHandler):
             # 诚实报「后台服务卡住/停了」——退役中的 Mac app 横幅的替身。
             self._send_json(200, health.snapshot(ctx.home))
         elif path == "/api/settings/models":
-            # §57 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
+            # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
             self._send_json(200, settings.models_snapshot(ctx.home))
         elif path == "/api/claude-code/default-model":
-            # §57 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
+            # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
             self._send_json(200, settings.claude_code_default())
         elif path == "/api/events":
             self._serve_events(ctx.hub)
@@ -238,7 +238,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise InvalidFieldError("card_id must be a string")
             self._send_json(200, files.reveal(ctx.home, card_id))
         elif path == "/api/claude-code/default-model":
-            # §57 owner 的显式一键「设为 <id>」：只改 model 键、先备份、坏文件拒改
+            # §59 owner 的显式一键「设为 <id>」：只改 model 键、先备份、坏文件拒改
             payload = self._read_json_body()
             unknown = set(payload) - {"model"}
             if unknown:
@@ -249,7 +249,7 @@ class Handler(BaseHTTPRequestHandler):
             raise NotFoundError("not found", {"path": path})
 
     # ------------------------------------------------------------------ #
-    # PUT 路由（§57 设置面；四闸同 POST）
+    # PUT 路由（§59 设置面；四闸同 POST）
     # ------------------------------------------------------------------ #
     def _route_put(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]

@@ -43,7 +43,7 @@ export interface AppState {
   cardDetailError: string | null;
   language: Language;             // UI 语言（G7 shell：?lang= 覆写 > localStorage > 浏览器）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
-  models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§57 设置页「模型」）
+  models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
   settingsError: string | null;   // 设置页读失败的用户可读文案（成功后清空；保存失败由页面 toast）
 }
@@ -179,7 +179,7 @@ export function clearFilters() {
   setFilters(EMPTY_CARD_FILTERS);
 }
 
-// ----- settings（§57 设置页） ---------------------------------------------- #
+// ----- settings（§59 设置页） ---------------------------------------------- #
 
 /** 拉设置页「模型」的两份快照（旋钮 + Claude Code 全局默认）；读失败落 settingsError */
 export async function refreshSettings(): Promise<void> {

@@ -1,4 +1,4 @@
-// 一把模型旋钮的控件（§57）：<select>（跟随 / canonical ids / 自定义…）+ 自定义时的文本框。
+// 一把模型旋钮的控件（§59）：<select>（跟随 / canonical ids / 自定义…）+ 自定义时的文本框。
 // 值的三态：FOLLOW（server 的 follow 哨兵）| canonical id | 自由文本（server 照收，附整句 WARN）。
 // 纯受控组件：不碰 store，不发请求；父组件（ModelsSection）持有草稿并统一 PUT。
 import { useI18n } from "../../i18n";

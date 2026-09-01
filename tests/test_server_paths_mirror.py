@@ -78,7 +78,7 @@ class LayoutMirrorTestCase(unittest.TestCase):
 
 
 class ModelSettingsMirrorTestCase(unittest.TestCase):
-    """§57：server/settings.py 手抄的模型旋钮常量与 act/lib/config.py 逐字一致
+    """§59：server/settings.py 手抄的模型旋钮常量与 act/lib/config.py 逐字一致
     ——两侧对「什么是合法旋钮值」意见不一，web 就会写出 daemon 忽略的键。"""
 
     def test_constants_mirror_config(self):

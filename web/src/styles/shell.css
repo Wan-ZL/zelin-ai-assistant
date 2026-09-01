@@ -132,7 +132,7 @@
   border-radius: 3px;
 }
 
-/* 设置入口（§57）：齿轮图标链接，与回收站链接同排同色 */
+/* 设置入口（§59）：齿轮图标链接，与回收站链接同排同色 */
 .shell-settings-link {
   display: inline-flex;
   align-items: center;

@@ -105,7 +105,7 @@ DEFAULT_DIGEST_FREQUENCY: str = "off"
 # registry.backend()——这里只是配置词表。
 REGISTRY_BACKENDS: tuple = ("auto", "yaml", "sqlite")
 DEFAULT_REGISTRY_BACKEND: str = "auto"
-# §57 模型旋钮（D22）：两把——`models.dispatch`（claude --bg 派工 agent，"手"）
+# §59 模型旋钮（D22）：两把——`models.dispatch`（claude --bg 派工 agent，"手"）
 # 与 `models.pipeline`（各处 headless `claude -p`：雷达/分诊/判官/问答，"脑"）。
 # 值 = "follow"（默认：argv 不带 --model，继承 Claude Code 全局默认
 # ~/.claude/settings.json `model`）或一个显式模型 id。canonical 表是 UI 下拉
@@ -224,7 +224,7 @@ class Config:
     # 词表外的值一律回落 auto（fail-safe：配错字不至于让真源判定翻车）。
     registry_backend: str = DEFAULT_REGISTRY_BACKEND
 
-    # §57 模型旋钮（D22）。"follow" = 不传 --model（继承 Claude Code 全局
+    # §59 模型旋钮（D22）。"follow" = 不传 --model（继承 Claude Code 全局
     # 默认）；其余 = act/llm.py 在 argv 末尾唯一一处追加 `--model <id>`。
     # 形状坏（空白/控制字符）回落 follow——宁可跟随全局，不可把垃圾塞进 argv。
     models_dispatch: str = MODEL_FOLLOW
@@ -465,7 +465,7 @@ def _coerce_registry_backend(value) -> str:
 
 
 def coerce_model(value) -> str:
-    """§57 模型旋钮归一：None/空白/"follow"（大小写不敏感）→ "follow"；形状
+    """§59 模型旋钮归一：None/空白/"follow"（大小写不敏感）→ "follow"；形状
     合法的 id 原样（大小写保留——模型 id 由 CLI 判，这里不猜）；其余（含控制
     字符、空格、超长）→ ValueError，由调用方按「坏值 = 保留原生效值」处理。
     yaml 路径经 _model_or 吞成 follow；overrides 路径经 per-entry try 跳过。"""
@@ -662,7 +662,7 @@ def load_config() -> Config:
     if "backend" in registry_blk:
         cfg.registry_backend = _coerce_registry_backend(registry_blk.get("backend"))
 
-    # §57（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
+    # §59（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
     # 保留 follow（不是保留"上一个值"——yaml 里没有上一个值）。
     models_blk = _dict_or(data.get("models"))
     for _mode in MODEL_MODES:
@@ -929,7 +929,7 @@ _OVERRIDE_FIELDS: dict = {
     "feedback_publish_default": _coerce_bool,
     "feedback_sync_repo": str,
     "feedback_sync_token_path": str,
-    # §57 (D22): the two model knobs — web Settings「模型」writes these flat
+    # §59 (D22): the two model knobs — web Settings「模型」writes these flat
     # keys via server/settings.py (diff-write: a value equal to the
     # config.yaml/default effective value deletes the key). Bad shapes raise
     # → per-entry skip, the effective value stays.

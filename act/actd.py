@@ -3505,7 +3505,7 @@ def _store2_tick() -> None:
 # one pass + loop
 # --------------------------------------------------------------------------- #
 def _refresh_model_knobs(cfg: config.Config) -> None:
-    """§57（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次。
+    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次。
 
     dispatch / resume / rework / brief 都拿 run_once 手里这个冻结 cfg 去
     ``llm.dispatch_argv(cfg)``；不刷新的话 web 设置页保存后要等重启守护进程
@@ -3529,7 +3529,7 @@ def run_once(
     interval: Optional[int] = None,   # 主循环真实 pass 间隔（--interval 优先）
 ) -> dict:
     config.ensure_state_dirs()
-    _refresh_model_knobs(cfg)   # §57：模型旋钮改动下一 pass 生效，无需重启
+    _refresh_model_knobs(cfg)   # §59：模型旋钮改动下一 pass 生效，无需重启
     # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
     # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
     heartbeat.beat("store2", interval)

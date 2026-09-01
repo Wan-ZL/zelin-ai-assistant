@@ -197,7 +197,7 @@ class DoctorTestCase(unittest.TestCase):
             launchd_claude_probe=(lambda claude_bin, cwd: dict(launchd_claude))
             if launchd_claude is not None
             else (lambda claude_bin, cwd: {"state": "ok", "rc": 0, "text": "2.1.252"}),
-            # §57: never read the developer's real ~/.claude/settings.json;
+            # §59: never read the developer's real ~/.claude/settings.json;
             # default = "unset" so the healthy baseline stays healthy.
             claude_code_settings=lambda: dict(
                 claude_code if claude_code is not None

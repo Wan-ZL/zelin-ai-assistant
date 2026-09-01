@@ -447,7 +447,7 @@ def _extract_prompt(note_text: str) -> str:
 def _run_extract(note_text: str, runner=None) -> str:
     if runner is not None:
         return runner(note_text)
-    # §57 single LLM boundary (act/llm.py): binary resolution (cron 的 PATH
+    # §59 single LLM boundary (act/llm.py): binary resolution (cron 的 PATH
     # 不含 ~/.local/bin，2026-07-08 事故), scrub, --model all live there.
     proc = llm.run(
         _extract_prompt(note_text), mode=llm.MODE_PIPELINE,

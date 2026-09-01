@@ -195,7 +195,7 @@ _EXPAND_ALLOWED_TOOLS = ",".join([
 
 
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    # §57 single LLM boundary (act/llm.py): scrub + argv + --model live there.
+    # §59 single LLM boundary (act/llm.py): scrub + argv + --model live there.
     # NOTE: prompt must come BEFORE --allowedTools — the claude CLI parses
     # --allowedTools as variadic and would swallow a trailing positional
     # prompt ("Input must be provided..." error, verified 2026-07-07) —

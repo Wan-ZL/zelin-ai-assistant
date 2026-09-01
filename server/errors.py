@@ -5,7 +5,7 @@ codes 词表（CONTRACT §49，v0.48 已入典）：UNKNOWN_FIELD / INVALID_FIEL
 NOT_FOUND / INTERNAL_ERROR / NOT_IMPLEMENTED（501 专用，reveal 非 darwin——
 add-only 正式收编，原 TODO(contract) 关闭）/ FORBIDDEN / UNAUTHORIZED
 （§49 auth model 的 Host/Origin 闸与 instance token 闸，add-only 收编）/
-CONFLICT（409，§57 设置写入遇到不可解析的目标文件——拒绝覆盖，add-only 收编）。
+CONFLICT（409，§59 设置写入遇到不可解析的目标文件——拒绝覆盖，add-only 收编）。
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class NotImplementedError501(ApiError):
 
 
 class ConflictError(ApiError):
-    """server 侧文件状态不允许这次写（§57：settings_overrides.json /
+    """server 侧文件状态不允许这次写（§59：settings_overrides.json /
     ~/.claude/settings.json 不是合法 JSON——拒绝覆盖，让人手修）→ 409。"""
     status = 409
     code = "CONFLICT"

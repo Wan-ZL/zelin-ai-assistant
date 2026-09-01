@@ -198,7 +198,7 @@ export interface HealthSnapshot {
   [key: string]: unknown;
 }
 
-/** GET/PUT /api/settings/models（CONTRACT §57，D22）：server/settings.py models_snapshot 的 wire 形逐字镜像。
+/** GET/PUT /api/settings/models（CONTRACT §59，D22）：server/settings.py models_snapshot 的 wire 形逐字镜像。
  *  dispatch/pipeline = "follow" 或显式模型 id；canonical = server-owned 下拉全集；warnings = 非 canonical 值的整句警告 */
 export interface ModelsSettings {
   dispatch: string;
@@ -210,7 +210,7 @@ export interface ModelsSettings {
   [key: string]: unknown;
 }
 
-/** GET /api/claude-code/default-model（§57）：follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json `model`） */
+/** GET /api/claude-code/default-model（§59）：follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json `model`） */
 export interface ClaudeCodeDefault {
   model: string | null;
   path: string;

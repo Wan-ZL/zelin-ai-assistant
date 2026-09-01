@@ -111,7 +111,7 @@ registry:                              # 数据层真源（CONTRACT §53，owner
                                        # yaml = 回滚开关（保留一个版本）：忽略 store2 标记、继续读写 act/registry/*.yaml。
                                        # 回滚步骤见 docs/TROUBLESHOOTING.md「store2 回滚」。改动本键需重启守护进程。
 
-# models:                              # 模型选择（CONTRACT §57，owner 决策 D22）——两把旋钮，都默认 follow
+# models:                              # 模型选择（CONTRACT §59，owner 决策 D22）——两把旋钮，都默认 follow
 #   dispatch: follow                   # 「手」：claude --bg 派工 agent 用哪个模型。follow = 不传 --model，继承 Claude Code 全局默认（~/.claude/settings.json 的 model）
 #   pipeline: follow                   # 「脑」：各处 headless claude -p（雷达提取/分诊/判官/问答/digest）用哪个模型。同上
 #                                      # 显式值请用 canonical id：claude-fable-5 / claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5-20251001

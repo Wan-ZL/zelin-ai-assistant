@@ -250,7 +250,7 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
 # LLM runner (injectable for tests)
 # --------------------------------------------------------------------------- #
 def _default_extractor(prompt: str) -> subprocess.CompletedProcess:
-    # §57 single LLM boundary (act/llm.py): scrub, argv, credential env
+    # §59 single LLM boundary (act/llm.py): scrub, argv, credential env
     # (launchd can't read the Keychain OAuth token) and --model live there.
     # Lazy import on purpose: act/lib must not import upward at module load.
     from act import llm
