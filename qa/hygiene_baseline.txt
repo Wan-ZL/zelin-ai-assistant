@@ -1,0 +1,27 @@
+# hygiene_baseline.txt —— shrink-only 存量账本（docs/CONTRACT.md §58.4）。
+# 只许缩：新违例 FAIL、账上恶化 FAIL、已修好仍挂账 FAIL（划掉这行）。
+# 重铸：python3 scripts/qa/hygiene.py --write-baseline（P3 清账轮以外别用）。
+docstring:act/ai_fix.py 1
+docstring:act/analytics_sync.py 1
+docstring:act/golden_eval.py 1
+docstring:act/lib/agent_states.py 1
+docstring:act/lib/analytics.py 1
+docstring:act/lib/config.py 1
+docstring:act/lib/feedback_sync.py 1
+docstring:act/lib/logcap.py 1
+docstring:act/lib/platform.py 1
+docstring:act/lib/qr.py 1
+docstring:act/lib/repos.py 1
+docstring:act/lib/sanitize.py 1
+docstring:act/lib/systemd.py 1
+docstring:act/lib/taskscheduler.py 1
+docstring:act/merge_review.py 1
+docstring:act/radar.py 1
+docstring:act/report.py 1
+docstring:act/voice_gen.py 1
+docstring:server/__main__.py 1
+docstring:server/sse.py 1
+file-lines:act/actd.py 3652
+func-lines:act/actd.py::_apply_decision 457
+func-lines:act/lib/dashboard.py::build_dashboard 485
+func-lines:act/lib/dashboard.py::build_dashboard._project 365

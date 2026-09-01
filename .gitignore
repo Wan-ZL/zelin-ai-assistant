@@ -27,5 +27,9 @@ promo/package.json
 promo/package-lock.json
 .coverage
 
+# QA gate outputs (scripts/qa/run_gates.sh; CONTRACT §58) — verdicts, coverage
+# JSON and suggested baselines land here; the committed truth lives in qa/
+.qa-report/
+
 # Playwright MCP browser-debug dumps (never commit)
 .playwright-mcp/
