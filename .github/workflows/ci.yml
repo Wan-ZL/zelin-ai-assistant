@@ -186,6 +186,74 @@ jobs:
       - name: Run vitest
         run: npx vitest run
 
+  qa-gates:
+    name: QA gates (complexity + CRAP + coverage floor + deps + hygiene)
+    # 合并硬门四把尺（docs/CONTRACT.md §58；owner 决策 D4/D5）：每函数圈复杂度
+    # ≤6、CRAP ≤6、总覆盖率不低于 qa/coverage_floor.txt、模块依赖方向 + 防腐
+    # 十条机械化——全部对着 qa/*_baseline.txt 的 shrink-only 存量账本判决，
+    # 所以老代码不挡门、新代码必须干净、账本只许缩（清账 = P3）。
+    # 出生时是非必需检查；在 main 上证明稳定后再升 required（§58.5）。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # no step pushes or uses git auth after checkout — don't leave the
+          # token in .git/config for later steps to read
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          # 钉小版本：coverage 派生的 CRAP 账本要求跑门的解释器可复现
+          # （qa/crap_baseline.txt 就是在这个版本的 ubuntu 腿上收的账）。
+          python-version: "3.13"
+
+      - name: Install PyYAML + coverage
+        # coverage = dev/CI-only（§0 宪法第 7 条：运行时白名单 stdlib+PyYAML 不变）
+        run: python3 -m pip install "pyyaml>=6,<7" coverage
+
+      - name: Run QA gates
+        # 全套 unittest 在 coverage 下跑一遍 + 五道门；判决与建议账本落
+        # .qa-report/（下面整目录上传——收账 = 从 artifact 拷回 qa/）。
+        run: bash scripts/qa/run_gates.sh
+
+      - name: ruff C901 advisory cross-check
+        # 参考尺不判卷（§58.1）：mccabe 的计数口径与 scripts/qa/complexity.py
+        # 略异，仅作交叉参照，永不阻塞（阈值同源 qa/gates.toml）。
+        if: always()
+        run: |
+          python3 -m pip install ruff==0.15.20
+          MAX="$(python3 scripts/qa/complexity.py --print-threshold)"
+          ruff check act server scripts --extend-select C901 --config "lint.mccabe.max-complexity=${MAX}" \
+            || echo "::notice title=C901 advisory::mccabe findings above are informational (authoritative gate: scripts/qa/complexity.py)"
+
+      - name: Upload QA report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qa-report
+          path: .qa-report/
+
+  qlty:
+    name: qlty check (informational)
+    # .qlty/qlty.toml 早就配好 9 个 plugin（bandit/trivy/trufflehog/zizmor/
+    # actionlint/…）却从未在 CI 跑过（UNCLEBOB 审计的「配好未接线」项）。
+    # R2.3.8 第一步：先以 informational 身份接线——continue-on-error 与
+    # tests-windows 同款，红了不挡 PR；稳定后再议安全类 plugin 升门。
+    continue-on-error: true
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # no step pushes or uses git auth after checkout — don't leave the
+          # token in .git/config for later steps to read
+          persist-credentials: false
+
+      - uses: qltysh/qlty-action/install@08a0a862c159eae9b9003081da6663d96efef637 # v2.3.0
+
+      - name: qlty check
+        run: qlty check --all --no-cache --no-progress
+
   ci:
     runs-on: macos-latest
     steps:
