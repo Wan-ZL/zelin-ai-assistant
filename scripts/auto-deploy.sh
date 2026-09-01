@@ -237,9 +237,6 @@ take_lock() {
     return 1
 }
 
-# shellcheck disable=SC2329 # invoked through the EXIT trap in main
-release_lock() { rm -rf "$LOCK_DIR"; }
-
 rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 rollback itself failed
     log "ROLLBACK to $(short "$1"): $2"
     _dirty="$(git_q status --porcelain --untracked-files=no 2>/dev/null || true)"
@@ -293,7 +290,7 @@ main() {
     fi
 
     take_lock || exit 0
-    trap release_lock EXIT
+    trap 'rm -rf "$LOCK_DIR"' EXIT
 
     _now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if [ "$FORCE" -eq 1 ]; then
