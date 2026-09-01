@@ -3959,6 +3959,50 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - Mac app 构建失败（§23 `app=fail`，只可能来自手动 install.sh）从不进入自动部署的判据：`failed_deploy_steps` 不计 `app` 行——旧 app 原地保留，回滚也治不了它。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
+## 58. 质量仪表与合并硬门（v0.48.x，P2；owner 决策 D4/D5/D15）
+
+（§57：同轮并行 PR 的预留席位——若该 PR 最终未立法，此号作废、永不复用。）
+
+owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + 覆盖率不下降 = 必须绿」**，而且老代码新代码都要达标、冲最终完整版。本节把「达标」从提示词变成确定性工具（Uncle Bob 采纳清单的 DEV #1/#3/#4/#6）：四把尺 + 防腐十条的机械化，全部以 **shrink-only 存量账本** 起步——**门从上线第一天就是绿的**，老代码的欠账全部显式登记且只许缩，清账是 P3 的工作。执法：`scripts/qa/`（qa_common / complexity / crap / coverage_floor / depgraph / hygiene + run_coverage.sh / run_gates.sh）、CI job `qa-gates`；判例 `tests/test_qa_complexity_counter.py`、`tests/test_qa_crap_formula.py`、`tests/test_qa_coverage_floor.py`、`tests/test_qa_depgraph_rules.py`、`tests/test_qa_hygiene_caps.py`、`tests/test_qa_ledger_shrink.py`。
+
+**阈值单源**：一切数字（复杂度上限、CRAP 上限与抖动容差、覆盖率棘轮旋钮、行数上限）住在 **`qa/gates.toml`**（truth = 该文件，本节不复述数字）。五道门、CI、以及后续的测试 skill（R2.8.3）都只读它——第二套阈值定义 = 违宪的第二真源。变异测试（R2.3.4）**永不进本节的门**：夜间任务另立，存活变异体是每日循环的输入不是 PR 的判决。
+
+### 58.1 尺一：每函数圈复杂度（scripts/qa/complexity.py）
+
+- **范围**：`act/` `server/` `scripts/` 的全部 `.py`（含嵌套函数与方法）。`tests/` 是判例不设门；`mac/` 按 D3 豁免（退役中，不做任何 QA 仪表——R2.2.4）。
+- **计数口径**（判例钉死）：1 + `if/elif`、`for/while`、`except`、`assert`、三元、`and/or`（n 路短路 = n−1）、comprehension 的 `if` 子句、`match` 的每个 `case`。**`with-as` 不算**；**嵌套 `def` 不计入外层**（各自成账——否则「拆函数」这条唯一出路会被口径没收）；lambda 体计入所在函数。
+- **交叉参照**：CI 里 ruff `C901`（mccabe，max-complexity 同读 `qa/gates.toml`）作 advisory 输出，**永不判卷**——两把尺口径略异，authoritative 的是本节的 stdlib-ast 实现。
+
+### 58.2 尺二/三：CRAP 与覆盖率地板（scripts/qa/crap.py、coverage_floor.py）
+
+- **公式**：`CRAP(f) = CC(f)² × (1 − cov(f))³ + CC(f)`，上限 = owner D4 拍板的值（truth = qa/gates.toml）。`cov(f)` = 函数 AST 行段内 coverage 认识的语句行中被执行的比例；覆盖率原料 = `scripts/qa/run_coverage.sh`（整套 unittest 在 coverage.py 下跑一遍，产出 JSON；coverage 是 dev/CI 侧依赖，宪法第 7 条白名单不动）。
+- **两类超标一眼可分**（审计 r6）：「没测」型（CC 低、cov ≈ 0——补一条注入缝测试就掉账）与「太复杂」型（CC 高、cov 高——只有拆分能救）。P3 清账按「先补测试网再拆」的顺序（R2.3.2）。
+- **覆盖率地板**：`act/ + server/` 的总行覆盖率必须 ≥ `qa/coverage_floor.txt`（单个数字）。地板**只经 PR 上调**：覆盖率涨过触发带时门自动打印建议新地板（= 当前值 − buffer，向下取 1 位小数），谁的 PR 涨的覆盖率谁顺手把地板拧上去；下调地板 = 显式的 owner 决定（删功能连带删测试的场景，R2.3.3 不设死数字的本意）。
+- **canonical 环境 = CI 的 `qa-gates` job**（ubuntu + 钉住的 Python 小版本 + 只装 pyyaml/coverage）：coverage 派生的分数带环境差（平台 skip、线程时序），账本按该环境收账；本地跑 `run_gates.sh` 是参考，darwin 上的偏差由 `[crap].tolerance` 抖动缓冲吸收，吸收不了的以 CI 为准。
+
+### 58.3 尺四：依赖方向 + 防腐十条机械化（scripts/qa/depgraph.py、hygiene.py）
+
+分层模型正式入典（防腐 #2 从文字变机器；含函数体内的 lazy import 与 `TYPE_CHECKING`）：
+
+- `act/lib/**` 只准 import stdlib + `yaml` + `act(.lib)`——lib 永不向上（`lib-import` / `lib-thirdparty`；`cryptography` 是 `act/lib/e2e.py` 的法定 lazy 依赖，在白名单）。
+- `act/*.py`（entrypoint 层：actd、executor、radar*、digest、doctor、webui、boardctl……）准 import `act.lib`，**互相之间不准 import**（`entry-pair`）。今天账上的 ~25 条互引边（actd→analyze/executor/…）是 P3 的重构清单：该层里事实上的共享核心要么下沉 `act.lib`、要么显式立法为新层——届时修本节。
+- `server/**` 只准 import stdlib/第三方 + `act.lib` + `server`（`server-import`）。
+- **任何模块不准跨模块引用 `_私名`**（`from X import _y` 与 `X._y` 属性链两形，dunder 除外；`private:`）——防腐 #2 的「当场升 public 或抽进共享模块」。
+- **hygiene**（防腐 #1/#5 的可机械化半边）：`.py` 文件/函数/class 行数上限与 `shell/` 的 `.swift` 文件行数上限（数字 truth = qa/gates.toml；`mac/` 豁免见 58.1）；`act/**`、`server/**` 的模块 docstring 必须含 `§<数字>`（`__init__.py` 豁免）。挂账文件**不许再长**（登记值就是它的天花板）。
+
+### 58.4 shrink-only 账本（qa/*_baseline.txt；实现 qa_common.compare_with_ledger）
+
+- **账本**：`qa/complexity_baseline.txt`、`qa/crap_baseline.txt`、`qa/deps_baseline.txt`、`qa/hygiene_baseline.txt`（行形 `<key> <登记分>`，`#` 注释）。键 = `路径::qualname`（尺一/二）或 `规则:路径->目标`（尺四），**不含行号**（无关编辑不移账）。
+- **判决三态（任一即门红）**：`new`——超阈值且不在账上（新代码必须干净）；`worse`——账上条目劣于登记分（存量只许持平或变好；coverage 派生的尺二有 `[crap].tolerance` 缓冲）；`stale`——已达标/已消失仍挂账（**修好了必须同 PR 划账**——这就是棘轮，账本永不回涨）。另有两个不判死的提示：`limbo`（尺二专用：落在阈值下方 tolerance 带内，建议观察后删账）与 `better`（仍超标但比登记分好，建议把登记分拧低）。
+- **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。
+- **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
+
+### 58.5 CI 接线（.github/workflows/ci.yml）
+
+- **`qa-gates` job**：coverage 下跑全套 unittest + 五道门 + C901 advisory + artifact 上传。**出生为非必需检查**（D15 的安全分阶段：先在 main 上证明它绿而稳），转正 = owner/编排者把它加进 ruleset `protect-main` 的 required checks——届时它与既有四道必需检查（Lint / Tests ubuntu ×2 / Web tests）同级，红即不可合。
+- **`qlty` job（informational）**：把早已配好、从未运行的 `.qlty/qlty.toml`（bandit/trivy/trufflehog/zizmor/actionlint/…）以 `continue-on-error` 接进 CI（与 tests-windows 同款语义）——R2.3.8 的第一步；安全类 plugin 是否升为阻塞门，等它跑稳后另立修订。
+- 本地等价物：`bash scripts/qa/run_gates.sh`（CONTRIBUTING 的本地门清单附注）。
+
 ## 59. 模型选择：单一 LLM 边界 + 两把旋钮 + 全局默认（decision D22）
 
 （§57 / §58：同轮并行 PR 已各自立法（夜间变异测试 / 质量仪表），本节取下一个空号；若它们最终未立法，两个号作废、永不复用。）
