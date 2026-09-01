@@ -20,8 +20,8 @@ works as a plain CLI too). One pass:
 Call-pattern notes (same landmines as act/radar_slack._default_mcp_runner):
 - prompt must come BEFORE --allowedTools (the claude CLI parses --allowedTools
   as variadic and would swallow a trailing positional prompt);
-- binary via radar._claude_bin (launchd/cron PATH 兜底), env via
-  executor._runner_env (Keychain-less API-key fallback).
+- argv/binary/env via act/llm.py (§57 single LLM boundary: launchd/cron
+  PATH 兜底 + Keychain-less API-key fallback + the --model knob).
 
 The runner is injectable so tests never spawn a real claude.
 
@@ -36,7 +36,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
-from act.lib import analytics, config, failures, sanitize
+from act.lib import analytics, config, failures
 
 # Read/search-only Slack MCP tool group — single source of truth is the radar
 # fallback's red-line list (never add write tools THERE either).
@@ -99,22 +99,15 @@ def build_prompt(cfg: config.Config) -> str:
 
 
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    from act.executor import _runner_env
-    from act.radar import _claude_bin   # cron/launchd PATH 兜底（radar.py 事故注）
-    prompt, _ = sanitize.scrub(prompt)
-    return subprocess.run(
-        # NOTE: prompt must come BEFORE --allowedTools — the claude CLI parses
-        # --allowedTools as variadic and would swallow a trailing positional
-        # prompt (same landmine as radar_slack._default_mcp_runner).
-        [
-            _claude_bin(), "-p", prompt,
-            "--output-format", "text",
-            "--allowedTools", _MCP_ALLOWED_TOOLS,
-        ],
-        capture_output=True,
-        text=True,
+    from act import llm  # §57 single LLM boundary (scrub / argv / --model)
+    # NOTE: prompt must come BEFORE --allowedTools — the claude CLI parses
+    # --allowedTools as variadic and would swallow a trailing positional
+    # prompt (same landmine as radar_slack._default_mcp_runner); llm.run's
+    # default prompt_via="arg" keeps that order.
+    return llm.run(
+        prompt, mode=llm.MODE_PIPELINE,
+        extra_argv=["--allowedTools", _MCP_ALLOWED_TOOLS],
         timeout=TIMEOUT_S,
-        env=_runner_env(),
     )
 
 

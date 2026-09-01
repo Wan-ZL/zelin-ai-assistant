@@ -30,10 +30,9 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from act.analyze import _extract_json
-from act.executor import _runner_env
+from act import llm
 from act.lib import analytics, config, failures, sanitize
 # cron/launchd PATH 兜底（radar.py 事故注）— single claude-bin resolution path.
-from act.radar import _claude_bin
 
 DISCUSSIONS_URL = "https://github.com/Wan-ZL/zelin-ai-assistant/discussions"
 
@@ -280,15 +279,11 @@ def build_prompt(question: str, bundle: str, lang: Optional[str] = None) -> str:
 
 
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    prompt, _ = sanitize.scrub(prompt)
-    return subprocess.run(
-        # prompt BEFORE any variadic flags (claude CLI quirk, see analyze.py).
-        # No tools: a pure answer over the pre-gathered bundle (§27).
-        [_claude_bin(), "-p", prompt, "--output-format", "text"],
-        capture_output=True,
-        text=True,
+    # §57 single LLM boundary (act/llm.py): scrub + argv + --model live there.
+    # No tools: a pure answer over the pre-gathered bundle (§27).
+    return llm.run(
+        prompt, mode=llm.MODE_PIPELINE,
         timeout=ASK_TIMEOUT,
-        env=_runner_env(),
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
 

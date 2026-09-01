@@ -8,7 +8,7 @@ Zelin 发给自己的 Slack self-DM（一句话 / 一张图的描述）进来后
     {"action": "relates_to", "req": "R-xxx", "note": ...} -> 关联已有条目（detected 则 raise）
     {"action": "ignore", "reason": ...}                   -> 无需行动
 
-``capture()`` 造 prompt + 跑 headless ``claude -p``（复用 executor._runner_env 的
+``capture()`` 造 prompt + 跑 headless ``claude -p``（经 act/llm.py 单一边界，复用其 runner_env 的
 key 解析；``extractor`` 可注入做测试）并返回解析后的决策 dict。LLM 失败时兜底成一张
 最小 new_proposal（快速捕获宁可多建一张卡，也不能把 Zelin 随手记的东西弄丢）。
 
@@ -250,16 +250,14 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
 # LLM runner (injectable for tests)
 # --------------------------------------------------------------------------- #
 def _default_extractor(prompt: str) -> subprocess.CompletedProcess:
-    prompt, _ = sanitize.scrub(prompt)
-    # Reuse the executor's single ANTHROPIC_API_KEY resolution path (launchd
-    # can't read the Keychain OAuth token) — do NOT duplicate that logic.
-    from act.executor import _runner_env
-    return subprocess.run(
-        ["claude", "-p", "--output-format", "text", prompt],
-        capture_output=True,
-        text=True,
+    # §57 single LLM boundary (act/llm.py): scrub, argv, credential env
+    # (launchd can't read the Keychain OAuth token) and --model live there.
+    # Lazy import on purpose: act/lib must not import upward at module load.
+    from act import llm
+    return llm.run(
+        prompt, mode=llm.MODE_PIPELINE,
+        prompt_via="arg_last",  # legacy prompt-last order
         timeout=300,
-        env=_runner_env(),
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
 

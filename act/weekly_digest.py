@@ -51,7 +51,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from act.executor import _runner_env
+from act import llm
 from act.lib import analytics, config, notify, sanitize
 from act.lib.registry import Requirement, State, merge_or_new, save
 
@@ -113,12 +113,6 @@ def _write_marker(data: dict) -> None:
     os.replace(tmp, path)
 
 
-def _claude_bin() -> str:
-    # launchd/cron PATH may miss ~/.local/bin (same pitfall as the radar) —
-    # unified resolution: execution.claude_bin pin -> PATH -> ~/.local/bin.
-    return config.resolve_claude_bin()
-
-
 # --------------------------------------------------------------------------- #
 # ingest-note collection (last WINDOW_DAYS of *.md in obsidian_raw)
 # --------------------------------------------------------------------------- #
@@ -178,12 +172,12 @@ def build_prompt(cfg: config.Config, material: str) -> str:
 def _run_claude(prompt: str, runner=None) -> str:
     if runner is not None:
         return runner(prompt)
-    proc = subprocess.run(
-        [_claude_bin(), "-p", "--output-format", "text", prompt],
-        capture_output=True,
-        text=True,
+    # §57 single LLM boundary (act/llm.py): binary resolution (launchd/cron
+    # PATH may miss ~/.local/bin), scrub, --model all live there.
+    proc = llm.run(
+        prompt, mode=llm.MODE_PIPELINE,
+        prompt_via="arg_last",  # legacy prompt-last order
         timeout=420,  # a week of notes can be dense
-        env=_runner_env(),
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
     if proc.returncode != 0:

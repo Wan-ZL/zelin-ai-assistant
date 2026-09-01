@@ -32,7 +32,7 @@ try:
 except ImportError:  # pragma: no cover - exercised only on Windows CI
     fcntl = None
 
-from act.executor import _runner_env
+from act import llm
 from act.lib import (analytics, config, failures, health, provenance, registry,
                      sanitize, secrets, sources)
 from act.lib.registry import Requirement
@@ -432,13 +432,6 @@ def file_parse_degraded_card(note: Path, note_text: str) -> Optional[Requirement
 # --------------------------------------------------------------------------- #
 # claude -p extraction
 # --------------------------------------------------------------------------- #
-def _claude_bin() -> str:
-    # cron 的 PATH 不含 ~/.local/bin（2026-07-08 事故：每次提取 FileNotFoundError
-    # 被吞成 "claude -p failed"，雷达自 cron 接管起零产出）——统一走
-    # config.resolve_claude_bin（execution.claude_bin pin → PATH → ~/.local/bin）。
-    return config.resolve_claude_bin()
-
-
 def _extract_prompt(note_text: str) -> str:
     """Outbound extraction prompt: untrusted note fenced, then scrubbed.
 
@@ -454,14 +447,14 @@ def _extract_prompt(note_text: str) -> str:
 def _run_extract(note_text: str, runner=None) -> str:
     if runner is not None:
         return runner(note_text)
-    proc = subprocess.run(
-        [_claude_bin(), "-p", "--output-format", "text", _extract_prompt(note_text)],
-        capture_output=True,
-        text=True,
+    # §57 single LLM boundary (act/llm.py): binary resolution (cron 的 PATH
+    # 不含 ~/.local/bin，2026-07-08 事故), scrub, --model all live there.
+    proc = llm.run(
+        _extract_prompt(note_text), mode=llm.MODE_PIPELINE,
+        prompt_via="arg_last",  # legacy order pinned by tests/test_radar_scrub.py
         timeout=600,  # dense-OCR notes legitimately take 100-360s+ to extract
                       # (2026-07-22 replay: 32KB note = 277s success) — 300 sat
                       # mid-distribution and manufactured chronic timeouts
-        env=_runner_env(),
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
     if proc.returncode != 0:
@@ -709,7 +702,7 @@ def _note_health(ok: bool, reason: Optional[str] = None,
 
 
 def _has_anthropic_key() -> bool:
-    """Mirror ingest/process-screenpipe.sh:118-134 + executor._runner_env: an
+    """Mirror ingest/process-screenpipe.sh:118-134 + llm.runner_env: an
     Anthropic key is resolvable from the env or the §19 file chain. Used to
     tell ``no_api_key`` (extraction can't authenticate at all) apart from
     ``extract_failed`` (a key exists but ``claude -p`` still failed)."""

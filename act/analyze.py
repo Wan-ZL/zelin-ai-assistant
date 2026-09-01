@@ -21,11 +21,9 @@ import json
 import subprocess
 from typing import Callable, Optional
 
-from act.lib import analytics, config, sanitize
+from act import llm
+from act.lib import analytics, config
 from act.lib.registry import Requirement, State, load, save
-# Reuse the executor's single key-resolution path — do NOT duplicate the
-# ANTHROPIC_API_KEY-from-~/.config fallback with divergent logic.
-from act.executor import _runner_env
 
 
 # --------------------------------------------------------------------------- #
@@ -197,20 +195,15 @@ _EXPAND_ALLOWED_TOOLS = ",".join([
 
 
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    prompt, _ = sanitize.scrub(prompt)
-    return subprocess.run(
-        # NOTE: prompt must come BEFORE --allowedTools — the claude CLI parses
-        # --allowedTools as variadic and would swallow a trailing positional
-        # prompt ("Input must be provided..." error, verified 2026-07-07).
-        [
-            "claude", "-p", prompt,
-            "--output-format", "text",
-            "--allowedTools", _EXPAND_ALLOWED_TOOLS,
-        ],
-        capture_output=True,
-        text=True,
+    # §57 single LLM boundary (act/llm.py): scrub + argv + --model live there.
+    # NOTE: prompt must come BEFORE --allowedTools — the claude CLI parses
+    # --allowedTools as variadic and would swallow a trailing positional
+    # prompt ("Input must be provided..." error, verified 2026-07-07) —
+    # llm.run's default prompt_via="arg" keeps that order.
+    return llm.run(
+        prompt, mode=llm.MODE_PIPELINE,
+        extra_argv=["--allowedTools", _EXPAND_ALLOWED_TOOLS],
         timeout=420,  # agent may make multiple tool round-trips
-        env=_runner_env(),
     )
 
 
