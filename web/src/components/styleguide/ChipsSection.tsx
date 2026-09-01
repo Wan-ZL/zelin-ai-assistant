@@ -17,8 +17,8 @@ export function ChipsSection() {
   const { text, language } = useI18n();
 
   // queued_reason 走真解析函数（steer.ts），与 RunningCard/DetailFields 同一条词表
+  // （waiting_budget chip retired v0.49，D9）
   const reasonCard = queuedReasonLabel({ kind: "waiting_card", blocking_id: "R-101" }, text) ?? "";
-  const reasonBudget = queuedReasonLabel({ kind: "waiting_budget" }, text) ?? "";
   const reasonSlot = queuedReasonLabel("concurrency", text) ?? "";
 
   const specimens: ChipSpecimen[] = [
@@ -97,7 +97,6 @@ export function ChipsSection() {
       chips: [
         { className: "chip", zh: "排队中", en: "Queued" },
         { className: "chip", zh: reasonCard, en: reasonCard },
-        { className: "chip", zh: reasonBudget, en: reasonBudget },
         { className: "chip", zh: reasonSlot, en: reasonSlot },
       ],
       noteZh: "queued + 排队原因 chip（RunningCard，§M6.2）：中性 .chip；文案出自 steer.ts queuedReasonLabel（本页即真函数输出）",

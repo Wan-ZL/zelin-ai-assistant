@@ -19,8 +19,13 @@ channel 由各 radar/capture 写入端硬编码（quick/slack/gmail/meeting/...�
 条纪律：宁可错关，不可错开。
 
 本模块只做裁决，不做 I/O、不写 registry（§44 单写者不变）：actd 主循环拿着
-裁决去改状态；today_spend 由调用方计算传入；repo 存在性检查经由可注入的
-``path_exists`` seam（测试绝不碰真文件系统）。
+裁决去改状态；repo 存在性检查经由可注入的 ``path_exists`` seam（测试绝不碰
+真文件系统）。
+
+预算天花板（`daily_budget_usd` 单卡上限 + 当日累计台账 `today_spend`）retired
+v0.49——owner decision D9（docs/design/vnext2-plan.md：「取消一切预算……钱是
+足够的」）。钱的可见性由 §7/§41 的 `require_text_confirm_above_usd` 文字确认线
+承担（那是审批语义不是预算），卡上的 cost_estimate_usd 仍作披露展示。
 """
 from __future__ import annotations
 
@@ -128,9 +133,9 @@ def classify_origin(card_sources: object,
 # --------------------------------------------------------------------------- #
 AUTODISPATCH_DEFAULTS: dict = {
     "enabled": True,            # 总开关：关掉 = 全部回人工审批
-    "daily_budget_usd": 5.0,    # 每日自动派发预算（USD）；也是单卡估价上限
     "max_concurrent": 3,        # 自动派发并发上限（超出 -> queued: concurrency）
     "notify": True,             # 观察模式：每次自动派发发一条通知
+    # daily_budget_usd — retired v0.49（D9）：旧 config 里残留的键被静默忽略。
 }
 
 
@@ -167,9 +172,6 @@ def autodispatch_config(cfg: object) -> dict:
     out = dict(AUTODISPATCH_DEFAULTS)
     if "enabled" in block:
         out["enabled"] = bool(block["enabled"])
-    budget = _num(block.get("daily_budget_usd"))
-    if budget is not None and budget >= 0:
-        out["daily_budget_usd"] = budget
     cap = _int(block.get("max_concurrent"))
     if cap is not None and cap >= 1:
         out["max_concurrent"] = cap
@@ -190,14 +192,14 @@ def autodispatch_config(cfg: object) -> dict:
 #   repo:new          — target_kind=new（自动派发绝不建新 repo）
 #   repo:none         — 卡与配置都给不出 target_repo
 #   repo:missing      — 落点 repo 在磁盘上不存在（existing target_repo only）
-#   cost:unknown      — 无成本估计（不可证明 <= 上限，保守拒）
-#   cost:over_ceiling — 单卡估价超过 daily_budget_usd（默认 $5 上限）
-#   budget:unknown    — today_spend 传入值不可解析（台账坏了先停自动）
-#   budget:exhausted  — 当日累计 + 本卡估价将超预算
+#   cost:unknown      — 无成本估计（不可证明 <= 文字确认线，保守拒）
+#   cost:over_ceiling / budget:unknown / budget:exhausted — retired v0.49
+#                       （D9 取消预算天花板；旧卡上残留的 token 由 actd 在下一
+#                       pass 按「解除即清」清掉，不再产生）
 MAY_REASONS = (
     "ok", "disabled", "origin:proposed", "origin:meeting", "origin:external",
     "t2_confirm", "outbound", "repo:new", "repo:none", "repo:missing",
-    "cost:unknown", "cost:over_ceiling", "budget:unknown", "budget:exhausted",
+    "cost:unknown",
 )
 
 
@@ -211,7 +213,6 @@ def _field(card: object, name: str, default: object = None) -> object:
 def may_auto_dispatch(
     card: object,
     cfg: object,
-    today_spend: object,
     path_exists: Optional[Callable[[str], bool]] = None,
 ) -> tuple:
     """自动派发资格裁决 -> (bool, reason_token)。
@@ -221,8 +222,9 @@ def may_auto_dispatch(
     留在待审批，reason token 上卡陈述（locked：over-ceiling => falls back to
     needs-approval with a stated reason）。并发上限不在这里管——它不是资格
     问题而是排队问题，由 queued_reason 在派发时刻裁（超并发的卡已 approved，
-    排在合并运行列的 queued 子状态）。纯函数：repo 存在性经 ``path_exists``
-    seam（默认 os.path.exists），测试注入假的。
+    排在合并运行列的 queued 子状态）。预算不在这里管——没有预算（D9，v0.49
+    起 ``today_spend`` 参数随台账一并退役）。纯函数：repo 存在性经
+    ``path_exists`` seam（默认 os.path.exists），测试注入假的。
     """
     ad = autodispatch_config(cfg)
     if not ad["enabled"]:
@@ -262,17 +264,10 @@ def may_auto_dispatch(
     if not exists(os.path.expanduser(repo)):
         return False, "repo:missing"
 
-    # 成本天花板：估价必须存在且 <= 单日预算（默认 $5——locked 上限）。
+    # 估价必须存在：缺失即不可证明 <= 上面的文字确认线，保守回人批。金额本身
+    # 不设上限——单卡 $5 天花板与当日预算 retired v0.49（D9）。
     if cost is None:
         return False, "cost:unknown"
-    budget = ad["daily_budget_usd"]
-    if cost > budget:
-        return False, "cost:over_ceiling"
-    spend = _num(today_spend)
-    if spend is None:
-        return False, "budget:unknown"
-    if max(spend, 0.0) + cost > budget:
-        return False, "budget:exhausted"
 
     return True, "ok"
 
@@ -280,31 +275,26 @@ def may_auto_dispatch(
 # --------------------------------------------------------------------------- #
 # queued_reason — 合并运行列 queued 子状态的原因 chip（locked 词表）
 # --------------------------------------------------------------------------- #
-QUEUED_REASONS = ("dependency", "budget", "concurrency")
+# "budget" retired v0.49（D9）——词表 tombstone，token 永不复用。
+QUEUED_REASONS = ("dependency", "concurrency")
 
 
 def queued_reason(card: object, state: object) -> Optional[str]:
-    """approved-未派发卡的排队原因 -> {dependency, budget, concurrency} 或
-    None（无阻塞，纯粹还没轮到/上次派发失败在退避）。
+    """approved-未派发卡的排队原因 -> {dependency, concurrency} 或 None
+    （无阻塞，纯粹还没轮到/上次派发失败在退避）。
 
     ``state`` 是调用方（actd/dashboard 投影）算好的快照 dict，键全部可选，
     缺键 = 跳过该项检查（policy 不做 I/O，不自己数并发）：
       blocked_by        — 非空（list/str）= 有未完结的依赖卡 -> dependency
-      today_spend + daily_budget_usd — 当日累计 + 本卡估价超预算 -> budget
       running + max_concurrent       — 在跑数达上限 -> concurrency
-    优先级 dependency > budget > concurrency：chip 只有一个位置，报最
-    「粘」的阻塞（依赖不随时间自愈；预算等到明天；并发最快松动）。
+    优先级 dependency > concurrency：chip 只有一个位置，报最「粘」的阻塞
+    （依赖不随时间自愈；并发最快松动）。旧快照里残留的 today_spend /
+    daily_budget_usd 键不认、不 raise（D9 之后没有「等预算」这回事）。
     全函数：垃圾 state/card 只会让检查被跳过，绝不 raise。
     """
     st = state if isinstance(state, dict) else {}
     if st.get("blocked_by"):
         return "dependency"
-    spend = _num(st.get("today_spend"))
-    budget = _num(st.get("daily_budget_usd"))
-    if spend is not None and budget is not None:
-        cost = _num(_field(card, "cost_estimate_usd")) or 0.0
-        if max(spend, 0.0) + cost > budget:
-            return "budget"
     running = _int(st.get("running"))
     cap = _int(st.get("max_concurrent"))
     if running is not None and cap is not None and running >= cap:

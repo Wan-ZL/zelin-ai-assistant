@@ -25,6 +25,9 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+### Removed
+- **自动派发的预算天花板整套退役**(owner decision D9,`docs/design/vnext2-plan.md`:「取消一切预算……钱是足够的」;CONTRACT §51 留 tombstone)。删掉的机器:`autodispatch.daily_budget_usd`(默认 $5,兼单卡估价上限)、`may_auto_dispatch` 的 `today_spend` 参数、`state/autodispatch_spend.json` 当日花费台账(actd 写 + dashboard 只读小读器)、派发时刻对 auto 卡的预算复核、`queued_reason` 的 `budget`/`waiting_budget` 与 web 端「等预算」chip、`cost:over_ceiling` / `budget:unknown` / `budget:exhausted` 三个原因 token。现在 hand 出身且有估价的卡不管金额多少、当天累计多少,一律免批派发;并发上限是唯一的排队原因。旧 config 里残留的 `daily_budget_usd` 键被忽略;旧卡上残留的退役 token 在升级后第一个 pass 按「解除即清」清掉并放行;磁盘上的旧台账文件无人读写。**保留**:卡上的成本估价照常展示(披露),`require_text_confirm_above_usd` 文字确认线照常拦 T2(审批语义)——那两条不是预算;`cost:unknown`(无估价保守回人批)也保留,理由改为「不可证明 ≤ 文字确认线」。
+
 ## [0.48.3] - 2026-09-01
 
 真机部署 v0.48.2 时挖到的最后一层:plist 渲染全对、解释器也有 PyYAML,守护**仍然**起不来 —— 因为 macOS 的文件访问授权是**按二进制**发的。

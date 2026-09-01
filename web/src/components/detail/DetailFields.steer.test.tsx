@@ -44,12 +44,13 @@ describe("DetailFields steer notes", () => {
         detail={detailWith({
           id: "R-106",
           state: "queued",
-          queued_reason: { kind: "waiting_budget" },
+          // waiting_budget retired v0.49（D9）——改用现行词表里的 concurrency
+          queued_reason: { kind: "concurrency" },
         })}
       />,
     );
     expect(screen.getByText("Queued because")).toBeTruthy();
-    expect(screen.getByText("waiting on budget")).toBeTruthy();
+    expect(screen.getByText("waiting on a run slot")).toBeTruthy();
     expect(screen.queryByText("Other fields")).toBeNull();
   });
 

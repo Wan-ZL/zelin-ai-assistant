@@ -1,6 +1,8 @@
 # vnext 修宪草案（ratification-ready）
 
 > **状态：已入典（v0.48，2026-08-31）**。本文全部草案已按 M8.1 地图落进 `docs/CONTRACT.md`，编号对照：PR1/M8.2 → **§49**（web 面）；M1.a + W17 + T-28/T-29 → **§50**（信任矩阵 + effective tier + ingress 落款）；M1.b + M1.c + §M6.2 + C-2/C-6 → **§51**（自动派发天花板 + queued 词表）；M5 → **§52**（boardctl + board-agent skill）；store2（T-7~T-16 终裁）→ **§53**（休眠地基，NOT YET WIRED）；shell 薄壳 → **§54**；W-steer/M2 + §M6.1 + C-3/C-4 → **§44.3-S**（含 §2 v0.48 字段块、§32.2 comment 白名单扩 executing、§39.2 steer 家族追记）；W18 → **§41 修订**（+ §31 追记、§34 引用注）；W17 引用注 → **§7**；W1.a → **§38.4**；W1.c → **§10 修订**；T-17 → **§3 追记**；T-18 → **§10 追记**；F1/F2/F3 → **§14 追记 / §31 修订 / §32.4**；宪法 localhost 例外 → **§0 第 9 条修宪段**。本文自此转为历史证据链——与 CONTRACT 冲突时以 CONTRACT 为准。
+>
+> **已知偏离（v0.49）**：M1.b/M1.c 与 §M6.2/C-2 里的预算天花板（`daily_budget_usd`、`today_spend` 台账、`budget`/`waiting_budget` 排队原因、`cost:over_ceiling`/`budget:*` token）已按 owner decision D9（`docs/design/vnext2-plan.md`「取消一切预算」）整套退役，CONTRACT §51 留 tombstone。下文相关段落只作历史记录。
 
 本文件收集 v-next wire 团队的全部法条改动草案。原 build PR **不动 `docs/CONTRACT.md`**；每节按可直接并入 CONTRACT 的措辞书写，owner 批准后由 integrator 落入正文（编号沿 CONTRACT 惯例分配新 §，永不复用旧号）。各 builder 只追加自己的小节，不改别人的。
 

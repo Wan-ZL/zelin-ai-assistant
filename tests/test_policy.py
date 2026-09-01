@@ -127,23 +127,29 @@ class TestAutodispatchConfig(unittest.TestCase):
 
     def test_explicit_values(self):
         got = policy.autodispatch_config(_cfg(auto={
-            "enabled": False, "daily_budget_usd": 10,
-            "max_concurrent": 1, "notify": False}))
-        self.assertEqual(got, {"enabled": False, "daily_budget_usd": 10.0,
+            "enabled": False, "max_concurrent": 1, "notify": False}))
+        self.assertEqual(got, {"enabled": False,
                                "max_concurrent": 1, "notify": False})
 
     def test_garbage_values_fall_back_per_key(self):
         got = policy.autodispatch_config(_cfg(auto={
-            "daily_budget_usd": "cheap", "max_concurrent": 0,
-            "enabled": 1}))
-        self.assertEqual(got["daily_budget_usd"], 5.0)
+            "max_concurrent": 0, "enabled": 1}))
         self.assertEqual(got["max_concurrent"], 3)
         self.assertTrue(got["enabled"])
 
     def test_bare_dict_cfg(self):
         got = policy.autodispatch_config(
-            {"autodispatch": {"daily_budget_usd": 2}})
-        self.assertEqual(got["daily_budget_usd"], 2.0)
+            {"autodispatch": {"max_concurrent": 2}})
+        self.assertEqual(got["max_concurrent"], 2)
+
+    def test_legacy_daily_budget_key_is_ignored(self):
+        # D9（vnext2-plan）：预算天花板 retired v0.49。旧 config 里残留的
+        # daily_budget_usd 既不进解析结果、也不影响别的键——tombstone 判例。
+        got = policy.autodispatch_config(_cfg(auto={
+            "daily_budget_usd": 5, "max_concurrent": 2}))
+        self.assertNotIn("daily_budget_usd", got)
+        self.assertNotIn("daily_budget_usd", policy.AUTODISPATCH_DEFAULTS)
+        self.assertEqual(got["max_concurrent"], 2)
 
 
 class TestMayAutoDispatch(unittest.TestCase):
@@ -151,9 +157,9 @@ class TestMayAutoDispatch(unittest.TestCase):
         self.cfg = _cfg()
         self.exists = lambda p: True
 
-    def _may(self, card, cfg=None, spend=0.0, exists=None):
+    def _may(self, card, cfg=None, exists=None):
         return policy.may_auto_dispatch(
-            card, cfg if cfg is not None else self.cfg, spend,
+            card, cfg if cfg is not None else self.cfg,
             path_exists=exists if exists is not None else self.exists)
 
     def test_happy_path(self):
@@ -204,29 +210,31 @@ class TestMayAutoDispatch(unittest.TestCase):
         seen = []
         cfg = _cfg(default_target_repo="~/Projects/workbench")
         ok, reason = policy.may_auto_dispatch(
-            _hand_card(target_repo=None), cfg, 0.0,
+            _hand_card(target_repo=None), cfg,
             path_exists=lambda p: seen.append(p) or True)
         self.assertEqual((ok, reason), (True, "ok"))
         self.assertTrue(seen and seen[0].endswith("Projects/workbench"))
 
-    def test_cost_ceilings(self):
+    def test_unknown_cost_still_fails_closed(self):
+        # 估价缺失 = 不可证明 <= require_text_confirm_above_usd 文字确认线
+        # （§7/§41 审批语义仍在），保守回人批——这条不是预算，D9 后保留。
         self.assertEqual(self._may(_hand_card(cost_estimate_usd=None)),
                          (False, "cost:unknown"))
-        self.assertEqual(self._may(_hand_card(cost_estimate_usd=7.0)),
-                         (False, "cost:over_ceiling"))
-        # 边界：正好 == 预算 放行
-        self.assertEqual(self._may(_hand_card(cost_estimate_usd=5.0)),
-                         (True, "ok"))
 
-    def test_budget_ceilings(self):
-        self.assertEqual(self._may(_hand_card(), spend=4.0),
-                         (False, "budget:exhausted"))
-        self.assertEqual(self._may(_hand_card(), spend=3.0), (True, "ok"))
-        self.assertEqual(self._may(_hand_card(), spend="garbage"),
-                         (False, "budget:unknown"))
-        # 负 spend（台账异常）不放大预算
-        self.assertEqual(self._may(_hand_card(cost_estimate_usd=5.0),
-                                   spend=-100.0), (True, "ok"))
+    def test_no_cost_ceiling_d9(self):
+        # 原判例（test_cost_ceilings / test_budget_ceilings）钉 $5 单卡上限
+        # 与 today_spend 累计：7.0 → cost:over_ceiling、spend 4+2 →
+        # budget:exhausted、"garbage" → budget:unknown。owner decision D9
+        # （docs/design/vnext2-plan.md「取消一切预算」）retired 全部预算天花板
+        # v0.49：任何 <= 文字确认线的估价都放行，today_spend 参数随台账退役。
+        for cost in (5.0, 5.5, 7.0, 49.99):
+            self.assertEqual(self._may(_hand_card(cost_estimate_usd=cost)),
+                             (True, "ok"), cost)
+        for retired in ("cost:over_ceiling", "budget:unknown",
+                        "budget:exhausted"):
+            self.assertNotIn(retired, policy.MAY_REASONS)
+        with self.assertRaises(TypeError):     # 旧签名的第三个位置参数不再存在
+            policy.may_auto_dispatch(_hand_card(), self.cfg, 0.0, self.exists)
 
     def test_dict_card_accepted(self):
         card = {"tier": "T1", "type": "other", "cost_estimate_usd": 1,
@@ -256,14 +264,15 @@ class TestQueuedReason(unittest.TestCase):
             policy.queued_reason(_hand_card(), {"blocked_by": ["R-001"]}),
             "dependency")
 
-    def test_budget(self):
+    def test_budget_token_retired_d9(self):
+        # 原判例 test_budget 钉 today_spend 4 + cost 2 > 5 → "budget"。D9
+        # retired v0.49：旧快照里残留的两个预算键被忽略、不 raise、不报 budget，
+        # 词表里也不再有这个 token（永不复用）。
         st = {"today_spend": 4.0, "daily_budget_usd": 5.0}
-        self.assertEqual(
-            policy.queued_reason(_hand_card(cost_estimate_usd=2.0), st),
-            "budget")
-        # 无估价卡按 0 计——不超预算就不报 budget
         self.assertIsNone(
-            policy.queued_reason(_hand_card(cost_estimate_usd=None), st))
+            policy.queued_reason(_hand_card(cost_estimate_usd=2.0), st))
+        self.assertNotIn("budget", policy.QUEUED_REASONS)
+        self.assertEqual(policy.QUEUED_REASONS, ("dependency", "concurrency"))
 
     def test_concurrency(self):
         st = {"running": 3, "max_concurrent": 3}
@@ -272,20 +281,18 @@ class TestQueuedReason(unittest.TestCase):
         self.assertIsNone(policy.queued_reason(
             _hand_card(), {"running": 2, "max_concurrent": 3}))
 
-    def test_precedence_dependency_budget_concurrency(self):
-        st = {"blocked_by": "R-001", "today_spend": 9, "daily_budget_usd": 5,
-              "running": 3, "max_concurrent": 3}
+    def test_precedence_dependency_concurrency(self):
+        # 原为 dependency > budget > concurrency 三级；budget retired v0.49（D9）
+        st = {"blocked_by": "R-001", "running": 3, "max_concurrent": 3}
         self.assertEqual(policy.queued_reason(_hand_card(), st), "dependency")
         st.pop("blocked_by")
-        self.assertEqual(policy.queued_reason(_hand_card(), st), "budget")
-        st.pop("today_spend")
         self.assertEqual(policy.queued_reason(_hand_card(), st),
                          "concurrency")
 
     def test_missing_keys_skip_checks(self):
-        # 只有一半预算键 / 垃圾值 -> 该检查跳过，绝不 raise
+        # 只有一半并发键 / 垃圾值 -> 该检查跳过，绝不 raise
         self.assertIsNone(policy.queued_reason(
-            _hand_card(), {"today_spend": 4.0}))
+            _hand_card(), {"running": 4}))
         self.assertIsNone(policy.queued_reason(
             _hand_card(), {"running": "many", "max_concurrent": 3}))
         self.assertIn(

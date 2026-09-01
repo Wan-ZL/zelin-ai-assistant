@@ -54,14 +54,15 @@ describe("queuedReasonLabel", () => {
     expect(queuedReasonLabel({ kind: "waiting_card" }, en)).toBe("waiting on another card");
   });
 
-  it("waiting_budget →「等预算」", () => {
-    expect(queuedReasonLabel({ kind: "waiting_budget" }, zh)).toBe("等预算");
-    expect(queuedReasonLabel({ kind: "waiting_budget" }, en)).toBe("waiting on budget");
+  it("waiting_budget / budget 已退役（CONTRACT §51，D9）：无专属文案，按原文降级", () => {
+    // 原判例钉「等预算 / waiting on budget」；预算天花板 retired v0.49 后这两个
+    // 值只可能来自旧快照，走开放枚举的原文路径，绝不再翻译成「等预算」。
+    expect(queuedReasonLabel({ kind: "waiting_budget" }, zh)).toBe("waiting_budget");
+    expect(queuedReasonLabel("budget", en)).toBe("budget");
   });
 
-  it("act/lib/policy.py 扁平 token 形（dependency/budget/concurrency）同表翻译", () => {
+  it("act/lib/policy.py 扁平 token 形（dependency/concurrency）同表翻译", () => {
     expect(queuedReasonLabel("dependency", en)).toBe("waiting on another card");
-    expect(queuedReasonLabel("budget", zh)).toBe("等预算");
     expect(queuedReasonLabel("concurrency", en)).toBe("waiting on a run slot");
     expect(queuedReasonLabel({ kind: "concurrency" }, zh)).toBe("等并发位");
   });

@@ -49,13 +49,15 @@ export function steerStatusLabel(status: unknown, text: Text): string {
 }
 
 /**
- * queued_reason → 单行标签（「排队中 · 等 R-xx / 等预算」chip 与详情行共用）。
+ * queued_reason → 单行标签（「排队中 · 等 R-xx / 等并发位」chip 与详情行共用）。
  * 双词表兼容（canonical 由 integrator 终裁，见 §M6.2）：
- * - 结构化形 {kind, detail?, blocking_id?}，kind = waiting_card / waiting_budget
+ * - 结构化形 {kind, detail?, blocking_id?}，kind = waiting_card / concurrency
  *   （demo_seed QUEUED_REASON_KINDS 对齐）；
- * - 扁平 token 形（act/lib/policy.py QUEUED_REASONS：dependency / budget /
- *   concurrency）——M1.c 的 dashboard 投影直出形，同表翻译；
+ * - 扁平 token 形（act/lib/policy.py QUEUED_REASONS：dependency / concurrency）
+ *   ——M1.c 的 dashboard 投影直出形，同表翻译；
  * - 未知 kind/token 按 detail/原文原样展示（开放枚举不崩渲染）；解析不出 → null。
+ *   waiting_budget / budget retired v0.49（CONTRACT §51，owner decision D9）：
+ *   不再有专属文案，旧快照里若还出现就走这条原文降级路径。
  */
 export function queuedReasonLabel(value: unknown, text: Text): string | null {
   let kind: string | null = null;
@@ -75,9 +77,6 @@ export function queuedReasonLabel(value: unknown, text: Text): string | null {
     case "waiting_card":
     case "dependency":
       return text(`等 ${blocking ?? "前置卡"}`, `waiting on ${blocking ?? "another card"}`);
-    case "waiting_budget":
-    case "budget":
-      return text("等预算", "waiting on budget");
     case "concurrency":
       return text("等并发位", "waiting on a run slot");
     default:
