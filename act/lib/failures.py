@@ -54,6 +54,65 @@ FAILURES: dict = {
         "plain_en": "This Mac has more than one claude CLI and the background service is using an outdated copy — update or remove the old one, then re-run the installer",
         "action_id": "open_deps",
     },
+    # §55 第三幕（2026-08-31 storm, verified 2026-09-01 under a throwaway
+    # launchd job): the claude binary launched by the launchd-run actd gets
+    # EPERM on getcwd/readdir when the task folder sits on a TCC-gated path
+    # (external volume, ~/Documents, ~/Desktop, ~/Downloads). Bun renders that
+    # unmapped errno as "An unknown error occurred, possibly due to low max
+    # file descriptors (Unexpected)" — a GUESS, and a wrong one: the same job
+    # runs `claude --version` fine with cwd=$HOME at ulimit 256, and raising
+    # the fd ceiling to 8192 changed nothing (11 more failures, "Current
+    # limit: 8192"). macOS keys Full Disk Access per executable PATH, so the
+    # grant Terminal/python3 hold does not cover ~/.local/share/claude/
+    # versions/<v> — and every claude update is a new path. No one-click
+    # repair: it is the owner's TCC toggle (or moving the folder).
+    "claude_blind": {
+        "plain_zh": "后台服务里的 claude 读不到任务目录（macOS 按可执行文件授磁盘权限，launchd 起的"
+                    " claude 没有「完全磁盘访问」，任务目录又在外置卷或 Documents/Desktop/Downloads"
+                    " 里；claude 自己报的「low max file descriptors」是猜错的）——系统设置 → 隐私与"
+                    "安全性 → 完全磁盘访问，打开 claude 当前版本那一项（~/.local/share/claude/"
+                    "versions/<版本>，claude 每次更新后要再打开一次），或把任务目录搬到启动盘的"
+                    "家目录下；然后把卡「停止 → 退回提案」再批准。doctor 的 `launchd claude` 行"
+                    "能确认",
+        "plain_en": "The claude binary the background service launches cannot read the task "
+                    "folder (macOS grants disk access per executable; launchd-spawned claude "
+                    "has no Full Disk Access and the folder sits on an external volume or in "
+                    "Documents/Desktop/Downloads — claude's own \"low max file descriptors\" "
+                    "guess is wrong) — System Settings → Privacy & Security → Full Disk "
+                    "Access: enable the current claude version (~/.local/share/claude/"
+                    "versions/<v>; repeat after each claude update), or move the task folder "
+                    "under your home on the boot volume; then Stop → Discard & re-propose → "
+                    "approve the card again. Doctor's `launchd claude` row confirms it",
+        "action_id": "open_deps",
+    },
+    # genuine fd exhaustion: EMFILE/ENFILE spellings, Bun's own
+    # ProcessFdQuotaExceeded / SystemFdQuotaExceeded ("bun ran out of file
+    # descriptors"). launchd's gui domain hands every job a soft `ulimit -n`
+    # of 256 (hard unlimited); the templates raise the SOFT limit (§55) and
+    # re-rendering the agents is the fix — same one-click path as a dead actd.
+    "fd_limit": {
+        "plain_zh": "后台服务的打开文件数耗尽（launchd 默认软上限 256；错误里写着 EMFILE / too many"
+                    " open files）——重跑一次安装器（bash install.sh）让每个后台服务带上更高的软上限，"
+                    "再重新批准这张卡",
+        "plain_en": "The background service ran out of open files (launchd's default soft limit "
+                    "is 256; the error reads EMFILE / too many open files) — re-run the "
+                    "installer (bash install.sh) so every agent carries a higher soft limit, "
+                    "then approve the card again",
+        "action_id": "restart_actd",
+    },
+    # issue #89: `claude --bg --dangerously-skip-permissions` refuses to start
+    # until the bypassPermissions disclaimer has been accepted ONCE
+    # interactively on this machine — a Task Scheduler / launchd session can
+    # never do that, so a fresh install dispatches into a wall (49 attempts
+    # in the report). One-time human step, same shape as claude_cli_outdated.
+    "claude_bypass_disclaimer": {
+        "plain_zh": "claude 还没在这台机器上接受过「跳过权限确认」的免责声明——在终端里手动跑一次"
+                    " `claude --dangerously-skip-permissions` 并接受，后台派发才能启动",
+        "plain_en": "claude has not accepted the bypass-permissions disclaimer on this machine "
+                    "yet — run `claude --dangerously-skip-permissions` once in a terminal and "
+                    "accept it, then background dispatch can start",
+        "action_id": "open_deps",
+    },
     "claude_auth_failed": {
         "plain_zh": "AI 的 API key 无效或过期——去设置页重新粘贴一个",
         "plain_en": "The AI API key is invalid or expired — re-paste one in Settings",
@@ -129,6 +188,31 @@ FAILURES: dict = {
         "plain_en": "The background service stopped updating data — the board shows old content",
         "action_id": "restart_actd",
     },
+    # §47.4 heartbeat: the process is alive (launchctl shows a pid) but its
+    # per-pass heartbeat stopped — 2026-08-31 22:31 actd sat idle in
+    # time.sleep for 2.5h, no children, dashboard frozen, doctor green.
+    # Distinct from dashboard_stale (process dead / never started): the fix
+    # is a hard restart of the live process, not a reload.
+    "actd_stalled": {
+        "plain_zh": "后台服务进程还活着，但已经停止心跳（不再跑循环）——强制重启它："
+                    "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
+        "plain_en": "The background service process is alive but its heartbeat stopped (the "
+                    "loop is no longer running) — force-restart it: "
+                    "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
+        "action_id": "restart_actd",
+    },
+    # a launchd agent with our label prefix but no template in act/launchd —
+    # a retired service the installer failed to unload. 2026-08-31 audit: the
+    # imessageradar agent (removed v0.21) kept running for 51 days, 23,613
+    # tracebacks, because install.sh swallowed the bootout failure.
+    "launchd_orphan": {
+        "plain_zh": "有已退役的后台服务还在 launchd 里运行（仓库里已没有它的模板）——重跑一次安装器"
+                    "把它卸掉（bash install.sh），或手动 launchctl bootout",
+        "plain_en": "A retired background service is still loaded in launchd (the repo no "
+                    "longer ships its template) — re-run the installer to unload it "
+                    "(bash install.sh), or launchctl bootout it by hand",
+        "action_id": "open_deps",
+    },
     "config_invalid": {
         "plain_zh": "配置文件写坏了——所有组件都退回默认设置",
         "plain_en": "The config file is broken — every component fell back to defaults",
@@ -157,6 +241,24 @@ _RULES: list = [
     ("claude_cli_outdated", re.compile(
         r"unknown option.{0,10}['\"]?--(bg|name|resume)\b|"
         r"unknown command.{0,10}['\"]?agents\b", re.IGNORECASE)),
+    # Bun's catch-all for an UNMAPPED errno ("An unknown error occurred,
+    # possibly due to low max file descriptors (Unexpected)"). It is NOT fd
+    # exhaustion — Bun spells that out separately (ProcessFdQuotaExceeded /
+    # SystemFdQuotaExceeded, below). On this product's launch path the errno
+    # is TCC's EPERM on the task cwd (§55 第三幕), so the sentence says so.
+    # Ranked before auth/network: the message carries no other signature,
+    # and a card text would not plausibly contain it.
+    ("claude_blind", re.compile(
+        r"possibly due to low max file descriptors", re.IGNORECASE)),
+    # genuine fd exhaustion: errno spellings + Bun's own quota messages.
+    ("fd_limit", re.compile(
+        r"\bEMFILE\b|\bENFILE\b|too many open files|"
+        r"ran out of file descriptors|FdQuotaExceeded",
+        re.IGNORECASE)),
+    # claude's exact refusal (issue #89); narrow on purpose — a card that merely
+    # talks about permissions or disclaimers must not classify.
+    ("claude_bypass_disclaimer", re.compile(
+        r"bypassPermissions requires accepting the disclaimer", re.IGNORECASE)),
     ("claude_auth_failed", re.compile(
         r"authentication_error|invalid (x-)?api[- _]?key|"
         r"\b401\b|OAuth token has expired|(?<![\w-])unauthorized|"

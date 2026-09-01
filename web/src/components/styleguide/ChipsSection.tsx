@@ -17,7 +17,7 @@ export function ChipsSection() {
   const { text, language } = useI18n();
 
   // queued_reason 走真解析函数（steer.ts），与 RunningCard/DetailFields 同一条词表
-  // （waiting_budget chip retired v0.49，D9）
+  // （waiting_budget chip retired v0.48.7，D9）
   const reasonCard = queuedReasonLabel({ kind: "waiting_card", blocking_id: "R-101" }, text) ?? "";
   const reasonSlot = queuedReasonLabel("concurrency", text) ?? "";
 

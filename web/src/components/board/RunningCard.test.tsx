@@ -104,3 +104,35 @@ describe("comment-as-steer flow", () => {
     expect(await screen.findByText("Submitted…")).toBeTruthy();
   });
 });
+
+describe("dispatch-halted blocked row (§4 storm brake)", () => {
+  function haltedRow(): TaskRow {
+    return {
+      id: "R-175",
+      name: "被 fd 上限卡住的卡",
+      state: "blocked",
+      dispatch_halted: true,
+      dispatch_attempts: 5,
+      last_error: "error: An unknown error occurred, possibly due to low max file descriptors",
+      question: "Launch failed 5 times in a row; auto-retry stopped: fd limit. Fix the cause…",
+    };
+  }
+
+  it("shows the halt chip with the attempt count and the fixed explanation", () => {
+    render(<RunningCard row={haltedRow()} isBlocked />);
+    expect(screen.getByText("Launch stopped ×5")).toBeTruthy();
+    expect(screen.getByText(/auto-retry stopped/)).toBeTruthy();
+  });
+
+  it("offers Stop but never Answer… (there is no session to answer)", () => {
+    render(<RunningCard row={haltedRow()} isBlocked />);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Answer…" })).toBeNull();
+  });
+
+  it("a genuine blocked agent row still gets Answer…", () => {
+    render(<RunningCard row={{ id: "R-1", name: "x", state: "blocked", question: "A or B?" }} isBlocked />);
+    expect(screen.getByRole("button", { name: "Answer…" })).toBeTruthy();
+    expect(screen.queryByText(/Launch stopped/)).toBeNull();
+  });
+});

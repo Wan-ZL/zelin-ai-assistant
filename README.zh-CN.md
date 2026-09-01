@@ -193,7 +193,7 @@ act/
   executor.py      # claude --bg 派发 + resume/rework + 质量门 + 交付收割
   radar*.py        # 三路需求雷达(Obsidian / Slack / Gmail)
   analyze.py       # 欠账 → 可审批提案的 LLM 扩写
-  digest.py        # 周一 digest + self-improvement 建议卡
+  digest.py        # 状态摘要 digest（digest.frequency 节奏，默认 off）+ self-improvement 建议卡
   lib/             # config / registry(状态机) / dashboard 投影 / notify / secrets / …
   registry/        # 需求注册表(YAML,一条需求一个文件,运行时生成)
   launchd/         # actd + 雷达 plists

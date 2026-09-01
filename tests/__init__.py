@@ -17,6 +17,11 @@ import tempfile
 
 TMP_HOME = tempfile.mkdtemp(prefix="aiassistant-test-home-")
 os.environ["AIASSISTANT_HOME"] = TMP_HOME
+# §55 launchd probes (install.sh's interpreter viability probe, doctor's
+# `launchd claude` row) bootstrap a real throwaway launchd job when switched
+# on. The suite injects fakes everywhere; this is the belt-and-braces so a
+# forgotten seam can never touch the developer's launchd from a test.
+os.environ.setdefault("AIASSISTANT_LAUNCHD_PROBE", "0")
 
 
 # --------------------------------------------------------------------------- #

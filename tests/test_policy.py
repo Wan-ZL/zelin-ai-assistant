@@ -143,7 +143,7 @@ class TestAutodispatchConfig(unittest.TestCase):
         self.assertEqual(got["max_concurrent"], 2)
 
     def test_legacy_daily_budget_key_is_ignored(self):
-        # D9（vnext2-plan）：预算天花板 retired v0.49。旧 config 里残留的
+        # D9（vnext2-plan）：预算天花板 retired v0.48.7。旧 config 里残留的
         # daily_budget_usd 既不进解析结果、也不影响别的键——tombstone 判例。
         got = policy.autodispatch_config(_cfg(auto={
             "daily_budget_usd": 5, "max_concurrent": 2}))
@@ -226,7 +226,7 @@ class TestMayAutoDispatch(unittest.TestCase):
         # 与 today_spend 累计：7.0 → cost:over_ceiling、spend 4+2 →
         # budget:exhausted、"garbage" → budget:unknown。owner decision D9
         # （docs/design/vnext2-plan.md「取消一切预算」）retired 全部预算天花板
-        # v0.49：任何 <= 文字确认线的估价都放行，today_spend 参数随台账退役。
+        # v0.48.7：任何 <= 文字确认线的估价都放行，today_spend 参数随台账退役。
         for cost in (5.0, 5.5, 7.0, 49.99):
             self.assertEqual(self._may(_hand_card(cost_estimate_usd=cost)),
                              (True, "ok"), cost)
@@ -266,7 +266,7 @@ class TestQueuedReason(unittest.TestCase):
 
     def test_budget_token_retired_d9(self):
         # 原判例 test_budget 钉 today_spend 4 + cost 2 > 5 → "budget"。D9
-        # retired v0.49：旧快照里残留的两个预算键被忽略、不 raise、不报 budget，
+        # retired v0.48.7：旧快照里残留的两个预算键被忽略、不 raise、不报 budget，
         # 词表里也不再有这个 token（永不复用）。
         st = {"today_spend": 4.0, "daily_budget_usd": 5.0}
         self.assertIsNone(
@@ -282,7 +282,7 @@ class TestQueuedReason(unittest.TestCase):
             _hand_card(), {"running": 2, "max_concurrent": 3}))
 
     def test_precedence_dependency_concurrency(self):
-        # 原为 dependency > budget > concurrency 三级；budget retired v0.49（D9）
+        # 原为 dependency > budget > concurrency 三级；budget retired v0.48.7（D9）
         st = {"blocked_by": "R-001", "running": 3, "max_concurrent": 3}
         self.assertEqual(policy.queued_reason(_hand_card(), st), "dependency")
         st.pop("blocked_by")

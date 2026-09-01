@@ -14,7 +14,7 @@ t2_confirm 的一次性留痕。这里补齐**全部** ceiling 在 auto_dispatch
 另钉：token 换因重盖｜解除后 token 清除并放行｜并发上限 = 排队不是拒绝
 （槽位空出即派发）。
 
-预算天花板 retired v0.49（owner decision D9，docs/design/vnext2-plan.md）：
+预算天花板 retired v0.48.7（owner decision D9，docs/design/vnext2-plan.md）：
 原「$5 单卡精确边界（5.0 过、5.5 拦）」「budget:exhausted 台账累计」「dispatch
 预算复核排除本卡预留」三组判例改钉其反面——任意估价（<= 文字确认线）、任意
 当日累计都放行，残留的旧台账文件是死数据。
@@ -35,7 +35,7 @@ from act.lib.registry import Requirement, State
 _HAND_SRC = [{"who": "zelin", "channel": "quick_capture",
               "date": "2026-08-30", "quote": "手打的活"}]
 
-# v0.48 台账文件名（retired v0.49，D9）：测试只用它伪造「升级前残留」。
+# v0.48 台账文件名（retired v0.48.7，D9）：测试只用它伪造「升级前残留」。
 _LEGACY_LEDGER = "autodispatch_spend.json"
 
 
@@ -116,7 +116,7 @@ class TestEachCeiling(CeilingBase):
 
     def test_no_single_card_ceiling_d9(self):
         # 原判例 test_five_dollar_boundary_exact/_over 钉「5.0 过、5.5 拦
-        # （cost:over_ceiling）」。D9 retired v0.49：5.0 / 5.5 / 9 / 49.99 全部
+        # （cost:over_ceiling）」。D9 retired v0.48.7：5.0 / 5.5 / 9 / 49.99 全部
         # 放行——只剩 §7/§41 的文字确认线（默认 $50）还看金额。
         for i, cost in enumerate((5.0, 5.5, 9.0, 49.99)):
             _mk(f"R-80{5 + i}", cost_estimate_usd=cost)
@@ -128,7 +128,7 @@ class TestEachCeiling(CeilingBase):
 
     def test_no_daily_budget_regardless_of_accumulated_spend_d9(self):
         # 原判例 test_daily_budget_exhausted_from_ledger 钉「台账 $4 + 本卡 $2 >
-        # $5 → budget:exhausted」。D9 retired v0.49：hand 出身 + 任意估价的卡
+        # $5 → budget:exhausted」。D9 retired v0.48.7：hand 出身 + 任意估价的卡
         # 一律自动派发，不管当天已经派了多少钱——五张 $40 的卡（合计 $200，
         # 远超旧 $5 预算）同一 pass 全部批准；升级前残留的台账文件（记着 $999）
         # 无人读，也不会被写。
@@ -246,7 +246,7 @@ class TestConcurrencyQueue(CeilingBase):
 class TestDispatchNoBudgetRecheck(CeilingBase):
     def test_auto_card_dispatches_whatever_the_ledger_says(self):
         # 原判例钉「台账只有本卡 $4 预留 → 复核 0+4 <= 5 放行」。D9 retired
-        # v0.49：派发时刻根本不看钱——即便残留台账说今天已经花了 $999、本卡
+        # v0.48.7：派发时刻根本不看钱——即便残留台账说今天已经花了 $999、本卡
         # 估价 $40，auto 卡照常派发，并发是唯一的排队原因。
         _plant_legacy_ledger({"R-other": 999.0, "R-840": 40.0})
         _mk("R-840", status=State.APPROVED.value, cost_estimate_usd=40.0,

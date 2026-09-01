@@ -20,13 +20,62 @@ other file needs editing. To cut a release:
 2. Rename the `[Unreleased]` section below to `[X.Y.Z] - YYYY-MM-DD` and add a
    fresh empty `[Unreleased]` heading above it; update the compare links at the
    bottom.
-3. Commit (`chore: bump version to X.Y.Z`) and tag `vX.Y.Z`; pushing the tag
-   triggers the release workflow.
+3. Commit and merge the PR. **Nobody tags by hand anymore** (CONTRACT §56):
+   `tag-on-merge.yml` reads `act/__init__.py` on every push to `main`, creates
+   `vX.Y.Z` when it does not exist yet and dispatches the release workflow.
+   Every PR therefore bumps the patch version — a merge that does not bump is
+   silently not released. A hand-pushed `vX.Y.Z` tag still works as before.
 
 ## [Unreleased]
 
+## [0.48.7] - 2026-09-01
+
+v-next-2 P0 收尾(决议 D9):「自动派工作,要不先不要搞预算。把现有的手打卡自动派工每天 5 块钱的预算也取消吧。目前还没有遇到预算的问题,钱是足够的。」
+
 ### Removed
-- **自动派发的预算天花板整套退役**(owner decision D9,`docs/design/vnext2-plan.md`:「取消一切预算……钱是足够的」;CONTRACT §51 留 tombstone)。删掉的机器:`autodispatch.daily_budget_usd`(默认 $5,兼单卡估价上限)、`may_auto_dispatch` 的 `today_spend` 参数、`state/autodispatch_spend.json` 当日花费台账(actd 写 + dashboard 只读小读器)、派发时刻对 auto 卡的预算复核、`queued_reason` 的 `budget`/`waiting_budget` 与 web 端「等预算」chip、`cost:over_ceiling` / `budget:unknown` / `budget:exhausted` 三个原因 token。现在 hand 出身且有估价的卡不管金额多少、当天累计多少,一律免批派发;并发上限是唯一的排队原因。旧 config 里残留的 `daily_budget_usd` 键被忽略;旧卡上残留的退役 token 在升级后第一个 pass 按「解除即清」清掉并放行;磁盘上的旧台账文件无人读写。**保留**:卡上的成本估价照常展示(披露),`require_text_confirm_above_usd` 文字确认线照常拦 T2(审批语义)——那两条不是预算;`cost:unknown`(无估价保守回人批)也保留,理由改为「不可证明 ≤ 文字确认线」。
+- **自动派发的预算天花板整套退役**(owner decision D9,`docs/design/vnext2-plan.md`;CONTRACT §51 留 tombstone)。删掉的机器:`autodispatch.daily_budget_usd`(默认 $5,兼单卡估价上限)、`may_auto_dispatch` 的 `today_spend` 参数、`state/autodispatch_spend.json` 当日花费台账(actd 写 + dashboard 只读小读器)、派发时刻对 auto 卡的预算复核、`queued_reason` 的 `budget`/`waiting_budget` 与 web 端「等预算」chip、`cost:over_ceiling` / `budget:unknown` / `budget:exhausted` 三个原因 token。现在 hand 出身且有估价的卡不管金额多少、当天累计多少,一律免批派发;并发上限是唯一的排队原因。旧 config 里残留的 `daily_budget_usd` 键被忽略;旧卡上残留的退役 token 在升级后第一个 pass 按「解除即清」清掉并放行;磁盘上的旧台账文件无人读写。**保留**:卡上的成本估价照常展示(披露),`require_text_confirm_above_usd` 文字确认线照常拦 T2(审批语义)——那两条不是预算;`cost:unknown`(无估价保守回人批)也保留,理由改为「不可证明 ≤ 文字确认线」。
+
+## [0.48.6] - 2026-09-01
+
+合并即上岗（owner decision D17，CONTRACT §56）：合进 `main` 的 PR 自动打 tag、自动发版、自动部署到 owner 的 Mac；doctor 出现**新增**红项就自动回滚到上一个提交。人只做两件事——点合并、收通知。
+
+### Added
+- **tag-on-merge**：`.github/workflows/tag-on-merge.yml` 在每次 push to `main` 时读 `act/__init__.py`，`v<version>` 不存在就在该提交上建 tag 并显式 dispatch `release.yml`（GITHUB_TOKEN 建的 tag 不会触发 `on: push: tags`，所以 `release.yml` 新增 `workflow_dispatch` 入口；版本闸门两个入口都生效）。tag 已在 = 静默跳过；ruleset 只管分支，tag 不受影响。
+- **自动部署 agent** `com.zelin.aiassistant.autodeploy`（每 10 分钟；`python3 -m act.auto_deploy` → `scripts/auto-deploy.sh`）：HEAD 在 `main` 且树干净时：**先问 GitHub check-runs API「origin/main 这个 sha 的 `ci` 绿了吗」**（ruleset 是 non-strict，绿的是 PR head 不是合出来的 merge commit；main 上的 `ci` 要 ~8 min——没结束 = `ci_pending` 下轮再问，红 = `ci_failed` 记账 + 通知一次，`--force` 跳过），绿了才 `git merge --ff-only origin/main` → **自检**（`bash -n scripts/auto-deploy.sh` + `import act.auto_deploy`，弄坏部署 agent 自己的合并会静默终结所有后续部署）→ doctor 基线 → `install.sh --non-interactive`（守护进程 / cron / config，不碰 Mac app）→ **等 `state/actd.heartbeat` 由新进程写下新版本 + `phase=idle`**（新代码上完整跑完一个 pass；180 s 内没等到 = `actd:no_heartbeat_from_new_version` 回滚——原来的「静置 30 s + 一次 `launchctl list` 采样」是抛硬币：import 即死的 KeepAlive actd 每个节流周期亮 ~0.5 s 的 pid，旧 daemon 的 heartbeat/dashboard 文件 90 s 内又都算新鲜）→ doctor 复查；install 失败、相对部署前基线**新增** FAIL、或 doctor 自身跑不出 JSON（`doctor:unparseable`——在任一次运行出现都致命，基线阶段就回滚且不装；两次都用新代码，当成 pre-existing 会让闸门对「弄坏 doctor 的提交」失明）→ `git reset --hard` 回旧 sha + 重装 + 通知「auto-deploy rolled back to …」，该 sha 记账后不再重试（`--force` 才重试）。doctor 里常驻（KeepAlive）agent 的 crash-loop——actd **和 syncd**——都是 FAIL（原来只有 actd；live 上 `mode=cloud`，syncd 死 = 手机/web 看板死却记 `deployed`），周期性 agent 一次非 0 退出仍是 WARN。回滚 `reset --hard` 前**重验**：owner 在部署这几分钟里改了 tracked 文件或切了分支 → 回滚被拒（`rollback_failed` + 通知，改动保留、新版本留在原地），install.sh 自己的 `+x` 翻转不算改动。脏树只通知一次、不动 HEAD；不可 ff 的分叉本地 main 永不被 reset。刚 mkdir 还没写 pid 的锁目录视为活锁，不会被并发的第二个实例当陈旧锁回收。锁 + 1 MB 自截日志（`~/Library/Logs/zelin-ai-assistant/auto-deploy.log`）。只装在 git checkout 上（.pkg 副本没有 `.git`），`features.auto_deploy: false` 可关。
+- **`install.sh --non-interactive`**（§23 第三个 mode）：永不提问——缺 claude 只警告、doctor 留给调用方；退出码 = 失败 step 数（旧 Mac app 的 `app` 步骤除外，D3 已冻结它）。**该模式永不构建/安装 Mac app**（step 4 记 `app=skipped`）：`mac/build.sh --install` 会 quit + relaunch 正在跑的 app，screenpipe 是它的直接子进程、实时字幕住在它里面——无人值守的重建等于在合并后 10 分钟内的任意时刻掐断录制或会议字幕，launchd 里的 `swift build` + `codesign` 还会卡在没人点的 keychain 提示上。mac/ 的改动因此只随 owner 手动 `bash install.sh` 上机（§56.5）。
+- **`state/deploy_state.json`** → dashboard add-only 顶层键 `deploy_state`、doctor 新行 `auto-deploy`、web 顶栏小字「v0.48.6 · deployed 12m ago」（非 healthy 状态切警告色并点名）。syncd 的变更闸门把整键 `deploy_state` 列为易变键（§31）——agent 每 10 分钟重写 `last_run`，不剔除就是 v0.48 刚修掉的「零活动也每 10 分钟推一次全量快照」风暴回归。
+
+### Fixed
+- `ingest/vault-sync.sh` 在 git 里的可执行位（install.sh 每次 `chmod +x` 都把 live checkout 弄脏，自动部署的脏树检查会永远拒绝）。
+
+## [0.48.5] - 2026-09-01
+
+v-next-2 第一批（决议 D19）：两条 digest 通道出厂零卡片。Owner：「像这种每日摘要，好像在设置里面没法关，几天没看就攒起来了……能不能在设置里面让我能够改成一周或者两天摘要，或者完全关掉」；追问「摘要卡还需要吗」的采纳答案是**默认不以卡片形式出现**。
+
+### Changed
+- **状态摘要（原「周一 digest」）新增节奏旋钮 `digest.frequency`**：`off | daily | every2days | weekly`，**默认 `off`**；设置层扁平键 `digest_frequency` 同步进 overrides 允许列表——但本版**没有 UI 暴露它**（原生 Mac 设置页不再加功能，web 设置页要到 v-next-2 P4）；在此之前改 `config.yaml` 的 `digest.frequency` 或手写 `state/settings_overrides.json`。crontab 行改为每天 09:07 唤醒且不再带 `--now`，模块按滚动间隔（距上次生成 ≥1/2/7 天，标记 `state/digest.json`）自行闸门——不钉周一，周一睡着的机器周二照样拿到本周那张；off / 未到期的定时 pass 完全静默（不打印、不打点），默认 off 不会在日志或 analytics 里留一行一天。`--now` 仍可手动立即生成。重跑 `bash install.sh` 会把旧的「周一 `--now`」cron 行替换掉（旧行会越过 off 继续每周强制铸卡）；doctor 「cron digest」行看见 crontab 里还带 `--now` 的 digest 行即 **WARN** 指向 `bash install.sh`，不再把它报成「已安装、按节奏」。`state/digest.json` 标记写失败时卡已发布、只打印一行（不 traceback、不静默）——标记缺失会让 `weekly` 退化成一天一张，这一行是唯一让人看见的地方。多年出厂却从未被读取的 `digest.weekly: monday` 模板键随之移除。（CONTRACT §16/§17）
+- **文案去周几**：卡片标题「周一 digest · <日期>」→「状态摘要 · <日期>」（en "Status digest"），通知与正文首行同步——日频卡片带「周一」会撒谎。（§40.7）
+- **每周摘要（weekly digest）默认关**：`sources.weekly_digest.enabled` 出厂 `false`，显式写 true 才生成回顾卡；launchd 每小时的定时唤醒遇关闭态与「未到期」同款静默，不再每天 24 条 skip 事件。设置页「现在生成一份」按钮遇关闭态仍在日志与 analytics 留回音（无通知，v0.14 判例 `test_disabled_flag_no_ops` 不变）。标记 `state/weekly_digest.json` 写失败同 digest：卡已落、一行日志、不 traceback。（§24）
+
+### Removed
+- **weekly digest 的「自动化建议」提案卡退役**（墓碑）：15 张从未获批一张、3 个 cluster 跨 4 周重铸。管道代码（`MAX_SUGGESTIONS`、`_file_suggestion_cards`、parser 分支、prompt 的 `suggestions` 字段）**同版删除**（防腐 #6），prompt 只要 `{"digest": ...}`，模型若仍自带 `suggestions` 键一律忽略；通知不再宣称「另有 N 条自动化建议」。summary / `weekly_digest_generated` 事件里的 `suggestions`（恒 0）、`suggestion_ids`（恒 []）作 add-only 常量保留。反悔 = `git revert`；这类想法的新出口是 v-next-2 的每日自我改进循环（P5）。（§24）
+
+> 升级提示：cron 行形态变了——**重跑 `bash install.sh`** 才会把旧的周一行替换成新的每日自闸门行。不重跑的话旧行仍会每周一强制生成一张（等价于 `weekly` 且忽略 `off`）。
+
+## [0.48.4] - 2026-09-01
+
+2026-08-31 live 审计挖出的三条静默失效(#89):launchd 起的 claude 读不到外置卷上的任务目录、每次派发都死却无限重试(claude 自己把 EPERM 猜成「low max file descriptors」,首版跟着猜错,09-01 审查证伪后修订)、actd 进程活着但循环卡死 2.5 小时无人知、v0.21 退役的 agent 又跑了 51 天。三条都各自加了「让它被看见 + 让它停下」的机制;第一条的修法在 owner 手里(TCC 开关),本版只保证它被诚实地看见、分类、指路。
+
+### Fixed
+- **launchd 起的 claude 对任务目录 TCC-blind**(CONTRACT §55 第三幕、§25 `claude_blind`):派发失败原文 `An unknown error occurred, possibly due to low max file descriptors (Unexpected)` 是 Bun 对未映射 errno 的统一猜测,真因是 EPERM——macOS 按可执行文件路径授「完全磁盘访问」,launchd 会话里的 claude(`~/.local/share/claude/versions/<v>`,每次更新换路径)没有授权,任务 repo 又在外置卷上。一次性 launchd job 实测:同 binary 同上限,cwd=$HOME 好、cwd 在外置卷死,同 job 里 homebrew node 直接报 EPERM;TCC 台账里 claude 2.1.251 的 denied 行落款正是首次失败那一分钟。`failures` 目录新增 `claude_blind`(句子写明两条出路:给 claude 当前版本开完全磁盘访问——每次更新后重做;或把 repo 放回启动盘家目录),doctor 新行 **`launchd claude`**——在一次性 launchd job 里以默认工作 repo 为 cwd 跑 `claude --version`,终端里看不见的失败只能这样问出来(FAIL `claude_blind`;探针 `AIASSISTANT_LAUNCHD_PROBE=0` 可关)。**本版不声称该事故已修复**:live 机器上 doctor 此行仍 FAIL,修法需 owner 亲手点 TCC;验收 = 该行 OK 且一张重批的卡真到 executing。结构性根治(有授权的 GUI app 托管 actd)记入 vnext2-plan 待拍板。
+- **资源上限改为只抬 soft**:launchd 默认 soft 256 / hard unlimited。首版给全部模板加了 `SoftResourceLimits` + `HardResourceLimits` 8192——实测 hard 键把 unlimited 压成 8192,只降不升;现在模板只带 `SoftResourceLimits.NumberOfFiles = 8192`(余量,不是任何已知事故的修法),systemd 单元镜像 `LimitNOFILE=8192:524288`(soft:hard,裸 8192 会把两把都设成 8192)。`fd_limit` 只留给真句柄耗尽(EMFILE/ENFILE/`FdQuotaExceeded`),句子不再提派发失败;doctor `launchd fd limit` 行:soft 缺失/过低 WARN,**出现 hard 键也 WARN**(hotfix 形状)。**升级需重跑 `bash install.sh`**去掉 hotfix 的 hard 键。
+- **`failures` 目录补 `claude_bypass_disclaimer`**(#89 的原始报告:`--bg` 在本机接受过一次「跳过权限确认」免责声明之前拒启,新装机几乎必撞;此前落成 `dispatch_error_id=null`)。doctor 的装机预检暂缺——claude 没有文档化的接受标记可读。
+- **派发风暴刹车**(CONTRACT §4.1):同一失败类别连续失败 N 次(`execution.dispatch_max_failures`,默认 5,0 = 关)后卡停止自动重试——`execution.dispatch_halted`、卡上一行 `[dispatch-halted]` 记录、一条通知,投影进「需输入」列(不再在运行中列顶着「排队中」装忙);web 隐藏「回答…」只留「停止」。重新上膛 = **进入 approved 的每条路径**(owner 批准、hand 卡免批通道)都清掉整条失败台账,退回提案本身也清——审查复现的死循环(刹车 → 退回提案 → 免批带着刹车再进 approved → 永远停在「需输入」,再点批准是 no-op)已钉判例。退避窗口内 actd 现在**零写盘零 traceback**——此前每个 pass 都重写一次 `last_error_at` + 28 行 traceback。
+- **actd 心跳看门狗**(CONTRACT §47.4):actd 在每个 pass 的每个阶段边界 touch `state/actd.heartbeat`(mtime 为真源,body 带 phase/pid/interval 与写者自定的 `stale_after_s = max(3 × interval, 90)`)。doctor 新行 `actd heartbeat`:进程活着 + 心跳过期 → FAIL `actd_stalled`,修法是 `launchctl kickstart -k`(kill+respawn,不是 reload)。server 新路由 `GET /api/health`(token-light,只 stat 三个文件),web 看板顶部新增管线健康横幅(卡住 / 连崩 / 没跑)——退役中的 Mac app 横幅的替身(parity 1.11)。
+- **退役 launchd label 的卸载必须自证**:`install.sh` 的 RETIRED 步骤此前把 `launchctl bootout` 失败吞进 /dev/null,v0.21 删掉的 `imessageradar` agent 因此又跑了 51 天(23,613 条 traceback、14.5 MB 日志)。现在卸载后再问一次 `launchctl list`,还在就 `[ERR ]` + 给出命令,安装报告落 `launchd_retired=fail`;另扫描带我们前缀却已无模板的孤儿 label(只报告不动手,`launchd_orphans=warn`),doctor 新行 `launchd orphans`(已装载的孤儿 FAIL)。用户日志不删。
+
+### Changed
+- `docs/design/vnext2-plan.md`:决策台账追加 D17(自动部署方案 A)、D18(他人 issue 只摘要)、D19(digest 卡默认 OFF + 频率旋钮)、D20(本次事故与刹车);§5 填入审计的 issue 处置表与 8 条日志教训;新增 §8 进度日志。
 
 ## [0.48.3] - 2026-09-01
 
@@ -2031,7 +2080,11 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.7...HEAD
+[0.48.7]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.6...v0.48.7
+[0.48.6]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.5...v0.48.6
+[0.48.5]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...v0.48.5
+[0.48.4]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...v0.48.1

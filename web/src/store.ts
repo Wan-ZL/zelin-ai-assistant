@@ -5,7 +5,7 @@
 //   3. 新增 UI state（filters/搜索词/抽屉页签…）= 给 AppState 加字段 + 加 action 函数，别处不许存全局态；
 //   4. 服务端数据只进 board/cardDetails，前端绝不改写 wire 字段。
 import { useSyncExternalStore } from "react";
-import { ApiError, fetchBoard, fetchCard } from "./api";
+import { ApiError, fetchBoard, fetchCard, fetchHealth } from "./api";
 import { resolveLanguage, type Language } from "./i18n";
 import {
   EMPTY_CARD_FILTERS,
@@ -13,7 +13,7 @@ import {
   writeCardFilters,
   type CardFilters,
 } from "./taskFilters";
-import type { Board, CardDetail } from "./types";
+import type { Board, CardDetail, HealthSnapshot } from "./types";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 
@@ -22,6 +22,7 @@ export interface AppState {
   boardError: string | null;      // 最近一次 board 读失败的用户可读文案（成功后清空）
   boardLoading: boolean;          // 首载 true；SSE 触发的静默 refetch 不置位
   connection: ConnectionState;
+  health: HealthSnapshot | null;  // GET /api/health 最近快照（§47.4；PipelineBanner 读）
   selectedCardId: string | null;  // 详情抽屉当前卡（route.ts 同步 ?card= 深链）
   cardDetail: CardDetail | null;  // selectedCardId 对应的 /api/cards/{id} 增补详情
   cardDetailError: string | null;
@@ -50,6 +51,7 @@ const initialState: AppState = {
   boardError: null,
   boardLoading: true,
   connection: "connecting",
+  health: null,
   selectedCardId: null,
   cardDetail: null,
   cardDetailError: null,
@@ -118,6 +120,16 @@ export function selectCard(cardId: string | null) {
 
 export function setConnection(connection: ConnectionState) {
   if (state.connection !== connection) setState({ connection });
+}
+
+/** 拉一次 /api/health（§47.4）。读失败保留上一份快照——离线由 ErrorBanner 声明，这里不双报 */
+export async function refreshHealth(): Promise<void> {
+  try {
+    const health = await fetchHealth();
+    setState({ health });
+  } catch {
+    /* server 连不上：ErrorBanner 负责；旧快照留着（它可能仍在说真话） */
+  }
 }
 
 /** 切换 UI 语言并持久化（localStorage zai.lang；写失败静默——仅影响下次启动的默认值） */

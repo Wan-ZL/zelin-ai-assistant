@@ -55,7 +55,7 @@ describe("queuedReasonLabel", () => {
   });
 
   it("waiting_budget / budget 已退役（CONTRACT §51，D9）：无专属文案，按原文降级", () => {
-    // 原判例钉「等预算 / waiting on budget」；预算天花板 retired v0.49 后这两个
+    // 原判例钉「等预算 / waiting on budget」；预算天花板 retired v0.48.7 后这两个
     // 值只可能来自旧快照，走开放枚举的原文路径，绝不再翻译成「等预算」。
     expect(queuedReasonLabel({ kind: "waiting_budget" }, zh)).toBe("waiting_budget");
     expect(queuedReasonLabel("budget", en)).toBe("budget");

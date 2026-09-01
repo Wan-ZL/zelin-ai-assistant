@@ -23,7 +23,7 @@ channel 由各 radar/capture 写入端硬编码（quick/slack/gmail/meeting/...�
 真文件系统）。
 
 预算天花板（`daily_budget_usd` 单卡上限 + 当日累计台账 `today_spend`）retired
-v0.49——owner decision D9（docs/design/vnext2-plan.md：「取消一切预算……钱是
+v0.48.7——owner decision D9（docs/design/vnext2-plan.md：「取消一切预算……钱是
 足够的」）。钱的可见性由 §7/§41 的 `require_text_confirm_above_usd` 文字确认线
 承担（那是审批语义不是预算），卡上的 cost_estimate_usd 仍作披露展示。
 """
@@ -135,7 +135,7 @@ AUTODISPATCH_DEFAULTS: dict = {
     "enabled": True,            # 总开关：关掉 = 全部回人工审批
     "max_concurrent": 3,        # 自动派发并发上限（超出 -> queued: concurrency）
     "notify": True,             # 观察模式：每次自动派发发一条通知
-    # daily_budget_usd — retired v0.49（D9）：旧 config 里残留的键被静默忽略。
+    # daily_budget_usd — retired v0.48.7（D9）：旧 config 里残留的键被静默忽略。
 }
 
 
@@ -193,7 +193,7 @@ def autodispatch_config(cfg: object) -> dict:
 #   repo:none         — 卡与配置都给不出 target_repo
 #   repo:missing      — 落点 repo 在磁盘上不存在（existing target_repo only）
 #   cost:unknown      — 无成本估计（不可证明 <= 文字确认线，保守拒）
-#   cost:over_ceiling / budget:unknown / budget:exhausted — retired v0.49
+#   cost:over_ceiling / budget:unknown / budget:exhausted — retired v0.48.7
 #                       （D9 取消预算天花板；旧卡上残留的 token 由 actd 在下一
 #                       pass 按「解除即清」清掉，不再产生）
 MAY_REASONS = (
@@ -222,7 +222,7 @@ def may_auto_dispatch(
     留在待审批，reason token 上卡陈述（locked：over-ceiling => falls back to
     needs-approval with a stated reason）。并发上限不在这里管——它不是资格
     问题而是排队问题，由 queued_reason 在派发时刻裁（超并发的卡已 approved，
-    排在合并运行列的 queued 子状态）。预算不在这里管——没有预算（D9，v0.49
+    排在合并运行列的 queued 子状态）。预算不在这里管——没有预算（D9，v0.48.7
     起 ``today_spend`` 参数随台账一并退役）。纯函数：repo 存在性经
     ``path_exists`` seam（默认 os.path.exists），测试注入假的。
     """
@@ -265,7 +265,7 @@ def may_auto_dispatch(
         return False, "repo:missing"
 
     # 估价必须存在：缺失即不可证明 <= 上面的文字确认线，保守回人批。金额本身
-    # 不设上限——单卡 $5 天花板与当日预算 retired v0.49（D9）。
+    # 不设上限——单卡 $5 天花板与当日预算 retired v0.48.7（D9）。
     if cost is None:
         return False, "cost:unknown"
 
@@ -275,7 +275,7 @@ def may_auto_dispatch(
 # --------------------------------------------------------------------------- #
 # queued_reason — 合并运行列 queued 子状态的原因 chip（locked 词表）
 # --------------------------------------------------------------------------- #
-# "budget" retired v0.49（D9）——词表 tombstone，token 永不复用。
+# "budget" retired v0.48.7（D9）——词表 tombstone，token 永不复用。
 QUEUED_REASONS = ("dependency", "concurrency")
 
 

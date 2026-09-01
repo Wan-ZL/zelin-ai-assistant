@@ -44,7 +44,7 @@ describe("DetailFields steer notes", () => {
         detail={detailWith({
           id: "R-106",
           state: "queued",
-          // waiting_budget retired v0.49（D9）——改用现行词表里的 concurrency
+          // waiting_budget retired v0.48.7（D9）——改用现行词表里的 concurrency
           queued_reason: { kind: "concurrency" },
         })}
       />,

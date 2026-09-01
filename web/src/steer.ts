@@ -56,7 +56,7 @@ export function steerStatusLabel(status: unknown, text: Text): string {
  * - 扁平 token 形（act/lib/policy.py QUEUED_REASONS：dependency / concurrency）
  *   ——M1.c 的 dashboard 投影直出形，同表翻译；
  * - 未知 kind/token 按 detail/原文原样展示（开放枚举不崩渲染）；解析不出 → null。
- *   waiting_budget / budget retired v0.49（CONTRACT §51，owner decision D9）：
+ *   waiting_budget / budget retired v0.48.7（CONTRACT §51，owner decision D9）：
  *   不再有专属文案，旧快照里若还出现就走这条原文降级路径。
  */
 export function queuedReasonLabel(value: unknown, text: Text): string | null {

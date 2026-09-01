@@ -51,7 +51,7 @@
 | 8 | 自动建 GitHub repo | 批准指向新目录的卡时 | GitHub | **关**（v0.11 起） | 默认即关；设 `execution.create_github_repo: true` 才启用 |
 | 9 | Telemetry（匿名使用统计） | 每小时 cron（install.sh 安装）/ 手动 sync | 维护者的 Supabase（可换成你自己的） | **开** | App 设置「产品改进计划」开关 / `telemetry.enabled: false` |
 | 10 | 更新检查 | actd，至多每 24h 一次（ETag 缓存）；「关于」页「立即检查」按钮手动触发同一请求 | GitHub releases API | **开** | App 设置「自动检查新版本」/ `updates.check_enabled: false`（关闭后手动按钮同样不发请求） |
-| 11 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **开** | `sources.weekly_digest.enabled: false` |
+| 11 | 周报（weekly digest） | launchd 每小时醒来，实际执行每周至多一次 | Anthropic | **关**（D19 起） | 默认即关；设 `sources.weekly_digest.enabled: true` 才启用 |
 | 12 | 问问助手（Ask） | 你在 App 里提交问题时 | Anthropic | — | 不提问即不触发 / `ask.enabled: false` |
 | 13 | 让 AI 修（Fix with AI） | 你点按钮 / 跑 CLI 时 | Anthropic | — | 不点即不触发 / `doctor.ai_fix_enabled: false` |
 | 14 | 建议上报（feedback） | **你点「提建议」发送时** | 维护者的 Supabase（同 telemetry 通道/表；**不受** telemetry 开关限制） | — | 不发送即不触发；fork 设 `telemetry.supabase_url: ""` 硬关 |
@@ -197,9 +197,9 @@
   4000 字符**（总预算 60000 字符），经 UNTRUSTED 围栏 + `sanitize.scrub()` 后由
   headless `claude -p` 发往你的 AI 引擎。窗口内没有新 note 时**不调用** claude
   （cost guard）。
-- **产出**：一张周回顾卡 + 至多 3 张自动化建议卡，走注册表 merge——同一周重跑
-  合并而不堆叠。
-- **关闭**：`sources.weekly_digest.enabled: false`。
+- **产出**：一张周回顾卡，走注册表 merge——同一周重跑合并而不堆叠。（曾随附的
+  「自动化建议」提案卡自 D19 起退役，不再铸造。）
+- **开关**：**默认关**（D19）；`sources.weekly_digest.enabled: true` 才生成。
 
 ### 12. 问问助手（Ask）→ Anthropic
 

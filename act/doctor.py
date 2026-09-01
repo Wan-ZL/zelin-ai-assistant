@@ -31,23 +31,40 @@ import argparse
 import datetime as _dt
 import json
 import os
+import plistlib
 import re
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, failures, platform, secrets, taskscheduler
+from act.lib import (
+    config,
+    deploy_state,
+    failures,
+    heartbeat,
+    platform,
+    secrets,
+    taskscheduler,
+)
 
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 
 ACTD_LABEL = "com.zelin.aiassistant.actd"      # launchd label (macOS)
+SYNCD_LABEL = "com.zelin.aiassistant.syncd"
+# 常驻 agent（模板 KeepAlive=true）：进程一退出 launchd 就在 ThrottleInterval 后
+# 再拉起。这类 label「已加载、无 pid、上次退出码非 0」= 正在 crash-loop（每个周期
+# 死一次），不是周期性 agent 的「上次跑失败一次」——FAIL（§55；§56.3 的回滚判据
+# 由此看见 syncd 被新版本弄坏）。集合与 act/launchd/*.plist 的 KeepAlive 键逐字
+# 一致，tests/test_doctor.py 钉住漂移。
+RESIDENT_LABELS = frozenset({ACTD_LABEL, SYNCD_LABEL})
 ACTD_UNIT = "zelin-actd.service"               # systemd --user unit (Linux)
 ACTD_TASK = taskscheduler.TASK_PATH_PREFIX + "actd"  # schtasks TaskName (Windows)
 # Resident systemd services doctor expects up (the rest are timer-driven
@@ -76,6 +93,10 @@ def _pick(zh: str, en: str) -> str:
 # the chain stopped firing or it comes from an install predating the probe.
 CRON_PROBE_FRESH_SECONDS = 2 * 3600
 CRON_PROBE_PATH = config.STATE_DIR / "cron_probe.json"
+# §17 D19: the installer's digest line never passes --now; a crontab line
+# that does is the pre-D19 Monday form (or a hand edit) and forces a card
+# every fire, past digest.frequency.
+_LEGACY_DIGEST_NOW_RE = re.compile(r"act\.digest\s+--now\b")
 
 # actd rewrites dashboard.json every ~10s pass; anything older than this means
 # the daemon is not writing (same threshold as the app's staleness banner).
@@ -180,6 +201,35 @@ def _launchd_log_tail(short: str) -> str:
     return ""
 
 
+LABEL_PREFIX = "com.zelin.aiassistant."
+
+
+def _installed_agent_labels() -> List[str]:
+    """~/Library/LaunchAgents 里带我们前缀的 plist 文件名（label）——孤儿探测
+    用（§55）：有文件没模板 = 退役 agent 的残留，下次登录还会被 launchd 装载。"""
+    d = Path.home() / "Library" / "LaunchAgents"
+    try:
+        return sorted(p.stem for p in d.glob(LABEL_PREFIX + "*.plist"))
+    except OSError:
+        return []
+
+
+def _pid_alive(pid: int) -> Optional[bool]:
+    """进程是否存在；None = 本平台判不了（Windows 的 os.kill(pid, 0) 会
+    TerminateProcess，绝不能拿来探活）。"""
+    if platform.is_windows():
+        return None
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True   # 存在但不是我们的——对「活着」的判断足够
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 # 两条 ModuleNotFoundError 在 `launchctl list` 里长得一模一样，修复动作却相反
 # （§55）。断言 PyYAML 而不读日志，正是 2026-08-31 那次把排查带偏几个小时的原因：
 # /opt/homebrew/bin/python3 全程都装着 PyYAML，缺的是对 repo 的读权限。
@@ -198,6 +248,101 @@ def _log_missing_module(tail: str) -> Optional[str]:
         if name in (MISSING_ACT, MISSING_YAML):
             return name
     return None
+
+
+# --------------------------------------------------------------------------- #
+# §55 第三幕：launchd 起的 claude 读不读得到任务目录 —— 只能问 launchd 本人
+# --------------------------------------------------------------------------- #
+_CLAUDE_BLIND_RE = re.compile(
+    r"possibly due to low max file descriptors|operation not permitted|\bEPERM\b",
+    re.IGNORECASE)
+
+# The payload is /bin/sh (an Apple platform binary — it can cd anywhere the
+# way python's pre-exec chdir did on 2026-08-31); only the exec'd claude is
+# what TCC judges, exactly as in a real dispatch. Stages let the reader tell
+# "cd itself failed" from "claude started and hung" from "claude exited".
+_CLAUDE_PROBE_SH = (
+    'cd "$1" || { echo "cd_failed:$?" > "$3"; exit 0; }; '
+    'echo started > "$3.stage"; '
+    '"$2" --version > "$3.out" 2>&1; echo "rc:$?" > "$3"')
+
+
+def _launchd_claude_probe(claude_bin: str, cwd: str, budget_s: float = 20.0) -> dict:
+    """Run ``<claude_bin> --version`` with cwd=``cwd`` inside a throwaway
+    gui-domain launchd job (same recipe as install.sh's viability probe) and
+    report what happened::
+
+        {"state": "ok" | "failed" | "hang" | "cd_failed" | "unavailable",
+         "rc": int | None, "text": str}
+
+    Doctor runs in the owner's terminal, whose TCC grants make claude read
+    everything — so the terminal cannot see this failure at all. Verified
+    2026-09-01: from the same launchd job, ``claude --version`` succeeds with
+    cwd=$HOME and dies with Bun's "possibly due to low max file descriptors
+    (Unexpected)" the moment cwd is on the external volume, while /bin/ls and
+    /usr/bin/python3 read it fine and homebrew node shows the raw EPERM.
+    "unavailable" = no launchd here, probe switched off
+    (``AIASSISTANT_LAUNCHD_PROBE=0``), or launchd refused the job — never a
+    verdict about claude. Sub-30 s, self-cleaning (bootout + rm)."""
+    if not platform.is_darwin() or os.environ.get("AIASSISTANT_LAUNCHD_PROBE", "1") == "0":
+        return {"state": "unavailable", "rc": None, "text": "probe disabled or no launchd"}
+    if not shutil.which("launchctl"):
+        return {"state": "unavailable", "rc": None, "text": "launchctl not found"}
+    tmp = Path(tempfile.mkdtemp(prefix="zai-claude-probe-"))
+    label = "com.zelin.aiassistant.claudeprobe.%d" % os.getpid()
+    verdict = tmp / "verdict"
+    plist = tmp / "probe.plist"
+    domain = "gui/%d" % os.getuid()
+    try:
+        plist.write_bytes(plistlib.dumps({
+            "Label": label,
+            "ProgramArguments": ["/bin/sh", "-c", _CLAUDE_PROBE_SH, "_",
+                                 cwd, claude_bin, str(verdict)],
+            "EnvironmentVariables": {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+            "WorkingDirectory": str(Path.home()),
+            "RunAtLoad": True,
+            # kill the whole group on bootout so a hung claude does not linger
+            "AbandonProcessGroup": False,
+        }))
+        subprocess.run(["launchctl", "bootout", "%s/%s" % (domain, label)],
+                       capture_output=True, timeout=10)
+        boot = subprocess.run(["launchctl", "bootstrap", domain, str(plist)],
+                              capture_output=True, text=True, timeout=15)
+        if boot.returncode != 0:
+            return {"state": "unavailable", "rc": None,
+                    "text": "launchd refused the probe job: %s"
+                            % (boot.stderr or boot.stdout).strip()[-200:]}
+        deadline = time.time() + budget_s
+        while time.time() < deadline and not verdict.exists():
+            time.sleep(0.25)
+        if not verdict.exists():
+            started = (tmp / "verdict.stage").exists()
+            return {"state": "hang" if started else "unavailable", "rc": None,
+                    "text": ("claude started under launchd but produced no exit within "
+                             "%.0f s" % budget_s) if started
+                    else "launchd ran nothing observable within %.0f s" % budget_s}
+        raw = verdict.read_text(encoding="utf-8", errors="replace").strip()
+        out = ""
+        try:
+            out = (tmp / "verdict.out").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        if raw.startswith("cd_failed"):
+            return {"state": "cd_failed", "rc": None, "text": "sh could not cd into %s" % cwd}
+        try:
+            rc = int(raw.split(":", 1)[1])
+        except (IndexError, ValueError):
+            return {"state": "unavailable", "rc": None, "text": "unreadable verdict %r" % raw[:60]}
+        return {"state": "ok" if rc == 0 else "failed", "rc": rc, "text": out.strip()[-600:]}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"state": "unavailable", "rc": None, "text": "probe error: %r" % (exc,)}
+    finally:
+        try:
+            subprocess.run(["launchctl", "bootout", "%s/%s" % (domain, label)],
+                           capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        shutil.rmtree(str(tmp), ignore_errors=True)
 
 
 @dataclass
@@ -224,6 +369,14 @@ class Probes:
     installed_plist_text: Callable[[str], Optional[str]] = _installed_plist_text
     # §55 日志归因：short name → 该 agent 自管日志的末尾（"" = 读不到）
     launchd_log_tail: Callable[[str], str] = _launchd_log_tail
+    # §55 孤儿探测：~/Library/LaunchAgents 里带前缀的 plist label（文件面）
+    installed_agent_labels: Callable[[], List[str]] = _installed_agent_labels
+    # §47.4 心跳：state/actd.heartbeat 的读取 + 进程探活（tests 注入保持 hermetic）
+    heartbeat_read: Callable[[], Optional[dict]] = heartbeat.read
+    pid_alive: Callable[[int], Optional[bool]] = _pid_alive
+    # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = 默认工作
+    # repo）——终端看不见的 TCC 失败只能这样问出来；tests 注入，绝不真起 launchd
+    launchd_claude_probe: Callable[[str, str], dict] = _launchd_claude_probe
 
 
 @dataclass
@@ -504,10 +657,9 @@ def _check_launchd(probes: Probes):
         # actd is the resident daemon the whole product hangs off; the radar
         # agents are periodic and recommended via cron anyway (TCC), so their
         # absence only warns.
-        severity = FAIL if label == ACTD_LABEL else WARN
         if label not in table:
             results.append(CheckResult(
-                short, severity,
+                short, FAIL if label == ACTD_LABEL else WARN,
                 "%s not registered with launchd%s" % (
                     label, " - cards never move" if label == ACTD_LABEL else ""),
                 "bash install.sh (renders + loads the agents)",
@@ -519,22 +671,31 @@ def _check_launchd(probes: Probes):
         elif status == "0":
             results.append(CheckResult(short, OK, "loaded (last run exited 0)"))
         else:
+            # A KeepAlive agent with no pid and a non-zero exit is crash-looping
+            # (launchd respawns it every ThrottleInterval, it dies again) — FAIL
+            # for every resident label, not just actd: a broken syncd is the
+            # phone/web board gone, and only FAIL rows drive §56's rollback.
+            # Periodic agents (RunAtLoad radars, weeklydigest, autodeploy)
+            # exiting non-zero once is a WARN — one network blip would
+            # otherwise roll a deploy back.
+            severity = FAIL if label in RESIDENT_LABELS else WARN
+            loop = " (KeepAlive: crash loop)" if label in RESIDENT_LABELS else ""
             # 名出真因，别猜（§55）：读它自己的日志，把两条 ModuleNotFoundError
             # 分开——'act' = 解释器看不见 repo，'yaml' = 缺 PyYAML。
             missing = _log_missing_module(probes.launchd_log_tail(short))
             if missing == MISSING_ACT:
-                detail = ("loaded but exits with status %s - its log says "
+                detail = ("loaded but exits with status %s%s - its log says "
                           "\"No module named 'act'\": the interpreter cannot see "
-                          "the repo (PyYAML is NOT the problem)" % status)
+                          "the repo (PyYAML is NOT the problem)" % (status, loop))
                 fix = _INTERPRETER_BLIND_FIX
             elif missing == MISSING_YAML:
-                detail = ("loaded but exits with status %s - its log says "
+                detail = ("loaded but exits with status %s%s - its log says "
                           "\"No module named 'yaml'\": PyYAML is missing for the "
-                          "daemon python" % status)
+                          "daemon python" % (status, loop))
                 fix = "%s -m pip install --user --break-system-packages pyyaml" % (
                     _pinned_interpreter(probes) or "python3")
             else:
-                detail = "loaded but its process exits with status %s" % status
+                detail = "loaded but its process exits with status %s%s" % (status, loop)
                 fix = ("tail -20 ~/Library/Logs/zelin-ai-assistant/%s.launchd.log"
                        " (pre-v0.48 installs: state/%s.launchd.log)"
                        "  # usual causes: the interpreter cannot see the repo"
@@ -710,6 +871,188 @@ def _check_launchd_paths(probes: Probes):
             % (", ".join(sorted(blind_py)), named),
             _INTERPRETER_BLIND_FIX).with_failure("interpreter_blind")]
     return [paths]
+
+
+def _launchctl_table(probes: Probes) -> dict:
+    """label → (pid, last exit status) from `launchctl list`; {} when it fails."""
+    table = {}
+    try:
+        for line in probes.launchctl_list().splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                table[parts[2]] = (parts[0], parts[1])
+    except Exception:  # noqa: BLE001 - 探针不许崩（宪法第 11 条）
+        pass
+    return table
+
+
+def _check_launchd_orphans(probes: Probes):
+    """§55 孤儿 agent：带我们前缀、但 act/launchd 里已没有模板的 label。
+
+    2026-08-31 审计：v0.21 删掉的 imessageradar agent 又跑了 51 天、23,613 条
+    traceback（14.5 MB 日志）——install.sh 的 RETIRED 卸载把 bootout 失败吞进
+    `/dev/null`，而旧 doctor 只查有模板的 label，孤儿结构性不可见。两个面都
+    扫：`launchctl list` 里已装载的（此刻在耗资源/刷日志 → FAIL）与
+    ~/Library/LaunchAgents 里只剩文件的（下次登录复活 → WARN）。
+    """
+    labels = probes.launchd_labels
+    if labels is None:
+        labels = sorted(p.stem for p in (config.HOME / "act" / "launchd").glob("*.plist"))
+    known = set(labels)
+    loaded = sorted(lbl for lbl in _launchctl_table(probes)
+                    if lbl.startswith(LABEL_PREFIX) and lbl not in known)
+    try:
+        on_disk = sorted(lbl for lbl in probes.installed_agent_labels()
+                         if lbl.startswith(LABEL_PREFIX) and lbl not in known
+                         and lbl not in loaded)
+    except Exception:  # noqa: BLE001 - 探针不许崩
+        on_disk = []
+    if not loaded and not on_disk:
+        return CheckResult("launchd orphans", OK,
+                           "no retired agents loaded or left in ~/Library/LaunchAgents")
+    uid_hint = "launchctl bootout gui/$(id -u)/%s && rm ~/Library/LaunchAgents/%s.plist"
+    if loaded:
+        return CheckResult(
+            "launchd orphans", FAIL,
+            "retired agent(s) still loaded in launchd (no template in act/launchd): "
+            "%s - each one keeps running/crash-looping and logging forever"
+            % ", ".join(loaded),
+            "bash install.sh  # unloads retired labels; or by hand: "
+            + "; ".join(uid_hint % (lbl, lbl) for lbl in loaded),
+        ).with_failure("launchd_orphan")
+    return CheckResult(
+        "launchd orphans", WARN,
+        "retired agent plist(s) left in ~/Library/LaunchAgents (not loaded now, but "
+        "launchd reloads them at next login): %s" % ", ".join(on_disk),
+        "bash install.sh  # or: rm " + " ".join(
+            "~/Library/LaunchAgents/%s.plist" % lbl for lbl in on_disk),
+    ).with_failure("launchd_orphan")
+
+
+_FD_LIMIT_MIN = 4096   # anything below this is the launchd default territory
+
+
+def _plist_number_of_files(text: str, key: str) -> Optional[int]:
+    """`<key>KEY</key><dict>…<key>NumberOfFiles</key><integer>N</integer>…</dict>`
+    — NumberOfFiles may sit anywhere inside the dict (a hand-edited plist
+    with another limit first must not read as unset)."""
+    m = re.search(r"<key>%s</key>\s*<dict>(.*?)</dict>" % key, text, re.S)
+    if not m:
+        return None
+    n = re.search(r"<key>NumberOfFiles</key>\s*<integer>(\d+)</integer>", m.group(1))
+    return int(n.group(1)) if n else None
+
+
+def _check_launchd_fd_limit(probes: Probes):
+    """§55 资源上限：已安装 actd plist 的 SoftResourceLimits.NumberOfFiles。
+
+    launchd gui domain 给 job 的默认是 soft 256 / hard unlimited。模板只抬
+    soft（余量）；**HardResourceLimits 不该出现**——它只会把 unlimited 压低
+    （2026-09-01 实测：Soft+Hard 8192 → [8192, 8192]，只 Soft → [8192,
+    unlimited]）。当晚 hotfix 的形状正是两把都设，而 8-31 的派发失败根本不是
+    fd 问题（TCC，见 _check_launchd_claude）——所以这一行只说资源上限的事实，
+    不再把 dispatch 失败归到它头上。
+    """
+    text = probes.installed_plist_text(ACTD_LABEL)
+    if not text:
+        return []   # 没装——_check_launchd 已经报 unregistered
+    soft = _plist_number_of_files(text, "SoftResourceLimits")
+    hard = _plist_number_of_files(text, "HardResourceLimits")
+    if hard is not None:
+        return CheckResult(
+            "launchd fd limit", WARN,
+            "installed actd plist sets HardResourceLimits.NumberOfFiles=%d - launchd's "
+            "default hard limit is unlimited, so this only LOWERS the ceiling (the "
+            "2026-08-31 hotfix shape; soft=%s)" % (hard, soft if soft is not None else "unset"),
+            "bash install.sh  # re-renders the agents: soft limit only, hard left unlimited",
+        ).with_failure("fd_limit")
+    if soft is not None and soft >= _FD_LIMIT_MIN:
+        return CheckResult("launchd fd limit", OK,
+                           "installed actd plist raises the soft NumberOfFiles limit to %d "
+                           "(hard stays launchd's unlimited)" % soft)
+    return CheckResult(
+        "launchd fd limit", WARN,
+        "installed actd plist carries no soft NumberOfFiles limit (soft=%s) - launchd's "
+        "default is 256, thin headroom for a daemon and its children (EMFILE)"
+        % (soft if soft is not None else "unset"),
+        "bash install.sh  # re-renders the agents with SoftResourceLimits.NumberOfFiles",
+    ).with_failure("fd_limit")
+
+
+def _check_launchd_claude(probes: Probes):
+    """§55 第三幕（v0.48.4）：launchd 起的 claude 可执行文件能否读任务目录。
+
+    macOS 按可执行文件路径授「完全磁盘访问」；终端里的 claude 继承终端的授权，
+    launchd 里的 claude 只有它自己的——而 ~/.local/share/claude/versions/<v>
+    每次更新都是新路径。任务目录在外置卷 / Documents / Desktop / Downloads 时，
+    每次派发都死在 Bun 的「possibly due to low max file descriptors」上。
+    2026-08-31 事故就是这个，抬 fd 上限一字未改。doctor 自己在终端里看不见
+    它，所以照 §55 的规矩问 launchd 本人（probes.launchd_claude_probe，测试注入）。
+    没有 actd plist（没装 launchd 服务）→ 无此行：本行说的是 launchd 会话。
+    """
+    if not probes.installed_plist_text(ACTD_LABEL):
+        return []
+    cfg = config.load_config()
+    claude_bin = config.resolve_claude_bin(cfg)
+    cwd = cfg.target_repo_path
+    try:
+        cwd = cwd.resolve()
+    except OSError:
+        pass
+    if not cwd.is_dir():
+        return []   # 默认工作 repo 不存在 — _check_target_repo 之类另有报法
+    real_bin = claude_bin
+    try:
+        real_bin = str(Path(claude_bin).resolve())
+    except OSError:
+        pass
+    res = probes.launchd_claude_probe(claude_bin, str(cwd))
+    state = res.get("state")
+    text = str(res.get("text") or "").strip()
+    first = (text.splitlines() or [""])[0][:200] if text else ""
+    fda_fix = ("System Settings > Privacy & Security > Full Disk Access: enable %s "
+               "(again after every claude update), or move the repo under $HOME on the "
+               "boot volume; then Stop > Discard & re-propose > approve the halted cards"
+               % real_bin)
+    if state == "ok":
+        return CheckResult("launchd claude", OK,
+                           "launchd-spawned %s reads %s" % (claude_bin, cwd))
+    if state == "unavailable":
+        return CheckResult(
+            "launchd claude", WARN,
+            "could not ask launchd whether claude can read %s (%s)" % (cwd, first),
+            "re-run doctor; or by hand: bootstrap a throwaway agent that runs "
+            "`%s --version` with WorkingDirectory=%s" % (claude_bin, cwd))
+    if state == "cd_failed":
+        return CheckResult(
+            "launchd claude", FAIL,
+            "even /bin/sh inside a launchd job cannot cd into %s - the folder is "
+            "missing or unreadable to background jobs" % cwd,
+            "check the path in config.yaml (execution.default_target_repo) and that the "
+            "volume is mounted")
+    if state == "hang":
+        return CheckResult(
+            "launchd claude", WARN,
+            "%s started under launchd with cwd=%s but never exited - what a pending "
+            "macOS file-access prompt looks like for a job that has no UI to show it"
+            % (claude_bin, cwd),
+            fda_fix,
+        ).with_failure("claude_blind")
+    # failed
+    if _CLAUDE_BLIND_RE.search(text):
+        return CheckResult(
+            "launchd claude", FAIL,
+            "launchd-spawned %s cannot read %s (rc=%s: %s) - macOS grants Full Disk "
+            "Access per executable path and this claude has none; every dispatch into "
+            "that folder dies the same way" % (claude_bin, cwd, res.get("rc"), first),
+            fda_fix,
+        ).with_failure("claude_blind")
+    return CheckResult(
+        "launchd claude", WARN,
+        "`%s --version` under launchd with cwd=%s exited %s: %s"
+        % (claude_bin, cwd, res.get("rc"), first),
+        "run the same command in a terminal; if it works there, the difference is the "
+        "launchd session (permissions, environment) - see docs/TROUBLESHOOTING.md")
 
 
 def _symlink_shaped(value: Optional[str]) -> bool:
@@ -898,12 +1241,30 @@ def _check_cron(probes: Probes):
             "missing from crontab - screen captures never become vault notes or radar cards",
             "bash install.sh (reinstalls the §18 cron lines)",
         ).with_failure("cron_missing"))
-    if "act.digest" in text:
-        results.append(CheckResult("cron digest", OK, "installed (Mon 09:07)"))
+    digest_lines = [ln for ln in text.splitlines()
+                    if "act.digest" in ln and not ln.lstrip().startswith("#")]
+    if any(_LEGACY_DIGEST_NOW_RE.search(ln) for ln in digest_lines):
+        # §17 D19: a crontab line that still passes --now is the pre-D19
+        # Monday form — --now bypasses the cadence gate, so this line forces
+        # a card every fire no matter what digest.frequency says (default
+        # off). Calling it "installed" here would be the lie the knob exists
+        # to end; only `bash install.sh` replaces the line.
+        results.append(CheckResult(
+            "cron digest", WARN,
+            "legacy `act.digest --now` line - forces a card every fire, "
+            "ignoring digest.frequency (default off)",
+            "bash install.sh (replaces it with the daily self-gated line)",
+        ).with_failure("cron_missing"))
+    elif digest_lines:
+        # the line fires daily; the cadence (default off) lives in config,
+        # so "installed" says nothing about whether cards appear.
+        results.append(CheckResult(
+            "cron digest", OK,
+            "installed (daily 09:07; cadence = digest.frequency)"))
     else:
         results.append(CheckResult(
             "cron digest", WARN,
-            "Monday digest line missing from crontab",
+            "digest line missing from crontab",
             "bash install.sh",
         ).with_failure("cron_missing"))
     results.append(_check_cron_probe(probes, cron_installed="screenpipe-export.sh" in text))
@@ -998,6 +1359,103 @@ def _check_dashboard(probes: Probes):
         "tail -20 ~/Library/Logs/zelin-ai-assistant/actd.launchd.log"
         " (pre-v0.48 installs: state/actd.launchd.log)",
     ).with_failure("dashboard_stale")
+
+
+def _actd_restart_cmd() -> str:
+    """The hard-restart command for the resident daemon on this OS — a stalled
+    process needs a kill+respawn, not a reload."""
+    if platform.is_darwin():
+        return "launchctl kickstart -k gui/$(id -u)/%s" % ACTD_LABEL
+    if platform.is_windows():
+        return 'schtasks /End /TN "%s" & schtasks /Run /TN "%s"' % (ACTD_TASK, ACTD_TASK)
+    return "systemctl --user restart %s" % ACTD_UNIT
+
+
+def _actd_alive(probes: Probes, hb: Optional[dict]) -> Optional[bool]:
+    """Is the resident daemon process alive? darwin asks launchd (the pid
+    column); elsewhere the heartbeat's own pid is probed. None = cannot tell."""
+    if platform.is_darwin():
+        row = _launchctl_table(probes).get(ACTD_LABEL)
+        if row is not None:
+            return row[0] != "-"
+    pid = (hb or {}).get("pid")
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        return probes.pid_alive(pid)
+    return None
+
+
+def _check_heartbeat(probes: Probes):
+    """§47.4 stall watchdog: process alive + heartbeat stale = the loop is stuck.
+
+    2026-08-31 22:31: actd kept its pid for 2.5 h with no children, parked in
+    time.sleep, dashboard frozen — `launchctl list` said running, loop_health
+    counted zero crashes, doctor said healthy. The heartbeat's mtime (touched
+    at every phase boundary of every pass) is the only signal that separates
+    "alive" from "looping"; ``stale_after_s`` comes from the writer
+    (3 × interval, floor 90 s) so the threshold has exactly one owner.
+    """
+    hb = probes.heartbeat_read()
+    alive = _actd_alive(probes, hb)
+    restart = _actd_restart_cmd()
+    if hb is None:
+        if alive:
+            return CheckResult(
+                "actd heartbeat", WARN,
+                "actd is running but has never written state/actd.heartbeat - the "
+                "daemon predates v0.48.4 or just started; without it a silent stall "
+                "is invisible",
+                restart + "  # restart so the upgraded daemon starts beating")
+        return []   # not running: the actd row already carries the fix
+    age = float(hb.get("age_s") or 0)
+    phase = str(hb.get("phase") or "?")
+    if not heartbeat.is_stale(hb):
+        return CheckResult(
+            "actd heartbeat", OK,
+            "beating (phase=%s, %ds ago%s)" % (
+                phase, int(age), ", pid %s" % hb["pid"] if hb.get("pid") else ""))
+    mins = int(age // 60)
+    if alive is False:
+        return CheckResult(
+            "actd heartbeat", WARN,
+            "no heartbeat for %d min and actd is not running - see the actd row"
+            % mins, restart)
+    who = "alive (pid %s)" % hb.get("pid") if alive else "process state unknown"
+    return CheckResult(
+        "actd heartbeat", FAIL,
+        "%s but no heartbeat for %d min (last seen in phase '%s') - the loop is "
+        "stuck, not looping; cards will not move and the board goes stale"
+        % (who, mins, phase),
+        restart,
+    ).with_failure("actd_stalled")
+
+
+def _check_auto_deploy(probes: Probes):
+    """§56 合并即上岗：最近一次自动部署的结果（state/deploy_state.json，
+    scripts/auto-deploy.sh 写）。文件不存在 = 这台机器不跑该 agent（.pkg 安装 /
+    Linux / features.auto_deploy 关）——不出行，不告警。deployed / up_to_date
+    之外的一切结果都是 WARN：回滚、脏树拒绝、fetch 失败……都是需要人看一眼
+    的事，而 launchd 的 status 列永远是 0（脚本对每种已处理结果都 exit 0）。"""
+    state = deploy_state.read()
+    if not state:
+        return []
+    status = state.get("status", "")
+    detail = state.get("detail", "")
+    version = state.get("version", "")
+    if status in deploy_state.HEALTHY:
+        when = state.get("last_deployed") or state.get("last_run") or ""
+        return CheckResult(
+            "auto-deploy", OK,
+            "%s (v%s%s)" % (status, version or "?", (" at " + when) if when else ""))
+    return CheckResult(
+        "auto-deploy", WARN,
+        "last run ended '%s'%s%s" % (
+            status or "?",
+            (" on v%s" % version) if version else "",
+            (": " + detail) if detail else ""),
+        _pick("tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
+              " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
+              "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
+              " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)"))
 
 
 def _check_obsidian(probes: Probes):
@@ -1133,7 +1591,8 @@ def _checks_for_platform() -> List:
     scheduled tasks, so there is no crontab ingest chain to probe.
     """
     if platform.is_darwin():
-        middle = [_check_launchd, _check_launchd_paths, _check_cron]
+        middle = [_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
+                  _check_launchd_claude, _check_launchd_orphans, _check_cron]
         tail_extra = [_check_screenpipe, _check_npx]
     elif platform.is_windows():
         middle = [_check_scheduled_tasks]
@@ -1141,8 +1600,12 @@ def _checks_for_platform() -> List:
     else:
         middle = [_check_systemd]
         tail_extra = []
+    # §47.4 heartbeat rides right behind the dashboard freshness row on every
+    # OS: the two together tell "dead" (dashboard stale, no pid) from "stuck"
+    # (pid alive, heartbeat stale).
     return (_CHECKS_COMMON_HEAD + middle
-            + [_check_dashboard, _check_obsidian] + tail_extra + [_check_gh])
+            + [_check_dashboard, _check_heartbeat, _check_auto_deploy, _check_obsidian]
+            + tail_extra + [_check_gh])
 
 
 def _safe(fn, probes: Probes) -> List[CheckResult]:

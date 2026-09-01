@@ -94,6 +94,11 @@ TELEMETRY_LEVELS: tuple = ("basic", "detailed")
 # §15 default output format for drafted deliverables. "markdown" = status quo
 # (no prompt change); "html" makes the executor author deliverables as HTML.
 OUTPUT_FORMATS: tuple = ("markdown", "html")
+# §17 digest cadence (D19). "off" = never scheduled (the cron still fires;
+# act/digest.py self-gates); the other three are rolling intervals measured
+# from the state/digest.json marker, not pinned to a weekday.
+DIGEST_FREQUENCIES: tuple = ("off", "daily", "every2days", "weekly")
+DEFAULT_DIGEST_FREQUENCY: str = "off"
 
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
@@ -108,6 +113,9 @@ DEFAULT_FEATURES: dict = {
     # alone changes nothing — the sync also needs the token file to exist
     # (feedback_sync.token_path) AND a per-report publish opt-in.
     "feedback_sync": True,
+    # §56 合并即上岗: install.sh installs the self-updating deploy agent
+    # (com.zelin.aiassistant.autodeploy) only for a git checkout with this on.
+    "auto_deploy": True,
 }
 
 
@@ -176,12 +184,16 @@ class Config:
     # 负责给 review_ready 队列条目打 kind；键收进 overrides 白名单以便记账。
     review_notify: str = "sound"
     # weekly ingest digest (CONTRACT §24) — reads the last 7 days of Obsidian
-    # ingest output and turns it into a review-lane digest card + automation
-    # proposal cards. Skips itself (cheap, no claude call) when there is no
-    # new ingest data, so "enabled by default" costs nothing on empty vaults.
-    weekly_digest_enabled: bool = True
+    # ingest output and turns it into a review-lane digest card. Default OFF
+    # since D19 (owner 2026-09-01: digest 不再默认铸卡; 15 automation-idea
+    # cards minted, 0 approved) — an explicit `enabled: true` opts back in.
+    weekly_digest_enabled: bool = False
     weekly_digest_day: int = 0    # 0=Monday .. 6=Sunday (python weekday())
     weekly_digest_hour: int = 9   # local hour (24h) the weekly run unlocks
+    # §17 state digest cadence (D19): off | daily | every2days | weekly.
+    # Default off — the owner turns it on in Settings (overrides key
+    # `digest_frequency`) or config.yaml `digest.frequency`.
+    digest_frequency: str = DEFAULT_DIGEST_FREQUENCY
 
     # approval / cost
     poll_interval_seconds: int = 10
@@ -209,6 +221,11 @@ class Config:
     # runtime escape hatch for machines with multiple claude installs where
     # the daemon PATH keeps picking the wrong one (2026-07-08 incident).
     claude_bin: Optional[str] = None
+    # dispatch-storm brake (§4 / §51): after this many CONSECUTIVE launch
+    # failures of the same failure class the card stops auto-retrying and
+    # surfaces in the blocked lane (2026-08-31: one card re-dispatched 66
+    # times in 13h behind a 256-fd cap). 0 = never brake (pre-v0.48.4).
+    dispatch_max_failures: int = 5
     self_check: bool = True
     fresh_context_review: bool = True
 
@@ -399,6 +416,14 @@ def _dict_or(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _coerce_digest_frequency(value) -> str:
+    """§17 digest.frequency：规范到 DIGEST_FREQUENCIES 成员；typo/未知值
+    fail-quiet 回 "off"（宁可少一份摘要，不可按错误节奏刷卡）。yaml 与
+    overrides 两条路径共用，两侧读出同一答案。"""
+    v = str(value).strip().lower().replace("_", "").replace("-", "")
+    return v if v in DIGEST_FREQUENCIES else DEFAULT_DIGEST_FREQUENCY
+
+
 def load_config() -> Config:
     """Load ``config.yaml`` (falling back to ``config.example.yaml``).
 
@@ -532,6 +557,10 @@ def load_config() -> Config:
     _cb = execution.get("claude_bin")
     if _cb and str(_cb).strip():
         cfg.claude_bin = str(_cb).strip()
+    cfg.dispatch_max_failures = max(0, _int_or(
+        execution.get("dispatch_max_failures", cfg.dispatch_max_failures),
+        cfg.dispatch_max_failures,
+    ))
     qg = _dict_or(execution.get("quality_gate"))
     cfg.self_check = _bool_or(qg.get("self_check", cfg.self_check), cfg.self_check)
     cfg.fresh_context_review = _bool_or(
@@ -549,6 +578,13 @@ def load_config() -> Config:
         archive.get("after_days", cfg.archive_after_days),
         cfg.archive_after_days,
     )
+
+    # §17 (D19) digest cadence. The legacy `digest.weekly: monday` key that
+    # config.example.yaml carried for years was never read by any code —
+    # it stays an ignored unknown key; only `frequency` is law.
+    digest_blk = _dict_or(data.get("digest"))
+    if "frequency" in digest_blk:
+        cfg.digest_frequency = _coerce_digest_frequency(digest_blk.get("frequency"))
 
     voice = _dict_or(data.get("voice"))
     cfg.voice_enabled = _bool_or(
@@ -774,6 +810,9 @@ _OVERRIDE_FIELDS: dict = {
     "obsidian_enabled": _coerce_bool,
     "review_notify": str,
     "weekly_digest_enabled": _coerce_bool,
+    # §17 (D19): digest cadence — the Settings UI writes this flat key
+    # (diff-write; "off" == product default so writing off deletes the key).
+    "digest_frequency": _coerce_digest_frequency,
     "show_cost_above_usd": float,
     "require_text_confirm_above_usd": float,
     "trash_retention_days": int,

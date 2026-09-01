@@ -44,6 +44,7 @@ from act.lib import (
     analytics,
     config,
     health,
+    heartbeat,
     logcap,
     notify,
     policy,
@@ -1723,6 +1724,20 @@ def _stop_live_session(req: Requirement, why: str) -> None:
     req.execution = ex
 
 
+def _rearm_dispatch(ex: dict) -> dict:
+    """§4.1 storm brake：清掉上一轮派发的失败台账（attempts / 同类连败计数 /
+    halted 标记 / 旧 last_error），返回同一个 dict。**进入 approved 的每条路径**
+    都必须过这里——不只是 owner 的 approve。审查复现（2026-09-01）：
+    auto_dispatch_pass 把 execution 原样带进 approved，`dispatch_halted` 跟着
+    过去，卡永远停在「需输入」；owner 再点批准是 approved 上的幂等 no-op，
+    UI 上没有任何出口。abort_execution（退回提案）也一并清——那个动词的
+    语义本来就是「丢弃这一轮，重新决定」。"""
+    for key in (tuple(getattr(executor, "DISPATCH_STREAK_KEYS", ()))
+                + ("last_error", "last_error_at")):
+        ex.pop(key, None)
+    return ex
+
+
 def _apply_decision(req: Requirement, action: Optional[str],
                     comment: Optional[str],
                     expected_status: Optional[str] = None,
@@ -1794,7 +1809,9 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # the dispatch event report wait_s (approve -> launch latency).
         ex = dict(req.execution or {})
         ex["approved_at"] = _iso_now()
-        req.execution = ex
+        # §4.1 storm brake：批准 = 重新上膛。上一轮派发的失败台账随新批准
+        # 清零，否则退回提案再批准的卡会带着旧刹车直接停在原地。
+        req.execution = _rearm_dispatch(ex)
         save(req)
         # lifecycle milestone (docs/TELEMETRY.md): first genuine approval on
         # this install. The idempotent guard above means re-approvals of an
@@ -2063,7 +2080,10 @@ def _apply_decision(req: Requirement, action: Optional[str],
             ex.pop("session_id", None)
         ex.pop("done", None)
         ex["aborted_at"] = _iso_now()
-        req.execution = ex
+        # §4.1：退回提案 = 丢弃这一轮，派发失败台账（含 dispatch_halted）一并
+        # 清掉——否则 card_sent 卡带着刹车回到待审批，policy 免批通道会把它
+        # 原样再推进 approved，永远停在「需输入」（审查复现 2026-09-01）。
+        req.execution = _rearm_dispatch(ex)
         req.set_status(State.CARD_SENT)
         save(req)
         _log(f"inbox: {req.id} abort_execution -> card_sent")
@@ -2221,7 +2241,7 @@ def _safe_unlink(path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # (a') auto-dispatch（§51 · vnext-amendments M1.b/C-6）
 # --------------------------------------------------------------------------- #
-# 当日花费台账 state/autodispatch_spend.json retired v0.49（owner decision D9，
+# 当日花费台账 state/autodispatch_spend.json retired v0.48.7（owner decision D9，
 # docs/design/vnext2-plan.md）：没有预算就没有账要记；磁盘上残留的旧文件无人
 # 读写，属死数据。
 
@@ -2272,7 +2292,10 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
             cost = _card_cost(req)
             ex.pop("auto_dispatch_block", None)
             ex["auto_dispatched"] = True          # add-only：审计痕（policy 批的，非 owner 点头）
-            req.execution = ex
+            # §4.1：policy 批准与 owner 批准同权——进入 approved 即重新上膛。
+            # 不清的话，刹车停下 → 退回提案 → 本 pass 免批再推进 approved 的
+            # 卡会带着 dispatch_halted 直接停回「需输入」，无 UI 出口。
+            req.execution = _rearm_dispatch(ex)
             tag = (f"[{_dt.date.today().isoformat()} auto-dispatch] "
                    f"hand 出身免批自动派发（est ${cost:g}）")
             req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
@@ -2312,11 +2335,15 @@ def dispatch_approved(cfg: config.Config) -> int:
         if executor is None:
             _log(f"dispatch: executor unavailable, cannot dispatch {req.id}")
             continue
+        # §4 派发风暴刹车已触发：不再重试、不占并发槽、不写卡、不打日志——
+        # 卡在「需输入」列等 owner 退回重批（approve 清台账）。
+        if (req.execution or {}).get("dispatch_halted"):
+            continue
         # §51 合并运行列 queued 子状态：并发满 → 卡留 approved 排队（原因
         # chip 由 dashboard 的 queued_reason 投影），槽位空出即派发。
         if live >= int(ad["max_concurrent"]):
             continue
-        # （auto 卡派发时刻的预算复核 retired v0.49，D9：并发是唯一的排队原因。）
+        # （auto 卡派发时刻的预算复核 retired v0.48.7，D9：并发是唯一的排队原因。）
         snap_ref = None
         try:
             # §34bis 机械护栏起点：preset 清理卡在会话启动**之前**拍 registry
@@ -2357,27 +2384,45 @@ def dispatch_approved(cfg: config.Config) -> int:
                 req.execution = ex
                 save(req)
         except Exception as e:  # noqa: BLE001 - keep the loop alive
-            _log(f"dispatch: {req.id} FAILED: {e}\n{traceback.format_exc()}")
             # §34bis：起跑崩了 → 预拍的快照无主即焚（重试下轮重拍）。
             if snap_ref:
                 _safe_unlink(Path(snap_ref))
+            is_dispatch_error = (executor is not None
+                                 and isinstance(e, executor.DispatchError))
+            # getattr 兜底：测试注入的最小 executor 替身可能只带 DispatchError
+            backing_off = getattr(executor, "DispatchBackingOff", ())
+            halted_cls = getattr(executor, "DispatchHalted", ())
+            if is_dispatch_error and isinstance(e, backing_off):
+                # 退避窗口内：什么都没发生——不写卡、不打 traceback（2026-08-31
+                # 事故：这条 no-op 每 pass 重写一次 last_error_at + 28 行
+                # traceback，一张卡占了 98% 的 registry 写入、954 条 traceback）。
+                continue
+            if is_dispatch_error:
+                # executor 已落账（last_error/attempts/halted），只留一行日志
+                _log(f"dispatch: {req.id} FAILED: {(str(e).splitlines() or [''])[0][:300]}"
+                     + (" — halted (storm brake)"
+                        if isinstance(e, halted_cls) else ""))
+            else:
+                _log(f"dispatch: {req.id} FAILED: {e}\n{traceback.format_exc()}")
             # leave a trace on execution so the dashboard's queued item can show
             # dispatch_error (§2); status stays approved -> auto-retry next pass.
+            # 只在文本真变了时才写（executor 正常路径已写过同一段——重写只会
+            # 刷新 last_error_at，让 registry_writes 台账每 pass 多一行）。
             err = str(e)[:300]
             try:
                 ex = dict(req.execution or {})
-                ex["last_error"] = err
-                ex["last_error_at"] = _iso_now()
-                req.execution = ex
-                save(req)
+                # prefix compare: executor keeps 500 chars, this trace 300
+                if not str(ex.get("last_error") or "").startswith(err):
+                    ex["last_error"] = err
+                    ex["last_error_at"] = _iso_now()
+                    req.execution = ex
+                    save(req)
             except Exception:  # noqa: BLE001 - bookkeeping must not block retry
                 pass
             # executor.dispatch already emits dispatch_failed (with reason/attempt)
             # for DispatchError. Only log unexpected crashes here so analytics
             # is not double-counted for a single failed launch (issue #12).
-            if executor is not None and isinstance(e, executor.DispatchError):
-                pass
-            else:
+            if not is_dispatch_error:
                 analytics.log_event(
                     "dispatch_failed",
                     req=req.id,
@@ -2685,10 +2730,11 @@ def detect_transitions(prev: Optional[dict], curr: dict
     # notification carries a snippet of the QUESTION the agent is asking.
     for rid, item in c_ni.items():
         if rid not in p_ni and rid in p_run:
-            if item.get("resume_exhausted"):
-                # §46 降级卡进 需输入 列：reconcile 已发过精确文案
-                # （msg_resume_storm / msg_auto_resume_exhausted），这里再发
-                # 「任务需要你输入」是重复 ping，且 agent 并没有在提问。
+            if item.get("resume_exhausted") or item.get("dispatch_halted"):
+                # §46 降级卡 / §4 刹车卡进 需输入 列：reconcile / executor 已
+                # 发过精确文案（msg_resume_storm / msg_auto_resume_exhausted /
+                # msg_dispatch_halted），这里再发「任务需要你输入」是重复
+                # ping，且 agent 并没有在提问。
                 continue
             t, b = notify.msg_needs_input(item.get("name") or rid,
                                           item.get("question"))
@@ -3539,8 +3585,12 @@ def run_once(
     interval: Optional[int] = None,   # 主循环真实 pass 间隔（--interval 优先）
 ) -> dict:
     config.ensure_state_dirs()
+    # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
+    # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
+    heartbeat.beat("inbox", interval)
     n_inbox = process_inbox()
     n_auto = auto_dispatch_pass(cfg)   # §51：hand 卡免批通道（card_sent→approved）
+    heartbeat.beat("dispatch", interval)
     n_dispatched = dispatch_approved(cfg)
     # write-early：审批/派发刚落账就先写一次 dashboard，app 立刻看到 queued/executing
     # 回显，不用等 reconcile/raising（都可能慢）跑完；pass 尾部照常再写最终版。
@@ -3551,7 +3601,9 @@ def run_once(
             write_dashboard(build_dashboard(cfg=cfg))
         except Exception as e:  # noqa: BLE001 - early write is best-effort
             _log(f"early dashboard write FAILED: {e}")
+    heartbeat.beat("reconcile", interval)
     reconcile_executing(cfg, resume_notified if resume_notified is not None else set())
+    heartbeat.beat("housekeeping", interval)
     process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
     purge_trash(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
@@ -3599,6 +3651,7 @@ def run_once(
         gc_attachments()
     except Exception:  # noqa: BLE001 - housekeeping must not kill the pass
         pass
+    heartbeat.beat("dashboard", interval)
     dash = build_dashboard(cfg=cfg)
     # §26 in-app update check: cheap (ETag-cached, at most one network attempt
     # per 24h) and never raises — the field is simply absent when no newer
@@ -3651,13 +3704,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     _log(f"actd starting (interval={interval}s, home={config.HOME})")
     prev_dash: Optional[dict] = None
     loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
+    heartbeat.beat("starting", interval)
     while True:
         try:
             prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
                                  radar_dead_notified, interval=interval)
             loop_health.record_success()
+            heartbeat.beat("idle", interval)      # §47.4：pass 完整跑完
         except Exception as e:  # noqa: BLE001 - one bad pass must not kill loop
             loop_health.record_failure(f"{type(e).__name__}: {e}")
+            heartbeat.beat("failed", interval)    # 崩了也算活着——循环还在转
             _log(f"loop pass FAILED: {e}\n{traceback.format_exc()}")
         time.sleep(interval)
 

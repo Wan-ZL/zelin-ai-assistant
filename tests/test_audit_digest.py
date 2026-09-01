@@ -1,8 +1,10 @@
 """act/digest.py + act/oneonone.py behavior.
 
-* §40.7 digest unify: the Monday digest lands as a review-lane chat card
+* §40.7 digest unify: the state digest lands as a review-lane chat card
   (same filing pattern as act/weekly_digest — final_draft = full markdown,
-  merge_or_new dedup on the per-Monday title) and writes NO workbench file;
+  merge_or_new dedup on the per-day title) and writes NO workbench file;
+  D19 (v0.48.5) renamed the copy 周一 digest → 状态摘要 because the card can
+  now be daily (digest.frequency) — a weekday in the name would lie;
   the 1:1 prep page (its own module) still lands via oneonone.output_root
   (configured repo, STATE_DIR fallback — never the example placeholder).
 * §40 (#19): the rendered pages say lane display names (待审批/待验收/…),
@@ -54,7 +56,12 @@ class DigestCardTestCase(unittest.TestCase):
         self.assertEqual(card.type, "digest")
         self.assertEqual(card.delivery_mode, "chat")
         ex = card.execution or {}
-        self.assertIn("周一 digest", ex.get("final_draft", ""))
+        # D19: cadence-neutral heading + title (was 「周一 digest」); the
+        # folded analytics heatmap legitimately lists weekdays, so only the
+        # first line and the card title are checked
+        self.assertTrue(ex.get("final_draft", "").startswith("# 状态摘要 · "))
+        self.assertTrue(card.title.startswith("状态摘要 · "))
+        self.assertNotIn("周一", card.title)
         self.assertTrue(ex.get("delivered_summary"))
         # §40.7: no workbench digest file anymore, anywhere
         self.assertFalse((config.STATE_DIR / "digests").exists())

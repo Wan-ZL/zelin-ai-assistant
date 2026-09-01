@@ -46,7 +46,7 @@ export interface ApprovalCard {
  * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
  * docs/CONTRACT.md §51（可能缺席，也可能是纯字符串——UI 经 steer.ts 双兼容
  * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id="R-xx"）/
- * concurrency（等并发位）；waiting_budget retired v0.49（D9）。
+ * concurrency（等并发位）；waiting_budget retired v0.48.7（D9）。
  */
 export interface QueuedReason {
   kind: string;
@@ -90,6 +90,9 @@ export interface TaskRow {
   dispatch_error?: string | null;
   waiting_for?: string;
   resume_exhausted?: boolean;
+  /** §4 派发风暴刹车：approved 卡连续派发失败 N 次后停止重试，投影为 blocked 行（wire key 逐字镜像） */
+  dispatch_halted?: boolean;
+  dispatch_attempts?: number;
   delivered_summary?: string;
   queued_reason?: QueuedReason | string | null;
   steers?: SteerNote[];
@@ -137,6 +140,25 @@ export interface TrashRow {
   [key: string]: unknown;
 }
 
+/**
+ * §56 合并即上岗：scripts/auto-deploy.sh 最近一次运行的结果（dashboard add-only
+ * 顶层键 deploy_state；字段逐字镜像 wire key，全部 string）。status 已知值：
+ * deployed | up_to_date | rolled_back | rollback_failed | refused_dirty |
+ * refused_branch | fetch_failed | ci_pending | ci_failed | failed —— 未知值按
+ * "需要人看"处理。
+ */
+export interface DeployState {
+  status?: string;
+  version?: string;
+  head?: string;
+  prev?: string;
+  last_deployed?: string;
+  last_run?: string;
+  detail?: string;
+  failed_sha?: string;
+  [key: string]: unknown;
+}
+
 /** 看板投影顶层（GET /api/board = dashboard.json 原样透传） */
 export interface Board {
   generated_at: string;
@@ -152,8 +174,26 @@ export interface Board {
   merge_suggestions?: unknown[];
   update_available?: unknown;
   device_label?: string;
+  deploy_state?: DeployState;
   [key: string]: unknown;
 }
 
 /** GET /api/cards/{id} = 投影行 + registry YAML 只读增补（add-only 合并，字段名同投影） */
 export type CardDetail = Record<string, unknown> & { id: string };
+
+/** GET /api/health（CONTRACT §47.4）：管线活性——server/health.py 的 wire 形逐字镜像 */
+export interface HealthSnapshot {
+  verdict: "ok" | "unknown" | "stale" | "stalled" | "failing" | string;
+  heartbeat: {
+    age_s: number;
+    phase: string | null;
+    pid: number | null;
+    interval: number | null;
+    stale_after_s: number;
+    stale: boolean;
+  } | null;
+  dashboard: { generated_at: string; age_s: number; stale: boolean } | null;
+  loop_health: { consecutive_failures: number; last_error: string | null };
+  checked_at: string;
+  [key: string]: unknown;
+}

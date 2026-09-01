@@ -1,10 +1,11 @@
-// 顶栏（G7 shell，自写非 fork）：左=标识+标题+设备标签+新鲜度；中=搜索槽位；
+// 顶栏（G7 shell，自写非 fork）：左=标识+标题+设备标签+新鲜度+部署状态（§56）；中=搜索槽位；
 // 右=连接状态点+语言切换+主题切换。搜索本体归 A8（filters/⌘F）——这里只留
 // searchSlot 槽位，A8 把搜索组件经 app.tsx 传进来即可，不传则槽位为空但布局稳定。
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { buildAppUrl } from "../../route";
 import { useAppState, type ConnectionState } from "../../store";
+import { DeployLabel } from "./DeployLabel";
 import { FreshnessLabel } from "./FreshnessLabel";
 import { LanguageToggle } from "./LanguageToggle";
 import { ThemeToggle } from "./ThemeToggle";
@@ -45,6 +46,8 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
         <h1 className="shell-title">{text("Zelin 的 AI 助理", "Zelin's AI Assistant")}</h1>
         {deviceLabel && <span className="shell-device">{deviceLabel}</span>}
         <FreshnessLabel />
+        {/* §56：v0.48.x · deployed 12m ago（无 deploy_state 时自隐藏） */}
+        <DeployLabel />
       </div>
       <div className="shell-search-slot">{searchSlot ?? null}</div>
       <div className="shell-header-right">

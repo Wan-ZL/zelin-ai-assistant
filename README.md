@@ -212,7 +212,7 @@ act/
   executor.py      # claude --bg dispatch + resume/rework + quality gate + delivery harvest
   radar*.py        # three requirement radars (Obsidian / Slack / Gmail)
   analyze.py       # debt → approvable proposal expansion (LLM)
-  digest.py        # Monday digest + self-improvement suggestion cards
+  digest.py        # state digest (digest.frequency, default off) + self-improvement suggestion cards
   lib/             # config / registry (state machine) / dashboard projection / notify / secrets / …
   registry/        # requirement ledger (one YAML per requirement, generated at runtime)
   launchd/         # actd + radar plists

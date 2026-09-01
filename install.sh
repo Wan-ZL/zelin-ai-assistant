@@ -12,8 +12,8 @@
 #      python/repo/home paths + the login shell's claude directory, which goes
 #      FIRST on the daemon PATH), load them, then verify they actually spawn
 #   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
-#      the repo's ingest/ scripts + `python -m act.radar --once`, and Monday
-#      09:07 runs `python -m act.digest --now`
+#      the repo's ingest/ scripts + `python -m act.radar --once`, and a daily
+#      09:07 `python -m act.digest` (self-gated by digest.frequency, §17)
 #   7. run the post-install diagnostics (python -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
@@ -28,6 +28,19 @@
 #
 # --check: run the post-install doctor (python -m act.doctor) and exit with
 #   the number of failing checks. Installs/changes nothing.
+#
+# --non-interactive: the mode scripts/auto-deploy.sh runs (CONTRACT §56). Same
+#   steps as the interactive run, but it can never stop to ask: a missing
+#   claude only warns, the doctor step is left to the caller (it gates the
+#   deploy and decides on rollback), the closing "next steps" banner is
+#   replaced by a one-line summary, and the EXIT CODE is the number of failed
+#   steps. It NEVER builds or installs the Mac app (step 4 is skipped, §56.5):
+#   D3 froze the legacy app, and `mac/build.sh --install` quits + relaunches
+#   the running instance — screenpipe is its direct child (RunningBoard reaps
+#   orphans) and live captions live inside it, so an unattended rebuild would
+#   kill a recording or a meeting's captions at whatever hour a merge lands.
+#   Only a hand-run `bash install.sh` (the owner picking the moment) rebuilds
+#   the app. The §23 report records mode "non-interactive".
 set -uo pipefail
 
 # Physical path of a directory — every symlink resolved (CONTRACT §55).
@@ -228,6 +241,9 @@ fi
 
 PKG_POSTINSTALL=0
 [ "${1:-}" = "--pkg-postinstall" ] && PKG_POSTINSTALL=1
+# CONTRACT §56 — never-prompting mode for scripts/auto-deploy.sh (see header).
+NON_INTERACTIVE=0
+[ "${1:-}" = "--non-interactive" ] && NON_INTERACTIVE=1
 
 ok()   { printf "  [ ok ] %s\n" "$1"; }
 warn() { printf "  [warn] %s\n" "$1"; }
@@ -243,6 +259,43 @@ report_step() { # $1=name $2=status [$3=detail]
 "
 }
 
+# --non-interactive verdict (§56): the report lines whose status is fail,
+# minus `app` — the frozen legacy Mac app (D3): its build failing leaves the
+# installed app untouched, and rolling the deploy back would not fix it.
+# (Since §56.5 that mode never builds the app at all — install_mac_app records
+# `app=skipped` — so the exclusion is a belt for a stray fail line, kept
+# because the exit code is the deploy verdict and must never hinge on it.)
+# Printed one per line; the exit code is their count.
+failed_deploy_steps() {
+    printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
+}
+
+# Step 4 — build + install the Mac app (CONTRACT §23 step `app`; §56.5).
+# A function so tests can run it against a fake mac/build.sh. Skipped by the
+# .pkg postinstall (the pkg installed the app) and by --non-interactive:
+# auto-deploy must NEVER rebuild the frozen legacy app (D3) — build.sh quits
+# and relaunches the running instance, taking screenpipe (its direct child)
+# and live captions down with it, and a `swift build` + `codesign` under
+# launchd can hang on a keychain prompt nobody is there to click.
+install_mac_app() {
+    if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+        echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
+        report_step "app" "skipped" "installed by the .pkg"
+    elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+        echo "==> 4. build + install Mac app — skipped (--non-interactive never rebuilds the frozen legacy app; run bash install.sh by hand)"
+        report_step "app" "skipped" "non-interactive never rebuilds the app (D3); bash install.sh to rebuild"
+    else
+        echo "==> 4. build + install Mac app"
+        if bash "$REPO_ROOT/mac/build.sh" --install; then
+            ok "Mac app built + installed"
+            report_step "app" "ok" "built and installed"
+        else
+            warn "Mac app build failed — see output above"
+            report_step "app" "fail" "mac/build.sh --install failed"
+        fi
+    fi
+}
+
 write_install_report() {
     RPY="${RUNTIME_PY:-${PY:-}}"
     { [ -n "$RPY" ] && [ -x "$RPY" ]; } || RPY="$(command -v python3 || true)"
@@ -252,6 +305,7 @@ write_install_report() {
     fi
     MODE=interactive
     [ "$PKG_POSTINSTALL" -eq 1 ] && MODE=pkg-postinstall
+    [ "$NON_INTERACTIVE" -eq 1 ] && MODE=non-interactive
     if printf '%s' "$REPORT_STEPS" | (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
         "$RPY" -m act.lib.install_report --mode "$MODE" --steps-stdin \
         --agents "$LOADED_LABELS" >/dev/null 2>&1); then
@@ -273,6 +327,47 @@ launchd_unload() { # $1=plist path, $2=label
 launchd_load() { # $1=plist path
     launchctl bootstrap "gui/$UID_NUM" "$1" >/dev/null 2>&1 \
         || launchctl load "$1" >/dev/null 2>&1
+}
+# Is this label registered with launchd right now? (`launchctl list` columns:
+# PID Status Label). The only proof an unload actually took.
+launchd_label_loaded() { # $1=label
+    launchctl list 2>/dev/null | awk -v l="$1" '$3 == l' | grep -q .
+}
+# Retire a label for good: unload + delete its plist + PROVE it is gone
+# (CONTRACT §55). launchd_unload swallows failures by design (idempotent
+# upgrades), which is exactly how the v0.21-removed imessageradar agent kept
+# running for 51 days — 23,613 tracebacks — while every install.sh run printed
+# nothing (2026-08-31 audit L3). A label that survives bootout is reported
+# loudly and lands in the install report as launchd_retired=fail.
+RETIRED_STILL_LOADED=""
+launchd_retire() { # $1=label
+    _was_loaded=0
+    launchd_label_loaded "$1" && _was_loaded=1
+    launchd_unload "$LA_DIR/$1.plist" "$1"
+    rm -f "$LA_DIR/$1.plist"
+    if launchd_label_loaded "$1"; then
+        echo "  [ERR ] retired agent $1 is STILL loaded after bootout" >&2
+        info "  fix: launchctl bootout gui/$UID_NUM/$1   # then re-run install.sh"
+        RETIRED_STILL_LOADED="$RETIRED_STILL_LOADED $1"
+    elif [ "$_was_loaded" -eq 1 ]; then
+        ok "unloaded retired agent $1"
+    fi
+}
+# Orphans = our label prefix, loaded (or left in ~/Library/LaunchAgents), but
+# no template in act/launchd/ any more and not in the explicit RETIRED list.
+# Reported, never auto-unloaded (a label we do not know is not ours to kill);
+# doctor's "launchd orphans" row carries the same finding with the fix.
+launchd_orphans() { # prints one label per line
+    {
+        launchctl list 2>/dev/null | awk '$3 ~ /^com\.zelin\.aiassistant\./ {print $3}'
+        for _p in "$LA_DIR"/com.zelin.aiassistant.*.plist; do
+            [ -e "$_p" ] || continue
+            _b="$(basename "$_p")"; printf '%s\n' "${_b%.plist}"
+        done
+    } | sort -u | while IFS= read -r _label; do
+        [ -e "$REPO_ROOT/act/launchd/$_label.plist" ] && continue
+        printf '%s\n' "$_label"
+    done
 }
 
 # escape a value for use on the replacement side of sed s|…|…| (delimiter |)
@@ -395,9 +490,13 @@ if [ "$PKG_POSTINSTALL" -eq 1 ]; then
     info "pkg postinstall mode — dependency checks skipped"
 else
 
-# claude (required)
+# claude (required). --non-interactive (§56) cannot stop to ask: it warns and
+# keeps deploying the daemons — they only need claude at dispatch time, and
+# the claude_bin step of the §23 report records the gap.
 if command -v claude >/dev/null 2>&1; then
     ok "claude found: $(command -v claude)"
+elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    warn "claude CLI not found — daemons will fail to dispatch until Claude Code is installed"
 else
     echo "  [ERR ] claude CLI not found (REQUIRED). Install Claude Code first, then re-run." >&2
     exit 1
@@ -406,7 +505,10 @@ fi
 # swift toolchain (required to build the Mac app) — presence AND minimum
 # version. MIN_SWIFT lives in mac/build.sh (single source); on failure it
 # prints the exact fix (update Xcode, xcode-select) so we just exit.
-if bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
+# --non-interactive never builds the app (§56.5), so it does not need one.
+if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    info "swift toolchain not checked — --non-interactive never rebuilds the Mac app (§56.5)"
+elif bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
     ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
 else
     echo "  [ERR ] Swift toolchain check failed (see message above), then re-run this script." >&2
@@ -604,19 +706,7 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-if [ "$PKG_POSTINSTALL" -eq 1 ]; then
-    echo "==> 4. build + install Mac app — skipped (the .pkg already installed it)"
-    report_step "app" "skipped" "installed by the .pkg"
-else
-    echo "==> 4. build + install Mac app"
-    if bash "$REPO_ROOT/mac/build.sh" --install; then
-        ok "Mac app built + installed"
-        report_step "app" "ok" "built and installed"
-    else
-        warn "Mac app build failed — see output above"
-        report_step "app" "fail" "mac/build.sh --install failed"
-    fi
-fi
+install_mac_app
 
 # --------------------------------------------------------------------------
 # Runs in BOTH modes: a .pkg install that leaves actd unloaded ships an inert
@@ -633,15 +723,30 @@ info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
 # ever saw an empty vault — retire any previously-installed copy so an upgrade
 # doesn't leave a redundant agent that logs empty passes forever.
 RETIRED_RADAR_LABEL="com.zelin.aiassistant.radar"
-launchd_unload "$LA_DIR/$RETIRED_RADAR_LABEL.plist" "$RETIRED_RADAR_LABEL"
-rm -f "$LA_DIR/$RETIRED_RADAR_LABEL.plist"
+launchd_retire "$RETIRED_RADAR_LABEL"
 # v0.21.0: the iMessage transport was removed (Slack's phone-approval role too;
 # the Mac app is now the sole approval surface). Its launchd agent is no longer
 # shipped — retire any previously-installed copy so an upgrade unloads the
 # already-loaded agent instead of leaving it polling chat.db forever.
 RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
-launchd_unload "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist" "$RETIRED_IMESSAGE_LABEL"
-rm -f "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist"
+launchd_retire "$RETIRED_IMESSAGE_LABEL"
+# §55 retire assertion + orphan report (2026-08-31 audit L3): a retired label
+# that survived bootout is a FAIL step; any other prefixed label with no
+# template is reported (not touched) so it stops being structurally invisible.
+if [ -n "$RETIRED_STILL_LOADED" ]; then
+    report_step "launchd_retired" "fail" "still loaded:$RETIRED_STILL_LOADED"
+else
+    report_step "launchd_retired" "ok"
+fi
+ORPHAN_LABELS="$(launchd_orphans | tr '\n' ' ' | sed 's/ *$//')"
+if [ -n "$ORPHAN_LABELS" ]; then
+    warn "launchd agent(s) with our prefix but no template in act/launchd: $ORPHAN_LABELS"
+    info "  each keeps running/logging until unloaded — launchctl bootout gui/$UID_NUM/<label>;"
+    info "  rm ~/Library/LaunchAgents/<label>.plist   (python3 -m act.doctor lists them too)"
+    report_step "launchd_orphans" "warn" "$ORPHAN_LABELS"
+else
+    report_step "launchd_orphans" "ok"
+fi
 # v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
 # ONLY when its source is enabled per the single source of truth
 # (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
@@ -656,6 +761,25 @@ radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
     rc=0
     out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" \
         "${RUNTIME_PY:-python3}" -m act.lib.sources --enabled "$1") 2>/dev/null )" || rc=$?
+    ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
+}
+# CONTRACT §56: the self-updating deploy agent is installed ONLY for a git
+# checkout (a .pkg copy has no .git — nothing to fast-forward) whose
+# features.auto_deploy is on (default on). Same fail-open shape as the radar
+# gate: only the dedicated exit 3 + literal "off" means off.
+AUTODEPLOY_LABEL="com.zelin.aiassistant.autodeploy"
+autodeploy_wanted() {      # returns 0 wanted/probe-failed, 1 not wanted
+    git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    rc=0
+    out="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c '
+from act.lib import config
+try:
+    cfg = config.load_config()
+except Exception:
+    cfg = config.Config()
+on = cfg.feature("auto_deploy")
+print("on" if on else "off")
+raise SystemExit(0 if on else 3)') 2>/dev/null )" || rc=$?
     ! { [ "$rc" -eq 3 ] && [ "$out" = "off" ]; }
 }
 for plist in "$REPO_ROOT"/act/launchd/*.plist; do
@@ -673,6 +797,22 @@ for plist in "$REPO_ROOT"/act/launchd/*.plist; do
         launchd_unload "$dest" "$label"
         rm -f "$dest"
         continue
+    fi
+    if [ "$label" = "$AUTODEPLOY_LABEL" ]; then
+        if ! autodeploy_wanted; then
+            info "auto-deploy is off (not a git checkout, or features.auto_deploy: false) — not installing $label"
+            launchd_unload "$dest" "$label"
+            rm -f "$dest"
+            continue
+        fi
+        if [ "${AIASSISTANT_AUTODEPLOY_ACTIVE:-0}" = "1" ]; then
+            # We ARE that agent's process tree right now: bootout would kill
+            # the deploy mid-flight. Re-render only; a changed template takes
+            # effect on the next manual `bash install.sh`.
+            render_launchd_plist "$plist" "$dest"
+            info "$label re-rendered; reload deferred (this install.sh runs inside it)"
+            continue
+        fi
     fi
     # unload any previous version first (idempotent upgrades)
     launchd_unload "$dest" "$label"
@@ -702,7 +842,7 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 6. crontab — unified ingest chain + Monday digest (CONTRACT §18)"
+echo "==> 6. crontab — unified ingest chain + state digest (CONTRACT §18)"
 chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || true
 
 # cron runs outside the login shell — same validated-interpreter rule as the
@@ -729,7 +869,11 @@ CRON_CLAUDE_DIR="$HOME/.local/bin"
 # only real cron runs may write state/cron_probe.json — a manual in-app run
 # has the app's own disk access and would falsify the verdict.
 INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; } && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.radar --once >> $REPO_ROOT/state/radar.cron.log 2>&1"
-DIGEST_LINE="7 9 * * 1 cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest --now >> $REPO_ROOT/state/digest.log 2>&1"
+# Daily 09:07 fire WITHOUT --now (CONTRACT §17 D19): act.digest self-gates on
+# digest.frequency (off | daily | every2days | weekly, default off) + its
+# state/digest.json marker, so a cadence change in Settings needs no crontab
+# rewrite. Off/not-due fires exit silently (no log line).
+DIGEST_LINE="7 9 * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest >> $REPO_ROOT/state/digest.log 2>&1"
 TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.analytics_sync --once >> $REPO_ROOT/state/analytics_sync.log 2>&1"
 
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
@@ -744,12 +888,15 @@ else
     ok "ingest cron chain installed (legacy screenpipe-export lines replaced)"
 fi
 
-# idempotent: append the Monday digest line if absent
-if printf '%s\n' "$NEW_CRON" | grep -q 'act\.digest'; then
-    ok "Monday digest cron already installed"
+# idempotent: exact line present -> keep; otherwise replace any older
+# act.digest line (the pre-D19 Monday-only `--now` form would keep forcing a
+# weekly card past an `off` knob) with the daily self-gating one.
+if printf '%s\n' "$NEW_CRON" | grep -Fq "$DIGEST_LINE"; then
+    ok "digest cron already installed"
 else
+    NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'act\.digest' || true)"
     NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$DIGEST_LINE")"
-    ok "Monday digest cron installed (Mon 09:07)"
+    ok "digest cron installed (daily 09:07; cadence = digest.frequency, default off)"
 fi
 
 # idempotent: append the hourly telemetry sync if absent (default-on anonymous
@@ -780,6 +927,8 @@ fi
 echo ""
 if [ "$PKG_POSTINSTALL" -eq 1 ]; then
     echo "==> 7. diagnostics — skipped (non-interactive pkg mode; run anytime: bash install.sh --check)"
+elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    echo "==> 7. diagnostics — left to the caller (auto-deploy runs the doctor and gates on it, §56)"
 elif [ -n "${RUNTIME_PY:-}" ] && [ -x "${RUNTIME_PY:-}" ]; then
     echo "==> 7. post-install diagnostics (python -m act.doctor)"
     if ! (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.doctor); then
@@ -795,6 +944,20 @@ echo ""
 write_install_report
 
 # --------------------------------------------------------------------------
+# --non-interactive (§56): no banner; the exit code IS the verdict — one per
+# failed step, the legacy Mac app (`app`) excepted (see header). The caller
+# (scripts/auto-deploy.sh) rolls back on non-zero.
+if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    FAILED_STEPS="$(failed_deploy_steps)"
+    N_FAILED="$(printf '%s' "$FAILED_STEPS" | grep -c . || true)"
+    if [ "$N_FAILED" -gt 0 ]; then
+        echo "install.sh --non-interactive: $N_FAILED failed step(s): $(printf '%s' "$FAILED_STEPS" | cut -d= -f1 | tr '\n' ' ')"
+    else
+        echo "install.sh --non-interactive: ok (v$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$REPO_ROOT/act/__init__.py"))"
+    fi
+    exit "$N_FAILED"
+fi
+
 cat <<'EOF'
 
 ==============================================

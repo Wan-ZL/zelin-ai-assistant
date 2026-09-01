@@ -91,10 +91,17 @@ while the project is pre-1.0:
   and the changelog entry must call the break out prominently.
 - **MAJOR** — reserved for 1.0 and post-1.0 breaking changes.
 
-Merging a PR does **not** produce an installer: packages are built only when
-a maintainer cuts a release (version bump + changelog + `vX.Y.Z` tag — see
-the procedure at the top of [CHANGELOG.md](CHANGELOG.md)). Contributors never
-need to touch the version.
+Merging a PR **is** the release (CONTRACT §56): every PR bumps the patch
+version in `act/__init__.py` (+ the two iOS `MARKETING_VERSION` pins — CI
+enforces the tri-pin), and on push to `main` the `tag-on-merge` workflow
+creates `vX.Y.Z` and runs the release workflow. A merge that does not bump the
+version is silently not released. The maintainer's Mac then fast-forwards to
+`main` by itself (`scripts/auto-deploy.sh`) once the `ci` check-run on that
+exact `main` commit is green — the branch ruleset only requires green on the
+PR head, so the merge commit itself is verified before it is installed — with a
+doctor-gated rollback; daemons, cron and config only; the frozen legacy Mac app
+is never rebuilt unattended (a hand-run `bash install.sh` does that, §56.5).
+Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).
 
 ## License of contributions
 

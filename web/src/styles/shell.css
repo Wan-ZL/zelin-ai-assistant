@@ -89,6 +89,17 @@
   color: var(--warning);
 }
 
+/* §56 部署状态小字：v0.48.x · deployed 12m ago；非 healthy 状态切警告色 */
+.shell-deploy {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.shell-deploy.is-warn {
+  color: var(--warning);
+}
+
 /* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定 */
 .shell-search-slot {
   display: flex;
@@ -228,6 +239,17 @@
   color: var(--text-secondary);
 }
 
+/* 管线健康横幅（PipelineBanner，§47.4）的 warning 变体：stale = 没在跑
+   （橙），stalled/failing 沿用 danger 红——同一组件、两种严重度 */
+.shell-banner.is-warning {
+  background: var(--warning-soft);
+}
+
+.shell-banner.is-warning .shell-banner-icon,
+.shell-banner.is-warning .shell-banner-title {
+  color: var(--warning);
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;
@@ -290,7 +312,8 @@
 }
 
 @media (max-width: 780px) {
-  .shell-freshness {
+  .shell-freshness,
+  .shell-deploy {
     display: none;
   }
 

@@ -37,7 +37,7 @@ _HAND_SRC = [{"who": "zelin", "channel": "quick_capture",
 _SLACK_SRC = [{"who": "boss", "channel": "slack",
                "date": "2026-08-30", "quote": "外部请求"}]
 
-# v0.48 当日花费台账文件名（retired v0.49，D9）：只用来钉「不再写它」。
+# v0.48 当日花费台账文件名（retired v0.48.7，D9）：只用来钉「不再写它」。
 _LEGACY_LEDGER = "autodispatch_spend.json"
 
 
@@ -96,7 +96,7 @@ class TestAutoDispatch(WireBase):
         self.assertTrue(req.execution.get("auto_dispatched"))
         self.assertIn("auto-dispatch", req.notes)
         self.assertIn("est $2", req.notes)     # 估价仍作披露上卡（D9 只删预算）
-        # 当日花费台账 retired v0.49（D9）：原判例钉 ledger["cards"]=={"R-700":2.0}，
+        # 当日花费台账 retired v0.48.7（D9）：原判例钉 ledger["cards"]=={"R-700":2.0}，
         # 现在钉「根本不落这个文件」。
         self.assertFalse((config.STATE_DIR / _LEGACY_LEDGER).exists())
         self.notify.assert_called_once()  # 观察模式钩子
@@ -131,7 +131,7 @@ class TestAutoDispatch(WireBase):
     def test_second_card_not_blocked_by_accumulated_spend_d9(self):
         # 原判例 test_budget_exhausted_second_card_blocked 钉「$3 + $3 > $5 →
         # 第二张 budget:exhausted」。owner decision D9（docs/design/vnext2-plan.md）
-        # retired v0.49：hand 出身 + 有估价的卡不管当天累计多少都自动派发。
+        # retired v0.48.7：hand 出身 + 有估价的卡不管当天累计多少都自动派发。
         _mk("R-703", cost_estimate_usd=3.0)
         _mk("R-704", cost_estimate_usd=3.0)
         _mk("R-705", cost_estimate_usd=30.0)
@@ -180,7 +180,7 @@ class TestDispatchGates(WireBase):
 
     def test_auto_card_never_waits_on_budget_d9(self):
         # 原判例 test_auto_card_waits_when_budget_tightened 钉「台账 3+4 > 5 →
-        # auto 卡留队、人批卡照发」。D9 retired v0.49：auto 卡与人批卡同等派发，
+        # auto 卡留队、人批卡照发」。D9 retired v0.48.7：auto 卡与人批卡同等派发，
         # 旧 config 里残留的 daily_budget_usd 键不起作用。
         _mk("R-720", status=State.APPROVED.value, cost_estimate_usd=40.0,
             execution={"auto_dispatched": True})
@@ -589,7 +589,7 @@ class TestDashboardProjection(WireBase):
 
     def test_queued_reason_never_waiting_budget_d9(self):
         # 原判例 test_queued_reason_budget_only_for_auto_cards 钉「auto 卡台账
-        # 3+4 > 5 → {kind: waiting_budget}，人批卡无 chip」。D9 retired v0.49：
+        # 3+4 > 5 → {kind: waiting_budget}，人批卡无 chip」。D9 retired v0.48.7：
         # 槽位有空时 auto 卡与人批卡都无 queued_reason——哪怕磁盘上还躺着一份
         # 升级前的台账；waiting_budget 这个 kind 不再由任何生产端投出。
         (config.STATE_DIR / _LEGACY_LEDGER).write_text(json.dumps({

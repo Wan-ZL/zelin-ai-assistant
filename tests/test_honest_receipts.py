@@ -448,8 +448,12 @@ class DigestFailureNotifyTestCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.raw = Path(self.tmp.name) / "2 - raw"
         self.raw.mkdir(parents=True)
+        # D19 (v0.48.5): weekly_digest is default-OFF; these §40.4 pins are
+        # about the failure paths of an ENABLED run, so opt in explicitly.
         config.CONFIG_PATH.write_text(
-            f'sources:\n  obsidian_raw: "{self.raw.as_posix()}"\n',
+            'sources:\n'
+            f'  obsidian_raw: "{self.raw.as_posix()}"\n'
+            '  weekly_digest:\n    enabled: true\n',
             encoding="utf-8")
         note = self.raw / "2026-07-15 work.md"
         note.write_text("did things", encoding="utf-8")

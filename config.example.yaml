@@ -41,8 +41,9 @@ sources:                               # 需求雷达监控的增量源
   #   enabled: true
   #   # app_password_path 可省略：推荐在 App 设置窗口粘贴保存
   #   # （config/secrets/gmail-app-password.txt）；旧默认 ~/Desktop/Keys/gmail-app-password.txt 仍兜底
-  # weekly_digest:                     # 每周摘要（CONTRACT §24）：近 7 天 ingest → 回顾卡 + 自动化建议卡
-  #   enabled: true                    # 默认开；没有新 ingest 数据时自动跳过（不调 claude，零成本）
+  # weekly_digest:                     # 每周摘要（CONTRACT §24）：近 7 天 ingest → 一张回顾卡（待验收）
+  #   enabled: false                   # 【默认关，D19】写 true 才生成；没有新 ingest 数据时自动跳过（不调 claude）
+  #                                    # 曾随附的「自动化建议」提案卡已退役（铸了 15 张、0 张获批），不再铸造
   #   day: 0                           # 0=周一 .. 6=周日
   #   hour: 9                          # 当地时间小时（24h）；改这里即可，无需重装 launchd agent
 
@@ -59,7 +60,7 @@ approval:
 # 信任矩阵自动派发（v-next；见 docs/design/vnext-amendments.md §M1）——只有出身
 # hand（手打快速捕获 / Slack self-DM）的卡有资格免审批开跑；AI 自提、会议出生、
 # 外部 Slack/Gmail 一律照旧人工审批。全部键可省略（缺省如下）。
-# 没有预算：`daily_budget_usd`（原每日 $5 上限）已于 v0.49 取消（owner decision D9，
+# 没有预算：`daily_budget_usd`（原每日 $5 上限）已于 v0.48.7 取消（owner decision D9，
 # docs/design/vnext2-plan.md），旧配置里残留的这一键被忽略。钱的可见性由上面
 # approval.cost_thresholds.require_text_confirm_above_usd 的键入确认承担，估价照常显示在卡上。
 autodispatch:
@@ -76,6 +77,8 @@ execution:
   # claude_bin: ~/.local/bin/claude    # 显式钉死 claude CLI 路径（默认不设：PATH → ~/.local/bin 兜底）。
   #                                    # 机器上装了多个 claude、后台服务总用错旧版时的运行时逃生口
   #                                    # （2026-07-08 事故：旧版不认 --bg，派发无限重试）
+  # dispatch_max_failures: 5           # 派发风暴刹车：同一失败类别连续失败 N 次后停止自动重试，卡进「需输入」列
+  #                                    # 等你修好原因再重批（2026-08-31 事故：fd 上限 256 让一张卡 13 小时重派 66 次）。0 = 不刹车
   quality_gate:
     self_check: true                   # 可运行检查 + 证据
     fresh_context_review: true         # 交付前 fresh-context 审 diff
@@ -113,8 +116,10 @@ integrations:
   jira: off                            # 默认关；开启后自动建票到 projectKey
   jira_project_key: ABC                # 换成你自己的 Jira project key
 
-digest:
-  weekly: monday                       # 周一 digest：低置信度疑似需求 + 卡住任务 + 双向欠账
+digest:                                # 状态摘要卡（CONTRACT §17）：待审批/待验收积压 + 卡住任务 + 潜在任务 + 双向欠账 + 进化建议
+  frequency: off                       # 【默认 off，D19】off | daily | every2days | weekly。cron 每天 09:07 唤醒，模块按此节奏
+                                       # 自行闸门（滚动间隔，从上次生成起算，不钉周一）；off = 永不自动生成，几天不看也不会攒卡。
+                                       # App 设置也能改（settings_overrides 扁平键 digest_frequency）。`python -m act.digest --now` 手动立即生成
 
 # 执行落点：req 未指定 target_repo 时的兜底（paperwork/调研的家；绝不默认进你的代码 repo，如 your-bench-repo）
 # raise/提取时 LLM 会按 ~/Projects 仓库清单主动选择 target_repo，这里只是最后兜底。

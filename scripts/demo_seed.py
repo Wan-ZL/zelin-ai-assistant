@@ -64,7 +64,7 @@ HOME = "~/Projects/zelin-ai-assistant"
 # （信任矩阵更细的 self_dm/meeting/ai 档在 wire 上折叠为 hand/external/缺席）。
 ORIGIN_TRUST = ("hand", "external")
 TIER_RANK = {"T0": 0, "T1": 1, "T2": 2}
-# CONTRACT §51 词表（waiting_budget retired v0.49，D9——kind 值永不复用）
+# CONTRACT §51 词表（waiting_budget retired v0.48.7，D9——kind 值永不复用）
 QUEUED_REASON_KINDS = ("waiting_card", "concurrency")
 STEER_STATUSES = ("queued", "delivered", "dropped")
 

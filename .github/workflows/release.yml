@@ -1,12 +1,20 @@
 # Release: on push of a v* tag — verify the tag matches the source version, run all
 # CI gates, package the .app with ditto, build the .pkg, generate SHA-256 checksums,
 # attest build provenance, and publish a GitHub Release.
+#
+# Two ways in (CONTRACT §56): a hand-pushed tag, or `gh workflow run release.yml
+# --ref v<version>` from tag-on-merge.yml — tags created with GITHUB_TOKEN never
+# fire `on: push: tags`, so the auto path dispatches explicitly. Under
+# workflow_dispatch GITHUB_REF_NAME is still the tag name the run was started
+# on, so the version gate below covers both entrances (dispatching on a branch
+# by mistake fails that gate immediately).
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 jobs:
   release:

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) into ~/Library/LaunchAgents - do not load this file as-is.
+
+  autodeploy - 合并即上岗 (CONTRACT s56, decision D17). Every 10 minutes
+  `python3 -m act.auto_deploy` runs scripts/auto-deploy.sh: fetch origin/main,
+  require the `ci` check-run on THAT sha to be green (the ruleset is
+  non-strict: a merge commit's tree was never tested), fast-forward the
+  checkout when the tree is clean, self-check the new deploy agent, run
+  `install.sh --non-interactive` (daemons, cron, config - NEVER the frozen
+  legacy Mac app, s56.5: rebuilding it quits + relaunches the running app and
+  takes screenpipe / live captions down mid-use), wait for the restarted actd
+  to complete one pass on the new code (state/actd.heartbeat), re-run the
+  doctor and roll back to the previous commit if a check that was green is
+  now red. Outcome lands in state/deploy_state.json (dashboard key
+  deploy_state, doctor row auto-deploy).
+
+  INSTALLED ONLY for a git checkout with features.auto_deploy on (install.sh
+  gate); a .pkg copy has no .git and gets none. When install.sh itself runs
+  INSIDE this agent (AIASSISTANT_AUTODEPLOY_ACTIVE=1) it re-renders this plist
+  but does not bootout/bootstrap it - that would kill the running deploy.
+
+  StartInterval, not KeepAlive: one bounded run per interval; launchd skips
+  an interval while the previous run is still going (the script also holds a
+  lock). RunAtLoad false so a manual install.sh does not immediately trigger a
+  deploy pass.
+
+  SoftResourceLimits/NumberOfFiles: same 8192 soft limit as every other
+  template (s55 资源上限; no HardResourceLimits - that only lowers the ceiling).
+  The gui domain default is 256; git + install.sh + doctor fit, but the
+  headroom rule is per template, not per workload.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zelin.aiassistant.autodeploy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSERNAME/miniconda3/bin/python3</string>
+        <string>-m</string>
+        <string>act.auto_deploy</string>
+    </array>
+
+    <!-- $HOME, NEVER the repo: launchd performs chdir + log-file open
+         BEFORE exec, and a repo on an external (TCC-gated) volume makes
+         the spawn itself fail with EX_CONFIG (78). Module resolution
+         rides PYTHONPATH in EnvironmentVariables instead. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME</string>
+
+    <key>StartInterval</key>
+    <integer>600</integer>
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIASSISTANT_HOME</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <!-- import path for `python3 -m act.*` now that
+             WorkingDirectory no longer points at the repo -->
+        <key>PYTHONPATH</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <!-- install.sh needs git, launchctl, crontab (no swift: this mode
+             never builds the app); the login shell's claude dir stays FIRST
+             like every other agent (install.sh resolves claude for the
+             daemons from it). -->
+        <key>PATH</key>
+        <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- ~/Library/Logs, NEVER under the repo — same spawn-time rule as
+         WorkingDirectory above (launchd opens these paths pre-exec). The
+         script keeps its own capped log next to this one (auto-deploy.log);
+         this file only sees what the launcher itself prints. -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSERNAME/Library/Logs/zelin-ai-assistant/autodeploy.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSERNAME/Library/Logs/zelin-ai-assistant/autodeploy.launchd.log</string>
+</dict>
+</plist>

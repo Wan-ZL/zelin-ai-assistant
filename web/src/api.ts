@@ -4,7 +4,7 @@
 // server 端码：UNKNOWN_FIELD / INVALID_FIELD / NOT_FOUND / INTERNAL_ERROR；
 // 客户端合成码：READ_FAILED（读失败，UI 静默重试）/ SERVICE_UNAVAILABLE（写失败，UI 明确报错）。
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
-import type { Board, CardDetail } from "./types";
+import type { Board, CardDetail, HealthSnapshot } from "./types";
 
 interface ApiErrorBody {
   error?: {
@@ -117,6 +117,11 @@ export function fetchBoard(signal?: AbortSignal): Promise<Board> {
 /** GET /api/cards/{id} — 投影 + registry 详情增补 */
 export function fetchCard(id: string, signal?: AbortSignal): Promise<CardDetail> {
   return request<CardDetail>(`/api/cards/${encodeURIComponent(id)}`, { signal });
+}
+
+/** GET /api/health — 管线活性（心跳年龄 / 看板新鲜度 / 连崩计数 → verdict，§47.4） */
+export function fetchHealth(signal?: AbortSignal): Promise<HealthSnapshot> {
+  return request<HealthSnapshot>("/api/health", { signal });
 }
 
 /**

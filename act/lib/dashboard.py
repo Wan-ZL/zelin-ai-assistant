@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import config, failures, health, policy, risk, sources, steer, titles
+from act.lib import config, deploy_state, failures, health, policy, risk, sources, steer, titles
 from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
@@ -544,7 +544,7 @@ def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
     """M1.c token → 结构化 wire 形（M8.3 C-2 终裁为 canonical）：
     dependency → {kind: waiting_card, blocking_id}｜concurrency → {kind:
     concurrency}。None = 无阻塞（纯粹没轮到/派发失败退避——后者由
-    dispatch_error 独立表达，不混写）。`waiting_budget` retired v0.49（D9），
+    dispatch_error 独立表达，不混写）。`waiting_budget` retired v0.48.7（D9），
     kind 值永不复用。"""
     token = policy.queued_reason(req, state)
     if token == "dependency":
@@ -695,7 +695,7 @@ def build_dashboard(
     agent_idx = _index_agents(agents)
 
     # v-next queued_reason 快照（§51）：并发口径与 actd.dispatch_approved 一致
-    # （EXECUTING 且带 session 的卡数）。预算口径 retired v0.49（D9）。
+    # （EXECUTING 且带 session 的卡数）。预算口径 retired v0.48.7（D9）。
     ad_cfg = policy.autodispatch_config(cfg)
     live_sessions = sum(
         1 for r in reqs
@@ -837,6 +837,43 @@ def build_dashboard(
                 }
             )
 
+        elif req.status == State.APPROVED.value and (
+                isinstance(req.execution, dict)
+                and req.execution.get("dispatch_halted")):
+            # §4 派发风暴刹车已触发：卡仍 approved，但 actd 不再重试——投影进
+            # 「需输入」列（blocked 行形），而不是在 运行中 列顶着「排队中」
+            # 装忙（宪法 3：诚实的健康报告）。question 是固定文案：这里没有
+            # agent 在提问，说的是事实和唯一出口（停止 → 退回提案 → 重批）。
+            ex = req.execution
+            fid = failures.classify(ex.get("last_error"))
+            hint = failures.user_message(fid) or _s(ex.get("last_error")) or ""
+            n = int(ex.get("dispatch_class_streak") or ex.get("dispatch_attempts") or 0)
+            row = {
+                "id": _s(req.id),
+                "name": _s(req.title or req.id),
+                **_title_fields(req),
+                "session_id": None,
+                "short_id": None,
+                "copy_cmd": None,
+                "agent_name": None,
+                "state": "blocked",
+                "waiting_for": None,
+                "question": failures.pick(
+                    f"派发连续失败 {n} 次，已停止自动重试：{hint}。修好原因后点"
+                    "「停止」选「退回提案」，再重新批准即恢复派发",
+                    f"Launch failed {n} times in a row; auto-retry stopped: {hint}. "
+                    "Fix the cause, then press \"Stop\" → \"Discard & re-propose\" "
+                    "and approve again to resume"),
+                "last_error": ex.get("last_error"),
+                "last_error_id": fid,
+                # add-only（decodeIfPresent）：告诉客户端这是刹车行，不是 agent
+                # 在等回答——web 据此隐藏「回答…」、显示派发次数 chip。
+                "dispatch_halted": True,
+                "dispatch_attempts": int(ex.get("dispatch_attempts") or 0),
+                **_opt("origin_trust", getattr(req, "origin_trust", None)),
+            }
+            needs_input.append(row)
+
         elif req.status == State.APPROVED.value:
             # §2 queued 项：已批准但还没（成功）派发 —— 混入 running 分区，✅ 一点
             # 下去立刻有回显。没有会话可 attach，所以无 session_id/copy_cmd；
@@ -844,7 +881,7 @@ def build_dashboard(
             ex = req.execution if isinstance(req.execution, dict) else {}
             # v-next §51：排队原因 chip（结构化 wire 形，C-2）。快照口径与
             # actd.dispatch_approved 的闸完全一致；blocked_by 依赖字段未立法
-            # （T-26），现行只有 concurrency 一因（budget retired v0.49，D9）。
+            # （T-26），现行只有 concurrency 一因（budget retired v0.48.7，D9）。
             # 与 dispatch_error 并存不混写。
             snap: dict = {"running": live_sessions,
                           "max_concurrent": ad_cfg["max_concurrent"]}
@@ -1165,6 +1202,10 @@ def build_dashboard(
     label = _device_label()
     if label:
         dash["device_label"] = label
+    # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的
+    # 加法约定）：scripts/auto-deploy.sh 写的最近一次自动部署结果；文件缺失或
+    # 读不了 = 整键不存在，web 顶栏据此显示「v0.48.x · deployed 12m ago」。
+    deploy_state.attach(dash)
     return dash
 
 
