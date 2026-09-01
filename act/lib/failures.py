@@ -54,6 +54,19 @@ FAILURES: dict = {
         "plain_en": "This Mac has more than one claude CLI and the background service is using an outdated copy — update or remove the old one, then re-run the installer",
         "action_id": "open_deps",
     },
+    # launchd's gui domain hands every job `ulimit -n 256`; `claude --bg`
+    # refuses to start under it ("low max file descriptors") and the card was
+    # re-dispatched 66 times in 13h before anyone saw why (2026-08-31 storm,
+    # §55). The fix is re-rendering the agents from templates that now carry
+    # Soft/HardResourceLimits — the same one-click path as a dead actd.
+    "fd_limit": {
+        "plain_zh": "后台服务的打开文件上限太低（launchd 默认 256），claude 起不来——重跑一次安装器"
+                    "（bash install.sh）让每个后台服务带上 8192 的上限，再重新批准这张卡",
+        "plain_en": "The background service's open-file limit is too low (launchd defaults to "
+                    "256) so claude cannot start — re-run the installer (bash install.sh) so "
+                    "every agent carries an 8192 ceiling, then approve the card again",
+        "action_id": "restart_actd",
+    },
     "claude_auth_failed": {
         "plain_zh": "AI 的 API key 无效或过期——去设置页重新粘贴一个",
         "plain_en": "The AI API key is invalid or expired — re-paste one in Settings",
@@ -129,6 +142,31 @@ FAILURES: dict = {
         "plain_en": "The background service stopped updating data — the board shows old content",
         "action_id": "restart_actd",
     },
+    # §47.4 heartbeat: the process is alive (launchctl shows a pid) but its
+    # per-pass heartbeat stopped — 2026-08-31 22:31 actd sat idle in
+    # time.sleep for 2.5h, no children, dashboard frozen, doctor green.
+    # Distinct from dashboard_stale (process dead / never started): the fix
+    # is a hard restart of the live process, not a reload.
+    "actd_stalled": {
+        "plain_zh": "后台服务进程还活着，但已经停止心跳（不再跑循环）——强制重启它："
+                    "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
+        "plain_en": "The background service process is alive but its heartbeat stopped (the "
+                    "loop is no longer running) — force-restart it: "
+                    "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
+        "action_id": "restart_actd",
+    },
+    # a launchd agent with our label prefix but no template in act/launchd —
+    # a retired service the installer failed to unload. 2026-08-31 audit: the
+    # imessageradar agent (removed v0.21) kept running for 51 days, 23,613
+    # tracebacks, because install.sh swallowed the bootout failure.
+    "launchd_orphan": {
+        "plain_zh": "有已退役的后台服务还在 launchd 里运行（仓库里已没有它的模板）——重跑一次安装器"
+                    "把它卸掉（bash install.sh），或手动 launchctl bootout",
+        "plain_en": "A retired background service is still loaded in launchd (the repo no "
+                    "longer ships its template) — re-run the installer to unload it "
+                    "(bash install.sh), or launchctl bootout it by hand",
+        "action_id": "open_deps",
+    },
     "config_invalid": {
         "plain_zh": "配置文件写坏了——所有组件都退回默认设置",
         "plain_en": "The config file is broken — every component fell back to defaults",
@@ -157,6 +195,13 @@ _RULES: list = [
     ("claude_cli_outdated", re.compile(
         r"unknown option.{0,10}['\"]?--(bg|name|resume)\b|"
         r"unknown command.{0,10}['\"]?agents\b", re.IGNORECASE)),
+    # claude's own phrasing for a starved fd table ("An unknown error
+    # occurred, possibly due to low max file descriptors") plus the raw
+    # errno spellings. Ranked before auth/network: the message carries no
+    # other signature, and a card text would not plausibly contain it.
+    ("fd_limit", re.compile(
+        r"low max file descriptors|\bEMFILE\b|too many open files",
+        re.IGNORECASE)),
     ("claude_auth_failed", re.compile(
         r"authentication_error|invalid (x-)?api[- _]?key|"
         r"\b401\b|OAuth token has expired|(?<![\w-])unauthorized|"

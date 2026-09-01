@@ -133,7 +133,9 @@ def is_executing(home: Path, card_id: str) -> bool:
     except Exception:
         return False
     if lane == "needs_input":
-        return True
+        # §4 刹车卡（dispatch_halted）也投影在这一列，但它是 approved 且无
+        # 会话——comment 只能折进 notes，标 steer 会是假回执。
+        return not (isinstance(row, dict) and row.get("dispatch_halted"))
     return (lane == "running" and isinstance(row, dict)
             and row.get("state") != "queued")
 

@@ -283,6 +283,25 @@ def msg_dispatch_failed(title: str, reason: Optional[str] = None) -> tuple[str, 
                   " shows the error with a fix button"))
 
 
+def msg_dispatch_halted(title: str, n: int, reason: Optional[str] = None) -> tuple[str, str]:
+    """§4 dispatch-storm brake: ``n`` straight launch failures of one failure
+    class — actd stops retrying and parks the card in the blocked lane.
+
+    2026-08-31: a 256-fd cap made one card fail 66 launches in 13h while the
+    only notification said「会自动重试」. The body names the classified cause
+    when there is one and the exact buttons that re-arm the card (停止 →
+    退回提案 → 批准 clears the streak; approve is the re-arm verb)."""
+    why = f"：{reason}" if reason else ""
+    why_en = f": {reason}" if reason else ""
+    return (_pick(f"任务派发已停止重试（连续失败 {n} 次）",
+                  f"Task launch stopped retrying ({n} straight failures)"),
+            _pick(f"{title}{why} —— 这张卡在「需输入」列。修好原因后点「停止」选"
+                  "「退回提案」，再重新批准即恢复派发",
+                  f"{title}{why_en} — the card is in Needs input. Fix the cause, then"
+                  " press \"Stop\" → \"Discard & re-propose\" and approve it again"
+                  " to resume dispatch"))
+
+
 def msg_resuming(title: str) -> tuple[str, str]:
     return (_pick("任务疑似中断，正在自动恢复", "Task looks interrupted — auto-recovering"),
             _pick(f"{title} —— 无需操作；持续失败会另行通知",

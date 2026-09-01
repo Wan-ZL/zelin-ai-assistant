@@ -90,6 +90,9 @@ export interface TaskRow {
   dispatch_error?: string | null;
   waiting_for?: string;
   resume_exhausted?: boolean;
+  /** §4 派发风暴刹车：approved 卡连续派发失败 N 次后停止重试，投影为 blocked 行（wire key 逐字镜像） */
+  dispatch_halted?: boolean;
+  dispatch_attempts?: number;
   delivered_summary?: string;
   queued_reason?: QueuedReason | string | null;
   steers?: SteerNote[];

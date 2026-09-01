@@ -74,6 +74,8 @@ execution:
   # claude_bin: ~/.local/bin/claude    # 显式钉死 claude CLI 路径（默认不设：PATH → ~/.local/bin 兜底）。
   #                                    # 机器上装了多个 claude、后台服务总用错旧版时的运行时逃生口
   #                                    # （2026-07-08 事故：旧版不认 --bg，派发无限重试）
+  # dispatch_max_failures: 5           # 派发风暴刹车：同一失败类别连续失败 N 次后停止自动重试，卡进「需输入」列
+  #                                    # 等你修好原因再重批（2026-08-31 事故：fd 上限 256 让一张卡 13 小时重派 66 次）。0 = 不刹车
   quality_gate:
     self_check: true                   # 可运行检查 + 证据
     fresh_context_review: true         # 交付前 fresh-context 审 diff

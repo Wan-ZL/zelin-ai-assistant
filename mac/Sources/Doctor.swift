@@ -149,6 +149,17 @@ enum FailureCatalog {
         case "dashboard_stale":
             return L("后台服务停止更新数据——看板显示的是旧内容",
                      "The background service stopped updating data — the board shows old content")
+        // v0.48.4 (§25/§55, mirror only — the menu-bar app is retiring, D3):
+        // sentences kept in lockstep with failures.py for the drift guard.
+        case "fd_limit":
+            return L("后台服务的打开文件上限太低（launchd 默认 256），claude 起不来——重跑一次安装器（bash install.sh）让每个后台服务带上 8192 的上限，再重新批准这张卡",
+                     "The background service's open-file limit is too low (launchd defaults to 256) so claude cannot start — re-run the installer (bash install.sh) so every agent carries an 8192 ceiling, then approve the card again")
+        case "actd_stalled":
+            return L("后台服务进程还活着，但已经停止心跳（不再跑循环）——强制重启它：launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd",
+                     "The background service process is alive but its heartbeat stopped (the loop is no longer running) — force-restart it: launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd")
+        case "launchd_orphan":
+            return L("有已退役的后台服务还在 launchd 里运行（仓库里已没有它的模板）——重跑一次安装器把它卸掉（bash install.sh），或手动 launchctl bootout",
+                     "A retired background service is still loaded in launchd (the repo no longer ships its template) — re-run the installer to unload it (bash install.sh), or launchctl bootout it by hand")
         case "config_invalid":
             return L("配置文件写坏了——所有组件都退回默认设置",
                      "The config file is broken — every component fell back to defaults")

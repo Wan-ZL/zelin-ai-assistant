@@ -209,6 +209,11 @@ class Config:
     # runtime escape hatch for machines with multiple claude installs where
     # the daemon PATH keeps picking the wrong one (2026-07-08 incident).
     claude_bin: Optional[str] = None
+    # dispatch-storm brake (§4 / §51): after this many CONSECUTIVE launch
+    # failures of the same failure class the card stops auto-retrying and
+    # surfaces in the blocked lane (2026-08-31: one card re-dispatched 66
+    # times in 13h behind a 256-fd cap). 0 = never brake (pre-v0.48.4).
+    dispatch_max_failures: int = 5
     self_check: bool = True
     fresh_context_review: bool = True
 
@@ -532,6 +537,10 @@ def load_config() -> Config:
     _cb = execution.get("claude_bin")
     if _cb and str(_cb).strip():
         cfg.claude_bin = str(_cb).strip()
+    cfg.dispatch_max_failures = max(0, _int_or(
+        execution.get("dispatch_max_failures", cfg.dispatch_max_failures),
+        cfg.dispatch_max_failures,
+    ))
     qg = _dict_or(execution.get("quality_gate"))
     cfg.self_check = _bool_or(qg.get("self_check", cfg.self_check), cfg.self_check)
     cfg.fresh_context_review = _bool_or(

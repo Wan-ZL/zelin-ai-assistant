@@ -1794,6 +1794,12 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # the dispatch event report wait_s (approve -> launch latency).
         ex = dict(req.execution or {})
         ex["approved_at"] = _iso_now()
+        # §4 storm brake：批准 = 重新上膛。上一轮派发的失败台账（attempts /
+        # 同类连败计数 / halted 标记 / 旧 last_error）随新批准清零，否则
+        # 退回提案再批准的卡会带着旧刹车直接停在原地。
+        if executor is not None:
+            for key in executor.DISPATCH_STREAK_KEYS + ("last_error", "last_error_at"):
+                ex.pop(key, None)
         req.execution = ex
         save(req)
         # lifecycle milestone (docs/TELEMETRY.md): first genuine approval on
@@ -2357,6 +2363,10 @@ def dispatch_approved(cfg: config.Config) -> int:
         if executor is None:
             _log(f"dispatch: executor unavailable, cannot dispatch {req.id}")
             continue
+        # §4 派发风暴刹车已触发：不再重试、不占并发槽、不写卡、不打日志——
+        # 卡在「需输入」列等 owner 退回重批（approve 清台账）。
+        if (req.execution or {}).get("dispatch_halted"):
+            continue
         # §51 合并运行列 queued 子状态：并发满 → 卡留 approved 排队（原因
         # chip 由 dashboard 的 queued_reason 投影），槽位空出即派发。
         if live >= int(ad["max_concurrent"]):
@@ -2409,27 +2419,42 @@ def dispatch_approved(cfg: config.Config) -> int:
                 req.execution = ex
                 save(req)
         except Exception as e:  # noqa: BLE001 - keep the loop alive
-            _log(f"dispatch: {req.id} FAILED: {e}\n{traceback.format_exc()}")
             # §34bis：起跑崩了 → 预拍的快照无主即焚（重试下轮重拍）。
             if snap_ref:
                 _safe_unlink(Path(snap_ref))
+            is_dispatch_error = (executor is not None
+                                 and isinstance(e, executor.DispatchError))
+            if is_dispatch_error and isinstance(e, executor.DispatchBackingOff):
+                # 退避窗口内：什么都没发生——不写卡、不打 traceback（2026-08-31
+                # 事故：这条 no-op 每 pass 重写一次 last_error_at + 28 行
+                # traceback，一张卡占了 98% 的 registry 写入、954 条 traceback）。
+                continue
+            if is_dispatch_error:
+                # executor 已落账（last_error/attempts/halted），只留一行日志
+                _log(f"dispatch: {req.id} FAILED: {str(e).splitlines()[0][:300]}"
+                     + (" — halted (storm brake)"
+                        if isinstance(e, executor.DispatchHalted) else ""))
+            else:
+                _log(f"dispatch: {req.id} FAILED: {e}\n{traceback.format_exc()}")
             # leave a trace on execution so the dashboard's queued item can show
             # dispatch_error (§2); status stays approved -> auto-retry next pass.
+            # 只在文本真变了时才写（executor 正常路径已写过同一段——重写只会
+            # 刷新 last_error_at，让 registry_writes 台账每 pass 多一行）。
             err = str(e)[:300]
             try:
                 ex = dict(req.execution or {})
-                ex["last_error"] = err
-                ex["last_error_at"] = _iso_now()
-                req.execution = ex
-                save(req)
+                # prefix compare: executor keeps 500 chars, this trace 300
+                if not str(ex.get("last_error") or "").startswith(err):
+                    ex["last_error"] = err
+                    ex["last_error_at"] = _iso_now()
+                    req.execution = ex
+                    save(req)
             except Exception:  # noqa: BLE001 - bookkeeping must not block retry
                 pass
             # executor.dispatch already emits dispatch_failed (with reason/attempt)
             # for DispatchError. Only log unexpected crashes here so analytics
             # is not double-counted for a single failed launch (issue #12).
-            if executor is not None and isinstance(e, executor.DispatchError):
-                pass
-            else:
+            if not is_dispatch_error:
                 analytics.log_event(
                     "dispatch_failed",
                     req=req.id,
@@ -2737,10 +2762,11 @@ def detect_transitions(prev: Optional[dict], curr: dict
     # notification carries a snippet of the QUESTION the agent is asking.
     for rid, item in c_ni.items():
         if rid not in p_ni and rid in p_run:
-            if item.get("resume_exhausted"):
-                # §46 降级卡进 需输入 列：reconcile 已发过精确文案
-                # （msg_resume_storm / msg_auto_resume_exhausted），这里再发
-                # 「任务需要你输入」是重复 ping，且 agent 并没有在提问。
+            if item.get("resume_exhausted") or item.get("dispatch_halted"):
+                # §46 降级卡 / §4 刹车卡进 需输入 列：reconcile / executor 已
+                # 发过精确文案（msg_resume_storm / msg_auto_resume_exhausted /
+                # msg_dispatch_halted），这里再发「任务需要你输入」是重复
+                # ping，且 agent 并没有在提问。
                 continue
             t, b = notify.msg_needs_input(item.get("name") or rid,
                                           item.get("question"))
