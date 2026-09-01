@@ -44,6 +44,7 @@ from act.lib import (
     analytics,
     config,
     health,
+    heartbeat,
     logcap,
     notify,
     policy,
@@ -3617,8 +3618,12 @@ def run_once(
     interval: Optional[int] = None,   # 主循环真实 pass 间隔（--interval 优先）
 ) -> dict:
     config.ensure_state_dirs()
+    # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
+    # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
+    heartbeat.beat("inbox", interval)
     n_inbox = process_inbox()
     n_auto = auto_dispatch_pass(cfg)   # §51：hand 卡免批通道（card_sent→approved）
+    heartbeat.beat("dispatch", interval)
     n_dispatched = dispatch_approved(cfg)
     # write-early：审批/派发刚落账就先写一次 dashboard，app 立刻看到 queued/executing
     # 回显，不用等 reconcile/raising（都可能慢）跑完；pass 尾部照常再写最终版。
@@ -3629,7 +3634,9 @@ def run_once(
             write_dashboard(build_dashboard(cfg=cfg))
         except Exception as e:  # noqa: BLE001 - early write is best-effort
             _log(f"early dashboard write FAILED: {e}")
+    heartbeat.beat("reconcile", interval)
     reconcile_executing(cfg, resume_notified if resume_notified is not None else set())
+    heartbeat.beat("housekeeping", interval)
     process_raising(cfg)     # expand ONE 'raising' debt per pass (bounded block)
     purge_trash(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
@@ -3677,6 +3684,7 @@ def run_once(
         gc_attachments()
     except Exception:  # noqa: BLE001 - housekeeping must not kill the pass
         pass
+    heartbeat.beat("dashboard", interval)
     dash = build_dashboard(cfg=cfg)
     # §26 in-app update check: cheap (ETag-cached, at most one network attempt
     # per 24h) and never raises — the field is simply absent when no newer
@@ -3729,13 +3737,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     _log(f"actd starting (interval={interval}s, home={config.HOME})")
     prev_dash: Optional[dict] = None
     loop_health = LoopHealthTracker()  # §47.3 连续崩溃可见化
+    heartbeat.beat("starting", interval)
     while True:
         try:
             prev_dash = run_once(cfg, prev_dash, auth_notified, resume_notified,
                                  radar_dead_notified, interval=interval)
             loop_health.record_success()
+            heartbeat.beat("idle", interval)      # §47.4：pass 完整跑完
         except Exception as e:  # noqa: BLE001 - one bad pass must not kill loop
             loop_health.record_failure(f"{type(e).__name__}: {e}")
+            heartbeat.beat("failed", interval)    # 崩了也算活着——循环还在转
             _log(f"loop pass FAILED: {e}\n{traceback.format_exc()}")
         time.sleep(interval)
 

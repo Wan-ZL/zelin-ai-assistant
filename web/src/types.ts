@@ -160,3 +160,20 @@ export interface Board {
 
 /** GET /api/cards/{id} = 投影行 + registry YAML 只读增补（add-only 合并，字段名同投影） */
 export type CardDetail = Record<string, unknown> & { id: string };
+
+/** GET /api/health（CONTRACT §47.4）：管线活性——server/health.py 的 wire 形逐字镜像 */
+export interface HealthSnapshot {
+  verdict: "ok" | "unknown" | "stale" | "stalled" | "failing" | string;
+  heartbeat: {
+    age_s: number;
+    phase: string | null;
+    pid: number | null;
+    interval: number | null;
+    stale_after_s: number;
+    stale: boolean;
+  } | null;
+  dashboard: { generated_at: string; age_s: number; stale: boolean } | null;
+  loop_health: { consecutive_failures: number; last_error: string | null };
+  checked_at: string;
+  [key: string]: unknown;
+}

@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, failures, platform, secrets, taskscheduler
+from act.lib import config, failures, heartbeat, platform, secrets, taskscheduler
 
 OK = "ok"
 WARN = "warn"
@@ -180,6 +180,35 @@ def _launchd_log_tail(short: str) -> str:
     return ""
 
 
+LABEL_PREFIX = "com.zelin.aiassistant."
+
+
+def _installed_agent_labels() -> List[str]:
+    """~/Library/LaunchAgents 里带我们前缀的 plist 文件名（label）——孤儿探测
+    用（§55）：有文件没模板 = 退役 agent 的残留，下次登录还会被 launchd 装载。"""
+    d = Path.home() / "Library" / "LaunchAgents"
+    try:
+        return sorted(p.stem for p in d.glob(LABEL_PREFIX + "*.plist"))
+    except OSError:
+        return []
+
+
+def _pid_alive(pid: int) -> Optional[bool]:
+    """进程是否存在；None = 本平台判不了（Windows 的 os.kill(pid, 0) 会
+    TerminateProcess，绝不能拿来探活）。"""
+    if platform.is_windows():
+        return None
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True   # 存在但不是我们的——对「活着」的判断足够
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 # 两条 ModuleNotFoundError 在 `launchctl list` 里长得一模一样，修复动作却相反
 # （§55）。断言 PyYAML 而不读日志，正是 2026-08-31 那次把排查带偏几个小时的原因：
 # /opt/homebrew/bin/python3 全程都装着 PyYAML，缺的是对 repo 的读权限。
@@ -224,6 +253,11 @@ class Probes:
     installed_plist_text: Callable[[str], Optional[str]] = _installed_plist_text
     # §55 日志归因：short name → 该 agent 自管日志的末尾（"" = 读不到）
     launchd_log_tail: Callable[[str], str] = _launchd_log_tail
+    # §55 孤儿探测：~/Library/LaunchAgents 里带前缀的 plist label（文件面）
+    installed_agent_labels: Callable[[], List[str]] = _installed_agent_labels
+    # §47.4 心跳：state/actd.heartbeat 的读取 + 进程探活（tests 注入保持 hermetic）
+    heartbeat_read: Callable[[], Optional[dict]] = heartbeat.read
+    pid_alive: Callable[[int], Optional[bool]] = _pid_alive
 
 
 @dataclass
@@ -712,6 +746,99 @@ def _check_launchd_paths(probes: Probes):
     return [paths]
 
 
+def _launchctl_table(probes: Probes) -> dict:
+    """label → (pid, last exit status) from `launchctl list`; {} when it fails."""
+    table = {}
+    try:
+        for line in probes.launchctl_list().splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                table[parts[2]] = (parts[0], parts[1])
+    except Exception:  # noqa: BLE001 - 探针不许崩（宪法第 11 条）
+        pass
+    return table
+
+
+def _check_launchd_orphans(probes: Probes):
+    """§55 孤儿 agent：带我们前缀、但 act/launchd 里已没有模板的 label。
+
+    2026-08-31 审计：v0.21 删掉的 imessageradar agent 又跑了 51 天、23,613 条
+    traceback（14.5 MB 日志）——install.sh 的 RETIRED 卸载把 bootout 失败吞进
+    `/dev/null`，而旧 doctor 只查有模板的 label，孤儿结构性不可见。两个面都
+    扫：`launchctl list` 里已装载的（此刻在耗资源/刷日志 → FAIL）与
+    ~/Library/LaunchAgents 里只剩文件的（下次登录复活 → WARN）。
+    """
+    labels = probes.launchd_labels
+    if labels is None:
+        labels = sorted(p.stem for p in (config.HOME / "act" / "launchd").glob("*.plist"))
+    known = set(labels)
+    loaded = sorted(l for l in _launchctl_table(probes)
+                    if l.startswith(LABEL_PREFIX) and l not in known)
+    try:
+        on_disk = sorted(l for l in probes.installed_agent_labels()
+                         if l.startswith(LABEL_PREFIX) and l not in known
+                         and l not in loaded)
+    except Exception:  # noqa: BLE001 - 探针不许崩
+        on_disk = []
+    if not loaded and not on_disk:
+        return CheckResult("launchd orphans", OK,
+                           "no retired agents loaded or left in ~/Library/LaunchAgents")
+    uid_hint = "launchctl bootout gui/$(id -u)/%s && rm ~/Library/LaunchAgents/%s.plist"
+    if loaded:
+        return CheckResult(
+            "launchd orphans", FAIL,
+            "retired agent(s) still loaded in launchd (no template in act/launchd): "
+            "%s - each one keeps running/crash-looping and logging forever"
+            % ", ".join(loaded),
+            "bash install.sh  # unloads retired labels; or by hand: "
+            + "; ".join(uid_hint % (l, l) for l in loaded),
+        ).with_failure("launchd_orphan")
+    return CheckResult(
+        "launchd orphans", WARN,
+        "retired agent plist(s) left in ~/Library/LaunchAgents (not loaded now, but "
+        "launchd reloads them at next login): %s" % ", ".join(on_disk),
+        "bash install.sh  # or: rm " + " ".join(
+            "~/Library/LaunchAgents/%s.plist" % l for l in on_disk),
+    ).with_failure("launchd_orphan")
+
+
+_FD_LIMIT_MIN = 4096   # anything below this is the launchd default territory
+
+
+def _plist_number_of_files(text: str, key: str) -> Optional[int]:
+    m = re.search(r"<key>%s</key>\s*<dict>\s*<key>NumberOfFiles</key>\s*"
+                  r"<integer>(\d+)</integer>" % key, text)
+    return int(m.group(1)) if m else None
+
+
+def _check_launchd_fd_limit(probes: Probes):
+    """§55 fd 上限：已安装 actd plist 必须带 Soft+HardResourceLimits.NumberOfFiles。
+
+    launchd gui domain 给 job 的默认 `ulimit -n` 是 256；`claude --bg` 在这个
+    上限下直接拒启（"low max file descriptors"）——2026-08-31 每次派发都死、
+    一张卡 13h 重派 66 次，而 doctor 一路绿灯。模板自 v0.48.4 起带 8192；已
+    安装的旧渲染没有 → 重跑安装器（一键修复重渲 actd 也行）。
+    """
+    text = probes.installed_plist_text(ACTD_LABEL)
+    if not text:
+        return []   # 没装——_check_launchd 已经报 unregistered
+    soft = _plist_number_of_files(text, "SoftResourceLimits")
+    hard = _plist_number_of_files(text, "HardResourceLimits")
+    if soft is not None and hard is not None and min(soft, hard) >= _FD_LIMIT_MIN:
+        return CheckResult("launchd fd limit", OK,
+                           "installed actd plist raises NumberOfFiles to %d/%d"
+                           % (soft, hard))
+    have = "soft=%s hard=%s" % (soft if soft is not None else "unset",
+                                hard if hard is not None else "unset")
+    return CheckResult(
+        "launchd fd limit", WARN,
+        "installed actd plist carries no usable NumberOfFiles ceiling (%s) - "
+        "launchd's default is 256 and `claude --bg` refuses to start under it, so "
+        "every dispatch can fail with \"low max file descriptors\"" % have,
+        "bash install.sh  # re-renders the agents with Soft/HardResourceLimits 8192",
+    ).with_failure("fd_limit")
+
+
 def _symlink_shaped(value: Optional[str]) -> bool:
     """该路径是否经过 symlink（≠ 自己的 realpath）。不存在的路径原样返回，
     所以未安装/占位路径不会误报。"""
@@ -1000,6 +1127,74 @@ def _check_dashboard(probes: Probes):
     ).with_failure("dashboard_stale")
 
 
+def _actd_restart_cmd() -> str:
+    """The hard-restart command for the resident daemon on this OS — a stalled
+    process needs a kill+respawn, not a reload."""
+    if platform.is_darwin():
+        return "launchctl kickstart -k gui/$(id -u)/%s" % ACTD_LABEL
+    if platform.is_windows():
+        return 'schtasks /End /TN "%s" & schtasks /Run /TN "%s"' % (ACTD_TASK, ACTD_TASK)
+    return "systemctl --user restart %s" % ACTD_UNIT
+
+
+def _actd_alive(probes: Probes, hb: Optional[dict]) -> Optional[bool]:
+    """Is the resident daemon process alive? darwin asks launchd (the pid
+    column); elsewhere the heartbeat's own pid is probed. None = cannot tell."""
+    if platform.is_darwin():
+        row = _launchctl_table(probes).get(ACTD_LABEL)
+        if row is not None:
+            return row[0] != "-"
+    pid = (hb or {}).get("pid")
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        return probes.pid_alive(pid)
+    return None
+
+
+def _check_heartbeat(probes: Probes):
+    """§47.4 stall watchdog: process alive + heartbeat stale = the loop is stuck.
+
+    2026-08-31 22:31: actd kept its pid for 2.5 h with no children, parked in
+    time.sleep, dashboard frozen — `launchctl list` said running, loop_health
+    counted zero crashes, doctor said healthy. The heartbeat's mtime (touched
+    at every phase boundary of every pass) is the only signal that separates
+    "alive" from "looping"; ``stale_after_s`` comes from the writer
+    (3 × interval, floor 90 s) so the threshold has exactly one owner.
+    """
+    hb = probes.heartbeat_read()
+    alive = _actd_alive(probes, hb)
+    restart = _actd_restart_cmd()
+    if hb is None:
+        if alive:
+            return CheckResult(
+                "actd heartbeat", WARN,
+                "actd is running but has never written state/actd.heartbeat - the "
+                "daemon predates v0.48.4 or just started; without it a silent stall "
+                "is invisible",
+                restart + "  # restart so the upgraded daemon starts beating")
+        return []   # not running: the actd row already carries the fix
+    age = float(hb.get("age_s") or 0)
+    phase = str(hb.get("phase") or "?")
+    if not heartbeat.is_stale(hb):
+        return CheckResult(
+            "actd heartbeat", OK,
+            "beating (phase=%s, %ds ago%s)" % (
+                phase, int(age), ", pid %s" % hb["pid"] if hb.get("pid") else ""))
+    mins = int(age // 60)
+    if alive is False:
+        return CheckResult(
+            "actd heartbeat", WARN,
+            "no heartbeat for %d min and actd is not running - see the actd row"
+            % mins, restart)
+    who = "alive (pid %s)" % hb.get("pid") if alive else "process state unknown"
+    return CheckResult(
+        "actd heartbeat", FAIL,
+        "%s but no heartbeat for %d min (last seen in phase '%s') - the loop is "
+        "stuck, not looping; cards will not move and the board goes stale"
+        % (who, mins, phase),
+        restart,
+    ).with_failure("actd_stalled")
+
+
 def _check_obsidian(probes: Probes):
     cfg = config.load_config()
     raw = cfg.obsidian_raw
@@ -1133,7 +1328,8 @@ def _checks_for_platform() -> List:
     scheduled tasks, so there is no crontab ingest chain to probe.
     """
     if platform.is_darwin():
-        middle = [_check_launchd, _check_launchd_paths, _check_cron]
+        middle = [_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
+                  _check_launchd_orphans, _check_cron]
         tail_extra = [_check_screenpipe, _check_npx]
     elif platform.is_windows():
         middle = [_check_scheduled_tasks]
@@ -1141,8 +1337,12 @@ def _checks_for_platform() -> List:
     else:
         middle = [_check_systemd]
         tail_extra = []
+    # §47.4 heartbeat rides right behind the dashboard freshness row on every
+    # OS: the two together tell "dead" (dashboard stale, no pid) from "stuck"
+    # (pid alive, heartbeat stale).
     return (_CHECKS_COMMON_HEAD + middle
-            + [_check_dashboard, _check_obsidian] + tail_extra + [_check_gh])
+            + [_check_dashboard, _check_heartbeat, _check_obsidian]
+            + tail_extra + [_check_gh])
 
 
 def _safe(fn, probes: Probes) -> List[CheckResult]:

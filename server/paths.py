@@ -1,7 +1,8 @@
 """路径推导——镜像 act/lib/config.py 的布局常量，但绝不 import act。
 
 act.lib.config 在 import 时读 env 并携带写路径（ensure_state_dirs 等）；
-server 侧只需要五个只读路径，自己算，零依赖（registry 单写者原则 §44）。
+server 侧只需要几个只读路径，自己算，零依赖（registry 单写者原则 §44）。
+镜像 drift-pin：tests/test_server_paths_mirror.py。
 """
 from __future__ import annotations
 
@@ -33,6 +34,16 @@ def archive_dir(home: Path) -> Path:
 
 def inbox_dir(home: Path) -> Path:
     return home / "state" / "inbox"
+
+
+def heartbeat_path(home: Path) -> Path:
+    # §47.4：act/lib/heartbeat.HEARTBEAT_PATH（actd 每阶段 touch；mtime 为真源）
+    return home / "state" / "actd.heartbeat"
+
+
+def loop_health_path(home: Path) -> Path:
+    # §47.3：act/actd.LOOP_HEALTH_NAME（连续 pass 崩溃计数）
+    return home / "state" / "loop_health.json"
 
 
 def web_dist_dir() -> Path:

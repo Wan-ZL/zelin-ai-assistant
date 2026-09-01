@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlsplit
 
-from server import board_source, files, inbox_writer, paths, security
+from server import board_source, files, health, inbox_writer, paths, security
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -169,6 +169,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/cards/"):
             card_id = path[len("/api/cards/"):]
             self._send_json(200, board_source.card_detail(ctx.home, card_id))
+        elif path == "/api/health":
+            # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳
+            # 年龄 + 看板新鲜度 + 连崩计数 → 一个 verdict，web 顶部横幅据此
+            # 诚实报「后台服务卡住/停了」——退役中的 Mac app 横幅的替身。
+            self._send_json(200, health.snapshot(ctx.home))
         elif path == "/api/events":
             self._serve_events(ctx.hub)
         elif path.startswith("/files/deliverables/"):

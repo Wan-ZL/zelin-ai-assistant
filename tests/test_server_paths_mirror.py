@@ -13,7 +13,9 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
-from act.lib import config, registry
+from act import actd, doctor
+from act.lib import config, heartbeat, registry
+from server import health as server_health
 from server import paths
 
 HOME = Path("/tmp/zai-paths-pin")
@@ -54,6 +56,21 @@ class LayoutMirrorTestCase(unittest.TestCase):
     def test_archive_dir_matches_registry_constant(self):
         self.assertEqual(paths.archive_dir(HOME),
                          HOME / self._rel(registry.ARCHIVE_DIR))
+
+    def test_health_files_match_their_writers(self):
+        # §47.4 heartbeat + §47.3 loop_health: server/health.py reads what
+        # actd writes — the names live in exactly two places, pinned here.
+        self.assertEqual(paths.heartbeat_path(HOME),
+                         HOME / self._rel(heartbeat.HEARTBEAT_PATH))
+        self.assertEqual(paths.loop_health_path(HOME),
+                         HOME / "state" / actd.LOOP_HEALTH_NAME)
+
+    def test_health_thresholds_mirror_the_python_side(self):
+        self.assertEqual(server_health.LOOP_ALARM_AFTER, actd.LOOP_ALARM_AFTER)
+        self.assertEqual(server_health.DASHBOARD_FRESH_SECONDS,
+                         doctor.DASHBOARD_FRESH_SECONDS)
+        self.assertEqual(server_health.DASHBOARD_FRESH_SECONDS,
+                         heartbeat.STALE_FLOOR_SECONDS)
 
 
 if __name__ == "__main__":
