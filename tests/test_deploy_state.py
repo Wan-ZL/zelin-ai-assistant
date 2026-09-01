@@ -3,13 +3,14 @@
 写方是 scripts/auto-deploy.sh（判例在 tests/integration/test_auto_deploy_script.py）；
 这里钉读方：逐字段类型消毒（宪法第 11 条：撕裂/手改的文件不许崩 dashboard pass）、
 「缺章 = 整键不存在」的 add-only 约定（同 update_available / device_label）、doctor
-的 auto-deploy 行只在文件存在时出现（healthy → OK，其余 → WARN 并给 --force 修法）。
-沙箱 AIASSISTANT_HOME（tests/__init__.py）。
+的 auto-deploy 行只在文件存在时出现（healthy → OK，其余 → WARN 并给 --force 修法）、
+以及 §31 F2 的 syncd 变更闸门把整键 deploy_state 视为易变（每 10 分钟的 last_run
+改写不得推一次全量快照）。沙箱 AIASSISTANT_HOME（tests/__init__.py）。
 """
 import json
 import unittest
 
-from act import doctor
+from act import doctor, syncd
 from act.lib import config, dashboard, deploy_state
 
 
@@ -78,6 +79,27 @@ class DashboardProjectionTestCase(unittest.TestCase):
         self.assertEqual(ds["version"], "0.48.4")
         self.assertEqual(ds["last_deployed"], "2026-09-01T10:00:00Z")
         self.assertEqual(ds["prev"], "b" * 40)
+
+    def test_last_run_churn_does_not_move_the_syncd_gate_digest(self):
+        """§56 × §31 F2：auto-deploy 每 10 分钟重写 last_run（up_to_date 也写），
+        两次 build_dashboard 只差 deploy_state 时 syncd 的变更闸门摘要必须相同——
+        否则 mode=cloud 的机器零看板活动也每 10 分钟推一次全量加密快照（L6 风暴回归）。
+        """
+        base = {"status": "up_to_date", "version": "0.48.6", "head": "a" * 40,
+                "prev": "b" * 40, "last_deployed": "2026-09-01T10:00:00Z"}
+        digests = []
+        for last_run in ("2026-09-01T10:10:00Z", "2026-09-01T10:20:00Z"):
+            self.path.write_text(json.dumps(dict(base, last_run=last_run)), encoding="utf-8")
+            dash = self._build()
+            self.assertEqual(dash["deploy_state"]["last_run"], last_run)
+            digests.append(syncd._gate_digest(json.dumps(dash).encode("utf-8")))
+        self.assertEqual(digests[0], digests[1])
+        # 一次真部署（status/version 变）也不单独触发推送——整键易变
+        self.path.write_text(json.dumps(dict(base, status="deployed", version="0.48.7",
+                                             last_run="2026-09-01T10:30:00Z")),
+                             encoding="utf-8")
+        self.assertEqual(syncd._gate_digest(json.dumps(self._build()).encode("utf-8")),
+                         digests[0])
 
 
 class DoctorRowTestCase(unittest.TestCase):

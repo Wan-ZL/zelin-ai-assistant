@@ -12,8 +12,13 @@
 #   3. `git fetch origin main`; HEAD == origin/main → record up_to_date, exit
 #   4. PREV=HEAD; `git merge --ff-only origin/main` (diverged local main =
 #      refuse + notify, never force)
-#   5. doctor BASELINE with the NEW code, before installing anything
-#   6. `bash install.sh --non-interactive` under a watchdog timeout
+#   5. doctor BASELINE with the NEW code, before installing anything — a
+#      doctor that cannot even produce JSON (import error, no yaml) is fatal
+#      here, never "pre-existing": rollback without installing
+#   6. `bash install.sh --non-interactive` under a watchdog timeout — that
+#      mode never rebuilds the frozen legacy Mac app (§56.5: build.sh would
+#      quit + relaunch it and take screenpipe / live captions down mid-use);
+#      only a hand-run `bash install.sh` does
 #   7. settle, doctor again; rollback iff the install failed or a check that
 #      was green in the baseline is now FAIL. Pre-existing red is reported,
 #      not blamed on the new version (otherwise a machine with one stale
@@ -51,8 +56,10 @@ LOG="$LOG_DIR/auto-deploy.log"
 LOG_CAP_BYTES=1048576                     # 防腐 #4：日志必有帽
 STATE_FILE="$REPO_ROOT/state/deploy_state.json"
 LOCK_DIR="$REPO_ROOT/state/auto-deploy.lock"
-INSTALL_TIMEOUT="${AUTODEPLOY_INSTALL_TIMEOUT:-1800}"   # swift build included
-DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-5}"          # agents need a moment
+INSTALL_TIMEOUT="${AUTODEPLOY_INSTALL_TIMEOUT:-1800}"   # no swift build in this mode; generous anyway
+DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-30}"         # a KeepAlive actd that dies on import
+                                                        # shows a pid for ~0.5 s, then nothing
+                                                        # for launchd's ~10 s throttle: sample late
 FORCE=0
 PY=""
 
@@ -146,7 +153,12 @@ notify.notify(sys.argv[1], sys.argv[2])' "$1" "$2") >/dev/null 2>&1 \
 
 # Sorted FAIL check names from `act.doctor --fast --json`, one per line. The
 # doctor's exit code alone cannot separate "the new version broke X" from "X
-# was already red"; names can. Unparseable output is itself a named failure.
+# was already red"; names can. Unparseable output (doctor crashed on import,
+# printed garbage, interpreter lost yaml…) is itself a named failure — and
+# main() treats it as fatal on EITHER run: both runs use the new code, so an
+# unparseable baseline would be "pre-existing" and blind the one safety gate
+# to exactly the class of commit it exists to catch.
+UNPARSEABLE="doctor:unparseable"
 doctor_fail_names() {
     (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
         "$PY" -m act.doctor --fast --json 2>/dev/null) | "$PY" -c 'import json, sys
@@ -154,8 +166,12 @@ try:
     rows = json.load(sys.stdin).get("checks", [])
     names = sorted({str(r.get("name")) for r in rows if r.get("status") == "fail"})
 except Exception:
-    names = ["doctor:unparseable"]
-sys.stdout.write("\n".join(names))'
+    names = [sys.argv[1]]
+sys.stdout.write("\n".join(names))' "$UNPARSEABLE"
+}
+
+has_line() { # $1=newline-separated list, $2=exact line
+    printf '%s\n' "$1" | grep -qxF -- "$2"
 }
 
 # Lines of $2 that are not in $1 (both newline-separated name lists).
@@ -196,24 +212,6 @@ run_install() {
     log "install.sh --non-interactive (timeout ${INSTALL_TIMEOUT}s)"
     AIASSISTANT_AUTODEPLOY_ACTIVE=1 run_with_timeout "$INSTALL_TIMEOUT" \
         bash "$REPO_ROOT/install.sh" --non-interactive >> "$LOG" 2>&1
-}
-
-# `app` step of the §23 install report ("" when unreadable): the Mac app is a
-# frozen legacy surface (D3) whose build failure leaves the installed app
-# untouched, so it is reported alongside the deploy rather than rolling it back.
-install_report_app_status() {
-    "$PY" - "$REPO_ROOT/state/install_report.json" <<'PY' 2>/dev/null || true
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as fh:
-        steps = json.load(fh).get("steps", [])
-    for step in steps:
-        if step.get("name") == "app":
-            sys.stdout.write(str(step.get("status", "")))
-            break
-except Exception:
-    pass
-PY
 }
 
 take_lock() {
@@ -363,6 +361,10 @@ main() {
 
     _baseline="$(doctor_fail_names)"
     [ -n "$_baseline" ] && log "doctor baseline (pre-install) FAIL: $(printf '%s' "$_baseline" | tr '\n' ' ')"
+    if has_line "$_baseline" "$UNPARSEABLE"; then
+        rollback "$PREV" "doctor unparseable on v${VERSION:-?} ($(short "$NEW")) — new code cannot even run its own diagnostics" "$TARGET"
+        exit 0
+    fi
 
     run_install
     _rc=$?
@@ -373,6 +375,10 @@ main() {
 
     [ "$DOCTOR_SETTLE" -gt 0 ] && sleep "$DOCTOR_SETTLE"
     _after="$(doctor_fail_names)"
+    if has_line "$_after" "$UNPARSEABLE"; then
+        rollback "$PREV" "doctor unparseable after install of v${VERSION:-?} ($(short "$NEW"))" "$TARGET"
+        exit 0
+    fi
     _new="$(new_names "$_baseline" "$_after")"
     if [ -n "$_new" ]; then
         rollback "$PREV" "doctor new FAIL after v${VERSION:-?}: $(printf '%s' "$_new" | tr '\n' ' ')" "$TARGET"
@@ -382,9 +388,6 @@ main() {
     _detail="deployed $(short "$PREV") -> $(short "$NEW")"
     if [ -n "$_after" ]; then
         _detail="$_detail; doctor pre-existing FAIL: $(printf '%s' "$_after" | tr '\n' ' ')"
-    fi
-    if [ "$(install_report_app_status)" = "fail" ]; then
-        _detail="$_detail; mac app build failed (previous app kept)"
     fi
     write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" \
                 "head=$NEW" "prev=$PREV" "version=$VERSION" \

@@ -13,6 +13,8 @@ launchd、不碰真 $HOME（HOME 指到临时目录）。
   - install 失败 / doctor 出现**新增** FAIL → git reset --hard 回旧 sha + 再装 +
     rolled_back + failed_sha 记账，下一轮对同一 sha 不再重试，--force 才重试；
   - 部署前已红的 doctor 项不归咎新版本（deployed，detail 点名 pre-existing）；
+  - doctor 自身跑不出 JSON（import 崩 / 打印垃圾）= 致命而非 pre-existing：基线
+    阶段就回滚且不装新版本；装完后才崩同样回滚；
   - 脏树拒绝（不动 HEAD、同一 sha 只通知一次）；不在 main 拒绝；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
   - 日志 1 MB 自压；ff-merge 途中脚本自身被替换也照常跑完（main 包裹）。
@@ -45,8 +47,6 @@ if [ -n "${FAKE_INSTALL_RC_PLAN:-}" ] && [ -s "$FAKE_INSTALL_RC_PLAN" ]; then
     rc="$(head -n 1 "$FAKE_INSTALL_RC_PLAN")"
     tail -n +2 "$FAKE_INSTALL_RC_PLAN" > "$FAKE_INSTALL_RC_PLAN.tmp" && mv "$FAKE_INSTALL_RC_PLAN.tmp" "$FAKE_INSTALL_RC_PLAN"
 fi
-mkdir -p "$here/state"
-printf '{"steps": [{"name": "app", "status": "%s"}]}\n' "${FAKE_APP_STATUS:-ok}" > "$here/state/install_report.json"
 [ -n "${FAKE_INSTALL_SLEEP:-}" ] && sleep "$FAKE_INSTALL_SLEEP"
 exit "$rc"
 """
@@ -68,6 +68,10 @@ log = os.environ.get("FAKE_DOCTOR_LOG")
 if log:
     with open(log, "a", encoding="utf-8") as fh:
         fh.write("doctor %s version=%s fails=%s\n" % (" ".join(sys.argv[1:]), __version__, ",".join(names) or "-"))
+if "GARBAGE" in names:
+    # the doctor itself is broken on this commit: no JSON at all
+    print("Traceback (most recent call last): ModuleNotFoundError: No module named 'yaml'")
+    sys.exit(1)
 checks = [{"name": n, "status": "fail", "detail": "", "fix": ""} for n in names]
 checks.append({"name": "home", "status": "ok", "detail": "", "fix": ""})
 print(json.dumps({"home": os.getcwd(), "checks": checks}))
@@ -341,14 +345,34 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("cron", st["detail"])
         self.assertEqual(len(self.installs()), 1)
 
-    def test_mac_app_build_failure_is_reported_not_rolled_back(self):
+    def test_unparseable_doctor_on_the_new_code_rolls_back_before_installing(self):
+        # H1：baseline 与复查都用新代码——doctor 在两次都 unparseable 时「新增 FAIL」
+        # 为空，旧逻辑会判 deployed 并把 doctor:unparseable 写成 pre-existing。
+        # 恰恰是 doctor 自己 import 崩的那种提交，必须回滚，且新版本压根不该被装。
         target = self.push("0.48.4")
-        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_APP_STATUS": "fail"})
+        proc = self.run_script(doctor_plan=["GARBAGE", "GARBAGE"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.head(), target)
+        self.assertEqual(self.head(), self.base_sha, "rolled back to PREV")
         st = self.state()
-        self.assertEqual(st["status"], "deployed")
-        self.assertIn("mac app build failed", st["detail"])
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("unparseable", st["detail"])
+        inst = self.installs()
+        self.assertEqual(len(inst), 1, inst)
+        self.assertIn("head=%s" % self.base_sha, inst[0], "the only install is the rollback at PREV")
+        self.assertNotIn("pre-existing", st["detail"])
+        self.assertEqual(len(self.notifications()), 1)
+
+    def test_unparseable_doctor_after_install_rolls_back(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "GARBAGE"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("unparseable", st["detail"])
+        self.assertEqual(len(self.installs()), 2, "install at NEW, then the rollback install at PREV")
 
     def test_install_timeout_counts_as_failure(self):
         self.push("0.48.4")

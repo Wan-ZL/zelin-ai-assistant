@@ -495,7 +495,12 @@ def _inbox_shape_error(action: dict) -> Optional[str]:
 # 闸门摘要因此看**剔除易变字段后的规范形**；推送 payload 仍是原始字节
 # （generated_at 保留给手机端）。字段表 add-only：只列「每次重建必变、与
 # 看板内容无关」的键。
-_VOLATILE_DASH_KEYS = ("generated_at",)
+# - deploy_state（§56）：scripts/auto-deploy.sh 每 10 分钟一轮，每轮都重写
+#   last_run（哪怕 up_to_date 什么都没干）——不剔除就是同一场风暴的回归：
+#   零看板活动也每 10 分钟推一次全量加密快照。整键剔除（不是只剔 last_run）
+#   ——脚本以后再加什么字段都不该成为推送理由；真部署带来的 version/status
+#   变化随下一次真看板变化的 payload 一起走（payload 是原始字节）。
+_VOLATILE_DASH_KEYS = ("generated_at", "deploy_state")
 
 
 def _gate_digest(raw: bytes) -> str:

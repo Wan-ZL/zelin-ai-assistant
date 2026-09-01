@@ -1,7 +1,7 @@
 """§56 自动部署 agent 的安装形状判例：plist 模板 + python 启动器 + install.sh 闸门。
 
 - com.zelin.aiassistant.autodeploy.plist：StartInterval 600、RunAtLoad false、
-  SoftResourceLimits.NumberOfFiles（swift build 在 gui domain 默认 256 fd 下会炸）、
+  SoftResourceLimits.NumberOfFiles 与其余模板同款 8192（§55 资源上限）、
   ProgramArguments = 渲染注入的解释器 -m act.auto_deploy（§55：argv0 必须是那个
   launchd 可行的 python，doctor 的 `launchd python` 探针靳它 import yaml）；通用
   路径纪律由 tests/test_launchd_render.py 对全部模板统一钉。
@@ -10,6 +10,10 @@
 - install.sh autodeploy_wanted / failed_deploy_steps：抠出原文真跑（同
   test_launchd_render 的 install_sh_prelude 手法）——非 git 目录不装；
   features.auto_deploy: false 不装；探针崩了 fail-open；app 步骤失败不计入退出码。
+- install.sh install_mac_app（§56.5）：--non-interactive **永不**跑
+  `mac/build.sh --install`——build.sh 会 quit + relaunch 正在跑的 app，screenpipe
+  是它的直接子进程、实时字幕住在它里面，无人值守的重建等于在任意时刻掐断录制；
+  交互模式照常构建。假 mac/build.sh 记录调用。
 """
 import os
 import plistlib
@@ -47,8 +51,11 @@ class AutodeployPlistShapeTestCase(unittest.TestCase):
                       "a manual install.sh must not trigger a deploy pass on load")
         self.assertNotIn("KeepAlive", self.obj)
 
-    def test_fd_limit_raised_for_the_swift_build(self):
-        self.assertGreaterEqual(self.obj["SoftResourceLimits"]["NumberOfFiles"], 1024)
+    def test_fd_soft_limit_matches_the_other_templates(self):
+        # §55 资源上限：每个模板 Soft 8192、不带 Hard（tests/test_launchd_render.py
+        # 钉全部模板 >= 4096；这里钉「与兄弟模板同款」，别让一个模板另立标准）
+        self.assertEqual(self.obj["SoftResourceLimits"]["NumberOfFiles"], 8192)
+        self.assertNotIn("HardResourceLimits", self.obj)
 
 
 class LauncherTestCase(unittest.TestCase):
@@ -161,6 +168,70 @@ class InstallGateTestCase(unittest.TestCase):
     def test_all_ok_or_only_app_failed_is_clean(self):
         self.assertEqual(self._failed("config=ok\napp=fail:x\nlaunchd=ok:4 agents loaded\n"), [])
         self.assertEqual(self._failed(""), [])
+
+
+@unittest.skipIf(_WIN, "install.sh is POSIX-only")
+class InstallMacAppStepTestCase(unittest.TestCase):
+    """§56.5：自动部署（--non-interactive）永不重建 Mac app。
+
+    真跑 install.sh 的 install_mac_app，REPO_ROOT 指向一个只有假 mac/build.sh 的
+    目录；假脚本把 argv 追加到 calls.log。断言的是**行为**（build.sh 有没有被以
+    --install 调起、§23 报告行写了什么），不是 install.sh 的字面。
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="autodeploy-app-step-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "mac").mkdir()
+        self.calls = self.tmp / "calls.log"
+        (self.tmp / "mac" / "build.sh").write_text(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$CALLS\"\nexit \"${FAKE_BUILD_RC:-0}\"\n",
+            encoding="utf-8")
+
+    def _run(self, *, non_interactive, pkg=0, build_rc=0):
+        script = ("set -u\n"
+                  "ok() { :; }; warn() { :; }; info() { :; }\n"
+                  "REPORT_STEPS=''\n"
+                  + _install_sh_fn("report_step")
+                  + _install_sh_fn("install_mac_app")
+                  + 'REPO_ROOT="$1"; NON_INTERACTIVE="$2"; PKG_POSTINSTALL="$3"\n'
+                  "install_mac_app >/dev/null\n"
+                  "printf '%s' \"$REPORT_STEPS\"\n")
+        proc = subprocess.run(
+            ["bash", "-c", script, "bash", str(self.tmp), str(non_interactive), str(pkg)],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "CALLS": str(self.calls), "FAKE_BUILD_RC": str(build_rc)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = self.calls.read_text(encoding="utf-8").splitlines() if self.calls.exists() else []
+        return calls, proc.stdout.strip()
+
+    def test_non_interactive_never_invokes_build_sh(self):
+        calls, report = self._run(non_interactive=1)
+        self.assertEqual(calls, [], "auto-deploy must not quit/relaunch the app (kills screenpipe + captions)")
+        self.assertTrue(report.startswith("app=skipped:"), report)
+        self.assertIn("non-interactive", report)
+        self.assertIn("bash install.sh", report, "the report must point at the manual rebuild path")
+
+    def test_non_interactive_skips_even_when_a_build_would_fail(self):
+        # 不是「构建失败不回滚」——是压根不构建；报告不得出现 app=fail
+        calls, report = self._run(non_interactive=1, build_rc=1)
+        self.assertEqual(calls, [])
+        self.assertNotIn("app=fail", report)
+
+    def test_interactive_builds_and_installs(self):
+        calls, report = self._run(non_interactive=0)
+        self.assertEqual(calls, ["--install"])
+        self.assertEqual(report, "app=ok:built and installed")
+
+    def test_interactive_build_failure_is_reported_honestly(self):
+        calls, report = self._run(non_interactive=0, build_rc=1)
+        self.assertEqual(calls, ["--install"])
+        self.assertEqual(report, "app=fail:mac/build.sh --install failed")
+
+    def test_pkg_postinstall_still_skips(self):
+        calls, report = self._run(non_interactive=0, pkg=1)
+        self.assertEqual(calls, [])
+        self.assertEqual(report, "app=skipped:installed by the .pkg")
 
 
 if __name__ == "__main__":

@@ -267,6 +267,28 @@ class GateDigestTestCase(unittest.TestCase):
         b = b'{"running":[],"counts":{"debt":1}}'
         self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(b))
 
+    def test_deploy_state_is_volatile_for_the_gate(self):
+        # §56：auto-deploy 每 10 分钟重写 deploy_state.last_run（up_to_date 也写）。
+        # 不剔除 = 零看板活动也每 10 分钟推一次全量快照——F2 修掉的风暴回归。
+        # 整键剔除：连 status/version 的变化也不单独触发推送。
+        self.assertIn("deploy_state", syncd._VOLATILE_DASH_KEYS)
+        a = (b'{"generated_at":"2026-09-01T10:00:00Z","counts":{"debt":1},'
+             b'"deploy_state":{"status":"up_to_date","version":"0.48.6",'
+             b'"last_run":"2026-09-01T10:00:00Z"}}')
+        b = (b'{"generated_at":"2026-09-01T10:10:00Z","counts":{"debt":1},'
+             b'"deploy_state":{"status":"up_to_date","version":"0.48.6",'
+             b'"last_run":"2026-09-01T10:10:00Z"}}')
+        c = (b'{"generated_at":"2026-09-01T10:20:00Z","counts":{"debt":1},'
+             b'"deploy_state":{"status":"deployed","version":"0.48.7",'
+             b'"last_run":"2026-09-01T10:20:00Z"}}')
+        no_key = b'{"generated_at":"2026-09-01T10:30:00Z","counts":{"debt":1}}'
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(b))
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(c))
+        self.assertEqual(syncd._gate_digest(a), syncd._gate_digest(no_key))
+        # 看板本身变了仍然推
+        real = a.replace(b'"debt":1', b'"debt":2')
+        self.assertNotEqual(syncd._gate_digest(a), syncd._gate_digest(real))
+
     def test_non_json_payload_falls_back_to_raw_hash(self):
         raw = b"\xff\xfenot json at all"
         self.assertEqual(syncd._gate_digest(raw),

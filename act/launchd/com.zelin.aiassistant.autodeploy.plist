@@ -7,9 +7,12 @@
   autodeploy - 合并即上岗 (CONTRACT s56, decision D17). Every 10 minutes
   `python3 -m act.auto_deploy` runs scripts/auto-deploy.sh: fetch origin/main,
   fast-forward the checkout when it moved and the tree is clean, run
-  `install.sh --non-interactive`, re-run the doctor and roll back to the
-  previous commit if a check that was green is now red. Outcome lands in
-  state/deploy_state.json (dashboard key deploy_state, doctor row auto-deploy).
+  `install.sh --non-interactive` (daemons, cron, config - NEVER the frozen
+  legacy Mac app, s56.5: rebuilding it quits + relaunches the running app and
+  takes screenpipe / live captions down mid-use), re-run the doctor and roll
+  back to the previous commit if a check that was green is now red. Outcome
+  lands in state/deploy_state.json (dashboard key deploy_state, doctor row
+  auto-deploy).
 
   INSTALLED ONLY for a git checkout with features.auto_deploy on (install.sh
   gate); a .pkg copy has no .git and gets none. When install.sh itself runs
@@ -21,9 +24,10 @@
   lock). RunAtLoad false so a manual install.sh does not immediately trigger a
   deploy pass.
 
-  SoftResourceLimits/NumberOfFiles: the gui domain default is 256 open files,
-  which is too few for the swift build install.sh performs (and the s55 audit
-  finding L1: fd exhaustion is what turned a dispatch failure into a storm).
+  SoftResourceLimits/NumberOfFiles: same 8192 soft limit as every other
+  template (s55 资源上限; no HardResourceLimits - that only lowers the ceiling).
+  The gui domain default is 256; git + install.sh + doctor fit, but the
+  headroom rule is per template, not per workload.
 -->
 <plist version="1.0">
 <dict>
@@ -52,7 +56,7 @@
     <key>SoftResourceLimits</key>
     <dict>
         <key>NumberOfFiles</key>
-        <integer>4096</integer>
+        <integer>8192</integer>
     </dict>
 
     <key>EnvironmentVariables</key>
@@ -63,9 +67,10 @@
              WorkingDirectory no longer points at the repo -->
         <key>PYTHONPATH</key>
         <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
-        <!-- install.sh needs git, swift/xcrun, launchctl, crontab; the login
-             shell's claude dir stays FIRST like every other agent (install.sh
-             resolves claude for the daemons from it). -->
+        <!-- install.sh needs git, launchctl, crontab (no swift: this mode
+             never builds the app); the login shell's claude dir stays FIRST
+             like every other agent (install.sh resolves claude for the
+             daemons from it). -->
         <key>PATH</key>
         <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
