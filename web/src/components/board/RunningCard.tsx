@@ -54,6 +54,12 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
             {row.resume_exhausted && (
               <span className="chip chip-danger">{text("恢复已放弃", "Auto-resume exhausted")}</span>
             )}
+            {/* §4 派发风暴刹车：approved 卡停止重试后投影到这里（无会话，不是 agent 在提问） */}
+            {row.dispatch_halted && (
+              <span className="chip chip-danger">
+                {text(`派发已停止 ×${row.dispatch_attempts ?? 0}`, `Launch stopped ×${row.dispatch_attempts ?? 0}`)}
+              </span>
+            )}
             {/* 等待 chip = Mac .yellow notice（owner 验收单：黄等待）——--notice 槽位 */}
             {row.waiting_for && <span className="chip chip-notice">{text(`等待：${row.waiting_for}`, `waiting: ${row.waiting_for}`)}</span>}
           </div>
@@ -114,8 +120,9 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </p>
       ) : (
         <div className="card-actions">
-          {/* 色相 = Mac tint：回答/停止都是橙（needs-input 家族）；评论是 web fork 动词，保持中性 */}
-          {isBlocked && (
+          {/* 色相 = Mac tint：回答/停止都是橙（needs-input 家族）；评论是 web fork 动词，保持中性。
+              刹车卡没有会话可答（answer_input 会落成 [回答未投递]），只留「停止」这一个出口。 */}
+          {isBlocked && !row.dispatch_halted && (
             <button type="button" className="btn btn-warning" onClick={() => setDialog("answer")}>
               {text("回答…", "Answer…")}
             </button>

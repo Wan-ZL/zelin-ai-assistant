@@ -90,6 +90,9 @@ export interface TaskRow {
   dispatch_error?: string | null;
   waiting_for?: string;
   resume_exhausted?: boolean;
+  /** §4 派发风暴刹车：approved 卡连续派发失败 N 次后停止重试，投影为 blocked 行（wire key 逐字镜像） */
+  dispatch_halted?: boolean;
+  dispatch_attempts?: number;
   delivered_summary?: string;
   queued_reason?: QueuedReason | string | null;
   steers?: SteerNote[];
@@ -157,3 +160,20 @@ export interface Board {
 
 /** GET /api/cards/{id} = 投影行 + registry YAML 只读增补（add-only 合并，字段名同投影） */
 export type CardDetail = Record<string, unknown> & { id: string };
+
+/** GET /api/health（CONTRACT §47.4）：管线活性——server/health.py 的 wire 形逐字镜像 */
+export interface HealthSnapshot {
+  verdict: "ok" | "unknown" | "stale" | "stalled" | "failing" | string;
+  heartbeat: {
+    age_s: number;
+    phase: string | null;
+    pid: number | null;
+    interval: number | null;
+    stale_after_s: number;
+    stale: boolean;
+  } | null;
+  dashboard: { generated_at: string; age_s: number; stale: boolean } | null;
+  loop_health: { consecutive_failures: number; last_error: string | null };
+  checked_at: string;
+  [key: string]: unknown;
+}

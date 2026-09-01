@@ -98,6 +98,8 @@
 - `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`waiting_budget`|`concurrency`，词表与映射见 §51）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
 - `running[]` / `needs_input[]` 行加 `steers: [{text, ts, status, delivered_at}]`（§44.3-S 投影）：`status ∈ {queued, delivered, dropped}` 开放枚举（dropped 现行不投影，值保留 forward-compat）；`status=="delivered"` 必带 ISO `delivered_at`，其余为 null——诚实投递状态，绝不虚报送达。**`ts` 为 ISO 字符串**——显式偏离本节「dashboard 输出 epoch int」惯例（M8.3 C-4）：ts 是 steer dedup 键的组成部分，投影保原文才能与 `execution.*` 台账逐字对账；web 端无 string ts 的行整行丢弃（绝不渲染无法对账的 steer）。
 
+**v0.48.4 新增（§4 派发风暴刹车的投影面，add-only optional）**：`execution.dispatch_halted` 为真的 approved 卡**不再**作 queued 项混入 `running[]`，改投影进 `needs_input[]`（blocked 行形：`session_id/short_id/copy_cmd/agent_name` 恒 null、`waiting_for` null、`question` = 固定文案「派发连续失败 N 次，已停止自动重试：<§25 目录句或原文>…」），行带 `dispatch_halted: true` + `dispatch_attempts`(int) + `last_error`/`last_error_id`。客户端据 `dispatch_halted` 隐藏「回答…」（没有会话可答）、只留「停止」；`detect_transitions` 对该行**不**发「任务需要你输入」（executor 已发 `msg_dispatch_halted`，同 §46.3 `resume_exhausted` 的去重规则）。server `is_executing` 对该行判 false（comment 不标 steer）。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -113,6 +115,55 @@ approved 的需求：
 1. 组装 prompt = 需求 title+plan+sources + **记忆注入**（读 `~/.claude/projects/<encoded ~/Projects>/memory/MEMORY.md` 及相关 program map 摘要，作为 system context）+ 质量门指令（自检可运行 + fresh-context 审 diff + 交付 draft PR，不 merge/不发对外消息）+ 若 type=training 则强制每 ckpt system card。
 2. 派发：`cd <target_repo> && claude --bg --dangerously-skip-permissions "<prompt>"`（target_repo 默认 config 的 default_target_repo 或需求指定）。
 3. 记录 `execution.session_id`（从派发输出或 `claude agents --json` 最新匹配 cwd 取）+ dispatched_at + log 路径；status → executing。
+
+### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
+
+派发失败（claude 非零退出 / 子进程错误 / 拿不到 session id）的卡**留在
+approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_at`
+记原因，退避重试 `30s·2^attempts`（上限 600s；`dispatch_attempts` /
+`last_dispatch_attempt_at` 台账）。事故：launchd 起的 `claude --bg` 每次都以
+「An unknown error occurred, possibly due to low max file descriptors
+(Unexpected)」拒启（claude 猜的是文件句柄，实测是 TCC 的 EPERM——目标 repo
+在外置卷上，launchd 起的 claude 可执行文件没有磁盘授权，§55 第三幕），一张
+卡 13 小时重派 66 次、954 条 traceback，`registry_writes.jsonl` 98% 的行是
+它——退避窗口内 actd 每 pass 重新落一次 `last_error_at`（「稳定 fixpoint」
+设计只保证文本不叠，没保证不写）。自本节起：
+
+- **退避窗口 = 纯 no-op**：executor 抛 `DispatchBackingOff`（`DispatchError`
+  子类），actd 不写卡、不打 traceback、不发事件——一张卡在窗口内**零**磁盘
+  写。首次失败由 executor 落账一次；actd 只在存的 `last_error` 与异常文本
+  不同（前缀比较：executor 存 500 字、actd 300 字）时才补写（mock 场景的
+  兜底），`DispatchError` 一律单行日志，完整 traceback 只留给非 DispatchError
+  的意外崩溃。
+- **同类连败刹车**：每次失败按 `failures.classify(err) or "unclassified"`
+  归类（`execution.dispatch_error_class`），同类连续计数
+  `dispatch_class_streak`（换类从 1 重数——原因真变了值得新一轮重试；
+  未分类文本**合并为一类**，pid/时间戳漂移的错误照样触发）。连败达
+  `execution.dispatch_max_failures`（config.yaml，默认 **5**，0 = 关刹车，
+  负数按 0）→ `execution.dispatch_halted: true` + `dispatch_halted_at`，
+  notes 追加一行 `[dispatch-halted] 派发连续失败 N 次（<class>），已停止自动
+  重试：<§25 目录句 | 原文首行> [@ts]`，analytics `dispatch_halted{failure_id,
+  attempts, streak}`，通知 `notify.msg_dispatch_halted(title, n, reason)`
+  一次；executor 抛 `DispatchHalted`。**卡仍是 approved**（不 trash、不改状
+  态机），但 actd `dispatch_approved` 在并发闸之前就跳过它（不占槽、不写、
+  不 log），executor 直调也拒启。投影见 §2 v0.48.4（进「需输入」列）。
+- **重新上膛 = 进入 approved 的每一条路径**（`actd._rearm_dispatch`）：清掉
+  `executor.DISPATCH_STREAK_KEYS`（`dispatch_attempts / last_dispatch_attempt_at
+  / dispatch_error_class / dispatch_class_streak / dispatch_halted /
+  dispatch_halted_at`）+ `last_error`/`last_error_at`。三条路径一视同仁：
+  owner 的 `approve`（detected/card_sent → approved）、**policy 免批**
+  （`auto_dispatch_pass`，§51 hand 卡 card_sent → approved）、direct-run
+  （新卡，execution 本来就是新建的）。`abort_execution`（退回提案 →
+  card_sent）**也清**——那个动词的语义就是「丢弃这一轮、重新决定」，card_sent
+  卡不得带着刹车回到待审批。审查复现（2026-09-01）：只有 approve 清账时，
+  刹车停下 → 退回提案 → 同一 pass 免批通道把 `dispatch_halted` 原样推进
+  approved → 卡回到「需输入」，而 owner 再点批准是 approved 上的白名单 no-op
+  ——UI 上没有任何出口，只能手改 YAML。owner 的出口仍是 停止 → 退回提案 →
+  修好原因 → 批准（或免批通道自动接手）；成功派发整体重建 execution，台账
+  自然消失。不新增 inbox 动词。
+- 判例：`tests/test_dispatch_storm_brake.py`（分类、刹车、换类重数、0 关闭、
+  退避零写零 traceback、重批清账、退回提案清账、免批重上膛后真能再派、投影、
+  去重通知、server 不标 steer）。
 
 ## 5. macOS 通知（actd）
 
@@ -747,6 +798,52 @@ add-only）：
   但只在 CGPreflight 真报缺权限时出现），不再无条件猜「多半缺权限」；录制页
   的 ffmpeg 诊断行给「安装 ffmpeg」+「装好了，重启引擎」两个动作（死引擎的
   日志尾在装好后仍是旧错误行，就地重启是该页唯一的复活路径）。
+
+v0.48.4 追加（add-only；live 事故 2026-08-31 + issue #89，§4.1/§47.4/§55）五枚
+failure id：
+- `claude_bypass_disclaimer`（#89）——`claude --bg --dangerously-skip-permissions`
+  在本机**一次性交互接受**免责声明之前拒启（原文 `bypassPermissions requires
+  accepting the disclaimer`，签名收窄到这一句）；Task Scheduler / launchd 会话
+  永远做不了那一步，所以新装机第一次派发几乎必撞。action_id `open_deps`。
+  doctor 的**预检**（装机时判断是否已接受）暂缺：claude 没有文档化的接受
+  标记可读，宁缺毋猜——§4.1 刹车 + 分类通知已把「静默死管线」变成一条点名
+  修法的通知。
+- `claude_blind`——launchd 起的 claude 可执行文件读不到任务目录（TCC 按可执行
+  文件路径授「完全磁盘访问」，§55 第三幕）。签名 = Bun 对**未映射 errno** 的
+  统一猜测 `possibly due to low max file descriptors`（`(Unexpected)`）：Bun
+  把真正的句柄耗尽另有拼法（`ProcessFdQuotaExceeded` / `SystemFdQuotaExceeded`），
+  所以这句话**按定义不是** fd 问题；在本产品的发射路径上它就是任务 cwd 的
+  EPERM（2026-09-01 一次性 launchd job 实测：同一 binary 同一上限，cwd=$HOME 好、
+  cwd 在外置卷死；同 job 里 homebrew node 直接报 `EPERM`）。排在 auth/network
+  规则之前。action_id `open_deps`——没有一键修法：修的是 owner 的 TCC 开关
+  （或搬目录），句子里点名 doctor `launchd claude` 行作确认。
+- `fd_limit`——**真**句柄耗尽：`EMFILE` / `ENFILE` / `too many open files` /
+  Bun 的 `ran out of file descriptors` / `FdQuotaExceeded`。launchd 默认 soft 256、
+  hard unlimited；action_id `restart_actd`——修法是按模板重渲 agent（§55 资源
+  上限：只抬 soft），「一键修复」重渲 actd 即命中。v0.48.4 最初把 Bun 的猜测
+  也归到这里并给 8192 上限的建议——live 证伪（抬到 8192 后 11 次同样失败），
+  自本修订起两枚 id 分开，`fd_limit` 的句子不再提 dispatch 失败。
+- `actd_stalled`——进程活着（launchctl 有 pid）但 §47.4 心跳过期：循环卡死而非
+  进程死。与 `dashboard_stale`（进程死/没起）分开：修法是 **kill+respawn**
+  （`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`；Linux
+  `systemctl --user restart zelin-actd.service`），不是 reload。action_id
+  `restart_actd`。
+- `launchd_orphan`——带 `com.zelin.aiassistant.` 前缀、但 act/launchd 已无模板
+  的 label（已装载或只剩 plist 文件）。action_id `open_deps`。
+Swift `FailureCatalog` 只镜像句子（D3：菜单栏 app 退役中，不给新按钮）。
+通知 builder 追加 `msg_dispatch_halted(title, n, reason)`（§4.1；正文点名
+现存按钮「停止 → 退回提案 → 批准」）。doctor 新行：`actd heartbeat`（§47.4）、
+`launchd fd limit`（已安装 actd plist：`SoftResourceLimits.NumberOfFiles` 缺失或
+< 4096 → WARN `fd_limit`；出现 `HardResourceLimits` → WARN `fd_limit`，因为它
+只会把 launchd 默认的 unlimited 压低——8-31 当晚 hotfix 的形状；没装 → 无此行）、
+`launchd claude`（§55 第三幕：在一次性 launchd job 里以默认工作 repo 为 cwd 跑
+`<claude> --version`——doctor 自己在终端里看不见 TCC 失败，只能问 launchd 本人；
+Bun 猜测句/EPERM → **FAIL `claude_blind`**，起了但 20s 不退出（无 UI 的 TCC 提示）
+→ WARN `claude_blind`，launchd 不可用/探针被 `AIASSISTANT_LAUNCHD_PROBE=0` 关掉
+→ WARN 无 id，没装 actd plist 或默认 repo 不存在 → 无此行；`Probes.
+launchd_claude_probe` 注入缝，测试绝不真起 launchd——`tests/__init__.py` 兜底把
+开关设为 0）、`launchd orphans`（已装载孤儿 → FAIL `launchd_orphan`，只剩文件 →
+WARN；其他厂商前缀永不算）。
 
 **dashboard.json 新字段**（全部 optional，Swift `decodeIfPresent`；原始错误文本
 字段不变，分类 id 只是伴随）：
@@ -2675,6 +2772,57 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   dashboard 已 stale/dead 时**不**看此文件（那两个 verdict 更严重且已有
   横幅与修复路径）；文件缺失/损坏/清零 → 不报警（诊断文件绝不自己成为
   报警源）。
+
+### 47.4 `state/actd.heartbeat`（actd 写；doctor / server 只读；v0.48.4）
+
+```json
+{"ts": "2026-09-01T08:00:00Z", "phase": "idle", "pid": 4242, "interval": 10, "stale_after_s": 90, "version": "0.48.4"}
+```
+
+- **为什么**：2026-08-31 22:31:56 actd 停止写 dashboard.json，进程却活了
+  2.5 小时（无子进程、停在 `time.sleep`）。当时产品自己看得见的每个信号都说
+  「没事」：`launchctl list` 有 pid，§47.3 只数 pass **崩溃**（它没崩，它不
+  转），doctor 的 `dashboard` 行没人跑（`mw_doctor_result` 0 事件），唯一的
+  detector 是退役中的 Mac app 横幅（D3）。宪法第 3 条：诚实的健康报告。
+- **写者**：actd 主循环（`act/lib/heartbeat.beat`，原子写 .tmp+rename，绝不
+  抛）。**每个 pass 的每个阶段边界**各 touch 一次：`starting`（进程起）→
+  `inbox` → `dispatch` → `reconcile` → `housekeeping` → `dashboard` → `idle`
+  （pass 完整跑完）或 `failed`（pass 抛了但循环还在转——崩也算活）。**mtime
+  是活性真源**，JSON 只解释循环最后被看见在哪一步；body 撕裂时读者退回
+  mtime + 下限阈值。`--once` 同样打点（run_once 内），只是没有 idle/failed。
+- **阈值由写者定**：`stale_after_s = max(3 × interval, 90)`。三个 pass 没心跳
+  = 卡死的定义；90s 下限（= doctor `DASHBOARD_FRESH_SECONDS`）防 10s 间隔
+  下一个合法的长 pass（`claude agents --json` + `claude --bg` 起跑）被判死。
+  读者**一律读 body 里的 `stale_after_s`**，不自行推导——阈值只有一个主人。
+- **读者 1：doctor `actd heartbeat`**（全平台，紧跟 `dashboard` 行）：
+  心跳新鲜 → OK（报 phase/age/pid）；**进程活着 + 心跳过期 → FAIL
+  `actd_stalled`**（detail 点名 age 与最后 phase，fix = 本平台的 kill+respawn
+  命令）；心跳过期但进程已死 → WARN 不带 failure_id（`actd` 行已 FAIL，不双
+  记）；进程活着却**没有心跳文件** → WARN「daemon 早于 v0.48.4 或刚起，重启
+  一次」；进程死 + 无文件 → 无此行。进程活性：darwin 问 `launchctl list`
+  的 pid 列，其他平台探 body 里的 pid（Windows `os.kill(pid,0)` 会
+  TerminateProcess，永不用作探活 → None = 判不了，按「状态未知」仍 FAIL）。
+- **读者 2：`GET /api/health`**（§49 路由表 add-only，token-light GET，
+  `Cache-Control: no-store`，永不发 CORS 头）：`server/health.py` 纯 stdlib
+  镜像文件布局（`server/paths.heartbeat_path` / `loop_health_path`，
+  `tests/test_server_paths_mirror.py` 钉住），响应
+  `{verdict, heartbeat{age_s, phase, pid, interval, stale_after_s, stale}|null,
+  dashboard{generated_at, age_s, stale}|null, loop_health{consecutive_failures,
+  last_error}, checked_at}`。verdict 阶梯（先命中先赢）：`stalled`（心跳过期）
+  → `failing`（§47.3 ≥3）→ `stale`（无心跳且看板过期/缺失）→ `unknown`（无
+  心跳但看板新鲜 = 旧 daemon 仍在写）→ `ok`。server 不 spawn、不问 launchctl
+  ——它只 stat 三个文件。
+- **读者 3：web `PipelineBanner`**（`web/src/components/shell/PipelineBanner.tsx`，
+  app.tsx 每 30s 轮询 `/api/health`）：`stalled`/`failing` 红、`stale` 橙，
+  正文带 age、最后 phase 与 kickstart 命令；`ok`/`unknown` 不渲染；server 连
+  不上时让位给离线横幅（同一信息绝不双份）。这是 Mac app
+  `PipelineHealthBanner` 的 web 替身，退役前置条件之一（s4 parity 1.11）。
+- 与 §47.3 的分工：loop_health 回答「每轮都在崩吗」，heartbeat 回答「还在转
+  吗」；两者都是诊断文件，缺失/损坏都不得自己成为报警源（heartbeat 缺失 +
+  进程死 = 沉默，交给 `actd` 行）。
+- 判例：`tests/test_actd_heartbeat.py`（形状、阈值、阶段顺序、绝不抛）、
+  `tests/test_doctor.py` 心跳组、`tests/test_server_health.py`、
+  `web/src/components/shell/PipelineBanner.test.tsx`。
 ---
 
 # v0.47 additions（源开关归一 + 源死亡告警）
@@ -2952,6 +3100,9 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
 - `GET /api/events`：SSE，事件词表仅 `board.updated {generated_at}`；25s
   heartbeat 注释行；**无重连契约**——客户端断线后全量 refetch；触发 = 300ms
   mtime 轮询 dashboard.json（`server/watcher.py`）。
+- `GET /api/health`（v0.48.4，§47.4）：管线活性快照 `{verdict, heartbeat,
+  dashboard, loop_health, checked_at}`；只 stat/读三个 state 文件，不 spawn；
+  token-light GET、`no-store`；文件缺失/撕裂 → 如实报 null/`stale`，永不 500。
 - `POST /api/actions`：动词白名单 = docs/design/inbox-actions.md §2+§3 目录
   （T-2 终裁：实现即白名单）；JSON 形状/文件命名/stem 幂等/tmp+rename 原子写
   与 Mac `Store.swift` 产物**逐字节等价**（golden 33 件 `tests/fixtures/
@@ -3402,3 +3553,100 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   `$REPO/state/*.launchd.log` 仅作诊断包的兜底读（迁移前安装还留着旧日志）。
 - `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
   无 WorkingDirectory、bash 绝对路径）本就合规，不动。
+
+**第三幕：claude 可执行文件对任务目录 TCC-blind（v0.48.4；live 事故 2026-08-31，
+2026-09-01 审查证伪首版结论后修订）**：launchd 起的 actd 每次 `claude --bg`
+都以「An unknown error occurred, possibly due to low max file descriptors
+(Unexpected)」拒启，一张卡 13 小时重派 66 次（§4.1 的风暴由此而来），而登录
+shell 里同一条命令跑得好好的。首版把它读成 fd 上限并给全部模板加了 8192 的
+Soft+Hard 上限——**live 证伪**：hotfix 生效 9 小时后同一张卡再失败 11 次，
+原文变成「Current limit: 8192」。真相靠一次性 launchd job 问出来（同 §55 第二幕
+「唯一诚实的探针是问 launchd 本人」）：
+
+- **同一 job、同一上限**：`claude --version` cwd=`$HOME` 成功；cwd 在
+  `/Volumes/<外置卷>/…`（任务 repo 所在）以上句失败；`--help`、`agents --json`
+  同样；cwd 在 `~/Documents` / `~/Desktop` / `~/Downloads` 则**挂住不退出**
+  （无 UI 的 job 等一个永远弹不出来的 TCC 提示）。
+- **同一 job 里换 binary**：`/bin/ls`、`/usr/bin/python3` 读外置卷正常；
+  homebrew `node` 的 `process.cwd()`/`readdirSync` 直接报 **`EPERM: operation
+  not permitted`**，homebrew `python3` 的 `os.getcwd()` 同样 PermissionError。
+  claude 是 Bun 编译的单文件 binary，Bun 把未映射的 errno 统一渲成上面那句
+  猜测（真正的句柄耗尽它另有拼法 `ProcessFdQuotaExceeded` /
+  `SystemFdQuotaExceeded`）——所以这句话按定义**不是** fd 问题。
+- **TCC 台账印证**（只读 `TCC.db`）：`kTCCServiceSystemPolicyAllFiles` 里
+  `/usr/bin/python3`、`/bin/bash`、`/usr/sbin/cron`、终端 app 都是 allowed，
+  而 `~/.local/share/claude/versions/2.1.251` 的 **denied** 行落款
+  `2026-08-31 18:15:31`——正是 R-175 第一次派发失败那一分钟；`2.1.252` 又一行
+  denied。TCC 对命令行工具**按可执行文件路径**记账，claude 每次更新都是新路径
+  → 授权不随版本走。§55 第二幕「Apple 随系统发的解释器带着用户的文件授权」
+  更准确的说法是：owner 07-10 给 `/usr/bin/python3` 点过完全磁盘访问。
+- **谁的授权算数**：终端里的 claude 继承终端（responsible process）的授权；
+  launchd job 里没有 app 可继承，每个非平台 binary 只看自己的那一行。所以
+  `/usr/bin/python3` 有授权不等于它 spawn 的 claude 有授权——实测如此。
+
+自本节起（判例 `tests/test_doctor.py` 的 `launchd claude` 组、
+`tests/test_dispatch_storm_brake.py` 分类组）：
+
+- **分类**：Bun 猜测句 → `claude_blind`（§25），句子说明真因与两条出路；
+  `fd_limit` 只留给 EMFILE/ENFILE 类原文。
+- **doctor `launchd claude` 行**：在一次性 gui-domain launchd job 里以
+  `execution.default_target_repo`（物理路径）为 cwd 跑 `<claude> --version`
+  （payload 是 `/bin/sh`——Apple 平台 binary，负责 `cd`，和 8-31 那天 python 的
+  pre-exec chdir 一个角色；TCC 判的只有 exec 出来的 claude，与真派发同形）。
+  失败且原文含猜测句/EPERM → FAIL `claude_blind`，起了但 20s 不退出 → WARN
+  `claude_blind`，探针不可用 → WARN 无 id。探针 `Probes.launchd_claude_probe`
+  注入缝；`AIASSISTANT_LAUNCHD_PROBE=0` 关掉（测试沙箱默认关）。
+- **owner 的两条出路**（都不是 agent 能替做的；文档 `docs/TROUBLESHOOTING.md`）：
+  (a) 系统设置 → 隐私与安全性 → 完全磁盘访问：打开 claude 当前版本
+  （`~/.local/share/claude/versions/<v>`，被拒过一次后它已在列表里）——**每次
+  claude 更新后重做**；(b) 把任务 repo 放回启动盘家目录下（非 Documents /
+  Desktop / Downloads）。结构性根治（一次授权、子进程全继承）= 由有授权的 GUI
+  app（`shell/`）托管 actd 而非 launchd——记入 `docs/design/vnext2-plan.md`
+  待 owner 拍板（v-next-2 的自动 PR 通道要派发进本 repo，本 repo 就在外置卷上，
+  不解决这条 P6 一张卡也发不出去）。
+- **验收**：doctor `launchd claude` 行 OK **且**一张重新批准的卡真的到 executing
+  （`dispatch` 事件）。截至 v0.48.4 合并前，live 机器上这两项都还是 FAIL——
+  出路 (a) 需要 owner 亲手点；本修订**不**声称事故已修复，只声称已被诚实地
+  看见、分类、指路。
+
+**资源上限（同一修订）**：launchd gui domain 给 job 的默认是 soft **256** /
+hard **unlimited**（`launchctl limit maxfiles` = `256 unlimited`）。实测
+（一次性 job 读 `getrlimit`）：只设 `SoftResourceLimits.NumberOfFiles` → soft
+随设、hard 仍 unlimited（8192 / 61440 / 1048576 / 10000000 全部照收）；
+加 `HardResourceLimits` 8192 → **[8192, 8192]**，把 unlimited 压成了 8192。
+自本节起（判例 `tests/test_launchd_render.py
+test_fd_soft_limit_is_raised_and_hard_limit_is_left_alone`、
+`tests/test_systemd_render.py`）：
+
+- 每个 `act/launchd/*.plist` 模板带 `SoftResourceLimits.NumberOfFiles = 8192`
+  （守护进程与不自抬上限的子进程的余量——不是任何已知事故的修法），**不带**
+  `HardResourceLimits`（只会降天花板）。三个渲染方都是占位符替换，模板改了
+  即全部生效。
+- `act/systemd/*.service` 镜像 `LimitNOFILE=8192:524288`（soft 抬到 8192，hard
+  保持 systemd 常见默认；裸 `LimitNOFILE=8192` 会把两把都设成 8192——同一个
+  错误的 Linux 版）。
+- doctor `launchd fd limit`：读**已安装**的 actd plist，soft 缺失或 < 4096 → WARN
+  `fd_limit`；**出现 hard 键 → WARN `fd_limit`**（hotfix 形状，重跑 install.sh 去
+  掉）；没装 → 无此行。这一行只陈述上限事实，不再把派发失败归到它头上。
+
+**退役 label 的卸载必须自证 + 孤儿必须被看见（v0.48.4；审计 L3）**：install.sh
+的 `launchd_unload` 为了幂等升级刻意吞掉 bootout 失败，结果 v0.21 删掉的
+`com.zelin.aiassistant.imessageradar` agent 又跑了 **51 天**、23,613 条
+traceback（14.5 MB 日志），每次 install.sh 都一声不响；旧 doctor 只查有模板的
+label，孤儿结构性不可见。自本节起：
+
+- install.sh `launchd_retire <label>`（RETIRED_* 一律走它）：unload + 删 plist
+  之后**再问一次 `launchctl list`**，还在 → stderr `[ERR ]` + 给出
+  `launchctl bootout gui/$UID/<label>` 命令，并落 §23 安装报告
+  `launchd_retired=fail:still loaded: …`；全部干净 → `launchd_retired=ok`。
+- install.sh `launchd_orphans`：`launchctl list` 已装载的 ∪
+  `~/Library/LaunchAgents/com.zelin.aiassistant.*.plist` 文件面，减去
+  act/launchd 有模板的 → 只**报告**（warn + `launchd_orphans=warn:<labels>`），
+  **不自动卸载**（不认识的 label 不是我们该杀的；RETIRED 名单才是显式授权）。
+- doctor `launchd orphans`（darwin）：同一集合；**已装载**的孤儿 → FAIL
+  `launchd_orphan`（此刻在耗资源/刷日志），只剩 plist 文件 → WARN（下次登录
+  复活）；`com.zelin.storageguard` 这类同 owner 异产品前缀永不算。
+- 用户日志**不删**：`~/Library/Logs/zelin-ai-assistant/*.launchd.log` 与旧
+  `state/*.launchd.log` 是取证材料，删除是 owner 手动动作。
+- 判例：`tests/test_install_launchd_retire.py`（真跑 install.sh 函数 + 假
+  launchctl）、`tests/test_doctor.py` 孤儿组。

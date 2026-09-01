@@ -2,13 +2,15 @@
 // app.tsx 保持薄——页面组件作为 children 传进来，这里只管壳层关注点：
 //   1. 整页状态分派：首载 loading / 从未加载成功且离线（诚实空态+恢复路径）/ 正常渲染页面；
 //   2. <html lang> 与 document.title 随语言同步；
-//   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）。
+//   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
+//   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话）。
 import { useEffect, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { refreshBoard, useAppState } from "../../store";
 import { EmptyState } from "./EmptyState";
 import { ErrorBanner } from "./ErrorBanner";
 import { HeaderBar } from "./HeaderBar";
+import { PipelineBanner } from "./PipelineBanner";
 
 export interface AppShellProps {
   /** 透传给 HeaderBar 的搜索/过滤槽位（A8 组件经 app.tsx 注入） */
@@ -73,6 +75,8 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
     <div className="shell">
       <HeaderBar searchSlot={searchSlot} />
       <ErrorBanner />
+      {/* §47.4 管线健康（后台服务卡住/崩/停）——与离线横幅互斥，见组件头注 */}
+      <PipelineBanner />
       <main className="shell-main">{content}</main>
     </div>
   );

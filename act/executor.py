@@ -511,6 +511,38 @@ class DispatchError(RuntimeError):
     """
 
 
+class DispatchBackingOff(DispatchError):
+    """The retry backoff window is still open — nothing was launched and
+    NOTHING on the card changed. actd must treat this as a no-op (no write,
+    no traceback): re-recording the stored error every pass is what turned
+    one failing card into 98% of all registry writes (2026-08-31 storm)."""
+
+
+class DispatchHalted(DispatchError):
+    """The dispatch-storm brake tripped (or had already tripped): the card
+    stays APPROVED but is no longer retried — ``execution.dispatch_halted``
+    parks it in the blocked lane until the owner re-approves it (§4)."""
+
+
+# execution keys that belong to ONE dispatch streak. A fresh approval wipes
+# them (approve = the re-arm verb after a halt); a successful launch rebuilds
+# execution wholesale, so they never survive into a live run either.
+DISPATCH_STREAK_KEYS = (
+    "dispatch_attempts", "last_dispatch_attempt_at",
+    "dispatch_error_class", "dispatch_class_streak",
+    "dispatch_halted", "dispatch_halted_at",
+)
+
+
+def dispatch_error_class(err: Optional[str]) -> str:
+    """The failure class a launch error counts under for the storm brake:
+    the §25 catalog id, or ``"unclassified"`` for everything else. Unknown
+    errors pool into ONE class on purpose — a message whose text drifts
+    (pids, timestamps) must still trip the brake, and a genuinely flapping
+    cause is still a storm."""
+    return failures.classify(err) or "unclassified"
+
+
 def _runner_env() -> dict:
     """Ensure ANTHROPIC_API_KEY is set for the claude subprocess.
 
@@ -727,7 +759,15 @@ def dispatch(
     raised. Retries back off exponentially (30s·2^attempts, capped 10 min, the
     reconcile_executing curve) via ``dispatch_attempts``/
     ``last_dispatch_attempt_at``, which survive actd's last_error clearing;
-    while the window is open the launch is skipped entirely.
+    while the window is open the launch is skipped entirely
+    (``DispatchBackingOff`` — nothing on the card changes).
+
+    Storm brake (§4, v0.48.4): ``cfg.dispatch_max_failures`` (default 5, 0 =
+    off) consecutive failures of the same :func:`dispatch_error_class` set
+    ``execution.dispatch_halted`` — the card stays APPROVED but is never
+    retried again (``DispatchHalted``), gets a ``[dispatch-halted]`` notes
+    line + one notification, and the dashboard projects it into the blocked
+    lane. A fresh approve (after 退回提案) clears :data:`DISPATCH_STREAK_KEYS`.
     """
     if cfg is None:
         cfg = config.load_config()
@@ -739,6 +779,12 @@ def dispatch(
     config.ensure_state_dirs()
 
     ex = dict(req.execution or {})
+    if ex.get("dispatch_halted"):
+        # §4 storm brake already tripped: no launch, no bookkeeping — the card
+        # waits in the blocked lane for a fresh approval (actd skips halted
+        # cards before calling us; this is the guard for direct callers).
+        raise DispatchHalted(str(ex.get("last_error")
+                                 or "dispatch halted after repeated failures"))
     attempts = int(ex.get("dispatch_attempts") or 0)
     if attempts:
         last_try = _parse_when(ex.get("last_dispatch_attempt_at"))
@@ -746,11 +792,12 @@ def dispatch(
             backoff = min(600, 30 * (2 ** min(attempts, 5)))
             elapsed = (_dt.datetime.now(_dt.timezone.utc) - last_try).total_seconds()
             if 0 <= elapsed < backoff:
-                # still backing off — no launch. Raise the STORED error text
-                # verbatim so actd's re-record is a stable fixpoint (no prefix
-                # stacking) and the queued card keeps showing it.
-                raise DispatchError(str(ex.get("last_error")
-                                        or "dispatch launch failed; retry backing off"))
+                # still backing off — no launch, nothing changed on the card.
+                # The STORED error text rides along verbatim so any caller
+                # that does re-record sees a stable fixpoint (no prefix
+                # stacking); actd treats the subclass as a pure no-op.
+                raise DispatchBackingOff(str(ex.get("last_error")
+                                             or "dispatch launch failed; retry backing off"))
 
     target = Path(req.target_repo).expanduser() if req.target_repo else cfg.target_repo_path
 
@@ -822,16 +869,42 @@ def dispatch(
         ex["dispatch_attempts"] = attempts + 1
         ex["last_dispatch_attempt_at"] = now
         ex["log"] = str(log_path)
+        # §4 storm brake: count CONSECUTIVE failures of the same class; a
+        # different class restarts the streak (a real cause change deserves
+        # its own retries), a success rebuilds execution and wipes it all.
+        klass = dispatch_error_class(err)
+        streak = (int(ex.get("dispatch_class_streak") or 0) + 1
+                  if ex.get("dispatch_error_class") == klass else 1)
+        ex["dispatch_error_class"] = klass
+        ex["dispatch_class_streak"] = streak
+        limit = int(getattr(cfg, "dispatch_max_failures", 5) or 0)
+        halted = limit > 0 and streak >= limit
+        fid = failures.classify(err)
+        if halted:
+            ex["dispatch_halted"] = True
+            ex["dispatch_halted_at"] = now
+            # notes breadcrumb (§38.2 spirit: the card carries its own
+            # history) — the hint is the catalog sentence when classified,
+            # otherwise the raw error's first line.
+            hint = failures.user_message(fid) or (err.splitlines() or [err])[0][:200]
+            tag = (f"[dispatch-halted] 派发连续失败 {streak} 次（{klass}），"
+                   f"已停止自动重试：{hint} [@{now}]")
+            req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
         req.execution = ex
-        save(req)  # status untouched — stays APPROVED for the next-pass retry
+        save(req)  # status untouched — stays APPROVED (retry, or parked if halted)
         analytics.log_event("dispatch_failed", req=req.id, error=err[:120],
                             reason=reason, attempt=attempts + 1)
+        if halted:
+            analytics.log_event("dispatch_halted", req=req.id, failure_id=fid,
+                                attempts=attempts + 1, streak=streak)
+            notify.notify(*notify.msg_dispatch_halted(
+                req.title or req.id, streak, failures.user_message(fid)), req=req.id)
+            raise DispatchHalted(err[:500])
         if attempts == 0:  # once per failure streak, not on every retry
             # classified reason in the notification body — "任务派发失败" with
             # zero clue left the 2026-07-08 outdated-claude loop undiagnosed
-            reason = failures.user_message(failures.classify(err))
-            notify.notify(*notify.msg_dispatch_failed(req.title or req.id, reason),
-                          req=req.id)
+            notify.notify(*notify.msg_dispatch_failed(
+                req.title or req.id, failures.user_message(fid)), req=req.id)
         raise DispatchError(err[:500])
 
     # dispatch lifecycle timing (metadata): seconds the card waited between

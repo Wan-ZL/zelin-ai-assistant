@@ -861,6 +861,43 @@ def build_dashboard(
                 }
             )
 
+        elif req.status == State.APPROVED.value and (
+                isinstance(req.execution, dict)
+                and req.execution.get("dispatch_halted")):
+            # §4 派发风暴刹车已触发：卡仍 approved，但 actd 不再重试——投影进
+            # 「需输入」列（blocked 行形），而不是在 运行中 列顶着「排队中」
+            # 装忙（宪法 3：诚实的健康报告）。question 是固定文案：这里没有
+            # agent 在提问，说的是事实和唯一出口（停止 → 退回提案 → 重批）。
+            ex = req.execution
+            fid = failures.classify(ex.get("last_error"))
+            hint = failures.user_message(fid) or _s(ex.get("last_error")) or ""
+            n = int(ex.get("dispatch_class_streak") or ex.get("dispatch_attempts") or 0)
+            row = {
+                "id": _s(req.id),
+                "name": _s(req.title or req.id),
+                **_title_fields(req),
+                "session_id": None,
+                "short_id": None,
+                "copy_cmd": None,
+                "agent_name": None,
+                "state": "blocked",
+                "waiting_for": None,
+                "question": failures.pick(
+                    f"派发连续失败 {n} 次，已停止自动重试：{hint}。修好原因后点"
+                    "「停止」选「退回提案」，再重新批准即恢复派发",
+                    f"Launch failed {n} times in a row; auto-retry stopped: {hint}. "
+                    "Fix the cause, then press \"Stop\" → \"Discard & re-propose\" "
+                    "and approve again to resume"),
+                "last_error": ex.get("last_error"),
+                "last_error_id": fid,
+                # add-only（decodeIfPresent）：告诉客户端这是刹车行，不是 agent
+                # 在等回答——web 据此隐藏「回答…」、显示派发次数 chip。
+                "dispatch_halted": True,
+                "dispatch_attempts": int(ex.get("dispatch_attempts") or 0),
+                **_opt("origin_trust", getattr(req, "origin_trust", None)),
+            }
+            needs_input.append(row)
+
         elif req.status == State.APPROVED.value:
             # §2 queued 项：已批准但还没（成功）派发 —— 混入 running 分区，✅ 一点
             # 下去立刻有回显。没有会话可 attach，所以无 session_id/copy_cmd；

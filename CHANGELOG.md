@@ -25,6 +25,21 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.4] - 2026-09-01
+
+2026-08-31 live 审计挖出的三条静默失效(#89):launchd 起的 claude 读不到外置卷上的任务目录、每次派发都死却无限重试(claude 自己把 EPERM 猜成「low max file descriptors」,首版跟着猜错,09-01 审查证伪后修订)、actd 进程活着但循环卡死 2.5 小时无人知、v0.21 退役的 agent 又跑了 51 天。三条都各自加了「让它被看见 + 让它停下」的机制;第一条的修法在 owner 手里(TCC 开关),本版只保证它被诚实地看见、分类、指路。
+
+### Fixed
+- **launchd 起的 claude 对任务目录 TCC-blind**(CONTRACT §55 第三幕、§25 `claude_blind`):派发失败原文 `An unknown error occurred, possibly due to low max file descriptors (Unexpected)` 是 Bun 对未映射 errno 的统一猜测,真因是 EPERM——macOS 按可执行文件路径授「完全磁盘访问」,launchd 会话里的 claude(`~/.local/share/claude/versions/<v>`,每次更新换路径)没有授权,任务 repo 又在外置卷上。一次性 launchd job 实测:同 binary 同上限,cwd=$HOME 好、cwd 在外置卷死,同 job 里 homebrew node 直接报 EPERM;TCC 台账里 claude 2.1.251 的 denied 行落款正是首次失败那一分钟。`failures` 目录新增 `claude_blind`(句子写明两条出路:给 claude 当前版本开完全磁盘访问——每次更新后重做;或把 repo 放回启动盘家目录),doctor 新行 **`launchd claude`**——在一次性 launchd job 里以默认工作 repo 为 cwd 跑 `claude --version`,终端里看不见的失败只能这样问出来(FAIL `claude_blind`;探针 `AIASSISTANT_LAUNCHD_PROBE=0` 可关)。**本版不声称该事故已修复**:live 机器上 doctor 此行仍 FAIL,修法需 owner 亲手点 TCC;验收 = 该行 OK 且一张重批的卡真到 executing。结构性根治(有授权的 GUI app 托管 actd)记入 vnext2-plan 待拍板。
+- **资源上限改为只抬 soft**:launchd 默认 soft 256 / hard unlimited。首版给全部模板加了 `SoftResourceLimits` + `HardResourceLimits` 8192——实测 hard 键把 unlimited 压成 8192,只降不升;现在模板只带 `SoftResourceLimits.NumberOfFiles = 8192`(余量,不是任何已知事故的修法),systemd 单元镜像 `LimitNOFILE=8192:524288`(soft:hard,裸 8192 会把两把都设成 8192)。`fd_limit` 只留给真句柄耗尽(EMFILE/ENFILE/`FdQuotaExceeded`),句子不再提派发失败;doctor `launchd fd limit` 行:soft 缺失/过低 WARN,**出现 hard 键也 WARN**(hotfix 形状)。**升级需重跑 `bash install.sh`**去掉 hotfix 的 hard 键。
+- **`failures` 目录补 `claude_bypass_disclaimer`**(#89 的原始报告:`--bg` 在本机接受过一次「跳过权限确认」免责声明之前拒启,新装机几乎必撞;此前落成 `dispatch_error_id=null`)。doctor 的装机预检暂缺——claude 没有文档化的接受标记可读。
+- **派发风暴刹车**(CONTRACT §4.1):同一失败类别连续失败 N 次(`execution.dispatch_max_failures`,默认 5,0 = 关)后卡停止自动重试——`execution.dispatch_halted`、卡上一行 `[dispatch-halted]` 记录、一条通知,投影进「需输入」列(不再在运行中列顶着「排队中」装忙);web 隐藏「回答…」只留「停止」。重新上膛 = **进入 approved 的每条路径**(owner 批准、hand 卡免批通道)都清掉整条失败台账,退回提案本身也清——审查复现的死循环(刹车 → 退回提案 → 免批带着刹车再进 approved → 永远停在「需输入」,再点批准是 no-op)已钉判例。退避窗口内 actd 现在**零写盘零 traceback**——此前每个 pass 都重写一次 `last_error_at` + 28 行 traceback。
+- **actd 心跳看门狗**(CONTRACT §47.4):actd 在每个 pass 的每个阶段边界 touch `state/actd.heartbeat`(mtime 为真源,body 带 phase/pid/interval 与写者自定的 `stale_after_s = max(3 × interval, 90)`)。doctor 新行 `actd heartbeat`:进程活着 + 心跳过期 → FAIL `actd_stalled`,修法是 `launchctl kickstart -k`(kill+respawn,不是 reload)。server 新路由 `GET /api/health`(token-light,只 stat 三个文件),web 看板顶部新增管线健康横幅(卡住 / 连崩 / 没跑)——退役中的 Mac app 横幅的替身(parity 1.11)。
+- **退役 launchd label 的卸载必须自证**:`install.sh` 的 RETIRED 步骤此前把 `launchctl bootout` 失败吞进 /dev/null,v0.21 删掉的 `imessageradar` agent 因此又跑了 51 天(23,613 条 traceback、14.5 MB 日志)。现在卸载后再问一次 `launchctl list`,还在就 `[ERR ]` + 给出命令,安装报告落 `launchd_retired=fail`;另扫描带我们前缀却已无模板的孤儿 label(只报告不动手,`launchd_orphans=warn`),doctor 新行 `launchd orphans`(已装载的孤儿 FAIL)。用户日志不删。
+
+### Changed
+- `docs/design/vnext2-plan.md`:决策台账追加 D17(自动部署方案 A)、D18(他人 issue 只摘要)、D19(digest 卡默认 OFF + 频率旋钮)、D20(本次事故与刹车);§5 填入审计的 issue 处置表与 8 条日志教训;新增 §8 进度日志。
+
 ## [0.48.3] - 2026-09-01
 
 真机部署 v0.48.2 时挖到的最后一层:plist 渲染全对、解释器也有 PyYAML,守护**仍然**起不来 —— 因为 macOS 的文件访问授权是**按二进制**发的。
@@ -2028,7 +2043,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...HEAD
+[0.48.4]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...v0.48.1

@@ -53,6 +53,41 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 没有任何候选 python3 带 PyYAML 时 install.sh 直接报 `[ERR ]` 并给出 pip 命令。若所有候选都过不了 launchd 那道闸门(例如机器上只有一个 python),它会照实说,这时再手动给那个解释器二进制授「完全磁盘访问」:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴解释器路径。
 
+## 派发反复失败:`possibly due to low max file descriptors`(实为 claude 读不到任务目录)
+
+**症状**:卡批准后每次派发都失败,错误 chip 写着 `An unknown error occurred, possibly due to low max file descriptors (Unexpected)`;`state/actd.log` 每十几秒一条 `dispatch: R-xxx FAILED`;终端里手跑 `claude --bg` 正常。v0.48.4 起同一张卡连续失败 5 次后会**停止重试**并挪到「需输入」列,通知与卡片都写明原因(CONTRACT §4.1、§25 `claude_blind`)。
+
+**原因**(CONTRACT §55 第三幕):**不是**文件句柄。claude 是 Bun 编译的单文件程序,Bun 把它不认识的 errno 统一渲成这句猜测(真正的句柄耗尽它会写 `ProcessFdQuotaExceeded` / `EMFILE`)。这里的 errno 是 **EPERM**:macOS 按可执行文件路径授「完全磁盘访问」,终端里的 claude 继承终端的授权,launchd 起的 claude 只看它自己那一行——而 `~/.local/share/claude/versions/<版本>` 每次更新都是新路径,从来没被授权过。任务 repo 在外置卷(或 ~/Documents、~/Desktop、~/Downloads)上时,claude 一起来就在 `getcwd` 上被拒。2026-08-31 这台机器把 `~/Projects` 搬到外置卷后当天就撞上;当晚给 plist 加 8192 上限的 hotfix 生效后又失败了 11 次(`Current limit: 8192`),这才是证伪。
+
+**确认**:`python3 -m act.doctor` 的 `launchd claude` 行——它在一个一次性 launchd job 里以默认工作 repo 为 cwd 跑 `claude --version`(终端里跑永远是好的,只有 launchd 会话能复现):FAIL `claude_blind` = 就是本条;WARN 且写着 never exited = cwd 在 ~/Documents 这类会弹提示的目录,job 没有界面所以挂住。旁证:`~/.local/share/claude/versions/<版本>` 出现在「完全磁盘访问」列表里且**未打开**——被拒过一次 macOS 就会把它列出来。
+
+**修复**(两条路,选一):
+
+1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → 打开 claude 当前版本那一项(不在列表里就 `+` → `Command`-`Shift`-`G` 粘贴 `~/.local/share/claude/versions/<版本>`)。**claude 每次自动更新后要重做**——授权跟路径走。
+2. 把任务 repo 放回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),改 `config.yaml` 的 `execution.default_target_repo`。
+
+然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上把停住的卡「停止 → 退回提案」再批准一次(批准会清掉整条失败台账;hand 卡免批通道也会自动接手)。一张卡真的到「执行中」才算修好。结构性根治(一次授权、子进程全继承)是由有授权的 GUI app 托管后台服务,记在 `docs/design/vnext2-plan.md` 等 owner 拍板。
+
+**附带的资源上限**:launchd 给后台任务的默认是 soft `ulimit -n` 256 / hard unlimited。模板自 v0.48.4 起只抬 soft 到 8192(余量);**不要**再手加 `HardResourceLimits`——它把 unlimited 压成 8192,doctor `launchd fd limit` 行会 WARN,重跑 `bash install.sh` 即去掉。
+
+## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
+
+**症状**:看板顶部横幅「后台服务卡住了」/ doctor `actd heartbeat` 行 FAIL `actd_stalled`;`state/dashboard.json` 与 `actd.log` 的 mtime 几小时不动,`launchctl list | grep actd` 却给出 pid,没有子进程。2026-08-31 22:31 这台机器就这样静默了 2.5 小时。
+
+**原因**:进程没死,主循环卡住了(卡在某个 pass 阶段,或 `time.sleep` 之后再没醒)。§47.3 的 `loop_health.json` 只数 pass **崩溃**,它没崩所以一路 0;`launchctl` 只知道 pid 在。v0.48.4 起 actd 在每个 pass 的每个阶段 touch `state/actd.heartbeat`(CONTRACT §47.4),心跳超过 `max(3 × interval, 90)` 秒没动 = 卡死。
+
+**确认**:`python3 -m act.doctor`(`actd heartbeat` 行会说最后一次心跳的阶段与多久之前);或 `curl -s http://127.0.0.1:47820/api/health`(`verdict: "stalled"`)。
+
+**修复**:kill+respawn,**不是** reload:`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`(Linux:`systemctl --user restart zelin-actd.service`)。重启后心跳恢复,横幅自动消。反复出现请把 `state/actd.heartbeat` 里的 `phase`(卡死时的阶段)带进 issue。
+
+## `launchctl list | grep zelin` 里有仓库早已删掉的 agent(孤儿)
+
+**症状**:doctor `launchd orphans` 行 FAIL/WARN `launchd_orphan`,或 `~/Library/Logs/zelin-ai-assistant/<name>.launchd.log` 疯长(2026-08-31 审计:`imessageradar` 退役 51 天还在跑,23,613 条 traceback、14.5 MB)。
+
+**原因**:旧版 install.sh 卸载退役 label 时把 `launchctl bootout` 的失败吞掉了。v0.48.4 起卸载会自证(失败就 `[ERR ]` + 安装报告 `launchd_retired=fail`),并列出带 `com.zelin.aiassistant.` 前缀却已无模板的 label(只报告不动手)。
+
+**修复**:重跑 `bash install.sh`(RETIRED 名单里的会被卸载并验证);不在名单里的孤儿手动 `launchctl bootout gui/$(id -u)/<label> && rm ~/Library/LaunchAgents/<label>.plist`。日志文件是取证材料,脚本不删——确认不需要后自己 `rm`。
+
 ## launchd 任务读不到 ~/Documents:radar 扫到空 vault,零报错
 
 **症状**:vault 里明明有新笔记,radar 却什么都扫不出来,日志无报错。

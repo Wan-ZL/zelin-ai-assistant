@@ -62,6 +62,21 @@
         <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
+    <!-- fd soft limit (CONTRACT §55): a launchd gui-domain job starts with
+         `ulimit -n 256` soft / unlimited hard. The soft raise is headroom for
+         the daemon and its children — it was NOT the 2026-08-31 dispatch
+         failure (that was TCC: the claude binary could not read a task folder
+         on an external volume; Bun reported the EPERM as "possibly due to low
+         max file descriptors" and 8192 changed nothing). HardResourceLimits is
+         deliberately ABSENT: launchd's default hard limit is unlimited and
+         setting it only lowers the ceiling (verified: Soft+Hard 8192 ->
+         [8192, 8192]; Soft only -> [8192, unlimited]). -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
     <!-- ~/Library/Logs, NEVER under the repo — same spawn-time rule as
          WorkingDirectory above (launchd opens these paths pre-exec). -->
     <key>StandardOutPath</key>
