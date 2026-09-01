@@ -121,9 +121,12 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 | P3 | 老代码达标重构(CRAP ≤ 6),按变异测试结果先补洞再拆函数;actd.py 等超限文件拆分 | 网已在 | 全仓库 CRAP ≤ 6;文件/函数上限无非豁免违规;全套件 + 变异绿 | 每函数一 PR,可单独 revert |
 | P4 | web 补齐设置/录制/权限/doctor/看板动作;shell 承接字幕/通知/screenpipe;旧 app 改名 -old | 退役前置 | s4 清单全部 EXISTS;owner 一周日用无需打开旧 app | 旧 app 仍可启动 |
 | P5 | 每日循环 + 维护(去重/过时/合并/UI 提示)+ 设置项 + 素材库(存储/设置入口/弹窗) | 依赖 P1(事务)与 P2(变异结果作输入) | 连续 3 天自动运行有记录;提案 ≤5/天;维护摘要出现在看板 | 关闭循环开关 |
+| P5b | **会议 recap**(issue #129,owner 拍板 2026-09-01):`act/recap.py --once` 挂在既有 30 分钟 screenpipe cron 之后,只读 `~/.screenpipe/db.sqlite` 做**确定性** meeting-session 判定(不调 LLM;gap > 5 min 切 session、CLOSED = 静默 ≥ 5 min 且无 pending 转写、dedup key 一场一份);CLOSED 后生成 5 行 copy-only recap(中英同产);**无发送路径**——不是卡、不进 registry/dispatch、JSON 无 recipient/channel 字段、生成 argv `--tools ""` 由测试钉死,唯一出口是剪贴板;Settings 开关 `recap.slack_draft.enabled`(**默认关**)开后仅经 Slack MCP 白名单 `slack_send_message_draft` 投**草稿**,发送键仍在人手里;页面落 web 看板(D3),dashboard 只多 add-only 顶层 `recaps[]` | 不依赖任何阶段;排在 P2 之后,新代码出生即受 QA 仪表约束 | 一场真实会议 → 恰好一份 recap;`tests/test_recap_no_egress.py` 钉 argv;开关关时 argv 无任何 Slack 工具;开关开时白名单无 send/schedule/reaction | 摘掉 cron 挂点;`state/recap/` 可整目录删 |
 | P6 | 自动 PR 通道:`self_improve` 渠道、本仓库白名单、草稿 PR 校验、敏感路径护栏、PR 评论/CI 红捕捉 | 依赖 P0 护栏 + P5 循环 | 一张自提案卡端到端到草稿 PR 且 CI 绿;owner 评论被下一轮捕捉 | 关闭通道开关 |
 | P7 | skill 商店 + 测试 skill;agent 收工前自动跑测试 skill | 独立 | 两台机器同步验证;PR 附结构化报告 | — |
 | P8 | owner 明确下令后:卸载旧 app、删除 `mac/` 看板代码、CONTRACT 墓碑 | 只等 owner 一句话 | — | git revert |
+
+**P6 附注——AI 完成度评语 + 一句话摘要**(issue #128,proposal,2026-09-01):待验收卡在**验收时刻**附带证据(deliverable manifest:PR / CI 状态 / 文件数 / 触碰的保护路径)与一句 ≤40 字白话摘要,内容变化(新 run、打回、编辑)即重生成;AI 三态评语「建议验收 / 需继续做 / 需要拍板」各带一行理由(引用未满足的 DoD 条目)。**仅为建议**:永不自动验收,验收 / 打回只有人能按(§0 审批边界不动;与 R2.3.6「结构化测试报告是加分项不是通行证」同理)。
 
 ## 5. 审计结果补充(2026-09-01 issues/logs/suggestions 审计,摘自 `~/Downloads/brainstorm/AUDIT-ISSUES-LOGS-SUGGESTIONS.md`;处置同步到 GitHub 是 tracker hygiene 步骤)
 
@@ -165,6 +168,44 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 ### 5.4 Open decisions(审计留的 6 问,默认值)
 
 Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC 重授权;Q2 screenpipe 进程归属 → **shell 原生子进程**;Q3 weekly_digest automation ideas → **停铸**(D19);Q4 stale 阈值 → **45 d + guards**,`stale:*` retention 90 d,先 pin 那 40 张;Q5 loop cap → **config 5、首月跑 2**,前两周走人工审批 lane;Q6 DRAFT PR token → **owner fine-grained PAT**(无 workflow scope);**Q7(PR-A 审查新增)** launchd 会话里的 claude 读不到外置卷 repo(D20)→ 默认建议 **shell app 托管 actd**(一次授权全继承,与 R2.2.3「shell 内最小原生残留」同车),过渡期 owner 手动给 claude 当前版本开完全磁盘访问、每次更新后重做;P6 开通前必须已解。
+
+### 5.5 GitHub 处置 2026-09-01(§5.1 的执行记录;每条 issue 上都有引用证据的评论)
+
+新建 label 七枚:`loop-seed`(每日循环 seed)、`needs-owner`(非 owner 作者,D18 只做摘要)、`mac-retire`(随 P4 re-home)、`素材库-idea`(产品想法,§2.5 落地后迁入)、`owner-decided` / `proposal` / `decision-needed`(owner 新 issue 三档)。
+
+| Issue | 动作 | 理由(证据) |
+|---|---|---|
+| #10 archive old entries | **关闭(done)** | `archive_stale` `act/actd.py:2405`、`archive_after_days`=30 `act/lib/config.py:248`、`registry.ARCHIVE_DIR`;CONTRACT §10;store2(#126)后性能动机也消失 |
+| #22 Windows/Linux port | **关闭(done,milestone 1)** | `install-linux.sh` 277 行、`install.ps1` 272 行、`docs/LINUX.md`、`docs/WINDOWS.md`、CI `tests-windows`(`ci.yml:114`);剩余 = #90 的 PWA;去 help-wanted |
+| #89 dispatch unactionable、#119 retire needs-input | 已由 #125 / #126 关闭 | 本轮无动作 |
+| #17 Swift test infra | **关闭(superseded)** | `mac/LogicTests` SPM + CI `swift test` 已在;mac/ 退役(D3)且 §3 禁在其上做 QA;真缺口 = shell/ 零测试 → P2/P4 |
+| #9 Settings unsaved changes | **关闭(superseded)** | v0.14 起 diff-write on change(`Settings.swift:3-5`,§15.3),前提不存在;Mac Settings 退役 |
+| #13 naming decision | **关闭(superseded)** | shell 已是 `com.zelin.ai-board`;TCC 重授权 / 旧 launchd label bootout 并入 Mac-retire 清单(§5.4 Q1) |
+| #26 insights auto-file issues | **关闭(superseded)** | 方向反了(→ 提案卡不 → issue);fingerprint dedupe + 每日 cap 两条约束已进 §2.4(D10) |
+| #7 capture_id | 留开,`mac-retire` | 全仓零 `capture_id`;症状只在 `mac/Sources/PendingSweep.swift` 的乐观占位,web `LaneComposer` 无 ghost;P4 若加 optimistic echo 再以 add-only 复活 |
+| #18 #19 #15 #16 #11 #8 #37 | `loop-seed` | 自包含、可验证,P5/P6 首批 seed(顺序见 §5.3 E) |
+| #90 Windows shell(Carol929) | `needs-owner` | 非 owner 作者 → D18 摘要制;技术上只做 PWA manifest |
+| #29 #28 #27 quiet hours / retention UI / recording schedule | `mac-retire` | 通知 relay / 设置页 / 录制控制随 P4 re-home 到 web+shell 后再 scope |
+| #23 commitments ledger | `素材库-idea` | 产品想法非缺陷,素材库(§2.5)落地后迁入并关 |
+| #20 Usage Insights(bot,pinned) | 不动 | 每日循环输入源(R2.4.2) |
+| #129 会议 recap | `owner-decided` | owner 拍板 → 本文 P5b 行 |
+| #128 完成度评语 + 摘要 | `proposal` | → 本文 P6 附注 |
+| #127 R-number 在 detected 时分配 | `decision-needed` | 三个选项(文档化 / 两段 id / 单独 approval 序号)待 owner;方案 2 改 id 契约需迁移 |
+
+**dependabot #108–#117(全部先 `@dependabot rebase` 再看绿 CI;actions 的 SHA pin 逐个与上游 tag 比对一致;新 major 全部只是 Node 24 运行时,GitHub-hosted runner 满足,本仓库无 `pull_request_target`/`workflow_run`、setup-python 无 `pip-install` 入参、github-script 脚本不 `require('@actions/github')`)**:
+
+| PR | 结果 |
+|---|---|
+| #112 checkout 4.3.1→7.0.1 | merged `52e5cd3` |
+| #109 setup-python 5.6.0→7.0.0 | merged `3330a54` |
+| #110 setup-node 6.5.0→7.0.0 | merged `d9a2c2f` |
+| #108 attest-build-provenance 3.0.0→4.2.2 | merged `50594a2`(v4 = `actions/attest` 的 wrapper,入参不变) |
+| #111 github-script 7→9 | merged `c619448` |
+| #116 jsdom 25→30 | merged `1adbf1c`(engines `^22.22.2`,CI 解析到 Node 22.23.2;本地 build + 159 tests 绿) |
+| #113 vitest 3→4 | merged `e1b2f25`(本地 build + 159 tests 绿;jsdom 合并后重新 rebase 再过 CI) |
+| #117 typescript 5.7→7.0(Go 原生编译器,20 个平台二进制全在 lockfile) | merged `02bf1c7`(本地验证 `tsc --noEmit` 仍会抓类型错、tsconfig 零弃用警告、build + 159 tests 绿;vitest 合并后再 rebase 一次才合) |
+| #114 @vitejs/plugin-react 4→6 | **关闭 + `@dependabot ignore this major version`**:peer 硬依赖 `vite@^8`;实测 vite 8 + vitest 3 会出现两份 vite、`vite.config.ts` 的 `test` 键 tsc 报错——是 vite 8 + vitest 4 + plugin-react 6 三 major 联动,P4 一次做;做 vite 8 时 `@dependabot unignore this dependency` |
+| #115 react 18→19 | **关闭(不 ignore)**:PR 只抬了 react + @types/react,react-dom 留在 18 → ERESOLVE,结构上装不上;本地四包齐升 tsc / build / 159 tests 零改动全绿(bundle 271→322 KB),React 19 可行,留给 P4 一次四包同 PR 落;dependabot 无 `groups:` 会继续产半截 bump |
 
 ## 6. 对话记录(owner 原话摘录,按主题)
 
@@ -220,3 +261,4 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 | 2026-09-01 | `fix/launchd-fd-storm-heartbeat`(PR-A,#89) | P0 前置止血(审计 L1/L2/L3) | launchd 模板只抬 soft fd 上限(hard 不设,实测 hard 键只降天花板)、systemd `LimitNOFILE=8192:524288`;`failures.claude_blind`(Bun 猜测句 = TCC EPERM,真因)+ `fd_limit` 只留真 EMFILE;doctor `launchd claude` 探针(一次性 launchd job);派发风暴刹车(同类连败 5 次 → `dispatch_halted`,进「需输入」列 + 通知,退避窗口零写零 traceback,进入 approved 的每条路径 + 退回提案都清账);actd 每阶段写 `state/actd.heartbeat`,doctor `actd heartbeat` / `launchd fd limit` / `launchd orphans` 三探针,`GET /api/health` + web `PipelineBanner`;install.sh `launchd_retire` 自证 + `launchd_orphans` 报告。本节 + D17–D20 + §5 同 PR 入库。 | §2 / §4.1 / §25 / §47.4 / §49 / §55 |
 | 2026-09-01 | `feat/store2-source-of-truth`（PR-D，#126，v0.48.8） | P1（D2）+ 前置 #119 | **store2 接线为真源**：actd 首 pass 激活协议（整目录备份带 sha256 manifest 永不覆盖 → 从备份迁移 → 导出 → 逐字段比对 → 零差异 + 无并发 YAML 写才写标记；任何差异 = 删库拒绝 + doctor FAIL，无半态）；registry 门面公开 API 双后端逐字一致（callers 零改动）；每日 YAML 导出镜像 `state/registry-export/`（prune 常开）；多进程写者走 BEGIN IMMEDIATE 事务（跨进程判例）；agent 转移墙实际生效（DB trigger + Python 墙，actd 级判例）；白名单接线补行 5 条 + origin_trust 触发器改「只禁升档」；回滚开关 `registry.backend: yaml` 保留一个版本（TROUBLESHOOTING「store2 回滚」）。**同版落地 #119 需输入退役**：受阻/放弃救活的会话按 stop_to_review 收割进待验收（interrupted 标记 + msg_review_interrupted），answer_input/executor.answer/extract_question/msg_needs_input 全退役，needs_input[] 只剩 §4 刹车行。 | §0.1（显式精确化）/ §1 / §2 / §5 / §6 / §24 / §39（tombstone）/ §44.7 / §46.3 / §53（整节改写） |
 | 2026-09-01 | `feat/digest-frequency-knob`(PR #123,v0.48.5) | D19 落地(审计 L7) | `digest.frequency` 旋钮 `off/daily/every2days/weekly` **默认 off**(config + overrides 扁平键 `digest_frequency`);crontab 行改为每天 09:07 不带 `--now`,模块按滚动间隔自闸门(标记 `state/digest.json`),off/未到期静默;doctor 「cron digest」看见旧的 `--now` 行即 WARN;文案 「周一 digest」→「状态摘要」;weekly digest 默认 off、launchd 每小时唤醒静默;automation-idea 提案卡退役且管道代码同版删除(防腐 #6);两个标记写失败只打一行、卡仍落。**UI 未到**:两把旋钮都还没有设置页可点(Mac 不加功能 D3,web 设置页 = P4),P4 前经 config.yaml / overrides 手改。 | §16 / §17 / §24 / §40.7 |
+| 2026-09-01 | `docs/issue-triage-2026-09-01`(docs only,无版本 bump) | tracker hygiene(§5.1 执行) | GitHub 处置落账 §5.5:关 6 个 issue(#10 #22 done;#17 #9 #13 #26 superseded)、#7 留开标 `mac-retire`、七枚新 label 与 17 个 issue 的归类;dependabot #108–#117 八合二关(actions 五 major + jsdom 30 + vitest 4 + TypeScript 7 进 main;plugin-react 6 ignore-major、react 19 关不 ignore,两者归 P4 一次联动);§4 新增 **P5b 会议 recap**(#129,owner 拍板)与 **P6 附注 AI 完成度评语**(#128,proposal)。 | —(纯文档) |
