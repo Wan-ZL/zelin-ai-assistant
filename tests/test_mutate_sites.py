@@ -364,6 +364,19 @@ class MarkdownReportTestCase(unittest.TestCase):
         self.assertIn("Surviving mutants (4)", body)
         self.assertIn("scripts/qa/mutate.py --all", body)  # 本地跑法（无 launchd）
 
+    def test_survivor_list_is_capped_in_markdown(self):
+        report = self._sample_report()
+        survivors = report["modules"]["m1.py"]["survivors"]
+        # 人造一份超帽报告：同一批 survivors 重复到帽 +5
+        many = (survivors * ((mutate.MD_SURVIVOR_CAP + 5) // len(survivors) + 1)
+                )[:mutate.MD_SURVIVOR_CAP + 5]
+        report["modules"]["m1.py"]["survivors"] = many
+        body = mutate.render_markdown(report)
+        self.assertIn("and 5 more", body)  # GitHub issue body 上限的保护帽
+        listed = [line for line in body.splitlines()
+                  if line.startswith("- `m1.py:")]
+        self.assertEqual(len(listed), mutate.MD_SURVIVOR_CAP)
+
     def test_report_json_is_serializable(self):
         report = self._sample_report()
         parsed = json.loads(json.dumps(report))

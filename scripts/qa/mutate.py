@@ -57,6 +57,9 @@ DEFAULT_MUTANT_TIMEOUT = 60
 # 每 N 个变异体落一次 state（正常结束也会落）：预算内被硬杀（workflow 超时、
 # 断电）最多丢 N 个变异体的账，绝不丢整夜。
 CHECKPOINT_EVERY = 20
+# markdown 报告里存活体列表的行数帽（GitHub issue body 上限 65,536 字符；
+# 全量清单永远在 JSON 工件里，md 只是人看的摘要）。
+MD_SURVIVOR_CAP = 200
 
 # 等价变异体高发区的跳过启发（§57）：logging 调用里的改动（级别名、拼串）
 # 几乎不可能被行为测试杀死，全部不铸 site。
@@ -646,8 +649,12 @@ def render_markdown(report):
     lines.append(f"## Surviving mutants ({len(survivors)})")
     lines.append("")
     if survivors:
-        for rel, s in survivors:
+        # GitHub issue body 上限 65,536 字符——列表封顶，全量永远在 JSON 工件里
+        for rel, s in survivors[:MD_SURVIVOR_CAP]:
             lines.append(f"- `{s['location']}` — {s['detail']} (`{s['site']}`)")
+        if len(survivors) > MD_SURVIVOR_CAP:
+            lines.append(f"- … and {len(survivors) - MD_SURVIVOR_CAP} more — "
+                         "full list in the `mutation-report` JSON artifact")
     else:
         lines.append("None — every executed mutant was killed. 测试网无洞（本轮范围内）。")
     lines.append("")
