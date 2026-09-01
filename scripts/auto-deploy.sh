@@ -194,12 +194,16 @@ PY
 
 # §28 relay queue — the app posts it with the product identity. Never fatal,
 # but the failure line carries the child's exception (same rationale as
-# write_state: the live EPERM window was invisible from this log).
+# write_state: the live EPERM window was invisible from this log). notify()
+# itself never raises — a swallowed queue-write failure only returns False —
+# so map False to exit 1 with a hint, or that loss would be silent here too.
 notify() { # $1=title $2=body
     _nerr="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" PYTHONPATH="$REPO_ROOT" \
         "$PY" -c 'import sys
 from act.lib import notify
-notify.notify(sys.argv[1], sys.argv[2])' "$1" "$2") 2>&1 >/dev/null )" \
+if not notify.notify(sys.argv[1], sys.argv[2]):
+    sys.stderr.write("notify.notify returned False (state/notify_queue unwritable?)\n")
+    sys.exit(1)' "$1" "$2") 2>&1 >/dev/null )" \
         || log "notify failed (non-fatal): $1 — $(printf '%s' "$_nerr" | tail -n 1)"
 }
 
@@ -676,7 +680,7 @@ main() {
             rollback "$PREV" "doctor new FAIL after v${VERSION:-?} (persisted through $_attempt runs ${DOCTOR_SETTLE}s apart): $(printf '%s' "$_new" | tr '\n' ' ')" "$TARGET"
             exit 0
         fi
-        log "doctor new FAIL (attempt $_attempt/$DOCTOR_RETRIES): $(printf '%s' "$_new" | tr '\n' ' ')— daemons may still be settling; doctor again in ${DOCTOR_SETTLE}s"
+        log "doctor new FAIL (attempt $_attempt/$DOCTOR_RETRIES): $(printf '%s' "$_new" | tr '\n' ' ') — daemons may still be settling; doctor again in ${DOCTOR_SETTLE}s"
         sleep "$DOCTOR_SETTLE"
         _attempt=$((_attempt + 1))
     done

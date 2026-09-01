@@ -40,7 +40,8 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
   - **store2 迁移感知回滚**：state/store2_truth.json 在本次部署期间出现 → 回滚
     被拒 + 指向 docs/TROUBLESHOOTING.md「store2 回滚」；部署前就在 → 照常回滚；
   - write_state / notify 失败时日志行携带子进程异常（首次实战两行 non-fatal
-    全裸，PermissionError 只在 launchd stderr 里）；
+    全裸，PermissionError 只在 launchd stderr 里）；notify() 吞掉队列写失败只
+    返回 False 的路径同样记行；
   - 每轮都写 last_run（回滚路径、poisoned-sha 跳过也写）；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
   - 日志 1 MB 自压；ff-merge 途中脚本自身被替换也照常跑完（main 包裹）。
@@ -176,7 +177,7 @@ def notify(title, body, subtitle=None, req=None, kind=None):
     if path:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("%s|%s\\n" % (title, body))
-    return True
+    return not os.environ.get("FAKE_NOTIFY_RETURN_FALSE")
 '''
 
 
@@ -875,6 +876,17 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("notify failed (non-fatal)", self.log_text())
         self.assertIn("IsADirectoryError", self.log_text())
+
+    def test_notify_returning_false_logs_the_cause(self):
+        # act.lib.notify.notify() 按内部约定 never raises：队列写失败被吞掉、只返回
+        # False（Codex review P2）——部署脚本的通知是唯一推送通道，静默丢失 = owner
+        # 不知道机器停在坏版本上，所以 False 也必须记一行
+        self.push("0.48.4")
+        (self.live / "README.md").write_text("dirty\n", encoding="utf-8")  # → one notify
+        proc = self.run_script(env={"FAKE_NOTIFY_RETURN_FALSE": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("notify failed (non-fatal)", self.log_text())
+        self.assertIn("returned False", self.log_text())
 
     def test_install_timeout_counts_as_failure(self):
         self.push("0.48.4")
