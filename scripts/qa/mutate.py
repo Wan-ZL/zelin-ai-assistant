@@ -514,7 +514,11 @@ def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
             if clock() >= deadline:
                 budget_hit = True
                 break
-            status = runner(plan.rel, None, plan.tests, mutant_timeout * 5)
+            try:
+                status = runner(plan.rel, None, plan.tests, mutant_timeout * 5)
+            except OSError as exc:  # workspace 里没有该文件等 IO 角落
+                log(f"mutate: baseline IO error for {plan.rel}: {exc}")
+                status = "fail"
             if status != "pass":
                 plan.status = "baseline_failed"
                 pending_map[plan.rel] = []
@@ -535,7 +539,12 @@ def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
                     "status": "error", "line": site.lineno, "col": site.col,
                     "op": site.op, "detail": f"{site.detail} ({exc})"}
                 continue
-            status = runner(plan.rel, mutant, plan.tests, mutant_timeout)
+            try:
+                status = runner(plan.rel, mutant, plan.tests, mutant_timeout)
+            except OSError as exc:
+                # 单变异体的 IO 角落不许崩整轮（宪法第 11 条）——记 error 继续
+                log(f"mutate: workspace error at {plan.rel} {site.site_id}: {exc}")
+                status = "workspace_error"
             outcome = {"pass": "survived", "fail": "killed",
                        "timeout": "timeout"}.get(status, "error")
             plan.results[site.site_id] = {
