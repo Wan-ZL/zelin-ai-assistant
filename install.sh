@@ -30,20 +30,56 @@
 #   the number of failing checks. Installs/changes nothing.
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Physical path of a directory — every symlink resolved (CONTRACT §55).
+# `cd … && pwd -P` is the portable realpath: macOS only grew /usr/bin/realpath
+# recently and the pkg postinstall runs with a minimal PATH.
+physical_path() {
+    ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"
+}
+
+# `pwd -P`, NOT `pwd`: a convenience symlink in the invocation path (the
+# 2026-08-31 incident: ~/Projects -> /Volumes/Storage/Server/Projects) would
+# otherwise be baked into PYTHONPATH / AIASSISTANT_HOME / the home pointer,
+# and launchd-spawned processes are TCC-denied on the external volume through
+# that path shape — every agent died on "No module named 'act'".
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$SCRIPT_DIR"
 LA_DIR="$HOME/Library/LaunchAgents"
+
+# CONTRACT §19/§55 — an interpreter is only usable for the daemons if it is an
+# ABSOLUTE path that can really `import yaml`. 2026-08-31: install.sh pinned
+# /opt/homebrew/bin/python3 (3.14, no PyYAML), so even a correctly rendered
+# PYTHONPATH left every launchd agent exiting 1 in a KeepAlive loop.
+py_imports_yaml() {
+    case "${1:-}" in /*) ;; *) return 1 ;; esac
+    [ -x "$1" ] || return 1
+    "$1" -c "import yaml" >/dev/null 2>&1
+}
+
+# First candidate that passes py_imports_yaml wins; prints nothing and returns
+# 1 when none do (callers report that loudly rather than pinning a dud).
+pick_python() {
+    for _cand in "$@"; do
+        if py_imports_yaml "$_cand"; then printf '%s' "$_cand"; return 0; fi
+    done
+    return 1
+}
+
+# The interpreter pinned by a previous run (CONTRACT §19), "" when unpinned.
+pinned_python() {
+    [ -f "$REPO_ROOT/config/runtime.json" ] || return 0
+    sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        "$REPO_ROOT/config/runtime.json"
+}
 
 # --check: delegate to act/doctor.py — re-validates every runtime assumption
 # (deps, key resolution, launchd agents alive, cron lines, dashboard freshness)
 # symptom-first, one fix line per finding. Exit code = number of FAILs.
 if [ "${1:-}" = "--check" ]; then
+    # prefer the pinned daemon interpreter — it is what launchd/cron run
     DOCTOR_PY="$(command -v python3 || echo /usr/bin/python3)"
-    if [ -f "$REPO_ROOT/config/runtime.json" ]; then
-        # prefer the pinned daemon interpreter — it is what launchd/cron run
-        RJ_PY="$(sed -n 's/.*"python"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/config/runtime.json")"
-        [ -n "$RJ_PY" ] && [ -x "$RJ_PY" ] && DOCTOR_PY="$RJ_PY"
-    fi
+    RJ_PY="$(pick_python "$(pinned_python)" "$DOCTOR_PY" /usr/bin/python3 || true)"
+    [ -n "$RJ_PY" ] && DOCTOR_PY="$RJ_PY"
     cd "$REPO_ROOT" || exit 1
     AIASSISTANT_HOME="$REPO_ROOT" exec "$DOCTOR_PY" -m act.doctor
 fi
@@ -109,8 +145,16 @@ _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 # currently skips launchd) render identically if they ever load agents.
 render_launchd_plist() {
     src="$1"; dest="$2"
-    py="${RUNTIME_PY:-$(command -v python3 || echo /usr/bin/python3)}"
+    # Validated interpreter, never a bare PATH guess: an interpreter without
+    # PyYAML makes every agent exit 1 on `import yaml` before it can log.
+    py="${RUNTIME_PY:-}"
+    py_imports_yaml "$py" || py="$(pick_python "$(command -v python3 || true)" \
+        /usr/bin/python3 || echo /usr/bin/python3)"
     pydir="$(dirname "$py")"
+    # PHYSICAL repo path (CONTRACT §55): the rendered PYTHONPATH /
+    # AIASSISTANT_HOME must not carry a symlink the launchd session cannot
+    # traverse under TCC. Idempotent when REPO_ROOT is already physical.
+    repo="$(physical_path "$REPO_ROOT")"
     claudedir="$HOME/.local/bin"
     [ -n "${CLAUDE_LOGIN_BIN:-}" ] && claudedir="$(dirname "$CLAUDE_LOGIN_BIN")"
     # launchd opens StandardOut/ErrorPath BEFORE exec — the templates point
@@ -120,7 +164,7 @@ render_launchd_plist() {
     mkdir -p "$HOME/Library/Logs/zelin-ai-assistant"
     sed -e "s|/Users/YOURUSERNAME/\.claude-bin|$(_sed_escape "$claudedir")|g" \
         -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
-        -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$REPO_ROOT")|g" \
+        -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$repo")|g" \
         -e "s|/Users/YOURUSERNAME/miniconda3/bin|$(_sed_escape "$pydir")|g" \
         -e "s|/Users/YOURUSERNAME|$(_sed_escape "$HOME")|g" \
         "$src" > "$dest"
@@ -264,25 +308,28 @@ if [ ! -f "$REPO_ROOT/config/redaction_terms.txt" ]; then
     ok "created config/redaction_terms.txt from template (gitignored)"
 fi
 
-# runtime python pointer (CONTRACT §19) — the Mac app shells out to this python
-# for its dependency checks (Swift can't guess the conda env). Detection order:
-#   $AIASSISTANT_PYTHON env -> miniconda python3 (if it can import yaml) -> which python3
+# runtime python pointer (CONTRACT §19) — the interpreter launchd, cron and the
+# Mac app all run. EVERY candidate is validated with `import yaml` before it is
+# pinned (§55): a python that cannot import yaml turns every background agent
+# into a KeepAlive crash loop, and the pointer is what the plists inherit.
+# Order: $AIASSISTANT_PYTHON env -> the existing pin -> miniconda -> the python3
+# this installer found -> /usr/bin/python3.
 mkdir -p "$REPO_ROOT/config"
-RUNTIME_PY=""
-if [ -n "${AIASSISTANT_PYTHON:-}" ] && [ -x "${AIASSISTANT_PYTHON:-}" ]; then
-    RUNTIME_PY="$AIASSISTANT_PYTHON"
-elif [ -x "$HOME/miniconda3/bin/python3" ] && "$HOME/miniconda3/bin/python3" -c "import yaml" >/dev/null 2>&1; then
-    RUNTIME_PY="$HOME/miniconda3/bin/python3"
-else
-    RUNTIME_PY="$PY"
+RUNTIME_PY="$(pick_python "${AIASSISTANT_PYTHON:-}" "$(pinned_python)" \
+    "$HOME/miniconda3/bin/python3" "${PY:-}" /usr/bin/python3 || true)"
+if [ -n "${AIASSISTANT_PYTHON:-}" ] && [ "$RUNTIME_PY" != "$AIASSISTANT_PYTHON" ]; then
+    warn "AIASSISTANT_PYTHON=$AIASSISTANT_PYTHON cannot 'import yaml' — ignored"
 fi
 if [ -n "$RUNTIME_PY" ]; then
     printf '{"python": "%s"}\n' "$RUNTIME_PY" > "$REPO_ROOT/config/runtime.json"
-    ok "config/runtime.json -> $RUNTIME_PY"
+    ok "config/runtime.json -> $RUNTIME_PY (PyYAML importable)"
     report_step "runtime_python" "ok" "$RUNTIME_PY"
 else
-    warn "python3 not found — skipped config/runtime.json (re-run install.sh once python3 exists)"
-    report_step "runtime_python" "fail" "python3 not found"
+    echo "  [ERR ] no python3 with PyYAML found — the launchd agents would die on" >&2
+    echo "         \"No module named 'yaml'\" the moment they spawn." >&2
+    info "fix: $(command -v python3 || echo python3) -m pip install --user --break-system-packages pyyaml"
+    info "  then re-run: bash $REPO_ROOT/install.sh"
+    report_step "runtime_python" "fail" "no candidate python3 can import yaml"
 fi
 
 # claude for the DAEMONS (launchd plists + cron chain) — resolve the binary the
@@ -463,10 +510,11 @@ echo ""
 echo "==> 6. crontab — unified ingest chain + Monday digest (CONTRACT §18)"
 chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || true
 
-# cron runs outside the login shell; prefer the miniconda python (has PyYAML),
-# fall back to whatever python3 the installer found.
-CRON_PY="$HOME/miniconda3/bin/python3"
-[ -x "$CRON_PY" ] || CRON_PY="${PY:-python3}"
+# cron runs outside the login shell — same validated-interpreter rule as the
+# launchd plists (§55): -x alone once picked a miniconda python that had no
+# PyYAML, so every cron radar pass died on `import yaml`.
+CRON_PY="$(pick_python "${RUNTIME_PY:-}" "$HOME/miniconda3/bin/python3" \
+    "${PY:-}" /usr/bin/python3 || echo "${PY:-python3}")"
 
 # cron's PATH is minimal AND user-customizable — pin the login shell's claude
 # dir first so process-screenpipe.sh's `command -v claude` and the radar's

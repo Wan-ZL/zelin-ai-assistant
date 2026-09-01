@@ -3327,8 +3327,33 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   `$HOME`；`python3 -m act.*` 的模块解析改走 `EnvironmentVariables.PYTHONPATH`
   （= repo 根）。repo 路径只允许出现在环境变量值里（`AIASSISTANT_HOME` /
   `PYTHONPATH` / `PATH`）——那些是进程起来之后才被消费的。
+- **渲染进 plist 的 repo 路径必须是 PHYSICAL 路径**（symlink 全解开）。
+  2026-08-31 live 部署的第二起事故：repo 实体在
+  `/Volumes/Storage/Server/Projects/…`，另有便利 symlink
+  `~/Projects -> /Volumes/Storage/Server/Projects`；从 symlink 那侧的 shell 跑
+  install.sh，渲染出的 `PYTHONPATH` / `AIASSISTANT_HOME` / home 指针全是
+  symlink 形状，launchd 起的进程经该形状被 TCC 拒绝，每个 agent 以
+  `ModuleNotFoundError: No module named 'act'` 退出 1、被 KeepAlive 空转重启。
+  三个渲染方在替换**之前**各自解析：install.sh 的 `physical_path()`
+  （`cd … && pwd -P`；`SCRIPT_DIR` 自己也改用 `pwd -P`），两个 Swift 渲染方的
+  `AppPaths.physicalStateRoot`（`resolvingSymlinksInPath`）。`stateRoot` 本身
+  不动——App 自己的文件访问经 symlink 与经实体路径等价，只有 launchd 不是。
 - **解释器 = §19 runtime 指针渲染出的绝对路径**，永不 `/usr/bin/env`（TCC 按
-  binary 计权限，env 间接层让授权漂移）。指针机制本身不变。
+  binary 计权限，env 间接层让授权漂移），且**必须先验证它真能 `import yaml`**。
+  同一次部署的另一个症状：install.sh 挑中 `/opt/homebrew/bin/python3`（3.14，
+  没装 PyYAML），于是即便 PYTHONPATH 正确，agent 照样在写下任何日志之前就死。
+  候选链按序试、取第一个能 import yaml 的：`$AIASSISTANT_PYTHON` → 现有
+  `config/runtime.json` pin → `~/miniconda3/bin/python3` → install.sh 自己找到
+  的 python3 → `/usr/bin/python3`；一个都不过就**大声失败**（install.sh 打
+  `[ERR ]` 并把 `runtime_python=fail` 写进 §23 安装报告，绝不静默 pin 一个坏
+  解释器）。cron 链（§18）与 `install.sh --check` 的 doctor 解释器走同一条链。
+  Swift 侧对称实现：`RuntimePython.importsYAML` + `resolve()` 的惰性候选链。
+- **doctor 迁移探测覆盖以上三条**（`act/doctor.py _check_launchd_paths`）：
+  已安装 plist 的 spawn 前键指向 repo、`AIASSISTANT_HOME`/`PYTHONPATH` 是
+  symlink 形状（都记在 `launchd paths` 一行），或 `ProgramArguments[0]`
+  import 不了 yaml（`launchd python`，恒 FAIL）。修复动作统一是重跑
+  `bash install.sh`；App 的「一键修复」只重渲染 actd，所以 detail 必须点名
+  每一个坏 agent。
 - §32.4 的日志自压缩豁免语义不变：`*.launchd.log` 仍是 launchd 自管、不参与
   进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。
 - 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧

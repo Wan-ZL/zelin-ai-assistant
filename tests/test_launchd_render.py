@@ -11,22 +11,50 @@ EX_CONFIG(78) 拒绝 spawn，把手工修好的 plist 一键打回故障态。
      永不指向 repo（外置卷也一样）；
   2. WorkingDirectory = $HOME，模块解析改走 EnvironmentVariables.PYTHONPATH；
   3. 解释器是渲染注入的绝对路径（CONTRACT §19 runtime 指针），永不
-     /usr/bin/env —— TCC 按 binary 计权限，env 间接层会让授权漂移。
+     /usr/bin/env —— TCC 按 binary 计权限，env 间接层会让授权漂移；
+  4. 渲染进去的 repo 路径是 PHYSICAL 路径（symlink 全解开），解释器是
+     **验证过能 import yaml** 的那个 —— 2026-08-31 live 部署的两个症状：
+     ~/Projects -> /Volumes/… 这条便利 symlink 被渲进 PYTHONPATH，launchd
+     会话经该形状被 TCC 拒绝；同一轮渲染又挑中 /opt/homebrew/bin/python3
+     （3.14，没 PyYAML）。两条合起来 = 每个 agent 都 `ModuleNotFoundError`
+     退出 1 + KeepAlive 空转。
 
-本文件直接执行的是 install.sh render_launchd_plist 替换序的手工镜像（见
-render()），所以它**直接**钉住的是「模板 + install.sh 的序」。另外两个渲染方
-（mac/Sources/Doctor.swift LaunchAgents.install、mac/Sources/SetupWizard.swift
-ActdAgent.renderAndLoad）是同一 5 条替换序的 Swift 手工镜像——注释互相指认、
-由 code review 保持同步；模板层的不变式（路径形状、占位符集合）对它们同样
-成立，但它们的 Swift 代码不在本测试的执行路径里。
+本文件既钉模板形状（render() 是 install.sh 替换序的手工镜像），也**真的执行**
+install.sh 里的 physical_path / pick_python / render_launchd_plist（见
+InstallShRealRenderTestCase）。另外两个渲染方（mac/Sources/Doctor.swift
+LaunchAgents.install、mac/Sources/SetupWizard.swift ActdAgent.renderAndLoad）
+是同一替换序的 Swift 手工镜像——注释互相指认、由 code review 保持同步，物理
+路径那一条另有 mac/LogicTests 的 AppPaths.physical 判例。
 """
+import os
 import plistlib
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "act" / "launchd"
+
+# 模板形状那一组是纯字符串 + plistlib，三个平台都跑；真执行 install.sh 的那
+# 一组是 POSIX-only（见 InstallShRealRenderTestCase）。
+_WIN = sys.platform.startswith("win")
+
+# install.sh 里真正参与渲染的函数（顺序 = 依赖顺序）。测试执行的是从
+# install.sh 抠出来的**原文**，所以脚本改了而测试没改会立刻炸。
+_RENDER_FNS = ("physical_path", "py_imports_yaml", "pick_python",
+               "_sed_escape", "render_launchd_plist")
+
+
+def install_sh_prelude(fns=_RENDER_FNS):
+    """把 install.sh 的这些函数定义逐字抠出来的 bash 片段（eval 即可用）。
+    每个定义都是 `name() {` 开头、行首 `}` 结尾的块。"""
+    return "".join(
+        "eval \"$(awk '/^%s\\(\\) \\{/,/^\\}/' \"$REPO/install.sh\")\"\n" % fn
+        for fn in fns)
 
 # 故意用外置卷路径当 repo root：这正是事故场景 —— 渲染结果里 launchd
 # 需要在 spawn 前触碰的路径（workdir、日志）一个都不许指向它。
@@ -121,6 +149,146 @@ class LaunchdTemplateShapeTestCase(unittest.TestCase):
                                  "%s: ProgramArguments must not carry the repo "
                                  "path (module resolution rides PYTHONPATH)"
                                  % path.name)
+
+
+@unittest.skipIf(_WIN, "install.sh is POSIX-only; the Windows installer is install.ps1")
+class InstallShRealRenderTestCase(unittest.TestCase):
+    """真的跑 install.sh 的函数（不是镜像）——2026-08-31 live 部署判例。
+
+    整个 class 在 Windows 上跳过：这里的每一条都要么直接 `bash -c` 跑 install.sh
+    抠出来的函数、要么经 _render_from/_pick 间接跑，另有四条还要 os.symlink
+    （Windows 上要特权）。install.sh 只在 macOS/Linux 上运行——Windows 侧的
+    安装器是 install.ps1，它有自己的判例。上面那个 class 是纯字符串 + plistlib
+    的模板形状检查，三个平台照跑，不在跳过范围内。
+
+    症状：owner 的 repo 实体在 /Volumes/Storage/Server/Projects/…，另有便利
+    symlink ~/Projects -> /Volumes/Storage/Server/Projects。从 symlink 那侧
+    的 shell 跑 install.sh，渲染出的 PYTHONPATH / AIASSISTANT_HOME 是 symlink
+    形状，launchd 起的进程经该形状被 TCC 拒绝，actd/radar 全部
+    `ModuleNotFoundError: No module named 'act'` 退出 1、KeepAlive 空转。
+    """
+
+    PATH_KEYS = ("PYTHONPATH", "AIASSISTANT_HOME")
+
+    def _tmpdir(self, prefix):
+        d = Path(tempfile.mkdtemp(prefix=prefix))
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        return d
+
+    def _symlinked_repo(self):
+        """<tmp>/phys/repo（实体）+ <tmp>/link -> <tmp>/phys（便利 symlink）。
+        返回 (物理路径, 经 symlink 的等价路径)。"""
+        tmp = self._tmpdir("symlinked-repo-")
+        phys = tmp / "phys" / "repo"
+        phys.mkdir(parents=True)
+        (tmp / "link").symlink_to(tmp / "phys")
+        # tmp 自己在 macOS 上就走 /var -> /private/var，所以物理侧也要 realpath
+        return os.path.realpath(str(phys)), str(tmp / "link" / "repo")
+
+    def _render_from(self, repo_root, py="/usr/bin/python3"):
+        out = self._tmpdir("render-") / "out.plist"
+        # 假 $HOME：render_launchd_plist 会 mkdir 日志目录，别落到真 home 上
+        fake_home = self._tmpdir("render-home-")
+        script = (
+            "set -u\n"
+            + install_sh_prelude()
+            + 'REPO_ROOT="$1"\n'
+            'RUNTIME_PY="$2"\n'
+            'CLAUDE_LOGIN_BIN=/fake/claude-home/claude\n'
+            'render_launchd_plist "$REPO/act/launchd/'
+            'com.zelin.aiassistant.actd.plist" "$OUT"\n'
+        )
+        proc = subprocess.run(
+            ["bash", "-c", script, "bash", repo_root, py],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "REPO": str(REPO), "OUT": str(out),
+                 "HOME": str(fake_home)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        bare = re.sub(r"<!--.*?-->", "", out.read_text(encoding="utf-8"),
+                      flags=re.S)
+        return plistlib.loads(bare.encode("utf-8"))
+
+    def test_render_from_a_symlinked_repo_bakes_the_physical_path(self):
+        phys, linked = self._symlinked_repo()
+        self.assertNotEqual(phys, linked)  # fixture sanity
+        obj = self._render_from(linked)
+        for key in self.PATH_KEYS:
+            self.assertEqual(
+                obj["EnvironmentVariables"][key], phys,
+                "%s must carry the PHYSICAL repo path — a symlinked shape "
+                "leaves the launchd session TCC-denied" % key)
+        # 整份 plist 里都不许再出现 symlink 形状
+        self.assertNotIn(linked, plistlib.dumps(obj).decode("utf-8"))
+
+    def test_script_dir_resolves_the_invocation_symlink(self):
+        # REPO_ROOT = SCRIPT_DIR 还喂着 home 指针（App 的 stateRoot）和 §18 的
+        # cron 行，所以 `pwd -P` 这一条本身也要钉，不能只靠渲染方兜底。
+        phys, linked = self._symlinked_repo()
+        line = next(ln for ln in (REPO / "install.sh").read_text(
+            encoding="utf-8").splitlines() if ln.startswith("SCRIPT_DIR="))
+        probe = Path(phys) / "probe.sh"
+        probe.write_text('set -u\n%s\nprintf %%s "$SCRIPT_DIR"\n' % line,
+                         encoding="utf-8")
+        proc = subprocess.run(
+            ["bash", str(Path(linked) / "probe.sh")],
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, phys,
+                         "install.sh invoked through a symlink must still "
+                         "resolve REPO_ROOT to the physical path")
+
+    def test_render_from_the_physical_path_is_unchanged(self):
+        phys, _ = self._symlinked_repo()
+        obj = self._render_from(phys)
+        for key in self.PATH_KEYS:
+            self.assertEqual(obj["EnvironmentVariables"][key], phys)
+
+    def _fake_python(self, name, imports_yaml):
+        """假解释器：真 python 一个都不起（只是 exit 0 / exit 1 的 shell 壳）。"""
+        p = self._tmpdir("fakepy-") / name
+        p.write_text("#!/bin/sh\nexit %d\n" % (0 if imports_yaml else 1),
+                     encoding="utf-8")
+        p.chmod(0o755)
+        return str(p)
+
+    def _pick(self, *candidates):
+        script = ("set -u\n" + install_sh_prelude(("py_imports_yaml",
+                                                   "pick_python"))
+                  + 'pick_python "$@" || printf ""\n')
+        proc = subprocess.run(
+            ["bash", "-c", script, "bash", *candidates],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "REPO": str(REPO)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def test_pick_python_rejects_an_interpreter_without_yaml(self):
+        # 2026-08-31 第二症状：/opt/homebrew/bin/python3 = 3.14 无 PyYAML
+        no_yaml = self._fake_python("python3", imports_yaml=False)
+        with_yaml = self._fake_python("python3", imports_yaml=True)
+        self.assertEqual(self._pick(no_yaml, with_yaml), with_yaml)
+
+    def test_pick_python_rejects_relative_and_missing_candidates(self):
+        with_yaml = self._fake_python("python3", imports_yaml=True)
+        self.assertEqual(
+            self._pick("python3", "/nonexistent/python3", with_yaml),
+            with_yaml,
+            "only absolute, executable, yaml-importing candidates qualify")
+
+    def test_pick_python_prints_nothing_when_no_candidate_has_yaml(self):
+        no_yaml = self._fake_python("python3", imports_yaml=False)
+        self.assertEqual(self._pick(no_yaml), "")
+
+    def test_render_falls_back_to_a_validated_interpreter(self):
+        # RUNTIME_PY 没验过就不许进 plist：渲染方自己再挑一次
+        phys, _ = self._symlinked_repo()
+        no_yaml = self._fake_python("python3", imports_yaml=False)
+        obj = self._render_from(phys, py=no_yaml)
+        argv0 = obj["ProgramArguments"][0]
+        self.assertNotEqual(argv0, no_yaml,
+                            "an interpreter that cannot import yaml must never "
+                            "reach the plist")
+        self.assertTrue(argv0.startswith("/"), argv0)
 
 
 if __name__ == "__main__":

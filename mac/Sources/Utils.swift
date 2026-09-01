@@ -31,6 +31,21 @@ enum AppPaths {
         }
         return ("~/Projects/zelin-ai-assistant" as NSString).expandingTildeInPath
     }()
+    /// `path` with every symlink resolved. Pure — no I/O beyond the resolution
+    /// itself — so mac/LogicTests can exercise it.
+    nonisolated static func physical(_ path: String) -> String {
+        guard !path.isEmpty else { return path }
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    /// The repo root with symlinks resolved — what the launchd renderers must
+    /// bake into PYTHONPATH / AIASSISTANT_HOME (CONTRACT §55). 2026-08-31: a
+    /// convenience symlink (~/Projects -> /Volumes/…) rendered into the plist
+    /// left the launchd session TCC-denied on the external volume, so every
+    /// agent exited 1 on "No module named 'act'". The app's own file access
+    /// works through either shape, hence stateRoot stays as configured.
+    nonisolated static var physicalStateRoot: String { physical(stateRoot) }
+
     static var dashboardPath: String { stateRoot + "/state/dashboard.json" }
     static var inboxDir: String { stateRoot + "/state/inbox" }
     // §15: the ONLY config file the app writes; config.load_config() merges it last.
@@ -594,20 +609,46 @@ enum Shell {
 // wizard all shell out to python3 the same way launchd does.
 
 enum RuntimePython {
-    /// The interpreter launchd runs: config/runtime.json pointer (CONTRACT
-    /// §19) → login-shell `command -v python3` → /usr/bin/python3.
-    nonisolated static func resolve() -> String {
+    /// True if this interpreter can actually `import yaml` (CONTRACT §55).
+    /// PyYAML is the daemons' one non-stdlib dependency: a python without it
+    /// makes every `python3 -m act.*` exit before it can log anything, which
+    /// is exactly how the 2026-08-31 launchd outage presented.
+    /// Blocking — background queue only.
+    nonisolated static func importsYAML(_ py: String) -> Bool {
+        guard py.hasPrefix("/"),
+              FileManager.default.isExecutableFile(atPath: py) else { return false }
+        return Shell.run(py, ["-c", "import yaml"]).0 == 0
+    }
+
+    /// The pinned interpreter from config/runtime.json (CONTRACT §19), "" when
+    /// the pointer is missing or unreadable.
+    nonisolated static func pinned() -> String {
         let p = AppPaths.stateRoot + "/config/runtime.json"
-        if let data = FileManager.default.contents(atPath: p),
-           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-           let py = obj["python"] as? String, !py.isEmpty {
-            return py
-        }
+        guard let data = FileManager.default.contents(atPath: p),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let py = obj["python"] as? String else { return "" }
+        return py
+    }
+
+    /// The interpreter launchd runs: config/runtime.json pointer (CONTRACT
+    /// §19) → login-shell `command -v python3` → /usr/bin/python3, taking the
+    /// first that passes importsYAML. Candidates are probed lazily, so a
+    /// healthy pin costs one `-c "import yaml"` and no login shell.
+    /// When nothing validates we still return the pointer's answer: the
+    /// doctor's "daemon python" FAIL must stay the thing that reports it,
+    /// rather than the app silently running a different interpreter.
+    nonisolated static func resolve() -> String {
+        let pin = pinned()
+        if importsYAML(pin) { return pin }
+        var shellPy = ""
         let (code, out) = Shell.run("/bin/zsh", ["-lc", "command -v python3"])
         let lines = out.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: "\n")
-        if code == 0, let found = lines.last, found.hasPrefix("/") { return found }
-        return "/usr/bin/python3"
+        if code == 0, let found = lines.last, found.hasPrefix("/") { shellPy = found }
+        if importsYAML(shellPy) { return shellPy }
+        if importsYAML("/usr/bin/python3") { return "/usr/bin/python3" }
+        if !pin.isEmpty { return pin }
+        return shellPy.isEmpty ? "/usr/bin/python3" : shellPy
     }
 
 }

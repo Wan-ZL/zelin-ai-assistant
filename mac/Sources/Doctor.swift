@@ -44,12 +44,17 @@ enum LaunchAgents {
     /// pinned by tests/test_launchd_render.py) and launchctl load it.
     /// Blocking — call from a background queue only.
     nonisolated static func install(label: String) -> (Bool, String) {
-        let root = AppPaths.stateRoot
+        // PHYSICAL repo path (CONTRACT §55): a convenience symlink rendered
+        // into PYTHONPATH / AIASSISTANT_HOME leaves the launchd session
+        // TCC-denied on an external volume — the agent then exits 1 on
+        // "No module named 'act'" forever (2026-08-31 incident).
+        let root = AppPaths.physicalStateRoot
         let template = root + "/act/launchd/\(label).plist"
         guard var text = try? String(contentsOfFile: template, encoding: .utf8) else {
             return (false, L("找不到模板 \(template)——repo 不完整？",
                              "Template missing: \(template) — incomplete repo?"))
         }
+        // §55: PyYAML-validated absolute interpreter, never a bare PATH guess.
         let py = RuntimePython.resolve()
         let pyDir = (py as NSString).deletingLastPathComponent
         let home = NSHomeDirectory()

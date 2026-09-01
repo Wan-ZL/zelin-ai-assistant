@@ -30,6 +30,7 @@ import unittest
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
+from tests.test_launchd_render import install_sh_prelude
 
 from act import ai_fix, doctor
 from act.lib import config, dashboard, failures
@@ -544,9 +545,10 @@ class ClaudePathRenderTestCase(unittest.TestCase):
         script = (
             'set -eu\n'
             'cd "$REPO"\n'
-            'eval "$(grep \'^_sed_escape()\' install.sh)"\n'
-            "eval \"$(awk '/^render_launchd_plist\\(\\) \\{/,/^\\}/' install.sh)\"\n"
-            'REPO_ROOT="$REPO"\n'
+            + install_sh_prelude()
+            + 'REPO_ROOT="$REPO"\n'
+            # unvalidated on purpose: render_launchd_plist must swap in a
+            # PyYAML-capable interpreter of its own (§55)
             'RUNTIME_PY=/fake/py/bin/python3\n'
             + ("CLAUDE_LOGIN_BIN=%s\n" % claude_login_bin
                if claude_login_bin else "")
