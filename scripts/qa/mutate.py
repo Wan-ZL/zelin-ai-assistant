@@ -54,6 +54,9 @@ DEFAULT_JSON = ".qa/mutation/report.json"
 DEFAULT_MD = ".qa/mutation/report.md"
 DEFAULT_BUDGET_SECONDS = 2700  # 45 min——mutation-nightly.yml 的 60 min 顶之内
 DEFAULT_MUTANT_TIMEOUT = 60
+# 每 N 个变异体落一次 state（正常结束也会落）：预算内被硬杀（workflow 超时、
+# 断电）最多丢 N 个变异体的账，绝不丢整夜。
+CHECKPOINT_EVERY = 20
 
 # 等价变异体高发区的跳过启发（§57.8）：logging 调用里的改动（级别名、拼串）
 # 几乎不可能被行为测试杀死，全部不铸 site。
@@ -455,13 +458,15 @@ def round_robin(pending_lists):
 
 def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
                 state, clock=time.monotonic, subset_runner=None, log=print,
-                prune_state=False):
+                prune_state=False, checkpoint=None):
     """全部靶区模块跑一轮（受预算封顶）→ (report dict, state)。
 
     subset_runner 注入缝（测试用假 runner，绝不 spawn）：
         runner(module_rel, mutant_source_or_None, test_files, timeout) -> status
     mutant_source 为 None = baseline（未变异）运行。
     prune_state 只在整个靶区都在跑时开（--all）——单模块运行绝不清别人的账。
+    checkpoint（可选零参回调）每 CHECKPOINT_EVERY 个变异体调一次——caller 用它
+    落 state 文件，硬杀（workflow 超时）最多丢一个窗口的账。
     """
     deadline = clock() + budget_seconds
     state_modules = state.setdefault("modules", {})
@@ -537,6 +542,9 @@ def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
                 "status": outcome, "line": site.lineno, "col": site.col,
                 "op": site.op, "detail": site.detail}
             executed_this_run += 1
+            if checkpoint is not None and \
+                    executed_this_run % CHECKPOINT_EVERY == 0:
+                checkpoint()
     finally:
         if "tmp" in workspace_holder:
             shutil.rmtree(workspace_holder["tmp"], ignore_errors=True)
@@ -703,7 +711,8 @@ def main(argv=None):
 
     report, state = run_targets(
         repo_root, targets, budget_seconds=budget,
-        mutant_timeout=mutant_timeout, state=state, prune_state=bool(args.all))
+        mutant_timeout=mutant_timeout, state=state, prune_state=bool(args.all),
+        checkpoint=lambda: save_state(state_path, state))
 
     save_state(state_path, state)
     json_path = repo_root / args.json_out

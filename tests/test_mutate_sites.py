@@ -296,6 +296,18 @@ class SchedulerTestCase(unittest.TestCase):
                            log=lambda *_: None, prune_state=False)
         self.assertIn("m2.py", state["modules"])  # 单模块运行不清别人的账
 
+    def test_checkpoint_fires_every_interval(self):
+        from unittest import mock
+        clock = _FakeClock()
+        hits = []
+        with mock.patch.object(mutate, "CHECKPOINT_EVERY", 3):
+            mutate.run_targets(
+                self.root, self.targets, budget_seconds=10_000, mutant_timeout=1,
+                state=self._fresh_state(), clock=clock,
+                subset_runner=_FakeRunner(clock), log=lambda *_: None,
+                checkpoint=lambda: hits.append(1))
+        self.assertEqual(len(hits), 2)  # 8 个变异体、每 3 个落一次账
+
     def test_missing_module_reported_not_crashed(self):
         clock = _FakeClock()
         report, _state = mutate.run_targets(
