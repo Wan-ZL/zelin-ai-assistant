@@ -25,6 +25,19 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.4] - 2026-09-01
+
+2026-08-31 live 审计挖出的三条静默失效(#89):launchd 的 256 fd 上限让每次派发都死却无限重试、actd 进程活着但循环卡死 2.5 小时无人知、v0.21 退役的 agent 又跑了 51 天。三条都各自加了「让它被看见 + 让它停下」的机制。
+
+### Fixed
+- **launchd 文件句柄上限**:launchd gui domain 给后台任务默认 `ulimit -n 256`,`claude --bg` 在此上限下拒启(「low max file descriptors」),一张卡 13 小时被重派 66 次、954 条 traceback、占了 98% 的 registry 写入,而 doctor 一路绿灯。所有 `act/launchd/*.plist` 模板永久带 `SoftResourceLimits` + `HardResourceLimits` 的 `NumberOfFiles = 8192`(三个渲染器都是占位符替换,自动继承),systemd 单元镜像 `LimitNOFILE=8192`;`failures` 目录新增 `fd_limit`;doctor 新行 `launchd fd limit` 检查**已安装**的 actd plist。**升级需重跑 `bash install.sh`**(或 app 的「一键修复」重渲 actd)。
+- **派发风暴刹车**(CONTRACT §4.1):同一失败类别连续失败 N 次(`execution.dispatch_max_failures`,默认 5,0 = 关)后卡停止自动重试——`execution.dispatch_halted`、卡上一行 `[dispatch-halted]` 记录、一条通知,投影进「需输入」列(不再在运行中列顶着「排队中」装忙);web 隐藏「回答…」只留「停止」。重新上膛 = 停止 → 退回提案 → 批准(approve 清掉整条失败台账)。退避窗口内 actd 现在**零写盘零 traceback**——此前每个 pass 都重写一次 `last_error_at` + 28 行 traceback。
+- **actd 心跳看门狗**(CONTRACT §47.4):actd 在每个 pass 的每个阶段边界 touch `state/actd.heartbeat`(mtime 为真源,body 带 phase/pid/interval 与写者自定的 `stale_after_s = max(3 × interval, 90)`)。doctor 新行 `actd heartbeat`:进程活着 + 心跳过期 → FAIL `actd_stalled`,修法是 `launchctl kickstart -k`(kill+respawn,不是 reload)。server 新路由 `GET /api/health`(token-light,只 stat 三个文件),web 看板顶部新增管线健康横幅(卡住 / 连崩 / 没跑)——退役中的 Mac app 横幅的替身(parity 1.11)。
+- **退役 launchd label 的卸载必须自证**:`install.sh` 的 RETIRED 步骤此前把 `launchctl bootout` 失败吞进 /dev/null,v0.21 删掉的 `imessageradar` agent 因此又跑了 51 天(23,613 条 traceback、14.5 MB 日志)。现在卸载后再问一次 `launchctl list`,还在就 `[ERR ]` + 给出命令,安装报告落 `launchd_retired=fail`;另扫描带我们前缀却已无模板的孤儿 label(只报告不动手,`launchd_orphans=warn`),doctor 新行 `launchd orphans`(已装载的孤儿 FAIL)。用户日志不删。
+
+### Changed
+- `docs/design/vnext2-plan.md`:决策台账追加 D17(自动部署方案 A)、D18(他人 issue 只摘要)、D19(digest 卡默认 OFF + 频率旋钮)、D20(本次事故与刹车);§5 填入审计的 issue 处置表与 8 条日志教训;新增 §8 进度日志。
+
 ## [0.48.3] - 2026-09-01
 
 真机部署 v0.48.2 时挖到的最后一层:plist 渲染全对、解释器也有 PyYAML,守护**仍然**起不来 —— 因为 macOS 的文件访问授权是**按二进制**发的。
@@ -2028,7 +2041,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.4...HEAD
+[0.48.4]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.3...v0.48.4
 [0.48.3]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.0...v0.48.1

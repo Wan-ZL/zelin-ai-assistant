@@ -772,12 +772,12 @@ def _check_launchd_orphans(probes: Probes):
     if labels is None:
         labels = sorted(p.stem for p in (config.HOME / "act" / "launchd").glob("*.plist"))
     known = set(labels)
-    loaded = sorted(l for l in _launchctl_table(probes)
-                    if l.startswith(LABEL_PREFIX) and l not in known)
+    loaded = sorted(lbl for lbl in _launchctl_table(probes)
+                    if lbl.startswith(LABEL_PREFIX) and lbl not in known)
     try:
-        on_disk = sorted(l for l in probes.installed_agent_labels()
-                         if l.startswith(LABEL_PREFIX) and l not in known
-                         and l not in loaded)
+        on_disk = sorted(lbl for lbl in probes.installed_agent_labels()
+                         if lbl.startswith(LABEL_PREFIX) and lbl not in known
+                         and lbl not in loaded)
     except Exception:  # noqa: BLE001 - 探针不许崩
         on_disk = []
     if not loaded and not on_disk:
@@ -791,14 +791,14 @@ def _check_launchd_orphans(probes: Probes):
             "%s - each one keeps running/crash-looping and logging forever"
             % ", ".join(loaded),
             "bash install.sh  # unloads retired labels; or by hand: "
-            + "; ".join(uid_hint % (l, l) for l in loaded),
+            + "; ".join(uid_hint % (lbl, lbl) for lbl in loaded),
         ).with_failure("launchd_orphan")
     return CheckResult(
         "launchd orphans", WARN,
         "retired agent plist(s) left in ~/Library/LaunchAgents (not loaded now, but "
         "launchd reloads them at next login): %s" % ", ".join(on_disk),
         "bash install.sh  # or: rm " + " ".join(
-            "~/Library/LaunchAgents/%s.plist" % l for l in on_disk),
+            "~/Library/LaunchAgents/%s.plist" % lbl for lbl in on_disk),
     ).with_failure("launchd_orphan")
 
 

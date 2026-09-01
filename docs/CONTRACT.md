@@ -98,6 +98,8 @@
 - `running[]` 的 queued 项加 `queued_reason`（**结构化形** `{kind, detail?, blocking_id?}`，kind ∈ `waiting_card`(必带 `blocking_id`)|`waiting_budget`|`concurrency`，词表与映射见 §51）；与既有 `dispatch_error`/`dispatch_error_id`（为什么派发失败）独立并存，生产端不得混写——`queued_reason` 回答的是「为什么还没派发」。
 - `running[]` / `needs_input[]` 行加 `steers: [{text, ts, status, delivered_at}]`（§44.3-S 投影）：`status ∈ {queued, delivered, dropped}` 开放枚举（dropped 现行不投影，值保留 forward-compat）；`status=="delivered"` 必带 ISO `delivered_at`，其余为 null——诚实投递状态，绝不虚报送达。**`ts` 为 ISO 字符串**——显式偏离本节「dashboard 输出 epoch int」惯例（M8.3 C-4）：ts 是 steer dedup 键的组成部分，投影保原文才能与 `execution.*` 台账逐字对账；web 端无 string ts 的行整行丢弃（绝不渲染无法对账的 steer）。
 
+**v0.48.4 新增（§4 派发风暴刹车的投影面，add-only optional）**：`execution.dispatch_halted` 为真的 approved 卡**不再**作 queued 项混入 `running[]`，改投影进 `needs_input[]`（blocked 行形：`session_id/short_id/copy_cmd/agent_name` 恒 null、`waiting_for` null、`question` = 固定文案「派发连续失败 N 次，已停止自动重试：<§25 目录句或原文>…」），行带 `dispatch_halted: true` + `dispatch_attempts`(int) + `last_error`/`last_error_id`。客户端据 `dispatch_halted` 隐藏「回答…」（没有会话可答）、只留「停止」；`detect_transitions` 对该行**不**发「任务需要你输入」（executor 已发 `msg_dispatch_halted`，同 §46.3 `resume_exhausted` 的去重规则）。server `is_executing` 对该行判 false（comment 不标 steer）。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -113,6 +115,44 @@ approved 的需求：
 1. 组装 prompt = 需求 title+plan+sources + **记忆注入**（读 `~/.claude/projects/<encoded ~/Projects>/memory/MEMORY.md` 及相关 program map 摘要，作为 system context）+ 质量门指令（自检可运行 + fresh-context 审 diff + 交付 draft PR，不 merge/不发对外消息）+ 若 type=training 则强制每 ckpt system card。
 2. 派发：`cd <target_repo> && claude --bg --dangerously-skip-permissions "<prompt>"`（target_repo 默认 config 的 default_target_repo 或需求指定）。
 3. 记录 `execution.session_id`（从派发输出或 `claude agents --json` 最新匹配 cwd 取）+ dispatched_at + log 路径；status → executing。
+
+### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
+
+派发失败（claude 非零退出 / 子进程错误 / 拿不到 session id）的卡**留在
+approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_at`
+记原因，退避重试 `30s·2^attempts`（上限 600s；`dispatch_attempts` /
+`last_dispatch_attempt_at` 台账）。事故：launchd 给 actd 的 `ulimit -n` 是
+256，`claude --bg` 以「low max file descriptors」拒启，一张卡 13 小时重派
+66 次、954 条 traceback，`registry_writes.jsonl` 98% 的行是它——退避窗口内
+actd 每 pass 重新落一次 `last_error_at`（「稳定 fixpoint」设计只保证文本不
+叠，没保证不写）。自本节起：
+
+- **退避窗口 = 纯 no-op**：executor 抛 `DispatchBackingOff`（`DispatchError`
+  子类），actd 不写卡、不打 traceback、不发事件——一张卡在窗口内**零**磁盘
+  写。首次失败由 executor 落账一次；actd 只在存的 `last_error` 与异常文本
+  不同（前缀比较：executor 存 500 字、actd 300 字）时才补写（mock 场景的
+  兜底），`DispatchError` 一律单行日志，完整 traceback 只留给非 DispatchError
+  的意外崩溃。
+- **同类连败刹车**：每次失败按 `failures.classify(err) or "unclassified"`
+  归类（`execution.dispatch_error_class`），同类连续计数
+  `dispatch_class_streak`（换类从 1 重数——原因真变了值得新一轮重试；
+  未分类文本**合并为一类**，pid/时间戳漂移的错误照样触发）。连败达
+  `execution.dispatch_max_failures`（config.yaml，默认 **5**，0 = 关刹车，
+  负数按 0）→ `execution.dispatch_halted: true` + `dispatch_halted_at`，
+  notes 追加一行 `[dispatch-halted] 派发连续失败 N 次（<class>），已停止自动
+  重试：<§25 目录句 | 原文首行> [@ts]`，analytics `dispatch_halted{failure_id,
+  attempts, streak}`，通知 `notify.msg_dispatch_halted(title, n, reason)`
+  一次；executor 抛 `DispatchHalted`。**卡仍是 approved**（不 trash、不改状
+  态机），但 actd `dispatch_approved` 在并发闸之前就跳过它（不占槽、不写、
+  不 log），executor 直调也拒启。投影见 §2 v0.48.4（进「需输入」列）。
+- **重新上膛 = 批准**：`approve`（detected/card_sent → approved）清掉
+  `executor.DISPATCH_STREAK_KEYS`（`dispatch_attempts / last_dispatch_attempt_at
+  / dispatch_error_class / dispatch_class_streak / dispatch_halted /
+  dispatch_halted_at`）+ `last_error`/`last_error_at`。owner 的出口 = 停止 →
+  退回提案（`abort_execution` → card_sent）→ 修好原因 → 批准；成功派发整体
+  重建 execution，台账自然消失。不新增 inbox 动词。
+- 判例：`tests/test_dispatch_storm_brake.py`（分类、刹车、换类重数、0 关闭、
+  退避零写零 traceback、重批清账、投影、去重通知、server 不标 steer）。
 
 ## 5. macOS 通知（actd）
 
@@ -747,6 +787,26 @@ add-only）：
   但只在 CGPreflight 真报缺权限时出现），不再无条件猜「多半缺权限」；录制页
   的 ffmpeg 诊断行给「安装 ffmpeg」+「装好了，重启引擎」两个动作（死引擎的
   日志尾在装好后仍是旧错误行，就地重启是该页唯一的复活路径）。
+
+v0.48.4 追加（add-only；live 事故 2026-08-31，§4.1/§47.4/§55）三枚 failure id：
+- `fd_limit`——launchd gui domain 默认 `ulimit -n 256`，`claude --bg` 拒启。
+  分类签名收窄为 claude 自己的措辞 `low max file descriptors` + errno 拼法
+  `EMFILE` / `too many open files`；排在 auth/network 规则之前（这段话没有别的
+  签名，卡片正文也不会合理地含它）。action_id `restart_actd`——修法就是按
+  v0.48.4 模板重渲 agent（§55 资源上限），「一键修复」重渲 actd 即命中。
+- `actd_stalled`——进程活着（launchctl 有 pid）但 §47.4 心跳过期：循环卡死而非
+  进程死。与 `dashboard_stale`（进程死/没起）分开：修法是 **kill+respawn**
+  （`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`；Linux
+  `systemctl --user restart zelin-actd.service`），不是 reload。action_id
+  `restart_actd`。
+- `launchd_orphan`——带 `com.zelin.aiassistant.` 前缀、但 act/launchd 已无模板
+  的 label（已装载或只剩 plist 文件）。action_id `open_deps`。
+Swift `FailureCatalog` 只镜像句子（D3：菜单栏 app 退役中，不给新按钮）。
+通知 builder 追加 `msg_dispatch_halted(title, n, reason)`（§4.1；正文点名
+现存按钮「停止 → 退回提案 → 批准」）。doctor 新行：`actd heartbeat`（§47.4）、
+`launchd fd limit`（已安装 actd plist 缺 Soft/Hard `NumberOfFiles` ≥ 4096 →
+WARN `fd_limit`；没装 → 无此行）、`launchd orphans`（已装载孤儿 → FAIL
+`launchd_orphan`，只剩文件 → WARN；其他厂商前缀永不算）。
 
 **dashboard.json 新字段**（全部 optional，Swift `decodeIfPresent`；原始错误文本
 字段不变，分类 id 只是伴随）：
@@ -2675,6 +2735,57 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
   dashboard 已 stale/dead 时**不**看此文件（那两个 verdict 更严重且已有
   横幅与修复路径）；文件缺失/损坏/清零 → 不报警（诊断文件绝不自己成为
   报警源）。
+
+### 47.4 `state/actd.heartbeat`（actd 写；doctor / server 只读；v0.48.4）
+
+```json
+{"ts": "2026-09-01T08:00:00Z", "phase": "idle", "pid": 4242, "interval": 10, "stale_after_s": 90, "version": "0.48.4"}
+```
+
+- **为什么**：2026-08-31 22:31:56 actd 停止写 dashboard.json，进程却活了
+  2.5 小时（无子进程、停在 `time.sleep`）。当时产品自己看得见的每个信号都说
+  「没事」：`launchctl list` 有 pid，§47.3 只数 pass **崩溃**（它没崩，它不
+  转），doctor 的 `dashboard` 行没人跑（`mw_doctor_result` 0 事件），唯一的
+  detector 是退役中的 Mac app 横幅（D3）。宪法第 3 条：诚实的健康报告。
+- **写者**：actd 主循环（`act/lib/heartbeat.beat`，原子写 .tmp+rename，绝不
+  抛）。**每个 pass 的每个阶段边界**各 touch 一次：`starting`（进程起）→
+  `inbox` → `dispatch` → `reconcile` → `housekeeping` → `dashboard` → `idle`
+  （pass 完整跑完）或 `failed`（pass 抛了但循环还在转——崩也算活）。**mtime
+  是活性真源**，JSON 只解释循环最后被看见在哪一步；body 撕裂时读者退回
+  mtime + 下限阈值。`--once` 同样打点（run_once 内），只是没有 idle/failed。
+- **阈值由写者定**：`stale_after_s = max(3 × interval, 90)`。三个 pass 没心跳
+  = 卡死的定义；90s 下限（= doctor `DASHBOARD_FRESH_SECONDS`）防 10s 间隔
+  下一个合法的长 pass（`claude agents --json` + `claude --bg` 起跑）被判死。
+  读者**一律读 body 里的 `stale_after_s`**，不自行推导——阈值只有一个主人。
+- **读者 1：doctor `actd heartbeat`**（全平台，紧跟 `dashboard` 行）：
+  心跳新鲜 → OK（报 phase/age/pid）；**进程活着 + 心跳过期 → FAIL
+  `actd_stalled`**（detail 点名 age 与最后 phase，fix = 本平台的 kill+respawn
+  命令）；心跳过期但进程已死 → WARN 不带 failure_id（`actd` 行已 FAIL，不双
+  记）；进程活着却**没有心跳文件** → WARN「daemon 早于 v0.48.4 或刚起，重启
+  一次」；进程死 + 无文件 → 无此行。进程活性：darwin 问 `launchctl list`
+  的 pid 列，其他平台探 body 里的 pid（Windows `os.kill(pid,0)` 会
+  TerminateProcess，永不用作探活 → None = 判不了，按「状态未知」仍 FAIL）。
+- **读者 2：`GET /api/health`**（§49 路由表 add-only，token-light GET，
+  `Cache-Control: no-store`，永不发 CORS 头）：`server/health.py` 纯 stdlib
+  镜像文件布局（`server/paths.heartbeat_path` / `loop_health_path`，
+  `tests/test_server_paths_mirror.py` 钉住），响应
+  `{verdict, heartbeat{age_s, phase, pid, interval, stale_after_s, stale}|null,
+  dashboard{generated_at, age_s, stale}|null, loop_health{consecutive_failures,
+  last_error}, checked_at}`。verdict 阶梯（先命中先赢）：`stalled`（心跳过期）
+  → `failing`（§47.3 ≥3）→ `stale`（无心跳且看板过期/缺失）→ `unknown`（无
+  心跳但看板新鲜 = 旧 daemon 仍在写）→ `ok`。server 不 spawn、不问 launchctl
+  ——它只 stat 三个文件。
+- **读者 3：web `PipelineBanner`**（`web/src/components/shell/PipelineBanner.tsx`，
+  app.tsx 每 30s 轮询 `/api/health`）：`stalled`/`failing` 红、`stale` 橙，
+  正文带 age、最后 phase 与 kickstart 命令；`ok`/`unknown` 不渲染；server 连
+  不上时让位给离线横幅（同一信息绝不双份）。这是 Mac app
+  `PipelineHealthBanner` 的 web 替身，退役前置条件之一（s4 parity 1.11）。
+- 与 §47.3 的分工：loop_health 回答「每轮都在崩吗」，heartbeat 回答「还在转
+  吗」；两者都是诊断文件，缺失/损坏都不得自己成为报警源（heartbeat 缺失 +
+  进程死 = 沉默，交给 `actd` 行）。
+- 判例：`tests/test_actd_heartbeat.py`（形状、阈值、阶段顺序、绝不抛）、
+  `tests/test_doctor.py` 心跳组、`tests/test_server_health.py`、
+  `web/src/components/shell/PipelineBanner.test.tsx`。
 ---
 
 # v0.47 additions（源开关归一 + 源死亡告警）
@@ -2952,6 +3063,9 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
 - `GET /api/events`：SSE，事件词表仅 `board.updated {generated_at}`；25s
   heartbeat 注释行；**无重连契约**——客户端断线后全量 refetch；触发 = 300ms
   mtime 轮询 dashboard.json（`server/watcher.py`）。
+- `GET /api/health`（v0.48.4，§47.4）：管线活性快照 `{verdict, heartbeat,
+  dashboard, loop_health, checked_at}`；只 stat/读三个 state 文件，不 spawn；
+  token-light GET、`no-store`；文件缺失/撕裂 → 如实报 null/`stale`，永不 500。
 - `POST /api/actions`：动词白名单 = docs/design/inbox-actions.md §2+§3 目录
   （T-2 终裁：实现即白名单）；JSON 形状/文件命名/stem 幂等/tmp+rename 原子写
   与 Mac `Store.swift` 产物**逐字节等价**（golden 33 件 `tests/fixtures/
@@ -3402,3 +3516,45 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   `$REPO/state/*.launchd.log` 仅作诊断包的兜底读（迁移前安装还留着旧日志）。
 - `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
   无 WorkingDirectory、bash 绝对路径）本就合规，不动。
+
+**资源上限（v0.48.4；live 事故 2026-08-31 第三幕）**：launchd gui domain 给
+job 的默认 `ulimit -n` 是 **256**，`claude --bg` 在这个上限下直接拒启（原文
+「An unknown error occurred, possibly due to low max file descriptors」），
+每次派发都死、一张卡 13 小时重派 66 次（§4.1 的风暴由此而来），而登录 shell
+里同一条命令跑得好好的——差别只在 launchd 会话里存在，同 §55 前三幕一个
+性质。自本节起为不变式（判例 `tests/test_launchd_render.py
+test_fd_ceiling_is_raised_for_every_agent`、`tests/test_systemd_render.py`）：
+
+- **每个 `act/launchd/*.plist` 模板都带 `SoftResourceLimits` + `HardResourceLimits`
+  的 `NumberOfFiles = 8192`**（登录 shell 的有效上限）。两把都要设——只抬
+  soft 会被 256 的 hard cap 顶回去。三个渲染方（install.sh / 两个 Swift 渲染方）
+  都是占位符替换，模板改了即全部生效，不需要各自加键。
+- `act/systemd/*.service` 镜像 `LimitNOFILE=8192`（systemd --user 通常继承
+  1024，长 agent 会话仍不够）。
+- doctor `launchd fd limit`：读**已安装**的 actd plist，Soft/Hard 任一缺失或
+  `< 4096` → WARN `fd_limit`（fix = 重跑 install.sh；「一键修复」重渲 actd
+  同样命中）；没装该 plist → 无此行。
+- 应急手法（当晚 hotfix 的形状）：手改已安装 plist 加这两把上限再
+  `launchctl bootout` + `bootstrap`；模板落地后重跑 install.sh 即永久。
+
+**退役 label 的卸载必须自证 + 孤儿必须被看见（v0.48.4；审计 L3）**：install.sh
+的 `launchd_unload` 为了幂等升级刻意吞掉 bootout 失败，结果 v0.21 删掉的
+`com.zelin.aiassistant.imessageradar` agent 又跑了 **51 天**、23,613 条
+traceback（14.5 MB 日志），每次 install.sh 都一声不响；旧 doctor 只查有模板的
+label，孤儿结构性不可见。自本节起：
+
+- install.sh `launchd_retire <label>`（RETIRED_* 一律走它）：unload + 删 plist
+  之后**再问一次 `launchctl list`**，还在 → stderr `[ERR ]` + 给出
+  `launchctl bootout gui/$UID/<label>` 命令，并落 §23 安装报告
+  `launchd_retired=fail:still loaded: …`；全部干净 → `launchd_retired=ok`。
+- install.sh `launchd_orphans`：`launchctl list` 已装载的 ∪
+  `~/Library/LaunchAgents/com.zelin.aiassistant.*.plist` 文件面，减去
+  act/launchd 有模板的 → 只**报告**（warn + `launchd_orphans=warn:<labels>`），
+  **不自动卸载**（不认识的 label 不是我们该杀的；RETIRED 名单才是显式授权）。
+- doctor `launchd orphans`（darwin）：同一集合；**已装载**的孤儿 → FAIL
+  `launchd_orphan`（此刻在耗资源/刷日志），只剩 plist 文件 → WARN（下次登录
+  复活）；`com.zelin.storageguard` 这类同 owner 异产品前缀永不算。
+- 用户日志**不删**：`~/Library/Logs/zelin-ai-assistant/*.launchd.log` 与旧
+  `state/*.launchd.log` 是取证材料，删除是 owner 手动动作。
+- 判例：`tests/test_install_launchd_retire.py`（真跑 install.sh 函数 + 假
+  launchctl）、`tests/test_doctor.py` 孤儿组。

@@ -30,6 +30,10 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 | D14 | **测试 skill**:运行后多选要跑的测试种类并并行执行、出一份报告;owner 手动用,agent 收工前也自动用 | 「运行这个 skill 之后,它可以问我需要做哪些 test……让我多选之后,再进行大量的测试。」 | 08-31 |
 | D15 | **完整性规则**(已入 memory `push-to-complete-version`):目标永远是最终完整版,分阶段只为安全不为省事 | 「尽量往最完美的去推进。你可以把这个记到你的 rule 中去。」 | 09-01 |
 | D16 | **本文档的存在理由** | 「为了防止你中途忘掉……把我们前面聊的这么多内容都写进你要修改的文档里。记录抽象功能:不用写具体代码怎么改,但要写清楚需要达到什么功能。记录沟通内容:把我们的对话记录也添加进文档。」 | 09-01 |
+| D17 | **自动部署 = 方案 A:merge 即自动 release + 自动部署到本机,doctor 闸门失败自动回滚** | owner 在 v-next-2 ratify 轮拍板:合并进 main 的每个 PR 自动打 tag、出 release、部署到 live 机器;部署后跑 doctor,红 → 回滚到上一版。「皇上只看绿的 PR」——部署也不该是手动步骤。 | 09-01 |
+| D18 | **他人提的 GitHub issue:只做摘要,owner 说「do it」才动** | 外来 issue(非 owner 账号)进每日循环时只生成一条摘要(建议处置 + 理由),不铸提案卡、不开 PR;owner 在摘要上回一句「do it」才进入实现通道。 | 09-01 |
+| D19 | **digest 卡默认 OFF,加频率旋钮** | 周一 digest 的 automation-idea 卡 0/15 被批准、3 个 cluster 跨 4 周重铸(审计 L7):默认关闭铸卡;报告卡保留但受 `digest.frequency` 旋钮控制(off / weekly / …),设置里可改。 | 09-01 |
+| D20 | **fd-limit 事故 + 派发风暴刹车 + 心跳看门狗**(PR-A,#89) | 2026-08-31 live:launchd 给 actd `ulimit -n 256`,`claude --bg` 拒启,R-175 13 小时重派 66 次、954 条 traceback、98% 的 registry 写入;22:31 起 actd 静默卡死 2.5 小时,唯一 detector 是退役中的 Mac app 横幅。决定:模板永久带 8192 fd 上限(当晚 hotfix 转正);同类连败 N 次(默认 5,可配)刹车,卡进「需输入」列 + 通知,退避窗口零写零 traceback;actd 每阶段写心跳,doctor / `GET /api/health` / web 横幅三读者;install.sh 退役 label 卸载自证 + 孤儿报告,用户日志不删。 | 09-01 |
 
 ## 2. 目标状态(抽象功能需求;每条是"必须为真"的陈述)
 
@@ -121,9 +125,46 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 | P7 | skill 商店 + 测试 skill;agent 收工前自动跑测试 skill | 独立 | 两台机器同步验证;PR 附结构化报告 | — |
 | P8 | owner 明确下令后:卸载旧 app、删除 `mac/` 看板代码、CONTRACT 墓碑 | 只等 owner 一句话 | — | git revert |
 
-## 5. 审计结果补充(2026-09-01 issues/logs/suggestions 审计完成后填写)
+## 5. 审计结果补充(2026-09-01 issues/logs/suggestions 审计,摘自 `~/Downloads/brainstorm/AUDIT-ISSUES-LOGS-SUGGESTIONS.md`;处置同步到 GitHub 是 tracker hygiene 步骤)
 
-_待 `~/Downloads/brainstorm/AUDIT-ISSUES-LOGS-SUGGESTIONS.md` 产出后,把「要解决的 issue / 日志教训 / 采纳的建议 / Mac→web 清单」摘要填入本节,并把决定的 issue 处置同步到 GitHub。_
+### 5.1 Issue 处置表(22 open)
+
+| Verdict | Issues | 一句话 |
+|---|---|---|
+| **SOLVE NOW** | #119 retire needs-input;#89 dispatch failure unactionable | #119 必须落在 store2 接线之前(否则把死态迁进 SQLite);#89 不是历史 bug 而是正在发生的风暴——**本 PR(PR-A)解决**:fd-limit 规则 + plist 资源上限 + 风暴刹车 + 心跳 + 孤儿探测。 |
+| **LOOP**(喂给每日循环当 seed) | #37 telemetry 裸 stderr 上传;#19 social-preview 图;#18 demo_seed `--english`(seed #1);#16 ingest smoke test(`tests/integration/` 首住户);#15 pin Xcode;#11 卡上披露建 repo(`egress[]`);#8 a11y(改指 web,`vitest-axe`);#90 Windows 只走 PWA | 全部自包含、可验证,正好用来 prove 自动 PR 管线。 |
+| **CLOSE** | #26(被 LOOP 取代);#22(milestone 1 done);#17(Swift test infra 已在 + mac 退役);#13(shell 已是新身份);#10(archive 已做,v0.48);#9(前提消失);#7(前提消失);#23(素材库落地后关) | 一次性 close/relabel;15/22 issue 52 天零活动、无 milestone,不清理则 loop 每天重读 Mac 视角的死 issue。 |
+| **IGNORE**(blocked / meta) | #29 quiet hours;#28 retention UI;#27 recording schedule;#20 Usage Insights bot(keep pinned,是 LOOP 输入源);#23(产品 idea → 素材库) | 通知 relay / 录制控制 / 设置页都随 Mac 退役 re-home 之后再 scope。 |
+
+另有 12 个 open PR(#121 本计划、#102 bundled skills、#108–#117 dependabot majors)——main 保护前第一批过门,majors 不许 loop 盲合。
+
+### 5.2 日志教训(8 条 → 改进/删除)
+
+| # | 发现 | → 处置 | 状态 |
+|---|---|---|---|
+| L1 | **派发重试风暴(live)**:R-175 66 attempts / 13h,954 × traceback,`registry_writes.jsonl` 98% 是它;根因 `ulimit -n 256`,`failures.classify` 无 fd 规则 → `dispatch_error_id=null`,doctor 报 healthy | plist Soft/Hard `NumberOfFiles` 8192;`failures.fd_limit`;退避窗口不写卡不打 traceback;同类连败 N 次刹车 → 「需输入」列 + 通知 | **PR-A 已做**(CONTRACT §4.1/§25/§55) |
+| L2 | **静默卡死**:actd/syncd 活着、停在 `time.sleep`,dashboard/日志/写入全部冻在 22:31:5x 达 2.5h;没有产品自己看的 heartbeat,唯一 detector 是退役中的 Mac app 横幅 | 每阶段写 `state/actd.heartbeat`;doctor `actd heartbeat`(活着 + 过期 = FAIL `actd_stalled`,kickstart 提示);`GET /api/health` + web `PipelineBanner` | **PR-A 已做**(§47.4) |
+| L3 | **孤儿 launchd agent 51 天**:imessageradar(v0.21 已删)23,613 × traceback、14.5 MB 日志;install.sh 的 RETIRED unload 把失败吞进 /dev/null;doctor 只查有模板的 label | install.sh `launchd_retire` 自证 + `launchd_orphans` 报告(install_report 两个 step);doctor `launchd orphans`;**日志不删**(owner 手动) | **PR-A 已做**(§55) |
+| L4 | **Gmail 中毒 + 无凭证噪音**:3,921 × `parsedate_to_datetime TypeError`(13.6 天);`radar_skip source=gmail reason=no_credentials` 10,539 次,全部 radar_skip = 67% 的 analytics;54 天 151 次真扫 → 1 张卡;8 张 2024/25 旧件卡 | disabled / no-creds 源不排程(§48 gate 加断言);doctor 读 `radar_failed.json`;gmail 加「N 天以前的邮件不铸卡」出生过滤 | 待办(LOOP seed) |
+| L5 | **syncd ack 队头阻塞 49 天**:6,267 × `ack-tail: patch capture-<uuid> failed 400`(每 10s 一条);`applied_cursor.json` 停在 2026-07-13;`syncd.py` 首个失败即 `break`,无 attempt counter | `ack_tail` 加 attempt counter + skip-after-N + 4xx poison 台账(size-capped) | 待办(U-97) |
+| L6 | **快照体量**:2,158 × 453 KB 上传 / 30h ≈ 955 MB;477 KB `dashboard.json` 每 10s 无条件重写(~4 GB/天磁盘);review lane 带全文 `final_draft`,57 张 archived/trashed 随每个快照上传 | `write_dashboard` 内容不变短路;推送快照剥掉 `final_draft` 正文 + archived/trashed;ETag/delta 后置 | 待办 |
+| L7 | **雷达产出 vs owner 参与**:9,888 次 radar_scan → 5 张卡;`silent_merge` 63 判 → 3 合(5%,每次一个 LLM call);weekly-digest automation 卡 0/15 approved、3 cluster 跨 4 周重铸;owner `card_action` 117(7 月)→ 16(8 月) | CLEANUP day-one 尺寸(≈75 → 30–35 张);merge 候选先走确定性 §38.3 再 LLM;**weekly_digest 的 automation ideas 停铸**(→ D19) | D19 已拍板,PR-B 做 |
+| L8 | **死面 + 类型混乱**:152 个 event name → 69 从未触发;`mw_*` ~90% 未观测;auto_dispatch / steer / merge_force / split_note / voice / Ask / Slack settings 全 0;registry `type:` 66 个不同值 / 176 卡 | Mac 退役 DELETE 清单有数据背书;store2 把 `type` 收成 enum + `type_raw`;夜间变异优先打 §46.2/§47.1/§47.2/§34bis 这些 prod 从未执行的防御路径 | P1/P2 |
+
+**三条 hygiene 附注**:H7 privacy——39 个 `state/logs/R-*.log` 逐字含 card title,`radar_failed.json` key 含第三方文件名,两者都不在 `clip_content` 覆盖下 → 停写 R-*.log 或改 id-only;**install_report `app: fail`**——v0.48.3 装机 Mac app build 失败没人发现 → install 有 fail step 就不许报 ok;**Telemetry 0.48.x 空白**——部署两天 insights 无 0.48 事件 → doctor probe。
+
+### 5.3 采纳的建议(去重后 60 条 → 进 plan 的部分)
+
+- **A · QA**:`act/llm.py run(prompt, runner=None)` + 拆 `silent_merge.JUDGE_RUNNER`(防腐 #3 存量违反);`act/actd.py` 3,718 行唯一超 cap → facade 拆 / grandfather 清单;§-docstring lint、§-citation liveness、tombstone check(§11 静默缺席);日志派生的 doctor/failures 扩展(L1–L5,**L1–L3 本 PR 已落**);privacy lint(`log_event(error=)` 禁裸文本)。
+- **E · daily loop**:deliverable manifest `execution.deliverables {branch, pr_url, files[]}` + `cost_actual` 收割(approve-at-END 没它就是盲批);fingerprint dedupe vs open cards + open/closed issues + trashed cards,每类每天 ≤1 proposal;parse spec = 读台账不读 traceback(**不读** `state/logs/R-*.log`、legacy `*.launchd.log`、dashboard bodies);seeds 顺序:docs-drift PR → #18 → #19 → #15 → #89 doctor 半边 → U-97 → …
+- **F · auto-PR lane**:`egress[]` disclosure;agent-facing token;main ruleset 加 `pull_request` + `required_status_checks`(今天 ff-push main 合法);fine-grained PAT(contents + pull_requests,**无 workflow scope**,branch `ai/*`);protected-path set hit → `needs-owner-eyes` + lane 挂起。
+- **Mac-retire**:#119 四泳道语义先定 → `Store.swift` 15 组 optimistic 状态验尸表 → web 补 `merge_suggestions / split_note / set_title / import_claude_sessions / feedback / archive` → server-owned lane catalog → canonical slug(`ZAI_PORT` / `zai.theme` / `com.zelin.ai-board` 三拼法)→ shell 稳定签名 → capture / LiveCaptions / TCC 落点决定。同车退役 legacy `webui/` + `act/webui.py`、`docs/ROADMAP.md` 重写或 tombstone。**parity 1.11(pipeline health banner)已由本 PR 的 `/api/health` + `PipelineBanner` 提前落地**。
+- **DB · store2**:T-7/8/10/12/14 表照搬为 wiring checklist;多写者 parity;两条来自日志的断言——一次 transition 一行写(L1)、`type` enum + `type_raw`(L8);新列 `merged_from` add-only;顺序 **#119 → fd-limit/write-storm fix(本 PR) → store2 wiring**。
+- **CLEANUP**:day one 合并 3 个 automation cluster + 6 张 3 周以上 `repeated_mentions==1` 卡;backlog 8 张旧件 + 3 张 diagnostic give-up + 8 张过期 deadline + ~13 张已被 shipped 版本覆盖的 dev 卡;3 张 Monday digest 卡 superseded 自动 archive;**现有 ~40 张 trashed 卡 09-08 起触发第一波硬删 → 先 pin 或临时拉长 retention**。
+
+### 5.4 Open decisions(审计留的 6 问,默认值)
+
+Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC 重授权;Q2 screenpipe 进程归属 → **shell 原生子进程**;Q3 weekly_digest automation ideas → **停铸**(D19);Q4 stale 阈值 → **45 d + guards**,`stale:*` retention 90 d,先 pin 那 40 张;Q5 loop cap → **config 5、首月跑 2**,前两周走人工审批 lane;Q6 DRAFT PR token → **owner fine-grained PAT**(无 workflow scope)。
 
 ## 6. 对话记录(owner 原话摘录,按主题)
 
@@ -171,3 +212,9 @@ _待 `~/Downloads/brainstorm/AUDIT-ISSUES-LOGS-SUGGESTIONS.md` 产出后,把「�
 - `~/Downloads/brainstorm/architecture-v048.html` — 架构现状图(含本轮新增部分虚线标注)
 - `~/Downloads/repo-review/UNCLEBOB-ADOPTION.md`, `V048-CODE-HEALTH.md`, `STRUCTURE-VERDICT.md` — 质量审计三份
 - `~/Downloads/dashi-research/V048-AUDIT.md`, `SYNTHESIS.md`, `SRC-SYNTHESIS.md` — dashi 对照研究
+
+## 8. 进度日志(每个落地的 PR 一行;日期 = 开 PR 当天)
+
+| 日期 | PR / 分支 | 阶段 | 做了什么 | 法典 |
+|---|---|---|---|---|
+| 2026-09-01 | `fix/launchd-fd-storm-heartbeat`(PR-A,#89) | P0 前置止血(审计 L1/L2/L3) | 全部 launchd 模板 + systemd 单元带 8192 fd 上限;`failures.fd_limit`;派发风暴刹车(同类连败 5 次 → `dispatch_halted`,进「需输入」列 + 通知,退避窗口零写零 traceback,approve 清账);actd 每阶段写 `state/actd.heartbeat`,doctor `actd heartbeat` / `launchd fd limit` / `launchd orphans` 三探针,`GET /api/health` + web `PipelineBanner`;install.sh `launchd_retire` 自证 + `launchd_orphans` 报告。本节 + D17–D20 + §5 同 PR 入库。 | §2 / §4.1 / §25 / §47.4 / §49 / §55 |

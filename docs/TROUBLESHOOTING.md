@@ -53,6 +53,34 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 没有任何候选 python3 带 PyYAML 时 install.sh 直接报 `[ERR ]` 并给出 pip 命令。若所有候选都过不了 launchd 那道闸门(例如机器上只有一个 python),它会照实说,这时再手动给那个解释器二进制授「完全磁盘访问」:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴解释器路径。
 
+## 批准后卡一直「排队中」,派发反复失败:`low max file descriptors`
+
+**症状**:卡批准后停在运行中列的「排队中」,错误 chip 写着 `An unknown error occurred, possibly due to low max file descriptors`;`~/Library/Logs/zelin-ai-assistant/actd.launchd.log` 每十几秒一条 `dispatch: R-xxx FAILED`;终端里手跑 `claude --bg` 正常。v0.48.4 起同一张卡连续失败 5 次后会**停止重试**并挪到「需输入」列,通知说明原因(CONTRACT §4.1)。
+
+**原因**(CONTRACT §55 资源上限):launchd gui domain 给后台任务的默认 `ulimit -n` 是 **256**,`claude --bg` 起不来。登录 shell 的上限是 8192,所以手跑没事。v0.48.4 之前的 plist 模板没有设 `SoftResourceLimits`/`HardResourceLimits`。
+
+**确认**:`python3 -m act.doctor` 的 `launchd fd limit` 行(WARN `fd_limit` = 已安装的 actd plist 没带上限);或 `grep -A2 NumberOfFiles ~/Library/LaunchAgents/com.zelin.aiassistant.actd.plist` 为空。
+
+**修复**:在 repo 目录重跑 `bash install.sh`(重渲全部 agent,模板自带 8192);app 的「一键修复」只重渲 actd,也能解本条。然后在看板上把停住的卡「停止 → 退回提案」再批准一次——批准会清掉整条失败台账(不重批它会一直停在「需输入」列,这是刻意的:修好原因前不该再烧重试)。应急手法(不重装):手改 plist 加两把 `NumberOfFiles` 8192,`launchctl bootout gui/$(id -u)/com.zelin.aiassistant.actd && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.zelin.aiassistant.actd.plist`。
+
+## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
+
+**症状**:看板顶部横幅「后台服务卡住了」/ doctor `actd heartbeat` 行 FAIL `actd_stalled`;`state/dashboard.json` 与 `actd.log` 的 mtime 几小时不动,`launchctl list | grep actd` 却给出 pid,没有子进程。2026-08-31 22:31 这台机器就这样静默了 2.5 小时。
+
+**原因**:进程没死,主循环卡住了(卡在某个 pass 阶段,或 `time.sleep` 之后再没醒)。§47.3 的 `loop_health.json` 只数 pass **崩溃**,它没崩所以一路 0;`launchctl` 只知道 pid 在。v0.48.4 起 actd 在每个 pass 的每个阶段 touch `state/actd.heartbeat`(CONTRACT §47.4),心跳超过 `max(3 × interval, 90)` 秒没动 = 卡死。
+
+**确认**:`python3 -m act.doctor`(`actd heartbeat` 行会说最后一次心跳的阶段与多久之前);或 `curl -s http://127.0.0.1:47820/api/health`(`verdict: "stalled"`)。
+
+**修复**:kill+respawn,**不是** reload:`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`(Linux:`systemctl --user restart zelin-actd.service`)。重启后心跳恢复,横幅自动消。反复出现请把 `state/actd.heartbeat` 里的 `phase`(卡死时的阶段)带进 issue。
+
+## `launchctl list | grep zelin` 里有仓库早已删掉的 agent(孤儿)
+
+**症状**:doctor `launchd orphans` 行 FAIL/WARN `launchd_orphan`,或 `~/Library/Logs/zelin-ai-assistant/<name>.launchd.log` 疯长(2026-08-31 审计:`imessageradar` 退役 51 天还在跑,23,613 条 traceback、14.5 MB)。
+
+**原因**:旧版 install.sh 卸载退役 label 时把 `launchctl bootout` 的失败吞掉了。v0.48.4 起卸载会自证(失败就 `[ERR ]` + 安装报告 `launchd_retired=fail`),并列出带 `com.zelin.aiassistant.` 前缀却已无模板的 label(只报告不动手)。
+
+**修复**:重跑 `bash install.sh`(RETIRED 名单里的会被卸载并验证);不在名单里的孤儿手动 `launchctl bootout gui/$(id -u)/<label> && rm ~/Library/LaunchAgents/<label>.plist`。日志文件是取证材料,脚本不删——确认不需要后自己 `rm`。
+
 ## launchd 任务读不到 ~/Documents:radar 扫到空 vault,零报错
 
 **症状**:vault 里明明有新笔记,radar 却什么都扫不出来,日志无报错。

@@ -1798,9 +1798,9 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # §4 storm brake：批准 = 重新上膛。上一轮派发的失败台账（attempts /
         # 同类连败计数 / halted 标记 / 旧 last_error）随新批准清零，否则
         # 退回提案再批准的卡会带着旧刹车直接停在原地。
-        if executor is not None:
-            for key in executor.DISPATCH_STREAK_KEYS + ("last_error", "last_error_at"):
-                ex.pop(key, None)
+        for key in (tuple(getattr(executor, "DISPATCH_STREAK_KEYS", ()))
+                    + ("last_error", "last_error_at")):
+            ex.pop(key, None)
         req.execution = ex
         save(req)
         # lifecycle milestone (docs/TELEMETRY.md): first genuine approval on
@@ -2425,16 +2425,19 @@ def dispatch_approved(cfg: config.Config) -> int:
                 _safe_unlink(Path(snap_ref))
             is_dispatch_error = (executor is not None
                                  and isinstance(e, executor.DispatchError))
-            if is_dispatch_error and isinstance(e, executor.DispatchBackingOff):
+            # getattr 兜底：测试注入的最小 executor 替身可能只带 DispatchError
+            backing_off = getattr(executor, "DispatchBackingOff", ())
+            halted_cls = getattr(executor, "DispatchHalted", ())
+            if is_dispatch_error and isinstance(e, backing_off):
                 # 退避窗口内：什么都没发生——不写卡、不打 traceback（2026-08-31
                 # 事故：这条 no-op 每 pass 重写一次 last_error_at + 28 行
                 # traceback，一张卡占了 98% 的 registry 写入、954 条 traceback）。
                 continue
             if is_dispatch_error:
                 # executor 已落账（last_error/attempts/halted），只留一行日志
-                _log(f"dispatch: {req.id} FAILED: {str(e).splitlines()[0][:300]}"
+                _log(f"dispatch: {req.id} FAILED: {(str(e).splitlines() or [''])[0][:300]}"
                      + (" — halted (storm brake)"
-                        if isinstance(e, executor.DispatchHalted) else ""))
+                        if isinstance(e, halted_cls) else ""))
             else:
                 _log(f"dispatch: {req.id} FAILED: {e}\n{traceback.format_exc()}")
             # leave a trace on execution so the dashboard's queued item can show
