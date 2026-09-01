@@ -1215,11 +1215,15 @@ def _check_cron(probes: Probes):
             "bash install.sh (reinstalls the §18 cron lines)",
         ).with_failure("cron_missing"))
     if "act.digest" in text:
-        results.append(CheckResult("cron digest", OK, "installed (Mon 09:07)"))
+        # §17 D19: the line fires daily; the cadence (default off) lives in
+        # config, so "installed" says nothing about whether cards appear.
+        results.append(CheckResult(
+            "cron digest", OK,
+            "installed (daily 09:07; cadence = digest.frequency)"))
     else:
         results.append(CheckResult(
             "cron digest", WARN,
-            "Monday digest line missing from crontab",
+            "digest line missing from crontab",
             "bash install.sh",
         ).with_failure("cron_missing"))
     results.append(_check_cron_probe(probes, cron_installed="screenpipe-export.sh" in text))

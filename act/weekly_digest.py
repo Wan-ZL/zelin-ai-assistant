@@ -1,18 +1,25 @@
-"""Weekly ingest digest (CONTRACT §24) — "本周你都在忙什么" + automation ideas.
+"""Weekly ingest digest (CONTRACT §24) — "本周你都在忙什么".
+
+**Default OFF since D19 (v0.48.4)** — ``sources.weekly_digest.enabled`` must
+be an explicit ``true`` for anything below to happen. TOMBSTONE: the
+"这件事我可以帮你自动化" automation-idea proposal cards this module used to
+mint alongside the recap (audit L7: 15 minted across 4 Mondays, 0 ever
+approved, 3 clusters re-minted weekly) are retired — ``MAX_SUGGESTIONS`` is 0
+and nothing reaches ``card_sent`` from here anymore. The suggestion plumbing
+(prompt field, parser, ``_file_suggestion_cards``) is kept for exactly one
+release so the retirement is a one-line revert if the owner changes his mind;
+the next release deletes it (and, per vnext2-plan P5, the recap itself is
+expected to be absorbed by the daily self-improvement loop).
 
 Reads the last 7 days of the Obsidian ingest output (``sources.obsidian_raw``,
 the same ``2 - raw`` folder the radar scans — YYYY-MM-DD-*.md files produced by
 the unprocessed→raw ingest pipeline), asks headless ``claude -p`` (same
 invocation pattern as the radar, with the untrusted-content fencing + scrub)
-for:
-
-  1. a short digest of what the user spent the week on, and
-  2. 2-3 "这件事我可以帮你自动化" suggestions.
+for a short digest of what the user spent the week on.
 
 The digest becomes a review-lane card (status=review, final_draft = full text,
-delivery_mode=chat) and each suggestion becomes a normal proposal card
-(status=card_sent). Both go through ``registry.merge_or_new`` — the same entry
-point the radars use — so a re-run in the same week merges instead of stacking
+delivery_mode=chat) through ``registry.merge_or_new`` — the same entry point
+the radars use — so a re-run in the same week merges instead of stacking
 duplicates. Source channel: ``weekly-digest``.
 
 Cost guard: when there are no ingest notes in the window (or nothing new since
@@ -21,8 +28,12 @@ the last run), the job logs a line and exits WITHOUT calling claude.
 Scheduling: the launchd agent (com.zelin.aiassistant.weeklydigest) fires hourly
 and this module gates itself on ``sources.weekly_digest`` (enabled/day/hour)
 plus a state marker (``state/weekly_digest.json``) so the real work runs at
-most once a week. ``--now`` (the Settings "现在生成一份" button via the
-``weekly_digest_now`` inbox action) bypasses the schedule gate.
+most once a week. Scheduled fires that find the module disabled or not due
+exit QUIETLY (no log line, no analytics event) — 24 fires a day against a
+default-off switch must not become the next ``radar_skip`` (audit L4).
+``--now`` (the Settings "现在生成一份" button via the ``weekly_digest_now``
+inbox action) bypasses the schedule gate but NOT the enabled switch, and a
+disabled forced run does say so.
 
 Run: ``python -m act.weekly_digest [--now]``.
 """
@@ -48,7 +59,9 @@ WINDOW_DAYS = 7
 MAX_FILES = 40          # newest-first cap on notes fed to the prompt
 PER_FILE_CHARS = 4000   # head of each note
 TOTAL_CHARS = 60000     # overall prompt-material budget
-MAX_SUGGESTIONS = 3
+# D19 tombstone (see module docstring): automation-idea proposal cards are
+# retired — 0 = never mint, whatever the model returns. Was 3.
+MAX_SUGGESTIONS = 0
 
 PROMPT_HEADER = (
     "You are the weekly-review assistant of a personal AI secretary. Below, "
@@ -63,12 +76,9 @@ PROMPT_HEADER = (
     "- digest: a short, warm '本周你都在忙什么' recap (<= 300 words): the 3-6 "
     "main threads of the week, notable progress, and anything left hanging. "
     "Plain language, no bullet spam.\n"
-    "- suggestions: 2-3 concrete, recurring chores visible in the notes that "
-    "an AI assistant could automate for the owner (e.g. a report drafted "
-    "weekly by hand, repeated manual data shuffling). Each: title (short "
-    "imperative), summary (one plain-language sentence: what it is and what "
-    "happens once automated), plan (2-4 concrete steps). Only suggest things "
-    "actually evidenced in the notes; if nothing qualifies, return [].\n"
+    # D19: automation ideas are retired (MAX_SUGGESTIONS = 0) — keep the JSON
+    # shape the parser expects, but stop paying for output nobody files.
+    "- suggestions: always return an empty list [].\n"
     "- Write every user-visible value in {lang}.\n\n"
 )
 
@@ -263,7 +273,10 @@ def _file_digest_card(cfg: config.Config, digest: str, n_notes: int,
 
 def _file_suggestion_cards(cfg: config.Config, suggestions: list,
                            today: _dt.date) -> list:
-    """Each suggestion -> a normal proposal card (status=card_sent)."""
+    """Each suggestion -> a normal proposal card (status=card_sent).
+
+    D19 TOMBSTONE: ``MAX_SUGGESTIONS`` is 0, so this files nothing; the body
+    survives one release for a trivial revert, then goes (module docstring)."""
     filed = []
     for s in suggestions[:MAX_SUGGESTIONS]:
         title = str(s.get("title") or "").strip()
@@ -335,6 +348,11 @@ def run(force: bool = False, runner=None,
         return summary
 
     if not cfg.weekly_digest_enabled:
+        if not force:
+            # D19: default-off + hourly launchd fire — quiet like not_due,
+            # else this is 24 log lines + 24 analytics events a day forever.
+            summary["skipped"] = "disabled"
+            return summary
         return skip("disabled", "weekly digest: sources.weekly_digest.enabled "
                                 "is off — no-op")
 
@@ -411,12 +429,13 @@ def run(force: bool = False, runner=None,
 
     _write_marker({"last_run": today.isoformat(),
                    "last_ingest_mtime": newest_mtime})
+    # D19: no automation proposals ride along anymore — the body must not
+    # promise cards that were never filed (§40 honest receipts).
     notify.notify(
         _lang(cfg, "本周摘要已生成", "Weekly digest ready"),
         _lang(cfg,
-              f"去「待验收」看看这周的回顾；另有 {len(suggestion_cards)} 条自动化建议进了待审批。",
-              f"Review this week's recap in the Review lane; "
-              f"{len(suggestion_cards)} automation proposals await approval."))
+              "去「待验收」看看这周的回顾。",
+              "Review this week's recap in the Review lane."))
     analytics.log_event("weekly_digest_generated",
                         notes=len(notes), suggestions=len(suggestion_cards))
     print(f"weekly digest: generated {digest_card.id} from {len(notes)} notes "

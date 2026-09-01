@@ -1,8 +1,10 @@
-"""act/digest.py — 周一 digest 通知走 §5 v0.14 契约：python 侧全部通知经
+"""act/digest.py — 状态摘要 digest 通知走 §5 v0.14 契约：python 侧全部通知经
 act/lib/failures.pick 走 §15 的 UI 语言设置，且每条 body 必带下一步动作。
 （回归：English UI 用户每周一收到中文标题 + 纯路径 body 的通知。）
 
 §40.7 起 digest 落卡而非落盘——通知不再携带文件路径，body 指向待验收列。
+D19（v0.48.4）：文案去掉「周一/Monday」——digest.frequency 可设 daily，标题
+不能再暗示周几。
 
 Everything lives under the sandbox AIASSISTANT_HOME set in tests/__init__.py;
 build_digest / oneonone / _file_digest_card 被 mock 掉，不触 registry /
@@ -58,7 +60,7 @@ class DigestNotifyTestCase(unittest.TestCase):
         card = digest.publish_digest()
         self.assertEqual(card.id, "R-999")
         (title, body) = self.notify.call_args[0][:2]
-        self.assertEqual(title, "Monday digest ready")
+        self.assertEqual(title, "Status digest ready")  # D19: was "Monday digest ready"
         self.assertIsNone(_CJK.search(title))   # 英文 UI 不夹中文标题
         self.assertIsNone(_CJK.search(body))
         self.assertIn("Review", body)           # 下一步：去待验收列
@@ -73,7 +75,7 @@ class DigestNotifyTestCase(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True):
             digest.publish_digest()
         (title, body) = self.notify.call_args[0][:2]
-        self.assertEqual(title, "周一 digest 已生成")
+        self.assertEqual(title, "状态摘要已生成")  # D19: was 「周一 digest 已生成」
         self.assertIn("待验收", body)           # body 带下一步动作
         self.assertNotIn("/", body)             # 不再是路径
 
