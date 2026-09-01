@@ -1,4 +1,4 @@
-"""周一 digest (CONTRACT §17/§40.7) — the Monday morning state-of-the-world.
+"""状态摘要 digest (CONTRACT §17/§40.7) — the state-of-the-world card.
 
 Sections:
   1. 待审批积压   — status=card_sent, with age in days
@@ -16,20 +16,28 @@ Sections:
 
 Output (§40.7): a review-lane chat card — same filing pattern as
 ``act.weekly_digest`` (status=review, delivery_mode=chat, final_draft = the
-full markdown, merge_or_new dedup on the per-Monday title so a same-day
+full markdown, merge_or_new dedup on the per-day title so a same-day
 re-run refreshes instead of stacking) — plus a notification pointing at the
 待验收 lane. No workbench file is written anymore and no filesystem path
 rides in the notification (the old ``digests/digest-YYYY-MM-DD.md`` output
 was invisible from every app surface). The 1:1 prep page (``act.oneonone``)
 is still generated alongside and linked inside the digest text.
 
-Run: ``python -m act.digest --now`` (crontab: Mondays 09:07; without ``--now``
-it no-ops unless today is Monday). Feature flag: ``features.digest``.
+Scheduling (§17 D19): the crontab line fires DAILY at 09:07 without
+``--now``; this module gates itself on ``digest.frequency``
+(off | daily | every2days | weekly — default **off**) plus the marker
+``state/digest.json`` ``{"last_run": "YYYY-MM-DD"}``, the same self-gating
+shape as ``act.weekly_digest``. Intervals are rolling (measured from the
+last run), not pinned to a weekday, so a machine asleep on Monday still gets
+its weekly card on Tuesday. ``--now`` bypasses the cadence gate (manual
+run); ``features.digest`` (§16) stays the master kill switch either way.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +53,13 @@ ASSISTANT_REPO = "~/Projects/zelin-ai-assistant"
 STUCK_AFTER_HOURS = 24
 
 SOURCE_CHANNEL = "digest"
+
+# §17 cadence gate (D19) — canonical slug `digest`: module act/digest.py,
+# config key digest.frequency, marker state/digest.json, log state/digest.log.
+MARKER_PATH_NAME = "digest.json"
+# rolling interval per frequency value; "off" (and any unknown value) has no
+# entry and never comes due.
+FREQUENCY_DAYS: dict = {"daily": 1, "every2days": 2, "weekly": 7}
 
 
 # --------------------------------------------------------------------------- #
@@ -67,6 +82,50 @@ def _parse_iso(s) -> Optional[_dt.datetime]:
 def _age_days(req: Requirement, today: _dt.date) -> Optional[int]:
     d = first_seen(req)
     return (today - d).days if d else None
+
+
+# --------------------------------------------------------------------------- #
+# §17 cadence gate (D19) — marker + due(), mirrors act.weekly_digest
+# --------------------------------------------------------------------------- #
+def _marker_path() -> Path:
+    return config.STATE_DIR / MARKER_PATH_NAME
+
+
+def _read_marker() -> dict:
+    try:
+        data = json.loads(_marker_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — corrupt/missing marker -> start over
+        return {}
+
+
+def _write_marker(data: dict) -> None:
+    config.ensure_state_dirs()
+    path = _marker_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def due(cfg: config.Config, marker: dict,
+        today: Optional[_dt.date] = None) -> bool:
+    """Scheduled-run gate: ``digest.frequency`` names a rolling interval and
+    the marker's ``last_run`` is at least that many days old (or absent).
+    ``off`` — and any value the config layer did not recognise — is never
+    due. An unparseable ``last_run`` counts as absent (run, then rewrite)."""
+    interval = FREQUENCY_DAYS.get(str(cfg.digest_frequency))
+    if interval is None:
+        return False
+    today = today or _dt.date.today()
+    last_run = str(marker.get("last_run") or "")
+    if not last_run:
+        return True
+    try:
+        last = _dt.date.fromisoformat(last_run)
+    except ValueError:
+        return True
+    return (today - last).days >= interval
 
 
 def _fmt(req: Requirement, today: _dt.date, extra: str = "") -> str:
@@ -238,8 +297,9 @@ def build_digest(today: Optional[_dt.date] = None,
     def section(header: str, lines: list[str], empty: str = "- （无）") -> list[str]:
         return [header] + (lines if lines else [empty]) + [""]
 
-    # §44: silent fold-ins since the last digest (7 days) — the ONLY place
-    # they are surfaced besides the card chip; metadata events, never content.
+    # §44: silent fold-ins over a fixed 7-day lookback (whatever the cadence)
+    # — the ONLY place they are surfaced besides the card chip; metadata
+    # events, never content.
     try:
         week_ago = now - _dt.timedelta(days=7)
         folded = sum(1 for e in analytics.read_events(since=week_ago)
@@ -249,7 +309,9 @@ def build_digest(today: Optional[_dt.date] = None,
     except Exception:  # noqa: BLE001 - a digest must never die over a count
         folded = 0
 
-    out: list[str] = [f"# 周一 digest · {today.isoformat()}", ""]
+    # cadence-neutral heading (D19): the card may be daily, so no weekday in
+    # the name — §40.7 页面诚实
+    out: list[str] = [f"# 状态摘要 · {today.isoformat()}", ""]
     # one-line overview right under the title — doubles as the review-lane
     # card's summary (_file_digest_card picks the first non-header line).
     folded_zh = f" · 静默并入 {folded}" if folded else ""
@@ -290,10 +352,10 @@ def _file_digest_card(md: str, today: _dt.date) -> Requirement:
     """Digest -> review-lane chat card (§40.7) — the same filing pattern as
     act/weekly_digest: status=review, delivery_mode=chat, final_draft = the
     full markdown, delivered_summary = its head. merge_or_new dedups on the
-    per-Monday title, so a same-day re-run refreshes the existing card
+    per-day title, so a same-day re-run refreshes the existing card
     instead of stacking a duplicate."""
-    title = failures.pick(f"周一 digest · {today.isoformat()}",
-                          f"Monday digest · {today.isoformat()}")
+    title = failures.pick(f"状态摘要 · {today.isoformat()}",
+                          f"Status digest · {today.isoformat()}")
     first_line = next((ln.strip() for ln in md.splitlines()
                        if ln.strip() and not ln.strip().startswith("#")),
                       title)
@@ -310,7 +372,7 @@ def _file_digest_card(md: str, today: _dt.date) -> Requirement:
             "channel": SOURCE_CHANNEL,
             "date": today.isoformat(),
             "ref": "act.digest",
-            "quote": failures.pick("周一状态盘点", "Monday state of the world"),
+            "quote": failures.pick("状态盘点", "State of the world"),
             "who": "assistant",
         }],
     )
@@ -344,10 +406,10 @@ def publish_digest(today: Optional[_dt.date] = None) -> Requirement:
 
     # §5 v0.14：python 侧全部通知经 failures.pick 走 UI 语言，body 必带下一步
     notify.notify(
-        failures.pick("周一 digest 已生成", "Monday digest ready"),
+        failures.pick("状态摘要已生成", "Status digest ready"),
         failures.pick(
-            "去「待验收」看这周的盘点；进化建议在潜在任务列。",
-            "Open the Review lane for this week's state of the world; "
+            "去「待验收」看这份盘点；进化建议在潜在任务列。",
+            "Open the Review lane for the state of the world; "
             "suggestions sit in the backlog.",
         ),
     )
@@ -355,22 +417,57 @@ def publish_digest(today: Optional[_dt.date] = None) -> Requirement:
     return card
 
 
+def run(force: bool = False, today: Optional[_dt.date] = None) -> dict:
+    """One scheduled pass (§17 D19). Returns ``{skipped: None|reason, id?}``.
+
+    Gate order: ``features.digest`` (master kill switch, wins even over
+    ``--now``) → cadence (``digest.frequency`` + marker; ``force`` bypasses).
+    Skips are QUIET — no print, no analytics — because the cron fires daily
+    by design and a default-off knob must not leave a line a day in
+    ``state/digest.log`` nor a ``digest_skip`` event stream (audit L4: skip
+    events were 67% of all analytics ever). The marker advances on every
+    successful publish, forced or not, so a manual ``--now`` restarts the
+    interval from today.
+
+    A marker that cannot be written (perm/disk) is reported as ONE readable
+    line and the summary carries ``marker_error`` — never a traceback that
+    hides the fact the card WAS published, never silence: an absent marker
+    reads as due, so ``weekly`` would quietly degrade to a card a day.
+    """
+    cfg = config.load_config()
+    today = today or _dt.date.today()
+    if not cfg.feature("digest"):
+        return {"skipped": "disabled"}
+    if not force and not due(cfg, _read_marker(), today):
+        return {"skipped": "off" if cfg.digest_frequency == "off" else "not_due"}
+    card = publish_digest(today)
+    summary: dict = {"skipped": None, "id": card.id}
+    try:
+        _write_marker({"last_run": today.isoformat()})
+    except OSError as e:
+        summary["marker_error"] = f"{type(e).__name__}: {e}"
+        print(f"digest: marker write failed ({_marker_path()}): "
+              f"{type(e).__name__}: {e} — cadence will re-fire next run; "
+              "fix the state dir")
+    return summary
+
+
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(prog="digest", description="Monday digest")
+    ap = argparse.ArgumentParser(prog="digest", description="state digest")
     ap.add_argument("--now", action="store_true",
-                    help="generate immediately regardless of weekday")
+                    help="generate immediately, bypassing the digest.frequency gate")
     args = ap.parse_args(argv)
 
-    cfg = config.load_config()
-    if not cfg.feature("digest"):
-        print("features.digest is off — no-op")
+    summary = run(force=args.now)
+    if summary["skipped"] == "disabled":
+        # a human typed --now into a killed feature: say so (the scheduled
+        # daily fire stays quiet — same reason as the cadence skips)
+        if args.now:
+            print("features.digest is off — no-op")
         return 0
-    if not args.now and _dt.date.today().weekday() != 0:
-        print("today is not Monday — skipping (use --now to force)")
+    if summary["skipped"]:
         return 0
-
-    card = publish_digest()
-    print(f"{card.id} (review lane)")
+    print(f"{summary['id']} (review lane)")
     return 0
 
 

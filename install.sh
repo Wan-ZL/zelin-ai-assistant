@@ -12,8 +12,8 @@
 #      python/repo/home paths + the login shell's claude directory, which goes
 #      FIRST on the daemon PATH), load them, then verify they actually spawn
 #   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
-#      the repo's ingest/ scripts + `python -m act.radar --once`, and Monday
-#      09:07 runs `python -m act.digest --now`
+#      the repo's ingest/ scripts + `python -m act.radar --once`, and a daily
+#      09:07 `python -m act.digest` (self-gated by digest.frequency, §17)
 #   7. run the post-install diagnostics (python -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
@@ -758,7 +758,7 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 6. crontab — unified ingest chain + Monday digest (CONTRACT §18)"
+echo "==> 6. crontab — unified ingest chain + state digest (CONTRACT §18)"
 chmod +x "$REPO_ROOT"/ingest/*.sh "$REPO_ROOT"/ingest/*.command 2>/dev/null || true
 
 # cron runs outside the login shell — same validated-interpreter rule as the
@@ -785,7 +785,11 @@ CRON_CLAUDE_DIR="$HOME/.local/bin"
 # only real cron runs may write state/cron_probe.json — a manual in-app run
 # has the app's own disk access and would falsify the verdict.
 INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH AIASSISTANT_CRON=1 && ./ingest/screenpipe-export.sh && ./ingest/screenpipe-cleanup.sh && { ./ingest/process-screenpipe.sh || [ \$? -eq 3 ]; } && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.radar --once >> $REPO_ROOT/state/radar.cron.log 2>&1"
-DIGEST_LINE="7 9 * * 1 cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest --now >> $REPO_ROOT/state/digest.log 2>&1"
+# Daily 09:07 fire WITHOUT --now (CONTRACT §17 D19): act.digest self-gates on
+# digest.frequency (off | daily | every2days | weekly, default off) + its
+# state/digest.json marker, so a cadence change in Settings needs no crontab
+# rewrite. Off/not-due fires exit silently (no log line).
+DIGEST_LINE="7 9 * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest >> $REPO_ROOT/state/digest.log 2>&1"
 TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.analytics_sync --once >> $REPO_ROOT/state/analytics_sync.log 2>&1"
 
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
@@ -800,12 +804,15 @@ else
     ok "ingest cron chain installed (legacy screenpipe-export lines replaced)"
 fi
 
-# idempotent: append the Monday digest line if absent
-if printf '%s\n' "$NEW_CRON" | grep -q 'act\.digest'; then
-    ok "Monday digest cron already installed"
+# idempotent: exact line present -> keep; otherwise replace any older
+# act.digest line (the pre-D19 Monday-only `--now` form would keep forcing a
+# weekly card past an `off` knob) with the daily self-gating one.
+if printf '%s\n' "$NEW_CRON" | grep -Fq "$DIGEST_LINE"; then
+    ok "digest cron already installed"
 else
+    NEW_CRON="$(printf '%s\n' "$NEW_CRON" | grep -v 'act\.digest' || true)"
     NEW_CRON="$(printf '%s\n%s\n' "$NEW_CRON" "$DIGEST_LINE")"
-    ok "Monday digest cron installed (Mon 09:07)"
+    ok "digest cron installed (daily 09:07; cadence = digest.frequency, default off)"
 fi
 
 # idempotent: append the hourly telemetry sync if absent (default-on anonymous

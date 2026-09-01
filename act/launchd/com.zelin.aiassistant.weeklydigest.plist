@@ -5,8 +5,10 @@
   repo root, $HOME) into ~/Library/LaunchAgents - do not load this file as-is.
 
   weeklydigest - the weekly ingest digest (CONTRACT s24): reads the last 7
-  days of Obsidian ingest output and files a review-lane digest card plus 2-3
-  automation proposal cards.
+  days of Obsidian ingest output and files a review-lane digest card. Default
+  OFF since D19 (sources.weekly_digest.enabled must be true); the automation
+  proposal cards it used to mint are retired. Disabled/not-due fires exit
+  silently.
 
   SCHEDULING: launchd fires this hourly (StartCalendarInterval Minute only);
   the module itself gates on sources.weekly_digest (enabled/day/hour, default

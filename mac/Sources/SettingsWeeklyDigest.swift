@@ -9,7 +9,8 @@ import SwiftUI
 
 struct WeeklyDigestSettingsSection: View {
     @ObservedObject private var i18n = LanguageStore.shared
-    @State private var enabled = true
+    // D19 (v0.48.5): product default is OFF — mirrors Config.weekly_digest_enabled.
+    @State private var enabled = false
     @State private var status = ""
     @State private var loaded = false
 
@@ -17,8 +18,8 @@ struct WeeklyDigestSettingsSection: View {
     // the shared CollapsibleSection wrapper it's registered in (Settings.swift).
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle(L("每周自动生成「本周你都在忙什么」+ 自动化建议",
-                     "Auto-generate a weekly \"what you were up to\" recap + automation ideas"),
+            Toggle(L("每周自动生成「本周你都在忙什么」回顾卡（默认关）",
+                     "Auto-generate a weekly \"what you were up to\" recap (default off)"),
                    isOn: Binding(
                     get: { enabled },
                     set: { v in
@@ -39,8 +40,8 @@ struct WeeklyDigestSettingsSection: View {
                 Spacer()
             }
 
-            Text(L("读取最近 7 天的 ingest 笔记：摘要卡片会出现在「待验收」，自动化建议进「待审批」。没有新数据时会自动跳过，不花钱。",
-                   "Reads the last 7 days of ingest notes: the recap lands in the Review lane, automation ideas in Approvals. Skips (free) when there is no new data."))
+            Text(L("读取最近 7 天的 ingest 笔记：摘要卡片会出现在「待验收」。没有新数据时会自动跳过，不花钱。（自动化建议卡已退役。）",
+                   "Reads the last 7 days of ingest notes: the recap lands in the Review lane. Skips (free) when there is no new data. (Automation-idea cards are retired.)"))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
             Text(L("本区改动即时生效，不用点下方的保存。",
@@ -58,7 +59,9 @@ struct WeeklyDigestSettingsSection: View {
 
     private func load() {
         let ov = SettingsIO.readOverrides()
-        enabled = (ov["weekly_digest_enabled"] as? Bool) ?? true
+        // key absent == product default (false since D19) — both readers
+        // (this toggle and act.lib.config) must agree or the switch lies
+        enabled = (ov["weekly_digest_enabled"] as? Bool) ?? false
     }
 
     /// Immediate persist (read-merge-write): only this key is touched, so
@@ -66,10 +69,10 @@ struct WeeklyDigestSettingsSection: View {
     private func saveEnabled(_ v: Bool) {
         var merged = SettingsIO.readOverrides()
         if v {
-            // true == the product default -> drop the override key entirely
-            merged.removeValue(forKey: "weekly_digest_enabled")
+            merged["weekly_digest_enabled"] = true
         } else {
-            merged["weekly_digest_enabled"] = false
+            // false == the product default (D19) -> drop the override key entirely
+            merged.removeValue(forKey: "weekly_digest_enabled")
         }
         do {
             try SettingsIO.writeOverrides(merged)

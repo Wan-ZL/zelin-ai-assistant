@@ -78,6 +78,10 @@ def _pick(zh: str, en: str) -> str:
 # the chain stopped firing or it comes from an install predating the probe.
 CRON_PROBE_FRESH_SECONDS = 2 * 3600
 CRON_PROBE_PATH = config.STATE_DIR / "cron_probe.json"
+# §17 D19: the installer's digest line never passes --now; a crontab line
+# that does is the pre-D19 Monday form (or a hand edit) and forces a card
+# every fire, past digest.frequency.
+_LEGACY_DIGEST_NOW_RE = re.compile(r"act\.digest\s+--now\b")
 
 # actd rewrites dashboard.json every ~10s pass; anything older than this means
 # the daemon is not writing (same threshold as the app's staleness banner).
@@ -1214,12 +1218,30 @@ def _check_cron(probes: Probes):
             "missing from crontab - screen captures never become vault notes or radar cards",
             "bash install.sh (reinstalls the §18 cron lines)",
         ).with_failure("cron_missing"))
-    if "act.digest" in text:
-        results.append(CheckResult("cron digest", OK, "installed (Mon 09:07)"))
+    digest_lines = [ln for ln in text.splitlines()
+                    if "act.digest" in ln and not ln.lstrip().startswith("#")]
+    if any(_LEGACY_DIGEST_NOW_RE.search(ln) for ln in digest_lines):
+        # §17 D19: a crontab line that still passes --now is the pre-D19
+        # Monday form — --now bypasses the cadence gate, so this line forces
+        # a card every fire no matter what digest.frequency says (default
+        # off). Calling it "installed" here would be the lie the knob exists
+        # to end; only `bash install.sh` replaces the line.
+        results.append(CheckResult(
+            "cron digest", WARN,
+            "legacy `act.digest --now` line - forces a card every fire, "
+            "ignoring digest.frequency (default off)",
+            "bash install.sh (replaces it with the daily self-gated line)",
+        ).with_failure("cron_missing"))
+    elif digest_lines:
+        # the line fires daily; the cadence (default off) lives in config,
+        # so "installed" says nothing about whether cards appear.
+        results.append(CheckResult(
+            "cron digest", OK,
+            "installed (daily 09:07; cadence = digest.frequency)"))
     else:
         results.append(CheckResult(
             "cron digest", WARN,
-            "Monday digest line missing from crontab",
+            "digest line missing from crontab",
             "bash install.sh",
         ).with_failure("cron_missing"))
     results.append(_check_cron_probe(probes, cron_installed="screenpipe-export.sh" in text))

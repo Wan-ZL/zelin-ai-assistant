@@ -382,6 +382,8 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
 
 **v0.14 追记（add-only；随 §17 v0.14 修订）**：`manager_pack` 随 manager pack ①的移除退出 flag 集合——`DEFAULT_FEATURES` 与设置窗口均不再包含它，代码中无任何调用点检查；config.yaml/overrides 里遗留的 `features.manager_pack` 键按「未知 flag」语义被静默忽略。现行集合 = {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics}。1:1 准备页（`act.oneonone`）随 §17 digest 生成，受 `features.digest` 门控，无独立 flag。
 
+**v0.48.5 追记（D19；随 §17 v0.48.5 修订，add-only）**：`features.digest` 仍是 §17 digest 的**总开关**（默认 on，off 时连 `--now` 都 no-op），但它不再是唯一闸——**是否按时出卡**由新增的 `digest.frequency`（默认 **off**）决定，两键 AND。语义分工：flag = 「这个功能存在吗」（关了连进化建议/1:1 准备页都不产生），frequency = 「多久自动来一张」。默认安装两键的合取 = **不出卡**，这正是 D19 「digest 默认不以卡片形式出现」的落地；进化建议（type=self-improvement 卡）自然只在 digest 真跑时随之产生，未新增任何 doctor/insights 噪音。§24 的 weekly digest 同日改为默认 off（见该节 v0.48.5 修订），两条 digest 通道自此**出厂零卡片**。
+
 **死开关修复追记（add-only；本节「各模块入口检查 flag」的两处落地澄清）**：
 - **`features.analytics`**：flag 为 false 时事件**不产生也不出本机**——gate 拦在
   全部三个环节：① Python 写者 `act/lib/analytics.py:log_event`/`log_first`
@@ -443,6 +445,14 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
 
 ## 17. 周一 digest + Manager pack
 - `python -m act.digest`：待审批积压、待验收积压、needs_input/resume_exhausted 卡住项、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
+
+**v0.48.5 修订（D19，owner 2026-09-01 拍板；行为变更，随 release 记 CHANGELOG）——节奏旋钮 `digest.frequency`，默认 off**。Owner 原话：「像这种每日摘要，好像在设置里面没法关，几天没看就攒起来了……能不能在设置里面让我能够改成一周或者两天摘要，或者完全关掉」；追问「摘要卡还需要吗」的采纳答案：**默认不以卡片形式出现**。据此：
+- **config（add-only）** 顶层块 `digest.frequency` ∈ {`off`, `daily`, `every2days`, `weekly`}，**默认 `off`**（`Config.digest_frequency`，常量 `config.DIGEST_FREQUENCIES` / `DEFAULT_DIGEST_FREQUENCY`）；typo/未知值 **fail-quiet 到 off**（宁可少一份摘要，不可按错误节奏刷卡），大小写与 `_`/`-` 拼写差异归一。overrides 允许列表新增扁平键 `digest_frequency`（设置 UI diff-write；off == 产品默认，写 off 即删键）。多年随 `config.example.yaml` 出厂却从未被任何代码读取的 `digest.weekly: monday` 键自此从模板移除，config.yaml 中残留者按「未知键」静默忽略。
+- **调度**：crontab 行改为**每天** 09:07 唤醒 `python -m act.digest`（**不带** `--now`）；模块自行闸门——`features.digest`（§16 总开关，`--now` 也压不过）→ 节奏（`digest.frequency` + 状态标记 **`state/digest.json`** `{"last_run":"YYYY-MM-DD"}`，原子写，与 §24 的 `state/weekly_digest.json` 同款）。节奏是**滚动间隔**（距 `last_run` ≥ 1/2/7 天即到期；标记缺失或不可解析 = 到期），**不钉周几**——周一睡着的机器周二照样拿到本周那张。install.sh 幂等：精确行已在则保留，否则**替换**任何旧 `act.digest` 行（D19 之前的「周一 `--now`」形态会越过 off 继续每周强制铸卡）。doctor 「cron digest」行只报「installed (daily 09:07; cadence = digest.frequency)」——安装了 ≠ 会出卡；crontab 里的 `act.digest` 行若仍带 `--now`（D19 前的周一形态，或手改）→ **WARN**（failure_id `cron_missing` → `repair_cron`，detail 点名 `--now` 越过 `digest.frequency`，fix = `bash install.sh`）——那条行每次触发都强制铸卡，报 OK 就是本节要终结的那句谎话（判例 `tests/test_doctor.py` `test_legacy_monday_now_digest_line_warns`）；`#` 注释掉的行按缺失计。Linux/Windows 从未装过此 cron，不变。
+- **静默纪律**：off / 未到期的定时 pass **不打印、不打 analytics 事件**——cron 每天都来，默认 off 的旋钮不得在 `state/digest.log` 留一行一天、也不得成为下一个 `radar_skip`（审计 L4：skip 事件占历史 analytics 的 67%）。`--now` 为人手动请求：绕过节奏（含 off）并把 `last_run` 推到今天（下一个间隔从今天起算）；`features.digest` 关着时 `--now` 打印一行说明后退出。**例外——标记写失败必须出声**：`state/digest.json` 写不进去时卡已发布，`run()` 在 summary 加 `marker_error` 并**只打印一行**（路径 + 异常名），`--now` 仍打印卡 id；不抛 traceback、不静默——标记缺失 = 到期，`weekly` 会退化成一天一张，这个放大效应只能靠这一行被看见（判例 `test_marker_write_failure_is_one_line_and_card_still_published`）。
+- **设置界面落点**：`digest_frequency` 已进 overrides 允许列表，但截至本修订**没有任何 UI 暴露它**——原生 Mac 设置页不再加功能（D3），web 设置页尚未存在（vnext2-plan P4）。P4 之前 owner 只能改 `config.yaml` 的 `digest.frequency` 或手写 `state/settings_overrides.json`；D19 「设置里可改」的 UI 半边由 P4 兑现。
+- **文案去周几**：标题 「周一 digest · <日期>」→ **「状态摘要 · <日期>」**（en：Status digest · <date>），正文首行、通知标题（「状态摘要已生成」/ "Status digest ready"）、source quote（「状态盘点」）同步——日频卡片带「周一」字样即 §40.7 「页面诚实」的反例。merge_or_new 仍按每日标题去重（同日重跑刷新同卡）。
+- 判例：`tests/test_digest_frequency.py`（四值 fake-clock 到期表、14 天序列计数、默认 off、overrides 键、静默、`--now`/`features.digest` 优先级、install.sh 行形态）；旧判例 `test_audit_digest.py` / `test_digest_notify.py` 的 「周一」 字面量随本修订改为 「状态摘要」并在注释里注明缘由。
 - Manager pack（flag: manager_pack）：①obsidian radar 扫到含 manager（watch_people 首项的 first-name token）的新会议记录时，额外派 T0 任务生成**会后 action-item 清单草稿**（workbench/meetings/<date>-action-items.md，通知）；②`python -m act.oneonone` 生成 1:1 准备页（ready/not-ready per registry + 双向欠账 + 上次以来 delta），digest 周一自动附带。
 
 **v0.14 补充（会后清单落点守卫 + 通知合并 + pass 互斥，add-only；2026-07-08 backfill 风暴修正）**：
@@ -719,6 +729,13 @@ overrides 允许列表新增扁平键 `weekly_digest_enabled`（bool，App 设�
 **inbox 动作** `weekly_digest_now`（§10 全集成员；无 `id` 字段，App 设置「现在生成一份」按钮写入）：actd 收到后 `subprocess.Popen` 分离启动 `python -m act.weekly_digest --now`（stdout/err 追加 `state/weekly_digest.log`；启动失败只 log），打点 `weekly_digest_requested`。`--now` 跳过调度闸门与 `no_new_data` 护栏，但 `no_data`（零笔记）仍跳过并弹通知说明缘由。
 
 **analytics**：`weekly_digest_generated{notes,suggestions}` / `weekly_digest_skip{reason}` / `weekly_digest_requested`（actd）+ app 侧 `weekly_digest_toggle{on}` / `weekly_digest_generate_now`。
+
+**v0.48.5 修订（D19，owner 2026-09-01 拍板；行为变更，随 release 记 CHANGELOG）——默认关 + 自动化建议卡退役**。审计 L7：本节的「自动化建议」提案卡共铸 **15 张、0 张获批**，3 个 cluster 跨 4 个周一重铸；owner 追问「摘要卡还需要吗」的采纳答案是**默认不以卡片形式出现**。据此：
+- **`sources.weekly_digest.enabled` 默认 `false`**（`Config.weekly_digest_enabled`；config.example.yaml 模板同步）。显式 `enabled: true`（yaml）或 overrides 扁平键 `weekly_digest_enabled: true` 才生成回顾卡；上文「默认开」的表述自此作历史记录保留。overrides 的 diff-write 语义随默认翻转：**false == 产品默认，写 false 时删键、写 true 时落键**——Mac 设置页开关（`mac/Sources/SettingsWeeklyDigest.swift`）同 PR 镜像（键缺失读作 false），两个读者对同一份 overrides 必须给出同一答案，否则开关会显示「开」而实际关着（§16 analytics gate 的同款双读者纪律）。
+- **墓碑：自动化建议卡（②，type=automation / status=card_sent）自 v0.48.5 起不再铸造**——管道代码**同 release 删除**（防腐 #6：`MAX_SUGGESTIONS`、`_file_suggestion_cards`、parser 的 suggestions 分支、prompt 的 `suggestions` 字段全部移除；prompt 只要 `{"digest": ...}`），模型若仍自带 `suggestions` 键一律忽略，无论返回什么都不落卡、不到 card_sent。`run()` summary 与 `weekly_digest_generated` 事件里的 `suggestions`（恒 0）/ `suggestion_ids`（恒 []）作 add-only 常量保留。owner 反悔的路径是 `git revert` D19 提交，不是留一个 0 开关；vnext2-plan P5 的每日自我改进循环是这类想法（若还想要）的新出口——过 fingerprint 去重后再出，不再由本模块直发。判例 `test_suggestion_plumbing_is_deleted_not_parked`。通知 body 相应去掉「另有 N 条自动化建议进了待审批」（§40 诚实回执：不承诺没铸的卡）；actd §40.6 对 `weekly-digest` 通道新提案的免重复通知护栏保留（存量卡仍可能在看板上，且它是无害的 no-op）。
+- **静默纪律**：launchd 每小时唤醒 × 默认 off = 每天 24 次「disabled」——**定时（非 `--now`）pass 遇 enabled=false 与 not_due 同款静默**：不打印、不打 `weekly_digest_skip` 事件（审计 L4：skip 事件占历史 analytics 的 67%，不再添一条）。`--now`（设置页「现在生成一份」）遇 enabled=false 仍打印 + 打点——那是人按的按钮，要有回音；`--now` **不**绕过 enabled（v0.14 起的判例 `test_disabled_flag_no_ops` 保留）。
+- **标记写失败要被看见**：`state/weekly_digest.json` 写不进去（权限/磁盘）时卡已落、通知照发，`run()` 在 summary 加 `marker_error` 并**只打印一行**（含路径与异常名）——不抛 traceback（会遮住「卡其实已落」的事实），也不静默（标记缺失 = 到期，周一会每小时刷同一张卡并重复通知，这个放大效应只能靠这一行让人看见）。§17 的 `state/digest.json` 同款。
+- 判例：`tests/test_weekly_digest.py`（`DefaultOffTestCase` 钉默认 off、定时静默、显式 true / overrides 键回开；`test_suggestions_never_minted` 取代原「≤3 张」pin 并在注释里注明缘由；`test_marker_write_failure_is_one_line_and_card_still_filed`；其余行为 pin 的 fixture 改为显式 opt-in）；`tests/test_honest_receipts.py` §40.4 三条失败通知 pin 同样显式 opt-in。
 
 ---
 
@@ -2232,6 +2249,10 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   <日期>」标题 merge_or_new 去重（当天重跑刷新同一张卡）。通知 body 指向
   待验收列。进化建议维持 `status=detected`（潜在任务）——digest.py 自述规则，
   测试钉死。1:1 准备页（`act/oneonone`，独立面）照常写盘、在 digest 正文链接。
+  **v0.48.5（D19）**：标题/首行/通知改为「状态摘要 · <日期>」（en "Status
+  digest · <date>"）——§17 的 `digest.frequency` 可设 daily，卡名里的「周一」
+  会撒谎；去重键仍是每日标题。同日 §17 改为默认 off，本节的落卡形态只在
+  owner 打开节奏旋钮后出现。
 - 页面诚实（audit #19 的 digest/oneonone 半边）：条目行用通道显示名
   （`oneonone.lane_name`，随界面语言）而非 registry 原词；承诺账本表述
   owner-neutral 并按 `owner.name` 参数化（`oneonone.ledger_header`）；

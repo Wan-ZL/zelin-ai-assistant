@@ -901,7 +901,7 @@ struct SettingsFormView: View {
                    isOn: featureBinding("gmail_radar", $featGmailRadar))
             Toggle(L("obsidian_radar — Obsidian 雷达", "obsidian_radar — Obsidian radar"),
                    isOn: featureBinding("obsidian_radar", $featObsidianRadar))
-            Toggle(L("digest — 周一 digest", "digest — Monday digest"),
+            Toggle(L("digest — 状态摘要", "digest — status digest"),
                    isOn: featureBinding("digest", $featDigest))
             Toggle(L("auto_resume — 后台任务自动拉起", "auto_resume — auto-resume background tasks"),
                    isOn: featureBinding("auto_resume", $featAutoResume))
