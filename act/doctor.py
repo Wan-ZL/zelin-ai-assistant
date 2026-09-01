@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+from act import llm
 from act.lib import (
     config,
     deploy_state,
@@ -106,6 +107,9 @@ DASHBOARD_FRESH_SECONDS = 90
 SCREENPIPE_STALE_SECONDS = 2 * 3600
 MIN_PYTHON = (3, 9)
 _PROBE_TIMEOUT = 90  # ceiling for the live claude call
+# §57 model liveness: one "ok" per explicit knob; a model that exists answers
+# in seconds, one that does not is rejected before any generation.
+_MODEL_PROBE_TIMEOUT = 60
 
 
 # --------------------------------------------------------------------------- #
@@ -377,6 +381,9 @@ class Probes:
     # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = 默认工作
     # repo）——终端看不见的 TCC 失败只能这样问出来；tests 注入，绝不真起 launchd
     launchd_claude_probe: Callable[[str, str], dict] = _launchd_claude_probe
+    # §57 (D22)：Claude Code 全局默认模型（~/.claude/settings.json `model`）——
+    # follow 模式继承的就是它；tests 注入，绝不读开发者的真文件
+    claude_code_settings: Callable[[], dict] = llm.read_claude_code_default_model
 
 
 @dataclass
@@ -1648,6 +1655,95 @@ def _check_claude_auth(probes: Probes):
     ).with_failure(failures.classify(out) or "claude_auth_failed")
 
 
+# --------------------------------------------------------------------------- #
+# §57 (D22) model knobs — what "follow" inherits + does an explicit id answer
+# --------------------------------------------------------------------------- #
+def _model_knobs(cfg) -> dict:
+    """{"dispatch": id|None, "pipeline": id|None} — None = follow."""
+    return {mode: llm.model_for(mode, cfg) for mode in llm.MODES}
+
+
+def _check_claude_code_model(probes: Probes):
+    """One row, file reads only (rides under --fast too): the Claude Code global
+    default every follow-mode call inherits, plus where the two knobs point.
+    Never FAIL — this row informs; §56's rollback verdict must not turn on it.
+    WARN when a knob follows a NON-canonical global default: that is exactly
+    the 2026 EAP-alias retirement that broke every dispatch silently."""
+    info = probes.claude_code_settings() or {}
+    cfg = config.load_config()
+    knobs = _model_knobs(cfg)
+    knob_text = " · ".join(
+        "%s: %s" % (mode, knobs[mode] or "follow") for mode in llm.MODES)
+    global_model = info.get("model")
+    if info.get("exists") and not info.get("parseable"):
+        return CheckResult(
+            "claude code model", WARN,
+            _pick("~/.claude/settings.json 不是合法 JSON——follow 模式继承的全局默认读不出来（%s）",
+                  "~/.claude/settings.json is not valid JSON - the global default that follow mode inherits is unreadable (%s)") % knob_text,
+            _pick("手动修好那个文件（Claude Code 自己也读它）",
+                  "fix that file by hand (Claude Code reads it too)"))
+    shown = global_model or _pick("未设置（Claude Code 内置默认）", "unset (Claude Code built-in default)")
+    following = [m for m in llm.MODES if knobs[m] is None]
+    if global_model and following and not llm.is_canonical(global_model):
+        return CheckResult(
+            "claude code model", WARN,
+            _pick("全局默认 `%s` 不是 canonical id，%s 跟随它——别名/后缀下线那天这些调用会静默全败（%s）",
+                  "global default `%s` is not a canonical id and %s follow it - the day the alias/suffix retires those calls fail silently (%s)")
+            % (global_model, "/".join(following), knob_text),
+            _pick("设置页「模型」→「设为 <canonical id>」改全局默认，或给旋钮选一个显式 canonical id",
+                  "Settings > Models > \"Set to <canonical id>\" for the global default, or pick an explicit canonical id per knob"))
+    return CheckResult("claude code model", OK,
+                       _pick("全局默认 %s（%s）", "global default %s (%s)") % (shown, knob_text))
+
+
+def _check_model_liveness(probes: Probes):
+    """Per explicit knob: one minimal live call with that --model. follow =
+    skipped (nothing to probe; the auth row already covers the default).
+    FAIL speaks plainly: the model in Settings is unavailable, dispatch /
+    pipeline will fail wholesale."""
+    cfg = config.load_config()
+    knobs = _model_knobs(cfg)
+    results = []
+    probed: dict = {}
+    for mode in llm.MODES:
+        model = knobs[mode]
+        name = "model %s" % mode
+        if model is None:
+            results.append(CheckResult(
+                name, OK, _pick("follow（继承 Claude Code 全局默认，不探）",
+                                "follow (inherits the Claude Code default, not probed)")))
+            continue
+        if not probes.which("claude"):
+            # the `claude CLI` row already FAILs; do not double-blame the model
+            results.append(CheckResult(
+                name, WARN, _pick("%s — 跳过（未找到 claude CLI）",
+                                  "%s - skipped (claude CLI not found)") % model))
+            continue
+        if model not in probed:   # dispatch == pipeline → one call, not two
+            probed[model] = probes.run(llm.probe_argv(model, cfg),
+                                       env=llm.runner_env(),
+                                       timeout=_MODEL_PROBE_TIMEOUT)
+        rc, out = probed[model]
+        if rc == 0:
+            results.append(CheckResult(
+                name, OK, _pick("%s — 活探针 ok", "%s - live probe ok") % model))
+            continue
+        tail = " ".join(str(out).strip().split())[-120:] if str(out).strip() else "no output"
+        consequence = (_pick("派工会全部失败", "every dispatch will fail")
+                       if mode == llm.MODE_DISPATCH else
+                       _pick("雷达/分诊/判官/问答会全部失败",
+                             "radar / triage / judge / ask will all fail"))
+        results.append(CheckResult(
+            name, FAIL,
+            _pick("模型 %s 不可用，%s（exit %s: %s）",
+                  "model %s is unavailable, %s (exit %s: %s)")
+            % (model, consequence, rc, tail),
+            _pick("设置页「模型」改回「跟随 Claude Code 全局」或换一个 canonical id",
+                  "Settings > Models: switch back to \"follow Claude Code\" or pick a canonical id"),
+        ).with_failure("model_unavailable"))
+    return results
+
+
 # Shared checks that run on every OS (pure Python / portable subprocess).
 _CHECKS_COMMON_HEAD = [
     _check_home,
@@ -1686,7 +1782,7 @@ def _checks_for_platform() -> List:
     return (_CHECKS_COMMON_HEAD + middle
             + [_check_store2, _check_dashboard, _check_heartbeat,
                _check_auto_deploy, _check_obsidian]
-            + tail_extra + [_check_gh])
+            + tail_extra + [_check_gh, _check_claude_code_model])
 
 
 def _safe(fn, probes: Probes) -> List[CheckResult]:
@@ -1705,6 +1801,7 @@ def run_checks(probes: Optional[Probes] = None, fast: bool = False) -> List[Chec
     checks = _checks_for_platform()
     if not fast:
         checks.append(_check_claude_auth)
+        checks.append(_check_model_liveness)   # §57: spends tokens only for explicit knobs
     results: List[CheckResult] = []
     for fn in checks:
         results.extend(_safe(fn, probes))

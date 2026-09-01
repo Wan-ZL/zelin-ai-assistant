@@ -213,6 +213,17 @@ FAILURES: dict = {
                     "(bash install.sh), or launchctl bootout it by hand",
         "action_id": "open_deps",
     },
+    # §57 (D22): an explicit model knob names an id claude cannot serve
+    # (alias/suffix retired, typo, no access). Only the doctor's liveness
+    # probe produces it — dispatch failures keep their raw text.
+    "model_unavailable": {
+        "plain_zh": "设置里选的模型不可用——派工会全部失败；去设置页「模型」改回"
+                    "「跟随 Claude Code 全局」或换一个 canonical id",
+        "plain_en": "The model chosen in Settings is unavailable — every dispatch will "
+                    "fail; in Settings → Models switch back to \"follow Claude Code\" "
+                    "or pick a canonical id",
+        "action_id": "open_deps",
+    },
     "config_invalid": {
         "plain_zh": "配置文件写坏了——所有组件都退回默认设置",
         "plain_en": "The config file is broken — every component fell back to defaults",

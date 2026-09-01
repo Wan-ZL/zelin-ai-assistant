@@ -161,7 +161,7 @@ class DoctorTestCase(unittest.TestCase):
     def make_probes(self, run=None, launchctl=None, cron=None, which_map=None,
                     now=None, db=None, legacy=None, installed_plists=None,
                     launchd_logs=None, agent_files=None, heartbeat=None,
-                    pid_alive=None, launchd_claude=None):
+                    pid_alive=None, launchd_claude=None, claude_code=None):
         if which_map is None:
             which_map = {"claude": "/fake/bin/claude",
                          "npx": "/fake/bin/npx",
@@ -197,6 +197,11 @@ class DoctorTestCase(unittest.TestCase):
             launchd_claude_probe=(lambda claude_bin, cwd: dict(launchd_claude))
             if launchd_claude is not None
             else (lambda claude_bin, cwd: {"state": "ok", "rc": 0, "text": "2.1.252"}),
+            # §57: never read the developer's real ~/.claude/settings.json;
+            # default = "unset" so the healthy baseline stays healthy.
+            claude_code_settings=lambda: dict(
+                claude_code if claude_code is not None
+                else {"model": None, "exists": False, "parseable": False}),
         )
 
     def _main(self, probes, argv=None):

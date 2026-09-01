@@ -166,6 +166,10 @@ enum FailureCatalog {
         case "launchd_orphan":
             return L("有已退役的后台服务还在 launchd 里运行（仓库里已没有它的模板）——重跑一次安装器把它卸掉（bash install.sh），或手动 launchctl bootout",
                      "A retired background service is still loaded in launchd (the repo no longer ships its template) — re-run the installer to unload it (bash install.sh), or launchctl bootout it by hand")
+        // §57 (D22, mirror only — D3 freeze): the web Settings page owns the fix.
+        case "model_unavailable":
+            return L("设置里选的模型不可用——派工会全部失败；去设置页「模型」改回「跟随 Claude Code 全局」或换一个 canonical id",
+                     "The model chosen in Settings is unavailable — every dispatch will fail; in Settings → Models switch back to \"follow Claude Code\" or pick a canonical id")
         case "config_invalid":
             return L("配置文件写坏了——所有组件都退回默认设置",
                      "The config file is broken — every component fell back to defaults")
