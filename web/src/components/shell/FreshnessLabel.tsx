@@ -16,6 +16,15 @@ export function parseGeneratedAt(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+/** 相对时间档位（刚刚/N分钟前/N小时前/N天前）——新鲜度标签与 §56 部署标签共用同一套文案 */
+export function relativeAge(ageSeconds: number, text: (zh: string, en: string) => string): string {
+  if (ageSeconds < 60) return text("刚刚", "just now");
+  const mins = Math.floor(ageSeconds / 60);
+  if (mins < 60) return text(`${mins}分钟前`, `${mins}m ago`);
+  if (mins < 60 * 24) return text(`${Math.floor(mins / 60)}小时前`, `${Math.floor(mins / 60)}h ago`);
+  return text(`${Math.floor(mins / 1440)}天前`, `${Math.floor(mins / 1440)}d ago`);
+}
+
 export function FreshnessLabel() {
   const { text } = useI18n();
   const { board } = useAppState();
@@ -43,18 +52,9 @@ export function FreshnessLabel() {
   }
 
   // 新鲜分支（≤90s）实际只会命中 刚刚/1分钟前——完整档位保留以镜像 Mac 版语义
-  let relative: string;
-  if (ageSeconds < 60) {
-    relative = text("刚刚", "just now");
-  } else {
-    const mins = Math.floor(ageSeconds / 60);
-    if (mins < 60) relative = text(`${mins}分钟前`, `${mins}m ago`);
-    else if (mins < 60 * 24) relative = text(`${Math.floor(mins / 60)}小时前`, `${Math.floor(mins / 60)}h ago`);
-    else relative = text(`${Math.floor(mins / 1440)}天前`, `${Math.floor(mins / 1440)}d ago`);
-  }
   return (
     <span className="shell-freshness">
-      {text("数据生成于 ", "Data generated ") + relative}
+      {text("数据生成于 ", "Data generated ") + relativeAge(ageSeconds, text)}
     </span>
   );
 }

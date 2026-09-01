@@ -113,6 +113,9 @@ DEFAULT_FEATURES: dict = {
     # alone changes nothing — the sync also needs the token file to exist
     # (feedback_sync.token_path) AND a per-report publish opt-in.
     "feedback_sync": True,
+    # §56 合并即上岗: install.sh installs the self-updating deploy agent
+    # (com.zelin.aiassistant.autodeploy) only for a git checkout with this on.
+    "auto_deploy": True,
 }
 
 

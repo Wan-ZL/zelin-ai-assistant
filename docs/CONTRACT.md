@@ -100,6 +100,8 @@
 
 **v0.48.4 新增（§4 派发风暴刹车的投影面，add-only optional）**：`execution.dispatch_halted` 为真的 approved 卡**不再**作 queued 项混入 `running[]`，改投影进 `needs_input[]`（blocked 行形：`session_id/short_id/copy_cmd/agent_name` 恒 null、`waiting_for` null、`question` = 固定文案「派发连续失败 N 次，已停止自动重试：<§25 目录句或原文>…」），行带 `dispatch_halted: true` + `dispatch_attempts`(int) + `last_error`/`last_error_id`。客户端据 `dispatch_halted` 隐藏「回答…」（没有会话可答）、只留「停止」；`detect_transitions` 对该行**不**发「任务需要你输入」（executor 已发 `msg_dispatch_halted`，同 §46.3 `resume_exhausted` 的去重规则）。server `is_executing` 对该行判 false（comment 不标 steer）。
 
+**v0.48.6 新增顶层 optional 字段 `deploy_state`（§56 合并即上岗；§2 兄弟字段，同 `update_available` / `device_label` 的加法约定）**：scripts/auto-deploy.sh 写 `state/deploy_state.json`、`act/lib/deploy_state.py` 逐字段消毒后由 `build_dashboard` 投影；文件缺失/读不了 = **整键不存在**（这台机器不跑该 agent）。形状与状态词表见 §56。web 顶栏据此显示「v0.48.x · deployed 12m ago」。syncd 的变更闸门把整键 `deploy_state` 视为**易变键**（§31 F2 修订的 `_VOLATILE_DASH_KEYS`，与 `generated_at` 同列）：它每 10 分钟随 agent 的每次运行改写，不得触发一次板快照上传。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -383,6 +385,8 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
 **v0.14 追记（add-only；随 §17 v0.14 修订）**：`manager_pack` 随 manager pack ①的移除退出 flag 集合——`DEFAULT_FEATURES` 与设置窗口均不再包含它，代码中无任何调用点检查；config.yaml/overrides 里遗留的 `features.manager_pack` 键按「未知 flag」语义被静默忽略。现行集合 = {slack_radar, gmail_radar, obsidian_radar, digest, auto_resume, analytics}。1:1 准备页（`act.oneonone`）随 §17 digest 生成，受 `features.digest` 门控，无独立 flag。
 
 **v0.48.5 追记（D19；随 §17 v0.48.5 修订，add-only）**：`features.digest` 仍是 §17 digest 的**总开关**（默认 on，off 时连 `--now` 都 no-op），但它不再是唯一闸——**是否按时出卡**由新增的 `digest.frequency`（默认 **off**）决定，两键 AND。语义分工：flag = 「这个功能存在吗」（关了连进化建议/1:1 准备页都不产生），frequency = 「多久自动来一张」。默认安装两键的合取 = **不出卡**，这正是 D19 「digest 默认不以卡片形式出现」的落地；进化建议（type=self-improvement 卡）自然只在 digest 真跑时随之产生，未新增任何 doctor/insights 噪音。§24 的 weekly digest 同日改为默认 off（见该节 v0.48.5 修订），两条 digest 通道自此**出厂零卡片**。
+
+**v0.48.6 追记（D17，add-only）**：`auto_deploy`（默认 on）加入 `DEFAULT_FEATURES`——install.sh 只在「git checkout **且** `features.auto_deploy` 为真」时安装 §56 的自动部署 agent（探针崩了 fail-open，与雷达闸门同形）；`false` 时既有 agent 被 unload + 删除。检查点只有 install.sh 这一处（agent 装不装），脚本本身不读 flag。
 
 **死开关修复追记（add-only；本节「各模块入口检查 flag」的两处落地澄清）**：
 - **`features.analytics`**：flag 为 false 时事件**不产生也不出本机**——gate 拦在
@@ -695,7 +699,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 }
 ```
 
-- `mode` ∈ `"interactive" | "pkg-postinstall"`；`user` = 实际执行安装步骤的用户（pkg 路线下 = console user，postinstall 经 `launchctl asuser <uid> sudo -u <user>` 降权执行）。
+- `mode` ∈ `"interactive" | "pkg-postinstall" | "non-interactive"`（**v0.48.6 追记**：第三个值 = scripts/auto-deploy.sh 跑的 `install.sh --non-interactive`，§56；该模式**永不**构建/安装 Mac app——step `app` 恒为 `skipped`（§56.5，判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`）；退出码 = `status==fail` 的 step 数**减去 `app`**（被冻结的旧 Mac app（D3）即使出现失败行也不动已装 app、回滚也治不了它）——由 `failed_deploy_steps` 一处计算）；`user` = 实际执行安装步骤的用户（pkg 路线下 = console user，postinstall 经 `launchctl asuser <uid> sudo -u <user>` 降权执行）。
 - `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
@@ -1331,6 +1335,15 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
   顶多退回旧的逢重建必推行为，绝不漏推真变化）。升级后首轮因摘要口径切换会多
   推一次，一次性、无害。判例：tests/test_syncd.py::GateDigestTestCase /
   DownTestCase::test_generated_at_only_rebuild_pushes_nothing。
+- **v0.48.6 追记（§56 合并即上岗；易变键表第二项，add-only）**：`deploy_state`
+  整键进 `_VOLATILE_DASH_KEYS`。scripts/auto-deploy.sh 每 10 分钟一轮、每轮重写
+  `last_run`（`up_to_date` 什么都没做也写），经 §2 投影进 dashboard 后若参与闸门
+  摘要 = 零看板活动也每 10 分钟推一次全量加密快照（~450 KB × 144/天）——正是本
+  修订刚修掉的那场风暴换了个键名回来。剔的是**整键**而非只剔 `last_run`：脚本
+  以后再加什么字段都不该成为推送理由；一次真部署带来的 `status`/`version` 变化
+  也不单独触发推送，随下一次真看板变化的 payload（原始字节）一起到手机端。
+  判例：tests/test_syncd.py::GateDigestTestCase::test_deploy_state_is_volatile_for_the_gate、
+  tests/test_deploy_state.py::test_last_run_churn_does_not_move_the_syncd_gate_digest。
 
 ### `state/sync.json`（opt-in 门 + 路由；不存在 = 纯本地）
 ```json
@@ -3568,6 +3581,16 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   日志时两个原因都摆出来，不许偏袒。执法点：install.sh
   `launchd_failure_hint`、`act/doctor.py _check_launchd`、`act/ai_fix.py` 的
   prompt「Known trap」段。
+- **常驻 agent 的 crash-loop 是 FAIL，不只 actd**（v0.48.6 审查 B3）：
+  `_check_launchd` 里「已注册、无 pid、上次退出码非 0」对模板 `KeepAlive=true`
+  的每个 label（`doctor.RESIDENT_LABELS` = actd + syncd，`tests/test_doctor.py`
+  钉住它与 `act/launchd/*.plist` 的 KeepAlive 键逐字一致）都是 FAIL，detail 带
+  「(KeepAlive: crash loop)」——launchd 每 ThrottleInterval 拉起一次、它立刻死
+  一次，不是「上次跑失败一次」。周期性 agent（RunAtLoad radar、weeklydigest、
+  StartInterval autodeploy）一次非 0 退出仍是 WARN（一次网络抖动就够）。
+  「没注册」的严重度不变：只有 actd 缺席是 FAIL。为什么：§56 的回滚只数 FAIL
+  行，syncd 在 live（`mode=cloud`）上 import 即死曾只得 WARN——新版本把手机/web
+  看板弄死却记 `deployed`。
 - §32.4 的日志自压缩豁免语义不变：`*.launchd.log` 仍是 launchd 自管、不参与
   进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。
 - 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧
@@ -3671,3 +3694,68 @@ label，孤儿结构性不可见。自本节起：
   `state/*.launchd.log` 是取证材料，删除是 owner 手动动作。
 - 判例：`tests/test_install_launchd_retire.py`（真跑 install.sh 函数 + 假
   launchctl）、`tests/test_doctor.py` 孤儿组。
+
+---
+
+# v0.48.x additions（v-next-2 round：合并即上岗）
+
+## 56. 合并即上岗：自动发版与自动部署（decision D17）
+
+owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/tag-on-merge.yml`、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`web/src/components/shell/HeaderBar.test.tsx`。
+
+### 56.1 每个 PR 都 bump patch（发版的前提）
+
+`act/__init__.py` 的 `__version__` 是版本单源（既有 CI 门钉 `ios/project.yml` + `pbxproj` 两处 pin 与它逐字一致）。自本节起**每个合进 main 的 PR 都 bump patch**（同一轮多个 PR 各取下一个号，谁先合谁占号，后者 rebase）——因为 tag 由版本号推导（56.2），不 bump 的合并**不发版也不报错**（tag 已存在 = 静默跳过），等于让那次合并「不存在」于发布史。
+
+### 56.2 tag-on-merge：合并即打 tag、即发版
+
+`tag-on-merge.yml` 在 **push to main** 时读 `act/__init__.py`，`refs/tags/v<version>` 不存在则用 GITHUB_TOKEN（job 级 `contents: write` + `actions: write`，顶层 `permissions: {}`）经 REST 在**被推的那个 commit** 上建 tag，然后 `gh workflow run release.yml --ref v<version>`。两条事实决定了这个形状：
+
+- **GITHUB_TOKEN 造成的事件不触发别的 workflow**（`workflow_dispatch` / `repository_dispatch` 除外）——所以建了 tag 之后必须**显式 dispatch** `release.yml`，而 `release.yml` 相应加了 `workflow_dispatch:` 入口；它自己的第一步「tag == v<act.__version__>」闸门在两个入口下都成立（`GITHUB_REF_NAME` 在 dispatch-on-tag 下仍是 tag 名；误在分支上 dispatch 会被该闸门立刻挡下）。
+- **ruleset `protect-main` 只管 `refs/heads`**（target=branch、`~DEFAULT_BRANCH`），tag 是 `refs/tags`，不受其约束，因此不需要 PAT、不需要 bypass actor。
+
+幂等：tag 已在 → 什么都不做（版本没 bump 的合并、re-run）；`concurrency: tag-on-merge` 串行化连续合并。手工 `git tag v… && git push --tags` 仍走 `on: push: tags`，两个入口不冲突。
+
+### 56.3 部署 job：owner Mac 每 10 分钟跟随 origin/main
+
+launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtLoad false`、无 KeepAlive；`SoftResourceLimits.NumberOfFiles 8192`——与其余模板同款，§55 资源上限），`ProgramArguments = <§55 渲染的解释器> -m act.auto_deploy`——**argv0 必须是那个 launchd 可行的 python**（§55 两道闸门 + `tests/test_launchd_render.py` 的「argv0 含 python」判例 + doctor `launchd python` 探针都建立在这个前提上），python 启动器再 spawn `bash scripts/auto-deploy.sh` 并把自己以 `AIASSISTANT_PYTHON` 交给脚本（子进程的 TCC responsible process 是它）。路径纪律照 §55：WorkingDirectory=`$HOME`、日志 `~/Library/Logs/zelin-ai-assistant/autodeploy.launchd.log`、repo 只出现在环境变量里。
+
+**安装闸门**：install.sh 只在「`$REPO_ROOT` 是 git checkout」**且** `features.auto_deploy` 为真（§16）时渲染并 load 它；.pkg 安装（rsync 副本，无 `.git`）不装；关掉 flag 的机器 unload + 删 plist。install.sh 若**自身正跑在这个 agent 里**（`AIASSISTANT_AUTODEPLOY_ACTIVE=1`，脚本调用时导出）则只重渲染该 plist、**不** bootout/bootstrap（那会杀掉正在跑的部署）——模板改动在下一次手动 `bash install.sh` 生效。
+
+**一次运行 = 有序十步**（`scripts/auto-deploy.sh`；全部函数化、末尾 `main "$@"`，bash 先整份解析——第 5 步的 ff-merge 会替换脚本自己）：
+
+1. 取锁 `state/auto-deploy.lock/`（`mkdir` 原子；`pid` 文件；持锁 PID 已死 = 陈旧锁可回收，活着 = 本轮跳过；**尚无 `pid` 文件的新鲜锁目录（< 2 min）= 对方刚 mkdir 还没写 pid，视为活锁跳过**——否则 launchd 与手动运行并发时两个实例会同时 merge/install/reset；无 pid 且 > 2 min 才算 mkdir 与写 pid 之间崩了的陈旧锁）；日志 `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 超 1 MB 自截一半（防腐 #4）。
+2. **HEAD 必须在 `main`**（否则 `refused_branch`）；`git fetch origin main`（`GIT_TERMINAL_PROMPT=0`、ssh `BatchMode=yes`——永不提示；失败 = `fetch_failed`，下个 interval 再试，不通知）。HEAD == origin/main → `up_to_date`，退出；origin/main == 记账的 `failed_sha` → 只写一行日志 + `last_run` 退出（**不重试、不重装、不再通知、不再问 CI**，直到 main 前进或 `--force`）。
+3. **CI 闸门（v0.48.6 审查 B1）**：向 GitHub check-runs API 问**origin/main 那个 sha**（`GET /repos/<owner>/<repo>/commits/<sha>/check-runs`，匿名、公开 repo、每小时 ≤6 次 ≪ 60 次限额；`owner/repo` 从 `origin` 的 URL 派生，非 github.com 远端且未设 `AUTODEPLOY_CI_REPO` = `failed` + 通知一次、**不猜不放行**），要求 `AUTODEPLOY_CI_CHECKS`（默认 `ci`——macOS job：compileall + 全套 unittest + 版本三处 pin；逗号分隔可加）里每个名字的**最新一次** run 都 `completed` 且 `success`。为什么必须问：ruleset `protect-main` 是 **non-strict**（`strict_required_status_checks_policy=false`），PR head 绿了就能合，合出来的 merge commit 的树**从未被测过**——同一轮并行的多个 PR 各只为版本号 rebase，正是产出语义坏合并的形状；main 上的 `ci` 跑 ~8 min，本 job 在 +10 min 开火。判定：全绿 → 继续；任一 required run 结束但非 `success` → `ci_failed`（`failed_sha=<sha>` 记账 + **一条**通知「main 的 CI 红了，未部署」，此后按第 2 步静默直到 main 前进）；还没 run / `in_progress` / API 不可达或非 JSON → `ci_pending`（不动 HEAD、不通知，下个 interval 再问）。**`--force` 跳过闸门**（owner 亲手要这个 sha）。这道闸门顺带给每次合并一个天然隔离期。判例 `test_ci_still_running_defers_without_touching_the_checkout` / `test_red_ci_on_main_poisons_the_sha_notifies_once_and_never_merges` / `test_force_skips_the_ci_gate` / `test_only_the_configured_checks_gate` / `test_non_github_origin_without_ci_repo_refuses_and_notifies_once`。
+4. **脏树拒绝**：`git status --porcelain --untracked-files=no` 非空 → `refused_dirty` + 点名文件；**同一个待部署 sha 只通知一次**（`notified_sha`）；untracked 文件不算脏（state/、config/ 本就被 ignore）。
+5. 树干净则 `PREV=HEAD`，`git merge --ff-only origin/main`——**不可 ff（本地 main 分叉）= `failed` + 通知一次，永不 reset 分叉的本地提交**。
+6. **自检（v0.48.6 审查 B3）**：`bash -n scripts/auto-deploy.sh` + `python -c 'import act.auto_deploy'`（新代码）。部署 agent 必须还能跑它自己的下一版——合进来一个语法错误否则会**静默终结所有后续部署**（launchd 的 status 列是唯一见证，没人看）。任一失败 = 不装、回滚。判例 `test_merge_that_breaks_the_deploy_script_rolls_back_before_installing` / `test_merge_that_breaks_the_launchd_shim_rolls_back_before_installing`。
+7. **doctor 基线**：用**新代码**的 `act.doctor --fast --json` 取 FAIL 项名集合（装之前）。输出解析不出 JSON（doctor 自己 import 崩、解释器丢了 yaml、打印垃圾）记为名字 `doctor:unparseable`，而它在**任一次**运行里出现都是**致命**的——基线阶段出现 = 不装、直接回滚（v0.48.6 审查 H1：两次都用新代码，若把它当 pre-existing，唯一的安全闸门就对「让 doctor 跑不起来的提交」这一类它最该拦的东西失明）。判例 `test_unparseable_doctor_on_the_new_code_rolls_back_before_installing`。同时记下装之前的 `state/actd.heartbeat`（version / pid / phase）作第 9 步的对照。
+8. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装 Mac app**（56.5）——部署的是守护进程、cron、config、launchd 渲染，不是那个 .app。
+9. **就绪等待（v0.48.6 审查 B2；取代原「静置 30 s + 一次采样」）**：轮询 `state/actd.heartbeat`（§47.4，写者已盖 `version` / `pid` / `phase`），直到它**同时**满足：`version` == 新代码的 `act.__version__`、`pid` ≠ 装之前那条的 pid（**新进程**——同版本号的合并否则会被旧 daemon 的 idle 心跳放行）、`phase == idle`（新代码上**完整跑完一个 pass**：inbox / dispatch / reconcile / housekeeping / dashboard 全部 import 并执行过）。`phase == failed`（pass 抛了）只在装之前的 daemon **也**在 `failed` 时算就绪——pre-existing，不归咎新版本。超过 `AUTODEPLOY_HEARTBEAT_DEADLINE`（默认 180 s：一个 pass 可能含 `claude agents --json`，负载高时 >30 s）= FAIL `actd:no_heartbeat_from_new_version` → 回滚，detail 带装前/装后两条心跳。为什么不再静置采样：import 即死的 KeepAlive actd 在每个 ~10 s 节流周期里亮 ~0.5 s 的 pid，一次 `launchctl list` 有 ~5% 概率撞上「在跑」；而 `dashboard` / `actd heartbeat` 两行读的是**旧** daemon 留下的文件，90 s 内都算新鲜——三行齐绿、卡片冻结、记 `deployed`，二十次坏提交漏一次；反过来第一个 pass 慢于 90 s 时旧 dashboard 过期又会**误**回滚。判例 `test_new_actd_that_never_completes_a_pass_rolls_back` / `test_the_old_daemons_heartbeat_does_not_count_even_with_the_same_version` / `test_no_heartbeat_file_at_all_before_and_after_rolls_back` / `test_new_actd_whose_pass_throws_rolls_back_when_the_old_one_was_fine` / `test_pre_existing_failing_pass_is_not_blamed_on_the_new_version`。
+10. doctor 再跑一次；**回滚判据 = 相对基线新增的 FAIL 名、或 `doctor:unparseable`**（或第 8 步退出码非 0 / 超时、第 9 步超时）。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。
+
+**回滚** = `git reset --hard PREV`——**reset 前重验**：HEAD 仍在 `main` **且** 无 tracked **内容**改动（`-c core.fileMode=false` 看 status：install.sh 自己对 ingest 脚本的 `+x` 翻转不算，reset 顺手复原即可）。第 5 步到这里隔着 install + 就绪等待 + doctor，owner 在这几分钟里改了文件或切了分支，`reset --hard` 就是一次不可恢复的自动删除（宪法第 2 条）——因此**拒绝回滚**：不 reset、不重装，记 `rollback_failed`（detail `rollback refused (…)` 点名文件/分支）+ 通知「回滚被拒」，新版本留在原地由 owner 手动处理（判例 `test_rollback_refuses_to_destroy_edits_made_during_the_deploy` / `test_rollback_ignores_install_sh_own_mode_flips`）——**留在 `main` 分支上**而不是 `git checkout PREV`（detached HEAD 会让后续每一轮都撞上第 2 步的「不在 main」）——再 `install.sh --non-interactive` 一次，记 `rolled_back` + `failed_sha=<那个 origin/main sha>`，通知「auto-deploy rolled back to <PREV 短 sha>」并附原因与 `--force` 出口；回滚自身失败（reset 失败或重装非 0）= `rollback_failed`，同样通知。回滚的每条出路都写 `last_run`（56.4：它描述本轮，回滚也是一轮）。成功部署也通知一次（版本 + 前后 sha）。
+
+**退出码**：每种已处理结果都 `exit 0`（launchd 的 status 列保持 0——verdict 住在 `deploy_state.json`，由 doctor 的 `auto-deploy` 行说话，而不是让 `_check_launchd` 用通用的「exits with status N」误导排查）；1 = 环境坏（非 git checkout / 无 python）；2 = 用法错。`--force` = 忘掉 `failed_sha` / `notified_sha`、**跳过第 3 步的 CI 闸门**、立刻部署 origin/main 现在的 sha——它是 owner 亲手敲的命令，其余每道闸门（脏树、自检、doctor、就绪等待）照常。
+
+### 56.4 `state/deploy_state.json`（脚本写，dashboard / doctor 只读；全部 string，add-only）
+
+```json
+{"status": "deployed", "version": "0.48.6", "head": "<40 hex>", "prev": "<40 hex>",
+ "last_deployed": "2026-09-01T10:00:00Z", "last_run": "2026-09-01T10:10:00Z",
+ "detail": "deployed 1111111 -> 2222222; doctor pre-existing FAIL: cron ingest chain",
+ "failed_sha": "<40 hex，仅 rolled_back / rollback_failed / ci_failed 时存在>"}
+```
+
+- `status` 开放词表：`deployed | up_to_date | rolled_back | rollback_failed | refused_dirty | refused_branch | fetch_failed | ci_pending | ci_failed | failed`；读方对未知值按「需要人看」处理（WARN / 警告色）。`ci_pending`（等 main 上那个 sha 的 CI）**也是** WARN / 警告色而非 healthy：合并后的十分钟里顶栏写着「等 main 的 CI」是信息不是噪音，而卡住几小时的 `ci_pending`（Actions 故障、push 没触发 CI）必须有人看得见——静默的等待态是 L2/L3 那类事故的形状。`status` / `last_run` 描述**本轮**——**每一轮都写 `last_run`**，包括回滚各出路与「failed_sha 命中、什么都不做」的跳过轮（那一轮 `status` 原样带过：verdict 仍是上次的回滚 / CI 红）；`last_deployed` / `prev` 描述**最近一次成功部署**，无动作的轮次原样带过（`up_to_date` 同时清掉 `failed_sha` / `notified_sha`）。
+- 写：每轮一次原子 tmp+rename（`write_state key=value…`，空值 = 删键）；`notified_sha` 是脚本私账，不投影。读：`act/lib/deploy_state.py read()` 逐字段只收非空 string、丢未知键，撕裂/非对象文件 → None（宪法第 11 条：绝不崩 dashboard pass）。
+- 消费方：`build_dashboard` → 顶层 `deploy_state`（§2 兄弟字段）；`act.doctor _check_auto_deploy` → 行 `auto-deploy`（`deployed`/`up_to_date` OK，其余 WARN，fix 指向日志与 `--force`；**文件不存在 = 不出行**）；web `HeaderBar` 的 `DeployLabel`：`v<version> · <相对时间>部署`，非 healthy 状态追加状态名并切警告色（`ci_pending` →「等 main 的 CI / waiting for CI on main」，`ci_failed` →「main 的 CI 红了，未部署 / main CI red, not deployed」），`title` 挂 `detail`；无 `deploy_state` / 无 `version` 整个隐藏。**永不进** `install_report.json` 或 registry。
+
+### 56.5 边界（明确不做）
+
+- 不 push、不 force、不建分支；除 `git merge --ff-only` / `git reset --hard PREV` 对 tracked 文件的改动、它自己的两个文件（`state/deploy_state.json`、`state/auto-deploy.lock/`）、56.3 列出的日志，以及 `install.sh --non-interactive` 本身的副作用（launchd 渲染/加载、crontab 行、`config/` `state/` 的幂等初始化）之外不碰任何东西；不在非 `main` 上运作。
+- **不部署没被测过的 sha**（v0.48.6 审查 B1 推翻了初版「合进去的就是绿的」）：ruleset `protect-main` 的必需检查是 **non-strict**——绿的是 PR head，不是合出来的 merge commit；两个各自绿的并行 PR 合在一起可以是坏的，而 main 上的 `ci` 要 ~8 min 才知道。所以部署 job 自己向 check-runs API 核对**要部署的那个 sha**（56.3 第 3 步），绿了才 ff；`tag-on-merge` 仍直接信任 main（tag 只是命名，`release.yml` 红了不影响 live 机器）。owner 若把 ruleset 切成 strict（合并前 PR 必须与 main 同步），这道闸门变成双保险，**不因此移除**——它同时挡住 API 看得见、ruleset 看不见的东西（re-run 后变红、手动 push 的 tag）。
+- **不重建 Mac app**（v0.48.6 审查定型；D3 冻结）：`install.sh --non-interactive` 跳过 step 4（`app=skipped`），永不跑 `mac/build.sh --install`。原因不只是「冻结」：build.sh 的 stage-then-swap 会 `osascript quit` + `pkill` 再 `open` 正在跑的 app——screenpipe 是它的**直接子进程**（RunningBoard 会 reap 孤儿，`mac/Sources/Recording.swift` 的 exec 注释），实时字幕住在同一进程——agent 在合并后 10 分钟内任何时刻开火，等于随机掐断一段录制或一场会议的字幕；launchd 里的 `osascript` 还要 Automation TCC（首跑静默拒绝 → 直接 `pkill`），`swift build` + `codesign` 的 keychain ACL 提示没人点 = 看门狗 1800 s 超时 → 回滚 → 再 1800 s → `rollback_failed`。**手动 `bash install.sh`（owner 自己挑时机）是重建 app 的唯一路径**；mac/ 目录的改动因此**不**随自动部署上机，直到 owner 手动跑一次。判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`（假 mac/build.sh 记录调用：non-interactive 零调用、交互模式 `--install`）。
+- Mac app 构建失败（§23 `app=fail`，只可能来自手动 install.sh）从不进入自动部署的判据：`failed_deploy_steps` 不计 `app` 行——旧 app 原地保留，回滚也治不了它。
+- 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。

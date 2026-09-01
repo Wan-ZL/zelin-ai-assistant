@@ -284,6 +284,67 @@ class DoctorTestCase(unittest.TestCase):
         self.assertEqual(by_name(results, "actd").status, doctor.FAIL)
         self.assertEqual(by_name(results, "radar").status, doctor.WARN)
 
+    # -- §55 常驻（KeepAlive）agent 的 crash-loop 是 FAIL，不只 actd ---------- #
+    # PR #124 审查 B3：syncd（live mode=cloud 时 = 手机/web 看板）import 即死
+    # 只得 WARN，而 §56 的回滚只数 FAIL 行——新版本把 syncd 弄坏就永远
+    # crash-loop 下去、deploy_state 却写 deployed。
+
+    RESIDENT_LABELS = ["com.zelin.aiassistant.actd", "com.zelin.aiassistant.syncd",
+                       "com.zelin.aiassistant.gmailradar",
+                       "com.zelin.aiassistant.weeklydigest"]
+
+    def _resident_probes(self, launchctl):
+        probes = self.make_probes(launchctl=launchctl)
+        probes.launchd_labels = list(self.RESIDENT_LABELS)
+        return probes
+
+    def test_crash_looping_syncd_is_fail_like_actd(self):
+        out = ("4242\t0\tcom.zelin.aiassistant.actd\n"
+               "-\t1\tcom.zelin.aiassistant.syncd\n"
+               "-\t0\tcom.zelin.aiassistant.gmailradar\n"
+               "-\t0\tcom.zelin.aiassistant.weeklydigest\n")
+        results = doctor.run_checks(self._resident_probes(out), fast=True)
+        r = by_name(results, "syncd")
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertIn("crash loop", r.detail)
+        self.assertIn("syncd.launchd.log", r.fix)
+        self.assertEqual(r.failure_id, "agent_unloaded")
+        self.assertEqual(by_name(results, "actd").status, doctor.OK)
+
+    def test_periodic_agent_exiting_non_zero_once_only_warns(self):
+        # RunAtLoad radar / weeklydigest：一次网络抖动就是一个非 0 退出码，
+        # 不是 crash loop —— WARN，否则 §56 会为此回滚一次部署。
+        out = ("4242\t0\tcom.zelin.aiassistant.actd\n"
+               "-\t0\tcom.zelin.aiassistant.syncd\n"
+               "-\t1\tcom.zelin.aiassistant.gmailradar\n"
+               "-\t1\tcom.zelin.aiassistant.weeklydigest\n")
+        results = doctor.run_checks(self._resident_probes(out), fast=True)
+        for short in ("gmailradar", "weeklydigest"):
+            r = by_name(results, short)
+            self.assertEqual(r.status, doctor.WARN, short)
+            self.assertNotIn("crash loop", r.detail)
+        # syncd with sync OFF exits 0 every throttle cycle: that is healthy
+        self.assertEqual(by_name(results, "syncd").status, doctor.OK)
+
+    def test_unregistered_syncd_still_only_warns(self):
+        # 「没注册」不是 crash loop：只有 actd 缺席是 FAIL（卡不会动）
+        out = "4242\t0\tcom.zelin.aiassistant.actd\n"
+        results = doctor.run_checks(self._resident_probes(out), fast=True)
+        self.assertEqual(by_name(results, "syncd").status, doctor.WARN)
+
+    def test_resident_labels_mirror_the_keepalive_templates(self):
+        # 单源纪律（防腐 #9）：doctor 的常驻集合必须和 act/launchd/*.plist 里
+        # KeepAlive=true 的模板逐字一致——加/删一个 KeepAlive agent 就得改两处。
+        import re
+        repo = Path(__file__).resolve().parents[1]
+        keepalive = set()
+        for plist in (repo / "act" / "launchd").glob("*.plist"):
+            text = plist.read_text(encoding="utf-8")
+            if re.search(r"<key>KeepAlive</key>\s*<true\s*/>", text):
+                keepalive.add(plist.stem)
+        self.assertTrue(keepalive, "no KeepAlive templates found — layout changed?")
+        self.assertEqual(set(doctor.RESIDENT_LABELS), keepalive)
+
     # -- §55 迁移探测: pre-v0.48 plists still pointing at the repo ------------- #
     # 2026-08-31 双次宕机根因: 已安装 plist 的 spawn 前路径键指着 repo，repo
     # 在外置卷上时 launchd 以 EX_CONFIG(78) 拒绝 spawn；「一键修复」只重渲染

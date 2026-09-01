@@ -43,13 +43,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from act.lib import config, failures, heartbeat, platform, secrets, taskscheduler
+from act.lib import (
+    config,
+    deploy_state,
+    failures,
+    heartbeat,
+    platform,
+    secrets,
+    taskscheduler,
+)
 
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
 
 ACTD_LABEL = "com.zelin.aiassistant.actd"      # launchd label (macOS)
+SYNCD_LABEL = "com.zelin.aiassistant.syncd"
+# 常驻 agent（模板 KeepAlive=true）：进程一退出 launchd 就在 ThrottleInterval 后
+# 再拉起。这类 label「已加载、无 pid、上次退出码非 0」= 正在 crash-loop（每个周期
+# 死一次），不是周期性 agent 的「上次跑失败一次」——FAIL（§55；§56.3 的回滚判据
+# 由此看见 syncd 被新版本弄坏）。集合与 act/launchd/*.plist 的 KeepAlive 键逐字
+# 一致，tests/test_doctor.py 钉住漂移。
+RESIDENT_LABELS = frozenset({ACTD_LABEL, SYNCD_LABEL})
 ACTD_UNIT = "zelin-actd.service"               # systemd --user unit (Linux)
 ACTD_TASK = taskscheduler.TASK_PATH_PREFIX + "actd"  # schtasks TaskName (Windows)
 # Resident systemd services doctor expects up (the rest are timer-driven
@@ -642,10 +657,9 @@ def _check_launchd(probes: Probes):
         # actd is the resident daemon the whole product hangs off; the radar
         # agents are periodic and recommended via cron anyway (TCC), so their
         # absence only warns.
-        severity = FAIL if label == ACTD_LABEL else WARN
         if label not in table:
             results.append(CheckResult(
-                short, severity,
+                short, FAIL if label == ACTD_LABEL else WARN,
                 "%s not registered with launchd%s" % (
                     label, " - cards never move" if label == ACTD_LABEL else ""),
                 "bash install.sh (renders + loads the agents)",
@@ -657,22 +671,31 @@ def _check_launchd(probes: Probes):
         elif status == "0":
             results.append(CheckResult(short, OK, "loaded (last run exited 0)"))
         else:
+            # A KeepAlive agent with no pid and a non-zero exit is crash-looping
+            # (launchd respawns it every ThrottleInterval, it dies again) — FAIL
+            # for every resident label, not just actd: a broken syncd is the
+            # phone/web board gone, and only FAIL rows drive §56's rollback.
+            # Periodic agents (RunAtLoad radars, weeklydigest, autodeploy)
+            # exiting non-zero once is a WARN — one network blip would
+            # otherwise roll a deploy back.
+            severity = FAIL if label in RESIDENT_LABELS else WARN
+            loop = " (KeepAlive: crash loop)" if label in RESIDENT_LABELS else ""
             # 名出真因，别猜（§55）：读它自己的日志，把两条 ModuleNotFoundError
             # 分开——'act' = 解释器看不见 repo，'yaml' = 缺 PyYAML。
             missing = _log_missing_module(probes.launchd_log_tail(short))
             if missing == MISSING_ACT:
-                detail = ("loaded but exits with status %s - its log says "
+                detail = ("loaded but exits with status %s%s - its log says "
                           "\"No module named 'act'\": the interpreter cannot see "
-                          "the repo (PyYAML is NOT the problem)" % status)
+                          "the repo (PyYAML is NOT the problem)" % (status, loop))
                 fix = _INTERPRETER_BLIND_FIX
             elif missing == MISSING_YAML:
-                detail = ("loaded but exits with status %s - its log says "
+                detail = ("loaded but exits with status %s%s - its log says "
                           "\"No module named 'yaml'\": PyYAML is missing for the "
-                          "daemon python" % status)
+                          "daemon python" % (status, loop))
                 fix = "%s -m pip install --user --break-system-packages pyyaml" % (
                     _pinned_interpreter(probes) or "python3")
             else:
-                detail = "loaded but its process exits with status %s" % status
+                detail = "loaded but its process exits with status %s%s" % (status, loop)
                 fix = ("tail -20 ~/Library/Logs/zelin-ai-assistant/%s.launchd.log"
                        " (pre-v0.48 installs: state/%s.launchd.log)"
                        "  # usual causes: the interpreter cannot see the repo"
@@ -1406,6 +1429,35 @@ def _check_heartbeat(probes: Probes):
     ).with_failure("actd_stalled")
 
 
+def _check_auto_deploy(probes: Probes):
+    """§56 合并即上岗：最近一次自动部署的结果（state/deploy_state.json，
+    scripts/auto-deploy.sh 写）。文件不存在 = 这台机器不跑该 agent（.pkg 安装 /
+    Linux / features.auto_deploy 关）——不出行，不告警。deployed / up_to_date
+    之外的一切结果都是 WARN：回滚、脏树拒绝、fetch 失败……都是需要人看一眼
+    的事，而 launchd 的 status 列永远是 0（脚本对每种已处理结果都 exit 0）。"""
+    state = deploy_state.read()
+    if not state:
+        return []
+    status = state.get("status", "")
+    detail = state.get("detail", "")
+    version = state.get("version", "")
+    if status in deploy_state.HEALTHY:
+        when = state.get("last_deployed") or state.get("last_run") or ""
+        return CheckResult(
+            "auto-deploy", OK,
+            "%s (v%s%s)" % (status, version or "?", (" at " + when) if when else ""))
+    return CheckResult(
+        "auto-deploy", WARN,
+        "last run ended '%s'%s%s" % (
+            status or "?",
+            (" on v%s" % version) if version else "",
+            (": " + detail) if detail else ""),
+        _pick("tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
+              " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
+              "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
+              " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)"))
+
+
 def _check_obsidian(probes: Probes):
     cfg = config.load_config()
     raw = cfg.obsidian_raw
@@ -1552,7 +1604,7 @@ def _checks_for_platform() -> List:
     # OS: the two together tell "dead" (dashboard stale, no pid) from "stuck"
     # (pid alive, heartbeat stale).
     return (_CHECKS_COMMON_HEAD + middle
-            + [_check_dashboard, _check_heartbeat, _check_obsidian]
+            + [_check_dashboard, _check_heartbeat, _check_auto_deploy, _check_obsidian]
             + tail_extra + [_check_gh])
 
 

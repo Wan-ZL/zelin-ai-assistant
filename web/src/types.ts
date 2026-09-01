@@ -140,6 +140,25 @@ export interface TrashRow {
   [key: string]: unknown;
 }
 
+/**
+ * §56 合并即上岗：scripts/auto-deploy.sh 最近一次运行的结果（dashboard add-only
+ * 顶层键 deploy_state；字段逐字镜像 wire key，全部 string）。status 已知值：
+ * deployed | up_to_date | rolled_back | rollback_failed | refused_dirty |
+ * refused_branch | fetch_failed | ci_pending | ci_failed | failed —— 未知值按
+ * "需要人看"处理。
+ */
+export interface DeployState {
+  status?: string;
+  version?: string;
+  head?: string;
+  prev?: string;
+  last_deployed?: string;
+  last_run?: string;
+  detail?: string;
+  failed_sha?: string;
+  [key: string]: unknown;
+}
+
 /** 看板投影顶层（GET /api/board = dashboard.json 原样透传） */
 export interface Board {
   generated_at: string;
@@ -155,6 +174,7 @@ export interface Board {
   merge_suggestions?: unknown[];
   update_available?: unknown;
   device_label?: string;
+  deploy_state?: DeployState;
   [key: string]: unknown;
 }
 

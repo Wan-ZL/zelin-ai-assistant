@@ -1,0 +1,67 @@
+# Tag on merge (CONTRACT §56, decision D17): every push to main reads
+# act/__init__.py (the version's single source of truth) and, when no tag
+# v<version> exists yet, creates it on the pushed commit and dispatches the
+# Release workflow on that tag. Merge = release; nobody tags by hand anymore.
+#
+# WHY THE EXPLICIT DISPATCH: a ref created with the workflow's own
+# GITHUB_TOKEN does NOT fire other workflows' `on: push: tags` triggers
+# (GitHub suppresses token-caused events except workflow_dispatch /
+# repository_dispatch). So this job creates the tag AND explicitly runs
+# release.yml on it — release.yml therefore also accepts workflow_dispatch.
+#
+# IDEMPOTENT: a merge that does not bump the version (or a re-run) finds the
+# tag already present and does nothing. The branch ruleset `protect-main`
+# targets branches only (refs/heads); tags are refs/tags, so contents:write
+# on GITHUB_TOKEN is sufficient — no PAT, no bypass actor.
+name: Tag on merge
+
+on:
+  push:
+    branches: [main]
+
+# Job-level grants only (the default workflow token is read-only in this repo).
+permissions: {}
+
+# Two merges in quick succession must tag in order, never in parallel.
+concurrency:
+  group: tag-on-merge
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag v<version> and dispatch release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create refs/tags/v<version>
+      actions: write # gh workflow run release.yml
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # the tag is created through the REST API with GH_TOKEN — git auth
+          # is never used after checkout
+          persist-credentials: false
+
+      - name: Create tag v<version> if absent, then dispatch release.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # the pushed commit — github.sha is not attacker-controlled, but it
+          # still enters the shell via env, never by template interpolation
+          PUSHED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' act/__init__.py)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read __version__ from act/__init__.py"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "tag ${TAG} already exists — this merge did not bump the version; nothing to release"
+            exit 0
+          fi
+          echo "creating ${TAG} -> ${PUSHED_SHA}"
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" -f sha="${PUSHED_SHA}" >/dev/null
+          # release.yml's own first step re-verifies TAG == v<act.__version__>
+          echo "dispatching release.yml on ${TAG}"
+          gh workflow run release.yml --ref "${TAG}"

@@ -89,6 +89,17 @@
   color: var(--warning);
 }
 
+/* §56 部署状态小字：v0.48.x · deployed 12m ago；非 healthy 状态切警告色 */
+.shell-deploy {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.shell-deploy.is-warn {
+  color: var(--warning);
+}
+
 /* A8 搜索组件的挂载槽：居中弹性列，空着也占位保持左右两翼稳定 */
 .shell-search-slot {
   display: flex;
@@ -301,7 +312,8 @@
 }
 
 @media (max-width: 780px) {
-  .shell-freshness {
+  .shell-freshness,
+  .shell-deploy {
     display: none;
   }
 
