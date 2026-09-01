@@ -3959,6 +3959,54 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - Mac app 构建失败（§23 `app=fail`，只可能来自手动 install.sh）从不进入自动部署的判据：`failed_deploy_steps` 不计 `app` 行——旧 app 原地保留，回滚也治不了它。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
+## 57. QA 仪表（P2 · v-next-2；R2.3.x）
+
+**编号协调**：本节是 P2 质量仪表轮（vnext2-plan 阶段 P2）的落点——覆盖率 /
+复杂度-CRAP / 依赖方向 / 防腐十条机械化各占 §57.1–§57.7（由 PR-E 立法；
+两车并行，后合并者 rebase 小节号，§ 号永不复用的纪律不受影响）。本 PR 只立
+§57.8 变异测试。
+
+### 57.8 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
+
+**目的**：检验测试网真的咬人。对靶区模块做确定性 operator flip（算子全集的
+truth = `scripts/qa/mutate.py` 的 site 收集器，判例钉在
+`tests/test_mutate_sites.py` 的 fixture 总数上），跑该模块映射的定向测试
+子集——**测试杀不死的变异体 = 测试网的洞**，是补测试提案的原料，不是合并
+否决。
+
+- **工具**：`scripts/qa/mutate.py`，stdlib-only 自制（宪法第 7 条：运行时
+  依赖仍 = stdlib + PyYAML，CI 侧也零安装；不引 mutmut/cosmic-ray）。
+- **靶区**：`qa/mutation_targets.toml`（模块 → 测试文件数组；宪法关键模块
+  先行）。映射子集必须先绿（baseline），红映射 = 该模块整轮跳过并在报告
+  点名（假杀伤比没有杀伤更坏）。未映射模块 fallback 全套件 discover——
+  允许，但报告标 `slow_full_suite`。
+- **沙箱**：变异体写进**临时工作区副本**（git 树走 `git ls-files` 精确复制），
+  绝不改动真源树；子集在 `tests/__init__` 沙箱（tempdir HOME + subprocess
+  守卫）内跑；每个变异体独立超时，超时按 killed 侧独立列（`timeout`）记。
+- **确定性与预算**：site 顺序 = AST 深度优先遍历序（同一棵树两遍 = 同一列表，
+  site_id 稳定）；round-robin 跨模块交错 + 总预算封顶（默认 truth =
+  `qa/mutation_targets.toml` 的 `time_budget_seconds`）——每晚每个模块都被
+  访问，长模块跨夜跑完；断点台账 `.qa/mutation/state.json`（防腐 #4：出生
+  即 gitignore），模块内容 hash 变 = 该模块结果作废重跑。
+- **等价变异体高发区跳过**（成文，不许悄悄扩）：docstring/字符串常量（算子
+  集天然不碰）、logging 类调用整棵、`__repr__` 函数体、`if __name__ ==
+  "__main__"` 守卫。
+- **运行面两个，都不进 owner 机器的常驻面**：(a) 夜间 GitHub Action
+  `.github/workflows/mutation-nightly.yml`（ubuntu，60 分钟顶，state 走
+  Actions cache 跨夜续跑）；(b) 本地手跑 `python3 scripts/qa/mutate.py
+  --all`——**不装 launchd agent**（D3/D5：owner 机器保持精简；P5 每日循环
+  读 pinned issue 而非本机跑）。
+- **产出**：JSON 报告（`.qa/mutation/report.json`，字段 add-only——survivors
+  带 `file:line` + operator，是 P5 每日自我改进循环的机器可读输入，
+  R2.3.4/R2.4.2）+ markdown 同文（Actions artifact `mutation-report`）+
+  pinned issue「Nightly mutation report」幂等 create-or-update
+  （`scripts/qa/mutation_issue.py`，与 insights.yml 同模式：精确标题匹配
+  open+closed 全集、绝不开第二张、closed 先 reopen、pin 尽力而为）。
+- **判例**：`tests/test_mutate_sites.py`（site 生成 / 跳过规则 / TOML 子集 /
+  预算与续跑调度，零 spawn）、`tests/test_mutation_issue.py`（issue 更新
+  逻辑 + dry-run，零网络）、`tests/integration/test_mutation_runner.py`
+  （真子进程杀伤判定：强测试 10/10 全歼、弱测试 1 杀 9 存）。
+
 ## 58. 质量仪表与合并硬门（v0.48.x，P2；owner 决策 D4/D5/D15）
 
 （§57：同轮并行 PR 的预留席位——若该 PR 最终未立法，此号作废、永不复用。）
