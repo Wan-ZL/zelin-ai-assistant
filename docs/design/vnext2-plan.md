@@ -33,7 +33,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 | D17 | **自动部署 = 方案 A:merge 即自动 release + 自动部署到本机,doctor 闸门失败自动回滚** | owner 在 v-next-2 ratify 轮拍板:合并进 main 的每个 PR 自动打 tag、出 release、部署到 live 机器;部署后跑 doctor,红 → 回滚到上一版。「皇上只看绿的 PR」——部署也不该是手动步骤。 | 09-01 |
 | D18 | **他人提的 GitHub issue:只做摘要,owner 说「do it」才动** | 外来 issue(非 owner 账号)进每日循环时只生成一条摘要(建议处置 + 理由),不铸提案卡、不开 PR;owner 在摘要上回一句「do it」才进入实现通道。 | 09-01 |
 | D19 | **digest 卡默认 OFF,加频率旋钮** | 周一 digest 的 automation-idea 卡 0/15 被批准、3 个 cluster 跨 4 周重铸(审计 L7):默认关闭铸卡;报告卡保留但受 `digest.frequency` 旋钮控制(off / weekly / …),设置里可改。 | 09-01 |
-| D20 | **fd-limit 事故 + 派发风暴刹车 + 心跳看门狗**(PR-A,#89) | 2026-08-31 live:launchd 给 actd `ulimit -n 256`,`claude --bg` 拒启,R-175 13 小时重派 66 次、954 条 traceback、98% 的 registry 写入;22:31 起 actd 静默卡死 2.5 小时,唯一 detector 是退役中的 Mac app 横幅。决定:模板永久带 8192 fd 上限(当晚 hotfix 转正);同类连败 N 次(默认 5,可配)刹车,卡进「需输入」列 + 通知,退避窗口零写零 traceback;actd 每阶段写心跳,doctor / `GET /api/health` / web 横幅三读者;install.sh 退役 label 卸载自证 + 孤儿报告,用户日志不删。 | 09-01 |
+| D20 | **派发失败事故(claude TCC-blind)+ 派发风暴刹车 + 心跳看门狗**(PR-A,#89) | (设计判断,非 owner 原话)2026-08-31 live:launchd 起的 actd 每次 `claude --bg` 都以「possibly due to low max file descriptors」拒启,R-175 13 小时重派 66 次、954 条 traceback、98% 的 registry 写入;22:31 起 actd 静默卡死 2.5 小时,唯一 detector 是退役中的 Mac app 横幅。首版结论「fd 上限 256」被 09-01 审查**证伪**(hotfix 8192 后再失败 11 次);一次性 launchd job 实测真因 = TCC:macOS 按可执行文件路径授完全磁盘访问,launchd 会话里的 claude(每次更新换路径)读不到外置卷上的任务 repo,Bun 把 EPERM 渲成那句猜测。决定:模板只抬 soft fd 上限(余量)、不设 hard;`failures.claude_blind` + doctor `launchd claude` 探针(问 launchd 本人);同类连败 N 次(默认 5,可配)刹车,卡进「需输入」列 + 通知,退避窗口零写零 traceback,**进入 approved 的每条路径都重新上膛**;actd 每阶段写心跳,doctor / `GET /api/health` / web 横幅三读者;install.sh 退役 label 卸载自证 + 孤儿报告,用户日志不删。**待 owner**:(1) 给 claude 当前版本开完全磁盘访问(每次 claude 更新后重做)或把任务 repo 搬回启动盘;(2) 结构性根治的取舍——由有授权的 GUI app(`shell/`)托管 actd,子进程全继承一次授权,vs 继续 launchd + 每次更新手点。P6 自动 PR 通道要派发进本 repo(在外置卷上),不定这条 P6 一张卡也发不出去。 | 09-01 |
 
 ## 2. 目标状态(抽象功能需求;每条是"必须为真"的陈述)
 
@@ -131,7 +131,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 
 | Verdict | Issues | 一句话 |
 |---|---|---|
-| **SOLVE NOW** | #119 retire needs-input;#89 dispatch failure unactionable | #119 必须落在 store2 接线之前(否则把死态迁进 SQLite);#89 不是历史 bug 而是正在发生的风暴——**本 PR(PR-A)解决**:fd-limit 规则 + plist 资源上限 + 风暴刹车 + 心跳 + 孤儿探测。 |
+| **SOLVE NOW** | #119 retire needs-input;#89 dispatch failure unactionable | #119 必须落在 store2 接线之前(否则把死态迁进 SQLite);#89 不是历史 bug 而是正在发生的风暴——**本 PR(PR-A)止血 + 诚实归因**:`claude_blind` 分类 + doctor `launchd claude` 探针 + 风暴刹车 + 心跳 + 孤儿探测;真修法(TCC 授权 / 搬 repo / GUI app 托管)在 owner 手里,见 D20。 |
 | **LOOP**(喂给每日循环当 seed) | #37 telemetry 裸 stderr 上传;#19 social-preview 图;#18 demo_seed `--english`(seed #1);#16 ingest smoke test(`tests/integration/` 首住户);#15 pin Xcode;#11 卡上披露建 repo(`egress[]`);#8 a11y(改指 web,`vitest-axe`);#90 Windows 只走 PWA | 全部自包含、可验证,正好用来 prove 自动 PR 管线。 |
 | **CLOSE** | #26(被 LOOP 取代);#22(milestone 1 done);#17(Swift test infra 已在 + mac 退役);#13(shell 已是新身份);#10(archive 已做,v0.48);#9(前提消失);#7(前提消失);#23(素材库落地后关) | 一次性 close/relabel;15/22 issue 52 天零活动、无 milestone,不清理则 loop 每天重读 Mac 视角的死 issue。 |
 | **IGNORE**(blocked / meta) | #29 quiet hours;#28 retention UI;#27 recording schedule;#20 Usage Insights bot(keep pinned,是 LOOP 输入源);#23(产品 idea → 素材库) | 通知 relay / 录制控制 / 设置页都随 Mac 退役 re-home 之后再 scope。 |
@@ -142,7 +142,7 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 
 | # | 发现 | → 处置 | 状态 |
 |---|---|---|---|
-| L1 | **派发重试风暴(live)**:R-175 66 attempts / 13h,954 × traceback,`registry_writes.jsonl` 98% 是它;根因 `ulimit -n 256`,`failures.classify` 无 fd 规则 → `dispatch_error_id=null`,doctor 报 healthy | plist Soft/Hard `NumberOfFiles` 8192;`failures.fd_limit`;退避窗口不写卡不打 traceback;同类连败 N 次刹车 → 「需输入」列 + 通知 | **PR-A 已做**(CONTRACT §4.1/§25/§55) |
+| L1 | **派发重试风暴(live)**:R-175 66 attempts / 13h,954 × traceback,`registry_writes.jsonl` 98% 是它;审计当时记的根因「`ulimit -n 256`」**是错的**(hotfix 8192 后又失败 11 次)——真因是 launchd 会话里的 claude 可执行文件对外置卷任务目录 TCC-blind(EPERM,Bun 渲成 fd 猜测句);`failures.classify` 无规则 → `dispatch_error_id=null`,doctor 报 healthy | `failures.claude_blind`(Bun 猜测句)+ `fd_limit` 只留真 EMFILE;doctor `launchd claude`(一次性 launchd job 里跑 `claude --version`);plist 只抬 soft;退避窗口不写卡不打 traceback;同类连败 N 次刹车 → 「需输入」列 + 通知;每条进 approved 的路径重新上膛 | **PR-A 已做止血与归因**(CONTRACT §4.1/§25/§55);**修复待 owner**(TCC 开关 / 搬 repo,D20),验收 = doctor 行 OK + 一张重批卡到 executing |
 | L2 | **静默卡死**:actd/syncd 活着、停在 `time.sleep`,dashboard/日志/写入全部冻在 22:31:5x 达 2.5h;没有产品自己看的 heartbeat,唯一 detector 是退役中的 Mac app 横幅 | 每阶段写 `state/actd.heartbeat`;doctor `actd heartbeat`(活着 + 过期 = FAIL `actd_stalled`,kickstart 提示);`GET /api/health` + web `PipelineBanner` | **PR-A 已做**(§47.4) |
 | L3 | **孤儿 launchd agent 51 天**:imessageradar(v0.21 已删)23,613 × traceback、14.5 MB 日志;install.sh 的 RETIRED unload 把失败吞进 /dev/null;doctor 只查有模板的 label | install.sh `launchd_retire` 自证 + `launchd_orphans` 报告(install_report 两个 step);doctor `launchd orphans`;**日志不删**(owner 手动) | **PR-A 已做**(§55) |
 | L4 | **Gmail 中毒 + 无凭证噪音**:3,921 × `parsedate_to_datetime TypeError`(13.6 天);`radar_skip source=gmail reason=no_credentials` 10,539 次,全部 radar_skip = 67% 的 analytics;54 天 151 次真扫 → 1 张卡;8 张 2024/25 旧件卡 | disabled / no-creds 源不排程(§48 gate 加断言);doctor 读 `radar_failed.json`;gmail 加「N 天以前的邮件不铸卡」出生过滤 | 待办(LOOP seed) |
@@ -159,12 +159,12 @@ Governing law: `docs/CONTRACT.md` (§0 constitution + §1–§55). Behavior chan
 - **E · daily loop**:deliverable manifest `execution.deliverables {branch, pr_url, files[]}` + `cost_actual` 收割(approve-at-END 没它就是盲批);fingerprint dedupe vs open cards + open/closed issues + trashed cards,每类每天 ≤1 proposal;parse spec = 读台账不读 traceback(**不读** `state/logs/R-*.log`、legacy `*.launchd.log`、dashboard bodies);seeds 顺序:docs-drift PR → #18 → #19 → #15 → #89 doctor 半边 → U-97 → …
 - **F · auto-PR lane**:`egress[]` disclosure;agent-facing token;main ruleset 加 `pull_request` + `required_status_checks`(今天 ff-push main 合法);fine-grained PAT(contents + pull_requests,**无 workflow scope**,branch `ai/*`);protected-path set hit → `needs-owner-eyes` + lane 挂起。
 - **Mac-retire**:#119 四泳道语义先定 → `Store.swift` 15 组 optimistic 状态验尸表 → web 补 `merge_suggestions / split_note / set_title / import_claude_sessions / feedback / archive` → server-owned lane catalog → canonical slug(`ZAI_PORT` / `zai.theme` / `com.zelin.ai-board` 三拼法)→ shell 稳定签名 → capture / LiveCaptions / TCC 落点决定。同车退役 legacy `webui/` + `act/webui.py`、`docs/ROADMAP.md` 重写或 tombstone。**parity 1.11(pipeline health banner)已由本 PR 的 `/api/health` + `PipelineBanner` 提前落地**。
-- **DB · store2**:T-7/8/10/12/14 表照搬为 wiring checklist;多写者 parity;两条来自日志的断言——一次 transition 一行写(L1)、`type` enum + `type_raw`(L8);新列 `merged_from` add-only;顺序 **#119 → fd-limit/write-storm fix(本 PR) → store2 wiring**。
+- **DB · store2**:T-7/8/10/12/14 表照搬为 wiring checklist;多写者 parity;两条来自日志的断言——一次 transition 一行写(L1)、`type` enum + `type_raw`(L8);新列 `merged_from` add-only;顺序 **#119 → write-storm brake + claude_blind 归因(本 PR) → store2 wiring**。
 - **CLEANUP**:day one 合并 3 个 automation cluster + 6 张 3 周以上 `repeated_mentions==1` 卡;backlog 8 张旧件 + 3 张 diagnostic give-up + 8 张过期 deadline + ~13 张已被 shipped 版本覆盖的 dev 卡;3 张 Monday digest 卡 superseded 自动 archive;**现有 ~40 张 trashed 卡 09-08 起触发第一波硬删 → 先 pin 或临时拉长 retention**。
 
 ### 5.4 Open decisions(审计留的 6 问,默认值)
 
-Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC 重授权;Q2 screenpipe 进程归属 → **shell 原生子进程**;Q3 weekly_digest automation ideas → **停铸**(D19);Q4 stale 阈值 → **45 d + guards**,`stale:*` retention 90 d,先 pin 那 40 张;Q5 loop cap → **config 5、首月跑 2**,前两周走人工审批 lane;Q6 DRAFT PR token → **owner fine-grained PAT**(无 workflow scope)。
+Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC 重授权;Q2 screenpipe 进程归属 → **shell 原生子进程**;Q3 weekly_digest automation ideas → **停铸**(D19);Q4 stale 阈值 → **45 d + guards**,`stale:*` retention 90 d,先 pin 那 40 张;Q5 loop cap → **config 5、首月跑 2**,前两周走人工审批 lane;Q6 DRAFT PR token → **owner fine-grained PAT**(无 workflow scope);**Q7(PR-A 审查新增)** launchd 会话里的 claude 读不到外置卷 repo(D20)→ 默认建议 **shell app 托管 actd**(一次授权全继承,与 R2.2.3「shell 内最小原生残留」同车),过渡期 owner 手动给 claude 当前版本开完全磁盘访问、每次更新后重做;P6 开通前必须已解。
 
 ## 6. 对话记录(owner 原话摘录,按主题)
 
@@ -217,4 +217,4 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 
 | 日期 | PR / 分支 | 阶段 | 做了什么 | 法典 |
 |---|---|---|---|---|
-| 2026-09-01 | `fix/launchd-fd-storm-heartbeat`(PR-A,#89) | P0 前置止血(审计 L1/L2/L3) | 全部 launchd 模板 + systemd 单元带 8192 fd 上限;`failures.fd_limit`;派发风暴刹车(同类连败 5 次 → `dispatch_halted`,进「需输入」列 + 通知,退避窗口零写零 traceback,approve 清账);actd 每阶段写 `state/actd.heartbeat`,doctor `actd heartbeat` / `launchd fd limit` / `launchd orphans` 三探针,`GET /api/health` + web `PipelineBanner`;install.sh `launchd_retire` 自证 + `launchd_orphans` 报告。本节 + D17–D20 + §5 同 PR 入库。 | §2 / §4.1 / §25 / §47.4 / §49 / §55 |
+| 2026-09-01 | `fix/launchd-fd-storm-heartbeat`(PR-A,#89) | P0 前置止血(审计 L1/L2/L3) | launchd 模板只抬 soft fd 上限(hard 不设,实测 hard 键只降天花板)、systemd `LimitNOFILE=8192:524288`;`failures.claude_blind`(Bun 猜测句 = TCC EPERM,真因)+ `fd_limit` 只留真 EMFILE;doctor `launchd claude` 探针(一次性 launchd job);派发风暴刹车(同类连败 5 次 → `dispatch_halted`,进「需输入」列 + 通知,退避窗口零写零 traceback,进入 approved 的每条路径 + 退回提案都清账);actd 每阶段写 `state/actd.heartbeat`,doctor `actd heartbeat` / `launchd fd limit` / `launchd orphans` 三探针,`GET /api/health` + web `PipelineBanner`;install.sh `launchd_retire` 自证 + `launchd_orphans` 报告。本节 + D17–D20 + §5 同 PR 入库。 | §2 / §4.1 / §25 / §47.4 / §49 / §55 |

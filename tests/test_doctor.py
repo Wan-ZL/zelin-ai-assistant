@@ -128,6 +128,10 @@ class DoctorTestCase(unittest.TestCase):
 
         self.missing_legacy = self.home / "no-such-legacy-key.txt"
 
+        # §55 第三幕 probe cwd: the default target repo must exist for the row
+        self.target_repo = self.home / "fake-workbench"
+        self.target_repo.mkdir(parents=True, exist_ok=True)
+
     def tearDown(self):
         for p in self._created:
             if p.exists():
@@ -148,7 +152,7 @@ class DoctorTestCase(unittest.TestCase):
     def make_probes(self, run=None, launchctl=None, cron=None, which_map=None,
                     now=None, db=None, legacy=None, installed_plists=None,
                     launchd_logs=None, agent_files=None, heartbeat=None,
-                    pid_alive=None):
+                    pid_alive=None, launchd_claude=None):
         if which_map is None:
             which_map = {"claude": "/fake/bin/claude",
                          "npx": "/fake/bin/npx",
@@ -178,6 +182,12 @@ class DoctorTestCase(unittest.TestCase):
             installed_agent_labels=lambda: list(agent_files or []),
             heartbeat_read=lambda: heartbeat,
             pid_alive=pid_alive or (lambda pid: True),
+            # §55 第三幕：the real probe bootstraps a launchd job — never from
+            # the suite. Default = "claude reads the folder" so the healthy
+            # baseline stays healthy.
+            launchd_claude_probe=(lambda claude_bin, cwd: dict(launchd_claude))
+            if launchd_claude is not None
+            else (lambda claude_bin, cwd: {"state": "ok", "rc": 0, "text": "2.1.252"}),
         )
 
     def _main(self, probes, argv=None):
@@ -588,19 +598,21 @@ class DoctorTestCase(unittest.TestCase):
         results = doctor.run_checks(self.make_probes(heartbeat=hb), fast=True)
         self.assertEqual(by_name(results, "actd heartbeat").status, doctor.OK)
 
-    # -- §55 fd ceiling on the INSTALLED actd plist ------------------------------ #
-    _LIMITS = ("<key>SoftResourceLimits</key><dict><key>NumberOfFiles</key>"
-               "<integer>8192</integer></dict><key>HardResourceLimits</key>"
-               "<dict><key>NumberOfFiles</key><integer>8192</integer></dict>")
+    # -- §55 fd soft limit on the INSTALLED actd plist --------------------------- #
+    _SOFT = ("<key>SoftResourceLimits</key><dict><key>NumberOfFiles</key>"
+             "<integer>8192</integer></dict>")
+    _HARD = ("<key>HardResourceLimits</key><dict><key>NumberOfFiles</key>"
+             "<integer>8192</integer></dict>")
 
-    def test_installed_plist_with_fd_ceiling_is_ok(self):
-        plists = {"com.zelin.aiassistant.actd": "<plist>" + self._LIMITS + "</plist>"}
+    def test_installed_plist_with_soft_limit_only_is_ok(self):
+        plists = {"com.zelin.aiassistant.actd": "<plist>" + self._SOFT + "</plist>"}
         results = doctor.run_checks(self.make_probes(installed_plists=plists), fast=True)
         r = by_name(results, "launchd fd limit")
         self.assertEqual(r.status, doctor.OK)
-        self.assertIn("8192/8192", r.detail)
+        self.assertIn("8192", r.detail)
+        self.assertIn("unlimited", r.detail)
 
-    def test_installed_plist_without_fd_ceiling_warns_fd_limit(self):
+    def test_installed_plist_without_soft_limit_warns_fd_limit(self):
         plists = {"com.zelin.aiassistant.actd": "<plist><key>Label</key></plist>"}
         results = doctor.run_checks(self.make_probes(installed_plists=plists), fast=True)
         r = by_name(results, "launchd fd limit")
@@ -608,21 +620,100 @@ class DoctorTestCase(unittest.TestCase):
         self.assertEqual(r.failure_id, "fd_limit")
         self.assertIn("256", r.detail)
         self.assertIn("install.sh", r.fix)
+        # the row no longer blames dispatch failures on the fd limit
+        self.assertNotIn("claude", r.detail)
 
-    def test_soft_only_or_too_low_ceiling_still_warns(self):
-        soft_only = ("<plist><key>SoftResourceLimits</key><dict><key>NumberOfFiles"
-                     "</key><integer>8192</integer></dict></plist>")
-        low = self._LIMITS.replace("8192", "512")
-        for text in (soft_only, "<plist>" + low + "</plist>"):
-            plists = {"com.zelin.aiassistant.actd": text}
-            results = doctor.run_checks(self.make_probes(installed_plists=plists),
-                                        fast=True)
-            self.assertEqual(by_name(results, "launchd fd limit").status, doctor.WARN,
-                             text)
+    def test_hard_limit_present_warns_because_it_lowers_the_ceiling(self):
+        # the 2026-08-31 hotfix shape (Soft+Hard 8192): verified 2026-09-01 to
+        # turn launchd's [256, unlimited] into [8192, 8192]
+        plists = {"com.zelin.aiassistant.actd": "<plist>" + self._SOFT + self._HARD + "</plist>"}
+        results = doctor.run_checks(self.make_probes(installed_plists=plists), fast=True)
+        r = by_name(results, "launchd fd limit")
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "fd_limit")
+        self.assertIn("LOWERS", r.detail)
+        self.assertIn("install.sh", r.fix)
+
+    def test_too_low_soft_limit_warns(self):
+        low = self._SOFT.replace("8192", "512")
+        plists = {"com.zelin.aiassistant.actd": "<plist>" + low + "</plist>"}
+        results = doctor.run_checks(self.make_probes(installed_plists=plists), fast=True)
+        self.assertEqual(by_name(results, "launchd fd limit").status, doctor.WARN)
+
+    def test_number_of_files_need_not_be_the_first_key_in_the_dict(self):
+        text = ("<plist><key>SoftResourceLimits</key><dict><key>NumberOfProcesses</key>"
+                "<integer>512</integer><key>NumberOfFiles</key><integer>8192</integer>"
+                "</dict></plist>")
+        self.assertEqual(doctor._plist_number_of_files(text, "SoftResourceLimits"), 8192)
+        self.assertIsNone(doctor._plist_number_of_files(text, "HardResourceLimits"))
 
     def test_no_installed_actd_plist_skips_the_fd_row(self):
         results = doctor.run_checks(self.make_probes(), fast=True)
         self.assertNotIn("launchd fd limit", [r.name for r in results])
+
+    # -- §55 第三幕: launchd-spawned claude vs the task folder (TCC) ------------- #
+    _ACTD_PLIST = {"com.zelin.aiassistant.actd": "<plist>" + _SOFT + "</plist>"}
+    _BUN_GUESS = ("error: An unknown error occurred, possibly due to low max file "
+                  "descriptors (Unexpected)\n\nCurrent limit: 8192\n")
+
+    def _claude_row(self, probe):
+        with mock.patch.object(doctor.config, "load_config") as lc:
+            cfg = doctor.config.Config()
+            cfg.default_target_repo = str(self.target_repo)
+            lc.return_value = cfg
+            results = doctor.run_checks(
+                self.make_probes(installed_plists=self._ACTD_PLIST, launchd_claude=probe),
+                fast=True)
+        return by_name(results, "launchd claude")
+
+    def test_launchd_claude_reading_the_folder_is_ok(self):
+        r = self._claude_row({"state": "ok", "rc": 0, "text": "2.1.252 (Claude Code)"})
+        self.assertEqual(r.status, doctor.OK)
+        self.assertIn(str(self.target_repo.resolve()), r.detail)
+
+    def test_bun_guess_under_launchd_is_fail_claude_blind_with_fda_fix(self):
+        # the live 2026-08-31 failure, reproduced 2026-09-01 by exactly this probe
+        r = self._claude_row({"state": "failed", "rc": 1, "text": self._BUN_GUESS})
+        self.assertEqual(r.status, doctor.FAIL)
+        self.assertEqual(r.failure_id, "claude_blind")
+        self.assertEqual(r.action_id, "open_deps")
+        self.assertIn("Full Disk Access", r.detail)
+        self.assertIn("Full Disk Access", r.fix)
+        self.assertIn("claude update", r.fix)
+        self.assertNotIn("8192", r.fix)          # no more fd-limit advice here
+
+    def test_hang_under_launchd_warns_claude_blind(self):
+        # ~/Downloads: a promptable TCC folder — the job has no UI, claude hangs
+        r = self._claude_row({"state": "hang", "rc": None,
+                              "text": "claude started under launchd but produced no exit"})
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "claude_blind")
+        self.assertIn("never exited", r.detail)
+
+    def test_unavailable_probe_is_a_plain_warn_without_failure_id(self):
+        r = self._claude_row({"state": "unavailable", "rc": None,
+                              "text": "launchd refused the probe job"})
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "")
+        self.assertIn("could not ask launchd", r.detail)
+
+    def test_other_launchd_failure_is_warn_not_claude_blind(self):
+        r = self._claude_row({"state": "failed", "rc": 2, "text": "segmentation fault"})
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertEqual(r.failure_id, "")
+
+    def test_no_installed_actd_plist_skips_the_claude_row(self):
+        results = doctor.run_checks(self.make_probes(), fast=True)
+        self.assertNotIn("launchd claude", [r.name for r in results])
+
+    def test_real_probe_is_inert_when_switched_off(self):
+        # safety belt for the suite itself: with AIASSISTANT_LAUNCHD_PROBE=0 the
+        # real probe must return without touching launchctl
+        with mock.patch.dict(os.environ, {"AIASSISTANT_LAUNCHD_PROBE": "0"}), \
+                mock.patch.object(doctor.subprocess, "run",
+                                  side_effect=AssertionError("must not spawn")):
+            res = doctor._launchd_claude_probe("/fake/claude", "/tmp")
+        self.assertEqual(res["state"], "unavailable")
 
     # -- §55 orphan agents ------------------------------------------------------- #
     def test_no_orphans_is_ok(self):

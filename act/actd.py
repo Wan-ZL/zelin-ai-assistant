@@ -1724,6 +1724,20 @@ def _stop_live_session(req: Requirement, why: str) -> None:
     req.execution = ex
 
 
+def _rearm_dispatch(ex: dict) -> dict:
+    """§4.1 storm brake：清掉上一轮派发的失败台账（attempts / 同类连败计数 /
+    halted 标记 / 旧 last_error），返回同一个 dict。**进入 approved 的每条路径**
+    都必须过这里——不只是 owner 的 approve。审查复现（2026-09-01）：
+    auto_dispatch_pass 把 execution 原样带进 approved，`dispatch_halted` 跟着
+    过去，卡永远停在「需输入」；owner 再点批准是 approved 上的幂等 no-op，
+    UI 上没有任何出口。abort_execution（退回提案）也一并清——那个动词的
+    语义本来就是「丢弃这一轮，重新决定」。"""
+    for key in (tuple(getattr(executor, "DISPATCH_STREAK_KEYS", ()))
+                + ("last_error", "last_error_at")):
+        ex.pop(key, None)
+    return ex
+
+
 def _apply_decision(req: Requirement, action: Optional[str],
                     comment: Optional[str],
                     expected_status: Optional[str] = None,
@@ -1795,13 +1809,9 @@ def _apply_decision(req: Requirement, action: Optional[str],
         # the dispatch event report wait_s (approve -> launch latency).
         ex = dict(req.execution or {})
         ex["approved_at"] = _iso_now()
-        # §4 storm brake：批准 = 重新上膛。上一轮派发的失败台账（attempts /
-        # 同类连败计数 / halted 标记 / 旧 last_error）随新批准清零，否则
-        # 退回提案再批准的卡会带着旧刹车直接停在原地。
-        for key in (tuple(getattr(executor, "DISPATCH_STREAK_KEYS", ()))
-                    + ("last_error", "last_error_at")):
-            ex.pop(key, None)
-        req.execution = ex
+        # §4.1 storm brake：批准 = 重新上膛。上一轮派发的失败台账随新批准
+        # 清零，否则退回提案再批准的卡会带着旧刹车直接停在原地。
+        req.execution = _rearm_dispatch(ex)
         save(req)
         # lifecycle milestone (docs/TELEMETRY.md): first genuine approval on
         # this install. The idempotent guard above means re-approvals of an
@@ -2070,7 +2080,10 @@ def _apply_decision(req: Requirement, action: Optional[str],
             ex.pop("session_id", None)
         ex.pop("done", None)
         ex["aborted_at"] = _iso_now()
-        req.execution = ex
+        # §4.1：退回提案 = 丢弃这一轮，派发失败台账（含 dispatch_halted）一并
+        # 清掉——否则 card_sent 卡带着刹车回到待审批，policy 免批通道会把它
+        # 原样再推进 approved，永远停在「需输入」（审查复现 2026-09-01）。
+        req.execution = _rearm_dispatch(ex)
         req.set_status(State.CARD_SENT)
         save(req)
         _log(f"inbox: {req.id} abort_execution -> card_sent")
@@ -2319,7 +2332,10 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
             cost = _card_cost(req)
             ex.pop("auto_dispatch_block", None)
             ex["auto_dispatched"] = True          # add-only：预算复核/投影用
-            req.execution = ex
+            # §4.1：policy 批准与 owner 批准同权——进入 approved 即重新上膛。
+            # 不清的话，刹车停下 → 退回提案 → 本 pass 免批再推进 approved 的
+            # 卡会带着 dispatch_halted 直接停回「需输入」，无 UI 出口。
+            req.execution = _rearm_dispatch(ex)
             tag = (f"[{_dt.date.today().isoformat()} auto-dispatch] "
                    f"hand 出身免批自动派发（est ${cost:g}）")
             req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag

@@ -31,11 +31,13 @@ import argparse
 import datetime as _dt
 import json
 import os
+import plistlib
 import re
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -229,6 +231,101 @@ def _log_missing_module(tail: str) -> Optional[str]:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# §55 第三幕：launchd 起的 claude 读不读得到任务目录 —— 只能问 launchd 本人
+# --------------------------------------------------------------------------- #
+_CLAUDE_BLIND_RE = re.compile(
+    r"possibly due to low max file descriptors|operation not permitted|\bEPERM\b",
+    re.IGNORECASE)
+
+# The payload is /bin/sh (an Apple platform binary — it can cd anywhere the
+# way python's pre-exec chdir did on 2026-08-31); only the exec'd claude is
+# what TCC judges, exactly as in a real dispatch. Stages let the reader tell
+# "cd itself failed" from "claude started and hung" from "claude exited".
+_CLAUDE_PROBE_SH = (
+    'cd "$1" || { echo "cd_failed:$?" > "$3"; exit 0; }; '
+    'echo started > "$3.stage"; '
+    '"$2" --version > "$3.out" 2>&1; echo "rc:$?" > "$3"')
+
+
+def _launchd_claude_probe(claude_bin: str, cwd: str, budget_s: float = 20.0) -> dict:
+    """Run ``<claude_bin> --version`` with cwd=``cwd`` inside a throwaway
+    gui-domain launchd job (same recipe as install.sh's viability probe) and
+    report what happened::
+
+        {"state": "ok" | "failed" | "hang" | "cd_failed" | "unavailable",
+         "rc": int | None, "text": str}
+
+    Doctor runs in the owner's terminal, whose TCC grants make claude read
+    everything — so the terminal cannot see this failure at all. Verified
+    2026-09-01: from the same launchd job, ``claude --version`` succeeds with
+    cwd=$HOME and dies with Bun's "possibly due to low max file descriptors
+    (Unexpected)" the moment cwd is on the external volume, while /bin/ls and
+    /usr/bin/python3 read it fine and homebrew node shows the raw EPERM.
+    "unavailable" = no launchd here, probe switched off
+    (``AIASSISTANT_LAUNCHD_PROBE=0``), or launchd refused the job — never a
+    verdict about claude. Sub-30 s, self-cleaning (bootout + rm)."""
+    if not platform.is_darwin() or os.environ.get("AIASSISTANT_LAUNCHD_PROBE", "1") == "0":
+        return {"state": "unavailable", "rc": None, "text": "probe disabled or no launchd"}
+    if not shutil.which("launchctl"):
+        return {"state": "unavailable", "rc": None, "text": "launchctl not found"}
+    tmp = Path(tempfile.mkdtemp(prefix="zai-claude-probe-"))
+    label = "com.zelin.aiassistant.claudeprobe.%d" % os.getpid()
+    verdict = tmp / "verdict"
+    plist = tmp / "probe.plist"
+    domain = "gui/%d" % os.getuid()
+    try:
+        plist.write_bytes(plistlib.dumps({
+            "Label": label,
+            "ProgramArguments": ["/bin/sh", "-c", _CLAUDE_PROBE_SH, "_",
+                                 cwd, claude_bin, str(verdict)],
+            "EnvironmentVariables": {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+            "WorkingDirectory": str(Path.home()),
+            "RunAtLoad": True,
+            # kill the whole group on bootout so a hung claude does not linger
+            "AbandonProcessGroup": False,
+        }))
+        subprocess.run(["launchctl", "bootout", "%s/%s" % (domain, label)],
+                       capture_output=True, timeout=10)
+        boot = subprocess.run(["launchctl", "bootstrap", domain, str(plist)],
+                              capture_output=True, text=True, timeout=15)
+        if boot.returncode != 0:
+            return {"state": "unavailable", "rc": None,
+                    "text": "launchd refused the probe job: %s"
+                            % (boot.stderr or boot.stdout).strip()[-200:]}
+        deadline = time.time() + budget_s
+        while time.time() < deadline and not verdict.exists():
+            time.sleep(0.25)
+        if not verdict.exists():
+            started = (tmp / "verdict.stage").exists()
+            return {"state": "hang" if started else "unavailable", "rc": None,
+                    "text": ("claude started under launchd but produced no exit within "
+                             "%.0f s" % budget_s) if started
+                    else "launchd ran nothing observable within %.0f s" % budget_s}
+        raw = verdict.read_text(encoding="utf-8", errors="replace").strip()
+        out = ""
+        try:
+            out = (tmp / "verdict.out").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        if raw.startswith("cd_failed"):
+            return {"state": "cd_failed", "rc": None, "text": "sh could not cd into %s" % cwd}
+        try:
+            rc = int(raw.split(":", 1)[1])
+        except (IndexError, ValueError):
+            return {"state": "unavailable", "rc": None, "text": "unreadable verdict %r" % raw[:60]}
+        return {"state": "ok" if rc == 0 else "failed", "rc": rc, "text": out.strip()[-600:]}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"state": "unavailable", "rc": None, "text": "probe error: %r" % (exc,)}
+    finally:
+        try:
+            subprocess.run(["launchctl", "bootout", "%s/%s" % (domain, label)],
+                           capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        shutil.rmtree(str(tmp), ignore_errors=True)
+
+
 @dataclass
 class Probes:
     which: Callable[[str], Optional[str]] = shutil.which
@@ -258,6 +355,9 @@ class Probes:
     # §47.4 心跳：state/actd.heartbeat 的读取 + 进程探活（tests 注入保持 hermetic）
     heartbeat_read: Callable[[], Optional[dict]] = heartbeat.read
     pid_alive: Callable[[int], Optional[bool]] = _pid_alive
+    # §55 第三幕：在一次性 launchd job 里跑 `claude --version`（cwd = 默认工作
+    # repo）——终端看不见的 TCC 失败只能这样问出来；tests 注入，绝不真起 launchd
+    launchd_claude_probe: Callable[[str, str], dict] = _launchd_claude_probe
 
 
 @dataclass
@@ -806,37 +906,126 @@ _FD_LIMIT_MIN = 4096   # anything below this is the launchd default territory
 
 
 def _plist_number_of_files(text: str, key: str) -> Optional[int]:
-    m = re.search(r"<key>%s</key>\s*<dict>\s*<key>NumberOfFiles</key>\s*"
-                  r"<integer>(\d+)</integer>" % key, text)
-    return int(m.group(1)) if m else None
+    """`<key>KEY</key><dict>…<key>NumberOfFiles</key><integer>N</integer>…</dict>`
+    — NumberOfFiles may sit anywhere inside the dict (a hand-edited plist
+    with another limit first must not read as unset)."""
+    m = re.search(r"<key>%s</key>\s*<dict>(.*?)</dict>" % key, text, re.S)
+    if not m:
+        return None
+    n = re.search(r"<key>NumberOfFiles</key>\s*<integer>(\d+)</integer>", m.group(1))
+    return int(n.group(1)) if n else None
 
 
 def _check_launchd_fd_limit(probes: Probes):
-    """§55 fd 上限：已安装 actd plist 必须带 Soft+HardResourceLimits.NumberOfFiles。
+    """§55 资源上限：已安装 actd plist 的 SoftResourceLimits.NumberOfFiles。
 
-    launchd gui domain 给 job 的默认 `ulimit -n` 是 256；`claude --bg` 在这个
-    上限下直接拒启（"low max file descriptors"）——2026-08-31 每次派发都死、
-    一张卡 13h 重派 66 次，而 doctor 一路绿灯。模板自 v0.48.4 起带 8192；已
-    安装的旧渲染没有 → 重跑安装器（一键修复重渲 actd 也行）。
+    launchd gui domain 给 job 的默认是 soft 256 / hard unlimited。模板只抬
+    soft（余量）；**HardResourceLimits 不该出现**——它只会把 unlimited 压低
+    （2026-09-01 实测：Soft+Hard 8192 → [8192, 8192]，只 Soft → [8192,
+    unlimited]）。当晚 hotfix 的形状正是两把都设，而 8-31 的派发失败根本不是
+    fd 问题（TCC，见 _check_launchd_claude）——所以这一行只说资源上限的事实，
+    不再把 dispatch 失败归到它头上。
     """
     text = probes.installed_plist_text(ACTD_LABEL)
     if not text:
         return []   # 没装——_check_launchd 已经报 unregistered
     soft = _plist_number_of_files(text, "SoftResourceLimits")
     hard = _plist_number_of_files(text, "HardResourceLimits")
-    if soft is not None and hard is not None and min(soft, hard) >= _FD_LIMIT_MIN:
+    if hard is not None:
+        return CheckResult(
+            "launchd fd limit", WARN,
+            "installed actd plist sets HardResourceLimits.NumberOfFiles=%d - launchd's "
+            "default hard limit is unlimited, so this only LOWERS the ceiling (the "
+            "2026-08-31 hotfix shape; soft=%s)" % (hard, soft if soft is not None else "unset"),
+            "bash install.sh  # re-renders the agents: soft limit only, hard left unlimited",
+        ).with_failure("fd_limit")
+    if soft is not None and soft >= _FD_LIMIT_MIN:
         return CheckResult("launchd fd limit", OK,
-                           "installed actd plist raises NumberOfFiles to %d/%d"
-                           % (soft, hard))
-    have = "soft=%s hard=%s" % (soft if soft is not None else "unset",
-                                hard if hard is not None else "unset")
+                           "installed actd plist raises the soft NumberOfFiles limit to %d "
+                           "(hard stays launchd's unlimited)" % soft)
     return CheckResult(
         "launchd fd limit", WARN,
-        "installed actd plist carries no usable NumberOfFiles ceiling (%s) - "
-        "launchd's default is 256 and `claude --bg` refuses to start under it, so "
-        "every dispatch can fail with \"low max file descriptors\"" % have,
-        "bash install.sh  # re-renders the agents with Soft/HardResourceLimits 8192",
+        "installed actd plist carries no soft NumberOfFiles limit (soft=%s) - launchd's "
+        "default is 256, thin headroom for a daemon and its children (EMFILE)"
+        % (soft if soft is not None else "unset"),
+        "bash install.sh  # re-renders the agents with SoftResourceLimits.NumberOfFiles",
     ).with_failure("fd_limit")
+
+
+def _check_launchd_claude(probes: Probes):
+    """§55 第三幕（v0.48.4）：launchd 起的 claude 可执行文件能否读任务目录。
+
+    macOS 按可执行文件路径授「完全磁盘访问」；终端里的 claude 继承终端的授权，
+    launchd 里的 claude 只有它自己的——而 ~/.local/share/claude/versions/<v>
+    每次更新都是新路径。任务目录在外置卷 / Documents / Desktop / Downloads 时，
+    每次派发都死在 Bun 的「possibly due to low max file descriptors」上。
+    2026-08-31 事故就是这个，抬 fd 上限一字未改。doctor 自己在终端里看不见
+    它，所以照 §55 的规矩问 launchd 本人（probes.launchd_claude_probe，测试注入）。
+    没有 actd plist（没装 launchd 服务）→ 无此行：本行说的是 launchd 会话。
+    """
+    if not probes.installed_plist_text(ACTD_LABEL):
+        return []
+    cfg = config.load_config()
+    claude_bin = config.resolve_claude_bin(cfg)
+    cwd = cfg.target_repo_path
+    try:
+        cwd = cwd.resolve()
+    except OSError:
+        pass
+    if not cwd.is_dir():
+        return []   # 默认工作 repo 不存在 — _check_target_repo 之类另有报法
+    real_bin = claude_bin
+    try:
+        real_bin = str(Path(claude_bin).resolve())
+    except OSError:
+        pass
+    res = probes.launchd_claude_probe(claude_bin, str(cwd))
+    state = res.get("state")
+    text = str(res.get("text") or "").strip()
+    first = (text.splitlines() or [""])[0][:200] if text else ""
+    fda_fix = ("System Settings > Privacy & Security > Full Disk Access: enable %s "
+               "(again after every claude update), or move the repo under $HOME on the "
+               "boot volume; then Stop > Discard & re-propose > approve the halted cards"
+               % real_bin)
+    if state == "ok":
+        return CheckResult("launchd claude", OK,
+                           "launchd-spawned %s reads %s" % (claude_bin, cwd))
+    if state == "unavailable":
+        return CheckResult(
+            "launchd claude", WARN,
+            "could not ask launchd whether claude can read %s (%s)" % (cwd, first),
+            "re-run doctor; or by hand: bootstrap a throwaway agent that runs "
+            "`%s --version` with WorkingDirectory=%s" % (claude_bin, cwd))
+    if state == "cd_failed":
+        return CheckResult(
+            "launchd claude", FAIL,
+            "even /bin/sh inside a launchd job cannot cd into %s - the folder is "
+            "missing or unreadable to background jobs" % cwd,
+            "check the path in config.yaml (execution.default_target_repo) and that the "
+            "volume is mounted")
+    if state == "hang":
+        return CheckResult(
+            "launchd claude", WARN,
+            "%s started under launchd with cwd=%s but never exited - what a pending "
+            "macOS file-access prompt looks like for a job that has no UI to show it"
+            % (claude_bin, cwd),
+            fda_fix,
+        ).with_failure("claude_blind")
+    # failed
+    if _CLAUDE_BLIND_RE.search(text):
+        return CheckResult(
+            "launchd claude", FAIL,
+            "launchd-spawned %s cannot read %s (rc=%s: %s) - macOS grants Full Disk "
+            "Access per executable path and this claude has none; every dispatch into "
+            "that folder dies the same way" % (claude_bin, cwd, res.get("rc"), first),
+            fda_fix,
+        ).with_failure("claude_blind")
+    return CheckResult(
+        "launchd claude", WARN,
+        "`%s --version` under launchd with cwd=%s exited %s: %s"
+        % (claude_bin, cwd, res.get("rc"), first),
+        "run the same command in a terminal; if it works there, the difference is the "
+        "launchd session (permissions, environment) - see docs/TROUBLESHOOTING.md")
 
 
 def _symlink_shaped(value: Optional[str]) -> bool:
@@ -1329,7 +1518,7 @@ def _checks_for_platform() -> List:
     """
     if platform.is_darwin():
         middle = [_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
-                  _check_launchd_orphans, _check_cron]
+                  _check_launchd_claude, _check_launchd_orphans, _check_cron]
         tail_extra = [_check_screenpipe, _check_npx]
     elif platform.is_windows():
         middle = [_check_scheduled_tasks]

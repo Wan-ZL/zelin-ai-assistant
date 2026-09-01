@@ -54,17 +54,50 @@ FAILURES: dict = {
         "plain_en": "This Mac has more than one claude CLI and the background service is using an outdated copy — update or remove the old one, then re-run the installer",
         "action_id": "open_deps",
     },
-    # launchd's gui domain hands every job `ulimit -n 256`; `claude --bg`
-    # refuses to start under it ("low max file descriptors") and the card was
-    # re-dispatched 66 times in 13h before anyone saw why (2026-08-31 storm,
-    # §55). The fix is re-rendering the agents from templates that now carry
-    # Soft/HardResourceLimits — the same one-click path as a dead actd.
+    # §55 第三幕（2026-08-31 storm, verified 2026-09-01 under a throwaway
+    # launchd job): the claude binary launched by the launchd-run actd gets
+    # EPERM on getcwd/readdir when the task folder sits on a TCC-gated path
+    # (external volume, ~/Documents, ~/Desktop, ~/Downloads). Bun renders that
+    # unmapped errno as "An unknown error occurred, possibly due to low max
+    # file descriptors (Unexpected)" — a GUESS, and a wrong one: the same job
+    # runs `claude --version` fine with cwd=$HOME at ulimit 256, and raising
+    # the fd ceiling to 8192 changed nothing (11 more failures, "Current
+    # limit: 8192"). macOS keys Full Disk Access per executable PATH, so the
+    # grant Terminal/python3 hold does not cover ~/.local/share/claude/
+    # versions/<v> — and every claude update is a new path. No one-click
+    # repair: it is the owner's TCC toggle (or moving the folder).
+    "claude_blind": {
+        "plain_zh": "后台服务里的 claude 读不到任务目录（macOS 按可执行文件授磁盘权限，launchd 起的"
+                    " claude 没有「完全磁盘访问」，任务目录又在外置卷或 Documents/Desktop/Downloads"
+                    " 里；claude 自己报的「low max file descriptors」是猜错的）——系统设置 → 隐私与"
+                    "安全性 → 完全磁盘访问，打开 claude 当前版本那一项（~/.local/share/claude/"
+                    "versions/<版本>，claude 每次更新后要再打开一次），或把任务目录搬到启动盘的"
+                    "家目录下；然后把卡「停止 → 退回提案」再批准。doctor 的 `launchd claude` 行"
+                    "能确认",
+        "plain_en": "The claude binary the background service launches cannot read the task "
+                    "folder (macOS grants disk access per executable; launchd-spawned claude "
+                    "has no Full Disk Access and the folder sits on an external volume or in "
+                    "Documents/Desktop/Downloads — claude's own \"low max file descriptors\" "
+                    "guess is wrong) — System Settings → Privacy & Security → Full Disk "
+                    "Access: enable the current claude version (~/.local/share/claude/"
+                    "versions/<v>; repeat after each claude update), or move the task folder "
+                    "under your home on the boot volume; then Stop → Discard & re-propose → "
+                    "approve the card again. Doctor's `launchd claude` row confirms it",
+        "action_id": "open_deps",
+    },
+    # genuine fd exhaustion: EMFILE/ENFILE spellings, Bun's own
+    # ProcessFdQuotaExceeded / SystemFdQuotaExceeded ("bun ran out of file
+    # descriptors"). launchd's gui domain hands every job a soft `ulimit -n`
+    # of 256 (hard unlimited); the templates raise the SOFT limit (§55) and
+    # re-rendering the agents is the fix — same one-click path as a dead actd.
     "fd_limit": {
-        "plain_zh": "后台服务的打开文件上限太低（launchd 默认 256），claude 起不来——重跑一次安装器"
-                    "（bash install.sh）让每个后台服务带上 8192 的上限，再重新批准这张卡",
-        "plain_en": "The background service's open-file limit is too low (launchd defaults to "
-                    "256) so claude cannot start — re-run the installer (bash install.sh) so "
-                    "every agent carries an 8192 ceiling, then approve the card again",
+        "plain_zh": "后台服务的打开文件数耗尽（launchd 默认软上限 256；错误里写着 EMFILE / too many"
+                    " open files）——重跑一次安装器（bash install.sh）让每个后台服务带上更高的软上限，"
+                    "再重新批准这张卡",
+        "plain_en": "The background service ran out of open files (launchd's default soft limit "
+                    "is 256; the error reads EMFILE / too many open files) — re-run the "
+                    "installer (bash install.sh) so every agent carries a higher soft limit, "
+                    "then approve the card again",
         "action_id": "restart_actd",
     },
     # issue #89: `claude --bg --dangerously-skip-permissions` refuses to start
@@ -208,12 +241,19 @@ _RULES: list = [
     ("claude_cli_outdated", re.compile(
         r"unknown option.{0,10}['\"]?--(bg|name|resume)\b|"
         r"unknown command.{0,10}['\"]?agents\b", re.IGNORECASE)),
-    # claude's own phrasing for a starved fd table ("An unknown error
-    # occurred, possibly due to low max file descriptors") plus the raw
-    # errno spellings. Ranked before auth/network: the message carries no
-    # other signature, and a card text would not plausibly contain it.
+    # Bun's catch-all for an UNMAPPED errno ("An unknown error occurred,
+    # possibly due to low max file descriptors (Unexpected)"). It is NOT fd
+    # exhaustion — Bun spells that out separately (ProcessFdQuotaExceeded /
+    # SystemFdQuotaExceeded, below). On this product's launch path the errno
+    # is TCC's EPERM on the task cwd (§55 第三幕), so the sentence says so.
+    # Ranked before auth/network: the message carries no other signature,
+    # and a card text would not plausibly contain it.
+    ("claude_blind", re.compile(
+        r"possibly due to low max file descriptors", re.IGNORECASE)),
+    # genuine fd exhaustion: errno spellings + Bun's own quota messages.
     ("fd_limit", re.compile(
-        r"low max file descriptors|\bEMFILE\b|too many open files",
+        r"\bEMFILE\b|\bENFILE\b|too many open files|"
+        r"ran out of file descriptors|FdQuotaExceeded",
         re.IGNORECASE)),
     # claude's exact refusal (issue #89); narrow on purpose — a card that merely
     # talks about permissions or disclaimers must not classify.

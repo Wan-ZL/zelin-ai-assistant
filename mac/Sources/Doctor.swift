@@ -151,9 +151,12 @@ enum FailureCatalog {
                      "The background service stopped updating data — the board shows old content")
         // v0.48.4 (§25/§55, mirror only — the menu-bar app is retiring, D3):
         // sentences kept in lockstep with failures.py for the drift guard.
+        case "claude_blind":
+            return L("后台服务里的 claude 读不到任务目录（macOS 按可执行文件授磁盘权限，launchd 起的 claude 没有「完全磁盘访问」，任务目录又在外置卷或 Documents/Desktop/Downloads 里；claude 自己报的「low max file descriptors」是猜错的）——系统设置 → 隐私与安全性 → 完全磁盘访问，打开 claude 当前版本那一项（~/.local/share/claude/versions/<版本>，claude 每次更新后要再打开一次），或把任务目录搬到启动盘的家目录下；然后把卡「停止 → 退回提案」再批准。doctor 的 `launchd claude` 行能确认",
+                     "The claude binary the background service launches cannot read the task folder (macOS grants disk access per executable; launchd-spawned claude has no Full Disk Access and the folder sits on an external volume or in Documents/Desktop/Downloads — claude's own \"low max file descriptors\" guess is wrong) — System Settings → Privacy & Security → Full Disk Access: enable the current claude version (~/.local/share/claude/versions/<v>; repeat after each claude update), or move the task folder under your home on the boot volume; then Stop → Discard & re-propose → approve the card again. Doctor's `launchd claude` row confirms it")
         case "fd_limit":
-            return L("后台服务的打开文件上限太低（launchd 默认 256），claude 起不来——重跑一次安装器（bash install.sh）让每个后台服务带上 8192 的上限，再重新批准这张卡",
-                     "The background service's open-file limit is too low (launchd defaults to 256) so claude cannot start — re-run the installer (bash install.sh) so every agent carries an 8192 ceiling, then approve the card again")
+            return L("后台服务的打开文件数耗尽（launchd 默认软上限 256；错误里写着 EMFILE / too many open files）——重跑一次安装器（bash install.sh）让每个后台服务带上更高的软上限，再重新批准这张卡",
+                     "The background service ran out of open files (launchd's default soft limit is 256; the error reads EMFILE / too many open files) — re-run the installer (bash install.sh) so every agent carries a higher soft limit, then approve the card again")
         case "claude_bypass_disclaimer":
             return L("claude 还没在这台机器上接受过「跳过权限确认」的免责声明——在终端里手动跑一次 `claude --dangerously-skip-permissions` 并接受，后台派发才能启动",
                      "claude has not accepted the bypass-permissions disclaimer on this machine yet — run `claude --dangerously-skip-permissions` once in a terminal and accept it, then background dispatch can start")
@@ -189,7 +192,7 @@ enum FailureCatalog {
         case "agent_unloaded", "dashboard_stale": return L("一键修复", "Fix now")
         case "cron_missing": return L("查看修法", "How to fix")
         // 不给「一键修复」：重装 agent 会把同一个瞎解释器再渲一遍，得重跑安装器
-        case "interpreter_blind": return L("去诊断", "Open diagnostics")
+        case "interpreter_blind", "claude_blind": return L("去诊断", "Open diagnostics")
         case "cron_fda_blocked": return L("去授权", "Grant…")
         case "config_invalid": return L("显示文件", "Reveal file")
         default: return nil
@@ -228,7 +231,7 @@ enum FailureCatalog {
             RecordingController.openScreenRecordingSettings()
         case "agent_unloaded", "dashboard_stale":
             PipelineRepair.shared.restartActd()
-        case "claude_cli_outdated", "interpreter_blind":
+        case "claude_cli_outdated", "interpreter_blind", "claude_blind":
             // the doctor row on the diagnostics page names the two binaries
             // and the fix — deep-link there (same rationale as cron_missing).
             // interpreter_blind lands here too: its fix is re-running the

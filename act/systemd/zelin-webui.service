@@ -24,10 +24,10 @@ WorkingDirectory=@REPO_ROOT@
 Environment=AIASSISTANT_HOME=@REPO_ROOT@
 Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=@PYTHON@ -m act.webui
-# fd ceiling (CONTRACT §55 mirror): the launchd plists raise NumberOfFiles to
-# 8192 because `claude --bg` refuses to start under a 256 cap; a systemd --user
-# session usually inherits 1024, still below what a long agent session needs.
-LimitNOFILE=8192
+# fd soft limit (CONTRACT §55 mirror): raise the soft limit for headroom, keep
+# the hard limit at systemd's usual default (524288) — never lower a ceiling.
+# The launchd side's 2026-08-31 launch failure was TCC, not fd starvation.
+LimitNOFILE=8192:524288
 Restart=always
 RestartSec=5
 

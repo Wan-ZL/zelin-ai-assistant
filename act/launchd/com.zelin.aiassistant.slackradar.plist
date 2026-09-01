@@ -54,18 +54,16 @@
         <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
-    <!-- fd ceiling (CONTRACT §55): a launchd gui-domain job inherits
-         `ulimit -n 256`, and `claude --bg` refuses to start under it ("low
-         max file descriptors") — 2026-08-31 live incident: every dispatch
-         failed and the card was re-dispatched 66 times in 13h. 8192 is the
-         login shell's effective ceiling; both keys must be set or launchd
-         keeps the 256 hard cap and the soft raise is a no-op. -->
+    <!-- fd soft limit (CONTRACT §55): a launchd gui-domain job starts with
+         `ulimit -n 256` soft / unlimited hard. The soft raise is headroom for
+         the daemon and its children — it was NOT the 2026-08-31 dispatch
+         failure (that was TCC: the claude binary could not read a task folder
+         on an external volume; Bun reported the EPERM as "possibly due to low
+         max file descriptors" and 8192 changed nothing). HardResourceLimits is
+         deliberately ABSENT: launchd's default hard limit is unlimited and
+         setting it only lowers the ceiling (verified: Soft+Hard 8192 ->
+         [8192, 8192]; Soft only -> [8192, unlimited]). -->
     <key>SoftResourceLimits</key>
-    <dict>
-        <key>NumberOfFiles</key>
-        <integer>8192</integer>
-    </dict>
-    <key>HardResourceLimits</key>
     <dict>
         <key>NumberOfFiles</key>
         <integer>8192</integer>

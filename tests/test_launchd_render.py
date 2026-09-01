@@ -143,17 +143,20 @@ class LaunchdTemplateShapeTestCase(unittest.TestCase):
             self.assertIn("python", argv0.rsplit("/", 1)[-1], path.name)
             self.assertNotIn("/usr/bin/env", text, path.name)
 
-    def test_fd_ceiling_is_raised_for_every_agent(self):
-        # §55 fd ceiling：launchd gui domain 给 job 的默认 `ulimit -n` 是 256，
-        # `claude --bg` 在这个上限下直接拒启（"low max file descriptors"）——
-        # 2026-08-31 live：每次派发都死、同一张卡 13h 内重派 66 次。Soft/Hard
-        # 两把都要设：只抬 soft 会被 256 的 hard cap 顶回去。
+    def test_fd_soft_limit_is_raised_and_hard_limit_is_left_alone(self):
+        # §55 资源上限：launchd gui domain 给 job 的默认是 soft 256 / hard
+        # unlimited。只抬 soft（余量）；**不设 HardResourceLimits**——它只会把
+        # unlimited 压低（2026-09-01 实测：Soft+Hard 8192 → [8192, 8192]；
+        # 只 Soft → [8192, unlimited]）。8-31 的派发失败本身不是 fd 问题
+        # （是 TCC，见 §55 第三幕），所以这里只是余量不是修复。
         for path, _, obj in self.rendered():
-            for key in ("SoftResourceLimits", "HardResourceLimits"):
-                self.assertIn(key, obj, "%s: %s missing" % (path.name, key))
-                self.assertEqual(
-                    obj[key].get("NumberOfFiles"), 8192,
-                    "%s: %s.NumberOfFiles must be 8192" % (path.name, key))
+            self.assertIn("SoftResourceLimits", obj, "%s: soft limit missing" % path.name)
+            self.assertGreaterEqual(
+                int(obj["SoftResourceLimits"].get("NumberOfFiles") or 0), 4096,
+                "%s: SoftResourceLimits.NumberOfFiles must be >= 4096" % path.name)
+            self.assertNotIn("HardResourceLimits", obj,
+                             "%s: HardResourceLimits lowers launchd's unlimited hard cap"
+                             % path.name)
 
     def test_repo_appears_only_in_env_vars(self):
         # spawn 前 launchd 触碰的每个键都不许携带 repo 路径；repo 只允许

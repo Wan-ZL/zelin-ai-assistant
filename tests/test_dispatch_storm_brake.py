@@ -1,11 +1,15 @@
-"""Dispatch-storm brake (CONTRACT §4 / §25 fd_limit / §51; v0.48.4).
+"""Dispatch-storm brake (CONTRACT §4.1 / §25 claude_blind+fd_limit / §51; v0.48.4).
 
-2026-08-31 live: launchd handed actd ``ulimit -n 256``, ``claude --bg`` died
-on "low max file descriptors", and one approved card was re-dispatched 66
-times in 13h — 954 tracebacks, 98% of all registry writes, doctor green, the
-only notification saying「会自动重试」. Four judgments pinned here:
+2026-08-31 live: the launchd-run actd's ``claude --bg`` died every time on
+"An unknown error occurred, possibly due to low max file descriptors
+(Unexpected)" and one approved card was re-dispatched 66 times in 13h — 954
+tracebacks, 98% of all registry writes, doctor green, the only notification
+saying「会自动重试」. The message is Bun's guess for an unmapped errno; the
+errno was TCC's EPERM on the task cwd (§55 第三幕), not fd starvation. Four
+judgments pinned here:
 
-1. ``failures.classify`` knows the fd-limit message (``fd_limit``).
+1. ``failures.classify`` maps Bun's guess to ``claude_blind`` and only real
+   EMFILE/ENFILE spellings to ``fd_limit``.
 2. After ``dispatch_max_failures`` consecutive failures of the same class the
    card is HALTED: stays approved, ``execution.dispatch_halted``, a
    ``[dispatch-halted]`` notes line, one ``dispatch_halted`` event + one
@@ -13,9 +17,11 @@ only notification saying「会自动重试」. Four judgments pinned here:
    change restarts the streak; ``0`` disables the brake.
 3. The backoff window is a pure no-op for actd: no registry write, no
    traceback (the fixpoint re-record was the write storm).
-4. Re-approval (退回提案 → 批准) clears the streak; the dashboard projects a
-   halted card into ``needs_input`` as a blocked row (never「排队中」), and the
-   transition detector does not double-ping it.
+4. EVERY path into approved re-arms (owner approve, policy auto-dispatch,
+   and 退回提案 itself clears) — the review-reproduced dead loop
+   (halt → abort → auto_dispatch_pass → still halted) is pinned; the
+   dashboard projects a halted card into ``needs_input`` as a blocked row
+   (never「排队中」), and the transition detector does not double-ping it.
 
 Same injectable-runner pattern as tests/test_dispatch.py; nothing real is
 launched, notified or queried.
@@ -47,11 +53,31 @@ def _events(req_id: str, name: str) -> list:
 
 
 class FdLimitClassificationTestCase(unittest.TestCase):
-    def test_claude_fd_message_classifies(self):
-        self.assertEqual(failures.classify(FD_ERR), "fd_limit")
+    def test_bun_unexpected_guess_is_claude_blind_not_fd_limit(self):
+        # verified 2026-09-01 under a throwaway launchd job: same binary, same
+        # limits, cwd=$HOME works, cwd on the external volume dies with this
+        # text; homebrew node in the same job shows the raw EPERM. Raising the
+        # fd ceiling to 8192 changed nothing ("Current limit: 8192").
+        self.assertEqual(failures.classify(FD_ERR), "claude_blind")
+        self.assertEqual(failures.classify(FD_ERR + "\n\nCurrent limit: 8192\n"),
+                         "claude_blind")
+        self.assertEqual(failures.action_id("claude_blind"), "open_deps")
+        msg = failures.user_message("claude_blind", "zh")
+        self.assertIn("完全磁盘访问", msg)
+        self.assertIn("launchd claude", msg)
+        self.assertNotIn("8192", msg)
+
+    def test_real_fd_exhaustion_classifies_fd_limit(self):
         self.assertEqual(failures.classify("EMFILE: too many open files, open"),
                          "fd_limit")
+        self.assertEqual(failures.classify(
+            "error: bun ran out of file descriptors (ProcessFdQuotaExceeded)"),
+            "fd_limit")
+        self.assertEqual(failures.classify(
+            "error: Your computer ran out of file descriptors (SystemFdQuotaExceeded)"),
+            "fd_limit")
         self.assertEqual(failures.action_id("fd_limit"), "restart_actd")
+        self.assertNotIn("8192", failures.user_message("fd_limit", "zh"))
 
     def test_bypass_disclaimer_refusal_classifies_narrowly(self):
         # issue #89's exact text; prose about permissions/disclaimers must not
@@ -64,7 +90,7 @@ class FdLimitClassificationTestCase(unittest.TestCase):
                       failures.user_message("claude_bypass_disclaimer", "en"))
 
     def test_dispatch_error_class_pools_unknown_text(self):
-        self.assertEqual(executor.dispatch_error_class(FD_ERR), "fd_limit")
+        self.assertEqual(executor.dispatch_error_class(FD_ERR), "claude_blind")
         self.assertEqual(executor.dispatch_error_class("boom pid 4242"), "unclassified")
         self.assertEqual(executor.dispatch_error_class("boom pid 9999"), "unclassified")
 
@@ -116,7 +142,7 @@ class StormBrakeTripsTestCase(BrakeBase):
             exc = self._fail_once("R-980")
             self.assertNotIsInstance(exc, executor.DispatchHalted, i)
             ex = registry.load("R-980").execution
-            self.assertEqual(ex["dispatch_error_class"], "fd_limit")
+            self.assertEqual(ex["dispatch_error_class"], "claude_blind")
             self.assertEqual(ex["dispatch_class_streak"], i + 1)
             self.assertNotIn("dispatch_halted", ex)
         exc = self._fail_once("R-980")
@@ -133,13 +159,13 @@ class StormBrakeTripsTestCase(BrakeBase):
         # notes breadcrumb names the count, the class and the catalog hint
         self.assertIn("[dispatch-halted]", saved.notes)
         self.assertIn("5", saved.notes)
-        self.assertIn("fd_limit", saved.notes)
-        self.assertIn("8192", saved.notes)
+        self.assertIn("claude_blind", saved.notes)
+        self.assertIn("launchd claude", saved.notes)   # catalog hint (either language)
         # exactly one halted event + one halted notification (plus the single
         # first-failure ping from the streak start)
         halted = _events("R-980", "dispatch_halted")
         self.assertEqual(len(halted), 1)
-        self.assertEqual(halted[0].get("failure_id"), "fd_limit")
+        self.assertEqual(halted[0].get("failure_id"), "claude_blind")
         self.assertEqual(halted[0].get("streak"), 5)
         titles = [c.args[0] for c in self.notified.call_args_list]
         self.assertEqual(len(titles), 2, titles)
@@ -197,7 +223,7 @@ class HaltedCardIsNeverRetriedTestCase(BrakeBase):
         req.execution = {"approved_at": "2026-08-31T11:15:00Z",
                          "last_error": FD_ERR, "last_error_at": "2026-08-31T12:00:00Z",
                          "dispatch_attempts": 5, "dispatch_class_streak": 5,
-                         "dispatch_error_class": "fd_limit",
+                         "dispatch_error_class": "claude_blind",
                          "last_dispatch_attempt_at": "2026-01-01T00:00:00Z",
                          "dispatch_halted": True,
                          "dispatch_halted_at": "2026-08-31T12:00:00Z"}
@@ -283,7 +309,7 @@ class ReapprovalRearmsTestCase(BrakeBase):
         req.execution = {"aborted_at": "2026-08-31T13:00:00Z",
                          "last_error": FD_ERR, "last_error_at": "x",
                          "dispatch_attempts": 5, "dispatch_class_streak": 5,
-                         "dispatch_error_class": "fd_limit",
+                         "dispatch_error_class": "claude_blind",
                          "last_dispatch_attempt_at": "x",
                          "dispatch_halted": True, "dispatch_halted_at": "x"}
         registry.save(req)
@@ -295,6 +321,74 @@ class ReapprovalRearmsTestCase(BrakeBase):
         self.assertTrue(ex.get("approved_at"))
         self.assertEqual(ex.get("aborted_at"), "2026-08-31T13:00:00Z")  # unrelated keys stay
 
+    _HALTED = {"approved_at": "2026-08-31T11:15:00Z",
+               "last_error": FD_ERR, "last_error_at": "x",
+               "dispatch_attempts": 5, "dispatch_class_streak": 5,
+               "dispatch_error_class": "claude_blind",
+               "last_dispatch_attempt_at": "x",
+               "dispatch_halted": True, "dispatch_halted_at": "x"}
+
+    def _hand_card(self, req_id: str, status: str) -> Requirement:
+        req = Requirement(id=req_id, title="免批重上膛", tier="T1", type="other",
+                          status=status, target_repo=str(self.target),
+                          cost_estimate_usd=1.0,
+                          sources=[{"who": "zelin", "channel": "quick",
+                                    "date": "2026-08-31", "quote": "原话"}])
+        req.execution = dict(self._HALTED)
+        registry.save(req)
+        ledger = config.STATE_DIR / actd._SPEND_LEDGER_FILE
+        if ledger.exists():
+            ledger.unlink()
+        return req
+
+    def test_abort_execution_clears_the_streak(self):
+        # 退回提案 = 「丢弃这一轮」：card_sent 卡不得带着刹车回到待审批
+        # （adversarial review 2026-09-01 B1）。
+        req = self._approved("R-990")
+        req.execution = dict(self._HALTED)
+        registry.save(req)
+        self.assertEqual(actd._apply_decision(req, "abort_execution", None), "running")
+        saved = registry.load("R-990")
+        self.assertEqual(saved.status, State.CARD_SENT.value)
+        for key in executor.DISPATCH_STREAK_KEYS + ("last_error", "last_error_at"):
+            self.assertNotIn(key, saved.execution, key)
+        self.assertTrue(saved.execution.get("aborted_at"))
+
+    def test_policy_reapproval_rearms_and_dispatch_resumes(self):
+        # Reproduced dead loop: brake trips -> 停止/退回提案 -> the SAME pass's
+        # auto_dispatch_pass re-approves the hand card -> before the fix the
+        # halt rode along, the card sat in 需输入 forever and owner approve on
+        # an approved card was a whitelist no-op. Every path into approved
+        # must re-arm (§4.1).
+        self._hand_card("R-991", State.APPROVED.value)
+        with mock.patch.object(actd.notify, "notify"):
+            # the exact sequence the review scripted — no approve verb at all
+            actd._apply_decision(registry.load("R-991"), "abort_execution", None)
+            self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
+        saved = registry.load("R-991")
+        self.assertEqual(saved.status, State.APPROVED.value)
+        self.assertTrue(saved.execution.get("auto_dispatched"))
+        for key in executor.DISPATCH_STREAK_KEYS + ("last_error", "last_error_at"):
+            self.assertNotIn(key, saved.execution, key)
+        # ...and dispatch_approved actually launches it again
+        launch = mock.Mock()
+        with mock.patch.object(actd.executor, "dispatch", launch):
+            actd.dispatch_approved(self.cfg)
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.args[0].id, "R-991")
+
+    def test_policy_approval_rearms_even_without_abort(self):
+        # a card_sent card carrying a stale halt (hand-edited YAML, crash
+        # between abort and save, ...) must not be promoted with the halt on.
+        self._hand_card("R-992", State.CARD_SENT.value)
+        with mock.patch.object(actd.notify, "notify"):
+            self.assertEqual(actd.auto_dispatch_pass(self.cfg), 1)
+        saved = registry.load("R-992")
+        self.assertEqual(saved.status, State.APPROVED.value)
+        self.assertNotIn("dispatch_halted", saved.execution)
+        self.assertNotIn("last_error", saved.execution)
+        self.assertEqual(saved.execution.get("approved_at"), "2026-08-31T11:15:00Z")
+
 
 class HaltedProjectionTestCase(unittest.TestCase):
     def _row(self):
@@ -302,7 +396,7 @@ class HaltedProjectionTestCase(unittest.TestCase):
             "id": "R-989", "title": "投影测试", "status": "approved",
             "execution": {"last_error": FD_ERR, "dispatch_attempts": 5,
                           "dispatch_class_streak": 5,
-                          "dispatch_error_class": "fd_limit",
+                          "dispatch_error_class": "claude_blind",
                           "dispatch_halted": True},
         })
         return dashboard.build_dashboard(reqs=[req], agents=[], cfg=config.Config())
@@ -316,11 +410,11 @@ class HaltedProjectionTestCase(unittest.TestCase):
         self.assertEqual(row["state"], "blocked")
         self.assertTrue(row["dispatch_halted"])
         self.assertEqual(row["dispatch_attempts"], 5)
-        self.assertEqual(row["last_error_id"], "fd_limit")
+        self.assertEqual(row["last_error_id"], "claude_blind")
         self.assertEqual(row["last_error"], FD_ERR)
         self.assertIsNone(row["session_id"])
         self.assertIn("5", row["question"])
-        self.assertIn("8192", row["question"])   # catalog hint, not raw text
+        self.assertIn("launchd claude", row["question"])   # catalog hint, not raw text
         self.assertEqual(dash["counts"]["needs_input"], 1)
         self.assertEqual(dash["counts"]["running"], 0)
 

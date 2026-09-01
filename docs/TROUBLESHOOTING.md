@@ -53,15 +53,22 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 没有任何候选 python3 带 PyYAML 时 install.sh 直接报 `[ERR ]` 并给出 pip 命令。若所有候选都过不了 launchd 那道闸门(例如机器上只有一个 python),它会照实说,这时再手动给那个解释器二进制授「完全磁盘访问」:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴解释器路径。
 
-## 批准后卡一直「排队中」,派发反复失败:`low max file descriptors`
+## 派发反复失败:`possibly due to low max file descriptors`(实为 claude 读不到任务目录)
 
-**症状**:卡批准后停在运行中列的「排队中」,错误 chip 写着 `An unknown error occurred, possibly due to low max file descriptors`;`~/Library/Logs/zelin-ai-assistant/actd.launchd.log` 每十几秒一条 `dispatch: R-xxx FAILED`;终端里手跑 `claude --bg` 正常。v0.48.4 起同一张卡连续失败 5 次后会**停止重试**并挪到「需输入」列,通知说明原因(CONTRACT §4.1)。
+**症状**:卡批准后每次派发都失败,错误 chip 写着 `An unknown error occurred, possibly due to low max file descriptors (Unexpected)`;`state/actd.log` 每十几秒一条 `dispatch: R-xxx FAILED`;终端里手跑 `claude --bg` 正常。v0.48.4 起同一张卡连续失败 5 次后会**停止重试**并挪到「需输入」列,通知与卡片都写明原因(CONTRACT §4.1、§25 `claude_blind`)。
 
-**原因**(CONTRACT §55 资源上限):launchd gui domain 给后台任务的默认 `ulimit -n` 是 **256**,`claude --bg` 起不来。登录 shell 的上限是 8192,所以手跑没事。v0.48.4 之前的 plist 模板没有设 `SoftResourceLimits`/`HardResourceLimits`。
+**原因**(CONTRACT §55 第三幕):**不是**文件句柄。claude 是 Bun 编译的单文件程序,Bun 把它不认识的 errno 统一渲成这句猜测(真正的句柄耗尽它会写 `ProcessFdQuotaExceeded` / `EMFILE`)。这里的 errno 是 **EPERM**:macOS 按可执行文件路径授「完全磁盘访问」,终端里的 claude 继承终端的授权,launchd 起的 claude 只看它自己那一行——而 `~/.local/share/claude/versions/<版本>` 每次更新都是新路径,从来没被授权过。任务 repo 在外置卷(或 ~/Documents、~/Desktop、~/Downloads)上时,claude 一起来就在 `getcwd` 上被拒。2026-08-31 这台机器把 `~/Projects` 搬到外置卷后当天就撞上;当晚给 plist 加 8192 上限的 hotfix 生效后又失败了 11 次(`Current limit: 8192`),这才是证伪。
 
-**确认**:`python3 -m act.doctor` 的 `launchd fd limit` 行(WARN `fd_limit` = 已安装的 actd plist 没带上限);或 `grep -A2 NumberOfFiles ~/Library/LaunchAgents/com.zelin.aiassistant.actd.plist` 为空。
+**确认**:`python3 -m act.doctor` 的 `launchd claude` 行——它在一个一次性 launchd job 里以默认工作 repo 为 cwd 跑 `claude --version`(终端里跑永远是好的,只有 launchd 会话能复现):FAIL `claude_blind` = 就是本条;WARN 且写着 never exited = cwd 在 ~/Documents 这类会弹提示的目录,job 没有界面所以挂住。旁证:`~/.local/share/claude/versions/<版本>` 出现在「完全磁盘访问」列表里且**未打开**——被拒过一次 macOS 就会把它列出来。
 
-**修复**:在 repo 目录重跑 `bash install.sh`(重渲全部 agent,模板自带 8192);app 的「一键修复」只重渲 actd,也能解本条。然后在看板上把停住的卡「停止 → 退回提案」再批准一次——批准会清掉整条失败台账(不重批它会一直停在「需输入」列,这是刻意的:修好原因前不该再烧重试)。应急手法(不重装):手改 plist 加两把 `NumberOfFiles` 8192,`launchctl bootout gui/$(id -u)/com.zelin.aiassistant.actd && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.zelin.aiassistant.actd.plist`。
+**修复**(两条路,选一):
+
+1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → 打开 claude 当前版本那一项(不在列表里就 `+` → `Command`-`Shift`-`G` 粘贴 `~/.local/share/claude/versions/<版本>`)。**claude 每次自动更新后要重做**——授权跟路径走。
+2. 把任务 repo 放回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),改 `config.yaml` 的 `execution.default_target_repo`。
+
+然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上把停住的卡「停止 → 退回提案」再批准一次(批准会清掉整条失败台账;hand 卡免批通道也会自动接手)。一张卡真的到「执行中」才算修好。结构性根治(一次授权、子进程全继承)是由有授权的 GUI app 托管后台服务,记在 `docs/design/vnext2-plan.md` 等 owner 拍板。
+
+**附带的资源上限**:launchd 给后台任务的默认是 soft `ulimit -n` 256 / hard unlimited。模板自 v0.48.4 起只抬 soft 到 8192(余量);**不要**再手加 `HardResourceLimits`——它把 unlimited 压成 8192,doctor `launchd fd limit` 行会 WARN,重跑 `bash install.sh` 即去掉。
 
 ## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
 

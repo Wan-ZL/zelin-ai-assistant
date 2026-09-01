@@ -121,11 +121,13 @@ approved 的需求：
 派发失败（claude 非零退出 / 子进程错误 / 拿不到 session id）的卡**留在
 approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_at`
 记原因，退避重试 `30s·2^attempts`（上限 600s；`dispatch_attempts` /
-`last_dispatch_attempt_at` 台账）。事故：launchd 给 actd 的 `ulimit -n` 是
-256，`claude --bg` 以「low max file descriptors」拒启，一张卡 13 小时重派
-66 次、954 条 traceback，`registry_writes.jsonl` 98% 的行是它——退避窗口内
-actd 每 pass 重新落一次 `last_error_at`（「稳定 fixpoint」设计只保证文本不
-叠，没保证不写）。自本节起：
+`last_dispatch_attempt_at` 台账）。事故：launchd 起的 `claude --bg` 每次都以
+「An unknown error occurred, possibly due to low max file descriptors
+(Unexpected)」拒启（claude 猜的是文件句柄，实测是 TCC 的 EPERM——目标 repo
+在外置卷上，launchd 起的 claude 可执行文件没有磁盘授权，§55 第三幕），一张
+卡 13 小时重派 66 次、954 条 traceback，`registry_writes.jsonl` 98% 的行是
+它——退避窗口内 actd 每 pass 重新落一次 `last_error_at`（「稳定 fixpoint」
+设计只保证文本不叠，没保证不写）。自本节起：
 
 - **退避窗口 = 纯 no-op**：executor 抛 `DispatchBackingOff`（`DispatchError`
   子类），actd 不写卡、不打 traceback、不发事件——一张卡在窗口内**零**磁盘
@@ -145,14 +147,23 @@ actd 每 pass 重新落一次 `last_error_at`（「稳定 fixpoint」设计只�
   一次；executor 抛 `DispatchHalted`。**卡仍是 approved**（不 trash、不改状
   态机），但 actd `dispatch_approved` 在并发闸之前就跳过它（不占槽、不写、
   不 log），executor 直调也拒启。投影见 §2 v0.48.4（进「需输入」列）。
-- **重新上膛 = 批准**：`approve`（detected/card_sent → approved）清掉
+- **重新上膛 = 进入 approved 的每一条路径**（`actd._rearm_dispatch`）：清掉
   `executor.DISPATCH_STREAK_KEYS`（`dispatch_attempts / last_dispatch_attempt_at
   / dispatch_error_class / dispatch_class_streak / dispatch_halted /
-  dispatch_halted_at`）+ `last_error`/`last_error_at`。owner 的出口 = 停止 →
-  退回提案（`abort_execution` → card_sent）→ 修好原因 → 批准；成功派发整体
-  重建 execution，台账自然消失。不新增 inbox 动词。
+  dispatch_halted_at`）+ `last_error`/`last_error_at`。三条路径一视同仁：
+  owner 的 `approve`（detected/card_sent → approved）、**policy 免批**
+  （`auto_dispatch_pass`，§51 hand 卡 card_sent → approved）、direct-run
+  （新卡，execution 本来就是新建的）。`abort_execution`（退回提案 →
+  card_sent）**也清**——那个动词的语义就是「丢弃这一轮、重新决定」，card_sent
+  卡不得带着刹车回到待审批。审查复现（2026-09-01）：只有 approve 清账时，
+  刹车停下 → 退回提案 → 同一 pass 免批通道把 `dispatch_halted` 原样推进
+  approved → 卡回到「需输入」，而 owner 再点批准是 approved 上的白名单 no-op
+  ——UI 上没有任何出口，只能手改 YAML。owner 的出口仍是 停止 → 退回提案 →
+  修好原因 → 批准（或免批通道自动接手）；成功派发整体重建 execution，台账
+  自然消失。不新增 inbox 动词。
 - 判例：`tests/test_dispatch_storm_brake.py`（分类、刹车、换类重数、0 关闭、
-  退避零写零 traceback、重批清账、投影、去重通知、server 不标 steer）。
+  退避零写零 traceback、重批清账、退回提案清账、免批重上膛后真能再派、投影、
+  去重通知、server 不标 steer）。
 
 ## 5. macOS 通知（actd）
 
@@ -788,7 +799,7 @@ add-only）：
   的 ffmpeg 诊断行给「安装 ffmpeg」+「装好了，重启引擎」两个动作（死引擎的
   日志尾在装好后仍是旧错误行，就地重启是该页唯一的复活路径）。
 
-v0.48.4 追加（add-only；live 事故 2026-08-31 + issue #89，§4.1/§47.4/§55）四枚
+v0.48.4 追加（add-only；live 事故 2026-08-31 + issue #89，§4.1/§47.4/§55）五枚
 failure id：
 - `claude_bypass_disclaimer`（#89）——`claude --bg --dangerously-skip-permissions`
   在本机**一次性交互接受**免责声明之前拒启（原文 `bypassPermissions requires
@@ -797,11 +808,21 @@ failure id：
   doctor 的**预检**（装机时判断是否已接受）暂缺：claude 没有文档化的接受
   标记可读，宁缺毋猜——§4.1 刹车 + 分类通知已把「静默死管线」变成一条点名
   修法的通知。
-- `fd_limit`——launchd gui domain 默认 `ulimit -n 256`，`claude --bg` 拒启。
-  分类签名收窄为 claude 自己的措辞 `low max file descriptors` + errno 拼法
-  `EMFILE` / `too many open files`；排在 auth/network 规则之前（这段话没有别的
-  签名，卡片正文也不会合理地含它）。action_id `restart_actd`——修法就是按
-  v0.48.4 模板重渲 agent（§55 资源上限），「一键修复」重渲 actd 即命中。
+- `claude_blind`——launchd 起的 claude 可执行文件读不到任务目录（TCC 按可执行
+  文件路径授「完全磁盘访问」，§55 第三幕）。签名 = Bun 对**未映射 errno** 的
+  统一猜测 `possibly due to low max file descriptors`（`(Unexpected)`）：Bun
+  把真正的句柄耗尽另有拼法（`ProcessFdQuotaExceeded` / `SystemFdQuotaExceeded`），
+  所以这句话**按定义不是** fd 问题；在本产品的发射路径上它就是任务 cwd 的
+  EPERM（2026-09-01 一次性 launchd job 实测：同一 binary 同一上限，cwd=$HOME 好、
+  cwd 在外置卷死；同 job 里 homebrew node 直接报 `EPERM`）。排在 auth/network
+  规则之前。action_id `open_deps`——没有一键修法：修的是 owner 的 TCC 开关
+  （或搬目录），句子里点名 doctor `launchd claude` 行作确认。
+- `fd_limit`——**真**句柄耗尽：`EMFILE` / `ENFILE` / `too many open files` /
+  Bun 的 `ran out of file descriptors` / `FdQuotaExceeded`。launchd 默认 soft 256、
+  hard unlimited；action_id `restart_actd`——修法是按模板重渲 agent（§55 资源
+  上限：只抬 soft），「一键修复」重渲 actd 即命中。v0.48.4 最初把 Bun 的猜测
+  也归到这里并给 8192 上限的建议——live 证伪（抬到 8192 后 11 次同样失败），
+  自本修订起两枚 id 分开，`fd_limit` 的句子不再提 dispatch 失败。
 - `actd_stalled`——进程活着（launchctl 有 pid）但 §47.4 心跳过期：循环卡死而非
   进程死。与 `dashboard_stale`（进程死/没起）分开：修法是 **kill+respawn**
   （`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`；Linux
@@ -812,9 +833,17 @@ failure id：
 Swift `FailureCatalog` 只镜像句子（D3：菜单栏 app 退役中，不给新按钮）。
 通知 builder 追加 `msg_dispatch_halted(title, n, reason)`（§4.1；正文点名
 现存按钮「停止 → 退回提案 → 批准」）。doctor 新行：`actd heartbeat`（§47.4）、
-`launchd fd limit`（已安装 actd plist 缺 Soft/Hard `NumberOfFiles` ≥ 4096 →
-WARN `fd_limit`；没装 → 无此行）、`launchd orphans`（已装载孤儿 → FAIL
-`launchd_orphan`，只剩文件 → WARN；其他厂商前缀永不算）。
+`launchd fd limit`（已安装 actd plist：`SoftResourceLimits.NumberOfFiles` 缺失或
+< 4096 → WARN `fd_limit`；出现 `HardResourceLimits` → WARN `fd_limit`，因为它
+只会把 launchd 默认的 unlimited 压低——8-31 当晚 hotfix 的形状；没装 → 无此行）、
+`launchd claude`（§55 第三幕：在一次性 launchd job 里以默认工作 repo 为 cwd 跑
+`<claude> --version`——doctor 自己在终端里看不见 TCC 失败，只能问 launchd 本人；
+Bun 猜测句/EPERM → **FAIL `claude_blind`**，起了但 20s 不退出（无 UI 的 TCC 提示）
+→ WARN `claude_blind`，launchd 不可用/探针被 `AIASSISTANT_LAUNCHD_PROBE=0` 关掉
+→ WARN 无 id，没装 actd plist 或默认 repo 不存在 → 无此行；`Probes.
+launchd_claude_probe` 注入缝，测试绝不真起 launchd——`tests/__init__.py` 兜底把
+开关设为 0）、`launchd orphans`（已装载孤儿 → FAIL `launchd_orphan`，只剩文件 →
+WARN；其他厂商前缀永不算）。
 
 **dashboard.json 新字段**（全部 optional，Swift `decodeIfPresent`；原始错误文本
 字段不变，分类 id 只是伴随）：
@@ -3525,25 +3554,80 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
 - `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
   无 WorkingDirectory、bash 绝对路径）本就合规，不动。
 
-**资源上限（v0.48.4；live 事故 2026-08-31 第三幕）**：launchd gui domain 给
-job 的默认 `ulimit -n` 是 **256**，`claude --bg` 在这个上限下直接拒启（原文
-「An unknown error occurred, possibly due to low max file descriptors」），
-每次派发都死、一张卡 13 小时重派 66 次（§4.1 的风暴由此而来），而登录 shell
-里同一条命令跑得好好的——差别只在 launchd 会话里存在，同 §55 前三幕一个
-性质。自本节起为不变式（判例 `tests/test_launchd_render.py
-test_fd_ceiling_is_raised_for_every_agent`、`tests/test_systemd_render.py`）：
+**第三幕：claude 可执行文件对任务目录 TCC-blind（v0.48.4；live 事故 2026-08-31，
+2026-09-01 审查证伪首版结论后修订）**：launchd 起的 actd 每次 `claude --bg`
+都以「An unknown error occurred, possibly due to low max file descriptors
+(Unexpected)」拒启，一张卡 13 小时重派 66 次（§4.1 的风暴由此而来），而登录
+shell 里同一条命令跑得好好的。首版把它读成 fd 上限并给全部模板加了 8192 的
+Soft+Hard 上限——**live 证伪**：hotfix 生效 9 小时后同一张卡再失败 11 次，
+原文变成「Current limit: 8192」。真相靠一次性 launchd job 问出来（同 §55 第二幕
+「唯一诚实的探针是问 launchd 本人」）：
 
-- **每个 `act/launchd/*.plist` 模板都带 `SoftResourceLimits` + `HardResourceLimits`
-  的 `NumberOfFiles = 8192`**（登录 shell 的有效上限）。两把都要设——只抬
-  soft 会被 256 的 hard cap 顶回去。三个渲染方（install.sh / 两个 Swift 渲染方）
-  都是占位符替换，模板改了即全部生效，不需要各自加键。
-- `act/systemd/*.service` 镜像 `LimitNOFILE=8192`（systemd --user 通常继承
-  1024，长 agent 会话仍不够）。
-- doctor `launchd fd limit`：读**已安装**的 actd plist，Soft/Hard 任一缺失或
-  `< 4096` → WARN `fd_limit`（fix = 重跑 install.sh；「一键修复」重渲 actd
-  同样命中）；没装该 plist → 无此行。
-- 应急手法（当晚 hotfix 的形状）：手改已安装 plist 加这两把上限再
-  `launchctl bootout` + `bootstrap`；模板落地后重跑 install.sh 即永久。
+- **同一 job、同一上限**：`claude --version` cwd=`$HOME` 成功；cwd 在
+  `/Volumes/<外置卷>/…`（任务 repo 所在）以上句失败；`--help`、`agents --json`
+  同样；cwd 在 `~/Documents` / `~/Desktop` / `~/Downloads` 则**挂住不退出**
+  （无 UI 的 job 等一个永远弹不出来的 TCC 提示）。
+- **同一 job 里换 binary**：`/bin/ls`、`/usr/bin/python3` 读外置卷正常；
+  homebrew `node` 的 `process.cwd()`/`readdirSync` 直接报 **`EPERM: operation
+  not permitted`**，homebrew `python3` 的 `os.getcwd()` 同样 PermissionError。
+  claude 是 Bun 编译的单文件 binary，Bun 把未映射的 errno 统一渲成上面那句
+  猜测（真正的句柄耗尽它另有拼法 `ProcessFdQuotaExceeded` /
+  `SystemFdQuotaExceeded`）——所以这句话按定义**不是** fd 问题。
+- **TCC 台账印证**（只读 `TCC.db`）：`kTCCServiceSystemPolicyAllFiles` 里
+  `/usr/bin/python3`、`/bin/bash`、`/usr/sbin/cron`、终端 app 都是 allowed，
+  而 `~/.local/share/claude/versions/2.1.251` 的 **denied** 行落款
+  `2026-08-31 18:15:31`——正是 R-175 第一次派发失败那一分钟；`2.1.252` 又一行
+  denied。TCC 对命令行工具**按可执行文件路径**记账，claude 每次更新都是新路径
+  → 授权不随版本走。§55 第二幕「Apple 随系统发的解释器带着用户的文件授权」
+  更准确的说法是：owner 07-10 给 `/usr/bin/python3` 点过完全磁盘访问。
+- **谁的授权算数**：终端里的 claude 继承终端（responsible process）的授权；
+  launchd job 里没有 app 可继承，每个非平台 binary 只看自己的那一行。所以
+  `/usr/bin/python3` 有授权不等于它 spawn 的 claude 有授权——实测如此。
+
+自本节起（判例 `tests/test_doctor.py` 的 `launchd claude` 组、
+`tests/test_dispatch_storm_brake.py` 分类组）：
+
+- **分类**：Bun 猜测句 → `claude_blind`（§25），句子说明真因与两条出路；
+  `fd_limit` 只留给 EMFILE/ENFILE 类原文。
+- **doctor `launchd claude` 行**：在一次性 gui-domain launchd job 里以
+  `execution.default_target_repo`（物理路径）为 cwd 跑 `<claude> --version`
+  （payload 是 `/bin/sh`——Apple 平台 binary，负责 `cd`，和 8-31 那天 python 的
+  pre-exec chdir 一个角色；TCC 判的只有 exec 出来的 claude，与真派发同形）。
+  失败且原文含猜测句/EPERM → FAIL `claude_blind`，起了但 20s 不退出 → WARN
+  `claude_blind`，探针不可用 → WARN 无 id。探针 `Probes.launchd_claude_probe`
+  注入缝；`AIASSISTANT_LAUNCHD_PROBE=0` 关掉（测试沙箱默认关）。
+- **owner 的两条出路**（都不是 agent 能替做的；文档 `docs/TROUBLESHOOTING.md`）：
+  (a) 系统设置 → 隐私与安全性 → 完全磁盘访问：打开 claude 当前版本
+  （`~/.local/share/claude/versions/<v>`，被拒过一次后它已在列表里）——**每次
+  claude 更新后重做**；(b) 把任务 repo 放回启动盘家目录下（非 Documents /
+  Desktop / Downloads）。结构性根治（一次授权、子进程全继承）= 由有授权的 GUI
+  app（`shell/`）托管 actd 而非 launchd——记入 `docs/design/vnext2-plan.md`
+  待 owner 拍板（v-next-2 的自动 PR 通道要派发进本 repo，本 repo 就在外置卷上，
+  不解决这条 P6 一张卡也发不出去）。
+- **验收**：doctor `launchd claude` 行 OK **且**一张重新批准的卡真的到 executing
+  （`dispatch` 事件）。截至 v0.48.4 合并前，live 机器上这两项都还是 FAIL——
+  出路 (a) 需要 owner 亲手点；本修订**不**声称事故已修复，只声称已被诚实地
+  看见、分类、指路。
+
+**资源上限（同一修订）**：launchd gui domain 给 job 的默认是 soft **256** /
+hard **unlimited**（`launchctl limit maxfiles` = `256 unlimited`）。实测
+（一次性 job 读 `getrlimit`）：只设 `SoftResourceLimits.NumberOfFiles` → soft
+随设、hard 仍 unlimited（8192 / 61440 / 1048576 / 10000000 全部照收）；
+加 `HardResourceLimits` 8192 → **[8192, 8192]**，把 unlimited 压成了 8192。
+自本节起（判例 `tests/test_launchd_render.py
+test_fd_soft_limit_is_raised_and_hard_limit_is_left_alone`、
+`tests/test_systemd_render.py`）：
+
+- 每个 `act/launchd/*.plist` 模板带 `SoftResourceLimits.NumberOfFiles = 8192`
+  （守护进程与不自抬上限的子进程的余量——不是任何已知事故的修法），**不带**
+  `HardResourceLimits`（只会降天花板）。三个渲染方都是占位符替换，模板改了
+  即全部生效。
+- `act/systemd/*.service` 镜像 `LimitNOFILE=8192:524288`（soft 抬到 8192，hard
+  保持 systemd 常见默认；裸 `LimitNOFILE=8192` 会把两把都设成 8192——同一个
+  错误的 Linux 版）。
+- doctor `launchd fd limit`：读**已安装**的 actd plist，soft 缺失或 < 4096 → WARN
+  `fd_limit`；**出现 hard 键 → WARN `fd_limit`**（hotfix 形状，重跑 install.sh 去
+  掉）；没装 → 无此行。这一行只陈述上限事实，不再把派发失败归到它头上。
 
 **退役 label 的卸载必须自证 + 孤儿必须被看见（v0.48.4；审计 L3）**：install.sh
 的 `launchd_unload` 为了幂等升级刻意吞掉 bootout 失败，结果 v0.21 删掉的
