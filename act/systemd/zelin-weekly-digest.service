@@ -17,3 +17,7 @@ WorkingDirectory=@REPO_ROOT@
 Environment=AIASSISTANT_HOME=@REPO_ROOT@
 Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=@PYTHON@ -m act.weekly_digest
+# fd ceiling (CONTRACT §55 mirror): the launchd plists raise NumberOfFiles to
+# 8192 because `claude --bg` refuses to start under a 256 cap; a systemd --user
+# session usually inherits 1024, still below what a long agent session needs.
+LimitNOFILE=8192

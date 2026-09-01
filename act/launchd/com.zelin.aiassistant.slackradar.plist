@@ -54,6 +54,23 @@
         <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
+    <!-- fd ceiling (CONTRACT §55): a launchd gui-domain job inherits
+         `ulimit -n 256`, and `claude --bg` refuses to start under it ("low
+         max file descriptors") — 2026-08-31 live incident: every dispatch
+         failed and the card was re-dispatched 66 times in 13h. 8192 is the
+         login shell's effective ceiling; both keys must be set or launchd
+         keeps the 256 hard cap and the soft raise is a no-op. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
     <!-- ~/Library/Logs, NEVER under the repo — same spawn-time rule as
          WorkingDirectory above (launchd opens these paths pre-exec). -->
     <key>StandardOutPath</key>

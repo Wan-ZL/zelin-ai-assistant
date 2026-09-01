@@ -82,6 +82,17 @@ class RenderTemplatesTestCase(unittest.TestCase):
         self.assertIn("ExecStart=%s -m act.webui" % PY,
                       self.rendered["zelin-webui.service"])
 
+    def test_every_service_raises_the_fd_ceiling(self):
+        # §55 fd ceiling: the launchd mirror learned the hard way that
+        # `claude --bg` refuses to start under a 256-descriptor cap
+        # (2026-08-31 storm); the Linux units pin the same 8192 in [Service].
+        for name, text in self.rendered.items():
+            if not name.endswith(".service"):
+                continue
+            service = text.split("[Service]", 1)[1]
+            self.assertIn("LimitNOFILE=8192", service.split("[Install]")[0],
+                          "%s: LimitNOFILE=8192 must live in [Service]" % name)
+
     def test_radar_services_are_oneshot(self):
         pairs = {
             "zelin-gmail-radar": "act.radar_gmail",
