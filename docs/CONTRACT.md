@@ -3921,7 +3921,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 **安装闸门**：install.sh 只在「`$REPO_ROOT` 是 git checkout」**且** `features.auto_deploy` 为真（§16）时渲染并 load 它；.pkg 安装（rsync 副本，无 `.git`）不装；关掉 flag 的机器 unload + 删 plist。install.sh 若**自身正跑在这个 agent 里**（`AIASSISTANT_AUTODEPLOY_ACTIVE=1`，脚本调用时导出）则只重渲染该 plist、**不** bootout/bootstrap（那会杀掉正在跑的部署）——模板改动在下一次手动 `bash install.sh` 生效。
 
-**一次运行 = 有序十步**（`scripts/auto-deploy.sh`；全部函数化、末尾 `main "$@"`，bash 先整份解析——第 5 步的 ff-merge 会替换脚本自己）：
+**一次运行 = 有序十步**（`scripts/auto-deploy.sh`；全部函数化、末尾 `main "$@"`，bash 先整份解析——第 5 步的 ff-merge 会替换脚本自己；git 按 rename 写文件、函数体驻内存、main 的每条路径都 `exit`，所以合并进来的新脚本在本轮**一行都不会执行**。推论（v0.48.9 review P1，成法）：**一次部署自始至终跑的是合并前的旧脚本；第 N 版引入的闸门保护 N→N+1 起的升级，永远保护不了「升到 N」这一轮**——合并前取的任何快照都是旧脚本，copy-then-exec 改变不了这一点；想让新闸门管住当轮需要 mid-deploy re-exec 新脚本 + 断点续步，那是显式修 §56 的设计题、不是 bug。判例 `test_script_replaced_by_the_merge_still_completes`（booby-trap 全量替换）。）：
 
 1. 取锁 `state/auto-deploy.lock/`（`mkdir` 原子；`pid` 文件；持锁 PID 已死 = 陈旧锁可回收，活着 = 本轮跳过；**尚无 `pid` 文件的新鲜锁目录（< 2 min）= 对方刚 mkdir 还没写 pid，视为活锁跳过**——否则 launchd 与手动运行并发时两个实例会同时 merge/install/reset；无 pid 且 > 2 min 才算 mkdir 与写 pid 之间崩了的陈旧锁）；日志 `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 超 1 MB 自截一半（防腐 #4）。
 2. **HEAD 必须在 `main`**（否则 `refused_branch`）；`git fetch origin main`（`GIT_TERMINAL_PROMPT=0`、ssh `BatchMode=yes`——永不提示；失败 = `fetch_failed`，下个 interval 再试，不通知）。HEAD == origin/main → `up_to_date`，退出；origin/main == 记账的 `failed_sha` → 只写一行日志 + `last_run` 退出（**不重试、不重装、不再通知、不再问 CI**，直到 main 前进或 `--force`）。
