@@ -135,12 +135,12 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
        registry:
          backend: yaml
 
-   开关强制 YAML 为真源,store2 标记被无视、每日导出停止(CONTRACT §53.6)。开关保留一个版本——它在的期间不会再自动迁移。
+   开关强制 YAML 为真源,store2 标记被无视、每日导出停止(CONTRACT §53.6)。server 的卡详情读(`/api/cards/{id}`)同样跟随开关(逐请求读 config,不用重启 server)。开关保留一个版本——它在的期间不会再自动迁移。
 4. **重启**:`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`(或重跑 `bash install.sh`)。`python3 -m act.doctor` 应显示 `store2: YAML 后端(registry.backend/env 强制)`。
 
 **想再切回 SQLite**:删掉 config 里的 `registry.backend` 键(或设 `auto`),删 `state/store2_truth.json` + `state/store2.db`,重启 actd——下一个 pass 重新走一遍完整激活协议(重新备份、重新比对)。
 
-**激活被拒(doctor FAIL `store2_refused`)**:这不是故障,是保护——某张卡的形态无法忠实入库(最常见:手编 YAML 里有拼错的未知字段名)。`cat state/store2_activation.json` 看逐条 diff,修好点名的卡文件后等重试(数据类拒绝退避 6 小时;删掉 `state/store2_activation.json` 立即重试)。拒绝期间 YAML 一直是真源,管线照常。
+**激活被拒(doctor FAIL `store2_refused`)**:这不是故障,是保护——某张卡的形态无法忠实入库(最常见:手编 YAML 里有拼错的未知字段名,或未加引号的日期值——`deadline: 2026-09-15` 会被 YAML 解析成日期对象,JSON 装不下,给值加引号即可)。`cat state/store2_activation.json` 看逐条 diff,修好点名的卡文件后等重试(数据类拒绝退避 6 小时;删掉 `state/store2_activation.json` 立即重试)。拒绝期间 YAML 一直是真源,管线照常。
 
 ## 开发注意(新组件必读)
 

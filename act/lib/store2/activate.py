@@ -234,8 +234,16 @@ def first_run(now: Optional[_dt.datetime] = None) -> dict:
                        retry_after_s=RETRY_AFTER_REFUSED_S)
     plans, errors = [], []
     for rid in sorted(by_id):
-        p = migrate_yaml.plan_card(rid, by_id[rid], allow_unknown=False,
-                                   coerce_cost=False)
+        try:
+            p = migrate_yaml.plan_card(rid, by_id[rid], allow_unknown=False,
+                                       coerce_cost=False)
+        except (TypeError, ValueError) as e:
+            # 计划级兜底：任何卡让 plan_card 抛类型/值错误 = 无法忠实入库，
+            # 走同一条拒绝路（6h 退避 + activation 台账）。曾经这类异常逃出
+            # first_run：无台账、无退避、每个 pass 重铸一份全量备份（B1）。
+            errors.append(f"{rid}: plan_card failed "
+                          f"({e.__class__.__name__}: {e})")
+            continue
         if p["errors"]:
             errors += [f"{rid}: {e}" for e in p["errors"]]
         else:

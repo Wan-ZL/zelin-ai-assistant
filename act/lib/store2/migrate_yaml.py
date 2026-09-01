@@ -221,11 +221,20 @@ def plan_card(rid: str, entry: dict, *, allow_unknown: bool = False,
     created, created_from = _derive_created(norm, entry["mtime"])
     updated = _iso(_dt.datetime.fromtimestamp(entry["mtime"], tz=_UTC))
 
+    # payload = verbatim JSON 全文——JSON 装不下的值（手编 YAML 的未加引号
+    # 日期/datetime、``!!binary``）无法忠实入库 = errors，绝不让 TypeError
+    # 逃出去变成调用方的 traceback / 激活重试风暴（宪法第 11 条，§53.3）。
+    try:
+        payload = json.dumps(norm, ensure_ascii=False)
+    except (TypeError, ValueError) as e:
+        errors.append(f"payload 无法 JSON 序列化（{e}）——多为手编 YAML 里"
+                      "未加引号的日期/时间或 !!binary 值，给值加引号后重试")
+        payload = None
     hot_full = dict(hot_cols)
     hot_full.update({
         "id": rid, "created": created, "updated": updated, "version": 1,
         "board_rev": 1, "tombstone": 0, "last_actor_type": "system",
-        "payload": json.dumps(norm, ensure_ascii=False),
+        "payload": payload,
     })
     return {"hot": hot_full, "norm": norm, "sources": src_rows,
             "created_from": created_from, "warnings": warnings, "errors": errors}
@@ -358,7 +367,13 @@ def main(argv=None) -> int:
         by_id, scan_notes = scan_registry(Path(args.registry))
         plans, card_errors = [], []
         for rid in sorted(by_id):
-            p = plan_card(rid, by_id[rid], allow_unknown=args.allow_unknown)
+            try:
+                p = plan_card(rid, by_id[rid], allow_unknown=args.allow_unknown)
+            except (TypeError, ValueError) as e:
+                # 与激活协议同一兜底：坏形态 = 干净 REFUSED（exit 2），不 traceback
+                card_errors.append(f"{rid}: plan_card failed "
+                                   f"({e.__class__.__name__}: {e})")
+                continue
             if p["errors"]:
                 card_errors += [f"{rid}: {e}" for e in p["errors"]]
             else:

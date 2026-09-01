@@ -3543,7 +3543,11 @@ actd 每 pass 跑 `activate.tick()`（心跳 phase `store2`）；未激活且无
    **永不覆盖**），旁落 `.manifest.json`（逐文件 sha256）。
 2. **迁移（从备份读，不读 live 目录）**：scan 出「会丢卡」的形态（unreadable/
    非 dict/缺 id/duplicate id）或任何无法忠实入库的卡（未知顶层键即丢字段、
-   词表外 status、merged 缺父指针）→ **整体拒绝**；否则单事务 INSERT 全部卡。
+   词表外 status、merged 缺父指针、payload 无法 JSON 序列化——手编 YAML 里
+   未加引号的日期/datetime、`!!binary` 等）→ **整体拒绝**；否则单事务 INSERT
+   全部卡。计划阶段的 TypeError/ValueError 一律折进同一条拒绝路（点名卡 id，
+   6h 退避）——绝不逃出 first_run 变成「每 pass 重试 + 每次一份全量备份 +
+   doctor 报 OK」的风暴（B1 判例，宪法第 3/11 条 + 防腐 #4）。
    激活路径 `plan_card(coerce_cost=False)`——payload 必须与备份逐字段一致，
    连 `_coerce_cost` 归一都不做（CLI 手动迁移保留归一，两者 docstring 点名）。
 3. **导出 + 逐字段比对**：`export_yaml.export_db` 到 `state/registry-export/`，
@@ -3589,9 +3593,14 @@ tests/test_store2_parity.py + 激活协议第 3 步的运行时比对。
 - **§34bis 护栏与写入台账**：`registry.guard_snapshot()` backend-aware
   （yaml = 文件名→size:mtime；sqlite = `<id>.yaml`→`v<version>`，键形一致），
   写入台账 `registry_writes.jsonl` 两后端同键照记——快照护栏逻辑零改动。
-- **server 只读面**：`/api/cards/{id}` 增补在标记在时经
-  `act/lib/store2/readonly.py`（sqlite URI `mode=ro`，物理只读）读 payload，
-  **不回落**冻结 YAML；dashboard 投影经 registry 门面自动走真源（R2.1 g）。
+- **server 只读面**：`/api/cards/{id}` 增补的真源判定与 `registry.backend()`
+  同序（`board_source.registry_backend` 只读镜像：env `ZAI_REGISTRY_BACKEND` >
+  config `registry.backend` > 激活标记；§53.6 回滚开关对 server 详情读同样
+  生效，逐请求读 config、无需重启 server——曾经只看标记，文档化回滚后详情
+  读会永远停在已废弃的 DB 上）；sqlite 真源时经 `act/lib/store2/readonly.py`
+  （sqlite URI `mode=ro`，物理只读）读 payload，**不回落**冻结 YAML；
+  dashboard 投影经 registry 门面自动走真源（R2.1 g）。判例
+  tests/test_server_store2_detail.py。
 
 ### 53.6 doctor 行 + 回滚（R2.1.3）
 
@@ -3604,7 +3613,8 @@ tests/test_store2_parity.py + 激活协议第 3 步的运行时比对。
   （回滚开关生效）。
 - **回滚开关（保留一个版本）**：config `registry.backend: yaml`（或 env
   `ZAI_REGISTRY_BACKEND`，测试/CI 用）强制 YAML 后端：
-  激活标记被无视、tick 永不迁移/导出、读写回到 YAML 文件。完整手动回滚步骤
+  激活标记被无视、tick 永不迁移/导出、读写回到 YAML 文件——**含 server 的
+  `/api/cards/{id}` 详情增补**（§53.5 的判定同序，开关 > 标记）。完整手动回滚步骤
   文档 = docs/TROUBLESHOOTING.md「store2 回滚」（停守护 → 恢复
   `state/backups/registry-<ts>/` → 设开关 → 重启）。判例
   tests/test_store2_rollback.py。

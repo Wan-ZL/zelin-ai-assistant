@@ -19,6 +19,12 @@ def home_dir(explicit: "str | Path | None" = None) -> Path:
     return Path(raw).expanduser()
 
 
+def config_path(home: Path) -> Path:
+    # 镜像 act/lib/config.py CONFIG_PATH（HOME / "config.yaml"）——server 只读
+    # 一个键：`registry.backend` 回滚开关（§53.6，board_source 真源判定用）
+    return home / "config.yaml"
+
+
 def dashboard_path(home: Path) -> Path:
     return home / "state" / "dashboard.json"
 

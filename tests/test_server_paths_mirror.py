@@ -49,6 +49,9 @@ class LayoutMirrorTestCase(unittest.TestCase):
             (paths.dashboard_path(HOME), config.DASHBOARD_PATH),
             (paths.registry_dir(HOME), config.REGISTRY_DIR),
             (paths.inbox_dir(HOME), config.INBOX_DIR),
+            # §53.6 回滚开关：board_source 真源判定读的 config.yaml 必须
+            # 就是 act 侧写规则的那一份
+            (paths.config_path(HOME), config.CONFIG_PATH),
         )
         for got, expected in cases:
             self.assertEqual(got, HOME / self._rel(expected))

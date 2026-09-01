@@ -113,6 +113,54 @@ class ActivationTestCase(unittest.TestCase):
         self.assertIn("duplicate id", act_info["reason"])
         self.assertEqual(registry.backend(), registry.BACKEND_YAML)
 
+    def test_non_json_value_refuses_cleanly_without_backup_storm(self):
+        """B1 判例：手编 YAML 的未加引号日期（PyYAML → datetime.date）曾以
+        TypeError 逃出拒绝网——无台账、无退避、每个 pass 重铸一份全量备份
+        （默认 10s 间隔 ≈ 10 GB/天），doctor 还报 OK。必须走 §53.3 第 6 步的
+        干净拒绝：activation 台账 + 6h 退避 + 恰好一份备份。"""
+        _seed("R-001")
+        (config.REGISTRY_DIR / "R-070.yaml").write_text(
+            "id: R-070\ntitle: 手编日期卡\nstatus: detected\n"
+            "deadline: 2026-09-15\n", encoding="utf-8")
+        lines = activate.tick()          # 绝不抛（宪法第 11 条）
+        self.assertTrue(any("REFUSED" in ln for ln in lines), lines)
+        act_info = json.loads(registry.store2_activation_path()
+                              .read_text(encoding="utf-8"))
+        self.assertEqual(act_info["result"], "refused")
+        # 点名卡 id，reason 属于「无法忠实入库」类
+        self.assertIn("R-070", json.dumps(act_info, ensure_ascii=False))
+        self.assertEqual(activate.status()["state"], "cooldown")   # 6h 退避
+        self.assertEqual(registry.backend(), registry.BACKEND_YAML)
+        self.assertFalse(registry.store2_db_path().exists())
+        # 退避生效：再 tick 两次不再铸新备份目录（风暴的止血点）
+        def _n_backups():
+            return len([d for d in registry.registry_backups_dir()
+                        .glob("registry-*") if d.is_dir()])
+        self.assertEqual(_n_backups(), 1)
+        self.assertEqual(activate.tick(), [])
+        self.assertEqual(activate.tick(), [])
+        self.assertEqual(_n_backups(), 1)
+
+    def test_unquoted_datetime_and_binary_refuse_not_crash(self):
+        """同类（B1）：未加引号 datetime、!!binary——json.dumps 装不下的一切
+        值形态都必须落进拒绝路，绝不逃出 first_run。"""
+        _seed("R-001")
+        variants = {
+            "R-071": ("id: R-071\ntitle: t\nstatus: detected\ncard:\n"
+                      "  sent_at: 2026-08-31 10:00:00\n"),
+            "R-072": "id: R-072\ntitle: t\nstatus: detected\n"
+                     "notes: !!binary aGVsbG8=\n",
+        }
+        for rid, body in variants.items():
+            p = config.REGISTRY_DIR / f"{rid}.yaml"
+            p.write_text(body, encoding="utf-8")
+            res = activate.first_run()
+            self.assertEqual(res["result"], "refused", rid)
+            self.assertIn(rid, json.dumps(res, ensure_ascii=False))
+            self.assertFalse(registry.store2_db_path().exists())
+            self.assertFalse(registry.store2_truth_path().exists())
+            p.unlink()
+
     def test_concurrent_writer_during_migration_refuses_with_short_retry(self):
         _seed("R-001")
         real_parity = activate.parity_diff
