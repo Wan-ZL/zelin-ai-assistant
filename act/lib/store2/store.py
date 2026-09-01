@@ -1,6 +1,8 @@
-"""store2 存取层 — SQLite 地基的唯一写入口（BUILD-CONTRACT §3；PR2 不接线，actd 不 import）。
+"""store2 存取层 — SQLite 真源的唯一写入口（CONTRACT §53）。
 
-契约：docs/CONTRACT.md §53（休眠地基——schema 版本纪律 + agent 转移墙；NOT YET WIRED）。
+契约：docs/CONTRACT.md §53（schema 版本纪律 + 状态机白名单 + agent 转移墙 +
+激活协议）。v0.48.8（D2）起接线：act/lib/registry.py 是唯一调用门面
+（put_card/list_cards/get_card/purge_trashed），callers 永远不直接 import 本模块。
 
 职责（B2，与 schema.md「给 B2/B3/B4 的接口约定」逐条对应）：
 * 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接
@@ -186,6 +188,10 @@ class Store:
         self._now = now_fn
         self._local = threading.local()
         self._ensure_schema()
+
+    @property
+    def db_path(self) -> str:
+        return self._db_path
 
     # ----------------------------------------------------------------- #
     # 连接与事务
@@ -373,6 +379,117 @@ class Store:
                                   [{"field": "status", "before": None, "after": card["status"]}])
             row = self._get_row(conn, card["id"])
         return self._row_to_card(row)
+
+    # registry 门面整卡 upsert 的热列键（id/created/updated/version/board_rev/
+    # tombstone/last_actor_type/payload 由本层管理，不在此表）
+    _PUT_HOT_KEYS = ("status", "prev_status", "tier", "type", "title",
+                     "origin_trust", "target_repo", "deadline", "merged_into_id")
+    _SRC_KEYS = ("channel", "who", "date", "ref", "quote")
+
+    def put_card(self, card_id: str, payload: dict, hot: dict, sources: list,
+                 actor_type: str = "system", actor_id: Optional[str] = None) -> dict:
+        """registry 门面（§53.5）的整卡 upsert——payload 真源 + 热列投影一笔事务。
+
+        - 新卡 INSERT：出生状态不设限（应用层裁决）；agent 铸敏感出生态由
+          ``cards_agent_insert_wall`` trigger 拒收。
+        - 既有卡 UPDATE：热列 + payload + last_actor_type 同一条语句；status
+          变更由 ``cards_status_transition`` trigger 按 (old,new,actor) 白名单
+          执法——store 层不复刻法条，fail-closed 在 DB（§53.2）。
+        - no-op（payload 与全部热列均未变、sources 投影也未变）：不 bump、
+          不写 activity、原样返回（幂等重放无害）。
+        - sources 表只是查询投影（payload 是真源）：变更时整替，origin_key
+          恒 NULL（回填属未来写路径，§53.2 wiring checklist）。
+        - tombstone 行对写路径视同不存在（NotFound）——死号永不复活。
+        - 刻意无 CAS：门面是单写者纪律下的 read-modify-write（yaml 后端同
+          语义），跨进程原子性由 BEGIN IMMEDIATE + busy_timeout 保证；
+          version 列照常随每笔真实变更 +1（审计/护栏可比对）。
+        """
+        self._require_actor(actor_type)
+        if not isinstance(payload, dict):
+            raise StoreError("INVALID_FIELD", "payload must be a dict",
+                             {"field": "payload"})
+        src_rows = [tuple((s or {}).get(k) for k in self._SRC_KEYS)
+                    for s in (sources or [])]
+        now = self._now()
+        with self._write() as conn:
+            row = self._get_row(conn, card_id)
+            if row is not None and row["tombstone"]:
+                raise NotFound("card", card_id)
+            if row is None:
+                rev = self._bump_revision(conn)
+                conn.execute(
+                    "INSERT INTO cards (id, status, prev_status, tier, type,"
+                    " title, origin_trust, target_repo, deadline, created,"
+                    " updated, version, merged_into_id, board_rev, tombstone,"
+                    " last_actor_type, payload)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)",
+                    (card_id, hot.get("status"), hot.get("prev_status"),
+                     hot.get("tier", "T1"), hot.get("type", ""),
+                     hot.get("title", ""),
+                     hot.get("origin_trust") or "external",
+                     hot.get("target_repo"), hot.get("deadline"),
+                     now, now, hot.get("merged_into_id"), rev, actor_type,
+                     _dump_json(payload)),
+                )
+                for s in src_rows:
+                    conn.execute(
+                        "INSERT INTO sources (card_id, channel, who, date, ref,"
+                        " quote, origin_key, created_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                        (card_id, s[0] or "", s[1], s[2], s[3], s[4], now))
+                self._append_activity(
+                    conn, card_id, actor_type, actor_id or "put_card",
+                    [{"field": "status", "before": None,
+                      "after": hot.get("status")}])
+                fresh = self._get_row(conn, card_id)
+                return self._row_to_card(fresh)
+
+            old_payload = _parse_payload(row["payload"])
+            changes = []
+            for k in self._PUT_HOT_KEYS:
+                if row[k] != hot.get(k):
+                    changes.append({"field": k, "before": row[k],
+                                    "after": hot.get(k)})
+            payload_changed = old_payload != payload
+            cur_src = [tuple(r[k] for k in self._SRC_KEYS) for r in conn.execute(
+                "SELECT channel, who, date, ref, quote FROM sources"
+                " WHERE card_id = ? ORDER BY id", (card_id,))]
+            src_changed = cur_src != src_rows
+            if not changes and not payload_changed and not src_changed:
+                return self._row_to_card(row)
+            if payload_changed:
+                # payload 变更按顶层键 diff 进审计（同 update_card_fields 口径）
+                for k in sorted(set(old_payload) | set(payload)):
+                    if old_payload.get(k) != payload.get(k):
+                        changes.append({"field": f"payload.{k}",
+                                        "before": old_payload.get(k),
+                                        "after": payload.get(k)})
+            rev = self._bump_revision(conn)
+            conn.execute(
+                "UPDATE cards SET status = ?, prev_status = ?, tier = ?,"
+                " type = ?, title = ?, origin_trust = ?, target_repo = ?,"
+                " deadline = ?, merged_into_id = ?, payload = ?,"
+                " last_actor_type = ?, updated = ?, version = version + 1,"
+                " board_rev = ? WHERE id = ?",
+                (hot.get("status"), hot.get("prev_status"),
+                 hot.get("tier", "T1"), hot.get("type", ""),
+                 hot.get("title", ""), hot.get("origin_trust") or "external",
+                 hot.get("target_repo"), hot.get("deadline"),
+                 hot.get("merged_into_id"), _dump_json(payload), actor_type,
+                 now, rev, card_id),
+            )
+            if src_changed:
+                conn.execute("DELETE FROM sources WHERE card_id = ?", (card_id,))
+                for s in src_rows:
+                    conn.execute(
+                        "INSERT INTO sources (card_id, channel, who, date, ref,"
+                        " quote, origin_key, created_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                        (card_id, s[0] or "", s[1], s[2], s[3], s[4], now))
+            self._append_activity(conn, card_id, actor_type,
+                                  actor_id or "put_card", changes)
+            fresh = self._get_row(conn, card_id)
+        return self._row_to_card(fresh)
 
     def _cas_precheck(self, conn, card_id: str, expected_version: Optional[int]) -> sqlite3.Row:
         """CAS 件一：预检。缺卡/tombstone → 404；版本不符 → 409（带 expected/actual）。

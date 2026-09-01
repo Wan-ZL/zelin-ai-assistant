@@ -112,7 +112,8 @@ class RunOnceBeatsTestCase(unittest.TestCase):
                 mock.patch.object(actd, "_check_radar_liveness", return_value=[]):
             actd.run_once(config.Config(), None, set(), set(), set(), interval=10)
         self.assertEqual([p for p, _ in phases],
-                         ["inbox", "dispatch", "reconcile", "housekeeping", "dashboard"])
+                         ["store2", "inbox", "dispatch", "reconcile",
+                          "housekeeping", "dashboard"])
         self.assertTrue(all(iv == 10 for _, iv in phases))
         body = json.loads(heartbeat.HEARTBEAT_PATH.read_text(encoding="utf-8"))
         self.assertEqual(body["phase"], "dashboard")

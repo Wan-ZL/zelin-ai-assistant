@@ -81,11 +81,12 @@ class StoreApiTestCase(_StoreFixture):
         card = self.store.transition("R-001", "approve", "user", None)
         self.assertEqual(card["status"], "approved")
 
-    def test_system_approve_hits_whitelist(self):
+    def test_system_approve_allowed_for_autodispatch(self):
+        # v0.48.8 接线修订（§51/§53.2）：hand 卡免批通道 = system 把 card_sent
+        # 翻 approved 是白名单内的真实管线转移；agent 仍被墙拒（下测）。
         self._mint()
-        with self.assertRaises(TransitionDenied) as cm:
-            self.store.transition("R-001", "approve", "system", None)
-        self.assertEqual(cm.exception.code, "ILLEGAL_TRANSITION")
+        card = self.store.transition("R-001", "approve", "system", None)
+        self.assertEqual(card["status"], "approved")
 
     def test_agent_accept_denied(self):
         self._mint("R-001", "review")

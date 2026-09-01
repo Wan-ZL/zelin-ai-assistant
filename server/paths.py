@@ -32,6 +32,16 @@ def archive_dir(home: Path) -> Path:
     return registry_dir(home) / "archive"
 
 
+def store2_db_path(home: Path) -> Path:
+    # §53：store2 SQLite 真源（registry.store2_db_path 镜像）
+    return home / "state" / "store2.db"
+
+
+def store2_truth_path(home: Path) -> Path:
+    # §53：激活标记——在 = SQLite 是真源，YAML 目录只是冻结工件/导出镜像
+    return home / "state" / "store2_truth.json"
+
+
 def inbox_dir(home: Path) -> Path:
     return home / "state" / "inbox"
 

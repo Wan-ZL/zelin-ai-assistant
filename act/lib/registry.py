@@ -1,19 +1,33 @@
-"""Requirement registry — the source of truth (YAML under act/registry/).
+"""Requirement registry — the card-ledger facade every caller goes through.
+
+契约：CONTRACT §1（状态机/字段）+ §53（store2 真源与激活协议）+ §44（单写者）。
+
+Truth（v0.48.8，D2）：``state/store2_truth.json`` 激活标记在（且未被回滚开关
+强制回 yaml）时，真源 = SQLite ``state/store2.db``（act/lib/store2）；否则
+真源 = ``act/registry/*.yaml``。**公开 API 两后端逐字一致**（判例
+tests/test_registry_backend_parity.py）——调用方（actd/雷达/digest/dashboard/
+server/boardctl）永远只经这里，永远看不见 SQL。
 
 State machine (CONTRACT §1):
     detected -> card_sent -> approved -> executing -> review -> delivered
     branches: rejected  /  merged_into:<parent-id>
     terminal (merge-review 契约 四): merged + merged_into=<primary>
 
-Files may be either a single YAML doc (one requirement) or a YAML list (e.g.
-the debt batch R-002..R-006). Both shapes round-trip through ``save``.
+YAML 后端：files may be either a single YAML doc (one requirement) or a YAML
+list (e.g. the debt batch R-002..R-006). Both shapes round-trip through
+``save``. SQLite 后端：payload 冷列存 canonical ``to_dict()`` 全文（真源），
+热列由 act/lib/store2/hot.py 单点推导；状态机白名单与 agent 墙由 schema
+trigger 执法（§53.2）。
 """
 from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
 import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -57,6 +71,161 @@ class State(str, Enum):
 
 
 MERGED_PREFIX = "merged_into:"
+
+# --------------------------------------------------------------------------- #
+# storage backend (CONTRACT §53) — YAML files vs store2 SQLite
+# --------------------------------------------------------------------------- #
+BACKEND_YAML = "yaml"
+BACKEND_SQLITE = "sqlite"
+STORE2_DB_NAME = "store2.db"
+# 真源标记：存在 = store2 已通过「备份→迁移→逐字段比对零差异」的激活协议
+# （act/lib/store2/activate.py 是唯一写者）；内容 {activated_at, backup_dir,
+# cards, schema_version, app_version}
+STORE2_TRUTH_NAME = "store2_truth.json"
+# 最近一次激活尝试的结果（activated/refused + diff 摘要）——doctor 的数据源
+STORE2_ACTIVATION_NAME = "store2_activation.json"
+_BACKEND_ENV = "ZAI_REGISTRY_BACKEND"          # 测试/CI 强制后端（yaml|sqlite）
+_ACTOR_TYPES = ("user", "agent", "system")
+# agent 出生墙的目标态（schema cards_agent_insert_wall 同一词表）
+_AGENT_FORBIDDEN = ("approved", "delivered", "executing", "review")
+
+
+def store2_db_path() -> Path:
+    return config.STATE_DIR / STORE2_DB_NAME
+
+
+def store2_truth_path() -> Path:
+    return config.STATE_DIR / STORE2_TRUTH_NAME
+
+
+def store2_activation_path() -> Path:
+    return config.STATE_DIR / STORE2_ACTIVATION_NAME
+
+
+def registry_backups_dir() -> Path:
+    """整目录 YAML 备份的家（R2.1.3）：state/backups/registry-<ts>/。"""
+    return config.STATE_DIR / "backups"
+
+
+def registry_export_dir() -> Path:
+    """每日 YAML 导出镜像（R2.1.2，git-diff/肉眼可读）：state/registry-export/。"""
+    return config.STATE_DIR / "registry-export"
+
+
+_UNSET = object()
+_STORE = None                    # 进程内 Store 单例（per-thread 连接在 Store 里）
+_CFG_BACKEND_MEMO = _UNSET       # config 面设定的进程内 memo（重启生效，rollback 口径）
+
+
+def reset_store_cache() -> None:
+    """清后端判定与 Store 缓存（激活切换 / 测试沙箱切后端后调用）。"""
+    global _STORE, _CFG_BACKEND_MEMO
+    if _STORE is not None:
+        try:
+            _STORE.close()
+        except Exception:  # noqa: BLE001 - 缓存清理绝不抛
+            pass
+    _STORE = None
+    _CFG_BACKEND_MEMO = _UNSET
+
+
+def backend_forced() -> Optional[str]:
+    """显式强制值（env > config），无强制 = None（auto，看激活标记）。"""
+    env = os.environ.get(_BACKEND_ENV, "").strip().lower()
+    if env in (BACKEND_YAML, BACKEND_SQLITE):
+        return env
+    global _CFG_BACKEND_MEMO
+    if _CFG_BACKEND_MEMO is _UNSET:
+        _CFG_BACKEND_MEMO = config.registry_backend_setting()
+    if _CFG_BACKEND_MEMO in (BACKEND_YAML, BACKEND_SQLITE):
+        return _CFG_BACKEND_MEMO
+    return None
+
+
+def backend() -> str:
+    """当前真源：强制值优先；auto 下激活标记在 = sqlite，否则 yaml。
+
+    标记在而 DB 文件缺失属于故障半态：backend() 仍答 sqlite（绝不静默退回
+    已冻结的 YAML 目录装没事），首次触库时 :func:`_store` 响亮拒绝并指向
+    rollback 文档；doctor `store2` 行 FAIL（§53.6）。"""
+    forced = backend_forced()
+    if forced is not None:
+        return forced
+    return BACKEND_SQLITE if store2_truth_path().exists() else BACKEND_YAML
+
+
+def _store():
+    """store2 存取层单例（仅 sqlite 后端调用）。DB 缺失 = 响亮拒绝。"""
+    global _STORE
+    db = store2_db_path()
+    if _STORE is not None and _STORE.db_path != str(db):
+        reset_store_cache()
+    if _STORE is None:
+        if not db.exists():
+            raise RuntimeError(
+                f"store2 truth marker present but {db} is missing — "
+                "restore state/backups/registry-<ts>/ or set registry.backend:"
+                " yaml (docs/TROUBLESHOOTING.md「store2 回滚」)")
+        from act.lib.store2.store import Store
+        _STORE = Store(db)
+    return _STORE
+
+
+# --- actor seam（§53.5）----------------------------------------------------- #
+# actor = 动作的发起者（不是写库进程）：actd 替用户执行 inbox 决策时 = user，
+# radar/triage/digest/reconcile 等自主管线 = system（默认），agent 通道 = agent。
+# thread-local 而非 module-global（防腐 #3 的教训适用于注入缝——这里是随调用
+# 栈走的身份上下文，且只经 acting_as() 一个受控入口设置）。
+_ACTOR_CTX = threading.local()
+
+
+def current_actor() -> str:
+    return getattr(_ACTOR_CTX, "value", "system")
+
+
+@contextmanager
+def acting_as(actor: str):
+    """把本调用栈内的 registry 写标为 ``actor`` 发起（user|agent|system）。
+
+    actd 的 inbox 决策漏斗用 ``acting_as("user"/"agent")`` 包住 apply；其余
+    管线不包 = system。sqlite 后端把 actor 写进 last_actor_type，schema 的
+    transition_whitelist / agent 墙据此执法；yaml 后端由 :func:`_agent_wall`
+    在 Python 面执行同一堵墙（两后端行为一致，R2.1.4）。"""
+    if actor not in _ACTOR_TYPES:
+        raise ValueError(f"unknown actor {actor!r}")
+    prev = getattr(_ACTOR_CTX, "value", None)
+    _ACTOR_CTX.value = actor
+    try:
+        yield
+    finally:
+        if prev is None:
+            try:
+                del _ACTOR_CTX.value
+            except AttributeError:
+                pass
+        else:
+            _ACTOR_CTX.value = prev
+
+
+def _agent_wall(req: "Requirement", old_status: Optional[str]) -> None:
+    """R2.1.4 权限墙的后端无关面：agent 发起的任何状态转移/敏感出生一律拒绝。
+
+    sqlite 后端另有 schema trigger 兜底（AGENT_TRANSITION_FORBIDDEN /
+    cards_agent_insert_wall）；这里在两后端共同的入口先拒，保证 yaml 回滚
+    窗口内墙不消失、错误形状一致（store2.TransitionDenied）。"""
+    if current_actor() != "agent":
+        return
+    from act.lib.store2.store import TransitionDenied
+    new_status = str(req.status)
+    if old_status is None:
+        if new_status in _AGENT_FORBIDDEN or                 (req.prev_status and str(req.prev_status) in _AGENT_FORBIDDEN):
+            raise TransitionDenied(
+                "AGENT_TRANSITION_FORBIDDEN",
+                f"agent may not mint card {req.id} in/into {new_status!r}")
+    elif str(old_status) != new_status:
+        raise TransitionDenied(
+            "AGENT_TRANSITION_FORBIDDEN",
+            f"agent may not move card {req.id} {old_status!r} -> {new_status!r}")
 
 # Core fields always serialized (in this order); optional fields appended when set.
 # PUBLIC on purpose: these two lists are the card field vocabulary's single
@@ -266,6 +435,35 @@ class Requirement:
 ARCHIVE_DIR: Path = config.REGISTRY_DIR / "archive"
 
 
+def registry_yaml_files(include_archived: bool = False) -> list:
+    """YAML registry 目录的卡文件清单（不管当前后端——激活协议/doctor 用它
+    看「激活后是否还有旁路进程往 YAML 目录写」，§53.6 late_yaml_writes）。"""
+    return list(_iter_files(include_archived))
+
+
+def guard_snapshot() -> dict:
+    """§34bis 机械护栏的快照面（backend-aware）：{f"<id>.yaml": token}。
+
+    yaml = 文件名 → "size:mtime_ns"（历史形状原样）；sqlite = 卡 id（拼 .yaml
+    后缀保持键形一致，writes journal 也按这个键记）→ "v<version>"（CAS 列，
+    任何写都会 bump——含 tombstone 行，会话删卡也逃不过比对）。"""
+    if backend() == BACKEND_SQLITE:
+        st = _store()
+        return {f"{c['id']}.yaml": f"v{c['version']}"
+                for c in st.list_cards(include_tombstones=True)}
+    snap: dict = {}
+    try:
+        for p in config.REGISTRY_DIR.glob("*.yaml"):
+            try:
+                stt = p.stat()
+            except OSError:
+                continue
+            snap[p.name] = f"{stt.st_size}:{stt.st_mtime_ns}"
+    except OSError:
+        pass
+    return snap
+
+
 def _iter_files(include_archived: bool = False) -> Iterable[Path]:
     if not config.REGISTRY_DIR.exists():
         return []
@@ -286,7 +484,19 @@ def load_all(include_archived: bool = False) -> list[Requirement]:
     :func:`next_id` and :func:`load` (id-collision safety, §4) and by
     :func:`load_archived`; the dashboard + matching keep the default False so
     sealed cards stay out of the hot path and out of matching.
+
+    sqlite 后端：payload 即 canonical dict，一条 SELECT 全量取回；archived
+    过滤按热列 status（与 yaml 的 archive/ 目录语义等价），tombstone 行
+    （回收站到期硬删的替身）不出现。
     """
+    if backend() == BACKEND_SQLITE:
+        out: list[Requirement] = []
+        for card in _store().list_cards():
+            if not include_archived and card["status"] == State.ARCHIVED.value:
+                continue
+            r = Requirement.from_dict(card["payload"])
+            out.append(r)
+        return out
     reqs: list[Requirement] = []
     for path in _iter_files(include_archived):
         try:
@@ -316,6 +526,15 @@ def load_all(include_archived: bool = False) -> list[Requirement]:
 
 
 def load(req_id: str) -> Optional[Requirement]:
+    if backend() == BACKEND_SQLITE:
+        from act.lib.store2.store import NotFound
+        try:
+            card = _store().get_card(str(req_id))
+        except NotFound:
+            return None
+        if card.get("tombstone"):
+            return None      # 硬删替身：对读方等同不存在（yaml 同义 = 文件已删）
+        return Requirement.from_dict(card["payload"])
     # CRITICAL (§4): scan the archive dir too, or an archived card is invisible
     # to load()/unarchive and — worse — next_id() would reallocate its id and
     # overwrite it (silent data loss). Both funnel through include_archived=True.
@@ -424,8 +643,39 @@ def _atomic_write(path: Path, text: str) -> None:
     _journal_write(path.name)
 
 
+def _sqlite_save(req: Requirement) -> None:
+    """sqlite 后端的落盘：payload = canonical to_dict 全文（真源），热列经
+    act/lib/store2/hot.py 单点推导，一笔事务写卡 + 同步 sources 投影行。
+
+    状态机合法性由 schema transition_whitelist trigger 执法（last_actor_type
+    = :func:`current_actor`）；形态装不下（status 词表外且非 legacy 串、
+    merged 缺父指针）= store2.StoreError 响亮拒绝，绝不静默失真。"""
+    from act.lib.store2 import hot as _hot
+    from act.lib.store2.export_yaml import normalize_card
+    from act.lib.store2.store import StoreError
+    norm = normalize_card(req.to_dict())
+    hot_cols, _warnings, errors = _hot.derive(norm)
+    if errors:
+        raise StoreError("UNREPRESENTABLE",
+                         f"card {req.id}: " + "; ".join(errors),
+                         {"card": req.id, "errors": errors})
+    src_rows, _sw = _hot.source_rows(norm)
+    _store().put_card(str(norm.get("id") or req.id), norm, hot_cols, src_rows,
+                      actor_type=current_actor())
+    _journal_write(f"{req.id}.yaml")   # §34bis 写入台账：键形与 yaml 后端一致
+    _note_first_card(req)
+
+
 def save(req: Requirement) -> None:
     """Persist a requirement, preserving whether it lives in a list file."""
+    if current_actor() == "agent":
+        # R2.1.4 权限墙（两后端一致）：agent 不得转移状态/铸敏感出生态。
+        # 旧状态从真源现查（agent 路径罕见，额外一读可接受）。
+        prior = load(req.id) if req.id else None
+        _agent_wall(req, str(prior.status) if prior is not None else None)
+    if backend() == BACKEND_SQLITE:
+        _sqlite_save(req)
+        return
     if req._file and req._in_list:
         path = Path(req._file)
         try:
@@ -614,7 +864,22 @@ def delete(req: Requirement) -> bool:
     Single-doc file  -> remove the file.
     List-file member -> drop just this entry; remove the file if it becomes empty.
     Returns True if something was removed.
+
+    sqlite 后端：硬删 = tombstone 化（§53.2——行骨架保留进 revision 流，
+    增量客户端学到删除；schema CHECK 只许 trashed 卡 purge，与 §9 一致）。
+    已 tombstone / 不存在 → False（幂等语义对齐 yaml 的「没删到东西」）。
     """
+    if backend() == BACKEND_SQLITE:
+        from act.lib.store2.store import NotFound, StoreError
+        try:
+            row = _store().get_card(str(req.id))
+            if row.get("tombstone"):
+                return False
+            _store().purge_trashed(str(req.id))
+        except (NotFound, StoreError):
+            return False
+        _journal_write(f"{req.id}.yaml")     # §34bis 台账：管线的合法删除
+        return True
     if not req._file:
         existing = load(req.id)
         if existing is None or not existing._file:
@@ -680,12 +945,16 @@ def archive(req: Requirement, reason: str) -> Requirement:
     ``reason`` is "user" (点归档：已验收/备选) or "auto" (archive_stale 冷扫).
     The prior status is stashed in ``prev_status`` so :func:`unarchive` restores
     it. The file is written into ``ARCHIVE_DIR`` first, then the original entry
-    is removed — so a crash mid-move leaves the card recoverable, never lost."""
+    is removed — so a crash mid-move leaves the card recoverable, never lost.
+    sqlite 后端无目录搬迁：status=archived 即封存（load_all 默认过滤）。"""
     if req.status != State.ARCHIVED.value:
         req.prev_status = req.status
     req.set_status(State.ARCHIVED)
     req.archived_at = _iso_now()
     req.archive_reason = reason
+    if backend() == BACKEND_SQLITE:
+        save(req)
+        return req
     orig, in_list = req._file, req._in_list
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     req._file = str(ARCHIVE_DIR / f"{req.id}.yaml")
@@ -698,11 +967,15 @@ def archive(req: Requirement, reason: str) -> Requirement:
 
 def unarchive(req: Requirement) -> Requirement:
     """Restore an archived card to ``prev_status`` and move it back to the
-    active registry dir (§4). Clears the archive bookkeeping."""
+    active registry dir (§4). Clears the archive bookkeeping.
+    sqlite 后端无目录搬迁：状态复位即解封。"""
     req.set_status(req.prev_status or State.DELIVERED.value)
     req.prev_status = None
     req.archived_at = None
     req.archive_reason = None
+    if backend() == BACKEND_SQLITE:
+        save(req)
+        return req
     orig = req._file
     req._file = str(config.REGISTRY_DIR / f"{req.id}.yaml")
     req._in_list = False
@@ -807,6 +1080,14 @@ def find_open_follow_up(parent_id: str) -> Optional[Requirement]:
 
 
 def next_id() -> str:
+    if backend() == BACKEND_SQLITE:
+        # tombstone 行也计入（id 是 PK 且永不复用——复用会撞 PK/复活死号）
+        mx = 0
+        for card in _store().list_cards(include_tombstones=True):
+            m = _FILE_ID_RE.match(str(card.get("id") or ""))
+            if m:
+                mx = max(mx, int(m.group(1)))
+        return f"R-{mx + 1:03d}"
     mx = 0
     # CRITICAL (§4): include archived cards, or a freshly allocated id could
     # collide with a sealed R-050 and overwrite it (silent data loss).

@@ -102,6 +102,14 @@ try:
 except Exception:  # pragma: no cover - feedback import must not kill daemon
     feedback = None  # type: ignore
 
+# §53.5 agent 墙的错误形（store2.TransitionDenied）——inbox 面把它按干净 no-op
+# 处理（不是 poison 文件）。stdlib-only 模块，导入失败只可能是打包损坏。
+try:
+    from act.lib.store2.store import TransitionDenied as _TransitionDenied
+except Exception:  # pragma: no cover - degrade：墙错误按普通异常走 poison 路径
+    class _TransitionDenied(Exception):  # type: ignore[no-redef]
+        pass
+
 
 # --------------------------------------------------------------------------- #
 # logging
@@ -248,7 +256,10 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
             if action in ("merge_apply", "merge_dismiss"):
-                result = _apply_merge_decision(action, decision.get("id"))
+                # §53.5 actor：merge 判决是用户拍板（§21），merged 终态转移在
+                # 白名单里是 user 独占
+                result = _apply_with_actor(
+                    decision, _apply_merge_decision, action, decision.get("id"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -256,7 +267,9 @@ def process_inbox() -> int:
             # 强制合并（§21 v0.31）: user-chosen primary, skips the AI entirely —
             # carries "ids" (>=2 R-ids) + "primary" (∈ ids), no MS- suggestion.
             if action == "merge_force":
-                result = _apply_merge_force(decision.get("ids"), decision.get("primary"))
+                result = _apply_with_actor(
+                    decision, _apply_merge_force, decision.get("ids"),
+                    decision.get("primary"))
                 processed += 1
                 _write_applied_ack(path.stem, result)
                 _safe_unlink(path)
@@ -293,16 +306,22 @@ def process_inbox() -> int:
                 # (result_status=unknown), never left guessing on a stuck 'delivered'.
                 _write_applied_ack(path.stem, "unknown")
             else:
+                # §53.5 actor 语义：inbox 决策的发起者——owner 面（Mac/web/
+                # 手机同步）= user；agent 通道（via:"agent"）= agent，store2
+                # 的 agent 墙（AGENT_TRANSITION_FORBIDDEN）就在这里成为 actd
+                # 级现实（R2.1.4）：agent 的 approve/accept 在 save 处被拒。
                 if action == "set_title":
                     # §37: carries a `title` field the generic decision path
                     # doesn't know about — validated fail-closed in the helper.
-                    result_status = _apply_set_title(req, decision.get("title"))
+                    result_status = _apply_with_actor(
+                        decision, _apply_set_title, req, decision.get("title"))
                 else:
                     # ts 透传（§44.3-S）：steer 的 dedup 键带时间戳——同一
                     # inbox 文件重放（unlink 失败）同 ts 去重，owner 重申同文
                     # 新 ts 是新指令。via 透传（T-28 ingress 落款）+ stem
                     # （steer dedup 的文件 nonce）。
-                    result_status = _apply_decision(
+                    result_status = _apply_with_actor(
+                        decision, _apply_decision,
                         req, action, comment, expected_status, board_seq,
                         ts=decision.get("ts"), via=decision.get("via"),
                         stem=path.stem)
@@ -565,18 +584,12 @@ def _proposals_triage_in_flight() -> bool:
 
 
 def _registry_snapshot() -> dict:
-    """§34bis 机械护栏起点：registry 目录清单快照（文件名 → "size:mtime_ns"）。"""
-    snap: dict = {}
+    """§34bis 机械护栏起点：registry 快照（backend-aware，键形恒 <id>.yaml；
+    yaml = size:mtime_ns，sqlite = v<version>——见 registry.guard_snapshot）。"""
     try:
-        for p in config.REGISTRY_DIR.glob("*.yaml"):
-            try:
-                st = p.stat()
-            except OSError:
-                continue
-            snap[p.name] = f"{st.st_size}:{st.st_mtime_ns}"
-    except OSError:
-        pass
-    return snap
+        return registry.guard_snapshot()
+    except Exception:  # noqa: BLE001 - 护栏快照失败绝不崩 pass（宪法 11）
+        return {}
 
 
 def _triage_snapshot_path(req_id: str) -> Path:
@@ -675,6 +688,25 @@ def _sweep_triage_snapshots() -> None:
     for p in files:
         if p.stem not in live:
             _safe_unlink(p)
+
+
+def _apply_with_actor(decision: dict, fn, *args, **kwargs) -> str:
+    """inbox 决策的统一 apply 外壳（§53.5）：按 ingress 落款设置 actor 上下文；
+    agent 撞权限墙（TransitionDenied——approve/accept 等状态转移对 agent 零
+    写权，R2.1.4）= 干净的幂等 no-op + 日志，不是 poison 文件。"""
+    try:
+        with registry.acting_as(_decision_actor(decision)):
+            return fn(*args, **kwargs)
+    except _TransitionDenied as e:
+        _log(f"inbox: action denied by the agent wall ({e}) — noop (§53.5)")
+        return "noop"
+
+
+def _decision_actor(decision: dict) -> str:
+    """§53.5：inbox 决策文件 → registry actor。via:"agent"（server agent 通道
+    落款，§50/§52）= agent；其余（Mac 无 via / web / 手机同步）都是 owner 的
+    动作 = user。radar/digest 等自主管线不经 inbox，走默认 system。"""
+    return "agent" if decision.get("via") == "agent" else "user"
 
 
 # T-28 ingress 落款 → 捕获源 channel。无 via = Mac 等 owner-local 写者（HTTP
@@ -3294,6 +3326,16 @@ def _registry_attachment_refs() -> set:
     附图会被当孤儿删掉——这里任一 yaml 读不出/解析失败都直接 raise，让本
     pass 整体零删除（fail safe：引用不可见就不删）。"""
     refs: set = set()
+    if registry.backend() == registry.BACKEND_SQLITE:
+        # store2 真源：payload 是 DB 级校验过的 JSON（json_valid CHECK），
+        # 读取失败会 raise —— 与 yaml 侧「引用不可见就整轮零删除」同一 fail-safe
+        for req in registry.load_all(include_archived=True):
+            ex = req.execution if isinstance(req.execution, dict) else None
+            atts = ex.get("attachments") if isinstance(ex, dict) else None
+            if isinstance(atts, list):
+                refs.update(p.strip() for p in atts
+                            if isinstance(p, str) and p.strip())
+        return refs
     reg_files = [p for p in config.REGISTRY_DIR.glob("*.yaml")
                  if p.name != "R-000-example.yaml"]
     if registry.ARCHIVE_DIR.exists():
@@ -3447,6 +3489,18 @@ class LoopHealthTracker:
         self._write(None)  # 恢复回执 → App 侧红点自动消
 
 
+def _store2_tick() -> None:
+    """§53（D2）：数据层激活/导出的每 pass 钩子——已激活时一次 stat 级开销；
+    未激活时尝试「备份 → 迁移 → 导出 → 逐字段比对 → 零差异才写标记」；任何
+    差异 = YAML 仍是真源 + 响亮日志 + doctor FAIL。绝不崩 pass（宪法 11）。"""
+    try:
+        from act.lib.store2 import activate as store2_activate
+        for line in store2_activate.tick():
+            _log(f"store2: {line}")
+    except Exception as e:  # noqa: BLE001 - 数据层钩子绝不反杀主循环
+        _log(f"store2 tick FAILED: {e}")
+
+
 # --------------------------------------------------------------------------- #
 # one pass + loop
 # --------------------------------------------------------------------------- #
@@ -3461,6 +3515,8 @@ def run_once(
     config.ensure_state_dirs()
     # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
     # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
+    heartbeat.beat("store2", interval)
+    _store2_tick()   # §53 数据层：首跑激活（备份→迁移→比对→标记）+ 每日导出
     heartbeat.beat("inbox", interval)
     n_inbox = process_inbox()
     n_auto = auto_dispatch_pass(cfg)   # §51：hand 卡免批通道（card_sent→approved）

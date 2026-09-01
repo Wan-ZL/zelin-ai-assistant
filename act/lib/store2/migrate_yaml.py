@@ -41,7 +41,6 @@ from pathlib import Path
 
 import yaml
 
-from ..policy import classify_origin
 from .export_yaml import dropped_keys, dump_card_yaml, normalize_card, say
 # 热列顺序同包单源：INSERT 的列表与回读校验的 SELECT 列表都从它派生，
 # schema 加列时迁移自动跟上（曾在这里手抄过一份 17 列 tuple）。
@@ -176,9 +175,17 @@ def scan_registry(reg_dir: Path):
 # --------------------------------------------------------------------------- #
 # 逐卡计划（热列推导 + 警告收集）
 # --------------------------------------------------------------------------- #
-def plan_card(rid: str, entry: dict, *, allow_unknown: bool = False):
+def plan_card(rid: str, entry: dict, *, allow_unknown: bool = False,
+              coerce_cost: bool = True):
     """entry → {"hot": {...}, "norm": dict, "sources": [...], "created_from",
-    "warnings": [...], "errors": [...]}。errors 非空 = 本卡无法忠实入库。"""
+    "warnings": [...], "errors": [...]}。errors 非空 = 本卡无法忠实入库。
+
+    热列推导单点 = act/lib/store2/hot.py（store.put_card 同源，防两处漂移）。
+    ``coerce_cost``：CLI 迁移保持历史行为（垃圾 cost 归 None，_coerce_cost
+    语义）；激活协议传 False——payload 必须与备份 YAML 逐字段零差异
+    （R2.1.3），归一会制造假 diff。
+    """
+    from . import hot as _hot
     warnings: list = []
     errors: list = []
     norm = normalize_card(entry["raw"])
@@ -192,121 +199,35 @@ def plan_card(rid: str, entry: dict, *, allow_unknown: bool = False):
             errors.append(f"未知顶层键 {k!r}：入库即静默丢字段，拒绝"
                           "（补进 export_yaml 词表，或 --allow-unknown 显式放行）")
 
-    # -- status：legacy 'merged_into:<id>' 串热列归一成 merged（schema CHECK 只认
-    #    11 词），payload 里保留 verbatim —— export 走 payload，round-trip 不失真
-    raw_status = norm.get("status")
-    merged_into_id = None
-    if isinstance(raw_status, str) and raw_status.startswith(MERGED_PREFIX):
-        hot_status = "merged"
-        merged_into_id = raw_status[len(MERGED_PREFIX):].strip()
-        warnings.append(f"legacy status {raw_status!r} 热列归一为 merged"
-                        "（payload 保留原串）")
-        if not merged_into_id:
-            errors.append("legacy merged_into: 串无父卡 id，schema 无法表达")
-    elif raw_status in STATUS_VOCAB:
-        hot_status = raw_status
-        if raw_status == "merged":
-            mi = norm.get("merged_into")
-            merged_into_id = mi if isinstance(mi, str) else (
-                str(mi) if mi is not None else None)
-            if not merged_into_id:
-                errors.append("status=merged 但无 merged_into 父指针（CHECK 拒收）")
-    else:
-        hot_status = None
-        errors.append(f"status {raw_status!r} 不在 schema 词表内")
-
-    # -- prev_status：trashed/archived 缺失时按 live restore/unarchive fallback
-    #    回填热列（payload 不加键——原文件没有就还是没有）
-    prev = norm.get("prev_status")
-    if prev is not None and prev not in STATUS_VOCAB:
-        warnings.append(f"prev_status {prev!r} 不在词表，热列置 NULL/回填"
-                        "（payload 保留原值）")
-        prev = None
-    if prev is None and hot_status == "trashed":
-        prev = "detected"       # live registry.restore 的 fallback
-        warnings.append("trashed 缺 prev_status，热列回填 detected")
-    if prev is None and hot_status == "archived":
-        prev = "delivered"      # live registry.unarchive 的 fallback
-        warnings.append("archived 缺 prev_status，热列回填 delivered")
-
-    # -- tier：schema CHECK 比 registry 严（registry 不校验，`tier: 7` 能存活，
-    #    mapping §1/§7）——越界值热列回落默认 'T1'（dataclass 默认），payload 保
-    #    verbatim，绝不因 LLM 污染崩整轮（宪法第 11 条；B4 测试钉死此语义）
-    tier = norm.get("tier")
-    if tier not in _TIER_VOCAB:
-        warnings.append(f"tier {tier!r} 越界，热列回落 T1（payload 保留原值）")
-        tier = "T1"
-
     # -- cost_estimate_usd：镜像 live analyze._coerce_cost 的容忍（mapping §7）：
     #    float() 失败的垃圾值归 None；能过 float() 的数值**保 verbatim**（不转
     #    float——int 5 转 5.0 会破坏干净卡的字节 round-trip）
-    cost = norm.get("cost_estimate_usd")
-    if cost is not None:
-        try:
-            float(cost)
-        except (TypeError, ValueError):
-            warnings.append(f"cost_estimate_usd {cost!r} 非数字，归 None"
-                            "（_coerce_cost 语义——此处 payload 也归一）")
-            norm["cost_estimate_usd"] = None
+    if coerce_cost:
+        cost = norm.get("cost_estimate_usd")
+        if cost is not None:
+            try:
+                float(cost)
+            except (TypeError, ValueError):
+                warnings.append(f"cost_estimate_usd {cost!r} 非数字，归 None"
+                                "（_coerce_cost 语义——此处 payload 也归一）")
+                norm["cost_estimate_usd"] = None
 
-    # -- title/type：热列 NOT NULL——payload 保 verbatim，热列兜底成 str
-    title = norm.get("title")
-    if not isinstance(title, str):
-        warnings.append(f"title {title!r} 非 str，热列存 str 兜底")
-        title = "" if title is None else str(title)
-    typ = norm.get("type")
-    if not isinstance(typ, str):
-        warnings.append(f"type {typ!r} 非 str，热列存 str 兜底")
-        typ = "" if typ is None else str(typ)
-
-    # -- deadline：GLOB 不过的值热列置 NULL（payload 保 verbatim）
-    dl = norm.get("deadline")
-    hot_deadline = dl if isinstance(dl, str) and _DEADLINE_RE.match(dl) else None
-    if dl is not None and hot_deadline is None:
-        warnings.append(f"deadline {dl!r} 不符 YYYY-MM-DD，热列置 NULL"
-                        "（payload 保留原值）")
-
-    # -- origin_trust：§50 canonical 裁决（T-15 已定）——policy.classify_origin
-    #    对**全部** sources 取最小信任（fold 进过外部渠道的手打卡判 external），
-    #    未知/畸形 channel fail-closed 落 external，与 live 铸卡侧同一真源
-    origin_trust = classify_origin(norm.get("sources"))
-    srcs = norm.get("sources") or []
+    hot_cols, hot_warnings, hot_errors = _hot.derive(norm)
+    warnings += hot_warnings
+    errors += hot_errors
+    src_rows, src_warnings = _hot.source_rows(norm)
+    warnings += src_warnings
 
     created, created_from = _derive_created(norm, entry["mtime"])
     updated = _iso(_dt.datetime.fromtimestamp(entry["mtime"], tz=_UTC))
 
-    tr = norm.get("target_repo")
-    if tr is not None and not isinstance(tr, str):
-        warnings.append(f"target_repo {tr!r} 非 str，热列存 str 兜底")
-        tr = str(tr)
-
-    # -- sources 投影行（payload 已存 verbatim 全文；此处只做查询投影）。
-    #    origin_key 一律 NULL：回溯推导强信号有全局 partial-unique 撞车风险
-    #    （同一 gmail thread 喂过多卡），留给接线后的写路径。TODO(contract)
-    src_rows = []
-    for i, s in enumerate(srcs if isinstance(srcs, list) else []):
-        if not isinstance(s, dict):
-            warnings.append(f"sources[{i}] 非 dict，投影跳过（payload 仍保留）")
-            continue
-
-        def _txt(v):
-            return v if v is None or isinstance(v, str) else str(v)
-
-        src_rows.append({
-            "channel": _txt(s.get("channel")) or "",
-            "who": _txt(s.get("who")), "date": _txt(s.get("date")),
-            "ref": _txt(s.get("ref")), "quote": _txt(s.get("quote")),
-        })
-
-    hot = {
-        "id": rid, "status": hot_status, "prev_status": prev, "tier": tier,
-        "type": typ, "title": title, "origin_trust": origin_trust,
-        "target_repo": tr, "deadline": hot_deadline, "created": created,
-        "updated": updated, "version": 1, "merged_into_id": merged_into_id,
+    hot_full = dict(hot_cols)
+    hot_full.update({
+        "id": rid, "created": created, "updated": updated, "version": 1,
         "board_rev": 1, "tombstone": 0, "last_actor_type": "system",
         "payload": json.dumps(norm, ensure_ascii=False),
-    }
-    return {"hot": hot, "norm": norm, "sources": src_rows,
+    })
+    return {"hot": hot_full, "norm": norm, "sources": src_rows,
             "created_from": created_from, "warnings": warnings, "errors": errors}
 
 

@@ -1,6 +1,6 @@
 # store2 schema v1 — 设计说明（B1；BUILD-CONTRACT §3）
 
-`schema.sql` 是 v-next SQLite 地基的唯一 DDL 真源（`PRAGMA user_version=1`）。本 PR 不接线：actd 不 import store2，YAML registry 仍是生产真源。本文记录每个结构决定的出处与取舍，供 B2（store.py）/B3（migrate/export）/B4（测试）与未来修宪引用。
+`schema.sql` 是 store2 SQLite 真源的唯一 DDL（`PRAGMA user_version=1`）。**v0.48.8 起已接线**（CONTRACT §53：registry 门面 + 激活协议 + agent 墙生效；本文其余「本 PR 不接线」语境的段落保留作 v1 设计出处）。本文记录每个结构决定的出处与取舍，供 B2（store.py）/B3（migrate/export）/B4（测试）与修宪引用。
 
 ## 表设计
 

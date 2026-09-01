@@ -1329,6 +1329,86 @@ def _check_cron_probe(probes: Probes, cron_installed: bool):
                        "cron read %s ok (probe %d min ago)" % (probed, int(age // 60)))
 
 
+def _check_store2(probes: Probes):
+    """§53.6 数据层真源体检：激活状态 / 拒绝原因 / 每日导出 / 迟到 YAML 写。
+
+    数据源 = act/lib/store2/activate.status()（doctor 与 --report 同一真相）。
+    FAIL 两形：refused（迁移比对有差异——YAML 仍是真源，diff 摘要在
+    state/store2_activation.json）与 db_missing（标记在、库没了——按
+    TROUBLESHOOTING「store2 回滚」处置）。"""
+    from act.lib import registry
+    from act.lib.store2 import activate
+    st = activate.status()
+    state = st.get("state")
+    if state == "yaml_forced":
+        note = "（store2 标记在，回滚开关生效）" if st.get("marker_present") else ""
+        return CheckResult(
+            "store2", OK,
+            _pick("YAML 后端（registry.backend/env 强制）%s" % note,
+                  "YAML backend (forced by registry.backend/env)%s" % note))
+    if state == "active":
+        marker = st.get("marker") or {}
+        late = st.get("late_yaml_writes") or []
+        if late:
+            shown = ", ".join(late[:5]) + ("…" if len(late) > 5 else "")
+            return CheckResult(
+                "store2", WARN,
+                _pick("SQLite 是真源，但激活后仍有进程往 YAML 目录写：%s"
+                      "——那些卡不在真源里" % shown,
+                      "SQLite is the truth, but YAML files were written after"
+                      " activation: %s — those cards are NOT in the truth" % shown),
+                _pick("确认写者已升级/重启（旧雷达进程），再手动核对这些文件是否"
+                      "需要重新录入（重新触发一次对应捕获）",
+                      "restart the stale writer processes, then re-enter those"
+                      " cards through a normal capture"))
+        return CheckResult(
+            "store2", OK,
+            "SQLite is the registry truth (%s cards at activation; backup %s;"
+            " daily export last_run=%s)" % (
+                marker.get("cards", "?"), marker.get("backup_dir", "?"),
+                st.get("export_last_run") or "never"))
+    if state == "db_missing":
+        return CheckResult(
+            "store2", FAIL,
+            _pick("激活标记在，但 %s 不见了——数据层处于故障半态，管线读写会"
+                  "响亮失败" % registry.store2_db_path(),
+                  "truth marker present but %s is missing — the data layer is"
+                  " in a broken half-state" % registry.store2_db_path()),
+            _pick("按 docs/TROUBLESHOOTING.md「store2 回滚」：停守护 → 恢复 "
+                  "state/backups/registry-<ts>/ → config registry.backend: yaml"
+                  " → 重启",
+                  "follow docs/TROUBLESHOOTING.md (store2 rollback): stop the"
+                  " daemons, restore state/backups/registry-<ts>/, set"
+                  " registry.backend: yaml, restart"),
+        ).with_failure("store2_db_missing")
+    if state in ("refused", "cooldown"):
+        act_info = st.get("activation") or {}
+        reason = str(act_info.get("reason") or "?")
+        n = act_info.get("diff_total") or 0
+        extra = (_pick("；差异 %s 条，明细在 state/store2_activation.json" % n,
+                       "; %s field diff(s), details in"
+                       " state/store2_activation.json" % n) if n else "")
+        return CheckResult(
+            "store2", FAIL,
+            _pick("store2 激活被拒，YAML 仍是真源：%s%s" % (reason, extra),
+                  "store2 activation refused — YAML stays the truth: %s%s"
+                  % (reason, extra)),
+            _pick("修复点名的卡文件后等重试（或删 state/store2_activation.json"
+                  " 立即重试）；备份完好在 %s" % act_info.get("backup_dir"),
+                  "fix the named card files and wait for the retry (or delete"
+                  " state/store2_activation.json to retry now); the backup is"
+                  " intact at %s" % act_info.get("backup_dir")),
+        ).with_failure("store2_refused")
+    # pending：还没激活过（全新安装 / 升级后第一个 actd pass 会做）
+    return CheckResult(
+        "store2", OK,
+        _pick("尚未激活（YAML 是真源）——actd 下一个 pass 将自动「备份→迁移→"
+              "逐字段比对」，零差异才切换",
+              "not yet activated (YAML is the truth) — actd's next pass runs"
+              " backup → migrate → field-by-field parity, and only a zero diff"
+              " flips the truth"))
+
+
 def _check_dashboard(probes: Probes):
     path = config.DASHBOARD_PATH
     if not path.exists():
@@ -1604,7 +1684,8 @@ def _checks_for_platform() -> List:
     # OS: the two together tell "dead" (dashboard stale, no pid) from "stuck"
     # (pid alive, heartbeat stale).
     return (_CHECKS_COMMON_HEAD + middle
-            + [_check_dashboard, _check_heartbeat, _check_auto_deploy, _check_obsidian]
+            + [_check_store2, _check_dashboard, _check_heartbeat,
+               _check_auto_deploy, _check_obsidian]
             + tail_extra + [_check_gh])
 
 

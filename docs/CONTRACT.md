@@ -1,12 +1,15 @@
 # 组件间数据契约（锁定 — 三层都按此实现，不得偏离）
 
 > **English orientation** — This is the frozen data contract between the Python pipeline and the
-> Mac app. Three files make it up: `act/registry/<ID>.yaml` (source of truth; state machine
-> `detected → card_sent → approved → executing → review → delivered`, any state → `trashed`),
-> `state/dashboard.json` (actd writes, app reads), and `state/inbox/<uuid>.json` (app writes,
-> actd reads then deletes). Fields are **add-only** — never renamed or removed; the Swift side
-> decodes every new field with `decodeIfPresent`. Change this file *before* any code that touches
-> these shapes. **Section numbers §1–§24 are referenced from code and docs — never renumber.**
+> Mac app. The card ledger's source of truth is the store2 SQLite database `state/store2.db`
+> once the activation marker exists (§53; before activation, and under the one-release rollback
+> switch, it is `act/registry/<ID>.yaml`). The state machine is unchanged:
+> `detected → card_sent → approved → executing → review → delivered`, any state → `trashed`.
+> Two more files complete the contract: `state/dashboard.json` (actd writes, app reads) and
+> `state/inbox/<uuid>.json` (app writes, actd reads then deletes). Fields are **add-only** —
+> never renamed or removed; the Swift side decodes every new field with `decodeIfPresent`.
+> Change this file *before* any code that touches these shapes. **Section numbers §1–§24 are
+> referenced from code and docs — never renumber.**
 > The Chinese body is canonical. **Read §0 (the constitution) before designing any feature.**
 
 ## 0. 设计宪法（不变原则 — 修宪必须显式声明，任何功能不得默默违反）
@@ -16,6 +19,14 @@
 
 1. **单写者**：registry 只有 actd 主循环一个写者；旁路进程（silent-merge 复核、
    detached 子进程）只读+回执，绝不落盘卡片。（§44 两段式；tests/test_silent_merge.py）
+   **修宪（v0.48.8，D2/R2.1.5，显式精确化不放宽）**：「写者」按语义分层——
+   **状态转移**仍只由 actd 主循环（替 owner 执行的 inbox 决策与自主管线）发出，
+   store2 后端由 transition_whitelist 触发器逐条执法；**铸卡/折叠类**写入
+   （雷达、digest、quick_capture——它们历来在独立进程里落卡）必须经同一存储层
+   门面 `act/lib/registry.py`，store2 后端由数据库事务保证每笔原子（§53.5，
+   替代 YAML 时代的多进程无锁写文件）；旁路进程与 server 仍只读+回执；
+   **agent 对状态零写权**由 DB 触发器 + 门面 Python 墙双层执法（§53.5，
+   R2.1.4）。
 2. **一切可逆**：用户可见的破坏性动作都有回程票——trash/archive 记 `prev_status`
    可恢复，静默并入的 fold note 可拆出，绝无不可恢复的自动删除。（§21/§38.2/§44.4）
 3. **诚实的健康报告**：状态行/健康文件只报真实探测结果，绝不虚报 ok；失败要分类
@@ -46,9 +57,19 @@
     pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账；§47 瞬时重试/
     解析降级卡/loop_health）
 
-## 1. 注册表 YAML（真源）— `act/registry/<ID>.yaml`
+## 1. 注册表（卡片账本）— 真源与字段
 
-一条需求一个文件。状态机：
+**v0.48.8 修宪（D2 / §53）**：卡片账本的**真源**由激活标记裁决——
+`state/store2_truth.json` 在（且回滚开关未强制 yaml）= 真源是 SQLite
+`state/store2.db`（§53，payload 冷列存本节 canonical 字段全文）；标记不在 =
+真源仍是 `act/registry/<ID>.yaml`（本节原文语义）。一切读写只经
+`act/lib/registry.py` 门面（公开 API 两后端逐字一致，判例
+tests/test_registry_backend_parity.py）；激活后 YAML 目录降级为**迁移冻结件**
+（doctor 对激活后的迟到 YAML 写 WARN），人类可读镜像改由每日导出承担
+（`state/registry-export/`，§53.4）。本节其余文字（字段词表/状态机/文件形状）
+继续是 payload 与 YAML 两种载体共同的 canonical 定义。
+
+YAML 载体：一条需求一个文件。状态机：
 `detected → card_sent → approved → executing → review → delivered`，旁支 `rejected` / `merged_into:<父ID>`；merge-review 终态 `merged`（+ 顶层 `merged_into` 字段，语义见 §21）。
 
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
@@ -76,7 +97,7 @@
 }
 ```
 - `show_cost` = cost_usd 是否 ≥ config.show_cost_above_usd（<$5 时 false，app 不显示成本）
-- running/needs_input/completed 由 actd 把注册表中 status=executing 的项与 `claude agents --json` 按 session_id join 得到（**§46.3 追记**：needs_input 另收 auto-resume 已放弃且会话已死的 executing 降级卡，行带 add-only `resume_exhausted: true`）
+- running/needs_input/completed 由 actd 把注册表中 status=executing 的项与 `claude agents --json` 按 session_id join 得到（**§46.3 追记**：needs_input 另收 auto-resume 已放弃且会话已死的 executing 降级卡，行带 add-only `resume_exhausted: true`。**v0.48.8 修订（#119，需输入退役）**：以上两条会话来源全部退役——受阻（roster blocked 且无待注入 briefing/steer）与放弃救活的 executing 卡由 reconcile 按 stop_to_review 收割路径直接落 review（§46.3 v0.48.8 块）；`needs_input[]` 键 add-only 恒在，唯一住户 = §4 派发刹车行（下方 v0.48.4 块）。）
 - debt = status=detected 的项
 
 **v0.10 新增字段**（全部 optional，Swift 侧一律 `decodeIfPresent`；注册表存 ISO 字符串，dashboard 输出 **epoch int**——与 `started_at` 一致）：
@@ -101,6 +122,8 @@
 **v0.48.4 新增（§4 派发风暴刹车的投影面，add-only optional）**：`execution.dispatch_halted` 为真的 approved 卡**不再**作 queued 项混入 `running[]`，改投影进 `needs_input[]`（blocked 行形：`session_id/short_id/copy_cmd/agent_name` 恒 null、`waiting_for` null、`question` = 固定文案「派发连续失败 N 次，已停止自动重试：<§25 目录句或原文>…」），行带 `dispatch_halted: true` + `dispatch_attempts`(int) + `last_error`/`last_error_id`。客户端据 `dispatch_halted` 隐藏「回答…」（没有会话可答）、只留「停止」；`detect_transitions` 对该行**不**发「任务需要你输入」（executor 已发 `msg_dispatch_halted`，同 §46.3 `resume_exhausted` 的去重规则）。server `is_executing` 对该行判 false（comment 不标 steer）。
 
 **v0.48.6 新增顶层 optional 字段 `deploy_state`（§56 合并即上岗；§2 兄弟字段，同 `update_available` / `device_label` 的加法约定）**：scripts/auto-deploy.sh 写 `state/deploy_state.json`、`act/lib/deploy_state.py` 逐字段消毒后由 `build_dashboard` 投影；文件缺失/读不了 = **整键不存在**（这台机器不跑该 agent）。形状与状态词表见 §56。web 顶栏据此显示「v0.48.x · deployed 12m ago」。syncd 的变更闸门把整键 `deploy_state` 视为**易变键**（§31 F2 修订的 `_VOLATILE_DASH_KEYS`，与 `generated_at` 同列）：它每 10 分钟随 agent 的每次运行改写，不得触发一次板快照上传。
+
+**v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
@@ -176,14 +199,14 @@ approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_
 状态跃迁时用 `osascript -e 'display notification ...'`：
 - 新 card_sent（雷达发现新需求）→ "有新需求待审批：<title>"
 - executing → done → "任务完成：<title>"
-- executing → blocked(needs_input) → "任务需要你输入：<title>"
+- ~~executing → blocked(needs_input) → "任务需要你输入：<title>"~~（retired v0.48.8，#119：受阻会话收割进待验收，改发 `msg_review_interrupted`「任务停下来了」）
 - 凭证失效（执行日志含 auth/login 关键词）→ "需要重新登录：<service>"
 
 ## 6. Mac app 行为
 
 - LSUIElement（菜单栏 app，无 Dock 图标），NSStatusItem
 - 每 5s 读 dashboard.json 重渲染；菜单栏标题显示待审批数（>0 时高亮）
-- 五区：待审批（卡片带 ✅/❌/💬 按钮）/ 运行中 / 需输入 / 已完成 / 欠账（v0.17 起展示层更名「备选/Backlog」，见 v0.17 additions；registry `status=detected` 与 dashboard 的 `debt` key 不变）
+- 五区：待审批（卡片带 ✅/❌/💬 按钮）/ 运行中 / 需输入 / 已完成 / 欠账（v0.17 起展示层更名「备选/Backlog」，见 v0.17 additions；registry `status=detected` 与 dashboard 的 `debt` key 不变）。**v0.48.8（#119）**：「需输入」的会话语义退役——该区数据面只剩 §4 派发刹车行（§2 v0.48.8 修订）；Mac 端渲染代码按 D3 冻结不动（区照常渲染、常态为空），web 看板本就把该分区混排进「运行中」列首。
 - ✅→写 `{action:approve}`；❌→`{action:reject}`；💬→弹输入框→`{action:comment,comment:...}`
 - "运行中/需输入"项点击 → 复制 `claude --resume <session_id>` 到剪贴板（方便进会话看）
 - app 绝不直接调 claude / 改注册表 / 持密钥——只读 dashboard.json、只写 inbox
@@ -448,7 +471,7 @@ launch 仍是 LSUIElement 静默启动（无窗则无 Dock），首次开窗后�
   tests/test_reconcile.py 的 flag off 用例 + 「进程内翻开关下一 pass 生效」用例。
 
 ## 17. 周一 digest + Manager pack
-- `python -m act.digest`：待审批积压、待验收积压、needs_input/resume_exhausted 卡住项、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
+- `python -m act.digest`：待审批积压、待验收积压、卡住项（v0.48.8 起口径 = §4 派发刹车行 + 中断收割进待验收的 interrupted 卡；needs_input 会话行已退役，#119）、低置信度(detected 欠账)清单、双向承诺账本(registry notes 里 [MANAGER-OWES] 标记项)、analytics 摘要+进化建议。产出 markdown 存 workbench + macOS/Slack 通知摘要。crontab 周一 09:07。
 
 **v0.48.5 修订（D19，owner 2026-09-01 拍板；行为变更，随 release 记 CHANGELOG）——节奏旋钮 `digest.frequency`，默认 off**。Owner 原话：「像这种每日摘要，好像在设置里面没法关，几天没看就攒起来了……能不能在设置里面让我能够改成一周或者两天摘要，或者完全关掉」；追问「摘要卡还需要吗」的采纳答案：**默认不以卡片形式出现**。据此：
 - **config（add-only）** 顶层块 `digest.frequency` ∈ {`off`, `daily`, `every2days`, `weekly`}，**默认 `off`**（`Config.digest_frequency`，常量 `config.DIGEST_FREQUENCIES` / `DEFAULT_DIGEST_FREQUENCY`）；typo/未知值 **fail-quiet 到 off**（宁可少一份摘要，不可按错误节奏刷卡），大小写与 `_`/`-` 拼写差异归一。overrides 允许列表新增扁平键 `digest_frequency`（设置 UI diff-write；off == 产品默认，写 off 即删键）。多年随 `config.example.yaml` 出厂却从未被任何代码读取的 `digest.weekly: monday` 键自此从模板移除，config.yaml 中残留者按「未知键」静默忽略。
@@ -907,10 +930,12 @@ app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录�
 **§5 通知文案 v0.14 补充（add-only，语义不变）**：python 侧全部通知/手机镜像文案
 经 `act/lib/failures.pick(zh, en)` 走 §15 的 UI 语言设置（`language` override），
 且每条 body 必带下一步动作（audit Theme 11：「需要人工处理」式句子废止）。
-builder 全集在 `act/lib/notify.py`：`msg_new_card / msg_done / msg_needs_input /
+builder 全集在 `act/lib/notify.py`：`msg_new_card / msg_done /
 msg_auth / msg_review_ready / msg_dispatch_failed / msg_resuming /
 msg_auto_resume_exhausted`。（**§46 追加**：`msg_resume_storm` /
-`msg_stop_failed`；`msg_auto_resume_exhausted` 文案随 §46.3 投影改指「需输入」列。）
+`msg_stop_failed`。**v0.48.8（#119）**：`msg_needs_input` / `msg_answer_not_delivered` /
+`msg_answer_failed` 退役；新增 `msg_review_interrupted`；`msg_resume_storm` 与
+`msg_auto_resume_exhausted` 文案改指「待验收」列的现存动词（验收/丢弃/打回）。）
 
 ---
 
@@ -2035,6 +2060,23 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 ## 39. 需输入的 `question` 字段 + `answer_input` 动作（add-only）
 
+**v0.48.8 退役（#119，owner 拍板 2026-08-31；防腐 #6 tombstone）**：本节的
+「需输入」产品面整体退役——不再检测 session 是否需要输入：受阻/空闲/放弃救活
+的 running 会话由 reconcile 收割进**待验收**（§46.3 v0.48.8 块），交付摘要
+天然保留会话最后的提问原文；「回答」语义由既有「打回 + 修改方向」（rework）
+完整覆盖。具体墓碑：`question` 会话投影字段与 transcript 抽取
+（executor.extract_question / dashboard._QUESTION_CACHE）删除（§2 v0.48.4 的
+刹车行 `question` 固定文案不受影响——那不是 transcript 抽取）；inbox 动作
+`answer_input` 从 §10 全集除名（server/webui 按未知动作 400，actd 对迟到文件
+按 unknown-action ack；golden 样张同版删除）；`executor.answer` 删除；
+`msg_needs_input` / `msg_answer_not_delivered` / `msg_answer_failed` 退役。
+**存活的法条**：§39.2 的安全窗口 doctrine（stop-idle-then-resume、投递前
+roster 探测「绝不 stop 正在工作的会话」、`OWNER ANSWER:`/owner 亲打文本不过
+围栏的先例、「owner 打的字绝不静默蒸发」红线）继续由 §44.3 briefing 与
+§44.3-S steer 引用与执行——那半边不是墓碑。`execution.answer_count /
+last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义）。以下原文
+保留作历史与 §39.2 doctrine 的出处。
+
 **背景**：agent 卡在 needs_input 时，看板只显示 `waiting_for: "input"`——用户
 既看不到 AI 在问什么，也没有任何 App 内回答入口，唯一出路是复制命令去终端。
 本节把「问题」投影上卡、把「回答」做成一等 inbox 动作，Mac 与 iPhone 同权。
@@ -2562,6 +2604,14 @@ secondary,outcome∈ok|ok_retry|retry_aborted|separate|judge_failed|state_moved|
     "刚刚发生了什么"的**瞬时**通知面；§21 人工合并路径（用户自己按的按钮，
     自带乐观回显与确认弹窗）不产生回执。
 
+**§44.7 存储层单写者精确化（v0.48.8，D2/R2.1.5；§0 宪法第 1 条同 PR 修宪）**：
+store2 接线后本节引用的「单写者」语义落到存储层的读法——(a) 状态转移只有 actd
+发出（DB transition_whitelist 执法，§53.2）；(b) 铸卡/折叠进程（雷达/digest/
+capture）经 registry 门面写入，事务原子（§53.5）；(c) §44.1 的 detached 复核
+judge 与 server 照旧 registry-read-only（sqlite 侧另有 `mode=ro` 只读面，
+act/lib/store2/readonly.py）；(d) §44 全部 fold/receipt 语义不因载体切换而变
+（判例 tests/test_registry_backend_parity.py 双后端逐字一致）。
+
 ## 45. 来源角色决策表（出生资格 — 回声环的一刀）
 
 **背景（2026-07-25 拍板）**：screenpipe 录屏会把系统自己的输出（看板、AI 会话、
@@ -2685,6 +2735,25 @@ reconcile 的 auto-resume 增加一本**按成功启动次数计的风暴台账*
 - 坏 history 条目静默跳过（宪法 11），绝不崩 reconcile pass。
 
 ### 46.3 投影判例（§2 needs_input 语义补充）
+
+**v0.48.8 修订（#119 需输入退役）**：本小节的两条 needs_input 投影来源随
+#119 退役，语义改为**收割进待验收**：
+- roster blocked 的 executing 卡：reconcile 先走既有优先序（FINAL DRAFT 探测
+  提升 → pending briefing 注入（§44.3 窗口①）→ pending steer flush），都
+  没有可注入的内容且会话仍不推进 → 按 stop_to_review 收割路径落 review
+  （确认式停止仅当有活 pid；`execution.interrupted_reason="blocked"`；notes
+  留 `[会话受阻]` 痕；通知 `msg_review_interrupted`）。
+- resume 风暴 / 连续 5 败放弃：置 `resume_exhausted`（账目保留）后**同 pass
+  收割进 review**（`interrupted_reason` ∈ resume_storm|resume_exhausted；
+  精确通知照发）；升级前滞留 executing 的历史降级卡在首个 reconcile pass
+  按同路径迁出（不重复 ping）。
+- 投影面：blocked/exhausted 行不再进 needs_input（间隙里诚实留在 running，
+  state 原样、无「回答」入口）；review 行带 add-only `interrupted: true`
+  （§2 v0.48.8 块），`detect_transitions` 对其不发「AI 已交付草稿」。
+- 判例：tests/test_dashboard_status_projection.py（新映射表）、
+  tests/test_reconcile.py（blocked 收割 / briefing 优先 / 放弃即收割 / 历史
+  迁移）、tests/test_resume_storm.py。以下原文保留作历史。
+
 
 - **§2 add-only 修订**：needs_input 分区除「executing × roster blocked」外，
   新收「executing × `resume_exhausted` × 会话无活 pid（且无 done）」的
@@ -3414,61 +3483,144 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
 **判例**：tests/test_boardctl.py（动词面收窄 / actor 恒发 / 输出契约 / exit
 codes / token 墙：无 token 写 → 401 透传零落盘，读 token-light）。
 
-## 53. store2 — SQLite 休眠地基（schema v1 + CAS + YAML 迁移；**尚未接线**）
+## 53. store2 — SQLite 真源（schema v1 + 激活协议 + 每日导出 + 回滚；v0.48.8 接线，D2）
 
-**地位（诚实声明，全节大前提）**：`act/lib/store2/` 是 owner 决策 D2 的数据
-层地基，**本版完全休眠**——actd/管线**零 import**（runtime 不碰 SQLite），
-registry YAML 仍是唯一真源（§1）。接线（读写切换、双写迁移、D3 墙生效）属
-**另案修宪**（PR3），届时本节 add-only 增补。休眠期它只被测试与手动
-migrate/export CLI 触碰。
+**地位（v0.48.8 修法：本节从「休眠地基」改写为真源法条）**：`act/lib/store2/`
+是卡片账本的真源载体——激活标记 `state/store2_truth.json` 在（且 §53.6 回滚
+开关未强制 yaml）时，真源 = `state/store2.db`，§1 的 YAML 目录降级为迁移
+冻结件。**唯一调用面 = `act/lib/registry.py` 门面**（load/save/load_all/
+merge_or_new/next_id/trash/restore/archive/… 公开 API 两后端逐字一致；callers
+——actd、雷达、digest、dashboard、boardctl-经-server——永远看不见 SQL）。
+**宪法第 7 条不受影响**：`sqlite3` 是 Python stdlib，运行时依赖仍 = stdlib +
+PyYAML。
 
-- **schema 版本纪律**：`PRAGMA user_version = 1`，且版本钉扎在 schema.sql
-  **文件末尾**——executescript 途中崩溃时版本必须还是 0，`_ensure_schema`
-  重跑才补全建表；版本号先行会把半截库伪装成完工库（crash window 判例）。
-  字段纪律与 YAML registry 同一条宪法：add-only，只增不改不删不重编号。
-- **结构**：cards 主表 = 热列（看板投影/过滤所需：status/prev_status/tier/
-  type/hardness/deadline/merged_into_id/version/board_rev/tombstone/
-  origin_trust/…）+ payload JSON 冷列（其余字段原样存 YAML 的 JSON 化全文）；
-  notes / sources / dispatches 独立子表（runtime 字段绝不焊进核心表；notes
-  的 kind 词表含 `steer`，与 §44.3-S note class 对齐）；`board_revision`
-  单行表 + 每卡 `board_rev` 支撑 `changes_since(cursor)` 增量读（tombstone
-  行让客户端学到删除——**硬删被 trigger 禁止**，回收站到期 = tombstone 化，
-  删除因此进 revision 流）。
-- **CAS**：`version` 乐观锁列，写路径 `UPDATE … WHERE id=? AND version=?`，
-  changes≠1 → 重查分 404（卡没了）/ 409（版本被别人推走）——§52 exit code 5
-  预留的对端。
-- **状态机进 DB（数据即法条）**：`transition_whitelist(old_status,
-  new_status, actor_type)` 表逐行收录 §1/§8/§9/§10/§21 的全部合法转移；
-  不在表里 = 非法（trigger fail-closed RAISE `ILLEGAL_TRANSITION`）。
-  **agent-transition 墙（D3 的数据库层）**：`actor_type='agent'` 在白名单里
-  **一行都没有**——agent 发起的任何状态转移 RAISE
-  `AGENT_TRANSITION_FORBIDDEN`，敏感字段写入 RAISE `AGENT_FIELD_FORBIDDEN`。
-  actor 语义：actor = 动作发起者而非写库进程——inbox 动作记 `user`，radar/
-  triage/digest 自主管线记 `system`，headless session 及旁路进程记 `agent`。
-  遗留缺口（digest 拉回等转移行）撞 `ILLEGAL_TRANSITION` 再 add-only 补行
-  （T-14）；`dispatches.status` 词表（`running|completed|failed|stopped`）随
-  接线 PR 入宪。
-- **origin_trust 列**：schema v1 的 CHECK 为 §50 四值 canonical
-  `('hand','proposed','meeting','external')` + DEFAULT 'external'（T-15
-  **已定并落地**，PR #106 终审：原二值 CHECK 与四值词表的冲突在 dormant 期
-  修复）；迁移的推导规则 = `policy.classify_origin`（全部 sources 取最小
-  信任，`policy.CHANNEL_CLASS` 单一真源，T-6）；payload 里的 `origin_trust`
-  权威章经 export/import round-trip 保真（shape 表含该键）。
-- **YAML 迁移终裁（migrate_yaml / export_yaml，round-trip 优先）**：`created`
-  无祖先 → sources[0].date 可解析优先、文件 mtime 兜底，dry-run 逐卡报取值
-  来源（T-7）；`outputs`/`card` 历史键 payload 原样保留（T-9）；plan str 形态
-  原样、畸形值尽量 verbatim，唯 cost 经 `_coerce_cost` 归 None 的偏离**追认**
-  （T-11）；`type` 值域永不归一、crash-mid-move residue 不清理只报告
-  （T-13）；trashed→archived 复位后 restore 补 `prev_status='delivered'`
-  （unarchive 兜底回程票，schema CHECK 要求封存卡必带——**追认实现**，接线
-  parity 以 store2 语义为准，T-16）；`merged_into` 提热列、`thread_key` 留
-  payload + 接线时建表达式索引（T-8）；notes blob 双写一致性随接线案立法
-  （T-12）；`execution.deliverables`（[str] 相对路径，writer = executor
-  harvest，server 只服务清单内文件）预留 add-only、随接线 PR 落 §33 家族
-  （T-19，此前 §49 的目录约定推导 + 穿越防护追认为过渡合法）。
-- **判例**：tests/test_store2_schema.py（白名单矩阵 + agent 墙 + tombstone）、
-  test_store2_cas.py、test_store2_migration.py（畸形值 round-trip 判例）、
-  test_store2_parity.py。
+### 53.1 schema 纪律（v1 原文保留）
+
+- `PRAGMA user_version = 1`，版本钉扎在 schema.sql **文件末尾**——executescript
+  途中崩溃时版本必须还是 0，`_ensure_schema` 重跑才补全建表（crash window
+  判例）。字段纪律与 §1 同一条宪法：add-only，只增不改不删不重编号。
+- **结构**：cards 主表 = 热列（status/prev_status/tier/type/title/origin_trust/
+  target_repo/deadline/merged_into_id/version/board_rev/tombstone/…）+ payload
+  JSON 冷列（§1 canonical `to_dict()` 全文——**payload 是真源，热列只是查询
+  投影**，推导单点 = `act/lib/store2/hot.py`，migrate 与运行时写路径同源）；
+  notes / sources / dispatches 独立子表；`board_revision` 单行表 + 每卡
+  `board_rev` 支撑 `changes_since(cursor)` 增量读（tombstone 行让客户端学到
+  删除——硬删被 trigger 禁止，回收站到期 = tombstone 化，`registry.delete`
+  的 sqlite 面即它）。
+- **CAS**：`version` 乐观锁列照常随每笔真实变更 +1（transition/
+  update_card_fields 的 CAS 三件套保留给未来的多编辑者 API；门面 put_card 刻意
+  无 CAS，见 §53.5）。
+
+### 53.2 状态机进 DB（数据即法条）+ 接线修订
+
+- `transition_whitelist(old,new,actor)` fail-closed：不在表里 = RAISE
+  `ILLEGAL_TRANSITION`。**agent 行数恒为零**（宪法第 1 条的 SQL 化）——agent
+  的任何状态转移 RAISE `AGENT_TRANSITION_FORBIDDEN`，敏感字段 RAISE
+  `AGENT_FIELD_FORBIDDEN`，出生墙拒 agent 铸 approved/delivered/executing/
+  review（含带毒 prev_status 回程票）。
+- **v0.48.8 接线补行（add-only，schema.md T-14 预案，parity 测试逐条撞出）**：
+  `card_sent→approved(system)`（§51 hand 卡免批通道——approve 的「user 独占」
+  收窄为「user 或过 §51 天花板的 actd 自主管线」，agent 仍零行）、
+  `raising→detected(system)`（§8 扩写失败兜底）、`delivered→detected(system)`
+  （§45 LIMITED 天花板 re-raise）、`merged→card_sent/detected(system)`
+  （§3.3 canonical dead-end re-raise）。
+- **origin_trust 触发器修订（v0.48.8）**：非用户改档从「一刀切禁」修正为
+  「只禁**升档**」（trust 序 hand 3 > proposed 2 > meeting 1 > external 0，
+  `policy._TRUST_RANK` 同源）——§50 M1.a 的 live 语义 = 管线每次 fold 后按
+  sources 重算章，sources 只增不减 ⇒ 重算只可能降档；升档（自封 hand =
+  免审批自提权，M1.d）仍 RAISE `ORIGIN_TRUST_USER_ONLY` 且 user 独占。
+- `dispatches.status` 词表 `running|completed|failed|stopped`（随本节入宪）；
+  `notes.kind` 三值 `comment|steer|fold` 定稿（§39 answer 已于同版退役，无需
+  加值）。
+
+### 53.3 激活协议（首跑迁移；`act/lib/store2/activate.py` 是标记的唯一写者）
+
+actd 每 pass 跑 `activate.tick()`（心跳 phase `store2`）；未激活且无强制后端
+时执行，**没有半态**：
+
+1. **备份**：整目录复制 `act/registry/`（含 archive/、list 文件、坏文件——
+   verbatim）到 `state/backups/registry-<UTC ts>/`（已存在加 `-2/-3` 后缀，
+   **永不覆盖**），旁落 `.manifest.json`（逐文件 sha256）。
+2. **迁移（从备份读，不读 live 目录）**：scan 出「会丢卡」的形态（unreadable/
+   非 dict/缺 id/duplicate id）或任何无法忠实入库的卡（未知顶层键即丢字段、
+   词表外 status、merged 缺父指针）→ **整体拒绝**；否则单事务 INSERT 全部卡。
+   激活路径 `plan_card(coerce_cost=False)`——payload 必须与备份逐字段一致，
+   连 `_coerce_cost` 归一都不做（CLI 手动迁移保留归一，两者 docstring 点名）。
+3. **导出 + 逐字段比对**：`export_yaml.export_db` 到 `state/registry-export/`，
+   `parity_diff(备份, 导出)` 两侧过同一 `normalize_card` 逐卡逐字段比对——
+   多卡/少卡/任一字段值差异都算。**非零差异 = 拒绝**。
+4. **并发复检**：比对通过后再验 live 目录 manifest 与备份一致——迁移窗口内
+   有别的进程写过 YAML → 拒绝（短退避 60s 重试；数据差异类拒绝退避 6h）。
+5. **写标记**：以上全过才写 `state/store2_truth.json`（activated_at/backup_dir/
+   cards/schema_version/app_version）——从这一刻起真源翻转，同进程
+   `registry.reset_store_cache()` 立即生效。
+6. **拒绝的形状**：删掉刚建的 DB（无标记的 DB 一律视为可丢弃派生物）+ 写
+   `state/store2_activation.json`（result/reason/diff 摘要（cap 50）/
+   retry_after/backup_dir）——doctor FAIL（§53.6），YAML 照旧是真源，管线
+   零感知，日志一行 `ACTIVATION REFUSED`。判例 tests/test_store2_activation.py。
+
+### 53.4 每日 YAML 导出（R2.1.2）
+
+激活后每**本地日**一次（marker `state/registry_export.json`，actd pass 内
+节流）把全库导出到 `state/registry-export/`：内容未变不重写（mtime 稳定、
+git-diff 干净）、`--prune` 语义常开（tombstone/消失的卡随之删除——导出目录
+大小 = 活卡数，天然有帽，防腐 #4）。手动：`python3 -m act.lib.store2.activate
+--export-now`；`--report` 打印状态 JSON。导出 ↔ 迁移往返判例 =
+tests/test_store2_parity.py + 激活协议第 3 步的运行时比对。
+
+### 53.5 写者与 actor（R2.1.4/R2.1.5）
+
+- **actor 语义**：actor = 动作发起者，不是写库进程——actd 替 owner 执行 inbox
+  决策 = `user`；radar/triage/digest/reconcile 等自主管线 = `system`（默认）；
+  agent 通道（inbox 落款 via:"agent"，§50/§52）= `agent`。传递方式 =
+  `registry.acting_as(actor)`（thread-local 上下文，actd 的 inbox apply 漏斗
+  `_apply_with_actor` 是唯一设置点；§52 的 agent 有界通道自动落 agent）。
+- **agent 墙成为现实（R2.1.4）**：DB 触发器 + 门面 Python 墙（两后端一致，
+  yaml 回滚窗口内墙不消失）双层——agent 发起的 approve/accept/任何状态转移
+  在 `registry.save` 处抛 `TransitionDenied`，actd 按干净幂等 no-op ack
+  （不是 poison 文件）。判例 tests/test_store2_agent_wall_live.py。
+- **写路径**：门面唯一落盘点 = `Store.put_card`（payload + hot 热列 + sources
+  投影行整替，一笔 BEGIN IMMEDIATE 事务；no-op 不 bump 不留 activity；每笔
+  真实变更 bump version + board_rev + activities 审计行）。**事务保证** =
+  每笔写原子（无 torn/交错文件）、插入零丢失、revision 单调、payload 恒为
+  完整 JSON；**跨进程 read-modify-write 仍是后写者胜**——与 YAML 时代语义
+  等价（状态转移单写者纪律让该窗口只存在于 fold 类 payload 并写），judgment
+  钉在 tests/integration/test_store2_concurrent_writers.py。
+- **§34bis 护栏与写入台账**：`registry.guard_snapshot()` backend-aware
+  （yaml = 文件名→size:mtime；sqlite = `<id>.yaml`→`v<version>`，键形一致），
+  写入台账 `registry_writes.jsonl` 两后端同键照记——快照护栏逻辑零改动。
+- **server 只读面**：`/api/cards/{id}` 增补在标记在时经
+  `act/lib/store2/readonly.py`（sqlite URI `mode=ro`，物理只读）读 payload，
+  **不回落**冻结 YAML；dashboard 投影经 registry 门面自动走真源（R2.1 g）。
+
+### 53.6 doctor 行 + 回滚（R2.1.3）
+
+- doctor `store2` 行（act/doctor._check_store2，数据源 = activate.status()）：
+  active=OK（激活卡数/备份路径/导出 last_run；激活后仍有迟到 YAML 写 = WARN
+  点名文件——那些卡不在真源里）；pending=OK（下个 pass 将迁移）；refused/
+  cooldown=FAIL `store2_refused`（reason + diff 条数 + 备份路径）；标记在而
+  DB 缺 = FAIL `store2_db_missing`（此半态下 backend() 仍答 sqlite、门面首次
+  触库响亮 RuntimeError——绝不静默退回冻结 YAML 装没事）；yaml_forced=OK
+  （回滚开关生效）。
+- **回滚开关（保留一个版本）**：config `registry.backend: yaml`（或 env
+  `ZAI_REGISTRY_BACKEND`，测试/CI 用）强制 YAML 后端：
+  激活标记被无视、tick 永不迁移/导出、读写回到 YAML 文件。完整手动回滚步骤
+  文档 = docs/TROUBLESHOOTING.md「store2 回滚」（停守护 → 恢复
+  `state/backups/registry-<ts>/` → 设开关 → 重启）。判例
+  tests/test_store2_rollback.py。
+- **性能**：load_all(~200 卡) 的 sqlite 面 = 单 SELECT + json 解析，预算钉在
+  tests/test_store2_load_scale.py（<2s，远小于 10s pass）。
+
+### 53.7 判例清单
+
+tests/test_store2_schema.py（白名单矩阵 + agent 墙 + tombstone + origin_trust
+降档修订）、test_store2_cas.py、test_store2_migration.py、
+test_store2_parity.py、test_store2_field_parity.py、
+test_registry_backend_parity.py（公开 API 双后端逐字一致 + 有意分歧单列：
+sqlite 永不复用已硬删的 id）、test_store2_activation.py（激活协议全分支 +
+doctor 行）、test_store2_rollback.py、test_store2_agent_wall_live.py、
+test_store2_load_scale.py、test_server_store2_detail.py、
+tests/integration/test_store2_concurrent_writers.py。
 
 ## 54. 薄壳看板 app（shell/ — "Zelin AI Board"）
 

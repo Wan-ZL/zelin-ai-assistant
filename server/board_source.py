@@ -1,11 +1,13 @@
 """看板数据源：/api/board 透传 + /api/cards/{id} 详情增补。
 
 - GET /api/board = ``state/dashboard.json`` 原样透传（bytes 级，零改写）。
-- GET /api/cards/{id} = 投影行 + registry YAML 只读增补（add-only 合并，
-  绝不覆盖投影字段名；含 archive/ fallback）。
+- GET /api/cards/{id} = 投影行 + registry 真源只读增补（add-only 合并，
+  绝不覆盖投影字段名）。
 
-registry 只读纪律（§44 单写者）：不 import act.lib.registry（它带 save/
-archive 写路径），这里用 PyYAML safe_load 复刻其文件布局知识：
+真源路由（§53，v0.48.8）：store2 激活标记在 → 从 SQLite 读 payload（经
+act/lib/store2/readonly.py 的 ``mode=ro`` 只读面，物理上不可写）；否则走
+YAML 目录。registry 只读纪律（§44 单写者）不变：不 import act.lib.registry
+（它带 save/archive 写路径）。YAML 侧用 PyYAML safe_load 复刻其文件布局知识：
 - 文件 = 单卡 dict 或 list（debt 批次 R-002..R-006 是一个 list 文件）；
 - ``R-000-example.yaml`` 是文档样例，永不加载（registry._iter_files 同款）；
 - crash-mid-move 残留时 archive/ 副本 authoritative（registry.load 判例），
@@ -24,6 +26,12 @@ try:
     import yaml
 except ImportError:  # pragma: no cover - 环境缺 PyYAML 的降级路径
     yaml = None  # type: ignore[assignment]
+
+# store2 只读面（§53）：缺席（部分安装形态）只降级 YAML 路径，不拒启动
+try:
+    from act.lib.store2 import readonly as store2_readonly
+except Exception:  # pragma: no cover - 降级路径
+    store2_readonly = None  # type: ignore[assignment]
 
 from server import paths
 from server.errors import InvalidFieldError, NotFoundError
@@ -90,8 +98,15 @@ def _registry_dirs(home: Path) -> Iterable[Path]:
 
 
 def load_registry_card(home: Path, card_id: str) -> Optional[dict]:
-    """按 id 找卡：先按 canonical 文件名 ``<ID>.yaml`` 直取（§1），
-    找不到再全量扫描（list 批次文件 / 带 slug 的历史文件名）。"""
+    """按 id 找卡：store2 激活时读 SQLite payload（§53 真源；标记在时**不**
+    回落 YAML——那只是迁移冻结件，回落等于把旧数据当真相）；否则先按
+    canonical 文件名 ``<ID>.yaml`` 直取（§1），找不到再全量扫描（list 批次
+    文件 / 带 slug 的历史文件名）。"""
+    if store2_readonly is not None and paths.store2_truth_path(home).exists():
+        db = paths.store2_db_path(home)
+        if db.exists():
+            return store2_readonly.read_card(db, card_id)
+        return None
     for d in _registry_dirs(home):
         hit = _match_card(_load_yaml(d / f"{card_id}.yaml"), card_id)
         if hit is not None:

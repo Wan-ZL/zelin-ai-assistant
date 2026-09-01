@@ -116,6 +116,32 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 
 **修复**:走 token 兜底——Slack user token / Atlassian API token 写入 `config/secrets/`(推荐在 app 设置窗口粘贴保存,见 `docs/CONTRACT.md` §19 与 `docs/SLACK_SETUP.md`)。
 
+## store2 回滚:把卡片账本从 SQLite 切回 YAML(保留一个版本的开关)
+
+**什么时候用**:升级到 v0.48.8+ 后,actd 第一个 pass 会自动做「备份 → 迁移 → 逐字段比对 → 零差异才切换」,把卡片真源从 `act/registry/*.yaml` 切到 `state/store2.db`(CONTRACT §53.3)。如果切换后发现任何不对劲(卡不见了、doctor `store2` 行 FAIL `store2_db_missing`、或你就是想回去),按下面手动回滚——迁移永远先留完整备份,数据不会丢。
+
+**症状确认**:`python3 -m act.doctor` 的 `store2` 行;或 `python3 -m act.lib.store2.activate --report` 打印状态 JSON(`state` ∈ active / refused / db_missing / yaml_forced / pending)。
+
+**回滚步骤(照顺序做)**:
+
+1. **停守护**:`launchctl bootout gui/$(id -u)/com.zelin.aiassistant.actd`(Linux: `systemctl --user stop zelin-actd.service`);雷达是短命进程,不用管。
+2. **恢复备份**:激活时的完整 YAML 备份在 `state/backups/registry-<时间戳>/`(旁边的 `.manifest.json` 是逐文件 sha256 清单)。把它整目录拷回:
+
+       cp -R "state/backups/registry-<时间戳>/." act/registry/
+
+   注意:激活**不会**清空 `act/registry/`,里面通常还是切换当刻的原文件;真正需要拷贝的场景是你在 SQLite 上又跑了一段时间(那段时间的新卡只在 DB 里——想要它们的话先 `python3 -m act.lib.store2.activate --export-now`,把 `state/registry-export/` 里对应的 `R-*.yaml` 挑进 `act/registry/`)。
+3. **设回滚开关**:`config.yaml` 里加(或改):
+
+       registry:
+         backend: yaml
+
+   开关强制 YAML 为真源,store2 标记被无视、每日导出停止(CONTRACT §53.6)。开关保留一个版本——它在的期间不会再自动迁移。
+4. **重启**:`launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd`(或重跑 `bash install.sh`)。`python3 -m act.doctor` 应显示 `store2: YAML 后端(registry.backend/env 强制)`。
+
+**想再切回 SQLite**:删掉 config 里的 `registry.backend` 键(或设 `auto`),删 `state/store2_truth.json` + `state/store2.db`,重启 actd——下一个 pass 重新走一遍完整激活协议(重新备份、重新比对)。
+
+**激活被拒(doctor FAIL `store2_refused`)**:这不是故障,是保护——某张卡的形态无法忠实入库(最常见:手编 YAML 里有拼错的未知字段名)。`cat state/store2_activation.json` 看逐条 diff,修好点名的卡文件后等重试(数据类拒绝退避 6 小时;删掉 `state/store2_activation.json` 立即重试)。拒绝期间 YAML 一直是真源,管线照常。
+
 ## 开发注意(新组件必读)
 
 执行器必须注入 auto-memory 的 program map 与约束(例如:eval 走统一 CLI、数据放固定目录、云端资源命名规则等)——否则执行 agent 会自行发明布局。对应 config 键 `execution.memory_inject`(默认开),实现在 `act/executor.py`。
