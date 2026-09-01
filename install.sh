@@ -274,6 +274,47 @@ launchd_load() { # $1=plist path
     launchctl bootstrap "gui/$UID_NUM" "$1" >/dev/null 2>&1 \
         || launchctl load "$1" >/dev/null 2>&1
 }
+# Is this label registered with launchd right now? (`launchctl list` columns:
+# PID Status Label). The only proof an unload actually took.
+launchd_label_loaded() { # $1=label
+    launchctl list 2>/dev/null | awk -v l="$1" '$3 == l' | grep -q .
+}
+# Retire a label for good: unload + delete its plist + PROVE it is gone
+# (CONTRACT §55). launchd_unload swallows failures by design (idempotent
+# upgrades), which is exactly how the v0.21-removed imessageradar agent kept
+# running for 51 days — 23,613 tracebacks — while every install.sh run printed
+# nothing (2026-08-31 audit L3). A label that survives bootout is reported
+# loudly and lands in the install report as launchd_retired=fail.
+RETIRED_STILL_LOADED=""
+launchd_retire() { # $1=label
+    _was_loaded=0
+    launchd_label_loaded "$1" && _was_loaded=1
+    launchd_unload "$LA_DIR/$1.plist" "$1"
+    rm -f "$LA_DIR/$1.plist"
+    if launchd_label_loaded "$1"; then
+        echo "  [ERR ] retired agent $1 is STILL loaded after bootout" >&2
+        info "  fix: launchctl bootout gui/$UID_NUM/$1   # then re-run install.sh"
+        RETIRED_STILL_LOADED="$RETIRED_STILL_LOADED $1"
+    elif [ "$_was_loaded" -eq 1 ]; then
+        ok "unloaded retired agent $1"
+    fi
+}
+# Orphans = our label prefix, loaded (or left in ~/Library/LaunchAgents), but
+# no template in act/launchd/ any more and not in the explicit RETIRED list.
+# Reported, never auto-unloaded (a label we do not know is not ours to kill);
+# doctor's "launchd orphans" row carries the same finding with the fix.
+launchd_orphans() { # prints one label per line
+    {
+        launchctl list 2>/dev/null | awk '$3 ~ /^com\.zelin\.aiassistant\./ {print $3}'
+        for _p in "$LA_DIR"/com.zelin.aiassistant.*.plist; do
+            [ -e "$_p" ] || continue
+            _b="$(basename "$_p")"; printf '%s\n' "${_b%.plist}"
+        done
+    } | sort -u | while IFS= read -r _label; do
+        [ -e "$REPO_ROOT/act/launchd/$_label.plist" ] && continue
+        printf '%s\n' "$_label"
+    done
+}
 
 # escape a value for use on the replacement side of sed s|…|…| (delimiter |)
 _sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
@@ -633,15 +674,30 @@ info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
 # ever saw an empty vault — retire any previously-installed copy so an upgrade
 # doesn't leave a redundant agent that logs empty passes forever.
 RETIRED_RADAR_LABEL="com.zelin.aiassistant.radar"
-launchd_unload "$LA_DIR/$RETIRED_RADAR_LABEL.plist" "$RETIRED_RADAR_LABEL"
-rm -f "$LA_DIR/$RETIRED_RADAR_LABEL.plist"
+launchd_retire "$RETIRED_RADAR_LABEL"
 # v0.21.0: the iMessage transport was removed (Slack's phone-approval role too;
 # the Mac app is now the sole approval surface). Its launchd agent is no longer
 # shipped — retire any previously-installed copy so an upgrade unloads the
 # already-loaded agent instead of leaving it polling chat.db forever.
 RETIRED_IMESSAGE_LABEL="com.zelin.aiassistant.imessageradar"
-launchd_unload "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist" "$RETIRED_IMESSAGE_LABEL"
-rm -f "$LA_DIR/$RETIRED_IMESSAGE_LABEL.plist"
+launchd_retire "$RETIRED_IMESSAGE_LABEL"
+# §55 retire assertion + orphan report (2026-08-31 audit L3): a retired label
+# that survived bootout is a FAIL step; any other prefixed label with no
+# template is reported (not touched) so it stops being structurally invisible.
+if [ -n "$RETIRED_STILL_LOADED" ]; then
+    report_step "launchd_retired" "fail" "still loaded:$RETIRED_STILL_LOADED"
+else
+    report_step "launchd_retired" "ok"
+fi
+ORPHAN_LABELS="$(launchd_orphans | tr '\n' ' ' | sed 's/ *$//')"
+if [ -n "$ORPHAN_LABELS" ]; then
+    warn "launchd agent(s) with our prefix but no template in act/launchd: $ORPHAN_LABELS"
+    info "  each keeps running/logging until unloaded — launchctl bootout gui/$UID_NUM/<label>;"
+    info "  rm ~/Library/LaunchAgents/<label>.plist   (python3 -m act.doctor lists them too)"
+    report_step "launchd_orphans" "warn" "$ORPHAN_LABELS"
+else
+    report_step "launchd_orphans" "ok"
+fi
 # v0.47 (CONTRACT §48): per-source switch gate — a radar agent is installed
 # ONLY when its source is enabled per the single source of truth
 # (act/lib/sources.py: features.<src>_radar AND sources.<src>.enabled).
