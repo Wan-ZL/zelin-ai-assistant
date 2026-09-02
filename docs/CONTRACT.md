@@ -3963,7 +3963,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 （§57：同轮并行 PR 的预留席位——若该 PR 最终未立法，此号作废、永不复用。）
 
-owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + 覆盖率不下降 = 必须绿」**，而且老代码新代码都要达标、冲最终完整版。本节把「达标」从提示词变成确定性工具（Uncle Bob 采纳清单的 DEV #1/#3/#4/#6）：四把尺 + 防腐十条的机械化，全部以 **shrink-only 存量账本** 起步——**门从上线第一天就是绿的**，老代码的欠账全部显式登记且只许缩，清账是 P3 的工作。执法：`scripts/qa/`（qa_common / complexity / crap / coverage_floor / depgraph / hygiene + run_coverage.sh / run_gates.sh）、CI job `qa-gates`；判例 `tests/test_qa_complexity_counter.py`、`tests/test_qa_crap_formula.py`、`tests/test_qa_coverage_floor.py`、`tests/test_qa_depgraph_rules.py`、`tests/test_qa_hygiene_caps.py`、`tests/test_qa_ledger_shrink.py`。
+owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + 覆盖率不下降 = 必须绿」**，而且老代码新代码都要达标、冲最终完整版。本节把「达标」从提示词变成确定性工具（Uncle Bob 采纳清单的 DEV #1/#3/#4/#6）：四把尺 + 防腐十条的机械化，全部以 **shrink-only 存量账本** 起步——**门从上线第一天就是绿的**，老代码的欠账全部显式登记且只许缩，清账是 P3 的工作。执法：`scripts/qa/`（qa_common / complexity / crap / coverage_floor / depgraph / hygiene / ledger_diff + run_coverage.sh / run_gates.sh）、CI job `qa-gates`；判例 `tests/test_qa_complexity_counter.py`、`tests/test_qa_crap_formula.py`、`tests/test_qa_coverage_floor.py`、`tests/test_qa_depgraph_rules.py`、`tests/test_qa_hygiene_caps.py`、`tests/test_qa_ledger_shrink.py`、`tests/test_qa_ledger_diff.py`、`tests/test_qa_crap_baseline_reconciled.py`。
 
 **阈值单源**：一切数字（复杂度上限、CRAP 上限与抖动容差、覆盖率棘轮旋钮、行数上限）住在 **`qa/gates.toml`**（truth = 该文件，本节不复述数字）。五道门、CI、以及后续的测试 skill（R2.8.3）都只读它——第二套阈值定义 = 违宪的第二真源。变异测试（R2.3.4）**永不进本节的门**：夜间任务另立，存活变异体是每日循环的输入不是 PR 的判决。
 
@@ -3994,12 +3994,13 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 
 - **账本**：`qa/complexity_baseline.txt`、`qa/crap_baseline.txt`、`qa/deps_baseline.txt`、`qa/hygiene_baseline.txt`（行形 `<key> <登记分>`，`#` 注释）。键 = `路径::qualname`（尺一/二）或 `规则:路径->目标`（尺四），**不含行号**（无关编辑不移账）。
 - **判决三态（任一即门红）**：`new`——超阈值且不在账上（新代码必须干净）；`worse`——账上条目劣于登记分（存量只许持平或变好；coverage 派生的尺二有 `[crap].tolerance` 缓冲）；`stale`——已达标/已消失仍挂账（**修好了必须同 PR 划账**——这就是棘轮，账本永不回涨）。另有两个不判死的提示：`limbo`（尺二专用：落在阈值下方 tolerance 带内，建议观察后删账）与 `better`（仍超标但比登记分好，建议把登记分拧低）。
-- **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。
+- **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。**对账只能是缩**（划掉 stale、把登记分拧低）——想给新债记账没有合法路径，见下一条。
+- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。
 - **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
 
-- **`qa-gates` job**：coverage 下跑全套 unittest + 五道门 + C901 advisory + artifact 上传。**出生为非必需检查**（D15 的安全分阶段：先在 main 上证明它绿而稳），转正 = owner/编排者把它加进 ruleset `protect-main` 的 required checks——届时它与既有四道必需检查（Lint / Tests ubuntu ×2 / Web tests）同级，红即不可合。
+- **`qa-gates` job**：PR 上先跑 `ledger_diff --base HEAD^1`（merge ref 的第一父 = 当前 main；push 到 main 无 base 可比，跳过），再在 coverage 下跑全套 unittest + 五道门 + C901 advisory + artifact 上传。**出生为非必需检查**（D15 的安全分阶段：先在 main 上证明它绿而稳），转正 = owner/编排者把它加进 ruleset `protect-main` 的 required checks——届时它与既有四道必需检查（Lint / Tests ubuntu ×2 / Web tests）同级，红即不可合。
 - **`qlty` job（informational）**：把早已配好、从未运行的 `.qlty/qlty.toml`（bandit/trivy/trufflehog/zizmor/actionlint/…）以 `continue-on-error` 接进 CI（与 tests-windows 同款语义）——R2.3.8 的第一步；安全类 plugin 是否升为阻塞门，等它跑稳后另立修订。
 - 本地等价物：`bash scripts/qa/run_gates.sh`（CONTRIBUTING 的本地门清单附注）。
 

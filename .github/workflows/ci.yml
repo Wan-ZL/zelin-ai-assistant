@@ -200,12 +200,24 @@ jobs:
           # no step pushes or uses git auth after checkout — don't leave the
           # token in .git/config for later steps to read
           persist-credentials: false
+          # ledger_diff 要跟 PR base（merge ref 的第一父提交）比较 qa/ 文件
+          # ——多取一层父提交（push 到 main 时该步跳过，深度 2 无副作用）。
+          fetch-depth: 2
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           # 钉小版本：coverage 派生的 CRAP 账本要求跑门的解释器可复现
           # （qa/crap_baseline.txt 就是在这个版本的 ubuntu 腿上收的账）。
           python-version: "3.13"
+
+      - name: Ledger shrink-only diff vs PR base
+        # §58.4 的另一半：三态判决看不见「账本自己长了」——新增债务 + 同 PR
+        # 自记账在三态下照样全绿。这里把 qa/*_baseline.txt（加键/抬分）、
+        # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）与 merge
+        # ref 的第一父（= 当前 main）比较，任何放宽即 FAIL。push 到 main 时
+        # 没有 base 可比，跳过。
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/qa/ledger_diff.py --base HEAD^1
 
       - name: Install PyYAML + coverage
         # coverage = dev/CI-only（§0 宪法第 7 条：运行时白名单 stdlib+PyYAML 不变）

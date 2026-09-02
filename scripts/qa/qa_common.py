@@ -68,14 +68,20 @@ def _apply_line(text, sections, current):
     return current
 
 
-def load_gates(path=GATES_FILE):
-    """qa/gates.toml → {section: {key: value}}。"""
+def parse_gates_text(text):
+    """gates.toml 文本 → {section: {key: value}}（ledger_diff 对 base 版本
+    也用同一解析器——阈值怎么被门读，就怎么被差分门读）。"""
     sections = {}
     current = None
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            current = _apply_line(line.strip(), sections, current)
+    for line in text.splitlines():
+        current = _apply_line(line.strip(), sections, current)
     return sections
+
+
+def load_gates(path=GATES_FILE):
+    """qa/gates.toml → {section: {key: value}}。"""
+    with open(path, "r", encoding="utf-8") as fh:
+        return parse_gates_text(fh.read())
 
 
 # --------------------------------------------------------------------------- #
@@ -209,31 +215,47 @@ def span_coverage(node, executed, missing):
 # shrink-only 账本（§58.4；判例 tests/test_qa_ledger_shrink.py）
 # --------------------------------------------------------------------------- #
 
-def load_ledger(path):
-    """账本 → {key: 登记分}。行形 `<key> <score>`；# 注释与空行忽略；
-    无分数按 1.0（不计分的违例种类）。文件缺席 = 空账（一切违例都算新）。"""
+def parse_ledger_text(text):
+    """账本文本 → {key: 登记分}。行形 `<key> <score>`；# 注释与空行忽略；
+    无分数按 1.0（不计分的违例种类）。"""
     entries = {}
-    if not os.path.exists(path):
-        return entries
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            text = line.split("#", 1)[0].strip()
-            if not text:
-                continue
-            parts = text.split()
-            entries[parts[0]] = float(parts[1]) if len(parts) > 1 else 1.0
+    for line in text.splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        if not stripped:
+            continue
+        parts = stripped.split()
+        entries[parts[0]] = float(parts[1]) if len(parts) > 1 else 1.0
     return entries
 
 
-def _format_score(score):
+def load_ledger(path):
+    """账本文件 → {key: 登记分}。文件缺席 = 空账（一切违例都算新）。"""
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return parse_ledger_text(fh.read())
+
+
+def format_score(score):
+    """登记分 → 账本文本形（整数不带小数点；ledger_diff 的输出同款）。"""
     if float(score).is_integer():
         return str(int(score))
     return "%.1f" % score
 
 
+def parse_floor_text(text):
+    """coverage_floor.txt 文本 → 地板数字（首个非注释 token；
+    coverage_floor.read_floor 与 ledger_diff 共用同一解析）。"""
+    for line in text.splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        if stripped:
+            return float(stripped)
+    raise ValueError("no floor number in coverage_floor text")
+
+
 def format_ledger(violations):
     """{key: score} → 账本文本（按 key 排序，key + 空格 + 分数）。"""
-    lines = ["%s %s" % (key, _format_score(violations[key]))
+    lines = ["%s %s" % (key, format_score(violations[key]))
              for key in sorted(violations)]
     return "".join(line + "\n" for line in lines)
 
@@ -312,9 +334,9 @@ def _describe(kind, keys, scores, ledger):
     lines = []
     for key in keys:
         current = scores.get(key)
-        shown = "gone" if current is None else _format_score(current)
+        shown = "gone" if current is None else format_score(current)
         listed = ledger.get(key)
-        suffix = "" if listed is None else " (baseline %s)" % _format_score(listed)
+        suffix = "" if listed is None else " (baseline %s)" % format_score(listed)
         lines.append("  %s: %s = %s%s" % (kind, key, shown, suffix))
     return lines
 
@@ -322,7 +344,7 @@ def _describe(kind, keys, scores, ledger):
 def render_verdict(name, result, scores, ledger, threshold):
     """人读判决文本（stdout 与 report 同一份）。"""
     lines = ["[%s] threshold %s: %d violation(s), %d listed"
-             % (name, _format_score(threshold), len(result["violations"]), len(ledger))]
+             % (name, format_score(threshold), len(result["violations"]), len(ledger))]
     lines += _describe("NEW", result["new"], scores, ledger)
     lines += _describe("WORSE", result["worse"], scores, ledger)
     lines += _describe("STALE", result["stale"], scores, ledger)
@@ -356,6 +378,21 @@ def soften_off_canonical(rc, platform, gate):
     return rc
 
 
+def _print_red_hint(name, result, ledger_path):
+    """红判决的出路提示，按三态分开写：NEW 的唯一出路是修代码——把新债
+    写进账本会被 ledger_diff 的 base 差分门拒掉（§58.4，f2a54c1 审查
+    blocker 1：旧提示「reconcile the ledger」对 NEW 就是教人自记账）。"""
+    rel = os.path.relpath(ledger_path, REPO_ROOT)
+    if result["new"]:
+        print("[%s] NEW violations must be fixed in the code — enrolling"
+              " them in %s is rejected by scripts/qa/ledger_diff.py"
+              " against the PR base" % (name, rel))
+    if result["worse"] or result["stale"]:
+        print("[%s] WORSE: improve the code back to its listed score;"
+              " STALE: strike the now-clean line from %s in this PR"
+              % (name, rel))
+
+
 def run_gate(name, scores, ledger_path, threshold, tolerance=0.0, report_dir=None):
     """一道门的统一出口：比较、打印、写建议账本；返回进程退出码。
     建议账本 = 当前全部超阈值条目——CI 上 FAIL 时直接从 artifact 拷回
@@ -365,8 +402,7 @@ def run_gate(name, scores, ledger_path, threshold, tolerance=0.0, report_dir=Non
     verdict = render_verdict(name, result, scores, ledger, threshold)
     print(verdict)
     if not result["ok"]:
-        print("[%s] fix the code, or reconcile the shrink-only ledger %s"
-              % (name, os.path.relpath(ledger_path, REPO_ROOT)))
+        _print_red_hint(name, result, ledger_path)
     if report_dir:
         write_report(report_dir, "%s_verdict.txt" % name, verdict + "\n")
         write_report(report_dir, "%s_suggested_baseline.txt" % name,

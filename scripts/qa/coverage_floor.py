@@ -33,13 +33,9 @@ def evaluate_floor(percent, floor, trigger, buffer):
 
 
 def read_floor(path=FLOOR_FILE):
-    """地板文件 = 单个数字一行（# 注释与空行忽略）。"""
+    """地板文件 = 单个数字一行（解析与 ledger_diff 共用 qa_common）。"""
     with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            text = line.split("#", 1)[0].strip()
-            if text:
-                return float(text)
-    raise ValueError("no floor number in %s" % path)
+        return qa_common.parse_floor_text(fh.read())
 
 
 def main(argv=None):
