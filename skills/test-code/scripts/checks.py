@@ -239,8 +239,13 @@ def _post_ledger_verdict(ctx, plan, runs):
     return {"summary": summary, "details": found}
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def parse_test_failures(text):
-    """unittest / pytest / vitest-jest 输出里的失败用例 id（排序去重）。"""
+    """unittest / pytest / vitest-jest 输出里的失败用例 id（排序去重）。先剥 ANSI 颜色码——
+    pytest 带色输出的 `ERROR tests/x.py`（收集错误）否则一条都对不上（跨项目实跑抓到）。"""
+    text = _ANSI_RE.sub("", text)
     ids = set()
     for name, qual in _UNITTEST_FAIL.findall(text):
         ids.add(qual if qual.endswith("." + name) else "%s.%s" % (qual, name))
@@ -646,6 +651,8 @@ def check_field_add_only(ctx):
 def check_diff_minimality(ctx):
     declared = ctx["sel"].get("declared_files") or []
     changed = _diff(ctx)["changed_files"]
+    if not changed:
+        return _res("pass", "no changed files vs base — nothing to bound", {"outside": [], "changed": []})
     if not declared:
         return _res("unavailable", "no declared file set (selection.declared_files / --declared); "
                     "%d changed file(s) listed for review" % len(changed), {"changed": changed})

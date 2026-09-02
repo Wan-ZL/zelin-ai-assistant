@@ -257,6 +257,9 @@ class DiffMinimalityTestCase(unittest.TestCase):
         self.assertEqual((res["status"], res["details"]["outside"]), ("fail", ["act/y.py"]))
         res = checks.check_diff_minimality(_ctx("/r", [], sel={"declared_files": ["skills/*", "act/*"]}, diff=diff))
         self.assertEqual(res["status"], "pass")
+        # 无 diff（干净 clone / 无 base）= 没东西可约束 → pass，不是 unavailable（跨项目实跑抓到）
+        res = checks.check_diff_minimality(_ctx("/r", [], diff=_diff([])))
+        self.assertEqual((res["status"], res["details"]["outside"]), ("pass", []))
 
 
 class DependencyBudgetTestCase(unittest.TestCase):
@@ -314,6 +317,9 @@ class ParseOutputsTestCase(unittest.TestCase):
         self.assertEqual(checks.parse_test_failures(" ✗ src/a.test.ts > does thing\n FAIL  src/b.test.ts > other\n"),
                          ["src/a.test.ts > does thing", "src/b.test.ts > other"])
         self.assertEqual(checks.parse_test_failures("Ran 3 tests\n\nOK\n"), [])
+        # pytest 带色输出（收集错误）：ANSI 码剥掉后 `ERROR tests/x.py` 必须被认出（跨项目实跑抓到）
+        colored = "\x1b[31mERROR\x1b[0m tests/test_a.py\n\x1b[31m\x1b[1m5 errors\x1b[0m in 0.1s\n"
+        self.assertEqual(checks.parse_test_failures(colored), ["tests/test_a.py"])
 
     def test_post_ledger_verdict_parses_both_formats(self):
         runs = [lc.RunResult(1, "  NEW: a::b = 7\n  WORSE: c::d = 9 (baseline 8)\n  STALE: e::f = gone\n"

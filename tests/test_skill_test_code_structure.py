@@ -96,6 +96,27 @@ class ImportGraphTestCase(unittest.TestCase):
         self.assertNotIn("orphan:scripts/run.py", violations, "scripts/ = entrypoint dir")
         self.assertNotIn("orphan:pkg/__init__.py", violations)
 
+    def test_relative_imports_resolve_so_submodules_are_not_orphans(self):
+        """跨项目实跑（itsdangerous）：`from ._json import x` 让 _json.py 被误报孤儿；包 __init__ 的
+        `.sub` 与模块里的 `..sibling` 都要解析到绝对名。docs/conf.py（Sphinx）免检。"""
+        files = {
+            "pkg/__init__.py": "from ._json import dumps\nfrom .core import run\n",
+            "pkg/_json.py": "def dumps():\n    return 1\n",
+            "pkg/core.py": "from . import _json\nfrom ..top import T\n",
+            "top.py": "T = 1\n",
+            "docs/conf.py": "project = 'x'\n",
+            "tests/test_core.py": "import pkg\n",
+        }
+        graph, stems, errors = sc.scan_imports(_reader(files), sorted(f for f in files if f.endswith(".py")))
+        self.assertEqual(errors, [])
+        self.assertEqual(graph["pkg"], {"pkg._json", "pkg.core"})
+        self.assertEqual(graph["pkg.core"], {"pkg", "pkg._json", "top"}, "`from . import _json` also imports the package")
+        violations, _, _ = sc.measure(sorted(files), _reader(files), "tests", CAPS)
+        self.assertEqual([k for k in violations if k.startswith("orphan:")], [])
+        self.assertEqual(sc._relative_base("pkg.sub.mod", False, 1), "pkg.sub")
+        self.assertEqual(sc._relative_base("pkg.sub.mod", False, 2), "pkg")
+        self.assertEqual(sc._relative_base("pkg.sub", True, 1), "pkg.sub")
+
     def test_syntax_error_is_an_error_not_a_pass(self):
         files = dict(CLEAN, **{"pkg/broken.py": "def (:\n"})
         _, _, errors = sc.measure(sorted(files), _reader(files), "tests", CAPS)
