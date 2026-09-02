@@ -268,6 +268,8 @@ Q1 shell bundle identity → **保留 `com.zelin.ai-board`**,接受一次 TCC �
 
 ## 8. 进度日志(每个落地的 PR 一行;日期 = 开 PR 当天)
 
+**2026-09-02 起本表冻结为历史，不再直接追加行**（CONTRACT §56.7，`ci/changelog-fragments`）：并行 PR 全部在表尾插一行 = 最后一类相邻行合并冲突。新的一行 = 一个文件 `docs/design/progress/<YYYY-MM-DD>-<slug>.md`（头部 `pr:` / `phase:` / `law:`，空行，正文；形状见 `docs/design/progress/README.md`），CI 门「Version pins untouched」拒绝直接往本表新增 `| YYYY-MM-DD |` 行。读全表：`python3 scripts/ci/progress_log.py render`（历史行 + 全部 fragments → stdout，永不写回本文件）。
+
 | 日期 | PR / 分支 | 阶段 | 做了什么 | 法典 |
 |---|---|---|---|---|
 | 2026-09-01 | `fix/launchd-fd-storm-heartbeat`(PR-A,#89) | P0 前置止血(审计 L1/L2/L3) | launchd 模板只抬 soft fd 上限(hard 不设,实测 hard 键只降天花板)、systemd `LimitNOFILE=8192:524288`;`failures.claude_blind`(Bun 猜测句 = TCC EPERM,真因)+ `fd_limit` 只留真 EMFILE;doctor `launchd claude` 探针(一次性 launchd job);派发风暴刹车(同类连败 5 次 → `dispatch_halted`,进「需输入」列 + 通知,退避窗口零写零 traceback,进入 approved 的每条路径 + 退回提案都清账);actd 每阶段写 `state/actd.heartbeat`,doctor `actd heartbeat` / `launchd fd limit` / `launchd orphans` 三探针,`GET /api/health` + web `PipelineBanner`;install.sh `launchd_retire` 自证 + `launchd_orphans` 报告。本节 + D17–D20 + §5 同 PR 入库。 | §2 / §4.1 / §25 / §47.4 / §49 / §55 |

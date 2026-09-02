@@ -11,8 +11,9 @@ The version's single source of truth is the **git tag on `main`** (CONTRACT §56
 
 To ship a change:
 
-1. Write your notes under `## [Unreleased]` below — that is the only section a PR touches. Never add a `## [X.Y.Z]` heading or a compare link; the CI job "Version pins untouched" rejects both, along with any edit to the version pins.
-2. Merge. `release-on-merge.yml` tags the merged commit with the next patch (`release: minor` / `release: major` labels on the PR pick a bigger bump), dispatches `release.yml`, and the GitHub Release body is the *delta* of `[Unreleased]` since the previous tag (`scripts/changelog_release_notes.py`). This file is never rewritten by a release; the per-version history lives in GitHub Releases + tags. The dated `## [X.Y.Z]` sections below are the pre-cutover history and stay as they are.
+1. Write your notes as **one fragment file per PR**: `changelog.d/<kebab-slug>.md`, first line `type: added|changed|deprecated|removed|fixed|security`, then top-level `- ` bullets (shape and lifecycle in [`changelog.d/README.md`](changelog.d/README.md); `python3 scripts/ci/changelog_fragments.py check` validates). **Do not write into `## [Unreleased]` below** — it is frozen (CONTRACT §56.7): the CI job "Version pins untouched" rejects any added bullet or `### ` heading there, along with `## [X.Y.Z]` headings, compare links and edits to the version pins. Deleting old `[Unreleased]` entries that a tag already shipped is allowed (chore PRs).
+2. Merge. `release-on-merge.yml` tags the merged commit with the next patch (`release: minor` / `release: major` labels on the PR pick a bigger bump), dispatches `release.yml`, and the GitHub Release body is the *delta* of (fragments ∪ `[Unreleased]`) since the previous tag (`scripts/ci/changelog_release_notes.py`). Nothing in this file or in `changelog.d/` is rewritten or deleted by a release; the per-version history lives in GitHub Releases + tags. The dated `## [X.Y.Z]` sections below are the pre-cutover history and stay as they are.
+3. Later, any PR that touches `changelog.d/` runs `python3 scripts/ci/changelog_prune.py` to drop fragments the latest tag already shipped (CI nudges with a `::notice::`; a delta body means a late prune never duplicates a note).
 
 ## [Unreleased]
 

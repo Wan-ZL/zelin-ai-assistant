@@ -189,6 +189,13 @@ jobs:
     # CONTRACT §56.1 — no PR may carry a version: the iOS MARKETING_VERSION
     # placeholders, the act/__init__.py fallback line (refresh to the latest
     # tag excepted) and CHANGELOG version headings are all read-only for PRs.
+    # §56.7 — nor may a PR write the two shared append-only ledgers by hand:
+    # new CHANGELOG bullets / `### ` headings ([Unreleased] is frozen,
+    # shrink-only) and new `| YYYY-MM-DD |` rows in vnext2-plan §8 are
+    # rejected; the PR adds a changelog.d/<slug>.md and a
+    # docs/design/progress/<date>-<slug>.md fragment instead, and this job
+    # validates their shape (a malformed fragment would otherwise vanish
+    # silently from the release notes — release.yml only warns).
     # HEAD is the synthetic merge commit on both events (PR: refs/pull/N/merge;
     # queue: the group's merge commit) — HEAD^1 = base, HEAD^2 = PR head, so
     # `git diff HEAD^1 HEAD` is exactly the PR's change and merge-base(HEAD^1,
@@ -224,6 +231,21 @@ jobs:
           echo "latest release tag: ${LATEST_TAG:-none}"
           # shellcheck disable=SC2086 # $LEGACY is either empty or one flag
           git diff HEAD^1 HEAD | python3 scripts/ci/version_pins_check.py --latest-tag "${LATEST_TAG}" $LEGACY
+
+      - name: Validate changelog.d and progress fragments
+        # §56.7 — shape check of every fragment in the tree (not just the
+        # PR's): name pattern, `type:` line, bullets only / header keys + body.
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/changelog_fragments.py check
+          python3 scripts/ci/progress_log.py check
+
+      - name: Hint at released fragments that can be pruned
+        # §56.7 — CI never commits to main, so consumed fragments are pruned
+        # by the next PR that touches changelog.d/. This only prints a
+        # ::notice:: (never fails) while fragments already shipped in the
+        # latest tag are still in the tree.
+        run: python3 scripts/ci/changelog_prune.py --notice
 
   web-tests:
     name: Web tests (build + vitest)
