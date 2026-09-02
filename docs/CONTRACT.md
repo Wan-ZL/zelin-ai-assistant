@@ -3383,7 +3383,8 @@ queued 灰卡 + needs_input 行排最前）；**没有拖拽换状态**——一
 
 **依赖澄清（宪法第 7 条执法注，T-3 裁 A 案：条文零改动）**：web/ 的 npm 依赖
 （运行时仅 `react`/`react-dom`；dev 限 `vite`/`@vitejs/plugin-react`/
-`typescript`/`vitest`/`jsdom`/`@testing-library/react` + 纯类型包
+`typescript`/`vitest`/`jsdom`/`@testing-library/react`/`axe-core`（a11y 判例，
+§54.1 第 11 项，issue #8）+ 纯类型包
 `@types/react`/`@types/react-dom`，T-20）属**构建/测试侧**，交付物为静态文件、
 由 server/（纯 stdlib）服务；Python 管线运行时白名单 stdlib + PyYAML 不变。
 mermaid **不进**白名单，保持禁用降级（code block 展示，T-23）。Fork 纪律：
@@ -3947,6 +3948,18 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
     `web/src/styles/typeScale.ts`（角色 → Swift file:line → token）。判例
     `web/src/styles/typeScale.test.ts`（CSS ↔ 表）+ `tests/test_web_type_scale_mirror.py`
     （表 ↔ Swift 源行）。
+11. **可访问性（issue #8，原 Mac 版诉求改指 web）**：(a) 每张卡的 `<article>` 是
+    `CardSurface`（`cardChrome.tsx`）——`tabIndex=0`、Enter / Space 打开详情抽屉（整卡双击
+    的键盘等价物；焦点在卡内按钮/输入框时不响应，Enter 归按钮）、`aria-label` = 「<状态词> ·
+    <标题>」（提案 / AI 研究中 / 排队中 / 执行中… / 需输入 / 待验收 / 已完成 / 潜在任务），
+    色点一律 `aria-hidden`——**状态不靠颜色**；(b) 单击复制（指令行 / 路径行）成功后有
+    `role=status` 的「已复制到剪贴板」播报（`CopiedAnnouncer`，`.sr-only`）；按钮可见文案
+    即可访问名（WCAG 2.5.3，不另加 aria-label）；(c) 图标按钮全部带 `aria-label`（顶栏
+    设置/主题/语言/录制/字幕、列头「?」、抽屉关闭）；横幅 `role=alert` / 状态行
+    `role=status`。判例 `web/src/components/board/a11y.test.tsx`：八种卡形的键盘路径 +
+    状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
+    （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
+    `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。

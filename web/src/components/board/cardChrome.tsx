@@ -5,12 +5,16 @@
 //   RepoChip：cwd / target basename 中性章；
 //   CopyCommandLine：「单击复制指令」行——网页没有终端入口（server 无对应 endpoint），只复制，tooltip 说明；
 //   ErrorLine + 让 AI 修：错误一句（红）+ 起 server 的 act.ai_fix 修复会话（POST /api/ai-fix）。
+//   CardSurface（issue #8 a11y）：五种卡共用的 <article>——可聚焦、Enter/Space 打开详情抽屉
+//     （双击的键盘等价物）、aria-label = 「<状态词> · <标题>」（色点 aria-hidden，状态不靠颜色）。
+//   CopiedAnnouncer：复制成功的 role=status 播报（视觉上 sr-only）——按钮文案变化 VoiceOver 不一定读。
 // 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { postAiFix } from "../../api";
 import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
+import { openCardDetail } from "./boardActions";
 import { toggleCardExpanded, useAppState } from "../../store";
 import { copyText } from "../detail/copyText";
 
@@ -20,6 +24,48 @@ export type CardIdRow = { id: string; display_id?: unknown; work_id?: unknown; i
 /** 卡片 id 标签（右上角等宽小字）：展示 displayId()；legacy R 主键（检测即分号的旧卡）灰显 */
 export function CardIdTag({ card }: { card: CardIdRow }) {
   return <span className={isLegacyId(card) ? "card-id card-id-legacy" : "card-id"}>{displayId(card)}</span>;
+}
+
+interface CardSurfaceProps {
+  cardId: string;
+  /** VoiceOver 读的一句：状态词 + 标题（例「执行中 · 修 flaky 测试」）——状态不靠色点 */
+  label: string;
+  className?: string;
+  children: ReactNode;
+}
+
+/**
+ * 卡片外壳（issue #8）：原生 CardSurface 的整卡双击开详情在网页上没有键盘等价物——
+ * 这里给 article 加 tabIndex + Enter/Space 打开详情抽屉（只在焦点落在卡本身、不是
+ * 卡里的按钮/输入框时响应，免得抢走按钮自己的 Enter），aria-label 把状态词与标题
+ * 读出来（色点是 aria-hidden 的装饰）。<article> 的隐式 role 已是 article（可带 aria-label，
+ * VoiceOver 把整卡当一个可导航项）——不另加 role（axe aria-allowed-role 会拒）。
+ */
+export function CardSurface({ cardId, label, className = "", children }: CardSurfaceProps) {
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openCardDetail(cardId);
+    }
+  };
+  return (
+    <article
+      className={`task-card${className ? ` ${className}` : ""}`}
+      tabIndex={0}
+      aria-label={label}
+      onDoubleClick={() => openCardDetail(cardId)}
+      onKeyDown={onKeyDown}
+    >
+      {children}
+    </article>
+  );
+}
+
+/** 复制成功的屏幕阅读器播报（视觉隐藏；aria-live=polite 不打断正在读的内容） */
+export function CopiedAnnouncer({ copied }: { copied: boolean }) {
+  const { text } = useI18n();
+  return <span className="sr-only" role="status">{copied ? text("已复制到剪贴板", "Copied to clipboard") : ""}</span>;
 }
 
 interface CardHeadProps {
@@ -124,23 +170,26 @@ export function CopyCommandLine({ cmd }: { cmd: unknown }) {
   }, []);
   if (typeof cmd !== "string" || !cmd) return null;
   return (
-    <button
-      type="button"
-      className={`card-copy-line${copied ? " is-copied" : ""}`}
-      title={cmd}
-      onClick={() => {
-        void copyText(cmd).then((ok) => {
-          if (!ok) return;
-          setCopied(true);
-          if (timer.current) clearTimeout(timer.current);
-          timer.current = setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      {copied
-        ? text("已复制 ✓", "Copied ✓")
-        : text("单击复制指令 · 粘贴到终端即可接管会话", "Click to copy the command · paste it in a terminal to take over the session")}
-    </button>
+    <>
+      <button
+        type="button"
+        className={`card-copy-line${copied ? " is-copied" : ""}`}
+        title={cmd}
+        onClick={() => {
+          void copyText(cmd).then((ok) => {
+            if (!ok) return;
+            setCopied(true);
+            if (timer.current) clearTimeout(timer.current);
+            timer.current = setTimeout(() => setCopied(false), 1500);
+          });
+        }}
+      >
+        {copied
+          ? text("已复制 ✓", "Copied ✓")
+          : text("单击复制指令 · 粘贴到终端即可接管会话", "Click to copy the command · paste it in a terminal to take over the session")}
+      </button>
+      <CopiedAnnouncer copied={copied} />
+    </>
   );
 }
 

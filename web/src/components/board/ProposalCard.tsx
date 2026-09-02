@@ -9,8 +9,8 @@ import { useState } from "react";
 import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
-import { cardAction, costLine, effectiveTier, openCardDetail, useSubmit } from "./boardActions";
-import { CardDetails, CardHead, DetailsToggle } from "./cardChrome";
+import { cardAction, costLine, effectiveTier, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CardSurface, DetailsToggle } from "./cardChrome";
 import { DodList, PlanList, SourceList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
@@ -85,7 +85,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
   if (card.processing) {
     // raising 占位：dashboard.py 对 status=raising 发的形状（cf. demo_seed R-104）
     return (
-      <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
+      <CardSurface cardId={card.id} label={`${text("AI 研究中", "AI researching")} · ${card.title}`}>
         <CardHead card={card} title={card.title} variant="placeholder" />
         <div className="task-processing-row is-running">
           <span className="task-processing-ring" aria-hidden="true"><span /></span>
@@ -93,7 +93,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
             {text("AI 研究中，完成后变成正式提案", "AI is researching; becomes a proposal when done")}
           </span>
         </div>
-      </article>
+      </CardSurface>
     );
   }
 
@@ -104,7 +104,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
   const shownId = displayId(card);
 
   return (
-    <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
+    <CardSurface cardId={card.id} label={`${text("提案", "Proposal")} · ${displayTitle}`}>
       {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题） */}
       <CardHead card={card} title={displayTitle} variant="lg" />
       <TargetLine card={card} />
@@ -228,6 +228,6 @@ export function ProposalCard({ card }: ProposalCardProps) {
           onCancel={() => setDialog("none")}
         />
       )}
-    </article>
+    </CardSurface>
   );
 }

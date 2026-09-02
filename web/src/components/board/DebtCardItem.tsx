@@ -4,8 +4,8 @@
 // 卡面：摘要标题 + type / 硬需求 章；「展开详情 ▸」后：技术标题 + 💬 需求来自。
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { DebtCard } from "../../types";
-import { cardAction, openCardDetail, useSubmit } from "./boardActions";
-import { CardDetails, CardHead, DetailsToggle } from "./cardChrome";
+import { cardAction, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CardSurface, DetailsToggle } from "./cardChrome";
 import { SourceList } from "./detailBlocks";
 
 interface DebtCardItemProps {
@@ -19,7 +19,7 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
   const displayTitle = typeof item.display_title === "string" && item.display_title ? item.display_title : summary;
 
   return (
-    <article className="task-card" onDoubleClick={() => openCardDetail(item.id)}>
+    <CardSurface cardId={item.id} label={`${text("潜在任务", "Backlog")} · ${displayTitle}`}>
       <CardHead card={item} title={displayTitle} leading={<span className="card-dot is-backlog" aria-hidden="true" />} />
       <div className="card-badges">
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
@@ -54,6 +54,6 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
         </div>
       )}
       {error && <p className="card-error">{error}</p>}
-    </article>
+    </CardSurface>
   );
 }

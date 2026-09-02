@@ -13,8 +13,8 @@ import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
-import { cardAction, openCardDetail, useSubmit } from "./boardActions";
-import { AiFixButton, CardDetails, CardHead, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip } from "./cardChrome";
+import { cardAction, useSubmit } from "./boardActions";
+import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip } from "./cardChrome";
 import { BodyText, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
@@ -78,12 +78,14 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
     void submit(body);
   };
 
-  const cardClass = ["task-card", isQueued ? "is-queued" : "", isBlocked ? "is-blocked" : "", hasError ? "has-error" : ""]
+  const cardClass = [isQueued ? "is-queued" : "", isBlocked ? "is-blocked" : "", hasError ? "has-error" : ""]
     .filter(Boolean)
     .join(" ");
+  // a11y（issue #8）：状态词进 aria-label——色点只是装饰，状态不靠颜色
+  const stateWord = isBlocked ? text("需输入", "Needs input") : isQueued ? text("排队中", "Queued") : stateLabel(row.state, text);
 
   return (
-    <article className={cardClass} onDoubleClick={() => openCardDetail(row.id)}>
+    <CardSurface cardId={row.id} className={cardClass} label={`${stateWord} · ${title}`}>
       <CardHead
         card={row}
         title={title}
@@ -254,6 +256,6 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
           onCancel={() => setDialog("none")}
         />
       )}
-    </article>
+    </CardSurface>
   );
 }
