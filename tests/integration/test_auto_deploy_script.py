@@ -965,11 +965,14 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(self.installs()), 2)
         self.assertIn('__version__ = "0.48.4"', stale.read_text(encoding="utf-8"), "re-stamped")
 
-    def test_a_report_older_than_the_install_never_keys_readiness(self):
+    def test_a_report_left_over_from_the_previous_install_never_keys_readiness(self):
         # install.sh exited 0 but (somehow) did not rewrite the report: the previous
-        # run's `version=ok:0.48.3` must not make the new 0.48.4 daemon look wrong
+        # run's `version=ok:0.48.3` must not make the new 0.48.4 daemon look wrong.
+        # The guard is "the report changed since before install.sh ran", not the
+        # wall clock (Codex P2 on #146): a generated_at in the FUTURE is still the
+        # previous run's report when it is byte-for-byte the one sampled before.
         rep = self.live / "state" / "install_report.json"
-        rep.write_text(json.dumps({"version": "0.48.3", "generated_at": "2020-01-01T00:00:00Z",
+        rep.write_text(json.dumps({"version": "0.48.3", "generated_at": "2999-01-01T00:00:00Z",
                                    "mode": "non-interactive",
                                    "steps": [{"name": "version", "status": "ok", "detail": "0.48.3"}]}),
                        encoding="utf-8")
@@ -978,7 +981,23 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.state()["status"], "deployed", self.log_text())
         self.assertNotIn("ROLLBACK", self.log_text())
-        self.assertNotIn("readiness keyed on the stamp", self.log_text(), "stale report ignored → checkout prediction, as before")
+        self.assertNotIn("readiness keyed on the stamp", self.log_text(), "unchanged report ignored → checkout prediction, as before")
+
+    def test_a_fresh_report_counts_even_when_the_clock_stepped_backwards(self):
+        # the fake stamps its report with a generated_at BEFORE the one sampled
+        # pre-install (a clock stepped back mid-install): still this run's report
+        rep = self.live / "state" / "install_report.json"
+        rep.write_text(json.dumps({"version": "0.48.3", "generated_at": "2999-01-01T00:00:00Z",
+                                   "mode": "non-interactive", "steps": []}), encoding="utf-8")
+        stale = self.live / "act" / "_version.py"
+        stale.write_text('__version__ = "0.48.3"\n', encoding="utf-8")
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_STAMP_FAIL": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "deployed", self.log_text())
+        self.assertIn("WARN install.sh could not stamp act/_version.py", self.log_text(),
+                      "the warn step of THIS run's report was read — no false rollback")
+        self.assertNotIn("ROLLBACK", self.log_text())
 
     def test_readiness_is_keyed_on_the_stamp_install_sh_wrote_not_the_prediction(self):
         # the report says ok:<v>; the heartbeat must carry THAT v (here identical
