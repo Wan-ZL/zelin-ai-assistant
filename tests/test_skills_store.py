@@ -71,6 +71,7 @@ def make_repo(root: Path, manifest: str = MANIFEST, project_links=("alpha",)) ->
     return root
 
 
+@unittest.skipIf(_WIN, "the fixture store needs symlinks (POSIX); pure-function cases below still run")
 class _Case(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="skills-store-"))
