@@ -14,6 +14,12 @@ act.lib.version，所以夹具里的 act 包就是被测代码）。钉住的行
   - 非 git 副本（.pkg / tarball 形状）：已有 stamp 保留，没有 → 回落常量；
   - install.sh 的 stamp_version（抠原文真跑）：写 stamp、报 `version=ok:<v>` 行、
     STAMPED_VERSION 可用；没有 python 也不致命；
+  - **解释器挑选**（2026-09-02 v0.48.21 首次实战：auto-deploy 下 PATH 首位的 Homebrew
+    python3 被 TCC 拒在外置卷外、stderr 被 2>/dev/null 吞掉）：候选按 §55 daemon 顺序
+    （$AIASSISTANT_PYTHON 最先），第一个能盖章的赢；被拒的解释器**跳过并点名**
+    （[info] 行带它的最后一行 stderr）；全部失败 → warn（不 fail）且 §23 report 的
+    `version` detail 带每个解释器的最后一行 stderr；launchd 式洁净环境（无 LANG/LC_*、
+    最小 PATH、cwd=repo）下 tag 在 → tag，tag 不在 → 回落值，都不失败；
   - `--ios` 只改工作树里的 pin、`--check-pins` 随之变红；`--stamp-into DIR` 往
     打包 stage 落 stamp。
 """
@@ -190,38 +196,113 @@ class VersionGitFixtureTestCase(unittest.TestCase):
 
     # -- install.sh stamp_version ------------------------------------------- #
 
+    # install.sh's stamp_version + everything it calls (the §55 candidate order
+    # is the real one: stamp_python_candidates → daemon_python_candidates →
+    # repo_outside_home / physical_path / pinned_python).
+    STAMP_FNS = ("report_step", "physical_path", "repo_outside_home", "pinned_python",
+                 "daemon_python_candidates", "stamp_python_candidates", "stamp_version")
+
+    def stamp_script(self, override=""):
+        return ("set -u\n"
+                'ok()   { printf "  [ ok ] %s\\n" "$1"; }\n'
+                'warn() { printf "  [warn] %s\\n" "$1"; }\n'
+                'info() { printf "  [info] %s\\n" "$1"; }\n'
+                'REPORT_STEPS=""\n'
+                + "".join(_install_sh_fn(fn) for fn in self.STAMP_FNS)
+                + override
+                + 'REPO_ROOT="$1"; PY="$2"\n'
+                'stamp_version\n'
+                'printf "STAMPED=%s\\nREPORT=%s" "$STAMPED_VERSION" "$REPORT_STEPS"\n')
+
+    def run_stamp(self, py, env=None, override="", cwd=None):
+        # HOME = the sandbox: the repo is INSIDE it, so the §55 order is
+        # $AIASSISTANT_PYTHON, the pin, ~/miniconda3 (absent), $PY, /usr/bin/python3
+        base = dict(self.env, HOME=str(self.tmp))
+        base.pop("AIASSISTANT_PYTHON", None)
+        base.update(env or {})
+        return subprocess.run(["bash", "-c", self.stamp_script(override), "bash", str(self.repo), py],
+                              capture_output=True, text=True, timeout=60, env=base, cwd=cwd)
+
+    def denied_python(self):
+        """A stand-in for the TCC-denied Homebrew python3 under launchd: cannot open
+        any file of the checkout, says so on stderr the way CPython does, exits 2."""
+        fake = self.tmp / "homebrew" / "python3"
+        fake.parent.mkdir(parents=True, exist_ok=True)
+        fake.write_text("#!/bin/sh\n"
+                        "echo \"$0: can't open file '$1': [Errno 1] Operation not permitted\" >&2\n"
+                        "exit 2\n", encoding="utf-8")
+        fake.chmod(0o755)
+        return str(fake)
+
     @unittest.skipIf(_WIN, "install.sh is POSIX-only")
     def test_install_sh_stamp_version(self):
-        script = ("set -u\n"
-                  'ok()   { printf "  [ ok ] %s\\n" "$1"; }\n'
-                  'warn() { printf "  [warn] %s\\n" "$1"; }\n'
-                  'REPORT_STEPS=""\n'
-                  + _install_sh_fn("report_step") + _install_sh_fn("stamp_version")
-                  + 'REPO_ROOT="$1"; PY="$2"\n'
-                  'stamp_version\n'
-                  'printf "STAMPED=%s\\nREPORT=%s" "$STAMPED_VERSION" "$REPORT_STEPS"\n')
-        proc = subprocess.run(["bash", "-c", script, "bash", str(self.repo), sys.executable],
-                              capture_output=True, text=True, timeout=60, env=self.env)
+        proc = self.run_stamp(sys.executable)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("[ ok ] act/_version.py -> v0.48.16", proc.stdout)
+        self.assertIn(sys.executable, proc.stdout, "the ok line names the interpreter that stamped")
         self.assertIn("STAMPED=0.48.16", proc.stdout)
         self.assertIn("version=ok:0.48.16", proc.stdout)
+        self.assertNotIn("skipped interpreter", proc.stdout)
         self.assertEqual(self.import_version(), "0.48.16")
 
     @unittest.skipIf(_WIN, "install.sh is POSIX-only")
-    def test_install_sh_stamp_version_without_python_is_a_warn_not_a_fail(self):
-        script = ("set -u\n"
-                  'ok()   { printf "  [ ok ] %s\\n" "$1"; }\n'
-                  'warn() { printf "  [warn] %s\\n" "$1"; }\n'
-                  'REPORT_STEPS=""\n'
-                  + _install_sh_fn("report_step") + _install_sh_fn("stamp_version")
-                  + 'REPO_ROOT="$1"; PY="/nonexistent/python3"\n'
-                  'PATH=/nonexistent stamp_version\n'
-                  'printf "REPORT=%s" "$REPORT_STEPS"\n')
-        proc = subprocess.run(["bash", "-c", script, "bash", str(self.repo)],
-                              capture_output=True, text=True, timeout=60, env=self.env)
+    def test_install_sh_stamp_version_skips_the_tcc_denied_interpreter_and_names_it(self):
+        denied = self.denied_python()
+        proc = self.run_stamp(sys.executable, env={"AIASSISTANT_PYTHON": denied})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("version=warn", proc.stdout)
+        self.assertIn("STAMPED=0.48.16", proc.stdout)
+        self.assertIn("version=ok:0.48.16", proc.stdout)
+        self.assertIn("[info]   version: skipped interpreter(s)", proc.stdout)
+        self.assertIn(denied + ": ", proc.stdout, "the skipped interpreter is named")
+        self.assertIn("Operation not permitted", proc.stdout, "…with its last stderr line")
+        self.assertEqual(self.import_version(), "0.48.16")
+
+    @unittest.skipIf(_WIN, "install.sh is POSIX-only")
+    def test_install_sh_stamp_version_every_interpreter_failing_is_a_warn_that_carries_stderr(self):
+        stamper = self.repo / "scripts" / "version_stamp.py"
+        stamper.write_text("import sys\nsys.exit('stamper boom: pretend act/ is unwritable')\n", encoding="utf-8")
+        proc = self.run_stamp(sys.executable)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("STAMPED=\n", proc.stdout)
+        self.assertIn("[warn] scripts/version_stamp.py failed with every interpreter", proc.stdout)
+        self.assertIn("stamper boom", proc.stdout, "the [warn] line carries the stamper's last stderr line")
+        report = proc.stdout.split("REPORT=", 1)[1]
+        self.assertIn("version=warn:stamp failed — ", report)
+        self.assertIn(sys.executable + ": stamper boom", report, "the §23 detail names interpreter + stderr")
+        self.assertNotIn("=fail", proc.stdout)
+        self.assertFalse((self.repo / "act" / "_version.py").exists())
+
+    @unittest.skipIf(_WIN, "install.sh is POSIX-only")
+    def test_install_sh_stamp_version_without_python_is_a_warn_not_a_fail(self):
+        # no candidate at all (the real list always holds /usr/bin/python3, so pin
+        # the list to the one nonexistent $PY to reach this branch)
+        proc = self.run_stamp("/nonexistent/python3",
+                              override='stamp_python_candidates() { printf "%s\\n" "${PY:-}"; }\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("[warn] no python3", proc.stdout)
+        self.assertIn("version=warn:no python3 to stamp", proc.stdout)
+        self.assertNotIn("=fail", proc.stdout)
+
+    @unittest.skipIf(_WIN, "install.sh is POSIX-only")
+    def test_install_sh_stamp_version_under_a_launchd_like_environment(self):
+        # no LANG / LC_* / PYTHON*, a minimal PATH whose python3 is ours, cwd = the repo
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        os.symlink(sys.executable, str(bindir / "python3"))
+        scrubbed = {"PATH": "%s:/usr/bin:/bin" % bindir, "HOME": str(self.tmp)}
+        script = self.stamp_script()
+        proc = subprocess.run(["bash", "-c", script, "bash", str(self.repo), str(bindir / "python3")],
+                              capture_output=True, text=True, timeout=60, env=scrubbed, cwd=str(self.repo))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("STAMPED=0.48.16", proc.stdout)
+        self.assertIn("version=ok:0.48.16", proc.stdout)
+        # tags never fetched (or none yet): the fallback constant, still ok, never a fail
+        _git(self.repo, "tag", "-d", "v0.48.16")
+        proc = subprocess.run(["bash", "-c", script, "bash", str(self.repo), str(bindir / "python3")],
+                              capture_output=True, text=True, timeout=60, env=scrubbed, cwd=str(self.repo))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("STAMPED=0.48.16", proc.stdout, "no tag → the fixture's baked fallback (setUp)")
+        self.assertIn("version=ok:0.48.16", proc.stdout)
         self.assertNotIn("=fail", proc.stdout)
 
 

@@ -24,11 +24,12 @@ pins 检查解析 tag 名（``parse_tag``）。stdlib only（宪法第 7 条）�
 from __future__ import annotations
 
 import os
+import plistlib
 import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 PKG_DIR = Path(__file__).resolve().parents[1]          # …/act
 REPO_ROOT = PKG_DIR.parent
@@ -40,6 +41,13 @@ INIT_PATH = PKG_DIR / "__init__.py"
 # sed 成真版本、绝不提交（CI「Version pins untouched」把关）。
 PIN_PLACEHOLDER = "0.0.0-dev"
 PIN_FILES = ("ios/project.yml", "ios/ZelinAIAssistant.xcodeproj/project.pbxproj")
+
+# §54 看板壳的 bundle 目录名（id com.zelin.ai-board）——与 install.sh UI_APP_NAME /
+# shell/build.sh APP_NAME 逐字一致（tests/test_version_resolution.py 钉住漂移）。
+# doctor 的 `board app version` 行拿装好的壳的 CFBundleShortVersionString 与
+# act.__version__ 对账：壳是 install.sh ui 步用 shell/build.sh 盖章的，两边不一致
+# = 壳没盖章（占位版本出厂）或壳是旧代码的构建。
+BOARD_APP_NAME = "Zelin AI Board.app"
 
 _TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _DESCRIBE_RE = re.compile(r"^(v?\d+\.\d+\.\d+)-(\d+)-g[0-9a-fA-F]+$")
@@ -203,9 +211,75 @@ def status(fallback: Optional[str], stamp_path: Optional[Path] = None,
     }
 
 
+def board_app_candidates() -> List[Path]:
+    """install.sh ui 步装壳的两个去处（/Applications，不可写时 ~/Applications），按查找顺序。"""
+    return [Path("/Applications") / BOARD_APP_NAME, Path.home() / "Applications" / BOARD_APP_NAME]
+
+
+def _bundle_version(plist: Path) -> Optional[str]:
+    """Info.plist 的 CFBundleShortVersionString；读不了 / 坏 plist / 没有键 → None。"""
+    try:
+        with open(plist, "rb") as fh:
+            found = plistlib.load(fh).get("CFBundleShortVersionString")
+    except Exception:  # noqa: BLE001 - a corrupt plist is a finding, not a doctor crash
+        return None
+    text = str(found).strip() if found is not None else ""
+    return text or None
+
+
+def installed_board_app(candidates: Optional[Iterable[Path]] = None) -> Optional[dict]:
+    """第一个装着的壳 bundle → ``{"path", "version"}``（version None = Info.plist 读不出
+    CFBundleShortVersionString）；一个都没装（或非 macOS）→ None。永不抛。"""
+    for app in (board_app_candidates() if candidates is None else candidates):
+        plist = Path(app) / "Contents" / "Info.plist"
+        if plist.is_file():
+            return {"path": str(app), "version": _bundle_version(plist)}
+    return None
+
+
 def status_probe() -> dict:
-    """doctor ``Probes.version_status`` 的默认实现（tests 注入别的——沙箱不是 git checkout）。"""
-    return status(read_fallback())
+    """doctor ``Probes.version_status`` 的默认实现（tests 注入别的——沙箱不是 git checkout，
+    也不读开发者的 /Applications）。``board_app`` 键 add-only：没装壳 = None。"""
+    st = status(read_fallback())
+    st["board_app"] = installed_board_app()
+    return st
+
+
+def board_app_row(app: Optional[dict], running: str) -> Optional[Tuple[str, str, str]]:
+    """doctor 行 ``board app version``（§25 add-only）的 (status, detail, fix)；没装壳 → None
+    （不出行）。壳的 CFBundleShortVersionString == ``running``（act.__version__）→ ok；读不出
+    → warn；不一致 → warn（2026-09-02：auto-deploy 装的壳报 Info.plist 占位 0.1.0，daemons
+    报 0.48.21）。**永不 fail**——同 doctor_row：§56.3 回滚判据不能被一个版本标签翻。"""
+    from act.lib.failures import pick  # 同层；懒 import 让 `import act` 只带本模块
+    if not app:
+        return None
+    name = Path(str(app.get("path") or "")).name or BOARD_APP_NAME
+    found = app.get("version")
+    fix = pick("bash install.sh --non-interactive（重建 + 重装壳）或等下一次 auto-deploy",
+               "bash install.sh --non-interactive (rebuilds + reinstalls the shell) or wait for the next deploy")
+    if not found:
+        return ("warn",
+                pick("%s 的 Info.plist 读不出 CFBundleShortVersionString——壳的构建没盖章",
+                     "%s: Info.plist has no readable CFBundleShortVersionString — the shell build was not stamped") % name,
+                fix)
+    if found != running:
+        return ("warn",
+                pick("%s 报 v%s，daemons 跑的是 v%s——壳是没盖章的构建（占位版本出厂）或旧代码的构建",
+                     "%s reports v%s but the daemons run v%s — the shell was built unstamped (placeholder shipped) "
+                     "or from older code") % (name, found, running),
+                fix)
+    return ("ok", "v%s (%s == act.__version__)" % (found, name), "")
+
+
+def doctor_rows(st: dict) -> List[Tuple[str, str, str, str]]:
+    """doctor 的版本行组：``version``（doctor_row）+ 装了壳时的 ``board app version``。
+    每项 (name, status, detail, fix)。``running`` 与 resolve() 同一口径：stamp 优先，否则
+    checkout 算出的（git describe / 回落值）。"""
+    rows = [("version",) + doctor_row(st)]
+    board = board_app_row(st.get("board_app"), st.get("stamp") or st.get("computed") or "")
+    if board is not None:
+        rows.append(("board app version",) + board)
+    return rows
 
 
 def doctor_row(st: dict) -> Tuple[str, str, str]:

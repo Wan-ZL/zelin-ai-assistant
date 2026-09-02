@@ -10,9 +10,17 @@ tests/integration/test_version_git_fixture.py）。钉住的行为：
   - stamp_decision：git 答不上但已有 stamp → 保留（.pkg 副本盖的是真 tag）；
   - write_stamp 原子写、read_stamp 只认 `__version__ = "…"` 形状；
   - doctor `version` 行：无 stamp = WARN、stamp ≠ describe = WARN、一致 = OK、
-    非 git checkout 有 stamp = OK；永不 FAIL。
+    非 git checkout 有 stamp = OK；永不 FAIL；
+  - doctor `board app version` 行（2026-09-02 首次实战：auto-deploy 装的壳报 Info.plist
+    占位 0.1.0）：没装壳 = 不出行、壳版本 == act.__version__ = OK、不一致 = WARN
+    （修法指向 install.sh --non-interactive / 下一次 deploy）、读不出 = WARN；永不 FAIL；
+    `installed_board_app` 按 /Applications → ~/Applications 找第一个 bundle；
+    BOARD_APP_NAME 与 install.sh UI_APP_NAME / shell/build.sh APP_NAME 逐字一致。
 """
 import os
+import plistlib
+import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +28,8 @@ from pathlib import Path
 
 from act import doctor
 from act.lib import version as ver
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 def fake_git(stdout=None, returncode=0, raise_exc=None):
@@ -171,10 +181,15 @@ class ComputeAndResolveTestCase(unittest.TestCase):
 
 
 class DoctorVersionRowTestCase(unittest.TestCase):
-    def row(self, **st):
+    def rows(self, **st):
         base = {"stamp": None, "git": True, "computed": "0.48.16", "fallback": "0.48.16"}
         base.update(st)
         return doctor._check_version(doctor.Probes(version_status=lambda: dict(base)))
+
+    def row(self, **st):
+        rows = self.rows(**st)
+        self.assertEqual([r.name for r in rows], ["version"], "no board_app in the status → only the version row")
+        return rows[0]
 
     def test_missing_stamp_is_warn_with_install_fix(self):
         r = self.row(stamp=None)
@@ -202,6 +217,85 @@ class DoctorVersionRowTestCase(unittest.TestCase):
 
     def test_row_is_in_every_platform_composition(self):
         self.assertIn(doctor._check_version, doctor._checks_for_platform())
+
+
+class BoardAppVersionRowTestCase(unittest.TestCase):
+    """doctor `board app version`：装好的壳 vs act.__version__（2026-09-02 首次实战）。"""
+
+    def rows(self, board_app, **st):
+        base = {"stamp": "0.48.21", "git": True, "computed": "0.48.21", "fallback": "0.48.21", "board_app": board_app}
+        base.update(st)
+        return doctor._check_version(doctor.Probes(version_status=lambda: dict(base)))
+
+    def board(self, board_app, **st):
+        rows = self.rows(board_app, **st)
+        self.assertEqual([r.name for r in rows], ["version", "board app version"])
+        return rows[1]
+
+    def test_no_installed_shell_means_no_row(self):
+        self.assertEqual([r.name for r in self.rows(None)], ["version"])
+        self.assertEqual([r.name for r in self.rows({})], ["version"])
+
+    def test_placeholder_shipped_is_warn_pointing_at_install_sh(self):
+        r = self.board({"path": "/Applications/Zelin AI Board.app", "version": "0.1.0"})
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("Zelin AI Board.app", r.detail)
+        self.assertIn("v0.1.0", r.detail)
+        self.assertIn("v0.48.21", r.detail)
+        self.assertIn("install.sh --non-interactive", r.fix)
+        self.assertIn("deploy", r.fix)
+
+    def test_matching_shell_is_ok(self):
+        r = self.board({"path": "/Applications/Zelin AI Board.app", "version": "0.48.21"})
+        self.assertEqual(r.status, doctor.OK)
+        self.assertIn("v0.48.21", r.detail)
+        self.assertEqual(r.fix, "")
+
+    def test_running_version_is_stamp_first_then_computed_like_resolve(self):
+        # no stamp: the daemons derive via git → the shell must match THAT
+        self.assertEqual(self.board({"path": "/x/Zelin AI Board.app", "version": "0.48.21+2"},
+                                    stamp=None, computed="0.48.21+2").status, doctor.OK)
+        # stamp present and different from the checkout: the stamp is what runs
+        self.assertEqual(self.board({"path": "/x/Zelin AI Board.app", "version": "0.48.20"},
+                                    stamp="0.48.20", computed="0.48.21").status, doctor.OK)
+
+    def test_unreadable_version_is_warn(self):
+        r = self.board({"path": "/Applications/Zelin AI Board.app", "version": None})
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("CFBundleShortVersionString", r.detail)
+        self.assertIn("install.sh", r.fix)
+
+    def test_row_never_fails(self):
+        for app in ({"path": "/a/Zelin AI Board.app", "version": "9.9.9"},
+                    {"path": "/a/Zelin AI Board.app", "version": None},
+                    {"path": "", "version": ""}):
+            self.assertNotEqual(self.board(app).status, doctor.FAIL, app)
+
+    def test_installed_board_app_reads_the_first_bundle_that_exists(self):
+        tmp = Path(tempfile.mkdtemp(prefix="boardapp-"))
+        self.addCleanup(shutil.rmtree, str(tmp), ignore_errors=True)
+        first, second = tmp / "Applications" / ver.BOARD_APP_NAME, tmp / "home" / "Applications" / ver.BOARD_APP_NAME
+        self.assertIsNone(ver.installed_board_app([first, second]), "nothing installed → None")
+        (second / "Contents").mkdir(parents=True)
+        with open(second / "Contents" / "Info.plist", "wb") as fh:
+            plistlib.dump({"CFBundleShortVersionString": "0.48.21", "CFBundleVersion": "0.48.21"}, fh)
+        self.assertEqual(ver.installed_board_app([first, second]), {"path": str(second), "version": "0.48.21"})
+        (first / "Contents").mkdir(parents=True)
+        (first / "Contents" / "Info.plist").write_bytes(b"not a plist")
+        self.assertEqual(ver.installed_board_app([first, second]), {"path": str(first), "version": None},
+                         "the first existing bundle wins even when its plist is corrupt (that IS the finding)")
+        with open(first / "Contents" / "Info.plist", "wb") as fh:
+            plistlib.dump({"CFBundleVersion": "1"}, fh)
+        self.assertEqual(ver.installed_board_app([first, second])["version"], None)
+
+    def test_bundle_name_matches_install_sh_and_shell_build(self):
+        install = (REPO / "install.sh").read_text(encoding="utf-8")
+        build = (REPO / "shell" / "build.sh").read_text(encoding="utf-8")
+        stem = ver.BOARD_APP_NAME[:-len(".app")]
+        self.assertTrue(ver.BOARD_APP_NAME.endswith(".app"))
+        self.assertTrue(re.search(r'^UI_APP_NAME="%s"' % re.escape(stem), install, re.M), "install.sh UI_APP_NAME drifted")
+        self.assertTrue(re.search(r'^APP_NAME="%s"' % re.escape(stem), build, re.M), "shell/build.sh APP_NAME drifted")
+        self.assertEqual([str(p.name) for p in ver.board_app_candidates()], [ver.BOARD_APP_NAME] * 2)
 
 
 if __name__ == "__main__":

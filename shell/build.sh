@@ -93,6 +93,17 @@ build_failed() {   # $1 = which step broke
     exit 1
 }
 
+# --- version（先于 compile：答不上就别花 swiftc 的时间；上一次构建的 bundle 原样留着）---
+# version truth = git tag（CONTRACT §56.1；same helper as mac/build.sh）：
+# scripts/build_version.sh 挑一个真能读这个 checkout 的解释器（§55 第三幕：
+# launchd 下 Homebrew python3 在外置卷上 EPERM）跑 stamper（顺手写 act/_version.py），
+# 退而求其次用 act.__version__；都答不上 → 构建**失败**，绝不带着 Info.plist 的
+# 占位版本出厂（2026-09-02：auto-deploy 装到 /Applications 的壳报 0.1.0）。
+echo "==> Deriving the version (scripts/build_version.sh)"
+VERSION="$(bash "$SCRIPT_DIR/../scripts/build_version.sh")" \
+    || build_failed "could not derive the version to stamp (scripts/build_version.sh — see its messages above); refusing to ship the Info.plist placeholder"
+echo "    version: $VERSION"
+
 # --- compile ---
 # AVFoundation + ScreenCaptureKit: 实时字幕 in-process audio capture
 # (LiveCaptions.swift); Speech (macOS 26 SpeechAnalyzer) auto-links on import;
@@ -113,17 +124,11 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN" "$APP_DIR/Contents/MacOS/$EXEC_NAME"
 cp "$PLIST" "$APP_DIR/Contents/Info.plist"
 
-# version truth = git tag（CONTRACT §56.1；same stamper as mac/build.sh）：
-# scripts/version_stamp.py 算出版本并写 act/_version.py（git-ignored）。
-# Stamp the STAGED plist only — 源 Info.plist 保留 fallback 值。
-VERSION="$(python3 "$SCRIPT_DIR/../scripts/version_stamp.py" --write 2>/dev/null || true)"
-if [ -n "$VERSION" ]; then
-    plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
-    plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
-    echo "    stamped version $VERSION (scripts/version_stamp.py: git tag truth)"
-else
-    echo "WARN: scripts/version_stamp.py could not derive a version — bundle keeps the Info.plist fallback version."
-fi
+# version（§56.1）：上面 compile 前已算出 VERSION。Stamp the STAGED plist only —
+# 源 Info.plist 保留占位值。
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+echo "    stamped version $VERSION (git tag truth, scripts/build_version.sh)"
 
 # server repo: stamp the ACTUAL repo root this shell is built from（same
 # staged-plist mechanism as the version stamp; 源 Info.plist 留空 = 未解析，

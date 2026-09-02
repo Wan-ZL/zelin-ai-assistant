@@ -638,23 +638,60 @@ relaunch_shell_app() {
 # .git — the payload already carries the tag's stamp). Never fatal: without
 # a stamp act.__version__ falls back to the baked constant, and doctor's
 # `version` row says so.
+#
+# WHICH python runs the stamper matters (§55 第三幕): TCC judges every
+# non-platform binary on its own, even as a child of the launchd job's
+# FDA-granted interpreter. 2026-09-02 (v0.48.21 first contact): auto-deploy's
+# PATH puts Homebrew first, so `command -v python3` handed the stamper to
+# /opt/homebrew/bin/python3, which could not even open scripts/version_stamp.py
+# on the external-volume checkout (`[Errno 1] Operation not permitted`) — and
+# 2>/dev/null hid it. So the candidates are the §55 daemon order
+# ($AIASSISTANT_PYTHON = the launchd job's own interpreter first, the system
+# python above the PATH python when the repo is outside $HOME), the first one
+# that stamps wins, and every failure's last stderr line is logged AND lands
+# in the §23 report (`version=warn:<interpreter>: <stderr>`).
 STAMPED_VERSION=""
+STAMP_PY=""
+stamp_python_candidates() {
+    daemon_python_candidates
+    printf '%s\n' "$(command -v python3 2>/dev/null || true)"
+}
 stamp_version() {
-    _spy="${PY:-}"
-    { [ -n "$_spy" ] && [ -x "$_spy" ]; } || _spy="$(command -v python3 || true)"
-    if [ -z "$_spy" ]; then
+    STAMPED_VERSION=""; STAMP_PY=""
+    _stamp_err="$(mktemp 2>/dev/null || printf '/tmp/zai-stamp.%s' "$$")"
+    _tried=""; _why=""
+    _saved_ifs="$IFS"
+    IFS='
+'
+    # shellcheck disable=SC2046 # newline word-splitting the candidate list is the point
+    for _spy in $(stamp_python_candidates); do
+        IFS="$_saved_ifs"
+        case "$_spy" in /*) ;; *) continue ;; esac
+        [ -x "$_spy" ] || continue
+        case " $_tried " in *" $_spy "*) continue ;; esac
+        _tried="$_tried $_spy"
+        STAMPED_VERSION="$(cd "$REPO_ROOT" && "$_spy" scripts/version_stamp.py --write 2>"$_stamp_err")"
+        _rc=$?
+        if [ "$_rc" -eq 0 ] && [ -n "$STAMPED_VERSION" ]; then
+            STAMP_PY="$_spy"
+            break
+        fi
+        STAMPED_VERSION=""
+        _last="$(tail -n 1 "$_stamp_err" 2>/dev/null | tr -d '\r')"
+        _why="${_why:+$_why; }$_spy: ${_last:-exit $_rc, no stderr}"
+    done
+    IFS="$_saved_ifs"
+    rm -f "$_stamp_err"
+    if [ -n "$STAMPED_VERSION" ]; then
+        ok "act/_version.py -> v$STAMPED_VERSION (git tag truth, §56.1; $STAMP_PY)"
+        [ -z "$_why" ] || info "  version: skipped interpreter(s) that could not run the stamper — $_why"
+        report_step "version" "ok" "$STAMPED_VERSION"
+    elif [ -z "$_tried" ]; then
         warn "no python3 — act/_version.py not written (daemons report the baked fallback version)"
         report_step "version" "warn" "no python3 to stamp"
-        return 0
-    fi
-    if STAMPED_VERSION="$(cd "$REPO_ROOT" && "$_spy" scripts/version_stamp.py --write 2>/dev/null)" \
-       && [ -n "$STAMPED_VERSION" ]; then
-        ok "act/_version.py -> v$STAMPED_VERSION (git tag truth, §56.1)"
-        report_step "version" "ok" "$STAMPED_VERSION"
     else
-        STAMPED_VERSION=""
-        warn "scripts/version_stamp.py failed — act/_version.py not written (daemons report the baked fallback version)"
-        report_step "version" "warn" "stamp failed"
+        warn "scripts/version_stamp.py failed with every interpreter — act/_version.py not written (daemons derive the version themselves or report the baked fallback): $_why"
+        report_step "version" "warn" "stamp failed — $_why"
     fi
 }
 
