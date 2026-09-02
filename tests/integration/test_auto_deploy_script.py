@@ -598,6 +598,25 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(st["version"], "0.48.4", "the late tag must be fetched, not 0.48.3+1")
         self.assertIn("version=0.48.4", self.installs()[0])
 
+    def test_local_tag_diverged_from_origin_is_realigned_not_a_fetch_failure(self):
+        # The owner Mac carries an old hand-made tag that points somewhere else
+        # than origin's tag of the same name. `git fetch --tags` refuses to
+        # clobber it and exits 1 — without --force every run would end in
+        # fetch_failed and nothing would ever deploy again. origin's tags are
+        # the truth (§56.1): the fetch must succeed and realign the tag.
+        origin_sha = _git(self.live, "rev-parse", "v0.48.3")
+        _git(self.live, "commit", "-q", "--allow-empty", "-m", "local junk")
+        _git(self.live, "tag", "-f", "v0.48.3", "HEAD")
+        _git(self.live, "reset", "-q", "--hard", "origin/main")
+        self.assertNotEqual(_git(self.live, "rev-parse", "v0.48.3"), origin_sha, "fixture: tag diverged")
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual((st["status"], st["head"]), ("deployed", target), self.log_text())
+        self.assertEqual(_git(self.live, "rev-parse", "v0.48.3"), origin_sha, "the stale local tag now matches origin")
+        self.assertEqual(st["version"], "0.48.4")
+
     def test_rollback_onto_a_pre_cutover_checkout_reads_the_literal_version_line(self):
         # transition (§56.1): the rollback target may predate the stamper — that
         # tree has no scripts/version_stamp.py and a literal `__version__ = "…"`

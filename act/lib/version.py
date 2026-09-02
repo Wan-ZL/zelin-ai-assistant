@@ -83,8 +83,12 @@ def read_fallback(path: Optional[Path] = None) -> Optional[str]:
 
 
 def _run_describe(root: str, runner: Runner) -> Optional[str]:
-    """`git describe` 的 stdout；rc≠0 / spawn 失败 / 超时 → None。"""
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
+    """`git describe` 的 stdout；rc≠0 / spawn 失败 / 超时 → None。
+    GIT_CEILING_DIRECTORIES：只认 root 自己的 .git——.pkg / tarball 副本落在一个
+    本身是 git repo 的目录树下（$HOME 放 dotfiles repo 的人）时，git 会一路向上
+    找到那个 repo 并 describe 它的 tag；「非 git checkout」必须真的是非 git。"""
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0",
+               GIT_CEILING_DIRECTORIES=str(Path(root).parent))
     try:
         proc = runner(["git", "-C", root, "describe", "--tags", "--long",
                        "--match", "v[0-9]*"],

@@ -28,10 +28,12 @@ def fake_git(stdout=None, returncode=0, raise_exc=None):
 
     def run(argv, **kwargs):
         calls.append(list(argv))
+        run.kwargs.append(kwargs)
         if raise_exc is not None:
             raise raise_exc
         return subprocess.CompletedProcess(argv, returncode, stdout or "", "")
     run.calls = calls
+    run.kwargs = []
     return run
 
 
@@ -68,6 +70,15 @@ class DescribeTestCase(unittest.TestCase):
     def test_non_version_tag_is_none(self):
         # --match filters server-side, but a stray shape must not crash the parser
         self.assertIsNone(ver.git_describe(Path("/r"), fake_git("vnext-2-gabc")))
+
+    def test_describe_never_climbs_above_the_repo_root(self):
+        # a .pkg / tarball copy under a $HOME that is itself a git repo (dotfiles)
+        # must not inherit that repo's tags: the ceiling is the root's parent
+        run = fake_git("v9.9.9-0-gabc")
+        ver.git_describe(Path("/home/u/pipeline"), run)
+        env = run.kwargs[0]["env"]
+        self.assertEqual(env["GIT_CEILING_DIRECTORIES"], str(Path("/home/u")))
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
 
 
 class FromDescribeTestCase(unittest.TestCase):

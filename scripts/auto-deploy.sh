@@ -16,9 +16,11 @@
 #      EPERM here = `blocked_tcc`: log the exact interpreter to grant Full
 #      Disk Access to, record it in the HOME mirror, notify once per day,
 #      exit 0 with nothing changed. HEAD never moves before this passes.
-#   2. refuse unless HEAD is on `main`; `git fetch --tags origin main` (the
-#      version is derived from tags, §56.1 — and a tag created after its
-#      commit was first fetched is NOT auto-followed by a plain fetch);
+#   2. refuse unless HEAD is on `main`; `git fetch --tags --force origin main`
+#      (the version is derived from tags, §56.1 — a tag created after its
+#      commit was first fetched is NOT auto-followed by a plain fetch, and a
+#      stale local tag that diverged from origin's must be realigned, not
+#      fail the fetch forever);
 #      HEAD == origin/main → DEPLOYED MEANS RUNNING: up_to_date only when
 #      state/install_report.json carries the checkout's version AND
 #      state/actd.heartbeat carries it too and is fresh (a stale-but-right
@@ -1131,9 +1133,14 @@ main() {
     # about a minute after the push; a plain `fetch origin main` that already
     # downloaded the commit never auto-follows a tag created later, and the
     # stamp would read `<prev>+N` instead of the release number.
+    # --force: a local tag that no longer matches origin's (an old hand-made
+    # tag on this machine) makes `fetch --tags` exit 1 ("would clobber
+    # existing tag") on EVERY run — no deploy ever again. origin's tags are
+    # the truth, so realign them; the refspec has no destination, so --force
+    # touches nothing but tags.
     if ! GIT_TERMINAL_PROMPT=0 \
          GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oConnectTimeout=30}" \
-         git_q fetch --quiet --tags "$REMOTE" "$BRANCH" 2>>"$LOG"; then
+         git_q fetch --quiet --tags --force "$REMOTE" "$BRANCH" 2>>"$LOG"; then
         log "git fetch $REMOTE $BRANCH failed (offline? ssh agent?) — will retry next interval"
         write_state "status=fetch_failed" "last_run=$_now" \
                     "head=$(git_q rev-parse HEAD)" "version=$(repo_version)" \

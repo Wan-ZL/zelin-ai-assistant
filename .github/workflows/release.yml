@@ -53,6 +53,12 @@ jobs:
             *) echo "::error::release.yml must run on a vX.Y.Z tag, got ref '${GITHUB_REF_NAME}'"; exit 1 ;;
           esac
           VERSION="${GITHUB_REF_NAME#v}"
+          # merge = release (§56.2): a tag whose commit is not on main would
+          # publish code nobody merged. fetch-depth 0 brings origin/main along.
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at $(git rev-parse --short HEAD), which is not on origin/main — releases are cut from main only (CONTRACT §56.2)"
+            exit 1
+          fi
           python3 scripts/version_stamp.py --version "${VERSION}" --write
           GOT="$(python3 -c 'import act; print(act.__version__)')"
           if [ "${GOT}" != "${VERSION}" ]; then
@@ -340,7 +346,20 @@ jobs:
 
           NOTES
           cat /tmp/release-body.md /tmp/release-notes.md > /tmp/release-full.md
-          gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-full.md --generate-notes --latest
+          # "Latest" is what Sparkle (SUFeedURL …/releases/latest/download/
+          # appcast.xml) and update_check (/releases/latest) follow. Merge =
+          # release means back-to-back merges run this workflow in parallel and
+          # finish in any order — decide from the tag list, never from who
+          # finishes last (a lower tag must not eclipse a higher one). API
+          # unreachable → old behavior (latest).
+          HIGHEST="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
+                     | sed 's#^refs/tags/##' | python3 scripts/ci/release_tags.py highest || true)"
+          LATEST=true
+          if [ -n "$HIGHEST" ] && [ "$HIGHEST" != "$GITHUB_REF_NAME" ]; then
+            LATEST=false
+            echo "${HIGHEST} exists above ${GITHUB_REF_NAME} — publishing without the Latest mark"
+          fi
+          gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-full.md --generate-notes --latest="$LATEST"
           gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" "$LINUX" "$WIN" mac/build/checksums.sha256 mac/build/appcast.xml
 
       - name: Clean up signing keychain
