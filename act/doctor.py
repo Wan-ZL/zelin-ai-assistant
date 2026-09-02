@@ -467,7 +467,7 @@ def _check_home(probes: Probes):
 
 
 def _check_version(probes: Probes):
-    return CheckResult("version", *version_lib.doctor_row(probes.version_status()))
+    return [CheckResult(*row) for row in version_lib.doctor_rows(probes.version_status())]
 
 
 def _check_claude(probes: Probes):

@@ -116,6 +116,20 @@ build_failed() {   # $1 = which compile step broke
     exit 1
 }
 
+# --- version (before the compile: no answer = no swiftc time spent; the previous
+# build's bundle stays as it was) ---
+# version truth = the git tag (CONTRACT §56.1): scripts/build_version.sh picks an
+# interpreter that can actually read this checkout (§55 第三幕: under launchd a
+# Homebrew python3 is TCC-denied on an external volume), runs the stamper (exact
+# tag, tag+N when ahead, else the baked fallback; also writes the git-ignored
+# act/_version.py so the daemons shipped next to this app report the same
+# number), falls back to act.__version__, and exits non-zero when nothing
+# answers — then this build FAILS rather than shipping the Info.plist placeholder.
+echo "==> Deriving the version (scripts/build_version.sh)"
+VERSION="$(bash "$SCRIPT_DIR/../scripts/build_version.sh")" \
+    || build_failed "could not derive the version to stamp (scripts/build_version.sh — see its messages above); refusing to ship the Info.plist placeholder"
+echo "    version: $VERSION"
+
 # --- compile ---
 echo "==> Compiling $SRC_DIR/*.swift + $SHARED_DIR/*.swift"
 mkdir -p "$BUILD_DIR"
@@ -171,19 +185,11 @@ if [ -x "$BUILD_DIR/vault-sync-helper" ]; then
     cp "$BUILD_DIR/vault-sync-helper" "$APP_DIR/Contents/MacOS/vault-sync-helper"
     echo "    bundled vault-sync-helper"
 fi
-# version truth = the git tag (CONTRACT §56.1): scripts/version_stamp.py derives
-# it (exact tag, tag+N when ahead, else the baked fallback) and writes the
-# git-ignored act/_version.py so the daemons shipped next to this app report
-# the same number. Stamp the STAGED plist only — the source Info.plist keeps
-# its values as a fallback for when the version cannot be derived.
-VERSION="$(python3 "$SCRIPT_DIR/../scripts/version_stamp.py" --write 2>/dev/null || true)"
-if [ -n "$VERSION" ]; then
-    plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
-    plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
-    echo "    stamped version $VERSION (scripts/version_stamp.py: git tag truth)"
-else
-    echo "WARN: scripts/version_stamp.py could not derive a version — bundle keeps the Info.plist fallback version."
-fi
+# version (§56.1): VERSION was derived before the compile step. Stamp the
+# STAGED plist only — the source Info.plist keeps its placeholder.
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+echo "    stamped version $VERSION (git tag truth, scripts/build_version.sh)"
 # app icon (optional — present after icon generation)
 if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then
     cp "$SCRIPT_DIR/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
