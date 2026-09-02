@@ -59,15 +59,20 @@
 #      board UI (web/dist + shell app, the `ui` step): toolchain absent =
 #      `ui=skipped` (still a success), build broken = `ui=fail` (rollback)
 #   9. READINESS: wait until state/actd.heartbeat (§47.4) is written by a NEW
-#      actd process (pid changed), stamped with the NEW version (= what
-#      scripts/version_stamp.py derives for the merged checkout — the same
-#      number install.sh just wrote into act/_version.py), in phase
+#      actd process (pid changed), stamped with the version install.sh's
+#      `version` step ACTUALLY wrote into act/_version.py (install_report.json
+#      `version=ok:<v>` — what the daemons read; normally the tag
+#      scripts/version_stamp.py derives for the merged checkout), in phase
 #      `idle` = one full pass completed on the new code. Deadline
 #      (AUTODEPLOY_HEARTBEAT_DEADLINE, 180 s) → FAIL
 #      `actd:no_heartbeat_from_new_version` → rollback. A fixed settle was a
 #      coin: a KeepAlive actd that dies on import shows a pid ~0.5 s of every
 #      throttle cycle, and the old daemon's heartbeat/dashboard files stay
-#      "fresh" for 90 s.
+#      "fresh" for 90 s. When the stamp step FAILED (`version=warn:…`) the
+#      identity is unverifiable — a stale act/_version.py made the new actd
+#      report the OLD number on 2026-09-02T10:14Z and a good v0.48.22 deploy
+#      was rolled back — so readiness is pid + idle only, logged as a WARN
+#      (stamped_identity); the next run's running_mismatch re-stamps.
 #  10. doctor again — as a settle-aware retry loop, not a single sample. A
 #      verdict taken seconds after install.sh restarted every daemon is a
 #      coin (first contact 2026-09-01: the verdict ran 12 s after restart,
@@ -484,7 +489,10 @@ PY
 # completed on the new code. `failed` (the pass threw) counts only when the
 # pre-install daemon was already failing its passes — pre-existing, not the
 # new version's fault. Anything else until the deadline = not ready.
-wait_for_new_actd() { # $1=version $2=pre-install "<version> <pid> <phase>" → 0 ready, 1 deadline
+# $1 = the version the new daemon must report; "" = any version (the stamp
+# step failed, see stamped_identity — identity is unverifiable, pid + phase
+# still are).
+wait_for_new_actd() { # $1=version|"" $2=pre-install "<version> <pid> <phase>" → 0 ready, 1 deadline
     _old_pid="$(printf '%s' "$2" | awk '{print $2}')"
     _old_phase="$(printf '%s' "$2" | awk '{print $3}')"
     _waited=0
@@ -494,7 +502,7 @@ wait_for_new_actd() { # $1=version $2=pre-install "<version> <pid> <phase>" → 
         _hb_rest="${_hb#* }"
         _hb_pid="${_hb_rest%% *}"
         _hb_phase="${_hb_rest#* }"
-        if [ "$_hb_version" = "$1" ] && [ "$_hb_pid" != "$_old_pid" ]; then
+        if { [ -z "$1" ] || [ "$_hb_version" = "$1" ]; } && [ "$_hb_pid" != "$_old_pid" ]; then
             [ "$_hb_phase" = "idle" ] && return 0
             [ "$_hb_phase" = "failed" ] && [ "$_old_phase" = "failed" ] && return 0
         fi
@@ -645,6 +653,54 @@ try:
 except Exception:
     pass
 PY
+}
+
+# The §23 step `$1` of state/install_report.json as "<status>:<detail>"; ""
+# when the report / the step is absent (a pre-cutover install.sh wrote no
+# `version` step) — or when the report predates `$2` (UTC %Y-%m-%dT%H:%M:%SZ,
+# the moment install.sh was started): a run that exited 0 without rewriting
+# the report must not be judged by the PREVIOUS run's stamp.
+install_report_step() { # $1=step name $2=not-before timestamp ("" = any)
+    [ -f "$INSTALL_REPORT" ] || return 0
+    "$PY" - "$INSTALL_REPORT" "$1" "${2:-}" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    if sys.argv[3] and str(data.get("generated_at") or "") < sys.argv[3]:
+        sys.exit(0)
+    for step in data.get("steps") or []:
+        if isinstance(step, dict) and step.get("name") == sys.argv[2]:
+            sys.stdout.write("%s:%s" % (step.get("status") or "", step.get("detail") or ""))
+            break
+except Exception:
+    pass
+PY
+}
+
+# The version identity the daemons install.sh just restarted will carry
+# (§56.1) — read from what install.sh's `version` step ACTUALLY stamped, never
+# predicted from the checkout. `ok:<v>` → v (normally == the checkout's tag).
+# `warn:…` → the stamp step failed and act/_version.py may be STALE: on
+# 2026-09-02T10:14Z a hand-written 0.48.21 stamp survived a failed stamp step
+# on the v0.48.22 checkout, the new actd (new pid, idle pass done) reported
+# 0.48.21, and a perfectly good deploy was rolled back as
+# no_heartbeat_from_new_version. Identity is unverifiable then: EXPECTED_IDENTITY
+# = "" so wait_for_new_actd judges readiness by a NEW pid + an idle pass only
+# (the doctor `version` row WARNs, and the next run's running_mismatch re-runs
+# install.sh to re-stamp). No report / no step → the checkout's version.
+# Globals, not stdout: the reason has to survive back to the caller.
+EXPECTED_IDENTITY=""
+STAMP_WARN=""
+stamped_identity() { # $1=checkout version $2=install start (UTC) → EXPECTED_IDENTITY ("" = any) + STAMP_WARN
+    EXPECTED_IDENTITY="$1"; STAMP_WARN=""
+    _step="$(install_report_step version "${2:-}")"
+    case "$_step" in
+        ok:?*)  EXPECTED_IDENTITY="${_step#ok:}" ;;
+        warn:*) EXPECTED_IDENTITY=""
+                STAMP_WARN="${_step#warn:}"
+                STAMP_WARN="${STAMP_WARN:-stamp step warned without detail}" ;;
+    esac
 }
 
 # Seconds since the heartbeat's `ts`; "-" when absent or unparseable.
@@ -1251,6 +1307,7 @@ main() {
     fi
 
     _hb_before="$(heartbeat_fields)"
+    _install_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     run_install
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
@@ -1258,7 +1315,16 @@ main() {
         exit 0
     fi
 
-    if ! wait_for_new_actd "$VERSION" "$_hb_before"; then
+    # Readiness is keyed on the identity install.sh actually stamped (§56.1),
+    # not on the checkout's prediction — a failed stamp step must not turn a
+    # good deploy into a false no_heartbeat_from_new_version rollback.
+    stamped_identity "$VERSION" "$_install_started"
+    if [ -n "$STAMP_WARN" ]; then
+        log "WARN install.sh could not stamp act/_version.py ($STAMP_WARN) — the daemons' version identity is unverifiable this round: readiness = a NEW actd pid + one idle pass, no version match (doctor \`version\` row WARNs; a stale stamp makes the next run see install_incomplete and re-run install.sh)"
+    elif [ "$EXPECTED_IDENTITY" != "$VERSION" ]; then
+        log "install.sh stamped v$EXPECTED_IDENTITY while the checkout computes v${VERSION:-?} — readiness keyed on the stamp (what the daemons read)"
+    fi
+    if ! wait_for_new_actd "$EXPECTED_IDENTITY" "$_hb_before"; then
         rollback "$PREV" "actd:no_heartbeat_from_new_version — actd on v${VERSION:-?} ($(short "$NEW")) completed no pass within ${HEARTBEAT_DEADLINE}s (heartbeat now: $(heartbeat_fields); before install: $_hb_before) — crash loop or stall" "$TARGET"
         exit 0
     fi
@@ -1289,6 +1355,9 @@ main() {
         _detail="$_detail; doctor pre-existing FAIL: $(printf '%s' "$_after" | tr '\n' ' ')"
     fi
     _hb_now="$(heartbeat_fields)"
+    if [ -n "$STAMP_WARN" ]; then
+        _detail="$_detail; act/_version.py not stamped (daemons report v${_hb_now%% *}; version identity unverified)"
+    fi
     write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" \
                 "head=$NEW" "prev=$PREV" "version=$VERSION" \
                 "running_version=${_hb_now%% *}" "install_report_version=$(install_report_version)" \

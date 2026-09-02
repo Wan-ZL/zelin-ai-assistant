@@ -11,6 +11,9 @@ act.lib.version，所以夹具里的 act 包就是被测代码）。钉住的行
   - 领先 tag N 个 commit：回落常量 ≤ tag → `X.Y.Z+N`；回落常量 > tag（过渡条款，
     本轮切换那一刻的形状）→ 回落常量；随后打上 tag → 恰好是 tag；
   - 仓库没有任何 v* tag → 回落常量；
+  - 解析不依赖进程 cwd（daemon 在 launchd 下 cwd=$HOME、repo 走 PYTHONPATH）：`import act`
+    与绝对路径调用的 stamper 都从包自己的根 `git -C`；陈旧 stamp 在 → `import act` 报它
+    （§56.1 顺序），stamper 的决策仍以 git 为准；
   - 非 git 副本（.pkg / tarball 形状）：已有 stamp 保留，没有 → 回落常量；
   - install.sh 的 stamp_version（抠原文真跑）：写 stamp、报 `version=ok:<v>` 行、
     STAMPED_VERSION 可用；没有 python 也不致命；
@@ -128,6 +131,29 @@ class VersionGitFixtureTestCase(unittest.TestCase):
         self.assertEqual((self.repo / "act" / "_version.py").read_text(encoding="utf-8").count('"0.48.16"'), 1)
         self.assertEqual(self.stamper("--runtime")[0], "0.48.16")
         self.assertEqual(self.import_version(), "0.48.16")
+
+    def test_resolution_never_depends_on_the_process_cwd(self):
+        # the daemons run under launchd with WorkingDirectory=$HOME and the repo on
+        # PYTHONPATH (act/launchd/*.plist); the stamper is called by absolute path from
+        # wherever. `git -C <root derived from __file__>` — never the cwd (2026-09-02
+        # false-rollback review asked for this pin).
+        elsewhere = self.tmp / "home"
+        elsewhere.mkdir()
+        env = dict(self.env, PYTHONPATH=str(self.repo))
+        proc = subprocess.run([sys.executable, "-c", "import act; print(act.__version__)"],
+                              capture_output=True, text=True, timeout=60, cwd=str(elsewhere), env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "0.48.16", "no stamp: git describe from the package's own root")
+        proc = subprocess.run([sys.executable, str(self.repo / "scripts" / "version_stamp.py")],
+                              capture_output=True, text=True, timeout=60, cwd=str(elsewhere), env=self.env)
+        self.assertEqual(proc.stdout.strip(), "0.48.16")
+        # a stale stamp is what the daemons report until re-stamped — that is the
+        # §56.1 order (stamp first), and why auto-deploy keys readiness on the stamp
+        (self.repo / "act" / "_version.py").write_text('__version__ = "0.48.15"\n', encoding="utf-8")
+        proc = subprocess.run([sys.executable, "-c", "import act; print(act.__version__)"],
+                              capture_output=True, text=True, timeout=60, cwd=str(elsewhere), env=env)
+        self.assertEqual(proc.stdout.strip(), "0.48.15")
+        self.assertEqual(self.stamper()[0], "0.48.16", "the stamper's decision ignores a stale stamp when git answers")
 
     def test_ahead_of_tag_with_fallback_at_or_below_tag(self):
         self.set_fallback("0.48.16")            # == tag → honest +N

@@ -22,9 +22,13 @@
 #   python3 on PATH          whatever the shell resolves (a terminal lends its own grant)
 # Each is tried twice: scripts/version_stamp.py --write (also writes the
 # git-ignored act/_version.py the daemons shipped next to this app read), then
-# the runtime resolution itself — `import act; act.__version__` (stamp → git
-# describe → baked fallback) — which still answers when the stamper can read
-# the checkout but not WRITE it. The first non-empty answer wins.
+# the SAME decision read-only (scripts/version_stamp.py without --write: git
+# describe first, an existing stamp only when git cannot answer, else the
+# baked fallback) — which still answers when the stamper can read the checkout
+# but not WRITE it. NOT `import act; act.__version__`: that puts the stamp
+# first, so a stale act/_version.py (an older deploy's, a hand-written one)
+# would label a new build with the OLD number (Codex review P1 on #145). The
+# first non-empty answer wins.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -59,14 +63,14 @@ for py in $(candidates); do
     last="$(tail -n 1 "$err_file" 2>/dev/null | tr -d '\r')"
     last="${last:-exit $rc, no stderr}"
     why="${why:+$why; }$py: $last"
-    version="$(cd "$REPO_ROOT" && PYTHONPATH="$REPO_ROOT" "$py" -c 'import act; print(act.__version__)' 2>"$err_file")"
+    version="$("$py" "$REPO_ROOT/scripts/version_stamp.py" 2>"$err_file")"
     if [ -n "$version" ]; then
-        echo "build_version: WARN scripts/version_stamp.py failed via $py ($last) — using act.__version__ = $version instead; act/_version.py was NOT written" >&2
+        echo "build_version: WARN scripts/version_stamp.py --write failed via $py ($last) — using its read-only answer $version instead; act/_version.py was NOT written" >&2
         printf '%s\n' "$version"
         exit 0
     fi
     last="$(tail -n 1 "$err_file" 2>/dev/null | tr -d '\r')"
-    why="$why; import act: ${last:-no stderr}"
+    why="$why; read-only: ${last:-no stderr}"
 done
 IFS="$saved_ifs"
 

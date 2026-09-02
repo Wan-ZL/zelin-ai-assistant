@@ -12,8 +12,8 @@ python3 跑 stamper，被 TCC 拒在外置卷外，`2>/dev/null` 吞掉报错，
   - build_version.sh：stdout 恰一行版本；tag 在 → tag、写 act/_version.py；
     $AIASSISTANT_PYTHON 最先、pin（config/runtime.json）、/usr/bin/python3、PATH 的
     python3 依次；被拒（EPERM）的解释器跳过并在 stderr 点名 + 带它的最后一行 stderr；
-  - stamper 能读不能写（act/ 只读）→ 退到 `import act; act.__version__`（git describe），
-    stderr 带 WARN，退出 0；
+  - stamper 能读不能写（act/ 只读）→ 退到**只读的 stamper**（同一决策：git 优先；陈旧的
+    act/_version.py 不算——`import act` 会让 stamp 先赢，Codex P1）；stderr 带 WARN，退出 0；
   - 都答不上 → 退出 1，stderr 带每个解释器的诊断；**stdout 为空**；
   - shell/build.sh：bundle 的 CFBundleShortVersionString / CFBundleVersion == 版本；
     版本答不上 → BUILD FAILED（退出非零、没有 bundle）而非带占位出厂。
@@ -161,17 +161,21 @@ class BuildVersionTestCase(unittest.TestCase):
         self.assertIn("via %s" % pin, proc.stderr)
 
     @unittest.skipIf(os.geteuid() == 0 if hasattr(os, "geteuid") else False, "root ignores directory modes")
-    def test_stamper_that_cannot_write_falls_back_to_act_version(self):
+    def test_stamper_that_cannot_write_falls_back_to_its_read_only_answer_not_a_stale_stamp(self):
+        # Codex P1 (#145): a stale act/_version.py from an older deploy must not
+        # label the new build — the fallback is the stamper's own decision (git
+        # first), not `import act` (stamp first)
+        (self.repo / "act" / "_version.py").write_text('__version__ = "0.48.15"\n', encoding="utf-8")
         act_dir = self.repo / "act"
         act_dir.chmod(0o555)
         self.addCleanup(act_dir.chmod, 0o755)
         proc = self.build_version({"AIASSISTANT_PYTHON": sys.executable})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.strip(), "0.48.16", "git describe still answers through act.__version__")
-        self.assertIn("WARN scripts/version_stamp.py failed via", proc.stderr)
-        self.assertIn("using act.__version__ = 0.48.16", proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "0.48.16", "git describe answers; the stale 0.48.15 stamp does not")
+        self.assertIn("WARN scripts/version_stamp.py --write failed via", proc.stderr)
+        self.assertIn("using its read-only answer 0.48.16", proc.stderr)
         self.assertIn("NOT written", proc.stderr)
-        self.assertFalse(self.stamp().exists())
+        self.assertIn('"0.48.15"', (self.repo / "act" / "_version.py").read_text(encoding="utf-8"), "stamp untouched")
 
     def test_nothing_answers_exits_1_with_diagnostics_and_empty_stdout(self):
         self.break_everything()
@@ -182,7 +186,7 @@ class BuildVersionTestCase(unittest.TestCase):
         self.assertIn("build_version: ERROR no interpreter could derive the version", proc.stderr)
         self.assertIn("Operation not permitted", proc.stderr)
         self.assertIn("stamper boom", proc.stderr)
-        self.assertIn("act boom", proc.stderr)
+        self.assertIn("read-only:", proc.stderr, "both attempts per interpreter are named")
 
     # -- shell/build.sh ----------------------------------------------------- #
 

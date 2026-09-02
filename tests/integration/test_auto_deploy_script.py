@@ -43,7 +43,11 @@ version_stamp.py 算期望版本，假 install.sh 用同一把尺盖章 + 写心
   - **就绪等待**（B2）：install 后必须等到 state/actd.heartbeat 由**新进程**
     （pid 变了）写下**新版本** + phase=idle；旧 daemon 的心跳不算；超时 =
     actd:no_heartbeat_from_new_version 回滚；新 daemon pass 抛 `failed` 只在旧
-    daemon 也 `failed` 时算 pre-existing；
+    daemon 也 `failed` 时算 pre-existing；**「新版本」= install.sh `version` step 真盖
+    的号**（install_report `version=ok:<v>`），不是 checkout 的预测；stamp 步失败
+    （`version=warn:…`，2026-09-02T10:14Z：陈旧的手写 stamp 让新 actd 报旧号、好部署被
+    误回滚）→ 身份不可验证：只看新 pid + idle，日志 WARN，deployed 的 detail 点名；
+    下一轮 running_mismatch 看到旧号 → install_incomplete → 重跑 install.sh 重盖章自愈；
   - install 失败 / doctor 出现**新增** FAIL → git reset --hard 回旧 sha + 再装 +
     rolled_back + failed_sha 记账，下一轮对同一 sha 不再重试，--force 才重试；
   - **settle-before-verdict**（首次实战 2026-09-01 的假阳性回滚）：装后 doctor
@@ -105,9 +109,19 @@ FAKE_INSTALL = r"""#!/bin/bash
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # like the real install.sh (§56.1): stamp act/_version.py from the tag and report
-# that number; a pre-cutover checkout (no stamper) still has the literal line
-if [ -f "$here/scripts/version_stamp.py" ]; then
+# that number (§23 step `version=ok:<v>`); a pre-cutover checkout (no stamper)
+# still has the literal line. FAKE_INSTALL_STAMP_FAIL models the 2026-09-02T10:14Z
+# shape: the stamp step fails (TCC-denied interpreter), a STALE act/_version.py
+# survives, the daemons read it → heartbeat + report carry the stale number,
+# the report's `version` step says warn.
+stamp_step=""
+if [ -n "${FAKE_INSTALL_STAMP_FAIL:-}" ]; then
+    ver="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$here/act/_version.py" 2>/dev/null)"
+    [ -n "$ver" ] || ver="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$here/act/__init__.py")"
+    stamp_step='{"name": "version", "status": "warn", "detail": "stamp failed — /opt/homebrew/bin/python3: [Errno 1] Operation not permitted"}'
+elif [ -f "$here/scripts/version_stamp.py" ]; then
     ver="$("${AIASSISTANT_PYTHON:-python3}" "$here/scripts/version_stamp.py" --write 2>/dev/null)"
+    stamp_step="$(printf '{"name": "version", "status": "ok", "detail": "%s"}' "$ver")"
 else
     ver="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$here/act/__init__.py")"
 fi
@@ -181,7 +195,8 @@ fi
 # dies before its last step never writes it; rc≠0 here models that)
 if { [ "$rc" -eq 0 ] && [ -z "${FAKE_INSTALL_NO_REPORT:-}" ]; } || [ -n "${FAKE_INSTALL_REPORT_ANYWAY:-}" ]; then
     mkdir -p "$here/state"
-    printf '{"version": "%s", "mode": "non-interactive", "steps": []}\n' "$ver" > "$here/state/install_report.json"
+    printf '{"version": "%s", "generated_at": "%s", "mode": "non-interactive", "steps": [%s]}\n' \
+        "$ver" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stamp_step" > "$here/state/install_report.json"
 fi
 exit "$rc"
 """
@@ -911,6 +926,70 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), target)
         self.assertEqual(self.state()["status"], "deployed")
+
+    def test_failed_stamp_step_does_not_roll_back_a_good_deploy_and_the_next_runs_re_stamp(self):
+        # 2026-09-02T10:14Z: the stamp step failed (Homebrew python TCC-denied), a
+        # hand-written 0.48.21 stamp survived on the v0.48.22 checkout, the NEW actd
+        # (new pid, idle pass) reported 0.48.21 → rolled back as no_heartbeat_from_new_version.
+        stale = self.live / "act" / "_version.py"
+        stale.write_text('__version__ = "0.48.3"\n', encoding="utf-8")
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_STAMP_FAIL": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual(st["status"], "deployed", self.log_text())
+        self.assertEqual(self.head(), target, "no rollback")
+        self.assertEqual(st["version"], "0.48.4", "the checkout's version")
+        self.assertEqual(st["running_version"], "0.48.3", "…while the daemons read the stale stamp")
+        self.assertEqual(st["install_report_version"], "0.48.3")
+        self.assertIn("act/_version.py not stamped", st["detail"])
+        self.assertIn("version identity unverified", st["detail"])
+        log = self.log_text()
+        self.assertIn("WARN install.sh could not stamp act/_version.py (stamp failed — /opt/homebrew/bin/python3: [Errno 1] Operation not permitted)", log)
+        self.assertNotIn("ROLLBACK", log)
+        self.assertEqual(len(self.installs()), 1)
+        # next run: the stale identity is a running_mismatch — first sighting only records…
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertIn("heartbeat_version_mismatch", st["reason"])
+        self.assertEqual(len(self.installs()), 1, "first sighting: no re-run yet")
+        # …the second sighting re-runs install.sh, whose stamp step now succeeds → identity restored
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual(st["status"], "deployed", self.log_text())
+        self.assertEqual(st["running_version"], "0.48.4")
+        self.assertEqual(st["install_report_version"], "0.48.4")
+        self.assertEqual(len(self.installs()), 2)
+        self.assertIn('__version__ = "0.48.4"', stale.read_text(encoding="utf-8"), "re-stamped")
+
+    def test_a_report_older_than_the_install_never_keys_readiness(self):
+        # install.sh exited 0 but (somehow) did not rewrite the report: the previous
+        # run's `version=ok:0.48.3` must not make the new 0.48.4 daemon look wrong
+        rep = self.live / "state" / "install_report.json"
+        rep.write_text(json.dumps({"version": "0.48.3", "generated_at": "2020-01-01T00:00:00Z",
+                                   "mode": "non-interactive",
+                                   "steps": [{"name": "version", "status": "ok", "detail": "0.48.3"}]}),
+                       encoding="utf-8")
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_NO_REPORT": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "deployed", self.log_text())
+        self.assertNotIn("ROLLBACK", self.log_text())
+        self.assertNotIn("readiness keyed on the stamp", self.log_text(), "stale report ignored → checkout prediction, as before")
+
+    def test_readiness_is_keyed_on_the_stamp_install_sh_wrote_not_the_prediction(self):
+        # the report says ok:<v>; the heartbeat must carry THAT v (here identical
+        # to the checkout's — the fake stamps with the real stamper), and a daemon
+        # still beating the OLD version under a new pid is not ready
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertNotIn("WARN install.sh could not stamp", self.log_text())
+        self.assertNotIn("readiness keyed on the stamp", self.log_text(), "stamp == checkout: nothing to say")
 
     def test_ready_heartbeat_is_logged_and_the_doctor_runs_after_it(self):
         self.push("0.48.4")
