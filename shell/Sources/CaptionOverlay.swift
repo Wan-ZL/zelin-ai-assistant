@@ -1,0 +1,222 @@
+// CaptionOverlay.swift — the 实时字幕 always-on-top overlay: a borderless
+// NON-ACTIVATING NSPanel (lyrics style) that floats over every app and Space
+// and never steals focus from what the user is doing.
+//
+// shell/ copy of mac/Sources/CaptionOverlay.swift (CONTRACT §61.3). The ONLY
+// deliberate difference: the hover strip's gear button no longer routes through
+// the native MainNav/Settings window (retired, D3) — it asks the shell to open
+// the web board's settings page (`?page=settings&anchor=live_captions`) via
+// `ShellNavigation.openSettings`. Everything else is verbatim.
+
+import AppKit
+import SwiftUI
+
+/// Shell-side navigation hook the overlay calls into (set by AppDelegate at
+/// launch). Kept as a closure so this file stays free of AppDelegate types.
+@MainActor
+enum ShellNavigation {
+    static var openSettings: ((_ anchor: String) -> Void)?
+}
+
+@MainActor
+final class CaptionOverlayController {
+    static let shared = CaptionOverlayController()
+    private var panel: NSPanel?
+
+    /// Hard ceiling for the panel height: the overlay shows a rolling
+    /// 2-sentence window (CaptionRollup), never a transcript — no content may
+    /// ever grow the panel past this. Sized for the max font (40 pt) bilingual
+    /// pair + live line at lineLimit(2) each (captionText enforces the two
+    /// lines, so this ceiling and the row cap agree by construction).
+    static let maxPanelHeight: CGFloat = 300
+
+    func show() {
+        if panel == nil {
+            let p = NSPanel(contentRect: Self.defaultFrame(),
+                            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+                            backing: .buffered, defer: false)
+            p.isFloatingPanel = true
+            p.level = .statusBar
+            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            p.isReleasedWhenClosed = false
+            p.backgroundColor = .clear
+            p.isOpaque = false
+            p.hasShadow = false
+            p.hidesOnDeactivate = false
+            p.becomesKeyOnlyIfNeeded = true
+            p.isMovableByWindowBackground = true
+            p.minSize = NSSize(width: 320, height: 72)
+            p.maxSize = NSSize(width: 2400, height: Self.maxPanelHeight)
+            p.contentViewController = NSHostingController(rootView: CaptionOverlayView())
+            // restores the user's dragged position/size across launches
+            // (falls back to the bottom-center default frame above)
+            p.setFrameAutosaveName("liveCaptionsPanel")
+            panel = p
+        }
+        // maxSize only gates USER resizing — clamp a taller frame restored
+        // from before the height cap existed (the old ceiling was 480)
+        if let p = panel, p.frame.height > Self.maxPanelHeight {
+            var f = p.frame
+            f.size.height = Self.maxPanelHeight
+            p.setFrame(f, display: false)
+        }
+        panel?.orderFrontRegardless()
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
+    }
+
+    /// Bottom-center of the main screen — the lyrics spot.
+    private static func defaultFrame() -> NSRect {
+        let visible = NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let width = min(760.0, visible.width * 0.6)
+        let height = 110.0
+        return NSRect(x: visible.midX - width / 2, y: visible.minY + 60,
+                      width: width, height: height)
+    }
+}
+
+// MARK: - view
+
+struct CaptionOverlayView: View {
+    @ObservedObject private var cap = LiveCaptionsController.shared
+    @ObservedObject private var i18n = LanguageStore.shared
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            VStack(alignment: .leading, spacing: 4) {
+                Spacer(minLength: 0)
+                // status precedence lives in CaptionDisplayState (CaptionCore,
+                // tested): the paused label always outranks engine status, so
+                // a late .listening can never claim we're listening while
+                // nothing is captured (review G)
+                if let status = displayState.statusLine(pausedLabel: Self.pausedLabel) {
+                    Text(status.text)
+                        .font(.system(size: 11))
+                        .foregroundColor(status.isError ? .orange
+                            : cap.paused ? .yellow.opacity(0.9) : .white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !cap.sourceNote.isEmpty && !cap.paused {
+                    Text(cap.sourceNote)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                finalBlock
+                if !cap.lines.liveText.isEmpty {
+                    // live line truncates at the HEAD: in a growing partial
+                    // the newest words are at the end and must stay visible
+                    captionText(cap.lines.liveText, size: cap.fontSize * 0.8,
+                                color: .white.opacity(0.6), truncation: .head)
+                }
+                if idle {
+                    Text(L("实时字幕正在听…", "Live captions — listening…"))
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            if hovering { controlStrip }
+        }
+        .background(RoundedRectangle(cornerRadius: 12)
+            .fill(Color.black.opacity(cap.opacity)))
+        .onHover { hovering = $0 }
+        // belt-and-braces over CaptionRollup's sentence cap + the per-row
+        // lineLimit: the box never asks the panel for more than
+        // maxPanelHeight, and anything taller clips at the TOP — newest text
+        // stays bottom-anchored and visible (clipped AFTER the frame so the
+        // clip rect is the capped box itself)
+        .frame(maxHeight: CaptionOverlayController.maxPanelHeight,
+               alignment: .bottom)
+        .clipped()
+    }
+
+    static var pausedLabel: String {
+        L("已暂停 — 未在采集，也不计费", "Paused — nothing is captured or billed")
+    }
+
+    private var displayState: CaptionDisplayState {
+        CaptionDisplayState(paused: cap.paused, statusText: cap.statusText,
+                            statusIsError: cap.statusIsError)
+    }
+
+    /// Nothing to show yet (and no status line explaining why).
+    private var idle: Bool {
+        !cap.paused && cap.statusText.isEmpty && cap.sourceNote.isEmpty
+            && cap.lines.finalText.isEmpty && cap.lines.liveText.isEmpty
+    }
+
+    // top line: last finalized sentence — bilingual mode renders the pair as
+    // 原文小字 + 译文大字, captions-only mode renders the original big
+    @ViewBuilder private var finalBlock: some View {
+        if !cap.lines.finalText.isEmpty {
+            if cap.translationActive {
+                captionText(cap.lines.finalText, size: cap.fontSize * 0.6,
+                            color: .white.opacity(0.75))
+                if !cap.lines.finalTranslation.isEmpty {
+                    captionText(cap.lines.finalTranslation, size: cap.fontSize,
+                                color: .white)
+                }
+            } else {
+                captionText(cap.lines.finalText, size: cap.fontSize, color: .white)
+            }
+        }
+    }
+
+    /// One caption row, hard-capped at two wrapped lines (review MAJOR 4: a
+    /// 300-char CJK tail at 40 pt once wrapped to ~16 lines and pushed the
+    /// original + translation off the clipped top — only the live partial
+    /// stayed visible). Final/translation rows truncate at the tail; the
+    /// live row passes .head so its newest words survive.
+    private func captionText(_ text: String, size: Double, color: Color,
+                             truncation: Text.TruncationMode = .tail) -> some View {
+        Text(text)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundColor(color)
+            .shadow(color: .black.opacity(0.8), radius: 2, x: 0, y: 1)
+            .lineLimit(2)
+            .truncationMode(truncation)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // hover-only strip: pause / settings / close
+    private var controlStrip: some View {
+        HStack(spacing: 10) {
+            // engineDead = capture already stopped; nothing left to pause
+            // (toggling off / fixing the key in settings are the real moves)
+            if !cap.engineDead {
+                Button {
+                    cap.togglePause()
+                } label: {
+                    Image(systemName: cap.paused ? "play.fill" : "pause.fill")
+                }
+                .help(cap.paused ? L("继续", "Resume")
+                                 : L("暂停（停止采集与计费）", "Pause (stops capture and billing)"))
+            }
+            Button {
+                // web 设置页承接字幕偏好（P4 Tier 2）；原生 Settings 窗口已退役
+                ShellNavigation.openSettings?("live_captions")
+            } label: {
+                Image(systemName: "gearshape.fill")
+            }
+            .help(L("字幕设置", "Caption settings"))
+            Button {
+                cap.setEnabled(false)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .help(L("关闭实时字幕", "Turn off live captions"))
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 13))
+        .foregroundColor(.white.opacity(0.85))
+        .padding(8)
+    }
+}
