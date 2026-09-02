@@ -1,7 +1,7 @@
 ---
 name: test-code
 description: test code 测试代码 — a five-tier, trigger-aware measurement ladder for ANY repo and ANY AI harness. Detects the stack, asks the human ONCE (tier 1–5 + a multi-select of checks), runs the checks (parallel where safe, per-check timeouts; tier 5 = 通宵/通几天, no limit) and writes one honest report (report.md + report.json) with a three-way "not run" split, a fix-first ranking, core-skip accounting and structural blind spots. Use when asked "test this", "跑测试", "测一下", "测试代码", "test code", "how well is this tested", before a merge, or when an agent finishes work and must attach evidence. It only measures — it never writes specs, code or tests.
-version: 0.2.0
+version: 0.2.1
 upstream: robust-code (Zelin's private skill) ← AmazingAng/old-coder (MIT) — attribution in NOTICE
 upstream_version: robust-code SKILL.md snapshot 2026-08-18
 ---

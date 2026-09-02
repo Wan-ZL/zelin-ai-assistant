@@ -22,7 +22,7 @@ import subprocess
 import time
 
 SKILL_NAME = "test-code"
-SKILL_VERSION = "0.2.0"
+SKILL_VERSION = "0.2.1"
 REPORT_SCHEMA = 1
 
 # 遍历项目文件时永远跳过的目录（依赖/构建产物/本 skill 自己的输出）。

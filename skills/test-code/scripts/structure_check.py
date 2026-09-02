@@ -23,7 +23,7 @@ import re
 
 _TEST_NAME_RE = re.compile(r"(^|/)(test_[^/]*\.py|[^/]*_test\.py)$")
 _ENTRY_DIRS = ("scripts", "bin", "tools")
-_MODULE_EXEMPT = ("__init__.py", "__main__.py", "conftest.py", "setup.py")
+_MODULE_EXEMPT = ("__init__.py", "__main__.py", "conftest.py", "setup.py", "conf.py")
 DEFAULT_CAPS = {"max_dir_depth": 6, "max_files_per_dir": 40}
 
 
@@ -85,15 +85,34 @@ def module_name(rel):
     return ".".join(parts)
 
 
-def _imported_names(tree):
-    """`import a.b` → a.b；`from a import b` → a 与 a.b（b 可能是子模块，多报无害：只对已知模块解析）。"""
+def _relative_base(importer, is_package, level):
+    """`from ..x import y` 的锚点：importer=`pkg.sub.mod`（文件）level 1 → `pkg.sub`；包 __init__ 自身算一层。"""
+    parts = importer.split(".")
+    keep = len(parts) - level + (1 if is_package else 0)
+    return ".".join(parts[:max(keep, 0)])
+
+
+def _from_names(node, importer, is_package):
+    """ImportFrom → 绝对模块名列表：模块本身 + 模块.别名（别名可能是子模块，多报无害）。"""
+    if node.level:
+        base = _relative_base(importer, is_package, node.level)
+        module = ".".join(p for p in (base, node.module or "") if p)
+    else:
+        module = node.module or ""
+    if not module:
+        return []
+    return [module] + ["%s.%s" % (module, alias.name) for alias in node.names]
+
+
+def _imported_names(tree, importer="", is_package=False):
+    """`import a.b` → a.b；`from a import b` → a 与 a.b；相对导入按 importer 解析成绝对名
+    （首次跨项目实跑：itsdangerous 的 `from ._json import …` 让 _json.py 被误报为孤儿）。"""
     names = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names += [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.append(node.module)
-            names += ["%s.%s" % (node.module, alias.name) for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names += _from_names(node, importer, is_package)
     return names
 
 
@@ -119,7 +138,7 @@ def scan_imports(read, py_files):
         except (SyntaxError, ValueError) as exc:
             errors.append("%s: %s" % (rel, exc))
             continue
-        names = _imported_names(tree)
+        names = _imported_names(tree, mod, rel.endswith("__init__.py"))
         stems.update(n.split(".")[-1] for n in names)
         targets = {_resolve(n, known) for n in names}
         graph[mod] = {t for t in targets if t and t != mod}
@@ -210,7 +229,8 @@ def orphans(graph, py_files, read, tests_dir, stems=frozenset()):
     imported = _all_imported(graph)
     out = {}
     for rel in py_files:
-        exempt = _referenced(rel, imported, stems) or _under(rel, tests_dir) or rel.endswith("__init__.py")
+        exempt = (_referenced(rel, imported, stems) or _under(rel, tests_dir)
+                  or os.path.basename(rel) in _MODULE_EXEMPT)
         if not exempt and not _is_entry(rel, read):
             out["orphan:%s" % rel] = 1.0
     return out

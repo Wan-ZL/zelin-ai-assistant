@@ -26,3 +26,13 @@ per_mutant_timeout_seconds = 60
 "act/lib/provenance.py" = ["tests/test_provenance.py"]
 "act/lib/registry.py" = ["tests/test_registry_merge.py", "tests/test_registry_backend_parity.py", "tests/test_registry_example_skip.py", "tests/test_audit_registry_fail_closed.py", "tests/test_audit_registry_listfile.py", "tests/test_card_lifecycle.py"]
 "act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]
+
+# test-code skill（skills/test-code；vnext2-plan R2.8）——skill 自己也接受每晚第 4 档考验。
+# 2026-09-02 首轮：1,581 变异体 62% 杀伤，存活体 75% 是 CATALOG 数据表里的时间估计常数（±1），
+# 逻辑存活体已在 tests/test_skill_test_code_mutation_kills.py 逐个钉死。
+"skills/test-code/scripts/ladder_common.py" = ["tests/test_skill_test_code_common.py", "tests/test_skill_test_code_mutation_kills.py"]
+"skills/test-code/scripts/complexity_min.py" = ["tests/test_skill_test_code_complexity_min.py"]
+"skills/test-code/scripts/structure_check.py" = ["tests/test_skill_test_code_structure.py"]
+"skills/test-code/scripts/detect.py" = ["tests/test_skill_test_code_detect.py"]
+"skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py"]
+"skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
