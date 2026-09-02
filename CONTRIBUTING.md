@@ -37,7 +37,7 @@ Note that `install.sh` is the *end-user* installer — it installs the app to /A
 ## Dev environment
 
 - **Python 3.9+ with PyYAML** — deliberately the only Python dependency (that's why there is no lockfile). If `pip install --user pyyaml` fails with "externally managed environment" (Homebrew Python, PEP 668), retry with `--break-system-packages`; CI uses the same fallback.
-- **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI; see the "Select newest Xcode" comment in `.github/workflows/ci.yml`). `mac/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash mac/build.sh` is the whole build.
+- **Xcode / Swift 6.x** — older toolchains fail mid-build on main-actor isolation rules (same floor as CI, which pins one exact Xcode for both `ci.yml` and `release.yml` — truth = `.github/xcode-version`, applied by `scripts/ci/select_xcode.sh`; a pin missing from the runner image fails loudly instead of falling back to "newest"; bump it in a PR). `mac/Sources/` compiles as one module via plain `swiftc` — no SPM, no Xcode project; `bash mac/build.sh` is the whole build.
 - Only needed for full-pipeline work: [Claude Code CLI](https://claude.com/claude-code) + API key, Node.js LTS, Obsidian — setup in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## The four gates
