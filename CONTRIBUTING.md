@@ -58,7 +58,7 @@ CI additionally runs the **QA merge gates** (per-function complexity, CRAP, cove
 
 ### board shell 手动检查（shell/ 没有 test target）
 
-`shell/Sources/main.swift` 的连接序（CONTRACT §54.1）没有 Swift 测试靶，改动它时手动过一遍（每条 ≤1 分钟）：
+`shell/Sources/main.swift` 的连接序（CONTRACT §54.2）没有 Swift 测试靶，改动它时手动过一遍（每条 ≤1 分钟）：
 
 1. **attach**：server agent 在班（`launchctl print gui/$UID/com.zelin.aiassistant.server` 退出 0、`curl -s 127.0.0.1:47820/api/health` 有答）→ `open "shell/build/Zelin AI Board.app"` → 看板直接出现；`~/Library/Logs/zelin-ai-assistant/board-shell.log` **没有**新的 `spawn` 横幅。
 2. **launchd 已加载但端口没答话**：`launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server` 后 1 秒内 `open` 壳 → 壳等 ≤10 s 后照常加载（log 里一行 `… is loaded in launchd — waiting, not spawning`），期间 `pgrep -fl "python3 -m server"` 只有 launchd 那一个进程。

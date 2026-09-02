@@ -1,6 +1,6 @@
 """Board server hosting + UI deploy probes — the pure half of two doctor rows.
 
-CONTRACT §54.1 (the board server is a resident launchd agent / systemd unit;
+CONTRACT §54.2 (the board server is a resident launchd agent / systemd unit;
 the shell only connects) and §56.5 (the `ui` install step). ``act/doctor.py``
 wraps these into ``CheckResult`` rows; this module holds the platform-neutral
 logic so it stays testable and keeps doctor.py under the file cap (防腐 #1).
@@ -67,7 +67,7 @@ def hosted(listing: str, darwin: bool) -> bool:
 
 def restart_cmd(darwin: bool) -> str:
     """Hard-restart the server — the shell's failure dialog prints the darwin
-    line first (§54.1)."""
+    line first (§54.2)."""
     if darwin:
         return "launchctl kickstart -k gui/$(id -u)/%s" % LABEL
     return "systemctl --user restart %s" % UNIT
