@@ -7,7 +7,7 @@ act/actd.py::_apply_decision 87.1
 act/actd.py::_apply_feedback 7.5
 act/actd.py::_apply_harvest_title 7
 act/actd.py::_apply_merge_decision 16.9
-act/actd.py::_apply_merge_force 15
+act/actd.py::_apply_merge_force 10
 act/actd.py::_apply_merge_partition 17.1
 act/actd.py::_apply_merge_review 29.1
 act/actd.py::_apply_merge_verdict 61.6
@@ -196,9 +196,8 @@ act/lib/registry.py::load 9
 act/lib/registry.py::load_all 12
 act/lib/registry.py::mark_note_split 8
 act/lib/registry.py::merge_or_new_with_kind 41
-act/lib/registry.py::next_id 10
 act/lib/registry.py::reraise_or_followup 36
-act/lib/registry.py::save 19.1
+act/lib/registry.py::save 8
 act/lib/registry.py::set_display_title 16
 act/lib/registry.py::writes_since 9.9
 act/lib/repos.py::_readme_hint 13.1
@@ -247,13 +246,11 @@ act/lib/store2/migrate_yaml.py::main 15.2
 act/lib/store2/migrate_yaml.py::plan_card 7
 act/lib/store2/migrate_yaml.py::run_migration 10.9
 act/lib/store2/migrate_yaml.py::scan_registry._walk 13.4
-act/lib/store2/readonly.py::read_card 9.2
 act/lib/store2/store.py::Store.create_card 10.1
 act/lib/store2/store.py::Store.get_activities 9.8
 act/lib/store2/store.py::Store.put_card 24.2
 act/lib/store2/store.py::Store.transition 19.1
 act/lib/store2/store.py::Store.update_card_fields 19.8
-act/lib/store2/store.py::_translate_integrity 27.9
 act/lib/titles.py::_url_title 12.8
 act/lib/titles.py::is_unreadable_title 8
 act/lib/titles.py::sanitize_title 8
@@ -358,7 +355,6 @@ server/app.py::Handler._route_post 11
 server/app.py::Handler._serve_events 6.1
 server/app.py::Handler._serve_static 27.4
 server/app.py::main 9.9
-server/board_source.py::_match_card 7
 server/board_source.py::card_detail 9
 server/board_source.py::load_registry_card 11
 server/board_source.py::registry_backend 7
