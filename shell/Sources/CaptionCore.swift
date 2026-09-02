@@ -1,0 +1,680 @@
+// CaptionCore.swift — pure logic for 实时字幕 (live captions): the Doubao
+// streaming-ASR binary frame codec, the server-payload interpreter, and the
+// 2-line caption roll-up reducer.
+//
+// Foundation + Compression ONLY — no AppKit/SwiftUI — so ios/tests/captions
+// can compile this file with plain swiftc and assert on byte-exact frames and
+// reducer sequences (same harness style as ios/tests/contract). Keep every
+// network/UI concern in LiveCaptions.swift / CaptionOverlay.swift.
+
+import Foundation
+import Compression
+
+// MARK: - Doubao streaming-ASR wire framing (火山 sauc v3 binary protocol)
+//
+// Every WebSocket message is: a 4-byte header, an optional 4-byte big-endian
+// sequence (when the flags nibble says so), for error frames a 4-byte
+// big-endian error code, then a 4-byte big-endian payload size + payload.
+//
+//   byte 0: (protocol version << 4) | header size in 4-byte units  → 0x11
+//   byte 1: (message type << 4) | message-type-specific flags
+//   byte 2: (serialization << 4) | compression
+//   byte 3: reserved (0x00)
+//
+// Client → server: one "full client request" (JSON config, sequence 1), then
+// audio-only frames with increasing sequence; the FINAL audio frame flips the
+// flags to 0b0011 and carries the NEGATIVE sequence (protocol's end marker).
+
+enum DoubaoFrame {
+    // message types (high nibble of byte 1)
+    static let typeFullClient: UInt8 = 0b0001
+    static let typeAudioOnly: UInt8 = 0b0010
+    static let typeFullServer: UInt8 = 0b1001
+    static let typeError: UInt8 = 0b1111
+    // message-type-specific flags (low nibble of byte 1)
+    static let flagPosSequence: UInt8 = 0b0001
+    static let flagNegSequence: UInt8 = 0b0011  // last frame: sequence < 0
+    // serialization / compression nibbles (byte 2)
+    static let serialJSON: UInt8 = 0b0001
+    static let serialRaw: UInt8 = 0b0000
+    static let compressNone: UInt8 = 0b0000
+    static let compressGzip: UInt8 = 0b0001
+
+    private static func header(type: UInt8, flags: UInt8, serial: UInt8,
+                               compress: UInt8) -> [UInt8] {
+        [0x11, (type << 4) | flags, (serial << 4) | compress, 0x00]
+    }
+
+    private static func beInt32(_ v: Int32) -> [UInt8] {
+        let u = UInt32(bitPattern: v)
+        return [UInt8(u >> 24 & 0xFF), UInt8(u >> 16 & 0xFF),
+                UInt8(u >> 8 & 0xFF), UInt8(u & 0xFF)]
+    }
+
+    /// First frame of a session: the JSON config payload, sequence 1.
+    /// Payload is sent UNCOMPRESSED — the sauc server accepts it and it keeps
+    /// this codec free of a gzip *encoder*.
+    static func fullClientRequest(json payload: Data, sequence: Int32) -> Data {
+        var out = header(type: typeFullClient, flags: flagPosSequence,
+                         serial: serialJSON, compress: compressNone)
+        out += beInt32(sequence)
+        out += beInt32(Int32(payload.count))
+        return Data(out) + payload
+    }
+
+    /// Audio frame (raw pcm_s16le bytes). `last: true` emits the protocol's
+    /// end marker: flags 0b0011 + negative sequence.
+    static func audioFrame(_ audio: Data, sequence: Int32, last: Bool) -> Data {
+        var out = header(type: typeAudioOnly,
+                         flags: last ? flagNegSequence : flagPosSequence,
+                         serial: serialRaw, compress: compressNone)
+        out += beInt32(last ? -sequence : sequence)
+        out += beInt32(Int32(audio.count))
+        return Data(out) + audio
+    }
+
+    struct ServerFrame: Equatable {
+        let messageType: UInt8
+        let flags: UInt8
+        let sequence: Int32?
+        let errorCode: UInt32?  // only for typeError frames
+        let payload: Data       // already gunzipped when the server compressed
+        var isError: Bool { messageType == DoubaoFrame.typeError }
+        /// Server marks its final frame the same way the client does (bit 1).
+        var isLast: Bool { flags & 0b0010 != 0 }
+    }
+
+    /// Parse one server WebSocket message. nil = malformed/truncated frame
+    /// (callers drop it and keep the stream alive).
+    static func parseServerFrame(_ data: Data) -> ServerFrame? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 4 else { return nil }
+        let headerSize = Int(bytes[0] & 0x0F) * 4
+        guard headerSize >= 4, bytes.count >= headerSize else { return nil }
+        let type = bytes[1] >> 4
+        let flags = bytes[1] & 0x0F
+        let compression = bytes[2] & 0x0F
+        var idx = headerSize
+
+        func readBE32() -> UInt32? {
+            guard idx + 4 <= bytes.count else { return nil }
+            let v = UInt32(bytes[idx]) << 24 | UInt32(bytes[idx + 1]) << 16
+                | UInt32(bytes[idx + 2]) << 8 | UInt32(bytes[idx + 3])
+            idx += 4
+            return v
+        }
+
+        var sequence: Int32?
+        if flags & 0x01 != 0 {
+            guard let raw = readBE32() else { return nil }
+            sequence = Int32(bitPattern: raw)
+        }
+        var errorCode: UInt32?
+        if type == typeError {
+            guard let raw = readBE32() else { return nil }
+            errorCode = raw
+        }
+        guard let size = readBE32(), idx + Int(size) <= bytes.count else { return nil }
+        var payload = Data(bytes[idx..<idx + Int(size)])
+        if compression == compressGzip {
+            guard let plain = gunzip(payload) else { return nil }
+            payload = plain
+        }
+        return ServerFrame(messageType: type, flags: flags, sequence: sequence,
+                           errorCode: errorCode, payload: payload)
+    }
+
+    /// RFC 1952 gzip → plain bytes. libcompression's COMPRESSION_ZLIB is RAW
+    /// deflate, so strip the gzip wrapper (header + 8-byte trailer) first.
+    /// CRC is not verified — a corrupt payload just fails JSON parsing later.
+    static func gunzip(_ data: Data) -> Data? {
+        let bytes = [UInt8](data)
+        guard bytes.count > 18, bytes[0] == 0x1F, bytes[1] == 0x8B,
+              bytes[2] == 0x08 else { return nil }
+        let flg = bytes[3]
+        var idx = 10
+        if flg & 0x04 != 0 {  // FEXTRA: 2-byte little-endian length + payload
+            guard idx + 2 <= bytes.count else { return nil }
+            idx += 2 + (Int(bytes[idx]) | Int(bytes[idx + 1]) << 8)
+        }
+        if flg & 0x08 != 0 {  // FNAME: NUL-terminated
+            while idx < bytes.count, bytes[idx] != 0 { idx += 1 }
+            idx += 1
+        }
+        if flg & 0x10 != 0 {  // FCOMMENT: NUL-terminated
+            while idx < bytes.count, bytes[idx] != 0 { idx += 1 }
+            idx += 1
+        }
+        if flg & 0x02 != 0 { idx += 2 }  // FHCRC
+        guard idx < bytes.count - 8 else { return nil }
+        return inflateRaw(Data(bytes[idx..<bytes.count - 8]))
+    }
+
+    private static func inflateRaw(_ data: Data) -> Data? {
+        var capacity = max(data.count * 8, 1 << 16)
+        // grow-and-retry: a full output buffer means it was too small
+        for _ in 0..<6 {
+            let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+            defer { dst.deallocate() }
+            let written = data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
+                guard let base = src.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return compression_decode_buffer(dst, capacity, base, data.count,
+                                                 nil, COMPRESSION_ZLIB)
+            }
+            if written == 0 { return nil }
+            if written < capacity { return Data(bytes: dst, count: written) }
+            capacity *= 4
+        }
+        return nil
+    }
+}
+
+// MARK: - server payload → finals / partial
+
+/// One server response, interpreted: sentences newly finalized by this
+/// response (in order) + the current in-progress utterance ("" = none).
+struct ASRUpdate: Equatable {
+    var finals: [String] = []
+    var partial = ""
+}
+
+/// Per-connection interpreter for sauc JSON payloads. Responses restate
+/// utterances with `definite: true` once a sentence closes (end_window_size
+/// VAD); `start_time` identifies each utterance, so definite ones are emitted
+/// exactly once even when later responses restate them. Utterances missing
+/// start_time fall back to "always new" (rolling-window servers) — captions
+/// may repeat rather than silently drop.
+struct DoubaoSession {
+    private var lastFinalStart = -1.0
+
+    mutating func interpret(payload: Data) -> ASRUpdate? {
+        guard let obj = (try? JSONSerialization.jsonObject(with: payload))
+                as? [String: Any],
+              let result = obj["result"] as? [String: Any] else { return nil }
+        guard let utterances = result["utterances"] as? [[String: Any]] else {
+            // show_utterances off / degraded server: full text as the live line
+            if let text = result["text"] as? String {
+                return ASRUpdate(finals: [], partial: text)
+            }
+            return nil
+        }
+        var update = ASRUpdate()
+        var partials: [String] = []
+        for utt in utterances {
+            guard let text = utt["text"] as? String else { continue }
+            let definite = utt["definite"] as? Bool ?? false
+            if definite {
+                if let start = numeric(utt["start_time"]) {
+                    if start > lastFinalStart {
+                        lastFinalStart = start
+                        update.finals.append(text)
+                    }
+                } else {
+                    update.finals.append(text)
+                }
+            } else {
+                partials.append(text)
+            }
+        }
+        update.partial = partials.joined()
+        return update
+    }
+
+    private func numeric(_ v: Any?) -> Double? {
+        if let d = v as? Double { return d }
+        if let i = v as? Int { return Double(i) }
+        return nil
+    }
+}
+
+// MARK: - 2-line roll-up reducer
+
+/// What the overlay renders: top = the last finalized sentence (plus its
+/// translation once it streams in), bottom = the live partial, dimmed.
+struct CaptionLines: Equatable {
+    /// Monotonic id of the finalized sentence on the top line; 0 = none yet.
+    /// Translation deltas attach by this id so a late-arriving stream for an
+    /// already-replaced sentence can never clobber the newer one.
+    var finalID = 0
+    var finalText = ""
+    var finalTranslation = ""
+    var liveText = ""
+}
+
+/// Rolling-window cap for everything the overlay may display. ASR partials
+/// can restate an ever-growing transcript (degraded full-text servers, long
+/// speech with no VAD pause) and one definite utterance can carry many
+/// sentences — without a cap the 悬浮窗 grows with the transcript until it
+/// runs off the screen. Every string the reducer stores passes through
+/// `tail`: keep only the newest `maxSentences` sentences (a trailing
+/// unterminated fragment counts as one), plus a hard character budget for
+/// punctuation-free monsters. CaptionOverlay's max-height clamp is the
+/// belt-and-braces on top of this.
+enum CaptionRollup {
+    static let maxSentences = 2
+    static let maxCharacters = 300
+
+    /// Sentence terminators. ASCII '.' is handled separately: it only ends a
+    /// sentence before whitespace/end-of-string, so decimals ("2.5") and
+    /// URLs never split one.
+    private static let terminators: Set<Character> =
+        ["。", "！", "？", "…", "；", "!", "?", ";"]
+    /// Closing quotes/brackets stay glued to the sentence they close.
+    private static let closers: Set<Character> =
+        ["”", "’", "」", "』", "）", ")", "]", "\"", "'"]
+
+    /// Cost stays bounded no matter how long the input grows (the degraded
+    /// full-text server restates the whole session every frame — the very
+    /// case this cap exists for): only the last 2×maxCharacters characters
+    /// are ever scanned. Equivalent to a full scan: a result that would need
+    /// text beyond the window is longer than maxCharacters and gets cut to
+    /// its own suffix anyway, and boundary detection is purely local (钉在
+    /// 判例 [14b] 的 windowed ≡ full 检查).
+    static func tail(_ text: String, maxSentences: Int = maxSentences) -> String {
+        let windowStart = text.index(text.endIndex,
+                                     offsetBy: -(maxCharacters * 2),
+                                     limitedBy: text.startIndex)
+            ?? text.startIndex
+        let window = text[windowStart...]
+        // segment starts: window start + one after each sentence end that
+        // still has text behind it (the remainder is the live fragment)
+        var starts = [window.startIndex]
+        var i = window.startIndex
+        while i < window.endIndex {
+            let c = window[i]
+            var ends = terminators.contains(c)
+            if c == "." {
+                let next = window.index(after: i)
+                ends = next == window.endIndex || window[next].isWhitespace
+            }
+            i = window.index(after: i)
+            if ends {
+                // 连串终止符/引号一起吃掉（"真的吗？？"、"……"）——一串
+                // 标点只算一个句界，不烧滚动窗的名额
+                while i < window.endIndex,
+                      closers.contains(window[i]) || terminators.contains(window[i]) {
+                    i = window.index(after: i)
+                }
+                if i < window.endIndex { starts.append(i) }
+            }
+        }
+        let out = starts.count <= maxSentences ? String(window)
+            : String(window[starts[starts.count - maxSentences]...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        return clampCharacters(out)
+    }
+
+    /// 字符预算兜底（punctuation-free monster）——tail() 末段与 translation
+    /// 行共用；index 走步，永不 O(全文) count。
+    static func clampCharacters(_ text: String) -> String {
+        guard let cut = text.index(text.endIndex, offsetBy: -maxCharacters,
+                                   limitedBy: text.startIndex),
+              cut > text.startIndex else { return text }
+        return String(text[cut...])
+    }
+}
+
+struct CaptionReducer {
+    private(set) var lines = CaptionLines()
+    private var nextID = 1
+
+    mutating func partial(_ text: String) {
+        lines.liveText = CaptionRollup
+            .tail(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// A sentence closed: push it to the top line, clear the live line.
+    /// Returns the sentence id for the translation stream to attach to;
+    /// nil for whitespace-only finals (still clears the live line).
+    /// The stored top line is the ROLLING TAIL of the final (CaptionRollup) —
+    /// a multi-sentence final displays only its newest sentences.
+    @discardableResult
+    mutating func finalize(_ text: String) -> Int? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.liveText = ""
+        guard !t.isEmpty else { return nil }
+        lines.finalID = nextID
+        nextID += 1
+        lines.finalText = CaptionRollup.tail(t)
+        lines.finalTranslation = ""
+        return lines.finalID
+    }
+
+    /// Streaming translation update (full accumulated text so far) for the
+    /// sentence `id`. Dropped when the top line already moved on. NOT
+    /// sentence-capped: the stream translates the already rolling-capped
+    /// original (LiveCaptions.apply passes the displayed tail), and a CJK→EN
+    /// split (一句 → two EN sentences) must not drop text the original still
+    /// shows. Only the character budget guards a rogue stream.
+    mutating func translation(_ id: Int, _ text: String) {
+        guard id == lines.finalID else { return }
+        lines.finalTranslation = CaptionRollup.clampCharacters(text)
+    }
+
+    /// Clear the display (pause/engine switch). Ids stay monotonic so stale
+    /// translation streams from before the reset can never re-attach.
+    mutating func reset() {
+        lines = CaptionLines()
+    }
+}
+
+// MARK: - async ownership gate
+//
+// PR #51 review: every lifecycle finding traced to ONE structural root —
+// async completions (WS receive, reconnect timers, TCC callbacks,
+// capture-start Tasks) applying side effects without re-checking that they
+// still own the pipeline they were issued for. This gate is the shared fix:
+// a completion captures `token` when issued; every teardown/restart calls
+// bump(); a stale completion fails isCurrent() and must apply NOTHING.
+
+struct AsyncGate: Equatable {
+    private(set) var token = 0
+
+    /// Invalidate every outstanding completion; returns the new current token.
+    @discardableResult
+    mutating func bump() -> Int {
+        token += 1
+        return token
+    }
+
+    func isCurrent(_ t: Int) -> Bool { t == token }
+}
+
+// MARK: - pcm mixing
+
+enum CaptionMixer {
+    /// Sum two 16 kHz mono s16 streams with saturation; the shorter one is
+    /// zero-padded (one silent source must not mute the other). Empty inputs
+    /// pass the other stream through untouched.
+    static func mix(_ a: [Int16], _ b: [Int16]) -> [Int16] {
+        if a.isEmpty { return b }
+        if b.isEmpty { return a }
+        var out = [Int16](repeating: 0, count: max(a.count, b.count))
+        for i in 0..<out.count {
+            let sum = Int(i < a.count ? a[i] : 0) + Int(i < b.count ? b[i] : 0)
+            out[i] = Int16(clamping: sum)
+        }
+        return out
+    }
+}
+
+// MARK: - overlay status precedence
+//
+// Review G: pause is USER intent and must never be overwritten by engine
+// chatter (a late .listening once wiped the 已暂停 display, so the overlay
+// claimed to listen while feeding nothing). One pure source of truth for
+// what the status area shows, so the precedence is executable + tested.
+
+struct CaptionDisplayState: Equatable {
+    var paused = false
+    var statusText = ""
+    var statusIsError = false
+
+    /// The status line to render: the paused label always wins; then the
+    /// engine status/error; nil = listening normally (no line).
+    func statusLine(pausedLabel: String) -> (text: String, isError: Bool)? {
+        if paused { return (pausedLabel, false) }
+        if statusText.isEmpty { return nil }
+        return (statusText, statusIsError)
+    }
+}
+
+// MARK: - BYO speech credential (new-console API key OR legacy App ID + token)
+//
+// v0.37.1: the OLD Volcano console issues an App ID (digits) + Access Token
+// pair instead of the new console's single API key, and the WS handshake
+// needs different auth headers per generation (X-Api-Key vs X-Api-App-Key +
+// X-Api-Access-Key). One enum owns paste auto-detection, the stored-file
+// format, and the header mapping so the engine, the 检测 probe, and the
+// settings row can never disagree about what a saved credential means.
+
+enum VolcanoSpeechCredential: Equatable {
+    case apiKey(String)
+    case legacy(appID: String, accessToken: String)
+
+    /// Single line "AppID<sep>Token": old-console App IDs are 6–12 digits and
+    /// Access Tokens are long opaque strings — a new-console API key never
+    /// has this digits+separator prefix shape.
+    private static let legacyOneLine = try! NSRegularExpression(
+        pattern: #"^(\d{6,12})[\s:：,;，；]+(\S{20,})$"#)
+    /// Labeled one-line variant: covers a labeled two-line paste that a
+    /// single-line field flattened (newline → space, or dropped outright) —
+    /// the console's own labels survive the flattening and mark the boundary
+    /// the lost newline used to. The token label is REQUIRED here (an
+    /// unlabeled flattened pair already matches legacyOneLine above).
+    private static let legacyLabeledOneLine = try! NSRegularExpression(
+        pattern: #"^(?:app[\s_-]*(?:id|key)\s*[:：])?\s*(\d{6,12})\s*[\s:：,;，；]*(?:access[\s_-]*token|token|secret)\s*[:：]\s*(\S{20,})$"#,
+        options: [.caseInsensitive])
+
+    var isLegacy: Bool {
+        if case .legacy = self { return true }
+        return false
+    }
+
+    /// Auto-detect a user paste. Legacy shapes: two non-empty lines whose
+    /// halves actually LOOK like the pair (App ID first; the console's
+    /// "App ID:" / "Access Token:" labels — and our own stored labels — are
+    /// stripped first), or one "AppID<sep>Token" line, labeled or not.
+    /// Everything else is a new-console API key, passed through unchanged —
+    /// including a hard-wrapped key, which re-joins instead of being torn
+    /// into a bogus pair. nil = nothing pasted.
+    static func parse(_ input: String) -> VolcanoSpeechCredential? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if lines.count >= 2 {
+            let id = stripLabel(lines[0])
+            let token = stripLabel(lines[1])
+            if isAppID(id), looksLikeToken(token) {
+                return .legacy(appID: id, accessToken: token)
+            }
+            // not a credential pair — most plausibly one key hard-wrapped
+            // across lines; joining restores it
+            return .apiKey(lines.joined())
+        }
+        for regex in [legacyOneLine, legacyLabeledOneLine] {
+            let whole = NSRange(trimmed.startIndex..., in: trimmed)
+            if let m = regex.firstMatch(in: trimmed, range: whole),
+               let idRange = Range(m.range(at: 1), in: trimmed),
+               let tokenRange = Range(m.range(at: 2), in: trimmed) {
+                return .legacy(appID: String(trimmed[idRange]),
+                               accessToken: String(trimmed[tokenRange]))
+            }
+        }
+        return .apiKey(trimmed)
+    }
+
+    /// 6–12 ASCII digits — the old console's App ID shape.
+    private static func isAppID(_ s: String) -> Bool {
+        (6...12).contains(s.count) && s.allSatisfy { $0.isASCII && $0.isNumber }
+    }
+
+    /// One long opaque token (the console's Access Tokens are 32 chars).
+    private static func looksLikeToken(_ s: String) -> Bool {
+        s.count >= 20 && !s.contains(where: \.isWhitespace)
+    }
+
+    /// "App ID: 321…" / "ACCESS_TOKEN：2tz…" / "appid:321…" → the bare value.
+    /// The prefix before the first colon is normalized (lowercased; spaces,
+    /// underscores and dashes dropped) and must be a KNOWN credential label —
+    /// any other prefix leaves the line untouched, because a raw key may
+    /// legitimately contain a colon.
+    private static func stripLabel(_ line: String) -> String {
+        guard let colon = line.firstIndex(where: { $0 == ":" || $0 == "：" })
+        else { return line }
+        let label = line[..<colon].lowercased()
+            .filter { !$0.isWhitespace && $0 != "_" && $0 != "-" }
+        let known = ["appid", "appkey", "accesstoken", "token", "secret"]
+        guard known.contains(label) else { return line }
+        return String(line[line.index(after: colon)...])
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Content stored in config/secrets/volcano-speech-key.txt (CONTRACT §36
+    /// add-only): the legacy pair = two labeled lines, unambiguous against a
+    /// bare single-line new-console key.
+    var fileRepresentation: String {
+        switch self {
+        case .apiKey(let key): return key
+        case .legacy(let appID, let accessToken):
+            return "appid:\(appID)\ntoken:\(accessToken)"
+        }
+    }
+
+    /// Decode the stored secrets file. Two labeled lines = legacy pair; any
+    /// bare content = a new-console API key — files saved before v0.37.1
+    /// keep working untouched. nil = empty file.
+    static func decode(_ stored: String) -> VolcanoSpeechCredential? {
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if lines.count == 2, lines[0].lowercased().hasPrefix("appid:"),
+           lines[1].lowercased().hasPrefix("token:") {
+            let id = String(lines[0].dropFirst("appid:".count))
+                .trimmingCharacters(in: .whitespaces)
+            let token = String(lines[1].dropFirst("token:".count))
+                .trimmingCharacters(in: .whitespaces)
+            if !id.isEmpty, !token.isEmpty {
+                return .legacy(appID: id, accessToken: token)
+            }
+        }
+        return .apiKey(trimmed)
+    }
+
+    /// WS handshake auth headers per console generation: new console =
+    /// X-Api-Key; old console = X-Api-App-Key + X-Api-Access-Key; the
+    /// resource + request ids ride along in both.
+    func wsHeaders(resourceID: String,
+                   requestID: String) -> [(field: String, value: String)] {
+        var headers: [(field: String, value: String)]
+        switch self {
+        case .apiKey(let key):
+            headers = [("X-Api-Key", key)]
+        case .legacy(let appID, let accessToken):
+            headers = [("X-Api-App-Key", appID),
+                       ("X-Api-Access-Key", accessToken)]
+        }
+        headers.append(("X-Api-Resource-Id", resourceID))
+        headers.append(("X-Api-Request-Id", requestID))
+        return headers
+    }
+}
+
+// MARK: - key 检测 verdict mapping
+//
+// The 检测 buttons (CaptionKeyProbe in LiveCaptions.swift) classify their raw
+// network outcomes through these pure functions so the UI copy and the
+// harness assertions share one truth. Raw codes/messages always ride along —
+// unknown codes are shown as-is, never guessed at.
+
+enum CaptionKeyVerdict: Equatable {
+    case ok
+    /// The credential itself was rejected (HTTP or in-band 401/403): invalid
+    /// key/token, or the speech service was never activated for the account.
+    case badKey(detail: String)
+    /// Authenticated, but the server names a resource/activation problem.
+    case resourceNotEnabled(code: String, message: String)
+    /// Ark only: the configured model ID does not exist / is not opened.
+    case modelNotFound(detail: String)
+    /// Anything else the service said — raw code + message, no guessing.
+    case serviceError(code: String, message: String)
+    /// DNS/timeout/refused — the credential's verdict is unknown.
+    case network(detail: String)
+}
+
+enum DoubaoProbeLogic {
+    /// Server messages naming a resource/activation problem. The sauc error
+    /// code table is not exhaustively public, so sniff the message text
+    /// instead of hardcoding undocumented numeric codes.
+    static func mentionsResource(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("resource") || lower.contains("未开通")
+            || lower.contains("not granted") || lower.contains("permission")
+    }
+
+    /// First server frame of the 检测 handshake → verdict. Any non-error
+    /// frame means the server acked the session config: credential works.
+    static func verdict(for frame: DoubaoFrame.ServerFrame) -> CaptionKeyVerdict {
+        guard frame.isError else { return .ok }
+        let code = frame.errorCode ?? 0
+        let text = String(data: frame.payload, encoding: .utf8) ?? ""
+        if code == 401 || code == 403 {
+            return .badKey(detail: text.isEmpty ? "\(code)" : "\(code) \(text)")
+        }
+        if mentionsResource(text) {
+            return .resourceNotEnabled(code: "\(code)", message: text)
+        }
+        return .serviceError(code: "\(code)", message: text)
+    }
+
+    /// The WS upgrade itself was refused (HTTP status, no frames exchanged).
+    static func verdict(upgradeStatus: Int, message: String) -> CaptionKeyVerdict {
+        // 101 = the upgrade already SUCCEEDED — a transport failure carrying
+        // it is a connection dropped AFTER the handshake, not a service
+        // refusal; the credential's verdict is unknown.
+        if upgradeStatus == 101 {
+            return .network(detail: message.isEmpty
+                ? "connection lost after handshake" : message)
+        }
+        if upgradeStatus == 401 || upgradeStatus == 403 {
+            if mentionsResource(message) {
+                return .resourceNotEnabled(code: "HTTP \(upgradeStatus)",
+                                           message: message)
+            }
+            return .badKey(detail: message.isEmpty
+                ? "HTTP \(upgradeStatus)" : "HTTP \(upgradeStatus) \(message)")
+        }
+        return .serviceError(code: "HTTP \(upgradeStatus)", message: message)
+    }
+}
+
+enum ArkProbeLogic {
+    /// Ark chat-completion probe: HTTP status + the error body's code/message
+    /// → verdict. A missing/unopened model is its own case (the key may be
+    /// perfectly fine — the fix is the model-ID field, not the key).
+    static func verdict(status: Int, errorCode: String,
+                        errorMessage: String) -> CaptionKeyVerdict {
+        if (200..<300).contains(status) { return .ok }
+        let detail = [errorCode, errorMessage].filter { !$0.isEmpty }
+            .joined(separator: ": ")
+        if status == 401 || status == 403 {
+            return .badKey(detail: detail.isEmpty ? "HTTP \(status)" : detail)
+        }
+        let lowerCode = errorCode.lowercased()
+        if status == 404 || lowerCode.contains("notfound")
+            || lowerCode.contains("modelnotopen") {
+            return .modelNotFound(detail: detail.isEmpty ? "HTTP \(status)" : detail)
+        }
+        return .serviceError(code: "HTTP \(status)", message: detail)
+    }
+}
+
+// MARK: - translation direction
+
+enum TranslateDirection {
+    /// Target language ("en" / "zh") for one sentence. mode ∈
+    /// "auto" | "zh2en" | "en2zh"; auto = script sniff (CJK share > 30%
+    /// of letters → the sentence is Chinese → translate to English).
+    static func target(for text: String, mode: String) -> String {
+        switch mode {
+        case "zh2en": return "en"
+        case "en2zh": return "zh"
+        default:
+            var cjk = 0, letters = 0
+            for scalar in text.unicodeScalars {
+                let v = scalar.value
+                let isCJK = (0x4E00...0x9FFF).contains(v)
+                    || (0x3400...0x4DBF).contains(v)
+                    || (0x3000...0x303F).contains(v)
+                if isCJK { cjk += 1; letters += 1 }
+                else if scalar.properties.isAlphabetic { letters += 1 }
+            }
+            guard letters > 0 else { return "zh" }
+            return Double(cjk) / Double(letters) > 0.3 ? "en" : "zh"
+        }
+    }
+}

@@ -131,15 +131,19 @@ class DefaultListDriftTestCase(unittest.TestCase):
     guards fail loudly when someone edits one copy only."""
 
     def test_swift_default_matches_python(self):
-        swift = (REPO_ROOT / "mac" / "Sources" / "Recording.swift").read_text(
-            encoding="utf-8"
-        )
-        block = re.search(
-            r"defaultIgnoredApps\s*=\s*\[(.*?)\]", swift, re.DOTALL
-        )
-        self.assertIsNotNone(block, "defaultIgnoredApps literal not found")
-        apps = re.findall(r'"([^"]+)"', block.group(1))
-        self.assertEqual(apps, config.DEFAULT_IGNORED_APPS)
+        # two Swift copies while mac/ is frozen-but-present (CONTRACT §61.3):
+        # the shell copy is what actually launches the engine now; the mac one
+        # stays as the read-only reference until P8 deletes it.
+        for rel in [("mac", "Sources", "Recording.swift"),
+                    ("shell", "Sources", "Recording.swift")]:
+            with self.subTest(file="/".join(rel)):
+                swift = REPO_ROOT.joinpath(*rel).read_text(encoding="utf-8")
+                block = re.search(
+                    r"defaultIgnoredApps\s*=\s*\[(.*?)\]", swift, re.DOTALL
+                )
+                self.assertIsNotNone(block, "defaultIgnoredApps literal not found")
+                apps = re.findall(r'"([^"]+)"', block.group(1))
+                self.assertEqual(apps, config.DEFAULT_IGNORED_APPS)
 
     def test_shell_fallback_matches_python(self):
         script = (REPO_ROOT / "ingest" / "screenpipe-export.sh").read_text(

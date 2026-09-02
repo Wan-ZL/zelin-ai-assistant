@@ -18,6 +18,19 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **永久修复(维护者一次性)**:根因是 ad-hoc 签名——换成一个**稳定的 self-signed code-signing 证书**(免费、不需要 Apple Developer 账号)后,签名指纹跨版本不变,TCC 授权就**不再**因为更新而失效。做法:本地跑一次 `bash mac/scripts/make-signing-cert.sh` 生成稳定证书并导入 login keychain(`mac/build.sh` 会自动认出名为 `Zelin AI Engineer Dev` 的证书来签名);再把脚本打印出来的两个值加成 GitHub secret(`MACOS_SIGN_CERT_P12` 和 `MACOS_SIGN_CERT_PASSWORD`),CI 的 release 构建(`.github/workflows/release.yml`)就会用同一个身份签名。**一次性过渡**:第一个稳定签名的版本因为身份从 ad-hoc 变成 self-signed,会**再弹一次**屏幕录制授权(照上面的 `tccutil reset` + 重新打开开关做一遍),之后所有更新都不再弹。注意 self-signed **不是** notarized,Gatekeeper 首次打开仍需右键→打开(见 `docs/INSTALL.md`)。
 
+## 换壳后的 TCC 重授权:第一次在看板 header 开「录制」/「实时字幕」会弹系统提示(v0.48.19 起)
+
+**症状**:从原生菜单栏 app 换到 "Zelin AI Board" 壳(D3,CONTRACT §61)后,第一次在看板右上角点「录制 → 仅屏幕」弹出 macOS「屏幕录制」授权提示;第一次开「实时字幕」(音源含麦克风)弹「麦克风」提示;在授权之前 header 显示 `录制:未在录制`,菜单首行写「缺「屏幕录制」权限」。
+
+**原因**:这是预期行为,不是故障。TCC 授权按 **bundle id + 签名**归属:原生 app 是 `com.zelin.ai-engineer`,壳是 `com.zelin.ai-board`(审计 Q1 决定保留新身份),两者在系统设置里是两条独立的记录;录制引擎(screenpipe)现在是**壳的直接子进程**、字幕的麦克风/系统声音采集在**壳进程内**,所以两项授权都要给壳重新点一次。壳启动时会一次性把原生 app 里的录制模式/字幕偏好接过来(§61.4),但**刻意不**继承「曾授权过」标记——新身份要自己拿授权。
+
+**修复**:
+
+1. 屏幕录制:点菜单里的「打开系统设置 → 屏幕录制」(或 系统设置 → 隐私与安全性 → 屏幕录制),给 **Zelin AI Board** 打开开关。壳每 5 s 探一次授权,授权一生效引擎自动重启(与原生 app 同一自愈路径,通知「录制已就绪」)。
+2. 麦克风:系统提示直接点允许;拒绝了就到 系统设置 → 隐私与安全性 → 麦克风 打开 **Zelin AI Board**,再把「实时字幕」关一次开一次。
+3. 壳目前仍是 ad-hoc 签名(P4 过渡期):每次重新 `bash shell/build.sh` 装机后屏幕录制授权会像上一节一样失效——`tccutil reset ScreenCapture com.zelin.ai-board` 后重新打开开关即可。稳定证书随 Mac-retire 清单一起落地后不再需要。
+4. 两个 app 同时在跑时(旧 app 已改名 `-old` 备用),谁最后切换模式谁持有 screenpipe 子进程——不必同时开着;只保留壳在跑即可。
+
 ## 雷达静默数天没有新卡 / headless claude 在 cron 下直接死
 
 **症状**:数天没有任何新审批卡;`state/radar.cron.log` 里 claude 报 auth 错误或 `command not found`,而手动在终端跑一切正常。

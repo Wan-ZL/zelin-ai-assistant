@@ -1,11 +1,15 @@
-// main.swift — 看板薄壳 app（AppKit + WKWebView，单文件；CONTRACT §54）
+// main.swift — "Zelin AI Board" 壳 app（AppKit + WKWebView）的 bootstrap + AppDelegate
 // 显示名 "Zelin's AI Assistant (Board)"，bundle 仍是 Zelin AI Board.app /
-// com.zelin.ai-board（最终换名等 P8，见 docs/design/vnext2-plan.md §8）。
+// com.zelin.ai-board（最终换名等 P8，见 docs/design/vnext2-plan.md §8；CONTRACT §54）。
 //
 // 职责刻意做薄：解析 PORT/HOME/SERVER_REPO → 探活 /api/board → **连接**
 // launchd 托管的 server（com.zelin.aiassistant.server，install.sh 渲染/加载）→
 // 一个 WKWebView 窗口加载 http://127.0.0.1:PORT/。板子本体（React board）活在
-// web/dist，由 server/ 静态托管；这里没有业务逻辑。
+// web/dist，由 server/ 静态托管；壳里没有看板业务逻辑。壳**必须**原生承载的
+// 最小残留（R2.2.3 / CONTRACT §61）：录制引擎的进程归属（screenpipe 是壳的直接
+// 子进程——TCC 屏幕录制授权按 GUI 父进程归属）、实时字幕引擎 + 悬浮窗；两者经
+// ShellBridge（`zaiShell`）暴露给页面 header 的两个开关。Dock-only（D3）：无菜单栏
+// 图标；关窗不退出（引擎还在跑），点 Dock 图标重开窗口；⌘Q 正常退出。
 //
 // server 为什么不再是壳的子进程（2026-09-02 live 事故）：GUI app 是它 spawn 的
 // 每个子进程的 TCC responsible process，而壳 bundle 没有任何磁盘授权（ad-hoc
@@ -96,6 +100,13 @@ enum ShellConfig {
 
     static var boardURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
     static var probeURL: URL { URL(string: "http://127.0.0.1:\(port)/api/board")! }
+    /// 设置页深链（web route.ts `?page=settings`；anchor 由页面自己滚动）。
+    static func settingsURL(anchor: String) -> URL {
+        var c = URLComponents(url: boardURL, resolvingAgainstBaseURL: false)!
+        c.queryItems = [URLQueryItem(name: "page", value: "settings"),
+                        URLQueryItem(name: "anchor", value: anchor)]
+        return c.url ?? boardURL
+    }
 
     static let logDir: String =
         ("~/Library/Logs/zelin-ai-assistant" as NSString).expandingTildeInPath
@@ -238,15 +249,30 @@ private func splashHTML(_ message: String) -> String {
 
 // MARK: - AppDelegate
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private let server = ServerManager()
+    /// 页面 ⇄ 壳 桥（§61.1）；与 webView 同寿命。
+    private let bridge = ShellBridge()
+    /// 5 s 引擎巡检（镜像 mac AppDelegate.refresh 的录制半边：TCC 自愈 + pgrep 活性）。
+    private var engineTick: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // 一次性把原生 app 的录制/字幕偏好接过来（同一位 owner 的既有 consent，§61.4）
+        let seeded = LegacyPrefs.seedFromNativeAppIfNeeded()
+        if !seeded.isEmpty {
+            server.logLine("board-shell: seeded prefs from \(LegacyPrefs.nativeSuite): "
+                + seeded.joined(separator: ","))
+        }
+        _ = LanguageStore.shared   // L() 镜像就位（悬浮窗/通知文案）
+        ShellNavigation.openSettings = { [weak self] anchor in
+            self?.openSettingsPage(anchor: anchor)
+        }
         buildMenu()
         buildWindow()
         connectOrSpawn()
+        startEngines()
     }
 
     /// §54 生命周期：先探活——有人在班就直接 attach；没有则看 launchd 有没有
@@ -275,23 +301,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 引擎落户壳后的启动序列（逐字对应 mac AppDelegate 的同名调用；P0-11：
+    /// 无 recordingMode = 尚未 consent = off，autostart 自然不动）。
+    private func startEngines() {
+        RecordingController.shared.autostartIfNeeded()
+        LiveCaptionsController.shared.restoreOnLaunch()
+        let timer = Timer(timeInterval: 5.0, repeats: true) { _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    RecordingController.shared.pollScreenPermission()
+                    RecordingController.shared.refreshEngineState()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        engineTick = timer
+    }
+
     func applicationWillTerminate(_ note: Notification) {
+        engineTick?.invalidate()
         server.stopIfSpawned()
     }
 
+    /// D3 / R2.2.1：关窗不退出——screenpipe 是本进程的子进程、字幕悬浮窗住在本
+    /// 进程，窗口关了它们还得活着。⌘Q 才是退出。
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
+        return false
+    }
+
+    /// 点 Dock 图标重开窗口（无菜单栏图标，这是唯一的重开入口）。
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showWindow() }
         return true
+    }
+
+    private func showWindow() {
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// 字幕悬浮窗齿轮 → 看板设置页（`?page=settings&anchor=<anchor>`）。
+    private func openSettingsPage(anchor: String) {
+        showWindow()
+        webView.load(URLRequest(url: ShellConfig.settingsURL(anchor: anchor)))
     }
 
     // MARK: window / webview
 
     private func buildWindow() {
         let config = WKWebViewConfiguration()
+        bridge.install(into: config)   // 必须在 WKWebView 创建前注册 handler
         webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = self
         webView.allowsMagnification = true
         if #available(macOS 13.3, *) {
             webView.isInspectable = true   // preview shell：允许 Safari Web Inspector
         }
+        bridge.attach(to: webView)
         webView.loadHTMLString(splashHTML("Starting board server\u{2026}"), baseURL: nil)
 
         window = NSWindow(
@@ -313,6 +380,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func loadBoard() {
         webView.load(URLRequest(url: ShellConfig.boardURL))
         window.makeFirstResponder(webView)   // ⌘F / 键盘事件直达页面
+    }
+
+    /// 页面加载完成 → 推一份当前快照（页面 mount 时也会自己 getState；这一推
+    /// 让 reload / 深链切页后的 header 无需等下一次状态变化）。
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        bridge.pushState()
     }
 
     /// spawn 后每 0.5s 探一次，直到 server 上线或超时（10s）。

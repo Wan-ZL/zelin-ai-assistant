@@ -45,6 +45,12 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!-- TCC usage descriptions（CONTRACT §61.4）：录制/字幕引擎搬进壳后，屏幕录制
+	     授权按本 bundle id 归属（无 usage-description 键，系统提示由 CGRequest
+	     ScreenCaptureAccess 触发）；麦克风由实时字幕的 AVCaptureDevice.requestAccess
+	     首次触发，缺这个键 macOS 会直接杀进程。文案与 mac/Info.plist 同义。 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>实时字幕与「屏幕 + 音频」录制模式需要麦克风来转录会议与语音；音频只送往你自己 key 对应的识别服务，录制数据只存本地 ~/.screenpipe。</string>
 	<!-- Server repo（cwd of `python3 -m server`）。源文件留空：shell/build.sh
 	     构建时以实际 repo root 盖章（同版本号机制）；未盖章 + 无 defaults 覆盖
 	     时壳会礼貌报错而非猜路径。

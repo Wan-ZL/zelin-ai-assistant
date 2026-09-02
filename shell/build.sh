@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build + assemble the board shell (.app bundle) — no Xcode project.
+# Build + assemble the "Zelin AI Board" shell (.app bundle) — no Xcode project.
 #
 # Usage:
 #   ./build.sh                    # compile + assemble under shell/build/
@@ -8,10 +8,18 @@
 #                                 # config.yaml server.port this way, CONTRACT §54)
 #
 # Conventions mirror mac/build.sh (swiftc + hand-assembled bundle + plutil lint
-# + codesign)。差异点：ad-hoc 签名（壳不持有任何 TCC 授权——server 自 v0.48.18 起
-# 由 launchd 托管，壳只连接），codesign 用 --deep（bundle 里只有一个 Mach-O）。
+# + codesign)。差异点：ad-hoc 签名（P4 过渡期；稳定证书随 Mac-retire 清单 0.9
+# 一起决定；壳不持有任何磁盘 TCC 授权——server 自 v0.48.18 起由 launchd 托管，
+# 壳只连接），且 codesign 用 --deep（bundle 里只有一个 Mach-O，没有 Sparkle
+# 嵌套结构要保护）。注意 ad-hoc 签名 = 每次重建后 TCC 屏幕录制授权失效
+# （docs/TROUBLESHOOTING.md「换壳后的 TCC 重授权」）。
 # 不 quit / 不 relaunch / 不装到 /Applications：安装动作归 install.sh 的 `ui` 步
 # （§56.5 的 relaunch 规则住在那里）。
+#
+# Sources：shell/Sources/*.swift 全部编成一个 module（只有 main.swift 可含顶层
+# 语句）+ shared/Sources/I18n.swift（L() 双语文案；Foundation-only 共享文件）。
+# 录制/字幕引擎（Recording / CaptionCore / LiveCaptions / CaptionOverlay）自
+# mac/Sources 搬入（CONTRACT §61.3），所以链接的框架与 mac/build.sh 同一组。
 #
 # Naming (CONTRACT §54; vnext2-plan §8 — the final name swap waits for P8):
 #   bundle:       Zelin AI Board.app          (folder name kept — id/TCC continuity)
@@ -52,6 +60,8 @@ fi
 APP_NAME="Zelin AI Board"
 EXEC_NAME="ZelinAIBoard"
 SRC_DIR="$SCRIPT_DIR/Sources"
+# 只借 I18n.swift（L() + LanguageMirror）；shared/ 的其余文件是看板模型，壳不要。
+SHARED_I18N="$SCRIPT_DIR/../shared/Sources/I18n.swift"
 PLIST="$SCRIPT_DIR/Info.plist"
 BUILD_DIR="$SCRIPT_DIR/build"
 BIN="$BUILD_DIR/$EXEC_NAME"
@@ -61,6 +71,10 @@ APP_DIR="$BUILD_DIR/$APP_NAME.app"
 check_toolchain || exit 1
 if [ ! -f "$SRC_DIR/main.swift" ]; then
     echo "ERROR: Swift source not found at: $SRC_DIR/main.swift" >&2
+    exit 1
+fi
+if [ ! -f "$SHARED_I18N" ]; then
+    echo "ERROR: shared I18n source not found at: $SHARED_I18N" >&2
     exit 1
 fi
 if [ ! -f "$PLIST" ]; then
@@ -80,10 +94,14 @@ build_failed() {   # $1 = which step broke
 }
 
 # --- compile ---
-echo "==> Compiling $SRC_DIR/main.swift"
+# AVFoundation + ScreenCaptureKit: 实时字幕 in-process audio capture
+# (LiveCaptions.swift); Speech (macOS 26 SpeechAnalyzer) auto-links on import;
+# UserNotifications: Recording.swift 的 self-heal / TCC-loss 一次性通知。
+echo "==> Compiling $SRC_DIR/*.swift + $SHARED_I18N"
 mkdir -p "$BUILD_DIR"
-swiftc -O "$SRC_DIR/main.swift" -o "$BIN" \
-    -framework AppKit -framework WebKit -framework Foundation \
+swiftc -O "$SRC_DIR"/*.swift "$SHARED_I18N" -o "$BIN" \
+    -framework AppKit -framework WebKit -framework SwiftUI -framework Foundation \
+    -framework AVFoundation -framework ScreenCaptureKit -framework UserNotifications \
     || build_failed "shell compile (swiftc) exited non-zero — errors above"
 echo "    built binary: $BIN"
 
