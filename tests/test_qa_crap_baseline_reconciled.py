@@ -3,12 +3,11 @@
 f2a54c1 审查 blocker 2：首铸账本里残留了 8 条 darwin 收的分——其中
 ensure_repo 登记 95.7 而 canonical 实测 22.5，等于留了 73 分的静默回归
 窗口；compute_target_kind 在 canonical 上已达标却仍挂账（limbo 带把
-清账漏了）。对账 = 从 CI qa-report artifact 拷回（run 33569581546，
-两次 linux run 逐字节一致），但对账自身也受 §58.4 base 差分管辖——
-只许缩，所以 _check_launchd 保留更紧的 17（canonical 17.1，0.1 差
-由 [crap].tolerance 吸收），其余 7 条取 canonical 值。本判例钉死这批
-值只许缩、已划掉的键不许回账、账本条数不许涨回出生值以上——darwin
-收的松账从此回不来。
+清账漏了）。对账 = 从 CI qa-report artifact 拷回（先 run 33569581546，
+rebase 到 v0.48.11 后再从 run 33577287680 收 #134 的出生债），但对账
+对既有键只许缩，所以 _check_launchd 保留更紧的 17（canonical 17.1，
+0.1 差由 [crap].tolerance 吸收）。本判例钉死这批值只许缩、已划掉的键
+不许回账、账本条数不许涨回出生值以上——darwin 收的松账从此回不来。
 """
 import os
 import sys
@@ -35,8 +34,8 @@ _CANONICAL_CEILING = {
     "act/doctor.py::_actd_alive": 7.0,
 }
 
-# 出生时（对账后）的账本条数；P3 只会往下削。
-_BIRTH_SIZE = 369
+# 出生时（对账后，含 #134 出生债）的账本条数；P3 只会往下削。
+_BIRTH_SIZE = 376
 
 
 class CrapLedgerReconciledTestCase(unittest.TestCase):
