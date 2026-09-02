@@ -34,6 +34,10 @@ promo/package-lock.json
 # JSON and suggested baselines land here; the committed truth lives in qa/
 .qa-report/
 
+# test-code skill run outputs (skills/test-code; vnext2-plan R2.8) — reports are
+# per-run artifacts; .test-code/baselines/ (shrink-only ledgers) stays committed
+.test-code/reports/
+
 # Playwright MCP browser-debug dumps (never commit)
 .playwright-mcp/
 

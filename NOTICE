@@ -134,3 +134,46 @@ Maintenance note: this list must stay accurate to what actually ships.
 The integration agent reconciles it against the final file tree before
 merge; additions/removals of forked material must update this NOTICE
 in the same PR.
+
+--------------------------------------------------------------------
+old-coder (via the owner's private robust-code fork)
+--------------------------------------------------------------------
+Upstream:   https://github.com/AmazingAng/old-coder
+Copyright:  (c) 2026 amazingang
+License:    MIT License (full text below)
+
+8. test-code skill — measurement ladder for any repo
+   Upstream: SKILL.md (ASK step, gauntlet layer table, checker
+             doctrine, anti-gaming rules), references/hardening.md
+             (hardened-layer triggers), references/gauntlet.md
+             (ecosystem command tables, manual mutation procedure),
+             references/templates.md (evidence report shape: three-way
+             "layers not run" split), references/verifier.md
+             (fresh-context verification protocol)
+   Here:     skills/test-code/SKILL.md,
+             skills/test-code/references/{tiers,triggers,adapters,
+             report-template,anti-gaming}.md
+   Changes:  re-expressed as a five-tier measurement ladder with a
+             trigger axis; SPEC/EVIDENCE build loop, maintainability
+             judge and rubric dropped (this skill only measures);
+             detection, runner, report and fallback rulers are new
+             Python stdlib code (skills/test-code/scripts/), not
+             forked. Prose adapted, not copied verbatim.
+
+MIT License text (old-coder):
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions: The above copyright notice and this
+permission notice shall be included in all copies or substantial
+portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
+WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
