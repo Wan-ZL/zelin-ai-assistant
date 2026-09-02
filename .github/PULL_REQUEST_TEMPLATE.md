@@ -23,6 +23,9 @@ CI runs the same three on every PR; please run them locally first.
 See [CONTRIBUTING.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/CONTRIBUTING.md). Tick what applies; strike through what doesn't (e.g. docs-only).
 
 - [ ] **Contract first** — this PR touches a `dashboard.json` / inbox field only if `docs/CONTRACT.md` is updated in the same PR, the field is add-only (nothing renamed or removed), and the Swift side decodes it with `decodeIfPresent`
+- [ ] **No version, no shared-ledger edits** (CONTRACT §56.1 / §56.7; the required check **Version pins untouched**) — no version pin or `__version__` edit, nothing written into `CHANGELOG.md` `## [Unreleased]`, no new row in `docs/design/vnext2-plan.md` §8
+- [ ] **Release note as a fragment** — `changelog.d/<kebab-slug>.md` (first line `type: added|changed|deprecated|removed|fixed|security`, then `- ` bullets; [shape](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/changelog.d/README.md)), validated by `python3 scripts/ci/changelog_fragments.py check`; released fragments pruned with `python3 scripts/ci/changelog_prune.py` if CI hinted
+- [ ] **Progress row as a fragment** (v-next-2 round) — `docs/design/progress/<YYYY-MM-DD>-<slug>.md` with `pr:` / `phase:` / `law:` + body ([shape](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/design/progress/README.md)), validated by `python3 scripts/ci/progress_log.py check`
 - [ ] **Bilingual strings** — every new user-visible string uses `L("中文", "English")`
 - [ ] New behavior is covered by a test where practical
 - [ ] Commit messages are conventional commits, in English, and explain *why*

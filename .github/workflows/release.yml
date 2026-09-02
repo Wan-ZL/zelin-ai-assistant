@@ -3,8 +3,9 @@
 # MARKETING_VERSION pins are written on this runner, never committed), run all
 # CI gates, package the .app with ditto, build the .pkg, generate SHA-256
 # checksums, attest build provenance, and publish a GitHub Release whose body
-# is the CHANGELOG [Unreleased] delta since the previous tag (the file itself
-# is never rewritten — history lives in Releases + tags).
+# is the delta of changelog.d/ fragments + the legacy CHANGELOG [Unreleased]
+# text since the previous tag (§56.7; nothing is rewritten or deleted by CI —
+# history lives in Releases + tags).
 #
 # Two ways in (CONTRACT §56.2): a hand-pushed tag, or `gh workflow run
 # release.yml --ref v<version>` from release-on-merge.yml — tags created with
@@ -276,23 +277,33 @@ jobs:
             dist/ZelinAIAssistant-*-linux.tar.gz
             dist/ZelinAIAssistant-*-windows.zip
 
-      - name: Release notes from CHANGELOG [Unreleased] delta
-        # CONTRACT §56.2: PRs only ever write under [Unreleased]; a release
-        # never rewrites CHANGELOG.md. The body is what [Unreleased] gained
-        # since the previous tag (scripts/changelog_release_notes.py); the
-        # first release (no previous tag) takes the whole section. Empty delta
-        # = no changelog paragraph, the auto-generated PR list still follows.
+      - name: Release notes from changelog.d fragments + legacy [Unreleased] delta
+        # CONTRACT §56.2 / §56.7: PRs write one changelog.d/<slug>.md fragment
+        # each ([Unreleased] is frozen, shrink-only); a release never rewrites
+        # or deletes anything. The body is every entry present at this tag
+        # (fragments ∪ [Unreleased]) minus the entries the previous tag's tree
+        # already had (scripts/ci/changelog_release_notes.py) — so fragments
+        # that nobody pruned yet are not announced twice. The first release
+        # (no previous tag) takes everything. A malformed fragment is a
+        # ::warning:: and is skipped, never a failed release (the PR-time
+        # `changelog_fragments.py check` is the hard gate). Empty delta = no
+        # changelog paragraph, the auto-generated PR list still follows.
         run: |
           set -euo pipefail
           PREV="$(git tag -l 'v[0-9]*' | python3 scripts/ci/release_tags.py previous "${GITHUB_REF_NAME}" || true)"
           : > /tmp/prev-changelog.md
+          rm -rf /tmp/prev-tree && mkdir -p /tmp/prev-tree/changelog.d
           if [ -n "$PREV" ]; then
             git show "${PREV}:CHANGELOG.md" > /tmp/prev-changelog.md 2>/dev/null || : > /tmp/prev-changelog.md
-            echo "release notes = [Unreleased] delta since ${PREV}"
+            if git cat-file -e "${PREV}:changelog.d" 2>/dev/null; then
+              git archive --format=tar "${PREV}" changelog.d | tar -x -C /tmp/prev-tree
+            fi
+            echo "release notes = fragments + [Unreleased] delta since ${PREV}"
           else
-            echo "no previous tag — release notes = the whole [Unreleased] section"
+            echo "no previous tag — release notes = every fragment + the whole [Unreleased] section"
           fi
-          python3 scripts/changelog_release_notes.py CHANGELOG.md --previous /tmp/prev-changelog.md > /tmp/changelog-delta.md
+          python3 scripts/ci/changelog_release_notes.py CHANGELOG.md --previous /tmp/prev-changelog.md \
+            --fragments changelog.d --previous-fragments /tmp/prev-tree/changelog.d > /tmp/changelog-delta.md
           if [ -s /tmp/changelog-delta.md ]; then
             { echo "## 变更 / Changes"; echo; cat /tmp/changelog-delta.md; echo; } > /tmp/release-body.md
           else
