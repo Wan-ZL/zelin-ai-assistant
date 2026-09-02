@@ -11,6 +11,15 @@
 # context — the queue's checks_requested event must be able to turn every
 # required context green by itself. PR-only jobs are the informational ones
 # (Windows suite, qlty) and the contract reminder (needs github.base_ref).
+# (The queue itself is unavailable on personal-account repos — §56.6's
+# update-pr-branches.yml keeps PR heads current instead; the merge_group
+# wiring stays for the day the repo moves to an organization.)
+#
+# TIMEOUTS (§56.6): every job carries timeout-minutes (Windows legs 30, the
+# rest 40; qlty 15) — typical wall time is ≤4 min for the ubuntu legs and
+# ~9 min for the macOS job. Without a cap a hung informational job holds the
+# per-branch concurrency group for GitHub's 6-hour default and blocks every
+# later run on that PR.
 name: CI
 
 on:
@@ -36,6 +45,7 @@ jobs:
     # Runs on ubuntu in parallel with the macOS build job — shellcheck is
     # preinstalled on the ubuntu runner image.
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,6 +78,7 @@ jobs:
     # fake runners instead of shelling out); darwin-only paths guard themselves
     # behind the OS seam (act/lib/platform.py) instead of failing here.
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       matrix:
         python-version: ["3.9", "3.x"]
@@ -100,6 +111,7 @@ jobs:
     # 纯重构/修 typo 不该被一个文档门拦住，判断力在 reviewer。
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -139,6 +151,7 @@ jobs:
     if: github.event_name != 'merge_group'
     continue-on-error: true
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         # Git Bash is preinstalled on the windows runner — run the ubuntu
@@ -185,6 +198,7 @@ jobs:
     # past the cutover; then hand bumps are rejected for good.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -216,6 +230,7 @@ jobs:
     # web/ 看板前端（v0.48 §49）：tsc --noEmit + vite build 抓类型/打包回归，
     # vitest 跑 web/src/*.test.* 纯逻辑测试。ubuntu 上跑（无浏览器，jsdom）。
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: web
@@ -247,6 +262,7 @@ jobs:
     # 所以老代码不挡门、新代码必须干净、账本只许缩（清账 = P3）。
     # 出生时是非必需检查；在 main 上证明稳定后再升 required（§58.5）。
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -326,6 +342,7 @@ jobs:
 
   ci:
     runs-on: macos-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

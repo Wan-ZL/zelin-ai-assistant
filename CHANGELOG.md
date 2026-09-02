@@ -16,7 +16,11 @@ To ship a change:
 
 ## [Unreleased]
 
+### Added
+- **PR 分支自动跟随 main（CONTRACT §56.6）**：新 workflow `update-pr-branches.yml` 在每次 push 到 main 时把新 main 合进每个在飞的同 repo、非草稿 PR 分支（fork 与贴了 `no-autoupdate` 的跳过），让 auto-merge（`gh pr merge --auto --merge`）在重跑的 required check 绿的那一刻合并——个人账户 repo 装不上 Merge Queue，这是替代协议。与 main 冲突的 PR 打 **`needs-rebase`** + 一条幂等评论，合干净后自动摘。update-branch 调用必须用 fine-grained PAT（repo secret `PR_AUTOUPDATE_TOKEN`；`GITHUB_TOKEN` 造成的分支更新不触发 `pull_request` workflow，PR 会停在「Expected」永不合并）；secret 缺席 = report-only，只打标签不碰分支。CONTRIBUTING 新增「PR lifecycle」：开 PR → 立刻 arm auto-merge → 只轮询 required check、永不 `--watch`。
+
 ### Changed
+- **ci.yml 每个 job 带 `timeout-minutes`**（Windows 腿 30、其余 40、qlty 15）：一个挂死的 informational job 曾按 GitHub 默认 6 小时占住 per-branch concurrency group、挡住该 PR 之后的每一次 run。
 - **版本真源改为 main 上的 git tag；PR 不再 bump 任何版本（CONTRACT §56.1/§56.2 改写、§0 宪法第 8 条修宪）**：`act.__version__` 在 import 时按 `act/_version.py`（生成文件，git-ignored；install.sh / mac/build.sh / shell/build.sh / release 打包 / `scripts/version_stamp.py --write` 写）→ `git describe`（恰在 tag = `X.Y.Z`，领先 = `X.Y.Z+N`）→ 烘焙回落值解析；iOS 两处 `MARKETING_VERSION` 提交的是占位 `0.0.0-dev`，构建前在 runner 上 sed（永不提交）。`tag-on-merge.yml` 退役为 `release-on-merge.yml`：push 到 main 算「最高 tag + 1 patch」（PR label `release: minor|major` 抬档）在被推的 commit 上建 tag 并 dispatch `release.yml`；并发串行、re-run 幂等、不写分支。`release.yml` 从 tag 名盖章、只发 commit 在 `origin/main` 上的 tag、`Latest` 标记按 tag 高低定（并行 release run 的完成顺序不再决定 Sparkle / update_check 看到的「最新」）、Release 正文 = CHANGELOG `[Unreleased]` 相对上一个 tag 的增量（`scripts/changelog_release_notes.py`），文件不改写。新 CI 门 **Version pins untouched**（`scripts/ci/version_pins_check.py`，pull_request + merge_group）：改 pin 行 / 改 `__version__` 回落行（刷新到最新 tag 除外）/ 新增 CHANGELOG 版本标题 = FAIL，merge-base 早于本门的在飞 PR 过渡放行。全部必需检查的 workflow 同时响应 `merge_group`（merge queue 就绪）。`scripts/auto-deploy.sh` 期望版本改由 `scripts/version_stamp.py` 算、fetch 带 `--tags --force`（本机一个与 origin 分叉的旧 tag 否则会让每一轮 fetch 都失败）；install.sh 在任何 `import act` 之前盖章（install_report 新 step `version`）；doctor 新行 `version`（stamp 缺失 / 与 `git describe` 不一致 = WARN，永不 FAIL）。
 
 ## [0.48.20] - 2026-09-02
