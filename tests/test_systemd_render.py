@@ -9,7 +9,7 @@ on a Linux box (docs/LINUX.md).
 
 Pinned facts the port depends on:
   * every @TOKEN@ placeholder is substituted (no leftovers);
-  * the resident actd/webui units carry Restart=always (KeepAlive equivalent);
+  * the resident actd/webui/server units carry Restart=always (KeepAlive equivalent);
   * the periodic radars/digest are timer-driven (Type=oneshot + a .timer);
   * the login-shell claude dir is FIRST on the unit PATH (the 2026-07-08 guard);
   * AIASSISTANT_HOME + WorkingDirectory point at the repo root.
@@ -52,9 +52,10 @@ class RenderTemplatesTestCase(unittest.TestCase):
 
     def test_expected_unit_set_present(self):
         names = set(self.rendered)
-        # resident services
+        # resident services (§54: the board server joined in v0.48.18)
         self.assertIn("zelin-actd.service", names)
         self.assertIn("zelin-webui.service", names)
+        self.assertIn("zelin-server.service", names)
         # a timer+service pair per periodic scan + the weekly digest
         for base in ("zelin-gmail-radar", "zelin-slack-radar",
                      "zelin-obsidian-radar", "zelin-weekly-digest"):
@@ -69,7 +70,7 @@ class RenderTemplatesTestCase(unittest.TestCase):
             self.assertNotIn("YOURUSERNAME", text, name)
 
     def test_resident_units_have_restart_always(self):
-        for name in ("zelin-actd.service", "zelin-webui.service"):
+        for name in ("zelin-actd.service", "zelin-webui.service", "zelin-server.service"):
             text = self.rendered[name]
             self.assertIn("Restart=always", text, name)
             self.assertIn("Type=simple", text, name)
@@ -81,6 +82,8 @@ class RenderTemplatesTestCase(unittest.TestCase):
                       self.rendered["zelin-actd.service"])
         self.assertIn("ExecStart=%s -m act.webui" % PY,
                       self.rendered["zelin-webui.service"])
+        self.assertIn("ExecStart=%s -m server" % PY,
+                      self.rendered["zelin-server.service"])
 
     def test_every_service_raises_the_soft_fd_limit_without_lowering_hard(self):
         # §55 mirror: raise the soft limit for headroom, keep the hard limit at

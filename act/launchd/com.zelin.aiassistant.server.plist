@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE: install.sh renders the /Users/YOURUSERNAME placeholders (python,
+  repo root, $HOME) and the ZAI_PORT value (config.yaml server.port, default
+  47820) into ~/Library/LaunchAgents - do not load this file as-is.
+
+  server - the board server of Zelin's AI Assistant (CONTRACT s49 / s54):
+  `python3 -m server` serves web/dist on http://127.0.0.1:$ZAI_PORT/ and the
+  /api/* read + inbox-write routes the web board and the shell app use.
+
+  WHY LAUNCHD AND NOT THE SHELL APP (2026-09-02 live incident, s54): the thin
+  shell used to spawn the server as its own child. A GUI app is the TCC
+  responsible process for everything it spawns, and the shell bundle holds no
+  Full Disk Access grant (ad-hoc signed - a grant would not even stick across
+  builds), so on a repo living on an external volume the child could not read
+  the checkout and died with "No module named server". The daemon interpreter
+  install.sh pins here has cleared the s55 launchd viability probe: it is the
+  one binary already proven to read the repo when launchd spawns it. The shell
+  therefore only CONNECTS; it spawns a fallback child solely when the probe
+  fails AND this label is not loaded (two servers must never fight for the
+  port).
+
+  KeepAlive: resident like actd/syncd - a crash-looping server is a doctor
+  FAIL (RESIDENT_LABELS, s55) and rolls an auto-deploy back (s56). Binding to
+  a busy port exits after ONE short line, not a traceback, so a port fight
+  cannot grow the log by kilobytes per throttle cycle.
+
+  SoftResourceLimits/NumberOfFiles: same 8192 soft limit as every other
+  template (s55 resource limits; no HardResourceLimits - that only lowers the
+  ceiling). SSE clients hold one fd each.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zelin.aiassistant.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSERNAME/miniconda3/bin/python3</string>
+        <string>-m</string>
+        <string>server</string>
+    </array>
+
+    <!-- $HOME, NEVER the repo: launchd performs chdir + log-file open
+         BEFORE exec, and a repo on an external (TCC-gated) volume makes
+         the spawn itself fail with EX_CONFIG (78). Module resolution
+         rides PYTHONPATH in EnvironmentVariables instead. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSERNAME</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AIASSISTANT_HOME</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <!-- import path for `python3 -m server` now that WorkingDirectory
+             no longer points at the repo -->
+        <key>PYTHONPATH</key>
+        <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
+        <!-- loopback port the server binds (server/app.py DEFAULT_PORT is the
+             same 47820); install.sh rewrites the value from config.yaml
+             server.port - keep key and value on ONE line, the renderer keys
+             its substitution on that shape. -->
+        <key>ZAI_PORT</key><string>47820</string>
+        <!-- the server never runs claude itself, but the login shell's claude
+             dir stays FIRST like every other agent (one PATH shape for all
+             templates; s55). -->
+        <key>PATH</key>
+        <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- ~/Library/Logs, NEVER under the repo — same spawn-time rule as
+         WorkingDirectory above (launchd opens these paths pre-exec).
+         install.sh caps this file (keep the newest half past 1 MB) in the
+         unload→load window, when launchd holds no fd on it (s55). -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOURUSERNAME/Library/Logs/zelin-ai-assistant/server.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOURUSERNAME/Library/Logs/zelin-ai-assistant/server.launchd.log</string>
+</dict>
+</plist>

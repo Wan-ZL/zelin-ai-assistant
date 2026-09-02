@@ -45,10 +45,12 @@ from typing import Callable, List, Optional, Tuple
 
 from act import llm
 from act.lib import (
+    board_server,
     config,
     deploy_state,
     failures,
     heartbeat,
+    install_report,
     platform,
     secrets,
     taskscheduler,
@@ -60,17 +62,22 @@ FAIL = "fail"
 
 ACTD_LABEL = "com.zelin.aiassistant.actd"      # launchd label (macOS)
 SYNCD_LABEL = "com.zelin.aiassistant.syncd"
+# §54 看板 server（`python3 -m server`）——v0.48.18 起由 launchd 托管而非壳 app
+# 的子进程（GUI app 是子进程的 TCC responsible process，壳没有磁盘授权）。
+# 探针与判决的纯逻辑住 act/lib/board_server.py（doctor.py 的文件上限，防腐 #1）。
+SERVER_LABEL = board_server.LABEL
 # 常驻 agent（模板 KeepAlive=true）：进程一退出 launchd 就在 ThrottleInterval 后
 # 再拉起。这类 label「已加载、无 pid、上次退出码非 0」= 正在 crash-loop（每个周期
 # 死一次），不是周期性 agent 的「上次跑失败一次」——FAIL（§55；§56.3 的回滚判据
-# 由此看见 syncd 被新版本弄坏）。集合与 act/launchd/*.plist 的 KeepAlive 键逐字
-# 一致，tests/test_doctor.py 钉住漂移。
-RESIDENT_LABELS = frozenset({ACTD_LABEL, SYNCD_LABEL})
+# 由此看见 syncd / server 被新版本弄坏）。集合与 act/launchd/*.plist 的 KeepAlive
+# 键逐字一致，tests/test_doctor.py 钉住漂移。
+RESIDENT_LABELS = frozenset({ACTD_LABEL, SYNCD_LABEL, SERVER_LABEL})
 ACTD_UNIT = "zelin-actd.service"               # systemd --user unit (Linux)
+SERVER_UNIT = board_server.UNIT                # §54 board server (Linux mirror)
 ACTD_TASK = taskscheduler.TASK_PATH_PREFIX + "actd"  # schtasks TaskName (Windows)
 # Resident systemd services doctor expects up (the rest are timer-driven
 # oneshots that are correctly inactive between fires — the timer is the signal).
-SYSTEMD_RESIDENT = ("zelin-actd.service", "zelin-webui.service")
+SYSTEMD_RESIDENT = ("zelin-actd.service", "zelin-webui.service", SERVER_UNIT)
 
 
 def _installer() -> str:
@@ -384,6 +391,9 @@ class Probes:
     # §59 (D22)：Claude Code 全局默认模型（~/.claude/settings.json `model`）——
     # follow 模式继承的就是它；tests 注入，绝不读开发者的真文件
     claude_code_settings: Callable[[], dict] = llm.read_claude_code_default_model
+    # §54 看板 server：回环 /api/health 探针（port → verdict dict）；tests 注入，
+    # 默认实现在 AIASSISTANT_HTTP_PROBE=0 下自报 unavailable（行不出）
+    board_health: Callable[[int], dict] = board_server.health_probe
 
 
 @dataclass
@@ -1552,6 +1562,60 @@ def _check_heartbeat(probes: Probes):
     ).with_failure("actd_stalled")
 
 
+# --------------------------------------------------------------------------- #
+# §54 看板 server + §56.5 ui 步：判决逻辑在 act/lib/board_server.py，这里只包
+# CheckResult（判例 tests/test_doctor_board_server.py）
+# --------------------------------------------------------------------------- #
+def _row_from(row: dict, name: str) -> CheckResult:
+    res = CheckResult(name, row["status"], row["detail"], row.get("fix", ""))
+    if row.get("failure_id"):
+        res.with_failure(row["failure_id"])
+    return res
+
+
+def _check_board_server(probes: Probes):
+    """§54 看板 server 行：`GET /api/health` 答话才算活——`launchctl list` 里的
+    pid 只说明进程起了，bind 成功没有它不知道。可达 + 托管 OK；可达但非托管
+    （壳 spawn 的旧形状）WARN；不可达 + 托管 FAIL `board_server_down`（crash-loop /
+    端口被占）；不可达 + 未托管 WARN。探针不可用（沙箱 / windows）→ 不出行。"""
+    if platform.is_windows():
+        return []
+    port = int(config.load_config().server_port)
+    verdict = probes.board_health(port)
+    if verdict.get("state") == "unavailable":
+        return []
+    try:
+        listing = probes.launchctl_list()
+    except Exception:  # noqa: BLE001 - 探针不许崩（宪法第 11 条）
+        listing = ""
+    darwin = platform.is_darwin()
+    row = board_server.assess(verdict, board_server.hosted(listing, darwin), port,
+                              darwin, _installer())
+    return _row_from(row, "board server")
+
+
+def _install_report_step(name: str) -> Optional[dict]:
+    """§23 install_report.json 里名为 ``name`` 的 step（最后一个同名者）；
+    文件缺失 / 撕裂 / 形状不对 → None（宪法第 11 条：探针不许崩）。"""
+    try:
+        doc = json.loads(install_report.REPORT_PATH.read_text(encoding="utf-8"))
+        steps = [st for st in doc.get("steps", []) if isinstance(st, dict) and st.get("name") == name]
+    except (OSError, ValueError, AttributeError):
+        return None
+    return steps[-1] if steps else None
+
+
+def _check_ui_build(probes: Probes):
+    """§56.5 `ui` 步的可见性：最近一次 install.sh 的 `ui` step 是 `skipped_tcc`
+    （node 在 launchd 会话里缺 Full Disk Access——部署照常完成、web 看板却没
+    重建）→ WARN `ui_build_tcc_blocked`；`fail`（只可能来自手动 install.sh）→
+    WARN 指向 ui-build.log；其余不出行。"""
+    row = board_server.ui_build_row(_install_report_step("ui"), _installer())
+    if row is None:
+        return []
+    return _row_from(row, "board ui build")
+
+
 def _check_auto_deploy(probes: Probes):
     """§56 合并即上岗：最近一次自动部署的结果（state/deploy_state.json，
     scripts/auto-deploy.sh 写）。文件不存在 = 这台机器不跑该 agent（.pkg 安装 /
@@ -1817,7 +1881,8 @@ def _checks_for_platform() -> List:
     # (pid alive, heartbeat stale).
     return (_CHECKS_COMMON_HEAD + middle
             + [_check_store2, _check_dashboard, _check_heartbeat,
-               _check_auto_deploy, _check_obsidian]
+               _check_board_server, _check_ui_build, _check_auto_deploy,
+               _check_obsidian]
             + tail_extra + [_check_gh, _check_claude_code_model])
 
 

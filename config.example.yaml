@@ -111,6 +111,10 @@ registry:                              # 数据层真源（CONTRACT §53，owner
                                        # yaml = 回滚开关（保留一个版本）：忽略 store2 标记、继续读写 act/registry/*.yaml。
                                        # 回滚步骤见 docs/TROUBLESHOOTING.md「store2 回滚」。改动本键需重启守护进程。
 
+# server:                              # 看板 server（CONTRACT §54）：launchd 常驻 com.zelin.aiassistant.server / systemd zelin-server.service
+#   port: 47820                        # 回环端口（1..65535，默认 47820）。install.sh 渲进 ZAI_PORT；改动需重跑 bash install.sh
+#                                      # 壳 app 缺 env 时按同一默认连；非默认端口要同步 defaults write com.zelin.ai-board serverPort <N>（或重跑 install.sh 盖进 app）
+
 # models:                              # 模型选择（CONTRACT §59，owner 决策 D22）——两把旋钮，都默认 follow
 #   dispatch: follow                   # 「手」：claude --bg 派工 agent 用哪个模型。follow = 不传 --model，继承 Claude Code 全局默认（~/.claude/settings.json 的 model）
 #   pipeline: follow                   # 「脑」：各处 headless claude -p（雷达提取/分诊/判官/问答/digest）用哪个模型。同上

@@ -1,0 +1,32 @@
+# TEMPLATE: install-linux.sh renders the @PYTHON@ / @REPO_ROOT@ /
+# @CLAUDE_BIN_DIR@ / @ZAI_PORT@ placeholders (via `python3 -m act.lib.systemd`)
+# into ~/.config/systemd/user — do not `systemctl enable` this file in place.
+#
+# server — the board server (server/, CONTRACT §49 / §54), the Linux mirror of
+# act/launchd/com.zelin.aiassistant.server.plist. Serves web/dist on
+# http://127.0.0.1:@ZAI_PORT@/ plus the /api/* routes the web board uses.
+# Resident like actd (Restart=always) so it auto-starts and stays up; a busy
+# port makes it exit after one short line (no traceback per restart cycle).
+#
+# SECURITY: server/ binds 127.0.0.1 ONLY (hard-coded, §49) and gates every
+# write with the four-gate model in server/security.py. Nothing network-facing.
+[Unit]
+Description=Zelin AI Assistant — board server (web/dist + /api, §49)
+Documentation=https://github.com/Wan-ZL/zelin-ai-assistant
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=AIASSISTANT_HOME=@REPO_ROOT@
+Environment=ZAI_PORT=@ZAI_PORT@
+Environment=PATH=@CLAUDE_BIN_DIR@:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m server
+# fd soft limit (CONTRACT §55 mirror): raise the soft limit for headroom, keep
+# the hard limit at systemd's usual default (524288) — never lower a ceiling.
+LimitNOFILE=8192:524288
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

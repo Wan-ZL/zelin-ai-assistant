@@ -28,6 +28,21 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.18] - 2026-09-01
+
+v-next-2 D17「merge = deploy」的第一次实战审计（2026-09-02 03:35Z）：owner 机器守护进程跑在 v0.48.12，看板 UI **从未被部署过**——install.sh 没有任何步骤构建 web/dist 或 shell，/Applications 里是 v0.48.0 的旧 app、壳 app 根本不存在；手工构建后壳 spawn 的 `python3 -m server` 以 `No module named server` 死掉（GUI app 是子进程的 TCC responsible process，壳没有磁盘授权）。手工救法是把 server 挂成 launchd agent——本版把它成法，并让部署包含 UI。
+
+### Added
+- **board server 是常驻 launchd agent `com.zelin.aiassistant.server`（CONTRACT §54.2 新增；§55 RESIDENT 集收编）**：模板 `act/launchd/com.zelin.aiassistant.server.plist`（KeepAlive、§55 解释器 `-m server`、`ZAI_PORT` env、`server.launchd.log`、与兄弟模板同款路径纪律与 fd 上限）+ Linux 镜像 `act/systemd/zelin-server.service`（渲染器新 token `@ZAI_PORT@`，`--zai-port`）。install.sh / install-linux.sh 每种模式都渲染并加载；crash-loop = doctor FAIL = §56 回滚判据。端口单源 config.yaml `server.port`（`Config.server_port`，坏值回 47820 = `server/app.py DEFAULT_PORT`，镜像判例）。server 在 EADDRINUSE 下只打一行、退出 75（`EX_PORT_BUSY`），不再每个 KeepAlive 周期吐 traceback。
+- **doctor `board server` 行（§54.2；§25 新 failure id `board_server_down`，Swift 镜像同步）**：回环 `GET /api/health` 是唯一诚实探针——可达 + 托管 OK；可达但非 launchd 托管（壳 spawn 的旧形状）WARN；托管但不可达 FAIL（修法点名 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`）；未托管 WARN 指向安装器。测试沙箱 `AIASSISTANT_HTTP_PROBE=0` 关探针。owner 2026-09-02 手做的同名 plist 自此不再被 `launchd orphans` 行当孤儿。
+- **install.sh 步 4b `ui`（§56.5；§23 新 step `ui` = `ok | skipped | skipped_tcc | fail`）**：node+npm 在 → 把 web/ 镜像到 `~/Library/Caches/zelin-ai-assistant/web-build/` 后在**那里** `npm ci`（只在 node_modules 缺席或 package-lock cksum 变了）+ `npm run build`，再把 dist/ 拷回 web/dist——一次性 launchd job 实测 homebrew node 对外置卷上的 repo EPERM（TCC 按 binary 记账，FDA 的 python 父进程不算），bash/cp/rsync/swiftc 等 Apple 平台 binary 读得好好的，所以 node 只碰 $HOME；残余 EPERM → `skipped_tcc`（不是部署失败）+ doctor `board ui build` 行（WARN，§25 新 id `ui_build_tcc_blocked`）；macOS + swiftc 在 → `shell/build.sh`（`ZAI_PORT` 盖进 Info.plist `ZAIServerPort`）→ stage-then-swap 进 /Applications（bundle 仍 `Zelin AI Board.app` / `com.zelin.ai-board`）。**缺工具链 = `skipped` + warn，从不是部署失败**；构建坏了 = `fail` → 回滚。每条命令受 `AIASSISTANT_UI_BUDGET`（600 s）看门狗，耗时进 report detail；输出进 `ui-build.log`（1 MB 帽）。**relaunch 规则**：只在 `--non-interactive`、本次装了新 bundle、app 正在跑时，于步 5 server agent 重新加载**之后** `pkill -TERM` + `open -g`；交互模式不动正在跑的 app。旧 app `Zelin's AI Assistant.app` 一根手指不碰（判例钉字节与 mtime）。CI 的 macOS job 新增 `bash shell/build.sh`。
+- install.sh `cap_launchd_log`（§55 追记，防腐 #4）：每个（重）加载的 label 在 unload→load 窗口里给 launchd 日志加 1 MB 帽（launchd 此刻不持 fd）；退役/孤儿日志照旧不动。install.sh 加载 server label 前若端口上已有非 launchd 的 server 在答话 → warn + 新 step `board_server_port`（不杀、不失败）。
+
+### Changed
+- **壳只连接，不再托管 server（§54.2 / §54.3 修订）**：探活 → 在班 attach；否则问 launchd（`launchctl print gui/<uid>/<label>`）——**已加载 = 不 spawn**、只等 ≤10 s；未加载才 spawn 兜底（解释器改读 repo `config/runtime.json`，回落 `/usr/bin/python3`）。失败弹窗第一条永远是「server 由 launchd 托管：launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server」。端口解析加两层：defaults `serverPort` → Info.plist `ZAIServerPort`。
+- **壳的显示名 = "Zelin's AI Assistant (Board)"**（`CFBundleName` / `CFBundleDisplayName`；窗口标题与 app 菜单同步读它）——回答 owner「为什么名字变成了 Zelin AI Board」；bundle 文件夹与 id 暂不动（TCC 按 id 记账），最终换名在 P8 与旧 app 退役同车（vnext2-plan §8）。
+- `uninstall.sh` 顺带退出并移除 `Zelin AI Board.app`；`scripts/auto-deploy.sh` 的 1800 s 看门狗注释改为覆盖 `ui` 步。
+
 ## [0.48.17] - 2026-09-01
 
 v-next-2 D3（产品 = web 看板 + shell）：owner 对照原生看板逐项列出 web 看板的回归，本版全部补回——原生 `mac/Sources/Kanban.swift` / `Cards.swift` / `Store.swift` 是行为与外观规格（CONTRACT §54.1 parity 清单）。
@@ -58,6 +73,7 @@ v-next-2 D3（产品 = web 看板 + shell）：owner 对照原生看板逐项列
 
 ### Added
 - **doctor 新行 `cron write access`（§25 新 failure id `cron_tcc_blocked`，add-only，Swift 镜像同步）**：install_report 的 `cron=skipped_tcc` → WARN + 修法（给守护 python 开 Full Disk Access 后重跑 `bash install.sh`；**终端跑通不算数**——Terminal 自带 FDA，launchd 会话没有）。crontab 内容检查按 pattern 匹配旧行照样绿，这行是「改写被拒」的唯一窗口，下次改写成功自动消失。
+
 
 ## [0.48.15] - 2026-09-01
 
@@ -2151,7 +2167,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.17...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.18...HEAD
+[0.48.18]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.17...v0.48.18
 [0.48.17]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.16...v0.48.17
 [0.48.16]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.15...v0.48.16
 [0.48.15]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.14...v0.48.15

@@ -1,3 +1,3 @@
 """Zelin's AI Assistant — act (approve / execute / deliver) pipeline package."""
 
-__version__ = "0.48.17"
+__version__ = "0.48.18"

@@ -1,16 +1,24 @@
 #!/bin/bash
-# One-click installer for Zelin's AI Assistant (Act pipeline + menu-bar app).
+# One-click installer for Zelin's AI Assistant (Act pipeline + board UI).
 #
 # What it does:
 #   1. dependency checks (claude/swift required; python3/PyYAML; node+npx for
 #      the recording engine; obsidian/gh optional)
 #   2. config.example.yaml -> config.yaml (if absent) + runtime/home pointers
 #   3. create state/ and state/inbox/
-#   4. build + install the Mac app (mac/build.sh --install)
-#   5. install launchd agents (actd resident + radar periodic): render the
-#      plist templates (replace /Users/YOURUSERNAME placeholders with the real
-#      python/repo/home paths + the login shell's claude directory, which goes
-#      FIRST on the daemon PATH), load them, then verify they actually spawn
+#   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
+#   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
+#      npm ci + npm run build) and the board shell app (shell/build.sh) and
+#      install the bundle to /Applications — each half skipped with a warn
+#      when its toolchain (node+npm / swiftc) is absent, never a failure.
+#      Never touches the legacy "Zelin's AI Assistant.app".
+#   5. install launchd agents (actd + board server resident, radars periodic):
+#      render the plist templates (replace /Users/YOURUSERNAME placeholders
+#      with the real python/repo/home paths + the login shell's claude
+#      directory, which goes FIRST on the daemon PATH; ZAI_PORT from
+#      config.yaml server.port), load them, then verify they actually spawn.
+#      In --non-interactive mode a running shell app is relaunched here, AFTER
+#      the server agent came back (§56.5 relaunch rule).
 #   6. unify the user crontab (CONTRACT §18): screenpipe ingest chain now runs
 #      the repo's ingest/ scripts + `python -m act.radar --once`, and a daily
 #      09:07 `python -m act.digest` (self-gated by digest.frequency, §17)
@@ -34,13 +42,17 @@
 #   claude only warns, the doctor step is left to the caller (it gates the
 #   deploy and decides on rollback), the closing "next steps" banner is
 #   replaced by a one-line summary, and the EXIT CODE is the number of failed
-#   steps. It NEVER builds or installs the Mac app (step 4 is skipped, §56.5):
-#   D3 froze the legacy app, and `mac/build.sh --install` quits + relaunches
-#   the running instance — screenpipe is its direct child (RunningBoard reaps
+#   steps. It NEVER builds or installs the legacy Mac app (step 4 is skipped,
+#   §56.5): D3 froze it, and `mac/build.sh --install` quits + relaunches the
+#   running instance — screenpipe is its direct child (RunningBoard reaps
 #   orphans) and live captions live inside it, so an unattended rebuild would
 #   kill a recording or a meeting's captions at whatever hour a merge lands.
 #   Only a hand-run `bash install.sh` (the owner picking the moment) rebuilds
-#   the app. The §23 report records mode "non-interactive".
+#   that app. The board UI (step 4b) IS built and installed in this mode —
+#   merge = deploy includes the UI (2026-09-02: the UI had never been deployed
+#   because nothing built it) — the shell spawns nothing (the server is a
+#   launchd agent), so relaunching it costs nobody a recording. The §23 report
+#   records mode "non-interactive".
 set -uo pipefail
 
 # Physical path of a directory — every symlink resolved (CONTRACT §55).
@@ -267,7 +279,10 @@ report_step() { # $1=name $2=status [$3=detail]
 # because the exit code is the deploy verdict and must never hinge on it.)
 # `cron=skipped_tcc`（apply_crontab：launchd 会话被 TCC 拒写 crontab）同理不算
 # fail——环境问题回滚治不了，还会毒掉 sha（2026-09-02 v0.48.12 实战）。
-# Printed one per line; the exit code is their count.
+# The `ui` step (§56.5) is NOT excluded: `ui=skipped` (toolchain absent) is
+# not a fail line, `ui=fail` (web/shell build broke) is — a merge that breaks
+# the UI build rolls back like any other. Printed one per line; the exit code
+# is their count.
 failed_deploy_steps() {
     printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
 }
@@ -295,6 +310,319 @@ install_mac_app() {
             warn "Mac app build failed — see output above"
             report_step "app" "fail" "mac/build.sh --install failed"
         fi
+    fi
+}
+
+# --------------------------------------------------------------------------
+# Step 4b — the board UI (CONTRACT §56.5 `ui` step; §54 shell).
+#
+# Two halves, each independently `ok | skipped | fail` (web also `skipped_tcc`):
+#   web:   node+npm present → mirror web/ into a build dir under $HOME
+#          (ui_web_build_dir: TCC — see below) → `npm ci` (only when that
+#          dir's node_modules is missing or package-lock.json changed since
+#          the last ci — cksum stamp) → `npm run build` → copy dist/ back to
+#          web/dist (served by the board server). EPERM in the npm log =
+#          `skipped_tcc` (node lacks Full Disk Access in a launchd session;
+#          not something a rollback can fix).
+#   shell: macOS + swiftc present → `bash shell/build.sh` (ZAI_PORT stamped
+#          from config.yaml server.port) → stage-then-swap the bundle into
+#          $UI_APPS_DIR (default /Applications; ~/Applications when not
+#          writable). Bundle folder/id stay "Zelin AI Board.app" /
+#          com.zelin.ai-board (§54 — TCC keys on the id); the display name is
+#          the product's.
+# Combined step status: any fail → fail; else any ok → ok; else skipped_tcc
+# if the web half was TCC-refused; else skipped.
+# Missing toolchain is `skipped` + a warn, NEVER a deploy failure (mirror of
+# the `app` precedent, §56.5). Never prompts: ad-hoc codesign needs no
+# keychain, npm runs with CI=1 --no-audit --no-fund. Each half runs under a
+# wall-clock budget (AIASSISTANT_UI_BUDGET, default 600 s per command) so a
+# hung npm cannot eat the auto-deploy watchdog (1800 s); durations are logged
+# and land in the report detail. Output goes to ui-build.log (capped), the
+# tail is echoed on failure.
+#
+# The legacy "Zelin's AI Assistant.app" is NEVER touched here (D3):
+# tests/test_install_ui_step.py plants one next to the shell bundle and
+# asserts it is byte-identical afterwards.
+UI_APP_NAME="Zelin AI Board"            # bundle folder — id com.zelin.ai-board (§54)
+UI_EXEC_NAME="ZelinAIBoard"             # CFBundleExecutable → pgrep/pkill -x
+UI_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam
+UI_BUDGET_S="${AIASSISTANT_UI_BUDGET:-600}"
+UI_LOG="$HOME/Library/Logs/zelin-ai-assistant/ui-build.log"
+UI_LOG_CAP_BYTES=1048576                # 防腐 #4：日志必有帽
+UI_SHELL_INSTALLED=0
+UI_APP_PATH=""
+UI_WEB_STATUS=""; UI_WEB_DETAIL=""
+UI_SHELL_STATUS=""; UI_SHELL_DETAIL=""
+
+# Run a command with a wall-clock limit; 124 on timeout (children reaped too).
+# Same shape as scripts/auto-deploy.sh run_with_timeout (macOS has no `timeout`);
+# polls 4×/s so short builds do not pay a whole second of slack.
+ui_run_with_timeout() { # $1=seconds, rest=command
+    _limit="$1"; shift
+    "$@" &
+    _pid=$!
+    _ticks=0
+    while kill -0 "$_pid" 2>/dev/null; do
+        if [ $((_ticks / 4)) -ge "$_limit" ]; then
+            echo "  [ERR ] ui: timeout after ${_limit}s — killing: $*" >&2
+            pkill -TERM -P "$_pid" 2>/dev/null
+            kill -TERM "$_pid" 2>/dev/null
+            sleep 2
+            pkill -KILL -P "$_pid" 2>/dev/null
+            kill -KILL "$_pid" 2>/dev/null
+            wait "$_pid" 2>/dev/null
+            return 124
+        fi
+        sleep 0.25
+        _ticks=$((_ticks + 1))
+    done
+    wait "$_pid"
+}
+
+ui_log_begin() { # cap the build log, open a timestamped section
+    mkdir -p "$(dirname "$UI_LOG")"
+    if [ -f "$UI_LOG" ]; then
+        _sz="$(wc -c < "$UI_LOG" | tr -d ' ')"
+        if [ "$_sz" -gt "$UI_LOG_CAP_BYTES" ]; then
+            tail -c "$((UI_LOG_CAP_BYTES / 2))" "$UI_LOG" > "$UI_LOG.tmp" && mv "$UI_LOG.tmp" "$UI_LOG"
+        fi
+    fi
+    printf '\n==== install.sh ui step %s ====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$UI_LOG"
+}
+
+ui_log_tail() { # echo the last lines of the build log after a failure
+    info "last lines of $UI_LOG:"
+    tail -n 15 "$UI_LOG" 2>/dev/null | sed 's/^/         /'
+}
+
+ui_now() { date +%s; }
+
+# Where the web build actually runs (§56.5): NOT inside the repo. Verified
+# 2026-09-02 with a throwaway launchd job: homebrew `node` is TCC-denied on a
+# repo living on an external volume (EPERM on scandir / uv_cwd) even as a
+# child of the FDA-granted daemon python — TCC judges each non-platform binary
+# on its own (§55 第三幕) — while bash/cp/rsync/swiftc (Apple platform
+# binaries) read it fine. So the sources are rsync'ed under $HOME, node/npm
+# only ever touch $HOME paths, and the finished dist/ is copied back into the
+# repo by cp (platform binary). Side benefit: `npm ci` never writes
+# node_modules into the checkout.
+ui_web_build_dir() {
+    if [ -n "${AIASSISTANT_UI_BUILD_DIR:-}" ]; then printf '%s' "$AIASSISTANT_UI_BUILD_DIR"; return; fi
+    if [ "$(uname -s)" = "Darwin" ]; then
+        printf '%s' "$HOME/Library/Caches/zelin-ai-assistant/web-build"
+    else
+        printf '%s' "${XDG_CACHE_HOME:-$HOME/.cache}/zelin-ai-assistant/web-build"
+    fi
+}
+
+# Mirror web/ (minus node_modules + dist) into the build dir. rsync --delete is
+# the sanctioned directory sync (防腐 #8); cp -R after rm -rf is the fallback.
+# --checksum: the mirror follows CONTENT, not rsync's size+whole-second-mtime
+# quick check — the `npm ci` gate below hashes the mirrored package-lock.json,
+# so a same-size edit inside the mtime window must still land (the tree is
+# ~100 small files; hashing it costs nothing).
+ui_sync_web_sources() { # $1=src web dir $2=build dir
+    mkdir -p "$2"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --checksum --delete --exclude node_modules --exclude dist --exclude '.zai-*' "$1/" "$2/" >> "$UI_LOG" 2>&1
+    else
+        _keep="$2/node_modules"; _tmpkeep=""
+        if [ -d "$_keep" ]; then _tmpkeep="$2.node_modules.keep"; rm -rf "$_tmpkeep"; mv "$_keep" "$_tmpkeep"; fi
+        rm -rf "$2" && mkdir -p "$2" && cp -R "$1/." "$2/" && rm -rf "$2/node_modules" "$2/dist" \
+            && { [ -z "$_tmpkeep" ] || mv "$_tmpkeep" "$_keep"; }
+    fi
+}
+
+# Was that build failure TCC (EPERM / operation not permitted in the log tail)?
+# Code cannot fix a missing Full Disk Access grant and a rollback will hit the
+# same wall (the 2026-09-02 `cron=skipped_tcc` lesson, §23/§56.5) — such a half
+# is `skipped_tcc`, not `fail`.
+ui_log_says_tcc() {
+    tail -n 40 "$UI_LOG" 2>/dev/null | grep -Eiq 'EPERM|operation not permitted'
+}
+
+# web half → UI_WEB_STATUS / UI_WEB_DETAIL
+install_web_ui() {
+    UI_WEB_STATUS=skipped; UI_WEB_DETAIL=""
+    if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+        warn "ui: node/npm not found — web board not built (brew install node, then bash install.sh)"
+        UI_WEB_DETAIL="web skipped (no node/npm)"
+        return 0
+    fi
+    if [ ! -f "$REPO_ROOT/web/package.json" ]; then
+        warn "ui: web/package.json missing — web board not built"
+        UI_WEB_DETAIL="web skipped (no web/package.json)"
+        return 0
+    fi
+    _web="$REPO_ROOT/web"
+    _bld="$(ui_web_build_dir)"
+    if ! ui_sync_web_sources "$_web" "$_bld"; then
+        warn "ui: could not mirror web/ into $_bld — see $UI_LOG"
+        UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail (source sync into $_bld failed)"
+        return 0
+    fi
+    _stamp="$_bld/node_modules/.zai-package-lock.cksum"
+    _lock_sum=""
+    [ -f "$_bld/package-lock.json" ] && _lock_sum="$(cksum < "$_bld/package-lock.json" | cut -d' ' -f1)"
+    _ci_s=0
+    if [ ! -d "$_bld/node_modules" ] || [ "$(cat "$_stamp" 2>/dev/null)" != "$_lock_sum" ]; then
+        _t0="$(ui_now)"
+        (cd "$_bld" && CI=1 ui_run_with_timeout "$UI_BUDGET_S" npm ci --no-audit --no-fund >> "$UI_LOG" 2>&1)
+        _rc=$?
+        if [ "$_rc" -ne 0 ]; then
+            ui_web_failed "npm ci" "$_rc"
+            return 0
+        fi
+        mkdir -p "$_bld/node_modules" && printf '%s' "$_lock_sum" > "$_stamp"
+        _ci_s=$(( $(ui_now) - _t0 ))
+    fi
+    _t0="$(ui_now)"
+    (cd "$_bld" && CI=1 ui_run_with_timeout "$UI_BUDGET_S" npm run build >> "$UI_LOG" 2>&1)
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        ui_web_failed "npm run build" "$_rc"
+        return 0
+    fi
+    _build_s=$(( $(ui_now) - _t0 ))
+    if [ ! -f "$_bld/dist/index.html" ]; then
+        warn "ui: npm run build exited 0 but $_bld/dist/index.html is missing"
+        UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail (no dist/index.html after build)"
+        return 0
+    fi
+    # publish: stage next to the served dir, then swap (the server reads files
+    # per request — the missing-dist window is milliseconds)
+    rm -rf "$_web/dist.tmp"
+    if ! cp -R "$_bld/dist" "$_web/dist.tmp"; then
+        rm -rf "$_web/dist.tmp"
+        warn "ui: could not copy the built dist into $_web"
+        UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail (publish into web/dist failed)"
+        return 0
+    fi
+    rm -rf "$_web/dist" && mv "$_web/dist.tmp" "$_web/dist"
+    UI_WEB_STATUS=ok
+    UI_WEB_DETAIL="web ok (npm ci ${_ci_s}s, build ${_build_s}s)"
+    ok "ui: web/dist built (npm ci ${_ci_s}s, build ${_build_s}s; built in $_bld)"
+}
+
+# a failed npm step → fail, or skipped_tcc when the log says TCC (see ui_log_says_tcc)
+ui_web_failed() { # $1=step name $2=rc
+    if ui_log_says_tcc; then
+        warn "ui: $1 hit EPERM / operation not permitted — node lacks Full Disk Access in this (launchd) session; web board not rebuilt"
+        info "  fix: System Settings > Privacy & Security > Full Disk Access: add $(command -v node) (resolve the symlink), or run: bash $REPO_ROOT/install.sh   # from a terminal"
+        UI_WEB_STATUS=skipped_tcc; UI_WEB_DETAIL="web skipped_tcc ($1 exit $2: EPERM under launchd; grant node Full Disk Access or bash install.sh from a terminal)"
+        return 0
+    fi
+    warn "ui: $1 failed (exit $2) — see $UI_LOG"
+    ui_log_tail
+    UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail ($1 exit $2)"
+}
+
+# shell half → UI_SHELL_STATUS / UI_SHELL_DETAIL (+ UI_APP_PATH, UI_SHELL_INSTALLED)
+install_shell_app() {
+    UI_SHELL_STATUS=skipped; UI_SHELL_DETAIL=""
+    if [ "$(uname -s)" != "Darwin" ]; then
+        UI_SHELL_DETAIL="shell skipped (not macOS)"
+        return 0
+    fi
+    if ! command -v swiftc >/dev/null 2>&1 || ! bash "$REPO_ROOT/shell/build.sh" --check-toolchain >/dev/null 2>&1; then
+        warn "ui: swift toolchain missing/too old — board shell app not built (xcode-select --install, then bash install.sh)"
+        UI_SHELL_DETAIL="shell skipped (no swift toolchain)"
+        return 0
+    fi
+    _t0="$(ui_now)"
+    ZAI_PORT="${SERVER_PORT:-}" ui_run_with_timeout "$UI_BUDGET_S" bash "$REPO_ROOT/shell/build.sh" >> "$UI_LOG" 2>&1
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        warn "ui: shell/build.sh failed (exit $_rc) — see $UI_LOG"
+        ui_log_tail
+        UI_SHELL_STATUS=fail; UI_SHELL_DETAIL="shell fail (shell/build.sh exit $_rc)"
+        return 0
+    fi
+    _src="$REPO_ROOT/shell/build/$UI_APP_NAME.app"
+    if [ ! -d "$_src" ]; then
+        warn "ui: shell/build.sh exited 0 but $_src is missing"
+        UI_SHELL_STATUS=fail; UI_SHELL_DETAIL="shell fail (no bundle after build)"
+        return 0
+    fi
+    _dest_dir="$UI_APPS_DIR"
+    if [ ! -w "$_dest_dir" ] || { [ -e "$_dest_dir/$UI_APP_NAME.app" ] && [ ! -w "$_dest_dir/$UI_APP_NAME.app" ]; }; then
+        warn "ui: $_dest_dir not writable — installing the shell app to ~/Applications"
+        _dest_dir="$HOME/Applications"
+        mkdir -p "$_dest_dir"
+    fi
+    # Stage-then-swap (mac/build.sh precedent): a failed copy must never leave
+    # a half-bundle in place; the rm+mv window is near-instant. ditto keeps
+    # the ad-hoc signature intact (cp -R can perturb it).
+    _staged="$_dest_dir/.$UI_APP_NAME.app.staged"
+    rm -rf "$_staged"
+    if ! ditto "$_src" "$_staged" >> "$UI_LOG" 2>&1; then
+        rm -rf "$_staged"
+        warn "ui: could not copy the shell bundle into $_dest_dir — installed app left untouched"
+        UI_SHELL_STATUS=fail; UI_SHELL_DETAIL="shell fail (ditto into $_dest_dir failed)"
+        return 0
+    fi
+    rm -rf "$_dest_dir/$UI_APP_NAME.app"
+    mv "$_staged" "$_dest_dir/$UI_APP_NAME.app"
+    UI_APP_PATH="$_dest_dir/$UI_APP_NAME.app"
+    UI_SHELL_INSTALLED=1
+    _shell_s=$(( $(ui_now) - _t0 ))
+    UI_SHELL_STATUS=ok
+    UI_SHELL_DETAIL="shell ok (${_shell_s}s → $UI_APP_PATH)"
+    ok "ui: board shell built + installed to $UI_APP_PATH (${_shell_s}s)"
+    if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
+        if [ "$NON_INTERACTIVE" -eq 1 ]; then
+            info "ui: the shell app is running — relaunched after the server agent reloads (step 5)"
+        else
+            info "ui: the shell app is running — quit + reopen it to pick up this build: open \"$UI_APP_PATH\""
+        fi
+    fi
+}
+
+install_ui() {
+    if [ "$PKG_POSTINSTALL" -eq 1 ]; then
+        echo "==> 4b. board UI (web/dist + shell app) — skipped (.pkg mode)"
+        report_step "ui" "skipped" "pkg-postinstall never builds the UI"
+        return 0
+    fi
+    echo "==> 4b. board UI (web/dist + shell app)"
+    ui_log_begin
+    _ui_t0="$(ui_now)"
+    install_web_ui
+    install_shell_app
+    _ui_s=$(( $(ui_now) - _ui_t0 ))
+    _status=skipped
+    if [ "$UI_WEB_STATUS" = fail ] || [ "$UI_SHELL_STATUS" = fail ]; then
+        _status=fail
+    elif [ "$UI_WEB_STATUS" = ok ] || [ "$UI_SHELL_STATUS" = ok ]; then
+        _status=ok
+    elif [ "$UI_WEB_STATUS" = skipped_tcc ]; then
+        _status=skipped_tcc
+    fi
+    info "ui step: $_status in ${_ui_s}s"
+    report_step "ui" "$_status" "$UI_WEB_DETAIL; $UI_SHELL_DETAIL; ${_ui_s}s total"
+}
+
+# §56.5 relaunch rule: only the auto-deploy path (--non-interactive), only when
+# this run installed a new shell bundle AND the app is running, and only AFTER
+# step 5 reloaded the server agent. SIGTERM → the shell's DispatchSource turns
+# it into a regular NSApp.terminate (it spawned nothing to clean up: the server
+# is launchd's). `open -g` relaunches without stealing focus. Interactive runs
+# leave a running app alone (the owner picks the moment).
+relaunch_shell_app() {
+    [ "$NON_INTERACTIVE" -eq 1 ] || return 0
+    [ "$UI_SHELL_INSTALLED" -eq 1 ] || return 0
+    [ -n "$UI_APP_PATH" ] || return 0
+    pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || return 0
+    pkill -TERM -x "$UI_EXEC_NAME" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+    pkill -KILL -x "$UI_EXEC_NAME" 2>/dev/null || true
+    if open -g "$UI_APP_PATH" 2>/dev/null; then
+        ok "ui: relaunched the shell app on the new build (server agent reloaded first)"
+    else
+        warn "ui: relaunch failed — start it manually: open \"$UI_APP_PATH\""
     fi
 }
 
@@ -414,12 +742,62 @@ render_launchd_plist() {
     # external-volume repo makes the spawn fail with EX_CONFIG 78), and the
     # directory must exist or the spawn fails the same way.
     mkdir -p "$HOME/Library/Logs/zelin-ai-assistant"
+    # §54 board server port: the server template carries
+    # `<key>ZAI_PORT</key><string>47820</string>` on ONE line; SERVER_PORT is
+    # config.yaml server.port (computed once by server_port), default 47820.
+    port="${SERVER_PORT:-47820}"
     sed -e "s|/Users/YOURUSERNAME/\.claude-bin|$(_sed_escape "$claudedir")|g" \
         -e "s|/Users/YOURUSERNAME/miniconda3/bin/python3|$(_sed_escape "$py")|g" \
         -e "s|/Users/YOURUSERNAME/Projects/zelin-ai-assistant|$(_sed_escape "$repo")|g" \
         -e "s|/Users/YOURUSERNAME/miniconda3/bin|$(_sed_escape "$pydir")|g" \
         -e "s|/Users/YOURUSERNAME|$(_sed_escape "$HOME")|g" \
+        -e "s|<key>ZAI_PORT</key><string>[0-9]*</string>|<key>ZAI_PORT</key><string>$(_sed_escape "$port")</string>|g" \
         "$src" > "$dest"
+}
+
+# §54: the board server's loopback port from config.yaml `server.port`
+# (act.lib.config.server_port, 1..65535, default 47820). Fail-open to the
+# default on any probe trouble — a port typo must never stop the install.
+server_port() {
+    _p="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "${RUNTIME_PY:-python3}" -c '
+from act.lib import config
+try:
+    print(int(config.load_config().server_port))
+except Exception:
+    print(config.DEFAULT_SERVER_PORT)') 2>/dev/null )"
+    case "$_p" in ''|*[!0-9]*) _p=47820 ;; esac
+    printf '%s' "$_p"
+}
+
+# Does anything answer GET /api/health on the board port right now? Used before
+# loading the server agent: a shell-spawned fallback or a hand-run `-m server`
+# holding the port would make the launchd job crash-loop (§54: two servers
+# must never fight for the port). Reported, never killed — it is not ours.
+board_server_answering() { # $1=port
+    (cd "$REPO_ROOT" && "${RUNTIME_PY:-python3}" -c '
+import sys, urllib.request
+try:
+    with urllib.request.urlopen("http://127.0.0.1:%d/api/health" % int(sys.argv[1]), timeout=2) as r:
+        raise SystemExit(0 if 200 <= r.status < 300 else 1)
+except SystemExit:
+    raise
+except Exception:
+    raise SystemExit(1)' "$1" >/dev/null 2>&1)
+}
+
+# Cap an agent's launchd-managed log in the unload→load window — the only
+# moment launchd holds no fd on it (§32.4: in-process replace is off-limits
+# for *.launchd.log; §55). Keep the newest half past 1 MB (防腐 #4; same
+# shape as scripts/auto-deploy.sh cap_log). Only labels this run reloads are
+# touched; retired/orphan logs stay as forensics (§55).
+cap_launchd_log() { # $1=label
+    _lf="$HOME/Library/Logs/zelin-ai-assistant/${1##*.}.launchd.log"
+    [ -f "$_lf" ] || return 0
+    _lsz="$(wc -c < "$_lf" | tr -d ' ')"
+    [ "$_lsz" -gt 1048576 ] || return 0
+    if tail -c 524288 "$_lf" > "$_lf.tmp" && mv "$_lf.tmp" "$_lf"; then
+        info "capped ${1##*.}.launchd.log (was $_lsz bytes; newest half kept)"
+    fi
 }
 
 # `launchctl load` reports success even when the job crashes on spawn (e.g. a
@@ -509,7 +887,7 @@ fi
 # prints the exact fix (update Xcode, xcode-select) so we just exit.
 # --non-interactive never builds the app (§56.5), so it does not need one.
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    info "swift toolchain not checked — --non-interactive never rebuilds the Mac app (§56.5)"
+    info "swift toolchain not required — --non-interactive never rebuilds the legacy Mac app (§56.5); the board shell (step 4b) is skipped when swiftc is absent"
 elif bash "$REPO_ROOT/mac/build.sh" --check-toolchain; then
     ok "swift toolchain: $(swiftc --version 2>/dev/null | head -n1)"
 else
@@ -711,6 +1089,14 @@ echo ""
 install_mac_app
 
 # --------------------------------------------------------------------------
+# §54 board server port (config.yaml server.port) — consumed by the shell
+# build below (Info.plist ZAIServerPort) and by the server plist render in
+# step 5 (ZAI_PORT). One resolution, both consumers.
+SERVER_PORT="$(server_port)"
+echo ""
+install_ui
+
+# --------------------------------------------------------------------------
 # Runs in BOTH modes: a .pkg install that leaves actd unloaded ships an inert
 # product (the app shows an orange banner and nothing ever executes). The
 # radars are safe to load before credentials exist — they no-op and record a
@@ -719,7 +1105,7 @@ echo ""
 echo "==> 5. launchd agents"
 LAUNCHD_FAILED=0
 mkdir -p "$LA_DIR"
-info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT"
+info "rendering plist templates: python=${RUNTIME_PY:-python3} home=$REPO_ROOT server_port=$SERVER_PORT"
 # v0.18.1: the Obsidian radar now runs ONLY through the cron ingest chain
 # (step 6). Its old launchd agent was TCC-blocked from ~/Documents and only
 # ever saw an empty vault — retire any previously-installed copy so an upgrade
@@ -769,6 +1155,11 @@ radar_source_enabled() {   # $1 = source name; returns 0 on/probe-failed, 1 off
 # checkout (a .pkg copy has no .git — nothing to fast-forward) whose
 # features.auto_deploy is on (default on). Same fail-open shape as the radar
 # gate: only the dedicated exit 3 + literal "off" means off.
+# §54 board server agent (every mode: without it the web board and the shell
+# have nothing to connect to; the shell only spawns a fallback when this label
+# is NOT loaded).
+SERVER_LABEL="com.zelin.aiassistant.server"
+SERVER_PORT_BUSY=0
 AUTODEPLOY_LABEL="com.zelin.aiassistant.autodeploy"
 autodeploy_wanted() {      # returns 0 wanted/probe-failed, 1 not wanted
     git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
@@ -816,8 +1207,21 @@ for plist in "$REPO_ROOT"/act/launchd/*.plist; do
             continue
         fi
     fi
-    # unload any previous version first (idempotent upgrades)
+    if [ "$label" = "$SERVER_LABEL" ] && ! launchd_label_loaded "$label" \
+        && board_server_answering "$SERVER_PORT"; then
+        # §54: something not under launchd already answers on the port (the
+        # shell's spawn fallback from before this version, or a hand-run
+        # `python3 -m server`). The agent is loaded anyway — it takes the port
+        # over as soon as that process exits — but say so: until then the
+        # job exits 75 every throttle cycle and doctor's `board server` row
+        # stays red.
+        warn "a board server not managed by launchd answers on 127.0.0.1:$SERVER_PORT — quit the old shell app / hand-started 'python3 -m server' so $label can take the port"
+        SERVER_PORT_BUSY=1
+    fi
+    # unload any previous version first (idempotent upgrades); cap the agent's
+    # launchd log while launchd holds no fd on it (§55)
     launchd_unload "$dest" "$label"
+    cap_launchd_log "$label"
     render_launchd_plist "$plist" "$dest"
     if launchd_load "$dest"; then
         ok "loaded $label"
@@ -841,6 +1245,11 @@ elif [ -n "$LOADED_LABELS" ]; then
 else
     report_step "launchd" "skipped" "no agents to load"
 fi
+if [ "$SERVER_PORT_BUSY" -eq 1 ]; then
+    report_step "board_server_port" "warn" "127.0.0.1:$SERVER_PORT answered before $SERVER_LABEL loaded - quit the old shell app / hand-run server so launchd can take the port"
+fi
+# §56.5 relaunch rule — only now, with the server agent back under launchd
+relaunch_shell_app
 
 # --------------------------------------------------------------------------
 echo ""
@@ -1006,8 +1415,10 @@ cat <<'EOF'
         granted it in System Settings > Privacy > Full Disk Access. There is no
         launchd radar agent to manage: just grant that access and the ingest
         chain picks up the vault.
- 4. The menu-bar app is installed; launch it from /Applications (or ~/Applications).
-    It reads state/dashboard.json every 5s and writes approvals to state/inbox/.
+ 4. The board app "Zelin's AI Assistant (Board)" (bundle: Zelin AI Board.app) is
+    in /Applications (or ~/Applications); the board server runs as launchd agent
+    com.zelin.aiassistant.server on http://127.0.0.1:<server.port, default 47820>/.
+    The legacy menu-bar app "Zelin's AI Assistant.app" is left as it was (D3).
  5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」。
     menu-bar icon → quick capture → approve ✅ → a reviewable draft arrives minutes later
     (needs only claude + API key — no screenpipe/Obsidian material required).

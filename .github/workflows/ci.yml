@@ -329,6 +329,12 @@ jobs:
       - name: Build macOS app (with Sparkle, like a release build)
         run: bash mac/build.sh
 
+      - name: Build board shell app (shell/build.sh — install.sh's ui step)
+        # CONTRACT §56.5: merge = deploy now includes the UI; the shell must
+        # compile on the CI toolchain or the auto-deploy `ui` step fails and
+        # rolls the deploy back. ZAI_PORT stamping is exercised too.
+        run: ZAI_PORT=47820 bash shell/build.sh
+
       - name: Swift logic tests (mac/LogicTests, swift test)
         # 本地第四道门（CONTRIBUTING.md）：⌘V 认领矩阵
         # (PastedImages.isImagePaste/readImages) — a Swift Testing package

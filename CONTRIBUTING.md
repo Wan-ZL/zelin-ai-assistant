@@ -56,6 +56,15 @@ They are cheap; run them locally before pushing.
 
 CI additionally runs the **QA merge gates** (per-function complexity, CRAP, coverage floor, dependency direction, hygiene caps — see docs/CONTRACT.md §58) against the shrink-only baselines in `qa/`. Local equivalent: `bash scripts/qa/run_gates.sh` (needs `pip install coverage`, dev-side only). New code must pass clean; pre-existing debt is ledgered in `qa/*_baseline.txt` and may only shrink. The canonical environment for the coverage-derived numbers is the CI `qa-gates` job — on non-linux machines the two coverage-derived gates (CRAP, coverage floor) print their verdicts but never block; reconcile those ledgers from the job's `qa-report` artifact, not from a local darwin run. "Reconcile" only ever means shrink: on pull requests the `qa-gates` job also diffs `qa/` against the PR base (`scripts/qa/ledger_diff.py`) and fails on any added ledger key, raised score, lowered coverage floor, or loosened threshold in `qa/gates.toml` — new debt must be fixed in the code, never enrolled. Local equivalent: `python3 scripts/qa/ledger_diff.py --base origin/main`.
 
+### board shell 手动检查（shell/ 没有 test target）
+
+`shell/Sources/main.swift` 的连接序（CONTRACT §54.2）没有 Swift 测试靶，改动它时手动过一遍（每条 ≤1 分钟）：
+
+1. **attach**：server agent 在班（`launchctl print gui/$UID/com.zelin.aiassistant.server` 退出 0、`curl -s 127.0.0.1:47820/api/health` 有答）→ `open "shell/build/Zelin AI Board.app"` → 看板直接出现；`~/Library/Logs/zelin-ai-assistant/board-shell.log` **没有**新的 `spawn` 横幅。
+2. **launchd 已加载但端口没答话**：`launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server` 后 1 秒内 `open` 壳 → 壳等 ≤10 s 后照常加载（log 里一行 `… is loaded in launchd — waiting, not spawning`），期间 `pgrep -fl "python3 -m server"` 只有 launchd 那一个进程。
+3. **失败弹窗**：`launchctl bootout gui/$UID/com.zelin.aiassistant.server` 再把 `defaults write com.zelin.ai-board serverRepo /nonexistent` → `open` 壳 → 弹窗第一条是 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`，注明 label 未加载 → `bash install.sh`。完事 `defaults delete com.zelin.ai-board serverRepo && bash install.sh`。
+4. **名字**：Dock、窗口标题、app 菜单都读 "Zelin's AI Assistant (Board)"；`osascript -e 'id of app "Zelin AI Board"'` 仍是 `com.zelin.ai-board`。
+
 ## Project rules
 
 - **Contract first.** Any change to a `dashboard.json` or `state/inbox/` field lands in [docs/CONTRACT.md](docs/CONTRACT.md) *before* the code. Fields are **add-only** — never renamed or removed — and the Swift side decodes every new field with `decodeIfPresent` for backward compatibility. CONTRACT.md's section numbers are referenced from code and docs; never renumber them.

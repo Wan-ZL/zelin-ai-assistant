@@ -105,6 +105,11 @@ DEFAULT_DIGEST_FREQUENCY: str = "off"
 # registry.backend()——这里只是配置词表。
 REGISTRY_BACKENDS: tuple = ("auto", "yaml", "sqlite")
 DEFAULT_REGISTRY_BACKEND: str = "auto"
+# §54 看板 server 的回环端口（config.yaml `server.port`）。install.sh 把它渲进
+# com.zelin.aiassistant.server.plist / zelin-server.service 的 ZAI_PORT；server/
+# 自己只读 env（server/app.py DEFAULT_PORT 镜像这个默认值，tests/
+# test_server_paths_mirror.py 钉漂移）。壳 app 缺 env 时也回落到同一默认。
+DEFAULT_SERVER_PORT: int = 47820
 # §59 模型旋钮（D22）：两把——`models.dispatch`（claude --bg 派工 agent，"手"）
 # 与 `models.pipeline`（各处 headless `claude -p`：雷达/分诊/判官/问答，"脑"）。
 # 值 = "follow"（默认：argv 不带 --model，继承 Claude Code 全局默认
@@ -223,6 +228,10 @@ class Config:
     # §53 数据层后端开关（config.yaml `registry.backend`）——rollback 用；
     # 词表外的值一律回落 auto（fail-safe：配错字不至于让真源判定翻车）。
     registry_backend: str = DEFAULT_REGISTRY_BACKEND
+    # §54 看板 server 端口（config.yaml `server.port`，1..65535；坏值回默认）。
+    # 只在安装期消费（渲进 launchd/systemd 模板），无 override 键——改动需重跑
+    # bash install.sh。
+    server_port: int = DEFAULT_SERVER_PORT
 
     # §59 模型旋钮（D22）。"follow" = 不传 --model（继承 Claude Code 全局
     # 默认）；其余 = act/llm.py 在 argv 末尾唯一一处追加 `--model <id>`。
@@ -464,6 +473,13 @@ def _coerce_registry_backend(value) -> str:
     return v if v in REGISTRY_BACKENDS else DEFAULT_REGISTRY_BACKEND
 
 
+def _server_port_from(data: dict) -> int:
+    """§54 `server.port`：整数 1..65535 才收，其余（缺失/bool/越界/字符串
+    垃圾）一律回 DEFAULT_SERVER_PORT——端口写错不该让 server 起不来。"""
+    port = _int_or(_dict_or(data.get("server")).get("port"), DEFAULT_SERVER_PORT)
+    return port if 0 < port < 65536 else DEFAULT_SERVER_PORT
+
+
 def coerce_model(value) -> str:
     """§59 模型旋钮归一：None/空白/"follow"（大小写不敏感）→ "follow"；形状
     合法的 id 原样（大小写保留——模型 id 由 CLI 判，这里不猜）；其余（含控制
@@ -661,6 +677,9 @@ def load_config() -> Config:
     registry_blk = _dict_or(data.get("registry"))
     if "backend" in registry_blk:
         cfg.registry_backend = _coerce_registry_backend(registry_blk.get("backend"))
+
+    # §54 看板 server 端口（无分支：load_config 的圈复杂度账本已在上限之外）
+    cfg.server_port = _server_port_from(data)
 
     # §59（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
     # 保留 follow（不是保留"上一个值"——yaml 里没有上一个值）。

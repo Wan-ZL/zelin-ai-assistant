@@ -6,10 +6,15 @@
 	<string>ZelinAIBoard</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.zelin.ai-board</string>
+	<!-- Names (CONTRACT §54 / vnext2-plan §8): the bundle FOLDER stays
+	     "Zelin AI Board.app" and the id stays com.zelin.ai-board for now
+	     (TCC grants key on the id); what the user sees — Dock, window title,
+	     app menu — reads as part of the product. The final swap (shell takes
+	     "Zelin's AI Assistant", legacy becomes "(old)") happens at P8. -->
 	<key>CFBundleName</key>
-	<string>Zelin AI Board</string>
+	<string>Zelin's AI Assistant (Board)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Zelin AI Board</string>
+	<string>Zelin's AI Assistant (Board)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>
@@ -45,6 +50,11 @@
 	     时壳会礼貌报错而非猜路径。
 	     可用 `defaults write com.zelin.ai-board serverRepo <path>` 覆盖。 -->
 	<key>ZAIServerRepo</key>
+	<string></string>
+	<!-- Board server port（§54）。源文件留空 = 用 server 侧同一默认 47820；
+	     install.sh 经 shell/build.sh（env ZAI_PORT）以 config.yaml server.port
+	     盖章。解析序：env ZAI_PORT → defaults serverPort → 本键 → 47820。 -->
+	<key>ZAIServerPort</key>
 	<string></string>
 </dict>
 </plist>
