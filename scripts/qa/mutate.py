@@ -21,15 +21,18 @@ stdlib + PyYAML）+ Uncle Bob 采纳清单的判决——价值靠确定性工�
 机器可读输出（P5 每日自我改进循环的输入——survivors 列表带 file:line +
 operator，循环据此自动提出补测试提案，R2.3.4/R2.4.2；JSON 字段 add-only）：
   .qa/mutation/report.json    本轮聚合报告（schema 见 build_report()）
-  .qa/mutation/state.json     断点续跑台账（跨夜 resume；模块内容 hash 变
-                              = 该模块结果作废重跑）
+  .qa/mutation/state.json     断点续跑台账（跨夜 resume；模块内容**或其映射
+                              测试子集**的 hash 变 = 该模块结果作废重跑——
+                              测试变强必须重新判存活，不然夜报永远复述
+                              已被杀死的变异体）
 
 确定性与预算：site 顺序 = AST 深度优先遍历序（跑两遍同一棵树得同一列表）；
 round-robin 跨模块交错执行，预算（--time-budget）到点即停——每个模块每晚都
 被访问到，长模块跨几夜跑完。
 
 判例：tests/test_mutate_sites.py（site 生成/跳过规则/预算与续跑调度）、
-tests/integration/test_mutation_runner.py（真子进程杀伤判定 + 弱测试存活）。
+tests/integration/test_mutation_runner.py（真子进程杀伤判定 + 弱测试存活 +
+测试变强作废旧账）。
 """
 import argparse
 import ast
@@ -45,8 +48,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA = 1
-# 变异算子集合的版本号：算子增删改 → bump → 旧 state 全部作废（结果不可比）。
-RUNNER_VERSION = 1
+# 变异算子/跳过规则的版本号：site 列表的生成规则变 → bump → 旧 state 全部
+# 作废（site_id 不再可比）。v2：logging 跳过从「名字含 log」子串启发收紧为
+# 精确名单（§57「不许悄悄扩」）。
+RUNNER_VERSION = 2
 
 DEFAULT_TARGETS = "qa/mutation_targets.toml"
 DEFAULT_STATE = ".qa/mutation/state.json"
@@ -62,9 +67,12 @@ CHECKPOINT_EVERY = 20
 MD_SURVIVOR_CAP = 200
 
 # 等价变异体高发区的跳过启发（§57）：logging 调用里的改动（级别名、拼串）
-# 几乎不可能被行为测试杀死，全部不铸 site。
-_LOGGING_ATTRS = frozenset(
-    {"debug", "info", "warning", "error", "exception", "critical", "log"})
+# 几乎不可能被行为测试杀死，全部不铸 site。**精确名单**，不是子串匹配——
+# `catalog(...)`、`_merge_event_logged(...)` 这类名字含 log 的真谓词照常
+# 变异（§57：跳过名单成文、不许悄悄扩）。
+_LOGGING_CALL_NAMES = frozenset(
+    {"debug", "info", "warning", "error", "exception", "critical", "log",
+     "log_event"})
 
 # 临时工作区的 fallback 复制（非 git 树）要跳过的目录名。
 _IGNORE_NAMES = frozenset(
@@ -91,22 +99,31 @@ def _strip_comment(line):
     return "".join(out).strip()
 
 
+def _quoted(text):
+    """带双引号的字符串字面量（子集里无转义）。"""
+    return text.startswith('"') and text.endswith('"') and len(text) >= 2
+
+
+def _parse_array(raw, where):
+    inner = raw[1:-1].strip()
+    if not inner:
+        return []
+    items = []
+    for piece in inner.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if not _quoted(piece):
+            raise ValueError(f"{where}: 数组元素必须是双引号字符串: {piece!r}")
+        items.append(piece[1:-1])
+    return items
+
+
 def _parse_value(raw, where):
     raw = raw.strip()
     if raw.startswith("[") and raw.endswith("]"):
-        inner = raw[1:-1].strip()
-        if not inner:
-            return []
-        items = []
-        for piece in inner.split(","):
-            piece = piece.strip()
-            if not piece:
-                continue
-            if not (piece.startswith('"') and piece.endswith('"') and len(piece) >= 2):
-                raise ValueError(f"{where}: 数组元素必须是双引号字符串: {piece!r}")
-            items.append(piece[1:-1])
-        return items
-    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        return _parse_array(raw, where)
+    if _quoted(raw):
         return raw[1:-1]
     if raw in ("true", "false"):
         return raw == "true"
@@ -114,6 +131,24 @@ def _parse_value(raw, where):
         return int(raw)
     except ValueError:
         raise ValueError(f"{where}: 不在支持的 TOML 子集内: {raw!r}") from None
+
+
+def _table_name(line, where, rawline):
+    name = line[1:-1].strip()
+    if not name or name.startswith("["):
+        raise ValueError(f"{where}: 非法 table 头: {rawline!r}")
+    return name
+
+
+def _split_key(line, where, rawline):
+    """`key = value` 行 → (key 去引号, 原始 value 文本)。"""
+    if "=" not in line:
+        raise ValueError(f"{where}: 期望 key = value: {rawline!r}")
+    key, _, raw = line.partition("=")
+    key = key.strip()
+    if _quoted(key):
+        key = key[1:-1]
+    return key, raw
 
 
 def parse_targets_toml(text):
@@ -126,19 +161,11 @@ def parse_targets_toml(text):
             continue
         where = f"line {n}"
         if line.startswith("[") and line.endswith("]"):
-            name = line[1:-1].strip()
-            if not name or name.startswith("["):
-                raise ValueError(f"{where}: 非法 table 头: {rawline!r}")
-            current = tables.setdefault(name, {})
+            current = tables.setdefault(_table_name(line, where, rawline), {})
             continue
-        if "=" not in line:
-            raise ValueError(f"{where}: 期望 key = value: {rawline!r}")
         if current is None:
             raise ValueError(f"{where}: key 出现在任何 [table] 之前")
-        key, _, raw = line.partition("=")
-        key = key.strip()
-        if key.startswith('"') and key.endswith('"') and len(key) >= 2:
-            key = key[1:-1]
+        key, raw = _split_key(line, where, rawline)
         current[key] = _parse_value(raw, where)
     return tables
 
@@ -183,8 +210,7 @@ def _call_simple_name(node):
 
 
 def _skip_call(node):
-    name = _call_simple_name(node)
-    return name in _LOGGING_ATTRS or "log" in name.lower()
+    return _call_simple_name(node) in _LOGGING_CALL_NAMES
 
 
 def _is_main_guard(node):
@@ -207,66 +233,98 @@ def _const_sites(node, sites):
                               lambda n=node, v=value + delta: setattr(n, "value", v)))
 
 
+def _compare_sites(node, sites):
+    for j, op in enumerate(node.ops):
+        flip = _CMP_FLIPS.get(type(op))
+        if flip:
+            repl, detail = flip
+            sites.append(Site(f"cmp_{type(op).__name__.lower()}",
+                              node.lineno, node.col_offset, detail,
+                              lambda n=node, j=j, r=repl: n.ops.__setitem__(j, r())))
+
+
+def _binop_sites(node, sites):
+    if isinstance(node.op, ast.Add):
+        sites.append(Site("arith_add", node.lineno, node.col_offset, "+ -> -",
+                          lambda n=node: setattr(n, "op", ast.Sub())))
+    elif isinstance(node.op, ast.Sub):
+        sites.append(Site("arith_sub", node.lineno, node.col_offset, "- -> +",
+                          lambda n=node: setattr(n, "op", ast.Add())))
+
+
+def _boolop_sites(node, sites):
+    if isinstance(node.op, ast.And):
+        sites.append(Site("bool_and", node.lineno, node.col_offset, "and -> or",
+                          lambda n=node: setattr(n, "op", ast.Or())))
+    else:
+        sites.append(Site("bool_or", node.lineno, node.col_offset, "or -> and",
+                          lambda n=node: setattr(n, "op", ast.And())))
+
+
+def _return_sites(node, sites):
+    value = node.value
+    if value is None or (isinstance(value, ast.Constant) and value.value is None):
+        return  # `return` / `return None` 变异成自己 = 等价变异体
+    sites.append(Site("return_none", node.lineno, node.col_offset,
+                      "return X -> return None",
+                      lambda n=node: setattr(n, "value", ast.Constant(value=None))))
+
+
+# node 类型 → 铸 site 的函数（顺序 = 原 elif 链；类型互斥，首中即停）。
+_SITE_MAKERS = (
+    (ast.Compare, _compare_sites),
+    (ast.BinOp, _binop_sites),
+    (ast.BoolOp, _boolop_sites),
+    (ast.Constant, _const_sites),
+    (ast.Return, _return_sites),
+)
+
+
 def _node_sites(node, sites):
     """当前 node 自身能铸出的 sites（不含 continue/break——那要父语句表）。"""
-    if isinstance(node, ast.Compare):
-        for j, op in enumerate(node.ops):
-            flip = _CMP_FLIPS.get(type(op))
-            if flip:
-                repl, detail = flip
-                sites.append(Site(f"cmp_{type(op).__name__.lower()}",
-                                  node.lineno, node.col_offset, detail,
-                                  lambda n=node, j=j, r=repl: n.ops.__setitem__(j, r())))
-    elif isinstance(node, ast.BinOp):
-        if isinstance(node.op, ast.Add):
-            sites.append(Site("arith_add", node.lineno, node.col_offset, "+ -> -",
-                              lambda n=node: setattr(n, "op", ast.Sub())))
-        elif isinstance(node.op, ast.Sub):
-            sites.append(Site("arith_sub", node.lineno, node.col_offset, "- -> +",
-                              lambda n=node: setattr(n, "op", ast.Add())))
-    elif isinstance(node, ast.BoolOp):
-        if isinstance(node.op, ast.And):
-            sites.append(Site("bool_and", node.lineno, node.col_offset, "and -> or",
-                              lambda n=node: setattr(n, "op", ast.Or())))
-        else:
-            sites.append(Site("bool_or", node.lineno, node.col_offset, "or -> and",
-                              lambda n=node: setattr(n, "op", ast.And())))
-    elif isinstance(node, ast.Constant):
-        _const_sites(node, sites)
-    elif isinstance(node, ast.Return):
-        value = node.value
-        if value is not None and not (isinstance(value, ast.Constant)
-                                      and value.value is None):
-            sites.append(Site("return_none", node.lineno, node.col_offset,
-                              "return X -> return None",
-                              lambda n=node: setattr(
-                                  n, "value", ast.Constant(value=None))))
+    for cls, maker in _SITE_MAKERS:
+        if isinstance(node, cls):
+            maker(node, sites)
+            return
+
+
+def _skip_subtree(node):
+    """整棵子树不铸 site 的规则（等价变异体高发区，§57 明文）：
+    __repr__ 函数体、`if __name__ == "__main__"` 守卫、logging 类调用。"""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and \
+            node.name == "__repr__":
+        return True
+    if _is_main_guard(node):
+        return True
+    return isinstance(node, ast.Call) and _skip_call(node)
+
+
+def _loop_flow_site(children, idx, child, sites):
+    """语句表里的 continue ↔ break 位点（需要父列表才能原地替换节点）。"""
+    if isinstance(child, ast.Continue):
+        into, detail = ast.Break, "continue -> break"
+    else:
+        into, detail = ast.Continue, "break -> continue"
+    sites.append(Site("loop_flow", child.lineno, child.col_offset, detail,
+                      lambda lst=children, i=idx, cls=into, c=child:
+                      lst.__setitem__(i, ast.copy_location(cls(), c))))
+
+
+def _walk_children(children, sites):
+    for idx, child in enumerate(children):
+        if isinstance(child, (ast.Continue, ast.Break)):
+            _loop_flow_site(children, idx, child, sites)
+        if isinstance(child, ast.AST):
+            _walk(child, sites)
 
 
 def _walk(node, sites):
-    # 跳过整棵子树的规则（等价变异体高发区，§57 明文）：
-    #   __repr__ 函数体、`if __name__ == "__main__"` 守卫、logging 类调用。
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and \
-            node.name == "__repr__":
-        return
-    if _is_main_guard(node):
-        return
-    if isinstance(node, ast.Call) and _skip_call(node):
+    if _skip_subtree(node):
         return
     _node_sites(node, sites)
     for _field, value in ast.iter_fields(node):
         if isinstance(value, list):
-            for idx, child in enumerate(value):
-                if isinstance(child, (ast.Continue, ast.Break)):
-                    into = ast.Break if isinstance(child, ast.Continue) else ast.Continue
-                    detail = ("continue -> break"
-                              if isinstance(child, ast.Continue) else "break -> continue")
-                    sites.append(Site("loop_flow", child.lineno, child.col_offset,
-                                      detail,
-                                      lambda lst=value, i=idx, cls=into, c=child:
-                                      lst.__setitem__(i, ast.copy_location(cls(), c))))
-                if isinstance(child, ast.AST):
-                    _walk(child, sites)
+            _walk_children(value, sites)
         elif isinstance(value, ast.AST):
             _walk(value, sites)
 
@@ -298,30 +356,32 @@ def render_mutant(source, index):
 # --------------------------------------------------------------------------- #
 # 临时工作区 + 定向子集执行
 # --------------------------------------------------------------------------- #
-def build_workspace(repo_root, dest):
-    """把待测树复制到 dest：git 树走 `git ls-files`（精确 tracked 集合，天然排除
-    state//缓存），非 git 树（测试 fixture）fallback 全量复制减 _IGNORE_NAMES。"""
-    repo_root = Path(repo_root)
-    dest = Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)
+def _git_listing(repo_root):
+    """git 树的 tracked 文件列表；非 git 树 / git 不可用 → None（走 fallback）。"""
     try:
         listing = subprocess.run(
             ["git", "-C", str(repo_root), "ls-files", "-z"],
             capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
-        listing = None
-    if listing is not None and listing.returncode == 0 and listing.stdout:
-        for rel in listing.stdout.decode("utf-8", "replace").split("\0"):
-            if not rel:
-                continue
-            src = repo_root / rel
-            if not src.is_file():
-                continue  # tracked 但被删的文件
-            target = dest / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, target)
-        return dest
+        return None
+    if listing.returncode != 0 or not listing.stdout:
+        return None
+    return listing.stdout.decode("utf-8", "replace").split("\0")
 
+
+def _copy_git_tree(repo_root, dest, rels):
+    for rel in rels:
+        if not rel:
+            continue
+        src = repo_root / rel
+        if not src.is_file():
+            continue  # tracked 但被删的文件
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
+
+
+def _copy_fallback(repo_root, dest):
     def _ignore(_dirpath, names):
         return [n for n in names if n in _IGNORE_NAMES]
 
@@ -333,6 +393,19 @@ def build_workspace(repo_root, dest):
             shutil.copytree(entry, target, ignore=_ignore)
         else:
             shutil.copy2(entry, target)
+
+
+def build_workspace(repo_root, dest):
+    """把待测树复制到 dest：git 树走 `git ls-files`（精确 tracked 集合，天然排除
+    state//缓存），非 git 树（测试 fixture）fallback 全量复制减 _IGNORE_NAMES。"""
+    repo_root = Path(repo_root)
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    rels = _git_listing(repo_root)
+    if rels is not None:
+        _copy_git_tree(repo_root, dest, rels)
+    else:
+        _copy_fallback(repo_root, dest)
     return dest
 
 
@@ -345,6 +418,17 @@ def _test_argv(test_files):
     return ["-m", "unittest"] + modules
 
 
+def _kill_group(proc):
+    """超时收割：POSIX 连孙进程一起 killpg（测试可能 spawn 子进程）。"""
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+    proc.kill()
+    proc.wait()
+
+
 def run_subset(workspace, test_files, timeout, python_exe=None):
     """在 workspace 里跑定向子集 → ("pass"|"fail"|"timeout", seconds)。
 
@@ -354,6 +438,11 @@ def run_subset(workspace, test_files, timeout, python_exe=None):
     env = os.environ.copy()
     home = tempfile.mkdtemp(prefix="mutate-home-")
     env["AIASSISTANT_HOME"] = home
+    # 子进程的 tests/__init__ 会无条件再 mkdtemp 一个自己的沙箱 HOME——把
+    # 临时目录根指进本轮的 home，孙目录随下面的 rmtree 一起消失（不然
+    # --all 一晚在 owner 机器上泄漏 ~1,200 个 tempdir，防腐 #4）。
+    # TMPDIR 是 POSIX 键，TEMP/TMP 是 Windows 侧同义键。
+    env["TMPDIR"] = env["TEMP"] = env["TMP"] = home
     env["PYTHONDONTWRITEBYTECODE"] = "1"  # 变异体覆写同名文件，绝不许吃到旧 pyc
     popen_kwargs = {"cwd": str(workspace), "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL, "env": env}
@@ -365,13 +454,7 @@ def run_subset(workspace, test_files, timeout, python_exe=None):
         rc = proc.wait(timeout=timeout)
         status = "pass" if rc == 0 else "fail"
     except subprocess.TimeoutExpired:
-        if os.name == "posix":
-            try:
-                os.killpg(proc.pid, 9)
-            except OSError:
-                pass
-        proc.kill()
-        proc.wait()
+        _kill_group(proc)
         status = "timeout"
     finally:
         shutil.rmtree(home, ignore_errors=True)
@@ -406,6 +489,32 @@ def _content_hash(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def _fingerprint_files(repo_root, tests):
+    """测试指纹覆盖的文件列表：有映射 = 子集自身（列表变 = 指纹变）；
+    未映射（全套件 fallback）= tests/ 树下全部 .py（排序，确定性）。"""
+    if tests:
+        return [str(t) for t in tests]
+    tests_dir = Path(repo_root) / "tests"
+    if not tests_dir.is_dir():
+        return []
+    return sorted(p.relative_to(repo_root).as_posix()
+                  for p in tests_dir.rglob("*.py"))
+
+
+def _tests_fingerprint(repo_root, tests):
+    """映射测试子集的内容指纹。测试变强必须作废该模块的旧账，否则夜报把
+    已被杀死的变异体继续当「测试网的洞」喂给 P5（v0.48.13 审查 B3）。"""
+    digest = hashlib.sha256()
+    for rel in _fingerprint_files(repo_root, tests):
+        digest.update(rel.encode("utf-8") + b"\0")
+        try:
+            digest.update((Path(repo_root) / rel).read_bytes())
+        except OSError:
+            digest.update(b"<missing>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 # --------------------------------------------------------------------------- #
 # 调度（round-robin + 预算）
 # --------------------------------------------------------------------------- #
@@ -429,9 +538,14 @@ def _prepare_module(repo_root, rel, tests, state_modules):
     except OSError:
         return ModulePlan(rel, tests, None, [], {}, "missing", not tests)
     digest = _content_hash(data)
+    tests_digest = _tests_fingerprint(repo_root, tests)
     entry = state_modules.get(rel)
-    if not isinstance(entry, dict) or entry.get("content_hash") != digest:
-        entry = {"content_hash": digest, "results": {}}
+    # 模块内容或映射测试子集任何一边变 = 旧结果作废（tests_hash 缺席的旧
+    # state 条目也作废——它们可能早于测试网的强化）。
+    if (not isinstance(entry, dict) or entry.get("content_hash") != digest
+            or entry.get("tests_hash") != tests_digest):
+        entry = {"content_hash": digest, "tests_hash": tests_digest,
+                 "results": {}}
         state_modules[rel] = entry
     entry.setdefault("results", {})
     try:
@@ -459,28 +573,25 @@ def round_robin(pending_lists):
         idx += 1
 
 
-def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
-                state, clock=time.monotonic, subset_runner=None, log=print,
-                prune_state=False, checkpoint=None):
-    """全部靶区模块跑一轮（受预算封顶）→ (report dict, state)。
+def _prune_stale(state_modules, targets):
+    for stale in [k for k in state_modules if k not in targets]:
+        del state_modules[stale]  # 靶区移除的模块不留账
 
-    subset_runner 注入缝（测试用假 runner，绝不 spawn）：
-        runner(module_rel, mutant_source_or_None, test_files, timeout) -> status
-    mutant_source 为 None = baseline（未变异）运行。
-    prune_state 只在整个靶区都在跑时开（--all）——单模块运行绝不清别人的账。
-    checkpoint（可选零参回调）每 CHECKPOINT_EVERY 个变异体调一次——caller 用它
-    落 state 文件，硬杀（workflow 超时）最多丢一个窗口的账。
-    """
-    deadline = clock() + budget_seconds
-    state_modules = state.setdefault("modules", {})
-    if prune_state:
-        for stale in [k for k in state_modules if k not in targets]:
-            del state_modules[stale]  # 靶区移除的模块不留账
-    plans = [_prepare_module(repo_root, rel, tests, state_modules)
-             for rel, tests in sorted(targets.items())]
 
-    workspace_holder = {}
+def _pending_sites(plans):
+    """{rel: [(plan, site index), …]}——只含还没记账的 site。"""
+    pending_map = {}
+    for plan in plans:
+        if plan.status != "ok":
+            continue
+        pending_map[plan.rel] = [
+            (plan, i) for i, site in enumerate(plan.sites)
+            if site.site_id not in plan.results]
+    return pending_map
 
+
+def _make_real_runner(repo_root, workspace_holder):
+    """真 runner：懒建一次工作区副本，每个变异体覆写目标文件、跑完还原。"""
     def _real_runner(module_rel, mutant_source, test_files, timeout):
         if "dir" not in workspace_holder:
             workspace_holder["tmp"] = tempfile.mkdtemp(prefix="mutate-ws-")
@@ -497,66 +608,108 @@ def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
         finally:
             target.write_bytes(original)
 
-    runner = subset_runner or _real_runner
-    executed_this_run = 0
-    budget_hit = False
+    return _real_runner
+
+
+def _baseline_status(runner, plan, timeout, log):
     try:
-        pending_map = {}
-        for plan in plans:
-            if plan.status != "ok":
-                continue
-            pending_map[plan.rel] = [
-                (plan, i) for i, site in enumerate(plan.sites)
-                if site.site_id not in plan.results]
+        return runner(plan.rel, None, plan.tests, timeout)
+    except OSError as exc:  # workspace 里没有该文件等 IO 角落
+        log(f"mutate: baseline IO error for {plan.rel}: {exc}")
+        return "fail"
 
-        # baseline：映射子集必须先绿，红的映射比没有映射更坏（假杀伤）。
-        # 已跑完（无 pending）的模块跳过 baseline——完成态的重复运行零成本。
-        for plan in plans:
-            if plan.status != "ok" or not pending_map.get(plan.rel):
-                continue
-            if clock() >= deadline:
-                budget_hit = True
-                break
-            try:
-                status = runner(plan.rel, None, plan.tests, mutant_timeout * 5)
-            except OSError as exc:  # workspace 里没有该文件等 IO 角落
-                log(f"mutate: baseline IO error for {plan.rel}: {exc}")
-                status = "fail"
-            if status != "pass":
-                plan.status = "baseline_failed"
-                pending_map[plan.rel] = []
-                log(f"mutate: baseline {status} for {plan.rel} — 该模块本轮跳过")
 
-        pending_lists = [pending_map[plan.rel] for plan in plans
-                         if plan.status == "ok" and pending_map.get(plan.rel)]
+def _run_baselines(plans, pending_map, runner, mutant_timeout, deadline,
+                   clock, log):
+    """baseline：映射子集必须先绿，红的映射比没有映射更坏（假杀伤）。
+    已跑完（无 pending）的模块跳过 baseline——完成态的重复运行零成本。
+    返回是否被预算打断。"""
+    for plan in plans:
+        if plan.status != "ok" or not pending_map.get(plan.rel):
+            continue
+        if clock() >= deadline:
+            return True
+        status = _baseline_status(runner, plan, mutant_timeout * 5, log)
+        if status != "pass":
+            plan.status = "baseline_failed"
+            pending_map[plan.rel] = []
+            log(f"mutate: baseline {status} for {plan.rel} — 该模块本轮跳过")
+    return False
 
-        for plan, index in round_robin(pending_lists):
-            if clock() >= deadline:
-                budget_hit = True
-                break
-            site = plan.sites[index]
-            try:
-                mutant = render_mutant(plan.source, index)
-            except (SyntaxError, ValueError) as exc:  # unparse 极端角落
-                plan.results[site.site_id] = {
-                    "status": "error", "line": site.lineno, "col": site.col,
-                    "op": site.op, "detail": f"{site.detail} ({exc})"}
-                continue
-            try:
-                status = runner(plan.rel, mutant, plan.tests, mutant_timeout)
-            except OSError as exc:
-                # 单变异体的 IO 角落不许崩整轮（宪法第 11 条）——记 error 继续
-                log(f"mutate: workspace error at {plan.rel} {site.site_id}: {exc}")
-                status = "workspace_error"
-            outcome = {"pass": "survived", "fail": "killed",
-                       "timeout": "timeout"}.get(status, "error")
-            plan.results[site.site_id] = {
-                "status": outcome, "line": site.lineno, "col": site.col,
-                "op": site.op, "detail": site.detail}
-            executed_this_run += 1
-            if checkpoint is not None and \
-                    executed_this_run % CHECKPOINT_EVERY == 0:
-                checkpoint()
+
+def _execute_mutant(plan, index, runner, mutant_timeout, log):
+    """一个 site 的执行与记账；render 失败记 error 且不计入执行数。"""
+    site = plan.sites[index]
+    try:
+        mutant = render_mutant(plan.source, index)
+    except (SyntaxError, ValueError) as exc:  # unparse 极端角落
+        plan.results[site.site_id] = {
+            "status": "error", "line": site.lineno, "col": site.col,
+            "op": site.op, "detail": f"{site.detail} ({exc})"}
+        return False
+    try:
+        status = runner(plan.rel, mutant, plan.tests, mutant_timeout)
+    except OSError as exc:
+        # 单变异体的 IO 角落不许崩整轮（宪法第 11 条）——记 error 继续
+        log(f"mutate: workspace error at {plan.rel} {site.site_id}: {exc}")
+        status = "workspace_error"
+    outcome = {"pass": "survived", "fail": "killed",
+               "timeout": "timeout"}.get(status, "error")
+    plan.results[site.site_id] = {
+        "status": outcome, "line": site.lineno, "col": site.col,
+        "op": site.op, "detail": site.detail}
+    return True
+
+
+def _maybe_checkpoint(checkpoint, executed):
+    if checkpoint is not None and executed % CHECKPOINT_EVERY == 0:
+        checkpoint()
+
+
+def _run_mutants(plans, pending_map, runner, mutant_timeout, deadline, clock,
+                 log, checkpoint):
+    """round-robin 执行全部 pending 变异体 → (执行数, 是否被预算打断)。"""
+    pending_lists = [pending_map[plan.rel] for plan in plans
+                     if plan.status == "ok" and pending_map.get(plan.rel)]
+    executed = 0
+    for plan, index in round_robin(pending_lists):
+        if clock() >= deadline:
+            return executed, True
+        if _execute_mutant(plan, index, runner, mutant_timeout, log):
+            executed += 1
+            _maybe_checkpoint(checkpoint, executed)
+    return executed, False
+
+
+def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
+                state, clock=time.monotonic, subset_runner=None, log=print,
+                prune_state=False, checkpoint=None):
+    """全部靶区模块跑一轮（受预算封顶）→ (report dict, state)。
+
+    subset_runner 注入缝（测试用假 runner，绝不 spawn）：
+        runner(module_rel, mutant_source_or_None, test_files, timeout) -> status
+    mutant_source 为 None = baseline（未变异）运行。
+    prune_state 只在整个靶区都在跑时开（--all）——单模块运行绝不清别人的账。
+    checkpoint（可选零参回调）每 CHECKPOINT_EVERY 个变异体调一次——caller 用它
+    落 state 文件，硬杀（workflow 超时）最多丢一个窗口的账。
+    """
+    deadline = clock() + budget_seconds
+    state_modules = state.setdefault("modules", {})
+    if prune_state:
+        _prune_stale(state_modules, targets)
+    plans = [_prepare_module(repo_root, rel, tests, state_modules)
+             for rel, tests in sorted(targets.items())]
+
+    workspace_holder = {}
+    runner = subset_runner or _make_real_runner(repo_root, workspace_holder)
+    try:
+        pending_map = _pending_sites(plans)
+        budget_hit = _run_baselines(plans, pending_map, runner, mutant_timeout,
+                                    deadline, clock, log)
+        executed_this_run, mutants_hit = _run_mutants(
+            plans, pending_map, runner, mutant_timeout, deadline, clock, log,
+            checkpoint)
+        budget_hit = budget_hit or mutants_hit
     finally:
         if "tmp" in workspace_holder:
             shutil.rmtree(workspace_holder["tmp"], ignore_errors=True)
@@ -567,32 +720,46 @@ def run_targets(repo_root, targets, *, budget_seconds, mutant_timeout,
     return report, state
 
 
+def _tally_results(plan):
+    """模块的记账结果 → (状态计数, 存活体列表)；不认识的 site_id 忽略。"""
+    counts = {"killed": 0, "survived": 0, "timeout": 0, "error": 0}
+    survivors = []
+    known_ids = {site.site_id for site in plan.sites}
+    for site_id, result in sorted(plan.results.items()):
+        if site_id not in known_ids:
+            continue
+        counts[result["status"]] = counts.get(result["status"], 0) + 1
+        if result["status"] == "survived":
+            survivors.append({
+                "site": site_id, "line": result["line"], "col": result["col"],
+                "op": result["op"], "detail": result["detail"],
+                "location": f"{plan.rel}:{result['line']}"})
+    return counts, survivors
+
+
+def _module_score(counts):
+    """kill 率：timeout 记 killed 侧（变异体把测试跑挂 = 被行为差异抓住）。"""
+    denominator = counts["killed"] + counts["survived"] + counts["timeout"]
+    if not denominator:
+        return None
+    return round((counts["killed"] + counts["timeout"]) / denominator, 4)
+
+
+def _module_complete(plan, pending):
+    if plan.status == "ok" and pending:
+        return False
+    return plan.status not in ("baseline_failed", "parse_error", "missing")
+
+
 def build_report(plans, *, budget_seconds, executed_this_run, budget_hit):
     """聚合报告（JSON schema 的唯一出生点；字段 add-only——P5 循环消费它）。"""
     modules = {}
     complete = True
     for plan in plans:
-        counts = {"killed": 0, "survived": 0, "timeout": 0, "error": 0}
-        survivors = []
-        known_ids = {site.site_id for site in plan.sites}
-        for site_id, result in sorted(plan.results.items()):
-            if site_id not in known_ids:
-                continue
-            counts[result["status"]] = counts.get(result["status"], 0) + 1
-            if result["status"] == "survived":
-                survivors.append({
-                    "site": site_id, "line": result["line"], "col": result["col"],
-                    "op": result["op"], "detail": result["detail"],
-                    "location": f"{plan.rel}:{result['line']}"})
+        counts, survivors = _tally_results(plan)
         executed = sum(counts.values())
         pending = len(plan.sites) - executed
-        if plan.status == "ok" and pending:
-            complete = False
-        if plan.status in ("baseline_failed", "parse_error", "missing"):
-            complete = False
-        denominator = counts["killed"] + counts["survived"] + counts["timeout"]
-        score = ((counts["killed"] + counts["timeout"]) / denominator
-                 if denominator else None)
+        complete = complete and _module_complete(plan, pending)
         modules[plan.rel] = {
             "status": plan.status,
             "tests": [str(t) for t in plan.tests],
@@ -604,7 +771,7 @@ def build_report(plans, *, budget_seconds, executed_this_run, budget_hit):
             "survived": counts["survived"],
             "timeout": counts["timeout"],
             "error": counts["error"],
-            "score": round(score, 4) if score is not None else None,
+            "score": _module_score(counts),
             "survivors": survivors,
         }
     return {
@@ -622,11 +789,40 @@ def build_report(plans, *, budget_seconds, executed_this_run, budget_hit):
 # --------------------------------------------------------------------------- #
 # markdown 报告（pinned issue 的 body；scripts/qa/mutation_issue.py 负责投递）
 # --------------------------------------------------------------------------- #
+def _cycle_state(report):
+    if report["complete"]:
+        return "complete"
+    if report["budget_hit"]:
+        return "budget hit — resumes next night"
+    return "partial"
+
+
+def _md_module_rows(modules):
+    rows = []
+    for rel, m in sorted(modules.items()):
+        score = "—" if m["score"] is None else f"{m['score'] * 100:.1f}%"
+        status = m["status"] + (" · slow(full suite)" if m["slow_full_suite"] else "")
+        rows.append(f"| `{rel}` | {m['sites_total']} | {m['executed']} | "
+                    f"{m['killed']} | {m['survived']} | {m['timeout']} | "
+                    f"{score} | {status} |")
+    return rows
+
+
+def _md_survivor_lines(survivors):
+    if not survivors:
+        return ["None — every executed mutant was killed. 测试网无洞（本轮范围内）。"]
+    # GitHub issue body 上限 65,536 字符——列表封顶，全量永远在 JSON 工件里
+    lines = [f"- `{s['location']}` — {s['detail']} (`{s['site']}`)"
+             for _rel, s in survivors[:MD_SURVIVOR_CAP]]
+    if len(survivors) > MD_SURVIVOR_CAP:
+        lines.append(f"- … and {len(survivors) - MD_SURVIVOR_CAP} more — "
+                     "full list in the `mutation-report` JSON artifact")
+    return lines
+
+
 def render_markdown(report):
     lines = ["# Nightly mutation report", ""]
-    state = "complete" if report["complete"] else \
-        ("budget hit — resumes next night" if report["budget_hit"] else "partial")
-    lines.append(f"Generated {report['generated_at']} · cycle {state} · "
+    lines.append(f"Generated {report['generated_at']} · cycle {_cycle_state(report)} · "
                  f"budget {report['budget_seconds']}s · "
                  f"{report['executed_this_run']} mutants executed this run.")
     lines.append("")
@@ -637,26 +833,13 @@ def render_markdown(report):
     lines.append("")
     lines.append("| module | sites | run | killed | survived | timeout | score | status |")
     lines.append("|---|---|---|---|---|---|---|---|")
-    for rel, m in sorted(report["modules"].items()):
-        score = "—" if m["score"] is None else f"{m['score'] * 100:.1f}%"
-        status = m["status"] + (" · slow(full suite)" if m["slow_full_suite"] else "")
-        lines.append(f"| `{rel}` | {m['sites_total']} | {m['executed']} | "
-                     f"{m['killed']} | {m['survived']} | {m['timeout']} | "
-                     f"{score} | {status} |")
+    lines.extend(_md_module_rows(report["modules"]))
     lines.append("")
     survivors = [(rel, s) for rel, m in sorted(report["modules"].items())
                  for s in m["survivors"]]
     lines.append(f"## Surviving mutants ({len(survivors)})")
     lines.append("")
-    if survivors:
-        # GitHub issue body 上限 65,536 字符——列表封顶，全量永远在 JSON 工件里
-        for rel, s in survivors[:MD_SURVIVOR_CAP]:
-            lines.append(f"- `{s['location']}` — {s['detail']} (`{s['site']}`)")
-        if len(survivors) > MD_SURVIVOR_CAP:
-            lines.append(f"- … and {len(survivors) - MD_SURVIVOR_CAP} more — "
-                         "full list in the `mutation-report` JSON artifact")
-    else:
-        lines.append("None — every executed mutant was killed. 测试网无洞（本轮范围内）。")
+    lines.extend(_md_survivor_lines(survivors))
     lines.append("")
     lines.append("Run locally (no launchd agent — owner machine stays lean): "
                  "`python3 scripts/qa/mutate.py --all`")
@@ -677,6 +860,30 @@ def load_targets(path):
             raise ValueError(f"targets[{rel!r}] 必须是测试文件数组")
         targets[rel] = tests
     return config, targets
+
+
+def _list_sites(repo_root, targets):
+    for rel in sorted(targets):
+        try:
+            source = (repo_root / rel).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"{rel}: unreadable ({exc})")
+            continue
+        for site in collect_sites_from_source(source):
+            print(f"{rel}:{site.lineno}:{site.col} {site.site_id} {site.detail}")
+    return 0
+
+
+def _resolve_budget(args, config):
+    if args.time_budget is not None:
+        return args.time_budget
+    return int(config.get("time_budget_seconds", DEFAULT_BUDGET_SECONDS))
+
+
+def _initial_state(force, state_path):
+    if force:
+        return {"schema": SCHEMA, "runner_version": RUNNER_VERSION, "modules": {}}
+    return load_state(state_path)
 
 
 def main(argv=None):
@@ -707,26 +914,15 @@ def main(argv=None):
         parser.error("需要 --all 或 --modules")
 
     if args.list:
-        for rel in sorted(targets):
-            try:
-                source = (repo_root / rel).read_text(encoding="utf-8")
-            except OSError as exc:
-                print(f"{rel}: unreadable ({exc})")
-                continue
-            for site in collect_sites_from_source(source):
-                print(f"{rel}:{site.lineno}:{site.col} {site.site_id} {site.detail}")
-        return 0
+        return _list_sites(repo_root, targets)
 
-    budget = args.time_budget if args.time_budget is not None else \
-        int(config.get("time_budget_seconds", DEFAULT_BUDGET_SECONDS))
     mutant_timeout = int(config.get("per_mutant_timeout_seconds",
                                     DEFAULT_MUTANT_TIMEOUT))
     state_path = repo_root / args.state
-    state = {"schema": SCHEMA, "runner_version": RUNNER_VERSION, "modules": {}} \
-        if args.force else load_state(state_path)
+    state = _initial_state(args.force, state_path)
 
     report, state = run_targets(
-        repo_root, targets, budget_seconds=budget,
+        repo_root, targets, budget_seconds=_resolve_budget(args, config),
         mutant_timeout=mutant_timeout, state=state, prune_state=bool(args.all),
         checkpoint=lambda: save_state(state_path, state))
 
@@ -743,6 +939,12 @@ def main(argv=None):
     total_executed = sum(m["executed"] for m in report["modules"].values())
     print(f"mutate: {total_executed} mutants recorded, {total_survived} surviving; "
           f"complete={report['complete']} -> {json_path}")
+    if not any(m["status"] == "ok" for m in report["modules"].values()):
+        # 报告型工具照旧退 0（D5），但整夜零模块可执行 = 仪表在空转——
+        # 在 stderr 喊一声，别让坏映射永远静默地绿下去。
+        print("mutate: WARNING — no module reached execution "
+              "(baseline_failed / parse_error / missing everywhere); "
+              "tonight's survivors feed is stale", file=sys.stderr)
     return 0  # 报告型工具：存活变异体不是失败（D5）；只有硬错误才非零
 
 

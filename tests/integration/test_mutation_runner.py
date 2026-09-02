@@ -4,9 +4,10 @@ integration/（防腐 #7）。
 剧本：一个 10-site 的小模块 + 一强一弱两份测试。强测试钉边界值 → 10/10 全歼；
 弱测试只断言「非 None」→ 恰好 1 杀 9 存（唯一杀得死的是 return X → return None）
 ——这就是变异测试要暴露的「测试跑了但什么都没钉」的洞。随后同一 state 再跑
-一轮 = 零执行（断点台账生效），CLI 主入口全程写出 JSON + markdown 报告。
+一轮 = 零执行（断点台账生效）；把弱测试改强再跑 = 旧账作废、全部重判
+（B3：存活体名单必须跟着测试网走）。CLI 主入口全程写出 JSON + markdown 报告。
 
-时间预算：BUDGET_SECONDS 兜底（~23 个子进程 unittest，每个亚秒级）。
+时间预算：BUDGET_SECONDS 兜底（~34 个子进程 unittest，每个亚秒级）。
 """
 import importlib.util
 import json
@@ -110,6 +111,33 @@ class KillDetectionTestCase(unittest.TestCase):
             self.assertEqual(report2["executed_this_run"], 0)
             self.assertEqual(report2["modules"]["mymod.py"]["survived"], 9)
             self.assertTrue(report2["complete"])
+
+    def test_strengthening_the_mapped_test_rejudges_old_survivors(self):
+        # B3（v0.48.13 审查，empirically reproduced）：作废键只挂模块内容时，
+        # 把弱测试改强永远不重跑（executed_this_run=0），夜报把 9 个早已
+        # 杀得死的变异体继续当「测试网的洞」发布——P3/P5 修好了也摘不掉。
+        # 修复后：映射测试文件的内容折进作废键，测试变强 = 该模块全部重判。
+        with TemporaryDirectory(prefix="mutate-int-") as root:
+            _make_project(root)
+            state = _fresh_state()
+            report, state = mutate.run_targets(
+                root, {"mymod.py": ["t/test_weak.py"]},
+                budget_seconds=BUDGET_SECONDS, mutant_timeout=30,
+                state=state, log=lambda *_: None)
+            self.assertEqual(report["modules"]["mymod.py"]["survived"], 9)
+
+            # 夜里有人按 P3 的单子把弱测试补强（模块本身一字未动）
+            (Path(root) / "t" / "test_weak.py").write_text(
+                _STRONG.replace("StrongTestCase", "StrengthenedTestCase"),
+                encoding="utf-8")
+            report2, _state = mutate.run_targets(
+                root, {"mymod.py": ["t/test_weak.py"]},
+                budget_seconds=BUDGET_SECONDS, mutant_timeout=30,
+                state=state, log=lambda *_: None)
+        module = report2["modules"]["mymod.py"]
+        self.assertEqual(report2["executed_this_run"], 10)  # 旧账作废全部重判
+        self.assertEqual((module["killed"], module["survived"]), (10, 0))
+        self.assertTrue(report2["complete"])
 
     def test_cli_main_writes_reports_and_state(self):
         with TemporaryDirectory(prefix="mutate-int-") as root:

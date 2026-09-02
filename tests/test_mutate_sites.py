@@ -90,6 +90,13 @@ class SkipRuleTestCase(unittest.TestCase):
     def test_non_logging_calls_still_mutate(self):
         self.assertIn("arith_add", self._ops("process(n + 1)\n"))
 
+    def test_log_substring_names_are_not_skipped(self):
+        # 跳过名单是精确名字不是子串启发（§57「不许悄悄扩」）：catalog /
+        # _merge_event_logged 这类名字含 log 的真谓词必须照常变异
+        # （v0.48.13 审查 finding 3）。
+        self.assertIn("arith_add", self._ops("catalog(n + 1)\n"))
+        self.assertIn("cmp_eq", self._ops("_merge_event_logged(a == 1)\n"))
+
     def test_return_none_not_mutated_to_itself(self):
         self.assertEqual(self._ops("def f():\n    return None\n"), [])
         self.assertEqual(self._ops("def f():\n    return\n"), [])
@@ -249,6 +256,47 @@ class SchedulerTestCase(unittest.TestCase):
         self.assertEqual(report["executed_this_run"], 4)  # 只有 m1 重跑
         self.assertEqual({c for c in runner.calls if c[0] == "mutant"},
                          {("mutant", "m1.py")})
+
+    def test_mapped_test_change_invalidates_only_that_module(self):
+        # B3（v0.48.13 审查）：作废键只看模块内容的话，测试变强永远不重判
+        # ——夜报会把已被杀死的变异体继续当洞喂给 P5。映射测试文件内容
+        # 折进作废键后，改 t/t1.py 必须让 m1 全部重跑，m2 的账不动。
+        clock = _FakeClock()
+        state = self._fresh_state()
+        mutate.run_targets(self.root, self.targets, budget_seconds=10_000,
+                           mutant_timeout=1, state=state, clock=clock,
+                           subset_runner=_FakeRunner(clock), log=lambda *_: None)
+        _write_module(self.root, "t/t1.py", "# strengthened test\n")
+        runner = _FakeRunner(clock)
+        report, _state = mutate.run_targets(
+            self.root, self.targets, budget_seconds=10_000, mutant_timeout=1,
+            state=state, clock=clock, subset_runner=runner, log=lambda *_: None)
+        self.assertEqual(report["executed_this_run"], 4)  # 只有 m1 重跑
+        self.assertEqual({c for c in runner.calls if c[0] == "mutant"},
+                         {("mutant", "m1.py")})
+
+    def test_unmapped_module_keys_on_the_whole_tests_tree(self):
+        # 未映射（全套件 fallback）模块的判定者是整个 tests/ 树——树里任何
+        # 一个文件变，该模块的旧账作废（B3 的 fallback 半边）。
+        clock = _FakeClock()
+        state = self._fresh_state()
+        targets = {"m1.py": []}
+        _write_module(self.root, "tests/test_net.py", "# v1\n")
+        mutate.run_targets(self.root, targets, budget_seconds=10_000,
+                           mutant_timeout=1, state=state, clock=clock,
+                           subset_runner=_FakeRunner(clock), log=lambda *_: None)
+        runner_same = _FakeRunner(clock)
+        report_same, _s = mutate.run_targets(
+            self.root, targets, budget_seconds=10_000, mutant_timeout=1,
+            state=state, clock=clock, subset_runner=runner_same,
+            log=lambda *_: None)
+        self.assertEqual(report_same["executed_this_run"], 0)  # 树没变不重跑
+        _write_module(self.root, "tests/test_net.py", "# v2 stronger\n")
+        runner = _FakeRunner(clock)
+        report, _state = mutate.run_targets(
+            self.root, targets, budget_seconds=10_000, mutant_timeout=1,
+            state=state, clock=clock, subset_runner=runner, log=lambda *_: None)
+        self.assertEqual(report["executed_this_run"], 4)
 
     def test_red_baseline_skips_module_and_marks_report(self):
         clock = _FakeClock()

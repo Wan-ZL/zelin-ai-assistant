@@ -3986,9 +3986,15 @@ truth = `scripts/qa/mutate.py` 的 site 收集器，判例钉在
   site_id 稳定）；round-robin 跨模块交错 + 总预算封顶（默认 truth =
   `qa/mutation_targets.toml` 的 `time_budget_seconds`）——每晚每个模块都被
   访问，长模块跨夜跑完；断点台账 `.qa/mutation/state.json`（防腐 #4：出生
-  即 gitignore），模块内容 hash 变 = 该模块结果作废重跑。
+  即 gitignore），**模块内容或其映射测试子集**（子集列表 + 每个测试文件的
+  内容；未映射 = 整个 `tests/` 树）hash 变 = 该模块结果作废重跑——测试
+  变强必须重新判存活，否则夜报把已被杀死的变异体继续当「测试网的洞」喂给
+  P5，P3 补的每个测试都摘不掉旧名单（v0.48.13 审查 B3）；算子/跳过规则变 =
+  bump `RUNNER_VERSION`，旧 state 全体作废。
 - **等价变异体高发区跳过**（成文，不许悄悄扩）：docstring/字符串常量（算子
-  集天然不碰）、logging 类调用整棵、`__repr__` 函数体、`if __name__ ==
+  集天然不碰）、logging 类调用整棵（**精确名单** truth =
+  `_LOGGING_CALL_NAMES`，不是子串启发——`catalog` / `_merge_event_logged`
+  这类名字含 log 的真谓词照常变异）、`__repr__` 函数体、`if __name__ ==
   "__main__"` 守卫。
 - **运行面两个，都不进 owner 机器的常驻面**：(a) 夜间 GitHub Action
   `.github/workflows/mutation-nightly.yml`（ubuntu，60 分钟顶，state 走
@@ -4000,15 +4006,18 @@ truth = `scripts/qa/mutate.py` 的 site 收集器，判例钉在
   R2.3.4/R2.4.2）+ markdown 同文（Actions artifact `mutation-report`）+
   pinned issue「Nightly mutation report」幂等 create-or-update
   （`scripts/qa/mutation_issue.py`，与 insights.yml 同模式：精确标题匹配
-  open+closed 全集、绝不开第二张、closed 先 reopen、pin 尽力而为）。
+  open+closed 全集、绝不开第二张、closed 先 reopen、pin 尽力而为；列举带
+  `in:title` search 收窄——不带时 gh 只取按创建时间最新的 100 张，仓库
+  长大后报告 issue 会隐身并被铸出第二张）。
 - **判例**：`tests/test_mutate_sites.py`（site 生成 / 跳过规则 / TOML 子集 /
   预算与续跑调度，零 spawn）、`tests/test_mutation_issue.py`（issue 更新
   逻辑 + dry-run，零网络）、`tests/integration/test_mutation_runner.py`
-  （真子进程杀伤判定：强测试 10/10 全歼、弱测试 1 杀 9 存）。
+  （真子进程杀伤判定：强测试 10/10 全歼、弱测试 1 杀 9 存、弱测试补强后
+  旧账作废 10/10 重判）。
 
 ## 58. 质量仪表与合并硬门（v0.48.x，P2；owner 决策 D4/D5/D15）
 
-（§57：同轮并行 PR 的预留席位——若该 PR 最终未立法，此号作废、永不复用。）
+（§57 席位已由变异测试如约立法，见上一节；预留即兑现，§ 号未复用。）
 
 owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + 覆盖率不下降 = 必须绿」**，而且老代码新代码都要达标、冲最终完整版。本节把「达标」从提示词变成确定性工具（Uncle Bob 采纳清单的 DEV #1/#3/#4/#6）：四把尺 + 防腐十条的机械化，全部以 **shrink-only 存量账本** 起步——**门从上线第一天就是绿的**，老代码的欠账全部显式登记且只许缩，清账是 P3 的工作。执法：`scripts/qa/`（qa_common / complexity / crap / coverage_floor / depgraph / hygiene / ledger_diff + run_coverage.sh / run_gates.sh）、CI job `qa-gates`；判例 `tests/test_qa_complexity_counter.py`、`tests/test_qa_crap_formula.py`、`tests/test_qa_coverage_floor.py`、`tests/test_qa_depgraph_rules.py`、`tests/test_qa_hygiene_caps.py`、`tests/test_qa_ledger_shrink.py`、`tests/test_qa_ledger_diff.py`、`tests/test_qa_crap_baseline_reconciled.py`。
 
