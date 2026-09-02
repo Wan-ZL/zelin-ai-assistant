@@ -672,7 +672,9 @@ running_mismatch() { # $1=checkout version
     _grace="$HEARTBEAT_GRACE"
     while :; do
         running_snapshot "$1"
-        [ "$MISMATCH_REASON" = "heartbeat_stale" ] && [ "$_grace" -gt 0 ] || break
+        if [ "$MISMATCH_REASON" != "heartbeat_stale" ] || [ "$_grace" -le 0 ]; then
+            break
+        fi
         sleep 1
         _grace=$((_grace - 1))
     done
