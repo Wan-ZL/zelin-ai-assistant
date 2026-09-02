@@ -227,12 +227,23 @@ def _parse_score(raw):
     return value
 
 
+_COMMENT_RE = re.compile(r"(?:^|\s)#")
+
+
+def _strip_comment(line):
+    """注释 = 行首的 # 或空白后的 #。键内的 # 不是注释——iter_functions
+    给同名重定义铸 `qual#2` 键，split("#") 会把它读成 `qual`，造成
+    round-trip 后同一函数假 NEW + 假 STALE（round-2 review 判例）。"""
+    match = _COMMENT_RE.search(line)
+    return line[:match.start()] if match else line
+
+
 def parse_ledger_text(text):
-    """账本文本 → {key: 登记分}。行形 `<key> <score>`；# 注释与空行忽略；
-    无分数按 1.0（不计分的违例种类）；非有限分数 fail-loud。"""
+    """账本文本 → {key: 登记分}。行形 `<key> <score>`；# 注释（行首或空白
+    后）与空行忽略；无分数按 1.0（不计分的违例种类）；非有限分数 fail-loud。"""
     entries = {}
     for line in text.splitlines():
-        stripped = line.split("#", 1)[0].strip()
+        stripped = _strip_comment(line).strip()
         if not stripped:
             continue
         parts = stripped.split()
@@ -259,7 +270,7 @@ def parse_floor_text(text):
     """coverage_floor.txt 文本 → 地板数字（首个非注释 token；非有限数
     fail-loud；coverage_floor.read_floor 与 ledger_diff 共用同一解析）。"""
     for line in text.splitlines():
-        stripped = line.split("#", 1)[0].strip()
+        stripped = _strip_comment(line).strip()
         if stripped:
             return _parse_score(stripped)
     raise ValueError("no floor number in coverage_floor text")

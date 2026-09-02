@@ -131,5 +131,27 @@ class LedgerFileRoundTripTestCase(unittest.TestCase):
                              {"edge-a": 1.0, "edge-b": 2.0})
 
 
+class DuplicateDefinitionKeyTestCase(unittest.TestCase):
+    """`qual#2` 键（iter_functions 给同名重定义铸的稳定键）判例：# 只在
+    行首或空白后才是注释。旧 split("#") 会把 --write-baseline 写出的
+    `act/x.py::f#2 9` 读成 `act/x.py::f 1.0`——未改代码也会同时报
+    f#2 NEW 和 f STALE（round-2 review 发现）。"""
+
+    def test_hash_suffixed_key_round_trips(self):
+        entries = {"act/x.py::f": 8.0, "act/x.py::f#2": 9.0}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ledger.txt")
+            qa_common.write_ledger(path, entries, "complexity")
+            self.assertEqual(qa_common.load_ledger(path), entries)
+
+    def test_hash_key_parses_and_inline_comment_still_ignored(self):
+        self.assertEqual(
+            qa_common.parse_ledger_text("a 8.5  # inline note\nact/x.py::f#2 9\n"),
+            {"a": 8.5, "act/x.py::f#2": 9.0})
+
+    def test_floor_inline_comment_still_ignored(self):
+        self.assertEqual(qa_common.parse_floor_text("83.2 # why\n"), 83.2)
+
+
 if __name__ == "__main__":
     unittest.main()
