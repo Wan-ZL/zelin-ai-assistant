@@ -1,0 +1,195 @@
+# Update PR branches (CONTRACT §56.6): every push to main merges the new main
+# into every open, non-draft, same-repo pull request, so a PR never sits on a
+# stale base and auto-merge (`gh pr merge --auto --merge`) fires as soon as
+# its rerun checks are green. This is the owner's "once main moves, the other
+# PRs rebase by themselves" — done without GitHub's Merge Queue, which the
+# ruleset API refuses on personal-account repositories (verified 2026-09-02;
+# revisit if the repo ever moves to an organization).
+#
+# TOKEN TRUTH (verified against the GitHub docs "Triggering a workflow" and
+# community discussion #26520 "Update branch triggered through API does not
+# run checks"): a branch update performed with the workflow's own
+# GITHUB_TOKEN does NOT fire the PR's `pull_request: synchronize` event. The
+# suppression rule is the same one that keeps our GITHUB_TOKEN-created tags
+# from firing release.yml (§56.2): every event GITHUB_TOKEN causes, except
+# workflow_dispatch / repository_dispatch, creates no workflow run. An update
+# pushed with GITHUB_TOKEN would therefore move the PR head to a commit that
+# never gets CI — the seven required checks sit at "Expected — waiting for
+# status", auto-merge never fires, and the PR is WORSE off than before. So:
+#   - the update itself uses a fine-grained PAT stored as the repository
+#     secret PR_AUTOUPDATE_TOKEN (this repo only; Contents: read+write,
+#     Pull requests: read+write). Its pushes are ordinary user pushes and DO
+#     trigger CI, the advisory PR reviews (pr-review-*.yml rerun on every
+#     update — that is the price of fresh reviews on a fresh base) and the
+#     `Version pins untouched` gate.
+#   - without the secret the workflow degrades to REPORT-ONLY: it still
+#     labels conflicting PRs `needs-rebase` (labels and comments need no push
+#     and are fine with GITHUB_TOKEN) and lists what it would have updated,
+#     but never touches a branch.
+#
+# PER PR: skip drafts, forks (the API cannot push to them) and PRs labeled
+# `no-autoupdate`. Already contains main → make sure `needs-rebase` is off.
+# Conflicts with main (GitHub says mergeable=false, or update-branch answers
+# 422 "merge conflict") → add `needs-rebase` + ONE comment (idempotent: the
+# comment carries a marker and is skipped when the latest comment already is
+# ours). Update accepted → remove `needs-rebase` if present.
+# `expected_head_sha` is passed so a push that lands between our read and our
+# write makes the API refuse instead of merging onto a head we never saw.
+#
+# NO CHECKOUT: nothing from the repo runs here, so no PR code can ever see
+# the PAT. SERIALIZED: one run at a time; a queued run re-reads the current
+# main head, so it does everything a cancelled predecessor would have.
+name: Update PR branches
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print every write instead of performing it"
+        type: boolean
+        default: false
+
+# Job-level grants only (the default workflow token is read-only in this repo).
+permissions: {}
+
+concurrency:
+  group: update-pr-branches
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Merge main into every open same-repo PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # compare API (is the PR behind main?)
+      pull-requests: write # labels + the needs-rebase comment on PRs
+      issues: write # PR labels/comments go through the issues API
+    steps:
+      - name: Update every eligible PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTOUPDATE_TOKEN: ${{ secrets.PR_AUTOUPDATE_TOKEN }}
+          # repository / default branch are not attacker-controlled on
+          # push-to-main, but they still enter the shell via env, never by
+          # template interpolation (zizmor template-injection)
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '' }}
+          MARKER: "<!-- zai:update-pr-branches needs-rebase -->"
+        run: |
+          set -euo pipefail
+          note() { echo "$*"; echo "- $*" >> "$GITHUB_STEP_SUMMARY"; }
+          # writes go through here so --dry-run can print them instead
+          write() {
+            if [ -n "$DRY_RUN" ]; then echo "  [dry-run] gh api $*"; return 0; fi
+            gh api "$@" >/dev/null
+          }
+
+          MODE=update
+          if [ -z "$AUTOUPDATE_TOKEN" ]; then
+            MODE=report
+            echo "::warning title=PR_AUTOUPDATE_TOKEN not set::report-only — GITHUB_TOKEN branch updates would not rerun CI (see the header of this workflow); add the fine-grained PAT secret to enable real updates"
+            echo "**report-only: PR_AUTOUPDATE_TOKEN is not configured — no branch was touched**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          BASE_SHA="$(gh api "repos/${REPO}/git/ref/heads/${BASE}" --jq .object.sha)"
+          echo "### update-pr-branches: ${BASE} @ ${BASE_SHA:0:7} (${MODE}${DRY_RUN:+, dry-run})" >> "$GITHUB_STEP_SUMMARY"
+
+          has_label() { # $1 = PR number, $2 = label name
+            LABEL="$2" gh api "repos/${REPO}/issues/$1/labels" \
+              --jq '[.[].name] | index(env.LABEL) != null' | grep -q true
+          }
+          clear_label() { # $1 = PR number
+            if has_label "$1" needs-rebase; then
+              write -X DELETE "repos/${REPO}/issues/$1/labels/needs-rebase"
+              echo "  #$1: removed needs-rebase"
+            fi
+          }
+          flag_conflict() { # $1 = PR number, $2 = why
+            has_label "$1" needs-rebase \
+              || write -X POST "repos/${REPO}/issues/$1/labels" -f 'labels[]=needs-rebase'
+            # one comment only: skip when the latest comment on the PR is ours
+            LAST_IS_OURS="$(gh api --paginate "repos/${REPO}/issues/$1/comments?per_page=100" \
+              --jq '[.[] | (.body | contains(env.MARKER))] | last' | tail -n1)"
+            if [ "$LAST_IS_OURS" != "true" ]; then
+              # shellcheck disable=SC2016 # the fence's backticks are literal
+              BODY="$(printf '%s\n%s\n\n%s\n\n```\n%s\n%s\n%s\n```\n\n%s\n' \
+                "$MARKER" \
+                "**\`${BASE}\` moved and this branch no longer merges with it automatically** (${2})." \
+                "Rebase (or merge \`${BASE}\`) and push; CI reruns on the new head and auto-merge takes it from there:" \
+                "git fetch origin ${BASE}" \
+                "git rebase origin/${BASE}   # resolve, then" \
+                "git push --force-with-lease" \
+                "The \`needs-rebase\` label is cleared by the next run of this workflow (next push to \`${BASE}\`, or a manual dispatch) once the branch merges cleanly. Automation: \`.github/workflows/update-pr-branches.yml\` (CONTRACT §56.6).")"
+              write -X POST "repos/${REPO}/issues/$1/comments" -f body="$BODY"
+              echo "  #$1: commented"
+            fi
+            note "#$1: **needs-rebase** (${2})"
+          }
+
+          # open PRs into BASE, fetched once (--paginate emits one array per
+          # page; `jq -s add` flattens). Eligible = non-draft, head in this
+          # repo, not opted out; everything else is listed as skipped.
+          gh api --paginate "repos/${REPO}/pulls?state=open&base=${BASE}&per_page=100" > pulls.json
+          jq -s -r 'add // [] | .[]
+                    | select(.draft == false)
+                    | select(.head.repo.full_name == env.REPO)
+                    | select(([.labels[].name] | index("no-autoupdate")) == null)
+                    | "\(.number) \(.head.sha) \(.head.ref)"' pulls.json > prs.txt
+          SKIPPED="$(jq -s -r 'add // [] | .[]
+                    | select(.draft or .head.repo.full_name != env.REPO
+                             or (([.labels[].name] | index("no-autoupdate")) != null))
+                    | "#\(.number) (\(if .draft then "draft"
+                                     elif .head.repo.full_name != env.REPO then "fork"
+                                     else "no-autoupdate" end))"' pulls.json | paste -sd, -)"
+          if [ -n "$SKIPPED" ]; then note "skipped: ${SKIPPED}"; fi
+          if [ ! -s prs.txt ]; then note "no eligible open PRs"; exit 0; fi
+
+          # fd 3, so nothing inside the loop can eat the list from stdin
+          while read -r -u 3 NUM HEAD_SHA HEAD_REF; do
+            echo "#${NUM} ${HEAD_REF} @ ${HEAD_SHA:0:7}"
+            BEHIND="$(gh api "repos/${REPO}/compare/${BASE}...${HEAD_SHA}?per_page=1" --jq .behind_by)"
+            if [ "$BEHIND" = "0" ]; then
+              clear_label "$NUM"
+              note "#${NUM}: already contains ${BASE}"
+              continue
+            fi
+            # GitHub computes mergeability lazily: null = still computing
+            MERGEABLE=null
+            for _ in 1 2 3; do
+              MERGEABLE="$(gh api "repos/${REPO}/pulls/${NUM}" --jq '.mergeable')"
+              [ "$MERGEABLE" != "null" ] && break
+              sleep 5
+            done
+            if [ "$MERGEABLE" = "false" ]; then
+              flag_conflict "$NUM" "GitHub reports the branch as not mergeable"
+              continue
+            fi
+            if [ "$MODE" = "report" ]; then
+              note "#${NUM}: behind by ${BEHIND} — would update (report-only, no token)"
+              continue
+            fi
+            if [ -n "$DRY_RUN" ]; then
+              note "#${NUM}: behind by ${BEHIND} — [dry-run] would PUT update-branch"
+              continue
+            fi
+            set +e
+            OUT="$(GH_TOKEN="$AUTOUPDATE_TOKEN" gh api -X PUT "repos/${REPO}/pulls/${NUM}/update-branch" \
+                     -f expected_head_sha="$HEAD_SHA" 2>&1)"
+            RC=$?
+            set -e
+            if [ "$RC" -eq 0 ]; then
+              clear_label "$NUM"
+              note "#${NUM}: updated (was behind by ${BEHIND})"
+            elif printf '%s' "$OUT" | grep -qi 'conflict'; then
+              flag_conflict "$NUM" "update-branch answered 422 merge conflict"
+            else
+              # head moved under us (expected_head_sha mismatch), no new
+              # commits after all, or an API hiccup — the next push to main
+              # simply tries again
+              echo "::warning title=#${NUM} not updated::${OUT}"
+              note "#${NUM}: not updated — $(printf '%s' "$OUT" | tr '\n' ' ')"
+            fi
+          done 3< prs.txt
