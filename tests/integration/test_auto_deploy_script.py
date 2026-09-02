@@ -41,6 +41,9 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
     state/store2.db 的 PRAGMA user_version 在部署期间升高（schema bump：标记
     早已在场，单看标记会漏，#135 review）→ 回滚被拒 + 指向
     docs/TROUBLESHOOTING.md「store2 回滚」；标记先在且 schema 没动 → 照常回滚；
+    判决在**冻结的账本**上取：先 bootout actd（kill 会被 KeepAlive 复活）再重
+    采样（正好在停止那一刻落盘的迁移也被抓住），拒绝路径把 actd bootstrap 回
+    来；user_version 探针答不上来 = unknown = **fail closed** 拒绝，绝不当 0；
   - write_state / notify 失败时日志行携带子进程异常（首次实战两行 non-fatal
     全裸，PermissionError 只在 launchd stderr 里）；notify() 吞掉队列写失败只
     返回 False 的路径同样记行；
@@ -101,6 +104,12 @@ con.commit()
 con.close()
 EOF
 fi
+# corrupt the ledger mid-deploy: the rollback-time user_version probe must
+# fail CLOSED (report unknown, refuse) instead of assuming 0
+if [ -n "${FAKE_INSTALL_STORE2_CORRUPT:-}" ]; then
+    mkdir -p "$here/state"
+    printf 'NOT A SQLITE DB' > "$here/state/store2.db"
+fi
 # generic trigger file (the fake git uses it to start failing mid-run)
 [ -n "${FAKE_INSTALL_TOUCH:-}" ] && touch "$FAKE_INSTALL_TOUCH"
 # the restarted actd's heartbeat (§47.4): a NEW pid ($$ of this install run),
@@ -156,6 +165,19 @@ if [ -n "${FAKE_GIT_BREAK_FILE:-}" ] && [ -f "$FAKE_GIT_BREAK_FILE" ]; then
     done
 fi
 exec @REAL_GIT@ "$@"
+"""
+
+FAKE_LAUNCHCTL = r"""#!/bin/bash
+# fake launchctl: records every call — the REAL one must never run under the
+# tests (it would boot out the owner's live actd). TOCTOU seam: on `bootout`,
+# optionally drop the store2 marker, simulating an actd that finishes its
+# migration at the exact moment the rollback stops it; the frozen re-sample
+# must still catch it.
+[ -n "${FAKE_LAUNCHCTL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_LAUNCHCTL_LOG"
+if [ "${1:-}" = "bootout" ] && [ -n "${FAKE_LAUNCHCTL_BOOTOUT_MARKER:-}" ]; then
+    printf '{"activated_at": "at-the-stop-point"}\n' > "$FAKE_LAUNCHCTL_BOOTOUT_MARKER"
+fi
+exit 0
 """
 
 FAKE_SHIM = '"""fake act.auto_deploy: only has to import (the script self-checks it after the merge)."""\n'
@@ -234,6 +256,12 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         fake_curl = self.bin / "curl"
         fake_curl.write_text(FAKE_CURL, encoding="utf-8")
         fake_curl.chmod(0o755)
+        # fake launchctl ALWAYS shadows the real one: rollback() boots out the
+        # actd label, and on the dev Mac that label is the owner's LIVE daemon
+        self.launchctl_log = self.tmp / "launchctl.log"
+        fake_launchctl = self.bin / "launchctl"
+        fake_launchctl.write_text(FAKE_LAUNCHCTL, encoding="utf-8")
+        fake_launchctl.chmod(0o755)
 
         # bare origin whose HEAD is main, seeded from a scratch clone
         self.origin = self.tmp / "origin.git"
@@ -312,6 +340,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             # repo the fake curl "serves" so the CI gate runs like on the owner Mac
             "AUTODEPLOY_CI_REPO": "fixture/repo",
             "FAKE_NOTIFY_LOG": str(self.notify_log),
+            "FAKE_LAUNCHCTL_LOG": str(self.launchctl_log),
             "FAKE_INSTALL_LOG": str(self.install_log),
             "FAKE_DOCTOR_LOG": str(self.doctor_log),
             "FAKE_DOCTOR_PLAN": str(self.doctor_plan),
@@ -345,6 +374,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def ci_queries(self):
         return self.curl_log.read_text(encoding="utf-8").splitlines() if self.curl_log.exists() else []
+
+    def launchctl_calls(self):
+        return self.launchctl_log.read_text(encoding="utf-8").splitlines() if self.launchctl_log.exists() else []
 
     def doctor_runs(self):
         return self.doctor_log.read_text(encoding="utf-8").splitlines() if self.doctor_log.exists() else []
@@ -928,6 +960,44 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(notes), 1, notes)
         self.assertIn("user_version", notes[0])
         self.assertIn("TROUBLESHOOTING", notes[0])
+
+    def test_actd_change_landing_at_the_stop_point_still_refuses_rollback(self):
+        # TOCTOU（#130 review P1）：判决前先 bootout actd（kill 会被 KeepAlive
+        # 复活）——正在收尾的迁移若恰好在停止那一刻落盘（fake launchctl 在
+        # bootout 时写标记），冻结后的重采样必须看见它并拒绝；采样后、reset 前
+        # 不得留窗口。拒绝路径还必须把停掉的 actd bootstrap 回来。
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_LAUNCHCTL_BOOTOUT_MARKER":
+                                    str(self.live / "state" / "store2_truth.json")})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "never resets against a ledger that just moved")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertIn("store2", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        calls = self.launchctl_calls()
+        self.assertTrue(any(c.startswith("bootout") for c in calls), calls)
+        self.assertTrue(any(c.startswith("bootstrap") for c in calls),
+                        "a refusal must restart the actd it stopped: %s" % calls)
+
+    def test_unreadable_user_version_probe_fails_closed(self):
+        # 探针错 ≠ 0（#130 review P1）：EPERM 窗口 / 坏文件里读不出 user_version
+        # 时按「不明」拒绝——当 0 处理会在这 PR 本来要治的那类窗口里静默缴械
+        target = self.push("0.48.4")
+        marker = self.live / "state" / "store2_truth.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"activated_at": "2026-08-01T00:00:00Z"}\n', encoding="utf-8")
+        self.seed_store2_db(1)
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_STORE2_CORRUPT": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "an unreadable ledger is never assumed safe to strand")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertIn("unknown", st["detail"])
+        self.assertIn("TROUBLESHOOTING", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
 
     def test_write_state_failure_logs_the_cause(self):
         (self.live / "state").mkdir(exist_ok=True)

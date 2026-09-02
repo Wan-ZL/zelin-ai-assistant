@@ -53,13 +53,17 @@
 #      main, no tracked content edits since step 5 — otherwise the rollback
 #      is REFUSED and notified rather than destroying the owner's work; a git
 #      that cannot even answer (EPERM window, volume offline) is reported as
-#      exactly that, never as "detached"; and if state/store2_truth.json
-#      APPEARED during this deploy — or state/store2.db's PRAGMA user_version
-#      INCREASED (schema bump on an already-active ledger: the marker
-#      pre-exists then and alone would miss it) — the rollback is REFUSED
-#      with a pointer to docs/TROUBLESHOOTING.md「store2 回滚」— resetting
-#      the code to a version whose runtime cannot read the ledger the new
-#      actd just advanced; stays
+#      exactly that, never as "detached"; the store2 verdict is taken on a
+#      FROZEN ledger — actd is booted out first (KeepAlive would respawn a
+#      mere kill) and re-bootstrapped on every refusal exit — and if
+#      state/store2_truth.json APPEARED during this deploy, or state/
+#      store2.db's PRAGMA user_version INCREASED (schema bump on an
+#      already-active ledger: the marker pre-exists then and alone would
+#      miss it), or the user_version probe cannot answer (fail CLOSED:
+#      "unknown" is never assumed to be 0), the rollback is REFUSED with a
+#      pointer to docs/TROUBLESHOOTING.md「store2 回滚」— resetting the code
+#      to a version whose runtime cannot read the ledger the new actd just
+#      advanced; stays
 #      on main so the next run can still fast-forward) + install.sh again +
 #      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
 #      remembered as failed and skipped until main moves (or --force).
@@ -420,37 +424,66 @@ tracked_content_changes() {
     git_q -c core.fileMode=false status --porcelain --untracked-files=no 2>/dev/null || true
 }
 
-# PRAGMA user_version of the store2 ledger; "0" when the DB is absent or
-# unreadable. Read-only URI open — this probe must never create the file.
+# PRAGMA user_version of the store2 ledger; "0" when the DB is genuinely
+# absent, "unknown" when the probe errs (EPERM window, locked, corrupt,
+# interpreter failure) — NEVER a guessed number: the rollback guard fails
+# CLOSED on "unknown", because assuming 0 would silently disarm it in exactly
+# the EPERM windows this PR exists for. Read-only URI open — the probe must
+# never create the file.
 store2_user_version() {
     [ -f "$STORE2_DB" ] || { printf '0'; return 0; }
-    "$PY" - "$STORE2_DB" <<'PY' 2>/dev/null || printf '0'
+    "$PY" - "$STORE2_DB" <<'PY' 2>/dev/null || printf 'unknown'
 import sqlite3, sys
 try:
     con = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
     print(con.execute("PRAGMA user_version").fetchone()[0])
     con.close()
 except Exception:
-    print(0)
+    print("unknown")
 PY
+}
+
+# §56 rollback TOCTOU: the NEW actd keeps running while rollback() decides —
+# it can finish a §53 migration or schema bump between our sample and the
+# `reset --hard`. Stop it BEFORE sampling (bootout, not kill: KeepAlive would
+# respawn a kill within seconds and reopen the window), decide on a frozen
+# ledger, and restart it on every refusal exit — a refusal leaves the NEW
+# code in place, so the right daemon for the on-disk ledger is exactly the
+# one we stopped. The success path needs no restart: install.sh at PREV
+# bootstraps everything. No launchctl (Linux dev box, CI) = no-op — §56
+# deploys only to the owner Mac.
+ACTD_LABEL="com.zelin.aiassistant.actd"
+stop_actd() {
+    command -v launchctl >/dev/null 2>&1 || return 0
+    launchctl bootout "gui/$(id -u)/$ACTD_LABEL" 2>/dev/null
+    return 0
+}
+restart_actd() {
+    command -v launchctl >/dev/null 2>&1 || return 0
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$ACTD_LABEL.plist" 2>/dev/null \
+        || log "could not re-bootstrap $ACTD_LABEL after the refused rollback (non-fatal) — run install.sh or launchctl bootstrap by hand"
+    return 0
 }
 
 rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
+    # Freeze the ledger before deciding anything (TOCTOU above).
+    stop_actd
     # store2 guard (§53 / §56 rollback): the new actd migrating the ledger
-    # during THIS deploy — either the truth marker appearing (YAML→SQLite,
-    # v0.48.8) or PRAGMA user_version increasing (schema bump on an already-
-    # active ledger; the marker pre-exists then, so it alone would miss this,
-    # #135 review) — means PREV's runtime cannot read what is now on disk.
-    # Refuse the code rollback — the by-hand procedure (restore the backup
-    # first) is docs/TROUBLESHOOTING.md「store2 回滚」.
+    # during THIS deploy — the truth marker appearing (YAML→SQLite, v0.48.8),
+    # PRAGMA user_version increasing (schema bump on an already-active
+    # ledger; the marker pre-exists then, so it alone would miss this, #135
+    # review), or the probe unable to say (fail closed) — means PREV's
+    # runtime may not read what is now on disk. Refuse the code rollback —
+    # the by-hand procedure is docs/TROUBLESHOOTING.md「store2 回滚」.
     _s2why=""
+    _uv_now="$(store2_user_version)"
     if [ "${_store2_before:-1}" -eq 0 ] && [ -f "$STORE2_MARKER" ]; then
         _s2why="store2 became the registry truth during this deploy ($STORE2_MARKER)"
-    else
-        _uv_now="$(store2_user_version)"
-        [ "${_uv_now:-0}" -gt "${_store2_uv_before:-0}" ] 2>/dev/null \
-            && _s2why="store2 schema was upgraded during this deploy (user_version ${_store2_uv_before:-0} -> ${_uv_now})"
+    elif [ "$_uv_now" = "unknown" ] || [ "${_store2_uv_before:-0}" = "unknown" ]; then
+        _s2why="store2 schema state is unknown (user_version probe: before=${_store2_uv_before:-?}, now=${_uv_now}) — refusing to assume the ledger did not move"
+    elif [ "${_uv_now:-0}" -gt "${_store2_uv_before:-0}" ] 2>/dev/null; then
+        _s2why="store2 schema was upgraded during this deploy (user_version ${_store2_uv_before:-0} -> ${_uv_now})"
     fi
     if [ -n "$_s2why" ]; then
         log "rollback REFUSED — $_s2why; a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
@@ -459,7 +492,8 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
         # ${_s2why} braced: bash 3.2 would swallow the first byte of the
         # following fullwidth paren into the variable name (set -u abort).
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
-               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 账本前进了（${_s2why}）—— 回退代码会让账本落在读不了它的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT"
+               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 账本前进了或状态不明（${_s2why}）—— 回退代码可能让账本落在读不了它的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT"
+        restart_actd
         return 1
     fi
     # Re-verify the checkout right before `reset --hard`: minutes have passed
@@ -489,6 +523,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
                     "detail=rollback refused ($_why): $2"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
                "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
+        restart_actd
         return 1
     fi
     if ! git_q reset --hard --quiet "$1"; then
@@ -497,6 +532,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
                     "detail=git reset --hard failed: $2"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)"
+        restart_actd
         return 1
     fi
     run_install
