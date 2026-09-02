@@ -197,7 +197,7 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 
 **升级本身被拒(`StoreError: SCHEMA_SNAPSHOT_FAILED`)**:新代码拍不下升级前快照(磁盘满、`state/` 不可写、外置卷瞬态 EPERM)就**不**踏出单向门——DB 留在旧版本,新旧代码都还能开它,下一次开库自动重试;排除写入障碍即可,不需要手动干预数据。
 
-## 版本号不对:doctor `version` 行 WARN、看板顶栏 / `python3 -c "import act; print(act.__version__)"` 报的不是 tag(v0.48.17 起)
+## 版本号不对:doctor `version` 行 WARN、看板顶栏 / `python3 -c "import act; print(act.__version__)"` 报的不是 tag(2026-09-02 切到 tag 真源之后)
 
 版本的真源是 main 上的 git tag(CONTRACT §56.1),**没有任何文件里写着版本**。`act.__version__` 按 `act/_version.py`(生成文件、git-ignored)→ `git describe` → `act/__init__.py` 的烘焙回落行解析;守护进程只读 stamp。三种症状:
 
@@ -205,7 +205,7 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 - **stamp 与 checkout 不一致**(`act/_version.py 说 v0.48.16,checkout 是 v0.48.17`):手动 `git pull` 了但没跑 install.sh。同上修法。
 - **报 `X.Y.Z+N`**:HEAD 领先最近的 tag N 个 commit——本地 tag 没跟上(`git fetch --tags origin`)或这是一个未发版的开发分支。live 机器上 auto-deploy 的 fetch 自带 `--tags --force`;手动 `git fetch --tags --force origin && bash install.sh --non-interactive`(`--force`:本机一个与 origin 同名不同指的旧 tag 会让不带它的 `fetch --tags` 以 rc 1 拒绝,auto-deploy 就会每轮 `fetch_failed`)。
 
-**首次部署 v0.48.17(切换到 tag 真源的那一版)被回滚**:那一轮跑的是旧部署脚本,它用 sed 读 `act/__init__.py` 的字面行当期望版本(§56.1 过渡条款)。若 release-on-merge 迟到或号猜错导致 `actd:no_heartbeat_from_new_version` 回滚,手动一次即可:`git -C <repo> merge --ff-only origin/main && bash install.sh --non-interactive`——新脚本上机后不再依赖这一切。
+**首次部署切换到 tag 真源的那一版被回滚**:那一轮跑的是旧部署脚本,它用 sed 读 `act/__init__.py` 的字面行当期望版本(§56.1 过渡条款)。若 release-on-merge 迟到或号猜错导致 `actd:no_heartbeat_from_new_version` 回滚,手动一次即可:`git -C <repo> merge --ff-only origin/main && bash install.sh --non-interactive`——新脚本上机后不再依赖这一切。
 
 ## 开发注意(新组件必读)
 
