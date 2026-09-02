@@ -1,0 +1,10 @@
+# docs_drift baseline
+# shrink-only: NEW / WORSE fail, STALE is advisory — strike fixed lines.
+docs/CONTRACT.md::act/launchd/com.zelin.aiassistant.imessageradar.plist 1
+docs/CONTRACT.md::act/radar_imessage.py 1
+docs/CONTRACT.md::docs/IMESSAGE_SETUP.md 1
+docs/CONTRACT.md::mac/Sources/SettingsIMessage.swift 1
+docs/CONTRACT.md::shared/InboxAction.swift 1
+docs/design/vnext2-plan.md::tests/test_recap_no_egress.py 1
+skills/test-code/references/adapters.md::scripts/clean-vm-install.sh 1
+skills/test-code/references/catalog.md::scripts/clean-vm-install.sh 1

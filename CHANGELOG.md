@@ -17,6 +17,7 @@ To ship a change:
 ## [Unreleased]
 
 ### Added
+- **`skills/test-code` 测试代码 skill v0.2.0（手动/交互模式；vnext2-plan R2.8 / D14，skill 商店 D13 / R2.7）**：项目无关的测量梯子——`scripts/detect.py` 探测技术栈、工具、阈值来源（本 repo = `qa/gates.toml` 只读，R2.8.3）、对 merge-base 的 diff 与触发器，给出 1–5 档推荐与菜单（每层标 core/extended 圈）；AI 助手按 SKILL.md **问一次**（档 1 静态门 → 档 5 通宵/通几天无时限 + 检查多选）；`scripts/run_ladder.py` 并行/串行执行 54 个层（项目自己的 QA 门优先，缺席时用 `complexity_min.py`、`structure_check.py` 与内置 CRAP / diff 覆盖 / no-drop 兜底），写 `.test-code/reports/<UTC>/report.md + report.json`：三分法「没跑的层」、**核心层被跳过必须带理由**（否则 verdict INCOMPLETE）、**结构性盲区**、先修什么排序、zero-NEW 基线、tool versions、一条 rerun 命令。新增确定性**结构门**（测试放置 / 同名模块 / 目录深度 / 拥挤目录 / import 环 / 孤儿模块；镜像率只报告）与扩展圈目录 `references/catalog.md`（类型覆盖、重复率、API 破坏、体积预算、许可证、文档覆盖、干净 VM 安装、反馈回路探针等大厂 presubmit 硬指标，触发条件 + 命令 + 阈值）。每个脚本配负控制判例（`tests/test_skill_test_code_*.py`，139 tests，零子进程；真子进程判例住 `tests/integration/`）。血统：robust-code ← old-coder（MIT，NOTICE）。
 - **PR 分支自动跟随 main（CONTRACT §56.6）**：新 workflow `update-pr-branches.yml` 在每次 push 到 main 时把新 main 合进每个在飞的同 repo、非草稿 PR 分支（fork 与贴了 `no-autoupdate` 的跳过），让 auto-merge（`gh pr merge --auto --merge`）在重跑的 required check 绿的那一刻合并——个人账户 repo 装不上 Merge Queue，这是替代协议。与 main 冲突的 PR 打 **`needs-rebase`** + 一条幂等评论，合干净后自动摘。update-branch 调用必须用 fine-grained PAT（repo secret `PR_AUTOUPDATE_TOKEN`；`GITHUB_TOKEN` 造成的分支更新不触发 `pull_request` workflow，PR 会停在「Expected」永不合并）；secret 缺席 = report-only，只打标签不碰分支。CONTRIBUTING 新增「PR lifecycle」：开 PR → 立刻 arm auto-merge → 只轮询 required check、永不 `--watch`。
 
 ### Changed
