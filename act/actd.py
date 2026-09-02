@@ -3504,6 +3504,22 @@ def _store2_tick() -> None:
 # --------------------------------------------------------------------------- #
 # one pass + loop
 # --------------------------------------------------------------------------- #
+def _refresh_model_knobs(cfg: config.Config) -> None:
+    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次。
+
+    dispatch / resume / rework / brief 都拿 run_once 手里这个冻结 cfg 去
+    ``llm.dispatch_argv(cfg)``；不刷新的话 web 设置页保存后要等重启守护进程
+    才生效（雷达/ask/判官/digest 是独立进程，本来就每次现读）。做法同
+    ``auto_resume`` 的现读判定（§16 追记）：只刷这两个字段，其余
+    startup-frozen 语义不动；load_config 自身防崩，这里再兜一层。"""
+    try:
+        fresh = config.load_config()
+    except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
+        return
+    cfg.models_dispatch = fresh.models_dispatch
+    cfg.models_pipeline = fresh.models_pipeline
+
+
 def run_once(
     cfg: config.Config,
     prev_dash: Optional[dict],
@@ -3513,6 +3529,7 @@ def run_once(
     interval: Optional[int] = None,   # 主循环真实 pass 间隔（--interval 优先）
 ) -> dict:
     config.ensure_state_dirs()
+    _refresh_model_knobs(cfg)   # §59：模型旋钮改动下一 pass 生效，无需重启
     # §47.4 心跳：每个阶段边界 touch 一次 state/actd.heartbeat——mtime 是活性
     # 真源，phase 说明循环最后被看见在哪一步（2026-08-31 静默卡死 2.5h 无人知）。
     heartbeat.beat("store2", interval)

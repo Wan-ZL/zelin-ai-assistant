@@ -1,0 +1,203 @@
+/*
+ * 设置页样式（§59 首个 section「模型」）。只引用 tokens.css 已有变量，不造新色值
+ * （web/CONVENTIONS.md §主题）。页面骨架对齐回收站页（trash-page 的宽度/间距节拍）。
+ */
+
+.settings-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.settings-page-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+}
+
+/* ----- section 卡 ------------------------------------------------------------ */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: var(--border-hairline) solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 14px 16px 16px;
+}
+
+.settings-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settings-helper {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.settings-error {
+  margin: 0;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+
+.settings-warning {
+  margin: 0;
+  color: var(--warning);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.settings-warning-list {
+  margin: 0;
+  padding: 8px 12px;
+  list-style: none;
+  background: var(--warning-soft-quiet);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ----- 一把旋钮 -------------------------------------------------------------- */
+.settings-knob {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.settings-knob-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-knob-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-select,
+.settings-input {
+  min-width: 0;
+  padding: 5px 8px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.settings-select {
+  max-width: 100%;
+}
+
+.settings-input {
+  flex: 1;
+  min-width: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.settings-select:focus-visible,
+.settings-input:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ----- Claude Code 全局默认 ---------------------------------------------------- */
+.settings-global {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.settings-global-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.settings-global-label {
+  font-weight: 600;
+}
+
+.settings-global-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface-muted);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+.settings-global-path {
+  color: var(--text-quaternary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.settings-global-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ----- toast（页内，非系统通知） ------------------------------------------------ */
+.settings-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: var(--dialog-shadow);
+  border: var(--border-hairline) solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  z-index: 1000;
+}
+
+.settings-toast.is-ok {
+  border-color: var(--success);
+}
+
+.settings-toast.is-error {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}

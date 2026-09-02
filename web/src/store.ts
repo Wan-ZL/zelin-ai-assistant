@@ -5,7 +5,16 @@
 //   3. 新增 UI state（filters/搜索词/抽屉页签…）= 给 AppState 加字段 + 加 action 函数，别处不许存全局态；
 //   4. 服务端数据只进 board/cardDetails，前端绝不改写 wire 字段。
 import { useSyncExternalStore } from "react";
-import { ApiError, fetchBoard, fetchCard, fetchHealth } from "./api";
+import {
+  ApiError,
+  fetchBoard,
+  fetchCard,
+  fetchClaudeCodeDefault,
+  fetchHealth,
+  fetchModelsSettings,
+  postClaudeCodeDefault,
+  putModelsSettings,
+} from "./api";
 import { resolveLanguage, type Language } from "./i18n";
 import {
   EMPTY_CARD_FILTERS,
@@ -13,7 +22,13 @@ import {
   writeCardFilters,
   type CardFilters,
 } from "./taskFilters";
-import type { Board, CardDetail, HealthSnapshot } from "./types";
+import type {
+  Board,
+  CardDetail,
+  ClaudeCodeDefault,
+  HealthSnapshot,
+  ModelsSettings,
+} from "./types";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 
@@ -28,6 +43,9 @@ export interface AppState {
   cardDetailError: string | null;
   language: Language;             // UI 语言（G7 shell：?lang= 覆写 > localStorage > 浏览器）
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
+  models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
+  claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
+  settingsError: string | null;   // 设置页读失败的用户可读文案（成功后清空；保存失败由页面 toast）
 }
 
 const LANGUAGE_STORAGE_KEY = "zai.lang";
@@ -57,6 +75,9 @@ const initialState: AppState = {
   cardDetailError: null,
   language: detectInitialLanguage(),
   filters: EMPTY_CARD_FILTERS,
+  models: null,
+  claudeCodeDefault: null,
+  settingsError: null,
 };
 
 let state: AppState = initialState;
@@ -156,6 +177,37 @@ export function setFilters(patch: Partial<CardFilters>) {
 
 export function clearFilters() {
   setFilters(EMPTY_CARD_FILTERS);
+}
+
+// ----- settings（§59 设置页） ---------------------------------------------- #
+
+/** 拉设置页「模型」的两份快照（旋钮 + Claude Code 全局默认）；读失败落 settingsError */
+export async function refreshSettings(): Promise<void> {
+  try {
+    const [models, claudeCodeDefault] = await Promise.all([
+      fetchModelsSettings(),
+      fetchClaudeCodeDefault(),
+    ]);
+    setState({ models, claudeCodeDefault, settingsError: null });
+  } catch (error) {
+    const message = error instanceof ApiError ? error.message : String(error);
+    setState({ settingsError: message });
+  }
+}
+
+/** 保存旋钮（PUT，server 校验 + diff-write）；成功以 server 回执替换快照，失败原样抛给页面 toast */
+export async function saveModels(patch: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
+  const models = await putModelsSettings(patch);
+  setState({ models });
+  return models;
+}
+
+/** 一键「设为 <id>」：改 Claude Code 全局默认（server 只改 model 键、先备份）；成功后重拉全局默认 */
+export async function setClaudeCodeDefaultModel(model: string): Promise<string | null> {
+  const receipt = await postClaudeCodeDefault(model);
+  const claudeCodeDefault = await fetchClaudeCodeDefault();
+  setState({ claudeCodeDefault });
+  return receipt.backup;
 }
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */

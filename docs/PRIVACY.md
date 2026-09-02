@@ -361,7 +361,7 @@
 macOS Keychain 只对用户 Aqua GUI 会话里的进程可读。本项目的核心组件跑在 **cron 和 launchd**
 下（daemon 会话）,读不到 Keychain 的 OAuth token,`launchctl asuser` 桥接在 cron 的 audit
 session 下也会被拒（详见 `ingest/process-screenpipe.sh` 头部注释与
-`act/executor.py` `_runner_env()`）。因此凭证走文件:
+`act/llm.py` `runner_env()`）。因此凭证走文件:
 
 - 位置 `<AIASSISTANT_HOME>/config/secrets/`,目录 **0700**、文件 **0600**
   （App 设置窗口与 `act/lib/secrets.write_secret` 两侧都强制）,整个目录 gitignored。

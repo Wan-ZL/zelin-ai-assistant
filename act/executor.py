@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -30,6 +29,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from act import llm
 from act.lib import analytics, config, failures, notify, sanitize
 from act.lib.registry import Requirement, State, load, save
 
@@ -543,29 +543,6 @@ def dispatch_error_class(err: Optional[str]) -> str:
     return failures.classify(err) or "unclassified"
 
 
-def _runner_env() -> dict:
-    """Ensure ANTHROPIC_API_KEY is set for the claude subprocess.
-
-    actd runs under a launchd agent; when spawned outside the Aqua login session
-    it cannot read the Keychain OAuth token, so fall back to the API key file
-    (same pattern the screenpipe ingest cron uses). Resolution (CONTRACT §19):
-    config/secrets/anthropic-api-key.txt (App 设置窗口保存) -> legacy
-    ~/.config/anthropic-key.txt. If the key is already in the environment or no
-    file exists, leave things untouched and let claude use its own auth.
-    """
-    env = dict(os.environ)
-    if not env.get("ANTHROPIC_API_KEY"):
-        from act.lib import secrets
-        key = secrets.resolve_credential(
-            secrets.ANTHROPIC_API_KEY_FILE,
-            None,
-            "~/.config/anthropic-key.txt",
-        )
-        if key:
-            env["ANTHROPIC_API_KEY"] = key
-    return env
-
-
 def session_name(req: Requirement) -> str:
     """Readable display name for the bg session — shows up in `claude agents`
     so Zelin can correlate list entries with assistant cards at a glance.
@@ -582,25 +559,24 @@ def session_name(req: Requirement) -> str:
 
 
 def _claude_bin(cfg: Optional[config.Config] = None) -> str:
-    """Resolved claude CLI for every subprocess site (launch / roster / stop).
+    """Resolved claude CLI for the non-prompt subprocess sites (roster / stop).
 
     A bare "claude" argv trusts the daemon's PATH — under launchd that once
     resolved a second, outdated install and every dispatch died on
     "unknown option '--bg'" (2026-07-08). config.resolve_claude_bin prefers
     the execution.claude_bin pin, then PATH, then ~/.local/bin/claude."""
-    return config.resolve_claude_bin(cfg)
+    return llm.claude_bin(cfg)
 
 
 def _bg_base_cmd(cfg: Optional[config.Config] = None) -> list:
-    """Base ``claude --bg`` argv shared by all three launch sites (dispatch /
-    resume / rework). ``--dangerously-skip-permissions`` is included only while
-    ``execution.skip_permissions`` is on (default; P0-10) — off means the agent
-    runs under claude's normal permission model; a blocked agent is harvested
-    to review by actd's reconcile (#119) instead of acting unattended."""
-    cmd = [_claude_bin(cfg), "--bg"]
-    if cfg is None or getattr(cfg, "skip_permissions", True):
-        cmd.append("--dangerously-skip-permissions")
-    return cmd
+    """Base ``claude --bg`` argv shared by all launch sites (dispatch / resume /
+    rework / brief) — built by the §59 single LLM boundary (act/llm.py):
+    ``--dangerously-skip-permissions`` only while ``execution.skip_permissions``
+    is on (default; P0-10 — off means the agent runs under claude's normal
+    permission model; a blocked agent is harvested to review by actd's
+    reconcile (#119) instead of acting unattended), then ``--model <id>``
+    when the dispatch knob is explicit (nothing when it follows)."""
+    return llm.dispatch_argv(cfg)
 
 
 def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
@@ -616,7 +592,7 @@ def _default_runner(prompt: str, cwd: Path, name: Optional[str] = None,
         capture_output=True,
         text=True,
         timeout=120,
-        env=_runner_env(),
+        env=llm.runner_env(),
     )
 
 
@@ -707,7 +683,7 @@ def _newest_session_for_cwd(cwd: str,
 def _parse_session_id(output: str) -> Optional[str]:
     if not output:
         return None
-    # keyword 和 id 之间夹 ANSI 色码（FORCE_COLOR 下的 claude 输出，_runner_env
+    # keyword 和 id 之间夹 ANSI 色码（FORCE_COLOR 下的 claude 输出，llm.runner_env
     # 原样透传 os.environ）会让分隔符字符类匹配不上——先剥转义序列再匹配，
     # 否则一次成功的 launch 会被误判成 no_session_id 并在下轮重试出重复 agent。
     m = _SESSION_RE.search(_ANSI_RE.sub("", output))
@@ -990,7 +966,7 @@ def resume(
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_runner_env(),
+                env=llm.runner_env(),
             )
 
     try:
@@ -1656,7 +1632,7 @@ def rework(
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_runner_env(),
+                env=llm.runner_env(),
             )
 
     try:
@@ -1794,7 +1770,7 @@ def brief(
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_runner_env(),
+                env=llm.runner_env(),
             )
 
     try:

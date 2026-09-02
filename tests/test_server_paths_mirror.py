@@ -13,10 +13,11 @@ from unittest import mock
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env 先于任何 act.* import
 
-from act import actd, doctor
+from act import actd, doctor, llm
 from act.lib import config, heartbeat, registry
 from server import health as server_health
 from server import paths
+from server import settings as server_settings
 
 HOME = Path("/tmp/zai-paths-pin")
 
@@ -74,6 +75,43 @@ class LayoutMirrorTestCase(unittest.TestCase):
                          doctor.DASHBOARD_FRESH_SECONDS)
         self.assertEqual(server_health.DASHBOARD_FRESH_SECONDS,
                          heartbeat.STALE_FLOOR_SECONDS)
+
+
+class ModelSettingsMirrorTestCase(unittest.TestCase):
+    """§59：server/settings.py 手抄的模型旋钮常量与 act/lib/config.py 逐字一致
+    ——两侧对「什么是合法旋钮值」意见不一，web 就会写出 daemon 忽略的键。"""
+
+    def test_constants_mirror_config(self):
+        self.assertEqual(server_settings.MODEL_FOLLOW, config.MODEL_FOLLOW)
+        self.assertEqual(server_settings.MODEL_MODES, config.MODEL_MODES)
+        self.assertEqual(server_settings.CANONICAL_MODELS, config.CANONICAL_MODELS)
+        self.assertEqual(server_settings.MODEL_ID_RE.pattern, config.MODEL_ID_RE.pattern)
+
+    def test_override_key_is_what_the_pipeline_reads(self):
+        for mode in config.MODEL_MODES:
+            self.assertIn(server_settings.OVERRIDE_KEY % mode, config._OVERRIDE_FIELDS)
+
+    def test_paths_mirror(self):
+        self.assertEqual(server_settings.settings_overrides_path(HOME),
+                         HOME / config.SETTINGS_OVERRIDES_PATH.relative_to(config.HOME))
+        self.assertEqual(server_settings.claude_code_settings_path(),
+                         llm.claude_code_settings_path())
+
+    def test_coerce_model_agrees_on_a_table(self):
+        table = (None, "", "  ", "follow", "FOLLOW", " claude-opus-5 ",
+                 "claude-fable-5-1[1m]", "has space", "-lead", "a" * 65, 12, True,
+                 "x\ny", "q'uote")
+        for value in table:
+            with self.subTest(value=value):
+                try:
+                    a = ("ok", config.coerce_model(value))
+                except ValueError:
+                    a = ("err", None)
+                try:
+                    b = ("ok", server_settings.coerce_model(value))
+                except ValueError:
+                    b = ("err", None)
+                self.assertEqual(a, b)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,20 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.11] - 2026-09-01
+
+v-next-2 决议 D22：「关于默认模型的选择，按照你的建议来。你先找机会把它 implement，然后我看看效果。」本产品此前从不传 `--model`——每次 claude 调用都继承 Claude Code 全局默认，一个 EAP 别名退场曾让派工静默全败。
+
+### Added
+- **`act/llm.py` — 单一 LLM 边界（CONTRACT §59.1；防腐十条 #3 落地）**：`run()` 收编全部 10 处 headless `claude -p` 调用点（analyze / radar / radar_slack ×2 / radar_gmail / quick_capture / merge_review / ask / golden_eval / voice_gen / weekly_digest），`dispatch_argv()` 收编 executor 的 4 个 `claude --bg` 发射点；scrub、binary 解析、凭证 env、`--model` 追加都只在此处。两把旋钮都 follow 时每个调用点的 argv 与 kwargs 逐字节不变（`tests/test_llm_boundary.py` 逐 site 钉住）。`executor._runner_env` 搬入为 `llm.runner_env`。
+- **两把模型旋钮（§59.2）**：config.yaml `models: {dispatch, pipeline}` + overrides 扁平键 `models_dispatch` / `models_pipeline`（§15 追记）。`follow`（默认）= 不传 `--model`；显式 id 追加一处。坏形状回落 follow / 跳过。actd 每 pass 现读两字段——设置改动下一次派工即生效，无需重启。
+- **doctor 三行（§59.3 / §25）**：`claude code model`（Claude Code 全局默认 + 两把旋钮指向；跟随非 canonical 别名 → WARN，永不 FAIL）、`model dispatch` / `model pipeline`（显式旋钮一次最小活探针；非零 → FAIL 新 failure id `model_unavailable`：「模型 X 不可用，派工会全部失败」）。`--fast` 不探，自动部署判据不受影响。
+- **server 设置面（§59.4 / §49 追记）**：`GET/PUT /api/settings/models`（PUT 进四闸——写请求自此 = POST 与 PUT；字段白名单、形状校验、diff-write `state/settings_overrides.json` 保留其余键）、`GET/POST /api/claude-code/default-model`（只改 `~/.claude/settings.json` 的 `model` 键，先备份 `settings.json.bak-<UTC ts>`，不可解析 409 `CONFLICT` 拒改；启动/部署任何自动路径永不写它）。envelope 词表 add-only 收编 `CONFLICT`。
+- **web 首个设置页（§59.5）**：`?page=settings`（顶栏齿轮），section「模型」：两把下拉（跟随 Claude Code 全局（当前 <id>）/ canonical ids / 自定义 + 别名下线警告）+「手 / 脑」说明 + 保存；「Claude Code 全局默认」行 + 显式一键「设为 <id>」（原生 dialog 确认 → toast 带备份路径）；server 400 的整句以 toast 显示。
+
+### Changed
+- analyze / radar_gmail / radar_slack extractor / golden_eval / quick_capture 五处 argv[0] 从裸 `"claude"` 统一为 `config.resolve_claude_bin`（pin → PATH → `~/.local/bin`）——PATH 有 claude 时同一二进制；cron/launchd PATH 缺 `~/.local/bin` 时从 FileNotFoundError 变为能跑；`execution.claude_bin` pin 自此对所有调用点生效。
+
 ## [0.48.8] - 2026-09-01
 
 v-next-2 P1（决议 D2）：「切换时机：等 QA 网配好之后，现在就可以切。备份与回滚：在电脑上留个备份，如果切换失败，手动导回去。」卡片账本的真源从 YAML 文件切到 SQLite（store2），同版落地 owner 拍板的 #119（需输入状态退役）。
@@ -2091,7 +2105,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.8...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.11...HEAD
+[0.48.11]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.8...v0.48.11
 [0.48.8]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.7...v0.48.8
 [0.48.7]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.6...v0.48.7
 [0.48.6]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.5...v0.48.6

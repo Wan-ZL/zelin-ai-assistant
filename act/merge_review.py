@@ -32,11 +32,11 @@ from typing import Callable, Optional
 import yaml
 
 from act.analyze import _extract_json
-from act.executor import _runner_env, _transcript_cwd
+from act import llm
+from act.executor import _transcript_cwd
 from act.lib import analytics, config, sanitize
 from act.lib.registry import Requirement, load
 # cron/launchd PATH 兜底（radar.py 事故注）— single claude-bin resolution path.
-from act.radar import _claude_bin
 
 # Job files live here (契约 二; same frozen path act/lib/dashboard.py projects
 # into the merge_suggestions partition — do not fork).
@@ -330,15 +330,11 @@ def build_analysis_prompt(job: dict) -> str:
 # runner + validation
 # --------------------------------------------------------------------------- #
 def _default_runner(prompt: str) -> subprocess.CompletedProcess:
-    prompt, _ = sanitize.scrub(prompt)
-    return subprocess.run(
-        # prompt BEFORE any variadic flags (claude CLI quirk, see analyze.py).
-        # No tools: this is a pure judgment call over pre-gathered material.
-        [_claude_bin(), "-p", prompt, "--output-format", "text"],
-        capture_output=True,
-        text=True,
+    # §59 single LLM boundary (act/llm.py): scrub + argv + --model live there.
+    # No tools: this is a pure judgment call over pre-gathered material.
+    return llm.run(
+        prompt, mode=llm.MODE_PIPELINE,
         timeout=CLAUDE_TIMEOUT,
-        env=_runner_env(),
         cwd=config.headless_cwd(),  # 中性 cwd：repo 根会让 claude 自动吞 CLAUDE.md
     )
 

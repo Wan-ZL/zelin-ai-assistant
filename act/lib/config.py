@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -104,6 +105,25 @@ DEFAULT_DIGEST_FREQUENCY: str = "off"
 # registry.backend()——这里只是配置词表。
 REGISTRY_BACKENDS: tuple = ("auto", "yaml", "sqlite")
 DEFAULT_REGISTRY_BACKEND: str = "auto"
+# §59 模型旋钮（D22）：两把——`models.dispatch`（claude --bg 派工 agent，"手"）
+# 与 `models.pipeline`（各处 headless `claude -p`：雷达/分诊/判官/问答，"脑"）。
+# 值 = "follow"（默认：argv 不带 --model，继承 Claude Code 全局默认
+# ~/.claude/settings.json `model`）或一个显式模型 id。canonical 表是 UI 下拉
+# 的全集；表外的自由文本照收（[1m]/-eap 一类别名/后缀会随时下线——2026 一次
+# EAP 别名退场让派工静默全败——所以 UI 与 doctor 对表外值给 WARN）。
+# server/settings.py 镜像这两组常量（server 不 import act），
+# tests/test_server_paths_mirror.py 钉漂移。
+MODEL_FOLLOW: str = "follow"
+MODEL_MODES: tuple = ("dispatch", "pipeline")
+CANONICAL_MODELS: tuple = (
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001",
+)
+# 模型 id 的形状闸（不是词表）：字母数字开头，之后允许 . _ - [ ] ，≤64 字符。
+# 只防 argv 注入面上的垃圾（空白/控制字符/引号），不猜模型名的未来拼法。
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
 
 # Feature flags (§16) — default ALL on; config.yaml `features:` then
 # settings_overrides.json `features` overlay on top.
@@ -203,6 +223,12 @@ class Config:
     # §53 数据层后端开关（config.yaml `registry.backend`）——rollback 用；
     # 词表外的值一律回落 auto（fail-safe：配错字不至于让真源判定翻车）。
     registry_backend: str = DEFAULT_REGISTRY_BACKEND
+
+    # §59 模型旋钮（D22）。"follow" = 不传 --model（继承 Claude Code 全局
+    # 默认）；其余 = act/llm.py 在 argv 末尾唯一一处追加 `--model <id>`。
+    # 形状坏（空白/控制字符）回落 follow——宁可跟随全局，不可把垃圾塞进 argv。
+    models_dispatch: str = MODEL_FOLLOW
+    models_pipeline: str = MODEL_FOLLOW
 
     # approval / cost
     poll_interval_seconds: int = 10
@@ -438,6 +464,37 @@ def _coerce_registry_backend(value) -> str:
     return v if v in REGISTRY_BACKENDS else DEFAULT_REGISTRY_BACKEND
 
 
+def coerce_model(value) -> str:
+    """§59 模型旋钮归一：None/空白/"follow"（大小写不敏感）→ "follow"；形状
+    合法的 id 原样（大小写保留——模型 id 由 CLI 判，这里不猜）；其余（含控制
+    字符、空格、超长）→ ValueError，由调用方按「坏值 = 保留原生效值」处理。
+    yaml 路径经 _model_or 吞成 follow；overrides 路径经 per-entry try 跳过。"""
+    if value is None:
+        return MODEL_FOLLOW
+    if not isinstance(value, str):
+        raise ValueError(f"not a model id: {value!r}")
+    s = value.strip()
+    if not s or s.lower() == MODEL_FOLLOW:
+        return MODEL_FOLLOW
+    if not MODEL_ID_RE.match(s):
+        raise ValueError(f"not a model id: {value!r}")
+    return s
+
+
+def _model_or(value, default: str) -> str:
+    try:
+        return coerce_model(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def model_is_canonical(value) -> bool:
+    """UI/doctor 的 WARN 判据：显式值是否在 CANONICAL_MODELS 表内。"follow"
+    不是模型 id，按 True（没有可警告的东西）。"""
+    s = str(value or "").strip()
+    return (not s) or s.lower() == MODEL_FOLLOW or s in CANONICAL_MODELS
+
+
 def load_config() -> Config:
     """Load ``config.yaml`` (falling back to ``config.example.yaml``).
 
@@ -604,6 +661,14 @@ def load_config() -> Config:
     registry_blk = _dict_or(data.get("registry"))
     if "backend" in registry_blk:
         cfg.registry_backend = _coerce_registry_backend(registry_blk.get("backend"))
+
+    # §59（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
+    # 保留 follow（不是保留"上一个值"——yaml 里没有上一个值）。
+    models_blk = _dict_or(data.get("models"))
+    for _mode in MODEL_MODES:
+        if _mode in models_blk:
+            setattr(cfg, f"models_{_mode}",
+                    _model_or(models_blk.get(_mode), MODEL_FOLLOW))
 
     voice = _dict_or(data.get("voice"))
     cfg.voice_enabled = _bool_or(
@@ -864,6 +929,12 @@ _OVERRIDE_FIELDS: dict = {
     "feedback_publish_default": _coerce_bool,
     "feedback_sync_repo": str,
     "feedback_sync_token_path": str,
+    # §59 (D22): the two model knobs — web Settings「模型」writes these flat
+    # keys via server/settings.py (diff-write: a value equal to the
+    # config.yaml/default effective value deletes the key). Bad shapes raise
+    # → per-entry skip, the effective value stays.
+    "models_dispatch": coerce_model,
+    "models_pipeline": coerce_model,
     # W18: remote_allow_direct_run 故意不在此表——远程直跑闸门只认 config.yaml
     # 手写 opt-in（fail-closed），App/settings_overrides 不得翻开它（vnext §W18）。
 }

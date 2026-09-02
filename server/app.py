@@ -6,14 +6,17 @@
 - POST body 上限 1MiB；未知 JSON 字段零容忍 400 UNKNOWN_FIELD（reveal 在
   本层校验，actions 的字段闸门归 inbox_writer/G1）。
 - 鉴权四闸（原 PR3 TODO，v0.48.1 落地；机制与差异见 server/security.py）：
-  Host 回环白名单（每请求，anti-rebind）→ Origin 白名单（POST，present 才
-  查，anti-CSRF）→ Content-Type: application/json（POST，杀 simple-request
-  向量）→ per-install instance token（POST 一律必带 X-Zai-Token；token 由
-  server 注入被服务的 index.html）。GET 保持 token-light（同源纪律 + 永不
+  Host 回环白名单（每请求，anti-rebind）→ Origin 白名单（写请求，present 才
+  查，anti-CSRF）→ Content-Type: application/json（写请求，杀 simple-request
+  向量）→ per-install instance token（写请求一律必带 X-Zai-Token；token 由
+  server 注入被服务的 index.html）。写请求 = POST 与 PUT（§59 设置面加的
+  第二个写动词，四闸逐字同款）。GET 保持 token-light（同源纪律 + 永不
   发 CORS 头，跨源页面读不到任何响应）。
+- 设置面（§59）：GET/PUT /api/settings/models、GET/POST
+  /api/claude-code/default-model，校验与落盘在 server/settings.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）。
+localhost 例外的法源）、§59（设置面）。
 """
 from __future__ import annotations
 
@@ -28,7 +31,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlsplit
 
-from server import board_source, files, health, inbox_writer, paths, security
+from server import (board_source, files, health, inbox_writer, paths, security,
+                    settings)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -106,6 +110,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self._dispatch("POST")
 
+    def do_PUT(self) -> None:  # noqa: N802
+        self._dispatch("PUT")
+
     def _dispatch(self, method: str) -> None:
         try:
             path = unquote(urlsplit(self.path).path)
@@ -114,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
             self._check_auth(method)
             if method == "GET":
                 self._route_get(path)
+            elif method == "PUT":
+                self._route_put(path)
             else:
                 self._route_post(path)
         except ApiError as err:
@@ -138,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
         if not security.host_ok(self.headers.get("Host")):
             self.close_connection = True
             raise ForbiddenError("bad host")
-        if method != "POST":
+        if method not in ("POST", "PUT"):
             return  # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
         origin = self.headers.get("Origin")
         if origin is not None and not security.origin_ok(
@@ -174,6 +183,12 @@ class Handler(BaseHTTPRequestHandler):
             # 年龄 + 看板新鲜度 + 连崩计数 → 一个 verdict，web 顶部横幅据此
             # 诚实报「后台服务卡住/停了」——退役中的 Mac app 横幅的替身。
             self._send_json(200, health.snapshot(ctx.home))
+        elif path == "/api/settings/models":
+            # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
+            self._send_json(200, settings.models_snapshot(ctx.home))
+        elif path == "/api/claude-code/default-model":
+            # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
+            self._send_json(200, settings.claude_code_default())
         elif path == "/api/events":
             self._serve_events(ctx.hub)
         elif path.startswith("/files/deliverables/"):
@@ -222,6 +237,26 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(card_id, str):
                 raise InvalidFieldError("card_id must be a string")
             self._send_json(200, files.reveal(ctx.home, card_id))
+        elif path == "/api/claude-code/default-model":
+            # §59 owner 的显式一键「设为 <id>」：只改 model 键、先备份、坏文件拒改
+            payload = self._read_json_body()
+            unknown = set(payload) - {"model"}
+            if unknown:
+                raise UnknownFieldError("unknown field",
+                                        {"fields": sorted(unknown)})
+            self._send_json(200, settings.set_claude_code_default(payload.get("model")))
+        else:
+            raise NotFoundError("not found", {"path": path})
+
+    # ------------------------------------------------------------------ #
+    # PUT 路由（§59 设置面；四闸同 POST）
+    # ------------------------------------------------------------------ #
+    def _route_put(self, path: str) -> None:
+        ctx = self.server.ctx  # type: ignore[attr-defined]
+        if path == "/api/settings/models":
+            # 字段白名单 + 形状校验 + diff-write 都在 server/settings.py（单一职责）
+            payload = self._read_json_body()
+            self._send_json(200, settings.update_models(ctx.home, payload))
         else:
             raise NotFoundError("not found", {"path": path})
 

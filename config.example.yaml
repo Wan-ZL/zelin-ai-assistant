@@ -111,6 +111,13 @@ registry:                              # 数据层真源（CONTRACT §53，owner
                                        # yaml = 回滚开关（保留一个版本）：忽略 store2 标记、继续读写 act/registry/*.yaml。
                                        # 回滚步骤见 docs/TROUBLESHOOTING.md「store2 回滚」。改动本键需重启守护进程。
 
+# models:                              # 模型选择（CONTRACT §59，owner 决策 D22）——两把旋钮，都默认 follow
+#   dispatch: follow                   # 「手」：claude --bg 派工 agent 用哪个模型。follow = 不传 --model，继承 Claude Code 全局默认（~/.claude/settings.json 的 model）
+#   pipeline: follow                   # 「脑」：各处 headless claude -p（雷达提取/分诊/判官/问答/digest）用哪个模型。同上
+#                                      # 显式值请用 canonical id：claude-fable-5 / claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5-20251001
+#                                      # 别名/后缀（[1m]、-eap…）随时可能下线——下线那天派工会静默全败；doctor 对显式值做一次活探针
+#                                      # web 设置页「模型」写 state/settings_overrides.json 的 models_dispatch / models_pipeline，优先级高于本块；改动下一次调用即生效，无需重启
+
 archive:
   after_days: 30                       # 交付(delivered)卡最后活动超过 N 天自动封存进 archive。vnext 决议把 v0.20.0 的默认 0(off) 改为 30；设 0 = 恢复永不自动归档。只封存冷 delivered：带未来 deadline / cluster 内还有 open 兄弟卡 / 时间戳不可解析的卡一律不动
 
