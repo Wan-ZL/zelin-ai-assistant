@@ -7,6 +7,7 @@ visible. See docs/DEMO.md for the full recording workflow.
 
     python3 scripts/demo_seed.py /tmp/assistant-demo
     python3 scripts/demo_seed.py /tmp/assistant-demo --scene running
+    python3 scripts/demo_seed.py /tmp/assistant-demo --english
     python3 scripts/demo_seed.py /tmp/assistant-demo --check
 
 Field names/types mirror what act/lib/dashboard.py:build_dashboard emits
@@ -85,9 +86,48 @@ def _src(who: str, channel: str, date: str, quote: str) -> dict:
 # --------------------------------------------------------------------------- #
 # fictional dataset
 # --------------------------------------------------------------------------- #
-def _hero_card(now: dt.datetime) -> dict:
+def _hero_card(now: dt.datetime, lang: str = "zh") -> dict:
     """R-101 as a needs_approval card (scene=initial)."""
     deadline = _date(now, 6)
+    if lang == "en":
+        return {
+            "id": HERO_ID,
+            "title": "example-bench: one-click leaderboard eval report export",
+            "summary": "Add an 'Export Report' button to the eval dashboard; once approved, AI opens a draft PR on example-bench without touching main.",
+            "target_repo": "~/Projects/example-bench",
+            "target_name": "example-bench",
+            "target_kind": "existing",
+            "tier": "T1",
+            "tier_hint": "One-click approval",
+            "hardness": "hard",
+            "deadline": deadline,
+            "days_left": (dt.date.fromisoformat(deadline) - now.date()).days,
+            "repeated": 2,
+            "cost_usd": 12,
+            "show_cost": True,
+            "green_sign": False,
+            "disagreement": None,
+            "improvement_of": None,
+            "sources": [
+                _src("manager", "meeting", _date(now, -7),
+                     "Can we add a button to export the leaderboard into a report with one click?"),
+                _src("alex.doe", "slack", _date(now, -2),
+                     "Are we still doing the export report feature mentioned last week? Someone asked in the weekly."),
+            ],
+            "plan": [
+                "Add 'Export Report' button to the example-bench dashboard page",
+                "Backend renders current leaderboard into markdown + png",
+                "Produce draft PR, do not merge",
+            ],
+            "outputs": ["draft PR: example-bench#42"],
+            "dod": [
+                "'Export Report' button appears on dashboard page",
+                "Clicking generates markdown + png into exports/",
+                "Draft PR passes CI",
+            ],
+            "processing": False,
+            "delivery_mode": "repo",
+        }
     return {
         "id": HERO_ID,
         "title": "example-bench: leaderboard 一键导出评测报告",
@@ -130,15 +170,107 @@ def _hero_card(now: dt.datetime) -> dict:
     }
 
 
-def _hero_plan_dod(now: dt.datetime) -> dict:
-    card = _hero_card(now)
+def _hero_plan_dod(now: dt.datetime, lang: str = "zh") -> dict:
+    card = _hero_card(now, lang=lang)
     return {k: card[k] for k in ("summary", "plan", "dod", "sources")}
 
 
-def _needs_approval(now: dt.datetime) -> list[dict]:
+def _needs_approval(now: dt.datetime, lang: str = "zh") -> list[dict]:
     deadline_t2 = _date(now, 13)
+    if lang == "en":
+        return [
+            _hero_card(now, lang=lang),
+            {
+                "id": "R-102",
+                "title": "inkweld: set up public demo environment + seed data",
+                "summary": "Create inkweld-demo repo and deploy a public demo site with seed data. Publicly visible, requires written confirmation.",
+                "target_repo": "~/Projects/inkweld-demo",
+                "target_name": "inkweld-demo",
+                "target_kind": "new",
+                "tier": "T2",
+                "tier_hint": "Written confirmation required",
+                "origin_trust": "external",
+                "effective_tier": "T2",
+                "hardness": "hard",
+                "deadline": deadline_t2,
+                "days_left": (dt.date.fromisoformat(deadline_t2) - now.date()).days,
+                "repeated": 3,
+                "cost_usd": 85,
+                "show_cost": True,
+                "green_sign": True,
+                "disagreement": "Disagreement between manager and alex.doe on whether demo should use real or synthetic data",
+                "improvement_of": None,
+                "sources": [
+                    _src("manager", "meeting", _date(now, -9),
+                         "Customer wants to see a clickable demo first, doesn't need full features"),
+                    _src("sam.rivera", "slack", _date(now, -3),
+                         "Can we finalize the demo environment this week? Sales is asking again"),
+                ],
+                "plan": [
+                    "Create inkweld-demo repo (forked from inkweld template)",
+                    "Write seed data generator script (all synthetic data)",
+                    "Deploy to internal PaaS with read-only demo account",
+                    "Document demo boundaries and reset procedure in README",
+                ],
+                "outputs": [],
+                "dod": [
+                    "Demo site publicly accessible, demo account can log in",
+                    "All data synthetic with zero real customer info",
+                    "Single command to reset demo data",
+                ],
+                "processing": False,
+                "delivery_mode": "repo",
+            },
+            {
+                "id": "R-103",
+                "title": "Draft Q3 planning one-pager (bilingual)",
+                "summary": "Writing task: Q3 planning one-pager initial draft, delivered in chat session, touches no repos.",
+                "target_repo": "~/Projects/workbench",
+                "target_name": "workbench",
+                "target_kind": "existing",
+                "tier": "T1",
+                "tier_hint": "Escalated from external source, requires written confirmation",
+                "origin_trust": "external",
+                "effective_tier": "T2",
+                "hardness": "soft",
+                "deadline": _date(now, 3),
+                "days_left": 3,
+                "repeated": 1,
+                "cost_usd": None,
+                "show_cost": False,
+                "green_sign": False,
+                "disagreement": None,
+                "improvement_of": None,
+                "sources": [
+                    _src("manager", "gmail", _date(now, -1),
+                         "Need a Q3 planning one-pager by next Wednesday, outline works first"),
+                ],
+                "plan": [
+                    "Review Q2 outcomes and candidate Q3 priorities",
+                    "Outline by objectives / key results / risks",
+                    "Bilingual draft delivered in final summary for review",
+                ],
+                "outputs": [],
+                "dod": ["Outline covers 3 objectives", "Bilingual", "Under one page"],
+                "processing": False,
+                "delivery_mode": "chat",
+            },
+            {
+                "id": "R-104",
+                "title": "Unify lint configurations across example-bench and inkweld",
+                "summary": "Unify lint configurations across example-bench and inkweld",
+                "tier": "T1",
+                "tier_hint": "AI researching",
+                "processing": True,
+                "sources": [],
+                "plan": [],
+                "dod": [],
+                "show_cost": False,
+                "delivery_mode": "repo",
+            },
+        ]
     return [
-        _hero_card(now),
+        _hero_card(now, lang=lang),
         {
             "id": "R-102",
             "title": "inkweld: 搭对外可访问的 demo 环境 + 种子数据",
@@ -235,8 +367,65 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
     ]
 
 
-def _running(now: dt.datetime) -> list[dict]:
+def _running(now: dt.datetime, lang: str = "zh") -> list[dict]:
     e = _epoch(now)
+    if lang == "en":
+        return [
+            {
+                "id": "R-105",
+                "name": "example-bench: fix flaky e2e tests (retry logic)",
+                "session_id": "a7c9e2f4-8b31-4d6a-9e05-2f7c8d1b3a54",
+                "short_id": "a7c9e2f4",
+                "copy_cmd": "claude attach a7c9e2f4",
+                "agent_name": "fix flaky e2e retries",
+                "cwd": "~/Projects/example-bench",
+                "state": "working",
+                "origin_trust": "hand",
+                "started_at": e - 1500,
+                "summary": "3 test cases in e2e suite timeout intermittently; add unified retry + diagnostic logs.",
+                "plan": [
+                    "Reproduce and identify timeout bottlenecks in 3 flaky cases",
+                    "Extract retry helper with exponential backoff",
+                    "Run 40 consecutive rounds to verify zero failures",
+                ],
+                "dod": ["40 consecutive green e2e runs", "Unit tests for retry helper"],
+                "log": f"{HOME}/state/logs/R-105.log",
+                "dispatched_at": e - 1560,
+                "delivery_mode": "repo",
+                "last_error": None,
+            },
+            {
+                "id": "R-106",
+                "name": "inkweld: rewrite README quickstart section",
+                "state": "queued",
+                "summary": "Current quickstart gets stuck at step 2; rewrite to match new install script.",
+                "plan": ["Walk through install flow with current install.sh", "Rewrite quickstart section in README"],
+                "dod": ["Newcomers can get running in under 10 minutes following README"],
+                "delivery_mode": "repo",
+                "dispatch_error": None,
+                "origin_trust": "hand",
+                "queued_reason": {"kind": "concurrency"},
+            },
+            {
+                "id": "R-107",
+                "name": "example-bench: dataset v2 loader compatibility shim",
+                "session_id": "c3f8a2d1-6e97-4b28-a1c4-9d5e0f7b2c86",
+                "short_id": "c3f8a2d1",
+                "copy_cmd": "claude attach c3f8a2d1",
+                "agent_name": "dataset v2 loader shim",
+                "cwd": "~/Projects/example-bench",
+                "state": "working",
+                "origin_trust": "hand",
+                "started_at": e - 7200,
+                "summary": "Dataset v2 changed schema; add shim so legacy eval scripts work without changes.",
+                "plan": ["Compare v1/v2 schema differences", "Write field mapping compatibility shim", "Legacy script regression passes completely"],
+                "dod": ["v1 scripts run on v2 dataset with zero changes"],
+                "log": f"{HOME}/state/logs/R-107.log",
+                "dispatched_at": e - 7260,
+                "delivery_mode": "repo",
+                "last_error": "auto-resume attempt 1 failed: session busy — retried in 60s, OK",
+            },
+        ]
     return [
         {
             "id": "R-105",
@@ -300,11 +489,16 @@ def _running(now: dt.datetime) -> list[dict]:
     ]
 
 
-def _needs_input(now: dt.datetime) -> list[dict]:
+def _needs_input(now: dt.datetime, lang: str = "zh") -> list[dict]:
+    name = (
+        "Connect Supabase auth to inkweld (service key needed)"
+        if lang == "en"
+        else "给 inkweld 接 Supabase auth（需要 service key）"
+    )
     return [
         {
             "id": "R-108",
-            "name": "给 inkweld 接 Supabase auth（需要 service key）",
+            "name": name,
             "session_id": "d4b8f1c6-2a53-4e79-b8d0-1c6f9a3e5d27",
             "short_id": "d4b8f1c6",
             "copy_cmd": "claude attach d4b8f1c6",
@@ -315,8 +509,78 @@ def _needs_input(now: dt.datetime) -> list[dict]:
     ]
 
 
-def _review(now: dt.datetime) -> list[dict]:
+def _review(now: dt.datetime, lang: str = "zh") -> list[dict]:
     e = _epoch(now)
+    if lang == "en":
+        return [
+            {
+                "id": "R-109",
+                "name": "example-bench: eval caching layer (~10x speedup on repeat runs)",
+                "summary": "Add content-hash cache to runner; repeat evaluations read directly from cache.",
+                "dod": ["Repeat run with same config hits cache", "Unit tests for cache invalidation logic", "CI all green"],
+                "session_id": "e5a1c7d9-4f62-4b8e-9a35-7d0c2b8f4e61",
+                "short_id": "e5a1c7d9",
+                "copy_cmd": "cd '~/Projects/example-bench' && claude --resume "
+                            "e5a1c7d9-4f62-4b8e-9a35-7d0c2b8f4e61",
+                "agent_name": "eval cache layer",
+                "state": "review",
+                "cwd": "~/Projects/example-bench",
+                "delivered_summary": "Draft PR #87 opened in example-bench: content-hash "
+                                     "caching layer added to runner, repeat runs reduced from ~12min to ~70s; 6 unit tests for invalidation logic, CI all green.",
+                "final_draft": None,
+                "plan": ["Design content-hash scheme for config", "Implement cache read/write in runner", "Add unit tests for invalidation logic"],
+                "sources": [
+                    _src("alex.doe", "slack", _date(now, -6),
+                         "Changing one line of config requires a full rerun every time, takes way too long"),
+                ],
+                "log": f"{HOME}/state/logs/R-109.log",
+                "dispatched_at": e - 9000,
+                "review_at": e - 1800,
+                "delivery_mode": "repo",
+            },
+            {
+                "id": "R-110",
+                "name": "Write this week's weekly report (review before sending)",
+                "summary": "In-chat delivery: weekly report initial draft, copy-paste after sign-off.",
+                "dod": ["Covers progress on both projects this week", "Bilingual", "Under one page"],
+                "session_id": "f2d6b8a3-9c14-4d57-8e60-3b7a5f1c9d42",
+                "short_id": "f2d6b8a3",
+                "copy_cmd": "cd '~/Projects/workbench' && claude --resume "
+                            "f2d6b8a3-9c14-4d57-8e60-3b7a5f1c9d42",
+                "agent_name": "weekly report draft",
+                "state": "review",
+                "cwd": "~/Projects/workbench",
+                "delivered_summary": "Weekly report draft completed: progress section for each project + next week plans, bilingual.",
+                "final_draft": (
+                    "**Weekly Report | 周报**\n"
+                    "\n"
+                    "## example-bench\n"
+                    "- 评测缓存层 draft PR 已提交，重复 run 提速 ~10x（12min → 70s）。\n"
+                    "  Eval cache layer in draft PR; repeat runs ~10x faster.\n"
+                    "- e2e flaky 修复中：retry 逻辑已连续 40 轮零失败。\n"
+                    "  Flaky e2e fix in progress; 40 consecutive green runs with retries.\n"
+                    "\n"
+                    "## inkweld\n"
+                    "- 对外 demo 环境方案已成型，等 green light 后开工。\n"
+                    "  Public demo environment proposal ready, pending sign-off.\n"
+                    "- README 快速上手重写已排队。\n"
+                    "  Quick-start rewrite queued.\n"
+                    "\n"
+                    "## Next week\n"
+                    "- leaderboard 一键导出评测报告（PR review 中）\n"
+                    "- Q3 planning one-pager 初稿\n"
+                ),
+                "plan": ["Aggregate progress across both projects this week", "Draft bilingual report", "Place in final summary for review"],
+                "sources": [
+                    _src("manager", "slack", _date(now, -1),
+                         "Don't forget this week's weekly report, ideally before Friday noon"),
+                ],
+                "log": f"{HOME}/state/logs/R-110.log",
+                "dispatched_at": e - 2400,
+                "review_at": e - 600,
+                "delivery_mode": "chat",
+            },
+        ]
     return [
         {
             "id": "R-109",
@@ -388,8 +652,41 @@ def _review(now: dt.datetime) -> list[dict]:
     ]
 
 
-def _completed(now: dt.datetime) -> list[dict]:
+def _completed(now: dt.datetime, lang: str = "zh") -> list[dict]:
     e = _epoch(now)
+    if lang == "en":
+        return [
+            {
+                "id": "R-111",
+                "name": "example-bench: add lint gate to CI (ruff + prettier)",
+                "session_id": "b9e3d5f7-1a48-4c26-9b70-5e2d8c4a6f13",
+                "short_id": "b9e3d5f7",
+                "copy_cmd": "cd '~/Projects/example-bench' && claude --resume "
+                            "b9e3d5f7-1a48-4c26-9b70-5e2d8c4a6f13",
+                "agent_name": "ci lint gate",
+                "state": "delivered",
+                "cwd": "~/Projects/example-bench",
+                "summary": "PRs must pass ruff + prettier before merging.",
+                "delivered_summary": "Draft PR #61 accepted: lint gate live, legacy violations cleared.",
+                "accepted_at": e - 86400,
+                "dod": ["PR cannot merge if lint fails", "Single local command auto-fixes issues"],
+            },
+            {
+                "id": "R-112",
+                "name": "Automatically organize weekly meeting action items into checklist",
+                "session_id": "a1f5c8e2-7d39-4b64-8c05-2e9b6d3f7a58",
+                "short_id": "a1f5c8e2",
+                "copy_cmd": "cd '~/Projects/workbench' && claude --resume "
+                            "a1f5c8e2-7d39-4b64-8c05-2e9b6d3f7a58",
+                "agent_name": "meeting action items",
+                "state": "delivered",
+                "cwd": "~/Projects/workbench",
+                "summary": "Automatically generate action-item checklist whenever meeting notes are saved.",
+                "delivered_summary": "Script delivered: checklist generated and notified within 5 minutes of meeting notes saved.",
+                "accepted_at": e - 259200,
+                "dod": ["Every action item has an owner and deadline"],
+            },
+        ]
     return [
         {
             "id": "R-111",
@@ -424,7 +721,43 @@ def _completed(now: dt.datetime) -> list[dict]:
     ]
 
 
-def _debt(now: dt.datetime) -> list[dict]:
+def _debt(now: dt.datetime, lang: str = "zh") -> list[dict]:
+    if lang == "en":
+        return [
+            {
+                "id": "R-113",
+                "title": "example-bench README installation section is outdated",
+                "summary": "Setup command fails, newcomers get stuck on step one.",
+                "hardness": "soft",
+                "type": "engineering",
+                "sources": [
+                    _src("sam.rivera", "slack", _date(now, -5),
+                         "Isn't the setup command in the README failing now?"),
+                ],
+            },
+            {
+                "id": "R-114",
+                "title": "Weekly meeting notes unorganized, action items frequently lost",
+                "summary": "Verbal commitments go unrecorded and forgotten by next week.",
+                "hardness": "hard",
+                "type": "process",
+                "sources": [
+                    _src("manager", "meeting", _date(now, -12),
+                         "Nobody remembers the two action items agreed upon last week"),
+                ],
+            },
+            {
+                "id": "R-115",
+                "title": "inkweld error logs too noisy, real errors drowned out",
+                "summary": "Warning spam drowns out real errors when issues arise.",
+                "hardness": "soft",
+                "type": "engineering",
+                "sources": [
+                    _src("alex.doe", "slack", _date(now, -4),
+                         "Hundreds of warning lines per minute in logs, impossible to spot real failures"),
+                ],
+            },
+        ]
     return [
         {
             "id": "R-113",
@@ -462,7 +795,21 @@ def _debt(now: dt.datetime) -> list[dict]:
     ]
 
 
-def _trash(now: dt.datetime) -> list[dict]:
+def _trash(now: dt.datetime, lang: str = "zh") -> list[dict]:
+    if lang == "en":
+        return [
+            {
+                "id": "R-116",
+                "title": "Add auto-reply bot to Slack",
+                "summary": "Detected suggestion, rejected into trash — do not want auto-replies.",
+                "kind": "suggestion",
+                "trashed_at": _iso(now - dt.timedelta(days=2)),
+                "trash_reason": "rejected",
+                "permanent": False,
+                "type": "engineering",
+                "hardness": "soft",
+            },
+        ]
     return [
         {
             "id": "R-116",
@@ -485,10 +832,24 @@ def _epoch(now: dt.datetime) -> int:
     return int(now.timestamp())
 
 
-def _hero_captured(now: dt.datetime) -> dict:
+def _hero_captured(now: dt.datetime, lang: str = "zh") -> dict:
     """R-101 as a raising placeholder — the moment right after a meeting
     recording was ingested and radar picked the requirement up (scene=captured).
     Same shape dashboard.py emits for status=raising (cf. R-104)."""
+    if lang == "en":
+        return {
+            "id": HERO_ID,
+            "title": "One-click leaderboard eval report export",
+            "summary": "One-click leaderboard eval report export",
+            "tier": "T1",
+            "tier_hint": "AI researching",
+            "processing": True,
+            "sources": [],
+            "plan": [],
+            "dod": [],
+            "show_cost": False,
+            "delivery_mode": "repo",
+        }
     return {
         "id": HERO_ID,
         "title": "leaderboard 一键导出评测报告",
@@ -504,11 +865,11 @@ def _hero_captured(now: dt.datetime) -> dict:
     }
 
 
-def _hero_queued(now: dt.datetime) -> dict:
-    h = _hero_plan_dod(now)
+def _hero_queued(now: dt.datetime, lang: str = "zh") -> dict:
+    h = _hero_plan_dod(now, lang=lang)
     return {
         "id": HERO_ID,
-        "name": _hero_card(now)["title"],
+        "name": _hero_card(now, lang=lang)["title"],
         "state": "queued",
         "summary": h["summary"],
         "plan": h["plan"],
@@ -521,12 +882,12 @@ def _hero_queued(now: dt.datetime) -> dict:
     }
 
 
-def _hero_running(now: dt.datetime) -> dict:
-    h = _hero_plan_dod(now)
+def _hero_running(now: dt.datetime, lang: str = "zh") -> dict:
+    h = _hero_plan_dod(now, lang=lang)
     e = _epoch(now)
     return {
         "id": HERO_ID,
-        "name": _hero_card(now)["title"],
+        "name": _hero_card(now, lang=lang)["title"],
         "session_id": "b1e4d7a2-5c38-4f9e-8d21-6a0b3c9e7f45",
         "short_id": "b1e4d7a2",
         "copy_cmd": "claude attach b1e4d7a2",
@@ -544,39 +905,62 @@ def _hero_running(now: dt.datetime) -> dict:
     }
 
 
-def _hero_steer(now: dt.datetime) -> dict:
+def _hero_steer(now: dt.datetime, lang: str = "zh") -> dict:
     """scene=steer——R-101 executing 途中 owner 在卡上留了两条捎话（steer）：
     第一条已经过 §44.3 送达点注入会话（delivered，带 ISO delivered_at），
     第二条还在等安全窗口（queued，delivered_at 必须为 null）——投递状态诚实
     可见，绝不假装已送达。ts 是 ISO 字符串（带时间戳的 dedup key：同文重申
     是新指令，web/src/steer.ts 只认 string ts）。"""
-    card = _hero_running(now)
+    card = _hero_running(now, lang=lang)
     e = _epoch(now)
     card["started_at"] = e - 900
     card["dispatched_at"] = e - 960
-    card["steers"] = [
-        {
-            "text": "导出格式优先 markdown，png 可以放到后续 PR",
-            "ts": _iso(now - dt.timedelta(seconds=600)),
-            "status": "delivered",
-            "delivered_at": _iso(now - dt.timedelta(seconds=540)),
-        },
-        {
-            "text": "报告文件名里带上日期，方便归档",
-            "ts": _iso(now - dt.timedelta(seconds=60)),
-            "status": "queued",
-            "delivered_at": None,
-        },
-    ]
+    if lang == "en":
+        card["steers"] = [
+            {
+                "text": "Prioritize markdown format for exports; png can follow in a later PR",
+                "ts": _iso(now - dt.timedelta(seconds=600)),
+                "status": "delivered",
+                "delivered_at": _iso(now - dt.timedelta(seconds=540)),
+            },
+            {
+                "text": "Include date in the report filename for easier archiving",
+                "ts": _iso(now - dt.timedelta(seconds=60)),
+                "status": "queued",
+                "delivered_at": None,
+            },
+        ]
+    else:
+        card["steers"] = [
+            {
+                "text": "导出格式优先 markdown，png 可以放到后续 PR",
+                "ts": _iso(now - dt.timedelta(seconds=600)),
+                "status": "delivered",
+                "delivered_at": _iso(now - dt.timedelta(seconds=540)),
+            },
+            {
+                "text": "报告文件名里带上日期，方便归档",
+                "ts": _iso(now - dt.timedelta(seconds=60)),
+                "status": "queued",
+                "delivered_at": None,
+            },
+        ]
     return card
 
 
-def _hero_review(now: dt.datetime) -> dict:
-    h = _hero_plan_dod(now)
+def _hero_review(now: dt.datetime, lang: str = "zh") -> dict:
+    h = _hero_plan_dod(now, lang=lang)
     e = _epoch(now)
+    delivered = (
+        "Draft PR example-bench#42 opened: added 'Export Report' button to dashboard, "
+        "backend renders markdown + png, CI all green."
+        if lang == "en"
+        else "已开 draft PR example-bench#42：dashboard 加「导出报告」按钮，"
+             "后端渲染 markdown + png，CI 全绿。"
+    )
     return {
         "id": HERO_ID,
-        "name": _hero_card(now)["title"],
+        "name": _hero_card(now, lang=lang)["title"],
         "summary": h["summary"],
         "dod": h["dod"],
         "session_id": "b1e4d7a2-5c38-4f9e-8d21-6a0b3c9e7f45",
@@ -586,8 +970,7 @@ def _hero_review(now: dt.datetime) -> dict:
         "agent_name": "export leaderboard report",
         "state": "review",
         "cwd": "~/Projects/example-bench",
-        "delivered_summary": "已开 draft PR example-bench#42：dashboard 加「导出报告」按钮，"
-                             "后端渲染 markdown + png，CI 全绿。",
+        "delivered_summary": delivered,
         "final_draft": None,
         "plan": h["plan"],
         "sources": h["sources"],
@@ -598,12 +981,19 @@ def _hero_review(now: dt.datetime) -> dict:
     }
 
 
-def _hero_done(now: dt.datetime) -> dict:
-    h = _hero_plan_dod(now)
+def _hero_done(now: dt.datetime, lang: str = "zh") -> dict:
+    h = _hero_plan_dod(now, lang=lang)
     e = _epoch(now)
+    delivered = (
+        "Draft PR example-bench#42 opened: added 'Export Report' button to dashboard, "
+        "backend renders markdown + png, CI all green."
+        if lang == "en"
+        else "已开 draft PR example-bench#42：dashboard 加「导出报告」按钮，"
+             "后端渲染 markdown + png，CI 全绿。"
+    )
     return {
         "id": HERO_ID,
-        "name": _hero_card(now)["title"],
+        "name": _hero_card(now, lang=lang)["title"],
         "session_id": "b1e4d7a2-5c38-4f9e-8d21-6a0b3c9e7f45",
         "short_id": "b1e4d7a2",
         "copy_cmd": "cd '~/Projects/example-bench' && claude --resume "
@@ -612,39 +1002,40 @@ def _hero_done(now: dt.datetime) -> dict:
         "state": "delivered",
         "cwd": "~/Projects/example-bench",
         "summary": h["summary"],
-        "delivered_summary": "已开 draft PR example-bench#42：dashboard 加「导出报告」按钮，"
-                             "后端渲染 markdown + png，CI 全绿。",
+        "delivered_summary": delivered,
         "accepted_at": e - 10,
         "dod": h["dod"],
     }
 
 
-def build(scene: str, now: dt.datetime | None = None) -> dict:
+def build(scene: str, now: dt.datetime | None = None, lang: str = "zh", english: bool = False) -> dict:
+    if english:
+        lang = "en"
     if now is None:
         now = dt.datetime.now(dt.timezone.utc)
-    needs_approval = _needs_approval(now)
-    running = _running(now)
-    needs_input = _needs_input(now)
-    review = _review(now)
-    completed = _completed(now)
+    needs_approval = _needs_approval(now, lang=lang)
+    running = _running(now, lang=lang)
+    needs_input = _needs_input(now, lang=lang)
+    review = _review(now, lang=lang)
+    completed = _completed(now, lang=lang)
 
     if scene != "initial":
         needs_approval = [c for c in needs_approval if c["id"] != HERO_ID]
     if scene == "captured":
-        needs_approval = [_hero_captured(now)] + needs_approval
+        needs_approval = [_hero_captured(now, lang=lang)] + needs_approval
     elif scene == "approved":
-        running = [_hero_queued(now)] + running
+        running = [_hero_queued(now, lang=lang)] + running
     elif scene == "running":
-        running = [_hero_running(now)] + running
+        running = [_hero_running(now, lang=lang)] + running
     elif scene == "steer":
-        running = [_hero_steer(now)] + running
+        running = [_hero_steer(now, lang=lang)] + running
     elif scene == "review":
-        review = [_hero_review(now)] + review
+        review = [_hero_review(now, lang=lang)] + review
     elif scene == "done":
-        completed = [_hero_done(now)] + completed
+        completed = [_hero_done(now, lang=lang)] + completed
 
-    debt = _debt(now)
-    trash = _trash(now)
+    debt = _debt(now, lang=lang)
+    trash = _trash(now, lang=lang)
     return {
         "generated_at": _iso(now),
         "counts": {
@@ -880,10 +1271,15 @@ def main(argv: list[str] | None = None) -> int:
                                    "(or, with --check, a dashboard.json path)")
     ap.add_argument("--scene", choices=SCENES, default="initial",
                     help="pipeline moment for the demo video (default: initial)")
+    ap.add_argument("--lang", choices=("zh", "en"), default="zh",
+                    help="language for fictional card contents (zh or en, default: zh)")
+    ap.add_argument("--english", action="store_true",
+                    help="seed English equivalents of fictional demo data (shorthand for --lang en)")
     ap.add_argument("--check", action="store_true",
                     help="only validate an existing dashboard.json, write nothing")
     args = ap.parse_args(argv)
 
+    lang = "en" if args.english or args.lang == "en" else "zh"
     target = Path(args.target).expanduser()
     path = target if target.suffix == ".json" else target / "state" / "dashboard.json"
 
@@ -897,7 +1293,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"UNREADABLE: {path}: {exc}", file=sys.stderr)
             return 1
     else:
-        dash = build(args.scene)
+        dash = build(args.scene, lang=lang)
         path.parent.mkdir(parents=True, exist_ok=True)
         # atomic write, same as act/lib/dashboard.py (.tmp then rename)
         tmp = path.with_suffix(path.suffix + ".tmp")

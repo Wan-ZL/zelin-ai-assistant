@@ -13,8 +13,9 @@ inkweld / alex.doe / sam.rivera……全是编的，绝无真实人物或组织�
 ## 快速开始
 
 ```bash
-# 1. 生成 demo 数据（目录不存在会自动创建）
+# 1. 生成 demo 数据（目录不存在会自动创建；传 --english 或 --lang en 生成英文数据）
 python3 scripts/demo_seed.py /tmp/assistant-demo
+python3 scripts/demo_seed.py /tmp/assistant-demo --english
 
 # 2. 构建并安装 app（如尚未安装）
 ./mac/build.sh --install
@@ -37,6 +38,15 @@ app 每 5s 重读 dashboard.json，重跑 seeder 后最多等 5s 界面就换过
   `while true; do python3 scripts/demo_seed.py /tmp/assistant-demo >/dev/null; sleep 60; done`
 - demo 期间点 ✅/❌ 只会往 `/tmp/assistant-demo/state/inbox/` 写文件（没有 actd 在读），
   无害；卡片不会真的动——视频里卡片的流动靠 `--scene` 换数据（见下）。
+
+## 语言选项（`--english` / `--lang`）
+
+默认生成中文虚构数据（与既有脚本/文档保持一致）。录制英文版 Demo 视频或截图时，添加 `--english`（或 `--lang en`）即可生成全套英文卡片内容：
+
+```bash
+python3 scripts/demo_seed.py /tmp/assistant-demo --english
+python3 scripts/demo_seed.py /tmp/assistant-demo --scene running --english
+```
 
 ## 校验模式
 
