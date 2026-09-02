@@ -803,13 +803,10 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None,
         # 该铸新卡（plan 也不进 _carries_increment 的增量口径）。
         plan=list(plan) if plan else None,
         preset=preset if plan else None,
-        sources=[{
-            "who": "zelin" if owner else
-                   ("agent" if channel == "agent_capture" else "remote"),
-            "channel": channel,
-            "date": _dt.date.today().isoformat(),
-            "quote": t,
-        }],
+        # §10 capture_id（issue #7）= inbox 文件 stem，随出生源引文落盘
+        sources=[registry.capture_source(
+            "zelin" if owner else ("agent" if channel == "agent_capture" else "remote"),
+            channel, t, capture_id=inbox_stem)],
         notes=("[direct-run] 用户直接开跑" if run else
                ("from app quick capture" if owner else f"from {channel}")),
     )

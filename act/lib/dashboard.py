@@ -253,6 +253,9 @@ def _source_view(req: Requirement, cfg: config.Config) -> list[dict]:
                 "channel": s.get("channel") or "",
                 "date": str(d) if d is not None else "",
                 "quote": s.get("quote") or s.get("ref") or "",
+                # §10 add-only（issue #7）：出生 capture 的 inbox stem；Swift
+                # Source 合成 Decodable 忽略多余键，web 可选读
+                **_opt("capture_id", s.get("capture_id")),
             }
         )
     return out
@@ -410,6 +413,43 @@ def _egress_view(req: Requirement, cfg: config.Config, target_kind: str,
         return []
     return [{"kind": EGRESS_GITHUB_REPO_CREATE, "target": target_name,
              "visibility": "private"}]
+
+
+def _capture_id(req: Requirement) -> Optional[str]:
+    """§10 add-only ``capture_id`` (issue #7): the inbox stem of the capture that
+    minted this card = the first ``sources[]`` row carrying one (birth row;
+    folds append later rows and never rewrite it). None when the card was not
+    born from an inbox capture (radar, Slack self-DM, digest…)."""
+    for s in req.sources or []:
+        if isinstance(s, dict) and s.get("capture_id"):
+            return str(s["capture_id"])
+    return None
+
+
+def _proposal_extras(req: Requirement, ex: dict, cfg: config.Config,
+                     target_kind: str, target_name: str) -> dict:
+    """The add-only tail of a needs_approval (card_sent) row — kept out of
+    ``build_dashboard._project`` so the projection body stays under the
+    §58 function-length ledger. Every key here is optional/add-only:
+
+    - ``reraised`` / ``reraised_note`` (v0.20.0 §5 「回锅」marker: this
+      proposal is a re-raise of a card the user already accepted — amber
+      Returned badge + the new ask);
+    - ``origin_trust`` / ``auto_dispatch_block`` (§50/§51/C-6: 出身章 +
+      auto-dispatch 拦下原因；origin:*/disabled 常态原因不上卡，见 actd) —
+      whole key omitted when empty;
+    - ``egress`` (§7, issue #11): what leaves the machine on approval — always
+      a list, ``[]`` = nothing;
+    - ``capture_id`` (§10, issue #7): inbox stem of the birth capture, omitted
+      when the card was not born from one."""
+    return {
+        "reraised": bool(ex.get("reraised_at")),
+        "reraised_note": str(ex.get("reraised_note") or ""),
+        **_opt("origin_trust", getattr(req, "origin_trust", None)),
+        **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
+        "egress": _egress_view(req, cfg, target_kind, target_name),
+        **_opt("capture_id", _capture_id(req)),
+    }
 
 
 # notes fold user comments / radar updates that used to be unsearchable on the
@@ -789,18 +829,7 @@ def build_dashboard(
                     "dod": list(req.definition_of_done or []),
                     "processing": False,
                     "delivery_mode": _delivery_mode(req),
-                    # v0.20.0 §5: 「回锅」marker — this proposal came from a
-                    # re-raise of a card the user had already accepted; the app
-                    # shows an amber Returned badge + the new ask.
-                    "reraised": bool(ex.get("reraised_at")),
-                    "reraised_note": str(ex.get("reraised_note") or ""),
-                    # v-next add-only（§50/§51/C-6）：出身章 + auto-dispatch
-                    # 拦下原因（origin:*/disabled 常态原因不上卡，见 actd）。
-                    **_opt("origin_trust", getattr(req, "origin_trust", None)),
-                    **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
-                    # §7 add-only（issue #11）：批准即出机的后果——恒在 list，
-                    # 空 = 批了什么也不出机；web 以醒目颊色渲染每条。
-                    "egress": _egress_view(req, cfg, target_kind, target_name),
+                    **_proposal_extras(req, ex, cfg, target_kind, target_name),
                 }
             )
 
@@ -822,8 +851,10 @@ def build_dashboard(
                     "dod": [],
                     "show_cost": False,
                     "delivery_mode": _delivery_mode(req),
-                    # v-next add-only（§50）
+                    # v-next add-only（§50）；§10 capture_id（issue #7）——占位
+                    # 行就带，客户端对账「我刚输入的那条」不用等扩写完成
                     **_opt("origin_trust", getattr(req, "origin_trust", None)),
+                    **_opt("capture_id", _capture_id(req)),
                 }
             )
 

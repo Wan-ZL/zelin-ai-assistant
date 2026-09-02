@@ -9,6 +9,8 @@ export interface CardSource {
   date: string;
   quote: string;
   ref?: string;
+  /** §10 add-only（issue #7）：出生 capture 的 inbox stem（`capture-<uuid>` = POST /api/actions 回的 `file` 去掉 .json）；只有出生行带 */
+  capture_id?: string;
   [key: string]: unknown;
 }
 
@@ -51,6 +53,8 @@ export interface ApprovalCard {
   target_kind?: "new" | "existing" | string | null;
   /** §7 add-only（issue #11）：批准即出机的后果；kind 开放枚举，今日唯一值 github_repo_create（缺席 = 旧 server） */
   egress?: EgressRow[];
+  /** §10 add-only（issue #7）：卡级 capture_id（= 出生 sources[].capture_id）——占位行与提案行都带；非 capture 出身的卡缺席 */
+  capture_id?: string;
   /** §44 静默并入次数（0 = 从未）——原生「已并入×N」紫章 */
   silent_merged?: number;
   /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */

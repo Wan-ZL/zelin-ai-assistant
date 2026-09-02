@@ -309,6 +309,18 @@ debt item 新增 `summary`（同上，大白话）。
 ```
 actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="quick_capture"`，sources 里保留原话）→ 置状态 `raising` → 复用 process_raising 每轮扩写一条 → 变 card_sent 正式提案卡。快速、不堵轮询。幂等：同 text 重复文件不重复建卡（merge_or_new 按 title 合并）。
 
+**issue #7 追记（add-only）——`capture_id`：捕获与卡片的精确对账**。文件名里的 stem
+（`capture-<uuid>`；server 的 `POST /api/actions` 以 `file: "<stem>.json"` 回给 web，§49）随出生
+源引文落盘：`sources[0].capture_id = "<stem>"`（`registry.capture_source` 单点构造，`mode:"run"`
+的卡同样带、且等于既有的 `execution.inbox_stem`）。dashboard 投影两处：`needs_approval[]` 行
+（含 `raising` 占位行——客户端对账「我刚输入的那条」不用等扩写完成）加卡级 `capture_id`
+（= 第一条带该键的源引文，即出生行；折叠只追加源引文、永不改写它），`sources[]` 每条源引文加
+`capture_id`（有才发）。Slack self-DM / radar / digest 出身的卡没有 inbox 文件 → 整键缺席；
+存量卡投影逐字不变。不进 `_dedupe_sources` 的键（channel/date/ref|quote），折叠语义不变；
+YAML 与 store2 payload 都原样往返。客户端 decodeIfPresent；web `types.ts` 镜像
+`ApprovalCard.capture_id` / `CardSource.capture_id`（原生 `PendingSweep` 的标题前缀猜测法已随
+mac/ 退役，web 若加 optimistic echo 以此键对账）。判例 `tests/test_capture_id.py`。
+
 **§10bis 输入框贴图 `images` 字段（v0.46，add-only；用户建议 #4/#5）**：`capture` 与 `feedback` 动作可携带 `images` = 本机 PNG 绝对路径数组。App 侧先把粘贴的图片降采样（最长边 2560px）落成 PNG——capture / answer 附图 → `state/attachments/<uuid>-<n>.png`，feedback 附图 → `state/feedback/attachments/<uuid>-<n>.png`（`<uuid>` 每次发送一批、`n` 从 1 起）；UI 上限 4 张；inbox 写失败时 App 删除本批 PNG（孤儿兜底见下方 GC）。actd 边界校验（§33 口径，fail-closed）：非 list 整体忽略，仅收非空字符串、去重、上限 4。`answer_input` **无新键**——附图以尾行 `[附图，用 Read 工具查看] <路径>` 拼进 `text`（前缀常量两侧逐字一致：`act/actd.py` 的 `ANSWER_ATTACHMENT_PREFIX` = `mac/Sources/PastedImages.swift` 的 `answerLinePrefix`；附图行连同正文一起受 §39.2 的 4000 上限约束，App 先给附图行留位再裁剪正文）。
 
 **执行侧**：capture 的 `images` add-only 去重并入卡片 `execution.attachments`（折叠进既有卡时不覆盖旧附件，跨轮次累积）；`executor.build_prompt` 在 Sources 块后追加 `## 用户附图（用 Read 工具打开查看）` 段落，路径每行一个；无附件时 prompt 逐字不变。
