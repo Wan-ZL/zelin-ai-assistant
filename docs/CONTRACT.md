@@ -4193,9 +4193,10 @@ server 不 import act（§49）：`server/settings.py` **手抄** `MODEL_FOLLOW`
 - 不给 `--model` 之外的任何 claude 参数开旋钮（effort / fallback-model 等另案）。
 - 启动 / 部署 / 任何自动路径**永不写** `~/.claude/settings.json`；唯一写者是 owner 在设置页点确认后的 `POST /api/claude-code/default-model`。
 - `silent_merge.JUDGE_RUNNER`（module-global 注入缝存量违反）不在本节拆——它的判官 `merge_review._default_runner` 已经过 `llm.run`，拆缝是纯测试基建改造，另案。
+
 ## 60. 两段式卡片编号：`P-` 主键出生即定，`R-` 工作编号批准才发（v0.48.13；owner 决策 D21，issue #127）
 
-> §57 / §58 由并行 PR（`feat/nightly-mutation` / `feat/qa-merge-gates`）占用，§60 已由模型选择（D22，#134）立法，本节取下一个空号 §60——§ 号永不复用。
+> §57 / §58 由并行 PR（`feat/nightly-mutation` / `feat/qa-merge-gates`）占用，§59 已由模型选择（D22，#134）立法，本节取下一个空号 §60——§ 号永不复用。
 
 owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不算是真正的卡片，不需要给它 R 编号；只有我 approve 跑了的，才给编号。」
 
