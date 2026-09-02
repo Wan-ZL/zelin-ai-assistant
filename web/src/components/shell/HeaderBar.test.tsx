@@ -166,7 +166,7 @@ describe("HeaderBar", () => {
     expect(screen.getByText("v0.48.6 · main 的 CI 红了，未部署").className).toBe("shell-deploy is-warn");
   });
 
-  it("§56 部署状态：install_incomplete / blocked_tcc（v0.48.17）是警告态，各有双语文案", async () => {
+  it("§56 部署状态：install_incomplete / blocked_tcc（v0.48.19）是警告态，各有双语文案", async () => {
     await seedBoard(10, {
       status: "install_incomplete",
       version: "0.48.11",

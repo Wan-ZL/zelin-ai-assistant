@@ -212,7 +212,7 @@ class LaunchdVolumeAccessRowTestCase(unittest.TestCase):
 
 
 class AutoDeployRowNewStatusesTestCase(unittest.TestCase):
-    """`auto-deploy` 行对 v0.48.17 两个新状态词的修法指向（§56.4）。"""
+    """`auto-deploy` 行对 v0.48.19 两个新状态词的修法指向（§56.4）。"""
 
     def setUp(self):
         config.ensure_state_dirs()
@@ -245,7 +245,7 @@ class AutoDeployRowNewStatusesTestCase(unittest.TestCase):
         self.assertIn("install.sh", row.fix)
 
     def test_healthy_rows_do_not_mention_running_version(self):
-        (row,) = self._row(status="up_to_date", version="0.48.17", running_version="0.48.17")
+        (row,) = self._row(status="up_to_date", version="0.48.19", running_version="0.48.19")
         self.assertEqual(row.status, doctor.OK)
         self.assertNotIn("running", row.detail)
         self.assertEqual(row.fix, "")

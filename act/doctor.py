@@ -218,8 +218,7 @@ def _launchd_log_tail(short: str) -> str:
 
 
 def _launchd_log_mtime(short: str) -> Optional[float]:
-    """agent 自管日志最后一次写入的时刻；None = 读不到。launchd 的 stderr 文件
-    没有时间戳——「最近 24h 有没有写」只能靠 mtime（§56.3 第 1 步的日志证据）。"""
+    """agent 自管日志的 mtime；None = 读不到（launchd 的 stderr 没有时间戳，§56.3 第 1 步）。"""
     for p in _launchd_log_paths(short):
         try:
             return p.stat().st_mtime
@@ -410,9 +409,8 @@ class Probes:
     # §54 看板 server：回环 /api/health 探针（port → verdict dict）；tests 注入，
     # 默认实现在 AIASSISTANT_HTTP_PROBE=0 下自报 unavailable（行不出）
     board_health: Callable[[int], dict] = board_server.health_probe
-    # §56.4 HOME 镜像（~/Library/Application Support/ZelinAIAssistant/
-    # deploy_state.json）：auto-deploy 自己的真源，TCC 永不拦 $HOME——`launchd
-    # volume access` 行读它的 unattended_* 三元组；tests 注入保持 hermetic
+    # §56.4 HOME 镜像（auto-deploy 自己的真源，TCC 永不拦 $HOME）：`launchd volume
+    # access` 行读它的 unattended_* 三元组；tests 注入保持 hermetic
     deploy_mirror_read: Callable[[], Optional[dict]] = deploy_state.read_mirror
     # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
     launchd_log_mtime: Callable[[str], Optional[float]] = _launchd_log_mtime
@@ -1101,21 +1099,11 @@ AUTODEPLOY_LABEL = "com.zelin.aiassistant.autodeploy"
 _VOLUME_ROW = "launchd volume access"
 
 
-def _volume_access_row(verdict: dict, interp: str, repo: str) -> CheckResult:
-    ok, detail, fix = deploy_state.volume_access_row(verdict, interp, repo)
-    if ok:
-        return CheckResult(_VOLUME_ROW, OK, detail)
-    return CheckResult(_VOLUME_ROW, FAIL, detail, fix).with_failure("deploy_blind_tcc")
-
-
 def _check_launchd_volume_access(probes: Probes):
-    """§56.3 第 1 步（v0.48.17；live 事故 2026-09-02）：部署 agent 在 launchd 会话里
-    能否读写 repo 所在的卷。doctor 自己跑在终端里、借着终端的 TCC 授权什么都读
-    得到，所以本行**不探**，只读无人值守那一轮留下的证据（判决与推理住
-    `deploy_state.unattended_verdict`：HOME 镜像的 `unattended_status == blocked_tcc`，
-    或 `autodeploy.launchd.log` 24h 内的 EPERM / `No module named 'act'`）。没装
-    autodeploy plist、或它部署的是另一个 checkout → 无此行。
-    """
+    """§56.3 第 1 步：部署 agent 在 launchd 会话里能否读写 repo 所在的卷。doctor 跑在
+    终端里、借着终端的 TCC 授权什么都读得到，所以本行**不探**，只读无人值守那一轮的
+    证据（判决与文案：`deploy_state.unattended_verdict` / `volume_access_row`）。没装
+    autodeploy plist、或它部署的是另一个 checkout → 无此行。"""
     text = probes.installed_plist_text(AUTODEPLOY_LABEL)
     if not text:
         return []
@@ -1126,7 +1114,7 @@ def _check_launchd_volume_access(probes: Probes):
     verdict = deploy_state.unattended_verdict(
         probes.deploy_mirror_read(), repo, probes.launchd_log_tail("autodeploy"),
         probes.launchd_log_mtime("autodeploy"), probes.now())
-    return _volume_access_row(verdict, interp, repo)
+    return _row_from(deploy_state.volume_access_row(verdict, interp, repo), _VOLUME_ROW)
 
 
 def _symlink_shaped(value: Optional[str]) -> bool:
@@ -1674,18 +1662,14 @@ def _check_ui_build(probes: Probes):
 
 
 def _check_auto_deploy(probes: Probes):
-    """§56 合并即上岗：最近一次自动部署的结果（`deploy_state.read()`：HOME 镜像
-    描述的是本 checkout 时读镜像，否则读 state/deploy_state.json 投影；
-    scripts/auto-deploy.sh 写）。两个文件都不存在 = 这台机器不跑该 agent（.pkg
-    安装 / Linux / flag 关）→ 不出行。healthy → OK；其余 → WARN；healthy 但
-    `last_incident` 在案（回滚判决还没被下一次 deployed 清掉）→ WARN（#135 review）。
-    文案与修法住 `deploy_state.auto_deploy_row`（§56.4）。
-    """
+    """§56 合并即上岗：最近一次自动部署的结果（`deploy_state.read()`：HOME 镜像描述的
+    是本 checkout 时读镜像，否则读 state/ 投影；两个文件都不存在 = 这台机器不跑该
+    agent → 不出行）。healthy → OK、其余 → WARN、healthy 但 `last_incident` 在案 →
+    WARN（#135 review）；文案与修法住 `deploy_state.auto_deploy_row`（§56.4）。"""
     state = deploy_state.read()
     if not state:
         return []
-    ok, detail, fix = deploy_state.auto_deploy_row(state)
-    return CheckResult("auto-deploy", OK if ok else WARN, detail, fix or "")
+    return _row_from(deploy_state.auto_deploy_row(state), "auto-deploy")
 
 
 def _check_obsidian(probes: Probes):

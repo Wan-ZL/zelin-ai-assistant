@@ -20,7 +20,7 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
     incomplete_sha 中毒 + 每 sha 一条通知，--force / main 前进解毒；回滚被拒留在
     新 sha 的机器由后续轮次把安装做完；回滚判决另存 last_incident，直到下一次
     deployed 才清（up_to_date 不清——#135 review 的「10 分钟后被冲掉」）；
-  - 锁住 $HOME；升级窗口里 v0.48.16 的 state/auto-deploy.lock 活着 → 跳过，死了 → 清；
+  - 锁住 $HOME；升级窗口里 v0.48.18 的 state/auto-deploy.lock 活着 → 跳过，死了 → 清；
   - **卷访问探针 + HOME 镜像**（同一事故；§56.3 第 1 步 / §56.4）：第一次 git
     调用前读 repo + 在 state/ 里 mkstemp，PermissionError → blocked_tcc、HEAD 不
     动、日志点名 plist ProgramArguments[0]、通知一天一次；状态先写
@@ -87,7 +87,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 300  # ~80 runs of real bash+git; ~170 s on a 2024 Mac (v0.48.17: +33 runs)
+BUDGET_SECONDS = 300  # ~80 runs of real bash+git; ~170 s on a 2024 Mac (v0.48.19: +33 runs)
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -1303,7 +1303,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertFalse(lock.exists())
 
     def test_live_legacy_state_lock_is_honoured_and_a_stale_one_is_cleared(self):
-        # upgrade window: a pre-v0.48.17 run still holds state/auto-deploy.lock
+        # upgrade window: a pre-v0.48.19 run still holds state/auto-deploy.lock
         # while it fast-forwards to THIS script — a run of the new script must
         # not deploy alongside it (Codex review P1 on #140)
         self.push("0.48.4")
@@ -1315,7 +1315,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.installs(), [], "the legacy holder is live")
-        self.assertIn("pre-v0.48.17 auto-deploy run still holds", self.log_text())
+        self.assertIn("pre-v0.48.19 auto-deploy run still holds", self.log_text())
         self.assertTrue(legacy.exists(), "never removed while live")
         self.assertFalse(self.lock.exists(), "the HOME lock was not even taken")
         sleeper.kill()
@@ -1826,7 +1826,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
                          "AIASSISTANT_PYTHON is argv0 when the shim started us")
 
     def test_mirror_seeds_itself_from_the_repo_copy_on_first_run(self):
-        # upgrade path: pre-v0.48.17 machines only have state/deploy_state.json;
+        # upgrade path: pre-v0.48.19 machines only have state/deploy_state.json;
         # its failed_sha bookkeeping must survive into the mirror
         target = self.push("0.48.4")
         (self.live / "state" / "deploy_state.json").write_text(

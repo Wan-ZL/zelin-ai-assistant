@@ -219,7 +219,7 @@ repo_version() {
 # effort — on a TCC-blocked volume it simply fails, and the failure line
 # carries the child's exception (live 2026-09-01: `PermissionError: [Errno 1]`
 # was only in launchd's untimestamped stderr file). The mirror did not exist
-# before v0.48.17: when it is absent the merge seeds itself from the repo copy
+# before v0.48.19: when it is absent the merge seeds itself from the repo copy
 # so failed_sha / notified_sha bookkeeping survives the upgrade.
 #
 # Every write also stamps this run's identity (trigger / interpreter / volume /
@@ -284,7 +284,7 @@ PY
 
 # $1=key → its string value, "" when absent/unreadable. The mirror is the
 # truth; the repo copy is only consulted while the mirror does not exist yet
-# (first run after the v0.48.17 upgrade).
+# (first run after the v0.48.19 upgrade).
 read_state() {
     _src="$MIRROR_FILE"
     [ -f "$_src" ] || _src="$STATE_FILE"
@@ -489,22 +489,22 @@ wait_for_new_actd() { # $1=version $2=pre-install "<version> <pid> <phase>" → 
     done
 }
 
-# Upgrade window (v0.48.17 moved the lock to $HOME): a pre-v0.48.17 run still
+# Upgrade window (v0.48.19 moved the lock to $HOME): a pre-v0.48.19 run still
 # holds state/auto-deploy.lock while it fast-forwards to THIS script and runs
 # install.sh — a hand-started run of the new script would otherwise take the
 # fresh HOME lock and deploy concurrently (Codex review P1 on #140). Honour a
 # LIVE legacy holder; clear a dead one best-effort (the old EXIT trap may have
-# EPERM'd on the volume). Drop this once no v0.48.16 checkout is left.
+# EPERM'd on the volume). Drop this once no v0.48.18 checkout is left.
 LEGACY_LOCK_DIR="$REPO_ROOT/state/auto-deploy.lock"
 legacy_lock_live() {
     [ -d "$LEGACY_LOCK_DIR" ] || return 1
     _lholder="$(cat "$LEGACY_LOCK_DIR/pid" 2>/dev/null || true)"
     if [ -n "$_lholder" ] && kill -0 "$_lholder" 2>/dev/null; then
-        log "a pre-v0.48.17 auto-deploy run still holds $LEGACY_LOCK_DIR (pid $_lholder) — skipping"
+        log "a pre-v0.48.19 auto-deploy run still holds $LEGACY_LOCK_DIR (pid $_lholder) — skipping"
         return 0
     fi
     if [ -z "$_lholder" ] && [ -z "$(find "$LEGACY_LOCK_DIR" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
-        log "a pre-v0.48.17 run holds $LEGACY_LOCK_DIR without a pid yet — skipping"
+        log "a pre-v0.48.19 run holds $LEGACY_LOCK_DIR without a pid yet — skipping"
         return 0
     fi
     rm -rf "$LEGACY_LOCK_DIR" 2>/dev/null && log "removed stale legacy lock $LEGACY_LOCK_DIR (pid ${_lholder:-?} is gone)"

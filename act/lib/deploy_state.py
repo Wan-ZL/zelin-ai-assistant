@@ -13,7 +13,7 @@ atomic tmp+rename, rewritten every run):
   (``repo``): a projection the job could not rewrite (that is what
   ``blocked_tcc`` means) must not keep showing the last status it could.
 - ``~/Library/Application Support/ZelinAIAssistant/deploy_state.json`` — the
-  HOME MIRROR, the script's own truth (v0.48.17, §56.4). macOS gates
+  HOME MIRROR, the script's own truth (v0.48.19, §56.4). macOS gates
   background access to removable volumes per responsible executable (TCC)
   and never gates ``$HOME``, so a launchd-fired run that cannot touch the
   repo still records what happened here. It carries every projected field
@@ -44,7 +44,7 @@ PATH: Path = config.STATE_DIR / "deploy_state.json"
 MIRROR_PATH: Path = (Path.home() / "Library" / "Application Support"
                      / "ZelinAIAssistant" / "deploy_state.json")
 
-# Projected keys (all strings). v0.48.17 add-only: `running_version` (what
+# Projected keys (all strings). v0.48.19 add-only: `running_version` (what
 # state/actd.heartbeat says is in memory), `install_report_version` (what
 # install.sh last finished on), `reason` (machine tokens behind a non-healthy
 # status), `last_incident` ("<ts> <status>: <detail>" of the last rollback
@@ -67,7 +67,7 @@ MIRROR_FIELDS = FIELDS + ("trigger", "interpreter", "volume", "repo", "denied_pa
 # Outcomes that mean "nothing needs a human" — everything else is a WARN row.
 HEALTHY = frozenset({"deployed", "up_to_date"})
 
-# §56.4 open vocabulary, v0.48.17 additions: `install_incomplete` (HEAD is at
+# §56.4 open vocabulary, v0.48.19 additions: `install_incomplete` (HEAD is at
 # origin/main but install_report / heartbeat disagree — install.sh re-run),
 # `blocked_tcc` (the volume-access probe got EPERM before any git call).
 INSTALL_INCOMPLETE = "install_incomplete"
@@ -259,23 +259,30 @@ def volume_access_fix(interp: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Doctor prose for the two §56 rows (pure: (ok, detail, fix) tuples, no
-# CheckResult — act/doctor.py wraps them; kept here so doctor.py stays under
-# the 防腐 #1 file cap)
+# Doctor rows for §56 (same dict shape as act/lib/board_server.py rows —
+# ``{"status": "ok"|"warn"|"fail", "detail", "fix", "failure_id"}`` — which
+# act/doctor.py `_row_from` turns into a CheckResult; kept here so doctor.py
+# stays under the 防腐 #1 file cap)
 # --------------------------------------------------------------------------- #
-def volume_access_row(verdict: dict, interp: str, repo: str) -> tuple:
-    """``launchd volume access`` row text from :func:`unattended_verdict`.
-    Returns ``(ok, detail, fix)``; ``fix`` is None when ok."""
+DEPLOY_BLIND_FAILURE_ID = "deploy_blind_tcc"
+
+
+def _row(status: str, detail: str, fix: str = "", failure_id: str = "") -> dict:
+    return {"status": status, "detail": detail, "fix": fix, "failure_id": failure_id}
+
+
+def volume_access_row(verdict: dict, interp: str, repo: str) -> dict:
+    """``launchd volume access`` row from :func:`unattended_verdict`."""
     kind = verdict["kind"]
     if kind == BLOCKED_MIRROR:
-        return (False, failures.pick(
+        return _row("fail", failures.pick(
             "上一次无人值守的部署运行（%s）读不了 %s（卡在 %s）：%s——launchd 任务没有"
             "这个卷的访问权，每 10 分钟都在原地打转，什么都没部署",
             "the last unattended deploy run (%s) could not access %s (denied at %s): %s - "
             "the launchd job has no grant for that volume; it idles every 10 min and "
             "deploys nothing")
             % (verdict["last_run"], verdict["volume"], verdict["denied_path"], verdict["detail"]),
-            volume_access_fix(interp))
+            volume_access_fix(interp), DEPLOY_BLIND_FAILURE_ID)
     if kind == BLOCKED_LOG:
         # `No module named 'act'` alone cannot tell TCC from a mis-rendered
         # PYTHONPATH (§55): say so and send the reader to `launchd paths` first.
@@ -286,19 +293,19 @@ def volume_access_row(verdict: dict, interp: str, repo: str) -> tuple:
                 "是 OK → 解释器读不到 repo：",
                 "check doctor's launchd paths row first: not OK -> bash install.sh re-renders "
                 "the plist; OK -> the interpreter cannot read the repo: ") + fix
-        return (False, failures.pick(
+        return _row("fail", failures.pick(
             "autodeploy.launchd.log（%d 分钟前写入）尾部有「%s」——launchd 起的"
             "启动器/解释器 %s 读不到 %s 上的 repo（这份 stderr 没时间戳，只能按"
             "文件 mtime 判「最近 24h」）",
             "autodeploy.launchd.log (written %d min ago) ends with \"%s\" - the "
             "launchd-spawned launcher/interpreter %s cannot reach the repo on %s "
             "(this stderr file has no timestamps; \"last 24h\" = file mtime)")
-            % (int(verdict["age_s"] // 60), verdict["match"], interp, repo), fix)
+            % (int(verdict["age_s"] // 60), verdict["match"], interp, repo), fix, DEPLOY_BLIND_FAILURE_ID)
     if kind == OK_RECORDED:
-        return (True, "last unattended run %s reached %s (status %s)"
-                % (verdict["last_run"], repo, verdict["status"]), None)
-    return (True, "no unattended run recorded yet (mirror %s) - expect one within 10 min of install"
-            % MIRROR_PATH, None)
+        return _row("ok", "last unattended run %s reached %s (status %s)"
+                    % (verdict["last_run"], repo, verdict["status"]))
+    return _row("ok", "no unattended run recorded yet (mirror %s) - expect one within 10 min of install"
+                % MIRROR_PATH)
 
 
 def _auto_deploy_fix(status: str) -> str:
@@ -346,21 +353,21 @@ def _auto_deploy_ok_detail(state: dict) -> str:
                            (" at " + when) if when else "")
 
 
-def auto_deploy_row(state: dict) -> tuple:
-    """``auto-deploy`` row text for a sanitized :func:`read` result:
-    ``(ok, detail, fix)``. Healthy statuses are OK — unless a `last_incident`
+def auto_deploy_row(state: dict) -> dict:
+    """``auto-deploy`` row for a sanitized :func:`read` result. Healthy
+    statuses are OK — unless a `last_incident`
     (a rollback verdict no later `deployed` has cleared) is still on file: the
     machine may well be up to date NOW, but the refusal that put it there has
     not been looked at, and the routine `up_to_date` write must not hide it
     (#135 review)."""
     status = state.get("status", "")
     if status not in HEALTHY:
-        return (False, _auto_deploy_warn_detail(state), _auto_deploy_fix(status))
+        return _row("warn", _auto_deploy_warn_detail(state), _auto_deploy_fix(status))
     incident = state.get("last_incident", "")
     if not incident:
-        return (True, _auto_deploy_ok_detail(state), None)
-    return (False, "%s; unresolved deploy incident: %s" % (_auto_deploy_ok_detail(state), incident),
-            failures.pick(
+        return _row("ok", _auto_deploy_ok_detail(state))
+    return _row("warn", "%s; unresolved deploy incident: %s" % (_auto_deploy_ok_detail(state), incident),
+                failures.pick(
                 "上一次回滚判决还没人看过（新 sha 留在原地）：核对它点名的问题；下一次成功部署"
                 "（合并新提交，或 bash scripts/auto-deploy.sh --force 部署新 sha）会清掉本行",
                 "the last rollback verdict has not been looked at (the new sha stayed in place): "
