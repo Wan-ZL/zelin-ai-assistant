@@ -1147,6 +1147,29 @@ def _bump_work_seq(work_id: str) -> None:
         pass
 
 
+def _stored_work_id(req_id: str) -> Optional[str]:
+    """真源里这张卡**当前**的工作编号；没有 / 卡不存在 / 读失败 → None。
+
+    sqlite 读的是 ``cards.work_id`` **热列**而不是 payload：payload 可能被
+    < v0.48.13 的代码整卡覆写而丢了 ``work_id``（它不认识这个键），热列却仍
+    钉着号——正是 set-once 触发器会拒绝的那种「内存 None vs 盘上有号」。
+    yaml 后端只有文件一处真源，读 :func:`load`。永不抛（分配钩子的口径）。"""
+    try:
+        if backend() == BACKEND_SQLITE:
+            from act.lib.store2.store import NotFound
+            try:
+                card = _store().get_card(str(req_id))
+            except NotFound:
+                return None
+            wid = card.get("work_id")
+            return str(wid) if wid else None
+        prior = load(str(req_id))
+        wid = getattr(prior, "work_id", None) if prior is not None else None
+        return str(wid) if wid else None
+    except Exception:  # noqa: BLE001 - 读不到就当没号，由调用方按常规路径走
+        return None
+
+
 def _allocate_work_id(req: "Requirement") -> Optional[str]:
     """save() 的分配钩子：approved 且无 work_id → 分配并写回 req；否则 None。
 
@@ -1157,6 +1180,14 @@ def _allocate_work_id(req: "Requirement") -> Optional[str]:
     trashed/archived）——存量卡不会再「进入 approved」一次，只认 approved 会让
     已交付的存量卡永远没有 work_id。未批准的 legacy 卡仍无 work_id
     （id_kind=legacy，看板灰显）——D21 的「批准了才算」对存量卡同样成立。
+
+    **陈旧内存副本防御（§60.2）**：P 卡已过批准闸而这份内存副本没带号（副本
+    取自拿号之前——跨进程 fold 撞上 approve 的真实形状；或 payload 被
+    < v0.48.13 的代码剥掉了 ``work_id`` 而 sqlite 热列还留着——§53.1 降级
+    警告点名的形状）→ **采纳真源里已发的号**（:func:`_stored_work_id`），
+    绝不再铸、绝不清空。没有这一步：sqlite 的 set-once 触发器把这类落盘打成
+    ``WORK_ID_SET_ONCE`` 硬失败（inbox 决策文件被当 poison 丢弃），yaml 后端
+    更会静默换号（重铸）或丢号（覆写成 None）。
     永不抛（宪法第 11 条）——分配失败时卡照常落盘、编号下次再补。"""
     if getattr(req, "work_id", None):
         return None
@@ -1165,8 +1196,16 @@ def _allocate_work_id(req: "Requirement") -> Optional[str]:
             if not _passed_approval(req):
                 return None
             req.work_id = req.id
-        elif str(req.status) == State.APPROVED.value:
-            req.work_id = next_work_id()
+        elif _passed_approval(req):
+            stored = _stored_work_id(req.id)
+            if stored:
+                req.work_id = stored                  # 采纳，不铸新号
+            elif str(req.status) == State.APPROVED.value:
+                req.work_id = next_work_id()
+            else:
+                # 已过闸但盘上也没号（批准当刻分配失败过）：按 §60.1 只在
+                # approved 落盘时补铸，其余状态原样落盘（display 回落主键）
+                return None
         else:
             return None
     except Exception as e:  # noqa: BLE001 - 编号是显示层资产，不许拖垮落盘

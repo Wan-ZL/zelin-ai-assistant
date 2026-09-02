@@ -3553,6 +3553,36 @@ PyYAML。
   `SCHEMA_UPGRADE_BROKEN`。**全新库与升级库形状必须收敛**（判例比对
   `sqlite_master` + `PRAGMA table_info(cards)`）。`migrate_yaml.check_target`
   只接受 `user_version == SCHEMA_VERSION` 的空库。
+- **单向门与退路（v0.48.13）**：梯子只有上行——旧代码对 `user_version` 更高的
+  库 fail-closed（`SCHEMA_VERSION_MISMATCH` 在**每次** registry 调用处抛：
+  actd pass 全红、phase 永不 idle、inbox/dispatch 冻结），这是设计而非缺陷；
+  **绝不手改 `PRAGMA user_version` 伪装旧版**（实测的腐蚀路径：旧 save 会把
+  payload 里的 `work_id` 剥掉而热列还留着 → 新代码再落盘撞 `WORK_ID_SET_ONCE`
+  那张卡永远存不进去；旧 `next_id()` 会把已发的工作编号铸成新主键——两种 R-
+  用途的数值不重叠被打破，`resolve()` 从此有歧义；facade 侧的采纳防御见
+  §60.2，但主键撞号无解）。因此 `_ensure_schema` 在踏出**每级**梯子前先把
+  整库快照到 `store.pre_upgrade_snapshot_path` = `<db>.pre-v<from>`（同目录、
+  单文件：独立只读连接走 sqlite backup API、切回 `journal_mode=DELETE`、写 tmp
+  再 rename；**在 BEGIN IMMEDIATE 写锁下复核 `user_version == from` 之后拍，
+  该级每次重跑都刷新**——快照恒为「最近一次踏出该级前」的已提交状态，恢复快照
+  → 旧代码跑一阵 → 再部署新代码这条路上只认第一份会漏掉旧代码期间的写入；等锁者
+  拿到锁时版本已升则既不拍也不升；固定一级一份、数量 ≤ SCHEMA_VERSION−1、
+  大小 = 库大小，防腐 #4 满足，owner 接受该版本后可删）；拍不下来 =
+  `SCHEMA_SNAPSHOT_FAILED` **拒绝升级**（异常穿过事务 → ROLLBACK），DB 留在
+  旧版本、新旧代码都还能跑它，下次开库重试——没有退路的单向门不许自动踏过
+  （宪法第 2 条）。**D17 自动部署与本条的交界**：§56.3 的回滚（`git reset
+  --hard PREV` + install.sh）跑的是 **PREV 侧**的 `scripts/auto-deploy.sh`
+  （bash 在 `main "$@"` 前已整份解析），所以本版自己**无法**替自己的那次部署
+  加闸——「部署期间 `user_version` 升高 → 拒绝代码回滚」的闸门由 PR #130 在
+  §56.3 落地，且**只在 #130 已合并并已部署到 live 之后**才护得住跨梯级的部署；
+  在那之前（以及任何手动 reset / checkout 到旧版），回滚会把账本搁浅在打不开
+  新库的旧代码下——数据无损，人工出路（向前滚 `--force` / 恢复 `pre-v<from>`
+  快照 / §53.6 YAML 回滚）= docs/TROUBLESHOOTING.md「store2 回滚」schema 降级
+  段。合并门：本版在 live `deploy_state.json` 的 `head` 已包含 #130 的 merge
+  commit 之后才合。判例 tests/test_two_stage_card_ids.py::SchemaUpgradeTestCase
+  （快照存在、单文件且形状 == 从未升级的 v1 库 / 旧代码之门对升级后的库关、对
+  快照开 / 恢复快照再升级时快照刷新且搁置的 v2 库原样保留 / 并发首开只升一次
+  只留一份 v1 快照 / 快照失败拒升级且可恢复 / 全新库不拍）。
 - **v2（§60/D21）**：`cards.work_id TEXT`（热列，列序在 payload 之后 =
   ALTER 追加序；`CARD_COLUMNS` 末位）+ 唯一索引 `cards_work_id ON cards(work_id)
   WHERE work_id IS NOT NULL`（撞号 → `WORK_ID_DUPLICATE`）+ 触发器
@@ -3682,6 +3712,12 @@ tests/test_store2_parity.py + 激活协议第 3 步的运行时比对。
   文档 = docs/TROUBLESHOOTING.md「store2 回滚」（停守护 → 恢复
   `state/backups/registry-<ts>/` → 设开关 → 重启）。判例
   tests/test_store2_rollback.py。
+- **schema 降级（v0.48.13 追记）**：本节的 YAML 回滚开关同时是「代码已回退到
+  打不开当前 `user_version` 的旧版本」时的出口之一；另一条是恢复 §53.1 单向门
+  条款留下的 `state/store2.db.pre-v<from>` 快照（升级后新写的卡只在被搁置的
+  v2 库里——主库连同 `-wal`/`-shm` 一起挪走保存，别删）。两条的完整步骤与
+  「绝不手改 user_version」的理由合并写在 TROUBLESHOOTING「store2 回滚」
+  schema 降级段。
 - **性能**：load_all(~200 卡) 的 sqlite 面 = 单 SELECT + json 解析，预算钉在
   tests/test_store2_load_scale.py（<2s，远小于 10s pass）。
 
@@ -4178,6 +4214,7 @@ owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不�
 - **legacy 主键计入上界**：一切新工作号 > 任何存量卡号——两种 R- 用途在数值上**构造性不重叠**（`R-n ≤ 存量上界` 必是 legacy 主键，`R-m > 上界` 必是工作编号），老日志/通知里的 R 号不会被新工作号「顶替」。
 - **不复用**：sqlite 后端 `purge_trashed` 清 payload 但保留 `work_id` 热列（tombstone 行照样占位）；yaml 后端硬删会带走文件里的号，`state/work_seq.json`（`{"work_seq": <int>}`，固定大小，防腐 #4 天然满足；每次分配成功后只升不降）在两后端都参与 max。`store2_testkit.wipe_data_layer` 同步清它。
 - **原子性口径**：单写者纪律下只有 actd 把卡送进 approved，「算 max → 落盘」两步不会并发；sqlite 唯一索引 `cards_work_id` 是万一并发时的响亮兜底（`WORK_ID_DUPLICATE`，不静默复用）。跨进程接力（actd 重启 / CLI 手批）判例 = `tests/integration/test_work_seq_cross_process.py`（两后端）。
+- **陈旧内存副本只会采纳、绝不重铸/清空**（v0.48.13 判例化）：任何已过批准闸的 P 卡落盘时内存没带号 → `save()` 的分配钩子先读真源（`registry._stored_work_id`：sqlite 读 `cards.work_id` **热列**而非 payload，yaml 读文件）、采纳已发的号（找不到才按 §60.1 只在 approved 补铸；D21 字面的无号卡照旧无号）——两种真实形状：跨进程 fold 撞上 approve 的 read-modify-write 窗口（§53.5），以及 payload 被 < v0.48.13 的代码整卡覆写而丢了 `work_id` 键、热列却仍钉着号（§53.1 单向门条款点名的腐蚀路径）。二者不再表现为 sqlite `WORK_ID_SET_ONCE` 硬失败（inbox 决策文件被当 poison 丢弃）或 yaml 静默换号/丢号。判例 tests/test_two_stage_card_ids.py::StaleCopyAdoptsStoredNumberTestCase（两后端 + sqlite 热列剥号剧本 + D21 字面无号卡不变）。yaml 后端**没有**撞号守卫（无 UNIQUE），依赖单写者纪律——它只是 §53.6 的回滚后端。
 - 存量 legacy 卡**采纳自己的主键**作 `work_id`（`R-050` → `work_id: R-050`），不另发号：一张卡两个 R 号只会添乱（`R-175.log` 与看板 `R-290` 对不上），且 legacy 主键 ≤ 序列下界、与新工作号不撞。采纳时机 = 任何**已过批准闸**的落盘（现态 approved/executing/review/delivered，或带这些回程票的 trashed/archived）——存量卡不会再「进入 approved」一次，只认 approved 会让已交付的存量卡永远没号。未批准的 legacy 卡仍无 `work_id`（`id_kind: legacy`，看板灰显）。这是对设计稿「legacy 卡 restore 进 approved 拿新号」的有意偏离，理由如上。
 
 ### 60.3 解析：主键或工作编号都能指到卡
@@ -4193,10 +4230,10 @@ owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不�
 
 ### 60.5 存量数据：不迁移、不回填
 
-- 存量 `R-<n>` 主键**原样保留**（文件名 / PK / lineage 都不动）；store2 v1→v2 升级只加列，`work_id` 全 NULL（§53.1 v2）；**不**批量回填 payload（激活协议的逐字段 parity 会把回填当差异，且宪法第 6 条禁止改写存量字段语义）。
-- 已过批准闸的存量卡（approved/executing/review/delivered，含带这些回程票的 trashed/archived）：`display_id` = 主键，`registry.id_kind` 按状态判 `work`（不灰显——它们的 R 号是批准后跑出来的）；下一次落盘（派发失败落 `last_error`、归档扫、re-raise……）按 59.2 采纳主键作 `work_id`，号不变、显示不变。
+- 存量 `R-<n>` 主键**原样保留**（文件名 / PK / lineage 都不动）；store2 v1→v2 升级只加列，`work_id` 全 NULL（§53.1 v2）；**不**批量回填 payload（激活协议的逐字段 parity 会把回填当差异，且宪法第 6 条禁止改写存量字段语义）。**升级是单向的**：< v0.48.13 的代码打不开 v2 库（每次 registry 调用抛 `SCHEMA_VERSION_MISMATCH`）——踏出升级前 store 自动留 `store2.db.pre-v1` 快照；§56.3 的部署回滚闸门（PR #130，**合并并部署到 live 之后**才生效）拒绝跨升级的代码 reset；降级出路见 §53.1 单向门条款与 TROUBLESHOOTING「store2 回滚」schema 降级段。
+- 已过批准闸的存量卡（approved/executing/review/delivered，含带这些回程票的 trashed/archived）：`display_id` = 主键，`registry.id_kind` 按状态判 `work`（不灰显——它们的 R 号是批准后跑出来的）；下一次落盘（派发失败落 `last_error`、归档扫、re-raise……）按 60.2 采纳主键作 `work_id`，号不变、显示不变。
 - 从未批准的存量卡（detected / card_sent / raising / 带这些回程票的 trashed）：`id_kind: legacy`，看板灰显——这就是 #127 数出来的 162 张「雷达噪音占号」；P5 清理（vnext2-plan §4）时连同 proposal-lane 一起处理。
 
 ### 60.6 判例
 
-`tests/test_two_stage_card_ids.py`（两后端：出生 P- / 检测·合并·回收站零分配 / 四条 approved 路径分配 / set-once / 稠密单调不复用 / legacy 采纳 / resolve 与 inbox·merge 入口 / 投影字段 / executor 命名 / 序键 / schema v1→v2 升级·crash window·形状收敛·触发器·唯一索引 / 导出↔迁移 round-trip）、`tests/integration/test_work_seq_cross_process.py`（跨进程接力）、`tests/test_registry_backend_parity.py`（剧本含分配与 restore 保号）、web `src/cardId.test.ts` + `ProposalCard.test.tsx`（显示 display_id、送 id）+ `DetailDrawer.test.tsx`（深链按工作号）+ `taskFilters.test.ts` + `steer.test.ts`；旧判例改钉：`test_audit_registry_fail_closed`（P 空间文件名守卫 + R 空间归 `next_work_id`）、`test_card_lifecycle` / `test_radar_triage` / `test_registry_example_skip` / `test_store2_activation`（`next_id` → `P-`）、`test_store2_schema` / `test_store2_cas`（版本钉 = `SCHEMA_VERSION`）、`test_store2_field_parity`（词表加 `work_id`）、server / boardctl 判例（demo hero `P-101`，工作号 `R-101`）。
+`tests/test_two_stage_card_ids.py`（两后端：出生 P- / 检测·合并·回收站零分配 / 四条 approved 路径分配 / set-once / 稠密单调不复用 / legacy 采纳 / resolve 与 inbox·merge 入口 / 投影字段 / executor 命名 / 序键 / schema v1→v2 升级·crash window·形状收敛·触发器·唯一索引·`pre-v<from>` 快照（存在且为升级前形状·单文件 / 旧代码开得了快照开不了升级后的库 / 该级重跑刷新 / 并发开库收敛 / 拍不下来拒升级且可恢复 / 全新库不拍，§53.1 单向门） / 导出↔迁移 round-trip）、`tests/integration/test_work_seq_cross_process.py`（跨进程接力）、`tests/test_registry_backend_parity.py`（剧本含分配与 restore 保号）、web `src/cardId.test.ts` + `ProposalCard.test.tsx`（显示 display_id、送 id）+ `DetailDrawer.test.tsx`（深链按工作号）+ `taskFilters.test.ts` + `steer.test.ts`；旧判例改钉：`test_audit_registry_fail_closed`（P 空间文件名守卫 + R 空间归 `next_work_id`）、`test_card_lifecycle` / `test_radar_triage` / `test_registry_example_skip` / `test_store2_activation`（`next_id` → `P-`）、`test_store2_schema` / `test_store2_cas`（版本钉 = `SCHEMA_VERSION`）、`test_store2_field_parity`（词表加 `work_id`）、server / boardctl 判例（demo hero `P-101`，工作号 `R-101`）。

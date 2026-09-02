@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -32,7 +33,8 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 # schema 版本（§53.1）：schema.sql 末尾的 PRAGMA user_version 必须等于它；
-# 旧库按 _UPGRADES 逐级升到它（v1→v2 是本 repo 第一级梯子，§60/D21）。
+# 旧库按 _UPGRADES 逐级升到它（v1→v2 是本 repo 第一级梯子，§60/D21）。升级单向
+# ——旧代码 fail-closed 打不开新库，踏出每级前 _pre_upgrade_snapshot 先留退路。
 SCHEMA_VERSION = 2
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
@@ -157,6 +159,14 @@ def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
 _UPGRADES = {1: _upgrade_1_to_2}
 
 
+def pre_upgrade_snapshot_path(db_path, from_version: int) -> Path:
+    """踏出 ``from_version`` 这一级梯子前留下的整库快照落点：``<db>.pre-v<from>``
+    （§53.1 单向门条款）。PUBLIC：TROUBLESHOOTING 的降级步骤、doctor/测试都
+    按这个名字找——一级一份、随该级每次重跑刷新，数量 ≤ SCHEMA_VERSION−1
+    （防腐 #4：天然有帽）。"""
+    return Path(f"{db_path}.pre-v{int(from_version)}")
+
+
 # --------------------------------------------------------------------------- #
 # verb 表 — 动词只算「去哪 + 带什么」，合法性（老状态×新状态×actor）由 whitelist trigger 执法。
 # 用户动词与 live inbox 动作同名（actd.py handlers）；管线动词按 CONTRACT 法条命名。
@@ -269,6 +279,24 @@ class Store:
                 )
             conn.execute("BEGIN IMMEDIATE")
             try:
+                # 写锁下复核版本：并发开库者可能已把这一级升完（快照必须拍在
+                # 「确认此级尚未踏出」之后，否则拍到的是升级后的形状）
+                cur = conn.execute("PRAGMA user_version").fetchone()[0]
+                if cur != version:
+                    conn.execute("COMMIT")
+                    if cur > SCHEMA_VERSION:
+                        raise StoreError(
+                            "SCHEMA_VERSION_MISMATCH",
+                            f"db user_version={cur}, store2 supports {SCHEMA_VERSION}",
+                            {"db_version": cur, "supported": SCHEMA_VERSION},
+                        )
+                    version = cur
+                    continue
+                # §53.1 单向门条款：踏出一级前先留 pre-v<from> 整库快照——旧代码
+                # 打不开升级后的库（fail-closed），这份快照是 D17 代码回滚落到
+                # 旧版本时唯一能被旧代码打开的账本副本。拍不下来 = 拒绝升级
+                # （异常穿过下面的 except → ROLLBACK，版本与形状都留在 from）。
+                self._pre_upgrade_snapshot(version)
                 step(conn)
                 conn.execute("COMMIT")
             except BaseException:
@@ -283,6 +311,66 @@ class Store:
                     {"db_version": after, "expected": version + 1},
                 )
             version = after
+
+    def _pre_upgrade_snapshot(self, from_version: int) -> None:
+        """升级梯子踏出一级前的整库快照（§53.1 单向门条款，v0.48.13）。
+
+        落点 :func:`pre_upgrade_snapshot_path`（``<db>.pre-v<from>``，同目录），
+        **每次踏出该级都刷新**：调用点持有 BEGIN IMMEDIATE 写锁并已复核
+        ``user_version == from``，所以拍到的永远是「最近一次踏出这一级之前」
+        的已提交状态——恢复快照 → 旧代码跑一阵 → 再部署新代码 这条真实路径
+        上，第一份快照早已过时，只认第一份反而丢写入。梯子是单向的：旧代码对
+        更高 ``user_version`` fail-closed（SCHEMA_VERSION_MISMATCH），D17 自动
+        部署把代码回滚到旧版本后，这份快照是旧代码唯一打得开的账本副本
+        （人工步骤 = docs/TROUBLESHOOTING.md「store2 回滚」schema 降级段）。
+        拍不下来 = ``SCHEMA_SNAPSHOT_FAILED`` 拒绝升级，DB 留在旧版本（新旧
+        代码此刻都还能跑它）——没有退路的单向门不许自动踏过（宪法第 2 条）。
+
+        一致性：本事务尚未写任何东西；**独立**连接经 ``sqlite3`` backup API
+        读到的最后已提交状态恰是升级前的全量（持写锁的连接自己 backup 会在
+        WAL 下死锁——实测；WAL 读不阻塞写者，rollback-journal 下 RESERVED
+        锁仍允许 SHARED 读，backup 在本线程内先完成、EXCLUSIVE 升级在其后）。
+        快照切回 ``journal_mode=DELETE`` 成单文件（backup 会连 WAL 头标一起
+        抄过来，否则日后一开就长出 -wal/-shm）；先写 ``.tmp-<pid>`` 再
+        rename——绝不留半截快照，失败时连 tmp 的旁文件一起清掉。
+        """
+        dst = pre_upgrade_snapshot_path(self._db_path, from_version)
+        tmp = dst.with_name(dst.name + f".tmp-{os.getpid()}")
+        try:
+            src = sqlite3.connect(self._db_path)
+            try:
+                src.execute("PRAGMA busy_timeout = 5000")
+                out = sqlite3.connect(str(tmp))
+                try:
+                    src.backup(out)
+                    out.execute("PRAGMA journal_mode = DELETE")
+                finally:
+                    out.close()
+            finally:
+                src.close()
+            self._unlink_side_files(tmp)
+            tmp.replace(dst)
+        except (sqlite3.Error, OSError) as e:
+            for leftover in (tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm")):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+            raise StoreError(
+                "SCHEMA_SNAPSHOT_FAILED",
+                f"cannot snapshot db before the v{from_version} upgrade: {e}",
+                {"db_version": from_version, "snapshot": str(dst)},
+            ) from e
+
+    @staticmethod
+    def _unlink_side_files(db: Path) -> None:
+        """快照 tmp 在 backup 期间短暂处于 WAL 模式留下的 -wal/-shm（切回
+        DELETE 后已无内容）——rename 前清掉，别让孤儿旁文件留在 state/。"""
+        for side in (Path(f"{db}-wal"), Path(f"{db}-shm")):
+            try:
+                side.unlink()
+            except FileNotFoundError:
+                pass
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)

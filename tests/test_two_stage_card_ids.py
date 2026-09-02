@@ -17,16 +17,23 @@ approve 跑了的,才给编号。」
   * 投影行 display_id / id_kind / work_id；executor 的 prompt 头 / 会话名 / 日志名
     用显示编号，analytics 仍记主键；
   * store2 schema v1 → v2 升级梯子：加列 + 唯一索引 + set-once 触发器，crash window
-    幂等重跑，全新库与升级库形状收敛；
+    幂等重跑，全新库与升级库形状收敛；踏出一级前先留 ``<db>.pre-v<from>`` 整库快照
+    （写锁下复核版本后每次刷新、单文件；拍不下来 = SCHEMA_SNAPSHOT_FAILED 拒绝
+    升级）——升级单向、旧代码打不开新库，快照是 D17 代码回滚的退路（§53.1 单向门
+    条款）：旧代码的门对升级后的库关、对快照开，恢复快照后再升级快照随之刷新，
+    并发首开只留一份 v1 快照；
+  * 陈旧内存副本 / 被旧代码剥掉 payload 号的卡落盘时采纳真源里的号，不重铸不清空；
   * 导出 ↔ 迁移 round-trip 带 work_id；
   * 跨命名空间序键（auto_merge / quick_capture / actd FIFO）。
 跨进程的序列判例住 tests/integration/test_work_seq_cross_process.py。
 """
 import json
+import os
 import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 import unittest
 import uuid
 from pathlib import Path
@@ -40,7 +47,7 @@ from act.lib import auto_merge, config, dashboard, quick_capture, registry
 from act.lib.registry import Requirement, State
 from act.lib.store2 import export_yaml, hot, migrate_yaml
 from act.lib.store2.store import (SCHEMA_VERSION, IntegrityViolation, Store,
-                                  StoreError)
+                                  StoreError, pre_upgrade_snapshot_path)
 
 BACKENDS = ("yaml", "sqlite")
 SCHEMA_PATH = Path(registry.__file__).parent / "store2" / "schema.sql"
@@ -273,6 +280,80 @@ class ApprovalAllocatesTestCase(_Both):
         self.assertIsNone(r.work_id)
         registry.save(r)
         self.assertEqual(registry.load("P-001").work_id, "R-001")
+
+
+# --------------------------------------------------------------------------- #
+# 陈旧内存副本防御（§60.2）：盘上已发的号只会被采纳，绝不重铸/清空
+# --------------------------------------------------------------------------- #
+class StaleCopyAdoptsStoredNumberTestCase(_Both):
+    """跨进程 fold 撞上 approve 的 read-modify-write 窗口（§53.5）：一份取自
+    拿号之前的内存副本再落盘，必须采纳盘上的号——否则 sqlite 撞
+    ``WORK_ID_SET_ONCE`` 硬失败（inbox 决策文件被当 poison 丢弃），yaml
+    静默换号（重铸）或丢号（覆写成 None）。"""
+
+    def test_stale_approved_copy_adopts_not_remints(self):
+        def body(_b):
+            registry.upsert(_card("P-001", "陈旧副本"))
+            stale = registry.load("P-001")            # 拿号之前读出的副本
+            self.assertIsNone(stale.work_id)
+            _approve("P-001")
+            self.assertEqual(registry.load("P-001").work_id, "R-001")
+            nw = registry.next_work_id()
+            stale.set_status(State.APPROVED)
+            registry.save(stale)                      # 不撞 set-once、不换号
+            self.assertEqual(registry.load("P-001").work_id, "R-001")
+            self.assertEqual(registry.next_work_id(), nw)     # 序列零消耗
+        self.for_each_backend(body)
+
+    def test_stale_executing_copy_does_not_clear_the_number(self):
+        def body(_b):
+            registry.upsert(_card("P-001", "丢号防御"))
+            stale = registry.load("P-001")
+            _approve("P-001")
+            stale.set_status(State.EXECUTING)         # dispatch 形状的陈旧副本
+            stale.work_id = None
+            registry.save(stale)
+            self.assertEqual(registry.load("P-001").work_id, "R-001")
+        self.for_each_backend(body)
+
+    def test_d21_literal_card_without_a_stored_number_stays_unnumbered(self):
+        # 绕过 approved 直达 review/delivered 的 P 卡（§60.1 D21 字面）：真源里
+        # 没号 → 采纳分支不发号、也不铸号，display 回落主键、id_kind=proposal。
+        def body(_b):
+            registry.upsert(_card("P-001", "外部完成"))
+            req = registry.load("P-001")
+            req.set_status(State.DELIVERED)          # done_external：card_sent→delivered
+            with registry.acting_as("user"):
+                registry.save(req)
+            again = registry.load("P-001")
+            self.assertIsNone(again.work_id)
+            self.assertEqual(registry.id_kind(again), registry.ID_KIND_PROPOSAL)
+            self.assertEqual(registry.display_id(again), "P-001")
+        self.for_each_backend(body)
+
+    def test_payload_stripped_by_old_code_readopts_from_hot_column(self):
+        # §53.1「绝不手改 user_version」点名的腐蚀形状：< v0.48.13 的 save 整卡
+        # 覆写 payload 时不认识 work_id 键 → payload 丢号、热列仍钉着号。
+        # 新代码下一次落盘必须从热列采纳，而不是撞 WORK_ID_SET_ONCE 永远存不进去。
+        store2_testkit.use_backend(self, "sqlite")
+        registry.upsert(_card("P-001", "旧代码剥号"))
+        _approve("P-001")
+        store = registry._store()
+        row = store.get_card("P-001")
+        self.assertEqual(row["work_id"], "R-001")
+        stripped = dict(row["payload"])
+        stripped.pop("work_id", None)
+        con = store._conn()
+        con.execute("UPDATE cards SET payload = ? WHERE id = ?",
+                    (json.dumps(stripped, ensure_ascii=False), "P-001"))
+        registry.reset_store_cache()
+        req = registry.load("P-001")
+        self.assertIsNone(req.work_id)               # 内存副本：payload 里已无号
+        registry.save(req)                           # 不抛 IntegrityViolation
+        fresh = registry.load("P-001")
+        self.assertEqual(fresh.work_id, "R-001")
+        self.assertEqual(registry._store().get_card("P-001")["work_id"], "R-001")
+        self.assertEqual(registry.next_work_id(), "R-002")   # 没有重铸
 
 
 # --------------------------------------------------------------------------- #
@@ -601,6 +682,146 @@ class SchemaUpgradeTestCase(unittest.TestCase):
             self.assertEqual((row["tombstone"], row["work_id"]), (1, "R-001"))
         finally:
             store.close()
+
+    def test_upgrade_snapshots_the_v1_db_for_the_rollback_target(self):
+        # §53.1 单向门条款：踏出 v1→v2 前留 <db>.pre-v1——旧代码（SCHEMA_VERSION=1，
+        # user_version != 1 即 raise）唯一打得开的账本副本，D17 代码回滚落到
+        # < 0.48.13 时的退路（TROUBLESHOOTING「store2 回滚」schema 降级段）。
+        db = self._v1_db()
+        pristine = self._v1_db("pristine.db")        # 从未被新代码碰过的 v1 对照
+        Store(db).close()
+        snap = pre_upgrade_snapshot_path(db, 1)
+        self.assertEqual(snap, Path(str(db) + ".pre-v1"))
+        self.assertTrue(snap.exists())
+        # 单文件：backup 抄来的 WAL 头标已切回 DELETE，旁边不长 -wal/-shm、无 tmp 残留
+        self.assertEqual([p.name for p in self.tmp.glob("v1.db.pre-v1*")], ["v1.db.pre-v1"])
+        con = sqlite3.connect(snap)
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+            cols = [r[1] for r in con.execute("PRAGMA table_info(cards)")]
+            self.assertNotIn("work_id", cols)      # 升级前的形状，逐字保留
+            rows = con.execute("SELECT id, status, payload FROM cards").fetchall()
+            self.assertEqual(rows, [("R-001", "approved", '{"id":"R-001"}')])
+        finally:
+            con.close()
+        # 形状 == 一个从未升级过的 v1 库（sqlite_master + 列序）——旧代码
+        # （SCHEMA_VERSION=1 且只认 user_version==1）按构造打得开它
+        self.assertEqual(_objects(snap), _objects(pristine))
+
+    def test_old_reader_cannot_open_the_upgraded_db_but_can_open_the_snapshot(self):
+        # 两份审查同一个 blocker 的可执行形态：D17 回滚目标（< v0.48.13）的门 =
+        # `user_version != 1 → raise`。升级后的库对它必然关门（这是设计），
+        # 快照对它必然开门——否则 TROUBLESHOOTING 的「恢复快照」出路是空话。
+        def old_code_gate(path: Path) -> list:
+            con = sqlite3.connect(path)
+            try:
+                v = con.execute("PRAGMA user_version").fetchone()[0]
+                if v != 1:
+                    raise StoreError("SCHEMA_VERSION_MISMATCH",
+                                     f"db user_version={v}, store2 supports 1")
+                return con.execute("SELECT id, status FROM cards ORDER BY id").fetchall()
+            finally:
+                con.close()
+        db = self._v1_db()
+        Store(db).close()
+        with self.assertRaises(StoreError) as cm:
+            old_code_gate(db)
+        self.assertEqual(cm.exception.code, "SCHEMA_VERSION_MISMATCH")
+        self.assertEqual(old_code_gate(pre_upgrade_snapshot_path(db, 1)),
+                         [("R-001", "approved")])
+
+    def test_snapshot_is_refreshed_on_each_run_of_the_step(self):
+        # 真实降级剧本：升级 → 回滚代码 → 恢复快照 → 旧代码继续写卡 → 再部署新
+        # 代码。第二次踏出 v1→v2 时快照必须刷新成「这一次升级前」的状态——
+        # 只认第一份会把旧代码那阵子写的卡从退路里漏掉。写锁下已复核版本，
+        # 刷新不可能把 v2 形状写进 pre-v1。
+        db = self._v1_db()
+        Store(db).close()
+        snap = pre_upgrade_snapshot_path(db, 1)
+        first = snap.read_bytes()
+        # 恢复快照（TROUBLESHOOTING 步骤 2 的形状：主库连旁文件一起挪走）
+        for side in ("", "-wal", "-shm"):
+            p = Path(str(db) + side)
+            if p.exists():
+                p.replace(Path(str(db) + ".v2-stranded" + side))
+        shutil.copyfile(snap, db)
+        con = sqlite3.connect(db)                    # 「旧代码」在 v1 库上继续写
+        con.execute("INSERT INTO cards (id, status, title, created, updated, payload)"
+                    " VALUES ('R-002', 'detected', 't2', 'x', 'x', '{\"id\":\"R-002\"}')")
+        con.commit()
+        self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], 1)
+        con.close()
+        Store(db).close()                            # 新代码再部署：第二次踏出
+        self.assertNotEqual(snap.read_bytes(), first)
+        con = sqlite3.connect(snap)
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertNotIn("work_id", [r[1] for r in con.execute("PRAGMA table_info(cards)")])
+            self.assertEqual([r[0] for r in con.execute("SELECT id FROM cards ORDER BY id")],
+                             ["R-001", "R-002"])
+        finally:
+            con.close()
+        # 被挪走的 v2 库原样还在（步骤 2 只挪不删）
+        self.assertTrue(Path(str(db) + ".v2-stranded").exists())
+
+    def test_concurrent_openers_converge_and_leave_one_v1_snapshot(self):
+        # 多个进程（cron 雷达 + actd + server）同时首开一个 v1 库：都成功、
+        # 只升一次、快照仍是 v1 形状（等锁者拿到锁后复核版本，不重拍、不重升）。
+        db = self._v1_db()
+        errors: list = []
+        barrier = threading.Barrier(6)
+
+        def opener():
+            try:
+                barrier.wait(timeout=10)
+                Store(db).close()
+            except BaseException as e:  # noqa: BLE001 - 收集后统一断言
+                errors.append(e)
+        threads = [threading.Thread(target=opener) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        self.assertEqual(errors, [])
+        con = sqlite3.connect(db)
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+            self.assertEqual([r[1] for r in con.execute("PRAGMA table_info(cards)")].count("work_id"), 1)
+        finally:
+            con.close()
+        con = sqlite3.connect(pre_upgrade_snapshot_path(db, 1))
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertNotIn("work_id", [r[1] for r in con.execute("PRAGMA table_info(cards)")])
+        finally:
+            con.close()
+        self.assertEqual([p.name for p in self.tmp.glob("v1.db.pre-v1*")], ["v1.db.pre-v1"])
+
+    def test_snapshot_failure_refuses_the_upgrade(self):
+        # 拍不下来 = SCHEMA_SNAPSHOT_FAILED 拒绝踏出单向门：DB 留在 v1（旧代码
+        # 照样打得开）、无半截快照；障碍解除后重开即照常升级。
+        db = self._v1_db()
+        blocker = Path(str(db) + f".pre-v1.tmp-{os.getpid()}")
+        blocker.mkdir()                    # sqlite 打不开目录 → 快照必失败
+        with self.assertRaises(StoreError) as cm:
+            Store(db)
+        self.assertEqual(cm.exception.code, "SCHEMA_SNAPSHOT_FAILED")
+        con = sqlite3.connect(db)
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], 1)
+        finally:
+            con.close()
+        self.assertFalse(Path(str(db) + ".pre-v1").exists())
+        blocker.rmdir()
+        Store(db).close()
+        self.assertTrue(Path(str(db) + ".pre-v1").exists())
+
+    def test_fresh_db_takes_no_snapshot(self):
+        # 全新库（version 0 → executescript）不走梯子，也就没有快照。
+        fresh = self.tmp / "fresh2.db"
+        Store(fresh).close()
+        self.assertEqual(list(self.tmp.glob("fresh2.db.pre-v*")), [])
 
     def test_migrate_check_target_accepts_current_version_only(self):
         fresh = self.tmp / "f.db"
