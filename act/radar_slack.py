@@ -700,6 +700,16 @@ _RECEIPT_EMOJI = {
 }
 
 
+_SLACK_ERROR_CODE = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def _slack_error_code(value) -> Optional[str]:
+    """Slack's ``error`` field as a bare enum code, or None when it is not one
+    (TELEMETRY 红线 #37: identifiers may leave the machine, free text may not)."""
+    text = str(value or "")
+    return text if _SLACK_ERROR_CODE.match(text) else None
+
+
 def _ack_capture(token: str, m: dict, kind: str, cfg: config.Config) -> None:
     """§40 capture receipt: one emoji reaction on the captured self-DM message.
 
@@ -718,8 +728,10 @@ def _ack_capture(token: str, m: dict, kind: str, cfg: config.Config) -> None:
     resp = slack_api("reactions.add", token,
                      {"channel": channel, "timestamp": ts, "name": emoji})
     if not resp.get("ok") and resp.get("error") != "already_reacted":
+        # Slack API `error` is an enum code (missing_scope / channel_not_found…);
+        # only that identifier shape is uploaded — anything else is dropped (#37)
         analytics.log_event("capture_receipt_failed",
-                            error=str(resp.get("error") or "")[:80])
+                            slack_error=_slack_error_code(resp.get("error")))
 
 
 def _handle_self_message(m: dict, token: str, cfg: config.Config,

@@ -209,8 +209,10 @@ class StopFailureLedgerTestCase(unittest.TestCase):
         self.assertIn("[stop-failed]", req.notes or "")
 
     def test_analytics_detail_carries_no_full_uuid_or_pid(self):
-        # TELEMETRY 红线：analytics 默认上传——error 里全量会话 UUID 只留
-        # 前 8 位、PID 脱掉；全量 detail 只进本机台账（stop_failed_error/notes）
+        # TELEMETRY 红线（issue #37 收紧）：analytics 默认上传——stop_failed 事件
+        # 不再携带任何原文（此前留 UUID 前 8 位 + 脱 PID 的截断 error），只带 req
+        # + 分类 failure_id（无法分类时整键缺席）；全量 detail 只进本机台账
+        # （stop_failed_error/notes）
         req = Requirement(id="R-902", title="打点脱敏测试",
                           status=State.REVIEW.value,
                           execution={"session_id": SID, "done": True})
@@ -223,13 +225,16 @@ class StopFailureLedgerTestCase(unittest.TestCase):
             actd.process_inbox()
         req = registry.load("R-902")
         self.assertIn(SID, (req.execution or {}).get("stop_failed_error") or "")
-        errs = [e.get("error") or "" for e in analytics.read_events()
-                if e.get("event") == "stop_failed" and e.get("req") == "R-902"]
-        self.assertTrue(errs)
-        for err in errs:
-            self.assertNotIn(SID, err)            # 全量 UUID 不出机
-            self.assertNotIn("pid 7", err)        # PID 不出机
-            self.assertIn(SID[:8], err)           # 前 8 位留作关联线索
+        events = [e for e in analytics.read_events()
+                  if e.get("event") == "stop_failed" and e.get("req") == "R-902"]
+        self.assertTrue(events)
+        for ev in events:
+            self.assertNotIn("error", ev)         # 原文一个字节都不出机
+            blob = json.dumps(ev)
+            self.assertNotIn(SID[:8], blob)       # 连 UUID 前缀也不再上传
+            self.assertNotIn("pid", blob)
+            # "still alive" 无 §25 分类 → failure_id 整键缺席（诚实未知）
+            self.assertNotIn("failure_id", ev)
 
 
 if __name__ == "__main__":

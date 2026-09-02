@@ -43,7 +43,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Iterator, List, Optional, Tuple
 
-from act.lib import analytics, config, secrets
+from act.lib import analytics, config, failures, secrets
 
 CURSOR_PATH: Path = config.STATE_DIR / "analytics_sync.json"
 DEVICE_ID_PATH: Path = config.STATE_DIR / "device_id"
@@ -307,12 +307,16 @@ def sync_once(cfg: Optional[config.Config] = None,
             _save_cursor(file_name, batch_end)
     except Exception as exc:  # noqa: BLE001 - telemetry must never break anything
         stats["ok"] = False
-        stats["error"] = str(exc)[:120]
+        stats["error"] = str(exc)[:120]          # local stats only (CLI / tests)
+        stats["error_type"] = type(exc).__name__
 
     # Logged AFTER the cursor writes: this event is picked up by the NEXT run,
-    # never re-entered in this one.
+    # never re-entered in this one. Only the exception CLASS and a §25
+    # failure id ride along (issue #37) — str(exc) can carry the upload URL
+    # or a filesystem path and never leaves the machine.
     analytics.log_event("telemetry_sync", ok=stats["ok"],
                         uploaded=stats["uploaded"],
                         malformed=stats["malformed"] or None,
-                        error=stats["error"])
+                        error_type=stats.get("error_type"),
+                        failure_id=failures.classify(stats["error"]))
     return stats

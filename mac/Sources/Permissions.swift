@@ -630,6 +630,30 @@ struct CapabilityRowsView: View {
     }
 }
 
+/// Writes the consent-surface markers only when the disclosure copy is really
+/// visible (issue #37; CONTRACT §15 「披露块实际可见才写标记」). Both hosts
+/// (Permissions Checkup page, Setup Wizard step 3) are non-lazy VStacks inside
+/// a ScrollView: `.onAppear` fires on INSERTION, so at the 480 pt minimum
+/// window height the block could sit below the fold while the v1+v2 markers
+/// were already written — "disclosure shown" without anyone having seen it.
+/// macOS 15+: `onScrollVisibilityChange` (≥50 % of the block in the viewport;
+/// fires on initial layout too, so a tall window still writes immediately).
+/// macOS 14 (deployment floor): insertion-time write, i.e. exactly the old
+/// behavior — never worse than before, and the uploader's gate stays closed
+/// until the marker exists either way.
+private struct ConsentSurfaceMarker: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollVisibilityChange(threshold: 0.5) { visible in
+                if visible { TelemetryConsent.markSurfaceShown() }
+            }
+        } else {
+            content.onAppear { TelemetryConsent.markSurfaceShown() }
+        }
+    }
+}
+
 /// First-run telemetry disclosure (v0.18; v0.48 opt-in revision): one
 /// low-key honest line — behavior stats (event metadata only) are ON by
 /// default, and the text the user types is uploaded ONLY after they check
@@ -641,7 +665,8 @@ struct CapabilityRowsView: View {
 /// (CONTRACT §15 v0.48); the Settings toggle keeps working over the same
 /// key. Rendering this block still writes the consent-surface marker the
 /// Python uploader gates on (unchanged semantics — nothing uploads before
-/// this line has been shown).
+/// this line has been shown) — but only once the block is actually ON
+/// SCREEN (issue #37, see ConsentSurfaceMarker above).
 struct TelemetryBlockView: View {
     @ObservedObject private var i18n = LanguageStore.shared
     // reflect an already-recorded choice on re-open (checkup page / wizard
@@ -679,7 +704,7 @@ struct TelemetryBlockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .onAppear { TelemetryConsent.markSurfaceShown() }
+        .modifier(ConsentSurfaceMarker())
     }
 
     /// Checking (or unchecking) the box is the informed choice — write the

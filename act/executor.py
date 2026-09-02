@@ -873,7 +873,9 @@ def dispatch(
             req.notes = (req.notes + "\n" + tag).strip() if req.notes else tag
         req.execution = ex
         save(req)  # status untouched — stays APPROVED (retry, or parked if halted)
-        analytics.log_event("dispatch_failed", req=req.id, error=err[:120],
+        # TELEMETRY 红线（issue #37）：只上传分类 id，绝不上传原始 stderr——
+        # 路径/值都可能藏在里面；全文只进本机台账（execution.last_error）。
+        analytics.log_event("dispatch_failed", req=req.id, failure_id=fid,
                             reason=reason, attempt=attempts + 1)
         if halted:
             analytics.log_event("dispatch_halted", req=req.id, failure_id=fid,
@@ -1532,7 +1534,8 @@ def _rework_abort(req: Requirement, ex: dict, err: str) -> bool:
     ex["last_error_at"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     req.execution = ex
     save(req)
-    analytics.log_event("rework_failed", req=req.id, error=err[:120])
+    analytics.log_event("rework_failed", req=req.id,
+                        failure_id=failures.classify(err))   # id only (#37)
     return False
 
 
@@ -1660,7 +1663,8 @@ def rework(
         save(req)
         analytics.log_event("rework_launch", req=req.id, ok=False,
                             round=ex["rework_count"])
-        analytics.log_event("rework_failed", req=req.id, error=err[:120])
+        analytics.log_event("rework_failed", req=req.id,
+                            failure_id=failures.classify(err))   # id only (#37)
         return False
     ex.pop("done", None)                      # it's working again
     ex.pop("last_error", None)                # clean relaunch clears stale errors
