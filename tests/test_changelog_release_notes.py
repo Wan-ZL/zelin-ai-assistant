@@ -104,7 +104,22 @@ class DeltaTestCase(unittest.TestCase):
 
     def test_entries_without_group_heading_survive(self):
         cur = "## [Unreleased]\n\n- bare bullet\n\n\n- another\n## [0.1.0]\n"
-        self.assertEqual(crn.release_notes(cur, ""), "- bare bullet\n\n- another")
+        self.assertEqual(crn.release_notes(cur, ""), "- bare bullet\n- another")
+
+    def test_delta_compares_whole_entries_not_lines(self):
+        # Codex review #142 P2: two different bullets sharing an identical
+        # sub-item line — the new bullet must keep its sub-item.
+        prev = "## [Unreleased]\n\n### Added\n- old thing\n  - macOS\n  - Linux\n"
+        cur = ("## [Unreleased]\n\n### Added\n- old thing\n  - macOS\n  - Linux\n"
+               "- new thing\n  - macOS\n  - Windows\n")
+        self.assertEqual(crn.release_notes(cur, prev), "### Added\n- new thing\n  - macOS\n  - Windows")
+        # an edited continuation line makes the whole entry new (it IS a change)
+        cur2 = "## [Unreleased]\n\n### Added\n- old thing\n  - macOS\n  - Linux (fixed)\n"
+        self.assertEqual(crn.release_notes(cur2, prev), "### Added\n- old thing\n  - macOS\n  - Linux (fixed)")
+
+    def test_entries_split_on_top_level_bullets_only(self):
+        blocks = crn._entries(["### A", "- one", "  wrapped line", "  - sub", "* two", "", "loose text"])
+        self.assertEqual(blocks, [["### A"], ["- one", "  wrapped line", "  - sub"], ["* two", "loose text"]])
 
 
 class MainTestCase(unittest.TestCase):

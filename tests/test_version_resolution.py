@@ -12,6 +12,7 @@ tests/integration/test_version_git_fixture.py）。钉住的行为：
   - doctor `version` 行：无 stamp = WARN、stamp ≠ describe = WARN、一致 = OK、
     非 git checkout 有 stamp = OK；永不 FAIL。
 """
+import os
 import subprocess
 import tempfile
 import unittest
@@ -50,7 +51,7 @@ class DescribeTestCase(unittest.TestCase):
         run = fake_git("v0.48.16-0-g61cfed6\n")
         self.assertEqual(ver.git_describe(Path("/repo"), run), ("0.48.16", 0))
         argv = run.calls[0]
-        self.assertEqual(argv[:3], ["git", "-C", "/repo"])
+        self.assertEqual(argv[:3], ["git", "-C", str(Path("/repo"))])  # str(): Windows spells it \repo
         self.assertIn("--long", argv)
         self.assertIn("--tags", argv)
 
@@ -133,6 +134,9 @@ class ComputeAndResolveTestCase(unittest.TestCase):
         self.assertEqual(ver.read_stamp(self.stamp), "0.48.17+2")
         self.assertEqual([p.name for p in self.stamp.parent.iterdir()], ["_version.py"],
                          "atomic write must leave no temp file behind")
+        if os.name == "posix":
+            # mkstemp's 0600 would break the .pkg postinstall rsync (root-owned payload read as the user)
+            self.assertEqual(os.stat(self.stamp).st_mode & 0o777, 0o644)
 
     def test_read_stamp_rejects_garbage(self):
         self.assertIsNone(ver.read_stamp(self.tmp / "missing.py"))

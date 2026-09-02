@@ -84,13 +84,42 @@ def _drop_empty_groups(lines: list) -> list:
     return groups.result()
 
 
+def _starts_entry(line: str, blocks: list) -> bool:
+    """``### 组`` 标题、顶格 bullet、或没有可归属的前块（首行 / 前块是标题）= 新块。"""
+    if _H3_RE.match(line) or line[:2] in ("- ", "* "):
+        return True
+    return not blocks or bool(_H3_RE.match(blocks[-1][0]))
+
+
+def _entries(lines: list) -> list:
+    """把 [Unreleased] 的行切成条目块：``### 组`` 标题自成一块；``- `` / ``* `` 顶格
+    bullet 开新块，其后的缩进续行（子项、折行）归入同一块；空行不进块。"""
+    blocks: list = []
+    for line in lines:
+        if not line.strip():
+            continue
+        if _starts_entry(line, blocks):
+            blocks.append([line])
+        else:
+            blocks[-1].append(line)
+    return blocks
+
+
 def release_notes(current: str, previous: str = "") -> str:
-    """本版正文：current 的 [Unreleased] 行中不在 previous 的 [Unreleased] 里的
-    那些（``### `` 分组标题总是保留，随后由 _drop_empty_groups 清掉空组）。"""
-    now = unreleased_section(current)
-    seen = set(line.strip() for line in unreleased_section(previous) if line.strip())
-    kept = [line for line in now if _H3_RE.match(line) or not line.strip() or line.strip() not in seen]
+    """本版正文：current 的 [Unreleased] **条目**中不在 previous 的 [Unreleased] 里的
+    那些（整块比较——两个不同 bullet 共用同一句子项续行时子项不会被误删；``### ``
+    分组标题总是保留，随后由 _drop_empty_groups 清掉空组）。"""
+    now = _entries(unreleased_section(current))
+    seen = {_key(block) for block in _entries(unreleased_section(previous)) if not _H3_RE.match(block[0])}
+    kept: list = []
+    for block in now:
+        if _H3_RE.match(block[0]) or _key(block) not in seen:
+            kept.extend(block)
     return "\n".join(_drop_empty_groups(kept))
+
+
+def _key(block: list) -> str:
+    return "\n".join(line.strip() for line in block)
 
 
 def main(argv=None) -> int:

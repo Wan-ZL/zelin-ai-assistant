@@ -64,7 +64,9 @@ class LabelsAndSubjectTestCase(unittest.TestCase):
         self.assertEqual(ver.pr_number_from_subject("feat(x): y (#141)\n\nbody (#7)"), 141)
         self.assertEqual(ver.pr_number_from_subject("fix: no pr"), None)
         self.assertEqual(ver.pr_number_from_subject(""), None)
-        self.assertEqual(ver.pr_number_from_subject("Merge pull request #12 from x"), None)
+        # merge commits (the merge queue's MERGE method produces these) carry the number up front
+        self.assertEqual(ver.pr_number_from_subject("Merge pull request #12 from Wan-ZL/feat/x\n\nfeat: x"), 12)
+        self.assertEqual(ver.pr_number_from_subject("Merge branch 'main' into feat/x"), None)
 
 
 class CliTestCase(unittest.TestCase):

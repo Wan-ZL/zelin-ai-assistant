@@ -45,6 +45,7 @@ _TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _DESCRIBE_RE = re.compile(r"^(v?\d+\.\d+\.\d+)-(\d+)-g[0-9a-fA-F]+$")
 _VERSION_LINE_RE = re.compile(r'^__version__ = "([^"]*)"', re.M)
 _PR_SUBJECT_RE = re.compile(r"\(#(\d+)\)\s*$")
+_PR_MERGE_RE = re.compile(r"^Merge pull request #(\d+)\b")
 
 BUMPS = ("patch", "minor", "major")
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -150,13 +151,16 @@ def stamp_text(version: str) -> str:
 
 
 def write_stamp(version: str, path: Optional[Path] = None) -> Path:
-    """原子写 act/_version.py（tmp + rename）。调用方决定内容；这里不判断。"""
+    """原子写 act/_version.py（tmp + rename，0644）。调用方决定内容；这里不判断。
+    mkstemp 默认 0600——.pkg 把 payload 装成 root-owned 后 postinstall 以登录用户
+    rsync，0600 的 stamp 会让整个同步失败（Codex review #142 P1）。"""
     target = Path(path or STAMP_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix="._version-", suffix=".py", dir=str(target.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(stamp_text(version))
+        os.chmod(tmp, 0o644)
         os.replace(tmp, str(target))
     except BaseException:
         try:
@@ -241,7 +245,8 @@ def bump_from_labels(labels: Iterable[str]) -> str:
 
 
 def pr_number_from_subject(subject: str) -> Optional[int]:
-    """merge commit 首行 ``… (#141)`` → 141；squash 也是这个形状。没有 → None。"""
+    """被合并的 PR 号：squash 首行 ``… (#141)`` → 141；merge commit（merge queue 的
+    MERGE 方法也是这个形状）首行 ``Merge pull request #141 from …`` → 141。没有 → None。"""
     first = (subject or "").strip().splitlines()[0] if (subject or "").strip() else ""
-    m = _PR_SUBJECT_RE.search(first)
+    m = _PR_MERGE_RE.match(first) or _PR_SUBJECT_RE.search(first)
     return int(m.group(1)) if m else None

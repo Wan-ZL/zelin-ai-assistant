@@ -16,7 +16,9 @@
 # release.yml on it — release.yml therefore also accepts workflow_dispatch.
 #
 # IDEMPOTENT: a re-run finds the pushed commit already tagged and does
-# nothing. SERIALIZED: the concurrency group runs one push at a time, so two
+# nothing — unless the tag exists but release.yml was never dispatched (a
+# first run that died between the two steps): then it re-dispatches once.
+# SERIALIZED: the concurrency group runs one push at a time, so two
 # quick merges take consecutive numbers (GitHub keeps at most one run
 # pending per group — a third rapid push cancels the pending middle one; the
 # newest main then gets the next tag and carries the middle commit inside
@@ -71,7 +73,22 @@ jobs:
           git fetch --quiet --tags --force origin
           EXISTING="$(git tag --points-at "$PUSHED_SHA" -l 'v[0-9]*' | python3 scripts/ci/release_tags.py highest || true)"
           if [ -n "$EXISTING" ]; then
-            echo "commit ${PUSHED_SHA} is already tagged ${EXISTING} — nothing to do (re-run or duplicate event)"
+            # re-run / duplicate event. The tag is done; the only thing that can
+            # still be missing is the release.yml dispatch (a first run that died
+            # between the two steps) — re-dispatch only when NO release run for
+            # this tag exists at all (a running one would otherwise get a twin
+            # that fails at `gh release create`).
+            if gh release view "$EXISTING" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "commit ${PUSHED_SHA} is already tagged ${EXISTING} and released — nothing to do"
+              exit 0
+            fi
+            RUNS="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$EXISTING" --limit 1 --json databaseId --jq 'length' 2>/dev/null || echo 0)"
+            if [ "${RUNS:-0}" != "0" ]; then
+              echo "commit ${PUSHED_SHA} is already tagged ${EXISTING}; release.yml already ran/runs for it — nothing to do"
+              exit 0
+            fi
+            echo "commit ${PUSHED_SHA} is tagged ${EXISTING} but release.yml never ran — re-dispatching"
+            gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "${EXISTING}"
             exit 0
           fi
           BUMP="patch"
