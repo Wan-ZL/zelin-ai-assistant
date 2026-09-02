@@ -106,12 +106,13 @@ class ArchiveExclusionAndCollisionTestCase(LifecycleBase):
         self.assertNotIn("R-050", quick_capture.registry_inventory_text())
 
     def test_next_id_and_load_scan_archive_dir(self):
-        r = self._seed("R-050", "sealed", State.DELIVERED.value)
+        r = self._seed("P-050", "sealed", State.DELIVERED.value)
         registry.archive(r, "user")
-        # CRITICAL: id must not be reissued (would overwrite the archived card)
-        self.assertEqual(registry.next_id(), "R-051")
+        # CRITICAL: id must not be reissued (would overwrite the archived card).
+        # §60（D21）：next_id 发 P- 主键，归档扫描语义不变
+        self.assertEqual(registry.next_id(), "P-051")
         # load still resolves the archived card (unarchive path depends on it)
-        loaded = registry.load("R-050")
+        loaded = registry.load("P-050")
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.status, State.ARCHIVED.value)
 

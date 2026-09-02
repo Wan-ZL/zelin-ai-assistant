@@ -79,7 +79,8 @@ class ActivationTestCase(unittest.TestCase):
         self.assertTrue(any("ACTIVATED" in ln for ln in lines), lines)
         self.assertEqual(registry.backend(), registry.BACKEND_SQLITE)
         self.assertEqual(registry.load_all(), [])
-        self.assertEqual(registry.next_id(), "R-001")
+        self.assertEqual(registry.next_id(), "P-001")      # §60：P- 主键
+        self.assertEqual(registry.next_work_id(), "R-001")
 
     def test_unknown_key_refuses_and_yaml_stays_truth(self):
         _seed("R-001")

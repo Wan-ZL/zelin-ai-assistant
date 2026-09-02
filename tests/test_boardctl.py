@@ -80,16 +80,23 @@ class BoardReadTest(_CtlBase):
         doc = self.ok_json("board", "--lane", "needs_approval")
         self.assertEqual(doc["lane"], "needs_approval")
         ids = [row["id"] for row in doc["cards"]]
-        self.assertIn("R-101", ids)
+        self.assertIn("P-101", ids)
 
     def test_board_unknown_lane_is_usage_error(self):
         err = self.err_json(2, "board", "--lane", "bogus")
         self.assertEqual(err["code"], "USAGE_ERROR")
 
     def test_card_detail_merges_lane(self):
-        doc = self.ok_json("card", "R-101")
-        self.assertEqual(doc["card"]["id"], "R-101")
+        doc = self.ok_json("card", "P-101")
+        self.assertEqual(doc["card"]["id"], "P-101")
         self.assertEqual(doc["card"]["lane"], "needs_approval")
+
+    def test_card_detail_by_work_id(self):
+        # §60.3：CARD_ID 也可以是工作编号（demo running 卡 P-105 的 R-105）
+        doc = self.ok_json("card", "R-105")
+        self.assertEqual(doc["card"]["id"], "P-105")
+        self.assertEqual(doc["card"]["display_id"], "R-105")
+        self.assertEqual(doc["card"]["lane"], "running")
 
     def test_card_bad_id_fails_client_side(self):
         err = self.err_json(2, "card", "../../etc/passwd")
@@ -154,26 +161,26 @@ class WriteVerbsTest(_CtlBase):
         self.assertEqual(self.inbox_files(), [])
 
     def test_comment_writes_inbox_file(self):
-        doc = self.ok_json("comment", "R-101", "--body",
+        doc = self.ok_json("comment", "P-101", "--body",
                            "progress: tests green, risk none")
         self.assertTrue(doc["ok"])
         self.assertEqual(doc["action"], "comment")
         rec = json.loads(self.inbox_files()[0].read_text(encoding="utf-8"))
         self.assertEqual(rec["action"], "comment")
-        self.assertEqual(rec["id"], "R-101")
+        self.assertEqual(rec["id"], "P-101")
         self.assertEqual(rec["comment"], "progress: tests green, risk none")
         self.assertEqual(rec["via"], "agent")   # T-28 自报家门（comment 同款）
         self.assertNotIn("actor", rec)
 
     def test_comment_empty_body_fails_closed(self):
-        self.err_json(2, "comment", "R-101", "--body", "   ")
+        self.err_json(2, "comment", "P-101", "--body", "   ")
         self.assertEqual(self.inbox_files(), [])
 
     def test_state_verbs_are_not_subcommands(self):
         # permission wall 的 CLI 面:决策动词连子命令都不是(exit 2,零落盘)
         for verb in ("approve", "reject", "accept", "rework", "trash",
                      "archive", "merge_apply", "restore"):
-            err = self.err_json(2, verb, "R-101")
+            err = self.err_json(2, verb, "P-101")
             self.assertEqual(err["code"], "USAGE_ERROR")
         self.assertEqual(self.inbox_files(), [])
 

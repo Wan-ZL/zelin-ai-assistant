@@ -2,10 +2,11 @@
 
 契约：docs/CONTRACT.md §53（schema 版本纪律 + 状态机白名单 + agent 转移墙 +
 激活协议）。v0.48.8（D2）起接线：act/lib/registry.py 是唯一调用门面
-（put_card/list_cards/get_card/purge_trashed），callers 永远不直接 import 本模块。
+（put_card/list_cards/get_card/get_card_by_work_id/purge_trashed），callers 永远不直接 import 本模块。
 
 职责（B2，与 schema.md「给 B2/B3/B4 的接口约定」逐条对应）：
-* 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接
+* 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接；
+  并发首开的 DELETE→WAL 转换输家短退避重试（锁升级冲突 = 立即 BUSY，不等 busy_timeout）
 * 写事务 helper：BEGIN IMMEDIATE → board_revision +1 → 新值盖到被触碰卡的 board_rev → COMMIT
   （子表 notes/sources/dispatches 变更也 bump 所属卡；no-op 不写不 bump）
 * CAS 三件套（抄 dashi database.mjs:2181-2211 / #requireVersion / #throwMissingOrConflict 模式）：
@@ -25,21 +26,29 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import sqlite3
+import sys
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
-SCHEMA_VERSION = 1
+# schema 版本（§53.1）：schema.sql 末尾的 PRAGMA user_version 必须等于它；
+# 旧库按 _UPGRADES 逐级升到它（v1→v2 是本 repo 第一级梯子，§60/D21）。升级单向
+# ——旧代码 fail-closed 打不开新库，踏出每级前 _pre_upgrade_snapshot 先留退路。
+SCHEMA_VERSION = 2
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # 卡片热列全集（schema.sql cards 表）——行↔dict 转换与 create_card 白名单的共同真源。
-# PUBLIC：migrate_yaml 的 INSERT/回读列表 import 本表，热列顺序只有一份
+# PUBLIC：migrate_yaml 的 INSERT/回读列表 import 本表，热列顺序只有一份。
+# work_id（v2）排最后 = ALTER TABLE ADD COLUMN 追加后的物理列序，与 schema.sql 同序。
 CARD_COLUMNS = (
     "id", "status", "prev_status", "tier", "type", "title", "origin_trust",
     "target_repo", "deadline", "created", "updated", "version",
     "merged_into_id", "board_rev", "tombstone", "last_actor_type", "payload",
+    "work_id",
 )
 # create_card 允许显式传入的键（migration 需要完整控制出生形态；version/board_rev 由 store 管）
 _CREATE_KEYS = frozenset(CARD_COLUMNS) - {"version", "board_rev", "tombstone", "last_actor_type"}
@@ -58,7 +67,7 @@ _DISPATCH_END_STATES = ("completed", "failed", "stopped")
 _TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "AGENT_FIELD_FORBIDDEN",
                      "ORIGIN_TRUST_USER_ONLY", "ILLEGAL_TRANSITION")
 _INTEGRITY_CODES = (
-    "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE",
+    "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE", "WORK_ID_SET_ONCE",
     "NOTES_APPEND_ONLY", "NOTES_RECEIPT_SET_ONCE",
     "ACTIVITIES_APPEND_ONLY", "WHITELIST_APPEND_ONLY", "REVISION_MONOTONIC",
 )
@@ -103,20 +112,82 @@ class IntegrityViolation(StoreError):
     """其余 schema 执法：append-only、tombstone 冻结、去重键、one_active……"""
 
 
+# UNIQUE 约束按索引名/列名细分（sqlite 的 IntegrityError 消息二者其一）
+_UNIQUE_CODES = (
+    (("sources_dedup", "sources.channel"), "SOURCE_DUPLICATE"),
+    (("dispatches_one_active", "dispatches.card_id"), "DISPATCH_ACTIVE"),
+    # §60.2 工作编号撞号（并发分配）——响亮拒绝，绝不静默复用
+    (("cards_work_id", "cards.work_id"), "WORK_ID_DUPLICATE"),
+)
+
+
+def _first_code(msg: str, codes) -> Optional[str]:
+    return next((c for c in codes if c in msg), None)
+
+
 def _translate_integrity(e: sqlite3.IntegrityError) -> StoreError:
     """trigger RAISE 消息即错误码；UNIQUE 约束按索引名细分（fail-closed 兜底 INTEGRITY_ERROR）。"""
     msg = str(e)
-    for code in _TRANSITION_CODES:
-        if code in msg:
-            return TransitionDenied(code, msg)
-    for code in _INTEGRITY_CODES:
-        if code in msg:
-            return IntegrityViolation(code, msg)
-    if "sources_dedup" in msg or "sources.channel" in msg:
-        return IntegrityViolation("SOURCE_DUPLICATE", msg)
-    if "dispatches_one_active" in msg or "dispatches.card_id" in msg:
-        return IntegrityViolation("DISPATCH_ACTIVE", msg)
+    code = _first_code(msg, _TRANSITION_CODES)
+    if code:
+        return TransitionDenied(code, msg)
+    code = _first_code(msg, _INTEGRITY_CODES)
+    if code:
+        return IntegrityViolation(code, msg)
+    for needles, unique_code in _UNIQUE_CODES:
+        if _first_code(msg, needles):
+            return IntegrityViolation(unique_code, msg)
     return IntegrityViolation("INTEGRITY_ERROR", msg)
+
+
+# --------------------------------------------------------------------------- #
+# schema 升级梯子（§53.1）：{from_version: upgrade_fn}，每级幂等、单事务、
+# 末尾钉 user_version=from+1。crash window 判例：任一级中途崩溃 = 版本没动 =
+# 下次开库重跑同一级补全（ALTER TABLE ADD COLUMN 不幂等，所以先查 table_info）。
+# 升级 DDL 与 schema.sql 的全新库形状必须收敛（判例比对 sqlite_master）。
+# --------------------------------------------------------------------------- #
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
+    """v1 → v2（v0.48.15，§60/D21）：cards.work_id 列 + 唯一索引 + set-once 触发器。
+    存量行 work_id 一律 NULL（legacy 卡不回填，§60.4：显示名回落主键）。"""
+    if not _has_column(conn, "cards", "work_id"):
+        conn.execute("ALTER TABLE cards ADD COLUMN work_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS cards_work_id"
+        " ON cards(work_id) WHERE work_id IS NOT NULL")
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS cards_work_id_set_once\n"
+        "BEFORE UPDATE OF work_id ON cards\n"
+        "WHEN OLD.work_id IS NOT NULL AND NEW.work_id IS NOT OLD.work_id\n"
+        "BEGIN\n"
+        "  SELECT RAISE(ABORT, 'WORK_ID_SET_ONCE');\n"
+        "END")
+    conn.execute("PRAGMA user_version = 2")
+
+
+_UPGRADES = {1: _upgrade_1_to_2}
+
+
+def _check_known_version(version: int) -> int:
+    """未来版本的库 fail-closed：绝不带着不认识的 schema 盲写。"""
+    if version > SCHEMA_VERSION:
+        raise StoreError(
+            "SCHEMA_VERSION_MISMATCH",
+            f"db user_version={version}, store2 supports {SCHEMA_VERSION}",
+            {"db_version": version, "supported": SCHEMA_VERSION},
+        )
+    return version
+
+
+def pre_upgrade_snapshot_path(db_path, from_version: int) -> Path:
+    """踏出 ``from_version`` 这一级梯子前留下的整库快照落点：``<db>.pre-v<from>``
+    （§53.1 单向门条款）。PUBLIC：TROUBLESHOOTING 的降级步骤、doctor/测试都
+    按这个名字找——一级一份、随该级每次重跑刷新，数量 ≤ SCHEMA_VERSION−1
+    （防腐 #4：天然有帽）。"""
+    return Path(f"{db_path}.pre-v{int(from_version)}")
 
 
 # --------------------------------------------------------------------------- #
@@ -200,18 +271,13 @@ class Store:
         conn = self._conn()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
-            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；user_version=1 是
+            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；user_version 钉扎是
             # 其**最后一条**语句——建库途中崩溃时版本仍是 0，这里重跑即补全
             conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
             return
-        if version != SCHEMA_VERSION:
-            # 未来版本的库 fail-closed：绝不带着不认识的 schema 盲写
-            raise StoreError(
-                "SCHEMA_VERSION_MISMATCH",
-                f"db user_version={version}, store2 supports {SCHEMA_VERSION}",
-                {"db_version": version, "supported": SCHEMA_VERSION},
-            )
+        _check_known_version(version)
         # 版本号对但核心表缺席 = 半截库/手写 pragma 伪装——版本门不许被绕过
+        # （升级前先验：ALTER 一张不存在的表只会报更难懂的错）
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
                         " AND name = 'cards'").fetchone() is None:
             raise StoreError(
@@ -219,6 +285,109 @@ class Store:
                 f"db user_version={version} but core tables are missing",
                 {"db_version": version},
             )
+        while version < SCHEMA_VERSION:
+            # 逐级升级（§53.1 梯子）：每级一个事务，末尾钉版本；缺级 = fail-closed
+            version = self._upgrade_one_level(conn, version)
+
+    def _upgrade_one_level(self, conn: sqlite3.Connection, version: int) -> int:
+        """踏出 ``version`` 这一级梯子（写锁下复核版本）；返回之后的 user_version。"""
+        step = _UPGRADES.get(version)
+        if step is None:
+            raise StoreError(
+                "SCHEMA_UPGRADE_MISSING",
+                f"no upgrade path from user_version={version}",
+                {"db_version": version, "supported": SCHEMA_VERSION},
+            )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # 写锁下复核版本：并发开库者可能已把这一级升完（快照必须拍在
+            # 「确认此级尚未踏出」之后，否则拍到的是升级后的形状）
+            cur = conn.execute("PRAGMA user_version").fetchone()[0]
+            if cur != version:
+                conn.execute("COMMIT")
+                return _check_known_version(cur)
+            # §53.1 单向门条款：踏出一级前先留 pre-v<from> 整库快照——旧代码
+            # 打不开升级后的库（fail-closed），这份快照是 D17 代码回滚落到
+            # 旧版本时唯一能被旧代码打开的账本副本。拍不下来 = 拒绝升级
+            # （异常穿过下面的 except → ROLLBACK，版本与形状都留在 from）。
+            self._pre_upgrade_snapshot(version)
+            step(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            self._rollback(conn)
+            raise
+        after = conn.execute("PRAGMA user_version").fetchone()[0]
+        if after != version + 1:
+            # 升级函数忘了钉版本 = 死循环/半态——当场拒绝
+            raise StoreError(
+                "SCHEMA_UPGRADE_BROKEN",
+                f"upgrade from {version} left user_version={after}",
+                {"db_version": after, "expected": version + 1},
+            )
+        # 单向门踏出的审计痕迹（registry.py 同款 stderr 口径）：版本 + 快照落点
+        print(f"store2: schema v{version} -> v{after} upgraded; pre-upgrade snapshot: "
+              f"{pre_upgrade_snapshot_path(self._db_path, version)}", file=sys.stderr)
+        return after
+
+    def _pre_upgrade_snapshot(self, from_version: int) -> None:
+        """升级梯子踏出一级前的整库快照（§53.1 单向门条款，v0.48.15）。
+
+        落点 :func:`pre_upgrade_snapshot_path`（``<db>.pre-v<from>``，同目录），
+        **每次踏出该级都刷新**：调用点持有 BEGIN IMMEDIATE 写锁并已复核
+        ``user_version == from``，所以拍到的永远是「最近一次踏出这一级之前」
+        的已提交状态——恢复快照 → 旧代码跑一阵 → 再部署新代码 这条真实路径
+        上，第一份快照早已过时，只认第一份反而丢写入。梯子是单向的：旧代码对
+        更高 ``user_version`` fail-closed（SCHEMA_VERSION_MISMATCH），D17 自动
+        部署把代码回滚到旧版本后，这份快照是旧代码唯一打得开的账本副本
+        （人工步骤 = docs/TROUBLESHOOTING.md「store2 回滚」schema 降级段）。
+        拍不下来 = ``SCHEMA_SNAPSHOT_FAILED`` 拒绝升级，DB 留在旧版本（新旧
+        代码此刻都还能跑它）——没有退路的单向门不许自动踏过（宪法第 2 条）。
+
+        一致性：本事务尚未写任何东西；**独立**连接经 ``sqlite3`` backup API
+        读到的最后已提交状态恰是升级前的全量（持写锁的连接自己 backup 会在
+        WAL 下死锁——实测；WAL 读不阻塞写者，rollback-journal 下 RESERVED
+        锁仍允许 SHARED 读，backup 在本线程内先完成、EXCLUSIVE 升级在其后）。
+        快照切回 ``journal_mode=DELETE`` 成单文件（backup 会连 WAL 头标一起
+        抄过来，否则日后一开就长出 -wal/-shm）；先写 ``.tmp-<pid>`` 再
+        rename——绝不留半截快照，失败时连 tmp 的旁文件一起清掉。
+        """
+        dst = pre_upgrade_snapshot_path(self._db_path, from_version)
+        tmp = dst.with_name(dst.name + f".tmp-{os.getpid()}")
+        try:
+            src = sqlite3.connect(self._db_path)
+            try:
+                src.execute("PRAGMA busy_timeout = 5000")
+                out = sqlite3.connect(str(tmp))
+                try:
+                    src.backup(out)
+                    out.execute("PRAGMA journal_mode = DELETE")
+                finally:
+                    out.close()
+            finally:
+                src.close()
+            self._unlink_side_files(tmp)
+            tmp.replace(dst)
+        except (sqlite3.Error, OSError) as e:
+            for leftover in (tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm")):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+            raise StoreError(
+                "SCHEMA_SNAPSHOT_FAILED",
+                f"cannot snapshot db before the v{from_version} upgrade: {e}",
+                {"db_version": from_version, "snapshot": str(dst)},
+            ) from e
+
+    @staticmethod
+    def _unlink_side_files(db: Path) -> None:
+        """快照 tmp 在 backup 期间短暂处于 WAL 模式留下的 -wal/-shm（切回
+        DELETE 后已无内容）——rename 前清掉，别让孤儿旁文件留在 state/。"""
+        for side in (Path(f"{db}-wal"), Path(f"{db}-shm")):
+            try:
+                side.unlink()
+            except FileNotFoundError:
+                pass
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -227,8 +396,20 @@ class Store:
             conn = sqlite3.connect(self._db_path, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")     # per-connection！（schema.md 约定）
-            conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA busy_timeout = 5000")
+            # WAL 转换（DELETE→WAL）需要瞬时独占；并发首开时输家拿到的是
+            # **立即** SQLITE_BUSY——sqlite 判定这类锁升级冲突为潜在死锁，
+            # 不等 busy_timeout（Windows CI 实测三个并发 opener 当场
+            # 'database is locked'）。短退避重试直到赢家转完：已是 WAL 的库
+            # （live 自 v0.48.8 出生即 WAL）这条 pragma 是无锁读、首次即成；
+            # 极端不收敛时按现有 journal 模式继续——正确性不依赖 WAL，
+            # BEGIN IMMEDIATE + busy_timeout 的事务纪律照常成立。
+            for _attempt in range(100):
+                try:
+                    conn.execute("PRAGMA journal_mode = WAL")
+                    break
+                except sqlite3.OperationalError:
+                    time.sleep(0.05)
             self._local.conn = conn
         return conn
 
@@ -303,6 +484,13 @@ class Store:
             raise NotFound("card", card_id)
         return self._row_to_card(row)
 
+    def get_card_by_work_id(self, work_id: str) -> Optional[dict]:
+        """按工作编号取卡（§60.3；cards_work_id 唯一索引保证至多一行）。
+        无 → None（不抛：resolve 的两步查找里「不是工作号」是常态）。"""
+        row = self._conn().execute(
+            "SELECT * FROM cards WHERE work_id = ?", (str(work_id),)).fetchone()
+        return None if row is None else self._row_to_card(row)
+
     def list_cards(self, status: Optional[str] = None, include_tombstones: bool = False) -> list[dict]:
         sql = "SELECT * FROM cards"
         where, args = [], []
@@ -363,8 +551,9 @@ class Store:
             conn.execute(
                 "INSERT INTO cards (id, status, prev_status, tier, type, title,"
                 " origin_trust, target_repo, deadline, created, updated, version,"
-                " merged_into_id, board_rev, tombstone, last_actor_type, payload)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)",
+                " merged_into_id, board_rev, tombstone, last_actor_type, payload,"
+                " work_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)",
                 (
                     card["id"], card["status"], card.get("prev_status"),
                     card.get("tier", "T1"), card.get("type", ""), card["title"],
@@ -373,6 +562,7 @@ class Store:
                     card.get("target_repo"), card.get("deadline"),
                     card.get("created") or now, card.get("updated") or now,
                     card.get("merged_into_id"), rev, actor_type, _dump_json(payload),
+                    card.get("work_id"),
                 ),
             )
             self._append_activity(conn, card["id"], actor_type, actor_id or "create",
@@ -383,7 +573,8 @@ class Store:
     # registry 门面整卡 upsert 的热列键（id/created/updated/version/board_rev/
     # tombstone/last_actor_type/payload 由本层管理，不在此表）
     _PUT_HOT_KEYS = ("status", "prev_status", "tier", "type", "title",
-                     "origin_trust", "target_repo", "deadline", "merged_into_id")
+                     "origin_trust", "target_repo", "deadline", "merged_into_id",
+                     "work_id")      # v2（§60）：set-once 由 trigger 执法
     _SRC_KEYS = ("channel", "who", "date", "ref", "quote")
 
     def put_card(self, card_id: str, payload: dict, hot: dict, sources: list,
@@ -421,15 +612,15 @@ class Store:
                     "INSERT INTO cards (id, status, prev_status, tier, type,"
                     " title, origin_trust, target_repo, deadline, created,"
                     " updated, version, merged_into_id, board_rev, tombstone,"
-                    " last_actor_type, payload)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)",
+                    " last_actor_type, payload, work_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)",
                     (card_id, hot.get("status"), hot.get("prev_status"),
                      hot.get("tier", "T1"), hot.get("type", ""),
                      hot.get("title", ""),
                      hot.get("origin_trust") or "external",
                      hot.get("target_repo"), hot.get("deadline"),
                      now, now, hot.get("merged_into_id"), rev, actor_type,
-                     _dump_json(payload)),
+                     _dump_json(payload), hot.get("work_id")),
                 )
                 for s in src_rows:
                     conn.execute(
@@ -468,15 +659,15 @@ class Store:
             conn.execute(
                 "UPDATE cards SET status = ?, prev_status = ?, tier = ?,"
                 " type = ?, title = ?, origin_trust = ?, target_repo = ?,"
-                " deadline = ?, merged_into_id = ?, payload = ?,"
+                " deadline = ?, merged_into_id = ?, work_id = ?, payload = ?,"
                 " last_actor_type = ?, updated = ?, version = version + 1,"
                 " board_rev = ? WHERE id = ?",
                 (hot.get("status"), hot.get("prev_status"),
                  hot.get("tier", "T1"), hot.get("type", ""),
                  hot.get("title", ""), hot.get("origin_trust") or "external",
                  hot.get("target_repo"), hot.get("deadline"),
-                 hot.get("merged_into_id"), _dump_json(payload), actor_type,
-                 now, rev, card_id),
+                 hot.get("merged_into_id"), hot.get("work_id"),
+                 _dump_json(payload), actor_type, now, rev, card_id),
             )
             if src_changed:
                 conn.execute("DELETE FROM sources WHERE card_id = ?", (card_id,))

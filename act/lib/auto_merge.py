@@ -30,7 +30,6 @@ set diff. Everything here is best-effort and never raises into the daemon.
 from __future__ import annotations
 
 import json
-import re
 from typing import Optional
 
 from act.lib import analytics, config, match_corpus, registry
@@ -60,7 +59,6 @@ CONTACT_MIN_TOKENS = 2
 # capture, and empties carry no signal.
 _GENERIC_WHO = frozenset({"", "zelin"})
 
-_ID_NUM_RE = re.compile(r"^R-(\d+)")
 
 
 def _load_state() -> dict:
@@ -143,9 +141,11 @@ def _outstanding_auto() -> int:
         return MAX_OUTSTANDING
 
 
-def _idnum(rid: str) -> int:
-    m = _ID_NUM_RE.match(str(rid or ""))
-    return int(m.group(1)) if m else 0
+def _idnum(rid: str) -> tuple:
+    r"""「哪张更老」的序键（§60 跨命名空间：legacy R 主键 < P 主键，同空间按
+    数值）。曾是 ``^R-(\d+)`` 取数——P 卡会解析成 0、永远「更老」，合并方向
+    反转（新 P 卡成主卡、存量 R 卡被折进去）。"""
+    return registry.id_sort_key(rid)
 
 
 def record_pair_final(a_id: str, b_id: str) -> None:

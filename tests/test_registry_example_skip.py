@@ -81,7 +81,9 @@ class NumericYamlFieldsNormalizeTestCase(unittest.TestCase):
                 # 曾经：_ID_RE.match(int) -> TypeError，所有新建卡的入口全瘫。
                 # audit finding 3: 文件名 R-004.yaml 占号 —— 重发 R-004 会让
                 # save() 覆盖这张 legacy 卡（静默数据丢失），所以是 R-005。
-                self.assertEqual(registry.next_id(), "R-005")
+                # §60（D21）：R- 范围归工作序列；主键 next_id 在 P- 空间。
+                self.assertEqual(registry.next_work_id(), "R-005")
+                self.assertEqual(registry.next_id(), "P-001")
                 loaded = registry.load_all()
             self.assertEqual([r.id for r in loaded], ["4"])
 

@@ -298,7 +298,8 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
-            req = load(req_id) if req_id else None
+            # §60.3：id 可以是主键或工作编号（web 显示的是后者）；此后一律用 req.id
+            req = registry.resolve(req_id) if req_id else None
 
             if req is None:
                 _log(f"inbox: decision for unknown req {req_id!r} ({action}) — dropped")
@@ -899,7 +900,7 @@ def _apply_split_note(req_id, note_ts) -> str:
              f"(id={type(req_id).__name__}, note_ts={type(note_ts).__name__}) — ignored")
         return "noop"
     rid, ts = req_id.strip(), note_ts.strip()
-    req = load(rid) if rid else None
+    req = registry.resolve(rid) if rid else None      # §60.3 主键或工作编号
     if req is None:
         _log(f"inbox: split_note for unknown req {req_id!r} — dropped")
         return "unknown"
@@ -1098,19 +1099,13 @@ def _apply_merge_review(ids) -> str:
         _log("inbox: merge_review requested but module unavailable — dropped")
         return "noop"
     raw = ids if isinstance(ids, list) else []
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for i in raw:
-        s = str(i or "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            uniq.append(s)
-    if len(uniq) < 2:
-        _log(f"inbox: merge_review needs >=2 distinct ids, got {raw!r} — dropped")
-        return "noop"
-    missing = [i for i in uniq if load(i) is None]
+    # §60.3：ids 可以是主键或工作编号，归一成主键（同卡的两种写法折成一张）
+    uniq, missing = registry.canonical_ids(raw)
     if missing:
         _log(f"inbox: merge_review unknown ids {missing} — dropped")
+        return "noop"
+    if len(uniq) < 2:
+        _log(f"inbox: merge_review needs >=2 distinct cards, got {raw!r} — dropped")
         return "noop"
 
     job = merge_review.create_job(uniq)
@@ -1145,26 +1140,20 @@ def _apply_merge_force(ids, primary) -> str:
     公共规则）；执行失败只 log + 打点 outcome=fail，绝不抛穿轮询（用户可重试）。
     Returns the §5.4 result_status ("running" applied | "noop" dropped/failed)."""
     raw = ids if isinstance(ids, list) else []
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for i in raw:
-        s = str(i or "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            uniq.append(s)
-    prim = str(primary or "").strip()
-    if len(uniq) < 2:
-        _log(f"inbox: merge_force needs >=2 distinct ids, got {raw!r} — dropped")
-        return "noop"
-    if prim not in uniq:
-        _log(f"inbox: merge_force primary {primary!r} not in ids {uniq} — dropped")
-        return "noop"
-    missing = [i for i in uniq if load(i) is None]
+    # §60.3：ids / primary 都可以是主键或工作编号；lineage（merged_into）只认主键
+    uniq, missing = registry.canonical_ids(raw)
     if missing:
         _log(f"inbox: merge_force unknown ids {missing} — dropped")
         return "noop"
-    prim_req = load(prim)
-    if prim_req is not None and str(prim_req.status) in _MERGE_DEAD_STATES:
+    prim_req = registry.resolve(str(primary or "").strip())
+    if prim_req is None or prim_req.id not in uniq:
+        _log(f"inbox: merge_force primary {primary!r} not in ids {uniq} — dropped")
+        return "noop"
+    prim = prim_req.id
+    if len(uniq) < 2:
+        _log(f"inbox: merge_force needs >=2 distinct cards, got {raw!r} — dropped")
+        return "noop"
+    if str(prim_req.status) in _MERGE_DEAD_STATES:
         # a stale board can pick a primary the user meanwhile trashed/merged/
         # archived — folding live cards into it loses them (audit 2026-07-15)
         _log(f"inbox: merge_force primary {prim} is {prim_req.status} — dropped")
@@ -2111,7 +2100,8 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
     张、累计多少钱都不拦。"""
     ad = policy.autodispatch_config(cfg)
     approved = 0
-    for req in sorted(load_all(), key=lambda r: r.id):
+    # §60 跨命名空间 FIFO（legacy R < P，同空间按数值）——字典序会让 P 卡全体插队
+    for req in sorted(load_all(), key=lambda r: registry.id_sort_key(r.id)):
         if req.status != State.CARD_SENT.value:
             continue
         try:
@@ -3293,7 +3283,8 @@ def process_raising(cfg: config.Config) -> int:
                if r.status == registry.State.RAISING.value]
     if not pending:
         return 0
-    req = sorted(pending, key=lambda r: r.id)[0]
+    # §60 跨命名空间 FIFO 取最老的一张——字典序 "P-" < "R-" 会饿死存量 raising 队列
+    req = sorted(pending, key=lambda r: registry.id_sort_key(r.id))[0]
     try:
         analyze.expand_debt(req)  # -> card_sent (or detected+note on failure)
         _log(f"raising: {req.id} expanded -> {req.status}")

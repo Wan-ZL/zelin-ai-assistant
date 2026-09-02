@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import config, deploy_state, failures, health, policy, risk, sources, steer, titles
+from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
 
@@ -426,8 +427,19 @@ def _notes_text(req: Requirement):
 def _title_fields(req: Requirement) -> dict:
     """The §37 add-only row fields shared by every lane projection. Empty
     optionals are omitted (not null) so the payload only grows where there is
-    something to say; Swift reads them with decodeIfPresent."""
-    out: dict = {"display_title": _display_title(req)}
+    something to say; Swift reads them with decodeIfPresent.
+
+    §60（D21）两段式编号的投影面也挂在这里（每条 lane 行都 spread 本函数，
+    一个钩子全覆盖）：``display_id``（恒在 = work_id or id）、``work_id``
+    （有才发）、``id_kind``（work | legacy | proposal；web 据此灰显存量 R
+    主键，不许在客户端按前缀猜——防腐 #10）。``id`` 本身不动：动作回传仍
+    用主键。"""
+    out: dict = {
+        "display_title": _display_title(req),
+        "display_id": _s(registry_ids.display_id(req)),
+        "id_kind": registry_ids.id_kind(req),
+        **_opt("work_id", getattr(req, "work_id", None)),
+    }
     if getattr(req, "user_titled", False):
         out["user_titled"] = True
     former = [str(x) for x in (getattr(req, "former_titles", None) or [])
@@ -530,6 +542,9 @@ def _queued_reason_view(req: Requirement, state: dict) -> Optional[dict]:
         first = blocking[0] if isinstance(blocking, list) and blocking else None
         out = {"kind": "waiting_card"}
         if first:
+            # 主键（lineage 口径）。§60 追记：blocked_by 至今无生产者（T-26
+            # 未立法）；立法时须同车加 add-only ``blocking_display_id`` =
+            # 前置卡的 display_id，web chip「等 R-xx」不得拿主键充数。
             out["blocking_id"] = str(first)
         return out
     if token == "concurrency":

@@ -117,3 +117,42 @@ describe("ProposalCard approve", () => {
     });
   });
 });
+
+describe("ProposalCard §60 two-stage ids (D21)", () => {
+  it("卡面显示 display_id，动作 payload 仍送主键 id", () => {
+    // 已批准过又退回提案的卡：主键 P-012、工作编号 R-280——看到的是 R-280，发出去的是 P-012
+    const card = { ...makeCard("T1"), id: "P-012", work_id: "R-280", display_id: "R-280", id_kind: "work" };
+    render(<ProposalCard card={card} />);
+    expect(screen.getByText("R-280")).toBeTruthy();
+    expect(screen.queryByText("P-012")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({
+      action: "approve",
+      comment: null,
+      id: "P-012",
+    });
+  });
+
+  it("提案卡（未批准）显示 P- 主键；legacy R 主键按 server 的 id_kind 灰显", () => {
+    const { unmount } = render(<ProposalCard card={{ ...makeCard("T1"), id: "P-007", display_id: "P-007", id_kind: "proposal" }} />);
+    const shown = screen.getByText("P-007");
+    expect(shown.className).toBe("card-id");
+    unmount();
+    render(<ProposalCard card={{ ...makeCard("T1"), id: "R-050", display_id: "R-050", id_kind: "legacy" }} />);
+    expect(screen.getByText("R-050").className).toContain("card-id-legacy");
+  });
+
+  it("T2 typed-confirm 弹窗点名的是展示编号，wire 仍是主键", () => {
+    const card = { ...makeCard("T2"), id: "P-012", work_id: "R-280", display_id: "R-280", id_kind: "work" };
+    render(<ProposalCard card={card} />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByText(/Approve R-280:/)).toBeTruthy();
+    const input = screen.getByPlaceholderText("Type 确认 or go");
+    const dialogApprove = screen
+      .getAllByRole("button", { name: "Approve" })
+      .find((b) => b.closest("dialog"))!;
+    fireEvent.change(input, { target: { value: "go" } });
+    fireEvent.click(dialogApprove);
+    expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({ action: "approve", comment: null, id: "P-012" });
+  });
+});

@@ -44,7 +44,7 @@ import yaml
 from .export_yaml import dropped_keys, dump_card_yaml, normalize_card, say
 # 热列顺序同包单源：INSERT 的列表与回读校验的 SELECT 列表都从它派生，
 # schema 加列时迁移自动跟上（曾在这里手抄过一份 17 列 tuple）。
-from .store import CARD_COLUMNS
+from .store import CARD_COLUMNS, SCHEMA_VERSION
 
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _UTC = _dt.timezone.utc
@@ -279,9 +279,10 @@ def check_target(db_path: Path) -> str:
             if not tables:
                 return "empty-file"
             uv = con.execute("PRAGMA user_version").fetchone()[0]
-            if uv != 1 or not set(_DATA_TABLES) <= tables:
+            if uv != SCHEMA_VERSION or not set(_DATA_TABLES) <= tables:
                 raise MigrateError(
-                    f"refuse: {db_path} 已有非 store2-v1 内容（user_version={uv}）")
+                    f"refuse: {db_path} 已有非 store2-v{SCHEMA_VERSION} 内容"
+                    f"（user_version={uv}）")
             for t in _DATA_TABLES:
                 n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608 - 白名单表名
                 if n:

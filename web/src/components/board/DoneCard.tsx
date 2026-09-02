@@ -2,6 +2,7 @@
 //   退回待验收（revert_review：可能对方反馈来了要再看）·
 //   永久完成（archive → 封存，确认弹窗文案统一用「永久完成」，§41）。
 import { useState } from "react";
+import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
 import { cardAction, openCardDetail, useSubmit } from "./boardActions";
@@ -20,9 +21,11 @@ export function DoneCard({ row }: DoneCardProps) {
     ? new Date(row.accepted_at * 1000).toLocaleDateString(locale)
     : null;
 
+  const shownId = displayId(row);   // §60：展示工作编号；动作仍送主键 row.id
+
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(row.id)}>
-      <div className="card-id">{row.id}</div>
+      <div className={isLegacyId(row) ? "card-id card-id-legacy" : "card-id"}>{shownId}</div>
       <div className="card-title">{row.name}</div>
       {(row.delivered_summary || row.summary) && (
         <p className="card-summary">{row.delivered_summary ?? row.summary}</p>
@@ -53,7 +56,7 @@ export function DoneCard({ row }: DoneCardProps) {
 
       {confirmArchive && (
         <ForkDialog
-          title={text(`永久完成 ${row.id}？`, `Done for good — ${row.id}?`)}
+          title={text(`永久完成 ${shownId}？`, `Done for good — ${shownId}?`)}
           body={text(
             "封存这条线程：不再参与匹配、不再提示，后续相关信息会开新卡。可随时从归档「放回看板」。",
             "Seal this thread: no more matching or suggestions; future related info opens a new card. You can always bring it back from the archive.",

@@ -54,7 +54,11 @@ from pathlib import Path
 
 SCENES = ("captured", "initial", "approved", "running", "steer", "review", "done")
 
-HERO_ID = "R-101"  # the card the --scene flag walks through the pipeline
+# §60（D21）两段式编号：主键 P-<n> 出生即定、终身不变；工作编号 R-<m> 只在
+# 进入 approved 时分配。hero 卡主键 P-101，approved 起工作编号 R-101——
+# 看板上人看到的是 display_id（= work_id or id）。
+HERO_ID = "P-101"       # the card the --scene flag walks through the pipeline
+HERO_WORK_ID = "R-101"  # allocated the moment the hero is approved (scene>=approved)
 
 HOME = "~/Projects/zelin-ai-assistant"
 
@@ -86,7 +90,7 @@ def _src(who: str, channel: str, date: str, quote: str) -> dict:
 # fictional dataset
 # --------------------------------------------------------------------------- #
 def _hero_card(now: dt.datetime) -> dict:
-    """R-101 as a needs_approval card (scene=initial)."""
+    """P-101 as a needs_approval card (scene=initial) — no work number yet (§60)."""
     deadline = _date(now, 6)
     return {
         "id": HERO_ID,
@@ -140,7 +144,7 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
     return [
         _hero_card(now),
         {
-            "id": "R-102",
+            "id": "P-102",
             "title": "inkweld: 搭对外可访问的 demo 环境 + 种子数据",
             "summary": "新建 inkweld-demo 仓库，部署一个带种子数据的公开 demo 站。对外可见，所以需要你文字确认。",
             "target_repo": "~/Projects/inkweld-demo",
@@ -182,7 +186,7 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
             "delivery_mode": "repo",
         },
         {
-            "id": "R-103",
+            "id": "P-103",
             "title": "起草 Q3 planning 的 one-pager（中英双语）",
             "summary": "写作任务：Q3 planning 一页纸初稿，会话内交付成稿，不动任何仓库。",
             "target_repo": "~/Projects/workbench",
@@ -220,7 +224,7 @@ def _needs_approval(now: dt.datetime) -> list[dict]:
         },
         # raising placeholder — exact shape dashboard.py emits for status=raising
         {
-            "id": "R-104",
+            "id": "P-104",
             "title": "统一 example-bench 和 inkweld 的 lint 配置",
             "summary": "统一 example-bench 和 inkweld 的 lint 配置",
             "tier": "T1",
@@ -239,7 +243,7 @@ def _running(now: dt.datetime) -> list[dict]:
     e = _epoch(now)
     return [
         {
-            "id": "R-105",
+            "id": "P-105",
             "name": "example-bench: 修 flaky 的 e2e 测试（retry 逻辑）",
             "session_id": "a7c9e2f4-8b31-4d6a-9e05-2f7c8d1b3a54",
             "short_id": "a7c9e2f4",
@@ -264,7 +268,7 @@ def _running(now: dt.datetime) -> list[dict]:
         },
         # queued: approved but not yet dispatched — NO session_id/copy_cmd keys
         {
-            "id": "R-106",
+            "id": "P-106",
             "name": "inkweld: README 快速上手一节重写",
             "state": "queued",
             "summary": "现在的快速上手照着跑会卡在第二步，按新安装脚本重写。",
@@ -279,7 +283,7 @@ def _running(now: dt.datetime) -> list[dict]:
             "queued_reason": {"kind": "concurrency"},
         },
         {
-            "id": "R-107",
+            "id": "P-107",
             "name": "example-bench: 数据集 v2 的 loader 兼容层",
             "session_id": "c3f8a2d1-6e97-4b28-a1c4-9d5e0f7b2c86",
             "short_id": "c3f8a2d1",
@@ -303,7 +307,7 @@ def _running(now: dt.datetime) -> list[dict]:
 def _needs_input(now: dt.datetime) -> list[dict]:
     return [
         {
-            "id": "R-108",
+            "id": "P-108",
             "name": "给 inkweld 接 Supabase auth（需要 service key）",
             "session_id": "d4b8f1c6-2a53-4e79-b8d0-1c6f9a3e5d27",
             "short_id": "d4b8f1c6",
@@ -319,7 +323,7 @@ def _review(now: dt.datetime) -> list[dict]:
     e = _epoch(now)
     return [
         {
-            "id": "R-109",
+            "id": "P-109",
             "name": "example-bench: 评测缓存层（重复 run 提速 10x）",
             "summary": "给 runner 加 content-hash 缓存，重复评测直接读缓存。",
             "dod": ["同 config 重复 run 命中缓存", "缓存失效逻辑有单测", "CI 全绿"],
@@ -344,7 +348,7 @@ def _review(now: dt.datetime) -> list[dict]:
             "delivery_mode": "repo",
         },
         {
-            "id": "R-110",
+            "id": "P-110",
             "name": "写本周 weekly report（发出去前先过目）",
             "summary": "会话内交付：本周周报初稿，验收后自己粘贴发送。",
             "dod": ["覆盖本周两个 project 的进展", "中英双语", "不超过一页"],
@@ -392,7 +396,7 @@ def _completed(now: dt.datetime) -> list[dict]:
     e = _epoch(now)
     return [
         {
-            "id": "R-111",
+            "id": "P-111",
             "name": "example-bench: CI 加 lint gate（ruff + prettier）",
             "session_id": "b9e3d5f7-1a48-4c26-9b70-5e2d8c4a6f13",
             "short_id": "b9e3d5f7",
@@ -407,7 +411,7 @@ def _completed(now: dt.datetime) -> list[dict]:
             "dod": ["PR 未过 lint 无法合并", "本地一条命令自动修复"],
         },
         {
-            "id": "R-112",
+            "id": "P-112",
             "name": "把周会 action items 自动整理成清单",
             "session_id": "a1f5c8e2-7d39-4b64-8c05-2e9b6d3f7a58",
             "short_id": "a1f5c8e2",
@@ -427,7 +431,7 @@ def _completed(now: dt.datetime) -> list[dict]:
 def _debt(now: dt.datetime) -> list[dict]:
     return [
         {
-            "id": "R-113",
+            "id": "P-113",
             "title": "example-bench 的 README 安装一节过时了",
             "summary": "setup 命令已经跑不通，新人第一步就卡住。",
             "hardness": "soft",
@@ -438,7 +442,7 @@ def _debt(now: dt.datetime) -> list[dict]:
             ],
         },
         {
-            "id": "R-114",
+            "id": "P-114",
             "title": "周会纪要没人整理，action items 常丢",
             "summary": "口头说好的事没人记，下周就忘。",
             "hardness": "hard",
@@ -449,7 +453,7 @@ def _debt(now: dt.datetime) -> list[dict]:
             ],
         },
         {
-            "id": "R-115",
+            "id": "P-115",
             "title": "inkweld 报错日志太吵，真错误被淹没",
             "summary": "warning 刷屏，出真错时没人看得见。",
             "hardness": "soft",
@@ -465,7 +469,7 @@ def _debt(now: dt.datetime) -> list[dict]:
 def _trash(now: dt.datetime) -> list[dict]:
     return [
         {
-            "id": "R-116",
+            "id": "P-116",
             "title": "给 slack 加自动回复 bot",
             "summary": "检测到的建议，被拒绝进回收站——不想要自动回复。",
             "kind": "suggestion",
@@ -479,16 +483,16 @@ def _trash(now: dt.datetime) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
-# scenes — walk the hero card (R-101) through the pipeline
+# scenes — walk the hero card (P-101 → work number R-101 once approved) through the pipeline
 # --------------------------------------------------------------------------- #
 def _epoch(now: dt.datetime) -> int:
     return int(now.timestamp())
 
 
 def _hero_captured(now: dt.datetime) -> dict:
-    """R-101 as a raising placeholder — the moment right after a meeting
+    """P-101 as a raising placeholder — the moment right after a meeting
     recording was ingested and radar picked the requirement up (scene=captured).
-    Same shape dashboard.py emits for status=raising (cf. R-104)."""
+    Same shape dashboard.py emits for status=raising (cf. P-104)."""
     return {
         "id": HERO_ID,
         "title": "leaderboard 一键导出评测报告",
@@ -515,9 +519,11 @@ def _hero_queued(now: dt.datetime) -> dict:
         "dod": h["dod"],
         "delivery_mode": "repo",
         "dispatch_error": None,
-        # 同仓 R-105 还在跑 → 排队等它；UI chip「排队中 · 等 R-105」
-        # （meeting-born 卡无 origin_trust 字段——中间档，人批后照常排队派发）
-        "queued_reason": {"kind": "waiting_card", "blocking_id": "R-105"},
+        # 同仓 P-105（工作编号 R-105）还在跑 → 排队等它；UI chip「排队中 · 等 R-105」
+        # （blocking_id = 主键，blocking_display_id = 展示编号，§60 add-only；
+        # meeting-born 卡无 origin_trust 字段——中间档，人批后照常排队派发）
+        "queued_reason": {"kind": "waiting_card", "blocking_id": "P-105",
+                          "blocking_display_id": "R-105"},
     }
 
 
@@ -545,7 +551,7 @@ def _hero_running(now: dt.datetime) -> dict:
 
 
 def _hero_steer(now: dt.datetime) -> dict:
-    """scene=steer——R-101 executing 途中 owner 在卡上留了两条捎话（steer）：
+    """scene=steer——P-101（R-101）executing 途中 owner 在卡上留了两条捎话（steer）：
     第一条已经过 §44.3 送达点注入会话（delivered，带 ISO delivered_at），
     第二条还在等安全窗口（queued，delivered_at 必须为 null）——投递状态诚实
     可见，绝不假装已送达。ts 是 ISO 字符串（带时间戳的 dedup key：同文重申
@@ -643,8 +649,16 @@ def build(scene: str, now: dt.datetime | None = None) -> dict:
     elif scene == "done":
         completed = [_hero_done(now)] + completed
 
-    debt = _debt(now)
-    trash = _trash(now)
+    lanes = {
+        "needs_approval": needs_approval,
+        "running": running,
+        "needs_input": needs_input,
+        "review": review,
+        "completed": completed,
+        "debt": _debt(now),
+        "trash": _trash(now),
+    }
+    _stamp_lane_ids(lanes)
     return {
         "generated_at": _iso(now),
         "counts": {
@@ -653,17 +667,33 @@ def build(scene: str, now: dt.datetime | None = None) -> dict:
             "needs_input": len(needs_input),
             "review": len(review),
             "completed": len(completed),
-            "debt": len(debt),
-            "trash": len(trash),
+            "debt": len(lanes["debt"]),
+            "trash": len(lanes["trash"]),
         },
-        "needs_approval": needs_approval,
-        "running": running,
-        "needs_input": needs_input,
-        "review": review,
-        "completed": completed,
-        "debt": debt,
-        "trash": trash,
+        **lanes,
     }
+
+
+# 批准过的 lane：每行带工作编号（§60）；提案/备选/回收站只有 P- 主键
+_WORK_LANES = ("running", "needs_input", "review", "completed")
+
+
+def _stamp_lane_ids(lanes: dict) -> None:
+    """§60 投影面：批准过的 lane（running/needs_input/review/completed）每行带工作
+    编号 R-<n>（demo 里取主键同号，P-105 → R-105，方便肉眼对账）；提案/备选/
+    回收站只有 P- 主键。display_id / id_kind 与 act/lib/dashboard._title_fields 同式。"""
+    for name, rows in lanes.items():
+        for row in rows:
+            if name in _WORK_LANES:
+                row.setdefault("work_id", "R-" + row["id"][2:])
+            _stamp_ids(row)
+
+
+def _stamp_ids(row: dict) -> None:
+    """§60（D21）：display_id 恒在（= work_id or id）；id_kind ∈ work | proposal
+    （demo 无 legacy 卡——存量 R- 主键只出现在真实迁移安装上）。"""
+    row.setdefault("display_id", row.get("work_id") or row["id"])
+    row.setdefault("id_kind", "work" if row.get("work_id") else "proposal")
 
 
 # --------------------------------------------------------------------------- #
@@ -694,6 +724,24 @@ def _check_epoch(problems: list, where: str, item: dict, *keys: str) -> None:
         if k in item and item[k] is not None and not isinstance(item[k], int):
             problems.append(f"{where}.{k}: epoch fields must be int, "
                             f"got {type(item[k]).__name__}")
+
+
+def _check_optional_str(problems: list, where: str, item: dict, k: str) -> None:
+    if k in item and item[k] is not None and not isinstance(item[k], str):
+        problems.append(f"{where}.{k}: must be str when present")
+
+
+def _check_ids(problems: list, where: str, item: dict) -> None:
+    """§60（add-only optional，老快照可缺席）：work_id/display_id/id_kind 出现时
+    必为 str；work_id 有则 display_id 必等于它（server 公式 display_id = work_id
+    or id）；id_kind 词表 work | legacy | proposal。"""
+    for k in ("work_id", "display_id", "id_kind"):
+        _check_optional_str(problems, where, item, k)
+    wid = item.get("work_id")
+    if wid and item.get("display_id", wid) != wid:
+        problems.append(f"{where}.display_id must equal work_id when set")
+    if item.get("id_kind") not in (None, "work", "legacy", "proposal"):
+        problems.append(f"{where}.id_kind: unknown value {item['id_kind']!r}")
 
 
 def _check_str(problems: list, where: str, item: dict, *keys: str) -> None:
@@ -815,6 +863,7 @@ def validate(dash: dict) -> list[str]:
         _check_sources(problems, w, c.get("sources") or [])
         _check_origin_trust(problems, w, c)
         _check_effective_tier(problems, w, c)
+        _check_ids(problems, w, c)
         if c.get("cost_usd") is not None and not isinstance(c["cost_usd"], (int, float)):
             problems.append(f"{w}.cost_usd: number or null")
 
@@ -826,6 +875,7 @@ def validate(dash: dict) -> list[str]:
             _check_origin_trust(problems, w, t)
             _check_queued_reason(problems, w, t)
             _check_steers(problems, w, t)
+            _check_ids(problems, w, t)
             if t.get("state") == "queued":
                 for k in ("session_id", "copy_cmd", "short_id"):
                     if k in t:
@@ -844,6 +894,7 @@ def validate(dash: dict) -> list[str]:
             problems.append(f"{w}.dod: required list")
         _check_sources(problems, w, r.get("sources") or [])
         _check_origin_trust(problems, w, r)
+        _check_ids(problems, w, r)
         _check_epoch(problems, w, r, "dispatched_at", "review_at")
         if r.get("delivery_mode") not in ("chat", "repo"):
             problems.append(f"{w}.delivery_mode: must be 'chat' or 'repo'")

@@ -59,6 +59,7 @@ FIELD_DEFAULTS = {
     "archived_at": None, "archive_reason": None, "split_from": None,
     "silent_merge_count": 0, "display_title": None, "user_titled": False,
     "former_titles": None, "preset": None,
+    "work_id": None,          # §60（D21）工作编号；None = 未批准/legacy
 }
 
 # import 期 fail-fast：registry 加了字段而这里漏补默认值 = 迁移静默丢字段。
@@ -119,7 +120,7 @@ def normalize_card(raw: dict) -> dict:
         vals["target_repo"] = d["repo"]
     dm = str(vals.get("delivery_mode") or "").strip().lower()
     vals["delivery_mode"] = dm if dm in ("chat", "repo") else "repo"
-    for k in ("id", "title", "tier"):
+    for k in ("id", "title", "tier", "work_id"):
         v = vals[k]
         if v is not None and not isinstance(v, str):
             vals[k] = str(v)

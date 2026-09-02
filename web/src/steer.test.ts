@@ -51,6 +51,8 @@ describe("queuedReasonLabel", () => {
   it("waiting_card 带 blocking_id →「等 R-xx」", () => {
     expect(queuedReasonLabel({ kind: "waiting_card", blocking_id: "R-105" }, zh)).toBe("等 R-105");
     expect(queuedReasonLabel({ kind: "waiting_card", blocking_id: "R-105" }, en)).toBe("waiting on R-105");
+    // §60：blocking_display_id（前置卡工作编号）优先于主键
+    expect(queuedReasonLabel({ kind: "waiting_card", blocking_id: "P-105", blocking_display_id: "R-105" }, en)).toBe("waiting on R-105");
     expect(queuedReasonLabel({ kind: "waiting_card" }, en)).toBe("waiting on another card");
   });
 

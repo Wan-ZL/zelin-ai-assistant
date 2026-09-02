@@ -25,7 +25,9 @@ def _comment(card_id: str) -> dict:
 
 @unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
 class SteerFlagTestCase(unittest.TestCase):
-    """running 场景：R-105/R-107 working、R-106 queued、R-108 blocked（needs_input）。"""
+    """running 场景：R-105/R-107 working、R-106 queued、R-108 blocked（needs_input）。
+    §60 起这些是 demo 卡的**工作编号**（主键 P-1xx）——inbox / is_executing 按
+    工作编号也能指到卡，本类的动作全部用工作编号发，顺带钉住 §60.3。"""
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-m6-steer-"))
@@ -110,9 +112,9 @@ class ProjectionPassthroughTestCase(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp(prefix="zai-m6-passthru-"))
         dash = seed_scene(self.home, "running")
         for row in dash["running"]:
-            if row["id"] == "R-106":
+            if row["id"] == "P-106":           # 主键（工作编号 R-106，§60）
                 row["queued_reason"] = dict(self.QUEUED_REASON)
-            elif row["id"] == "R-105":
+            elif row["id"] == "P-105":
                 row["steers"] = [dict(n) for n in self.STEERS]
         rewrite_board(self.home, dash)
         _httpd, self.port = start_server(self, self.home)
@@ -121,12 +123,14 @@ class ProjectionPassthroughTestCase(unittest.TestCase):
         status, board = get_json(self.port, "/api/board")
         self.assertEqual(status, 200)
         by_id = {row["id"]: row for row in board["running"]}
-        self.assertEqual(by_id["R-106"].get("queued_reason"), self.QUEUED_REASON)
-        self.assertEqual(by_id["R-105"].get("steers"), self.STEERS)
+        self.assertEqual(by_id["P-106"].get("queued_reason"), self.QUEUED_REASON)
+        self.assertEqual(by_id["P-105"].get("steers"), self.STEERS)
 
     def test_card_detail_keeps_queued_reason(self):
+        # 按工作编号取详情（§60.3）：响应 id 恒为主键
         status, detail = get_json(self.port, "/api/cards/R-106")
         self.assertEqual(status, 200)
+        self.assertEqual(detail.get("id"), "P-106")
         self.assertEqual(detail.get("queued_reason"), self.QUEUED_REASON)
         self.assertEqual(detail.get("lane"), "running")
 

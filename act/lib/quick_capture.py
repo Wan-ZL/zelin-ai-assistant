@@ -1,11 +1,11 @@
 """quick_capture — self-DM 快速捕获通道 (CONTRACT §13 #0) + 雷达统一三选一判定 (v0.17).
 
 Zelin 发给自己的 Slack self-DM（一句话 / 一张图的描述）进来后，LLM 对照**当前注册表
-清单**（每条非回收站条目一行 "R-xxx | status | title"，含 delivered/merged）做三选一，
+清单**（每条非回收站条目一行 "<id> | status | title"（id = P-/legacy R- 主键，§60），含 delivered/merged）做三选一，
 只返回一个 JSON 对象：
 
     {"action": "new_proposal", ...card fields}            -> 新卡，status=card_sent
-    {"action": "relates_to", "req": "R-xxx", "note": ...} -> 关联已有条目（detected 则 raise）
+    {"action": "relates_to", "req": "<id>", "note": ...} -> 关联已有条目（detected 则 raise）
     {"action": "ignore", "reason": ...}                   -> 无需行动
 
 ``capture()`` 造 prompt + 跑 headless ``claude -p``（经 act/llm.py 单一边界，复用其 runner_env 的
@@ -27,7 +27,7 @@ Slack 原生路径 / Slack MCP 兜底路径 (act/radar_slack.py) 和 Obsidian �
                              分流由调用方经 high_confidence 保留；
                              confidence="low" = 真实但不紧急 -> 强制落
                              detected/备选，即使调用方预设了 card_sent）
-    relates_to <R-xxx>    -> 先做 merge-cluster 归一（副卡命中挂到主卡）；
+    relates_to <id>       -> 先做 merge-cluster 归一（副卡命中挂到主卡）；
                              REJECTED/TRASHED 命中按未知 id 处理（决策6：
                              拒绝≠已办完，重述重新成卡）。
                              未结卡：折叠为备注+来源（不发新卡；detected 卡
@@ -92,12 +92,12 @@ def _inventory_reqs() -> list:
             if r.status not in (registry.State.TRASHED.value,
                                 registry.State.ARCHIVED.value)]
 
-    def _idnum(r) -> int:
-        # str() 防御第二层（from_dict 已归一 YAML 路径）：一张遗留 int-id 卡
-        # 不能让 capture()/triage() 的清单窗口整个 TypeError（capture 承诺
-        # never raises）。
-        m = registry._ID_RE.match(str(r.id or ""))
-        return int(m.group(1)) if m else 0
+    def _idnum(r) -> tuple:
+        # §60 跨命名空间序键（legacy R 主键 < P 主键，同空间按数值；str() 防御
+        # 在里面——遗留 int-id 卡不能让 capture()/triage() 的清单窗口整个
+        # TypeError，capture 承诺 never raises）。曾按 ``^R-(\d+)`` 取数：P 卡
+        # 算 0 = 「最老」，closed 窗口反排会把刚交付的 P 卡最先挤出清单。
+        return registry.id_sort_key(r.id)
 
     def _closed(r) -> bool:
         return (r.is_merged
@@ -126,7 +126,7 @@ def _display_name(r) -> str:
 def registry_inventory_text(reqs: Optional[list] = None,
                             cfg: Optional[config.Config] = None) -> str:
     """One line per selected requirement (W1-capped window) for the triage/
-    capture LLM, each ``R-xxx | status | title`` plus the card's
+    capture LLM, each ``<id> | status | title`` plus the card's
     display-corpus (§38): a readable 显示名 (when it differs from the frozen
     title) and up to ~6 deterministic keyword aliases — so a card whose title
     is a URL/path is still recognizable to the matcher.
@@ -232,7 +232,7 @@ def build_capture_prompt(text_or_media_desc: str, cfg: Optional[config.Config] =
         '    "confidence": "high|low"（high=现在就要办，进待审批；low=不紧急的'
         "备忘/未来条件性事项，先进潜在任务不打扰）}\n"
         "2) 他在说上面清单里的某个已有条目（含 delivered/merged 既往卡的后续）->\n"
-        '   {"action": "relates_to", "req": "R-xxx", "note": "他补充/追加了什么"}\n'
+        '   {"action": "relates_to", "req": "<清单里的卡片 id，原样照抄>", "note": "他补充/追加了什么"}\n'
         "3) 纯闲聊 / 纯感慨（真的什么都不用记）->\n"
         '   {"action": "ignore", "reason": "为什么不需要行动"}\n'
         "无损原则：这是他【主动发给自己】的快速捕获——他明确要记的备忘（含\"某人说"
@@ -386,7 +386,7 @@ def build_triage_prompt(desc: str, cfg: Optional[config.Config] = None) -> str:
         '    "display_title": "看板显示名（<=40 字中文大白话，动词开头，说清这卡在干什么）"}\n'
         "   （high=现在就需要行动/决策，进提案列；low=真实但不紧急，进潜在任务/Backlog）\n"
         "2) 与清单里某条相关（后续/进展/重述/补充）->\n"
-        '   {"action": "relates_to", "req": "R-xxx", "note": "它补充了什么",\n'
+        '   {"action": "relates_to", "req": "<清单里的卡片 id，原样照抄>", "note": "它补充了什么",\n'
         f'    "needs_action": true|false（现在是否需要 {owner} 新的行动或决策）}}\n'
         '3) 纯信息 / 闲聊 / 已解决 -> {"action": "ignore", "reason": "为什么"}\n'
     )

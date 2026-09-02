@@ -15,6 +15,10 @@ CHECK 能装下的归一值）：
   deadline 不合 ``YYYY-MM-DD`` 置 NULL；target_repo 非 str 兜底 str()。
 - origin_trust：``policy.classify_origin(sources)``（§50 最小信任者定卡，与
   ``registry._stamp_origin`` 同一真源；payload 里的章由 registry 盖，这里只投影）。
+- work_id（schema v2，§60）：payload 的 ``work_id`` 原样投影（非 str 兜底 str()、
+  空串归 NULL）；分配与 set-once 都不在这里——registry.save 分配、trigger 执法。
+  **必须**投影：put_card 的 UPDATE 整替热列，漏掉它 = 每次落盘把编号抹成 NULL
+  （trigger 会响亮拒绝，但那是事故不是设计）。
 """
 from __future__ import annotations
 
@@ -35,11 +39,21 @@ def _text(v) -> Optional[str]:
     return v if v is None or isinstance(v, str) else str(v)
 
 
+def _work_id_column(norm: dict, warnings: list) -> Optional[str]:
+    """payload 的 ``work_id`` → 热列值：非 str 兜底 str()；空串归 NULL（未分配
+    ——UNIQUE 索引对 NULL 不生效、对 '' 会撞）。"""
+    wid = norm.get("work_id")
+    if wid is not None and not isinstance(wid, str):
+        warnings.append(f"work_id {wid!r} 非 str，热列存 str 兜底")
+        wid = str(wid)
+    return wid or None
+
+
 def derive(norm: dict) -> "tuple[dict, list, list]":
     """canonical dict → ``(hot, warnings, errors)``。
 
     ``hot`` 键：status / prev_status / tier / type / title / origin_trust /
-    target_repo / deadline / merged_into_id。errors 非空 = 这张卡的形态 schema
+    target_repo / deadline / merged_into_id / work_id。errors 非空 = 这张卡的形态 schema
     装不下（调用方按各自纪律拒收：迁移整体 refuse，运行时抛 StoreError）。
     """
     warnings: list = []
@@ -105,7 +119,7 @@ def derive(norm: dict) -> "tuple[dict, list, list]":
         "status": hot_status, "prev_status": prev, "tier": tier, "type": typ,
         "title": title, "origin_trust": classify_origin(norm.get("sources")),
         "target_repo": tr, "deadline": hot_deadline,
-        "merged_into_id": merged_into_id,
+        "merged_into_id": merged_into_id, "work_id": _work_id_column(norm, warnings),
     }
     return hot, warnings, errors
 

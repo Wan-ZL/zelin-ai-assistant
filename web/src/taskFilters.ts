@@ -105,7 +105,8 @@ function rowDaysLeft(row: Record<string, unknown>): number | null {
   return Number.isNaN(t) ? null : Math.floor((t - Date.now()) / 86_400_000);
 }
 
-const SEARCH_FIELDS = ["id", "title", "name", "summary", "delivered_summary", "tier", "type"] as const;
+// §60：工作编号 / 展示编号也可搜（用户记的是 R-280，卡的主键可能是 P-012）
+const SEARCH_FIELDS = ["id", "work_id", "display_id", "title", "name", "summary", "delivered_summary", "tier", "type"] as const;
 
 export function matchesCardSearch(row: Record<string, unknown>, search: string): boolean {
   const needle = search.trim().toLowerCase();

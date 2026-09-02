@@ -4,6 +4,7 @@
 // 挂载点：app.tsx（或 BoardPage）加一行 <DetailDrawer />——集成 agent 接线（A7 无权改
 // A5/A6 的文件）。组件自身在 selectedCardId=null 时渲染 null，挂在任何页面都无副作用。
 import { useEffect, useRef, useState } from "react";
+import { displayId, matchesCardRef } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readCardId, readPage } from "../../route";
 import { selectCard, useAppState } from "../../store";
@@ -60,12 +61,18 @@ export function DetailDrawer() {
   const boardRow = board
     ? (["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash"] as const)
       .flatMap((section) => (Array.isArray(board[section]) ? (board[section] as Array<Record<string, unknown>>) : []))
-      .find((row) => row.id === selectedCardId)
+      // §60：?card= 深链可能带工作编号（用户复制看板上的 R-280）——按主键或 work_id 命中
+      .find((row) => typeof row.id === "string" && matchesCardRef(row as { id: string; work_id?: unknown }, selectedCardId))
     : undefined;
   const title = (cardDetail ?? boardRow) as Record<string, unknown> | undefined;
   const heading = (typeof title?.title === "string" && title.title)
     || (typeof title?.name === "string" && title.name)
     || selectedCardId;
+  // 抬头编号 = display_id（server 算好；缺席回落 selectedCardId）；主键不同才并排给出
+  const shownId = title && typeof title.id === "string"
+    ? displayId(title as { id: string; display_id?: unknown; work_id?: unknown })
+    : selectedCardId;
+  const primaryKey = title && typeof title.id === "string" ? (title.id as string) : null;
 
   const onCopyMarkdown = () => {
     if (!cardDetail) return;
@@ -97,7 +104,10 @@ export function DetailDrawer() {
       >
         <header className="zai-drawer-header">
           <div className="zai-drawer-heading">
-            <span className="zai-drawer-id">{selectedCardId}</span>
+            <span className="zai-drawer-id">{shownId}</span>
+            {primaryKey && primaryKey !== shownId && (
+              <span className="zai-drawer-id zai-drawer-id-key" title={text("主键（动作/深链用）", "Primary key (actions / deep links)")}>{primaryKey}</span>
+            )}
             <h2>{heading}</h2>
           </div>
           <div className="zai-drawer-tools">

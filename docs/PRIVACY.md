@@ -111,7 +111,7 @@
 
 - **触发**：仅当你主动给自己的 Slack self-DM 发消息（CONTRACT §13）。
 - **Payload**：你发的文本/媒体描述 + **当前注册表全量清单**（每条非回收站条目一行
-  `R-xxx | status | title`，`act/lib/quick_capture.py`）。出境前过 `sanitize.scrub()`。
+  `<id> | status | title`（id = P-/legacy R- 主键，§60），`act/lib/quick_capture.py`）。出境前过 `sanitize.scrub()`。
 - **关闭**：不发 self-DM 即不触发；`features.slack_radar: false` 关掉整个通道。
 
 ### 6. 欠账扩写（analyze）→ Anthropic + 联网研究工具

@@ -1,6 +1,7 @@
 // 潜在任务卡（debt 行；经 chrome/BacklogStrip 的 renderCard 缝注入——侧条开合归 G4，
 // 本组件只管卡面 + 两个动词，Mac DebtRow 同款）：
 //   研究并提议（raise → AI 扩写成提案）· 删除（trash → 回收站，可恢复，不弹确认）。
+import { displayId, isLegacyId } from "../../cardId";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { DebtCard } from "../../types";
 import { cardAction, openCardDetail, useSubmit } from "./boardActions";
@@ -16,7 +17,8 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
 
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(item.id)}>
-      <div className="card-id">{item.id}</div>
+      {/* §60：备选卡没有工作编号——显示 P- 主键；legacy R 主键灰显 */}
+      <div className={isLegacyId(item) ? "card-id card-id-legacy" : "card-id"}>{displayId(item)}</div>
       <div className="card-title">{item.title}</div>
       {summary && <p className="card-line">{summary}</p>}
       <div className="card-badges">

@@ -3,6 +3,7 @@
 //   Mac 同款自查指令字面量，见 boardActions.REWORK_EMPTY_FALLBACK）·
 //   复制成稿（final_draft 非空时，剪贴板 + 1.5s「已复制 ✓」回执，纯客户端）。
 import { useEffect, useRef, useState } from "react";
+import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ReviewCard as ReviewCardRow } from "../../types";
 import { cardAction, openCardDetail, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
@@ -34,7 +35,8 @@ export function ReviewCard({ card }: ReviewCardProps) {
 
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
-      <div className="card-id">{card.id}</div>
+      {/* §60：展示工作编号（待验收卡必经 approved，恒有）；动作仍送主键 card.id */}
+      <div className={isLegacyId(card) ? "card-id card-id-legacy" : "card-id"}>{displayId(card)}</div>
       <div className="card-title">{card.name}</div>
       {card.delivered_summary && <p className="card-summary">{card.delivered_summary}</p>}
       {card.dod.length > 0 ? (
@@ -77,7 +79,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
 
       {showRework && (
         <TextDialog
-          title={text(`打回 ${card.id}`, `Send back ${card.id}`)}
+          title={text(`打回 ${displayId(card)}`, `Send back ${displayId(card)}`)}
           body={text(
             "反馈会送回原会话继续改。留空 = 让 AI 按验收标准自查改进。",
             "Feedback goes back to the session. Leave empty = AI self-reviews against the DoD.",

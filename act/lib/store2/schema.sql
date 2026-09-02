@@ -1,4 +1,10 @@
--- store2 schema v1 — SQLite 真源的 DDL（CONTRACT §53；v0.48.8 起接线，registry 门面是唯一调用者）
+-- store2 schema v2 — SQLite 真源的 DDL（CONTRACT §53；v0.48.8 起接线，registry 门面是唯一调用者）
+--
+-- 版本史（§53.1 升级梯子在 store.py `_UPGRADES`，每级一个幂等函数）：
+--   v1  v0.48.8  首版（cards/sources/notes/dispatches/activities/board_revision + 触发器）
+--   v2  v0.48.15  §60（D21）两段式编号：cards.work_id 列 + 唯一索引 + set-once 触发器
+-- 本文件永远是「全新库的完整 DDL」；已有库按 user_version 逐级走 _UPGRADES。
+-- **两条路必须收敛到同一形状**（判例 tests/test_two_stage_card_ids.py 比对 sqlite_master）。
 --
 -- 设计根据（真源只读参考，勿改）：
 --   * live docs/CONTRACT.md §1 状态机 + §8/§9/§10/§21/§24/§30/§45 各转移法条
@@ -26,7 +32,7 @@
 -- 原样存 registry YAML 的 JSON 化全文：sources/plan/dod/card/execution/notes…）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS cards (
-  id              TEXT PRIMARY KEY,            -- 'R-xxx'，身份锚点，永不改写
+  id              TEXT PRIMARY KEY,            -- 主键：'P-xxx'（v0.48.15 起出生）或存量 'R-xxx'（legacy），永不改写
   status          TEXT NOT NULL CHECK (status IN (
     'detected', 'card_sent', 'raising', 'approved', 'executing',
     'review', 'delivered', 'rejected', 'trashed', 'merged', 'archived'
@@ -65,6 +71,12 @@ CREATE TABLE IF NOT EXISTS cards (
   last_actor_type TEXT NOT NULL DEFAULT 'system'
                   CHECK (last_actor_type IN ('user', 'agent', 'system')),
   payload         TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload)),
+  -- work_id（schema v2，§60/D21）：人看的工作编号 'R-<m>'，卡进入 approved 时由
+  -- registry.save 分配、set-once（trigger cards_work_id_set_once）。NULL = 从未批准
+  -- 过（提案/备选/回收站）或存量 legacy 卡。热列而非只进 payload：purge_trashed 清
+  -- payload 但保留热列——已硬删卡的编号照样占位，序列永不复用（§60.2）。
+  -- 注：v1→v2 升级用 ALTER TABLE ADD COLUMN 追加，列位置在 payload 之后（这里同序）
+  work_id         TEXT,
   -- 终态一致性：merged 必带父指针；trashed/archived 必带回程票
   -- （migrate_yaml 对缺 prev_status 的 legacy 卡按 live registry 的 restore/
   --  unarchive fallback 回填：trashed→'detected'，archived→'delivered'）
@@ -81,6 +93,10 @@ CREATE INDEX IF NOT EXISTS cards_status_live
   ON cards(status, updated) WHERE tombstone = 0;
 CREATE INDEX IF NOT EXISTS cards_board_rev
   ON cards(board_rev);
+-- 工作编号全局唯一（§60.2）：并发分配撞号 = IntegrityError → StoreError，绝不静默复用；
+-- 也是 resolve(work_id) 的查找索引
+CREATE UNIQUE INDEX IF NOT EXISTS cards_work_id
+  ON cards(work_id) WHERE work_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- sources — 卡片来源引文（CONTRACT §1 sources[{channel,date,ref,quote}] + who）。
@@ -376,6 +392,15 @@ BEGIN
   SELECT RAISE(ABORT, 'CARD_ID_IMMUTABLE');
 END;
 
+-- 工作编号 set-once（§60.1/§37 身份锚点族）：NULL → 值 只许一次；已有值不得改写/清空。
+-- put_card 的 UPDATE 从 payload 推导 work_id——payload 若丢了编号，这里响亮拒绝而不是静默抹掉
+CREATE TRIGGER IF NOT EXISTS cards_work_id_set_once
+BEFORE UPDATE OF work_id ON cards
+WHEN OLD.work_id IS NOT NULL AND NEW.work_id IS NOT OLD.work_id
+BEGIN
+  SELECT RAISE(ABORT, 'WORK_ID_SET_ONCE');
+END;
+
 -- tombstone 行冻结：删过的卡只剩 id+board_rev 供同步，任何字段不得复活
 CREATE TRIGGER IF NOT EXISTS cards_tombstone_frozen
 BEFORE UPDATE ON cards
@@ -450,6 +475,7 @@ END;
 
 -- ---------------------------------------------------------------------------
 -- 版本钉扎 — 必须是本文件**最后一条语句**（测试钉死）：全部 DDL 落地后
--- 版本号才生效，建库途中崩溃 = 版本仍 0 = 下次重跑幂等补全
+-- 版本号才生效，建库途中崩溃 = 版本仍 0 = 下次重跑幂等补全。
+-- 数值必须等于 store.py SCHEMA_VERSION（判例钉死）
 -- ---------------------------------------------------------------------------
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;

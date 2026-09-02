@@ -69,7 +69,11 @@ export function queuedReasonLabel(value: unknown, text: Text): string | null {
     const reason = value as QueuedReason;
     kind = typeof reason.kind === "string" && reason.kind !== "" ? reason.kind : null;
     detail = typeof reason.detail === "string" && reason.detail.trim() !== "" ? reason.detail : null;
-    blocking = typeof reason.blocking_id === "string" && reason.blocking_id !== "" ? reason.blocking_id : null;
+    // §60：前置卡的展示编号（add-only blocking_display_id）优先；缺席回落主键 blocking_id
+    const shown = reason.blocking_display_id;
+    blocking = typeof shown === "string" && shown !== ""
+      ? shown
+      : (typeof reason.blocking_id === "string" && reason.blocking_id !== "" ? reason.blocking_id : null);
   }
   switch (kind) {
     case null:

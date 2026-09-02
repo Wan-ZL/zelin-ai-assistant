@@ -1,5 +1,6 @@
 // 卡片 → markdown 文档（「复制为 Markdown」）。纯函数，输出面向粘贴到笔记/聊天。
 // 只序列化已知语义字段；未知字段不进成文（避免把内部字段泄进分享文本）。
+import { displayId } from "../../cardId";
 import type { CardDetail, CardSource } from "../../types";
 import { parseFoldNotes } from "./foldNotes";
 
@@ -24,8 +25,10 @@ export function cardToMarkdown(detail: CardDetail, text: TextFn): string {
   out.push(`# ${title}`, "");
 
   const meta: string[] = [];
+  // §60：ID 行给展示编号；主键不同时并排（粘贴出去的文本要能定位回卡）
+  const shown = displayId(detail as { id: string; display_id?: unknown; work_id?: unknown });
   const metaPairs: Array<[string, unknown]> = [
-    ["ID", detail.id],
+    ["ID", shown === detail.id ? detail.id : `${shown} (${detail.id})`],
     [text("状态", "Lane"), detail.lane ?? detail.status],
     ["Tier", detail.tier],
     [text("类型", "Type"), detail.type],
