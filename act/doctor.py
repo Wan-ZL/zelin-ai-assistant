@@ -1237,6 +1237,41 @@ def _check_scheduled_tasks(probes: Probes):
     return results
 
 
+def _install_report_cron_status() -> str:
+    """state/install_report.json 里 cron step 的 status；读不了/没有 = ""。"""
+    try:
+        data = json.loads((config.STATE_DIR / "install_report.json")
+                          .read_text(encoding="utf-8"))
+        for step in data.get("steps", []):
+            if isinstance(step, dict) and step.get("name") == "cron":
+                return str(step.get("status") or "")
+    except Exception:  # noqa: BLE001 - 探针不许崩（宪法第 11 条）
+        pass
+    return ""
+
+
+def _cron_write_access_rows(probes: Probes) -> list:
+    """§23 `cron=skipped_tcc`：最近一次 install.sh 想改写 crontab 但被 TCC 拒了
+    （launchd 会话，Operation not permitted）——crontab 里的行可能是旧的，而
+    `_check_cron` 的两行按内容 pattern 判断，旧行照样匹配、照样绿。这行是唯一
+    的窗口；下一次改写成功（cron=ok）它自动消失。2026-09-02 v0.48.12 实战。"""
+    if _install_report_cron_status() != "skipped_tcc":
+        return []
+    _daemon_py = _pinned_interpreter(probes) or "the daemon python (config/runtime.json)"
+    return [CheckResult(
+        "cron write access", WARN,
+        _pick("上次 install.sh 改写 crontab 被拒（Operation not permitted——launchd "
+              "会话缺 Full Disk Access）；§18 的 cron 行可能停在旧版本",
+              "last install.sh could not rewrite the crontab (Operation not permitted - "
+              "the launchd session lacks Full Disk Access); the §18 cron lines may be stale"),
+        _pick("系统设置 > 隐私与安全性 > 完全磁盘访问权限：给 %s 打开，然后 bash "
+              "install.sh。在终端里跑通不算数——Terminal 自带 FDA，launchd 会话没有",
+              "System Settings > Privacy & Security > Full Disk Access: enable %s, then "
+              "bash install.sh. A terminal-run install proving it works proves nothing - "
+              "Terminal has its own FDA, the launchd session does not") % _daemon_py,
+    ).with_failure("cron_tcc_blocked")]
+
+
 def _check_cron(probes: Probes):
     text = probes.crontab()
     results = []
@@ -1248,6 +1283,7 @@ def _check_cron(probes: Probes):
             "missing from crontab - screen captures never become vault notes or radar cards",
             "bash install.sh (reinstalls the §18 cron lines)",
         ).with_failure("cron_missing"))
+    results.extend(_cron_write_access_rows(probes))
     digest_lines = [ln for ln in text.splitlines()
                     if "act.digest" in ln and not ln.lstrip().startswith("#")]
     if any(_LEGACY_DIGEST_NOW_RE.search(ln) for ln in digest_lines):

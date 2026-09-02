@@ -739,7 +739,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 ```
 
 - `mode` ∈ `"interactive" | "pkg-postinstall" | "non-interactive"`（**v0.48.6 追记**：第三个值 = scripts/auto-deploy.sh 跑的 `install.sh --non-interactive`，§56；该模式**永不**构建/安装 Mac app——step `app` 恒为 `skipped`（§56.5，判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`）；退出码 = `status==fail` 的 step 数**减去 `app`**（被冻结的旧 Mac app（D3）即使出现失败行也不动已装 app、回滚也治不了它）——由 `failed_deploy_steps` 一处计算）；`user` = 实际执行安装步骤的用户（pkg 路线下 = console user，postinstall 经 `launchctl asuser <uid> sudo -u <user>` 降权执行）。
-- `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。
+- `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。**v0.48.16 追记（add-only）**：`cron` step 新增值 `skipped_tcc` = crontab 改写被 TCC 拒（stderr 带 `Operation not permitted`，launchd 会话缺 Full Disk Access）——不是 `fail`，所以天然不进 `failed_deploy_steps` 的退出码（§56.5：环境问题回滚治不了，2026-09-02 v0.48.12 实战里它把部署打回滚、把 sha 毒成停摆）；其余 crontab 失败（语法错、命令缺失）仍记 `fail`。写者 = install.sh `apply_crontab`（改写前先把 TMPDIR 固定为绝对可写目录——实战报错里 crontab 的临时文件解析成了相对路径 `tmp/tmp.<pid>`）；doctor `cron write access` 行（WARN `cron_tcc_blocked`，§25）负责让它可见。判例 `tests/test_install_cron_tcc.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
 
@@ -895,6 +895,13 @@ failure id：
   只由 doctor `model dispatch` / `model pipeline` 两行产出（派发失败照旧带原文
   + 既有分类）；句子点名后果（派工/管线全败）与修法（设置页改回跟随或换
   canonical id）。action_id `open_deps`。
+- `cron_tcc_blocked`（**v0.48.16 追加，§23/§56.5**）——最近一次 install.sh 改写
+  crontab 被 TCC 拒（`Operation not permitted`，launchd 会话缺 Full Disk
+  Access；2026-09-02 v0.48.12 实战：timer 触发的自动部署因此回滚、回滚重装撞
+  同一堵墙、sha 中毒停摆全部后续部署）。只由 doctor `cron write access` 行
+  （WARN）产出，数据源 = install_report 的 `cron=skipped_tcc`（§23）；修法 =
+  给守护 python 开 FDA 后重跑 `bash install.sh`，**终端跑通不算数**（Terminal
+  自带 FDA，launchd 会话没有）。action_id `open_deps`。
 Swift `FailureCatalog` 只镜像句子（D3：菜单栏 app 退役中，不给新按钮）。
 通知 builder 追加 `msg_dispatch_halted(title, n, reason)`（§4.1；正文点名
 现存按钮「停止 → 退回提案 → 批准」）。doctor 新行：`actd heartbeat`（§47.4）、
@@ -4037,6 +4044,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **不部署没被测过的 sha**（v0.48.6 审查 B1 推翻了初版「合进去的就是绿的」）：ruleset `protect-main` 的必需检查是 **non-strict**——绿的是 PR head，不是合出来的 merge commit；两个各自绿的并行 PR 合在一起可以是坏的，而 main 上的 `ci` 要 ~8 min 才知道。所以部署 job 自己向 check-runs API 核对**要部署的那个 sha**（56.3 第 3 步），绿了才 ff；`tag-on-merge` 仍直接信任 main（tag 只是命名，`release.yml` 红了不影响 live 机器）。owner 若把 ruleset 切成 strict（合并前 PR 必须与 main 同步），这道闸门变成双保险，**不因此移除**——它同时挡住 API 看得见、ruleset 看不见的东西（re-run 后变红、手动 push 的 tag）。
 - **不重建 Mac app**（v0.48.6 审查定型；D3 冻结）：`install.sh --non-interactive` 跳过 step 4（`app=skipped`），永不跑 `mac/build.sh --install`。原因不只是「冻结」：build.sh 的 stage-then-swap 会 `osascript quit` + `pkill` 再 `open` 正在跑的 app——screenpipe 是它的**直接子进程**（RunningBoard 会 reap 孤儿，`mac/Sources/Recording.swift` 的 exec 注释），实时字幕住在同一进程——agent 在合并后 10 分钟内任何时刻开火，等于随机掐断一段录制或一场会议的字幕；launchd 里的 `osascript` 还要 Automation TCC（首跑静默拒绝 → 直接 `pkill`），`swift build` + `codesign` 的 keychain ACL 提示没人点 = 看门狗 1800 s 超时 → 回滚 → 再 1800 s → `rollback_failed`。**手动 `bash install.sh`（owner 自己挑时机）是重建 app 的唯一路径**；mac/ 目录的改动因此**不**随自动部署上机，直到 owner 手动跑一次。判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`（假 mac/build.sh 记录调用：non-interactive 零调用、交互模式 `--install`）。
 - Mac app 构建失败（§23 `app=fail`，只可能来自手动 install.sh）从不进入自动部署的判据：`failed_deploy_steps` 不计 `app` 行——旧 app 原地保留，回滚也治不了它。
+- **crontab 被 TCC 拒写同样不进判据（v0.48.16；首次 timer 实战 2026-09-02）**：v0.48.12 的自动部署在 install.sh 第 6 步撞上 `crontab: tmp/tmp.<pid>: Operation not permitted`（launchd 会话缺 Full Disk Access——此前两次成功部署都发生在 owner 交互会话拉起的环境里，没暴露），step 记 `fail` → install 退出 1 → 回滚 → 回滚重装撞同一堵墙 → `rollback_failed` + `failed_sha` 中毒，**所有后续部署停摆**（`--force` 也救不了：重装还是会撞墙）。自本版起该失败记 `cron=skipped_tcc`（§23）而非 `fail`——代码回滚治不了 TCC，部署照常完成；缺行/旧行由 doctor `cron write access`（WARN `cron_tcc_blocked`）+ 既有 `cron ingest chain` 行负责可见性，修复入口在 owner（给守护 python 开 FDA，终端跑通不算数）。其余 crontab 失败照旧是部署失败步。判例 `tests/test_install_cron_tcc.py`（EPERM → skipped_tcc + 退出码 0；语法错 → fail + 退出码 1）与 `tests/integration/test_auto_deploy_script.py::test_install_reporting_skipped_tcc_cron_still_deploys`。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）

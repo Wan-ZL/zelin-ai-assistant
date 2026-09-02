@@ -146,6 +146,11 @@ enum FailureCatalog {
         case "cron_fda_blocked":
             return L("定时任务被 macOS 挡住了（缺「完全磁盘访问」）——笔记会静默丢失",
                      "macOS is blocking the scheduled jobs (no Full Disk Access) — notes are silently lost")
+        // v0.48.16 (§23/§56.5, mirror only — D3 freeze): sentences in lockstep
+        // with failures.py for the drift guard.
+        case "cron_tcc_blocked":
+            return L("后台安装改不了定时任务表（macOS 挡住了 crontab——launchd 会话缺「完全磁盘访问」）——给守护 Python 开一次完全磁盘访问再跑 bash install.sh；在终端里跑通不算数（Terminal 自带权限）",
+                     "Background installs cannot rewrite the scheduled jobs (macOS blocks crontab — the launchd session has no Full Disk Access) — grant Full Disk Access to the daemon Python once, then bash install.sh; a terminal run proving it works proves nothing (Terminal has its own grant)")
         case "dashboard_stale":
             return L("后台服务停止更新数据——看板显示的是旧内容",
                      "The background service stopped updating data — the board shows old content")

@@ -28,6 +28,16 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.16] - 2026-09-02
+
+首次 timer 实战暴露的部署环死锁（§56.5）：v0.48.12 的自动部署在 install.sh 第 6 步撞上 `crontab: tmp/tmp.<pid>: Operation not permitted`（launchd 会话缺 Full Disk Access——此前两次成功部署都发生在 owner 交互会话拉起的环境里，没暴露），cron step 记 fail → install 退出 1 → 回滚 → 回滚重装撞同一堵墙 → rollback_failed + sha 中毒，**所有后续部署停摆**（`--force` 也无解：重装还是会撞墙）。
+
+### Fixed
+- **crontab 被 TCC 拒写不再是部署失败步（CONTRACT §23 / §56.5 修法）**：install.sh 第 6 步的 crontab 写入抽成 `apply_crontab`（可提取真跑的判例形状），stderr 带 `Operation not permitted` 时记新值 `cron=skipped_tcc`（§23 add-only）——不进 `failed_deploy_steps`，`--non-interactive` 照常退出 0、部署照常完成；其余 crontab 失败（语法错等）仍是 `cron=fail`，照旧算部署失败步。crontab 子进程强制拿**绝对** TMPDIR（实战里它把临时文件解析成了相对 `tmp/tmp.<pid>`；未设/相对一律退 /tmp）。判例 `tests/test_install_cron_tcc.py` + `tests/integration/test_auto_deploy_script.py::test_install_reporting_skipped_tcc_cron_still_deploys`。
+
+### Added
+- **doctor 新行 `cron write access`（§25 新 failure id `cron_tcc_blocked`，add-only，Swift 镜像同步）**：install_report 的 `cron=skipped_tcc` → WARN + 修法（给守护 python 开 Full Disk Access 后重跑 `bash install.sh`；**终端跑通不算数**——Terminal 自带 FDA，launchd 会话没有）。crontab 内容检查按 pattern 匹配旧行照样绿，这行是「改写被拒」的唯一窗口，下次改写成功自动消失。
+
 ## [0.48.15] - 2026-09-01
 
 owner 决策 D21（issue #127）：「如果这个卡片没有执行，就不算是真正的卡片，不需要给它 R 编号；只有我 approve 跑了的，才给编号。」
@@ -2120,7 +2130,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.15...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.16...HEAD
+[0.48.16]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.15...v0.48.16
 [0.48.15]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.14...v0.48.15
 [0.48.11]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.8...v0.48.11
 [0.48.8]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.7...v0.48.8

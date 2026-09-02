@@ -265,6 +265,8 @@ report_step() { # $1=name $2=status [$3=detail]
 # (Since §56.5 that mode never builds the app at all — install_mac_app records
 # `app=skipped` — so the exclusion is a belt for a stray fail line, kept
 # because the exit code is the deploy verdict and must never hinge on it.)
+# `cron=skipped_tcc`（apply_crontab：launchd 会话被 TCC 拒写 crontab）同理不算
+# fail——环境问题回滚治不了，还会毒掉 sha（2026-09-02 v0.48.12 实战）。
 # Printed one per line; the exit code is their count.
 failed_deploy_steps() {
     printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
@@ -876,6 +878,50 @@ INGEST_CHAIN="*/30 * * * * cd $REPO_ROOT && export PATH=$CRON_CLAUDE_DIR:\$PATH 
 DIGEST_LINE="7 9 * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.digest >> $REPO_ROOT/state/digest.log 2>&1"
 TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY -m act.analytics_sync --once >> $REPO_ROOT/state/analytics_sync.log 2>&1"
 
+# 第 6 步的 crontab 写入与判决，抽成函数（tests 用 stub crontab 真跑它，同
+# install_mac_app / failed_deploy_steps 的手法）。读全局 NEW_CRON / CURRENT_CRON /
+# INGEST_CHAIN / DIGEST_LINE / CRON_PY。失败分两类（§23 / §56.5）：
+#   - stderr 带 "Operation not permitted" = launchd 会话被 TCC 拒写 crontab
+#     （2026-09-02 v0.48.12 实战：timer 触发的自动部署在这里翻车 → 回滚 → 回滚
+#     的 install.sh 撞同一堵墙 → rollback_failed + sha 中毒，所有后续部署停摆。
+#     回滚治不了环境问题）→ `cron=skipped_tcc`，不计入 failed_deploy_steps；
+#     doctor 的 `cron write access` 行负责把它亮成 WARN + FDA 指引。
+#   - 其余（语法错、crontab 不存在等）仍是 `cron=fail`，照旧算部署失败步。
+# TMPDIR 强制绝对可写目录：launchd 会话里 crontab 的临时文件曾解析成相对路径
+# `tmp/tmp.<pid>`（实战报错原文）；绝对 TMPDIR 是零成本的皮带，装上不亏。
+apply_crontab() {
+    if [ "$NEW_CRON" = "$CURRENT_CRON" ]; then
+        report_step "cron" "ok" "already installed"
+        return 0
+    fi
+    _cron_tmpdir="${TMPDIR:-/tmp}"
+    case "$_cron_tmpdir" in /*) ;; *) _cron_tmpdir="/tmp" ;; esac
+    _cron_err_file="$_cron_tmpdir/aiassistant-cron-err.$$"
+    if printf '%s\n' "$NEW_CRON" | grep -v '^[[:space:]]*$' \
+            | TMPDIR="$_cron_tmpdir" crontab - 2>"$_cron_err_file"; then
+        rm -f "$_cron_err_file"
+        ok "crontab rewritten (other lines preserved)"
+        report_step "cron" "ok" "ingest chain + digest + telemetry installed"
+        return 0
+    fi
+    _cron_err="$(cat "$_cron_err_file" 2>/dev/null || true)"
+    rm -f "$_cron_err_file"
+    [ -n "$_cron_err" ] && printf '%s\n' "$_cron_err" >&2
+    warn "crontab update failed — add these lines manually with 'crontab -e':"
+    info "$INGEST_CHAIN"
+    info "$DIGEST_LINE"
+    case "$_cron_err" in
+        *"Operation not permitted"*)
+            warn "crontab is TCC-blocked in this session — grant Full Disk Access to $CRON_PY, then rerun bash install.sh"
+            report_step "cron" "skipped_tcc" "crontab rewrite refused (Operation not permitted — TCC); grant Full Disk Access to $CRON_PY"
+            ;;
+        *)
+            report_step "cron" "fail" "crontab rewrite failed"
+            ;;
+    esac
+    return 0
+}
+
 CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
 NEW_CRON="$CURRENT_CRON"
 
@@ -909,19 +955,7 @@ else
     ok "telemetry sync cron installed (hourly; opt out in app Settings or telemetry.enabled: false)"
 fi
 
-if [ "$NEW_CRON" != "$CURRENT_CRON" ]; then
-    if printf '%s\n' "$NEW_CRON" | grep -v '^[[:space:]]*$' | crontab -; then
-        ok "crontab rewritten (other lines preserved)"
-        report_step "cron" "ok" "ingest chain + digest + telemetry installed"
-    else
-        warn "crontab update failed — add these lines manually with 'crontab -e':"
-        info "$INGEST_CHAIN"
-        info "$DIGEST_LINE"
-        report_step "cron" "fail" "crontab rewrite failed"
-    fi
-else
-    report_step "cron" "ok" "already installed"
-fi
+apply_crontab
 
 # --------------------------------------------------------------------------
 echo ""
