@@ -60,6 +60,7 @@ CI additionally runs the **QA merge gates** (per-function complexity, CRAP, cove
 
 - **Contract first.** Any change to a `dashboard.json` or `state/inbox/` field lands in [docs/CONTRACT.md](docs/CONTRACT.md) *before* the code. Fields are **add-only** — never renamed or removed — and the Swift side decodes every new field with `decodeIfPresent` for backward compatibility. CONTRACT.md's section numbers are referenced from code and docs; never renumber them.
 - **Bilingual strings.** Every user-visible string goes through `L("中文", "English")` — both languages, always; the UI switches at runtime.
+- **Shell scripts run on bash 3.2** (the live `/bin/bash`): inside a bilingual string, always brace a variable followed by a fullwidth/CJK character — `（${_why}）` not `（$_why）` — bash 3.2 swallows the multibyte character's first byte into the variable name and aborts under `set -u` (shipped bug in PR #130, caught by its own test).
 - **Tests use a tempdir `AIASSISTANT_HOME`** — never a real `state/` or registry.
 - **Commit messages**: conventional commits, English, and say *why*, not just what.
 
