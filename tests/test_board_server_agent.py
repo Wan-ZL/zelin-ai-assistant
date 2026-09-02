@@ -168,6 +168,8 @@ class ServerPortKnobTestCase(unittest.TestCase):
             self.assertEqual(config.load_config().server_port, 47821)
 
 
+@unittest.skipIf(_WIN, "Windows SO_REUSEADDR lets a second bind on a busy port succeed, "
+                       "so main() never sees EADDRINUSE and would serve_forever (hang)")
 class BusyPortExitTestCase(unittest.TestCase):
     def test_main_on_a_busy_port_prints_one_line_and_exits_75(self):
         holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
