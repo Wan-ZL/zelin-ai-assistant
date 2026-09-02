@@ -35,8 +35,14 @@ UNPROCESSED="$(resolve_config_path obsidian_unprocessed "$HOME/Documents/Obsidia
 # Vault root = obsidian_raw's parent — the same derivation rule the config
 # layer itself uses for the pipeline dirs (v0.10.3 契约二).
 VAULT="$(dirname "$(resolve_config_path obsidian_raw "$HOME/Documents/Obsidian Vault/2 - raw")")"
-LOCKFILE="/tmp/process-screenpipe.lock"
-LOGFILE="/tmp/screenpipe-auto.log"
+# Lock + log paths are fixed for production (the Mac app tails LOGFILE, and
+# vault-sync.sh keys its in-flight guard off the same lock). The env seams
+# exist for tests/integration/test_ingest_smoke.py, which runs this real
+# script against a stubbed `claude` and must not touch the machine's live
+# lock/log (CONTRACT §18). PROCESS_SCREENPIPE_LOCK is read by vault-sync.sh
+# too, so both sides always agree on the lock path.
+LOCKFILE="${PROCESS_SCREENPIPE_LOCK:-/tmp/process-screenpipe.lock}"
+LOGFILE="${PROCESS_SCREENPIPE_LOG:-/tmp/screenpipe-auto.log}"
 
 # VAULT MIRROR mode (claude TCC isolation — see ingest/vault-sync.sh):
 # screenpipe-export.sh, at the top of this same chain run, pulled the vault
@@ -120,6 +126,16 @@ FILES_COUNT=$(printf '%s\n' "$FILES" | grep -c .)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] DIAG find_exit=$FIND_EXIT find_count=$FILES_COUNT ls_count=$DIR_LS_COUNT stderr=$(tr '\n' '|' < "$FIND_STDERR")" >> "$LOGFILE"
 rm -f "$FIND_STDERR"
 
+# An inbox that cannot be READ is not an empty inbox (issue #16): the vault
+# is missing/unconfigured, or TCC hides ~/Documents from this session. The
+# old behavior logged "No ingestable files" and exited 0 — silent data loss
+# dressed as success. Fail the chain with a line that names the path.
+if [ "$FIND_EXIT" -ne 0 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ inbox not readable (find exit $FIND_EXIT): $UNPROCESSED — vault missing/unconfigured (sources.obsidian_unprocessed) or blocked by TCC; nothing processed" >> "$LOGFILE"
+    echo "---" >> "$LOGFILE"
+    exit 1
+fi
+
 if [ -z "$FILES" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] No ingestable files found — exiting" >> "$LOGFILE"
     echo "---" >> "$LOGFILE"
@@ -129,7 +145,11 @@ fi
 FILE_COUNT=$(echo "$FILES" | wc -l | tr -d ' ')
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Processing triggered — $FILE_COUNT file(s) found" >> "$LOGFILE"
 
-cd "$VAULT" || exit 1
+if ! cd "$VAULT"; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ vault root not accessible: $VAULT — nothing processed" >> "$LOGFILE"
+    echo "---" >> "$LOGFILE"
+    exit 1
+fi
 
 # Cron auth strategy: use ANTHROPIC_API_KEY (not OAuth via Keychain).
 #
@@ -211,6 +231,10 @@ echo "$CLAUDE_PID" >> "$LOCKFILE"
 WATCHDOG_PID=$!
 wait "$CLAUDE_PID"
 EXIT_CODE=$?
+# Reap the watchdog AND its `sleep` child (children first — killing the
+# subshell alone orphans the sleep, which then lingers up to
+# CLAUDE_MAX_SECONDS holding the caller's stdout/stderr open).
+pkill -P "$WATCHDOG_PID" 2>/dev/null
 kill "$WATCHDOG_PID" 2>/dev/null
 
 if [ $EXIT_CODE -eq 0 ]; then

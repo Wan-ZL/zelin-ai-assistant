@@ -28,8 +28,9 @@ VAULT_PUSH_PENDING="$AIASSISTANT_HOME/state/vault-sync-push-pending"
 # the processing chain's PID lock (must match process-screenpipe.sh) — the
 # in-flight guard below keys off it. Holds one PID per line: the script's own
 # $$ at startup, plus the headless-claude child's PID once spawned (so a
-# killed parent's orphaned claude still holds the lock).
-VAULT_SYNC_PROCESS_LOCK="/tmp/process-screenpipe.lock"
+# killed parent's orphaned claude still holds the lock). Same env seam as
+# process-screenpipe.sh's LOCKFILE (tests only; production default unchanged).
+VAULT_SYNC_PROCESS_LOCK="${PROCESS_SCREENPIPE_LOCK:-/tmp/process-screenpipe.lock}"
 
 # vault_sync_processing_live — true iff the previous round's processing is
 # STILL RUNNING in the mirror (same liveness rule as process-screenpipe.sh's

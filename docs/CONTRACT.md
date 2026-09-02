@@ -540,6 +540,19 @@ cron 无窗可弹直接 `EPERM`（07-09→07-13 截图→笔记链 38 连败）�
   本节原有行为逐字不变；mirror 是升级，不是前置条件。附带：ingest 的 claude
   调用加 watchdog（默认 7200s，`CLAUDE_MAX_SECONDS` 可调）。
 
+**issue #16 追记（add-only；`process-screenpipe.sh` 退出码词表与判例）**：退出码
+`0` = 处理完成或 inbox 为空；`3` = 另一轮仍持有 PID 锁（跳过，链不算失败）；
+**`1` = inbox 目录不可读**（`find` 非零：vault 缺失/未配置 `sources.obsidian_unprocessed`
+或 TCC 挡住本会话）——此前这条路被当成「无文件」静默退出 0，是穿着成功外衣的
+静默丢数据；现在日志一行点名路径与原因、claude 不起；其余非零 = claude 自身的退出码
+原样上传（`❌ Processing failed (exit N)`）。凭证分支（§19 顺序）不改 claude 的 argv：
+两个分支都是 `-p <prompt> --allowedTools Read,Write,Edit,Bash,Glob,Grep`，只差
+`ANTHROPIC_API_KEY` 是否导出。watchdog 收尾同时回收其 `sleep` 子进程（此前孤儿 sleep
+挂着调用方的 stdout/stderr 直到 `CLAUDE_MAX_SECONDS`）。**判例**
+`tests/integration/test_ingest_smoke.py`：真 bash 跑真脚本，PATH 前置一个只记 argv/env、
+永不出网的桩 `claude`；锁与日志走 env seam `PROCESS_SCREENPIPE_LOCK` /
+`PROCESS_SCREENPIPE_LOG`（`vault-sync.sh` 读同一个锁 seam；生产默认路径不变）。
+
 ## 19. 凭证与 secrets（跨组件契约，两侧逐字一致）
 
 - **SECRETS 目录** = `<AIASSISTANT_HOME>/config/secrets/`，目录权限 **0700**、文件权限 **0600**（App 设置窗口写入方与 `act/lib/secrets.write_secret` 均强制）。gitignore：`config/secrets/`。
