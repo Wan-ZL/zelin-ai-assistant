@@ -355,7 +355,7 @@ class StaleCopyAdoptsStoredNumberTestCase(_Both):
         self.for_each_backend(body)
 
     def test_payload_stripped_by_old_code_readopts_from_hot_column(self):
-        # §53.1「绝不手改 user_version」点名的腐蚀形状：< v0.48.14 的 save 整卡
+        # §53.1「绝不手改 user_version」点名的腐蚀形状：< v0.48.15 的 save 整卡
         # 覆写 payload 时不认识 work_id 键 → payload 丢号、热列仍钉着号。
         # 新代码下一次落盘必须从热列采纳，而不是撞 WORK_ID_SET_ONCE 永远存不进去。
         store2_testkit.use_backend(self, "sqlite")
@@ -742,7 +742,7 @@ class SchemaUpgradeTestCase(unittest.TestCase):
     def test_upgrade_snapshots_the_v1_db_for_the_rollback_target(self):
         # §53.1 单向门条款：踏出 v1→v2 前留 <db>.pre-v1——旧代码（SCHEMA_VERSION=1，
         # user_version != 1 即 raise）唯一打得开的账本副本，D17 代码回滚落到
-        # < 0.48.14 时的退路（TROUBLESHOOTING「store2 回滚」schema 降级段）。
+        # < 0.48.15 时的退路（TROUBLESHOOTING「store2 回滚」schema 降级段）。
         db = self._v1_db()
         pristine = self._v1_db("pristine.db")        # 从未被新代码碰过的 v1 对照
         Store(db).close()
@@ -766,7 +766,7 @@ class SchemaUpgradeTestCase(unittest.TestCase):
         self.assertEqual(_objects(snap), _objects(pristine))
 
     def test_old_reader_cannot_open_the_upgraded_db_but_can_open_the_snapshot(self):
-        # 两份审查同一个 blocker 的可执行形态：D17 回滚目标（< v0.48.14）的门 =
+        # 两份审查同一个 blocker 的可执行形态：D17 回滚目标（< v0.48.15）的门 =
         # `user_version != 1 → raise`。升级后的库对它必然关门（这是设计），
         # 快照对它必然开门——否则 TROUBLESHOOTING 的「恢复快照」出路是空话。
         def old_code_gate(path: Path) -> list:

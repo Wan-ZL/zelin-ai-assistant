@@ -1050,8 +1050,8 @@ def unarchive(req: Requirement) -> Requirement:
 # ID allocation + matching / merge（§60，D21：两段式编号）
 # --------------------------------------------------------------------------- #
 # 命名空间：
-#   P-<n>  主键（provisional）——v0.48.14 起所有新卡的出生 id（next_id）
-#   R-<n>  ①存量卡的主键（legacy，v0.48.14 前雷达检测即分号）
+#   P-<n>  主键（provisional）——v0.48.15 起所有新卡的出生 id（next_id）
+#   R-<n>  ①存量卡的主键（legacy，v0.48.15 前雷达检测即分号）
 #          ②工作编号 work_id（进入 approved 时分配，next_work_id）
 # 两种 R- 用途靠数值区间**构造上不重叠**：工作序列从 max(legacy R 主键 ∪
 # 已分配 work_id ∪ state/work_seq.json 高水位) + 1 起，所以任一 R-<n> 要么
@@ -1084,7 +1084,7 @@ def id_number(rid) -> Optional[int]:
 
 
 def is_legacy_key(rid) -> bool:
-    """主键是否为 v0.48.14 前的 ``R-<n>`` 形（检测即分号的存量卡）。"""
+    """主键是否为 v0.48.15 前的 ``R-<n>`` 形（检测即分号的存量卡）。"""
     return bool(_ID_RE.match(str(rid or "")))
 
 
@@ -1177,7 +1177,7 @@ def _stored_work_id(req_id: str) -> Optional[str]:
     """真源里这张卡**当前**的工作编号；没有 / 卡不存在 / 读失败 → None。
 
     sqlite 读的是 ``cards.work_id`` **热列**而不是 payload：payload 可能被
-    < v0.48.14 的代码整卡覆写而丢了 ``work_id``（它不认识这个键），热列却仍
+    < v0.48.15 的代码整卡覆写而丢了 ``work_id``（它不认识这个键），热列却仍
     钉着号——正是 set-once 触发器会拒绝的那种「内存 None vs 盘上有号」。
     yaml 后端只有文件一处真源，读 :func:`load`。永不抛（分配钩子的口径）。"""
     try:
@@ -1219,7 +1219,7 @@ def _allocate_work_id(req: "Requirement") -> Optional[str]:
 
     **陈旧内存副本防御（§60.2）**：P 卡已拿号而这份内存副本没带号（副本
     取自拿号之前——跨进程 fold 撞上 approve 的真实形状；或 payload 被
-    < v0.48.14 的代码剥掉了 ``work_id`` 而 sqlite 热列还留着——§53.1 降级
+    < v0.48.15 的代码剥掉了 ``work_id`` 而 sqlite 热列还留着——§53.1 降级
     警告点名的形状）→ **采纳真源里已发的号**，绝不再铸、绝不清空。没有这
     一步：sqlite 的 set-once 触发器把这类落盘打成 ``WORK_ID_SET_ONCE`` 硬
     失败（inbox 决策文件被当 poison 丢弃），yaml 后端更会静默换号（重铸）
@@ -1331,7 +1331,7 @@ def _max_number(values: Iterable, regex) -> int:
 def next_id() -> str:
     """下一张新卡的**主键** ``P-<n>``（§60，D21）——出生即分、终身不变。
 
-    公开名保留（§53 点名、12 个铸卡点全部经它）：v0.48.14 前它发 ``R-<n>``
+    公开名保留（§53 点名、12 个铸卡点全部经它）：v0.48.15 前它发 ``R-<n>``
     （检测即消耗工作号，issue #127），现在发 provisional ``P-<n>``；工作编号
     改由 :func:`next_work_id` 在进入 approved 时分配。
     """

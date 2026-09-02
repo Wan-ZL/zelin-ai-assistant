@@ -151,7 +151,7 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
 
 
 def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
-    """v1 → v2（v0.48.14，§60/D21）：cards.work_id 列 + 唯一索引 + set-once 触发器。
+    """v1 → v2（v0.48.15，§60/D21）：cards.work_id 列 + 唯一索引 + set-once 触发器。
     存量行 work_id 一律 NULL（legacy 卡不回填，§60.4：显示名回落主键）。"""
     if not _has_column(conn, "cards", "work_id"):
         conn.execute("ALTER TABLE cards ADD COLUMN work_id TEXT")
@@ -330,7 +330,7 @@ class Store:
         return after
 
     def _pre_upgrade_snapshot(self, from_version: int) -> None:
-        """升级梯子踏出一级前的整库快照（§53.1 单向门条款，v0.48.14）。
+        """升级梯子踏出一级前的整库快照（§53.1 单向门条款，v0.48.15）。
 
         落点 :func:`pre_upgrade_snapshot_path`（``<db>.pre-v<from>``，同目录），
         **每次踏出该级都刷新**：调用点持有 BEGIN IMMEDIATE 写锁并已复核
