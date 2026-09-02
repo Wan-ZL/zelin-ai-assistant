@@ -58,6 +58,7 @@ act/digest.py::run 7
 act/doctor.py::_actd_alive 7
 act/doctor.py::_check_auto_deploy 10
 act/doctor.py::_check_claude_auth 8
+act/doctor.py::_check_claude_code_model 10
 act/doctor.py::_check_cron_probe 9
 act/doctor.py::_check_daemon_claude 19
 act/doctor.py::_check_heartbeat 9
@@ -66,6 +67,7 @@ act/doctor.py::_check_launchd_claude 13
 act/doctor.py::_check_launchd_fd_limit 7
 act/doctor.py::_check_launchd_orphans 11
 act/doctor.py::_check_launchd_paths 23
+act/doctor.py::_check_model_liveness 8
 act/doctor.py::_check_runtime_python 11
 act/doctor.py::_check_scheduled_tasks 12
 act/doctor.py::_check_store2 15
@@ -110,7 +112,7 @@ act/lib/auto_merge.py::scan_new_cards 24
 act/lib/config.py::_apply_settings_overrides 59
 act/lib/config.py::_clean_slack_channels 7
 act/lib/config.py::_coerce_bool 7
-act/lib/config.py::load_config 56
+act/lib/config.py::load_config 58
 act/lib/config.py::recording_exclusion_sql 7
 act/lib/dashboard.py::_merge_suggestions 19
 act/lib/dashboard.py::_purge_at 8
@@ -223,6 +225,7 @@ act/lib/update_check.py::_release_view 12
 act/lib/update_check.py::check 14
 act/lib/update_check.py::cli_status 10
 act/lib/update_check.py::parse_version 8
+act/llm.py::read_claude_code_default_model 7
 act/merge_review.py::_extract_verdict_json 20
 act/merge_review.py::_material_for 11
 act/merge_review.py::_tail_messages 13
@@ -290,10 +293,10 @@ scripts/insights_report.py::path_failures 18
 scripts/insights_report.py::render_reliability 9
 scripts/insights_report.py::retention 10
 server/app.py::Handler._check_auth 7
-server/app.py::Handler._dispatch 7
+server/app.py::Handler._dispatch 8
 server/app.py::Handler._read_json_body 7
-server/app.py::Handler._route_get 9
-server/app.py::Handler._route_post 9
+server/app.py::Handler._route_get 11
+server/app.py::Handler._route_post 11
 server/app.py::Handler._serve_static 13
 server/board_source.py::_match_card 7
 server/board_source.py::card_detail 9
@@ -308,3 +311,6 @@ server/inbox_writer.py::_dump_value 7
 server/inbox_writer.py::_require_id_list 7
 server/inbox_writer.py::write_action 14
 server/security.py::_read_token_hardened 10
+server/settings.py::_config_models 8
+server/settings.py::set_claude_code_default 10
+server/settings.py::update_models 8
