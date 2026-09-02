@@ -1,6 +1,7 @@
 // 顶栏（G7 shell，自写非 fork）：左=标识+标题+设备标签+新鲜度+部署状态（§56）；中=搜索槽位；
-// 右=连接状态点+语言切换+主题切换。搜索本体归 A8（filters/⌘F）——这里只留
-// searchSlot 槽位，A8 把搜索组件经 app.tsx 传进来即可，不传则槽位为空但布局稳定。
+// 右=壳内原生开关（录制 / 实时字幕，仅壳里出现，§61）+回收站+设置+连接状态点+语言切换+主题切换。
+// 搜索本体归 A8（filters/⌘F）——这里只留 searchSlot 槽位，A8 把搜索组件经 app.tsx 传进来即可，
+// 不传则槽位为空但布局稳定。
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { buildAppUrl } from "../../route";
@@ -8,6 +9,7 @@ import { useAppState, type ConnectionState } from "../../store";
 import { DeployLabel } from "./DeployLabel";
 import { FreshnessLabel } from "./FreshnessLabel";
 import { LanguageToggle } from "./LanguageToggle";
+import { ShellControls } from "./ShellControls";
 import { ThemeToggle } from "./ThemeToggle";
 
 export interface HeaderBarProps {
@@ -51,6 +53,8 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
       </div>
       <div className="shell-search-slot">{searchSlot ?? null}</div>
       <div className="shell-header-right">
+        {/* §61：录制 / 实时字幕 开关——只在 "Zelin AI Board" 壳里渲染（普通浏览器无桥 → null） */}
+        <ShellControls />
         {/* 回收站入口：TrashPage 只有 ?page=trash 深链——壳层导航走整页 <a>（同 trash-back-link 约定） */}
         <a
           className="shell-trash-link"
