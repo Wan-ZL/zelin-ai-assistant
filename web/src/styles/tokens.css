@@ -20,7 +20,7 @@
  */
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-sans); /* 字体栈单源在下方 type-scale 块 */
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -212,6 +212,55 @@
     --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
     --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
   }
+}
+
+/*
+ * —— 字号/字重梯（type scale）：逐字镜像原生看板（本 repo 自写，非 fork）——
+ * 原生 mac/Sources（D3 冻结的只读规格）全部走 .font(.system(size:weight:))，SF Pro 的
+ * regular/medium/semibold/bold = 400/500/600/700，1pt = 1px。每个 token 是一个原生角色的
+ * `font` 简写（weight size/line-height family）；组件 CSS 只许 `font: var(--type-…)`，
+ * 禁止在组件里写字面 font-size / font-weight。行高统一 1.4（中英混排时 PingFang 撑到的
+ * 原生实际行高），胶囊/按钮用定值行高保住盒高。
+ * 与 Swift 行号的对照表（角色 → file:line → token）= web/src/styles/typeScale.ts；
+ * typeScale.test.ts 钉 CSS 值 ↔ 表，tests/test_web_type_scale_mirror.py 钉 表 ↔ Swift 源行；
+ * CONTRACT §54.1 第 10 项指向本块。
+ * 颜色映射（不新造色值）：原生 .primary → --text-primary；.secondary → --text-secondary；
+ * .secondary.opacity(0.85) → --text-tertiary；.secondary.opacity(0.7/0.55) → --text-quaternary。
+ */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* 卡面 */
+  --type-card-title-lg: 600 15px/1.4 var(--font-sans);
+  --type-card-title: 500 12px/1.4 var(--font-sans);
+  --type-card-placeholder: 400 13px/1.4 var(--font-sans);
+  --type-card-line: 500 11px/1.4 var(--font-sans);
+  --type-card-body: 400 11px/1.4 var(--font-sans);
+  --type-card-body-strong: 600 11px/1.4 var(--font-sans);
+  --type-card-meta: 400 10px/1.4 var(--font-sans);
+  --type-card-meta-strong: 500 10px/1.4 var(--font-sans);
+  --type-card-fine: 400 9px/1.4 var(--font-sans);
+  --type-card-fine-mono: 400 9px/1.4 var(--font-mono);
+  --type-card-error-mono: 400 10px/1.5 var(--font-mono);
+  --type-chip: 600 10px/16px var(--font-sans);
+  --type-button: 400 11px/18px var(--font-sans);
+  --type-details-toggle: 400 11px/18px var(--font-sans);
+  /* 展开详情 */
+  --type-detail-title: 500 12px/1.4 var(--font-sans);
+  --type-detail-heading: 600 11px/1.4 var(--font-sans);
+  --type-detail-subheading: 600 10px/1.4 var(--font-sans);
+  /* 列 */
+  --type-lane-title: 600 12px/1.4 var(--font-sans);
+  --type-lane-count: 700 11px/16px var(--font-sans);
+  --type-lane-help: 400 12px/1.55 var(--font-sans);
+  --type-lane-empty: 400 11px/1.4 var(--font-sans);
+  /* 列顶输入框 */
+  --type-composer: 400 12px/1.4 var(--font-sans);
+  --type-composer-hint: 400 10px/1.4 var(--font-sans);
+  /* 顶栏 */
+  --type-header-title: 600 14px/1.4 var(--font-sans);
+  --type-header-control: 400 12px/1.4 var(--font-sans);
+  --type-header-meta: 400 10px/1.4 var(--font-sans);
 }
 
 /* —— 以下为本 repo 自写的基础重置（非 fork）—— */

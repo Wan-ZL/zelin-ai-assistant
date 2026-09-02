@@ -107,7 +107,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
             {row.waiting_for && <span className="chip chip-notice">{text(`等待：${row.waiting_for}`, `waiting: ${row.waiting_for}`)}</span>}
             <RepoChip path={row.cwd} />
           </div>
-          {question && <p className="card-line is-warning">{question}</p>}
+          {question && <p className="card-line is-warning is-body">{question}</p>}
         </>
       ) : isQueued ? (
         <div className="card-badges">

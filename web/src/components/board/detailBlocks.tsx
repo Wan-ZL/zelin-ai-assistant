@@ -33,14 +33,15 @@ export function DodList({ dod, heading, checklist = false }: { dod: unknown; hea
   if (items.length === 0 && !checklist) return null;
   return (
     <div className="card-detail-block">
-      <div className="card-detail-heading">{heading ?? text("怎样算办完：", "Definition of done:")}</div>
+      {/* 原生 DodListView / 验收清单 头是 10 semibold（比 需求来自/要做什么 的 11 小一级） */}
+      <div className="card-detail-subheading">{heading ?? text("怎样算办完：", "Definition of done:")}</div>
       {items.length === 0 ? (
         // §11 待验收：清单永远渲染，空时给兜底句（原生 ReviewRow）
         <p className="card-detail-muted">{text("该任务未定义验收标准，请自行判断", "No acceptance criteria defined — judge manually")}</p>
       ) : checklist ? (
         <ul className="card-detail-list is-checklist">{items.map((d, i) => <li key={i}>☐ {d}</li>)}</ul>
       ) : (
-        <ol className="card-detail-list">{items.map((d, i) => <li key={i}>{d}</li>)}</ol>
+        <ol className="card-detail-list is-dod">{items.map((d, i) => <li key={i}>{d}</li>)}</ol>
       )}
     </div>
   );

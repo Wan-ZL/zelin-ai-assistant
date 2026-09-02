@@ -3863,6 +3863,15 @@ server/ 静态托管；**壳里没有业务逻辑**，不读 registry、不写 i
 8. **composer 占位文案**逐字镜像原生 Composer.swift：提案「一句话，AI 来研究并
    提案…」、运行中「一句话，直接开跑（跳过提案）…」。
 9. **卡 id 右上角**（原生 idTag：等宽小字，收起态可见）。
+10. **排版跟原生字号/字重梯**（owner 2026-09-02「文字的粗细」）：卡面、列头、chip、
+    按钮、composer、顶栏小字的字号 / 字重 / 字族逐字镜像 `mac/Sources` 的
+    `.font(.system(size:weight:))`（1pt = 1px；SF regular/medium/semibold/bold =
+    400/500/600/700），原生 `.secondary` → `--text-secondary`、`.secondary.opacity(0.85)`
+    → `--text-tertiary`（色值不动）。**truth = `web/src/styles/tokens.css` 的 type-scale
+    块**（`--type-*` `font` 简写 token；组件 CSS 只许 `font: var(--type-…)`）；对照表
+    `web/src/styles/typeScale.ts`（角色 → Swift file:line → token）。判例
+    `web/src/styles/typeScale.test.ts`（CSS ↔ 表）+ `tests/test_web_type_scale_mirror.py`
+    （表 ↔ Swift 源行）。
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。

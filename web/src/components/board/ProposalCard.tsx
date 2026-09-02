@@ -60,7 +60,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
     // raising 占位：dashboard.py 对 status=raising 发的形状（cf. demo_seed R-104）
     return (
       <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
-        <CardHead card={card} title={card.title} isMuted />
+        <CardHead card={card} title={card.title} variant="placeholder" />
         <div className="task-processing-row is-running">
           <span className="task-processing-ring" aria-hidden="true"><span /></span>
           <span className="task-processing-label">
@@ -79,7 +79,8 @@ export function ProposalCard({ card }: ProposalCardProps) {
 
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
-      <CardHead card={card} title={displayTitle} />
+      {/* 原生 ApprovalCardView：大白话摘要 15 semibold（其余四种卡是 12 medium 行标题） */}
+      <CardHead card={card} title={displayTitle} variant="lg" />
       <TargetLine card={card} />
       <div className="card-badges">
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
@@ -132,11 +133,11 @@ export function ProposalCard({ card }: ProposalCardProps) {
       </div>
       {card.reraised && card.reraised_note && <p className="card-line is-warning">{card.reraised_note}</p>}
       {card.disagreement && (
-        <p className="card-line is-warning">{text("⚠ 有分歧：", "⚠ Disagreement: ")}{card.disagreement}</p>
+        <p className="card-line is-warning is-body">{text("⚠ 有分歧：", "⚠ Disagreement: ")}{card.disagreement}</p>
       )}
       <CardDetails cardId={card.id}>
         {/* 长技术标题住在详情里（原生 expandedDetail 首行）；展示名与它不同才重复一遍 */}
-        {card.title !== displayTitle && <p className="card-detail-muted">{card.title}</p>}
+        {card.title !== displayTitle && <p className="card-detail-title">{card.title}</p>}
         <p className="card-detail-heading">💰 {costLine(card, text)}</p>
         <SourceList sources={card.sources} />
         <PlanList plan={card.plan} />

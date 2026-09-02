@@ -28,13 +28,21 @@ interface CardHeadProps {
   /** 标题前的小图标/色点（原生 TaskRow 的 Circle、DebtRow 的 tray 图标） */
   leading?: ReactNode;
   isMuted?: boolean;
+  /**
+   * 标题字级（tokens.css type-scale）：缺省 = 行标题 12 medium（TaskRow/ReviewRow/DebtRow）；
+   * "lg" = 提案卡摘要 15 semibold（ApprovalCardView）；"placeholder" = AI 研究中占位 13 regular 次级
+   */
+  variant?: "lg" | "placeholder";
 }
 
-export function CardHead({ card, title, leading, isMuted = false }: CardHeadProps) {
+export function CardHead({ card, title, leading, isMuted = false, variant }: CardHeadProps) {
+  const cls = ["card-title", variant === "lg" ? "is-lg" : "", variant === "placeholder" ? "is-placeholder" : "", isMuted ? "is-muted" : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className="card-head">
       {leading}
-      <div className={`card-title${isMuted ? " is-muted" : ""}`}>{title}</div>
+      <div className={cls}>{title}</div>
       <CardIdTag card={card} />
     </div>
   );

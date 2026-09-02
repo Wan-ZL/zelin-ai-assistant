@@ -61,10 +61,10 @@
   border-radius: 5px;
 }
 
+/* 顶栏标题 / 新鲜度 / 部署小字：字号字重走 tokens.css type-scale（原生 MainWindow 14 semibold · Freshness 10 regular 次级） */
 .shell-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font: var(--type-header-title);
   color: var(--text-primary);
   white-space: nowrap;
 }
@@ -80,8 +80,8 @@
 }
 
 .shell-freshness {
-  font-size: 11px;
-  color: var(--text-tertiary);
+  font: var(--type-header-meta);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -91,8 +91,8 @@
 
 /* §56 部署状态小字：v0.48.x · deployed 12m ago；非 healthy 状态切警告色 */
 .shell-deploy {
-  font-size: 11px;
-  color: var(--text-tertiary);
+  font: var(--type-header-meta);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -115,7 +115,7 @@
 
 /* 回收站入口：低调文本链接，与连接状态/切换钮同排 */
 .shell-trash-link {
-  font-size: 11px;
+  font: var(--type-header-control);
   color: var(--text-secondary);
   text-decoration: none;
   white-space: nowrap;

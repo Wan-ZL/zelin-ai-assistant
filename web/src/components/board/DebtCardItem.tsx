@@ -26,7 +26,7 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
         {item.hardness === "hard" && <span className="chip chip-danger">{text("硬需求", "Hard")}</span>}
       </div>
       <CardDetails cardId={item.id}>
-        {item.title !== displayTitle && <p className="card-detail-muted">{item.title}</p>}
+        {item.title !== displayTitle && <p className="card-detail-title">{item.title}</p>}
         <SourceList sources={item.sources} />
       </CardDetails>
       {pending ? (
