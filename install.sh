@@ -417,10 +417,14 @@ ui_web_build_dir() {
 
 # Mirror web/ (minus node_modules + dist) into the build dir. rsync --delete is
 # the sanctioned directory sync (防腐 #8); cp -R after rm -rf is the fallback.
+# --checksum: the mirror follows CONTENT, not rsync's size+whole-second-mtime
+# quick check — the `npm ci` gate below hashes the mirrored package-lock.json,
+# so a same-size edit inside the mtime window must still land (the tree is
+# ~100 small files; hashing it costs nothing).
 ui_sync_web_sources() { # $1=src web dir $2=build dir
     mkdir -p "$2"
     if command -v rsync >/dev/null 2>&1; then
-        rsync -a --delete --exclude node_modules --exclude dist --exclude '.zai-*' "$1/" "$2/" >> "$UI_LOG" 2>&1
+        rsync -a --checksum --delete --exclude node_modules --exclude dist --exclude '.zai-*' "$1/" "$2/" >> "$UI_LOG" 2>&1
     else
         _keep="$2/node_modules"; _tmpkeep=""
         if [ -d "$_keep" ]; then _tmpkeep="$2.node_modules.keep"; rm -rf "$_tmpkeep"; mv "$_keep" "$_tmpkeep"; fi
