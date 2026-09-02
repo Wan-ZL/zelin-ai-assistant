@@ -203,6 +203,37 @@ def status(fallback: Optional[str], stamp_path: Optional[Path] = None,
     }
 
 
+def status_probe() -> dict:
+    """doctor ``Probes.version_status`` 的默认实现（tests 注入别的——沙箱不是 git checkout）。"""
+    return status(read_fallback())
+
+
+def doctor_row(st: dict) -> Tuple[str, str, str]:
+    """doctor 行 ``version``（§25 add-only）的 (status, detail, fix)——status ∈ ok | warn，
+    **永不 fail**（§56.3 回滚判据不能被一个版本盖章翻）。没有 stamp（daemons 回落到
+    烘焙常量或各自 spawn git）→ warn；stamp 与 checkout 的 describe 不一致（代码动了、
+    install.sh 没跑）→ warn；一致 → ok；非 git checkout（.pkg / tarball）有 stamp → ok。
+    文案走 §15 单语言开关（act.lib.failures.pick）；命令与路径两种语言都保持英文。"""
+    from act.lib.failures import pick  # 同层；懒 import 让 `import act` 只带本模块
+    stamp, computed, is_git = st.get("stamp"), st.get("computed") or "", bool(st.get("git"))
+    if not stamp:
+        running = resolve(read_fallback())
+        return ("warn",
+                pick("没有 act/_version.py——运行中报 v%s（来自 git describe / 烘焙回落值）",
+                     "no act/_version.py — reporting v%s (from git describe / the baked fallback)") % running,
+                pick("bash install.sh（会写 act/_version.py）或 python3 scripts/version_stamp.py --write",
+                     "bash install.sh (writes act/_version.py) or python3 scripts/version_stamp.py --write"))
+    if is_git and stamp != computed:
+        return ("warn",
+                pick("act/_version.py 说 v%s，checkout 是 v%s——代码动了但没重新盖章/重启",
+                     "act/_version.py says v%s but the checkout is v%s — code moved without re-stamping") % (stamp, computed),
+                pick("bash install.sh --non-interactive（重盖章 + 重启 daemons）",
+                     "bash install.sh --non-interactive (re-stamps + restarts the daemons)"))
+    return ("ok", "v%s (%s)" % (
+        stamp, "act/_version.py == git describe" if is_git
+        else pick("act/_version.py；非 git checkout", "act/_version.py; not a git checkout")), "")
+
+
 # --------------------------------------------------------------------------- #
 # release-on-merge：下一个 tag（纯函数，判例 tests/test_version_tags.py）
 # --------------------------------------------------------------------------- #

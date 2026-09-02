@@ -43,7 +43,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-import act
 from act import llm
 from act.lib import (
     board_server,
@@ -373,11 +372,6 @@ def _launchd_claude_probe(claude_bin: str, cwd: str, budget_s: float = 20.0) -> 
         shutil.rmtree(str(tmp), ignore_errors=True)
 
 
-def _version_status() -> dict:
-    """§56.1：stamp / git describe / 回落值三方对照（act.lib.version.status）。"""
-    return version_lib.status(version_lib.read_fallback())
-
-
 @dataclass
 class Probes:
     which: Callable[[str], Optional[str]] = shutil.which
@@ -421,9 +415,7 @@ class Probes:
     deploy_mirror_read: Callable[[], Optional[dict]] = deploy_state.read_mirror
     # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
     launchd_log_mtime: Callable[[str], Optional[float]] = _launchd_log_mtime
-    # §56.1 版本盖章：act/_version.py 的值 vs checkout 的 git describe（tests
-    # 注入——沙箱 HOME 不是 git checkout，真探针会把每条测试都判成「无 stamp」）
-    version_status: Callable[[], dict] = _version_status
+    version_status: Callable[[], dict] = version_lib.status_probe  # §56.1 stamp vs describe；tests 注入（沙箱非 git）
 
 
 @dataclass
@@ -475,32 +467,7 @@ def _check_home(probes: Probes):
 
 
 def _check_version(probes: Probes):
-    """§56.1 版本真源 = git tag：daemons 读 act/_version.py（install.sh / 构建脚本
-    盖章）。行 `version`——永不 FAIL（§56.3 回滚判据不能被一个版本盖章翻）：
-    没有 stamp（daemons 回落到烘焙常量或各自 spawn git）→ WARN；stamp 与 checkout
-    的 git describe 不一致（checkout 动了、install.sh 没跑）→ WARN；一致 → OK。
-    非 git checkout（.pkg / tarball）：有 stamp 即 OK、没有 = WARN。"""
-    st = probes.version_status()
-    stamp, computed, is_git = st.get("stamp"), st.get("computed") or "", bool(st.get("git"))
-    running = act.__version__
-    if not stamp:
-        return CheckResult(
-            "version", WARN,
-            _pick("没有 act/_version.py——运行中报 v%s（%s）",
-                  "no act/_version.py — reporting v%s (%s)") % (
-                running, _pick("来自 git describe / 烘焙回落值", "from git describe / the baked fallback")),
-            _pick("bash install.sh（会写 act/_version.py）或 python3 scripts/version_stamp.py --write",
-                  "bash install.sh (writes act/_version.py) or python3 scripts/version_stamp.py --write"))
-    if is_git and stamp != computed:
-        return CheckResult(
-            "version", WARN,
-            _pick("act/_version.py 说 v%s，checkout 是 v%s——代码动了但没重新盖章/重启",
-                  "act/_version.py says v%s but the checkout is v%s — code moved without re-stamping") % (stamp, computed),
-            _pick("bash install.sh --non-interactive（重盖章 + 重启 daemons）",
-                  "bash install.sh --non-interactive (re-stamps + restarts the daemons)"))
-    return CheckResult("version", OK, "v%s (%s)" % (
-        stamp, "act/_version.py == git describe" if is_git
-        else _pick("act/_version.py；非 git checkout", "act/_version.py; not a git checkout")))
+    return CheckResult("version", *version_lib.doctor_row(probes.version_status()))
 
 
 def _check_claude(probes: Probes):
