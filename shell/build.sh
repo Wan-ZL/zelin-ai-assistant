@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build + assemble the "Zelin AI Board" shell (.app bundle) — no Xcode project.
+# Build + assemble the "Zelin's AI Assistant" shell (.app bundle) — no Xcode project.
 #
 # Usage:
 #   ./build.sh                    # compile + assemble under shell/build/
@@ -21,11 +21,14 @@
 # 录制/字幕引擎（Recording / CaptionCore / LiveCaptions / CaptionOverlay）自
 # mac/Sources 搬入（CONTRACT §61.3），所以链接的框架与 mac/build.sh 同一组。
 #
-# Naming (CONTRACT §54; vnext2-plan §8 — the final name swap waits for P8):
-#   bundle:       Zelin AI Board.app          (folder name kept — id/TCC continuity)
-#   executable:   ZelinAIBoard
-#   bundle id:    com.zelin.ai-board
-#   display name: Zelin's AI Assistant (Board)  (Info.plist CFBundleDisplayName)
+# Naming (CONTRACT §54; owner 2026-09-02 — the shell is the product):
+#   bundle:       Zelin's AI Assistant.app     (install.sh moves the legacy app
+#                                              to "Zelin's AI Assistant (old).app")
+#   executable:   ZelinAIBoard                 (unchanged — pgrep/pkill -x key)
+#   bundle id:    com.zelin.ai-board           (unchanged — its own TCC identity;
+#                                              the legacy com.zelin.ai-engineer keeps
+#                                              the legacy grants until P8)
+#   display name: Zelin's AI Assistant         (Info.plist CFBundleDisplayName)
 set -euo pipefail
 
 # --- locate self (worktree-safe, handles spaces) ---
@@ -57,7 +60,7 @@ if [ "${1:-}" = "--check-toolchain" ]; then
     if check_toolchain; then exit 0; else exit 1; fi
 fi
 
-APP_NAME="Zelin AI Board"
+APP_NAME="Zelin's AI Assistant"
 EXEC_NAME="ZelinAIBoard"
 SRC_DIR="$SCRIPT_DIR/Sources"
 # 只借 I18n.swift（L() + LanguageMirror）；shared/ 的其余文件是看板模型，壳不要。

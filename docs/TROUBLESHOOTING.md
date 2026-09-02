@@ -20,16 +20,18 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 ## 换壳后的 TCC 重授权:第一次在看板 header 开「录制」/「实时字幕」会弹系统提示(v0.48.19 起)
 
-**症状**:从原生菜单栏 app 换到 "Zelin AI Board" 壳(D3,CONTRACT §61)后,第一次在看板右上角点「录制 → 仅屏幕」弹出 macOS「屏幕录制」授权提示;第一次开「实时字幕」(音源含麦克风)弹「麦克风」提示;在授权之前 header 显示 `录制:未在录制`,菜单首行写「缺「屏幕录制」权限」。
+**症状**:从原生菜单栏 app 换到壳 app "Zelin's AI Assistant"(shell/,D3,CONTRACT §61;2026-09-02 前叫 "Zelin AI Board" / "Zelin's AI Assistant (Board)")后,第一次在看板右上角点「录制 → 仅屏幕」弹出 macOS「屏幕录制」授权提示;第一次开「实时字幕」(音源含麦克风)弹「麦克风」提示;在授权之前 header 显示 `录制:未在录制`,菜单首行写「缺「屏幕录制」权限」。
 
 **原因**:这是预期行为,不是故障。TCC 授权按 **bundle id + 签名**归属:原生 app 是 `com.zelin.ai-engineer`,壳是 `com.zelin.ai-board`(审计 Q1 决定保留新身份),两者在系统设置里是两条独立的记录;录制引擎(screenpipe)现在是**壳的直接子进程**、字幕的麦克风/系统声音采集在**壳进程内**,所以两项授权都要给壳重新点一次。壳启动时会一次性把原生 app 里的录制模式/字幕偏好接过来(§61.4),但**刻意不**继承「曾授权过」标记——新身份要自己拿授权。
 
 **修复**:
 
-1. 屏幕录制:点菜单里的「打开系统设置 → 屏幕录制」(或 系统设置 → 隐私与安全性 → 屏幕录制),给 **Zelin AI Board** 打开开关。壳每 5 s 探一次授权,授权一生效引擎自动重启(与原生 app 同一自愈路径,通知「录制已就绪」)。
-2. 麦克风:系统提示直接点允许;拒绝了就到 系统设置 → 隐私与安全性 → 麦克风 打开 **Zelin AI Board**,再把「实时字幕」关一次开一次。
+1. 屏幕录制:点菜单里的「打开系统设置 → 屏幕录制」(或 系统设置 → 隐私与安全性 → 屏幕录制),给 **Zelin's AI Assistant** 打开开关(列表里同名的还有旧菜单栏 app——它的条目在旧 app 重新构建后会显示为 "Zelin's AI Assistant (old)";分不清时看哪一条是新出现的,或先 `tccutil reset ScreenCapture com.zelin.ai-board` 再开一次开关,重新出现的那条就是壳)。壳每 5 s 探一次授权,授权一生效引擎自动重启(与原生 app 同一自愈路径,通知「录制已就绪」)。
+2. 麦克风:系统提示直接点允许;拒绝了就到 系统设置 → 隐私与安全性 → 麦克风 打开 **Zelin's AI Assistant**(同上,认新出现的那条),再把「实时字幕」关一次开一次。
 3. 壳目前仍是 ad-hoc 签名(P4 过渡期):每次重新 `bash shell/build.sh` 装机后屏幕录制授权会像上一节一样失效——`tccutil reset ScreenCapture com.zelin.ai-board` 后重新打开开关即可。稳定证书随 Mac-retire 清单一起落地后不再需要。
-4. 两个 app 同时在跑时(旧 app 已改名 `-old` 备用),谁最后切换模式谁持有 screenpipe 子进程——不必同时开着;只保留壳在跑即可。
+4. 两个 app 同时在跑时(旧 app 已改名 "Zelin's AI Assistant (old)" 备用,§54),谁最后切换模式谁持有 screenpipe 子进程——不必同时开着;只保留壳在跑即可。
+
+**旧 app 的名字与位置(§54 名字互换,2026-09-02)**:`bash install.sh`(含 auto-deploy)第一次装新壳时,把原来的 `/Applications/Zelin's AI Assistant.app`(bundle id `com.zelin.ai-engineer`)**同目录改名**为 `/Applications/Zelin's AI Assistant (old).app`——只改文件夹名,bundle 内容一个字节不动(它在签名封条之内,改了 TCC 授权就名存实亡),所以旧 app 的授权与偏好全部原地保留。**它在系统设置里显示的名字要等下一次重新构建**(`mac/build.sh --install`、.pkg 或 Sparkle 更新——名字盖在 `mac/Info.plist` 里)才变成 "(old)";在那之前隐私列表里会有两条 "Zelin's AI Assistant"。用 .pkg 装过的旧 bundle 是 root 属主:install.sh 搬得动(rename 只要 /Applications 的写权限)但删不了、也不该 `sudo plutil` 去改名(同样破封条);想立刻看到 "(old)" 名字:先 `sudo rm -rf "/Applications/Zelin's AI Assistant (old).app"`(root 属主,用户级脚本删不掉;授权与偏好都不在 bundle 里,删了不丢),再在终端跑 `bash install.sh`——交互模式的第 4 步用同一 bundle id + 同一签名证书把旧 app 重建到 `(old).app`,名字随之到位、授权照旧。
 
 ## 雷达静默数天没有新卡 / headless claude 在 cron 下直接死
 

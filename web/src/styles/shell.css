@@ -181,7 +181,7 @@
   white-space: nowrap;
 }
 
-/* —— 壳内原生开关（§61：录制 / 实时字幕；只在 Zelin AI Board 壳里渲染）——
+/* —— 壳内原生开关（§61：录制 / 实时字幕；只在 shell/ 壳（"Zelin's AI Assistant"）里渲染）——
    颜色逐字镜像 mac RecordingMenuButton：关=次级、引擎在录=红（.red→--danger）、
    开了没录上=橙（.orange→--warning）、字幕开=accent、字幕出错=橙。 */
 .shell-native-controls {

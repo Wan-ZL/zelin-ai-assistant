@@ -1,6 +1,9 @@
 #!/bin/bash
 # Build an unsigned product .pkg that installs the WHOLE suite (HANDOFF §6 #1):
-#   component 1: the menu-bar app            -> /Applications
+#   component 1: the legacy menu-bar app     -> /Applications/Zelin's AI Assistant (old).app
+#                (§54 name swap: the product name belongs to the board shell,
+#                which install.sh builds and installs — a .pkg must never land
+#                a legacy bundle on top of it)
 #   component 2: the pipeline (repo export)  -> /Library/Application Support/
 #                ZelinAIAssistant/pipeline   (root-owned, versioned master copy)
 # plus a postinstall that rsyncs the master copy into the console user's
@@ -17,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
-APP_NAME="Zelin's AI Assistant"
+APP_NAME="Zelin's AI Assistant (old)"   # == mac/build.sh APP_NAME
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
 APP_PKG_ID="com.zelin.aiassistant.app"
 PIPELINE_PKG_ID="com.zelin.aiassistant.pipeline"
@@ -145,7 +148,7 @@ fi
 # Launch the app so "install finished" visibly means "assistant is running"
 # (first run opens the permissions & setup window). Payloads installed by
 # Installer carry no quarantine xattr, so this does not fight Gatekeeper.
-APP="/Applications/Zelin's AI Assistant.app"
+APP="/Applications/Zelin's AI Assistant (old).app"
 if [ -d "$APP" ]; then
     if run_as_console_user open -a "$APP"; then
         echo "postinstall: launched the menu-bar app for $CONSOLE_USER"

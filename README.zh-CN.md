@@ -109,10 +109,10 @@ bash scripts/dev-preview.sh              # 首次自动构建 web/,灌 demo 数�
 # ② 真数据 —— `bash install.sh` 跑过一次之后(或设了 AIASSISTANT_HOME):
 bash scripts/dev-preview.sh --real
 
-# ③ 原生窗口 —— "Zelin's AI Assistant (Board)":`bash install.sh` 构建 web/dist、
+# ③ 原生窗口 —— app "Zelin's AI Assistant"(shell/):`bash install.sh` 构建 web/dist、
 #    构建薄壳并装进 /Applications,看板服务器以 launchd agent
 #    com.zelin.aiassistant.server 常驻(CONTRACT §54)。开发循环:
-bash shell/build.sh && open "shell/build/Zelin AI Board.app"   # 连接正在跑的服务器
+bash shell/build.sh && open "shell/build/Zelin's AI Assistant.app"   # 连接正在跑的服务器
 ```
 
 构建 web UI 需要 Node.js LTS——`web/dist` 缺席时 `dev-preview.sh` 自动 `npm install && npm run build`;`install.sh` 同样(lockfile 变了才 `npm ci`),node 或 swiftc 缺席时跳过 UI 并 warn。壳 app 是 ad-hoc 签名:自己构建不需要 Apple 开发者账号;从网上下载的副本首次需右键 → 打开(Gatekeeper)。

@@ -198,7 +198,7 @@ class BuildVersionTestCase(unittest.TestCase):
                               capture_output=True, text=True, timeout=120, env=merged, cwd=str(self.tmp))
 
     def bundle_plist(self):
-        return self.repo / "shell" / "build" / "Zelin AI Board.app" / "Contents" / "Info.plist"
+        return self.repo / "shell" / "build" / "Zelin's AI Assistant.app" / "Contents" / "Info.plist"
 
     @unittest.skipUnless(_DARWIN, "shell/build.sh needs plutil/codesign")
     def test_shell_build_stamps_the_bundle_with_the_tag_version(self):

@@ -9,7 +9,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_NAME="Zelin's AI Assistant"
+APP_NAME="Zelin's AI Assistant (old)"   # the legacy menu-bar app (mac/build.sh APP_NAME; §54 name swap)
 ACTD_LABEL="com.zelin.aiassistant.actd"
 # actd 默认 10s 一轮、每轮重写 dashboard.json —— 60s 内没动过 = 守护进程僵了。
 DASHBOARD_MAX_AGE=60

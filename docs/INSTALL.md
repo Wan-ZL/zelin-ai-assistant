@@ -58,7 +58,7 @@ claude CLI 有两套互不相通的凭据,而这个项目的不同组件用到�
 2. **未签名**(无 Developer ID),Gatekeeper 会拦:右键 → 打开;若仍被拒,去
    系统设置 → 隐私与安全性 → 底部点 "仍要打开"(macOS Sequoia 起只有这条路)。
 3. 装了什么、装到哪:
-   - `/Applications/Zelin's AI Assistant.app` — 菜单栏 app。
+   - `/Applications/Zelin's AI Assistant (old).app` — 旧菜单栏 app（D3 冻结；产品名 `Zelin's AI Assistant.app` 归看板壳，由 `install.sh` 构建安装，CONTRACT §54）。
    - `/Library/Application Support/ZelinAIAssistant/pipeline/` — pipeline 母本(root 所有,随版本更新)。
    - postinstall 自动把母本 rsync 到 `~/Projects/zelin-ai-assistant/`(**不覆盖**你已有的
      `config.yaml`、`config/secrets/`、`state/`),再跑 `install.sh --pkg-postinstall`:

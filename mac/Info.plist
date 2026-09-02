@@ -6,10 +6,16 @@
 	<string>ZelinAIEngineer</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.zelin.ai-engineer</string>
+	<!-- §54 name swap (owner 2026-09-02): the board shell is "Zelin's AI
+	     Assistant"; this frozen menu-bar app reads "(old)" everywhere it shows a
+	     name. Stamped HERE, at build time, so the value sits inside the code
+	     signature seal — installed bundles are never edited (tccd validates the
+	     seal on every request). Executable, bundle id and the signing identity
+	     stay exactly as they are: they are what the TCC grants key on (§12). -->
 	<key>CFBundleName</key>
-	<string>Zelin's AI Assistant</string>
+	<string>Zelin's AI Assistant (old)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Zelin's AI Assistant</string>
+	<string>Zelin's AI Assistant (old)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>

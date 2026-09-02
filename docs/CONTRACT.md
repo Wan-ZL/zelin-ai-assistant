@@ -317,6 +317,8 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 ## 12. 命名
 显示名 **Zelin's AI Assistant**（2026-07-07 /ask-me 拍板）；app bundle "Zelin's AI Assistant.app"。可执行 `ZelinAIEngineer`、bundle id `com.zelin.ai-engineer` **刻意不改**——TCC 授权与 UserDefaults 挂在 bundle id 名下，改=权限设置全部重来。launchd label 与 `AIASSISTANT_HOME` 环境变量名保持不变（兼容）。仓库目录默认 `~/Projects/zelin-ai-assistant`（旧默认兜底；clone 到任意位置均可，实际解析顺序见 §19 的 home 指针条目）。
 
+**2026-09-02 追记（§54 名字互换，owner 指令）**：上段的显示名与 bundle 文件夹自此属于**看板壳**（`shell/`，id `com.zelin.ai-board`）；本节描述的菜单栏 app（`mac/`，D3 冻结）改名 **"Zelin's AI Assistant (old)"**，bundle 文件夹 `Zelin's AI Assistant (old).app`（`mac/Info.plist` 构建期盖章；`mac/build.sh` / `mac/package.sh` / `release.yml` 同名）。**不变**的仍然不变：可执行 `ZelinAIEngineer`、bundle id `com.zelin.ai-engineer`、签名身份 "Zelin AI Engineer Dev"、launchd label、`AIASSISTANT_HOME`——授权与偏好全部原地继承。已装的旧 bundle 由 install.sh 同目录 `mv` 到新名字、内容一字不改（细则与判例见 §54 追记）。
+
 ## 13. Slack 手机端（self-DM = 指挥通道）
 
 > **v0.21 弃用说明（add-only，本节其余内容保留作历史）**：iMessage 通道整体移除（`act/radar_imessage.py`、`com.zelin.aiassistant.imessageradar.plist`、config `phone_channel`/`imessage_self_handle`、§13 v0.13「iPhone 联动 / iMessage 设置区」note（本节 194 行）、Permissions 里「仅 iPhone 联动需要」的 Full Disk Access 行（185 行）均随之退役）。Slack 的**手机审批角色**也移除：不再有出站通知镜像到 self-DM、不再有 `批准/拒绝/打回/验收 R-xxx` 指令面、不再有 ✅ reaction 审批（§5 通知语义里的「§13 手机镜像」与 §29「notify.py 里 osascript 只剩 radar_imessage 用途」等引用一并作古——notify 现在只走 §28 app 身份中继，`req` 参数保留但不再使用）。**Mac App 成为唯一审批面**。**保留**：Slack self-DM 的**快速捕获**（下面 #0 那条：给自己发一条文字/图片/视频 → 三选一建卡），以及全部 Slack 入站 ingest（DM/群/@提及 + MCP 兜底）——self-DM 现在是**只进不出**的手机端捕获入口，助手不再往里回帖。
@@ -748,6 +750,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - `mode` ∈ `"interactive" | "pkg-postinstall" | "non-interactive"`（**v0.48.6 追记**：第三个值 = scripts/auto-deploy.sh 跑的 `install.sh --non-interactive`，§56；该模式**永不**构建/安装 Mac app——step `app` 恒为 `skipped`（§56.5，判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`）；退出码 = `status==fail` 的 step 数**减去 `app`**（被冻结的旧 Mac app（D3）即使出现失败行也不动已装 app、回滚也治不了它）——由 `failed_deploy_steps` 一处计算）；`user` = 实际执行安装步骤的用户（pkg 路线下 = console user，postinstall 经 `launchctl asuser <uid> sudo -u <user>` 降权执行）。
 - `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。**v0.48.16 追记（add-only）**：`cron` step 新增值 `skipped_tcc` = crontab 改写被 TCC 拒（stderr 带 `Operation not permitted`，launchd 会话缺 Full Disk Access）——不是 `fail`，所以天然不进 `failed_deploy_steps` 的退出码（§56.5：环境问题回滚治不了，2026-09-02 v0.48.12 实战里它把部署打回滚、把 sha 毒成停摆）；其余 crontab 失败（语法错、命令缺失）仍记 `fail`。写者 = install.sh `apply_crontab`（判类只看 crontab 的 stderr 原文，直接抓进变量、不落临时文件——报错里的 `tmp/tmp.<pid>` 是 crontab 自己的 spool 相对路径：它先 chdir 到 `/usr/lib/cron` → `/var/at` 再写 `tmp/tmp.<pid>`，与 TMPDIR 无关）；doctor `cron write access` 行（WARN `cron_tcc_blocked`，§25）负责让它可见。判例 `tests/test_install_cron_tcc.py`。
 - **v0.48.18 追记（add-only，§56.5 `ui` 步）**：新 step `ui` = 看板 UI 的构建与安装（web/dist + shell app），`ok | skipped | skipped_tcc | fail`——`skipped` = 工具链缺席（node+npm / swiftc）或 `.pkg` 模式，`skipped_tcc` = node 在 launchd 会话里被 TCC 拒（EPERM）、web 半没重建（doctor `board ui build` 行负责可见性），`fail` = 构建/安装真的坏了；`detail` 形如 `web ok (npm ci 12s, build 31s); shell ok (9s → /Applications/Zelin AI Board.app); 52s total`（两半独立、各带耗时）。**`ui=fail` 进 `failed_deploy_steps` 的退出码（回滚判据），`ui=skipped` / `ui=skipped_tcc` 不进**——与 `app` 例外不同：UI 是产品本体，构建坏了就是坏版本；TCC 拒绝则是环境，回滚治不了。另一新 step `board_server_port`（只在 warn 时出现）= 加载 `com.zelin.aiassistant.server` 之前端口上已有非 launchd 的 server 在答话（§54.2 端口互斥）。判例 `tests/test_install_ui_step.py`。
+- **2026-09-02 追记（§54 名字互换）**：`ui` 步 detail 里壳的路径改为 `/Applications/Zelin's AI Assistant.app`；本轮把旧 app 搬去 `(old)` 时 shell 半 detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（add-only，只在真搬了时出现）。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
 
@@ -3791,7 +3794,7 @@ test_store2_load_scale.py、test_server_store2_detail.py、
 tests/integration/test_store2_concurrent_writers.py；schema v1→v2 升级梯子与
 `work_id` 列/索引/触发器 = tests/test_two_stage_card_ids.py（§60）。
 
-## 54. 薄壳看板 app（shell/ — 显示名 "Zelin's AI Assistant (Board)"，bundle "Zelin AI Board.app"）
+## 54. 薄壳看板 app（shell/ — "Zelin's AI Assistant"，bundle "Zelin's AI Assistant.app"，id `com.zelin.ai-board`）
 
 `shell/` 是 §49 web 面的**桌面薄壳**（AppKit + WKWebView，单文件
 `shell/Sources/main.swift`）：职责刻意做薄——解析 PORT/HOME → 探活
@@ -3812,6 +3815,43 @@ server/ 静态托管；**壳里没有业务逻辑**，不读 registry、不写 i
 ——引擎住在本进程，窗口关了它们还得活着），点 Dock 图标重开窗口，⌘Q 正常退出
 （Dock app 语义，不做 v0.46 的 ⌘Q 守卫）。`mac/` 在 owner 明确下令删除前（P8）
 保留为**冻结的只读行为规范**，装机版改名 `-old` 备用（R2.2.4）。
+
+**§54 名字互换追记（owner 2026-09-02 指令，提前于 P8；改写本节标题与 54.2「命名」
+一条的「暂留 / 等 P8」两句）**：壳**就叫产品名**——`shell/Info.plist` 的
+`CFBundleName` / `CFBundleDisplayName` = **"Zelin's AI Assistant"**（不带 "(Board)"），
+bundle 文件夹 **`Zelin's AI Assistant.app`**（`shell/build.sh APP_NAME` ≡ `install.sh
+UI_APP_NAME` ≡ `act.lib.version.BOARD_APP_NAME`，判例钉逐字一致）；旧菜单栏 app 改名
+**"Zelin's AI Assistant (old)"**（bundle 文件夹 `Zelin's AI Assistant (old).app`）。
+四条不变式：
+
+- **bundle id 一个都不改**：壳仍 `com.zelin.ai-board`（它自己的 TCC 身份——录制 /
+  麦克风授权自 v0.48.19 起记在它名下），旧 app 仍 `com.zelin.ai-engineer`（§12：
+  Documents / 通知等旧授权与 UserDefaults 挂在它名下）。两个 bundle 共用一个 id 会在
+  LaunchServices 注册与 TCC 归属上互相打架，所以壳**不**接过旧 id（§5.4 Q1 默认）。
+  可执行名（`ZelinAIBoard` / `ZelinAIEngineer`）与签名身份同样不动。
+- **认 bundle 只认 CFBundleIdentifier，不认目录名**：同一个目录名在换名前后住的是
+  不同的 app。install.sh `ui` 步、uninstall.sh、doctor `board app version` 行、
+  `ingest/vault-sync.sh` 找 helper，全部先读 id（或以 helper 是否存在作自然 id 检查）。
+- **已装的旧 bundle 只搬不改**：install.sh 在装壳之前，若产品路径上的 bundle 是
+  `com.zelin.ai-engineer` → **同目录 `mv`** 到 `(old).app`（rename 只要目录的写权限，
+  .pkg 装出来的 root 属主 bundle 也搬得动——2026-09-02 live 机器正是这个形状）；
+  `(old)` 已存在 → 保留 `(old)` 那份，产品路径上多出来的那份先 rename 停到带时间戳的
+  `(old <ts>).app` 再尽力 `rm`（root 属主 rm 被拒 = 留在停车位 + warn 给 `sudo rm -rf`
+  一行）；`mv` 本身失败 → shell 半 `fail`，**绝不 `rm` 旧 bundle、绝不盖在它上面**。
+  **永不 `plutil` 已装 bundle 的 Info.plist**：它在代码签名封条之内，tccd 每次请求都
+  验封条，改了 = 旧 app 的授权名存实亡。"(old)" 显示名因此**在构建期盖进** `mac/Info.plist`
+  （封条之内），随下一次旧 app 构建 / .pkg / Sparkle 更新到位；`mac/build.sh --install`、
+  `mac/package.sh`（.pkg 载荷）、`release.yml` 打包、`scripts/smoke-deploy.sh` 全部改到
+  `(old).app`——一个 .pkg / Sparkle 更新**永不**把旧 app 装回产品路径。
+- **换名前的壳 bundle `Zelin AI Board.app`**（≤ v0.48.29）在新 bundle 装好**之后**删除，
+  且只在它的 id 是 `com.zelin.ai-board` 时；产品路径上已经是 `com.zelin.ai-board` 的
+  bundle = 正常升级（stage-then-swap 原样替换）。§56.5 relaunch 规则不变（`pgrep -x
+  ZelinAIBoard` → 步 5 之后 `pkill -TERM` → `open -g` 新路径）。
+
+判例：`tests/test_install_ui_step.py`（旧 app 在产品路径 / 不在 / 两份都在 / 两份都在且
+rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv 失败）、
+`tests/test_version_resolution.py`（doctor 行认 id）、`tests/test_vault_sync_helper_resolution.py`、
+`tests/test_uninstall.py`。台账：`docs/design/vnext2-plan.md` D3 / §8。
 
 ### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
 
@@ -3925,7 +3965,9 @@ server/ 静态托管；**壳里没有业务逻辑**，不读 registry、不写 i
   §5.4 Q1），但 `CFBundleName` / `CFBundleDisplayName` = **"Zelin's AI Assistant
   (Board)"**——Dock、窗口标题、app 菜单都读成产品的一部分。最终换名（壳接手
   "Zelin's AI Assistant"、旧 app 改 "(old)"）在 P8 与旧 app 退役同车，理由与时间
-  记在 `docs/design/vnext2-plan.md` §8。
+  记在 `docs/design/vnext2-plan.md` §8。**→ 2026-09-02 owner 指令提前执行：见本节
+  开头「§54 名字互换追记」——壳 = "Zelin's AI Assistant" / `Zelin's AI Assistant.app`，
+  旧 app = "Zelin's AI Assistant (old)"，两个 bundle id 都不动。**
 
 ### 54.3 配置解析与构建（原 §54 正文，v0.48.18 按 54.2 修订处已标注）
 
@@ -4197,7 +4239,7 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 - **CI 门「Version pins untouched」**（`scripts/ci/version_pins_check.py`，pull_request + merge_group，required；纯函数对 `git diff HEAD^1 HEAD` 判决）：iOS pin 行任何增删、`act/__init__.py` 回落行改成 ≠ 最新 tag 的值或被删、CHANGELOG 新增 `## [X.Y.Z]` 标题或 `[X.Y.Z]: https://…` 链接、`act/_version.py` 进 diff——皆 FAIL。**过渡条款（cutover）**：PR 的 fork point（`merge-base(HEAD^1, HEAD^2)`）那一刻的树里**还没有** `scripts/ci/version_pins_check.py` = 本门诞生前开的在飞 PR（#138–#141 一批带旧式手 bump），只打 `::notice::` 不 FAIL；它们一旦 rebase 过本门（act/__init__.py 与 pin 文件的冲突会逼它们 rebase）新规则即生效——冲突解决 = 采纳占位与回落行、把自己的 CHANGELOG 条目搬到 `[Unreleased]` 下。判例 `tests/test_version_pins_check.py`。
 - **CHANGELOG**：PR 只写 `## [Unreleased]` 下；文件**永不**被发版改写（没有「Unreleased 改名为 [X.Y.Z]」这一步）。发版历史住在 GitHub Releases + tag；Release 正文 = `[Unreleased]` 相对上一个 tag 的**增量**（`scripts/changelog_release_notes.py`；判例 `tests/test_changelog_release_notes.py`）。既有的 `## [0.48.16]` 等带日期段落是切换前的历史，原样保留。`[Unreleased]` 长了可以在 chore PR 里删旧条目（删行不影响任何 release：增量只看新增）。
 - **doctor 行 `version`**（§25 add-only；`Probes.version_status` 注入缝）：永不 FAIL（§56.3 回滚判据不能被一个盖章翻）。没有 `act/_version.py` → WARN（fix：`bash install.sh` / `scripts/version_stamp.py --write`）；stamp ≠ checkout 的 describe（代码动了没重盖）→ WARN（fix：`bash install.sh --non-interactive`）；一致 → OK；非 git checkout 有 stamp → OK。
-- **盖章的解释器与「绝不静默」（2026-09-02 首次实战追记，add-only）**：v0.48.21 上机那一轮，install.sh 的 `stamp_version` 把 stamper 交给了 `command -v python3`——auto-deploy 的 plist PATH 以 Homebrew 打头，而 **TCC 按每个非平台 binary 单独记账**（§55 第三幕；§56.5 web 半的 node 同一堵墙）：launchd 会话里的 `/opt/homebrew/bin/python3` 哪怕是有 FDA 的守护 python 的子进程，也打不开外置卷 checkout 上的 `scripts/version_stamp.py`（`[Errno 1] Operation not permitted`，一次性 launchd job 实测：同一命令 `/usr/bin/python3` 与 Xcode python 都答 0.48.21）；`2>/dev/null` 把这行吞掉，日志只剩「stamp failed」，install.sh 收尾打出 `ok (v?)`，同一轮 `shell/build.sh` 用同一个 `python3` 再失败一次、VERSION 为空、把 Info.plist 的占位 **0.1.0** 装进了 /Applications；daemons 反而没事（它们各自 spawn git 回落）。法条：(a) **盖章的解释器按 §55 daemon 候选顺序挑**（`$AIASSISTANT_PYTHON` = launchd job 自己的解释器最先；repo 在 $HOME 之外时 `/usr/bin/python3` 排在 PATH python 之前；`stamp_python_candidates` = `daemon_python_candidates` + PATH 的 python3 兜底），第一个盖成的赢，被拒的跳过并以 `[info]` 点名 + 带它的最后一行 stderr；(b) **stamper 的 stderr 永不吞**：全部失败时 `[warn]` 与 §23 `version` step 的 detail 都带 `<解释器>: <最后一行 stderr>`；仍永不 `fail`。(c) **构建脚本的版本来自 `scripts/build_version.sh`**（mac/build.sh 与 shell/build.sh 共用；候选 `$AIASSISTANT_PYTHON` → `config/runtime.json` 的 pin → `/usr/bin/python3` → PATH 的 python3，每个先跑 `version_stamp.py --write`、再退到**同一个 stamper 的只读决策**（`version_stamp.py` 不带 `--write`：git 优先、git 答不上才认已有 stamp）——能读不能写的 checkout 仍答得上；**不是** `import act; act.__version__`：那是 stamp 优先，陈旧的 `act/_version.py` 会把新构建标成旧号（Codex P1）；**在 compile 之前**算（答不上就不花 swiftc 的时间、上一次的 bundle 原样留着），答不上 = **BUILD FAILED**（非零退出，install.sh 的 ui 步记 `shell fail`）——**永不带占位版本出厂**。(d) **doctor 行 `board app version`**（§25 add-only；随 `version` 行同一探针 `Probes.version_status` 的 add-only 键 `board_app` 出行；没装壳 = 不出行）：装在 `/Applications`（或 `~/Applications`）的 `Zelin AI Board.app` 的 `CFBundleShortVersionString` == 运行中的 `act.__version__`（stamp 优先，否则 checkout 算出的值）→ OK；不一致（含占位 0.1.0）或读不出 → WARN，fix `bash install.sh --non-interactive`（重建 + 重装壳）或等下一次 auto-deploy；永不 FAIL。判例 `tests/integration/test_version_git_fixture.py`（被拒解释器跳过并点名 / 全部失败的 warn 与 detail 带 stderr / launchd 式洁净环境下 tag 在与不在都不失败）、`tests/integration/test_build_version.py`（build_version.sh 的候选顺序、pin、EPERM 跳过、只读 act/ 退到 act.__version__、都答不上退出 1 且 stdout 为空；shell/build.sh 真跑（假 swiftc）盖对版本 / 答不上 BUILD FAILED 且不留半成品）、`tests/test_version_resolution.py`（`board app version` 行 + bundle 名与 install.sh / shell/build.sh 逐字一致）。
+- **盖章的解释器与「绝不静默」（2026-09-02 首次实战追记，add-only）**：v0.48.21 上机那一轮，install.sh 的 `stamp_version` 把 stamper 交给了 `command -v python3`——auto-deploy 的 plist PATH 以 Homebrew 打头，而 **TCC 按每个非平台 binary 单独记账**（§55 第三幕；§56.5 web 半的 node 同一堵墙）：launchd 会话里的 `/opt/homebrew/bin/python3` 哪怕是有 FDA 的守护 python 的子进程，也打不开外置卷 checkout 上的 `scripts/version_stamp.py`（`[Errno 1] Operation not permitted`，一次性 launchd job 实测：同一命令 `/usr/bin/python3` 与 Xcode python 都答 0.48.21）；`2>/dev/null` 把这行吞掉，日志只剩「stamp failed」，install.sh 收尾打出 `ok (v?)`，同一轮 `shell/build.sh` 用同一个 `python3` 再失败一次、VERSION 为空、把 Info.plist 的占位 **0.1.0** 装进了 /Applications；daemons 反而没事（它们各自 spawn git 回落）。法条：(a) **盖章的解释器按 §55 daemon 候选顺序挑**（`$AIASSISTANT_PYTHON` = launchd job 自己的解释器最先；repo 在 $HOME 之外时 `/usr/bin/python3` 排在 PATH python 之前；`stamp_python_candidates` = `daemon_python_candidates` + PATH 的 python3 兜底），第一个盖成的赢，被拒的跳过并以 `[info]` 点名 + 带它的最后一行 stderr；(b) **stamper 的 stderr 永不吞**：全部失败时 `[warn]` 与 §23 `version` step 的 detail 都带 `<解释器>: <最后一行 stderr>`；仍永不 `fail`。(c) **构建脚本的版本来自 `scripts/build_version.sh`**（mac/build.sh 与 shell/build.sh 共用；候选 `$AIASSISTANT_PYTHON` → `config/runtime.json` 的 pin → `/usr/bin/python3` → PATH 的 python3，每个先跑 `version_stamp.py --write`、再退到**同一个 stamper 的只读决策**（`version_stamp.py` 不带 `--write`：git 优先、git 答不上才认已有 stamp）——能读不能写的 checkout 仍答得上；**不是** `import act; act.__version__`：那是 stamp 优先，陈旧的 `act/_version.py` 会把新构建标成旧号（Codex P1）；**在 compile 之前**算（答不上就不花 swiftc 的时间、上一次的 bundle 原样留着），答不上 = **BUILD FAILED**（非零退出，install.sh 的 ui 步记 `shell fail`）——**永不带占位版本出厂**。(d) **doctor 行 `board app version`**（§25 add-only；随 `version` 行同一探针 `Probes.version_status` 的 add-only 键 `board_app` 出行；没装壳 = 不出行）：装在 `/Applications`（或 `~/Applications`）的 `Zelin AI Board.app`（2026-09-02 起 `Zelin's AI Assistant.app`，§54 名字互换；探针带 add-only 键 `bundle_id`——产品路径上的 bundle 不是 `com.zelin.ai-board` 时 WARN 点名「不是看板壳、旧 app 还占着产品路径」而非版本文案）的 `CFBundleShortVersionString` == 运行中的 `act.__version__`（stamp 优先，否则 checkout 算出的值）→ OK；不一致（含占位 0.1.0）或读不出 → WARN，fix `bash install.sh --non-interactive`（重建 + 重装壳）或等下一次 auto-deploy；永不 FAIL。判例 `tests/integration/test_version_git_fixture.py`（被拒解释器跳过并点名 / 全部失败的 warn 与 detail 带 stderr / launchd 式洁净环境下 tag 在与不在都不失败）、`tests/integration/test_build_version.py`（build_version.sh 的候选顺序、pin、EPERM 跳过、只读 act/ 退到 act.__version__、都答不上退出 1 且 stdout 为空；shell/build.sh 真跑（假 swiftc）盖对版本 / 答不上 BUILD FAILED 且不留半成品）、`tests/test_version_resolution.py`（`board app version` 行 + bundle 名与 install.sh / shell/build.sh 逐字一致）。
 - **过渡条款（首次部署本改动那一轮，一次性）**：§56.3 成法「一次部署自始至终跑的是合并前的旧脚本」——旧 `scripts/auto-deploy.sh` 用 `sed` 读 `act/__init__.py` 的 `^__version__ = "…"` 行当期望版本，并要求新 actd 的心跳 `version` 与之**逐字相等**（第 9 步）。因此 (a) 回落行在本改动的 PR 里**手写为合并时 release-on-merge 将铸造的号**（最新 tag + 1 patch；PR 若 rebase 过另一个 release 必须同步刷新；不得给这个 PR 贴 `release: minor|major`）；(b) `version.from_describe` 的**回落值领先条款**：HEAD 不在 tag 上、且回落值 **>** 最近的 tag 时，版本 = 回落值而非 `tag+N`——旧脚本的 `git fetch origin main` 不带 `--tags`，tag 在 commit 已被抓取之后铸造时**不会**被自动跟随（实测），没有这一条心跳会写成 `0.48.16+1` 而被误判回滚。新常态下回落值 ≤ 最新 tag，本条永不触发。若那一轮仍被误判回滚（release-on-merge 迟到 / 号猜错），出路是 owner 手动 `git -C <repo> merge --ff-only origin/main && bash install.sh --non-interactive` 一次——新脚本上机后不再依赖这一切。判例 `tests/test_version_resolution.py`（顺序 / 过渡条款 / stamp 保留 / doctor 行）、`tests/integration/test_version_git_fixture.py`（真 git：恰在 tag / 领先 / 无 tag / 无 git 副本 / install.sh `stamp_version` 原文真跑 / `--ios`）、`tests/test_version_stamp_cli.py`（pin 文本盖章 + 提交的 pin 必须是占位）。
 
 ### 56.2 release-on-merge：合并即打 tag、即发版（2026-09-02 改写；前身 tag-on-merge）
@@ -4275,6 +4317,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
   - **预算**：每条构建命令受 `AIASSISTANT_UI_BUDGET`（默认 600 s）看门狗——超时 = 该半 `fail (exit 124)`，绝不吃掉自动部署的 1800 s 总看门狗；各半耗时写进 `ui` 步 detail 与 install 输出（`ui step: ok in 52s`）。构建输出进 `~/Library/Logs/zelin-ai-assistant/ui-build.log`（1 MB 帽，失败时 tail 回显）。
   - **relaunch 规则**：`--non-interactive` 且本次真的装了新 bundle 且 app 正在跑（`pgrep -x ZelinAIBoard`）→ **在步 5 launchd agents 全部重新加载之后**（server agent 已回到 launchd）`pkill -TERM -x ZelinAIBoard` → 等 ≤5 s → `open -g <bundle>`（不抢焦点）。壳 spawn 不了任何东西（server 归 launchd），所以 relaunch 掐不断录制或字幕——这正是它与旧 app 的区别。交互模式**不**动正在跑的 app（只提示 owner 自己重开）。
   - **旧 app 一根手指不碰**（D3）：`ui` 步的每条路径都只认 `Zelin AI Board.app`；判例把 `Zelin's AI Assistant.app` 放在旁边、断言字节与 mtime 不变。
+  - **2026-09-02 追记（§54 名字互换，改写上两条的名字）**：壳的 bundle 文件夹改为 **`Zelin's AI Assistant.app`**（staged 名 `.Zelin's AI Assistant.app.staged`），旧 app 的家改为 **`Zelin's AI Assistant (old).app`**。「一根手指不碰」精确化为「**只搬不改**」：产品路径上的 bundle 若 id 是 `com.zelin.ai-engineer`，装壳前同目录 `mv` 到 `(old).app`（`(old)` 已在 → 保留 `(old)`、多出来的那份 rename 停到 `(old <ts>).app` 再尽力 rm；mv 失败 → shell 半 `fail`，绝不 rm、绝不盖）；bundle 内容永不编辑（签名封条）；判例断言搬过去的文件字节与 mtime 不变。新 bundle 装好后删掉 id 为 `com.zelin.ai-board` 的老壳 `Zelin AI Board.app`。detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（只在本轮真搬了时）。细则见 §54 追记。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
 ### 56.6 PR 分支自动跟随 main（auto-update-branch；2026-09-02，owner：「一旦一个 main 弄了，其他的就直接自动 rebase」）
