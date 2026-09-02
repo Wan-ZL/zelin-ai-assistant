@@ -133,7 +133,8 @@ class DefaultRunnerTestCase(unittest.TestCase):
         with mock.patch.object(ai_fix_launch.subprocess, "run", return_value=proc) as run:
             rc, out = ai_fix_launch._default_runner(["x"], {"A": "1"}, Path("/tmp"))
         self.assertEqual((rc, out), (0, "/tmp/a.command\nwarn\n"))
-        self.assertEqual(run.call_args.kwargs["cwd"], "/tmp")
+        # runner 传的是 str(Path)——Windows 上是 "\\tmp"，别钉 POSIX 字面量
+        self.assertEqual(run.call_args.kwargs["cwd"], str(Path("/tmp")))
         self.assertEqual(run.call_args.kwargs["env"], {"A": "1"})
 
     def test_default_runner_maps_timeout_and_oserror(self):
