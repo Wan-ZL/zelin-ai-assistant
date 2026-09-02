@@ -655,19 +655,37 @@ except Exception:
 PY
 }
 
+# `generated_at` of state/install_report.json ("" when absent/unreadable) —
+# sampled before install.sh runs so the report can be told apart from the
+# previous run's afterwards WITHOUT trusting the wall clock (Codex review P2
+# on #146: a clock stepped backwards mid-install would make a fresh report
+# look old).
+install_report_generated_at() {
+    [ -f "$INSTALL_REPORT" ] || return 0
+    "$PY" - "$INSTALL_REPORT" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        sys.stdout.write(str(json.load(fh).get("generated_at") or ""))
+except Exception:
+    pass
+PY
+}
+
 # The §23 step `$1` of state/install_report.json as "<status>:<detail>"; ""
 # when the report / the step is absent (a pre-cutover install.sh wrote no
-# `version` step) — or when the report predates `$2` (UTC %Y-%m-%dT%H:%M:%SZ,
-# the moment install.sh was started): a run that exited 0 without rewriting
-# the report must not be judged by the PREVIOUS run's stamp.
-install_report_step() { # $1=step name $2=not-before timestamp ("" = any)
+# `version` step) — or when the report is STILL the one sampled before
+# install.sh ran (`$2` = its `generated_at` then, "" = there was none): a run
+# that exited 0 without rewriting the report must not be judged by the
+# PREVIOUS run's stamp. Pass `$2` unset to skip that guard.
+install_report_step() { # $1=step name [$2=generated_at of the pre-install report]
     [ -f "$INSTALL_REPORT" ] || return 0
-    "$PY" - "$INSTALL_REPORT" "$1" "${2:-}" <<'PY' 2>/dev/null || true
+    "$PY" - "$INSTALL_REPORT" "$1" "$#" "${2:-}" <<'PY' 2>/dev/null || true
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         data = json.load(fh)
-    if sys.argv[3] and str(data.get("generated_at") or "") < sys.argv[3]:
+    if int(sys.argv[3]) >= 2 and str(data.get("generated_at") or "") == sys.argv[4]:
         sys.exit(0)
     for step in data.get("steps") or []:
         if isinstance(step, dict) and step.get("name") == sys.argv[2]:
@@ -692,7 +710,7 @@ PY
 # Globals, not stdout: the reason has to survive back to the caller.
 EXPECTED_IDENTITY=""
 STAMP_WARN=""
-stamped_identity() { # $1=checkout version $2=install start (UTC) → EXPECTED_IDENTITY ("" = any) + STAMP_WARN
+stamped_identity() { # $1=checkout version $2=pre-install report generated_at → EXPECTED_IDENTITY ("" = any) + STAMP_WARN
     EXPECTED_IDENTITY="$1"; STAMP_WARN=""
     _step="$(install_report_step version "${2:-}")"
     case "$_step" in
@@ -1307,7 +1325,7 @@ main() {
     fi
 
     _hb_before="$(heartbeat_fields)"
-    _install_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    _report_before="$(install_report_generated_at)"
     run_install
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
@@ -1318,7 +1336,7 @@ main() {
     # Readiness is keyed on the identity install.sh actually stamped (§56.1),
     # not on the checkout's prediction — a failed stamp step must not turn a
     # good deploy into a false no_heartbeat_from_new_version rollback.
-    stamped_identity "$VERSION" "$_install_started"
+    stamped_identity "$VERSION" "$_report_before"
     if [ -n "$STAMP_WARN" ]; then
         log "WARN install.sh could not stamp act/_version.py ($STAMP_WARN) — the daemons' version identity is unverifiable this round: readiness = a NEW actd pid + one idle pass, no version match (doctor \`version\` row WARNs; a stale stamp makes the next run see install_incomplete and re-run install.sh)"
     elif [ "$EXPECTED_IDENTITY" != "$VERSION" ]; then
