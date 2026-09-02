@@ -54,10 +54,12 @@
 #      is REFUSED and notified rather than destroying the owner's work; a git
 #      that cannot even answer (EPERM window, volume offline) is reported as
 #      exactly that, never as "detached"; and if state/store2_truth.json
-#      APPEARED during this deploy, the rollback is REFUSED with a pointer to
-#      docs/TROUBLESHOOTING.md「store2 回滚」— resetting the code to a
-#      pre-store2 version would strand the SQLite ledger the new actd just
-#      made the registry truth; stays
+#      APPEARED during this deploy — or state/store2.db's PRAGMA user_version
+#      INCREASED (schema bump on an already-active ledger: the marker
+#      pre-exists then and alone would miss it) — the rollback is REFUSED
+#      with a pointer to docs/TROUBLESHOOTING.md「store2 回滚」— resetting
+#      the code to a version whose runtime cannot read the ledger the new
+#      actd just advanced; stays
 #      on main so the next run can still fast-forward) + install.sh again +
 #      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
 #      remembered as failed and skipped until main moves (or --force).
@@ -100,6 +102,7 @@ HEARTBEAT_DEADLINE="${AUTODEPLOY_HEARTBEAT_DEADLINE:-180}"  # the restarted actd
 DOCTOR_RETRIES="${AUTODEPLOY_DOCTOR_RETRIES:-3}"        # post-install doctor verdict: attempts (§56.3 step 10)
 DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-45}"         # seconds between those attempts
 STORE2_MARKER="$REPO_ROOT/state/store2_truth.json"      # §53 activation marker — rollback guard
+STORE2_DB="$REPO_ROOT/state/store2.db"                  # §53 ledger — its PRAGMA user_version guards too
 CI_API="${AUTODEPLOY_CI_API:-https://api.github.com}"
 CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that must be green on the
                                                         # deployed sha (comma-separated); `ci` is the
@@ -417,19 +420,46 @@ tracked_content_changes() {
     git_q -c core.fileMode=false status --porcelain --untracked-files=no 2>/dev/null || true
 }
 
+# PRAGMA user_version of the store2 ledger; "0" when the DB is absent or
+# unreadable. Read-only URI open — this probe must never create the file.
+store2_user_version() {
+    [ -f "$STORE2_DB" ] || { printf '0'; return 0; }
+    "$PY" - "$STORE2_DB" <<'PY' 2>/dev/null || printf '0'
+import sqlite3, sys
+try:
+    con = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+    print(con.execute("PRAGMA user_version").fetchone()[0])
+    con.close()
+except Exception:
+    print(0)
+PY
+}
+
 rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
-    # store2 guard (§53 / §56 rollback): the truth marker appearing during
-    # THIS deploy means the new actd just migrated the card ledger to SQLite;
-    # resetting the code to a pre-store2 version would leave that live ledger
-    # on a runtime that cannot read it. Refuse — the by-hand procedure
-    # (restore the YAML backup first) is docs/TROUBLESHOOTING.md「store2 回滚」.
+    # store2 guard (§53 / §56 rollback): the new actd migrating the ledger
+    # during THIS deploy — either the truth marker appearing (YAML→SQLite,
+    # v0.48.8) or PRAGMA user_version increasing (schema bump on an already-
+    # active ledger; the marker pre-exists then, so it alone would miss this,
+    # #135 review) — means PREV's runtime cannot read what is now on disk.
+    # Refuse the code rollback — the by-hand procedure (restore the backup
+    # first) is docs/TROUBLESHOOTING.md「store2 回滚」.
+    _s2why=""
     if [ "${_store2_before:-1}" -eq 0 ] && [ -f "$STORE2_MARKER" ]; then
-        log "rollback REFUSED — store2 became the registry truth during this deploy ($STORE2_MARKER); a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
+        _s2why="store2 became the registry truth during this deploy ($STORE2_MARKER)"
+    else
+        _uv_now="$(store2_user_version)"
+        [ "${_uv_now:-0}" -gt "${_store2_uv_before:-0}" ] 2>/dev/null \
+            && _s2why="store2 schema was upgraded during this deploy (user_version ${_store2_uv_before:-0} -> ${_uv_now})"
+    fi
+    if [ -n "$_s2why" ]; then
+        log "rollback REFUSED — $_s2why; a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
         write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=rollback refused (store2 activated during this deploy — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2"
+                    "detail=rollback refused ($_s2why — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2"
+        # ${_s2why} braced: bash 3.2 would swallow the first byte of the
+        # following fullwidth paren into the variable name (set -u abort).
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
-               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 已把卡片真源切到 SQLite —— 回退代码会让账本落在没有 store2 运行时的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT"
+               "v$(repo_version) 需要回滚（$2），但本次部署中 store2 账本前进了（${_s2why}）—— 回退代码会让账本落在读不了它的版本上；请按 docs/TROUBLESHOOTING.md「store2 回滚」手动处理 $REPO_ROOT"
         return 1
     fi
     # Re-verify the checkout right before `reset --hard`: minutes have passed
@@ -552,10 +582,12 @@ main() {
 
     PREV="$(git_q rev-parse HEAD)"
     TARGET="$(git_q rev-parse "refs/remotes/$REMOTE/$BRANCH" 2>/dev/null || git_q rev-parse FETCH_HEAD)"
-    # §53 marker as of this run's start: if it APPEARS during the deploy (the
-    # new actd migrated the registry truth to SQLite), rollback() refuses.
+    # §53 ledger state as of this run's start: if the marker APPEARS or the
+    # DB's user_version INCREASES during the deploy (the new actd migrated
+    # the registry truth / bumped the schema), rollback() refuses.
     _store2_before=0
     [ -f "$STORE2_MARKER" ] && _store2_before=1
+    _store2_uv_before="$(store2_user_version)"
 
     if [ "$PREV" = "$TARGET" ]; then
         write_state "status=up_to_date" "last_run=$_now" "head=$PREV" \

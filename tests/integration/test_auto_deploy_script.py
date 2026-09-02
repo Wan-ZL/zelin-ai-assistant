@@ -37,8 +37,10 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
   - **git 答不上来 ≠ detached**（首次实战：EPERM 窗口里 symbolic-ref/rev-parse
     全空，误报 detached + 空 sha）：入口与回滚重验都区分 rc>1（git 读不了 checkout
     → 诚实报错，不 reset）与 rc=1（真 detached）；"checkout left at" 永不插空值；
-  - **store2 迁移感知回滚**：state/store2_truth.json 在本次部署期间出现 → 回滚
-    被拒 + 指向 docs/TROUBLESHOOTING.md「store2 回滚」；部署前就在 → 照常回滚；
+  - **store2 迁移感知回滚**：state/store2_truth.json 在本次部署期间出现、或
+    state/store2.db 的 PRAGMA user_version 在部署期间升高（schema bump：标记
+    早已在场，单看标记会漏，#135 review）→ 回滚被拒 + 指向
+    docs/TROUBLESHOOTING.md「store2 回滚」；标记先在且 schema 没动 → 照常回滚；
   - write_state / notify 失败时日志行携带子进程异常（首次实战两行 non-fatal
     全裸，PermissionError 只在 launchd stderr 里）；notify() 吞掉队列写失败只
     返回 False 的路径同样记行；
@@ -51,6 +53,7 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -85,6 +88,18 @@ fi
 if [ -n "${FAKE_INSTALL_STORE2:-}" ]; then
     mkdir -p "$here/state"
     printf '{"activated_at": "2026-09-01T21:07:19Z"}\n' > "$here/state/store2_truth.json"
+fi
+# simulate the new actd bumping the store2 schema on first DB open (#135 shape:
+# the truth marker already exists, only PRAGMA user_version moves)
+if [ -n "${FAKE_INSTALL_STORE2_UV:-}" ]; then
+    mkdir -p "$here/state"
+    python3 - "$here/state/store2.db" "$FAKE_INSTALL_STORE2_UV" <<'EOF'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("PRAGMA user_version=%d" % int(sys.argv[2]))
+con.commit()
+con.close()
+EOF
 fi
 # generic trigger file (the fake git uses it to start failing mid-run)
 [ -n "${FAKE_INSTALL_TOUCH:-}" ] && touch "$FAKE_INSTALL_TOUCH"
@@ -341,6 +356,16 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         hb.write_text(json.dumps({"ts": "2026-09-01T00:00:00Z", "phase": phase, "pid": pid,
                                   "interval": 10, "stale_after_s": 90, "version": version}),
                       encoding="utf-8")
+
+    def seed_store2_db(self, user_version):
+        """A store2 ledger left by the daemon running BEFORE the deploy."""
+        db = self.live / "state" / "store2.db"
+        db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(db))
+        con.execute("PRAGMA user_version=%d" % user_version)
+        con.commit()
+        con.close()
+        return db
 
     def install_fake_git(self):
         """Shadow git on the script's PATH with the EPERM-window wrapper."""
@@ -871,11 +896,38 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         marker = self.live / "state" / "store2_truth.json"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text('{"activated_at": "2026-08-01T00:00:00Z"}\n', encoding="utf-8")
+        self.seed_store2_db(1)  # ledger active and its schema does NOT move this deploy
         proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self.head(), self.base_sha, "a pre-existing marker never blocks a rollback")
+        self.assertEqual(self.head(), self.base_sha,
+                         "a pre-existing marker + unchanged schema never blocks a rollback")
         self.assertEqual(self.state()["status"], "rolled_back")
         self.assertTrue(marker.exists(), "reset --hard does not touch untracked state/")
+
+    def test_store2_schema_bump_during_the_deploy_refuses_code_rollback(self):
+        # #135 review：真源早已是 sqlite（标记先在），新版本首开 DB 把 PRAGMA
+        # user_version 1→2——标记闸门看不见它，但回退代码后旧 store.py 会对每次
+        # registry 调用抛 StoreError（db user_version=2, store2 supports 1）：
+        # 账本数据没丢，actd 却全灭。schema 前进 = 同样拒绝代码回滚。
+        target = self.push("0.48.4")
+        marker = self.live / "state" / "store2_truth.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"activated_at": "2026-08-01T00:00:00Z"}\n', encoding="utf-8")
+        self.seed_store2_db(1)
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_STORE2_UV": "2"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "code stays on the new version")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("user_version 1 -> 2", st["detail"])
+        self.assertIn("TROUBLESHOOTING", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("user_version", notes[0])
+        self.assertIn("TROUBLESHOOTING", notes[0])
 
     def test_write_state_failure_logs_the_cause(self):
         (self.live / "state").mkdir(exist_ok=True)
