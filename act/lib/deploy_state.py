@@ -13,7 +13,7 @@ atomic tmp+rename, rewritten every run):
   (``repo``): a projection the job could not rewrite (that is what
   ``blocked_tcc`` means) must not keep showing the last status it could.
 - ``~/Library/Application Support/ZelinAIAssistant/deploy_state.json`` — the
-  HOME MIRROR, the script's own truth (v0.48.19, §56.4). macOS gates
+  HOME MIRROR, the script's own truth (v0.48.20, §56.4). macOS gates
   background access to removable volumes per responsible executable (TCC)
   and never gates ``$HOME``, so a launchd-fired run that cannot touch the
   repo still records what happened here. It carries every projected field
@@ -44,7 +44,7 @@ PATH: Path = config.STATE_DIR / "deploy_state.json"
 MIRROR_PATH: Path = (Path.home() / "Library" / "Application Support"
                      / "ZelinAIAssistant" / "deploy_state.json")
 
-# Projected keys (all strings). v0.48.19 add-only: `running_version` (what
+# Projected keys (all strings). v0.48.20 add-only: `running_version` (what
 # state/actd.heartbeat says is in memory), `install_report_version` (what
 # install.sh last finished on), `reason` (machine tokens behind a non-healthy
 # status), `last_incident` ("<ts> <status>: <detail>" of the last rollback
@@ -67,7 +67,7 @@ MIRROR_FIELDS = FIELDS + ("trigger", "interpreter", "volume", "repo", "denied_pa
 # Outcomes that mean "nothing needs a human" — everything else is a WARN row.
 HEALTHY = frozenset({"deployed", "up_to_date"})
 
-# §56.4 open vocabulary, v0.48.19 additions: `install_incomplete` (HEAD is at
+# §56.4 open vocabulary, v0.48.20 additions: `install_incomplete` (HEAD is at
 # origin/main but install_report / heartbeat disagree — install.sh re-run),
 # `blocked_tcc` (the volume-access probe got EPERM before any git call).
 INSTALL_INCOMPLETE = "install_incomplete"

@@ -81,7 +81,7 @@ class DeployStateReaderTestCase(unittest.TestCase):
                          ("Library", "Application Support", "ZelinAIAssistant", "deploy_state.json"))
 
     def test_last_incident_is_projected(self):
-        # v0.48.19 add-only（#135 review）：回滚判决独立于 status 存活到下一次 deployed
+        # v0.48.20 add-only（#135 review）：回滚判决独立于 status 存活到下一次 deployed
         self._write({"status": "up_to_date", "version": "0.48.11",
                      "last_incident": "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2)"})
         self.assertEqual(deploy_state.read()["last_incident"],

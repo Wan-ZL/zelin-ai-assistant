@@ -89,7 +89,7 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **原因**(CONTRACT §56.3 第 1 步、§55 第四幕):repo 住在外置卷(USB/APFS,`/Volumes/…`)上。macOS 按 **responsible executable** 给「可移动卷」授权,launchd 起的任务是它自己的 responsible process、**没有界面接弹窗**,于是默认被拒(errno 1,EPERM);而终端里跑的每一次都把终端(它有完全磁盘访问)的授权借给全部子进程,所以「我手跑是绿的」**对无人值守的运行什么都不证明**。2026-09-02 的实录:timer 起的一轮先把 checkout 推到 v0.48.11(git 碰巧读得到),然后 `bash install.sh` 拿到 EPERM(exit 126)、回滚被拒、`state/deploy_state.json` / 通知队列 / 锁全部写不进去;20 分钟后下一轮看到 HEAD == origin/main 就写了 `up_to_date`,而 actd 内存里还是 v0.48.8。
 
-v0.48.19 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(读 repo、在 `state/` 里 mkstemp),被拒就记 `blocked_tcc`、HEAD 不动、一天最多通知一次;判决和锁都先写进 `~/Library/Application Support/ZelinAIAssistant/`(TCC 从不拦 `$HOME`),repo 里的 `state/deploy_state.json` 只是尽力而为的投影;`up_to_date` 的定义收紧为「HEAD 到位 **且** install_report 与 actd 心跳都是这个版本且心跳新鲜」,否则 `install_incomplete` 并在本轮重跑一次 `install.sh`(连续 3 轮无效即停并通知)。
+v0.48.20 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(读 repo、在 `state/` 里 mkstemp),被拒就记 `blocked_tcc`、HEAD 不动、一天最多通知一次;判决和锁都先写进 `~/Library/Application Support/ZelinAIAssistant/`(TCC 从不拦 `$HOME`),repo 里的 `state/deploy_state.json` 只是尽力而为的投影;`up_to_date` 的定义收紧为「HEAD 到位 **且** install_report 与 actd 心跳都是这个版本且心跳新鲜」,否则 `install_incomplete` 并在本轮重跑一次 `install.sh`(连续 3 轮无效即停并通知)。
 
 **确认**:`python3 -m act.doctor` —— `launchd volume access` 行读的是**无人值守那一轮**留下的记录(镜像的 `unattended_status`),不是你刚在终端跑的那一轮;它会点名 plist 里那个解释器的精确路径。想直接看证据:`cat "$HOME/Library/Application Support/ZelinAIAssistant/deploy_state.json"`(看 `unattended_status` / `unattended_detail` / `interpreter` / `volume`)。
 

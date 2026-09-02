@@ -140,7 +140,7 @@ enum FailureCatalog {
         case "interpreter_blind":
             return L("后台服务用的那个 Python 读不到项目文件夹（macOS 按程序单独授权，后台任务不继承终端的权限）——重跑一次安装器会换一个能读的",
                      "The Python the background services run cannot read the project folder (macOS grants file access per program, and background jobs do not inherit your terminal's grant) — re-running the installer picks one that can")
-        // §56 (v0.48.19, mirror only — D3 freeze): the doctor row carries the exact path.
+        // §56 (v0.48.20, mirror only — D3 freeze): the doctor row carries the exact path.
         case "deploy_blind_tcc":
             return L("后台自动部署任务读不到项目所在的外置盘（macOS 按程序单独授权，后台任务不继承终端的权限）——给它用的那个 Python 授「完全磁盘访问」，路径见 doctor 的 launchd volume access 行",
                      "The background auto-deploy job cannot read the external volume the project lives on (macOS grants file access per program, and background jobs do not inherit your terminal's grant) — grant Full Disk Access to the Python it runs; the exact path is in doctor's launchd volume access row")
