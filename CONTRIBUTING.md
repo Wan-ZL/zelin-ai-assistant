@@ -95,6 +95,11 @@ Recommended reading before a non-trivial change: `HANDOFF.md` (architecture map,
   Sparkle), verify it landed with `bash scripts/smoke-deploy.sh` — version
   match, binary feature markers, actd liveness, and the full doctor in one
   command (also printed as step 7 at the end of `install.sh`).
+- **Social preview** (issue #19): when the board UI changes materially, `bash promo/social-preview.sh`
+  re-renders `docs/assets/social-preview.png` (1280 × 640) and you upload it by hand under GitHub →
+  Settings → General → Social preview — GitHub has no API for this, so it is the one manual step
+  left in a release. Verify it took: `gh api graphql -f query='{ repository(owner:"Wan-ZL", name:"zelin-ai-assistant") { usesCustomOpenGraphImage } }'`
+  must say `true` (the field is read-only — there is no write API).
 
 ## Versioning
 

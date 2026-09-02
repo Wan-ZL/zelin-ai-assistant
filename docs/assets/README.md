@@ -15,6 +15,7 @@ list and storyboard in [docs/DEMO.md](../DEMO.md).
 | `t2-card.png` | slot | expanded T2 card: $85 cost, typed confirmation, disagreement, repeated ×3 (DEMO shot 3) | 2x PNG; fills README marker `<!-- screenshot slot: docs/assets/t2-card.png -->` |
 | `review-final-draft.png` | slot | review lane, chat delivery with FINAL DRAFT expanded next to a repo-delivery card (DEMO shot 4) | 2x PNG; fills README marker `<!-- screenshot slot: docs/assets/review-final-draft.png -->` |
 | `trash.png` | slot | recycle bin expanded: restore / keep-forever buttons + search (DEMO shot 5) | 2x PNG |
+| `social-preview.png` | ✅ | the OpenGraph card GitHub shows on X / Slack / HN: app icon + English tagline over the kanban shot (issue #19) | **exactly 1280 × 640** PNG; rendered by `bash promo/social-preview.sh` from `promo/social-preview.html` — never hand-edited |
 
 ## Capture rules
 
@@ -33,4 +34,6 @@ list and storyboard in [docs/DEMO.md](../DEMO.md).
   automated.") over a low-opacity kanban screenshot; keep icon and text inside the central
   ≈1200 × 600 safe area since some platforms crop the edges.
 - Keep the source file here as `social-preview.png` for provenance, even though GitHub doesn't
-  read it from the repo.
+  read it from the repo. **Regenerate** with `bash promo/social-preview.sh` (headless Chrome
+  screenshot of `promo/social-preview.html`; asserts 1280 × 640), then re-upload — the upload
+  step is on the maintainer checklist in CONTRIBUTING.md.

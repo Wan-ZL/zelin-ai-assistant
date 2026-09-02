@@ -1,0 +1,78 @@
+<!doctype html>
+<!-- Social-preview card (issue #19) — the 1280×640 OpenGraph image GitHub shows on
+     X / Slack / HN. Rendered to docs/assets/social-preview.png by
+     promo/social-preview.sh (headless Chrome screenshot at exactly 1280×640).
+     Inputs: build/icon.png (from mac/AppIcon.icns via prepare.sh / social-preview.sh)
+     and ../docs/assets/kanban.png (the real hero screenshot, low opacity).
+     Keep icon + text inside the central ≈1200×600 safe area (edges get cropped
+     on some platforms). Palette = promo/stage/stage.css. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>social preview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 1280px; height: 640px; overflow: hidden; background: #0e0e10; }
+    body {
+      position: relative;
+      font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      color: #f2f2f4;
+    }
+    /* low-opacity kanban screenshot, offset so the lanes read as a backdrop */
+    .shot {
+      position: absolute; left: 380px; top: 96px; width: 1180px;
+      opacity: 0.22;
+      border-radius: 18px;
+      box-shadow: 0 40px 120px rgba(0, 0, 0, 0.7);
+      filter: saturate(0.9);
+    }
+    .veil {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(900px 600px at 22% 40%, rgba(125, 91, 214, 0.28), transparent 70%),
+        linear-gradient(90deg, #0e0e10 0%, #0e0e10 34%, rgba(14, 14, 16, 0.55) 62%, rgba(14, 14, 16, 0.1) 100%);
+    }
+    .content {
+      position: absolute; left: 88px; top: 0; height: 640px; width: 760px;
+      display: flex; flex-direction: column; justify-content: center; gap: 28px;
+    }
+    .brand { display: flex; align-items: center; gap: 22px; }
+    .brand img { width: 108px; height: 108px; border-radius: 26px; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55); }
+    .brand .name { font-size: 40px; font-weight: 700; letter-spacing: -0.5px; }
+    .brand .sub { margin-top: 6px; font-size: 18px; color: #a8a8b0; font-weight: 500; }
+    .tagline {
+      font-size: 46px; line-height: 1.12; font-weight: 700; letter-spacing: -0.8px;
+      max-width: 720px;
+    }
+    .tagline em { font-style: normal; color: #b18cff; }
+    .chips { display: flex; gap: 10px; flex-wrap: wrap; }
+    .chip {
+      font-size: 16px; font-weight: 600; padding: 7px 14px; border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08); color: #dcdce2; border: 1px solid rgba(255, 255, 255, 0.10);
+    }
+    .chip.local { background: rgba(76, 208, 125, 0.16); color: #7fe0a3; border-color: rgba(76, 208, 125, 0.25); }
+    .foot { position: absolute; left: 88px; bottom: 34px; font-size: 15px; color: #77777f; letter-spacing: 0.2px; }
+  </style>
+</head>
+<body>
+  <img class="shot" src="../docs/assets/kanban.png" alt="">
+  <div class="veil"></div>
+  <div class="content">
+    <div class="brand">
+      <img src="build/icon.png" alt="">
+      <div>
+        <div class="name">Zelin's AI Assistant</div>
+        <div class="sub">A personal AI chief-of-staff for macOS</div>
+      </div>
+    </div>
+    <div class="tagline">You <em>approve</em> and <em>accept</em> — everything else is automated.</div>
+    <div class="chips">
+      <span class="chip">Meeting notes · Slack · Gmail → approval cards</span>
+      <span class="chip">Background Claude agents</span>
+      <span class="chip local">Runs on your Mac</span>
+    </div>
+  </div>
+  <div class="foot">github.com/Wan-ZL/zelin-ai-assistant</div>
+</body>
+</html>
