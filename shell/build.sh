@@ -113,15 +113,16 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN" "$APP_DIR/Contents/MacOS/$EXEC_NAME"
 cp "$PLIST" "$APP_DIR/Contents/Info.plist"
 
-# version single source of truth: act/__init__.py（same extraction as mac/build.sh）。
+# version truth = git tag（CONTRACT §56.1；same stamper as mac/build.sh）：
+# scripts/version_stamp.py 算出版本并写 act/_version.py（git-ignored）。
 # Stamp the STAGED plist only — 源 Info.plist 保留 fallback 值。
-VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$SCRIPT_DIR/../act/__init__.py" 2>/dev/null || true)"
+VERSION="$(python3 "$SCRIPT_DIR/../scripts/version_stamp.py" --write 2>/dev/null || true)"
 if [ -n "$VERSION" ]; then
     plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
     plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
-    echo "    stamped version $VERSION (from act/__init__.py)"
+    echo "    stamped version $VERSION (scripts/version_stamp.py: git tag truth)"
 else
-    echo "WARN: could not read __version__ from act/__init__.py — bundle keeps the Info.plist fallback version."
+    echo "WARN: scripts/version_stamp.py could not derive a version — bundle keeps the Info.plist fallback version."
 fi
 
 # server repo: stamp the ACTUAL repo root this shell is built from（same

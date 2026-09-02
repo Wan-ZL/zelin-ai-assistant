@@ -1,0 +1,118 @@
+# Release on merge (CONTRACT §56.2, decision D17): every push to main tags the
+# pushed commit with the NEXT version and dispatches the Release workflow on
+# that tag. Merge = release; nobody bumps a version anywhere — the git tag IS
+# the version's single source of truth (§56.1; act.__version__ is derived
+# from it at install/build time, never committed).
+#
+# NEXT = highest existing vX.Y.Z tag + 1 patch. A `release: minor` or
+# `release: major` label on the merged PR (found through the "(#N)" suffix of
+# the merge/squash commit subject) picks a bigger bump; no PR number or no
+# label = patch.
+#
+# WHY THE EXPLICIT DISPATCH: a ref created with the workflow's own
+# GITHUB_TOKEN does NOT fire other workflows' `on: push: tags` triggers
+# (GitHub suppresses token-caused events except workflow_dispatch /
+# repository_dispatch). So this job creates the tag AND explicitly runs
+# release.yml on it — release.yml therefore also accepts workflow_dispatch.
+#
+# IDEMPOTENT: a re-run finds the pushed commit already tagged and does
+# nothing — unless the tag exists but release.yml was never dispatched (a
+# first run that died between the two steps): then it re-dispatches once.
+# SERIALIZED: the concurrency group runs one push at a time, so two
+# quick merges take consecutive numbers (GitHub keeps at most one run
+# pending per group — a third rapid push cancels the pending middle one; the
+# newest main then gets the next tag and carries the middle commit inside
+# it, so nothing merged is ever left unreleased). The branch ruleset
+# `protect-main` targets branches only (refs/heads); tags are refs/tags, so
+# contents:write on GITHUB_TOKEN is sufficient — no PAT, no bypass actor.
+# NO WRITES TO THE BRANCH: this workflow creates a tag ref and nothing else.
+name: Release on merge
+
+on:
+  push:
+    branches: [main]
+
+# Job-level grants only (the default workflow token is read-only in this repo).
+permissions: {}
+
+# Two merges in quick succession must tag in order, never in parallel.
+concurrency:
+  group: release-on-merge
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag the merged commit and dispatch release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create refs/tags/v<next>
+      actions: write # gh workflow run release.yml
+      pull-requests: read # gh pr view <n> --json labels (release: minor|major)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the tag is created through the REST API with GH_TOKEN — git auth
+          # is never used after checkout
+          persist-credentials: false
+          # full history + every tag: the next number is computed from the
+          # complete tag list, and `git tag --points-at` is the idempotency test
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tag v<next> if the commit is untagged, then dispatch release.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # github.sha and the head commit message are not attacker-controlled
+          # on push-to-main (PR-only branch), but they still enter the shell
+          # via env, never by template interpolation (zizmor template-injection)
+          PUSHED_SHA: ${{ github.sha }}
+          HEAD_SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          # fresh tag list even if the checkout raced an earlier run's tag
+          git fetch --quiet --tags --force origin
+          EXISTING="$(git tag --points-at "$PUSHED_SHA" -l 'v[0-9]*' | python3 scripts/ci/release_tags.py highest || true)"
+          if [ -n "$EXISTING" ]; then
+            # re-run / duplicate event. The tag is done; the only thing that can
+            # still be missing is the release.yml dispatch (a first run that died
+            # between the two steps) — re-dispatch only when NO release run for
+            # this tag exists at all (a running one would otherwise get a twin
+            # that fails at `gh release create`).
+            if gh release view "$EXISTING" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "commit ${PUSHED_SHA} is already tagged ${EXISTING} and released — nothing to do"
+              exit 0
+            fi
+            RUNS="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "$EXISTING" --limit 1 --json databaseId --jq 'length' 2>/dev/null || echo 0)"
+            if [ "${RUNS:-0}" != "0" ]; then
+              echo "commit ${PUSHED_SHA} is already tagged ${EXISTING}; release.yml already ran/runs for it — nothing to do"
+              exit 0
+            fi
+            echo "commit ${PUSHED_SHA} is tagged ${EXISTING} but release.yml never ran — re-dispatching"
+            gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "${EXISTING}"
+            exit 0
+          fi
+          BUMP="patch"
+          PR="$(printf '%s' "$HEAD_SUBJECT" | python3 scripts/ci/release_tags.py pr-number || true)"
+          if [ -n "$PR" ]; then
+            LABELS="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' 2>/dev/null || true)"
+            BUMP="$(printf '%s\n' "$LABELS" | python3 scripts/ci/release_tags.py bump-from-labels)"
+            echo "merged PR #${PR}: labels [$(printf '%s' "$LABELS" | tr '\n' ',')] → ${BUMP} bump"
+          else
+            echo "no (#N) in the head commit subject — patch bump"
+          fi
+          NEXT="$(git tag -l 'v[0-9]*' | python3 scripts/ci/release_tags.py next --bump "$BUMP")"
+          echo "creating ${NEXT} -> ${PUSHED_SHA}"
+          if ! gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+                 -f ref="refs/tags/${NEXT}" -f sha="${PUSHED_SHA}" >/dev/null; then
+            # lost a race with a hand-pushed tag of the same name? only fine if it points here
+            AT="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${NEXT}" --jq '.object.sha' 2>/dev/null || true)"
+            if [ "$AT" != "$PUSHED_SHA" ]; then
+              echo "::error::could not create ${NEXT} (exists at ${AT:-?}, not ${PUSHED_SHA})"
+              exit 1
+            fi
+            echo "${NEXT} already points at ${PUSHED_SHA}"
+          fi
+          # release.yml's first step stamps act/_version.py from the tag name and
+          # verifies act.__version__ == ${NEXT#v}
+          echo "dispatching release.yml on ${NEXT}"
+          gh workflow run release.yml --ref "${NEXT}"

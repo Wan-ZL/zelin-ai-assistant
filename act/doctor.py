@@ -54,6 +54,7 @@ from act.lib import (
     platform,
     secrets,
     taskscheduler,
+    version as version_lib,
 )
 
 OK = "ok"
@@ -414,6 +415,7 @@ class Probes:
     deploy_mirror_read: Callable[[], Optional[dict]] = deploy_state.read_mirror
     # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
     launchd_log_mtime: Callable[[str], Optional[float]] = _launchd_log_mtime
+    version_status: Callable[[], dict] = version_lib.status_probe  # §56.1 stamp vs describe；tests 注入（沙箱非 git）
 
 
 @dataclass
@@ -462,6 +464,10 @@ def _check_home(probes: Probes):
             _pick("export AIASSISTANT_HOME=<你的 clone>，或运行 bash <你的 clone>/install.sh（会写入 home 指针）",
                   "export AIASSISTANT_HOME=<your clone>, or run bash <your clone>/install.sh (writes the home pointer)"))
     return CheckResult("AIASSISTANT_HOME", OK, str(config.HOME))
+
+
+def _check_version(probes: Probes):
+    return CheckResult("version", *version_lib.doctor_row(probes.version_status()))
 
 
 def _check_claude(probes: Probes):
@@ -1874,6 +1880,7 @@ def _check_model_liveness(probes: Probes):
 # Shared checks that run on every OS (pure Python / portable subprocess).
 _CHECKS_COMMON_HEAD = [
     _check_home,
+    _check_version,
     _check_claude,
     _check_daemon_claude,
     _check_runtime_python,

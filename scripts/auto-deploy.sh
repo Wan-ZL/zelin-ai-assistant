@@ -16,7 +16,11 @@
 #      EPERM here = `blocked_tcc`: log the exact interpreter to grant Full
 #      Disk Access to, record it in the HOME mirror, notify once per day,
 #      exit 0 with nothing changed. HEAD never moves before this passes.
-#   2. refuse unless HEAD is on `main`; `git fetch origin main`;
+#   2. refuse unless HEAD is on `main`; `git fetch --tags --force origin main`
+#      (the version is derived from tags, §56.1 — a tag created after its
+#      commit was first fetched is NOT auto-followed by a plain fetch, and a
+#      stale local tag that diverged from origin's must be realigned, not
+#      fail the fetch forever);
 #      HEAD == origin/main → DEPLOYED MEANS RUNNING: up_to_date only when
 #      state/install_report.json carries the checkout's version AND
 #      state/actd.heartbeat carries it too and is fresh (a stale-but-right
@@ -55,7 +59,9 @@
 #      board UI (web/dist + shell app, the `ui` step): toolchain absent =
 #      `ui=skipped` (still a success), build broken = `ui=fail` (rollback)
 #   9. READINESS: wait until state/actd.heartbeat (§47.4) is written by a NEW
-#      actd process (pid changed), stamped with the NEW version, in phase
+#      actd process (pid changed), stamped with the NEW version (= what
+#      scripts/version_stamp.py derives for the merged checkout — the same
+#      number install.sh just wrote into act/_version.py), in phase
 #      `idle` = one full pass completed on the new code. Deadline
 #      (AUTODEPLOY_HEARTBEAT_DEADLINE, 180 s) → FAIL
 #      `actd:no_heartbeat_from_new_version` → rollback. A fixed settle was a
@@ -165,7 +171,7 @@ CI_API="${AUTODEPLOY_CI_API:-https://api.github.com}"
 CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that must be green on the
                                                         # deployed sha (comma-separated); `ci` is the
                                                         # macOS job: compileall + full unittest +
-                                                        # version tri-pin
+                                                        # version placeholder gate + app/iOS builds
 FORCE=0
 PY=""
 TRIGGER=""      # terminal | launchd | $AUTODEPLOY_TRIGGER (detect_trigger)
@@ -205,7 +211,16 @@ git_q() { git -C "$REPO_ROOT" "$@"; }
 
 short() { printf '%s' "${1:0:7}"; }
 
+# The version the checkout at HEAD carries (CONTRACT §56.1: derived from the
+# git tag by scripts/version_stamp.py — exactly what install.sh writes into
+# act/_version.py, so the new actd's heartbeat must match it). A checkout that
+# predates the stamper (a rollback target) still has the literal
+# `__version__ = "…"` line — fall back to reading that.
 repo_version() {
+    if [ -n "$PY" ] && [ -f "$REPO_ROOT/scripts/version_stamp.py" ]; then
+        _rv="$("$PY" "$REPO_ROOT/scripts/version_stamp.py" 2>/dev/null)" && [ -n "$_rv" ] \
+            && { printf '%s' "$_rv"; return 0; }
+    fi
     sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$REPO_ROOT/act/__init__.py" 2>/dev/null
 }
 
@@ -1114,9 +1129,18 @@ main() {
         exit 0
     fi
 
+    # --tags: the version is the tag (§56.1). release-on-merge tags the commit
+    # about a minute after the push; a plain `fetch origin main` that already
+    # downloaded the commit never auto-follows a tag created later, and the
+    # stamp would read `<prev>+N` instead of the release number.
+    # --force: a local tag that no longer matches origin's (an old hand-made
+    # tag on this machine) makes `fetch --tags` exit 1 ("would clobber
+    # existing tag") on EVERY run — no deploy ever again. origin's tags are
+    # the truth, so realign them; the refspec has no destination, so --force
+    # touches nothing but tags.
     if ! GIT_TERMINAL_PROMPT=0 \
          GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oConnectTimeout=30}" \
-         git_q fetch --quiet "$REMOTE" "$BRANCH" 2>>"$LOG"; then
+         git_q fetch --quiet --tags --force "$REMOTE" "$BRANCH" 2>>"$LOG"; then
         log "git fetch $REMOTE $BRANCH failed (offline? ssh agent?) — will retry next interval"
         write_state "status=fetch_failed" "last_run=$_now" \
                     "head=$(git_q rev-parse HEAD)" "version=$(repo_version)" \

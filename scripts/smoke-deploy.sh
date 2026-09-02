@@ -40,17 +40,17 @@ if [ ! -d "$APP" ]; then
 fi
 BIN="$APP/Contents/MacOS/ZelinAIEngineer"
 
-# --- 1. installed version == act.__version__ (the single source of truth) ---
+# --- 1. installed version == the checkout's version (git tag truth, §56.1) ---
 echo "==> 1. version match"
-EXPECTED="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$REPO_ROOT/act/__init__.py")"
+EXPECTED="$(python3 "$REPO_ROOT/scripts/version_stamp.py" 2>/dev/null || true)"
 if [ -z "$EXPECTED" ]; then
-    fail "could not read __version__ from act/__init__.py — is $REPO_ROOT a full checkout?"
+    fail "scripts/version_stamp.py could not derive a version — is $REPO_ROOT a full checkout?"
 elif [ ! -d "$APP" ]; then
     fail "version check skipped — no installed app to compare against"
 else
     INSTALLED="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || echo "?")"
     if [ "$INSTALLED" = "$EXPECTED" ]; then
-        ok "installed app is $INSTALLED (== act/__init__.py)"
+        ok "installed app is $INSTALLED (== checkout version)"
     else
         fail "installed app reports $INSTALLED but the checkout says $EXPECTED — the install did not land; re-run: bash mac/build.sh --install"
     fi

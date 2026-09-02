@@ -207,6 +207,11 @@ class DoctorTestCase(unittest.TestCase):
             # injects both); default = no mirror, no log.
             deploy_mirror_read=lambda: None,
             launchd_log_mtime=lambda short: None,
+            # §56.1: never run git describe against the developer's checkout
+            # from the suite; default = "stamped and matching" (healthy). The
+            # version row's own cases live in tests/test_version_resolution.py.
+            version_status=lambda: {"stamp": "0.0.1", "git": True,
+                                    "computed": "0.0.1", "fallback": "0.0.1"},
         )
 
     def _main(self, probes, argv=None):

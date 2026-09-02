@@ -1,13 +1,17 @@
-# Release: on push of a v* tag — verify the tag matches the source version, run all
-# CI gates, package the .app with ditto, build the .pkg, generate SHA-256 checksums,
-# attest build provenance, and publish a GitHub Release.
+# Release: on a v* tag — stamp the version FROM THE TAG (CONTRACT §56.1: the
+# tag is the version's single source of truth; act/_version.py and the iOS
+# MARKETING_VERSION pins are written on this runner, never committed), run all
+# CI gates, package the .app with ditto, build the .pkg, generate SHA-256
+# checksums, attest build provenance, and publish a GitHub Release whose body
+# is the CHANGELOG [Unreleased] delta since the previous tag (the file itself
+# is never rewritten — history lives in Releases + tags).
 #
-# Two ways in (CONTRACT §56): a hand-pushed tag, or `gh workflow run release.yml
-# --ref v<version>` from tag-on-merge.yml — tags created with GITHUB_TOKEN never
-# fire `on: push: tags`, so the auto path dispatches explicitly. Under
-# workflow_dispatch GITHUB_REF_NAME is still the tag name the run was started
-# on, so the version gate below covers both entrances (dispatching on a branch
-# by mistake fails that gate immediately).
+# Two ways in (CONTRACT §56.2): a hand-pushed tag, or `gh workflow run
+# release.yml --ref v<version>` from release-on-merge.yml — tags created with
+# GITHUB_TOKEN never fire `on: push: tags`, so the auto path dispatches
+# explicitly. Under workflow_dispatch GITHUB_REF_NAME is still the tag name the
+# run was started on, so the ref gate below covers both entrances (dispatching
+# on a branch by mistake fails it immediately).
 name: Release
 
 on:
@@ -29,17 +33,39 @@ jobs:
           # gh release talks to the API via GH_TOKEN env — git auth is never
           # used after checkout
           persist-credentials: false
+          # full history + tags: the release notes are the [Unreleased] delta
+          # against the previous tag's CHANGELOG.md (git show <prev>:CHANGELOG.md)
+          fetch-depth: 0
+          fetch-tags: true
 
-      - name: Verify tag matches act.__version__
-        # Integrity gate — act/__init__.py is the version's source of truth. A tag
-        # that doesn't match it would publish an app that self-reports the wrong
-        # version (telemetry, bug reports). Fail fast, before the expensive build.
+      - name: Stamp the version from the tag
+        # Integrity gate + stamping in one step (CONTRACT §56.1). The ref must
+        # be a vX.Y.Z tag (a workflow_dispatch on a branch fails here, before
+        # the expensive build); its number is written to the git-ignored
+        # act/_version.py on this runner and act.__version__ is then verified
+        # to report exactly the tag — every artifact below (Info.plist, .pkg,
+        # appcast, portable bundles) self-reports the tag. The iOS pins are
+        # stamped after the unit tests (one test pins the committed placeholder).
         run: |
-          VERSION="$(python3 -c 'import act; print(act.__version__)')"
-          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::pushed tag ${GITHUB_REF_NAME} does not match act.__version__ (v${VERSION}) — bump act/__init__.py or re-tag"
+          set -euo pipefail
+          case "${GITHUB_REF_NAME}" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::release.yml must run on a vX.Y.Z tag, got ref '${GITHUB_REF_NAME}'"; exit 1 ;;
+          esac
+          VERSION="${GITHUB_REF_NAME#v}"
+          # merge = release (§56.2): a tag whose commit is not on main would
+          # publish code nobody merged. fetch-depth 0 brings origin/main along.
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at $(git rev-parse --short HEAD), which is not on origin/main — releases are cut from main only (CONTRACT §56.2)"
             exit 1
           fi
+          python3 scripts/version_stamp.py --version "${VERSION}" --write
+          GOT="$(python3 -c 'import act; print(act.__version__)')"
+          if [ "${GOT}" != "${VERSION}" ]; then
+            echo "::error::act.__version__ reports ${GOT} after stamping ${VERSION} — resolution order broken (act/lib/version.py)"
+            exit 1
+          fi
+          echo "stamped act/_version.py = ${VERSION} (runner-only)"
 
       - name: Verify Sparkle key matches the baked SUPublicEDKey
         # Integrity gate — the appcast step below signs the .pkg with the
@@ -84,6 +110,12 @@ jobs:
 
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
+
+      - name: Stamp the iOS version pins (runner-only)
+        # Same number into ios/project.yml + the two pbxproj pins, never
+        # committed (§56.1) — after the unit tests, which assert the committed
+        # files still carry the 0.0.0-dev placeholder.
+        run: python3 scripts/version_stamp.py --version "${GITHUB_REF_NAME#v}" --ios
 
       - name: Import signing certificate (stable self-signed; optional)
         # Makes CI release builds sign with the SAME stable self-signed identity
@@ -151,7 +183,9 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
       - name: Build .pkg installer
-        # Produces mac/build/ZelinAIAssistant-<version>.pkg (version from act/__init__.py).
+        # Produces mac/build/ZelinAIAssistant-<version>.pkg (version = the stamp
+        # written above; the pipeline payload gets its own act/_version.py so a
+        # .pkg install — no .git — still self-reports the tag).
         run: bash mac/package.sh
 
       - name: Stage release assets
@@ -242,14 +276,38 @@ jobs:
             dist/ZelinAIAssistant-*-linux.tar.gz
             dist/ZelinAIAssistant-*-windows.zip
 
+      - name: Release notes from CHANGELOG [Unreleased] delta
+        # CONTRACT §56.2: PRs only ever write under [Unreleased]; a release
+        # never rewrites CHANGELOG.md. The body is what [Unreleased] gained
+        # since the previous tag (scripts/changelog_release_notes.py); the
+        # first release (no previous tag) takes the whole section. Empty delta
+        # = no changelog paragraph, the auto-generated PR list still follows.
+        run: |
+          set -euo pipefail
+          PREV="$(git tag -l 'v[0-9]*' | python3 scripts/ci/release_tags.py previous "${GITHUB_REF_NAME}" || true)"
+          : > /tmp/prev-changelog.md
+          if [ -n "$PREV" ]; then
+            git show "${PREV}:CHANGELOG.md" > /tmp/prev-changelog.md 2>/dev/null || : > /tmp/prev-changelog.md
+            echo "release notes = [Unreleased] delta since ${PREV}"
+          else
+            echo "no previous tag — release notes = the whole [Unreleased] section"
+          fi
+          python3 scripts/changelog_release_notes.py CHANGELOG.md --previous /tmp/prev-changelog.md > /tmp/changelog-delta.md
+          if [ -s /tmp/changelog-delta.md ]; then
+            { echo "## 变更 / Changes"; echo; cat /tmp/changelog-delta.md; echo; } > /tmp/release-body.md
+          else
+            : > /tmp/release-body.md
+          fi
+          cat /tmp/release-body.md
+
       - name: Create GitHub Release and upload assets
-        # The install-steps block is prepended to the auto-generated notes
-        # (gh appends --generate-notes output after --notes-file). It exists
-        # because the pkg is UNSIGNED (no Developer ID yet): without the
-        # three-click bypass spelled out next to the download, macOS Sequoia
-        # shows only "Done / Move to Trash" and users conclude the app is
-        # malware. Remove the Gatekeeper paragraph once builds are signed
-        # and notarized.
+        # The changelog delta comes first, then the install-steps block; gh
+        # appends the --generate-notes PR list after the --notes-file body.
+        # The install block exists because the pkg is UNSIGNED (no Developer
+        # ID yet): without the three-click bypass spelled out next to the
+        # download, macOS Sequoia shows only "Done / Move to Trash" and users
+        # conclude the app is malware. Remove the Gatekeeper paragraph once
+        # builds are signed and notarized.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -287,7 +345,21 @@ jobs:
           完整安装指南 / full install guide: [docs/INSTALL.md](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/docs/INSTALL.md) · 卸载 / uninstall: `bash uninstall.sh`
 
           NOTES
-          gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md --generate-notes --latest
+          cat /tmp/release-body.md /tmp/release-notes.md > /tmp/release-full.md
+          # "Latest" is what Sparkle (SUFeedURL …/releases/latest/download/
+          # appcast.xml) and update_check (/releases/latest) follow. Merge =
+          # release means back-to-back merges run this workflow in parallel and
+          # finish in any order — decide from the tag list, never from who
+          # finishes last (a lower tag must not eclipse a higher one). API
+          # unreachable → old behavior (latest).
+          HIGHEST="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
+                     | sed 's#^refs/tags/##' | python3 scripts/ci/release_tags.py highest || true)"
+          LATEST=true
+          if [ -n "$HIGHEST" ] && [ "$HIGHEST" != "$GITHUB_REF_NAME" ]; then
+            LATEST=false
+            echo "${HIGHEST} exists above ${GITHUB_REF_NAME} — publishing without the Latest mark"
+          fi
+          gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-full.md --generate-notes --latest="$LATEST"
           gh release upload "$GITHUB_REF_NAME" "$ZIP" "$PKG" "$LINUX" "$WIN" mac/build/checksums.sha256 mac/build/appcast.xml
 
       - name: Clean up signing keychain

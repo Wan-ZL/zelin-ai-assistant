@@ -123,6 +123,22 @@ if ((-not (Test-Path $RedTerms)) -and (Test-Path $RedExample)) {
     Write-Ok 'created config\redaction_terms.txt from template (gitignored)'
 }
 
+# version stamp (CONTRACT §56.1): the version's truth is the git tag; write the
+# git-ignored act\_version.py before anything imports act (a portable bundle
+# already carries the tag's stamp and has no .git — the stamper keeps it).
+$StampScript = Join-Path $RepoRoot 'scripts\version_stamp.py'
+$Stamped = $null
+try {
+    # --quiet: no stderr chatter ($ErrorActionPreference = 'Stop' turns native stderr into errors on PS 5.1)
+    $Stamped = (& $PY $StampScript --write --quiet | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0) { $Stamped = $null }
+} catch { $Stamped = $null }
+if ($Stamped) {
+    Write-Ok "act\_version.py -> v$Stamped"
+} else {
+    Write-Warn2 'could not write act\_version.py - act.__version__ falls back to the baked constant'
+}
+
 # runtime python pointer (CONTRACT §19): $env:AIASSISTANT_PYTHON override, else
 # the interpreter found above. ConvertTo-Json escapes the backslashes for us.
 $ConfigDir = Join-Path $RepoRoot 'config'

@@ -23,8 +23,8 @@
 	<string>AppIcon</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<!-- Fallback only: shell/build.sh stamps both version keys from
-	     act/__init__.py (single source of truth), same as mac/build.sh. -->
+	<!-- Fallback only: shell/build.sh stamps both version keys from the git
+	     tag (scripts/version_stamp.py, CONTRACT §56.1), same as mac/build.sh. -->
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>

@@ -171,16 +171,18 @@ if [ -x "$BUILD_DIR/vault-sync-helper" ]; then
     cp "$BUILD_DIR/vault-sync-helper" "$APP_DIR/Contents/MacOS/vault-sync-helper"
     echo "    bundled vault-sync-helper"
 fi
-# version single source of truth: act/__init__.py (same extraction as
-# mac/package.sh). Stamp the STAGED plist only — the source Info.plist keeps
-# its values as a fallback for when the version cannot be read.
-VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$SCRIPT_DIR/../act/__init__.py" 2>/dev/null || true)"
+# version truth = the git tag (CONTRACT §56.1): scripts/version_stamp.py derives
+# it (exact tag, tag+N when ahead, else the baked fallback) and writes the
+# git-ignored act/_version.py so the daemons shipped next to this app report
+# the same number. Stamp the STAGED plist only — the source Info.plist keeps
+# its values as a fallback for when the version cannot be derived.
+VERSION="$(python3 "$SCRIPT_DIR/../scripts/version_stamp.py" --write 2>/dev/null || true)"
 if [ -n "$VERSION" ]; then
     plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
     plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
-    echo "    stamped version $VERSION (from act/__init__.py)"
+    echo "    stamped version $VERSION (scripts/version_stamp.py: git tag truth)"
 else
-    echo "WARN: could not read __version__ from act/__init__.py — bundle keeps the Info.plist fallback version."
+    echo "WARN: scripts/version_stamp.py could not derive a version — bundle keeps the Info.plist fallback version."
 fi
 # app icon (optional — present after icon generation)
 if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then

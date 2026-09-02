@@ -17,7 +17,9 @@
 #
 # Usage:
 #   bash scripts/package-portable.sh [tag]
-# tag defaults to v<act.__version__> when omitted (e.g. v0.29.0).
+# tag defaults to v<version> derived by scripts/version_stamp.py when omitted
+# (e.g. v0.29.0). Every bundle carries act/_version.py (the unpacked tree has
+# no .git — CONTRACT §56.1: the stamp is how a git-less copy knows its version).
 set -euo pipefail
 
 # Locate the repo root from this script's own path so it works from any CWD.
@@ -25,12 +27,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Tag: $1 verbatim, else v<version> read from the single source of truth.
+# Tag: $1 verbatim, else v<version> derived from the checkout (git tag truth).
 TAG="${1:-}"
 if [ -z "$TAG" ]; then
-  VERSION="$(python3 -c 'import act; print(act.__version__)')"
+  VERSION="$(python3 scripts/version_stamp.py)"
   TAG="v${VERSION}"
 fi
+VERSION="${TAG#v}"
 
 DIST="$REPO_ROOT/dist"
 mkdir -p "$DIST"
@@ -80,6 +83,7 @@ build_bundle() {
   cp -R "${COMMON[@]}" "$stage"/
   cp "$script" "$stage"/
   scrub "$stage"
+  python3 scripts/version_stamp.py --version "$VERSION" --stamp-into "$stage" >/dev/null
 
   case "$fmt" in
     tar.gz)

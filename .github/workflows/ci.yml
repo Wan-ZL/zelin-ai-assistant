@@ -2,11 +2,21 @@
 # unit tests, and one macOS job (macOS runners are expensive — everything
 # Apple-flavored lives in it: mac app build WITH Sparkle, shared-contract
 # Swift tests, the Swift↔Python crypto interop gate, and the iOS simulator
-# build) — on every pull request and push to main.
+# build) — on every pull request, on every merge-queue group, and on push to
+# main.
+#
+# MERGE QUEUE (CONTRACT §56.2): every job that backs a required status check
+# (ci, Lint, Tests on ubuntu ×2, Web tests, QA gates, Version pins untouched)
+# runs on `merge_group` with the SAME job name and no pull_request-only
+# context — the queue's checks_requested event must be able to turn every
+# required context green by itself. PR-only jobs are the informational ones
+# (Windows suite, qlty) and the contract reminder (needs github.base_ref).
 name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
@@ -14,7 +24,8 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on the same PR/branch (never cancels main pushes mid-run).
+# Cancel superseded runs on the same PR/branch (never cancels main pushes or
+# merge-queue groups mid-run — a cancelled queue run would evict the entry).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -124,6 +135,8 @@ jobs:
     # first CI runs may surface path/OS bugs. continue-on-error keeps a red
     # Windows run from failing the workflow / blocking PRs until it's driven
     # green — flip this off once Windows is reliably passing.
+    # Informational → not needed in the merge queue (saves a Windows runner).
+    if: github.event_name != 'merge_group'
     continue-on-error: true
     runs-on: windows-latest
     defaults:
@@ -157,6 +170,46 @@ jobs:
         env:
           AIASSISTANT_HOME: ${{ runner.temp }}
         run: python -m unittest discover -s tests
+
+  version-pins:
+    name: Version pins untouched
+    # CONTRACT §56.1 — no PR may carry a version: the iOS MARKETING_VERSION
+    # placeholders, the act/__init__.py fallback line (refresh to the latest
+    # tag excepted) and CHANGELOG version headings are all read-only for PRs.
+    # HEAD is the synthetic merge commit on both events (PR: refs/pull/N/merge;
+    # queue: the group's merge commit) — HEAD^1 = base, HEAD^2 = PR head, so
+    # `git diff HEAD^1 HEAD` is exactly the PR's change and merge-base(HEAD^1,
+    # HEAD^2) is where the PR forked. CUTOVER: a PR whose fork point predates
+    # this gate (that tree has no scripts/ci/version_pins_check.py) still
+    # carries a legacy hand bump — tolerated (notice only) until it rebases
+    # past the cutover; then hand bumps are rejected for good.
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Reject hand-bumped versions
+        run: |
+          set -euo pipefail
+          git rev-parse -q --verify HEAD^1 >/dev/null || { echo "::error::HEAD has no first parent — expected the synthetic merge commit"; exit 1; }
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            FORK="$(git merge-base HEAD^1 HEAD^2)"
+          else
+            FORK="$(git rev-parse HEAD^1)"
+          fi
+          LEGACY=""
+          if ! git cat-file -e "$FORK:scripts/ci/version_pins_check.py" 2>/dev/null; then
+            echo "::notice::fork point $FORK predates the no-version-edits gate — legacy PR, hand bumps tolerated until it rebases"
+            LEGACY="--legacy-base"
+          fi
+          LATEST_TAG="$(git tag -l 'v[0-9]*' | python3 scripts/ci/release_tags.py highest || true)"
+          echo "latest release tag: ${LATEST_TAG:-none}"
+          # shellcheck disable=SC2086 # $LEGACY is either empty or one flag
+          git diff HEAD^1 HEAD | python3 scripts/ci/version_pins_check.py --latest-tag "${LATEST_TAG}" $LEGACY
 
   web-tests:
     name: Web tests (build + vitest)
@@ -214,9 +267,9 @@ jobs:
         # §58.4 的另一半：三态判决看不见「账本自己长了」——新增债务 + 同 PR
         # 自记账在三态下照样全绿。这里把 qa/*_baseline.txt（加键/抬分）、
         # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）与 merge
-        # ref 的第一父（= 当前 main）比较，任何放宽即 FAIL。push 到 main 时
-        # 没有 base 可比，跳过。
-        if: github.event_name == 'pull_request'
+        # ref 的第一父（= 当前 main；merge queue 的临时 merge commit 同形）
+        # 比较，任何放宽即 FAIL。push 到 main 时没有 base 可比，跳过。
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: python3 scripts/qa/ledger_diff.py --base HEAD^1
 
       - name: Install PyYAML + coverage
@@ -254,6 +307,8 @@ jobs:
     # actionlint/…）却从未在 CI 跑过（UNCLEBOB 审计的「配好未接线」项）。
     # R2.3.8 第一步：先以 informational 身份接线——continue-on-error 与
     # tests-windows 同款，红了不挡 PR；稳定后再议安全类 plugin 升门。
+    # informational → merge queue 里不跑。
+    if: github.event_name != 'merge_group'
     continue-on-error: true
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -298,25 +353,21 @@ jobs:
       - name: Run unit tests
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
-      - name: Verify iOS MARKETING_VERSION matches act.__version__
-        # act/__init__.py is the version single source of truth. The Mac app is
-        # stamped from it at build time (mac/build.sh), but Xcode builds the iOS
-        # target straight from the committed project, so its MARKETING_VERSION
-        # is a pin (ios/project.yml + pbxproj) that WILL silently drift on
-        # version bumps unless this gate forces the sync — an iOS app
-        # self-reporting a years-old version makes device-side triage useless.
-        run: |
-          set -euo pipefail
-          VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' act/__init__.py)"
-          [ -n "$VERSION" ] || { echo "::error::could not read __version__ from act/__init__.py"; exit 1; }
-          for f in ios/project.yml ios/ZelinAIAssistant.xcodeproj/project.pbxproj; do
-            PINS="$(grep 'MARKETING_VERSION' "$f")" || { echo "::error file=$f::no MARKETING_VERSION found — project layout changed, update this gate"; exit 1; }
-            if printf '%s\n' "$PINS" | grep -vF "$VERSION"; then
-              echo "::error file=$f::iOS MARKETING_VERSION out of sync (lines above) — bump it to $VERSION in ios/project.yml AND ios/ZelinAIAssistant.xcodeproj/project.pbxproj (2 places) alongside act/__init__.py"
-              exit 1
-            fi
-          done
-          echo "iOS MARKETING_VERSION == $VERSION (project.yml + pbxproj)"
+      - name: Verify the committed version pins are the placeholder
+        # CONTRACT §56.1: the version's truth is the git tag on main; nothing
+        # committed carries it. ios/project.yml + the two pbxproj pins stay
+        # 0.0.0-dev in git and are stamped on the runner right below — a hand
+        # bump here would drift the moment the next PR merges (the tri-pin
+        # rebase storm this replaced) and is rejected by this gate as well as
+        # by the "Version pins untouched" job.
+        run: python3 scripts/version_stamp.py --check-pins
+
+      - name: Stamp the version (act/_version.py + iOS pins, runner-only)
+        # git describe on a shallow PR checkout finds no tag → the stamp is the
+        # baked fallback; on a tag checkout it is the tag. Either way the Mac
+        # app, the Swift tests and the iOS simulator build below all see one
+        # consistent version, and nothing is committed.
+        run: python3 scripts/version_stamp.py --write --ios
 
       - name: Vendor Sparkle (framework + tools)
         # Release builds link Sparkle (release.yml runs this same SHA-pinned

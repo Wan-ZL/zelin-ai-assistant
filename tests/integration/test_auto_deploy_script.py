@@ -4,7 +4,10 @@
 BUDGET_SECONDS）。整套夹具是一个临时 bare origin + 一个 live clone，clone 里的
 install.sh / act/doctor.py / act/lib/notify.py / act/auto_deploy.py 全是**记录
 调用、按剧本出退出码**的假货，PATH 前置一个假 `curl`（按剧本回 GitHub
-check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹具并提交）。
+check-runs JSON），只有 scripts/auto-deploy.sh、scripts/version_stamp.py 与
+act/lib/version.py 是真的（逐字拷进夹具并提交）。版本真源 = tag（§56.1）：
+`push(version)` 在 origin 上建 `v<version>` tag，脚本 `fetch --tags` 后用
+version_stamp.py 算期望版本，假 install.sh 用同一把尺盖章 + 写心跳。
 不出网、不起 launchd、不碰真 $HOME（HOME 指到临时目录）。
 
 钉住的行为：
@@ -86,6 +89,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
+# the real version machinery rides along (the script derives the expected version
+# through scripts/version_stamp.py, which imports the fixture's act.lib.version)
+REAL_COPIES = ("scripts/version_stamp.py", "act/lib/version.py")
+FIXTURE_INIT = ('"""fixture act: resolves like the real package (stamp -> git tag -> fallback)."""\n'
+                "from act.lib import version as _version\n"
+                '__version__ = "0.0.0"\n'
+                "__version__ = _version.resolve(__version__)\n")
 _WIN = sys.platform.startswith("win")
 BUDGET_SECONDS = 300  # ~80 runs of real bash+git; ~170 s on a 2024 Mac (v0.48.20: +33 runs)
 _T0 = time.monotonic()
@@ -94,7 +104,13 @@ FAKE_INSTALL = r"""#!/bin/bash
 # fake install.sh: record the call, exit per FAKE_INSTALL_RC_PLAN (one rc per line, consumed)
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-ver="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$here/act/__init__.py")"
+# like the real install.sh (§56.1): stamp act/_version.py from the tag and report
+# that number; a pre-cutover checkout (no stamper) still has the literal line
+if [ -f "$here/scripts/version_stamp.py" ]; then
+    ver="$("${AIASSISTANT_PYTHON:-python3}" "$here/scripts/version_stamp.py" --write 2>/dev/null)"
+else
+    ver="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$here/act/__init__.py")"
+fi
 printf 'install %s head=%s version=%s active=%s\n' "$*" "$(git -C "$here" rev-parse HEAD)" "$ver" \
     "${AIASSISTANT_AUTODEPLOY_ACTIVE:-}" >> "$FAKE_INSTALL_LOG"
 rc=0
@@ -334,8 +350,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self._write_tree(seed, "0.48.3")
         _git(seed, "add", "-A")
         _git(seed, "commit", "-q", "-m", "seed v0.48.3")
+        _git(seed, "tag", "v0.48.3")
         _git(seed, "remote", "add", "origin", str(self.origin))
-        _git(seed, "push", "-q", "origin", "main")
+        _git(seed, "push", "-q", "origin", "main", "v0.48.3")
         self.dev = seed  # later commits are made here and pushed
 
         # the live checkout under test
@@ -355,8 +372,13 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def _write_tree(self, root, version):
         (root / "act" / "lib").mkdir(parents=True, exist_ok=True)
-        (root / "act" / "__init__.py").write_text('__version__ = "%s"\n' % version, encoding="utf-8")
+        (root / "act" / "__init__.py").write_text(FIXTURE_INIT, encoding="utf-8")
         (root / "act" / "lib" / "__init__.py").write_text("", encoding="utf-8")
+        (root / "RELEASE").write_text(version + "\n", encoding="utf-8")   # the commit that gets tagged v<version>
+        for rel in REAL_COPIES:
+            dst = root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(REPO / rel), str(dst))
         (root / "act" / "lib" / "notify.py").write_text(FAKE_NOTIFY, encoding="utf-8")
         (root / "act" / "doctor.py").write_text(FAKE_DOCTOR, encoding="utf-8")
         (root / "act" / "auto_deploy.py").write_text(FAKE_SHIM, encoding="utf-8")
@@ -370,13 +392,15 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         (root / "README.md").write_text("fixture\n", encoding="utf-8")
 
     def push(self, version, extra=None):
-        """Advance origin/main: bump the version (+ optional extra edits)."""
-        (self.dev / "act" / "__init__.py").write_text('__version__ = "%s"\n' % version, encoding="utf-8")
+        """Advance origin/main by one commit tagged v<version> (+ optional extra
+        edits) — the shape release-on-merge leaves behind (§56.2)."""
+        (self.dev / "RELEASE").write_text(version + "\n", encoding="utf-8")
         if extra:
             extra(self.dev)
         _git(self.dev, "add", "-A")
         _git(self.dev, "commit", "-q", "-m", "v%s" % version)
-        _git(self.dev, "push", "-q", "origin", "main")
+        _git(self.dev, "tag", "v%s" % version)
+        _git(self.dev, "push", "-q", "origin", "main", "v%s" % version)
         return _git(self.dev, "rev-parse", "HEAD")
 
     def run_script(self, *args, doctor_plan=None, install_rc=None, ci=None, env=None,
@@ -549,6 +573,78 @@ class AutoDeployScriptTestCase(unittest.TestCase):
                          "the lock lives in $HOME now, never on the (TCC-gated) volume")
 
     # -- 2. the happy path --------------------------------------------------- #
+
+    def test_tag_created_after_the_first_fetch_is_still_seen(self):
+        # release-on-merge tags the commit about a minute after the push; the
+        # first interval usually fetches the commit BEFORE the tag exists (CI
+        # pending) and a plain `git fetch origin main` never auto-follows a tag
+        # created later — the deployed version would read 0.48.3+1. The script
+        # fetches --tags (§56.3 step 2), so the second run sees v0.48.4.
+        (self.dev / "RELEASE").write_text("0.48.4\n", encoding="utf-8")
+        _git(self.dev, "add", "-A")
+        _git(self.dev, "commit", "-q", "-m", "v0.48.4 (untagged yet)")
+        _git(self.dev, "push", "-q", "origin", "main")
+        target = _git(self.dev, "rev-parse", "HEAD")
+        proc = self.run_script(ci=["pending"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "ci_pending")
+        self.assertEqual(_git(self.live, "tag", "-l", "v0.48.4"), "", "not tagged yet")
+        _git(self.dev, "tag", "v0.48.4")
+        _git(self.dev, "push", "-q", "origin", "v0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual((st["status"], st["head"]), ("deployed", target))
+        self.assertEqual(st["version"], "0.48.4", "the late tag must be fetched, not 0.48.3+1")
+        self.assertIn("version=0.48.4", self.installs()[0])
+
+    def test_local_tag_diverged_from_origin_is_realigned_not_a_fetch_failure(self):
+        # The owner Mac carries an old hand-made tag that points somewhere else
+        # than origin's tag of the same name. `git fetch --tags` refuses to
+        # clobber it and exits 1 — without --force every run would end in
+        # fetch_failed and nothing would ever deploy again. origin's tags are
+        # the truth (§56.1): the fetch must succeed and realign the tag.
+        origin_sha = _git(self.live, "rev-parse", "v0.48.3")
+        _git(self.live, "commit", "-q", "--allow-empty", "-m", "local junk")
+        _git(self.live, "tag", "-f", "v0.48.3", "HEAD")
+        _git(self.live, "reset", "-q", "--hard", "origin/main")
+        self.assertNotEqual(_git(self.live, "rev-parse", "v0.48.3"), origin_sha, "fixture: tag diverged")
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual((st["status"], st["head"]), ("deployed", target), self.log_text())
+        self.assertEqual(_git(self.live, "rev-parse", "v0.48.3"), origin_sha, "the stale local tag now matches origin")
+        self.assertEqual(st["version"], "0.48.4")
+
+    def test_rollback_onto_a_pre_cutover_checkout_reads_the_literal_version_line(self):
+        # transition (§56.1): the rollback target may predate the stamper — that
+        # tree has no scripts/version_stamp.py and a literal `__version__ = "…"`
+        # in act/__init__.py. repo_version() must still name it (deploy_state,
+        # notifications), via the legacy sed.
+        legacy_sha = self.push("0.48.4", extra=self._make_legacy_tree)
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), legacy_sha)
+        self.assertEqual(self.state()["version"], "0.48.4", "legacy checkout: version from the literal line")
+        target = self.push("0.48.5", extra=self._restore_stamper_tree)
+        proc = self.run_script(doctor_plan=["-", "-"], install_rc=[1, 0])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), legacy_sha, "rolled back onto the pre-cutover commit")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertEqual(st["version"], "0.48.4", "after the reset the literal line is the only source")
+
+    def _make_legacy_tree(self, root):
+        (root / "scripts" / "version_stamp.py").unlink()
+        (root / "act" / "lib" / "version.py").unlink()
+        (root / "act" / "__init__.py").write_text('__version__ = "0.48.4"\n', encoding="utf-8")
+
+    def _restore_stamper_tree(self, root):
+        (root / "act" / "__init__.py").write_text(FIXTURE_INIT, encoding="utf-8")
+        for rel in REAL_COPIES:
+            shutil.copyfile(str(REPO / rel), str(root / rel))
 
     def test_fast_forward_deploy_installs_once_and_notifies(self):
         target = self.push("0.48.4")

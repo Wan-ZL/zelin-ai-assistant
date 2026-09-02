@@ -36,3 +36,8 @@ promo/package-lock.json
 
 # Playwright MCP browser-debug dumps (never commit)
 .playwright-mcp/
+
+# Generated version stamp (CONTRACT §56.1): scripts/version_stamp.py writes it
+# from the git tag at install/build/release time; the tag is the truth, never a
+# committed file.
+act/_version.py
