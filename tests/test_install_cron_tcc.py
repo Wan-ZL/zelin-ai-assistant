@@ -11,8 +11,6 @@
     warn 行带 Full Disk Access 指引，手动 crontab -e 的两行照常打印；
   - 其余 crontab 失败（语法错等）仍是 `cron=fail`，照旧算部署失败步；
   - 成功照旧 `cron=ok`；行没变化时 crontab 根本不被调用（`already installed`）；
-  - crontab 子进程拿到**绝对** TMPDIR（实战里临时文件被解析成相对 tmp/tmp.<pid>；
-    TMPDIR 未设或为相对路径时退到 /tmp）；
   - doctor `cron write access` 行（§25 `cron_tcc_blocked`）：install_report 的
     cron=skipped_tcc → WARN，fix 点名给守护 python 开 FDA 且「终端跑通不算数」；
     cron=ok / 无报告 → 无此行（crontab 行内容 pattern 匹配旧行照样绿，这行是
@@ -38,8 +36,8 @@ REPO = Path(__file__).resolve().parents[1]
 _WIN = sys.platform.startswith("win")
 
 FAKE_CRONTAB = r"""#!/bin/bash
-# stub crontab: log argv + TMPDIR, drain stdin, act per FAKE_CRONTAB_MODE
-printf 'crontab %s TMPDIR=%s\n' "$*" "${TMPDIR:-<unset>}" >> "$FAKE_CRONTAB_LOG"
+# stub crontab: log argv, drain stdin, act per FAKE_CRONTAB_MODE
+printf 'crontab %s\n' "$*" >> "$FAKE_CRONTAB_LOG"
 cat >/dev/null
 case "${FAKE_CRONTAB_MODE:-ok}" in
     eperm)  echo "crontab: tmp/tmp.$$: Operation not permitted" >&2; exit 1 ;;
@@ -78,7 +76,7 @@ class ApplyCrontabTestCase(unittest.TestCase):
         stub.chmod(0o755)
         self.cron_log = self.tmp / "crontab.log"
 
-    def run_apply(self, mode="ok", new="NEW LINE", current="", tmpdir=None):
+    def run_apply(self, mode="ok", new="NEW LINE", current=""):
         script = ("set -uo pipefail\n"
                   + _install_sh_fn("report_step")
                   + _install_sh_fn("failed_deploy_steps")
@@ -97,9 +95,6 @@ class ApplyCrontabTestCase(unittest.TestCase):
                "PATH": str(self.bin) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
                "FAKE_CRONTAB_MODE": mode,
                "FAKE_CRONTAB_LOG": str(self.cron_log)}
-        env.pop("TMPDIR", None)
-        if tmpdir is not None:
-            env["TMPDIR"] = tmpdir
         proc = subprocess.run(
             ["bash", "-c", script, "bash",
              self.INGEST, self.DIGEST, "/pinned/python3", new, current],
@@ -145,16 +140,12 @@ class ApplyCrontabTestCase(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertEqual(self.crontab_calls(), [], "no rewrite needed, no crontab call")
 
-    def test_crontab_child_gets_an_absolute_tmpdir(self):
-        # 实战报错 `tmp/tmp.<pid>`：launchd 会话里 TMPDIR 解析成了相对路径。
-        # 未设 → /tmp；相对 → /tmp；已设绝对 → 原样传递。
-        for tmpdir, expect in ((None, "TMPDIR=/tmp"), ("tmp", "TMPDIR=/tmp"),
-                               (str(self.tmp), "TMPDIR=%s" % self.tmp)):
-            self.cron_log.unlink(missing_ok=True)
-            self.run_apply(mode="ok", tmpdir=tmpdir)
-            calls = self.crontab_calls()
-            self.assertEqual(len(calls), 1, calls)
-            self.assertIn(expect, calls[0])
+    def test_rewrite_is_a_single_plain_crontab_call(self):
+        # stderr 直接抓进变量：不落 /tmp 临时文件（固定名 + 共享目录 = symlink
+        # 覆写面），也不摆弄 TMPDIR（crontab 的 tmp/tmp.<pid> 是 spool 相对路径）。
+        _, report, _, _ = self.run_apply(mode="eperm")
+        self.assertEqual(self.crontab_calls(), ["crontab -"])
+        self.assertIn("cron=skipped_tcc:crontab rewrite refused", "\n".join(report))
 
 
 class DoctorCronWriteAccessTestCase(unittest.TestCase):

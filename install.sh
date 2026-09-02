@@ -887,25 +887,20 @@ TELEMETRY_LINE="17 * * * * cd $REPO_ROOT && AIASSISTANT_HOME=$REPO_ROOT $CRON_PY
 #     回滚治不了环境问题）→ `cron=skipped_tcc`，不计入 failed_deploy_steps；
 #     doctor 的 `cron write access` 行负责把它亮成 WARN + FDA 指引。
 #   - 其余（语法错、crontab 不存在等）仍是 `cron=fail`，照旧算部署失败步。
-# TMPDIR 强制绝对可写目录：launchd 会话里 crontab 的临时文件曾解析成相对路径
-# `tmp/tmp.<pid>`（实战报错原文）；绝对 TMPDIR 是零成本的皮带，装上不亏。
+# 报错里的 `tmp/tmp.<pid>` 是 crontab 自己的 spool 相对路径（它先 chdir 到
+# /usr/lib/cron → /var/at，再写 tmp/tmp.<pid>，与 TMPDIR 无关），所以这里不
+# 摆弄环境，只抓 stderr 原文判类。匹配的是 Darwin strerror 的英文（Darwin libc
+# 不本地化 strerror）；万一没匹配上就落回 `fail`——旧行为，只会更保守。
 apply_crontab() {
     if [ "$NEW_CRON" = "$CURRENT_CRON" ]; then
         report_step "cron" "ok" "already installed"
         return 0
     fi
-    _cron_tmpdir="${TMPDIR:-/tmp}"
-    case "$_cron_tmpdir" in /*) ;; *) _cron_tmpdir="/tmp" ;; esac
-    _cron_err_file="$_cron_tmpdir/aiassistant-cron-err.$$"
-    if printf '%s\n' "$NEW_CRON" | grep -v '^[[:space:]]*$' \
-            | TMPDIR="$_cron_tmpdir" crontab - 2>"$_cron_err_file"; then
-        rm -f "$_cron_err_file"
+    if _cron_err="$(printf '%s\n' "$NEW_CRON" | grep -v '^[[:space:]]*$' | crontab - 2>&1)"; then
         ok "crontab rewritten (other lines preserved)"
         report_step "cron" "ok" "ingest chain + digest + telemetry installed"
         return 0
     fi
-    _cron_err="$(cat "$_cron_err_file" 2>/dev/null || true)"
-    rm -f "$_cron_err_file"
     [ -n "$_cron_err" ] && printf '%s\n' "$_cron_err" >&2
     warn "crontab update failed — add these lines manually with 'crontab -e':"
     info "$INGEST_CHAIN"
