@@ -16,6 +16,9 @@ To ship a change:
 
 ## [Unreleased]
 
+### Fixed
+- web: legacy R ids on never-approved cards are greyed only, no longer struck through (owner: match the native board).
+
 ### Added
 - **`skills/test-code` v0.2.1 — 首次跨项目实跑 + 第 4 档自测的修正**：在从未见过的仓库（pallets/itsdangerous）上跑第 2 档抓到三个真 bug——相对导入（`from ._json import …`）被结构门误报孤儿、pytest 带颜色的收集错误解析不出失败（现在先剥 ANSI）、空 diff 被 `diff_minimality` 报 UNAVAILABLE（现在 pass）；Sphinx `docs/conf.py` 免孤儿检查。对 skill 自己跑变异测试（1,581 变异体，62% 杀伤；存活体 75% 是 CATALOG 数据表的时间估计常数 ±1），逻辑存活体在 `tests/test_skill_test_code_mutation_kills.py` 逐个钉死（账本等值不算 WORSE、no-drop 容差边界、核心层跳过的档位边界与圈判定、JS 就绪 and/or、测试判决 ×N 后缀）；skill 六个脚本加入 `qa/mutation_targets.toml` 每晚受检。相对导入解析变准后本仓库多出一条真环 `act.lib.registry>act.lib.store2.export_yaml`，进 `.test-code/baselines/structure.txt`。
 - **`skills/test-code` 测试代码 skill v0.2.0（手动/交互模式；vnext2-plan R2.8 / D14，skill 商店 D13 / R2.7）**：项目无关的测量梯子——`scripts/detect.py` 探测技术栈、工具、阈值来源（本 repo = `qa/gates.toml` 只读，R2.8.3）、对 merge-base 的 diff 与触发器，给出 1–5 档推荐与菜单（每层标 core/extended 圈）；AI 助手按 SKILL.md **问一次**（档 1 静态门 → 档 5 通宵/通几天无时限 + 检查多选）；`scripts/run_ladder.py` 并行/串行执行 54 个层（项目自己的 QA 门优先，缺席时用 `complexity_min.py`、`structure_check.py` 与内置 CRAP / diff 覆盖 / no-drop 兜底），写 `.test-code/reports/<UTC>/report.md + report.json`：三分法「没跑的层」、**核心层被跳过必须带理由**（否则 verdict INCOMPLETE）、**结构性盲区**、先修什么排序、zero-NEW 基线、tool versions、一条 rerun 命令。新增确定性**结构门**（测试放置 / 同名模块 / 目录深度 / 拥挤目录 / import 环 / 孤儿模块；镜像率只报告）与扩展圈目录 `references/catalog.md`（类型覆盖、重复率、API 破坏、体积预算、许可证、文档覆盖、干净 VM 安装、反馈回路探针等大厂 presubmit 硬指标，触发条件 + 命令 + 阈值）。每个脚本配负控制判例（`tests/test_skill_test_code_*.py`，139 tests，零子进程；真子进程判例住 `tests/integration/`）。血统：robust-code ← old-coder（MIT，NOTICE）。

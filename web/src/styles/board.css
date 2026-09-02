@@ -412,11 +412,10 @@
   font: var(--type-card-fine-mono);
   font-variant-numeric: tabular-nums;
 }
-/* §60：存量 R 主键（检测即分号、从未批准）——再灰一档 + 划线，提醒「不是工作编号」 */
+/* §60：存量 R 主键（检测即分号、从未批准）——只再灰一档；不划线（划线读作「已删除」，
+   与原生看板不一致，owner 2026-09-02 要求视觉对齐原生） */
 .card-id-legacy {
   opacity: 0.55;
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
 }
 
 /* —— badge / chip（原生 Badge：10 semibold，色字 + 同色 .18 底，胶囊）—— */
