@@ -8,6 +8,7 @@
 // M6 追加（add-only）：queued 卡的结构化排队原因 chip（queued_reason，§M6.2）；
 // working 卡的 steer 回执 chips（steers[]，§M6.1）+ comment 即 steer 的排队回执。
 import { useState } from "react";
+import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
@@ -46,7 +47,8 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
 
   return (
     <article className={cardClass} onDoubleClick={() => openCardDetail(row.id)}>
-      <div className="card-id">{row.id}</div>
+      {/* §60：运行中/排队卡必经 approved → 显示工作编号；动作回传仍是主键 row.id */}
+      <div className={isLegacyId(row) ? "card-id card-id-legacy" : "card-id"}>{displayId(row)}</div>
       <div className="card-title">{row.name}</div>
       {isBlocked ? (
         <>
@@ -137,7 +139,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
 
       {dialog === "stop" && (
         <ForkDialog
-          title={text(`停止 ${row.id}？`, `Stop ${row.id}?`)}
+          title={text(`停止 ${displayId(row)}？`, `Stop ${displayId(row)}?`)}
           body={text(
             "退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
             "Discard & re-propose throws this run away; Keep for review keeps what it made for you to check",

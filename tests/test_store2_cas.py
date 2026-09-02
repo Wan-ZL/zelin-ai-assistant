@@ -15,8 +15,9 @@ _STORE_LANDED = importlib.util.find_spec("act.lib.store2.store") is not None
 _SKIP_REASON = "act.lib.store2.store (B2) not importable"
 
 if _STORE_LANDED:
-    from act.lib.store2 import (IntegrityViolation, NotFound, Store,
-                                StoreError, TransitionDenied, VersionConflict)
+    from act.lib.store2 import (SCHEMA_VERSION, IntegrityViolation, NotFound,
+                                Store, StoreError, TransitionDenied,
+                                VersionConflict)
 
 NOW = "2026-08-30T12:00:00Z"
 
@@ -290,7 +291,8 @@ class SchemaVersionGateTestCase(unittest.TestCase):
 
     def test_crash_window_rerun_completes_schema(self):
         # 模拟 executescript 崩在版本钉扎之前：表在、版本还是 0——
-        # 重开 Store 必须幂等补全并钉到 1，而不是带着半截库上路
+        # 重开 Store 必须幂等补全并钉到 SCHEMA_VERSION（v2 起，§60/D21），
+        # 而不是带着半截库上路
         db = self.tmp / "crash.db"
         schema_path = (Path(__file__).resolve().parent.parent
                        / "act" / "lib" / "store2" / "schema.sql")
@@ -305,7 +307,7 @@ class SchemaVersionGateTestCase(unittest.TestCase):
                                "title": "t"}, actor_type="system")
             version = store._conn().execute(
                 "PRAGMA user_version").fetchone()[0]
-            self.assertEqual(version, 1)
+            self.assertEqual(version, SCHEMA_VERSION)
         finally:
             store.close()
 

@@ -111,7 +111,10 @@ completed, debt, trash, archived.""",
 
 Reads GET /api/cards/CARD_ID: the projection row plus read-only
 registry fields (plan, definition_of_done, sources, notes, ...) and a
-"lane" key. CARD_ID must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}.""",
+"lane" key. CARD_ID is the card's primary key (P-xxx, or a legacy
+R-xxx) or its work number (the R-xxx shown on approved/running cards);
+the response "id" is always the primary key. CARD_ID must match
+[A-Za-z0-9][A-Za-z0-9_-]{0,63}.""",
     "capture": """Usage: boardctl capture (--text TEXT | --text-file FILE)
                         [--image /abs/path.png ...] [--json]
 
@@ -125,7 +128,8 @@ paths). There is no direct-run option on this channel by design.""",
                         [--json]
 
 Submits {"action":"comment","id":CARD_ID,"comment":...,"actor":
-"agent"} to POST /api/actions. Use it for progress notes: what
+"agent"} to POST /api/actions. CARD_ID is the primary key or the work
+number (either resolves). Use it for progress notes: what
 changed, how it was verified, outcome, remaining risks. The body must
 be non-empty. Agent comments are recorded on the card for the owner;
 they are never relayed into a live work session as owner steering.""",

@@ -1,6 +1,13 @@
 """Requirement registry — the card-ledger facade every caller goes through.
 
-契约：CONTRACT §1（状态机/字段）+ §53（store2 真源与激活协议）+ §44（单写者）。
+契约：CONTRACT §1（状态机/字段）+ §53（store2 真源与激活协议）+ §44（单写者）
++ §60（两段式卡片编号：`P-` 主键 + `work_id` 工作编号，D21）。
+
+Ids（§60，D21）：``id`` 是终身不变的主键——新卡出生即 ``P-<n>``（provisional，
+:func:`next_id`）；``work_id`` 是人看的工作编号 ``R-<m>``，**只在卡进入
+approved 时**由 :func:`save` 单点分配（set-once、稠密、单调、永不复用），
+detected/card_sent/raising/trash/merge 一律不给。存量卡的 ``R-<n>`` 主键原样
+保留（legacy），显示名 = ``work_id or id``（:func:`display_id`）。
 
 Truth（v0.48.8，D2）：``state/store2_truth.json`` 激活标记在（且未被回滚开关
 强制回 yaml）时，真源 = SQLite ``state/store2.db``（act/lib/store2）；否则
@@ -295,6 +302,10 @@ OPTIONAL_ORDER = [
     # "proposals_triage"）。顶层字段而非 execution 键：executor.dispatch
     # 成功路径会整个重建 execution，标记放那里活不过起跑。
     "preset",
+    # §60（D21）工作编号 ``R-<m>``：进入 approved 时由 save() 分配，set-once。
+    # None = 从未批准过（提案/备选/回收站卡）或存量 legacy 卡——整键省略，
+    # 旧 YAML 逐字节 round-trip 不受影响。
+    "work_id",
 ]
 
 
@@ -336,8 +347,9 @@ class Requirement:
     origin_trust: Optional[str] = None
 
     # v0.20.0 thread-level matching (卡片生命周期 §2)
-    # thread_id: the thread anchor = the R-id of the thread-root card (reuses the
-    #   R- namespace; inherited on a match, self-rooted on a brand-new card).
+    # thread_id: the thread anchor = the primary ``id`` of the thread-root card
+    #   (same namespace as ``id`` — P-/legacy R- keys, never work_id; inherited
+    #   on a match, self-rooted on a brand-new card).
     # thread_key: a STRONG deterministic bucket, only from an external thread ref
     #   ("gmail:<X-GM-THRID>" / "slack:<thread_ts>"); None when there is no strong
     #   signal — never fuzzy. See :func:`derive_thread_key`.
@@ -366,6 +378,11 @@ class Requirement:
     # 在 dispatch/收割时认出提案清理卡。
     preset: Optional[str] = None
 
+    # §60（D21）工作编号：``R-<m>``，进入 approved 时 save() 分配、此后永不
+    # 改写；``id`` 仍是唯一主键/lineage 锚点（merged_into/thread_id/
+    # improvement_of/split_from 全部指 id，绝不指 work_id）。
+    work_id: Optional[str] = None
+
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
     _in_list: bool = field(default=False, repr=False, compare=False)
@@ -388,7 +405,7 @@ class Requirement:
         # 数字时 PyYAML 解析成 int —— 一律 str() 归一，否则 next_id 的正则
         # match 抛 TypeError（快速捕获整条链瘫痪），且 dashboard wire 上的 int
         # 会让 Swift 端硬 String decode 把整列清空（CONTRACT §2）。
-        for k in ("id", "title", "tier"):
+        for k in ("id", "title", "tier", "work_id"):
             v = kwargs.get(k)
             if v is not None and not isinstance(v, str):
                 kwargs[k] = str(v)
@@ -663,19 +680,42 @@ def _sqlite_save(req: Requirement) -> None:
     _store().put_card(str(norm.get("id") or req.id), norm, hot_cols, src_rows,
                       actor_type=current_actor())
     _journal_write(f"{req.id}.yaml")   # §34bis 写入台账：键形与 yaml 后端一致
-    _note_first_card(req)
 
 
 def save(req: Requirement) -> None:
-    """Persist a requirement, preserving whether it lives in a list file."""
+    """Persist a requirement, preserving whether it lives in a list file.
+
+    §60（D21）**工作编号的唯一分配点**：卡以 ``approved`` 落盘且尚无
+    ``work_id`` 时，在这里分配 ``R-<m>``（:func:`next_work_id`）。进入
+    approved 的每条路径——owner approve、§51 免批、capture[run] 出生即
+    approved、restore 按 prev_status 精确复位回 approved——都经 save()，
+    所以调用方零改动、零遗漏；detected/card_sent/raising/trashed/merged
+    的落盘永不分配。分配失败（序列文件读不了等）不崩 save：编号是显示层
+    资产，卡照常落盘，下一次 approved 落盘再补。"""
     if current_actor() == "agent":
         # R2.1.4 权限墙（两后端一致）：agent 不得转移状态/铸敏感出生态。
         # 旧状态从真源现查（agent 路径罕见，额外一读可接受）。
         prior = load(req.id) if req.id else None
         _agent_wall(req, str(prior.status) if prior is not None else None)
-    if backend() == BACKEND_SQLITE:
-        _sqlite_save(req)
-        return
+    allocated = _allocate_work_id(req)
+    try:
+        if backend() == BACKEND_SQLITE:
+            _sqlite_save(req)
+        else:
+            _yaml_save(req)
+    except BaseException:
+        if allocated:
+            # 没落盘的编号不占位：清掉内存里的号，下一次 approved 落盘重分
+            # ——否则重试会带着同一个号再撞一次 UNIQUE（sqlite）。
+            req.work_id = None
+        raise
+    if allocated:
+        _bump_work_seq(allocated)
+    _note_first_card(req)
+
+
+def _yaml_save(req: Requirement) -> None:
+    """YAML 后端的落盘（单卡文件 / list 成员两种形状，见模块 docstring）。"""
     if req._file and req._in_list:
         path = Path(req._file)
         try:
@@ -724,7 +764,6 @@ def save(req: Requirement) -> None:
         req._file = str(path)
         req._in_list = False
         _atomic_write(path, _dump_yaml(req.to_dict()))
-    _note_first_card(req)
 
 
 def _note_first_card(req: Requirement) -> None:
@@ -990,12 +1029,151 @@ def unarchive(req: Requirement) -> Requirement:
 
 
 # --------------------------------------------------------------------------- #
-# ID allocation + matching / merge
+# ID allocation + matching / merge（§60，D21：两段式编号）
 # --------------------------------------------------------------------------- #
-_ID_RE = re.compile(r"^R-(\d+)$")
+# 命名空间：
+#   P-<n>  主键（provisional）——v0.48.13 起所有新卡的出生 id（next_id）
+#   R-<n>  ①存量卡的主键（legacy，v0.48.13 前雷达检测即分号）
+#          ②工作编号 work_id（进入 approved 时分配，next_work_id）
+# 两种 R- 用途靠数值区间**构造上不重叠**：工作序列从 max(legacy R 主键 ∪
+# 已分配 work_id ∪ state/work_seq.json 高水位) + 1 起，所以任一 R-<n> 要么
+# 是 ≤ 存量上界的 legacy 主键，要么是 > 上界的工作编号——resolve() 按
+# 「先精确主键、再 work_id」两步查，无歧义。
+_ID_RE = re.compile(r"^R-(\d+)$")              # legacy R 主键 / work_id 形
+_P_ID_RE = re.compile(r"^P-(\d+)$")
 # Filename form of an id — prefix match so "R-042" and "R-042-notes" both
 # count as allocating 42 (next_id's unreadable-file guard; conservative).
 _FILE_ID_RE = re.compile(r"^R-(\d+)")
+_P_FILE_ID_RE = re.compile(r"^P-(\d+)")
+WORK_ID_PREFIX = "R-"
+PROVISIONAL_ID_PREFIX = "P-"
+# 工作序列高水位（§60.2 的第二道保险）：{"work_seq": <int>}——固定大小，
+# 防腐 #4 天然满足。yaml 后端硬删 trashed 文件会带走它的 work_id，光扫账本
+# 会让被删的最大号复用；高水位在两后端都参与 max()，sqlite 侧 tombstone 行
+# 保留热列本就不丢，这里只是同一口径。
+WORK_SEQ_NAME = "work_seq.json"
+
+# id_kind 词表（§2 投影 add-only 字段，web 据此灰显 legacy 主键）
+ID_KIND_WORK = "work"            # 有 work_id：显示名 = 工作编号
+ID_KIND_LEGACY = "legacy"        # 存量 R- 主键、未获工作编号
+ID_KIND_PROPOSAL = "proposal"    # P- 主键、未获工作编号（提案/备选/回收站）
+
+
+def id_number(rid) -> Optional[int]:
+    """``R-042`` / ``P-007`` → 42 / 7；其他形状 → None。"""
+    m = _ID_RE.match(str(rid or "")) or _P_ID_RE.match(str(rid or ""))
+    return int(m.group(1)) if m else None
+
+
+def is_legacy_key(rid) -> bool:
+    """主键是否为 v0.48.13 前的 ``R-<n>`` 形（检测即分号的存量卡）。"""
+    return bool(_ID_RE.match(str(rid or "")))
+
+
+def id_sort_key(rid) -> tuple:
+    """跨命名空间的 FIFO 序：legacy R 主键 < P 主键（一切 P 卡都晚于一切
+    存量卡出生），同空间按数值；其他形状按字面排最后。
+    actd 的公平轮转（process_raising / auto_dispatch_pass）与 auto_merge /
+    quick_capture 的「哪张更老」判断都用它——字典序 ``"P-" < "R-"`` 会让
+    每张 P 卡插到所有存量卡前面（饿死存量 raising 队列），数值解析把 P 当
+    0 会让 P 卡永远「更老」（合并方向反转）。"""
+    s = str(rid or "")
+    m = _ID_RE.match(s)
+    if m:
+        return (0, int(m.group(1)), s)
+    m = _P_ID_RE.match(s)
+    if m:
+        return (1, int(m.group(1)), s)
+    return (2, 0, s)
+
+
+def display_id(req: "Requirement") -> str:
+    """人看的编号：``work_id``（批准过的卡）否则主键（P-/legacy R-）。
+    executor 的 prompt 头/会话名/日志名、oneonone、dashboard ``display_id``
+    都从这里取——单一落点。"""
+    return str(getattr(req, "work_id", None) or req.id or "")
+
+
+def _passed_approval(req: "Requirement") -> bool:
+    """卡是否已（曾）过批准闸：现态或回程票 prev_status 在 approved 之后各态。"""
+    st = str(req.status or "")
+    if st in _AGENT_FORBIDDEN:
+        return True
+    return (st in (State.TRASHED.value, State.ARCHIVED.value)
+            and str(getattr(req, "prev_status", None) or "") in _AGENT_FORBIDDEN)
+
+
+def id_kind(req: "Requirement") -> str:
+    """§2 投影的 ``id_kind``：work | legacy | proposal（见词表常量）。
+
+    存量 legacy 卡若已过批准闸（approved/executing/review/delivered，或带这些
+    回程票进了回收站/归档）算 ``work``——它的 R 号是批准后跑出来的，不该灰显；
+    只有「检测即分号、从未批准」的存量卡才是 ``legacy``（#127 抱怨的那 162 张）。
+    """
+    if getattr(req, "work_id", None):
+        return ID_KIND_WORK
+    if is_legacy_key(req.id):
+        return ID_KIND_WORK if _passed_approval(req) else ID_KIND_LEGACY
+    return ID_KIND_PROPOSAL
+
+
+def _work_seq_path() -> Path:
+    return config.STATE_DIR / WORK_SEQ_NAME
+
+
+def _read_work_seq() -> int:
+    try:
+        data = json.loads(_work_seq_path().read_text(encoding="utf-8"))
+        return max(0, int(data.get("work_seq") or 0)) if isinstance(data, dict) else 0
+    except (OSError, ValueError, TypeError):
+        return 0
+
+
+def _bump_work_seq(work_id: str) -> None:
+    """高水位只升不降；写失败静默（序列真源仍是账本，文件只是保险）。"""
+    n = id_number(work_id)
+    if n is None:
+        return
+    try:
+        cur = _read_work_seq()
+        if n <= cur:
+            return
+        path = _work_seq_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"work_seq": n}), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def _allocate_work_id(req: "Requirement") -> Optional[str]:
+    """save() 的分配钩子：approved 且无 work_id → 分配并写回 req；否则 None。
+
+    存量 legacy 卡（主键本就是 ``R-<n>``）**采纳自己的主键**作 work_id、不另
+    发新号：一张卡两个 R 号只会添乱（日志 R-175.log 与看板 R-290 对不上），
+    且 legacy 主键 ≤ 序列下界、与新工作号构造上不撞。采纳时机 = 任何已过
+    批准闸的落盘（approved/executing/review/delivered，含带这些回程票的
+    trashed/archived）——存量卡不会再「进入 approved」一次，只认 approved 会让
+    已交付的存量卡永远没有 work_id。未批准的 legacy 卡仍无 work_id
+    （id_kind=legacy，看板灰显）——D21 的「批准了才算」对存量卡同样成立。
+    永不抛（宪法第 11 条）——分配失败时卡照常落盘、编号下次再补。"""
+    if getattr(req, "work_id", None):
+        return None
+    try:
+        if is_legacy_key(req.id):
+            if not _passed_approval(req):
+                return None
+            req.work_id = req.id
+        elif str(req.status) == State.APPROVED.value:
+            req.work_id = next_work_id()
+        else:
+            return None
+    except Exception as e:  # noqa: BLE001 - 编号是显示层资产，不许拖垮落盘
+        print(f"registry: work_id allocation failed for {req.id}: {e}",
+              file=sys.stderr)
+        return None
+    return req.work_id
 
 # "Resolved" = the work behind the card already closed (delivered, or merged
 # into a primary — incl. the legacy ``merged_into:<id>`` status). A radar hit
@@ -1079,35 +1257,96 @@ def find_open_follow_up(parent_id: str) -> Optional[Requirement]:
     return None
 
 
-def next_id() -> str:
-    if backend() == BACKEND_SQLITE:
-        # tombstone 行也计入（id 是 PK 且永不复用——复用会撞 PK/复活死号）
-        mx = 0
-        for card in _store().list_cards(include_tombstones=True):
-            m = _FILE_ID_RE.match(str(card.get("id") or ""))
-            if m:
-                mx = max(mx, int(m.group(1)))
-        return f"R-{mx + 1:03d}"
+def _max_number(values: Iterable, regex) -> int:
     mx = 0
-    # CRITICAL (§4): include archived cards, or a freshly allocated id could
-    # collide with a sealed R-050 and overwrite it (silent data loss).
-    for r in load_all(include_archived=True):
+    for v in values:
         # str() 防御第二层（from_dict 已归一 YAML 路径）：直接构造的
         # Requirement 仍可能带 int id —— 正则 match 对 int 抛 TypeError。
-        m = _ID_RE.match(str(r.id or ""))
+        m = regex.match(str(v or ""))
         if m:
             mx = max(mx, int(m.group(1)))
+    return mx
+
+
+def next_id() -> str:
+    """下一张新卡的**主键** ``P-<n>``（§60，D21）——出生即分、终身不变。
+
+    公开名保留（§53 点名、12 个铸卡点全部经它）：v0.48.13 前它发 ``R-<n>``
+    （检测即消耗工作号，issue #127），现在发 provisional ``P-<n>``；工作编号
+    改由 :func:`next_work_id` 在进入 approved 时分配。
+    """
+    if backend() == BACKEND_SQLITE:
+        # tombstone 行也计入（id 是 PK 且永不复用——复用会撞 PK/复活死号）
+        ids = [c.get("id") for c in _store().list_cards(include_tombstones=True)]
+        return f"{PROVISIONAL_ID_PREFIX}{_max_number(ids, _P_FILE_ID_RE) + 1:03d}"
+    # CRITICAL (§4): include archived cards, or a freshly allocated id could
+    # collide with a sealed P-050 and overwrite it (silent data loss).
+    mx = _max_number((r.id for r in load_all(include_archived=True)), _P_ID_RE)
     # Fail-closed vs unreadable files: load_all() SKIPS a corrupt/unreadable
     # card file (hand-edit YAML typo, transient OSError), so its id would
     # otherwise be re-allocated here and the still-recoverable file overwritten
     # by the next save(). Filenames stay readable even when content isn't —
-    # count R-<n>*.yaml names in both the active and archive dirs as allocated.
+    # count P-<n>*.yaml names in both the active and archive dirs as allocated.
     # (Over-counting is harmless: worst case an id number is skipped.)
-    for p in _iter_files(include_archived=True):
-        m = _FILE_ID_RE.match(p.stem)
-        if m:
-            mx = max(mx, int(m.group(1)))
-    return f"R-{mx + 1:03d}"
+    mx = max(mx, _max_number((p.stem for p in _iter_files(include_archived=True)),
+                             _P_FILE_ID_RE))
+    return f"{PROVISIONAL_ID_PREFIX}{mx + 1:03d}"
+
+
+def next_work_id() -> str:
+    """下一个**工作编号** ``R-<m>``（§60.2）：稠密、单调、永不复用。
+
+    序列上界 = max(存量 legacy ``R-<n>`` 主键 ∪ 已分配 ``work_id`` ∪
+    ``state/work_seq.json`` 高水位)。legacy 主键计入 = 新工作号一定大于
+    任何存量卡号，两种 R- 用途在数值上不重叠（resolve 无歧义、老 log/
+    通知里的 R 号不会被新工作号「顶替」）。sqlite 侧 tombstone 行保留
+    ``work_id`` 热列（purge 只清 payload），已硬删卡的编号照样占位；yaml
+    侧文件被删后靠高水位补位。唯一调用者 = :func:`save` 的分配钩子；
+    单写者纪律下（只有 actd 把卡送进 approved）序列不会并发分配，sqlite
+    的 UNIQUE 索引是万一并发时的响亮兜底（撞号 = StoreError，不静默复用）。
+    """
+    if backend() == BACKEND_SQLITE:
+        cards = _store().list_cards(include_tombstones=True)
+        mx = max(_max_number((c.get("id") for c in cards), _FILE_ID_RE),
+                 _max_number((c.get("work_id") for c in cards), _ID_RE))
+    else:
+        reqs = load_all(include_archived=True)
+        mx = max(_max_number((r.id for r in reqs), _ID_RE),
+                 _max_number((r.work_id for r in reqs), _ID_RE),
+                 # 文件名守卫同 next_id：不可读的存量 R-*.yaml 也占号
+                 _max_number((p.stem for p in _iter_files(include_archived=True)),
+                             _FILE_ID_RE))
+    mx = max(mx, _read_work_seq())
+    return f"{WORK_ID_PREFIX}{mx + 1:03d}"
+
+
+def load_by_work_id(work_id: str) -> Optional[Requirement]:
+    """按工作编号取卡（§60.3）；无/不像 R- 号 → None。"""
+    wid = str(work_id or "").strip()
+    if not _ID_RE.match(wid):
+        return None
+    if backend() == BACKEND_SQLITE:
+        card = _store().get_card_by_work_id(wid)
+        if card is None or card.get("tombstone"):
+            return None
+        return Requirement.from_dict(card["payload"])
+    for r in load_all(include_archived=True):
+        if r.work_id == wid:
+            return r
+    return None
+
+
+def resolve(ref: str) -> Optional[Requirement]:
+    """按「主键或工作编号」取卡（§60.3）——inbox / boardctl / server 收到的
+    ``id`` 字段可能是两者之一（web 显示工作编号，用户复制的就是它）。
+    顺序：精确主键 → work_id；两种 R- 用途数值不重叠，无歧义。"""
+    rid = str(ref or "").strip()
+    if not rid:
+        return None
+    req = load(rid)
+    if req is not None:
+        return req
+    return load_by_work_id(rid)
 
 
 def derive_thread_key(source: Optional[dict]) -> Optional[str]:

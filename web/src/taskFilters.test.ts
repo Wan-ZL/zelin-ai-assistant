@@ -100,6 +100,12 @@ describe("匹配语义", () => {
     expect(matchesCardFilters(runningRow, f({ search: "跑着" }))).toBe(true);
     expect(matchesCardFilters(runningRow, f({ search: "readme" }))).toBe(false);
   });
+
+  it("§60：工作编号 / 展示编号也可搜——用户记的是 R-280，主键是 P-012", () => {
+    const work = { ...runningRow, id: "P-012", work_id: "R-280", display_id: "R-280" };
+    expect(matchesCardFilters(work, f({ search: "R-280" }))).toBe(true);
+    expect(matchesCardFilters(work, f({ search: "P-012" }))).toBe(true);
+  });
 });
 
 describe("词表收集", () => {

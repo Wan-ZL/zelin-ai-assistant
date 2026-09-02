@@ -14,6 +14,9 @@ import sqlite3
 import unittest
 from pathlib import Path
 
+# 只借一个常量（schema.sql 末尾钉的版本必须等于它）——DDL 断言本身仍是纯 sqlite3
+from act.lib.store2.store import SCHEMA_VERSION
+
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "act" / "lib" / "store2" / "schema.sql"
 
 NOW = "2026-08-30T12:00:00Z"
@@ -522,8 +525,10 @@ class SchemaLayoutTestCase(unittest.TestCase):
         sql = SCHEMA_PATH.read_text(encoding="utf-8")
         stripped = re.sub(r"--[^\n]*", "", sql)
         statements = [s.strip() for s in stripped.split(";") if s.strip()]
+        # 数值 = store.SCHEMA_VERSION（v2 起：§60/D21 加 work_id 列；schema.sql
+        # 永远是全新库的完整 DDL，旧库走 store._UPGRADES 梯子）
         self.assertEqual(statements[-1].upper().replace(" ", ""),
-                         "PRAGMAUSER_VERSION=1")
+                         f"PRAGMAUSER_VERSION={SCHEMA_VERSION}")
         # 全文件只钉一次（注释除外）——出现第二处 = 有人把它挪回了前面
         self.assertEqual(stripped.count("user_version"), 1)
 

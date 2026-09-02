@@ -134,6 +134,12 @@
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+/* §60：存量 R 主键（检测即分号、从未批准）——再灰一档 + 划线，提醒「不是工作编号」 */
+.card-id-legacy {
+  opacity: 0.55;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
+}
 
 /* —— badge / chip —— */
 .card-badges {

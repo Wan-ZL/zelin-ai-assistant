@@ -31,7 +31,7 @@ from typing import Callable, Optional
 
 from act import llm
 from act.lib import analytics, config, failures, notify, sanitize
-from act.lib.registry import Requirement, State, load, save
+from act.lib.registry import Requirement, State, display_id, load, save
 
 MEMORY_HEAD_LINES = 60
 
@@ -335,7 +335,9 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     delivery_mode = getattr(req, "delivery_mode", None) or "repo"
 
     blocks: list[str] = []
-    blocks.append(f"# Requirement {req.id}: {req.title}")
+    # §60：人看的编号（work_id，派发必在 approved 之后所以恒有；legacy 卡回落
+    # 主键）——agent 从这一行取分支名/PR 标题里的编号。analytics 仍记 req.id。
+    blocks.append(f"# Requirement {display_id(req)}: {req.title}")
     blocks.append(f"Type: {req.type or 'unspecified'} | Tier: {req.tier} | "
                   f"Hardness: {req.hardness} | Deadline: {req.deadline or 'none'}")
     if req.summary:
@@ -555,7 +557,8 @@ def session_name(req: Requirement) -> str:
     title = (req.title or "").strip()
     title = re.sub(r"[\\/\x00-\x1f\x7f]+", " ", title)   # newlines, / \, ctrl chars
     title = re.sub(r"\s+", " ", title).strip()
-    return f"{req.id} · {title[:48]}" if title else req.id
+    rid = display_id(req)          # §60：工作编号（legacy 卡回落主键）
+    return f"{rid} · {title[:48]}" if title else rid
 
 
 def _claude_bin(cfg: Optional[config.Config] = None) -> str:
@@ -803,7 +806,9 @@ def dispatch(
     # cd/mkdir 一个不存在的路径（与 chat 模式"不落文件"红线冲突）。
     prompt = build_prompt(req, cfg, target=target)
 
-    log_path = config.LOG_DIR / f"{req.id}.log"
+    # §60：日志按显示编号命名（R-<m>.log）；路径持久化在 execution.log，读方
+    # 不依赖文件名口径
+    log_path = config.LOG_DIR / f"{display_id(req)}.log"
     # pre-launch stamp: the roster fallback below only claims sessions started
     # AFTER this moment, so it can never adopt an older unrelated session.
     dispatched_dt = _dt.datetime.now(_dt.timezone.utc)
@@ -818,7 +823,7 @@ def dispatch(
         rc, stdout, stderr = 1, "", str(e)
     try:
         log_path.write_text(
-            f"# dispatch {req.id} @ {_dt.datetime.now().isoformat()}\n"
+            f"# dispatch {display_id(req)} ({req.id}) @ {_dt.datetime.now().isoformat()}\n"
             f"# cwd={target}\n\n=== STDOUT ===\n{stdout}\n\n=== STDERR ===\n{stderr}\n",
             encoding="utf-8",
         )

@@ -2,7 +2,7 @@
 
 覆盖：
 - 六个 demo 场景（demo_seed --scene）逐一透传：响应 bytes 与 dashboard.json
-  磁盘 bytes 完全一致（零改写），且 hero 卡 R-101 落在场景对应分区；
+  磁盘 bytes 完全一致（零改写），且 hero 卡 P-101 落在场景对应分区；
 - dashboard.json 缺席 → 404 NOT_FOUND envelope；未知 /api/* 路由 → 404；
 - /api/cards/{id}：投影行字段 verbatim + ``lane`` + registry YAML add-only
   增补（投影已有键绝不被覆盖）；archive/ 优先于 active（crash 残留判例）；
@@ -22,7 +22,8 @@ from tests.test_server_common import (DEMO_SEED_PATH, SCENES, assert_envelope,
 
 from server import board_source
 
-HERO = "R-101"
+HERO = "P-101"          # 主键（§60）；批准后工作编号 R-101
+HERO_WORK = "R-101"
 
 # 场景 → hero 卡所在分区（demo_seed 的管线走位，UI 各列渲染的判据）
 _HERO_LANE = {
@@ -122,6 +123,21 @@ class CardDetailProjectionTestCase(unittest.TestCase):
         status, obj = get_json(self.port, "/api/cards/R-424242")
         self.assertEqual(status, 404)
         assert_envelope(self, obj, "NOT_FOUND")
+
+    def test_work_id_resolves_to_the_same_card(self):
+        # §60.3：/api/cards/{ref} 接受工作编号；响应 id 恒为主键、lane 正确
+        dash = seed_scene(self.home, "running")
+        row = [c for c in dash["running"] if c["id"] == HERO][0]
+        self.assertEqual(row["work_id"], HERO_WORK)
+        status, obj = get_json(self.port, f"/api/cards/{HERO_WORK}")
+        self.assertEqual(status, 200)
+        self.assertEqual(obj["id"], HERO)
+        self.assertEqual(obj["display_id"], HERO_WORK)
+        self.assertEqual(obj["lane"], "running")
+        # 提案场景里 hero 还没有工作编号 → 按 R-101 查是 404（不按前缀猜卡）
+        seed_scene(self.home, "initial")
+        status, obj = get_json(self.port, f"/api/cards/{HERO_WORK}")
+        self.assertEqual(status, 404)
 
     def test_traversal_id_rejected(self):
         # URL 编码穿越：unquote 后含 "/"，SAFE_ID_RE 必拒

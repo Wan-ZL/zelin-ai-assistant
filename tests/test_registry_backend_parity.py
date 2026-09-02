@@ -9,6 +9,11 @@
 已知且有意的分歧（单独判例钉住，不进剧本比较）：
 - next_id 对「已硬删的最大 id」：yaml 会复用文件号（历史危险行为），
   sqlite 的 tombstone 行钉住 id 永不复用（§53.2）。
+
+§60（D21）起 next_id 发 ``P-<n>`` 主键、approve 落盘分配 ``R-<m>`` work_id
+——两后端必须分出**同一个**号（剧本里 P-001 批准 → work_id R-004，即存量
+legacy 主键上界 + 1；legacy R-001 批准 → 采纳自己的主键 R-001），分配后的
+work_id 进快照比较，trash→restore 回 approved 时 set-once 不重分。
 """
 import unittest
 from unittest import mock
@@ -60,7 +65,8 @@ class BackendParityTestCase(unittest.TestCase):
             registry.upsert(_card("R-003", "已交付的事", status="delivered",
                                   delivery_mode="chat",
                                   execution={"session_id": "s-3", "done": True}))
-            log.append(("next_id", registry.next_id()))
+            log.append(("next_id", registry.next_id()))          # P-001（§60）
+            log.append(("next_work_id", registry.next_work_id()))  # R-004
 
             # merge_or_new：纯重述折叠（同标题）
             kind, saved = registry.merge_or_new_with_kind(
@@ -86,16 +92,26 @@ class BackendParityTestCase(unittest.TestCase):
             with registry.acting_as("user"):
                 r = registry.load("R-001")
                 r.set_status("approved")
-                registry.save(r)
+                registry.save(r)              # §60：legacy 主键 → work_id 采纳 R-001
+                log.append(("work_id_legacy", registry.load("R-001").work_id))
+                # merge_or_new 铸的新卡是 P-001（不再消耗 R 号，issue #127）；
+                # 批准 → 工作编号 R-004（legacy 上界 3 + 1），resolve 双向可达
+                p1 = registry.load("P-001")
+                p1.set_status("approved")
+                registry.save(p1)
+                log.append(("work_id_new", registry.load("P-001").work_id))
+                log.append(("resolve", registry.resolve("R-004").id,
+                            registry.resolve("P-001").work_id))
                 registry.set_display_title(registry.load("R-002"), "备选的新名字",
                                            by_user=True)
                 r2 = registry.load("R-002")
                 registry.set_display_title(r2, "备选的新名字", by_user=True)
                 registry.save(r2)
-                registry.trash(registry.load("R-004"), "deleted")
-                registry.restore(registry.load("R-004"))
-                registry.trash(registry.load("R-004"), "deleted")
-                registry.pin(registry.load("R-004"))
+                registry.trash(registry.load("P-001"), "deleted")
+                registry.restore(registry.load("P-001"))   # 回 approved：set-once
+                log.append(("work_id_after_restore", registry.load("P-001").work_id))
+                registry.trash(registry.load("P-001"), "deleted")
+                registry.pin(registry.load("P-001"))
                 registry.archive(registry.load("R-002"), reason="user")
                 registry.unarchive(registry.load("R-002"))
                 registry.archive(registry.load("R-002"), reason="user")
@@ -131,12 +147,13 @@ class BackendParityTestCase(unittest.TestCase):
 
     def test_next_id_never_reuses_a_purged_id_on_sqlite(self):
         # 有意分歧：yaml 硬删最大 id 后会复用号码；sqlite tombstone 钉死 id。
+        # （§60 起 next_id 发 P- 主键，判例改用 P 命名空间，语义不变）
         store2_testkit.use_backend(self, "sqlite")
-        registry.upsert(_card("R-007", "最大号", status="card_sent"))
+        registry.upsert(_card("P-007", "最大号", status="card_sent"))
         with registry.acting_as("user"):
-            registry.trash(registry.load("R-007"), "deleted")
-        self.assertTrue(registry.delete(registry.load("R-007")))
-        self.assertEqual(registry.next_id(), "R-008")
+            registry.trash(registry.load("P-007"), "deleted")
+        self.assertTrue(registry.delete(registry.load("P-007")))
+        self.assertEqual(registry.next_id(), "P-008")
 
     def test_agent_wall_is_identical_on_both_backends(self):
         from act.lib.store2.store import TransitionDenied

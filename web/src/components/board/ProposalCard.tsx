@@ -3,6 +3,7 @@
 //   done_external，§41）· 修改（comment 文本弹窗）· 暂缓（defer，提案→潜在任务）。
 // processing=true 的灰卡是 AI 研究中占位——只展示 sheen，不给决策按钮。
 import { useState } from "react";
+import { displayId, isLegacyId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
 import { cardAction, costLine, effectiveTier, openCardDetail, useSubmit } from "./boardActions";
@@ -40,12 +41,14 @@ export function ProposalCard({ card }: ProposalCardProps) {
 
   const decide = (action: string, comment: string | null = null) => {
     setDialog("none");
-    void submit(cardAction(card.id, action, comment));
+    void submit(cardAction(card.id, action, comment));   // 动作回传永远送主键 id（§60）
   };
+  const shownId = displayId(card);
 
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
-      <div className="card-id">{card.id}</div>
+      {/* §60：展示 display_id；legacy R 主键（检测即分号的旧卡）灰显 */}
+      <div className={isLegacyId(card) ? "card-id card-id-legacy" : "card-id"}>{shownId}</div>
       <div className="card-summary">{summary}</div>
       <div className="card-badges">
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板） */}
@@ -115,7 +118,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
 
       {dialog === "t2" && (
         <T2ConfirmDialog
-          cardId={card.id}
+          cardId={shownId}
           summary={summary}
           costLine={costLine(card, text)}
           onConfirm={() => decide("approve")}
@@ -124,7 +127,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
       )}
       {dialog === "reject" && (
         <ForkDialog
-          title={text(`拒绝 ${card.id}？`, `Reject ${card.id}?`)}
+          title={text(`拒绝 ${shownId}？`, `Reject ${shownId}?`)}
           body={summary}
           choices={[
             { label: text("不想做（进回收站）", "Won't do (to trash)"), isDanger: true, onPick: () => decide("reject") },

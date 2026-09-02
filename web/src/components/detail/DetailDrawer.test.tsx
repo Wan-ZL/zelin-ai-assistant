@@ -103,3 +103,36 @@ describe("DetailDrawer", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalled());
   });
 });
+
+describe("DetailDrawer §60 two-stage ids (D21)", () => {
+  it("抬头显示 display_id（工作编号），主键并排；深链按工作编号也能命中", async () => {
+    const detail = { ...DETAIL, id: "P-012", work_id: "R-280", display_id: "R-280", id_kind: "work" };
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+      // server 侧 /api/cards/{ref} 同样接受工作编号（§60.3），响应 id 恒为主键
+      if (String(url).includes("/api/cards/")) return jsonResponse(detail);
+      return jsonResponse({ ok: true });
+    }));
+    render(<DetailDrawer />);
+    act(() => selectCard("R-280"));
+    await screen.findByText("step A");
+    const ids = Array.from(document.querySelectorAll(".zai-drawer-id")).map((n) => n.textContent);
+    expect(ids).toEqual(["R-280", "P-012"]);
+    // 字段面：工作编号 + 主键两行都在
+    expect(screen.getByText("Work number")).toBeTruthy();
+    expect(screen.getByText("Card key")).toBeTruthy();
+  });
+
+  it("无工作编号的提案卡：抬头只有主键一枚，不并排", async () => {
+    const detail = { ...DETAIL, id: "P-007", display_id: "P-007", id_kind: "proposal" };
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+      if (String(url).includes("/api/cards/")) return jsonResponse(detail);
+      return jsonResponse({ ok: true });
+    }));
+    render(<DetailDrawer />);
+    act(() => selectCard("P-007"));
+    await screen.findByText("step A");
+    const ids = Array.from(document.querySelectorAll(".zai-drawer-id")).map((n) => n.textContent);
+    expect(ids).toEqual(["P-007"]);
+    expect(screen.queryByText("Work number")).toBeNull();
+  });
+});

@@ -16,6 +16,12 @@ export interface CardSource {
 export interface ApprovalCard {
   id: string;
   title: string;
+  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
+  work_id?: string | null;
+  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
+  display_id?: string;
+  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
+  id_kind?: string;
   tier: "T0" | "T1" | "T2" | string;
   /** W17 生效档位（§50）：外部出身恒 "T2"；缺席 = 旧投影，消费端回落 tier */
   effective_tier?: string;
@@ -45,13 +51,16 @@ export interface ApprovalCard {
 /**
  * 排队原因（running 分区 queued 项，add-only optional）。wire 真源 =
  * docs/CONTRACT.md §51（可能缺席，也可能是纯字符串——UI 经 steer.ts 双兼容
- * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id="R-xx"）/
+ * 解析）。kind 开放枚举：waiting_card（等前置卡，带 blocking_id=前置卡主键）/
  * concurrency（等并发位）；waiting_budget retired v0.48.7（D9）。
  */
 export interface QueuedReason {
   kind: string;
   detail?: string | null;
+  /** 前置卡主键（lineage 口径） */
   blocking_id?: string | null;
+  /** §60 add-only：前置卡的展示编号（work_id ?? id）——chip 文案用它，缺席回落 blocking_id */
+  blocking_display_id?: string | null;
   [key: string]: unknown;
 }
 
@@ -73,6 +82,12 @@ export interface SteerNote {
 export interface TaskRow {
   id: string;
   name: string;
+  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
+  work_id?: string | null;
+  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
+  display_id?: string;
+  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
+  id_kind?: string;
   state: "queued" | "working" | "blocked" | "done" | string;
   session_id?: string;
   short_id?: string;
@@ -103,6 +118,12 @@ export interface TaskRow {
 export interface ReviewCard {
   id: string;
   name: string;
+  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
+  work_id?: string | null;
+  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
+  display_id?: string;
+  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
+  id_kind?: string;
   delivered_summary?: string;
   final_draft?: string | null;
   plan?: string[];
@@ -119,6 +140,12 @@ export interface ReviewCard {
 export interface DebtCard {
   id: string;
   title: string;
+  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
+  work_id?: string | null;
+  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
+  display_id?: string;
+  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
+  id_kind?: string;
   hardness?: string;
   type?: string;
   sources?: CardSource[];
@@ -129,6 +156,12 @@ export interface DebtCard {
 export interface TrashRow {
   id: string;
   title: string;
+  /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
+  work_id?: string | null;
+  /** §60 展示编号（= work_id ?? id），server 算好；旧 server 缺席时客户端按 cardId.ts 回落 */
+  display_id?: string;
+  /** §60 编号分类 work | legacy | proposal（server 给，客户端不按前缀猜） */
+  id_kind?: string;
   permanent: boolean;
   trashed_at: string;
   summary?: string;

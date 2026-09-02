@@ -25,7 +25,7 @@ def wipe_data_layer() -> None:
     for name in (registry.STORE2_DB_NAME, registry.STORE2_DB_NAME + "-wal",
                  registry.STORE2_DB_NAME + "-shm", registry.STORE2_TRUTH_NAME,
                  registry.STORE2_ACTIVATION_NAME, "registry_export.json",
-                 "registry_writes.jsonl"):
+                 "registry_writes.jsonl", registry.WORK_SEQ_NAME):
         p = config.STATE_DIR / name
         try:
             p.unlink()

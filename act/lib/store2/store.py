@@ -2,7 +2,7 @@
 
 契约：docs/CONTRACT.md §53（schema 版本纪律 + 状态机白名单 + agent 转移墙 +
 激活协议）。v0.48.8（D2）起接线：act/lib/registry.py 是唯一调用门面
-（put_card/list_cards/get_card/purge_trashed），callers 永远不直接 import 本模块。
+（put_card/list_cards/get_card/get_card_by_work_id/purge_trashed），callers 永远不直接 import 本模块。
 
 职责（B2，与 schema.md「给 B2/B3/B4 的接口约定」逐条对应）：
 * 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接
@@ -31,15 +31,19 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
-SCHEMA_VERSION = 1
+# schema 版本（§53.1）：schema.sql 末尾的 PRAGMA user_version 必须等于它；
+# 旧库按 _UPGRADES 逐级升到它（v1→v2 是本 repo 第一级梯子，§60/D21）。
+SCHEMA_VERSION = 2
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # 卡片热列全集（schema.sql cards 表）——行↔dict 转换与 create_card 白名单的共同真源。
-# PUBLIC：migrate_yaml 的 INSERT/回读列表 import 本表，热列顺序只有一份
+# PUBLIC：migrate_yaml 的 INSERT/回读列表 import 本表，热列顺序只有一份。
+# work_id（v2）排最后 = ALTER TABLE ADD COLUMN 追加后的物理列序，与 schema.sql 同序。
 CARD_COLUMNS = (
     "id", "status", "prev_status", "tier", "type", "title", "origin_trust",
     "target_repo", "deadline", "created", "updated", "version",
     "merged_into_id", "board_rev", "tombstone", "last_actor_type", "payload",
+    "work_id",
 )
 # create_card 允许显式传入的键（migration 需要完整控制出生形态；version/board_rev 由 store 管）
 _CREATE_KEYS = frozenset(CARD_COLUMNS) - {"version", "board_rev", "tombstone", "last_actor_type"}
@@ -58,7 +62,7 @@ _DISPATCH_END_STATES = ("completed", "failed", "stopped")
 _TRANSITION_CODES = ("AGENT_TRANSITION_FORBIDDEN", "AGENT_FIELD_FORBIDDEN",
                      "ORIGIN_TRUST_USER_ONLY", "ILLEGAL_TRANSITION")
 _INTEGRITY_CODES = (
-    "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE",
+    "TOMBSTONE_FROZEN", "USE_TOMBSTONE", "CARD_ID_IMMUTABLE", "WORK_ID_SET_ONCE",
     "NOTES_APPEND_ONLY", "NOTES_RECEIPT_SET_ONCE",
     "ACTIVITIES_APPEND_ONLY", "WHITELIST_APPEND_ONLY", "REVISION_MONOTONIC",
 )
@@ -116,7 +120,41 @@ def _translate_integrity(e: sqlite3.IntegrityError) -> StoreError:
         return IntegrityViolation("SOURCE_DUPLICATE", msg)
     if "dispatches_one_active" in msg or "dispatches.card_id" in msg:
         return IntegrityViolation("DISPATCH_ACTIVE", msg)
+    if "cards_work_id" in msg or "cards.work_id" in msg:
+        # §60.2 工作编号撞号（并发分配）——响亮拒绝，绝不静默复用
+        return IntegrityViolation("WORK_ID_DUPLICATE", msg)
     return IntegrityViolation("INTEGRITY_ERROR", msg)
+
+
+# --------------------------------------------------------------------------- #
+# schema 升级梯子（§53.1）：{from_version: upgrade_fn}，每级幂等、单事务、
+# 末尾钉 user_version=from+1。crash window 判例：任一级中途崩溃 = 版本没动 =
+# 下次开库重跑同一级补全（ALTER TABLE ADD COLUMN 不幂等，所以先查 table_info）。
+# 升级 DDL 与 schema.sql 的全新库形状必须收敛（判例比对 sqlite_master）。
+# --------------------------------------------------------------------------- #
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
+    """v1 → v2（v0.48.13，§60/D21）：cards.work_id 列 + 唯一索引 + set-once 触发器。
+    存量行 work_id 一律 NULL（legacy 卡不回填，§60.4：显示名回落主键）。"""
+    if not _has_column(conn, "cards", "work_id"):
+        conn.execute("ALTER TABLE cards ADD COLUMN work_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS cards_work_id"
+        " ON cards(work_id) WHERE work_id IS NOT NULL")
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS cards_work_id_set_once\n"
+        "BEFORE UPDATE OF work_id ON cards\n"
+        "WHEN OLD.work_id IS NOT NULL AND NEW.work_id IS NOT OLD.work_id\n"
+        "BEGIN\n"
+        "  SELECT RAISE(ABORT, 'WORK_ID_SET_ONCE');\n"
+        "END")
+    conn.execute("PRAGMA user_version = 2")
+
+
+_UPGRADES = {1: _upgrade_1_to_2}
 
 
 # --------------------------------------------------------------------------- #
@@ -200,11 +238,11 @@ class Store:
         conn = self._conn()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
-            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；user_version=1 是
+            # schema.sql 全程 IF NOT EXISTS / OR IGNORE，幂等；user_version 钉扎是
             # 其**最后一条**语句——建库途中崩溃时版本仍是 0，这里重跑即补全
             conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
             return
-        if version != SCHEMA_VERSION:
+        if version > SCHEMA_VERSION:
             # 未来版本的库 fail-closed：绝不带着不认识的 schema 盲写
             raise StoreError(
                 "SCHEMA_VERSION_MISMATCH",
@@ -212,6 +250,7 @@ class Store:
                 {"db_version": version, "supported": SCHEMA_VERSION},
             )
         # 版本号对但核心表缺席 = 半截库/手写 pragma 伪装——版本门不许被绕过
+        # （升级前先验：ALTER 一张不存在的表只会报更难懂的错）
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
                         " AND name = 'cards'").fetchone() is None:
             raise StoreError(
@@ -219,6 +258,31 @@ class Store:
                 f"db user_version={version} but core tables are missing",
                 {"db_version": version},
             )
+        while version < SCHEMA_VERSION:
+            # 逐级升级（§53.1 梯子）：每级一个事务，末尾钉版本；缺级 = fail-closed
+            step = _UPGRADES.get(version)
+            if step is None:
+                raise StoreError(
+                    "SCHEMA_UPGRADE_MISSING",
+                    f"no upgrade path from user_version={version}",
+                    {"db_version": version, "supported": SCHEMA_VERSION},
+                )
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                step(conn)
+                conn.execute("COMMIT")
+            except BaseException:
+                self._rollback(conn)
+                raise
+            after = conn.execute("PRAGMA user_version").fetchone()[0]
+            if after != version + 1:
+                # 升级函数忘了钉版本 = 死循环/半态——当场拒绝
+                raise StoreError(
+                    "SCHEMA_UPGRADE_BROKEN",
+                    f"upgrade from {version} left user_version={after}",
+                    {"db_version": after, "expected": version + 1},
+                )
+            version = after
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -303,6 +367,13 @@ class Store:
             raise NotFound("card", card_id)
         return self._row_to_card(row)
 
+    def get_card_by_work_id(self, work_id: str) -> Optional[dict]:
+        """按工作编号取卡（§60.3；cards_work_id 唯一索引保证至多一行）。
+        无 → None（不抛：resolve 的两步查找里「不是工作号」是常态）。"""
+        row = self._conn().execute(
+            "SELECT * FROM cards WHERE work_id = ?", (str(work_id),)).fetchone()
+        return None if row is None else self._row_to_card(row)
+
     def list_cards(self, status: Optional[str] = None, include_tombstones: bool = False) -> list[dict]:
         sql = "SELECT * FROM cards"
         where, args = [], []
@@ -363,8 +434,9 @@ class Store:
             conn.execute(
                 "INSERT INTO cards (id, status, prev_status, tier, type, title,"
                 " origin_trust, target_repo, deadline, created, updated, version,"
-                " merged_into_id, board_rev, tombstone, last_actor_type, payload)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)",
+                " merged_into_id, board_rev, tombstone, last_actor_type, payload,"
+                " work_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)",
                 (
                     card["id"], card["status"], card.get("prev_status"),
                     card.get("tier", "T1"), card.get("type", ""), card["title"],
@@ -373,6 +445,7 @@ class Store:
                     card.get("target_repo"), card.get("deadline"),
                     card.get("created") or now, card.get("updated") or now,
                     card.get("merged_into_id"), rev, actor_type, _dump_json(payload),
+                    card.get("work_id"),
                 ),
             )
             self._append_activity(conn, card["id"], actor_type, actor_id or "create",
@@ -383,7 +456,8 @@ class Store:
     # registry 门面整卡 upsert 的热列键（id/created/updated/version/board_rev/
     # tombstone/last_actor_type/payload 由本层管理，不在此表）
     _PUT_HOT_KEYS = ("status", "prev_status", "tier", "type", "title",
-                     "origin_trust", "target_repo", "deadline", "merged_into_id")
+                     "origin_trust", "target_repo", "deadline", "merged_into_id",
+                     "work_id")      # v2（§60）：set-once 由 trigger 执法
     _SRC_KEYS = ("channel", "who", "date", "ref", "quote")
 
     def put_card(self, card_id: str, payload: dict, hot: dict, sources: list,
@@ -421,15 +495,15 @@ class Store:
                     "INSERT INTO cards (id, status, prev_status, tier, type,"
                     " title, origin_trust, target_repo, deadline, created,"
                     " updated, version, merged_into_id, board_rev, tombstone,"
-                    " last_actor_type, payload)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?)",
+                    " last_actor_type, payload, work_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)",
                     (card_id, hot.get("status"), hot.get("prev_status"),
                      hot.get("tier", "T1"), hot.get("type", ""),
                      hot.get("title", ""),
                      hot.get("origin_trust") or "external",
                      hot.get("target_repo"), hot.get("deadline"),
                      now, now, hot.get("merged_into_id"), rev, actor_type,
-                     _dump_json(payload)),
+                     _dump_json(payload), hot.get("work_id")),
                 )
                 for s in src_rows:
                     conn.execute(
@@ -468,15 +542,15 @@ class Store:
             conn.execute(
                 "UPDATE cards SET status = ?, prev_status = ?, tier = ?,"
                 " type = ?, title = ?, origin_trust = ?, target_repo = ?,"
-                " deadline = ?, merged_into_id = ?, payload = ?,"
+                " deadline = ?, merged_into_id = ?, work_id = ?, payload = ?,"
                 " last_actor_type = ?, updated = ?, version = version + 1,"
                 " board_rev = ? WHERE id = ?",
                 (hot.get("status"), hot.get("prev_status"),
                  hot.get("tier", "T1"), hot.get("type", ""),
                  hot.get("title", ""), hot.get("origin_trust") or "external",
                  hot.get("target_repo"), hot.get("deadline"),
-                 hot.get("merged_into_id"), _dump_json(payload), actor_type,
-                 now, rev, card_id),
+                 hot.get("merged_into_id"), hot.get("work_id"),
+                 _dump_json(payload), actor_type, now, rev, card_id),
             )
             if src_changed:
                 conn.execute("DELETE FROM sources WHERE card_id = ?", (card_id,))

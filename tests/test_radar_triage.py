@@ -734,6 +734,8 @@ class LegacyIntIdCardDoesNotHaltCaptureTestCase(TriageBase):
         (config.REGISTRY_DIR / "R-004.yaml").write_text(
             "id: 4\ntitle: legacy int-id card\nstatus: card_sent\n",
             encoding="utf-8")
+        # §60 工作序列高水位是套件级共享文件——清掉别的测试留下的号
+        (config.STATE_DIR / registry.WORK_SEQ_NAME).unlink(missing_ok=True)
 
     def test_inventory_and_next_id_survive(self):
         self._seed_int_id_card()
@@ -741,8 +743,10 @@ class LegacyIntIdCardDoesNotHaltCaptureTestCase(TriageBase):
         self.assertIn("4 | card_sent | legacy int-id card", inv)
         # audit finding 3: the FILENAME R-004.yaml occupies the R- range even
         # though the content id is "4" — reissuing R-004 would make save()
-        # overwrite this legacy card (silent data loss).
-        self.assertEqual(registry.next_id(), "R-005")
+        # overwrite this legacy card (silent data loss). §60（D21）：R- 范围
+        # 归工作序列（next_work_id），主键序列 next_id 在 P- 空间照常发号。
+        self.assertEqual(registry.next_work_id(), "R-005")
+        self.assertEqual(registry.next_id(), "P-001")
 
     def test_capture_keeps_its_never_raises_promise(self):
         self._seed_int_id_card()

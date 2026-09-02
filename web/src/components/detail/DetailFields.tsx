@@ -21,6 +21,8 @@ const KNOWN_KEYS = new Set([
   "merged_into", "prev_status",
   // M6（§M6.1/§M6.2）：steer 回执与结构化排队原因有专属版式
   "queued_reason", "steers",
+  // §60（D21）两段式编号：work_id 进 meta 行，display_id/id_kind 是抬头的展示口径
+  "work_id", "display_id", "id_kind",
 ]);
 
 function str(value: unknown): string | null {
@@ -115,6 +117,11 @@ export function DetailFields({ detail }: DetailFieldsProps) {
   }
 
   const meta: Array<[string, string]> = [];
+  // §60：工作编号（有才显示）+ 主键——抬头已给展示编号，这里把两者都留在字段面
+  const workId = str(detail.work_id);
+  if (workId) meta.push([text("工作编号", "Work number"), workId]);
+  const primaryKey = str(detail.id);
+  if (primaryKey && workId && primaryKey !== workId) meta.push([text("主键", "Card key"), primaryKey]);
   const deadline = str(detail.deadline);
   if (deadline) {
     const daysLeft = typeof detail.days_left === "number" ? text(`（剩 ${detail.days_left} 天）`, ` (${detail.days_left}d left)`) : "";

@@ -319,7 +319,7 @@ def build_analysis_prompt(job: dict) -> str:
         "的事。\n"
         '  "confidence": "high" | "medium" | "low".\n'
         '  "groups": 仅 verdict="partition" 时提供 — array of '
-        '{"primary": "R-xxx", "ids": ["R-…"], "reason": "一句话"}。'
+        '{"primary": "<卡片 id，原样照抄>", "ids": ["<卡片 id>"], "reason": "一句话"}。'
         "primary 与全部成员必须都来自 CARDS，每张卡最多出现在一个分组，"
         "未列出的卡视为保持独立；reason 用中文大白话说清这一组为什么是"
         "同一件事。\n"

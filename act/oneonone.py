@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from act.lib import analytics, config, failures
-from act.lib.registry import Requirement, State, load_all
+from act.lib.registry import Requirement, State, display_id, load_all
 
 
 def output_root() -> Path:
@@ -135,7 +135,7 @@ def _line(req: Requirement, today: _dt.date) -> str:
     age = _age_str(req, today)
     lane = lane_name(req.status)
     tail = f"（{lane}，{age}）" if age else f"（{lane}）"
-    return f"- {icon} {req.id} · {req.title or '(untitled)'} {tail}"
+    return f"- {icon} {display_id(req)} · {req.title or '(untitled)'} {tail}"
 
 
 # --------------------------------------------------------------------------- #
@@ -148,7 +148,7 @@ def promises_owed(reqs: list[Requirement]) -> list[str]:
     for r in reqs:
         for line in (r.notes or "").splitlines():
             if _MANAGER_OWES_TAG.lower() in line.lower():
-                out.append(f"- {r.id} · {line.strip()}")
+                out.append(f"- {display_id(r)} · {line.strip()}")
     return out
 
 

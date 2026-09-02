@@ -2,7 +2,9 @@
 
 - GET /api/board = ``state/dashboard.json`` 原样透传（bytes 级，零改写）。
 - GET /api/cards/{id} = 投影行 + registry 真源只读增补（add-only 合并，
-  绝不覆盖投影字段名）。
+  绝不覆盖投影字段名）。``{id}`` 接受主键（P-/legacy R-）**或**工作编号
+  （§60.3）：投影行按 ``id`` 或 ``work_id`` 命中，registry 增补同样两步查；
+  响应里的 ``id`` 恒为主键（动作回传用它）。
 
 真源路由（§53，v0.48.8）：判定镜像 ``registry.backend()``——env/config 的
 §53.6 回滚开关优先，auto 下看激活标记；sqlite → 从 SQLite 读 payload（经
@@ -84,12 +86,20 @@ def _load_yaml(p: Path):
         return None
 
 
+def _is_ref(item, ref: str) -> bool:
+    """卡 dict 是否被 ``ref`` 指到：主键精确，或工作编号（§60.3）。"""
+    if not isinstance(item, dict):
+        return False
+    return str(item.get("id")) == ref or (
+        item.get("work_id") is not None and str(item.get("work_id")) == ref)
+
+
 def _match_card(doc, card_id: str) -> Optional[dict]:
-    if isinstance(doc, dict) and str(doc.get("id")) == card_id:
+    if _is_ref(doc, card_id):
         return doc
     if isinstance(doc, list):
         for item in doc:
-            if isinstance(item, dict) and str(item.get("id")) == card_id:
+            if _is_ref(item, card_id):
                 return item
     return None
 
@@ -132,7 +142,7 @@ def load_registry_card(home: Path, card_id: str) -> Optional[dict]:
     if store2_readonly is not None and registry_backend(home) == "sqlite":
         db = paths.store2_db_path(home)
         if db.exists():
-            return store2_readonly.read_card(db, card_id)
+            return store2_readonly.read_card_by_ref(db, card_id)
         return None
     for d in _registry_dirs(home):
         hit = _match_card(_load_yaml(d / f"{card_id}.yaml"), card_id)
@@ -154,9 +164,16 @@ def load_registry_card(home: Path, card_id: str) -> Optional[dict]:
 # /api/cards/{id} —— 投影行 + YAML 增补
 # --------------------------------------------------------------------------- #
 def _projection_row(board: dict, card_id: str) -> "tuple[Optional[str], Optional[dict]]":
+    """按主键找投影行；找不到再按 ``work_id``（§60.3）——两遍而不是一遍
+    ``or``：主键精确命中永远优先，两种 R- 用途数值不重叠所以不会二义。"""
     for sec in SECTIONS:
         for row in board.get(sec) or []:
             if isinstance(row, dict) and row.get("id") == card_id:
+                return sec, row
+    for sec in SECTIONS:
+        for row in board.get(sec) or []:
+            if (isinstance(row, dict) and row.get("work_id") is not None
+                    and str(row.get("work_id")) == card_id):
                 return sec, row
     return None, None
 
@@ -193,7 +210,9 @@ def card_detail(home: Path, card_id: str) -> dict:
     if row is None and reg is None:
         raise NotFoundError("card not found", {"id": card_id})
 
-    merged: dict = dict(row) if row else {"id": card_id}
+    # §60.3：ref 可能是工作编号——响应 ``id`` 恒为主键（投影行/registry 的 id）
+    merged: dict = dict(row) if row else {
+        "id": str((reg or {}).get("id") or card_id)}
     # ``lane`` 是本 endpoint 的新增键（不动投影字段名）；registry-only 卡为 null
     merged["lane"] = lane
     for k, v in (reg or {}).items():

@@ -20,7 +20,7 @@ from tests.test_server_common import (DEMO_SEED_PATH, assert_envelope,
 
 from server import files as files_mod
 
-HERO = "R-101"
+HERO = "P-101"     # 主键（§60）
 
 
 def _symlink_or_skip(case, target, link):
@@ -34,7 +34,7 @@ def _symlink_or_skip(case, target, link):
 
 @unittest.skipUnless(DEMO_SEED_PATH, "scripts/demo_seed.py not found")
 class _DeliverablesHome(unittest.TestCase):
-    """公共布景：R-101 的 target_repo 改指 tmpdir 内的假 repo（不出沙箱）。"""
+    """公共布景：P-101 的 target_repo 改指 tmpdir 内的假 repo（不出沙箱）。"""
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="zai-g5-files-"))
@@ -42,7 +42,7 @@ class _DeliverablesHome(unittest.TestCase):
         self.repo = self.home / "demo-repo"
         self.dlv = self.repo / "deliverables"
         self.dlv.mkdir(parents=True)
-        # 投影行是 card_detail 的第一真源：直接改 R-101 的 target_repo
+        # 投影行是 card_detail 的第一真源：直接改 P-101 的 target_repo
         for row in dash["needs_approval"]:
             if row["id"] == HERO:
                 row["target_repo"] = str(self.repo)
@@ -109,9 +109,9 @@ class ServeDeliverableTestCase(_DeliverablesHome):
         assert_envelope(self, obj, "NOT_FOUND")
 
     def test_card_without_deliverable_root_404(self):
-        # debt 卡 R-113 无 target_repo/cwd —— server 推不出根目录必须 404
+        # debt 卡 P-113 无 target_repo/cwd —— server 推不出根目录必须 404
         status, obj = get_json(self.port,
-                               "/files/deliverables/R-113/report.txt")
+                               "/files/deliverables/P-113/report.txt")
         self.assertEqual(status, 404)
         assert_envelope(self, obj, "NOT_FOUND")
 

@@ -14,6 +14,7 @@
 - `prev_status`：§9/§10 的回程票。CHECK 强制 trashed/archived 必带（宪法第 2 条「一切可逆」的 schema 化）；B3 对缺失的 legacy 卡按 live `registry.restore`/`unarchive` 的 fallback 回填（trashed→`'detected'`，archived→`'delivered'`）。
 - `last_actor_type`：状态机 trigger 的 actor 输入。SQLite trigger 无法看到「谁」在 UPDATE，所以 actor 随行入列——**B2 约定：任何 status UPDATE 必须同时 `SET last_actor_type`**。已知限制：writer 忘 SET 时 NEW 继承 OLD 值，trigger 按旧 actor 判——这是 backstop 不是唯一防线，真正的执法闭环 = B2 强制传参 + activities 全量审计 + B4 的 trigger 拒绝测试。
 - `deadline` 用 GLOB 钉死 `YYYY-MM-DD`（§1 词形）；`created/updated` 存 ISO-8601 UTC 字符串（与 registry/dashi 一致，SQLite 字符串序即时间序）。
+- `work_id`（**schema v2**，v0.48.13，CONTRACT §60 / owner 决策 D21）：人看的工作编号 `R-<m>`，卡进入 approved 时由 `registry.save` 分配、set-once（trigger `cards_work_id_set_once`），唯一索引 `cards_work_id`（partial：`WHERE work_id IS NOT NULL`）。`id` 主键自 v0.48.13 起出生即 `P-<n>`（存量 `R-<n>` 主键原样保留）。做成热列而非只进 payload 的理由：`purge_trashed` 清 payload 保热列——已硬删卡的编号照样占位，序列永不复用；也是 `resolve(work_id)` 的查找索引。**升级路径**：`store._UPGRADES[1]`（`ALTER TABLE ADD COLUMN` 先查 `table_info` 保幂等 + 索引 + 触发器 + `PRAGMA user_version = 2`，单事务）——schema.sql 永远是全新库的完整 DDL，两条路收敛到同一形状（判例 `tests/test_two_stage_card_ids.py`）。
 
 ### 终态分立 + tombstone 进 revision 流
 

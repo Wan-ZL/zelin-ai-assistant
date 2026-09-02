@@ -27,7 +27,7 @@ from tests.test_server_common import (assert_envelope, auth_headers,
 from server import security
 from server import app as app_mod
 
-HERO = "R-101"
+HERO = "P-101"     # 主键（§60）
 
 # Windows 口径（CI 判例，2026-08-31）：st_mode 组/他人位在 Windows 是合成值
 # （可写文件一律 ~0o666），0600 断言只在 POSIX 有意义；权限收回在生产侧也是

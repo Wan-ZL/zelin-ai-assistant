@@ -35,30 +35,44 @@ def _clear_registry():
     if registry.ARCHIVE_DIR.exists():
         for p in registry.ARCHIVE_DIR.glob("*.yaml"):
             p.unlink()
+    # §60 工作序列高水位是套件级共享文件——别的测试批过 R-9xx 会把它抬高
+    (config.STATE_DIR / registry.WORK_SEQ_NAME).unlink(missing_ok=True)
 
 
 # --------------------------------------------------------------------------- #
 # finding 3: unreadable card files must keep their id allocated
 # --------------------------------------------------------------------------- #
 class NextIdFailClosedTestCase(unittest.TestCase):
+    """§60（D21）起 next_id 发 P- 主键：判例的文件名守卫语义不变，命名空间随
+    之改为 P-<n>*.yaml；R-<n> 文件名归 next_work_id 的守卫（同款断言在下）。"""
+
     def setUp(self):
         _clear_registry()
 
     def test_next_id_counts_unreadable_active_file(self):
-        registry.save(Requirement(id="R-001", title="readable card"))
+        registry.save(Requirement(id="P-001", title="readable card"))
         # highest id on disk is a corrupt file load_all() skips
-        (config.REGISTRY_DIR / "R-042.yaml").write_text(CORRUPT, encoding="utf-8")
-        # 曾经返回 R-002 —— 下一次 save 就会覆盖仍可手工修复的 R-042.yaml
-        self.assertEqual(registry.next_id(), "R-043")
+        (config.REGISTRY_DIR / "P-042.yaml").write_text(CORRUPT, encoding="utf-8")
+        # 曾经返回 P-002 —— 下一次 save 就会覆盖仍可手工修复的 P-042.yaml
+        self.assertEqual(registry.next_id(), "P-043")
 
     def test_next_id_counts_unreadable_archive_file(self):
         registry.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-        (registry.ARCHIVE_DIR / "R-050.yaml").write_text(CORRUPT, encoding="utf-8")
-        self.assertEqual(registry.next_id(), "R-051")
+        (registry.ARCHIVE_DIR / "P-050.yaml").write_text(CORRUPT, encoding="utf-8")
+        self.assertEqual(registry.next_id(), "P-051")
 
     def test_next_id_unchanged_for_readable_files(self):
-        registry.save(Requirement(id="R-007", title="readable card"))
-        self.assertEqual(registry.next_id(), "R-008")
+        registry.save(Requirement(id="P-007", title="readable card"))
+        self.assertEqual(registry.next_id(), "P-008")
+
+    def test_next_work_id_counts_unreadable_legacy_files(self):
+        # 存量 R-<n> 文件读不出也占号：工作序列必须从它之上起，否则新工作号
+        # 会与一张仍可手工修复的 legacy 卡同号（resolve 二义）
+        registry.save(Requirement(id="R-001", title="readable legacy card"))
+        (config.REGISTRY_DIR / "R-042.yaml").write_text(CORRUPT, encoding="utf-8")
+        registry.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        (registry.ARCHIVE_DIR / "R-050.yaml").write_text(CORRUPT, encoding="utf-8")
+        self.assertEqual(registry.next_work_id(), "R-051")
 
 
 class SaveOverwriteGuardTestCase(unittest.TestCase):
