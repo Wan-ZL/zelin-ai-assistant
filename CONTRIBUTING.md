@@ -52,7 +52,11 @@ Every change batch must pass all four before merging — CI runs exactly these o
    adds framework search paths on Command-Line-Tools-only machines (the CLT
    ships Swift Testing but hides it — details at the top of the script).
 
-They are cheap; run them locally before pushing.
+They are cheap; run them locally before pushing. Touching `shell/` (the product
+app since D3 — CONTRACT §54/§61) adds two more: `bash shell/build.sh` (must
+compile; engines moved from `mac/Sources` live here) and `bash shell/tests/run.sh`
+(swiftc typecheck of the whole module + the XCTest-free bridge harness). Touching
+`web/` adds `cd web && npm run build && npx vitest run`.
 
 CI additionally runs the **QA merge gates** (per-function complexity, CRAP, coverage floor, dependency direction, hygiene caps — see docs/CONTRACT.md §58) against the shrink-only baselines in `qa/`. Local equivalent: `bash scripts/qa/run_gates.sh` (needs `pip install coverage`, dev-side only). New code must pass clean; pre-existing debt is ledgered in `qa/*_baseline.txt` and may only shrink. The canonical environment for the coverage-derived numbers is the CI `qa-gates` job — on non-linux machines the two coverage-derived gates (CRAP, coverage floor) print their verdicts but never block; reconcile those ledgers from the job's `qa-report` artifact, not from a local darwin run. "Reconcile" only ever means shrink: on pull requests the `qa-gates` job also diffs `qa/` against the PR base (`scripts/qa/ledger_diff.py`) and fails on any added ledger key, raised score, lowered coverage floor, or loosened threshold in `qa/gates.toml` — new debt must be fixed in the code, never enrolled. Local equivalent: `python3 scripts/qa/ledger_diff.py --base origin/main`.
 

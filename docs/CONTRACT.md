@@ -344,6 +344,7 @@ actd 处理：立即 `registry.merge_or_new`（title=text，来源 `channel="qui
 - **录制三态**：菜单栏控制 Screenpipe 录制，三态 关 / 仅屏幕 / 屏幕+音频。存 UserDefaults `recordingMode` ∈ `"off"|"screen"|"screen_audio"`，默认 `"screen"`；开 app 时按当前模式**自动启动**录制引擎（引擎运行判定 = `pgrep -f "screenpipe.*record"` 有结果）。引擎启动参数含 sensitive-app 排除（每个 config `recording.ignored_apps` 词条一个 `--ignored-windows`，默认密码管理器 + 无痕窗口标题；`ingest/screenpipe-export.sh` 导出时用同一清单二次过滤——见 docs/PRIVACY.md「你有哪些控制」）。
   - **v0.11 补充（P0-11，覆盖上行 default，字段语义与取值不变）**：fresh install（UserDefaults 无 `recordingMode` key）默认视为 `"off"`，首启弹**一次性**双语 consent alert（`RecordingConsent`，Onboarding.swift）：说明采集什么、去哪里、保留多久，链 docs/PRIVACY.md，按钮 仅屏幕 / 屏幕+音频 / 暂不开启。任一选择均持久化 `recordingMode` + UserDefaults `recordingConsentShown`（Bool），两个 key 任一存在即不再弹；自动启动仅在已存在模式值时进行。已有 `recordingMode` 值的存量安装不受影响、永不询问。
   - **v0.13 补充（覆盖上行 consent 的呈现形式，key 语义与取值不变）**：consent 改为**首启「权限体检」窗口**（`PermissionsWindowController`，Permissions.swift），单一问题「现在开启屏幕记录吗？」——开启 → `recordingMode="screen"`（**仅屏幕**；onboarding 不再提供 屏幕+音频 选项，音频只能事后在 设置/录制菜单 里显式打开），暂不 / 直接关窗 → `"off"`。任一路径都照旧持久化 `recordingConsentShown` + `recordingMode`。窗口同时列出 屏幕录制 / 通知 / 完全磁盘访问（标注「仅 iPhone 联动需要」）三行实时授权状态（2s 轮询 + 窗口重获焦点刷新，探测分别为 CGPreflightScreenCaptureAccess / UNUserNotificationCenter / 试读 `~/Library/Messages/chat.db`）与「匿名使用统计」复选框（见 3) 的 telemetry.enabled），并取代 P1-5 的首启依赖页弹窗（窗口内含「打开依赖检查」入口）。可随时从 App 菜单 / 状态栏右键菜单 /「设置 → 通用 → 权限体检」重开。
+  - **v0.48.19 追记（D3；引擎落户 shell/，语义不变）**：录制状态机（三态词表、`recordingMode` / `lastActiveRecordingMode` UserDefaults 键、autostart、pgrep 活性、ffmpeg 预检 + 回滚、TCC 自愈、`recording_*` analytics 事件）**原样**由 `shell/Sources/Recording.swift` 执行（与 `mac/Sources/Recording.swift` 逐字节相同，判例 `tests/test_shell_engine_mirror.py`）；控制入口从菜单栏/原生 header 变为 **web 看板 header 的「录制」开关**（经 §61 桥）。P0-11 的 consent 语义在壳里的形状：壳的 UserDefaults 域（`com.zelin.ai-board`）无 `recordingMode` = 尚未同意 = off；owner 在 header 显式选一个模式即为 consent；原生 app 里已有的选择由 §61.4 一次性接过来。§61 是本条的执法细节。
 - **popover 快速捕获输入框**：一句话回车 → 写 `state/inbox/capture-<uuid>.json`（§10 capture 动作），app 不直接碰注册表。
 - **菜单栏图标显示开关**：UserDefaults `showMenuBarIcon`（Bool，默认 true）；录制状态图标开关 `showRecordingIcon`（Bool，默认 true）。
 - **语言即时切换**：界面语言存 `settings_overrides.json` 的 `"language"`（`"zh"|"en"`），切换即时生效（app 与 Python 侧共用该值）。
@@ -1814,6 +1815,17 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 - **TCC 新增面**：首次以麦克风为来源开启时，App 首次主动调用
   `AVCaptureDevice.requestAccess(.audio)`（此前麦克风授权一直由 screenpipe 子进
   程触发）；系统声音复用既有「屏幕录制」授权探测/深链。
+
+**§36 v0.48.19 追记（D3；引擎落户 shell/，本节全部语义不变）**：「纯 Mac 本机展示层」
+的宿主从 `mac/` 原生 app 变为 `shell/`（"Zelin AI Board"）：`CaptionCore.swift` /
+`LiveCaptions.swift` 逐字节搬入 `shell/Sources`，`CaptionOverlay.swift` 唯一改动是
+悬浮窗齿轮从原生 Settings 窗改为打开 web 设置页（`?page=settings&anchor=live_captions`）
+（判例 `tests/test_shell_engine_mirror.py`）。`liveCaptionsEnabled` 与 `captions*`
+偏好仍是 UserDefaults（现在是壳的域，§61.4 一次性从原生域接过来）；两个 BYO 凭证
+文件、隐私条款、analytics 事件词表照旧；「只有 Mac App 读取这两个文件」现读作「只有
+壳读取」——Python/server 侧仍永不读取。开关入口 = web 看板 header 的「实时字幕」按钮
+（经 §61 桥）；悬浮窗内的 暂停/关闭 仍是原生按钮。字幕偏好的设置页（引擎/音源/翻译/
+字号）随 P4 Tier 2 落 web，届时再立法其 server 端点。
 
 ## 37. v0.37.0 找得到、看得懂 — 看板搜索全量化 + 活标题（add-only）
 
@@ -3772,6 +3784,18 @@ server/ 静态托管；**壳里没有业务逻辑**，不读 registry、不写 i
 面 = §49 客户端）。与 `mac/` 主 App 并存（D3：主 App 冻结、退役中；壳 + web 是
 产品，见 `docs/design/vnext2-plan.md` R2.2）。
 
+**§54 v0.48.19 追记（D3 / R2.2.1–R2.2.3；改写上段「单文件」「与 mac/ 并存不替代」
+两句）**：owner 拍板退役原生菜单栏 app，**产品 app = 本壳**（Dock-only，无菜单栏
+图标）。壳自此承载 R2.2.3 列出的**最小原生残留**——录制引擎的进程归属（screenpipe
+必须是 GUI 父进程的直接子进程，TCC 屏幕录制授权按父进程归属）与实时字幕引擎 +
+悬浮窗——两者的引擎文件自 `mac/Sources` **逐字搬入** `shell/Sources`，经
+`zaiShell` 桥暴露给页面 header 的两个开关；法条见 **§61**。`shell/Sources/` 因此
+不再是单文件（每文件 ≤1,500 行，防腐 #1 由 §58.3 hygiene 门执法）。生命周期随之
+修订：**关窗不退出**（`applicationShouldTerminateAfterLastWindowClosed = false`
+——引擎住在本进程，窗口关了它们还得活着），点 Dock 图标重开窗口，⌘Q 正常退出
+（Dock app 语义，不做 v0.46 的 ⌘Q 守卫）。`mac/` 在 owner 明确下令删除前（P8）
+保留为**冻结的只读行为规范**，装机版改名 `-old` 备用（R2.2.4）。
+
 ### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
 
 产品 = web 看板 + shell（D3）；原生看板（`mac/Sources/Kanban.swift` /
@@ -3904,8 +3928,15 @@ server/ 静态托管；**壳里没有业务逻辑**，不读 registry、不写 i
   `shell/build/` 进 .gitignore（构建产物永不入库）。**build.sh 只构建、不安装、
   不 quit/relaunch**——安装与 relaunch 归 install.sh 的 `ui` 步（§56.5）；CI 的
   macOS job 编译它（合进来的壳必须能编，否则自动部署的 `ui` 步 fail → 回滚）。
-- **无 Swift 测试靶**：shell/ 目前没有 test target（vnext2-plan §5.5：真缺口）；
-  54.2 的连接序以手动检查验收，步骤见 CONTRIBUTING.md「board shell 手动检查」。
+  v0.48.19 起编译 `shell/Sources/*.swift` + `shared/Sources/I18n.swift`（只借
+  L()），链接 AVFoundation / ScreenCaptureKit / UserNotifications / SwiftUI /
+  WebKit（引擎所需，与 `mac/build.sh` 同一组）；CI `ci` job 跑 `shell/build.sh`
+  + `shell/tests/run.sh`（§61.5）。ad-hoc 签名在 P4 过渡期保留——代价是每次重建
+  后屏幕录制授权失效（TROUBLESHOOTING「换壳后的 TCC 重授权」）；稳定证书随
+  Mac-retire 清单 0.9（bundle 身份）一起决定。
+- **Swift 测试靶**：`shell/tests/run.sh`（§61.5，v0.48.19 起）钉 `zaiShell` 桥的
+  wire 词表与 LegacyPrefs 种子规则；54.2 的连接序仍无自动判例，以手动检查验收，
+  步骤见 CONTRIBUTING.md「board shell 手动检查」。
 
 ## 55. launchd 模板路径纪律（v0.48.x；live 事故 2026-08-31）
 
@@ -4394,3 +4425,53 @@ owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不�
 ### 60.6 判例
 
 `tests/test_two_stage_card_ids.py`（两后端：出生 P- / 检测·合并·回收站零分配 / 四条 approved 路径分配 / set-once / 稠密单调不复用 / legacy 采纳 / resolve 与 inbox·merge 入口 / 投影字段 / executor 命名 / 序键 / schema v1→v2 升级·crash window·形状收敛·触发器·唯一索引·`pre-v<from>` 快照（存在且为升级前形状·单文件 / 旧代码开得了快照开不了升级后的库 / 该级重跑刷新 / 并发开库收敛 / 拍不下来拒升级且可恢复 / 全新库不拍，§53.1 单向门） / 导出↔迁移 round-trip）、`tests/integration/test_work_seq_cross_process.py`（跨进程接力）、`tests/test_registry_backend_parity.py`（剧本含分配与 restore 保号）、web `src/cardId.test.ts` + `ProposalCard.test.tsx`（显示 display_id、送 id）+ `DetailDrawer.test.tsx`（深链按工作号）+ `taskFilters.test.ts` + `steer.test.ts`；旧判例改钉：`test_audit_registry_fail_closed`（P 空间文件名守卫 + R 空间归 `next_work_id`）、`test_card_lifecycle` / `test_radar_triage` / `test_registry_example_skip` / `test_store2_activation`（`next_id` → `P-`）、`test_store2_schema` / `test_store2_cas`（版本钉 = `SCHEMA_VERSION`）、`test_store2_field_parity`（词表加 `work_id`）、server / boardctl 判例（demo hero `P-101`，工作号 `R-101`）。
+
+## 61. 壳桥 `zaiShell` + 录制/字幕引擎落户 shell/（v0.48.19；D3 / R2.2.2–R2.2.3，P4 Tier-0 0.4 + Tier-4）
+
+owner 原话（D3，2026-09-01）：「起码在视觉上我希望把它去掉。录制状态和字幕开关我一般不用这个入口，直接打开主软件在右上角操作。录屏和录音 Mac 默认就能显示是否在使用。」本节把两件事立法：(1) 页面 ⇄ 壳的**唯一通道**是一份 add-only 的 JS wire contract；(2) 录制引擎与实时字幕引擎从 `mac/` **逐字**搬进 `shell/`，壳是它们的 GUI 父进程（TCC 归属）。看板 header 右上因此长出两个开关：「录制」（三态 + 重启）与「实时字幕」。执法：`shell/Sources/ShellBridge.swift`、`shell/Sources/ShellSupport.swift`、`web/src/shellBridge.ts`、`web/src/components/shell/{ShellControls,RecordingControl,CaptionsControl}.tsx`；判例 `shell/tests/run.sh`、`web/src/shellBridge.test.ts`、`web/src/components/shell/ShellControls.test.tsx`、`tests/test_shell_engine_mirror.py`、`tests/test_capture_exclusion.py`（shell 副本入列）。
+
+### 61.1 桥的 wire contract（add-only；键名 snake_case，前端逐字镜像——防腐 #10）
+
+- **在场判定**：`window.webkit?.messageHandlers?.zaiShell` 存在 ⇔ 页面跑在壳里。页面**只在此时**渲染两个开关；普通浏览器会话（`scripts/dev-preview.sh`、手机 PWA）整组不渲染、不调桥。handler 名 `zaiShell`、事件名 `zai-shell-state` 冻结。
+- **请求**：`postMessage({method, ...args})` → `Promise<state>`（WKScriptMessageHandlerWithReply；同步语义部分执行完即回执）。方法词表：
+  - `getState` → 快照。
+  - `setRecording {on: bool, mode?: "screen"|"screen_audio"}`：`on:false` = `setMode("off")`；`on:true` = `setMode(mode ?? resume_mode)`。`mode:"off"` 或未知模式 → reject `INVALID_ARGS`（关就是 `on:false`，不给第二种拼法）。`screen_audio` 照 §15 先过 ffmpeg 预检再提交——**回执里的 `recording.mode` 可能仍是旧值**，真相随后以事件推送（预检拒绝时 `note` 非空、mode 不变）。
+  - `restartRecording`（= 契约D「重启录制引擎」，mode off 时 no-op）。
+  - `openScreenRecordingSettings`（系统设置 → 屏幕录制 深链）。
+  - `setCaptions {on: bool}`（= `LiveCaptionsController.setEnabled`，同步翻转）。
+  - `setLanguage {lang: "zh"|"en"}`：页面把 `zai.lang` 同步给壳，悬浮窗/通知的 L() 文案跟随；壳启动时先读 overrides `language` → 系统 locale（与原生 LanguageStore 同读侧），**壳不写 overrides**。
+  - 未知 method → reject `UNKNOWN_METHOD: <m>`；坏参数 → reject `INVALID_ARGS: <why>`；其它 → `INTERNAL: …`。冒号前是稳定 code，冒号后是人话、可改。
+- **快照 `state`**（`ShellBridge.stateSnapshot()`；回执与事件同一形状）：
+
+```json
+{"recording": {"available": true, "on": false, "mode": "off", "engine_running": false,
+               "diagnosis": null, "note": "", "tcc_lost": false,
+               "screen_permission": true, "resume_mode": "screen"},
+ "captions":  {"available": true, "on": false, "engine": "auto", "paused": false,
+               "engine_dead": false, "status_text": "", "status_is_error": false},
+ "language": "zh"}
+```
+
+  `recording.on ⇔ mode != "off"`（派生，不另存）；`mode` 词表 = §15 冻结三态；`diagnosis` = §25 引擎 failure id 或 `null`；`note` = 拒绝/回滚一次切换后的 15 s 说明（壳侧已本地化，原生 `recordingNote`）；`captions.engine` = `captionsEngine` 偏好（auto/doubao/apple）；`available` 恒 true 于本壳（为未来非 mac 壳预留 false）。**新字段只加不改不删**；页面对缺失字段取默认值（`normalizeShellState`），对未知字段视而不见。
+- **事件**：壳在 `RecordingController` / `LiveCaptionsController` / `LanguageStore` 任何 `@Published` 变化后（合并到下一个主队列 tick）`dispatchEvent(new CustomEvent("zai-shell-state", {detail: state}))`；页面 `didFinish` 加载后也推一次。事件是真相，回执也是真相；页面不做自己的状态机。
+
+### 61.2 web header 两个开关（`web/src/components/shell/`）
+
+- 位置：顶栏右侧簇最左（回收站链接之前）。文案/颜色/状态**逐字镜像** `mac/Sources/DashboardView.swift RecordingMenuButton`（冻结参考）：按钮 = `录制：` + 状态词（关 / 未在录制 / 仅屏幕 / 屏幕+音频；英文 `Rec: ` + Off / Not recording / Screen only / Screen + audio）；颜色 关 = 次级文字色、引擎在录 = `--danger`（原生 .red）、开了没录上 = `--warning`（.orange）；切换后 3 s 「重启中…」橙字。菜单 = 首行状态（引擎死了时说**真实原因**：权限优先，再按 `diagnosis` 映射 ffmpeg / Node / 首次下载 / 意外停了）+ `note` 行 + 三态单选（`menuitemradio`，当前项 ✓）+「重启录制引擎」（off 时禁用）+ 缺权限时「打开系统设置 → 屏幕录制」。字幕按钮 = 「实时字幕」四态：开 ✓（accent）/ 开但引擎致命出错 ⚠「实时字幕（出错，见悬浮窗）」（warning）/ 开但已暂停 ⏸「实时字幕（已暂停）」/ 关（次级）；`aria-pressed` 承载开关态。a11y 名：`录制控制` / `Recording controls`、`实时字幕` / `Live captions`。
+- **乐观 UI + 回滚**：点选即显示目标态；桥 reject → 回滚到点选前的真相，reject 原文挂在按钮 `title` 与菜单里；乐观值在 真相追平 / 壳发出 `note`（拒绝或回滚）/ 15 s 兜底 三者任一时退场——所以 `screen_audio` 预检期间按钮显示目标模式（橙）而不闪回旧值。
+- 字幕偏好（引擎/音源/翻译/字号）**不在**本节：随 P4 Tier 2 web 设置页立法。
+
+### 61.3 引擎逐字搬入（零逻辑改动；`tests/test_shell_engine_mirror.py` 执法）
+
+- `shell/Sources/Recording.swift` / `CaptionCore.swift` / `LiveCaptions.swift` 与 `mac/Sources` 同名文件**逐字节相同**。mac/ 在 P8 之前是冻结的只读规范、**永不再改**；日后若引擎行为确需改动，只落 shell/，并在同一 PR 把该文件从判例的 VERBATIM 清单移出（PR 描述写明偏离原因）——P8 删 mac/ 时整条判例改 tombstone。`CaptionOverlay.swift` 唯一允许的差异 = 文件头 + 齿轮按钮改走 `ShellNavigation.openSettings("live_captions")`（web 设置页）。
+- 引擎依赖的 helper 以**同名**落在 `shell/Sources/ShellSupport.swift`（读侧子集）：`AppPaths.stateRoot`（§19 同一解析；canonical 默认与 `server/paths.py DEFAULT_HOME` 逐字同一）、`Analytics`（§16 隐私门逐字复制，事件继续落 `state/analytics/events.jsonl`——`recording_set_mode` / `recording_restart` / `recording_mode_rollback` / `recording_self_heal` / `recording_ffmpeg_blocked` / `screen_tcc_lost` / `captions_toggle` / `captions_autostart` / `feature_first_reach{ingest_configured,live_captions}` 词表不变，每日循环与 insights 不断档）、`SettingsIO`（只读：overrides / configScalar / configList）、`Shell`、`Prefs`、`SecretsIO`（只读 `volcano-*` 两文件）、`FailureCatalog`（§25 **引擎子集** 6 句，与 `act/lib/failures.py` 逐字一致——第二份 Swift 镜像同样受漂移判例约束）、`LanguageStore`（读侧同原生，不持久化）。壳**不带**任何写侧（`writeOverrides` / `SecretsIO.save`）——设置的写者是 server（§59.5 / R2.10.5）。
+- 启动序列逐字对应 mac AppDelegate：`autostartIfNeeded()` → `restoreOnLaunch()` → 5 s tick（`pollScreenPermission` + `refreshEngineState`）。screenpipe 由壳 `Process` 直接持有（RunningBoard 语义不变，§15 / `Recording.swift` exec 注释）。
+
+### 61.4 TCC 与偏好迁移
+
+- bundle id 保留 `com.zelin.ai-board`（审计 Q1 默认值），接受一次 TCC 重授权：**首次在 header 开录制 → 屏幕录制 系统提示；首次开字幕（音源含麦克风）→ 麦克风提示**；`shell/Info.plist` 带 `NSMicrophoneUsageDescription`（缺它 macOS 直接杀进程）。步骤在 TROUBLESHOOTING「换壳后的 TCC 重授权」。
+- `LegacyPrefs.seedFromNativeAppIfNeeded()`：壳首启**一次**（marker `legacyPrefsSeeded`）从原生域 `com.zelin.ai-engineer` 复制**尚未设置**的 `recordingMode` / `lastActiveRecordingMode` / `liveCaptionsEnabled` / `captions*` 八键——owner 在原生 app 里的选择即 consent，换壳不重问；壳已有值永不覆盖；`screenTCCWasGranted` **刻意不搬**（新 bundle id 要自己拿授权，继承旧标记只会立刻误报「授权失效」）。
+
+### 61.5 门
+
+`shell/build.sh` 必须编过（CI `ci` job）；`shell/tests/run.sh`（swiftc `-typecheck` 全模块 + XCTest-free 桥 harness：快照键全集、请求词表与 reject code、`setLanguage`、LegacyPrefs 三条规则）；web vitest 钉 61.2 全部状态与回滚；Python 判例钉 61.3 逐字节 + FailureCatalog 逐句 + wire 键/方法两侧互镜 + Info.plist 键。ad-hoc 签名与 Dock badge / 通知中继（§28）/ 权限体检 / Sparkle 等其余原生残留**不在本节**，按 s4 顺序另 PR。

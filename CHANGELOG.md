@@ -28,6 +28,21 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.19] - 2026-09-02
+
+v-next-2 P4 Tier-0（决议 D3）：「录制状态和字幕开关我一般不用这个入口，直接打开主软件在右上角操作。」原生菜单栏 app 退役的第一块砖——录制与实时字幕引擎搬进 "Zelin AI Board" 壳，看板 header 右上长出两个开关。
+
+### Added
+- **壳桥 `zaiShell`（CONTRACT §61.1，新 wire contract，add-only）**：`shell/Sources/ShellBridge.swift`（`WKScriptMessageHandlerWithReply`）向页面暴露 `getState` / `setRecording {on, mode?}` / `restartRecording` / `openScreenRecordingSettings` / `setCaptions {on}` / `setLanguage {lang}`，回执与 `zai-shell-state` window 事件同一份 snake_case 快照（`recording.{available,on,mode,engine_running,diagnosis,note,tcc_lost,screen_permission,resume_mode}` / `captions.{available,on,engine,paused,engine_dead,status_text,status_is_error}` / `language`）；未知 method / 坏参数以 `UNKNOWN_METHOD:` / `INVALID_ARGS:` reject。壳在任何 `@Published` 变化后合并推送一次。
+- **录制 + 实时字幕引擎落户 shell/（§61.3；R2.2.3）**：`Recording.swift` / `CaptionCore.swift` / `LiveCaptions.swift` 自 `mac/Sources` **逐字节**搬入（`tests/test_shell_engine_mirror.py` 钉住），`CaptionOverlay.swift` 唯一改动是悬浮窗齿轮改开 web 设置页；同名 helper 子集（`AppPaths` / `Analytics` §16 门 / `SettingsIO` 只读 / `Shell` / `Prefs` / `SecretsIO` 只读 / `FailureCatalog` 引擎 6 句与 failures.py 逐字一致 / `LanguageStore`）落 `ShellSupport.swift`。screenpipe 自此是壳的直接子进程（TCC 归属），`recording_*` / `captions_*` analytics 事件继续落 `state/analytics/events.jsonl`。启动序列同原生：autostart → 字幕 restoreOnLaunch → 5 s 巡检。
+- **web header 两个开关（§61.2）**：`ShellControls` 只在 `window.webkit.messageHandlers.zaiShell` 存在时渲染；`RecordingControl` = `录制：关/未在录制/仅屏幕/屏幕+音频`（次级/橙/红三色逐字镜像原生 `RecordingMenuButton`）+ 三态单选菜单 + 重启引擎 + 缺权限时系统设置深链 + 引擎死因首行；`CaptionsControl` = 实时字幕 四态（开 ✓ / 出错 ⚠ / 已暂停 ⏸ / 关）。乐观 UI，桥 reject 回滚并把原文挂 title；`screen_audio` 预检期间乐观值保留到真相追平 / 壳发拒绝说明 / 15 s 兜底。语言切换同步给壳（悬浮窗文案跟随）。
+- **一次性偏好迁移（§61.4）**：壳首启从原生域 `com.zelin.ai-engineer` 接过尚未设置的 `recordingMode` / `lastActiveRecordingMode` / `liveCaptionsEnabled` / `captions*`（owner 的既有 consent 换壳不重问），`screenTCCWasGranted` 刻意不搬。
+- **门（§61.5）**：CI `ci` job 新增 `shell/build.sh`（此前壳无任何 workflow 编译）+ `shell/tests/run.sh`（swiftc `-typecheck` + XCTest-free 桥 harness）；vitest `shellBridge.test.ts` / `ShellControls.test.tsx`（+18）；`tests/test_capture_exclusion.py` 的 ignored-apps 漂移判例覆盖 shell 副本。
+- docs/TROUBLESHOOTING.md「换壳后的 TCC 重授权」：`com.zelin.ai-board` 首次开录制弹屏幕录制、首次开字幕弹麦克风，属预期；ad-hoc 签名重建后 `tccutil reset ScreenCapture com.zelin.ai-board`。
+
+### Changed
+- **§54 壳生命周期**：关窗不退出（引擎住在壳进程），点 Dock 图标重开窗口，⌘Q 正常退出；`shell/Sources` 不再是单文件（每文件 ≤1,500 行）；`shell/Info.plist` 新增 `NSMicrophoneUsageDescription`（缺它 macOS 直接杀进程）。§15 录制三态 / §36 实时字幕各加一条「引擎落户 shell/，语义不变」追记。
+
 ## [0.48.18] - 2026-09-01
 
 v-next-2 D17「merge = deploy」的第一次实战审计（2026-09-02 03:35Z）：owner 机器守护进程跑在 v0.48.12，看板 UI **从未被部署过**——install.sh 没有任何步骤构建 web/dist 或 shell，/Applications 里是 v0.48.0 的旧 app、壳 app 根本不存在；手工构建后壳 spawn 的 `python3 -m server` 以 `No module named server` 死掉（GUI app 是子进程的 TCC responsible process，壳没有磁盘授权）。手工救法是把 server 挂成 launchd agent——本版把它成法，并让部署包含 UI。
@@ -89,6 +104,7 @@ owner 决策 D21（issue #127）：「如果这个卡片没有执行，就不算
 - demo_seed：fixture 主键改 `P-1xx`，批准过的 lane 带 `work_id: R-1xx`，hero 卡 `P-101` 批准后显示 `R-101`；validator 校 `display_id`/`id_kind` 形状。
 - **陈旧内存副本只采纳不重铸（§60.2）**：P 卡落盘时内存没带号 → `registry.save()` 的分配钩子先读真源（sqlite 读 `cards.work_id` 热列、yaml 读文件）采纳已发的号，**无论现态**（approve→退回提案后号仍在卡上，批准前取的副本此时落盘也不许把它抹掉）——跨进程 fold 撞 approve 的 read-modify-write 窗口、abort 之后的批准前副本、以及 payload 被旧代码剥掉 `work_id` 而热列仍在的形状，都不再变成 sqlite `WORK_ID_SET_ONCE` 硬失败（inbox 决策文件被当 poison 丢弃）或 yaml 静默换号/丢号；真源无号时只在 approved 落盘铸号，D21 字面的无号卡照旧无号。踏出 schema 梯子时 stderr 留一行审计（版本 + 快照落点）。
 - **§58 门下的新代码全部干净**：本 PR 的 7 个新函数与 5 个增长函数全部拆到复杂度 ≤ 上限（`registry.canonical_ids` 自 actd 下沉为公开 lib 函数——merge_review / merge_force 的 ids / primary 归一都经它），`act/actd.py` 3698 → 3660 行（账本天花板拧到 3660）；修好的 6 条存量账划掉（复杂度 5 + 依赖方向 1），`save` / `_apply_merge_force` 登记分拧低。
+
 
 ## [0.48.11] - 2026-09-01
 
@@ -2167,7 +2183,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.18...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.19...HEAD
+[0.48.19]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.18...v0.48.19
 [0.48.18]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.17...v0.48.18
 [0.48.17]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.16...v0.48.17
 [0.48.16]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.15...v0.48.16
