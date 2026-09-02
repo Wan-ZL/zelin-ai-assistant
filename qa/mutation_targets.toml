@@ -1,0 +1,28 @@
+# 变异测试靶区 —— 模块 → 定向测试子集（CONTRACT §57；scripts/qa/mutate.py 读）。
+#
+# 语法是 mutate.parse_targets_toml 支持的 TOML 子集（table / 双引号字符串 /
+# 整数 / true·false / 单行字符串数组 / # 注释）——Python 3.9 floor 没有
+# tomllib，宪法第 7 条不许装。超出子集 runner 直接报错。
+#
+# 靶区选择（vnext2-plan R2.3.4 + UNCLEBOB-ADOPTION §3）：宪法关键模块先行——
+# 一个存活变异体在这些模块里意味着宪法条文没有被测试执法。映射的测试子集
+# 必须先绿（baseline），红映射 = 模块整轮跳过并在报告点名。
+# 未映射模块（[] 空数组）fallback 全套件 discover——允许，但报告标 slow。
+
+[config]
+# 单轮总预算（秒）；到点即停，state 续跑，round-robin 保证每模块每晚被访问。
+time_budget_seconds = 2700
+# 单变异体超时（秒）；baseline 给 5 倍。必须高于最慢子集的正常耗时。
+per_mutant_timeout_seconds = 60
+
+[targets]
+"act/lib/sanitize.py" = ["tests/test_sanitize.py", "tests/test_prompt_fencing.py"]
+"act/lib/policy.py" = ["tests/test_policy.py", "tests/test_policy_ceilings.py", "tests/test_policy_trust_matrix.py"]
+"act/lib/risk.py" = ["tests/test_risk.py"]
+"act/lib/silent_merge.py" = ["tests/test_silent_merge.py"]
+"act/lib/auto_merge.py" = ["tests/test_auto_merge.py"]
+"act/lib/failures.py" = ["tests/test_failures.py"]
+"act/lib/heartbeat.py" = ["tests/test_actd_heartbeat.py"]
+"act/lib/provenance.py" = ["tests/test_provenance.py"]
+"act/lib/registry.py" = ["tests/test_registry_merge.py", "tests/test_registry_backend_parity.py", "tests/test_registry_example_skip.py", "tests/test_audit_registry_fail_closed.py", "tests/test_audit_registry_listfile.py", "tests/test_card_lifecycle.py"]
+"act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]

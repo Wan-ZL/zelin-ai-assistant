@@ -1,0 +1,98 @@
+# Nightly mutation testing -> one pinned issue + a machine-readable artifact.
+#
+# NEVER a PR gate (owner decision D5 / CONTRACT §57): surviving mutants are
+# test-gap *proposals* — input for the daily self-improvement loop (P5 reads
+# the pinned issue and the `mutation-report` JSON artifact), never a merge
+# veto. This workflow is not in the required-checks set and must stay out.
+#
+# scripts/qa/mutate.py is stdlib-only (constitution art. 7): it flips
+# operators in the target modules (truth = qa/mutation_targets.toml), runs
+# each module's mapped test subset against every mutant inside a throwaway
+# workspace copy, and records killed/survived. Deterministic order, budget
+# capped, resumable: .qa/mutation/state.json rides the Actions cache across
+# nights, so long modules finish over several nights (round-robin keeps every
+# module visited each night).
+#
+# Local equivalent (no launchd agent — the owner machine stays lean):
+#     python3 scripts/qa/mutate.py --all
+#
+# Security: minimal permissions (issues: write for the pinned issue), no
+# untrusted input reaches run: scripts — the issue body is our own report
+# file, delivered by scripts/qa/mutation_issue.py via argv (no shell interp).
+name: Mutation nightly
+
+on:
+  schedule:
+    - cron: "3 9 * * *" # daily at 09:03 UTC (02:03 US Pacific)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: mutation-nightly
+  cancel-in-progress: false
+
+jobs:
+  mutate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # the runner's own budget is 45 min (--time-budget)
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # gh talks to the API via GH_TOKEN env — git auth is never used
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.x"
+
+      - name: Install PyYAML (the only runtime dep — constitution art. 7)
+        run: python3 -m pip install pyyaml
+
+      # Cross-night resume: restore the newest state file from any previous
+      # night (restore-keys prefix match), save under a fresh key below.
+      - name: Restore mutation state
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .qa/mutation/state.json
+          key: mutation-state-${{ github.run_id }}
+          restore-keys: |
+            mutation-state-
+
+      - name: Run the mutation suite (45-min budget, round-robin)
+        run: |
+          python3 scripts/qa/mutate.py --all --time-budget 2700
+
+      - name: Save mutation state
+        if: ${{ always() }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .qa/mutation/state.json
+          key: mutation-state-${{ github.run_id }}
+
+      # The JSON is the machine-readable feed the P5 daily loop consumes
+      # (survivors with file:line + operator -> test-gap proposals).
+      - name: Upload report artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-report
+          path: |
+            .qa/mutation/report.json
+            .qa/mutation/report.md
+            .qa/mutation/state.json
+          if-no-files-found: warn
+
+      # Idempotent: exact-title match over open+closed issues, create only
+      # when missing, reopen+edit otherwise — never a second issue per run.
+      # Logic + dry-run live in scripts/qa/mutation_issue.py (tested offline).
+      - name: Create or update the pinned issue
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/qa/mutation_issue.py \
+            --body-file .qa/mutation/report.md \
+            --repo "$GITHUB_REPOSITORY"

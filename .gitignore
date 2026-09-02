@@ -26,6 +26,9 @@ promo/node_modules/
 promo/package.json
 promo/package-lock.json
 .coverage
+# QA instrument outputs (mutation state/reports — CONTRACT §57; 防腐 #4:
+# data files are born gitignored, never inside a package)
+.qa/
 
 # QA gate outputs (scripts/qa/run_gates.sh; CONTRACT §58) — verdicts, coverage
 # JSON and suggested baselines land here; the committed truth lives in qa/
