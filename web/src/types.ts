@@ -45,6 +45,17 @@ export interface ApprovalCard {
   delivery_mode?: "chat" | "repo" | string;
   reraised?: boolean;
   reraised_note?: string;
+  /** §7 落点三元组：target_kind "new"（新建 repo）/ "existing"（改现有；basename 以 your-workbench 结尾 = 只出文档） */
+  target_repo?: string | null;
+  target_name?: string | null;
+  target_kind?: "new" | "existing" | string | null;
+  /** §44 静默并入次数（0 = 从未）——原生「已并入×N」紫章 */
+  silent_merged?: number;
+  /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
+  cost_state?: string;
+  /** §37 展示名 / 曾用名（原生 rowTitle 优先 display_title） */
+  display_title?: string;
+  former_titles?: string[];
   [key: string]: unknown;
 }
 
@@ -111,6 +122,15 @@ export interface TaskRow {
   delivered_summary?: string;
   queued_reason?: QueuedReason | string | null;
   steers?: SteerNote[];
+  /** §30 待验收卡因会话再活跃投影回运行中——原生「已交付过·再运行」青章 */
+  from_review?: boolean;
+  /** §25 错误分类 id（null = 未分类）——原生据此挑人话句；web 目前只用原文 */
+  last_error_id?: string | null;
+  dispatch_error_id?: string | null;
+  agent_name?: string | null;
+  question?: string | null;
+  display_title?: string;
+  former_titles?: string[];
   [key: string]: unknown;
 }
 
@@ -133,6 +153,13 @@ export interface ReviewCard {
   dispatched_at?: number;
   review_at?: number;
   delivery_mode: "chat" | "repo" | string;
+  /** 原生 ReviewRow meta 行：cwd basename 章 / 会话有新活动 / 单击复制指令 */
+  cwd?: string;
+  copy_cmd?: string | null;
+  session_active?: boolean;
+  summary?: string | null;
+  agent_name?: string | null;
+  display_title?: string;
   [key: string]: unknown;
 }
 
@@ -149,6 +176,23 @@ export interface DebtCard {
   hardness?: string;
   type?: string;
   sources?: CardSource[];
+  summary?: string;
+  display_title?: string;
+  [key: string]: unknown;
+}
+
+/** 永久性完成行（archived[] 分区，§5 v0.20.0：镜像回收站行 + 封存簿记；dashboard.py _archived_view） */
+export interface ArchivedRow {
+  id: string;
+  title: string;
+  summary?: string;
+  kind?: "suggestion" | "debt" | string;
+  archived_at?: string | null;
+  archive_reason?: "user" | "auto" | string | null;
+  prev_status?: string | null;
+  type?: string;
+  hardness?: string;
+  display_title?: string;
   [key: string]: unknown;
 }
 
@@ -203,11 +247,30 @@ export interface Board {
   completed: TaskRow[];
   debt: DebtCard[];
   trash: TrashRow[];
-  archived?: unknown[];
+  archived?: ArchivedRow[];
   merge_suggestions?: unknown[];
   update_available?: unknown;
   device_label?: string;
   deploy_state?: DeployState;
+  [key: string]: unknown;
+}
+
+/** GET /api/lanes（CONTRACT §54）：列说明文案的 server-owned 目录——web 列头「?」气泡逐字镜像，按 UI 语言取 zh / en */
+export interface LaneCatalogEntry {
+  slug: string;
+  help: { zh: string; en: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+export interface LaneCatalog {
+  lanes: LaneCatalogEntry[];
+  [key: string]: unknown;
+}
+
+/** POST /api/ai-fix 回执（§54 让 AI 修）：server 已在 Terminal 打开修复会话；command_file = 生成的 .command 路径 */
+export interface AiFixReceipt {
+  ok: boolean;
+  command_file?: string;
   [key: string]: unknown;
 }
 

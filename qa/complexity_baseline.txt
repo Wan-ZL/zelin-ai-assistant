@@ -291,8 +291,7 @@ scripts/insights_report.py::retention 10
 server/app.py::Handler._check_auth 7
 server/app.py::Handler._dispatch 8
 server/app.py::Handler._read_json_body 7
-server/app.py::Handler._route_get 11
-server/app.py::Handler._route_post 11
+server/app.py::Handler._route_get 9
 server/app.py::Handler._serve_static 13
 server/board_source.py::card_detail 9
 server/board_source.py::load_registry_card 11

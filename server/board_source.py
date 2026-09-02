@@ -186,6 +186,13 @@ def _projection_row(board: dict, card_id: str) -> "tuple[Optional[str], Optional
     return lane, row
 
 
+def locate_card(home: Path, card_id: str) -> "tuple[Optional[str], Optional[dict]]":
+    """投影里找卡：``(lane, row)``，找不到 ``(None, None)``。其它 server 模块
+    读投影行的公开面（ai_fix_launch 推导修复上下文）——不跨模块引 `_私名`
+    （防腐 #2）。"""
+    return _projection_row(_board_dict(home), card_id)
+
+
 def is_executing(home: Path, card_id: str) -> bool:
     """卡是否「正在执行」= running 分区的非 queued 行，或 needs_input 分区行。
 

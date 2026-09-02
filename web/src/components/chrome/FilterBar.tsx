@@ -11,7 +11,8 @@ import {
   useI18n,
   type LabelTable,
 } from "../../i18n";
-import { clearFilters, initFiltersFromUrl, setFilters, useAppState } from "../../store";
+import { normalizeSortOrder, SORT_ORDERS, type SortOrder } from "../../cardSort";
+import { clearFilters, initFiltersFromUrl, setFilters, setSortOrder, useAppState } from "../../store";
 import {
   cardFilterCount,
   collectChannels,
@@ -27,7 +28,7 @@ const TIER_VALUES = ["T0", "T1", "T2"] as const;
 
 export function FilterBar() {
   const { text, language } = useI18n();
-  const { board, filters } = useAppState();
+  const { board, filters, sortOrder } = useAppState();
   const [openChip, setOpenChip] = useState<ChipKey | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -82,6 +83,13 @@ export function FilterBar() {
     { value: "none", label: text("无期限", "No deadline") },
   ];
   const deadlineLabel = deadlineOptions.find((o) => o.value === filters.deadline)?.label ?? "";
+
+  // 卡片排序偏好（原生 Settings「卡片排序」Picker 的三个选项，文案逐字；store 持久化 cardSortOrder）
+  const sortLabels: Record<SortOrder, string> = {
+    newest: text("新的在上（默认）", "Newest first"),
+    oldest: text("旧的在上（先清积压）", "Oldest first"),
+    deadline: text("Deadline 近的在上", "Deadline first"),
+  };
 
   return (
     <div className="chrome-filterbar" role="toolbar" aria-label={text("过滤与搜索", "Filter and search")}>
@@ -168,6 +176,20 @@ export function FilterBar() {
           {text(`清除（${activeCount}）`, `Clear (${activeCount})`)}
         </button>
       )}
+
+      <label className="chrome-sort">
+        <span className="chrome-sort-label">{text("排序", "Sort")}</span>
+        <select
+          className="chrome-sort-select"
+          value={sortOrder}
+          aria-label={text("卡片排序", "Card sorting")}
+          onChange={(event) => setSortOrder(normalizeSortOrder(event.target.value))}
+        >
+          {SORT_ORDERS.map((order) => (
+            <option key={order} value={order}>{sortLabels[order]}</option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }

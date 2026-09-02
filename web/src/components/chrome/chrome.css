@@ -165,6 +165,18 @@
   color: var(--text-primary);
 }
 
+/* 展开态列头：toggle + 原生同款「?」说明并排 */
+.backlog-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.backlog-strip:not(.is-collapsed) {
+  flex: 0 0 300px;
+  width: 300px;
+}
+
 /* 收起态：竖排窄条（列外侧，点击展开） */
 .backlog-strip.is-collapsed .backlog-strip-toggle {
   writing-mode: vertical-rl;
@@ -172,6 +184,11 @@
   border: var(--border-hairline) solid var(--border);
   border-radius: 8px;
   background: var(--surface-muted);
+}
+
+/* 右侧书立条（永久性完成）：与左条对称，收起时贴在最后一列右边 */
+.backlog-strip.is-archive .backlog-strip-count {
+  color: var(--status-done);
 }
 
 .backlog-strip-count {
@@ -218,6 +235,33 @@
   gap: 6px;
   color: var(--text-tertiary);
   font-size: 11px;
+}
+
+/* ----- 卡片排序（原生 Settings「卡片排序」Picker 的 web 落点，顶栏工具条末尾） ----- */
+.chrome-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chrome-sort-select {
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.chrome-sort-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 /* ----- 通用小徽章（chrome 内部；A6 有自己的卡徽章体系，不共享） -------------- */

@@ -8,12 +8,12 @@
 import { useState } from "react";
 import "../components/chrome/chrome.css";
 import { ApiError, postAction } from "../api";
+import { RelativeTime } from "../components/board/cardChrome";
 import {
   domainLabel,
   TRASH_KIND_LABELS,
   TRASH_REASON_LABELS,
   useI18n,
-  type I18n,
 } from "../i18n";
 import { buildAppUrl } from "../route";
 import { useAppState } from "../store";
@@ -25,15 +25,6 @@ function daysUntilPurge(purgeAt: string | null | undefined): number | null {
   const t = Date.parse(purgeAt);
   if (Number.isNaN(t)) return null;
   return Math.max(0, Math.ceil((t - Date.now()) / 86_400_000));
-}
-
-/** trashed_at 的相对时间（简化版：天粒度） */
-function ageLabel(trashedAt: string, text: I18n["text"]): string | null {
-  const t = Date.parse(trashedAt);
-  if (Number.isNaN(t)) return null;
-  const days = Math.floor((Date.now() - t) / 86_400_000);
-  if (days <= 0) return text("今天", "today");
-  return text(`${days} 天前`, days === 1 ? "1 day ago" : `${days} days ago`);
 }
 
 export function TrashPage() {
@@ -90,7 +81,6 @@ export function TrashPage() {
     const isRestored = restoredLocal.has(item.id);
     const isBusy = busyIds.has(item.id);
     const days = daysUntilPurge(item.purge_at);
-    const age = ageLabel(item.trashed_at, text);
 
     return (
       <article key={item.id} className={`trash-row${isRestored ? " is-restored" : ""}`}>
@@ -101,7 +91,8 @@ export function TrashPage() {
         <div className="trash-row-meta">
           {item.kind && <span className="chrome-badge">{domainLabel(TRASH_KIND_LABELS, language, item.kind)}</span>}
           {item.trash_reason && <span>{domainLabel(TRASH_REASON_LABELS, language, item.trash_reason)}</span>}
-          {age && <span>{age}</span>}
+          {/* trashed_at 相对时间（原生 RelativeTime.since：刚刚/N分钟前/N小时前/N天前），hover 绝对 */}
+          <RelativeTime iso={item.trashed_at} />
           {isPinned ? (
             <span className="trash-row-purge is-pinned">{text("已永久保留", "Kept forever")}</span>
           ) : (

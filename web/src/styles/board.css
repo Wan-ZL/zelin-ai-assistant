@@ -48,6 +48,52 @@
   font-size: 12px;
 }
 
+/* 列头「?」说明（原生 SectionHeader：questionmark.circle 常显，点击气泡 / hover tooltip） */
+.lane-help {
+  position: relative;
+  display: inline-flex;
+}
+
+.lane-help-button {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: var(--border-hairline) solid var(--text-tertiary);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.lane-help-button:hover,
+.lane-help-button[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.lane-help-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: 280px;
+  padding: 10px 12px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--dialog-shadow);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  white-space: normal;
+}
+
 .column-help {
   margin: 6px 2px 8px;
   color: var(--text-tertiary);
@@ -105,12 +151,208 @@
   border-left: 3px solid var(--warning);
 }
 
+/* 标题行：色点 + 标题（撑满）+ 右上角 id（原生 CardSurface idTag：等宽 9pt 次级色） */
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.card-head .card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.card-head .card-id {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
 .card-title {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+
+.card-title.is-muted {
+  color: var(--text-secondary);
+}
+
+/* 原生 TaskRow / ReviewRow 的 7pt 色点：lane 语义色 */
+.card-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.card-dot.is-running { background: var(--info); }
+.card-dot.is-blocked { background: var(--warning); }
+.card-dot.is-queued { background: var(--text-quaternary); }
+.card-dot.is-review { background: var(--accent); }
+.card-dot.is-done { background: var(--success); }
+.card-dot.is-backlog { background: var(--status-backlog); }
+
+/* 章行里的相对时间 / 耗时 小字（原生 10pt secondary） */
+.card-meta-text {
+  align-self: center;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.card-meta-text.is-danger { color: var(--danger); white-space: normal; }
+
+.card-line.is-success { color: var(--success); }
+
+/* 「单击复制指令」行（原生 9pt secondary 一行）——本身是复制热区 */
+.card-copy-line {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-copy-line:hover { color: var(--text-secondary); text-decoration: underline; }
+.card-copy-line.is-copied { color: var(--success); }
+
+/* §25 错误一句：两行截断，hover 全文 */
+.card-error-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-error-block {
+  margin: 0;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* —— 展开详情（原生 CardSurface 详情槽）—— */
+.card-details-toggle {
+  margin-left: auto;
+  padding: 3px 4px;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.card-details-toggle:hover { color: var(--text-primary); }
+
+.card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.card-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-detail-heading {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.card-detail-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.card-detail-list.is-checklist {
+  list-style: none;
+  padding-left: 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.card-detail-list li.is-rework {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.card-detail-muted {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.card-detail-mono {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-source { display: flex; flex-direction: column; gap: 1px; }
+.card-source-who { color: var(--text-secondary); font-size: 10px; font-weight: 500; }
+.card-source-quote { color: var(--text-tertiary); font-size: 10px; font-style: italic; overflow-wrap: anywhere; }
+
+/* 一行等宽路径/命令，点击复制（原生 CopyPathLine） */
+.card-copy-path {
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-copy-path:hover { color: var(--text-secondary); }
+.card-copy-path.is-copied { color: var(--success); }
 
 .card-summary {
   font-size: 12px;
@@ -171,13 +413,15 @@
 .chip.chip-success { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
 .chip.chip-purple { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
 .chip.chip-notice { color: var(--notice); border-color: var(--notice-soft); background: var(--notice-soft); }
+.chip.chip-info { color: var(--info); border-color: var(--info-soft); background: var(--info-soft); } /* 原生 running accent .blue（执行中 状态章） */
 
 .chip.chip-accent,
 .chip.chip-warning,
 .chip.chip-danger,
 .chip.chip-success,
 .chip.chip-purple,
-.chip.chip-notice {
+.chip.chip-notice,
+.chip.chip-info {
   font-weight: 500;
 }
 

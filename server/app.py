@@ -14,6 +14,9 @@
   发 CORS 头，跨源页面读不到任何响应）。
 - 设置面（§59）：GET/PUT /api/settings/models、GET/POST
   /api/claude-code/default-model，校验与落盘在 server/settings.py。
+- 看板 parity 面（§54）：GET /api/lanes（列说明文案的 server-owned 目录，
+  server/lanes.py）、POST /api/ai-fix（「让 AI 修」= 起 act.ai_fix 的
+  Terminal 修复会话，server/ai_fix_launch.py）。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）。
@@ -31,8 +34,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlsplit
 
-from server import (board_source, files, health, inbox_writer, paths, security,
-                    settings)
+from server import (ai_fix_launch, board_source, files, health, inbox_writer,
+                    lanes, paths, security, settings)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -178,17 +181,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/cards/"):
             card_id = path[len("/api/cards/"):]
             self._send_json(200, board_source.card_detail(ctx.home, card_id))
-        elif path == "/api/health":
-            # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳
-            # 年龄 + 看板新鲜度 + 连崩计数 → 一个 verdict，web 顶部横幅据此
-            # 诚实报「后台服务卡住/停了」——退役中的 Mac app 横幅的替身。
-            self._send_json(200, health.snapshot(ctx.home))
-        elif path == "/api/settings/models":
-            # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
-            self._send_json(200, settings.models_snapshot(ctx.home))
-        elif path == "/api/claude-code/default-model":
-            # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
-            self._send_json(200, settings.claude_code_default())
+        elif path in _GET_JSON_ROUTES:
+            # 纯 JSON 读面（health / 设置面 / 列目录）——表驱动，见 _GET_JSON_ROUTES
+            self._send_json(200, _GET_JSON_ROUTES[path](ctx))
         elif path == "/api/events":
             self._serve_events(ctx.hub)
         elif path.startswith("/files/deliverables/"):
@@ -209,44 +204,11 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     def _route_post(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
-        if path == "/api/actions":
-            payload = self._read_json_body()
-            # 字段级白名单 + 动词闸门在 inbox_writer（G1）——单一职责，
-            # 校验规则只写一处（module docstring 已冻结）
-            result = inbox_writer.write_action(payload, home=ctx.home)
-            # steer 标注（M6，add-only 响应键；inbox 文件形状零改动）：
-            # executing 卡上的 **owner** comment 会被 actd 按 steer 类经
-            # §44.3 briefing 机制转投递——这里只诚实报「queued」（落盘即排
-            # 队），delivered/dropped 状态由投影回流（vnext-amendments.md
-            # §M6.1）。agent ingress（via:"agent"，T-28）的 comment 只记录
-            # 不 steer——标注必须反映实际裁决：steer:false、无 steer_status。
-            if result.get("action") == "comment" and board_source.is_executing(
-                    ctx.home, str(payload.get("id") or "")):
-                owner = result.get("via") == "web"
-                result["steer"] = owner
-                if owner:
-                    result["steer_status"] = "queued"
-            self._send_json(200, result)
-        elif path == "/api/reveal":
-            payload = self._read_json_body()
-            unknown = set(payload) - {"card_id"}
-            if unknown:
-                raise UnknownFieldError("unknown field",
-                                        {"fields": sorted(unknown)})
-            card_id = payload.get("card_id")
-            if not isinstance(card_id, str):
-                raise InvalidFieldError("card_id must be a string")
-            self._send_json(200, files.reveal(ctx.home, card_id))
-        elif path == "/api/claude-code/default-model":
-            # §59 owner 的显式一键「设为 <id>」：只改 model 键、先备份、坏文件拒改
-            payload = self._read_json_body()
-            unknown = set(payload) - {"model"}
-            if unknown:
-                raise UnknownFieldError("unknown field",
-                                        {"fields": sorted(unknown)})
-            self._send_json(200, settings.set_claude_code_default(payload.get("model")))
-        else:
+        handler = _POST_JSON_ROUTES.get(path)
+        if handler is None:
             raise NotFoundError("not found", {"path": path})
+        # body 只在路由命中后才读（未知路径 404 不消费 body）
+        self._send_json(200, handler(ctx, self._read_json_body()))
 
     # ------------------------------------------------------------------ #
     # PUT 路由（§59 设置面；四闸同 POST）
@@ -364,6 +326,70 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         # 保留一行式访问日志到 stderr；SSE 心跳不经此处，噪音可控
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+
+# --------------------------------------------------------------------------- #
+# 表驱动的 JSON 路由（读面 / 写面）——新增一个 JSON 端点 = 加一行，不再在
+# _route_get/_route_post 里堆 elif（§58 复杂度门）。写面四闸在 _check_auth，
+# 与表无关；每个 handler 自己做字段白名单（UNKNOWN_FIELD 零容忍）。
+# --------------------------------------------------------------------------- #
+def _post_actions(ctx, payload: dict) -> dict:
+    # 字段级白名单 + 动词闸门在 inbox_writer（G1）——单一职责，
+    # 校验规则只写一处（module docstring 已冻结）
+    result = inbox_writer.write_action(payload, home=ctx.home)
+    # steer 标注（M6，add-only 响应键；inbox 文件形状零改动）：
+    # executing 卡上的 **owner** comment 会被 actd 按 steer 类经
+    # §44.3 briefing 机制转投递——这里只诚实报「queued」（落盘即排
+    # 队），delivered/dropped 状态由投影回流（vnext-amendments.md
+    # §M6.1）。agent ingress（via:"agent"，T-28）的 comment 只记录
+    # 不 steer——标注必须反映实际裁决：steer:false、无 steer_status。
+    if result.get("action") == "comment" and board_source.is_executing(
+            ctx.home, str(payload.get("id") or "")):
+        owner = result.get("via") == "web"
+        result["steer"] = owner
+        if owner:
+            result["steer_status"] = "queued"
+    return result
+
+
+def _post_reveal(ctx, payload: dict) -> dict:
+    unknown = set(payload) - {"card_id"}
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    card_id = payload.get("card_id")
+    if not isinstance(card_id, str):
+        raise InvalidFieldError("card_id must be a string")
+    return files.reveal(ctx.home, card_id)
+
+
+def _post_claude_code_default(ctx, payload: dict) -> dict:
+    # §59 owner 的显式一键「设为 <id>」：只改 model 键、先备份、坏文件拒改
+    unknown = set(payload) - {"model"}
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    return settings.set_claude_code_default(payload.get("model"))
+
+
+_GET_JSON_ROUTES = {
+    # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳年龄 +
+    # 看板新鲜度 + 连崩计数 → 一个 verdict，web 顶部横幅据此诚实报「后台
+    # 服务卡住/停了」——退役中的 Mac app 横幅的替身。
+    "/api/health": lambda ctx: health.snapshot(ctx.home),
+    # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
+    "/api/settings/models": lambda ctx: settings.models_snapshot(ctx.home),
+    # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
+    "/api/claude-code/default-model": lambda ctx: settings.claude_code_default(),
+    # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
+    "/api/lanes": lambda ctx: lanes.catalog(),
+}
+
+_POST_JSON_ROUTES = {
+    "/api/actions": _post_actions,
+    "/api/reveal": _post_reveal,
+    "/api/claude-code/default-model": _post_claude_code_default,
+    # §54 让 AI 修：字段白名单 + 上下文推导 + 子进程都在 ai_fix_launch
+    "/api/ai-fix": lambda ctx, payload: ai_fix_launch.launch(ctx.home, payload),
+}
 
 
 class _Context:
