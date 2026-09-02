@@ -23,7 +23,8 @@
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）。
+localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
+§65（skill 商店：GET/POST /api/skills，写者是 act/lib/skills.py）。
 """
 from __future__ import annotations
 
@@ -446,6 +447,9 @@ _GET_JSON_ROUTES = {
     "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+    # §65 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
+    # custom / foreign）；token-light GET，写面在 POST /api/skills
+    "/api/skills": lambda ctx, query: settings.skills_snapshot(ctx.home),
 }
 
 _POST_JSON_ROUTES = {
@@ -461,6 +465,8 @@ _POST_JSON_ROUTES = {
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
     # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
     "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
+    # §65 启用/停用一个 skill（= ~/.claude/skills 软链接的建/删；自定义副本拒改 409）
+    "/api/skills": lambda ctx, payload: settings.update_skill(ctx.home, payload),
 }
 
 _PUT_JSON_ROUTES = {

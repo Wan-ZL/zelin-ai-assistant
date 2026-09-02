@@ -472,3 +472,36 @@ export interface MaterialsList {
   counts: { open: number; total: number; [key: string]: unknown };
   [key: string]: unknown;
 }
+
+/** GET /api/skills 的一行（CONTRACT §65）：act/lib/skills.Store.inspect 的 wire 形逐字镜像（add-only）。
+ *  state = disabled | enabled | copy | custom | foreign；toggle = enable | disable | locked；
+ *  relation/distance = 本机副本相对仓库版本的 same | behind | ahead | unknown 与「N 版」距离 */
+export interface SkillRow {
+  name: string;
+  version: string;
+  upstream: string | null;
+  upstream_version: string | null;
+  default_enabled: boolean;
+  description: string;
+  path: string;
+  target: string;
+  link: string;
+  state: string;
+  stale_target: boolean;
+  installed_version: string | null;
+  relation: string;
+  distance: number;
+  decision: string | null;
+  project_visible: boolean;
+  toggle: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/skills 快照 = POST /api/skills 回执（§65） */
+export interface SkillsSnapshot {
+  skills: SkillRow[];
+  skills_dir: string;
+  repo_skills_dir: string;
+  state_path: string;
+  [key: string]: unknown;
+}

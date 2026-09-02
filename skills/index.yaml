@@ -1,0 +1,38 @@
+# skills/index.yaml — the skill store manifest (CONTRACT §65; owner decision D13, R2.7).
+#
+# One entry per skills/<name>/ directory. `version` MUST equal the `version:` in
+# that skill's SKILL.md frontmatter (tests/test_skills_manifest_repo.py pins it),
+# and every skills/*/SKILL.md must be listed here. Read by act/lib/skills.py
+# (`python3 -m act.lib.skills list|enable|disable|sync`), the board server
+# (GET/POST /api/skills) and install.sh (step `skills` via scripts/skills_sync.sh).
+#
+# default_enabled: true  = a fresh machine gets ~/.claude/skills/<name> linked by
+#                          install.sh (only while no decision is recorded in
+#                          state/skills.json — a skill the owner switched off stays
+#                          off) AND the skill is project-visible to every session
+#                          and dispatched agent working in this repo through the
+#                          tracked relative symlink .claude/skills/<name>.
+# default_enabled: false = shipped, listed, off until enabled on this machine
+#                          (Settings → Skills, or the CLI). A skill that changes the
+#                          assistant's voice stays off: nobody gets a new voice from
+#                          `git pull` (skills/README.md).
+schema: 1
+skills:
+  - name: board-agent
+    version: 1.0.0
+    upstream: dashi-taskboard skills/manage-taskboard (Apache-2.0) — attribution in NOTICE
+    upstream_version: dashi-taskboard manage-taskboard as adapted 2026-08 (CONTRACT §52.5)
+    default_enabled: true
+    description: Scoped agent channel to the card board via boardctl (read / capture / comment only; CONTRACT §52). Dispatched agents read it when working a card.
+  - name: test-code
+    version: 0.2.1
+    upstream: robust-code (Zelin's private skill) ← AmazingAng/old-coder (MIT) — attribution in NOTICE
+    upstream_version: robust-code SKILL.md snapshot 2026-08-18
+    default_enabled: true
+    description: test code 测试代码 — five-tier (档 1 静态门 … 档 5 通宵/通几天), trigger-aware, core/extended-circle testing ladder for any repo; detect → ask tier + multi-select once → run → report.md + report.json with fix-first ranking (R2.8, D14).
+  - name: write-better
+    version: 1.0.0
+    upstream: Munindar P. Singh's public editorial advice pages (grammar / editing), quoted with attribution; argument-structure exemplars from his AAAI-22 / JAIR-25 / CACM-25 papers
+    upstream_version: advice pages as fetched 2026-08-18 (PR #102)
+    default_enabled: false
+    description: Precision-first formal English for emails, papers, articles, READMEs, reports and CVs, modeled on Munindar P. Singh's editorial standards, with a deterministic sentence-aware linter (scripts/style_check.py). Changes the assistant's voice — off by default.

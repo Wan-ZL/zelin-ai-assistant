@@ -160,6 +160,7 @@ radar 出卡需要 screenpipe + Obsidian 里先积累素材;**新装机器请先
 - **Gmail 雷达**:`docs/GMAIL_SETUP.md`(应用专用密码)。
 - **遥测**(匿名使用统计,默认开、一键可关):`docs/TELEMETRY.md`。
 - 什么数据会离开你的机器:`docs/PRIVACY.md`。
+- **Skills**(仓库内 skill 商店,CONTRACT §65):`install.sh` 已把默认开的 skill(`board-agent`、`test-code`)链进 `~/.claude/skills`;其余在看板设置页 → Skills 启用/停用,或 `python3 -m act.lib.skills enable <name>`。另一台机器更新后跑 `bash scripts/skills_sync.sh --pull` 即同步;本地改过的副本标为「自定义」,商店永不覆盖(`skills/README.md`)。
 
 ## 卸载(clean uninstall)
 

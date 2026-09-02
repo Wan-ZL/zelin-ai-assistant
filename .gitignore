@@ -45,3 +45,10 @@ promo/package-lock.json
 # from the git tag at install/build/release time; the tag is the truth, never a
 # committed file.
 act/_version.py
+
+# Claude Code's own runtime files under the project .claude/ (bg-session
+# worktrees, locks, local settings) never enter the repo; the ONE tracked entry
+# is .claude/skills/ — relative symlinks that make the default_enabled store
+# skills project-visible to every session and dispatched agent (CONTRACT §65).
+.claude/*
+!.claude/skills/

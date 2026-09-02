@@ -296,3 +296,74 @@
 .settings-check input {
   accent-color: var(--accent);
 }
+
+/* ----- Skills（§65 skill 商店）：一行一个仓库 skill ------------------------------ */
+.skills-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skill-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: var(--border-hairline) solid var(--border);
+}
+
+.skill-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skill-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-row-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.skill-row-version {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.skill-row-badge {
+  font: var(--type-chip);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.skill-row-badge.is-enabled { background: var(--success-soft); color: var(--success); }
+.skill-row-badge.is-copy { background: var(--info-soft); color: var(--info); }
+.skill-row-badge.is-custom { background: var(--warning-soft); color: var(--warning); }
+.skill-row-badge.is-foreign { background: var(--danger-soft); color: var(--danger); }
+.skill-row-badge.is-project { background: var(--purple-soft); color: var(--purple); }
+.skill-row-badge.is-default { background: var(--accent-soft-quiet); color: var(--accent); }
+
+.skill-row-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.skill-row > .btn {
+  flex: none;
+  margin-top: 2px;
+}
