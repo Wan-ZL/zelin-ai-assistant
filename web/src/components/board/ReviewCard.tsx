@@ -56,7 +56,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
         {card.delivered_summary ? (
           <>
             {/* v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文 */}
-            <div className="card-detail-heading">{text("交付了什么：", "Delivered:")}</div>
+            <div className="card-detail-subheading">{text("交付了什么：", "Delivered:")}</div>
             <BodyText value={card.delivered_summary} />
             <BodyText value={card.summary} className="card-detail-muted" />
           </>

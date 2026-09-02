@@ -1,19 +1,11 @@
-// 第 5 节 Typography & spacing：现役字号/字重梯（值抄自 board.css / shell.css，
-// 系统字体栈见 tokens.css :root）、文字四层 token、间距与圆角梯、阴影 token。
+// 第 5 节 Typography & spacing：字号/字重梯逐行渲染自 styles/typeScale.ts（原生看板角色 →
+// Swift 源行 → tokens.css --type-* token），每行用 `font: var(token)` 真渲染，token 一改本页即变；
+// 另有文字四层 token、间距与圆角梯、阴影 token。
 // 双主题注：本页与看板同一棵 token 树——顶栏 ThemeToggle（真组件）切 data-theme，
 // 全部活色块/样本立即跟随；light / dark 各看一遍即完成核对。
 import { useI18n } from "../../i18n";
+import { TYPE_SCALE, WEIGHT_OF } from "../../styles/typeScale";
 import { SpecimenNote } from "./SpecimenNote";
-
-const TYPE_SCALE: Array<{ px: number; weight: number; zh: string; en: string }> = [
-  { px: 15, weight: 600, zh: "详情摘要（Mac 卡面 15pt 语义的 web 对应，DetailDrawer）", en: "Detail summary (DetailDrawer)" },
-  { px: 14, weight: 600, zh: "顶栏标题 .shell-title / 弹窗标题 .zai-dialog h2", en: "Shell title / dialog heading" },
-  { px: 13, weight: 600, zh: "列头 .column-header", en: "Lane header .column-header" },
-  { px: 12, weight: 600, zh: "卡标题 .card-title", en: "Card title .card-title" },
-  { px: 12, weight: 400, zh: "卡摘要 .card-summary / 弹窗正文 / 输入框", en: "Card summary / dialog body / inputs" },
-  { px: 11, weight: 400, zh: "说明行 .card-line / 列帮助 .column-help / 按钮 .btn", en: "Card line / lane help / buttons" },
-  { px: 10, weight: 400, zh: "卡号 .card-id（tabular-nums）/ chip 文字", en: "Card id (tabular-nums) / chip text" },
-];
 
 const TEXT_TOKENS = ["--text-primary", "--text-secondary", "--text-tertiary", "--text-quaternary"];
 const SPACING = [4, 6, 8, 12, 16, 20];
@@ -23,15 +15,43 @@ export function TypographySection() {
   const { text } = useI18n();
   return (
     <div className="sg-grid">
-      <figure className="sg-specimen">
-        {TYPE_SCALE.map((row) => (
-          <p key={`${row.px}-${row.weight}-${row.zh}`} className="sg-type-row" style={{ fontSize: row.px, fontWeight: row.weight }}>
-            {row.px}px / {row.weight} — {text(row.zh, row.en)}
-          </p>
-        ))}
+      <figure className="sg-specimen sg-specimen-wide">
+        <table className="sg-ref-table sg-type-table">
+          <thead>
+            <tr>
+              <th>{text("样本（font: var(token) 真渲染）", "Sample (rendered with font: var(token))")}</th>
+              <th>{text("原生角色", "Native role")}</th>
+              <th>{text("Swift 源行", "Swift source")}</th>
+              <th>token</th>
+              <th>{text("值", "Value")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {TYPE_SCALE.map((row) => (
+              <tr key={row.token} className="sg-type-row">
+                <td>
+                  <span className="sg-type-sample" style={{ font: `var(${row.token})` }}>
+                    {text("看板 Board 文字 Aa 0123", "Board 看板 text Aa 0123")}
+                  </span>
+                </td>
+                <td>{text(row.zh, row.en)}</td>
+                <td>
+                  <code>
+                    {row.swift.file}:{row.swift.line}
+                  </code>
+                  <div className="sg-note">
+                    {row.swift.size}pt · {row.swift.weight} ({WEIGHT_OF[row.swift.weight]}){row.swift.mono ? " · monospaced" : ""}
+                  </div>
+                </td>
+                <td><code>{row.token}</code></td>
+                <td><code>{row.font}</code></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <SpecimenNote
-          zh="字号梯（board.css / shell.css 现役值）；字体 = tokens.css :root 系统栈（-apple-system → PingFang SC …）"
-          en="Type scale (live values from board.css / shell.css); font = the tokens.css :root system stack (-apple-system → PingFang SC …)"
+          zh="字号/字重梯逐字镜像原生看板（mac/Sources，D3 冻结规格；1pt = 1px，SF regular/medium/semibold/bold = 400/500/600/700）。truth = tokens.css 的 type-scale 块；本表来自 styles/typeScale.ts；typeScale.test.ts 钉 CSS ↔ 表，tests/test_web_type_scale_mirror.py 钉 表 ↔ Swift 源行。字体 = tokens.css --font-sans 系统栈（-apple-system → PingFang SC …）。"
+          en="Type scale mirrors the native board verbatim (mac/Sources, the frozen D3 spec; 1pt = 1px, SF regular/medium/semibold/bold = 400/500/600/700). Truth = the type-scale block in tokens.css; this table comes from styles/typeScale.ts; typeScale.test.ts pins CSS ↔ table and tests/test_web_type_scale_mirror.py pins table ↔ Swift source line. Font = the tokens.css --font-sans system stack (-apple-system → PingFang SC …)."
         />
       </figure>
       <figure className="sg-specimen">
@@ -41,8 +61,8 @@ export function TypographySection() {
           </p>
         ))}
         <SpecimenNote
-          zh="文字四层（对应 Mac .primary/.secondary 透明度层）：primary 正文 / secondary 说明 / tertiary 弱化 / quaternary 卡号与空态"
-          en="Four text layers (Mac's .primary/.secondary opacity ladder): primary body / secondary notes / tertiary muted / quaternary card ids & empty states"
+          zh="文字四层 ← 原生颜色映射：.primary → primary / .secondary → secondary（列头、meta、复制行、展开详情 都是它）/ .secondary.opacity(0.85) → tertiary（卡 id、引文）/ .secondary.opacity(0.7/0.55) → quaternary（空列）。色值本身不动（owner 验收过的白底对比度阶梯）。"
+          en="Four text layers ← native color mapping: .primary → primary / .secondary → secondary (lane heads, meta, copy line, details all use it) / .secondary.opacity(0.85) → tertiary (card id, quotes) / .secondary.opacity(0.7/0.55) → quaternary (empty lanes). The hex values themselves are unchanged (owner-approved contrast ladder)."
         />
       </figure>
       <figure className="sg-specimen">

@@ -67,8 +67,8 @@ export function StyleguidePage() {
       <Section
         title={text("3 · Chips / labels", "3 · Chips / labels")}
         note={text(
-          "chip 是 board.css class 约定（.chip / -accent / -warning / -danger / -success / -purple / -notice + 权重档 -quiet / 描边档 -outline；抽屉侧 zai-chip--improves/--merged），文案与词表和宿主组件同源；origin_trust 与 effective-tier 升档已立法未接线，按规划形态标 ⚠️ 展示。",
-          "Chips are board.css class conventions (.chip / -accent / -warning / -danger / -success / -purple / -notice plus the -quiet weight and -outline steps; drawer-side zai-chip--improves/--merged) sharing labels and tables with their host components; origin_trust and effective-tier escalation are ratified but not wired yet, shown as ⚠️ planned shapes.",
+          "chip 是 board.css class 约定（.chip / -accent / -warning / -danger / -success / -purple / -notice + 底色档 -quiet / 描边档 -outline；抽屉侧 zai-chip--improves/--merged），文案与词表和宿主组件同源；origin_trust 与 effective-tier 升档已立法未接线，按规划形态标 ⚠️ 展示。",
+          "Chips are board.css class conventions (.chip / -accent / -warning / -danger / -success / -purple / -notice plus the -quiet tint and -outline steps; drawer-side zai-chip--improves/--merged) sharing labels and tables with their host components; origin_trust and effective-tier escalation are ratified but not wired yet, shown as ⚠️ planned shapes.",
         )}
       >
         <ChipsSection />

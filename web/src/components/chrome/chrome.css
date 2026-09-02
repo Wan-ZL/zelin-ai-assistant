@@ -119,8 +119,7 @@
   border: var(--border-hairline) solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
-  font: inherit;
-  font-size: 12.5px;
+  font: var(--type-header-control);
   padding: 5px 10px;
   border-radius: 8px;
   width: 200px;
@@ -134,10 +133,11 @@
 }
 
 .chrome-search::placeholder {
-  color: var(--text-quaternary);
+  color: var(--text-secondary);
+  opacity: 1;
 }
 
-/* ----- 潜在任务折叠侧条（debt / Backlog strip） ----------------------------- */
+/* ----- 潜在任务折叠侧条（debt / Backlog strip）——列头字号字重同原生 SectionHeader / collapsedStrip（12 semibold 次级 + 11 bold 计数胶囊） ----- */
 .backlog-strip {
   display: flex;
   flex-direction: column;
@@ -151,9 +151,7 @@
   border: none;
   background: none;
   color: var(--text-secondary);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
+  font: var(--type-lane-title);
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -192,8 +190,17 @@
 }
 
 .backlog-strip-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-active);
   color: var(--status-backlog);
+  font: var(--type-lane-count);
   font-variant-numeric: tabular-nums;
+}
+
+/* 竖排收起态：胶囊跟着竖排会被拉长，改回横排数字 */
+.backlog-strip.is-collapsed .backlog-strip-count {
+  writing-mode: horizontal-tb;
 }
 
 .backlog-strip-list {
@@ -214,8 +221,7 @@
   border-radius: 8px;
   box-shadow: var(--card-shadow);
   padding: 8px 10px;
-  font: inherit;
-  font-size: 12.5px;
+  font: var(--type-card-title);
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -225,16 +231,12 @@
   background: var(--surface-hover);
 }
 
-.backlog-row-title {
-  font-weight: 500;
-}
-
 .backlog-row-meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-tertiary);
-  font-size: 11px;
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
 }
 
 /* ----- 卡片排序（原生 Settings「卡片排序」Picker 的 web 落点，顶栏工具条末尾） ----- */
@@ -270,8 +272,7 @@
   align-items: center;
   border-radius: 4px;
   padding: 1px 5px;
-  font-size: 10px;
-  font-weight: 600;
+  font: var(--type-chip);
   background: var(--surface-muted);
   color: var(--text-secondary);
 }
@@ -344,11 +345,11 @@
   gap: 8px;
 }
 
+/* 回收站行：标题 / meta 同原生 TrashRow（12 medium · 10 次级） */
 .trash-row-text {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 500;
+  font: var(--type-card-title);
 }
 
 .trash-row-meta {
@@ -356,8 +357,8 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  color: var(--text-tertiary);
-  font-size: 11px;
+  color: var(--text-secondary);
+  font: var(--type-card-meta);
 }
 
 .trash-row-purge {
@@ -366,7 +367,7 @@
 
 .trash-row-purge.is-imminent {
   color: var(--danger);
-  font-weight: 600;
+  font: var(--type-detail-subheading);
 }
 
 .trash-row-purge.is-pinned {
@@ -383,8 +384,7 @@
   border: var(--border-hairline) solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
+  font: var(--type-button);
   padding: 4px 10px;
   border-radius: 7px;
   cursor: pointer;
@@ -411,7 +411,7 @@
 
 .trash-empty {
   color: var(--text-tertiary);
-  font-size: 12.5px;
+  font: var(--type-lane-empty);
   padding: 18px 0;
   text-align: center;
 }

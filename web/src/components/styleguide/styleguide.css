@@ -155,6 +155,19 @@
   line-height: 1.4;
 }
 
+/* 字号梯对照表横跨整个 specimen 网格；样本列不换行、按 token 真渲染 */
+.sg-specimen-wide {
+  grid-column: 1 / -1;
+}
+
+.sg-type-table td:first-child {
+  white-space: nowrap;
+}
+
+.sg-type-sample {
+  color: var(--text-primary);
+}
+
 .sg-spacing-row {
   display: flex;
   flex-wrap: wrap;

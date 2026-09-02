@@ -114,8 +114,8 @@ export function ChipsSection() {
         { className: "chip chip-warning", zh: "↩︎ 回锅", en: "↩︎ Returned" },
         { className: "chip chip-warning chip-quiet", zh: "被提×3", en: "Raised ×3" },
       ],
-      noteZh: "回锅是状态警示（重档 .chip-warning）；被提×N 是 lineage 计数（.chip-quiet 安静档 → --warning-soft-quiet）——同 hue 两档权重",
-      noteEn: "Returned is a state alert (heavy .chip-warning); Raised ×N is a lineage counter (.chip-quiet → --warning-soft-quiet) — one hue, two weights",
+      noteZh: "回锅是状态警示（重档 .chip-warning）；被提×N 是 lineage 计数（.chip-quiet 安静档 → --warning-soft-quiet）——同 hue 两档底色（字重同原生 Badge 一律 semibold）",
+      noteEn: "Returned is a state alert (heavy .chip-warning); Raised ×N is a lineage counter (.chip-quiet → --warning-soft-quiet) — one hue, two tints (weight stays semibold like the native Badge)",
     },
     {
       key: "lineage",
