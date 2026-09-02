@@ -38,6 +38,18 @@ app 每 5s 重读 dashboard.json，重跑 seeder 后最多等 5s 界面就换过
 - demo 期间点 ✅/❌ 只会往 `/tmp/assistant-demo/state/inbox/` 写文件（没有 actd 在读），
   无害；卡片不会真的动——视频里卡片的流动靠 `--scene` 换数据（见下）。
 
+## 英文数据（`--english` / `--lang en`）
+
+```bash
+python3 scripts/demo_seed.py /tmp/assistant-demo --english
+python3 scripts/demo_seed.py /tmp/assistant-demo --scene review --lang en
+```
+
+默认仍是中文（既有文档与脚本一字不改）。录英文版视频 / 截英文截图时加 `--english`
+（等价 `--lang en`）：同一份虚构数据集经一张「中文串 → 英文串」词表逐值替换，卡片
+id / 时间戳 / 列大小 / 校验结论与中文版完全一致，只有文字换了语言；输出里不含任何
+CJK 字符（`tests/test_demo_seed.py` 钉死——给数据集新加一条中文串而没补词表，测试就红）。
+
 ## 校验模式
 
 ```bash

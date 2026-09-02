@@ -16,12 +16,12 @@ AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 bash mac/build.sh
 
 # 3. Run the app against entirely fictional data — no keys, no recording:
-python3 scripts/demo_seed.py /tmp/assistant-demo
+python3 scripts/demo_seed.py /tmp/assistant-demo          # add --english for English demo data
 AIASSISTANT_HOME=/tmp/assistant-demo \
   "mac/build/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
 ```
 
-The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
+The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` and `--english` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
 
 What you need for what:
 
