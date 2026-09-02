@@ -27,15 +27,15 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <ProposalCard card={PROPOSAL_T1} />
         <SpecimenNote
-          zh="提案 T1（ProposalCard）：徽章全开——tier .chip-purple 粉紫、交付 .chip-purple、紧急截止 .chip-danger.chip-outline 红字、成本 .chip、被提×N .chip-warning.chip-quiet、green-sign / 回锅 .chip-warning、分歧行 .card-line.is-warning"
-          en="Proposal T1 (ProposalCard): full badge row — tier .chip-purple pink-magenta, deliver .chip-purple, urgent deadline .chip-danger.chip-outline red, cost .chip, raised ×N .chip-warning.chip-quiet, green-sign / returned .chip-warning, disagreement line .card-line.is-warning"
+          zh="提案 T1（ProposalCard）：徽章全开——tier .chip-purple 粉紫、交付 .chip-purple、紧急截止 .chip-danger.chip-outline 红字、成本 .chip、被提×N .chip-warning.chip-quiet、已并入×N .chip-purple.chip-quiet、green-sign / 回锅 .chip-warning、分歧行 .card-line.is-warning；落点行「📄 草稿落点: your-workbench（只出文档）」；id 右上角；详情默认收起（展开详情 ▸）"
+          en="Proposal T1 (ProposalCard): full badge row — tier .chip-purple pink-magenta, deliver .chip-purple, urgent deadline .chip-danger.chip-outline red, cost .chip, raised ×N .chip-warning.chip-quiet, folded ×N .chip-purple.chip-quiet, green-sign / returned .chip-warning, disagreement line .card-line.is-warning; target line “📄 Drafts land in: your-workbench”; id top-right; details collapsed by default (Details ▸)"
         />
       </figure>
       <figure className="sg-specimen">
         <ProposalCard card={PROPOSAL_T2} />
         <SpecimenNote
-          zh="提案 T2（ProposalCard）：批准弹键入确认（§41 confirmT2）；硬需求 .chip-danger（--danger / --danger-soft）"
-          en="Proposal T2 (ProposalCard): Approve opens typed confirm (§41 confirmT2); Hard chip .chip-danger (--danger / --danger-soft)"
+          zh="提案 T2（ProposalCard）：批准弹键入确认（§41 confirmT2）；硬需求 .chip-danger（--danger / --danger-soft）；落点行「🟠 修改现有: …（只提 draft PR）」.card-line.is-warning"
+          en="Proposal T2 (ProposalCard): Approve opens typed confirm (§41 confirmT2); Hard chip .chip-danger (--danger / --danger-soft); target line “🟠 Modify existing: … (draft PR only)” .card-line.is-warning"
         />
       </figure>
       <figure className="sg-specimen">
@@ -55,8 +55,8 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <RunningCard row={TASK_WORKING} />
         <SpecimenNote
-          zh="working 卡（RunningCard）：sheen 行 + steer 三态回执 chips + 告警行 .card-line.is-warning"
-          en="Working card (RunningCard): sheen row + tri-state steer chips + warning line .card-line.is-warning"
+          zh="working 卡（RunningCard）：运行时长（相对时间，hover 绝对）+ repo 章 .chip + sheen 行 + 单击复制指令 行 .card-copy-line + steer 三态回执 chips + 错误一句 .card-line.is-danger；出错 → 让 AI 修（.btn，POST /api/ai-fix）· 回答…（.btn-warning，comment/steer）· 停止"
+          en="Working card (RunningCard): run age (relative, absolute on hover) + repo chip .chip + sheen row + copy-command line .card-copy-line + tri-state steer chips + error line .card-line.is-danger; on error → Fix with AI (.btn, POST /api/ai-fix) · Answer… (.btn-warning, comment/steer) · Stop"
         />
       </figure>
       <figure className="sg-specimen">
@@ -69,15 +69,15 @@ export function CardsSection() {
       <figure className="sg-specimen">
         <ReviewCard card={REVIEW_FIXTURE} />
         <SpecimenNote
-          zh="review 卡（ReviewCard）：交付摘要 + DoD 验收清单 + 三动词（复制成稿仅 final_draft 非空时）"
-          en="Review card (ReviewCard): delivery summary + DoD checklist + three verbs (Copy final draft only with final_draft)"
+          zh="review 卡（ReviewCard）：meta 行 repo 章 + 耗时 + 已等待验收（自驱走表）+ 单击复制指令 行；交付摘要 / ☐ 验收清单在 展开详情；三动词（复制成稿仅 final_draft 非空时）"
+          en="Review card (ReviewCard): meta line repo chip + took + in review (live) + copy-command line; delivery summary / ☐ checklist behind Details ▸; three verbs (Copy final draft only with final_draft)"
         />
       </figure>
       <figure className="sg-specimen">
         <DoneCard row={TASK_DONE} />
         <SpecimenNote
-          zh="done 卡（DoneCard）：验收于 .chip-success（--success）+ 退回待验收 / 永久完成"
-          en="Done card (DoneCard): accepted chip .chip-success (--success) + Back to review / Done for good"
+          zh="done 卡（DoneCard）：已交付 .chip-success（--success）+ repo 章 + 验收于 <相对时间>（hover 绝对）+ 单击复制指令 行 + 退回待验收 / 永久完成"
+          en="Done card (DoneCard): Delivered .chip-success (--success) + repo chip + accepted <relative> (absolute on hover) + copy-command line + Back to review / Done for good"
         />
       </figure>
       <figure className="sg-specimen">

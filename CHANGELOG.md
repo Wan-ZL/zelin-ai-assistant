@@ -28,6 +28,27 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.17] - 2026-09-01
+
+v-next-2 D3（产品 = web 看板 + shell）：owner 对照原生看板逐项列出 web 看板的回归，本版全部补回——原生 `mac/Sources/Kanban.swift` / `Cards.swift` / `Store.swift` 是行为与外观规格（CONTRACT §54.1 parity 清单）。
+
+### Added
+- **列内排序（原生 `Store.sortCards`）**：newest（默认）/ oldest / deadline 三模式，按 id 数字后缀、不看前缀（`R-` / `P-` 同一把尺）、不可解析沉底、同后缀稳定；偏好键逐字镜像原生 `cardSortOrder`（localStorage）；顶栏「排序」select 三个选项文案 = 原生 Settings Picker。提案列 processing 占位钉顶不参与排序。
+- **展开详情 ▸ / 收起 ▾**：卡面默认只留标题行 + meta 行 + chips + 动作；plan / DoD（验收清单）/ 来源 / 正文 / 日志 / 指令 / 会话 ID 收进详情；展开态按卡 id 会话内记忆。
+- **卡面 chips / 行**（读投影既有字段，零新增投影键）：提案 §7 落点行三态（🟢 新建 repo / 📄 草稿落点: your-workbench（只出文档，不动任何代码）/ 🟠 修改现有）+ 「已并入×N」紫章；待验收 repo 章 + 耗时 + 已等待验收（自驱走表）；阶段性完成 已交付 章 + repo 章 + 验收于 <相对时间>；运行中 运行时长 + repo 章 + 已交付过·再运行；**单击复制指令** 行（web 无终端 endpoint → 只复制，文案如实、tooltip 带命令全文）。
+- **相对时间处处如原生**（19天前 / 2小时59分 / 刚刚），hover 绝对时间：`web/src/relativeTime.ts` 镜像 `RelativeTime.since / sinceEpoch / duration`；FreshnessLabel / DeployLabel / 回收站 / 归档共用。
+- **出错的运行卡**：红色错误一句 + 「让 AI 修」+ 「回答…」+ 「停止」。让 AI 修 = 新端点 `POST /api/ai-fix {card_id, lang?}`（server/ai_fix_launch.py：原生 `AIFix.launch` 的 server 落点，起 `act.ai_fix --open` 的 Terminal 修复会话；上下文只由 server 从投影行推导，客户端文本进不了 prompt；非 darwin / config 关闭 → 501）。回答… = `comment` 即 steer（`answer_input` 已退役 #119）。
+- **右侧书立条「🗄 永久性完成 · done for good <count>」**（原生 v0.33 第二根 collapsibleColumn）：默认收起、count = `counts.archived`、展开 = 搜索 + 行（你封存 / 自动封存、原来在：<列名>、相对时间）+ 「放回看板」（unarchive）。
+- **列头「?」说明**（原生 SectionHeader）：常显 ? 图标 + 点击气泡 / hover tooltip，文案来自新端点 `GET /api/lanes`（server/lanes.py = 列说明 server-owned 单源，防腐 #10；client 端不再内联第二份列说明）；替代列头下的整段说明。
+- **composer 占位文案回原生**：「一句话，AI 来研究并提案…」/「一句话，直接开跑（跳过提案）…」。
+- **卡 id 回右上角**（原生 idTag 位置）。
+
+### Changed
+- `server/app.py` 的 GET / POST JSON 路由改成表驱动（`_GET_JSON_ROUTES` / `_POST_JSON_ROUTES`），新端点不再往 `_route_get` / `_route_post` 堆 elif（§58 复杂度门；qa 账本对应两行按 shrink-only 收紧/划掉）。`board_source.locate_card` 公开投影行查找（防腐 #2：不跨模块引 `_私名`）。
+
+### Law
+- CONTRACT §49 路由表追加 `GET /api/lanes` / `POST /api/ai-fix`；**§54.1（新）** web 看板 parity 清单（九项，每项判例）。
+
 ## [0.48.16] - 2026-09-02
 
 首次 timer 实战暴露的部署环死锁（§56.5）：v0.48.12 的自动部署在 install.sh 第 6 步撞上 `crontab: tmp/tmp.<pid>: Operation not permitted`（launchd 会话缺 Full Disk Access——此前两次成功部署都发生在 owner 交互会话拉起的环境里，没暴露），cron step 记 fail → install 退出 1 → 回滚 → 回滚重装撞同一堵墙 → rollback_failed + sha 中毒，**所有后续部署停摆**（`--force` 也无解：重装还是会撞墙）。
@@ -2130,7 +2151,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.16...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.17...HEAD
+[0.48.17]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.16...v0.48.17
 [0.48.16]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.15...v0.48.16
 [0.48.15]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.14...v0.48.15
 [0.48.11]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.8...v0.48.11

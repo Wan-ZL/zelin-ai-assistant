@@ -3279,6 +3279,22 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   不可解析如实报 `parseable:false` 不 500）、`POST /api/claude-code/default-model
   {model}`（四闸；只改 `model` 键、先备份 `settings.json.bak-<UTC ts>`、其余键
   与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §59.4。
+- **v0.48.x 追加（§54 web 看板 parity，add-only）**：`GET /api/lanes`（列说明
+  文案的 **server-owned 目录**：`{"lanes":[{slug, help:{zh,en}}…]}`，slug =
+  dashboard 分区名，顺序 = 看板从左到右；文案单源 `server/lanes.py`，来源
+  `shared/Sources/Lanes.swift` LaneHelp + `ArchiveSectionView.helpCopy`；web 列头
+  「?」逐字镜像、按 UI 语言取键，client 端**不**内联第二份列说明（防腐 #10）；
+  token-light GET、`no-store`、不依赖 dashboard.json 存在）；`POST /api/ai-fix
+  {card_id, lang?}`（「让 AI 修」——原生 `AIFix.launch` 的 server 落点：**不是
+  inbox 动作**，起 `sys.executable -m act.ai_fix --open --context-file <f>`，
+  cwd 与 `AIASSISTANT_HOME` = server home，`lang` ∈ {zh,en} 经
+  `AIASSISTANT_UI_LANG` 传入；四闸；字段白名单 400 `UNKNOWN_FIELD`；**上下文
+  文本只由 server 从投影行推导**（`last_error` / `dispatch_error`，客户端文本进
+  不了 prompt）；投影查无此卡 404；非 darwin 501；act.ai_fix 退出码 2（config
+  `doctor.ai_fix_enabled: false`）→ 501 整句转出；其它非零 → 500 带输出尾巴
+  （长度 truth = `server/ai_fix_launch.py` `_OUTPUT_TAIL`）；成功 `{ok:true, command_file}`；子进程经 `runner` 注入缝，判例绝不
+  真起 act.ai_fix / claude）。判例：tests/test_server_lanes_catalog.py、
+  tests/test_server_ai_fix_launch.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -3293,6 +3309,9 @@ queued 灰卡 + needs_input 行排最前）；**没有拖拽换状态**——一
 （§41 confirmT2 + §50）；rework 空反馈复刻 §10 T-18 冻结字面量；HTML 交付物
 只经 `<iframe sandbox="allow-scripts">` 渲染（**永不 `allow-same-origin`**）。
 过滤/搜索是纯客户端展示行为、不产生 wire 动作，不入本契约（T-21）。
+原生看板行为与外观的继承清单（列内排序、详情收起、卡面 chips、相对时间、
+让 AI 修 / 回答…、永久性完成书立条、列头「?」、composer 文案、id 位置）见
+**§54.1**。
 
 **依赖澄清（宪法第 7 条执法注，T-3 裁 A 案：条文零改动）**：web/ 的 npm 依赖
 （运行时仅 `react`/`react-dom`；dev 限 `vite`/`@vitejs/plugin-react`/
@@ -3773,6 +3792,60 @@ tests/integration/test_store2_concurrent_writers.py；schema v1→v2 升级梯�
   从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、`ZAIServerRepo` 以构建
   所在 repo root 盖章（可移植：换机器/换 worktree 重跑 build.sh 即自洽）、
   ad-hoc codesign。`shell/build/` 进 .gitignore（构建产物永不入库）。
+
+### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
+
+产品 = web 看板 + shell（D3）；原生看板（`mac/Sources/Kanban.swift` /
+`Cards.swift` / `Store.swift`，退役前冻结）是 web 看板的**行为与外观规格**——
+颜色/标签/文案继承原生，wire 键逐字镜像（防腐 #10：client 不算 lane 语义、不
+翻译字段、文案进 server-owned catalog）。owner 2026-09-01 对照原生列出的回归
+项与其 web 落点（每项都有判例钉住）：
+
+1. **列内排序**（原生 `Store.sortCards`，v0.10.3 契约一）：每列按 id **数字后缀**
+   排序，三种模式 `newest`（默认，降序）/ `oldest`（升序）/ `deadline`（有期限
+   的先按 YYYY-MM-DD 升序，其余按 newest；行模型无 deadline 的列退化为
+   newest）；不看前缀（`R-` / `P-` / `MS-` 同一把尺，#135 两段 id 即天然兼容）；
+   不可解析 id 沉底保序；同后缀稳定。偏好名逐字镜像原生 UserDefaults 键
+   `cardSortOrder`（web：localStorage）；提案列 processing 占位钉顶不参与排序。
+   web：`web/src/cardSort.ts`，顶栏「排序」select（三个选项文案 = 原生 Settings
+   Picker）。判例 cardSort.test.ts / BoardLanes.test.tsx。
+2. **详情默认收起**（原生 `CardSurface` 详情槽）：卡面 = 标题行 + 一行 meta +
+   chips + 动作；plan / DoD（验收清单）/ 来源 / 正文 / 日志 / 指令 / 会话 ID 在
+   「展开详情 ▸ / 收起 ▾」之后；展开态按卡 id 在会话内记忆（`store.expandedCardIds`，
+   不持久化——原生 @State 同义）。判例 cardParity.test.tsx。
+3. **卡面 chips / 行**（全部读投影既有字段，零新增投影键）：提案 §7 落点行三态
+   （`target_kind` new → 「🟢 新建 repo: <name>」/ existing 且 basename 以
+   your-workbench 结尾 → 「📄 草稿落点: your-workbench（只出文档，不动任何代码）」/
+   existing → 「🟠 修改现有: <name>（只提 draft PR，不动主分支）」）与「已并入×N」
+   紫 quiet 章（`silent_merged` ≥ 1）；待验收 repo 章（`cwd` basename）+ 「耗时」
+   （dispatched_at→review_at）+ 「已等待验收」（review_at→now，自驱）；阶段性完成
+   「已交付」绿章 + repo 章 + 「验收于 <相对>」；运行中 运行时长（started_at ??
+   dispatched_at）+ repo 章 + 「已交付过·再运行」（`from_review`）；
+   **单击复制指令 行**（copy_cmd，其次 `claude --resume <session_id>`）——web 没有
+   终端 endpoint，故只复制、文案如实（「单击复制指令 · 粘贴到终端即可接管会话」，
+   tooltip = 命令全文），不承诺双击起终端。
+4. **相对时间**处处如原生（19天前 / 2小时59分 / 刚刚），hover 绝对时间：
+   `web/src/relativeTime.ts` 镜像 `RelativeTime.since / sinceEpoch / duration`
+   （回收站 trashed_at、归档 archived_at 同）。判例 relativeTime.test.ts。
+5. **出错的运行卡**（原生 `TaskRow.errorLine`）：红色错误一句（hover 全文，详情
+   有全文块）+ 「让 AI 修」（= `POST /api/ai-fix`，见 §49；**不是 inbox 动作**）+
+   「回答…」（`answer_input` 已退役 #119——web 的 回答… = `comment` 四键形即
+   steer，§44.3 中继）+ 「停止」。排队卡的派发失败只给 让 AI 修（无会话）；§4
+   刹车行给 让 AI 修 + 停止。
+6. **右侧书立条「🗄 永久性完成 · done for good <count>」**（原生 v0.33 第二根
+   collapsibleColumn）：默认收起、count = `counts.archived` 真实总数、展开 = 搜索
+   （title/summary）+ 行（你封存 / 自动封存、原来在：<列名>、相对时间）+ 「放回
+   看板」（`unarchive`）；与左侧潜在任务条同一开合行为；不是看板列（不进多选/
+   过滤）。判例 ArchiveStrip.test.tsx。
+7. **列头「?」说明**（原生 `SectionHeader`）：常显 ? 图标，点击即时气泡 / hover
+   tooltip，文案来自 `GET /api/lanes`（§49；目录未到不渲染，client 无第二份文案）；
+   替代此前列头下的整段说明。
+8. **composer 占位文案**逐字镜像原生 Composer.swift：提案「一句话，AI 来研究并
+   提案…」、运行中「一句话，直接开跑（跳过提案）…」。
+9. **卡 id 右上角**（原生 idTag：等宽小字，收起态可见）。
+
+不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
+回收站页、详情抽屉）保持不变。
 
 ## 55. launchd 模板路径纪律（v0.48.x；live 事故 2026-08-31）
 

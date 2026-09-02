@@ -41,8 +41,12 @@ describe("StyleguidePage", () => {
     expect(screen.getAllByRole("button", { name: "Approve" }).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByRole("button", { name: "Reject" }).length).toBeGreaterThanOrEqual(2);
     // RunningCard blocked / working、ReviewCard、DoneCard、DebtCardItem
-    // （#119：「回答…」已退役——blocked 卡只剩「停止」出口）
-    expect(screen.queryAllByRole("button", { name: "Answer…" }).length).toBe(0);
+    // （#119：answer_input 已退役——blocked 卡只剩「停止」(+ 让 AI 修) 出口；
+    // 「回答…」只回到出错的执行卡上，走 comment/steer 通道——原生 parity 项 5）
+    const answers = screen.queryAllByRole("button", { name: "Answer…" });
+    expect(answers.length).toBeGreaterThanOrEqual(1);
+    expect(answers.every((b) => !b.closest(".task-card")?.classList.contains("is-blocked"))).toBe(true);
+    expect(screen.getAllByRole("button", { name: "Fix with AI" }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole("button", { name: "Stop" }).length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByRole("button", { name: "Accept" }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole("button", { name: "Send Back" }).length).toBeGreaterThanOrEqual(1);

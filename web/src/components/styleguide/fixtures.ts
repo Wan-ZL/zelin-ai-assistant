@@ -19,6 +19,9 @@ export const PROPOSAL_T1: ApprovalCard = {
   disagreement: "两条来源对交付格式说法不一致。",
   reraised: true,
   reraised_note: "上轮暂缓后信号再次出现，重新出卡。",
+  silent_merged: 2,
+  target_kind: "existing",
+  target_repo: "/Users/zelin/Projects/your-workbench",
   processing: false,
   delivery_mode: "chat",
   sources: [{ who: "Zelin", channel: "manual", date: "2026-08-29", quote: "styleguide fixture" }],
@@ -36,6 +39,8 @@ export const PROPOSAL_T2: ApprovalCard = {
   hardness: "hard",
   cost_usd: 12,
   show_cost: true,
+  target_kind: "existing",
+  target_name: "zelin-ai-assistant",
   processing: false,
   sources: [],
   plan: ["备份现网配置", "灰度重启"],
@@ -71,6 +76,9 @@ export const TASK_WORKING: TaskRow = {
   state: "working",
   agent_name: "调研代号 Falcon",
   summary: "后台会话正在跑，卡面显示方向修正回执。",
+  cwd: "/Users/zelin/Projects/acme-site",
+  copy_cmd: "claude attach falcon",
+  started_at: Math.floor(Date.now() / 1000) - 2 * 3600 - 59 * 60,
   last_error: "上一轮重试自动恢复成功（示例告警行）。",
   steers: [
     { ts: "2026-08-30T10:00:00Z", text: "改用中文写", status: "queued" },
@@ -97,15 +105,21 @@ export const REVIEW_FIXTURE: ReviewCard = {
   final_draft: "（fixture 成稿正文——复制按钮拷贝的就是这段。）",
   dod: ["覆盖三条来源", "语气与旧稿一致"],
   delivery_mode: "chat",
+  cwd: "/Users/zelin/Projects/your-workbench",
+  copy_cmd: "cd '/Users/zelin/Projects/your-workbench' && claude --resume 0000-fixture",
+  dispatched_at: Math.floor(Date.now() / 1000) - 5 * 3600,
+  review_at: Math.floor(Date.now() / 1000) - 2 * 3600 - 10 * 60,
 };
 
 /** 阶段性完成卡：验收于 chip + 两动词 */
 export const TASK_DONE: TaskRow = {
   id: "SG-DONE",
   name: "阶段性完成的任务（fixture）",
-  state: "done",
+  state: "delivered",
   delivered_summary: "交付已验收，等对方反馈。",
-  accepted_at: 1_756_500_000, // 2026-08-29 前后
+  cwd: "/Users/zelin/Projects/acme-site",
+  copy_cmd: "claude --resume 1111-fixture",
+  accepted_at: Math.floor(Date.now() / 1000) - 19 * 86400,
 };
 
 /** 潜在任务（debt）卡：type + 硬需求 chips + 两动词 */

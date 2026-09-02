@@ -6,7 +6,7 @@ import { setApiText } from "./api";
 import { getI18n, LanguageContext } from "./i18n";
 import { readPage } from "./route";
 import { createBoardRealtime } from "./realtime";
-import { refreshBoard, refreshHealth, setConnection, useAppState } from "./store";
+import { refreshBoard, refreshHealth, refreshLanes, setConnection, useAppState } from "./store";
 import { AppShell } from "./components/shell/AppShell";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
@@ -28,6 +28,7 @@ export function App() {
   useEffect(() => {
     void refreshBoard();
     void refreshHealth();
+    void refreshLanes(); // 列头「?」说明文案（server-owned 目录，§54；静态，拉一次）
     const realtime = createBoardRealtime({
       onRefetch: () => void refreshBoard(),
       onConnectionChange: setConnection,

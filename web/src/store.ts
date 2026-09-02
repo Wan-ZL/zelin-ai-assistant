@@ -11,10 +11,12 @@ import {
   fetchCard,
   fetchClaudeCodeDefault,
   fetchHealth,
+  fetchLanes,
   fetchModelsSettings,
   postClaudeCodeDefault,
   putModelsSettings,
 } from "./api";
+import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
 import { resolveLanguage, type Language } from "./i18n";
 import {
   EMPTY_CARD_FILTERS,
@@ -27,6 +29,7 @@ import type {
   CardDetail,
   ClaudeCodeDefault,
   HealthSnapshot,
+  LaneCatalog,
   ModelsSettings,
 } from "./types";
 
@@ -46,6 +49,9 @@ export interface AppState {
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
   settingsError: string | null;   // 设置页读失败的用户可读文案（成功后清空；保存失败由页面 toast）
+  sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
+  expandedCardIds: ReadonlySet<string>; // 展开详情的卡 id（会话内记忆，不持久化——原生 @State 同义）
+  lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
 }
 
 const LANGUAGE_STORAGE_KEY = "zai.lang";
@@ -78,6 +84,9 @@ const initialState: AppState = {
   models: null,
   claudeCodeDefault: null,
   settingsError: null,
+  sortOrder: readSortOrder(),
+  expandedCardIds: new Set<string>(),
+  lanes: null,
 };
 
 let state: AppState = initialState;
@@ -179,6 +188,32 @@ export function clearFilters() {
   setFilters(EMPTY_CARD_FILTERS);
 }
 
+// ----- 看板展示偏好（原生 parity：排序 / 展开详情 / 列说明） -------------------- #
+
+/** 改卡片排序偏好并持久化（localStorage cardSortOrder，原生同名 UserDefaults 键） */
+export function setSortOrder(sortOrder: SortOrder) {
+  writeSortOrder(sortOrder);
+  if (state.sortOrder !== sortOrder) setState({ sortOrder });
+}
+
+/** 展开/收起一张卡的详情（会话内记忆：切页/回流不丢，刷新页面即复位） */
+export function toggleCardExpanded(cardId: string) {
+  const next = new Set(state.expandedCardIds);
+  if (next.has(cardId)) next.delete(cardId);
+  else next.add(cardId);
+  setState({ expandedCardIds: next });
+}
+
+/** 拉一次列说明目录（server 常量；失败保留 null——列头只是少个「?」，不双报） */
+export async function refreshLanes(): Promise<void> {
+  try {
+    const lanes = await fetchLanes();
+    setState({ lanes });
+  } catch {
+    /* 离线由 ErrorBanner 声明 */
+  }
+}
+
 // ----- settings（§59 设置页） ---------------------------------------------- #
 
 /** 拉设置页「模型」的两份快照（旋钮 + Claude Code 全局默认）；读失败落 settingsError */
@@ -212,6 +247,6 @@ export async function setClaudeCodeDefaultModel(model: string): Promise<string |
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */
 export function resetStoreForTests() {
-  state = initialState;
+  state = { ...initialState, sortOrder: readSortOrder(), expandedCardIds: new Set<string>() };
   boardRequest = null;
 }

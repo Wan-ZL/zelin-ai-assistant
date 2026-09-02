@@ -1,40 +1,49 @@
 // 阶段性完成卡（completed 分区项，delivered）：两动词——
 //   退回待验收（revert_review：可能对方反馈来了要再看）·
 //   永久完成（archive → 封存，确认弹窗文案统一用「永久完成」，§41）。
+// 卡面（原生 TaskRow lane=.completed 收起态）：已交付 章（绿）· repo 章 · 验收于 <相对时间> ·
+//   单击复制指令 行；「展开详情 ▸」后：交付摘要 / 摘要 / 怎样算办完 / 指令 / 会话 ID。
 import { useState } from "react";
-import { displayId, isLegacyId } from "../../cardId";
+import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { TaskRow } from "../../types";
 import { cardAction, openCardDetail, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CopyCommandLine, DetailsToggle, RelativeTime, RepoChip } from "./cardChrome";
+import { BodyText, CopyPathLine, DodList, MetaLine } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
+import { resumeCommand, stateLabel } from "./RunningCard";
 
 interface DoneCardProps {
   row: TaskRow;
 }
 
 export function DoneCard({ row }: DoneCardProps) {
-  const { text, locale } = useI18n();
+  const { text } = useI18n();
   const { pending, error, submit } = useSubmit();
   const [confirmArchive, setConfirmArchive] = useState(false);
 
-  const acceptedAt = typeof row.accepted_at === "number"
-    ? new Date(row.accepted_at * 1000).toLocaleDateString(locale)
-    : null;
+  const title = typeof row.display_title === "string" && row.display_title ? row.display_title : row.name;
+  const cmd = resumeCommand(row);
 
   const shownId = displayId(row);   // §60：展示工作编号；动作仍送主键 row.id
 
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(row.id)}>
-      <div className={isLegacyId(row) ? "card-id card-id-legacy" : "card-id"}>{shownId}</div>
-      <div className="card-title">{row.name}</div>
-      {(row.delivered_summary || row.summary) && (
-        <p className="card-summary">{row.delivered_summary ?? row.summary}</p>
-      )}
-      {acceptedAt && (
-        <div className="card-badges">
-          <span className="chip chip-success">{text(`验收于 ${acceptedAt}`, `accepted ${acceptedAt}`)}</span>
-        </div>
-      )}
+      <CardHead card={row} title={title} leading={<span className="card-dot is-done" aria-hidden="true" />} />
+      <div className="card-badges">
+        {/* 原生 completed 行：状态章 已交付（绿 accent）· 验收于 <相对> · repo 章 */}
+        <span className="chip chip-success">{stateLabel(row.state === "done" ? "delivered" : row.state, text)}</span>
+        <RepoChip path={row.cwd} />
+        <RelativeTime epoch={row.accepted_at} prefix={text("验收于 ", "accepted ")} />
+      </div>
+      <CopyCommandLine cmd={cmd} />
+      <CardDetails cardId={row.id}>
+        <BodyText value={row.delivered_summary} />
+        <BodyText value={row.summary} className={row.delivered_summary ? "card-detail-muted" : "card-summary"} />
+        <DodList dod={row.dod} />
+        <CopyPathLine label={text("指令：", "Command: ")} path={cmd} />
+        <MetaLine label={text("会话 ID：", "Session ID: ")} value={row.short_id ?? row.session_id} />
+      </CardDetails>
       {pending ? (
         <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
       ) : (
@@ -50,6 +59,7 @@ export function DoneCard({ row }: DoneCardProps) {
           <button type="button" className="btn" onClick={() => setConfirmArchive(true)}>
             {text("永久完成", "Done for good")}
           </button>
+          <DetailsToggle cardId={row.id} />
         </div>
       )}
       {error && <p className="card-error">{error}</p>}

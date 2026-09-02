@@ -5,11 +5,13 @@
 // 客户端合成码：READ_FAILED（读失败，UI 静默重试）/ SERVICE_UNAVAILABLE（写失败，UI 明确报错）。
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
 import type {
+  AiFixReceipt,
   Board,
   CardDetail,
   ClaudeCodeDefault,
   ClaudeCodeDefaultWrite,
   HealthSnapshot,
+  LaneCatalog,
   ModelsSettings,
 } from "./types";
 
@@ -144,6 +146,23 @@ export function postReveal(cardId: string): Promise<unknown> {
   return request<unknown>("/api/reveal", {
     method: "POST",
     body: JSON.stringify({ card_id: cardId }),
+  });
+}
+
+/** GET /api/lanes — 列说明文案目录（server-owned，§54；静态内容，进程内拉一次即可） */
+export function fetchLanes(signal?: AbortSignal): Promise<LaneCatalog> {
+  return request<LaneCatalog>("/api/lanes", { signal });
+}
+
+/**
+ * POST /api/ai-fix — 「让 AI 修」：server 从投影行推导错误上下文并起
+ * act.ai_fix 的 Terminal 修复会话（§54）。客户端只传 card_id + UI 语言，
+ * 绝不传错误文本（server 端不接受）。非 darwin / config 关闭 → 501。
+ */
+export function postAiFix(cardId: string, lang: "zh" | "en"): Promise<AiFixReceipt> {
+  return request<AiFixReceipt>("/api/ai-fix", {
+    method: "POST",
+    body: JSON.stringify({ card_id: cardId, lang }),
   });
 }
 

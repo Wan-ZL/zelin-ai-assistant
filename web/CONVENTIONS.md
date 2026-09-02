@@ -21,6 +21,8 @@
 
 ## i18n / 主题 / 路由
 - 所有用户可见文案：`const { text } = useI18n()` → `text("中文", "English")` 内联对。固定枚举词表（列名/tier/动词）加到 `i18n.ts` 的 Record 表（仿 dashi STATUS_LABELS）。
+- **server-owned 文案不落 client**（防腐十条 #10）：列说明（`GET /api/lanes`，store.lanes）、canonical 模型列表等由 server 目录给 zh/en 两键，组件按 `language` 取键、逐字镜像，绝不在 client 再写一份。原生看板（mac/Sources，冻结）是文案与行为规格——CONTRACT §54.1 是 parity 清单。
+- 相对时间一律经 `relativeTime.ts`（刚刚/N分钟前/N小时前/N天前 + 时长 N小时M分），hover `title` 给绝对时间；卡片排序经 `cardSort.ts`（偏好键 `cardSortOrder`）。
 - 颜色/阴影/字体只用 `var(--...)` token。暗色自动生效（data-theme 覆写 + prefers-color-scheme 兜底，见 tokens.css 头注释）；列语义→token 映射也在那条注释里。主题切换组件写 `localStorage["zai.theme"]` + `document.documentElement.dataset.theme`。
 - 深链只经 `route.ts`（`?page=` + `?card=`）；抽屉开合调 `selectCard(id|null)` 并用 `history.replaceState(buildAppUrl(...))` 同步 URL。过滤器序列化独立成 `taskFilters.ts`（A8）。
 

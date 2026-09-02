@@ -1,12 +1,17 @@
-// 待验收卡（review 分区项）：交付摘要 + DoD 验收清单 + 三动词——
+// 待验收卡（review 分区项）：三动词——
 //   验收（accept → 阶段性完成）· 打回（rework，反馈弹窗；留空时客户端替换成
 //   Mac 同款自查指令字面量，见 boardActions.REWORK_EMPTY_FALLBACK）·
 //   复制成稿（final_draft 非空时，剪贴板 + 1.5s「已复制 ✓」回执，纯客户端）。
+// 卡面（原生 ReviewRow 收起态的 meta 行）：会话有新活动（青）· repo 章 · 耗时 <dispatched→review> ·
+//   已等待验收 <review→now，自驱走表> · 单击复制指令 行；「展开详情 ▸」后：交付了什么 /
+//   摘要 / ☐ 验收清单（§11：永远渲染，空给兜底句）/ 📋 要做什么 / 💬 需求来自 / 日志 / 指令。
 import { useEffect, useRef, useState } from "react";
-import { displayId, isLegacyId } from "../../cardId";
+import { displayId } from "../../cardId";
 import { useI18n } from "../../i18n";
 import type { ReviewCard as ReviewCardRow } from "../../types";
 import { cardAction, openCardDetail, REWORK_EMPTY_FALLBACK, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, CopyCommandLine, DetailsToggle, DurationText, RepoChip } from "./cardChrome";
+import { BodyText, CopyPathLine, DodList, MetaLine, PlanList, SourceList } from "./detailBlocks";
 import { TextDialog } from "./TextDialog";
 
 interface ReviewCardProps {
@@ -33,26 +38,38 @@ export function ReviewCard({ card }: ReviewCardProps) {
     });
   };
 
+  const title = typeof card.display_title === "string" && card.display_title ? card.display_title : card.name;
+
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(card.id)}>
-      {/* §60：展示工作编号（待验收卡必经 approved，恒有）；动作仍送主键 card.id */}
-      <div className={isLegacyId(card) ? "card-id card-id-legacy" : "card-id"}>{displayId(card)}</div>
-      <div className="card-title">{card.name}</div>
-      {card.delivered_summary && <p className="card-summary">{card.delivered_summary}</p>}
-      {card.dod.length > 0 ? (
-        <div className="card-line">
-          {text("验收清单——逐条对照：", "Acceptance checklist:")}
-          <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
-            {card.dod.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <p className="card-line">
-          {text("该任务未定义验收标准，请自行判断", "No acceptance criteria defined; use your judgement")}
-        </p>
-      )}
+      <CardHead card={card} title={title} leading={<span className="card-dot is-review" aria-hidden="true" />} />
+      <div className="card-badges">
+        {/* §30 会话再活跃：只是平静地标注，不是打回轮（原生 teal 章） */}
+        {card.session_active && <span className="chip chip-accent">{text("会话有新活动", "Session active")}</span>}
+        {card.interrupted === true && <span className="chip chip-warning">{text("中断收割", "Interrupted")}</span>}
+        <RepoChip path={card.cwd} />
+        <DurationText from={card.dispatched_at} to={card.review_at} prefix={text("耗时 ", "took ")} />
+        <DurationText from={card.review_at} prefix={text("已等待验收 ", "in review ")} />
+      </div>
+      <CopyCommandLine cmd={card.copy_cmd} />
+      <CardDetails cardId={card.id}>
+        {card.delivered_summary ? (
+          <>
+            {/* v0.10：执行器实际交付的 = 正文；审批时摘要降为灰色上下文 */}
+            <div className="card-detail-heading">{text("交付了什么：", "Delivered:")}</div>
+            <BodyText value={card.delivered_summary} />
+            <BodyText value={card.summary} className="card-detail-muted" />
+          </>
+        ) : (
+          <BodyText value={card.summary} />
+        )}
+        <DodList dod={card.dod} heading={text("验收清单——逐条对照：", "Acceptance checklist:")} checklist />
+        <PlanList plan={card.plan} />
+        <SourceList sources={card.sources} />
+        <CopyPathLine label={text("日志：", "Log: ")} path={card.log} />
+        <CopyPathLine label={text("指令：", "Command: ")} path={card.copy_cmd} />
+        <MetaLine label={text("claude agents 列表名：", "claude agents list name: ")} value={card.agent_name} />
+      </CardDetails>
       {pending ? (
         <p className="card-pending-note">{text("已提交…", "Submitted…")}</p>
       ) : (
@@ -73,6 +90,7 @@ export function ReviewCard({ card }: ReviewCardProps) {
               {copied ? text("已复制 ✓", "Copied ✓") : text("复制成稿", "Copy final draft")}
             </button>
           )}
+          <DetailsToggle cardId={card.id} />
         </div>
       )}
       {error && <p className="card-error">{error}</p>}

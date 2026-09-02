@@ -4,6 +4,7 @@
 // Mac 版用 TimelineView 15s tick，这里等价用 setInterval(15s) 自驱重算。
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
+import { relativeAge } from "../../relativeTime";
 import { useAppState } from "../../store";
 
 const TICK_MS = 15_000;
@@ -16,14 +17,8 @@ export function parseGeneratedAt(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-/** 相对时间档位（刚刚/N分钟前/N小时前/N天前）——新鲜度标签与 §56 部署标签共用同一套文案 */
-export function relativeAge(ageSeconds: number, text: (zh: string, en: string) => string): string {
-  if (ageSeconds < 60) return text("刚刚", "just now");
-  const mins = Math.floor(ageSeconds / 60);
-  if (mins < 60) return text(`${mins}分钟前`, `${mins}m ago`);
-  if (mins < 60 * 24) return text(`${Math.floor(mins / 60)}小时前`, `${Math.floor(mins / 60)}h ago`);
-  return text(`${Math.floor(mins / 1440)}天前`, `${Math.floor(mins / 1440)}d ago`);
-}
+/** 相对时间档位（刚刚/N分钟前/N小时前/N天前）——单源在 relativeTime.ts，这里 re-export 保住既有 import 面 */
+export { relativeAge } from "../../relativeTime";
 
 export function FreshnessLabel() {
   const { text } = useI18n();

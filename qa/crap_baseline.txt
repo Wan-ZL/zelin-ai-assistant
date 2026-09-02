@@ -350,8 +350,7 @@ act/weekly_digest.py::run 15
 server/app.py::Handler._check_auth 7
 server/app.py::Handler._dispatch 10.7
 server/app.py::Handler._read_json_body 7.4
-server/app.py::Handler._route_get 11
-server/app.py::Handler._route_post 11
+server/app.py::Handler._route_get 9
 server/app.py::Handler._serve_events 6.1
 server/app.py::Handler._serve_static 27.4
 server/app.py::main 9.9

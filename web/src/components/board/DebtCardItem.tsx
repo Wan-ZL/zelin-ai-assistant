@@ -1,10 +1,12 @@
 // 潜在任务卡（debt 行；经 chrome/BacklogStrip 的 renderCard 缝注入——侧条开合归 G4，
 // 本组件只管卡面 + 两个动词，Mac DebtRow 同款）：
 //   研究并提议（raise → AI 扩写成提案）· 删除（trash → 回收站，可恢复，不弹确认）。
-import { displayId, isLegacyId } from "../../cardId";
+// 卡面：摘要标题 + type / 硬需求 章；「展开详情 ▸」后：技术标题 + 💬 需求来自。
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { DebtCard } from "../../types";
 import { cardAction, openCardDetail, useSubmit } from "./boardActions";
+import { CardDetails, CardHead, DetailsToggle } from "./cardChrome";
+import { SourceList } from "./detailBlocks";
 
 interface DebtCardItemProps {
   item: DebtCard;
@@ -13,18 +15,20 @@ interface DebtCardItemProps {
 export function DebtCardItem({ item }: DebtCardItemProps) {
   const { text, language } = useI18n();
   const { pending, error, submit } = useSubmit();
-  const summary = typeof item["summary"] === "string" ? (item["summary"] as string) : null;
+  const summary = typeof item.summary === "string" && item.summary ? item.summary : item.title;
+  const displayTitle = typeof item.display_title === "string" && item.display_title ? item.display_title : summary;
 
   return (
     <article className="task-card" onDoubleClick={() => openCardDetail(item.id)}>
-      {/* §60：备选卡没有工作编号——显示 P- 主键；legacy R 主键灰显 */}
-      <div className={isLegacyId(item) ? "card-id card-id-legacy" : "card-id"}>{displayId(item)}</div>
-      <div className="card-title">{item.title}</div>
-      {summary && <p className="card-line">{summary}</p>}
+      <CardHead card={item} title={displayTitle} leading={<span className="card-dot is-backlog" aria-hidden="true" />} />
       <div className="card-badges">
         {item.type && <span className="chip">{domainLabel(TYPE_LABELS, language, item.type)}</span>}
         {item.hardness === "hard" && <span className="chip chip-danger">{text("硬需求", "Hard")}</span>}
       </div>
+      <CardDetails cardId={item.id}>
+        {item.title !== displayTitle && <p className="card-detail-muted">{item.title}</p>}
+        <SourceList sources={item.sources} />
+      </CardDetails>
       {pending ? (
         <p className="card-pending-note">
           {text("已提交，AI 分析中（通常 2-3 分钟）", "Submitted; AI is researching (usually 2-3 min)")}
@@ -46,6 +50,7 @@ export function DebtCardItem({ item }: DebtCardItemProps) {
           >
             {text("删除", "Delete")}
           </button>
+          <DetailsToggle cardId={item.id} />
         </div>
       )}
       {error && <p className="card-error">{error}</p>}

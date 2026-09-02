@@ -1,0 +1,183 @@
+// 卡面共用小件——镜像原生 CardSurface（mac/Sources/Cards.swift）的几样 chrome：
+//   CardHead：标题行 + 右上角等宽小字 id（原生 idTag 位置，收起态可见）；
+//   DetailsToggle：动作行尾右对齐的「展开详情 ▸ / 收起 ▾」（展开态记在 store，会话内按卡 id 记忆）；
+//   RelativeTime：卡面一律相对时间（19天前 / 2小时59分），hover 给绝对时间；
+//   RepoChip：cwd / target basename 中性章；
+//   CopyCommandLine：「单击复制指令」行——网页没有终端入口（server 无对应 endpoint），只复制，tooltip 说明；
+//   ErrorLine + 让 AI 修：错误一句（红）+ 起 server 的 act.ai_fix 修复会话（POST /api/ai-fix）。
+// 纪律：颜色只用 token class；文案 text(zh,en) 内联对；不上抛 DOM event。
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { postAiFix } from "../../api";
+import { displayId, isLegacyId } from "../../cardId";
+import { useI18n } from "../../i18n";
+import { absoluteLabel, duration, sinceEpoch, sinceIso, useNow } from "../../relativeTime";
+import { toggleCardExpanded, useAppState } from "../../store";
+import { copyText } from "../detail/copyText";
+
+/** id 标签读的投影键（§60 两段式编号：卡面展示 display_id，动作回传仍送主键 id） */
+export type CardIdRow = { id: string; display_id?: unknown; work_id?: unknown; id_kind?: unknown };
+
+/** 卡片 id 标签（右上角等宽小字）：展示 displayId()；legacy R 主键（检测即分号的旧卡）灰显 */
+export function CardIdTag({ card }: { card: CardIdRow }) {
+  return <span className={isLegacyId(card) ? "card-id card-id-legacy" : "card-id"}>{displayId(card)}</span>;
+}
+
+interface CardHeadProps {
+  card: CardIdRow;
+  title: string;
+  /** 标题前的小图标/色点（原生 TaskRow 的 Circle、DebtRow 的 tray 图标） */
+  leading?: ReactNode;
+  isMuted?: boolean;
+}
+
+export function CardHead({ card, title, leading, isMuted = false }: CardHeadProps) {
+  return (
+    <div className="card-head">
+      {leading}
+      <div className={`card-title${isMuted ? " is-muted" : ""}`}>{title}</div>
+      <CardIdTag card={card} />
+    </div>
+  );
+}
+
+/** 一张卡是否展开（store 会话内记忆） */
+export function useCardExpanded(cardId: string): boolean {
+  const { expandedCardIds } = useAppState();
+  return expandedCardIds.has(cardId);
+}
+
+/** 展开详情 ▸ / 收起 ▾（原生 CardSurface 详情槽的 toggle：plain 灰链接，动作行尾右对齐） */
+export function DetailsToggle({ cardId }: { cardId: string }) {
+  const { text } = useI18n();
+  const expanded = useCardExpanded(cardId);
+  return (
+    <button
+      type="button"
+      className="card-details-toggle"
+      aria-expanded={expanded}
+      onClick={() => toggleCardExpanded(cardId)}
+    >
+      {expanded ? text("收起 ▾", "Collapse ▾") : text("展开详情 ▸", "Details ▸")}
+    </button>
+  );
+}
+
+/** 详情区容器（只在展开时渲染；children 由各卡按原生 detailBlock 组织） */
+export function CardDetails({ cardId, children }: { cardId: string; children: ReactNode }) {
+  const expanded = useCardExpanded(cardId);
+  if (!expanded) return null;
+  return <div className="card-details">{children}</div>;
+}
+
+type Stamp = { epoch?: unknown; iso?: unknown };
+
+/** 相对时间小字（原生 RelativeTime.sinceEpoch / since）+ hover 绝对时间；解析不了不渲染 */
+export function RelativeTime({ epoch, iso, prefix = "", className = "" }: Stamp & { prefix?: string; className?: string }) {
+  const { text, locale } = useI18n();
+  const now = useNow();
+  const label = epoch !== undefined ? sinceEpoch(epoch, now, text) : sinceIso(iso, now, text);
+  if (!label) return null;
+  return (
+    <span className={`card-meta-text${className ? ` ${className}` : ""}`} title={absoluteLabel(epoch ?? iso, locale)}>
+      {prefix}{label}
+    </span>
+  );
+}
+
+/** 两个 epoch 之间的时长（原生 RelativeTime.duration）；to 缺省 = 现在（「已等待验收」自驱走表） */
+export function DurationText({ from, to, prefix = "" }: { from: unknown; to?: unknown; prefix?: string }) {
+  const { text, locale } = useI18n();
+  const now = useNow();
+  const end = to === undefined ? now / 1000 : to;
+  const label = duration(from, end, text);
+  if (!label) return null;
+  const title = absoluteLabel(from, locale);
+  return <span className="card-meta-text" title={title}>{prefix}{label}</span>;
+}
+
+/** cwd / target 的 basename 中性章（原生 Badge(lastPathComponent, .secondary)） */
+export function RepoChip({ path }: { path: unknown }) {
+  if (typeof path !== "string" || !path) return null;
+  const base = path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
+  return <span className="chip" title={path}>{base}</span>;
+}
+
+/**
+ * 「单击复制指令」行（原生 TaskRow / ReviewRow 的 copy 仰赖整卡点击 + 双击起终端）。
+ * 网页：整卡双击已归详情抽屉，且 server 没有终端 endpoint——这一行本身就是复制热区，
+ * 文案如实只承诺复制；tooltip 带完整命令。
+ */
+export function CopyCommandLine({ cmd }: { cmd: unknown }) {
+  const { text } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+  if (typeof cmd !== "string" || !cmd) return null;
+  return (
+    <button
+      type="button"
+      className={`card-copy-line${copied ? " is-copied" : ""}`}
+      title={cmd}
+      onClick={() => {
+        void copyText(cmd).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          if (timer.current) clearTimeout(timer.current);
+          timer.current = setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      {copied
+        ? text("已复制 ✓", "Copied ✓")
+        : text("单击复制指令 · 粘贴到终端即可接管会话", "Click to copy the command · paste it in a terminal to take over the session")}
+    </button>
+  );
+}
+
+/**
+ * 让 AI 修（原生 TaskRow.errorLine 的按钮）：POST /api/ai-fix → server 起 act.ai_fix
+ * 的 Terminal 修复会话。状态行镜像原生 aiFixStatus：准备中 → 成功 4s 后淡出 / 失败红字留着。
+ */
+export function AiFixButton({ cardId }: { cardId: string }) {
+  const { text, language } = useI18n();
+  const [status, setStatus] = useState<{ msg: string; failed: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  const launch = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus({ msg: text("正在准备诊断包…", "Preparing the diagnostic bundle…"), failed: false });
+    try {
+      await postAiFix(cardId, language);
+      setStatus({ msg: text("已在 Terminal 打开修复会话——跟着 AI 走即可", "Repair session opened in Terminal — just follow the AI"), failed: false });
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setStatus(null), 4000);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setStatus({ msg: text("让 AI 修启动失败：", "Fix with AI failed to launch: ") + detail, failed: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button type="button" className="btn" disabled={busy} onClick={() => void launch()}>
+        {text("让 AI 修", "Fix with AI")}
+      </button>
+      {status && <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>{status.msg}</span>}
+    </>
+  );
+}
+
+/** 错误一句（红，两行截断，hover 全文）——原生 errorLine 的文本部分；按钮由宿主放进动作行 */
+export function ErrorLine({ prefix, raw }: { prefix: string; raw: unknown }) {
+  if (typeof raw !== "string" || !raw) return null;
+  return <p className="card-line is-danger card-error-line" title={raw}>{prefix}{raw}</p>;
+}

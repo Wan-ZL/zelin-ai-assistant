@@ -67,13 +67,13 @@ export function ButtonsSection() {
       </figure>
       <figure className="sg-specimen">
         <LaneComposer
-          placeholder={text("快速捕获：一句话说清要做什么…", "Quick capture: one line on what to do…")}
+          placeholder={text("一句话，AI 来研究并提案…", "One sentence — AI researches and proposes…")}
           submitLabel={text("捕获", "Capture")}
           successNote={text("已提交，AI 分析中（通常 2-3 分钟）", "Submitted; AI is analyzing (usually 2-3 min)")}
           buildBody={(t) => ({ action: "capture", text: t })}
         />
         <LaneComposer
-          placeholder={text("直接开跑（跳过提案闸）…", "Run directly (skips the proposal gate)…")}
+          placeholder={text("一句话，直接开跑（跳过提案）…", "One line — run it now (skips proposal)…")}
           submitLabel={text("直跑", "Run")}
           successNote={text("已提交，直接开跑（跳过提案），排队派发中…", "Submitted to run directly; queued for dispatch…")}
           buildBody={(t) => ({ action: "capture", text: t, mode: "run" })}
