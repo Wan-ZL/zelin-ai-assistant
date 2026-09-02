@@ -1,0 +1,33 @@
+# qa/gates.toml — 质量硬门阈值的唯一真源（docs/CONTRACT.md §58）。
+#
+# 谁读它：scripts/qa/*.py 五道门、CI 的 qa-gates job、（后续 R2.8.3）测试
+# skill。别处不许再写这些数字——文档要引用时写 "truth = qa/gates.toml"。
+# 格式：TOML 子集（[section] + key = 标量），由 scripts/qa/qa_common.py 的
+# stdlib 解析器读（owner 机器是 python 3.9，没有 tomllib）。
+
+[complexity]
+# 每函数圈复杂度上限（owner 决策 D4/D5；计数口径见 §58.1）。
+# ruff C901 的 mccabe max-complexity 同用此值（advisory 交叉参照）。
+max = 6
+
+[crap]
+# CRAP(f) = CC(f)² × (1 − cov(f))³ + CC(f)，上限 = owner D4 拍板的 6。
+max = 6.0
+# coverage 派生的分数带环境抖动（线程时序、平台 skip）：账上条目要
+# 「恶化」超过 tolerance 才 FAIL，「达标」低于 max − tolerance 才算 stale。
+tolerance = 0.5
+
+[coverage]
+# 总行覆盖率地板住在 qa/coverage_floor.txt（单个数字，只许往上走）；
+# 这两个旋钮管自动棘轮的建议：覆盖率高出地板 ratchet_trigger 以上时，
+# 门建议新地板 = 当前值 − ratchet_buffer（向下取 1 位小数）。
+ratchet_trigger = 0.5
+ratchet_buffer = 0.3
+
+[hygiene]
+# 防腐十条 #1 的机械化（CLAUDE.md）：mac/ 按 D3 豁免（退役中），Swift 线
+# 只对 shell/ 生效。
+max_file_lines_py = 2000
+max_file_lines_swift = 1500
+max_function_lines = 300
+max_class_lines = 800

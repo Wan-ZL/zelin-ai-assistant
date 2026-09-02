@@ -1,0 +1,3 @@
+# 总行覆盖率地板（act/ + server/，行覆盖百分数；docs/CONTRACT.md §58.2）。
+# 只许经 PR 上调（coverage_floor.py 会在覆盖率上涨时给建议值）。
+83.2
