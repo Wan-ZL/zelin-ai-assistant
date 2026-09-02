@@ -30,21 +30,33 @@ def _default_runner(args):
     return proc.returncode, proc.stdout
 
 
+def _list_candidates(title, repo, runner):
+    """标题作 search 词的 open+closed 列举 → rows（精确匹配在 find_issue 做）。
+
+    为什么必须带 --search：不带时 gh 按创建时间取前 --limit 张，仓库一旦
+    累计 100+ 张比报告 issue 新的 issue，报告就此隐身 → 第二张被铸出来，
+    正好违反「绝不开第二张」（v0.48.13 审查 finding 1）。in:title 把候选集
+    收窄到标题命中，limit 因此永远够用；报告 issue 出生只有一次、次日起
+    search 索引必然可见，不受索引延迟影响。"""
+    rc, out = runner(["issue", "list", "-R", repo, "--state", "all",
+                      "--search", f'in:title "{title}"',
+                      "--limit", "100", "--json", "number,title,state"])
+    if rc != 0:
+        raise RuntimeError("gh issue list failed")
+    try:
+        return json.loads(out or "[]")
+    except ValueError:
+        raise RuntimeError(
+            f"gh issue list: unparseable output {out[:200]!r}") from None
+
+
 def find_issue(title, repo, runner):
     """精确标题匹配（open+closed 全集）→ {number, state} | None。
 
     永不开第二张的关键就在 --state all：closed 的同名 issue 必须被找到并
     reopen，而不是再铸一张。
     """
-    rc, out = runner(["issue", "list", "-R", repo, "--state", "all",
-                      "--limit", "100", "--json", "number,title,state"])
-    if rc != 0:
-        raise RuntimeError("gh issue list failed")
-    try:
-        rows = json.loads(out or "[]")
-    except ValueError:
-        raise RuntimeError(f"gh issue list: unparseable output {out[:200]!r}")
-    for row in rows:
+    for row in _list_candidates(title, repo, runner):
         if isinstance(row, dict) and row.get("title") == title:
             return {"number": row.get("number"), "state": row.get("state")}
     return None
@@ -72,6 +84,45 @@ def _pin_best_effort(number, repo, runner, log):
         f"pin failed for #{number} (already pinned, or token lacks access) — continuing")
 
 
+def _create_issue(title, body_file, repo, runner, log):
+    """铸新 issue → number | None（失败）。"""
+    rc, out = runner(["issue", "create", "-R", repo,
+                      "--title", title, "--body-file", body_file])
+    if rc != 0:
+        log("issue create failed")
+        return None
+    number = out.strip().rsplit("/", 1)[-1]
+    log(f"created issue #{number}")
+    return number
+
+
+def _reopen_if_closed(existing, repo, runner, log):
+    """closed 先 reopen（绝不铸第二张）→ 是否可以继续 edit。"""
+    if existing.get("state") != "CLOSED":
+        return True
+    number = existing["number"]
+    rc, _out = runner(["issue", "reopen", str(number), "-R", repo])
+    if rc != 0:
+        log(f"issue reopen failed for #{number}")
+        return False
+    log(f"reopened issue #{number}")
+    return True
+
+
+def _update_issue(existing, body_file, repo, runner, log):
+    """既有 issue 的 reopen（如需）+ body 覆写 → number | None（失败）。"""
+    if not _reopen_if_closed(existing, repo, runner, log):
+        return None
+    number = existing["number"]
+    rc, _out = runner(["issue", "edit", str(number), "-R", repo,
+                       "--body-file", body_file])
+    if rc != 0:
+        log(f"issue edit failed for #{number}")
+        return None
+    log(f"updated issue #{number}")
+    return number
+
+
 def create_or_update(title, body_file, repo, runner, log=print, dry_run=False):
     """幂等投递：无 → create；closed → reopen+edit；open → edit。返回 0/1。"""
     if dry_run:
@@ -82,27 +133,11 @@ def create_or_update(title, body_file, repo, runner, log=print, dry_run=False):
         return 0
     existing = find_issue(title, repo, runner)
     if existing is None:
-        rc, out = runner(["issue", "create", "-R", repo,
-                          "--title", title, "--body-file", body_file])
-        if rc != 0:
-            log("issue create failed")
-            return 1
-        number = out.strip().rsplit("/", 1)[-1]
-        log(f"created issue #{number}")
+        number = _create_issue(title, body_file, repo, runner, log)
     else:
-        number = existing["number"]
-        if existing.get("state") == "CLOSED":
-            rc, _out = runner(["issue", "reopen", str(number), "-R", repo])
-            if rc != 0:
-                log(f"issue reopen failed for #{number}")
-                return 1
-            log(f"reopened issue #{number}")
-        rc, _out = runner(["issue", "edit", str(number), "-R", repo,
-                           "--body-file", body_file])
-        if rc != 0:
-            log(f"issue edit failed for #{number}")
-            return 1
-        log(f"updated issue #{number}")
+        number = _update_issue(existing, body_file, repo, runner, log)
+    if number is None:
+        return 1
     _pin_best_effort(number, repo, runner, log)
     return 0
 

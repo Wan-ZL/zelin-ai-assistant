@@ -86,6 +86,18 @@ class CreateOrUpdateTestCase(unittest.TestCase):
         self.assertEqual(kinds.index("issue reopen"), kinds.index("issue edit") - 1)
         self.assertNotIn("issue create", kinds)
 
+    def test_listing_is_scoped_by_title_search(self):
+        # 不带 --search 时 gh 按创建时间取前 100 张：仓库累计 100+ 张更新的
+        # issue 后报告隐身 → 第二张被铸出来（v0.48.13 审查 finding 1）。
+        # in:title 收窄候选集让 limit 永远够用；精确匹配仍在 find_issue。
+        gh = _FakeGh(issues=[{"number": 9, "title": TITLE, "state": "OPEN"}])
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(_run(gh, tmp), 0)
+        listing = [c for c in gh.calls if c[:2] == ["issue", "list"]][0]
+        self.assertIn("--search", listing)
+        self.assertIn(f'in:title "{TITLE}"', listing)
+        self.assertIn("all", listing)  # open+closed 全集不因 search 而丢
+
     def test_title_match_is_exact(self):
         gh = _FakeGh(issues=[
             {"number": 3, "title": TITLE + " (archive)", "state": "OPEN"}])
