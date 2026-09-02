@@ -107,17 +107,14 @@ while the project is pre-1.0:
   and the changelog entry must call the break out prominently.
 - **MAJOR** — reserved for 1.0 and post-1.0 breaking changes.
 
-Merging a PR **is** the release (CONTRACT §56): every PR bumps the patch
-version in `act/__init__.py` (+ the two iOS `MARKETING_VERSION` pins — CI
-enforces the tri-pin), and on push to `main` the `tag-on-merge` workflow
-creates `vX.Y.Z` and runs the release workflow. A merge that does not bump the
-version is silently not released. The maintainer's Mac then fast-forwards to
-`main` by itself (`scripts/auto-deploy.sh`) once the `ci` check-run on that
-exact `main` commit is green — the branch ruleset only requires green on the
-PR head, so the merge commit itself is verified before it is installed — with a
-doctor-gated rollback; daemons, cron and config only; the frozen legacy Mac app
-is never rebuilt unattended (a hand-run `bash install.sh` does that, §56.5).
-Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).
+Merging a PR **is** the release (CONTRACT §56), and **nobody bumps a version — ever**. The version's single source of truth is the git tag on `main` (§56.1): on push to `main`, `release-on-merge.yml` tags the merged commit with the highest existing tag + 1 patch and runs the release workflow, which stamps that number into the artifacts. Put a `release: minor` or `release: major` label on the PR for a bigger bump. What a PR does and does not touch:
+
+- **Never** edit the `__version__ = "…"` fallback line in `act/__init__.py`, the `MARKETING_VERSION: "0.0.0-dev"` placeholders in `ios/project.yml` / `project.pbxproj`, or add a `## [X.Y.Z]` heading / compare link to `CHANGELOG.md`. The required CI check **Version pins untouched** rejects all of these (PRs opened before the cutover get a notice instead of a failure until they rebase).
+- Write release notes under `## [Unreleased]` in `CHANGELOG.md` only; the GitHub Release body is the delta of that section since the previous tag and the file is never rewritten.
+- `act.__version__` resolves at import from the generated, git-ignored `act/_version.py` (written by `install.sh`, `mac/build.sh`, `shell/build.sh`, packaging and the release job through `scripts/version_stamp.py --write`), else `git describe`, else the fallback line. `python3 scripts/version_stamp.py` prints what your checkout would be stamped with (`X.Y.Z` on a tag, `X.Y.Z+N` when ahead); `python3 -m act.doctor` has a `version` row that warns when the stamp is missing or stale.
+- **Merge queue**: `gh pr merge --auto --merge <n>` enqueues the PR once it is green; the queue re-runs every required check on top of the current `main` (all workflows respond to `merge_group`) and merges by itself. Rebasing to pick up someone else's version bump is a thing of the past.
+
+The maintainer's Mac then fast-forwards to `main` by itself (`scripts/auto-deploy.sh`) once the `ci` check-run on that exact `main` commit is green — the merge commit itself is verified before it is installed — with a doctor-gated rollback; daemons, cron and config only; the frozen legacy Mac app is never rebuilt unattended (a hand-run `bash install.sh` does that, §56.5). Changelog procedure at the top of [CHANGELOG.md](CHANGELOG.md).
 
 ## License of contributions
 

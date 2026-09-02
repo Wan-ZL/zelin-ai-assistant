@@ -4,7 +4,9 @@
 # What it does:
 #   1. dependency checks (claude/swift required; python3/PyYAML; node+npx for
 #      the recording engine; obsidian/gh optional)
-#   2. config.example.yaml -> config.yaml (if absent) + runtime/home pointers
+#   2. config.example.yaml -> config.yaml (if absent), the version stamp
+#      (act/_version.py from the git tag — CONTRACT §56.1; written before any
+#      `import act`), runtime/home pointers
 #   3. create state/ and state/inbox/
 #   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
 #   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
@@ -626,6 +628,36 @@ relaunch_shell_app() {
     fi
 }
 
+# Version stamp (CONTRACT §56.1) — the version's truth is the git tag; nothing
+# committed carries it. Write the git-ignored act/_version.py BEFORE anything
+# here imports act (the launchd viability probe, the dashboard seed, the
+# report writer, the daemons themselves): under launchd `git` is a different
+# binary whose TCC grant may not cover an external-volume checkout, so the
+# daemons must read the stamp and never derive the version themselves. The
+# stamper keeps an existing stamp when git cannot answer (.pkg copy without
+# .git — the payload already carries the tag's stamp). Never fatal: without
+# a stamp act.__version__ falls back to the baked constant, and doctor's
+# `version` row says so.
+STAMPED_VERSION=""
+stamp_version() {
+    _spy="${PY:-}"
+    { [ -n "$_spy" ] && [ -x "$_spy" ]; } || _spy="$(command -v python3 || true)"
+    if [ -z "$_spy" ]; then
+        warn "no python3 — act/_version.py not written (daemons report the baked fallback version)"
+        report_step "version" "warn" "no python3 to stamp"
+        return 0
+    fi
+    if STAMPED_VERSION="$(cd "$REPO_ROOT" && "$_spy" scripts/version_stamp.py --write 2>/dev/null)" \
+       && [ -n "$STAMPED_VERSION" ]; then
+        ok "act/_version.py -> v$STAMPED_VERSION (git tag truth, §56.1)"
+        report_step "version" "ok" "$STAMPED_VERSION"
+    else
+        STAMPED_VERSION=""
+        warn "scripts/version_stamp.py failed — act/_version.py not written (daemons report the baked fallback version)"
+        report_step "version" "warn" "stamp failed"
+    fi
+}
+
 write_install_report() {
     RPY="${RUNTIME_PY:-${PY:-}}"
     { [ -n "$RPY" ] && [ -x "$RPY" ]; } || RPY="$(command -v python3 || true)"
@@ -972,6 +1004,10 @@ if [ ! -f "$REPO_ROOT/config/redaction_terms.txt" ]; then
     cp "$REPO_ROOT/config/redaction_terms.example.txt" "$REPO_ROOT/config/redaction_terms.txt"
     ok "created config/redaction_terms.txt from template (gitignored)"
 fi
+
+# version stamp first (§56.1): every `import act` below — including the launchd
+# viability probe a few lines down — reads act/_version.py.
+stamp_version
 
 # runtime python pointer (CONTRACT §19) — the interpreter launchd, cron and the
 # Mac app all run. EVERY candidate must clear TWO gates before it is pinned
@@ -1391,7 +1427,7 @@ if [ "$NON_INTERACTIVE" -eq 1 ]; then
     if [ "$N_FAILED" -gt 0 ]; then
         echo "install.sh --non-interactive: $N_FAILED failed step(s): $(printf '%s' "$FAILED_STEPS" | cut -d= -f1 | tr '\n' ' ')"
     else
-        echo "install.sh --non-interactive: ok (v$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$REPO_ROOT/act/__init__.py"))"
+        echo "install.sh --non-interactive: ok (v${STAMPED_VERSION:-?})"
     fi
     exit "$N_FAILED"
 fi

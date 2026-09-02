@@ -23,10 +23,11 @@ APP_PKG_ID="com.zelin.aiassistant.app"
 PIPELINE_PKG_ID="com.zelin.aiassistant.pipeline"
 PIPELINE_DEST="/Library/Application Support/ZelinAIAssistant/pipeline"
 
-# version single source of truth: act/__init__.py
-VERSION="$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' "$REPO_ROOT/act/__init__.py")"
+# version truth = git tag (CONTRACT §56.1); the stamper derives it from the
+# checkout (release.yml has already pinned it to the tag via act/_version.py).
+VERSION="$(python3 "$REPO_ROOT/scripts/version_stamp.py" --write 2>/dev/null || true)"
 if [ -z "$VERSION" ]; then
-    echo "ERROR: could not read __version__ from act/__init__.py" >&2
+    echo "ERROR: scripts/version_stamp.py could not derive a version" >&2
     exit 1
 fi
 echo "==> Packaging version $VERSION"
@@ -76,6 +77,9 @@ PIPELINE_ROOT="$STAGE/pipeline-root"
 mkdir -p "$PIPELINE_ROOT"
 git -C "$REPO_ROOT" archive HEAD | tar -x -C "$PIPELINE_ROOT"
 rm -rf "$PIPELINE_ROOT/mac/build"   # belt & suspenders (gitignored anyway)
+# the payload has no .git: bake the version stamp in so the installed pipeline
+# self-reports the tag (act/__init__.py reads act/_version.py first, §56.1)
+python3 "$REPO_ROOT/scripts/version_stamp.py" --version "$VERSION" --stamp-into "$PIPELINE_ROOT" >/dev/null
 xattr -rc "$PIPELINE_ROOT" 2>/dev/null || true
 if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
     echo "WARN: working tree is dirty — the pkg payload is HEAD, not your edits." >&2

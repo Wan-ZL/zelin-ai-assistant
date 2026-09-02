@@ -127,6 +127,15 @@ if [ ! -f "$REPO_ROOT/config/redaction_terms.txt" ] \
     ok "created config/redaction_terms.txt from template (gitignored)"
 fi
 
+# version stamp (CONTRACT §56.1): the version's truth is the git tag; write the
+# git-ignored act/_version.py before anything imports act (a portable bundle
+# already carries the tag's stamp and has no .git — the stamper keeps it).
+if _sv="$(cd "$REPO_ROOT" && "$PY" scripts/version_stamp.py --write 2>/dev/null)" && [ -n "$_sv" ]; then
+    ok "act/_version.py -> v$_sv"
+else
+    warn "could not write act/_version.py — act.__version__ falls back to the baked constant"
+fi
+
 # runtime python pointer (CONTRACT §19): $AIASSISTANT_PYTHON override, else the
 # python3 found above. Pin the interpreter the units + doctor run.
 mkdir -p "$REPO_ROOT/config"

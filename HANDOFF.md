@@ -152,7 +152,7 @@
 
 ## 5. 当前状态快照（交接时点）
 
-- 版本 v0.11.0（版本号真源 `act/__init__.py`）。全链路实测可用：录屏→ingest→wiki、雷达→卡片、批准→执行→验收、
+- 版本 v0.11.0（交接时点；版本号真源自 2026-09-02 起是 main 上的 git tag——CONTRACT §56.1，`act.__version__` 只是派生值）。全链路实测可用：录屏→ingest→wiki、雷达→卡片、批准→执行→验收、
   快速捕获（popover + 看板列顶多行 composer + ⌘L；v0.15 移除了 ⌥Space 全局热键）、回收站、双语。
 - 已知小债：① TaskRow 用 accent 颜色识别"已验收"列（宜改显式参数）；② queued 灰卡上的
   停止按钮可点（合语义但视觉待观察）；③ ~~ingest 导出脚本硬编码 unprocessed 路径，

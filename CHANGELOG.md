@@ -5,28 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Bumping the version
+## Releasing (nobody bumps a version anymore)
 
-`__version__` in [`act/__init__.py`](act/__init__.py) is the **single source of
-truth** for the project version. `mac/build.sh` stamps it into the app bundle's
-`Info.plist` at build time, and `mac/package.sh` reads it for the `.pkg` — no
-other file needs editing. To cut a release:
+The version's single source of truth is the **git tag on `main`** (CONTRACT §56.1). No committed file carries it: `act.__version__` resolves at import from the generated, git-ignored `act/_version.py` (written by `install.sh`, the build scripts and the release job via `scripts/version_stamp.py`), else from `git describe`, else from the baked fallback line in `act/__init__.py`. The iOS `MARKETING_VERSION` pins are committed as the placeholder `0.0.0-dev` and stamped on the runner before `xcodebuild`.
 
-0. Pick the bump: **patch** for bug fixes / small UX corrections / docs,
-   **minor** for new user-visible features (pre-1.0, breaking changes also
-   ride a minor with a `!` commit marker and a prominent changelog callout).
-   See CONTRIBUTING.md "Versioning".
-1. Bump `__version__` in `act/__init__.py`.
-2. Rename the `[Unreleased]` section below to `[X.Y.Z] - YYYY-MM-DD` and add a
-   fresh empty `[Unreleased]` heading above it; update the compare links at the
-   bottom.
-3. Commit and merge the PR. **Nobody tags by hand anymore** (CONTRACT §56):
-   `tag-on-merge.yml` reads `act/__init__.py` on every push to `main`, creates
-   `vX.Y.Z` when it does not exist yet and dispatches the release workflow.
-   Every PR therefore bumps the patch version — a merge that does not bump is
-   silently not released. A hand-pushed `vX.Y.Z` tag still works as before.
+To ship a change:
+
+1. Write your notes under `## [Unreleased]` below — that is the only section a PR touches. Never add a `## [X.Y.Z]` heading or a compare link; the CI job "Version pins untouched" rejects both, along with any edit to the version pins.
+2. Merge. `release-on-merge.yml` tags the merged commit with the next patch (`release: minor` / `release: major` labels on the PR pick a bigger bump), dispatches `release.yml`, and the GitHub Release body is the *delta* of `[Unreleased]` since the previous tag (`scripts/changelog_release_notes.py`). This file is never rewritten by a release; the per-version history lives in GitHub Releases + tags. The dated `## [X.Y.Z]` sections below are the pre-cutover history and stay as they are.
 
 ## [Unreleased]
+
+### Changed
+- **版本真源改为 main 上的 git tag；PR 不再 bump 任何版本（CONTRACT §56.1/§56.2 改写、§0 宪法第 8 条修宪）**：`act.__version__` 在 import 时按 `act/_version.py`（生成文件，git-ignored；install.sh / mac/build.sh / shell/build.sh / release 打包 / `scripts/version_stamp.py --write` 写）→ `git describe`（恰在 tag = `X.Y.Z`，领先 = `X.Y.Z+N`）→ 烘焙回落值解析；iOS 两处 `MARKETING_VERSION` 提交的是占位 `0.0.0-dev`，构建前在 runner 上 sed（永不提交）。`tag-on-merge.yml` 退役为 `release-on-merge.yml`：push 到 main 算「最高 tag + 1 patch」（PR label `release: minor|major` 抬档）在被推的 commit 上建 tag 并 dispatch `release.yml`；并发串行、re-run 幂等、不写分支。`release.yml` 从 tag 名盖章、Release 正文 = CHANGELOG `[Unreleased]` 相对上一个 tag 的增量（`scripts/changelog_release_notes.py`），文件不改写。新 CI 门 **Version pins untouched**（`scripts/ci/version_pins_check.py`，pull_request + merge_group）：改 pin 行 / 改 `__version__` 回落行（刷新到最新 tag 除外）/ 新增 CHANGELOG 版本标题 = FAIL，merge-base 早于本门的在飞 PR 过渡放行。全部必需检查的 workflow 同时响应 `merge_group`（merge queue 就绪）。`scripts/auto-deploy.sh` 期望版本改由 `scripts/version_stamp.py` 算、fetch 带 `--tags`；install.sh 在任何 `import act` 之前盖章（install_report 新 step `version`）；doctor 新行 `version`（stamp 缺失 / 与 `git describe` 不一致 = WARN，永不 FAIL）。
 
 ## [0.48.20] - 2026-09-02
 
