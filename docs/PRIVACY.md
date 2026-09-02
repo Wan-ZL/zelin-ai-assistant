@@ -144,6 +144,9 @@
   且 `gh` CLI 在 PATH 且已登录（`act/executor.py` `ensure_repo()`）。
 - **Payload**：`gh repo create <目录名> --private` 在你的 GitHub 账号下新建**私有** repo,
   执行产出（可能源自屏幕/会议/邮件内容）会被推送为 feature 分支 + draft PR。
+- **批准前可见**（issue #11，CONTRACT §7 `egress[]`）：开关为 true 且卡指向新目录、repo 交付时，
+  提案卡本身多一行红色后果句「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」——
+  你在点批准之前就看得到这条出机后果；开关关（默认）时 `egress` 恒为空、卡面无任何变化。
 - **关闭时的行为**：仅本地 `git init` + 本地分支交付；任何失败也自动留在本地
   （"stay local"，永不阻塞派发）。
 

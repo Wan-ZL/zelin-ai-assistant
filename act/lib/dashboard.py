@@ -386,6 +386,32 @@ def _delivery_mode(req: Requirement) -> str:
     return dm if dm in ("chat", "repo") else "repo"
 
 
+# §7 egress[] 词表（issue #11）：批准这张卡会触发的**出机**后果，每条一个 kind。
+# 目前唯一住户 = github_repo_create；后续 kinds 只增不改（add-only）。
+EGRESS_GITHUB_REPO_CREATE = "github_repo_create"
+
+
+def _egress_view(req: Requirement, cfg: config.Config, target_kind: str,
+                 target_name: str) -> list[dict]:
+    """§7 add-only ``egress[]``: the out-of-machine consequences approving this
+    card will trigger, disclosed on the approval card itself (the security
+    boundary of the product, issue #11 / PRIVACY.md egress row 8).
+
+    Mirrors the executor's ``ensure_repo`` gate byte-for-byte: repo delivery
+    (chat never touches a repo) + ``target_kind == "new"`` + config
+    ``execution.create_github_repo`` on → the dispatch runs
+    ``gh repo create <name> --private`` and pushes screen/meeting/mail-derived
+    content to GitHub. Flag off (the default) → always ``[]`` — nothing
+    changes for existing installs. ``gh`` missing at dispatch time keeps the
+    repo local (PRIVACY.md); the card still discloses the intent, because the
+    approval decision must not depend on a binary the user cannot see."""
+    if not (cfg.create_github_repo and target_kind == "new"
+            and _delivery_mode(req) == "repo"):
+        return []
+    return [{"kind": EGRESS_GITHUB_REPO_CREATE, "target": target_name,
+             "visibility": "private"}]
+
+
 # notes fold user comments / radar updates that used to be unsearchable on the
 # board — projected capped so one chatty card can't bloat the ~10s rewrite
 # (and the E2E board payload) unboundedly.
@@ -772,6 +798,9 @@ def build_dashboard(
                     # 拦下原因（origin:*/disabled 常态原因不上卡，见 actd）。
                     **_opt("origin_trust", getattr(req, "origin_trust", None)),
                     **_opt("auto_dispatch_block", ex.get("auto_dispatch_block")),
+                    # §7 add-only（issue #11）：批准即出机的后果——恒在 list，
+                    # 空 = 批了什么也不出机；web 以醒目颊色渲染每条。
+                    "egress": _egress_view(req, cfg, target_kind, target_name),
                 }
             )
 

@@ -398,6 +398,9 @@
 .card-line.is-warning { color: var(--warning); }
 .card-line.is-danger { color: var(--danger); }
 
+/* §7 egress[]（issue #11）：出机后果行——列表零装饰，每行沿用 .card-line.is-danger 的红 */
+.card-egress { list-style: none; margin: 0; padding: 0; }
+
 /* §25 错误一句（原生 10 regular 红）：两行截断，hover 全文——放在 .card-line 之后压过它的字重 */
 .card-line.card-error-line {
   display: -webkit-box;

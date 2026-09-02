@@ -156,3 +156,33 @@ describe("ProposalCard §60 two-stage ids (D21)", () => {
     expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({ action: "approve", comment: null, id: "P-012" });
   });
 });
+
+describe("ProposalCard §7 egress[] disclosure (issue #11)", () => {
+  it("github_repo_create 行以后果语气渲染，带 target；空/缺席不渲染", () => {
+    const card = {
+      ...makeCard("T1"),
+      target_repo: "~/Projects/brand-new-repo",
+      target_name: "brand-new-repo",
+      target_kind: "new",
+      egress: [{ kind: "github_repo_create", target: "brand-new-repo", visibility: "private" }],
+    };
+    const { unmount } = render(<ProposalCard card={card} />);
+    const list = screen.getByRole("list", { name: "What leaves this Mac if you approve" });
+    expect(list.textContent).toContain("Approving creates the private GitHub repo “brand-new-repo” and pushes content");
+    unmount();
+
+    // flag off (today's default) → egress: [] → no disclosure list at all
+    render(<ProposalCard card={{ ...card, egress: [] }} />);
+    expect(screen.queryByRole("list", { name: "What leaves this Mac if you approve" })).toBeNull();
+    cleanup();
+    // old server (no key) → same
+    render(<ProposalCard card={makeCard("T1")} />);
+    expect(screen.queryByRole("list", { name: "What leaves this Mac if you approve" })).toBeNull();
+  });
+
+  it("未知 kind 不吞——按 kind 原文降级显示（披露宁多勿少）", () => {
+    const card = { ...makeCard("T1"), egress: [{ kind: "slack_draft", target: "#team" }] };
+    render(<ProposalCard card={card} />);
+    expect(screen.getByText(/Approving sends data out: slack_draft → #team/)).toBeTruthy();
+  });
+});

@@ -245,6 +245,15 @@ debt item 新增 `summary`（同上，大白话）。
 - "展开详情 ▸" 切换 → 显示带小标题的两块：**「需求来自」**(sources，灰字原话) 和 **「要做什么」**(plan，编号)。折叠为默认。
 - 目的：不展开就能一眼看懂；灰/黑差异由显式小标题承载，不靠颜色猜。
 
+**issue #11 追记（add-only）——`egress[]`：批准即出机的后果披露**。每条 needs_approval 卡（raising 占位项除外）
+恒带 `egress: [{kind, target?, visibility?}]`，空 list = 批了什么也不出机。`kind` 开放枚举，今日唯一值
+`github_repo_create`（`act/lib/dashboard.EGRESS_GITHUB_REPO_CREATE`）：`{"kind":"github_repo_create","target":"<目录名>","visibility":"private"}`，
+仅当 config `execution.create_github_repo` 为真 **且** `target_kind == "new"` **且** 交付方式为 repo（chat 永不碰仓库，§20）——
+与 `act/executor.py ensure_repo` 的闸门逐字同源；开关关（默认）时恒 `[]`，存量安装卡面零变化。dispatch 时 `gh` 缺席
+只会让仓库留在本地，卡面**仍**披露意图（审批决定不得依赖用户看不见的二进制）。web `ProposalCard.EgressLines` 以
+红色后果句渲染（「批准后将在你的 GitHub 新建私有仓库「<名>」并推送内容」），未知 kind 按原文降级显示、永不吞掉；
+客户端 decodeIfPresent / `?? []`。docs/PRIVACY.md 出机清单第 8 行反向引用本条。判例 `tests/test_dashboard_egress_disclosure.py`。
+
 **v0.48 引用注（W17，本文见 §50）**：审批与调度层的生效档位自 v0.48 起读派生值 `effective_tier`（外部出身——显式 `origin_trust=="external"` 章或 sources 现算为 external，v0.48.1 修订——的卡强制按 T2 对待 + 强制 plan expansion），声明字段 `tier` 在 registry YAML 里原样不动；T2 typed-confirm 闸门（Mac/web，§41）应读 `effective_tier` 而非 `tier`——web 客户端自 v0.48.1 已接线（ProposalCard 批准闸门），Mac 端接线是排期项（缺席期间 daemon 侧强制扩写是后盾）。
 
 ## 8. 欠账 → 建议 循环

@@ -49,6 +49,8 @@ export interface ApprovalCard {
   target_repo?: string | null;
   target_name?: string | null;
   target_kind?: "new" | "existing" | string | null;
+  /** §7 add-only（issue #11）：批准即出机的后果；kind 开放枚举，今日唯一值 github_repo_create（缺席 = 旧 server） */
+  egress?: EgressRow[];
   /** §44 静默并入次数（0 = 从未）——原生「已并入×N」紫章 */
   silent_merged?: number;
   /** §40 "estimated" | "unknown"（unknown 时 cost_usd 不当估价读） */
@@ -56,6 +58,18 @@ export interface ApprovalCard {
   /** §37 展示名 / 曾用名（原生 rowTitle 优先 display_title） */
   display_title?: string;
   former_titles?: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * 出机后果行（needs_approval 项 `egress[]`，CONTRACT §7 issue #11）。kind 开放枚举：
+ * github_repo_create（批准后 `gh repo create <target> --private` + 推送派生内容）；
+ * 未知 kind 按 kind 原文降级显示，永不吞掉——披露宁多勿少。
+ */
+export interface EgressRow {
+  kind: string;
+  target?: string | null;
+  visibility?: string | null;
   [key: string]: unknown;
 }
 
