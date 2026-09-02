@@ -8,7 +8,22 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
 不出网、不起 launchd、不碰真 $HOME（HOME 指到临时目录）。
 
 钉住的行为：
-  - HEAD == origin/main → up_to_date，install 不跑；
+  - HEAD == origin/main **且机器真在跑这个版本**（install_report.json 版本 ==
+    checkout、actd.heartbeat 版本 == checkout 且新鲜）→ up_to_date，install 不跑；
+  - **deployed 就是在跑**（2026-09-02 事故；§56.3 第 2 步）：HEAD 到位但三件事
+    不齐 → install_incomplete（reason token + detail 点名）+ 本轮重跑一次
+    install.sh（先过与第 3 步同一道 CI 闸门：pending 等、红 → incomplete_sha 中毒 +
+    一条通知、非 github 远端不重跑；--force 跳过）；重跑后齐了 → deployed；连续 N
+    轮不齐 → incomplete_sha 中毒 + 一条通知，--force / 手动对齐解毒；回滚被拒留在
+    新 sha 的机器由下一轮把安装做完；
+  - 锁住 $HOME；升级窗口里 v0.48.16 的 state/auto-deploy.lock 活着 → 跳过，死了 → 清；
+  - **卷访问探针 + HOME 镜像**（同一事故；§56.3 第 1 步 / §56.4）：第一次 git
+    调用前读 repo + 在 state/ 里 mkstemp，PermissionError → blocked_tcc、HEAD 不
+    动、日志点名 plist ProgramArguments[0]、通知一天一次；状态先写
+    ~/Library/Application Support/ZelinAIAssistant/deploy_state.json（真源；
+    state/ 不可写时照样落盘），repo 的 state/deploy_state.json 是尽力投影；锁也
+    住 $HOME；终端触发（tty / TERM_PROGRAM / AUTODEPLOY_TRIGGER=terminal）不改写
+    unattended_* 三元组；镜像不存在时从 repo 投影播种（failed_sha 不丢）；
   - **CI 闸门**（PR #124 审查 B1）：ff 之前查 origin/main **那个 sha** 的 `ci`
     check-run；success 才部署；in_progress / 尚无 run / API 不可达 → ci_pending
     不动 HEAD 下轮再试；红 → ci_failed + failed_sha 记账 + 一条通知；只有
@@ -44,9 +59,10 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
     判决在**冻结的账本**上取：先 bootout actd（kill 会被 KeepAlive 复活）再重
     采样（正好在停止那一刻落盘的迁移也被抓住），拒绝路径把 actd bootstrap 回
     来；user_version 探针答不上来 = unknown = **fail closed** 拒绝，绝不当 0；
-  - write_state / notify 失败时日志行携带子进程异常（首次实战两行 non-fatal
-    全裸，PermissionError 只在 launchd stderr 里）；notify() 吞掉队列写失败只
-    返回 False 的路径同样记行；
+  - write_state（镜像 / repo 投影各自）/ notify 失败时日志行携带子进程异常（首次
+    实战两行 non-fatal 全裸，PermissionError 只在 launchd stderr 里）；notify()
+    吞掉队列写失败只返回 False 的路径同样记行；
+  - install.sh 非零永不 deployed；incomplete_runs 按 sha 计；投影 detail 不带本机路径；
   - 每轮都写 last_run（回滚路径、poisoned-sha 跳过也写）；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
   - 日志 1 MB 自压；ff-merge 途中脚本自身被替换（哪怕换成执行即 exit 99 的
@@ -67,7 +83,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 180  # ~45 runs of real bash+git; ~95 s on a 2024 Mac
+BUDGET_SECONDS = 240  # ~60 runs of real bash+git; ~130 s on a 2024 Mac (v0.48.17: +13 runs)
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -133,12 +149,19 @@ if [ -n "${FAKE_INSTALL_CRON_TCC:-}" ]; then
 fi
 # the restarted actd's heartbeat (§47.4): a NEW pid ($$ of this install run),
 # the checkout's version, phase per FAKE_INSTALL_HEARTBEAT (default idle = one
-# full pass done; "none" = the new daemon never writes one, e.g. dies on import)
+# full pass done; "none" = the new daemon never writes one, e.g. dies on
+# import). ts = now: the "deployed means running" predicate reads its age.
 hb="${FAKE_INSTALL_HEARTBEAT:-idle}"
 if [ "$hb" != "none" ]; then
     mkdir -p "$here/state"
-    printf '{"ts": "2026-09-01T00:00:00Z", "phase": "%s", "pid": %s, "interval": 10, "stale_after_s": 90, "version": "%s"}\n' \
-        "$hb" "$$" "$ver" > "$here/state/actd.heartbeat"
+    printf '{"ts": "%s", "phase": "%s", "pid": %s, "interval": 10, "stale_after_s": 90, "version": "%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$hb" "$$" "$ver" > "$here/state/actd.heartbeat"
+fi
+# §23 install report — the version install.sh actually finished on (a run that
+# dies before its last step never writes it; rc≠0 here models that)
+if { [ "$rc" -eq 0 ] && [ -z "${FAKE_INSTALL_NO_REPORT:-}" ]; } || [ -n "${FAKE_INSTALL_REPORT_ANYWAY:-}" ]; then
+    mkdir -p "$here/state"
+    printf '{"version": "%s", "mode": "non-interactive", "steps": []}\n' "$ver" > "$here/state/install_report.json"
 fi
 exit "$rc"
 """
@@ -316,6 +339,13 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         _git(self.tmp, "clone", "-q", str(self.origin), str(self.live))
         self.script = self.live / "scripts" / "auto-deploy.sh"
         self.base_sha = _git(self.live, "rev-parse", "HEAD")
+        # the machine is RUNNING the base version: install.sh finished on it
+        # (install_report) and its actd is beating (deployed means running,
+        # §56.3 step 2 — without these an up-to-date checkout is "incomplete")
+        self.seed_running("0.48.3")
+        # the HOME mirror (§56.4): the script's own truth, never TCC-gated
+        self.mirror_dir = self.home / "Library" / "Application Support" / "ZelinAIAssistant"
+        self.lock = self.mirror_dir / "auto-deploy.lock"
 
     # -- fixture helpers ---------------------------------------------------- #
 
@@ -363,8 +393,14 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             self.curl_plan.write_text("\n".join(ci) + "\n", encoding="utf-8")
         elif self.curl_plan.exists():
             self.curl_plan.unlink()
+        # TERM_PROGRAM / SSH_TTY are the script's "started from a terminal"
+        # tells (detect_trigger); subprocess.run has no tty, so without them
+        # every fixture run reads as launchd-spawned = unattended — the shape
+        # the incident had. Tests that model the owner's terminal set
+        # AUTODEPLOY_TRIGGER=terminal explicitly.
         base = {k: v for k, v in os.environ.items()
-                if not k.startswith(("AIASSISTANT_", "AUTODEPLOY_", "FAKE_", "GIT_"))}
+                if not k.startswith(("AIASSISTANT_", "AUTODEPLOY_", "FAKE_", "GIT_"))
+                and k not in ("TERM_PROGRAM", "SSH_TTY")}
         full = {
             **base,
             "PATH": str(self.bin) + os.pathsep + base.get("PATH", "/usr/bin:/bin"),
@@ -394,7 +430,15 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         return proc
 
     def state(self):
+        """The repo projection state/deploy_state.json (what dashboard/doctor read)."""
         path = self.live / "state" / "deploy_state.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def mirror(self):
+        """The HOME mirror — the script's own truth + private bookkeeping."""
+        path = self.mirror_dir / "deploy_state.json"
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
@@ -421,13 +465,31 @@ class AutoDeployScriptTestCase(unittest.TestCase):
     def doctor_runs(self):
         return self.doctor_log.read_text(encoding="utf-8").splitlines() if self.doctor_log.exists() else []
 
-    def seed_heartbeat(self, version, phase, pid=1):
-        """A heartbeat left by the daemon running BEFORE the deploy."""
+    def seed_heartbeat(self, version, phase, pid=1, age_s=0):
+        """A heartbeat left by the daemon running BEFORE the deploy (fresh unless age_s)."""
         hb = self.live / "state" / "actd.heartbeat"
         hb.parent.mkdir(parents=True, exist_ok=True)
-        hb.write_text(json.dumps({"ts": "2026-09-01T00:00:00Z", "phase": phase, "pid": pid,
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - age_s))
+        hb.write_text(json.dumps({"ts": ts, "phase": phase, "pid": pid,
                                   "interval": 10, "stale_after_s": 90, "version": version}),
                       encoding="utf-8")
+
+    def seed_install_report(self, version):
+        """What install.sh left behind when it last finished (§23)."""
+        rep = self.live / "state" / "install_report.json"
+        rep.parent.mkdir(parents=True, exist_ok=True)
+        rep.write_text(json.dumps({"version": version, "mode": "non-interactive", "steps": []}),
+                       encoding="utf-8")
+
+    def seed_running(self, version):
+        """The machine RUNS this version: installed on it, actd beating on it."""
+        self.seed_install_report(version)
+        self.seed_heartbeat(version, "idle", pid=1)
+
+    def clear_heartbeat(self):
+        hb = self.live / "state" / "actd.heartbeat"
+        if hb.exists():
+            hb.unlink()
 
     def seed_store2_db(self, user_version):
         """A store2 ledger left by the daemon running BEFORE the deploy."""
@@ -460,7 +522,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertNotIn("last_deployed", st, "never deployed by this job → no last_deployed")
         self.assertEqual(self.notifications(), [])
         self.assertEqual(self.ci_queries(), [], "nothing to deploy → the CI API is not asked")
-        self.assertFalse((self.live / "state" / "auto-deploy.lock").exists(), "lock released")
+        self.assertFalse(self.lock.exists(), "lock released")
+        self.assertFalse((self.live / "state" / "auto-deploy.lock").exists(),
+                         "the lock lives in $HOME now, never on the (TCC-gated) volume")
 
     # -- 2. the happy path --------------------------------------------------- #
 
@@ -706,6 +770,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def test_no_heartbeat_file_at_all_before_and_after_rolls_back(self):
         self.push("0.48.4")
+        self.clear_heartbeat()
         proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_HEARTBEAT": "none"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.state()["status"], "rolled_back")
@@ -1092,9 +1157,20 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("TROUBLESHOOTING", st["detail"])
         self.assertEqual(len(self.installs()), 1, "no rollback install")
 
-    def test_write_state_failure_logs_the_cause(self):
+    def test_write_state_repo_copy_failure_logs_the_cause_and_keeps_the_mirror(self):
+        # the repo copy is the best-effort projection: its failure is logged with
+        # the child's exception, and the HOME mirror still has the verdict
         (self.live / "state").mkdir(exist_ok=True)
         (self.live / "state" / "deploy_state.json.tmp").mkdir()  # open(tmp, "w") → IsADirectoryError
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("mirror written, repo copy failed (non-fatal): IsADirectoryError", self.log_text())
+        self.assertIsNone(self.state(), "repo copy could not be written")
+        self.assertEqual(self.mirror()["status"], "up_to_date", "the mirror is the truth")
+
+    def test_write_state_mirror_failure_logs_the_cause(self):
+        self.mirror_dir.mkdir(parents=True)
+        (self.mirror_dir / "deploy_state.json.tmp").mkdir()
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("write_state failed (non-fatal): IsADirectoryError", self.log_text())
@@ -1185,7 +1261,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def test_live_lock_skips_and_stale_lock_is_reclaimed(self):
         self.push("0.48.4")
-        lock = self.live / "state" / "auto-deploy.lock"
+        lock = self.lock
         lock.mkdir(parents=True)
         sleeper = subprocess.Popen(["sleep", "30"])
         self.addCleanup(sleeper.kill)
@@ -1204,10 +1280,34 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(self.state()["status"], "deployed")
         self.assertFalse(lock.exists())
 
+    def test_live_legacy_state_lock_is_honoured_and_a_stale_one_is_cleared(self):
+        # upgrade window: a pre-v0.48.17 run still holds state/auto-deploy.lock
+        # while it fast-forwards to THIS script — a run of the new script must
+        # not deploy alongside it (Codex review P1 on #140)
+        self.push("0.48.4")
+        legacy = self.live / "state" / "auto-deploy.lock"
+        legacy.mkdir(parents=True)
+        sleeper = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(sleeper.kill)
+        (legacy / "pid").write_text("%d\n" % sleeper.pid, encoding="utf-8")
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.installs(), [], "the legacy holder is live")
+        self.assertIn("pre-v0.48.17 auto-deploy run still holds", self.log_text())
+        self.assertTrue(legacy.exists(), "never removed while live")
+        self.assertFalse(self.lock.exists(), "the HOME lock was not even taken")
+        sleeper.kill()
+        sleeper.wait()
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("removed stale legacy lock", self.log_text())
+        self.assertFalse(legacy.exists())
+        self.assertEqual(self.state()["status"], "deployed")
+
     def test_fresh_lock_without_pid_is_live_and_old_one_is_stale(self):
         # P2（review）：mkdir 与写 pid 之间的另一实例看到「无 pid」不得当陈旧锁回收
         self.push("0.48.4")
-        lock = self.live / "state" / "auto-deploy.lock"
+        lock = self.lock
         lock.mkdir(parents=True)
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -1243,6 +1343,372 @@ class AutoDeployScriptTestCase(unittest.TestCase):
                                    "AUTODEPLOY_LOG_DIR": str(self.logs)})
         self.assertEqual(proc.returncode, 1)
         self.assertIn("not a git checkout", self.log_text())
+
+    # -- 6. deployed means running（2026-09-02 事故；§56.3 step 2） ------------- #
+    # 实录：timer 起的一轮把 checkout 推到 v0.48.11，install.sh 被 EPERM（exit 126）、
+    # 回滚被拒；20 分钟后下一轮看到 HEAD == origin/main 就写了 up_to_date，而
+    # actd 内存里还是 v0.48.8。HEAD 到位只是必要条件：install_report.json 与
+    # actd.heartbeat 都得说同一个版本、且心跳新鲜，否则 install_incomplete + 重装。
+
+    def test_up_to_date_head_with_an_older_running_version_reinstalls_and_deploys(self):
+        # the incident's second run: checkout v0.48.3, install.sh last finished on
+        # v0.48.2 and the daemon in memory is v0.48.2
+        self.seed_running("0.48.2")
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        inst = self.installs()
+        self.assertEqual(len(inst), 1, "install.sh re-run exactly once")
+        self.assertIn("head=%s" % self.base_sha, inst[0])
+        st = self.state()
+        self.assertEqual(st["status"], "deployed", "the re-run completed the install")
+        self.assertEqual(st["version"], "0.48.3")
+        self.assertEqual(st["running_version"], "0.48.3")
+        self.assertEqual(st["install_report_version"], "0.48.3")
+        self.assertIn("install completed on re-run", st["detail"])
+        self.assertIn("install_report.json says v0.48.2", st["detail"])
+        self.assertIn("actd heartbeat says v0.48.2", st["detail"])
+        self.assertNotIn("reason", st)
+        self.assertIn("install_incomplete", self.log_text())
+        self.assertNotIn("up_to_date", self.log_text() + json.dumps(st))
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("install re-run", notes[0])
+        # and now it really is up to date
+        proc = self.run_script()
+        self.assertEqual(self.state()["status"], "up_to_date")
+        self.assertEqual(len(self.installs()), 1)
+
+    def test_stale_heartbeat_with_the_right_version_is_not_up_to_date(self):
+        # report says v0.48.3, heartbeat says v0.48.3 — but an hour old: nothing
+        # is running that code right now
+        self.seed_heartbeat("0.48.3", "idle", age_s=3600)
+        proc = self.run_script(env={"FAKE_INSTALL_HEARTBEAT": "none"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 1, "re-run once")
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete", "the re-run brought no fresh heartbeat")
+        self.assertEqual(st["reason"], "heartbeat_stale")
+        self.assertRegex(st["detail"], r"heartbeat is 36\d\ds old \(> 600s\)")
+        self.assertEqual(st["running_version"], "0.48.3")
+        self.assertEqual(self.notifications(), [], "first incomplete run is not yet news")
+
+    def test_missing_heartbeat_and_report_are_spelled_out(self):
+        self.clear_heartbeat()
+        (self.live / "state" / "install_report.json").unlink()
+        # and the re-run fails too, bringing neither a report nor a heartbeat
+        proc = self.run_script(install_rc=[2], env={"FAKE_INSTALL_HEARTBEAT": "none"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertEqual(st["reason"], "install_failed install_report_version_mismatch heartbeat_missing")
+        self.assertIn("install.sh exited 2", st["detail"])
+        self.assertIn("v0.48.3", st["detail"])
+        self.assertNotIn("install_report_version", st, "no report → no version to record")
+        self.assertIn("no actd heartbeat at all", self.log_text())
+
+    def test_persistently_incomplete_install_poisons_after_n_runs_and_force_rearms(self):
+        # the re-run never completes (install.sh keeps failing → no report):
+        # bounded — one re-run per run, poison + ONE notification at the limit,
+        # then silence until main moves / --force / a hand-run install.sh
+        (self.live / "state" / "install_report.json").unlink()
+        for n in (1, 2):
+            proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            st = self.state()
+            self.assertEqual(st["status"], "install_incomplete", n)
+            self.assertIn("re-run %d/3" % n, st["detail"])
+            self.assertNotIn("incomplete_sha", self.mirror(), "not poisoned yet")
+            self.assertEqual(self.notifications(), [], "quiet below the limit")
+        proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 3, "one re-run per run, three runs")
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertIn("3 consecutive incomplete runs", st["detail"])
+        self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha, "poisoned in its own ledger")
+        self.assertNotIn("failed_sha", self.mirror(), "not the rollback / CI-red ledger")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("install incomplete", notes[0])
+        # poisoned: no install, last_run still stamped, still no second notification
+        time.sleep(1.1)
+        proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.assertEqual(len(self.installs()), 3, "no fourth install.sh")
+        self.assertIn("gave up after 3 runs", self.log_text())
+        self.assertNotEqual(self.state()["last_run"], st["last_run"])
+        self.assertEqual(self.state()["status"], "install_incomplete", "verdict carried")
+        self.assertEqual(len(self.notifications()), 1)
+        # the owner repairs by hand (install.sh finished, actd beating) → up_to_date, no --force needed
+        self.seed_running("0.48.3")
+        proc = self.run_script()
+        self.assertEqual(self.state()["status"], "up_to_date")
+        self.assertNotIn("incomplete_sha", self.mirror())
+        self.assertEqual(len(self.installs()), 3)
+
+    def test_force_rearms_a_poisoned_incomplete_install(self):
+        (self.live / "state" / "install_report.json").unlink()
+        for _ in range(2):
+            self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
+        self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha)
+        proc = self.run_script("--force")   # install.sh succeeds this time
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 3)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertNotIn("incomplete_sha", self.mirror())
+
+    def test_refused_rollback_leaves_head_on_the_new_sha_and_the_next_run_finishes_the_install(self):
+        # the incident chain, minus TCC: install.sh dies (126) on the new sha,
+        # rollback is refused (store2 advanced during the deploy) — HEAD stays on
+        # v0.48.4 with failed_sha set. The next run must NOT call that up_to_date:
+        # the machine still runs v0.48.3; finishing the install is the repair,
+        # and failed_sha (a verdict about the ROLLBACK) does not block it.
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-"], install_rc=[126],
+                               env={"FAKE_INSTALL_STORE2": "1", "FAKE_INSTALL_HEARTBEAT": "none"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "rollback_failed")
+        self.assertEqual(self.state()["failed_sha"], target)
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 2, "the second run re-ran install.sh")
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertEqual(st["version"], "0.48.4")
+        self.assertEqual(st["running_version"], "0.48.4")
+        self.assertNotIn("failed_sha", st)
+        self.assertNotIn("up_to_date", self.log_text())
+
+    def test_repair_waits_for_ci_and_never_reinstalls_a_red_head(self):
+        # §56.5 still holds on the repair path: the owner may have `git pull`ed a
+        # main whose CI is pending or red — install.sh is not re-run on it
+        # (Codex review P1 on #140); the same --force exit applies
+        self.seed_running("0.48.2")
+        proc = self.run_script(ci=["pending"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.installs(), [], "CI still running → no re-run")
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertIn("ci_pending", st["reason"])
+        self.assertIn("waiting for CI", st["detail"])
+        self.assertEqual(self.notifications(), [])
+        proc = self.run_script(ci=["failure"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.installs(), [], "red CI → never re-run on that sha")
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertIn("ci_failed", st["reason"])
+        self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha, "poisoned in the repair ledger")
+        self.assertEqual(len(self.notifications()), 1)
+        self.assertIn("CI red", self.notifications()[0])
+        # poisoned: no further CI query, no second notification
+        self.run_script(ci=["failure"])
+        self.assertEqual(len(self.ci_queries()), 2)
+        self.assertEqual(len(self.notifications()), 1)
+        # --force is the owner's exit: skips the gate and repairs
+        proc = self.run_script("--force", ci=["failure"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 1)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertEqual(len(self.ci_queries()), 2, "forced run did not ask")
+
+    def test_repair_without_a_github_remote_and_no_ci_repo_does_not_reinstall(self):
+        self.seed_running("0.48.2")
+        proc = self.run_script(env={"AUTODEPLOY_CI_REPO": ""})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.installs(), [])
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertIn("ci_unverifiable", st["reason"])
+        self.assertIn("AUTODEPLOY_CI_REPO", st["detail"])
+
+    def test_repair_install_that_exits_non_zero_is_never_deployed(self):
+        # install.sh's exit code counts failed steps (crontab, launchd…) while the
+        # report still records the new version and actd beats on it — that is
+        # not `deployed` (Codex review P1 on #140)
+        self.seed_running("0.48.2")
+        proc = self.run_script(install_rc=[1], env={"FAKE_INSTALL_REPORT_ANYWAY": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 1)
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertEqual(st["reason"], "install_failed")
+        self.assertIn("install.sh exited 1", st["detail"])
+        self.assertEqual(st["running_version"], "0.48.3", "report + heartbeat did agree…")
+        self.assertEqual(st["install_report_version"], "0.48.3", "…but the installer said no")
+        self.assertEqual(self.notifications(), [])
+
+    def test_incomplete_counter_restarts_for_a_new_sha(self):
+        # sha A collected two incomplete runs; main moves to B, B's install dies
+        # and its rollback is refused (store2 advanced) → HEAD on B with two of
+        # three strikes inherited would poison B on its FIRST repair (Codex P2)
+        (self.live / "state" / "install_report.json").unlink()
+        for _ in range(2):
+            self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.assertEqual(self.mirror()["incomplete_runs"], "2")
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-"], install_rc=[126],
+                               env={"FAKE_INSTALL_STORE2": "1", "FAKE_INSTALL_HEARTBEAT": "none",
+                                    "AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "rollback_failed")
+        proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        m = self.mirror()
+        self.assertEqual(m["status"], "install_incomplete")
+        self.assertEqual(m["incomplete_runs"], "1", "B starts its own count")
+        self.assertEqual(m["incomplete_runs_sha"], target)
+        self.assertNotIn("incomplete_sha", m, "not poisoned on the first strike")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("REFUSED", notes[0], "only the deploy's refused-rollback notice; no poison notice")
+
+    def test_a_real_deploy_records_the_running_and_report_versions(self):
+        self.push("0.48.4")
+        self.run_script(doctor_plan=["-", "-"])
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertEqual(st["running_version"], "0.48.4")
+        self.assertEqual(st["install_report_version"], "0.48.4")
+
+    # -- 7. volume-access probe + HOME mirror（TCC；2026-09-02 事故） ------------ #
+    # macOS 按 responsible executable 给外置卷授权，launchd 任务收不到弹窗；终端里
+    # 跑的每一次都把终端的授权借给子进程，所以「我手跑是好的」不证明任何事。探针
+    # 在第一次 git 调用之前跑；拒绝 = blocked_tcc 写进 $HOME 的镜像 + 日志点名
+    # plist 里那个解释器，通知一天一次，HEAD 不动。fixture 用 chmod 000 造出
+    # PermissionError（errno 13；真 TCC 是 errno 1——脚本只看异常类型）。
+
+    def _plist(self, interpreter="/fake/launchd/python3"):
+        p = self.home / "Library" / "LaunchAgents" / "com.zelin.aiassistant.autodeploy.plist"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("<plist><dict><key>Label</key><string>x</string>\n<key>ProgramArguments</key>\n"
+                     "<array>\n  <string>%s</string>\n  <string>-m</string>\n</array></dict></plist>\n"
+                     % interpreter, encoding="utf-8")
+        return p
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "chmod 000 does not bind root")
+    def test_unreadable_repo_file_is_blocked_tcc_and_moves_nothing(self):
+        target = self.push("0.48.4")
+        self._plist()
+        (self.live / "install.sh").chmod(0)
+        self.addCleanup(lambda: (self.live / "install.sh").chmod(0o755))
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "HEAD never moves before the probe passes")
+        self.assertEqual(_git(self.live, "rev-parse", "refs/remotes/origin/main"), self.base_sha,
+                         "git fetch was not even attempted")
+        self.assertEqual(self.installs(), [])
+        self.assertEqual(self.ci_queries(), [])
+        log = self.log_text()
+        self.assertRegex(log, r"volume_access=denied \(errno \d+\)")
+        self.assertIn("grant Full Disk Access to /fake/launchd/python3", log,
+                      "names the plist's ProgramArguments[0], the binary TCC judges")
+        self.assertIn("trigger=launchd", log)
+        m = self.mirror()
+        self.assertEqual(m["status"], "blocked_tcc")
+        self.assertEqual(m["reason"], "volume_access_denied")
+        self.assertEqual(m["interpreter"], "/fake/launchd/python3")
+        self.assertEqual(m["trigger"], "launchd")
+        self.assertEqual(m["repo"], str(self.live.resolve()))
+        self.assertTrue(m["volume"].startswith("/"), m)
+        self.assertEqual(m["unattended_status"], "blocked_tcc", "the doctor reads this triple")
+        self.assertEqual(m["denied_path"], str(self.live.resolve() / "install.sh"))
+        # the projected detail carries NO local path (it rides into the dashboard
+        # and, in cloud mode, into the encrypted snapshot): paths live in the
+        # mirror-only keys the doctor row renders
+        for value in (m["detail"], m["unattended_detail"], self.state()["detail"]):
+            self.assertIn("volume_access=denied", value)
+            self.assertNotIn(str(self.live), value)
+            self.assertNotIn("/fake/launchd/python3", value)
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("/fake/launchd/python3", notes[0])
+        self.assertIn("完全磁盘访问", notes[0])
+        # same day: quiet; yesterday's stamp: one more
+        self.run_script()
+        self.assertEqual(len(self.notifications()), 1, "once per day, not every 10 min")
+        self.assertEqual(self.mirror()["tcc_notified_day"], time.strftime("%Y-%m-%d", time.gmtime()))
+        path = self.mirror_dir / "deploy_state.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["tcc_notified_day"] = "2000-01-01"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.run_script()
+        self.assertEqual(len(self.notifications()), 2)
+        self.assertEqual(self.head(), self.base_sha)
+        # access granted → the very next run deploys normally, nothing was poisoned
+        (self.live / "install.sh").chmod(0o755)
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertEqual(self.mirror()["unattended_status"], "deployed", "a good unattended run clears it")
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "chmod 000 does not bind root")
+    def test_unwritable_state_dir_still_records_blocked_tcc_in_the_home_mirror(self):
+        # the incident's write_state / rm-lock EPERMs: state/ itself is off limits
+        self.push("0.48.4")
+        state_dir = self.live / "state"
+        state_dir.chmod(0)
+        self.addCleanup(lambda: state_dir.chmod(0o755))
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        m = self.mirror()
+        self.assertEqual(m["status"], "blocked_tcc")
+        self.assertEqual(m["denied_path"], str(state_dir.resolve()))
+        self.assertNotIn(str(state_dir), m["detail"], "paths stay out of the projected detail")
+        self.assertIn("mirror written, repo copy failed", self.log_text())
+        self.assertFalse(self.lock.exists(), "the HOME lock is released cleanly")
+        self.assertNotIn("could not remove", self.log_text())
+        state_dir.chmod(0o755)
+        self.assertFalse((state_dir / "deploy_state.json").exists(), "nothing landed on the volume")
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "chmod 000 does not bind root")
+    def test_terminal_runs_do_not_overwrite_the_unattended_verdict(self):
+        # a green run from the owner's terminal inherits the terminal's TCC grants:
+        # it proves nothing about the launchd job, so the unattended triple stays
+        self.push("0.48.4")
+        (self.live / "install.sh").chmod(0)
+        self.addCleanup(lambda: (self.live / "install.sh").chmod(0o755))
+        self.run_script()
+        self.assertEqual(self.mirror()["unattended_status"], "blocked_tcc")
+        (self.live / "install.sh").chmod(0o755)
+        proc = self.run_script(doctor_plan=["-", "-"], env={"AUTODEPLOY_TRIGGER": "terminal"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        m = self.mirror()
+        self.assertEqual(m["status"], "deployed")
+        self.assertEqual(m["trigger"], "terminal")
+        self.assertEqual(m["unattended_status"], "blocked_tcc", "untouched by the terminal run")
+        # TERM_PROGRAM alone marks a terminal too (an orchestrator started from one)
+        self.run_script(env={"TERM_PROGRAM": "Apple_Terminal"})
+        self.assertEqual(self.mirror()["trigger"], "terminal")
+        self.assertEqual(self.mirror()["unattended_status"], "blocked_tcc")
+        # the next launchd-spawned run rewrites it
+        self.run_script()
+        self.assertEqual(self.mirror()["unattended_status"], "up_to_date")
+
+    def test_without_a_plist_the_interpreter_named_is_the_launchers_own(self):
+        self.push("0.48.4")
+        self.seed_running("0.48.2")   # any run writes interpreter/trigger/repo
+        self.run_script()
+        self.assertEqual(self.mirror()["interpreter"], sys.executable,
+                         "AIASSISTANT_PYTHON is argv0 when the shim started us")
+
+    def test_mirror_seeds_itself_from_the_repo_copy_on_first_run(self):
+        # upgrade path: pre-v0.48.17 machines only have state/deploy_state.json;
+        # its failed_sha bookkeeping must survive into the mirror
+        target = self.push("0.48.4")
+        (self.live / "state" / "deploy_state.json").write_text(
+            json.dumps({"status": "rolled_back", "version": "0.48.3", "failed_sha": target,
+                        "last_deployed": "2026-09-01T00:00:00Z"}), encoding="utf-8")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "the poisoned sha is still poisoned")
+        self.assertIn("already failed", self.log_text())
+        self.assertEqual(self.mirror()["failed_sha"], target)
+        self.assertEqual(self.mirror()["last_deployed"], "2026-09-01T00:00:00Z")
+        self.assertEqual(self.state()["failed_sha"], target, "repo copy stays in step")
 
 
 if __name__ == "__main__":

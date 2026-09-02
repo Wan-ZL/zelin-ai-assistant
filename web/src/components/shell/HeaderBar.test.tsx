@@ -166,6 +166,24 @@ describe("HeaderBar", () => {
     expect(screen.getByText("v0.48.6 · main 的 CI 红了，未部署").className).toBe("shell-deploy is-warn");
   });
 
+  it("§56 部署状态：install_incomplete / blocked_tcc（v0.48.17）是警告态，各有双语文案", async () => {
+    await seedBoard(10, {
+      status: "install_incomplete",
+      version: "0.48.11",
+      running_version: "0.48.8",
+      detail: "install_report.json says v0.48.8, checkout is v0.48.11",
+    });
+    renderHeader();
+    const incomplete = screen.getByText("v0.48.11 · install incomplete, re-running");
+    expect(incomplete.className).toBe("shell-deploy is-warn");
+    expect(incomplete.getAttribute("title")).toContain("v0.48.8");
+    cleanup();
+    resetStoreForTests();
+    await seedBoard(10, { status: "blocked_tcc", version: "0.48.11", reason: "volume_access_denied" });
+    renderHeader("zh");
+    expect(screen.getByText("v0.48.11 · 后台任务读不到外置盘（需授权）").className).toBe("shell-deploy is-warn");
+  });
+
   it("§56 部署状态：只有 version、还没成功部署过（无 last_deployed）→ 只显示版本", async () => {
     await seedBoard(10, { status: "up_to_date", version: "0.48.4" });
     renderHeader();

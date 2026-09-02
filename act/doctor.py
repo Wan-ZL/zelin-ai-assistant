@@ -200,16 +200,32 @@ def _installed_plist_text(label: str) -> Optional[str]:
         return None
 
 
+def _launchd_log_paths(short: str):
+    """agent 自管日志的候选路径：v0.48 起住 ~/Library/Logs/，旧址兜底。"""
+    return (Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
+            / ("%s.launchd.log" % short),
+            config.HOME / "state" / ("%s.launchd.log" % short))
+
+
 def _launchd_log_tail(short: str) -> str:
-    """agent 自管日志的末尾；"" = 读不到。v0.48 起住 ~/Library/Logs/，旧址兜底。"""
-    for p in (Path.home() / "Library" / "Logs" / "zelin-ai-assistant"
-              / ("%s.launchd.log" % short),
-              config.HOME / "state" / ("%s.launchd.log" % short)):
+    """agent 自管日志的末尾；"" = 读不到。"""
+    for p in _launchd_log_paths(short):
         try:
             return p.read_text(encoding="utf-8", errors="replace")[-4000:]
         except OSError:
             continue
     return ""
+
+
+def _launchd_log_mtime(short: str) -> Optional[float]:
+    """agent 自管日志最后一次写入的时刻；None = 读不到。launchd 的 stderr 文件
+    没有时间戳——「最近 24h 有没有写」只能靠 mtime（§56.3 第 1 步的日志证据）。"""
+    for p in _launchd_log_paths(short):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            continue
+    return None
 
 
 LABEL_PREFIX = "com.zelin.aiassistant."
@@ -394,6 +410,12 @@ class Probes:
     # §54 看板 server：回环 /api/health 探针（port → verdict dict）；tests 注入，
     # 默认实现在 AIASSISTANT_HTTP_PROBE=0 下自报 unavailable（行不出）
     board_health: Callable[[int], dict] = board_server.health_probe
+    # §56.4 HOME 镜像（~/Library/Application Support/ZelinAIAssistant/
+    # deploy_state.json）：auto-deploy 自己的真源，TCC 永不拦 $HOME——`launchd
+    # volume access` 行读它的 unattended_* 三元组；tests 注入保持 hermetic
+    deploy_mirror_read: Callable[[], Optional[dict]] = deploy_state.read_mirror
+    # §56.3 第 1 步日志证据：launchd stderr 文件的 mtime（它没有时间戳）
+    launchd_log_mtime: Callable[[str], Optional[float]] = _launchd_log_mtime
 
 
 @dataclass
@@ -1072,6 +1094,76 @@ def _check_launchd_claude(probes: Probes):
         "launchd session (permissions, environment) - see docs/TROUBLESHOOTING.md")
 
 
+# --------------------------------------------------------------------------- #
+# §56.3 第 1 步：launchd 起的部署任务读不读得到外置卷上的 repo（TCC）
+# --------------------------------------------------------------------------- #
+AUTODEPLOY_LABEL = "com.zelin.aiassistant.autodeploy"
+_VOLUME_ROW = "launchd volume access"
+
+
+def _volume_access_row(verdict: dict, interp: str, repo: str) -> CheckResult:
+    kind = verdict["kind"]   # deploy_state.unattended_verdict → 一行
+    if kind == deploy_state.BLOCKED_MIRROR:
+        return CheckResult(
+            _VOLUME_ROW, FAIL,
+            _pick("上一次无人值守的部署运行（%s）读不了 %s（卡在 %s）：%s——launchd 任务没有"
+                  "这个卷的访问权，每 10 分钟都在原地打转，什么都没部署",
+                  "the last unattended deploy run (%s) could not access %s (denied at %s): %s - "
+                  "the launchd job has no grant for that volume; it idles every 10 min and "
+                  "deploys nothing")
+            % (verdict["last_run"], verdict["volume"], verdict["denied_path"], verdict["detail"]),
+            deploy_state.volume_access_fix(interp),
+        ).with_failure("deploy_blind_tcc")
+    if kind == deploy_state.BLOCKED_LOG:
+        # `No module named 'act'` alone cannot tell TCC from a mis-rendered
+        # PYTHONPATH (§55): say so and send the reader to `launchd paths` first.
+        fix = deploy_state.volume_access_fix(interp)
+        if verdict.get("ambiguous"):
+            fix = _pick("先看 doctor 的 launchd paths 行：不是 OK → bash install.sh 重渲 plist；"
+                        "是 OK → 解释器读不到 repo：", "check doctor's launchd paths row first: "
+                        "not OK -> bash install.sh re-renders the plist; OK -> the interpreter "
+                        "cannot read the repo: ") + fix
+        return CheckResult(
+            _VOLUME_ROW, FAIL,
+            _pick("autodeploy.launchd.log（%d 分钟前写入）尾部有「%s」——launchd 起的"
+                  "启动器/解释器 %s 读不到 %s 上的 repo（这份 stderr 没时间戳，只能按"
+                  "文件 mtime 判「最近 24h」）",
+                  "autodeploy.launchd.log (written %d min ago) ends with \"%s\" - the "
+                  "launchd-spawned launcher/interpreter %s cannot reach the repo on %s "
+                  "(this stderr file has no timestamps; \"last 24h\" = file mtime)")
+            % (int(verdict["age_s"] // 60), verdict["match"], interp, repo),
+            fix,
+        ).with_failure("deploy_blind_tcc")
+    if kind == deploy_state.OK_RECORDED:
+        return CheckResult(_VOLUME_ROW, OK, "last unattended run %s reached %s (status %s)"
+                           % (verdict["last_run"], repo, verdict["status"]))
+    return CheckResult(
+        _VOLUME_ROW, OK,
+        "no unattended run recorded yet (mirror %s) - expect one within 10 min of install"
+        % deploy_state.MIRROR_PATH)
+
+
+def _check_launchd_volume_access(probes: Probes):
+    """§56.3 第 1 步（v0.48.17；live 事故 2026-09-02）：部署 agent 在 launchd 会话里
+    能否读写 repo 所在的卷。doctor 自己跑在终端里、借着终端的 TCC 授权什么都读
+    得到，所以本行**不探**，只读无人值守那一轮留下的证据（判决与推理住
+    `deploy_state.unattended_verdict`：HOME 镜像的 `unattended_status == blocked_tcc`，
+    或 `autodeploy.launchd.log` 24h 内的 EPERM / `No module named 'act'`）。没装
+    autodeploy plist、或它部署的是另一个 checkout → 无此行。
+    """
+    text = probes.installed_plist_text(AUTODEPLOY_LABEL)
+    if not text:
+        return []
+    repo = str(config.HOME)
+    if not deploy_state.same_repo(_plist_string(text, "AIASSISTANT_HOME"), repo):
+        return []
+    interp = _plist_interpreter(text) or "<ProgramArguments[0] of the autodeploy plist>"
+    verdict = deploy_state.unattended_verdict(
+        probes.deploy_mirror_read(), repo, probes.launchd_log_tail("autodeploy"),
+        probes.launchd_log_mtime("autodeploy"), probes.now())
+    return _volume_access_row(verdict, interp, repo)
+
+
 def _symlink_shaped(value: Optional[str]) -> bool:
     """该路径是否经过 symlink（≠ 自己的 realpath）。不存在的路径原样返回，
     所以未安装/占位路径不会误报。"""
@@ -1616,6 +1708,48 @@ def _check_ui_build(probes: Probes):
     return _row_from(row, "board ui build")
 
 
+def _auto_deploy_fix(status: str) -> str:
+    """WARN 行的修法按状态词分三种（§56.4）。"""
+    if status == deploy_state.BLOCKED_TCC:
+        # v0.48.17：探针在第一次 git 调用前就拒了——修法是授权，不是 --force；
+        # 精确的解释器路径与证据在 `launchd volume access` 行
+        return _pick("给 plist 里那个解释器授「完全磁盘访问」——见 doctor 的 launchd volume "
+                     "access 行与 docs/TROUBLESHOOTING.md「外置盘 + launchd 权限」",
+                     "grant Full Disk Access to the plist's interpreter - see the launchd volume "
+                     "access row and docs/TROUBLESHOOTING.md (external volume + launchd)")
+    if status == deploy_state.INSTALL_INCOMPLETE:
+        return _pick("下一轮会自动重跑 install.sh（连续几轮无效即停并通知）；等不及就手动"
+                     " bash install.sh 或 bash scripts/auto-deploy.sh --force",
+                     "the next run re-runs install.sh by itself (gives up + notifies after a few "
+                     "consecutive runs); or by hand: bash install.sh / bash scripts/auto-deploy.sh --force")
+    return _pick("tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
+                 " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
+                 "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
+                 " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)")
+
+
+def _auto_deploy_ok_detail(state: dict) -> str:
+    when = state.get("last_deployed") or state.get("last_run") or ""
+    return "%s (v%s%s)" % (state.get("status", ""), state.get("version") or "?",
+                           (" at " + when) if when else "")
+
+
+def _auto_deploy_warn_detail(state: dict) -> str:
+    """「last run ended '<status>' on v<version> (running v<running>): <detail>」——
+    `running_version`（心跳里的版本）与 checkout 版本不同时才点名（v0.48.17）。"""
+    version = state.get("version", "")
+    running = state.get("running_version", "")
+    detail = state.get("detail", "")
+    parts = ["last run ended '%s'" % (state.get("status", "") or "?")]
+    if version:
+        parts.append(" on v%s" % version)
+    if running and running != version:
+        parts.append(" (running v%s)" % running)
+    if detail:
+        parts.append(": " + detail)
+    return "".join(parts)
+
+
 def _check_auto_deploy(probes: Probes):
     """§56 合并即上岗：最近一次自动部署的结果（state/deploy_state.json，
     scripts/auto-deploy.sh 写）。文件不存在 = 这台机器不跑该 agent（.pkg 安装 /
@@ -1626,23 +1760,10 @@ def _check_auto_deploy(probes: Probes):
     if not state:
         return []
     status = state.get("status", "")
-    detail = state.get("detail", "")
-    version = state.get("version", "")
     if status in deploy_state.HEALTHY:
-        when = state.get("last_deployed") or state.get("last_run") or ""
-        return CheckResult(
-            "auto-deploy", OK,
-            "%s (v%s%s)" % (status, version or "?", (" at " + when) if when else ""))
-    return CheckResult(
-        "auto-deploy", WARN,
-        "last run ended '%s'%s%s" % (
-            status or "?",
-            (" on v%s" % version) if version else "",
-            (": " + detail) if detail else ""),
-        _pick("tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
-              " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
-              "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
-              " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)"))
+        return CheckResult("auto-deploy", OK, _auto_deploy_ok_detail(state))
+    return CheckResult("auto-deploy", WARN, _auto_deploy_warn_detail(state),
+                       _auto_deploy_fix(status))
 
 
 def _check_obsidian(probes: Probes):
@@ -1868,7 +1989,8 @@ def _checks_for_platform() -> List:
     """
     if platform.is_darwin():
         middle = [_check_launchd, _check_launchd_paths, _check_launchd_fd_limit,
-                  _check_launchd_claude, _check_launchd_orphans, _check_cron]
+                  _check_launchd_claude, _check_launchd_volume_access,
+                  _check_launchd_orphans, _check_cron]
         tail_extra = [_check_screenpipe, _check_npx]
     elif platform.is_windows():
         middle = [_check_scheduled_tasks]

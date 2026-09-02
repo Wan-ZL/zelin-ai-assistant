@@ -202,6 +202,11 @@ class DoctorTestCase(unittest.TestCase):
             claude_code_settings=lambda: dict(
                 claude_code if claude_code is not None
                 else {"model": None, "exists": False, "parseable": False}),
+            # §56.4: never read the developer's real HOME mirror or the real
+            # autodeploy.launchd.log mtime (tests/test_doctor_launchd_volume_access.py
+            # injects both); default = no mirror, no log.
+            deploy_mirror_read=lambda: None,
+            launchd_log_mtime=lambda short: None,
         )
 
     def _main(self, probes, argv=None):

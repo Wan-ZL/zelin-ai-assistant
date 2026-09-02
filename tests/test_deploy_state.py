@@ -45,6 +45,41 @@ class DeployStateReaderTestCase(unittest.TestCase):
         self._write({"status": "paused_by_owner", "version": "0.48.4"})
         self.assertEqual(deploy_state.read()["status"], "paused_by_owner")
 
+    def test_v0_48_13_fields_are_projected_and_mirror_only_keys_are_not(self):
+        # add-only：running_version / install_report_version / reason 进投影；
+        # trigger / interpreter / volume / repo / unattended_* 只住 HOME 镜像
+        self._write({"status": "install_incomplete", "version": "0.48.11",
+                     "running_version": "0.48.8", "install_report_version": "0.48.8",
+                     "reason": "heartbeat_version_mismatch", "trigger": "launchd",
+                     "interpreter": "/usr/bin/python3", "volume": "/Volumes/Storage",
+                     "repo": "/Volumes/Storage/repo", "unattended_status": "blocked_tcc",
+                     "incomplete_runs": "2", "tcc_notified_day": "2026-09-02"})
+        self.assertEqual(deploy_state.read(), {
+            "status": "install_incomplete", "version": "0.48.11",
+            "running_version": "0.48.8", "install_report_version": "0.48.8",
+            "reason": "heartbeat_version_mismatch"})
+
+    def test_read_mirror_is_a_superset_with_the_unattended_triple(self):
+        mirror = self.path.parent / "mirror.json"
+        self.addCleanup(lambda: mirror.unlink(missing_ok=True))
+        mirror.write_text(json.dumps({
+            "status": "deployed", "trigger": "terminal", "interpreter": "/usr/bin/python3",
+            "volume": "/Volumes/Storage", "repo": "/Volumes/Storage/repo",
+            "unattended_status": "blocked_tcc", "unattended_last_run": "2026-09-02T00:48:54Z",
+            "unattended_detail": "volume_access=denied (errno 1)", "tcc_notified_day": "x",
+            "incomplete_sha": "abc"}), encoding="utf-8")
+        got = deploy_state.read_mirror(mirror)
+        self.assertEqual(got["unattended_status"], "blocked_tcc")
+        self.assertEqual(got["unattended_last_run"], "2026-09-02T00:48:54Z")
+        self.assertEqual(got["interpreter"], "/usr/bin/python3")
+        self.assertEqual(got["trigger"], "terminal")
+        self.assertNotIn("tcc_notified_day", got, "private bookkeeping stays private")
+        self.assertNotIn("incomplete_sha", got)
+        self.assertIsNone(deploy_state.read_mirror(self.path.parent / "absent.json"))
+        # parts, not a string suffix: the Windows leg spells the separators differently
+        self.assertEqual(deploy_state.MIRROR_PATH.parts[-4:],
+                         ("Library", "Application Support", "ZelinAIAssistant", "deploy_state.json"))
+
     def test_attach_adds_key_only_when_present(self):
         self.path.unlink(missing_ok=True)
         self.assertNotIn("deploy_state", deploy_state.attach({}))
@@ -149,7 +184,8 @@ class DoctorRowTestCase(unittest.TestCase):
     def test_every_non_healthy_status_warns(self):
         # ci_pending 也在这里（§56.4）：等待态必须看得见，卡住几小时的等待更要
         for status in ("refused_dirty", "refused_branch", "fetch_failed", "failed",
-                       "rollback_failed", "ci_pending", "ci_failed", "something_new"):
+                       "rollback_failed", "ci_pending", "ci_failed", "install_incomplete",
+                       "blocked_tcc", "something_new"):
             self.path.write_text(json.dumps({"status": status, "version": "0.48.4"}),
                                  encoding="utf-8")
             (row,) = self._row()

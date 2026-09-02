@@ -55,7 +55,6 @@ act/digest.py::build_digest 18
 act/digest.py::build_suggestions 17
 act/digest.py::run 7
 act/doctor.py::_actd_alive 7
-act/doctor.py::_check_auto_deploy 10
 act/doctor.py::_check_claude_auth 8
 act/doctor.py::_check_claude_code_model 10
 act/doctor.py::_check_cron_probe 9
@@ -120,7 +119,6 @@ act/lib/dashboard.py::_run_claude_agents 9
 act/lib/dashboard.py::_source_view 9
 act/lib/dashboard.py::build_dashboard 19
 act/lib/dashboard.py::build_dashboard._project 72
-act/lib/deploy_state.py::read 8
 act/lib/failures.py::_persisted_language 11
 act/lib/failures.py::classify_engine_log 8
 act/lib/failures.py::ui_lang 7

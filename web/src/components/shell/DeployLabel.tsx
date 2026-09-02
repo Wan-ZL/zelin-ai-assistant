@@ -30,6 +30,12 @@ function statusLabel(status: string, text: (zh: string, en: string) => string): 
       return text("main 的 CI 红了，未部署", "main CI red, not deployed");
     case "failed":
       return text("部署失败", "deploy failed");
+    // §56.4 v0.48.17：HEAD 到位但没跑起来（install_report / heartbeat 版本不符，
+    // 下轮自动重跑 install.sh）；launchd 任务读不到外置盘（TCC，需授权）
+    case "install_incomplete":
+      return text("安装未完成，正在重装", "install incomplete, re-running");
+    case "blocked_tcc":
+      return text("后台任务读不到外置盘（需授权）", "job blocked from the volume (grant access)");
     default:
       return status || text("状态未知", "unknown state");
   }

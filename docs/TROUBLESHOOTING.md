@@ -83,6 +83,24 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **附带的资源上限**:launchd 给后台任务的默认是 soft `ulimit -n` 256 / hard unlimited。模板自 v0.48.4 起只抬 soft 到 8192(余量);**不要**再手加 `HardResourceLimits`——它把 unlimited 压成 8192,doctor `launchd fd limit` 行会 WARN,重跑 `bash install.sh` 即去掉。
 
+## 外置盘 + launchd 权限:自动部署每 10 分钟原地打转,或「已 up_to_date」却还在跑旧版本
+
+**症状**(任一):① doctor `launchd volume access` 行 FAIL `deploy_blind_tcc`;② `~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 里每 10 分钟一行 `volume_access=denied (errno 1) — launchd job lacks access to /Volumes/<卷>; grant Full Disk Access to <解释器>`;③ `autodeploy.launchd.log`(launchd 的 stderr,没时间戳)里 `PermissionError: [Errno 1] Operation not permitted`、`rm: … Operation not permitted`、或 `ModuleNotFoundError: No module named 'act'`;④ 顶栏/doctor 写着 `install_incomplete`——checkout 已在新 sha,`state/install_report.json` 与 `state/actd.heartbeat` 却还是旧版本。而你在终端里手跑 `bash scripts/auto-deploy.sh`(或 `launchctl kickstart` 之后马上看)**一切正常**。
+
+**原因**(CONTRACT §56.3 第 1 步、§55 第四幕):repo 住在外置卷(USB/APFS,`/Volumes/…`)上。macOS 按 **responsible executable** 给「可移动卷」授权,launchd 起的任务是它自己的 responsible process、**没有界面接弹窗**,于是默认被拒(errno 1,EPERM);而终端里跑的每一次都把终端(它有完全磁盘访问)的授权借给全部子进程,所以「我手跑是绿的」**对无人值守的运行什么都不证明**。2026-09-02 的实录:timer 起的一轮先把 checkout 推到 v0.48.11(git 碰巧读得到),然后 `bash install.sh` 拿到 EPERM(exit 126)、回滚被拒、`state/deploy_state.json` / 通知队列 / 锁全部写不进去;20 分钟后下一轮看到 HEAD == origin/main 就写了 `up_to_date`,而 actd 内存里还是 v0.48.8。
+
+v0.48.17 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(读 repo、在 `state/` 里 mkstemp),被拒就记 `blocked_tcc`、HEAD 不动、一天最多通知一次;判决和锁都先写进 `~/Library/Application Support/ZelinAIAssistant/`(TCC 从不拦 `$HOME`),repo 里的 `state/deploy_state.json` 只是尽力而为的投影;`up_to_date` 的定义收紧为「HEAD 到位 **且** install_report 与 actd 心跳都是这个版本且心跳新鲜」,否则 `install_incomplete` 并在本轮重跑一次 `install.sh`(连续 3 轮无效即停并通知)。
+
+**确认**:`python3 -m act.doctor` —— `launchd volume access` 行读的是**无人值守那一轮**留下的记录(镜像的 `unattended_status`),不是你刚在终端跑的那一轮;它会点名 plist 里那个解释器的精确路径。想直接看证据:`cat "$HOME/Library/Application Support/ZelinAIAssistant/deploy_state.json"`(看 `unattended_status` / `unattended_detail` / `interpreter` / `volume`)。
+
+**修复**(两条授权都要加):
+
+1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴路径,加**两条**:① 后台任务的解释器 = doctor 行给出的 `~/Library/LaunchAgents/com.zelin.aiassistant.autodeploy.plist` 的 `ProgramArguments[0]`(这台机器上出过事的是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`;**按路径授权,换了解释器要重授**);② `/Users/<你>/.local/bin/claude`(实体在 `~/.local/share/claude/versions/<版本>`,claude 每次更新后重做,见上一节)。
+2. **等 timer 自己触发一轮(≤ 10 分钟)**,再 `python3 -m act.doctor` 看 `launchd volume access` 行变 OK、`auto-deploy` 行变 `deployed` / `up_to_date`(`tail -f ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 能看到那一轮)。**不要拿自己起的运行当证据**:2026-09-02 的观察是,从终端起的每一次——`bash scripts/auto-deploy.sh`、`python3 -m act.auto_deploy`、乃至在终端里敲的 `launchctl kickstart`——都绿,只有 timer 触发的那一次被拒:终端把自己的授权借给了它起的一切,绿了对 timer 触发的运行什么都不证明。从进程内部看 kickstart 与 timer 分不出来,所以一次终端 kickstart 可能让 doctor 行在下一次 timer 触发前短暂显示 OK——那不是修好。
+3. 替代路线:把 repo 搬回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),重跑 `bash install.sh` 重渲 plist。
+
+**别做**:不要用 `--force` 去「修」`blocked_tcc`——它只是从终端借了一次授权,下一轮 timer 照样被拒;也不要手动删 `~/Library/Application Support/ZelinAIAssistant/deploy_state.json`——那是脚本的记账(failed_sha / notified_sha / incomplete_sha 都在里面),删了它会忘掉哪个 sha 已经失败过。
+
 ## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
 
 **症状**:看板顶部横幅「后台服务卡住了」/ doctor `actd heartbeat` 行 FAIL `actd_stalled`;`state/dashboard.json` 与 `actd.log` 的 mtime 几小时不动,`launchctl list | grep actd` 却给出 pid,没有子进程。2026-08-31 22:31 这台机器就这样静默了 2.5 小时。
