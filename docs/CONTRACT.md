@@ -3566,7 +3566,9 @@ PyYAML。
   再 rename；**在 BEGIN IMMEDIATE 写锁下复核 `user_version == from` 之后拍，
   该级每次重跑都刷新**——快照恒为「最近一次踏出该级前」的已提交状态，恢复快照
   → 旧代码跑一阵 → 再部署新代码这条路上只认第一份会漏掉旧代码期间的写入；等锁者
-  拿到锁时版本已升则既不拍也不升；固定一级一份、数量 ≤ SCHEMA_VERSION−1、
+  拿到锁时版本已升则既不拍也不升；并发首开的 DELETE→WAL journal 转换
+  输家在连接层短退避重试——sqlite 把锁升级冲突判成潜在死锁**立即** BUSY、
+  不等 busy_timeout（Windows CI 实测），live 库出生即 WAL 不受影响；固定一级一份、数量 ≤ SCHEMA_VERSION−1、
   大小 = 库大小，防腐 #4 满足，owner 接受该版本后可删）；拍不下来 =
   `SCHEMA_SNAPSHOT_FAILED` **拒绝升级**（异常穿过事务 → ROLLBACK），DB 留在
   旧版本、新旧代码都还能跑它，下次开库重试——没有退路的单向门不许自动踏过

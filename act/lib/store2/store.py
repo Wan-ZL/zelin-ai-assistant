@@ -5,7 +5,8 @@
 （put_card/list_cards/get_card/get_card_by_work_id/purge_trashed），callers 永远不直接 import 本模块。
 
 职责（B2，与 schema.md「给 B2/B3/B4 的接口约定」逐条对应）：
-* 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接
+* 连接管理：WAL + busy_timeout=5000 + foreign_keys=ON（per-connection！）、每线程一连接；
+  并发首开的 DELETE→WAL 转换输家短退避重试（锁升级冲突 = 立即 BUSY，不等 busy_timeout）
 * 写事务 helper：BEGIN IMMEDIATE → board_revision +1 → 新值盖到被触碰卡的 board_rev → COMMIT
   （子表 notes/sources/dispatches 变更也 bump 所属卡；no-op 不写不 bump）
 * CAS 三件套（抄 dashi database.mjs:2181-2211 / #requireVersion / #throwMissingOrConflict 模式）：
@@ -28,6 +29,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
@@ -379,8 +381,20 @@ class Store:
             conn = sqlite3.connect(self._db_path, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")     # per-connection！（schema.md 约定）
-            conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA busy_timeout = 5000")
+            # WAL 转换（DELETE→WAL）需要瞬时独占；并发首开时输家拿到的是
+            # **立即** SQLITE_BUSY——sqlite 判定这类锁升级冲突为潜在死锁，
+            # 不等 busy_timeout（Windows CI 实测三个并发 opener 当场
+            # 'database is locked'）。短退避重试直到赢家转完：已是 WAL 的库
+            # （live 自 v0.48.8 出生即 WAL）这条 pragma 是无锁读、首次即成；
+            # 极端不收敛时按现有 journal 模式继续——正确性不依赖 WAL，
+            # BEGIN IMMEDIATE + busy_timeout 的事务纪律照常成立。
+            for _attempt in range(100):
+                try:
+                    conn.execute("PRAGMA journal_mode = WAL")
+                    break
+                except sqlite3.OperationalError:
+                    time.sleep(0.05)
             self._local.conn = conn
         return conn
 
