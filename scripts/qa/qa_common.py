@@ -12,6 +12,7 @@ qa-gates job 上；不依赖 PyYAML（TOML 子集自带解析），不依赖 tom
 """
 
 import ast
+import math
 import os
 import re
 
@@ -215,16 +216,27 @@ def span_coverage(node, executed, missing):
 # shrink-only 账本（§58.4；判例 tests/test_qa_ledger_shrink.py）
 # --------------------------------------------------------------------------- #
 
+def _parse_score(raw):
+    """账本/地板数字：必须是有限数，否则 fail-loud（与 _parse_scalar 同哲学）。
+    `float()` 认 nan/inf，而 nan 与任何数比较都是 False——放进登记分或地板
+    就把三态判决（worse/stale）与 ledger_diff 的 base 差分同时 fail-open，
+    等于单 token 永久豁免。判例：tests/test_qa_ledger_shrink.py。"""
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError("non-finite score in qa ledger/floor text: %r" % raw)
+    return value
+
+
 def parse_ledger_text(text):
     """账本文本 → {key: 登记分}。行形 `<key> <score>`；# 注释与空行忽略；
-    无分数按 1.0（不计分的违例种类）。"""
+    无分数按 1.0（不计分的违例种类）；非有限分数 fail-loud。"""
     entries = {}
     for line in text.splitlines():
         stripped = line.split("#", 1)[0].strip()
         if not stripped:
             continue
         parts = stripped.split()
-        entries[parts[0]] = float(parts[1]) if len(parts) > 1 else 1.0
+        entries[parts[0]] = _parse_score(parts[1]) if len(parts) > 1 else 1.0
     return entries
 
 
@@ -244,12 +256,12 @@ def format_score(score):
 
 
 def parse_floor_text(text):
-    """coverage_floor.txt 文本 → 地板数字（首个非注释 token；
-    coverage_floor.read_floor 与 ledger_diff 共用同一解析）。"""
+    """coverage_floor.txt 文本 → 地板数字（首个非注释 token；非有限数
+    fail-loud；coverage_floor.read_floor 与 ledger_diff 共用同一解析）。"""
     for line in text.splitlines():
         stripped = line.split("#", 1)[0].strip()
         if stripped:
-            return float(stripped)
+            return _parse_score(stripped)
     raise ValueError("no floor number in coverage_floor text")
 
 

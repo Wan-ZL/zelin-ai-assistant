@@ -81,6 +81,34 @@ class ShrinkOnlyVerdictTestCase(unittest.TestCase):
         self.assertEqual(result["stale"], ["edge-a"])
 
 
+class NonFiniteScoreRejectedTestCase(unittest.TestCase):
+    """nan/inf 拒收判例：`float()` 认 non-finite，而 nan 与任何数比较都是
+    False——一个登记分或地板写成 nan 就把 worse/stale 判决与 ledger_diff
+    的抬分/下调检测同时 fail-open（单 token 永久豁免）。两个 parser 必须
+    与 gates.toml 的 _parse_scalar 同哲学 fail-loud。"""
+
+    def test_ledger_score_nan_or_inf_fails_loud(self):
+        for bad in ("nan", "NaN", "-nan", "inf", "-inf", "Infinity"):
+            with self.assertRaises(ValueError, msg=bad):
+                qa_common.parse_ledger_text("act/x.py::f %s\n" % bad)
+
+    def test_floor_nan_or_inf_fails_loud(self):
+        for bad in ("nan", "NaN", "-nan", "inf", "-inf", "Infinity"):
+            with self.assertRaises(ValueError, msg=bad):
+                qa_common.parse_floor_text("# note\n%s\n" % bad)
+
+    def test_nan_would_defeat_the_three_state_verdict(self):
+        # 钉住动机本身：nan 一旦进了账，烂到 120 也不算 worse、也永不 stale。
+        result = qa_common.compare_with_ledger(
+            {"act/x.py::f": 120.0}, {"act/x.py::f": float("nan")}, 6.0)
+        self.assertTrue(result["ok"])  # 这就是 parser 必须拒收的原因
+
+    def test_finite_scores_still_parse(self):
+        self.assertEqual(qa_common.parse_ledger_text("a 8.5\nb 2\n"),
+                         {"a": 8.5, "b": 2.0})
+        self.assertEqual(qa_common.parse_floor_text("83.2\n"), 83.2)
+
+
 class LedgerFileRoundTripTestCase(unittest.TestCase):
     def test_write_then_load_preserves_entries_and_ignores_comments(self):
         entries = {"act/x.py::f": 8.0, "deps:a->b": 1.0, "act/y.py::g": 22.5}

@@ -59,6 +59,14 @@ class BaselineGrowthTestCase(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("deleted", findings[0])
 
+    def test_nan_score_cannot_slip_past_the_raise_check(self):
+        # nan > 84 与 nan < 84 都是 False：nan 一旦被解析成登记分，抬分
+        # 检测就永久失明。解析层必须 fail-loud（qa_common._parse_score），
+        # 差分门跟着炸红——不是静默零 findings。
+        with self.assertRaises(ValueError):
+            ledger_diff.diff_baseline(_BASELINE, "act/x.py::f 84\n",
+                                      "act/x.py::f nan\n")
+
     def test_comments_and_scoreless_keys_parse_like_the_gate(self):
         # 解析与门同源（qa_common.parse_ledger_text）：注释/裸键语义一致。
         base = "# header\nedge-a\n"
@@ -77,6 +85,12 @@ class FloorDiffTestCase(unittest.TestCase):
     def test_raising_or_holding_the_floor_passes(self):
         self.assertEqual(ledger_diff.diff_floor("82.8\n", "83.1\n"), [])
         self.assertEqual(ledger_diff.diff_floor("82.8\n", "82.8\n"), [])
+
+    def test_nan_floor_cannot_slip_past_the_lower_check(self):
+        # nan < 83.2 是 False：nan 地板既不算 lowered、又让 coverage_floor
+        # 的 percent < floor 永远 False——覆盖率跌到 1% 门照样绿。拒收。
+        with self.assertRaises(ValueError):
+            ledger_diff.diff_floor("83.2\n", "nan\n")
 
     def test_floor_birth_is_exempt_and_deletion_fails(self):
         self.assertEqual(ledger_diff.diff_floor(None, "82.8\n"), [])
