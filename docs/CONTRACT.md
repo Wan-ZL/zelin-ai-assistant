@@ -74,7 +74,7 @@ YAML 载体：一条需求一个文件。状态机：
 
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
 
-**v0.48.13 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.13 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
+**v0.48.14 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.14 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
 
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
@@ -125,7 +125,7 @@ YAML 载体：一条需求一个文件。状态机：
 
 **v0.48.6 新增顶层 optional 字段 `deploy_state`（§56 合并即上岗；§2 兄弟字段，同 `update_available` / `device_label` 的加法约定）**：scripts/auto-deploy.sh 写 `state/deploy_state.json`、`act/lib/deploy_state.py` 逐字段消毒后由 `build_dashboard` 投影；文件缺失/读不了 = **整键不存在**（这台机器不跑该 agent）。形状与状态词表见 §56。web 顶栏据此显示「v0.48.x · deployed 12m ago」。syncd 的变更闸门把整键 `deploy_state` 视为**易变键**（§31 F2 修订的 `_VOLATILE_DASH_KEYS`，与 `generated_at` 同列）：它每 10 分钟随 agent 的每次运行改写，不得触发一次板快照上传。
 
-**v0.48.13 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
+**v0.48.14 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
@@ -136,7 +136,7 @@ YAML 载体：一条需求一个文件。状态机：
 ```
 `action` ∈ `approve` | `reject` | `comment`。`comment` 动作携带 `comment` 文本（= 💬 修改方向，actd 把它并入需求的 plan/notes 并保持 card_sent 等重新审批）。
 
-**v0.48.13 追记（§60.3）**：`id` 字段接受**主键或工作编号**（web 卡面显示的是工作编号，owner 复制粘贴的就是它）；actd 经 `registry.resolve(ref)` 两步解析（精确主键 → `work_id`，两种 R- 用途数值不重叠、无歧义），此后一律按 `req.id`（主键）落账；`merge_review` / `merge_force` 的 `ids` / `primary` 同样先归一成主键再写作业文件（`actd._canonical_ids`）。server `/api/cards/{ref}` 与 boardctl `card`/`comment` 的 CARD_ID 同规则。
+**v0.48.14 追记（§60.3）**：`id` 字段接受**主键或工作编号**（web 卡面显示的是工作编号，owner 复制粘贴的就是它）；actd 经 `registry.resolve(ref)` 两步解析（精确主键 → `work_id`，两种 R- 用途数值不重叠、无歧义），此后一律按 `req.id`（主键）落账；`merge_review` / `merge_force` 的 `ids` / `primary` 同样先归一成主键再写作业文件（`registry.canonical_ids`）。server `/api/cards/{ref}` 与 boardctl `card`/`comment` 的 CARD_ID 同规则。
 
 **v0.48 追记（T-17）**：上行动词清单是 v0.1 化石，形状示例仅作历史保留——动作**全集与语义见 §10**（+ `set_title`/`split_note` 特形分支；actd `_apply_decision` elif 链即白名单）；字节形以 Mac `JSONSerialization [.prettyPrinted, .sortedKeys]` 产物为准（golden 集 `tests/fixtures/inbox/`，33 件；提取稿 docs/design/inbox-actions.md）。HTTP 写入面落盘的文件另带 ingress 落款 `via`（add-only，见 §50）；Mac 文件无 `via` = owner-local。
 
@@ -147,7 +147,7 @@ approved 的需求：
 2. 派发：`cd <target_repo> && claude --bg --dangerously-skip-permissions "<prompt>"`（target_repo 默认 config 的 default_target_repo 或需求指定）。
 3. 记录 `execution.session_id`（从派发输出或 `claude agents --json` 最新匹配 cwd 取）+ dispatched_at + log 路径；status → executing。
 
-**v0.48.13 追记（§60.4）**：prompt 头 `# Requirement <编号>: <title>`、bg 会话名（`executor.session_name`，claude 用它派生 worktree/分支名）、派发日志文件名 `state/logs/<编号>.log` 与首行 `# dispatch <编号> (<主键>) @ …` 中的「编号」= `registry.display_id(req)`（工作编号；派发必在 approved 之后所以恒有，存量 legacy 卡回落主键）。日志路径持久化在 `execution.log`，读方不依赖文件名口径。analytics 事件的 `req=` 仍记主键（稳定键）。
+**v0.48.14 追记（§60.4）**：prompt 头 `# Requirement <编号>: <title>`、bg 会话名（`executor.session_name`，claude 用它派生 worktree/分支名）、派发日志文件名 `state/logs/<编号>.log` 与首行 `# dispatch <编号> (<主键>) @ …` 中的「编号」= `registry.display_id(req)`（工作编号；派发必在 approved 之后所以恒有，存量 legacy 卡回落主键）。日志路径持久化在 `execution.log`，读方不依赖文件名口径。analytics 事件的 `req=` 仍记主键（稳定键）。
 
 ### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
 
@@ -1813,7 +1813,7 @@ registry 状态仍是 `review`,不翻状态机**;因此不碰 auto-resume(review
 
 - **内部 `title` 冻结不变**：它是 `merge_or_new`/`_same_source_and_title`/
   re-raise 的**身份锚点**，任何机制都不得改写。人看的名字走新字段。
-  **v0.48.13 追记（§60）**：身份锚点族再添两条同规——`id` 主键终身不可改写
+  **v0.48.14 追记（§60）**：身份锚点族再添两条同规——`id` 主键终身不可改写
   （store2 `cards_id_immutable` 触发器）；`work_id` 工作编号 **set-once**
   （NULL → 值一次，之后不得改写/清空，store2 `cards_work_id_set_once` 触发器 +
   `registry.save` 只在无号时分配）。「人看的名字」与「人看的编号」同构：
@@ -3537,14 +3537,14 @@ merge_or_new/next_id/trash/restore/archive/… 公开 API 两后端逐字一致�
 **宪法第 7 条不受影响**：`sqlite3` 是 Python stdlib，运行时依赖仍 = stdlib +
 PyYAML。
 
-### 53.1 schema 纪律（v1 原文保留；v2 与升级梯子 v0.48.13 追记）
+### 53.1 schema 纪律（v1 原文保留；v2 与升级梯子 v0.48.14 追记）
 
 - `PRAGMA user_version = <SCHEMA_VERSION>`（truth = `act/lib/store2/store.py`
   `SCHEMA_VERSION`；schema.sql 末尾的钉扎值必须与之相等，判例钉死），版本钉扎在
   schema.sql **文件末尾**——executescript 途中崩溃时版本必须还是 0，
   `_ensure_schema` 重跑才补全建表（crash window 判例）。字段纪律与 §1 同一条
   宪法：add-only，只增不改不删不重编号。
-- **升级梯子（v0.48.13，本 repo 第一级）**：schema.sql 永远是**全新库**的完整
+- **升级梯子（v0.48.14，本 repo 第一级）**：schema.sql 永远是**全新库**的完整
   DDL；已有库按 `user_version` 逐级走 `store._UPGRADES[{from: fn}]`——每级一个
   幂等函数、单事务、末尾钉 `user_version = from+1`（`ALTER TABLE ADD COLUMN`
   不幂等，先查 `PRAGMA table_info` 再加），中途崩溃 = 版本没动 = 下次开库重跑
@@ -3553,7 +3553,7 @@ PyYAML。
   `SCHEMA_UPGRADE_BROKEN`。**全新库与升级库形状必须收敛**（判例比对
   `sqlite_master` + `PRAGMA table_info(cards)`）。`migrate_yaml.check_target`
   只接受 `user_version == SCHEMA_VERSION` 的空库。
-- **单向门与退路（v0.48.13）**：梯子只有上行——旧代码对 `user_version` 更高的
+- **单向门与退路（v0.48.14）**：梯子只有上行——旧代码对 `user_version` 更高的
   库 fail-closed（`SCHEMA_VERSION_MISMATCH` 在**每次** registry 调用处抛：
   actd pass 全红、phase 永不 idle、inbox/dispatch 冻结），这是设计而非缺陷；
   **绝不手改 `PRAGMA user_version` 伪装旧版**（实测的腐蚀路径：旧 save 会把
@@ -3703,7 +3703,7 @@ tests/test_store2_parity.py + 激活协议第 3 步的运行时比对。
   DB 缺 = FAIL `store2_db_missing`（此半态下 backend() 仍答 sqlite、门面首次
   触库响亮 RuntimeError——绝不静默退回冻结 YAML 装没事）；yaml_forced=OK
   （回滚开关生效）。
-- **v0.48.13 追记（§60）**：`work_id` 同时住在 payload 与热列，YAML 导出 /
+- **v0.48.14 追记（§60）**：`work_id` 同时住在 payload 与热列，YAML 导出 /
   回滚后的 YAML 文件照样带 `work_id:` 键——两后端的编号、`display_id`、
   `resolve()` 行为逐字一致；yaml 后端硬删会带走文件里的号，靠
   `state/work_seq.json` 高水位（§60.2）保证不复用。
@@ -3714,7 +3714,7 @@ tests/test_store2_parity.py + 激活协议第 3 步的运行时比对。
   文档 = docs/TROUBLESHOOTING.md「store2 回滚」（停守护 → 恢复
   `state/backups/registry-<ts>/` → 设开关 → 重启）。判例
   tests/test_store2_rollback.py。
-- **schema 降级（v0.48.13 追记）**：本节的 YAML 回滚开关同时是「代码已回退到
+- **schema 降级（v0.48.14 追记）**：本节的 YAML 回滚开关同时是「代码已回退到
   打不开当前 `user_version` 的旧版本」时的出口之一；另一条是恢复 §53.1 单向门
   条款留下的 `state/store2.db.pre-v<from>` 快照（升级后新写的卡只在被搁置的
   v2 库里——主库连同 `-wal`/`-shm` 一起挪走保存，别删）。两条的完整步骤与
@@ -4196,13 +4196,13 @@ server 不 import act（§49）：`server/settings.py` **手抄** `MODEL_FOLLOW`
 - 启动 / 部署 / 任何自动路径**永不写** `~/.claude/settings.json`；唯一写者是 owner 在设置页点确认后的 `POST /api/claude-code/default-model`。
 - `silent_merge.JUDGE_RUNNER`（module-global 注入缝存量违反）不在本节拆——它的判官 `merge_review._default_runner` 已经过 `llm.run`，拆缝是纯测试基建改造，另案。
 
-## 60. 两段式卡片编号：`P-` 主键出生即定，`R-` 工作编号批准才发（v0.48.13；owner 决策 D21，issue #127）
+## 60. 两段式卡片编号：`P-` 主键出生即定，`R-` 工作编号批准才发（v0.48.14；owner 决策 D21，issue #127）
 
 > §57 / §58 由并行 PR（`feat/nightly-mutation` / `feat/qa-merge-gates`）占用，§59 已由模型选择（D22，#134）立法，本节取下一个空号 §60——§ 号永不复用。
 
 owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不算是真正的卡片，不需要给它 R 编号；只有我 approve 跑了的，才给编号。」
 
-问题（#127）：v0.48.13 前 `registry.next_id()` 在**检测**时刻就发 `R-<n>`，12 个铸卡点（四个雷达、capture、split_note、follow-up、re-raise 子卡、merge_or_new、digest）全部在人做任何决定之前消耗工作号——219 张卡里 79 张 trashed、83 张 detected 都占着 R 号，序列数的是雷达噪音不是被接受的工作；合并留下永久空洞、被并掉的卡号可能比存活的主卡还小。
+问题（#127）：v0.48.14 前 `registry.next_id()` 在**检测**时刻就发 `R-<n>`，12 个铸卡点（四个雷达、capture、split_note、follow-up、re-raise 子卡、merge_or_new、digest）全部在人做任何决定之前消耗工作号——219 张卡里 79 张 trashed、83 张 detected 都占着 R 号，序列数的是雷达噪音不是被接受的工作；合并留下永久空洞、被并掉的卡号可能比存活的主卡还小。
 
 ### 60.1 两个编号、两种语义
 
@@ -4217,23 +4217,23 @@ owner 原话（D21，2026-09-01）：「如果这个卡片没有执行，就不�
 - **legacy 主键计入上界**：一切新工作号 > 任何存量卡号——两种 R- 用途在数值上**构造性不重叠**（`R-n ≤ 存量上界` 必是 legacy 主键，`R-m > 上界` 必是工作编号），老日志/通知里的 R 号不会被新工作号「顶替」。
 - **不复用**：sqlite 后端 `purge_trashed` 清 payload 但保留 `work_id` 热列（tombstone 行照样占位）；yaml 后端硬删会带走文件里的号，`state/work_seq.json`（`{"work_seq": <int>}`，固定大小，防腐 #4 天然满足；每次分配成功后只升不降）在两后端都参与 max。`store2_testkit.wipe_data_layer` 同步清它。
 - **原子性口径**：单写者纪律下只有 actd 把卡送进 approved，「算 max → 落盘」两步不会并发；sqlite 唯一索引 `cards_work_id` 是万一并发时的响亮兜底（`WORK_ID_DUPLICATE`，不静默复用）。跨进程接力（actd 重启 / CLI 手批）判例 = `tests/integration/test_work_seq_cross_process.py`（两后端）。
-- **陈旧内存副本只会采纳、绝不重铸/清空**（v0.48.13 判例化）：任何已过批准闸的 P 卡落盘时内存没带号 → `save()` 的分配钩子先读真源（`registry._stored_work_id`：sqlite 读 `cards.work_id` **热列**而非 payload，yaml 读文件）、采纳已发的号（找不到才按 §60.1 只在 approved 补铸；D21 字面的无号卡照旧无号）——两种真实形状：跨进程 fold 撞上 approve 的 read-modify-write 窗口（§53.5），以及 payload 被 < v0.48.13 的代码整卡覆写而丢了 `work_id` 键、热列却仍钉着号（§53.1 单向门条款点名的腐蚀路径）。二者不再表现为 sqlite `WORK_ID_SET_ONCE` 硬失败（inbox 决策文件被当 poison 丢弃）或 yaml 静默换号/丢号。判例 tests/test_two_stage_card_ids.py::StaleCopyAdoptsStoredNumberTestCase（两后端 + sqlite 热列剥号剧本 + D21 字面无号卡不变）。yaml 后端**没有**撞号守卫（无 UNIQUE），依赖单写者纪律——它只是 §53.6 的回滚后端。
+- **陈旧内存副本只会采纳、绝不重铸/清空**（v0.48.14 判例化）：任何 P 卡落盘时内存没带号 → `save()` 的分配钩子先读真源（`registry._stored_work_id`：sqlite 读 `cards.work_id` **热列**而非 payload，yaml 读文件）、采纳已发的号——**无论现态**：号是 set-once 的，`abort_execution` 把 approved 卡退回 card_sent 后号仍在卡上，一份批准前取的副本在这之后落盘若只在过闸态才采纳，就会把号覆写成 None（sqlite 打成 `WORK_ID_SET_ONCE`，yaml 静默丢号后再批准重铸 = 一卡两号）。真源无号时才按 §60.1 只在 approved 补铸；D21 字面的无号卡照旧无号。三种真实形状：跨进程 fold 撞上 approve 的 read-modify-write 窗口（§53.5）、批准→abort 之后落盘的批准前副本、payload 被 < v0.48.14 的代码整卡覆写而丢了 `work_id` 键、热列却仍钉着号（§53.1 单向门条款点名的腐蚀路径）。三者都不再表现为 sqlite `WORK_ID_SET_ONCE` 硬失败（inbox 决策文件被当 poison 丢弃）或 yaml 静默换号/丢号。判例 tests/test_two_stage_card_ids.py::StaleCopyAdoptsStoredNumberTestCase（两后端 + sqlite 热列剥号剧本 + abort 后的 card_sent 副本 + D21 字面无号卡不变）。yaml 后端**没有**撞号守卫（无 UNIQUE），依赖单写者纪律——它只是 §53.6 的回滚后端。
 - 存量 legacy 卡**采纳自己的主键**作 `work_id`（`R-050` → `work_id: R-050`），不另发号：一张卡两个 R 号只会添乱（`R-175.log` 与看板 `R-290` 对不上），且 legacy 主键 ≤ 序列下界、与新工作号不撞。采纳时机 = 任何**已过批准闸**的落盘（现态 approved/executing/review/delivered，或带这些回程票的 trashed/archived）——存量卡不会再「进入 approved」一次，只认 approved 会让已交付的存量卡永远没号。未批准的 legacy 卡仍无 `work_id`（`id_kind: legacy`，看板灰显）。这是对设计稿「legacy 卡 restore 进 approved 拿新号」的有意偏离，理由如上。
 
 ### 60.3 解析：主键或工作编号都能指到卡
 
-`registry.resolve(ref)`：精确主键（`load`）→ `work_id`（`load_by_work_id`；sqlite `Store.get_card_by_work_id` 走唯一索引，yaml 扫 `load_all(include_archived=True)`）。接线点：actd inbox 决策漏斗（`process_inbox` 的 `req_id`）、`split_note`、`merge_review` / `merge_force` 的 `ids`/`primary`（`_canonical_ids` 先归一成主键、去重、解析不到的原样报 missing——lineage 只落主键）；server `/api/cards/{ref}`（投影行按 `id` 再按 `work_id` 两遍找，registry 增补经 `store2/readonly.read_card_by_ref` 两条独立查询——库还停在 v1 时按工作号查只降级为 None，按主键查照常；响应 `id` 恒为主键）、`is_executing`（steer 标注）同规；boardctl `card` / `comment` 的 CARD_ID 同规。`SAFE_ID_RE` 不变（`P-001` / `R-280` 都在白名单内）。
+`registry.resolve(ref)`：精确主键（`load`）→ `work_id`（`load_by_work_id`；sqlite `Store.get_card_by_work_id` 走唯一索引，yaml 扫 `load_all(include_archived=True)`）。接线点：actd inbox 决策漏斗（`process_inbox` 的 `req_id`）、`split_note`、`merge_review` / `merge_force` 的 `ids`/`primary`（`registry.canonical_ids` 先归一成主键、去重、解析不到的原样报 missing——lineage 只落主键）；server `/api/cards/{ref}`（投影行按 `id` 再按 `work_id` 两遍找，registry 增补经 `store2/readonly.read_card_by_ref` 两条独立查询——库还停在 v1 时按工作号查只降级为 None，按主键查照常；响应 `id` 恒为主键）、`is_executing`（steer 标注）同规；boardctl `card` / `comment` 的 CARD_ID 同规。`SAFE_ID_RE` 不变（`P-001` / `R-280` 都在白名单内）。
 
 ### 60.4 人看的编号：`display_id`
 
 - `registry.display_id(req) = work_id or id`；`registry.id_kind(req)` ∈ `work`（有号）｜`legacy`（存量 R 主键、无号）｜`proposal`（P 主键、无号）。
-- 投影（§2 v0.48.13 块）：每条 lane 行 `display_id`（恒在）+ `id_kind`（恒在）+ `work_id`（有才发），`_title_fields` 单点；`id` 不动。web（防腐 #10，字段逐字镜像）：卡面 / 抽屉抬头 / 对话框标题 / Markdown 导出的 ID 行一律 `displayId(row)`（`web/src/cardId.ts`：`display_id ?? work_id ?? id`，旧 server 缺席同式回落），legacy 行加 `card-id-legacy` 灰显（只信 `id_kind`，**不按前缀猜**）；搜索字段加 `work_id`/`display_id`；`?card=` 深链与抽屉占位行按主键或工作编号命中（`matchesCardRef`）；`cardAction()` 继续送主键 `id`。`queued_reason.blocking_display_id`（add-only，T-26 立法时同车）优先于 `blocking_id` 渲染。
+- 投影（§2 v0.48.14 块）：每条 lane 行 `display_id`（恒在）+ `id_kind`（恒在）+ `work_id`（有才发），`_title_fields` 单点；`id` 不动。web（防腐 #10，字段逐字镜像）：卡面 / 抽屉抬头 / 对话框标题 / Markdown 导出的 ID 行一律 `displayId(row)`（`web/src/cardId.ts`：`display_id ?? work_id ?? id`，旧 server 缺席同式回落），legacy 行加 `card-id-legacy` 灰显（只信 `id_kind`，**不按前缀猜**）；搜索字段加 `work_id`/`display_id`；`?card=` 深链与抽屉占位行按主键或工作编号命中（`matchesCardRef`）；`cardAction()` 继续送主键 `id`。`queued_reason.blocking_display_id`（add-only，T-26 立法时同车）优先于 `blocking_id` 渲染。
 - executor（§4 追记）：prompt 头、bg 会话名、`state/logs/<display_id>.log` 与首行；oneonone 的行前缀；通知早已用 title。analytics 仍记主键。
 - 排序/年龄口径：`registry.id_sort_key(rid)` = legacy R 主键 < P 主键（一切 P 卡都晚于一切存量卡出生），同空间按数值——actd `auto_dispatch_pass` / `process_raising` 的 FIFO、`auto_merge._idnum`（主卡 = 更老的一张）、`quick_capture` 清单窗口全部改用它。字典序 `"P-" < "R-"` 会让每张 P 卡插到所有存量卡之前（存量 raising 队列饿死）；`^R-(\d+)` 取数把 P 卡算 0 会让合并方向反转、刚交付的 P 卡最先被挤出 LLM 清单。LLM prompt 里的示例 id 字面量（`"req": "R-xxx"` 等）改为 `<清单里的卡片 id，原样照抄>`——避免模型给 P 卡幻觉一个 `R-` 前缀（错前缀 = load 失败 = 「unknown」= 重复新卡）。
 
 ### 60.5 存量数据：不迁移、不回填
 
-- 存量 `R-<n>` 主键**原样保留**（文件名 / PK / lineage 都不动）；store2 v1→v2 升级只加列，`work_id` 全 NULL（§53.1 v2）；**不**批量回填 payload（激活协议的逐字段 parity 会把回填当差异，且宪法第 6 条禁止改写存量字段语义）。**升级是单向的**：< v0.48.13 的代码打不开 v2 库（每次 registry 调用抛 `SCHEMA_VERSION_MISMATCH`）——踏出升级前 store 自动留 `store2.db.pre-v1` 快照；§56.3 的部署回滚闸门（PR #130，**合并并部署到 live 之后**才生效）拒绝跨升级的代码 reset；降级出路见 §53.1 单向门条款与 TROUBLESHOOTING「store2 回滚」schema 降级段。
+- 存量 `R-<n>` 主键**原样保留**（文件名 / PK / lineage 都不动）；store2 v1→v2 升级只加列，`work_id` 全 NULL（§53.1 v2）；**不**批量回填 payload（激活协议的逐字段 parity 会把回填当差异，且宪法第 6 条禁止改写存量字段语义）。**升级是单向的**：< v0.48.14 的代码打不开 v2 库（每次 registry 调用抛 `SCHEMA_VERSION_MISMATCH`）——踏出升级前 store 自动留 `store2.db.pre-v1` 快照；§56.3 的部署回滚闸门（PR #130，**合并并部署到 live 之后**才生效）拒绝跨升级的代码 reset；降级出路见 §53.1 单向门条款与 TROUBLESHOOTING「store2 回滚」schema 降级段。
 - 已过批准闸的存量卡（approved/executing/review/delivered，含带这些回程票的 trashed/archived）：`display_id` = 主键，`registry.id_kind` 按状态判 `work`（不灰显——它们的 R 号是批准后跑出来的）；下一次落盘（派发失败落 `last_error`、归档扫、re-raise……）按 60.2 采纳主键作 `work_id`，号不变、显示不变。
 - 从未批准的存量卡（detected / card_sent / raising / 带这些回程票的 trashed）：`id_kind: legacy`，看板灰显——这就是 #127 数出来的 162 张「雷达噪音占号」；P5 清理（vnext2-plan §4）时连同 proposal-lane 一起处理。
 

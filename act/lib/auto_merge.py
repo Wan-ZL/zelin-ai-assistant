@@ -142,7 +142,7 @@ def _outstanding_auto() -> int:
 
 
 def _idnum(rid: str) -> tuple:
-    """「哪张更老」的序键（§60 跨命名空间：legacy R 主键 < P 主键，同空间按
+    r"""「哪张更老」的序键（§60 跨命名空间：legacy R 主键 < P 主键，同空间按
     数值）。曾是 ``^R-(\d+)`` 取数——P 卡会解析成 0、永远「更老」，合并方向
     反转（新 P 卡成主卡、存量 R 卡被折进去）。"""
     return registry.id_sort_key(rid)

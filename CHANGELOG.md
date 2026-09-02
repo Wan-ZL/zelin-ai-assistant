@@ -28,7 +28,7 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
-## [0.48.13] - 2026-09-01
+## [0.48.14] - 2026-09-01
 
 owner 决策 D21（issue #127）：「如果这个卡片没有执行，就不算是真正的卡片，不需要给它 R 编号；只有我 approve 跑了的，才给编号。」
 
@@ -38,7 +38,7 @@ owner 决策 D21（issue #127）：「如果这个卡片没有执行，就不算
 - **解析（§3/§60.3）**：inbox `id`、`merge_review`/`merge_force` 的 `ids`/`primary`、server `/api/cards/{ref}`、boardctl `card`/`comment` 都接受主键或工作编号（`registry.resolve`：精确主键 → work_id）；lineage / merge 作业文件只落主键。
 - **executor（§4 追记）**：prompt 头 `# Requirement <display_id>`、bg 会话名、`state/logs/<display_id>.log` 用工作编号（legacy 卡回落主键）；analytics 仍记主键。oneonone 行前缀同。
 - **排序口径**：`registry.id_sort_key`（legacy R < P，同空间按数值）替换 actd `auto_dispatch_pass`/`process_raising` 的字典序与 `auto_merge`/`quick_capture` 的 `^R-(\d+)` 取数——否则 P 卡在 FIFO 里插队到全部存量卡之前、在「谁更老」里永远算 0（合并方向反转、刚交付的 P 卡最先被挤出 LLM 清单）。LLM prompt 里的示例 id `"R-xxx"` 改为 `<清单里的卡片 id，原样照抄>`。
-- **store2 schema v2 + 本 repo 第一级升级梯子（§53.1）**：`cards.work_id` 列 + 唯一索引 `cards_work_id` + set-once 触发器 `cards_work_id_set_once`；`Store._ensure_schema` 按 `user_version` 逐级走 `_UPGRADES`（幂等、单事务、crash window 重跑、全新库与升级库形状收敛有判例），`> SCHEMA_VERSION` 仍 fail-closed；`migrate_yaml.check_target` 改钉 `SCHEMA_VERSION`；`export_yaml.FIELD_DEFAULTS` / `hot.derive` / `readonly.read_card_by_ref` 同步。**单向门条款（§53.1）**：升级只有上行——旧代码（< 0.48.13）对 v2 库 fail-closed，每次 registry 调用抛 `SCHEMA_VERSION_MISMATCH`；因此踏出每级梯子前 store 自动留 `state/store2.db.pre-v<from>` 整库快照（`sqlite3` backup、写 tmp 再 rename；写锁下复核版本后拍、该级每次重跑刷新——恒为「最近一次踏出该级前」的已提交状态），拍不下来 = 新错误码 `SCHEMA_SNAPSHOT_FAILED` 拒绝升级（宪法第 2 条：没有退路的单向门不许自动踏过）；降级出路（向前滚 / 恢复快照 / §53.6 YAML 回滚）与「绝不手改 `PRAGMA user_version`」写进 TROUBLESHOOTING「store2 回滚」schema 降级段；配套的自动部署回滚闸门（部署期间 `user_version` 升高 → 拒绝 reset）在 PR #130（§56.3），**本 PR 依赖 #130 先合并且已部署到 live**（回滚跑的是 PREV 侧脚本，闸门必须先上机）。
+- **store2 schema v2 + 本 repo 第一级升级梯子（§53.1）**：`cards.work_id` 列 + 唯一索引 `cards_work_id` + set-once 触发器 `cards_work_id_set_once`；`Store._ensure_schema` 按 `user_version` 逐级走 `_UPGRADES`（幂等、单事务、crash window 重跑、全新库与升级库形状收敛有判例），`> SCHEMA_VERSION` 仍 fail-closed；`migrate_yaml.check_target` 改钉 `SCHEMA_VERSION`；`export_yaml.FIELD_DEFAULTS` / `hot.derive` / `readonly.read_card_by_ref` 同步。**单向门条款（§53.1）**：升级只有上行——旧代码（< 0.48.14）对 v2 库 fail-closed，每次 registry 调用抛 `SCHEMA_VERSION_MISMATCH`；因此踏出每级梯子前 store 自动留 `state/store2.db.pre-v<from>` 整库快照（`sqlite3` backup、写 tmp 再 rename；写锁下复核版本后拍、该级每次重跑刷新——恒为「最近一次踏出该级前」的已提交状态），拍不下来 = 新错误码 `SCHEMA_SNAPSHOT_FAILED` 拒绝升级（宪法第 2 条：没有退路的单向门不许自动踏过）；降级出路（向前滚 / 恢复快照 / §53.6 YAML 回滚）与「绝不手改 `PRAGMA user_version`」写进 TROUBLESHOOTING「store2 回滚」schema 降级段；配套的自动部署回滚闸门（部署期间 `user_version` 升高 → 拒绝 reset）在 PR #130（§56.3），**本 PR 依赖 #130 先合并且已部署到 live**（回滚跑的是 PREV 侧脚本，闸门必须先上机）。
 - demo_seed：fixture 主键改 `P-1xx`，批准过的 lane 带 `work_id: R-1xx`，hero 卡 `P-101` 批准后显示 `R-101`；validator 校 `display_id`/`id_kind` 形状。
 - **陈旧内存副本只采纳不重铸（§60.2）**：已过批准闸的 P 卡落盘时内存没带号 → `registry.save()` 的分配钩子先读真源（sqlite 读 `cards.work_id` 热列、yaml 读文件）采纳已发的号——跨进程 fold 撞 approve 的 read-modify-write 窗口、以及 payload 被旧代码剥掉 `work_id` 而热列仍在的形状，都不再变成 sqlite `WORK_ID_SET_ONCE` 硬失败（inbox 决策文件被当 poison 丢弃）或 yaml 静默换号/丢号；D21 字面的无号卡照旧无号。
 
@@ -2119,8 +2119,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.13...HEAD
-[0.48.13]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.11...v0.48.13
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.14...HEAD
+[0.48.14]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.13...v0.48.14
 [0.48.11]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.8...v0.48.11
 [0.48.8]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.7...v0.48.8
 [0.48.7]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.6...v0.48.7

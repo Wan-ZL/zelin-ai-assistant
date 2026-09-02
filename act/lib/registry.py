@@ -717,53 +717,71 @@ def save(req: Requirement) -> None:
 def _yaml_save(req: Requirement) -> None:
     """YAML 后端的落盘（单卡文件 / list 成员两种形状，见模块 docstring）。"""
     if req._file and req._in_list:
-        path = Path(req._file)
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
-        except (OSError, yaml.YAMLError) as e:
-            # Fail-closed: this req is ONE member of a multi-card list file.
-            # Treating an existing-but-unreadable file as empty would rewrite
-            # it with just this card — silently destroying every sibling AND
-            # the still-recoverable corrupt content. Refuse the write instead
-            # (mirrors delete(), which returns False on the same failure).
-            print(f"registry: refuse save into unreadable list file "
-                  f"{path.name} (member {req.id}): {e}", file=sys.stderr)
-            raise
-        if not isinstance(data, list):
-            data = [data]
-        out: list = []
-        replaced = False
-        for item in data:
-            # str() both sides: from_dict normalizes hand-written numeric ids
-            # (`id: 4` -> "4") but the raw on-disk entry still holds the int —
-            # an un-normalized == would append a duplicate instead of replacing.
-            if (isinstance(item, dict) and item.get("id") is not None
-                    and str(item.get("id")) == str(req.id)):
-                out.append(req.to_dict())
-                replaced = True
-            else:
-                out.append(item)
-        if not replaced:
-            out.append(req.to_dict())
-        _atomic_write(path, _dump_yaml(out))
+        _yaml_save_list_member(req, Path(req._file))
     else:
-        path = Path(req._file) if req._file else config.REGISTRY_DIR / f"{req.id}.yaml"
-        if req._file is None and path.exists():
-            # Fail-closed: this req was NOT loaded from disk (its _file is
-            # unset) yet a file for its id already exists. If that file is
-            # unreadable its content was skipped by load_all()/load() — still
-            # recoverable by hand — and overwriting would make the loss
-            # permanent. Readable files pass through: updating an existing id
-            # via a fresh object is a legitimate save.
-            try:
-                yaml.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError) as e:
-                print(f"registry: refuse to overwrite unreadable card file "
-                      f"{path.name} with {req.id}: {e}", file=sys.stderr)
-                raise
-        req._file = str(path)
-        req._in_list = False
-        _atomic_write(path, _dump_yaml(req.to_dict()))
+        _yaml_save_single(req)
+
+
+def _yaml_save_list_member(req: Requirement, path: Path) -> None:
+    """req 是多卡 list 文件的一个成员：整文件读 → 换掉同 id 项 → 原子写回。"""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    except (OSError, yaml.YAMLError) as e:
+        # Fail-closed: this req is ONE member of a multi-card list file.
+        # Treating an existing-but-unreadable file as empty would rewrite
+        # it with just this card — silently destroying every sibling AND
+        # the still-recoverable corrupt content. Refuse the write instead
+        # (mirrors delete(), which returns False on the same failure).
+        print(f"registry: refuse save into unreadable list file "
+              f"{path.name} (member {req.id}): {e}", file=sys.stderr)
+        raise
+    if not isinstance(data, list):
+        data = [data]
+    _atomic_write(path, _dump_yaml(_replace_list_member(data, req)))
+
+
+def _same_card(item, rid) -> bool:
+    # str() both sides: from_dict normalizes hand-written numeric ids
+    # (`id: 4` -> "4") but the raw on-disk entry still holds the int —
+    # an un-normalized == would append a duplicate instead of replacing.
+    return (isinstance(item, dict) and item.get("id") is not None
+            and str(item.get("id")) == str(rid))
+
+
+def _replace_list_member(data: list, req: Requirement) -> list:
+    """list 文件内容里换掉 req 的那一项（没有就追加）。"""
+    out: list = []
+    replaced = False
+    for item in data:
+        if _same_card(item, req.id):
+            out.append(req.to_dict())
+            replaced = True
+        else:
+            out.append(item)
+    if not replaced:
+        out.append(req.to_dict())
+    return out
+
+
+def _yaml_save_single(req: Requirement) -> None:
+    """单卡文件：``<REGISTRY_DIR>/<id>.yaml``（或 req 自带的 _file）。"""
+    path = Path(req._file) if req._file else config.REGISTRY_DIR / f"{req.id}.yaml"
+    if req._file is None and path.exists():
+        # Fail-closed: this req was NOT loaded from disk (its _file is
+        # unset) yet a file for its id already exists. If that file is
+        # unreadable its content was skipped by load_all()/load() — still
+        # recoverable by hand — and overwriting would make the loss
+        # permanent. Readable files pass through: updating an existing id
+        # via a fresh object is a legitimate save.
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as e:
+            print(f"registry: refuse to overwrite unreadable card file "
+                  f"{path.name} with {req.id}: {e}", file=sys.stderr)
+            raise
+    req._file = str(path)
+    req._in_list = False
+    _atomic_write(path, _dump_yaml(req.to_dict()))
 
 
 def _note_first_card(req: Requirement) -> None:
@@ -1032,8 +1050,8 @@ def unarchive(req: Requirement) -> Requirement:
 # ID allocation + matching / merge（§60，D21：两段式编号）
 # --------------------------------------------------------------------------- #
 # 命名空间：
-#   P-<n>  主键（provisional）——v0.48.13 起所有新卡的出生 id（next_id）
-#   R-<n>  ①存量卡的主键（legacy，v0.48.13 前雷达检测即分号）
+#   P-<n>  主键（provisional）——v0.48.14 起所有新卡的出生 id（next_id）
+#   R-<n>  ①存量卡的主键（legacy，v0.48.14 前雷达检测即分号）
 #          ②工作编号 work_id（进入 approved 时分配，next_work_id）
 # 两种 R- 用途靠数值区间**构造上不重叠**：工作序列从 max(legacy R 主键 ∪
 # 已分配 work_id ∪ state/work_seq.json 高水位) + 1 起，所以任一 R-<n> 要么
@@ -1066,7 +1084,7 @@ def id_number(rid) -> Optional[int]:
 
 
 def is_legacy_key(rid) -> bool:
-    """主键是否为 v0.48.13 前的 ``R-<n>`` 形（检测即分号的存量卡）。"""
+    """主键是否为 v0.48.14 前的 ``R-<n>`` 形（检测即分号的存量卡）。"""
     return bool(_ID_RE.match(str(rid or "")))
 
 
@@ -1147,67 +1165,70 @@ def _bump_work_seq(work_id: str) -> None:
         pass
 
 
+def _sqlite_stored_work_id(req_id: str):
+    from act.lib.store2.store import NotFound
+    try:
+        return _store().get_card(req_id).get("work_id")
+    except NotFound:
+        return None
+
+
 def _stored_work_id(req_id: str) -> Optional[str]:
     """真源里这张卡**当前**的工作编号；没有 / 卡不存在 / 读失败 → None。
 
     sqlite 读的是 ``cards.work_id`` **热列**而不是 payload：payload 可能被
-    < v0.48.13 的代码整卡覆写而丢了 ``work_id``（它不认识这个键），热列却仍
+    < v0.48.14 的代码整卡覆写而丢了 ``work_id``（它不认识这个键），热列却仍
     钉着号——正是 set-once 触发器会拒绝的那种「内存 None vs 盘上有号」。
     yaml 后端只有文件一处真源，读 :func:`load`。永不抛（分配钩子的口径）。"""
     try:
-        if backend() == BACKEND_SQLITE:
-            from act.lib.store2.store import NotFound
-            try:
-                card = _store().get_card(str(req_id))
-            except NotFound:
-                return None
-            wid = card.get("work_id")
-            return str(wid) if wid else None
-        prior = load(str(req_id))
-        wid = getattr(prior, "work_id", None) if prior is not None else None
-        return str(wid) if wid else None
+        wid = (_sqlite_stored_work_id(str(req_id)) if backend() == BACKEND_SQLITE
+               else getattr(load(str(req_id)), "work_id", None))
     except Exception:  # noqa: BLE001 - 读不到就当没号，由调用方按常规路径走
         return None
+    return str(wid) if wid else None
+
+
+def _pick_work_id(req: "Requirement") -> Optional[str]:
+    """无号卡这次落盘该带的号（不写回）：采纳优先于铸号。
+
+    - 存量 legacy 卡（主键本就是 ``R-<n>``）已过批准闸 → **采纳自己的主键**，
+      不另发新号（一张卡两个 R 号只会添乱：日志 R-175.log 与看板 R-290 对
+      不上；legacy 主键 ≤ 序列下界、与新工作号构造上不撞）。采纳时机 = 任何
+      已过批准闸的落盘（approved/executing/review/delivered，含带这些回程票
+      的 trashed/archived）——存量卡不会再「进入 approved」一次。未批准的
+      legacy 卡仍无号（id_kind=legacy，看板灰显）：D21 对存量卡同样成立。
+    - P 卡先看真源里有没有已发的号（:func:`_stored_work_id`），**无论现态**
+      ——abort 把 approved 卡退回 card_sent 时号是保留的（set-once），一份
+      批准前取的陈旧副本在这之后落盘，若只在过闸态才采纳就会把号覆写成
+      None（sqlite 打成 ``WORK_ID_SET_ONCE``、yaml 静默丢号后再批准重铸
+      = 一卡两号）。真源无号且这次是 approved 落盘 → 铸新号；其余状态原样
+      无号（D21 字面：没批准就没编号）。"""
+    if is_legacy_key(req.id):
+        return req.id if _passed_approval(req) else None
+    stored = _stored_work_id(req.id)
+    if stored:
+        return stored
+    if str(req.status) == State.APPROVED.value:
+        return next_work_id()
+    return None
 
 
 def _allocate_work_id(req: "Requirement") -> Optional[str]:
-    """save() 的分配钩子：approved 且无 work_id → 分配并写回 req；否则 None。
+    """save() 的分配钩子：无 work_id 的卡按 :func:`_pick_work_id` 采纳/铸号并
+    写回 req；有号或不该有号 → None。
 
-    存量 legacy 卡（主键本就是 ``R-<n>``）**采纳自己的主键**作 work_id、不另
-    发新号：一张卡两个 R 号只会添乱（日志 R-175.log 与看板 R-290 对不上），
-    且 legacy 主键 ≤ 序列下界、与新工作号构造上不撞。采纳时机 = 任何已过
-    批准闸的落盘（approved/executing/review/delivered，含带这些回程票的
-    trashed/archived）——存量卡不会再「进入 approved」一次，只认 approved 会让
-    已交付的存量卡永远没有 work_id。未批准的 legacy 卡仍无 work_id
-    （id_kind=legacy，看板灰显）——D21 的「批准了才算」对存量卡同样成立。
-
-    **陈旧内存副本防御（§60.2）**：P 卡已过批准闸而这份内存副本没带号（副本
+    **陈旧内存副本防御（§60.2）**：P 卡已拿号而这份内存副本没带号（副本
     取自拿号之前——跨进程 fold 撞上 approve 的真实形状；或 payload 被
-    < v0.48.13 的代码剥掉了 ``work_id`` 而 sqlite 热列还留着——§53.1 降级
-    警告点名的形状）→ **采纳真源里已发的号**（:func:`_stored_work_id`），
-    绝不再铸、绝不清空。没有这一步：sqlite 的 set-once 触发器把这类落盘打成
-    ``WORK_ID_SET_ONCE`` 硬失败（inbox 决策文件被当 poison 丢弃），yaml 后端
-    更会静默换号（重铸）或丢号（覆写成 None）。
+    < v0.48.14 的代码剥掉了 ``work_id`` 而 sqlite 热列还留着——§53.1 降级
+    警告点名的形状）→ **采纳真源里已发的号**，绝不再铸、绝不清空。没有这
+    一步：sqlite 的 set-once 触发器把这类落盘打成 ``WORK_ID_SET_ONCE`` 硬
+    失败（inbox 决策文件被当 poison 丢弃），yaml 后端更会静默换号（重铸）
+    或丢号（覆写成 None）。
     永不抛（宪法第 11 条）——分配失败时卡照常落盘、编号下次再补。"""
     if getattr(req, "work_id", None):
         return None
     try:
-        if is_legacy_key(req.id):
-            if not _passed_approval(req):
-                return None
-            req.work_id = req.id
-        elif _passed_approval(req):
-            stored = _stored_work_id(req.id)
-            if stored:
-                req.work_id = stored                  # 采纳，不铸新号
-            elif str(req.status) == State.APPROVED.value:
-                req.work_id = next_work_id()
-            else:
-                # 已过闸但盘上也没号（批准当刻分配失败过）：按 §60.1 只在
-                # approved 落盘时补铸，其余状态原样落盘（display 回落主键）
-                return None
-        else:
-            return None
+        req.work_id = _pick_work_id(req)
     except Exception as e:  # noqa: BLE001 - 编号是显示层资产，不许拖垮落盘
         print(f"registry: work_id allocation failed for {req.id}: {e}",
               file=sys.stderr)
@@ -1310,7 +1331,7 @@ def _max_number(values: Iterable, regex) -> int:
 def next_id() -> str:
     """下一张新卡的**主键** ``P-<n>``（§60，D21）——出生即分、终身不变。
 
-    公开名保留（§53 点名、12 个铸卡点全部经它）：v0.48.13 前它发 ``R-<n>``
+    公开名保留（§53 点名、12 个铸卡点全部经它）：v0.48.14 前它发 ``R-<n>``
     （检测即消耗工作号，issue #127），现在发 provisional ``P-<n>``；工作编号
     改由 :func:`next_work_id` 在进入 approved 时分配。
     """
@@ -1359,20 +1380,28 @@ def next_work_id() -> str:
     return f"{WORK_ID_PREFIX}{mx + 1:03d}"
 
 
+def _from_live_card(card: Optional[dict]) -> Optional[Requirement]:
+    """store2 行 → Requirement；缺席 / tombstone（硬删替身）→ None。"""
+    if card is None or card.get("tombstone"):
+        return None
+    return Requirement.from_dict(card["payload"])
+
+
+def _yaml_load_by_work_id(wid: str) -> Optional[Requirement]:
+    for r in load_all(include_archived=True):
+        if r.work_id == wid:
+            return r
+    return None
+
+
 def load_by_work_id(work_id: str) -> Optional[Requirement]:
     """按工作编号取卡（§60.3）；无/不像 R- 号 → None。"""
     wid = str(work_id or "").strip()
     if not _ID_RE.match(wid):
         return None
     if backend() == BACKEND_SQLITE:
-        card = _store().get_card_by_work_id(wid)
-        if card is None or card.get("tombstone"):
-            return None
-        return Requirement.from_dict(card["payload"])
-    for r in load_all(include_archived=True):
-        if r.work_id == wid:
-            return r
-    return None
+        return _from_live_card(_store().get_card_by_work_id(wid))
+    return _yaml_load_by_work_id(wid)
 
 
 def resolve(ref: str) -> Optional[Requirement]:
@@ -1386,6 +1415,32 @@ def resolve(ref: str) -> Optional[Requirement]:
     if req is not None:
         return req
     return load_by_work_id(rid)
+
+
+def _distinct_strs(values) -> list:
+    """str() + strip、去空、去重、保序。"""
+    out: list = []
+    for v in values:
+        s = str(v or "").strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def canonical_ids(refs) -> "tuple[list, list]":
+    """§60.3：把 inbox 送来的「主键或工作编号」列表归一成**主键**列表（去空、
+    去重、保序；同一张卡的两种写法折成一项）；解析不到的原样进 missing。
+    merge 作业文件与 ``merged_into`` 父指针只认主键——工作编号进 lineage 会让
+    canonical()/thread 跳链落空。"""
+    keys: list = []
+    missing: list = []
+    for ref in _distinct_strs(refs):
+        req = resolve(ref)
+        if req is None:
+            missing.append(ref)
+        elif req.id not in keys:
+            keys.append(req.id)
+    return keys, missing
 
 
 def derive_thread_key(source: Optional[dict]) -> Optional[str]:

@@ -142,15 +142,15 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
 
 **激活被拒(doctor FAIL `store2_refused`)**:这不是故障,是保护——某张卡的形态无法忠实入库(最常见:手编 YAML 里有拼错的未知字段名,或未加引号的日期值——`deadline: 2026-09-15` 会被 YAML 解析成日期对象,JSON 装不下,给值加引号即可)。`cat state/store2_activation.json` 看逐条 diff,修好点名的卡文件后等重试(数据类拒绝退避 6 小时;删掉 `state/store2_activation.json` 立即重试)。拒绝期间 YAML 一直是真源,管线照常。
 
-### schema 降级:代码回退到旧版本后账本打不开(v0.48.13 起)
+### schema 降级:代码回退到旧版本后账本打不开(v0.48.14 起)
 
 **症状**:每次 registry 调用都抛 `StoreError: db user_version=2, store2 supports 1`;actd 每个 pass 报同一条 traceback、heartbeat `phase` 永不到 idle,inbox 不处理、不派工、看板冻结。旧版 doctor 的 `store2` 行不真正开库,所以**照样显示绿**——别被它骗。
 
-**为什么**:v0.48.13 起 store2 有 schema 升级梯子(CONTRACT §53.1),新代码第一次开库就把 `user_version` 升上去,而升级是**单向的**——旧代码对更高版本 fail-closed,这是设计(带着不认识的 schema 盲写更糟)。自动部署(§56.3)的回滚跑的是**回滚目标那一版**的 `scripts/auto-deploy.sh`,所以「部署期间 `user_version` 升高 → 拒绝代码回滚」这道闸门(PR #130)只在 #130 已合并**并已部署到本机**之后才护得住跨升级的部署;在那之前的自动回滚,以及任何手动 `git reset` / `checkout` 到旧版,都会走到这一步。**数据本身完好**——v2 库无损,只是这份代码打不开它。
+**为什么**:v0.48.14 起 store2 有 schema 升级梯子(CONTRACT §53.1),新代码第一次开库就把 `user_version` 升上去,而升级是**单向的**——旧代码对更高版本 fail-closed,这是设计(带着不认识的 schema 盲写更糟)。自动部署(§56.3)的回滚跑的是**回滚目标那一版**的 `scripts/auto-deploy.sh`,所以「部署期间 `user_version` 升高 → 拒绝代码回滚」这道闸门(PR #130)只在 #130 已合并**并已部署到本机**之后才护得住跨升级的部署;在那之前的自动回滚,以及任何手动 `git reset` / `checkout` 到旧版,都会走到这一步。**数据本身完好**——v2 库无损,只是这份代码打不开它。
 
 **三条出路(选一,都先停守护 `launchctl bootout gui/$(id -u)/com.zelin.aiassistant.actd`)**:
 
-1. **向前滚(推荐)**:回到 ≥ 0.48.13 的代码——`git -C <repo> reset --hard <新版本 sha>` 后 `bash install.sh`,或 `bash scripts/auto-deploy.sh --force`。什么数据都不丢。
+1. **向前滚(推荐)**:回到 ≥ 0.48.14 的代码——`git -C <repo> reset --hard <新版本 sha>` 后 `bash install.sh`,或 `bash scripts/auto-deploy.sh --force`。什么数据都不丢。
 2. **恢复升级前快照**:升级踏出前 store 自动留了 `state/store2.db.pre-v1`(旧代码打得开的 v1 副本,CONTRACT §53.1 单向门条款)。先把 v2 库**连同它的旁文件**挪走保存(升级之后新写的卡只在它里面;`-wal` 可能装着尚未 checkpoint 的已提交写入,**必须跟着主库走、同名后缀改名,什么都不删**):
 
        for s in "" -wal -shm; do
@@ -158,7 +158,7 @@ app 里所有无法一键修复的错误旁都有「让 AI 修」按钮(= `pytho
        done
 
    再 `cp state/store2.db.pre-v1 state/store2.db`(快照是单文件,没有旁文件),重启。想要 stranded 里的新卡,回到新代码后再比对/导出(`state/store2.db.v2-stranded` 连旁文件一起原样可开)。
-3. **YAML 回滚**:按上面「store2 回滚」的常规步骤(恢复 `state/backups/registry-<ts>/` + `registry.backend: yaml`)。注意旧代码开不了 v2 库,`--export-now` 只能在 ≥ 0.48.13 的代码下先跑。
+3. **YAML 回滚**:按上面「store2 回滚」的常规步骤(恢复 `state/backups/registry-<ts>/` + `registry.backend: yaml`)。注意旧代码开不了 v2 库,`--export-now` 只能在 ≥ 0.48.14 的代码下先跑。
 
 **绝对不要**:手改 `PRAGMA user_version` 把 v2 库伪装成 v1。实测后果:旧代码的 save 会把 payload 里的 `work_id` 剥掉而热列还留着(切回新代码后靠 §60.2 的采纳防御才能从热列把号找回,别赌);更致命的是旧 `next_id()` 会把已发的工作编号(比如 R-264)当主键铸新卡——主键与工作编号从此撞号,`resolve()` 出现歧义,这一步没有任何防御能救。
 

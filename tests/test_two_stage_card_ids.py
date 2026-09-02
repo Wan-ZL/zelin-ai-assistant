@@ -46,6 +46,7 @@ from act import actd, executor
 from act.lib import auto_merge, config, dashboard, quick_capture, registry
 from act.lib.registry import Requirement, State
 from act.lib.store2 import export_yaml, hot, migrate_yaml
+from act.lib.store2 import store as store_mod
 from act.lib.store2.store import (SCHEMA_VERSION, IntegrityViolation, Store,
                                   StoreError, pre_upgrade_snapshot_path)
 
@@ -316,6 +317,28 @@ class StaleCopyAdoptsStoredNumberTestCase(_Both):
             self.assertEqual(registry.load("P-001").work_id, "R-001")
         self.for_each_backend(body)
 
+    def test_stale_copy_of_aborted_card_adopts_regardless_of_state(self):
+        # 批准 → abort_execution 退回 card_sent（号 set-once 保留）→ 一份批准前
+        # 取的无号 card_sent 副本落盘：采纳不看状态——只在过闸态采纳会把号覆写成
+        # None（sqlite WORK_ID_SET_ONCE 硬失败 / yaml 静默丢号，再批准就重铸 =
+        # 一卡两号，旧号被高水位烧掉）。
+        def body(_b):
+            registry.upsert(_card("P-001", "退回提案"))
+            stale = registry.load("P-001")            # 批准前的副本，无号
+            _approve("P-001")
+            with registry.acting_as("user"):
+                actd._apply_decision(registry.load("P-001"), "abort_execution", None)
+            back = registry.load("P-001")
+            self.assertEqual(str(back.status), State.CARD_SENT.value)
+            self.assertEqual(back.work_id, "R-001")   # set-once：退回不收号
+            self.assertIsNone(stale.work_id)
+            registry.save(stale)                      # 不抛、不清号
+            self.assertEqual(registry.load("P-001").work_id, "R-001")
+            _approve("P-001")                         # 再批准不重铸
+            self.assertEqual(registry.load("P-001").work_id, "R-001")
+            self.assertEqual(registry.next_work_id(), "R-002")
+        self.for_each_backend(body)
+
     def test_d21_literal_card_without_a_stored_number_stays_unnumbered(self):
         # 绕过 approved 直达 review/delivered 的 P 卡（§60.1 D21 字面）：真源里
         # 没号 → 采纳分支不发号、也不铸号，display 回落主键、id_kind=proposal。
@@ -332,7 +355,7 @@ class StaleCopyAdoptsStoredNumberTestCase(_Both):
         self.for_each_backend(body)
 
     def test_payload_stripped_by_old_code_readopts_from_hot_column(self):
-        # §53.1「绝不手改 user_version」点名的腐蚀形状：< v0.48.13 的 save 整卡
+        # §53.1「绝不手改 user_version」点名的腐蚀形状：< v0.48.14 的 save 整卡
         # 覆写 payload 时不认识 work_id 键 → payload 丢号、热列仍钉着号。
         # 新代码下一次落盘必须从热列采纳，而不是撞 WORK_ID_SET_ONCE 永远存不进去。
         store2_testkit.use_backend(self, "sqlite")
@@ -464,7 +487,7 @@ class ResolveTestCase(_Both):
         store2_testkit.use_backend(self, "yaml")
         registry.upsert(_card("P-001", "a"))
         _approve("P-001")
-        ids, missing = actd._canonical_ids(["P-001", "R-001", "R-777"])
+        ids, missing = registry.canonical_ids(["P-001", "R-001", "R-777"])
         self.assertEqual(ids, ["P-001"])
         self.assertEqual(missing, ["R-777"])
 
@@ -639,6 +662,39 @@ class SchemaUpgradeTestCase(unittest.TestCase):
         finally:
             store.close()
 
+    def test_missing_ladder_step_fails_closed(self):
+        # 版本落在梯子没有的一级（如账本来自更老/分叉的构建）：拒绝，不猜
+        db = self._v1_db()
+        with mock.patch.dict(store_mod._UPGRADES, {}, clear=True):
+            with self.assertRaises(StoreError) as cm:
+                Store(db)
+        self.assertEqual(cm.exception.code, "SCHEMA_UPGRADE_MISSING")
+        con = sqlite3.connect(db)
+        try:
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], 1)
+        finally:
+            con.close()
+
+    def test_ladder_step_that_forgets_to_pin_the_version_is_refused(self):
+        # 升级函数忘了钉 user_version = 半态/死循环：当场拒绝，不进下一轮
+        db = self._v1_db()
+        with mock.patch.dict(store_mod._UPGRADES, {1: lambda conn: None}, clear=True):
+            with self.assertRaises(StoreError) as cm:
+                Store(db)
+        self.assertEqual(cm.exception.code, "SCHEMA_UPGRADE_BROKEN")
+
+    def test_upgrade_logs_the_crossing_and_the_snapshot_path(self):
+        # 单向门踏出的时刻要有审计痕迹（stderr 一行：版本 + 快照落点）
+        db = self._v1_db()
+        import io
+        buf = io.StringIO()
+        with mock.patch("sys.stderr", buf):
+            Store(db).close()
+        line = buf.getvalue().strip()
+        self.assertIn("schema v1", line)
+        self.assertIn(f"v{SCHEMA_VERSION}", line)
+        self.assertIn(str(pre_upgrade_snapshot_path(db, 1)), line)
+
     def test_future_version_still_refused(self):
         db = self._v1_db()
         con = sqlite3.connect(db)
@@ -686,7 +742,7 @@ class SchemaUpgradeTestCase(unittest.TestCase):
     def test_upgrade_snapshots_the_v1_db_for_the_rollback_target(self):
         # §53.1 单向门条款：踏出 v1→v2 前留 <db>.pre-v1——旧代码（SCHEMA_VERSION=1，
         # user_version != 1 即 raise）唯一打得开的账本副本，D17 代码回滚落到
-        # < 0.48.13 时的退路（TROUBLESHOOTING「store2 回滚」schema 降级段）。
+        # < 0.48.14 时的退路（TROUBLESHOOTING「store2 回滚」schema 降级段）。
         db = self._v1_db()
         pristine = self._v1_db("pristine.db")        # 从未被新代码碰过的 v1 对照
         Store(db).close()
@@ -710,7 +766,7 @@ class SchemaUpgradeTestCase(unittest.TestCase):
         self.assertEqual(_objects(snap), _objects(pristine))
 
     def test_old_reader_cannot_open_the_upgraded_db_but_can_open_the_snapshot(self):
-        # 两份审查同一个 blocker 的可执行形态：D17 回滚目标（< v0.48.13）的门 =
+        # 两份审查同一个 blocker 的可执行形态：D17 回滚目标（< v0.48.14）的门 =
         # `user_version != 1 → raise`。升级后的库对它必然关门（这是设计），
         # 快照对它必然开门——否则 TROUBLESHOOTING 的「恢复快照」出路是空话。
         def old_code_gate(path: Path) -> list:

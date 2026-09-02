@@ -298,8 +298,7 @@ def process_inbox() -> int:
                 _safe_unlink(path)
                 continue
 
-            # §60.3：inbox 的 id 可以是主键或工作编号（web 显示的是工作编号，
-            # owner 复制粘贴的就是它）——两步解析，此后一律用 req.id（主键）。
+            # §60.3：id 可以是主键或工作编号（web 显示的是后者）；此后一律用 req.id
             req = registry.resolve(req_id) if req_id else None
 
             if req is None:
@@ -1091,21 +1090,6 @@ _MERGE_DEAD_STATES = (State.TRASHED.value, State.MERGED.value,
                       State.REJECTED.value, State.ARCHIVED.value)
 
 
-def _canonical_ids(refs: list) -> "tuple[list, list]":
-    """§60.3：把 inbox 送来的「主键或工作编号」列表归一成主键列表（去重、
-    保序）；解析不到的原样进 missing。merge 作业文件与 ``merged_into`` 父指针
-    只认主键——工作编号进 lineage 会让 canonical()/thread 跳链落空。"""
-    out: list = []
-    missing: list = []
-    for ref in refs:
-        req = registry.resolve(ref)
-        if req is None:
-            missing.append(ref)
-        elif req.id not in out:
-            out.append(req.id)
-    return out, missing
-
-
 def _apply_merge_review(ids) -> str:
     """契约 五 actd 侧：校验 ids（≥2、去重、都存在）→ 建 analyzing 作业文件 →
     subprocess.Popen 分离启动 ``python -m act.merge_review <id>``（不等待，
@@ -1115,22 +1099,13 @@ def _apply_merge_review(ids) -> str:
         _log("inbox: merge_review requested but module unavailable — dropped")
         return "noop"
     raw = ids if isinstance(ids, list) else []
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for i in raw:
-        s = str(i or "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            uniq.append(s)
-    if len(uniq) < 2:
-        _log(f"inbox: merge_review needs >=2 distinct ids, got {raw!r} — dropped")
-        return "noop"
-    uniq, missing = _canonical_ids(uniq)
+    # §60.3：ids 可以是主键或工作编号，归一成主键（同卡的两种写法折成一张）
+    uniq, missing = registry.canonical_ids(raw)
     if missing:
         _log(f"inbox: merge_review unknown ids {missing} — dropped")
         return "noop"
     if len(uniq) < 2:
-        _log(f"inbox: merge_review ids collapse to one card {uniq} — dropped")
+        _log(f"inbox: merge_review needs >=2 distinct cards, got {raw!r} — dropped")
         return "noop"
 
     job = merge_review.create_job(uniq)
@@ -1165,31 +1140,20 @@ def _apply_merge_force(ids, primary) -> str:
     公共规则）；执行失败只 log + 打点 outcome=fail，绝不抛穿轮询（用户可重试）。
     Returns the §5.4 result_status ("running" applied | "noop" dropped/failed)."""
     raw = ids if isinstance(ids, list) else []
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for i in raw:
-        s = str(i or "").strip()
-        if s and s not in seen:
-            seen.add(s)
-            uniq.append(s)
-    prim = str(primary or "").strip()
-    if len(uniq) < 2:
-        _log(f"inbox: merge_force needs >=2 distinct ids, got {raw!r} — dropped")
-        return "noop"
-    if prim not in uniq:
-        _log(f"inbox: merge_force primary {primary!r} not in ids {uniq} — dropped")
-        return "noop"
-    uniq, missing = _canonical_ids(uniq)
+    # §60.3：ids / primary 都可以是主键或工作编号；lineage（merged_into）只认主键
+    uniq, missing = registry.canonical_ids(raw)
     if missing:
         _log(f"inbox: merge_force unknown ids {missing} — dropped")
         return "noop"
-    prim_req = registry.resolve(prim)
-    if prim_req is not None:
-        prim = prim_req.id            # §60.3：lineage（merged_into）只认主键
-    if len(uniq) < 2:
-        _log(f"inbox: merge_force ids collapse to one card {uniq} — dropped")
+    prim_req = registry.resolve(str(primary or "").strip())
+    if prim_req is None or prim_req.id not in uniq:
+        _log(f"inbox: merge_force primary {primary!r} not in ids {uniq} — dropped")
         return "noop"
-    if prim_req is not None and str(prim_req.status) in _MERGE_DEAD_STATES:
+    prim = prim_req.id
+    if len(uniq) < 2:
+        _log(f"inbox: merge_force needs >=2 distinct cards, got {raw!r} — dropped")
+        return "noop"
+    if str(prim_req.status) in _MERGE_DEAD_STATES:
         # a stale board can pick a primary the user meanwhile trashed/merged/
         # archived — folding live cards into it loses them (audit 2026-07-15)
         _log(f"inbox: merge_force primary {prim} is {prim_req.status} — dropped")
@@ -2136,8 +2100,7 @@ def auto_dispatch_pass(cfg: config.Config) -> int:
     张、累计多少钱都不拦。"""
     ad = policy.autodispatch_config(cfg)
     approved = 0
-    # §60：跨命名空间 FIFO（legacy R 主键 < P 主键，同空间按数值）——字典序
-    # 会把每张 P 卡排到所有存量卡前面
+    # §60 跨命名空间 FIFO（legacy R < P，同空间按数值）——字典序会让 P 卡全体插队
     for req in sorted(load_all(), key=lambda r: registry.id_sort_key(r.id)):
         if req.status != State.CARD_SENT.value:
             continue
@@ -3320,8 +3283,7 @@ def process_raising(cfg: config.Config) -> int:
                if r.status == registry.State.RAISING.value]
     if not pending:
         return 0
-    # §60：一 pass 扩写一张，按跨命名空间 FIFO 取最老的——字典序 "P-" < "R-"
-    # 会让每张新 P 卡插队到全部存量 R raising 卡之前（存量队列饿死）
+    # §60 跨命名空间 FIFO 取最老的一张——字典序 "P-" < "R-" 会饿死存量 raising 队列
     req = sorted(pending, key=lambda r: registry.id_sort_key(r.id))[0]
     try:
         analyze.expand_debt(req)  # -> card_sent (or detected+note on failure)

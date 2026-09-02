@@ -2,7 +2,7 @@
 --
 -- 版本史（§53.1 升级梯子在 store.py `_UPGRADES`，每级一个幂等函数）：
 --   v1  v0.48.8  首版（cards/sources/notes/dispatches/activities/board_revision + 触发器）
---   v2  v0.48.13  §60（D21）两段式编号：cards.work_id 列 + 唯一索引 + set-once 触发器
+--   v2  v0.48.14  §60（D21）两段式编号：cards.work_id 列 + 唯一索引 + set-once 触发器
 -- 本文件永远是「全新库的完整 DDL」；已有库按 user_version 逐级走 _UPGRADES。
 -- **两条路必须收敛到同一形状**（判例 tests/test_two_stage_card_ids.py 比对 sqlite_master）。
 --
@@ -32,7 +32,7 @@
 -- 原样存 registry YAML 的 JSON 化全文：sources/plan/dod/card/execution/notes…）
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS cards (
-  id              TEXT PRIMARY KEY,            -- 主键：'P-xxx'（v0.48.13 起出生）或存量 'R-xxx'（legacy），永不改写
+  id              TEXT PRIMARY KEY,            -- 主键：'P-xxx'（v0.48.14 起出生）或存量 'R-xxx'（legacy），永不改写
   status          TEXT NOT NULL CHECK (status IN (
     'detected', 'card_sent', 'raising', 'approved', 'executing',
     'review', 'delivered', 'rejected', 'trashed', 'merged', 'archived'

@@ -163,19 +163,27 @@ def load_registry_card(home: Path, card_id: str) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # /api/cards/{id} —— 投影行 + YAML 增补
 # --------------------------------------------------------------------------- #
+def _section_rows(board: dict, sec: str) -> list:
+    rows = board.get(sec)
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def _find_row(board: dict, key: str, value: str) -> "tuple[Optional[str], Optional[dict]]":
+    """按 SECTIONS 顺序找第一条 ``row[key] == value`` 的投影行 → (lane, row)。"""
+    for sec in SECTIONS:
+        for row in _section_rows(board, sec):
+            if row.get(key) is not None and str(row.get(key)) == value:
+                return sec, row
+    return None, None
+
+
 def _projection_row(board: dict, card_id: str) -> "tuple[Optional[str], Optional[dict]]":
     """按主键找投影行；找不到再按 ``work_id``（§60.3）——两遍而不是一遍
     ``or``：主键精确命中永远优先，两种 R- 用途数值不重叠所以不会二义。"""
-    for sec in SECTIONS:
-        for row in board.get(sec) or []:
-            if isinstance(row, dict) and row.get("id") == card_id:
-                return sec, row
-    for sec in SECTIONS:
-        for row in board.get(sec) or []:
-            if (isinstance(row, dict) and row.get("work_id") is not None
-                    and str(row.get("work_id")) == card_id):
-                return sec, row
-    return None, None
+    lane, row = _find_row(board, "id", card_id)
+    if row is None:
+        return _find_row(board, "work_id", card_id)
+    return lane, row
 
 
 def is_executing(home: Path, card_id: str) -> bool:
@@ -199,6 +207,11 @@ def is_executing(home: Path, card_id: str) -> bool:
             and row.get("state") != "queued")
 
 
+def _primary_key(reg: Optional[dict], card_id: str) -> str:
+    """§60.3：ref 可能是工作编号——响应 ``id`` 恒为主键（registry 卡的 id）。"""
+    return str((reg or {}).get("id") or card_id)
+
+
 def card_detail(home: Path, card_id: str) -> dict:
     """详情 = 投影行字段（原样） + ``lane``（所在分区名） + YAML 的其余字段
     （plan/definition_of_done/sources/notes/execution/…，add-only：投影已有
@@ -210,9 +223,7 @@ def card_detail(home: Path, card_id: str) -> dict:
     if row is None and reg is None:
         raise NotFoundError("card not found", {"id": card_id})
 
-    # §60.3：ref 可能是工作编号——响应 ``id`` 恒为主键（投影行/registry 的 id）
-    merged: dict = dict(row) if row else {
-        "id": str((reg or {}).get("id") or card_id)}
+    merged: dict = dict(row) if row else {"id": _primary_key(reg, card_id)}
     # ``lane`` 是本 endpoint 的新增键（不动投影字段名）；registry-only 卡为 null
     merged["lane"] = lane
     for k, v in (reg or {}).items():

@@ -649,17 +649,16 @@ def build(scene: str, now: dt.datetime | None = None) -> dict:
     elif scene == "done":
         completed = [_hero_done(now)] + completed
 
-    debt = _debt(now)
-    trash = _trash(now)
-    # §60 投影面：批准过的 lane（running/needs_input/review/completed）每行带工作
-    # 编号 R-<n>（demo 里取主键同号，P-105 → R-105，方便肉眼对账）；提案/备选/
-    # 回收站只有 P- 主键。display_id / id_kind 与 act/lib/dashboard._title_fields 同式。
-    for rows in (running, needs_input, review, completed):
-        for row in rows:
-            row.setdefault("work_id", "R-" + row["id"][2:])
-    for rows in (needs_approval, running, needs_input, review, completed, debt, trash):
-        for row in rows:
-            _stamp_ids(row)
+    lanes = {
+        "needs_approval": needs_approval,
+        "running": running,
+        "needs_input": needs_input,
+        "review": review,
+        "completed": completed,
+        "debt": _debt(now),
+        "trash": _trash(now),
+    }
+    _stamp_lane_ids(lanes)
     return {
         "generated_at": _iso(now),
         "counts": {
@@ -668,17 +667,26 @@ def build(scene: str, now: dt.datetime | None = None) -> dict:
             "needs_input": len(needs_input),
             "review": len(review),
             "completed": len(completed),
-            "debt": len(debt),
-            "trash": len(trash),
+            "debt": len(lanes["debt"]),
+            "trash": len(lanes["trash"]),
         },
-        "needs_approval": needs_approval,
-        "running": running,
-        "needs_input": needs_input,
-        "review": review,
-        "completed": completed,
-        "debt": debt,
-        "trash": trash,
+        **lanes,
     }
+
+
+# 批准过的 lane：每行带工作编号（§60）；提案/备选/回收站只有 P- 主键
+_WORK_LANES = ("running", "needs_input", "review", "completed")
+
+
+def _stamp_lane_ids(lanes: dict) -> None:
+    """§60 投影面：批准过的 lane（running/needs_input/review/completed）每行带工作
+    编号 R-<n>（demo 里取主键同号，P-105 → R-105，方便肉眼对账）；提案/备选/
+    回收站只有 P- 主键。display_id / id_kind 与 act/lib/dashboard._title_fields 同式。"""
+    for name, rows in lanes.items():
+        for row in rows:
+            if name in _WORK_LANES:
+                row.setdefault("work_id", "R-" + row["id"][2:])
+            _stamp_ids(row)
 
 
 def _stamp_ids(row: dict) -> None:
@@ -718,15 +726,19 @@ def _check_epoch(problems: list, where: str, item: dict, *keys: str) -> None:
                             f"got {type(item[k]).__name__}")
 
 
+def _check_optional_str(problems: list, where: str, item: dict, k: str) -> None:
+    if k in item and item[k] is not None and not isinstance(item[k], str):
+        problems.append(f"{where}.{k}: must be str when present")
+
+
 def _check_ids(problems: list, where: str, item: dict) -> None:
     """§60（add-only optional，老快照可缺席）：work_id/display_id/id_kind 出现时
     必为 str；work_id 有则 display_id 必等于它（server 公式 display_id = work_id
     or id）；id_kind 词表 work | legacy | proposal。"""
     for k in ("work_id", "display_id", "id_kind"):
-        if k in item and item[k] is not None and not isinstance(item[k], str):
-            problems.append(f"{where}.{k}: must be str when present")
-    if item.get("work_id") and "display_id" in item \
-            and item.get("display_id") != item["work_id"]:
+        _check_optional_str(problems, where, item, k)
+    wid = item.get("work_id")
+    if wid and item.get("display_id", wid) != wid:
         problems.append(f"{where}.display_id must equal work_id when set")
     if item.get("id_kind") not in (None, "work", "legacy", "proposal"):
         problems.append(f"{where}.id_kind: unknown value {item['id_kind']!r}")

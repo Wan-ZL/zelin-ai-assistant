@@ -28,6 +28,7 @@ import datetime as _dt
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -111,22 +112,31 @@ class IntegrityViolation(StoreError):
     """其余 schema 执法：append-only、tombstone 冻结、去重键、one_active……"""
 
 
+# UNIQUE 约束按索引名/列名细分（sqlite 的 IntegrityError 消息二者其一）
+_UNIQUE_CODES = (
+    (("sources_dedup", "sources.channel"), "SOURCE_DUPLICATE"),
+    (("dispatches_one_active", "dispatches.card_id"), "DISPATCH_ACTIVE"),
+    # §60.2 工作编号撞号（并发分配）——响亮拒绝，绝不静默复用
+    (("cards_work_id", "cards.work_id"), "WORK_ID_DUPLICATE"),
+)
+
+
+def _first_code(msg: str, codes) -> Optional[str]:
+    return next((c for c in codes if c in msg), None)
+
+
 def _translate_integrity(e: sqlite3.IntegrityError) -> StoreError:
     """trigger RAISE 消息即错误码；UNIQUE 约束按索引名细分（fail-closed 兜底 INTEGRITY_ERROR）。"""
     msg = str(e)
-    for code in _TRANSITION_CODES:
-        if code in msg:
-            return TransitionDenied(code, msg)
-    for code in _INTEGRITY_CODES:
-        if code in msg:
-            return IntegrityViolation(code, msg)
-    if "sources_dedup" in msg or "sources.channel" in msg:
-        return IntegrityViolation("SOURCE_DUPLICATE", msg)
-    if "dispatches_one_active" in msg or "dispatches.card_id" in msg:
-        return IntegrityViolation("DISPATCH_ACTIVE", msg)
-    if "cards_work_id" in msg or "cards.work_id" in msg:
-        # §60.2 工作编号撞号（并发分配）——响亮拒绝，绝不静默复用
-        return IntegrityViolation("WORK_ID_DUPLICATE", msg)
+    code = _first_code(msg, _TRANSITION_CODES)
+    if code:
+        return TransitionDenied(code, msg)
+    code = _first_code(msg, _INTEGRITY_CODES)
+    if code:
+        return IntegrityViolation(code, msg)
+    for needles, unique_code in _UNIQUE_CODES:
+        if _first_code(msg, needles):
+            return IntegrityViolation(unique_code, msg)
     return IntegrityViolation("INTEGRITY_ERROR", msg)
 
 
@@ -141,7 +151,7 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
 
 
 def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
-    """v1 → v2（v0.48.13，§60/D21）：cards.work_id 列 + 唯一索引 + set-once 触发器。
+    """v1 → v2（v0.48.14，§60/D21）：cards.work_id 列 + 唯一索引 + set-once 触发器。
     存量行 work_id 一律 NULL（legacy 卡不回填，§60.4：显示名回落主键）。"""
     if not _has_column(conn, "cards", "work_id"):
         conn.execute("ALTER TABLE cards ADD COLUMN work_id TEXT")
@@ -159,6 +169,17 @@ def _upgrade_1_to_2(conn: sqlite3.Connection) -> None:
 
 
 _UPGRADES = {1: _upgrade_1_to_2}
+
+
+def _check_known_version(version: int) -> int:
+    """未来版本的库 fail-closed：绝不带着不认识的 schema 盲写。"""
+    if version > SCHEMA_VERSION:
+        raise StoreError(
+            "SCHEMA_VERSION_MISMATCH",
+            f"db user_version={version}, store2 supports {SCHEMA_VERSION}",
+            {"db_version": version, "supported": SCHEMA_VERSION},
+        )
+    return version
 
 
 def pre_upgrade_snapshot_path(db_path, from_version: int) -> Path:
@@ -254,13 +275,7 @@ class Store:
             # 其**最后一条**语句——建库途中崩溃时版本仍是 0，这里重跑即补全
             conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
             return
-        if version > SCHEMA_VERSION:
-            # 未来版本的库 fail-closed：绝不带着不认识的 schema 盲写
-            raise StoreError(
-                "SCHEMA_VERSION_MISMATCH",
-                f"db user_version={version}, store2 supports {SCHEMA_VERSION}",
-                {"db_version": version, "supported": SCHEMA_VERSION},
-            )
+        _check_known_version(version)
         # 版本号对但核心表缺席 = 半截库/手写 pragma 伪装——版本门不许被绕过
         # （升级前先验：ALTER 一张不存在的表只会报更难懂的错）
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'"
@@ -272,50 +287,50 @@ class Store:
             )
         while version < SCHEMA_VERSION:
             # 逐级升级（§53.1 梯子）：每级一个事务，末尾钉版本；缺级 = fail-closed
-            step = _UPGRADES.get(version)
-            if step is None:
-                raise StoreError(
-                    "SCHEMA_UPGRADE_MISSING",
-                    f"no upgrade path from user_version={version}",
-                    {"db_version": version, "supported": SCHEMA_VERSION},
-                )
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                # 写锁下复核版本：并发开库者可能已把这一级升完（快照必须拍在
-                # 「确认此级尚未踏出」之后，否则拍到的是升级后的形状）
-                cur = conn.execute("PRAGMA user_version").fetchone()[0]
-                if cur != version:
-                    conn.execute("COMMIT")
-                    if cur > SCHEMA_VERSION:
-                        raise StoreError(
-                            "SCHEMA_VERSION_MISMATCH",
-                            f"db user_version={cur}, store2 supports {SCHEMA_VERSION}",
-                            {"db_version": cur, "supported": SCHEMA_VERSION},
-                        )
-                    version = cur
-                    continue
-                # §53.1 单向门条款：踏出一级前先留 pre-v<from> 整库快照——旧代码
-                # 打不开升级后的库（fail-closed），这份快照是 D17 代码回滚落到
-                # 旧版本时唯一能被旧代码打开的账本副本。拍不下来 = 拒绝升级
-                # （异常穿过下面的 except → ROLLBACK，版本与形状都留在 from）。
-                self._pre_upgrade_snapshot(version)
-                step(conn)
+            version = self._upgrade_one_level(conn, version)
+
+    def _upgrade_one_level(self, conn: sqlite3.Connection, version: int) -> int:
+        """踏出 ``version`` 这一级梯子（写锁下复核版本）；返回之后的 user_version。"""
+        step = _UPGRADES.get(version)
+        if step is None:
+            raise StoreError(
+                "SCHEMA_UPGRADE_MISSING",
+                f"no upgrade path from user_version={version}",
+                {"db_version": version, "supported": SCHEMA_VERSION},
+            )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # 写锁下复核版本：并发开库者可能已把这一级升完（快照必须拍在
+            # 「确认此级尚未踏出」之后，否则拍到的是升级后的形状）
+            cur = conn.execute("PRAGMA user_version").fetchone()[0]
+            if cur != version:
                 conn.execute("COMMIT")
-            except BaseException:
-                self._rollback(conn)
-                raise
-            after = conn.execute("PRAGMA user_version").fetchone()[0]
-            if after != version + 1:
-                # 升级函数忘了钉版本 = 死循环/半态——当场拒绝
-                raise StoreError(
-                    "SCHEMA_UPGRADE_BROKEN",
-                    f"upgrade from {version} left user_version={after}",
-                    {"db_version": after, "expected": version + 1},
-                )
-            version = after
+                return _check_known_version(cur)
+            # §53.1 单向门条款：踏出一级前先留 pre-v<from> 整库快照——旧代码
+            # 打不开升级后的库（fail-closed），这份快照是 D17 代码回滚落到
+            # 旧版本时唯一能被旧代码打开的账本副本。拍不下来 = 拒绝升级
+            # （异常穿过下面的 except → ROLLBACK，版本与形状都留在 from）。
+            self._pre_upgrade_snapshot(version)
+            step(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            self._rollback(conn)
+            raise
+        after = conn.execute("PRAGMA user_version").fetchone()[0]
+        if after != version + 1:
+            # 升级函数忘了钉版本 = 死循环/半态——当场拒绝
+            raise StoreError(
+                "SCHEMA_UPGRADE_BROKEN",
+                f"upgrade from {version} left user_version={after}",
+                {"db_version": after, "expected": version + 1},
+            )
+        # 单向门踏出的审计痕迹（registry.py 同款 stderr 口径）：版本 + 快照落点
+        print(f"store2: schema v{version} -> v{after} upgraded; pre-upgrade snapshot: "
+              f"{pre_upgrade_snapshot_path(self._db_path, version)}", file=sys.stderr)
+        return after
 
     def _pre_upgrade_snapshot(self, from_version: int) -> None:
-        """升级梯子踏出一级前的整库快照（§53.1 单向门条款，v0.48.13）。
+        """升级梯子踏出一级前的整库快照（§53.1 单向门条款，v0.48.14）。
 
         落点 :func:`pre_upgrade_snapshot_path`（``<db>.pre-v<from>``，同目录），
         **每次踏出该级都刷新**：调用点持有 BEGIN IMMEDIATE 写锁并已复核

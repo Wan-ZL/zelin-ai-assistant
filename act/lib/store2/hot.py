@@ -39,6 +39,16 @@ def _text(v) -> Optional[str]:
     return v if v is None or isinstance(v, str) else str(v)
 
 
+def _work_id_column(norm: dict, warnings: list) -> Optional[str]:
+    """payload 的 ``work_id`` → 热列值：非 str 兜底 str()；空串归 NULL（未分配
+    ——UNIQUE 索引对 NULL 不生效、对 '' 会撞）。"""
+    wid = norm.get("work_id")
+    if wid is not None and not isinstance(wid, str):
+        warnings.append(f"work_id {wid!r} 非 str，热列存 str 兜底")
+        wid = str(wid)
+    return wid or None
+
+
 def derive(norm: dict) -> "tuple[dict, list, list]":
     """canonical dict → ``(hot, warnings, errors)``。
 
@@ -105,18 +115,11 @@ def derive(norm: dict) -> "tuple[dict, list, list]":
         warnings.append(f"target_repo {tr!r} 非 str，热列存 str 兜底")
         tr = str(tr)
 
-    wid = norm.get("work_id")
-    if wid is not None and not isinstance(wid, str):
-        warnings.append(f"work_id {wid!r} 非 str，热列存 str 兜底")
-        wid = str(wid)
-    if wid == "":
-        wid = None       # 空串 = 未分配（UNIQUE 索引对 NULL 不生效，对 '' 会撞）
-
     hot = {
         "status": hot_status, "prev_status": prev, "tier": tier, "type": typ,
         "title": title, "origin_trust": classify_origin(norm.get("sources")),
         "target_repo": tr, "deadline": hot_deadline,
-        "merged_into_id": merged_into_id, "work_id": wid,
+        "merged_into_id": merged_into_id, "work_id": _work_id_column(norm, warnings),
     }
     return hot, warnings, errors
 

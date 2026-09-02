@@ -60,7 +60,6 @@ private:act/lib/feedback_sync.py->act.lib.secrets._read_path 1
 private:act/lib/quick_capture.py->act.analyze._coerce_cost 1
 private:act/lib/quick_capture.py->act.analyze._coerce_plan 1
 private:act/lib/quick_capture.py->act.analyze._extract_json 1
-private:act/lib/quick_capture.py->act.lib.registry._ID_RE 1
 private:act/lib/quick_capture.py->act.lib.registry._dedupe_sources 1
 private:act/lib/quick_capture.py->act.lib.registry._same_source_and_title 1
 private:act/lib/silent_merge.py->act.lib.auto_merge._linked 1
