@@ -112,6 +112,13 @@ if [ -n "${FAKE_INSTALL_STORE2_CORRUPT:-}" ]; then
 fi
 # generic trigger file (the fake git uses it to start failing mid-run)
 [ -n "${FAKE_INSTALL_TOUCH:-}" ] && touch "$FAKE_INSTALL_TOUCH"
+# simulate §23 cron=skipped_tcc: crontab TCC-refused, warned about, NOT counted
+# in the exit code (the rc plan stays authoritative — real mapping pinned in
+# tests/test_install_cron_tcc.py)
+if [ -n "${FAKE_INSTALL_CRON_TCC:-}" ]; then
+    echo "  [warn] crontab is TCC-blocked in this session — grant Full Disk Access to /pinned/python3, then rerun bash install.sh"
+    echo "install.sh --non-interactive: ok (cron=skipped_tcc)"
+fi
 # the restarted actd's heartbeat (§47.4): a NEW pid ($$ of this install run),
 # the checkout's version, phase per FAKE_INSTALL_HEARTBEAT (default idle = one
 # full pass done; "none" = the new daemon never writes one, e.g. dies on import)
@@ -768,6 +775,23 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("pre-existing", st["detail"])
         self.assertIn("cron", st["detail"])
         self.assertEqual(len(self.installs()), 1)
+
+    def test_install_reporting_skipped_tcc_cron_still_deploys(self):
+        # §56.5（2026-09-02 v0.48.12 实战）：crontab 被 TCC 拒写记 cron=skipped_tcc，
+        # install.sh --non-interactive 退出 0（映射判例 tests/test_install_cron_tcc.py）
+        # ——部署层的判决必须是 SUCCESS 而非回滚：回滚重装只会撞同一堵 TCC 墙，
+        # 还会把 sha 毒成停摆（当晚实况）。
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_INSTALL_CRON_TCC": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertNotIn("failed_sha", st)
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("v0.48.4", notes[0], "the one notification is the deploy, not a rollback")
 
     def test_unparseable_doctor_on_the_new_code_rolls_back_before_installing(self):
         # H1：baseline 与复查都用新代码——doctor 在两次都 unparseable 时「新增 FAIL」

@@ -12,7 +12,8 @@ Shell interface (what install.sh calls)::
         --mode pkg-postinstall --steps-stdin --agents "label1 label2"
 
 where ``$STEPS`` is newline-separated ``name=status[:detail]`` lines
-(status ∈ ok|warn|fail|skipped; detail is free text and may contain colons).
+(status vocabulary per CONTRACT §23 — ok|warn|fail|skipped plus the add-only
+``skipped_tcc`` for the cron step; detail is free text and may contain colons).
 
 The write is atomic (.tmp + os.replace) so a concurrent reader never sees a
 torn file. The report is diagnostics, not control flow — failures here must
@@ -35,7 +36,7 @@ from act.lib import config
 
 REPORT_PATH: Path = config.STATE_DIR / "install_report.json"
 
-_VALID_STATUS = {"ok", "warn", "fail", "skipped"}
+_VALID_STATUS = {"ok", "warn", "fail", "skipped", "skipped_tcc"}
 
 
 def parse_steps(text: str) -> List[dict]:

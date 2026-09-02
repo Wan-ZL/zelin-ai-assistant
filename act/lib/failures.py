@@ -183,6 +183,19 @@ FAILURES: dict = {
         "plain_en": "macOS is blocking the scheduled jobs (no Full Disk Access) — notes are silently lost",
         "action_id": "grant_cron_fda",
     },
+    # §23 cron=skipped_tcc（2026-09-02 v0.48.12 实战）：自动部署的 launchd 会话
+    # 被 TCC 拒写 crontab（Operation not permitted）——环境问题不算部署失败步
+    # （§56.5），这里的人话负责把「给守护 python 开 FDA」说清楚。
+    "cron_tcc_blocked": {
+        "plain_zh": "后台安装改不了定时任务表（macOS 挡住了 crontab——launchd 会话缺"
+                    "「完全磁盘访问」）——给守护 Python 开一次完全磁盘访问再跑 "
+                    "bash install.sh；在终端里跑通不算数（Terminal 自带权限）",
+        "plain_en": "Background installs cannot rewrite the scheduled jobs (macOS blocks "
+                    "crontab — the launchd session has no Full Disk Access) — grant Full "
+                    "Disk Access to the daemon Python once, then bash install.sh; a "
+                    "terminal run proving it works proves nothing (Terminal has its own grant)",
+        "action_id": "open_deps",
+    },
     "dashboard_stale": {
         "plain_zh": "后台服务停止更新数据——看板显示的是旧内容",
         "plain_en": "The background service stopped updating data — the board shows old content",
