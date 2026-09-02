@@ -140,6 +140,10 @@ enum FailureCatalog {
         case "interpreter_blind":
             return L("后台服务用的那个 Python 读不到项目文件夹（macOS 按程序单独授权，后台任务不继承终端的权限）——重跑一次安装器会换一个能读的",
                      "The Python the background services run cannot read the project folder (macOS grants file access per program, and background jobs do not inherit your terminal's grant) — re-running the installer picks one that can")
+        // §56 (v0.48.20, mirror only — D3 freeze): the doctor row carries the exact path.
+        case "deploy_blind_tcc":
+            return L("后台自动部署任务读不到项目所在的外置盘（macOS 按程序单独授权，后台任务不继承终端的权限）——给它用的那个 Python 授「完全磁盘访问」，路径见 doctor 的 launchd volume access 行",
+                     "The background auto-deploy job cannot read the external volume the project lives on (macOS grants file access per program, and background jobs do not inherit your terminal's grant) — grant Full Disk Access to the Python it runs; the exact path is in doctor's launchd volume access row")
         case "cron_missing":
             return L("定时任务没有安装——屏幕记录不会变成笔记和卡片",
                      "The scheduled jobs are not installed — screen captures never become notes or cards")
@@ -208,7 +212,7 @@ enum FailureCatalog {
         case "agent_unloaded", "dashboard_stale": return L("一键修复", "Fix now")
         case "cron_missing": return L("查看修法", "How to fix")
         // 不给「一键修复」：重装 agent 会把同一个瞎解释器再渲一遍，得重跑安装器
-        case "interpreter_blind", "claude_blind": return L("去诊断", "Open diagnostics")
+        case "interpreter_blind", "claude_blind", "deploy_blind_tcc": return L("去诊断", "Open diagnostics")
         case "cron_fda_blocked": return L("去授权", "Grant…")
         case "config_invalid": return L("显示文件", "Reveal file")
         default: return nil
@@ -247,7 +251,7 @@ enum FailureCatalog {
             RecordingController.openScreenRecordingSettings()
         case "agent_unloaded", "dashboard_stale":
             PipelineRepair.shared.restartActd()
-        case "claude_cli_outdated", "interpreter_blind", "claude_blind":
+        case "claude_cli_outdated", "interpreter_blind", "claude_blind", "deploy_blind_tcc":
             // the doctor row on the diagnostics page names the two binaries
             // and the fix — deep-link there (same rationale as cron_missing).
             // interpreter_blind lands here too: its fix is re-running the

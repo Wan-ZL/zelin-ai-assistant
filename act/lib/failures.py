@@ -173,6 +173,20 @@ FAILURES: dict = {
                     "picks one that can",
         "action_id": "open_deps",
     },
+    # §56.3 第 1 步（v0.48.20；live 事故 2026-09-02）：launchd 起的自动部署任务
+    # 读不到外置卷上的 repo（TCC 按 responsible executable 授权、任务收不到弹
+    # 窗）。终端里跑绿了不算——它借的是终端的授权。修法是给 plist 里那个解释器
+    # 授「完全磁盘访问」，没有一键动作，把人送到依赖页看 doctor 的精确路径。
+    "deploy_blind_tcc": {
+        "plain_zh": "后台自动部署任务读不到项目所在的外置盘（macOS 按程序单独授权，"
+                    "后台任务不继承终端的权限）——给它用的那个 Python 授「完全磁盘访问」，"
+                    "路径见 doctor 的 launchd volume access 行",
+        "plain_en": "The background auto-deploy job cannot read the external volume the "
+                    "project lives on (macOS grants file access per program, and background "
+                    "jobs do not inherit your terminal's grant) — grant Full Disk Access to the "
+                    "Python it runs; the exact path is in doctor's launchd volume access row",
+        "action_id": "open_deps",
+    },
     "cron_missing": {
         "plain_zh": "定时任务没有安装——屏幕记录不会变成笔记和卡片",
         "plain_en": "The scheduled jobs are not installed — screen captures never become notes or cards",

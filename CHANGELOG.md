@@ -28,6 +28,25 @@ other file needs editing. To cut a release:
 
 ## [Unreleased]
 
+## [0.48.20] - 2026-09-02
+
+§56 follow-up（D20 第四幕）。live 事故 2026-09-02T00:48Z：timer 起的自动部署把 checkout 推到 v0.48.11 之后，`bash install.sh` 对外置卷拿到 EPERM（exit 126）、回滚被拒、`state/deploy_state.json` / 通知队列 / 锁全部写不进去（`PermissionError: [Errno 1]` 只出现在 launchd 那份没时间戳的 stderr 里）；20 分钟后下一轮看到 HEAD == origin/main 就写了 `up_to_date` + `version=0.48.11`，而 actd 内存里还是 v0.48.8。与此同时从终端 kickstart 的每一次都成功——它借的是终端的完全磁盘访问。macOS 按 responsible executable 给可移动卷授权，launchd 任务收不到弹窗。
+
+### Changed
+- **「deployed 就是在跑」（CONTRACT §56.3 第 2 步）**：`up_to_date` 现在要求 HEAD == origin/main **且** `state/install_report.json` 的 `version` == checkout 版本 **且** `state/actd.heartbeat` 的 `version` == checkout 版本且心跳新鲜（≤ 600 s）。任一不符 → 新状态 `install_incomplete`（`reason` 机器 token + `detail` 逐条点名），**第一眼只记账、下一轮仍不一致才**重跑一次 `install.sh --non-interactive` 并等新心跳（10 分钟 interval 跨得过的瞬态——owner 自己的 install.sh 跑到一半、刚唤醒——自愈在第二眼之前；只是心跳过期、版本都对 → 先等 `AUTODEPLOY_HEARTBEAT_GRACE` 90 s 看它再跳；重跑前过与第 3 步同一道 CI 闸门：pending 等、红 → 中毒 + 一条通知、非 github 远端不重跑；`--force` 两道都跳）；install.sh 非零永不算 `deployed`（`reason` 前置 `install_failed`）；**重跑预算每 sha 3 次（`AUTODEPLOY_INCOMPLETE_LIMIT`）、成功也计**——起来跑一个 pass 又死的 daemon 不会每 10 分钟被重装一次——用完 → 自己的账本 `incomplete_sha` 中毒 + 每 sha 一条通知，直到 main 前进 / `--force` / 手动 `bash install.sh` 对齐（对齐清中毒不清预算）。回滚被拒后留在新 sha 的机器由此自愈（`failed_sha` 不拦它）。
+- **锁搬家**：`state/auto-deploy.lock/` → `~/Library/Application Support/ZelinAIAssistant/auto-deploy.lock/`（TCC 永不拦 `$HOME`；事故里 EPERM 删不掉的锁让下一轮按陈旧锁回收）。升级窗口兼容一个版本：旧址的锁活着 → 跳过，死了 → 清。
+- doctor `auto-deploy` 行：`blocked_tcc` 的 fix 指向授权与 `launchd volume access` 行（不是 `--force`）；`install_incomplete` 的 fix 说明下轮自动重装；`running_version` ≠ `version` 时 detail 追加「(running vX)」；healthy 但 `last_incident` 在案 → WARN「unresolved deploy incident」。文案搬进 `act/lib/deploy_state.py`（`auto_deploy_row` / `volume_access_row`），`act/doctor.py` 回到防腐 #1 上限之下。
+- **读方偏向镜像**：`deploy_state.read()`（dashboard 顶层键与 doctor `auto-deploy` 行）在 HOME 镜像的 `repo` 是本 checkout 时读镜像、否则读 `state/` 投影——`blocked_tcc` 正是任务写不进投影的情形，投影里停着的旧 `up_to_date` 不得压过镜像。
+- web 顶栏 `install_incomplete` 文案改为「安装未完成 / install incomplete」（第一眼并不重装）。
+
+### Added
+- **卷访问探针（§56.3 第 1 步）**：每轮在第一次 git 调用之前 stat + 读 repo 文件 + 在 `state/` 里 mkstemp；`PermissionError` → 状态 `blocked_tcc`，日志一行 `volume_access=denied (errno N) — launchd job lacks access to <卷>; grant Full Disk Access to <plist ProgramArguments[0]>`，通知每 UTC 日一次，`exit 0`，HEAD 不动、什么都不改；投影 `detail` 不带本机路径（宪法第 9 条），卷 / 解释器 / 被拒路径只住镜像专有键。
+- **HOME 镜像（§56.4）**：`~/Library/Application Support/ZelinAIAssistant/deploy_state.json` 是脚本的真源（先写它、再尽力写 repo 的 `state/deploy_state.json` 投影；第一轮用投影播种，`failed_sha` 等私账不丢）。镜像多出 `trigger` / `interpreter` / `volume` / `repo` 与 **`unattended_status` / `unattended_last_run` / `unattended_detail`**——只有非终端触发的运行才改写它们。trigger 启发式诚实到此为止：有 tty 或 `TERM_PROGRAM` / `SSH_TTY` = `terminal`，否则 `launchd`（定时触发与 `launchctl kickstart` 从进程内分不出来，两者都是无人值守的真证据；`AUTODEPLOY_TRIGGER` 可覆盖）。
+- **deploy_state 新字段（add-only）**：`running_version`（心跳里的版本）、`install_report_version`、`reason`、**`last_incident`**（`<ts> <status>: <detail>` 的回滚判决——#135 review 实测：回滚被拒后 HEAD 留在新 sha，10 分钟后下一轮的 `up_to_date` 把判决从仪表上冲掉了；现在它穿过每次例行写入，只被下一次 `deployed` 清掉；doctor `auto-deploy` 行与 web 顶栏在 healthy 状态下见它即警告）；新状态词 `install_incomplete` / `blocked_tcc`（web 顶栏各有双语文案）。
+- **doctor `launchd volume access` 行（darwin）+ §25 新 failure id `deploy_blind_tcc`**：读镜像的 `unattended_status`（blocked_tcc → FAIL）或 `autodeploy.launchd.log` 24h 内的 EPERM / `No module named 'act'` 证据（启动器连 act 都 import 不到时脚本没跑、镜像里什么都没有），fix 给出精确修法、两条授权都点名：系统设置 → 隐私与安全性 → 完全磁盘访问 → 加入 ① 后台任务的解释器 `<plist ProgramArguments[0]>`（事故机器上是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`）② `$HOME/.local/bin/claude`；然后**等 timer 自己触发一轮**再看本行——从终端起的运行（含终端里敲的 `launchctl kickstart`）继承终端的授权，绿了对 timer 触发的运行什么都不证明。`Probes.deploy_mirror_read` / `Probes.launchd_log_mtime` 注入缝。Swift `FailureCatalog` 镜像句同版。
+- `docs/TROUBLESHOOTING.md`「外置盘 + launchd 权限」；CONTRACT §55 第四幕指针。
+- 判例：`tests/integration/test_auto_deploy_script.py` 第 6/7 组（install 失败 → `install_incomplete` 重装而非 `up_to_date`；心跳版本不符 / 过期；chmod 000 造出的 PermissionError → `blocked_tcc`、HEAD 不动、一天一次通知；`state/` 不可写时镜像仍落盘；终端运行不覆盖 `unattended_*`；镜像从投影播种）、`tests/test_doctor_launchd_volume_access.py`、`tests/test_deploy_state.py` 镜像读方。
+
 ## [0.48.19] - 2026-09-02
 
 v-next-2 P4 Tier-0（决议 D3）：「录制状态和字幕开关我一般不用这个入口，直接打开主软件在右上角操作。」原生菜单栏 app 退役的第一块砖——录制与实时字幕引擎搬进 "Zelin AI Board" 壳，看板 header 右上长出两个开关。
@@ -2183,7 +2202,8 @@ SwiftUI menu-bar app — plus the FSL-1.1-MIT license, `CONTRIBUTING.md`, CI and
 release workflows
 ([`ef421de`](https://github.com/Wan-ZL/zelin-ai-assistant/commit/ef421de)).
 
-[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.19...HEAD
+[Unreleased]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.20...HEAD
+[0.48.20]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.19...v0.48.20
 [0.48.19]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.18...v0.48.19
 [0.48.18]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.17...v0.48.18
 [0.48.17]: https://github.com/Wan-ZL/zelin-ai-assistant/compare/v0.48.16...v0.48.17

@@ -64,7 +64,6 @@ act/digest.py::build_suggestions 18.8
 act/digest.py::file_suggestion_cards 6.3
 act/digest.py::run 7
 act/doctor.py::_actd_alive 7
-act/doctor.py::_check_auto_deploy 10
 act/doctor.py::_check_claude_auth 8
 act/doctor.py::_check_claude_code_model 10
 act/doctor.py::_check_cron_probe 9
@@ -82,7 +81,6 @@ act/doctor.py::_check_store2 15
 act/doctor.py::_check_systemd 13
 act/doctor.py::_installed_actd_path_env 24.5
 act/doctor.py::_launchd_claude_probe 248.4
-act/doctor.py::_launchd_log_tail 8.7
 act/doctor.py::_login_shell_claude 20.7
 act/doctor.py::_pid_alive 10
 act/doctor.py::_run 8.1
@@ -143,7 +141,6 @@ act/lib/dashboard.py::_source_view 9.2
 act/lib/dashboard.py::build_dashboard 19
 act/lib/dashboard.py::build_dashboard._project 72
 act/lib/dashboard.py::write_dashboard 9.3
-act/lib/deploy_state.py::read 8
 act/lib/e2e.py::_open 38.1
 act/lib/failures.py::_persisted_language 11
 act/lib/failures.py::classify_engine_log 8

@@ -5,10 +5,32 @@
 # (act/launchd/com.zelin.aiassistant.autodeploy.plist → `python3 -m
 # act.auto_deploy` → this script). One run =
 #
-#   1. take the lock (state/auto-deploy.lock/, stale-PID aware), cap the log
+#   1. take the lock (HOME mirror dir, stale-PID aware), cap the log, then
+#      PROBE VOLUME ACCESS before touching git: stat + read + mktemp in
+#      state/ + read install.sh. macOS gates background access to removable
+#      volumes per responsible executable (TCC) and a launchd job cannot
+#      receive the prompt — the 2026-09-02 timer-fired run moved HEAD to
+#      v0.48.11, then `bash install.sh` got EPERM (exit 126), rollback was
+#      refused, write_state/notify/rm-lock all EPERM'd; the next run saw
+#      HEAD == origin/main and wrote up_to_date while actd still ran v0.48.8.
+#      EPERM here = `blocked_tcc`: log the exact interpreter to grant Full
+#      Disk Access to, record it in the HOME mirror, notify once per day,
+#      exit 0 with nothing changed. HEAD never moves before this passes.
 #   2. refuse unless HEAD is on `main`; `git fetch origin main`;
-#      HEAD == origin/main → record up_to_date, exit; origin/main is the
-#      remembered failed sha → one log line, exit (no retry storm)
+#      HEAD == origin/main → DEPLOYED MEANS RUNNING: up_to_date only when
+#      state/install_report.json carries the checkout's version AND
+#      state/actd.heartbeat carries it too and is fresh (a stale-but-right
+#      heartbeat gets AUTODEPLOY_HEARTBEAT_GRACE seconds to beat again — the
+#      Mac just woke, actd is mid-restart). Otherwise `install_incomplete`
+#      (mismatch spelled out); the FIRST sighting only records it, the
+#      SECOND consecutive run re-runs install.sh ONCE — behind the same CI
+#      gate as step 3 (never install a sha CI has not passed, even one the
+#      owner pulled by hand); `--force` skips both waits. install.sh is
+#      re-run at most AUTODEPLOY_INCOMPLETE_LIMIT times per sha, successes
+#      included (a daemon that comes up and dies again every interval must
+#      not be reinstalled forever) → then the sha is poisoned + one
+#      notification. origin/main is the remembered failed sha → one log
+#      line, exit (no retry storm)
 #   3. CI GATE on the exact origin/main sha: the GitHub check-runs API must
 #      say the `ci` run on THAT commit completed green. The ruleset only
 #      requires green on the PR head (non-strict), so a merge commit's tree
@@ -69,12 +91,21 @@
 #      on main so the next run can still fast-forward) + install.sh again +
 #      notify "auto-deploy rolled back to PREV"; that origin/main sha is then
 #      remembered as failed and skipped until main moves (or --force).
-#  12. every outcome lands in state/deploy_state.json (dashboard add-only key
-#      `deploy_state`, doctor row `auto-deploy`, web header) and in
-#      ~/Library/Logs/zelin-ai-assistant/auto-deploy.log (1 MB self-cap).
+#  12. every outcome lands in TWO places: the HOME mirror
+#      ~/Library/Application Support/ZelinAIAssistant/deploy_state.json (the
+#      script's own truth + private bookkeeping; TCC never gates $HOME, so a
+#      run that cannot touch /Volumes still records what happened) and
+#      state/deploy_state.json in the repo (best-effort projection: dashboard
+#      add-only key `deploy_state`, doctor row `auto-deploy`, web header —
+#      readers prefer the mirror when it describes this checkout, so a
+#      projection the job could not rewrite never masks the mirror's verdict),
+#      plus ~/Library/Logs/zelin-ai-assistant/auto-deploy.log (1 MB self-cap).
+#      A rollback verdict is ALSO kept in `last_incident` until the next
+#      `deployed`: the routine up_to_date write of the following interval
+#      must not make a refused rollback disappear from the dashboard.
 #
 # Never prompts, never pushes, never touches state/ or config/ beyond its own
-# two files. Exit 0 for every handled outcome (launchd's status column stays
+# files. Exit 0 for every handled outcome (launchd's status column stays
 # clean; the verdict lives in deploy_state.json), 1 for a broken environment
 # (not a git checkout / no python), 2 for bad usage.
 #
@@ -82,9 +113,12 @@
 #   --force   forget the remembered failed sha, skip the CI gate, deploy now
 #
 # Test seams (env, never set by the plist): AUTODEPLOY_LOG_DIR,
-# AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE, AUTODEPLOY_BRANCH,
+# AUTODEPLOY_HOME_DIR, AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE,
+# AUTODEPLOY_HEARTBEAT_FRESH, AUTODEPLOY_HEARTBEAT_GRACE,
+# AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
 # AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS,
-# AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE.
+# AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE, AUTODEPLOY_TRIGGER,
+# AUTODEPLOY_PLIST.
 set -uo pipefail
 
 # Everything lives in functions and runs from main "$@" at the very end: bash
@@ -98,15 +132,31 @@ REMOTE=origin
 LOG_DIR="${AUTODEPLOY_LOG_DIR:-$HOME/Library/Logs/zelin-ai-assistant}"
 LOG="$LOG_DIR/auto-deploy.log"
 LOG_CAP_BYTES=1048576                     # 防腐 #4：日志必有帽
-STATE_FILE="$REPO_ROOT/state/deploy_state.json"
-LOCK_DIR="$REPO_ROOT/state/auto-deploy.lock"
+STATE_FILE="$REPO_ROOT/state/deploy_state.json"         # projection for dashboard/doctor (best-effort)
+# HOME mirror (§56.4): the script's own truth. $HOME is never TCC-gated, the
+# repo on a removable volume is (per responsible executable, no prompt for a
+# launchd job) — so the lock, the bookkeeping and every verdict live here
+# first and are copied into the repo second. Same directory as the §19 home
+# pointer (~/Library/Application Support/ZelinAIAssistant/home.txt).
+MIRROR_DIR="${AUTODEPLOY_HOME_DIR:-$HOME/Library/Application Support/ZelinAIAssistant}"
+MIRROR_FILE="$MIRROR_DIR/deploy_state.json"
+LOCK_DIR="$MIRROR_DIR/auto-deploy.lock"
 INSTALL_TIMEOUT="${AUTODEPLOY_INSTALL_TIMEOUT:-1800}"   # covers the §56.5 ui step (npm ci + vite build +
                                                         # the thin shell's swiftc, each under its own
                                                         # AIASSISTANT_UI_BUDGET=600 s watchdog)
+INSTALL_REPORT="$REPO_ROOT/state/install_report.json"   # §23, written by install.sh at the end of a run
 HEARTBEAT_FILE="$REPO_ROOT/state/actd.heartbeat"        # §47.4, written by actd at every phase boundary
 HEARTBEAT_DEADLINE="${AUTODEPLOY_HEARTBEAT_DEADLINE:-180}"  # the restarted actd must finish ONE pass
                                                         # (a pass may run `claude agents --json`,
                                                         # >30 s on a loaded machine)
+HEARTBEAT_FRESH="${AUTODEPLOY_HEARTBEAT_FRESH:-600}"    # "deployed means running": a heartbeat older
+                                                        # than one interval = that version is NOT running
+HEARTBEAT_GRACE="${AUTODEPLOY_HEARTBEAT_GRACE:-90}"     # …unless it beats again within this (§47.4
+                                                        # STALE_FLOOR: a pass can run >30 s; the Mac may
+                                                        # have just woken with actd still asleep)
+INCOMPLETE_LIMIT="${AUTODEPLOY_INCOMPLETE_LIMIT:-3}"    # install.sh re-runs per sha (successes included)
+                                                        # before the sha is poisoned (+ one notification)
+PLIST="${AUTODEPLOY_PLIST:-$HOME/Library/LaunchAgents/com.zelin.aiassistant.autodeploy.plist}"
 DOCTOR_RETRIES="${AUTODEPLOY_DOCTOR_RETRIES:-3}"        # post-install doctor verdict: attempts (§56.3 step 10)
 DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-45}"         # seconds between those attempts
 STORE2_MARKER="$REPO_ROOT/state/store2_truth.json"      # §53 activation marker — rollback guard
@@ -118,6 +168,10 @@ CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that m
                                                         # version tri-pin
 FORCE=0
 PY=""
+TRIGGER=""      # terminal | launchd | $AUTODEPLOY_TRIGGER (detect_trigger)
+INTERP=""       # the plist's ProgramArguments[0] — the binary TCC judges
+VOLUME=""       # mount point the repo lives on
+_now=""
 
 log() {
     _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -159,40 +213,83 @@ repo_version() {
 # value deletes the key. Values are all strings; readers type-check per field
 # (act/lib/deploy_state.py). Written on every run: `status`/`last_run` describe
 # THIS run, `last_deployed`/`prev` the last successful deploy (carried over).
-# On failure the child's stderr (last line = the exception, e.g. the live
-# 2026-09-01 `PermissionError: [Errno 1]` EPERM window) lands in OUR log —
-# stderr inherited from launchd goes to a different file with no timestamps,
-# which made the first live failure undiagnosable from here.
+#
+# Two files, one truth: the HOME mirror is merged first and MUST succeed (its
+# failure is logged as such); the repo copy is the same dict written best-
+# effort — on a TCC-blocked volume it simply fails, and the failure line
+# carries the child's exception (live 2026-09-01: `PermissionError: [Errno 1]`
+# was only in launchd's untimestamped stderr file). The mirror did not exist
+# before v0.48.20: when it is absent the merge seeds itself from the repo copy
+# so failed_sha / notified_sha bookkeeping survives the upgrade.
+#
+# Every write also stamps this run's identity (trigger / interpreter / volume /
+# repo), and — when the run is NOT attached to a terminal — mirrors `status` /
+# `detail` into `unattended_status` / `unattended_last_run` /
+# `unattended_detail`: a green `--force` from the owner's terminal inherits the
+# terminal's TCC grants and proves nothing about the launchd job; the doctor's
+# `launchd volume access` row reads the unattended triple, never the last run.
 write_state() {
+    _pairs=("$@" "trigger=$TRIGGER" "interpreter=$INTERP" "volume=$VOLUME" "repo=$REPO_ROOT")
+    if [ "$TRIGGER" != "terminal" ]; then
+        for _p in "$@"; do
+            case "$_p" in
+                status=*) _pairs+=("unattended_status=${_p#status=}" "unattended_last_run=$_now") ;;
+                detail=*) _pairs+=("unattended_detail=${_p#detail=}") ;;
+            esac
+        done
+    fi
+    mkdir -p "$MIRROR_DIR" 2>/dev/null
     mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
-    _wserr="$("$PY" - "$STATE_FILE" "$@" 2>&1 1>/dev/null <<'PY'
+    _wserr="$("$PY" - "$MIRROR_FILE" "$STATE_FILE" "${_pairs[@]}" 2>&1 1>/dev/null <<'PY'
 import json, os, sys
-path, pairs = sys.argv[1], sys.argv[2:]
-try:
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    if not isinstance(data, dict):
-        data = {}
-except Exception:
-    data = {}
+mirror, repo_copy, pairs = sys.argv[1], sys.argv[2], sys.argv[3:]
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def dump(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+data = load(mirror) if os.path.exists(mirror) else load(repo_copy)
 for pair in pairs:
     key, _, value = pair.partition("=")
     if value == "":
         data.pop(key, None)
     else:
         data[key] = value
-tmp = path + ".tmp"
-with open(tmp, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, ensure_ascii=False, indent=2, sort_keys=True)
-    fh.write("\n")
-os.replace(tmp, path)
+dump(mirror, data)          # the truth — an exception here is the real failure
+try:
+    dump(repo_copy, data)   # the projection — best-effort on a gated volume
+except Exception as exc:
+    sys.stderr.write("%s: %s\n" % (type(exc).__name__, exc))
+    sys.exit(3)
 PY
-)" || log "write_state failed (non-fatal): $(printf '%s' "$_wserr" | tail -n 1)"
+)" || {
+        if [ "$?" -eq 3 ]; then
+            log "write_state: mirror written, repo copy failed (non-fatal): $(printf '%s' "$_wserr" | tail -n 1)"
+        else
+            log "write_state failed (non-fatal): $(printf '%s' "$_wserr" | tail -n 1)"
+        fi
+    }
 }
 
-read_state() { # $1=key → its string value, "" when absent/unreadable
-    [ -f "$STATE_FILE" ] || return 0
-    "$PY" - "$STATE_FILE" "$1" <<'PY' 2>/dev/null || true
+# $1=key → its string value, "" when absent/unreadable. The mirror is the
+# truth; the repo copy is only consulted while the mirror does not exist yet
+# (first run after the v0.48.20 upgrade).
+read_state() {
+    _src="$MIRROR_FILE"
+    [ -f "$_src" ] || _src="$STATE_FILE"
+    [ -f "$_src" ] || return 0
+    "$PY" - "$_src" "$1" <<'PY' 2>/dev/null || true
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
@@ -392,7 +489,30 @@ wait_for_new_actd() { # $1=version $2=pre-install "<version> <pid> <phase>" → 
     done
 }
 
+# Upgrade window (v0.48.20 moved the lock to $HOME): a pre-v0.48.20 run still
+# holds state/auto-deploy.lock while it fast-forwards to THIS script and runs
+# install.sh — a hand-started run of the new script would otherwise take the
+# fresh HOME lock and deploy concurrently (Codex review P1 on #140). Honour a
+# LIVE legacy holder; clear a dead one best-effort (the old EXIT trap may have
+# EPERM'd on the volume). Drop this once no v0.48.19 checkout is left.
+LEGACY_LOCK_DIR="$REPO_ROOT/state/auto-deploy.lock"
+legacy_lock_live() {
+    [ -d "$LEGACY_LOCK_DIR" ] || return 1
+    _lholder="$(cat "$LEGACY_LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$_lholder" ] && kill -0 "$_lholder" 2>/dev/null; then
+        log "a pre-v0.48.20 auto-deploy run still holds $LEGACY_LOCK_DIR (pid $_lholder) — skipping"
+        return 0
+    fi
+    if [ -z "$_lholder" ] && [ -z "$(find "$LEGACY_LOCK_DIR" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+        log "a pre-v0.48.20 run holds $LEGACY_LOCK_DIR without a pid yet — skipping"
+        return 0
+    fi
+    rm -rf "$LEGACY_LOCK_DIR" 2>/dev/null && log "removed stale legacy lock $LEGACY_LOCK_DIR (pid ${_lholder:-?} is gone)"
+    return 1
+}
+
 take_lock() {
+    legacy_lock_live && return 1
     mkdir -p "$(dirname "$LOCK_DIR")"
     if mkdir "$LOCK_DIR" 2>/dev/null; then
         printf '%s\n' "$$" > "$LOCK_DIR/pid"
@@ -420,6 +540,186 @@ take_lock() {
     fi
     log "could not take the lock — skipping"
     return 1
+}
+
+# How this run was started — the only distinction the process can honestly
+# make. `terminal`: a tty is attached or TERM_PROGRAM / SSH_TTY is set = the
+# owner (or an orchestrator started from a terminal) ran it, and it INHERITS
+# that terminal's TCC grants. `launchd`: none of that = spawned by launchd,
+# whether the StartInterval timer fired or someone ran `launchctl kickstart`
+# — those two are indistinguishable from inside (same environment, same TCC
+# identity: the job's own executable), and both are equally honest evidence
+# about unattended runs. A wrapper that knows more sets AUTODEPLOY_TRIGGER.
+detect_trigger() {
+    if [ -n "${AUTODEPLOY_TRIGGER:-}" ]; then
+        printf '%s' "$AUTODEPLOY_TRIGGER" | tr -c 'A-Za-z0-9_-' '_'
+        return 0
+    fi
+    if [ -t 0 ] || [ -t 1 ] || [ -t 2 ] || [ -n "${TERM_PROGRAM:-}" ] || [ -n "${SSH_TTY:-}" ]; then
+        printf 'terminal'
+    else
+        printf 'launchd'
+    fi
+}
+
+# ProgramArguments[0] of the INSTALLED autodeploy plist — the exact binary
+# macOS judges when the job runs (TCC is granted per executable path; the
+# python launcher is the responsible process for bash/git/install.sh under
+# it). Fallbacks: the launcher's own sys.executable (AIASSISTANT_PYTHON is
+# exactly argv0 when we were started by the shim), then $PY.
+plist_interpreter() {
+    _pi=""
+    [ -f "$PLIST" ] && _pi="$(tr -d '\n' < "$PLIST" 2>/dev/null \
+        | sed -n 's#.*<key>ProgramArguments</key>[[:space:]]*<array>[[:space:]]*<string>\([^<]*\)</string>.*#\1#p')"
+    [ -n "$_pi" ] || _pi="${AIASSISTANT_PYTHON:-}"
+    [ -n "$_pi" ] || _pi="$PY"
+    printf '%s' "$_pi"
+}
+
+# read + write + exec on the repo, BEFORE any git call. One line on stdout:
+#   ok
+#   denied <errno> <path>    PermissionError (TCC: errno 1 EPERM on macOS)
+#   error <errno> <path>     any other OSError (volume unmounted, …)
+# Also prints the mount point the repo lives on as a second line.
+volume_probe() {
+    "$PY" - "$REPO_ROOT" <<'PY' 2>/dev/null || printf 'error ? probe-crashed\n/\n'
+import os, sys, tempfile
+repo = sys.argv[1]
+verdict, where = "ok", ""
+try:
+    where = repo
+    os.stat(repo)
+    os.listdir(repo)
+    for rel in ("act/__init__.py", "install.sh", "scripts/auto-deploy.sh"):
+        where = os.path.join(repo, rel)
+        if os.path.exists(where):
+            with open(where, "rb") as fh:
+                fh.read(1)
+    where = os.path.join(repo, "state")
+    os.makedirs(where, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".volume-probe.", dir=where)
+    os.write(fd, b"probe\n")
+    os.close(fd)
+    os.unlink(tmp)
+except PermissionError as exc:
+    verdict = "denied %s %s" % (exc.errno if exc.errno is not None else "?", where)
+except OSError as exc:
+    verdict = "error %s %s" % (exc.errno if exc.errno is not None else "?", where)
+mount = repo
+try:
+    while mount != os.path.dirname(mount) and not os.path.ismount(mount):
+        mount = os.path.dirname(mount)
+except OSError:
+    parts = repo.split("/")
+    mount = "/".join(parts[:3]) if repo.startswith("/Volumes/") and len(parts) > 2 else "/"
+print(verdict)
+print(mount)
+PY
+}
+
+# `version` recorded by install.sh in state/install_report.json (§23); "" when
+# absent/unreadable — an install that never finished never wrote it.
+install_report_version() {
+    [ -f "$INSTALL_REPORT" ] || return 0
+    "$PY" - "$INSTALL_REPORT" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        v = json.load(fh).get("version", "")
+    sys.stdout.write(v if isinstance(v, str) else "")
+except Exception:
+    pass
+PY
+}
+
+# Seconds since the heartbeat's `ts`; "-" when absent or unparseable.
+heartbeat_age() {
+    "$PY" - "$HEARTBEAT_FILE" <<'PY' 2>/dev/null || printf -- '-'
+import datetime, json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        ts = json.load(fh)["ts"]
+    then = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    print(max(0, int((datetime.datetime.now(datetime.timezone.utc) - then).total_seconds())))
+except Exception:
+    print("-")
+PY
+}
+
+# DEPLOYED MEANS RUNNING (§56.3 step 2). HEAD == origin/main is necessary, not
+# sufficient: 2026-09-02 the checkout sat at v0.48.11 while install.sh had
+# never run (EPERM, exit 126) and actd still ran v0.48.8 in memory — and the
+# next run wrote `up_to_date`. Three facts must agree with the checkout:
+# state/install_report.json `version` (install.sh finished on this code),
+# state/actd.heartbeat `version` (the daemon in memory IS this code) and the
+# heartbeat's age (it is running now, not a corpse's last word). Sets
+# MISMATCH_REASON (space-separated tokens) / MISMATCH_WHY (human detail) and
+# the two observed versions for the state file; returns 0 when consistent,
+# 1 on any mismatch. Globals, not stdout: callers need all four values and a
+# $(...) subshell would keep them.
+#
+# A heartbeat that is right in every way except its age gets HEARTBEAT_GRACE
+# seconds to beat again before it counts: launchd fires the interval this job
+# missed the moment the Mac wakes, while actd is still finishing the sleep it
+# went down in; install.sh by hand is mid-restart; a pass can run >30 s. Any
+# other mismatch (wrong version, no report) is not a timing question and gets
+# no grace.
+RUNNING_VERSION=""
+REPORT_VERSION=""
+MISMATCH_REASON=""
+MISMATCH_WHY=""
+running_mismatch() { # $1=checkout version
+    _grace="$HEARTBEAT_GRACE"
+    while :; do
+        running_snapshot "$1"
+        if [ "$MISMATCH_REASON" != "heartbeat_stale" ] || [ "$_grace" -le 0 ]; then
+            break
+        fi
+        sleep 1
+        _grace=$((_grace - 1))
+    done
+    [ -z "$MISMATCH_REASON" ]
+}
+running_snapshot() { # $1=checkout version → sets the four globals from the files as they are now
+    REPORT_VERSION="$(install_report_version)"
+    _hb="$(heartbeat_fields)"
+    RUNNING_VERSION="${_hb%% *}"
+    _hb_rest="${_hb#* }"
+    _hb_pid="${_hb_rest%% *}"
+    _hb_phase="${_hb_rest#* }"
+    _age="$(heartbeat_age)"
+    _mm_reasons=""
+    _mm_why=""
+    if [ "$REPORT_VERSION" != "$1" ]; then
+        _mm_reasons="install_report_version_mismatch"
+        _mm_why="install_report.json says v${REPORT_VERSION:-none}, checkout is v$1 (install.sh never finished on this code)"
+    fi
+    if [ "$RUNNING_VERSION" = "-" ]; then
+        RUNNING_VERSION=""
+        _mm_reasons="${_mm_reasons:+$_mm_reasons }heartbeat_missing"
+        _mm_why="${_mm_why:+$_mm_why; }no actd heartbeat at all (state/actd.heartbeat absent or torn) — nothing is running"
+    elif [ "$RUNNING_VERSION" != "$1" ]; then
+        _mm_reasons="${_mm_reasons:+$_mm_reasons }heartbeat_version_mismatch"
+        _mm_why="${_mm_why:+$_mm_why; }actd heartbeat says v${RUNNING_VERSION} (pid ${_hb_pid}, phase ${_hb_phase}), checkout is v$1 — the daemon in memory is not this version"
+    elif [ "$_age" = "-" ] || [ "$_age" -gt "$HEARTBEAT_FRESH" ]; then
+        _mm_reasons="${_mm_reasons:+$_mm_reasons }heartbeat_stale"
+        _mm_why="${_mm_why:+$_mm_why; }actd heartbeat is ${_age}s old (> ${HEARTBEAT_FRESH}s) — v$1 is not running"
+    fi
+    MISMATCH_REASON="$_mm_reasons"
+    MISMATCH_WHY="$_mm_why"
+}
+
+# blocked_tcc notification, at most once per UTC day (the job fires every 10
+# min; the fix is a one-time click in System Settings). The relay queue lives
+# in state/notify_queue on the very volume we cannot reach, so this attempt
+# will usually fail too — the log line, the HOME mirror and the doctor row are
+# the channels that survive; the day stamp is written regardless so the log
+# does not fill with 144 identical failures.
+notify_tcc_once_daily() { # $1=body
+    _today="$(date -u +%Y-%m-%d)"
+    [ "$(read_state tcc_notified_day)" = "$_today" ] && return 0
+    write_state "tcc_notified_day=$_today"
+    notify "自动部署被 macOS 挡住 / auto-deploy blocked (Full Disk Access)" "$1"
 }
 
 # Tracked CONTENT changes (mode-only flips ignored: install.sh's own `chmod +x`
@@ -469,6 +769,19 @@ restart_actd() {
     return 0
 }
 
+# A rollback verdict (`rolled_back` / `rollback_failed`) is written twice: as
+# this run's `status` AND as `last_incident` (add-only, projected). `status`
+# is overwritten by the very next interval — after a REFUSED rollback HEAD sits
+# on the new sha, so that run ends `up_to_date` / `deployed`-by-repair and the
+# refusal vanished from the dashboard 10 min after it was raised (#135 review,
+# live 2026-09-01). `last_incident` survives every routine write and is cleared
+# only by a `deployed` (a real fast-forward or a completed repair).
+write_rollback_state() { # $1=status $2=detail, rest = extra key=value pairs
+    _rb_status="$1"; _rb_detail="$2"; shift 2
+    write_state "status=$_rb_status" "last_run=$_now" "detail=$_rb_detail" \
+                "last_incident=$_now $_rb_status: $_rb_detail" "$@"
+}
+
 rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
     # Freeze the ledger before deciding anything (TOCTOU above).
@@ -491,8 +804,9 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if [ -n "$_s2why" ]; then
         log "rollback REFUSED — $_s2why; a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=rollback refused ($_s2why — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2"
+        write_rollback_state "rollback_failed" \
+                             "rollback refused ($_s2why — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2" \
+                             "failed_sha=$3"
         # ${_s2why} braced: bash 3.2 would swallow the first byte of the
         # following fullwidth paren into the variable name (set -u abort).
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
@@ -523,8 +837,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if [ -n "$_why" ]; then
         log "rollback REFUSED — $_why; checkout left at ${_head_now:-unknown}"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=rollback refused ($_why): $2"
+        write_rollback_state "rollback_failed" "rollback refused ($_why): $2" "failed_sha=$3"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
                "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
         restart_actd
@@ -532,8 +845,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if ! git_q reset --hard --quiet "$1"; then
         log "git reset --hard $1 FAILED — checkout left at ${_head_now:-unknown}"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=git reset --hard failed: $2"
+        write_rollback_state "rollback_failed" "git reset --hard failed: $2" "failed_sha=$3"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)"
         restart_actd
@@ -543,17 +855,172 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
         log "install.sh at $(short "$1") exited $_rc after the rollback"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" "head=$1" \
-                    "version=$(repo_version)" "detail=rolled back to $(short "$1") but install.sh exited $_rc: $2"
+        write_rollback_state "rollback_failed" "rolled back to $(short "$1") but install.sh exited $_rc: $2" \
+                             "failed_sha=$3" "head=$1" "version=$(repo_version)"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "已退回 $(short "$1") 但 install.sh 退出码 ${_rc}；请手动 bash install.sh ($2)"
         return 1
     fi
-    write_state "status=rolled_back" "last_run=$_now" "failed_sha=$3" "head=$1" "prev=$1" \
-                "version=$(repo_version)" "detail=$2"
+    write_rollback_state "rolled_back" "$2" "failed_sha=$3" "head=$1" "prev=$1" "version=$(repo_version)"
     notify "自动部署已回滚 / auto-deploy rolled back to $(short "$1")" \
            "$2 —— 已重装旧版；origin/main $(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交"
     return 0
+}
+
+# HEAD == origin/main. `up_to_date` only when the machine is RUNNING this
+# code (running_mismatch above); otherwise `install_incomplete`, and install.sh
+# is re-run once — not a deploy (no PREV to fall back to, the checkout is
+# already where it should be), a repair with the same readiness wait. Three
+# brakes, because a repair that fires on a false positive costs an install.sh
+# (every daemon restarted) plus a notification:
+#   - CONFIRM FIRST: the first run that sees a mismatch only records it
+#     (`incomplete_seen=<sha>`); install.sh is re-run by the next run if it
+#     still sees one. Every transient the 10-min interval can straddle — the
+#     owner's own `bash install.sh` mid-flight, a wake-up before actd's first
+#     beat, a report being rewritten — resolves itself before that. `--force`
+#     skips the wait (the owner is watching).
+#   - BUDGET PER SHA, successes included: `incomplete_runs` counts every
+#     install.sh re-run at `incomplete_runs_sha`; at INCOMPLETE_LIMIT the sha
+#     is poisoned in its OWN ledger (`incomplete_sha`, not `failed_sha`: a
+#     refused rollback — store2 advanced, owner edits — leaves HEAD on the new
+#     sha with failed_sha set, and finishing THAT install is exactly the right
+#     repair) + ONE notification per sha (`incomplete_notified_sha`). Counting
+#     only consecutive failures would let a daemon that comes up, passes once
+#     and dies again be reinstalled — and announced — every interval forever.
+#     `up_to_date` (the owner repaired by hand, or the daemon is back) clears
+#     the poison and the sighting but not the budget; `--force`, a new commit
+#     on main (a real `deployed`) re-arm everything.
+#   - the same CI gate as step 3 before the re-run.
+# The poison check sits INSIDE the mismatch branch: a machine the owner
+# repaired by hand becomes `up_to_date` on the next run without any --force.
+verify_running() { # $1=sha (HEAD == origin/main)
+    _version="$(repo_version)"
+    if running_mismatch "$_version"; then
+        # up_to_date never touches `last_incident` (a refused rollback's verdict
+        # stays on the dashboard until a real deploy) nor the per-sha budget.
+        write_state "status=up_to_date" "last_run=$_now" "head=$1" "version=$_version" \
+                    "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "notified_sha=" "detail="
+        return 0
+    fi
+    _reason="$MISMATCH_REASON"
+    _why="$MISMATCH_WHY"
+    if [ "$(read_state incomplete_sha)" = "$1" ]; then
+        log "install still incomplete at $(short "$1") ($_reason) — gave up after ${INCOMPLETE_LIMIT} install.sh re-runs at this sha; waiting for a new commit (or --force, or bash install.sh by hand)"
+        write_state "last_run=$_now" "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION"
+        return 0
+    fi
+    if [ "$FORCE" -ne 1 ] && [ "$(read_state incomplete_seen)" != "$1" ]; then
+        log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — first sighting; install.sh is re-run if the next run still sees it"
+        write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
+                    "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                    "reason=$_reason" "incomplete_seen=$1" \
+                    "detail=$_why (first sighting; install.sh is re-run if the next run still sees it)"
+        return 0
+    fi
+    _n="$(read_state incomplete_runs)"
+    case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+    [ "$(read_state incomplete_runs_sha)" = "$1" ] || _n=0
+    if [ "$_n" -ge "$INCOMPLETE_LIMIT" ]; then
+        poison_incomplete "$1" "$_version" "$_reason" \
+            "$_why (install.sh already re-run $_n times at this sha and the machine keeps falling out of its running state; giving up until main moves, --force, or bash install.sh by hand)"
+        return 0
+    fi
+    # The repair installs the code that is ALREADY checked out — but §56.5 still
+    # holds: never deploy a sha CI has not passed (the owner may have `git pull`ed
+    # a red or still-running main by hand; Codex review P1 on #140). Same gate as
+    # step 3, same `--force` exit; red poisons THIS ledger (incomplete_sha).
+    if [ "$FORCE" -ne 1 ]; then
+        _repo="$(github_repo)"
+        if [ -z "$_repo" ]; then
+            log "install_incomplete at $(short "$1") but CI cannot be verified ($REMOTE is not a github.com remote) — not re-running install.sh; set AUTODEPLOY_CI_REPO=owner/repo"
+            write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
+                        "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                        "reason=$_reason ci_unverifiable" \
+                        "detail=$_why; not re-running install.sh: CI gate impossible ($REMOTE is not a github.com remote; set AUTODEPLOY_CI_REPO)"
+            return 0
+        fi
+        _ci="$(ci_verdict "$_repo" "$1")"
+        case "$_ci" in
+            success) ;;
+            failure*)
+                log "install_incomplete at $(short "$1") but CI is RED on it (${_ci#failure }) — not re-running install.sh on a red sha; waiting for a new commit (or --force)"
+                write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
+                            "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                            "reason=$_reason ci_failed" "incomplete_sha=$1" \
+                            "detail=$_why; HEAD $(short "$1") failed CI (${_ci#failure }) — install.sh not re-run on a red sha; wait for a green commit or --force"
+                if [ "$(read_state notified_sha)" != "$1" ]; then
+                    notify "自动部署未完成：HEAD 的 CI 红了 / auto-deploy: install incomplete, CI red" \
+                           "checkout 在 $(short "$1")（v${_version:-?}）但机器没跑起来（${_why}）；该 sha 的 CI 红了，不会在红 sha 上重跑 install.sh——等下一个绿提交，或 bash scripts/auto-deploy.sh --force"
+                    write_state "notified_sha=$1"
+                fi
+                return 0 ;;
+            *)
+                log "install_incomplete at $(short "$1") but CI is not green yet on it (${_ci#pending }) — will re-run install.sh once it is"
+                write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
+                            "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                            "reason=$_reason ci_pending" \
+                            "detail=$_why; waiting for CI on HEAD $(short "$1") (${_ci#pending }) before re-running install.sh"
+                return 0 ;;
+        esac
+    fi
+    _n=$((_n + 1))
+    log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — re-running install.sh ($_n/$INCOMPLETE_LIMIT at this sha)"
+    # Spent BEFORE the run: an install.sh that takes this process down with it
+    # (the 2026-09-02 EPERM shape) must still count against the budget.
+    write_state "incomplete_runs=$_n" "incomplete_runs_sha=$1"
+    _hb_before="$(heartbeat_fields)"
+    run_install
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        wait_for_new_actd "$_version" "$_hb_before" || log "actd v${_version:-?} completed no pass within ${HEARTBEAT_DEADLINE}s after the re-run (heartbeat now: $(heartbeat_fields))"
+    else
+        log "install.sh exited $_rc on the re-run"
+    fi
+    # A non-zero install.sh is never `deployed`, even when report + heartbeat
+    # now agree: the exit code counts failed steps (crontab, launchd…) that the
+    # report still records under the new version (Codex review P1 on #140).
+    if [ "$_rc" -eq 0 ] && running_mismatch "$_version"; then
+        _detail="install completed on re-run at $(short "$1") (was: $_why)"
+        write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" "head=$1" "version=$_version" \
+                    "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "notified_sha=" "last_incident=" "detail=$_detail"
+        log "DEPLOYED v${_version:-?}: $_detail"
+        notify "已自动部署 v${_version:-?} / auto-deployed (install re-run)" "$_detail"
+        return 0
+    fi
+    if [ "$_rc" -ne 0 ]; then
+        running_mismatch "$_version" || true
+        _reason="install_failed${MISMATCH_REASON:+ $MISMATCH_REASON}"
+        _why="install.sh exited $_rc${MISMATCH_WHY:+; $MISMATCH_WHY}"
+    else
+        _reason="$MISMATCH_REASON"
+        _why="$MISMATCH_WHY"
+    fi
+    if [ "$_n" -ge "$INCOMPLETE_LIMIT" ]; then
+        poison_incomplete "$1" "$_version" "$_reason" \
+            "$_why ($_n install.sh re-runs at this sha did not complete it; giving up until main moves, --force, or bash install.sh by hand)"
+        return 0
+    fi
+    write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
+                "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                "reason=$_reason" "detail=$_why (re-run $_n/$INCOMPLETE_LIMIT did not complete it)"
+    return 0
+}
+
+# The install_incomplete poison: no more install.sh at this sha; ONE
+# notification per sha, whatever else happens to it afterwards (a hand repair
+# that clears the poison and a daemon that dies again re-poison silently — the
+# dashboard and the doctor row carry it, the owner was told once).
+poison_incomplete() { # $1=sha $2=version $3=reason $4=detail
+    log "install_incomplete at $(short "$1") — install.sh re-run budget (${INCOMPLETE_LIMIT}) spent; poisoning the sha: no more install.sh until main moves or --force"
+    write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$2" \
+                "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                "reason=$3" "incomplete_sha=$1" "detail=$4"
+    [ "$(read_state incomplete_notified_sha)" = "$1" ] && return 0
+    notify "自动部署未完成 / auto-deploy: install incomplete" \
+           "v${2:-?} 已 checkout 但没有跑起来（$4）；该 sha 的 install.sh 重跑次数已用完（${INCOMPLETE_LIMIT}），已停止重试——请手动 bash install.sh 或 bash scripts/auto-deploy.sh --force"
+    write_state "incomplete_notified_sha=$1"
 }
 
 usage() {
@@ -575,20 +1042,57 @@ main() {
         log "no python3 found — cannot run"
         exit 1
     fi
+    TRIGGER="$(detect_trigger)"
+    INTERP="$(plist_interpreter)"
+
+    # The lock lives in $HOME (never TCC-gated): taking it cannot be what
+    # fails, and `rm` at exit cannot leave a corpse the way the 2026-09-02 run
+    # did on the volume (next run had to reclaim it as stale).
+    take_lock || exit 0
+    trap 'rm -rf "$LOCK_DIR" 2>/dev/null || log "could not remove $LOCK_DIR (non-fatal) — the next run reclaims it once pid $$ is gone"' EXIT
+    _now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    # VOLUME ACCESS PROBE — before the first git call. macOS gates background
+    # access to removable volumes per responsible executable (TCC) and a
+    # launchd job has no UI to receive the prompt; the terminal you test from
+    # lends its own grant to every child, so "it works when I run it" proves
+    # nothing (2026-09-02: every terminal-started run succeeded, the timer-
+    # fired one EPERM'd through install.sh, rollback, write_state, notify and
+    # the lock). Denied = record it where we CAN (the HOME mirror + log), name
+    # the exact binary to grant, notify once a day, change nothing, exit 0.
+    _probe="$(volume_probe)"
+    _verdict="${_probe%%$'\n'*}"
+    VOLUME="${_probe#*$'\n'}"
+    case "$_verdict" in
+        ok) ;;
+        denied*)
+            _errno="$(printf '%s' "$_verdict" | awk '{print $2}')"
+            _where="${_verdict#denied * }"
+            log "volume_access=denied (errno ${_errno}) — launchd job lacks access to ${VOLUME} (${_where}); grant Full Disk Access to ${INTERP} (System Settings → Privacy & Security → Full Disk Access; also ${HOME}/.local/bin/claude for dispatch; a run started from a terminal inherits the terminal's grant and proves nothing about timer-fired runs) — trigger=${TRIGGER}, nothing changed"
+            # `detail` is projected into the dashboard (and, in cloud mode, into the
+            # encrypted snapshot syncd uploads) — keep local paths out of it; the
+            # exact volume / interpreter / denied path live in mirror-only keys the
+            # doctor's `launchd volume access` row renders (§0 第 9 条).
+            write_state "status=blocked_tcc" "last_run=$_now" "reason=volume_access_denied" "denied_path=${_where}" \
+                        "detail=volume_access=denied (errno ${_errno}): the ${TRIGGER}-started job cannot read/write the repo's volume; grant Full Disk Access to the job's interpreter (exact paths: doctor launchd volume access row)"
+            notify_tcc_once_daily "后台部署任务读不到 ${VOLUME}（errno ${_errno}，macOS 按程序授权、launchd 任务收不到弹窗）。系统设置 → 隐私与安全性 → 完全磁盘访问 → 加入 ${INTERP} 与 ${HOME}/.local/bin/claude；终端里跑绿了不算，等 timer 自己跑一轮。HEAD 未动、什么都没改。"
+            exit 0 ;;
+        *)
+            log "volume probe: ${_verdict} — repo not reachable right now (unmounted?); will retry next interval"
+            write_state "status=failed" "last_run=$_now" "reason=volume_access_error" \
+                        "detail=volume probe ${_verdict%% *} (errno $(printf '%s' "$_verdict" | awk '{print $2}')): the repo is not reachable right now, will retry"
+            exit 0 ;;
+    esac
+
     if ! git_q rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         log "$REPO_ROOT is not a git checkout — auto-deploy needs a clone, not a .pkg copy"
         exit 1
     fi
 
-    take_lock || exit 0
-    # A failed removal (live 2026-09-01: EPERM on the volume) leaves a lock
-    # the next run must reclaim as stale — say so instead of failing silently.
-    trap 'rm -rf "$LOCK_DIR" 2>/dev/null || log "could not remove state/auto-deploy.lock (non-fatal) — the next run reclaims it once pid $$ is gone"' EXIT
-
-    _now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if [ "$FORCE" -eq 1 ]; then
-        log "--force: forgetting failed/notified shas"
-        write_state "failed_sha=" "notified_sha="
+        log "--force: forgetting failed/notified/incomplete shas"
+        write_state "failed_sha=" "notified_sha=" "incomplete_sha=" "incomplete_seen=" \
+                    "incomplete_runs=" "incomplete_runs_sha=" "incomplete_notified_sha="
     fi
 
     # rc 1 (with -q) = genuinely detached → refused_branch; rc >1 = git could
@@ -630,8 +1134,7 @@ main() {
     _store2_uv_before="$(store2_user_version)"
 
     if [ "$PREV" = "$TARGET" ]; then
-        write_state "status=up_to_date" "last_run=$_now" "head=$PREV" \
-                    "version=$(repo_version)" "failed_sha=" "notified_sha=" "detail="
+        verify_running "$TARGET"
         exit 0
     fi
 
@@ -761,9 +1264,12 @@ main() {
     if [ -n "$_after" ]; then
         _detail="$_detail; doctor pre-existing FAIL: $(printf '%s' "$_after" | tr '\n' ' ')"
     fi
+    _hb_now="$(heartbeat_fields)"
     write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" \
                 "head=$NEW" "prev=$PREV" "version=$VERSION" \
-                "failed_sha=" "notified_sha=" "detail=$_detail"
+                "running_version=${_hb_now%% *}" "install_report_version=$(install_report_version)" \
+                "reason=" "incomplete_seen=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" \
+                "incomplete_notified_sha=" "failed_sha=" "notified_sha=" "last_incident=" "detail=$_detail"
     log "DEPLOYED v${VERSION:-?}: $_detail"
     notify "已自动部署 v${VERSION:-?} / auto-deployed" "$_detail"
     exit 0

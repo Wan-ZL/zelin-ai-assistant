@@ -166,6 +166,45 @@ describe("HeaderBar", () => {
     expect(screen.getByText("v0.48.6 · main 的 CI 红了，未部署").className).toBe("shell-deploy is-warn");
   });
 
+  it("§56 部署状态：install_incomplete / blocked_tcc（v0.48.20）是警告态，各有双语文案", async () => {
+    await seedBoard(10, {
+      status: "install_incomplete",
+      version: "0.48.11",
+      running_version: "0.48.8",
+      detail: "install_report.json says v0.48.8, checkout is v0.48.11",
+    });
+    renderHeader();
+    const incomplete = screen.getByText("v0.48.11 · install incomplete");
+    expect(incomplete.className).toBe("shell-deploy is-warn");
+    expect(incomplete.getAttribute("title")).toContain("v0.48.8");
+    cleanup();
+    resetStoreForTests();
+    await seedBoard(10, { status: "blocked_tcc", version: "0.48.11", reason: "volume_access_denied" });
+    renderHeader("zh");
+    expect(screen.getByText("v0.48.11 · 后台任务读不到外置盘（需授权）").className).toBe("shell-deploy is-warn");
+  });
+
+  it("§56 部署状态：healthy 但 last_incident 在案 → 警告色 + 判决进 title（#135 review）", async () => {
+    const verdict = "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2 became the registry truth)";
+    await seedBoard(10, {
+      status: "up_to_date",
+      version: "0.48.11",
+      last_deployed: "2026-09-02T00:30:00Z",
+      detail: "",
+      last_incident: verdict,
+    });
+    renderHeader();
+    const el = screen.getByText(/unresolved rollback verdict/);
+    expect(el.textContent).toContain("v0.48.11");
+    expect(el.className).toBe("shell-deploy is-warn");
+    expect(el.getAttribute("title")).toBe(verdict);
+    cleanup();
+    resetStoreForTests();
+    await seedBoard(10, { status: "up_to_date", version: "0.48.12", last_incident: verdict });
+    renderHeader("zh");
+    expect(screen.getByText("v0.48.12 · 上次回滚判决待处理").className).toBe("shell-deploy is-warn");
+  });
+
   it("§56 部署状态：只有 version、还没成功部署过（无 last_deployed）→ 只显示版本", async () => {
     await seedBoard(10, { status: "up_to_date", version: "0.48.4" });
     renderHeader();
