@@ -80,6 +80,43 @@ class DeployStateReaderTestCase(unittest.TestCase):
         self.assertEqual(deploy_state.MIRROR_PATH.parts[-4:],
                          ("Library", "Application Support", "ZelinAIAssistant", "deploy_state.json"))
 
+    def test_last_incident_is_projected(self):
+        # v0.48.17 add-only（#135 review）：回滚判决独立于 status 存活到下一次 deployed
+        self._write({"status": "up_to_date", "version": "0.48.11",
+                     "last_incident": "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2)"})
+        self.assertEqual(deploy_state.read()["last_incident"],
+                         "2026-09-02T00:48:54Z rollback_failed: rollback refused (store2)")
+        self.assertIn("last_incident", deploy_state.FIELDS)
+
+    def test_read_prefers_the_mirror_when_it_describes_this_checkout(self):
+        # blocked_tcc is exactly the case where the job cannot rewrite the
+        # projection: a stale `up_to_date` there must not outrank the mirror
+        mirror = self.path.parent / "mirror.json"
+        self.addCleanup(lambda: mirror.unlink(missing_ok=True))
+        real = deploy_state.MIRROR_PATH
+        deploy_state.MIRROR_PATH = mirror
+        self.addCleanup(setattr, deploy_state, "MIRROR_PATH", real)
+        self._write({"status": "up_to_date", "version": "0.48.11", "last_run": "2026-09-01T00:00:00Z"})
+        # no mirror → projection
+        self.assertEqual(deploy_state.read()["status"], "up_to_date")
+        # another clone's mirror → projection
+        mirror.write_text(json.dumps({"status": "blocked_tcc", "repo": str(self.path.parent / "elsewhere"),
+                                      "last_run": "2026-09-02T00:00:00Z"}), encoding="utf-8")
+        self.assertEqual(deploy_state.read()["status"], "up_to_date")
+        # a mirror without `repo` (pre-mirror shape) is not trusted either
+        mirror.write_text(json.dumps({"status": "blocked_tcc"}), encoding="utf-8")
+        self.assertEqual(deploy_state.read()["status"], "up_to_date")
+        # this checkout's mirror wins, and only FIELDS come through
+        mirror.write_text(json.dumps({"status": "blocked_tcc", "repo": str(config.HOME),
+                                      "last_run": "2026-09-02T00:00:00Z", "volume": "/Volumes/X",
+                                      "interpreter": "/x/python3", "denied_path": "/Volumes/X/repo"}),
+                          encoding="utf-8")
+        got = deploy_state.read()
+        self.assertEqual(got, {"status": "blocked_tcc", "last_run": "2026-09-02T00:00:00Z"})
+        self.assertEqual(deploy_state.attach({})["deploy_state"]["status"], "blocked_tcc")
+        # an explicit path is read as given (no mirror lookup)
+        self.assertEqual(deploy_state.read(self.path)["status"], "up_to_date")
+
     def test_attach_adds_key_only_when_present(self):
         self.path.unlink(missing_ok=True)
         self.assertNotIn("deploy_state", deploy_state.attach({}))

@@ -19,13 +19,18 @@
 #   2. refuse unless HEAD is on `main`; `git fetch origin main`;
 #      HEAD == origin/main → DEPLOYED MEANS RUNNING: up_to_date only when
 #      state/install_report.json carries the checkout's version AND
-#      state/actd.heartbeat carries it too and is fresh. Otherwise
-#      `install_incomplete` (mismatch spelled out) and install.sh is re-run
-#      ONCE this run — behind the same CI gate as step 3 (never install a
-#      sha CI has not passed, even one the owner pulled by hand); still
-#      inconsistent after AUTODEPLOY_INCOMPLETE_LIMIT consecutive runs → the
-#      sha is poisoned + one notification. origin/main is the remembered
-#      failed sha → one log line, exit (no retry storm)
+#      state/actd.heartbeat carries it too and is fresh (a stale-but-right
+#      heartbeat gets AUTODEPLOY_HEARTBEAT_GRACE seconds to beat again — the
+#      Mac just woke, actd is mid-restart). Otherwise `install_incomplete`
+#      (mismatch spelled out); the FIRST sighting only records it, the
+#      SECOND consecutive run re-runs install.sh ONCE — behind the same CI
+#      gate as step 3 (never install a sha CI has not passed, even one the
+#      owner pulled by hand); `--force` skips both waits. install.sh is
+#      re-run at most AUTODEPLOY_INCOMPLETE_LIMIT times per sha, successes
+#      included (a daemon that comes up and dies again every interval must
+#      not be reinstalled forever) → then the sha is poisoned + one
+#      notification. origin/main is the remembered failed sha → one log
+#      line, exit (no retry storm)
 #   3. CI GATE on the exact origin/main sha: the GitHub check-runs API must
 #      say the `ci` run on THAT commit completed green. The ruleset only
 #      requires green on the PR head (non-strict), so a merge commit's tree
@@ -91,8 +96,13 @@
 #      script's own truth + private bookkeeping; TCC never gates $HOME, so a
 #      run that cannot touch /Volumes still records what happened) and
 #      state/deploy_state.json in the repo (best-effort projection: dashboard
-#      add-only key `deploy_state`, doctor row `auto-deploy`, web header),
+#      add-only key `deploy_state`, doctor row `auto-deploy`, web header —
+#      readers prefer the mirror when it describes this checkout, so a
+#      projection the job could not rewrite never masks the mirror's verdict),
 #      plus ~/Library/Logs/zelin-ai-assistant/auto-deploy.log (1 MB self-cap).
+#      A rollback verdict is ALSO kept in `last_incident` until the next
+#      `deployed`: the routine up_to_date write of the following interval
+#      must not make a refused rollback disappear from the dashboard.
 #
 # Never prompts, never pushes, never touches state/ or config/ beyond its own
 # files. Exit 0 for every handled outcome (launchd's status column stays
@@ -104,7 +114,8 @@
 #
 # Test seams (env, never set by the plist): AUTODEPLOY_LOG_DIR,
 # AUTODEPLOY_HOME_DIR, AUTODEPLOY_INSTALL_TIMEOUT, AUTODEPLOY_HEARTBEAT_DEADLINE,
-# AUTODEPLOY_HEARTBEAT_FRESH, AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
+# AUTODEPLOY_HEARTBEAT_FRESH, AUTODEPLOY_HEARTBEAT_GRACE,
+# AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
 # AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS,
 # AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE, AUTODEPLOY_TRIGGER,
 # AUTODEPLOY_PLIST.
@@ -140,8 +151,11 @@ HEARTBEAT_DEADLINE="${AUTODEPLOY_HEARTBEAT_DEADLINE:-180}"  # the restarted actd
                                                         # >30 s on a loaded machine)
 HEARTBEAT_FRESH="${AUTODEPLOY_HEARTBEAT_FRESH:-600}"    # "deployed means running": a heartbeat older
                                                         # than one interval = that version is NOT running
-INCOMPLETE_LIMIT="${AUTODEPLOY_INCOMPLETE_LIMIT:-3}"    # consecutive install_incomplete runs before the
-                                                        # sha is poisoned (+ one notification)
+HEARTBEAT_GRACE="${AUTODEPLOY_HEARTBEAT_GRACE:-90}"     # …unless it beats again within this (§47.4
+                                                        # STALE_FLOOR: a pass can run >30 s; the Mac may
+                                                        # have just woken with actd still asleep)
+INCOMPLETE_LIMIT="${AUTODEPLOY_INCOMPLETE_LIMIT:-3}"    # install.sh re-runs per sha (successes included)
+                                                        # before the sha is poisoned (+ one notification)
 PLIST="${AUTODEPLOY_PLIST:-$HOME/Library/LaunchAgents/com.zelin.aiassistant.autodeploy.plist}"
 DOCTOR_RETRIES="${AUTODEPLOY_DOCTOR_RETRIES:-3}"        # post-install doctor verdict: attempts (§56.3 step 10)
 DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-45}"         # seconds between those attempts
@@ -643,11 +657,28 @@ PY
 # the two observed versions for the state file; returns 0 when consistent,
 # 1 on any mismatch. Globals, not stdout: callers need all four values and a
 # $(...) subshell would keep them.
+#
+# A heartbeat that is right in every way except its age gets HEARTBEAT_GRACE
+# seconds to beat again before it counts: launchd fires the interval this job
+# missed the moment the Mac wakes, while actd is still finishing the sleep it
+# went down in; install.sh by hand is mid-restart; a pass can run >30 s. Any
+# other mismatch (wrong version, no report) is not a timing question and gets
+# no grace.
 RUNNING_VERSION=""
 REPORT_VERSION=""
 MISMATCH_REASON=""
 MISMATCH_WHY=""
 running_mismatch() { # $1=checkout version
+    _grace="$HEARTBEAT_GRACE"
+    while :; do
+        running_snapshot "$1"
+        [ "$MISMATCH_REASON" = "heartbeat_stale" ] && [ "$_grace" -gt 0 ] || break
+        sleep 1
+        _grace=$((_grace - 1))
+    done
+    [ -z "$MISMATCH_REASON" ]
+}
+running_snapshot() { # $1=checkout version → sets the four globals from the files as they are now
     REPORT_VERSION="$(install_report_version)"
     _hb="$(heartbeat_fields)"
     RUNNING_VERSION="${_hb%% *}"
@@ -674,7 +705,6 @@ running_mismatch() { # $1=checkout version
     fi
     MISMATCH_REASON="$_mm_reasons"
     MISMATCH_WHY="$_mm_why"
-    [ -z "$_mm_reasons" ]
 }
 
 # blocked_tcc notification, at most once per UTC day (the job fires every 10
@@ -737,6 +767,19 @@ restart_actd() {
     return 0
 }
 
+# A rollback verdict (`rolled_back` / `rollback_failed`) is written twice: as
+# this run's `status` AND as `last_incident` (add-only, projected). `status`
+# is overwritten by the very next interval — after a REFUSED rollback HEAD sits
+# on the new sha, so that run ends `up_to_date` / `deployed`-by-repair and the
+# refusal vanished from the dashboard 10 min after it was raised (#135 review,
+# live 2026-09-01). `last_incident` survives every routine write and is cleared
+# only by a `deployed` (a real fast-forward or a completed repair).
+write_rollback_state() { # $1=status $2=detail, rest = extra key=value pairs
+    _rb_status="$1"; _rb_detail="$2"; shift 2
+    write_state "status=$_rb_status" "last_run=$_now" "detail=$_rb_detail" \
+                "last_incident=$_now $_rb_status: $_rb_detail" "$@"
+}
+
 rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / itself failed
     log "ROLLBACK to $(short "$1"): $2"
     # Freeze the ledger before deciding anything (TOCTOU above).
@@ -759,8 +802,9 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if [ -n "$_s2why" ]; then
         log "rollback REFUSED — $_s2why; a code rollback would strand the SQLite ledger — follow docs/TROUBLESHOOTING.md「store2 回滚」"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=rollback refused ($_s2why — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2"
+        write_rollback_state "rollback_failed" \
+                             "rollback refused ($_s2why — code rollback would strand the SQLite truth; see docs/TROUBLESHOOTING.md store2 回滚): $2" \
+                             "failed_sha=$3"
         # ${_s2why} braced: bash 3.2 would swallow the first byte of the
         # following fullwidth paren into the variable name (set -u abort).
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
@@ -791,8 +835,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if [ -n "$_why" ]; then
         log "rollback REFUSED — $_why; checkout left at ${_head_now:-unknown}"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=rollback refused ($_why): $2"
+        write_rollback_state "rollback_failed" "rollback refused ($_why): $2" "failed_sha=$3"
         notify "自动部署回滚被拒 / auto-deploy rollback REFUSED" \
                "v$(repo_version) 需要回滚（$2），但 $_why —— 未 reset 以免丢你的改动；请手动处理 $REPO_ROOT"
         restart_actd
@@ -800,8 +843,7 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     fi
     if ! git_q reset --hard --quiet "$1"; then
         log "git reset --hard $1 FAILED — checkout left at ${_head_now:-unknown}"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" \
-                    "detail=git reset --hard failed: $2"
+        write_rollback_state "rollback_failed" "git reset --hard failed: $2" "failed_sha=$3"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "git reset --hard $(short "$1") 失败；请手动检查 $REPO_ROOT ($2)"
         restart_actd
@@ -811,14 +853,13 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
     _rc=$?
     if [ "$_rc" -ne 0 ]; then
         log "install.sh at $(short "$1") exited $_rc after the rollback"
-        write_state "status=rollback_failed" "last_run=$_now" "failed_sha=$3" "head=$1" \
-                    "version=$(repo_version)" "detail=rolled back to $(short "$1") but install.sh exited $_rc: $2"
+        write_rollback_state "rollback_failed" "rolled back to $(short "$1") but install.sh exited $_rc: $2" \
+                             "failed_sha=$3" "head=$1" "version=$(repo_version)"
         notify "自动部署回滚失败 / auto-deploy rollback FAILED" \
                "已退回 $(short "$1") 但 install.sh 退出码 ${_rc}；请手动 bash install.sh ($2)"
         return 1
     fi
-    write_state "status=rolled_back" "last_run=$_now" "failed_sha=$3" "head=$1" "prev=$1" \
-                "version=$(repo_version)" "detail=$2"
+    write_rollback_state "rolled_back" "$2" "failed_sha=$3" "head=$1" "prev=$1" "version=$(repo_version)"
     notify "自动部署已回滚 / auto-deploy rolled back to $(short "$1")" \
            "$2 —— 已重装旧版；origin/main $(short "$3") 不再重试，修好后 bash scripts/auto-deploy.sh --force 或合并新提交"
     return 0
@@ -827,28 +868,60 @@ rollback() { # $1=PREV $2=reason $3=target sha  → 0 rolled back, 1 refused / i
 # HEAD == origin/main. `up_to_date` only when the machine is RUNNING this
 # code (running_mismatch above); otherwise `install_incomplete`, and install.sh
 # is re-run once — not a deploy (no PREV to fall back to, the checkout is
-# already where it should be), a repair with the same readiness wait. Still
-# inconsistent after INCOMPLETE_LIMIT consecutive runs → the sha is poisoned
-# in its OWN ledger (`incomplete_sha`, not `failed_sha`: a refused rollback —
-# store2 advanced, owner edits — leaves HEAD on the new sha with failed_sha
-# set, and finishing THAT install is exactly the right repair) + one
-# notification, so a crash-looping daemon does not get install.sh every 10
-# minutes forever; `--force` or a new commit on main re-arms it. The poison
-# check sits INSIDE the mismatch branch: a machine the owner repaired by hand
-# becomes `up_to_date` on the next run without any --force.
+# already where it should be), a repair with the same readiness wait. Three
+# brakes, because a repair that fires on a false positive costs an install.sh
+# (every daemon restarted) plus a notification:
+#   - CONFIRM FIRST: the first run that sees a mismatch only records it
+#     (`incomplete_seen=<sha>`); install.sh is re-run by the next run if it
+#     still sees one. Every transient the 10-min interval can straddle — the
+#     owner's own `bash install.sh` mid-flight, a wake-up before actd's first
+#     beat, a report being rewritten — resolves itself before that. `--force`
+#     skips the wait (the owner is watching).
+#   - BUDGET PER SHA, successes included: `incomplete_runs` counts every
+#     install.sh re-run at `incomplete_runs_sha`; at INCOMPLETE_LIMIT the sha
+#     is poisoned in its OWN ledger (`incomplete_sha`, not `failed_sha`: a
+#     refused rollback — store2 advanced, owner edits — leaves HEAD on the new
+#     sha with failed_sha set, and finishing THAT install is exactly the right
+#     repair) + ONE notification per sha (`incomplete_notified_sha`). Counting
+#     only consecutive failures would let a daemon that comes up, passes once
+#     and dies again be reinstalled — and announced — every interval forever.
+#     `up_to_date` (the owner repaired by hand, or the daemon is back) clears
+#     the poison and the sighting but not the budget; `--force`, a new commit
+#     on main (a real `deployed`) re-arm everything.
+#   - the same CI gate as step 3 before the re-run.
+# The poison check sits INSIDE the mismatch branch: a machine the owner
+# repaired by hand becomes `up_to_date` on the next run without any --force.
 verify_running() { # $1=sha (HEAD == origin/main)
     _version="$(repo_version)"
     if running_mismatch "$_version"; then
+        # up_to_date never touches `last_incident` (a refused rollback's verdict
+        # stays on the dashboard until a real deploy) nor the per-sha budget.
         write_state "status=up_to_date" "last_run=$_now" "head=$1" "version=$_version" \
                     "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
-                    "reason=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" "failed_sha=" "notified_sha=" "detail="
+                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "notified_sha=" "detail="
         return 0
     fi
     _reason="$MISMATCH_REASON"
     _why="$MISMATCH_WHY"
     if [ "$(read_state incomplete_sha)" = "$1" ]; then
-        log "install still incomplete at $(short "$1") ($_reason) — gave up after ${INCOMPLETE_LIMIT} runs; waiting for a new commit (or --force, or bash install.sh by hand)"
+        log "install still incomplete at $(short "$1") ($_reason) — gave up after ${INCOMPLETE_LIMIT} install.sh re-runs at this sha; waiting for a new commit (or --force, or bash install.sh by hand)"
         write_state "last_run=$_now" "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION"
+        return 0
+    fi
+    if [ "$FORCE" -ne 1 ] && [ "$(read_state incomplete_seen)" != "$1" ]; then
+        log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — first sighting; install.sh is re-run if the next run still sees it"
+        write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
+                    "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                    "reason=$_reason" "incomplete_seen=$1" \
+                    "detail=$_why (first sighting; install.sh is re-run if the next run still sees it)"
+        return 0
+    fi
+    _n="$(read_state incomplete_runs)"
+    case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
+    [ "$(read_state incomplete_runs_sha)" = "$1" ] || _n=0
+    if [ "$_n" -ge "$INCOMPLETE_LIMIT" ]; then
+        poison_incomplete "$1" "$_version" "$_reason" \
+            "$_why (install.sh already re-run $_n times at this sha and the machine keeps falling out of its running state; giving up until main moves, --force, or bash install.sh by hand)"
         return 0
     fi
     # The repair installs the code that is ALREADY checked out — but §56.5 still
@@ -889,7 +962,11 @@ verify_running() { # $1=sha (HEAD == origin/main)
                 return 0 ;;
         esac
     fi
-    log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — re-running install.sh"
+    _n=$((_n + 1))
+    log "install_incomplete at $(short "$1") (v${_version:-?}): $_why — re-running install.sh ($_n/$INCOMPLETE_LIMIT at this sha)"
+    # Spent BEFORE the run: an install.sh that takes this process down with it
+    # (the 2026-09-02 EPERM shape) must still count against the budget.
+    write_state "incomplete_runs=$_n" "incomplete_runs_sha=$1"
     _hb_before="$(heartbeat_fields)"
     run_install
     _rc=$?
@@ -905,7 +982,7 @@ verify_running() { # $1=sha (HEAD == origin/main)
         _detail="install completed on re-run at $(short "$1") (was: $_why)"
         write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" "head=$1" "version=$_version" \
                     "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
-                    "reason=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" "failed_sha=" "notified_sha=" "detail=$_detail"
+                    "reason=" "incomplete_seen=" "incomplete_sha=" "failed_sha=" "notified_sha=" "last_incident=" "detail=$_detail"
         log "DEPLOYED v${_version:-?}: $_detail"
         notify "已自动部署 v${_version:-?} / auto-deployed (install re-run)" "$_detail"
         return 0
@@ -918,27 +995,30 @@ verify_running() { # $1=sha (HEAD == origin/main)
         _reason="$MISMATCH_REASON"
         _why="$MISMATCH_WHY"
     fi
-    # The counter is per sha: a new commit (or a refused rollback that left HEAD
-    # on a new sha) starts from zero (Codex review P2 on #140).
-    _n="$(read_state incomplete_runs)"
-    case "$_n" in ''|*[!0-9]*) _n=0 ;; esac
-    [ "$(read_state incomplete_runs_sha)" = "$1" ] || _n=0
-    _n=$((_n + 1))
     if [ "$_n" -ge "$INCOMPLETE_LIMIT" ]; then
-        log "install_incomplete for the ${_n}th consecutive run at $(short "$1") — poisoning the sha; no more install.sh until main moves or --force"
-        write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
-                    "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
-                    "reason=$_reason" "incomplete_runs=$_n" "incomplete_runs_sha=$1" "incomplete_sha=$1" \
-                    "detail=$_why ($_n consecutive incomplete runs; giving up until main moves, --force, or bash install.sh by hand)"
-        notify "自动部署未完成 / auto-deploy: install incomplete" \
-               "v${_version:-?} 已 checkout 但没有跑起来（${_why}）；连续 ${_n} 轮重装无效，已停止重试——请手动 bash install.sh 或 bash scripts/auto-deploy.sh --force"
+        poison_incomplete "$1" "$_version" "$_reason" \
+            "$_why ($_n install.sh re-runs at this sha did not complete it; giving up until main moves, --force, or bash install.sh by hand)"
         return 0
     fi
     write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$_version" \
                 "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
-                "reason=$_reason" "incomplete_runs=$_n" "incomplete_runs_sha=$1" \
-                "detail=$_why (re-run $_n/$INCOMPLETE_LIMIT did not complete it)"
+                "reason=$_reason" "detail=$_why (re-run $_n/$INCOMPLETE_LIMIT did not complete it)"
     return 0
+}
+
+# The install_incomplete poison: no more install.sh at this sha; ONE
+# notification per sha, whatever else happens to it afterwards (a hand repair
+# that clears the poison and a daemon that dies again re-poison silently — the
+# dashboard and the doctor row carry it, the owner was told once).
+poison_incomplete() { # $1=sha $2=version $3=reason $4=detail
+    log "install_incomplete at $(short "$1") — install.sh re-run budget (${INCOMPLETE_LIMIT}) spent; poisoning the sha: no more install.sh until main moves or --force"
+    write_state "status=install_incomplete" "last_run=$_now" "head=$1" "version=$2" \
+                "running_version=$RUNNING_VERSION" "install_report_version=$REPORT_VERSION" \
+                "reason=$3" "incomplete_sha=$1" "detail=$4"
+    [ "$(read_state incomplete_notified_sha)" = "$1" ] && return 0
+    notify "自动部署未完成 / auto-deploy: install incomplete" \
+           "v${2:-?} 已 checkout 但没有跑起来（$4）；该 sha 的 install.sh 重跑次数已用完（${INCOMPLETE_LIMIT}），已停止重试——请手动 bash install.sh 或 bash scripts/auto-deploy.sh --force"
+    write_state "incomplete_notified_sha=$1"
 }
 
 usage() {
@@ -1009,7 +1089,8 @@ main() {
 
     if [ "$FORCE" -eq 1 ]; then
         log "--force: forgetting failed/notified/incomplete shas"
-        write_state "failed_sha=" "notified_sha=" "incomplete_sha=" "incomplete_runs=" "incomplete_runs_sha="
+        write_state "failed_sha=" "notified_sha=" "incomplete_sha=" "incomplete_seen=" \
+                    "incomplete_runs=" "incomplete_runs_sha=" "incomplete_notified_sha="
     fi
 
     # rc 1 (with -q) = genuinely detached → refused_branch; rc >1 = git could
@@ -1185,7 +1266,8 @@ main() {
     write_state "status=deployed" "last_run=$_now" "last_deployed=$_now" \
                 "head=$NEW" "prev=$PREV" "version=$VERSION" \
                 "running_version=${_hb_now%% *}" "install_report_version=$(install_report_version)" \
-                "reason=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" "failed_sha=" "notified_sha=" "detail=$_detail"
+                "reason=" "incomplete_seen=" "incomplete_runs=" "incomplete_runs_sha=" "incomplete_sha=" \
+                "incomplete_notified_sha=" "failed_sha=" "notified_sha=" "last_incident=" "detail=$_detail"
     log "DEPLOYED v${VERSION:-?}: $_detail"
     notify "已自动部署 v${VERSION:-?} / auto-deployed" "$_detail"
     exit 0

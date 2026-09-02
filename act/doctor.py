@@ -1102,45 +1102,10 @@ _VOLUME_ROW = "launchd volume access"
 
 
 def _volume_access_row(verdict: dict, interp: str, repo: str) -> CheckResult:
-    kind = verdict["kind"]   # deploy_state.unattended_verdict → 一行
-    if kind == deploy_state.BLOCKED_MIRROR:
-        return CheckResult(
-            _VOLUME_ROW, FAIL,
-            _pick("上一次无人值守的部署运行（%s）读不了 %s（卡在 %s）：%s——launchd 任务没有"
-                  "这个卷的访问权，每 10 分钟都在原地打转，什么都没部署",
-                  "the last unattended deploy run (%s) could not access %s (denied at %s): %s - "
-                  "the launchd job has no grant for that volume; it idles every 10 min and "
-                  "deploys nothing")
-            % (verdict["last_run"], verdict["volume"], verdict["denied_path"], verdict["detail"]),
-            deploy_state.volume_access_fix(interp),
-        ).with_failure("deploy_blind_tcc")
-    if kind == deploy_state.BLOCKED_LOG:
-        # `No module named 'act'` alone cannot tell TCC from a mis-rendered
-        # PYTHONPATH (§55): say so and send the reader to `launchd paths` first.
-        fix = deploy_state.volume_access_fix(interp)
-        if verdict.get("ambiguous"):
-            fix = _pick("先看 doctor 的 launchd paths 行：不是 OK → bash install.sh 重渲 plist；"
-                        "是 OK → 解释器读不到 repo：", "check doctor's launchd paths row first: "
-                        "not OK -> bash install.sh re-renders the plist; OK -> the interpreter "
-                        "cannot read the repo: ") + fix
-        return CheckResult(
-            _VOLUME_ROW, FAIL,
-            _pick("autodeploy.launchd.log（%d 分钟前写入）尾部有「%s」——launchd 起的"
-                  "启动器/解释器 %s 读不到 %s 上的 repo（这份 stderr 没时间戳，只能按"
-                  "文件 mtime 判「最近 24h」）",
-                  "autodeploy.launchd.log (written %d min ago) ends with \"%s\" - the "
-                  "launchd-spawned launcher/interpreter %s cannot reach the repo on %s "
-                  "(this stderr file has no timestamps; \"last 24h\" = file mtime)")
-            % (int(verdict["age_s"] // 60), verdict["match"], interp, repo),
-            fix,
-        ).with_failure("deploy_blind_tcc")
-    if kind == deploy_state.OK_RECORDED:
-        return CheckResult(_VOLUME_ROW, OK, "last unattended run %s reached %s (status %s)"
-                           % (verdict["last_run"], repo, verdict["status"]))
-    return CheckResult(
-        _VOLUME_ROW, OK,
-        "no unattended run recorded yet (mirror %s) - expect one within 10 min of install"
-        % deploy_state.MIRROR_PATH)
+    ok, detail, fix = deploy_state.volume_access_row(verdict, interp, repo)
+    if ok:
+        return CheckResult(_VOLUME_ROW, OK, detail)
+    return CheckResult(_VOLUME_ROW, FAIL, detail, fix).with_failure("deploy_blind_tcc")
 
 
 def _check_launchd_volume_access(probes: Probes):
@@ -1708,62 +1673,19 @@ def _check_ui_build(probes: Probes):
     return _row_from(row, "board ui build")
 
 
-def _auto_deploy_fix(status: str) -> str:
-    """WARN 行的修法按状态词分三种（§56.4）。"""
-    if status == deploy_state.BLOCKED_TCC:
-        # v0.48.17：探针在第一次 git 调用前就拒了——修法是授权，不是 --force；
-        # 精确的解释器路径与证据在 `launchd volume access` 行
-        return _pick("给 plist 里那个解释器授「完全磁盘访问」——见 doctor 的 launchd volume "
-                     "access 行与 docs/TROUBLESHOOTING.md「外置盘 + launchd 权限」",
-                     "grant Full Disk Access to the plist's interpreter - see the launchd volume "
-                     "access row and docs/TROUBLESHOOTING.md (external volume + launchd)")
-    if status == deploy_state.INSTALL_INCOMPLETE:
-        return _pick("下一轮会自动重跑 install.sh（连续几轮无效即停并通知）；等不及就手动"
-                     " bash install.sh 或 bash scripts/auto-deploy.sh --force",
-                     "the next run re-runs install.sh by itself (gives up + notifies after a few "
-                     "consecutive runs); or by hand: bash install.sh / bash scripts/auto-deploy.sh --force")
-    return _pick("tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
-                 " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
-                 "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
-                 " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)")
-
-
-def _auto_deploy_ok_detail(state: dict) -> str:
-    when = state.get("last_deployed") or state.get("last_run") or ""
-    return "%s (v%s%s)" % (state.get("status", ""), state.get("version") or "?",
-                           (" at " + when) if when else "")
-
-
-def _auto_deploy_warn_detail(state: dict) -> str:
-    """「last run ended '<status>' on v<version> (running v<running>): <detail>」——
-    `running_version`（心跳里的版本）与 checkout 版本不同时才点名（v0.48.17）。"""
-    version = state.get("version", "")
-    running = state.get("running_version", "")
-    detail = state.get("detail", "")
-    parts = ["last run ended '%s'" % (state.get("status", "") or "?")]
-    if version:
-        parts.append(" on v%s" % version)
-    if running and running != version:
-        parts.append(" (running v%s)" % running)
-    if detail:
-        parts.append(": " + detail)
-    return "".join(parts)
-
-
 def _check_auto_deploy(probes: Probes):
-    """§56 合并即上岗：最近一次自动部署的结果（state/deploy_state.json，
-    scripts/auto-deploy.sh 写）。文件不存在 = 这台机器不跑该 agent（.pkg 安装 /
-    Linux / features.auto_deploy 关）——不出行，不告警。deployed / up_to_date
-    之外的一切结果都是 WARN：回滚、脏树拒绝、fetch 失败……都是需要人看一眼
-    的事，而 launchd 的 status 列永远是 0（脚本对每种已处理结果都 exit 0）。"""
+    """§56 合并即上岗：最近一次自动部署的结果（`deploy_state.read()`：HOME 镜像
+    描述的是本 checkout 时读镜像，否则读 state/deploy_state.json 投影；
+    scripts/auto-deploy.sh 写）。两个文件都不存在 = 这台机器不跑该 agent（.pkg
+    安装 / Linux / flag 关）→ 不出行。healthy → OK；其余 → WARN；healthy 但
+    `last_incident` 在案（回滚判决还没被下一次 deployed 清掉）→ WARN（#135 review）。
+    文案与修法住 `deploy_state.auto_deploy_row`（§56.4）。
+    """
     state = deploy_state.read()
     if not state:
         return []
-    status = state.get("status", "")
-    if status in deploy_state.HEALTHY:
-        return CheckResult("auto-deploy", OK, _auto_deploy_ok_detail(state))
-    return CheckResult("auto-deploy", WARN, _auto_deploy_warn_detail(state),
-                       _auto_deploy_fix(status))
+    ok, detail, fix = deploy_state.auto_deploy_row(state)
+    return CheckResult("auto-deploy", OK if ok else WARN, detail, fix or "")
 
 
 def _check_obsidian(probes: Probes):

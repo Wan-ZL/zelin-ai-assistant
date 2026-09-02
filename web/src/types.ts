@@ -223,7 +223,9 @@ export interface TrashRow {
  * deployed | up_to_date | rolled_back | rollback_failed | refused_dirty |
  * refused_branch | fetch_failed | ci_pending | ci_failed | failed |
  * install_incomplete | blocked_tcc —— 未知值按"需要人看"处理。v0.48.17 add-only：
- * running_version（actd 心跳里的版本）/ install_report_version / reason。
+ * running_version（actd 心跳里的版本）/ install_report_version / reason /
+ * last_incident（上一次回滚判决「<ts> <status>: <detail>」，healthy 状态下仍在 =
+ * 回滚被拒后没人看过，直到下一次 deployed 才清）。
  */
 export interface DeployState {
   status?: string;
@@ -237,6 +239,7 @@ export interface DeployState {
   running_version?: string;
   install_report_version?: string;
   reason?: string;
+  last_incident?: string;
   [key: string]: unknown;
 }
 

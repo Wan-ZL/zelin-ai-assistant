@@ -8,7 +8,10 @@ atomic tmp+rename, rewritten every run):
   ``deploy_state``, §2 sibling field, same convention as ``update_available``
   / ``device_label``: absent when the file is absent or unreadable) and for
   the ``act.doctor`` ``auto-deploy`` row (OK for deployed/up_to_date, WARN for
-  every other outcome, no row when the file does not exist).
+  every other outcome, no row when the file does not exist). :func:`read`
+  prefers the mirror whenever the mirror says it describes THIS checkout
+  (``repo``): a projection the job could not rewrite (that is what
+  ``blocked_tcc`` means) must not keep showing the last status it could.
 - ``~/Library/Application Support/ZelinAIAssistant/deploy_state.json`` — the
   HOME MIRROR, the script's own truth (v0.48.17, §56.4). macOS gates
   background access to removable volumes per responsible executable (TCC)
@@ -44,11 +47,16 @@ MIRROR_PATH: Path = (Path.home() / "Library" / "Application Support"
 # Projected keys (all strings). v0.48.17 add-only: `running_version` (what
 # state/actd.heartbeat says is in memory), `install_report_version` (what
 # install.sh last finished on), `reason` (machine tokens behind a non-healthy
-# status). The script also keeps private bookkeeping (`notified_sha`,
-# `incomplete_runs`, `incomplete_sha`, `tcc_notified_day`); not projected.
+# status), `last_incident` ("<ts> <status>: <detail>" of the last rollback
+# verdict — kept through every routine write until the next `deployed`, so a
+# refused rollback stays visible after the following interval's up_to_date;
+# #135 review). The script also keeps private bookkeeping (`notified_sha`,
+# `incomplete_runs` / `incomplete_runs_sha` / `incomplete_seen` /
+# `incomplete_sha` / `incomplete_notified_sha`, `tcc_notified_day`); not
+# projected.
 FIELDS = ("status", "version", "head", "prev", "last_deployed", "last_run",
           "detail", "failed_sha", "running_version", "install_report_version",
-          "reason")
+          "reason", "last_incident")
 
 # Mirror-only keys (never in the dashboard: local paths and the unattended
 # triple are diagnostics for the doctor, not board content).
@@ -87,9 +95,28 @@ def _read_fields(target: Path, fields) -> Optional[dict]:
     return out or None
 
 
+def _mirror_describes(repo: str, mirror_path: Path) -> bool:
+    """Whether the HOME mirror's ``repo`` is this checkout (physical paths).
+    A mirror without ``repo`` is not trusted here: some other clone's run, or
+    a pre-mirror file — the projection stays authoritative for it."""
+    raw = _load_object(mirror_path)
+    if not raw:
+        return False
+    other = raw.get("repo")
+    return bool(other) and isinstance(other, str) and same_repo(other, repo)
+
+
 def read(path: Optional[Path] = None) -> Optional[dict]:
-    """The sanitized deploy state, or None when absent/unreadable/not a dict."""
-    return _read_fields(path or PATH, FIELDS)
+    """The sanitized deploy state, or None when absent/unreadable/not a dict.
+
+    Without an explicit ``path``: the HOME mirror when it describes this
+    checkout (its ``last_run`` is always >= the projection's — the script
+    writes it first and the projection best-effort), else the projection."""
+    if path is not None:
+        return _read_fields(path, FIELDS)
+    if _mirror_describes(str(config.HOME), MIRROR_PATH):
+        return _read_fields(MIRROR_PATH, FIELDS)
+    return _read_fields(PATH, FIELDS)
 
 
 def read_mirror(path: Optional[Path] = None) -> Optional[dict]:
@@ -229,3 +256,113 @@ def volume_access_fix(interp: str) -> str:
         "terminal - bash scripts/auto-deploy.sh, python3 -m act.auto_deploy, even a "
         "launchctl kickstart typed in that terminal - inherit the terminal's grant: a green "
         "one proves nothing about timer-fired runs" % (interp, claude_link))
+
+
+# --------------------------------------------------------------------------- #
+# Doctor prose for the two §56 rows (pure: (ok, detail, fix) tuples, no
+# CheckResult — act/doctor.py wraps them; kept here so doctor.py stays under
+# the 防腐 #1 file cap)
+# --------------------------------------------------------------------------- #
+def volume_access_row(verdict: dict, interp: str, repo: str) -> tuple:
+    """``launchd volume access`` row text from :func:`unattended_verdict`.
+    Returns ``(ok, detail, fix)``; ``fix`` is None when ok."""
+    kind = verdict["kind"]
+    if kind == BLOCKED_MIRROR:
+        return (False, failures.pick(
+            "上一次无人值守的部署运行（%s）读不了 %s（卡在 %s）：%s——launchd 任务没有"
+            "这个卷的访问权，每 10 分钟都在原地打转，什么都没部署",
+            "the last unattended deploy run (%s) could not access %s (denied at %s): %s - "
+            "the launchd job has no grant for that volume; it idles every 10 min and "
+            "deploys nothing")
+            % (verdict["last_run"], verdict["volume"], verdict["denied_path"], verdict["detail"]),
+            volume_access_fix(interp))
+    if kind == BLOCKED_LOG:
+        # `No module named 'act'` alone cannot tell TCC from a mis-rendered
+        # PYTHONPATH (§55): say so and send the reader to `launchd paths` first.
+        fix = volume_access_fix(interp)
+        if verdict.get("ambiguous"):
+            fix = failures.pick(
+                "先看 doctor 的 launchd paths 行：不是 OK → bash install.sh 重渲 plist；"
+                "是 OK → 解释器读不到 repo：",
+                "check doctor's launchd paths row first: not OK -> bash install.sh re-renders "
+                "the plist; OK -> the interpreter cannot read the repo: ") + fix
+        return (False, failures.pick(
+            "autodeploy.launchd.log（%d 分钟前写入）尾部有「%s」——launchd 起的"
+            "启动器/解释器 %s 读不到 %s 上的 repo（这份 stderr 没时间戳，只能按"
+            "文件 mtime 判「最近 24h」）",
+            "autodeploy.launchd.log (written %d min ago) ends with \"%s\" - the "
+            "launchd-spawned launcher/interpreter %s cannot reach the repo on %s "
+            "(this stderr file has no timestamps; \"last 24h\" = file mtime)")
+            % (int(verdict["age_s"] // 60), verdict["match"], interp, repo), fix)
+    if kind == OK_RECORDED:
+        return (True, "last unattended run %s reached %s (status %s)"
+                % (verdict["last_run"], repo, verdict["status"]), None)
+    return (True, "no unattended run recorded yet (mirror %s) - expect one within 10 min of install"
+            % MIRROR_PATH, None)
+
+
+def _auto_deploy_fix(status: str) -> str:
+    """WARN 行的修法按状态词分三种（§56.4）。"""
+    if status == BLOCKED_TCC:
+        # 探针在第一次 git 调用前就拒了——修法是授权，不是 --force；精确的
+        # 解释器路径与证据在 `launchd volume access` 行
+        return failures.pick(
+            "给 plist 里那个解释器授「完全磁盘访问」——见 doctor 的 launchd volume "
+            "access 行与 docs/TROUBLESHOOTING.md「外置盘 + launchd 权限」",
+            "grant Full Disk Access to the plist's interpreter - see the launchd volume "
+            "access row and docs/TROUBLESHOOTING.md (external volume + launchd)")
+    if status == INSTALL_INCOMPLETE:
+        return failures.pick(
+            "下一轮会自动重跑 install.sh（连续几轮无效即停并通知）；等不及就手动"
+            " bash install.sh 或 bash scripts/auto-deploy.sh --force",
+            "the next run re-runs install.sh by itself (gives up + notifies after a few "
+            "consecutive runs); or by hand: bash install.sh / bash scripts/auto-deploy.sh --force")
+    return failures.pick(
+        "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log；修好后"
+        " bash scripts/auto-deploy.sh --force（重试被记为失败的那个 origin/main）",
+        "tail -40 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log; once fixed:"
+        " bash scripts/auto-deploy.sh --force (retries the origin/main sha marked failed)")
+
+
+def _auto_deploy_warn_detail(state: dict) -> str:
+    """「last run ended '<status>' on v<version> (running v<running>): <detail>」——
+    `running_version`（心跳里的版本）与 checkout 版本不同时才点名。"""
+    version = state.get("version", "")
+    running = state.get("running_version", "")
+    detail = state.get("detail", "")
+    parts = ["last run ended '%s'" % (state.get("status", "") or "?")]
+    if version:
+        parts.append(" on v%s" % version)
+    if running and running != version:
+        parts.append(" (running v%s)" % running)
+    if detail:
+        parts.append(": " + detail)
+    return "".join(parts)
+
+
+def _auto_deploy_ok_detail(state: dict) -> str:
+    when = state.get("last_deployed") or state.get("last_run") or ""
+    return "%s (v%s%s)" % (state.get("status", ""), state.get("version") or "?",
+                           (" at " + when) if when else "")
+
+
+def auto_deploy_row(state: dict) -> tuple:
+    """``auto-deploy`` row text for a sanitized :func:`read` result:
+    ``(ok, detail, fix)``. Healthy statuses are OK — unless a `last_incident`
+    (a rollback verdict no later `deployed` has cleared) is still on file: the
+    machine may well be up to date NOW, but the refusal that put it there has
+    not been looked at, and the routine `up_to_date` write must not hide it
+    (#135 review)."""
+    status = state.get("status", "")
+    if status not in HEALTHY:
+        return (False, _auto_deploy_warn_detail(state), _auto_deploy_fix(status))
+    incident = state.get("last_incident", "")
+    if not incident:
+        return (True, _auto_deploy_ok_detail(state), None)
+    return (False, "%s; unresolved deploy incident: %s" % (_auto_deploy_ok_detail(state), incident),
+            failures.pick(
+                "上一次回滚判决还没人看过（新 sha 留在原地）：核对它点名的问题；下一次成功部署"
+                "（合并新提交，或 bash scripts/auto-deploy.sh --force 部署新 sha）会清掉本行",
+                "the last rollback verdict has not been looked at (the new sha stayed in place): "
+                "check what it names; the next successful deploy (a new commit on main, or bash "
+                "scripts/auto-deploy.sh --force onto a new sha) clears this"))

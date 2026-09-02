@@ -248,6 +248,22 @@ class AutoDeployRowNewStatusesTestCase(unittest.TestCase):
         (row,) = self._row(status="up_to_date", version="0.48.17", running_version="0.48.17")
         self.assertEqual(row.status, doctor.OK)
         self.assertNotIn("running", row.detail)
+        self.assertEqual(row.fix, "")
+
+    def test_healthy_status_with_an_unresolved_incident_warns(self):
+        # #135 review: a refused rollback left HEAD on the new sha; the next
+        # interval wrote up_to_date. The verdict must stay visible until the
+        # next successful deploy clears `last_incident`.
+        (row,) = self._row(status="up_to_date", version="0.48.11", running_version="0.48.11",
+                           last_incident="2026-09-02T00:48:54Z rollback_failed: rollback refused "
+                                         "(store2 became the registry truth): doctor new FAIL dashboard")
+        self.assertEqual(row.status, doctor.WARN)
+        self.assertIn("up_to_date (v0.48.11)", row.detail)
+        self.assertIn("unresolved deploy incident", row.detail)
+        self.assertIn("rollback refused", row.detail)
+        self.assertIn("next successful deploy", row.fix)
+        (row,) = self._row(status="deployed", version="0.48.12", last_deployed="2026-09-02T01:00:00Z")
+        self.assertEqual(row.status, doctor.OK, "a deployed with no incident on file is plain OK")
 
 
 if __name__ == "__main__":

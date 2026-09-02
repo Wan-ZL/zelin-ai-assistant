@@ -11,11 +11,15 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
   - HEAD == origin/main **且机器真在跑这个版本**（install_report.json 版本 ==
     checkout、actd.heartbeat 版本 == checkout 且新鲜）→ up_to_date，install 不跑；
   - **deployed 就是在跑**（2026-09-02 事故；§56.3 第 2 步）：HEAD 到位但三件事
-    不齐 → install_incomplete（reason token + detail 点名）+ 本轮重跑一次
-    install.sh（先过与第 3 步同一道 CI 闸门：pending 等、红 → incomplete_sha 中毒 +
-    一条通知、非 github 远端不重跑；--force 跳过）；重跑后齐了 → deployed；连续 N
-    轮不齐 → incomplete_sha 中毒 + 一条通知，--force / 手动对齐解毒；回滚被拒留在
-    新 sha 的机器由下一轮把安装做完；
+    不齐 → install_incomplete（reason token + detail 点名）；**第一眼只记账**
+    （incomplete_seen），下一轮仍不齐才重跑一次 install.sh（先过与第 3 步同一道 CI
+    闸门：pending 等、红 → incomplete_sha 中毒 + 一条通知、非 github 远端不重跑；
+    --force 两道都跳）；重跑后齐了 → deployed；只是心跳过期（版本都对）先等
+    AUTODEPLOY_HEARTBEAT_GRACE 秒看它会不会再跳（刚唤醒 / 重启窗口）；**每个 sha
+    最多重跑 N 次、成功也计**（起来又死的 daemon 不能每 10 分钟重装一次）→
+    incomplete_sha 中毒 + 每 sha 一条通知，--force / main 前进解毒；回滚被拒留在
+    新 sha 的机器由后续轮次把安装做完；回滚判决另存 last_incident，直到下一次
+    deployed 才清（up_to_date 不清——#135 review 的「10 分钟后被冲掉」）；
   - 锁住 $HOME；升级窗口里 v0.48.16 的 state/auto-deploy.lock 活着 → 跳过，死了 → 清；
   - **卷访问探针 + HOME 镜像**（同一事故；§56.3 第 1 步 / §56.4）：第一次 git
     调用前读 repo + 在 state/ 里 mkstemp，PermissionError → blocked_tcc、HEAD 不
@@ -83,7 +87,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 240  # ~60 runs of real bash+git; ~130 s on a 2024 Mac (v0.48.17: +13 runs)
+BUDGET_SECONDS = 300  # ~80 runs of real bash+git; ~170 s on a 2024 Mac (v0.48.17: +33 runs)
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -408,6 +412,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             "AIASSISTANT_PYTHON": sys.executable,
             "AUTODEPLOY_LOG_DIR": str(self.logs),
             "AUTODEPLOY_HEARTBEAT_DEADLINE": "1",
+            # the stale-heartbeat grace is a real wait; the one test that
+            # exercises it sets its own value
+            "AUTODEPLOY_HEARTBEAT_GRACE": "0",
             "AUTODEPLOY_INSTALL_TIMEOUT": "30",
             "AUTODEPLOY_DOCTOR_SETTLE": "0",
             # the fixture origin is a local bare repo, not github.com: name the
@@ -490,6 +497,21 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         hb = self.live / "state" / "actd.heartbeat"
         if hb.exists():
             hb.unlink()
+
+    def sighting(self, **kw):
+        """The first run that sees a mismatch only records it (§56.3 step 2:
+        confirm before repairing) — no install.sh, no CI query, no notification."""
+        installs, queries, notes = len(self.installs()), len(self.ci_queries()), len(self.notifications())
+        proc = self.run_script(**kw)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), installs, "a first sighting never installs")
+        self.assertEqual(len(self.ci_queries()), queries, "…nor asks CI")
+        self.assertEqual(len(self.notifications()), notes, "…nor notifies")
+        st = self.state()
+        self.assertEqual(st["status"], "install_incomplete")
+        self.assertIn("first sighting", st["detail"])
+        self.assertEqual(self.mirror()["incomplete_seen"], self.head())
+        return proc
 
     def seed_store2_db(self, user_version):
         """A store2 ledger left by the daemon running BEFORE the deploy."""
@@ -1354,11 +1376,13 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # the incident's second run: checkout v0.48.3, install.sh last finished on
         # v0.48.2 and the daemon in memory is v0.48.2
         self.seed_running("0.48.2")
+        self.sighting()
+        self.assertEqual(self.mirror()["reason"], "install_report_version_mismatch heartbeat_version_mismatch")
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), self.base_sha)
         inst = self.installs()
-        self.assertEqual(len(inst), 1, "install.sh re-run exactly once")
+        self.assertEqual(len(inst), 1, "install.sh re-run exactly once, on the confirming run")
         self.assertIn("head=%s" % self.base_sha, inst[0])
         st = self.state()
         self.assertEqual(st["status"], "deployed", "the re-run completed the install")
@@ -1369,6 +1393,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertIn("install_report.json says v0.48.2", st["detail"])
         self.assertIn("actd heartbeat says v0.48.2", st["detail"])
         self.assertNotIn("reason", st)
+        self.assertNotIn("incomplete_seen", self.mirror(), "the sighting is spent")
         self.assertIn("install_incomplete", self.log_text())
         self.assertNotIn("up_to_date", self.log_text() + json.dumps(st))
         notes = self.notifications()
@@ -1383,6 +1408,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # report says v0.48.3, heartbeat says v0.48.3 — but an hour old: nothing
         # is running that code right now
         self.seed_heartbeat("0.48.3", "idle", age_s=3600)
+        self.sighting(env={"FAKE_INSTALL_HEARTBEAT": "none"})
         proc = self.run_script(env={"FAKE_INSTALL_HEARTBEAT": "none"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(self.installs()), 1, "re-run once")
@@ -1396,6 +1422,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
     def test_missing_heartbeat_and_report_are_spelled_out(self):
         self.clear_heartbeat()
         (self.live / "state" / "install_report.json").unlink()
+        self.sighting()
         # and the re-run fails too, bringing neither a report nor a heartbeat
         proc = self.run_script(install_rc=[2], env={"FAKE_INSTALL_HEARTBEAT": "none"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -1412,6 +1439,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # bounded — one re-run per run, poison + ONE notification at the limit,
         # then silence until main moves / --force / a hand-run install.sh
         (self.live / "state" / "install_report.json").unlink()
+        self.sighting(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         for n in (1, 2):
             proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
             self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -1425,7 +1453,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(self.installs()), 3, "one re-run per run, three runs")
         st = self.state()
         self.assertEqual(st["status"], "install_incomplete")
-        self.assertIn("3 consecutive incomplete runs", st["detail"])
+        self.assertIn("3 install.sh re-runs at this sha did not complete it", st["detail"])
         self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha, "poisoned in its own ledger")
         self.assertNotIn("failed_sha", self.mirror(), "not the rollback / CI-red ledger")
         notes = self.notifications()
@@ -1435,7 +1463,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         time.sleep(1.1)
         proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         self.assertEqual(len(self.installs()), 3, "no fourth install.sh")
-        self.assertIn("gave up after 3 runs", self.log_text())
+        self.assertIn("gave up after 3 install.sh re-runs", self.log_text())
         self.assertNotEqual(self.state()["last_run"], st["last_run"])
         self.assertEqual(self.state()["status"], "install_incomplete", "verdict carried")
         self.assertEqual(len(self.notifications()), 1)
@@ -1445,17 +1473,28 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(self.state()["status"], "up_to_date")
         self.assertNotIn("incomplete_sha", self.mirror())
         self.assertEqual(len(self.installs()), 3)
+        # …but the per-sha budget is spent: should it fall over again, it is
+        # poisoned on sight (no fourth install.sh) and NOT announced twice
+        (self.live / "state" / "install_report.json").unlink()
+        self.sighting(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
+        self.assertEqual(len(self.installs()), 3, "budget per sha is for life, not per streak")
+        self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha)
+        self.assertIn("already re-run 3 times at this sha", self.state()["detail"])
+        self.assertEqual(len(self.notifications()), 1, "one poison notice per sha")
 
     def test_force_rearms_a_poisoned_incomplete_install(self):
         (self.live / "state" / "install_report.json").unlink()
+        self.sighting(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
         for _ in range(2):
             self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
         self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha)
-        proc = self.run_script("--force")   # install.sh succeeds this time
+        proc = self.run_script("--force")   # install.sh succeeds this time; no confirming run
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(self.installs()), 3)
         self.assertEqual(self.state()["status"], "deployed")
         self.assertNotIn("incomplete_sha", self.mirror())
+        self.assertEqual(self.mirror()["incomplete_runs"], "1", "--force re-armed the budget too")
 
     def test_refused_rollback_leaves_head_on_the_new_sha_and_the_next_run_finishes_the_install(self):
         # the incident chain, minus TCC: install.sh dies (126) on the new sha,
@@ -1470,14 +1509,18 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(self.head(), target)
         self.assertEqual(self.state()["status"], "rollback_failed")
         self.assertEqual(self.state()["failed_sha"], target)
+        self.assertIn("rollback_failed: rollback refused", self.state()["last_incident"])
+        self.sighting()
+        self.assertIn("rollback_failed", self.state()["last_incident"], "a sighting keeps the verdict")
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(len(self.installs()), 2, "the second run re-ran install.sh")
+        self.assertEqual(len(self.installs()), 2, "the confirming run re-ran install.sh")
         st = self.state()
         self.assertEqual(st["status"], "deployed")
         self.assertEqual(st["version"], "0.48.4")
         self.assertEqual(st["running_version"], "0.48.4")
         self.assertNotIn("failed_sha", st)
+        self.assertNotIn("last_incident", st, "a completed repair IS the next successful deploy")
         self.assertNotIn("up_to_date", self.log_text())
 
     def test_repair_waits_for_ci_and_never_reinstalls_a_red_head(self):
@@ -1485,6 +1528,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # main whose CI is pending or red — install.sh is not re-run on it
         # (Codex review P1 on #140); the same --force exit applies
         self.seed_running("0.48.2")
+        self.sighting()
         proc = self.run_script(ci=["pending"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.installs(), [], "CI still running → no re-run")
@@ -1515,6 +1559,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def test_repair_without_a_github_remote_and_no_ci_repo_does_not_reinstall(self):
         self.seed_running("0.48.2")
+        self.sighting(env={"AUTODEPLOY_CI_REPO": ""})
         proc = self.run_script(env={"AUTODEPLOY_CI_REPO": ""})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.installs(), [])
@@ -1528,6 +1573,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # report still records the new version and actd beats on it — that is
         # not `deployed` (Codex review P1 on #140)
         self.seed_running("0.48.2")
+        self.sighting()
         proc = self.run_script(install_rc=[1], env={"FAKE_INSTALL_REPORT_ANYWAY": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(self.installs()), 1)
@@ -1544,6 +1590,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # and its rollback is refused (store2 advanced) → HEAD on B with two of
         # three strikes inherited would poison B on its FIRST repair (Codex P2)
         (self.live / "state" / "install_report.json").unlink()
+        self.sighting(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         for _ in range(2):
             self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         self.assertEqual(self.mirror()["incomplete_runs"], "2")
@@ -1553,6 +1600,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
                                     "AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         self.assertEqual(self.head(), target)
         self.assertEqual(self.state()["status"], "rollback_failed")
+        self.sighting(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         proc = self.run_script(install_rc=[2], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "3"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         m = self.mirror()
@@ -1571,6 +1619,88 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(st["status"], "deployed")
         self.assertEqual(st["running_version"], "0.48.4")
         self.assertEqual(st["install_report_version"], "0.48.4")
+
+    def test_stale_heartbeat_gets_a_grace_to_beat_again(self):
+        # the Mac just woke: launchd fires the missed interval at once, actd is
+        # still finishing the sleep it went down in — its heartbeat is hours old
+        # for a few more seconds. Right version everywhere → wait, do not repair.
+        self.seed_heartbeat("0.48.3", "idle", age_s=3600)
+        hb = self.live / "state" / "actd.heartbeat"
+        fresh = json.dumps({"ts": "@NOW@", "phase": "idle", "pid": 1, "interval": 10,
+                            "stale_after_s": 90, "version": "0.48.3"})
+        beater = subprocess.Popen(["bash", "-c",
+                                   'sleep 2; printf "%s" "$1" | sed "s/@NOW@/$(date -u +%Y-%m-%dT%H:%M:%SZ)/" > "$2"',
+                                   "_", fresh, str(hb)])
+        self.addCleanup(beater.kill)
+        proc = self.run_script(env={"AUTODEPLOY_HEARTBEAT_GRACE": "20"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.state()["status"], "up_to_date")
+        self.assertEqual(self.installs(), [])
+        self.assertNotIn("install_incomplete", self.log_text())
+        self.assertNotIn("incomplete_seen", self.mirror())
+        # a wrong version gets no grace: the report says v0.48.2 → sighting at once
+        self.seed_install_report("0.48.2")
+        t0 = time.monotonic()
+        self.sighting(env={"AUTODEPLOY_HEARTBEAT_GRACE": "20"})
+        self.assertLess(time.monotonic() - t0, 15, "no grace wait for a version mismatch")
+
+    def test_install_rerun_budget_is_per_sha_even_when_each_repair_succeeds(self):
+        # a daemon that comes up, passes once and dies again before the next
+        # interval: every repair "succeeds" — counted per streak it would be
+        # reinstalled (and announced) every 20 min forever. Budget is per sha.
+        for _ in range(2):
+            self.seed_heartbeat("0.48.3", "idle", age_s=3600)     # died again
+            self.sighting(env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
+            proc = self.run_script(env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(self.state()["status"], "deployed")
+        self.assertEqual(len(self.installs()), 2)
+        self.assertEqual(self.mirror()["incomplete_runs"], "2", "successes count against the budget")
+        self.assertEqual(len(self.notifications()), 2, "two 'auto-deployed (install re-run)' notices")
+        self.seed_heartbeat("0.48.3", "idle", age_s=3600)         # …and again
+        self.sighting(env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
+        proc = self.run_script(env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.installs()), 2, "budget spent: no third install.sh")
+        self.assertEqual(self.mirror()["incomplete_sha"], self.base_sha)
+        self.assertEqual(self.state()["status"], "install_incomplete")
+        self.assertIn("already re-run 2 times at this sha", self.state()["detail"])
+        self.assertEqual(len(self.notifications()), 3, "one poison notice")
+        # main moving on is a fresh budget
+        self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"AUTODEPLOY_INCOMPLETE_LIMIT": "2"})
+        self.assertEqual(self.state()["status"], "deployed")
+        m = self.mirror()
+        for key in ("incomplete_runs", "incomplete_runs_sha", "incomplete_sha", "incomplete_notified_sha"):
+            self.assertNotIn(key, m, key)
+
+    def test_refused_rollback_verdict_survives_the_routine_up_to_date_write(self):
+        # #135 review: a refused rollback (store2 advanced; install.sh and actd
+        # fine) leaves HEAD on the new sha with everything aligned — the next
+        # interval's `up_to_date` erased the verdict 10 min after it was raised.
+        # `last_incident` keeps it on the dashboard until the next real deploy.
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_STORE2": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertRegex(st["last_incident"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ rollback_failed: rollback refused")
+        self.assertIn("dashboard", st["last_incident"], "carries the reason the rollback was wanted")
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        st = self.state()
+        self.assertEqual(st["status"], "up_to_date", "install.sh had finished and actd runs v0.48.4")
+        self.assertEqual(st["last_incident"], self.mirror()["last_incident"])
+        self.assertIn("rollback_failed", st["last_incident"], "not erased by the routine write")
+        self.assertNotIn("failed_sha", st, "HEAD == origin/main: the poison is moot and cleared")
+        self.run_script("--force", doctor_plan=["-", "-"])
+        self.assertIn("rollback_failed", self.state()["last_incident"], "--force alone clears nothing here")
+        self.push("0.48.5")
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertNotIn("last_incident", self.state(), "the next successful deploy clears it")
+        self.assertNotEqual(self.head(), target)
 
     # -- 7. volume-access probe + HOME mirror（TCC；2026-09-02 事故） ------------ #
     # macOS 按 responsible executable 给外置卷授权，launchd 任务收不到弹窗；终端里
