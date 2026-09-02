@@ -16,6 +16,38 @@ To ship a change:
 
 ## [Unreleased]
 
+1.0.0 — 新架构基线 / architecture baseline
+
+### 这一版是什么 / What this release is
+owner 决策 D24（2026-09-02，`docs/design/vnext2-plan.md` §1）：web 看板 + Dock 壳 + SQLite 账本 + 「合并即发版即部署」这套骨架就是 1.0 的基线；v-next-2 剩下的阶段（每日自我改进循环、素材库、自动草稿 PR 通道、skill 商店设置页、旧 app 退役）全部是在这个基线上做加法，不再换骨架。号从 0.48.x 直接跳到 1.0.0 是因为真源（YAML → SQLite）、客户端（菜单栏 app → 网页看板 + 壳）与发版机制（手 bump → tag）三样都换了；对用户而言升级仍是原地的：已装机器由 merge 后的自动部署接管，或手动 `bash install.sh` 一次（幂等）。终态验收标准 = D25 / 计划 §9「终态验收清单」：一台空白 macOS 从 GitHub 一条命令装完、看板能用。Decision D24: the web board + Dock shell + SQLite ledger + merge-equals-release-equals-deploy architecture is the 1.0 baseline; every remaining v-next-2 phase is additive. The jump from 0.48.x is a major bump because the source of truth, the client and the release mechanics all changed; upgrading an existing machine is still in place (auto-deploy after merge, or one idempotent `bash install.sh`). Final acceptance = D25 / plan §9: a fresh macOS machine installs from GitHub with one command and the board is usable.
+
+### 自 v0.47 以来变了什么（大白话）
+- **账本换成 SQLite（§53）。** 卡片的唯一真源是 `state/store2.db`（`act/lib/store2`），YAML 降为每日导出镜像 `state/registry-export/`（可 git diff、可肉眼读）与切换前的整目录备份；切换协议是「备份 → 迁移 → 导出 → 逐字段比对零差异才算成」，任何差异拒绝激活。多进程写者走数据库事务，「agent 不得批准/验收」的权限墙由 DB 触发器实际生效。卡片编号两段式（§60，D21）：出生即 `P-<n>` 主键，只有你批准过的卡才拿 `R-<m>` 工作编号。回滚开关 `registry.backend: yaml` 保留一个版本（TROUBLESHOOTING「store2 回滚」）。
+- **看板换成网页 + Dock 里一个普通 app（§54，D3）。** 产品 UI = React 看板（`web/`）由 stdlib 本地服务器（`server/`，常驻 launchd agent `com.zelin.aiassistant.server`）提供，装在薄壳 "Zelin's AI Assistant (Board)"（WKWebView，Dock 图标，关窗不退出，**没有菜单栏图标**）里。看板逐项继承原生看板的行为与外观（§54.1 parity 清单：列内排序、详情收起、chips、相对时间、让 AI 修、永久性完成书立、列头说明、字号/字重梯逐字镜像）。首个设置页（模型两把旋钮，§59，D22）。原生菜单栏 app 冻结不再加功能，先留着，删除等 owner 一句话（P8）。
+- **录制与实时字幕的开关搬到看板右上角（§61）。** 录制引擎与实时字幕引擎从 mac/ 逐字节搬进壳；screenpipe 成为壳的直接子进程；网页 header 两个开关（录制三态 + 字幕四态）经 `zaiShell` 桥控制；录制中的状态交给 macOS 系统指示器显示。
+- **合并即发版即部署（§56，D6/D17）。** main 只走 PR、必需检查绿才合并、不要求他人审批；每次合进 main 由 CI 自动打 tag、出 GitHub Release（`release-on-merge.yml` → `release.yml`）；owner 机器上的 timer 拉取新 tag、`install.sh --non-interactive`（含 web/dist 与壳的构建安装）、装后 doctor 判决、红则回滚；actd 每阶段写心跳，`GET /api/health` + 看板横幅三读者；派发风暴刹车（同类连败 → 「需输入」列 + 通知）。四幕 TCC 实战（外置卷 + launchd 会话）全部诚实归因到 doctor 行并给出精确修法。
+- **质量仪表成了合并硬门（§58，D4/D5）。** 每函数圈复杂度 ≤ 6、CRAP ≤ 6、总覆盖率不低于地板、依赖方向（`act/lib` 只准向下、entrypoint 互不 import）、hygiene（文件行数上限 + docstring 引 §）五道门是 required check；存量债记在只许缩的账本里（`qa/*_baseline.txt`），新代码必须干净。变异测试每晚自动跑、写 pinned issue，**永不作为 PR 门**（§57）。
+- **版本号来自 git tag（§56.1，宪法第 8 条修宪）。** 没有任何提交文件携带版本号：`act.__version__` 在 install/build 时由 tag 盖章（`act/_version.py`，git-ignored），PR 永不 bump；required check「Version pins untouched」拒绝手 bump；CHANGELOG 只写 `[Unreleased]`，Release 正文 = 相对上一个 tag 的增量。
+- **顺带落地的旋钮与止血。** 模型两把旋钮 `models.dispatch` / `models.pipeline`（默认跟随 Claude Code 全局，§59）；状态摘要 `digest.frequency` 默认 off（D19）；「需输入」列退役（#119）；预算全部取消（D9）；`skills/test-code` 测试代码 skill（1–5 档测量梯子，D14）与 skill 商店约定（D13）。
+
+### What changed since v0.47 (plain English)
+- **SQLite is the source of truth.** Cards live in `state/store2.db`; YAML is a daily, diffable export plus the pre-cutover backup. Cutover = backup → migrate → export → field-by-field parity or refuse. Multi-process writers use transactions; the "agents may not approve or accept" wall is a DB trigger. Two-stage ids: every card is born `P-<n>`, only approved cards get an `R-<m>` work number.
+- **The board is a web page in a Dock app.** React board (`web/`) served by a stdlib server (`server/`, a resident launchd agent) inside a thin WKWebView shell, "Zelin's AI Assistant (Board)" — Dock icon, no menu-bar icon, closing the window does not quit. Feature and typography parity with the native board is pinned by tests. The legacy menu-bar app is frozen and stays until the owner says delete.
+- **Recording and live-captions toggles sit in the board header.** Both engines moved into the shell; screenpipe is the shell's child process; macOS's own indicators show recording state.
+- **Merge = release = deploy.** PR-only main with required checks; every merge is tagged and released by CI; the owner's machine auto-deploys, runs the doctor, rolls back on red; heartbeat + health endpoint + board banner; dispatch-storm brake.
+- **Quality gates are merge gates.** Cyclomatic complexity ≤ 6, CRAP ≤ 6, coverage floor, dependency direction and hygiene are required checks with shrink-only debt ledgers; nightly mutation testing reports to a pinned issue and never blocks a PR.
+- **Versions come from git tags.** No committed file carries the version; PRs never bump; the "Version pins untouched" check enforces it; release notes are the `[Unreleased]` delta since the previous tag.
+
+### 还没进 1.0 的部分（后续全是加法）
+- 每日自我改进循环 + 看板维护（P5）、素材库（§2.5）、会议 recap（P5b）、自动草稿 PR 通道（P6）、skill 商店设置页与「agent 收工前自动跑测试 skill」（P7 后半）、旧 app 卸载与 `mac/` 删除（P8，等 owner 下令）。
+- 待 owner 的环境项（D20 家族）：给守护解释器与 `claude` 开完全磁盘访问，或把 repo 搬回启动盘——doctor 行 `launchd volume access` / `launchd claude` 给出精确路径。
+- Not yet in 1.0 (all additive): daily self-improvement loop, 素材库 (idea inbox), meeting recap, auto draft-PR lane, skills-store settings UI, legacy-app deletion (owner's call). Owner-side environment item: Full Disk Access for the daemon interpreter and `claude` on external volumes — the doctor rows spell out the exact paths.
+
+### 升级与安装 / Upgrading and installing
+- 已装机器：合并后 timer 自动部署；或手动 `bash install.sh`（幂等，含 UI 构建与壳安装）。store2 切换协议（备份 → 迁移 → 比对）由 actd 首 pass 自动执行，已在 SQLite 上的机器不再动数据。
+- 新机器：`git clone https://github.com/Wan-ZL/zelin-ai-assistant ~/Projects/zelin-ai-assistant && cd ~/Projects/zelin-ai-assistant && bash install.sh`（config.yaml 缺席时自动从 example 建），或 Releases 页的 `.pkg`；装完 `bash install.sh --check` 零 FAIL、Dock 出现看板 app 即为验收（计划 §9）。
+- Existing machine: auto-deploy after merge, or one idempotent `bash install.sh`. Fresh machine: the clone + `bash install.sh` one-liner (or the `.pkg` from Releases); `bash install.sh --check` with zero FAIL and the board app in the Dock is the acceptance state (plan §9).
+
 ### Fixed
 - web: legacy R ids on never-approved cards are greyed only, no longer struck through (owner: match the native board).
 

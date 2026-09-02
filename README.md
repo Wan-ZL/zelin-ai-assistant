@@ -8,7 +8,7 @@
 [![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)](docs/INSTALL.md)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](docs/INSTALL.md)
 
-A personal AI chief-of-staff for macOS. It watches where work arrives (meeting notes, Slack, Gmail), turns requests into approval cards in your menu bar, and executes approved tasks with background Claude agents. You do two things — **approve** and **accept**. Everything else is automated.
+A personal AI chief-of-staff for macOS. It watches where work arrives (meeting notes, Slack, Gmail), turns requests into approval cards on a kanban board, and executes approved tasks with background Claude agents. You do two things — **approve** and **accept**. Everything else is automated.
 
 <p align="center">
   <a href="docs/assets/promo-en.mp4"><img src="docs/assets/promo-teaser-en.gif" alt="60-second tour: AI pulls the related fragments out of your recordings and turns them into one approval card" width="760"></a>
@@ -23,12 +23,12 @@ A personal AI chief-of-staff for macOS. It watches where work arrives (meeting n
 ## How it works
 
 - **Capture** — [screenpipe](https://github.com/mediar-ai/screenpipe) records screen + audio locally; scheduled jobs export increments and a headless Claude session distills them into an Obsidian wiki (`ingest/`).
-- **Detect** — three radars (Obsidian notes, Slack, Gmail) scan for things people are asking you to do and file them into a YAML requirement registry that merges duplicates across sources (`act/`).
-- **Approve** — each requirement becomes a proposal card (plain-language summary, cost estimate, acceptance criteria) in a SwiftUI menu-bar app. One click: ✅ approve, ❌ reject, 💬 comment.
+- **Detect** — three radars (Obsidian notes, Slack, Gmail) scan for things people are asking you to do and file them into a requirement registry (SQLite source of truth with a daily, diffable YAML export) that merges duplicates across sources (`act/`).
+- **Approve** — each requirement becomes a proposal card (plain-language summary, cost estimate, acceptance criteria) on the board — a web kanban served locally and shown in a plain Dock app. One click: ✅ approve, ❌ reject, 💬 comment.
 - **Execute** — approved cards dispatch `claude --bg` agents in isolated git worktrees, supervised by a resident daemon (`actd`) with automatic resume and a quality gate (self-check, fresh-context diff review, draft-PR-only delivery).
 - **Deliver** — finished work lands in a review lane: a paste-ready final draft for writing tasks, a draft PR for code. You accept it or send it back with comments.
 
-The app and the pipeline are fully decoupled: the app only reads `state/dashboard.json` and writes your actions to `state/inbox/`. That two-file contract lives in [docs/CONTRACT.md](docs/CONTRACT.md).
+The board and the pipeline are fully decoupled: the board reads the `state/dashboard.json` projection and writes your actions to `state/inbox/`; the `actd` daemon is the registry's only writer. That contract lives in [docs/CONTRACT.md](docs/CONTRACT.md).
 
 ### Architecture
 
@@ -45,7 +45,7 @@ flowchart TB
 
         subgraph ACTP["Act pipeline (act/)"]
             RADARS["3 radars<br/>Obsidian · Slack · Gmail"]
-            REG[("registry — YAML source of truth<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(any state → trashed)")]
+            REG[("registry — SQLite source of truth (store2)<br/>daily YAML export for diffing/backup<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(any state → trashed)")]
             ACTD["actd daemon (launchd, 10 s pass)<br/>inbox → dispatch → reconcile → dashboard"]
             AGENTS["claude --bg agents<br/>isolated git worktrees + quality gate<br/>deliver: draft PR or FINAL DRAFT"]
             RADARS -->|"merge_or_new (dedup)"| REG
@@ -58,12 +58,12 @@ flowchart TB
         DASH["state/dashboard.json<br/>(projection, atomic writes)"]
         INBOX["state/inbox/*.json<br/>(one file per user action)"]
 
-        subgraph APP["Mac app (SwiftUI menu bar)"]
-            UI["approval cards · kanban ·<br/>quick capture"]
+        subgraph APP["Board — web kanban (web/) in a Dock shell (shell/),<br/>served by the local stdlib server (server/, launchd agent)"]
+            UI["approval cards · kanban · quick capture ·<br/>recording / live-captions toggles"]
         end
 
         ACTD --> DASH
-        DASH -->|"read-only, 5 s poll"| UI
+        DASH -->|"read-only, pushed over SSE"| UI
         UI -->|"approve · reject · comment · capture"| INBOX
         INBOX --> ACTD
     end
@@ -81,7 +81,7 @@ flowchart TB
     SRC -.->|"messages / unread mail / self-DM quick capture"| RADARS
 ```
 
-Solid arrows are local file/process flow; dashed arrows are the only network egress (the full inventory, with the switches that control each one, is in [docs/PRIVACY.md](docs/PRIVACY.md)). The app never talks to the network and never touches the registry, secrets, or `claude` — its whole world is one readable file and one writable directory.
+Solid arrows are local file/process flow; dashed arrows are the only network egress (the full inventory, with the switches that control each one, is in [docs/PRIVACY.md](docs/PRIVACY.md)). The board never talks to the network: its server reads the projection and the registry read-only and writes your actions as inbox files — `actd` stays the registry's single writer (CONTRACT §44).
 
 ## Quickstart
 
@@ -92,14 +92,14 @@ cp config.example.yaml config.yaml   # edit: Obsidian vault path, watched people
 bash install.sh                      # dependency checks → builds the app → launchd agents + cron chain
 ```
 
-On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and a one-line anonymous-usage-stats disclosure (details & opt-out in Settings). Reopen it anytime via the app menu → Permissions Checkup. Then open the menu-bar app's Settings and paste your Anthropic API key (headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in a `0600` file under `config/secrets/`).
+On first launch the app opens a bilingual **permissions & setup page**: one screen-recording consent (recording defaults to **screen-only** — audio is a separate opt-in in Settings), a live checklist for Screen Recording / Notifications / Full Disk Access, and a one-line anonymous-usage-stats disclosure (details & opt-out in Settings). Reopen it anytime via the app menu → Permissions Checkup. Then paste your Anthropic API key in the legacy app's Settings — or write it to `config/secrets/anthropic-api-key.txt` (mode `0600`) yourself; headless `claude` under cron/launchd cannot read Keychain OAuth, so the key lives in that file.
 
 - Full walkthrough with per-step checkpoints, exact TCC permission paths, and a "first card in 5 minutes" exercise: **[docs/INSTALL.md](docs/INSTALL.md)** (also covers the `.pkg` installer route).
-- No API key yet? One command previews the full web board with fictional data: `bash scripts/dev-preview.sh` — see the section below and [docs/DEMO.md](docs/DEMO.md) (Mac-app demo & recording guide).
+- No API key yet? One command previews the full board with fictional data: `bash scripts/dev-preview.sh` — see the section below and [docs/DEMO.md](docs/DEMO.md) (demo & recording guide).
 
-## 🆕 Web 看板（v0.48）· 两分钟上手
+## The board · two minutes to first look
 
-v0.48 adds a browser kanban: a stdlib-only local HTTP + SSE server (`server/`) serving a React board (`web/`) — another client of the same file contract the Mac app uses (reads `state/dashboard.json` + the registry, writes approvals to `state/inbox/`). Three ways in:
+The product UI is a browser kanban: a stdlib-only local HTTP + SSE server (`server/`) serving a React board (`web/`), wrapped in a thin Dock app (`shell/`) — no menu-bar icon. It is a client of the same file contract as everything else (reads `state/dashboard.json` + the registry, writes approvals to `state/inbox/`). The version you are running is whatever git tag `install.sh` stamped — the Release badge at the top of this page is the current one. Three ways in:
 
 ```bash
 # ① Demo — fictional data, no API key, no install:
@@ -121,8 +121,8 @@ Building the web UI needs Node.js LTS — `dev-preview.sh` runs `npm install && 
 
 | Component | Version | Used for |
 |---|---|---|
-| macOS | 14+ | menu-bar app, launchd/cron scheduling, TCC permissions |
-| Xcode / Swift toolchain | 6.x | building the app from source |
+| macOS | 14+ | board shell app, launchd/cron scheduling, TCC permissions |
+| Xcode / Swift toolchain | 6.x | building the board shell (and the legacy app) from source |
 | [Claude Code CLI](https://claude.com/claude-code) + Anthropic API key | latest | radars, proposal expansion, and execution all run on headless `claude` |
 | Python | 3.9+ with PyYAML | `actd` daemon, radars, digest |
 | Node.js | LTS (`npx`) | the screen-capture engine runs via `npx screenpipe`; building the web board (`web/`) |
@@ -133,11 +133,11 @@ Building the web UI needs Node.js LTS — `dev-preview.sh` runs `npm install && 
 
 | OS | Status |
 |---|---|
-| macOS 14+ | **Full product** — menu-bar app, launchd/cron scheduling, screen-capture ingest, Slack/Gmail radars |
+| macOS 14+ | **Full product** — web board in a Dock shell, launchd/cron scheduling, screen-capture ingest, Slack/Gmail radars |
 | Linux | **Core is portable, port wanted** — the headless pipeline (radars, `actd`, executor) is pure Python and its full test suite runs green on ubuntu CI; service wiring (systemd units), an ingest chain, and a UI are unbuilt. Map + first milestone: [docs/PORTING.md](docs/PORTING.md) |
 | Windows | **Core is portable, port wanted** — same story as Linux (minus CI coverage so far); Task Scheduler equivalents in [docs/PORTING.md](docs/PORTING.md) |
 
-The Slack radar (incl. self-DM quick capture) is the cross-platform capture surface; approvals happen in the Mac app.
+The Slack radar (incl. self-DM quick capture) is the cross-platform capture surface; approvals happen on the board.
 
 ## Features
 
@@ -146,14 +146,14 @@ The Slack radar (incl. self-DM quick capture) is the cross-platform capture surf
 - **Quality gate** — runnable check, read-only tests, fresh-context diff review, risk tiering, and revertible draft-PR delivery.
 - **Two delivery modes** — `repo` (feature branch / draft PR) for code; `chat` (a paste-ready `FINAL DRAFT`) for writing tasks, so a one-paragraph reply never forces a git branch.
 - **Voice profile for drafts** — anything written in your name follows a voice profile (short, plain, no boilerplate) instead of "polished assistant" register; a neutral starter template ships with the repo, and a private profile induced from your own messages overrides it ([docs/VOICE.md](docs/VOICE.md)).
-- **Quick capture** — click the menu-bar icon (or ⌘L in the main window), type a thought; an LLM triages it against the registry: new card, related to an existing one, or ignore. <!-- screenshot slot: docs/assets/t2-card.png -->
+- **Quick capture** — type a thought into the board's composer (one line → proposal, or run directly); an LLM triages it against the registry: new card, related to an existing one, or ignore. <!-- screenshot slot: docs/assets/t2-card.png -->
 - **Responsive UI** — every click gives feedback within one frame (optimistic echo), kanban main window, recycle bin with inverse operations instead of a fake undo, bilingual UI (English / 中文). <!-- screenshot slot: docs/assets/review-final-draft.png -->
-- **Mobile quick capture via Slack self-DM** — DM yourself a one-liner (or a photo/video of a whiteboard, screen, or sticky note) from your phone and it triages into a card, the same three-way gate as desktop capture ([docs/SLACK_SETUP.md](docs/SLACK_SETUP.md)). This is the mobile capture path until the iOS app ships; **approvals happen in the Mac app** (the iMessage transport and Slack phone-approval were removed in v0.21).
+- **Mobile quick capture via Slack self-DM** — DM yourself a one-liner (or a photo/video of a whiteboard, screen, or sticky note) from your phone and it triages into a card, the same three-way gate as desktop capture ([docs/SLACK_SETUP.md](docs/SLACK_SETUP.md)). This is the mobile capture path until the iOS app ships; **approvals happen on the board** (the iMessage transport and Slack phone-approval were removed in v0.21).
 - **Local-first content** — the registry, dashboard, and all captured content stay on your Mac; only anonymous usage events are uploaded by default (see Telemetry below).
 
 ## Telemetry
 
-> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. What's sent: event metadata only (event names, timestamps, a random device id, app version). **The text you type into the app** — captures, questions, rework feedback, search terms, each clipped to 500 chars — is **NOT uploaded by default**: `telemetry.capture_input` is off (opt-in since v0.48) until you check "Share typed text to improve the product" on the first-run page, flip the Settings toggle, or set `telemetry.capture_input: true` yourself. **Never sent at any setting**: the AI's answers, screen-recording content, email or Slack/iMessage message bodies, file contents, or keys. Opt out in Settings → "Product improvement program": the typed-text toggle withdraws that consent (`telemetry.capture_input: false`), the master toggle stops everything (`telemetry.enabled: false`). Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
+> **Anonymous usage statistics are ON by default** (like VS Code) and help drive product improvement. What's sent: event metadata only (event names, timestamps, a random device id, app version). **The text you type into the app** — captures, questions, rework feedback, search terms, each clipped to 500 chars — is **NOT uploaded by default**: `telemetry.capture_input` is off (opt-in) until you check "Share typed text to improve the product" on the first-run page, flip the Settings toggle, or set `telemetry.capture_input: true` yourself. **Never sent at any setting**: the AI's answers, screen-recording content, email or Slack/iMessage message bodies, file contents, or keys. Opt out in Settings → "Product improvement program": the typed-text toggle withdraws that consent (`telemetry.capture_input: false`), the master toggle stops everything (`telemetry.enabled: false`). Forks: telemetry points at the maintainer's Supabase project unless you change `telemetry.supabase_url` — setting it to `""` disables uploads entirely. Full field tables and details: [docs/TELEMETRY.md](docs/TELEMETRY.md).
 
 ## Privacy & security
 
@@ -163,7 +163,8 @@ This tool records your screen, can read your Slack/Gmail, and runs unattended ag
 
 - [x] v0: approval card → ✅ → executed task, end to end
 - [x] v1: three radars on cron/launchd, approval round-trip, Monday digest
-- [x] v2: SwiftUI menu-bar app (kanban window + quick capture + recycle bin + bilingual; the v2 popover panel was retired in v0.48 — the menu-bar icon now opens the board)
+- [x] v2: SwiftUI menu-bar app (kanban window + quick capture + recycle bin + bilingual) — frozen: the board took over its job; it stays installed until the owner retires it
+- [x] Architecture baseline (the current major — see the Release badge above): SQLite source of truth, web board in a Dock shell with recording/captions toggles, merge = release = deploy, quality gates as merge gates, versions minted from git tags. Plain-language notes: [CHANGELOG.md](CHANGELOG.md) `[Unreleased]`; the plan and acceptance checklist: [docs/design/vnext2-plan.md](docs/design/vnext2-plan.md)
 - [ ] v3: iOS remote approver (`ios/` is a placeholder)
 
 What's in flight and what comes next: [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -203,7 +204,7 @@ More questions — use at work, forks, what counts as competing use, per-release
 | [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) / [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md) | optional source integrations |
 | [docs/SANITIZATION.md](docs/SANITIZATION.md) | provenance: how this public export was sanitized from the private repo |
 
-Internal design docs (`docs/design/`) contain real work details and are excluded from this export; a note remains in place.
+Design docs ([docs/design/](docs/design/README.md)) record intent and owner decisions — lane semantics, the v-next-2 plan and its acceptance checklist; the behavior contract itself stays in [docs/CONTRACT.md](docs/CONTRACT.md).
 
 ### Repository layout
 

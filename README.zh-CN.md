@@ -8,7 +8,7 @@
 [![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)](docs/INSTALL.md)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](docs/INSTALL.md)
 
-macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack、Gmail），把"别人要你做的事"变成菜单栏里的审批卡片，批准后由后台 Claude agent 自动执行。你只做两件事——**批准** 和 **验收**，其余全自动。
+macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack、Gmail），把"别人要你做的事"变成看板上的审批卡片，批准后由后台 Claude agent 自动执行。你只做两件事——**批准** 和 **验收**，其余全自动。
 
 <p align="center">
   <a href="docs/assets/promo-zh.mp4"><img src="docs/assets/promo-teaser-zh.gif" alt="60 秒产品导览：AI 从录音里找出相关碎片，汇聚成一张审批卡" width="760"></a>
@@ -23,12 +23,12 @@ macOS 上的个人 AI 秘书：盯着工作从哪里来（会议记录、Slack�
 ## 工作原理
 
 - **感知**——[screenpipe](https://github.com/mediar-ai/screenpipe) 本地录屏+录音；定时任务增量导出，headless Claude 加工进 Obsidian wiki（`ingest/`）。
-- **发现**——三路需求雷达（Obsidian 笔记 / Slack / Gmail）扫出"别人要你做的事"，写入 YAML 需求注册表，跨源合并去重（`act/`）。
-- **审批**——每条需求扩写成提案卡（大白话摘要、成本预估、验收标准），出现在 SwiftUI 菜单栏 app 里。一键 ✅ 批准 / ❌ 拒绝 / 💬 评论。
+- **发现**——三路需求雷达（Obsidian 笔记 / Slack / Gmail）扫出"别人要你做的事"，写入需求注册表（SQLite 唯一真源，每日导出一份可 diff 的 YAML 镜像），跨源合并去重（`act/`）。
+- **审批**——每条需求扩写成提案卡（大白话摘要、成本预估、验收标准），出现在看板上——本地服务器提供的网页看板，装在 Dock 里一个普通 app 里。一键 ✅ 批准 / ❌ 拒绝 / 💬 评论。
 - **执行**——批准的卡片以 `claude --bg` 派发到独立 git worktree,由常驻守护进程（`actd`）监控,自动 resume + 质量门（自检、fresh-context 审 diff、只交 draft PR）。
 - **交付**——完工进"待验收"列：文书任务给可直接粘贴的成稿,代码任务给 draft PR。验收进「阶段性完成」,彻底结束点「永久完成」;不满意带评论打回。
 
-app 与管线彻底解耦：app 只读 `state/dashboard.json`、只写 `state/inbox/`,两个 JSON 文件的契约见 [docs/CONTRACT.md](docs/CONTRACT.md)。
+看板与管线彻底解耦：看板只读 `state/dashboard.json` 投影、只写 `state/inbox/`,注册表的唯一写者是 `actd` 守护进程;契约见 [docs/CONTRACT.md](docs/CONTRACT.md)。
 
 ### 架构图
 
@@ -45,7 +45,7 @@ flowchart TB
 
         subgraph ACTP["Act 管线(act/)"]
             RADARS["三路雷达<br/>Obsidian · Slack · Gmail"]
-            REG[("注册表 —— YAML 唯一真源<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(任意状态 → trashed)")]
+            REG[("注册表 —— SQLite 唯一真源(store2)<br/>每日导出 YAML 镜像供 diff / 备份<br/>detected → card_sent → approved →<br/>executing → review → delivered<br/>(任意状态 → trashed)")]
             ACTD["actd 守护(launchd,10 s 一轮)<br/>inbox → 派发 → reconcile → dashboard"]
             AGENTS["claude --bg agents<br/>独立 git worktree + 质量门<br/>交付:draft PR 或 FINAL DRAFT"]
             RADARS -->|"merge_or_new(去重)"| REG
@@ -58,12 +58,12 @@ flowchart TB
         DASH["state/dashboard.json<br/>(投影,原子写)"]
         INBOX["state/inbox/*.json<br/>(一个用户操作一个文件)"]
 
-        subgraph APP["Mac app(SwiftUI 菜单栏)"]
-            UI["审批卡片 · 看板 ·<br/>快速捕获"]
+        subgraph APP["看板 —— 网页看板(web/)装在 Dock 壳(shell/)里,<br/>由本地 stdlib 服务器(server/,launchd agent)提供"]
+            UI["审批卡片 · 看板 · 快速捕获 ·<br/>录制 / 实时字幕开关"]
         end
 
         ACTD --> DASH
-        DASH -->|"只读,5 s 轮询"| UI
+        DASH -->|"只读,SSE 推送"| UI
         UI -->|"批准 · 拒绝 · 评论 · 捕获"| INBOX
         INBOX --> ACTD
     end
@@ -81,7 +81,7 @@ flowchart TB
     SRC -.->|"消息 / 未读邮件 / self-DM 快速捕获"| RADARS
 ```
 
-实线 = 本地文件/进程流;虚线 = 仅有的网络出境点(完整清单及每一条对应的控制开关见 [docs/PRIVACY.md](docs/PRIVACY.md))。app 永不联网、永不碰注册表/密钥/`claude`——它的全部世界就是一个可读文件加一个可写目录。
+实线 = 本地文件/进程流;虚线 = 仅有的网络出境点(完整清单及每一条对应的控制开关见 [docs/PRIVACY.md](docs/PRIVACY.md))。看板永不联网:它的服务器只读投影与注册表、把你的操作写成 inbox 文件——注册表的单一写者始终是 `actd`(CONTRACT §44)。
 
 ## 快速开始
 
@@ -92,20 +92,40 @@ cp config.example.yaml config.yaml   # 编辑:Obsidian vault 路径、watch_peop
 bash install.sh                      # 依赖检查 → 构建装 app → launchd agents + crontab
 ```
 
-首次启动 app 会弹出双语**权限体检页**:唯一的屏幕记录 consent(默认**仅屏幕**,音频需在「设置 → 录制」单独打开)、屏幕录制/通知/完全磁盘访问 的实时授权清单,以及一行匿名使用统计披露(详情与关闭在设置);之后随时可从 菜单 → 权限体检 重开。然后打开菜单栏 app 的设置窗口,粘贴 Anthropic API key(cron/launchd 下的 headless `claude` 读不了 Keychain OAuth,所以 key 以 `0600` 文件存在 `config/secrets/` 下)。
+首次启动 app 会弹出双语**权限体检页**:唯一的屏幕记录 consent(默认**仅屏幕**,音频需在「设置 → 录制」单独打开)、屏幕录制/通知/完全磁盘访问 的实时授权清单,以及一行匿名使用统计披露(详情与关闭在设置);之后随时可从 菜单 → 权限体检 重开。然后在旧 app 的设置窗口粘贴 Anthropic API key——或自己写进 `config/secrets/anthropic-api-key.txt`(权限 `0600`);cron/launchd 下的 headless `claude` 读不了 Keychain OAuth,所以 key 就住在这个文件里。
 
 - 完整安装教程(逐步 checkpoint、TCC 授权准确路径、"第一张卡 5 分钟"练习):**[docs/INSTALL.md](docs/INSTALL.md)**(也覆盖 `.pkg` 安装包路线)。
-- 还没有 API key?用完全虚构的数据预览整套 UI:`python3 scripts/demo_seed.py /tmp/assistant-demo`,见 [docs/DEMO.md](docs/DEMO.md)。
+- 还没有 API key?一条命令用完全虚构的数据预览整个看板:`bash scripts/dev-preview.sh`,见下一节与 [docs/DEMO.md](docs/DEMO.md)。
+
+## 看板 · 两分钟上手
+
+产品 UI 是浏览器看板:纯 stdlib 的本地 HTTP + SSE 服务器(`server/`)提供 React 看板(`web/`),外面套一层薄薄的 Dock app(`shell/`)——**没有菜单栏图标**。它和其他组件遵守同一份文件契约(读 `state/dashboard.json` + 注册表,把审批写进 `state/inbox/`)。你在跑的版本就是 `install.sh` 盖章的那个 git tag——页首的 Release 徽章即当前版本。三种进入方式:
+
+```bash
+# ① Demo —— 虚构数据,不要 API key,不装东西:
+git clone https://github.com/Wan-ZL/zelin-ai-assistant && cd zelin-ai-assistant
+bash scripts/dev-preview.sh              # 首次自动构建 web/,灌 demo 数据,打开浏览器
+
+# ② 真数据 —— `bash install.sh` 跑过一次之后(或设了 AIASSISTANT_HOME):
+bash scripts/dev-preview.sh --real
+
+# ③ 原生窗口 —— "Zelin's AI Assistant (Board)":`bash install.sh` 构建 web/dist、
+#    构建薄壳并装进 /Applications,看板服务器以 launchd agent
+#    com.zelin.aiassistant.server 常驻(CONTRACT §54)。开发循环:
+bash shell/build.sh && open "shell/build/Zelin AI Board.app"   # 连接正在跑的服务器
+```
+
+构建 web UI 需要 Node.js LTS——`web/dist` 缺席时 `dev-preview.sh` 自动 `npm install && npm run build`;`install.sh` 同样(lockfile 变了才 `npm ci`),node 或 swiftc 缺席时跳过 UI 并 warn。壳 app 是 ad-hoc 签名:自己构建不需要 Apple 开发者账号;从网上下载的副本首次需右键 → 打开(Gatekeeper)。
 
 ## 环境要求
 
 | 组件 | 版本 | 用途 |
 |---|---|---|
-| macOS | 14+ | 菜单栏 app、launchd/cron 定时、TCC 权限模型 |
-| Xcode / Swift toolchain | 6.x | 从源码构建 app |
+| macOS | 14+ | 看板壳 app、launchd/cron 定时、TCC 权限模型 |
+| Xcode / Swift toolchain | 6.x | 从源码构建看板壳(与旧 app) |
 | [Claude Code CLI](https://claude.com/claude-code) + Anthropic API key | 最新版 | 雷达、提案扩写、执行全靠 headless `claude` |
 | Python | 3.9+ 与 PyYAML | `actd` 守护、雷达、digest |
-| Node.js | LTS(`npx`) | 录制引擎经 `npx screenpipe` 自动运行,无需单独安装 |
+| Node.js | LTS(`npx`) | 录制引擎经 `npx screenpipe` 自动运行;构建网页看板(`web/`) |
 | Obsidian(可选) | — | 雷达扫描源 + wiki 落点 |
 | `gh` CLI(可选) | — | draft-PR 交付 |
 
@@ -113,11 +133,11 @@ bash install.sh                      # 依赖检查 → 构建装 app → launch
 
 | 操作系统 | 状态 |
 |---|---|
-| macOS 14+ | **完整产品**——菜单栏 app、launchd/cron 定时、屏幕录制 ingest、Slack/Gmail 雷达 |
+| macOS 14+ | **完整产品**——Dock 壳里的网页看板、launchd/cron 定时、屏幕录制 ingest、Slack/Gmail 雷达 |
 | Linux | **核心已可移植,欢迎认领移植**——headless 流水线(雷达、`actd`、执行器)是纯 Python,完整测试套件在 ubuntu CI 上全绿;还缺 systemd 服务接线、ingest 链和 UI。移植地图与第一个里程碑:[docs/PORTING.md](docs/PORTING.md) |
 | Windows | **核心已可移植,欢迎认领移植**——与 Linux 相同(暂无 CI 覆盖);Task Scheduler 对照表见 [docs/PORTING.md](docs/PORTING.md) |
 
-Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一在 Mac App 里做。
+Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一在看板上做。
 
 ## 功能特性
 
@@ -125,14 +145,14 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 - **分级审批**——T0 自动 / T1 一键 / T2 文字确认;对外发消息、merge、删资源永不自动。成本 >$5 显示,>$50 升 T2。
 - **质量门**——可运行检查 + 只读测试 + fresh-context 审 diff + 风险分级 + 可回滚的 draft PR 交付。
 - **两种交付方式**——代码走 `repo`(feature 分支 / draft PR);文书走 `chat`(可直接粘贴的 `FINAL DRAFT`),一段回复稿不会被逼着建分支。
-- **快速捕获**——点菜单栏图标(主窗口内 ⌘L)随手记一句;LLM 对照注册表三选一:新卡 / 关联已有 / 忽略。<!-- screenshot slot: docs/assets/t2-card.png -->
+- **快速捕获**——在看板的输入框随手记一句(一句话提案,或直接开跑);LLM 对照注册表三选一:新卡 / 关联已有 / 忽略。<!-- screenshot slot: docs/assets/t2-card.png -->
 - **即时反馈的 UI**——所有点击 ≤1 帧内有视觉反馈(乐观回显),看板主窗口,回收站配逆操作而非假 undo,双语界面(English / 中文)。<!-- screenshot slot: docs/assets/review-final-draft.png -->
-- **Slack self-DM 手机端快速捕获**——在手机上给自己发一句话(或拍白板/屏幕/纸条的图片/视频),系统对照注册表三选一建卡,和桌面快速捕获同一条三选一门(见 [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md))。iOS app 上线前这是手机端的捕获方式;**审批统一在 Mac App 里做**(iMessage 通道与 Slack 手机审批已于 v0.21 移除)。
+- **Slack self-DM 手机端快速捕获**——在手机上给自己发一句话(或拍白板/屏幕/纸条的图片/视频),系统对照注册表三选一建卡,和桌面快速捕获同一条三选一门(见 [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md))。iOS app 上线前这是手机端的捕获方式;**审批统一在看板上做**(iMessage 通道与 Slack 手机审批已于 v0.21 移除)。
 - **内容本地优先**——注册表、dashboard、所有采集内容全部留在本机;默认只上传匿名使用事件(见下方「匿名使用统计」)。
 
 ## 匿名使用统计(Telemetry)
 
-> **匿名使用统计默认开启**(像 VS Code 一样),用于驱动产品改进。发送的内容:仅事件元数据(事件名、时间戳、随机设备号、版本号)。**你输入进本 App 的文本**——快速捕获、提问、打回反馈、搜索词,每条截断 500 字符——**默认不上传**:`telemetry.capture_input` 默认关(v0.48 起 opt-in),只有你在首启页勾选「分享输入文本以帮助改进产品」、在设置里打开「上传我输入的文本」,或自己写 `telemetry.capture_input: true` 后才收集。**任何设置下都不发送**:AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息正文、文件内容、密钥。关闭在 设置 →「产品改进计划」:取消文本开关即收回同意(`telemetry.capture_input: false`),关总开关全部停止(`telemetry.enabled: false`)。Fork 用户注意:不改 `telemetry.supabase_url` 时数据会传给本项目维护者——把 URL 置空(`""`)即彻底禁用上传。字段表与细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
+> **匿名使用统计默认开启**(像 VS Code 一样),用于驱动产品改进。发送的内容:仅事件元数据(事件名、时间戳、随机设备号、版本号)。**你输入进本 App 的文本**——快速捕获、提问、打回反馈、搜索词,每条截断 500 字符——**默认不上传**:`telemetry.capture_input` 默认关(opt-in),只有你在首启页勾选「分享输入文本以帮助改进产品」、在设置里打开「上传我输入的文本」,或自己写 `telemetry.capture_input: true` 后才收集。**任何设置下都不发送**:AI 的回答、屏幕录制内容、邮件或 Slack/iMessage 消息正文、文件内容、密钥。关闭在 设置 →「产品改进计划」:取消文本开关即收回同意(`telemetry.capture_input: false`),关总开关全部停止(`telemetry.enabled: false`)。Fork 用户注意:不改 `telemetry.supabase_url` 时数据会传给本项目维护者——把 URL 置空(`""`)即彻底禁用上传。字段表与细节见 [docs/TELEMETRY.md](docs/TELEMETRY.md)。
 
 ## 隐私与安全
 
@@ -142,7 +162,8 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 
 - [x] v0:审批卡片 → ✅ → 执行任务闭环
 - [x] v1:三路雷达 cron/launchd 接入,审批回传,周一 digest
-- [x] v2:SwiftUI 菜单栏 app(看板主窗口 + 快速捕获 + 回收站 + 双语;v2 的 popover 面板已于 v0.48 移除——点菜单栏图标直接打开看板)
+- [x] v2:SwiftUI 菜单栏 app(看板主窗口 + 快速捕获 + 回收站 + 双语)——已冻结:它的活由看板接手;先留着,等 owner 下令再退役
+- [x] 架构基线(当前大版本——看页首 Release 徽章):SQLite 唯一真源、Dock 壳里的网页看板 + 录制/字幕开关、合并即发版即部署、质量仪表作为合并硬门、版本号由 git tag 铸出。大白话说明见 [CHANGELOG.md](CHANGELOG.md) `[Unreleased]`;总设计与终态验收清单见 [docs/design/vnext2-plan.md](docs/design/vnext2-plan.md)
 - [ ] v3:iOS 遥控器(`ios/` 为占位)
 
 进行中与接下来的方向,见 [docs/ROADMAP.md](docs/ROADMAP.md)。
@@ -182,7 +203,7 @@ Slack 雷达(含 self-DM 快速捕获)是跨平台的捕获入口;审批统一�
 | [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md) / [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md) | 可选的 Slack / Gmail 接入 |
 | [docs/SANITIZATION.md](docs/SANITIZATION.md) | 出处说明:这份公开导出相对私有仓库做了哪些脱敏 |
 
-私有版设计文档(`docs/design/`)含真实使用数据,公开导出中已移除,仅留说明。
+设计文档([docs/design/](docs/design/README.md))记录意图与 owner 决策——lane 语义、v-next-2 总设计与终态验收清单;行为契约本身仍在 [docs/CONTRACT.md](docs/CONTRACT.md)。
 
 ### 目录结构
 
