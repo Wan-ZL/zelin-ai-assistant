@@ -18,7 +18,7 @@ bash mac/build.sh
 # 3. Run the app against entirely fictional data — no keys, no recording:
 python3 scripts/demo_seed.py /tmp/assistant-demo
 AIASSISTANT_HOME=/tmp/assistant-demo \
-  "mac/build/Zelin's AI Assistant.app/Contents/MacOS/ZelinAIEngineer"
+  "mac/build/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
 ```
 
 The demo seeder writes a fake `state/dashboard.json` with every card type and edge state visible; [docs/DEMO.md](docs/DEMO.md) documents the `--scene` flags and the screenshot/recording workflow. Launch the binary directly as shown — `open` does not pass environment variables, so the app would silently fall back to the default home and show "dashboard missing".
@@ -64,10 +64,10 @@ CI additionally runs the **QA merge gates** (per-function complexity, CRAP, cove
 
 `shell/Sources/main.swift` 的连接序（CONTRACT §54.2）没有 Swift 测试靶，改动它时手动过一遍（每条 ≤1 分钟）：
 
-1. **attach**：server agent 在班（`launchctl print gui/$UID/com.zelin.aiassistant.server` 退出 0、`curl -s 127.0.0.1:47820/api/health` 有答）→ `open "shell/build/Zelin AI Board.app"` → 看板直接出现；`~/Library/Logs/zelin-ai-assistant/board-shell.log` **没有**新的 `spawn` 横幅。
+1. **attach**：server agent 在班（`launchctl print gui/$UID/com.zelin.aiassistant.server` 退出 0、`curl -s 127.0.0.1:47820/api/health` 有答）→ `open "shell/build/Zelin's AI Assistant.app"` → 看板直接出现；`~/Library/Logs/zelin-ai-assistant/board-shell.log` **没有**新的 `spawn` 横幅。
 2. **launchd 已加载但端口没答话**：`launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server` 后 1 秒内 `open` 壳 → 壳等 ≤10 s 后照常加载（log 里一行 `… is loaded in launchd — waiting, not spawning`），期间 `pgrep -fl "python3 -m server"` 只有 launchd 那一个进程。
 3. **失败弹窗**：`launchctl bootout gui/$UID/com.zelin.aiassistant.server` 再把 `defaults write com.zelin.ai-board serverRepo /nonexistent` → `open` 壳 → 弹窗第一条是 `launchctl kickstart -k gui/$UID/com.zelin.aiassistant.server`，注明 label 未加载 → `bash install.sh`。完事 `defaults delete com.zelin.ai-board serverRepo && bash install.sh`。
-4. **名字**：Dock、窗口标题、app 菜单都读 "Zelin's AI Assistant (Board)"；`osascript -e 'id of app "Zelin AI Board"'` 仍是 `com.zelin.ai-board`。
+4. **名字**（§54 名字互换）：Dock、窗口标题、app 菜单都读 "Zelin's AI Assistant"；`osascript -e 'id of app "Zelin's AI Assistant"'` 是 `com.zelin.ai-board`（旧菜单栏 app 是 "Zelin's AI Assistant (old)" / `com.zelin.ai-engineer`）。
 
 ## Project rules
 

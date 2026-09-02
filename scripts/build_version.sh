@@ -7,7 +7,7 @@
 # stdout: exactly one line, the version. stderr: what was tried. Exit 1 = no
 # answer — callers FAIL the build instead of shipping the Info.plist
 # placeholder (2026-09-02, v0.48.21 first contact: install.sh's ui step built
-# and installed a "Zelin AI Board.app" reporting 0.1.0 because the build script
+# and installed a shell bundle (then "Zelin AI Board.app") reporting 0.1.0 because the build script
 # swallowed the stamper's stderr and kept the placeholder when VERSION came
 # back empty).
 #

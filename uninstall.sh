@@ -12,8 +12,12 @@
 #      the same distinctive tokens install.sh writes; all other lines kept
 #   3. quit the menu-bar app and stop the screenpipe recording engine
 #   4. remove the app bundle(s) from /Applications and ~/Applications — the
-#      legacy menu-bar app AND the board shell "Zelin AI Board.app" (§54;
-#      install.sh's ui step installs it)
+#      board shell "Zelin's AI Assistant.app" (§54; install.sh's ui step
+#      installs it), the legacy menu-bar app at "Zelin's AI Assistant (old).app"
+#      (its home since the §54 name swap) and, for pre-swap installs, a legacy
+#      bundle still under the product name or the shell still under
+#      "Zelin AI Board.app" — each matched by bundle id, so a stranger under
+#      one of these names is left alone
 #   5. remove the root-owned pipeline master copy (or print the sudo command)
 #
 # What it KEEPS by default (printed with the exact removal command for each):
@@ -35,9 +39,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 LA_DIR="$HOME/Library/LaunchAgents"
-APP_NAME="Zelin's AI Assistant"
+APP_NAME="Zelin's AI Assistant (old)"  # the legacy menu-bar app after the §54 name swap
 APP_BUNDLE_ID="com.zelin.ai-engineer"   # CONTRACT §12 — deliberately unchanged
-SHELL_APP_NAME="Zelin AI Board"         # CONTRACT §54 — bundle folder of the board shell
+SHELL_APP_NAME="Zelin's AI Assistant"   # CONTRACT §54 — the board shell (= the product)
+SHELL_BUNDLE_ID="com.zelin.ai-board"
+PREVIOUS_SHELL_APP_NAME="Zelin AI Board"   # the shell's folder before the swap (≤ v0.48.29)
 PIPELINE_MASTER="/Library/Application Support/ZelinAIAssistant"
 POINTER_DIR="$HOME/Library/Application Support/ZelinAIAssistant"
 
@@ -198,10 +204,27 @@ fi
 # --------------------------------------------------------------------------
 echo ""
 echo "==> 4. app bundle(s)"
-remove_path "/Applications/$APP_NAME.app"
-remove_path "$HOME/Applications/$APP_NAME.app"
-remove_path "/Applications/$SHELL_APP_NAME.app"
-remove_path "$HOME/Applications/$SHELL_APP_NAME.app"
+# remove_app <path> <accepted bundle id>...: only OUR bundles go — the same
+# folder name has meant different apps across the §54 swap, so the id decides.
+remove_app() {
+    p="$1"; shift
+    [ -e "$p" ] || { info "not present (nothing to do): $p"; return 0; }
+    have="$(plutil -extract CFBundleIdentifier raw "$p/Contents/Info.plist" 2>/dev/null || true)"
+    for want in "$@"; do
+        if [ "$have" = "$want" ]; then remove_path "$p"; return 0; fi
+    done
+    info "left alone (bundle id ${have:-unreadable} is not ours): $p"
+}
+for _dir in "/Applications" "$HOME/Applications"; do
+    # the product path: the shell, or a legacy bundle never moved (pre-swap install)
+    remove_app "$_dir/$SHELL_APP_NAME.app" "$SHELL_BUNDLE_ID" "$APP_BUNDLE_ID"
+    remove_app "$_dir/$APP_NAME.app" "$APP_BUNDLE_ID"                     # legacy at "(old)"
+    remove_app "$_dir/$PREVIOUS_SHELL_APP_NAME.app" "$SHELL_BUNDLE_ID"    # shell never renamed (≤ v0.48.29)
+    # a legacy copy install.sh parked when both existed and rm was refused (root-owned)
+    for p in "$_dir/$APP_NAME "*.app; do
+        [ -e "$p" ] && remove_app "$p" "$APP_BUNDLE_ID"
+    done
+done
 
 # --------------------------------------------------------------------------
 echo ""

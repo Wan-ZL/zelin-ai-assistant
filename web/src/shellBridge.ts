@@ -1,4 +1,4 @@
-// 壳桥客户端（CONTRACT §61.1）：看板跑在 "Zelin AI Board" 壳（WKWebView）里时，
+// 壳桥客户端（CONTRACT §61.1）：看板跑在 "Zelin's AI Assistant" 壳（WKWebView，shell/）里时，
 // `window.webkit.messageHandlers.zaiShell` 存在——header 的「录制」「实时字幕」两个
 // 开关经它驱动壳内的原生引擎；壳在状态变化时 dispatch `zai-shell-state` window 事件
 // 推回同一份快照。普通浏览器会话里没有这个 handler → hasShellBridge() 为 false，

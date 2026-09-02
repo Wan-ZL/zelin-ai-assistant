@@ -42,12 +42,15 @@ INIT_PATH = PKG_DIR / "__init__.py"
 PIN_PLACEHOLDER = "0.0.0-dev"
 PIN_FILES = ("ios/project.yml", "ios/ZelinAIAssistant.xcodeproj/project.pbxproj")
 
-# §54 看板壳的 bundle 目录名（id com.zelin.ai-board）——与 install.sh UI_APP_NAME /
+# §54 看板壳的 bundle 目录名（壳即产品，owner 2026-09-02）——与 install.sh UI_APP_NAME /
 # shell/build.sh APP_NAME 逐字一致（tests/test_version_resolution.py 钉住漂移）。
+# 同一路径在换名前住的是旧菜单栏 app（id com.zelin.ai-engineer，install.sh 把它
+# 搬去 "(old)"），所以认壳只认 bundle id，不认目录名。
 # doctor 的 `board app version` 行拿装好的壳的 CFBundleShortVersionString 与
 # act.__version__ 对账：壳是 install.sh ui 步用 shell/build.sh 盖章的，两边不一致
 # = 壳没盖章（占位版本出厂）或壳是旧代码的构建。
-BOARD_APP_NAME = "Zelin AI Board.app"
+BOARD_APP_NAME = "Zelin's AI Assistant.app"
+BOARD_BUNDLE_ID = "com.zelin.ai-board"
 
 _TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _DESCRIBE_RE = re.compile(r"^(v?\d+\.\d+\.\d+)-(\d+)-g[0-9a-fA-F]+$")
@@ -216,24 +219,30 @@ def board_app_candidates() -> List[Path]:
     return [Path("/Applications") / BOARD_APP_NAME, Path.home() / "Applications" / BOARD_APP_NAME]
 
 
-def _bundle_version(plist: Path) -> Optional[str]:
-    """Info.plist 的 CFBundleShortVersionString；读不了 / 坏 plist / 没有键 → None。"""
+def _bundle_info(plist: Path) -> dict:
+    """Info.plist 的 CFBundleShortVersionString / CFBundleIdentifier（键 ``version`` /
+    ``bundle_id``）；读不了 / 坏 plist / 没有键 → 该键 None。"""
     try:
         with open(plist, "rb") as fh:
-            found = plistlib.load(fh).get("CFBundleShortVersionString")
+            info = plistlib.load(fh)
     except Exception:  # noqa: BLE001 - a corrupt plist is a finding, not a doctor crash
-        return None
-    text = str(found).strip() if found is not None else ""
-    return text or None
+        info = {}
+    out = {}
+    for key, name in (("CFBundleShortVersionString", "version"), ("CFBundleIdentifier", "bundle_id")):
+        found = info.get(key) if isinstance(info, dict) else None
+        text = str(found).strip() if found is not None else ""
+        out[name] = text or None
+    return out
 
 
 def installed_board_app(candidates: Optional[Iterable[Path]] = None) -> Optional[dict]:
-    """第一个装着的壳 bundle → ``{"path", "version"}``（version None = Info.plist 读不出
-    CFBundleShortVersionString）；一个都没装（或非 macOS）→ None。永不抛。"""
+    """第一个装着的 bundle → ``{"path", "version", "bundle_id"}``（version None = Info.plist
+    读不出 CFBundleShortVersionString；bundle_id 让 board_app_row 认出换名前留在产品路径上
+    的旧 app）；一个都没装（或非 macOS）→ None。永不抛。"""
     for app in (board_app_candidates() if candidates is None else candidates):
         plist = Path(app) / "Contents" / "Info.plist"
         if plist.is_file():
-            return {"path": str(app), "version": _bundle_version(plist)}
+            return {"path": str(app), **_bundle_info(plist)}
     return None
 
 
@@ -245,9 +254,29 @@ def status_probe() -> dict:
     return st
 
 
+def _board_app_problem(name: str, bundle_id: Optional[str], found: Optional[str], running: str) -> Optional[str]:
+    """board_app_row 的 warn 文案（None = 没问题）：旧 app 占着产品路径 → 认 id 不认版本；
+    读不出版本 → 没盖章；版本不一致 → 占位出厂或旧代码。"""
+    from act.lib.failures import pick  # 同层；懒 import 让 `import act` 只带本模块
+    if bundle_id and bundle_id != BOARD_BUNDLE_ID:
+        # 换名前的旧 app 还占着产品路径（install.sh 的搬移没发生 / 没成功）——不是壳的版本问题
+        return pick("%s 是 %s，不是看板壳——旧 app 还占着产品路径，壳没装上（install.sh 应把它搬去 \"(old)\"）",
+                    "%s is %s, not the board shell — the legacy app still holds the product path, the shell "
+                    "is not installed (install.sh moves it to \"(old)\")") % (name, bundle_id)
+    if not found:
+        return pick("%s 的 Info.plist 读不出 CFBundleShortVersionString——壳的构建没盖章",
+                    "%s: Info.plist has no readable CFBundleShortVersionString — the shell build was not stamped") % name
+    if found != running:
+        return pick("%s 报 v%s，daemons 跑的是 v%s——壳是没盖章的构建（占位版本出厂）或旧代码的构建",
+                    "%s reports v%s but the daemons run v%s — the shell was built unstamped (placeholder shipped) "
+                    "or from older code") % (name, found, running)
+    return None
+
+
 def board_app_row(app: Optional[dict], running: str) -> Optional[Tuple[str, str, str]]:
     """doctor 行 ``board app version``（§25 add-only）的 (status, detail, fix)；没装壳 → None
-    （不出行）。壳的 CFBundleShortVersionString == ``running``（act.__version__）→ ok；读不出
+    （不出行）。产品路径上的 bundle 不是 ``BOARD_BUNDLE_ID``（§54 名字互换前的旧 app）→ warn
+    点名；壳的 CFBundleShortVersionString == ``running``（act.__version__）→ ok；读不出
     → warn；不一致 → warn（2026-09-02：auto-deploy 装的壳报 Info.plist 占位 0.1.0，daemons
     报 0.48.21）。**永不 fail**——同 doctor_row：§56.3 回滚判据不能被一个版本标签翻。"""
     from act.lib.failures import pick  # 同层；懒 import 让 `import act` 只带本模块
@@ -255,19 +284,11 @@ def board_app_row(app: Optional[dict], running: str) -> Optional[Tuple[str, str,
         return None
     name = Path(str(app.get("path") or "")).name or BOARD_APP_NAME
     found = app.get("version")
-    fix = pick("bash install.sh --non-interactive（重建 + 重装壳）或等下一次 auto-deploy",
-               "bash install.sh --non-interactive (rebuilds + reinstalls the shell) or wait for the next deploy")
-    if not found:
-        return ("warn",
-                pick("%s 的 Info.plist 读不出 CFBundleShortVersionString——壳的构建没盖章",
-                     "%s: Info.plist has no readable CFBundleShortVersionString — the shell build was not stamped") % name,
-                fix)
-    if found != running:
-        return ("warn",
-                pick("%s 报 v%s，daemons 跑的是 v%s——壳是没盖章的构建（占位版本出厂）或旧代码的构建",
-                     "%s reports v%s but the daemons run v%s — the shell was built unstamped (placeholder shipped) "
-                     "or from older code") % (name, found, running),
-                fix)
+    problem = _board_app_problem(name, app.get("bundle_id"), found, running)
+    if problem:
+        return ("warn", problem,
+                pick("bash install.sh --non-interactive（重建 + 重装壳）或等下一次 auto-deploy",
+                     "bash install.sh --non-interactive (rebuilds + reinstalls the shell) or wait for the next deploy"))
     return ("ok", "v%s (%s == act.__version__)" % (found, name), "")
 
 

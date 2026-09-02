@@ -11,9 +11,11 @@
 #   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
 #   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
 #      npm ci + npm run build) and the board shell app (shell/build.sh) and
-#      install the bundle to /Applications — each half skipped with a warn
-#      when its toolchain (node+npm / swiftc) is absent, never a failure.
-#      Never touches the legacy "Zelin's AI Assistant.app".
+#      install the bundle to /Applications as "Zelin's AI Assistant.app" —
+#      each half skipped with a warn when its toolchain (node+npm / swiftc)
+#      is absent, never a failure. A legacy menu-bar bundle found on that
+#      path is moved to "Zelin's AI Assistant (old).app" first (§54 name
+#      swap) — moved, never edited or deleted.
 #   5. install launchd agents (actd + board server resident, radars periodic):
 #      render the plist templates (replace /Users/YOURUSERNAME placeholders
 #      with the real python/repo/home paths + the login shell's claude
@@ -327,11 +329,12 @@ install_mac_app() {
 #          `skipped_tcc` (node lacks Full Disk Access in a launchd session;
 #          not something a rollback can fix).
 #   shell: macOS + swiftc present → `bash shell/build.sh` (ZAI_PORT stamped
-#          from config.yaml server.port) → stage-then-swap the bundle into
+#          from config.yaml server.port) → retire a legacy bundle sitting at
+#          the product path (below) → stage-then-swap the bundle into
 #          $UI_APPS_DIR (default /Applications; ~/Applications when not
-#          writable). Bundle folder/id stay "Zelin AI Board.app" /
-#          com.zelin.ai-board (§54 — TCC keys on the id); the display name is
-#          the product's.
+#          writable) as "Zelin's AI Assistant.app" → remove the pre-rename
+#          "Zelin AI Board.app" (only when its id is com.zelin.ai-board).
+#          The id stays com.zelin.ai-board (§54 — its own TCC identity).
 # Combined step status: any fail → fail; else any ok → ok; else skipped_tcc
 # if the web half was TCC-refused; else skipped.
 # Missing toolchain is `skipped` + a warn, NEVER a deploy failure (mirror of
@@ -342,16 +345,35 @@ install_mac_app() {
 # and land in the report detail. Output goes to ui-build.log (capped), the
 # tail is echoed on failure.
 #
-# The legacy "Zelin's AI Assistant.app" is NEVER touched here (D3):
-# tests/test_install_ui_step.py plants one next to the shell bundle and
-# asserts it is byte-identical afterwards.
-UI_APP_NAME="Zelin AI Board"            # bundle folder — id com.zelin.ai-board (§54)
+# The name swap (owner 2026-09-02; §54): the shell takes the product name, the
+# legacy menu-bar app becomes "Zelin's AI Assistant (old)". Bundles are told
+# apart by CFBundleIdentifier, never by folder name:
+#   - a com.zelin.ai-engineer bundle at the product path is MOVED (same-dir
+#     rename, never copied/deleted) to "… (old).app" before the shell lands;
+#     if "(old)" already exists that copy is kept and the redundant bundle at
+#     the product path is deleted — or, when rm is refused (a .pkg install is
+#     root-owned), parked beside it under a timestamped "(old …)" name;
+#   - the legacy bundle's contents are never edited: its Info.plist is inside
+#     the code-signature seal, and tccd validates that seal on every request
+#     (an edited plist = the grants stop being honored). The "(old)" display
+#     name is stamped at build time by mac/Info.plist instead, so it arrives
+#     with the next legacy build/update (mac/build.sh, .pkg, Sparkle);
+#   - the pre-rename "Zelin AI Board.app" is removed after the new bundle is
+#     in place, only when its id is com.zelin.ai-board; a com.zelin.ai-board
+#     bundle at the product path is simply replaced (that is the upgrade).
+# tests/test_install_ui_step.py pins every branch with fake bundles.
+UI_APP_NAME="Zelin's AI Assistant"      # bundle folder — id com.zelin.ai-board (§54)
+UI_BUNDLE_ID="com.zelin.ai-board"
 UI_EXEC_NAME="ZelinAIBoard"             # CFBundleExecutable → pgrep/pkill -x
+UI_LEGACY_APP_NAME="Zelin's AI Assistant (old)"   # the frozen menu-bar app (D3, R2.2.4)
+UI_LEGACY_BUNDLE_ID="com.zelin.ai-engineer"       # CONTRACT §12 — deliberately unchanged
+UI_PREVIOUS_APP_NAME="Zelin AI Board"   # the shell's folder name before the swap (≤ v0.48.29)
 UI_APPS_DIR="${AIASSISTANT_UI_APPS_DIR:-/Applications}"   # test seam
 UI_BUDGET_S="${AIASSISTANT_UI_BUDGET:-600}"
 UI_LOG="$HOME/Library/Logs/zelin-ai-assistant/ui-build.log"
 UI_LOG_CAP_BYTES=1048576                # 防腐 #4：日志必有帽
 UI_SHELL_INSTALLED=0
+UI_LEGACY_MOVED=0                       # this run moved the legacy app to "(old)"
 UI_APP_PATH=""
 UI_WEB_STATUS=""; UI_WEB_DETAIL=""
 UI_SHELL_STATUS=""; UI_SHELL_DETAIL=""
@@ -519,6 +541,66 @@ ui_web_failed() { # $1=step name $2=rc
     UI_WEB_STATUS=fail; UI_WEB_DETAIL="web fail ($1 exit $2)"
 }
 
+# CFBundleIdentifier of a .app (empty when the plist is missing/unreadable).
+ui_bundle_id() { # $1=.app path
+    plutil -extract CFBundleIdentifier raw "$1/Contents/Info.plist" 2>/dev/null || true
+}
+
+# Move a legacy (com.zelin.ai-engineer) bundle off the product path in $1 so
+# the shell can take it (§54 name swap). Only ever a same-directory rename —
+# that needs write on the directory, not on the bundle, so a root-owned .pkg
+# install moves too. Returns non-zero only when the product path is still
+# blocked by a legacy bundle afterwards; the caller's writability check then
+# reroutes to ~/Applications. Never edits the bundle (signature seal).
+ui_retire_legacy_app() { # $1=apps dir
+    _product="$1/$UI_APP_NAME.app"
+    _old="$1/$UI_LEGACY_APP_NAME.app"
+    [ -d "$_product" ] || return 0
+    [ "$(ui_bundle_id "$_product")" = "$UI_LEGACY_BUNDLE_ID" ] || return 0
+    if [ ! -d "$_old" ]; then
+        if mv "$_product" "$_old" 2>>"$UI_LOG"; then
+            ok "ui: legacy app moved aside: $_old (bundle id $UI_LEGACY_BUNDLE_ID kept; the \"(old)\" display name arrives with its next build)"
+            UI_LEGACY_MOVED=1
+            return 0
+        fi
+        warn "ui: could not move the legacy app to \"$_old\" — see $UI_LOG"
+        info "  fix: mv \"$_product\" \"$_old\"   # then bash install.sh"
+        return 1
+    fi
+    # both exist: keep the "(old)" copy; the one on the product path is redundant.
+    # Rename first (cannot half-fail), then best-effort delete the parked copy.
+    _parked="$1/$UI_LEGACY_APP_NAME $(date +%Y%m%d-%H%M%S).app"
+    if ! mv "$_product" "$_parked" 2>>"$UI_LOG"; then
+        warn "ui: a legacy app sits on the product path and \"$_old\" already exists — could not move it aside; see $UI_LOG"
+        info "  fix: sudo rm -rf \"$_product\"   # \"$_old\" is the copy that stays"
+        return 1
+    fi
+    if rm -rf "$_parked" 2>>"$UI_LOG" && [ ! -e "$_parked" ]; then
+        ok "ui: removed a second legacy bundle from the product path (\"$_old\" kept)"
+    else
+        warn "ui: a second legacy bundle was parked as \"$_parked\" (root-owned — rm refused); \"$_old\" is the copy that stays"
+        info "  fix: sudo rm -rf \"$_parked\""
+    fi
+    return 0
+}
+
+# Remove the shell's pre-rename bundle "Zelin AI Board.app" (≤ v0.48.29) from
+# $1 after the new bundle is installed — only when it really is the shell
+# (id com.zelin.ai-board); anything else under that name is left alone.
+ui_remove_previous_shell() { # $1=apps dir
+    _prev="$1/$UI_PREVIOUS_APP_NAME.app"
+    [ -d "$_prev" ] || return 0
+    if [ "$(ui_bundle_id "$_prev")" != "$UI_BUNDLE_ID" ]; then
+        info "ui: $_prev is not the board shell (bundle id differs) — left alone"
+        return 0
+    fi
+    if rm -rf "$_prev" 2>>"$UI_LOG" && [ ! -e "$_prev" ]; then
+        ok "ui: removed the pre-rename shell bundle $_prev"
+    else
+        warn "ui: could not remove the pre-rename shell bundle $_prev — see $UI_LOG"
+    fi
+}
+
 # shell half → UI_SHELL_STATUS / UI_SHELL_DETAIL (+ UI_APP_PATH, UI_SHELL_INSTALLED)
 install_shell_app() {
     UI_SHELL_STATUS=skipped; UI_SHELL_DETAIL=""
@@ -547,10 +629,20 @@ install_shell_app() {
         return 0
     fi
     _dest_dir="$UI_APPS_DIR"
+    # the legacy app may still own the product path (§54 name swap) — move it
+    # to "(old)" first; if that fails the writability test below reroutes.
+    [ -w "$_dest_dir" ] && ui_retire_legacy_app "$_dest_dir"
     if [ ! -w "$_dest_dir" ] || { [ -e "$_dest_dir/$UI_APP_NAME.app" ] && [ ! -w "$_dest_dir/$UI_APP_NAME.app" ]; }; then
         warn "ui: $_dest_dir not writable — installing the shell app to ~/Applications"
         _dest_dir="$HOME/Applications"
         mkdir -p "$_dest_dir"
+        ui_retire_legacy_app "$_dest_dir"
+    fi
+    if [ -d "$_dest_dir/$UI_APP_NAME.app" ] && [ "$(ui_bundle_id "$_dest_dir/$UI_APP_NAME.app")" = "$UI_LEGACY_BUNDLE_ID" ]; then
+        # the move above failed and reported why; never rm a legacy bundle
+        warn "ui: the legacy app still occupies $_dest_dir/$UI_APP_NAME.app — shell not installed"
+        UI_SHELL_STATUS=fail; UI_SHELL_DETAIL="shell fail (legacy app still on the product path in $_dest_dir)"
+        return 0
     fi
     # Stage-then-swap (mac/build.sh precedent): a failed copy must never leave
     # a half-bundle in place; the rm+mv window is near-instant. ditto keeps
@@ -567,9 +659,12 @@ install_shell_app() {
     mv "$_staged" "$_dest_dir/$UI_APP_NAME.app"
     UI_APP_PATH="$_dest_dir/$UI_APP_NAME.app"
     UI_SHELL_INSTALLED=1
+    ui_remove_previous_shell "$_dest_dir"
+    [ "$_dest_dir" = "$UI_APPS_DIR" ] || ui_remove_previous_shell "$UI_APPS_DIR"
     _shell_s=$(( $(ui_now) - _t0 ))
     UI_SHELL_STATUS=ok
     UI_SHELL_DETAIL="shell ok (${_shell_s}s → $UI_APP_PATH)"
+    [ "$UI_LEGACY_MOVED" -eq 1 ] && UI_SHELL_DETAIL="$UI_SHELL_DETAIL; legacy app moved to \"$UI_LEGACY_APP_NAME.app\""
     ok "ui: board shell built + installed to $UI_APP_PATH (${_shell_s}s)"
     if pgrep -x "$UI_EXEC_NAME" >/dev/null 2>&1; then
         if [ "$NON_INTERACTIVE" -eq 1 ]; then
@@ -1488,10 +1583,12 @@ cat <<'EOF'
         granted it in System Settings > Privacy > Full Disk Access. There is no
         launchd radar agent to manage: just grant that access and the ingest
         chain picks up the vault.
- 4. The board app "Zelin's AI Assistant (Board)" (bundle: Zelin AI Board.app) is
-    in /Applications (or ~/Applications); the board server runs as launchd agent
-    com.zelin.aiassistant.server on http://127.0.0.1:<server.port, default 47820>/.
-    The legacy menu-bar app "Zelin's AI Assistant.app" is left as it was (D3).
+ 4. The app "Zelin's AI Assistant" (bundle: Zelin's AI Assistant.app, the board
+    shell) is in /Applications (or ~/Applications); the board server runs as
+    launchd agent com.zelin.aiassistant.server on
+    http://127.0.0.1:<server.port, default 47820>/.
+    The legacy menu-bar app now lives at "Zelin's AI Assistant (old).app" (D3;
+    same bundle id, so its permissions carried over).
  5. First card in 5 minutes: docs/INSTALL.md →「第一张卡（5 分钟）」。
     menu-bar icon → quick capture → approve ✅ → a reviewable draft arrives minutes later
     (needs only claude + API key — no screenpipe/Obsidian material required).

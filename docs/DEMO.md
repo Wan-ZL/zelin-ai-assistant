@@ -25,7 +25,7 @@ pkill -x ZelinAIEngineer || true
 # 4. 启动 app 指向 demo 目录
 #    ⚠️ 必须直接跑 bundle 里的二进制 —— `open` 不会把环境变量传给 app 进程，
 #    AIASSISTANT_HOME 会静默丢失、app 读到的还是 ~/Projects/zelin-ai-assistant。
-AIASSISTANT_HOME=/tmp/assistant-demo "/Applications/Zelin's AI Assistant.app/Contents/MacOS/ZelinAIEngineer"
+AIASSISTANT_HOME=/tmp/assistant-demo "/Applications/Zelin's AI Assistant (old).app/Contents/MacOS/ZelinAIEngineer"
 ```
 
 app 每 5s 重读 dashboard.json，重跑 seeder 后最多等 5s 界面就换过来。

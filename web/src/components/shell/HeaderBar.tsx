@@ -53,7 +53,7 @@ export function HeaderBar({ searchSlot }: HeaderBarProps) {
       </div>
       <div className="shell-search-slot">{searchSlot ?? null}</div>
       <div className="shell-header-right">
-        {/* §61：录制 / 实时字幕 开关——只在 "Zelin AI Board" 壳里渲染（普通浏览器无桥 → null） */}
+        {/* §61：录制 / 实时字幕 开关——只在 shell/ 壳（"Zelin's AI Assistant"）里渲染（普通浏览器无桥 → null） */}
         <ShellControls />
         {/* 回收站入口：TrashPage 只有 ?page=trash 深链——壳层导航走整页 <a>（同 trash-back-link 约定） */}
         <a

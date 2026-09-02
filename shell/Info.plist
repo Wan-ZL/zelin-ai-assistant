@@ -6,15 +6,18 @@
 	<string>ZelinAIBoard</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.zelin.ai-board</string>
-	<!-- Names (CONTRACT §54 / vnext2-plan §8): the bundle FOLDER stays
-	     "Zelin AI Board.app" and the id stays com.zelin.ai-board for now
-	     (TCC grants key on the id); what the user sees — Dock, window title,
-	     app menu — reads as part of the product. The final swap (shell takes
-	     "Zelin's AI Assistant", legacy becomes "(old)") happens at P8. -->
+	<!-- Names (CONTRACT §54; owner 2026-09-02): this shell IS the product, so
+	     the bundle folder and every visible name read "Zelin's AI Assistant";
+	     the legacy menu-bar app moved to "Zelin's AI Assistant (old)". The id
+	     deliberately stays com.zelin.ai-board — a TCC identity separate from
+	     the legacy com.zelin.ai-engineer, whose grants (Screen Recording,
+	     Microphone, Documents) stay with the legacy app until P8; two bundles
+	     sharing one id would fight over LaunchServices registration and TCC
+	     attribution. -->
 	<key>CFBundleName</key>
-	<string>Zelin's AI Assistant (Board)</string>
+	<string>Zelin's AI Assistant</string>
 	<key>CFBundleDisplayName</key>
-	<string>Zelin's AI Assistant (Board)</string>
+	<string>Zelin's AI Assistant</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleIconFile</key>

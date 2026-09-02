@@ -23,8 +23,16 @@ build.sh; nothing real is installed, /Applications is a temp dir):
     exits 0 without producing its artifact) → `ui=fail`;
   - the per-command wall-clock budget (AIASSISTANT_UI_BUDGET) turns a hung
     build into `ui=fail` (exit 124) instead of eating the auto-deploy watchdog;
-  - the legacy "Zelin's AI Assistant.app" next to the shell bundle is never
-    touched (D3) — byte-identical and same mtime afterwards;
+  - the §54 name swap (owner 2026-09-02): the shell installs as
+    "Zelin's AI Assistant.app"; a legacy bundle (id com.zelin.ai-engineer)
+    found on that path is MOVED to "Zelin's AI Assistant (old).app" — a
+    same-directory rename, its files byte-identical and same mtime afterwards
+    (never edited: the Info.plist is inside the signature seal); when "(old)"
+    already exists that copy is kept and the redundant product-path bundle is
+    removed (parked under a timestamped name when rm is refused); the
+    pre-rename "Zelin AI Board.app" is removed after the install only when its
+    id is com.zelin.ai-board; a com.zelin.ai-board bundle on the product path
+    is simply replaced; nothing is ever moved or deleted by folder name alone;
   - `--pkg-postinstall` skips the whole step;
   - failed_deploy_steps counts `ui=fail`, never `ui=skipped`;
   - relaunch rule: only --non-interactive, only after this run installed a
@@ -47,7 +55,13 @@ _DARWIN = sys.platform == "darwin"
 # the shape install.sh's shell half needs from the real system (never faked)
 _SYSTEM_TOOLS = ("bash", "sh", "uname", "date", "tail", "head", "wc", "cut", "cksum",
                  "mv", "rm", "mkdir", "dirname", "basename", "sed", "cat", "sleep",
-                 "tr", "grep", "awk", "env", "ditto", "cp", "touch", "rsync")
+                 "tr", "grep", "awk", "env", "ditto", "cp", "touch", "rsync", "plutil")
+
+SHELL_APP = "Zelin's AI Assistant.app"            # install.sh UI_APP_NAME (§54)
+LEGACY_OLD_APP = "Zelin's AI Assistant (old).app"  # install.sh UI_LEGACY_APP_NAME
+PREVIOUS_SHELL_APP = "Zelin AI Board.app"          # install.sh UI_PREVIOUS_APP_NAME (≤ v0.48.29)
+SHELL_ID = "com.zelin.ai-board"
+LEGACY_ID = "com.zelin.ai-engineer"
 
 FAKE_NPM = r"""#!/bin/bash
 # fake npm: record "npm <args> cwd=<pwd>", honour FAKE_NPM_CI_RC / FAKE_NPM_BUILD_RC,
@@ -73,7 +87,7 @@ printf 'shell/build.sh %s ZAI_PORT=%s\n' "$*" "${ZAI_PORT:-}" >> "$CALLS"
 if [ "${1:-}" = "--check-toolchain" ]; then exit "${FAKE_SHELL_TOOLCHAIN_RC:-0}"; fi
 if [ "${FAKE_SHELL_RC:-0}" -ne 0 ]; then echo "swiftc: boom" >&2; exit "$FAKE_SHELL_RC"; fi
 if [ "${FAKE_SHELL_NO_BUNDLE:-0}" -ne 1 ]; then
-    app="$here/build/Zelin AI Board.app"
+    app="$here/build/Zelin's AI Assistant.app"
     rm -rf "$app"; mkdir -p "$app/Contents/MacOS"
     printf '<plist><dict><key>CFBundleIdentifier</key><string>com.zelin.ai-board</string></dict></plist>\n' > "$app/Contents/Info.plist"
     printf 'build-%s\n' "${FAKE_SHELL_BUILD_TAG:-1}" > "$app/Contents/MacOS/ZelinAIBoard"
@@ -81,15 +95,31 @@ fi
 exit 0
 """
 
+_FNS = ("report_step", "failed_deploy_steps", "ui_run_with_timeout", "ui_log_begin",
+        "ui_log_tail", "ui_now", "ui_web_build_dir", "ui_sync_web_sources",
+        "ui_log_says_tcc", "ui_web_failed", "install_web_ui", "ui_bundle_id",
+        "ui_retire_legacy_app", "ui_remove_previous_shell", "install_shell_app",
+        "install_ui", "relaunch_shell_app")
+
+
+def _plant_bundle(app_dir, bundle_id, payload="payload\n", mtime=1_700_000_000):
+    """A fake .app with a real (minimal) Info.plist carrying `bundle_id`; returns
+    (Info.plist path, executable path) with a fixed mtime for the untouched check."""
+    plist = app_dir / "Contents" / "Info.plist"
+    exe = app_dir / "Contents" / "MacOS" / "bin"
+    exe.parent.mkdir(parents=True)
+    plist.write_text('<plist><dict><key>CFBundleIdentifier</key><string>%s</string></dict></plist>\n'
+                     % bundle_id, encoding="utf-8")
+    exe.write_text(payload, encoding="utf-8")
+    for p in (plist, exe):
+        os.utime(p, (mtime, mtime))
+    return plist, exe
+
+
 # pgrep/pkill/open fakes for the relaunch rule: a flag file = "the app is running"
 FAKE_PGREP = "#!/bin/bash\nprintf 'pgrep %s\\n' \"$*\" >> \"$CALLS\"\n[ -f \"$RUNNING_FLAG\" ]\n"
 FAKE_PKILL = "#!/bin/bash\nprintf 'pkill %s\\n' \"$*\" >> \"$CALLS\"\nrm -f \"$RUNNING_FLAG\"\n"
 FAKE_OPEN = "#!/bin/bash\nprintf 'open %s\\n' \"$*\" >> \"$CALLS\"\nexit \"${FAKE_OPEN_RC:-0}\"\n"
-
-_FNS = ("report_step", "failed_deploy_steps", "ui_run_with_timeout", "ui_log_begin",
-        "ui_log_tail", "ui_now", "ui_web_build_dir", "ui_sync_web_sources",
-        "ui_log_says_tcc", "ui_web_failed", "install_web_ui", "install_shell_app",
-        "install_ui", "relaunch_shell_app")
 
 
 def _install_sh_text():
@@ -121,12 +151,11 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.home.mkdir()
         self.apps = self.tmp / "Applications"
         self.apps.mkdir()
-        # the frozen legacy app (D3) — must come out byte-identical
-        self.legacy = self.apps / "Zelin's AI Assistant.app" / "Contents" / "Info.plist"
-        self.legacy.parent.mkdir(parents=True)
-        self.legacy.write_text("legacy-untouched\n", encoding="utf-8")
-        os.utime(self.legacy, (1_700_000_000, 1_700_000_000))
-        self.legacy_snapshot = (self.legacy.read_bytes(), self.legacy.stat().st_mtime)
+        # the frozen legacy app (D3) already moved to "(old)" — must come out
+        # byte-identical whatever the ui step does
+        self.legacy_plist, self.legacy_exe = _plant_bundle(self.apps / LEGACY_OLD_APP, LEGACY_ID,
+                                                            payload="legacy-untouched\n")
+        self.legacy_snapshot = self._snapshot(self.legacy_plist, self.legacy_exe)
 
         self.repo = self.tmp / "repo"
         (self.repo / "web").mkdir(parents=True)
@@ -200,10 +229,19 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertEqual(len(lines), 1, report)
         return lines[0]
 
+    @staticmethod
+    def _snapshot(*paths):
+        return [(p.read_bytes(), p.stat().st_mtime) for p in paths]
+
     def _assert_legacy_untouched(self):
-        self.assertEqual((self.legacy.read_bytes(), self.legacy.stat().st_mtime),
-                         self.legacy_snapshot,
-                         "the frozen legacy app must never be touched by the ui step (D3)")
+        self.assertEqual(self._snapshot(self.legacy_plist, self.legacy_exe), self.legacy_snapshot,
+                         "the frozen legacy app must never be edited by the ui step (D3; signature seal)")
+
+    def _shell_bundle_ok(self, apps_dir=None, tag="1"):
+        app = (apps_dir or self.apps) / SHELL_APP
+        self.assertTrue((app / "Contents" / "MacOS" / "ZelinAIBoard").exists(), "bundle installed into the apps dir")
+        self.assertEqual((app / "Contents" / "MacOS" / "ZelinAIBoard").read_text(encoding="utf-8"), "build-%s\n" % tag)
+        self.assertFalse(((apps_dir or self.apps) / (".%s.staged" % SHELL_APP)).exists(), "staging dir swapped away")
 
     # -- the happy path -------------------------------------------------------- #
 
@@ -225,9 +263,8 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertFalse((self.repo / "web" / "node_modules").exists(), "npm ci never writes into the checkout")
         if _DARWIN:
             self.assertIn("shell ok (", ui)
-            self.assertTrue((self.apps / "Zelin AI Board.app" / "Contents" / "MacOS"
-                             / "ZelinAIBoard").exists(), "bundle installed into the apps dir")
-            self.assertFalse((self.apps / ".Zelin AI Board.app.staged").exists(), "staging dir swapped away")
+            self.assertNotIn("legacy app moved", ui, "nothing sat on the product path")
+            self._shell_bundle_ok()
             self.assertTrue(any("shell/build.sh  ZAI_PORT=47820" in c for c in calls), calls)
         else:
             self.assertIn("shell skipped (not macOS)", ui)
@@ -264,14 +301,140 @@ class InstallUiStepTestCase(unittest.TestCase):
     def test_reinstall_replaces_the_bundle_wholesale(self):
         self._with_toolchains(web=False)
         self._run(env={"FAKE_SHELL_BUILD_TAG": "one"})
-        stale = self.apps / "Zelin AI Board.app" / "Contents" / "Resources" / "stale.txt"
+        stale = self.apps / SHELL_APP / "Contents" / "Resources" / "stale.txt"
         stale.parent.mkdir(parents=True)
         stale.write_text("from an older build\n", encoding="utf-8")
         self._run(env={"FAKE_SHELL_BUILD_TAG": "two"})
-        binary = self.apps / "Zelin AI Board.app" / "Contents" / "MacOS" / "ZelinAIBoard"
-        self.assertEqual(binary.read_text(encoding="utf-8"), "build-two\n")
+        self._shell_bundle_ok(tag="two")
         self.assertFalse(stale.exists(), "stage-then-swap must not merge into the old bundle")
         self._assert_legacy_untouched()
+
+    # -- the §54 name swap: legacy bundle on the product path ---------------------- #
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_legacy_app_on_the_product_path_is_moved_to_old_then_shell_installed(self):
+        # the live 2026-09-02 shape: only the legacy app is installed, under the product name
+        shutil.rmtree(self.apps / LEGACY_OLD_APP)
+        plist, exe = _plant_bundle(self.apps / SHELL_APP, LEGACY_ID, payload="legacy-v0.48.0\n")
+        before = self._snapshot(plist, exe)
+        self._with_toolchains(web=False)
+        out, report = self._run()
+        ui = self._ui_line(report)
+        self.assertTrue(ui.startswith("ui=ok:"), ui)
+        self.assertIn('legacy app moved to "%s"' % LEGACY_OLD_APP, ui)
+        self.assertIn("legacy app moved aside", out)
+        self._shell_bundle_ok()
+        moved = self.apps / LEGACY_OLD_APP
+        self.assertEqual(self._snapshot(moved / "Contents" / "Info.plist", moved / "Contents" / "MacOS" / "bin"),
+                         before, "a same-directory rename: bytes and mtimes untouched (signature seal)")
+        self.assertEqual(sorted(p.name for p in self.apps.iterdir()), sorted([SHELL_APP, LEGACY_OLD_APP]))
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_legacy_absent_is_a_plain_install(self):
+        shutil.rmtree(self.apps / LEGACY_OLD_APP)
+        self._with_toolchains(web=False)
+        _, report = self._run()
+        ui = self._ui_line(report)
+        self.assertTrue(ui.startswith("ui=ok:"), ui)
+        self.assertNotIn("legacy", ui)
+        self.assertEqual([p.name for p in self.apps.iterdir()], [SHELL_APP])
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_both_legacy_copies_present_keeps_old_and_removes_the_product_path_one(self):
+        # "(old)" exists from an earlier run AND a legacy bundle came back to the
+        # product path (an old-layout .pkg / Sparkle re-install): the "(old)" copy
+        # is the one that stays, the redundant one is removed, the shell lands.
+        _plant_bundle(self.apps / SHELL_APP, LEGACY_ID, payload="legacy-came-back\n")
+        self._with_toolchains(web=False)
+        out, report = self._run()
+        ui = self._ui_line(report)
+        self.assertTrue(ui.startswith("ui=ok:"), ui)
+        self.assertNotIn("legacy app moved", ui, "nothing was moved to (old) — it was already there")
+        self.assertIn("second legacy bundle", out)
+        self._shell_bundle_ok()
+        self._assert_legacy_untouched()
+        self.assertEqual(sorted(p.name for p in self.apps.iterdir()), sorted([SHELL_APP, LEGACY_OLD_APP]),
+                         "no parked copy when rm succeeds")
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_both_present_and_rm_refused_parks_the_redundant_copy_beside(self):
+        # a root-owned (.pkg) bundle cannot be deleted without sudo — but a same-dir
+        # rename works; the redundant copy is parked under a timestamped name and
+        # the shell still lands (deploy proceeds, the warn names the sudo cleanup)
+        _plant_bundle(self.apps / SHELL_APP, LEGACY_ID, payload="root-owned\n")
+        locked = [self.apps / SHELL_APP / "Contents", self.apps / SHELL_APP / "Contents" / "MacOS"]
+        for d in locked:
+            d.chmod(0o555)
+
+        def unlock():
+            for d in self.apps.glob("*/Contents/MacOS"):
+                d.chmod(0o755)
+            for d in self.apps.glob("*/Contents"):
+                d.chmod(0o755)
+        self.addCleanup(unlock)
+        self._with_toolchains(web=False)
+        out, report = self._run()
+        ui = self._ui_line(report)
+        self.assertTrue(ui.startswith("ui=ok:"), ui)
+        self.assertIn("parked as", out)
+        self.assertIn("sudo rm -rf", out)
+        self._shell_bundle_ok()
+        self._assert_legacy_untouched()
+        parked = [p.name for p in self.apps.iterdir() if p.name not in (SHELL_APP, LEGACY_OLD_APP)]
+        self.assertEqual(len(parked), 1, parked)
+        self.assertRegex(parked[0], r"^Zelin's AI Assistant \(old\) \d{8}-\d{6}\.app$")
+        self.assertEqual((self.apps / parked[0] / "Contents" / "MacOS" / "bin").read_text(encoding="utf-8"),
+                         "root-owned\n")
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_previous_board_bundle_is_removed_after_the_install_only_when_it_is_the_shell(self):
+        _plant_bundle(self.apps / PREVIOUS_SHELL_APP, SHELL_ID, payload="old-shell\n")
+        self._with_toolchains(web=False)
+        out, _ = self._run()
+        self.assertFalse((self.apps / PREVIOUS_SHELL_APP).exists(), "the ≤ v0.48.29 shell bundle goes")
+        self.assertIn("removed the pre-rename shell bundle", out)
+        self._shell_bundle_ok()
+        self._assert_legacy_untouched()
+        # a stranger under that name (not our bundle id) is left alone
+        _plant_bundle(self.apps / PREVIOUS_SHELL_APP, "com.example.other", payload="not-ours\n")
+        out, _ = self._run()
+        self.assertTrue((self.apps / PREVIOUS_SHELL_APP).exists())
+        self.assertIn("left alone", out)
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_previous_board_bundle_stays_when_the_install_fails(self):
+        _plant_bundle(self.apps / PREVIOUS_SHELL_APP, SHELL_ID, payload="old-shell\n")
+        self._with_toolchains(web=False)
+        _, report = self._run(env={"FAKE_SHELL_RC": "3"})
+        self.assertIn("shell fail", self._ui_line(report))
+        self.assertTrue((self.apps / PREVIOUS_SHELL_APP).exists(), "nothing new landed → the old bundle is still the product")
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_shell_on_the_product_path_is_replaced_not_retired(self):
+        _plant_bundle(self.apps / SHELL_APP, SHELL_ID, payload="previous shell build\n")
+        self._with_toolchains(web=False)
+        out, report = self._run(env={"FAKE_SHELL_BUILD_TAG": "new"})
+        self.assertTrue(self._ui_line(report).startswith("ui=ok:"))
+        self.assertNotIn("legacy", out)
+        self._shell_bundle_ok(tag="new")
+        self.assertEqual(sorted(p.name for p in self.apps.iterdir()), sorted([SHELL_APP, LEGACY_OLD_APP]))
+
+    @unittest.skipUnless(_DARWIN, "the shell half only builds on macOS")
+    def test_legacy_on_the_product_path_that_cannot_move_is_shell_fail_never_rm(self):
+        # the apps dir is writable but the rename is refused (a read-only sub-mount
+        # or ACL) → the legacy bundle is never rm'ed and the shell is not installed
+        # over it; the half is `fail` with the mv command in the output
+        shutil.rmtree(self.apps / LEGACY_OLD_APP)
+        plist, exe = _plant_bundle(self.apps / SHELL_APP, LEGACY_ID)
+        before = self._snapshot(plist, exe)
+        self._write_exec(self.fakebin / "mv", "#!/bin/bash\necho 'mv: refused' >&2\nexit 1\n")
+        self._with_toolchains(web=False)
+        out, report = self._run()
+        ui = self._ui_line(report)
+        self.assertIn("shell fail (legacy app still on the product path", ui)
+        self.assertIn("could not move the legacy app", out)
+        self.assertEqual(self._snapshot(plist, exe), before)
+        self.assertEqual([p.name for p in self.apps.iterdir()], [SHELL_APP])
 
     # -- skipped, never fail ----------------------------------------------------- #
 
@@ -283,7 +446,7 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertIn("shell skipped", ui)
         self.assertIn("WARN:", out)
         self.assertEqual(self._calls(), [], "nothing may be invoked without a toolchain")
-        self.assertFalse((self.apps / "Zelin AI Board.app").exists())
+        self.assertFalse((self.apps / SHELL_APP).exists())
         self._assert_legacy_untouched()
 
     def test_web_only_toolchain_is_ok_with_shell_skipped(self):
@@ -358,7 +521,7 @@ class InstallUiStepTestCase(unittest.TestCase):
         self.assertTrue(ui.startswith("ui=fail:"), ui)
         self.assertIn("shell fail (shell/build.sh exit 3)", ui)
         self.assertIn("web ok", ui)
-        self.assertTrue((self.apps / "Zelin AI Board.app").exists(),
+        self.assertTrue((self.apps / SHELL_APP).exists(),
                         "a failed build leaves the previously installed bundle alone")
         self._assert_legacy_untouched()
 
@@ -410,7 +573,7 @@ class InstallUiStepTestCase(unittest.TestCase):
         opens = [c for c in calls if c.startswith("open ")]
         self.assertEqual(len(opens), 1, calls)
         self.assertTrue(opens[0].startswith("open -g "), "relaunch must not steal focus")
-        self.assertIn("Zelin AI Board.app", opens[0])
+        self.assertIn(SHELL_APP, opens[0])
         self.assertLess(calls.index("pkill -TERM -x ZelinAIBoard"), calls.index(opens[0]))
 
     @unittest.skipUnless(_DARWIN, "relaunch needs an installed bundle (macOS half)")

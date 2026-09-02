@@ -1,15 +1,22 @@
 #!/bin/bash
-# Build + assemble the "Zelin's AI Assistant" menu-bar app (.app bundle).
+# Build + assemble the LEGACY "Zelin's AI Assistant (old)" menu-bar app (.app
+# bundle) — frozen since D3 (docs/design/vnext2-plan.md); the product is the
+# board shell (shell/build.sh).
 #
 # Usage:
 #   ./build.sh                    # compile + assemble the bundle under mac/build/
 #   ./build.sh --install          # also copy the bundle to /Applications (fallback ~/Applications)
 #   ./build.sh --check-toolchain  # only verify swiftc presence + version, then exit
 #
-# Naming (v0.4 §12 — MUST stay in sync with install.sh / glue / launchd):
-#   bundle:     Zelin's AI Assistant.app
-#   executable: ZelinAIEngineer
-#   bundle id:  com.zelin.ai-engineer
+# Naming (v0.4 §12; §54 name swap 2026-09-02 — MUST stay in sync with
+# install.sh / uninstall.sh / mac/package.sh / release.yml / vault-sync.sh):
+#   bundle:     Zelin's AI Assistant (old).app   (the product name went to the shell;
+#                                                install.sh moves an installed legacy
+#                                                bundle to this name — this script
+#                                                builds and installs straight to it)
+#   executable: ZelinAIEngineer                  (unchanged)
+#   bundle id:  com.zelin.ai-engineer            (unchanged — TCC grants key on it)
+#   display:    Zelin's AI Assistant (old)       (mac/Info.plist, inside the seal)
 #   (launchd label + AIASSISTANT_HOME env var name intentionally unchanged.)
 set -euo pipefail
 
@@ -49,8 +56,9 @@ if [ "${1:-}" = "--check-toolchain" ]; then
     if check_toolchain; then exit 0; else exit 1; fi
 fi
 
-APP_NAME="Zelin's AI Assistant"
+APP_NAME="Zelin's AI Assistant (old)"
 EXEC_NAME="ZelinAIEngineer"
+BUNDLE_ID="com.zelin.ai-engineer"   # == mac/Info.plist CFBundleIdentifier (never changes, §12)
 # all module files in Sources/ compile as ONE module; only main.swift may hold
 # top-level statements (the bootstrap), per swiftc rules.
 SRC_DIR="$SCRIPT_DIR/Sources"
@@ -270,7 +278,9 @@ if [ "$INSTALL" -eq 1 ]; then
         if pgrep -x "$EXEC_NAME" >/dev/null 2>&1; then
             WAS_RUNNING=1
             echo "==> Quitting the running $APP_NAME instance"
-            osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+            # by bundle id, not by name: the running copy may still sit under the
+            # pre-swap folder name (§54), and an unknown name makes AppleScript ask
+            osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
             for _ in 1 2 3 4 5 6 7 8 9 10; do
                 pgrep -x "$EXEC_NAME" >/dev/null 2>&1 || break
                 sleep 0.5

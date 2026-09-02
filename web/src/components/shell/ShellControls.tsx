@@ -1,5 +1,5 @@
 // 壳内原生开关组（CONTRACT §61.2）：只在 `window.webkit.messageHandlers.zaiShell`
-// 存在（看板跑在 "Zelin AI Board" 壳里）时渲染「录制」「实时字幕」；普通浏览器
+// 存在（看板跑在 shell/ 壳（"Zelin's AI Assistant"）里）时渲染「录制」「实时字幕」；普通浏览器
 // 会话整组不渲染（连占位都没有）。挂载即开始监听壳推送 + 拉一次快照；语言切换
 // 同步给壳（悬浮窗/通知文案跟随，§61.1 setLanguage）。
 import { useEffect } from "react";

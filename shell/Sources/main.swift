@@ -1,6 +1,7 @@
-// main.swift — "Zelin AI Board" 壳 app（AppKit + WKWebView）的 bootstrap + AppDelegate
-// 显示名 "Zelin's AI Assistant (Board)"，bundle 仍是 Zelin AI Board.app /
-// com.zelin.ai-board（最终换名等 P8，见 docs/design/vnext2-plan.md §8；CONTRACT §54）。
+// main.swift — "Zelin's AI Assistant" 壳 app（AppKit + WKWebView）的 bootstrap + AppDelegate
+// 壳即产品（owner 2026-09-02）：bundle "Zelin's AI Assistant.app"、显示名同名；
+// bundle id 仍是 com.zelin.ai-board（与旧 app 的 com.zelin.ai-engineer 各持各的
+// TCC 身份；旧 app 装机版改名 "Zelin's AI Assistant (old)"，CONTRACT §54）。
 //
 // 职责刻意做薄：解析 PORT/HOME/SERVER_REPO → 探活 /api/board → **连接**
 // launchd 托管的 server（com.zelin.aiassistant.server，install.sh 渲染/加载）→
@@ -38,7 +39,7 @@ enum ShellConfig {
             as? String, !n.isEmpty {
             return n
         }
-        return "Zelin's AI Assistant (Board)"
+        return "Zelin's AI Assistant"
     }()
 
     /// PORT：env ZAI_PORT → defaults serverPort → Info.plist ZAIServerPort

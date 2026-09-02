@@ -14,8 +14,11 @@ tests/integration/test_version_git_fixture.py）。钉住的行为：
   - doctor `board app version` 行（2026-09-02 首次实战：auto-deploy 装的壳报 Info.plist
     占位 0.1.0）：没装壳 = 不出行、壳版本 == act.__version__ = OK、不一致 = WARN
     （修法指向 install.sh --non-interactive / 下一次 deploy）、读不出 = WARN；永不 FAIL；
-    `installed_board_app` 按 /Applications → ~/Applications 找第一个 bundle；
-    BOARD_APP_NAME 与 install.sh UI_APP_NAME / shell/build.sh APP_NAME 逐字一致。
+    `installed_board_app` 按 /Applications → ~/Applications 找第一个 bundle，带 bundle_id；
+    产品路径上的 bundle 不是 com.zelin.ai-board（换名前的旧 app 还没被 install.sh 搬去
+    "(old)"，§54 名字互换）= WARN 点名「不是看板壳」，不是版本文案；
+    BOARD_APP_NAME（"Zelin's AI Assistant.app"）与 install.sh UI_APP_NAME / shell/build.sh
+    APP_NAME 逐字一致。
 """
 import os
 import plistlib
@@ -237,37 +240,37 @@ class BoardAppVersionRowTestCase(unittest.TestCase):
         self.assertEqual([r.name for r in self.rows({})], ["version"])
 
     def test_placeholder_shipped_is_warn_pointing_at_install_sh(self):
-        r = self.board({"path": "/Applications/Zelin AI Board.app", "version": "0.1.0"})
+        r = self.board({"path": "/Applications/Zelin's AI Assistant.app", "version": "0.1.0"})
         self.assertEqual(r.status, doctor.WARN)
-        self.assertIn("Zelin AI Board.app", r.detail)
+        self.assertIn("Zelin's AI Assistant.app", r.detail)
         self.assertIn("v0.1.0", r.detail)
         self.assertIn("v0.48.21", r.detail)
         self.assertIn("install.sh --non-interactive", r.fix)
         self.assertIn("deploy", r.fix)
 
     def test_matching_shell_is_ok(self):
-        r = self.board({"path": "/Applications/Zelin AI Board.app", "version": "0.48.21"})
+        r = self.board({"path": "/Applications/Zelin's AI Assistant.app", "version": "0.48.21"})
         self.assertEqual(r.status, doctor.OK)
         self.assertIn("v0.48.21", r.detail)
         self.assertEqual(r.fix, "")
 
     def test_running_version_is_stamp_first_then_computed_like_resolve(self):
         # no stamp: the daemons derive via git → the shell must match THAT
-        self.assertEqual(self.board({"path": "/x/Zelin AI Board.app", "version": "0.48.21+2"},
+        self.assertEqual(self.board({"path": "/x/Zelin's AI Assistant.app", "version": "0.48.21+2"},
                                     stamp=None, computed="0.48.21+2").status, doctor.OK)
         # stamp present and different from the checkout: the stamp is what runs
-        self.assertEqual(self.board({"path": "/x/Zelin AI Board.app", "version": "0.48.20"},
+        self.assertEqual(self.board({"path": "/x/Zelin's AI Assistant.app", "version": "0.48.20"},
                                     stamp="0.48.20", computed="0.48.21").status, doctor.OK)
 
     def test_unreadable_version_is_warn(self):
-        r = self.board({"path": "/Applications/Zelin AI Board.app", "version": None})
+        r = self.board({"path": "/Applications/Zelin's AI Assistant.app", "version": None})
         self.assertEqual(r.status, doctor.WARN)
         self.assertIn("CFBundleShortVersionString", r.detail)
         self.assertIn("install.sh", r.fix)
 
     def test_row_never_fails(self):
-        for app in ({"path": "/a/Zelin AI Board.app", "version": "9.9.9"},
-                    {"path": "/a/Zelin AI Board.app", "version": None},
+        for app in ({"path": "/a/Zelin's AI Assistant.app", "version": "9.9.9"},
+                    {"path": "/a/Zelin's AI Assistant.app", "version": None},
                     {"path": "", "version": ""}):
             self.assertNotEqual(self.board(app).status, doctor.FAIL, app)
 
@@ -279,14 +282,33 @@ class BoardAppVersionRowTestCase(unittest.TestCase):
         (second / "Contents").mkdir(parents=True)
         with open(second / "Contents" / "Info.plist", "wb") as fh:
             plistlib.dump({"CFBundleShortVersionString": "0.48.21", "CFBundleVersion": "0.48.21"}, fh)
-        self.assertEqual(ver.installed_board_app([first, second]), {"path": str(second), "version": "0.48.21"})
+        self.assertEqual(ver.installed_board_app([first, second]),
+                         {"path": str(second), "version": "0.48.21", "bundle_id": None})
         (first / "Contents").mkdir(parents=True)
         (first / "Contents" / "Info.plist").write_bytes(b"not a plist")
-        self.assertEqual(ver.installed_board_app([first, second]), {"path": str(first), "version": None},
+        self.assertEqual(ver.installed_board_app([first, second]),
+                         {"path": str(first), "version": None, "bundle_id": None},
                          "the first existing bundle wins even when its plist is corrupt (that IS the finding)")
         with open(first / "Contents" / "Info.plist", "wb") as fh:
-            plistlib.dump({"CFBundleVersion": "1"}, fh)
-        self.assertEqual(ver.installed_board_app([first, second])["version"], None)
+            plistlib.dump({"CFBundleVersion": "1", "CFBundleIdentifier": "com.zelin.ai-engineer"}, fh)
+        found = ver.installed_board_app([first, second])
+        self.assertEqual((found["version"], found["bundle_id"]), (None, "com.zelin.ai-engineer"))
+
+    def test_legacy_app_on_the_product_path_is_warn_naming_the_id_not_a_version_gripe(self):
+        # §54 name swap: before install.sh moved it, the legacy menu-bar app sat at
+        # /Applications/Zelin's AI Assistant.app — a matching version there proves nothing
+        r = self.board({"path": "/Applications/Zelin's AI Assistant.app", "version": "0.48.21",
+                        "bundle_id": "com.zelin.ai-engineer"})
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("com.zelin.ai-engineer", r.detail)
+        self.assertIn("(old)", r.detail)
+        self.assertNotIn("v0.48.21", r.detail)
+        self.assertIn("install.sh", r.fix)
+        # the shell's own id (or an unreadable one, add-only: older probes had no key) → version logic
+        self.assertEqual(self.board({"path": "/Applications/Zelin's AI Assistant.app", "version": "0.48.21",
+                                     "bundle_id": "com.zelin.ai-board"}).status, doctor.OK)
+        self.assertEqual(self.board({"path": "/Applications/Zelin's AI Assistant.app", "version": "0.48.21",
+                                     "bundle_id": None}).status, doctor.OK)
 
     def test_bundle_name_matches_install_sh_and_shell_build(self):
         install = (REPO / "install.sh").read_text(encoding="utf-8")
@@ -295,6 +317,10 @@ class BoardAppVersionRowTestCase(unittest.TestCase):
         self.assertTrue(ver.BOARD_APP_NAME.endswith(".app"))
         self.assertTrue(re.search(r'^UI_APP_NAME="%s"' % re.escape(stem), install, re.M), "install.sh UI_APP_NAME drifted")
         self.assertTrue(re.search(r'^APP_NAME="%s"' % re.escape(stem), build, re.M), "shell/build.sh APP_NAME drifted")
+        self.assertTrue(re.search(r'^UI_BUNDLE_ID="%s"' % re.escape(ver.BOARD_BUNDLE_ID), install, re.M),
+                        "install.sh UI_BUNDLE_ID drifted")
+        self.assertIn("<string>%s</string>" % ver.BOARD_BUNDLE_ID,
+                      (REPO / "shell" / "Info.plist").read_text(encoding="utf-8"))
         self.assertEqual([str(p.name) for p in ver.board_app_candidates()], [ver.BOARD_APP_NAME] * 2)
 
 

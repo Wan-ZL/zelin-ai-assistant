@@ -109,10 +109,10 @@ bash scripts/dev-preview.sh              # builds web/ on first run, seeds demo 
 # ② Real data — after `bash install.sh` has run once (or with AIASSISTANT_HOME set):
 bash scripts/dev-preview.sh --real
 
-# ③ Native window — "Zelin's AI Assistant (Board)": `bash install.sh` builds web/dist,
+# ③ Native window — the "Zelin's AI Assistant" app (shell/): `bash install.sh` builds web/dist,
 #    builds the thin shell and installs it to /Applications, and hosts the board
 #    server as launchd agent com.zelin.aiassistant.server (CONTRACT §54). Dev loop:
-bash shell/build.sh && open "shell/build/Zelin AI Board.app"   # connects to the running server
+bash shell/build.sh && open "shell/build/Zelin's AI Assistant.app"   # connects to the running server
 ```
 
 Building the web UI needs Node.js LTS — `dev-preview.sh` runs `npm install && npm run build` automatically when `web/dist` is missing; `install.sh` does the same (`npm ci` only when the lockfile changed) and skips the UI with a warning when node or swiftc is absent. The app shell is ad-hoc signed: building it yourself needs no Apple developer account; a copy downloaded from the internet needs a one-time right-click → Open (Gatekeeper).

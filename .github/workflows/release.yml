@@ -178,7 +178,7 @@ jobs:
         # ditto (not zip) preserves resource forks / bundle metadata correctly.
         # App name contains an apostrophe — always reference it via a quoted variable.
         run: |
-          APP="Zelin's AI Assistant.app"
+          APP="Zelin's AI Assistant (old).app"   # mac/build.sh APP_NAME (the legacy app; §54)
           ZIP="ZelinAIAssistant-${GITHUB_REF_NAME}-macos.zip"
           cd mac/build
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
