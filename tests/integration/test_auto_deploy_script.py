@@ -24,19 +24,39 @@ check-runs JSON），只有 scripts/auto-deploy.sh 是真的（逐字拷进夹�
     daemon 也 `failed` 时算 pre-existing；
   - install 失败 / doctor 出现**新增** FAIL → git reset --hard 回旧 sha + 再装 +
     rolled_back + failed_sha 记账，下一轮对同一 sha 不再重试，--force 才重试；
+  - **settle-before-verdict**（首次实战 2026-09-01 的假阳性回滚）：装后 doctor
+    判决是重试环（默认 3 次、间隔 AUTODEPLOY_DOCTOR_SETTLE），只有撑到**最后
+    一次**的新增 FAIL 才回滚；瞬态 FAIL（重启后 daemon 还在 settle / EPERM 窗口）
+    自愈 → 照常 deployed；判决只看最后一次（早轮的名字不进 detail）；
   - 部署前已红的 doctor 项不归咎新版本（deployed，detail 点名 pre-existing）；
   - doctor 自身跑不出 JSON（import 崩 / 打印垃圾）= 致命而非 pre-existing：基线
-    阶段就回滚且不装新版本；装完后才崩同样回滚；
+    阶段就回滚且不装新版本；装完后**持续**崩同样回滚，瞬态崩走 settle 重试；
   - 脏树拒绝（不动 HEAD、同一 sha 只通知一次）；不在 main 拒绝；
   - 回滚前重验：部署期间 owner 改了 tracked 文件 → 回滚**被拒**（rollback_failed、
     通知、改动保留、HEAD 留在新版本）；install.sh 自己的 +x 位翻转不算改动，照常回滚；
+  - **git 答不上来 ≠ detached**（首次实战：EPERM 窗口里 symbolic-ref/rev-parse
+    全空，误报 detached + 空 sha）：入口与回滚重验都区分 rc>1（git 读不了 checkout
+    → 诚实报错，不 reset）与 rc=1（真 detached）；"checkout left at" 永不插空值；
+  - **store2 迁移感知回滚**：state/store2_truth.json 在本次部署期间出现、或
+    state/store2.db 的 PRAGMA user_version 在部署期间升高（schema bump：标记
+    早已在场，单看标记会漏，#135 review）→ 回滚被拒 + 指向
+    docs/TROUBLESHOOTING.md「store2 回滚」；标记先在且 schema 没动 → 照常回滚；
+    判决在**冻结的账本**上取：先 bootout actd（kill 会被 KeepAlive 复活）再重
+    采样（正好在停止那一刻落盘的迁移也被抓住），拒绝路径把 actd bootstrap 回
+    来；user_version 探针答不上来 = unknown = **fail closed** 拒绝，绝不当 0；
+  - write_state / notify 失败时日志行携带子进程异常（首次实战两行 non-fatal
+    全裸，PermissionError 只在 launchd stderr 里）；notify() 吞掉队列写失败只
+    返回 False 的路径同样记行；
   - 每轮都写 last_run（回滚路径、poisoned-sha 跳过也写）；
   - 锁：活 PID 持锁则跳过，死 PID 的锁视为陈旧；
-  - 日志 1 MB 自压；ff-merge 途中脚本自身被替换也照常跑完（main 包裹）。
+  - 日志 1 MB 自压；ff-merge 途中脚本自身被替换（哪怕换成执行即 exit 99 的
+    booby trap）也照常按旧逻辑跑完——main 包裹 + git rename 写文件；推论：
+    第 N 版新增的闸门保护的是 N 之后的部署，永远保护不了部署 N 自己的那一轮。
 """
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -47,7 +67,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "auto-deploy.sh"
 _WIN = sys.platform.startswith("win")
-BUDGET_SECONDS = 180  # 35 runs of real bash+git; ~75 s on a 2024 Mac
+BUDGET_SECONDS = 180  # ~45 runs of real bash+git; ~95 s on a 2024 Mac
 _T0 = time.monotonic()
 
 FAKE_INSTALL = r"""#!/bin/bash
@@ -66,6 +86,32 @@ fi
 # simulate the owner editing a tracked file while the deploy runs / install.sh's own chmod
 [ -n "${FAKE_INSTALL_EDIT:-}" ] && printf 'owner edit mid-deploy\n' >> "$here/README.md"
 [ -n "${FAKE_INSTALL_CHMOD:-}" ] && chmod +x "$here/README.md"
+# simulate the new actd's first pass migrating the registry truth to SQLite
+# (§53 activation happens between the script's "before" sample and any rollback)
+if [ -n "${FAKE_INSTALL_STORE2:-}" ]; then
+    mkdir -p "$here/state"
+    printf '{"activated_at": "2026-09-01T21:07:19Z"}\n' > "$here/state/store2_truth.json"
+fi
+# simulate the new actd bumping the store2 schema on first DB open (#135 shape:
+# the truth marker already exists, only PRAGMA user_version moves)
+if [ -n "${FAKE_INSTALL_STORE2_UV:-}" ]; then
+    mkdir -p "$here/state"
+    python3 - "$here/state/store2.db" "$FAKE_INSTALL_STORE2_UV" <<'EOF'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("PRAGMA user_version=%d" % int(sys.argv[2]))
+con.commit()
+con.close()
+EOF
+fi
+# corrupt the ledger mid-deploy: the rollback-time user_version probe must
+# fail CLOSED (report unknown, refuse) instead of assuming 0
+if [ -n "${FAKE_INSTALL_STORE2_CORRUPT:-}" ]; then
+    mkdir -p "$here/state"
+    printf 'NOT A SQLITE DB' > "$here/state/store2.db"
+fi
+# generic trigger file (the fake git uses it to start failing mid-run)
+[ -n "${FAKE_INSTALL_TOUCH:-}" ] && touch "$FAKE_INSTALL_TOUCH"
 # the restarted actd's heartbeat (§47.4): a NEW pid ($$ of this install run),
 # the checkout's version, phase per FAKE_INSTALL_HEARTBEAT (default idle = one
 # full pass done; "none" = the new daemon never writes one, e.g. dies on import)
@@ -101,6 +147,36 @@ case "$verdict" in
     *)        printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"success"')" \
                      "$(run 2 'Lint (shellcheck + ruff)' completed '"failure"')" ;;
 esac
+exit 0
+"""
+
+FAKE_GIT = r"""#!/bin/bash
+# fake git: once FAKE_GIT_BREAK_FILE exists, symbolic-ref and every HEAD query
+# fail like the live EPERM window (2026-09-01: git went dark mid-rollback and
+# the refusal blamed a phantom 'detached'); everything else passes through.
+set -u
+if [ -n "${FAKE_GIT_BREAK_FILE:-}" ] && [ -f "$FAKE_GIT_BREAK_FILE" ]; then
+    for a in "$@"; do
+        case "$a" in
+            symbolic-ref|HEAD)
+                echo "fatal: Operation not permitted (fixture EPERM)" >&2
+                exit 128 ;;
+        esac
+    done
+fi
+exec @REAL_GIT@ "$@"
+"""
+
+FAKE_LAUNCHCTL = r"""#!/bin/bash
+# fake launchctl: records every call — the REAL one must never run under the
+# tests (it would boot out the owner's live actd). TOCTOU seam: on `bootout`,
+# optionally drop the store2 marker, simulating an actd that finishes its
+# migration at the exact moment the rollback stops it; the frozen re-sample
+# must still catch it.
+[ -n "${FAKE_LAUNCHCTL_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_LAUNCHCTL_LOG"
+if [ "${1:-}" = "bootout" ] && [ -n "${FAKE_LAUNCHCTL_BOOTOUT_MARKER:-}" ]; then
+    printf '{"activated_at": "at-the-stop-point"}\n' > "$FAKE_LAUNCHCTL_BOOTOUT_MARKER"
+fi
 exit 0
 """
 
@@ -140,7 +216,7 @@ def notify(title, body, subtitle=None, req=None, kind=None):
     if path:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("%s|%s\\n" % (title, body))
-    return True
+    return not os.environ.get("FAKE_NOTIFY_RETURN_FALSE")
 '''
 
 
@@ -180,6 +256,12 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         fake_curl = self.bin / "curl"
         fake_curl.write_text(FAKE_CURL, encoding="utf-8")
         fake_curl.chmod(0o755)
+        # fake launchctl ALWAYS shadows the real one: rollback() boots out the
+        # actd label, and on the dev Mac that label is the owner's LIVE daemon
+        self.launchctl_log = self.tmp / "launchctl.log"
+        fake_launchctl = self.bin / "launchctl"
+        fake_launchctl.write_text(FAKE_LAUNCHCTL, encoding="utf-8")
+        fake_launchctl.chmod(0o755)
 
         # bare origin whose HEAD is main, seeded from a scratch clone
         self.origin = self.tmp / "origin.git"
@@ -253,10 +335,12 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             "AUTODEPLOY_LOG_DIR": str(self.logs),
             "AUTODEPLOY_HEARTBEAT_DEADLINE": "1",
             "AUTODEPLOY_INSTALL_TIMEOUT": "30",
+            "AUTODEPLOY_DOCTOR_SETTLE": "0",
             # the fixture origin is a local bare repo, not github.com: name the
             # repo the fake curl "serves" so the CI gate runs like on the owner Mac
             "AUTODEPLOY_CI_REPO": "fixture/repo",
             "FAKE_NOTIFY_LOG": str(self.notify_log),
+            "FAKE_LAUNCHCTL_LOG": str(self.launchctl_log),
             "FAKE_INSTALL_LOG": str(self.install_log),
             "FAKE_DOCTOR_LOG": str(self.doctor_log),
             "FAKE_DOCTOR_PLAN": str(self.doctor_plan),
@@ -291,6 +375,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
     def ci_queries(self):
         return self.curl_log.read_text(encoding="utf-8").splitlines() if self.curl_log.exists() else []
 
+    def launchctl_calls(self):
+        return self.launchctl_log.read_text(encoding="utf-8").splitlines() if self.launchctl_log.exists() else []
+
     def doctor_runs(self):
         return self.doctor_log.read_text(encoding="utf-8").splitlines() if self.doctor_log.exists() else []
 
@@ -301,6 +388,24 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         hb.write_text(json.dumps({"ts": "2026-09-01T00:00:00Z", "phase": phase, "pid": pid,
                                   "interval": 10, "stale_after_s": 90, "version": version}),
                       encoding="utf-8")
+
+    def seed_store2_db(self, user_version):
+        """A store2 ledger left by the daemon running BEFORE the deploy."""
+        db = self.live / "state" / "store2.db"
+        db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(db))
+        con.execute("PRAGMA user_version=%d" % user_version)
+        con.commit()
+        con.close()
+        return db
+
+    def install_fake_git(self):
+        """Shadow git on the script's PATH with the EPERM-window wrapper."""
+        real = shutil.which("git")
+        fake = self.bin / "git"
+        fake.write_text(FAKE_GIT.replace("@REAL_GIT@", real), encoding="utf-8")
+        fake.chmod(0o755)
+        return self.tmp / "git.break"  # tests hand this path to FAKE_GIT_BREAK_FILE
 
     # -- 1. nothing to do ---------------------------------------------------- #
 
@@ -363,16 +468,29 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(self.installs()), 1)
 
     def test_script_replaced_by_the_merge_still_completes(self):
-        # the ff-merge rewrites scripts/auto-deploy.sh on disk mid-run; bash must
-        # already hold the whole file (main "$@" wrapper) and finish normally
-        def touch_script(dev):
+        # the ff-merge rewrites scripts/auto-deploy.sh on disk mid-run; bash
+        # must finish on the OLD logic: the whole file was parsed before main
+        # ran (main "$@" wrapper), every main() path exits without returning
+        # to the reader, and git writes by rename so the running fd keeps the
+        # pre-merge inode. The replacement here is a booby trap that would
+        # exit 99 if ANY line of it executed — which also pins the flip side
+        # (Codex review P1 on #130): guards added in version N protect deploys
+        # FROM N onward, never the deploy OF N itself; no snapshot/exec trick
+        # changes that, because any copy taken before the merge IS the old
+        # script.
+        def swap_script(dev):
             p = dev / "scripts" / "auto-deploy.sh"
-            p.write_text(p.read_text(encoding="utf-8") + "\n# fixture edit\n", encoding="utf-8")
-        target = self.push("0.48.4", extra=touch_script)
+            p.write_text("#!/bin/bash\necho BOOBYTRAP-NEW-SCRIPT-EXECUTED >&2\nexit 99\n",
+                         encoding="utf-8")
+        target = self.push("0.48.4", extra=swap_script)
         proc = self.run_script(doctor_plan=["-", "-"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("BOOBYTRAP", proc.stderr, "no line of the merged-in script may run")
+        self.assertNotIn("BOOBYTRAP", self.log_text())
         self.assertEqual(self.head(), target)
         self.assertEqual(self.state()["status"], "deployed")
+        merged = (self.live / "scripts" / "auto-deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("BOOBYTRAP", merged, "the merge really did replace the script on disk")
 
     # -- 2b. the CI gate (B1) ------------------------------------------------- #
     # ruleset protect-main 是 non-strict：PR head 绿了就能合，合出来的 merge
@@ -582,7 +700,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def test_new_doctor_failure_rolls_back_and_poisons_that_sha(self):
         target = self.push("0.48.4")
-        proc = self.run_script(doctor_plan=["-", "dashboard"])  # green baseline, red after install
+        # green baseline, red after install — and red on every settle retry
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), self.base_sha, "back on the previous commit")
         self.assertEqual(_git(self.live, "symbolic-ref", "--short", "HEAD"), "main")
@@ -621,7 +740,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
 
     def test_force_retries_the_poisoned_sha(self):
         target = self.push("0.48.4")
-        self.run_script(doctor_plan=["-", "dashboard"])
+        self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"])
         self.assertEqual(self.state()["status"], "rolled_back")
         proc = self.run_script("--force", doctor_plan=["-", "-"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -669,8 +788,9 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(self.notifications()), 1)
 
     def test_unparseable_doctor_after_install_rolls_back(self):
+        # 持续 unparseable（每次 settle 重试都崩）才回滚——瞬态崩见 settle 测试
         target = self.push("0.48.4")
-        proc = self.run_script(doctor_plan=["-", "GARBAGE"])
+        proc = self.run_script(doctor_plan=["-", "GARBAGE", "GARBAGE", "GARBAGE"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), self.base_sha)
         st = self.state()
@@ -683,7 +803,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # P1（review）：step 4 的脏树检查到 reset --hard 之间隔着 install + settle +
         # doctor；owner 在这几分钟里改了 tracked 文件，reset 会无声毁掉它（§0.2）。
         target = self.push("0.48.4")
-        proc = self.run_script(doctor_plan=["-", "dashboard"], env={"FAKE_INSTALL_EDIT": "1"})
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_EDIT": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), target, "not reset: the owner's edit would be lost")
         self.assertIn("owner edit mid-deploy", (self.live / "README.md").read_text(encoding="utf-8"))
@@ -701,12 +822,208 @@ class AutoDeployScriptTestCase(unittest.TestCase):
     def test_rollback_ignores_install_sh_own_mode_flips(self):
         # install.sh 的 chmod +x 是它自己的脚印，不是 owner 的工作：不得阻止回滚
         target = self.push("0.48.4")
-        proc = self.run_script(doctor_plan=["-", "dashboard"], env={"FAKE_INSTALL_CHMOD": "1"})
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_CHMOD": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), self.base_sha, "rolled back despite the mode-only change")
         self.assertEqual(self.state()["status"], "rolled_back")
         self.assertEqual(self.state()["failed_sha"], target)
         self.assertEqual(len(self.installs()), 2)
+
+    # -- 3b. 首次实战修的四类 bug（2026-09-01 v0.48.8，§56.3 step 10 修订） ---- #
+    # 实录：install.sh 重启全部 daemon 后 12 s 就取 doctor 判决，撞上 store2 首跑
+    # 迁移 + 外置卷瞬态 EPERM 窗口 → 6 个假「new FAIL」→ 假阳性回滚；回滚重验里
+    # symbolic-ref / rev-parse 全空 → 误报 "HEAD is on 'detached'" + 空 sha（歪打
+    # 正着拦下了会 strand SQLite 账本的回退——本组测试把这份运气变成结构）；
+    # write_state / notify 的失败行不带原因（PermissionError 只在 launchd stderr）。
+
+    def test_transient_doctor_fail_after_install_settles_and_deploys(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "store2,config.yaml", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "a FAIL that clears on retry is settling, not a verdict")
+        st = self.state()
+        self.assertEqual(st["status"], "deployed")
+        self.assertNotIn("failed_sha", st)
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        self.assertEqual(len(self.doctor_runs()), 3, "baseline + first sample + the clean retry")
+        self.assertIn("daemons may still be settling", self.log_text())
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("v0.48.4", notes[0])
+
+    def test_transient_unparseable_doctor_after_install_settles(self):
+        # 装后第一采样 doctor 整个崩（EPERM 窗口里连 import 都可能失败）——基线
+        # 已证明新代码的 doctor 能跑，装后的瞬态崩走同一条 settle 重试路
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "GARBAGE", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertEqual(len(self.installs()), 1)
+
+    def test_persistent_new_fail_verdict_names_only_the_final_run(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "store2", "dashboard", "dashboard"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "still red on the final attempt → rollback")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("dashboard", st["detail"])
+        self.assertNotIn("store2", st["detail"], "a transient first-attempt name is not the verdict")
+        self.assertEqual(len(self.doctor_runs()), 4, "baseline + 3 attempts")
+
+    def test_git_failure_during_rollback_is_reported_as_git_not_detached(self):
+        target = self.push("0.48.4")
+        trigger = self.install_fake_git()
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_GIT_BREAK_FILE": str(trigger),
+                                    "FAKE_INSTALL_TOUCH": str(trigger)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "never resets through a git it cannot trust")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertIn("git cannot read the checkout", st["detail"])
+        self.assertNotIn("detached", st["detail"])
+        self.assertNotIn("detached", self.log_text())
+        self.assertIn("checkout left at unknown", self.log_text(),
+                      "the refusal line never interpolates empty git output")
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        self.assertEqual(len(self.notifications()), 1)
+
+    def test_git_failure_at_entry_is_an_environment_error_not_refused_branch(self):
+        self.push("0.48.4")
+        trigger = self.install_fake_git()
+        trigger.write_text("", encoding="utf-8")  # git is dark from the very first call
+        proc = self.run_script(env={"FAKE_GIT_BREAK_FILE": str(trigger)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.installs(), [])
+        st = self.state()
+        self.assertEqual(st["status"], "failed")
+        self.assertIn("cannot read HEAD", st["detail"])
+        self.assertNotIn("detached", st["detail"])
+        self.assertEqual(self.notifications(), [], "an environment hiccup retries silently")
+
+    def test_store2_truth_appearing_during_the_deploy_refuses_code_rollback(self):
+        # D2 安全网：本次部署里 actd 把卡片真源迁到 SQLite，回退代码会让账本落在
+        # 没有 store2 运行时的版本上——拒绝，并指向 TROUBLESHOOTING 的手动流程
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_STORE2": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "code stays on the new version")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("TROUBLESHOOTING", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("store2", notes[0])
+        self.assertIn("TROUBLESHOOTING", notes[0])
+
+    def test_store2_truth_present_before_the_deploy_rolls_back_normally(self):
+        self.push("0.48.4")
+        marker = self.live / "state" / "store2_truth.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"activated_at": "2026-08-01T00:00:00Z"}\n', encoding="utf-8")
+        self.seed_store2_db(1)  # ledger active and its schema does NOT move this deploy
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha,
+                         "a pre-existing marker + unchanged schema never blocks a rollback")
+        self.assertEqual(self.state()["status"], "rolled_back")
+        self.assertTrue(marker.exists(), "reset --hard does not touch untracked state/")
+
+    def test_store2_schema_bump_during_the_deploy_refuses_code_rollback(self):
+        # #135 review：真源早已是 sqlite（标记先在），新版本首开 DB 把 PRAGMA
+        # user_version 1→2——标记闸门看不见它，但回退代码后旧 store.py 会对每次
+        # registry 调用抛 StoreError（db user_version=2, store2 supports 1）：
+        # 账本数据没丢，actd 却全灭。schema 前进 = 同样拒绝代码回滚。
+        target = self.push("0.48.4")
+        marker = self.live / "state" / "store2_truth.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"activated_at": "2026-08-01T00:00:00Z"}\n', encoding="utf-8")
+        self.seed_store2_db(1)
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_STORE2_UV": "2"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "code stays on the new version")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("user_version 1 -> 2", st["detail"])
+        self.assertIn("TROUBLESHOOTING", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("user_version", notes[0])
+        self.assertIn("TROUBLESHOOTING", notes[0])
+
+    def test_actd_change_landing_at_the_stop_point_still_refuses_rollback(self):
+        # TOCTOU（#130 review P1）：判决前先 bootout actd（kill 会被 KeepAlive
+        # 复活）——正在收尾的迁移若恰好在停止那一刻落盘（fake launchctl 在
+        # bootout 时写标记），冻结后的重采样必须看见它并拒绝；采样后、reset 前
+        # 不得留窗口。拒绝路径还必须把停掉的 actd bootstrap 回来。
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_LAUNCHCTL_BOOTOUT_MARKER":
+                                    str(self.live / "state" / "store2_truth.json")})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "never resets against a ledger that just moved")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertIn("store2", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+        calls = self.launchctl_calls()
+        self.assertTrue(any(c.startswith("bootout") for c in calls), calls)
+        self.assertTrue(any(c.startswith("bootstrap") for c in calls),
+                        "a refusal must restart the actd it stopped: %s" % calls)
+
+    def test_unreadable_user_version_probe_fails_closed(self):
+        # 探针错 ≠ 0（#130 review P1）：EPERM 窗口 / 坏文件里读不出 user_version
+        # 时按「不明」拒绝——当 0 处理会在这 PR 本来要治的那类窗口里静默缴械
+        target = self.push("0.48.4")
+        marker = self.live / "state" / "store2_truth.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('{"activated_at": "2026-08-01T00:00:00Z"}\n', encoding="utf-8")
+        self.seed_store2_db(1)
+        proc = self.run_script(doctor_plan=["-", "dashboard", "dashboard", "dashboard"],
+                               env={"FAKE_INSTALL_STORE2_CORRUPT": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "an unreadable ledger is never assumed safe to strand")
+        st = self.state()
+        self.assertEqual(st["status"], "rollback_failed")
+        self.assertIn("unknown", st["detail"])
+        self.assertIn("TROUBLESHOOTING", st["detail"])
+        self.assertEqual(len(self.installs()), 1, "no rollback install")
+
+    def test_write_state_failure_logs_the_cause(self):
+        (self.live / "state").mkdir(exist_ok=True)
+        (self.live / "state" / "deploy_state.json.tmp").mkdir()  # open(tmp, "w") → IsADirectoryError
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("write_state failed (non-fatal): IsADirectoryError", self.log_text())
+
+    def test_notify_failure_logs_the_cause(self):
+        self.push("0.48.4")
+        (self.live / "README.md").write_text("dirty\n", encoding="utf-8")  # → one notify
+        proc = self.run_script(env={"FAKE_NOTIFY_LOG": str(self.tmp)})  # open(dir, "a") → IsADirectoryError
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("notify failed (non-fatal)", self.log_text())
+        self.assertIn("IsADirectoryError", self.log_text())
+
+    def test_notify_returning_false_logs_the_cause(self):
+        # act.lib.notify.notify() 按内部约定 never raises：队列写失败被吞掉、只返回
+        # False（Codex review P2）——部署脚本的通知是唯一推送通道，静默丢失 = owner
+        # 不知道机器停在坏版本上，所以 False 也必须记一行
+        self.push("0.48.4")
+        (self.live / "README.md").write_text("dirty\n", encoding="utf-8")  # → one notify
+        proc = self.run_script(env={"FAKE_NOTIFY_RETURN_FALSE": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("notify failed (non-fatal)", self.log_text())
+        self.assertIn("returned False", self.log_text())
 
     def test_install_timeout_counts_as_failure(self):
         self.push("0.48.4")
