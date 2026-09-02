@@ -11,7 +11,9 @@
 #   2. remove OUR crontab lines only — matched by the marker tokens below,
 #      the same distinctive tokens install.sh writes; all other lines kept
 #   3. quit the menu-bar app and stop the screenpipe recording engine
-#   4. remove the app bundle(s) from /Applications and ~/Applications
+#   4. remove the app bundle(s) from /Applications and ~/Applications — the
+#      legacy menu-bar app AND the board shell "Zelin AI Board.app" (§54;
+#      install.sh's ui step installs it)
 #   5. remove the root-owned pipeline master copy (or print the sudo command)
 #
 # What it KEEPS by default (printed with the exact removal command for each):
@@ -35,6 +37,7 @@ REPO_ROOT="$SCRIPT_DIR"
 LA_DIR="$HOME/Library/LaunchAgents"
 APP_NAME="Zelin's AI Assistant"
 APP_BUNDLE_ID="com.zelin.ai-engineer"   # CONTRACT §12 — deliberately unchanged
+SHELL_APP_NAME="Zelin AI Board"         # CONTRACT §54 — bundle folder of the board shell
 PIPELINE_MASTER="/Library/Application Support/ZelinAIAssistant"
 POINTER_DIR="$HOME/Library/Application Support/ZelinAIAssistant"
 
@@ -172,7 +175,7 @@ fi
 echo ""
 echo "==> 3. running processes"
 if [ "$DRY" -eq 1 ]; then
-    plan "quit the menu-bar app ($APP_NAME)"
+    plan "quit the menu-bar app ($APP_NAME) and the board shell ($SHELL_APP_NAME)"
     plan "stop the screenpipe recording engine (if running)"
 else
     if command -v osascript >/dev/null 2>&1; then
@@ -180,6 +183,10 @@ else
     fi
     pkill -x ZelinAIEngineer 2>/dev/null || true
     ok "menu-bar app asked to quit"
+    # the board shell handles SIGTERM as a regular quit (it spawns nothing now
+    # that the server is a launchd agent, §54 — unloaded in step 1 above)
+    pkill -TERM -x ZelinAIBoard 2>/dev/null || true
+    ok "board shell asked to quit"
     # char-class avoids pgrep/pkill matching itself (HANDOFF §3)
     if pkill -f "screenpipe.*[r]ecord" 2>/dev/null; then
         ok "screenpipe recording engine stopped"
@@ -193,6 +200,8 @@ echo ""
 echo "==> 4. app bundle(s)"
 remove_path "/Applications/$APP_NAME.app"
 remove_path "$HOME/Applications/$APP_NAME.app"
+remove_path "/Applications/$SHELL_APP_NAME.app"
+remove_path "$HOME/Applications/$SHELL_APP_NAME.app"
 
 # --------------------------------------------------------------------------
 echo ""

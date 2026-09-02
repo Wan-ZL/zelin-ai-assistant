@@ -1,18 +1,23 @@
 #!/bin/bash
-# Build + assemble the "Zelin AI Board" thin shell (.app bundle) — no Xcode project.
+# Build + assemble the board shell (.app bundle) — no Xcode project.
 #
 # Usage:
 #   ./build.sh                    # compile + assemble under shell/build/
 #   ./build.sh --check-toolchain  # only verify swiftc presence + version, then exit
+#   ZAI_PORT=47821 ./build.sh     # also stamp ZAIServerPort (install.sh passes
+#                                 # config.yaml server.port this way, CONTRACT §54)
 #
 # Conventions mirror mac/build.sh (swiftc + hand-assembled bundle + plutil lint
-# + codesign)。差异点：这里是 preview shell —— ad-hoc 签名足够（无 TCC 授权要保），
-# 且 codesign 用 --deep（bundle 里只有一个 Mach-O，没有 Sparkle 嵌套结构要保护）。
+# + codesign)。差异点：ad-hoc 签名（壳不持有任何 TCC 授权——server 自 v0.48.18 起
+# 由 launchd 托管，壳只连接），codesign 用 --deep（bundle 里只有一个 Mach-O）。
+# 不 quit / 不 relaunch / 不装到 /Applications：安装动作归 install.sh 的 `ui` 步
+# （§56.5 的 relaunch 规则住在那里）。
 #
-# Naming:
-#   bundle:     Zelin AI Board.app
-#   executable: ZelinAIBoard
-#   bundle id:  com.zelin.ai-board
+# Naming (CONTRACT §54; vnext2-plan §8 — the final name swap waits for P8):
+#   bundle:       Zelin AI Board.app          (folder name kept — id/TCC continuity)
+#   executable:   ZelinAIBoard
+#   bundle id:    com.zelin.ai-board
+#   display name: Zelin's AI Assistant (Board)  (Info.plist CFBundleDisplayName)
 set -euo pipefail
 
 # --- locate self (worktree-safe, handles spaces) ---
@@ -104,9 +109,19 @@ fi
 # server repo: stamp the ACTUAL repo root this shell is built from（same
 # staged-plist mechanism as the version stamp; 源 Info.plist 留空 = 未解析，
 # 壳在需要 spawn 时礼貌报错而非猜路径）。
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 plutil -replace ZAIServerRepo -string "$REPO_ROOT" "$APP_DIR/Contents/Info.plist"
 echo "    stamped ZAIServerRepo $REPO_ROOT"
+
+# server port（§54）：install.sh 把 config.yaml server.port 经 env ZAI_PORT 交进来；
+# 未设 = 留空 = 壳按 server 侧同一默认 47820 连。只收 1..65535 的整数。
+case "${ZAI_PORT:-}" in
+    ''|*[!0-9]*) ;;
+    *)  if [ "$ZAI_PORT" -ge 1 ] && [ "$ZAI_PORT" -le 65535 ]; then
+            plutil -replace ZAIServerPort -string "$ZAI_PORT" "$APP_DIR/Contents/Info.plist"
+            echo "    stamped ZAIServerPort $ZAI_PORT"
+        fi ;;
+esac
 
 # app icon — 复用主 app 的 AppIcon.icns（构建期已 vendored 进 shell/）
 if [ -f "$SCRIPT_DIR/AppIcon.icns" ]; then
@@ -124,4 +139,4 @@ codesign --force --deep -s - "$APP_DIR" \
 
 echo ""
 echo "DONE. App bundle: $APP_DIR"
-echo "  Launch with: open \"$APP_DIR\""
+echo "  Launch with: open \"$APP_DIR\"   (bash install.sh installs it to /Applications)"

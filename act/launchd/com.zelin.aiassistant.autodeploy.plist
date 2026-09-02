@@ -9,9 +9,11 @@
   require the `ci` check-run on THAT sha to be green (the ruleset is
   non-strict: a merge commit's tree was never tested), fast-forward the
   checkout when the tree is clean, self-check the new deploy agent, run
-  `install.sh --non-interactive` (daemons, cron, config - NEVER the frozen
-  legacy Mac app, s56.5: rebuilding it quits + relaunches the running app and
-  takes screenpipe / live captions down mid-use), wait for the restarted actd
+  `install.sh --non-interactive` (daemons incl. the board server agent, cron,
+  config, AND the board UI: web/dist + shell app via the `ui` step, s56.5 -
+  NEVER the frozen legacy Mac app: rebuilding that one quits + relaunches the
+  running app and takes screenpipe / live captions down mid-use), wait for the
+  restarted actd
   to complete one pass on the new code (state/actd.heartbeat), re-run the
   doctor and roll back to the previous commit if a check that was green is
   now red. Outcome lands in state/deploy_state.json (dashboard key
@@ -70,10 +72,11 @@
              WorkingDirectory no longer points at the repo -->
         <key>PYTHONPATH</key>
         <string>/Users/YOURUSERNAME/Projects/zelin-ai-assistant</string>
-        <!-- install.sh needs git, launchctl, crontab (no swift: this mode
-             never builds the app); the login shell's claude dir stays FIRST
-             like every other agent (install.sh resolves claude for the
-             daemons from it). -->
+        <!-- install.sh needs git, launchctl, crontab, and - for the `ui`
+             step (s56.5) - node/npm (homebrew) + swiftc (xcode-select);
+             both optional: absent = the UI half is skipped, never a failed
+             deploy. The login shell's claude dir stays FIRST like every
+             other agent (install.sh resolves claude for the daemons from it). -->
         <key>PATH</key>
         <string>/Users/YOURUSERNAME/.claude-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Users/YOURUSERNAME/miniconda3/bin:/Users/YOURUSERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>

@@ -13,7 +13,6 @@ docstring:act/lib/platform.py 1
 docstring:act/lib/qr.py 1
 docstring:act/lib/repos.py 1
 docstring:act/lib/sanitize.py 1
-docstring:act/lib/systemd.py 1
 docstring:act/lib/taskscheduler.py 1
 docstring:act/merge_review.py 1
 docstring:act/radar.py 1

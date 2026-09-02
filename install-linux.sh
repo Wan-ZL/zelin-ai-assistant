@@ -13,7 +13,8 @@
 #   3. create state/ and state/inbox/ + seed state/dashboard.json
 #   4. render act/systemd/*.service|*.timer (via `python3 -m act.lib.systemd`)
 #      into ~/.config/systemd/user, then `systemctl --user enable --now` the
-#      resident services (actd + webui) and the radar/digest timers
+#      resident services (actd + webui + the board server, CONTRACT §54) and
+#      the radar/digest timers
 #   5. run the post-install diagnostics (python3 -m act.doctor)
 #
 # Run from anywhere; it locates the repo root via its own path.
@@ -180,12 +181,22 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 4. systemd user units (actd + web dashboard + radar/digest timers)"
+echo "==> 4. systemd user units (actd + web dashboard + board server + radar/digest timers)"
+# §54 board server port (config.yaml server.port, default 47820) — rendered into
+# zelin-server.service as ZAI_PORT; fail-open to the default on probe trouble.
+SERVER_PORT="$( (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -c '
+from act.lib import config
+try:
+    print(int(config.load_config().server_port))
+except Exception:
+    print(config.DEFAULT_SERVER_PORT)') 2>/dev/null )"
+case "$SERVER_PORT" in ''|*[!0-9]*) SERVER_PORT=47820 ;; esac
 if ! command -v systemctl >/dev/null 2>&1; then
     warn "systemctl not found — no systemd user session on this box."
-    info "run the daemon + dashboard directly instead:"
+    info "run the daemon + dashboard + board server directly instead:"
     info "  AIASSISTANT_HOME=$REPO_ROOT $RUNTIME_PY -m act.actd &"
     info "  AIASSISTANT_HOME=$REPO_ROOT $RUNTIME_PY -m act.webui &"
+    info "  AIASSISTANT_HOME=$REPO_ROOT ZAI_PORT=$SERVER_PORT $RUNTIME_PY -m server &"
 else
     mkdir -p "$UNIT_DIR"
     # Render the templates into the user unit dir. act/lib/systemd is the single
@@ -193,7 +204,8 @@ else
     # sed/install drift between "what CI validated" and "what runs here".
     if (cd "$REPO_ROOT" && AIASSISTANT_HOME="$REPO_ROOT" "$RUNTIME_PY" -m act.lib.systemd \
             --python "$RUNTIME_PY" --repo-root "$REPO_ROOT" \
-            --claude-bin-dir "$CLAUDE_BIN_DIR" --out "$UNIT_DIR" >/dev/null); then
+            --claude-bin-dir "$CLAUDE_BIN_DIR" --zai-port "$SERVER_PORT" \
+            --out "$UNIT_DIR" >/dev/null); then
         ok "rendered units into $UNIT_DIR"
     else
         err "failed to render systemd units (python -m act.lib.systemd)"
@@ -210,6 +222,7 @@ else
     ENABLE_UNITS=(
         "zelin-actd.service"
         "zelin-webui.service"
+        "zelin-server.service"
         "zelin-gmail-radar.timer"
         "zelin-slack-radar.timer"
         "zelin-obsidian-radar.timer"
@@ -236,6 +249,7 @@ else
 
     if [ "$ENABLE_FAILED" -eq 0 ]; then
         ok "web dashboard: journalctl --user -u zelin-webui  (prints the http://127.0.0.1:PORT URL)"
+        ok "board server (web/dist, needs 'cd web && npm ci && npm run build'): http://127.0.0.1:$SERVER_PORT/"
     fi
 fi
 

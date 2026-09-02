@@ -740,6 +740,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 
 - `mode` ∈ `"interactive" | "pkg-postinstall" | "non-interactive"`（**v0.48.6 追记**：第三个值 = scripts/auto-deploy.sh 跑的 `install.sh --non-interactive`，§56；该模式**永不**构建/安装 Mac app——step `app` 恒为 `skipped`（§56.5，判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`）；退出码 = `status==fail` 的 step 数**减去 `app`**（被冻结的旧 Mac app（D3）即使出现失败行也不动已装 app、回滚也治不了它）——由 `failed_deploy_steps` 一处计算）；`user` = 实际执行安装步骤的用户（pkg 路线下 = console user，postinstall 经 `launchctl asuser <uid> sudo -u <user>` 降权执行）。
 - `steps[].status` ∈ `ok | warn | fail | skipped`（add-only：读方必须容忍未知值）；`detail` 为自由文本或 null。step 名与顺序不承诺稳定——读方按 `name` 查找、忽略不认识的行。**v0.48.16 追记（add-only）**：`cron` step 新增值 `skipped_tcc` = crontab 改写被 TCC 拒（stderr 带 `Operation not permitted`，launchd 会话缺 Full Disk Access）——不是 `fail`，所以天然不进 `failed_deploy_steps` 的退出码（§56.5：环境问题回滚治不了，2026-09-02 v0.48.12 实战里它把部署打回滚、把 sha 毒成停摆）；其余 crontab 失败（语法错、命令缺失）仍记 `fail`。写者 = install.sh `apply_crontab`（判类只看 crontab 的 stderr 原文，直接抓进变量、不落临时文件——报错里的 `tmp/tmp.<pid>` 是 crontab 自己的 spool 相对路径：它先 chdir 到 `/usr/lib/cron` → `/var/at` 再写 `tmp/tmp.<pid>`，与 TMPDIR 无关）；doctor `cron write access` 行（WARN `cron_tcc_blocked`，§25）负责让它可见。判例 `tests/test_install_cron_tcc.py`。
+- **v0.48.18 追记（add-only，§56.5 `ui` 步）**：新 step `ui` = 看板 UI 的构建与安装（web/dist + shell app），`ok | skipped | skipped_tcc | fail`——`skipped` = 工具链缺席（node+npm / swiftc）或 `.pkg` 模式，`skipped_tcc` = node 在 launchd 会话里被 TCC 拒（EPERM）、web 半没重建（doctor `board ui build` 行负责可见性），`fail` = 构建/安装真的坏了；`detail` 形如 `web ok (npm ci 12s, build 31s); shell ok (9s → /Applications/Zelin AI Board.app); 52s total`（两半独立、各带耗时）。**`ui=fail` 进 `failed_deploy_steps` 的退出码（回滚判据），`ui=skipped` / `ui=skipped_tcc` 不进**——与 `app` 例外不同：UI 是产品本体，构建坏了就是坏版本；TCC 拒绝则是环境，回滚治不了。另一新 step `board_server_port`（只在 warn 时出现）= 加载 `com.zelin.aiassistant.server` 之前端口上已有非 launchd 的 server 在答话（§54.1 端口互斥）。判例 `tests/test_install_ui_step.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
 
@@ -3761,18 +3762,72 @@ test_store2_load_scale.py、test_server_store2_detail.py、
 tests/integration/test_store2_concurrent_writers.py；schema v1→v2 升级梯子与
 `work_id` 列/索引/触发器 = tests/test_two_stage_card_ids.py（§60）。
 
-## 54. 薄壳看板 app（shell/ — "Zelin AI Board"）
+## 54. 薄壳看板 app（shell/ — 显示名 "Zelin's AI Assistant (Board)"，bundle "Zelin AI Board.app"）
 
 `shell/` 是 §49 web 面的**桌面薄壳**（AppKit + WKWebView，单文件
 `shell/Sources/main.swift`）：职责刻意做薄——解析 PORT/HOME → 探活
-`/api/board` → 必要时拉起 `python3 -m server` → 一个 WKWebView 窗口加载
-`http://127.0.0.1:PORT/`。看板本体（React board）活在 `web/dist`、由 server/
-静态托管；**壳里没有业务逻辑**，不读 registry、不写 inbox（一切经浏览器面 =
-§49 客户端）。与 `mac/` 主 App 并存不替代（Mac app 降薄壳属 PR3 愿景，
-本版不动）。
+`/api/board` → **连接** launchd 托管的 board server（§54.1）→ 一个 WKWebView
+窗口加载 `http://127.0.0.1:PORT/`。看板本体（React board）活在 `web/dist`、由
+server/ 静态托管；**壳里没有业务逻辑**，不读 registry、不写 inbox（一切经浏览器
+面 = §49 客户端）。与 `mac/` 主 App 并存（D3：主 App 冻结、退役中；壳 + web 是
+产品，见 `docs/design/vnext2-plan.md` R2.2）。
 
-- **配置解析（启动期一次性，全部只读）**：PORT = env `ZAI_PORT` → 默认
-  47820（与 server 同一默认）；HOME = env `AIASSISTANT_HOME` → home 指针
+### 54.1 server 生命周期：launchd 托管，壳只连接（v0.48.18；live 事故 2026-09-02）
+
+事故：owner 机器上守护进程跑在 v0.48.12，而看板 UI **从未被 install.sh 构建或
+安装过**（没有任何步骤构建 web/dist 或 shell）；手工构建后，壳按本节旧文「必要
+时拉起 `python3 -m server`」spawn 的子进程以 `No module named server` 死掉——
+**GUI app 是它 spawn 的每个子进程的 TCC responsible process**，壳 bundle 没有任何
+磁盘授权（ad-hoc 签名，每次 build 签名都变，授权也不会跟着走），repo 在外置卷上
+时子进程读不到 checkout（§55 第二幕同一机制的 GUI 版）。手工救法 = 把 server 挂
+成 launchd agent（用已过 §55 探针的守护解释器）——本节把它成法：
+
+- **server 是常驻 launchd agent** `com.zelin.aiassistant.server`（模板
+  `act/launchd/com.zelin.aiassistant.server.plist`：KeepAlive、`<§55 解释器> -m
+  server`、`EnvironmentVariables.ZAI_PORT`、日志 `~/Library/Logs/zelin-ai-assistant/
+  server.launchd.log`，其余路径纪律与兄弟模板逐字同款）；Linux 镜像
+  `act/systemd/zelin-server.service`（`@ZAI_PORT@` token，Restart=always）。
+  install.sh / install-linux.sh 在**每种模式**都渲染并加载它（没有它 web 看板与壳
+  都无处可连）。§55 `RESIDENT_LABELS` / `SYSTEMD_RESIDENT` 收编该 label：crash-loop
+  = doctor FAIL = §56 回滚判据。
+- **端口单源**：config.yaml `server.port`（`Config.server_port`，1..65535，坏值回
+  默认 47820 = `server/app.py DEFAULT_PORT`，镜像判例 `tests/test_board_server_agent.py`）。
+  install.sh 解析一次（`server_port`），渲进 plist 的 `ZAI_PORT`（模板里键值同一行
+  `<key>ZAI_PORT</key><string>47820</string>`，渲染方按此形状替换）与壳的
+  Info.plist `ZAIServerPort`（`shell/build.sh` 经 env `ZAI_PORT` 盖章）。无 override
+  键——改端口 = 重跑 `bash install.sh`。
+- **壳的连接序**：探活 `/api/board` → 在班则 attach；否则问 launchd（`launchctl
+  print gui/<uid>/com.zelin.aiassistant.server` 退出 0 = 已加载）：**已加载 = 不
+  spawn**，只轮询 ≤10 s（它在 KeepAlive 节流窗口里重启）；**未加载**才走 spawn 兜底
+  （解释器 = repo `config/runtime.json` 的 `python`，回落 `/usr/bin/python3`；cwd =
+  SERVER_REPO）。**两个 server 绝不抢同一个端口**：launchd 那份在 EADDRINUSE 下只打
+  一行人话、退出 75（`server.app.EX_PORT_BUSY`，不吐 traceback——KeepAlive 每 10 s
+  一段 traceback 就是 §55 审计 L3 那种 14 MB 孤儿日志），doctor `board server` 行
+  与 install.sh 的 `board_server_port` 步把它说出来。
+- **失败弹窗第一条永远是 launchd 的修法**：「server 由 launchd 托管：`launchctl
+  kickstart -k gui/$UID/com.zelin.aiassistant.server`」（并注明 label 已加载/未加载、
+  未加载 → `bash install.sh`），之后才是 server.launchd.log / board-shell.log /
+  SERVER_REPO / 手动试跑；壳有没有 spawn 兜底也写明。
+- **doctor `board server` 行**（`act/doctor.py _check_board_server`，全平台除
+  Windows；判例 `tests/test_doctor_board_server.py`）：唯一诚实探针是回环 `GET
+  /api/health`（`launchctl list` 的 pid 只证明进程起了，bind 成功没有它不知道）。
+  可达 + 托管 → OK；可达但**未托管**（壳 spawn 的或手起的——v0.48.18 之前的形状，
+  随父进程死）→ WARN `board_server_down`，修法 = 安装器；不可达 + 托管 → FAIL
+  `board_server_down`（crash-loop / 端口被占），修法点名 kickstart；不可达 + 未托管
+  → WARN，修法 = 安装器。探针不可用（测试沙箱 `AIASSISTANT_HTTP_PROBE=0`）→ 不出行。
+  §25 新 failure id `board_server_down`（Swift 镜像同步，D3 mirror-only）。
+- **命名**（owner 问「为什么名字变成了 Zelin AI Board」）：bundle 文件夹与 id 暂留
+  `Zelin AI Board.app` / `com.zelin.ai-board`（TCC 按 id 记账，换 id = 重授权一次，
+  §5.4 Q1），但 `CFBundleName` / `CFBundleDisplayName` = **"Zelin's AI Assistant
+  (Board)"**——Dock、窗口标题、app 菜单都读成产品的一部分。最终换名（壳接手
+  "Zelin's AI Assistant"、旧 app 改 "(old)"）在 P8 与旧 app 退役同车，理由与时间
+  记在 `docs/design/vnext2-plan.md` §8。
+
+### 54.2 配置解析与构建（原 §54 正文，v0.48.18 按 54.1 修订处已标注）
+
+- **配置解析（启动期一次性，全部只读）**：PORT = env `ZAI_PORT` → defaults
+  `serverPort` → Info.plist `ZAIServerPort`（54.1）→ 默认 47820（与 server 同一
+  默认）；HOME = env `AIASSISTANT_HOME` → home 指针
   `~/Library/Application Support/ZelinAIAssistant/home.txt`（§19 同一解析
   顺序）→ **无兜底**——两者都缺时 spawn 不注入该 env，由 server 侧
   canonical 默认（`server/paths.py DEFAULT_HOME`）接手，壳永不猜本机路径；
@@ -3783,15 +3838,20 @@ tests/integration/test_store2_concurrent_writers.py；schema v1→v2 升级梯�
   时礼貌弹窗（含日志路径与两条修复方式）+ log 落一行，绝不拿猜来的路径起
   server（attach 既有 server 不受影响，探活成功照常加载）。
 - **生命周期诚实原则（本节红线）**：先探活——有人在班就直接 **attach**；
-  没有才 **spawn** child server（spawn 后每 0.5s 探一次，≤10s）。退出时
-  **只 terminate 自己 spawn 的 child**（SIGTERM；`spawned` 非 nil 是唯一
-  依据）；对仅仅 attach 上去的既有 server **绝不动手**——它可能属于 actd
-  或另一个 shell。每次 spawn 在 append-only log 里落一行时间戳横幅（切段
-  取证）。
+  没有才按 54.1 的连接序决定是等 launchd 还是 **spawn** 兜底 child server
+  （spawn 后每 0.5s 探一次，≤10s）。退出时**只 terminate 自己 spawn 的 child**
+  （SIGTERM；`spawned` 非 nil 是唯一依据）；对仅仅 attach 上去的既有 server
+  **绝不动手**——它属于 launchd 或另一个 shell。每次 spawn 在 append-only log
+  里落一行时间戳横幅（切段取证，横幅注明「fallback: label 未加载」）。
 - **构建**：`shell/build.sh` 镜像 `mac/build.sh` 惯例——plutil lint、版本号
   从 `act/__init__.py` 盖章（宪法第 8 条版本单源）、`ZAIServerRepo` 以构建
-  所在 repo root 盖章（可移植：换机器/换 worktree 重跑 build.sh 即自洽）、
-  ad-hoc codesign。`shell/build/` 进 .gitignore（构建产物永不入库）。
+  所在 repo root（物理路径）盖章（可移植：换机器/换 worktree 重跑 build.sh 即
+  自洽）、`ZAIServerPort` 以 env `ZAI_PORT` 盖章（54.1）、ad-hoc codesign。
+  `shell/build/` 进 .gitignore（构建产物永不入库）。**build.sh 只构建、不安装、
+  不 quit/relaunch**——安装与 relaunch 归 install.sh 的 `ui` 步（§56.5）；CI 的
+  macOS job 编译它（合进来的壳必须能编，否则自动部署的 `ui` 步 fail → 回滚）。
+- **无 Swift 测试靶**：shell/ 目前没有 test target（vnext2-plan §5.5：真缺口）；
+  54.1 的连接序以手动检查验收，步骤见 CONTRIBUTING.md「board shell 手动检查」。
 
 ### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
 
@@ -3935,8 +3995,9 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   prompt「Known trap」段。
 - **常驻 agent 的 crash-loop 是 FAIL，不只 actd**（v0.48.6 审查 B3）：
   `_check_launchd` 里「已注册、无 pid、上次退出码非 0」对模板 `KeepAlive=true`
-  的每个 label（`doctor.RESIDENT_LABELS` = actd + syncd，`tests/test_doctor.py`
-  钉住它与 `act/launchd/*.plist` 的 KeepAlive 键逐字一致）都是 FAIL，detail 带
+  的每个 label（`doctor.RESIDENT_LABELS` = actd + syncd + **server**（§54.1，
+  v0.48.18），`tests/test_doctor.py` 钉住它与 `act/launchd/*.plist` 的 KeepAlive
+  键逐字一致）都是 FAIL，detail 带
   「(KeepAlive: crash loop)」——launchd 每 ThrottleInterval 拉起一次、它立刻死
   一次，不是「上次跑失败一次」。周期性 agent（RunAtLoad radar、weeklydigest、
   StartInterval autodeploy）一次非 0 退出仍是 WARN（一次网络抖动就够）。
@@ -3944,7 +4005,12 @@ WorkingDirectory 指到 `$REPO`——repo 在外置卷（TCC-gated volume）上�
   行，syncd 在 live（`mode=cloud`）上 import 即死曾只得 WARN——新版本把手机/web
   看板弄死却记 `deployed`。
 - §32.4 的日志自压缩豁免语义不变：`*.launchd.log` 仍是 launchd 自管、不参与
-  进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。
+  进程内压缩，只是住址迁到 `~/Library/Logs/zelin-ai-assistant/`。**v0.48.18
+  追记（防腐 #4，随 §54.1 的 server 常驻 agent 落地）**：install.sh 在每个（重）
+  加载的 label 的 **unload→load 窗口**里给它的 launchd 日志加帽（`cap_launchd_log`：
+  > 1 MB 时只保留最新的一半，同 `scripts/auto-deploy.sh cap_log` / `act/lib/logcap`
+  形状）——这是唯一 launchd 不持 fd 的时刻，进程内 replace 的禁令因此不被触碰。只
+  动本次要加载的 label；退役 / 孤儿 label 的日志照旧一字不动（下一条：取证材料）。
 - 读取方迁移：doctor 修复提示与 ai_fix 诊断包指向新址；旧
   `$REPO/state/*.launchd.log` 仅作诊断包的兜底读（迁移前安装还留着旧日志）。
 - `ingest/launchd/com.zelin.screenpipe-prune.plist`（日志在 `~/.screenpipe/`、
@@ -4083,7 +4149,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 5. 树干净则 `PREV=HEAD`，`git merge --ff-only origin/main`——**不可 ff（本地 main 分叉）= `failed` + 通知一次，永不 reset 分叉的本地提交**。
 6. **自检（v0.48.6 审查 B3）**：`bash -n scripts/auto-deploy.sh` + `python -c 'import act.auto_deploy'`（新代码）。部署 agent 必须还能跑它自己的下一版——合进来一个语法错误否则会**静默终结所有后续部署**（launchd 的 status 列是唯一见证，没人看）。任一失败 = 不装、回滚。判例 `test_merge_that_breaks_the_deploy_script_rolls_back_before_installing` / `test_merge_that_breaks_the_launchd_shim_rolls_back_before_installing`。
 7. **doctor 基线**：用**新代码**的 `act.doctor --fast --json` 取 FAIL 项名集合（装之前）。输出解析不出 JSON（doctor 自己 import 崩、解释器丢了 yaml、打印垃圾）记为名字 `doctor:unparseable`，而它在**任一次**运行里出现都是**致命**的——基线阶段出现 = 不装、直接回滚（v0.48.6 审查 H1：两次都用新代码，若把它当 pre-existing，唯一的安全闸门就对「让 doctor 跑不起来的提交」这一类它最该拦的东西失明）。判例 `test_unparseable_doctor_on_the_new_code_rolls_back_before_installing`。同时记下装之前的 `state/actd.heartbeat`（version / pid / phase）作第 9 步的对照。
-8. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装 Mac app**（56.5）——部署的是守护进程、cron、config、launchd 渲染，不是那个 .app。
+8. `bash install.sh --non-interactive`（§23 第三模式；看门狗默认 1800 s，超时 = 失败并连子进程一起杀）。**该模式不构建、不安装旧 Mac app**（56.5），**但构建并安装看板 UI**（web/dist + shell app，56.5 `ui` 步，v0.48.18）——部署的是守护进程、board server agent、cron、config、launchd 渲染，加上产品的脸。
 9. **就绪等待（v0.48.6 审查 B2；取代原「静置 30 s + 一次采样」）**：轮询 `state/actd.heartbeat`（§47.4，写者已盖 `version` / `pid` / `phase`），直到它**同时**满足：`version` == 新代码的 `act.__version__`、`pid` ≠ 装之前那条的 pid（**新进程**——同版本号的合并否则会被旧 daemon 的 idle 心跳放行）、`phase == idle`（新代码上**完整跑完一个 pass**：inbox / dispatch / reconcile / housekeeping / dashboard 全部 import 并执行过）。`phase == failed`（pass 抛了）只在装之前的 daemon **也**在 `failed` 时算就绪——pre-existing，不归咎新版本。超过 `AUTODEPLOY_HEARTBEAT_DEADLINE`（默认 180 s：一个 pass 可能含 `claude agents --json`，负载高时 >30 s）= FAIL `actd:no_heartbeat_from_new_version` → 回滚，detail 带装前/装后两条心跳。为什么不再静置采样：import 即死的 KeepAlive actd 在每个 ~10 s 节流周期里亮 ~0.5 s 的 pid，一次 `launchctl list` 有 ~5% 概率撞上「在跑」；而 `dashboard` / `actd heartbeat` 两行读的是**旧** daemon 留下的文件，90 s 内都算新鲜——三行齐绿、卡片冻结、记 `deployed`，二十次坏提交漏一次；反过来第一个 pass 慢于 90 s 时旧 dashboard 过期又会**误**回滚。判例 `test_new_actd_that_never_completes_a_pass_rolls_back` / `test_the_old_daemons_heartbeat_does_not_count_even_with_the_same_version` / `test_no_heartbeat_file_at_all_before_and_after_rolls_back` / `test_new_actd_whose_pass_throws_rolls_back_when_the_old_one_was_fine` / `test_pre_existing_failing_pass_is_not_blamed_on_the_new_version`。
 10. doctor 再跑——**settle-before-verdict（v0.48.14 修订；首次实战 2026-09-01 事故）**：判决是一个有界重试环（最多 `AUTODEPLOY_DOCTOR_RETRIES`（默认 3）次、间隔 `AUTODEPLOY_DOCTOR_SETTLE`（默认 45 s）），**回滚判据 = 撑到最后一次运行仍相对基线新增的 FAIL 名**（`doctor:unparseable` 不可能在基线里——基线阶段它是致命的——所以装后瞬态崩同样走重试、持续崩同样回滚）（或第 8 步退出码非 0 / 超时、第 9 步超时）。为什么不能单次采样：v0.48.8 的第一次实战在 install.sh 重启全部 daemon 后 12 s 取判决，撞上 store2 首跑迁移 + 外置卷瞬态 EPERM 窗口，6 个假「new FAIL」（config.yaml / daemon python / dashboard / launchd orphans / state dirs / store2）触发假阳性回滚；三小时后同一台机器 doctor 全绿。早轮的瞬态名字不进判决也不进 detail。部署前已红的项**不归咎新版本**——否则一台带着一项陈旧 FAIL 的机器永远升不了级（包括升到修它的那一版）；这些项以 `pre-existing` 写进 `detail`，doctor / 顶栏照常能看到。判例 `test_transient_doctor_fail_after_install_settles_and_deploys` / `test_transient_unparseable_doctor_after_install_settles` / `test_persistent_new_fail_verdict_names_only_the_final_run`。**常驻 agent（模板 `KeepAlive=true`：actd、syncd）「已加载、无 pid、退出码非 0」在 doctor 里是 FAIL**（§55 crash-loop 条）——所以新版本弄坏 syncd（live 上 `mode=cloud`，syncd 死 = 手机/web 看板死）也在这一步被抓到；周期性 agent（radar / weeklydigest / autodeploy）一次非 0 仍是 WARN，一次网络抖动不该回滚一次部署。就绪等待之后 syncd 的单次采样仍有 ThrottleInterval 内 ~0.5 s 的盲窗（≈2%），记录在此、不假装为零。
 
@@ -4118,6 +4184,13 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **不重建 Mac app**（v0.48.6 审查定型；D3 冻结）：`install.sh --non-interactive` 跳过 step 4（`app=skipped`），永不跑 `mac/build.sh --install`。原因不只是「冻结」：build.sh 的 stage-then-swap 会 `osascript quit` + `pkill` 再 `open` 正在跑的 app——screenpipe 是它的**直接子进程**（RunningBoard 会 reap 孤儿，`mac/Sources/Recording.swift` 的 exec 注释），实时字幕住在同一进程——agent 在合并后 10 分钟内任何时刻开火，等于随机掐断一段录制或一场会议的字幕；launchd 里的 `osascript` 还要 Automation TCC（首跑静默拒绝 → 直接 `pkill`），`swift build` + `codesign` 的 keychain ACL 提示没人点 = 看门狗 1800 s 超时 → 回滚 → 再 1800 s → `rollback_failed`。**手动 `bash install.sh`（owner 自己挑时机）是重建 app 的唯一路径**；mac/ 目录的改动因此**不**随自动部署上机，直到 owner 手动跑一次。判例 `tests/test_auto_deploy_agent.py::InstallMacAppStepTestCase`（假 mac/build.sh 记录调用：non-interactive 零调用、交互模式 `--install`）。
 - Mac app 构建失败（§23 `app=fail`，只可能来自手动 install.sh）从不进入自动部署的判据：`failed_deploy_steps` 不计 `app` 行——旧 app 原地保留，回滚也治不了它。
 - **crontab 被 TCC 拒写同样不进判据（v0.48.16；首次 timer 实战 2026-09-02）**：v0.48.12 的自动部署在 install.sh 第 6 步撞上 `crontab: tmp/tmp.<pid>: Operation not permitted`（launchd 会话缺 Full Disk Access——此前两次成功部署都发生在 owner 交互会话拉起的环境里，没暴露），step 记 `fail` → install 退出 1 → 回滚 → 回滚重装撞同一堵墙 → `rollback_failed` + `failed_sha` 中毒，**所有后续部署停摆**（`--force` 也救不了：重装还是会撞墙）。自本版起该失败记 `cron=skipped_tcc`（§23）而非 `fail`——代码回滚治不了 TCC，部署照常完成；缺行/旧行由 doctor `cron write access`（WARN `cron_tcc_blocked`）+ 既有 `cron ingest chain` 行负责可见性，修复入口在 owner（给守护 python 开 FDA，终端跑通不算数）。其余 crontab 失败照旧是部署失败步。判例 `tests/test_install_cron_tcc.py`（EPERM → skipped_tcc + 退出码 0；语法错 → fail + 退出码 1）与 `tests/integration/test_auto_deploy_script.py::test_install_reporting_skipped_tcc_cron_still_deploys`。
+- **看板 UI 随部署上机（v0.48.18 `ui` 步；live 事故 2026-09-02：UI 从未被部署过——install.sh 没有任何步骤构建 web/dist 或 shell，owner 机器跑着 v0.48.12 的守护进程、/Applications 里是 v0.48.0 的旧 app、壳 app 根本不存在）**。`install.sh` 步 4b `install_ui`（两种模式都跑，`.pkg` 跳过）：
+  - **web 半**：node+npm 在 → **在 repo 之外构建**：`rsync -a --delete`（防腐 #8；无 rsync 时 rm+cp）把 `web/`（除 node_modules / dist）镜像到 `~/Library/Caches/zelin-ai-assistant/web-build/`（Linux `$XDG_CACHE_HOME/zelin-ai-assistant/web-build`；seam `AIASSISTANT_UI_BUILD_DIR`）→ 在那里 `npm ci --no-audit --no-fund`（**只在**该目录 `node_modules` 缺席或 `package-lock.json` 的 cksum 与上次成功 ci 的 stamp `node_modules/.zai-package-lock.cksum` 不同）→ `npm run build` → 必须产出 `dist/index.html` → `cp -R` 回 `web/dist.tmp` 再 rm+mv 成 `web/dist`。**为什么不在 repo 里构建**：2026-09-02 一次性 launchd job 实测（同 §55 第二/三幕的方法）：homebrew `node` 在 launchd 会话里对外置卷上的 repo **EPERM**（`scandir` / `uv_cwd` 都拒），哪怕它是有 FDA 的守护 python 的子进程——TCC 按每个非平台 binary 单独记账；而 bash / cp / rsync / swiftc（Apple 平台 binary）读得好好的。node 只碰 `$HOME` 下的路径就绕开了整道墙（顺带 `npm ci` 不再往 checkout 里写 node_modules）。缺 node/npm → `skipped` + warn。npm 日志尾部带 `EPERM` / `operation not permitted` → 该半 **`skipped_tcc`**（§23 add-only 值，同 #137 的 `cron=skipped_tcc` 同理：代码回滚治不了缺失的 FDA），warn 点名给 node 二进制开完全磁盘访问或在终端跑一次 `bash install.sh`；doctor **`board ui build`** 行（WARN `ui_build_tcc_blocked`，§25 新 id，Swift 镜像同步）读 install_report 的 `ui` step 让它可见，`ui=fail`（只可能来自手动 install.sh）同行 WARN 指向 `ui-build.log`。
+  - **shell 半**（仅 macOS）：swiftc 在且过 `shell/build.sh --check-toolchain` → `ZAI_PORT=<server.port> bash shell/build.sh` → stage-then-swap（`ditto` 到 `.Zelin AI Board.app.staged`，`rm -rf` 旧 bundle，`mv`——**不**在旧 bundle 上合并，ad-hoc 签名的封条不许留陈旧文件）进 `/Applications`（不可写则 `~/Applications`），bundle 文件夹 / id 保持 `Zelin AI Board.app` / `com.zelin.ai-board`（§54.1）；缺工具链 → `skipped` + warn。
+  - **合并判决**：任一半 `fail` → `ui=fail`；否则任一半 `ok` → `ui=ok`；否则 web 半 `skipped_tcc` → `ui=skipped_tcc`；否则 `ui=skipped`。**只有 `fail` 是部署失败**（进 `failed_deploy_steps` → 回滚），`skipped` / `skipped_tcc` 是成功——一台没装 node 的机器照常升级守护进程。判例 `tests/test_install_ui_step.py`（假 npm / node / swiftc / shell/build.sh，真 bash）、`tests/integration/test_auto_deploy_script.py::test_ui_step_skipped_is_a_successful_deploy` / `test_ui_step_fail_rolls_back`（假 install.sh 跑**真** `failed_deploy_steps`）。
+  - **预算**：每条构建命令受 `AIASSISTANT_UI_BUDGET`（默认 600 s）看门狗——超时 = 该半 `fail (exit 124)`，绝不吃掉自动部署的 1800 s 总看门狗；各半耗时写进 `ui` 步 detail 与 install 输出（`ui step: ok in 52s`）。构建输出进 `~/Library/Logs/zelin-ai-assistant/ui-build.log`（1 MB 帽，失败时 tail 回显）。
+  - **relaunch 规则**：`--non-interactive` 且本次真的装了新 bundle 且 app 正在跑（`pgrep -x ZelinAIBoard`）→ **在步 5 launchd agents 全部重新加载之后**（server agent 已回到 launchd）`pkill -TERM -x ZelinAIBoard` → 等 ≤5 s → `open -g <bundle>`（不抢焦点）。壳 spawn 不了任何东西（server 归 launchd），所以 relaunch 掐不断录制或字幕——这正是它与旧 app 的区别。交互模式**不**动正在跑的 app（只提示 owner 自己重开）。
+  - **旧 app 一根手指不碰**（D3）：`ui` 步的每条路径都只认 `Zelin AI Board.app`；判例把 `Zelin's AI Assistant.app` 放在旁边、断言字节与 mtime 不变。
 - 一个 origin/main sha 最多**一次**部署尝试（`failed_sha`，回滚与 CI 红同一本账）——绝不出现 10 分钟一次的「部署→回滚→部署」或「问 CI→红→通知」风暴（L1 事故同款形状的预防）。`ci_pending` 不记账：等待不是判决，每个 interval 再问一次是它的本职。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）

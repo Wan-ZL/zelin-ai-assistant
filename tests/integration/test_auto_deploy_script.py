@@ -81,6 +81,18 @@ rc=0
 if [ -n "${FAKE_INSTALL_RC_PLAN:-}" ] && [ -s "$FAKE_INSTALL_RC_PLAN" ]; then
     rc="$(head -n 1 "$FAKE_INSTALL_RC_PLAN")"
     tail -n +2 "$FAKE_INSTALL_RC_PLAN" > "$FAKE_INSTALL_RC_PLAN.tmp" && mv "$FAKE_INSTALL_RC_PLAN.tmp" "$FAKE_INSTALL_RC_PLAN"
+elif [ -n "${FAKE_INSTALL_STEPS_PLAN:-}" ] && [ -s "$FAKE_INSTALL_STEPS_PLAN" ]; then
+    # §23/§56.5: derive the exit code from a report-step line set through the
+    # REAL failed_deploy_steps() (copied out of the repo's install.sh by the
+    # test) — one plan line per call, `|` separates the step lines.
+    steps="$(head -n 1 "$FAKE_INSTALL_STEPS_PLAN" | tr '|' '\n')"
+    tail -n +2 "$FAKE_INSTALL_STEPS_PLAN" > "$FAKE_INSTALL_STEPS_PLAN.tmp" && mv "$FAKE_INSTALL_STEPS_PLAN.tmp" "$FAKE_INSTALL_STEPS_PLAN"
+    # shellcheck disable=SC1090
+    . "$FAKE_INSTALL_FDS"
+    REPORT_STEPS="$steps
+"
+    rc="$(failed_deploy_steps | grep -c . || true)"
+    printf 'steps rc=%s: %s\n' "$rc" "$(printf '%s' "$steps" | tr '\n' ' ')" >> "$FAKE_INSTALL_LOG"
 fi
 [ -n "${FAKE_INSTALL_SLEEP:-}" ] && sleep "$FAKE_INSTALL_SLEEP"
 # simulate the owner editing a tracked file while the deploy runs / install.sh's own chmod
@@ -227,6 +239,15 @@ def notify(title, body, subtitle=None, req=None, kind=None):
 '''
 
 
+def _install_sh_fn(name):
+    """install.sh 里 `name() {` … 行首 `}` 的原文（同 tests/test_auto_deploy_agent）。"""
+    import re
+    text = (REPO / "install.sh").read_text(encoding="utf-8")
+    m = re.search(r"^%s\(\) \{.*?^\}" % re.escape(name), text, flags=re.S | re.M)
+    assert m, "install.sh no longer defines %s()" % name
+    return m.group(0) + "\n"
+
+
 def _git(cwd, *args):
     return subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
@@ -254,6 +275,11 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.doctor_log = self.tmp / "doctor.log"
         self.doctor_plan = self.tmp / "doctor.plan"
         self.install_rc_plan = self.tmp / "install.rc"
+        self.install_steps_plan = self.tmp / "install.steps"
+        # the REAL failed_deploy_steps() from the repo's install.sh (§56.5
+        # exit-code rule), sourced by the fake install.sh when a steps plan is set
+        self.install_fds = self.tmp / "failed_deploy_steps.sh"
+        self.install_fds.write_text(_install_sh_fn("failed_deploy_steps"), encoding="utf-8")
         self.curl_log = self.tmp / "curl.log"
         self.curl_plan = self.tmp / "curl.plan"
         # fake curl shadows the real one on PATH (the script only calls curl
@@ -319,7 +345,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         _git(self.dev, "push", "-q", "origin", "main")
         return _git(self.dev, "rev-parse", "HEAD")
 
-    def run_script(self, *args, doctor_plan=None, install_rc=None, ci=None, env=None):
+    def run_script(self, *args, doctor_plan=None, install_rc=None, ci=None, env=None,
+                   install_steps=None):
         if doctor_plan is not None:
             self.doctor_plan.write_text("\n".join(doctor_plan) + "\n", encoding="utf-8")
         elif self.doctor_plan.exists():
@@ -328,6 +355,10 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             self.install_rc_plan.write_text("\n".join(str(r) for r in install_rc) + "\n", encoding="utf-8")
         elif self.install_rc_plan.exists():
             self.install_rc_plan.unlink()
+        if install_steps is not None:
+            self.install_steps_plan.write_text("\n".join(install_steps) + "\n", encoding="utf-8")
+        elif self.install_steps_plan.exists():
+            self.install_steps_plan.unlink()
         if ci is not None:
             self.curl_plan.write_text("\n".join(ci) + "\n", encoding="utf-8")
         elif self.curl_plan.exists():
@@ -352,6 +383,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             "FAKE_DOCTOR_LOG": str(self.doctor_log),
             "FAKE_DOCTOR_PLAN": str(self.doctor_plan),
             "FAKE_INSTALL_RC_PLAN": str(self.install_rc_plan),
+            "FAKE_INSTALL_STEPS_PLAN": str(self.install_steps_plan),
+            "FAKE_INSTALL_FDS": str(self.install_fds),
             "FAKE_CURL_LOG": str(self.curl_log),
             "FAKE_CURL_PLAN": str(self.curl_plan),
             **(env or {}),
@@ -764,6 +797,42 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(st["failed_sha"], target)
         self.assertIn("install.sh exited 2", st["detail"])
         self.assertEqual(len(self.installs()), 2)
+
+    # -- §56.5 `ui` step: skipped is success, fail is a rollback ------------- #
+    # The verdict is install.sh's exit code = count of failed_deploy_steps()
+    # lines; the fake install.sh here runs the REAL function over a planned
+    # report-step set, so the rule is pinned end to end.
+
+    def test_ui_step_skipped_is_a_successful_deploy(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], install_steps=[
+            "config=ok:kept|app=skipped:non-interactive|"
+            "ui=skipped:web skipped (no node/npm); shell skipped (no swift toolchain); 0s total|"
+            "launchd=ok:7 agents loaded|cron=ok"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.state()["status"], "deployed")
+        inst = self.installs()
+        self.assertEqual(len([ln for ln in inst if ln.startswith("install ")]), 1, inst)
+        self.assertIn("steps rc=0", "\n".join(inst))
+
+    def test_ui_step_fail_rolls_back(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-"], install_steps=[
+            # the deploy: web build broke on the new code → ui=fail
+            "config=ok:kept|app=skipped:non-interactive|"
+            "ui=fail:web fail (npm run build exit 2); shell ok (9s); 41s total|launchd=ok:7 agents loaded",
+            # the rollback re-install on PREV: toolchain fine, UI ok again
+            "config=ok:kept|ui=ok:web ok (npm ci 0s, build 12s); shell ok (8s); 20s total|launchd=ok"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha, "ui=fail must roll the deploy back")
+        st = self.state()
+        self.assertEqual(st["status"], "rolled_back")
+        self.assertEqual(st["failed_sha"], target)
+        self.assertIn("install.sh exited 1", st["detail"])
+        inst = "\n".join(self.installs())
+        self.assertIn("steps rc=1", inst)
+        self.assertIn("steps rc=0", inst)
 
     def test_pre_existing_red_is_not_blamed_on_the_new_version(self):
         target = self.push("0.48.4")

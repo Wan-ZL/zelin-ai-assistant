@@ -29,7 +29,9 @@
 #   8. `bash install.sh --non-interactive` under a watchdog timeout — that
 #      mode never rebuilds the frozen legacy Mac app (§56.5: build.sh would
 #      quit + relaunch it and take screenpipe / live captions down mid-use);
-#      only a hand-run `bash install.sh` does
+#      only a hand-run `bash install.sh` does. It DOES build + install the
+#      board UI (web/dist + shell app, the `ui` step): toolchain absent =
+#      `ui=skipped` (still a success), build broken = `ui=fail` (rollback)
 #   9. READINESS: wait until state/actd.heartbeat (§47.4) is written by a NEW
 #      actd process (pid changed), stamped with the NEW version, in phase
 #      `idle` = one full pass completed on the new code. Deadline
@@ -98,7 +100,9 @@ LOG="$LOG_DIR/auto-deploy.log"
 LOG_CAP_BYTES=1048576                     # 防腐 #4：日志必有帽
 STATE_FILE="$REPO_ROOT/state/deploy_state.json"
 LOCK_DIR="$REPO_ROOT/state/auto-deploy.lock"
-INSTALL_TIMEOUT="${AUTODEPLOY_INSTALL_TIMEOUT:-1800}"   # no swift build in this mode; generous anyway
+INSTALL_TIMEOUT="${AUTODEPLOY_INSTALL_TIMEOUT:-1800}"   # covers the §56.5 ui step (npm ci + vite build +
+                                                        # the thin shell's swiftc, each under its own
+                                                        # AIASSISTANT_UI_BUDGET=600 s watchdog)
 HEARTBEAT_FILE="$REPO_ROOT/state/actd.heartbeat"        # §47.4, written by actd at every phase boundary
 HEARTBEAT_DEADLINE="${AUTODEPLOY_HEARTBEAT_DEADLINE:-180}"  # the restarted actd must finish ONE pass
                                                         # (a pass may run `claude agents --json`,

@@ -175,6 +175,13 @@ enum FailureCatalog {
         case "model_unavailable":
             return L("设置里选的模型不可用——派工会全部失败；去设置页「模型」改回「跟随 Claude Code 全局」或换一个 canonical id",
                      "The model chosen in Settings is unavailable — every dispatch will fail; in Settings → Models switch back to \"follow Claude Code\" or pick a canonical id")
+        // §54 (mirror only — D3 freeze): the board server is launchd-hosted since v0.48.18.
+        case "board_server_down":
+            return L("看板 server 没在端口上答话——web 看板和壳 app 连不上；先退掉手动起的 `python3 -m server` / 旧壳，再 launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.server（没装则 bash install.sh）",
+                     "The board server does not answer on its port — the web board and the shell app have nothing to connect to; quit any hand-started `python3 -m server` / old shell, then launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.server (bash install.sh if never installed)")
+        case "ui_build_tcc_blocked":
+            return L("自动部署没能重建 web 看板：node 在 launchd 会话里缺「完全磁盘访问」（守护进程已升级，看板还是旧的）——给 node 二进制开完全磁盘访问，或在终端里跑一次 bash install.sh",
+                     "The deploy could not rebuild the web board: node lacks Full Disk Access in the launchd session (daemons upgraded, board still old) — grant the node binary Full Disk Access, or run bash install.sh once from a terminal")
         case "config_invalid":
             return L("配置文件写坏了——所有组件都退回默认设置",
                      "The config file is broken — every component fell back to defaults")

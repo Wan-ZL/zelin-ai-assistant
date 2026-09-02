@@ -237,6 +237,29 @@ FAILURES: dict = {
                     "or pick a canonical id",
         "action_id": "open_deps",
     },
+    # §54 board server: nothing answers on the loopback port (launchd job
+    # crash-looping / port held by a stray server / never installed). Only
+    # the doctor's `board server` row produces it.
+    "board_server_down": {
+        "plain_zh": "看板 server 没在端口上答话——web 看板和壳 app 连不上；先退掉手动起的"
+                    " `python3 -m server` / 旧壳，再 launchctl kickstart -k "
+                    "gui/$(id -u)/com.zelin.aiassistant.server（没装则 bash install.sh）",
+        "plain_en": "The board server does not answer on its port — the web board and the "
+                    "shell app have nothing to connect to; quit any hand-started "
+                    "`python3 -m server` / old shell, then launchctl kickstart -k "
+                    "gui/$(id -u)/com.zelin.aiassistant.server (bash install.sh if never installed)",
+        "action_id": "open_deps",
+    },
+    # §56.5 `ui` step: node was TCC-denied (EPERM) while the deploy rebuilt the
+    # web board under launchd — the daemons upgraded, the UI did not.
+    "ui_build_tcc_blocked": {
+        "plain_zh": "自动部署没能重建 web 看板：node 在 launchd 会话里缺「完全磁盘访问」（守护进程已升级，"
+                    "看板还是旧的）——给 node 二进制开完全磁盘访问，或在终端里跑一次 bash install.sh",
+        "plain_en": "The deploy could not rebuild the web board: node lacks Full Disk Access in the "
+                    "launchd session (daemons upgraded, board still old) — grant the node binary Full "
+                    "Disk Access, or run bash install.sh once from a terminal",
+        "action_id": "open_deps",
+    },
     "config_invalid": {
         "plain_zh": "配置文件写坏了——所有组件都退回默认设置",
         "plain_en": "The config file is broken — every component fell back to defaults",

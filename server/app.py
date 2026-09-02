@@ -23,6 +23,7 @@ localhost 例外的法源）、§59（设置面）。
 """
 from __future__ import annotations
 
+import errno
 import json
 import mimetypes
 import os
@@ -429,8 +430,24 @@ def make_server(port: Optional[int] = None,
     return httpd
 
 
+# EADDRINUSE 下的退出码：launchd/systemd 常驻托管（§54）会按 KeepAlive/Restart
+# 重拉，所以这里只要一行人话、绝不整段 traceback——端口被壳的 spawn 兜底或手动
+# `-m server` 占着时，每个 throttle 周期一段 traceback会把 server.launchd.log
+# 刷成 imessageradar 那种 14 MB 孤儿日志（§55 审计 L3）。
+EX_PORT_BUSY = 75  # EX_TEMPFAIL
+
+
 def main() -> int:
-    httpd = make_server()
+    try:
+        httpd = make_server()
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        port = os.environ.get("ZAI_PORT", DEFAULT_PORT)
+        print(f"zai server: 127.0.0.1:{port} is busy — another server is already "
+              f"listening (the shell's spawn fallback or a manual `python3 -m "
+              f"server`); exiting {EX_PORT_BUSY} without a traceback", flush=True)
+        return EX_PORT_BUSY
     host, port = httpd.server_address[:2]
     print(f"zai server: http://{host}:{port}  "
           f"(AIASSISTANT_HOME={httpd.ctx.home})",  # type: ignore[attr-defined]
