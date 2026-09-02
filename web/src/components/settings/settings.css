@@ -201,3 +201,84 @@
   color: var(--danger);
   background: var(--danger-soft);
 }
+
+/* ----- 素材库（§62）：输入行 + 弹窗内可滚动列表 ------------------------------- */
+.materials-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.materials-input {
+  flex: 1 1 220px;
+  font-family: inherit;
+}
+
+.materials-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.materials-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.materials-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.materials-item-note {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.materials-item-url {
+  font-size: 11px;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.materials-item-url:hover {
+  text-decoration: underline;
+}
+
+.materials-item-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+}
+
+.materials-item-status {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.materials-item-link {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.materials-dismiss {
+  flex: 0 0 auto;
+}

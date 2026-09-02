@@ -17,9 +17,11 @@
 - 看板 parity 面（§54）：GET /api/lanes（列说明文案的 server-owned 目录，
   server/lanes.py）、POST /api/ai-fix（「让 AI 修」= 起 act.ai_fix 的
   Terminal 修复会话，server/ai_fix_launch.py）。
+- 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
+  POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）。
+localhost 例外的法源）、§59（设置面）、§62（素材库）。
 """
 from __future__ import annotations
 
@@ -33,10 +35,10 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (ai_fix_launch, board_source, files, health, inbox_writer,
-                    lanes, paths, security, settings)
+                    lanes, materials, paths, security, settings)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -183,8 +185,8 @@ class Handler(BaseHTTPRequestHandler):
             card_id = path[len("/api/cards/"):]
             self._send_json(200, board_source.card_detail(ctx.home, card_id))
         elif path in _GET_JSON_ROUTES:
-            # 纯 JSON 读面（health / 设置面 / 列目录）——表驱动，见 _GET_JSON_ROUTES
-            self._send_json(200, _GET_JSON_ROUTES[path](ctx))
+            # 纯 JSON 读面（health / 设置面 / 列目录 / 素材库）——表驱动，见 _GET_JSON_ROUTES
+            self._send_json(200, _GET_JSON_ROUTES[path](ctx, self._query()))
         elif path == "/api/events":
             self._serve_events(ctx.hub)
         elif path.startswith("/files/deliverables/"):
@@ -222,6 +224,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, settings.update_models(ctx.home, payload))
         else:
             raise NotFoundError("not found", {"path": path})
+
+    def _query(self) -> dict:
+        """URL query → 扁平 dict（同名键后者胜；空值保留）——GET 表路由的第二个实参。"""
+        return dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
 
     def _read_json_body(self) -> dict:
         length_raw = self.headers.get("Content-Length")
@@ -371,17 +377,20 @@ def _post_claude_code_default(ctx, payload: dict) -> dict:
     return settings.set_claude_code_default(payload.get("model"))
 
 
+# GET 表 handler 形状：(ctx, query) → dict；query = URL query 的扁平 dict（_query）。
 _GET_JSON_ROUTES = {
     # §47.4 管线活性（token-light GET，同源纪律同 /api/board）：心跳年龄 +
     # 看板新鲜度 + 连崩计数 → 一个 verdict，web 顶部横幅据此诚实报「后台
     # 服务卡住/停了」——退役中的 Mac app 横幅的替身。
-    "/api/health": lambda ctx: health.snapshot(ctx.home),
+    "/api/health": lambda ctx, query: health.snapshot(ctx.home),
     # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
-    "/api/settings/models": lambda ctx: settings.models_snapshot(ctx.home),
+    "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
-    "/api/claude-code/default-model": lambda ctx: settings.claude_code_default(),
+    "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
-    "/api/lanes": lambda ctx: lanes.catalog(),
+    "/api/lanes": lambda ctx, query: lanes.catalog(),
+    # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
+    "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
 }
 
 _POST_JSON_ROUTES = {
@@ -390,6 +399,9 @@ _POST_JSON_ROUTES = {
     "/api/claude-code/default-model": _post_claude_code_default,
     # §54 让 AI 修：字段白名单 + 上下文推导 + 子进程都在 ai_fix_launch
     "/api/ai-fix": lambda ctx, payload: ai_fix_launch.launch(ctx.home, payload),
+    # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/materials.py
+    "/api/materials/add": lambda ctx, payload: materials.add(ctx.home, payload),
+    "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
 }
 
 
