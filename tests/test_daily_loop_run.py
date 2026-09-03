@@ -266,12 +266,22 @@ class DefaultRunnersTestCase(unittest.TestCase):
 class ActdWiringTestCase(_Sandbox):
     def test_run_once_ticks_the_loop_with_the_pass_interval(self):
         from act import actd
+        # 同 test_actd_heartbeat：housekeeping 的其它住户全部 mock 掉——尤其
+        # update_check（真 GitHub releases 请求）与 auto_merge/feedback（子进程）。
         with mock.patch.object(actd.daily_loop, "tick") as tick, \
+                mock.patch.object(actd, "process_inbox", return_value=0), \
+                mock.patch.object(actd, "auto_dispatch_pass", return_value=0), \
                 mock.patch.object(actd, "build_dashboard", return_value={"counts": {}}), \
                 mock.patch.object(actd, "write_dashboard"), \
                 mock.patch.object(actd, "reconcile_executing", return_value=0), \
                 mock.patch.object(actd, "process_raising", return_value=0), \
                 mock.patch.object(actd, "dispatch_approved", return_value=0), \
+                mock.patch.object(actd, "purge_trash"), \
+                mock.patch.object(actd, "archive_stale"), \
+                mock.patch.object(actd, "cleanup_merge_jobs"), \
+                mock.patch.object(actd, "auto_merge", None), \
+                mock.patch.object(actd, "feedback", None), \
+                mock.patch.object(actd, "update_check", None), \
                 mock.patch.object(actd, "detect_transitions", return_value=[]), \
                 mock.patch.object(actd, "_check_auth_failures", return_value=[]), \
                 mock.patch.object(actd, "_check_radar_liveness", return_value=[]):
