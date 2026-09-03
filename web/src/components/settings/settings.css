@@ -119,6 +119,20 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* §65 每日整理：短输入（HH:MM / 天数 / 张数）不该撑满一行 */
+.settings-input-short {
+  flex: none;
+  min-width: 0;
+  width: 88px;
+}
+
+.settings-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
 .settings-select:focus-visible,
 .settings-input:focus-visible {
   outline: 2px solid var(--accent-soft);

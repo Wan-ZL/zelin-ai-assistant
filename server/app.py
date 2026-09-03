@@ -21,9 +21,12 @@
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+- 每日整理面（§65）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
+  diff-write 语义），server/settings.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）。
+localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
+§65（每日整理设置面）。
 """
 from __future__ import annotations
 
@@ -386,6 +389,8 @@ _GET_JSON_ROUTES = {
     "/api/health": lambda ctx, query: health.snapshot(ctx.home),
     # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
+    # §65 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
+    "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
@@ -414,6 +419,8 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+    # §65 每日自我改进循环的五把旋钮（同一 diff-write 语义）
+    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
 }
 
 

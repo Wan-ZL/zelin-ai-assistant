@@ -117,7 +117,8 @@ class NormalizeCardMirrorsFromDictTestCase(unittest.TestCase):
                "preset": "proposals_triage", "work_id": "R-901",
                "assessment": {"summary": "修好了", "verdict": "建议验收",
                               "verdict_reason": "清单全满足", "at": "2026-09-02T00:00:00Z",
-                              "source_hash": "abcd"}}
+                              "source_hash": "abcd"},
+               "merged_from": ["P-10", "P-11"]}
         self.assertEqual(set(raw), set(export_yaml.FIELD_DEFAULTS))  # fixture 自检
         self._assert_same(raw)
 

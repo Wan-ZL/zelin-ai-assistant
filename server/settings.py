@@ -14,6 +14,14 @@ Two things, both stdlib (+ optional PyYAML for reading config.yaml):
    other key in the file is preserved byte-for-byte as JSON. The pipeline
    (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same two keys.
 
+3. **The daily self-improvement loop's knobs** (CONTRACT §65, D10) —
+   ``GET/PUT /api/settings/daily-loop``: ``enabled`` / ``time`` (local HH:MM)
+   / ``max_proposals_per_day`` / ``stale_days`` / ``trash_retention_days``,
+   same layered read (override ``daily_loop_<field>`` → config.yaml
+   ``daily_loop.<field>`` → default) and the same diff-write; the pipeline's
+   ``config._OVERRIDE_FIELDS`` reads the identical flat keys and actd picks a
+   change up on its next pass (no restart).
+
 2. **The Claude Code global default** — ``~/.claude/settings.json`` ``model``,
    what every ``follow`` call inherits. ``GET /api/claude-code/default-model``
    reads it; ``POST`` edits **only the ``model`` key** after copying the file
@@ -58,6 +66,16 @@ MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
 
 # settings_overrides.json flat keys the pipeline reads (config._OVERRIDE_FIELDS)
 OVERRIDE_KEY = "models_%s"
+
+# ---- §65 daily loop knobs — mirrors of act/lib/config.py (drift-pinned) ---- #
+DAILY_LOOP_FIELDS = ("enabled", "time", "max_proposals_per_day", "stale_days",
+                     "trash_retention_days")
+DAILY_LOOP_DEFAULTS = {"enabled": True, "time": "03:30", "max_proposals_per_day": 5,
+                       "stale_days": 45, "trash_retention_days": 90}
+DAILY_LOOP_KEY = "daily_loop_%s"
+CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+_BOOL_WORDS = {"true": True, "yes": True, "on": True, "1": True,
+               "false": False, "no": False, "off": False, "0": False}
 
 BACKUP_SUFFIX = ".bak-%s"   # settings.json.bak-20260901T120000Z
 
@@ -107,6 +125,153 @@ def noncanonical_warning(mode: str, value: str) -> Optional[str]:
             "下线那天这些调用会静默全败 / %s uses the non-canonical model id \"%s\" - "
             "aliases/suffixes ([1m], -eap...) can disappear any day and every call "
             "would then fail silently" % (mode, value, mode, value))
+
+
+# --------------------------------------------------------------------------- #
+# §65 daily loop knob validation (mirror of config._coerce_bool / coerce_clock_time
+# / _nonneg_int — the strict, overrides-path shapes)
+# --------------------------------------------------------------------------- #
+def coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    key = str(value).strip().lower() if isinstance(value, (int, str)) else ""
+    if key in _BOOL_WORDS:
+        return _BOOL_WORDS[key]
+    raise ValueError("enabled 必须是 true/false / enabled must be true or false")
+
+
+def coerce_clock_time(value) -> str:
+    m = CLOCK_TIME_RE.match(value.strip()) if isinstance(value, str) else None
+    if m is None:
+        raise ValueError("time 必须是 HH:MM（本地时间，如 03:30）/ time must be HH:MM local, e.g. 03:30")
+    return "%02d:%s" % (int(m.group(1)), m.group(2))
+
+
+def _int_or_none(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def coerce_count(value) -> int:
+    n = _int_or_none(value)
+    if n is None or n < 0:
+        raise ValueError("必须是非负整数 / must be a non-negative integer")
+    return n
+
+
+_DAILY_LOOP_COERCE = {"enabled": coerce_bool, "time": coerce_clock_time,
+                      "max_proposals_per_day": coerce_count, "stale_days": coerce_count,
+                      "trash_retention_days": coerce_count}
+
+
+def coerce_daily_loop(field: str, value):
+    """Strict (overrides-path) coercion for one knob; ValueError with a plain reason."""
+    return _DAILY_LOOP_COERCE[field](value)
+
+
+def _lenient_daily_loop(field: str, value, default):
+    """config.yaml-path coercion (mirror of config._apply_daily_loop_block):
+    bad value → default; counts clamp at 0 (a negative day count means off)."""
+    if field in ("enabled", "time"):
+        try:
+            return coerce_daily_loop(field, value)
+        except (TypeError, ValueError):
+            return default
+    n = _int_or_none(value)
+    return max(0, default if n is None else n)
+
+
+def _config_daily_loop(home: Path) -> "tuple[dict, dict]":
+    """(values, present) from config.yaml ``daily_loop:``; absent/bad = defaults."""
+    values, present = dict(DAILY_LOOP_DEFAULTS), {f: False for f in DAILY_LOOP_FIELDS}
+    blk = _config_block(home, "daily_loop")
+    for field in DAILY_LOOP_FIELDS:
+        if field in blk:
+            present[field] = True
+            values[field] = _lenient_daily_loop(field, blk.get(field), values[field])
+    return values, present
+
+
+def _config_block(home: Path, name: str) -> dict:
+    if yaml is None:
+        return {}
+    try:
+        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+    blk = doc.get(name) if isinstance(doc, dict) else None
+    return blk if isinstance(blk, dict) else {}
+
+
+def daily_loop_snapshot(home: Path) -> dict:
+    """Wire shape (web/src/types.ts ``DailyLoopSettings`` mirrors verbatim)::
+
+        {"enabled": bool, "time": "HH:MM", "max_proposals_per_day": int,
+         "stale_days": int, "trash_retention_days": int,
+         "source": {"<field>": "override|config|default", ...}}
+    """
+    overrides = read_overrides(home)
+    values, present = _config_daily_loop(home)
+    out: dict = {"source": {}}
+    for field in DAILY_LOOP_FIELDS:
+        value, source = values[field], ("config" if present[field] else "default")
+        raw = overrides.get(DAILY_LOOP_KEY % field)
+        if raw is not None:
+            try:
+                value, source = coerce_daily_loop(field, raw), "override"
+            except ValueError:
+                pass  # the pipeline skips the bad entry too
+        out[field] = value
+        out["source"][field] = source
+    return out
+
+
+def _validated(payload: dict, fields: tuple, coerce, empty_msg: str) -> dict:
+    """Field whitelist (400 UNKNOWN_FIELD) + per-field coercion (400
+    INVALID_FIELD with the plain reason) → {field: value} for the given ones."""
+    _check_shape(payload, fields, empty_msg)
+    wanted: dict = {}
+    for field in (f for f in fields if f in payload):
+        try:
+            wanted[field] = coerce(field, payload[field])
+        except ValueError as exc:
+            raise InvalidFieldError(str(exc), {"field": field})
+    return wanted
+
+
+def _check_shape(payload: dict, fields: tuple, empty_msg: str) -> None:
+    unknown = set(payload) - set(fields)
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    if not payload:
+        raise InvalidFieldError(empty_msg)
+
+
+def _diff_write(home: Path, wanted: dict, base: dict, key_fmt: str) -> None:
+    """§15 v0.14 保存语义：equal to the config.yaml/default effective value →
+    the override key is deleted; different → written; other keys untouched."""
+    overrides = read_overrides(home)
+    for field, value in wanted.items():
+        key = key_fmt % field
+        if value == base[field]:
+            overrides.pop(key, None)
+        else:
+            overrides[key] = value
+    atomic_write_json(settings_overrides_path(home), overrides)
+
+
+def update_daily_loop(home: Path, payload: dict) -> dict:
+    """Validate a partial ``{field: value}`` and diff-write the flat override
+    keys (equal to the config.yaml/default effective value → key deleted)."""
+    wanted = _validated(payload, DAILY_LOOP_FIELDS, coerce_daily_loop,
+                        "nothing to save: give at least one daily_loop field")
+    base, _present = _config_daily_loop(home)
+    _diff_write(home, wanted, base, DAILY_LOOP_KEY)
+    return daily_loop_snapshot(home)
 
 
 # --------------------------------------------------------------------------- #
@@ -206,28 +371,10 @@ def update_models(home: Path, payload: dict) -> dict:
     override keys. Unknown keys → 400 UNKNOWN_FIELD; a malformed id → 400
     INVALID_FIELD with the plain-language reason (the web toasts it). Returns
     the fresh :func:`models_snapshot`."""
-    unknown = set(payload) - set(MODEL_MODES)
-    if unknown:
-        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
-    if not payload:
-        raise InvalidFieldError("nothing to save: give dispatch and/or pipeline")
-    wanted: dict = {}
-    for mode in MODEL_MODES:
-        if mode not in payload:
-            continue
-        try:
-            wanted[mode] = coerce_model(payload[mode])
-        except ValueError as exc:
-            raise InvalidFieldError(str(exc), {"field": mode})
-    overrides = read_overrides(home)
+    wanted = _validated(payload, MODEL_MODES, lambda _mode, v: coerce_model(v),
+                        "nothing to save: give dispatch and/or pipeline")
     base, _present = _config_models(home)
-    for mode, value in wanted.items():
-        key = OVERRIDE_KEY % mode
-        if value == base[mode]:
-            overrides.pop(key, None)      # diff-write: same as effective → no key
-        else:
-            overrides[key] = value
-    atomic_write_json(settings_overrides_path(home), overrides)
+    _diff_write(home, wanted, base, OVERRIDE_KEY)
     return models_snapshot(home)
 
 

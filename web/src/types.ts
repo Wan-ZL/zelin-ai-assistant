@@ -279,6 +279,27 @@ export interface DeployState {
   [key: string]: unknown;
 }
 
+/**
+ * §65 每日自我改进循环的投影（dashboard add-only 顶层键 maintenance；act/lib/daily_loop.projection）。
+ * phase 已知值：idle | dedup | stale_sweep | proposals（未知值按「在跑」显示）；时间全是 epoch 秒或 null。
+ * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数。
+ */
+export interface Maintenance {
+  phase: string;
+  started_at: number | null;
+  last_run_at: number | null;
+  next_run_at?: number | null;
+  last_result: {
+    merged: number;
+    trashed: number;
+    proposals: number;
+    summaries?: number;
+    errors?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 /** 看板投影顶层（GET /api/board = dashboard.json 原样透传） */
 export interface Board {
   generated_at: string;
@@ -295,6 +316,8 @@ export interface Board {
   update_available?: unknown;
   device_label?: string;
   deploy_state?: DeployState;
+  /** §65 每日整理投影（add-only；旧 server 缺席）——顶部横幅读它 */
+  maintenance?: Maintenance;
   /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
   recaps?: RecapRow[];
   [key: string]: unknown;
@@ -415,6 +438,22 @@ export interface ClaudeCodeDefault {
   canonical: boolean;
   [key: string]: unknown;
 }
+
+/** GET/PUT /api/settings/daily-loop（CONTRACT §65，D10）：server/settings.py daily_loop_snapshot 的 wire 形逐字镜像。
+ *  time = 本地 HH:MM；三个天数/张数都是非负整数（0 = 关掉那一项）；source = 每个字段的生效来源 override|config|default */
+export interface DailyLoopSettings {
+  enabled: boolean;
+  time: string;
+  max_proposals_per_day: number;
+  stale_days: number;
+  trash_retention_days: number;
+  source: { [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** PUT /api/settings/daily-loop 的 body：五键任意子集 */
+export type DailyLoopPatch = Partial<Pick<DailyLoopSettings,
+  "enabled" | "time" | "max_proposals_per_day" | "stale_days" | "trash_retention_days">>;
 
 /** POST /api/claude-code/default-model 的回执（只改 model 键；backup = 改前副本路径，文件原本不存在时为 null） */
 export interface ClaudeCodeDefaultWrite {

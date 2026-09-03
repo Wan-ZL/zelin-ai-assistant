@@ -3,13 +3,15 @@
 //   1. 整页状态分派：首载 loading / 从未加载成功且离线（诚实空态+恢复路径）/ 正常渲染页面；
 //   2. <html lang> 与 document.title 随语言同步；
 //   3. 有旧快照时的降级横幅（ErrorBanner 自读 store，条件互斥不双报）；
-//   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话）。
+//   4. 管线健康横幅（PipelineBanner，§47.4：actd 卡住/连崩/没跑——server 可达时才说话）；
+//   5. 每日整理横幅（MaintenanceBanner，§65：正在整理 / 今日整理：合并 N、清理 M）。
 import { useEffect, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { refreshBoard, useAppState } from "../../store";
 import { EmptyState } from "./EmptyState";
 import { ErrorBanner } from "./ErrorBanner";
 import { HeaderBar } from "./HeaderBar";
+import { MaintenanceBanner } from "./MaintenanceBanner";
 import { PipelineBanner } from "./PipelineBanner";
 
 export interface AppShellProps {
@@ -77,6 +79,8 @@ export function AppShell({ searchSlot, children }: AppShellProps) {
       <ErrorBanner />
       {/* §47.4 管线健康（后台服务卡住/崩/停）——与离线横幅互斥，见组件头注 */}
       <PipelineBanner />
+      {/* §65 每日整理：正在整理 / 今日整理摘要（不弹系统通知，D10） */}
+      <MaintenanceBanner />
       <main className="shell-main">{content}</main>
     </div>
   );

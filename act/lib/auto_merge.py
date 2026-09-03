@@ -95,23 +95,36 @@ def _contacts(req) -> set:
     return out
 
 
-def _linked(a, b) -> bool:
-    """Deliberately-related cards (lineage/thread/split) are never duplicate
-    noise. Split lineage is CRITICAL: a just-split card's text ≈ its origin
-    note by construction — suggesting the merge back would undo the undo
-    (review blocker 7)."""
+def _merge_lineage(a, b) -> bool:
+    """§65 daily-merge lineage: a card the owner RESTORED out of a daily merge
+    is deliberately separate from the synthesized card it came from — never
+    suggest folding it back (same doctrine as split_from)."""
+    return (b.id in (getattr(a, "merged_from", None) or [])
+            or a.id in (getattr(b, "merged_from", None) or []))
+
+
+def _lineage_linked(a, b) -> bool:
     if a.improvement_of == b.id or b.improvement_of == a.id:
         return True
     if (getattr(a, "split_from", None) == b.id
             or getattr(b, "split_from", None) == a.id):
         return True
-    ta, tb = getattr(a, "thread_id", None), getattr(b, "thread_id", None)
-    if ta and tb and ta == tb:
-        return True
-    tka, tkb = getattr(a, "thread_key", None), getattr(b, "thread_key", None)
-    if tka and tkb and tka == tkb:
-        return True
-    return False
+    return _merge_lineage(a, b)
+
+
+def _both_equal(x, y) -> bool:
+    return bool(x and y and x == y)
+
+
+def linked(a, b) -> bool:
+    """Deliberately-related cards (lineage/thread/split/daily-merge) are never
+    duplicate noise. Split lineage is CRITICAL: a just-split card's text ≈ its
+    origin note by construction — suggesting the merge back would undo the
+    undo (review blocker 7). Public since §65 (防腐 #2: silent_merge and
+    maintenance call it)."""
+    return (_lineage_linked(a, b)
+            or _both_equal(getattr(a, "thread_id", None), getattr(b, "thread_id", None))
+            or _both_equal(getattr(a, "thread_key", None), getattr(b, "thread_key", None)))
 
 
 def is_near_dupe(a, b, cfg=None) -> tuple[bool, list[str], str]:
@@ -214,7 +227,7 @@ def scan_new_cards() -> int:
                     if str(other.id) == str(new.id):
                         continue
                     key = pair_key(new.id, other.id)
-                    if key in suggested or _linked(new, other):
+                    if key in suggested or linked(new, other):
                         continue
                     dupe, matched, reason = is_near_dupe(new, other, cfg)
                     if not dupe:

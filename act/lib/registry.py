@@ -310,6 +310,10 @@ OPTIONAL_ORDER = [
     # {summary, verdict, verdict_reason, at, source_hash | error}，只由
     # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
     "assessment",
+    # §65 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
+    # 旧卡主键列表；旧卡进回收站（reason `daily-merge: 并入 <new>`）、可恢复。
+    # 只在合成卡上出现；空列表整键省略。
+    "merged_from",
 ]
 
 
@@ -389,6 +393,9 @@ class Requirement:
 
     # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
     assessment: Optional[dict] = None
+    # §65 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
+    # 主键）。None/[] = 不是合成卡。
+    merged_from: Optional[list] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
@@ -1478,7 +1485,7 @@ def _same_source_and_title(a: Requirement, b: Requirement) -> bool:
     Matching is title-based on purpose: the same ask restated in a *different*
     channel (meeting -> slack -> confluence) is exactly the multi-source case
     that should merge and bump ``repeated_mentions`` (see R-001's 3 sources).
-    Source de-duplication happens separately in :func:`_dedupe_sources`.
+    Source de-duplication happens separately in :func:`dedupe_sources`.
     """
     ta, tb = _norm_title(a.title), _norm_title(b.title)
     if not ta or not tb:
@@ -1501,7 +1508,7 @@ def capture_source(who: str, channel: str, quote: str,
     the dashboard can project a card-level ``capture_id`` and a client can match
     "the card born from MY input" by id instead of guessing from a title prefix.
     Absent (Slack self-DM, no inbox file) → key omitted. Not part of
-    :func:`_dedupe_sources`' key (channel/date/ref|quote) — fold semantics
+    :func:`dedupe_sources`' key (channel/date/ref|quote) — fold semantics
     are unchanged."""
     row = {"who": who, "channel": channel,
            "date": _dt.date.today().isoformat(), "quote": quote}
@@ -1510,8 +1517,12 @@ def capture_source(who: str, channel: str, quote: str,
     return row
 
 
-def _dedupe_sources(existing: list, incoming: list) -> tuple[list, int]:
-    """Append incoming sources not already present. Returns (merged, added_count)."""
+def dedupe_sources(existing: list, incoming: list) -> tuple[list, int]:
+    """Append incoming sources not already present. Returns (merged, added_count).
+
+    Public since §65 (防腐 #2：跨模块引用 `_私名` = 当场升 public)——the
+    fold/merge sites in actd, quick_capture, silent_merge and maintenance all
+    union sources through this one key."""
     def key(s: dict) -> tuple:
         return (
             (s.get("channel") or "").lower(),
@@ -1651,7 +1662,7 @@ def _fold_hit(target: Requirement, new_req: Optional[Requirement],
     re-raise paths add the same ``[radar]`` note tag and dedupe identically."""
     src = sources if sources is not None else (
         new_req.sources if new_req is not None else None)
-    merged, added = _dedupe_sources(target.sources or [], src or [])
+    merged, added = dedupe_sources(target.sources or [], src or [])
     target.sources = merged
     if added:
         target.repeated_mentions = int(target.repeated_mentions or 1) + added
@@ -1712,7 +1723,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
         # Q3 pure-restatement gate: a closed thread re-mentioned with NO new
         # actionable content → bump repeated_mentions, do NOT flip (kills the
         # hot-thread 提案 noise that LLM-recall jitter would otherwise create).
-        merged, _added = _dedupe_sources(
+        merged, _added = dedupe_sources(
             parent.sources or [],
             (sources if sources is not None else new_req.sources) or [])
         parent.sources = merged
@@ -1730,7 +1741,7 @@ def reraise_or_followup(parent: Requirement, new_req: Requirement, *,
 
     if same_task:
         # in-place re-raise: flip the ORIGINAL card back to 提案 (Q3 ownership).
-        merged, _added = _dedupe_sources(
+        merged, _added = dedupe_sources(
             parent.sources or [],
             (sources if sources is not None else new_req.sources) or [])
         parent.sources = merged
@@ -1900,7 +1911,7 @@ def merge_or_new_with_kind(
                 _stamp_origin(child)   # §50：增量子卡按自身 sources 盖章
                 return "proposed", upsert(child)
             # pure restatement -> merge sources, bump count, keep status
-            merged, added = _dedupe_sources(parent.sources or [], new_req.sources or [])
+            merged, added = dedupe_sources(parent.sources or [], new_req.sources or [])
             parent.sources = merged
             if added:
                 parent.repeated_mentions = int(parent.repeated_mentions or 1) + added
