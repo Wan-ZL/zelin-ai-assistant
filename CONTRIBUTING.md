@@ -56,7 +56,9 @@ They are cheap; run them locally before pushing. Touching `shell/` (the product
 app since D3 — CONTRACT §54/§61) adds two more: `bash shell/build.sh` (must
 compile; engines moved from `mac/Sources` live here) and `bash shell/tests/run.sh`
 (swiftc typecheck of the whole module + the XCTest-free bridge harness). Touching
-`web/` adds `cd web && npm run build && npx vitest run`.
+`web/` adds `cd web && npm run typecheck && npm run build && npx vitest run` (`build`
+type-checks only what ships — `tsconfig.build.json` — because install.sh builds web/
+from a mirror outside the repo; `typecheck` covers the tests too, CONTRACT §56.5).
 
 ### What CI runs where (CONTRACT §56.8)
 

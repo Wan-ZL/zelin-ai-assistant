@@ -12,13 +12,6 @@
 // 判决一致。双语都要命中（原生 L("zh","en") 是逐字规格，PR #143「逐字镜像」同理）。
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import inventory from "../../ui/parity/native-inventory.json";
-import demoBoard from "../../ui/parity/fixtures/demo-board.json";
-import demoLanes from "../../ui/parity/fixtures/lanes.json";
-import demoSettings from "../../ui/parity/fixtures/settings.json";
-import demoSecrets from "../../ui/parity/fixtures/secrets.json";
-import pendingText from "../../ui/parity/pending.txt?raw";
-import waiversText from "../../ui/parity/waivers.txt?raw";
 import {
   fetchAbout,
   fetchAskHistory,
@@ -57,7 +50,44 @@ import {
   setFilters,
   setLanguage,
 } from "./store";
-import type { AboutInfo, Board, ClaudeCodeDefault, DiagnosticsSnapshot, HealthSnapshot, ModelsSettings, SetupSnapshot } from "./types";
+import type {
+  AboutInfo,
+  Board,
+  ClaudeCodeDefault,
+  DiagnosticsSnapshot,
+  HealthSnapshot,
+  LaneCatalog,
+  ModelsSettings,
+  SecretsStatus,
+  SettingsCatalog,
+  SetupSnapshot,
+} from "./types";
+
+// 仓库根 ui/parity/ 的清单、两本账本与 fixture 经 import.meta.glob 读——vitest 在 web/ 里跑，
+// 解析得到。不用静态 import：tsc 会按 resolveJsonModule 去找那些文件，而 install.sh 的 ui 步
+// 把 web/ 镜像到 $HOME 下的构建目录里编（CONTRACT §56.5），仓库根不在那里——2026-09-03 的
+// 首次 fresh-install 验收正是死在这几个 import 上。web/src 里任何文件都不许留 web/ 之外的
+// 静态 import（tests/test_web_build_self_contained.py 钉）；glob 找不到 = 抛错，不静默空转。
+const PARITY_ROOT = "../../ui/parity/";
+const parityJson = import.meta.glob(["../../ui/parity/native-inventory.json", "../../ui/parity/fixtures/*.json"],
+  { eager: true, import: "default" });
+const parityText = import.meta.glob("../../ui/parity/*.txt", { eager: true, import: "default", query: "?raw" });
+
+function parityFile<T>(files: Record<string, unknown>, rel: string): T {
+  const value = files[PARITY_ROOT + rel];
+  if (value === undefined) {
+    throw new Error(`ui/parity/${rel} not found — this suite runs from the repo's web/ dir (got: ${Object.keys(files).join(", ") || "nothing"})`);
+  }
+  return value as T;
+}
+
+const inventory = parityFile<{ controls: ControlItem[] }>(parityJson, "native-inventory.json");
+const demoBoard = parityFile<Board>(parityJson, "fixtures/demo-board.json");
+const demoLanes = parityFile<LaneCatalog>(parityJson, "fixtures/lanes.json");
+const demoSettings = parityFile<SettingsCatalog>(parityJson, "fixtures/settings.json");
+const demoSecrets = parityFile<SecretsStatus>(parityJson, "fixtures/secrets.json");
+const pendingText = parityFile<string>(parityText, "pending.txt");
+const waiversText = parityFile<string>(parityText, "waivers.txt");
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
@@ -152,7 +182,7 @@ function ledgerIds(text: string): Set<string> {
 
 const pending = ledgerIds(pendingText);
 const waivers = ledgerIds(waiversText);
-const controls = (inventory.controls as ControlItem[]).filter((c) => c.gated && c.owner === "web");
+const controls = inventory.controls.filter((c) => c.gated && c.owner === "web");
 
 const normalize = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").trim();
 
@@ -403,14 +433,14 @@ beforeAll(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(demoBoard.generated_at));
   installFakeShell();
-  vi.mocked(fetchBoard).mockResolvedValue(demoBoard as unknown as Board);
+  vi.mocked(fetchBoard).mockResolvedValue(demoBoard);
   vi.mocked(fetchCard).mockImplementation(async (id: string) => ({ id, notes: "demo notes\n2026-09-01T10:00:00Z 追加：又问了一次", log_tail: "ok" }));
   vi.mocked(fetchHealth).mockResolvedValue(health);
   vi.mocked(fetchLanes).mockResolvedValue(demoLanes);
   vi.mocked(fetchModelsSettings).mockResolvedValue(models);
   vi.mocked(fetchClaudeCodeDefault).mockResolvedValue(ccDefault);
-  vi.mocked(fetchSettingsCatalog).mockResolvedValue(demoSettings as never);
-  vi.mocked(fetchSecrets).mockResolvedValue(demoSecrets as never);
+  vi.mocked(fetchSettingsCatalog).mockResolvedValue(demoSettings);
+  vi.mocked(fetchSecrets).mockResolvedValue(demoSecrets);
   vi.mocked(fetchSetup).mockResolvedValue(setup);
   vi.mocked(fetchAbout).mockResolvedValue(about);
   vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics);

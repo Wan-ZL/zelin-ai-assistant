@@ -241,12 +241,32 @@ class SummaryRenderTestCase(unittest.TestCase):
         self.assertIn("BROKEN", text)
         self.assertIn("[FAIL] store2", text)
         self.assertIn("waiting on you", text)
-        self.assertIn("[FAIL] claude CLI", text)
+        self.assertIn("[ you] claude CLI", text)
         self.assertIn("not wired in this run (--no-launchd)", text)
+        self.assertIn("[ n/a] actd", text)
         self.assertIn("notes (1)", text)
+        self.assertIn("[warn] board app version", text)
         self.assertIn("what is left for you, in order:", text)
         self.assertIn("1. Build the board UI", text)
         self.assertTrue(text.rstrip().endswith("exit 1 — 1 broken row(s) above"), text[-80:])
+
+    def test_badge_follows_the_bucket_not_the_raw_status(self):
+        # the first CI acceptance run (2026-09-03) exited 0 yet read as three
+        # [FAIL] lines — a red status inside an "expected" bucket is not a failure
+        # of this machine, so the badge names the class instead
+        fail_row = row("actd", "fail", "agent_unloaded")
+        self.assertEqual(fi.row_badge(fail_row, fi.UNWIRED), "[ n/a]")
+        self.assertEqual(fi.row_badge(row("cron ingest chain", "fail", "cron_missing"), fi.UNWIRED), "[ n/a]")
+        self.assertEqual(fi.row_badge(row("claude CLI", "fail", "claude_cli_missing"), fi.HUMAN), "[ you]")
+        self.assertEqual(fi.row_badge(row("anthropic key", "warn"), fi.HUMAN), "[ you]")
+        self.assertEqual(fi.row_badge(fail_row, fi.BROKEN), "[FAIL]")
+        self.assertEqual(fi.row_badge(row("x", "warn"), fi.NOTES), "[warn]")
+        self.assertEqual(fi.row_badge(row("x", "weird"), fi.NOTES), "[ ?  ]")
+        # every badge is the same width so the columns line up
+        self.assertEqual({len(b) for b in (fi.row_badge(fail_row, k) for k in fi.BUCKETS)}, {6})
+        text = fi.render(self._summary([fail_row, row("claude CLI", "fail", "claude_cli_missing")], NO_LAUNCHD_REPORT))
+        self.assertNotIn("[FAIL]", text)
+        self.assertIn("exit 0 — nothing broken", text)
 
     def test_render_clean_machine(self):
         text = fi.render(self._summary([row("a", "ok")], report("ok")))

@@ -316,6 +316,15 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Type-check everything (src + tests, tsconfig.json)
+        # `npm run build` type-checks only what ships (tsconfig.build.json — the
+        # install.sh ui step builds from a mirror of web/ outside the repo, where
+        # test-only fixtures under ui/parity/ do not exist); the tests' types are
+        # covered here so nothing is lost. tests/test_web_build_self_contained.py.
+        if: needs.changes.outputs.web != 'false'
+        working-directory: web
+        run: npm run typecheck
+
       - name: Build (tsc + vite)
         if: needs.changes.outputs.web != 'false'
         working-directory: web
