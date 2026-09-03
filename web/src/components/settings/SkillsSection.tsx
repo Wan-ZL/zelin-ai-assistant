@@ -1,4 +1,4 @@
-// 设置页 section「Skills」（CONTRACT §65，owner 决策 D13 / R2.7.2–R2.7.3）。
+// 设置页 section「Skills」（CONTRACT §67，owner 决策 D13 / R2.7.2–R2.7.3）。
 // 一行一个仓库 skill（skills/index.yaml）：名字 + 版本 + 描述 + 本机状态徽章 + 启用/停用开关。
 // 状态是 server 判的（enabled / disabled / copy / custom / foreign），client 只镜像 wire 键：
 //   enabled  = ~/.claude/skills/<name> 软链接指向仓库副本（开关：停用）

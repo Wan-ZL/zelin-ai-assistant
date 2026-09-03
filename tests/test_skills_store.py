@@ -1,4 +1,4 @@
-"""Skill store behaviour (CONTRACT §65; D13 / R2.7) — act/lib/skills.py against a
+"""Skill store behaviour (CONTRACT §67; D13 / R2.7) — act/lib/skills.py against a
 fixture store in a tempdir: never the real repo's skills/, never the developer's
 ~/.claude (every Store gets an injected claude_home + state_dir).
 

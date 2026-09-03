@@ -1,5 +1,5 @@
 """Skill store — ``skills/index.yaml`` manifest, enable/disable via
-``~/.claude/skills/<name>`` symlinks, drift detection (CONTRACT §65; owner
+``~/.claude/skills/<name>`` symlinks, drift detection (CONTRACT §67; owner
 decision D13, requirements R2.7).
 
 The repo is the store: every skill lives at ``skills/<name>/`` and is listed

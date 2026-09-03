@@ -68,7 +68,7 @@ export interface AppState {
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
-  skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§65 设置页「Skills」）
+  skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§67 设置页「Skills」）
   skillsError: string | null;     // 设置页 Skills 读失败的用户可读文案（成功后清空；切换失败由页面 toast）
 }
 
@@ -330,7 +330,7 @@ export async function markRecap(key: string, mark: "copied" | "sent", on = true)
   setState({ recapMarks: { ...state.recapMarks, [key]: { copied_at: receipt.copied_at, sent_at: receipt.sent_at } } });
 }
 
-// ----- skills（§65 设置页「Skills」） ------------------------------------------ #
+// ----- skills（§67 设置页「Skills」） ------------------------------------------ #
 
 /** 拉 skill 商店快照（manifest + 本机状态）；读失败落 skillsError */
 export async function refreshSkills(): Promise<void> {

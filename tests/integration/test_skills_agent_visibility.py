@@ -1,4 +1,4 @@
-"""Dispatched agents see the store's skills (CONTRACT §65 / R2.7.4) + skills_sync.sh
+"""Dispatched agents see the store's skills (CONTRACT §67 / R2.7.4) + skills_sync.sh
 end to end — real git, real bash, a FAKE claude (tests/integration/, 防腐 #7).
 
 Mechanism under test — the two places Claude Code documents it reads skills from:

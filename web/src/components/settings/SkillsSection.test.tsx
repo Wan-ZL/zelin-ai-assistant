@@ -1,4 +1,4 @@
-// 设置页「Skills」section 行为（CONTRACT §65，D13）：
+// 设置页「Skills」section 行为（CONTRACT §67，D13）：
 //   1) 从 GET /api/skills 水合：一行一个 skill，状态徽章逐字镜像 wire state（enabled / disabled / custom…）；
 //   2) 开关 = 一次 POST {name, action}，零多余字段；成功以 server 回执替换快照 + toast；
 //   3) custom（本地改过的副本）与 foreign 行开关锁定，并显示「自定义 · 落后 N 版」+ 不覆盖的说明；

@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/skills_sync.sh — refresh this machine's skill store (CONTRACT §65; D13 / R2.7.2).
+# scripts/skills_sync.sh — refresh this machine's skill store (CONTRACT §67; D13 / R2.7.2).
 #
 # The store is the repo's skills/ directory + skills/index.yaml; Claude Code and
 # dispatched agents read ~/.claude/skills/<name>. This script makes the second

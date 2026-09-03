@@ -1,4 +1,4 @@
-# skills/index.yaml — the skill store manifest (CONTRACT §65; owner decision D13, R2.7).
+# skills/index.yaml — the skill store manifest (CONTRACT §67; owner decision D13, R2.7).
 #
 # One entry per skills/<name>/ directory. `version` MUST equal the `version:` in
 # that skill's SKILL.md frontmatter (tests/test_skills_manifest_repo.py pins it),

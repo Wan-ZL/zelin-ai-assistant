@@ -22,7 +22,7 @@ Two things, both stdlib (+ optional PyYAML for reading config.yaml):
    ``CONFLICT``) — never overwritten. Nothing rewrites that file on launch
    (D22 (d)): the owner clicks 「设为 …」 explicitly.
 
-3. **The skill store** (CONTRACT §65) — ``GET /api/skills`` lists the
+3. **The skill store** (CONTRACT §67) — ``GET /api/skills`` lists the
    ``skills/index.yaml`` manifest with each skill's state on this machine
    (enabled symlink / disabled / store-owned copy / owner's custom copy /
    foreign) and ``POST /api/skills {name, action: enable|disable}`` flips one.
@@ -52,7 +52,7 @@ try:
 except ImportError:  # pragma: no cover - PyYAML absent: config.yaml layer is skipped
     yaml = None  # type: ignore[assignment]
 
-# §65 skill store: the single writer of ~/.claude/skills links; absent
+# §67 skill store: the single writer of ~/.claude/skills links; absent
 # (partial install shape) → the two skills endpoints answer 501, nothing else
 # in the settings face degrades.
 try:
@@ -397,7 +397,7 @@ def _replace_settings(p: Path, doc: dict, *, keep_mode: bool) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# skill store — GET/POST /api/skills (CONTRACT §65)
+# skill store — GET/POST /api/skills (CONTRACT §67)
 # --------------------------------------------------------------------------- #
 SKILL_ACTIONS = ("enable", "disable")
 

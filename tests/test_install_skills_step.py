@@ -1,4 +1,4 @@
-"""install.sh `install_skills` — the §23 `skills` step (CONTRACT §65; §56.5 spirit).
+"""install.sh `install_skills` — the §23 `skills` step (CONTRACT §67; §56.5 spirit).
 
 Runs the function text straight out of install.sh (same _install_sh_fn harness as
 tests/test_install_cron_tcc.py) against a stub scripts/skills_sync.sh in a temp

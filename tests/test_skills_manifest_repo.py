@@ -1,4 +1,4 @@
-"""The real skill store is consistent (CONTRACT §65; D13 / R2.7.1 / R2.7.4).
+"""The real skill store is consistent (CONTRACT §67; D13 / R2.7.1 / R2.7.4).
 
 Read-only over the checkout — no ~/.claude, no state/ (Store is only used for
 its repo-side validation). Pinned:

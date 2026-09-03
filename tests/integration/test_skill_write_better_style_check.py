@@ -1,4 +1,4 @@
-"""write-better skill · its own linter suite runs in CI (CONTRACT §65; skill absorbed from PR #102).
+"""write-better skill · its own linter suite runs in CI (CONTRACT §67; skill absorbed from PR #102).
 
 `skills/write-better/scripts/test_style_check.py` is the skill's self-contained
 62-case regression suite for `style_check.py` (contractions, slash dates, hedges,

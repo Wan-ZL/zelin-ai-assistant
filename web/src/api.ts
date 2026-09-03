@@ -242,7 +242,7 @@ export function postRecapMark(key: string, mark: "copied" | "sent", on = true): 
   });
 }
 
-/** GET /api/skills — skill 商店 manifest + 本机每个 skill 的状态（CONTRACT §65） */
+/** GET /api/skills — skill 商店 manifest + 本机每个 skill 的状态（CONTRACT §67） */
 export function fetchSkills(signal?: AbortSignal): Promise<SkillsSnapshot> {
   return request<SkillsSnapshot>("/api/skills", { signal });
 }

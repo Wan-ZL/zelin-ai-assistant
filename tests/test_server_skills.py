@@ -1,4 +1,4 @@
-"""server/ skill store face (CONTRACT §65; §49 routes).
+"""server/ skill store face (CONTRACT §67; §49 routes).
 
 - GET /api/skills: manifest rows with this machine's state (token-light read).
 - POST /api/skills {name, action}: all four write gates (same as every POST),

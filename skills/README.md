@@ -1,4 +1,4 @@
-# skills/ — the in-repo skill store (CONTRACT §65; vnext2-plan D13, R2.7)
+# skills/ — the in-repo skill store (CONTRACT §67; vnext2-plan D13, R2.7)
 
 Skills live here so they version with the code and sync between machines with `git pull`. Claude Code and dispatched agents read skills from `~/.claude/skills/<name>`; **enabling a repo skill is a symlink from there to its directory here**. The manifest `skills/index.yaml` is the catalog; `act/lib/skills.py` is the only thing that ever writes `~/.claude/skills` links or `state/skills.json`; git is the only writer of `skills/` itself (防腐 #8).
 

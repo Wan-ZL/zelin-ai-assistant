@@ -473,7 +473,7 @@ export interface MaterialsList {
   [key: string]: unknown;
 }
 
-/** GET /api/skills 的一行（CONTRACT §65）：act/lib/skills.Store.inspect 的 wire 形逐字镜像（add-only）。
+/** GET /api/skills 的一行（CONTRACT §67）：act/lib/skills.Store.inspect 的 wire 形逐字镜像（add-only）。
  *  state = disabled | enabled | copy | custom | foreign；toggle = enable | disable | locked；
  *  relation/distance = 本机副本相对仓库版本的 same | behind | ahead | unknown 与「N 版」距离 */
 export interface SkillRow {
@@ -497,7 +497,7 @@ export interface SkillRow {
   [key: string]: unknown;
 }
 
-/** GET /api/skills 快照 = POST /api/skills 回执（§65） */
+/** GET /api/skills 快照 = POST /api/skills 回执（§67） */
 export interface SkillsSnapshot {
   skills: SkillRow[];
   skills_dir: string;

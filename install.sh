@@ -12,7 +12,7 @@
 #      updates, so the grant survives — the versioned path under
 #      ~/.local/share/claude/versions/ changed under every update)
 #   3. create state/ and state/inbox/
-#   3b. `skills` step (CONTRACT §65): scripts/skills_sync.sh — link the
+#   3b. `skills` step (CONTRACT §67): scripts/skills_sync.sh — link the
 #      default_enabled store skills into ~/.claude/skills (never overriding a
 #      recorded decision or a custom copy) so a fresh machine has them
 #   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
@@ -298,7 +298,7 @@ failed_deploy_steps() {
     printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
 }
 
-# Step 3b — the skill store (CONTRACT §65; §23 step `skills`). Runs
+# Step 3b — the skill store (CONTRACT §67; §23 step `skills`). Runs
 # scripts/skills_sync.sh with the daemon interpreter: re-points ~/.claude/skills
 # links at THIS checkout, applies `default_enabled` where this machine has no
 # recorded decision (state/skills.json), never touches a custom copy. A fresh
@@ -1406,7 +1406,7 @@ fi
 
 # --------------------------------------------------------------------------
 echo ""
-echo "==> 3b. skill store — ~/.claude/skills links for skills/ (CONTRACT §65)"
+echo "==> 3b. skill store — ~/.claude/skills links for skills/ (CONTRACT §67)"
 install_skills
 
 # --------------------------------------------------------------------------

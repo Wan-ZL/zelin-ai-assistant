@@ -210,7 +210,7 @@ Design docs ([docs/design/](docs/design/README.md)) record intent and owner deci
 
 ```
 ingest/            # screenpipe → Obsidian chain (export / process / cleanup + skill)
-skills/            # in-repo skill store: index.yaml manifest + board-agent / test-code / write-better; enable = ~/.claude/skills symlink (CONTRACT §65)
+skills/            # in-repo skill store: index.yaml manifest + board-agent / test-code / write-better; enable = ~/.claude/skills symlink (CONTRACT §67)
 act/
   actd.py          # daemon: inbox → dispatch → reconcile → dashboard
   executor.py      # claude --bg dispatch + resume/rework + quality gate + delivery harvest
