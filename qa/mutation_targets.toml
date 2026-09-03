@@ -28,6 +28,10 @@ per_mutant_timeout_seconds = 60
 # §64 待验收卡 AI 摘要 + 评语：输出消毒 / 指纹闸门 / 「永不改 status」——一个存活体 = 建议变成了判决。
 "act/lib/card_summary.py" = ["tests/test_card_summary_verdict.py"]
 "act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]
+# §62 每日自我改进循环（P5）——它替 owner 动卡（合成 / 进回收站）并铸提案，宪法第 1/2/10/11 条都在这里执法。
+"act/lib/maintenance.py" = ["tests/test_daily_loop_dedup_merge.py", "tests/test_daily_loop_stale_rules.py"]
+"act/lib/daily_loop.py" = ["tests/test_daily_loop_run.py", "tests/test_daily_loop_proposals.py"]
+"act/lib/loop_inputs.py" = ["tests/test_daily_loop_inputs.py"]
 
 # test-code skill（skills/test-code；vnext2-plan R2.8）——skill 自己也接受每晚第 4 档考验。
 # 2026-09-02 首轮：1,581 变异体 62% 杀伤，存活体 75% 是 CATALOG 数据表里的时间估计常数（±1），

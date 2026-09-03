@@ -155,5 +155,36 @@ class RecapMirrorTestCase(unittest.TestCase):
                 self.assertEqual(a, b)
 
 
+class DailyLoopSettingsMirrorTestCase(unittest.TestCase):
+    """§62：server/settings.py 手抄的每日循环旋钮常量与 act/lib/config.py 逐字一致。"""
+
+    def test_defaults_and_keys_mirror_config(self):
+        cfg = config.Config()
+        for field in server_settings.DAILY_LOOP_FIELDS:
+            self.assertEqual(server_settings.DAILY_LOOP_DEFAULTS[field], getattr(cfg, f"daily_loop_{field}"))
+            self.assertIn(server_settings.DAILY_LOOP_KEY % field, config._OVERRIDE_FIELDS)
+        self.assertEqual(server_settings.CLOCK_TIME_RE.pattern, config.CLOCK_TIME_RE.pattern)
+        self.assertEqual(server_settings.DAILY_LOOP_DEFAULTS["time"], config.DEFAULT_DAILY_LOOP_TIME)
+
+    def test_coercers_agree_on_a_table(self):
+        table = {
+            "enabled": (True, False, 0, 1, 2, "yes", "OFF", "maybe", None, [], 1.0),
+            "time": ("03:30", "3:30", " 23:59 ", "24:00", "3:5", "noon", None, 330),
+            "max_proposals_per_day": (0, 5, -1, "7", "x", True, None, 2.5, []),
+        }
+        for field, values in table.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    try:
+                        a = ("ok", config._OVERRIDE_FIELDS["daily_loop_%s" % field](value))
+                    except (TypeError, ValueError):
+                        a = ("err", None)
+                    try:
+                        b = ("ok", server_settings.coerce_daily_loop(field, value))
+                    except (TypeError, ValueError):
+                        b = ("err", None)
+                    self.assertEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,8 @@ import type {
   CardDetail,
   ClaudeCodeDefault,
   ClaudeCodeDefaultWrite,
+  DailyLoopPatch,
+  DailyLoopSettings,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
@@ -186,6 +188,16 @@ export function fetchModelsSettings(signal?: AbortSignal): Promise<ModelsSetting
  */
 export function putModelsSettings(body: { dispatch?: string; pipeline?: string }): Promise<ModelsSettings> {
   return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/settings/daily-loop — 每日自我改进循环的五把旋钮 effective 值（CONTRACT §62） */
+export function fetchDailyLoopSettings(signal?: AbortSignal): Promise<DailyLoopSettings> {
+  return request<DailyLoopSettings>("/api/settings/daily-loop", { signal });
+}
+
+/** PUT /api/settings/daily-loop — 保存旋钮子集（写请求：四闸同 POST；server 校验 + diff-write） */
+export function putDailyLoopSettings(body: DailyLoopPatch): Promise<DailyLoopSettings> {
+  return request<DailyLoopSettings>("/api/settings/daily-loop", { method: "PUT", body: JSON.stringify(body) });
 }
 
 /** GET /api/claude-code/default-model — follow 模式继承的 Claude Code 全局默认 */

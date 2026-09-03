@@ -36,6 +36,13 @@ os.environ.setdefault("AIASSISTANT_HTTP_PROBE", "0")
 # （activate.py 只在 auto 下激活）。store2 侧的行为测试自己显式切 sqlite
 # （改 env + registry.reset_store_cache()，用完复原）。
 os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
+# §62 每日循环的 launchd 日志读取器默认读 ~/Library/Logs/zelin-ai-assistant/——
+# 开发者机器上有真日志，读了就是不确定的测试输入；指进沙箱（目录可以不存在）。
+os.environ.setdefault("ZAI_LAUNCHD_LOG_DIR", os.path.join(TMP_HOME, "launchd-logs"))
+# §62 每日循环挂在 actd.run_once 里：沙箱里没有 state/daily_loop.json，任何一条走
+# 真 run_once 的判例都会在本地时间 ≥ 03:30 时把整轮循环跑起来（真 gh、真 doctor
+# 子进程）。默认关掉；循环自己的判例显式打开（AIASSISTANT_DAILY_LOOP=1）。
+os.environ.setdefault("AIASSISTANT_DAILY_LOOP", "0")
 
 
 # --------------------------------------------------------------------------- #
@@ -60,6 +67,9 @@ _PROMPT_FLAGS = frozenset({"-p", "--print", "--resume"})
 _NETWORK_PROGRAMS = frozenset({
     "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp",
 })
+# 待办（§62 审查）：`gh` 也该进这份名单——§62 循环与 §57 pinned issue 都经注入缝——
+# 但 test_ask / test_telemetry_level 仍经 doctor 真跑 `gh auth status`；先把那两处
+# 探针改成可注入，再收编。
 # 这些只是外壳，真正要看的是它们后面那条命令（`bash -c "curl …"`）
 _SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "env", "xargs"})
 

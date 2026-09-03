@@ -63,6 +63,10 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 #       提形态（会话挖掘卡、§40/§47.2 诊断降级卡；analytics 是遥测建议通道）
 #   meeting / audio — obsidian radar 的会议音频与笔记通道
 #   slack / gmail — 第三方消息（radar_slack 非 self-DM 路径、radar_gmail）
+#   self_improve — §62 每日自我改进循环铸的 🤖 提案卡（act/lib/daily_loop.py
+#       SOURCE_CHANNEL 逐字同款，代码硬编码、无 LLM 参与 = write-locked）：
+#       AI 自提 → proposed，照旧人批；P6 自动 PR 通道的准入只认这个 channel
+#       + 物理 repo 路径，永不认 type/target_repo 这类 LLM 可写字段
 #   screen — §45 防御行：屏幕永不铸卡，真出现即异常，按最不信任处理
 CHANNEL_CLASS: dict = {
     "quick": HAND,
@@ -76,6 +80,7 @@ CHANNEL_CLASS: dict = {
     "claude_code": PROPOSED,
     "radar-diagnostic": PROPOSED,
     "radar-parse-degraded": PROPOSED,
+    "self_improve": PROPOSED,
     "meeting": MEETING,
     "audio": MEETING,
     "slack": EXTERNAL,

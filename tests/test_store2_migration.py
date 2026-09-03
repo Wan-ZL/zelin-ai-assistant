@@ -139,7 +139,7 @@ def build_fixture_registry(root: Path, *, with_archive: bool = True,
         cost_estimate_usd="cheap"))
     # plan 的 str 合法形（mapping §9.7：round-trip 优先，原样保留）
     dump("R-111.yaml", _card("R-111", "card_sent", plan=PLAN_STR))
-    # sources 列表混入 non-dict 项（load_all/_dedupe_sources 都静默跳过）
+    # sources 列表混入 non-dict 项（load_all/dedupe_sources 都静默跳过）
     dump("R-112.yaml", _card(
         "R-112", "detected",
         sources=["stray-non-dict-entry",

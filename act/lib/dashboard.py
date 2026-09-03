@@ -22,8 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import (card_summary, config, deploy_state, failures, health, policy,
-                     recap_store, risk, sources, steer, titles)
+from act.lib import (card_summary, config, daily_loop, deploy_state, failures, health,
+                     maintenance, policy, recap_store, risk, sources, steer, titles)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -352,35 +352,15 @@ def _iso_now() -> str:
 
 
 def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
-    """ISO hard-delete deadline for a trash row (§40): trashed_at + retention.
+    """ISO hard-delete deadline for a trash row (§40.5): trashed_at + retention.
 
     None (key emitted as null) when the row is pinned, retention is disabled
     (``trash_retention_days <= 0``), or ``trashed_at`` doesn't parse — EXACTLY
     the conditions under which actd.purge_trash skips the row, so the countdown
-    never promises a purge that isn't coming. The parse below mirrors
-    actd._parse_iso byte-for-byte (NOT the laxer _epoch, which accepts bare
-    numerics purge_trash rejects — a numeric trashed_at used to show a red
-    countdown for a purge that would never happen)."""
-    days = int(cfg.trash_retention_days or 0)
-    if days <= 0 or req.permanent:
-        return None
-    ts = req.trashed_at
-    if not ts:
-        return None
-    s = str(ts).strip().replace("Z", "+00:00")
-    try:
-        trashed = _dt.datetime.fromisoformat(s)
-    except (TypeError, ValueError):
-        try:
-            trashed = _dt.datetime.strptime(str(ts).strip(),
-                                            "%Y-%m-%dT%H:%M:%SZ")
-            trashed = trashed.replace(tzinfo=_dt.timezone.utc)
-        except (TypeError, ValueError):
-            return None
-    if trashed.tzinfo is None:
-        trashed = trashed.replace(tzinfo=_dt.timezone.utc)
-    dt = trashed.astimezone(_dt.timezone.utc) + _dt.timedelta(days=days)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    never promises a purge that isn't coming. §62: one judge for both sides
+    (maintenance.purge_at / purge_due) — loop-trashed rows (stale:* /
+    daily-merge:*) carry their own, longer retention."""
+    return maintenance.purge_at(req, cfg)
 
 
 def _epoch(ts: Any) -> Optional[int]:
@@ -1248,10 +1228,10 @@ def build_dashboard(
     label = _device_label()
     if label:
         dash["device_label"] = label
-    # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的
-    # 加法约定）：scripts/auto-deploy.sh 写的最近一次自动部署结果；文件缺失或
-    # 读不了 = 整键不存在，web 顶栏据此显示「v0.48.x · deployed 12m ago」。
+    # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的加法
+    # 约定：文件缺失或读不了 = 整键不存在）；§62 同款 maintenance（每日整理投影）。
     deploy_state.attach(dash)
+    daily_loop.attach(dash, cfg)   # §65 add-only 顶层键 maintenance（每日整理投影）
     return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
 
 

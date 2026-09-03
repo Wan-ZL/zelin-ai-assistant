@@ -84,6 +84,8 @@ YAML 载体：一条需求一个文件。状态机：
 
 **§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
 
+**§62 追记（add-only optional 字段）**：`merged_from`（list[str]，每日整理合成卡上的来源卡主键列表——`merged_into` 的反向指针；lineage 只指主键；非合成卡整键省略。词表同步：`registry.OPTIONAL_ORDER` + `store2/export_yaml.FIELD_DEFAULTS`，判例 tests/test_store2_field_parity.py）。
+
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
 ## 2. `state/dashboard.json`（actd 写，Mac app 只读，原子写：先写 .tmp 再 rename）
@@ -136,6 +138,8 @@ YAML 载体：一条需求一个文件。状态机：
 **v0.48.15 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
 
 **§64 新增（issue #128 AI 摘要 + 完成度评语的投影面，add-only optional）**：`review[]` 与 `completed[]` 行加 `assessment: {summary(str|null), verdict(str|null), verdict_reason(str|null), at(epoch int|null)}`——**只在卡上有摘要或评语、且其 `source_hash` 与卡当前内容指纹一致时整键出现**（失败标记 / 未评 / 内容已变而判官未归 = 整键不存在，客户端不得拿空壳或旧话去猜）；`verdict` 词表 = `建议验收`｜`需继续做`｜`需要拍板`（`act/lib/card_summary.VERDICTS` 单源，web `VerdictChip.VERDICTS` 逐字镜像；词表外的值 server 端归 null，客户端对未知值按原文中性渲染——开放枚举）。`source_hash` / `error` **不上 wire**。客户端只渲染：评语章点看理由、摘要一句上卡面；验收 / 打回按钮语义零变化（§64.6）。
+
+**§62 新增顶层 optional 字段 `maintenance`（每日自我改进循环的投影面；§2 兄弟字段，同 `deploy_state` 的加法约定）**：`act/lib/daily_loop.attach` 由 `build_dashboard` 调用，读 `state/daily_loop.json`；文件不存在（循环从未跑过）= **整键不存在**。形状（时间全是 **epoch int 或 null**，§2 惯例）：`{"phase": "idle|dedup|stale_sweep|proposals", "started_at", "last_run_at", "next_run_at", "last_result": {"merged", "trashed", "proposals", "summaries", "errors"}}`——`phase` 开放枚举（客户端对未知值按「在跑」显示）；`last_result` 五个计数恒在（缺失按 0）。web `MaintenanceBanner` 据此显示「正在整理看板…」（phase ≠ idle 且 started_at 在 2 h 内）或「今日整理：合并 N、清理 M（可撤销）、提案 K」（last_run_at 落在本地今天且三数非全零）；**不弹系统通知**（D10 设计判断）。syncd 变更闸门**不**把它视为易变键：它一天只变三次。
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
@@ -278,6 +282,7 @@ debt item 新增 `summary`（同上，大白话）。
 - dashboard 新增区 `trash`（+ `counts.trash`）：每项 `{id, title, summary, kind:"suggestion"|"debt", trashed_at, trash_reason, permanent, type, hardness}`。
 - app 回收站区（默认折叠）：带**搜索框**（客户端过滤 title/summary）；每行按钮 **「恢复」**(→inbox `{action:"restore"}` 回到 prev_status) 和 **「永久保存」**(→inbox `{action:"pin"}` 设 permanent=true)。
 - 保留策略：actd 清理 trashed 中 `trashed_at` 早于 `config.trash.retention_days`(默认 60) 且 `permanent!=true` 的项（硬删）。config 加 `trash.retention_days`。
+- **§62 追记（add-only；`trash_reason` 词表扩展 + 分级保留期）**：每日整理循环（actd 内运行，system actor）写两族新 reason——`daily-merge: 并入 <new id>`（同题多卡合成一张新卡后，旧卡进回收站；新卡主键在 reason 里，新卡 `merged_from[]` 反向列出旧卡）与 `stale:<rule>`（rule ∈ `deadline_passed` / `diagnostic_expired` / `superseded` / `idle`，词表见 §62.2）。两族卡 **`prev_status` 完整、restore 语义不变**；保留期改由 `maintenance.retention_days(req, cfg)` 按卡判决：这两族 = `daily_loop.trash_retention_days`（默认 **90**——owner 没亲眼看过它们进回收站，比手动 trash 的 60 天更长），其余 = `trash.retention_days`；`trash.retention_days <= 0` 仍是总开关（关掉后循环卡也不清）。`actd.purge_trash` 与 §40.5 `purge_at` 投影经**同一个**判决（`maintenance.purge_due` / `maintenance.purge_at`），倒计时永不许诺一次不会发生的删除。存量的 ~40 张 owner 手动 trash 的卡不受本条影响（它们按 owner 自己设的 60 天走）；想留作参考请在回收站页对每张按「永久保存」（pin），或临时抬高 `trash.retention_days`。
 
 ## 10. inbox 动作全集（app → actd）
 `approve` | `reject`(→trash) | `comment` | `raise`(debt→建议) | `trash`(→回收站) | `restore`(回收站→prev_status) | `pin`(回收站项设永久) | `capture`(快速捕获，见下) | `done_external`(已办完·系统外完成，v0.10.2，允许状态扩展 v0.12) | `abort_execution`(停止并退回待审批，v0.10.2) | `stop_to_review`(停止并收下成果待验收「去待验收」，见下) | `revert_review`(退回待验收，v0.10.2) | `merge_review`(多选请求合并建议，v0.12，见 §21) | `merge_apply`(接受合并建议，v0.12，见 §21) | `merge_dismiss`(取消合并建议，v0.12，见 §21) | `merge_force`(强制合并·用户钦定主卡、跳过 AI，携带 `ids`≥2 + `primary`，v0.31，见 §21) | `import_claude_sessions`(一键导入 Claude Code 近期会话，v0.13.x，见 §22) | `weekly_digest_now`(立即生成每周摘要，v0.14，无 `id` 字段，见 §24) | `feedback`(建议上报，无 `id` 字段、携带 `ids` 数组（可空），见 §29) | `defer`(存备选，提案→备选，v0.18，见下) | `archive`(封存线程,已验收/备选→归档,v0.20.0,见下) | `unarchive`(归档→prev_status,v0.20.0,见下) | `answer_input`(回答需输入，携带 `id`+`text`，v0.39.0，见 §39)。actd 读后删 inbox 文件。
@@ -435,6 +440,8 @@ silently ignored」跳过）。**写入方自此多一个**：web 设置页经 `
 /api/settings/models`（server/settings.py）按 v0.14 diff-write 语义写这两个键
 ——与 Mac app 写其它键的方式同款；两个写者写不同的键，互不覆盖（server 读改写
 整份文件时保留其余键原样）。
+
+**§15 §62 追记（add-only，每日循环旋钮）**：overrides 允许列表新增五个扁平键 `daily_loop_enabled`（bool）/ `daily_loop_time`（本地 `HH:MM`，`3:30` 归一为 `03:30`）/ `daily_loop_max_proposals_per_day` / `daily_loop_stale_days` / `daily_loop_trash_retention_days`（非负 int；负数/bool/垃圾按「wrong types are silently ignored」跳过）——语义 = config.yaml `daily_loop.*` 逐字一致（yaml 路径宽容：坏值回默认、负数按 0）。写入方 = web 设置页「每日整理」经 `PUT /api/settings/daily-loop`（server/settings.py，diff-write 同 §59 模型旋钮）。actd **每 pass 现读**这五个字段到启动冻结的 cfg 上（`_refresh_model_knobs`——§59 两把模型旋钮的同一刷新点，`daily_loop.LIVE_KNOBS`），保存后下一个 pass 生效、无需重启。
 
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
@@ -2401,6 +2408,8 @@ last_answer_at` 字段 add-only 保留（历史卡上仍在，永不重用语义
   「已永久保留」；`purge_at` 缺失/null 时不显示倒计时。iOS/webui 没有回收站
   列表面（只有「删除」动作），无处可显示——本节不涉及。
 
+- **§62 追记**：`purge_at` 的天数不再恒等于 `trash.retention_days`——循环自动扔进回收站的卡（`trash_reason` 以 `stale:` / `daily-merge:` 开头）按 `daily_loop.trash_retention_days`（默认 90）算；单点 `act/lib/maintenance.purge_at`，与 `actd.purge_trash` 的 `purge_due` 同源（§9 §62 追记）。
+
 ### 40.6 通知合批（fresh proposals）
 
 - `detect_transitions`：一个 pass 内**新增（非回锅）提案 > 2 张**时合并为一条
@@ -3363,6 +3372,7 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   不可解析如实报 `parseable:false` 不 500）、`POST /api/claude-code/default-model
   {model}`（四闸；只改 `model` 键、先备份 `settings.json.bak-<UTC ts>`、其余键
   与文件 mode 原样；不可解析 409 拒改；`follow`/空 400）。形状见 §59.4。
+- **§62 追加（每日循环设置面，add-only）**：`GET /api/settings/daily-loop`（五把旋钮的 effective 值 + 每字段 `source` ∈ override|config|default；token-light）、`PUT /api/settings/daily-loop {enabled?, time?, max_proposals_per_day?, stale_days?, trash_retention_days?}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状坏 400 `INVALID_FIELD` 整句人话、diff-write `state/settings_overrides.json` 的 `daily_loop_*` 扁平键；文件不可解析 409 `CONFLICT`）。PUT 路由自此表驱动（`_PUT_JSON_ROUTES`，与 GET/POST 同款）。形状见 §62.5。
 - **v0.48.x 追加（§54 web 看板 parity，add-only）**：`GET /api/lanes`（列说明
   文案的 **server-owned 目录**：`{"lanes":[{slug, help:{zh,en}}…]}`，slug =
   dashboard 分区名，顺序 = 看板从左到右；文案单源 `server/lanes.py`，来源
@@ -3447,7 +3457,9 @@ test_server_auth.py）。
 **四类出身（locked，M8.3 C-1 终裁四值为 canonical）**：`hand`（用户手打：
 quick capture / Slack self-DM——sources channel = `quick`/`quick_capture`）｜
 `proposed`（AI 自提：digest 建议 `analytics`、会话挖掘 `claude_code`、诊断
-降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`，以及 §50
+降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`、**§62 每日
+循环的 `self_improve`**（代码硬编码、无 LLM 经手 = write-locked；P6 通道的
+准入只认它 + 物理 repo 路径），以及 §50
 落款派生的 `agent_capture`/`remote_capture`）｜`meeting`（会议音频/笔记出生：
 `meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。信任序 hand >
 proposed > meeting > external。
@@ -4917,3 +4929,46 @@ wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictCh
 - 不给 rework 反馈、不进 executor prompt、不进 digest；不做通知（评语出现不是打扰资格——宪法第 10 条）。
 - 不在 web 提供「按 AI 建议一键验收」——那会把建议变成默认，正是 issue 里 interview scorecard 的教训。
 - 配置：`card_summary.enabled`（config.yaml 块 / overrides 扁平键 `card_summary_enabled`，默认 true）关掉 = 不派新判官，在飞的仍收回；不设第二把模型旋钮（跟 `models.pipeline`）。
+
+## 62. 每日自我改进循环：先维护再提案（P5；owner 决策 D10 / D12 / D18；R2.4）
+
+owner 原话（D10，2026-09-01）：「每天最多不要超过 5 个……在设置里面允许别人修改，但默认是 5 条。」「Running 就不要去重，毕竟它在跑，但是像潜在任务和提案这里面的都是没有处理的。去重啊，包括过时了的卡片去掉。」「如果合并卡片的话直接合并……把这三四张全部去掉，直接提供一张新的卡片。去掉的老卡片直接丢进回收站。」「可以在 UI 上显示一下……至于最后要不要提醒一声，你作为设计师来判断吧。」→ 设计判断：不弹通知，看板顶部留一行。执法：`act/lib/daily_loop.py`（编排 + 投影 + 计划报告 CLI）、`act/lib/maintenance.py`（去重合成 / 过时规则 / 分级保留期）、`act/lib/loop_inputs.py`（输入读取器）；挂点 `act/actd.py run_once`（`daily_loop.tick`，在 `archive_stale` 之后）；判例 `tests/test_daily_loop_{dedup_merge,stale_rules,inputs,proposals,run}.py`、`tests/test_server_settings_daily_loop.py`、web `MaintenanceBanner.test.tsx` / `DailyLoopSection.test.tsx`。
+
+### 62.1 运行位置、节奏与安全边界
+
+- **只在 actd 的 pass 里跑**：每 pass 一次 `daily_loop.tick(cfg, interval)`——`due()` = 开关开 ∧ 本地时间 ≥ `daily_loop.time`（默认 03:30）∧ 今天（本地日）还没跑（标记 `state/daily_loop.json.last_run_day`）；不到点 = 一次 stat 级开销。**状态转移单写者不变**（§0 第 1 条）：trash / 合成新卡 / 铸提案全部发生在 actd 进程内、system actor（store2 白名单里 `detected|card_sent|raising → trashed` 的 system 行早已存在，本节不改 schema）。`python3 -m act.lib.daily_loop --plan` 只出**计划报告**（会做什么），`--status` 只读投影；CLI **零写入**——想手动触发一轮 = 把 `daily_loop.time` 改到当前时刻之前等下一 pass。进程级总闸 `AIASSISTANT_DAILY_LOOP=0`（同 §55 `AIASSISTANT_LAUNCHD_PROBE` 的 belt-and-braces）：测试套件默认设它——任何走真 `run_once` 的判例都不会在沙箱里跑起整轮循环；循环自己的判例全部注入假 `gh` / 假 doctor runner（tests/__init__ 的出网名单收编 `gh` 待 doctor 的 `gh auth status` 探针可注入后再做）。
+- **不调 LLM**（Uncle Bob 原则 R2.9：价值靠确定性工具不靠提示词）：合并只认确定性同题信号；过时只认确定性规则；提案是确定性模板。理解素材 URL、修 CI、补测试的智力活留给被派工的 agent（它有工具与全上下文）。§34bis 判例（LLM 只许出报告不许动卡）因此在本节不构成例外。
+- **失败不外溢**（§0 第 11 条）：三个阶段（dedup → stale_sweep → proposals）各自隔离，任一阶段抛异常只记进 `last_result.errors` 与审计行，后续阶段照跑，`tick` 自身永不 raise；阶段边界各写一次心跳 `daily_loop:<phase>`（§47.4，gh 每次调用前再 beat 一次——一轮可能跑到一两分钟，不许被 `/api/health` 误判 stalled）。
+- **顺序**：先维护再提案（R2.4.1）——提案的去重要对着整理过的板。
+
+### 62.2 维护半边（`act/lib/maintenance.py`）
+
+- **范围**：只碰 `detected`（潜在任务）与 `card_sent`（提案）两列；`raising` / `approved` / `executing` / `review` / `delivered` / `merged` / `archived` / `trashed` 永不入簇、永不判过时；`preset` 卡（§34bis）不入簇不判过时。
+- **去重合成（dedup_lanes）**：两列内按**同题**做 union-find 成簇（同题 = 归一标题相等且 ≥ 6 字，或 §38.3 `auto_merge.is_near_dupe` 的 **`high`** 信号——`contact` 信号只够触发 LLM 复核、不够直接合并，本节没有判官，宁可留重复卡不可错并；血缘相连的卡（`improvement_of` / `split_from` / 同 thread 根——thread 缺省按自根 / `merged_from`）永不同簇）。每簇 ≥ 2 → **一张新卡**（`registry.next_id()` 主键 `P-`）：`merged_from[]` = 旧卡主键（升序）；`title` / `display_title` / `user_titled` / `summary` / `plan` / `definition_of_done` / `target_repo` / `delivery_mode` 取**主稿**（用户改过名 > 提及最多 > 最新）；`sources` = `registry.dedupe_sources` 并集；`repeated_mentions` = 累加；`hardness` = 有 hard 则 hard；`deadline` = 最早；`green_sign_required` = 任一；`thread_id` = 最老旧卡的 thread 根；`thread_key` = 全部相同才继承否则 None（永不模糊）；`former_titles` = 旧名并集（去重保序，cap `registry.FORMER_TITLES_CAP`——超出的旧名仍逐字活在 fold note 里，§37「旧名仍可搜索」）；`origin_trust` 由 `policy.classify_origin` 按并集重算（最小信任者定卡，§50）；`status` = 簇内有 card_sent 则 card_sent 否则 detected（**永不** approved/executing，§44.4 轻状态铁律同款）；每张旧卡一行 §38.2 冻结文法的 fold note `[radar] 每日整理并入 <old id>「<旧名>」：<旧 summary 或旧名> [@ts]`（自带拆出句柄，`split_note` 照常可用）。落盘次序：**新卡先写**（crash 只会多一张、绝不丢），再逐张 `registry.trash(old, "daily-merge: 并入 <new id>")`（`prev_status` 完整保留），每对 `auto_merge.record_pair_final(new, old)`（恢复旧卡后 §38.3 不再建议并回；`auto_merge.linked` 自此认 `merged_from`），最后一条 §44.6 回执（channel `daily_loop`，内容只进散列）。**绝不使用 §21 的 `merged` 终态**。撤销 = 回收站恢复旧卡（+ 手动 trash 新卡）；不新增 inbox 动词。
+- **过时清理（sweep_stale）**：`stale_verdict(req, all, today, stale_days)` 全函数、确定性、guards 先于规则、**任何字段解析不了 = 不动**：
+  - guards（永不判过时）：不在两列；`preset`；`user_titled`（owner 亲手改过名）；未来 `deadline`；同簇（thread 根 / `improvement_of` 双向）有 approved/executing/review 兄弟；`last_activity` 解析不了。
+  - `last_activity` = max(sources[].date（ISO / 裸日期 / RFC-2822——gmail 来源）, card.sent_at, execution.{approved,dispatched,review,reraised,accepted}_at, fold note `[@ts]` 句柄)。
+  - 规则（首个命中即 reason token）：`deadline_passed`（deadline 已过 ≥ 7 天 **且** 此后 ≥ 7 天无活动——提及多也不救一个已经作废的 deadline）→ `diagnostic_expired`（sources 全部是 `radar-diagnostic` / `radar-parse-degraded` 且 ≥ 14 天无活动，§40.3 give-up 卡）→ `superseded`（同名（≥ 6 字归一相等）卡已 delivered / merged / archived，且不是本卡的 `improvement_of` 血缘——事情在别处做完了）→ `idle`（无活动 > `daily_loop.stale_days`（默认 45）且 `repeated_mentions` < 3；`stale_days` = 0 只关这一条）。
+  - 命中 → `registry.trash(req, "stale:<rule>")`，可恢复；本节是 §0 第 10 条「拿不准的落备选静默过期」的第一份实现。
+- **分级保留期**：见 §9 / §40.5 追记（`maintenance.retention_days` / `purge_due` / `purge_at` 单源；循环卡默认 90 天）。
+
+### 62.3 提案半边（`act/lib/loop_inputs.py` + `daily_loop._propose`）
+
+- **输入 → Signal**（每个读取器独立、坏了只丢自己、`inputs.<name>` 记 `unavailable: <Exc>`）：① 卡片 `execution` 块（approved 且 `dispatch_attempts ≥ 3` 或 `dispatch_halted` → `stuck_dispatch:<failure_id|hash>`；`last_error` 未被 `failures.classify` 命中 → `unclassified_failure:<hash>`）；② `state/analytics/events.jsonl` 近 8 天按日计数，今天 ≥ 50 且 > 5× 前七日中位数 → `event_anomaly:<event>`；③ `state/radar_failed.json` 的 `gave_up` 按报错类别聚合 → `radar_give_up:<hash>`（key 里的文件名**不进卡**，s2 H7）；④ `state/registry_writes.jsonl` 24 h 内同文件 > 100 写 → `write_storm:<file>`；⑤ `state/actd.log` 末 2000 行去时间戳后同形报错 ≥ 50 → `log_loop:<hash>`；⑥ `state/install_report.json` 的 fail 步骤 → `install_step_fail:<step>`；⑦ `~/Library/Logs/zelin-ai-assistant/*.log` 各尾 200 行命中已知环境故障正则（no module act / yaml、TCC EPERM、Xcode license、fd limit）→ `launchd_fault:<name>`（测试经 `ZAI_LAUNCHD_LOG_DIR` 指进沙箱）；⑧ `python3 -m act.doctor --fast --json` 的 FAIL 行 → `doctor_fail:<name>`（WARN 不铸卡）；⑨ §57 pinned issue「Nightly mutation report」的模块表：存活最多且 ≥ 5 的一个模块 → `mutation:<module>`；⑩ GitHub 开放 issue（`gh issue list`）：**owner 作者（`Wan-ZL` / `zelinPostman`）→ `issue:<n>`**；**他人作者 → 只出摘要行 `Summary`（D18），不铸卡不开 PR**，除非 owner 在该 issue 评论里写了「do it」（每轮最多查 10 张）；机器人报告 issue（夜间变异 / `[bot]` 作者）不是待办；⑪ GitHub 开放 PR（最多 20 张 `gh pr view --json comments,reviews,statusCheckRollup`）：必需检查有 FAILURE/TIMED_OUT/CANCELLED → `pr_red:<n>`；**owner 本人**近 7 天的评论 → `pr_comment:<n>:<hash(id)>`（D12：「Where is the test?」= 下一轮任务）——带 🤖 / `Generated with Claude` / `Co-Authored-By: Claude` 落款的评论是 agent 借 owner 账号（D8）写的，不算 owner 指令；⑫ 素材库 `state/materials/materials.jsonl`（只读；事件日志形 `event` 与快照形 `status` 都认，每 id 取最后一行）状态 `new` 的条目 → `material:<id>`（提案 = 「消化这份素材」，抓取与理解 URL 交给被派工的 agent；反向链接 = 卡片 `sources[].ref = self_improve:material:<id>`，素材库据此推「已生成提案」）。**不读**：`state/logs/R-*.log`、legacy `state/*.launchd.log`、`dashboard.json` 正文、`search_index.json`（s2 §3 parse spec）。外来文本（issue 正文、PR 评论、素材备注）进 `quote` 前一律 `sanitize.fence_untrusted`（§0 第 5 条）。`gh` 缺席 / 未登录 / 超时（25 s）= GitHub 输入不可用，循环照跑。
+- **挑选（`select_signals`）**：按 `priority` 升序（红 CI 5 < owner PR 评论 8 < 派发卡死 10 < 安装失败 12 < doctor 14 < 事件风暴 15 < launchd 18 < 未分类报错 20 < 写风暴 25 < 雷达放弃 30 < 日志刷屏 35 < 变异 40 < 素材 42 < issue 45）逐条 offer，跳过原因逐类计数进审计行：`dedup`（指纹已在 registry 任何状态（含回收站——owner 扔掉 = 拒绝记忆，R2.6.6）的 `sources[].ref = self_improve:<fp>` 里，或在 90 天指纹台账 `state/daily_loop.json.fingerprints` 里）→ `kind_taken`（**每 class 每天一条**，s2：一场风暴 = 一条提案不是 954 条）→ `gh_title`（非 GitHub 来源的信号标题与某开放 issue/PR 标题互相包含 ≥ 12 字 = 已在 GitHub 上）→ `cap`（今日额度 = `daily_loop.max_proposals_per_day`（默认 5，0 = 只维护不提案）− 今天已铸的循环卡数（registry 现算，任何状态；重启不丢账））。
+- **铸卡（`build_card` → `registry.merge_or_new_with_kind`）**：`title` = `🤖 ` + 信号标题（≤ 120）；`type` = `self-improvement`；`tier` T1；`status` = **card_sent**（进提案列走正常三选一闸门——owner 批准才派工；P6 通道另立法）；`hardness` soft；`summary` / `plan[]` / `definition_of_done[]` / `cost_estimate_usd` 全部非空（R2.4.3）；`target_repo` = `config.HOME`（本仓库物理路径）；`delivery_mode` repo；`sources = [{channel: "self_improve", date: <今天>, ref: "self_improve:<fingerprint>", quote: <证据 ≤ 500，外来文本已 fence>, who: "daily_loop"}]`——**channel 是代码字面量，不经任何 LLM**（write-locked），`policy.CHANNEL_CLASS["self_improve"] = proposed`（§50）→ §51 不免批。同题（`merge_or_new` 的标题匹配）折进既有卡而不重复（outcome `folded`）。
+- **审计行**（`state/daily_loop.jsonl`，`logcap` 1 MB，防腐 #4）：`{ts, day, duration_s, merges[{new, from[], title}], trashed[{id, rule, display_id}], proposals[{id|error, fingerprint, kind, outcome, title}], skipped{dedup, kind_taken, gh_title, cap}, summaries[{kind, text, ref}], inputs{<reader>: n | "unavailable: …"}, errors[]}`。D18 的摘要行只活在这里与 `last_result.summaries` 计数里。
+
+### 62.4 配置（truth = `act/lib/config.py` / `config.example.yaml` `daily_loop:` 块）
+
+`daily_loop.enabled`（默认 true）/ `daily_loop.time`（本地 `HH:MM`，默认 `03:30`，`coerce_clock_time` 归一，坏值回默认）/ `daily_loop.max_proposals_per_day`（默认 5）/ `daily_loop.stale_days`（默认 45）/ `daily_loop.trash_retention_days`（默认 90）；三个整数 yaml 路径负数按 0。overrides 扁平键与 web 写入面见 §15 追记；actd 每 pass 现读（`daily_loop.LIVE_KNOBS`）。
+
+### 62.5 面（投影 / web / server）
+
+- 投影：§2 `maintenance` 顶层键（`daily_loop.projection`）。
+- web：`MaintenanceBanner`（`shell-banner is-info`，`role=status`）——「正在整理看板…（去重合并 / 清理过时卡 / 生成提案）」或「今日整理：合并 N、清理 M（可撤销）、提案 K」+「回收站可恢复」链接；全零 / 昨天的运行 / 陈旧 running（started_at > 2 h）/ server 连不上 都不渲染。设置页 section「每日整理」（`DailyLoopSection`）：开关 / 时刻 / 三个数字；保存 = 一次 PUT 只带改动键，数字原样交 server 校验；400 整句 toast。
+- server：`GET/PUT /api/settings/daily-loop`（§49）；wire 形 `{enabled, time, max_proposals_per_day, stale_days, trash_retention_days, source{<field>: override|config|default}}`（web `DailyLoopSettings` 逐字镜像）；`server/settings.py` **手抄** 默认值 / 键名 / `CLOCK_TIME_RE` / 三个 coercer（server 不 import act，§49），`tests/test_server_paths_mirror.py::DailyLoopSettingsMirrorTestCase` 钉漂移（含 coerce 真值表）。
+
+### 62.6 边界（明确不做）
+
+不弹系统通知；不给他人的 issue 铸卡（D18）；不自动派工（§51 不变——P6 立法）；不用 LLM 判同题或过时；不 fetch URL（素材由 agent 消化）；不新增 inbox 动词（撤销 = 回收站恢复）；不写素材库文件（只读；素材库 PR 自定其写者）；CLI 不写 registry。

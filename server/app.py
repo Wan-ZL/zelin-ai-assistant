@@ -386,6 +386,8 @@ _GET_JSON_ROUTES = {
     "/api/health": lambda ctx, query: health.snapshot(ctx.home),
     # §59 两把模型旋钮的 effective 值 + canonical 下拉全集（server-owned）
     "/api/settings/models": lambda ctx, query: settings.models_snapshot(ctx.home),
+    # §65 每日自我改进循环的五把旋钮（D10；web 设置页「每日整理」）
+    "/api/settings/daily-loop": lambda ctx, query: settings.daily_loop_snapshot(ctx.home),
     # §59 follow 模式继承的 Claude Code 全局默认（~/.claude/settings.json）
     "/api/claude-code/default-model": lambda ctx, query: settings.claude_code_default(),
     # §54 列说明文案目录（server-owned，防腐 #10）：web 列头「?」气泡逐字镜像
@@ -394,6 +396,12 @@ _GET_JSON_ROUTES = {
     "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+}
+
+# PUT 设置面（§59 / §62）：表驱动，同 GET/POST
+_PUT_JSON_ROUTES = {
+    "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
+    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
 }
 
 _POST_JSON_ROUTES = {

@@ -43,11 +43,13 @@ from act.lib import (
     analytics,
     card_summary,
     config,
+    daily_loop,
     detached,
     failures,
     health,
     heartbeat,
     logcap,
+    maintenance,
     notify,
     policy,
     recap_store,
@@ -1402,7 +1404,7 @@ def _merge_into_primary(primary_id: str, secondaries: list[str]) -> None:
             continue
         sec_ex = dict(sec.execution or {})
         # 主卡吸收
-        merged_sources, _ = registry._dedupe_sources(
+        merged_sources, _ = registry.dedupe_sources(
             primary.sources or [], sec.sources or [])
         primary.sources = merged_sources
         primary.repeated_mentions = (int(primary.repeated_mentions or 1)
@@ -2288,31 +2290,27 @@ def _parse_iso(ts: Optional[str]) -> Optional[_dt.datetime]:
 
 
 def purge_trash(cfg: config.Config) -> int:
-    """Hard-delete trashed items older than the retention window.
-
-    Skips items with ``permanent`` set. ``retention_days <= 0`` disables the
-    auto-purge entirely. A single bad item never aborts the pass.
-    """
-    days = int(cfg.trash_retention_days or 0)
-    if days <= 0:
+    """Hard-delete trashed items past their retention window (§9; skips
+    ``permanent``; ``retention_days <= 0`` disables). §62: loop-trashed rows
+    get a longer window — maintenance.purge_due is the one judge shared with
+    the §40.5 countdown. A single bad item never aborts the pass."""
+    if not maintenance.purge_enabled(cfg):
         return 0
-    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    now = _dt.datetime.now(_dt.timezone.utc)
     purged = 0
     for req in load_all():
         try:
-            if req.status != State.TRASHED.value:
-                continue
-            if req.permanent:
-                continue
-            trashed = _parse_iso(req.trashed_at)
-            if trashed is None or trashed >= cutoff:
-                continue
-            if registry.delete(req):
-                purged += 1
-                _log(f"trash: purged {req.id} (trashed_at={req.trashed_at})")
+            purged += _purge_one(req, cfg, now)
         except Exception as e:  # noqa: BLE001 - one bad item must not abort the pass
             _log(f"trash: purge failed for {getattr(req, 'id', '?')}: {e}")
     return purged
+
+
+def _purge_one(req: Requirement, cfg: config.Config, now: _dt.datetime) -> int:
+    if not maintenance.purge_due(req, cfg, now) or not registry.delete(req):
+        return 0
+    _log(f"trash: purged {req.id} (trashed_at={req.trashed_at})")
+    return 1
 
 
 # --------------------------------------------------------------------------- #
@@ -3492,19 +3490,18 @@ def _store2_tick() -> None:
 # one pass + loop
 # --------------------------------------------------------------------------- #
 def _refresh_model_knobs(cfg: config.Config) -> None:
-    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次。
-
-    dispatch / resume / rework / brief 都拿 run_once 手里这个冻结 cfg 去
-    ``llm.dispatch_argv(cfg)``；不刷新的话 web 设置页保存后要等重启守护进程
-    才生效（雷达/ask/判官/digest 是独立进程，本来就每次现读）。做法同
-    ``auto_resume`` 的现读判定（§16 追记）：只刷这两个字段，其余
-    startup-frozen 语义不动；load_config 自身防崩，这里再兜一层。"""
+    """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次，
+    web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立进程，
+    本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这几个
+    字段，其余 startup-frozen 语义不动；§62 的五把每日循环旋钮同一刷新点。"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
         return
     cfg.models_dispatch = fresh.models_dispatch
     cfg.models_pipeline = fresh.models_pipeline
+    for knob in daily_loop.LIVE_KNOBS:
+        setattr(cfg, knob, getattr(fresh, knob))
 
 
 def run_once(
@@ -3541,6 +3538,7 @@ def run_once(
     purge_trash(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
     archive_stale(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
+    daily_loop.tick(cfg, interval=interval)   # §62: 到点跑一次「先维护再提案」，自吞异常
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     try:
         # §44: execute same-thing verdicts in THIS thread (the daemon is the single merge

@@ -10,6 +10,7 @@ import {
   fetchBoard,
   fetchCard,
   fetchClaudeCodeDefault,
+  fetchDailyLoopSettings,
   fetchHealth,
   fetchLanes,
   fetchMaterials,
@@ -19,6 +20,7 @@ import {
   postMaterialAdd,
   postMaterialDismiss,
   postRecapMark,
+  putDailyLoopSettings,
   putModelsSettings,
   putRecapSettings,
 } from "./api";
@@ -34,6 +36,8 @@ import type {
   Board,
   CardDetail,
   ClaudeCodeDefault,
+  DailyLoopPatch,
+  DailyLoopSettings,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
@@ -57,6 +61,8 @@ export interface AppState {
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
+  dailyLoop: DailyLoopSettings | null; // GET /api/settings/daily-loop 最近快照（§62 设置页「每日整理」）
+  dailyLoopError: string | null;       // 该 section 读失败的用户可读文案（成功后清空）
   settingsError: string | null;   // 设置页读失败的用户可读文案（成功后清空；保存失败由页面 toast）
   materials: MaterialsList | null; // GET /api/materials/list?status=open 最近快照（§62 设置页「素材库」）
   materialsError: string | null;  // 素材库读失败的用户可读文案（成功后清空；写失败由 section toast）
@@ -102,6 +108,8 @@ const initialState: AppState = {
   filters: EMPTY_CARD_FILTERS,
   models: null,
   claudeCodeDefault: null,
+  dailyLoop: null,
+  dailyLoopError: null,
   settingsError: null,
   materials: null,
   materialsError: null,
@@ -266,6 +274,26 @@ export async function setClaudeCodeDefaultModel(model: string): Promise<string |
   const claudeCodeDefault = await fetchClaudeCodeDefault();
   setState({ claudeCodeDefault });
   return receipt.backup;
+}
+
+// ----- settings（§62 每日整理） -------------------------------------------- #
+
+/** 拉设置页「每日整理」的快照；读失败落 dailyLoopError（与「模型」section 互不连坐） */
+export async function refreshDailyLoop(): Promise<void> {
+  try {
+    const dailyLoop = await fetchDailyLoopSettings();
+    setState({ dailyLoop, dailyLoopError: null });
+  } catch (error) {
+    const message = error instanceof ApiError ? error.message : String(error);
+    setState({ dailyLoopError: message });
+  }
+}
+
+/** 保存旋钮子集（PUT，server 校验 + diff-write）；成功以 server 回执替换快照，失败原样抛给页面 toast */
+export async function saveDailyLoop(patch: DailyLoopPatch): Promise<DailyLoopSettings> {
+  const dailyLoop = await putDailyLoopSettings(patch);
+  setState({ dailyLoop });
+  return dailyLoop;
 }
 
 // ----- 素材库（§62 设置页 section） ------------------------------------------ #
