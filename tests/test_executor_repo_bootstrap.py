@@ -34,6 +34,7 @@ class _Git:
 
     def __call__(self, argv, **kw):
         self.calls.append(list(argv))
+        self.kwargs = kw
         sub = argv[1] if argv[0] == "git" else argv[0]
         if sub in self.fail or argv[0] in self.fail:
             raise OSError(f"{sub} unavailable")
@@ -122,6 +123,25 @@ class EnsureRepoTestCase(unittest.TestCase):
         git = self._run(_Git(remotes="", fail={"gh"}), which="/usr/bin/gh")
         self.assertEqual(git.subcommands()[-1], "gh")   # attempted, swallowed
 
+    def test_gh_runs_in_the_target_with_a_generous_timeout(self):
+        self.cfg.create_github_repo = True
+        git = self._run(_Git(remotes=""), which="/usr/bin/gh")
+        self.assertEqual(git.kwargs["cwd"], str(self.target))
+        self.assertEqual(git.kwargs["timeout"], 120)
+        self.assertIs(git.kwargs["capture_output"], True)
+        self.assertIs(git.kwargs["text"], True)
+
+    def test_existing_and_nested_targets_are_created_in_place(self):
+        # exist_ok: an already-present dir is fine; parents: a nested new one
+        self.target.mkdir(parents=True)
+        git = self._run(_Git())
+        self.assertEqual(git.subcommands(), ["rev-parse", "rev-parse"])
+        nested = self.target / "a" / "b"
+        with mock.patch.object(executor.subprocess, "run", _Git()), \
+                mock.patch.object(executor.shutil, "which", return_value=None):
+            executor.ensure_repo(nested, self.cfg)
+        self.assertTrue(nested.is_dir())
+
 
 class ProbesTestCase(unittest.TestCase):
     def setUp(self):
@@ -135,24 +155,47 @@ class ProbesTestCase(unittest.TestCase):
 
     def test_probe_spawn_failures_are_false(self):
         with mock.patch.object(executor.subprocess, "run", side_effect=OSError("no git")):
-            self.assertFalse(executor._has_git_repo(self.target))
-            self.assertFalse(executor._has_commits(self.target))
+            self.assertIs(executor._has_git_repo(self.target), False)
+            self.assertIs(executor._has_commits(self.target), False)
+            self.assertIs(executor._git_init_if_needed(self.target), False)
         git = _Git(fail={"remote"})
         with mock.patch.object(executor.subprocess, "run", git):
-            self.assertFalse(executor.has_remote(self.target))
+            self.assertIs(executor.has_remote(self.target), False)
 
     def test_probe_answers(self):
         with mock.patch.object(executor.subprocess, "run", _Git(is_repo=True, has_head=True)):
-            self.assertTrue(executor._has_git_repo(self.target))
-            self.assertTrue(executor._has_commits(self.target))
-            self.assertTrue(executor.has_remote(self.target))
+            self.assertIs(executor._has_git_repo(self.target), True)
+            self.assertIs(executor._has_commits(self.target), True)
+            self.assertIs(executor.has_remote(self.target), True)
         with mock.patch.object(executor.subprocess, "run",
                                _Git(is_repo=False, has_head=False, remotes="")):
-            self.assertFalse(executor._has_git_repo(self.target))
-            self.assertFalse(executor._has_commits(self.target))
-            self.assertFalse(executor.has_remote(self.target))
+            self.assertIs(executor._has_git_repo(self.target), False)
+            self.assertIs(executor._has_commits(self.target), False)
+            self.assertIs(executor.has_remote(self.target), False)
         with mock.patch.object(executor.subprocess, "run", _Git(remotes="  \n")):
-            self.assertFalse(executor.has_remote(self.target))
+            self.assertIs(executor.has_remote(self.target), False)
+
+    def test_work_tree_probe_needs_both_exit_zero_and_true(self):
+        def weird(argv, **kw):
+            if argv[1:3] == ["rev-parse", "--is-inside-work-tree"]:
+                return _proc(0, "false\n")        # exit 0, but not a work tree
+            raise AssertionError(argv)
+        with mock.patch.object(executor.subprocess, "run", weird):
+            self.assertIs(executor._has_git_repo(self.target), False)
+
+        def bare(argv, **kw):
+            return _proc(128, "true\n")           # says true, but failed
+        with mock.patch.object(executor.subprocess, "run", bare):
+            self.assertIs(executor._has_git_repo(self.target), False)
+
+    def test_git_probes_run_in_the_target_with_a_short_timeout(self):
+        git = _Git()
+        with mock.patch.object(executor.subprocess, "run", git):
+            executor._has_commits(self.target)
+        self.assertEqual(git.kwargs["cwd"], str(self.target))
+        self.assertEqual(git.kwargs["timeout"], 30)
+        self.assertIs(git.kwargs["capture_output"], True)
+        self.assertIs(git.kwargs["text"], True)
 
 
 class ComputeTargetKindTestCase(unittest.TestCase):

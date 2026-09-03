@@ -181,6 +181,17 @@ class ScanBudgetEdgesTestCase(unittest.TestCase):
         self.assertTrue(auto_merge.STATE_PATH.exists())
         self.assertEqual(_state()["scanned"], ["R-001", "R-002"])
 
+    def test_judge_pair_answers_false_only_on_mid_card_exhaustion(self):
+        a = Requirement(id="R-001", title="a", status=State.CARD_SENT.value)
+        b = Requirement(id="R-002", title="b", status=State.CARD_SENT.value)
+        scan = auto_merge._Scan(scanned=set(), suggested=set(), budget=0, cfg=None)
+        with mock.patch.object(auto_merge, "is_near_dupe", _dupes(("R-001", "R-002"))):
+            self.assertIs(scan.judge_pair(a, b), False)       # dupe, no budget → defer
+            self.assertIs(scan.judge_pair(a, a), True)        # self: skipped
+        with mock.patch.object(auto_merge, "is_near_dupe", _dupes()):
+            self.assertIs(scan.judge_pair(a, b), True)        # not a dupe
+        self.assertEqual(scan.deferred, {"R-001"})
+
     def test_any_failure_returns_integer_zero(self):
         with mock.patch.object(auto_merge.registry, "load_all",
                                side_effect=RuntimeError("registry down")):

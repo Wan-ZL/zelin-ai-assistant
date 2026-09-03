@@ -78,6 +78,9 @@ class DefaultRunnerTestCase(_Base):
         self.assertNotIn(SECRET, argv[-1])            # scrubbed outbound copy
         self.assertEqual(kw["cwd"], str(self.existing))
         self.assertEqual(kw["timeout"], 120)
+        self.assertIs(kw["capture_output"], True)
+        self.assertIs(kw["text"], True)
+        self.assertIn("PATH", kw["env"])
         self.assertEqual(registry.load("R-500").status, State.EXECUTING.value)
 
     def test_cfg_none_loads_config(self):

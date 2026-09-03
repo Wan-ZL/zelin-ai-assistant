@@ -87,6 +87,14 @@ class TranscriptInfoTestCase(_Home):
         with mock.patch.object(Path, "glob", side_effect=OSError("EIO")):
             self.assertIsNone(executor._transcript_info("abcd1234"))
 
+    def test_short_id_needs_the_full_eight_hex_segment(self):
+        # a 7-char prefix that DOES match a transcript on disk is still refused
+        self._write(['{"cwd": "/x"}'], sid="abcdef12-0000-4000-8000-000000000009")
+        self.assertIsNone(executor._transcript_info("abcdef1"))
+        self.assertIsNone(transcripts.plain_text("abcdef1"))
+        self.assertEqual(executor._transcript_info("abcdef12")[1], Path("/x"))
+        self.assertEqual(transcripts.MIN_SHORT_LEN, 8)
+
     def test_transcript_cwd_is_the_final_cwd_or_none(self):
         # both spellings: the lib function (merge_review) and the executor's
         # private alias (actd's merge-review worktree lookup)
@@ -112,6 +120,30 @@ class HarvestEdgeTestCase(_Home):
             _line("assistant", "字符串形态的交付总结"),
         ])
         self.assertEqual(executor.harvest_delivery(SID)["delivered_summary"], "字符串形态的交付总结")
+
+    def test_non_turn_user_lines_after_the_delivery_do_not_reset_it(self):
+        # tool results (even with a text block beside them) and odd content
+        # shapes are not user turns — the delivery before them stands
+        self._write([
+            _line("user", "开始"),
+            _line("assistant", _blocks("交付总结")),
+            json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "content": "x"}, {"type": "text", "text": "y"}]}}),
+            json.dumps({"type": "user", "message": {"content": 7}}),
+            json.dumps({"type": "user", "message": {"content": []}}),
+            json.dumps({"type": "user", "message": {"content": "   "}}),
+            json.dumps({"type": "user", "isMeta": True, "message": {"content": "meta"}}),
+            json.dumps({"type": "user", "toolUseResult": {}, "message": {"content": "tr"}}),
+        ])
+        self.assertEqual(executor.harvest_delivery(SID)["delivered_summary"], "交付总结")
+
+    def test_non_dict_blocks_inside_content_are_ignored(self):
+        self._write([
+            _line("user", "开始"),
+            _line("assistant", ["stray string block", 42, {"type": "text", "text": "真正的总结"},
+                                {"type": "text"}, {"type": "tool_use", "text": "no"}]),
+        ])
+        self.assertEqual(executor.harvest_delivery(SID)["delivered_summary"], "真正的总结")
 
     def test_image_only_user_turn_resets_the_delivery_window(self):
         self._write([
@@ -143,6 +175,26 @@ class HarvestEdgeTestCase(_Home):
         self._write([_line("assistant", _blocks("x"))])
         with mock.patch.object(executor, "_fence_marker_idxs", side_effect=RuntimeError("boom")):
             self.assertEqual(executor.harvest_delivery(SID), empty)
+
+
+class UserTurnPredicateTestCase(unittest.TestCase):
+    def test_answers_are_real_booleans(self):
+        turn = {"type": "user", "message": {"content": "hi"}}
+        self.assertIs(transcripts.is_user_turn(turn), True)
+        self.assertIs(transcripts.is_user_turn({"type": "assistant", "message": {"content": "hi"}}), False)
+        self.assertIs(transcripts.is_user_turn({"type": "user", "message": "not-an-object"}), False)
+        self.assertIs(transcripts.is_user_turn({"type": "user", "message": {"content": 7}}), False)
+        self.assertIs(transcripts.is_user_turn({"type": "user", "isSidechain": True,
+                                                "message": {"content": "hi"}}), False)
+        self.assertIs(transcripts.is_user_turn(
+            {"type": "user", "message": {"content": [{"type": "image"}]}}), True)
+
+
+class AssistantTextsDefaultTestCase(_Home):
+    def test_default_keeps_texts_before_the_last_user_turn(self):
+        path = self._write([_line("assistant", "a1"), _line("user", "u"), _line("assistant", "a2")])
+        self.assertEqual(transcripts.assistant_texts(path), ["a1", "a2"])
+        self.assertEqual(transcripts.assistant_texts(path, since_last_user=True), ["a2"])
 
 
 class PlainTextEdgeTestCase(_Home):
@@ -187,6 +239,10 @@ class PlainTextEdgeTestCase(_Home):
         self._write([_line("user", "p"), _line("assistant", "a" * 30), _line("assistant", "b" * 30)])
         self.assertEqual(executor.transcript_plain_text(SID, cap=10), "b" * 10)
         self.assertEqual(len(executor.transcript_plain_text(SID, cap=61)), 61)
+
+    def test_default_cap_is_fifty_thousand_chars(self):
+        self._write([_line("user", "p"), _line("assistant", "x" * 60_000)])
+        self.assertEqual(len(executor.transcript_plain_text(SID)), 50_000)
 
 
 if __name__ == "__main__":
