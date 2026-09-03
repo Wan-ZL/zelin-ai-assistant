@@ -1,18 +1,22 @@
 // 板级诊断条（§48 / §54.4；原生 Diagnostics.swift DiagnosticsRules 的 web 判例）：
 // 出卡规则（intent = enabled；skip_reason 分类；录制链按引擎 / TCC 细分）、dismiss 的 7 天窗口与「修好过再坏」重现、
 // vault_empty 的预热防抖、渲染面（只在看板页；每卡一颗动作 + ×）。
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchBoard } from "../../api";
+import { fetchBoard, fetchRadarAgents, postRadarReinstall } from "../../api";
 import { LanguageContext } from "../../i18n";
 import { refreshBoard, resetStoreForTests } from "../../store";
 import type { Board, RadarSourceHealth } from "../../types";
-import { buildDiagnosticCards, DiagnosticsStrip, gmailCardKind, isDebounced, isDismissed, type DiagnosticCard } from "./DiagnosticsStrip";
+import { buildDiagnosticCards, DiagnosticsStrip, gmailCardKind, isDebounced, isDismissed, schedulerMissing, type DiagnosticCard } from "./DiagnosticsStrip";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
-  return { ...actual, fetchBoard: vi.fn() };
+  return { ...actual, fetchBoard: vi.fn(), fetchRadarAgents: vi.fn(), postRadarReinstall: vi.fn() };
 });
+
+/** launchd 里两个 agent 都装着（默认：不出 agent_missing 卡） */
+const loadedAgents = { gmail: { label: "com.zelin.aiassistant.gmailradar", interval_s: 300, loaded: true, plist_installed: true },
+  slack: { label: "com.zelin.aiassistant.slackradar", interval_s: 180, loaded: true, plist_installed: true } };
 
 const en = (_zh: string, english: string) => english;
 const on = (skip_reason: string | null, extra: Partial<RadarSourceHealth> = {}): RadarSourceHealth => ({ enabled: true, last_ok: null, skip_reason, stale: false, ...extra });
@@ -52,6 +56,28 @@ describe("buildDiagnosticCards（原生 DiagnosticsRules）", () => {
     expect(buildDiagnosticCards({ obsidian: on("no_api_key") }, null, en)[0].action).toEqual({ kind: "page", page: "settings", anchor: "credentials" });
     expect(buildDiagnosticCards({ obsidian: on("disabled") }, null, en)).toEqual([]);
   });
+
+  it("agent_missing（§48.7）：源开着且 launchd 里没它 → 重装后台调度；失败回执 → 上次重装失败：+ 再试一次；同源凭证卡让位；状态未知不判", () => {
+    const notLoaded = { label: "com.zelin.aiassistant.gmailradar", interval_s: 300, loaded: false, plist_installed: false };
+    expect(schedulerMissing(on("no_credentials"), notLoaded, false)).toBe(true);
+    expect(schedulerMissing(on(null), { ...notLoaded, loaded: true, plist_installed: true }, false)).toBe(false);
+    expect(schedulerMissing(on(null), { ...notLoaded, loaded: true, plist_installed: true }, true)).toBe(true);   // 重装写成 plist 但 load 失败 → 卡留着
+    expect(schedulerMissing(on(null), { ...notLoaded, loaded: null }, false)).toBe(false);                        // 非 darwin / 问不到
+    expect(schedulerMissing({ enabled: false }, notLoaded, false)).toBe(false);
+    expect(schedulerMissing(on(null), undefined, false)).toBe(false);
+    const cards = buildDiagnosticCards({ gmail: on("no_credentials"), slack: on("connect_failed") }, null, en,
+      { radars: { gmail: notLoaded, slack: { ...notLoaded, label: "com.zelin.aiassistant.slackradar", loaded: true, plist_installed: true } }, failures: {} });
+    expect(cards.map((c) => [c.signature, c.actionLabel])).toEqual([["gmail:agent_missing", "Reinstall the scheduler"], ["slack:connect_failed", "Check Slack settings"]]);
+    expect(cards[0].title).toBe("The Gmail radar is on but its scheduler isn't installed");
+    expect(cards[0].action).toEqual({ kind: "reinstall_agent", source: "gmail" });
+    const failed = buildDiagnosticCards({ slack: on(null) }, null, en, { radars: { slack: { ...notLoaded, loaded: true, plist_installed: true } }, failures: { slack: "launchctl load failed (exit 5)" } });
+    expect(failed).toHaveLength(1);
+    expect(failed[0].detailPrefix).toBe("The last reinstall failed: ");
+    expect(failed[0].detail).toBe("The last reinstall failed: launchctl load failed (exit 5)");
+    expect(failed[0].actionLabel).toBe("Try again");
+    // agents 缺席（旧调用方 / 还没问到）= 老规则原样
+    expect(buildDiagnosticCards({ gmail: on("no_credentials") }, null, en)[0].signature).toBe("gmail:no_credentials");
+  });
 });
 
 describe("dismiss + warm-up", () => {
@@ -81,6 +107,7 @@ describe("<DiagnosticsStrip />", () => {
     resetStoreForTests();
     window.localStorage.clear();
     delete (window as Window & { webkit?: unknown }).webkit;
+    vi.mocked(fetchRadarAgents).mockResolvedValue({ radars: loadedAgents });
   });
   afterEach(cleanup);
 
@@ -103,5 +130,26 @@ describe("<DiagnosticsStrip />", () => {
     window.history.replaceState(null, "", "/?page=settings");
     render(<LanguageContext.Provider value="en"><DiagnosticsStrip /></LanguageContext.Provider>);
     expect(screen.queryAllByRole("status")).toHaveLength(0);
+  });
+
+  it("scheduler missing → 重装后台调度 posts the reinstall; a rejected reinstall stays on the card as 上次重装失败：+ 再试一次", async () => {
+    vi.mocked(fetchRadarAgents).mockResolvedValue({ radars: { ...loadedAgents, slack: { ...loadedAgents.slack, loaded: false, plist_installed: false } } });
+    vi.mocked(postRadarReinstall).mockRejectedValueOnce(new Error("install.sh --reinstall-agent exited 3"));
+    await boardWith({ slack: on("connect_failed") });
+    window.history.replaceState(null, "", "/");
+    render(<LanguageContext.Provider value="en"><DiagnosticsStrip /></LanguageContext.Provider>);
+    // launchd 还没回答前：老规则的凭证卡；回答落地后 agent_missing 顶替它（同源一卡）
+    const reinstallButton = await screen.findByRole("button", { name: "Reinstall the scheduler" });
+    expect(screen.queryByRole("link", { name: "Check Slack settings" })).toBeNull();
+    fireEvent.click(reinstallButton);
+    expect(postRadarReinstall).toHaveBeenCalledWith("slack");
+    await screen.findByText((_content, node) => node?.classList.contains("shell-banner-prefix") === true && node.textContent === "The last reinstall failed: ");
+    expect(screen.getByText("install.sh --reinstall-agent exited 3")).toBeTruthy();
+    // 再试一次 → server 装好并问过 launchd → 卡撤下
+    vi.mocked(postRadarReinstall).mockResolvedValueOnce({ ok: true, source: "slack", label: "com.zelin.aiassistant.slackradar", loaded: true });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Try again" })).toBeNull());
+    // 调度回来了 → 让位的凭证卡重新出现
+    expect(screen.getByRole("link", { name: "Check Slack settings" })).toBeTruthy();
   });
 });

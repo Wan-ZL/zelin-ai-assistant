@@ -92,6 +92,26 @@
             "zh": ""
           },
           "source": "default"
+        },
+        {
+          "choices": null,
+          "default": false,
+          "effective": false,
+          "help": {
+            "en": "Default state of the \"also publish to the GitHub feedback tracker\" checkbox in the feedback dialog; changing it there is remembered.",
+            "zh": "「提建议」弹窗里「同时公开到 GitHub 建议跟踪表」的默认勾选态；弹窗里改一次就记住。"
+          },
+          "key": "feedback_publish_default",
+          "kind": "bool",
+          "label": {
+            "en": "Publish feedback by default",
+            "zh": "提建议默认勾选「公开到 GitHub」"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
         }
       ],
       "help": {

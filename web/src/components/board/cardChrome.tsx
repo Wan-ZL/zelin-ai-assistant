@@ -229,7 +229,8 @@ export function CopyCommandLine({ cmd }: { cmd: unknown }) {
  */
 export function TerminalButton({ cardId }: { cardId: string }) {
   const { text } = useI18n();
-  const [status, setStatus] = useState<{ msg: string; failed: boolean } | null>(null);
+  // 回执两句逐字镜像原生 CopyPathLine 的 launched / launchFailed（已在终端打开 / 打开终端失败）；失败另附 server 原文
+  const [status, setStatus] = useState<{ msg: string; detail?: string; failed: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -242,11 +243,11 @@ export function TerminalButton({ cardId }: { cardId: string }) {
     setStatus(null);
     try {
       await postTerminal(cardId);
-      setStatus({ msg: text("已在 Terminal 打开", "Opened in Terminal"), failed: false });
+      setStatus({ msg: text("已在终端打开", "Opened in terminal"), failed: false });
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setStatus(null), 3000);
     } catch (e) {
-      setStatus({ msg: e instanceof Error ? e.message : String(e), failed: true });
+      setStatus({ msg: text("打开终端失败", "Terminal launch failed"), detail: e instanceof Error ? e.message : String(e), failed: true });
     } finally {
       setBusy(false);
     }
@@ -254,10 +255,15 @@ export function TerminalButton({ cardId }: { cardId: string }) {
 
   return (
     <>
-      <button type="button" className="btn" disabled={busy} onClick={() => void open()} title={text("在 Terminal 里接管这个会话（server 推导命令）", "Take over this session in Terminal (command derived by the server)")}>
+      <button type="button" className="btn" disabled={busy} onClick={() => void open()} title={text("在终端里接管这个会话（server 推导命令）", "Take over this session in a terminal (command derived by the server)")}>
         {text("在终端接管", "Open in Terminal")}
       </button>
-      {status && <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>{status.msg}</span>}
+      {status && (
+        <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>
+          <span>{status.msg}</span>
+          {status.detail && <span className="card-meta-detail">{` · ${status.detail}`}</span>}
+        </span>
+      )}
     </>
   );
 }
@@ -268,7 +274,8 @@ export function TerminalButton({ cardId }: { cardId: string }) {
  */
 export function AiFixButton({ cardId }: { cardId: string }) {
   const { text, language } = useI18n();
-  const [status, setStatus] = useState<{ msg: string; failed: boolean } | null>(null);
+  // 失败句 = 原生前缀「让 AI 修启动失败：」+ server 原文，前缀与原文各一节点（§54.4 前缀与值分两个节点）
+  const [status, setStatus] = useState<{ msg: string; detail?: string; failed: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -285,8 +292,7 @@ export function AiFixButton({ cardId }: { cardId: string }) {
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setStatus(null), 4000);
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
-      setStatus({ msg: text("让 AI 修启动失败：", "Fix with AI failed to launch: ") + detail, failed: true });
+      setStatus({ msg: text("让 AI 修启动失败：", "Fix with AI failed to launch: "), detail: e instanceof Error ? e.message : String(e), failed: true });
     } finally {
       setBusy(false);
     }
@@ -297,9 +303,28 @@ export function AiFixButton({ cardId }: { cardId: string }) {
       <button type="button" className="btn" disabled={busy} onClick={() => void launch()}>
         {text("让 AI 修", "Fix with AI")}
       </button>
-      {status && <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>{status.msg}</span>}
+      {status && (
+        <span className={`card-meta-text${status.failed ? " is-danger" : ""}`}>
+          <span>{status.msg}</span>
+          {status.detail && <span className="card-meta-detail">{status.detail}</span>}
+        </span>
+      )}
     </>
   );
+}
+
+/**
+ * 合并态角标（原生 Kanban.swift cardOverlay：契约七「合并分析中…」/ §21bis「合并中…」）：
+ * 这张卡在某条 analyzing 的合并建议里 → 合并分析中…（backend 真态）；强制合并已提交、等下一版
+ * dashboard → 合并中…（store 瞬态，回流即清）。强制合并优先（原生 mergeForcing 先判）。
+ */
+export function MergeStateChip({ cardId }: { cardId: string }) {
+  const { text } = useI18n();
+  const { board, forceMergingIds } = useAppState();
+  if (forceMergingIds.has(cardId)) return <span className="chip chip-purple chip-quiet">{text("合并中…", "Merging…")}</span>;
+  const analyzing = (board?.merge_suggestions ?? []).some((s) => s.status === "analyzing" && Array.isArray(s.ids) && s.ids.includes(cardId));
+  if (!analyzing) return null;
+  return <span className="chip chip-purple chip-quiet">{text("合并分析中…", "Analyzing…")}</span>;
 }
 
 /** 错误一句（红，两行截断，hover 全文）——原生 errorLine 的文本部分；按钮由宿主放进动作行 */

@@ -237,6 +237,23 @@ def top_level_spans(masked):
     return spans
 
 
+_TOP_FUNC = re.compile(
+    r"^(?:@\w+\s+)*(?:(?:private|fileprivate|public|internal)\s+)*func\s+(\w+)", re.M)
+
+
+def top_level_funcs(masked):
+    """顶层自由函数 [("func", name, start_off, end_off)]（列首的 `func` 声明；类型体内的成员
+    另走 member_spans）。Cards.swift 的 fileprivate 词表函数（trashReasonLabel 等）就住这里——
+    它们的 L() 归属由 FUNCTION_SCREEN 表按 (文件, 函数名) 点名（§66.1 归属表）。"""
+    spans = []
+    for m in _TOP_FUNC.finditer(masked):
+        body = _decl_span(masked, m.start())
+        if body is None:
+            continue
+        spans.append(("func", m.group(1), m.start(), body[1]))
+    return spans
+
+
 def member_spans(masked, start, end):
     """类型体 [start, end) 内的成员 var/func 范围 [(kind, name, start_off, end_off)]。
     只收带函数体/计算体的成员；存储属性略过。"""
@@ -265,12 +282,34 @@ def innermost(spans, offset):
 
 _STR = r'"((?:[^"\\]|\\.)*)"'
 L_CALL = re.compile(r"\bL\(\s*" + _STR + r"\s*,\s*" + _STR + r"\s*\)", re.S)
-_INTERP = re.compile(r"\\\((.*?)\)")
+def _interp_end(literal, start):
+    """`\\(` 在 start：返回配对的 `)` 之后一位；括号没配上 → -1。"""
+    depth, j = 1, start + 2
+    while j < len(literal) and depth:
+        depth += {"(": 1, ")": -1}.get(literal[j], 0)
+        j += 1
+    return -1 if depth else j
+
+
+def _fold_interpolations(literal):
+    """`\\(expr)` → `{expr}`，按括号配对吞到插值自己的 `)`——`\\(Self.money(cost))` 是一个
+    占位 `{Self.money(cost)}`，不是 `{Self.money(cost}` + 尾巴 `)`（非贪婪正则的老 bug 会让
+    探针正则要求 web 文案以 `)` 收尾，永远判不到「💰 预计费用: $N」）。没配对上的原样留下。"""
+    out, i = [], 0
+    while i < len(literal):
+        end = _interp_end(literal, i) if literal.startswith("\\(", i) else -1
+        if end < 0:
+            out.append(literal[i])
+            i += 1
+            continue
+        out.append("{%s}" % literal[i + 2:end - 1].strip())
+        i = end
+    return "".join(out)
 
 
 def unescape_swift(literal):
-    """Swift 字符串字面量 → 人读文本；插值 \\(expr) 变成 {expr} 占位。"""
-    text = _INTERP.sub(lambda m: "{%s}" % m.group(1).strip(), literal)
+    """Swift 字符串字面量 → 人读文本；插值 \\(expr) 变成 {expr} 占位（括号配对）。"""
+    text = _fold_interpolations(literal)
     text = text.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t")
     text = re.sub(r"\\u\{([0-9a-fA-F]+)\}", lambda m: chr(int(m.group(1), 16)), text)
     return text.replace("\\\\", "\\")

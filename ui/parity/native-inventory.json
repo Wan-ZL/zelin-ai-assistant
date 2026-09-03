@@ -1,5 +1,23 @@
 {
   "attribution": {
+    "control_owner": {
+      "control:doctor:label:failed-to-write-dest": {
+        "owner": "retired",
+        "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）"
+      },
+      "control:doctor:label:launchctl-load-failed": {
+        "owner": "retired",
+        "reason": "原生 app 自己 launchctl load 的失败句；server 永不 load plist（§68.8 同上，install.sh --reinstall-agent 是唯一装载路径 §48.7）"
+      },
+      "control:header.freshness:button:board-health-banner-background-service-down-one": {
+        "owner": "retired",
+        "reason": "AIFix.launch(context:) 的 prompt 上下文字串，从不渲染；web 的「让 AI 修」上下文由 server 从 doctor 报告推导（§68.4 / §54.4）"
+      },
+      "control:setup_wizard:label:failed-to-write-dest": {
+        "owner": "retired",
+        "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist"
+      }
+    },
     "file_screen": {
       "AppDelegate.swift": "app",
       "Ask.swift": "ask",
@@ -24,6 +42,9 @@
       "SetupWizard.swift": "setup_wizard",
       "Store.swift": "board.notices",
       "Utils.swift": "shared"
+    },
+    "function_screen": {
+      "Cards.swift:trashReasonLabel": "trash"
     },
     "member_screen": {
       "AppDelegate.alertImagesNotSaved": "board.dialogs",
@@ -1427,28 +1448,6 @@
       "source": "Cards.swift:136",
       "via": "k",
       "zh": "潜在任务"
-    },
-    {
-      "en": "You rejected it",
-      "gated": true,
-      "id": "control:board.card:label:you-rejected-it",
-      "owner": "web",
-      "role": "label",
-      "screen": "board.card",
-      "source": "Cards.swift:145",
-      "via": "r",
-      "zh": "你拒绝的"
-    },
-    {
-      "en": "You deleted it",
-      "gated": true,
-      "id": "control:board.card:label:you-deleted-it",
-      "owner": "web",
-      "role": "label",
-      "screen": "board.card",
-      "source": "Cards.swift:146",
-      "via": "r",
-      "zh": "你删除的"
     },
     {
       "en": "Merged",
@@ -3629,7 +3628,7 @@
       "zh": "未分级"
     },
     {
-      "en": "💰 Estimated cost: {Self.money(cost})",
+      "en": "💰 Estimated cost: {Self.money(cost)}",
       "gated": true,
       "id": "control:board.needs_approval:label:estimated-cost-self-money-cost",
       "owner": "web",
@@ -3637,7 +3636,7 @@
       "screen": "board.needs_approval",
       "source": "Cards.swift:1368",
       "via": "",
-      "zh": "💰 预计费用: {Self.money(cost})"
+      "zh": "💰 预计费用: {Self.money(cost)}"
     },
     {
       "en": "💰 Cost unknown",
@@ -3706,7 +3705,7 @@
       "zh": "dashboard.json 有 {db.decodeDrops.count} 行损坏已跳过（其余照常显示）: "
     },
     {
-      "en": " \"{String(r.title.prefix(20}))\"",
+      "en": " \"{String(r.title.prefix(20))}\"",
       "gated": true,
       "id": "control:board.notices:label:string-r-title-prefix-20",
       "owner": "web",
@@ -3714,7 +3713,7 @@
       "screen": "board.notices",
       "source": "Store.swift:302",
       "via": "seenFoldReceipts.contains",
-      "zh": "「{String(r.title.prefix(20}))」"
+      "zh": "「{String(r.title.prefix(20))}」"
     },
     {
       "en": "Your input was merged into {r.req}{name} (no new card filed)",
@@ -3739,7 +3738,7 @@
       "zh": "读取 dashboard.json 失败: "
     },
     {
-      "en": "\"{String(c.text.prefix(20}))\" did not start — the backend may not be running (check actd)",
+      "en": "\"{String(c.text.prefix(20))}\" did not start — the backend may not be running (check actd)",
       "gated": false,
       "id": "control:board.notices:copy:string-c-text-prefix-20-did-not-start-the-backen",
       "owner": "web",
@@ -3747,7 +3746,7 @@
       "screen": "board.notices",
       "source": "Store.swift:407",
       "via": "LocalNotice",
-      "zh": "「{String(c.text.prefix(20}))」任务没有开始——后台可能没在跑（检查 actd）"
+      "zh": "「{String(c.text.prefix(20))}」任务没有开始——后台可能没在跑（检查 actd）"
     },
     {
       "en": "Analysis is slower than usual — the card should still appear; if it never does, open the Dependencies page and check state/actd.log",
@@ -3761,7 +3760,7 @@
       "zh": "分析比平时慢，卡片稍后会自动出现；一直没有就打开「依赖检查」页并查看 state/actd.log"
     },
     {
-      "en": "Research proposal for \"{String(entry.summary.prefix(20}))\" timed out — try again",
+      "en": "Research proposal for \"{String(entry.summary.prefix(20))}\" timed out — try again",
       "gated": false,
       "id": "control:board.notices:copy:research-proposal-for-string-entry-summary-prefi",
       "owner": "web",
@@ -3769,7 +3768,7 @@
       "screen": "board.notices",
       "source": "Store.swift:420",
       "via": "LocalNotice",
-      "zh": "「{String(entry.summary.prefix(20}))」研究提案超时，请重试"
+      "zh": "「{String(entry.summary.prefix(20))}」研究提案超时，请重试"
     },
     {
       "en": "Backend timed out — the card is interactive again",
@@ -5158,7 +5157,7 @@
       "zh": "定时任务磁盘权限"
     },
     {
-      "en": "Last probe {Int(age / 3600})h ago — the scheduled jobs may have stopped (run Diagnostics)",
+      "en": "Last probe {Int(age / 3600)}h ago — the scheduled jobs may have stopped (run Diagnostics)",
       "gated": false,
       "id": "control:deps:copy:last-probe-int-age-3600-h-ago-the-scheduled-jobs",
       "owner": "web",
@@ -5166,7 +5165,7 @@
       "screen": "deps",
       "source": "Pages.swift:277",
       "via": "DepRowState",
-      "zh": "最近一次探测在 {Int(age / 3600}) 小时前——定时任务可能停跑了（先查「诊断」）"
+      "zh": "最近一次探测在 {Int(age / 3600)} 小时前——定时任务可能停跑了（先查「诊断」）"
     },
     {
       "en": "Cron disk access",
@@ -5588,9 +5587,10 @@
     },
     {
       "en": "Failed to write {dest}: ",
-      "gated": true,
+      "gated": false,
       "id": "control:doctor:label:failed-to-write-dest",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "原生 app 自己渲 plist 写 ~/Library/LaunchAgents 的失败句；server 永不写 plist（§68.8：修复 = launchctl kickstart，未加载 → 409 指向 install.sh）",
       "role": "label",
       "screen": "doctor",
       "source": "Doctor.swift:86",
@@ -5599,9 +5599,10 @@
     },
     {
       "en": "launchctl load failed: ",
-      "gated": true,
+      "gated": false,
       "id": "control:doctor:label:launchctl-load-failed",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "原生 app 自己 launchctl load 的失败句；server 永不 load plist（§68.8 同上，install.sh --reinstall-agent 是唯一装载路径 §48.7）",
       "role": "label",
       "screen": "doctor",
       "source": "Doctor.swift:92",
@@ -6071,7 +6072,7 @@
       "zh": "已在 Terminal 打开修复会话——跟着 AI 走即可"
     },
     {
-      "en": "Data generated {max(1, Int(age / 60})) min ago — actd may be down",
+      "en": "Data generated {max(1, Int(age / 60))} min ago — actd may be down",
       "gated": false,
       "id": "control:header.freshness:copy:data-generated-max-1-int-age-60-min-ago-actd-may",
       "owner": "web",
@@ -6079,7 +6080,7 @@
       "screen": "header.freshness",
       "source": "Freshness.swift:30",
       "via": "Text",
-      "zh": "数据生成于 {max(1, Int(age / 60})) 分钟前，actd 可能未运行"
+      "zh": "数据生成于 {max(1, Int(age / 60))} 分钟前，actd 可能未运行"
     },
     {
       "en": "Data generated ",
@@ -6314,9 +6315,10 @@
     },
     {
       "en": "Board health banner: background service down; one-click repair failed: ",
-      "gated": true,
+      "gated": false,
       "id": "control:header.freshness:button:board-health-banner-background-service-down-one",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "AIFix.launch(context:) 的 prompt 上下文字串，从不渲染；web 的「让 AI 修」上下文由 server 从 doctor 报告推导（§68.4 / §54.4）",
       "role": "button",
       "screen": "header.freshness",
       "source": "Freshness.swift:219",
@@ -6742,7 +6744,7 @@
       "zh": "引擎没能启动"
     },
     {
-      "en": "{label(forMode: failed}) could not start — {cause}; reverted to {label(forMode: kept}) and recording continues",
+      "en": "{label(forMode: failed)} could not start — {cause}; reverted to {label(forMode: kept)} and recording continues",
       "gated": false,
       "id": "control:header.recording:copy:label-formode-failed-could-not-start-cause-rever",
       "owner": "web",
@@ -6750,7 +6752,7 @@
       "screen": "header.recording",
       "source": "Recording.swift:352",
       "via": "String",
-      "zh": "「{label(forMode: failed})」没能开启——{cause}；已退回「{label(forMode: kept})」继续录制"
+      "zh": "「{label(forMode: failed)}」没能开启——{cause}；已退回「{label(forMode: kept)}」继续录制"
     },
     {
       "en": "Screen Recording is now granted — the engine restarted automatically",
@@ -11070,7 +11072,7 @@
       "zh": "扫描中…"
     },
     {
-      "en": "{model.servers.count} servers (user {model.count(in: .user}) · project {model.count(in: .project}))",
+      "en": "{model.servers.count} servers (user {model.count(in: .user)} · project {model.count(in: .project)})",
       "gated": false,
       "id": "control:settings.mcp:copy:model-servers-count-servers-user-model-count-in",
       "owner": "web",
@@ -11078,7 +11080,7 @@
       "screen": "settings.mcp",
       "source": "SettingsMCP.swift:191",
       "via": "Text",
-      "zh": "共 {model.servers.count} 个 server（用户 {model.count(in: .user}) · 项目 {model.count(in: .project})）"
+      "zh": "共 {model.servers.count} 个 server（用户 {model.count(in: .user)} · 项目 {model.count(in: .project)}）"
     },
     {
       "en": "No MCP servers in either scope yet. Add one in a terminal, then come back and hit Refresh:",
@@ -11147,7 +11149,7 @@
       "zh": "用户级"
     },
     {
-      "en": "{model.count(in: scope}) servers",
+      "en": "{model.count(in: scope)} servers",
       "gated": true,
       "id": "control:settings.mcp:label:model-count-in-scope-servers",
       "owner": "web",
@@ -11155,7 +11157,7 @@
       "screen": "settings.mcp",
       "source": "SettingsMCP.swift:274",
       "via": "Text",
-      "zh": "{model.count(in: scope}) 个 server"
+      "zh": "{model.count(in: scope)} 个 server"
     },
     {
       "en": "Reveal in Finder",
@@ -12809,9 +12811,10 @@
     },
     {
       "en": "Failed to write {dest}: ",
-      "gated": true,
+      "gated": false,
       "id": "control:setup_wizard:label:failed-to-write-dest",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "向导末步原生自渲 plist 的失败句；web 向导「启动后台服务」= POST /api/repair/actd（§68.5 ⑦），server 不写 plist",
       "role": "label",
       "screen": "setup_wizard",
       "source": "SetupWizard.swift:326",
@@ -13732,7 +13735,7 @@
       "zh": "去授权"
     },
     {
-      "en": "Last scheduled run was {Int(Date(}.timeIntervalSince(ts) / 3600))h ago — the jobs may have stopped",
+      "en": "Last scheduled run was {Int(Date().timeIntervalSince(ts) / 3600)}h ago — the jobs may have stopped",
       "gated": false,
       "id": "control:setup_wizard:copy:last-scheduled-run-was-int-date-timeintervalsinc",
       "owner": "web",
@@ -13740,7 +13743,7 @@
       "screen": "setup_wizard",
       "source": "SetupWizard.swift:1170",
       "via": "",
-      "zh": "最近一次定时任务在 {Int(Date(}.timeIntervalSince(ts) / 3600)) 小时前——它可能停跑了"
+      "zh": "最近一次定时任务在 {Int(Date().timeIntervalSince(ts) / 3600)} 小时前——它可能停跑了"
     },
     {
       "en": "Diagnostics",
@@ -13895,6 +13898,28 @@
       "source": "Utils.swift:915",
       "via": "",
       "zh": "{days}天前"
+    },
+    {
+      "en": "You rejected it",
+      "gated": true,
+      "id": "control:trash:label:you-rejected-it",
+      "owner": "web",
+      "role": "label",
+      "screen": "trash",
+      "source": "Cards.swift:145",
+      "via": "r",
+      "zh": "你拒绝的"
+    },
+    {
+      "en": "You deleted it",
+      "gated": true,
+      "id": "control:trash:label:you-deleted-it",
+      "owner": "web",
+      "role": "label",
+      "screen": "trash",
+      "source": "Cards.swift:146",
+      "via": "r",
+      "zh": "你删除的"
     },
     {
       "en": "🗑 Trash",

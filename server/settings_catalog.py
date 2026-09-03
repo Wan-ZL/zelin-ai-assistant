@@ -109,6 +109,12 @@ SECTIONS: tuple = (
                choices=("auto", "ghostty", "terminal", "iterm2"),
                help_zh="「在终端打开」（接管会话）/ 开发会话 / 卸载 都在这个终端里新开窗口运行。自动 = 装了 Ghostty 就用 Ghostty，否则 Terminal；选了没装的会回落到系统默认终端。",
                help_en="\"Open in terminal\" (take over a session) / development session / uninstall open a new window in this terminal. Auto = Ghostty when installed, else Terminal; a choice that is not installed falls back to the system default terminal."),
+            # 原生 AppDelegate.rememberFeedbackPublishDefault 的 override 键（§66.2 setting:overrides:feedback_publish_default）：
+            # 「提建议」弹窗里「同时公开到 GitHub」勾选的默认态 = 上次选择；web 弹窗读 effective、勾选即 PUT（§29bis）。
+            _f("feedback_publish_default", "bool", "提建议默认勾选「公开到 GitHub」", "Publish feedback by default",
+               default=False,
+               help_zh="「提建议」弹窗里「同时公开到 GitHub 建议跟踪表」的默认勾选态；弹窗里改一次就记住。",
+               help_en="Default state of the \"also publish to the GitHub feedback tracker\" checkbox in the feedback dialog; changing it there is remembered."),
         ],
     ),
     _section(

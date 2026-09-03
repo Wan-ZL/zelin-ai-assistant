@@ -12,7 +12,7 @@ import { cardToMarkdown } from "./cardMarkdown";
 import { copyText } from "./copyText";
 import { DetailFields } from "./DetailFields";
 import { DeliverableViewer } from "./DeliverableViewer";
-import { TitleEditor } from "./TitleEditor";
+import { FormerNames, TitleEditor } from "./TitleEditor";
 import "./detail.css";
 
 type DrawerTab = "fields" | "deliverable";
@@ -110,8 +110,10 @@ export function DetailDrawer() {
               <span className="zai-drawer-id zai-drawer-id-key" title={text("主键（动作/深链用）", "Primary key (actions / deep links)")}>{primaryKey}</span>
             )}
             <h2>{heading}</h2>
-            {/* §37 活标题：详情已到 + 主键可用才给改名（trash/archived 行也能改，actd 侧复验） */}
+            {/* §37 活标题：详情已到 + 主键可用才给改名（trash/archived 行也能改，actd 侧复验）；
+                曾用名一行同原生 TitleEditRow（改过的旧名仍可搜索） */}
             {cardDetail && primaryKey && <TitleEditor cardId={primaryKey} current={heading} />}
+            {cardDetail && <FormerNames titles={cardDetail.former_titles} />}
           </div>
           <div className="zai-drawer-tools">
             <button type="button" className="zai-detail-copy" onClick={onCopyMarkdown} disabled={!cardDetail}>

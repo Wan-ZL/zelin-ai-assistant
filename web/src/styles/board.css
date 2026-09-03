@@ -805,6 +805,40 @@ a.chip:hover { text-decoration: underline; }
   padding: 2px 8px;
 }
 
+/* ----- §44.6 并入回执（原生 NoticeRow kind .info，绿色，提案列顶一行可关掉） ---------------- */
+.fold-receipts {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fold-receipt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--success-soft);
+  color: var(--success);
+  font: var(--type-composer-hint);
+}
+
+.fold-receipt-text { flex: 1 1 auto; }
+
+.fold-receipt-dismiss {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0 2px;
+}
+
 /* ----- §29 提建议弹窗的勾选行 ------------------------------------------------------------- */
 .zai-dialog .dialog-check {
   display: flex;
