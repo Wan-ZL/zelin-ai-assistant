@@ -82,6 +82,8 @@ YAML 载体：一条需求一个文件。状态机：
 
 **v0.48.15 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.15 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
 
+**§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
+
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
 ## 2. `state/dashboard.json`（actd 写，Mac app 只读，原子写：先写 .tmp 再 rename）
@@ -132,6 +134,8 @@ YAML 载体：一条需求一个文件。状态机：
 **v0.48.6 新增顶层 optional 字段 `deploy_state`（§56 合并即上岗；§2 兄弟字段，同 `update_available` / `device_label` 的加法约定）**：scripts/auto-deploy.sh 写 `state/deploy_state.json`、`act/lib/deploy_state.py` 逐字段消毒后由 `build_dashboard` 投影；文件缺失/读不了 = **整键不存在**（这台机器不跑该 agent）。形状与状态词表见 §56。web 顶栏据此显示「v0.48.x · deployed 12m ago」。syncd 的变更闸门把整键 `deploy_state` 视为**易变键**（§31 F2 修订的 `_VOLATILE_DASH_KEYS`，与 `generated_at` 同列）：它每 10 分钟随 agent 的每次运行改写，不得触发一次板快照上传。
 
 **v0.48.15 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
+
+**§64 新增（issue #128 AI 摘要 + 完成度评语的投影面，add-only optional）**：`review[]` 与 `completed[]` 行加 `assessment: {summary(str|null), verdict(str|null), verdict_reason(str|null), at(epoch int|null)}`——**只在卡上有摘要或评语、且其 `source_hash` 与卡当前内容指纹一致时整键出现**（失败标记 / 未评 / 内容已变而判官未归 = 整键不存在，客户端不得拿空壳或旧话去猜）；`verdict` 词表 = `建议验收`｜`需继续做`｜`需要拍板`（`act/lib/card_summary.VERDICTS` 单源，web `VerdictChip.VERDICTS` 逐字镜像；词表外的值 server 端归 null，客户端对未知值按原文中性渲染——开放枚举）。`source_hash` / `error` **不上 wire**。客户端只渲染：评语章点看理由、摘要一句上卡面；验收 / 打回按钮语义零变化（§64.6）。
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
@@ -1000,6 +1004,22 @@ failure_id, action_id}]}`；exit code 仍 = FAIL 数。app 诊断区渲染 non-o
 人话句子（FailureCatalog）+ 对症按钮；raw detail/fix 收进 tooltip 与「完整报告」。
 app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录制模式下死亡）时
 **每次会话自动跑一次** `--fast` 版（零成本，不打真实 claude 调用）。
+
+**doctor 模块布局（P3a 追记，行为零变化；§58 清账）**：探针按家族住
+`act/lib/checks/`（`core` 共享件 / `environment` 工具链·配置·凭证·目录 /
+`launchd` §55 路径纪律与 TCC 三幕 / `services` systemd·Task Scheduler 镜像 /
+`cron` §18 链 + FDA 探针 / `pipeline` store2·dashboard·心跳·看板 server·部署），
+每家族公开 `check_*(probes)`，接收 `act.doctor.Probes`（注入缝，duck-typed——
+lib 永不 import doctor，§58.3）。`act/doctor.py` = `Probes`（缺省探针实现）+
+§59 两行模型旋钮（唯一经 `act/llm.py` 的行，lib 层不可达）+ 逐行 `_check_*`
+同名包装（`diagnostic crashed` 行名与判例都从它派生）+ 按 OS 组合 + 渲染 +
+`main`；公开面 `run_checks(probes=None, fast=False)` / `render` / `render_json`
+/ `main` 不变，行名、文案、failure_id 逐字不变（判例 tests/test_doctor*.py 零改动通过）。
+本节及 §54/§55 里对 `act/doctor.py _check_<x>` 的指针仍成立（包装存在），实现读
+`act/lib/checks/<家族>.py`。配套公开名（防腐 #2「跨模块不引 `_私名`」）：
+`act.lib.secrets.read_path`（§19 legacy 路径的无警告读取，doctor 的 key 探针用）、
+`act.lib.analytics_sync.resolve_key`（syncd / feedback 复用的上传 key 解析）——旧
+私名保留为模块内别名。
 
 **state/cron_probe.json**（cron FDA 探针 —— cron 链写，doctor/app 读）：
 
@@ -4365,7 +4385,7 @@ label，孤儿结构性不可见。自本节起：
 
 ## 56. 合并即上岗：自动发版与自动部署（decision D17）
 
-owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
+owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`.github/workflows/ci.yml` + `.github/workflows/ci-nightly.yml` + `.github/workflows/pr-review-claude.yml` / `pr-review-codex.yml`（56.8）、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
 
 ### 56.1 版本真源 = git tag；没有任何文件承载版本（2026-09-02 改写；宪法第 8 条同日修宪）
 
@@ -4392,7 +4412,7 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 串行：`concurrency: release-on-merge`（`cancel-in-progress: false`）——连续合并依次取号；GitHub 每组最多留**一个** pending run，第三次快速 push 会取消排队中的第二个——被取消的那次合并**不单独发版**，但下一次 run 给最新 main 的 tag 已含它的 commit，合进 main 的东西永不失落。手工 `git tag v… && git push --tags` 仍走 `on: push: tags`，两个入口不冲突（release.yml 从 tag 名盖章，不再读任何文件里的版本）。Release 正文：`## 变更 / Changes` = `changelog.d/` fragments ∪ CHANGELOG legacy `[Unreleased]` 相对 `release_tags.py previous <tag>` 那棵树的增量（56.1 / 56.7；上一版的 fragments 用 `git archive <prev> changelog.d` 取），其后是安装说明块与 `--generate-notes` 的 PR 清单。
 
-**merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。
+**merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。**追记二（2026-09-02，§56.8）**：Windows 套件与 qlty 已从 pull_request 搬到 `ci-nightly.yml`（schedule + dispatch），bot review 改为 `review:ai` 标签按需触发；pull_request 上只剩 contract reminder 一个非 required job，`ci` 与 `Web tests` 在 PR 上按路径 filter 决定做多少事（merge_group / push 恒全量）——required 集合与 job 名一字不改。
 
 ### 56.3 部署 job：owner Mac 每 10 分钟跟随 origin/main
 
@@ -4465,7 +4485,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 **为什么不是 merge queue**：GitHub Merge Queue 是 ruleset 的 `merge_queue` 规则，而 ruleset API 对**个人账户 repo** 拒绝它（2026-09-02 实测）；repo 搬进 organization 之前装不上，56.2 的 `merge_group` 接线原样保留等那一天。替代协议 = **main 每前进一步，把新 main 合进每个在飞 PR 的分支**，让 PR 的 head 永远建在最新 main 上、required check 永远是对「合并后形状」的判决，再由 GitHub 的 auto-merge（repo 设置 `allow_auto_merge` + `allow_update_branch` 已开）在七个 required check 绿的那一刻合并。执法：`.github/workflows/update-pr-branches.yml`（`on: push: branches: [main]` + `workflow_dispatch`，可选 `dry_run`；`concurrency: update-pr-branches`，不取消在跑的；顶层 `permissions: {}`，job 级 `contents: read` + `pull-requests: write` + `issues: write`；**不 checkout**——repo 里的任何代码都不在这个 job 里执行，PAT 永不与 PR 代码同处一个进程）。
 
-**token 真相（决定了这个 workflow 的形状）**：`GITHUB_TOKEN` 造成的事件不触发别的 workflow（`workflow_dispatch` / `repository_dispatch` 除外）——56.2 为 tag 引用过的同一条规则，对 `PUT /repos/{o}/{r}/pulls/{n}/update-branch` **同样成立**（GitHub 文档「Triggering a workflow」+ community discussion #26520「Update branch triggered through API does not run checks」）：用 `GITHUB_TOKEN` 更新分支 = PR head 挪到一个**永远没有 CI** 的 commit，七个 required check 停在 "Expected — waiting for status"，auto-merge 永不触发，PR 比不更新**更糟**。所以：(a) 真正的 update-branch 调用用 **fine-grained PAT**（repo secret `PR_AUTOUPDATE_TOKEN`；只授本 repo；Contents read+write + Pull requests read+write；owner 创建、到期续），它的 push 是普通用户 push，**会**触发 CI、`Version pins untouched` 与两个 advisory review（pr-review-*.yml 每次更新都重跑——新基底上的新审查，是这条协议的成本）；(b) **secret 缺席 = report-only 模式**：workflow 仍给冲突的 PR 打 `needs-rebase`（打标签、留评论不需要 push，`GITHUB_TOKEN` 足够）并在 step summary 列出「本该更新」的 PR，但**一根分支都不碰**，绝不退回 `GITHUB_TOKEN` 更新。
+**token 真相（决定了这个 workflow 的形状）**：`GITHUB_TOKEN` 造成的事件不触发别的 workflow（`workflow_dispatch` / `repository_dispatch` 除外）——56.2 为 tag 引用过的同一条规则，对 `PUT /repos/{o}/{r}/pulls/{n}/update-branch` **同样成立**（GitHub 文档「Triggering a workflow」+ community discussion #26520「Update branch triggered through API does not run checks」）：用 `GITHUB_TOKEN` 更新分支 = PR head 挪到一个**永远没有 CI** 的 commit，七个 required check 停在 "Expected — waiting for status"，auto-merge 永不触发，PR 比不更新**更糟**。所以：(a) 真正的 update-branch 调用用 **fine-grained PAT**（repo secret `PR_AUTOUPDATE_TOKEN`；只授本 repo；Contents read+write + Pull requests read+write；owner 创建、到期续），它的 push 是普通用户 push，**会**触发 CI、`Version pins untouched` 与两个 advisory review（pr-review-*.yml 每次更新都重跑——新基底上的新审查，是这条协议的成本；**§56.8 追记（2026-09-02）：作废**——bot review 改为 `review:ai` 标签 / dispatch 按需触发，auto-update 的 push 不再重跑它们、不再花 API 钱）；(b) **secret 缺席 = report-only 模式**：workflow 仍给冲突的 PR 打 `needs-rebase`（打标签、留评论不需要 push，`GITHUB_TOKEN` 足够）并在 step summary 列出「本该更新」的 PR，但**一根分支都不碰**，绝不退回 `GITHUB_TOKEN` 更新。
 
 **每个 PR 的判决**（按序）：草稿 / fork（API 推不进别人的 repo）/ 贴了 **`no-autoupdate`** 标签 → 跳过并列在 summary 里；`GET /compare/main...<head>` 的 `behind_by == 0`（已含 main）→ 如有 `needs-rebase` 摘掉；GitHub 说 `mergeable == false`（`null` 时最多等三次 5 s，GitHub 懒算合并性）**或** update-branch 回 422 "merge conflict" → **`needs-rebase`**：加标签 + **一条**评论（正文带 HTML marker `<!-- zai:update-pr-branches needs-rebase -->`，PR 最新一条评论已是 marker 评论时不再发——幂等）；否则 `PUT update-branch`，带 `expected_head_sha`（读与写之间作者又 push 了 → API 拒绝而非合到没见过的 head 上，下次 main push 重来）；202 → 更新成功、摘 `needs-rebase`；其它失败只打 `::warning` 不失败整个 run。**`needs-rebase` 的语义**：标签是信息不是闸门——它不阻塞任何东西，只告诉作者 / agent「main 动了、你的分支合不进去、请 rebase 后 push」；分支干净合入后由**下一次 run**（下次 main push 或手动 dispatch）自动摘掉。两枚标签是 repo fixture（`needs-rebase` / `no-autoupdate`，2026-09-02 建）。
 
@@ -4483,6 +4503,32 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **清理由下一个 PR 做，CI 永不往 main 写 commit**（56.2「不写分支」不因本条松动）：`scripts/ci/changelog_prune.py` 以最新 `vX.Y.Z` tag（`--tag` 可指定）的树为「已发版」基线，`git ls-tree -r <tag> -- changelog.d` 给出每个 fragment 的 blob id，本地文件的 blob id（`changelog_fragments.blob_sha` = `git hash-object` 同款 sha1，**不 spawn git**）相同 → 删；不同 = 发版后被改过 → **保留并点名**（改过的条目会在下一版正文再出现一次，这是「改已发版的 fragment」的代价——正确做法是加新 fragment）；tag 里没有 = 未发版 → 保留。`--dry-run` 只列；`--notice` = dry-run + 有可清的就打一条 GitHub `::notice::`，rc 永远 0——56.1 的 pins job 每个 PR 跑一次，提示「下一个动 changelog.d 的 PR 顺手清」。git 只在 CLI 壳里 spawn（`git` 注入缝），纯函数 `released_blobs` / `prune_plan`；判例 `tests/test_changelog_prune.py`。
 - **进度日志 fragment**（`docs/design/vnext2-plan.md` §8）：既有表格行冻结为历史；新行 = `docs/design/progress/<YYYY-MM-DD>-<kebab-slug>.md`（日期 = 开 PR 当天，取自文件名；`README.md` 免检）。头部 = 首个空行之前的 `key: value` 行，必有 `pr:`（分支 + PR 号）/ `phase:`（阶段 / 决议）/ `law:`（触及的 §§，纯文档写 `—`），顺序不限、未知键 = 形状错误；空行之后是正文（做了什么），多段允许。`scripts/ci/progress_log.py check` 校验；`render [--plan PATH]` 把 plan §8 里的历史行（`## 8.` 到下一个 `## ` 之间以 `|` 开头的行，含表头）+ 全部 fragments（按日期、同日按文件名）渲染成完整表打到 **stdout**——按需读、**永不写回 plan**（生成文件进 git 就是同一种冲突的复活）；正文进单元格时空白压成一个空格、`|` 转义为 `\|`。PR 直接往 plan 新增 `| YYYY-MM-DD |` 行 = pins 门 FAIL。判例 `tests/test_progress_log.py`。
 - **文档指针**：`changelog.d/README.md`、`docs/design/progress/README.md` 各说自己的形状与生命周期；CHANGELOG.md 头部「Releasing」、CONTRIBUTING「Versioning」/「PR lifecycle」、PR 模板 checklist 全部指向 fragments；`docs/design/vnext2-plan.md` §8 表前一行说明「本表冻结、新行在 progress/」。
+
+### 56.8 CI 矩阵：per-PR 瘦身、main 全量、夜间 informational、bot review 按需（2026-09-02）
+
+**病灶**：repo 是 public（runner 分钟免费），但 owner 在 free plan——真正的瓶颈是**并发上限**（约 20 个 job、其中 macOS 5 个）：几十个并行 agent PR 各带 11 个 job + 2 个 bot review，全部在同一条队列里等 macOS 槽；两条 Windows 腿与 qlty 是 informational、几乎每次都红、没人按 PR 读它们，却每个 PR 吃三个槽；两个 AI review workflow 每次 push（含 56.6 的 auto-update push）都调**付费** API，多数以 infra 错误收场。**改法的边界**：七个 required check（`ci` / `Lint (shellcheck + ruff)` / `Tests on ubuntu (Python 3.9)` / `(Python 3.x)` / `Web tests (build + vitest)` / `QA gates (…)` / `Version pins untouched`）**逐字不改名、每个 PR 与每个 merge_group 都报到**——ruleset `protect-main` 的清单一个字不动；瘦的是它们在 PR 上**做多少事、在哪台机器上做**。
+
+**矩阵**（truth = `.github/workflows/ci.yml` 与 `ci-nightly.yml`；本表只说形状）：
+
+| lane | pull_request | merge_group / push to main | schedule（夜间）+ workflow_dispatch | 按需 |
+|---|---|---|---|---|
+| `Lint` / `Tests on ubuntu ×2` / `QA gates` / `Version pins untouched` | 全跑 | 全跑（pins 门只在 PR / 队列） | — | — |
+| `Changed paths (per-PR filter)`（新，非 required） | 列 PR 文件 → `swift` / `web` 两个布尔输出 | 恒 `true` | — | — |
+| `ci`（macOS Apple 套件） | **filter 命中 → macos-latest 全套**；否则 **ubuntu-latest 一行 summary「no Swift changes — Swift gates not needed」即绿** | 全套（macOS） | — | — |
+| `Web tests (build + vitest)` | `web/` 动了 → npm 全套；否则一行 summary 即绿 | 全套 | — | — |
+| `Contract reminder`（soft） | 跑 | — | — | — |
+| `Tests on windows ×2`、`qlty check`（informational，`continue-on-error`） | **不跑** | 不跑 | `ci-nightly.yml` 每日 10:43 UTC | `gh workflow run ci-nightly.yml` |
+| `Claude PR Review` / `Codex PR Review`（advisory，付费 API） | **只在贴上 `review:ai` 标签时**（`types: [labeled]`） | — | — | `gh workflow run pr-review-claude.yml -f pr=<n>`（Codex 同） |
+| 干净机器安装验收（macOS；**预留**，随 `feat/fresh-machine-bootstrap` 落地时挂上） | 不跑 | push to main | 夜间 | dispatch |
+
+**法条**：
+
+- **filter 的定义单源在 `ci.yml` 的 `changes` job**（`dorny/paths-filter`，按 commit SHA 钉；pull_request 下走 API 列文件、不 checkout；job 级 `pull-requests: read`）。`swift` = macOS 腿独有而 ubuntu 腿没有的一切：`mac/**`、`shell/**`、`ios/**`、`shared/**`、任意 `*.swift`、`.github/xcode-version`、`scripts/ci/select_xcode.sh`、构建调用的 stamper（`scripts/version_stamp.py`、`scripts/build_version.sh`、`act/lib/version.py`）、Swift↔Python interop 的 Python 半（`act/lib/e2e.py`）、`ci.yml` 自己；`web` = `web/**` + `ci.yml`。**新增会被 macOS 独占执行的东西 = 同 PR 加进 filter**——忘了加，push to main 的全量跑会红、56.3 第 3 步的 CI 闸门会拦住部署，但那是事后网，filter 是事前门。
+- **fail-closed 三条**：(a) 非 pull_request 事件（merge_group / push）filter 输出恒 `true`；(b) filter step 失败（API 抽风、限流）时 gate step 仍答 `true`——filter 只能**移除它正面证明不需要的**工作；(c) 下游 step 条件写 `!= 'false'` 而非 `== 'true'`，job 带 `if: !cancelled()`——`changes` 自己挂了，`ci` 与 `Web tests` 照样跑全套而不是被连坐 skip（GitHub 把 skipped 的 required check 当通过，所以「跳过」在这里等于「放行」，绝不允许由故障触发）。
+- **`ci` 的 runner 随 filter 走**：`runs-on: ${{ swift == 'false' && 'ubuntu-latest' || 'macos-latest' }}`——不命中时**一个 macOS 槽都不占**；job 名不变、结论 success、summary 一行说明为什么不需要。**被跳掉的不只是 Swift 构建**：macOS 腿上那次 Python 全量 unittest 也一起跳（darwin-only 判例只有 4 个文件，且多数测试经 PATH 的 bash = runner 上的 Homebrew bash 5，与 ubuntu 无异）——main 上每次 push 仍全量跑，这是接受的取舍。
+- **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
+- **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
+- **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -4602,6 +4648,7 @@ CLAUDE.md 第 3 条点名的 `act/llm.py` 自本版起**真实存在**。凡带 
 - `probe_argv(model, cfg)`——doctor 的最小活探针 `[<claude>, "-p", "ok", "--model", <id>, "--output-format", "text", "--max-turns", "1"]`。
 - `claude_bin(cfg)`（= `config.resolve_claude_bin`：`execution.claude_bin` pin → 稳定副本（§55 第五幕，2026-09-02 追记）→ PATH → `~/.local/bin`）与 `runner_env()`（§19 凭证解析 + 恒定 `DISABLE_AUTOUPDATER=1`（§55 第五幕），原 `executor._runner_env` 搬入——`_私名`跨模块引用清零，防腐 #2）。
 - `model_for(mode, cfg=None)`：`cfg` 给则用它，None 则**现读** `load_config()`。
+- **依赖方向**：见 §58.3 边界层修订（`depgraph.BOUNDARY_MODULES`）——entrypoint import `act.llm` 不记 `entry-pair`；`act/lib` 仍不准向上 import 它，lib 侧要用模型 = 注入缝 `runner=` 或把 LLM 半边放进一个 entrypoint 子进程（§63 `act/recap.py`、§64 `act/card_summary_worker.py` 两个范例）。
 
 **不变量（判例钉死）**：两把旋钮都 `follow` 时，每个 call site 交给 `subprocess.run` 的 argv 与 kwargs（timeout / env / 中性 cwd / stdin 管道）与 v0.48.10 **逐字节相同**；显式旋钮时每个 site 只多出 `--model <id>` 两个 token，其它零变化。唯一有意的偏差：analyze / radar_gmail / radar_slack extractor / golden_eval / quick_capture 五处此前 argv[0] 是裸 `"claude"`（信任 daemon PATH），现统一经 `claude_bin()`——PATH 上有 claude 时解析到同一个二进制，cron/launchd PATH 缺 `~/.local/bin` 时从 FileNotFoundError 变为能跑（2026-07-08 事故的最后几处漏网），`execution.claude_bin` pin 自此对所有 site 生效（它的 docstring 本就这样承诺）。
 
@@ -4863,3 +4910,53 @@ owner 原话：「会议结束后自动出一份 5 行的 recap，我只做一�
 ### 63.7 未解（照 #129 原样登记，不在本节裁决）
 
 两场会间隔 < 5 min 合成一个 key；`audio_only_sessions` 默认关；public build 是否默认 `recap.enabled: true`（本版：**开**——确定性判定零成本，模型调用只在真会议 CLOSED 后发生，PRIVACY.md 有开关行）；Parakeet 引擎 silent 状态由 reconciliation 收尾（约 10 分钟地板），quiet 5 分钟可能多等一轮；同室第三人声与 System Audio 回声仍可能污染 Decided 行（页面脚注提醒粘贴前必读）；executor 派发会话带用户级 Slack MCP、「不对外发」只是 prompt——与本节无关，另开 issue；Slack MCP 在 headless cron 下是否稳定可达要实测（`draft failed` 回执可见）。
+## 64. 待验收卡的 AI 一句话摘要 + 完成度评语（issue #128；vnext2-plan P6 附注）
+
+> §61 壳桥、§62 素材库（`feat/material-box`）、§64 会议 recap（`feat/meeting-recap`）各自立法在前，本节取下一个空号 §64——§ 号永不复用。
+
+owner 的问题（issue #128，2026-09-01 待验收列截图）：(1) 卡上「交付了什么」是执行器收尾报告原话——长、满是术语、表格与列表树，扫一眼看不出这卡干了啥；(2) 那段文字交付时写一次就不再更新，打回重做后是旧的；(3) 「该任务未定义验收标准，请自行判断」——人在验收时刻得不到任何帮助。本节的答案是给每张待验收卡附一份**机器生成、内容一变就重生成、只是建议**的评估：一句 ≤40 字白话摘要 + 三态完成度评语 + 一行理由。**宪法边界不动**：验收 / 打回只有人能按（§0 第 1 条单写者、§11 审批边界；与 R2.3.6「结构化测试报告是加分项不是通行证」同理）。执法：`act/lib/card_summary.py`（指纹 / prompt / 消毒 / 作业文件 / 落卡）、`act/card_summary_worker.py`（detached 判官 CLI）、`act/lib/dashboard._assessment_view`、`web/src/components/board/VerdictChip.tsx`；判例 `tests/test_card_summary_verdict.py`、`web/src/components/board/VerdictChip.test.tsx`。
+
+### 64.1 存储：顶层 add-only 字段 `assessment`
+
+```yaml
+assessment:
+  summary: 把登录页的报错修好了，等你验收        # ≤~40 字中文白话（硬帽 80 字符，超截 …）
+  verdict: 建议验收                              # 建议验收 | 需继续做 | 需要拍板 | null（词表外一律 null）
+  verdict_reason: 清单 1/2 条都有对应改动与测试   # 一行（硬帽 240）；无清单时 = 建议的验收要点 1–3 条
+  at: 2026-09-02T02:30:00Z                       # 评语生成时刻
+  source_hash: 3f9a…                             # 生成所依据内容的指纹（64.2）
+```
+
+失败形（LLM 退出非零 / 解析不出 / 子进程超时 / 起不来）：`{error: <一句，≤300>, at, source_hash}`——**没有 summary/verdict 键**，卡面空白（没有章就是没有章，绝不编造）。本字段不进 `match_corpus`、不参与 §21/§38/§44 任何匹配，re-raise / merge / trash 都不读它；store2 存 payload 冷列，`export_yaml.FIELD_DEFAULTS` 同步（判例 `tests/test_store2_field_parity.py`）。字段名叫 `assessment` 而不是 issue 里的 `summary`：`summary` 早已是 §7 的「原始需求一句话」（分诊时写、参与去重匹配、进 executor prompt），不能改语义。
+
+### 64.2 触发 = 内容指纹变化（rate limit 的唯一判据）
+
+`source_hash` = sha256（前 16 hex）over 卡片内容视图 `{title, display_title, summary, plan, definition_of_done, notes, delivery_mode, execution.{delivered_summary, final_draft, review_at, rework_count, last_rework_at, interrupted_reason}}`（`card_summary.content_view`，JSON sort_keys）。新一轮交付改 `review_at`/`final_draft`/`delivered_summary`，打回改 `rework_count`，编辑改 title/清单/备注——都会改指纹；`status`、日志路径、agent 名、`assessment` 自身**不在**视图里（验收不改内容，评于待验收期的摘要在阶段性完成卡上继续有效；评自己不会触发再评）。**投影只信新鲜的**：`assessment.source_hash ≠ 当前指纹`（内容变了、判官未归）时 `_assessment_view` 整键不出——卡面留白胜过一句过时评语（issue 问题 2）。`needs_assessment(req)` 为真 ⇔ `status == review` ∧ 无 `execution._review_active`（attach 回流中内容在流动，等收割落定）∧（无 assessment ∨ `assessment.source_hash ≠ 当前指纹` ∨（上次是 `error` 且 `at` 距今 ≥ 6 h））。同一内容成功评过一次就**永不再花钱**；失败最多每 6 h 重试一次。非 review 卡一律不评（delivered 卡保留在 review 期评出的那份，供阶段性完成卡面用一句）。
+
+### 64.3 一个 pass、两段式（§44 精神；宪法第 1 条单写者）
+
+一次 summarize + judge = **一个** headless `claude -p`（`llm.run(mode=pipeline, timeout=180, cwd=headless_cwd)`，无工具；模型走 `models.pipeline` 旋钮，§59）。actd 每 pass 在 housekeeping 段调 `card_summary.tick(cfg)`：
+
+1. `sweep`：pending 超 20 min 的作业 → failed「worker timed out」；
+2. `consume`：done/failed 作业 → 在 actd 写者线程 `apply_job`（作业指纹 ≠ 卡当前指纹 = 评的是旧内容，**丢弃**；卡不在 review 了也丢弃）→ `registry.save` → 删作业文件；
+3. `card_summary.enabled` 为真时，为每张 `needs_assessment` 且无在飞作业的 review 卡（§60 `id_sort_key` 序）写 pending 作业 `state/card_summary/<card_id>.json` 并 `Popen` detached `python -m act.card_summary_worker <card_id>`；**同时在飞 ≤ 2**（`MAX_INFLIGHT`，成本刹车）。
+
+判官子进程（`act/card_summary_worker.py`）：读作业 → `registry.load` 只读 → 指纹仍一致才 `assess` → 结果 / 失败**只写回作业文件**，永不 `registry.save`；任何异常落 failed。作业文件一卡一份、consume 即删（数据不进包、体量自带上限——防腐 #4）；子进程 stdio 走 DEVNULL，没有日志文件可长。`tick` 内任何异常只进返回值，绝不崩 pass（宪法第 11 条）。10 s 主循环从不阻塞在模型上（silent_merge 的同一条纪律）。
+
+### 64.4 prompt 与输出消毒
+
+材料 = `content_view` 的人读排版（title / display_title / 原始需求摘要 / status + 打回次数 / 中断原因 / 计划 / 验收清单（无则写「（未定义）」）/ 备注 ≤800 / 交付报告 ≤4000 / 成稿 ≤4000），先 `sanitize.scrub` 再 `fence_untrusted`（宪法第 5 条：卡片内容来自外部来源与 agent 输出，是数据不是指令）。指令：只回一个 JSON `{summary, verdict, reason}`；三态定义写死在 prompt（建议验收 = 清单/需求每条都有对应交付；需继续做 = 缺东西但 AI 能自己做完；需要拍板 = 卡在只有 owner 能给的决定/信息上，含中断收割与 agent 提问）；**拿不准就不许答「建议验收」**（错误的 accept 藏住未完成的活）；没有清单时 reason 兼作建议的验收要点 1–3 条（分号分隔）——这就是 issue 问题 (3) 的软化。
+
+输出不可信，逐字段消毒（`parse_output`）：整段 JSON 优先，否则取**最后一个**同时带 `summary` + `verdict` 键的平衡对象（材料里回显的 JSON 永远不会被当成评语，silent_merge 判官同款防线）；`summary`/`reason` 非 str 一律视为空、折叠空白、硬帽截断；`verdict` 必须逐字命中三态词表否则 null；摘要与评语都空 = None = 没有章。dashboard 投影侧再消毒一次（手改 YAML 的数字摘要不上 wire）。
+
+### 64.5 投影与 web
+
+wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictChip`（`<button class="chip verdict-chip chip-success|chip-warning|chip-purple">AI · 建议验收</button>`，`aria-expanded`，点一下在 badges 行下展开 `role=note` 的理由行、再点收起；`title` = 理由；点击 `stopPropagation`，不发任何 inbox 动作），badges 行下加 `AssessmentSummaryLine`（与阶段性完成卡 `delivered_summary` 一句同款 11 次级单行截断，左侧 accent 细条标识「AI 摘要」）；执行器原话**原样**留在「展开详情 ▸」的「交付了什么」。`DoneCard` 卡面一句 = `assessment.summary` 优先、缺席回落 `delivered_summary`，**不带章**（已验收，评语失效）。英文标签 Looks done / Needs more work / Needs your call；未知 verdict 值按原文中性 chip 渲染。
+
+### 64.6 边界（明确不做）
+
+- **永不自动验收、永不打回、永不改任何状态**：`apply_job` 只写 `assessment` 一个字段；判例 `NeverChangesStatusTestCase` 对三态逐一钉 status 不变。§53.5 agent 墙对本模块无感（它不是 agent、不转移）。
+- 不评 delivered / executing / 提案卡；不为存量 delivered 卡回填（成本，且评语在验收后失效）。
+- 不给 rework 反馈、不进 executor prompt、不进 digest；不做通知（评语出现不是打扰资格——宪法第 10 条）。
+- 不在 web 提供「按 AI 建议一键验收」——那会把建议变成默认，正是 issue 里 interview scorecard 的教训。
+- 配置：`card_summary.enabled`（config.yaml 块 / overrides 扁平键 `card_summary_enabled`，默认 true）关掉 = 不派新判官，在飞的仍收回；不设第二把模型旋钮（跟 `models.pipeline`）。

@@ -12,7 +12,7 @@ Read [`CLAUDE.md`](https://github.com/Wan-ZL/zelin-ai-assistant/blob/main/CLAUDE
 
 ## The three gates
 
-CI runs the same three on every PR; please run them locally first.
+CI runs the same three on every PR (the macOS build only when a Swift-related path changed — CONTRACT §56.8); please run them locally first.
 
 - [ ] `python3 -m compileall act ingest` passes
 - [ ] `AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests` passes (tests use a tempdir HOME — never a real `state/` or registry)

@@ -56,12 +56,17 @@ CONSENT_MARKER_PATH: Path = config.STATE_DIR / "telemetry_consent_shown"
 SUPABASE_SERVICE_KEY_FILE = "supabase-service-key.txt"
 
 
-def _resolve_key(cfg: config.Config) -> str:
+def resolve_key(cfg: config.Config) -> str:
     """Upload key: key file (CONTRACT §19 / telemetry.key_path) wins; else the
-    built-in publishable key (public by design — RLS allows INSERT only)."""
+    built-in publishable key (public by design — RLS allows INSERT only).
+    Public: syncd / feedback reuse the same resolution（防腐 #2——跨模块不引
+    `_私名`）。"""
     key = secrets.resolve_credential(
         SUPABASE_SERVICE_KEY_FILE, explicit_path=cfg.telemetry_key_path)
     return key or config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY
+
+
+_resolve_key = resolve_key   # 本模块内部与既有判例沿用的旧名
 
 BATCH_SIZE = 500
 TIMEOUT_SECONDS = 15

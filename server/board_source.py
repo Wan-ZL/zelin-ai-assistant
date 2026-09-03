@@ -113,6 +113,14 @@ _BACKEND_ENV = "ZAI_REGISTRY_BACKEND"     # registry._BACKEND_ENV 同名镜像
 _BACKENDS = ("yaml", "sqlite")
 
 
+def _config_backend(home: Path) -> str:
+    """config.yaml ``registry.backend``（小写、去空白），不是合法值 → ""。"""
+    cfg = _load_yaml(paths.config_path(home))
+    blk = cfg.get("registry") if isinstance(cfg, dict) else None
+    val = str(blk.get("backend") or "").strip().lower() if isinstance(blk, dict) else ""
+    return val if val in _BACKENDS else ""
+
+
 def registry_backend(home: Path) -> str:
     """真源判定，镜像 ``act.lib.registry.backend()``（只读、零 import act）：
     env ``ZAI_REGISTRY_BACKEND`` > config.yaml ``registry.backend`` > 激活标记。
@@ -124,14 +132,45 @@ def registry_backend(home: Path) -> str:
     env = os.environ.get(_BACKEND_ENV, "").strip().lower()
     if env in _BACKENDS:
         return env
-    cfg = _load_yaml(paths.config_path(home))
-    if isinstance(cfg, dict):
-        blk = cfg.get("registry")
-        val = str(blk.get("backend") or "").strip().lower() \
-            if isinstance(blk, dict) else ""
-        if val in _BACKENDS:
-            return val
+    val = _config_backend(home)
+    if val:
+        return val
     return "sqlite" if paths.store2_truth_path(home).exists() else "yaml"
+
+
+def _sqlite_card(home: Path, card_id: str) -> Optional[dict]:
+    """store2 真源下读 SQLite payload；库文件不在 → None（不回落 YAML）。"""
+    db = paths.store2_db_path(home)
+    if db.exists():
+        return store2_readonly.read_card_by_ref(db, card_id)
+    return None
+
+
+def _scan_dir(d: Path, card_id: str) -> Optional[dict]:
+    """全量扫一个 registry 目录（list 批次文件 / 带 slug 的历史文件名）。"""
+    if not d.is_dir():
+        return None
+    for p in sorted(d.glob("*.yaml")):
+        if p.name == _EXAMPLE_FILE:
+            continue
+        hit = _match_card(_load_yaml(p), card_id)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _yaml_card(home: Path, card_id: str) -> Optional[dict]:
+    """YAML 后端：先按 canonical 文件名 ``<ID>.yaml`` 直取（§1），两目录都
+    没有再全量扫描。"""
+    for d in _registry_dirs(home):
+        hit = _match_card(_load_yaml(d / f"{card_id}.yaml"), card_id)
+        if hit is not None:
+            return hit
+    for d in _registry_dirs(home):
+        hit = _scan_dir(d, card_id)
+        if hit is not None:
+            return hit
+    return None
 
 
 def load_registry_card(home: Path, card_id: str) -> Optional[dict]:
@@ -140,24 +179,8 @@ def load_registry_card(home: Path, card_id: str) -> Optional[dict]:
     （未激活，或 §53.6 回滚开关强制）先按 canonical 文件名 ``<ID>.yaml``
     直取（§1），找不到再全量扫描（list 批次文件 / 带 slug 的历史文件名）。"""
     if store2_readonly is not None and registry_backend(home) == "sqlite":
-        db = paths.store2_db_path(home)
-        if db.exists():
-            return store2_readonly.read_card_by_ref(db, card_id)
-        return None
-    for d in _registry_dirs(home):
-        hit = _match_card(_load_yaml(d / f"{card_id}.yaml"), card_id)
-        if hit is not None:
-            return hit
-    for d in _registry_dirs(home):
-        if not d.is_dir():
-            continue
-        for p in sorted(d.glob("*.yaml")):
-            if p.name == _EXAMPLE_FILE:
-                continue
-            hit = _match_card(_load_yaml(p), card_id)
-            if hit is not None:
-                return hit
-    return None
+        return _sqlite_card(home, card_id)
+    return _yaml_card(home, card_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -229,7 +252,12 @@ def card_detail(home: Path, card_id: str) -> dict:
     reg = load_registry_card(home, card_id)
     if row is None and reg is None:
         raise NotFoundError("card not found", {"id": card_id})
+    return _merge_detail(row, reg, lane, card_id)
 
+
+def _merge_detail(row: Optional[dict], reg: Optional[dict],
+                  lane: Optional[str], card_id: str) -> dict:
+    """投影行为底、registry 字段只补空位（add-only）。"""
     merged: dict = dict(row) if row else {"id": _primary_key(reg, card_id)}
     # ``lane`` 是本 endpoint 的新增键（不动投影字段名）；registry-only 卡为 null
     merged["lane"] = lane

@@ -112,18 +112,9 @@ def noncanonical_warning(mode: str, value: str) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 # layered read: overrides → config.yaml → default
 # --------------------------------------------------------------------------- #
-def read_overrides(home: Path) -> dict:
-    """The overrides document, {} when absent. An unparsable file (or a non-
-    object) raises ConflictError — the pipeline ignores such a file, but
-    overwriting it from here would destroy whatever the owner had in it."""
-    p = settings_overrides_path(home)
-    try:
-        text = p.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    except OSError as exc:
-        raise ConflictError("settings_overrides.json is unreadable",
-                            {"path": str(p), "error": str(exc)})
+def _parse_overrides(text: str, p: Path) -> dict:
+    """Overrides text → object; empty file = {}; not JSON / not an object →
+    ConflictError (never overwrite what the owner had in there)."""
     try:
         doc = json.loads(text) if text.strip() else {}
     except ValueError:
@@ -136,29 +127,53 @@ def read_overrides(home: Path) -> dict:
     return doc
 
 
+def read_overrides(home: Path) -> dict:
+    """The overrides document, {} when absent. An unparsable file (or a non-
+    object) raises ConflictError — the pipeline ignores such a file, but
+    overwriting it from here would destroy whatever the owner had in it."""
+    p = settings_overrides_path(home)
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise ConflictError("settings_overrides.json is unreadable",
+                            {"path": str(p), "error": str(exc)})
+    return _parse_overrides(text, p)
+
+
+def _models_block(home: Path) -> Optional[dict]:
+    """config.yaml ``models:`` block, or None (PyYAML absent / file absent /
+    bad yaml / wrong shape — the pipeline degrades the same way)."""
+    if yaml is None:
+        return None
+    try:
+        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return None
+    blk = doc.get("models") if isinstance(doc, dict) else None
+    return blk if isinstance(blk, dict) else None
+
+
+def _coerce_or_follow(value) -> str:
+    """coerce_model with a bad shape reading as follow (config-file leniency)."""
+    try:
+        return coerce_model(value)
+    except ValueError:
+        return MODEL_FOLLOW
+
+
 def _config_models(home: Path) -> "tuple[dict, dict]":
     """(values, present): config.yaml ``models:`` block coerced per mode (bad
     shape → follow) + which modes the file actually spells (``source`` label).
     PyYAML absent / file absent / bad yaml → all follow, none present (the
     pipeline degrades the same way)."""
+    blk = _models_block(home) or {}
     values = {mode: MODEL_FOLLOW for mode in MODEL_MODES}
-    present = {mode: False for mode in MODEL_MODES}
-    if yaml is None:
-        return values, present
-    try:
-        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        return values, present
-    blk = doc.get("models") if isinstance(doc, dict) else None
-    if not isinstance(blk, dict):
-        return values, present
+    present = {mode: mode in blk for mode in MODEL_MODES}
     for mode in MODEL_MODES:
-        if mode in blk:
-            present[mode] = True
-            try:
-                values[mode] = coerce_model(blk.get(mode))
-            except ValueError:
-                values[mode] = MODEL_FOLLOW
+        if present[mode]:
+            values[mode] = _coerce_or_follow(blk.get(mode))
     return values, present
 
 
@@ -175,19 +190,25 @@ def models_snapshot(home: Path) -> dict:
     out: dict = {"follow": MODEL_FOLLOW, "canonical": list(CANONICAL_MODELS),
                  "source": {}, "warnings": []}
     for mode in MODEL_MODES:
-        value, source = base[mode], ("config" if present[mode] else "default")
-        raw = overrides.get(OVERRIDE_KEY % mode)
-        if raw is not None:
-            try:
-                value, source = coerce_model(raw), "override"
-            except ValueError:
-                pass  # the pipeline skips the bad entry too
+        value, source = _effective_knob(mode, base, present, overrides)
         out[mode] = value
         out["source"][mode] = source
         warning = noncanonical_warning(mode, value)
         if warning:
             out["warnings"].append(warning)
     return out
+
+
+def _effective_knob(mode: str, base: dict, present: dict, overrides: dict) -> "tuple[str, str]":
+    """(value, source) for one knob: a well-formed override wins; a malformed
+    override is skipped (the pipeline skips it too); else config.yaml / default."""
+    raw = overrides.get(OVERRIDE_KEY % mode)
+    if raw is not None:
+        try:
+            return coerce_model(raw), "override"
+        except ValueError:
+            pass
+    return base[mode], ("config" if present[mode] else "default")
 
 
 # --------------------------------------------------------------------------- #
@@ -211,6 +232,17 @@ def update_models(home: Path, payload: dict) -> dict:
         raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
     if not payload:
         raise InvalidFieldError("nothing to save: give dispatch and/or pipeline")
+    wanted = _wanted_models(payload)
+    overrides = read_overrides(home)
+    base, _present = _config_models(home)
+    _apply_diff(overrides, wanted, base)
+    atomic_write_json(settings_overrides_path(home), overrides)
+    return models_snapshot(home)
+
+
+def _wanted_models(payload: dict) -> dict:
+    """{mode: coerced id} for the modes the payload names; a malformed id →
+    400 INVALID_FIELD carrying the plain-language reason."""
     wanted: dict = {}
     for mode in MODEL_MODES:
         if mode not in payload:
@@ -219,16 +251,18 @@ def update_models(home: Path, payload: dict) -> dict:
             wanted[mode] = coerce_model(payload[mode])
         except ValueError as exc:
             raise InvalidFieldError(str(exc), {"field": mode})
-    overrides = read_overrides(home)
-    base, _present = _config_models(home)
+    return wanted
+
+
+def _apply_diff(overrides: dict, wanted: dict, base: dict) -> None:
+    """diff-write (§15 v0.14 保存语义): equal to the config/default effective
+    value → DELETE the override key; different → write it."""
     for mode, value in wanted.items():
         key = OVERRIDE_KEY % mode
         if value == base[mode]:
-            overrides.pop(key, None)      # diff-write: same as effective → no key
+            overrides.pop(key, None)
         else:
             overrides[key] = value
-    atomic_write_json(settings_overrides_path(home), overrides)
-    return models_snapshot(home)
 
 
 # --------------------------------------------------------------------------- #
@@ -282,13 +316,7 @@ def claude_code_default(path: Optional[Path] = None) -> dict:
 def set_claude_code_default(model, path: Optional[Path] = None) -> dict:
     """Edit only ``model``; back the file up first. ``follow`` / blank is not a
     model here (400). Returns ``{"model", "previous", "backup", "path"}``."""
-    try:
-        value = coerce_model(model)
-    except ValueError as exc:
-        raise InvalidFieldError(str(exc), {"field": "model"})
-    if value == MODEL_FOLLOW:
-        raise InvalidFieldError("give a model id - the Claude Code default cannot follow itself",
-                                {"field": "model"})
+    value = _explicit_model(model)
     p = path or claude_code_settings_path()
     doc, _text = _load_claude_settings(p)
     backup: Optional[str] = None
@@ -297,24 +325,53 @@ def set_claude_code_default(model, path: Optional[Path] = None) -> dict:
         doc = {}
         p.parent.mkdir(parents=True, exist_ok=True)
     else:
-        prev = doc.get("model")
-        previous = prev.strip() if isinstance(prev, str) and prev.strip() else None
-        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        bak = p.with_name(p.name + BACKUP_SUFFIX % stamp)
-        n = 0
-        while bak.exists():   # two clicks in one second: never clobber a backup
-            n += 1
-            bak = p.with_name(p.name + BACKUP_SUFFIX % ("%s-%d" % (stamp, n)))
-        shutil.copy2(p, bak)
-        backup = str(bak)
+        previous = _previous_model(doc)
+        backup = str(_backup_file(p))
     doc["model"] = value
+    _replace_settings(p, doc, keep_mode=backup is not None)
+    return {"model": value, "previous": previous, "backup": backup, "path": str(p)}
+
+
+def _explicit_model(model) -> str:
+    """A real id for the global default: malformed → 400; follow / blank → 400
+    (the default cannot follow itself)."""
+    try:
+        value = coerce_model(model)
+    except ValueError as exc:
+        raise InvalidFieldError(str(exc), {"field": "model"})
+    if value == MODEL_FOLLOW:
+        raise InvalidFieldError("give a model id - the Claude Code default cannot follow itself",
+                                {"field": "model"})
+    return value
+
+
+def _previous_model(doc: dict) -> Optional[str]:
+    prev = doc.get("model")
+    return prev.strip() if isinstance(prev, str) and prev.strip() else None
+
+
+def _backup_file(p: Path) -> Path:
+    """Copy ``p`` to ``settings.json.bak-<UTC ts>[-n]`` (never clobber: two
+    clicks in one second get distinct names) and return the backup path."""
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    bak = p.with_name(p.name + BACKUP_SUFFIX % stamp)
+    n = 0
+    while bak.exists():
+        n += 1
+        bak = p.with_name(p.name + BACKUP_SUFFIX % ("%s-%d" % (stamp, n)))
+    shutil.copy2(p, bak)
+    return bak
+
+
+def _replace_settings(p: Path, doc: dict, *, keep_mode: bool) -> None:
+    """Atomic rewrite (tmp + replace); ``keep_mode`` copies the owner's file
+    mode from the existing file first (best effort)."""
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
                    encoding="utf-8")
-    if backup is not None:
+    if keep_mode:
         try:
-            shutil.copymode(p, tmp)   # keep the owner's file mode
+            shutil.copymode(p, tmp)
         except OSError:
             pass
     os.replace(tmp, p)
-    return {"model": value, "previous": previous, "backup": backup, "path": str(p)}

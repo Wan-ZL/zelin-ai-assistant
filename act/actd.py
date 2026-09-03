@@ -41,6 +41,7 @@ import yaml
 
 from act.lib import (
     analytics,
+    card_summary,
     config,
     detached,
     failures,
@@ -3526,9 +3527,8 @@ def run_once(
     heartbeat.beat("dispatch", interval)
     n_dispatched = dispatch_approved(cfg)
     # write-early：审批/派发刚落账就先写一次 dashboard，app 立刻看到 queued/executing
-    # 回显，不用等 reconcile/raising（都可能慢）跑完；pass 尾部照常再写最终版。
-    # 仅在真有变化时才写 —— 空闲 pass 不额外跑一次 build_dashboard（内含
-    # `claude agents` 子进程 + 全量 registry 加载，白白翻倍热路径开销）。
+    # 回显，不用等 reconcile/raising（都可能慢）跑完；pass 尾部照常再写最终版。仅在真有变化
+    # 时才写——空闲 pass 不额外跑 build_dashboard（内含 `claude agents` 子进程 + 全量 registry 加载）。
     if n_inbox or n_auto or n_dispatched:
         try:
             write_dashboard(build_dashboard(cfg=cfg))
@@ -3543,14 +3543,15 @@ def run_once(
     archive_stale(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     try:
-        # §44: execute same-thing verdicts in THIS thread (the daemon is the
-        # single merge writer — the detached judge is registry-read-only),
-        # then fail stuck checks + purge expired job files.
+        # §44: execute same-thing verdicts in THIS thread (the daemon is the single merge
+        # writer — the detached judge is registry-read-only), then fail stuck checks + purge expired jobs.
         from act.lib import silent_merge
         silent_merge.consume_judged()
         silent_merge.sweep()
     except Exception:  # noqa: BLE001 - sweep must not kill the daemon
         pass
+    # §64：待验收卡 AI 摘要 + 完成度评语——同款两段式（detached 判官只读，本线程落卡）；只是建议，永不改 status；绝不抛
+    card_summary.tick(cfg)
     if auto_merge is not None:
         # §38/§44: deterministic near-dupe rule for newly appeared open cards
         # → detached silent two-card check (radar cron files cards from
@@ -3586,9 +3587,8 @@ def run_once(
         pass
     heartbeat.beat("dashboard", interval)
     dash = build_dashboard(cfg=cfg)
-    # §26 in-app update check: cheap (ETag-cached, at most one network attempt
-    # per 24h) and never raises — the field is simply absent when no newer
-    # release is known or the check is disabled.
+    # §26 in-app update check: cheap (ETag-cached, at most one network attempt per 24h) and
+    # never raises — the field is simply absent when no newer release is known or the check is off.
     if update_check is not None:
         dash = update_check.attach(dash, cfg)
     write_dashboard(dash)

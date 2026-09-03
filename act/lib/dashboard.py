@@ -22,8 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from act.lib import (config, deploy_state, failures, health, policy, recap_store, risk,
-                     sources, steer, titles)
+from act.lib import (card_summary, config, deploy_state, failures, health, policy,
+                     recap_store, risk, sources, steer, titles)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -219,6 +219,30 @@ def _int_or(v: Any, default: int) -> int:
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+def _assessment_view(req: Requirement) -> dict:
+    """§64 AI 摘要 + 完成度评语的 wire 形：``{"assessment": {summary, verdict,
+    verdict_reason, at(epoch)}}``，只在有摘要或评语**且指纹与当前内容一致**时整键出现
+    （失败标记行、内容已变而判官未归的过时评语都不投影——没有章就是没有章，不给客户端
+    一个空壳或旧话去猜）。只是建议：客户端只渲染，不据此动状态。"""
+    a = getattr(req, "assessment", None)
+    if not isinstance(a, dict) or not card_summary.has_content(a):
+        return {}
+    if not card_summary.is_fresh(req):
+        return {}
+    verdict = a.get("verdict")
+    return {"assessment": {
+        "summary": _opt_str(a.get("summary")),
+        "verdict": verdict if verdict in card_summary.VERDICTS else None,
+        "verdict_reason": _opt_str(a.get("verdict_reason")),
+        "at": _epoch(a.get("at")),
+    }}
+
+
+def _opt_str(v: Any) -> Optional[str]:
+    s = str(v or "")
+    return s or None
 
 
 def _clip_draft(v: Any) -> Optional[str]:
@@ -1035,6 +1059,7 @@ def build_dashboard(
                         "delivered_summary": ex.get("delivered_summary"),
                         "accepted_at": _epoch(ex.get("accepted_at")),
                         "dod": list(req.definition_of_done or []),
+                        **_assessment_view(req),   # §64 摘要一句（评于待验收期）
                     }
                 )
             elif req.status == State.REVIEW.value and state in _RUNNING_STATES:
@@ -1060,9 +1085,8 @@ def build_dashboard(
                         "agent_name": agent_name,
                         "cwd": cwd,
                         "state": "working",
-                        # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字
-                        # 符串必须归一，否则 Swift 端 started_at: Int? 的合成
-                        # decode 一个 typeMismatch 会把整个 running 列清空。
+                        # §2: wire 上时间戳一律 epoch int——roster 若给 ISO 字符串必须归一，
+                        # 否则 Swift 端 started_at: Int? 的合成 decode 一个 typeMismatch 会把整个 running 列清空。
                         "started_at": _epoch((agent or {}).get("started_at")),
                         "summary": req.summary or None,
                         "plan": _as_list(req.plan),
@@ -1114,8 +1138,8 @@ def build_dashboard(
                         # #119 add-only：这行是「中断收割」而非正常交付（受阻/
                         # 放弃救活被收进待验收）——detect_transitions 据此不发
                         # 「AI 已交付草稿」，客户端 decodeIfPresent 可标注。
-                        **_opt("interrupted",
-                               bool(ex.get("interrupted_reason"))),
+                        **_opt("interrupted", bool(ex.get("interrupted_reason"))),
+                        **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
                     }
                 )
             # #119（v0.48.8）：受阻/放弃救活的会话不再投影「需输入」——

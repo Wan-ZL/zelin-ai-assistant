@@ -306,6 +306,10 @@ OPTIONAL_ORDER = [
     # None = 从未批准过（提案/备选/回收站卡）或存量 legacy 卡——整键省略，
     # 旧 YAML 逐字节 round-trip 不受影响。
     "work_id",
+    # §64（issue #128）AI 一句话摘要 + 完成度评语：dict
+    # {summary, verdict, verdict_reason, at, source_hash | error}，只由
+    # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
+    "assessment",
 ]
 
 
@@ -382,6 +386,9 @@ class Requirement:
     # 改写；``id`` 仍是唯一主键/lineage 锚点（merged_into/thread_id/
     # improvement_of/split_from 全部指 id，绝不指 work_id）。
     work_id: Optional[str] = None
+
+    # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
+    assessment: Optional[dict] = None
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)
