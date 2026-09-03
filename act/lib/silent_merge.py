@@ -36,7 +36,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from act.lib import analytics, config, registry, sanitize
+from act.lib import analytics, config, near_dupe, registry, sanitize
 
 try:  # merge_review supplies the runner pipeline (claude -p + JSON extract)
     from act import merge_review as _mr
@@ -63,8 +63,6 @@ _OPEN_STATES = (
 
 PENDING_TIMEOUT_MIN = 20   # a check stuck "pending" this long is failed (sweep)
 TTL_HOURS = 24             # done/failed job files are purged after this
-
-BRIEFING_PREFIX = "BACKGROUND INFO (no action needed):\n"
 
 # Test seam: patch this with a fake runner to keep the judge off the real
 # claude CLI (the merge_review injected-runner idiom, module-level because
@@ -517,18 +515,17 @@ def find_fold_target(req: registry.Requirement,
                      runner=None) -> Optional[registry.Requirement]:
     """Before filing a new proposal: does an open card already cover this?
 
-    Deterministic rule first (auto_merge.is_near_dupe — cheap), then the
+    Deterministic rule first (near_dupe.is_near_dupe — cheap), then the
     focused judge only on the best rule hit. Returns the fold target or
     None (file normally). Never raises.
     """
     try:
-        from act.lib import auto_merge
         reqs = [r for r in registry.load_all()
-                if r.status in auto_merge.OPEN_STATES and r.id != req.id]
+                if r.status in near_dupe.OPEN_STATES and r.id != req.id]
         for other in reqs:
-            if auto_merge._linked(req, other):
+            if near_dupe.linked(req, other):
                 continue
-            dupe, _matched, _reason = auto_merge.is_near_dupe(req, other)
+            dupe, _matched, _reason = near_dupe.is_near_dupe(req, other)
             if not dupe:
                 continue
             verdict = judge(other, req, runner=runner)

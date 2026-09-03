@@ -216,6 +216,20 @@ class OutstandingAndLedgerTestCase(unittest.TestCase):
         with mock.patch.object(auto_merge, "_load_state", side_effect=RuntimeError):
             auto_merge.record_pair_final("R-001", "R-002")   # swallowed
 
+    def test_state_write_failure_is_swallowed(self):
+        with mock.patch.object(auto_merge.config, "ensure_state_dirs",
+                               side_effect=OSError("read-only")):
+            auto_merge._save_state({"scanned": ["R-001"]})   # no raise
+        self.assertFalse(auto_merge.STATE_PATH.exists())
+
+    def test_request_failure_is_none(self):
+        a = Requirement(id="R-001", title="a", status=State.CARD_SENT.value)
+        b = Requirement(id="R-002", title="b", status=State.CARD_SENT.value)
+        with mock.patch.object(silent_merge, "request", side_effect=OSError("spawn")):
+            self.assertIsNone(auto_merge._request_silent_check(a, b))
+        with mock.patch.object(silent_merge, "request", return_value="SM-1"):
+            self.assertEqual(auto_merge._request_silent_check(a, b), "SM-1")
+
 
 class LinkedTestCase(unittest.TestCase):
     def _pair(self, **kw):

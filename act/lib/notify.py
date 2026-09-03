@@ -117,15 +117,23 @@ def _sweep_stale(qdir: Path, now: Optional[float] = None) -> int:
     cutoff = (now if now is not None else time.time()) - STALE_AFTER_S
     try:
         for f in qdir.iterdir():
-            try:
-                if f.stat().st_mtime < cutoff:
-                    f.unlink(missing_ok=True)
-                    removed += 1
-            except OSError:
-                continue   # raced with the app's own delete
+            removed += _unlink_if_stale(f, cutoff)
     except OSError:
         pass
     return removed
+
+
+def _unlink_if_stale(f: Path, cutoff: float) -> int:
+    """1 when the entry was older than ``cutoff`` and removed, else 0. Losing a
+    race with the app deleting the same file is fine (missing_ok); a stat
+    failure (raced with the app's own delete) skips the entry."""
+    try:
+        if f.stat().st_mtime < cutoff:
+            f.unlink(missing_ok=True)
+            return 1
+    except OSError:
+        pass
+    return 0
 
 
 # --------------------------------------------------------------------------- #

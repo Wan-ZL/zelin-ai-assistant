@@ -25,7 +25,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import executor
-from act.lib import config
+from act.lib import config, dispatch_prompt
 from act.lib.registry import Requirement, State
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -99,7 +99,7 @@ def _render_build(remote, over, req):
         mem = Path(td) / "MEMORY.md"
         mem.write_text(MEMORY, encoding="utf-8")
         with mock.patch.object(executor, "has_remote", return_value=remote), \
-                mock.patch.object(executor, "resolve_voice_profile", return_value=VOICE), \
+                mock.patch.object(dispatch_prompt, "resolve_voice_profile", return_value=VOICE), \
                 mock.patch.object(config, "MEMORY_PATH", mem):
             return executor.build_prompt(req, cfg, target=TARGET)
 

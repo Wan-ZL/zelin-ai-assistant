@@ -20,6 +20,7 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sets the sandbox env before act imports
 
 from act import executor
+from act.lib import transcripts
 
 SID = "abcd1234-0000-4000-8000-000000000001"
 
@@ -85,6 +86,15 @@ class TranscriptInfoTestCase(_Home):
         self.assertIsNone(executor._transcript_info("abcd1234"))
         with mock.patch.object(Path, "glob", side_effect=OSError("EIO")):
             self.assertIsNone(executor._transcript_info("abcd1234"))
+
+    def test_transcript_cwd_is_the_final_cwd_or_none(self):
+        # both spellings: the lib function (merge_review) and the executor's
+        # private alias (actd's merge-review worktree lookup)
+        self._write(['{"cwd": "/first"}', '{"cwd": "/last"}'])
+        self.assertEqual(transcripts.transcript_cwd("abcd1234"), Path("/last"))
+        self.assertEqual(executor._transcript_cwd(SID), Path("/last"))
+        self.assertIsNone(transcripts.transcript_cwd("nomatch1"))
+        self.assertIsNone(executor._transcript_cwd(""))
 
 
 class HarvestEdgeTestCase(_Home):

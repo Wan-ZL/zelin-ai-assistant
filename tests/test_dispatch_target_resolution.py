@@ -141,6 +141,15 @@ class TargetResolutionTestCase(_Base):
         self.assertEqual(self.runs[-1][1]["cwd"], str(self.cfg.target_repo_path))
 
 
+class RetryWindowTestCase(_Base):
+    def test_attempts_without_a_timestamp_do_not_back_off(self):
+        # a hand-edited / partially written card: attempts recorded, no
+        # last_dispatch_attempt_at → nothing to measure against → launch
+        req = self._req(execution={"dispatch_attempts": 2})
+        executor.dispatch(req, self.cfg)
+        self.assertEqual(registry.load("R-500").status, State.EXECUTING.value)
+
+
 class LaunchLogTestCase(_Base):
     def test_log_records_streams_and_cwd(self):
         req = self._req()
