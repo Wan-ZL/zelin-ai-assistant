@@ -12,8 +12,11 @@ import {
   fetchClaudeCodeDefault,
   fetchHealth,
   fetchLanes,
+  fetchMaterials,
   fetchModelsSettings,
   postClaudeCodeDefault,
+  postMaterialAdd,
+  postMaterialDismiss,
   putModelsSettings,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
@@ -30,6 +33,8 @@ import type {
   ClaudeCodeDefault,
   HealthSnapshot,
   LaneCatalog,
+  MaterialItem,
+  MaterialsList,
   ModelsSettings,
 } from "./types";
 
@@ -49,6 +54,8 @@ export interface AppState {
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
   settingsError: string | null;   // 设置页读失败的用户可读文案（成功后清空；保存失败由页面 toast）
+  materials: MaterialsList | null; // GET /api/materials/list?status=open 最近快照（§62 设置页「素材库」）
+  materialsError: string | null;  // 素材库读失败的用户可读文案（成功后清空；写失败由 section toast）
   sortOrder: SortOrder;           // 卡片排序偏好（镜像原生 cardSortOrder；localStorage 持久化，cardSort.ts）
   expandedCardIds: ReadonlySet<string>; // 展开详情的卡 id（会话内记忆，不持久化——原生 @State 同义）
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
@@ -84,6 +91,8 @@ const initialState: AppState = {
   models: null,
   claudeCodeDefault: null,
   settingsError: null,
+  materials: null,
+  materialsError: null,
   sortOrder: readSortOrder(),
   expandedCardIds: new Set<string>(),
   lanes: null,
@@ -243,6 +252,33 @@ export async function setClaudeCodeDefaultModel(model: string): Promise<string |
   const claudeCodeDefault = await fetchClaudeCodeDefault();
   setState({ claudeCodeDefault });
   return receipt.backup;
+}
+
+// ----- 素材库（§62 设置页 section） ------------------------------------------ #
+
+/** 拉开放条目（弹窗内容 + 按钮计数）；读失败落 materialsError */
+export async function refreshMaterials(): Promise<void> {
+  try {
+    const materials = await fetchMaterials("open");
+    setState({ materials, materialsError: null });
+  } catch (error) {
+    const message = error instanceof ApiError ? error.message : String(error);
+    setState({ materialsError: message });
+  }
+}
+
+/** 加入一条（server 归一 + 校验）；成功后重拉列表，失败原样抛给 section toast */
+export async function addMaterial(body: { url: string; note: string }): Promise<MaterialItem> {
+  const item = await postMaterialAdd(body);
+  await refreshMaterials();
+  return item;
+}
+
+/** 放弃一条；成功后重拉列表 */
+export async function dismissMaterial(id: string): Promise<MaterialItem> {
+  const item = await postMaterialDismiss(id);
+  await refreshMaterials();
+  return item;
 }
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */

@@ -12,6 +12,8 @@ import type {
   ClaudeCodeDefaultWrite,
   HealthSnapshot,
   LaneCatalog,
+  MaterialItem,
+  MaterialsList,
   ModelsSettings,
 } from "./types";
 
@@ -195,4 +197,19 @@ export function postClaudeCodeDefault(model: string): Promise<ClaudeCodeDefaultW
     method: "POST",
     body: JSON.stringify({ model }),
   });
+}
+
+/** GET /api/materials/list?status= — 素材库（CONTRACT §62）；open = 尚未开 PR / 完成 / 放弃的条目（弹窗） */
+export function fetchMaterials(status: "open" | "all" = "open", signal?: AbortSignal): Promise<MaterialsList> {
+  return request<MaterialsList>(`/api/materials/list?status=${encodeURIComponent(status)}`, { signal });
+}
+
+/** POST /api/materials/add — 扔一条链接 + 备注进素材库（body 只许 url / note 两键，server UNKNOWN_FIELD 零容忍） */
+export function postMaterialAdd(body: { url: string; note: string }): Promise<MaterialItem> {
+  return request<MaterialItem>("/api/materials/add", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** POST /api/materials/dismiss — 放弃一条（状态机 → dismissed；台账保留记录，API 侧可恢复） */
+export function postMaterialDismiss(id: string): Promise<MaterialItem> {
+  return request<MaterialItem>("/api/materials/dismiss", { method: "POST", body: JSON.stringify({ id }) });
 }

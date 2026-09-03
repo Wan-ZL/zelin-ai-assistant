@@ -331,3 +331,25 @@ export interface ClaudeCodeDefaultWrite {
   path: string;
   [key: string]: unknown;
 }
+
+/** 素材库一条记录（CONTRACT §62.2；act/lib/materials.py 台账行的 wire 形逐字镜像）。
+ *  status 词表 new | picked_up | proposal_created | pr_opened | done | dismissed（开放枚举：未知值原样展示）；
+ *  links = 循环回填的 proposal_id / pr_url */
+export interface MaterialItem {
+  id: string;
+  ts: string;
+  created_at: string;
+  url: string;
+  note: string;
+  status: string;
+  links: { proposal_id?: string; pr_url?: string; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** GET /api/materials/list?status=…（§62.4）：items 按创建时间新→旧；status = 生效的过滤名；counts 反映全量台账 */
+export interface MaterialsList {
+  items: MaterialItem[];
+  status: string;
+  counts: { open: number; total: number; [key: string]: unknown };
+  [key: string]: unknown;
+}

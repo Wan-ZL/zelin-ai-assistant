@@ -2738,7 +2738,9 @@ cap_detected=…)` / `reraise_or_followup(cap_detected=…)`，fold 的 act-now 
 评估表的误杀/拦截率；改表前后各跑一遍是修法的尽职调查。
 
 **范围**：只管 obsidian radar（screenpipe 链）。slack/gmail/quick_capture/
-weekly-digest 是显式设计的发起渠道，不经此表。
+weekly-digest 是显式设计的发起渠道，不经此表。**§62 追记**：素材库是 owner
+的主动入口（hand 级意图）、且**自身永不铸卡**——它既不经此表、也不改此表；
+屏幕上被动看到的内容仍按本节只佐证（R2.5.4）。
 
 ## 46. session 生命周期可靠性 — stop 确认 + resume 风暴降级 + 投影判例（v0.46.x，add-only）
 
@@ -3328,12 +3330,20 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   （长度 truth = `server/ai_fix_launch.py` `_OUTPUT_TAIL`）；成功 `{ok:true, command_file}`；子进程经 `runner` 注入缝，判例绝不
   真起 act.ai_fix / claude）。判例：tests/test_server_lanes_catalog.py、
   tests/test_server_ai_fix_launch.py。
+- **§62 追加（素材库，add-only）**：`GET /api/materials/list?status=open|all|<status>`
+  （token-light、`no-store`；`{items, status, counts:{open,total}}`）、
+  `POST /api/materials/add {url?, note?}`、`POST /api/materials/dismiss {id}`
+  （四闸；字段白名单 400 `UNKNOWN_FIELD`；归一失败 400 `INVALID_FIELD`；
+  未知 id 404；台账满 / 状态机拒绝 409 `CONFLICT {"reason"}`）。形状与
+  状态机见 §62.2–§62.4；GET 表路由 handler 自此为 `(ctx, query)` 两实参。
+  判例：tests/test_server_materials.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
 `NOT_IMPLEMENTED` / `FORBIDDEN`(403，Host/Origin 闸) / `UNAUTHORIZED`
 (401，token 闸)（add-only；后两枚 v0.48.1 随 auth model 收编）/ `CONFLICT`
-(409，**v0.48.11 §59**：设置写入的目标文件不是合法 JSON——拒绝覆盖，让人手修)。
+(409，**v0.48.11 §59**：设置写入的目标文件不是合法 JSON——拒绝覆盖，让人手修；
+**§62 延伸**：素材库台账满 / 状态机不允许这次转移，details `reason` 说明是哪种)。
 
 **UI 语义（web 看板）**：看板列 = 审批状态机的投影（分区 → 列映射见
 docs/design/vnext.md §4，含「待办与运行中合并」的 owner 决策：running 混
@@ -4594,3 +4604,76 @@ owner 原话（D3，2026-09-01）：「起码在视觉上我希望把它去掉�
 ### 61.5 门
 
 `shell/build.sh` 必须编过（CI `ci` job）；`shell/tests/run.sh`（swiftc `-typecheck` 全模块 + XCTest-free 桥 harness：快照键全集、请求词表与 reject code、`setLanguage`、LegacyPrefs 三条规则）；web vitest 钉 61.2 全部状态与回滚；Python 判例钉 61.3 逐字节 + FailureCatalog 逐句 + wire 键/方法两侧互镜 + Info.plist 键。ad-hoc 签名与 Dock badge / 通知中继（§28）/ 权限体检 / Sparkle 等其余原生残留**不在本节**，按 s4 顺序另 PR。
+
+## 62. 素材库（owner 决策 D11；R2.5.1–R2.5.4；`act/lib/materials.py` + `server/materials.py` + web 设置页 section）
+
+> §61 由 `feat/shell-bridge-recording-captions` 立法（#138），本节取下一个空号 §62——§ 号永不复用。
+
+owner 原话（2026-09-01）：「我看过的内容还是不要做卡片……遇到好的东西我就往里面扔，扔链接或者一点讲解什么的，你可以把它放到 log 一起。」「放到软件的设置里面，不需要通过 Slack 私信……文本输入的形式。」「弄一个简易的窗口……只显示还没有 implement、还没有提 PR 的内容。所有已经提了 PR 的就把它去掉。」本节把这三句做成机制：**一个入口、一份台账、一个状态机、一个弹窗、一个抓取器**；铸不铸提案是每日循环（§2.4 / P5，另案立法）的事。
+
+### 62.1 地位与信任
+
+- 素材是 **owner 的主动行为**：条目只能经 §49 四闸后的同源页面 / 同用户本机进程写入（`POST /api/materials/add`），所以它对循环表达的是 **hand 级的意图**（「我想让产品借鉴这个」）。但它**永不直接铸卡**——本节没有任何路径调用 `registry.*`；成不成提案由循环按 §2.4 的去重、日上限、plan/DoD 规则决定，提案卡的出身按 §50 落款为循环自己的渠道，不冒充 hand。宪法第 4 条「记录 ≠ 立案」的又一实例。
+- URL 指向的**内容**是第三方文本：进 prompt 一律经 `materials.prompt_block()`，owner 的 URL/备注与抓取到的标题/正文**各自**过 `sanitize.fence_untrusted`（宪法第 5 条；owner 的 Slack self-DM 在 §13 也是同样待遇——hand 信任的是意图，不是文字的指令权）。
+- **§45 不动**：屏幕上被动看到的内容仍只能佐证、不发起卡片；素材库是显式的 owner 入口，与 screenpipe 链的 obsidian radar 互不沾边（R2.5.4）。不走 Slack 私信（§3 明确不做）。
+
+### 62.2 台账 `state/materials/materials.jsonl`
+
+- 路径：`materials.ledger_path(home)` = `<HOME>/state/materials/materials.jsonl`（与日志同级，不进 repo——`.gitignore` 的 `state/` 规则已覆盖；宪法第 9 条）。
+- **append-only，一行一条完整记录**（字段 add-only）：`id`（`m-` + 12 hex，`ID_RE`）、`ts`（本行写入的 UTC `%Y-%m-%dT%H:%M:%SZ`）、`created_at`（出生 ts，永不变）、`url`（`""` 或 http(s) 绝对地址 ≤ 2048 字符）、`note`（trim 后 ≤ 2000 字符，无 NUL）、`status`（§62.3 词表）、`links`（`{proposal_id?, pr_url?}`，只增不删）。url 与 note **至少一个非空**。
+- **fold 读法**：同 id 后一行覆盖前一行；坏 JSON 行 / 非 dict / id 不是字串 / status 不在词表 的行读侧跳过、不崩（宪法第 11 条）。`list_items(path, status)` 按 `created_at` 新→旧返回；过滤名 `open`（= `new | picked_up | proposal_created`，弹窗用）/ `all` / 单个状态名。
+- **体量帽（防腐 #4）**：`LEDGER_MAX_BYTES` = 1 MiB（与 `registry_writes.jsonl` 同款）。追加后超限即 `compact()`：先折叠成每 id 一行，再从**最老**（按 `ts`）的终态条目（done / dismissed）开始丢，直到装回上限；**开放条目一条不丢**（宪法第 2 条：owner 扔进来的东西不能被体量帽吃掉）。开放条目本身由 `MAX_OPEN_ITEMS` = 500 封顶——满了 `add` 拒绝（`full`），不静默丢旧的；所以台账最坏体量 = 500 × 单条上限，有界。重写 = tmp + `replace` 原子。
+- **多写者**：server 线程（owner 在页面上）与每日循环（actd 进程）都会写。`add` / `transition` / `compact` 在 `materials.lock` 上 `fcntl.flock(LOCK_EX)` 串行（读-改-追加是一个临界区；Windows 无 fcntl 时退化为无锁追加）。单行追加 < PIPE_BUF，`O_APPEND` 下本就原子；锁保护的是「读当前状态再追加」与压缩重写。
+- **谁能写**：只有 `act/lib/materials.py` 的三个函数落盘；server 侧 `server/materials.py` 是它的薄 HTTP 面（server 只准 import act.lib，§58.3 规则 3；act 不可 import 时诚实 501）。registry 单写者（宪法第 1 条）不受影响——本台账不是 registry。
+
+### 62.3 状态机
+
+```
+new ──→ picked_up ──→ proposal_created ──→ pr_opened ──→ done
+ │          │  ↑              │                 │
+ │          └──┘ (放回)       │                 │
+ └──────────┴─────────────────┴─────────────────┴──→ dismissed ──→ new (回程票)
+```
+
+| from ＼ to | new | picked_up | proposal_created | pr_opened | done | dismissed |
+|---|---|---|---|---|---|---|
+| **new** | – | ✓ | | | | ✓ |
+| **picked_up** | ✓ 放回 | – | ✓ | | | ✓ |
+| **proposal_created** | | | – | ✓ | ✓ | ✓ |
+| **pr_opened** | | | | – | ✓ | ✓ |
+| **done** | | | | | – | |
+| **dismissed** | ✓ 回程票 | | | | | – |
+
+- 表 = `materials.TRANSITIONS`；`transition(path, id, status, links=)` 是**唯一**改状态的函数；表外转移 → `MaterialsError(bad_transition)`，台账零写入。`done` 终态；`dismissed` 保留完整记录且可 `→ new`（宪法第 2 条的回程票；本版只在 Python API 层提供，设置页的「恢复」入口另案——弹窗按 owner 原话只列尚未开 PR 的）。
+- 语义：`picked_up` = 循环这一轮读过它（抓取 + 理解）；`proposal_created` = 循环为它铸了提案卡，`links.proposal_id` 指卡的 `P-` 主键；`pr_opened` = 该提案走到了草稿 PR，`links.pr_url`；`done` = owner 合并 / 验收；`dismissed` = owner 在弹窗点了放弃，或循环判定与本产品无关（后者由 §2.4 立法时决定是否允许）。「弹窗只显示尚未开 PR 的」= `OPEN_STATUSES`，所以 `pr_opened` 一到弹窗即消失（owner：「所有已经提了 PR 的就把它去掉」）。
+- 不变量（`tests/test_materials_ledger.py` 逐格穷举）：词表闭合 = `OPEN ∪ {pr_opened} ∪ TERMINAL`，两集不交；每格「合法 → 恰好多一行；非法 → 台账逐字节不变」。
+
+### 62.4 server 面（路由登记见 §49；`server/materials.py`）
+
+- `GET /api/materials/list?status=open|all|<status>`（token-light，`no-store`）→ `{"items":[<记录>…], "status":"open", "counts":{"open":N,"total":M}}`；`items` 已按过滤名筛好、新→旧；`counts` 永远反映全量台账（弹窗按钮计数）。坏过滤名 400 `INVALID_FIELD`。台账不存在 = 空列表，不是错误。
+- `POST /api/materials/add {url?, note?}`（四闸）→ 200 新记录。字段白名单 400 `UNKNOWN_FIELD`（`{"fields":[…]}`）；非字串 400 `INVALID_FIELD {"field"}`；归一失败（非 http(s) / 超长 / 两者皆空）400 `INVALID_FIELD {"reason":"invalid"}`；开放条目满 409 `CONFLICT {"reason":"full"}`。
+- `POST /api/materials/dismiss {id}`（四闸）→ 200 更新后的记录。未知 id 404 `NOT_FOUND`；状态机拒绝（已放弃 / 已完成）409 `CONFLICT {"reason":"bad_transition"}`。
+- 其它转移（picked_up / proposal_created / pr_opened / done / 放回 / 回程票）**不开 HTTP 面**：它们是循环在 actd 进程内经 Python API 直接落的；有需要时 add-only 加路由。
+- error envelope 词表零新增（`CONFLICT` 的语义从「目标文件状态不允许写」自然延伸到「台账状态机不允许写」，details 里 `reason` 说清是哪种）。
+- GET 表路由 handler 自此形状为 `(ctx, query)`，`query` = URL query 的扁平 dict（`Handler._query`）；既有四个读端点忽略第二个实参，行为逐字不变。
+
+### 62.5 内容获取 `materials.fetch(url)`（循环消费；本版只交付函数，不接线）
+
+- 返回 `{url, kind, title, text, source, truncated, error}`（add-only）；**永不抛**——任何失败落 `error` 一句（宪法第 11 条，单条素材的失败只属于它自己）。`kind` = `classify(url)` ∈ `youtube`（主机表 `YOUTUBE_HOSTS`）/ `web` / `unsupported`（非 http(s)）。
+- **YouTube**：`which("yt-dlp")` 在 → 起一次 `ytdlp_argv(bin, url, tmpdir)`（`--skip-download --no-simulate --print title --write-subs --write-auto-subs --sub-langs en,en-orig,zh-Hans,zh-Hant,zh --sub-format vtt --no-playlist …`，字幕落临时目录、标题在 stdout 首行；argv 形状判例钉死），VTT 按语言偏好（en > en-orig > zh-Hans > zh > zh-Hant）取一份经 `vtt_to_text()`（去时间轴/头部/内联标签、相邻重复行合一）；退出码非零但拿到字幕不算错（429 打掉一条翻译轨的实况）。没装 yt-dlp、或没拿到标题 → oEmbed（`https://www.youtube.com/oembed?url=…&format=json`）只取标题，`source=oembed`。
+- **网页**：`fetcher(url, timeout) → (content_type, bytes)`，默认 `urllib` 读到 `MAX_FETCH_BYTES`（2 MiB）+1；charset 取 header → `<meta charset>` → utf-8（未知编码名回落 utf-8，`errors=replace`）；`text/html` / xhtml / 无 content-type → stdlib `HTMLParser` 抽 `<title>` 与正文（script/style/noscript/svg/template/iframe 整棵跳过，块级标签换行）；`text/*` 原样；其它 media type → `error="unsupported content-type …"`、`text=""`。正文行内空白折一、空行吃掉，`MAX_TEXT_CHARS` = 20,000 截断，字节或字符任一超限 `truncated=true`。
+- **注入缝全部是参数**（防腐 #3 的精神）：`fetch(url, fetcher=, runner=, which=, timeout=)`；默认 runner 在调用时查 `subprocess.run`（`tests/__init__.py` 守卫壳照常拦截）。`tests/test_materials_fetch.py` 零真实网络、零真实子进程。
+- `prompt_block(item, fetched)`：循环把一条素材放进 prompt 的**唯一**形态——头一行 `素材 <id>（加入于 <created_at>）`（server 造的字段），然后 owner 的 `URL:` + `备注：` 进一个围栏，抓取到的 `标题：` / `抓取错误：` / 正文进第二个围栏；伪造的定界线由 `fence_untrusted` 转义。`llm.run` 的 `sanitize.scrub` 仍在其外再过一遍。
+
+### 62.6 web 设置页 section「素材库」
+
+`?page=settings` 第二个 section（`web/src/components/settings/MaterialsSection.tsx`）：一行表单 = 链接输入（`inputMode=url`，可空）+ 一行备注输入 + 「加入」（两者皆空禁用；Enter 提交；POST 只带 `url` / `note` 两键、trim 后；成功清空输入 + toast「已加入素材库，每日循环会读到它」；server 400/409 的整句原文以 `role=alert` toast 显示、草稿保留）。「查看待处理（N）」按钮 = `counts.open`，打开原生 `<dialog>`（`ModalDialog`）内一个 `max-height: 60vh; overflow-y: auto` 的列表，**只渲染 server 按 `status=open` 给的条目**（client 不做第二套过滤——防腐 #10）：每行 备注（粗）/ 链接（`target=_blank rel=noopener noreferrer`）/ 状态 chip（词表文案双语，未知值原样）/ `links.proposal_id` / 相对时间（hover 绝对）+ 「放弃」（POST dismiss → 重拉）。空态一句「空的——扔点东西进来」。读失败渲染错误句而非空白；表单照常可用。数据经 `store.ts`（`refreshMaterials` / `addMaterial` / `dismissMaterial`；state 键 `materials` / `materialsError`），client 类型 `MaterialItem` / `MaterialsList` 逐字镜像 wire（防腐 #10）。判例 `MaterialsSection.test.tsx`。
+
+### 62.7 边界（本节明确不做）
+
+- 不铸卡、不写 registry、不发通知、不走 Slack；不改 §45 表。
+- **每日循环对素材库的消费**（何时 `picked_up`、如何去重、`proposal_created` 的出身落款、`dismissed` 是否允许循环发起）在 §2.4 立法时随 P5 主体一起写——本节只保证台账、状态机与 `fetch` / `prompt_block` 已经在那里等它。
+- 设置页不提供「恢复已放弃」与「查看全部」；`status=all` 与回程票在 API 层已备好，UI 另案。
+- `fetch` 不做 JS 渲染、不跟 robots、不做 PDF；YouTube 之外的视频站不特判（当网页处理，拿到什么算什么）。
+
+判例：`tests/test_materials_ledger.py`（台账 / 状态机 / 压缩 / 锁）、`tests/test_materials_fetch.py`（分类 / html→text / VTT / 双上限 / yt-dlp 与 oEmbed 退路 / 永不抛 / 围栏）、`tests/test_server_materials.py`（三端点 + 四闸 + 错误映射 + 501）、`web/src/components/settings/MaterialsSection.test.tsx`。
