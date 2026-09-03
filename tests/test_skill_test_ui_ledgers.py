@@ -96,6 +96,20 @@ class ShrinkOnlyTestCase(unittest.TestCase):
         self.assertEqual(kinds, ["dangling_alias", "reasonless_waiver"])
 
 
+class PairVerdictTestCase(unittest.TestCase):
+    def test_ledger_problems_alone_make_the_pairing_red(self):
+        """全部 PRESENT 但账本有问题（悬空 alias）→ pair_structure 仍 FAIL：账本纪律不是附注。"""
+        import checks_ui
+        import sensors
+        ctx = checks_ui.make_ctx("/r", kit.fake_det(["board.html"]))
+        clean = {"rows": [{"id": "a", "status": "PRESENT", "ledger": None, "fields_changed": []}], "extras": [], "suggestions": [], "problems": []}
+        self.assertEqual(sensors._pair_verdict(ctx, clean, "structure")["status"], "pass")
+        dirty = dict(clean, problems=[{"kind": "dangling_alias", "line": "x y"}])
+        res = sensors._pair_verdict(ctx, dirty, "structure")
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(res["summary"].startswith("0 NEW MISSING/CHANGED, 1 ledger problem(s)"), res["summary"])
+
+
 class ThresholdsUnmovedTestCase(unittest.TestCase):
     def test_loosening_detected_by_direction(self):
         import sensors
