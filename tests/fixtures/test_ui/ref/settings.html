@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>Settings</title><link rel="stylesheet" href="tokens.css"></head>
+<body>
+  <nav class="rail" aria-label="Rail" data-side="left">
+    <a href="board.html">Workbench</a>
+    <a href="settings.html">Settings</a>
+    <a href="trash.html">Trash</a>
+  </nav>
+  <main>
+    <h1>Settings</h1>
+    <section aria-label="Models">
+      <h2>Models</h2>
+      <label for="dispatch">Dispatch model</label>
+      <select id="dispatch"><option>follow</option><option>custom</option></select>
+    </section>
+    <section aria-label="Overrides">
+      <h2>Overrides</h2>
+      <label for="ghrepo">Create GitHub repo</label>
+      <input id="ghrepo" type="checkbox" role="switch">
+    </section>
+    <section aria-label="Materials">
+      <h2>Materials box</h2>
+      <input type="text" aria-label="Link">
+      <button>Add</button>
+    </section>
+  </main>
+</body>
+</html>

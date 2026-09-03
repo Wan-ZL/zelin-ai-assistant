@@ -1,0 +1,14 @@
+test-ui — attribution
+
+Doctrine (ask once, tiers 1–5, three-way not-run split, fix-first, anti-gaming rules, ledgers that only shrink,
+fail-closed checkers with negative controls) is adapted from the sibling skill skills/test-code (this repository,
+v0.2.1), whose ASK step, checker doctrine and anti-gaming rules descend from robust-code (Zelin's private skill)
+and from AmazingAng/old-coder (MIT License, https://github.com/AmazingAng/old-coder).
+
+scripts/ladder_common_vendored.py is a byte-identical vendored copy of skills/test-code/scripts/ladder_common.py
+(tests/test_skill_test_ui_vendored.py pins the two files equal). Skills are self-contained on purpose: they run
+through a ~/.claude/skills symlink in any repository and must not import a sibling skill or the product packages.
+
+The id grammar `<kind>:<screen>:<role>:<slug>`, the slugify rule and the pending/waivers ledger line shape are the
+project's UI parity contract (scripts/ui/ui_common.py, CONTRACT §62 when landed); the skill speaks it, it does
+not redefine it. WCAG 2.2 success-criterion names in references/rules/wcag.json are W3C's (W3C Document License).
