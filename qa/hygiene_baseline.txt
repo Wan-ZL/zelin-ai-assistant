@@ -12,5 +12,3 @@ docstring:act/lib/qr.py 1
 docstring:act/lib/repos.py 1
 docstring:act/lib/taskscheduler.py 1
 docstring:act/report.py 1
-func-lines:act/actd.py::_apply_decision 457
-file-lines:act/actd.py 3647

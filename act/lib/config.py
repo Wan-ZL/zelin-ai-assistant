@@ -100,6 +100,11 @@ OUTPUT_FORMATS: tuple = ("markdown", "html")
 # from the state/digest.json marker, not pinned to a weekday.
 DIGEST_FREQUENCIES: tuple = ("off", "daily", "every2days", "weekly")
 DEFAULT_DIGEST_FREQUENCY: str = "off"
+# §68.7 「在终端打开」用哪个终端（原生 UserDefaults terminalApp 的 server 侧落点，
+# §66.2 setting:prefs:terminalApp）：auto = Ghostty 装了就 Ghostty，否则 Terminal
+# （原生 TerminalLauncher.preferred 同款）。唯一读者是 server/terminal_launch（open -a）。
+TERMINAL_APPS: tuple = ("auto", "ghostty", "terminal", "iterm2")
+DEFAULT_TERMINAL_APP: str = "auto"
 # §70 每日自我改进循环解锁时刻（本地 HH:MM；owner 机器夜里 03:30 无人用板）。
 # 形状由 coerce_clock_time 归一；坏值回落默认，绝不让循环因 typo 永不解锁。
 DEFAULT_DAILY_LOOP_TIME: str = "03:30"
@@ -217,6 +222,9 @@ class Config:
     # v0.46 完成提醒 (off|banner|sound)。App(NotifyRelay) 是唯一读者——管线只
     # 负责给 review_ready 队列条目打 kind；键收进 overrides 白名单以便记账。
     review_notify: str = "sound"
+    # §68.7 终端应用 (auto|ghostty|terminal|iterm2)。server/terminal_launch 是唯一读者
+    # （web 「在终端打开（接管会话）/ 开发会话 / 卸载」都经它 open -a）；键收进白名单以便记账。
+    terminal_app: str = DEFAULT_TERMINAL_APP
     # weekly ingest digest (CONTRACT §24) — reads the last 7 days of Obsidian
     # ingest output and turns it into a review-lane digest card. Default OFF
     # since D19 (owner 2026-09-01: digest 不再默认铸卡; 15 automation-idea
@@ -496,6 +504,13 @@ def _coerce_digest_frequency(value) -> str:
     overrides 两条路径共用，两侧读出同一答案。"""
     v = str(value).strip().lower().replace("_", "").replace("-", "")
     return v if v in DIGEST_FREQUENCIES else DEFAULT_DIGEST_FREQUENCY
+
+
+def _coerce_terminal_app(value) -> str:
+    """§68.7 terminal_app：规范到 TERMINAL_APPS 成员；未知值回 auto（原生对已卸载的
+    存值同样回落到 Ghostty-或-Terminal）。"""
+    v = str(value or "").strip().lower()
+    return v if v in TERMINAL_APPS else DEFAULT_TERMINAL_APP
 
 
 def _coerce_registry_backend(value) -> str:
@@ -1053,6 +1068,7 @@ _OVERRIDE_FIELDS: dict = {
     "slack_enabled": _coerce_bool,
     "obsidian_enabled": _coerce_bool,
     "review_notify": str,
+    "terminal_app": _coerce_terminal_app,
     "weekly_digest_enabled": _coerce_bool,
     # §17 (D19): digest cadence — the Settings UI writes this flat key
     # (diff-write; "off" == product default so writing off deletes the key).

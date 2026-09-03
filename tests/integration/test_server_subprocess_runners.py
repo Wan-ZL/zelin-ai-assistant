@@ -1,7 +1,7 @@
 """server/ 的默认子进程 runner（CONTRACT §49 / §68.4 / §68.8）——真子进程，但只起 ``sys.executable -c``。
 
 住在 tests/integration/（防腐 #7：真 IO 只许住这里）。三种收场都钉住：正常退出（rc + stdout /
-stderr 分开）、超时（rc 124 + 人话）、可执行文件不存在（rc 127）。`server/repair.py` 的 runner
+stderr 分开）、超时（rc 124 + 人话）、可执行文件不存在（rc 127）。`server/repair.py` 的 runner（public `default_runner`，§48.7 radars.py 同用）
 只在 stdout+stderr 合并这一点不同。绝不起 claude / launchctl / 网络工具（tests/__init__ 守卫）。
 
 时间预算：BUDGET_SECONDS（三个子进程各亚秒级；超时判例故意等 0.3 s）。
@@ -9,11 +9,12 @@ stderr 分开）、超时（rc 124 + 人话）、可执行文件不存在（rc 1
 import sys
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 
-from server import repair, subproc
+from server import folders, radars, repair, subproc
 
 BUDGET_SECONDS = 30
 _PY = sys.executable
@@ -57,16 +58,49 @@ class SubprocDefaultRunnerTestCase(unittest.TestCase):
 @unittest.skipIf(_WIN, "POSIX subprocess semantics")
 class RepairDefaultRunnerTestCase(unittest.TestCase):
     def test_merges_streams_and_returns_rc(self):
-        rc, out = repair._default_runner(
+        rc, out = repair.default_runner(
             [_PY, "-c", "import sys; print('a'); print('b', file=sys.stderr); sys.exit(3)"])
         self.assertEqual(rc, 3)
         self.assertIn("a", out)
         self.assertIn("b", out)
 
     def test_missing_executable_is_rc_127(self):
-        rc, out = repair._default_runner(["/nonexistent/launchctl", "print"])
+        rc, out = repair.default_runner(["/nonexistent/launchctl", "print"])
         self.assertEqual(rc, 127)
         self.assertTrue(out)
+
+
+@unittest.skipIf(_WIN, "POSIX subprocess semantics")
+class RadarsInstallRunnerTestCase(unittest.TestCase):
+    """§48.7 ``install.sh --reinstall-agent`` 的默认 runner：合并两流 + rc；超时 124；缺可执行文件 127。
+    这里只起 ``sys.executable -c``——真 install.sh 永不在测试里跑（它会碰 ~/Library/LaunchAgents）。"""
+
+    def test_merges_streams_and_returns_rc(self):
+        rc, out = radars._default_install_runner(
+            [_PY, "-c", "import sys; print('rendered'); print('warn', file=sys.stderr); sys.exit(3)"])
+        self.assertEqual(rc, 3)
+        self.assertIn("rendered", out)
+        self.assertIn("warn", out)
+
+    def test_timeout_is_rc_124_with_a_sentence(self):
+        with unittest.mock.patch.object(radars, "_REINSTALL_TIMEOUT_S", 1):
+            rc, out = radars._default_install_runner([_PY, "-c", "import time; time.sleep(5)"])
+        self.assertEqual(rc, 124)
+        self.assertIn("timed out", out)
+
+    def test_missing_executable_is_rc_127(self):
+        rc, out = radars._default_install_runner(["/nonexistent/bash", "install.sh"])
+        self.assertEqual(rc, 127)
+        self.assertTrue(out)
+
+
+@unittest.skipIf(_WIN, "POSIX subprocess semantics")
+class FoldersGitRunnerTestCase(unittest.TestCase):
+    """§68.1 创建目录后的 ``git init`` runner：只回 rc；缺可执行文件 127。"""
+
+    def test_returns_rc_and_127_for_missing_executable(self):
+        self.assertEqual(folders._default_runner([_PY, "-c", "raise SystemExit(4)"]), 4)
+        self.assertEqual(folders._default_runner(["/nonexistent/git", "init"]), 127)
 
 
 if __name__ == "__main__":

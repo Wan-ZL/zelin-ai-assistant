@@ -1,6 +1,8 @@
 // 权限体检页（§15 v0.13 权限体检窗 → §68.3 web 版；?page=permissions）。两半拼一页：
-//   1. GUI 三项（屏幕录制 / 麦克风 / 通知）——真相只有壳知道（TCC 探针是原生 API）：桥在场时
+//   1. GUI 四项（屏幕录制 / 麦克风 / 通知 / 笔记库 Documents）——真相只有壳知道（TCC 探针是原生 API）：桥在场时
 //      读 shell.permissions、按钮 = requestPermission / openPane；浏览器里如实说「只在看板 app 里可探」。
+//      笔记库行 = 原生 vaultRow：授权落在壳的 bundle 身份上，vault-sync-helper 从 cron 里永远复用（§68.13）；
+//      被拒后的「打开系统设置」深链「文件与文件夹」面板。
 //   2. 完全磁盘访问（D20 家族的一半原生窗从不管的事）：server 列出要授权的可执行文件（守护
 //      python / claude / node / 壳 app）+ 可复制的绝对路径 + 系统设置深链 + TCC 相关 doctor 行。
 // 授权步骤原样写在页面上（系统设置 → 隐私与安全性 → 完全磁盘访问 → + → ⌘⇧G 粘路径）。
@@ -23,6 +25,12 @@ export function statusLabel(status: PermissionStatus, text: Text): string {
     case "denied": return text("未授权", "Denied");
     default: return text("未知 / 尚未询问", "Unknown / not asked yet");
   }
+}
+
+/** 每项授权的系统设置面板（原生：屏幕 / 麦克风 / 通知各自的面板；笔记库被拒后 = 文件与文件夹） */
+export function paneFor(kind: string): (typeof PANE_IDS)[number] {
+  if (kind === "vault") return "files_folders";
+  return (PANE_IDS as readonly string[]).includes(kind) ? (kind as (typeof PANE_IDS)[number]) : "full_disk";
 }
 
 function CopyPath({ path }: { path: string }) {
@@ -99,12 +107,18 @@ export function PermissionsPage() {
     void callShell(method, args).catch((err) => setNote(err instanceof Error ? err.message : String(err)));
   };
 
-  const kindLabel = (kind: string) => kind === "screen" ? text("屏幕录制", "Screen Recording") : kind === "microphone" ? text("麦克风", "Microphone") : text("通知", "Notifications");
-  const kindWhy = (kind: string) => kind === "screen"
-    ? text("录制引擎读屏幕与系统声音都靠它；没有它录制一直「未在录制」。", "The recording engine reads the screen and system audio through it; without it recording stays \"Not recording\".")
-    : kind === "microphone"
-      ? text("实时字幕的麦克风转写。", "Live-captions microphone transcription.")
-      : text("卡片进待验收 / 引擎自愈这类系统通知由看板 app 投递；没有它通知静默丢弃。", "System notifications (card ready for review, engine self-heal) are posted by the board app; without it they are dropped silently.");
+  const kindLabel = (kind: string) => {
+    if (kind === "screen") return text("屏幕录制", "Screen Recording");
+    if (kind === "microphone") return text("麦克风", "Microphone");
+    if (kind === "vault") return text("笔记库访问（Documents）", "Notes vault access (Documents)"); // 原生 vaultRow 逐字
+    return text("通知", "Notifications");
+  };
+  const kindWhy = (kind: string) => {
+    if (kind === "screen") return text("录制引擎读屏幕与系统声音都靠它；没有它录制一直「未在录制」。", "The recording engine reads the screen and system audio through it; without it recording stays \"Not recording\".");
+    if (kind === "microphone") return text("实时字幕的麦克风转写。", "Live-captions microphone transcription.");
+    if (kind === "vault") return text("授权一次，后台管线就永远经由 App 的稳定身份读写 Obsidian 笔记库——此后 claude/python 升级不会再弹任何权限窗口。", "Grant once and the background pipeline reaches your Obsidian vault through the app's stable identity forever — claude/python updates can never trigger new permission prompts again.");
+    return text("卡片进待验收 / 引擎自愈这类系统通知由看板 app 投递；没有它通知静默丢弃。", "System notifications (card ready for review, engine self-heal) are posted by the board app; without it they are dropped silently.");
+  };
 
   return (
     <main className="settings-page perm-page">
@@ -115,9 +129,9 @@ export function PermissionsPage() {
       </div>
 
       <section className="settings-section" aria-labelledby="perm-gui-title">
-        <h3 id="perm-gui-title" className="settings-section-title">{text("看板 app 的三项授权", "The board app's three grants")}</h3>
+        <h3 id="perm-gui-title" className="settings-section-title">{text("看板 app 的四项授权", "The board app's four grants")}</h3>
         {!present || !shell ? (
-          <p className="settings-warning">{text("屏幕录制 / 麦克风 / 通知的真相只有看板 app（壳）自己探得到——请在 app 里打开本页。", "Screen Recording / Microphone / Notifications can only be probed by the board app itself — open this page inside the app.")}</p>
+          <p className="settings-warning">{text("屏幕录制 / 麦克风 / 通知 / 笔记库访问的真相只有看板 app（壳）自己探得到——请在 app 里打开本页。", "Screen Recording / Microphone / Notifications / Notes vault access can only be probed by the board app itself — open this page inside the app.")}</p>
         ) : (
           <ul className="settings-list">
             {PERMISSION_KINDS.map((kind) => {
@@ -130,7 +144,7 @@ export function PermissionsPage() {
                   <p className="settings-list-desc">{kindWhy(kind)}</p>
                   <span className="settings-list-meta">
                     {status !== "granted" && <button type="button" className="btn btn-primary" onClick={() => act("requestPermission", { kind })}>{text("授权", "Grant")}</button>}
-                    <button type="button" className="btn" onClick={() => act("openPane", { pane: kind })}>{text("打开系统设置", "Open System Settings")}</button>
+                    <button type="button" className="btn" onClick={() => act("openPane", { pane: paneFor(kind) })}>{text("打开系统设置", "Open System Settings")}</button>
                   </span>
                 </li>
               );

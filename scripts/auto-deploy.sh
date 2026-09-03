@@ -42,6 +42,14 @@
 #      job fires at +10 — not done yet / API unreachable = `ci_pending`, retry
 #      next interval; red = `ci_failed`, sha poisoned, one notification.
 #      `--force` skips the gate (the owner asked for THIS sha).
+#      The API is asked AUTHENTICATED whenever it can be (ci_api_auth: `gh
+#      api` through the owner's `gh auth login`, else curl with a token from
+#      GH_TOKEN/GITHUB_TOKEN, else anonymous curl). Anonymous = 60 req/h PER
+#      IP, shared with every other tool on the machine: 2026-09-03 06:03Z and
+#      06:14Z the walk below plus unrelated tooling had burnt it, both runs
+#      said "check-runs API unreachable" and nothing deployed. An HTTP error
+#      is still `pending`, but the status and `x-ratelimit-remaining` are
+#      spelled out in the log and the state detail.
 #      HEAD NOT GREEN ≠ NOTHING TO DEPLOY (2026-09-03T00:38Z→01:18Z: a merge
 #      every 10–20 min while CI took 20+ min under queue load — five runs in a
 #      row said "CI not green yet on <an ever-newer sha>" while v1.0.4–1.0.6
@@ -149,8 +157,8 @@
 # AUTODEPLOY_HEARTBEAT_FRESH, AUTODEPLOY_HEARTBEAT_GRACE,
 # AUTODEPLOY_INCOMPLETE_LIMIT, AUTODEPLOY_BRANCH,
 # AUTODEPLOY_CI_REPO, AUTODEPLOY_CI_API, AUTODEPLOY_CI_CHECKS, AUTODEPLOY_CI_WALK,
-# AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE, AUTODEPLOY_TRIGGER,
-# AUTODEPLOY_PLIST.
+# AUTODEPLOY_GH, AUTODEPLOY_DOCTOR_RETRIES, AUTODEPLOY_DOCTOR_SETTLE,
+# AUTODEPLOY_TRIGGER, AUTODEPLOY_PLIST.
 set -uo pipefail
 
 # Everything lives in functions and runs from main "$@" at the very end: bash
@@ -193,7 +201,9 @@ DOCTOR_RETRIES="${AUTODEPLOY_DOCTOR_RETRIES:-3}"        # post-install doctor ve
 DOCTOR_SETTLE="${AUTODEPLOY_DOCTOR_SETTLE:-45}"         # seconds between those attempts
 STORE2_MARKER="$REPO_ROOT/state/store2_truth.json"      # §53 activation marker — rollback guard
 STORE2_DB="$REPO_ROOT/state/store2.db"                  # §53 ledger — its PRAGMA user_version guards too
-CI_API="${AUTODEPLOY_CI_API:-https://api.github.com}"
+CI_API="${AUTODEPLOY_CI_API:-https://api.github.com}"   # base URL of the curl tiers (gh has its own host)
+GH_BIN="${AUTODEPLOY_GH:-gh}"                           # the gh CLI the CI gate authenticates through:
+                                                        # a name on PATH or a path; unresolvable = no gh
 CI_CHECKS="${AUTODEPLOY_CI_CHECKS:-ci}"                 # check-run names that must be green on the
                                                         # deployed sha (comma-separated); `ci` is the
                                                         # macOS job: compileall + full unittest +
@@ -412,13 +422,15 @@ new_names() {
 }
 
 # Run a command with a wall-clock limit; 124 on timeout (children reaped too).
+# Polls in quarter seconds: the wrapped command may be a sub-second API call
+# (ci_api_get), and a whole-second poll would tax every one of them.
 run_with_timeout() { # $1=seconds, rest=command
     _limit="$1"; shift
     "$@" &
     _pid=$!
-    _waited=0
+    _waited=0                                  # quarter seconds
     while kill -0 "$_pid" 2>/dev/null; do
-        if [ "$_waited" -ge "$_limit" ]; then
+        if [ "$_waited" -ge "$((_limit * 4))" ]; then
             log "timeout after ${_limit}s — killing pid $_pid and its children"
             pkill -TERM -P "$_pid" 2>/dev/null
             kill -TERM "$_pid" 2>/dev/null
@@ -428,7 +440,7 @@ run_with_timeout() { # $1=seconds, rest=command
             wait "$_pid" 2>/dev/null
             return 124
         fi
-        sleep 1
+        sleep 0.25
         _waited=$((_waited + 1))
     done
     wait "$_pid"
@@ -454,28 +466,112 @@ github_repo() {
         | sed -n -E 's#/*$##; s#\.git$##; s#^.*github\.com[:/]([^/]+)/([^/]+)$#\1/\2#p'
 }
 
-# CI verdict for one commit from the GitHub check-runs API — unauthenticated
-# (public repo; 60/h limit — one call for the head plus one per still-pending
-# ancestor in latest_green_ancestor, ≈20/h in a merge burst), `-f` so any HTTP error is
-# "unreachable". `filter=latest` (the API default) already collapses re-runs to
-# the newest run per check; the highest id wins if several still come back.
-# One line on stdout:
+# How the check-runs API is reached — decided ONCE per run (main() calls this
+# right after github_repo resolves; `$(ci_verdict …)` runs in a subshell, so a
+# lazy decision inside it could never be handed back) and logged once, so the
+# owner can see from the log which budget a run spent:
+#   gh               `gh api` — $GH_BIN resolves and holds a token (`gh auth
+#                    token`, an offline read of the same store `gh auth login`
+#                    filled); gh's own credentials, 5,000 req/h
+#   curl+token       curl with `Authorization: Bearer` from GH_TOKEN/GITHUB_TOKEN
+#                    (the variables gh itself honours) — no usable gh
+#   anonymous curl   60 req/h PER IP, shared with everything else on the
+#                    machine — the 2026-09-03 06:03Z/06:14Z shape: the walk in
+#                    step 3 (head + one call per pending ancestor, ≤CI_WALK+1)
+#                    plus unrelated tooling on the same IP had spent it, and
+#                    every run said "unreachable" while green commits waited
+CI_AUTH=""
+CI_TOKEN=""
+ci_api_auth() {
+    [ -z "$CI_AUTH" ] || return 0
+    if command -v "$GH_BIN" >/dev/null 2>&1 && [ -n "$("$GH_BIN" auth token 2>/dev/null)" ]; then
+        CI_AUTH="gh"
+        log "check-runs API via $GH_BIN api (authenticated)"
+    elif [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
+        CI_AUTH="curl+token"
+        CI_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+        log "check-runs API via curl with the token in GH_TOKEN/GITHUB_TOKEN ($GH_BIN not usable)"
+    else
+        CI_AUTH="anonymous curl"
+        log "check-runs API via curl, UNAUTHENTICATED (60 req/h per IP, shared with every tool on this machine) — install gh + gh auth login to lift the limit"
+    fi
+}
+
+# One check-runs API call through the tier ci_api_auth chose, `-i` style on
+# stdout for all three (status line + headers, blank line, body) so the caller
+# reads the HTTP status and the rate-limit header the same way. Bounded either
+# way (curl --max-time, gh under run_with_timeout): a stalled network must not
+# hold the deploy lock for the whole interval. Non-zero exit with NOTHING on
+# stdout = transport failure; gh also exits 1 on HTTP ≥ 400 but has printed
+# the headers by then, so the status still reaches the caller.
+ci_api_get() { # $1=owner/repo $2=sha
+    _path="repos/$1/commits/$2/check-runs?per_page=100"
+    case "$CI_AUTH" in
+        gh)     # NO_COLOR: gh would otherwise colour the header names it prints for -i
+            run_with_timeout 30 env NO_COLOR=1 "$GH_BIN" api -i -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' "$_path" 2>>"$LOG" ;;
+        curl+token)
+            curl -sS -i --max-time 30 -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' -H "Authorization: Bearer $CI_TOKEN" \
+                "$CI_API/$_path" 2>>"$LOG" ;;
+        *)
+            curl -sS -i --max-time 30 -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' "$CI_API/$_path" 2>>"$LOG" ;;
+    esac
+}
+
+# CI verdict for one commit from the GitHub check-runs API (ci_api_get).
+# `filter=latest` (the API default) already collapses re-runs to the newest
+# run per check; the highest id wins if several still come back. One line on
+# stdout:
 #   success                       every name in CI_CHECKS completed green
 #   failure <name> <conclusion>   a required run completed non-green
 #   pending <why>                 no run yet / still running / API unreachable
+#                                 or HTTP ≠ 200 (status, tier and the
+#                                 x-ratelimit-remaining header spelled out)
 ci_verdict() { # $1=owner/repo $2=sha
-    _body="$(curl -fsS --max-time 30 -H 'Accept: application/vnd.github+json' \
-                  -H 'X-GitHub-Api-Version: 2022-11-28' \
-                  "$CI_API/repos/$1/commits/$2/check-runs?per_page=100" 2>>"$LOG")" \
-        || { printf 'pending check-runs API unreachable'; return 0; }
-    printf '%s' "$_body" | "$PY" -c 'import json, sys
+    _raw="$(ci_api_get "$1" "$2")"
+    _rc=$?
+    if [ "$_rc" -ne 0 ] && [ -z "$_raw" ]; then
+        printf 'pending check-runs API unreachable (via %s)' "$CI_AUTH"
+        return 0
+    fi
+    printf '%s' "$_raw" | "$PY" -c 'import json, re, sys
 required = [n.strip() for n in sys.argv[1].split(",") if n.strip()]
+via = sys.argv[2]
+
+def split_response(raw):
+    """-i output = status line + headers, blank line, body (a proxy may
+    prepend a block of its own) -> (HTTP status, x-ratelimit-remaining, body).
+    No status line at all (status 0) = the body alone."""
+    status, remaining = 0, None
+    while raw.startswith("HTTP/"):
+        parts = re.split(r"\r?\n\r?\n", raw, maxsplit=1)
+        head, raw = parts[0], (parts[1] if len(parts) > 1 else "")
+        m = re.match(r"HTTP/\S*\s+(\d{3})", head)
+        if m:
+            status = int(m.group(1))
+        m = re.search(r"^x-ratelimit-remaining:\s*(\d+)", head, re.I | re.M)
+        if m:
+            remaining = m.group(1)
+    return status, remaining, raw
 
 def verdict():
+    status, remaining, body = split_response(sys.stdin.read())
     try:
-        runs = json.load(sys.stdin).get("check_runs", [])
+        data = json.loads(body)
     except Exception:
+        data = None
+    if status and status != 200:
+        why = "check-runs API HTTP %d via %s" % (status, via)
+        if remaining is not None:
+            why += " (x-ratelimit-remaining: %s)" % remaining
+        if isinstance(data, dict) and data.get("message"):
+            why += ": " + str(data["message"])[:120]
+        return "pending " + why
+    if not isinstance(data, dict):
         return "pending check-runs API returned no JSON"
+    runs = data.get("check_runs", [])
     latest = {}
     for run in runs:
         name = str(run.get("name"))
@@ -497,7 +593,7 @@ def verdict():
             return "failure %s %s" % (name, run.get("conclusion"))
     return "success"
 
-sys.stdout.write(verdict())' "$CI_CHECKS"
+sys.stdout.write(verdict())' "$CI_CHECKS" "$CI_AUTH"
 }
 
 # The poison ledger, two keys written together: `failed_sha` = the sha that
@@ -541,7 +637,8 @@ notify_ci_red() { # $1=sha $2="<check> <conclusion>"
 # poisoned sha is skipped without asking, a red one is poisoned + notified on
 # sight (never asked again), a green one is the answer. So the recurring cost
 # is one call per PENDING ancestor per run, on top of the head's own call
-# (unauthenticated budget: 60/h; the head-only gate used 6/h).
+# (5,000/h authenticated; the anonymous fallback's 60/h per IP is what the
+# 2026-09-03 06:03Z runs exhausted — see ci_api_auth).
 # Globals, not stdout: GREEN_ANCESTOR (the pick, "" = none) + WALK_SUMMARY
 # (what every candidate said, for the state file's detail). Returns 0 when a
 # pick exists.
@@ -1161,6 +1258,7 @@ verify_running() { # $1=sha (HEAD == origin/main)
                         "detail=$_why; not re-running install.sh: CI gate impossible ($REMOTE is not a github.com remote; set AUTODEPLOY_CI_REPO)"
             return 0
         fi
+        ci_api_auth
         _ci="$(ci_verdict "$_repo" "$1")"
         case "$_ci" in
             success) ;;
@@ -1396,6 +1494,7 @@ main() {
             fi
             exit 0
         fi
+        ci_api_auth
         _head_kind=""       # poisoned | red | pending — what to write when nothing older is green either
         _ci=""
         if sha_is_poisoned "$TARGET"; then

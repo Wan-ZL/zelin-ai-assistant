@@ -24,6 +24,7 @@ from act import doctor as act_doctor
 from server import repair, subproc, terminal_launch
 
 _WIN = sys.platform.startswith("win")
+_REAL_DEFAULT_OPENER = terminal_launch._default_opener   # setUp 会把模块属性换成替身；直测原函数用这个
 
 
 class _ServerCase(unittest.TestCase):
@@ -45,7 +46,9 @@ class TerminalLaunchTestCase(_ServerCase):
         super().setUp()
         self.board = seed_scene(self.home, "running")
         self.opened = []
-        for target, value in (("_default_opener", lambda p: self.opened.append(p)),):
+        # 默认 opener 现在收 (path, app)：app = 设置「终端应用」解析出的 open -a 目标（记下来给判例看）
+        self.opened_apps = []
+        for target, value in (("_default_opener", lambda p, app=None: (self.opened.append(p), self.opened_apps.append(app))),):
             patcher = mock.patch.object(terminal_launch, target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -106,6 +109,52 @@ class TerminalLaunchTestCase(_ServerCase):
         with self.assertRaises(terminal_launch.NotImplementedError501):
             terminal_launch.launch(self.home, {"card_id": "R-1"}, platform="linux")
 
+    # ---- 设置「通用 · 终端应用」（原生 UserDefaults terminalApp 的 server 侧落点，§66.2 / §68.7）----
+    def test_resolve_terminal_mirrors_native_preferred(self):
+        installed = {"Ghostty"}.__contains__
+        self.assertEqual(terminal_launch.resolve_terminal("auto", installed), "Ghostty")
+        self.assertEqual(terminal_launch.resolve_terminal("auto", lambda _n: False), "Terminal")
+        self.assertEqual(terminal_launch.resolve_terminal("bogus", lambda _n: False), "Terminal")
+        self.assertEqual(terminal_launch.resolve_terminal("iterm2", lambda _n: False), "iTerm")
+        self.assertEqual(terminal_launch.resolve_terminal("terminal", installed), "Terminal")
+        # 显式选择不看是否已装：open -a 失败时 _default_opener 再回落
+        self.assertEqual(terminal_launch.resolve_terminal("ghostty", lambda _n: False), "Ghostty")
+        with mock.patch.object(terminal_launch, "_APP_DIRS", (self.tmp.name,)):
+            self.assertFalse(terminal_launch.terminal_installed("Ghostty"))
+            (Path(self.tmp.name) / "Ghostty.app").mkdir()
+            self.assertTrue(terminal_launch.terminal_installed("Ghostty"))
+
+    def test_launch_opens_with_the_configured_terminal(self):
+        from server import settings_catalog
+        row = self._running_row()
+        settings_catalog.update_section(self.home, "general", {"terminal_app": "iterm2"})
+        status, obj = post_json(self.port, "/api/terminal", {"card_id": row["id"]})
+        self.assertEqual(status, 200, obj)
+        self.assertEqual(self.opened_apps, ["iTerm"])
+        Path(obj["command_file"]).unlink()
+        # 没有 home（调用方未配）= auto；坏 override 值按管线同款回落
+        self.assertEqual(terminal_launch.preferred_terminal(None), terminal_launch.resolve_terminal("auto"))
+        settings_catalog.write_overrides(self.home, {"terminal_app": "bogus"})
+        self.assertEqual(terminal_launch.preferred_terminal(self.home), terminal_launch.resolve_terminal("auto"))
+
+    def test_default_opener_falls_back_to_plain_open_when_the_app_is_missing(self):
+        calls = []
+
+        def fake_run(argv):
+            calls.append(list(argv))
+            return 1 if "-a" in argv else 0
+        with mock.patch.object(terminal_launch, "_run_open", fake_run):
+            _REAL_DEFAULT_OPENER(Path("/tmp/x.command"), "Ghostty")
+            self.assertEqual(calls, [["/usr/bin/open", "-a", "Ghostty", "/tmp/x.command"],
+                                     ["/usr/bin/open", "/tmp/x.command"]])
+            calls.clear()
+            _REAL_DEFAULT_OPENER(Path("/tmp/x.command"), None)
+            self.assertEqual(calls, [["/usr/bin/open", "/tmp/x.command"]])
+        calls.clear()
+        with mock.patch.object(terminal_launch, "_run_open", lambda argv: (calls.append(list(argv)), 0)[1]):
+            _REAL_DEFAULT_OPENER(Path("/tmp/x.command"), "Terminal")
+        self.assertEqual(calls, [["/usr/bin/open", "-a", "Terminal", "/tmp/x.command"]])
+
 
 class RepairTestCase(_ServerCase):
     def _runner(self, loaded=True, kick_rc=0):
@@ -146,7 +195,7 @@ class RepairTestCase(_ServerCase):
     def test_route_uses_default_runner_and_label_mirrors_doctor(self):
         self.assertEqual(repair.ACTD_LABEL, act_doctor.ACTD_LABEL)
         run, calls = self._runner()
-        with mock.patch.object(repair, "_default_runner", run), \
+        with mock.patch.object(repair, "default_runner", run), \
                 mock.patch.object(repair.sys, "platform", "darwin"):
             status, obj = post_json(self.port, "/api/repair/actd", {})
         self.assertEqual(status, 200)

@@ -59,5 +59,5 @@ def launch(home: Path, payload: dict, opener: Optional[Opener] = None, out_dir: 
     text = ("#!/bin/bash\n# Zelin's AI Assistant — development session\n"
             "export AIASSISTANT_HOME=%s\nexec %s\n" % (shlex.quote(str(home)), cmd))
     path = write_command_file(text, out_dir)
-    open_command_file(path, opener)
+    open_command_file(path, opener, home)
     return {"ok": True, "command": cmd, "command_file": str(path), "cwd": str(repo)}

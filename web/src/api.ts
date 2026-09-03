@@ -20,6 +20,7 @@ import type {
   DoctorReport,
   DailyLoopPatch,
   DailyLoopSettings,
+  FolderReceipt,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
@@ -31,6 +32,8 @@ import type {
   RecapSettings,
   SkillsSnapshot,
   PermissionsSnapshot,
+  RadarAgentsSnapshot,
+  RadarReinstallReceipt,
   RepairReceipt,
   SecretStatus,
   SecretVerifyResult,
@@ -434,4 +437,24 @@ export function postUninstallTerminal(): Promise<TerminalReceipt> {
 /** POST /api/maintainer/terminal — 开发者区「在终端打开开发会话」：cd <repo> && claude [--resume]，参数由 server 读设置（§68.1） */
 export function postMaintainerTerminal(): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/maintainer/terminal", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/radars — Slack / Gmail 后台雷达 agent 的 launchd 状态（§48.7；token-light GET） */
+export function fetchRadarAgents(signal?: AbortSignal): Promise<RadarAgentsSnapshot> {
+  return request<RadarAgentsSnapshot>("/api/radars", { signal });
+}
+
+/** POST /api/radars/reinstall {source} — 「重新安装」：server 跑 install.sh --reinstall-agent <label>（§48.7） */
+export function postRadarReinstall(source: "gmail" | "slack"): Promise<RadarReinstallReceipt> {
+  return request<RadarReinstallReceipt>("/api/radars/reinstall", { method: "POST", body: JSON.stringify({ source }) });
+}
+
+/** POST /api/folders/open {key} — 目录字段「打开」：server 从已保存的设置读路径，访达打开（§68.1） */
+export function postFolderOpen(key: string): Promise<FolderReceipt> {
+  return request<FolderReceipt>("/api/folders/open", { method: "POST", body: JSON.stringify({ key }) });
+}
+
+/** POST /api/folders/create {key} — 目录字段「创建」/「创建文件夹」：mkdir -p（任务工作目录另 git init）（§68.1） */
+export function postFolderCreate(key: string): Promise<FolderReceipt> {
+  return request<FolderReceipt>("/api/folders/create", { method: "POST", body: JSON.stringify({ key }) });
 }

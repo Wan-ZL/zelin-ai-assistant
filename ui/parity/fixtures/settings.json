@@ -67,6 +67,31 @@
             "zh": ""
           },
           "source": "default"
+        },
+        {
+          "choices": [
+            "auto",
+            "ghostty",
+            "terminal",
+            "iterm2"
+          ],
+          "default": "auto",
+          "effective": "auto",
+          "help": {
+            "en": "\"Open in terminal\" (take over a session) / development session / uninstall open a new window in this terminal. Auto = Ghostty when installed, else Terminal; a choice that is not installed falls back to the system default terminal.",
+            "zh": "「在终端打开」（接管会话）/ 开发会话 / 卸载 都在这个终端里新开窗口运行。自动 = 装了 Ghostty 就用 Ghostty，否则 Terminal；选了没装的会回落到系统默认终端。"
+          },
+          "key": "terminal_app",
+          "kind": "enum",
+          "label": {
+            "en": "Terminal app",
+            "zh": "终端应用"
+          },
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
+          "source": "default"
         }
       ],
       "help": {
@@ -141,7 +166,7 @@
         {
           "choices": null,
           "default": "",
-          "effective": "",
+          "effective": "~/Documents/Obsidian Vault/2 - raw",
           "help": {
             "en": "The radar's scan source (raw folder); the other three pipeline folders derive from its parent (the vault root).",
             "zh": "雷达扫描源（raw 目录）；其余三个管线目录由它的上级（vault 根）自动派生。"
@@ -152,11 +177,13 @@
             "en": "Obsidian Vault location",
             "zh": "Obsidian Vault 位置"
           },
+          "path": "dir",
+          "path_exists": false,
           "placeholder": {
             "en": "",
             "zh": ""
           },
-          "source": "default"
+          "source": "override"
         }
       ],
       "help": {
@@ -485,6 +512,8 @@
             "en": "Task working folder",
             "zh": "任务工作目录"
           },
+          "path": "dir",
+          "path_exists": false,
           "placeholder": {
             "en": "",
             "zh": ""
@@ -897,6 +926,8 @@
             "en": "This software's repo path",
             "zh": "本软件的仓库路径"
           },
+          "path": "dir",
+          "path_exists": null,
           "placeholder": {
             "en": "",
             "zh": ""

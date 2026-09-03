@@ -13,7 +13,12 @@
                 LANES 的 slug 顺序 = 原生顺序；lanes:rail-left/right 要求 BoardLanes.tsx
                 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 在之后
   setting:overrides:<k>   server/settings*.py 出现字面量 "<k>"（server 是 overrides 的写者，§59）
-  setting:prefs:<k>       web/src 出现字面量 "<k>"（localStorage 同名键）
+  setting:prefs:<k>       web/src 出现字面量 "<k>"（localStorage 同名键）；清单 probe=shell_source 的
+                键（壳持有的 UserDefaults）→ shell/Sources 出现 "<k>"；probe=server_source 的键
+                （概念搬到 server）→ 清单 `landing` 字面量出现在 server/*.py
+  notification:<kind>     server/notify_catalog.py 的 kind 词表登记了它（general = 无 kind）
+  control:notifications:* （probe=notify_catalog，壳直发的系统通知句）→ zh 与 en 都登记在
+                server/notify_catalog.py（server-owned 目录），且 shell/Sources 有同一对 L()
   shortcut:*    快捷键字形（如 ⌘F）出现在 web/src 源码
   theme:default web/index.html 首帧脚本写着 `dataset.theme = "light"` 兜底
   layout:*      web/src/**/*.css 某处 `var(--native-layout-…)` 消费该 token
@@ -21,7 +26,8 @@
 判决 = qa_common.compare_with_ledger 的三态（§58.4 同一语义）：MISSING 且不在
 ui/parity/pending.txt、也不在 ui/parity/waivers.txt → NEW → FAIL；在 pending 上但
 已 PRESENT → STALE → FAIL（划掉那行）。两本账本只许缩（ledger_diff 同门管）。
-非 web 负责的条目（shell / os / retired）与说明性文案（copy / help）只列不判。
+非 web 负责的条目（shell / os / retired）与说明性文案（copy / help）只列不判——
+例外是清单带 `probe` 的条目（上面三条 shell / server 探针，§66.2 追记）。
 报告：ui/parity/report.json + report.md（PRESENT / MISSING / PENDING / WAIVED 计数）。
 
 用法：
@@ -31,6 +37,7 @@ ui/parity/pending.txt、也不在 ui/parity/waivers.txt → NEW → FAIL；在 p
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -74,8 +81,31 @@ def _walk(root, sub, suffixes, skip_tests):
     return out
 
 
+def _load_notify_catalog(root):
+    """<root>/server/notify_catalog.py 作为独立模块加载（探针只用 kind_names / has_sentence）；
+    缺席 = None（该类探针一律「不在」）。"""
+    path = os.path.join(root, "server", "notify_catalog.py")
+    if not os.path.exists(path):
+        return None
+    if uc.REPO_ROOT not in sys.path:
+        sys.path.insert(0, uc.REPO_ROOT)   # 目录的 body 引用 act.lib.failures（§25 单源）
+    spec = importlib.util.spec_from_file_location("_zai_notify_catalog", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _shell_l_pairs(shell_sources):
+    pairs = set()
+    for text in shell_sources.values():
+        stripped, masked = uc.scan_views(text)
+        pairs.update((zh, en) for _off, zh, en in uc.find_l_calls(stripped, masked))
+    return pairs
+
+
 class WebSnapshot(object):
-    """探针读的一切：web/src 源码（剥注释）、CSS、server 源、index.html、lanes 目录。"""
+    """探针读的一切：web/src 源码（剥注释）、CSS、server 源、index.html、lanes 目录、
+    shell/Sources（壳持有的偏好键与 L() 对）、通知目录模块。"""
 
     def __init__(self, root=uc.REPO_ROOT):
         self.root = root
@@ -83,13 +113,18 @@ class WebSnapshot(object):
         self.ts = {p: _TS_COMMENT.sub("", t) for p, t in _walk(root, web_src, (".ts", ".tsx"), True).items()}
         self.css = _walk(root, web_src, (".css",), True)
         self.server = _walk(root, "server", (".py",), False)
+        shell = _walk(root, os.path.join("shell", "Sources"), (".swift",), False)
         index = os.path.join(root, "web", "index.html")
         self.index_html = uc.read_text(index) if os.path.exists(index) else ""
         self.ts_all = "\n".join(self.ts[p] for p in sorted(self.ts))
+        self.server_all = "\n".join(self.server[p] for p in sorted(self.server))
         self.settings_py = "\n".join(t for p, t in sorted(self.server.items())
                                      if os.path.basename(p).startswith("settings"))
         self.lanes_py = self.server.get("server/lanes.py", "")
         self.board_lanes = self.ts.get("web/src/components/board/BoardLanes.tsx", "")
+        self.shell_all = "\n".join(shell[p] for p in sorted(shell))
+        self.shell_pairs = _shell_l_pairs(shell)
+        self.notify = _load_notify_catalog(root)
 
     def ts_has(self, literal):
         return bool(literal) and literal in self.ts_all
@@ -97,6 +132,11 @@ class WebSnapshot(object):
     def css_has(self, needle):
         return any(needle in text for path, text in self.css.items()
                    if not path.endswith("tokens.css"))
+
+    def shell_posts(self, zh, en):
+        """壳源码里有同一对 L()（插值只差占位名）。"""
+        same = self.notify.same_template if self.notify else (lambda a, b: a == b)
+        return any(same(zh, pzh) and same(en, pen) for pzh, pen in self.shell_pairs)
 
 
 # --------------------------------------------------------------------------- #
@@ -124,7 +164,23 @@ def probe_setting(snap, item):
     literal = '"%s"' % item["key"]
     if item["store"] == "overrides":
         return literal in snap.settings_py
+    probe = item.get("probe")
+    if probe == "shell_source":          # 壳自己持有同名 UserDefaults 键
+        return literal in snap.shell_all
+    if probe == "server_source":         # 概念搬到 server：清单点名的落点字面量
+        return bool(item.get("landing")) and item["landing"] in snap.server_all
     return snap.ts_has(literal)
+
+
+def probe_notification(snap, item):
+    """notification:<kind> → server/notify_catalog.py 的 kind 词表（general = 无 kind）。"""
+    return snap.notify is not None and (item.get("kind") or "general") in snap.notify.kind_names()
+
+
+def probe_notice_control(snap, item):
+    """壳直发的系统通知句：server-owned 目录登记了这一对 zh / en，且壳源码真的发它。"""
+    return (snap.notify is not None and snap.notify.has_sentence(item["zh"], item["en"])
+            and snap.shell_posts(item["zh"], item["en"]))
 
 
 def probe_shortcut(snap, item):
@@ -142,6 +198,7 @@ def probe_layout(snap, item):
 _STATIC_PROBES = {
     "screen": probe_screen, "rail": probe_rail_item, "lane": probe_lane, "setting": probe_setting,
     "shortcut": probe_shortcut, "theme": probe_theme, "layout": probe_layout,
+    "notification": probe_notification,
 }
 
 
@@ -175,14 +232,21 @@ def structural_items(snap, inventory):
     }
 
 
+def _static_probe_for(item):
+    """gated 条目的静态探针；web 的 control 走 vitest（None）。"""
+    kind = item["id"].split(":", 1)[0]
+    if kind != "control":
+        return _STATIC_PROBES[kind]
+    return probe_notice_control if item.get("probe") == "notify_catalog" else None
+
+
 def static_presence(snap, inventory):
-    """所有非 control 的 gated web 条目：id → present（bool）。"""
+    """所有静态判的 gated 条目：id → present（bool）。web 的 control 由 vitest 判，不在这里。"""
     presence = {}
     for item in _iter_items(inventory):
-        kind = item["id"].split(":", 1)[0]
-        if kind == "control" or not item.get("gated"):
-            continue
-        presence[item["id"]] = bool(_STATIC_PROBES[kind](snap, item))
+        probe = _static_probe_for(item) if item.get("gated") else None
+        if probe is not None:
+            presence[item["id"]] = bool(probe(snap, item))
     presence.update(structural_items(snap, inventory))
     return presence
 

@@ -83,6 +83,17 @@ class TsxTestCase(unittest.TestCase):
         self.assertFalse(by["E"]["focusable"])
         self.assertTrue(by["F"]["focusable"] and by["F"]["visible"])
 
+    def test_quoted_attribute_forms(self):
+        """属性值三种写法逐字进名字：双引号、JSX 里的单引号字面量 `{'…'}`、以及空值 `aria-label=""`（空值后面的属性不能被
+        当成它的值——引号扫描从紧邻的下一个字符起）。"""
+        tsx = '<main><button aria-label="Approve">x</button><button aria-label={\'Later\'}>y</button>' \
+              '<button aria-label="" title="Fallback">z</button></main>'
+        by = {i["name"]["raw"]: i for i in _items(tsx, "x", "x.tsx")}
+        self.assertEqual((by["Approve"]["name_source"], by["Later"]["name_source"]), ("aria-label", "aria-label"))
+        self.assertEqual(by["z"]["name_source"], "text")  # empty aria-label is "no explicit name", the content names it
+        attrs = inv.parse_attrs('aria-label="" title="Fallback" data-x={"q"}')
+        self.assertEqual(attrs, {"aria-label": "", "title": "Fallback", "data-x": "q"})
+
     def test_jsx_scalar_literals_for_tabindex_hidden_disabled(self):
         """TSX 写 `tabIndex={-1}` / `hidden={false}` / `disabled={true}`：标量字面量是写死的状态——{-1} 不在 Tab 序，
         hidden={false} 可见，disabled={true} 禁用；`disabled={busy}` 仍是运行时值（可聚焦）。"""

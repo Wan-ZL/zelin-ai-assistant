@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyShellState,
   callShell,
+  chooseFolder,
   getShellState,
   hasShellBridge,
+  isBridgeUnavailable,
   normalizeShellState,
   resetShellBridgeForTests,
   SHELL_STATE_EVENT,
@@ -61,6 +63,27 @@ describe("shellBridge", () => {
     expect(state.language).toBe("zh");
     expect(getShellState()).toEqual(state);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("chooseFolder：无桥 NO_BRIDGE；回执 dialog.path 落出（取消 → null）且快照照样落店；reject 原文透传", async () => {
+    await expect(chooseFolder()).rejects.toThrow("NO_BRIDGE");
+    const postMessage = vi.fn(async (body: unknown) => {
+      const b = body as { method: string; current?: string };
+      if (b.method !== "chooseFolder") throw "UNKNOWN_METHOD: " + b.method;
+      return { recording: { mode: "screen" }, captions: {}, language: "en", dialog: { path: b.current ? "~/Picked" : null } };
+    });
+    window.webkit = { messageHandlers: { zaiShell: { postMessage } } };
+    expect(await chooseFolder({ current: "~/Notes", prompt: "选择" })).toBe("~/Picked");
+    expect(postMessage).toHaveBeenCalledWith({ method: "chooseFolder", current: "~/Notes", prompt: "选择" });
+    expect(getShellState()?.recording.mode).toBe("screen");
+    expect(await chooseFolder({ current: "" })).toBeNull();
+    // 老壳：reject 原文成为 Error.message；isBridgeUnavailable 只认 NO_BRIDGE / UNKNOWN_METHOD
+    window.webkit = { messageHandlers: { zaiShell: { postMessage: async () => { throw "UNKNOWN_METHOD: chooseFolder"; } } } };
+    await expect(chooseFolder()).rejects.toThrow("UNKNOWN_METHOD: chooseFolder");
+    expect(isBridgeUnavailable(new Error("UNKNOWN_METHOD: chooseFolder"))).toBe(true);
+    expect(isBridgeUnavailable(new Error("NO_BRIDGE"))).toBe(true);
+    expect(isBridgeUnavailable(new Error("INVALID_ARGS: current must be a string"))).toBe(false);
+    expect(isBridgeUnavailable("INTERNAL: x")).toBe(false);
   });
 
   it("startShellBridge：无桥 no-op；有桥 → 拉 getState + 订阅 zai-shell-state，stop 后不再收", async () => {

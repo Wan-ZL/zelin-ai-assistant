@@ -35,6 +35,8 @@ PANES = {
     "screen": _SYS_PREFS + "ScreenCapture",
     "microphone": _SYS_PREFS + "Microphone",
     "notifications": "x-apple.systempreferences:com.apple.preference.notifications",
+    # 笔记库（Documents）授权被拒后的第二次机会（原生 requestVaultAccess 的深链）
+    "files_folders": _SYS_PREFS + "FilesAndFolders",
 }
 
 # §25 里凡是「TCC 挡住了」的失败 id

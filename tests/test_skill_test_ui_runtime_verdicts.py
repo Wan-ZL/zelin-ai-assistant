@@ -124,6 +124,45 @@ class RedPathsTestCase(unittest.TestCase):
         self.assertEqual(sensors._driver_config(ctx, recipe, 2)["themes"], ["dark"])
 
 
+class StaticNotRunPathsTestCase(unittest.TestCase):
+    def test_static_checks_say_na_or_unavailable_when_their_input_is_missing(self):
+        """每个源模式层缺输入时的三分状态（不崩、不 pass）：无 CSS 表 → tokens_source N-A；无 subject 清单 → pair_structure
+        UNAVAILABLE；无 subject tokens → pair_tokens / off_token_literals / contrast_pairs / theme_default_declared UNAVAILABLE；
+        无源清单 → a11y_static / i18n_parity N-A；design-system 参照 → pair_runtime N-A（有 bundle 也没有参照清单可配）。"""
+        ctx = _ctx(subject_source=None, subject_tokens=None)
+        ctx["det"]["tokens_files"] = {"css": [], "index_html": None, "type_scale": None, "component_dirs": []}
+        ctx["det"]["sides"]["reference"] = kit.side("reference", "design-system", "design-system", mode={"structure": "na", "tokens": "source", "visual": "na"})
+        self.assertEqual(sensors.check_tokens_source(ctx)["status"], "na")
+        self.assertEqual(sensors.check_pair_structure(ctx)["status"], "na")  # design-system: no reference inventory
+        ctx["det"]["sides"]["reference"] = kit.side("reference", "dir", "/ref", directory="/nonexistent-ref-dir")
+        ctx["state"].pop("reference_inventory", None)
+        self.assertEqual(sensors.check_pair_structure(ctx)["status"], "unavailable")  # reference present, subject inventory absent
+        for name in ("check_pair_tokens", "check_theme_default_declared", "check_off_token_literals", "check_contrast_pairs"):
+            self.assertEqual(getattr(sensors, name)(ctx)["status"], "unavailable", name)
+        for name in ("check_a11y_static", "check_i18n_parity"):
+            self.assertEqual(getattr(sensors, name)(ctx)["status"], "na", name)
+        design = _ctx(runtime=_bundle())
+        design["det"]["sides"]["reference"] = kit.side("reference", "design-system", "design-system", mode={"structure": "na", "tokens": "source", "visual": "na"})
+        self.assertEqual(sensors.check_pair_runtime(design)["status"], "na")
+
+    def test_golden_manifest_pass_path(self):
+        import os
+        import tempfile
+        import visual
+        with tempfile.TemporaryDirectory() as tmp:
+            machine = os.path.join(tmp, "test-chromium-dpr1")
+            os.makedirs(machine)
+            with open(os.path.join(machine, "board.png"), "wb") as fh:
+                fh.write(kit.make_png(4, 4))
+            sha = tc.sha256_file(os.path.join(machine, "board.png"))
+            tc.write_text(os.path.join(machine, "manifest.json"), tc.dump_json({"entries": {"board.png": {"sha256": sha, "reason": "blessed after review"}}}))
+            ctx = _ctx()
+            ctx["det"]["goldens"] = {"dir": tmp, "machine_key": "test-chromium-dpr1", "machine_dir": machine}
+            res = sensors.check_golden_manifest(ctx)
+            self.assertEqual((res["status"], res["details"]["count"]), ("pass", 1))
+            self.assertEqual(visual.check_manifest(machine)["ok"], True)
+
+
 class SourceRedPathsTestCase(unittest.TestCase):
     def test_structure_source_fails_closed_on_errors_or_zero_items(self):
         ctx = _ctx(subject_source=dict(kit.make_inventory([]), errors=["a.html: Permission denied"], screens=[], landmarks=[]))

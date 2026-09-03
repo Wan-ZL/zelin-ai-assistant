@@ -43,6 +43,37 @@
       "AppDelegate.submitAnswer": "board.dialogs",
       "AppDelegate.updateStatusTitle": "menu.status"
     },
+    "pref_owner": {
+      "hasCompletedFirstRun": {
+        "landing": "setup_done.json",
+        "owner": "server",
+        "reason": "首启标记 = server 侧 state/setup_done.json（§68.5）：换壳 / 换浏览器不重问"
+      },
+      "recordingConsentShown": {
+        "owner": "retired",
+        "reason": "并入 recordingMode（壳无存值 = 未同意 = off，P0-11）+ setup_done.json；不再有第二把标记"
+      },
+      "screenPermissionRequested": {
+        "owner": "shell",
+        "reason": "TCC 引导归壳（R2.2.3）：ShellSystem.swift PermissionsProbe.request 同名键"
+      },
+      "showMenuBarIcon": {
+        "owner": "retired",
+        "reason": "D3：壳 Dock-only、菜单栏状态项退役（settings.menuBar 同判）"
+      },
+      "terminalApp": {
+        "landing": "\"terminal_app\"",
+        "owner": "server",
+        "reason": "「在终端打开」的执行者是 server（open -a，§68.7）——偏好落 settings_overrides terminal_app"
+      },
+      "vaultAccessGranted": {
+        "owner": "shell",
+        "reason": "Documents 授权按壳的 bundle id 记账（§68.13）：PermissionsProbe vault 探针同名键"
+      }
+    },
+    "probed_shell_screens": [
+      "notifications"
+    ],
     "screen_owner": {
       "app": "shell",
       "captions": "shell",
@@ -82,6 +113,9 @@
       "TrashRow": "trash",
       "TrashSectionView": "trash",
       "UpdateCheckModel": "about"
+    },
+    "via_screen": {
+      "Self.postSystemNotice": "notifications"
     }
   },
   "controls": [
@@ -6675,28 +6709,6 @@
       "zh": "仅屏幕"
     },
     {
-      "en": "Screen + Audio is not ready",
-      "gated": true,
-      "id": "control:header.recording:label:screen-audio-is-not-ready",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:215",
-      "via": "Self.postSystemNotice",
-      "zh": "还开不了「屏幕+音频」"
-    },
-    {
-      "en": "Reverted to the previous recording mode",
-      "gated": false,
-      "id": "control:header.recording:copy:reverted-to-the-previous-recording-mode",
-      "owner": "web",
-      "role": "copy",
-      "screen": "header.recording",
-      "source": "Recording.swift:324",
-      "via": "Self.postSystemNotice",
-      "zh": "已退回原来的录制模式"
-    },
-    {
       "en": "ffmpeg is missing (brew install ffmpeg, then switch again)",
       "gated": false,
       "id": "control:header.recording:copy:ffmpeg-is-missing-brew-install-ffmpeg-then-switc",
@@ -6741,17 +6753,6 @@
       "zh": "「{label(forMode: failed})」没能开启——{cause}；已退回「{label(forMode: kept})」继续录制"
     },
     {
-      "en": "Screen Recording permission lost",
-      "gated": true,
-      "id": "control:header.recording:label:screen-recording-permission-lost",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:429",
-      "via": "Self.postSystemNotice",
-      "zh": "屏幕录制授权失效了"
-    },
-    {
       "en": "Screen Recording is now granted — the engine restarted automatically",
       "gated": false,
       "id": "control:header.recording:copy:screen-recording-is-now-granted-the-engine-resta",
@@ -6761,17 +6762,6 @@
       "source": "Recording.swift:439",
       "via": "",
       "zh": "屏幕权限已生效，录制引擎已自动重启"
-    },
-    {
-      "en": "Recording is live",
-      "gated": true,
-      "id": "control:header.recording:label:recording-is-live",
-      "owner": "web",
-      "role": "label",
-      "screen": "header.recording",
-      "source": "Recording.swift:443",
-      "via": "Self.postSystemNotice",
-      "zh": "录制已就绪"
     },
     {
       "en": "No data",
@@ -7600,9 +7590,10 @@
     },
     {
       "en": "+{overflow.count} more notifications",
-      "gated": false,
+      "gated": true,
       "id": "control:notifications:label:overflow-count-more-notifications",
       "owner": "shell",
+      "probe": "notify_catalog",
       "role": "label",
       "screen": "notifications",
       "source": "NotifyRelay.swift:124",
@@ -7611,14 +7602,62 @@
     },
     {
       "en": "Open the app to see the board",
-      "gated": false,
+      "gated": true,
       "id": "control:notifications:label:open-the-app-to-see-the-board",
       "owner": "shell",
+      "probe": "notify_catalog",
       "role": "label",
       "screen": "notifications",
       "source": "NotifyRelay.swift:125",
       "via": "drain",
       "zh": "打开 App 查看看板"
+    },
+    {
+      "en": "Screen + Audio is not ready",
+      "gated": true,
+      "id": "control:notifications:label:screen-audio-is-not-ready",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:215",
+      "via": "Self.postSystemNotice",
+      "zh": "还开不了「屏幕+音频」"
+    },
+    {
+      "en": "Reverted to the previous recording mode",
+      "gated": false,
+      "id": "control:notifications:copy:reverted-to-the-previous-recording-mode",
+      "owner": "shell",
+      "role": "copy",
+      "screen": "notifications",
+      "source": "Recording.swift:324",
+      "via": "Self.postSystemNotice",
+      "zh": "已退回原来的录制模式"
+    },
+    {
+      "en": "Screen Recording permission lost",
+      "gated": true,
+      "id": "control:notifications:label:screen-recording-permission-lost",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:429",
+      "via": "Self.postSystemNotice",
+      "zh": "屏幕录制授权失效了"
+    },
+    {
+      "en": "Recording is live",
+      "gated": true,
+      "id": "control:notifications:label:recording-is-live",
+      "owner": "shell",
+      "probe": "notify_catalog",
+      "role": "label",
+      "screen": "notifications",
+      "source": "Recording.swift:443",
+      "via": "Self.postSystemNotice",
+      "zh": "录制已就绪"
     },
     {
       "en": "I live up here 👆",
@@ -14408,17 +14447,19 @@
   },
   "notifications": [
     {
-      "gated": false,
+      "gated": true,
       "id": "notification:review_ready",
       "kind": "review_ready",
       "owner": "shell",
+      "probe": "notify_catalog",
       "source": "NotifyRelay.swift:96"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "notification:general",
       "kind": null,
       "owner": "shell",
+      "probe": "notify_catalog",
       "source": "act/lib/notify.py"
     }
   ],
@@ -15249,10 +15290,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsAppleLocale",
       "key": "captionsAppleLocale",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:868",
         "LiveCaptions.swift:900"
@@ -15260,10 +15302,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsArkModel",
       "key": "captionsArkModel",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:871",
         "LiveCaptions.swift:901"
@@ -15271,10 +15314,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsEngine",
       "key": "captionsEngine",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:856",
         "LiveCaptions.swift:896"
@@ -15282,10 +15326,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsFontSize",
       "key": "captionsFontSize",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:874",
         "LiveCaptions.swift:902"
@@ -15293,10 +15338,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsOpacity",
       "key": "captionsOpacity",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:877",
         "LiveCaptions.swift:903"
@@ -15304,10 +15350,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsSource",
       "key": "captionsSource",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:859",
         "LiveCaptions.swift:897"
@@ -15315,10 +15362,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsTranslate",
       "key": "captionsTranslate",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:862",
         "LiveCaptions.swift:898"
@@ -15326,10 +15374,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:captionsTranslateDirection",
       "key": "captionsTranslateDirection",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:865",
         "LiveCaptions.swift:899"
@@ -15361,7 +15410,10 @@
       "gated": true,
       "id": "setting:prefs:hasCompletedFirstRun",
       "key": "hasCompletedFirstRun",
-      "owner": "web",
+      "landing": "setup_done.json",
+      "owner": "server",
+      "probe": "server_source",
+      "reason": "首启标记 = server 侧 state/setup_done.json（§68.5）：换壳 / 换浏览器不重问",
       "sources": [
         "AppDelegate.swift:187",
         "AppDelegate.swift:188",
@@ -15371,10 +15423,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:lastActiveRecordingMode",
       "key": "lastActiveRecordingMode",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "Recording.swift:182",
         "Recording.swift:235"
@@ -15382,10 +15435,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:liveCaptionsEnabled",
       "key": "liveCaptionsEnabled",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "LiveCaptions.swift:911",
         "LiveCaptions.swift:930"
@@ -15404,10 +15458,11 @@
       "store": "prefs"
     },
     {
-      "gated": true,
+      "gated": false,
       "id": "setting:prefs:recordingConsentShown",
       "key": "recordingConsentShown",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "并入 recordingMode（壳无存值 = 未同意 = off，P0-11）+ setup_done.json；不再有第二把标记",
       "sources": [
         "Onboarding.swift:27",
         "Onboarding.swift:44"
@@ -15415,10 +15470,11 @@
       "store": "prefs"
     },
     {
-      "gated": false,
+      "gated": true,
       "id": "setting:prefs:recordingMode",
       "key": "recordingMode",
       "owner": "shell",
+      "probe": "shell_source",
       "sources": [
         "Onboarding.swift:26",
         "Recording.swift:140",
@@ -15431,7 +15487,9 @@
       "gated": true,
       "id": "setting:prefs:screenPermissionRequested",
       "key": "screenPermissionRequested",
-      "owner": "web",
+      "owner": "shell",
+      "probe": "shell_source",
+      "reason": "TCC 引导归壳（R2.2.3）：ShellSystem.swift PermissionsProbe.request 同名键",
       "sources": [
         "Permissions.swift:165",
         "Permissions.swift:166",
@@ -15440,10 +15498,11 @@
       "store": "prefs"
     },
     {
-      "gated": true,
+      "gated": false,
       "id": "setting:prefs:showMenuBarIcon",
       "key": "showMenuBarIcon",
-      "owner": "web",
+      "owner": "retired",
+      "reason": "D3：壳 Dock-only、菜单栏状态项退役（settings.menuBar 同判）",
       "sources": [
         "AppDelegate.swift:267",
         "Settings.swift:1319",
@@ -15477,7 +15536,10 @@
       "gated": true,
       "id": "setting:prefs:terminalApp",
       "key": "terminalApp",
-      "owner": "web",
+      "landing": "\"terminal_app\"",
+      "owner": "server",
+      "probe": "server_source",
+      "reason": "「在终端打开」的执行者是 server（open -a，§68.7）——偏好落 settings_overrides terminal_app",
       "sources": [
         "Settings.swift:601",
         "TerminalLauncher.swift:88"
@@ -15488,7 +15550,9 @@
       "gated": true,
       "id": "setting:prefs:vaultAccessGranted",
       "key": "vaultAccessGranted",
-      "owner": "web",
+      "owner": "shell",
+      "probe": "shell_source",
+      "reason": "Documents 授权按壳的 bundle id 记账（§68.13）：PermissionsProbe vault 探针同名键",
       "sources": [
         "Permissions.swift:124",
         "Permissions.swift:80"

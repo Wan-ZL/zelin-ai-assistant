@@ -1,5 +1,7 @@
 // 一个目录 field 的控件（§68 通用设置区）：bool → 开关（checkbox role=switch）、enum → <select>、
 // string → 文本框、number/int → 数字框、list → 逗号分隔文本框（草稿存字串，server 拆表）。纯受控：值与回调都来自 CatalogSection 的草稿。
+// 目录字段（`path: "dir"`，§68.1）= string 文本框 + 「选择…」（壳桥 NSOpenPanel / 浏览器路径框）+ 「打开」/「创建」
+// 与「目录不存在」警告（FolderControls；作用于已保存的值，草稿未保存时禁用）。
 // 选项文案逐字镜像原生 Settings.swift 的 Picker 标签（§66.2 control:settings.*）。
 // 文案（label / help）是 server-owned 双语键，按 UI 语言取；来源章（override / config / default）
 // 让用户知道当前值是谁定的——原生 Settings 没有这一章，web 加它是为了「等于 config 即删键」
@@ -7,6 +9,7 @@
 import { useI18n } from "../../i18n";
 import type { SettingsField } from "../../types";
 import { pickText } from "./catalogText";
+import { FolderActions, FolderPicker } from "./FolderControls";
 
 export interface FieldControlProps {
   sectionId: string;
@@ -47,6 +50,11 @@ export function choiceLabel(key: string, choice: string, text: (zh: string, en: 
     "default_output_format:html": ["HTML", "HTML"],
     "telemetry.level:basic": ["基础", "Basic"],
     "telemetry.level:detailed": ["详细（默认）", "Detailed (default)"],
+    // 原生 TerminalApp.displayName（Ghostty / Terminal / iTerm2）+ web 才有的 auto（原生 preferred 的兜底规则）
+    "terminal_app:auto": ["自动（装了 Ghostty 就用它，否则 Terminal）", "Auto (Ghostty if installed, else Terminal)"],
+    "terminal_app:ghostty": ["Ghostty", "Ghostty"],
+    "terminal_app:terminal": ["Terminal", "Terminal"],
+    "terminal_app:iterm2": ["iTerm2", "iTerm2"],
   };
   const hit = table[`${key}:${choice}`];
   return hit ? text(hit[0], hit[1]) : choice;
@@ -109,27 +117,35 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
   } else {
     // string 与 list 同一个文本框：list 的草稿是逗号分隔字串（CatalogSection.draftOf 拼、server 拆）
     const fallback = typeof field.default === "string" && field.default ? field.default : text("（未设置）", "(unset)");
+    const isFolder = field.path === "dir";
     control = (
-      <input
-        id={id}
-        type="text"
-        className="settings-input"
-        value={typeof value === "string" ? value : ""}
-        disabled={isBusy}
-        spellCheck={false}
-        placeholder={pickText(field.placeholder, language) || fallback}
-        onChange={(event) => onChange(field.key, event.target.value)}
-      />
+      <>
+        <input
+          id={id}
+          type="text"
+          className="settings-input"
+          value={typeof value === "string" ? value : ""}
+          disabled={isBusy}
+          spellCheck={false}
+          placeholder={pickText(field.placeholder, language) || fallback}
+          onChange={(event) => onChange(field.key, event.target.value)}
+        />
+        {isFolder && (
+          <FolderPicker current={typeof value === "string" ? value : ""} disabled={isBusy} onPick={(path) => onChange(field.key, path)} />
+        )}
+      </>
     );
   }
 
+  const dirty = String(value ?? "").trim() !== String(field.effective ?? "").trim();
   return (
-    <div className={`settings-field is-${field.kind}`}>
+    <div className={`settings-field is-${field.kind}${field.path === "dir" ? " is-folder" : ""}`}>
       <div className="settings-field-head">
         <label className="settings-knob-label" htmlFor={id}>{label}</label>
         <span className="settings-source-chip" data-source={field.source}>{sourceLabel(field.source, text)}</span>
       </div>
       <div className="settings-knob-controls">{control}</div>
+      {field.path === "dir" && <FolderActions field={field} dirty={dirty} />}
       {help && <p className="settings-helper">{help}</p>}
     </div>
   );

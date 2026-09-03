@@ -52,7 +52,7 @@ func run() {
         check(cap[key] != nil, "captions.\(key) present (caption prefs)")
     }
     let perm = snap["permissions"] as? [String: Any] ?? [:]
-    for key in ["screen", "microphone", "notifications"] {
+    for key in ["screen", "microphone", "notifications", "vault"] {
         let value = perm[key] as? String ?? "?"
         check(["granted", "denied", "unknown"].contains(value),
               "permissions.\(key) ∈ granted|denied|unknown", "got \(value)")
@@ -132,9 +132,39 @@ func run() {
     } else {
         check(false, "getPermissions must not throw")
     }
-    check(PermissionsProbe.kinds == ["screen", "microphone", "notifications"], "permission kinds vocabulary frozen")
-    check(Set(PermissionsProbe.panes.keys) == Set(["full_disk", "screen", "microphone", "notifications"]),
+    // §68.1 chooseFolder：注入假面板（绝不弹真 NSOpenPanel）；回执 = 快照 + dialog.path；取消 = null；类型严格
+    var dialogCalls: [(String, String?)] = []
+    let realRunner = FolderDialog.runner
+    FolderDialog.runner = { current, prompt in dialogCalls.append((current, prompt)); return current.isEmpty ? nil : "~/Picked" }
+    defer { FolderDialog.runner = realRunner }
+    if let reply = try? bridge.handle(["method": "chooseFolder", "current": "~/Notes", "prompt": "选择"]) {
+        let dialog = reply["dialog"] as? [String: Any]
+        check(dialog?["path"] as? String == "~/Picked", "chooseFolder returns dialog.path alongside the snapshot")
+        check(reply["recording"] != nil, "chooseFolder reply still carries the snapshot")
+        check(dialogCalls.count == 1 && dialogCalls[0].0 == "~/Notes" && dialogCalls[0].1 == "选择",
+              "chooseFolder forwards current + prompt to the panel")
+    } else {
+        check(false, "chooseFolder must not throw for string args")
+    }
+    if let reply = try? bridge.handle(["method": "chooseFolder"]) {
+        check((reply["dialog"] as? [String: Any])?["path"] is NSNull, "cancelled dialog → dialog.path is null")
+    } else {
+        check(false, "chooseFolder without args is valid (current defaults to empty)")
+    }
+    check(rejection(["method": "chooseFolder", "current": 3]).hasPrefix("INVALID_ARGS"),
+          "chooseFolder current must be a string")
+    check(rejection(["method": "chooseFolder", "prompt": true]).hasPrefix("INVALID_ARGS"),
+          "chooseFolder prompt must be a string")
+    check((try? bridge.handle(["method": "getState"]))?["dialog"] == nil, "non-dialog methods carry no dialog block")
+    check(FolderDialog.abbreviateHome(NSHomeDirectory() + "/Notes") == "~/Notes", "abbreviateHome folds $HOME to ~")
+    check(FolderDialog.abbreviateHome("/Volumes/X") == "/Volumes/X", "abbreviateHome leaves other paths alone")
+    check(PermissionsProbe.kinds == ["screen", "microphone", "notifications", "vault"], "permission kinds vocabulary frozen")
+    check(Set(PermissionsProbe.panes.keys) == Set(["full_disk", "screen", "microphone", "notifications", "files_folders"]),
           "pane vocabulary frozen")
+    // 笔记库探针是被动的：没有 vault_sync_mode=mirror 也没有 vaultAccessGranted 时答 unknown，绝不读 ~/Documents
+    check(["granted", "unknown"].contains(PermissionsProbe.probeVaultPassive()), "vault probe is passive (granted|unknown)")
+    check(PermissionsProbe.vaultRootPath().hasSuffix("Obsidian Vault") || !PermissionsProbe.vaultRootPath().isEmpty,
+          "vault root = obsidian_raw's parent (default ~/Documents/Obsidian Vault)")
 
     // ---- 4. setLanguage flips the L() mirror (no persistence) ----
     print("[4] setLanguage:")

@@ -130,7 +130,7 @@ v0.48.20 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(�
 
 **确认**:`cat "$HOME/Library/Application Support/ZelinAIAssistant/deploy_state.json"` 看 `head` 是不是已经在 head 后面最新的绿 commit 上、`behind_main` 指着谁;`tail -n 30 ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 里每轮会列出走过的每个 sha 与它的 CI 判定(`CI green on ancestor …` / `CI RED on main commit …` / `CI not green yet on ancestor …`)。
 
-**它还是不部署的三种情形**:① head 与它后面到本机 HEAD 之间**全红**(或全在跑)——detail 写 `no green commit between the deployed <sha> and it (N examined: …)`,红的每个 sha 会各通知一次「main 的 CI 红了」并中毒(镜像私账 `failed_shas`,`--force` 或 main 越过它们时清),修好 CI、合一个绿的提交即可;② 某个 commit **没有任何 `ci` run**(path filter 跳过、workflow 没触发)——它算 pending 不算绿,永远不会被当成「测过」;想让它上机就 re-run 那个 workflow,或合一个会触发 CI 的提交;③ 一轮里回走的 commit 太多(全部 pending)撞上 GitHub 匿名 API 的 60 次/小时——日志写 `check-runs API unreachable`,同样是 pending,下轮自愈。`--force` 永远只部署 head 本身、跳过闸门与回走,别用它「催」一个还没绿的 head。
+**它还是不部署的三种情形**:① head 与它后面到本机 HEAD 之间**全红**(或全在跑)——detail 写 `no green commit between the deployed <sha> and it (N examined: …)`,红的每个 sha 会各通知一次「main 的 CI 红了」并中毒(镜像私账 `failed_shas`,`--force` 或 main 越过它们时清),修好 CI、合一个绿的提交即可;② 某个 commit **没有任何 `ci` run**(path filter 跳过、workflow 没触发)——它算 pending 不算绿,永远不会被当成「测过」;想让它上机就 re-run 那个 workflow,或合一个会触发 CI 的提交;③ GitHub API 额度用光——日志写 `check-runs API HTTP 403 via <gh|curl+token|anonymous curl> (x-ratelimit-remaining: 0)`,同样是 pending,下轮自愈。2026-09-03 06:03Z/06:14Z 起脚本带认证问(每轮开头一行 `check-runs API via gh api (authenticated)`,5,000 次/小时);要是那一行写的是 `via curl, UNAUTHENTICATED`,说明这台机器的 `gh` 没登录或不在 launchd 的 PATH 里——匿名额度只有 60 次/小时**按 IP 计、全机共享**(更新检查、你手上的 curl 都在花同一份),`gh auth login` 一次即可。`--force` 永远只部署 head 本身、跳过闸门与回走,别用它「催」一个还没绿的 head。
 
 ## 看板不更新,但 `launchctl list` 显示 actd 有 pid(进程活着、循环死了)
 

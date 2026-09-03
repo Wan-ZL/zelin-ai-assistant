@@ -168,6 +168,21 @@ class PairingTestCase(unittest.TestCase):
         self.assertEqual(by["setting:prefs:cardSortOrder"]["detail"]["evidence"], '"cardSortOrder"')
         self.assertEqual(by["setting:prefs:nope"]["status"], "MISSING")
 
+    def test_state_defaults_are_visible_and_focusable(self):
+        """states 里没写 visible / focusable 的条目按 schema 默认可见、可聚焦（frozen 参照与手写清单都这样）→ PRESENT。"""
+        ref = [kit.make_item("board", "button", "Go")]
+        sub = [kit.make_item("board", "button", "Go")]
+        sub[0]["states"] = {"frozen": {}}
+        self.assertEqual(_by_id(_compare(ref, sub))["control:board:button:go"]["status"], "PRESENT")
+        self.assertTrue(parity._visible({"states": {}}) and parity._focusable({"states": {}}))
+
+    def test_string_probe_never_touches_control_rows(self):
+        """源字符串探针只对 shortcut:* / setting:* 行：一个 MISSING 的 control 行即使它的 slug 以 "…" 出现在源码里也保持 MISSING。"""
+        ref = [kit.make_item("board", "button", "Approve")]
+        result = _compare(ref, [])
+        parity.string_probe(result["rows"], ref, 'label = "approve"; other = "Approve"', EMPTY, result["problems"])
+        self.assertEqual(_by_id(result)["control:board:button:approve"]["status"], "MISSING")
+
     def test_owner_and_dynamic_are_na(self):
         ref = [kit.make_item("about", "button", "Quit", owner="shell"), kit.make_item("board", "button", "{dynamic}")]
         rows = _by_id(_compare(ref, []))

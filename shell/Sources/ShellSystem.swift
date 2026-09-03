@@ -1,6 +1,6 @@
 // ShellSystem.swift — 壳内其余原生残留（R2.2.3；CONTRACT §68.13 / §61.6）：
 //   ShellWindow        窗口显示钩子（通知点击 / 全局快捷键 → 前置看板窗口）；
-//   PermissionsProbe   TCC 三项探针（屏幕录制 / 麦克风 / 通知）+ 请求 + 系统设置深链
+//   PermissionsProbe   TCC 四项探针（屏幕录制 / 麦克风 / 通知 / 笔记库 Documents）+ 请求 + 系统设置深链
 //                      ——原生 Permissions.swift 的 model 半边（视图半边在 web 权限体检页）；
 //   LaunchAtLogin      SMAppService.mainApp（原生 Settings 通用区「登录时启动」）；
 //   QuickCaptureHotkey Carbon RegisterEventHotKey 全局快捷键 ⌃⌥Space（不需要辅助功能授权），
@@ -33,22 +33,78 @@ final class PermissionsProbe: ObservableObject {
     @Published private(set) var screen = "unknown"
     @Published private(set) var microphone = "unknown"
     @Published private(set) var notifications = "unknown"
+    /// 笔记库（Documents）访问——原生 PermissionsModel.vault：被动探针，永不主动读 ~/Documents
+    @Published private(set) var vault = "unknown"
 
-    static let kinds = ["screen", "microphone", "notifications"]
+    static let kinds = ["screen", "microphone", "notifications", "vault"]
     static let panes: [String: String] = [
         "full_disk": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
         "screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
         "microphone": "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
         "notifications": "x-apple.systempreferences:com.apple.preference.notifications",
+        "files_folders": "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
     ]
+    /// 原生 Permissions.swift 同名 UserDefaults 键：一次成功的 app 内授权点击（§66.2 setting:prefs:vaultAccessGranted）
+    static let vaultGrantedKey = "vaultAccessGranted"
 
     private init() {}
 
-    /// 同步刷新屏幕 / 麦克风；通知是异步 API，回来后单独发布（桥合并到下一次推送）。
+    /// 同步刷新屏幕 / 麦克风 / 笔记库；通知是异步 API，回来后单独发布（桥合并到下一次推送）。
     func refresh() {
         screen = RecordingController.hasScreenPermission() ? "granted" : "denied"
         microphone = Self.microphoneStatus()
+        vault = Self.probeVaultPassive()
         refreshNotifications()
+    }
+
+    /// 被动探 Documents 授权（原生 probeVaultPassive 逐字）：GUI 里读一下 ~/Documents 本身就会触发
+    /// 一次性 TCC 弹窗，弹窗必须留在按钮后面。证据两条：ingest 链只在 courier 成功拉过之后才写
+    /// state/vault_sync_mode="mirror"（证明授权在 cron 里也生效），UserDefaults 记一次 app 内成功授权。
+    nonisolated static func probeVaultPassive() -> String {
+        let modeFile = AppPaths.stateRoot + "/state/vault_sync_mode"
+        if let mode = try? String(contentsOfFile: modeFile, encoding: .utf8),
+           mode.trimmingCharacters(in: .whitespacesAndNewlines) == "mirror" {
+            return "granted"
+        }
+        return Prefs.bool(vaultGrantedKey, default: false) ? "granted" : "unknown"
+    }
+
+    /// 生效的笔记库根（= obsidian_raw 的上级），override → config.yaml → 默认，与设置页同一解析。
+    nonisolated static func vaultRootPath() -> String {
+        var raw = "~/Documents/Obsidian Vault/2 - raw"
+        if let v = SettingsIO.readOverrides()["obsidian_raw"] as? String, !v.isEmpty {
+            raw = v
+        } else if let v = SettingsIO.configScalar("obsidian_raw"), !v.isEmpty {
+            raw = v
+        }
+        return ((raw as NSString).expandingTildeInPath as NSString).deletingLastPathComponent
+    }
+
+    /// 笔记库授权：GUI 里读一次 vault 目录——macOS 弹标准的「想访问“文稿”文件夹」，授权落在壳的稳定
+    /// bundle 身份上，vault-sync-helper（同一 bundle）从 cron 里永远复用（§68.13）。ENOENT 不是拒绝：
+    /// 新机器上目录还没建，照 ObsidianVaultSetup 建出来——同一次 Documents 授权、同一个一次性弹窗。
+    /// 已经拒绝过再点 = 深链「文件与文件夹」面板（弹窗每个身份只弹一次）。
+    func requestVaultAccess() {
+        let alreadyDenied = vault == "denied"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let fm = FileManager.default
+            let dir = Self.vaultRootPath()
+            var ok = (try? fm.contentsOfDirectory(atPath: dir)) != nil
+            if !ok, !fm.fileExists(atPath: dir) {
+                ok = (try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)) != nil
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if ok {
+                        UserDefaults.standard.set(true, forKey: Self.vaultGrantedKey)
+                        self.vault = "granted"
+                    } else {
+                        self.vault = "denied"
+                        if alreadyDenied { Self.openPane("files_folders") }
+                    }
+                }
+            }
+        }
     }
 
     nonisolated static func microphoneStatus() -> String {
@@ -82,9 +138,11 @@ final class PermissionsProbe: ObservableObject {
 
     /// 请求一项授权。屏幕：首次 CGRequestScreenCaptureAccess（系统只弹一次），之后深链面板；
     /// 麦克风：AVCaptureDevice.requestAccess（notDetermined 才会弹），否则深链；
-    /// 通知：notDetermined → requestAuthorization，否则深链。
+    /// 通知：notDetermined → requestAuthorization，否则深链；笔记库：requestVaultAccess（读一次 vault 目录）。
     func request(_ kind: String) {
         switch kind {
+        case "vault":
+            requestVaultAccess()
         case "screen":
             if !Prefs.bool("screenPermissionRequested", default: false) {
                 UserDefaults.standard.set(true, forKey: "screenPermissionRequested")
@@ -195,5 +253,36 @@ enum DockBadge {
     /// 等你动作的卡数（页面经桥 setBadge 推来；0 = 清空）。
     static func set(_ count: Int) {
         NSApp.dockTile.badgeLabel = count > 0 ? String(count) : nil
+    }
+}
+
+// MARK: - folder dialog（原生 Settings.pickFolder 的 NSOpenPanel；CONTRACT §61.1 `chooseFolder` / §68.1 目录字段）
+
+@MainActor
+enum FolderDialog {
+    /// 对话框的执行体（注入缝：桥 harness 换成假实现，绝不弹真面板）。参数 (current, prompt) →
+    /// 选中的路径（`$HOME` 缩回 `~`，同原生 abbreviateHome）或 nil（取消）。
+    static var runner: (String, String?) -> String? = { current, prompt in
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        if let prompt, !prompt.isEmpty { panel.prompt = prompt }
+        let cur = (current.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        if !cur.isEmpty, FileManager.default.fileExists(atPath: cur) {
+            panel.directoryURL = URL(fileURLWithPath: cur, isDirectory: true)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return abbreviateHome(url.path)
+    }
+
+    static func chooseFolder(current: String, prompt: String?) -> String? {
+        runner(current, prompt)
+    }
+
+    /// `/Users/x/Notes` → `~/Notes`（原生 Settings.abbreviateHome 同款；其它路径原样）。
+    static func abbreviateHome(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 }

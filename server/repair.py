@@ -26,7 +26,7 @@ _TIMEOUT_S = 30
 Runner = Callable[[list], "tuple[int, str]"]
 
 
-def _default_runner(argv: list) -> "tuple[int, str]":
+def default_runner(argv: list) -> "tuple[int, str]":
     try:
         proc = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -34,14 +34,16 @@ def _default_runner(argv: list) -> "tuple[int, str]":
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
-def _domain() -> str:
-    # launchd GUI domain of the current user；os.getuid 只在 POSIX 存在（Windows 腿的判例注入 platform）
+def domain() -> str:
+    """launchd GUI domain of the current user（``gui/<uid>``）；os.getuid 只在 POSIX 存在
+    （Windows 腿的判例注入 platform）。server/radars.py 同用（§48.7）。"""
     getuid = getattr(os, "getuid", None)
     return "gui/%d" % (getuid() if getuid else 0)
 
 
 def loaded(label: str, run: Runner) -> bool:
-    rc, _out = run(["/bin/launchctl", "print", "%s/%s" % (_domain(), label)])
+    """``launchctl print gui/<uid>/<label>`` 退出 0 ⇔ 已加载（radars.py 的状态探针也走这里）。"""
+    rc, _out = run(["/bin/launchctl", "print", "%s/%s" % (domain(), label)])
     return rc == 0
 
 
@@ -56,12 +58,12 @@ def kickstart_actd(payload: dict, runner: Optional[Runner] = None,
                    platform: Optional[str] = None) -> dict:
     """``POST /api/repair/actd``。"""
     _gate(payload, platform)
-    run = runner or _default_runner
+    run = runner or default_runner
     if not loaded(ACTD_LABEL, run):
         raise ConflictError(
             "%s is not loaded in launchd - run `bash install.sh` to render and load it" % ACTD_LABEL,
             {"label": ACTD_LABEL, "fix": "bash install.sh"})
-    rc, out = run(["/bin/launchctl", "kickstart", "-k", "%s/%s" % (_domain(), ACTD_LABEL)])
+    rc, out = run(["/bin/launchctl", "kickstart", "-k", "%s/%s" % (domain(), ACTD_LABEL)])
     if rc != 0:
         raise ApiError("launchctl kickstart exited %d: %s" % (rc, out.strip()[-300:]),
                        {"label": ACTD_LABEL, "rc": rc})
