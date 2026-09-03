@@ -1342,6 +1342,16 @@ stale 600 s / burst 5 / `review_notify` 三档 / 消费即删 / 坏文件 log+�
 身份 = 先扫到的 app）；`review_notify` 偏好两侧读同一 overrides 键。**手机镜像 §13
 不变。**
 
+**§28 2026-09-03 追记（add-only，§66.2 探针 notify_catalog）**：`server/notify_catalog.py` 是系统通知的
+**server-owned 目录**（`GET /api/notifications`，token-light、no-store）：`shell_notices` = 壳自己（不经队列）
+直发的每句通知（录制引擎自愈「录制已就绪」/ ffmpeg 缺席「还开不了「屏幕+音频」」/ 授权失效「屏幕录制授权
+失效了」/ 换模式回退「已退回原来的录制模式」/ 中继汇总「还有 N 条通知 · 打开 App 查看看板」），title / body
+双语，与 `shell/Sources` 的 `L("zh","en")` 逐字（判例）；引用 §25 FailureCatalog 的正文按 `body_failure_id`
+现取，不复制第二份；`kinds` = 队列 `kind` 词表（`review_ready` 带偏好键 `review_notify` / `recap_ready` /
+`general` = 无 kind 的其余守护进程通知，文案住 act/lib/notify.py 按语言即时生成）。新的壳直发通知句或新 kind
+= 同 PR 登记进目录，否则 `[ui-parity]` 报 NEW。壳（NotifyRelay / Recording 逐字节副本）与 Python 写方**都不读**
+这份目录——它是规格与判卷面，不是运行时依赖。
+
 
 ## 29. feedback（建议上报）— inbox 动作 + `state/feedback/<uuid>.json` + 上传
 
@@ -4333,6 +4343,8 @@ owner 原话（2026-09-02，§66 开篇）：原生主窗口**左侧竖排图标
 - **parity 判卷的渲染面**（§66.2 补充）：`web/src/parity.test.tsx` 自此渲染七个面（看板 / 回收站 / 设置 / 关于 / 问问助手 / 依赖检查 / 录制与数据接入）× zh / en，看板与回收站另各渲染两遍「空板 + 搜索中 + 后台服务卡住 / 没在跑且一键修复失败」收空态与横幅动词；时钟冻结在 fixture 的 `FIXED_NOW`；装假 `zaiShell` 桥（壳里才渲染的录制 / 字幕 / 登录时启动开关也判）；server 目录用 fixture 快照（`ui/parity/fixtures/settings.json` / `secrets.json`，`parity_fixture.py` 从空 home 落成）；点击三轮（展开详情 → 开弹窗的动词 → 其余提交类），每一拍 microtask 都收一遍（保存 → 验证中 → 通过 的中间态）。fixture 追加词表行（`_vocab_*`：状态词 / tier 提示 / 截止 / 分歧 / 合并建议六态 / kind=debt 的回收站与封存行 / 三源健康），只为让探针判得到、不改 demo 场景。**账本**：`pending.txt` 从出生的 698 缩到本 PR 的数字（truth = 该文件行数）；仍挂账的主要是 setup_wizard / permissions / doctor / board.diagnostics（各有自己的 web 页、探针尚未把这些面登记进渲染面）、Slack / Gmail 的「后台雷达 已安装 / 重新安装 / 立即测试一轮」（独立 cron 的事，雷达现住 actd 主循环 §48）、文件对话框类按钮（选择… / 打开 / 创建）、壳产出的系统通知句。
 - 判例：`NavRail.test.tsx`（八项同序同名、深链、选中态、折叠持久化、⌘1…⌘8、宽度钳制）、`tokens.test.ts`（无 prefers-color-scheme 块、index.html light 兜底、窗口底与状态色点走原生 token、布局定点齐全）、`FilterBar.test.tsx`（⎋ 两段）、`tests/test_server_ask.py`（ask / slack manifest / uninstall / maintainer 四组路由）、`tests/test_server_ai_fix_launch.py`（doctor 上下文）、`tests/test_server_settings_catalog.py`（list 字段、section 一拆三）、`tests/test_ui_parity_fixture.py`（词表行 / 设置与凭证快照）。
 
+- **2026-09-03 追记（add-only）——web 侧原生偏好键的落点（第三批）**（§66.2 `setting:prefs:*`，localStorage 同名）：`captureHistory`（composer ↑/↓ 历史；旧键 `zai.captureHistory` 首次读到即一次性搬过来）、`mainSection`（原生 `MainNav.section` didSet：每到一个 rail 页记 slug；冷启动 = 本窗口会话第一次整页加载、URL 没带 `?page=` / `?card=` → 回到上次的页，看板是缺省不导航；同一窗口会话内「← 返回看板」这类整页导航不再回跳——sessionStorage `zai.launched` 判「冷启动」）、`cardSortOrder` / `boardAnimations` / `sidebarCollapsed` / `sidebarWidth`（既有）。
+
 ## 55. launchd 模板路径纪律（v0.48.x；live 事故 2026-08-31）
 
 「一键修复」/ 初始设置向导 / install.sh 三方共用 `act/launchd/*.plist` 模板与
@@ -5297,6 +5309,7 @@ owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通�
 - **判决 = §58.4 同一三态**（`qa_common.compare_with_ledger`，阈值 0）：缺席且不在 `ui/parity/pending.txt`、也不在 `ui/parity/waivers.txt` → **NEW → FAIL**（补实现，不许记账）；在 pending 上但已在场 → **STALE → FAIL**（同 PR 划掉那行）。vitest 侧同一语义：普通 it 断言「在」，`[pending]` it 断言「不在」，`[waived]` skip——Web tests job 与 qa-gates job 读同两本账本，判决一致。vitest 跑不起来（没 node / 没 `npm ci`）= 门红，**不软化**。
 - **两本账本只许缩**（`ledger_diff.py` 对 base 差分，按 id 集合，备注列不是分数）：`pending.txt` = 尚未搬到 web 的原生条目（出生 = 本节立法当天的全量缺项，truth = 该文件行数，本节不复述；**每个加 UI 的 PR 必须让它缩**）；`waivers.txt` = 有意不搬（种子 = #119 需输入退役的回答对话框四条；行形 `<id>  <理由>  <issue/决策引用>`）。新的「不搬」判断**不走 waivers**——走归属表把 screen 标成 `retired` / `shell` 并带决策引用（代码可审、判例可钉）。
 - **报告**：`ui/parity/report.json` + `report.md`（PRESENT / PENDING / MISSING / STALE / WAIVED 按类计数 + NEW / STALE 清单 + 不判条目按 owner 计数），门每次运行重写；CI 的 `qa-report` artifact 带一份判决文本。`[ui-parity]` 是 `run_gates.sh` 的第六道门、住在 `qa-gates` job（job 名不变，required check 按名字挂），该 job 因此装 node 并在 web/ 做 `npm ci`。
+- **2026-09-03 追记（add-only，PR `fix/parity-notifications-prefs`）——owner=shell / server 的条目从「只列不判」到「按落点判」**：清单条目新增 add-only 键 `probe`（缺席 = 原规则：web 条目按上文探针、非 web 只列不判），三个值各一条探针：(a) `notify_catalog`——`notification:<kind>` 与壳直发的系统通知句（`control:notifications:*`，gated 的短标签；长句仍 copy 不判）→ 双语句 / kind 登记在 **`server/notify_catalog.py`**（server-owned 目录，`GET /api/notifications`，§28 追记）**且** `shell/Sources` 有同一对 `L("zh","en")`（插值只差占位名即同一句：目录 `{n}`、Swift `\(overflow.count)`）；(b) `shell_source`——壳自己持有的 UserDefaults 偏好键（字幕 / 录制引擎的键随逐字节搬入的引擎文件归壳，加 `screenPermissionRequested` / `vaultAccessGranted`）→ `shell/Sources` 出现字面量 `"<key>"`；(c) `server_source`——概念搬到了 server 的偏好键 → 清单点名的 `landing` 字面量出现在 `server/*.py`（`terminalApp` → `"terminal_app"`，§68.7；`hasCompletedFirstRun` → `setup_done.json`，§68.5）。归属表加两张：`VIA_SCREEN`（调用者标识 → screen：`Self.postSystemNotice` → `notifications`，壳 RecordingController 直发的三句录制通知自此归 shell，不再算 header.recording 的界面文案）与 **`PREF_OWNER`**（prefs 键 → owner + 一行理由 [+ landing]；`retired` = 新架构无对应概念，只列不判，理由进 JSON `attribution.pref_owner`——`showMenuBarIcon`（D3 Dock-only）、`recordingConsentShown`（并入壳 `recordingMode` 无存值 = 未同意 = off，P0-11，+ `setup_done.json`））。这是 66.2 末句「新的不搬判断走归属表」的偏好键版：**不进 waivers.txt**，PR 描述逐条列给 owner。判例 `tests/test_ui_parity_check.py`（三条探针的在 / 不在、无目录 = 不在）、`tests/test_ui_inventory_extractor.py`（两张表驱动 owner / gated / probe）、`tests/test_server_notify_catalog.py`（目录 ↔ 壳 L() 逐字、清单每个 kind / 通知句都登记）。
 
 ### 66.3 设计 token 单源（ui/tokens/native-tokens.json → tokens.css 生成块）
 
@@ -5367,6 +5380,7 @@ server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语
 
 - section 词表（顺序 = 设置页通用区顺序；truth = `settings_catalog.SECTIONS`）：`sources`（gmail_enabled / gmail_address / slack_enabled / obsidian_enabled / obsidian_raw）、`notifications`（review_notify）、`telemetry`（telemetry.enabled / level / capture_input）、`digest`（digest_frequency / weekly_digest_enabled）、`general`（language / default_output_format / updates_check_enabled）、`approval`（default_target_repo / skip_permissions / create_github_repo / show_cost_above_usd / require_text_confirm_above_usd / trash_retention_days）、`flags`（features.*，`DEFAULT_FEATURES` 全集）、`redaction`（enabled / terms_file / mask_secrets）、`voice`（voice_enabled）、`maintainer`（repo_path / session_id）。`models` 仍由 §59 自己的模块服务（同一 URL 前缀，精确表优先）。**2026-09-02 修订（§54.4）**：`sources` 一拆三为 `obsidian`（obsidian_enabled / obsidian_raw）/ `slack`（slack_enabled / owner_slack_user_id / slack_channels / watch_people）/ `gmail`（gmail_enabled / gmail_address / gmail_fetch_command），按原生分区；`kind` 词表加 `list`；field 加 add-only `placeholder{zh,en}`；标签逐字镜像原生（§66.2 `control:settings.*`）。
 - `kind` 词表 `bool | enum | string | number | int | list`（list：文件里是字串表，PUT 接受 JSON 字串表或逗号 / 换行分隔的一个字串，空 = 清键；§54.4）；effective 三层 = override（嵌套块优先，再扁平点号键）→ config.yaml 路径 → default，归一失败视为缺席（管线同款）。
+- **2026-09-03 追记（add-only）**：`general` 区新增 `terminal_app`（enum `auto | ghostty | terminal | iterm2`，默认 `auto`，override-only；标签逐字镜像原生「终端应用 / Terminal app」）= 原生 UserDefaults `terminalApp` 的 server 侧落点（§66.2 `setting:prefs:terminalApp`，probe server_source）——执行者是 server（§68.7 `open -a`），所以偏好住 overrides 不住浏览器。`act/lib/config.py` 收进 `_OVERRIDE_FIELDS`（`_coerce_terminal_app`：未知值回 `auto`）与 `Config.terminal_app`（`review_notify` 同款「唯一读者在管线之外」）；词表单源 `config.TERMINAL_APPS`。其它 server 模块读一把旋钮用 `settings_catalog.effective_value(home, section, key)`。
 - PUT：body 为 `{key: value}` 子集；未知键 400 `UNKNOWN_FIELD`；空 body / 类型错 / 越界（enum 外、负数、非整数 int、多行或 >1024 字符串）400 `INVALID_FIELD`；bool **只认 JSON 布尔**；string 空 = 清键；全部键先校验再一次落盘；overrides 不可解析 409 `CONFLICT` 不覆盖。diff-write 与 nested 规则见 §15 v0.48.x 追记。`set_flat_override` 是其它 server 模块的窄写口（Slack auth.test 自动填 `owner_slack_user_id`）。
 - web 之外的其它 section（模型 §59、录制 / 字幕 = 壳 UserDefaults 经 §61 桥、Skills / MCP / 导入 = 只读列表 + inbox 动作、素材库 = P5 占位、关于 = §68.6）在设置页有固定落点（`SettingsPage.SETTINGS_TOC` 是目录，`?anchor=<id>` 深链）。
 
@@ -5395,6 +5409,7 @@ server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语
 
 原生双击指令行 → TerminalLauncher 的 web 落点：server 从**投影行**推导命令（`copy_cmd` 优先，其次 `claude --resume <session_id>`，session_id 过 SAFE_ID），写可执行 `.command`（`cd <cwd|home>` + `export AIASSISTANT_HOME` + `exec <cmd>`）到 `$TMPDIR` 并 `open`（Terminal.app 执行，不需要自动化授权）；**绝不接受客户端文本**（与 reveal / ai-fix 同一纪律）；查无此卡 404、无会话 400、非 darwin 501；`opener` 注入缝。web：运行中（非排队 / 非受阻）与待验收卡的「在终端接管」按钮。
 
+**2026-09-03 追记（add-only）——用哪个终端**：`open` 改为 `open -a <终端> <file>.command`，终端 = 设置「通用 · 终端应用」（§68.1 `terminal_app`）：`auto` = 装了 Ghostty（`/Applications` / `~/Applications`）就 Ghostty，否则 Terminal（原生 `TerminalLauncher.preferred` 同款：Terminal / Ghostty / iTerm2 都把 `.command` 当「终端脚本」文档类型直接执行）；选了没装的终端 `open -a` 非零 → 回落到不带 `-a` 的 `open`（系统默认处理者），绝不报错。`open_command_file(path, opener, home)` 是三条 `.command` 通道（接管会话 / 开发会话 §54.4 / 卸载 §68.6）的共同出口，`home` 决定读哪份 overrides；注入的 `opener` 仍只收 path。「让 AI 修」走 `act.ai_fix --open`（`platform.open_path`，系统默认处理者）**不在本条**——它是守护进程侧的通道，改它另 PR。判例 `tests/test_server_board_tools.py`。
 ### 68.8 横幅一键修复（`POST /api/repair/actd {}`）
 
 原生 PipelineRepair 的最小诚实版：`com.zelin.aiassistant.actd` 在 launchd **已加载**（`launchctl print` 退出 0）→ `launchctl kickstart -k`；**未加载** → 409 `CONFLICT`，修法 `bash install.sh`（渲染 + 加载模板是安装器的活，server 不重造 §55 占位符替换）；kickstart 非零 → 500 带输出；非 darwin 501；label 与 `act/doctor.ACTD_LABEL` 逐字一致（判例）。web：`PipelineBanner` 在 stalled / failing / stale 三态给「一键修复」+ 诊断链接，成功 3 s 后重拉 health。
@@ -5419,6 +5434,7 @@ Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`�
 
 - **通知中继**：§28 追记（搬入副本、5 s drain、点击前置窗口、`NotifyRelayDelegate.install()`）。
 - **TCC 探针 / 请求 / 深链**：§68.3；`Analytics.log("permissions_action", cap)` 词表不变。
+- **2026-09-03 追记（add-only）——第四项授权：笔记库（Documents）**：`PermissionsProbe.vault`（`granted | denied | unknown`）= 原生 `PermissionsModel.vault` 的被动探针（**永不主动读 ~/Documents**：`state/vault_sync_mode == "mirror"` 或 UserDefaults `vaultAccessGranted`（原生同名键，§66.2 probe shell_source）→ granted）；`requestPermission {kind: "vault"}` = 原生 `requestVaultAccess`（GUI 里读一次 vault 根 = `obsidian_raw` 的上级，override → config.yaml → 默认；ENOENT 不是拒绝、照 ObsidianVaultSetup 建目录——同一次 Documents 授权；成功写 `vaultAccessGranted`；已拒绝再点 → 深链 `files_folders` 面板）。授权落在壳的 bundle 身份上，上条 helper CLI 的 vault-sync-helper 从 cron 里复用。词表 add-only：`kinds` 加 `vault`、`panes` 加 `files_folders`（server `permissions.PANES` 同步），快照 `permissions.vault`；web 权限体检页第四行「笔记库访问（Documents）/ Notes vault access (Documents)」（原生 vaultRow 逐字，被拒的「打开系统设置」深链文件与文件夹面板）。
 - **登录时启动**：§68.6（`SMAppService.mainApp`；bare binary 无 bundle 时如实报不支持）。
 - **全局快速捕获快捷键**：`⌃⌥Space`（Carbon `RegisterEventHotKey`，**不需要辅助功能授权**；`QuickCaptureHotkey.label` 是页面显示的人话）→ 前置看板窗口 + 向页面推 `zai-shell-command {command: "quick_capture"}`（§61.1 之外的第二个事件名，冻结 `zai-shell-command`；add-only 命令词表）；页面聚焦提案列 composer，不在看板页先回看板。
 - **Dock 徽章**：桥 `setBadge {count}`（非负整数）→ `NSApp.dockTile.badgeLabel`；count = 等你动作的卡数（提案 + 需输入 + 待验收，`counts` 真实总数优先；原生 §15 v0.46 ② 的 Dock 版）。页面每次看板回流推一次。

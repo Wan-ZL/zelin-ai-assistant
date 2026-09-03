@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { navigate } from "../../route";
 import { resetStoreForTests, getState } from "../../store";
-import { HISTORY_MAX, pushHistory, readHistory, runSlashCommand } from "./composerCommands";
+import { HISTORY_KEY, HISTORY_MAX, LEGACY_HISTORY_KEY, pushHistory, readHistory, runSlashCommand } from "./composerCommands";
 
 vi.mock("../../route", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../route")>();
@@ -28,8 +28,20 @@ describe("capture history", () => {
     expect(history[0]).toBe("item 24");
     pushHistory("item 24");
     expect(readHistory().filter((x) => x === "item 24")).toHaveLength(1);
-    window.localStorage.setItem("zai.captureHistory", "not json");
+    window.localStorage.setItem(HISTORY_KEY, "not json");
     expect(readHistory()).toEqual([]);
+  });
+
+  it("uses the native UserDefaults key name and migrates the pre-1.0 key once", () => {
+    expect(HISTORY_KEY).toBe("captureHistory"); // §66.2 setting:prefs:captureHistory 探针按字面量找
+    window.localStorage.setItem(LEGACY_HISTORY_KEY, JSON.stringify(["old one", "older"]));
+    expect(readHistory()).toEqual(["old one", "older"]);
+    expect(window.localStorage.getItem(LEGACY_HISTORY_KEY)).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(HISTORY_KEY) ?? "[]")).toEqual(["old one", "older"]);
+    // 新键在场后旧键再出现也不再读（不会把已删的历史复活）
+    window.localStorage.setItem(LEGACY_HISTORY_KEY, JSON.stringify(["ghost"]));
+    pushHistory("fresh");
+    expect(readHistory()).toEqual(["fresh", "old one", "older"]);
   });
 });
 

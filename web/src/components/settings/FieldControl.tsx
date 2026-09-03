@@ -47,6 +47,11 @@ export function choiceLabel(key: string, choice: string, text: (zh: string, en: 
     "default_output_format:html": ["HTML", "HTML"],
     "telemetry.level:basic": ["基础", "Basic"],
     "telemetry.level:detailed": ["详细（默认）", "Detailed (default)"],
+    // 原生 TerminalApp.displayName（Ghostty / Terminal / iTerm2）+ web 才有的 auto（原生 preferred 的兜底规则）
+    "terminal_app:auto": ["自动（装了 Ghostty 就用它，否则 Terminal）", "Auto (Ghostty if installed, else Terminal)"],
+    "terminal_app:ghostty": ["Ghostty", "Ghostty"],
+    "terminal_app:terminal": ["Terminal", "Terminal"],
+    "terminal_app:iterm2": ["iTerm2", "iTerm2"],
   };
   const hit = table[`${key}:${choice}`];
   return hit ? text(hit[0], hit[1]) : choice;

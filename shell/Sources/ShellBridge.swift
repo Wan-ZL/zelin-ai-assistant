@@ -120,6 +120,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandlerWithReply {
             "screen": perm.screen,
             "microphone": perm.microphone,
             "notifications": perm.notifications,
+            // §68.13 add-only：笔记库（Documents）授权——原生 PermissionsModel.vault 的被动探针
+            "vault": perm.vault,
         ]
         return [
             "recording": recording,

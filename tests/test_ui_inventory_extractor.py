@@ -231,6 +231,19 @@ NOTIFY = '''
 final class NotifyRelay {
     func drain() {
         if e.kind == "review_ready" && reviewMode == "off" { return }
+        content.title = L("还有 \\(overflow.count) 条通知", "+\\(overflow.count) more notifications")
+    }
+}
+'''
+
+RECORDING = '''
+final class RecordingController {
+    func poll() {
+        Self.postSystemNotice(title: L("录制已就绪", "Recording is live"), body: note)
+        UserDefaults.standard.set(true, forKey: "screenPermissionRequested")
+        UserDefaults.standard.set(v, forKey: "terminalApp")
+        UserDefaults.standard.set(true, forKey: "recordingConsentShown")
+        UserDefaults.standard.set("screen", forKey: "recordingMode")
     }
 }
 '''
@@ -243,6 +256,7 @@ FILES = {
     "Kanban.swift": KANBAN,
     "Cards.swift": CARDS,
     "NotifyRelay.swift": NOTIFY,
+    "Recording.swift": RECORDING,
 }
 
 
@@ -336,6 +350,21 @@ class ControlClassificationTestCase(_FixtureCase):
         main_menu = self.controls["control:menu.main:menu-item:settings"]
         self.assertEqual((main_menu["owner"], main_menu["gated"]), ("shell", False))
         self.assertTrue(self.controls["control:board.running:button:fix-with-ai"]["gated"])
+        self.assertNotIn("probe", self.controls["control:board.running:button:fix-with-ai"])
+
+    def test_shell_posted_notices_are_attributed_to_notifications_and_probed_by_catalog(self):
+        # VIA_SCREEN：Self.postSystemNotice(title: L(...)) 归 notifications（owner shell），不是 header.recording
+        notice = self.controls["control:notifications:label:recording-is-live"]
+        self.assertEqual((notice["owner"], notice["gated"], notice["probe"]), ("shell", True, "notify_catalog"))
+        self.assertEqual(notice["via"], "Self.postSystemNotice")
+        self.assertNotIn("control:header.recording:label:recording-is-live", self.controls)
+        overflow = self.controls["control:notifications:label:overflow-count-more-notifications"]
+        self.assertEqual((overflow["owner"], overflow["gated"], overflow["probe"]), ("shell", True, "notify_catalog"))
+        self.assertEqual(overflow["zh"], "还有 {overflow.count} 条通知")
+        attribution = self.inventory["attribution"]
+        self.assertEqual(attribution["via_screen"], {"Self.postSystemNotice": "notifications"})
+        self.assertEqual(attribution["probed_shell_screens"], ["notifications"])
+        self.assertIn("terminalApp", attribution["pref_owner"])
 
     def test_card_affordances_group_verbs_by_lane(self):
         aff = self.inventory["lanes"]["card_affordances"]
@@ -363,6 +392,28 @@ class LanesKeysShortcutsTestCase(_FixtureCase):
         self.assertNotIn(("overrides", "telemetry"), keys)
         self.assertTrue(keys[("prefs", "cardSortOrder")]["sources"][0].startswith("Settings.swift:"))
 
+    def test_pref_owner_table_drives_owner_gating_and_probe(self):
+        keys = {k["key"]: k for k in self.inventory["settings_keys"] if k["store"] == "prefs"}
+        web = keys["cardSortOrder"]                       # 表外 + 非引擎前缀 → web，vitest 之外的 web/src 探针
+        self.assertEqual((web["owner"], web["gated"]), ("web", True))
+        self.assertNotIn("probe", web)
+        engine = keys["recordingMode"]                    # 引擎前缀 → shell，探 shell/Sources
+        self.assertEqual((engine["owner"], engine["gated"], engine["probe"]), ("shell", True, "shell_source"))
+        shell = keys["screenPermissionRequested"]         # 表：shell
+        self.assertEqual((shell["owner"], shell["gated"], shell["probe"]), ("shell", True, "shell_source"))
+        self.assertTrue(shell["reason"])
+        server = keys["terminalApp"]                      # 表：server + landing 字面量
+        self.assertEqual((server["owner"], server["gated"], server["probe"], server["landing"]),
+                         ("server", True, "server_source", '"terminal_app"'))
+        for key in ("showMenuBarIcon", "recordingConsentShown"):   # 表：retired → 只列不判，理由进 JSON
+            self.assertEqual((keys[key]["owner"], keys[key]["gated"]), ("retired", False))
+            self.assertNotIn("probe", keys[key])
+            self.assertTrue(keys[key]["reason"])
+        for key, entry in inv.PREF_OWNER.items():          # 表里每一项都有 owner + reason；server 项必带 landing
+            self.assertIn(entry["owner"], ("shell", "server", "retired"), key)
+            self.assertTrue(entry.get("reason"), key)
+            self.assertEqual(entry["owner"] == "server", "landing" in entry, key)
+
     def test_shortcuts_menu_items_keyboard_shortcuts_owner(self):
         shortcuts = {s["id"]: s for s in self.inventory["shortcuts"]}
         self.assertEqual(shortcuts["shortcut:menu.main:cmd-,-settings"]["key"], "⌘,")
@@ -376,7 +427,9 @@ class LanesKeysShortcutsTestCase(_FixtureCase):
     def test_notification_kinds(self):
         self.assertEqual([n["id"] for n in self.inventory["notifications"]],
                          ["notification:review_ready", "notification:general"])
-        self.assertFalse(any(n["gated"] for n in self.inventory["notifications"]))
+        # owner shell 但判：探针 = server/notify_catalog.py 的 kind 词表（§66.2 追记）
+        self.assertTrue(all(n["gated"] and n["owner"] == "shell" and n["probe"] == "notify_catalog"
+                            for n in self.inventory["notifications"]))
 
     def test_theme_layout_pointers_and_stats(self):
         ids = [t["id"] for t in self.inventory["theme_layout"]]

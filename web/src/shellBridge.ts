@@ -56,6 +56,7 @@ export interface ShellPermissionsState {
   screen: PermissionStatus;
   microphone: PermissionStatus;
   notifications: PermissionStatus;
+  vault: PermissionStatus;          // 笔记库（Documents）授权：壳的被动探针（vault_sync_mode=mirror 或 vaultAccessGranted）
 }
 
 export interface ShellState {
@@ -82,8 +83,8 @@ export type ShellMethod =
   | "setCaptionPrefs"
   | "setBadge";
 
-export const PERMISSION_KINDS = ["screen", "microphone", "notifications"] as const;
-export const PANE_IDS = ["full_disk", "screen", "microphone", "notifications"] as const;
+export const PERMISSION_KINDS = ["screen", "microphone", "notifications", "vault"] as const;
+export const PANE_IDS = ["full_disk", "screen", "microphone", "notifications", "files_folders"] as const;
 
 interface ZaiShellHandler {
   postMessage(body: unknown): Promise<unknown>;
@@ -156,6 +157,7 @@ export function normalizeShellState(raw: unknown): ShellState {
       screen: asStatus(perm.screen),
       microphone: asStatus(perm.microphone),
       notifications: asStatus(perm.notifications),
+      vault: asStatus(perm.vault),
     },
     launch_at_login: asBool(obj.launch_at_login),
     hotkey: asString(obj.hotkey, "⌃⌥Space"),

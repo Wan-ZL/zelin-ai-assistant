@@ -52,7 +52,7 @@ func run() {
         check(cap[key] != nil, "captions.\(key) present (caption prefs)")
     }
     let perm = snap["permissions"] as? [String: Any] ?? [:]
-    for key in ["screen", "microphone", "notifications"] {
+    for key in ["screen", "microphone", "notifications", "vault"] {
         let value = perm[key] as? String ?? "?"
         check(["granted", "denied", "unknown"].contains(value),
               "permissions.\(key) ∈ granted|denied|unknown", "got \(value)")
@@ -132,9 +132,13 @@ func run() {
     } else {
         check(false, "getPermissions must not throw")
     }
-    check(PermissionsProbe.kinds == ["screen", "microphone", "notifications"], "permission kinds vocabulary frozen")
-    check(Set(PermissionsProbe.panes.keys) == Set(["full_disk", "screen", "microphone", "notifications"]),
+    check(PermissionsProbe.kinds == ["screen", "microphone", "notifications", "vault"], "permission kinds vocabulary frozen")
+    check(Set(PermissionsProbe.panes.keys) == Set(["full_disk", "screen", "microphone", "notifications", "files_folders"]),
           "pane vocabulary frozen")
+    // 笔记库探针是被动的：没有 vault_sync_mode=mirror 也没有 vaultAccessGranted 时答 unknown，绝不读 ~/Documents
+    check(["granted", "unknown"].contains(PermissionsProbe.probeVaultPassive()), "vault probe is passive (granted|unknown)")
+    check(PermissionsProbe.vaultRootPath().hasSuffix("Obsidian Vault") || !PermissionsProbe.vaultRootPath().isEmpty,
+          "vault root = obsidian_raw's parent (default ~/Documents/Obsidian Vault)")
 
     // ---- 4. setLanguage flips the L() mirror (no persistence) ----
     print("[4] setLanguage:")
