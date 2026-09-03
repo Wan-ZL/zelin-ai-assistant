@@ -380,6 +380,11 @@ jobs:
           npm ci
           npx playwright install chromium
 
+      - name: Install PyYAML (the demo server is the real python3 -m server)
+        # 运行时白名单内的依赖（§0 宪法第 7 条）；runner 的 python3 是 PEP 668 managed，两种装法都试。
+        run: python3 -m pip install --user "pyyaml>=6,<7" || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7"
+        working-directory: .
+
       - name: Build (the server serves web/dist)
         run: npm run build
 

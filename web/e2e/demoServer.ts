@@ -30,19 +30,21 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 15_000): Promise<void> {
+async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let last = "no response yet";
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`server exited early with code ${child.exitCode}`);
     try {
       const res = await fetch(`${baseURL}/api/board`);
       if (res.ok) return;
-    } catch {
-      /* not up yet */
+      last = `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`;
+    } catch (error) {
+      last = String(error);
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`server did not answer on ${baseURL}/api/board within ${timeoutMs} ms`);
+  throw new Error(`server did not answer OK on ${baseURL}/api/board within ${timeoutMs} ms (last: ${last})`);
 }
 
 /** 种 `scene`（默认 initial）→ 起 server → 返回可用的 baseURL。调用方负责 stop()。 */
@@ -57,17 +59,22 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
   // 开发者机器的真实路径 / 模型名，CI runner 上也没有这个文件，两边一致 = 「文件不存在」态。
   const child = spawn(PYTHON, ["-m", "server"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: home, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: REPO_ROOT },
-    stdio: ["ignore", "ignore", "pipe"],
+    env: {
+      ...process.env, HOME: home, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: REPO_ROOT,
+      PYTHONUNBUFFERED: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  let stderr = "";
-  child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+  let output = "";
+  child.stdout?.on("data", (chunk) => { output += String(chunk); });
+  child.stderr?.on("data", (chunk) => { output += String(chunk); });
   const baseURL = `http://127.0.0.1:${port}`;
   try {
     await waitForBoard(baseURL, child);
   } catch (error) {
     child.kill();
-    throw new Error(`${(error as Error).message}\n${stderr}`);
+    const version = spawnSync(PYTHON, ["--version"], { encoding: "utf-8" });
+    throw new Error(`${(error as Error).message}\n[${PYTHON} = ${(version.stdout || version.stderr).trim()}]\n${output}`);
   }
   return {
     baseURL,
