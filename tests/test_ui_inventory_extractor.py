@@ -223,8 +223,19 @@ struct TaskRow: View {
             Button(L("停止", "Stop")) { }
         } label: { Text(L("更多", "More")) }
         Button(L("让 AI 修", "Fix with AI")) { }
+        Text(L("💰 预计费用: \\(Self.money(cost))", "💰 Estimated cost: \\(Self.money(cost))"))
     }
 }
+
+/// trash_reason 词表——只被 TrashRow 调用，FUNCTION_SCREEN 把它点名到 trash
+fileprivate func trashReasonLabel(_ r: String) -> String {
+    switch r {
+    case "rejected": return L("你拒绝的", "You rejected it")
+    default: return r
+    }
+}
+
+fileprivate func hardnessLabel(_ h: String) -> String { L("较难", "Hard") }
 '''
 
 NOTIFY = '''
@@ -248,7 +259,16 @@ final class RecordingController {
 }
 '''
 
+DOCTOR = '''
+enum LaunchAgents {
+    static func install(_ label: String) -> (Bool, String) {
+        return (false, L("写入 \\(dest) 失败: ", "Failed to write \\(dest): ") + error.localizedDescription)
+    }
+}
+'''
+
 FILES = {
+    "Doctor.swift": DOCTOR,
     "MainWindow.swift": MAIN_WINDOW,
     "AppDelegate.swift": APP_DELEGATE,
     "Settings.swift": SETTINGS,
@@ -328,6 +348,28 @@ class ControlClassificationTestCase(_FixtureCase):
     def test_interpolation_becomes_placeholder(self):
         c = self.controls["control:board.needs_approval:label:request-merge-suggestions-activecount"]
         self.assertEqual(c["en"], "Request merge suggestions ({activeCount})")
+        # 插值里嵌套括号按配对吞：\(Self.money(cost)) 是一个占位，不是 {Self.money(cost} + 尾巴 )
+        cost = self.controls["control:board.running:label:estimated-cost-self-money-cost"]
+        self.assertEqual(cost["en"], "💰 Estimated cost: {Self.money(cost)}")
+        self.assertEqual(cost["zh"], "💰 预计费用: {Self.money(cost)}")
+
+    def test_free_function_table_and_per_control_owner(self):
+        # FUNCTION_SCREEN：(Cards.swift, trashReasonLabel) → trash；表外的自由函数仍走文件默认（board.card）
+        rejected = self.controls["control:trash:label:you-rejected-it"]
+        self.assertEqual((rejected["screen"], rejected["owner"], rejected["gated"]), ("trash", "web", True))
+        self.assertNotIn("control:board.card:label:you-rejected-it", self.controls)
+        self.assertEqual(self.controls["control:board.card:label:hard"]["screen"], "board.card")
+        attribution = self.inventory["attribution"]
+        self.assertEqual(attribution["function_screen"], {"Cards.swift:trashReasonLabel": "trash"})
+        # CONTROL_OWNER：单条点名 retired 的 id 只列不判，理由随行进 JSON
+        self.assertIn("control:doctor:label:failed-to-write-dest", attribution["control_owner"])
+        for cid, entry in inv.CONTROL_OWNER.items():
+            self.assertEqual(entry["owner"], "retired")
+            self.assertTrue(entry["reason"])
+        plist = self.controls["control:doctor:label:failed-to-write-dest"]
+        self.assertEqual((plist["owner"], plist["gated"]), ("retired", False))
+        self.assertIn("server 永不写 plist", plist["reason"])
+        self.assertEqual({c["id"] for c in self.controls.values() if c.get("reason")}, {"control:doctor:label:failed-to-write-dest"})
 
     def test_duplicate_ids_get_dense_suffixes_in_source_order(self):
         first = self.controls["control:settings.general:button:open"]

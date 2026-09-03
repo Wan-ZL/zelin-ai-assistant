@@ -207,8 +207,10 @@ describe("failed running card: 让 AI 修 + 回答… + 停止", () => {
     vi.mocked(postAiFix).mockRejectedValueOnce(new Error("Fix with AI is disabled in config.yaml"));
     render(<RunningCard row={failed} />);
     fireEvent.click(screen.getByRole("button", { name: "Fix with AI" }));
-    const line = await screen.findByText(/Fix with AI failed to launch: Fix with AI is disabled/);
-    expect(line.className).toContain("is-danger");
+    // 前缀与 server 原文各一节点（§54.4 前缀与值分两个节点）
+    const prefix = await screen.findByText((_c, node) => node?.tagName === "SPAN" && node.textContent === "Fix with AI failed to launch: ");
+    expect(screen.getByText("Fix with AI is disabled in config.yaml")).toBeTruthy();
+    expect(prefix.closest(".card-meta-text")?.className).toContain("is-danger");
   });
 
   it("回答… → comment 四键形（steer 通道），wire 与评论完全相同", () => {

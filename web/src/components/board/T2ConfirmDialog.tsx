@@ -33,12 +33,13 @@ export function T2ConfirmDialog({ cardId, summary, costLine, onConfirm, onCancel
 
   return (
     <ModalDialog title={text("T2 · 高影响操作确认", "T2 · High-Impact Action Confirmation")} onCancel={onCancel}>
+      {/* 原生 informativeText 的三行（批准 id：摘要 / 金额行 / 提示）——各自一个节点，金额行「预计费用：$N」/「成本未知」逐字 */}
       <p className="dialog-body">
-        {text(`批准 ${cardId}：${summary}`, `Approve ${cardId}: ${summary}`)}
+        <span>{text(`批准 ${cardId}：${summary}`, `Approve ${cardId}: ${summary}`)}</span>
         {"\n"}
-        {costLine}
+        <span className="dialog-cost-line">{costLine}</span>
         {"\n\n"}
-        {text("输入 确认 或 go", "Type 确认 or go")}
+        <span>{text("请输入 确认 或 go 后再点「批准」。", "Type 确认 or go, then click \"Approve\".")}</span>
       </p>
       <input
         type="text"

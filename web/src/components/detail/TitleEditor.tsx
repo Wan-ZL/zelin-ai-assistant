@@ -14,6 +14,19 @@ export function normalizeTitle(raw: string): string | null {
   return [...title].length <= TITLE_MAX ? title : null;
 }
 
+/** 原生 TitleEditRow 的「曾用名: 」一行（former_titles 非空才渲染；前缀与名字各一节点，名字以 · 相连） */
+export function FormerNames({ titles }: { titles: unknown }) {
+  const { text } = useI18n();
+  const names = Array.isArray(titles) ? titles.filter((t): t is string => typeof t === "string" && t.trim() !== "") : [];
+  if (names.length === 0) return null;
+  return (
+    <span className="zai-detail-dim zai-former-names" title={names.join(" · ")}>
+      <span>{text("曾用名: ", "Former names: ")}</span>
+      <span>{names.join(" · ")}</span>
+    </span>
+  );
+}
+
 export function TitleEditor({ cardId, current }: { cardId: string; current: string }) {
   const { text } = useI18n();
   const { pending, error, submit } = useSubmit();
@@ -59,6 +72,7 @@ export function TitleEditor({ cardId, current }: { cardId: string; current: stri
         type="text"
         value={draft}
         autoFocus
+        placeholder={text("新的卡片名字（≤64 字）", "New card name (≤64 chars)")}
         aria-label={text("新标题", "New title")}
         onChange={(e) => setDraft(clipCodePoints(e.target.value, TITLE_MAX * 2))}
         onKeyDown={onKey}

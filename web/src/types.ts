@@ -353,6 +353,18 @@ export interface Board {
   self_improve?: SelfImproveState;
   /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
   radar_sources?: Record<string, RadarSourceHealth>;
+  /** §44.6 静默并入回执（add-only 顶层键；TTL 600 s 内、cap 10、按 at 降序）——提案列顶一行 info 通知 */
+  fold_receipts?: FoldReceipt[];
+  [key: string]: unknown;
+}
+
+/** §44.6 并入回执行（dashboard._fold_receipts 的 wire 形逐字镜像）：只有目标卡 id + 展示名，永不带被并入原文 */
+export interface FoldReceipt {
+  id: string;
+  req: string;
+  title: string;
+  channel: string;
+  at: number;
   [key: string]: unknown;
 }
 

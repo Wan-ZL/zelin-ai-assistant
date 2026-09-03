@@ -130,8 +130,14 @@ export function MergeSuggestionCard({ suggestion }: { suggestion: MergeSuggestio
               ))}
               {(() => {
                 const loose = suggestion.ids.filter((id) => !suggestion.groups!.some((g) => g.ids.includes(id) || g.primary === id));
+                // 原生：前缀 + 名字以「、」（en ", "）joined——分隔符是原生的独立 L()，各自一节点
                 return loose.length > 0 && (
-                  <li className="card-meta-text"><span className="card-detail-label">{text("保持独立：", "Stays separate: ")}</span><span>{loose.map(nameOf).join(text("、", ", "))}</span></li>
+                  <li className="card-meta-text">
+                    <span className="card-detail-label">{text("保持独立：", "Stays separate: ")}</span>
+                    {loose.map((id, i) => (
+                      <span key={id}>{i > 0 && <span className="merge-sep">{text("、", ", ")}</span>}<span>{nameOf(id)}</span></span>
+                    ))}
+                  </li>
                 );
               })()}
             </ul>

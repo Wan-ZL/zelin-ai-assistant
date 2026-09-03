@@ -7,7 +7,8 @@ vitest 跑在 jsdom 里，拿不到 python 与 server，所以把 scripts/demo_s
                                           没有封存行，而看板右侧书立条要渲染它们；+ 词表行
                                           _vocab_rows：每列再加几行把卡面词表——状态词 / 难度 /
                                           类型 / 截止 / tier 提示 / 分歧 / 回锅 / 已并入 / 合并建议
-                                          三态——都渲染出来，探针才判得到；探针只认渲染出的字）
+                                          三态 / 需输入会话 / 时长 秒·天 / 曾用名 / 成本未知 T2 /
+                                          §44.6 并入回执——都渲染出来，探针才判得到；探针只认渲染出的字）
   ui/parity/fixtures/lanes.json        —— GET /api/lanes 响应体（server.lanes.catalog()）
   ui/parity/fixtures/settings.json     —— GET /api/settings（空 home = 全默认；文案 server-owned）
   ui/parity/fixtures/secrets.json      —— GET /api/secrets（Anthropic 已保存、其余未设置）
@@ -87,6 +88,15 @@ def _vocab_proposals(now):
         {"id": "P-134", "display_id": "P-134", "id_kind": "proposal", "title": "评审新的 API 设计稿",
          "summary": "按你的修改意见重提中。", "tier": "T1", "tier_hint": "一键可批", "hardness": "hard",
          "type": "review", "processing": True, "rework": True, "sources": src},
+        # T2 且成本未知：typed-confirm 弹窗的「成本未知」行（P-132 那张给「预计费用：$80」）；
+        # 另带 §37 活标题：display_title + former_titles → 详情抬头的「曾用名: 」
+        {"id": "P-135", "display_id": "P-135", "id_kind": "proposal", "title": "把周报模板迁到新的文档系统",
+         "display_title": "周报模板迁移", "former_titles": ["周报模板搬家", "迁移周报模板"],
+         "summary": "把周报模板从旧 wiki 搬到新的文档系统，保留历史版本。", "tier": "T2", "tier_hint": "需文字确认",
+         "hardness": "soft", "type": "paperwork", "cost_usd": None, "cost_state": "unknown", "show_cost": True,
+         "delivery_mode": "doc", "target_kind": "existing", "target_name": "your-workbench",
+         "target_repo": "~/Projects/your-workbench", "plan": ["导出", "导入", "校对"], "dod": ["新系统里能打开每一版"],
+         "sources": src, "processing": False},
     ]
 
 
@@ -98,8 +108,10 @@ def _vocab_running(now):
         dict(base, id="P-141", display_id="R-141", work_id="R-141", name="已派发但还没开工的卡", state="dispatched",
              dispatched_at=_epoch(now, minutes=3), agent_name="dispatched sample", session_id="f1f1f1f1-0000-4000-8000-000000000141",
              short_id="f1f1f1f1", copy_cmd="claude attach f1f1f1f1"),
+        # 排队卡的派发失败句读的是 dispatch_error（dashboard.py：与 last_error 分开表达）
         dict(base, id="P-142", display_id="R-142", work_id="R-142", name="排队等派发的卡", state="queued",
-             dispatched_at=None, last_error="dispatch failed: claude not found (Errno 2)"),
+             dispatched_at=None, last_error="dispatch failed: claude not found (Errno 2)",
+             dispatch_error="claude not found (Errno 2)", dispatch_error_id="claude_cli_missing"),
         dict(base, id="P-143", display_id="R-143", work_id="R-143", name="会话空闲的卡", state="idle",
              dispatched_at=_epoch(now, hours=5, minutes=17), started_at=_epoch(now, hours=5, minutes=17), agent_name="idle sample",
              session_id="f3f3f3f3-0000-4000-8000-000000000143", short_id="f3f3f3f3", copy_cmd="claude attach f3f3f3f3"),
@@ -107,8 +119,49 @@ def _vocab_running(now):
              dispatched_at=_epoch(now, days=1, hours=2), started_at=_epoch(now, days=1, hours=2),
              session_id="f4f4f4f4-0000-4000-8000-000000000144", short_id="f4f4f4f4", copy_cmd="claude attach f4f4f4f4",
              last_error="Traceback (most recent call last): boom", from_review=True, accepted_at=_epoch(now, days=2)),
+        # 其余状态词：受阻（会话等输入）/ 已完成（会话退出、待收割）/ 会话有新活动（legacy review-active 行）
+        dict(base, id="P-145", display_id="R-145", work_id="R-145", name="会话等输入的卡", state="blocked",
+             dispatched_at=_epoch(now, minutes=40), started_at=_epoch(now, minutes=40), agent_name="blocked sample",
+             session_id="f5f5f5f5-0000-4000-8000-000000000145", short_id="f5f5f5f5", copy_cmd="claude attach f5f5f5f5"),
+        dict(base, id="P-146", display_id="R-146", work_id="R-146", name="会话已退出待收割的卡", state="done",
+             dispatched_at=_epoch(now, hours=2), started_at=_epoch(now, hours=2), agent_name="done sample",
+             session_id="f6f6f6f6-0000-4000-8000-000000000146", short_id="f6f6f6f6", copy_cmd="claude attach f6f6f6f6"),
+        dict(base, id="P-147", display_id="R-147", work_id="R-147", name="待验收会话又活跃起来的卡", state="review-active",
+             dispatched_at=_epoch(now, hours=8), started_at=_epoch(now, hours=8), agent_name="review-active sample",
+             session_id="f7f7f7f7-0000-4000-8000-000000000147", short_id="f7f7f7f7", copy_cmd="claude attach f7f7f7f7"),
     ]
     return rows
+
+
+def _vocab_needs_input(now):
+    """需输入（blocked）行：§4 派发刹车之外的另一形——会话卡住等回答且带会话指令；
+    展开详情里「在终端接管会话：」（原生 detailBlock lane == .needsInput）。"""
+    return [
+        {"id": "P-148", "display_id": "R-148", "work_id": "R-148", "id_kind": "work", "name": "等你回答的会话",
+         "state": "blocked", "cwd": "~/Projects/inkweld", "delivery_mode": "repo", "summary": "词表行：受阻会话。",
+         "plan": ["步骤一"], "dod": ["验收点"], "dispatched_at": _epoch(now, minutes=25), "started_at": _epoch(now, minutes=25),
+         "session_id": "f8f8f8f8-0000-4000-8000-000000000148", "short_id": "f8f8f8f8", "copy_cmd": "claude attach f8f8f8f8",
+         "question": "要不要顺手把旧的 migration 也删掉？", "waiting_for": "你的回答", "resume_exhausted": True,
+         "last_error": "session paused: waiting for user input"},
+    ]
+
+
+def _vocab_review(now):
+    """待验收词表行：耗时 ≥ 1 天带小时位（{days}天{h}小时）+ 会话有新活动；另一行 45 秒（{secs}秒）。"""
+    base = {"id_kind": "work", "cwd": "~/Projects/example-bench", "delivery_mode": "repo",
+            "plan": ["步骤一"], "dod": ["验收点"], "summary": "词表行。", "sources": []}
+    long_start = _epoch(now, days=2, hours=5)
+    quick_start = _epoch(now, hours=3)
+    return [
+        dict(base, id="P-171", display_id="R-171", work_id="R-171", name="跑了一天多才交付的卡",
+             dispatched_at=long_start, review_at=long_start + 27 * 3600, session_active=True,
+             session_id="a1a1a1a1-0000-4000-8000-000000000171", short_id="a1a1a1a1", copy_cmd="claude attach a1a1a1a1",
+             delivered_summary="改完了，PR 已开。"),
+        dict(base, id="P-172", display_id="R-172", work_id="R-172", name="45 秒就交付的小卡",
+             dispatched_at=quick_start, review_at=quick_start + 45, session_active=False,
+             session_id="a2a2a2a2-0000-4000-8000-000000000172", short_id="a2a2a2a2", copy_cmd="claude attach a2a2a2a2",
+             delivered_summary="一行 typo 修好了。"),
+    ]
 
 
 def _vocab_trash(now):
@@ -124,22 +177,38 @@ def _vocab_trash(now):
 
 
 def _vocab_debt(now):
+    """潜在任务词表行：type 闭集里看板别处不出现的三种（调研 / 评审 / 训练）+ 其他。"""
+    src = [{"channel": "manual", "date": "2026-09-01", "quote": "先记下", "who": "me"}]
     return [
         {"id": "P-161", "display_id": "P-161", "id_kind": "proposal", "title": "其他类型的潜在任务",
-         "summary": "type=other 的词表行。", "type": "other", "hardness": "soft",
-         "sources": [{"channel": "manual", "date": "2026-09-01", "quote": "先记下", "who": "me"}]},
+         "summary": "type=other 的词表行。", "type": "other", "hardness": "soft", "sources": src},
+        {"id": "P-162", "display_id": "P-162", "id_kind": "proposal", "title": "调研新的向量数据库选型",
+         "summary": "type=research 的词表行。", "type": "research", "hardness": "soft", "sources": src},
+        {"id": "P-163", "display_id": "P-163", "id_kind": "proposal", "title": "评审队友的 RFC 草稿",
+         "summary": "type=review 的词表行。", "type": "review", "hardness": "soft", "sources": src},
+        {"id": "P-164", "display_id": "P-164", "id_kind": "proposal", "title": "训练一个小分类模型",
+         "summary": "type=training 的词表行。", "type": "training", "hardness": "hard", "sources": src},
     ]
+
+
+def _fold_receipts(now):
+    """§44.6 并入回执一条：看板提案列顶的一行 info 通知「刚才的输入已并入 R-xx「<title>」（没有建新卡）」。"""
+    return [{"id": "a3f1c2d4e5b6a7c8d9e0f1a2b3c4d5e6", "req": "R-105",
+             "title": "example-bench: 修 flaky 的 e2e 测试（retry 逻辑）",   # = 目标卡的展示名（dashboard._fold_receipts 现查）
+             "channel": "quick_capture", "at": _epoch(now, seconds=30)}]
 
 
 def _merge_suggestions(now):
     """§21 合并建议卡三态：分析中 / 完成（按分组）/ 失败。"""
     return [
         {"id": "MS-1", "ids": ["P-131", "P-133"], "status": "analyzing", "requested_at": _epoch(now, minutes=2)},
-        {"id": "MS-2", "ids": ["P-101", "P-132", "P-133"], "status": "done", "verdict": "partition", "confidence": "medium",
-         "rationale": "两张讲导出报告，一张讲入职文书。", "requested_at": _epoch(now, minutes=20),
+        # partition：两组 + 两张分组方案没点名的卡 → 「保持独立：A、B」（分隔符「、」是原生 joined 的独立词）
+        {"id": "MS-2", "ids": ["P-101", "P-132", "P-133", "P-102", "P-103"], "status": "done", "verdict": "partition",
+         "confidence": "medium", "rationale": "两张讲导出报告，一张讲入职文书，另两张各自独立。",
+         "requested_at": _epoch(now, minutes=20),
          "groups": [{"primary": "P-101", "ids": ["P-101", "P-132"], "reason": "同一份报告"},
                     {"primary": "P-133", "ids": ["P-133"], "reason": "独立"}],
-         "action_plan": ["P-132 并入 P-101", "P-133 保持独立"]},
+         "action_plan": ["P-132 并入 P-101", "P-133 保持独立", "P-102 / P-103 不动"]},
         {"id": "MS-3", "ids": ["P-102", "P-103"], "status": "failed", "error": "model timeout after 60s",
          "requested_at": _epoch(now, hours=1)},
         {"id": "MS-4", "ids": ["P-101", "P-132"], "status": "done", "verdict": "merge", "primary": "P-101", "confidence": "high",
@@ -165,13 +234,16 @@ def build_board(now=FIXED_NOW):
     board = demo_seed.build("initial", now=now)
     board["needs_approval"] += _vocab_proposals(now)
     board["running"] += _vocab_running(now)
+    board["needs_input"] = list(board.get("needs_input") or []) + _vocab_needs_input(now)
+    board["review"] += _vocab_review(now)
     board["trash"] += _vocab_trash(now)
     board["debt"] += _vocab_debt(now)
     board["merge_suggestions"] = _merge_suggestions(now)
+    board["fold_receipts"] = _fold_receipts(now)   # §44.6 add-only 顶层键
     # 第二张待验收卡的「耗时」带分钟位（1 小时 39 分）——时长词表 {h}小时{m}分 才渲染得到
     board["review"][1]["review_at"] = board["review"][1]["dispatched_at"] + 5977
     board["archived"] = _archived(now) + _archived_extra(now)
-    for lane in ("needs_approval", "running", "trash", "debt", "archived"):
+    for lane in ("needs_approval", "running", "needs_input", "review", "trash", "debt", "archived"):
         board["counts"][lane] = len(board[lane])
     board["device_label"] = "demo-mac"
     # §48 三源健康投影：一个正常、一个静默失败、一个关着（接入区「运行状态」三种句子都渲染到）；

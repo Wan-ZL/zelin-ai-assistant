@@ -53,7 +53,12 @@ export function pushHistory(entry: string): string[] {
 const PAGES: readonly AppPage[] = ["board", "trash", "archive", "settings", "permissions", "diagnostics", "setup"];
 const REC_MODES = ["off", "screen", "screen_audio"] as const;
 
-export type CommandResult = { handled: false } | { handled: true; note: string };
+/** handled:false = 不是命令（按普通捕获发出）；note = 成功回执；error = 原生 Composer.swift 的失败形——
+ *  `unrecognized`（打错了：「未识别或参数错误：」+ 原文，输入保留）或 `io`（命令本身坏了：原句）。 */
+export type CommandResult =
+  | { handled: false }
+  | { handled: true; note: string }
+  | { handled: true; error: { kind: "unrecognized"; input: string; usage: string } | { kind: "io"; message: string } };
 
 type Text = (zh: string, en: string) => string;
 
@@ -62,28 +67,30 @@ export async function runSlashCommand(raw: string, text: Text): Promise<CommandR
   const trimmed = raw.trim();
   if (!trimmed.startsWith("/")) return { handled: false };
   const [cmd, arg = ""] = trimmed.slice(1).split(/\s+/, 2);
+  // 参数打错 / 动词不认识 = 原生 SlashCommands.run 返回 false 的那条路：输入保留，一行「未识别或参数错误：」
+  const unrecognized = (usage: string): CommandResult => ({ handled: true, error: { kind: "unrecognized", input: trimmed, usage } });
   switch (cmd) {
     case "rec": {
-      if (!(REC_MODES as readonly string[]).includes(arg)) return { handled: true, note: text("用法：/rec off|screen|screen_audio", "Usage: /rec off|screen|screen_audio") };
+      if (!(REC_MODES as readonly string[]).includes(arg)) return unrecognized(text("用法：/rec off|screen|screen_audio", "Usage: /rec off|screen|screen_audio"));
       if (!hasShellBridge()) return { handled: true, note: text("/rec 只在看板 app（壳）里可用", "/rec only works inside the board app") };
       try {
         await (arg === "off" ? callShell("setRecording", { on: false }) : callShell("setRecording", { on: true, mode: arg }));
         return { handled: true, note: text(`录制 → ${arg}`, `Recording → ${arg}`) };
       } catch (e) {
-        return { handled: true, note: e instanceof Error ? e.message : String(e) };
+        return { handled: true, error: { kind: "io", message: e instanceof Error ? e.message : String(e) } };
       }
     }
     case "lang": {
-      if (arg !== "zh" && arg !== "en") return { handled: true, note: text("用法：/lang zh|en", "Usage: /lang zh|en") };
+      if (arg !== "zh" && arg !== "en") return unrecognized(text("用法：/lang zh|en", "Usage: /lang zh|en"));
       setLanguage(arg as Language);
       return { handled: true, note: text(`语言 → ${arg}`, `Language → ${arg}`) };
     }
     case "open": {
-      if (!(PAGES as readonly string[]).includes(arg)) return { handled: true, note: text(`用法：/open ${PAGES.join("|")}`, `Usage: /open ${PAGES.join("|")}`) };
+      if (!(PAGES as readonly string[]).includes(arg)) return unrecognized(text(`用法：/open ${PAGES.join("|")}`, `Usage: /open ${PAGES.join("|")}`));
       navigate(buildAppUrl(window.location.href, arg as AppPage, null));
       return { handled: true, note: text(`打开 ${arg}…`, `Opening ${arg}…`) };
     }
     default:
-      return { handled: true, note: text("未知命令；可用：/rec /lang /open", "Unknown command; available: /rec /lang /open") };
+      return unrecognized(text("可用：/rec /lang /open", "Available: /rec /lang /open"));
   }
 }

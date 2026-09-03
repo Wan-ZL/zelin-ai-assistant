@@ -14,7 +14,7 @@ import { useI18n } from "../../i18n";
 import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
 import { cardAction, useSubmit, pendingNote } from "./boardActions";
-import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
+import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, MergeStateChip, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
 import { BodyText, CopyButton, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
@@ -96,6 +96,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       {isBlocked ? (
         <>
           <div className="card-badges">
+            <MergeStateChip cardId={row.id} />
             <span className="chip chip-warning">{text("需输入", "Input")}</span>
             {row.resume_exhausted && (
               <span className="chip chip-danger">{text("恢复已放弃", "Auto-resume exhausted")}</span>
@@ -114,6 +115,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
         </>
       ) : isQueued ? (
         <div className="card-badges">
+          <MergeStateChip cardId={row.id} />
           <span className="chip">{text("排队中", "Queued")}</span>
           {/* 结构化排队原因（「等 R-xx / 等并发位」）——§M6.2 字段；过渡期字符串形也兼容，缺席不渲染 */}
           {queuedReason && <span className="chip">{queuedReason}</span>}
@@ -121,6 +123,7 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       ) : (
         <>
           <div className="card-badges">
+            <MergeStateChip cardId={row.id} />
             {/* 原生 TaskRow meta：状态章（accent 蓝）· 已交付过·再运行（青）· 运行时长 · repo 章。
                 working 由下方 sheen 行表达（执行中 / agents 列表名），只有非常规状态（idle / unknown /
                 review-active…）才出状态章——同一信息不在卡面说两遍 */}
@@ -176,6 +179,8 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
             <pre className="card-error-block">{errorText ?? row.last_error}</pre>
           </>
         )}
+        {/* §39 受阻卡的第二条路（原生 detailBlock lane == .needsInput）：把会话接到终端里——复制状态正确的 attach / --resume 指令 */}
+        {isBlocked && <CopyPathLine label={text("在终端接管会话：", "Take over in terminal: ")} path={cmd} />}
         <BodyText value={row.summary} />
         <PlanList plan={row.plan} />
         <DodList dod={row.dod} />
@@ -218,11 +223,12 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       {error && <p className="card-error">{error}</p>}
 
       {dialog === "stop" && (
+        // 标题逐字镜像原生 confirmationDialog「停止这个任务？」；卡号进正文首行（原生的对话框挂在卡上，不需要点名）
         <ForkDialog
-          title={text(`停止 ${displayId(row)}？`, `Stop ${displayId(row)}?`)}
+          title={text("停止这个任务？", "Stop this task?")}
           body={text(
-            "退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查",
-            "Discard & re-propose throws this run away; Keep for review keeps what it made for you to check",
+            `${displayId(row)} · 退回提案＝丢弃这次结果重来；去待验收＝留下它做的，我来检查`,
+            `${displayId(row)} · Discard & re-propose throws this run away; Keep for review keeps what it made for you to check`,
           )}
           choices={[
             {

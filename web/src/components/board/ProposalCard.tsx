@@ -10,7 +10,7 @@ import { displayId } from "../../cardId";
 import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
 import { cardAction, costLine, costText, deadlinePhrase, effectiveTier, hardnessLabel, tierHint, useSubmit, pendingNote } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, DetailsToggle, useCardExpanded } from "./cardChrome";
+import { CardDetails, CardHead, CardSurface, DetailsToggle, MergeStateChip, useCardExpanded } from "./cardChrome";
 import { DodList, PlanList, SourceList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
@@ -111,6 +111,8 @@ export function ProposalCard({ card }: ProposalCardProps) {
       <TargetLine card={card} />
       <EgressLines card={card} />
       <div className="card-badges">
+        {/* 合并态角标（合并分析中… / 合并中…）——原生 cardOverlay 压在卡右上；web 放章行首 */}
+        <MergeStateChip cardId={card.id} />
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板）。
             原生 tierLine：「T1 · 一键可批」——tier 与大白话各一个节点；未知 tier 只剩「未分级」 */}
         <span className="chip chip-purple">
@@ -199,7 +201,8 @@ export function ProposalCard({ card }: ProposalCardProps) {
               type="button"
               className="btn btn-success"
               // W17（§50）：typed-confirm 闸门读 effective_tier——外部升档卡
-              // （声明 T1、生效 T2）也必须过确认词，绝不单击直批
+              // （声明 T1、生效 T2）也必须过确认词，绝不单击直批；T2 的「批准」开的是弹窗（a11y 标出）
+              aria-haspopup={effectiveTier(card) === "T2" ? "dialog" : undefined}
               onClick={() => (effectiveTier(card) === "T2" ? setDialog("t2") : decide("approve"))}
             >
               {text("批准", "Approve")}

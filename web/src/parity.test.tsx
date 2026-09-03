@@ -7,7 +7,9 @@
 //     没装 / 没登录；后台服务在跑 / 没跑；cron 探针 ok / 被挡 / 停跑）各渲染几遍收全部状态词；依赖检查另按
 //     雷达 skip_reason 词表 × doctor 全绿 / 没回 渲染几遍；录制页另按 引擎没在录 / TCC 收回 / ffmpeg 缺失 / 崩了 与
 //     手动触发 成功 / 失败 / 持锁跳过 渲染几遍；关于页另按 没新版 / 最新 ≠ 本版 / 卸载脚本缺席 / Terminal 打不开
-//     渲染几遍）+ 把每颗按钮点一遍收集弹窗文案，按 accessible name / 自身文本精确匹配；
+//     渲染几遍；看板另有「server 拒绝」一遍（接管 / 让 AI 修 / capture / 斜杠命令的失败句）与诊断条 agent_missing
+//     两遍、问问助手两种失败面）+ 把每颗按钮点一遍收集弹窗文案（看板：进多选态勾上每张卡、开弹窗的动词逐点收、
+//     每张卡按同类轮换走一条提交路收 pending 一句），按 accessible name / 自身文本精确匹配；
 //     时钟冻结在 fixture 的 FIXED_NOW（相对时间词表才确定）；装一个假 zaiShell 桥（壳里才渲染的
 //     录制 / 字幕 / 登录时启动 开关也要判）；server 目录（设置 / 凭证）用 fixture 快照（文案 server-owned）。
 //   · 在 ui/parity/pending.txt 上 → it 标题带 ` [pending]`，断言「不在」——补齐后不划账即红
@@ -15,7 +17,7 @@
 //   · 在 ui/parity/waivers.txt 上 → it.skip（报告计 WAIVED）。
 // scripts/ui/parity_check.py 以 --reporter=json 跑本文件、按 it 标题读判决；两边读同两本账本，
 // 判决一致。双语都要命中（原生 L("zh","en") 是逐字规格，PR #143「逐字镜像」同理）。
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   fetchAbout,
@@ -63,6 +65,7 @@ import {
   selectCard,
   setFilters,
   setLanguage,
+  setSelectionMode,
 } from "./store";
 import type {
   AboutInfo,
@@ -107,6 +110,17 @@ const demoLanes = parityFile<LaneCatalog>(parityJson, "fixtures/lanes.json");
 const demoSettings = parityFile<SettingsCatalog>(parityJson, "fixtures/settings.json");
 const demoSecrets = parityFile<SecretsStatus>(parityJson, "fixtures/secrets.json");
 const pendingText = parityFile<string>(parityText, "pending.txt");
+
+/** fixture 里任一分区的投影行（详情 mock 以它为底，与 server/board_source.card_detail 同形） */
+function boardRowOf(id: string): Record<string, unknown> | undefined {
+  for (const lane of ["needs_approval", "running", "needs_input", "review", "completed", "debt", "trash", "archived"] as const) {
+    const rows = (demoBoard as unknown as Record<string, unknown>)[lane];
+    if (!Array.isArray(rows)) continue;
+    const hit = (rows as Array<Record<string, unknown>>).find((row) => row.id === id);
+    if (hit) return hit;
+  }
+  return undefined;
+}
 const waiversText = parityFile<string>(parityText, "waivers.txt");
 
 vi.mock("./api", async (importOriginal) => {
@@ -309,10 +323,11 @@ const stalledHealth: HealthSnapshot = {
   heartbeat: { age_s: 900, phase: "dispatch", pid: 4242, interval: 10, stale_after_s: 90, stale: true },
   loop_health: { consecutive_failures: 4, last_error: "boom" },
 };
+// 封存行留着：右侧书立条搜不到时才说「无匹配项」（原生 ArchiveLaneContent：items 非空 ∧ filtered 为空）
 const emptyBoard = {
   ...demoBoard,
-  needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [], archived: [], merge_suggestions: [],
-  counts: { needs_approval: 0, running: 0, needs_input: 0, review: 0, completed: 0, debt: 0, trash: 0, archived: 0 },
+  needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [], merge_suggestions: [], fold_receipts: [],
+  counts: { needs_approval: 0, running: 0, needs_input: 0, review: 0, completed: 0, debt: 0, trash: 0, archived: demoBoard.archived?.length ?? 0 },
 } as unknown as Board;
 const setup: SetupSnapshot = { needed: false, done: true, config_exists: true, config_example_exists: true, secrets: {}, home: "/Users/demo/zai", protected_location: false };
 const about: AboutInfo = {
@@ -430,11 +445,89 @@ function clickAll(buttons: Iterable<HTMLButtonElement>, pool?: Set<string>) {
 
 /** 只开弹窗 / 菜单、不提交动作的按钮（原生同名动词）：先点它们，弹窗文案才收得到 */
 const OPENS_DIALOG = /拒绝|Reject|修改|Comment|打回|Send Back|停止|Stop|提建议|feedback|改名|Rename|强制合并|Force-merge|仍然合并|Merge anyway|评论|回答|Answer|清理积压|Clean up|不需要执行|No need to run|退回|Discard|选择|Select/;
+/** 词表的误伤：FilterBar 的「退出选择」命中 选择 却是退出多选态——点它会把整条操作条卸掉 */
+const NOT_AN_OPENER = /^(退出选择|Done)$/;
+/** 开弹窗的按钮 = 动词命中词表，或组件自己用 aria-haspopup="dialog" 标了（T2 卡的「批准」开的是 typed-confirm） */
+const opensDialog = (b: HTMLButtonElement) => {
+  const label = normalize(b.textContent);
+  return !NOT_AN_OPENER.test(label) && (OPENS_DIALOG.test(label) || b.getAttribute("aria-haspopup") === "dialog");
+};
+/** 弹窗里的「取消」——轮换提交时跳过它，点的是提交 / 分叉选项 */
+const IS_CANCEL = /^(取消|Cancel)$/;
+
+/** 多选态（原生 Kanban「选择」）：进选择态并勾上每张可选卡——操作条的 请求合并建议 / 强制合并 / 批量批准 /
+ *  提建议 (N) 才从禁用变可点，「💡 提建议（N 张卡）」这类带计数的弹窗标题才收得到。只在看板面有这些勾选框。 */
+function selectAllCards(root: ParentNode) {
+  const boxes = () => Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"].card-select'));
+  if (boxes().length === 0 && root.querySelector(".board-main")) act(() => setSelectionMode(true));
+  for (const box of boxes()) if (!box.checked) fireEvent.click(box);
+}
+
+/** 点一颗按钮 → 收一遍 → 把它开出来的弹窗填好字、按最后一颗非取消键（ForkDialog 的次选项 / TextDialog 的提交）→ 再收 */
+function clickAndSubmitDialogs(button: HTMLButtonElement, pool: Set<string>) {
+  if (!button.isConnected || button.disabled) return;
+  try { fireEvent.click(button); } catch { /* jsdom 没有的 API */ }
+  collectLabels(document.body, pool);
+  for (const dialog of Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]"))) {
+    fillInputs(dialog, false);
+    collectLabels(document.body, pool);
+    const choices = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).filter((b) => !IS_CANCEL.test((b.textContent ?? "").trim()) && !b.disabled);
+    const last = choices[choices.length - 1];
+    if (last) {
+      try { fireEvent.click(last); } catch { /* ignore */ }
+      collectLabels(document.body, pool);
+    }
+  }
+}
+
+/**
+ * 轮换提交（每张卡只能提交一次：提交即 pending、动作行卸掉）。卡按动作行第一颗动词分类（批准 / 验收 / 评论…），
+ * 同一类的第 k 张卡点它的第 k % n 颗动作按钮——开了弹窗就填字、点弹窗里最后一颗非取消键（ForkDialog 的
+ * 次选项 / TextDialog 的提交），没开弹窗就是直接提交。fixture 里每类卡都不止 n 张，所以 批准 / 拒绝→已办完 /
+ * 修改→提交 / 暂缓 / 停止→去待验收 / 打回→提交 每条路都有卡走到，pending 一句（启动中… / 已办完 /
+ * 修改意见合并中… / 打回处理中… / 停止中，卡片将去待验收）各自收得到。
+ * 工具条（FilterBar / 多选操作条）不会互相卸掉，每颗开弹窗的动词都点、每个弹窗都提交；多选操作条第一枪
+ * 就清空选择，所以先点「强制合并」——它的回执是板上的「合并中…」章，别处收不到。
+ * 卡外其它按钮（书立条开合 / 列说明 ?）留给 ④。
+ */
+function rotateSubmits(root: ParentNode, pool: Set<string>) {
+  // 先把 ② 留下的弹窗全关掉（点各自的取消）：每张卡从干净态出发，轮换才有意义
+  for (const dialog of Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]"))) {
+    const cancel = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find((b) => IS_CANCEL.test((b.textContent ?? "").trim()));
+    if (cancel) fireEvent.click(cancel);
+  }
+  const cards = new Map<Element, HTMLButtonElement[]>();
+  const toolbars = new Map<Element, HTMLButtonElement[]>();
+  const loose: HTMLButtonElement[] = [];
+  for (const b of Array.from(root.querySelectorAll<HTMLButtonElement>("button"))) {
+    if (b.disabled || b.classList.contains("card-details-toggle") || b.closest("dialog")) continue;
+    const card = b.closest("article");
+    const toolbar = b.closest('[role="toolbar"]');
+    if (card) cards.set(card, [...(cards.get(card) ?? []), b]);
+    else if (toolbar) toolbars.set(toolbar, [...(toolbars.get(toolbar) ?? []), b]);
+    else if (opensDialog(b)) loose.push(b);
+  }
+  // 同类 = 动作行第一颗动词相同（批准… / 验收… / 评论…）：同类第 k 张点第 k % n 颗——复制成稿 / 在终端接管
+  // 这类只有部分卡才有的按钮不该把同一列拆成不同类，否则每类都只走到第一条路
+  const seenShape = new Map<string, number>();
+  for (const buttons of cards.values()) {
+    const shape = normalize(buttons[0].textContent);
+    const k = seenShape.get(shape) ?? 0;
+    seenShape.set(shape, k + 1);
+    clickAndSubmitDialogs(buttons[k % buttons.length], pool);
+  }
+  for (const buttons of toolbars.values()) {
+    const ordered = [...buttons].sort((a, b) => Number(/强制合并|Force-merge/.test(b.textContent ?? "")) - Number(/强制合并|Force-merge/.test(a.textContent ?? "")));
+    for (const b of ordered) if (opensDialog(b)) clickAndSubmitDialogs(b, pool);
+  }
+  for (const b of loose) clickAndSubmitDialogs(b, pool);
+}
 
 /** 把页面上每颗按钮点一遍（弹窗 / 折叠详情 / 菜单展开后的文案也要收），失败的点击静默跳过。
- *  三轮：① 「展开详情 ▸」② 开弹窗的按钮 ③ 其余。动作按钮（批准 / 暂缓…）会把卡切到 pending 态并
+ *  四轮：① 「展开详情 ▸」② 开弹窗的按钮（每点一下收一遍——同一张卡上后开的弹窗会顶掉先开的）
+ *  ③ 轮换提交（rotateSubmits）④ 其余。动作按钮（批准 / 暂缓…）会把卡切到 pending 态并
  *  卸掉整个动作行——之后再点同卡的按钮就点在脱离 DOM 的旧节点上，所以提交类放最后；
- *  ③ 跳过 toggle，别把刚展开的又收起。 */
+ *  ④ 跳过 toggle，别把刚展开的又收起。 */
 /** 给每个空输入框填点字：提交类按钮（提问 / 保存 / 发送）在空输入时是 disabled 的；数字框填 -1 让校验句出现；
  *  搜索框填一个不可能命中的词让「无匹配」空态出现。 */
 function fillInputs(root: ParentNode, searches: boolean) {
@@ -454,12 +547,19 @@ function clickEverything(root: ParentNode, pool: Set<string>, searches = false, 
   fillInputs(root, searches);
   clickAll(all().filter((b) => b.classList.contains("card-details-toggle")));
   collectLabels(document.body, pool);
-  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && OPENS_DIALOG.test(b.textContent ?? "")));
+  selectAllCards(root); // 看板：进多选态 + 勾上每张卡（操作条按钮解禁）；别的面没有勾选框，空转
+  collectLabels(document.body, pool);
+  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && opensDialog(b)), pool);
   collectLabels(document.body, pool); // 弹窗开着时收：弹窗标题 / 选项 / 提交键
+  if (root.querySelector(".board-main")) rotateSubmits(root, pool); // 看板：每张卡走一条提交路，pending 一句各收一遍
   // perClick（向导 / 权限体检）：每点一下收一遍——「启动中…」「验证中…」只活到下一颗按钮把这一步换掉之前；
   // 向导页脚的 上一步 / 下一步 / 完成 不点（会把当前步卸掉，先验后存的「✅ key 有效,已保存」就落不到 DOM 上）——它们按文本判
   const isWizardNav = (b: HTMLButtonElement) => perClick && b.closest(".setup-footer") !== null;
-  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && !OPENS_DIALOG.test(b.textContent ?? "") && !isWizardNav(b)), perClick ? pool : undefined);
+  // 详情抽屉：正文里的按钮（拆成新卡…）先点且每点一下收一遍——抬头的 × 与页签排在正文之前，先点它们会把正文
+  // 卸掉，而「拆分中…」这类忙态词只活到抽屉还在的时候
+  const rest = all().filter((b) => !b.classList.contains("card-details-toggle") && !opensDialog(b) && !isWizardNav(b));
+  clickAll(rest.filter((b) => b.closest(".zai-drawer-body") !== null), pool);
+  clickAll(rest.filter((b) => b.closest(".zai-drawer-body") === null), perClick ? pool : undefined);
   collectLabels(document.body, pool); // 点击后立刻收：in-flight 的忙态文案（保存中… / 正在准备诊断包…）
   fillInputs(root, searches); // 点开后才出现的输入框（书立条里的搜索框）
   collectLabels(document.body, pool);
@@ -534,7 +634,8 @@ async function renderSurface(language: Language, page: Surface) {
   await settle(pool);
   if (page === "board") {
     // 详情抽屉：选中 hero 卡、再选一张待验收卡（抽屉里的字段标题 / 动作 / 所属列章）
-    for (const id of [demoBoard.needs_approval[0].id, demoBoard.review[0].id]) {
+    const renamed = demoBoard.needs_approval.find((c) => Array.isArray(c.former_titles) && c.former_titles.length > 0);
+    for (const id of [demoBoard.needs_approval[0].id, demoBoard.review[0].id, ...(renamed ? [renamed.id] : [])]) {
       selectCard(id);
       await settle(pool);
       collectLabels(document.body, pool);
@@ -554,8 +655,13 @@ async function renderEmptyBoardVariants(language: Language) {
   vi.mocked(postRepairActd).mockRejectedValue(new Error("launchctl kickstart failed (exit 113)"));
   // 不用 mockResolvedValueOnce：一键修复 / 向导「启动后台服务」成功后 3 s 会再拉一次 health（真定时器），
   // 一次性的假值会被那一拉吃掉、这一遍就渲染不出横幅——按遍设值、遍完复原
-  for (const health2 of [stalledHealth, { ...stalledHealth, verdict: "stale", heartbeat: null }]) {
-    vi.mocked(fetchBoard).mockResolvedValue(emptyBoard);
+  // 右侧书立条两种空态：第一遍封存行也空（还没有永久完成的卡）；第二遍留着封存行、搜索不中（无匹配项）
+  const variants: Array<[HealthSnapshot, Board]> = [
+    [stalledHealth, { ...emptyBoard, archived: [], counts: { ...emptyBoard.counts, archived: 0 } } as Board],
+    [{ ...stalledHealth, verdict: "stale", heartbeat: null }, emptyBoard],
+  ];
+  for (const [health2, board2] of variants) {
+    vi.mocked(fetchBoard).mockResolvedValue(board2);
     vi.mocked(fetchHealth).mockResolvedValue(health2);
     await refreshBoard();
     await refreshHealth();
@@ -648,7 +754,12 @@ async function renderPermissionVariants(language: Language) {
 
 /** 看板诊断条（原生 DiagnosticsStrip）：Gmail / Slack / 录制链每种 skip_reason 一张卡 + 一颗修复按钮 */
 async function renderDiagnosticsVariants(language: Language) {
+  const { fetchRadarAgents, postRadarReinstall } = await import("./api");
+  window.localStorage.removeItem("dismissedDiagnostics"); // 主遍 ④ 把每张诊断卡的 × 都点过了——这几遍要它们重新出来
   const on = (skip_reason: string | null, last_ok: string | null = null): RadarSourceHealth => ({ enabled: true, last_ok, last_attempt: "2026-09-02T11:57:00Z", skip_reason, stale: false });
+  // 这几遍 launchd 里两个 agent 都装着：凭证 / 连接类卡才不被 agent_missing 顶掉（§48.7 schedulerMissing 赢）
+  const agent = (source: string, loaded: boolean) => ({ label: `com.zelin.aiassistant.${source}radar`, interval_s: source === "gmail" ? 300 : 180, loaded, plist_installed: loaded });
+  vi.mocked(fetchRadarAgents).mockResolvedValue({ radars: { gmail: agent("gmail", true), slack: agent("slack", true) } });
   // vault_empty 要等满一个 ingest 周期才报——把「首见」时间拨到 36 分钟前
   const firstSeen = Object.fromEntries(["screenpipe:vault_empty.engine", "screenpipe:vault_empty.tcc", "screenpipe:vault_empty.other"].map((sig) => [sig, Date.now() - 36 * 60_000]));
   window.localStorage.setItem("diagnosticsFirstSeen", JSON.stringify(firstSeen));
@@ -670,6 +781,24 @@ async function renderDiagnosticsVariants(language: Language) {
     collectLabels(document.body, pool);
     cleanup();
   }
+  // agent_missing（原生 Diagnostics.swift:208–222）：两个雷达开着但 launchd 里没它 → 「重装后台调度」；
+  // 第二遍重装被 server 拒绝 → 「上次重装失败：」+ 原文 + 「再试一次」
+  vi.mocked(fetchRadarAgents).mockResolvedValue({ radars: { gmail: agent("gmail", false), slack: agent("slack", false) } });
+  vi.mocked(fetchBoard).mockResolvedValue({ ...demoBoard, radar_sources: { gmail: on("no_credentials"), slack: on(null) } } as unknown as Board);
+  await refreshBoard();
+  for (const reject of [false, true]) {
+    window.localStorage.removeItem("dismissedDiagnostics");
+    if (reject) vi.mocked(postRadarReinstall).mockRejectedValue(new Error("install.sh --reinstall-agent exited 3"));
+    const pool = found[language].board;
+    const view = mount(language, "board");
+    await settle(pool);
+    clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".diag-card .shell-button")), pool);
+    await settle(pool);
+    await settle(pool);
+    cleanup();
+  }
+  vi.mocked(postRadarReinstall).mockImplementation((source: string) => new Promise((resolve) => setTimeout(() => resolve({ ok: true, source, label: `com.zelin.aiassistant.${source}radar`, loaded: true }), 0)));
+  vi.mocked(fetchRadarAgents).mockResolvedValue({ radars: { gmail: agent("gmail", false), slack: agent("slack", false) } });
   useShellVariant("default");
   vi.mocked(fetchBoard).mockResolvedValue(demoBoard as unknown as Board);
   await refreshBoard();
@@ -777,6 +906,49 @@ async function renderAboutVariants(language: Language) {
   await refreshAbout();
 }
 
+/** 看板「server 拒绝」那一遍（原生的失败态文案）：接管会话 → 打开终端失败；让 AI 修 → 让 AI 修启动失败：；
+ *  composer 捕获写入失败 → 提交失败，已保留输入；斜杠命令打错 → 未识别或参数错误：。遍完全部复原。 */
+async function renderBoardRejectVariant(language: Language) {
+  const { postAction, postAiFix, postTerminal } = await import("./api");
+  vi.mocked(postTerminal).mockRejectedValue(new Error("open -a failed (exit 1)"));
+  vi.mocked(postAiFix).mockRejectedValue(new Error("claude not found (Errno 2)"));
+  vi.mocked(postAction).mockRejectedValue(new Error("inbox not writable (EACCES)"));
+  const pool = found[language].board;
+  const view = mount(language, "board");
+  await settle(pool);
+  // 两个列顶输入框：第一个打一条参数错误的斜杠命令，其余照常一句捕获（走 postAction 的拒绝）
+  view.container.querySelectorAll<HTMLInputElement>(".lane-composer input").forEach((el, i) => {
+    fireEvent.change(el, { target: { value: i === 0 ? "/rec nope" : "demo" } });
+  });
+  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".lane-composer button")), pool);
+  await settle(pool);
+  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /在终端接管|Open in Terminal|让 AI 修|Fix with AI/.test(b.textContent ?? "")), pool);
+  await settle(pool);
+  await settle(pool);
+  cleanup();
+  vi.mocked(postTerminal).mockResolvedValue({ ok: true } as never);
+  vi.mocked(postAiFix).mockResolvedValue({ ok: true, command_file: "/tmp/x.command" } as never);
+  vi.mocked(postAction).mockResolvedValue({ ok: true });
+}
+
+/** 问问助手的两种失败面（原生 Ask.swift engineMissingCard / failureRow）：引擎没装 → 去接入（初始设置向导）/ 重新检测；
+ *  提问被拒 → 重试。遍完复原。 */
+async function renderAskVariants(language: Language) {
+  const { postAsk } = await import("./api");
+  vi.mocked(fetchSetupEngine).mockResolvedValue(ENGINES.no_cli);
+  vi.mocked(postAsk).mockResolvedValue({ ok: false, error: "claude: command not found", failure_id: "claude_cli_missing" } as never);
+  const pool = found[language].ask;
+  const view = mount(language, "ask");
+  await settle(pool);
+  fillInputs(view.container, false);
+  clickAll(Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).filter((b) => /提问|Ask/.test(b.textContent ?? "")), pool);
+  await settle(pool);
+  collectLabels(document.body, pool);
+  cleanup();
+  vi.mocked(fetchSetupEngine).mockResolvedValue(ENGINES.ready);
+  vi.mocked(postAsk).mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 } as never);
+}
+
 beforeAll(async () => {
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
@@ -791,7 +963,12 @@ beforeAll(async () => {
   vi.setSystemTime(new Date(demoBoard.generated_at));
   installFakeShell();
   vi.mocked(fetchBoard).mockResolvedValue(demoBoard);
-  vi.mocked(fetchCard).mockImplementation(async (id: string) => ({ id, notes: "demo notes\n2026-09-01T10:00:00Z 追加：又问了一次", log_tail: "ok" }));
+  // server card_detail = 投影行原样 + registry 字段（notes 里带 §38 fold 行：一条可拆、一条已拆出）
+  vi.mocked(fetchCard).mockImplementation(async (id: string) => ({
+    ...(boardRowOf(id) ?? {}), id, lane: null,
+    notes: "demo notes\n[quick] 又问了一次 [@2026-09-01T10:00:00Z]\n[radar] 群里又提了一次 [@2026-08-30T09:00:00Z] [已拆出 R-099]",
+    log_tail: "ok",
+  }));
   vi.mocked(fetchHealth).mockResolvedValue(health);
   vi.mocked(fetchLanes).mockResolvedValue(demoLanes);
   vi.mocked(fetchModelsSettings).mockResolvedValue(models);
@@ -811,6 +988,7 @@ beforeAll(async () => {
   for (const language of LANGUAGES) {
     resetStoreForTests();
     resetShellBridgeForTests();
+    window.sessionStorage.removeItem("seenFoldReceipts"); // 上一种语言的 ④ 把并入回执的 × 点过了——这一遍要它再出来
     useShellVariant("default");
     setLanguage(language);
     await refreshBoard();
@@ -820,11 +998,13 @@ beforeAll(async () => {
       await renderSurface(language, page);
     }
     await renderEmptyBoardVariants(language);
+    await renderBoardRejectVariant(language);
     await renderPermissionVariants(language);
     await renderDiagnosticsVariants(language);
     await renderDepsVariants(language);
     await renderIngestVariants(language);
     await renderAboutVariants(language);
+    await renderAskVariants(language);
   }
   // 九个面 × 两种语言 × 若干状态变体：几十次整页渲染（单机 ~12 s），远超 vitest 默认 10 s 的 hook 预算
 }, 120_000);

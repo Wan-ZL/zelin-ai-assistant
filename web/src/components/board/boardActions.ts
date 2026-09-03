@@ -172,7 +172,8 @@ export function pendingNote(action: string | null, text: (zh: string, en: string
     case "rework": return text("打回处理中…", "Sending back…");
     case "accept": return text("验收确认中…", "Accepting…");
     case "defer": return text("暂缓中…", "Moving to backlog…");
-    case "abort_execution": case "stop_to_review": return text("停止中，卡片将去待验收", "Stopping — card moves to Review");
+    case "abort_execution": return text("停止中，卡片将回到提案列", "Stopping — card returns to Proposals");
+    case "stop_to_review": return text("停止中，卡片将去待验收", "Stopping — card moves to Review");
     case "revert_review": return text("退回中，卡片将回到待验收", "Reverting to review");
     case "done_external": return text("已办完", "done outside");
     case "comment": return text("修改意见合并中…", "Merging your feedback…");

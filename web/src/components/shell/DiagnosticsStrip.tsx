@@ -4,14 +4,18 @@
 // （引擎活着没 / 屏幕录制授权还在不在）。ANTI-NAG：只显示「用户 INTENDED 的路径在静默失败」——关着的源不上板，
 // fresh user 看到 0 张卡；每 path 至多一卡；可 dismiss（localStorage `dismissedDiagnostics`，签名 = <path>:<reason>，
 // 换原因 = 新卡；修好过一次再坏 / 满 7 天重现）；vault_empty 先等一个 ingest 周期（~35 min）再报，防装机误报。
-// 原生的「后台调度没装上 / 重装后台调度」一族不搬：雷达现住 actd 主循环（§48），没有独立 launchd agent 可重装。
+// 「Gmail / Slack 雷达开着，但后台调度没装上」一族（原生 agent_missing）：Slack / Gmail 雷达是各自的 launchd agent
+// （§48.7），状态问 GET /api/radars（server 问 launchd 本人），「重装后台调度」= POST /api/radars/reinstall（server 跑
+// install.sh --reinstall-agent，绝不自己写 plist）；失败留在卡上「上次重装失败：」+ 原文，按钮变「再试一次」
+// （原生 RepairReceiptStore 的会话内版）。agent_missing 赢：同源的凭证类卡让位（原生 schedulerMissing flag）。
 // 只在看板页渲染（原生：kanban header 里 PipelineHealthBanner 之下）。文案逐字镜像 Diagnostics.swift:210–347。
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { fetchRadarAgents, postRadarReinstall } from "../../api";
 import { useI18n } from "../../i18n";
 import { buildAppUrl, readPage, type AppPage } from "../../route";
 import { callShell, hasShellBridge, useShellState, type ShellRecordingState } from "../../shellBridge";
 import { useAppState } from "../../store";
-import type { RadarSourceHealth } from "../../types";
+import type { RadarAgentStatus, RadarSourceHealth } from "../../types";
 import { RelativeTime } from "../board/cardChrome";
 
 type Text = (zh: string, en: string) => string;
@@ -21,10 +25,19 @@ export const FIRST_SEEN_KEY = "diagnosticsFirstSeen";
 const REAPPEAR_AFTER_MS = 7 * 86_400_000;
 const VAULT_EMPTY_WARMUP_MS = 35 * 60_000; // 对齐 install.sh */30
 
+export type RadarAgentSource = "gmail" | "slack";
+
 export type DiagAction =
   | { kind: "restart_engine" }
   | { kind: "grant_screen" }
-  | { kind: "page"; page: AppPage; anchor?: string };
+  | { kind: "page"; page: AppPage; anchor?: string }
+  | { kind: "reinstall_agent"; source: RadarAgentSource };
+
+/** launchd 里两个雷达 agent 的状态 + 会话内的重装失败回执（原生 RepairReceiptStore） */
+export interface RadarAgentsView {
+  radars: Record<string, RadarAgentStatus> | null;   // null = 还没问到 / 问不到（不出卡）
+  failures: Record<string, string>;                  // source → 上次重装失败原文
+}
 
 export interface DiagnosticCard {
   id: string;          // "diag.<path>"
@@ -35,6 +48,8 @@ export interface DiagnosticCard {
   action: DiagAction;
   lastOk: string | null;
   lastAttempt: string | null;  // 「上次尝试 …」（§48.4 add-only 键；旧 payload 缺 → 不显示）
+  /** detail 的前缀句（「上次重装失败：」）——有它时前缀与原文各一节点渲染 */
+  detailPrefix?: string;
 }
 
 function readMap(key: string): Record<string, number> {
@@ -125,8 +140,34 @@ function slackCard(reason: string, entry: RadarSourceHealth, text: Text): Diagno
   return null;
 }
 
-/** 该不该出卡的纯逻辑（原生 DiagnosticsRules + DiagnosticsModel.rebuild 的 web 版）；导出供测试直测。 */
-export function buildDiagnosticCards(sources: Record<string, RadarSourceHealth> | undefined | null, rec: ShellRecordingState | null, text: Text): DiagnosticCard[] {
+/** 原生 DiagnosticsRules.schedulerMissing：源开着 ∧（launchd 里没它 ∨ 上次重装失败）。agent 状态未知（非 darwin /
+ *  还没问到）= 不判——宁可不出卡也不瞎报。 */
+export function schedulerMissing(entry: RadarSourceHealth | undefined, agent: RadarAgentStatus | undefined, failed: boolean): boolean {
+  if (!entry?.enabled || !agent || agent.loaded === null) return false;
+  return !agent.loaded || !agent.plist_installed || failed;
+}
+
+function agentMissingCard(source: RadarAgentSource, entry: RadarSourceHealth, failMsg: string | undefined, text: Text): DiagnosticCard {
+  return {
+    id: `diag.${source}`, signature: `${source}:agent_missing`,
+    title: source === "gmail"
+      ? text("Gmail 雷达开着，但后台调度没装上", "The Gmail radar is on but its scheduler isn't installed")
+      : text("Slack 雷达开着，但后台调度没装上", "The Slack radar is on but its scheduler isn't installed"),
+    detail: failMsg !== undefined
+      ? text("上次重装失败：", "The last reinstall failed: ") + failMsg
+      : text("开关是开的，但 launchd 里没有它的调度任务（多半是关着时升级被卸载了）——点一下原地装回去。",
+        "The switch is on, but launchd has no job for it (likely removed by an upgrade while it was off) — one click reinstalls it in place."),
+    detailPrefix: failMsg !== undefined ? text("上次重装失败：", "The last reinstall failed: ") : undefined,
+    actionLabel: failMsg === undefined ? text("重装后台调度", "Reinstall the scheduler") : text("再试一次", "Try again"),
+    action: { kind: "reinstall_agent", source },
+    lastOk: entry.last_ok ?? null, lastAttempt: entry.last_attempt ?? null,
+  };
+}
+
+/** 该不该出卡的纯逻辑（原生 DiagnosticsRules + DiagnosticsModel.rebuild 的 web 版）；导出供测试直测。
+ *  `agents` 缺席 = 不判 agent_missing（旧调用方 / launchd 还没问到）。 */
+export function buildDiagnosticCards(sources: Record<string, RadarSourceHealth> | undefined | null, rec: ShellRecordingState | null, text: Text,
+  agents?: RadarAgentsView | null): DiagnosticCard[] {
   if (!sources) return [];
   const out: DiagnosticCard[] = [];
   const ob = sources.obsidian;
@@ -136,10 +177,18 @@ export function buildDiagnosticCards(sources: Record<string, RadarSourceHealth> 
     const card = obsidianCard(ob.skip_reason, rec, ob, text);
     if (card) out.push(card);
   }
+  // agent_missing 赢：调度没装上时凭证 / 连接类卡让位（同源一卡，原生 schedulerMissing flag）
+  const missing = (source: RadarAgentSource): boolean => {
+    const entry = sources[source];
+    const failMsg = agents?.failures[source];
+    if (!entry || !schedulerMissing(entry, agents?.radars?.[source], failMsg !== undefined)) return false;
+    out.push(agentMissingCard(source, entry, failMsg, text));
+    return true;
+  };
   const gm = sources.gmail;
-  if (gm?.enabled && gm.skip_reason) out.push(gmailCard(gm.skip_reason, gm, text));
+  if (!missing("gmail") && gm?.enabled && gm.skip_reason) out.push(gmailCard(gm.skip_reason, gm, text));
   const sl = sources.slack;
-  if (sl?.enabled && sl.skip_reason) {
+  if (!missing("slack") && sl?.enabled && sl.skip_reason) {
     const card = slackCard(sl.skip_reason, sl, text);
     if (card) out.push(card);
   }
@@ -171,13 +220,14 @@ function actionHref(action: DiagAction): string | null {
   return url.toString();
 }
 
-function DiagnosticCardView({ card, onDismiss }: { card: DiagnosticCard; onDismiss: () => void }) {
+function DiagnosticCardView({ card, busy, onDismiss, onReinstall }: { card: DiagnosticCard; busy: boolean; onDismiss: () => void; onReinstall: (source: RadarAgentSource) => void }) {
   const { text } = useI18n();
   const shell = hasShellBridge();
   const href = actionHref(card.action);
   const perform = () => {
     if (card.action.kind === "restart_engine") void callShell("restartRecording").catch(() => undefined);
     else if (card.action.kind === "grant_screen") void callShell("openPane", { pane: "screen" }).catch(() => undefined);
+    else if (card.action.kind === "reinstall_agent") onReinstall(card.action.source);
   };
   // 浏览器里（无桥）引擎 / 授权类动作退成页面深链（录制页 / 权限体检）
   const fallbackHref = card.action.kind === "restart_engine"
@@ -189,11 +239,15 @@ function DiagnosticCardView({ card, onDismiss }: { card: DiagnosticCard; onDismi
         <path d="M12 2.8 22.6 21H1.4L12 2.8Zm0 6.2a1 1 0 0 0-1 1v4a1 1 0 1 0 2 0v-4a1 1 0 0 0-1-1Zm0 8a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4Z" fill="currentColor" />
       </svg>
       <strong className="shell-banner-title">{card.title}</strong>
-      <span className="shell-banner-detail">{card.detail}</span>
+      <span className="shell-banner-detail">
+        {card.detailPrefix
+          ? <><span className="shell-banner-prefix">{card.detailPrefix}</span><span>{card.detail.slice(card.detailPrefix.length)}</span></>
+          : card.detail}
+      </span>
       <span className="shell-banner-actions">
         {href || (!shell && fallbackHref)
           ? <a className="shell-button" href={href ?? fallbackHref ?? "#"}>{card.actionLabel}</a>
-          : <button type="button" className="shell-button" onClick={perform}>{card.actionLabel}</button>}
+          : <button type="button" className="shell-button" disabled={busy} onClick={perform}>{busy ? text("重装中…", "Reinstalling…") : card.actionLabel}</button>}
         {card.lastAttempt && <RelativeTime iso={card.lastAttempt} prefix={text("上次尝试 ", "last tried ")} className="shell-banner-note" />}
         <button type="button" className="shell-icon-button diag-dismiss" title={text("忽略这张卡（问题还在会重新出现）", "Dismiss (returns if still broken)")} aria-label={text("忽略这张卡（问题还在会重新出现）", "Dismiss (returns if still broken)")} onClick={onDismiss}>×</button>
       </span>
@@ -201,11 +255,40 @@ function DiagnosticCardView({ card, onDismiss }: { card: DiagnosticCard; onDismi
   );
 }
 
+/** launchd 里两个雷达 agent 的状态：挂载时问一次 GET /api/radars（问不到 = null，不出卡）；重装后再问 */
+function useRadarAgents(): [RadarAgentsView, (source: RadarAgentSource) => Promise<void>, RadarAgentSource | null] {
+  const [radars, setRadars] = useState<Record<string, RadarAgentStatus> | null>(null);
+  const [failures, setFailures] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<RadarAgentSource | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetchRadarAgents().then((snap) => { if (alive) setRadars(snap.radars ?? {}); }, () => { if (alive) setRadars(null); });
+    return () => { alive = false; };
+  }, []);
+
+  const reinstall = async (source: RadarAgentSource) => {
+    setBusy(source);
+    try {
+      const receipt = await postRadarReinstall(source);
+      // 回执里 server 装完再问过 launchd 的 loaded 才是最后一笔（不信按钮，信回执）
+      setRadars((prev) => ({ ...(prev ?? {}), [source]: { ...(prev?.[source] ?? { label: receipt.label, interval_s: null, plist_installed: true }), loaded: receipt.loaded, plist_installed: true } }));
+      setFailures((prev) => { const next = { ...prev }; delete next[source]; return next; });
+    } catch (e) {
+      setFailures((prev) => ({ ...prev, [source]: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return [{ radars, failures }, reinstall, busy];
+}
+
 export function DiagnosticsStrip() {
   const { text } = useI18n();
   const { board, boardError, connection } = useAppState();
   const shellState = useShellState();
   const [dismissed, setDismissed] = useState(() => readMap(DISMISS_KEY));
+  const [agents, reinstall, reinstalling] = useRadarAgents();
 
   if (!board || boardError != null || connection === "reconnecting") return null;
   if (readPage(window.location.search) !== "board") return null;
@@ -215,7 +298,7 @@ export function DiagnosticsStrip() {
   const seen0 = readMap(FIRST_SEEN_KEY);
   let seen = seen0;
   const cards: DiagnosticCard[] = [];
-  for (const card of buildDiagnosticCards(board.radar_sources, rec, text)) {
+  for (const card of buildDiagnosticCards(board.radar_sources, rec, text, agents)) {
     const verdict = isDebounced(card, seen, now);
     seen = verdict.seen;
     if (verdict.debounced || isDismissed(card, dismissed, now)) continue;
@@ -232,7 +315,10 @@ export function DiagnosticsStrip() {
 
   return (
     <div className="diag-strip" data-count={cards.length}>
-      {cards.map((card) => <DiagnosticCardView key={card.id} card={card} onDismiss={() => dismiss(card)} />)}
+      {cards.map((card) => (
+        <DiagnosticCardView key={card.id} card={card} onDismiss={() => dismiss(card)} onReinstall={(source) => void reinstall(source)}
+          busy={card.action.kind === "reinstall_agent" && reinstalling === card.action.source} />
+      ))}
     </div>
   );
 }

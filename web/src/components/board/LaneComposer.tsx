@@ -20,11 +20,14 @@ interface LaneComposerProps {
   buildBody: (text: string) => Record<string, unknown>;
 }
 
+/** 失败一行（原生 slashError）：前缀句 + 细节各一节点——「提交失败，已保留输入」/「未识别或参数错误：」+ 原文 */
+type ComposerError = { prefix: string; detail?: string };
+
 export function LaneComposer({ placeholder, submitLabel, successNote, buildBody }: LaneComposerProps) {
   const { text } = useI18n();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ComposerError | null>(null);
   const [sent, setSent] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [historyIndex, setHistoryIndex] = useState(-1); // -1 = 不在翻历史
@@ -39,6 +42,13 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
     try {
       const command = await runSlashCommand(trimmed, text);
       if (command.handled) {
+        if ("error" in command) {
+          // 原生 Composer.submit 的 slash 失败分支：打错了 → 「未识别或参数错误：」+ 原文（输入保留）；IO 错 → 原句
+          setError(command.error.kind === "unrecognized"
+            ? { prefix: text("未识别或参数错误：", "Unrecognized or bad argument: "), detail: `${command.error.input} · ${command.error.usage}` }
+            : { prefix: command.error.message });
+          return;
+        }
         setDraft("");
         setNote(command.note);
         return;
@@ -49,7 +59,8 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
       setDraft(""); // 仅确认成功后清空（§41 草稿保留）
       setSent(true);
     } catch (e) {
-      setError(describeActionError(e, text));
+      // capture 写入失败（原生 submitCapture 返回 false）：固定一句 + server 原文；草稿原样留着
+      setError({ prefix: text("提交失败，已保留输入", "Submit failed — input kept"), detail: describeActionError(e, text) });
     } finally {
       setBusy(false);
     }
@@ -100,7 +111,12 @@ export function LaneComposer({ placeholder, submitLabel, successNote, buildBody 
           {busy ? text("提交中…", "Sending…") : submitLabel}
         </button>
       </div>
-      {error && <p className="composer-error">{error}</p>}
+      {error && (
+        <p className="composer-error">
+          <span>{error.prefix}</span>
+          {error.detail && <span className="composer-error-detail">{` ${error.detail}`}</span>}
+        </p>
+      )}
       {sent && !error && <p className="column-help">{successNote}</p>}
       {note && !error && <p className="column-help">{note}</p>}
     </>
