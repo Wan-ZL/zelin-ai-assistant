@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """UI 对齐门 `[ui-parity]`：原生清单 ui/parity/native-inventory.json ⟷ web 实现。
 
-法典：docs/CONTRACT.md §65.2。owner 2026-09-02：「你不能依靠一个个去看，而是要通过
+法典：docs/CONTRACT.md §66.2。owner 2026-09-02：「你不能依靠一个个去看，而是要通过
 一些硬指标、硬代码、硬文档来进行保证」——所以每一条清单 id 都有一个机器探针：
   control:*     web/src/parity.test.tsx（vitest，由清单驱动、不手写列表）用 demo
                 fixture 渲染每个页面/卡片，按 accessible name / 文本找每个双语标签；
@@ -314,7 +314,7 @@ def _group_counts(report):
 
 def render_markdown(report):
     c = report["counts"]
-    lines = ["# UI parity report (CONTRACT §65)", "",
+    lines = ["# UI parity report (CONTRACT §66)", "",
              "Inventory `ui/parity/native-inventory.json` sha256 `%s`." % report["inventory_sha256"][:12], "",
              "| status | count |", "|---|---|"]
     lines += ["| %s | %d |" % (k, c.get(k, 0)) for k in ("PRESENT", "PENDING", "MISSING", "STALE", "WAIVED")]
@@ -339,7 +339,7 @@ def _list_block(title, ids):
 def write_pending(path, presence, gated, waivers):
     """出生 / 清账：当前所有 MISSING（不含 waived）→ pending.txt。"""
     missing = sorted(i for i in gated if i not in waivers and not presence.get(i, False))
-    header = ("# ui/parity/pending.txt —— 尚未搬到 web 的原生 UI 条目（shrink-only，CONTRACT §65.2）。\n"
+    header = ("# ui/parity/pending.txt —— 尚未搬到 web 的原生 UI 条目（shrink-only，CONTRACT §66.2）。\n"
               "# 只许缩：新缺项 FAIL（补实现，不许记账）；已补齐仍挂账 FAIL（划掉这行）。\n"
               "# 每行：<inventory-id>。重铸：python3 scripts/ui/parity_check.py --write-pending（清账轮以外别用）。\n")
     uc.write_text(path, header + "".join(i + "\n" for i in missing))

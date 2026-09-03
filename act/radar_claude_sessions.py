@@ -232,6 +232,23 @@ def _tail_entries(path: Path) -> list:
     return _parse_lines(chunk)
 
 
+def _text_blocks(content: list) -> str:
+    """Block-list content → its ``text`` blocks joined by newlines."""
+    parts = [it.get("text", "") for it in content
+             if isinstance(it, dict) and it.get("type") == "text"]
+    return "\n".join(p for p in parts if p).strip()
+
+
+def _content_text(content) -> str:
+    """Message ``content`` → plain text: a string as-is, a block list joined
+    over its ``text`` blocks, anything else "" (images, tool_use, …)."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return _text_blocks(content)
+    return ""
+
+
 def _entry_text(entry: dict) -> str:
     """Plain conversation text of a user/assistant entry; "" for anything else
     (tool results, thinking, meta/sidechain lines, attachments, …)."""
@@ -243,14 +260,7 @@ def _entry_text(entry: dict) -> str:
     msg = entry.get("message")
     if not isinstance(msg, dict):
         return ""
-    content = msg.get("content")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = [it.get("text", "") for it in content
-                 if isinstance(it, dict) and it.get("type") == "text"]
-        return "\n".join(p for p in parts if p).strip()
-    return ""
+    return _content_text(msg.get("content"))
 
 
 def _clean_head(text: str, limit: int) -> str:
@@ -289,6 +299,121 @@ def _is_main_chain(entry: dict) -> bool:
             and not entry.get("isSidechain") and not entry.get("isMeta"))
 
 
+def _main_chain(entries: list) -> list:
+    return [e for e in entries if _is_main_chain(e)]
+
+
+def _foreign_session(entry: dict, stem: str) -> bool:
+    """A main-chain line carrying a ``sessionId`` other than the filename's
+    — the file does not own this content (例4a 张冠李戴)."""
+    sid = entry.get("sessionId")
+    return bool(isinstance(sid, str) and sid and sid != stem)
+
+
+def _ai_title(head: list) -> str:
+    """Claude Code's own ``ai-title`` line (the last one wins), any chain."""
+    title = ""
+    for e in head:
+        if e.get("type") == "ai-title" and isinstance(e.get("aiTitle"), str):
+            title = e["aiTitle"].strip()
+    return title
+
+
+def _first_cwd(chain: list) -> str:
+    """First non-empty string ``cwd`` on the chain, else ""."""
+    for e in chain:
+        cwd = e.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            return cwd
+    return ""
+
+
+def _session_cwd(head_chain: list, tail_chain: list) -> str:
+    """``project_dir`` = the LAST main-chain cwd (sessions migrate into
+    worktrees mid-flight; resume is scoped to the final cwd), falling back
+    to the first one seen in the head."""
+    return _first_cwd(list(reversed(tail_chain))) or _first_cwd(head_chain)
+
+
+def _first_user_text(chain: list) -> str:
+    """Text of the first user line that has any (the work order)."""
+    for e in chain:
+        if e.get("type") == "user":
+            text = _entry_text(e)
+            if text:
+                return text
+    return ""
+
+
+def _last_texts(chain: list) -> tuple[str, str]:
+    """(last_role, last_assistant): the role of the LAST real conversation
+    text in the file, and the text of the last assistant message."""
+    last_role = ""
+    last_assistant = ""
+    for e in chain:
+        text = _entry_text(e)
+        if not text:
+            continue
+        last_role = e.get("type", "")
+        if e.get("type") == "assistant":
+            last_assistant = text
+    return last_role, last_assistant
+
+
+def _latest_ts(entries: list) -> Optional[_dt.datetime]:
+    """Newest parseable ``timestamp`` over the entries (any chain)."""
+    last_ts: Optional[_dt.datetime] = None
+    for e in entries:
+        ts = _parse_ts(e.get("timestamp"))
+        if ts is not None and (last_ts is None or ts > last_ts):
+            last_ts = ts
+    return last_ts
+
+
+def _file_ts(path: Path) -> _dt.datetime:
+    """Fallback activity time when no entry carried a timestamp."""
+    try:
+        return _dt.datetime.fromtimestamp(path.stat().st_mtime, _dt.timezone.utc)
+    except OSError:
+        return _dt.datetime.now(_dt.timezone.utc)
+
+
+def _last_activity(tail: list, path: Path) -> str:
+    """ISO-Z of the newest tail timestamp, else the file's mtime."""
+    return (_latest_ts(tail) or _file_ts(path)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _waiting_on_user(last_role: str, last_assistant: str) -> bool:
+    """Session ended with the AI asking for input."""
+    return last_role == "assistant" and _looks_like_question(last_assistant)
+
+
+def _last_prompt(tail: list) -> str:
+    """The last-prompt marker Claude Code keeps near the end of the file —
+    the gist/title fallback when a long first prompt was pushed out of the
+    head window."""
+    for e in tail:
+        if e.get("type") == "last-prompt" and isinstance(e.get("lastPrompt"), str):
+            return e["lastPrompt"]
+    return ""
+
+
+def _gist(user_head: str, assistant_head: str) -> str:
+    if user_head and assistant_head:
+        return f"{user_head} → {assistant_head}"
+    return user_head or assistant_head
+
+
+def _title(ai_title: str, first_user: str, last_assistant: str) -> str:
+    return (_clean_head(ai_title, _TITLE_CHARS)
+            or _clean_head(first_user, _TITLE_CHARS)
+            or _clean_head(last_assistant, _TITLE_CHARS))
+
+
+def _project_name(project_dir: str, path: Path) -> str:
+    return Path(project_dir).name if project_dir else path.parent.name
+
+
 def _candidate_from_file(path: Path) -> Optional[dict]:
     """Build one scan candidate from a transcript. None = not importable
     (no real conversation text found in the head/tail windows).
@@ -302,95 +427,42 @@ def _candidate_from_file(path: Path) -> Optional[dict]:
     head = _head_entries(path)
     tail = _tail_entries(path)
     stem = path.stem
+    head_chain = _main_chain(head)
+    tail_chain = _main_chain(tail)
 
-    first_user = ""
-    ai_title = ""
-    head_cwd = ""
-    mismatch = False
-    for e in head:
-        if e.get("type") == "ai-title" and isinstance(e.get("aiTitle"), str):
-            ai_title = e["aiTitle"].strip()
-        if not _is_main_chain(e):
-            continue
-        sid = e.get("sessionId")
-        if isinstance(sid, str) and sid and sid != stem:
-            mismatch = True
-        if not head_cwd and isinstance(e.get("cwd"), str):
-            head_cwd = e["cwd"]
-        if not first_user and e.get("type") == "user":
-            first_user = _entry_text(e)
-
-    last_assistant = ""
-    last_role = ""          # role of the LAST real conversation text in the file
-    last_ts: Optional[_dt.datetime] = None
-    tail_cwd = ""
-    for e in tail:
-        ts = _parse_ts(e.get("timestamp"))
-        if ts is not None and (last_ts is None or ts > last_ts):
-            last_ts = ts
-        if not _is_main_chain(e):
-            continue
-        sid = e.get("sessionId")
-        if isinstance(sid, str) and sid and sid != stem:
-            mismatch = True
-        if isinstance(e.get("cwd"), str) and e["cwd"]:
-            tail_cwd = e["cwd"]
-        text = _entry_text(e)
-        if text:
-            last_role = e.get("type", "")
-            if e.get("type") == "assistant":
-                last_assistant = text
-    cwd = tail_cwd or head_cwd
+    first_user = _first_user_text(head_chain)
+    last_role, last_assistant = _last_texts(tail_chain)
     # The answered-Q&A heuristic only ever judges the REAL first prompt (from
     # the head window). The lastPrompt fallback below is the LAST user message
     # (e.g. a closing question), not the work order — judging it would widen
     # the false-positive surface, so it feeds gist/title only.
     head_first_user = first_user
     if not first_user:
-        # long first prompt pushed out of the head window — fall back to the
-        # last-prompt marker Claude Code keeps near the end of the file
-        for e in tail:
-            if e.get("type") == "last-prompt" and isinstance(e.get("lastPrompt"), str):
-                first_user = e["lastPrompt"]
-                break
+        first_user = _last_prompt(tail)
 
     user_head = _clean_head(first_user, _GIST_PART_CHARS)
     assistant_head = _clean_head(last_assistant, _GIST_PART_CHARS)
     if not user_head and not assistant_head:
         return None   # bookkeeping-only file (queue ops, snapshots, …)
 
-    if user_head and assistant_head:
-        gist = f"{user_head} → {assistant_head}"
-    else:
-        gist = user_head or assistant_head
-    title = _clean_head(ai_title, _TITLE_CHARS) or _clean_head(first_user, _TITLE_CHARS) \
-        or _clean_head(last_assistant, _TITLE_CHARS)
-
-    if last_ts is None:
-        try:
-            last_ts = _dt.datetime.fromtimestamp(path.stat().st_mtime,
-                                                 _dt.timezone.utc)
-        except OSError:
-            last_ts = _dt.datetime.now(_dt.timezone.utc)
-
-    waiting = last_role == "assistant" and _looks_like_question(last_assistant)
-    project_dir = cwd or ""
-    project = Path(project_dir).name if project_dir else path.parent.name
+    waiting = _waiting_on_user(last_role, last_assistant)
+    project_dir = _session_cwd(head_chain, tail_chain)
 
     return {
         "session_id": stem,
         "session_file": str(path),
-        "project": project,
+        "project": _project_name(project_dir, path),
         "project_dir": project_dir,
-        "title": title,
-        "gist": gist,
-        "last_activity": last_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "title": _title(_ai_title(head), first_user, last_assistant),
+        "gist": _gist(user_head, assistant_head),
+        "last_activity": _last_activity(tail, path),
         "ended_waiting_on_user": waiting,
         # import-gate flags: session_mismatch is hard (never import);
         # answered is soft (bulk paths skip, explicit import overrides)
         "answered": _answered_qa(head_first_user, last_assistant, last_role,
                                  waiting),
-        "session_mismatch": mismatch,
+        "session_mismatch": any(_foreign_session(e, stem)
+                                for e in head_chain + tail_chain),
     }
 
 
@@ -404,19 +476,74 @@ def _registry_session_ids() -> set:
     try:
         for r in registry.load_all():
             ex = r.execution if isinstance(r.execution, dict) else {}
-            # reraised_session_id: a finished round archived by
-            # registry.reraise_or_followup — still OUR agent's work; without
-            # it a re-raised card's old session gets bulk-imported as a brand
-            # new card (review 2026-07-15: would break this docstring's
-            # invariant the moment a delivered chat session is re-raised).
-            for key in ("session_id", "aborted_session_id",
-                        "reraised_session_id"):
-                sid = ex.get(key)
-                if sid:
-                    ids.add(str(sid))
+            ids |= _execution_session_ids(ex)
     except Exception:  # noqa: BLE001 — a broken registry must not kill the scan
         pass
     return ids
+
+
+# reraised_session_id: a finished round archived by
+# registry.reraise_or_followup — still OUR agent's work; without it a
+# re-raised card's old session gets bulk-imported as a brand new card (review
+# 2026-07-15: would break _registry_session_ids' invariant the moment a
+# delivered chat session is re-raised).
+_EXECUTION_SESSION_KEYS = ("session_id", "aborted_session_id",
+                           "reraised_session_id")
+
+
+def _execution_session_ids(ex: dict) -> set:
+    return {str(ex.get(key)) for key in _EXECUTION_SESSION_KEYS if ex.get(key)}
+
+
+def _session_files(root: Path):
+    """Top-level ``*.jsonl`` under each project dir — ``<session>/subagents/
+    **.jsonl`` are subagent transcripts of a session, not sessions themselves."""
+    for project_dir in sorted(root.iterdir()):
+        if not project_dir.is_dir():
+            continue
+        yield from project_dir.glob("*.jsonl")
+
+
+def _fresh_enough(f: Path, cutoff: _dt.datetime) -> bool:
+    """File mtime inside the window (unstattable = no)."""
+    try:
+        mtime = _dt.datetime.fromtimestamp(f.stat().st_mtime, _dt.timezone.utc)
+    except OSError:
+        return False
+    return mtime >= cutoff
+
+
+def _candidate_in_window(f: Path, cutoff: _dt.datetime) -> Optional[dict]:
+    """The transcript's candidate when both its mtime and its last activity
+    fall inside the window (mtime first — only then is the file opened)."""
+    if not _fresh_enough(f, cutoff):
+        return None
+    cand = _candidate_from_file(f)
+    if cand is None:
+        return None
+    ts = _parse_ts(cand["last_activity"])
+    if ts is not None and ts < cutoff:
+        return None
+    return cand
+
+
+def _collect_candidates(root: Path, cutoff: _dt.datetime,
+                        excluded: set) -> tuple[list, dict]:
+    """(candidates, {hard_skip_reason: count}) over the transcripts under root."""
+    out: list = []
+    skipped: dict = {}
+    for f in _session_files(root):
+        if f.stem in excluded:
+            continue
+        cand = _candidate_in_window(f, cutoff)
+        if cand is None:
+            continue
+        reason = _hard_skip_reason(cand)
+        if reason:
+            skipped[reason] = skipped.get(reason, 0) + 1
+        else:
+            out.append(cand)
+    return out, skipped
 
 
 def scan(window_days: int = DEFAULT_WINDOW_DAYS, *,
@@ -438,35 +565,7 @@ def scan(window_days: int = DEFAULT_WINDOW_DAYS, *,
     imported = {} if include_imported else _load_imported()
     own_sessions = _registry_session_ids()
 
-    out = []
-    skipped: dict = {}
-    for project_dir in sorted(root.iterdir()):
-        if not project_dir.is_dir():
-            continue
-        # top level only — <session>/subagents/**.jsonl are subagent
-        # transcripts of a session, not sessions themselves
-        for f in project_dir.glob("*.jsonl"):
-            sid = f.stem
-            if sid in imported or sid in own_sessions:
-                continue
-            try:
-                mtime = _dt.datetime.fromtimestamp(f.stat().st_mtime,
-                                                   _dt.timezone.utc)
-            except OSError:
-                continue
-            if mtime < cutoff:
-                continue
-            cand = _candidate_from_file(f)
-            if cand is None:
-                continue
-            ts = _parse_ts(cand["last_activity"])
-            if ts is not None and ts < cutoff:
-                continue
-            reason = _hard_skip_reason(cand)
-            if reason:
-                skipped[reason] = skipped.get(reason, 0) + 1
-                continue
-            out.append(cand)
+    out, skipped = _collect_candidates(root, cutoff, set(imported) | own_sessions)
     for reason, n in sorted(skipped.items()):
         analytics.log_event("radar_skip", source="claude_code", reason=reason,
                             count=n)
@@ -494,41 +593,93 @@ def _import_candidates(cands: list) -> int:
     for c in cands:
         if _hard_skip_reason(c):
             continue
-        target = c.get("project_dir") or None
-        if target and not Path(target).expanduser().is_dir():
-            target = None
-        new = registry.Requirement(
-            id=registry.next_id(),
-            title=(c.get("title") or c.get("gist") or "")[:80],
-            summary=c.get("gist") or "",
-            type="code",
-            tier="T1",
-            status=(registry.State.CARD_SENT.value
-                    if c.get("ended_waiting_on_user")
-                    else registry.State.DETECTED.value),
-            hardness="soft",
-            plan=[],
-            sources=[{
-                "who": "claude-code",
-                "channel": "claude_code",
-                "date": (c.get("last_activity") or "")[:10],
-                "quote": c.get("gist") or "",
-                "ref": c.get("session_id"),
-                # verified binding (main-chain cwd of THIS transcript) — so
-                # resume/attach flows read it from the card instead of
-                # glob-guessing across ~/.claude/projects (例4a 张冠李戴)
-                "cwd": c.get("project_dir") or "",
-            }],
-            target_repo=target,
-            notes="claude-code 导入 / imported from Claude Code session "
-                  f"{(c.get('session_id') or '')[:8]}",
-        )
-        registry.merge_or_new(new)
+        registry.merge_or_new(_session_card(c))
         created += 1
         done_ids.append(c.get("session_id"))
     if done_ids:
         _mark_imported(done_ids)
     return created
+
+
+def _import_target(c: dict) -> Optional[str]:
+    """target_repo = the session's project_dir when it still exists on disk."""
+    target = c.get("project_dir") or None
+    if target and not Path(target).expanduser().is_dir():
+        target = None
+    return target
+
+
+def _import_status(c: dict) -> str:
+    """Waiting-on-you sessions land in 待审批 (card_sent); merely-recent ones
+    in 备选 (detected) — the same confidence split the other radars use."""
+    if c.get("ended_waiting_on_user"):
+        return registry.State.CARD_SENT.value
+    return registry.State.DETECTED.value
+
+
+def _session_source(c: dict) -> dict:
+    return {
+        "who": "claude-code",
+        "channel": "claude_code",
+        "date": (c.get("last_activity") or "")[:10],
+        "quote": c.get("gist") or "",
+        "ref": c.get("session_id"),
+        # verified binding (main-chain cwd of THIS transcript) — so
+        # resume/attach flows read it from the card instead of
+        # glob-guessing across ~/.claude/projects (例4a 张冠李戴)
+        "cwd": c.get("project_dir") or "",
+    }
+
+
+def _session_card(c: dict) -> registry.Requirement:
+    return registry.Requirement(
+        id=registry.next_id(),
+        title=(c.get("title") or c.get("gist") or "")[:80],
+        summary=c.get("gist") or "",
+        type="code",
+        tier="T1",
+        status=_import_status(c),
+        hardness="soft",
+        plan=[],
+        sources=[_session_source(c)],
+        target_repo=_import_target(c),
+        notes="claude-code 导入 / imported from Claude Code session "
+              f"{(c.get('session_id') or '')[:8]}",
+    )
+
+
+def _importable_id(sid: str, imported: dict) -> bool:
+    """Non-empty, no path separator (ids come from an inbox file — never let
+    one form a path traversal), not already imported (re-run safe)."""
+    return bool(sid) and "/" not in sid and sid not in imported
+
+
+def _requested_ids(session_ids: list, imported: dict) -> list:
+    """Normalised, importable ids in request order."""
+    return [sid for sid in (str(raw or "").strip() for raw in session_ids)
+            if _importable_id(sid, imported)]
+
+
+def _explicit_candidate(root: Path, sid: str) -> Optional[dict]:
+    """Resolve one explicitly requested id straight to ``<projects>/*/<id>.jsonl``
+    (first match only, no full scan). Session-id mismatches are refused even
+    when explicitly requested (hard gate; per-session ``radar_skip`` event);
+    the soft ``answered`` heuristic is OVERRIDDEN and logged as
+    ``radar_gate_override``."""
+    for f in root.glob(f"*/{sid}.jsonl"):
+        cand = _candidate_from_file(f)
+        if cand is None:
+            return None
+        reason = _hard_skip_reason(cand)
+        if reason:
+            analytics.log_event("radar_skip", source="claude_code",
+                                reason=reason, session=sid[:8])
+            return None
+        if cand.get("answered"):
+            analytics.log_event("radar_gate_override", source="claude_code",
+                                reason="answered", session=sid[:8])
+        return cand
+    return None
 
 
 def import_by_ids(session_ids: list, root: Optional[Path] = None) -> int:
@@ -543,25 +694,10 @@ def import_by_ids(session_ids: list, root: Optional[Path] = None) -> int:
     root = root or projects_root()
     imported = _load_imported()
     cands = []
-    for sid in session_ids:
-        sid = str(sid or "").strip()
-        # ids come from an inbox file — never let one form a path traversal
-        if not sid or "/" in sid or sid in imported:
-            continue
-        for f in root.glob(f"*/{sid}.jsonl"):
-            cand = _candidate_from_file(f)
-            if cand is not None:
-                reason = _hard_skip_reason(cand)
-                if reason:
-                    analytics.log_event("radar_skip", source="claude_code",
-                                        reason=reason, session=sid[:8])
-                else:
-                    if cand.get("answered"):
-                        analytics.log_event("radar_gate_override",
-                                            source="claude_code",
-                                            reason="answered", session=sid[:8])
-                    cands.append(cand)
-            break
+    for sid in _requested_ids(session_ids, imported):
+        cand = _explicit_candidate(root, sid)
+        if cand is not None:
+            cands.append(cand)
     n = _import_candidates(cands)
     analytics.log_event("claude_sessions_import", requested=len(session_ids),
                         imported=n)

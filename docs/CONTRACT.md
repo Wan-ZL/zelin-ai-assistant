@@ -62,6 +62,22 @@
 11. **失败不外溢**：单条候选/单篇笔记/单封邮件的失败只属于它自己，绝不崩整个
     pass；放弃要留痕（重试台账/诊断卡）。（§40；radar 重试台账；§47 瞬时重试/
     解析降级卡/loop_health）
+12. **审批边界**（**修宪，2026-09-02，P6 / owner 决策 D7·D8·D9·D12**）：人对每张卡
+    的审批位置默认在**起点**（批准才派发；hand lane 的免批见 §51）。**唯一例外**
+    是 §65 自我改进通道，且只对「sources 全部是写死的 `self_improve` 渠道 ∧
+    `target_repo` 的 realpath 就是本仓库」的卡：人从起点审批移到**终点验收**——
+    合并 PR = 验收、关闭 PR = 拒绝。代价由**确定性后盾**而非 prompt 承担：①交付
+    只能是草稿 PR，做完后 actd 用 `gh` 物理核验（存在 / OPEN / head≠main /
+    base=main / draft / diff 非空），不过即带原因停在待验收；②会话零 MCP 出网
+    （`--strict-mcp-config --mcp-config {"mcpServers":{}}`，声明 `needs_mcp`
+    的卡只能走 owner 亲批）；③**受保护路径墙**——PR 触碰 `act/lib/policy.py`、
+    `act/lib/self_improve.py`、`act/llm.py`、`.github/workflows/`、`install.sh`、
+    `scripts/auto-deploy.sh` 任一即打 `needs-owner-eyes` 标签并暂停整条通道，直到
+    owner 处理该 PR 或亲手恢复；④守护进程跑的是 main 的 checkout，main 受 ruleset
+    保护（PR-only + required checks，§56），分支上改走自己的墙没有运行时效果。
+    其它一切 lane、其它一切仓库的审批位置不变；「验收 = 用户专属」的权限墙不动
+    ——GitHub 上的合并就是 owner 的点击，actd 只是 relay。（§51 第二条 lane；
+    §65；tests/test_policy_self_improve_lane.py、test_self_improve_*.py）
 
 ## 1. 注册表（卡片账本）— 真源与字段
 
@@ -79,6 +95,8 @@ YAML 载体：一条需求一个文件。状态机：
 `detected → card_sent → approved → executing → review → delivered`，旁支 `rejected` / `merged_into:<父ID>`；merge-review 终态 `merged`（+ 顶层 `merged_into` 字段，语义见 §21）。
 
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
+
+**2026-09-02 追记（§65，add-only optional 字段 `needs_mcp`，bool，默认 false 整键省略）**：卡显式声明本次执行需要 MCP（Slack/Gmail 等外部工具）。它只会让卡**更不自主**——`self_improve` lane 见到即拒（`self_improve:needs_mcp`，只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开；对其它出身的卡无任何效果。producer / owner 写，LLM 不写。
 
 **v0.48.15 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.15 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
 
@@ -139,6 +157,10 @@ YAML 载体：一条需求一个文件。状态机：
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
+**2026-09-02 新增（§65 自动草稿 PR 通道的投影面，全部 add-only optional）**：
+- `review[]` 行加 `delivery`（object，仅 self_improve 卡携带 = `execution.delivery` 原样：`verified`(bool) / `reason`(str|null，词表见 §65.3) / `branch` / `pr_number` / `pr_url` / `pr_draft` / `pr_state` / `base` / `head_sha` / `changed_files`(int) / `sensitive_paths`([str]) / `checked_at` / `label`?）；核验未过的行同时带既有的 `interrupted: true`（`interrupted_reason` 词表加值 `delivery_unverified`），detect_transitions 因此不发「AI 已交付草稿」（`on_harvest` 已发 `msg_self_improve_unverified`）。web 渲染 PR 章（通过 = 绿章链接 `PR #n · draft`；未过 = 红章 `PR 未核验：<reason>`）。
+- 顶层 `self_improve`（object，**恒在**，§2 兄弟字段同 `deploy_state` 的加法约定）：`{enabled, paused, paused_reason, paused_pr, paused_pr_url, paused_paths[], paused_at}`——通道开关 + 敏感路径护栏的暂停状态（`state/self_improve/lane.json` 的低频子集；巡检时间戳一类高频值**不**进看板，免触发 syncd 板快照上传）。web 顶部横幅 `SelfImproveBanner` 在 `paused` 时说话并给「恢复通道」（`POST /api/self-improve/resume`）。
+
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
 
 ```json
@@ -158,6 +180,8 @@ approved 的需求：
 3. 记录 `execution.session_id`（从派发输出或 `claude agents --json` 最新匹配 cwd 取）+ dispatched_at + log 路径；status → executing。
 
 **v0.48.15 追记（§60.4）**：prompt 头 `# Requirement <编号>: <title>`、bg 会话名（`executor.session_name`，claude 用它派生 worktree/分支名）、派发日志文件名 `state/logs/<编号>.log` 与首行 `# dispatch <编号> (<主键>) @ …` 中的「编号」= `registry.display_id(req)`（工作编号；派发必在 approved 之后所以恒有，存量 legacy 卡回落主键）。日志路径持久化在 `execution.log`，读方不依赖文件名口径。analytics 事件的 `req=` 仍记主键（稳定键）。
+
+**2026-09-02 追记（§65.2 出网封锁）**：sources 全为 `self_improve` 且未声明 `needs_mcp` 的卡，**四个发射点**（dispatch / resume / rework / brief，共用 `executor._bg_base_cmd(cfg, req)`）的 argv 在模型旗标之后、`--name` 之前追加 `llm.NO_MCP_ARGV` = `--strict-mcp-config --mcp-config {"mcpServers":{}}`——用户级 Slack/Gmail MCP 对该会话不存在（resume/rework 同样带，派发关掉的面永不被复活）；其它卡 argv 逐字节不变（`llm.dispatch_argv(cfg, no_mcp=False)` 默认）。prompt 多一段 `## SELF-IMPROVE LANE`（分支名 / 只准草稿 PR / 受保护路径清单 / 无 MCP / 不发 PR 评论），`execution.self_improve = {branch, egress: "none"|"mcp", lane: bool}` 随成功派发落账。判例 tests/test_self_improve_argv.py。
 
 ### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
 
@@ -1004,6 +1028,22 @@ failure_id, action_id}]}`；exit code 仍 = FAIL 数。app 诊断区渲染 non-o
 人话句子（FailureCatalog）+ 对症按钮；raw detail/fix 收进 tooltip 与「完整报告」。
 app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录制模式下死亡）时
 **每次会话自动跑一次** `--fast` 版（零成本，不打真实 claude 调用）。
+
+**doctor 模块布局（P3a 追记，行为零变化；§58 清账）**：探针按家族住
+`act/lib/checks/`（`core` 共享件 / `environment` 工具链·配置·凭证·目录 /
+`launchd` §55 路径纪律与 TCC 三幕 / `services` systemd·Task Scheduler 镜像 /
+`cron` §18 链 + FDA 探针 / `pipeline` store2·dashboard·心跳·看板 server·部署），
+每家族公开 `check_*(probes)`，接收 `act.doctor.Probes`（注入缝，duck-typed——
+lib 永不 import doctor，§58.3）。`act/doctor.py` = `Probes`（缺省探针实现）+
+§59 两行模型旋钮（唯一经 `act/llm.py` 的行，lib 层不可达）+ 逐行 `_check_*`
+同名包装（`diagnostic crashed` 行名与判例都从它派生）+ 按 OS 组合 + 渲染 +
+`main`；公开面 `run_checks(probes=None, fast=False)` / `render` / `render_json`
+/ `main` 不变，行名、文案、failure_id 逐字不变（判例 tests/test_doctor*.py 零改动通过）。
+本节及 §54/§55 里对 `act/doctor.py _check_<x>` 的指针仍成立（包装存在），实现读
+`act/lib/checks/<家族>.py`。配套公开名（防腐 #2「跨模块不引 `_私名`」）：
+`act.lib.secrets.read_path`（§19 legacy 路径的无警告读取，doctor 的 key 探针用）、
+`act.lib.analytics_sync.resolve_key`（syncd / feedback 复用的上传 key 解析）——旧
+私名保留为模块内别名。
 
 **state/cron_probe.json**（cron FDA 探针 —— cron 链写，doctor/app 读）：
 
@@ -3448,9 +3488,11 @@ test_server_auth.py）。
 quick capture / Slack self-DM——sources channel = `quick`/`quick_capture`）｜
 `proposed`（AI 自提：digest 建议 `analytics`、会话挖掘 `claude_code`、诊断
 降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`，以及 §50
-落款派生的 `agent_capture`/`remote_capture`）｜`meeting`（会议音频/笔记出生：
-`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。信任序 hand >
-proposed > meeting > external。
+落款派生的 `agent_capture`/`remote_capture`；**2026-09-02 加行 `self_improve`**
+——§65 自动草稿 PR 通道的唯一铸卡渠道，producer 硬编码写入，出身仍是
+proposed，**免批资格由 §51 的第二条 lane 另裁、出身分类不变**）｜`meeting`
+（会议音频/笔记出生：`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。
+信任序 hand > proposed > meeting > external。
 
 **分类规则**（`act/lib/policy.py::classify_origin(card_sources,
 capture_channel)`，全函数永不 raise）：① 逐条 sources 的 `channel` 查
@@ -3546,6 +3588,27 @@ token 词表（机读稳定，UI 侧映射文案）：`disabled` /
 `cost:over_ceiling` / `budget:unknown` / `budget:exhausted` retired v0.48.7
 （见下方 tombstone；token 永不复用，旧卡上残留的值由 actd 按「解除即清」在
 下一 pass 清掉并放行）。
+
+**第二条 lane（2026-09-02，§65 / §0 第 12 条修宪；owner 决策 D7·D9）**：出身
+`proposed` 的卡里，**sources 非空且每一条 channel 都是 `self_improve`** 的卡进入
+lane 专属天花板（顺序即 token 优先级）：`self_improve.enabled=false` →
+`self_improve:disabled`（常态，不上卡）；通道暂停（§65.4，`lane_paused` 由
+actd 每 pass 从 `state/self_improve/lane.json` 现读传入）→ `self_improve:paused`
+（上卡）；卡声明 `needs_mcp` → `self_improve:needs_mcp`（上卡）；`target_repo`
+（**不**回落默认 workbench）的 `os.path.realpath` ≠ `self_improve.repo_path`
+（默认安装根 `config.HOME`）的 realpath → `self_improve:repo_mismatch`（上卡）。
+全过 → 继续下面 ③④⑤ 的共用天花板；⑥ 成本对 lane 卡不拦（D9 无预算、无审批
+步骤），放行 token = `ok:self_improve`（actd 据此换 notes 痕与通知文案）。
+**判据锚点只有 channel + realpath**——`type=self-improvement`、`target_repo`
+单独、任何 LLM 可写字段的组合都开不了 lane（§50 M1.d）；sources 混入任何别的
+渠道（hand 卡被 fold、slack 来源并入……）即失格，按最小信任回 `origin:<class>`。
+词表 add-only：`ok:self_improve` / `self_improve:disabled` /
+`self_improve:paused` / `self_improve:needs_mcp` / `self_improve:repo_mismatch`；
+`policy.is_routine_reason` 是 C-6 常态判定的唯一读取点。config 块
+`self_improve:`（`enabled`(true) / `repo_path`("" = 安装根) / `tick_minutes`(60) /
+`owner_logins`([]) / `github_repo`("" = 首次使用时 `gh repo view` 取并缓存)，
+`policy.self_improve_config` 唯一读取点，脏值逐键回退）。
+判例 tests/test_policy_self_improve_lane.py。
 
 **天花板明细（locked + 保守解释）**：① `autodispatch.enabled=false` 全关；
 ② 出身非 hand 不批——出身**从 sources 现算**（不依赖可能缺失/过期的章，
@@ -4369,7 +4432,7 @@ label，孤儿结构性不可见。自本节起：
 
 ## 56. 合并即上岗：自动发版与自动部署（decision D17）
 
-owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
+owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并」到「跑在 owner Mac 上」之间的每一步都变成机器动作，人只在两处出现——点合并、收通知。执法：`.github/workflows/release-on-merge.yml`（前身 `tag-on-merge.yml`）、`.github/workflows/release.yml`、`.github/workflows/ci.yml` + `.github/workflows/ci-nightly.yml` + `.github/workflows/pr-review-claude.yml` / `pr-review-codex.yml`（56.8）、`act/lib/version.py`、`scripts/version_stamp.py`、`scripts/ci/release_tags.py`、`scripts/ci/version_pins_check.py`、`scripts/ci/changelog_release_notes.py`、`scripts/ci/changelog_fragments.py`、`scripts/ci/changelog_prune.py`、`scripts/ci/progress_log.py`（56.7）、`scripts/auto-deploy.sh`、`act/auto_deploy.py`、`act/launchd/com.zelin.aiassistant.autodeploy.plist`、`act/lib/deploy_state.py`、`install.sh --non-interactive`；判例 `tests/integration/test_auto_deploy_script.py`（真 bash + 真 git 对着临时 origin）、`tests/test_deploy_state.py`、`tests/test_auto_deploy_agent.py`、`tests/test_doctor_launchd_volume_access.py`、`tests/test_changelog_fragments.py`、`tests/test_changelog_release_notes.py`、`tests/test_changelog_prune.py`、`tests/test_progress_log.py`、`tests/test_version_pins_check.py`、`web/src/components/shell/HeaderBar.test.tsx`。
 
 ### 56.1 版本真源 = git tag；没有任何文件承载版本（2026-09-02 改写；宪法第 8 条同日修宪）
 
@@ -4396,7 +4459,7 @@ owner 的规矩：**只看绿的 PR，合并就是发布**。本节把「合并�
 
 串行：`concurrency: release-on-merge`（`cancel-in-progress: false`）——连续合并依次取号；GitHub 每组最多留**一个** pending run，第三次快速 push 会取消排队中的第二个——被取消的那次合并**不单独发版**，但下一次 run 给最新 main 的 tag 已含它的 commit，合进 main 的东西永不失落。手工 `git tag v… && git push --tags` 仍走 `on: push: tags`，两个入口不冲突（release.yml 从 tag 名盖章，不再读任何文件里的版本）。Release 正文：`## 变更 / Changes` = `changelog.d/` fragments ∪ CHANGELOG legacy `[Unreleased]` 相对 `release_tags.py previous <tag>` 那棵树的增量（56.1 / 56.7；上一版的 fragments 用 `git archive <prev> changelog.d` 取），其后是安装说明块与 `--generate-notes` 的 PR 清单。
 
-**merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。
+**merge queue 就绪**：每个提供 required status check 的 workflow / job（`ci`、`Lint (shellcheck + ruff)`、`Tests on ubuntu (Python 3.9)` / `(Python 3.x)`、`Web tests (build + vitest)`、`QA gates (…)`、`Version pins untouched`）同时响应 **`merge_group:`（`types: [checks_requested]`）**，job 名逐字相同、不依赖任何 pull_request 专有上下文（`qa-gates` 的账本差分步在两种事件下都对 `HEAD^1` 比）；bot review 与 informational jobs（Windows 套件、qlty、contract reminder）留在 pull_request。ruleset `protect-main` 加 `merge_queue` 规则（merge method **merge**、ALLGREEN、每组 ≤5）后，PR 用 `gh pr merge --auto --merge` 入队；队列以 main 头为基底跑全部 required check，绿了才合——这正是 §56.5「不部署没被测过的 sha」担心的形状的根治（56.3 第 3 步的 CI 闸门作为双保险**不因此移除**）。**追记（2026-09-02）**：ruleset API 对**个人账户 repo** 拒绝 `merge_queue` 规则（实测）——队列本身装不上；`merge_group` 接线原样保留（repo 搬进 organization 那天即可启用），眼下由 **§56.6 的 auto-update-branch 协议**替代「以 main 头为基底重跑」这一半。**追记二（2026-09-02，§56.8）**：Windows 套件与 qlty 已从 pull_request 搬到 `ci-nightly.yml`（schedule + dispatch），bot review 改为 `review:ai` 标签按需触发；pull_request 上只剩 contract reminder 一个非 required job，`ci` 与 `Web tests` 在 PR 上按路径 filter 决定做多少事（merge_group / push 恒全量）——required 集合与 job 名一字不改。
 
 ### 56.3 部署 job：owner Mac 每 10 分钟跟随 origin/main
 
@@ -4469,7 +4532,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 **为什么不是 merge queue**：GitHub Merge Queue 是 ruleset 的 `merge_queue` 规则，而 ruleset API 对**个人账户 repo** 拒绝它（2026-09-02 实测）；repo 搬进 organization 之前装不上，56.2 的 `merge_group` 接线原样保留等那一天。替代协议 = **main 每前进一步，把新 main 合进每个在飞 PR 的分支**，让 PR 的 head 永远建在最新 main 上、required check 永远是对「合并后形状」的判决，再由 GitHub 的 auto-merge（repo 设置 `allow_auto_merge` + `allow_update_branch` 已开）在七个 required check 绿的那一刻合并。执法：`.github/workflows/update-pr-branches.yml`（`on: push: branches: [main]` + `workflow_dispatch`，可选 `dry_run`；`concurrency: update-pr-branches`，不取消在跑的；顶层 `permissions: {}`，job 级 `contents: read` + `pull-requests: write` + `issues: write`；**不 checkout**——repo 里的任何代码都不在这个 job 里执行，PAT 永不与 PR 代码同处一个进程）。
 
-**token 真相（决定了这个 workflow 的形状）**：`GITHUB_TOKEN` 造成的事件不触发别的 workflow（`workflow_dispatch` / `repository_dispatch` 除外）——56.2 为 tag 引用过的同一条规则，对 `PUT /repos/{o}/{r}/pulls/{n}/update-branch` **同样成立**（GitHub 文档「Triggering a workflow」+ community discussion #26520「Update branch triggered through API does not run checks」）：用 `GITHUB_TOKEN` 更新分支 = PR head 挪到一个**永远没有 CI** 的 commit，七个 required check 停在 "Expected — waiting for status"，auto-merge 永不触发，PR 比不更新**更糟**。所以：(a) 真正的 update-branch 调用用 **fine-grained PAT**（repo secret `PR_AUTOUPDATE_TOKEN`；只授本 repo；Contents read+write + Pull requests read+write；owner 创建、到期续），它的 push 是普通用户 push，**会**触发 CI、`Version pins untouched` 与两个 advisory review（pr-review-*.yml 每次更新都重跑——新基底上的新审查，是这条协议的成本）；(b) **secret 缺席 = report-only 模式**：workflow 仍给冲突的 PR 打 `needs-rebase`（打标签、留评论不需要 push，`GITHUB_TOKEN` 足够）并在 step summary 列出「本该更新」的 PR，但**一根分支都不碰**，绝不退回 `GITHUB_TOKEN` 更新。
+**token 真相（决定了这个 workflow 的形状）**：`GITHUB_TOKEN` 造成的事件不触发别的 workflow（`workflow_dispatch` / `repository_dispatch` 除外）——56.2 为 tag 引用过的同一条规则，对 `PUT /repos/{o}/{r}/pulls/{n}/update-branch` **同样成立**（GitHub 文档「Triggering a workflow」+ community discussion #26520「Update branch triggered through API does not run checks」）：用 `GITHUB_TOKEN` 更新分支 = PR head 挪到一个**永远没有 CI** 的 commit，七个 required check 停在 "Expected — waiting for status"，auto-merge 永不触发，PR 比不更新**更糟**。所以：(a) 真正的 update-branch 调用用 **fine-grained PAT**（repo secret `PR_AUTOUPDATE_TOKEN`；只授本 repo；Contents read+write + Pull requests read+write；owner 创建、到期续），它的 push 是普通用户 push，**会**触发 CI、`Version pins untouched` 与两个 advisory review（pr-review-*.yml 每次更新都重跑——新基底上的新审查，是这条协议的成本；**§56.8 追记（2026-09-02）：作废**——bot review 改为 `review:ai` 标签 / dispatch 按需触发，auto-update 的 push 不再重跑它们、不再花 API 钱）；(b) **secret 缺席 = report-only 模式**：workflow 仍给冲突的 PR 打 `needs-rebase`（打标签、留评论不需要 push，`GITHUB_TOKEN` 足够）并在 step summary 列出「本该更新」的 PR，但**一根分支都不碰**，绝不退回 `GITHUB_TOKEN` 更新。
 
 **每个 PR 的判决**（按序）：草稿 / fork（API 推不进别人的 repo）/ 贴了 **`no-autoupdate`** 标签 → 跳过并列在 summary 里；`GET /compare/main...<head>` 的 `behind_by == 0`（已含 main）→ 如有 `needs-rebase` 摘掉；GitHub 说 `mergeable == false`（`null` 时最多等三次 5 s，GitHub 懒算合并性）**或** update-branch 回 422 "merge conflict" → **`needs-rebase`**：加标签 + **一条**评论（正文带 HTML marker `<!-- zai:update-pr-branches needs-rebase -->`，PR 最新一条评论已是 marker 评论时不再发——幂等）；否则 `PUT update-branch`，带 `expected_head_sha`（读与写之间作者又 push 了 → API 拒绝而非合到没见过的 head 上，下次 main push 重来）；202 → 更新成功、摘 `needs-rebase`；其它失败只打 `::warning` 不失败整个 run。**`needs-rebase` 的语义**：标签是信息不是闸门——它不阻塞任何东西，只告诉作者 / agent「main 动了、你的分支合不进去、请 rebase 后 push」；分支干净合入后由**下一次 run**（下次 main push 或手动 dispatch）自动摘掉。两枚标签是 repo fixture（`needs-rebase` / `no-autoupdate`，2026-09-02 建）。
 
@@ -4487,6 +4550,32 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **清理由下一个 PR 做，CI 永不往 main 写 commit**（56.2「不写分支」不因本条松动）：`scripts/ci/changelog_prune.py` 以最新 `vX.Y.Z` tag（`--tag` 可指定）的树为「已发版」基线，`git ls-tree -r <tag> -- changelog.d` 给出每个 fragment 的 blob id，本地文件的 blob id（`changelog_fragments.blob_sha` = `git hash-object` 同款 sha1，**不 spawn git**）相同 → 删；不同 = 发版后被改过 → **保留并点名**（改过的条目会在下一版正文再出现一次，这是「改已发版的 fragment」的代价——正确做法是加新 fragment）；tag 里没有 = 未发版 → 保留。`--dry-run` 只列；`--notice` = dry-run + 有可清的就打一条 GitHub `::notice::`，rc 永远 0——56.1 的 pins job 每个 PR 跑一次，提示「下一个动 changelog.d 的 PR 顺手清」。git 只在 CLI 壳里 spawn（`git` 注入缝），纯函数 `released_blobs` / `prune_plan`；判例 `tests/test_changelog_prune.py`。
 - **进度日志 fragment**（`docs/design/vnext2-plan.md` §8）：既有表格行冻结为历史；新行 = `docs/design/progress/<YYYY-MM-DD>-<kebab-slug>.md`（日期 = 开 PR 当天，取自文件名；`README.md` 免检）。头部 = 首个空行之前的 `key: value` 行，必有 `pr:`（分支 + PR 号）/ `phase:`（阶段 / 决议）/ `law:`（触及的 §§，纯文档写 `—`），顺序不限、未知键 = 形状错误；空行之后是正文（做了什么），多段允许。`scripts/ci/progress_log.py check` 校验；`render [--plan PATH]` 把 plan §8 里的历史行（`## 8.` 到下一个 `## ` 之间以 `|` 开头的行，含表头）+ 全部 fragments（按日期、同日按文件名）渲染成完整表打到 **stdout**——按需读、**永不写回 plan**（生成文件进 git 就是同一种冲突的复活）；正文进单元格时空白压成一个空格、`|` 转义为 `\|`。PR 直接往 plan 新增 `| YYYY-MM-DD |` 行 = pins 门 FAIL。判例 `tests/test_progress_log.py`。
 - **文档指针**：`changelog.d/README.md`、`docs/design/progress/README.md` 各说自己的形状与生命周期；CHANGELOG.md 头部「Releasing」、CONTRIBUTING「Versioning」/「PR lifecycle」、PR 模板 checklist 全部指向 fragments；`docs/design/vnext2-plan.md` §8 表前一行说明「本表冻结、新行在 progress/」。
+
+### 56.8 CI 矩阵：per-PR 瘦身、main 全量、夜间 informational、bot review 按需（2026-09-02）
+
+**病灶**：repo 是 public（runner 分钟免费），但 owner 在 free plan——真正的瓶颈是**并发上限**（约 20 个 job、其中 macOS 5 个）：几十个并行 agent PR 各带 11 个 job + 2 个 bot review，全部在同一条队列里等 macOS 槽；两条 Windows 腿与 qlty 是 informational、几乎每次都红、没人按 PR 读它们，却每个 PR 吃三个槽；两个 AI review workflow 每次 push（含 56.6 的 auto-update push）都调**付费** API，多数以 infra 错误收场。**改法的边界**：七个 required check（`ci` / `Lint (shellcheck + ruff)` / `Tests on ubuntu (Python 3.9)` / `(Python 3.x)` / `Web tests (build + vitest)` / `QA gates (…)` / `Version pins untouched`）**逐字不改名、每个 PR 与每个 merge_group 都报到**——ruleset `protect-main` 的清单一个字不动；瘦的是它们在 PR 上**做多少事、在哪台机器上做**。
+
+**矩阵**（truth = `.github/workflows/ci.yml` 与 `ci-nightly.yml`；本表只说形状）：
+
+| lane | pull_request | merge_group / push to main | schedule（夜间）+ workflow_dispatch | 按需 |
+|---|---|---|---|---|
+| `Lint` / `Tests on ubuntu ×2` / `QA gates` / `Version pins untouched` | 全跑 | 全跑（pins 门只在 PR / 队列） | — | — |
+| `Changed paths (per-PR filter)`（新，非 required） | 列 PR 文件 → `swift` / `web` 两个布尔输出 | 恒 `true` | — | — |
+| `ci`（macOS Apple 套件） | **filter 命中 → macos-latest 全套**；否则 **ubuntu-latest 一行 summary「no Swift changes — Swift gates not needed」即绿** | 全套（macOS） | — | — |
+| `Web tests (build + vitest)` | `web/` 动了 → npm 全套；否则一行 summary 即绿 | 全套 | — | — |
+| `Contract reminder`（soft） | 跑 | — | — | — |
+| `Tests on windows ×2`、`qlty check`（informational，`continue-on-error`） | **不跑** | 不跑 | `ci-nightly.yml` 每日 10:43 UTC | `gh workflow run ci-nightly.yml` |
+| `Claude PR Review` / `Codex PR Review`（advisory，付费 API） | **只在贴上 `review:ai` 标签时**（`types: [labeled]`） | — | — | `gh workflow run pr-review-claude.yml -f pr=<n>`（Codex 同） |
+| 干净机器安装验收（macOS；**预留**，随 `feat/fresh-machine-bootstrap` 落地时挂上） | 不跑 | push to main | 夜间 | dispatch |
+
+**法条**：
+
+- **filter 的定义单源在 `ci.yml` 的 `changes` job**（`dorny/paths-filter`，按 commit SHA 钉；pull_request 下走 API 列文件、不 checkout；job 级 `pull-requests: read`）。`swift` = macOS 腿独有而 ubuntu 腿没有的一切：`mac/**`、`shell/**`、`ios/**`、`shared/**`、任意 `*.swift`、`.github/xcode-version`、`scripts/ci/select_xcode.sh`、构建调用的 stamper（`scripts/version_stamp.py`、`scripts/build_version.sh`、`act/lib/version.py`）、Swift↔Python interop 的 Python 半（`act/lib/e2e.py`）、`ci.yml` 自己；`web` = `web/**` + `ci.yml`。**新增会被 macOS 独占执行的东西 = 同 PR 加进 filter**——忘了加，push to main 的全量跑会红、56.3 第 3 步的 CI 闸门会拦住部署，但那是事后网，filter 是事前门。
+- **fail-closed 三条**：(a) 非 pull_request 事件（merge_group / push）filter 输出恒 `true`；(b) filter step 失败（API 抽风、限流）时 gate step 仍答 `true`——filter 只能**移除它正面证明不需要的**工作；(c) 下游 step 条件写 `!= 'false'` 而非 `== 'true'`，job 带 `if: !cancelled()`——`changes` 自己挂了，`ci` 与 `Web tests` 照样跑全套而不是被连坐 skip（GitHub 把 skipped 的 required check 当通过，所以「跳过」在这里等于「放行」，绝不允许由故障触发）。
+- **`ci` 的 runner 随 filter 走**：`runs-on: ${{ swift == 'false' && 'ubuntu-latest' || 'macos-latest' }}`——不命中时**一个 macOS 槽都不占**；job 名不变、结论 success、summary 一行说明为什么不需要。**被跳掉的不只是 Swift 构建**：macOS 腿上那次 Python 全量 unittest 也一起跳（darwin-only 判例只有 4 个文件，且多数测试经 PATH 的 bash = runner 上的 Homebrew bash 5，与 ubuntu 无异）——main 上每次 push 仍全量跑，这是接受的取舍。
+- **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
+- **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
+- **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -4582,6 +4671,7 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。**对账只能是缩**（划掉 stale、把登记分拧低）——想给新债记账没有合法路径，见下一条。
 - **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。**追记（2026-09-02，§65.2）**：同一差分门顺带看管 `ui/parity/pending.txt` 与 `ui/parity/waivers.txt`（按 id 集合比，备注列不是分数）——加 id 即 FAIL。
 - **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
+- **P3 每批的固定顺序（2026-09-02 P3a 追记，add-only；R2.3.2 的执行口径）**：① 先把该批模块映射进 `qa/mutation_targets.toml`（§57）并跑一轮变异，幸存体逐个判定——等价变异（常数 ±1、日志文案）放过，逻辑幸存体（未测的分类分支 / CLI / 网络与 IMAP 包装 / 解析状态机…）**先补判例杀死**；② 再做纯抽取式重构（每函数 CC ≤ 6，新 helper 出生即干净），**零行为变化**——判据是既有全套件 + 补上的判例 + 同一轮变异重跑，不许借重构改语义；③ 该批模块的 complexity / crap / hygiene 账本行在**同一 PR** 划掉（`stale` 三态本身会逼着做）；④ 模块留在夜间靶区，测试网持续咬人。模块 docstring 必须写明管它的 §§（防腐 #5，hygiene 门执法）。首批 P3a = 雷达三源 + claude_sessions + digest / weekly_digest / analyze（分支 `refactor/p3a-radars`；账本现状 truth = `qa/complexity_baseline.txt` / `qa/crap_baseline.txt`）。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
 
@@ -4918,36 +5008,100 @@ wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictCh
 - 不在 web 提供「按 AI 建议一键验收」——那会把建议变成默认，正是 issue 里 interview scorecard 的教训。
 - 配置：`card_summary.enabled`（config.yaml 块 / overrides 扁平键 `card_summary_enabled`，默认 true）关掉 = 不派新判官，在飞的仍收回；不设第二把模型旋钮（跟 `models.pipeline`）。
 
+## 65. 自动草稿 PR 通道（self_improve lane；P6；owner 决策 D7·D8·D9·D12；§0 第 12 条修宪）
 
-## 65. UI 对齐契约：原生清单 = 终版规格，机器判卷（2026-09-02；owner 决策 D3 的执法面，P4 前置）
+owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……先只给泽林 AI assistant 这一个软件弄车道吧。」「Agent 使用的身份是我自己的 GitHub 个人账户。」「自动派工作，要不先不要搞预算。」「如果我留了一个 comment 'Where is the test?'，AI 就知道这个东西需要做 test 了。」「臣子把东西做出来了，皇上能挑你的那就是你的大幸。」本节把「人从起点审批移到终点验收」这条例外的**全部机械后盾**立法。执法代码：`act/lib/policy.py`（资格闸，§51 第二条 lane）、`act/lib/self_improve.py`（核验 / 护栏 / 巡检 / 拒绝记忆 / 状态）、`act/llm.py`（`NO_MCP_ARGV`）、`act/executor.py`（prompt 段 + argv + 派发记录）、`act/actd.py`（`_lane_delivery_check` 四条收割路径 + `_self_improve_tick`）、`act/lib/dashboard.py`（§2 投影）、`server/self_improve_lane.py`（恢复端点）、`web/src/components/shell/SelfImproveBanner.tsx` + `ReviewCard.DeliveryChip`。判例：`tests/test_policy_self_improve_lane.py` / `test_self_improve_verify.py` / `test_self_improve_sensitive_pause.py` / `test_self_improve_followups.py` / `test_self_improve_argv.py` / `test_self_improve_actd_wire.py`、web `SelfImproveBanner.test.tsx` / `ReviewCard.delivery.test.tsx`。
 
-> §62 / §63 / §64 由同日并行的 `feat/material-box`（#157）、`feat/meeting-recap`（#159）、`feat/card-summary-verdict`（#160）立法，本节取下一个空号 §65——§ 号永不复用。
+### 65.1 准入（谁进通道）
+
+- **唯一铸卡渠道** = sources channel `self_improve`（§50 加行，出身 proposed）。producer 只有两个：每日循环的提案（P5，另 PR——它把 channel 写成 `policy.SELF_IMPROVE_CHANNEL` 即进通道）与本节 65.5 的 PR 跟进卡。二者都**硬编码** channel / target_repo / delivery_mode / type，LLM 只填 title / summary / plan / DoD（跟进卡连这些都是骨架）。
+- **免批资格**由 §51 第二条 lane 裁决：channel 全为 `self_improve` ∧ `realpath(target_repo) == realpath(self_improve.repo_path)`（默认安装根）∧ 通道开着 ∧ 未暂停 ∧ 未声明 `needs_mcp` ∧ 共用天花板（T2 / green_sign / comms / `target_kind=new` / repo 不存在）全过。放行 token `ok:self_improve`；actd 的 notes 痕 `[<date> auto-dispatch] self_improve 通道免批自动派发（交付只能是草稿 PR，§65）`，观察通知 `msg_self_improve_dispatched`（`autodispatch.notify` 同一开关）。
+- **只给本仓库**（D7）：其它 repo 的 self_improve 卡报 `self_improve:repo_mismatch` 上卡，照旧人工审批。`self_improve.repo_path` 可配，默认 `config.HOME`；比对必 realpath（`~/Projects/zelin-ai-assistant` 是外置卷 symlink，v0.48.2 事故）。
+- **身份**（D8）：agent 用机器上既有的 `gh auth` 身份 = owner 本人；没有第二个账号、没有 PAT。推论：owner login 下的 PR 评论一律视为 owner 的话（65.5），所以 prompt 明令 lane 会话**不发 PR 评论**。
+- **无预算**（D9）：lane 卡不看 `cost_estimate_usd`（`cost:unknown` 不适用）；`max_concurrent` 照常排队。
+
+### 65.2 会话边界（派发时刻）
+
+- argv：`executor._bg_base_cmd(cfg, req)` → `llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))`；`egress_locked` = channel 全为 self_improve ∧ 未声明 `needs_mcp`。四个发射点同款（dispatch / resume / rework / brief），位置见 §4 追记。**只看写死的 channel，不看 lane 开关 / 仓库是否匹配**——封锁比准入更严。
+- prompt：`## SELF-IMPROVE LANE` 段（`self_improve.prompt_blocks`）：仓库路径、分支名（65.3）、只准 `gh pr create --draft --base main`、永不 push main / merge / mark ready / 开别处 PR / 发 PR 评论、受保护路径清单、无 MCP、收工前跑本地门、结尾 `PR: <url>` + `BRANCH: <name>`。非 self_improve 卡 prompt 逐字节不变。
+- 派发记录：`execution.self_improve = {branch, egress, lane}`（add-only；dispatch 成功路径重建 execution 后合入）。
+- `needs_mcp`（§1 新字段）：声明它 = 放弃免批（`self_improve:needs_mcp`），owner 亲批后派发才带 MCP。LLM 不写此字段。
+
+### 65.3 交付核验（收割时刻；宪法第 3 条「诚实」在通道上的形态）
+
+- 钩子 `actd._lane_delivery_check(req, ex)` 挂在**全部四条**进待验收的路径上：reconcile done 分支、`_promote_if_delivered`（FINAL DRAFT 探针）、`_harvest_to_review`（受阻 / 放弃救活收割）、`stop_to_review`。非 self_improve 卡零开销；任何异常只记日志，绝不挡收割（宪法第 11 条）。
+- 分支名 `self_improve.expected_branch(card)`：新提案 = `ai/self-improve/<display_id>`（§60 工作编号）；跟进卡 = 来源条目里 PR 的 `head`。
+- **仓库身份 pin**（Codex review P1）：gh **不许**从 cwd 的 remote 推断仓库（会话能把 `origin` 改到别的仓库再开 PR）。`self_improve.repo_slug` = config `self_improve.github_repo` > lane.json 缓存 `repo_slug` > 首次 `gh repo view --json nameWithOwner`（首次 = 首张 lane 卡**派发那一刻**，任何 lane 会话跑起来之前，`dispatch_record` 顺手钉；缓存后 remote 怎么改都不影响）。此后**每个** `gh pr …` 调用带 `-R <slug>`，`gh api` 路径写死 `repos/<slug>/…`，PR 的 `url` 必须以 `https://github.com/<slug>/pull/` 开头（否则 `pr_repo_mismatch`）；身份拿不到 = `repo_unknown`（fail-closed，一个 pr 调用都不发）。`execution.delivery.repo` / `execution.self_improve.repo` 记 slug。
+- 查找：新提案 `gh pr list --head <branch> --state all -R <slug>`（OPEN 优先，其次编号最大）→ `gh pr view <n> --json number,url,state,isDraft,baseRefName,headRefName,headRefOid,files,mergedAt,closedAt,mergedBy -R <slug>`；跟进卡直接按 `sources[].pr_number` view。cwd = 通道 repo。
+- 裁决顺序与 token（`execution.delivery.reason`，add-only 词表）：`gh_unavailable`（gh 未装 / 起不来——与「PR 不存在」严格区分）→ `repo_unknown` → `pr_missing` → MERGED 直接通过（owner 已验收）→ `pr_closed` → `pr_repo_mismatch` → `pr_head_main`（head 是 main/master）→ `pr_base_not_main` → `pr_branch_mismatch` → `pr_diff_empty` → 新提案 `pr_not_draft` ／ 跟进卡 `pr_no_push`（`headRefOid` 仍等于铸卡时记的 `head_sha`）。跟进卡**不**要求 draft——owner 可能已把 PR 标成 ready，agent 不许也不需要把它撤回。
+- 结果落 `execution.delivery`（形状见 §2 追记）。未通过 → `execution.interrupted_reason = "delivery_unverified"`（review 行 `interrupted: true`）+ 通知 `msg_self_improve_unverified(title, reason)`；卡停在待验收，owner 用「打回 + 一句话」让同一会话补上，或丢弃。通过 → 常规 `msg_review_ready` 由 detect_transitions 发，review 行带 `delivery` 章。
+- 约束：核验只读 GitHub，不改 PR（不 `pr ready --undo`、不关 PR）；不核对本地 worktree（agent 的 worktree 归 claude 管）。
+
+### 65.4 敏感路径护栏（通道不许扩自己的权）
+
+- 写死的受保护路径 `self_improve.SENSITIVE_PATHS` = `act/lib/policy.py`（资格闸）/ `act/lib/self_improve.py`（本通道）/ `act/llm.py`（argv 边界）/ `.github/workflows/`（前缀：CI / 发版 / 部署）/ `install.sh` / `scripts/auto-deploy.sh`。改这张表本身就在表里。
+- PR `files` 命中任一（无论核验是否通过）→ `gh label create needs-owner-eyes --force` + `gh pr edit <n> --add-label needs-owner-eyes`（标签失败不阻塞——暂停是本地真源，`delivery.label` 记 null）→ `state/self_improve/lane.json` 写 `{paused: true, paused_at, paused_reason: "sensitive_paths", paused_pr, paused_pr_url, paused_paths, paused_card}` → 通知 `msg_self_improve_paused`。
+- 暂停的效果：下一 pass 起所有 lane 卡报 `self_improve:paused` 留在待审批（token 上卡）；hand lane、人工审批、已派发的会话都不受影响；核验与封锁照常。
+- 三条恢复出口（都写进横幅文案）：① owner 处理被标记的 PR（合并或关闭）→ 巡检（65.5）看到它不再 OPEN 即 `clear_pause("pr_merged"|"pr_closed")`；② 看板顶部横幅「恢复通道」→ `POST /api/self-improve/resume`（空 body；`server/self_improve_lane.py` 只翻 `paused` + `resumed_at/resumed_by:"owner"`，清掉 `paused_*` 五键，其余键原样——server 不 import act，路径由 `server/paths.self_improve_lane_path` 镜像，键集与 `self_improve.clear_pause` 逐字一致由判例钉）；③ 终端 `python3 -m act.lib.self_improve --resume`。恢复不改任何卡。
+- 这堵墙防的不是恶意而是漂移：守护进程跑 main，分支上改 policy.py 没有运行时效果（§56 ruleset：PR-only + required checks），墙的价值是**让 owner 一定看见**这类 diff。
+
+### 65.5 巡检：PR 评论 = 下一轮任务，合并 = 验收，关闭 = 拒绝（D12）
+
+- `actd._self_improve_tick(cfg)` 每 pass 调 `self_improve.tick`，自身按 `self_improve.tick_minutes`（默认 60）节流；零 lane 卡零 gh 调用；gh 不可用整轮跳过但推进 `last_tick_at`（不每 pass 重试）；绝不崩 pass。
+- 追踪对象 = 待验收（REVIEW）的 self_improve 卡且 `execution.delivery.pr_number` 已核验出（65.3）。零追踪对象且未暂停 = 零 gh 调用；仓库身份拿不到（`repo_unknown`）= 本轮不动任何卡。每张查一次 `gh pr view`：
+  - **只认 owner 本人的动作**（Codex review P1）：MERGED 看 `mergedBy.login`，CLOSED 看 `gh api repos/<slug>/issues/<n>/events` 最后一条 `closed` 事件的 `actor.login`，都必须 ∈ owner login 集合；协作者 / 机器人 / 未知 actor 的合并·关闭只记一行日志，卡与拒绝记忆都不动（暂停自动清同规则）。
+  - **MERGED by owner** → 卡 `review → delivered`，`execution.accepted_at` + `accepted_via: "pr_merged"`，notes `[<date> PR merged] owner 合并了 <url> = 验收`。以 **`user` actor** 落账（`registry.acting_as("user")`）：合并是 owner 在 GitHub 上的点击，actd 是 relay——与 inbox 决策同一语义；store2 白名单 `review→delivered` 仍是 user 独占，权限墙不动。
+  - **CLOSED by owner**（未合并）→ `registry.trash(req, "pr_closed")`（回收站，可恢复，宪法第 2 条）+ **拒绝记忆** `state/self_improve/rejected.jsonl` 追加 `{fingerprint, title, card, pr, pr_url, closed_at}`（`fingerprint` = 标题空白折叠小写后 sha1 前 16 位；文件 256 KiB `logcap.cap` 自压缩）。`self_improve.is_rejected(fp)` 是每日循环（P5）去重的读取点：被 owner 关掉的提案不再重提。
+  - **OPEN** → 跟进判定：owner login 集合 = `gh api user` 的 login（缓存进 lane.json `owner_login`）∪ `self_improve.owner_logins`；收 issue 评论 + review 正文 + 行内 review 评论（`gh pr view --json comments,reviews` + `gh api repos/{owner}/{repo}/pulls/<n>/comments`），只留 owner login、时间晚于该 PR 上次 `covered_until` 的；红 required check = `gh pr checks <n> --required --json name,bucket,link` 里 `bucket == "fail"`（该命令有失败时自身退出 1，读侧接受 rc 0/1/8）。有评论或有红 → **铸一张跟进卡**（65.6），一 PR 一天一张（lane.json `followups[<n>] = {date, card, parent, covered_until}`），且该 PR 已有未完结（card_sent/raising/approved/executing）的跟进卡时不再铸。
+- 暂停中的 PR 若已被处理（不再 OPEN）→ 自动清暂停（65.4 出口①）。
+
+### 65.6 跟进卡（producer 硬编码的形状）
+
+`Requirement(id=next_id(), title="跟进 PR #<n>：<k> 条 owner 评论 / <m> 项红检查", type="self-improvement", tier="T1", status=card_sent, hardness="soft", sources=[{who: <owner login>|"ci", channel: "self_improve", date, ref: "pr:<n>", quote: <评论原文时间序拼接 + "red required checks: …"，1500 字封顶>, pr_number, pr_url, head, head_sha}], summary, plan=[checkout PR 分支 / 逐条用改动回应评论 / 让 required check 变绿 / 本地门跑过再 push 同一分支], definition_of_done=[…], target_repo=repo_path, target_kind="existing", delivery_mode="repo")`，`origin_trust` 按 sources 盖章（proposed）。**owner 评论原文只进 `quote`**——build_prompt 把 sources 整块过 `sanitize.fence_untrusted`（宪法第 5 条），标题 / plan / DoD 全是不含评论文字的骨架；`pr_number / head / head_sha` 是 65.3 核验跟进交付的坐标。铸出即 card_sent，下一 pass 经 §51 lane 免批派发；通知 `msg_self_improve_followup(n, k, m)`。
+
+### 65.7 状态与文件（防腐 #4：出生即带帽）
+
+- `state/self_improve/lane.json`（atomic 写）：`paused` 家族（65.4）、`resumed_at/resumed_by`、`owner_login`、`repo_slug`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——**读-改-写全部在 `lane.json.lock` 的 `flock` 内、且只动自己的键**（`self_improve._update_state` / server `_locked`；巡检末尾只提交 `TICK_KEYS`）：server 清暂停与 actd 同一时刻写的暂停互不覆盖（Codex review P1；Windows 无 flock 退化为无锁）。
+- `state/self_improve/rejected.jsonl`：append-only，256 KiB 自压缩保尾。
+- 都不进 repo（`state/` gitignore）；dashboard 只投影 65.4 的低频子集（§2）。
+
+### 65.8 不做 / 边界
+
+- 不为 lane 卡开第五类出身；不把 `type` / `target_repo` 当判据；不给别的仓库开通道（D7）；不设预算（D9）；不用第二个 GitHub 身份（D8）。
+- 不关 PR、不删远端分支、不 `pr ready --undo`——GitHub 侧动作只有打标签。
+- 跟进只盯 lane 自己的 PR（有 `delivery.pr_number` 的待验收 self_improve 卡）；owner 在其它 PR 上的评论不铸卡。
+- 通道配置（`self_improve:` 块）随 actd 启动冻结（同 `autodispatch:`）；设置页开关随 P4 设置页另案。每日循环的提案 producer、`is_rejected` 的消费、proposal 的 fingerprint 去重范围随 P5 主体立法。
+- `docs/PRIVACY.md`「审批是安全边界」一句改写为两条 lane 各自的边界声明（本 PR 同车）；`SECURITY.md` 指针随动。
+
+## 66. UI 对齐契约：原生清单 = 终版规格，机器判卷（2026-09-02；owner 决策 D3 的执法面，P4 前置）
+
+> §62 / §63 / §64 由同日并行的 `feat/material-box`（#157）、`feat/meeting-recap`（#159）、`feat/card-summary-verdict`（#160）立法，本节取下一个空号 §66（§66 = 同日并行的 `feat/self-improve-lane`，#167）——§ 号永不复用。
 
 owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通过一些硬指标、硬代码、硬文档来进行保证」。当天点名的四条差距：(a) 原生主窗口**左侧竖排图标栏**（任务台 / 问问助手 / 依赖检查 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于）被 web 挪到了顶栏，要回到左侧；(b) 原生默认**浅色**，web 默认成了深色；(c) 原生四列各 400pt 铺满一屏，web 列更窄；(d) 原生设置页的 section / 字段 web 大量缺席。本节把「web 看板必须补齐原生 app 的全部用户功能」（R2.2.2）从验收表变成硬门：**审阅者不再看截图判对齐，机器判**。执法：`scripts/ui/`（ui_common / extract_native_inventory / extract_native_tokens / parity_fixture / parity_check）、`web/src/parity.test.tsx`、`web/e2e/visual.spec.ts`、`scripts/qa/run_gates.sh [ui-parity]`、`scripts/qa/ledger_diff.py`（两本 UI 账本）；判例 `tests/test_ui_swift_scan.py`、`tests/test_ui_inventory_extractor.py`、`tests/test_ui_native_inventory_fresh.py`、`tests/test_ui_native_tokens.py`、`tests/test_ui_parity_check.py`、`tests/test_qa_ledger_diff.py::ParityLedgerTestCase`。
 
-### 65.1 清单（ui/parity/native-inventory.json）= 退役中 app 的终版规格
+### 66.1 清单（ui/parity/native-inventory.json）= 退役中 app 的终版规格
 
-- **来源与冻结**：`scripts/ui/extract_native_inventory.py` 只读 `mac/Sources/*.swift`（D3 冻结、永不再改），机器提取全部用户可见面：左侧栏（`MainSection` 顺序 / 双语标题 / SF 图标 / ⌘1..8）、页面与面板（rail 页、`SettingsSectionDescriptor` 注册表的每个 section、权限体检 / 初始设置向导 / 诊断条 / 强制合并 sheet 等窗口）、每个 `L("zh","en")` 双语字面量按**调用链**归类（toggle / button / menu / link / textfield / picker / option / menu-item / alert-button / dialog / label；长句 = copy、tooltip = help）并附 screen 与 `File.swift:line`、settings 键（`settings_overrides.json` 扁平键与 `features.*` / `telemetry.*` 嵌套键；UserDefaults 纯界面偏好键）、看板列（顺序 / 双语列名 / 左右两根可折叠书立条 / 每列卡面动词）、快捷键（`.keyboardShortcut` + `NSMenuItem keyEquivalent`）、通知 kind、以及主题 / 布局常量的指针（数值住 §65.3）。mac/ 冻结 ⇒ 清单是**终版**；重跑零 diff 由判例钉死，P8 删 mac/ 时 JSON 留在仓里作规格、提取器与判例改 tombstone（防腐 #6）。
+- **来源与冻结**：`scripts/ui/extract_native_inventory.py` 只读 `mac/Sources/*.swift`（D3 冻结、永不再改），机器提取全部用户可见面：左侧栏（`MainSection` 顺序 / 双语标题 / SF 图标 / ⌘1..8）、页面与面板（rail 页、`SettingsSectionDescriptor` 注册表的每个 section、权限体检 / 初始设置向导 / 诊断条 / 强制合并 sheet 等窗口）、每个 `L("zh","en")` 双语字面量按**调用链**归类（toggle / button / menu / link / textfield / picker / option / menu-item / alert-button / dialog / label；长句 = copy、tooltip = help）并附 screen 与 `File.swift:line`、settings 键（`settings_overrides.json` 扁平键与 `features.*` / `telemetry.*` 嵌套键；UserDefaults 纯界面偏好键）、看板列（顺序 / 双语列名 / 左右两根可折叠书立条 / 每列卡面动词）、快捷键（`.keyboardShortcut` + `NSMenuItem keyEquivalent`）、通知 kind、以及主题 / 布局常量的指针（数值住 §66.3）。mac/ 冻结 ⇒ 清单是**终版**；重跑零 diff 由判例钉死，P8 删 mac/ 时 JSON 留在仓里作规格、提取器与判例改 tombstone（防腐 #6）。
 - **id 稳定**：`control:<screen>:<role>:<slug-en>[#n]`（同 id 按源码顺序 #2/#3 稠密编号）、`rail:<slug>`、`lane:<slug>`、`screen:<screen>`、`setting:<overrides|prefs>:<key>`、`shortcut:<screen>:<key-slug>`、`notification:<kind>`、`theme:default`、`layout:<token>`。账本、报告、vitest 的 it 标题全部用这些 id 说话。
 - **唯一手写部分 = 归属表**（`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN`：文件 / 类型 / 成员 → screen；`SCREEN_OWNER`：screen → **谁负责补齐**：`web`（进门）/ `shell`（R2.2.3 原生残留：实时字幕悬浮窗、系统通知、macOS 应用菜单）/ `os`（⌘Q/⌘W/⌘H/⌘M/编辑菜单等系统惯例）/ `retired`（计划明文退役：D3 菜单栏状态项菜单、「显示菜单栏图标」、首启气泡「我在这里 👆」））。表本身进 JSON 的 `attribution` 节——改表 = 改规格，PR 可见、判例可钉。非 web 的条目**只列不判**；说明性文案（copy / help）同样只列不判——web 有自己的句子，但短标签、按钮、选项、字段名必须**逐字**（zh 与 en 都要）。
 
-### 65.2 门 `[ui-parity]`（scripts/ui/parity_check.py；shrink-only 两本账）
+### 66.2 门 `[ui-parity]`（scripts/ui/parity_check.py；shrink-only 两本账）
 
 - **探针**（每条 gated id 一个，真/假二值）：`control:*` → `web/src/parity.test.tsx`：由清单驱动生成 it()（不手写列表），用 demo fixture（`ui/parity/fixtures/`，`scripts/ui/parity_fixture.py` 从 `scripts/demo_seed.py` + `server/lanes.py` 落成，判例钉新鲜）渲染看板 / 回收站 / 设置三面 × zh / en，把每颗按钮点一遍收弹窗文案，按 accessible name / 自身文本**精确**匹配（插值 `{expr}` 放宽为正则）；原生 screen 按前缀映射到渲染面（`settings.*` → 设置页、`trash` → 回收站、其余看板相关 → 看板；web 尚无的页面在全部面的并集里找，新开页面时在该文件登记）。`screen:*` → zh + en 标题字面量都在 web/src 源码（剥注释、排除 `*.test.*`）；`rail:<slug>` → 双语标题 + `data-rail-item="<slug>"`，`rail:order` → 属性出现顺序 = 原生顺序且容器带 `data-rail="left"`；`lane:*` → 双语列名在 web/src 或 `server/lanes.py`，`lanes:order` → `LANES` 的 slug 顺序 = 原生顺序，`lanes:rail-left/right` → `BoardLanes.tsx` 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 之后；`setting:overrides:<k>` → `server/settings*.py` 出现 `"<k>"`（server 是 overrides 的 web 侧写者，§59.5）；`setting:prefs:<k>` → web/src 出现 `"<k>"`；`shortcut:*` → 字形（`⌘F`…）出现在 web/src；`theme:default` → `web/index.html` 首帧脚本写着 `dataset.theme = "light"` 兜底（无存储偏好时不跟随系统深色——owner (b)）；`layout:*` → 某个 web/src CSS `var(--native-layout-…)` 消费该 token（owner (c) 的列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）。
 - **判决 = §58.4 同一三态**（`qa_common.compare_with_ledger`，阈值 0）：缺席且不在 `ui/parity/pending.txt`、也不在 `ui/parity/waivers.txt` → **NEW → FAIL**（补实现，不许记账）；在 pending 上但已在场 → **STALE → FAIL**（同 PR 划掉那行）。vitest 侧同一语义：普通 it 断言「在」，`[pending]` it 断言「不在」，`[waived]` skip——Web tests job 与 qa-gates job 读同两本账本，判决一致。vitest 跑不起来（没 node / 没 `npm ci`）= 门红，**不软化**。
 - **两本账本只许缩**（`ledger_diff.py` 对 base 差分，按 id 集合，备注列不是分数）：`pending.txt` = 尚未搬到 web 的原生条目（出生 = 本节立法当天的全量缺项，truth = 该文件行数，本节不复述；**每个加 UI 的 PR 必须让它缩**）；`waivers.txt` = 有意不搬（种子 = #119 需输入退役的回答对话框四条；行形 `<id>  <理由>  <issue/决策引用>`）。新的「不搬」判断**不走 waivers**——走归属表把 screen 标成 `retired` / `shell` 并带决策引用（代码可审、判例可钉）。
 - **报告**：`ui/parity/report.json` + `report.md`（PRESENT / PENDING / MISSING / STALE / WAIVED 按类计数 + NEW / STALE 清单 + 不判条目按 owner 计数），门每次运行重写；CI 的 `qa-report` artifact 带一份判决文本。`[ui-parity]` 是 `run_gates.sh` 的第六道门、住在 `qa-gates` job（job 名不变，required check 按名字挂），该 job 因此装 node 并在 web/ 做 `npm ci`。
 
-### 65.3 设计 token 单源（ui/tokens/native-tokens.json → tokens.css 生成块）
+### 66.3 设计 token 单源（ui/tokens/native-tokens.json → tokens.css 生成块）
 
 - `scripts/ui/extract_native_tokens.py` 从 mac/Sources 提取：语义色用量 → macOS 解析值（Apple HIG system colors，light / dark 两套；web tokens.css 头注早已采用的暗色家族与之逐值一致）、`Color.primary/secondary/accentColor.opacity(x)` 叠层比例、`.font(.system(size:weight:))` 字号梯（角色级映射仍由 §54.1 第 10 项的 `typeScale.ts` 承担）、`.padding` / `spacing:` / `cornerRadius:` 取值集、**layout 定点**（列宽 400 / 书立条 44 / 列距 12 / 看板内边距 16 / 列圆角 10 / 卡圆角 8 / 侧栏 48·200·160–320 / 窗口 900×640·min 720×480；任一定点找不到即 fail-loud）、`theme.default = light`（owner 拍板；原生 app 本身跟随 macOS 外观，无强制）。JSON 形照 W3C Design Tokens 草案（`$type` / `$value` / `$extensions.zai`）。
 - `web/src/styles/tokens.css` 末尾的 `@generated-begin native-tokens … @generated-end` 块由同一脚本生成：只放 `--native-*` 数据变量（`--native-default-theme`、`--native-layout-*`、`--native-color-<x>-light/dark`、`--native-overlay-*`），**不做主题切换逻辑**；手改无效（判例钉「重跑零 diff」）。把它们接进语义 token（`--danger` / `--status-*` / 列宽）并翻默认主题是 **PR-B** 的活；本节只钉数值。组件消费方式 = `var(--native-layout-…)`（`layout:*` 探针即以此判「已消费」）。
 
-### 65.4 视觉基线（web/e2e/visual.spec.ts；CI job「Web visual (playwright)」）
+### 66.4 视觉基线（web/e2e/visual.spec.ts；CI job「Web visual (playwright)」）
 
 - `@playwright/test` 为 web dev 依赖；`web/e2e/demoServer.ts` 把 `scripts/demo_seed.py` 的 initial 场景种进临时 `AIASSISTANT_HOME`（绝不碰生产 state/），随机空闲端口起 `python3 -m server`；spec 对 看板 / 回收站 / 设置 × light / dark 各截 1440×900 一张，与 `web/e2e/__screenshots__/visual.spec.ts/*.png` 的 golden 比对（`maxDiffPixelRatio` 2%；新鲜度 / 部署标签遮罩）。golden 路径不带平台后缀，在 macOS 生成，CI 也跑 macos-latest（ubuntu 字体会让每张都「回归」）。
 - **改 UI 的 PR 必须显式更新 golden**（`cd web && npm run visual:update`，提交 png，PR 描述写明哪几张为何变）——golden 漂移不是噪音是决策。job 出生 informational（`continue-on-error`，红了上传 diff artifact `web-visual`），稳定后再议升门。
 
-### 65.5 与其它法条的关系
+### 66.5 与其它法条的关系
 
-§54.1 是 web 看板 parity 的判断清单（人写），本节是它的机器化上层：§54.1 的每一项都应对应清单里若干 id 的 PRESENT。§58 的账本哲学（出生即绿、只许缩、对 base 差分）在此复用不重造；§58.4 的 `ledger_diff` 顺带看管 `ui/parity/*.txt`。§65.2 header 两开关的「逐字镜像」正是本节探针对 control 的要求。P8 删 mac/ 后：清单 JSON 与 token JSON 继续作规格，提取器、`tests/test_ui_native_inventory_fresh.py` 与 §65.3 判例一起改 tombstone。
+§54.1 是 web 看板 parity 的判断清单（人写），本节是它的机器化上层：§54.1 的每一项都应对应清单里若干 id 的 PRESENT。§58 的账本哲学（出生即绿、只许缩、对 base 差分）在此复用不重造；§58.4 的 `ledger_diff` 顺带看管 `ui/parity/*.txt`。§61.2 header 两开关的「逐字镜像」正是本节探针对 control 的要求。P8 删 mac/ 后：清单 JSON 与 token JSON 继续作规格，提取器、`tests/test_ui_native_inventory_fresh.py` 与 §66.3 判例一起改 tombstone。

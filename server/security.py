@@ -103,41 +103,65 @@ def load_or_create_token(home: Path) -> str:
     return tok
 
 
-def _read_token_hardened(p: Path) -> "str | None":
-    """读既有 token：symlink 拒跟随、权限收回（POSIX）、内容校验。
-    坏则 None（触发重铸）。平台口径见 load_or_create_token docstring。"""
-    # symlink 拒绝先走可移植检查（Windows 无 O_NOFOLLOW，flag 是 0——只靠
-    # flag 在那里会真的跟随过去）；POSIX 侧 O_NOFOLLOW 仍保留，补
-    # is_symlink→open 之间的 TOCTOU 窗。
+def _open_nofollow(p: Path) -> int:
+    """只读打开既有 token 文件、拒跟随 symlink；打不开 / 是 symlink → -1。
+
+    symlink 拒绝先走可移植检查（Windows 无 O_NOFOLLOW，flag 是 0——只靠
+    flag 在那里会真的跟随过去）；POSIX 侧 O_NOFOLLOW 仍保留，补
+    is_symlink→open 之间的 TOCTOU 窗。"""
     try:
         if p.is_symlink():
-            return None
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(str(p), flags)
+            return -1
+        return os.open(str(p), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
-        return None
+        return -1
+
+
+def _reharden(fd: int) -> bool:
+    """权限收回（POSIX-only 关切——Windows 合成 mode 位 + 无 fchmod，见
+    load_or_create_token docstring 第一条）：group/other 任一可读/写 → 先尝试
+    收回 0600；收不回 → False（弃用重铸）。fstat 的 OSError 交调用方。"""
+    if os.name != "posix":
+        return True
+    st = os.fstat(fd)
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError:
+            return False
+    return True
+
+
+def _close_quietly(fd: int) -> None:
     try:
-        # 权限收回是 POSIX-only 关切（Windows 合成 mode 位 + 无 fchmod，
-        # 见 load_or_create_token docstring 第一条）
-        if os.name == "posix":
-            st = os.fstat(fd)
-            # group/other 任一可读/写 → 先尝试收回 0600；收不回就弃用重铸
-            if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-                try:
-                    os.fchmod(fd, 0o600)
-                except OSError:
-                    return None
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _read_owned_fd(fd: int) -> "str | None":
+    """收回权限 → 读全文（strip）；拒用 / 任何 OSError → None。fd 的关闭权
+    归本函数：交给 fdopen 后由它关，否则亲手关。"""
+    try:
+        if not _reharden(fd):
+            return None
         with os.fdopen(fd, "r", encoding="utf-8", closefd=True) as fh:
             fd = -1  # fdopen 已接管关闭权
-            existing = fh.read().strip()
+            return fh.read().strip()
     except OSError:
         return None
     finally:
         if fd >= 0:  # 拒用/异常路径：fd 尚未交给 fdopen，必须亲手关
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            _close_quietly(fd)
+
+
+def _read_token_hardened(p: Path) -> "str | None":
+    """读既有 token：symlink 拒跟随、权限收回（POSIX）、内容校验。
+    坏则 None（触发重铸）。平台口径见 load_or_create_token docstring。"""
+    fd = _open_nofollow(p)
+    if fd < 0:
+        return None
+    existing = _read_owned_fd(fd)
     return existing if _valid_token(existing) else None
 
 

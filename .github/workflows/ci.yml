@@ -1,23 +1,39 @@
 # CI: lint gates (shellcheck + ruff), Python 3.9 floor tests, compile check,
-# unit tests, and one macOS job (macOS runners are expensive — everything
-# Apple-flavored lives in it: mac app build WITH Sparkle, shared-contract
-# Swift tests, the Swift↔Python crypto interop gate, and the iOS simulator
-# build) — on every pull request, on every merge-queue group, and on push to
-# main.
+# unit tests, the web gates and one macOS job (macOS runners are the scarce
+# resource — everything Apple-flavored lives in it: mac app build WITH
+# Sparkle, shared-contract Swift tests, the Swift↔Python crypto interop gate,
+# and the iOS simulator build) — on every pull request, on every merge-queue
+# group, and on push to main.
+#
+# PER-PR DIET (CONTRACT §56.8): the repo is public (runner minutes are free)
+# but the owner is on the free plan, whose CONCURRENCY cap (~20 jobs, 5 macOS)
+# is what dozens of parallel agent PRs actually queue on. So the `changes` job
+# lists the PR's files first and the two heavy jobs read its verdict:
+#   - `ci` (macOS) runs the Apple suite only when a Swift-related path changed
+#     (truth = the `swift` filter below); otherwise it runs on ubuntu, prints
+#     "no Swift changes — Swift gates not needed" and ends green.
+#   - `Web tests` runs npm only when web/ changed; otherwise the same shape.
+# Both jobs KEEP their names and report on every PR — the required-check
+# contract is untouched. merge_group and push-to-main always run everything
+# (the filter is forced to 'true'), and a failed filter step also runs
+# everything: a broken filter must never become a skipped gate. The
+# informational Windows legs and qlty moved to ci-nightly.yml (schedule +
+# workflow_dispatch); the AI review bots run on demand (pr-review-*.yml,
+# label `review:ai`).
 #
 # MERGE QUEUE (CONTRACT §56.2): every job that backs a required status check
 # (ci, Lint, Tests on ubuntu ×2, Web tests, QA gates, Version pins untouched)
 # runs on `merge_group` with the SAME job name and no pull_request-only
 # context — the queue's checks_requested event must be able to turn every
-# required context green by itself. PR-only jobs are the informational ones
-# (Windows suite, qlty) and the contract reminder (needs github.base_ref).
+# required context green by itself. The only PR-only job left is the contract
+# reminder (needs github.base_ref).
 # (The queue itself is unavailable on personal-account repos — §56.6's
 # update-pr-branches.yml keeps PR heads current instead; the merge_group
 # wiring stays for the day the repo moves to an organization.)
 #
-# TIMEOUTS (§56.6): every job carries timeout-minutes (Windows legs 30, the
-# rest 40; qlty 15) — typical wall time is ≤4 min for the ubuntu legs and
-# ~9 min for the macOS job. Without a cap a hung informational job holds the
+# TIMEOUTS (§56.6): every job carries timeout-minutes (40; the filter job 5)
+# — typical wall time is ≤4 min for the ubuntu legs and ~9 min for the macOS
+# job when it runs the Apple suite. Without a cap a hung job holds the
 # per-branch concurrency group for GitHub's 6-hour default and blocks every
 # later run on that PR.
 name: CI
@@ -30,6 +46,7 @@ on:
     branches: [main]
 
 # Every job only reads the repo — no job creates releases, comments, or pushes.
+# (`changes` adds pull-requests: read at job level to list the PR's files.)
 permissions:
   contents: read
 
@@ -40,6 +57,70 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Changed paths (per-PR filter)
+    # §56.8: decides whether the macOS Swift gates (`ci`) and the web gates
+    # need to run for THIS pull request. Only pull_request is filtered —
+    # merge_group and push to main always run everything (outputs forced to
+    # 'true' below). dorny/paths-filter lists the PR's files through the API
+    # (no checkout needed on pull_request); if that step fails (API hiccup,
+    # rate limit) the gate step still answers 'true' for both — the filter
+    # can only ever REMOVE work it has positively proven unnecessary.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read # dorny/paths-filter lists the PR's files via the API
+    outputs:
+      swift: ${{ steps.gate.outputs.swift }}
+      web: ${{ steps.gate.outputs.web }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: github.event_name == 'pull_request'
+        id: filter
+        continue-on-error: true
+        with:
+          # swift = everything the macOS `ci` job exercises that the ubuntu
+          # legs do not: the Swift trees, the Xcode pin + selector, the
+          # version stamper the builds call, the Python half of the
+          # Swift↔Python interop gate, and this workflow itself.
+          filters: |
+            swift:
+              - 'mac/**'
+              - 'shell/**'
+              - 'ios/**'
+              - 'shared/**'
+              - '**/*.swift'
+              - '.github/xcode-version'
+              - 'scripts/ci/select_xcode.sh'
+              - 'scripts/version_stamp.py'
+              - 'scripts/build_version.sh'
+              - 'act/lib/version.py'
+              - 'act/lib/e2e.py'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'web/**'
+              - '.github/workflows/ci.yml'
+
+      - id: gate
+        name: Decide (non-PR events and a failed filter run everything)
+        env:
+          EVENT: ${{ github.event_name }}
+          FILTER_OUTCOME: ${{ steps.filter.outcome }}
+          SWIFT: ${{ steps.filter.outputs.swift }}
+          WEB: ${{ steps.filter.outputs.web }}
+        run: |
+          set -euo pipefail
+          swift=true
+          web=true
+          if [ "$EVENT" = "pull_request" ] && [ "$FILTER_OUTCOME" = "success" ]; then
+            swift="$SWIFT"
+            web="$WEB"
+          fi
+          echo "swift=$swift" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT filter=$FILTER_OUTCOME -> swift gates: $swift, web gates: $web"
+          echo "- per-PR filter (§56.8): swift gates **$swift**, web gates **$web** (event: $EVENT, filter step: $FILTER_OUTCOME)" >> "$GITHUB_STEP_SUMMARY"
+
   lint:
     name: Lint (shellcheck + ruff)
     # Runs on ubuntu in parallel with the macOS build job — shellcheck is
@@ -134,56 +215,6 @@ jobs:
             echo "contract check: ok"
           fi
 
-  tests-windows:
-    name: Tests on windows (Python ${{ matrix.python-version }})
-    # The act pipeline is pure Python + PyYAML; running the same suite on Windows
-    # catches real path/OS bugs and is the cross-platform CI foundation (see
-    # docs/LINUX.md). POSIX-only checks (file modes, launchd/cron, shell-shim
-    # resolution) guard themselves with sys.platform / os.name and are skipped
-    # here — never deleted. Windows service wiring (Task Scheduler) is a later
-    # port; this job only proves the portable core imports + runs on Windows.
-    #
-    # INFORMATIONAL for now: the Windows suite has never actually run, so its
-    # first CI runs may surface path/OS bugs. continue-on-error keeps a red
-    # Windows run from failing the workflow / blocking PRs until it's driven
-    # green — flip this off once Windows is reliably passing.
-    # Informational → not needed in the merge queue (saves a Windows runner).
-    if: github.event_name != 'merge_group'
-    continue-on-error: true
-    runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        # Git Bash is preinstalled on the windows runner — run the ubuntu
-        # commands verbatim so the three jobs stay in lockstep.
-        shell: bash
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.x"]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # no step pushes or uses git auth after checkout — don't leave the
-          # token in .git/config for later steps to read
-          persist-credentials: false
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install PyYAML
-        run: python -m pip install "pyyaml>=6,<7"
-
-      - name: Compile Python sources
-        run: python -m compileall -q act ingest server
-
-      - name: Run unit tests
-        # tests/__init__.py points AIASSISTANT_HOME at a throwaway tmp dir before
-        # any act import, so the sandbox is hermetic on Windows too.
-        env:
-          AIASSISTANT_HOME: ${{ runner.temp }}
-        run: python -m unittest discover -s tests
-
   version-pins:
     name: Version pins untouched
     # CONTRACT §56.1 — no PR may carry a version: the iOS MARKETING_VERSION
@@ -251,29 +282,46 @@ jobs:
     name: Web tests (build + vitest)
     # web/ 看板前端（v0.48 §49）：tsc --noEmit + vite build 抓类型/打包回归，
     # vitest 跑 web/src/*.test.* 纯逻辑测试。ubuntu 上跑（无浏览器，jsdom）。
+    # §56.8：required check，每个 PR 都报到；web/ 没动时只留一行 summary 就绿
+    # （merge_group / push 恒跑全套）。step 条件写 `!= 'false'` 而非 `== 'true'`
+    # ——filter 输出缺席时宁可多跑。`!cancelled()` 让 `changes` 失败时本 job
+    # 照样跑全套而不是被连坐跳过。
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    defaults:
-      run:
-        working-directory: web
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: No web changes — web gates not needed
+        if: needs.changes.outputs.web == 'false'
+        run: |
+          echo "no web changes — web gates not needed"
+          echo "no web changes — web gates not needed (web/ untouched in this PR; the full suite runs on push to main — CONTRACT §56.8)" >> "$GITHUB_STEP_SUMMARY"
+
+      - if: needs.changes.outputs.web != 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # no step pushes or uses git auth after checkout — don't leave the
           # token in .git/config for later steps to read
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - if: needs.changes.outputs.web != 'false'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
 
       - name: Install dependencies
+        if: needs.changes.outputs.web != 'false'
+        working-directory: web
         run: npm ci
 
       - name: Build (tsc + vite)
+        if: needs.changes.outputs.web != 'false'
+        working-directory: web
         run: npm run build
 
       - name: Run vitest
+        if: needs.changes.outputs.web != 'false'
+        working-directory: web
         run: npx vitest run
 
   qa-gates:
@@ -282,7 +330,7 @@ jobs:
     # ≤6、CRAP ≤6、总覆盖率不低于 qa/coverage_floor.txt、模块依赖方向 + 防腐
     # 十条机械化——全部对着 qa/*_baseline.txt 的 shrink-only 存量账本判决，
     # 所以老代码不挡门、新代码必须干净、账本只许缩（清账 = P3）。
-    # 第六道 [ui-parity]（§65.2）：原生 UI 清单 ⟷ web 实现，对着 ui/parity/pending.txt
+    # 第六道 [ui-parity]（§66.2）：原生 UI 清单 ⟷ web 实现，对着 ui/parity/pending.txt
     # （shrink-only）判决；job 名不变（required check 按名字挂）。
     # 出生时是非必需检查；在 main 上证明稳定后再升 required（§58.5）。
     runs-on: ubuntu-latest
@@ -307,7 +355,7 @@ jobs:
         # §58.4 的另一半：三态判决看不见「账本自己长了」——新增债务 + 同 PR
         # 自记账在三态下照样全绿。这里把 qa/*_baseline.txt（加键/抬分）、
         # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）、
-        # ui/parity/{pending,waivers}.txt（§65.2 加 id）与 merge
+        # ui/parity/{pending,waivers}.txt（§66.2 加 id）与 merge
         # ref 的第一父（= 当前 main；merge queue 的临时 merge commit 同形）
         # 比较，任何放宽即 FAIL。push 到 main 时没有 base 可比，跳过。
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -322,13 +370,13 @@ jobs:
           node-version: "22"
 
       - name: Install web dependencies (the [ui-parity] gate runs vitest)
-        # §65.2：scripts/ui/parity_check.py 以 --reporter=json 跑 web/src/parity.test.tsx
+        # §66.2：scripts/ui/parity_check.py 以 --reporter=json 跑 web/src/parity.test.tsx
         # 读每条原生控件的在/不在——门要 node + web/node_modules 才能判卷。
         run: npm ci
         working-directory: web
 
       - name: Run QA gates
-        # 全套 unittest 在 coverage 下跑一遍 + 六道门（§58 五道 + §65 [ui-parity]）；
+        # 全套 unittest 在 coverage 下跑一遍 + 六道门（§58 五道 + §66 [ui-parity]）；
         # 判决与建议账本落 .qa-report/（下面整目录上传——收账 = 从 artifact 拷回 qa/）。
         run: bash scripts/qa/run_gates.sh
 
@@ -354,12 +402,14 @@ jobs:
 
   web-visual:
     name: Web visual (playwright)
-    # 视觉基线（docs/CONTRACT.md §65.4）：demo 数据 + 真 server + chromium，三页 × light/dark
+    # 视觉基线（docs/CONTRACT.md §66.4）：demo 数据 + 真 server + chromium，三页 × light/dark
     # 截图对 web/e2e/__screenshots__/ 的 golden。macOS runner：golden 在 macOS 上生成
     # （SF Pro / PingFang），ubuntu 的字体会让每张都「回归」。出生 informational
     # （continue-on-error）：改 UI 的 PR 先看 diff artifact，稳定后再议升门。
-    # informational → merge queue 里不跑。
-    if: github.event_name != 'merge_group'
+    # informational → merge queue 里不跑；§56.8 diet：web/ 没动的 PR 不占 macOS 槽
+    # （filter 输出缺席时宁可多跑，与 web-tests 同款）。
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.changes.outputs.web != 'false' }}
     continue-on-error: true
     runs-on: macos-latest
     timeout-minutes: 30
@@ -407,34 +457,28 @@ jobs:
             web/playwright-report/
           if-no-files-found: ignore
 
-  qlty:
-    name: qlty check (informational)
-    # .qlty/qlty.toml 早就配好 9 个 plugin（bandit/trivy/trufflehog/zizmor/
-    # actionlint/…）却从未在 CI 跑过（UNCLEBOB 审计的「配好未接线」项）。
-    # R2.3.8 第一步：先以 informational 身份接线——continue-on-error 与
-    # tests-windows 同款，红了不挡 PR；稳定后再议安全类 plugin 升门。
-    # informational → merge queue 里不跑。
-    if: github.event_name != 'merge_group'
-    continue-on-error: true
-    timeout-minutes: 15
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          # no step pushes or uses git auth after checkout — don't leave the
-          # token in .git/config for later steps to read
-          persist-credentials: false
-
-      - uses: qltysh/qlty-action/install@08a0a862c159eae9b9003081da6663d96efef637 # v2.3.0
-
-      - name: qlty check
-        run: qlty check --all --no-cache --no-progress
-
   ci:
-    runs-on: macos-latest
+    # Required check `ci` — reports on every PR, so the job ALWAYS runs; what
+    # the filter changes is WHERE and HOW MUCH (§56.8). A Swift-related path
+    # touched (or merge_group / push to main / the filter step failed) →
+    # macOS runner, the full Apple suite below. Nothing Swift-related touched
+    # → ubuntu runner, one summary line, success — no macOS slot spent. Step
+    # conditions read `!= 'false'` (not `== 'true'`) so a missing output errs
+    # toward running everything; `!cancelled()` keeps this job alive when
+    # `changes` itself failed (it then runs the full suite).
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.changes.outputs.swift == 'false' && 'ubuntu-latest' || 'macos-latest' }}
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: No Swift changes — Swift gates not needed
+        if: needs.changes.outputs.swift == 'false'
+        run: |
+          echo "no Swift changes — Swift gates not needed"
+          echo "no Swift changes — Swift gates not needed (mac/, shell/, ios/, shared/, *.swift and the Xcode / version-stamp toolchain files are untouched in this PR; the full Apple suite runs on push to main — CONTRACT §56.8)" >> "$GITHUB_STEP_SUMMARY"
+
+      - if: needs.changes.outputs.swift != 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # no step pushes or uses git auth after checkout — don't leave the
           # token in .git/config for later steps to read
@@ -448,18 +492,22 @@ jobs:
         # the release build of the same commit always use the same toolchain.
         # A pin missing from the image fails loudly — no "newest" fallback.
         # Bump = edit .github/xcode-version in a PR.
+        if: needs.changes.outputs.swift != 'false'
         run: bash scripts/ci/select_xcode.sh
 
       - name: Install PyYAML + cryptography
         # Fallback covers PEP 668 "externally managed" Pythons on the runner image.
         # cryptography is act/lib/e2e.py's lazy dependency, exercised by the
         # Swift↔Python interop gate below.
+        if: needs.changes.outputs.swift != 'false'
         run: python3 -m pip install --user "pyyaml>=6,<7" cryptography || python3 -m pip install --user --break-system-packages "pyyaml>=6,<7" cryptography
 
       - name: Compile Python sources
+        if: needs.changes.outputs.swift != 'false'
         run: python3 -m compileall -q act ingest server
 
       - name: Run unit tests
+        if: needs.changes.outputs.swift != 'false'
         run: AIASSISTANT_HOME=$(mktemp -d) python3 -m unittest discover -s tests
 
       - name: Verify the committed version pins are the placeholder
@@ -469,6 +517,7 @@ jobs:
         # bump here would drift the moment the next PR merges (the tri-pin
         # rebase storm this replaced) and is rejected by this gate as well as
         # by the "Version pins untouched" job.
+        if: needs.changes.outputs.swift != 'false'
         run: python3 scripts/version_stamp.py --check-pins
 
       - name: Stamp the version (act/_version.py + iOS pins, runner-only)
@@ -476,6 +525,7 @@ jobs:
         # baked fallback; on a tag checkout it is the tag. Either way the Mac
         # app, the Swift tests and the iOS simulator build below all see one
         # consistent version, and nothing is committed.
+        if: needs.changes.outputs.swift != 'false'
         run: python3 scripts/version_stamp.py --write --ios
 
       - name: Vendor Sparkle (framework + tools)
@@ -484,9 +534,11 @@ jobs:
         # (updater wiring + the Settings update UI) compiles OUT of PR CI, so
         # a symbol break inside those blocks merges green and only explodes at
         # tag time — after the tag already exists.
+        if: needs.changes.outputs.swift != 'false'
         run: bash mac/scripts/fetch-sparkle.sh
 
       - name: Build macOS app (with Sparkle, like a release build)
+        if: needs.changes.outputs.swift != 'false'
         run: bash mac/build.sh
 
       - name: Build board shell app (shell/build.sh — install.sh's ui step)
@@ -495,11 +547,13 @@ jobs:
         # rolls the deploy back. ZAI_PORT stamping is exercised too. shell/ also
         # hosts the recording + live-captions engines moved from mac/Sources
         # (§61.3) and the zaiShell bridge (§61.1).
+        if: needs.changes.outputs.swift != 'false'
         run: ZAI_PORT=47820 bash shell/build.sh
 
       - name: Shell bridge tests (shell/tests, plain swiftc)
         # §61.5: typecheck the shell module + run the XCTest-free harness that
         # pins the zaiShell wire vocabulary and the LegacyPrefs seed rules.
+        if: needs.changes.outputs.swift != 'false'
         run: bash shell/tests/run.sh
 
       - name: Swift logic tests (mac/LogicTests, swift test)
@@ -509,12 +563,14 @@ jobs:
         # is the real file. The wrapper is exactly
         # `swift test --package-path mac/LogicTests` under full Xcode; it only
         # adds framework search flags on Xcode-less CLT machines (see test.sh).
+        if: needs.changes.outputs.swift != 'false'
         run: bash mac/LogicTests/test.sh
 
       - name: Swift contract tests (shared/Sources, plain swiftc)
         # Behavior tests for the lossy dashboard.json row decode (Contract.swift)
         # and the board-lane merge/badge logic (BoardModel.swift) — shared logic
         # both apps compile but nothing else executes. No Xcode project needed.
+        if: needs.changes.outputs.swift != 'false'
         run: bash ios/tests/contract/run.sh
 
       - name: Swift captions tests (CaptionCore, plain swiftc)
@@ -522,12 +578,14 @@ jobs:
         # payload decode, definite/partial dedup, and the 2-line caption
         # roll-up reducer (mac/Sources/CaptionCore.swift) — the only
         # executable check on the hand-rolled binary protocol.
+        if: needs.changes.outputs.swift != 'false'
         run: bash ios/tests/captions/run.sh
 
       - name: Swift board-diff tests (BoardDiff, plain swiftc)
         # v0.43 手感 gate: the pure snapshot differ driving the kanban flight
         # layer (mac/Sources/BoardDiff.swift) — first-load, moves vs reorder
         # noise, inserts/removals, and the >6-change crossfade cap.
+        if: needs.changes.outputs.swift != 'false'
         run: bash ios/tests/boarddiff/run.sh
 
       - name: Swift↔Python E2E crypto interop
@@ -535,6 +593,7 @@ jobs:
         # act/lib/e2e.py (tests/test_e2e.py is Python↔Python only): the frozen
         # ZSYN/ZQR1 wire contract between the pipeline and the phone, both
         # directions. Plain swiftc + CryptoKit — no Xcode project needed.
+        if: needs.changes.outputs.swift != 'false'
         run: bash ios/tests/interop/run.sh
 
       - name: Build iOS app (simulator, no signing)
@@ -543,6 +602,7 @@ jobs:
         # the maintainer's next manual Xcode open. Builds the committed project
         # (canonical spec: ios/project.yml; the pbxproj is kept in sync, so CI
         # needs no xcodegen). Simulator destination → no signing identity.
+        if: needs.changes.outputs.swift != 'false'
         run: |
           set -euo pipefail
           xcodebuild -project ios/ZelinAIAssistant.xcodeproj \

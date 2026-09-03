@@ -153,7 +153,7 @@ class GatesLoosenTestCase(unittest.TestCase):
 
 
 class ParityLedgerTestCase(unittest.TestCase):
-    """§65.2：ui/parity/pending.txt 与 waivers.txt 同样只许缩（按 id 集合比，备注列不是分数）。"""
+    """§66.2：ui/parity/pending.txt 与 waivers.txt 同样只许缩（按 id 集合比，备注列不是分数）。"""
 
     def test_added_id_is_caught_and_remarks_are_ignored(self):
         base = "# head\ncontrol:a:b:c\ncontrol:x:y:z  reason #119\n"

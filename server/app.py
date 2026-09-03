@@ -40,7 +40,8 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (ai_fix_launch, board_source, files, health, inbox_writer,
-                    lanes, materials, paths, recaps, security, settings)
+                    lanes, materials, paths, recaps, security, self_improve_lane,
+                    settings)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -123,16 +124,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str) -> None:
         try:
-            path = unquote(urlsplit(self.path).path)
-            if "\x00" in path:
-                raise InvalidFieldError("NUL in path")
-            self._check_auth(method)
-            if method == "GET":
-                self._route_get(path)
-            elif method == "PUT":
-                self._route_put(path)
-            else:
-                self._route_post(path)
+            self._handle(method)
         except ApiError as err:
             self._send_api_error(err)
         except NotImplementedError:
@@ -145,40 +137,67 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc(file=sys.stderr)
             self._send_api_error(ApiError("internal error"))
 
+    def _handle(self, method: str) -> None:
+        """一次请求的主线：路径解码 → 鉴权 → 按动词路由（异常交 _dispatch 兜）。"""
+        path = unquote(urlsplit(self.path).path)
+        if "\x00" in path:
+            raise InvalidFieldError("NUL in path")
+        self._check_auth(method)
+        if method == "GET":
+            self._route_get(path)
+        elif method == "PUT":
+            self._route_put(path)
+        else:
+            self._route_post(path)
+
     # ------------------------------------------------------------------ #
     # 鉴权四闸（§49 auth model；机制与 webui 差异注在 server/security.py）
     # ------------------------------------------------------------------ #
+    def _reject(self, err: ApiError) -> None:
+        """闸门拒绝：body 未读，残字节会污染 keep-alive——连接必须关。"""
+        self.close_connection = True
+        raise err
+
     def _check_auth(self, method: str) -> None:
-        ctx = self.server.ctx  # type: ignore[attr-defined]
         # Host 闸：每个请求（页面加载也算）——DNS-rebinding 防线。
-        # 拒绝路径 body 未读，残字节会污染 keep-alive——连接必须关。
         if not security.host_ok(self.headers.get("Host")):
-            self.close_connection = True
-            raise ForbiddenError("bad host")
-        if method not in ("POST", "PUT"):
-            return  # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
+            self._reject(ForbiddenError("bad host"))
+        if method in ("POST", "PUT"):
+            self._check_write_auth()
+        # GET/HEAD token-light：无 CORS 头，跨源页面读不到响应
+
+    def _check_write_auth(self) -> None:
+        """写请求的后三闸：Origin（present 才查）→ Content-Type → instance token。"""
+        ctx = self.server.ctx  # type: ignore[attr-defined]
         origin = self.headers.get("Origin")
         if origin is not None and not security.origin_ok(
                 origin, ctx.allowed_origins):
-            self.close_connection = True
-            raise ForbiddenError("bad origin")
+            self._reject(ForbiddenError("bad origin"))
         if not security.content_type_is_json(
                 self.headers.get("Content-Type")):
             # 415 复用 INVALID_FIELD（§49 的 413 先例：status 已表意，
             # 不为 loopback 面扩词表）
-            self.close_connection = True
-            raise InvalidFieldError("Content-Type must be application/json",
-                                    status=415)
+            self._reject(InvalidFieldError(
+                "Content-Type must be application/json", status=415))
         if not security.token_ok(self.headers.get(security.TOKEN_HEADER),
                                  ctx.token):
-            self.close_connection = True
-            raise UnauthorizedError("missing or bad token")
+            self._reject(UnauthorizedError("missing or bad token"))
 
     # ------------------------------------------------------------------ #
     # GET 路由
     # ------------------------------------------------------------------ #
     def _route_get(self, path: str) -> None:
         ctx = self.server.ctx  # type: ignore[attr-defined]
+        if path.startswith("/api/"):
+            self._route_api_get(ctx, path)
+        elif path.startswith("/files/deliverables/"):
+            self._send_deliverable(ctx, path)
+        elif path.startswith("/files/"):
+            raise NotFoundError("not found", {"path": path})
+        else:
+            self._serve_static(ctx.static_dir, path)
+
+    def _route_api_get(self, ctx, path: str) -> None:
         if path == "/api/board":
             body = board_source.board_bytes(ctx.home)
             self._send_bytes(200, body, "application/json; charset=utf-8",
@@ -191,18 +210,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, _GET_JSON_ROUTES[path](ctx, self._query()))
         elif path == "/api/events":
             self._serve_events(ctx.hub)
-        elif path.startswith("/files/deliverables/"):
-            rest = path[len("/files/deliverables/"):].split("/")
-            if len(rest) != 2:
-                raise NotFoundError("not found", {"path": path})
-            body, ctype, extra = files.serve_deliverable(ctx.home, rest[0],
-                                                         rest[1])
-            extra["Cache-Control"] = "no-store"
-            self._send_bytes(200, body, ctype, extra, frameable=True)
-        elif path.startswith("/api/") or path.startswith("/files/"):
-            raise NotFoundError("not found", {"path": path})
         else:
-            self._serve_static(ctx.static_dir, path)
+            raise NotFoundError("not found", {"path": path})
+
+    def _send_deliverable(self, ctx, path: str) -> None:
+        rest = path[len("/files/deliverables/"):].split("/")
+        if len(rest) != 2:
+            raise NotFoundError("not found", {"path": path})
+        body, ctype, extra = files.serve_deliverable(ctx.home, rest[0], rest[1])
+        extra["Cache-Control"] = "no-store"
+        self._send_bytes(200, body, ctype, extra, frameable=True)
 
     # ------------------------------------------------------------------ #
     # POST 路由
@@ -231,20 +248,7 @@ class Handler(BaseHTTPRequestHandler):
         return dict(parse_qsl(urlsplit(self.path).query, keep_blank_values=True))
 
     def _read_json_body(self) -> dict:
-        length_raw = self.headers.get("Content-Length")
-        if length_raw is None:
-            raise InvalidFieldError("Content-Length required")
-        try:
-            length = int(length_raw)
-        except ValueError:
-            raise InvalidFieldError("bad Content-Length")
-        if length < 0:
-            raise InvalidFieldError("bad Content-Length")
-        if length > MAX_BODY_BYTES:
-            # CONTRACT §49（v0.48 追认）：413 复用 INVALID_FIELD——status 已
-            # 表意，不为 loopback 面扩词表
-            raise InvalidFieldError("body too large",
-                                    {"limit": MAX_BODY_BYTES}, status=413)
+        length = _content_length(self.headers.get("Content-Length"))
         raw = self.rfile.read(length)
         try:
             doc = json.loads(raw.decode("utf-8"))
@@ -266,23 +270,7 @@ class Handler(BaseHTTPRequestHandler):
         # refetch + 重连，无 last-event-id 契约）
         self.close_connection = True
         try:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache, no-transform")
-            self.send_header("X-Accel-Buffering", "no")
-            # M4：SSE 流也过同一套安全头（nosniff/Referrer-Policy/X-Frame/CSP）
-            # ——此前手写头漏发，事件流成了唯一无 nosniff 的响应面。
-            self._emit_security_headers()
-            self.end_headers()
-            self.wfile.write(CONNECTED_FRAME)
-            self.wfile.flush()
-            while True:
-                try:
-                    frame = q.get(timeout=HEARTBEAT_SECONDS)
-                except queue.Empty:
-                    frame = HEARTBEAT_FRAME  # 25s 注释行心跳
-                self.wfile.write(frame)
-                self.wfile.flush()
+            self._stream_events(q)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass  # 客户端断开——正常退出
         except Exception:
@@ -292,48 +280,112 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             hub.unsubscribe(q)
 
+    def _stream_events(self, q: "queue.Queue") -> None:
+        """头 + connected 帧，然后阻塞转发订阅队列（空等 25s 发心跳注释行）。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        # M4：SSE 流也过同一套安全头（nosniff/Referrer-Policy/X-Frame/CSP）
+        # ——此前手写头漏发，事件流成了唯一无 nosniff 的响应面。
+        self._emit_security_headers()
+        self.end_headers()
+        self.wfile.write(CONNECTED_FRAME)
+        self.wfile.flush()
+        while True:
+            try:
+                frame = q.get(timeout=HEARTBEAT_SECONDS)
+            except queue.Empty:
+                frame = HEARTBEAT_FRAME  # 25s 注释行心跳
+            self.wfile.write(frame)
+            self.wfile.flush()
+
     # ------------------------------------------------------------------ #
     # 静态资源（web/dist）
     # ------------------------------------------------------------------ #
     def _serve_static(self, dist: Path, path: str) -> None:
-        rel = path.lstrip("/") or "index.html"
-        try:
-            real_dist = dist.resolve(strict=True)
-            target = (dist / rel).resolve()
-        except OSError:
+        target = _static_target(dist, path)
+        if target is None:
             # dist 尚未 build：根路径给占位页，其余 404
             if path == "/":
                 self._send_bytes(200, _PLACEHOLDER_HTML,
                                  "text/html; charset=utf-8")
                 return
             raise NotFoundError("not found", {"path": path})
-        # 包含性检查挡住 ../ 穿越；目录请求回落 index.html
-        if not str(target).startswith(str(real_dist) + os.sep) \
-                and target != real_dist:
-            raise NotFoundError("not found", {"path": path})
-        if target.is_dir():
-            target = target / "index.html"
-        if not target.is_file():
-            # SPA 深链（无扩展名路径）回落 index.html；带扩展名的按缺失处理
-            index = real_dist / "index.html"
-            if "." not in Path(rel).name and index.is_file():
-                target = index
-            else:
-                raise NotFoundError("not found", {"path": path})
-        ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        cache = ("public, max-age=31536000, immutable"
-                 if "/assets/" in str(target) else "no-cache")
         body = target.read_bytes()
         if target.name == "index.html":
             # instance token server 端注入（security.inject_token 的同源
             # 纪律）：只有本面服务的页面拿得到，跨源端点永不外发
             body = security.inject_token(
                 body, self.server.ctx.token)  # type: ignore[attr-defined]
-        self._send_bytes(200, body, ctype, {"Cache-Control": cache})
+        self._send_bytes(200, body, _static_ctype(target),
+                         {"Cache-Control": _static_cache(target)})
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         # 保留一行式访问日志到 stderr；SSE 心跳不经此处，噪音可控
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+
+# --------------------------------------------------------------------------- #
+# 请求体 / 静态资源的纯函数小件（Handler 方法只做发送）
+# --------------------------------------------------------------------------- #
+def _content_length(raw: Optional[str]) -> int:
+    """Content-Length 头 → 字节数；缺失/非数/负数 400，超上限 413。"""
+    if raw is None:
+        raise InvalidFieldError("Content-Length required")
+    try:
+        length = int(raw)
+    except ValueError:
+        raise InvalidFieldError("bad Content-Length")
+    if length < 0:
+        raise InvalidFieldError("bad Content-Length")
+    if length > MAX_BODY_BYTES:
+        # CONTRACT §49（v0.48 追认）：413 复用 INVALID_FIELD——status 已
+        # 表意，不为 loopback 面扩词表
+        raise InvalidFieldError("body too large",
+                                {"limit": MAX_BODY_BYTES}, status=413)
+    return length
+
+
+def _inside(target: Path, real_dist: Path) -> bool:
+    """包含性检查：target 在 dist 之内（或就是 dist）——挡住 ../ 穿越。"""
+    return str(target).startswith(str(real_dist) + os.sep) or target == real_dist
+
+
+def _pick_file(target: Path, real_dist: Path, rel: str, path: str) -> Path:
+    """目录请求回落 index.html；SPA 深链（无扩展名路径）回落 index.html；
+    带扩展名的缺失按 404。"""
+    if target.is_dir():
+        target = target / "index.html"
+    if target.is_file():
+        return target
+    index = real_dist / "index.html"
+    if "." not in Path(rel).name and index.is_file():
+        return index
+    raise NotFoundError("not found", {"path": path})
+
+
+def _static_target(dist: Path, path: str) -> Optional[Path]:
+    """web/dist 里要发的文件；None = dist 尚未 build（调用方决定占位页/404）。"""
+    rel = path.lstrip("/") or "index.html"
+    try:
+        real_dist = dist.resolve(strict=True)
+        target = (dist / rel).resolve()
+    except OSError:
+        return None
+    if not _inside(target, real_dist):
+        raise NotFoundError("not found", {"path": path})
+    return _pick_file(target, real_dist, rel, path)
+
+
+def _static_ctype(target: Path) -> str:
+    return mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+
+
+def _static_cache(target: Path) -> str:
+    # vite 的 hashed assets 可长缓存；其余（index.html 等）每次回源
+    return ("public, max-age=31536000, immutable"
+            if "/assets/" in str(target) else "no-cache")
 
 
 # --------------------------------------------------------------------------- #
@@ -407,6 +459,8 @@ _POST_JSON_ROUTES = {
     "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
     # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
+    # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
+    "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
 }
 
 _PUT_JSON_ROUTES = {
@@ -461,21 +515,15 @@ def make_server(port: Optional[int] = None,
 EX_PORT_BUSY = 75  # EX_TEMPFAIL
 
 
-def main() -> int:
-    try:
-        httpd = make_server()
-    except OSError as exc:
-        if exc.errno != errno.EADDRINUSE:
-            raise
-        port = os.environ.get("ZAI_PORT", DEFAULT_PORT)
-        print(f"zai server: 127.0.0.1:{port} is busy — another server is already "
-              f"listening (the shell's spawn fallback or a manual `python3 -m "
-              f"server`); exiting {EX_PORT_BUSY} without a traceback", flush=True)
-        return EX_PORT_BUSY
-    host, port = httpd.server_address[:2]
-    print(f"zai server: http://{host}:{port}  "
-          f"(AIASSISTANT_HOME={httpd.ctx.home})",  # type: ignore[attr-defined]
-          flush=True)
+def _port_busy_line() -> str:
+    port = os.environ.get("ZAI_PORT", DEFAULT_PORT)
+    return (f"zai server: 127.0.0.1:{port} is busy — another server is already "
+            f"listening (the shell's spawn fallback or a manual `python3 -m "
+            f"server`); exiting {EX_PORT_BUSY} without a traceback")
+
+
+def _serve(httpd: ThreadingHTTPServer) -> None:
+    """serve_forever 直到 Ctrl-C；无论如何停 watcher、关 socket。"""
     try:
         httpd.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
@@ -484,4 +532,19 @@ def main() -> int:
         if httpd.watcher is not None:  # type: ignore[attr-defined]
             httpd.watcher.stop()  # type: ignore[attr-defined]
         httpd.server_close()
+
+
+def main() -> int:
+    try:
+        httpd = make_server()
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        print(_port_busy_line(), flush=True)
+        return EX_PORT_BUSY
+    host, port = httpd.server_address[:2]
+    print(f"zai server: http://{host}:{port}  "
+          f"(AIASSISTANT_HOME={httpd.ctx.home})",  # type: ignore[attr-defined]
+          flush=True)
+    _serve(httpd)
     return 0

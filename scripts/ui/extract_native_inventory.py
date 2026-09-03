@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """原生 Mac app 的用户可见面清单 —— 机器提取，写进 ui/parity/native-inventory.json。
 
-法典：docs/CONTRACT.md §65（UI 对齐契约）。mac/Sources 在 D3 下冻结、只读，
+法典：docs/CONTRACT.md §66（UI 对齐契约）。mac/Sources 在 D3 下冻结、只读，
 所以这份 JSON 是退役中 app 的**终版规格**：web 看板补齐的不是「看着差不多」，
 是清单里每一条 id（owner 2026-09-02：「要通过一些硬指标、硬代码、硬文档来
 进行保证」）。提取范围：

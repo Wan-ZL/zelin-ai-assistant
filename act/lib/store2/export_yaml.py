@@ -61,6 +61,7 @@ FIELD_DEFAULTS = {
     "former_titles": None, "preset": None,
     "work_id": None,          # §60（D21）工作编号；None = 未批准/legacy
     "assessment": None,       # §64 AI 摘要 + 评语（dict）；None = 未评
+    "needs_mcp": False,       # §65 self_improve 卡显式声明需要 MCP（默认 False 不落盘）
 }
 
 # import 期 fail-fast：registry 加了字段而这里漏补默认值 = 迁移静默丢字段。

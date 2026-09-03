@@ -61,58 +61,83 @@ def _parse_iso(ts) -> Optional[float]:
         return None
 
 
-def snapshot(home: Path, now: Optional[float] = None) -> dict:
-    """The /api/health body. Never raises; missing files are reported as such."""
-    now = time.time() if now is None else now
+def _stale_after(body: dict) -> int:
+    """The writer's own ``stale_after_s`` (torn/absent → the dashboard floor)."""
+    try:
+        return int(body.get("stale_after_s") or 0) or DASHBOARD_FRESH_SECONDS
+    except (TypeError, ValueError):
+        return DASHBOARD_FRESH_SECONDS
 
+
+def _heartbeat_view(home: Path, now: float) -> Optional[dict]:
+    """``heartbeat`` block, or None when the file is missing (pre-v0.48.4 daemon)."""
     hb_path = paths.heartbeat_path(home)
     hb_age = _age(hb_path, now)
+    if hb_age is None:
+        return None
     hb_body = _read_json(hb_path) or {}
-    heartbeat: Optional[dict] = None
-    if hb_age is not None:
-        try:
-            stale_after = int(hb_body.get("stale_after_s") or 0) or DASHBOARD_FRESH_SECONDS
-        except (TypeError, ValueError):
-            stale_after = DASHBOARD_FRESH_SECONDS
-        heartbeat = {
-            "age_s": round(hb_age, 1),
-            "phase": hb_body.get("phase"),
-            "pid": hb_body.get("pid"),
-            "interval": hb_body.get("interval"),
-            "stale_after_s": stale_after,
-            "stale": hb_age > stale_after,
-        }
+    stale_after = _stale_after(hb_body)
+    return {
+        "age_s": round(hb_age, 1),
+        "phase": hb_body.get("phase"),
+        "pid": hb_body.get("pid"),
+        "interval": hb_body.get("interval"),
+        "stale_after_s": stale_after,
+        "stale": hb_age > stale_after,
+    }
 
-    dash_path = paths.dashboard_path(home)
-    dash_body = _read_json(dash_path) or {}
+
+def _dashboard_view(home: Path, now: float) -> Optional[dict]:
+    """``dashboard`` block, or None when there is no parseable ``generated_at``."""
+    dash_body = _read_json(paths.dashboard_path(home)) or {}
     gen_ts = _parse_iso(dash_body.get("generated_at"))
-    dashboard: Optional[dict] = None
-    if gen_ts is not None:
-        d_age = max(0.0, now - gen_ts)
-        dashboard = {"generated_at": dash_body.get("generated_at"),
-                     "age_s": round(d_age, 1),
-                     "stale": d_age > DASHBOARD_FRESH_SECONDS}
+    if gen_ts is None:
+        return None
+    d_age = max(0.0, now - gen_ts)
+    return {"generated_at": dash_body.get("generated_at"),
+            "age_s": round(d_age, 1),
+            "stale": d_age > DASHBOARD_FRESH_SECONDS}
 
+
+def _loop_health_view(home: Path) -> dict:
+    """``loop_health`` block; a non-int / bool / negative counter reads as 0."""
     lh = _read_json(paths.loop_health_path(home)) or {}
     failures = lh.get("consecutive_failures")
     if not isinstance(failures, int) or isinstance(failures, bool) or failures < 0:
         failures = 0
-    loop_health = {"consecutive_failures": failures,
-                   "last_error": lh.get("last_error") if failures else None}
+    return {"consecutive_failures": failures,
+            "last_error": lh.get("last_error") if failures else None}
 
-    if heartbeat is not None and heartbeat["stale"]:
-        verdict = "stalled"
-    elif failures >= LOOP_ALARM_AFTER:
-        verdict = "failing"
-    elif heartbeat is None and (dashboard is None or dashboard["stale"]):
-        verdict = "stale"
-    elif heartbeat is None:
-        verdict = "unknown"
-    else:
-        verdict = "ok"
 
+def _beating_verdict(heartbeat: dict, failures: int) -> str:
+    """Heartbeat file present: stalled beats failing beats ok."""
+    if heartbeat["stale"]:
+        return "stalled"
+    if failures >= LOOP_ALARM_AFTER:
+        return "failing"
+    return "ok"
+
+
+def _verdict(heartbeat: Optional[dict], dashboard: Optional[dict],
+             failures: int) -> str:
+    """The ladder from the module docstring — first match wins."""
+    if heartbeat is not None:
+        return _beating_verdict(heartbeat, failures)
+    if failures >= LOOP_ALARM_AFTER:
+        return "failing"
+    if dashboard is None or dashboard["stale"]:
+        return "stale"
+    return "unknown"
+
+
+def snapshot(home: Path, now: Optional[float] = None) -> dict:
+    """The /api/health body. Never raises; missing files are reported as such."""
+    now = time.time() if now is None else now
+    heartbeat = _heartbeat_view(home, now)
+    dashboard = _dashboard_view(home, now)
+    loop_health = _loop_health_view(home)
     return {
-        "verdict": verdict,
+        "verdict": _verdict(heartbeat, dashboard, loop_health["consecutive_failures"]),
         "heartbeat": heartbeat,
         "dashboard": dashboard,
         "loop_health": loop_health,
