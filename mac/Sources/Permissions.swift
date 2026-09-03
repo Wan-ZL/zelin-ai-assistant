@@ -636,20 +636,60 @@ struct CapabilityRowsView: View {
 /// a ScrollView: `.onAppear` fires on INSERTION, so at the 480 pt minimum
 /// window height the block could sit below the fold while the v1+v2 markers
 /// were already written — "disclosure shown" without anyone having seen it.
-/// macOS 15+: `onScrollVisibilityChange` (≥50 % of the block in the viewport;
-/// fires on initial layout too, so a tall window still writes immediately).
-/// macOS 14 (deployment floor): insertion-time write, i.e. exactly the old
-/// behavior — never worse than before, and the uploader's gate stays closed
-/// until the marker exists either way.
-private struct ConsentSurfaceMarker: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.onScrollVisibilityChange(threshold: 0.5) { visible in
-                if visible { TelemetryConsent.markSurfaceShown() }
+///
+/// Implementation = an invisible AppKit probe in the block's background.
+/// `NSView.visibleRect` is clip-view aware (SwiftUI's ScrollView is an
+/// NSScrollView underneath), so "≥ 50 % of the block inside the scroll
+/// viewport" is one geometry question that works identically on every macOS
+/// this app supports (14+) — no availability branch, no insertion-time
+/// fallback (review of #158: the macOS 14 fallback still wrote below the
+/// fold). Re-checked on window attach, on layout and on every scroll of the
+/// enclosing clip view; fires at most once per probe. A block that is not in
+/// a scroll view at all has visibleRect == bounds → written on appear, which
+/// is correct (nothing to scroll = fully visible).
+private struct ConsentVisibilityProbe: NSViewRepresentable {
+    func makeNSView(context: Context) -> ProbeView { ProbeView() }
+    func updateNSView(_ nsView: ProbeView, context: Context) { nsView.check() }
+
+    final class ProbeView: NSView {
+        private var fired = false
+        private var scrollObserver: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observeEnclosingScroll()
+            check()
+        }
+
+        override func layout() {
+            super.layout()
+            check()
+        }
+
+        private func observeEnclosingScroll() {
+            if let o = scrollObserver {
+                NotificationCenter.default.removeObserver(o)
+                scrollObserver = nil
             }
-        } else {
-            content.onAppear { TelemetryConsent.markSurfaceShown() }
+            guard let clip = enclosingScrollView?.contentView else { return }
+            clip.postsBoundsChangedNotifications = true
+            scrollObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.check() }
+            }
+        }
+
+        func check() {
+            guard !fired, window != nil, bounds.height > 0 else { return }
+            let visible = visibleRect
+            guard !visible.isEmpty, visible.height >= bounds.height * 0.5 else { return }
+            fired = true
+            TelemetryConsent.markSurfaceShown()
+        }
+
+        deinit {
+            if let o = scrollObserver { NotificationCenter.default.removeObserver(o) }
         }
     }
 }
@@ -666,7 +706,7 @@ private struct ConsentSurfaceMarker: ViewModifier {
 /// key. Rendering this block still writes the consent-surface marker the
 /// Python uploader gates on (unchanged semantics — nothing uploads before
 /// this line has been shown) — but only once the block is actually ON
-/// SCREEN (issue #37, see ConsentSurfaceMarker above).
+/// SCREEN (issue #37, see ConsentVisibilityProbe above).
 struct TelemetryBlockView: View {
     @ObservedObject private var i18n = LanguageStore.shared
     // reflect an already-recorded choice on re-open (checkup page / wizard
@@ -704,7 +744,7 @@ struct TelemetryBlockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .modifier(ConsentSurfaceMarker())
+        .background(ConsentVisibilityProbe())
     }
 
     /// Checking (or unchecking) the box is the informed choice — write the
