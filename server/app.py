@@ -408,7 +408,7 @@ _POST_JSON_ROUTES = {
     "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
     # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
-    # §64.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
+    # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
     "/api/self-improve/resume": lambda ctx, payload: self_improve_lane.resume(ctx.home, payload),
 }
 

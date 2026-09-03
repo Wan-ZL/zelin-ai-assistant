@@ -467,7 +467,7 @@
 .chip.chip-warning { color: var(--warning); border-color: var(--warning-soft); background: var(--warning-soft); }
 .chip.chip-danger { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
 .chip.chip-success { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
-/* §64.3 交付核验章可以是链接（PR 章点开 GitHub）：去下划线，色随 chip 变体 */
+/* §65.3 交付核验章可以是链接（PR 章点开 GitHub）：去下划线，色随 chip 变体 */
 a.chip { text-decoration: none; }
 a.chip:hover { text-decoration: underline; }
 .chip.chip-purple { color: var(--purple); border-color: var(--purple-soft); background: var(--purple-soft); }
@@ -487,6 +487,27 @@ a.chip:hover { text-decoration: underline; }
 .chip.chip-outline {
   background: transparent;
   border-color: currentColor;
+}
+
+/* §64 AI 评语章：是个 <button>（点看理由），外观与同色 chip 一致；理由行复用 .card-line.is-body */
+.chip.verdict-chip {
+  cursor: pointer;
+  font: var(--type-chip);
+}
+
+.chip.verdict-chip:hover { filter: brightness(0.96); }
+.chip.verdict-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.verdict-reason {
+  padding: 4px 8px;
+  border-left: 2px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+/* AI 摘要一句（与 delivered_summary 行同款）——左侧细条区别于执行器原话 */
+.card-summary-line.is-ai {
+  border-left: 2px solid var(--accent-soft);
+  padding-left: 6px;
 }
 
 /* —— 按钮行 —— */

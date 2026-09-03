@@ -1,4 +1,4 @@
-"""§64.4 敏感路径护栏：PR diff 触及写死的受保护路径 → 标签 needs-owner-eyes +
+"""§65.4 敏感路径护栏：PR diff 触及写死的受保护路径 → 标签 needs-owner-eyes +
 通道暂停（state/self_improve/lane.json）→ policy 对后续 lane 卡报
 self_improve:paused（上卡）→ owner 三条出口（处理 PR 后巡检自动清 / 看板
 POST /api/self-improve/resume / CLI --resume）。

@@ -1,4 +1,4 @@
-// 待验收卡的 §64.3 交付核验章：verified → PR 章链接（含 draft）；未通过 → 红章带原因 token；
+// 待验收卡的 §65.3 交付核验章：verified → PR 章链接（含 draft）；未通过 → 红章带原因 token；
 // 非 self_improve 卡（无 delivery）不渲染任何章。
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

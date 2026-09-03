@@ -1,4 +1,4 @@
-"""§64 self_improve 判例共用的假 gh runner + 卡片/PR 工厂（零子进程、零网络）。
+"""§65 self_improve 判例共用的假 gh runner + 卡片/PR 工厂（零子进程、零网络）。
 
 ``FakeGh`` 按 argv 前缀路由：`pr view N` / `pr list --head B` / `pr checks N` /
 `pr edit N` / `label create` / `api user` / `api repos/.../pulls/N/comments`；

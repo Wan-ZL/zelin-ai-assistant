@@ -166,7 +166,7 @@ def build_argv(prompt: Optional[str], *, mode: str = MODE_PIPELINE,
     return argv
 
 
-# §64 出网封锁（self_improve lane 会话的 MCP 面归零）：``--strict-mcp-config``
+# §65 出网封锁（self_improve lane 会话的 MCP 面归零）：``--strict-mcp-config``
 # 让 claude 只认 ``--mcp-config`` 给的服务器集合，而这个集合是空的——用户级
 # Slack/Gmail MCP 对该会话不存在。三个 token 顺序固定，紧跟模型旗标、在
 # ``--name`` 之前（``--mcp-config`` 是变参，后面必须是一个选项而不是裸 prompt）。
@@ -179,7 +179,7 @@ def dispatch_argv(cfg: Optional[config.Config] = None, *,
     (dispatch / resume / rework / brief). ``--dangerously-skip-permissions``
     is included only while ``execution.skip_permissions`` is on (default;
     P0-10) — off means the agent runs under claude's normal permission
-    model. The dispatch model knob rides right behind it; ``no_mcp`` (§64,
+    model. The dispatch model knob rides right behind it; ``no_mcp`` (§65,
     add-only kwarg, default off = byte-identical argv) appends
     :data:`NO_MCP_ARGV`; the caller appends ``--name`` / ``--resume`` / the
     prompt.

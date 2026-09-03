@@ -398,7 +398,7 @@ def build_prompt(req: Requirement, cfg: Optional[config.Config] = None,
     blocks.append("\n## " + _quality_gate_block(cfg, remote=remote,
                                                 delivery_mode=delivery_mode,
                                                 target=target))
-    # §64 self_improve lane：确定性交付契约段（分支名 / 只准草稿 PR / 受保护
+    # §65 self_improve lane：确定性交付契约段（分支名 / 只准草稿 PR / 受保护
     # 路径 / 无 MCP）——非 self_improve 卡给 []，prompt 逐字节不变。
     blocks.extend(self_improve.prompt_blocks(req, cfg, target))
 
@@ -584,7 +584,7 @@ def _bg_base_cmd(cfg: Optional[config.Config] = None,
     permission model; a blocked agent is harvested to review by actd's
     reconcile (#119) instead of acting unattended), then ``--model <id>``
     when the dispatch knob is explicit (nothing when it follows). ``req``
-    (§64, add-only): a self_improve card without ``needs_mcp`` gets
+    (§65, add-only): a self_improve card without ``needs_mcp`` gets
     ``llm.NO_MCP_ARGV`` appended — the session sees no Slack/Gmail MCP; every
     launch site passes its card so a resume/rework/brief can never re-open the
     MCP surface the dispatch closed. ``req=None`` = byte-identical to before."""
@@ -916,7 +916,7 @@ def dispatch(
         # 文件跨 pass 重放，重放闸靠这个键认出"这单已经建过卡"——整体重建
         # execution 抹掉它 = 每 pass 铸一张新卡、起一个新 agent（无上界）。
         req.execution["inbox_stem"] = ex["inbox_stem"]
-    # §64：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
+    # §65：self_improve 卡的派发记录（分支 / 出网档 / 是否走 lane）——非
     # self_improve 卡给 {}，execution 形状不变。
     req.execution.update(self_improve.dispatch_record(req, cfg))
     req.set_status(State.EXECUTING)

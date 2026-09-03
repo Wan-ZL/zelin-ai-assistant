@@ -63,7 +63,7 @@ def loop_health_path(home: Path) -> Path:
 
 
 def self_improve_lane_path(home: Path) -> Path:
-    # §64：act/lib/self_improve.lane_state_path()——自动草稿 PR 通道的暂停状态；
+    # §65：act/lib/self_improve.lane_state_path()——自动草稿 PR 通道的暂停状态；
     # server 只在 owner 点「恢复通道」时写 paused:false（server/self_improve_lane.py）
     return home / "state" / "self_improve" / "lane.json"
 

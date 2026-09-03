@@ -74,7 +74,7 @@ Before deploying on a machine you care about, read
 [`docs/PRIVACY.md`](docs/PRIVACY.md) — in particular the "执行权限 / Execution
 permissions" section (approval is the security boundary for manually approved
 cards; the two auto-dispatch lanes — hand capture and the repo's own
-`self_improve` draft-PR lane, CONTRACT §51/§64 — spell out their deterministic
+`self_improve` draft-PR lane, CONTRACT §51/§65 — spell out their deterministic
 backstops and residual risk there) and the available off-switches (recording
 mode, per-radar feature flags, `execution.create_github_repo`,
 `self_improve.enabled`, redaction).

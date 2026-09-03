@@ -306,7 +306,11 @@ OPTIONAL_ORDER = [
     # None = 从未批准过（提案/备选/回收站卡）或存量 legacy 卡——整键省略，
     # 旧 YAML 逐字节 round-trip 不受影响。
     "work_id",
-    # §64 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
+    # §64（issue #128）AI 一句话摘要 + 完成度评语：dict
+    # {summary, verdict, verdict_reason, at, source_hash | error}，只由
+    # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
+    "assessment",
+    # §65 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
     # 只会让卡**更不自主**——self_improve lane 见到即拒（self_improve:needs_mcp，
     # 只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开。
     # 默认 False 整键省略。
@@ -388,7 +392,10 @@ class Requirement:
     # improvement_of/split_from 全部指 id，绝不指 work_id）。
     work_id: Optional[str] = None
 
-    # §64：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
+    # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
+    assessment: Optional[dict] = None
+
+    # §65：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
     needs_mcp: bool = False
 
     # internal bookkeeping (never serialized)

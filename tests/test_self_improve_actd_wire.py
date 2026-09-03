@@ -1,4 +1,4 @@
-"""§64 在 actd 里的接线：免批通道（notes 痕 / 观察通知 / 暂停 token 上卡）、四条
+"""§65 在 actd 里的接线：免批通道（notes 痕 / 观察通知 / 暂停 token 上卡）、四条
 收割路径都过 gh 核验（reconcile done 分支 / _promote_if_delivered / 受阻收割 /
 stop_to_review）、dashboard review 行带 `delivery`（未通过 = interrupted）、巡检
 钩子绝不崩 pass。

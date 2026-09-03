@@ -302,10 +302,10 @@ def msg_stop_failed(title: str) -> tuple[str, str]:
 
 
 # --------------------------------------------------------------------------- #
-# §64 self_improve 自动草稿 PR 通道（宪法第 10 条：自动化替 owner 做的事必须可见）
+# §65 self_improve 自动草稿 PR 通道（宪法第 10 条：自动化替 owner 做的事必须可见）
 # --------------------------------------------------------------------------- #
 def msg_self_improve_dispatched(title: str) -> tuple[str, str]:
-    """§64 lane 免批派发的观察模式通知（同 hand lane 的 autodispatch.notify）。"""
+    """§65 lane 免批派发的观察模式通知（同 hand lane 的 autodispatch.notify）。"""
     return (_pick("自我改进通道：已免批派发（交付只能是草稿 PR）",
                   "Self-improve lane: dispatched without approval (draft PR only)"),
             _pick(f"{title} —— 做完后守护进程会用 gh 物理核验草稿 PR；你只需看绿色的 PR",
@@ -321,7 +321,7 @@ def msg_auto_dispatched(reason: str, title: str) -> tuple[str, str]:
 
 
 def msg_self_improve_unverified(title: str, reason: str) -> tuple[str, str]:
-    """§64.3 交付核验失败：卡进待验收但带 interrupted 标记，原因 token 上卡。"""
+    """§65.3 交付核验失败：卡进待验收但带 interrupted 标记，原因 token 上卡。"""
     return (_pick("自我改进通道：草稿 PR 未通过核验",
                   "Self-improve lane: draft PR failed verification"),
             _pick(f"{title} —— 原因 {reason}。卡在「待验收」列：打回附一句话让它补上，或丢弃",
@@ -330,7 +330,7 @@ def msg_self_improve_unverified(title: str, reason: str) -> tuple[str, str]:
 
 
 def msg_self_improve_paused(title: str, pr_url: str, paths: list) -> tuple[str, str]:
-    """§64.4 敏感路径护栏：PR 打 needs-owner-eyes 标签，通道挂起直到 owner 清。"""
+    """§65.4 敏感路径护栏：PR 打 needs-owner-eyes 标签，通道挂起直到 owner 清。"""
     shown = ", ".join(paths[:3]) + ("…" if len(paths) > 3 else "")
     return (_pick("自我改进通道已暂停：PR 触碰了受保护路径",
                   "Self-improve lane paused: PR touches protected paths"),
@@ -341,7 +341,7 @@ def msg_self_improve_paused(title: str, pr_url: str, paths: list) -> tuple[str, 
 
 
 def msg_self_improve_followup(pr_number: int, n_comments: int, n_red: int) -> tuple[str, str]:
-    """§64.5 PR 跟进卡铸出（owner 评论 / 红 required check → 新卡入通道）。"""
+    """§65.5 PR 跟进卡铸出（owner 评论 / 红 required check → 新卡入通道）。"""
     return (_pick(f"自我改进通道：PR #{pr_number} 有新活要做",
                   f"Self-improve lane: follow-up filed for PR #{pr_number}"),
             _pick(f"{n_comments} 条 owner 评论、{n_red} 项红检查 —— 已铸跟进卡并入通道",

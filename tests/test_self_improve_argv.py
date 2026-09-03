@@ -1,4 +1,4 @@
-"""§64.2 出网封锁的 argv 判例 + 派发侧接线（prompt 段 / execution 记录）。
+"""§65.2 出网封锁的 argv 判例 + 派发侧接线（prompt 段 / execution 记录）。
 
 钉死：self_improve 卡的四个发射点（dispatch / resume / rework / brief）argv
 都带 ``--strict-mcp-config --mcp-config {"mcpServers":{}}``，位置紧跟模型旗标、

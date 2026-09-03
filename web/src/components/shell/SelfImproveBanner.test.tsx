@@ -1,4 +1,4 @@
-// SelfImproveBanner（§64.4）：board.self_improve.paused → 横幅点名 PR / 受保护路径 + 「恢复通道」
+// SelfImproveBanner（§65.4）：board.self_improve.paused → 横幅点名 PR / 受保护路径 + 「恢复通道」
 // （POST /api/self-improve/resume 后刷新看板）；未暂停 / 老 daemon 无键 / 离线时不渲染。
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

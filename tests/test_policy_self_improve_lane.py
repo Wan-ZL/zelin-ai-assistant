@@ -1,4 +1,4 @@
-"""§64 self_improve lane 的资格闸（policy.may_auto_dispatch 第二条 lane；§51）。
+"""§65 self_improve lane 的资格闸（policy.may_auto_dispatch 第二条 lane；§51）。
 
 钉死的判据锚点：**写死的 sources channel + target_repo 的 realpath**。LLM 可写
 字段（type / target_repo 单独 / cost / plan 文字）任何组合都开不了这条 lane

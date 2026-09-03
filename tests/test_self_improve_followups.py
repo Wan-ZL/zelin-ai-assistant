@@ -1,4 +1,4 @@
-"""§64.5 巡检（self_improve.tick）：owner 合并 = 验收、owner 关闭 = 拒绝（回收站 +
+"""§65.5 巡检（self_improve.tick）：owner 合并 = 验收、owner 关闭 = 拒绝（回收站 +
 拒绝记忆）、owner 评论 / 红 required check → 跟进卡（一 PR 一天一张、只认 owner
 login、已有在途跟进卡不重铸、评论按 covered_until 去重）、节流（tick_minutes）、
 gh 不可用整轮跳过但推进时间戳、零 lane 卡零 gh 调用。

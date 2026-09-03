@@ -1,6 +1,6 @@
 """self_improve — 自动草稿 PR 通道的确定性后盾（P6；owner 决策 D7/D8/D9/D12）。
 
-契约：docs/CONTRACT.md §64（本通道全部法条）/ §51（may_auto_dispatch 的第二条
+契约：docs/CONTRACT.md §65（本通道全部法条）/ §51（may_auto_dispatch 的第二条
 lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论）/ §0 第 12 条
 （修宪：本通道人从起点审批移到终点验收）/ §2（review 行 `delivery`、顶层
 `self_improve` 投影）/ §4（派发 argv 的 MCP 封锁，argv 本体拼在 act/llm.py）。
@@ -8,18 +8,18 @@ lane——**资格判定住 act/lib/policy.py**，本模块只消费它的结论
 管的是「通道的机械部分」——Uncle Bob 那条「agent 说做完了不算，工具说 OK 才算」
 （vnext2-plan §2.9）：
 
-- **物理核验**（§64.3）：卡收割进待验收前用 `gh` 查 PR——存在、OPEN、head 不是
+- **物理核验**（§65.3）：卡收割进待验收前用 `gh` 查 PR——存在、OPEN、head 不是
   main、base 是 main、（新提案）isDraft、diff 非空、（跟进卡）确有新 push；任一
   不过 = `execution.delivery.verified=false` + `interrupted_reason=
   delivery_unverified`（卡在待验收列带中断标记，原因 token 上卡）。
-- **敏感路径护栏**（§64.4）：PR diff 触及 :data:`SENSITIVE_PATHS` → 打标签
+- **敏感路径护栏**（§65.4）：PR diff 触及 :data:`SENSITIVE_PATHS` → 打标签
   `needs-owner-eyes` + 通道暂停（`state/self_improve/lane.json`），直到 owner
   处理该 PR（合并/关闭，巡检自动清）或在看板点「恢复通道」。
-- **PR 跟进**（§64.5，D12）：巡检待验收 lane 卡的 PR——owner 评论 / 红 required
+- **PR 跟进**（§65.5，D12）：巡检待验收 lane 卡的 PR——owner 评论 / 红 required
   check → 铸一张 `self_improve` 跟进卡（一 PR 一天一张、只认 owner login）；
   owner 合并 = 验收（review→delivered）；owner 关闭 = 拒绝（回收站 + 拒绝记忆
   `rejected.jsonl`，封顶）。
-- **出网封锁**（§64.2）：:func:`egress_locked` 告诉 executor 这张卡的四个发射点
+- **出网封锁**（§65.2）：:func:`egress_locked` 告诉 executor 这张卡的四个发射点
   都要带 `llm.NO_MCP_ARGV`（Slack/Gmail MCP 对会话不存在），除非卡显式声明
   `needs_mcp`——那样的卡只能走 owner 亲批（policy 拒 `self_improve:needs_mcp`）。
 
@@ -57,7 +57,7 @@ CHANNEL = policy.SELF_IMPROVE_CHANNEL
 # 新提案卡的分支名前缀（+ 显示编号）；跟进卡沿用 PR 自己的 head 分支。
 BRANCH_PREFIX = "ai/self-improve/"
 PAUSE_LABEL = "needs-owner-eyes"
-# §64.4 受保护路径（写死；改这张表本身就在表里）——命中即打标签 + 通道暂停。
+# §65.4 受保护路径（写死；改这张表本身就在表里）——命中即打标签 + 通道暂停。
 # 目录以 "/" 结尾按前缀匹配，其余精确匹配。
 SENSITIVE_PATHS: tuple = (
     "act/lib/policy.py",        # 资格闸（§51 两条 lane）
@@ -144,7 +144,7 @@ def is_lane_card(card: object, cfg: object = None) -> bool:
 
 
 def egress_locked(card: object) -> bool:
-    """§64.2：self_improve 卡且未声明 needs_mcp → 四个发射点 argv 带 NO_MCP_ARGV。"""
+    """§65.2：self_improve 卡且未声明 needs_mcp → 四个发射点 argv 带 NO_MCP_ARGV。"""
     return is_self_improve(card) and not bool(_field(card, "needs_mcp"))
 
 
@@ -234,7 +234,7 @@ def _update_state(patch: dict, drop: tuple = ()) -> dict:
 def pause(reason: str, *, pr_number: object = None, pr_url: object = None,
           paths: object = (), card: object = None,
           now: Optional[_dt.datetime] = None, st: Optional[dict] = None) -> dict:
-    """§64.4 挂起通道（锁内落盘）；``st`` 传入时同步更新调用方的内存副本。"""
+    """§65.4 挂起通道（锁内落盘）；``st`` 传入时同步更新调用方的内存副本。"""
     patch = {"paused": True, "paused_at": _iso(now), "paused_reason": reason,
              "paused_pr": pr_number, "paused_pr_url": pr_url,
              "paused_paths": list(paths or []), "paused_card": card}
@@ -365,7 +365,7 @@ def find_pr_by_branch(gh: GhRunner, cwd: str, branch: str,
 
 
 # --------------------------------------------------------------------------- #
-# §64.3 物理核验
+# §65.3 物理核验
 # --------------------------------------------------------------------------- #
 def _is_sensitive(path: str) -> bool:
     return any(path == p or (p.endswith("/") and path.startswith(p))
@@ -444,7 +444,7 @@ def _fill_pr(result: dict, pr: Optional[dict]) -> None:
 
 def verify_delivery(card: object, cfg: object = None, gh: Optional[GhRunner] = None,
                     now: Optional[_dt.datetime] = None) -> dict:
-    """§64.3：查 PR 并裁决。返回 ``execution.delivery`` 的形状（add-only）：
+    """§65.3：查 PR 并裁决。返回 ``execution.delivery`` 的形状（add-only）：
     verified / reason / branch / pr_number / pr_url / pr_draft / pr_state /
     base / head_sha / changed_files / sensitive_paths / checked_at。绝不抛。"""
     src = pr_source(card)
@@ -485,7 +485,7 @@ def _add_label(gh: GhRunner, cwd: str, number: object, slug: Optional[str]) -> b
 
 def _flag_sensitive(req: Requirement, result: dict, cfg: object, gh: GhRunner,
                     log: Optional[Callable[[str], None]]) -> None:
-    """§64.4：标签 + 暂停 + 通知。标签失败不阻塞暂停（暂停是本地真源）。"""
+    """§65.4：标签 + 暂停 + 通知。标签失败不阻塞暂停（暂停是本地真源）。"""
     number = result.get("pr_number")
     try:
         labelled = _add_label(gh, policy.self_improve_repo_path(cfg), number, result.get("repo"))
@@ -502,7 +502,7 @@ def _flag_sensitive(req: Requirement, result: dict, cfg: object, gh: GhRunner,
 
 
 def _flag_unverified(req: Requirement, ex: dict, result: dict) -> None:
-    """§64.3 未通过：待验收行带 interrupted 标记（原因 token 上卡）+ 精确通知
+    """§65.3 未通过：待验收行带 interrupted 标记（原因 token 上卡）+ 精确通知
     （detect_transitions 对 interrupted 行不再发「AI 已交付草稿」）。"""
     ex["interrupted_reason"] = INTERRUPTED_REASON
     notify.notify(*notify.msg_self_improve_unverified(
@@ -512,7 +512,7 @@ def _flag_unverified(req: Requirement, ex: dict, result: dict) -> None:
 def on_harvest(req: Requirement, ex: dict, *, cfg: object = None,
                gh: Optional[GhRunner] = None,
                log: Optional[Callable[[str], None]] = None) -> Optional[dict]:
-    """收割进待验收前的核验（§64.3/§64.4）。非 self_improve 卡 = None、``ex``
+    """收割进待验收前的核验（§65.3/§65.4）。非 self_improve 卡 = None、``ex``
     零改动。否则写 ``ex["delivery"]``；未通过 → ``interrupted_reason`` +
     通知；触及受保护路径 → 标签 + 暂停 + 通知。调用方负责 save。"""
     if not is_self_improve(req):
@@ -530,7 +530,7 @@ def on_harvest(req: Requirement, ex: dict, *, cfg: object = None,
 
 def harvest_hook(req: Requirement, ex: dict,
                  log: Optional[Callable[[str], None]] = None) -> None:
-    """actd 四条收割路径的一行钩子（§64.3/§64.4）：配置现读一次（repo_path 可配，
+    """actd 四条收割路径的一行钩子（§65.3/§65.4）：配置现读一次（repo_path 可配，
     同 auto_resume 的现读判定），任何异常只记日志——核验是后盾，绝不挡收割
     （宪法第 11 条）。非 self_improve 卡零开销。"""
     try:
@@ -540,7 +540,7 @@ def harvest_hook(req: Requirement, ex: dict,
 
 
 def tick_hook(cfg: object, log: Optional[Callable[[str], None]] = None) -> None:
-    """actd 每 pass 的一行钩子（§64.5）：自身节流；绝不崩 pass；gh 不可用只在
+    """actd 每 pass 的一行钩子（§65.5）：自身节流；绝不崩 pass；gh 不可用只在
     真跑的那一轮记一行。"""
     try:
         summary = tick(cfg, log=log)
@@ -569,7 +569,7 @@ def prompt_blocks(req: Requirement, cfg: object = None, target: object = None) -
         return []
     branch = expected_branch(req)
     lines = [
-        "\n## SELF-IMPROVE LANE — deterministic delivery contract (CONTRACT §64)",
+        "\n## SELF-IMPROVE LANE — deterministic delivery contract (CONTRACT §65)",
         "This card was admitted WITHOUT human approval; the human reviews at the END, "
         "on the draft PR. When you finish, the daemon physically verifies the delivery "
         "with `gh` — anything that fails verification is parked for the owner, never "
@@ -653,10 +653,10 @@ def is_rejected(fp: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# §64.5 巡检：合并=验收 / 关闭=拒绝 / owner 评论·红 CI → 跟进卡 / 暂停自动清
+# §65.5 巡检：合并=验收 / 关闭=拒绝 / owner 评论·红 CI → 跟进卡 / 暂停自动清
 # --------------------------------------------------------------------------- #
 def delivery_of(req: object) -> dict:
-    """``execution.delivery``（§64.3 核验结果）——缺失/畸形给 {}。"""
+    """``execution.delivery``（§65.3 核验结果）——缺失/畸形给 {}。"""
     ex = _field(req, "execution")
     delivery = ex.get("delivery") if isinstance(ex, dict) else None
     return delivery if isinstance(delivery, dict) else {}
@@ -962,7 +962,7 @@ def tick_due(st: dict, cfg: object, now: _dt.datetime, force: bool = False) -> b
 def tick(cfg: object = None, *, gh: Optional[GhRunner] = None,
          now: Optional[_dt.datetime] = None,
          log: Optional[Callable[[str], None]] = None, force: bool = False) -> dict:
-    """§64.5 巡检（actd 每 pass 调，自身按 `self_improve.tick_minutes` 节流）。
+    """§65.5 巡检（actd 每 pass 调，自身按 `self_improve.tick_minutes` 节流）。
     零 lane 卡时零 gh 调用；gh 不可用 = 本轮跳过并照常推进 last_tick_at
     （不每 pass 重试）。绝不抛（宪法第 11 条）——调用方仍应兜一层。"""
     now = now or _utcnow()
@@ -1009,7 +1009,7 @@ def _has_tracked_work(st: dict) -> bool:
 def _main(argv: Optional[list] = None) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="act.lib.self_improve",
-                                     description="self_improve lane state (CONTRACT §64)")
+                                     description="self_improve lane state (CONTRACT §65)")
     parser.add_argument("--resume", action="store_true", help="clear the lane pause")
     args = parser.parse_args(argv)
     if args.resume:

@@ -64,7 +64,7 @@
     解析降级卡/loop_health）
 12. **审批边界**（**修宪，2026-09-02，P6 / owner 决策 D7·D8·D9·D12**）：人对每张卡
     的审批位置默认在**起点**（批准才派发；hand lane 的免批见 §51）。**唯一例外**
-    是 §64 自我改进通道，且只对「sources 全部是写死的 `self_improve` 渠道 ∧
+    是 §65 自我改进通道，且只对「sources 全部是写死的 `self_improve` 渠道 ∧
     `target_repo` 的 realpath 就是本仓库」的卡：人从起点审批移到**终点验收**——
     合并 PR = 验收、关闭 PR = 拒绝。代价由**确定性后盾**而非 prompt 承担：①交付
     只能是草稿 PR，做完后 actd 用 `gh` 物理核验（存在 / OPEN / head≠main /
@@ -77,7 +77,7 @@
     保护（PR-only + required checks，§56），分支上改走自己的墙没有运行时效果。
     其它一切 lane、其它一切仓库的审批位置不变；「验收 = 用户专属」的权限墙不动
     ——GitHub 上的合并就是 owner 的点击，actd 只是 relay。（§51 第二条 lane；
-    §64；tests/test_policy_self_improve_lane.py、test_self_improve_*.py）
+    §65；tests/test_policy_self_improve_lane.py、test_self_improve_*.py）
 
 ## 1. 注册表（卡片账本）— 真源与字段
 
@@ -96,9 +96,11 @@ YAML 载体：一条需求一个文件。状态机：
 
 字段（见 R-001 实例）：`id, title, type, tier(T0|T1|T2), status, hardness(hard|soft), deadline(YYYY-MM-DD|null), repeated_mentions(int), green_sign_required(bool), disagreement(str|null), cost_estimate_usd(num|null), sources[{channel,date,ref,quote}], plan(str|list), outputs?, card{sent_at,slack_ts?,slack_channel?}, execution?{session_id,dispatched_at,log}, notes`。
 
-**2026-09-02 追记（§64，add-only optional 字段 `needs_mcp`，bool，默认 false 整键省略）**：卡显式声明本次执行需要 MCP（Slack/Gmail 等外部工具）。它只会让卡**更不自主**——`self_improve` lane 见到即拒（`self_improve:needs_mcp`，只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开；对其它出身的卡无任何效果。producer / owner 写，LLM 不写。
+**2026-09-02 追记（§65，add-only optional 字段 `needs_mcp`，bool，默认 false 整键省略）**：卡显式声明本次执行需要 MCP（Slack/Gmail 等外部工具）。它只会让卡**更不自主**——`self_improve` lane 见到即拒（`self_improve:needs_mcp`，只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开；对其它出身的卡无任何效果。producer / owner 写，LLM 不写。
 
 **v0.48.15 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.15 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
+
+**§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
 
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
@@ -151,10 +153,12 @@ YAML 载体：一条需求一个文件。状态机：
 
 **v0.48.15 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
 
+**§64 新增（issue #128 AI 摘要 + 完成度评语的投影面，add-only optional）**：`review[]` 与 `completed[]` 行加 `assessment: {summary(str|null), verdict(str|null), verdict_reason(str|null), at(epoch int|null)}`——**只在卡上有摘要或评语、且其 `source_hash` 与卡当前内容指纹一致时整键出现**（失败标记 / 未评 / 内容已变而判官未归 = 整键不存在，客户端不得拿空壳或旧话去猜）；`verdict` 词表 = `建议验收`｜`需继续做`｜`需要拍板`（`act/lib/card_summary.VERDICTS` 单源，web `VerdictChip.VERDICTS` 逐字镜像；词表外的值 server 端归 null，客户端对未知值按原文中性渲染——开放枚举）。`source_hash` / `error` **不上 wire**。客户端只渲染：评语章点看理由、摘要一句上卡面；验收 / 打回按钮语义零变化（§64.6）。
+
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
-**2026-09-02 新增（§64 自动草稿 PR 通道的投影面，全部 add-only optional）**：
-- `review[]` 行加 `delivery`（object，仅 self_improve 卡携带 = `execution.delivery` 原样：`verified`(bool) / `reason`(str|null，词表见 §64.3) / `branch` / `pr_number` / `pr_url` / `pr_draft` / `pr_state` / `base` / `head_sha` / `changed_files`(int) / `sensitive_paths`([str]) / `checked_at` / `label`?）；核验未过的行同时带既有的 `interrupted: true`（`interrupted_reason` 词表加值 `delivery_unverified`），detect_transitions 因此不发「AI 已交付草稿」（`on_harvest` 已发 `msg_self_improve_unverified`）。web 渲染 PR 章（通过 = 绿章链接 `PR #n · draft`；未过 = 红章 `PR 未核验：<reason>`）。
+**2026-09-02 新增（§65 自动草稿 PR 通道的投影面，全部 add-only optional）**：
+- `review[]` 行加 `delivery`（object，仅 self_improve 卡携带 = `execution.delivery` 原样：`verified`(bool) / `reason`(str|null，词表见 §65.3) / `branch` / `pr_number` / `pr_url` / `pr_draft` / `pr_state` / `base` / `head_sha` / `changed_files`(int) / `sensitive_paths`([str]) / `checked_at` / `label`?）；核验未过的行同时带既有的 `interrupted: true`（`interrupted_reason` 词表加值 `delivery_unverified`），detect_transitions 因此不发「AI 已交付草稿」（`on_harvest` 已发 `msg_self_improve_unverified`）。web 渲染 PR 章（通过 = 绿章链接 `PR #n · draft`；未过 = 红章 `PR 未核验：<reason>`）。
 - 顶层 `self_improve`（object，**恒在**，§2 兄弟字段同 `deploy_state` 的加法约定）：`{enabled, paused, paused_reason, paused_pr, paused_pr_url, paused_paths[], paused_at}`——通道开关 + 敏感路径护栏的暂停状态（`state/self_improve/lane.json` 的低频子集；巡检时间戳一类高频值**不**进看板，免触发 syncd 板快照上传）。web 顶部横幅 `SelfImproveBanner` 在 `paused` 时说话并给「恢复通道」（`POST /api/self-improve/resume`）。
 
 ## 3. `state/inbox/<uuid>.json`（Mac app 写，actd 读后删除）
@@ -177,7 +181,7 @@ approved 的需求：
 
 **v0.48.15 追记（§60.4）**：prompt 头 `# Requirement <编号>: <title>`、bg 会话名（`executor.session_name`，claude 用它派生 worktree/分支名）、派发日志文件名 `state/logs/<编号>.log` 与首行 `# dispatch <编号> (<主键>) @ …` 中的「编号」= `registry.display_id(req)`（工作编号；派发必在 approved 之后所以恒有，存量 legacy 卡回落主键）。日志路径持久化在 `execution.log`，读方不依赖文件名口径。analytics 事件的 `req=` 仍记主键（稳定键）。
 
-**2026-09-02 追记（§64.2 出网封锁）**：sources 全为 `self_improve` 且未声明 `needs_mcp` 的卡，**四个发射点**（dispatch / resume / rework / brief，共用 `executor._bg_base_cmd(cfg, req)`）的 argv 在模型旗标之后、`--name` 之前追加 `llm.NO_MCP_ARGV` = `--strict-mcp-config --mcp-config {"mcpServers":{}}`——用户级 Slack/Gmail MCP 对该会话不存在（resume/rework 同样带，派发关掉的面永不被复活）；其它卡 argv 逐字节不变（`llm.dispatch_argv(cfg, no_mcp=False)` 默认）。prompt 多一段 `## SELF-IMPROVE LANE`（分支名 / 只准草稿 PR / 受保护路径清单 / 无 MCP / 不发 PR 评论），`execution.self_improve = {branch, egress: "none"|"mcp", lane: bool}` 随成功派发落账。判例 tests/test_self_improve_argv.py。
+**2026-09-02 追记（§65.2 出网封锁）**：sources 全为 `self_improve` 且未声明 `needs_mcp` 的卡，**四个发射点**（dispatch / resume / rework / brief，共用 `executor._bg_base_cmd(cfg, req)`）的 argv 在模型旗标之后、`--name` 之前追加 `llm.NO_MCP_ARGV` = `--strict-mcp-config --mcp-config {"mcpServers":{}}`——用户级 Slack/Gmail MCP 对该会话不存在（resume/rework 同样带，派发关掉的面永不被复活）；其它卡 argv 逐字节不变（`llm.dispatch_argv(cfg, no_mcp=False)` 默认）。prompt 多一段 `## SELF-IMPROVE LANE`（分支名 / 只准草稿 PR / 受保护路径清单 / 无 MCP / 不发 PR 评论），`execution.self_improve = {branch, egress: "none"|"mcp", lane: bool}` 随成功派发落账。判例 tests/test_self_improve_argv.py。
 
 ### 4.1 派发失败的重试与风暴刹车（v0.48.4，add-only；live 事故 2026-08-31）
 
@@ -3469,7 +3473,7 @@ quick capture / Slack self-DM——sources channel = `quick`/`quick_capture`）�
 `proposed`（AI 自提：digest 建议 `analytics`、会话挖掘 `claude_code`、诊断
 降级卡 `radar-diagnostic`/`radar-parse-degraded`、拆分卡 `split`，以及 §50
 落款派生的 `agent_capture`/`remote_capture`；**2026-09-02 加行 `self_improve`**
-——§64 自动草稿 PR 通道的唯一铸卡渠道，producer 硬编码写入，出身仍是
+——§65 自动草稿 PR 通道的唯一铸卡渠道，producer 硬编码写入，出身仍是
 proposed，**免批资格由 §51 的第二条 lane 另裁、出身分类不变**）｜`meeting`
 （会议音频/笔记出生：`meeting`/`audio`）｜`external`（第三方：`slack`/`gmail`）。
 信任序 hand > proposed > meeting > external。
@@ -3569,10 +3573,10 @@ token 词表（机读稳定，UI 侧映射文案）：`disabled` /
 （见下方 tombstone；token 永不复用，旧卡上残留的值由 actd 按「解除即清」在
 下一 pass 清掉并放行）。
 
-**第二条 lane（2026-09-02，§64 / §0 第 12 条修宪；owner 决策 D7·D9）**：出身
+**第二条 lane（2026-09-02，§65 / §0 第 12 条修宪；owner 决策 D7·D9）**：出身
 `proposed` 的卡里，**sources 非空且每一条 channel 都是 `self_improve`** 的卡进入
 lane 专属天花板（顺序即 token 优先级）：`self_improve.enabled=false` →
-`self_improve:disabled`（常态，不上卡）；通道暂停（§64.4，`lane_paused` 由
+`self_improve:disabled`（常态，不上卡）；通道暂停（§65.4，`lane_paused` 由
 actd 每 pass 从 `state/self_improve/lane.json` 现读传入）→ `self_improve:paused`
 （上卡）；卡声明 `needs_mcp` → `self_improve:needs_mcp`（上卡）；`target_repo`
 （**不**回落默认 workbench）的 `os.path.realpath` ≠ `self_improve.repo_path`
@@ -4648,6 +4652,7 @@ CLAUDE.md 第 3 条点名的 `act/llm.py` 自本版起**真实存在**。凡带 
 - `probe_argv(model, cfg)`——doctor 的最小活探针 `[<claude>, "-p", "ok", "--model", <id>, "--output-format", "text", "--max-turns", "1"]`。
 - `claude_bin(cfg)`（= `config.resolve_claude_bin`：`execution.claude_bin` pin → 稳定副本（§55 第五幕，2026-09-02 追记）→ PATH → `~/.local/bin`）与 `runner_env()`（§19 凭证解析 + 恒定 `DISABLE_AUTOUPDATER=1`（§55 第五幕），原 `executor._runner_env` 搬入——`_私名`跨模块引用清零，防腐 #2）。
 - `model_for(mode, cfg=None)`：`cfg` 给则用它，None 则**现读** `load_config()`。
+- **依赖方向**：见 §58.3 边界层修订（`depgraph.BOUNDARY_MODULES`）——entrypoint import `act.llm` 不记 `entry-pair`；`act/lib` 仍不准向上 import 它，lib 侧要用模型 = 注入缝 `runner=` 或把 LLM 半边放进一个 entrypoint 子进程（§63 `act/recap.py`、§64 `act/card_summary_worker.py` 两个范例）。
 
 **不变量（判例钉死）**：两把旋钮都 `follow` 时，每个 call site 交给 `subprocess.run` 的 argv 与 kwargs（timeout / env / 中性 cwd / stdin 管道）与 v0.48.10 **逐字节相同**；显式旋钮时每个 site 只多出 `--model <id>` 两个 token，其它零变化。唯一有意的偏差：analyze / radar_gmail / radar_slack extractor / golden_eval / quick_capture 五处此前 argv[0] 是裸 `"claude"`（信任 daemon PATH），现统一经 `claude_bin()`——PATH 上有 claude 时解析到同一个二进制，cron/launchd PATH 缺 `~/.local/bin` 时从 FileNotFoundError 变为能跑（2026-07-08 事故的最后几处漏网），`execution.claude_bin` pin 自此对所有 site 生效（它的 docstring 本就这样承诺）。
 
@@ -4909,27 +4914,77 @@ owner 原话：「会议结束后自动出一份 5 行的 recap，我只做一�
 ### 63.7 未解（照 #129 原样登记，不在本节裁决）
 
 两场会间隔 < 5 min 合成一个 key；`audio_only_sessions` 默认关；public build 是否默认 `recap.enabled: true`（本版：**开**——确定性判定零成本，模型调用只在真会议 CLOSED 后发生，PRIVACY.md 有开关行）；Parakeet 引擎 silent 状态由 reconciliation 收尾（约 10 分钟地板），quiet 5 分钟可能多等一轮；同室第三人声与 System Audio 回声仍可能污染 Decided 行（页面脚注提醒粘贴前必读）；executor 派发会话带用户级 Slack MCP、「不对外发」只是 prompt——与本节无关，另开 issue；Slack MCP 在 headless cron 下是否稳定可达要实测（`draft failed` 回执可见）。
+## 64. 待验收卡的 AI 一句话摘要 + 完成度评语（issue #128；vnext2-plan P6 附注）
 
-## 64. 自动草稿 PR 通道（self_improve lane；P6；owner 决策 D7·D8·D9·D12；§0 第 12 条修宪）
+> §61 壳桥、§62 素材库（`feat/material-box`）、§64 会议 recap（`feat/meeting-recap`）各自立法在前，本节取下一个空号 §64——§ 号永不复用。
+
+owner 的问题（issue #128，2026-09-01 待验收列截图）：(1) 卡上「交付了什么」是执行器收尾报告原话——长、满是术语、表格与列表树，扫一眼看不出这卡干了啥；(2) 那段文字交付时写一次就不再更新，打回重做后是旧的；(3) 「该任务未定义验收标准，请自行判断」——人在验收时刻得不到任何帮助。本节的答案是给每张待验收卡附一份**机器生成、内容一变就重生成、只是建议**的评估：一句 ≤40 字白话摘要 + 三态完成度评语 + 一行理由。**宪法边界不动**：验收 / 打回只有人能按（§0 第 1 条单写者、§11 审批边界；与 R2.3.6「结构化测试报告是加分项不是通行证」同理）。执法：`act/lib/card_summary.py`（指纹 / prompt / 消毒 / 作业文件 / 落卡）、`act/card_summary_worker.py`（detached 判官 CLI）、`act/lib/dashboard._assessment_view`、`web/src/components/board/VerdictChip.tsx`；判例 `tests/test_card_summary_verdict.py`、`web/src/components/board/VerdictChip.test.tsx`。
+
+### 64.1 存储：顶层 add-only 字段 `assessment`
+
+```yaml
+assessment:
+  summary: 把登录页的报错修好了，等你验收        # ≤~40 字中文白话（硬帽 80 字符，超截 …）
+  verdict: 建议验收                              # 建议验收 | 需继续做 | 需要拍板 | null（词表外一律 null）
+  verdict_reason: 清单 1/2 条都有对应改动与测试   # 一行（硬帽 240）；无清单时 = 建议的验收要点 1–3 条
+  at: 2026-09-02T02:30:00Z                       # 评语生成时刻
+  source_hash: 3f9a…                             # 生成所依据内容的指纹（64.2）
+```
+
+失败形（LLM 退出非零 / 解析不出 / 子进程超时 / 起不来）：`{error: <一句，≤300>, at, source_hash}`——**没有 summary/verdict 键**，卡面空白（没有章就是没有章，绝不编造）。本字段不进 `match_corpus`、不参与 §21/§38/§44 任何匹配，re-raise / merge / trash 都不读它；store2 存 payload 冷列，`export_yaml.FIELD_DEFAULTS` 同步（判例 `tests/test_store2_field_parity.py`）。字段名叫 `assessment` 而不是 issue 里的 `summary`：`summary` 早已是 §7 的「原始需求一句话」（分诊时写、参与去重匹配、进 executor prompt），不能改语义。
+
+### 64.2 触发 = 内容指纹变化（rate limit 的唯一判据）
+
+`source_hash` = sha256（前 16 hex）over 卡片内容视图 `{title, display_title, summary, plan, definition_of_done, notes, delivery_mode, execution.{delivered_summary, final_draft, review_at, rework_count, last_rework_at, interrupted_reason}}`（`card_summary.content_view`，JSON sort_keys）。新一轮交付改 `review_at`/`final_draft`/`delivered_summary`，打回改 `rework_count`，编辑改 title/清单/备注——都会改指纹；`status`、日志路径、agent 名、`assessment` 自身**不在**视图里（验收不改内容，评于待验收期的摘要在阶段性完成卡上继续有效；评自己不会触发再评）。**投影只信新鲜的**：`assessment.source_hash ≠ 当前指纹`（内容变了、判官未归）时 `_assessment_view` 整键不出——卡面留白胜过一句过时评语（issue 问题 2）。`needs_assessment(req)` 为真 ⇔ `status == review` ∧ 无 `execution._review_active`（attach 回流中内容在流动，等收割落定）∧（无 assessment ∨ `assessment.source_hash ≠ 当前指纹` ∨（上次是 `error` 且 `at` 距今 ≥ 6 h））。同一内容成功评过一次就**永不再花钱**；失败最多每 6 h 重试一次。非 review 卡一律不评（delivered 卡保留在 review 期评出的那份，供阶段性完成卡面用一句）。
+
+### 64.3 一个 pass、两段式（§44 精神；宪法第 1 条单写者）
+
+一次 summarize + judge = **一个** headless `claude -p`（`llm.run(mode=pipeline, timeout=180, cwd=headless_cwd)`，无工具；模型走 `models.pipeline` 旋钮，§59）。actd 每 pass 在 housekeeping 段调 `card_summary.tick(cfg)`：
+
+1. `sweep`：pending 超 20 min 的作业 → failed「worker timed out」；
+2. `consume`：done/failed 作业 → 在 actd 写者线程 `apply_job`（作业指纹 ≠ 卡当前指纹 = 评的是旧内容，**丢弃**；卡不在 review 了也丢弃）→ `registry.save` → 删作业文件；
+3. `card_summary.enabled` 为真时，为每张 `needs_assessment` 且无在飞作业的 review 卡（§60 `id_sort_key` 序）写 pending 作业 `state/card_summary/<card_id>.json` 并 `Popen` detached `python -m act.card_summary_worker <card_id>`；**同时在飞 ≤ 2**（`MAX_INFLIGHT`，成本刹车）。
+
+判官子进程（`act/card_summary_worker.py`）：读作业 → `registry.load` 只读 → 指纹仍一致才 `assess` → 结果 / 失败**只写回作业文件**，永不 `registry.save`；任何异常落 failed。作业文件一卡一份、consume 即删（数据不进包、体量自带上限——防腐 #4）；子进程 stdio 走 DEVNULL，没有日志文件可长。`tick` 内任何异常只进返回值，绝不崩 pass（宪法第 11 条）。10 s 主循环从不阻塞在模型上（silent_merge 的同一条纪律）。
+
+### 64.4 prompt 与输出消毒
+
+材料 = `content_view` 的人读排版（title / display_title / 原始需求摘要 / status + 打回次数 / 中断原因 / 计划 / 验收清单（无则写「（未定义）」）/ 备注 ≤800 / 交付报告 ≤4000 / 成稿 ≤4000），先 `sanitize.scrub` 再 `fence_untrusted`（宪法第 5 条：卡片内容来自外部来源与 agent 输出，是数据不是指令）。指令：只回一个 JSON `{summary, verdict, reason}`；三态定义写死在 prompt（建议验收 = 清单/需求每条都有对应交付；需继续做 = 缺东西但 AI 能自己做完；需要拍板 = 卡在只有 owner 能给的决定/信息上，含中断收割与 agent 提问）；**拿不准就不许答「建议验收」**（错误的 accept 藏住未完成的活）；没有清单时 reason 兼作建议的验收要点 1–3 条（分号分隔）——这就是 issue 问题 (3) 的软化。
+
+输出不可信，逐字段消毒（`parse_output`）：整段 JSON 优先，否则取**最后一个**同时带 `summary` + `verdict` 键的平衡对象（材料里回显的 JSON 永远不会被当成评语，silent_merge 判官同款防线）；`summary`/`reason` 非 str 一律视为空、折叠空白、硬帽截断；`verdict` 必须逐字命中三态词表否则 null；摘要与评语都空 = None = 没有章。dashboard 投影侧再消毒一次（手改 YAML 的数字摘要不上 wire）。
+
+### 64.5 投影与 web
+
+wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictChip`（`<button class="chip verdict-chip chip-success|chip-warning|chip-purple">AI · 建议验收</button>`，`aria-expanded`，点一下在 badges 行下展开 `role=note` 的理由行、再点收起；`title` = 理由；点击 `stopPropagation`，不发任何 inbox 动作），badges 行下加 `AssessmentSummaryLine`（与阶段性完成卡 `delivered_summary` 一句同款 11 次级单行截断，左侧 accent 细条标识「AI 摘要」）；执行器原话**原样**留在「展开详情 ▸」的「交付了什么」。`DoneCard` 卡面一句 = `assessment.summary` 优先、缺席回落 `delivered_summary`，**不带章**（已验收，评语失效）。英文标签 Looks done / Needs more work / Needs your call；未知 verdict 值按原文中性 chip 渲染。
+
+### 64.6 边界（明确不做）
+
+- **永不自动验收、永不打回、永不改任何状态**：`apply_job` 只写 `assessment` 一个字段；判例 `NeverChangesStatusTestCase` 对三态逐一钉 status 不变。§53.5 agent 墙对本模块无感（它不是 agent、不转移）。
+- 不评 delivered / executing / 提案卡；不为存量 delivered 卡回填（成本，且评语在验收后失效）。
+- 不给 rework 反馈、不进 executor prompt、不进 digest；不做通知（评语出现不是打扰资格——宪法第 10 条）。
+- 不在 web 提供「按 AI 建议一键验收」——那会把建议变成默认，正是 issue 里 interview scorecard 的教训。
+- 配置：`card_summary.enabled`（config.yaml 块 / overrides 扁平键 `card_summary_enabled`，默认 true）关掉 = 不派新判官，在飞的仍收回；不设第二把模型旋钮（跟 `models.pipeline`）。
+
+## 65. 自动草稿 PR 通道（self_improve lane；P6；owner 决策 D7·D8·D9·D12；§0 第 12 条修宪）
 
 owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……先只给泽林 AI assistant 这一个软件弄车道吧。」「Agent 使用的身份是我自己的 GitHub 个人账户。」「自动派工作，要不先不要搞预算。」「如果我留了一个 comment 'Where is the test?'，AI 就知道这个东西需要做 test 了。」「臣子把东西做出来了，皇上能挑你的那就是你的大幸。」本节把「人从起点审批移到终点验收」这条例外的**全部机械后盾**立法。执法代码：`act/lib/policy.py`（资格闸，§51 第二条 lane）、`act/lib/self_improve.py`（核验 / 护栏 / 巡检 / 拒绝记忆 / 状态）、`act/llm.py`（`NO_MCP_ARGV`）、`act/executor.py`（prompt 段 + argv + 派发记录）、`act/actd.py`（`_lane_delivery_check` 四条收割路径 + `_self_improve_tick`）、`act/lib/dashboard.py`（§2 投影）、`server/self_improve_lane.py`（恢复端点）、`web/src/components/shell/SelfImproveBanner.tsx` + `ReviewCard.DeliveryChip`。判例：`tests/test_policy_self_improve_lane.py` / `test_self_improve_verify.py` / `test_self_improve_sensitive_pause.py` / `test_self_improve_followups.py` / `test_self_improve_argv.py` / `test_self_improve_actd_wire.py`、web `SelfImproveBanner.test.tsx` / `ReviewCard.delivery.test.tsx`。
 
-### 64.1 准入（谁进通道）
+### 65.1 准入（谁进通道）
 
-- **唯一铸卡渠道** = sources channel `self_improve`（§50 加行，出身 proposed）。producer 只有两个：每日循环的提案（P5，另 PR——它把 channel 写成 `policy.SELF_IMPROVE_CHANNEL` 即进通道）与本节 64.5 的 PR 跟进卡。二者都**硬编码** channel / target_repo / delivery_mode / type，LLM 只填 title / summary / plan / DoD（跟进卡连这些都是骨架）。
-- **免批资格**由 §51 第二条 lane 裁决：channel 全为 `self_improve` ∧ `realpath(target_repo) == realpath(self_improve.repo_path)`（默认安装根）∧ 通道开着 ∧ 未暂停 ∧ 未声明 `needs_mcp` ∧ 共用天花板（T2 / green_sign / comms / `target_kind=new` / repo 不存在）全过。放行 token `ok:self_improve`；actd 的 notes 痕 `[<date> auto-dispatch] self_improve 通道免批自动派发（交付只能是草稿 PR，§64）`，观察通知 `msg_self_improve_dispatched`（`autodispatch.notify` 同一开关）。
+- **唯一铸卡渠道** = sources channel `self_improve`（§50 加行，出身 proposed）。producer 只有两个：每日循环的提案（P5，另 PR——它把 channel 写成 `policy.SELF_IMPROVE_CHANNEL` 即进通道）与本节 65.5 的 PR 跟进卡。二者都**硬编码** channel / target_repo / delivery_mode / type，LLM 只填 title / summary / plan / DoD（跟进卡连这些都是骨架）。
+- **免批资格**由 §51 第二条 lane 裁决：channel 全为 `self_improve` ∧ `realpath(target_repo) == realpath(self_improve.repo_path)`（默认安装根）∧ 通道开着 ∧ 未暂停 ∧ 未声明 `needs_mcp` ∧ 共用天花板（T2 / green_sign / comms / `target_kind=new` / repo 不存在）全过。放行 token `ok:self_improve`；actd 的 notes 痕 `[<date> auto-dispatch] self_improve 通道免批自动派发（交付只能是草稿 PR，§65）`，观察通知 `msg_self_improve_dispatched`（`autodispatch.notify` 同一开关）。
 - **只给本仓库**（D7）：其它 repo 的 self_improve 卡报 `self_improve:repo_mismatch` 上卡，照旧人工审批。`self_improve.repo_path` 可配，默认 `config.HOME`；比对必 realpath（`~/Projects/zelin-ai-assistant` 是外置卷 symlink，v0.48.2 事故）。
-- **身份**（D8）：agent 用机器上既有的 `gh auth` 身份 = owner 本人；没有第二个账号、没有 PAT。推论：owner login 下的 PR 评论一律视为 owner 的话（64.5），所以 prompt 明令 lane 会话**不发 PR 评论**。
+- **身份**（D8）：agent 用机器上既有的 `gh auth` 身份 = owner 本人；没有第二个账号、没有 PAT。推论：owner login 下的 PR 评论一律视为 owner 的话（65.5），所以 prompt 明令 lane 会话**不发 PR 评论**。
 - **无预算**（D9）：lane 卡不看 `cost_estimate_usd`（`cost:unknown` 不适用）；`max_concurrent` 照常排队。
 
-### 64.2 会话边界（派发时刻）
+### 65.2 会话边界（派发时刻）
 
 - argv：`executor._bg_base_cmd(cfg, req)` → `llm.dispatch_argv(cfg, no_mcp=self_improve.egress_locked(req))`；`egress_locked` = channel 全为 self_improve ∧ 未声明 `needs_mcp`。四个发射点同款（dispatch / resume / rework / brief），位置见 §4 追记。**只看写死的 channel，不看 lane 开关 / 仓库是否匹配**——封锁比准入更严。
-- prompt：`## SELF-IMPROVE LANE` 段（`self_improve.prompt_blocks`）：仓库路径、分支名（64.3）、只准 `gh pr create --draft --base main`、永不 push main / merge / mark ready / 开别处 PR / 发 PR 评论、受保护路径清单、无 MCP、收工前跑本地门、结尾 `PR: <url>` + `BRANCH: <name>`。非 self_improve 卡 prompt 逐字节不变。
+- prompt：`## SELF-IMPROVE LANE` 段（`self_improve.prompt_blocks`）：仓库路径、分支名（65.3）、只准 `gh pr create --draft --base main`、永不 push main / merge / mark ready / 开别处 PR / 发 PR 评论、受保护路径清单、无 MCP、收工前跑本地门、结尾 `PR: <url>` + `BRANCH: <name>`。非 self_improve 卡 prompt 逐字节不变。
 - 派发记录：`execution.self_improve = {branch, egress, lane}`（add-only；dispatch 成功路径重建 execution 后合入）。
 - `needs_mcp`（§1 新字段）：声明它 = 放弃免批（`self_improve:needs_mcp`），owner 亲批后派发才带 MCP。LLM 不写此字段。
 
-### 64.3 交付核验（收割时刻；宪法第 3 条「诚实」在通道上的形态）
+### 65.3 交付核验（收割时刻；宪法第 3 条「诚实」在通道上的形态）
 
 - 钩子 `actd._lane_delivery_check(req, ex)` 挂在**全部四条**进待验收的路径上：reconcile done 分支、`_promote_if_delivered`（FINAL DRAFT 探针）、`_harvest_to_review`（受阻 / 放弃救活收割）、`stop_to_review`。非 self_improve 卡零开销；任何异常只记日志，绝不挡收割（宪法第 11 条）。
 - 分支名 `self_improve.expected_branch(card)`：新提案 = `ai/self-improve/<display_id>`（§60 工作编号）；跟进卡 = 来源条目里 PR 的 `head`。
@@ -4939,35 +4994,35 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 - 结果落 `execution.delivery`（形状见 §2 追记）。未通过 → `execution.interrupted_reason = "delivery_unverified"`（review 行 `interrupted: true`）+ 通知 `msg_self_improve_unverified(title, reason)`；卡停在待验收，owner 用「打回 + 一句话」让同一会话补上，或丢弃。通过 → 常规 `msg_review_ready` 由 detect_transitions 发，review 行带 `delivery` 章。
 - 约束：核验只读 GitHub，不改 PR（不 `pr ready --undo`、不关 PR）；不核对本地 worktree（agent 的 worktree 归 claude 管）。
 
-### 64.4 敏感路径护栏（通道不许扩自己的权）
+### 65.4 敏感路径护栏（通道不许扩自己的权）
 
 - 写死的受保护路径 `self_improve.SENSITIVE_PATHS` = `act/lib/policy.py`（资格闸）/ `act/lib/self_improve.py`（本通道）/ `act/llm.py`（argv 边界）/ `.github/workflows/`（前缀：CI / 发版 / 部署）/ `install.sh` / `scripts/auto-deploy.sh`。改这张表本身就在表里。
 - PR `files` 命中任一（无论核验是否通过）→ `gh label create needs-owner-eyes --force` + `gh pr edit <n> --add-label needs-owner-eyes`（标签失败不阻塞——暂停是本地真源，`delivery.label` 记 null）→ `state/self_improve/lane.json` 写 `{paused: true, paused_at, paused_reason: "sensitive_paths", paused_pr, paused_pr_url, paused_paths, paused_card}` → 通知 `msg_self_improve_paused`。
 - 暂停的效果：下一 pass 起所有 lane 卡报 `self_improve:paused` 留在待审批（token 上卡）；hand lane、人工审批、已派发的会话都不受影响；核验与封锁照常。
-- 三条恢复出口（都写进横幅文案）：① owner 处理被标记的 PR（合并或关闭）→ 巡检（64.5）看到它不再 OPEN 即 `clear_pause("pr_merged"|"pr_closed")`；② 看板顶部横幅「恢复通道」→ `POST /api/self-improve/resume`（空 body；`server/self_improve_lane.py` 只翻 `paused` + `resumed_at/resumed_by:"owner"`，清掉 `paused_*` 五键，其余键原样——server 不 import act，路径由 `server/paths.self_improve_lane_path` 镜像，键集与 `self_improve.clear_pause` 逐字一致由判例钉）；③ 终端 `python3 -m act.lib.self_improve --resume`。恢复不改任何卡。
+- 三条恢复出口（都写进横幅文案）：① owner 处理被标记的 PR（合并或关闭）→ 巡检（65.5）看到它不再 OPEN 即 `clear_pause("pr_merged"|"pr_closed")`；② 看板顶部横幅「恢复通道」→ `POST /api/self-improve/resume`（空 body；`server/self_improve_lane.py` 只翻 `paused` + `resumed_at/resumed_by:"owner"`，清掉 `paused_*` 五键，其余键原样——server 不 import act，路径由 `server/paths.self_improve_lane_path` 镜像，键集与 `self_improve.clear_pause` 逐字一致由判例钉）；③ 终端 `python3 -m act.lib.self_improve --resume`。恢复不改任何卡。
 - 这堵墙防的不是恶意而是漂移：守护进程跑 main，分支上改 policy.py 没有运行时效果（§56 ruleset：PR-only + required checks），墙的价值是**让 owner 一定看见**这类 diff。
 
-### 64.5 巡检：PR 评论 = 下一轮任务，合并 = 验收，关闭 = 拒绝（D12）
+### 65.5 巡检：PR 评论 = 下一轮任务，合并 = 验收，关闭 = 拒绝（D12）
 
 - `actd._self_improve_tick(cfg)` 每 pass 调 `self_improve.tick`，自身按 `self_improve.tick_minutes`（默认 60）节流；零 lane 卡零 gh 调用；gh 不可用整轮跳过但推进 `last_tick_at`（不每 pass 重试）；绝不崩 pass。
-- 追踪对象 = 待验收（REVIEW）的 self_improve 卡且 `execution.delivery.pr_number` 已核验出（64.3）。零追踪对象且未暂停 = 零 gh 调用；仓库身份拿不到（`repo_unknown`）= 本轮不动任何卡。每张查一次 `gh pr view`：
+- 追踪对象 = 待验收（REVIEW）的 self_improve 卡且 `execution.delivery.pr_number` 已核验出（65.3）。零追踪对象且未暂停 = 零 gh 调用；仓库身份拿不到（`repo_unknown`）= 本轮不动任何卡。每张查一次 `gh pr view`：
   - **只认 owner 本人的动作**（Codex review P1）：MERGED 看 `mergedBy.login`，CLOSED 看 `gh api repos/<slug>/issues/<n>/events` 最后一条 `closed` 事件的 `actor.login`，都必须 ∈ owner login 集合；协作者 / 机器人 / 未知 actor 的合并·关闭只记一行日志，卡与拒绝记忆都不动（暂停自动清同规则）。
   - **MERGED by owner** → 卡 `review → delivered`，`execution.accepted_at` + `accepted_via: "pr_merged"`，notes `[<date> PR merged] owner 合并了 <url> = 验收`。以 **`user` actor** 落账（`registry.acting_as("user")`）：合并是 owner 在 GitHub 上的点击，actd 是 relay——与 inbox 决策同一语义；store2 白名单 `review→delivered` 仍是 user 独占，权限墙不动。
   - **CLOSED by owner**（未合并）→ `registry.trash(req, "pr_closed")`（回收站，可恢复，宪法第 2 条）+ **拒绝记忆** `state/self_improve/rejected.jsonl` 追加 `{fingerprint, title, card, pr, pr_url, closed_at}`（`fingerprint` = 标题空白折叠小写后 sha1 前 16 位；文件 256 KiB `logcap.cap` 自压缩）。`self_improve.is_rejected(fp)` 是每日循环（P5）去重的读取点：被 owner 关掉的提案不再重提。
-  - **OPEN** → 跟进判定：owner login 集合 = `gh api user` 的 login（缓存进 lane.json `owner_login`）∪ `self_improve.owner_logins`；收 issue 评论 + review 正文 + 行内 review 评论（`gh pr view --json comments,reviews` + `gh api repos/{owner}/{repo}/pulls/<n>/comments`），只留 owner login、时间晚于该 PR 上次 `covered_until` 的；红 required check = `gh pr checks <n> --required --json name,bucket,link` 里 `bucket == "fail"`（该命令有失败时自身退出 1，读侧接受 rc 0/1/8）。有评论或有红 → **铸一张跟进卡**（64.6），一 PR 一天一张（lane.json `followups[<n>] = {date, card, parent, covered_until}`），且该 PR 已有未完结（card_sent/raising/approved/executing）的跟进卡时不再铸。
-- 暂停中的 PR 若已被处理（不再 OPEN）→ 自动清暂停（64.4 出口①）。
+  - **OPEN** → 跟进判定：owner login 集合 = `gh api user` 的 login（缓存进 lane.json `owner_login`）∪ `self_improve.owner_logins`；收 issue 评论 + review 正文 + 行内 review 评论（`gh pr view --json comments,reviews` + `gh api repos/{owner}/{repo}/pulls/<n>/comments`），只留 owner login、时间晚于该 PR 上次 `covered_until` 的；红 required check = `gh pr checks <n> --required --json name,bucket,link` 里 `bucket == "fail"`（该命令有失败时自身退出 1，读侧接受 rc 0/1/8）。有评论或有红 → **铸一张跟进卡**（65.6），一 PR 一天一张（lane.json `followups[<n>] = {date, card, parent, covered_until}`），且该 PR 已有未完结（card_sent/raising/approved/executing）的跟进卡时不再铸。
+- 暂停中的 PR 若已被处理（不再 OPEN）→ 自动清暂停（65.4 出口①）。
 
-### 64.6 跟进卡（producer 硬编码的形状）
+### 65.6 跟进卡（producer 硬编码的形状）
 
-`Requirement(id=next_id(), title="跟进 PR #<n>：<k> 条 owner 评论 / <m> 项红检查", type="self-improvement", tier="T1", status=card_sent, hardness="soft", sources=[{who: <owner login>|"ci", channel: "self_improve", date, ref: "pr:<n>", quote: <评论原文时间序拼接 + "red required checks: …"，1500 字封顶>, pr_number, pr_url, head, head_sha}], summary, plan=[checkout PR 分支 / 逐条用改动回应评论 / 让 required check 变绿 / 本地门跑过再 push 同一分支], definition_of_done=[…], target_repo=repo_path, target_kind="existing", delivery_mode="repo")`，`origin_trust` 按 sources 盖章（proposed）。**owner 评论原文只进 `quote`**——build_prompt 把 sources 整块过 `sanitize.fence_untrusted`（宪法第 5 条），标题 / plan / DoD 全是不含评论文字的骨架；`pr_number / head / head_sha` 是 64.3 核验跟进交付的坐标。铸出即 card_sent，下一 pass 经 §51 lane 免批派发；通知 `msg_self_improve_followup(n, k, m)`。
+`Requirement(id=next_id(), title="跟进 PR #<n>：<k> 条 owner 评论 / <m> 项红检查", type="self-improvement", tier="T1", status=card_sent, hardness="soft", sources=[{who: <owner login>|"ci", channel: "self_improve", date, ref: "pr:<n>", quote: <评论原文时间序拼接 + "red required checks: …"，1500 字封顶>, pr_number, pr_url, head, head_sha}], summary, plan=[checkout PR 分支 / 逐条用改动回应评论 / 让 required check 变绿 / 本地门跑过再 push 同一分支], definition_of_done=[…], target_repo=repo_path, target_kind="existing", delivery_mode="repo")`，`origin_trust` 按 sources 盖章（proposed）。**owner 评论原文只进 `quote`**——build_prompt 把 sources 整块过 `sanitize.fence_untrusted`（宪法第 5 条），标题 / plan / DoD 全是不含评论文字的骨架；`pr_number / head / head_sha` 是 65.3 核验跟进交付的坐标。铸出即 card_sent，下一 pass 经 §51 lane 免批派发；通知 `msg_self_improve_followup(n, k, m)`。
 
-### 64.7 状态与文件（防腐 #4：出生即带帽）
+### 65.7 状态与文件（防腐 #4：出生即带帽）
 
-- `state/self_improve/lane.json`（atomic 写）：`paused` 家族（64.4）、`resumed_at/resumed_by`、`owner_login`、`repo_slug`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——**读-改-写全部在 `lane.json.lock` 的 `flock` 内、且只动自己的键**（`self_improve._update_state` / server `_locked`；巡检末尾只提交 `TICK_KEYS`）：server 清暂停与 actd 同一时刻写的暂停互不覆盖（Codex review P1；Windows 无 flock 退化为无锁）。
+- `state/self_improve/lane.json`（atomic 写）：`paused` 家族（65.4）、`resumed_at/resumed_by`、`owner_login`、`repo_slug`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——**读-改-写全部在 `lane.json.lock` 的 `flock` 内、且只动自己的键**（`self_improve._update_state` / server `_locked`；巡检末尾只提交 `TICK_KEYS`）：server 清暂停与 actd 同一时刻写的暂停互不覆盖（Codex review P1；Windows 无 flock 退化为无锁）。
 - `state/self_improve/rejected.jsonl`：append-only，256 KiB 自压缩保尾。
-- 都不进 repo（`state/` gitignore）；dashboard 只投影 64.4 的低频子集（§2）。
+- 都不进 repo（`state/` gitignore）；dashboard 只投影 65.4 的低频子集（§2）。
 
-### 64.8 不做 / 边界
+### 65.8 不做 / 边界
 
 - 不为 lane 卡开第五类出身；不把 `type` / `target_repo` 当判据；不给别的仓库开通道（D7）；不设预算（D9）；不用第二个 GitHub 身份（D8）。
 - 不关 PR、不删远端分支、不 `pr ready --undo`——GitHub 侧动作只有打标签。

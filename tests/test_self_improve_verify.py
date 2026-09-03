@@ -1,4 +1,4 @@
-"""§64.3 草稿 PR 物理核验（self_improve.verify_delivery / on_harvest）。
+"""§65.3 草稿 PR 物理核验（self_improve.verify_delivery / on_harvest）。
 
 「agent 说做完了不算，工具说 OK 才算」：每条核验路径一个判例——PR 不存在 /
 关闭 / head 是 main / base 不是 main / 分支名不对 / 不是 draft / diff 为空 /

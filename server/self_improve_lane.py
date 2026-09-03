@@ -1,4 +1,4 @@
-"""POST /api/self-improve/resume — owner 清掉自动草稿 PR 通道的暂停（CONTRACT §64.4 / §49）。
+"""POST /api/self-improve/resume — owner 清掉自动草稿 PR 通道的暂停（CONTRACT §65.4 / §49）。
 
 通道被敏感路径护栏挂起后（actd 写 ``state/self_improve/lane.json`` 的
 ``paused:true``），owner 有三条出口：处理被标记的 PR（合并/关闭，actd 巡检

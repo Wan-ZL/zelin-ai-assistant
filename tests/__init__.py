@@ -36,7 +36,7 @@ os.environ.setdefault("AIASSISTANT_HTTP_PROBE", "0")
 # （activate.py 只在 auto 下激活）。store2 侧的行为测试自己显式切 sqlite
 # （改 env + registry.reset_store_cache()，用完复原）。
 os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
-# §64 自动草稿 PR 通道：默认 gh runner 见到这个开关直接报「不可用」（核验 →
+# §65 自动草稿 PR 通道：默认 gh runner 见到这个开关直接报「不可用」（核验 →
 # gh_unavailable、巡检 → 跳过），套件里凡要 gh 的判例都注入假 runner。gh 同时
 # 在下方出网黑名单里——忘了注入的那一处会响亮地炸，而不是静默打 GitHub API。
 os.environ.setdefault("AIASSISTANT_GH", "0")
@@ -63,7 +63,7 @@ os.environ.setdefault("AIASSISTANT_GH", "0")
 _PROMPT_FLAGS = frozenset({"-p", "--print", "--resume"})
 _NETWORK_PROGRAMS = frozenset({
     "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp",
-    "gh",   # GitHub CLI = GitHub API（§64 通道的 gh 调用一律走注入缝）
+    "gh",   # GitHub CLI = GitHub API（§65 通道的 gh 调用一律走注入缝）
 })
 # 这些只是外壳，真正要看的是它们后面那条命令（`bash -c "curl …"`）
 _SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "env", "xargs"})

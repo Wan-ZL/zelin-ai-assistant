@@ -27,7 +27,7 @@ v0.48.7——owner decision D9（docs/design/vnext2-plan.md：「取消一切预
 足够的」）。钱的可见性由 §7/§41 的 `require_text_confirm_above_usd` 文字确认线
 承担（那是审批语义不是预算），卡上的 cost_estimate_usd 仍作披露展示。
 
-第二条免批 lane（§64，P6；owner 决策 D7/D8/D9，§0 第 12 条修宪）：出身仍是
+第二条免批 lane（§65，P6；owner 决策 D7/D8/D9，§0 第 12 条修宪）：出身仍是
 proposed（四类词表不动），**资格**另裁——sources 全部是写死的 `self_improve`
 渠道 **且** `target_repo` 的 realpath 就是本仓库（`self_improve.repo_path`，
 默认安装根）才免批；type/target_repo 之类 LLM 可写字段单独永远开不了这条
@@ -72,7 +72,7 @@ _TRUST_RANK = {HAND: 3, PROPOSED: 2, MEETING: 1, EXTERNAL: 0}
 #   meeting / audio — obsidian radar 的会议音频与笔记通道
 #   slack / gmail — 第三方消息（radar_slack 非 self-DM 路径、radar_gmail）
 #   screen — §45 防御行：屏幕永不铸卡，真出现即异常，按最不信任处理
-#   self_improve — §64 自动草稿 PR 通道的**唯一**铸卡渠道（每日循环提案 /
+#   self_improve — §65 自动草稿 PR 通道的**唯一**铸卡渠道（每日循环提案 /
 #       PR 跟进卡，producer 硬编码写入）：出身仍是 proposed（AI 自提），免批
 #       资格由 may_auto_dispatch 的第二条 lane 另裁——见模块 docstring。
 SELF_IMPROVE_CHANNEL = "self_improve"
@@ -194,7 +194,7 @@ def autodispatch_config(cfg: object) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# self_improve 配置（config.yaml `self_improve:` 块，全 add-only；§64）
+# self_improve 配置（config.yaml `self_improve:` 块，全 add-only；§65）
 # --------------------------------------------------------------------------- #
 SELF_IMPROVE_DEFAULTS: dict = {
     "enabled": True,        # 通道总开关：false = self_improve 卡照旧人工审批
@@ -290,9 +290,9 @@ def channel_class_key(channel: object) -> str:
 #   cost:over_ceiling / budget:unknown / budget:exhausted — retired v0.48.7
 #                       （D9 取消预算天花板；旧卡上残留的 token 由 actd 在下一
 #                       pass 按「解除即清」清掉，不再产生）
-#   ok:self_improve   — 放行，且走的是 §64 lane（actd 据此选文案/通知）
+#   ok:self_improve   — 放行，且走的是 §65 lane（actd 据此选文案/通知）
 #   self_improve:disabled      — self_improve.enabled=false（常态，不上卡）
-#   self_improve:paused        — 通道被敏感路径护栏挂起（§64.4），等 owner 清
+#   self_improve:paused        — 通道被敏感路径护栏挂起（§65.4），等 owner 清
 #   self_improve:needs_mcp     — 卡声明 needs_mcp：只能走 owner 亲批路径
 #   self_improve:repo_mismatch — target_repo 的 realpath 不是本仓库（D7）
 MAY_REASONS = (
@@ -313,10 +313,10 @@ def is_routine_reason(reason: object) -> bool:
 
 
 def auto_dispatch_note(reason: str, cost: float, today: str) -> str:
-    """免批放行的 notes 痕（actd 落卡）：hand lane 原文不动；§64 lane 报自己的名字。"""
+    """免批放行的 notes 痕（actd 落卡）：hand lane 原文不动；§65 lane 报自己的名字。"""
     if reason == "ok:self_improve":
         return (f"[{today} auto-dispatch] self_improve 通道免批自动派发"
-                "（交付只能是草稿 PR，§64）")
+                "（交付只能是草稿 PR，§65）")
     return f"[{today} auto-dispatch] hand 出身免批自动派发（est ${cost:g}）"
 
 
@@ -329,7 +329,7 @@ def _field(card: object, name: str, default: object = None) -> object:
 
 def _lane_gate(card: object, cfg: object, lane_paused: bool,
                realpath: Optional[Callable[[str], str]]) -> Optional[str]:
-    """§64 lane 的专属天花板（sources 已判定全为 self_improve）：
+    """§65 lane 的专属天花板（sources 已判定全为 self_improve）：
     开关 → 暂停 → needs_mcp → 仓库 realpath。返回拒绝 token 或 None。"""
     si = self_improve_config(cfg)
     if not si["enabled"]:
@@ -346,7 +346,7 @@ def _lane_gate(card: object, cfg: object, lane_paused: bool,
 
 def _origin_gate(card: object, cfg: object, lane_paused: bool,
                  realpath: Optional[Callable[[str], str]]) -> tuple:
-    """出身闸 -> (拒绝 token | None, 是否走 §64 lane)。hand 直接放行；sources
+    """出身闸 -> (拒绝 token | None, 是否走 §65 lane)。hand 直接放行；sources
     全为 self_improve 交给 _lane_gate；其余出身一律 `origin:<class>`。"""
     sources = _field(card, "sources") or []
     origin = classify_origin(sources)
@@ -358,7 +358,7 @@ def _origin_gate(card: object, cfg: object, lane_paused: bool,
 
 
 def _cost_verdict(cost: Optional[float], lane: bool) -> tuple:
-    """末位裁决：hand 卡估价缺失即拒（不可证明 ≤ 文字确认线）；§64 lane 无
+    """末位裁决：hand 卡估价缺失即拒（不可证明 ≤ 文字确认线）；§65 lane 无
     审批步骤、无预算（D9），估价缺失不拦，token 报 `ok:self_improve`。"""
     if lane:
         return True, "ok:self_improve"
@@ -386,7 +386,7 @@ def may_auto_dispatch(
     起 ``today_spend`` 参数随台账一并退役）。纯函数：repo 存在性经
     ``path_exists`` seam（默认 os.path.exists），测试注入假的。
 
-    §64 第二条 lane（add-only kwargs）：``lane_paused`` = 通道暂停状态（actd
+    §65 第二条 lane（add-only kwargs）：``lane_paused`` = 通道暂停状态（actd
     从 state/self_improve/lane.json 读后传入，本模块不做 I/O）；``realpath``
     = 仓库比对的 seam（默认 os.path.realpath）。lane 卡放行 token 为
     ``ok:self_improve``；其余天花板（t2_confirm / outbound / repo:*）对两条

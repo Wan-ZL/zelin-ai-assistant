@@ -107,6 +107,16 @@ export interface SteerNote {
   [key: string]: unknown;
 }
 
+/** §64（issue #128）AI 一句话摘要 + 完成度评语——server 只在有摘要或评语时才发整键；
+ *  只是建议：客户端只渲染，验收/打回仍是人按的按钮。verdict 是开放枚举，三个已知值见 VERDICTS */
+export interface CardAssessment {
+  summary?: string | null;
+  verdict?: string | null;
+  verdict_reason?: string | null;
+  /** 评语生成时刻（epoch 秒） */
+  at?: number | null;
+}
+
 /** 运行中/需输入/已完成 分区项（running 混入 state="queued" 的排队项，无 session_id） */
 export interface TaskRow {
   id: string;
@@ -149,10 +159,12 @@ export interface TaskRow {
   question?: string | null;
   display_title?: string;
   former_titles?: string[];
+  /** §64 AI 摘要 + 评语（阶段性完成卡只用 summary 一句） */
+  assessment?: CardAssessment | null;
   [key: string]: unknown;
 }
 
-/** §64.3 self_improve 卡的 gh 物理核验结果（review 行 `delivery`，wire key 逐字镜像 execution.delivery） */
+/** §65.3 self_improve 卡的 gh 物理核验结果（review 行 `delivery`，wire key 逐字镜像 execution.delivery） */
 export interface Delivery {
   verified: boolean;
   reason?: string | null;
@@ -166,7 +178,7 @@ export interface Delivery {
   [key: string]: unknown;
 }
 
-/** §64 顶层 `self_improve`：自动草稿 PR 通道的开关 + 暂停状态（敏感路径护栏） */
+/** §65 顶层 `self_improve`：自动草稿 PR 通道的开关 + 暂停状态（敏感路径护栏） */
 export interface SelfImproveState {
   enabled: boolean;
   paused: boolean;
@@ -182,7 +194,7 @@ export interface SelfImproveState {
 export interface ReviewCard {
   id: string;
   name: string;
-  /** §64.3 self_improve 卡才有：草稿 PR 核验结果 */
+  /** §65.3 self_improve 卡才有：草稿 PR 核验结果 */
   delivery?: Delivery;
   /** §60（D21）工作编号 R-xxx：进入 approved 时 server 分配；提案/备选/回收站卡缺席 */
   work_id?: string | null;
@@ -206,6 +218,8 @@ export interface ReviewCard {
   summary?: string | null;
   agent_name?: string | null;
   display_title?: string;
+  /** §64 AI 摘要 + 完成度评语（建议验收 / 需继续做 / 需要拍板，带一行理由） */
+  assessment?: CardAssessment | null;
   [key: string]: unknown;
 }
 
@@ -307,7 +321,7 @@ export interface Board {
   deploy_state?: DeployState;
   /** §63 会议 recap 投影（add-only；旧 server 缺席）——不是卡，页面 ?page=recaps 读它 */
   recaps?: RecapRow[];
-  /** §64 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
+  /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
   self_improve?: SelfImproveState;
   [key: string]: unknown;
 }

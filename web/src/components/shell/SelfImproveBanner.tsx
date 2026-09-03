@@ -1,4 +1,4 @@
-// 自动草稿 PR 通道横幅（CONTRACT §64.4）：敏感路径护栏把通道挂起时说话——
+// 自动草稿 PR 通道横幅（CONTRACT §65.4）：敏感路径护栏把通道挂起时说话——
 // 数据源 = board.self_improve（dashboard.json 顶层 add-only 键，老 daemon 无此键 → 不渲染）。
 // 只在 paused 时出现：点名被标记的 PR（needs-owner-eyes）与触碰的受保护路径，给一个
 // 「恢复通道」按钮（POST /api/self-improve/resume → 下一 pass 免批派发继续）。owner 处理完

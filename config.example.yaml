@@ -68,7 +68,7 @@ autodispatch:
   max_concurrent: 3                    # 自动派发并发上限；超出的卡留在「运行中」列 queued 子状态（原因 chip：concurrency）
   notify: true                         # 观察模式：每次自动派发都发一条通知；false = 只有看板留痕
 
-# 自动草稿 PR 通道（CONTRACT §64；owner 决策 D7/D8/D9/D12）——第二条免批 lane，
+# 自动草稿 PR 通道（CONTRACT §65；owner 决策 D7/D8/D9/D12）——第二条免批 lane，
 # **只给本仓库**：sources 全部是写死的 `self_improve` 渠道（每日循环提案 / PR 跟进卡）
 # 且 target_repo 的 realpath 就是 repo_path 的卡免批派发；交付只能是草稿 PR，做完后
 # 守护进程用 gh 物理核验（存在 / draft / base main / diff 非空），PR 触碰受保护路径
@@ -136,6 +136,11 @@ registry:                              # 数据层真源（CONTRACT §53，owner
 #                                      # 显式值请用 canonical id：claude-fable-5 / claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5-20251001
 #                                      # 别名/后缀（[1m]、-eap…）随时可能下线——下线那天派工会静默全败；doctor 对显式值做一次活探针
 #                                      # web 设置页「模型」写 state/settings_overrides.json 的 models_dispatch / models_pipeline，优先级高于本块；改动下一次调用即生效，无需重启
+
+# card_summary:                        # 待验收卡的 AI 一句话摘要 + 完成度评语（CONTRACT §64，issue #128）
+#   enabled: true                      # 默认开。每张待验收卡内容变化（新一轮交付/打回/编辑）时一次 headless claude -p（models.pipeline）
+#                                      # 生成 ≤40 字白话摘要 + 建议验收/需继续做/需要拍板 + 一行理由；只是建议，验收/打回仍只有人能按
+#                                      # false = 不再派新判官（在飞的仍收回）。overrides 扁平键 card_summary_enabled
 
 archive:
   after_days: 30                       # 交付(delivered)卡最后活动超过 N 天自动封存进 archive。vnext 决议把 v0.20.0 的默认 0(off) 改为 30；设 0 = 恢复永不自动归档。只封存冷 delivered：带未来 deadline / cluster 内还有 open 兄弟卡 / 时间戳不可解析的卡一律不动

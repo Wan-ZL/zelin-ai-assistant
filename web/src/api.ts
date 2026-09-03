@@ -153,7 +153,7 @@ export function postReveal(cardId: string): Promise<unknown> {
   });
 }
 
-/** POST /api/self-improve/resume（CONTRACT §64.4）：owner 清掉敏感路径护栏挂起的自动草稿 PR 通道；空 body */
+/** POST /api/self-improve/resume（CONTRACT §65.4）：owner 清掉敏感路径护栏挂起的自动草稿 PR 通道；空 body */
 export function postSelfImproveResume(): Promise<{ ok: boolean; paused: boolean; was_paused: boolean }> {
   return request("/api/self-improve/resume", { method: "POST", body: "{}" });
 }
