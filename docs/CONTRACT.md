@@ -219,7 +219,7 @@ approved**（P0-6：绝不进 executing），`execution.last_error`/`last_error_
   一次；executor 抛 `DispatchHalted`。**卡仍是 approved**（不 trash、不改状
   态机），但 actd `dispatch_approved` 在并发闸之前就跳过它（不占槽、不写、
   不 log），executor 直调也拒启。投影见 §2 v0.48.4（进「需输入」列）。
-- **重新上膛 = 进入 approved 的每一条路径**（`actd._rearm_dispatch`）：清掉
+- **重新上膛 = 进入 approved 的每一条路径**（`act/lib/actd/dispatch.py::rearm_dispatch`；P3b 前为 `actd._rearm_dispatch`，门面别名保留）：清掉
   `executor.DISPATCH_STREAK_KEYS`（`dispatch_attempts / last_dispatch_attempt_at
   / dispatch_error_class / dispatch_class_streak / dispatch_halted /
   dispatch_halted_at`）+ `last_error`/`last_error_at`。三条路径一视同仁：
@@ -316,6 +316,8 @@ debt item 新增 `summary`（同上，大白话）。
 > 一律改走 `stop_session_confirmed` 外壳（有限重试 + roster 验证 + 失败台账，
 > 见 §46.1）；「stop 失败只记日志、绝不阻塞状态落账」的语义不变，变的是
 > 失败不再静默——落 `execution.stop_failed_*` + notes `[stop-failed]` + 通知。
+
+**动词判决表 golden（P3b，add-only）**：`tests/test_actd_decision_table.py` 以 `tests/fixtures/actd_decision_table.json` 钉住本节 16 个卡级动词 + 1 个未知动词 × 11 种盘上状态（4 种另带活 session）× 有/无 comment（approve 另加外部出身，W17）的判决——§5.4 ack、落后状态、execution 增删键、notes 尾巴（日期掩码）、plan 是否变——再加 comment / raise / accept / rework 对 `expected_status` 命中 / 别名 / 过期 × owner / agent ingress 的第二张表（共 900 例，协作者是合作式假 executor / analyze，表钉的是 actd 自己的动词逻辑）。任何动词语义变化必须同 PR 用 `REGEN_DECISION_TABLE=1` 重铸并在本节落字；golden 变了而本节没动 = 审查 blocker。表由重构前的 `act/actd.py` 铸出，重构后逐例相等。
 
 **v0.10.2 逆向动作**（公共规则：状态不匹配的动作 = 幂等 no-op + 日志，防连点/迟到 inbox；三个动作均走现有 `inbox_{action}` analytics 自动打点）：
 - `done_external`（已办完·系统外完成）：允许 `card_sent | review | approved | executing`（v0.12 从 `card_sent | review` 扩展；动机：agent 停在 blocked 等输入、但 Zelin 已在 attach 会话里拿到交付——这是唯一的完成出口）→ 置 `delivered`；`execution.accepted_at` = UTC ISO now；notes 追加 `[done outside] Zelin 在系统外完成`。分状态行为：
@@ -3695,6 +3697,8 @@ token 词表（机读稳定，UI 侧映射文案）：`disabled` /
 （见下方 tombstone；token 永不复用，旧卡上残留的值由 actd 按「解除即清」在
 下一 pass 清掉并放行）。
 
+**资格判决表 golden（P3b，add-only）**：`tests/test_policy_admission_matrix.py` 以 `tests/fixtures/policy_admission_matrix.json` 钉住 `may_auto_dispatch` 对一张裁剪积（sources 形状 × 全部 CHANNEL_CLASS 渠道 + 未知 / 畸形 / 混合 / 大小写空格变体 × target_kind × cost 形状——含恰在文字确认线上的 3.0 × tier × green_sign × type × target_repo（本仓库 / 存在 / 缺失 / 空 / None）× needs_mcp × 六种 cfg × lane_paused；583,200 例，纯函数注入 path_exists / realpath）的**全部**裁决：token 集合 ⊆ `MAY_REASONS` 且每个仍会产出的 token 都被命中、按 token 的直方图、以及逐例 `(ok, reason)` 的 SHA-256；fixture 内另存每个 token 的前三例供人读。任何资格变化必须同 PR 用 `REGEN_POLICY_MATRIX=1` 重铸并在本节落字；golden 变了而本节没动 = 审查 blocker。表由重构前的 policy.py 铸出，重构后逐例相等（P3b：`may_auto_dispatch` CC 21 → 6，拆成出身 / 文字确认线 / 对外 / 落点四道命名闸，短路顺序与 token 优先级不变）。
+
 **第二条 lane（2026-09-02，§65 / §0 第 12 条修宪；owner 决策 D7·D9）**：出身
 `proposed` 的卡里，**sources 非空且每一条 channel 都是 `self_improve`** 的卡进入
 lane 专属天花板（顺序即 token 优先级）：`self_improve.enabled=false` →
@@ -4864,6 +4868,7 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。**追记（2026-09-02，§66.2）**：同一差分门顺带看管 `ui/parity/pending.txt` 与 `ui/parity/waivers.txt`（按 id 集合比，备注列不是分数）——加 id 即 FAIL。
 - **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。首批（P3a，`refactor/p3a-dashboard`）：`act/lib/dashboard.py`、`act/lib/silent_merge.py`、`act/merge_review.py`、`act/lib/analytics.py`、`act/lib/sanitize.py`、`act/lib/telemetry_upload.py` 全部函数 CC ≤ 6、CRAP ≤ 6，四本账本只划不加；手法 = 先补判例网（`tests/fixtures/dashboard_golden.json` 逐字节 golden + 各模块的 characterization 判例）再纯抽取，零行为变化。
 - **P3 每批的固定顺序（2026-09-02 P3a 追记，add-only；R2.3.2 的执行口径）**：① 先把该批模块映射进 `qa/mutation_targets.toml`（§57）并跑一轮变异，幸存体逐个判定——等价变异（常数 ±1、日志文案）放过，逻辑幸存体（未测的分类分支 / CLI / 网络与 IMAP 包装 / 解析状态机…）**先补判例杀死**；② 再做纯抽取式重构（每函数 CC ≤ 6，新 helper 出生即干净），**零行为变化**——判据是既有全套件 + 补上的判例 + 同一轮变异重跑，不许借重构改语义；③ 该批模块的 complexity / crap / hygiene 账本行在**同一 PR** 划掉（`stale` 三态本身会逼着做）；④ 模块留在夜间靶区，测试网持续咬人。模块 docstring 必须写明管它的 §§（防腐 #5，hygiene 门执法）。首批 P3a = 雷达三源 + claude_sessions + digest / weekly_digest / analyze（分支 `refactor/p3a-radars`；账本现状 truth = `qa/complexity_baseline.txt` / `qa/crap_baseline.txt`）。
+- **P3b（`refactor/p3b-actd-policy`，2026-09-02）：守护主循环拆包 + policy 清账**。`act/actd.py`（3,653 行，CC 84 的 `_apply_decision` 等 35 条 complexity 账、39 条 CRAP 账、9 条 `private:` deps 账、2 条 hygiene 账）与 `act/lib/policy.py`（3 + 3 条）全部划掉，零新增；每函数 CC ≤ 6。**布局**：pass 逻辑按阶段搬进 lib 子包 `act/lib/actd/`（`inbox` 排空决策文件 / `decisions` 卡级动词白名单表 / `merge` §21 / `dispatch` 免批闸 + 派发 + raising 展开 / `reconcile` 救活·收割·steer / `housekeeping` 回收站·封存·附件 GC / `alerts` 通知·凭证·雷达 liveness / `session` 停止·收割共用件 / `triage_guard` §34bis / `seam`），`act/actd.py` 只留入口（`python -m act.actd`）、主循环（run_once 分阶段 + main + LoopHealthTracker）、四个入口层协作者的降级 import（`executor` / `analyze` / `merge_review` / `radar_claude_sessions`——**仍且只**在这个文件 import，`qa/deps_baseline.txt` 里四条 entry-pair 边键不变）与兼容面。**接缝（防腐 #2 + #3）**：lib 永不向上 import；门面在**每次调用**时把自己的命名空间快照成 `act/lib/actd/seam.py::Daemon`（executor / analyze / merge_review / radar_claude_sessions / feedback、log / iso_now / save / safe_unlink / write_applied_ack / detached_actions / run_claude_agents，以及其它动词借道的七个门面函数）显式传给 lib 函数——不是 module-global 注入缝，而是每个函数的第一个参数；因此判例对门面的 `patch.object(actd, "executor")` 等 35 个 patch 点原样有效。**弃用声明**：`act.actd` 上的 `_私名` re-export（`_apply_decision` / `_merge_into_primary` / `_wake_state` …）只为判例兼容保留，**不再是合法 import 目标**——新代码 import `act.lib.actd.<module>`；日后判例迁移完成即可整批删除。跨模块 `_私名` 引用按防腐 #2 就地升 public：`agent_states.RUNNING_STATES / BLOCKED_STATES / DONE_STATES / LIVE_STATES`、`dashboard.run_claude_agents / index_agents`、`merge_review.validate_groups`、`executor.transcript_cwd / briefing_window_open`（下划线名仍绑定同一对象）。**网先于刀**：policy 资格判决表 golden（§51）+ 动词判决表 golden（§10）都由重构前代码铸出；变异首轮（原 actd.py 1,025 体 / policy 124 体）的逻辑幸存体逐个补判例（`test_actd_inbox_drain_accounting` / `test_actd_merge_edges` / `test_actd_triage_guard_edges` / `test_actd_card_payload_boundaries` / `test_actd_loop_and_phase_edges` / `test_policy_mutation_kills`），policy 复跑 125 体只剩 4 个等价体；十一个模块进 `qa/mutation_targets.toml` 夜间靶区。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
 

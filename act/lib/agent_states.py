@@ -34,3 +34,11 @@ _DONE_STATES = frozenset(
 
 # live = "do not resume": actively running, plus idle (process alive).
 _LIVE_STATES = _RUNNING_STATES | {"idle"}
+
+# Public names (P3b, 防腐 #2 rule 4): act.lib.actd.reconcile reads these
+# cross-module; the underscored spellings above stay bound for dashboard /
+# executor / the test_agent_states identity checks.
+RUNNING_STATES = _RUNNING_STATES
+BLOCKED_STATES = _BLOCKED_STATES
+DONE_STATES = _DONE_STATES
+LIVE_STATES = _LIVE_STATES

@@ -20,15 +20,6 @@ lib-import:act/lib/quick_capture.py->act.llm 1
 lib-import:act/lib/search_index.py->act.executor 1
 lib-import:act/lib/silent_merge.py->act.merge_review 1
 lib-import:act/lib/slack_setup.py->act.radar_slack 1
-private:act/actd.py->act.executor._briefing_window_open 1
-private:act/actd.py->act.executor._transcript_cwd 1
-private:act/actd.py->act.lib.agent_states._BLOCKED_STATES 1
-private:act/actd.py->act.lib.agent_states._DONE_STATES 1
-private:act/actd.py->act.lib.agent_states._LIVE_STATES 1
-private:act/actd.py->act.lib.agent_states._RUNNING_STATES 1
-private:act/actd.py->act.lib.dashboard._index_agents 1
-private:act/actd.py->act.lib.dashboard._run_claude_agents 1
-private:act/actd.py->act.merge_review._validate_groups 1
 private:act/ask.py->act.analyze._extract_json 1
 private:act/executor.py->act.lib.agent_states._BLOCKED_STATES 1
 private:act/executor.py->act.lib.dashboard._index_agents 1

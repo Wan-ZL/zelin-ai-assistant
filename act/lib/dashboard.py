@@ -180,6 +180,13 @@ def _index_agents(agents: list[dict]) -> dict[str, dict]:
     return idx
 
 
+# Public names (P3b, 防腐 #2 rule 4): the actd reconcile loop (act.lib.actd)
+# and act/actd.py read the roster through these; the underscored spellings
+# stay bound — executor / tests patch ``dashboard._run_claude_agents``.
+run_claude_agents = _run_claude_agents
+index_agents = _index_agents
+
+
 # completed[] cap (§2): the registry never archives DELIVERED items, so without
 # a ceiling the dashboard grows forever (rebuilt every ~10s, re-decoded by the
 # app on every refresh). Keep only the most recent entries by accepted_at;

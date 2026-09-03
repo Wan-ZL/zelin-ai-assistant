@@ -1,41 +1,6 @@
 # complexity_baseline.txt —— shrink-only 存量账本（docs/CONTRACT.md §58.4）。
 # 只许缩：新违例 FAIL、账上恶化 FAIL、已修好仍挂账 FAIL（划掉这行）。
 # 重铸：python3 scripts/qa/complexity.py --write-baseline（P3 清账轮以外别用）。
-act/actd.py::_apply_capture 22
-act/actd.py::_apply_claude_import 9
-act/actd.py::_apply_decision 84
-act/actd.py::_apply_feedback 7
-act/actd.py::_apply_merge_decision 15
-act/actd.py::_apply_merge_force 10
-act/actd.py::_apply_merge_partition 17
-act/actd.py::_apply_merge_verdict 16
-act/actd.py::_apply_split_note 14
-act/actd.py::_check_auth_failures 9
-act/actd.py::_check_radar_liveness 11
-act/actd.py::_check_triage_registry_guard 16
-act/actd.py::_cluster_has_live_sibling 9
-act/actd.py::_flush_steers 11
-act/actd.py::_harvest_to_review 11
-act/actd.py::_merge_into_primary 40
-act/actd.py::_partition_results_summary 7
-act/actd.py::_promote_if_delivered 10
-act/actd.py::_recent_resume_count 7
-act/actd.py::_reconcile_review_attach 20
-act/actd.py::_registry_attachment_refs 18
-act/actd.py::_stop_live_session 7
-act/actd.py::_stop_session_tracked 7
-act/actd.py::_sweep_attachment_dirs 18
-act/actd.py::_sync_active 8
-act/actd.py::_wake_grace 9
-act/actd.py::archive_stale 11
-act/actd.py::auto_dispatch_pass 16
-act/actd.py::cleanup_merge_jobs 19
-act/actd.py::detect_transitions 17
-act/actd.py::dispatch_approved 34
-act/actd.py::main 8
-act/actd.py::process_inbox 28
-act/actd.py::reconcile_executing 65
-act/actd.py::run_once 17
 act/ask.py::_split_sections 7
 act/ask.py::answer 19
 act/ask.py::relevant_sections 9
@@ -62,9 +27,6 @@ act/lib/match_corpus.py::derive_aliases 8
 act/lib/match_corpus.py::tokens 9
 act/lib/platform.py::notify_user 9
 act/lib/platform.py::service_list_text 8
-act/lib/policy.py::autodispatch_config 9
-act/lib/policy.py::classify_origin 7
-act/lib/policy.py::may_auto_dispatch 21
 act/lib/qr.py::_Matrix.apply_mask 12
 act/lib/qr.py::_Matrix.draw_codewords 8
 act/lib/qr.py::_Matrix.penalty 22

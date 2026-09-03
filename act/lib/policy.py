@@ -129,19 +129,22 @@ def classify_origin(card_sources: object,
       来源 fold 过 -> external——外来文本已经上卡，自动开跑资格随之消失。
     全函数，永不 raise。
     """
-    classes: list = []
-    if card_sources:
-        if isinstance(card_sources, (list, tuple)):
-            for s in card_sources:
-                chan = s.get("channel") if isinstance(s, dict) else None
-                classes.append(channel_class(chan))
-        else:
-            classes.append(EXTERNAL)   # 畸形 sources：fail-closed
+    classes = _source_classes(card_sources)
     if capture_channel is not None:
         classes.append(channel_class(capture_channel))
     if not classes:
         return PROPOSED
     return min(classes, key=lambda c: _TRUST_RANK[c])
+
+
+def _source_classes(card_sources: object) -> list:
+    """sources[] → 每条来源的 trust class（空 = []；畸形 sources = 一条 EXTERNAL）。"""
+    if not card_sources:
+        return []
+    if not isinstance(card_sources, (list, tuple)):
+        return [EXTERNAL]   # 畸形 sources：fail-closed
+    return [channel_class(s.get("channel") if isinstance(s, dict) else None)
+            for s in card_sources]
 
 
 # --------------------------------------------------------------------------- #
@@ -174,17 +177,19 @@ def _int(value: object) -> Optional[int]:
     return int(n) if n is not None else None
 
 
-def autodispatch_config(cfg: object) -> dict:
-    """读 `autodispatch:` 配置块（cfg.raw 或裸 dict），脏值逐键回退默认——
-    配置永远解析出一个完整合法的块，绝不 raise（宪法第 11 条口径）。"""
-    block: dict = {}
+def _raw_block(cfg: object, key: str) -> dict:
+    """cfg.raw 或裸 dict 里取一个配置块；不是 dict 一律当空块。"""
     raw = getattr(cfg, "raw", None)
     if not isinstance(raw, dict) and isinstance(cfg, dict):
         raw = cfg
-    if isinstance(raw, dict):
-        b = raw.get("autodispatch")
-        if isinstance(b, dict):
-            block = b
+    block = raw.get(key) if isinstance(raw, dict) else None
+    return block if isinstance(block, dict) else {}
+
+
+def autodispatch_config(cfg: object) -> dict:
+    """读 `autodispatch:` 配置块（cfg.raw 或裸 dict），脏值逐键回退默认——
+    配置永远解析出一个完整合法的块，绝不 raise（宪法第 11 条口径）。"""
+    block = _raw_block(cfg, "autodispatch")
     out = dict(AUTODISPATCH_DEFAULTS)
     if "enabled" in block:
         out["enabled"] = bool(block["enabled"])
@@ -206,15 +211,6 @@ SELF_IMPROVE_DEFAULTS: dict = {
     "owner_logins": [],     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
     "github_repo": "",      # 显式 owner/repo；"" = 首次使用时 gh repo view 取并缓存
 }
-
-
-def _raw_block(cfg: object, key: str) -> dict:
-    """cfg.raw 或裸 dict 里取一个配置块；不是 dict 一律当空块。"""
-    raw = getattr(cfg, "raw", None)
-    if not isinstance(raw, dict) and isinstance(cfg, dict):
-        raw = cfg
-    block = raw.get(key) if isinstance(raw, dict) else None
-    return block if isinstance(block, dict) else {}
 
 
 def _str_or(value: object, default: str) -> str:
@@ -272,9 +268,14 @@ def is_self_improve_sources(sources: object) -> bool:
                for s in sources)
 
 
+def _lower_key(value: object) -> str:
+    """字符串字段归一（strip+lower）；非字符串给空串——channel / type / target_kind 同尺。"""
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
 def channel_class_key(channel: object) -> str:
     """channel 值归一（strip+lower）；非字符串给空串。"""
-    return channel.strip().lower() if isinstance(channel, str) else ""
+    return _lower_key(channel)
 
 
 # --------------------------------------------------------------------------- #
@@ -360,6 +361,52 @@ def _origin_gate(card: object, cfg: object, lane_paused: bool,
     return _lane_gate(card, cfg, lane_paused, realpath), True
 
 
+def _tier_key(value: object) -> str:
+    """tier 值归一（strip+upper）；非字符串给空串。"""
+    return value.strip().upper() if isinstance(value, str) else ""
+
+
+def _over_confirm_line(cost: Optional[float], confirm_over: Optional[float]) -> bool:
+    return cost is not None and confirm_over is not None and cost > confirm_over
+
+
+def _confirm_gate(card: object, cfg: object, cost: Optional[float]) -> Optional[str]:
+    """§7/§41 审批语义不变：T2 / green-sign / 高成本文字确认线，一律人批。"""
+    confirm_over = _num(getattr(cfg, "require_text_confirm_above_usd", None))
+    if (_tier_key(_field(card, "tier")) == "T2"
+            or bool(_field(card, "green_sign_required"))
+            or _over_confirm_line(cost, confirm_over)):
+        return "t2_confirm"
+    return None
+
+
+def _outbound_gate(card: object) -> Optional[str]:
+    """never outbound：comms 类卡的执行天然指向对外回复/沟通稿，不自动开跑。"""
+    if _lower_key(_field(card, "type")) == "comms":
+        return "outbound"
+    return None
+
+
+def _target_repo(card: object, cfg: object) -> str:
+    """卡上的 target_repo（strip），缺失时回退 cfg.default_target_repo。"""
+    return (_str_or(_field(card, "target_repo"), "")
+            or _str_or(getattr(cfg, "default_target_repo", None), ""))
+
+
+def _repo_gate(card: object, cfg: object,
+               path_exists: Optional[Callable[[str], bool]]) -> Optional[str]:
+    """existing target_repo only：绝不为自动派发建新 repo；落点必须已存在。"""
+    if _lower_key(_field(card, "target_kind")) == "new":
+        return "repo:new"
+    repo = _target_repo(card, cfg)
+    if not repo:
+        return "repo:none"
+    exists = path_exists if path_exists is not None else os.path.exists
+    if not exists(os.path.expanduser(repo)):
+        return "repo:missing"
+    return None
+
+
 def _cost_verdict(cost: Optional[float], lane: bool) -> tuple:
     """末位裁决：hand 卡估价缺失即拒（不可证明 ≤ 文字确认线）；§65 lane 无
     审批步骤、无预算（D9），估价缺失不拦，token 报 `ok:self_improve`。"""
@@ -398,41 +445,13 @@ def may_auto_dispatch(
     ad = autodispatch_config(cfg)
     if not ad["enabled"]:
         return False, "disabled"
-
+    # 天花板按序裁决（短路：先拒者定 token）：出身 → 文字确认线 → 对外 → 落点。
     blocked, lane = _origin_gate(card, cfg, lane_paused, realpath)
+    cost = _num(_field(card, "cost_estimate_usd"))
+    blocked = (blocked or _confirm_gate(card, cfg, cost) or _outbound_gate(card)
+               or _repo_gate(card, cfg, path_exists))
     if blocked:
         return False, blocked
-
-    # §7/§41 审批语义不变：T2 / green-sign / 高成本文字确认线，一律人批。
-    tier = _field(card, "tier")
-    tier = tier.strip().upper() if isinstance(tier, str) else ""
-    cost = _num(_field(card, "cost_estimate_usd"))
-    confirm_over = _num(getattr(cfg, "require_text_confirm_above_usd", None))
-    if (tier == "T2" or bool(_field(card, "green_sign_required"))
-            or (cost is not None and confirm_over is not None
-                and cost > confirm_over)):
-        return False, "t2_confirm"
-
-    # never outbound：comms 类卡的执行天然指向对外回复/沟通稿，不自动开跑。
-    ctype = _field(card, "type")
-    if isinstance(ctype, str) and ctype.strip().lower() == "comms":
-        return False, "outbound"
-
-    # existing target_repo only：绝不为自动派发建新 repo；落点必须已存在。
-    tk = _field(card, "target_kind")
-    if isinstance(tk, str) and tk.strip().lower() == "new":
-        return False, "repo:new"
-    repo = _field(card, "target_repo")
-    repo = repo.strip() if isinstance(repo, str) else ""
-    if not repo:
-        fallback = getattr(cfg, "default_target_repo", None)
-        repo = fallback.strip() if isinstance(fallback, str) else ""
-    if not repo:
-        return False, "repo:none"
-    exists = path_exists if path_exists is not None else os.path.exists
-    if not exists(os.path.expanduser(repo)):
-        return False, "repo:missing"
-
     # 估价必须存在（hand lane）：缺失即不可证明 <= 上面的文字确认线，保守回人批。
     # 金额本身不设上限——单卡 $5 天花板与当日预算 retired v0.48.7（D9）。
     return _cost_verdict(cost, lane)
