@@ -15,14 +15,36 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 from server import paths
 from server.errors import UnknownFieldError
 
-# 与 act/lib/self_improve.clear_pause 清掉的键逐字一致
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows：无 flock，退化为无锁
+    fcntl = None  # type: ignore[assignment]
+
+# 与 act/lib/self_improve.PAUSE_KEYS 逐字一致（tests/test_self_improve_sensitive_pause.py 钉）
 _PAUSE_KEYS = ("paused_reason", "paused_pr", "paused_pr_url", "paused_paths",
                "paused_card")
+
+
+@contextmanager
+def _locked(p: Path):
+    """与 act/lib/self_improve._locked 同一把锁（``lane.json.lock``）：恢复端点的
+    读-改-写不许覆盖 actd 同一时刻写的暂停（Codex review P1）。"""
+    if fcntl is None:
+        yield
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.with_suffix(".lock").open("a") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 def _read(p: Path) -> dict:
@@ -46,11 +68,12 @@ def resume(home: Path, payload: dict) -> dict:
     if payload:
         raise UnknownFieldError("unknown field", {"fields": sorted(payload)})
     p = paths.self_improve_lane_path(home)
-    st = _read(p)
-    was_paused = bool(st.get("paused"))
-    st.update({"paused": False, "resumed_by": "owner",
-               "resumed_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
-    for key in _PAUSE_KEYS:
-        st.pop(key, None)
-    _write(p, st)
+    with _locked(p):
+        st = _read(p)
+        was_paused = bool(st.get("paused"))
+        st.update({"paused": False, "resumed_by": "owner",
+                   "resumed_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+        for key in _PAUSE_KEYS:
+            st.pop(key, None)
+        _write(p, st)
     return {"ok": True, "paused": False, "was_paused": was_paused}

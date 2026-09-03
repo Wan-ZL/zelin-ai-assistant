@@ -112,7 +112,8 @@ class HarvestWireTestCase(WireBase):
         self.assertTrue(d["verified"])
         self.assertEqual(d["pr_number"], 123)
         self.assertNotIn("interrupted_reason", req.execution)
-        self.assertEqual(gh.calls[0][:2], ["pr", "list"])
+        self.assertEqual(gh.argv_with("pr")[0][:2], ["pr", "list"])
+        self.assertTrue(gh.pr_calls_all_pinned())
         # dashboard：review 行带 delivery、无 interrupted
         with mock.patch("act.lib.dashboard._run_claude_agents", return_value=[]):
             dash = build_dashboard(cfg=self.cfg)

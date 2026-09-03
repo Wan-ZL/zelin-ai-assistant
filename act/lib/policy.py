@@ -201,6 +201,7 @@ SELF_IMPROVE_DEFAULTS: dict = {
     "repo_path": "",        # "" = 安装根（config.HOME）；比对用 realpath
     "tick_minutes": 60,     # PR 跟进巡检（owner 评论 / 红 CI / 合并 / 关闭）间隔
     "owner_logins": [],     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
+    "github_repo": "",      # 显式 owner/repo；"" = 首次使用时 gh repo view 取并缓存
 }
 
 
@@ -234,6 +235,7 @@ def self_improve_config(cfg: object) -> dict:
     out["tick_minutes"] = (minutes if minutes is not None and minutes >= 1
                            else out["tick_minutes"])
     out["owner_logins"] = _str_list(block.get("owner_logins"))
+    out["github_repo"] = _str_or(block.get("github_repo"), "")
     return out
 
 

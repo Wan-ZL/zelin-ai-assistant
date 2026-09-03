@@ -41,11 +41,17 @@ import json
 import os
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Optional
 
 from act.lib import config, logcap, notify, policy, registry
 from act.lib.registry import Requirement, State
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows：无 flock，lane.json 读改写退化为无锁
+    fcntl = None  # type: ignore[assignment]
 
 CHANNEL = policy.SELF_IMPROVE_CHANNEL
 # 新提案卡的分支名前缀（+ 显示编号）；跟进卡沿用 PR 自己的 head 分支。
@@ -67,7 +73,11 @@ INTERRUPTED_REASON = "delivery_unverified"
 GH_ENV = "AIASSISTANT_GH"
 GH_TIMEOUT_S = 60
 PR_FIELDS = ("number,url,state,isDraft,baseRefName,headRefName,headRefOid,"
-             "files,mergedAt,closedAt")
+             "files,mergedAt,closedAt,mergedBy")
+# lane.json 里「暂停」家族的键（clear_pause 清掉的集合；server/self_improve_lane.py 镜像）
+PAUSE_KEYS = ("paused_reason", "paused_pr", "paused_pr_url", "paused_paths", "paused_card")
+# 巡检结束时提交回盘的键（只动这些——并发的暂停/恢复写者互不覆盖）
+TICK_KEYS = ("last_tick_at", "owner_login", "repo_slug", "followups")
 REJECTED_CAP_BYTES = 256 * 1024
 FOLLOWUP_QUOTE_CAP = 1500
 CARD_TYPE = "self-improvement"
@@ -192,28 +202,58 @@ def lane_paused(st: Optional[dict] = None) -> bool:
     return bool((st if st is not None else load_state()).get("paused"))
 
 
+@contextmanager
+def _locked():
+    """lane.json 读-改-写互斥：actd（暂停 / 巡检）与 server 恢复端点是两个进程，
+    无锁的 load→save 会把对方刚写的暂停覆盖回去（Codex review P1）。锁文件
+    ``lane.json.lock`` 与 server/self_improve_lane.py 同名；Windows 无 flock 退化。"""
+    if fcntl is None:
+        yield
+        return
+    p = lane_state_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.with_suffix(".lock").open("a") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _update_state(patch: dict, drop: tuple = ()) -> dict:
+    """锁内读-改-写：只动 ``patch`` / ``drop`` 指名的键，其余键以磁盘为准。"""
+    with _locked():
+        st = load_state()
+        st.update(patch)
+        for key in drop:
+            st.pop(key, None)
+        save_state(st)
+    return st
+
+
 def pause(reason: str, *, pr_number: object = None, pr_url: object = None,
           paths: object = (), card: object = None,
           now: Optional[_dt.datetime] = None, st: Optional[dict] = None) -> dict:
-    """§64.4 挂起通道；``st`` 传入时就地更新（巡检持有内存副本），否则读盘。"""
-    st = load_state() if st is None else st
-    st.update({"paused": True, "paused_at": _iso(now), "paused_reason": reason,
-               "paused_pr": pr_number, "paused_pr_url": pr_url,
-               "paused_paths": list(paths or []), "paused_card": card})
-    save_state(st)
-    return st
+    """§64.4 挂起通道（锁内落盘）；``st`` 传入时同步更新调用方的内存副本。"""
+    patch = {"paused": True, "paused_at": _iso(now), "paused_reason": reason,
+             "paused_pr": pr_number, "paused_pr_url": pr_url,
+             "paused_paths": list(paths or []), "paused_card": card}
+    disk = _update_state(patch)
+    if st is not None:
+        st.update(patch)
+    return disk if st is None else st
 
 
 def clear_pause(by: str = "owner", *, now: Optional[_dt.datetime] = None,
                 st: Optional[dict] = None) -> dict:
-    """恢复通道（owner 点「恢复通道」/ 处理完被标记的 PR）。"""
-    st = load_state() if st is None else st
-    st.update({"paused": False, "resumed_at": _iso(now), "resumed_by": by})
-    for key in ("paused_reason", "paused_pr", "paused_pr_url", "paused_paths",
-                "paused_card"):
-        st.pop(key, None)
-    save_state(st)
-    return st
+    """恢复通道（owner 点「恢复通道」/ 处理完被标记的 PR / CLI）；锁内落盘。"""
+    patch = {"paused": False, "resumed_at": _iso(now), "resumed_by": by}
+    disk = _update_state(patch, drop=PAUSE_KEYS)
+    if st is not None:
+        st.update(patch)
+        for key in PAUSE_KEYS:
+            st.pop(key, None)
+    return disk if st is None else st
 
 
 def board_view(cfg: object = None) -> dict:
@@ -264,15 +304,58 @@ def _gh_json(gh: GhRunner, args: list, cwd: str, ok_codes: tuple = (0,)) -> obje
         return None
 
 
-def fetch_pr(gh: GhRunner, cwd: str, number: object) -> Optional[dict]:
-    data = _gh_json(gh, ["pr", "view", str(number), "--json", PR_FIELDS], cwd)
+def _pr_args(slug: Optional[str], *args: str) -> list:
+    """``gh pr <args> -R <slug>``——仓库身份显式给定，绝不让 gh 从 cwd 的 remote 推断
+    （remote 可被会话改到别的仓库；Codex review P1）。slug 未知时退回 cwd 推断。"""
+    return ["pr", *args] + (["-R", slug] if slug else [])
+
+
+def _api_repo_path(slug: Optional[str], tail: str) -> str:
+    return f"repos/{slug or '{owner}/{repo}'}/{tail}"
+
+
+def _cached_slug(st: Optional[dict]) -> Optional[str]:
+    slug = (st or {}).get("repo_slug")
+    return slug if isinstance(slug, str) and "/" in slug else None
+
+
+def _repo_slug_from_gh(gh: GhRunner, cwd: str) -> Optional[str]:
+    data = _gh_json(gh, ["repo", "view", "--json", "nameWithOwner"], cwd)
+    slug = data.get("nameWithOwner") if isinstance(data, dict) else None
+    return slug if isinstance(slug, str) and "/" in slug else None
+
+
+def repo_slug(gh: GhRunner, cwd: str, cfg: object, st: Optional[dict] = None) -> Optional[str]:
+    """通道仓库的 GitHub 身份 ``owner/repo``：config `self_improve.github_repo` >
+    lane.json 缓存 > 首次 `gh repo view`（首次 = 首张 lane 卡派发那一刻，任何
+    lane 会话跑起来之前——之后 remote 怎么改都不影响）。取到即写进 ``st`` 与
+    lane.json；取不到给 None（调用方 fail-closed）。gh 不可用照常抛 GhUnavailable。"""
+    slug = _known_slug(cfg, st)
+    if slug is None:
+        slug = _repo_slug_from_gh(gh, cwd)
+        if slug:
+            _update_state({"repo_slug": slug})
+    if st is not None and slug:
+        st["repo_slug"] = slug
+    return slug
+
+
+def _known_slug(cfg: object, st: Optional[dict]) -> Optional[str]:
+    configured = policy.self_improve_config(cfg)["github_repo"]
+    return configured or _cached_slug(st) or _cached_slug(load_state())
+
+
+def fetch_pr(gh: GhRunner, cwd: str, number: object,
+             slug: Optional[str] = None) -> Optional[dict]:
+    data = _gh_json(gh, _pr_args(slug, "view", str(number), "--json", PR_FIELDS), cwd)
     return data if isinstance(data, dict) else None
 
 
-def find_pr_by_branch(gh: GhRunner, cwd: str, branch: str) -> Optional[int]:
+def find_pr_by_branch(gh: GhRunner, cwd: str, branch: str,
+                      slug: Optional[str] = None) -> Optional[int]:
     """同分支可能有多个 PR（旧的已关）：OPEN 优先，其次编号最大。"""
-    data = _gh_json(gh, ["pr", "list", "--head", branch, "--state", "all",
-                         "--limit", "10", "--json", "number,state"], cwd)
+    data = _gh_json(gh, _pr_args(slug, "list", "--head", branch, "--state", "all",
+                                 "--limit", "10", "--json", "number,state"), cwd)
     rows = [r for r in _as_list(data)
             if isinstance(r, dict) and isinstance(r.get("number"), int)]
     if not rows:
@@ -299,7 +382,9 @@ def sensitive_hits(files: object) -> list:
     return sorted(out)
 
 
-def _judge_refs(pr: dict) -> Optional[str]:
+def _judge_refs(pr: dict, slug: Optional[str]) -> Optional[str]:
+    if slug and not str(pr.get("url")).startswith(f"https://github.com/{slug}/pull/"):
+        return "pr_repo_mismatch"
     if pr.get("headRefName") in ("main", "master"):
         return "pr_head_main"
     if pr.get("baseRefName") != "main":
@@ -323,7 +408,8 @@ def _judge_content(pr: dict, branch: str, src: Optional[dict]) -> Optional[str]:
     return _judge_fresh(pr) if src is None else _judge_followup(pr, src)
 
 
-def _judge(pr: Optional[dict], branch: str, src: Optional[dict]) -> Optional[str]:
+def _judge(pr: Optional[dict], branch: str, src: Optional[dict],
+           slug: Optional[str] = None) -> Optional[str]:
     """核验裁决 → 拒绝 token 或 None。MERGED = owner 已验收，核验无意义。"""
     if pr is None:
         return "pr_missing"
@@ -332,15 +418,16 @@ def _judge(pr: Optional[dict], branch: str, src: Optional[dict]) -> Optional[str
         return None
     if state == "CLOSED":
         return "pr_closed"
-    return _judge_refs(pr) or _judge_content(pr, branch, src)
+    return _judge_refs(pr, slug) or _judge_content(pr, branch, src)
 
 
-def _lookup_pr(gh: GhRunner, cwd: str, branch: str,
-               src: Optional[dict]) -> Optional[dict]:
-    number = src.get("pr_number") if src is not None else find_pr_by_branch(gh, cwd, branch)
+def _lookup_pr(gh: GhRunner, cwd: str, branch: str, src: Optional[dict],
+               slug: Optional[str]) -> Optional[dict]:
+    number = (src.get("pr_number") if src is not None
+              else find_pr_by_branch(gh, cwd, branch, slug))
     if number is None:
         return None
-    return fetch_pr(gh, cwd, number)
+    return fetch_pr(gh, cwd, number, slug)
 
 
 def _fill_pr(result: dict, pr: Optional[dict]) -> None:
@@ -362,17 +449,23 @@ def verify_delivery(card: object, cfg: object = None, gh: Optional[GhRunner] = N
     base / head_sha / changed_files / sensitive_paths / checked_at。绝不抛。"""
     src = pr_source(card)
     branch = expected_branch(card)
-    result = {"verified": False, "reason": None, "branch": branch,
+    result = {"verified": False, "reason": None, "branch": branch, "repo": None,
               "pr_number": None, "pr_url": None, "pr_draft": None,
               "pr_state": None, "base": None, "head_sha": None,
               "changed_files": 0, "sensitive_paths": [], "checked_at": _iso(now)}
+    runner, cwd = gh or default_gh, policy.self_improve_repo_path(cfg)
     try:
-        pr = _lookup_pr(gh or default_gh, policy.self_improve_repo_path(cfg), branch, src)
+        slug = repo_slug(runner, cwd, cfg)
+        if slug is None:                       # 仓库身份都拿不到 → fail-closed
+            result["reason"] = "repo_unknown"
+            return result
+        pr = _lookup_pr(runner, cwd, branch, src, slug)
     except GhUnavailable:
         result["reason"] = "gh_unavailable"
         return result
+    result["repo"] = slug
     _fill_pr(result, pr)
-    result["reason"] = _judge(pr, branch, src)
+    result["reason"] = _judge(pr, branch, src, slug)
     result["verified"] = result["reason"] is None
     return result
 
@@ -380,13 +473,13 @@ def verify_delivery(card: object, cfg: object = None, gh: Optional[GhRunner] = N
 # --------------------------------------------------------------------------- #
 # 收割钩子（actd 三条提升路径 + stop_to_review 各一行调用）
 # --------------------------------------------------------------------------- #
-def _add_label(gh: GhRunner, cwd: str, number: object) -> bool:
+def _add_label(gh: GhRunner, cwd: str, number: object, slug: Optional[str]) -> bool:
     if number is None:
         return False
-    gh(["label", "create", PAUSE_LABEL, "--force", "--color", "B60205",
-        "--description", "self_improve lane PR touches protected paths — owner must look"],
-       cwd)
-    rc, _ = gh(["pr", "edit", str(number), "--add-label", PAUSE_LABEL], cwd)
+    repo_flag = ["-R", slug] if slug else []
+    gh(["label", "create", PAUSE_LABEL, "--force", "--color", "B60205", "--description",
+        "self_improve lane PR touches protected paths — owner must look", *repo_flag], cwd)
+    rc, _ = gh(_pr_args(slug, "edit", str(number), "--add-label", PAUSE_LABEL), cwd)
     return rc == 0
 
 
@@ -395,7 +488,7 @@ def _flag_sensitive(req: Requirement, result: dict, cfg: object, gh: GhRunner,
     """§64.4：标签 + 暂停 + 通知。标签失败不阻塞暂停（暂停是本地真源）。"""
     number = result.get("pr_number")
     try:
-        labelled = _add_label(gh, policy.self_improve_repo_path(cfg), number)
+        labelled = _add_label(gh, policy.self_improve_repo_path(cfg), number, result.get("repo"))
     except GhUnavailable:
         labelled = False
     result["label"] = PAUSE_LABEL if labelled else None
@@ -501,15 +594,24 @@ def prompt_blocks(req: Requirement, cfg: object = None, target: object = None) -
     return ["\n".join(lines)]
 
 
+def _dispatch_slug(cfg: object) -> Optional[str]:
+    """派发时刻钉仓库身份（首张 lane 卡起跑前就缓存进 lane.json）；gh 不可用给 None。"""
+    try:
+        return repo_slug(default_gh, policy.self_improve_repo_path(cfg), cfg)
+    except GhUnavailable:
+        return None
+
+
 def dispatch_record(req: Requirement, cfg: object = None) -> dict:
     """dispatch 成功路径合进重建后的 execution 的 add-only 键（非 self_improve
-    卡 = {}）：分支名、出网档位、是否走 lane（审计痕）。"""
+    卡 = {}）：分支名、出网档位、是否走 lane、仓库身份（审计痕）。"""
     if not is_self_improve(req):
         return {}
     return {"self_improve": {
         "branch": expected_branch(req),
         "egress": "none" if egress_locked(req) else "mcp",
         "lane": is_lane_card(req, cfg),
+        "repo": _dispatch_slug(cfg),
     }}
 
 
@@ -639,9 +741,9 @@ def _norm_comment(c: dict) -> Optional[dict]:
     return {"login": login, "at": at, "body": body.strip(), "url": _comment_url(c)}
 
 
-def _pr_comment_rows(gh: GhRunner, cwd: str, number: int) -> list:
-    data = _gh_json(gh, ["pr", "view", str(number), "--json", "comments,reviews"], cwd)
-    inline = _gh_json(gh, ["api", f"repos/{{owner}}/{{repo}}/pulls/{number}/comments"], cwd)
+def _pr_comment_rows(gh: GhRunner, cwd: str, number: int, slug: Optional[str]) -> list:
+    data = _gh_json(gh, _pr_args(slug, "view", str(number), "--json", "comments,reviews"), cwd)
+    inline = _gh_json(gh, ["api", _api_repo_path(slug, f"pulls/{number}/comments")], cwd)
     rows: list = []
     if isinstance(data, dict):
         rows += _as_list(data.get("comments")) + _as_list(data.get("reviews"))
@@ -653,19 +755,20 @@ def _keep_comment(c: Optional[dict], logins: set, since: Optional[str]) -> bool:
 
 
 def owner_comments(gh: GhRunner, cwd: str, number: int, logins: set,
-                   since: Optional[str] = None) -> list:
+                   since: Optional[str] = None, slug: Optional[str] = None) -> list:
     """owner login 的评论（issue 评论 + review 正文 + 行内），时间晚于 ``since``，
     按时间升序。GitHub 时间戳同格式 ISO-Z，字符串比较即时间比较。"""
-    rows = [_norm_comment(c) for c in _pr_comment_rows(gh, cwd, number)
+    rows = [_norm_comment(c) for c in _pr_comment_rows(gh, cwd, number, slug)
             if isinstance(c, dict)]
     picked = [c for c in rows if _keep_comment(c, logins, since)]
     return sorted(picked, key=lambda c: c["at"])
 
 
-def red_required_checks(gh: GhRunner, cwd: str, number: int) -> list:
+def red_required_checks(gh: GhRunner, cwd: str, number: int,
+                        slug: Optional[str] = None) -> list:
     """required check 里 bucket=fail 的名字（`gh pr checks` 有失败时自身退出 1）。"""
-    data = _gh_json(gh, ["pr", "checks", str(number), "--required", "--json",
-                         "name,bucket,link"], cwd, ok_codes=(0, 1, 8))
+    data = _gh_json(gh, _pr_args(slug, "checks", str(number), "--required", "--json",
+                                 "name,bucket,link"), cwd, ok_codes=(0, 1, 8))
     return sorted({str(c.get("name")) for c in _as_list(data)
                    if isinstance(c, dict) and c.get("bucket") == "fail"})
 
@@ -757,9 +860,10 @@ def _maybe_followup(req: Requirement, pr: dict, cwd: str, cfg: object, gh: GhRun
     today = now.date().isoformat()
     if _followup_blocked(number, entry, today):
         return None
+    slug = _cached_slug(st)
     comments = owner_comments(gh, cwd, number, _owner_logins(gh, cwd, cfg, st),
-                              since=entry.get("covered_until"))
-    red = red_required_checks(gh, cwd, number)
+                              since=entry.get("covered_until"), slug=slug)
+    red = red_required_checks(gh, cwd, number, slug)
     if not comments and not red:
         return None
     card = mint_followup(pr, comments, red, cfg, now)
@@ -772,22 +876,49 @@ def _maybe_followup(req: Requirement, pr: dict, cwd: str, cfg: object, gh: GhRun
     return card
 
 
+def _actor_login(actor: object) -> Optional[str]:
+    login = actor.get("login") if isinstance(actor, dict) else None
+    return login if isinstance(login, str) else None
+
+
+def _closed_by(gh: GhRunner, cwd: str, number: int, slug: Optional[str]) -> Optional[str]:
+    """最后一条 `closed` 事件的 actor（gh pr view 不给 closedBy）。"""
+    events = _gh_json(gh, ["api", _api_repo_path(slug, f"issues/{number}/events")], cwd)
+    closers = [_actor_login(e.get("actor")) for e in _as_list(events)
+               if isinstance(e, dict) and e.get("event") == "closed"]
+    return closers[-1] if closers else None
+
+
+def _handled_by_owner(pr: dict, gh: GhRunner, cwd: str, cfg: object, st: dict) -> bool:
+    """合并/关闭只在 **owner 本人**动手时才算验收/拒绝：MERGED 看 `mergedBy`，
+    CLOSED 看最后一条 closed 事件的 actor（协作者/机器人的动作只记日志，卡不动；
+    Codex review P1）。"""
+    if pr.get("state") == "MERGED":
+        actor = _actor_login(pr.get("mergedBy"))
+    else:
+        actor = _closed_by(gh, cwd, int(pr["number"]), _cached_slug(st))
+    return actor is not None and actor in _owner_logins(gh, cwd, cfg, st)
+
+
 def _settle_card(req: Requirement, pr: dict, cwd: str, cfg: object, gh: GhRunner,
                  st: dict, now: _dt.datetime, summary: dict,
                  log: Optional[Callable[[str], None]]) -> None:
     state = pr.get("state")
-    if state == "MERGED":
-        _accept_merged(req, pr, now)
-        summary["accepted"].append(req.id)
-        _emit(log, f"self_improve: {req.id} PR merged by owner → delivered")
-    elif state == "CLOSED":
-        _reject_closed(req, pr, now)
-        summary["rejected"].append(req.id)
-        _emit(log, f"self_improve: {req.id} PR closed by owner → trashed + rejection memory")
-    else:
+    if state == "OPEN":
         card = _maybe_followup(req, pr, cwd, cfg, gh, st, now, log)
         if card is not None:
             summary["followups"].append(card.id)
+    elif not _handled_by_owner(pr, gh, cwd, cfg, st):
+        _emit(log, f"self_improve: {req.id} PR #{pr.get('number')} {state} by someone other "
+                   "than the owner — card left as is")
+    elif state == "MERGED":
+        _accept_merged(req, pr, now)
+        summary["accepted"].append(req.id)
+        _emit(log, f"self_improve: {req.id} PR merged by owner → delivered")
+    else:
+        _reject_closed(req, pr, now)
+        summary["rejected"].append(req.id)
+        _emit(log, f"self_improve: {req.id} PR closed by owner → trashed + rejection memory")
 
 
 def _tick_cards(cfg: object, gh: GhRunner, st: dict, now: _dt.datetime,
@@ -797,20 +928,28 @@ def _tick_cards(cfg: object, gh: GhRunner, st: dict, now: _dt.datetime,
         number = _tracked_pr(req)
         if number is None:
             continue
-        pr = fetch_pr(gh, cwd, number)
+        pr = fetch_pr(gh, cwd, number, _cached_slug(st))
         if pr is not None:
             _settle_card(req, pr, cwd, cfg, gh, st, now, summary, log)
 
 
-def _tick_pause(cfg: object, gh: GhRunner, st: dict, summary: dict) -> None:
-    """被标记的 PR 已被 owner 处理（合并/关闭）→ 通道自动恢复。"""
+def _paused_pr(gh: GhRunner, cwd: str, st: dict) -> Optional[dict]:
+    """暂停中且已不再 OPEN 的被标记 PR；其余情形 None。"""
     number = st.get("paused_pr")
     if not st.get("paused") or not isinstance(number, int):
+        return None
+    pr = fetch_pr(gh, cwd, number, _cached_slug(st))
+    return None if pr is None or pr.get("state") == "OPEN" else pr
+
+
+def _tick_pause(cfg: object, gh: GhRunner, st: dict, summary: dict) -> None:
+    """被标记的 PR 已被 **owner** 处理（合并/关闭）→ 通道自动恢复。"""
+    cwd = policy.self_improve_repo_path(cfg)
+    pr = _paused_pr(gh, cwd, st)
+    if pr is None or not _handled_by_owner(pr, gh, cwd, cfg, st):
         return
-    pr = fetch_pr(gh, policy.self_improve_repo_path(cfg), number)
-    if pr is not None and pr.get("state") != "OPEN":
-        clear_pause("pr_" + str(pr.get("state")).lower(), st=st)
-        summary["resumed"] = True
+    clear_pause("pr_" + str(pr.get("state")).lower(), st=st)
+    summary["resumed"] = True
 
 
 def tick_due(st: dict, cfg: object, now: _dt.datetime, force: bool = False) -> bool:
@@ -833,13 +972,35 @@ def tick(cfg: object = None, *, gh: Optional[GhRunner] = None,
     summary: dict = {"accepted": [], "rejected": [], "followups": [], "resumed": False}
     runner = gh or default_gh
     try:
-        _tick_cards(cfg, runner, st, now, summary, log)
-        _tick_pause(cfg, runner, st, summary)
+        _tick_body(cfg, runner, st, now, summary, log)
     except GhUnavailable:
         summary["skipped"] = "gh_unavailable"
     st["last_tick_at"] = _iso(now)
-    save_state(st)
+    _commit_tick(st)
     return summary
+
+
+def _commit_tick(st: dict) -> None:
+    """只提交巡检自己的键（TICK_KEYS）——同一时刻 server 可能刚清了暂停。"""
+    _update_state({k: st[k] for k in TICK_KEYS if k in st})
+
+
+def _tick_body(cfg: object, gh: GhRunner, st: dict, now: _dt.datetime,
+               summary: dict, log: Optional[Callable[[str], None]]) -> None:
+    if not _has_tracked_work(st):
+        return                                   # 零 lane 卡零 gh 调用
+    if repo_slug(gh, policy.self_improve_repo_path(cfg), cfg, st) is None:
+        summary["skipped"] = "repo_unknown"      # 仓库身份都拿不到 → 本轮不动任何卡
+        return
+    _tick_cards(cfg, gh, st, now, summary, log)
+    _tick_pause(cfg, gh, st, summary)
+
+
+def _has_tracked_work(st: dict) -> bool:
+    """有待验收 lane 卡（带核验出的 PR）或通道处于暂停 = 值得跑一趟 gh。"""
+    if st.get("paused"):
+        return True
+    return any(_tracked_pr(r) is not None for r in registry.load_all())
 
 
 # --------------------------------------------------------------------------- #

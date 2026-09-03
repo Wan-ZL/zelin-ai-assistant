@@ -77,7 +77,8 @@ class PauseOnHarvestTestCase(unittest.TestCase):
         create = gh.argv_with("label", "create")[0]
         self.assertEqual(create[:4], ["label", "create", "needs-owner-eyes", "--force"])
         self.assertEqual(gh.argv_with("pr", "edit")[0],
-                         ["pr", "edit", "123", "--add-label", "needs-owner-eyes"])
+                         ["pr", "edit", "123", "--add-label", "needs-owner-eyes", "-R", "o/r"])
+        self.assertEqual(create[-2:], ["-R", "o/r"])
         # 暂停落盘 + 可读
         st = self_improve.load_state()
         self.assertTrue(st["paused"])
@@ -168,17 +169,42 @@ class PauseVisibilityAndClearTestCase(unittest.TestCase):
         for key in ("paused_reason", "paused_pr", "paused_pr_url", "paused_paths", "paused_card"):
             self.assertNotIn(key, st)
 
-    def test_tick_auto_clears_when_flagged_pr_is_handled(self):
+    def test_tick_auto_clears_when_flagged_pr_is_handled_by_owner(self):
         self_improve.pause("sensitive_paths", pr_number=5, pr_url="u5", paths=["act/llm.py"])
         gh = FakeGh({5: pr_doc(5, branch=BRANCH, state="OPEN")})
         self_improve.tick(config.Config(), gh=gh, force=True)
         self.assertTrue(self_improve.lane_paused())           # 还开着 → 继续暂停
-        gh.prs[5]["state"] = "MERGED"
+        gh.prs[5] = pr_doc(5, branch=BRANCH, state="MERGED", merged_by="somebody-else")
+        summary = self_improve.tick(config.Config(), gh=gh, force=True)
+        self.assertFalse(summary["resumed"])                  # 不是 owner 合的 → 不清
+        self.assertTrue(self_improve.lane_paused())
+        gh.prs[5] = pr_doc(5, branch=BRANCH, state="MERGED")  # owner 合的
         summary = self_improve.tick(config.Config(), gh=gh, force=True)
         self.assertTrue(summary["resumed"])
         st = self_improve.load_state()
         self.assertFalse(st["paused"])
         self.assertEqual(st["resumed_by"], "pr_merged")
+
+    def test_tick_does_not_clear_when_a_bot_closed_the_flagged_pr(self):
+        self_improve.pause("sensitive_paths", pr_number=5, pr_url="u5", paths=["act/llm.py"])
+        gh = FakeGh({5: pr_doc(5, branch=BRANCH, state="CLOSED")}, closers={5: ["dependabot[bot]"]})
+        self.assertFalse(self_improve.tick(config.Config(), gh=gh, force=True)["resumed"])
+        self.assertTrue(self_improve.lane_paused())
+        gh.closers[5] = ["dependabot[bot]", "Wan-ZL"]        # 最后一次关闭是 owner
+        self.assertTrue(self_improve.tick(config.Config(), gh=gh, force=True)["resumed"])
+
+    def test_update_state_touches_only_named_keys(self):
+        # 两个进程各写各的键：server 恢复端点不许覆盖 actd 同一时刻写的暂停
+        self_improve.save_state({"owner_login": "Wan-ZL"})
+        self_improve.pause("sensitive_paths", pr_number=5)
+        disk = self_improve.load_state()
+        disk["followups"] = {"5": {"date": "d"}}
+        self_improve.save_state(disk)                          # 模拟另一写者插进来
+        st = self_improve._update_state({"last_tick_at": "t"})
+        self.assertEqual(st["followups"], {"5": {"date": "d"}})
+        self.assertTrue(st["paused"])
+        self.assertEqual(st["last_tick_at"], "t")
+        self.assertEqual(st["owner_login"], "Wan-ZL")
 
     def test_cli_resume(self):
         self_improve.pause("sensitive_paths")
@@ -234,6 +260,18 @@ class ServerResumeRouteTestCase(unittest.TestCase):
         before = set(self_improve.load_state())
         after = set(self_improve.clear_pause())
         self.assertEqual(before - after, set(server_lane._PAUSE_KEYS))
+        self.assertEqual(tuple(server_lane._PAUSE_KEYS), self_improve.PAUSE_KEYS)
+
+    def test_both_writers_share_one_lock_file(self):
+        # act 与 server 的 flock 都落在 <lane.json>.lock——同名才互斥
+        status, _ = post_json(self.port, "/api/self-improve/resume", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(self._lane().with_suffix(".lock").exists())
+        _clean()
+        self_improve.pause("sensitive_paths")
+        self.assertTrue(self_improve.lane_state_path().with_suffix(".lock").exists())
+        self.assertEqual(self._lane().with_suffix(".lock").name,
+                         self_improve.lane_state_path().with_suffix(".lock").name)
 
     def test_resume_without_a_file_is_idempotent_200(self):
         status, obj = post_json(self.port, "/api/self-improve/resume", {})

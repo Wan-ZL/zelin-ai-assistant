@@ -23,11 +23,20 @@ FOLLOW_SRC = [{"who": "Wan-ZL", "channel": "self_improve", "date": "2026-09-02",
                "head_sha": "old0000"}]
 
 
+def _clean_lane():
+    lane = self_improve.lane_state_path()
+    if lane.exists():
+        lane.unlink()
+
+
 def _verify(gh, card=None):
     return self_improve.verify_delivery(card or lane_card(), None, gh=gh)
 
 
 class FreshProposalVerifyTestCase(unittest.TestCase):
+    def setUp(self):
+        _clean_lane()
+
     def test_draft_pr_on_expected_branch_is_verified(self):
         gh = FakeGh({123: pr_doc(branch=BRANCH)})
         res = _verify(gh)
@@ -42,10 +51,36 @@ class FreshProposalVerifyTestCase(unittest.TestCase):
         self.assertEqual(res["sensitive_paths"], [])
         self.assertEqual(res["head_sha"], "deadbeef")
         self.assertTrue(res["checked_at"].endswith("Z"))
-        # 查找 = 按分支列 PR，再按编号取全字段；cwd = 通道 repo
-        self.assertEqual(gh.calls[0][:4], ["pr", "list", "--head", BRANCH])
-        self.assertEqual(gh.calls[1][:3], ["pr", "view", "123"])
+        # 查找 = 先钉仓库身份（gh repo view，缓存进 lane.json），再按分支列 PR、按编号取
+        # 全字段；每个 gh pr 调用都带 -R <slug>；cwd = 通道 repo
+        self.assertEqual(gh.calls[0], ["repo", "view", "--json", "nameWithOwner"])
+        self.assertEqual(gh.calls[1][:4], ["pr", "list", "--head", BRANCH])
+        self.assertEqual(gh.calls[2][:3], ["pr", "view", "123"])
+        self.assertTrue(gh.pr_calls_all_pinned())
         self.assertTrue(all(c == str(config.HOME) for c in gh.cwds))
+        self.assertEqual(res["repo"], "o/r")
+        self.assertEqual(self_improve.load_state()["repo_slug"], "o/r")
+
+    def test_repo_slug_is_cached_then_config_wins(self):
+        gh = FakeGh({123: pr_doc(branch=BRANCH)})
+        _verify(gh)
+        gh2 = FakeGh({123: pr_doc(branch=BRANCH)}, slug=None)   # gh repo view 现在会失败
+        self.assertTrue(_verify(gh2)["verified"])                # 缓存兜住
+        self.assertEqual(gh2.argv_with("repo", "view"), [])
+        cfg = config.Config(raw={"self_improve": {"github_repo": "other/repo"}})
+        res = self_improve.verify_delivery(lane_card(), cfg, gh=FakeGh({123: pr_doc(branch=BRANCH)}))
+        self.assertEqual(res["reason"], "pr_repo_mismatch")      # PR url 不属于配置的仓库
+        self.assertEqual(res["repo"], "other/repo")
+
+    def test_repo_unknown_fails_closed(self):
+        gh = FakeGh({123: pr_doc(branch=BRANCH)}, slug=None)
+        res = _verify(gh)
+        self.assertEqual(res["reason"], "repo_unknown")
+        self.assertEqual(gh.argv_with("pr"), [])                 # 身份未知 = 一个 pr 调用都不发
+
+    def test_pr_from_another_repo_is_refused(self):
+        gh = FakeGh({123: pr_doc(branch=BRANCH, url="https://github.com/evil/fork/pull/123")})
+        self.assertEqual(_verify(gh)["reason"], "pr_repo_mismatch")
 
     def test_branch_prefix_uses_display_id(self):
         card = lane_card(work_id=None)             # legacy/无工作编号 → 主键
@@ -140,6 +175,8 @@ class FreshProposalVerifyTestCase(unittest.TestCase):
 
     def test_gh_garbage_stdout_is_not_a_pr(self):
         def gh(args, cwd):
+            if args[:2] == ["repo", "view"]:
+                return 0, '{"nameWithOwner": "o/r"}'
             return 0, "not json"
         self.assertEqual(_verify(gh)["reason"], "pr_missing")
 
@@ -151,7 +188,7 @@ class FollowupVerifyTestCase(unittest.TestCase):
         gh = FakeGh({123: pr_doc(branch="ai/self-improve/R-800", sha="new1111", draft=False)})
         res = _verify(gh, card)
         self.assertTrue(res["verified"])
-        self.assertEqual(gh.calls[0][:3], ["pr", "view", "123"])   # 直接按编号
+        self.assertEqual(gh.argv_with("pr")[0][:3], ["pr", "view", "123"])   # 直接按编号，不 list
 
     def test_no_push_is_refused(self):
         card = lane_card(sources=FOLLOW_SRC)
@@ -163,9 +200,7 @@ class OnHarvestTestCase(unittest.TestCase):
     def setUp(self):
         self.notify = mock.patch.object(notify, "notify").start()
         self.addCleanup(mock.patch.stopall)
-        lane = self_improve.lane_state_path()
-        if lane.exists():
-            lane.unlink()
+        _clean_lane()
 
     def test_non_lane_card_is_untouched(self):
         card = lane_card(sources=[{"channel": "quick_capture", "date": "d"}])

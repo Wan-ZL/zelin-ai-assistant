@@ -69,6 +69,25 @@ class MergeAndCloseTestCase(TickBase):
         self.assertIn("PR merged", req.notes)
         self.assertIn("https://github.com/o/r/pull/123", req.notes)
 
+    def test_merged_by_someone_else_leaves_the_card_in_review(self):
+        _review_card()
+        gh = FakeGh({123: pr_doc(branch=BRANCH, state="MERGED", draft=False,
+                                 merged_by="collaborator")})
+        logs = []
+        summary = self._tick(gh, log=logs.append)
+        self.assertEqual(summary["accepted"], [])
+        self.assertEqual(registry.load("P-7").status, State.REVIEW.value)
+        self.assertTrue(any("someone other than the owner" in line for line in logs))
+
+    def test_closed_by_a_bot_leaves_the_card_and_memory_alone(self):
+        _review_card()
+        gh = FakeGh({123: pr_doc(branch=BRANCH, state="CLOSED")}, closers={123: ["github-actions[bot]"]})
+        summary = self._tick(gh)
+        self.assertEqual(summary["rejected"], [])
+        self.assertEqual(registry.load("P-7").status, State.REVIEW.value)
+        self.assertEqual(self_improve.rejected_entries(), [])
+        self.assertIn(["api", "repos/o/r/issues/123/events"], gh.calls)
+
     def test_closed_pr_trashes_and_remembers_the_rejection(self):
         _review_card(title="让 doctor 多一行")
         gh = FakeGh({123: pr_doc(branch=BRANCH, state="CLOSED")})
@@ -101,8 +120,16 @@ class MergeAndCloseTestCase(TickBase):
         p.write_text('{"fingerprint": "a"}\nnot json\n[1]\n', encoding="utf-8")
         self.assertEqual(self_improve.rejected_entries(), [{"fingerprint": "a"}])
 
+    def test_repo_unknown_skips_the_round_without_touching_cards(self):
+        _review_card()
+        gh = FakeGh({123: pr_doc(branch=BRANCH, state="MERGED", draft=False)}, slug=None)
+        summary = self._tick(gh)
+        self.assertEqual(summary["skipped"], "repo_unknown")
+        self.assertEqual(registry.load("P-7").status, State.REVIEW.value)
+        self.assertEqual(gh.argv_with("pr"), [])
+
     def test_only_review_lane_cards_with_a_pr_are_tracked(self):
-        # executing 卡 / hand 卡 / 无 delivery 的 review 卡都不查 gh
+        # executing 卡 / hand 卡 / 无 delivery 的 review 卡都不查 gh（连 repo view 都不发）
         registry.save(lane_card("P-1", status=State.EXECUTING.value))
         registry.save(lane_card("P-2", status=State.REVIEW.value,
                                 execution={"done": True}))
@@ -206,8 +233,9 @@ class FollowupTestCase(TickBase):
         quote = card.sources[0]["quote"]
         self.assertLess(quote.index("typo here"), quote.index("LGTM but rename"))  # 时间升序
         self.assertEqual(card.title, "跟进 PR #123：2 条 owner 评论 / 0 项红检查")
-        self.assertIn(["api", "repos/{owner}/{repo}/pulls/123/comments"], gh.calls)
+        self.assertIn(["api", "repos/o/r/pulls/123/comments"], gh.calls)   # 显式 slug
         self.assertIn(["api", "user"], gh.calls)          # owner login = gh 当前身份（D8）
+        self.assertTrue(gh.pr_calls_all_pinned())
 
     def test_extra_owner_logins_from_config(self):
         _review_card()

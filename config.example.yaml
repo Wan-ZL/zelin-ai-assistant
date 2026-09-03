@@ -81,6 +81,7 @@ self_improve:
   repo_path: ""                        # 唯一放行的仓库；"" = 安装根（AIASSISTANT_HOME），比对用 realpath
   tick_minutes: 60                     # PR 巡检间隔：owner 合并=验收 / 关闭=拒绝 / 评论·红 CI → 跟进卡
   owner_logins: []                     # 额外算作 owner 的 GitHub login（gh 当前身份恒在）
+  github_repo: ""                      # 通道仓库的 owner/repo；"" = 首次使用时 gh repo view 取并缓存进 lane.json，此后所有 gh pr 调用带 -R
 
 execution:
   dispatcher: claude-bg                # claude --bg 派发，claude agents --json 监控

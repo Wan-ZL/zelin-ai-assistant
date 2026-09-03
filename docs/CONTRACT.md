@@ -3586,7 +3586,8 @@ actd 每 pass 从 `state/self_improve/lane.json` 现读传入）→ `self_improv
 `self_improve:paused` / `self_improve:needs_mcp` / `self_improve:repo_mismatch`；
 `policy.is_routine_reason` 是 C-6 常态判定的唯一读取点。config 块
 `self_improve:`（`enabled`(true) / `repo_path`("" = 安装根) / `tick_minutes`(60) /
-`owner_logins`([])，`policy.self_improve_config` 唯一读取点，脏值逐键回退）。
+`owner_logins`([]) / `github_repo`("" = 首次使用时 `gh repo view` 取并缓存)，
+`policy.self_improve_config` 唯一读取点，脏值逐键回退）。
 判例 tests/test_policy_self_improve_lane.py。
 
 **天花板明细（locked + 保守解释）**：① `autodispatch.enabled=false` 全关；
@@ -4932,8 +4933,9 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 
 - 钩子 `actd._lane_delivery_check(req, ex)` 挂在**全部四条**进待验收的路径上：reconcile done 分支、`_promote_if_delivered`（FINAL DRAFT 探针）、`_harvest_to_review`（受阻 / 放弃救活收割）、`stop_to_review`。非 self_improve 卡零开销；任何异常只记日志，绝不挡收割（宪法第 11 条）。
 - 分支名 `self_improve.expected_branch(card)`：新提案 = `ai/self-improve/<display_id>`（§60 工作编号）；跟进卡 = 来源条目里 PR 的 `head`。
-- 查找：新提案 `gh pr list --head <branch> --state all`（OPEN 优先，其次编号最大）→ `gh pr view <n> --json number,url,state,isDraft,baseRefName,headRefName,headRefOid,files,mergedAt,closedAt`；跟进卡直接按 `sources[].pr_number` view。cwd = 通道 repo（gh 从 remote 推断仓库）。
-- 裁决顺序与 token（`execution.delivery.reason`，add-only 词表）：`gh_unavailable`（gh 未装 / 起不来——与「PR 不存在」严格区分）→ `pr_missing` → MERGED 直接通过（owner 已验收）→ `pr_closed` → `pr_head_main`（head 是 main/master）→ `pr_base_not_main` → `pr_branch_mismatch` → `pr_diff_empty` → 新提案 `pr_not_draft` ／ 跟进卡 `pr_no_push`（`headRefOid` 仍等于铸卡时记的 `head_sha`）。跟进卡**不**要求 draft——owner 可能已把 PR 标成 ready，agent 不许也不需要把它撤回。
+- **仓库身份 pin**（Codex review P1）：gh **不许**从 cwd 的 remote 推断仓库（会话能把 `origin` 改到别的仓库再开 PR）。`self_improve.repo_slug` = config `self_improve.github_repo` > lane.json 缓存 `repo_slug` > 首次 `gh repo view --json nameWithOwner`（首次 = 首张 lane 卡**派发那一刻**，任何 lane 会话跑起来之前，`dispatch_record` 顺手钉；缓存后 remote 怎么改都不影响）。此后**每个** `gh pr …` 调用带 `-R <slug>`，`gh api` 路径写死 `repos/<slug>/…`，PR 的 `url` 必须以 `https://github.com/<slug>/pull/` 开头（否则 `pr_repo_mismatch`）；身份拿不到 = `repo_unknown`（fail-closed，一个 pr 调用都不发）。`execution.delivery.repo` / `execution.self_improve.repo` 记 slug。
+- 查找：新提案 `gh pr list --head <branch> --state all -R <slug>`（OPEN 优先，其次编号最大）→ `gh pr view <n> --json number,url,state,isDraft,baseRefName,headRefName,headRefOid,files,mergedAt,closedAt,mergedBy -R <slug>`；跟进卡直接按 `sources[].pr_number` view。cwd = 通道 repo。
+- 裁决顺序与 token（`execution.delivery.reason`，add-only 词表）：`gh_unavailable`（gh 未装 / 起不来——与「PR 不存在」严格区分）→ `repo_unknown` → `pr_missing` → MERGED 直接通过（owner 已验收）→ `pr_closed` → `pr_repo_mismatch` → `pr_head_main`（head 是 main/master）→ `pr_base_not_main` → `pr_branch_mismatch` → `pr_diff_empty` → 新提案 `pr_not_draft` ／ 跟进卡 `pr_no_push`（`headRefOid` 仍等于铸卡时记的 `head_sha`）。跟进卡**不**要求 draft——owner 可能已把 PR 标成 ready，agent 不许也不需要把它撤回。
 - 结果落 `execution.delivery`（形状见 §2 追记）。未通过 → `execution.interrupted_reason = "delivery_unverified"`（review 行 `interrupted: true`）+ 通知 `msg_self_improve_unverified(title, reason)`；卡停在待验收，owner 用「打回 + 一句话」让同一会话补上，或丢弃。通过 → 常规 `msg_review_ready` 由 detect_transitions 发，review 行带 `delivery` 章。
 - 约束：核验只读 GitHub，不改 PR（不 `pr ready --undo`、不关 PR）；不核对本地 worktree（agent 的 worktree 归 claude 管）。
 
@@ -4948,9 +4950,10 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 ### 64.5 巡检：PR 评论 = 下一轮任务，合并 = 验收，关闭 = 拒绝（D12）
 
 - `actd._self_improve_tick(cfg)` 每 pass 调 `self_improve.tick`，自身按 `self_improve.tick_minutes`（默认 60）节流；零 lane 卡零 gh 调用；gh 不可用整轮跳过但推进 `last_tick_at`（不每 pass 重试）；绝不崩 pass。
-- 追踪对象 = 待验收（REVIEW）的 self_improve 卡且 `execution.delivery.pr_number` 已核验出（64.3）。每张查一次 `gh pr view`：
-  - **MERGED** → 卡 `review → delivered`，`execution.accepted_at` + `accepted_via: "pr_merged"`，notes `[<date> PR merged] owner 合并了 <url> = 验收`。以 **`user` actor** 落账（`registry.acting_as("user")`）：合并是 owner 在 GitHub 上的点击，actd 是 relay——与 inbox 决策同一语义；store2 白名单 `review→delivered` 仍是 user 独占，权限墙不动。
-  - **CLOSED**（未合并）→ `registry.trash(req, "pr_closed")`（回收站，可恢复，宪法第 2 条）+ **拒绝记忆** `state/self_improve/rejected.jsonl` 追加 `{fingerprint, title, card, pr, pr_url, closed_at}`（`fingerprint` = 标题空白折叠小写后 sha1 前 16 位；文件 256 KiB `logcap.cap` 自压缩）。`self_improve.is_rejected(fp)` 是每日循环（P5）去重的读取点：被 owner 关掉的提案不再重提。
+- 追踪对象 = 待验收（REVIEW）的 self_improve 卡且 `execution.delivery.pr_number` 已核验出（64.3）。零追踪对象且未暂停 = 零 gh 调用；仓库身份拿不到（`repo_unknown`）= 本轮不动任何卡。每张查一次 `gh pr view`：
+  - **只认 owner 本人的动作**（Codex review P1）：MERGED 看 `mergedBy.login`，CLOSED 看 `gh api repos/<slug>/issues/<n>/events` 最后一条 `closed` 事件的 `actor.login`，都必须 ∈ owner login 集合；协作者 / 机器人 / 未知 actor 的合并·关闭只记一行日志，卡与拒绝记忆都不动（暂停自动清同规则）。
+  - **MERGED by owner** → 卡 `review → delivered`，`execution.accepted_at` + `accepted_via: "pr_merged"`，notes `[<date> PR merged] owner 合并了 <url> = 验收`。以 **`user` actor** 落账（`registry.acting_as("user")`）：合并是 owner 在 GitHub 上的点击，actd 是 relay——与 inbox 决策同一语义；store2 白名单 `review→delivered` 仍是 user 独占，权限墙不动。
+  - **CLOSED by owner**（未合并）→ `registry.trash(req, "pr_closed")`（回收站，可恢复，宪法第 2 条）+ **拒绝记忆** `state/self_improve/rejected.jsonl` 追加 `{fingerprint, title, card, pr, pr_url, closed_at}`（`fingerprint` = 标题空白折叠小写后 sha1 前 16 位；文件 256 KiB `logcap.cap` 自压缩）。`self_improve.is_rejected(fp)` 是每日循环（P5）去重的读取点：被 owner 关掉的提案不再重提。
   - **OPEN** → 跟进判定：owner login 集合 = `gh api user` 的 login（缓存进 lane.json `owner_login`）∪ `self_improve.owner_logins`；收 issue 评论 + review 正文 + 行内 review 评论（`gh pr view --json comments,reviews` + `gh api repos/{owner}/{repo}/pulls/<n>/comments`），只留 owner login、时间晚于该 PR 上次 `covered_until` 的；红 required check = `gh pr checks <n> --required --json name,bucket,link` 里 `bucket == "fail"`（该命令有失败时自身退出 1，读侧接受 rc 0/1/8）。有评论或有红 → **铸一张跟进卡**（64.6），一 PR 一天一张（lane.json `followups[<n>] = {date, card, parent, covered_until}`），且该 PR 已有未完结（card_sent/raising/approved/executing）的跟进卡时不再铸。
 - 暂停中的 PR 若已被处理（不再 OPEN）→ 自动清暂停（64.4 出口①）。
 
@@ -4960,7 +4963,7 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 
 ### 64.7 状态与文件（防腐 #4：出生即带帽）
 
-- `state/self_improve/lane.json`（atomic 写）：`paused` 家族（64.4）、`resumed_at/resumed_by`、`owner_login`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——三者只翻少数键、不互相覆盖字段。
+- `state/self_improve/lane.json`（atomic 写）：`paused` 家族（64.4）、`resumed_at/resumed_by`、`owner_login`、`repo_slug`、`followups{}`、`last_tick_at`。写者：actd（暂停 / 巡检）、server 恢复端点、CLI `--resume`——**读-改-写全部在 `lane.json.lock` 的 `flock` 内、且只动自己的键**（`self_improve._update_state` / server `_locked`；巡检末尾只提交 `TICK_KEYS`）：server 清暂停与 actd 同一时刻写的暂停互不覆盖（Codex review P1；Windows 无 flock 退化为无锁）。
 - `state/self_improve/rejected.jsonl`：append-only，256 KiB 自压缩保尾。
 - 都不进 repo（`state/` gitignore）；dashboard 只投影 64.4 的低频子集（§2）。
 

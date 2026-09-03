@@ -120,7 +120,8 @@ class LaunchSitesTestCase(unittest.TestCase):
         saved = registry.load("P-7")
         self.assertEqual(saved.status, State.EXECUTING.value)
         self.assertEqual(saved.execution["self_improve"],
-                         {"branch": "ai/self-improve/R-900", "egress": "none", "lane": False})
+                         {"branch": "ai/self-improve/R-900", "egress": "none", "lane": False,
+                          "repo": None})       # AIASSISTANT_GH=0 → 派发时刻钉不到仓库身份
         self.assertIn("SELF-IMPROVE LANE", cmd[-1])
 
     def test_resume_argv(self):

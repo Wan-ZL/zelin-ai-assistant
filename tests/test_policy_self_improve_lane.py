@@ -206,11 +206,13 @@ class VocabularyTestCase(unittest.TestCase):
             "enabled": 0, "repo_path": 42, "tick_minutes": "abc",
             "owner_logins": "not-a-list"}}))
         self.assertEqual(si, {"enabled": False, "repo_path": "", "tick_minutes": 60,
-                              "owner_logins": []})
+                              "owner_logins": [], "github_repo": ""})
         si = policy.self_improve_config(Config(raw={"self_improve": {
             "tick_minutes": "15", "owner_logins": ["a", " b ", "", 7]}}))
         self.assertEqual(si["tick_minutes"], 15)
         self.assertEqual(si["owner_logins"], ["a", "b", "7"])
+        si = policy.self_improve_config(Config(raw={"self_improve": {"github_repo": " Wan-ZL/x "}}))
+        self.assertEqual(si["github_repo"], "Wan-ZL/x")
         self.assertEqual(policy.self_improve_config(None), policy.SELF_IMPROVE_DEFAULTS)
         self.assertEqual(policy.self_improve_config({"self_improve": "junk"})["enabled"], True)
 
