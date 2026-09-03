@@ -1,4 +1,4 @@
-// 看板装配（BUILD-CONTRACT §2.2 列序 + 原生 Kanban.swift 的两根书立条）：
+// 看板装配（BUILD-CONTRACT §2.2 列序 + 原生 Kanban.swift 的两根书立条；列名 / 空列文案逐字镜像原生，§54.4）：
 //   潜在任务（BacklogStrip 左侧折叠条，经 renderCard 缝注入 DebtCardItem）|
 //   提案（顶部 propose 捕获框）| 运行中（合并列：needs_input blocked 卡最前 →
 //   running 分区 queued/working 混排，顶部 direct-run 框）| 待验收 | 阶段性完成 |
@@ -11,7 +11,7 @@
 import { sortCards, type SortOrder } from "../../cardSort";
 import { useI18n } from "../../i18n";
 import { useAppState } from "../../store";
-import { matchesCardFilters } from "../../taskFilters";
+import { cardFilterCount, matchesCardFilters } from "../../taskFilters";
 import type { ApprovalCard } from "../../types";
 import { ArchiveStrip } from "../chrome/ArchiveStrip";
 import { BacklogStrip } from "../chrome/BacklogStrip";
@@ -50,6 +50,9 @@ export function BoardLanes() {
   const suggestions = Array.isArray(board.merge_suggestions) ? board.merge_suggestions : [];
 
   const counts = board.counts;
+  // 原生 laneEmptyText：搜索 / 过滤生效时空列说「无匹配卡片」而不是「什么都没有」
+  const filtering = cardFilterCount(filters) > 0;
+  const emptyText = (normal: string) => (filtering ? text("无匹配卡片", "No matching cards") : normal);
   // 徽章 = counts 真实总数（completed cap 50 后仍读 counts）；过滤命中数另行标注
   const label = (shown: number, total: number) => (shown === total ? `${total}` : `${shown}/${total}`);
   const runningTotal = (counts["running"] ?? board.running.length) + (counts["needs_input"] ?? board.needs_input.length);
@@ -60,7 +63,7 @@ export function BoardLanes() {
       <BacklogStrip renderCard={(card) => <DebtCardItem item={card} />} />
 
       <Lane
-        title={text("提案", "Proposals")}
+        title={text("提案 · proposals", "Proposals")}
         slug="needs_approval"
         countLabel={label(proposals.length, counts["needs_approval"] ?? board.needs_approval.length)}
         colorToken="--status-todo"
@@ -77,6 +80,7 @@ export function BoardLanes() {
           </>
         }
         isEmpty={proposals.length === 0 && suggestions.length === 0}
+        emptyText={emptyText(text("没有等你拍板的事。想到什么，直接在上面输入框里说一句", "Nothing needs your decision. Capture a thought in the box above"))}
       >
         {suggestions.map((s) => (
           <MergeSuggestionCard key={s.id} suggestion={s} />
@@ -87,7 +91,7 @@ export function BoardLanes() {
       </Lane>
 
       <Lane
-        title={text("运行中", "Running")}
+        title={text("运行中 · running", "Running")}
         slug="running"
         countLabel={label(blocked.length + running.length, runningTotal)}
         colorToken="--status-progress"
@@ -100,6 +104,7 @@ export function BoardLanes() {
           />
         }
         isEmpty={blocked.length === 0 && running.length === 0}
+        emptyText={emptyText(text("没有正在执行的任务。批准一个提案，AI 就开始干活", "Nothing running — approve a proposal to start"))}
       >
         {blocked.map((row) => (
           <RunningCard key={row.id} row={row} isBlocked />
@@ -110,11 +115,12 @@ export function BoardLanes() {
       </Lane>
 
       <Lane
-        title={text("待验收", "In review")}
+        title={text("待验收 · review", "Review")}
         slug="review"
         countLabel={label(review.length, counts["review"] ?? board.review.length)}
         colorToken="--status-review"
         isEmpty={review.length === 0}
+        emptyText={emptyText(text("没有等你验收的交付", "No drafts waiting for your review"))}
       >
         {review.map((card) => (
           <ReviewCard key={card.id} card={card} />
@@ -122,7 +128,7 @@ export function BoardLanes() {
       </Lane>
 
       <Lane
-        title={text("阶段性完成", "Done for now")}
+        title={text("阶段性完成 · done for now", "Done for now")}
         slug="completed"
         countLabel={label(completed.length, completedTotal)}
         colorToken="--status-done"
@@ -132,6 +138,7 @@ export function BoardLanes() {
             : undefined
         }
         isEmpty={completed.length === 0}
+        emptyText={emptyText(text("还没有验收过的交付", "Nothing accepted yet"))}
       >
         {completed.map((row) => (
           <DoneCard key={row.id} row={row} />

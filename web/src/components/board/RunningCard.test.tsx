@@ -96,12 +96,12 @@ describe("comment-as-steer flow", () => {
     expect(await screen.findByText("Submitted · steer queued…")).toBeTruthy();
   });
 
-  it("无 steer 标注的响应 → 普通「Submitted…」文案", async () => {
+  it("无 steer 标注的响应 → 动作词对应的等待句（comment → 修改意见合并中…，原生 Store notice 同文）", async () => {
     render(<RunningCard row={queuedRow()} />);
     fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "备注一下" } });
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
-    expect(await screen.findByText("Submitted…")).toBeTruthy();
+    expect(await screen.findByText("Merging your feedback…")).toBeTruthy();
   });
 });
 

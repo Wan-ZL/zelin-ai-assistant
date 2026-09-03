@@ -23,7 +23,7 @@ export function ForceMergeDialog({ ids, titles, defaultPrimary, onConfirm, onCan
   const [primary, setPrimary] = useState<string>(defaultPrimary && ids.includes(defaultPrimary) ? defaultPrimary : ids[0]);
 
   return (
-    <ModalDialog title={text(`强制合并 ${ids.length} 张卡？`, `Force-merge ${ids.length} cards?`)} onCancel={onCancel}>
+    <ModalDialog title={text(`强制合并 ${ids.length} 张卡片`, `Force-merge ${ids.length} cards`)} onCancel={onCancel}>
       <p className="dialog-body">
         {text(
           "选一张留下的主卡。其余副卡会停止运行、进入「已合并」（不可撤销）；它们的来源引文与交付物保留在主卡上。",
@@ -36,13 +36,17 @@ export function ForceMergeDialog({ ids, titles, defaultPrimary, onConfirm, onCan
             <input type="radio" name="force-merge-primary" value={id} checked={primary === id} onChange={() => setPrimary(id)} />
             <span className="dialog-radio-id">{id}</span>
             <span className="dialog-radio-title">{titles[id] ?? ""}</span>
+            {/* 原生每行的角色按钮：主卡 · 保留 / 副卡 · 并入主卡（点副卡 = 把它设为主卡） */}
+            <button type="button" className={`btn btn-quiet dialog-radio-role${primary === id ? " is-primary" : ""}`} onClick={() => setPrimary(id)}>
+              {primary === id ? text("主卡 · 保留", "Primary · kept") : text("副卡 · 并入主卡", "Secondary · folds in")}
+            </button>
           </label>
         ))}
       </div>
       <div className="dialog-actions">
-        <button type="button" className="btn" onClick={onCancel}>{text("取消", "Cancel")}</button>
-        <button type="button" className="btn btn-danger" onClick={() => onConfirm(primary)}>
-          {text(`合并进 ${primary}`, `Merge into ${primary}`)}
+        <button type="button" className="btn" onClick={onCancel} title="⎋">{text("取消", "Cancel")}</button>
+        <button type="button" className="btn btn-danger" onClick={() => onConfirm(primary)} title="↩">
+          {text("强制合并", "Force-merge")}
         </button>
       </div>
     </ModalDialog>

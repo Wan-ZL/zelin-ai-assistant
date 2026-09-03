@@ -63,25 +63,25 @@ export function CaptionsSection() {
           {select("apple_locale", text("本地识别语言（仅 Apple 引擎）", "On-device language (Apple engine only)"), [["zh", text("中文", "Chinese")], ["en", "English"]])}
           <div className="settings-field is-bool">
             <div className="settings-field-head">
-              <label className="settings-knob-label" htmlFor="captions-translate">{text("同传翻译", "Translate")}</label>
+              <label className="settings-knob-label" htmlFor="captions-translate">{text("翻译字幕（需要 Ark Key + 豆包引擎）", "Translate captions (needs the Ark key + Doubao engine)")}</label>
             </div>
             <div className="settings-knob-controls">
               <input id="captions-translate" type="checkbox" role="switch" className="settings-switch" checked={cap.translate} onChange={(e) => void set({ translate: e.target.checked })} />
             </div>
           </div>
-          {select("translate_direction", text("翻译方向", "Direction"), [["auto", text("自动", "Auto")], ["zh2en", "中 → EN"], ["en2zh", "EN → 中"]])}
+          {select("translate_direction", text("翻译方向", "Translation direction"), [["auto", text("自动（按句判断）", "Auto (per sentence)")], ["zh2en", text("中 → 英", "zh → en")], ["en2zh", text("英 → 中", "en → zh")]])}
           <div className="settings-field is-string">
-            <label className="settings-knob-label" htmlFor="captions-ark-model">{text("Ark 翻译模型", "Ark translation model")}</label>
+            <label className="settings-knob-label" htmlFor="captions-ark-model">{text("翻译模型（Ark model ID）", "Translation model (Ark model ID)")}</label>
             <div className="settings-knob-controls">
               <input id="captions-ark-model" className="settings-input" type="text" defaultValue={cap.ark_model} spellCheck={false}
                 onBlur={(e) => { if (e.target.value.trim() && e.target.value.trim() !== cap.ark_model) void set({ ark_model: e.target.value.trim() }); }} />
             </div>
           </div>
           <div className="settings-field is-number">
-            <label className="settings-knob-label" htmlFor="captions-font">{text(`字号 ${cap.font_size}`, `Font size ${cap.font_size}`)}</label>
+            <label className="settings-knob-label" htmlFor="captions-font"><span>{text("字号", "Font size")}</span><span className="settings-range-value">{cap.font_size}</span></label>
             <div className="settings-knob-controls">
               <input id="captions-font" type="range" min={14} max={40} step={1} value={cap.font_size} onChange={(e) => void set({ font_size: Number(e.target.value) })} />
-              <label htmlFor="captions-opacity" className="settings-knob-label">{text(`不透明度 ${Math.round(cap.opacity * 100)}%`, `Opacity ${Math.round(cap.opacity * 100)}%`)}</label>
+              <label htmlFor="captions-opacity" className="settings-knob-label"><span>{text("背景不透明度", "Background opacity")}</span><span className="settings-range-value">{Math.round(cap.opacity * 100)}%</span></label>
               <input id="captions-opacity" type="range" min={0.2} max={1} step={0.05} value={cap.opacity} onChange={(e) => void set({ opacity: Number(e.target.value) })} />
             </div>
           </div>

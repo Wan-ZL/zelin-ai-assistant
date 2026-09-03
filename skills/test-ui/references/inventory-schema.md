@@ -5,7 +5,7 @@ Every adapter and every sensor speaks this. `testui_common.validate_inventory` c
 ```json
 {
   "schemaVersion": 1,
-  "producer": {"adapter": "web-source | web-playwright | project:extract_native_inventory | frozen-file", "mode": "runtime | source | frozen", "tool": "…", "skill": "test-ui 0.1.0", "argv": []},
+  "producer": {"adapter": "web-source | web-playwright | project:extract_native_inventory | frozen-file", "mode": "runtime | source | frozen", "tool": "…", "skill": "test-ui <version>", "argv": []},
   "side": {"role": "subject | reference", "kind": "dir | git | url | app | inventory | alias | design-system", "locator": "…", "resolved": "sha:… | path:… | url:… | sha256:…", "stack": "web-dom | swiftui | static-html", "commit": "…", "dirty": false,
            "seed": {"recipe": ["…"], "seeded_by_skill": true, "marker": {"path": "/api/health", "expr": ".demo == true"}}},
   "dims": {"themes": ["light", "dark"], "default_theme": "light", "viewports": [{"name": "desktop", "w": 1440, "h": 900}], "languages": ["zh", "en"], "scenes": ["initial"], "flags": ["default"]},
@@ -31,7 +31,7 @@ Every adapter and every sensor speaks this. `testui_common.validate_inventory` c
 }
 ```
 
-Rules: roles are WAI-ARIA names (`testui_common.ALL_ROLES`); the id grammar is the parity contract's (`<kind>:<screen>:<role>:<slug>[#n]`, `slugify` = lowercase, non-alphanumerics (CJK kept) → `-`, ≤ 48); the pairing key is `(screen family, role, slug)`; `states` keys are `theme::viewport::language::state` at runtime and `source` / `frozen` otherwise; `topology.side ∈ {left, right, top, bottom, inside, null}`; `items[].dynamic` marks runtime-named items (never paired). Frozen native items keep their native id (`control:about:label:about`) and carry the mapped ARIA role in `key.role` so the ledgers stay in the project's grammar.
+Rules: roles are WAI-ARIA names (`testui_common.ALL_ROLES`); the id grammar is the parity contract's (`<kind>:<screen>:<role>:<slug>[#n]`, `slugify` = lowercase, non-alphanumerics (CJK kept) → `-`, ≤ 48); the pairing key is `(screen family, role, slug)`; `states` keys are `theme::viewport::language::state` at runtime and `source` / `frozen` otherwise; `topology.side ∈ {left, right, top, bottom, inside, null}`; `items[].dynamic` marks runtime-named items (never paired): their id slug is `dynamic`, `visible_text` is null and the `role:slug` segment they contribute to descendants' `topology.parent` is `role:dynamic`. Frozen native items keep their native id (`control:about:label:about`) and carry the mapped ARIA role in `key.role` so the ledgers stay in the project's grammar.
 
 ## Tokens document
 

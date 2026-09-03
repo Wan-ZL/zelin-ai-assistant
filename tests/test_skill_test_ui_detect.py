@@ -75,6 +75,24 @@ class ThresholdsTestCase(unittest.TestCase):
             self.assertEqual((current["source"], current["max_changed_pct"]), ("qa/gates.toml [ui]", 0.01))
             self.assertEqual(base["source"], "skill-defaults")  # git show fails in the fake → base = defaults
 
+    def test_base_copies_come_from_git_show_and_bad_base_json_is_empty(self):
+        """merge-base 的 gates.toml / config.json 经 `git show <sha>:path` 读；base config.json 不是 JSON → 当空配置
+        （阈值仍来自 base 的 gates.toml），不崩。"""
+        rules = [("show cafebabe:qa/gates.toml", (0, "[ui]\nmax_changed_pct = 0.05\n", "")),
+                 ("show cafebabe:ui/parity/config.json", (0, "{not json", ""))] + kit.git_ok_rules()
+        with tempfile.TemporaryDirectory() as tmp:
+            current, base, base_cfg = detect_ui.detect_thresholds(kit.FakeRunner(rules), tmp, {}, "cafebabe")
+            self.assertEqual((current["source"], base["source"], base["max_changed_pct"], base_cfg), ("skill-defaults", "qa/gates.toml [ui]", 0.05, {}))
+            good = [("show cafebabe:ui/parity/config.json", (0, '{"masks": {"board": [[0, 0, 1, 1]]}}', ""))] + kit.git_ok_rules()
+            _cur, _base, base_cfg = detect_ui.detect_thresholds(kit.FakeRunner(good), tmp, {}, "cafebabe")
+            self.assertEqual(base_cfg, {"masks": {"board": [[0, 0, 1, 1]]}})
+
+    def test_root_of_common_dir(self):
+        self.assertEqual(detect_ui._root_of(["web/src/a.tsx", "web/src/pages/b.tsx"], (".tsx",)), "web/src")
+        self.assertEqual(detect_ui._root_of(["web/src/a.tsx"], (".tsx",)), "web/src")
+        self.assertEqual(detect_ui._root_of(["a.html"], (".html",)), ".")
+        self.assertIsNone(detect_ui._root_of(["a.py"], (".tsx",)))
+
 
 class DiffAndTriggersTestCase(unittest.TestCase):
     def test_docs_only_diff_fires_nothing(self):

@@ -71,6 +71,22 @@ class SidesTestCase(unittest.TestCase):
             with self.assertRaises(ref.ReferenceError):
                 ref.resolve_side(tmp, "dir:/nonexistent", cfg)
 
+    def test_relative_inventory_and_dir_resolve_under_the_repo(self):
+        """`inventory:ui/parity/native-inventory.json` / `dir:other`（相对路径）以 repo 为基——之前相对 inventory 路径是一条
+        TypeError traceback（exit 1），不是 exit 2 + 候选；不存在的相对路径照样 ReferenceError。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit.make_repo(tmp, {"ui/parity/native-inventory.json": "{}", "other/x.html": "<main></main>"})
+            cfg, _ = ref.load_config(tmp)
+            inventory = ref.resolve_side(tmp, "inventory:ui/parity/native-inventory.json", cfg)
+            self.assertEqual(inventory["inventory"], os.path.join(tmp, "ui/parity/native-inventory.json"))
+            directory = ref.resolve_side(tmp, "dir:other", cfg)
+            self.assertEqual(directory["directory"], os.path.join(tmp, "other"))
+            self.assertEqual(directory["resolved"], "path:%s" % os.path.join(tmp, "other"))
+            with self.assertRaises(ref.ReferenceError):
+                ref.resolve_side(tmp, "inventory:ui/parity/missing.json", cfg)
+            with self.assertRaises(ref.ReferenceError):
+                ref.resolve_side(tmp, "dir:nope", cfg)
+
     def test_alias_missing_inventory_gets_hint(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = {"references": {"v1": {"inventory": "gone.json", "produced_by": ["scripts/ui/x.py"], "mode": "frozen"}}}
@@ -118,6 +134,9 @@ class MarkerTestCase(unittest.TestCase):
         self.assertFalse(ref.probe_marker("http://127.0.0.1:1", marker, fetch=lambda url: '{"demo": false}'))
         self.assertFalse(ref.probe_marker("http://127.0.0.1:1", marker, fetch=lambda url: "not json"))
         self.assertFalse(ref.probe_marker("http://example.com", marker, fetch=lambda url: '{"demo": true}'))  # non-loopback refused
+        self.assertTrue(ref.probe_marker("http://[::1]:8080/", marker, fetch=lambda url: '{"demo": true}'))  # IPv6 loopback is loopback
+        self.assertFalse(ref.probe_marker("http://[2001:db8::1]:80/", marker, fetch=lambda url: '{"demo": true}'))
+        self.assertFalse(ref.probe_marker("http://127.0.0.1.evil.com/", marker, fetch=lambda url: '{"demo": true}'))
         self.assertFalse(ref.probe_marker("http://127.0.0.1:1", None, fetch=lambda url: '{"demo": true}'))
         nested = {"path": "/h", "expr": ".seed.demo == \"yes\""}
         self.assertTrue(ref.probe_marker("http://localhost:9", nested, fetch=lambda url: '{"seed": {"demo": "yes"}}'))

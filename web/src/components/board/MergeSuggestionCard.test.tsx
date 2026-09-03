@@ -64,7 +64,7 @@ afterEach(cleanup);
 describe("MergeSuggestionCard", () => {
   it("done → accept posts merge_apply with the MS id; dismiss posts merge_dismiss", async () => {
     renderEn(<MergeSuggestionCard suggestion={suggestion()} />);
-    expect(screen.getByText("Merge")).toBeTruthy();
+    expect(screen.getByText("Suggest merging the secondary into the primary")).toBeTruthy();
     expect(screen.getByText("fold P-2 into P-1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({ action: "merge_apply", comment: null, id: "MS-1" }));
@@ -73,10 +73,11 @@ describe("MergeSuggestionCard", () => {
   it("failed → only dismiss + merge anyway; merge anyway → merge_force then merge_dismiss", async () => {
     renderEn(<MergeSuggestionCard suggestion={suggestion({ status: "failed", verdict: null, error: "timed out" })} />);
     expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
-    expect(screen.getByText(/Analysis failed: timed out/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Merge anyway…" }));
+    expect(screen.getByText("Merge analysis failed")).toBeTruthy();
+    expect(screen.getByText(/timed out/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Merge anyway" }));
     fireEvent.click(screen.getByRole("radio", { name: /P-2/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Merge into P-2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Force-merge" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledTimes(2));
     expect(vi.mocked(postAction).mock.calls[0][0]).toEqual({ action: "merge_force", ids: ["P-1", "P-2"], primary: "P-2" });
     expect(vi.mocked(postAction).mock.calls[1][0]).toEqual({ action: "merge_dismiss", comment: null, id: "MS-1" });
@@ -84,12 +85,12 @@ describe("MergeSuggestionCard", () => {
 
   it("analyzing shows the spinner and no decision buttons", () => {
     renderEn(<MergeSuggestionCard suggestion={suggestion({ status: "analyzing", verdict: null })} />);
-    expect(screen.getByText(/AI is analyzing/)).toBeTruthy();
+    expect(screen.getByText("Analyzing merge…")).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("helpers: verdict labels, confidence chip, titles lookup", () => {
-    expect(verdictLabel("keep_separate", en)).toBe("Keep separate");
+    expect(verdictLabel("keep_separate", en)).toBe("Suggest keeping them separate");
     expect(verdictLabel("weird", en)).toBe("weird");
     expect(confidenceChip("high")).toContain("chip-success");
     expect(confidenceChip("low")).toContain("chip-warning");
@@ -113,7 +114,7 @@ describe("SelectionBar", () => {
     toggleSelected("P-2");
     toggleSelected("P-1");
     await screen.findByText("2 selected");
-    fireEvent.click(screen.getByRole("button", { name: "Request merge review (2)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest merge (2)" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({ action: "merge_review", ids: ["P-2", "P-1"] }));
   });
 
@@ -171,8 +172,8 @@ describe("FeedbackDialog (§29)", () => {
     const { FeedbackButton } = await import("../chrome/FeedbackButton");
     window.localStorage.removeItem("zai.feedbackPublish");
     renderEn(<FeedbackButton />);
-    fireEvent.click(screen.getByRole("button", { name: "Feedback" }));
-    fireEvent.change(screen.getByPlaceholderText("One sentence is enough…"), { target: { value: "please add dark mode" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    fireEvent.change(screen.getByPlaceholderText("Your feedback…"), { target: { value: "please add dark mode" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(postAction).toHaveBeenCalledWith({ action: "feedback", text: "please add dark mode", publish: false, ids: [] }));
     await screen.findByText(/Feedback recorded/);

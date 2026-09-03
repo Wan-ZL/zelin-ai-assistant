@@ -1,7 +1,10 @@
 // UI 对齐判例（CONTRACT §66.2）—— 由 ui/parity/native-inventory.json 驱动，不手写列表。
 // 原生 mac/Sources（D3 冻结）的每个 gated `control:*` 条目在这里变成一条 it()：
-//   · 不在 pending/waivers 上 → 断言标签「在」：用 demo fixture 渲染看板 / 回收站 / 设置页
-//     （zh 与 en 各一遍）+ 把每颗按钮点一遍收集弹窗文案，按 accessible name / 自身文本精确匹配；
+//   · 不在 pending/waivers 上 → 断言标签「在」：用 demo fixture 渲染看板 / 回收站 / 设置 / 关于 / 问问助手 /
+//     依赖检查 / 录制与数据接入 七个面（zh 与 en 各一遍；看板另渲染一遍「空板 + 搜索中 + 后台服务卡住」
+//     收空态与横幅文案）+ 把每颗按钮点一遍收集弹窗文案，按 accessible name / 自身文本精确匹配；
+//     时钟冻结在 fixture 的 FIXED_NOW（相对时间词表才确定）；装一个假 zaiShell 桥（壳里才渲染的
+//     录制 / 字幕 / 登录时启动 开关也要判）；server 目录（设置 / 凭证）用 fixture 快照（文案 server-owned）。
 //   · 在 ui/parity/pending.txt 上 → it 标题带 ` [pending]`，断言「不在」——补齐后不划账即红
 //     （与 qa/*_baseline.txt 同一 shrink-only 语义）；
 //   · 在 ui/parity/waivers.txt 上 → it.skip（报告计 WAIVED）。
@@ -12,23 +15,38 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import inventory from "../../ui/parity/native-inventory.json";
 import demoBoard from "../../ui/parity/fixtures/demo-board.json";
 import demoLanes from "../../ui/parity/fixtures/lanes.json";
+import demoSettings from "../../ui/parity/fixtures/settings.json";
+import demoSecrets from "../../ui/parity/fixtures/secrets.json";
 import pendingText from "../../ui/parity/pending.txt?raw";
 import waiversText from "../../ui/parity/waivers.txt?raw";
 import {
+  fetchAbout,
+  fetchAskHistory,
   fetchBoard,
   fetchCard,
   fetchClaudeCodeDefault,
+  fetchClaudeSessions,
+  fetchDiagnostics,
   fetchHealth,
   fetchLanes,
+  fetchMcp,
   fetchModelsSettings,
+  fetchSecrets,
+  fetchSettingsCatalog,
+  fetchSetup,
 } from "./api";
 import { AppShell } from "./components/shell/AppShell";
 import { FilterBar } from "./components/chrome/FilterBar";
 import { DetailDrawer } from "./components/detail/DetailDrawer";
 import { LanguageContext, type Language } from "./i18n";
+import { AboutPage } from "./pages/AboutPage";
+import { AskPage } from "./pages/AskPage";
 import { BoardPage } from "./pages/BoardPage";
+import { DiagnosticsPage } from "./pages/DiagnosticsPage";
+import { IngestPage } from "./pages/IngestPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TrashPage } from "./pages/TrashPage";
+import { resetShellBridgeForTests, type ShellState } from "./shellBridge";
 import {
   refreshBoard,
   refreshHealth,
@@ -36,9 +54,10 @@ import {
   refreshSettings,
   resetStoreForTests,
   selectCard,
+  setFilters,
   setLanguage,
 } from "./store";
-import type { Board, ClaudeCodeDefault, HealthSnapshot, ModelsSettings } from "./types";
+import type { AboutInfo, Board, ClaudeCodeDefault, DiagnosticsSnapshot, HealthSnapshot, ModelsSettings, SetupSnapshot } from "./types";
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
@@ -50,7 +69,33 @@ vi.mock("./api", async (importOriginal) => {
     fetchLanes: vi.fn(),
     fetchModelsSettings: vi.fn(),
     fetchClaudeCodeDefault: vi.fn(),
+    fetchSettingsCatalog: vi.fn(),
+    fetchSecrets: vi.fn(),
+    fetchSetup: vi.fn(),
+    fetchAbout: vi.fn(),
+    fetchDiagnostics: vi.fn(),
+    fetchMcp: vi.fn(),
+    fetchClaudeSessions: vi.fn(),
+    fetchAskHistory: vi.fn(),
+    fetchDoctor: vi.fn().mockResolvedValue({ ok: true, checks: [], home: "/h", rc: 0, fast: false, ran_at: "2026-09-02T11:59:00Z" }),
+    fetchLogTail: vi.fn().mockResolvedValue({ name: "actd.log", path: "/h/state/logs/actd.log", size: 12, lines: ["ok"], truncated: false }),
+    fetchSlackManifest: vi.fn().mockResolvedValue({ manifest: "{}", path: "config/slack-app-manifest.json" }),
+    fetchSkills: vi.fn().mockResolvedValue({ skills: [], skills_dir: "/h/.claude/skills", repo_skills_dir: "/r/skills", state_path: "/h/state/skills.json" }),
+    fetchMaterials: vi.fn().mockResolvedValue({ items: [], status: "open", counts: { open: 0, total: 0 } }),
+    fetchRecapSettings: vi.fn().mockResolvedValue({ enabled: true, default_language: "zh", slack_draft_enabled: false, languages: ["auto", "zh", "en"], source: {} }),
     putModelsSettings: vi.fn().mockResolvedValue({}),
+    putSettingsSection: vi.fn().mockResolvedValue({}),
+    putSecret: vi.fn().mockResolvedValue({}),
+    // 隔一个 macrotask 再回：保存 → 「已保存，验证中…」/「验证中…」这一拍才收得到（下一拍收「验证通过」）
+    verifySecret: vi.fn(() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, network: false, detail: "ok", extra: {} }), 0))),
+    postSetupStep: vi.fn().mockResolvedValue({ ok: true, setup: { needed: false, done: true } }),
+    postUpdateCheck: vi.fn().mockResolvedValue({ ok: true, checked_at: "2026-09-02T11:00:00Z", update_available: false, latest: "0.48.30" }),
+    postAsk: vi.fn().mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 }),
+    postTerminal: vi.fn().mockResolvedValue({ ok: true }),
+    postUninstallTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && bash uninstall.sh", command_file: "/tmp/u.command" }),
+    postMaintainerTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && claude", command_file: "/tmp/m.command", cwd: "/r" }),
+    postRepairActd: vi.fn().mockResolvedValue({ ok: true }),
+    postSelfImproveResume: vi.fn().mockResolvedValue({ ok: true, paused: false, was_paused: true }),
     postClaudeCodeDefault: vi.fn().mockResolvedValue({ model: "x", previous: null, backup: null, path: "p" }),
     postAction: vi.fn().mockResolvedValue({ ok: true }),
     postReveal: vi.fn().mockResolvedValue({ ok: true }),
@@ -69,9 +114,9 @@ interface ControlItem {
 }
 
 const LANGUAGES: Language[] = ["zh", "en"];
-// web 已有的页面 = 渲染面；原生 screen 前缀 → 该面。web 新开页面（ask / deps / about…）时
-// 在这两处登记，它的原生条目才会按页判定；未登记的 screen 在全部面的并集里找（"any"）。
-const SURFACES = ["board", "trash", "settings"] as const;
+// web 已有的页面 = 渲染面；原生 screen 前缀 → 该面。web 新开页面时在这两处登记，它的原生条目
+// 才会按页判定；未登记的 screen（permissions / setup_wizard…）在全部面的并集里找（"any"）。
+const SURFACES = ["board", "trash", "settings", "about", "ask", "deps", "ingest"] as const;
 type Surface = (typeof SURFACES)[number];
 const SCREEN_SURFACE: Array<[prefix: string, surface: Surface]> = [
   ["settings", "settings"],
@@ -81,6 +126,10 @@ const SCREEN_SURFACE: Array<[prefix: string, surface: Surface]> = [
   ["window", "board"],
   ["rail", "board"],
   ["shared", "board"],
+  ["about", "about"],
+  ["ask", "ask"],
+  ["deps", "deps"],
+  ["ingest", "ingest"],
 ];
 
 function surfaceOf(screen: string): Surface | "any" {
@@ -139,10 +188,9 @@ function matcher(label: string): (candidate: string) => boolean {
   return (c) => re.test(c);
 }
 
-const found: Record<Language, Record<Surface, Set<string>>> = {
-  zh: { board: new Set(), trash: new Set(), settings: new Set() },
-  en: { board: new Set(), trash: new Set(), settings: new Set() },
-};
+const emptyPools = (): Record<Surface, Set<string>> =>
+  Object.fromEntries(SURFACES.map((s) => [s, new Set<string>()])) as Record<Surface, Set<string>>;
+const found: Record<Language, Record<Surface, Set<string>>> = { zh: emptyPools(), en: emptyPools() };
 
 function isFound(language: Language, surface: Surface | "any", label: string): boolean {
   const test = matcher(label);
@@ -178,16 +226,105 @@ const ccDefault: ClaudeCodeDefault = {
   parseable: true,
   canonical: false,
 };
+/** 第二遍看板：后台服务卡住（PipelineBanner 的修复 / 诊断动词）+ 空板 + 搜索中（空态文案） */
+const stalledHealth: HealthSnapshot = {
+  ...health,
+  verdict: "stalled",
+  heartbeat: { age_s: 900, phase: "dispatch", pid: 4242, interval: 10, stale_after_s: 90, stale: true },
+  loop_health: { consecutive_failures: 4, last_error: "boom" },
+};
+const emptyBoard = {
+  ...demoBoard,
+  needs_approval: [], running: [], needs_input: [], review: [], completed: [], debt: [], trash: [], archived: [], merge_suggestions: [],
+  counts: { needs_approval: 0, running: 0, needs_input: 0, review: 0, completed: 0, debt: 0, trash: 0, archived: 0 },
+} as unknown as Board;
+const setup: SetupSnapshot = { needed: false, done: true, config_exists: true, config_example_exists: true, secrets: {}, home: "/Users/demo/zai", protected_location: false };
+const about: AboutInfo = {
+  version: "0.48.29", home: "/Users/demo/zai", repo: "/Users/demo/Projects/zelin-ai-assistant",
+  update_available: { latest: "0.48.30", url: "https://github.com/Wan-ZL/zelin-ai-assistant/releases/tag/v0.48.30" },
+  update_check: { checked_at: "2026-09-02T11:00:00Z" },
+} as unknown as AboutInfo;
+const diagnostics: DiagnosticsSnapshot = {
+  doctor: { ok: true, checks: [{ name: "python", status: "OK", detail: "3.9", fix: null }, { name: "claude", status: "FAIL", detail: "missing", fix: "install" }], home: "/h", rc: 0, fast: true, ran_at: "2026-09-02T11:59:00Z" },
+  health, deploy_state: null, radar_sources: demoBoard.radar_sources ?? null, install_report: null, registry_backend: "yaml",
+  logs: [{ name: "actd.log", path: "/h/state/logs/actd.log", size: 2048, mtime: 1788350000 }],
+} as unknown as DiagnosticsSnapshot;
+/** 假 zaiShell 桥：录制开着、字幕开着且已暂停（header 两开关 + 设置录制 / 字幕区 + 关于页壳区都有得渲染） */
+const shellState: ShellState = {
+  recording: { available: true, on: true, mode: "screen_audio", engine_running: true, diagnosis: null, note: "", tcc_lost: false, screen_permission: true, resume_mode: "screen" },
+  captions: { available: true, on: true, engine: "doubao", paused: true, engine_dead: false, status_text: "", status_is_error: false, source: "both", translate: true, translate_direction: "auto", apple_locale: "zh", ark_model: "doubao-seed-1-6-flash", font_size: 24, opacity: 0.7 },
+  permissions: { screen: "granted", microphone: "unknown", notifications: "granted" },
+  launch_at_login: true,
+  hotkey: "⌃⌥Space",
+  language: "en",
+};
+function installFakeShell() {
+  window.webkit = { messageHandlers: { zaiShell: { postMessage: async () => shellState } } };
+}
 
-/** 把页面上每颗按钮点一遍（弹窗 / 折叠详情 / 菜单展开后的文案也要收），失败的点击静默跳过。 */
-function clickEverything(root: ParentNode) {
-  root.querySelectorAll("button").forEach((button) => {
+function clickAll(buttons: Iterable<HTMLButtonElement>) {
+  for (const button of buttons) {
     try {
       fireEvent.click(button);
     } catch {
       /* 某些按钮依赖 jsdom 没有的 API（clipboard / navigation）——忽略，只收文案 */
     }
+  }
+}
+
+/** 只开弹窗 / 菜单、不提交动作的按钮（原生同名动词）：先点它们，弹窗文案才收得到 */
+const OPENS_DIALOG = /拒绝|Reject|修改|Comment|打回|Send Back|停止|Stop|提建议|feedback|改名|Rename|强制合并|Force-merge|仍然合并|Merge anyway|评论|回答|Answer|清理积压|Clean up|不需要执行|No need to run|退回|Discard|选择|Select/;
+
+/** 把页面上每颗按钮点一遍（弹窗 / 折叠详情 / 菜单展开后的文案也要收），失败的点击静默跳过。
+ *  三轮：① 「展开详情 ▸」② 开弹窗的按钮 ③ 其余。动作按钮（批准 / 暂缓…）会把卡切到 pending 态并
+ *  卸掉整个动作行——之后再点同卡的按钮就点在脱离 DOM 的旧节点上，所以提交类放最后；
+ *  ③ 跳过 toggle，别把刚展开的又收起。 */
+/** 给每个空输入框填点字：提交类按钮（提问 / 保存 / 发送）在空输入时是 disabled 的；数字框填 -1 让校验句出现；
+ *  搜索框填一个不可能命中的词让「无匹配」空态出现。 */
+function fillInputs(root: ParentNode, searches: boolean) {
+  root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[type="text"], input[type="password"], input:not([type]), textarea').forEach((el) => {
+    if (!el.value) fireEvent.change(el, { target: { value: "demo" } });
   });
+  root.querySelectorAll<HTMLInputElement>('input[type="number"]').forEach((el) => fireEvent.change(el, { target: { value: "-1" } }));
+  // 搜索框会把整块列表过滤空——只在「空态」那几遍填（看板主遍要让卡都在场）
+  if (!searches) return;
+  root.querySelectorAll<HTMLInputElement>('input[type="search"]').forEach((el) => {
+    if (!el.value) fireEvent.change(el, { target: { value: "zzz-no-such-card" } });
+  });
+}
+
+function clickEverything(root: ParentNode, pool: Set<string>, searches = false) {
+  const all = () => Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
+  fillInputs(root, searches);
+  clickAll(all().filter((b) => b.classList.contains("card-details-toggle")));
+  collectLabels(document.body, pool);
+  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && OPENS_DIALOG.test(b.textContent ?? "")));
+  collectLabels(document.body, pool); // 弹窗开着时收：弹窗标题 / 选项 / 提交键
+  clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && !OPENS_DIALOG.test(b.textContent ?? "")));
+  collectLabels(document.body, pool); // 点击后立刻收：in-flight 的忙态文案（保存中… / 正在准备诊断包…）
+  fillInputs(root, searches); // 点开后才出现的输入框（书立条里的搜索框）
+  collectLabels(document.body, pool);
+}
+
+const PAGES: Record<Surface, () => JSX.Element> = {
+  board: () => <BoardPage />,
+  trash: () => <TrashPage />,
+  settings: () => <SettingsPage />,
+  about: () => <AboutPage />,
+  ask: () => <AskPage />,
+  deps: () => <DiagnosticsPage />,
+  ingest: () => <IngestPage />,
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** 渲染 + 让页内的 useEffect 数据拉取（mock 即时 resolve）落地：几拍 microtask 足够。
+ *  每拍都收一遍标签：保存 → 验证 → 通过 这类多段异步的中间态文案（已保存，验证中… / 验证中…）只在某一拍存在。 */
+async function settle(pool?: Set<string>) {
+  for (let i = 0; i < 4; i += 1) {
+    await tick();
+    if (pool) collectLabels(document.body, pool);
+  }
 }
 
 async function renderSurface(language: Language, page: Surface) {
@@ -196,26 +333,61 @@ async function renderSurface(language: Language, page: Surface) {
   const view = render(
     <LanguageContext.Provider value={language}>
       <AppShell searchSlot={<FilterBar />}>
-        {page === "trash" ? <TrashPage /> : page === "settings" ? <SettingsPage /> : <BoardPage />}
+        {PAGES[page]()}
         <DetailDrawer />
       </AppShell>
     </LanguageContext.Provider>,
   );
-  if (page === "settings") {
-    await refreshSettings();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
+  if (page === "settings") await refreshSettings();
+  await settle(pool);
   collectLabels(document.body, pool);
-  clickEverything(view.container);
+  clickEverything(view.container, pool, page !== "board");
+  await settle(pool);
   if (page === "board") {
-    // 详情抽屉：选中 hero 卡后再收一遍（抽屉里的字段标题 / 动作）
-    selectCard(demoBoard.needs_approval[0].id);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    collectLabels(document.body, pool);
-    clickEverything(document.body);
+    // 详情抽屉：选中 hero 卡、再选一张待验收卡（抽屉里的字段标题 / 动作 / 所属列章）
+    for (const id of [demoBoard.needs_approval[0].id, demoBoard.review[0].id]) {
+      selectCard(id);
+      await settle(pool);
+      collectLabels(document.body, pool);
+      clickEverything(document.body, pool);
+      await settle(pool);
+    }
   }
   collectLabels(document.body, pool);
   cleanup();
+}
+
+/** 第二 / 三遍看板与回收站：空板 + 搜索中 + 后台服务「卡住」/「没在跑」且一键修复失败 →
+ *  空态文案（无匹配卡片 / 回收站为空）与横幅动词（一键修复 / 启动后台服务 / 再试一次 / 手动命令） */
+async function renderEmptyBoardVariants(language: Language) {
+  const { postRepairActd } = await import("./api");
+  // 这两遍里一键修复永远失败（横幅的失败态动词才渲染）；遍完恢复成功态
+  vi.mocked(postRepairActd).mockRejectedValue(new Error("launchctl kickstart failed (exit 113)"));
+  for (const health2 of [stalledHealth, { ...stalledHealth, verdict: "stale", heartbeat: null }]) {
+    vi.mocked(fetchBoard).mockResolvedValueOnce(emptyBoard);
+    vi.mocked(fetchHealth).mockResolvedValueOnce(health2);
+    await refreshBoard();
+    await refreshHealth();
+    setFilters({ search: "zzz" });
+    for (const page of ["board", "trash"] as const) {
+      const pool = found[language][page];
+      window.history.replaceState(null, "", page === "board" ? "/" : "/?page=trash");
+      const view = render(
+        <LanguageContext.Provider value={language}>
+          <AppShell searchSlot={<FilterBar />}>{PAGES[page]()}<DetailDrawer /></AppShell>
+        </LanguageContext.Provider>,
+      );
+      await settle(pool);
+      collectLabels(document.body, pool);
+      clickEverything(view.container, pool, true);
+      await settle(pool);
+      await settle(pool); // 一键修复的 reject → 失败态文案再晚一拍也收得到
+      collectLabels(document.body, pool);
+      cleanup();
+    }
+    setFilters({ search: "" });
+  }
+  vi.mocked(postRepairActd).mockResolvedValue({ ok: true, label: "com.zelin.aiassistant.actd", action: "kickstart" });
 }
 
 beforeAll(async () => {
@@ -227,14 +399,27 @@ beforeAll(async () => {
     configurable: true,
     value: { writeText: () => Promise.resolve() },
   });
+  // 时钟冻结在 fixture 的 FIXED_NOW：相对时间（刚刚 / N分钟前 / N天）与截止倒数才是确定的
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(demoBoard.generated_at));
+  installFakeShell();
   vi.mocked(fetchBoard).mockResolvedValue(demoBoard as unknown as Board);
-  vi.mocked(fetchCard).mockImplementation(async (id: string) => ({ id, notes: "demo notes", log_tail: "ok" }));
+  vi.mocked(fetchCard).mockImplementation(async (id: string) => ({ id, notes: "demo notes\n2026-09-01T10:00:00Z 追加：又问了一次", log_tail: "ok" }));
   vi.mocked(fetchHealth).mockResolvedValue(health);
   vi.mocked(fetchLanes).mockResolvedValue(demoLanes);
   vi.mocked(fetchModelsSettings).mockResolvedValue(models);
   vi.mocked(fetchClaudeCodeDefault).mockResolvedValue(ccDefault);
+  vi.mocked(fetchSettingsCatalog).mockResolvedValue(demoSettings as never);
+  vi.mocked(fetchSecrets).mockResolvedValue(demoSecrets as never);
+  vi.mocked(fetchSetup).mockResolvedValue(setup);
+  vi.mocked(fetchAbout).mockResolvedValue(about);
+  vi.mocked(fetchDiagnostics).mockResolvedValue(diagnostics);
+  vi.mocked(fetchMcp).mockResolvedValue({ scopes: [{ scope: "user", path: "/Users/demo/.claude.json", exists: true, parseable: true, servers: [{ name: "slack", transport: "stdio", command: "npx", args: ["slack-mcp"], env_count: 1, incomplete: false }, { name: "broken", transport: "stdio", command: "", args: [], env_count: 0, incomplete: true }] }, { scope: "project", path: "/h/.mcp.json", exists: false, parseable: true, servers: [] }] } as never);
+  vi.mocked(fetchClaudeSessions).mockResolvedValue({ ok: true, window: 7, root: "/Users/demo/.claude/projects", candidates: [{ session_id: "abc12345-0000-4000-8000-000000000001", project: "example-bench", title: "修 flaky 测试", last_activity: "2026-09-01T10:00:00Z", ended_waiting_on_user: true, answered: false, session_mismatch: false }, { session_id: "abc12345-0000-4000-8000-000000000002", project: "inkweld", title: "问答", last_activity: "2026-08-30T10:00:00Z", ended_waiting_on_user: false, answered: true, session_mismatch: false }] } as never);
+  vi.mocked(fetchAskHistory).mockResolvedValue({ items: [{ q: "为什么没有新卡片？", a: "雷达每 3 分钟扫一次。", citation: "docs/TROUBLESHOOTING.md", ts: "2026-09-02T11:30:00Z", elapsed_s: 4.2 }] });
   for (const language of LANGUAGES) {
     resetStoreForTests();
+    resetShellBridgeForTests();
     setLanguage(language);
     await refreshBoard();
     await refreshHealth();
@@ -242,12 +427,29 @@ beforeAll(async () => {
     for (const page of SURFACES) {
       await renderSurface(language, page);
     }
+    await renderEmptyBoardVariants(language);
   }
 });
 
-afterAll(cleanup);
+afterAll(() => {
+  cleanup();
+  vi.useRealTimers();
+  delete window.webkit;
+});
 
 describe("native → web control parity (ui/parity/native-inventory.json)", () => {
+  // 调试用：VITE_PARITY_DEBUG=<文件路径> npx vitest run src/parity.test.tsx -t dump → 每个面收到的全部标签倒进该文件
+  const debugPath = (import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_PARITY_DEBUG;
+  if (debugPath) {
+    it("dump", async () => {
+      const fsModule = "node:fs";
+      const fs = (await import(/* @vite-ignore */ fsModule)) as { writeFileSync: (path: string, text: string) => void };
+      const out: Record<string, unknown> = {};
+      for (const surface of SURFACES) out[surface] = { zh: Array.from(found.zh[surface]).sort(), en: Array.from(found.en[surface]).sort() };
+      fs.writeFileSync(debugPath, JSON.stringify(out, null, 1));
+    });
+  }
+
   it("清单与账本都读到了（防空转：0 条 it 也会「全绿」）", () => {
     expect(controls.length).toBeGreaterThan(100);
     expect(found.zh.board.size).toBeGreaterThan(50);

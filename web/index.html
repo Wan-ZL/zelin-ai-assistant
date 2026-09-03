@@ -8,15 +8,24 @@
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>Zelin's AI Assistant</title>
     <script>
-      // 首帧前应用主题偏好（localStorage 覆写 > 系统），避免暗色闪白（FOUC）。
-      // key: zai.theme = "light" | "dark"；未设置时交给 tokens.css 的 prefers-color-scheme。
+      // 首帧前应用主题偏好，避免闪色（FOUC）。key: zai.theme = "light" | "dark"。
+      // 默认浅色（CONTRACT §54.4 / §66.2 theme:default，owner 2026-09-02）：没有存储偏好时不跟随系统深色，
+      // 显式落 light；暗色只由顶栏切换按钮选择并持久化。
       (function () {
+        var theme = "light";
         try {
-          var theme = localStorage.getItem("zai.theme");
-          if (theme === "light" || theme === "dark") {
-            document.documentElement.dataset.theme = theme;
-          }
-        } catch (_) { /* localStorage 不可用时静默走系统偏好 */ }
+          var stored = localStorage.getItem("zai.theme");
+          if (stored === "light" || stored === "dark") theme = stored;
+        } catch (_) { /* localStorage 不可用：按默认浅色 */ }
+        if (theme === "dark") {
+          document.documentElement.dataset.theme = "dark";
+        } else {
+          document.documentElement.dataset.theme = "light";
+        }
+        // 设置 → 通用「看板动画」（原生 UserDefaults boardAnimations 同名键）：关了就首帧关，避免闪一下动效
+        try {
+          if (localStorage.getItem("boardAnimations") === "false") document.documentElement.dataset.boardAnimations = "off";
+        } catch (_) { /* 按默认开 */ }
       })();
       // 首帧前应用显示偏好缓存（字号 / 字重 / 描边，CONTRACT §54.1 第 12 项），避免 server 快照到达前字号跳变。
       // key: zai.display = {"text_size","text_weight","stroke"}（displayPrefs.ts 写）；值 → CSS 变量的映射在 tokens.css。

@@ -2,10 +2,15 @@
 """web/src/parity.test.tsx 用的 demo fixture（docs/CONTRACT.md §66.2）。
 
 vitest 跑在 jsdom 里，拿不到 python 与 server，所以把 scripts/demo_seed.py 的
-`initial` 场景（固定 now，确定性）连同 server/lanes.py 的列目录落成两份 JSON：
+`initial` 场景（固定 now，确定性）连同 server 的几张目录落成 JSON：
   ui/parity/fixtures/demo-board.json   —— dashboard.json 形（+ archived[] 两行：demo_seed
-                                          没有封存行，而看板右侧书立条要渲染它们）
+                                          没有封存行，而看板右侧书立条要渲染它们；+ 词表行
+                                          _vocab_rows：每列再加几行把卡面词表——状态词 / 难度 /
+                                          类型 / 截止 / tier 提示 / 分歧 / 回锅 / 已并入 / 合并建议
+                                          三态——都渲染出来，探针才判得到；探针只认渲染出的字）
   ui/parity/fixtures/lanes.json        —— GET /api/lanes 响应体（server.lanes.catalog()）
+  ui/parity/fixtures/settings.json     —— GET /api/settings（空 home = 全默认；文案 server-owned）
+  ui/parity/fixtures/secrets.json      —— GET /api/secrets（Anthropic 已保存、其余未设置）
 全部虚构数据（demo_seed 的人名/仓库均为虚构）。tests/test_ui_parity_fixture.py 钉
 「重跑零 diff」。
 
@@ -17,6 +22,8 @@ import argparse
 import datetime as dt
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -25,10 +32,13 @@ sys.path.insert(0, os.path.join(_HERE, "..", ".."))
 import demo_seed  # noqa: E402
 import ui_common as uc  # noqa: E402
 from server import lanes as server_lanes  # noqa: E402
+from server import paths, secrets_store, settings_catalog  # noqa: E402
 
 FIXTURES_DIR = os.path.join(uc.PARITY_DIR, "fixtures")
 BOARD_PATH = os.path.join(FIXTURES_DIR, "demo-board.json")
 LANES_PATH = os.path.join(FIXTURES_DIR, "lanes.json")
+SETTINGS_PATH = os.path.join(FIXTURES_DIR, "settings.json")
+SECRETS_PATH = os.path.join(FIXTURES_DIR, "secrets.json")
 FIXED_NOW = dt.datetime(2026, 9, 2, 12, 0, 0, tzinfo=dt.timezone.utc)
 
 
@@ -46,16 +56,155 @@ def _archived(now):
     ]
 
 
+def _epoch(now, **delta):
+    return int((now - dt.timedelta(**delta)).timestamp())
+
+
+def _vocab_proposals(now):
+    """提案列词表行：T0 自动执行 + 逾期 + 分歧 + 改进 / T2 需文字确认 + 今天截止 + 回锅新增 + 已并入 /
+    未分级 + 成本未知 + 常规难度 + 修改意见合并中（processing rework）。"""
+    src = [{"channel": "gmail", "date": "2026-08-30", "quote": "季度报告的图表能自动更新吗", "who": "sam.rivera"}]
+    return [
+        {"id": "P-131", "display_id": "P-131", "id_kind": "proposal", "title": "季度报告图表自动刷新",
+         "summary": "把季度报告里的四张图接到数据源，生成时自动刷新。", "tier": "T0", "tier_hint": "自动执行",
+         "hardness": "hard", "type": "code", "cost_usd": 3.5, "show_cost": True, "deadline": "2026-08-30",
+         "days_left": -3, "delivery_mode": "repo", "target_kind": "existing", "target_name": "example-bench",
+         "target_repo": "~/Projects/example-bench", "improvement_of": "R-111",
+         "disagreement": "研究员认为图表来源应改为 warehouse 视图，而不是直接读生产库。",
+         "plan": ["接数据源", "生成时刷新"], "dod": ["四张图数据与源一致"], "sources": src, "processing": False},
+        {"id": "P-132", "display_id": "P-132", "id_kind": "proposal", "title": "给全员发一封迁移说明邮件",
+         "summary": "以你的口吻起草迁移说明，发前你过一眼。", "tier": "T2", "tier_hint": "需文字确认",
+         "hardness": "soft", "type": "comms", "cost_usd": 80, "show_cost": True, "deadline": "2026-09-02",
+         "days_left": 0, "delivery_mode": "doc", "target_kind": "new", "target_name": "migration-notes",
+         "silent_merged": 2, "reraised": True, "reraised_note": "又有两个人在群里问同一件事",
+         "plan": ["起草", "你审阅"], "dod": ["邮件草稿在 outbox"], "sources": src, "processing": False},
+        {"id": "P-133", "display_id": "P-133", "id_kind": "proposal", "title": "整理 onboarding 文书清单",
+         "summary": "把入职文书按部门整理成一页。", "tier": None, "tier_hint": "未分级", "hardness": "soft",
+         "type": "paperwork", "cost_usd": None, "show_cost": True, "deadline": "2026-09-12", "days_left": 10,
+         "delivery_mode": "doc", "target_kind": "existing", "target_name": "your-workbench",
+         "target_repo": "~/Projects/your-workbench", "plan": ["收集", "整理"], "dod": ["一页清单"],
+         "sources": src, "processing": False},
+        {"id": "P-134", "display_id": "P-134", "id_kind": "proposal", "title": "评审新的 API 设计稿",
+         "summary": "按你的修改意见重提中。", "tier": "T1", "tier_hint": "一键可批", "hardness": "hard",
+         "type": "review", "processing": True, "rework": True, "sources": src},
+    ]
+
+
+def _vocab_running(now):
+    """运行中列词表行：已派发 / 排队中 / 空闲 / 状态未知 + 出错行（错误全文、派发失败）+ 已交付过·再运行。"""
+    base = {"id_kind": "work", "cwd": "~/Projects/example-bench", "delivery_mode": "repo",
+            "plan": ["步骤一"], "dod": ["验收点"], "summary": "词表行。"}
+    rows = [
+        dict(base, id="P-141", display_id="R-141", work_id="R-141", name="已派发但还没开工的卡", state="dispatched",
+             dispatched_at=_epoch(now, minutes=3), agent_name="dispatched sample", session_id="f1f1f1f1-0000-4000-8000-000000000141",
+             short_id="f1f1f1f1", copy_cmd="claude attach f1f1f1f1"),
+        dict(base, id="P-142", display_id="R-142", work_id="R-142", name="排队等派发的卡", state="queued",
+             dispatched_at=None, last_error="dispatch failed: claude not found (Errno 2)"),
+        dict(base, id="P-143", display_id="R-143", work_id="R-143", name="会话空闲的卡", state="idle",
+             dispatched_at=_epoch(now, hours=5, minutes=17), started_at=_epoch(now, hours=5, minutes=17), agent_name="idle sample",
+             session_id="f3f3f3f3-0000-4000-8000-000000000143", short_id="f3f3f3f3", copy_cmd="claude attach f3f3f3f3"),
+        dict(base, id="P-144", display_id="R-144", work_id="R-144", name="状态未知的卡（roster 漏了）", state="unknown",
+             dispatched_at=_epoch(now, days=1, hours=2), started_at=_epoch(now, days=1, hours=2),
+             session_id="f4f4f4f4-0000-4000-8000-000000000144", short_id="f4f4f4f4", copy_cmd="claude attach f4f4f4f4",
+             last_error="Traceback (most recent call last): boom", from_review=True, accepted_at=_epoch(now, days=2)),
+    ]
+    return rows
+
+
+def _vocab_trash(now):
+    return [
+        {"id": "P-151", "display_id": "P-151", "id_kind": "proposal", "kind": "debt", "permanent": True,
+         "title": "永久保留在回收站的潜在任务", "summary": "你删除的，且钉住永久保留。", "trash_reason": "deleted",
+         "trashed_at": demo_seed._iso(now - dt.timedelta(days=2)), "type": "research", "hardness": "hard"},
+        {"id": "P-152", "display_id": "P-152", "id_kind": "proposal", "kind": "suggestion", "permanent": False,
+         "title": "训练一个分类小模型", "summary": "拒绝的建议。", "trash_reason": "rejected",
+         "trashed_at": demo_seed._iso(now - dt.timedelta(hours=1)), "type": "training", "hardness": "soft",
+         "purge_at": demo_seed._iso(now + dt.timedelta(days=59))},
+    ]
+
+
+def _vocab_debt(now):
+    return [
+        {"id": "P-161", "display_id": "P-161", "id_kind": "proposal", "title": "其他类型的潜在任务",
+         "summary": "type=other 的词表行。", "type": "other", "hardness": "soft",
+         "sources": [{"channel": "manual", "date": "2026-09-01", "quote": "先记下", "who": "me"}]},
+    ]
+
+
+def _merge_suggestions(now):
+    """§21 合并建议卡三态：分析中 / 完成（按分组）/ 失败。"""
+    return [
+        {"id": "MS-1", "ids": ["P-131", "P-133"], "status": "analyzing", "requested_at": _epoch(now, minutes=2)},
+        {"id": "MS-2", "ids": ["P-101", "P-132", "P-133"], "status": "done", "verdict": "partition", "confidence": "medium",
+         "rationale": "两张讲导出报告，一张讲入职文书。", "requested_at": _epoch(now, minutes=20),
+         "groups": [{"primary": "P-101", "ids": ["P-101", "P-132"], "reason": "同一份报告"},
+                    {"primary": "P-133", "ids": ["P-133"], "reason": "独立"}],
+         "action_plan": ["P-132 并入 P-101", "P-133 保持独立"]},
+        {"id": "MS-3", "ids": ["P-102", "P-103"], "status": "failed", "error": "model timeout after 60s",
+         "requested_at": _epoch(now, hours=1)},
+        {"id": "MS-4", "ids": ["P-101", "P-132"], "status": "done", "verdict": "merge", "primary": "P-101", "confidence": "high",
+         "rationale": "同一份报告的两次表述。", "requested_at": _epoch(now, minutes=30), "action_plan": ["P-132 并入 P-101"]},
+        {"id": "MS-5", "ids": ["P-103", "P-133"], "status": "done", "verdict": "keep_separate", "confidence": "low",
+         "rationale": "一个是 planning 文书、一个是 onboarding 清单。", "requested_at": _epoch(now, minutes=45)},
+        {"id": "MS-6", "ids": ["P-131", "P-134"], "status": "done", "verdict": None, "confidence": "deterministic",
+         "rationale": "§38 规则：同标题前缀。", "requested_at": _epoch(now, minutes=50)},
+    ]
+
+
+def _archived_extra(now):
+    """再两行封存卡：原来在「已合并」/「待验收」（prev_status 词表）+ kind=debt（「潜在任务」章）。"""
+    return [{"id": "P-072", "title": "重复的周报提案（并入 P-071）", "summary": "被并入主卡后封存",
+             "kind": "suggestion", "archived_at": demo_seed._iso(now - dt.timedelta(minutes=40)),
+             "archive_reason": "auto", "prev_status": "merged", "display_id": "P-072", "id_kind": "proposal"},
+            {"id": "P-073", "title": "待验收时被你封存的潜在任务", "summary": "kind=debt、原来在待验收",
+             "kind": "debt", "archived_at": demo_seed._iso(now - dt.timedelta(seconds=30)),
+             "archive_reason": "user", "prev_status": "review", "display_id": "R-073", "work_id": "R-073", "id_kind": "work"}]
+
+
 def build_board(now=FIXED_NOW):
     board = demo_seed.build("initial", now=now)
-    board["archived"] = _archived(now)
-    board["counts"]["archived"] = len(board["archived"])
+    board["needs_approval"] += _vocab_proposals(now)
+    board["running"] += _vocab_running(now)
+    board["trash"] += _vocab_trash(now)
+    board["debt"] += _vocab_debt(now)
+    board["merge_suggestions"] = _merge_suggestions(now)
+    # 第二张待验收卡的「耗时」带分钟位（1 小时 39 分）——时长词表 {h}小时{m}分 才渲染得到
+    board["review"][1]["review_at"] = board["review"][1]["dispatched_at"] + 5977
+    board["archived"] = _archived(now) + _archived_extra(now)
+    for lane in ("needs_approval", "running", "trash", "debt", "archived"):
+        board["counts"][lane] = len(board[lane])
     board["device_label"] = "demo-mac"
+    # §48 三源健康投影：一个正常、一个静默失败、一个关着（接入区「运行状态」三种句子都渲染到）
+    board["radar_sources"] = {
+        "gmail": {"enabled": True, "last_ok": demo_seed._iso(now - dt.timedelta(minutes=5)), "skip_reason": None, "stale": False},
+        "slack": {"enabled": True, "last_ok": None, "skip_reason": "no_credentials", "stale": False},
+        "obsidian": {"enabled": False, "last_ok": None, "skip_reason": None, "stale": False},
+    }
     return board
 
 
 def build_lanes():
     return server_lanes.catalog()
+
+
+def build_settings():
+    """GET /api/settings 在空 home 下的快照（全默认；文案 server-owned）。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        return settings_catalog.snapshot(Path(tmp))
+
+
+def build_secrets():
+    """GET /api/secrets 的快照：Anthropic key 已保存（「已保存（未验证）」+ 可验证），其余四把「未设置」。
+    值是占位符，只决定 present；mtime 抹成固定值保证零 diff。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        secrets_dir = paths.secrets_dir(Path(tmp))
+        secrets_dir.mkdir(parents=True)
+        (secrets_dir / "anthropic-api-key.txt").write_text("sk-ant-demo-placeholder\n", encoding="utf-8")
+        snap = secrets_store.snapshot(Path(tmp))
+    for row in snap["secrets"]:
+        if row.get("mtime"):
+            row["mtime"] = int(FIXED_NOW.timestamp())
+    return snap
 
 
 def main(argv=None):
@@ -64,8 +213,11 @@ def main(argv=None):
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--board", default=BOARD_PATH)
     parser.add_argument("--lanes", default=LANES_PATH)
+    parser.add_argument("--settings", default=SETTINGS_PATH)
+    parser.add_argument("--secrets", default=SECRETS_PATH)
     args = parser.parse_args(argv)
-    fresh = {args.board: uc.dump_json(build_board()), args.lanes: uc.dump_json(build_lanes())}
+    fresh = {args.board: uc.dump_json(build_board()), args.lanes: uc.dump_json(build_lanes()),
+             args.settings: uc.dump_json(build_settings()), args.secrets: uc.dump_json(build_secrets())}
     if args.write:
         for path, text in fresh.items():
             uc.write_text(path, text)

@@ -43,7 +43,7 @@ export function BacklogStrip({ renderCard }: BacklogStripProps) {
           onClick={() => setExpanded((v) => !v)}
         >
           <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
-          <span>{text("潜在任务", "Backlog")}</span>
+          <span>{text("潜在任务 · backlog", "Backlog")}</span>
           <span className="backlog-strip-count">{countLabel}</span>
         </button>
         {expanded && help && <LaneHelpButton help={help} />}
@@ -54,8 +54,8 @@ export function BacklogStrip({ renderCard }: BacklogStripProps) {
           {rows.length === 0 && (
             <p className="trash-empty">
               {all.length === 0
-                ? text("暂无潜在任务", "No backlog items")
-                : text("无匹配项（受过滤器影响）", "No matches (filters active)")}
+                ? text("不着急的事会先停在这里——不会自动执行，也永不过期", "Not-urgent items park here — nothing runs on its own, nothing expires")
+                : text("无匹配卡片", "No matching cards")}
             </p>
           )}
           {rows.map((card) =>

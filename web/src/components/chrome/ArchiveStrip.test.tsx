@@ -52,8 +52,8 @@ describe("ArchiveStrip", () => {
     fireEvent.click(screen.getByRole("button", { name: /Done for good/ }));
     expect(screen.getByText("You sealed").className).toContain("chip-success");
     expect(screen.getByText("Auto-sealed").className).toBe("chip");
-    expect(screen.getByText(/was in: Done/)).toBeTruthy();
-    expect(screen.getByText(/was in: Backlog/)).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("card-meta-text") === true && /was in: Done/.test(el.textContent ?? ""))).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("card-meta-text") === true && /was in: Backlog/.test(el.textContent ?? ""))).toBeTruthy();
     expect(screen.getByText("2d ago")).toBeTruthy();
     expect(screen.getByText("1h ago")).toBeTruthy();
   });

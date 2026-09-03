@@ -42,11 +42,13 @@ export function FeedbackDialog({ ids, onSubmit, onCancel }: FeedbackDialogProps)
   const trimmed = draft.trim();
 
   return (
-    <ModalDialog title={ids.length ? text(`对 ${ids.length} 张卡提建议`, `Feedback on ${ids.length} cards`) : text("提建议", "Send feedback")} onCancel={onCancel}>
+    <ModalDialog title={ids.length ? text(`💡 提建议（${ids.length} 张卡）`, `💡 Send feedback (${ids.length} cards)`) : text("💡 提建议（对整体）", "💡 Send feedback (overall)")} onCancel={onCancel}>
       <p className="dialog-body">
         {text("哪里不对、想要什么——写给这个软件的维护者。本地先落 state/feedback/，勾选公开才会同步成 GitHub issue。", "What is wrong or what you want — goes to this software's maintainer. Stored locally under state/feedback/ first; only the publish checkbox syncs it to a GitHub issue.")}
       </p>
-      <textarea rows={4} value={draft} autoFocus placeholder={text("一句话就够…", "One sentence is enough…")} onChange={(e) => setDraft(e.target.value)} />
+      <textarea rows={4} value={draft} autoFocus placeholder={text("建议内容…", "Your feedback…")} onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && trimmed) { e.preventDefault(); onSubmit(feedbackBody(trimmed, publish, ids)); } }} />
+      <p className="dialog-note">{text("↩ 发送 · ⇧↩ 换行", "↩ send · ⇧↩ newline")}</p>
       <label className="dialog-check">
         <input type="checkbox" checked={publish} onChange={(e) => { setPublish(e.target.checked); writePublishDefault(e.target.checked); }} />
         {text("同时公开到 GitHub 建议跟踪表（去掉卡片内容，只带你写的这段）", "Also publish to the GitHub feedback tracker (your text only, no card content)")}

@@ -1,7 +1,7 @@
 ---
 name: test-ui
 description: 'test ui 测 UI — measure a UI against a REFERENCE through three sensors: STRUCTURE (accessibility-tree inventory — roles, names, topology per screen; source extraction when the app cannot run), TOKENS (design language — colors, type scale, spacing, radius, layout geometry, default theme — from computed styles and/or source constants) and VISUAL (demo-data screenshots, perceptual diff vs goldens). Two modes: `--against <alias | git:ref | dir:path | url:… | app:argv | inventory:file>` (migration parity) and `--against design-system` (project tokens + WCAG). Five tiers, ask ONCE (tier + multi-select), deterministic checkers decide, one honest report (report.md + report.json) with PRESENT / MISSING / CHANGED / WAIVED, the three-way not-run split, fix-first and blind spots. Use for "test the UI", "测 UI", "对照原生", "parity check", "视觉回归", "a11y", "dark mode ok?", before merging a screen/component/token change, or when an agent finishes UI work. It only MEASURES — never designs, never edits UI, never writes a ledger, never blesses a golden.'
-version: 0.1.0
+version: 0.1.1
 upstream: test-code (this repo, skills/test-code v0.2.1) — doctrine, ASK, report contract, ledger semantics; anti-gaming lineage robust-code → AmazingAng/old-coder (MIT, NOTICE)
 upstream_version: test-code 0.2.1
 ---
@@ -32,7 +32,7 @@ ASK mechanics: Claude Code → `AskUserQuestion` (one single-select tier, one mu
 7. Never tune thresholds mid-run → read once from the project, printed with their source; ledgers shrink (pending strictly; waivers only with a reason, listed verbatim).
 8. Never brief a fresh-context judge → task contract + repo at commit + rerun command only.
 
-UI corollaries the runner enforces: ids come from role + accessible name, never `data-testid`; a `data-parity-id` pin whose role or name does not match its target is CHANGED `spoofed_pin`; hidden (display:none, `hidden`, aria-hidden, 0×0, off-screen) is MISSING, never PRESENT; runtime names not found in the subject's source string set become `{dynamic}` so no user content can enter an inventory even against a hand-given URL; opinion can touch nothing but its own section (unit-pinned).
+UI corollaries the runner enforces: ids come from role + accessible name, never `data-testid`; a `data-parity-id` pin whose role or name does not match its target is CHANGED `spoofed_pin`; hidden (display:none, `hidden`, aria-hidden, 0×0, off-screen) is MISSING, never PRESENT; runtime names not found in the subject's source string set (∪ the reference's names) become `{dynamic}` — name, id slug, visible text and landmark-path segment together, and an empty string set filters everything rather than nothing — so no user content can enter an inventory even against a hand-given URL; opinion can touch nothing but its own section (unit-pinned).
 
 ## Tiers 1–5 — budget axis (per-check timeouts 300 / 1800 / 3600 / 7200 / none; tier 5 lifts all; a timeout is FAIL) — references/tiers.md
 
@@ -41,10 +41,10 @@ UI corollaries the runner enforces: ids come from role + accessible name, never 
 | **1 静态门** | seconds, no launch | `surface_detect` `seed_probe` `structure_source` `tokens_source` `pair_structure` `pair_tokens` `theme_default_declared` `off_token_literals` `contrast_pairs` `a11y_static` `ledger_lint` `golden_manifest` `thresholds_unmoved` | source — the real instrument against a source/frozen reference (`native`, `git:`, `dir:`), SUBSTITUTED against a runtime one |
 | **2 运行时清单** | minutes | + `structure_runtime` `app_launch` `seed_guard` `pair_runtime` `topology_runtime` `tokens_runtime` `geometry_runtime` `theme_default_observed` `a11y_rules` `screens_capture` | runtime at default theme × default viewport × default language; VISUAL captured, not yet diffed |
 | **3 对照 + 矩阵** | tens of minutes | + `visual_diff` `matrix_themes_viewports` `keyboard_reach` `focus_order` `reflow` `i18n_parity` | every theme × viewport × language; VISUAL diffed vs this machine's goldens |
-| **4 稳定性** | up to hours | + `inventory_stability` `visual_stability` `states_matrix` `cross_engine` `reference_runtime` | determinism of the instruments — **UNAVAILABLE in 0.1.0** (rows exist, no runner; the report says so) |
-| **5 通宵 / 通几天** | **none** | + `matrix_all_routes` `all_references` `clean_machine_ui` `golden_review_sheet` + optional fresh-context adversary (agent step, ≤ 2 rounds) | everything — **UNAVAILABLE in 0.1.0** except the adversary protocol below |
+| **4 稳定性** | up to hours | + `inventory_stability` `visual_stability` `states_matrix` `cross_engine` `reference_runtime` | determinism of the instruments — **UNAVAILABLE in 0.1.x** (rows exist, no runner; the report says so) |
+| **5 通宵 / 通几天** | **none** | + `matrix_all_routes` `all_references` `clean_machine_ui` `golden_review_sheet` + optional fresh-context adversary (agent step, ≤ 2 rounds) | everything — **UNAVAILABLE in 0.1.x** except the adversary protocol below |
 
-**Extended circle** (menu-visible, never pre-selected — references/catalog.md): `project_parity` (this repo's `scripts/ui/parity_check.py --check`, verbatim) `project_visual` (`web/e2e/visual.spec.ts`, verbatim) `opinion` (advisory only). Table-only in 0.1.0: `lighthouse_a11y` `reduced_motion` `touch_target_size` `dead_tokens` `token_census_floor` `text_overflow_probe` `font_fallback` `rtl_smoke` `perf_budget`, VoiceOver/NVDA scripts, color-blind simulation, Storybook a11y, Percy/Chromatic, macOS AX runtime (`osascript`), iOS `idb`, Flutter semantics dumps.
+**Extended circle** (menu-visible, never pre-selected — references/catalog.md): `project_parity` (this repo's `scripts/ui/parity_check.py --check`, verbatim) `project_visual` (`web/e2e/visual.spec.ts`, verbatim) `opinion` (advisory only). Table-only in 0.1.x: `lighthouse_a11y` `reduced_motion` `touch_target_size` `dead_tokens` `token_census_floor` `text_overflow_probe` `font_fallback` `rtl_smoke` `perf_budget`, VoiceOver/NVDA scripts, color-blind simulation, Storybook a11y, Percy/Chromatic, macOS AX runtime (`osascript`), iOS `idb`, Flutter semantics dumps.
 
 ## Triggers — mandatory add-ons regardless of tier (references/triggers.md)
 

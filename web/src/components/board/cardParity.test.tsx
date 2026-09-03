@@ -20,6 +20,11 @@ vi.mock("../../api", async (importOriginal) => ({
 }));
 import { postAction, postAiFix } from "../../api";
 
+/** 前缀与值分在两个 span 里（原生两个 Text；探针按节点判前缀）——按父元素整段 textContent 精确找 */
+const byFullText = (expected: string) => (_: string, el: Element | null) =>
+  el?.textContent?.replace(/\s+/g, " ").trim() === expected && !Array.from(el.children).some((c) => c.textContent?.replace(/\s+/g, " ").trim() === expected);
+
+
 beforeEach(() => {
   if (typeof HTMLDialogElement.prototype.showModal !== "function") {
     HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.open = true; };
@@ -127,8 +132,8 @@ describe("review card meta line", () => {
     };
     render(<ReviewCard card={card} />);
     expect(screen.getByText("your-workbench").className).toContain("chip");
-    expect(screen.getByText("took 3h 59m")).toBeTruthy();
-    expect(screen.getByText("in review 10m")).toBeTruthy();
+    expect(screen.getByText(byFullText("took 3h 59m"))).toBeTruthy();
+    expect(screen.getByText(byFullText("in review 10m"))).toBeTruthy();
     const copyLine = screen.getByRole("button", { name: /Click to copy the command/ });
     expect(copyLine.getAttribute("title")).toBe("cd '/tmp/w' && claude --resume abc");
     expect(screen.queryByText(/覆盖三条来源/)).toBeNull();
@@ -151,7 +156,7 @@ describe("done card meta line", () => {
     render(<DoneCard row={row} />);
     expect(screen.getByText("Delivered").className).toContain("chip-success");
     expect(screen.getByText("acme").className).toContain("chip");
-    const accepted = screen.getByText("accepted 19d ago");
+    const accepted = screen.getByText(byFullText("accepted 19d ago"));
     expect(accepted.getAttribute("title")).toBe(new Date((NOW_S - 19 * 86400 - 3600) * 1000).toLocaleString("en"));
     expect(screen.getByRole("button", { name: /Click to copy the command/ }).getAttribute("title")).toBe("claude --resume 1234");
     expect(screen.getByRole("button", { name: "Back to review" })).toBeTruthy();
@@ -176,7 +181,7 @@ describe("failed running card: 让 AI 修 + 回答… + 停止", () => {
     expect(screen.getByRole("button", { name: "Answer…" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Comment" })).toBeNull();
-    expect(screen.getByText(/Error: Traceback: boom/)).toBeTruthy();
+    expect(screen.getByText(byFullText("Error: Traceback: boom"))).toBeTruthy();
     expect(screen.getByText("2h ago")).toBeTruthy(); // 运行时长相对时间
     expect(screen.getByText("zelin-ai-assistant").className).toContain("chip"); // repo 章
     expect(screen.queryByText("Idle")).toBeNull(); // working 由 sheen 行表达，不再出状态章
@@ -216,7 +221,7 @@ describe("failed running card: 让 AI 修 + 回答… + 停止", () => {
 
   it("排队卡派发失败：Dispatch failed 一句 + Fix with AI；无 Answer…（没有会话）", () => {
     render(<RunningCard row={{ id: "R-611", name: "排队", state: "queued", dispatch_error: "spawn failed" }} />);
-    expect(screen.getByText(/Dispatch failed: spawn failed/)).toBeTruthy();
+    expect(screen.getByText(byFullText("Dispatch failed: spawn failed"))).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix with AI" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Answer…" })).toBeNull();
     expect(screen.getByRole("button", { name: "Comment" })).toBeTruthy();

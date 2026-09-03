@@ -100,7 +100,7 @@ describe("SkillsSection", () => {
     expect(screen.getByText("disabled")).toBeTruthy();
     expect(screen.getByText("custom · 2 behind")).toBeTruthy();
     // the two default_enabled rows are project-visible (tracked .claude/skills symlinks); the custom one is not
-    expect(screen.getAllByText("project-visible")).toHaveLength(2);
+    expect(screen.getAllByText("project")).toHaveLength(2);
     expect(screen.getByText(/Link location/)).toBeTruthy();
   });
 

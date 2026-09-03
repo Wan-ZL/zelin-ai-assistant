@@ -712,6 +712,8 @@
   background: var(--surface);
   color: var(--text-primary);
   font-size: calc(13px * var(--text-scale));
+}
+
 /* ----- 显示偏好（§54.1 第 12 项）：Apple 式 segmented control + 实物预览 ----------- */
 .settings-segmented {
   display: flex;

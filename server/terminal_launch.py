@@ -86,11 +86,16 @@ def _resolve(home: Path, card_id: str) -> "tuple[dict, str]":
     return row, cmd
 
 
-def _open(path: Path, opener: Optional[Opener]) -> None:
+def open_command_file(path: Path, opener: Optional[Opener]) -> None:
+    """``open <path>``（Terminal.app 执行 .command）；起不来 → 500 带文件路径。uninstall_launch /
+    maintainer_launch 复用同一条通道（公开名，防腐 #2）。"""
     try:
         (opener or _default_opener)(path)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ApiError("could not open Terminal: %s" % exc, {"command_file": str(path)})
+
+
+_open = open_command_file
 
 
 def launch(home: Path, payload: dict, opener: Optional[Opener] = None,

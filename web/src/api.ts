@@ -6,6 +6,8 @@
 // 本模块不 import React——文案经 setApiText 注入（app.tsx 接线），vitest node 环境可直测。
 import type {
   AboutInfo,
+  AskAnswer,
+  AskHistory,
   AiFixReceipt,
   Board,
   CardDetail,
@@ -194,6 +196,14 @@ export function postAiFix(cardId: string, lang: "zh" | "en"): Promise<AiFixRecei
   return request<AiFixReceipt>("/api/ai-fix", {
     method: "POST",
     body: JSON.stringify({ card_id: cardId, lang }),
+  });
+}
+
+/** POST /api/ai-fix {source: "doctor"} — 依赖检查页的「让 AI 修」：上下文 = server 自己跑的 doctor 报告里没过的行（§54.4） */
+export function postAiFixDoctor(lang: "zh" | "en"): Promise<AiFixReceipt> {
+  return request<AiFixReceipt>("/api/ai-fix", {
+    method: "POST",
+    body: JSON.stringify({ source: "doctor", lang }),
   });
 }
 
@@ -399,4 +409,29 @@ export function postTerminal(cardId: string): Promise<TerminalReceipt> {
 /** POST /api/repair/actd — 横幅一键修复（launchctl kickstart；未加载 → 409） */
 export function postRepairActd(): Promise<RepairReceipt> {
   return request<RepairReceipt>("/api/repair/actd", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/ask/history — 问问助手最近的问答（只读，§27） */
+export function fetchAskHistory(signal?: AbortSignal): Promise<AskHistory> {
+  return request<AskHistory>("/api/ask/history", { signal });
+}
+
+/** POST /api/ask — 一问一答（server 子进程 act.ask，最多 ~75 s；§27） */
+export function postAsk(question: string, signal?: AbortSignal): Promise<AskAnswer> {
+  return request<AskAnswer>("/api/ask", { method: "POST", body: JSON.stringify({ question }), signal });
+}
+
+/** GET /api/slack/manifest — repo 的 Slack App Manifest 原文（Slack 接入区「复制 App Manifest」） */
+export function fetchSlackManifest(signal?: AbortSignal): Promise<{ manifest: string; path: string }> {
+  return request<{ manifest: string; path: string }>("/api/slack/manifest", { signal });
+}
+
+/** POST /api/uninstall/terminal — 关于页「在 Terminal 中卸载…」：server 写 .command（cd repo && bash uninstall.sh）并 open（§68.6） */
+export function postUninstallTerminal(): Promise<TerminalReceipt> {
+  return request<TerminalReceipt>("/api/uninstall/terminal", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/maintainer/terminal — 开发者区「在终端打开开发会话」：cd <repo> && claude [--resume]，参数由 server 读设置（§68.1） */
+export function postMaintainerTerminal(): Promise<TerminalReceipt> {
+  return request<TerminalReceipt>("/api/maintainer/terminal", { method: "POST", body: JSON.stringify({}) });
 }

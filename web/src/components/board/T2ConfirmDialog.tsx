@@ -38,7 +38,7 @@ export function T2ConfirmDialog({ cardId, summary, costLine, onConfirm, onCancel
         {"\n"}
         {costLine}
         {"\n\n"}
-        {text("请输入 确认 或 go 后再点「批准」。", 'Type 确认 or go, then click "Approve".')}
+        {text("输入 确认 或 go", "Type 确认 or go")}
       </p>
       <input
         type="text"

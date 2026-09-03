@@ -58,6 +58,10 @@ describe("ProposalCard approve", () => {
 
   it("T2 批准先过 typed-confirm：错词不发、正词(go/确认)放行且 wire 同 T1", () => {
     render(<ProposalCard card={makeCard("T2")} />);
+    // 原生 T2 gate（Cards.swift:1127）：详情没展开前只有「T2 需先展开看明细」，没有批准键
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getByText("T2: expand details first")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     // 弹窗出现，approve 尚未发出
     expect(postAction).not.toHaveBeenCalled();
@@ -90,6 +94,7 @@ describe("ProposalCard approve", () => {
     render(<ProposalCard card={card} />);
     // M8：卡面点明升档，别让用户见 "T1" 却弹 T2 确认框
     expect(screen.getByText("External → T2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Details ▸" })); // 生效 T2 同样先展开（§50）
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(postAction).not.toHaveBeenCalled();
     const input = screen.getByPlaceholderText("Type 确认 or go");
@@ -145,6 +150,7 @@ describe("ProposalCard §60 two-stage ids (D21)", () => {
   it("T2 typed-confirm 弹窗点名的是展示编号，wire 仍是主键", () => {
     const card = { ...makeCard("T2"), id: "P-012", work_id: "R-280", display_id: "R-280", id_kind: "work" };
     render(<ProposalCard card={card} />);
+    fireEvent.click(screen.getByRole("button", { name: "Details ▸" }));
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(screen.getByText(/Approve R-280:/)).toBeTruthy();
     const input = screen.getByPlaceholderText("Type 确认 or go");

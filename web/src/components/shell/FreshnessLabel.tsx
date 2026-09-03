@@ -38,18 +38,18 @@ export function FreshnessLabel() {
     const mins = Math.max(1, Math.floor(ageSeconds / 60));
     return (
       <span className="shell-freshness is-stale" role="status">
-        {text(
-          `数据生成于 ${mins} 分钟前，actd 可能未运行`,
-          `Data generated ${mins} min ago — actd may be down`,
-        )}
+        <span>{text("数据生成于 ", "Data generated ")}</span>
+        <span>{text(`${mins} 分钟前，actd 可能未运行`, `${mins} min ago — actd may be down`)}</span>
       </span>
     );
   }
 
   // 新鲜分支（≤90s）实际只会命中 刚刚/1分钟前——完整档位保留以镜像 Mac 版语义
+  // 前缀与相对时间各一个节点（原生 Freshness.swift 两个 Text；探针按节点判「数据生成于 」）
   return (
     <span className="shell-freshness">
-      {text("数据生成于 ", "Data generated ") + relativeAge(ageSeconds, text)}
+      <span>{text("数据生成于 ", "Data generated ")}</span>
+      <span>{relativeAge(ageSeconds, text)}</span>
     </span>
   );
 }

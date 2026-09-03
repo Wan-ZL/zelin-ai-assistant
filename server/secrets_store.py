@@ -223,7 +223,7 @@ def default_prober(kind: str, token: str, ctx: dict) -> "tuple[bool, str, dict]"
 
 
 def _gmail_context(home: Path) -> dict:
-    section = settings_catalog.lookup("sources")
+    section = settings_catalog.lookup("gmail")
     field = settings_catalog.field_index(section)["gmail_address"]
     value, _src = settings_catalog.effective(
         field, settings_catalog.read_overrides(home), settings_catalog.load_config_doc(home))

@@ -8,11 +8,15 @@ import { refreshClaudeSessions, useAppState } from "../../store";
 import { RelativeTime } from "../board/cardChrome";
 import { errorMessage } from "./useToast";
 
+/** 原生 SettingsClaudeImport：候选默认只列前几条，「显示全部 (N)」展开 */
+const SHOW_DEFAULT = 8;
+
 export function ClaudeImportSection() {
   const { text } = useI18n();
   const { claudeSessions, pageErrors } = useAppState();
   const [window, setWindow] = useState(7);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -61,9 +65,11 @@ export function ClaudeImportSection() {
         <label className="settings-knob-label" htmlFor="claude-import-window">{text("窗口（天）", "Window (days)")}</label>
         <input id="claude-import-window" className="settings-input is-number" type="number" min={1} max={90} value={window}
           onChange={(e) => setWindow(Math.min(90, Math.max(1, Number(e.target.value) || 7)))} />
-        <button type="button" className="btn" disabled={busy} onClick={() => void refreshClaudeSessions(window)}>{text("重新扫描", "Rescan")}</button>
+        <button type="button" className="btn" disabled={busy} onClick={() => void refreshClaudeSessions(window)}>
+          {claudeSessions ? text("重新扫描", "Re-scan") : text(`扫描最近 ${window} 天`, `Scan last ${window} days`)}
+        </button>
         <button type="button" className="btn btn-primary" disabled={busy || picked.size === 0} onClick={() => void importPicked()}>
-          {text(`导入所选（${picked.size}）`, `Import selected (${picked.size})`)}
+          {text(`导入所选 (${picked.size})`, `Import selected (${picked.size})`)}
         </button>
       </div>
       {pageErrors.claudeSessions && <p className="settings-error" role="alert">{pageErrors.claudeSessions}</p>}
@@ -76,8 +82,19 @@ export function ClaudeImportSection() {
       )}
       {claudeSessions?.ok && candidates.length === 0 && <p className="settings-helper">{text("这个窗口里没有可导入的会话。", "No importable sessions in this window.")}</p>}
       {candidates.length > 0 && (
+        <div className="settings-actions">
+          <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setPicked(new Set(candidates.filter((c) => !c.session_mismatch).map((c) => c.session_id)))}>{text("全选", "Select all")}</button>
+          <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setPicked(new Set())}>{text("全不选", "Select none")}</button>
+          {candidates.length > SHOW_DEFAULT && (
+            <button type="button" className="btn btn-quiet" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? text("收起", "Show fewer") : text(`显示全部 (${candidates.length})`, `Show all (${candidates.length})`)}
+            </button>
+          )}
+        </div>
+      )}
+      {candidates.length > 0 && (
         <ul className="settings-list" aria-label={text("会话候选", "Session candidates")}>
-          {candidates.map((c) => (
+          {(showAll ? candidates : candidates.slice(0, SHOW_DEFAULT)).map((c) => (
             <li key={c.session_id} className={`settings-list-row${c.session_mismatch ? " is-muted" : ""}`}>
               <label className="settings-check-row">
                 <input type="checkbox" checked={picked.has(c.session_id)} disabled={busy || c.session_mismatch} onChange={() => toggle(c.session_id)} />
@@ -85,8 +102,8 @@ export function ClaudeImportSection() {
               </label>
               <span className="settings-list-meta">
                 {c.project && <span className="chip">{c.project}</span>}
-                {c.ended_waiting_on_user && !c.answered && <span className="chip chip-warning">{text("等你回复", "Waiting on you")}</span>}
-                {c.answered && <span className="chip chip-quiet">{text("已回答", "Answered")}</span>}
+                {c.ended_waiting_on_user && !c.answered && <span className="chip chip-warning">{text("等你回复", "waiting on you")}</span>}
+                {c.answered && <span className="chip chip-quiet">{text("像已答完的问答", "looks answered")}</span>}
                 <RelativeTime iso={c.last_activity} />
               </span>
             </li>

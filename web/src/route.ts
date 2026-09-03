@@ -4,14 +4,19 @@
 // ?page=settings = 设置页（§59 首个 section「模型」；顶栏齿轮入口）。
 // ?page=recaps = 会议纪要页（§63；顶栏入口）——recap 不是卡，不走 ?card= 抽屉。
 // ?page=archive（永久性完成页）/ permissions（权限体检）/ diagnostics（诊断）/ setup（首次运行向导）= §68 P4 parity 页。
+// ?page=ask（问问助手，§27）/ deps（依赖检查——原生 DepsView 的名字，与 diagnostics 同一页）/
+// ingest（录制与数据接入）/ about（关于）= 左侧导航栏（§54.4，原生 MainSection 八页）补齐的四页；
+// rail slug ↔ page 的映射在 components/shell/NavRail.tsx。
 // ?anchor=<section id>：设置页滚到某个 section（字幕悬浮窗齿轮深链 live_captions，§61.3）。
 // 约定：路由只存"哪一页 + 哪张卡"，过滤器序列化由 A8 仿 dashi taskFilters.ts 在独立模块追加。
 const CARD_QUERY_PARAM = "card";
 const PAGE_QUERY_PARAM = "page";
 const ANCHOR_QUERY_PARAM = "anchor";
 
-export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps" | "archive" | "permissions" | "diagnostics" | "setup";
-const PAGES: readonly AppPage[] = ["board", "trash", "styleguide", "settings", "recaps", "archive", "permissions", "diagnostics", "setup"];
+export type AppPage = "board" | "trash" | "styleguide" | "settings" | "recaps" | "archive" | "permissions" | "diagnostics" | "setup"
+  | "ask" | "deps" | "ingest" | "about";
+const PAGES: readonly AppPage[] = ["board", "trash", "styleguide", "settings", "recaps", "archive", "permissions", "diagnostics", "setup",
+  "ask", "deps", "ingest", "about"];
 
 export function readCardId(search: string): string | null {
   // 保留大小写：id 由 SAFE_ID_RE 界定（允许小写），匹配按原样精确比对——不做 case 折叠

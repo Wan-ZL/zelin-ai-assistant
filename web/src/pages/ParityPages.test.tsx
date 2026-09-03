@@ -122,7 +122,7 @@ describe("DiagnosticsPage", () => {
     vi.mocked(fetchLogTail).mockResolvedValue({ name: "actd.launchd.log", path: "/l/actd.launchd.log", size: 2048, lines: ["a", "b"], truncated: true });
     renderEn(<DiagnosticsPage />);
     await screen.findByText("actd heartbeat");
-    expect(screen.getByText(/1 ok \/ 0 warn \/ 1 fail/)).toBeTruthy();
+    expect(screen.getByText(/1 failed \(1 ok \/ 0 warn\)/)).toBeTruthy();
     expect(screen.getByText("deployed")).toBeTruthy();
     expect(screen.getByText("skipped_tcc")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Pick a log"), { target: { value: "actd.launchd.log" } });
@@ -136,12 +136,14 @@ describe("DiagnosticsPage", () => {
     vi.mocked(fetchDoctor).mockResolvedValue({ ...diagnostics().doctor, fast: false });
     renderEn(<DiagnosticsPage />);
     await screen.findByText("actd heartbeat");
-    fireEvent.click(screen.getByRole("button", { name: /Full checkup/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Run diagnostics/ }));
     await waitFor(() => expect(fetchDoctor).toHaveBeenCalledWith(false, true));
   });
 
-  it("doctorSummary counts statuses", () => {
-    expect(doctorSummary(diagnostics().doctor, en)).toBe("1 ok / 0 warn / 1 fail");
+  it("doctorSummary counts statuses（原生 DepsView：零失败说全部通过 ✓）", () => {
+    expect(doctorSummary(diagnostics().doctor, en)).toBe("1 failed (1 ok / 0 warn)");
+    const clean = { ...diagnostics().doctor, checks: diagnostics().doctor.checks.filter((c) => c.status !== "FAIL") };
+    expect(doctorSummary(clean, en)).toBe("All checks passed ✓ (1 ok / 0 warn)");
   });
 });
 
@@ -190,16 +192,20 @@ describe("ArchivePage", () => {
 describe("RepairButton", () => {
   it("posts the repair and shows the server's 409 sentence on failure", async () => {
     vi.mocked(postRepairActd).mockRejectedValue(new Error("com.zelin.aiassistant.actd is not loaded in launchd - run `bash install.sh`"));
-    renderEn(<RepairButton />);
-    fireEvent.click(screen.getByRole("button", { name: "Repair" }));
+    renderEn(<RepairButton verdict="stalled" />);
+    fireEvent.click(screen.getByRole("button", { name: "Fix now" }));
     await screen.findByText(/not loaded in launchd/);
     expect(postRepairActd).toHaveBeenCalledTimes(1);
+    // 原生 Freshness.swift：失败后换成「自动修复没成功：」+「再试一次」+ 手动命令
+    expect(screen.getByText("Auto-repair didn't work:")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.getByText("Manual command:")).toBeTruthy();
   });
 });
 
 describe("route + app helpers", () => {
   it("knows the new pages and the anchor param", () => {
-    for (const page of ["archive", "permissions", "diagnostics", "setup"]) expect(readPage(`?page=${page}`)).toBe(page);
+    for (const page of ["archive", "permissions", "diagnostics", "setup", "ask", "deps", "ingest", "about"]) expect(readPage(`?page=${page}`)).toBe(page);
     expect(readAnchor("?page=settings&anchor=live_captions")).toBe("live_captions");
     expect(readAnchor("?anchor=<script>")).toBeNull();
     expect(readAnchor("")).toBeNull();

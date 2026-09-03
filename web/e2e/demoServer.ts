@@ -2,7 +2,7 @@
 // 在随机空闲端口起 `python3 -m server`，等 /api/board 通了再把 baseURL 交给 spec。
 // 与 scripts/dev-preview.sh 同一条链路，只是端口随机、目录临时、结束即杀进程。
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,6 +57,10 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
     encoding: "utf-8",
   });
   if (seed.status !== 0) throw new Error(`demo_seed.py failed: ${seed.stderr || seed.stdout}`);
+  // §68.5 首次运行判定：临时 home 没有 config.yaml 也没有凭证 → 看板会整页换到向导。golden 要的是看板，
+  // 所以写上「向导已完成」标记（与 POST /api/setup/complete 同一文件）——向导页有自己的判例，不在这组截图里。
+  mkdirSync(path.join(home, "state"), { recursive: true });
+  writeFileSync(path.join(home, "state", "setup_done.json"), JSON.stringify({ completed_at: "2026-09-02T12:00:00Z" }));
   const port = await freePort();
   // HOME 也指向临时目录：设置页读 ~/.claude/settings.json（§59 全局默认）——golden 不许带上
   // 开发者机器的真实路径 / 模型名，CI runner 上也没有这个文件，两边一致 = 「文件不存在」态。
