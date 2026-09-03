@@ -1,47 +1,103 @@
-# Claude PR review — advisory inline review on every same-repo PR.
+# Claude PR review — advisory inline review ON DEMAND (CONTRACT §56.8).
+#
+# Trigger = the `review:ai` label (pull_request: labeled) or a manual
+# workflow_dispatch with the PR number — no longer every push. The default
+# review of an agent PR is the adversarial agent review in the lead's own
+# session; the bots are a paid second opinion the maintainer asks for
+# explicitly (the every-push runs mostly failed on infra and still spent
+# API money on each of dozens of parallel agent PRs).
 #
 # Design (mirrors ci.yml conventions):
-# - Fork PRs are skipped outright (the job-level guard): on `pull_request`
-#   they get no secrets anyway, and a guaranteed-red advisory job on outside
-#   contributions is pure noise.
+# - Fork PRs are skipped outright: the job-level guard on the label event, the
+#   isCrossRepository probe on dispatch — on `pull_request` they get no
+#   secrets anyway, and a guaranteed-red advisory job on outside contributions
+#   is pure noise.
 # - Missing ANTHROPIC_API_KEY (secret not configured yet) = green no-op via
-#   the step-level presence probe — an advisory bot must never look like a
-#   broken build.
-# - concurrency cancels the superseded run on rapid pushes: reviewing a
-#   commit that is no longer the head is wasted spend.
+#   the presence probe — an advisory bot must never look like a broken build.
+# - The label is CONSUMED (removed) as soon as the request is picked up: a
+#   `labeled` event only fires when the label is actually added, so re-adding
+#   it later asks for a fresh review of the then-current head. Both bot
+#   workflows fire from the same event and both remove it; the second removal
+#   is a tolerated no-op.
+# - concurrency cancels the superseded run on the same PR.
 # - The review is advisory by definition — never a required check.
 name: Claude PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to review"
+        required: true
+        type: number
 
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
+# Job-level grants only (the default workflow token is read-only in this repo).
+permissions: {}
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    name: review (advisory, on demand)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.label.name == 'review:ai'
+          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout of the PR under review
+      pull-requests: write # inline review comments + consuming the review:ai label
+      issues: write # the summary comment goes through the issues API
+    # §56.6 timeout discipline — a hung review must not hold a slot for 6 h.
+    timeout-minutes: 45
     steps:
-      - id: key
-        # secrets are not readable in job-level `if` on all runner versions —
-        # the step-level probe is the portable gate
-        run: echo "present=${{ secrets.ANTHROPIC_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+      - id: pr
+        name: Resolve the PR, consume the label, probe the API key
+        # Every dynamic value enters the shell via env (zizmor
+        # template-injection). secrets are not readable in job-level `if` on
+        # all runner versions — the step-level probe is the portable gate.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr }}
+          KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          PR="${EVENT_PR:-$INPUT_PR}"
+          case "$PR" in (*[!0-9]*|"") echo "::error::no PR number"; exit 1 ;; esac
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --remove-label "review:ai" 2>/dev/null \
+            || echo "label review:ai already gone (or never set) on #$PR"
+          # workflow_dispatch has no job-level fork guard — same rule, applied here
+          CROSS="$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json isCrossRepository --jq .isCrossRepository)"
+          HEAD="$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          RUN="$KEY_PRESENT"
+          if [ "$CROSS" = "true" ]; then
+            echo "::notice::PR #$PR is from a fork — bot review skipped"
+            RUN=false
+          elif [ "$RUN" != "true" ]; then
+            echo "::notice::ANTHROPIC_API_KEY not configured — review skipped (green no-op)"
+          fi
+          {
+            echo "number=$PR"
+            echo "head=$HEAD"
+            echo "run=$RUN"
+          } >> "$GITHUB_OUTPUT"
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+          # label event: the default (the PR's synthetic merge ref); dispatch
+          # has no PR ref of its own → the PR head resolved above (same-repo
+          # only — forks were refused one step up)
+          ref: ${{ github.event_name == 'workflow_dispatch' && steps.pr.outputs.head || '' }}
 
-      - if: steps.key.outputs.present == 'true'
+      - if: steps.pr.outputs.run == 'true'
         uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -50,7 +106,7 @@ jobs:
           # (first live run failed on exactly this: "Failed to get OIDC token").
           github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
-            用中文 review 这个 PR（REPO: ${{ github.repository }}，PR #${{ github.event.pull_request.number }}）。
+            用中文 review 这个 PR（REPO: ${{ github.repository }}，PR #${{ steps.pr.outputs.number }}）。
             这是一个 macOS 菜单栏 app（mac/Sources/*.swift）+ Python 管线（act/）
             的个人 AI 助理项目。重点：
             1. 正确性——具体失败场景，不要风格意见；
