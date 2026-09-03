@@ -129,6 +129,10 @@ class OpinionIsolationTestCase(unittest.TestCase):
         self.assertEqual(out["items"], [{"id": "x", "status": "MISSING"}])
         self.assertEqual(out["opinion"]["dropped_keys"], ["fix_first", "items", "status"])
         self.assertEqual(out["opinion"]["banner"], "Nothing below changes a status or a rank.")
+        # catalog.md: any key other than `text` is dropped AND listed — not just the six well-known measurement keys
+        smuggled = parity.apply_opinion({}, {"text": "ok", "score": 9, "sections": ["a"], "verdict": "green"})
+        self.assertEqual(smuggled["opinion"]["dropped_keys"], ["score", "sections", "verdict"])
+        self.assertEqual(sorted(smuggled["opinion"]), ["banner", "dropped_keys", "text"])
 
     def test_opinion_check_and_report_section(self):
         det = kit.fake_det(["b.html"])

@@ -68,6 +68,25 @@ class BuildersTestCase(unittest.TestCase):
         self.assertEqual(checks.BY_ID["structure_source"]["build"](ctx)["kind"], "na")
         self.assertEqual(checks.BY_ID["structure_runtime"]["build"](ctx)["kind"], "na")
 
+    def test_swift_surface_without_project_adapter_is_a_blind_spot(self):
+        """只有 Swift 面、没有 scripts/ui/extract_native_inventory.py → structure_source UNAVAILABLE「needs project adapter」
+        （skill 不带 Swift 启发式）；Swift + web 并存 → web 清单 pass，Swift 作为 blind spot 记在 details 里。"""
+        import sensors
+        with tempfile.TemporaryDirectory() as tmp:
+            kit.make_repo(tmp, {"mac/Sources/App.swift": "// swift", "web/board.html": "<main><button>Go</button></main>"})
+            swift_only = kit.fake_det(["mac/Sources/App.swift"], repo=tmp, surfaces=[{"kind": "swift-source", "root": "mac/Sources", "files": 1}])
+            res = sensors.check_structure_source(checks.make_ctx(tmp, swift_only, out=os.path.join(tmp, "o1")))
+            self.assertEqual(res["status"], "unavailable")
+            self.assertIn("needs project adapter", res["summary"])
+            both = kit.fake_det(["mac/Sources/App.swift", "web/board.html"], repo=tmp,
+                                surfaces=[{"kind": "static-html", "root": "web", "files": 1}, {"kind": "swift-source", "root": "mac/Sources", "files": 1}])
+            res = sensors.check_structure_source(checks.make_ctx(tmp, both, out=os.path.join(tmp, "o2")))
+            self.assertEqual(res["status"], "pass")
+            self.assertEqual(len(res["details"]["blind_spots"]), 1)
+            both["adapters"] = {"extract_native_inventory": "scripts/ui/extract_native_inventory.py"}
+            res = sensors.check_structure_source(checks.make_ctx(tmp, both, out=os.path.join(tmp, "o3")))
+            self.assertEqual(res["details"]["blind_spots"], [])  # the project adapter speaks for Swift
+
     def test_project_adapters_called_verbatim(self):
         det = kit.fake_det(["b.html"], adapters={"parity_check": "scripts/ui/parity_check.py", "visual_spec": "web/e2e/visual.spec.ts"},
                            tools={"npx": "/bin/npx", "playwright_bin": True, "node": "/bin/node"}, web_dir="web")

@@ -190,14 +190,25 @@ def _runner(ctx):
     return runner if runner else lc.run_command
 
 
+def _report_dir(ctx, name):
+    """<report>/<name>/（建好目录）——参照产物现跑时的落点，永不写进项目树。"""
+    return os.path.dirname(_out_path(ctx, name, "x"))
+
+
 def _frozen_reference(ctx, ref):
-    """alias / inventory 文件：parity 契约原始形（有 controls）就归一，否则已是 schema。"""
+    """alias / inventory 文件：parity 契约原始形（有 controls）就归一，否则已是 schema。文件缺席但 producer 在 →
+    现跑 scripts/ui/extract_native_inventory.py 到报告目录（绝不写进 ui/）；都没有 → None（pair_* 记 UNAVAILABLE）。"""
     if ref.get("inventory"):
         raw = tc.read_json(ref["inventory"])
-        return inv.normalize_native(raw, ref["inventory"]) if "controls" in raw else raw
+        return inv.normalize_native(raw, ref["inventory"]) if isinstance(raw, dict) and "controls" in raw else raw
     if ref.get("produced_by"):
-        return inv.load_native(ctx["repo"], None, _runner(ctx), _out_path(ctx, "inventory", "x")[:-1])
+        return inv.load_native(ctx["repo"], None, _runner(ctx), _report_dir(ctx, "inventory"))
     return None
+
+
+def _reference_dir(ref):
+    """`dir:` 参照的目录：解析时记下的绝对路径（相对路径以 repo 为基），老记录退回 locator。"""
+    return ref.get("directory") or os.path.abspath(ref["locator"])
 
 
 def _load_reference_inventory(ctx, ref):
@@ -207,7 +218,7 @@ def _load_reference_inventory(ctx, ref):
     if kind == "git":
         return inv.extract_tree(refmod.ensure_worktree(ctx["repo"], ref, _runner(ctx)), _config(ctx).get("screens"))
     if kind == "dir":
-        return inv.extract_tree(os.path.abspath(ref["locator"]), _config(ctx).get("screens"))
+        return inv.extract_tree(_reference_dir(ref), _config(ctx).get("screens"))
     return None
 
 
@@ -236,16 +247,25 @@ def check_tokens_source(ctx):
         doc["families"], sorted(doc["themes"]), doc["default_theme"]["declared"]), {"families": doc["families"]})
 
 
-def _load_reference_tokens(ctx, ref):
+def _alias_tokens(ctx, ref):
+    """别名的 tokens 文件在 → 读；缺席但 producer 里有 extract_native_tokens.py → 现跑到报告目录（与清单同一条规矩）。"""
     if ref.get("tokens"):
         return tk.load_design_tokens(ref["tokens"])
+    if any("extract_native_tokens" in p for p in ref.get("produced_by") or []):
+        return tk.load_native_tokens(ctx["repo"], None, _runner(ctx), _report_dir(ctx, "tokens"))
+    return None
+
+
+def _load_reference_tokens(ctx, ref):
     kind = ref.get("kind")
+    if kind in ("alias", "inventory"):
+        return _alias_tokens(ctx, ref)
     if kind == "design-system":
         return _state(ctx).get("subject_tokens")
     if kind == "git":
         return _dir_tokens(ctx, refmod.ensure_worktree(ctx["repo"], ref, _runner(ctx)))
     if kind == "dir":
-        return _dir_tokens(ctx, os.path.abspath(ref["locator"]))
+        return _dir_tokens(ctx, _reference_dir(ref))
     return None
 
 
@@ -333,10 +353,21 @@ def _pair_verdict(ctx, result, sensor):
     return _res(status, (note + " · " + summary) if note else summary, details)
 
 
+def _no_reference_tokens(ctx):
+    """参照没有 tokens 表：design-system 是 N-A（项目 tokens 就是参照）；别名 / dir / git / inventory 缺表是 UNAVAILABLE
+    （工具或输入缺席——说清缺什么，不冒充 N-A）。"""
+    ref = _reference(ctx)
+    if ref.get("kind") == "design-system":
+        return _res("na", "design-system mode: the project tokens are the reference (see off_token_literals / contrast_pairs)")
+    hint = ref.get("hint") or "reference %s (%s) carries no tokens table — add `tokens` to its [references] entry or a tokens.css to its tree" % (
+        ref.get("locator"), ref.get("kind"))
+    return _res("unavailable", "no reference tokens: %s" % hint)
+
+
 def check_pair_tokens(ctx):
     subject, reference = _state(ctx).get("subject_tokens"), reference_tokens(ctx)
     if reference is None or _reference(ctx).get("kind") == "design-system":
-        return _res("na", "design-system mode: the project tokens are the reference (see off_token_literals / contrast_pairs)")
+        return _no_reference_tokens(ctx)
     if subject is None:
         return _res("unavailable", "no subject tokens (see tokens_source)")
     rows = parity.compare_tokens(subject, reference, _thresholds(ctx))
@@ -553,7 +584,7 @@ def _launch_recipe(ctx):
     # HOME 也指向临时目录（同 web/e2e/demoServer.ts）：app 读 ~/.claude/settings.json 之类的用户文件时
     # 拿到的是「不存在」态——截图里永不出现开发者机器的路径 / 模型名（不截真实数据）。
     env = dict(os.environ, **{launch.get("home_env", "AIASSISTANT_HOME"): home, launch.get("port_env", "ZAI_PORT"): str(port),
-                              "HOME": home, "PYTHONPATH": ctx["repo"]})
+                              "HOME": home, "PYTHONPATH": os.pathsep.join(p for p in (ctx["repo"], os.environ.get("PYTHONPATH")) if p)})
     marker = launch.get("marker")
     argv = [a.replace("{py}", sys.executable).replace("{port}", str(port)).replace("{home}", home) for a in launch["server"]]
     return {"argv": argv, "env": env, "home": home, "port": port,
@@ -667,17 +698,20 @@ def _drive(ctx, recipe, state):
                                  _out_path(ctx, "runtime", "x")[:-1], _runner(ctx), _node_bin(ctx), ctx.get("driver_timeout"))
     if output is None:
         return _res("fail", "driver failed (rc %s): %s" % (res.rc, res.text().strip()[-300:]))
-    bundle = inv.parse_runtime(output, dict(_subject_side(ctx), seed={"seeded_by_skill": True, "marker": recipe["marker"]}))
-    bundle["inventory"]["names_filtered"] = _static_name_filter(ctx, bundle["inventory"])
+    side = dict(_subject_side(ctx), seed={"seeded_by_skill": True, "marker": recipe["marker"]})
+    # 静态名字过滤在构造清单时就做（inventory_a11y.NameFilter）：名字、id、可见文本、地标路径段一起脱敏，
+    # 空集合 = 全部 {dynamic}（fail closed）——用户内容进不了 subject-runtime.json，也进不了报告。
+    bundle = inv.parse_runtime(output, side, known_names=_known_names(ctx))
     state["runtime"] = bundle
     tc.write_text(_out_path(ctx, "inventory", "subject-runtime.json"), tc.dump_json(bundle["inventory"]))
     runs = len(inv._rows(output, "runs"))
-    return _res("pass", "%d runtime item(s) across %d run(s); marker seen; seeded by skill" % (
-        len(bundle["inventory"]["items"]), runs), {"runs": runs})
+    return _res("pass", "%d runtime item(s) across %d run(s); marker seen; seeded by skill; %d name(s) filtered to {dynamic}" % (
+        len(bundle["inventory"]["items"]), runs, bundle["inventory"]["names_filtered"]), {"runs": runs})
 
 
 def _known_names(ctx):
-    """静态名字集合 = subject 源字符串（zh / en 两半）∪ 参照清单的名字（规格文本，永不是用户数据）。"""
+    """静态名字集合 = subject 源字符串（zh / en 两半）∪ 参照清单的名字（规格文本，永不是用户数据）。永远返回集合
+    （可以为空——空集合让 NameFilter 把一切都当用户内容，而不是关掉过滤）。"""
     source = subject_inventory(ctx)
     names = set((source if source else {}).get("names") or [])
     try:
@@ -686,22 +720,6 @@ def _known_names(ctx):
         reference = None  # unreadable reference is pair_structure's FAIL, not the filter's business
     names |= set(inv.static_names((reference if reference else {}).get("items") or []))
     return names
-
-
-def _foreign_name(item, known):
-    raw = item["name"]["raw"]
-    return bool(raw) and raw not in known and not item.get("pin")
-
-
-def _static_name_filter(ctx, runtime_inv):
-    """名字不在 subject 源字符串集合里 → {dynamic}（用户内容永不进清单）。没有源集合 = 不过滤。"""
-    known = _known_names(ctx)
-    if not known:
-        return 0
-    foreign = [item for item in runtime_inv["items"] if _foreign_name(item, known)]
-    for item in foreign:
-        item["name"]["raw"], item["dynamic"] = "{dynamic}", True
-    return len(foreign)
 
 
 # --------------------------------------------------------------------------- #
@@ -935,12 +953,26 @@ def check_visual_diff(ctx):
     return _visual_verdict(rows, visual.check_manifest(machine_dir))
 
 
-def _visual_verdict(rows, manifest):
+def _visual_red(rows, manifest):
+    """→ fail 结果或 None：超阈 / 遮罩超帽（max_mask_ratio——遮罩长到把差异盖住 = 反作弊 #1 的变体）/ 台账坏。"""
     over = [r for r in rows if r.get("item_status") == "CHANGED"]
-    if over or not manifest["ok"]:
-        return _res("fail", "%d shot(s) over threshold, manifest ok=%s" % (len(over), manifest["ok"]), {"rows": rows, "manifest": manifest})
-    no_golden = sum(1 for r in rows if r.get("status") == "no_golden")
-    return _res("pass", "%d shot(s) within threshold (%d without golden)" % (len(rows), no_golden), {"rows": rows})
+    capped = [r for r in rows if r.get("over_mask_cap")]
+    if not (over or capped) and manifest["ok"]:
+        return None
+    return _res("fail", "%d shot(s) over threshold, %d over the mask cap, manifest ok=%s" % (len(over), len(capped), manifest["ok"]),
+                {"rows": rows, "manifest": manifest, "over_mask_cap": [r["id"] for r in capped]})
+
+
+def _visual_verdict(rows, manifest):
+    """红 → fail；一张都没比（每张都没 golden）→ unavailable（没跑的比较不许写 pass）；否则 pass，注明几张没 golden。"""
+    red = _visual_red(rows, manifest)
+    if red:
+        return red
+    compared = [r for r in rows if r.get("status") != "no_golden"]
+    if not compared:
+        return _res("unavailable", "%d shot(s) but none has a golden on this machine — nothing was compared (run --propose-goldens)" % len(rows),
+                    {"rows": rows})
+    return _res("pass", "%d shot(s) within threshold (%d without golden)" % (len(compared), len(rows) - len(compared)), {"rows": rows})
 
 
 def _shot_row(ctx, shot, machine_dir):
@@ -953,7 +985,10 @@ def _shot_row(ctx, shot, machine_dir):
     except (OSError, ValueError) as exc:
         return {"id": shot["id"], "status": "unreadable", "item_status": "CHANGED", "error": str(exc)}
     result.pop("tiles", None)
-    return dict(result, id=shot["id"], golden=golden)
+    # odiff 不报遮罩面积：driver 在截图前画的遮罩比例（shot.masked_ratio）也算进帽子——两个仪器同一条帽线
+    masked = max(float(result.get("masked_ratio") or 0.0), float(shot.get("masked_ratio") or 0.0))
+    over_cap = masked > float(_thresholds(ctx).get("max_mask_ratio", 0.2))
+    return dict(result, id=shot["id"], golden=golden, masked_ratio=masked, over_mask_cap=result.get("over_mask_cap") or over_cap)
 
 
 def check_matrix_themes_viewports(ctx):
@@ -1018,7 +1053,7 @@ def check_i18n_parity(ctx):
 
 def _v01_unavailable(what):
     def check(ctx):
-        return _res("unavailable", "%s — not wired in test-ui 0.1.0 (table-only; run by hand, paste into Notes)" % what)
+        return _res("unavailable", "%s — not wired in test-ui %s (table-only; run by hand, paste into Notes)" % (what, tc.SKILL_VERSION))
     check.__name__ = "check_" + what.split(" ")[0]
     return check
 

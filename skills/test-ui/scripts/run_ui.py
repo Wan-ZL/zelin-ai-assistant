@@ -281,19 +281,24 @@ def _needs_fix(row):
     return row["status"] in ("MISSING", "CHANGED") and row["ledger"] != "pending"
 
 
-def _fix_items(rows, screens, project_items=None):
+def _fix_items(rows, screens, project_items=None, check="pair_structure"):
     """rank 1：改动屏上 MISSING 的交互项 + CHANGED topology；rank 5：其它屏。项目门（点遍按钮的 vitest）判 PRESENT 的
-    id 不进 rank 1——rest 态树看不见对话框里的按钮，那是 parity_disagreement 的材料，不是先修项。"""
+    id 不进 rank 1——rest 态树看不见对话框里的按钮，那是 parity_disagreement 的材料，不是先修项。check = 行的出处
+    （pair_runtime 跑了就是它，否则 pair_structure）。"""
     project = project_items if project_items else {}
-    return [_fix_item(row, screens, project.get(row["id"]) in ("PRESENT", "STALE")) for row in rows if _needs_fix(row)]
+    return [_fix_item(row, screens, project.get(row["id"]) in ("PRESENT", "STALE"), check) for row in rows if _needs_fix(row)]
 
 
-def _fix_item(row, screens, gate_present):
+def _fix_item(row, screens, gate_present, check="pair_structure"):
     rank = 1 if _is_hot(row) and _on_changed_screen(row, screens) and not gate_present else 5
     fields = ",".join(row["fields_changed"])
     kind = "%s %s" % (row["status"], fields if fields else row["kind"])
     return {"rank": rank, "kind": kind + (" — project gate says PRESENT (interaction-revealed?)" if gate_present else ""),
-            "item": row["id"], "check": "pair_structure"}
+            "item": row["id"], "check": check}
+
+
+def _pair_check(ctx):
+    return "pair_runtime" if ctx["state"].get("pair_runtime") else "pair_structure"
 
 
 _TOKEN_FIX_SOURCES = {"theme_default_declared": ("row", "location"), "theme_default_observed": ("row", "location"),
@@ -332,16 +337,19 @@ def _fix_rules(results):
     return out
 
 
-def _fix_visual(results):
+def _visual_fix_rows(row):
+    """一张截图的 fix-first 行：超阈 → rank 4；遮罩超帽 → rank 6（账本噪音：遮罩长到盖住差异是反作弊 #1 的变体）。"""
     out = []
-    for r in results:
-        if r["id"] != "visual_diff":
-            continue
-        for row in r["details"].get("rows") or []:
-            if row.get("item_status") == "CHANGED":
-                out.append({"rank": 4, "kind": "visual %.2f%% > %.2f%%" % (100 * row.get("changed_pct", 0), 100 * row.get("threshold", 0)),
-                            "item": row["id"], "check": "visual_diff"})
+    if row.get("item_status") == "CHANGED":
+        out.append({"rank": 4, "kind": "visual %.2f%% > %.2f%%" % (100 * row.get("changed_pct", 0), 100 * row.get("threshold", 0)),
+                    "item": row["id"], "check": "visual_diff"})
+    if row.get("over_mask_cap"):
+        out.append({"rank": 6, "kind": "mask over cap (%.1f%% masked)" % (100 * row.get("masked_ratio", 0)), "item": row["id"], "check": "visual_diff"})
     return out
+
+
+def _fix_visual(results):
+    return [fix for r in results if r["id"] == "visual_diff" for row in r["details"].get("rows") or [] for fix in _visual_fix_rows(row)]
 
 
 def _detail_list(result, key):
@@ -368,7 +376,7 @@ def fix_first(results, ctx, sel):
     4 视觉超阈 → 5 其它屏的 MISSING/CHANGED/规则 → 6 账本噪音 → 7 其它红层。"""
     screens = _changed_screens(sel)
     project = (ctx["state"].get("project_parity") or {}).get("items")
-    items = _fix_items(_rows(ctx), screens, project) + _fix_tokens(results, screens) + _fix_rules(results) + _fix_visual(results) + _fix_ledger(results)
+    items = _fix_items(_rows(ctx), screens, project, _pair_check(ctx)) + _fix_tokens(results, screens) + _fix_rules(results) + _fix_visual(results) + _fix_ledger(results)
     covered = {i["check"] for i in items}
     items += [{"rank": 7, "kind": "failing layer", "item": "%s: %s" % (r["id"], r["summary"]), "check": r["id"]}
               for r in results if r["status"] == "fail" and r["id"] not in covered]

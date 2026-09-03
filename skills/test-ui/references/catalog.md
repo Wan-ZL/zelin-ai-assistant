@@ -10,7 +10,7 @@ The core checks in SKILL.md are what a tier **must** run. This catalog is what a
 | `project_visual` | `web/e2e/visual.spec.ts` + `@playwright/test` installed in `web/` | `npx --no-install playwright test e2e/visual.spec.ts` exit 0 (its goldens are read-only for the skill; no second golden set) | project spec, verbatim | Playwright `toHaveScreenshot` |
 | `opinion` | always (advisory) | never fails; prints `selection.opinion.text` under `## Opinion (not a measurement)` with the banner "Nothing below changes a status or a rank."; any key other than `text` is dropped and listed | internal | owner: opinions separated from measurements |
 
-## Table-only rows (no runner in 0.1.0 — run by hand, paste into Notes)
+## Table-only rows (no runner in 0.1.x — run by hand, paste into Notes)
 
 | id / metric | pass line | tool | why it is mainstream |
 |---|---|---|---|
