@@ -101,23 +101,28 @@ def _dump_str(s: str) -> str:
     return json.dumps(s, ensure_ascii=False).replace("/", "\\/")
 
 
+# 三个 JSON 字面量（`is` 判定：True/False 是 int 子类，不能走 isinstance）
+_LITERALS = ((None, "null"), (True, "true"), (False, "false"))
+
+
+def _dump_list(v: list, key_indent: int) -> str:
+    pad = " " * key_indent
+    if not v:
+        # 空数组三行渲染：``[`` + 空行 + 缩进 ``]``（md §1 ⑦）
+        return "[\n\n" + pad + "]"
+    inner = " " * (key_indent + 2)
+    items = ",\n".join(inner + _dump_value(x, key_indent + 2) for x in v)
+    return "[\n" + items + "\n" + pad + "]"
+
+
 def _dump_value(v, key_indent: int) -> str:
-    if v is None:
-        return "null"
-    if v is True:
-        return "true"
-    if v is False:
-        return "false"
+    for literal, text in _LITERALS:
+        if v is literal:
+            return text
     if isinstance(v, str):
         return _dump_str(v)
     if isinstance(v, list):
-        pad = " " * key_indent
-        if not v:
-            # 空数组三行渲染：``[`` + 空行 + 缩进 ``]``（md §1 ⑦）
-            return "[\n\n" + pad + "]"
-        inner = " " * (key_indent + 2)
-        items = ",\n".join(inner + _dump_value(x, key_indent + 2) for x in v)
-        return "[\n" + items + "\n" + pad + "]"
+        return _dump_list(v, key_indent)
     raise TypeError(f"unsupported inbox value type: {type(v).__name__}")
 
 
@@ -144,19 +149,26 @@ def _require_str(value, field: str, *, allow_empty: bool = False) -> str:
     return value
 
 
+def _is_safe_id(x) -> bool:
+    return isinstance(x, str) and bool(SAFE_ID_RE.match(x))
+
+
 def _require_id_list(value, field: str, *, min_len: int = 0,
                      distinct: bool = True) -> list:
-    if not (isinstance(value, list)
-            and all(isinstance(x, str) and SAFE_ID_RE.match(x) for x in value)):
+    if not isinstance(value, list) or not all(_is_safe_id(x) for x in value):
         raise InvalidFieldError(f"{field} must be a list of safe ids",
                                 {"field": field})
+    _require_list_shape(value, field, min_len, distinct)
+    return list(value)
+
+
+def _require_list_shape(value: list, field: str, min_len: int, distinct: bool) -> None:
     if distinct and len(set(value)) != len(value):
         raise InvalidFieldError(f"{field} must not contain duplicates",
                                 {"field": field})
     if len(value) < min_len:
         raise InvalidFieldError(f"{field} needs at least {min_len} ids",
                                 {"field": field})
-    return list(value)
 
 
 def _require_image_list(value, field: str) -> list:
@@ -174,19 +186,29 @@ def _require_image_list(value, field: str) -> list:
 # --------------------------------------------------------------------------- #
 # 逐动词组装（返回待序列化 rec；ts 由调用方统一补）
 # --------------------------------------------------------------------------- #
-def _build_card(action: str, payload: dict) -> dict:
-    # 统一四键形（md §2）：comment 键恒在，无文本 = JSON null（对齐 Swift
-    # ``comment ?? NSNull()``；merge_* 在 Mac 端同走此路径，golden 带 null）
-    comment = payload.get("comment")
-    if comment is not None and not isinstance(comment, str):
-        raise InvalidFieldError("comment must be a string or null")
+def _optional_str(value, message: str):
+    """None 放行（= 缺省），否则必须是 str。"""
+    if value is not None and not isinstance(value, str):
+        raise InvalidFieldError(message)
+    return value
+
+
+def _comment_field(action: str, payload: dict):
+    """``comment`` 键：str 或 null；comment 动作本身必须带非空文本。"""
+    comment = _optional_str(payload.get("comment"), "comment must be a string or null")
     if action == "comment" and not (comment or "").strip():
         # §2.3：comment 动作携带文本——空文本没有语义，fail closed。
         # rework 留空是合法 wire（空反馈替换文案是 web 客户端的活，md R9）。
         raise InvalidFieldError("comment action requires text")
+    return comment
+
+
+def _build_card(action: str, payload: dict) -> dict:
+    # 统一四键形（md §2）：comment 键恒在，无文本 = JSON null（对齐 Swift
+    # ``comment ?? NSNull()``；merge_* 在 Mac 端同走此路径，golden 带 null）
     return {"action": action,
             "id": _require_safe_id(payload.get("id"), "id"),
-            "comment": comment}
+            "comment": _comment_field(action, payload)}
 
 
 def _build_split_note(payload: dict) -> dict:
@@ -226,14 +248,16 @@ def _build_merge_force(payload: dict) -> dict:
     return {"action": "merge_force", "ids": ids, "primary": primary}
 
 
-def _build_feedback(payload: dict) -> dict:
-    # §29：ids 升序 sorted（可空 = 对整体）；publish 恒在（缺省 false——opt-in
-    # 语义下缺省不公开最保守）；text 与 images 双空 → 400（Mac 端根本不发）
-    ids = sorted(_require_id_list(payload.get("ids", []), "ids"))
+def _publish_flag(payload: dict) -> bool:
+    # publish 恒在（缺省 false——opt-in 语义下缺省不公开最保守）
     publish = payload.get("publish", False)
     if not isinstance(publish, bool):
         raise InvalidFieldError("publish must be a boolean")
-    rec = {"action": "feedback", "ids": ids, "publish": publish}
+    return publish
+
+
+def _feedback_body(payload: dict, rec: dict) -> None:
+    """text（可空串）/ images 两个可选键落进 rec；双空 → 400（Mac 端根本不发）。"""
     text = payload.get("text")
     if text is not None:
         rec["text"] = _require_str(text, "text", allow_empty=True)
@@ -241,32 +265,54 @@ def _build_feedback(payload: dict) -> dict:
         rec["images"] = _require_image_list(payload["images"], "images")
     if not (rec.get("text") or "").strip() and not rec.get("images"):
         raise InvalidFieldError("feedback needs text or images")
+
+
+def _build_feedback(payload: dict) -> dict:
+    # §29：ids 升序 sorted（可空 = 对整体）
+    ids = sorted(_require_id_list(payload.get("ids", []), "ids"))
+    rec = {"action": "feedback", "ids": ids, "publish": _publish_flag(payload)}
+    _feedback_body(payload, rec)
     return rec
+
+
+def _capture_mode(payload: dict, rec: dict) -> None:
+    mode = payload.get("mode")
+    if mode is None:
+        return
+    # §34/§41：mode 仅恰为 "run" 时放行——未定义值 400，绝不骑进 inbox 文件
+    if mode != "run":
+        raise InvalidFieldError('mode is only capture mode:"run"')
+    rec["mode"] = "run"
+
+
+def _capture_images(payload: dict, rec: dict) -> None:
+    if "images" not in payload:
+        return
+    images = _require_image_list(payload["images"], "images")
+    if len(images) > _CAPTURE_IMAGES_MAX:
+        raise InvalidFieldError(
+            f"images allows at most {_CAPTURE_IMAGES_MAX} paths")
+    rec["images"] = images
+
+
+def _capture_preset(payload: dict, rec: dict) -> None:
+    preset = payload.get("preset")
+    if preset is None:
+        return
+    # §34bis：仅 "proposals_triage" 且必须同时 mode:"run"——actd 侧是
+    # fail-safe 忽略，API 侧 fail-closed 400（两层纪律，md §1）
+    if preset != _CAPTURE_PRESET or rec.get("mode") != "run":
+        raise InvalidFieldError(
+            'preset is only "proposals_triage" with mode:"run"')
+    rec["preset"] = _CAPTURE_PRESET
 
 
 def _build_capture(payload: dict) -> dict:
     rec = {"action": "capture",
            "text": _require_str(payload.get("text"), "text")}
-    mode = payload.get("mode")
-    if mode is not None:
-        # §34/§41：mode 仅恰为 "run" 时放行——未定义值 400，绝不骑进 inbox 文件
-        if mode != "run":
-            raise InvalidFieldError('mode is only capture mode:"run"')
-        rec["mode"] = "run"
-    if "images" in payload:
-        images = _require_image_list(payload["images"], "images")
-        if len(images) > _CAPTURE_IMAGES_MAX:
-            raise InvalidFieldError(
-                f"images allows at most {_CAPTURE_IMAGES_MAX} paths")
-        rec["images"] = images
-    preset = payload.get("preset")
-    if preset is not None:
-        # §34bis：仅 "proposals_triage" 且必须同时 mode:"run"——actd 侧是
-        # fail-safe 忽略，API 侧 fail-closed 400（两层纪律，md §1）
-        if preset != _CAPTURE_PRESET or rec.get("mode") != "run":
-            raise InvalidFieldError(
-                'preset is only "proposals_triage" with mode:"run"')
-        rec["preset"] = _CAPTURE_PRESET
+    _capture_mode(payload, rec)
+    _capture_images(payload, rec)
+    _capture_preset(payload, rec)   # 依赖 rec["mode"] 已就位——顺序不可换
     return rec
 
 
@@ -346,10 +392,19 @@ def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
     if not isinstance(action, str) or action not in ALLOWED_ACTIONS:
         raise InvalidFieldError("unknown action",
                                 {"action": str(action)[:100]})
+    _reject_unknown_fields(action, payload)
+    actor = _actor_of(payload)
+    rec = _build_record(action, payload, actor)
+    rec["via"] = _VIA_AGENT if actor == _VIA_AGENT else _VIA_WEB
+    rec["ts"] = _iso_now()
+    stem = _write_inbox_file(rec, action, home)
+    # via 回带（add-only 响应键）：app.py 的 steer 标注按实际 ingress 裁决
+    return {"ok": True, "file": f"{stem}.json", "action": action,
+            "via": rec["via"]}
 
-    # 逐动词字段白名单：schema 外一律 400（含 ts/expected_status/board_seq——
-    # ts 由 server 重打防 spoof，后两者不在 web 入站面上；``via`` 永远是
-    # server 落款，任何动词直发都是 UNKNOWN_FIELD）
+
+def _allowed_fields(action: str) -> set:
+    """本动词入站 schema 的键全集（含 action 本身；agent 动词多一个 actor）。"""
     if action in CARD_VERBS:
         allowed = {"action", "id", "comment"}
     else:
@@ -357,16 +412,28 @@ def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
         allowed = {"action"} | required | optional
     if action in _ACTOR_VERBS:
         allowed = allowed | {"actor"}
-    unknown = set(payload) - allowed
+    return allowed
+
+
+def _reject_unknown_fields(action: str, payload: dict) -> None:
+    # 逐动词字段白名单：schema 外一律 400（含 ts/expected_status/board_seq——
+    # ts 由 server 重打防 spoof，后两者不在 web 入站面上；``via`` 永远是
+    # server 落款，任何动词直发都是 UNKNOWN_FIELD）
+    unknown = set(payload) - _allowed_fields(action)
     if unknown:
         raise UnknownFieldError("unknown field",
                                 {"fields": sorted(unknown)})
 
+
+def _actor_of(payload: dict):
     # actor 是传输面字段（不落盘）：只认 "agent"，其余取值 fail-closed 400
     actor = payload.get("actor")
     if "actor" in payload and actor != _VIA_AGENT:
         raise InvalidFieldError('actor is only "agent"', {"field": "actor"})
+    return actor
 
+
+def _build_record(action: str, payload: dict, actor) -> dict:
     if action in CARD_VERBS:
         rec = _build_card(action, payload)
     else:
@@ -374,9 +441,11 @@ def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
     if actor == _VIA_AGENT and ("mode" in rec or "preset" in rec):
         # agent 通道无直跑面（boardctl 连 flag 都没有）——裸 HTTP 也 fail-closed
         raise InvalidFieldError("agent capture cannot request direct run")
-    rec["via"] = _VIA_AGENT if actor == _VIA_AGENT else _VIA_WEB
-    rec["ts"] = _iso_now()
+    return rec
 
+
+def _write_inbox_file(rec: dict, action: str, home: Optional[Path]) -> str:
+    """原子落盘，返回 stem（文件名去 .json）。"""
     # 文件命名（md §1）：capture-<uuid>.json 是 Mac debug 习惯，照抄；
     # stem 全局唯一是硬要求（§34.1 幂等键 + §5.4 ack 键）——每次铸新 uuid4。
     stem = f"capture-{uuid.uuid4()}" if action == "capture" else str(uuid.uuid4())
@@ -386,6 +455,4 @@ def write_action(payload: dict, *, home: Optional[Path] = None) -> dict:
     tmp = inbox / f"{stem}.json.tmp"
     tmp.write_bytes(mac_json_bytes(rec))
     os.replace(tmp, inbox / f"{stem}.json")
-    # via 回带（add-only 响应键）：app.py 的 steer 标注按实际 ingress 裁决
-    return {"ok": True, "file": f"{stem}.json", "action": action,
-            "via": rec["via"]}
+    return stem
