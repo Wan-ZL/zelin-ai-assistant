@@ -282,6 +282,8 @@ jobs:
     # ≤6、CRAP ≤6、总覆盖率不低于 qa/coverage_floor.txt、模块依赖方向 + 防腐
     # 十条机械化——全部对着 qa/*_baseline.txt 的 shrink-only 存量账本判决，
     # 所以老代码不挡门、新代码必须干净、账本只许缩（清账 = P3）。
+    # 第六道 [ui-parity]（§62.2）：原生 UI 清单 ⟷ web 实现，对着 ui/parity/pending.txt
+    # （shrink-only）判决；job 名不变（required check 按名字挂）。
     # 出生时是非必需检查；在 main 上证明稳定后再升 required（§58.5）。
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -304,7 +306,8 @@ jobs:
       - name: Ledger shrink-only diff vs PR base
         # §58.4 的另一半：三态判决看不见「账本自己长了」——新增债务 + 同 PR
         # 自记账在三态下照样全绿。这里把 qa/*_baseline.txt（加键/抬分）、
-        # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）与 merge
+        # qa/coverage_floor.txt（下调）、qa/gates.toml（放宽/删键）、
+        # ui/parity/{pending,waivers}.txt（§62.2 加 id）与 merge
         # ref 的第一父（= 当前 main；merge queue 的临时 merge commit 同形）
         # 比较，任何放宽即 FAIL。push 到 main 时没有 base 可比，跳过。
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -314,9 +317,19 @@ jobs:
         # coverage = dev/CI-only（§0 宪法第 7 条：运行时白名单 stdlib+PyYAML 不变）
         run: python3 -m pip install "pyyaml>=6,<7" coverage
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install web dependencies (the [ui-parity] gate runs vitest)
+        # §62.2：scripts/ui/parity_check.py 以 --reporter=json 跑 web/src/parity.test.tsx
+        # 读每条原生控件的在/不在——门要 node + web/node_modules 才能判卷。
+        run: npm ci
+        working-directory: web
+
       - name: Run QA gates
-        # 全套 unittest 在 coverage 下跑一遍 + 五道门；判决与建议账本落
-        # .qa-report/（下面整目录上传——收账 = 从 artifact 拷回 qa/）。
+        # 全套 unittest 在 coverage 下跑一遍 + 六道门（§58 五道 + §62 [ui-parity]）；
+        # 判决与建议账本落 .qa-report/（下面整目录上传——收账 = 从 artifact 拷回 qa/）。
         run: bash scripts/qa/run_gates.sh
 
       - name: ruff C901 advisory cross-check
@@ -338,6 +351,51 @@ jobs:
           # v4 默认丢弃隐藏路径（CVE-2024-43784 后的安全默认）；.qa-report/
           # 是点目录且内容只有本 job 生成的判决/榜单/建议账本，无秘密。
           include-hidden-files: true
+
+  web-visual:
+    name: Web visual (playwright)
+    # 视觉基线（docs/CONTRACT.md §62.4）：demo 数据 + 真 server + chromium，三页 × light/dark
+    # 截图对 web/e2e/__screenshots__/ 的 golden。macOS runner：golden 在 macOS 上生成
+    # （SF Pro / PingFang），ubuntu 的字体会让每张都「回归」。出生 informational
+    # （continue-on-error）：改 UI 的 PR 先看 diff artifact，稳定后再议升门。
+    # informational → merge queue 里不跑。
+    if: github.event_name != 'merge_group'
+    continue-on-error: true
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies + chromium
+        run: |
+          npm ci
+          npx playwright install chromium
+
+      - name: Build (the server serves web/dist)
+        run: npm run build
+
+      - name: Visual regression (playwright)
+        # e2e/demoServer.ts 种 demo 数据到临时 AIASSISTANT_HOME、随机端口起 python3 -m server。
+        run: npx playwright test
+
+      - name: Upload diffs + report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-visual
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
 
   qlty:
     name: qlty check (informational)
