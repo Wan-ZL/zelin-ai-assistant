@@ -332,7 +332,7 @@ def _apply_capture(text: Optional[str], mode: Optional[str] = None, images=None,
 
 
 def _attach_capture_images(req: Requirement, images) -> None:
-    _inbox.attach_capture_images(_ctx(), req, images)
+    return _inbox.attach_capture_images(_ctx(), req, images)
 
 
 def _apply_split_note(req_id, note_ts) -> str:
@@ -374,15 +374,15 @@ def _stop_session_tracked(req: Requirement, ex: dict, sid, why: str,
 
 
 def _stop_live_session(req: Requirement, why: str) -> None:
-    _session.stop_live_session(_ctx(), req, why)
+    return _session.stop_live_session(_ctx(), req, why)
 
 
 def _apply_harvest_title(req: Requirement, harvested: dict) -> None:
-    _session.apply_harvest_title(_ctx(), req, harvested)
+    return _session.apply_harvest_title(_ctx(), req, harvested)
 
 
 def _update_search_index(card_id, session_id) -> None:
-    _session.update_search_index(_ctx(), card_id, session_id)
+    return _session.update_search_index(_ctx(), card_id, session_id)
 
 
 # §34bis triage guard ---------------------------------------------------------
@@ -391,11 +391,11 @@ def _stamp_triage_snapshot(req_id: str) -> Optional[str]:
 
 
 def _check_triage_registry_guard(req, ex: dict) -> None:
-    _triage_guard.check_triage_registry_guard(_ctx(), req, ex)
+    return _triage_guard.check_triage_registry_guard(_ctx(), req, ex)
 
 
 def _sweep_triage_snapshots() -> None:
-    _triage_guard.sweep_triage_snapshots(_ctx())
+    return _triage_guard.sweep_triage_snapshots(_ctx())
 
 
 # merge-review (§21) ----------------------------------------------------------
@@ -412,15 +412,15 @@ def _apply_merge_decision(action: str, suggestion_id) -> str:
 
 
 def _apply_merge_verdict(job: dict) -> None:
-    _merge.apply_merge_verdict(_ctx(), job)
+    return _merge.apply_merge_verdict(_ctx(), job)
 
 
 def _apply_merge_partition(job: dict) -> None:
-    _merge.apply_merge_partition(_ctx(), job)
+    return _merge.apply_merge_partition(_ctx(), job)
 
 
 def _merge_into_primary(primary_id: str, secondaries: list) -> None:
-    _merge.merge_into_primary(_ctx(), primary_id, secondaries)
+    return _merge.merge_into_primary(_ctx(), primary_id, secondaries)
 
 
 def cleanup_merge_jobs() -> int:
@@ -446,7 +446,7 @@ def process_raising(cfg: config.Config) -> int:
 
 # reconcile -------------------------------------------------------------------
 def _reconcile_review_attach(req: Requirement, agents: dict) -> None:
-    _reconcile.reconcile_review_attach(_ctx(), req, agents)
+    return _reconcile.reconcile_review_attach(_ctx(), req, agents)
 
 
 def _promote_if_delivered(req, ex: dict, sid) -> bool:
@@ -455,16 +455,16 @@ def _promote_if_delivered(req, ex: dict, sid) -> bool:
 
 def _harvest_to_review(req: Requirement, ex: dict, sid, note_tag: str, log_reason: str,
                        interrupted_reason: str = "", agent: Optional[dict] = None) -> None:
-    _reconcile.harvest_to_review(_ctx(), req, ex, sid, note_tag, log_reason,
+    return _reconcile.harvest_to_review(_ctx(), req, ex, sid, note_tag, log_reason,
                                  interrupted_reason=interrupted_reason, agent=agent)
 
 
 def _drop_steers(req: Requirement, pend: list, reason: str, why: str) -> None:
-    _reconcile.drop_steers(_ctx(), req, pend, reason, why)
+    return _reconcile.drop_steers(_ctx(), req, pend, reason, why)
 
 
 def _flush_steers(req: Requirement, cfg: config.Config) -> None:
-    _reconcile.flush_steers(_ctx(), req, cfg)
+    return _reconcile.flush_steers(_ctx(), req, cfg)
 
 
 def reconcile_executing(cfg: config.Config, resume_notified: set) -> int:
