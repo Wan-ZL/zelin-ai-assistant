@@ -1,0 +1,5 @@
+pr: `feat/card-summary-verdict`（issue #128；无版本 bump，版本由 tag 派生）（PR #160）
+phase: P6 附注（AI 完成度评语 + 一句话摘要；owner proposal 采纳）
+law: §1 / §2 / §58.3（修订）/ §59.1（追记）/ **§63（新增）**
+
+**待验收卡的 AI 一句话摘要 + 完成度评语**：add-only 字段 `assessment {summary ≤40 字白话, verdict ∈ 建议验收/需继续做/需要拍板, verdict_reason 一行, at, source_hash}`；一次 summarize+judge 合并成一个 headless `claude -p`（`models.pipeline`，经 `act/llm.py`），**只在内容指纹变化时重跑**（新一轮交付 / 打回 / 编辑；同一内容评过永不再花钱、失败 6 h 一次）；§44 两段式：detached `act/card_summary_worker.py` 只读 registry 回写 `state/card_summary/<id>.json`，actd 写者线程 `card_summary.tick` 收结果落卡（指纹已变丢弃 / 离开 review 丢弃）、在飞 ≤2、20 min 超时、绝不崩 pass；LLM 输出逐字段消毒、解析失败 = 没有章；**只是建议**——永不改 status（三态逐一判例）。投影 `review[]`/`completed[]` add-only `assessment`（只在有章时出现）；web `VerdictChip`（三色章点看理由）+ `AssessmentSummaryLine`（卡面一句，执行器原话留在展开详情；阶段性完成卡回落 delivered_summary）。配置 `card_summary.enabled` 默认 true。**顺手修法 §58.3**：`act.llm` 立为 entrypoint 层法定共享模块（`entry → act.llm` 不算 entry-pair；lib → llm 仍违例），11 条存量 deps 账划掉——没有这条，任何新 LLM 站点都无法零债出生。
