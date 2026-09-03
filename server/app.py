@@ -33,6 +33,8 @@
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 - 每日整理面（§70）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
   diff-write 语义），server/settings.py。
+- 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
+  三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
@@ -54,8 +56,8 @@ from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (about, ai_fix_launch, board_source, claude_sessions,
-                    diagnostics, doctor_run, files, health, inbox_writer, lanes,
-                    materials, mcp_servers, paths, permissions, recaps, repair,
+                    diagnostics, display, doctor_run, files, health, inbox_writer,
+                    lanes, materials, mcp_servers, paths, permissions, recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
                     settings_catalog, setup, terminal_launch)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
@@ -513,6 +515,8 @@ _GET_JSON_ROUTES = {
     "/api/mcp": lambda ctx, query: mcp_servers.mcp(ctx.home),
     # §68.10 导入 Claude Code 工作：扫描预览
     "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
+    # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
+    "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
 }
 
 # 前缀表 handler 形状：(ctx, rest, query) → dict；rest = 前缀之后的尾段（非空）。
@@ -564,6 +568,8 @@ _PUT_JSON_ROUTES = {
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
     # §70 每日自我改进循环的五把旋钮（同一 diff-write 语义）
     "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
+    # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义；server 是这三个键的唯一读写者）
+    "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
 }
 
 _PUT_PREFIX_ROUTES = {

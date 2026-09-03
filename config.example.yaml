@@ -165,6 +165,12 @@ digest:                                # 状态摘要卡（CONTRACT §17）：�
                                        # 自行闸门（滚动间隔，从上次生成起算，不钉周一）；off = 永不自动生成，几天不看也不会攒卡。
                                        # App 设置也能改（settings_overrides 扁平键 digest_frequency）。`python -m act.digest --now` 手动立即生成
 
+ui:                                    # 看板显示偏好（CONTRACT §54.1 第 12 项）；设置页「显示」点选即写 overrides
+  display:                             #   扁平键 ui_display_text_size / ui_display_text_weight / ui_display_stroke，daemon 不读
+    text_size: m                       #   s | m | l | xl —— 字号倍率 .9 / 1 / 1.1 / 1.25
+    text_weight: regular               #   regular | medium | bold —— 字重平移 0 / +100 / +200
+    stroke: normal                     #   thin | normal | thick —— 描边 1px / 1.5px / 2px（系统「增强对比度」再加一档）
+
 recap:                                 # 会议 recap（CONTRACT §63，issue #129）：挂在 30 分钟 screenpipe cron 链上，只读 ~/.screenpipe/db.sqlite，
                                        # 确定性判会议 session，CLOSED 后出 5 行 copy-only 纪要（中英同产）到 state/recap/。不是卡，无发送路径。
   enabled: true                        # 关 = 整条静默（Settings「会议纪要」同一开关；overrides 扁平键 recap_enabled）

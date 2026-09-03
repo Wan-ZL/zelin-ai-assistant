@@ -402,6 +402,26 @@ export interface RecapSettings {
   [key: string]: unknown;
 }
 
+/** GET/PUT /api/settings/display（§54.1 第 12 项）：server/display.py snapshot 的 wire 形逐字镜像；
+ *  三个词表由 server 给（segmented control 从这里渲染，client 不存第二份） */
+export interface DisplaySettings {
+  text_size: "s" | "m" | "l" | "xl" | string;
+  text_weight: "regular" | "medium" | "bold" | string;
+  stroke: "thin" | "normal" | "thick" | string;
+  text_sizes: string[];
+  text_weights: string[];
+  strokes: string[];
+  source: { [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** PUT /api/settings/display 的 body：三键任意子集（server 零容忍多余字段） */
+export interface DisplaySettingsPatch {
+  text_size?: string;
+  text_weight?: string;
+  stroke?: string;
+}
+
 /** POST /api/recaps/mark 回执 */
 export interface RecapMarkReceipt {
   ok: boolean;

@@ -41,7 +41,7 @@
   height: 52px;
   padding: 0 16px;
   background: var(--header-bg);
-  border-bottom: var(--border-hairline) solid var(--border);
+  border-bottom: var(--stroke-w) solid var(--border);
 }
 
 .shell-header-left {
@@ -71,9 +71,9 @@
 
 .shell-device {
   padding: 1px 7px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   color: var(--text-secondary);
   background: var(--surface-muted);
   white-space: nowrap;
@@ -156,7 +156,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   color: var(--text-secondary);
 }
 
@@ -201,11 +201,11 @@
   gap: 4px;
   height: 28px;
   padding: 0 8px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-family: inherit;
   white-space: nowrap;
   cursor: pointer;
@@ -240,7 +240,7 @@
   z-index: 30;
   min-width: 240px;
   padding: 4px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 8px;
   background: var(--surface-raised);
   box-shadow: var(--dialog-shadow);
@@ -248,7 +248,7 @@
 
 .shell-menu-note {
   padding: 5px 10px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
   color: var(--text-secondary);
   white-space: normal;
   max-width: 320px;
@@ -259,7 +259,7 @@
 }
 
 .shell-menu-divider {
-  height: var(--border-hairline);
+  height: var(--stroke-w);
   margin: 4px 6px;
   background: var(--border);
 }
@@ -274,7 +274,7 @@
   border-radius: 5px;
   background: transparent;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-family: inherit;
   text-align: left;
   white-space: nowrap;
@@ -294,7 +294,7 @@
   display: inline-block;
   width: 12px;
   color: var(--accent);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }
 
 /* —— 壳层按钮 —— */
@@ -305,12 +305,12 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: calc(11px * var(--text-scale));
+  font-weight: var(--w-semibold);
   font-family: inherit;
   cursor: pointer;
 }
@@ -336,8 +336,8 @@
   border-radius: 6px;
   background: var(--accent);
   color: var(--on-accent);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: calc(12px * var(--text-scale));
+  font-weight: var(--w-semibold);
   font-family: inherit;
   cursor: pointer;
 }
@@ -354,8 +354,8 @@
   padding: 7px 16px;
   background: var(--danger-soft);
   color: var(--text-primary);
-  border-bottom: var(--border-hairline) solid var(--border);
-  font-size: 12px;
+  border-bottom: var(--stroke-w) solid var(--border);
+  font-size: calc(12px * var(--text-scale));
 }
 
 .shell-banner-icon {
@@ -366,7 +366,7 @@
 
 .shell-banner-title {
   color: var(--danger);
-  font-weight: 600;
+  font-weight: var(--w-semibold);
   white-space: nowrap;
 }
 
@@ -413,13 +413,13 @@
 }
 
 .shell-banner-icon-dot {
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
 }
 
 .shell-banner-link {
   margin-left: auto;
   color: var(--accent);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   white-space: nowrap;
 }
 
@@ -440,14 +440,14 @@
 
 .shell-empty-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: calc(14px * var(--text-scale));
+  font-weight: var(--w-semibold);
   color: var(--text-primary);
 }
 
 .shell-empty-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   line-height: 1.6;
   color: var(--text-secondary);
 }
@@ -506,10 +506,10 @@
 
 .shell-banner-link {
   color: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }
 
 .shell-banner-note {
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   opacity: 0.85;
 }

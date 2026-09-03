@@ -63,12 +63,12 @@
   width: 15px;
   height: 15px;
   padding: 0;
-  border: var(--border-hairline) solid var(--text-secondary);
+  border: var(--stroke-w) solid var(--text-secondary);
   border-radius: 50%;
   background: transparent;
   color: var(--text-secondary);
   font: var(--type-chip);
-  line-height: 13px;
+  line-height: calc(13px * var(--text-scale));
   text-align: center;
   cursor: pointer;
 }
@@ -86,7 +86,7 @@
   z-index: 20;
   width: 280px;
   padding: 10px 12px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 8px;
   background: var(--surface-raised);
   color: var(--text-primary);
@@ -131,7 +131,7 @@
   gap: 6px;
   padding: 8px 9px;
   overflow: hidden;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   box-shadow: var(--card-shadow);
@@ -237,7 +237,7 @@
   align-self: center;
   color: var(--text-secondary);
   font: var(--type-card-meta);
-  line-height: 16px;
+  line-height: calc(16px * var(--text-scale));
   white-space: nowrap;
 }
 
@@ -304,7 +304,7 @@
   flex-direction: column;
   gap: 6px;
   padding-top: 4px;
-  border-top: var(--border-hairline) solid var(--border);
+  border-top: var(--stroke-w) solid var(--border);
 }
 
 .card-detail-block {
@@ -453,7 +453,7 @@
   max-width: 100%;
   padding: 1px 6px;
   border-radius: 999px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface-muted);
   color: var(--text-secondary);
   font: var(--type-chip);
@@ -521,7 +521,7 @@ a.chip:hover { text-decoration: underline; }
 .btn {
   appearance: none;
   padding: 3px 9px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 5px;
   background: var(--surface);
   color: var(--text-primary);
@@ -611,7 +611,7 @@ a.chip:hover { text-decoration: underline; }
 /* working 卡的 sheen 行文字：字号对齐原生状态章 / 占位副句（animations.css fork 块的 11px/500 被本条覆盖） */
 .task-card .task-processing-row .task-processing-label {
   font: var(--type-card-meta);
-  line-height: 15px;
+  line-height: calc(15px * var(--text-scale));
 }
 
 /* —— 列顶输入框（快速捕获 / 直跑；原生 Composer TextField 12 regular，占位文案次级色）—— */
@@ -625,7 +625,7 @@ a.chip:hover { text-decoration: underline; }
   flex: 1 1 auto;
   min-width: 0;
   padding: 5px 8px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-primary);
@@ -653,7 +653,7 @@ a.chip:hover { text-decoration: underline; }
   min-width: 320px;
   max-width: 440px;
   padding: 16px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 10px;
   background: var(--surface-raised);
   color: var(--text-primary);
@@ -688,7 +688,7 @@ a.chip:hover { text-decoration: underline; }
 .zai-dialog input[type="text"] {
   width: 100%;
   padding: 6px 8px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-primary);

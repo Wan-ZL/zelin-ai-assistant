@@ -11,6 +11,7 @@ import {
   fetchBoard,
   fetchCard,
   fetchClaudeCodeDefault,
+  fetchDisplaySettings,
   fetchClaudeSessions,
   fetchDiagnostics,
   fetchDailyLoopSettings,
@@ -29,6 +30,7 @@ import {
   postMaterialAdd,
   postMaterialDismiss,
   postRecapMark,
+  putDisplaySettings,
   postSkill,
   putDailyLoopSettings,
   putModelsSettings,
@@ -36,6 +38,7 @@ import {
   putSettingsSection,
 } from "./api";
 import { readSortOrder, writeSortOrder, type SortOrder } from "./cardSort";
+import { applyDisplayPrefs, prefsOf } from "./displayPrefs";
 import { resolveLanguage, type Language } from "./i18n";
 import {
   EMPTY_CARD_FILTERS,
@@ -48,6 +51,8 @@ import type {
   Board,
   CardDetail,
   ClaudeCodeDefault,
+  DisplaySettings,
+  DisplaySettingsPatch,
   ClaudeSessionsScan,
   DiagnosticsSnapshot,
   DailyLoopPatch,
@@ -92,6 +97,7 @@ export interface AppState {
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
+  displaySettings: DisplaySettings | null; // GET /api/settings/display（§54.1 第 12 项：字号 / 字重 / 描边；到达即落 <html> data-*）
   skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§67 设置页「Skills」）
   skillsError: string | null;     // 设置页 Skills 读失败的用户可读文案（成功后清空；切换失败由页面 toast）
 
@@ -155,6 +161,7 @@ const initialState: AppState = {
   lanes: null,
   recapSettings: null,
   recapMarks: {},
+  displaySettings: null,
   skills: null,
   skillsError: null,
   settingsCatalog: null,
@@ -399,6 +406,35 @@ export async function saveRecapSettings(
 export async function markRecap(key: string, mark: "copied" | "sent", on = true): Promise<void> {
   const receipt = await postRecapMark(key, mark, on);
   setState({ recapMarks: { ...state.recapMarks, [key]: { copied_at: receipt.copied_at, sent_at: receipt.sent_at } } });
+}
+
+// ----- 显示偏好（§54.1 第 12 项） ------------------------------------------- #
+
+/** 拉三把显示旋钮并立刻落到 <html>（App 启动一次 + 设置 section 挂载）；读失败落 settingsError、页面保持首帧缓存的值 */
+export async function refreshDisplaySettings(): Promise<void> {
+  try {
+    const displaySettings = await fetchDisplaySettings();
+    applyDisplayPrefs(prefsOf(displaySettings));
+    setState({ displaySettings, settingsError: null });
+  } catch (error) {
+    const message = error instanceof ApiError ? error.message : String(error);
+    setState({ settingsError: message });
+  }
+}
+
+/** 改一把旋钮：先落 <html>（即时预览，Apple 设置式无保存键），再 PUT；server 拒绝则回滚到最近快照并把错误抛给 section toast */
+export async function saveDisplaySettings(patch: DisplaySettingsPatch): Promise<DisplaySettings> {
+  const previous = state.displaySettings;
+  if (previous) applyDisplayPrefs(prefsOf({ ...previous, ...patch }));
+  try {
+    const displaySettings = await putDisplaySettings(patch);
+    applyDisplayPrefs(prefsOf(displaySettings));
+    setState({ displaySettings });
+    return displaySettings;
+  } catch (error) {
+    if (previous) applyDisplayPrefs(prefsOf(previous));
+    throw error;
+  }
 }
 
 // ----- skills（§67 设置页「Skills」） ------------------------------------------ #

@@ -11,7 +11,7 @@
 }
 
 .sg-back-link {
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   color: var(--text-secondary);
   text-decoration: none;
 }
@@ -23,12 +23,12 @@
 
 .sg-page h2 {
   margin: 12px 0 4px;
-  font-size: 18px;
+  font-size: calc(18px * var(--text-scale));
 }
 
 .sg-intro {
   margin: 0 0 20px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   line-height: 1.6;
   color: var(--text-secondary);
 }
@@ -39,14 +39,14 @@
 
 .sg-section > h3 {
   margin: 0 0 4px;
-  font-size: 14px;
-  border-bottom: var(--border-hairline) solid var(--border);
+  font-size: calc(14px * var(--text-scale));
+  border-bottom: var(--stroke-w) solid var(--border);
   padding-bottom: 6px;
 }
 
 .sg-section-note {
   margin: 0 0 12px;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   line-height: 1.6;
   color: var(--text-tertiary);
 }
@@ -55,21 +55,21 @@
 .sg-ref-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }
 
 .sg-ref-table th {
   text-align: left;
   padding: 6px 8px;
   background: var(--column-header);
-  border-bottom: var(--border-hairline) solid var(--border-strong);
-  font-size: 11px;
+  border-bottom: var(--stroke-w) solid var(--border-strong);
+  font-size: calc(11px * var(--text-scale));
 }
 
 .sg-ref-table td {
   vertical-align: top;
   padding: 8px;
-  border-bottom: var(--border-hairline) solid var(--border);
+  border-bottom: var(--stroke-w) solid var(--border);
   line-height: 1.5;
 }
 
@@ -80,13 +80,13 @@
 .sg-note {
   margin-top: 2px;
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   line-height: 1.5;
 }
 
 .sg-value {
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   font-variant-numeric: tabular-nums;
 }
 
@@ -101,7 +101,7 @@
   width: 16px;
   height: 16px;
   border-radius: 4px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
 }
 
 .sg-swatch-bordered {
@@ -126,26 +126,26 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  border: var(--border-hairline) dashed var(--border-strong);
+  border: var(--stroke-w) dashed var(--border-strong);
   border-radius: 8px;
   background: var(--bg);
 }
 
 .sg-caption {
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   line-height: 1.5;
   color: var(--text-tertiary);
 }
 
 .sg-caption code,
 .sg-ref-table code {
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   color: var(--text-secondary);
 }
 
 .sg-meta-text {
   margin: 0;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   color: var(--text-secondary);
 }
 
@@ -185,20 +185,20 @@
 .sg-spacing-bar {
   height: 16px;
   background: var(--accent-soft);
-  border: var(--border-hairline) solid var(--accent);
+  border: var(--stroke-w) solid var(--accent);
   border-radius: 2px;
 }
 
 .sg-radius-chip {
   padding: 8px 12px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   background: var(--surface);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }
 
 .sg-shadow-chip {
   padding: 10px 14px;
   border-radius: 6px;
   background: var(--surface);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }

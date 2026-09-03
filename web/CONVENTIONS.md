@@ -24,6 +24,7 @@
 - **server-owned 文案不落 client**（防腐十条 #10）：列说明（`GET /api/lanes`，store.lanes）、canonical 模型列表等由 server 目录给 zh/en 两键，组件按 `language` 取键、逐字镜像，绝不在 client 再写一份。原生看板（mac/Sources，冻结）是文案与行为规格——CONTRACT §54.1 是 parity 清单。
 - 相对时间一律经 `relativeTime.ts`（刚刚/N分钟前/N小时前/N天前 + 时长 N小时M分），hover `title` 给绝对时间；卡片排序经 `cardSort.ts`（偏好键 `cardSortOrder`）。
 - 颜色/阴影/字体只用 `var(--...)` token。暗色自动生效（data-theme 覆写 + prefers-color-scheme 兜底，见 tokens.css 头注释）；列语义→token 映射也在那条注释里。主题切换组件写 `localStorage["zai.theme"]` + `document.documentElement.dataset.theme`。
+- **字号 / 字重 / 描边三把旋钮（CONTRACT §54.1 第 12 项）**：组件 CSS 里字号只许 `font: var(--type-…)` 或 `font-size: calc(<px> * var(--text-scale))`，字重只许 `var(--w-regular|medium|semibold|bold)`，描边只许 `var(--stroke-w)`——字面 px 字号、数值字重、0.5–1.5px 描边一律被 `displayPrefs.test.ts` 判红。值 → 变量的映射只住 tokens.css；JS 只写 `<html>` 的 `data-text-size` / `data-text-weight` / `data-stroke`（`displayPrefs.ts`），别在组件里碰这三个变量。
 - 深链只经 `route.ts`（`?page=` + `?card=`）；抽屉开合调 `selectCard(id|null)` 并用 `history.replaceState(buildAppUrl(...))` 同步 URL。过滤器序列化独立成 `taskFilters.ts`（A8）。
 
 ## 语义红线（契约 §0.8）

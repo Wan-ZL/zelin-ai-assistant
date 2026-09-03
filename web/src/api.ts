@@ -11,6 +11,8 @@ import type {
   CardDetail,
   ClaudeCodeDefault,
   ClaudeCodeDefaultWrite,
+  DisplaySettings,
+  DisplaySettingsPatch,
   ClaudeSessionsScan,
   DiagnosticsSnapshot,
   DoctorReport,
@@ -261,6 +263,16 @@ export function putRecapSettings(
   body: { enabled?: boolean; default_language?: string; slack_draft_enabled?: boolean },
 ): Promise<RecapSettings> {
   return request<RecapSettings>("/api/settings/recap", { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** GET /api/settings/display — 显示偏好三把旋钮的 effective 值 + 词表（CONTRACT §54.1 第 12 项） */
+export function fetchDisplaySettings(signal?: AbortSignal): Promise<DisplaySettings> {
+  return request<DisplaySettings>("/api/settings/display", { signal });
+}
+
+/** PUT /api/settings/display — 只许 text_size / text_weight / stroke 三键（server 零容忍） */
+export function putDisplaySettings(body: DisplaySettingsPatch): Promise<DisplaySettings> {
+  return request<DisplaySettings>("/api/settings/display", { method: "PUT", body: JSON.stringify(body) });
 }
 
 /** POST /api/recaps/mark — 「复制」/「标记已发送」本地标记（server 独写 marks.json；无控制流读它） */

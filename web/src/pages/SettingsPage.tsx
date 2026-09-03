@@ -1,6 +1,6 @@
 // 设置页（CONTRACT §59 + §68；?page=settings 深链，顶栏齿轮入口；?anchor=<id> 滚到某区）。
 // 原生 Settings.swift 的 20 个区在 web 的落点（D3 退役前的 parity 清单，§54.1 / §68.1）：
-//   模型（§59，ModelsSection）· 来源开关 + 凭证（sources）· 录制（桥）· 实时字幕（桥 + 凭证）·
+//   显示（§54.1 第 12 项，DisplaySection）· 模型（§59，ModelsSection）· 来源开关 + 凭证（sources）· 录制（桥）· 实时字幕（桥 + 凭证）·
 //   通知 · 产品改进计划 · 摘要与回顾 · 通用 · 审批 / 成本 · Feature flags · 脱敏 · 语气档案 ·
 //   开发者会话（以上通用区由 server 目录驱动，CatalogSection）· 导入 Claude Code 工作 · MCP servers · Skills（D13，§67，SkillsSection）·
 //   素材库（D11，§62，MaterialsSection）· 会议纪要（§63，RecapSection）· 每日整理（D10，§70，DailyLoopSection）· 关于 / 看板 app。
@@ -14,6 +14,7 @@ import { CaptionsSection } from "../components/settings/CaptionsSection";
 import { CatalogSection } from "../components/settings/CatalogSection";
 import { ClaudeImportSection } from "../components/settings/ClaudeImportSection";
 import { DailyLoopSection } from "../components/settings/DailyLoopSection";
+import { DisplaySection } from "../components/settings/DisplaySection";
 import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
 import { SkillsSection } from "../components/settings/SkillsSection";
@@ -26,6 +27,7 @@ import { buildAppUrl, readAnchor } from "../route";
 
 /** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序） */
 export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
+  { id: "display", zh: "显示", en: "Display" },
   { id: "models", zh: "模型", en: "Models" },
   { id: "sources", zh: "来源开关与凭证", en: "Sources & credentials" },
   { id: "recording", zh: "录制", en: "Recording" },
@@ -77,6 +79,8 @@ export function SettingsPage() {
           <a key={entry.id} href={`#settings-${entry.id}`}>{language === "zh" ? entry.zh : entry.en}</a>
         ))}
       </nav>
+      {/* §54.1 第 12 项 显示：字号 / 字重 / 描边三把旋钮，点选即生效（owner 4K 屏「框细字细」） */}
+      <div id="settings-display"><DisplaySection /></div>
       <div id="settings-models"><ModelsSection /></div>
       <SourcesSection />
       <RecordingSection />
