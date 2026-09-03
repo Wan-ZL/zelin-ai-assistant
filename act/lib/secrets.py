@@ -92,8 +92,10 @@ def write_secret(name: str, value: str) -> Path:
     return path
 
 
-def _read_path(path: Union[str, Path, None]) -> Optional[str]:
-    """First token line of a credential FILE at ``path``, or None."""
+def read_path(path: Union[str, Path, None]) -> Optional[str]:
+    """First token line of a credential FILE at ``path``, or None. Public: the
+    doctor's key probe reads the §19 legacy path through it without the
+    deprecation warning（防腐 #2——跨模块不引 `_私名`）。"""
     if not path:
         return None
     p = Path(str(path)).expanduser()
@@ -102,6 +104,9 @@ def _read_path(path: Union[str, Path, None]) -> Optional[str]:
     except OSError:
         return None
     return _first_token_line(raw, p)
+
+
+_read_path = read_path   # 本模块内部沿用的旧名
 
 
 # names already warned about in this process — radars poll in a loop, so the

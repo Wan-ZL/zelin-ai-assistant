@@ -1005,6 +1005,22 @@ failure_id, action_id}]}`；exit code 仍 = FAIL 数。app 诊断区渲染 non-o
 app 在依赖检查发现关键失败（npx/claude/PyYAML/cron_fda/引擎在录制模式下死亡）时
 **每次会话自动跑一次** `--fast` 版（零成本，不打真实 claude 调用）。
 
+**doctor 模块布局（P3a 追记，行为零变化；§58 清账）**：探针按家族住
+`act/lib/checks/`（`core` 共享件 / `environment` 工具链·配置·凭证·目录 /
+`launchd` §55 路径纪律与 TCC 三幕 / `services` systemd·Task Scheduler 镜像 /
+`cron` §18 链 + FDA 探针 / `pipeline` store2·dashboard·心跳·看板 server·部署），
+每家族公开 `check_*(probes)`，接收 `act.doctor.Probes`（注入缝，duck-typed——
+lib 永不 import doctor，§58.3）。`act/doctor.py` = `Probes`（缺省探针实现）+
+§59 两行模型旋钮（唯一经 `act/llm.py` 的行，lib 层不可达）+ 逐行 `_check_*`
+同名包装（`diagnostic crashed` 行名与判例都从它派生）+ 按 OS 组合 + 渲染 +
+`main`；公开面 `run_checks(probes=None, fast=False)` / `render` / `render_json`
+/ `main` 不变，行名、文案、failure_id 逐字不变（判例 tests/test_doctor*.py 零改动通过）。
+本节及 §54/§55 里对 `act/doctor.py _check_<x>` 的指针仍成立（包装存在），实现读
+`act/lib/checks/<家族>.py`。配套公开名（防腐 #2「跨模块不引 `_私名`」）：
+`act.lib.secrets.read_path`（§19 legacy 路径的无警告读取，doctor 的 key 探针用）、
+`act.lib.analytics_sync.resolve_key`（syncd / feedback 复用的上传 key 解析）——旧
+私名保留为模块内别名。
+
 **state/cron_probe.json**（cron FDA 探针 —— cron 链写，doctor/app 读）：
 
 ```json
