@@ -3,8 +3,10 @@
 住在 tests/integration/（防腐 #7：真 IO 只许住这里，单文件时间预算见
 BUDGET_SECONDS）。整套夹具是一个临时 bare origin + 一个 live clone，clone 里的
 install.sh / act/doctor.py / act/lib/notify.py / act/auto_deploy.py 全是**记录
-调用、按剧本出退出码**的假货，PATH 前置一个假 `curl`（按剧本回 GitHub
-check-runs JSON），只有 scripts/auto-deploy.sh、scripts/version_stamp.py 与
+调用、按剧本出退出码**的假货，PATH 前置一对假 `gh` + 假 `curl`（同一个假
+check-runs API 按剧本回 `-i` 式 HTTP 头 + JSON，记下是谁问的；真 gh 在开发机与
+CI runner 上都在 PATH 里且可能已登录——不遮住它，闸门就会真的去问 GitHub），只有
+scripts/auto-deploy.sh、scripts/version_stamp.py 与
 act/lib/version.py 是真的（逐字拷进夹具并提交）。版本真源 = tag（§56.1）：
 `push(version)` 在 origin 上建 `v<version>` tag，脚本 `fetch --tags` 后用
 version_stamp.py 算期望版本，假 install.sh 用同一把尺盖章 + 写心跳。
@@ -36,6 +38,12 @@ version_stamp.py 算期望版本，假 install.sh 用同一把尺盖章 + 写心
     不动 HEAD 下轮再试；红 → ci_failed + failed_sha 记账 + 一条通知；只有
     CI_CHECKS 里的名字算数；--force 跳过闸门；origin 不是 github.com 且没设
     AUTODEPLOY_CI_REPO → failed + 通知一次，不猜；
+  - **闸门带认证问 API**（2026-09-03 06:03Z/06:14Z live：匿名 60 req/h 按 IP 计，
+    回走 + 同机其它工具把额度烧光，两轮「check-runs API unreachable」什么都没部署）：
+    `gh` 在 PATH 且 `gh auth token` 有 token → `gh api`；没有可用 gh 但环境有
+    GH_TOKEN/GITHUB_TOKEN → curl + Bearer；都没有 → 匿名 curl（日志点名 UNAUTHENTICATED）；
+    HTTP ≠ 200 仍是 pending，但 detail/日志写明状态码、走的哪条路与
+    `x-ratelimit-remaining`；
   - **合并风暴下的部署目标**（2026-09-03 live：head 每 10–20 min 换一个、CI 排队
     20+ min，五轮「CI not green yet on <越来越新的 sha>」而绿的 v1.0.4–1.0.6 几小时
     没上机）：head 不绿（pending / 红 / 已中毒）→ 沿 first-parent 从 head 往回走到
@@ -211,30 +219,79 @@ fi
 exit "$rc"
 """
 
-FAKE_CURL = r"""#!/bin/bash
-# fake curl: record the URL, answer the check-runs API per FAKE_CURL_PLAN (one
+FAKE_CHECK_RUNS = r"""#!/bin/bash
+# fake check-runs API behind both the fake gh and the fake curl: record who
+# asked for what (FAKE_CI_LOG: "<via> <url>"), answer per FAKE_CI_PLAN (one
 # word per line, consumed): success | failure | pending | missing | rerun |
-# UNREACHABLE | GARBAGE. Default success. The success body also carries a RED
-# non-required check (Lint) to pin that only CI_CHECKS names gate the deploy.
+# RATELIMIT | UNREACHABLE | GARBAGE. Default success. Answers are `-i` style
+# (status line + headers, blank line, body) like the script asks for — gh
+# prints an LF status line, curl a CRLF one. The success body also carries a
+# RED non-required check (Lint) to pin that only CI_CHECKS names gate the deploy.
 set -u
-for a in "$@"; do case "$a" in http*) printf '%s\n' "$a" >> "$FAKE_CURL_LOG" ;; esac; done
+via="$1"; url="$2"
+printf '%s %s\n' "$via" "$url" >> "$FAKE_CI_LOG"
 verdict=success
-if [ -n "${FAKE_CURL_PLAN:-}" ] && [ -s "$FAKE_CURL_PLAN" ]; then
-    verdict="$(head -n 1 "$FAKE_CURL_PLAN")"
-    tail -n +2 "$FAKE_CURL_PLAN" > "$FAKE_CURL_PLAN.tmp" && mv "$FAKE_CURL_PLAN.tmp" "$FAKE_CURL_PLAN"
+if [ -n "${FAKE_CI_PLAN:-}" ] && [ -s "$FAKE_CI_PLAN" ]; then
+    verdict="$(head -n 1 "$FAKE_CI_PLAN")"
+    tail -n +2 "$FAKE_CI_PLAN" > "$FAKE_CI_PLAN.tmp" && mv "$FAKE_CI_PLAN.tmp" "$FAKE_CI_PLAN"
 fi
+status() { # $1=code $2=x-ratelimit-remaining
+    if [ "$via" = gh ]; then printf 'HTTP/2.0 %s OK\n' "$1"; else printf 'HTTP/2 %s \r\n' "$1"; fi
+    printf 'content-type: application/json; charset=utf-8\r\nx-ratelimit-remaining: %s\r\n\r\n' "$2"
+}
 run() { printf '{"id": %s, "name": "%s", "status": "%s", "conclusion": %s}' "$1" "$2" "$3" "$4"; }
 case "$verdict" in
     UNREACHABLE) exit 22 ;;
     GARBAGE)  printf 'not json at all' ;;
-    missing)  printf '{"total_count": 0, "check_runs": []}' ;;
-    pending)  printf '{"check_runs": [%s]}' "$(run 1 ci in_progress null)" ;;
-    failure)  printf '{"check_runs": [%s]}' "$(run 1 ci completed '"failure"')" ;;
-    rerun)    printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"failure"')" "$(run 2 ci completed '"success"')" ;;
-    *)        printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"success"')" \
+    RATELIMIT)
+        status 403 0
+        printf '{"message": "API rate limit exceeded for 203.0.113.7. (But here is the good news: Authenticated requests get a higher rate limit.)"}'
+        [ "$via" = gh ] && exit 1     # gh exits 1 on HTTP >= 400 (headers already printed); curl without -f does not
+        exit 0 ;;
+    missing)  status 200 4999; printf '{"total_count": 0, "check_runs": []}' ;;
+    pending)  status 200 4999; printf '{"check_runs": [%s]}' "$(run 1 ci in_progress null)" ;;
+    failure)  status 200 4999; printf '{"check_runs": [%s]}' "$(run 1 ci completed '"failure"')" ;;
+    rerun)    status 200 4999; printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"failure"')" "$(run 2 ci completed '"success"')" ;;
+    *)        status 200 4999; printf '{"check_runs": [%s, %s]}' "$(run 1 ci completed '"success"')" \
                      "$(run 2 'Lint (shellcheck + ruff)' completed '"failure"')" ;;
 esac
 exit 0
+"""
+
+FAKE_CURL = r"""#!/bin/bash
+# fake curl: the script only calls curl for the check-runs API (its two curl
+# tiers — with a Bearer token, or anonymous). Hand the URL to the fake API,
+# recorded as via=curl+token / via=curl.
+set -u
+via=curl; url=""
+for a in "$@"; do
+    case "$a" in
+        http*) url="$a" ;;
+        "Authorization: Bearer "*) via=curl+token ;;
+    esac
+done
+exec "$(dirname "$0")/fake-check-runs" "$via" "$url"
+"""
+
+FAKE_GH = r"""#!/bin/bash
+# fake gh: `auth token` prints a token (FAKE_GH_LOGGED_OUT set = fails like a
+# gh nobody ran `gh auth login` in); `api -i … <path>` answers through the fake
+# check-runs API, recorded as via=gh. Any other call is a fixture bug.
+set -u
+case "${1:-} ${2:-}" in
+    "auth token")
+        if [ -n "${FAKE_GH_LOGGED_OUT:-}" ]; then
+            echo "no oauth token found for github.com" >&2
+            exit 1
+        fi
+        printf 'gho_fixture\n'
+        exit 0 ;;
+    "api "*) ;;
+    *) echo "fake gh: unexpected call: $*" >&2; exit 2 ;;
+esac
+path=""
+for a in "$@"; do case "$a" in repos/*) path="$a" ;; esac; done
+exec "$(dirname "$0")/fake-check-runs" gh "$path"
 """
 
 FAKE_GIT = r"""#!/bin/bash
@@ -356,15 +413,17 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         # exit-code rule), sourced by the fake install.sh when a steps plan is set
         self.install_fds = self.tmp / "failed_deploy_steps.sh"
         self.install_fds.write_text(_install_sh_fn("failed_deploy_steps"), encoding="utf-8")
-        self.curl_log = self.tmp / "curl.log"
-        self.curl_plan = self.tmp / "curl.plan"
-        # fake curl shadows the real one on PATH (the script only calls curl
-        # for the check-runs API)
+        self.ci_log = self.tmp / "ci.log"
+        self.ci_plan = self.tmp / "ci.plan"
+        # fake gh + fake curl shadow the real ones on PATH — both are how the
+        # script reaches the check-runs API, and the real gh on the dev Mac /
+        # the CI runners may well be logged in
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        fake_curl = self.bin / "curl"
-        fake_curl.write_text(FAKE_CURL, encoding="utf-8")
-        fake_curl.chmod(0o755)
+        for name, body in (("fake-check-runs", FAKE_CHECK_RUNS), ("curl", FAKE_CURL), ("gh", FAKE_GH)):
+            fake = self.bin / name
+            fake.write_text(body, encoding="utf-8")
+            fake.chmod(0o755)
         # fake launchctl ALWAYS shadows the real one: rollback() boots out the
         # actd label, and on the dev Mac that label is the owner's LIVE daemon
         self.launchctl_log = self.tmp / "launchctl.log"
@@ -451,16 +510,18 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         elif self.install_steps_plan.exists():
             self.install_steps_plan.unlink()
         if ci is not None:
-            self.curl_plan.write_text("\n".join(ci) + "\n", encoding="utf-8")
-        elif self.curl_plan.exists():
-            self.curl_plan.unlink()
+            self.ci_plan.write_text("\n".join(ci) + "\n", encoding="utf-8")
+        elif self.ci_plan.exists():
+            self.ci_plan.unlink()
         # TERM_PROGRAM / SSH_TTY are the script's "started from a terminal"
         # tells (detect_trigger); subprocess.run has no tty, so without them
         # every fixture run reads as launchd-spawned = unattended — the shape
         # the incident had. Tests that model the owner's terminal set
-        # AUTODEPLOY_TRIGGER=terminal explicitly.
+        # AUTODEPLOY_TRIGGER=terminal explicitly. GH_* / GITHUB_* (a token in
+        # the developer's or the runner's shell) would pick the CI gate's
+        # auth tier for it — tests that want a token set GH_TOKEN themselves.
         base = {k: v for k, v in os.environ.items()
-                if not k.startswith(("AIASSISTANT_", "AUTODEPLOY_", "FAKE_", "GIT_"))
+                if not k.startswith(("AIASSISTANT_", "AUTODEPLOY_", "FAKE_", "GIT_", "GH_", "GITHUB_"))
                 and k not in ("TERM_PROGRAM", "SSH_TTY")}
         full = {
             **base,
@@ -485,8 +546,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             "FAKE_INSTALL_RC_PLAN": str(self.install_rc_plan),
             "FAKE_INSTALL_STEPS_PLAN": str(self.install_steps_plan),
             "FAKE_INSTALL_FDS": str(self.install_fds),
-            "FAKE_CURL_LOG": str(self.curl_log),
-            "FAKE_CURL_PLAN": str(self.curl_plan),
+            "FAKE_CI_LOG": str(self.ci_log),
+            "FAKE_CI_PLAN": str(self.ci_plan),
             **(env or {}),
         }
         proc = subprocess.run(["bash", str(self.script), *args], cwd=str(self.tmp),
@@ -521,7 +582,12 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         return self.notify_log.read_text(encoding="utf-8").splitlines() if self.notify_log.exists() else []
 
     def ci_queries(self):
-        return self.curl_log.read_text(encoding="utf-8").splitlines() if self.curl_log.exists() else []
+        """Every check-runs API call, in order: "<via> <url>" with via = gh |
+        curl+token | curl (the tier the script chose, see ci_api_auth)."""
+        return self.ci_log.read_text(encoding="utf-8").splitlines() if self.ci_log.exists() else []
+
+    def ci_vias(self):
+        return [q.split(" ", 1)[0] for q in self.ci_queries()]
 
     def queried_shas(self):
         """The commits the check-runs API was asked about, in call order."""
@@ -708,10 +774,12 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         doc = self.doctor_runs()
         self.assertEqual(len(doc), 2, doc)
         self.assertTrue(all("version=0.48.4" in ln and "--fast --json" in ln for ln in doc), doc)
-        # the CI gate asked about THE sha being deployed, once, at the configured repo
+        # the CI gate asked about THE sha being deployed, once, at the configured
+        # repo — through the logged-in gh, never anonymously
         queries = self.ci_queries()
         self.assertEqual(len(queries), 1, queries)
-        self.assertIn("/repos/fixture/repo/commits/%s/check-runs" % target, queries[0])
+        self.assertEqual(queries[0], "gh repos/fixture/repo/commits/%s/check-runs?per_page=100" % target)
+        self.assertIn("check-runs API via gh api (authenticated)", self.log_text())
         self.assertIn("CI green on %s" % target[:7], self.log_text())
 
     def test_second_run_after_deploy_is_up_to_date_and_keeps_last_deployed(self):
@@ -759,7 +827,8 @@ class AutoDeployScriptTestCase(unittest.TestCase):
     def test_ci_still_running_defers_without_touching_the_checkout(self):
         target = self.push("0.48.4")
         for plan, why in (("pending", "in_progress"), ("missing", "no ci check-run yet"),
-                          ("UNREACHABLE", "unreachable"), ("GARBAGE", "no JSON")):
+                          ("UNREACHABLE", "unreachable"), ("GARBAGE", "no JSON"),
+                          ("RATELIMIT", "HTTP 403")):
             proc = self.run_script(ci=[plan])
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(self.head(), self.base_sha, plan)
@@ -772,7 +841,7 @@ class AutoDeployScriptTestCase(unittest.TestCase):
             self.assertEqual(st["version"], "0.48.3")
             self.assertNotIn("failed_sha", st, "pending is not a verdict — never poisons")
         self.assertEqual(self.notifications(), [], "waiting for CI is not news")
-        self.assertEqual(len(self.ci_queries()), 4, "asked once per run")
+        self.assertEqual(len(self.ci_queries()), 5, "asked once per run")
         # CI finishes green → the very next run deploys
         proc = self.run_script(doctor_plan=["-", "-"], ci=["success"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -855,6 +924,64 @@ class AutoDeployScriptTestCase(unittest.TestCase):
         self.assertEqual(len(self.notifications()), 1, "same pending sha: quiet")
         # naming the repo unblocks it
         self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(self.head(), target)
+
+    # -- 2a'. the gate authenticates (2026-09-03 06:03Z/06:14Z live) ----------- #
+    # 匿名 60 req/h 按 IP 计：回走 + 同机其它工具烧光额度，两轮「check-runs API
+    # unreachable」什么都没部署。gh 登录着就走 gh api；没有可用 gh 而环境里有
+    # token 就 curl + Bearer；都没有才匿名——日志点名，HTTP 错误写明状态码与余额。
+
+    def test_gate_without_gh_falls_back_to_anonymous_curl(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"AUTODEPLOY_GH": str(self.tmp / "no-such-gh")})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target, "no gh is a slower budget, not a blocker")
+        self.assertEqual(self.state()["status"], "deployed")
+        self.assertEqual(self.ci_queries(),
+                         ["curl https://api.github.com/repos/fixture/repo/commits/%s/check-runs?per_page=100" % target])
+        self.assertIn("check-runs API via curl, UNAUTHENTICATED", self.log_text())
+
+    def test_gate_with_a_logged_out_gh_falls_back_to_anonymous_curl(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"], env={"FAKE_GH_LOGGED_OUT": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.ci_vias(), ["curl"], "a gh without a token is no gh")
+        self.assertIn("UNAUTHENTICATED", self.log_text())
+
+    def test_gate_without_gh_uses_a_token_from_the_environment(self):
+        target = self.push("0.48.4")
+        proc = self.run_script(doctor_plan=["-", "-"],
+                               env={"AUTODEPLOY_GH": str(self.tmp / "no-such-gh"), "GH_TOKEN": "ghp_fixture"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), target)
+        self.assertEqual(self.ci_vias(), ["curl+token"])
+        self.assertIn("check-runs API via curl with the token in GH_TOKEN/GITHUB_TOKEN", self.log_text())
+        self.assertNotIn("ghp_fixture", self.log_text(), "the token itself never reaches the log")
+
+    def test_rate_limited_gate_is_pending_and_names_the_status_tier_and_quota(self):
+        target = self.push("0.48.4")
+        # via gh (exits 1 with the headers already printed) …
+        proc = self.run_script(ci=["RATELIMIT"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        st = self.state()
+        self.assertEqual(st["status"], "ci_pending")
+        self.assertIn("check-runs API HTTP 403 via gh (x-ratelimit-remaining: 0)", st["detail"])
+        self.assertIn("API rate limit exceeded", st["detail"])
+        # … and via anonymous curl (exit 0, the status line says it)
+        proc = self.run_script(ci=["RATELIMIT"], env={"AUTODEPLOY_GH": str(self.tmp / "no-such-gh")})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.head(), self.base_sha)
+        self.assertIn("HTTP 403 via anonymous curl (x-ratelimit-remaining: 0)", self.state()["detail"])
+        self.assertIn("CI not green yet on %s: check-runs API HTTP 403" % target[:7], self.log_text())
+        self.assertEqual(self.installs(), [])
+        self.assertEqual(self.notifications(), [], "a spent budget is not news")
+        self.assertNotIn("failed_sha", self.state(), "an HTTP error never poisons")
+        self.assertEqual(self.ci_vias(), ["gh", "curl"])
+        # the window resets → the very next run deploys
+        proc = self.run_script(doctor_plan=["-", "-"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.head(), target)
 
     # -- 2b'. merge burst: the newest GREEN ancestor, not the ever-moving head - #
