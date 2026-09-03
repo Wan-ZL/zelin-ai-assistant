@@ -61,14 +61,20 @@ _TS_SUFFIX_RE = re.compile(r"#\d+$")
 # time helpers（与 actd._parse_iso 同口径 + 裸日期 + RFC-2822，全函数不 raise）
 # --------------------------------------------------------------------------- #
 def parse_iso(ts) -> Optional[_dt.datetime]:
-    """ISO 8601（含 Z）→ aware UTC datetime；解析不了 → None。"""
+    """ISO 8601（含 Z）→ aware UTC datetime；解析不了 → None。与 actd._parse_iso
+    逐字同口径：fromisoformat 拒收的未补零月/日（`2026-8-1T10:00:00Z`）走
+    strptime 兜底——§40.5 倒计时与 purge 判决共用这一把尺，少了兜底就会有
+    「永不清」的卡被投影成有倒计时（或反过来）。"""
     if not ts:
         return None
     s = str(ts).strip().replace("Z", "+00:00")
     try:
         dt = _dt.datetime.fromisoformat(s)
     except ValueError:
-        return None
+        try:
+            dt = _dt.datetime.strptime(str(ts).strip(), "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            return None
     return dt if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
 
 

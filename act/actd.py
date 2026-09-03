@@ -46,12 +46,12 @@ from act.lib import (
     daily_loop,
     detached,
     failures,
-    health,
     heartbeat,
     logcap,
     maintenance,
     notify,
     policy,
+    radar_health,
     recap_store,
     registry,
     risk,
@@ -2676,7 +2676,7 @@ def _check_radar_liveness(notified: set[str],
         if now is None:
             now = _dt.datetime.now(_dt.timezone.utc)
         graced = _wake_grace(cfg, now.timestamp(), interval, mono)
-        data = health.load_radar_health()
+        data = radar_health.load_radar_health()
         for src in sources.SOURCES:
             if not sources.enabled(cfg, src):
                 # 关着：清残留条目（条目不存在时 no-op、不写文件），出账。
@@ -2684,7 +2684,7 @@ def _check_radar_liveness(notified: set[str],
                 # 防的是手动/launchd 语境误删 cron 的**真实健康**；源 disabled
                 # 时 cron 写者自己也已静默（§48.2 入口 gate），条目只剩僵尸
                 # ——actd 作为清理仲裁者收尾不与单写者门冲突。
-                health.remove_radar_health(src)
+                radar_health.remove_radar_health(src)
                 notified.discard(src)
                 missing_since.pop(src, None)
                 continue

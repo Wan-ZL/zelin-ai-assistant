@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover - exercised only on Windows CI
     fcntl = None
 
 from act import llm
-from act.lib import (analytics, config, failures, health, provenance, registry,
+from act.lib import (analytics, config, failures, provenance, radar_health, registry,
                      sanitize, secrets, sources)
 from act.lib.registry import Requirement
 
@@ -778,7 +778,7 @@ def _note_health(ok: bool, reason: Optional[str] = None,
     if not _owns_health():
         return
     try:
-        health.update_radar_health("obsidian", ok=ok, skip_reason=reason,
+        radar_health.update_radar_health("obsidian", ok=ok, skip_reason=reason,
                                    cards=cards)
     except Exception:  # noqa: BLE001 - health must never break a radar pass
         pass
@@ -881,7 +881,7 @@ def scan(runner=None, triager=None) -> dict:
     if not sources.enabled(cfg, "obsidian"):
         summary["skipped"].append("source obsidian is off (act.lib.sources)")
         if _owns_health():
-            health.remove_radar_health("obsidian")
+            radar_health.remove_radar_health("obsidian")
         return summary
 
     lock = _acquire_pass_lock()

@@ -1,4 +1,5 @@
-"""act/lib/analytics_sync.py — default-on Supabase telemetry uploader.
+"""act/lib/telemetry_upload.py — default-on Supabase telemetry uploader
+(entry point act/analytics_sync.py; the lib module was renamed in P3a, 防腐 #9).
 
 sync_once must (a) upload only complete new lines and advance the byte cursor,
 (b) split uploads into BATCH_SIZE batches with the cursor saved per batch,
@@ -24,7 +25,7 @@ from tests import TMP_HOME  # noqa: F401 - ensures the sandbox env is set first
 
 from act import __version__ as act_version
 from act.lib import analytics, config, secrets
-from act.lib import analytics_sync as sync
+from act.lib import telemetry_upload as sync
 
 
 def _cfg(enabled: bool = True) -> config.Config:
@@ -292,7 +293,7 @@ class AnalyticsSyncTestCase(unittest.TestCase):
     # -- key resolution: key file wins, publishable key is the fallback ------ #
     def test_key_file_wins_over_publishable_default(self):
         # setUpClass wrote the secrets file — it must beat the built-in key
-        self.assertEqual(sync._resolve_key(config.Config()), "test-service-key")
+        self.assertEqual(sync.resolve_key(config.Config()), "test-service-key")
 
     # -- atomic cursor write -------------------------------------------------- #
     def test_cursor_write_is_atomic_and_never_torn(self):
@@ -378,7 +379,7 @@ class KeyResolutionTestCase(unittest.TestCase):
             path.unlink()
 
     def test_publishable_key_is_the_default(self):
-        self.assertEqual(sync._resolve_key(config.Config()),
+        self.assertEqual(sync.resolve_key(config.Config()),
                          config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY)
         self.assertTrue(
             config.DEFAULT_TELEMETRY_PUBLISHABLE_KEY.startswith(
@@ -387,7 +388,7 @@ class KeyResolutionTestCase(unittest.TestCase):
     def test_secrets_file_wins(self):
         secrets.write_secret(sync.SUPABASE_SERVICE_KEY_FILE, "svc-key-123")
         try:
-            self.assertEqual(sync._resolve_key(config.Config()), "svc-key-123")
+            self.assertEqual(sync.resolve_key(config.Config()), "svc-key-123")
         finally:
             (secrets.SECRETS_DIR / sync.SUPABASE_SERVICE_KEY_FILE).unlink()
 
@@ -396,7 +397,7 @@ class KeyResolutionTestCase(unittest.TestCase):
         path.write_text("alt-key-456\n", encoding="utf-8")
         cfg = config.Config()
         cfg.telemetry_key_path = str(path)
-        self.assertEqual(sync._resolve_key(cfg), "alt-key-456")
+        self.assertEqual(sync.resolve_key(cfg), "alt-key-456")
 
 
 class WriterVersionStampTestCase(unittest.TestCase):
