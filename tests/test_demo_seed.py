@@ -24,7 +24,12 @@ from pathlib import Path
 
 from tests import TMP_HOME  # noqa: F401 - hermetic sandbox HOME
 
+from act.lib import card_summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Server-owned wire vocabulary that is Chinese by contract and rendered per language by
+# the client (§64 verdict tokens → web VerdictChip labels): not prose, not a translation target.
+_WIRE_VOCAB = frozenset(card_summary.VERDICTS)
 DEMO_SEED_PATH = REPO_ROOT / "scripts" / "demo_seed.py"
 # CJK unified ideographs + fullwidth/CJK punctuation（「」，。？：）
 _CJK = re.compile(r"[　-〿㐀-䶿一-鿿＀-￯]")
@@ -78,7 +83,7 @@ class DemoSeedEnglishTestCase(unittest.TestCase):
         for scene in self.ds.SCENES:
             with self.subTest(scene=scene):
                 en = self.ds.build(scene, NOW, lang="en")
-                leaks = [(p, v) for p, v in _strings(en) if _CJK.search(v)]
+                leaks = [(p, v) for p, v in _strings(en) if _CJK.search(v) and v not in _WIRE_VOCAB]
                 self.assertEqual(leaks, [], f"untranslated strings in scene={scene}")
                 self.assertEqual(self.ds.validate(en), [])
 
@@ -119,7 +124,7 @@ class DemoSeedEnglishTestCase(unittest.TestCase):
                     self.assertEqual(self.ds.main([tmp, *argv]), 0)
                     path = Path(tmp) / "state" / "dashboard.json"
                     dash = json.loads(path.read_text(encoding="utf-8"))
-                    self.assertFalse(any(_CJK.search(v) for _, v in _strings(dash)))
+                    self.assertFalse(any(_CJK.search(v) and v not in _WIRE_VOCAB for _, v in _strings(dash)))
                     self.assertEqual(self.ds.main([str(path), "--check"]), 0)
             self.assertEqual(self.ds.main([tmp]), 0)   # default still Chinese
             dash = json.loads((Path(tmp) / "state" / "dashboard.json").read_text(encoding="utf-8"))

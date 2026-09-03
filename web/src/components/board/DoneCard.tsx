@@ -2,7 +2,7 @@
 //   退回待验收（revert_review：可能对方反馈来了要再看）·
 //   永久完成（archive → 封存，确认弹窗文案统一用「永久完成」，§41）。
 // 卡面（原生 TaskRow lane=.completed 收起态）：已交付 章（绿）· repo 章 · 验收于 <相对时间> ·
-//   交付了什么 一句（delivered_summary，单行截断，hover 全文）· 单击复制指令 行；
+//   一句话（§64 AI 白话摘要优先，缺席回落 delivered_summary；单行截断，hover 全文）· 单击复制指令 行；
 //   「展开详情 ▸」后：交付摘要全文 / 摘要 / 怎样算办完 / 指令 / 会话 ID。
 import { useState } from "react";
 import { displayId } from "../../cardId";
@@ -13,6 +13,7 @@ import { CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, Rel
 import { BodyText, CopyPathLine, DodList, MetaLine } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { resumeCommand, stateLabel } from "./RunningCard";
+import { AssessmentSummaryLine } from "./VerdictChip";
 
 interface DoneCardProps {
   row: TaskRow;
@@ -37,10 +38,8 @@ export function DoneCard({ row }: DoneCardProps) {
         <RepoChip path={row.cwd} />
         <RelativeTime epoch={row.accepted_at} prefix={text("验收于 ", "accepted ")} />
       </div>
-      {/* 原生 completed 行的 delivered_summary：一行 11 regular 次级，lineLimit(1) */}
-      {typeof row.delivered_summary === "string" && row.delivered_summary && (
-        <p className="card-summary-line" title={row.delivered_summary}>{row.delivered_summary}</p>
-      )}
+      {/* 原生 completed 行的一句：一行 11 regular 次级，lineLimit(1)——§64 AI 摘要优先，回落 delivered_summary */}
+      <AssessmentSummaryLine assessment={row.assessment} fallback={row.delivered_summary} />
       <CopyCommandLine cmd={cmd} />
       <CardDetails cardId={row.id}>
         <BodyText value={row.delivered_summary} />

@@ -486,6 +486,27 @@
   border-color: currentColor;
 }
 
+/* §64 AI 评语章：是个 <button>（点看理由），外观与同色 chip 一致；理由行复用 .card-line.is-body */
+.chip.verdict-chip {
+  cursor: pointer;
+  font: var(--type-chip);
+}
+
+.chip.verdict-chip:hover { filter: brightness(0.96); }
+.chip.verdict-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.verdict-reason {
+  padding: 4px 8px;
+  border-left: 2px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+/* AI 摘要一句（与 delivered_summary 行同款）——左侧细条区别于执行器原话 */
+.card-summary-line.is-ai {
+  border-left: 2px solid var(--accent-soft);
+  padding-left: 6px;
+}
+
 /* —— 按钮行 —— */
 .card-actions {
   display: flex;

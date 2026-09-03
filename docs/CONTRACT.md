@@ -82,6 +82,8 @@ YAML 载体：一条需求一个文件。状态机：
 
 **v0.48.15 修法（§60，owner 决策 D21，issue #127）——编号两段式**：`id` 是终身不变的**主键**，新卡出生即 `P-<n>`（provisional，`registry.next_id()`）；工作编号 `work_id`（add-only 顶层 optional 字段，`R-<m>`）**只在卡进入 approved 时**由 `registry.save()` 分配、set-once。v0.48.15 前出生的存量卡保留 `R-<n>` 主键（legacy），不迁移、不改名；本节其余文字里的「R-xxx」示例一律按「主键」读。人看的编号 = `work_id or id`（`registry.display_id`）；lineage 字段（`merged_into` / `improvement_of` / `thread_id` / `split_from`、merge 作业的 `ids`/`primary`、fold 回执、analytics `req=`）**只指主键**。完整法条见 §60。
 
+**§64 新增顶层 optional 字段 `assessment`（issue #128，add-only）**：dict `{summary, verdict, verdict_reason, at, source_hash}`（成功）或 `{error, at, source_hash}`（失败标记），只由 `act/lib/card_summary.py` 在 actd 写者线程里落、只对 status=review 的卡生成；**不是状态、不参与匹配/去重/re-raise**（`match_corpus` 不读它），永不改 `status`。完整法条见 §64。
+
 多条 doc 的文件（如欠账批量）= YAML 列表，每项同 schema 子集。
 
 ## 2. `state/dashboard.json`（actd 写，Mac app 只读，原子写：先写 .tmp 再 rename）
@@ -132,6 +134,8 @@ YAML 载体：一条需求一个文件。状态机：
 **v0.48.6 新增顶层 optional 字段 `deploy_state`（§56 合并即上岗；§2 兄弟字段，同 `update_available` / `device_label` 的加法约定）**：scripts/auto-deploy.sh 写 `state/deploy_state.json`、`act/lib/deploy_state.py` 逐字段消毒后由 `build_dashboard` 投影；文件缺失/读不了 = **整键不存在**（这台机器不跑该 agent）。形状与状态词表见 §56。web 顶栏据此显示「v0.48.x · deployed 12m ago」。syncd 的变更闸门把整键 `deploy_state` 视为**易变键**（§31 F2 修订的 `_VOLATILE_DASH_KEYS`，与 `generated_at` 同列）：它每 10 分钟随 agent 的每次运行改写，不得触发一次板快照上传。
 
 **v0.48.15 新增（§60 两段式编号的投影面，全部 add-only；`act/lib/dashboard._title_fields` 单点，spread 进每条 lane 行含 trash/archived）**：所有分区行加 `display_id`(str，**恒在** = `work_id or id`，人看的编号) + `id_kind`(str，恒在，词表 `work`｜`legacy`｜`proposal`：有工作编号｜存量 R 主键未获编号｜P 主键未获编号——web 据此灰显 legacy，**不许**在客户端按前缀猜) + `work_id`(str，有才发)。`id` 键语义不变 = 主键，动作回传仍用它。`queued_reason.blocking_id` 仍是前置卡主键；T-26（blocked_by）立法时须同车加 add-only `blocking_display_id`（web `steer.ts` 已优先读它）。
+
+**§64 新增（issue #128 AI 摘要 + 完成度评语的投影面，add-only optional）**：`review[]` 与 `completed[]` 行加 `assessment: {summary(str|null), verdict(str|null), verdict_reason(str|null), at(epoch int|null)}`——**只在卡上有摘要或评语、且其 `source_hash` 与卡当前内容指纹一致时整键出现**（失败标记 / 未评 / 内容已变而判官未归 = 整键不存在，客户端不得拿空壳或旧话去猜）；`verdict` 词表 = `建议验收`｜`需继续做`｜`需要拍板`（`act/lib/card_summary.VERDICTS` 单源，web `VerdictChip.VERDICTS` 逐字镜像；词表外的值 server 端归 null，客户端对未知值按原文中性渲染——开放枚举）。`source_hash` / `error` **不上 wire**。客户端只渲染：评语章点看理由、摘要一句上卡面；验收 / 打回按钮语义零变化（§64.6）。
 
 **v0.48.8 新增（#119 需输入退役的投影面，add-only optional）**：`review[]` 行加 `interrupted: true`（仅中断收割行携带：受阻/放弃救活被收进待验收，`execution.interrupted_reason` ∈ blocked|resume_storm|resume_exhausted 时投影）——`detect_transitions` 对带此标记的行**不发**「AI 已交付草稿」（reconcile 已当场发过精确文案 `msg_review_interrupted` / `msg_resume_storm` / `msg_auto_resume_exhausted`）；客户端 decodeIfPresent 可渲染「中断收割」标注。
 
@@ -4601,6 +4605,7 @@ CLAUDE.md 第 3 条点名的 `act/llm.py` 自本版起**真实存在**。凡带 
 - `probe_argv(model, cfg)`——doctor 的最小活探针 `[<claude>, "-p", "ok", "--model", <id>, "--output-format", "text", "--max-turns", "1"]`。
 - `claude_bin(cfg)`（= `config.resolve_claude_bin`：`execution.claude_bin` pin → 稳定副本（§55 第五幕，2026-09-02 追记）→ PATH → `~/.local/bin`）与 `runner_env()`（§19 凭证解析 + 恒定 `DISABLE_AUTOUPDATER=1`（§55 第五幕），原 `executor._runner_env` 搬入——`_私名`跨模块引用清零，防腐 #2）。
 - `model_for(mode, cfg=None)`：`cfg` 给则用它，None 则**现读** `load_config()`。
+- **依赖方向**：见 §58.3 边界层修订（`depgraph.BOUNDARY_MODULES`）——entrypoint import `act.llm` 不记 `entry-pair`；`act/lib` 仍不准向上 import 它，lib 侧要用模型 = 注入缝 `runner=` 或把 LLM 半边放进一个 entrypoint 子进程（§63 `act/recap.py`、§64 `act/card_summary_worker.py` 两个范例）。
 
 **不变量（判例钉死）**：两把旋钮都 `follow` 时，每个 call site 交给 `subprocess.run` 的 argv 与 kwargs（timeout / env / 中性 cwd / stdin 管道）与 v0.48.10 **逐字节相同**；显式旋钮时每个 site 只多出 `--model <id>` 两个 token，其它零变化。唯一有意的偏差：analyze / radar_gmail / radar_slack extractor / golden_eval / quick_capture 五处此前 argv[0] 是裸 `"claude"`（信任 daemon PATH），现统一经 `claude_bin()`——PATH 上有 claude 时解析到同一个二进制，cron/launchd PATH 缺 `~/.local/bin` 时从 FileNotFoundError 变为能跑（2026-07-08 事故的最后几处漏网），`execution.claude_bin` pin 自此对所有 site 生效（它的 docstring 本就这样承诺）。
 
@@ -4862,3 +4867,53 @@ owner 原话：「会议结束后自动出一份 5 行的 recap，我只做一�
 ### 63.7 未解（照 #129 原样登记，不在本节裁决）
 
 两场会间隔 < 5 min 合成一个 key；`audio_only_sessions` 默认关；public build 是否默认 `recap.enabled: true`（本版：**开**——确定性判定零成本，模型调用只在真会议 CLOSED 后发生，PRIVACY.md 有开关行）；Parakeet 引擎 silent 状态由 reconciliation 收尾（约 10 分钟地板），quiet 5 分钟可能多等一轮；同室第三人声与 System Audio 回声仍可能污染 Decided 行（页面脚注提醒粘贴前必读）；executor 派发会话带用户级 Slack MCP、「不对外发」只是 prompt——与本节无关，另开 issue；Slack MCP 在 headless cron 下是否稳定可达要实测（`draft failed` 回执可见）。
+## 64. 待验收卡的 AI 一句话摘要 + 完成度评语（issue #128；vnext2-plan P6 附注）
+
+> §61 壳桥、§62 素材库（`feat/material-box`）、§64 会议 recap（`feat/meeting-recap`）各自立法在前，本节取下一个空号 §64——§ 号永不复用。
+
+owner 的问题（issue #128，2026-09-01 待验收列截图）：(1) 卡上「交付了什么」是执行器收尾报告原话——长、满是术语、表格与列表树，扫一眼看不出这卡干了啥；(2) 那段文字交付时写一次就不再更新，打回重做后是旧的；(3) 「该任务未定义验收标准，请自行判断」——人在验收时刻得不到任何帮助。本节的答案是给每张待验收卡附一份**机器生成、内容一变就重生成、只是建议**的评估：一句 ≤40 字白话摘要 + 三态完成度评语 + 一行理由。**宪法边界不动**：验收 / 打回只有人能按（§0 第 1 条单写者、§11 审批边界；与 R2.3.6「结构化测试报告是加分项不是通行证」同理）。执法：`act/lib/card_summary.py`（指纹 / prompt / 消毒 / 作业文件 / 落卡）、`act/card_summary_worker.py`（detached 判官 CLI）、`act/lib/dashboard._assessment_view`、`web/src/components/board/VerdictChip.tsx`；判例 `tests/test_card_summary_verdict.py`、`web/src/components/board/VerdictChip.test.tsx`。
+
+### 64.1 存储：顶层 add-only 字段 `assessment`
+
+```yaml
+assessment:
+  summary: 把登录页的报错修好了，等你验收        # ≤~40 字中文白话（硬帽 80 字符，超截 …）
+  verdict: 建议验收                              # 建议验收 | 需继续做 | 需要拍板 | null（词表外一律 null）
+  verdict_reason: 清单 1/2 条都有对应改动与测试   # 一行（硬帽 240）；无清单时 = 建议的验收要点 1–3 条
+  at: 2026-09-02T02:30:00Z                       # 评语生成时刻
+  source_hash: 3f9a…                             # 生成所依据内容的指纹（64.2）
+```
+
+失败形（LLM 退出非零 / 解析不出 / 子进程超时 / 起不来）：`{error: <一句，≤300>, at, source_hash}`——**没有 summary/verdict 键**，卡面空白（没有章就是没有章，绝不编造）。本字段不进 `match_corpus`、不参与 §21/§38/§44 任何匹配，re-raise / merge / trash 都不读它；store2 存 payload 冷列，`export_yaml.FIELD_DEFAULTS` 同步（判例 `tests/test_store2_field_parity.py`）。字段名叫 `assessment` 而不是 issue 里的 `summary`：`summary` 早已是 §7 的「原始需求一句话」（分诊时写、参与去重匹配、进 executor prompt），不能改语义。
+
+### 64.2 触发 = 内容指纹变化（rate limit 的唯一判据）
+
+`source_hash` = sha256（前 16 hex）over 卡片内容视图 `{title, display_title, summary, plan, definition_of_done, notes, delivery_mode, execution.{delivered_summary, final_draft, review_at, rework_count, last_rework_at, interrupted_reason}}`（`card_summary.content_view`，JSON sort_keys）。新一轮交付改 `review_at`/`final_draft`/`delivered_summary`，打回改 `rework_count`，编辑改 title/清单/备注——都会改指纹；`status`、日志路径、agent 名、`assessment` 自身**不在**视图里（验收不改内容，评于待验收期的摘要在阶段性完成卡上继续有效；评自己不会触发再评）。**投影只信新鲜的**：`assessment.source_hash ≠ 当前指纹`（内容变了、判官未归）时 `_assessment_view` 整键不出——卡面留白胜过一句过时评语（issue 问题 2）。`needs_assessment(req)` 为真 ⇔ `status == review` ∧ 无 `execution._review_active`（attach 回流中内容在流动，等收割落定）∧（无 assessment ∨ `assessment.source_hash ≠ 当前指纹` ∨（上次是 `error` 且 `at` 距今 ≥ 6 h））。同一内容成功评过一次就**永不再花钱**；失败最多每 6 h 重试一次。非 review 卡一律不评（delivered 卡保留在 review 期评出的那份，供阶段性完成卡面用一句）。
+
+### 64.3 一个 pass、两段式（§44 精神；宪法第 1 条单写者）
+
+一次 summarize + judge = **一个** headless `claude -p`（`llm.run(mode=pipeline, timeout=180, cwd=headless_cwd)`，无工具；模型走 `models.pipeline` 旋钮，§59）。actd 每 pass 在 housekeeping 段调 `card_summary.tick(cfg)`：
+
+1. `sweep`：pending 超 20 min 的作业 → failed「worker timed out」；
+2. `consume`：done/failed 作业 → 在 actd 写者线程 `apply_job`（作业指纹 ≠ 卡当前指纹 = 评的是旧内容，**丢弃**；卡不在 review 了也丢弃）→ `registry.save` → 删作业文件；
+3. `card_summary.enabled` 为真时，为每张 `needs_assessment` 且无在飞作业的 review 卡（§60 `id_sort_key` 序）写 pending 作业 `state/card_summary/<card_id>.json` 并 `Popen` detached `python -m act.card_summary_worker <card_id>`；**同时在飞 ≤ 2**（`MAX_INFLIGHT`，成本刹车）。
+
+判官子进程（`act/card_summary_worker.py`）：读作业 → `registry.load` 只读 → 指纹仍一致才 `assess` → 结果 / 失败**只写回作业文件**，永不 `registry.save`；任何异常落 failed。作业文件一卡一份、consume 即删（数据不进包、体量自带上限——防腐 #4）；子进程 stdio 走 DEVNULL，没有日志文件可长。`tick` 内任何异常只进返回值，绝不崩 pass（宪法第 11 条）。10 s 主循环从不阻塞在模型上（silent_merge 的同一条纪律）。
+
+### 64.4 prompt 与输出消毒
+
+材料 = `content_view` 的人读排版（title / display_title / 原始需求摘要 / status + 打回次数 / 中断原因 / 计划 / 验收清单（无则写「（未定义）」）/ 备注 ≤800 / 交付报告 ≤4000 / 成稿 ≤4000），先 `sanitize.scrub` 再 `fence_untrusted`（宪法第 5 条：卡片内容来自外部来源与 agent 输出，是数据不是指令）。指令：只回一个 JSON `{summary, verdict, reason}`；三态定义写死在 prompt（建议验收 = 清单/需求每条都有对应交付；需继续做 = 缺东西但 AI 能自己做完；需要拍板 = 卡在只有 owner 能给的决定/信息上，含中断收割与 agent 提问）；**拿不准就不许答「建议验收」**（错误的 accept 藏住未完成的活）；没有清单时 reason 兼作建议的验收要点 1–3 条（分号分隔）——这就是 issue 问题 (3) 的软化。
+
+输出不可信，逐字段消毒（`parse_output`）：整段 JSON 优先，否则取**最后一个**同时带 `summary` + `verdict` 键的平衡对象（材料里回显的 JSON 永远不会被当成评语，silent_merge 判官同款防线）；`summary`/`reason` 非 str 一律视为空、折叠空白、硬帽截断；`verdict` 必须逐字命中三态词表否则 null；摘要与评语都空 = None = 没有章。dashboard 投影侧再消毒一次（手改 YAML 的数字摘要不上 wire）。
+
+### 64.5 投影与 web
+
+wire 形见 §2 的 §64 块。web：`ReviewCard` badges 行末尾加 `VerdictChip`（`<button class="chip verdict-chip chip-success|chip-warning|chip-purple">AI · 建议验收</button>`，`aria-expanded`，点一下在 badges 行下展开 `role=note` 的理由行、再点收起；`title` = 理由；点击 `stopPropagation`，不发任何 inbox 动作），badges 行下加 `AssessmentSummaryLine`（与阶段性完成卡 `delivered_summary` 一句同款 11 次级单行截断，左侧 accent 细条标识「AI 摘要」）；执行器原话**原样**留在「展开详情 ▸」的「交付了什么」。`DoneCard` 卡面一句 = `assessment.summary` 优先、缺席回落 `delivered_summary`，**不带章**（已验收，评语失效）。英文标签 Looks done / Needs more work / Needs your call；未知 verdict 值按原文中性 chip 渲染。
+
+### 64.6 边界（明确不做）
+
+- **永不自动验收、永不打回、永不改任何状态**：`apply_job` 只写 `assessment` 一个字段；判例 `NeverChangesStatusTestCase` 对三态逐一钉 status 不变。§53.5 agent 墙对本模块无感（它不是 agent、不转移）。
+- 不评 delivered / executing / 提案卡；不为存量 delivered 卡回填（成本，且评语在验收后失效）。
+- 不给 rework 反馈、不进 executor prompt、不进 digest；不做通知（评语出现不是打扰资格——宪法第 10 条）。
+- 不在 web 提供「按 AI 建议一键验收」——那会把建议变成默认，正是 issue 里 interview scorecard 的教训。
+- 配置：`card_summary.enabled`（config.yaml 块 / overrides 扁平键 `card_summary_enabled`，默认 true）关掉 = 不派新判官，在飞的仍收回；不设第二把模型旋钮（跟 `models.pipeline`）。
