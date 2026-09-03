@@ -65,3 +65,16 @@ per_mutant_timeout_seconds = 60
 "skills/test-code/scripts/detect.py" = ["tests/test_skill_test_code_detect.py"]
 "skills/test-code/scripts/checks.py" = ["tests/test_skill_test_code_checks.py", "tests/test_skill_test_code_structure.py", "tests/test_skill_test_code_mutation_kills.py"]
 "skills/test-code/scripts/run_ladder.py" = ["tests/test_skill_test_code_run_ladder.py", "tests/test_skill_test_code_mutation_kills.py"]
+
+# test-ui skill（skills/test-ui；vnext2-plan R2.8，test-code 的姐妹）——同样每晚第 4 档。
+# 2026-09-03 首轮（ad-hoc map，见 tests/test_skill_test_ui_mutation_kills.py 的 docstring）之后进夜间靶区。
+"skills/test-ui/scripts/testui_common.py" = ["tests/test_skill_test_ui_common.py", "tests/test_skill_test_ui_visual.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/parity.py" = ["tests/test_skill_test_ui_pair.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/visual.py" = ["tests/test_skill_test_ui_visual.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/tokens.py" = ["tests/test_skill_test_ui_tokens.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/inventory_a11y.py" = ["tests/test_skill_test_ui_inventory_source.py", "tests/test_skill_test_ui_topology.py", "tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/reference.py" = ["tests/test_skill_test_ui_reference.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/detect_ui.py" = ["tests/test_skill_test_ui_detect.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/checks_ui.py" = ["tests/test_skill_test_ui_checks.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/run_ui.py" = ["tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_anti_gaming.py", "tests/test_skill_test_ui_mutation_kills.py"]
+"skills/test-ui/scripts/sensors.py" = ["tests/test_skill_test_ui_seed_guard.py", "tests/test_skill_test_ui_geometry.py", "tests/test_skill_test_ui_ledgers.py", "tests/test_skill_test_ui_rules.py", "tests/test_skill_test_ui_run_ui.py", "tests/test_skill_test_ui_mutation_kills.py"]

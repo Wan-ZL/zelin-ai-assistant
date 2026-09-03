@@ -52,3 +52,8 @@ act/_version.py
 # skills project-visible to every session and dispatched agent (CONTRACT §67).
 .claude/*
 !.claude/skills/
+
+# test-ui skill run outputs (skills/test-ui; vnext2-plan R2.8) — reports and the detached reference
+# worktrees are per-run artifacts; the ledgers it reads live in ui/parity/ and stay committed
+.test-ui/reports/
+.test-ui/cache/

@@ -241,7 +241,7 @@ class SkillsSyncScriptTestCase(unittest.TestCase):
         proc = self.run_sync()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(self.link("test-code").is_symlink(), "a disabled decision survives sync")
-        self.assertIn("disabled 2 (test-code, write-better)", proc.stdout)
+        self.assertIn("disabled 3 (test-code, test-ui, write-better)", proc.stdout)
 
     def test_json_no_defaults_and_broken_manifest_exit_codes(self):
         proc = self.run_sync("--no-defaults", "--json")
@@ -249,7 +249,7 @@ class SkillsSyncScriptTestCase(unittest.TestCase):
         doc = json.loads(proc.stdout)
         self.assertEqual(doc["actions"], [])
         self.assertEqual({r["name"]: r["state"] for r in doc["skills"]},
-                         {"board-agent": "disabled", "test-code": "disabled", "write-better": "disabled"})
+                         {"board-agent": "disabled", "test-code": "disabled", "test-ui": "disabled", "write-better": "disabled"})
         self.assertEqual(self.run_sync("--bogus").returncode, 2)
         (self.repo / "skills" / "index.yaml").write_text("schema: 1\nskills: []\n", encoding="utf-8")
         proc = self.run_sync()
