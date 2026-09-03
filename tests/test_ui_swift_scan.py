@@ -124,6 +124,14 @@ class HelpersTestCase(unittest.TestCase):
     def test_dump_json_is_sorted_and_utf8(self):
         self.assertEqual(uc.dump_json({"b": 1, "a": "中"}), '{\n  "a": "中",\n  "b": 1\n}\n')
 
+    def test_display_path_repo_relative_or_verbatim(self):
+        self.assertEqual(uc.display_path(os.path.join(uc.REPO_ROOT, "ui", "x.json")), os.path.join("ui", "x.json"))
+        outside = os.path.join(tempfile.gettempdir(), "zai-outside.json")
+        self.assertEqual(uc.display_path(outside), outside)
+        # 跨盘（Windows）relpath 抛 ValueError → 原样返回
+        self.assertEqual(uc.display_path("Z:\\other\\f.json", "C:\\repo") if os.name == "nt"
+                         else uc.display_path("/other/f.json", "/repo"), "Z:\\other\\f.json" if os.name == "nt" else "/other/f.json")
+
     def test_iter_swift_files_missing_dir_is_empty(self):
         self.assertEqual(uc.iter_swift_files("/nonexistent/dir"), [])
 

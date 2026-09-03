@@ -69,7 +69,7 @@ def main(argv=None):
     if args.write:
         for path, text in fresh.items():
             uc.write_text(path, text)
-        print("wrote %s" % ", ".join(os.path.relpath(p, uc.REPO_ROOT) for p in fresh))
+        print("wrote %s" % ", ".join(uc.display_path(p) for p in fresh))
     return _check_fresh(fresh) if args.check else 0
 
 
@@ -77,7 +77,7 @@ def _check_fresh(fresh):
     stale = [p for p, text in fresh.items() if not os.path.exists(p) or uc.read_text(p) != text]
     if stale:
         print("stale fixture(s): %s — rerun with --write"
-              % ", ".join(os.path.relpath(p, uc.REPO_ROOT) for p in stale), file=sys.stderr)
+              % ", ".join(uc.display_path(p) for p in stale), file=sys.stderr)
         return 1
     print("parity fixtures are fresh")
     return 0

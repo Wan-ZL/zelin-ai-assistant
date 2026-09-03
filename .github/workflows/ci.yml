@@ -390,7 +390,12 @@ jobs:
 
       - name: Visual regression (playwright)
         # e2e/demoServer.ts 种 demo 数据到临时 AIASSISTANT_HOME、随机端口起 python3 -m server。
-        run: npx playwright test
+        # PYTHON 钉成绝对路径并先自报版本——起不来时错误信息里就有它。
+        run: |
+          PYTHON="$(command -v python3)"
+          echo "python3 = $PYTHON ($("$PYTHON" --version 2>&1))"
+          "$PYTHON" -c "import yaml, sqlite3; print('pyyaml', yaml.__version__)"
+          PYTHON="$PYTHON" npx playwright test
 
       - name: Upload diffs + report
         if: failure()

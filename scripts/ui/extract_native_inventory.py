@@ -763,7 +763,7 @@ def main(argv=None):
             print("%-14s total %4d  gated %4d" % (kind, c["total"], c["gated"]))
     if args.write:
         uc.write_text(args.out, text)
-        print("wrote %s" % os.path.relpath(args.out, uc.REPO_ROOT))
+        print("wrote %s" % uc.display_path(args.out))
     return _check_fresh(args.out, text) if args.check else 0
 
 

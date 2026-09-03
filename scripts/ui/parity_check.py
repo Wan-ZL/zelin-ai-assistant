@@ -379,7 +379,7 @@ def run(args, runner=None):
     gated = gated_ids(inventory)
     if args.write_pending:
         print("wrote %d pending item(s) to %s" % (write_pending(args.pending, presence, gated, waivers),
-                                                   os.path.relpath(args.pending, uc.REPO_ROOT)))
+                                                   uc.display_path(args.pending)))
         pending = uc.load_ledger(args.pending)
     result, scores = judge(presence, gated, waivers, pending)
     report = build_report(inventory, presence, scores, result, waivers, pending)

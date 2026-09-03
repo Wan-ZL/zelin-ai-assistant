@@ -265,7 +265,7 @@ def main(argv=None):
         for path, text in fresh.items():
             uc.write_text(path, text)
         print("wrote %s and the native-tokens block in %s" % (
-            os.path.relpath(args.out, uc.REPO_ROOT), os.path.relpath(args.css, uc.REPO_ROOT)))
+            uc.display_path(args.out), uc.display_path(args.css)))
     return _check_fresh(fresh) if args.check else 0
 
 
@@ -276,7 +276,7 @@ def _read_or_empty(path):
 def _check_fresh(fresh):
     stale = [p for p, text in fresh.items() if _read_or_empty(p) != text]
     if stale:
-        print("stale: %s — rerun with --write" % ", ".join(os.path.relpath(p, uc.REPO_ROOT) for p in stale),
+        print("stale: %s — rerun with --write" % ", ".join(uc.display_path(p) for p in stale),
               file=sys.stderr)
         return 1
     print("native tokens are fresh")

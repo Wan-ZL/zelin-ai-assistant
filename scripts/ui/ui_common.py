@@ -388,6 +388,16 @@ def write_text(path, text):
         fh.write(text)
 
 
+def display_path(path, root=REPO_ROOT):
+    """人读路径：仓内文件给 repo 相对路径；仓外（tmp 目录、Windows 上另一个盘）给原样
+    （os.path.relpath 跨盘会抛 ValueError——Windows 判例钉住）。"""
+    try:
+        rel = os.path.relpath(path, root)
+    except ValueError:
+        return path
+    return path if rel.startswith("..") else rel
+
+
 def load_json(path):
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)

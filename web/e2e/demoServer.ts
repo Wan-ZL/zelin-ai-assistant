@@ -30,7 +30,7 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 30_000): Promise<void> {
+async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 25_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last = "no response yet";
   while (Date.now() < deadline) {
@@ -58,6 +58,7 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
   // HOME 也指向临时目录：设置页读 ~/.claude/settings.json（§59 全局默认）——golden 不许带上
   // 开发者机器的真实路径 / 模型名，CI runner 上也没有这个文件，两边一致 = 「文件不存在」态。
   const child = spawn(PYTHON, ["-m", "server"], {
+    // stdout/stderr 都收：server 的横幅与访问日志走 stdout，起不来时一并进错误信息
     cwd: REPO_ROOT,
     env: {
       ...process.env, HOME: home, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: REPO_ROOT,
