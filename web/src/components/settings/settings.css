@@ -344,14 +344,14 @@
 }
 
 .skill-row-name {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: calc(12.5px * var(--text-scale));
+  font-weight: var(--w-semibold);
   font-family: var(--font-mono);
 }
 
 .skill-row-version {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   font-family: var(--font-mono);
 }
 
@@ -373,7 +373,7 @@
 .skill-row-desc {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
   line-height: 1.5;
 }
 
@@ -387,7 +387,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
 }
 
 .settings-toc a {
@@ -427,7 +427,7 @@
 }
 
 .settings-source-chip {
-  font-size: 10px;
+  font-size: calc(10px * var(--text-scale));
   color: var(--text-quaternary);
   border: var(--border-hairline) solid var(--border);
   border-radius: 999px;
@@ -490,8 +490,8 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: var(--border-hairline) solid var(--border);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: calc(12px * var(--text-scale));
+  font-weight: var(--w-semibold);
 }
 
 .settings-subblock {
@@ -508,7 +508,7 @@
 }
 
 .settings-link {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
   color: var(--accent);
 }
 
@@ -529,7 +529,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
 }
 
 .settings-health-line {
@@ -548,7 +548,7 @@
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .settings-radio {
@@ -573,15 +573,15 @@
   padding: 8px 10px;
   border: var(--border-hairline) solid var(--border);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .settings-list-row.is-muted { opacity: 0.55; }
 
-.settings-list-title { font-weight: 600; }
+.settings-list-title { font-weight: var(--w-semibold); }
 .settings-list-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.settings-list-desc { margin: 0; color: var(--text-secondary); font-size: 11.5px; }
-.settings-list-dim { margin: 0; color: var(--text-quaternary); font-size: 10.5px; overflow-wrap: anywhere; }
+.settings-list-desc { margin: 0; color: var(--text-secondary); font-size: calc(11.5px * var(--text-scale)); }
+.settings-list-dim { margin: 0; color: var(--text-quaternary); font-size: calc(10.5px * var(--text-scale)); overflow-wrap: anywhere; }
 
 .settings-check-row {
   display: flex;
@@ -594,7 +594,7 @@
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 4px 14px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .settings-meta div { display: contents; }
@@ -602,7 +602,7 @@
 .settings-meta dd { margin: 0; overflow-wrap: anywhere; }
 
 .settings-update-line.is-ok { color: var(--success); }
-.settings-update-line.is-warning { color: var(--warning); font-weight: 600; }
+.settings-update-line.is-warning { color: var(--warning); font-weight: var(--w-semibold); }
 
 .btn.btn-quiet { opacity: 0.8; }
 
@@ -617,7 +617,7 @@
 .perm-path code,
 .perm-inline {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   background: var(--surface-muted);
   border-radius: 5px;
   padding: 1px 6px;
@@ -631,7 +631,7 @@
   padding: 8px 10px;
   border: var(--border-hairline) solid var(--border);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
 }
 
 .perm-exec.is-missing { opacity: 0.7; }
@@ -641,7 +641,7 @@
 .perm-steps {
   margin: 0;
   padding-left: 20px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   line-height: 1.6;
   display: flex;
   flex-direction: column;
@@ -653,7 +653,7 @@
 .diag-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
 }
 
 .diag-table th,
@@ -664,7 +664,7 @@
   border-top: var(--border-hairline) solid var(--border);
 }
 
-.diag-table th { color: var(--text-tertiary); font-weight: 600; border-top: none; }
+.diag-table th { color: var(--text-tertiary); font-weight: var(--w-semibold); border-top: none; }
 
 .diag-log {
   margin: 0;
@@ -674,7 +674,7 @@
   background: var(--surface-muted);
   border-radius: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--text-scale));
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -695,7 +695,7 @@
   color: var(--text-secondary);
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
   cursor: pointer;
 }
 
@@ -711,7 +711,7 @@
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale));
 /* ----- 显示偏好（§54.1 第 12 项）：Apple 式 segmented control + 实物预览 ----------- */
 .settings-segmented {
   display: flex;

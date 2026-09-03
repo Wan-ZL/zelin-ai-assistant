@@ -413,13 +413,13 @@
 }
 
 .shell-banner-icon-dot {
-  font-size: 9px;
+  font-size: calc(9px * var(--text-scale));
 }
 
 .shell-banner-link {
   margin-left: auto;
   color: var(--accent);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   white-space: nowrap;
 }
 
@@ -506,10 +506,10 @@
 
 .shell-banner-link {
   color: inherit;
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
 }
 
 .shell-banner-note {
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   opacity: 0.85;
 }
