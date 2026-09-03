@@ -22,10 +22,20 @@ Two things, both stdlib (+ optional PyYAML for reading config.yaml):
    ``CONFLICT``) — never overwritten. Nothing rewrites that file on launch
    (D22 (d)): the owner clicks 「设为 …」 explicitly.
 
-server/ does not import act (§49): the follow sentinel, mode names, canonical
-list and id shape are **mirrored** from act/lib/config.py and pinned by
-tests/test_server_paths_mirror.py — the two sides must agree on what a valid
-knob value is or the web would write something the daemon ignores.
+3. **The skill store** (CONTRACT §67) — ``GET /api/skills`` lists the
+   ``skills/index.yaml`` manifest with each skill's state on this machine
+   (enabled symlink / disabled / store-owned copy / owner's custom copy /
+   foreign) and ``POST /api/skills {name, action: enable|disable}`` flips one.
+   This section does NOT mirror: ``act/lib/skills.py`` is the single writer
+   of ``~/.claude/skills`` links and ``state/skills.json`` (a mirrored writer
+   would be a second writer), and the deps gate (§58.3 rule 3) allows
+   server → act.lib. Refusals surface as 409 ``CONFLICT`` with the store's
+   reason verbatim; an unknown name is 404.
+
+For sections 1–2 server/ does not import act (§49): the follow sentinel, mode
+names, canonical list and id shape are **mirrored** from act/lib/config.py and
+pinned by tests/test_server_paths_mirror.py — the two sides must agree on what
+a valid knob value is or the web would write something the daemon ignores.
 """
 from __future__ import annotations
 
@@ -42,8 +52,17 @@ try:
 except ImportError:  # pragma: no cover - PyYAML absent: config.yaml layer is skipped
     yaml = None  # type: ignore[assignment]
 
+# §67 skill store: the single writer of ~/.claude/skills links; absent
+# (partial install shape) → the two skills endpoints answer 501, nothing else
+# in the settings face degrades.
+try:
+    from act.lib import skills as skill_store
+except Exception:  # pragma: no cover - 降级路径
+    skill_store = None  # type: ignore[assignment]
+
 from server import paths
-from server.errors import ConflictError, InvalidFieldError, UnknownFieldError
+from server.errors import (ConflictError, InvalidFieldError, NotFoundError,
+                           NotImplementedError501, UnknownFieldError)
 
 # ---- mirrors of act/lib/config.py (drift-pinned) --------------------------- #
 MODEL_FOLLOW = "follow"
@@ -375,3 +394,65 @@ def _replace_settings(p: Path, doc: dict, *, keep_mode: bool) -> None:
         except OSError:
             pass
     os.replace(tmp, p)
+
+
+# --------------------------------------------------------------------------- #
+# skill store — GET/POST /api/skills (CONTRACT §67)
+# --------------------------------------------------------------------------- #
+SKILL_ACTIONS = ("enable", "disable")
+
+
+def _store(home: Path):
+    if skill_store is None:
+        raise NotImplementedError501("the skill store (act/lib/skills.py) is not importable here")
+    return skill_store.Store(repo_root=home, state_dir=home / "state")
+
+
+def skills_snapshot(home: Path) -> dict:
+    """Wire shape (web ``SkillsSnapshot`` mirrors verbatim)::
+
+        {"skills": [<row>…], "skills_dir": "~/.claude/skills",
+         "repo_skills_dir": "<repo>/skills", "state_path": "<repo>/state/skills.json"}
+
+    Row fields = act/lib/skills.Store.inspect (add-only). A broken manifest is
+    the repo's fault, not the client's → 409 with the manifest error verbatim."""
+    store = _store(home)
+    try:
+        return store.snapshot()
+    except skill_store.ManifestError as exc:  # type: ignore[union-attr]
+        raise ConflictError("skills/index.yaml is unusable: %s" % exc)
+
+
+def _skill_payload(payload: dict) -> tuple:
+    """Validated ``(name, action)`` of a POST /api/skills body."""
+    unknown = set(payload) - {"name", "action"}
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    name, action = payload.get("name"), payload.get("action")
+    if not isinstance(name, str) or not name.strip():
+        raise InvalidFieldError("name must be a non-empty string", {"field": "name"})
+    if action not in SKILL_ACTIONS:
+        raise InvalidFieldError("action must be enable or disable", {"field": "action"})
+    return name.strip(), action
+
+
+def update_skill(home: Path, payload: dict) -> dict:
+    """``{"name": str, "action": "enable"|"disable"}`` → fresh snapshot.
+    Unknown keys 400 UNKNOWN_FIELD; bad shapes 400 INVALID_FIELD; unknown skill
+    404; custom/foreign copies refused 409 CONFLICT (details.code = the store's
+    SKILL_* token, so the web can render the exact refusal)."""
+    name, action = _skill_payload(payload)
+    store = _store(home)
+    try:
+        getattr(store, action)(name)
+    except skill_store.SkillError as exc:  # type: ignore[union-attr]
+        _raise_skill_error(exc, name)
+    except skill_store.ManifestError as exc:  # type: ignore[union-attr]
+        raise ConflictError("skills/index.yaml is unusable: %s" % exc)
+    return store.snapshot()
+
+
+def _raise_skill_error(exc, name: str) -> None:
+    if exc.code == "SKILL_UNKNOWN":
+        raise NotFoundError("no such skill", {"name": name})
+    raise ConflictError(str(exc), {"name": name, "code": exc.code})
