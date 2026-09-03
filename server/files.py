@@ -133,6 +133,14 @@ def _newest_deliverable(base: Path) -> Optional[Path]:
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
+def _open_reveal(target: Path, ident: dict) -> dict:
+    try:
+        subprocess.run(["open", "-R", str(target)], check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise NotFoundError("could not reveal", dict(ident, reason=str(exc)))
+    return {"ok": True, "revealed": str(target)}
+
+
 def reveal(home: Path, card_id: str) -> dict:
     """POST /api/reveal {card_id} → ``open -R``（访达定位，分享=拖拽起点）。
     定位目标 = 最新交付物文件；目录空则定位目录本身。非 darwin → 501。"""
@@ -145,9 +153,23 @@ def reveal(home: Path, card_id: str) -> dict:
         if not base.is_dir():
             raise NotFoundError("no deliverables for this card", {"id": card_id})
         target = base
-    try:
-        subprocess.run(["open", "-R", str(target)], check=False, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise NotFoundError("could not reveal deliverable",
-                            {"id": card_id, "reason": str(exc)})
-    return {"ok": True, "revealed": str(target)}
+    return _open_reveal(target, {"id": card_id})
+
+
+# 客户端只能点名一个词表项，路径仍由 server 推导（同一条「绝不接受客户端路径」红线）
+REVEAL_TARGETS = ("config",)
+
+
+def reveal_target(home: Path, target: str) -> dict:
+    """POST /api/reveal {target:"config"} → 访达定位 ``config.yaml``（缺席则模板
+    ``config.example.yaml``）——原生 FailureCatalog ``config_invalid`` 的「显示文件」。"""
+    if target not in REVEAL_TARGETS:
+        raise InvalidFieldError("unknown reveal target", {"field": "target", "choices": list(REVEAL_TARGETS)})
+    if sys.platform != "darwin":
+        raise NotImplementedError501("reveal is only available on macOS")
+    path = home / "config.yaml"
+    if not path.is_file():
+        path = home / "config.example.yaml"
+    if not path.is_file():
+        raise NotFoundError("neither config.yaml nor config.example.yaml exists", {"target": target})
+    return _open_reveal(path, {"target": target})

@@ -12,7 +12,9 @@
   （Anthropic ``GET /v1/models``、Slack ``auth.test``——成功顺手把 ``user_id``
   写进 override ``owner_slack_user_id``（§15.3 v0.14 身份零手填）、Gmail IMAP
   LOGIN）。探针经 ``prober`` 注入缝——测试绝不碰网络。火山（字幕）两把 key 没有
-  免费探针，``verifiable: false``，verify → 400。
+  免费探针，``verifiable: false``，verify → 400。body 可带 add-only 的
+  ``{"value": "<token>"}`` = **粘贴即验证**（原生 SetupWizard 的 verify-on-paste：
+  先验后存、无效的 key 永不落盘）——只探这个值、**不写文件**；没有 value 照旧探已保存的。
 
 文件名是 §19 的固定词表（server 不 import act.lib.secrets：它 import 期就把
 SECRETS_DIR 钉在进程 env 的 HOME 上，测试注入 home 会失真——判例
@@ -230,15 +232,35 @@ def _gmail_context(home: Path) -> dict:
     return {"address": value or ""}
 
 
-def _probe_target(home: Path, name: str) -> "tuple[str, str]":
-    """(probe kind, token)；无探针 / 尚未保存 → 400。"""
+def _probe_target(home: Path, name: str, value: Optional[str] = None) -> "tuple[str, str]":
+    """(probe kind, token)；无探针 / 尚未保存 → 400。``value`` 给了就探它（不落盘）。"""
     kind = _lookup(name)["probe"]
     if kind is None:
         raise InvalidFieldError("this credential has no verification probe", {"name": name})
+    if value is not None:
+        token = _first_token_line(value)
+        if not token:
+            raise InvalidFieldError("value is empty", {"field": "value"})
+        return kind, token
     token = read_value(home, name)
     if token is None:
         raise InvalidFieldError("nothing saved yet - save the credential first", {"name": name})
     return kind, token
+
+
+def verify_payload_value(payload: dict) -> Optional[str]:
+    """``POST …/verify`` 的 body：空 = 探已保存的；``{"value": str}`` = 粘贴即验证；其余 400。"""
+    unknown = set(payload) - {"value"}
+    if unknown:
+        raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
+    if "value" not in payload:
+        return None
+    value = payload.get("value")
+    if not isinstance(value, str):
+        raise InvalidFieldError("value must be a string", {"field": "value"})
+    if len(value) > VALUE_MAX:
+        raise InvalidFieldError("value is too long", {"field": "value", "max": VALUE_MAX})
+    return value
 
 
 def _autofill_slack_owner(home: Path, kind: str, ok: bool, extra: dict) -> None:
@@ -247,16 +269,18 @@ def _autofill_slack_owner(home: Path, kind: str, ok: bool, extra: dict) -> None:
         settings_catalog.set_flat_override(home, "owner_slack_user_id", extra["user_id"])
 
 
-def verify(home: Path, name: str, prober: Optional[Prober] = None) -> dict:
+def verify(home: Path, name: str, prober: Optional[Prober] = None,
+           value: Optional[str] = None) -> dict:
     """``POST /api/secrets/{name}/verify`` → ``{"ok": bool, "detail": str, "extra": {}}``。
     网络失败 ``ok:false`` + ``network:true``（不是凭证的错）。Slack 成功自动填
-    ``owner_slack_user_id``。"""
-    kind, token = _probe_target(home, name)
+    ``owner_slack_user_id``（只在探已保存的值时——粘贴即验证还没落盘，不动 override）。"""
+    kind, token = _probe_target(home, name, value)
     ctx = _gmail_context(home) if kind == "gmail" else {}
     try:
         ok, detail, extra = (prober or default_prober)(kind, token, ctx)
     except ProbeNetworkError as exc:
         return {"ok": False, "network": True, "detail": "network error: %s" % _clip(str(exc)),
                 "extra": {}}
-    _autofill_slack_owner(home, kind, ok, extra)
+    if value is None:
+        _autofill_slack_owner(home, kind, ok, extra)
     return {"ok": ok, "network": False, "detail": detail, "extra": extra}

@@ -1,20 +1,25 @@
-// 权限体检页（§15 v0.13 权限体检窗 → §68.3 web 版；?page=permissions）。两半拼一页：
-//   1. GUI 四项（屏幕录制 / 麦克风 / 通知 / 笔记库 Documents）——真相只有壳知道（TCC 探针是原生 API）：桥在场时
-//      读 shell.permissions、按钮 = requestPermission / openPane；浏览器里如实说「只在看板 app 里可探」。
-//      笔记库行 = 原生 vaultRow：授权落在壳的 bundle 身份上，vault-sync-helper 从 cron 里永远复用（§68.13）；
-//      被拒后的「打开系统设置」深链「文件与文件夹」面板。
-//   2. 完全磁盘访问（D20 家族的一半原生窗从不管的事）：server 列出要授权的可执行文件（守护
-//      python / claude / node / 壳 app）+ 可复制的绝对路径 + 系统设置深链 + TCC 相关 doctor 行。
+// 权限体检页（§15 v0.13 权限体检窗 → §68.3 web 版；?page=permissions）。原生 PermissionsView 的顺序原样：
+//   抬头「权限体检」+ 一句说明 → 屏幕记录（一次性同意块 / 实时状态行，RecordingConsentSection）→
+//   「系统权限」三行（屏幕录制 / 笔记库访问（Documents） / 通知 + web 多一行麦克风，CapabilityRows）→
+//   telemetry 披露块（TelemetryBlock）→ 页脚「打开依赖检查」…「完成」（首启：回向导）/「关闭」（体检：回看板）。
+// GUI 项的真相只有壳知道（TCC 探针是原生 API）：桥在场时读 shell.permissions、按钮 = requestPermission /
+// openPane，2 s 轮询一次；浏览器里如实说「只在看板 app 里可探」。
+// web 多出的下半：完全磁盘访问（D20 家族的一半原生窗从不管的事）——server 列出要授权的可执行文件
+// （守护 python / claude / node / 壳 app）+ 可复制的绝对路径 + 系统设置深链 + TCC 相关 doctor 行，
 // 授权步骤原样写在页面上（系统设置 → 隐私与安全性 → 完全磁盘访问 → + → ⌘⇧G 粘路径）。
 import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
+import "../components/permissions/permissions.css";
+import { CapabilityRows } from "../components/permissions/CapabilityRows";
+import { RecordingConsentSection } from "../components/permissions/RecordingConsentSection";
+import { TelemetryBlock } from "../components/permissions/TelemetryBlock";
 import { pickText } from "../components/settings/catalogText";
 import { copyText } from "../components/detail/copyText";
 import { useI18n } from "../i18n";
-import { buildAppUrl } from "../route";
-import { callShell, hasShellBridge, PANE_IDS, PERMISSION_KINDS, useShellState, type PermissionStatus } from "../shellBridge";
-import { refreshPermissions, useAppState } from "../store";
+import { buildAppUrl, navigate } from "../route";
+import { callShell, hasShellBridge, PANE_IDS, type PermissionStatus } from "../shellBridge";
+import { refreshPermissions, refreshSetup, useAppState } from "../store";
 import type { DoctorRow, FdaExecutable } from "../types";
 
 type Text = (zh: string, en: string) => string;
@@ -25,12 +30,6 @@ export function statusLabel(status: PermissionStatus, text: Text): string {
     case "denied": return text("未授权", "Denied");
     default: return text("未知 / 尚未询问", "Unknown / not asked yet");
   }
-}
-
-/** 每项授权的系统设置面板（原生：屏幕 / 麦克风 / 通知各自的面板；笔记库被拒后 = 文件与文件夹） */
-export function paneFor(kind: string): (typeof PANE_IDS)[number] {
-  if (kind === "vault") return "files_folders";
-  return (PANE_IDS as readonly string[]).includes(kind) ? (kind as (typeof PANE_IDS)[number]) : "full_disk";
 }
 
 function CopyPath({ path }: { path: string }) {
@@ -82,18 +81,8 @@ function DoctorRows({ rows }: { rows: DoctorRow[] }) {
   );
 }
 
-export function PermissionsPage() {
-  const { text } = useI18n();
-  const { permissions, pageErrors } = useAppState();
-  const shell = useShellState();
-  const present = hasShellBridge();
-  const [note, setNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    void refreshPermissions();
-  }, []);
-
-  // 桥在场：2 s 轮询一次探针（原生 PermissionsModel.startPolling 的节拍——用户正在系统设置里翻开关）
+/** 桥在场：2 s 轮询一次探针（原生 PermissionsModel.startPolling 的节拍——用户正在系统设置里翻开关） */
+export function usePermissionPolling(present: boolean) {
   useEffect(() => {
     if (!present) return undefined;
     const tick = () => void callShell("getPermissions").catch(() => undefined);
@@ -101,56 +90,45 @@ export function PermissionsPage() {
     const timer = window.setInterval(tick, 2000);
     return () => window.clearInterval(timer);
   }, [present]);
+}
 
-  const act = (method: "requestPermission" | "openPane", args: Record<string, unknown>) => {
+export function PermissionsPage() {
+  const { text } = useI18n();
+  const { permissions, pageErrors, setup } = useAppState();
+  const present = hasShellBridge();
+  const [note, setNote] = useState<string | null>(null);
+  // 原生 firstRun：向导还没走完 → 页脚是「完成」（回向导继续）；否则「关闭」（回看板）
+  const firstRun = Boolean(setup?.needed);
+
+  useEffect(() => {
+    void refreshPermissions();
+    void refreshSetup();
+  }, []);
+  usePermissionPolling(present);
+
+  const openPane = (pane: (typeof PANE_IDS)[number]) => {
     setNote(null);
-    void callShell(method, args).catch((err) => setNote(err instanceof Error ? err.message : String(err)));
-  };
-
-  const kindLabel = (kind: string) => {
-    if (kind === "screen") return text("屏幕录制", "Screen Recording");
-    if (kind === "microphone") return text("麦克风", "Microphone");
-    if (kind === "vault") return text("笔记库访问（Documents）", "Notes vault access (Documents)"); // 原生 vaultRow 逐字
-    return text("通知", "Notifications");
-  };
-  const kindWhy = (kind: string) => {
-    if (kind === "screen") return text("录制引擎读屏幕与系统声音都靠它；没有它录制一直「未在录制」。", "The recording engine reads the screen and system audio through it; without it recording stays \"Not recording\".");
-    if (kind === "microphone") return text("实时字幕的麦克风转写。", "Live-captions microphone transcription.");
-    if (kind === "vault") return text("授权一次，后台管线就永远经由 App 的稳定身份读写 Obsidian 笔记库——此后 claude/python 升级不会再弹任何权限窗口。", "Grant once and the background pipeline reaches your Obsidian vault through the app's stable identity forever — claude/python updates can never trigger new permission prompts again.");
-    return text("卡片进待验收 / 引擎自愈这类系统通知由看板 app 投递；没有它通知静默丢弃。", "System notifications (card ready for review, engine self-heal) are posted by the board app; without it they are dropped silently.");
+    void callShell("openPane", { pane }).catch((err) => setNote(err instanceof Error ? err.message : String(err)));
   };
 
   return (
     <main className="settings-page perm-page">
       <a className="trash-back-link" href={buildAppUrl(window.location.href, "board", null).toString()}>{text("← 返回看板", "← Back to board")}</a>
       <div className="settings-page-head">
-        <h2 className="settings-page-title">{text("权限体检", "Permissions checkup")}</h2>
-        <button type="button" className="btn" onClick={() => void refreshPermissions(true)}>{text("重新探测", "Re-probe")}</button>
+        <h2 className="settings-page-title">{text("权限体检", "Permissions Checkup")}</h2>
+        <button type="button" className="btn" onClick={() => { void refreshPermissions(true); if (present) void callShell("getPermissions").catch(() => undefined); }}>{text("重新探测", "Re-probe")}</button>
       </div>
+      <p className="settings-helper">{text("这一页帮你把需要的系统授权一次配齐;状态实时刷新,之后随时可从菜单「权限体检」再打开。", "This page sets up the system permissions in one place; statuses refresh live, and you can reopen it anytime from the menu (\"Permissions Checkup\").")}</p>
+
+      <section className="settings-section" aria-labelledby="perm-recording-title">
+        <h3 id="perm-recording-title" className="settings-section-title">{text("屏幕记录", "Screen recording")}</h3>
+        <RecordingConsentSection />
+      </section>
 
       <section className="settings-section" aria-labelledby="perm-gui-title">
-        <h3 id="perm-gui-title" className="settings-section-title">{text("看板 app 的四项授权", "The board app's four grants")}</h3>
-        {!present || !shell ? (
-          <p className="settings-warning">{text("屏幕录制 / 麦克风 / 通知 / 笔记库访问的真相只有看板 app（壳）自己探得到——请在 app 里打开本页。", "Screen Recording / Microphone / Notifications / Notes vault access can only be probed by the board app itself — open this page inside the app.")}</p>
-        ) : (
-          <ul className="settings-list">
-            {PERMISSION_KINDS.map((kind) => {
-              const status = shell.permissions[kind];
-              return (
-                <li key={kind} className="settings-list-row" data-kind={kind} data-status={status}>
-                  <span className="settings-list-title">
-                    <span className={`chip chip-${status === "granted" ? "success" : status === "denied" ? "danger" : "warning"}`}>{statusLabel(status, text)}</span> {kindLabel(kind)}
-                  </span>
-                  <p className="settings-list-desc">{kindWhy(kind)}</p>
-                  <span className="settings-list-meta">
-                    {status !== "granted" && <button type="button" className="btn btn-primary" onClick={() => act("requestPermission", { kind })}>{text("授权", "Grant")}</button>}
-                    <button type="button" className="btn" onClick={() => act("openPane", { pane: paneFor(kind) })}>{text("打开系统设置", "Open System Settings")}</button>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <h3 id="perm-gui-title" className="settings-section-title">{text("系统权限", "System permissions")}</h3>
+        <CapabilityRows onError={setNote} />
+        <TelemetryBlock />
         {note && <p className="settings-warning" role="alert">{note}</p>}
       </section>
 
@@ -166,7 +144,7 @@ export function PermissionsPage() {
             </p>
             <ol className="perm-steps">
               <li>{text("系统设置 → 隐私与安全性 → 完全磁盘访问", "System Settings → Privacy & Security → Full Disk Access")}
-                {present && <button type="button" className="btn" onClick={() => act("openPane", { pane: PANE_IDS[0] })}>{text("打开", "Open")}</button>}
+                {present && <button type="button" className="btn" onClick={() => openPane("full_disk")}>{text("打开", "Open")}</button>}
                 {!present && <code className="perm-inline">{permissions.fda.pane}</code>}
               </li>
               <li>{text("点「+」→ 按 ⌘⇧G → 粘贴下面某一行路径 → 打开 → 开关拨开", "Click \"+\" → press ⌘⇧G → paste one of the paths below → Open → flip the switch on")}</li>
@@ -183,6 +161,13 @@ export function PermissionsPage() {
         )}
         {!permissions && !pageErrors.permissions && <p className="settings-helper">{text("探测中…", "Probing…")}</p>}
       </section>
+
+      <div className="settings-actions perm-footer">
+        <a className="settings-link" href={buildAppUrl(window.location.href, "deps", null).toString()}>{text("打开依赖检查", "Open dependency check")}</a>
+        <button type="button" className="btn btn-primary" onClick={() => navigate(buildAppUrl(window.location.href, firstRun ? "setup" : "board", null))}>
+          {firstRun ? text("完成", "Done") : text("关闭", "Close")}
+        </button>
+      </div>
     </main>
   );
 }

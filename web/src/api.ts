@@ -38,8 +38,10 @@ import type {
   SecretStatus,
   SecretVerifyResult,
   SecretsStatus,
+  SeedDashboardReceipt,
   SettingsCatalog,
   SettingsSection,
+  SetupEngine,
   SetupReceipt,
   SetupSnapshot,
   TerminalReceipt,
@@ -342,11 +344,12 @@ export function putSecret(name: string, value: string): Promise<SecretStatus> {
   });
 }
 
-/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id） */
-export function verifySecret(name: string): Promise<SecretVerifyResult> {
+/** POST /api/secrets/{name}/verify — 最小活探针（server 侧；Slack 成功自动填 owner id）。
+ *  带 value = 粘贴即验证（§68.3；只探这个值、不落盘——向导「先验后存」用） */
+export function verifySecret(name: string, value?: string): Promise<SecretVerifyResult> {
   return request<SecretVerifyResult>(`/api/secrets/${encodeURIComponent(name)}/verify`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(value === undefined ? {} : { value }),
   });
 }
 
@@ -382,6 +385,21 @@ export function fetchSetup(signal?: AbortSignal): Promise<SetupSnapshot> {
 /** POST /api/setup/{config-from-example | complete | reset} */
 export function postSetupStep(step: "config-from-example" | "complete" | "reset"): Promise<SetupReceipt> {
   return request<SetupReceipt>(`/api/setup/${step}`, { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/setup/engine — AI 引擎检测（claude CLI + 认证梯子；原生 EngineDetector） */
+export function fetchSetupEngine(signal?: AbortSignal): Promise<SetupEngine> {
+  return request<SetupEngine>("/api/setup/engine", { signal });
+}
+
+/** POST /api/setup/seed-dashboard — 首次数据「立即生成一次」（python -m act.lib.dashboard） */
+export function postSeedDashboard(): Promise<SeedDashboardReceipt> {
+  return request<SeedDashboardReceipt>("/api/setup/seed-dashboard", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/reveal {target} — 访达定位 server 词表里的文件（config = config.yaml / 模板；§68.4「显示文件」） */
+export function postRevealTarget(target: "config"): Promise<unknown> {
+  return request("/api/reveal", { method: "POST", body: JSON.stringify({ target }) });
 }
 
 /** GET /api/about — 版本 / 路径 / 更新状态 */

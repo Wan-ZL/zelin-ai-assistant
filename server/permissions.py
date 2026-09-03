@@ -9,14 +9,19 @@ claude CLI、构建 UI 的 node 各自都要一次「完全磁盘访问」才能
     {"home", "on_external_volume",
      "fda": {"needed": bool, "pane": "<x-apple.systempreferences URL>",
              "executables": [{"role", "path", "realpath", "exists", "note": {zh,en}}]},
-     "panes": {"screen", "microphone", "notifications", "full_disk"},
+     "panes": {"screen", "microphone", "notifications", "full_disk", "files_folders"},
      "doctor": [<doctor rows whose failure_id / name is TCC-shaped>],
-     "doctor_ran_at": iso|null}
+     "doctor_ran_at": iso|null,
+     "vault": {"status": "granted"|"unknown", "root": "<vault root>"}}
 
 路径全部是**可复制的绝对路径**（系统设置里点 + → ⌘⇧G → 粘贴）。doctor 行来自
 server/doctor_run（``--fast``；缓存 15 s），只挑 TCC 相关的：``launchd claude`` /
 ``launchd volume access`` / ``cron write access`` / ``cron ingest chain`` /
-``board ui build`` / ``launchd paths``（以及任何 failure_id 属 TCC 词表的行）。
+``cron disk access`` / ``board ui build`` / ``launchd paths``（以及任何 failure_id 属 TCC
+词表的行）。``vault`` = 原生 PermissionsModel 的**被动**笔记库（Documents）探针：只看
+``state/vault_sync_mode`` 是否为 ``mirror``（ingest 链经壳身份 courier 拉成功过 = 授权确实
+生效）；server 永不去读 ~/Documents（那一读会在壳之外触发一次性 TCC 弹窗）——主动请求
+是壳的活（桥 ``requestPermission {kind:"vault"}``，§68.13）。
 """
 from __future__ import annotations
 
@@ -38,6 +43,7 @@ PANES = {
     # 笔记库（Documents）授权被拒后的第二次机会（原生 requestVaultAccess 的深链）
     "files_folders": _SYS_PREFS + "FilesAndFolders",
 }
+_DEFAULT_OBSIDIAN_RAW = "~/Documents/Obsidian Vault/2 - raw"
 
 # §25 里凡是「TCC 挡住了」的失败 id
 TCC_FAILURE_IDS = frozenset({
@@ -46,7 +52,7 @@ TCC_FAILURE_IDS = frozenset({
 })
 TCC_ROW_NAMES = frozenset({
     "launchd claude", "launchd volume access", "cron write access",
-    "cron ingest chain", "board ui build", "launchd paths",
+    "cron ingest chain", "cron disk access", "board ui build", "launchd paths",
 })
 
 
@@ -71,7 +77,7 @@ def stable_claude_bin() -> Path:
     return Path.home() / "Library" / "Application Support" / "ZelinAIAssistant" / "bin" / "claude"
 
 
-def _claude_bin(home: Path) -> Optional[str]:
+def claude_bin(home: Path) -> Optional[str]:
     """Resolution order = act/lib/config.resolve_claude_bin (§55 第五幕):
     pin → stable copy → ~/.local/bin → PATH."""
     execution = settings_catalog.load_config_doc(home).get("execution")
@@ -104,7 +110,7 @@ def _entry(role: str, path: Optional[str], zh: str, en: str) -> dict:
 
 def executables(home: Path) -> list:
     """需要「完全磁盘访问」的可执行文件清单（路径可复制；不存在的如实标 exists:false）。"""
-    claude = _claude_bin(home)
+    claude = claude_bin(home)
     return [
         _entry("daemon_python", _daemon_python(home),
                "守护进程解释器（actd / 雷达 / server / 自动部署都用它；launchd 会话里没有终端的授权可借）",
@@ -139,6 +145,30 @@ def protected_location(home: Path) -> bool:
                for d in ("Documents", "Desktop", "Downloads"))
 
 
+def vault_root(home: Path) -> str:
+    """笔记库根 = 生效 ``obsidian_raw``（override → config.yaml → 默认）的父目录——
+    与原生 PermissionsModel.vaultRootPath 同一解析。"""
+    field = settings_catalog.field_index(settings_catalog.lookup("obsidian")).get("obsidian_raw")
+    raw = None
+    if field is not None:
+        try:
+            overrides = settings_catalog.read_overrides(home)
+        except Exception:  # noqa: BLE001 - 坏 overrides 不该让权限页 409；退回 config / 默认层
+            overrides = {}
+        raw, _src = settings_catalog.effective(field, overrides, settings_catalog.load_config_doc(home))
+    raw = raw if isinstance(raw, str) and raw.strip() else _DEFAULT_OBSIDIAN_RAW
+    return os.path.dirname(os.path.expanduser(raw.strip()))
+
+
+def vault_status(home: Path) -> str:
+    """被动探针：``state/vault_sync_mode`` == ``mirror`` → granted；否则 unknown（不读 ~/Documents）。"""
+    try:
+        mode = (home / "state" / "vault_sync_mode").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "unknown"
+    return "granted" if mode == "mirror" else "unknown"
+
+
 def snapshot(home: Path, *, refresh: bool = False, runner=None) -> dict:
     """``GET /api/permissions``。"""
     report = doctor_run.report(home, fast=True, refresh=refresh, runner=runner)
@@ -152,4 +182,5 @@ def snapshot(home: Path, *, refresh: bool = False, runner=None) -> dict:
         "doctor": tcc_rows(report),
         "doctor_ran_at": report.get("ran_at"),
         "doctor_ok": bool(report.get("ok")),
+        "vault": {"status": vault_status(home), "root": vault_root(home)},
     }

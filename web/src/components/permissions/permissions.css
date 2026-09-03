@@ -1,0 +1,118 @@
+/* 权限体检 / 向导共用的行（原生 Permissions.swift capabilityRow：色点 · 名字 · 状态词 · 一颗按钮） */
+.perm-capability-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.perm-capability-action { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+
+.perm-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-quaternary);
+}
+
+.perm-dot.is-granted { background: var(--status-review); }
+.perm-dot.is-denied { background: var(--status-progress); }
+.perm-dot.is-unknown { background: var(--text-quaternary); }
+
+.perm-status { color: var(--text-secondary); font-size: calc(11px * var(--text-scale)); }
+.perm-status.is-granted { color: var(--success); }
+.perm-status.is-denied { color: var(--warning); }
+
+.perm-check { color: var(--success); font-weight: var(--w-semibold); font-size: calc(13px * var(--text-scale)); }
+
+/* 一次性同意块（原生 consentBlock：accent 7% 底、圆角 8） */
+.perm-consent-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.perm-consent-title { margin: 0; font-size: calc(14px * var(--text-scale)); font-weight: var(--w-semibold); }
+.perm-consent-copy { margin: 0; font-size: calc(12px * var(--text-scale)); }
+ul.perm-consent-copy { padding-left: 1.2em; }
+
+.perm-footer { justify-content: space-between; margin-top: 12px; }
+
+/* 向导（原生 SetupWizard：进度点 · 第 N / M 步 · 上一步 / 下一步 / 完成 在页脚） */
+.setup-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: var(--border-hairline) solid var(--border);
+  flex-wrap: wrap;
+}
+
+.setup-dots { display: inline-flex; gap: 5px; align-items: center; }
+.setup-dot { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text-secondary) 25%, transparent); }
+.setup-dot.is-reached { background: var(--accent); }
+.setup-progress { color: var(--text-secondary); font-size: calc(11px * var(--text-scale)); }
+.setup-footer-spacer { flex: 1; }
+
+.setup-title { margin: 0; font-size: calc(22px * var(--text-scale)); font-weight: var(--w-semibold); }
+.setup-subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: calc(13px * var(--text-scale)); }
+
+.setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.setup-card-title { margin: 0; font-size: calc(14px * var(--text-scale)); font-weight: var(--w-semibold); }
+
+/* 引擎步：认证梯子四档（✓ / ○） */
+.setup-ladder { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: calc(11px * var(--text-scale)); color: var(--text-secondary); }
+.setup-ladder li.is-hit { color: var(--text-primary); }
+
+/* 末步健康行（原生 healthRow：✅ / ❌ / — / 转圈 · 名字 · 一句 · 修复按钮） */
+.setup-health { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.setup-health-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+.setup-health-mark { font-size: calc(14px * var(--text-scale)); text-align: center; }
+.setup-health-name { font-weight: var(--w-medium); font-size: calc(13px * var(--text-scale)); }
+.setup-health-detail { color: var(--text-secondary); font-size: calc(11px * var(--text-scale)); }
+.setup-health-row.is-fail .setup-health-detail { color: var(--warning); }
+
+/* 笔记库步：可选的 vault 行（原生 vaultRow：单选圈 · 名字 · 路径 · 章 · 选择…） */
+.setup-vault-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  text-align: left;
+}
+.setup-vault-row.is-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.setup-vault-radio { border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: calc(16px * var(--text-scale)); cursor: pointer; padding: 0; }
+.setup-vault-row.is-selected .setup-vault-radio { color: var(--accent); }
+.setup-vault-row .settings-list-dim { font-family: var(--font-mono); }
+.setup-vault-badge {
+  font-size: calc(9px * var(--text-scale));
+  font-weight: var(--w-semibold);
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--purple-soft);
+}

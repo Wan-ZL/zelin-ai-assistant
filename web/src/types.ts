@@ -744,10 +744,12 @@ export interface PermissionsSnapshot {
   home: string;
   on_external_volume: boolean;
   fda: { needed: boolean; pane: string; executables: FdaExecutable[]; [key: string]: unknown };
-  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; [key: string]: unknown };
+  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; files_folders?: string; [key: string]: unknown };
   doctor: DoctorRow[];
   doctor_ran_at: string | null;
   doctor_ok: boolean;
+  /** 笔记库（Documents）被动探针：state/vault_sync_mode=mirror → granted；root = 生效 obsidian_raw 的父目录（add-only） */
+  vault?: { status: "granted" | "unknown" | string; root: string; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -804,6 +806,25 @@ export interface SetupReceipt {
   ok: boolean;
   setup: SetupSnapshot;
   path?: string;
+  [key: string]: unknown;
+}
+
+/** GET /api/setup/engine（§68.5；原生 EngineDetector）：CLI 路径 / 版本 / 认证梯子（顺序 = server AUTH_LADDER） */
+export type EngineAuth = "oauth" | "env_key" | "secrets_file" | "legacy_file";
+export interface SetupEngine {
+  cli_path: string | null;
+  version: string | null;
+  auth: EngineAuth | string | null;
+  auth_sources: Record<string, boolean>;
+  ready: boolean;
+  [key: string]: unknown;
+}
+
+/** POST /api/setup/seed-dashboard：ok:false 带 error 尾巴（不 500） */
+export interface SeedDashboardReceipt {
+  ok: boolean;
+  rc: number;
+  error?: string;
   [key: string]: unknown;
 }
 
