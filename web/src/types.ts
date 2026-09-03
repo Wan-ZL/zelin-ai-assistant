@@ -315,7 +315,8 @@ export interface Board {
   debt: DebtCard[];
   trash: TrashRow[];
   archived?: ArchivedRow[];
-  merge_suggestions?: unknown[];
+  /** §21 合并建议作业（analyzing/done/failed）；旧 server 缺席 */
+  merge_suggestions?: MergeSuggestion[];
   update_available?: unknown;
   device_label?: string;
   deploy_state?: DeployState;
@@ -323,6 +324,8 @@ export interface Board {
   recaps?: RecapRow[];
   /** §65 自动草稿 PR 通道状态（add-only 顶层键；老 daemon 无此键） */
   self_improve?: SelfImproveState;
+  /** §48 源健康投影：gmail / slack / obsidian 的 enabled / last_ok / skip_reason / stale */
+  radar_sources?: Record<string, RadarSourceHealth>;
   [key: string]: unknown;
 }
 
@@ -503,5 +506,275 @@ export interface SkillsSnapshot {
   skills_dir: string;
   repo_skills_dir: string;
   state_path: string;
+  [key: string]: unknown;
+}
+
+// ----- §21 合并建议（merge_suggestions 分区；dashboard.py _merge_suggestions 的 wire 形逐字镜像） ----- #
+/** MS-xxxx 作业投影：analyzing / done / failed（dismissed 不发）；verdict/primary/rationale/action_plan 仅 done 时齐备 */
+export interface MergeSuggestion {
+  id: string;
+  ids: string[];
+  status: "analyzing" | "done" | "failed" | string;
+  verdict?: "merge" | "link_improvement" | "keep_separate" | "close_secondary" | "partition" | string | null;
+  primary?: string | null;
+  rationale?: string | null;
+  action_plan?: string[];
+  confidence?: "high" | "medium" | "low" | string | null;
+  error?: string | null;
+  requested_at?: number | null;
+  /** §21ter partition 分组方案（仅 partition verdict 携带） */
+  groups?: Array<{ primary: string; ids: string[]; reason?: string | null; [key: string]: unknown }>;
+  [key: string]: unknown;
+}
+
+/** §48 radar_sources 投影（dashboard 顶层键）：每源 enabled / last_ok / skip_reason / stale */
+export interface RadarSourceHealth {
+  enabled: boolean;
+  last_ok?: string | null;
+  skip_reason?: string | null;
+  stale?: boolean;
+  [key: string]: unknown;
+}
+
+// ----- §68 设置目录（server/settings_catalog.py 的 wire 形；文案 zh/en 两键 server-owned） ----- #
+export interface BilingualText {
+  zh: string;
+  en: string;
+  [key: string]: unknown;
+}
+
+export interface SettingsField {
+  key: string;
+  kind: "bool" | "enum" | "string" | "number" | "int" | string;
+  label: BilingualText;
+  help: BilingualText;
+  default: unknown;
+  choices: string[] | null;
+  effective: unknown;
+  source: "override" | "config" | "default" | string;
+  [key: string]: unknown;
+}
+
+export interface SettingsSection {
+  id: string;
+  title: BilingualText;
+  help: BilingualText;
+  fields: SettingsField[];
+  [key: string]: unknown;
+}
+
+export interface SettingsCatalog {
+  sections: SettingsSection[];
+  [key: string]: unknown;
+}
+
+/** GET /api/secrets（§19 / §68）：只有状态，永无值 */
+export interface SecretStatus {
+  name: string;
+  label: BilingualText;
+  present: boolean;
+  verifiable: boolean;
+  mtime: number | null;
+  [key: string]: unknown;
+}
+
+export interface SecretsStatus {
+  secrets: SecretStatus[];
+  [key: string]: unknown;
+}
+
+/** POST /api/secrets/{name}/verify 回执 */
+export interface SecretVerifyResult {
+  ok: boolean;
+  network: boolean;
+  detail: string;
+  extra: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+// ----- §25 doctor 行（act/doctor.render_json 的 wire 形） ----- #
+export interface DoctorRow {
+  name: string;
+  status: "OK" | "WARN" | "FAIL" | string;
+  detail: string;
+  fix: string;
+  failure_id?: string;
+  action_id?: string;
+  [key: string]: unknown;
+}
+
+export interface DoctorReport {
+  ok: boolean;
+  checks: DoctorRow[];
+  home: string;
+  rc: number;
+  fast: boolean;
+  ran_at: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+// ----- §68.3 权限体检 ----- #
+export interface FdaExecutable {
+  role: string;
+  path: string | null;
+  realpath: string | null;
+  exists: boolean;
+  note: BilingualText;
+  [key: string]: unknown;
+}
+
+export interface PermissionsSnapshot {
+  home: string;
+  on_external_volume: boolean;
+  fda: { needed: boolean; pane: string; executables: FdaExecutable[]; [key: string]: unknown };
+  panes: { full_disk?: string; screen?: string; microphone?: string; notifications?: string; [key: string]: unknown };
+  doctor: DoctorRow[];
+  doctor_ran_at: string | null;
+  doctor_ok: boolean;
+  [key: string]: unknown;
+}
+
+// ----- §68.4 诊断 ----- #
+export interface LogEntry {
+  name: string;
+  path: string;
+  size: number;
+  mtime: number;
+  [key: string]: unknown;
+}
+
+export interface InstallReport {
+  version?: string | null;
+  generated_at?: string | null;
+  ok?: boolean | null;
+  steps: Array<{ name?: string; status?: string; detail?: string; [key: string]: unknown }>;
+  [key: string]: unknown;
+}
+
+export interface DiagnosticsSnapshot {
+  doctor: DoctorReport;
+  health: HealthSnapshot;
+  deploy_state: DeployState | null;
+  radar_sources: Record<string, RadarSourceHealth> | null;
+  install_report: InstallReport | null;
+  registry_backend: string;
+  logs: LogEntry[];
+  [key: string]: unknown;
+}
+
+export interface LogTail {
+  name: string;
+  path: string;
+  size: number;
+  lines: string[];
+  truncated: boolean;
+  [key: string]: unknown;
+}
+
+// ----- §68.5 首次运行向导 ----- #
+export interface SetupSnapshot {
+  needed: boolean;
+  done: boolean;
+  config_exists: boolean;
+  config_example_exists: boolean;
+  secrets: Record<string, boolean>;
+  home: string;
+  protected_location: boolean;
+  [key: string]: unknown;
+}
+
+export interface SetupReceipt {
+  ok: boolean;
+  setup: SetupSnapshot;
+  path?: string;
+  [key: string]: unknown;
+}
+
+// ----- §68.6 关于 / 更新（§26） ----- #
+export interface AboutInfo {
+  version: string;
+  home: string;
+  repo: string;
+  update_available: { current?: string; latest?: string; url?: string; pkg_asset_url?: string | null; [key: string]: unknown } | null;
+  update_check: { checked_at?: string | null; latest?: string | null; url?: string | null; pkg_asset_url?: string | null; [key: string]: unknown } | null;
+  [key: string]: unknown;
+}
+
+/** POST /api/update/check = §26 CLI 那一行 JSON（ok:false 时 error） */
+export interface UpdateCheckResult {
+  ok: boolean;
+  enabled?: boolean;
+  current?: string;
+  latest?: string | null;
+  update_available?: boolean;
+  url?: string | null;
+  checked_at?: string | null;
+  error?: string;
+  [key: string]: unknown;
+}
+
+// ----- §68.9 MCP servers（Skills 商店的 wire 形在 §67 SkillRow / SkillsSnapshot） ----- #
+export interface McpServer {
+  name: string;
+  scope: string;
+  transport: string;
+  summary: string;
+  env_count: number;
+  [key: string]: unknown;
+}
+
+export interface McpScope {
+  scope: "user" | "project" | string;
+  path: string;
+  exists: boolean;
+  parseable: boolean;
+  servers: McpServer[];
+  [key: string]: unknown;
+}
+
+export interface McpList {
+  scopes: McpScope[];
+  [key: string]: unknown;
+}
+
+// ----- §22 导入 Claude Code 工作（radar_claude_sessions --scan 的 JSON 行） ----- #
+export interface ClaudeSessionCandidate {
+  session_id: string;
+  project?: string;
+  project_dir?: string;
+  title?: string;
+  gist?: string;
+  last_activity?: string;
+  ended_waiting_on_user?: boolean;
+  answered?: boolean;
+  session_mismatch?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ClaudeSessionsScan {
+  ok: boolean;
+  reason?: string;
+  root?: string;
+  window: number;
+  candidates: ClaudeSessionCandidate[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/terminal 回执（§68.7）：server 已写 .command 并 open */
+export interface TerminalReceipt {
+  ok: boolean;
+  command: string;
+  command_file: string;
+  cwd: string;
+  [key: string]: unknown;
+}
+
+/** POST /api/repair/actd 回执（§68.8） */
+export interface RepairReceipt {
+  ok: boolean;
+  label: string;
+  action: string;
   [key: string]: unknown;
 }

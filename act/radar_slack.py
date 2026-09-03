@@ -83,7 +83,11 @@ MCP_MARKER_FILE = "slack_mcp.marker"   # iso start-ts of the last SUCCESSFUL MCP
 MCP_PRESENT_MARKER_FILE = "slack_mcp_present.marker"  # B4: cached `claude mcp list` verdict
 DEFAULT_TOKEN_PATH = "~/Desktop/Keys/slack-user-token.txt"  # nosec B105 - file PATH, not a secret
 MEDIA_DIR = config.STATE_DIR / "media"
-FRAMEGRAB = config.HOME / "mac" / "build" / "framegrab"   # AVFoundation frame extractor (mac/build.sh)
+# AVFoundation frame extractor：壳构建（shell/build.sh，§68.13）先于退役中的 mac/build.sh
+# 产物；import 期选第一个存在的（radar_slack 是每轮重起的 launchd 进程，import 即最新）。
+FRAMEGRAB_CANDIDATES = (config.HOME / "shell" / "build" / "framegrab",
+                        config.HOME / "mac" / "build" / "framegrab")
+FRAMEGRAB = next((c for c in FRAMEGRAB_CANDIDATES if c.exists()), FRAMEGRAB_CANDIDATES[0])
 MAX_FRAMES = 12
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}

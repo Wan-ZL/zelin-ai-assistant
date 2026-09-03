@@ -4,8 +4,11 @@
 // 三个要说话的 verdict：stalled（进程活着、心跳停了）/ failing（连续崩 ≥3）/
 // stale（没心跳且看板过期 = 没在跑）。ok / unknown（老 daemon 仍在写看板）不渲染。
 // 与 ErrorBanner 互斥：server 连不上时那条横幅说话，本条闭嘴（同一信息绝不双份）。
+import { useState } from "react";
+import { postRepairActd } from "../../api";
 import { useI18n } from "../../i18n";
-import { useAppState } from "../../store";
+import { buildAppUrl } from "../../route";
+import { refreshHealth, useAppState } from "../../store";
 import type { HealthSnapshot } from "../../types";
 
 const RESTART_CMD = "launchctl kickstart -k gui/$(id -u)/com.zelin.aiassistant.actd";
@@ -61,6 +64,38 @@ export function describeHealth(
   }
 }
 
+/**
+ * 一键修复（原生 PipelineRepair 的 web 落点，§68.8）：POST /api/repair/actd → server 对已加载的
+ * actd agent kickstart；未加载（409）时 server 的整句原文指向 bash install.sh。成功后 3s 重拉 health。
+ */
+export function RepairButton() {
+  const { text } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      await postRepairActd();
+      setNote(text("已重启后台服务，等心跳回来…", "Background service restarted; waiting for the heartbeat…"));
+      window.setTimeout(() => void refreshHealth(), 3000);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="shell-banner-actions">
+      <button type="button" className="shell-button" disabled={busy} onClick={() => void run()}>
+        {busy ? text("修复中…", "Repairing…") : text("一键修复", "Repair")}
+      </button>
+      <a className="shell-banner-link" href={buildAppUrl(window.location.href, "diagnostics", null).toString()}>{text("诊断", "Diagnostics")}</a>
+      {note && <span className="shell-banner-note">{note}</span>}
+    </span>
+  );
+}
+
 export function PipelineBanner() {
   const { text } = useI18n();
   const { health, boardError, connection } = useAppState();
@@ -80,6 +115,7 @@ export function PipelineBanner() {
       </svg>
       <strong className="shell-banner-title">{described.title}</strong>
       <span className="shell-banner-detail">{described.detail}</span>
+      <RepairButton />
     </div>
   );
 }

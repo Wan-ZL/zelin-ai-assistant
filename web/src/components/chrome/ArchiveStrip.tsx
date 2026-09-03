@@ -27,7 +27,7 @@ export function prevStatusLabel(status: string, language: "zh" | "en", text: (zh
   }
 }
 
-function ArchiveRow({ item }: { item: ArchivedRow }) {
+export function ArchiveRow({ item }: { item: ArchivedRow }) {
   const { text, language } = useI18n();
   const { pending, error, submit } = useSubmit();
   const title = typeof item.display_title === "string" && item.display_title ? item.display_title : item.summary || item.title;

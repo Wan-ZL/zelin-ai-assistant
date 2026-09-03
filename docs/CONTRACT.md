@@ -460,6 +460,21 @@ silently ignored」跳过）。**写入方自此多一个**：web 设置页经 `
 ——与 Mac app 写其它键的方式同款；两个写者写不同的键，互不覆盖（server 读改写
 整份文件时保留其余键原样）。
 
+**§15 v0.48.x 追记（add-only，§68：设置页整体搬到 web，server 是 overrides 的 web 侧写者）**：
+原生 Settings.swift 的 20 个区在 web 设置页（`?page=settings`）的落点见 §68.1；凡是
+「一把旋钮 = overrides 一个键」的区由 **server-owned 目录** `server/settings_catalog.py`
+驱动（`GET /api/settings`），写入经 `PUT /api/settings/{section}`，**保存语义与 v0.14
+diff-write 逐字同款**（等于「不含该 override 的 effective 值」= 删键；nested 拼法
+`telemetry` / `features` 写嵌套形并清掉同义扁平点号键；`telemetry.capture_input`
+按 v0.18 ④ 「切动过即知情选择」始终落键）。允许列表 = `_OVERRIDE_FIELDS` ∪ telemetry
+三子键 ∪ features 块（判例 tests/test_server_settings_catalog.py 钉住每个键在管线
+真读的名单里、默认值与 Config 数据类逐字一致）。壳（shell/）**仍不写 overrides**；
+录制模式与字幕偏好是壳 UserDefaults，经 §61 桥改（`setRecording` / `setCaptionPrefs`）。
+凭证行（§19 三把 + 字幕两把）经 `PUT /api/secrets/{name}`（0600，值 write-only）。
+本条起 §15.3 的写者是两个：server（web 设置页）与冻结中的 Mac app；退役后只剩 server。
+「菜单栏」区（`showMenuBarIcon` / `showRecordingIcon`）随 D3 Dock-only 决策**删除**，
+无 web 落点；这两个 UserDefaults 键成为无读者的历史键。
+
 **§15 v0.48.x 追记（add-only，owner 拍板：去 popover + Slack 式后台驻留）**：
 ① **菜单栏 popover 面板移除**（「用得并不是很多，去掉」）——菜单栏图标**左键
 = 打开/聚焦主窗口**（原 ⌥+click 直达主窗口的旧路径行为不变地并入）；右键
@@ -1188,6 +1203,15 @@ overrides 允许列表（`act/lib/config.py` `_OVERRIDE_FIELDS`）新增扁平�
   由 App **只读** `state/update_check.json` 取得——写入方仍然只有
   update_check.py。state 文件字段与 dashboard 投影**均无新增**。
 
+**§26 v0.48.x 追记（add-only，§68.6：关于页搬到 web）**：web 设置页「关于 / 看板 app」
+区同一行四态 + 「立即检查更新」= `POST /api/update/check {}` → server 起
+`python -m act.lib.update_check --force`（stdout 那一行 JSON 原样透出，子进程失败
+`ok:false` + error）；`GET /api/about` 给 `version`（`act.__version__`，§56.1）、
+`update_available`（dashboard 顶层键透传）、`update_check`（缓存的公开子集：
+checked_at / latest / url / pkg_asset_url，**ETag 不外发**）。语义不变：只告知 + 给
+release 页链接，**绝不自动下载执行**；owner 机器上 §56 合并即自动部署，Sparkle 在
+壳里**不落地**（D17 让它对 owner 机器失去意义；非 owner 安装照旧 release 页手动装）。
+
 ---
 
 # v0.14 additions（问问助手：in-app Q&A）
@@ -1296,6 +1320,17 @@ kind=…)` 透传；今日唯一取值 `"review_ready"` = 卡片进待验收的�
 App 设置·通用「任务完成提醒」写入，diff-write：sound=删键）——`off` 档对
 kind==review_ready 的条目**消费即删、不弹**（上文「剩余按 created_at 升序弹出」
 的显式例外），`sound` 档为其附加系统提示音；其余 kind 不受该偏好影响。
+
+**§28 v0.48.x 追记（add-only，§68.13：消费方 = 壳）**：`shell/Sources/NotifyRelay.swift`
+是 `mac/Sources/NotifyRelay.swift` 的搬入副本——**只许两处差异**（文件头、点击目标
+`MainWindowController.shared.show()` → `ShellWindow.show?()` 前置看板窗口），
+stale 600 s / burst 5 / `review_notify` 三档 / 消费即删 / 坏文件 log+删 全部逐字
+不变（判例 tests/test_shell_engine_mirror.py）；壳在 5 s 引擎巡检 tick 里 `drain()`，
+`NotifyRelayDelegate.install()` 于启动时装上。「native 通知需要 App 在跑」的前提自此
+指壳：壳登录自启（`SMAppService`，web 关于区开关，§68.13）在跑即常态。原生 app 与壳
+**同时在跑**的过渡期两个消费者抢同一目录——消费即删让每条只弹一次（谁先扫到谁弹，
+身份 = 先扫到的 app）；`review_notify` 偏好两侧读同一 overrides 键。**手机镜像 §13
+不变。**
 
 
 ## 29. feedback（建议上报）— inbox 动作 + `state/feedback/<uuid>.json` + 上传
@@ -3470,6 +3505,22 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   `INVALID_FIELD`、未知 skill 404、自定义/非商店副本 409 `CONFLICT`（`details.code` =
   `SKILL_CUSTOM_KEEP` / `SKILL_FOREIGN_LINK`）、清单坏 409）。形状见 §67.5。判例：
   tests/test_server_skills.py。
+- **v0.48.x 追加（§68 legacy-app parity 面，add-only；每条的形状与判例见 §68）**：
+  设置目录 `GET /api/settings`、`GET /api/settings/{section}`、`PUT /api/settings/{section}`
+  （`{key: value}` 子集；四闸）；凭证 `GET /api/secrets`（只报状态）、`PUT
+  /api/secrets/{name} {value}`、`POST /api/secrets/{name}/verify {}`；权限体检
+  `GET /api/permissions[?refresh=1]`；诊断 `GET /api/diagnostics[?refresh=1]`、
+  `GET /api/doctor[?fast=0][&refresh=1]`、`GET /api/logs/{name}[?lines=N]`；首次运行
+  `GET /api/setup`、`POST /api/setup/config-from-example {}`、`POST /api/setup/complete {}`、
+  `POST /api/setup/reset {}`；关于 `GET /api/about`、`POST /api/update/check {}`；
+  只读列表 `GET /api/mcp`、`GET /api/claude-sessions[?window=N]`（Skills 商店 = §67 的
+  `/api/skills`）；看板工具 `POST /api/terminal {card_id}`、`POST /api/repair/actd {}`。
+  GET 面接受 query（`Handler._query`），仍 token-light；POST/PUT 一律 JSON body 四闸。
+  路由表驱动：精确表 + **前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
+  `/api/secrets/`；精确命中先于前缀——`/api/settings/models` / `recap` 走各自模块），
+  新增端点 = 加一行（`server/app.py _lookup`）。
+  所有一次性 `python -m act.*` 子进程走 `server/subproc.py`（`sys.executable`、
+  cwd = repo 根、env `AIASSISTANT_HOME`、超时 + 输出上限、`runner` 注入缝）。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -4020,6 +4071,15 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
 `tests/test_version_resolution.py`（doctor 行认 id）、`tests/test_vault_sync_helper_resolution.py`、
 `tests/test_uninstall.py`。台账：`docs/design/vnext2-plan.md` D3 / §8。
 
+**§54 v0.48.x 追记（§68；P4 余量）**：web 面自此有七页（route.ts `?page=`）：`board` /
+`trash` / `settings` / `archive` / `permissions` / `diagnostics` / `setup`（+ 开发者页
+`styleguide`）；`?anchor=<section>` 让设置页滚到某区（字幕悬浮窗齿轮 → `live_captions`）。
+壳承载的原生残留扩为：录制 / 字幕引擎（§61）+ **通知中继（§28）+ TCC 探针与系统设置
+深链 + 登录时启动 + Dock 徽章 + 全局快速捕获快捷键 + vault-sync-helper / framegrab 两个
+helper CLI**（§68.13）。**s4 清单（`~/Downloads/brainstorm/s4-mac-parity.md`）Tier-0 / Tier-1
+自此全部 EXISTS**（例外与理由写在 §68.14）；owner 一周日用无需打开旧 app 是 P4 的完成判据
+（vnext2-plan §4）。
+
 ### 54.1 web 看板 parity——原生看板行为规格的继承清单（v0.48.x，D3）
 
 产品 = web 看板 + shell（D3）；原生看板（`mac/Sources/Kanban.swift` /
@@ -4091,6 +4151,19 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
     状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
     （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
     `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
+
+11. **v0.48.x 追记（§68 P4 余量，s4 Tier-1 全部落地）**：合并建议卡（§21，提案列顶，
+    紫 accent；analyzing / done / failed 三态、`merge_apply` / `merge_dismiss`、
+    verdict ≠ merge 或 failed 时「仍然合并…」= §21bis `merge_force` 主卡弹窗 + 顺手
+    dismiss、partition 分组清单）；**多选**（FilterBar「选择」→ 提案 / 运行中 / 待验收卡
+    标题前勾选框 → 底部操作条：请求合并建议 ≥2 / 强制合并 / 批量批准（**T2 与 W17 生效
+    T2 跳过**——typed-confirm 不能批量绕过，§0.8 / §50）/ 批量拒绝 / 清空 / 退出；每个批量
+    动作 = 逐卡一条 §3 四键形 inbox 动作）；提案列头「清理积压」（§34bis preset capture，
+    积压 0 禁用，2 s 防连点）；活标题改名（§37 `set_title`，详情抽屉抬头铅笔 → 输入框 →
+    ⏎；客户端同款归一 1..64 code points）；并入记录行「拆回独立卡片」（§38.2 `split_note`，
+    legacy 无 ts 行不可拆）；「在终端接管」（`POST /api/terminal`，§68.7）；横幅「一键修复」
+    （`POST /api/repair/actd`，§68.8）；永久性完成**整页** `?page=archive`（书立条同一行
+    组件 + 搜索）。判例 MergeSuggestionCard.test.tsx / ParityPages.test.tsx。
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。
@@ -5182,3 +5255,86 @@ owner 原话（2026-09-01）：「skill 商店 塞进本仓库」。此前四个
 ### 67.6 R2.8.2 留待后续
 
 「agent 收工前自动跑 test-code + 报告附 PR」不在本节——它改 executor prompt（`_quality_gate_block`），另 PR 与 §33 同修。本节只保证 agent **看得见** `test-code`（67.4）。
+## 68. legacy-app parity 面：设置全套 / 凭证 / 权限体检 / 诊断 / 首次运行向导 / 看板余量（v0.48.x；D3 / R2.2.2，P4 余量）
+
+owner（2026-09-02）：「一路推进到完成。最终状态：我能够在另一台电脑上起一个空白环境，或者在其他电脑上更新这个软件，就能够直接使用。」本节把原生 Mac app 剩下的用户功能全部立法到 web + server + 壳三处（§54 定位，§61 桥），使 `mac/` 可按 R2.2.4 改名 -old 备用、P8 删除。执法：`server/settings_catalog.py` / `secrets_store.py` / `permissions.py` / `diagnostics.py` / `doctor_run.py` / `setup.py` / `about.py` / `repair.py` / `terminal_launch.py` / `mcp_servers.py` / `claude_sessions.py` / `subproc.py`；`web/src/pages/{Settings,Permissions,Diagnostics,Setup,Archive}Page.tsx` 与 `web/src/components/settings/*`、`components/board/{MergeSuggestionCard,SelectionBar,ForceMergeDialog,ProposalsTriageButton}.tsx`、`components/detail/TitleEditor.tsx`；`shell/Sources/{NotifyRelay,ShellSystem}.swift` + `shell/Helpers/`。判例：`tests/test_server_settings_catalog.py`、`test_server_secrets.py`、`test_server_diagnostics.py`、`test_server_permissions_setup.py`、`test_server_board_tools.py`、`test_shell_engine_mirror.py`（§68.13）、web `CatalogSection.test.tsx` / `MergeSuggestionCard.test.tsx` / `ParityPages.test.tsx`、`shell/tests/run.sh`。
+
+### 68.1 设置目录（`GET /api/settings`；写 = `PUT /api/settings/{section}`）
+
+server-owned 目录（防腐 #10：文案 zh/en 两键下发，web 只按 UI 语言取键、逐字镜像）。wire 形：
+
+```json
+{"sections": [{"id": "general", "title": {"zh": "通用", "en": "General"}, "help": {"zh": "", "en": ""},
+  "fields": [{"key": "language", "kind": "enum", "label": {"zh": "界面语言", "en": "Interface language"},
+              "help": {"zh": "…", "en": "…"}, "default": "zh", "choices": ["zh", "en"],
+              "effective": "zh", "source": "override|config|default"}]}]}
+```
+
+- section 词表（顺序 = 设置页通用区顺序；truth = `settings_catalog.SECTIONS`）：`sources`（gmail_enabled / gmail_address / slack_enabled / obsidian_enabled / obsidian_raw）、`notifications`（review_notify）、`telemetry`（telemetry.enabled / level / capture_input）、`digest`（digest_frequency / weekly_digest_enabled）、`general`（language / default_output_format / updates_check_enabled）、`approval`（default_target_repo / skip_permissions / create_github_repo / show_cost_above_usd / require_text_confirm_above_usd / trash_retention_days）、`flags`（features.*，`DEFAULT_FEATURES` 全集）、`redaction`（enabled / terms_file / mask_secrets）、`voice`（voice_enabled）、`maintainer`（repo_path / session_id）。`models` 仍由 §59 自己的模块服务（同一 URL 前缀，精确表优先）。
+- `kind` 词表 `bool | enum | string | number | int`；effective 三层 = override（嵌套块优先，再扁平点号键）→ config.yaml 路径 → default，归一失败视为缺席（管线同款）。
+- PUT：body 为 `{key: value}` 子集；未知键 400 `UNKNOWN_FIELD`；空 body / 类型错 / 越界（enum 外、负数、非整数 int、多行或 >1024 字符串）400 `INVALID_FIELD`；bool **只认 JSON 布尔**；string 空 = 清键；全部键先校验再一次落盘；overrides 不可解析 409 `CONFLICT` 不覆盖。diff-write 与 nested 规则见 §15 v0.48.x 追记。`set_flat_override` 是其它 server 模块的窄写口（Slack auth.test 自动填 `owner_slack_user_id`）。
+- web 之外的其它 section（模型 §59、录制 / 字幕 = 壳 UserDefaults 经 §61 桥、Skills / MCP / 导入 = 只读列表 + inbox 动作、素材库 = P5 占位、关于 = §68.6）在设置页有固定落点（`SettingsPage.SETTINGS_TOC` 是目录，`?anchor=<id>` 深链）。
+
+### 68.2 字幕偏好（桥 add-only）
+
+`captions` 快照新增八键 `source | translate | translate_direction | apple_locale | ark_model | font_size | opacity`（+ 既有 `engine`）；写 = `setCaptionPrefs {…任意子集}`——每键先校验（engine ∈ auto|doubao|apple、source ∈ both|mic|system、translate_direction ∈ auto|zh2en|en2zh、apple_locale ∈ zh|en、translate bool、ark_model 非空 ≤64、font_size 14…40、opacity 0.2…1），**任一坏值整个请求拒绝、零写入**（`INVALID_ARGS`）；写入即 `LiveCaptionsController` 的 `@Published` 属性（UserDefaults `captions*` 键，原生同名），引擎在跑则按原生规则重启。两把 BYO key 是 §19 文件 `volcano-speech-key.txt` / `volcano-ark-key.txt`（经 §68.3 凭证面写）。
+
+### 68.3 凭证与权限体检
+
+- **凭证**（`server/secrets_store.py`）：名单 = §19 三把 + 字幕两把（与 `act/lib/secrets.py` 常量、`ShellSupport.SecretsIO` 逐字一致，判例钉住）。`GET /api/secrets` → `{"secrets":[{name, label:{zh,en}, present, verifiable, mtime}]}`——**值永不回显**（write-only）。`PUT /api/secrets/{name} {value}`：dir 0700 / file 0600、多行只留首个非空行、空值 = 删文件、未知名 404、`value` 非字符串 / >4096 400。`POST /api/secrets/{name}/verify {}` → `{ok, network, detail, extra}`：Anthropic `GET /v1/models`、Slack `auth.test`（成功 `extra.user_id` → override `owner_slack_user_id`，§15.3 v0.14）、Gmail IMAP LOGIN（地址 = `sources.gmail_address` effective；缺地址 = ok:false 人话）；网络层失败 `ok:false, network:true`（不是凭证的错）；火山两把无探针 → 400；未保存 → 400。探针经 `prober` 注入缝，判例零网络。
+- **权限体检**（`?page=permissions`；`GET /api/permissions`）：两半——GUI 三项（屏幕录制 / 麦克风 / 通知）真相只有壳知道：桥 `getPermissions` 刷新 `PermissionsProbe`（`CGPreflightScreenCaptureAccess` / `AVCaptureDevice.authorizationStatus(.audio)` / `UNUserNotificationCenter.getNotificationSettings`），快照 `permissions.{screen,microphone,notifications}` ∈ `granted|denied|unknown`；`requestPermission {kind}`（屏幕：首次 `CGRequestScreenCaptureAccess`、之后深链；麦克风：notDetermined 才弹；通知：notDetermined 才弹）；`openPane {pane}`，pane 词表 `full_disk | screen | microphone | notifications`（深链 URL 表 server / 壳两侧同一张，判例钉住）。页面 2 s 轮询（原生 PermissionsModel 节拍）。浏览器里打开 = 如实说「只在看板 app 里可探」。**FDA 半边**（原生窗从不管、D20 家族的真因）：server 列出要授「完全磁盘访问」的可执行文件——守护 python（`config/runtime.json`）、claude（`execution.claude_bin` → `~/.local/bin/claude` → PATH）、node（ui 构建）、壳 app——每条 `path` / `realpath`（TCC 按真实二进制记账）/ `exists` / `note:{zh,en}`，**路径可复制**；`fda.needed` = home 在可移动卷或 ~/Documents / ~/Desktop / ~/Downloads；`doctor` = `--fast` 报告里 TCC 相关行（failure_id ∈ claude_blind / deploy_blind_tcc / cron_tcc_blocked / cron_fda_blocked / ui_build_tcc_blocked / interpreter_blind / screen_tcc_lost，或行名 ∈ launchd claude / launchd volume access / cron write access / cron ingest chain / board ui build / launchd paths）。授权步骤原样印在页面上（系统设置 → 隐私与安全性 → 完全磁盘访问 → + → ⌘⇧G → 粘贴路径；等下一轮 timer 自证，终端 kickstart 不算）。
+
+### 68.4 诊断（`?page=diagnostics`）
+
+`GET /api/diagnostics` = `doctor`（`server/doctor_run.py`：子进程 `python -m act.doctor --json --fast`，进程内缓存 15 s，`?refresh=1` 绕过；非 JSON 输出 → `ok:false` + 尾巴，不 500）+ `health`（§47.4 快照）+ `deploy_state`（dashboard 顶层键）+ `radar_sources`（§48 投影）+ `install_report`（§23 公开子集 version / generated_at / ok / steps[name,status,detail]）+ `registry_backend` + `logs[]`（两个目录里实际存在的 `*.log`：`~/Library/Logs/zelin-ai-assistant/` 与 `<home>/state/logs/`，按 mtime 倒序最多 60 条）。`GET /api/doctor[?fast=0]` = 完整体检（含活探针，花 token；页面按钮显式点）。`GET /api/logs/{name}?lines=N`：name 只认 `[A-Za-z0-9._-]+\.log` 且在清单里（防穿越）；**size-cap** 最多读末尾 64 KiB、最多 1000 行（默认 200）；`truncated` 如实；server 永不写 / 删日志（§55 审计 L3）。
+
+### 68.5 首次运行向导（`?page=setup`；原生 SetupWizard 的 web 版）
+
+`GET /api/setup` → `{needed, done, config_exists, config_example_exists, secrets:{name: present}, home, protected_location}`；`needed` = 未写完成标记 ∧（config.yaml 缺席 ∨ §19 三把主凭证一把都没有）。app.tsx 在看板页且 `needed` 时整页换到向导（一次性 replace）。四步：配置文件（`POST /api/setup/config-from-example {}`：复制 `config.example.yaml` → `config.yaml`，**已存在 409 绝不覆盖**——install.sh 步 2 同一纪律；模板也缺 404）→ 后台进程磁盘授权（§68.3 FDA 清单）→ 可选凭证（§68.3 凭证行）→ 完成（`POST /api/setup/complete {}` 写 `state/setup_done.json {completed_at}`；`POST /api/setup/reset {}` 删标记 = 设置 → 关于「重新运行初始设置」）。完成标记住在 home 下（替代原生 UserDefaults `setupWizardCompleted`：换壳 / 换浏览器不重问）。幂等：每步预填真值、不清数据；中途关掉下次还回来。
+
+### 68.6 关于 / 更新
+
+`GET /api/about` → `{version, home, repo, update_available, update_check}`（§26 追记）；`POST /api/update/check {}`（§26 `--force`）。设置页「关于 / 看板 app」区另有：诊断 / 权限体检链接、「重新运行初始设置」、壳在场时的「登录时启动」（桥 `setLaunchAtLogin {on}` = `SMAppService.mainApp` register / unregister，失败整句 `INVALID_ARGS` 转出；快照 `launch_at_login`）、全局快捷键提示（快照 `hotkey`）、通知权限状态。
+
+### 68.7 在终端接管会话（`POST /api/terminal {card_id}`）
+
+原生双击指令行 → TerminalLauncher 的 web 落点：server 从**投影行**推导命令（`copy_cmd` 优先，其次 `claude --resume <session_id>`，session_id 过 SAFE_ID），写可执行 `.command`（`cd <cwd|home>` + `export AIASSISTANT_HOME` + `exec <cmd>`）到 `$TMPDIR` 并 `open`（Terminal.app 执行，不需要自动化授权）；**绝不接受客户端文本**（与 reveal / ai-fix 同一纪律）；查无此卡 404、无会话 400、非 darwin 501；`opener` 注入缝。web：运行中（非排队 / 非受阻）与待验收卡的「在终端接管」按钮。
+
+### 68.8 横幅一键修复（`POST /api/repair/actd {}`）
+
+原生 PipelineRepair 的最小诚实版：`com.zelin.aiassistant.actd` 在 launchd **已加载**（`launchctl print` 退出 0）→ `launchctl kickstart -k`；**未加载** → 409 `CONFLICT`，修法 `bash install.sh`（渲染 + 加载模板是安装器的活，server 不重造 §55 占位符替换）；kickstart 非零 → 500 带输出；非 darwin 501；label 与 `act/doctor.ACTD_LABEL` 逐字一致（判例）。web：`PipelineBanner` 在 stalled / failing / stale 三态给「一键修复」+ 诊断链接，成功 3 s 后重拉 health。
+
+### 68.9 MCP servers 只读列表（Skills 商店 = §67）
+
+Skills 区由 §67 立法（`GET/POST /api/skills`，写者 `act/lib/skills.py`，web `SkillsSection.tsx`），本节不再有第二份 skill 列表。`GET /api/mcp` → `{"scopes":[user ~/.claude.json, project <home>/.mcp.json]}`，**隐私规则**：只取 `mcpServers` 子树、env 只给个数、args / URL 过密钥掩码、URL query 整段打码；文件缺席 / 坏 JSON 如实标注不 500。
+
+### 68.10 导入 Claude Code 工作
+
+`GET /api/claude-sessions?window=N`（1..90，默认 7）= `python -m act.radar_claude_sessions --scan --window N` 的 JSON 行透传（`~/.claude/projects` 缺席 `ok:false, reason: no_claude_dir`；子进程失败 `reason: scan_failed`）；导入动作照旧是 §22 inbox `import_claude_sessions {session_ids}`（server 不重造）。web 设置页区：窗口天数、重新扫描、候选列表（默认勾「等你回复」且未回答的，`session_mismatch` 不可选）、导入所选。
+
+### 68.11 永久性完成整页
+
+`?page=archive`：与右侧书立条（§54.1 第 6 项）同一行组件 `ArchiveRow`（你封存 / 自动封存、原来在、相对时间、「放回看板」= `unarchive`），加整页搜索与 cap 说明；不是看板列。
+
+### 68.12 多选与批量
+
+见 §54.1 第 11 项。store 持 `selectionMode` / `selectedIds`（会话内瞬态）；退出选择即清空。批量批准的 T2 跳过是**硬规则**：typed-confirm（§50 W17 生效档）只能逐卡在提案卡上完成，操作条的提示如实列出被跳过的 id。
+
+### 68.13 壳的其余原生残留（R2.2.3；`shell/Sources/ShellSystem.swift` + `NotifyRelay.swift` + `shell/Helpers/`）
+
+- **通知中继**：§28 追记（搬入副本、5 s drain、点击前置窗口、`NotifyRelayDelegate.install()`）。
+- **TCC 探针 / 请求 / 深链**：§68.3；`Analytics.log("permissions_action", cap)` 词表不变。
+- **登录时启动**：§68.6（`SMAppService.mainApp`；bare binary 无 bundle 时如实报不支持）。
+- **全局快速捕获快捷键**：`⌃⌥Space`（Carbon `RegisterEventHotKey`，**不需要辅助功能授权**；`QuickCaptureHotkey.label` 是页面显示的人话）→ 前置看板窗口 + 向页面推 `zai-shell-command {command: "quick_capture"}`（§61.1 之外的第二个事件名，冻结 `zai-shell-command`；add-only 命令词表）；页面聚焦提案列 composer，不在看板页先回看板。
+- **Dock 徽章**：桥 `setBadge {count}`（非负整数）→ `NSApp.dockTile.badgeLabel`；count = 等你动作的卡数（提案 + 需输入 + 待验收，`counts` 真实总数优先；原生 §15 v0.46 ② 的 Dock 版）。页面每次看板回流推一次。
+- **helper CLI**：`shell/Helpers/VaultSyncHelper.swift` / `framegrab.swift` 是 `mac/` 顶层两文件的**逐字节副本**（判例），`shell/build.sh` 编成 `Contents/MacOS/vault-sync-helper` / `framegrab` 装进壳 bundle（`Zelin's AI Assistant.app`，§54 名字互换后的产品路径）；`ingest/vault-sync.sh find_vault_sync_helper` 候选顺序**不变**——旧 app `(old).app` 先（它已持有 Documents 授权，§54 不变式「认 id 不认目录名」），再到产品路径上的壳：旧 app 装着时继续用旧授权，**新机器（没有旧 app）才用壳的那份**，此时 Documents 授权按壳的 id 记一次（权限体检页有步骤）；`act/radar_slack.FRAMEGRAB` import 期选第一个存在的候选，`shell/build/framegrab` 先于 `mac/build/framegrab`。
+- 桥请求词表新增六个方法：`getPermissions` / `requestPermission {kind}` / `openPane {pane}` / `setLaunchAtLogin {on}` / `setCaptionPrefs {…}` / `setBadge {count}`；快照新增 `permissions{}` / `launch_at_login` / `hotkey` + §68.2 八键。全部 add-only，`shell/tests/run.sh` 钉词表与拒绝码，`tests/test_shell_engine_mirror.py` 钉两侧互镜。
+
+### 68.14 s4 清单的诚实例外
+
+- **0.8 Sparkle**：壳不集成 Sparkle——owner 机器由 §56 自动部署（D17），其它安装走 release 页手动；web 关于区承担「有没有新版」的告知（§68.6）。
+- **0.9 bundle 身份**：保留 `com.zelin.ai-board` + ad-hoc 签名（审计 Q1 默认；稳定证书随 P8 换名同车）——代价是屏幕录制 / Documents 授权各重做一次并在每次重建后可能失效（TROUBLESHOOTING）。
+- **1.5 / 1.7 / 1.9 粘贴图片**：feedback / capture 的 `images[]` 需要 `POST /api/attachments` 上传面（1MiB body 上限之外的第二条上传通道），本轮**未做**；文字反馈与文字捕获照旧，图片路径字段 wire 不变（inbox_writer 已接受），另 PR 补。
+- **1.13 终端**：走 `.command` + `open`，不是 Apple Events 到 Ghostty / iTerm2（无 `NSAppleEventsUsageDescription`，无终端 app 偏好）——Terminal.app 一种；owner 终端偏好留作 P5 提案输入。
+- **1.15 会话索引搜索**（`state/search_index.json` 合进 ⌘F）与 **1.16 看板动画**：未做（s4 自评 defer；搜索索引另 PR）。
+- **Tier 2 同步 / 配对**（iPhone 联动 QR）：随 §31 syncd 面另议，不在设置页。
