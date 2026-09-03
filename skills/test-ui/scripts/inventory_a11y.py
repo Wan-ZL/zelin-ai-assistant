@@ -84,15 +84,20 @@ class Node(object):
         return self.attrs.get(name)
 
 
+_NUMBER_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?|true|false)\s*$")
+
+
 def _name_value(raw):
-    """属性/文本表达式 → str（字面量）或 {"zh","en"}（双语）或 "{dynamic}"。"""
+    """属性/文本表达式 → str（字面量）或 {"zh","en"}（双语）或 "{dynamic}"。`{-1}` / `{true}` 这类标量字面量
+    按原文返回（tabIndex={-1} / disabled={true} 是写死的状态，不是运行时值）。"""
     bil = _BILINGUAL_RE.search(raw)
     if bil:
         return {"zh": bil.group(1), "en": bil.group(2)}
     lit = _LITERAL_RE.match(raw)
     if lit:
         return lit.group(1) if lit.group(1) is not None else lit.group(2)
-    return "{dynamic}"
+    number = _NUMBER_RE.match(raw)
+    return number.group(1) if number else "{dynamic}"
 
 
 class _Quote(object):
@@ -351,16 +356,25 @@ def is_aria_hidden(node):
     return str(node.attr("aria-hidden") or "").lower() == "true"
 
 
+def _hidden_attr(node):
+    """`hidden` / hidden="" / hidden={cond} 算隐藏；`hidden={false}` 是写死的「不隐藏」，不算。"""
+    return "hidden" in node.attrs and str(node.attr("hidden")).strip().lower() != "false"
+
+
+def _style_hidden(node):
+    style = node.attr("style")
+    if not isinstance(style, str) or not _STYLE_HIDDEN_RE.search(style):
+        return None
+    return "display:none" if "display" in style.lower() else "visibility:hidden"
+
+
 def hidden_by(node):
-    """None = 可见；否则 hidden / aria-hidden / display:none / visibility:hidden / inert 之一。"""
-    if "hidden" in node.attrs:
+    """None = 可见；否则 hidden / aria-hidden / display:none / visibility:hidden 之一。"""
+    if _hidden_attr(node):
         return "hidden"
     if is_aria_hidden(node):
         return "aria-hidden"
-    style = node.attr("style")
-    if isinstance(style, str) and _STYLE_HIDDEN_RE.search(style):
-        return "display:none" if "display" in style.lower() else "visibility:hidden"
-    return None
+    return _style_hidden(node)
 
 
 def _labelledby_text(node, by_id):
@@ -556,7 +570,7 @@ class SourceExtractor(object):
 
     def _states(self, node, role, hidden):
         focusable = role in tc.INTERACTIVE_ROLES and hidden is None and not _literal_disabled(node) \
-            and str(node.attr("tabindex") or "0") != "-1" and "inert" not in node.attrs
+            and not _tab_removed(node) and "inert" not in node.attrs
         return {"source": {"visible": hidden is None, "hidden_by": hidden, "focusable": focusable}}
 
     def _item(self, node, role, parent_path, hidden):
@@ -632,6 +646,13 @@ def _emits_item(node, role):
 
 def _static_text_node(node):
     return node.tag in STATIC_TAGS and _has_literal_text(node) and not node.is_component()
+
+
+def _tab_removed(node):
+    """HTML `tabindex="-1"` 或 JSX `tabIndex={-1}` → 不在 Tab 序里（驱动器里 parseInt(tabindex) < 0 同义）。"""
+    value = node.attr("tabindex")
+    value = value if value is not None else node.attr("tabIndex")
+    return str(value if value is not None else "0").strip() == "-1"
 
 
 def _literal_disabled(node):
@@ -838,7 +859,10 @@ RAIL_LANDMARK_ID = "rail:order"  # 项目门给「侧栏容器在左 + 条目顺
 
 
 def _native_rail(native):
-    rail = native.get("rail") or {}
+    """rail 块缺席（清单里没有侧栏）→ 不铸 `rail:order` 地标——否则每份没有 rail 的参照都会假报一条 MISSING。"""
+    rail = native.get("rail")
+    if not isinstance(rail, dict):
+        return [], []
     side = rail.get("side") or "left"
     mark = {"id": RAIL_LANDMARK_ID, "role": "navigation", "topology": {"parent": "window", "order": 0, "side": side},
             "bbox": None, "children_order": [e["id"] for e in rail.get("items") or []]}
@@ -952,15 +976,53 @@ def _dim_key(run, state="rest"):
     return "%s::%s::%s::%s" % (run.get("theme"), run.get("viewport"), run.get("language"), state)
 
 
-def _runtime_item(node, run, screen):
-    role, name = node.get("role") or "generic", node.get("name") or ""
-    slug = tc.slugify(name.strip()) if name.strip() else "unnamed"
+_DRIVER_SLUG_RE = re.compile(r"[^a-z0-9\u4e00-\u9fff]+")
+_PATH_ROLES = tc.LANDMARK_ROLES | frozenset({"list", "region", "tablist"})  # driver.cjs landmarkPath 收的角色
+
+
+def _driver_segment(role, name):
+    """driver.cjs `landmarkPath` 的一段：`role:` + 名字（无名 → 角色名）按 driver 同一正则折成 -（不截断）。"""
+    return "%s:%s" % (role, _DRIVER_SLUG_RE.sub("-", str(name or role).lower()).strip("-"))
+
+
+class NameFilter(object):
+    """静态名字过滤（SKILL.md「runtime names not found in the subject's source string set become {dynamic}」）：
+    known=None → 不过滤（CLI 调试）；否则名字不在集合里且没 pin → 名字、id 的 slug、可见文本、以及这个地标在
+    landmarkPath 里的那一段全部改成 {dynamic}/dynamic——用户内容进不了清单、进不了报告、进不了 id。空集合 = 什么都不认识
+    = 全部 {dynamic}（fail closed，不是不过滤）。"""
+
+    def __init__(self, known):
+        self.known = None if known is None else set(known)
+        self.segments = {}
+
+    def foreign(self, name, pin=None):
+        return self.known is not None and bool(name) and name not in self.known and not pin
+
+    def name(self, raw, pin=None):
+        """→ (name, dynamic)。"""
+        return ("{dynamic}", True) if self.foreign(raw, pin) else (raw, False)
+
+    def register(self, role, raw, pin=None):
+        """地标类节点先登记：它的 landmarkPath 段要在后代的 parent 路径里被脱敏。"""
+        if role in _PATH_ROLES and self.foreign(raw, pin):
+            self.segments[_driver_segment(role, raw)] = "%s:dynamic" % role
+
+    def parent(self, path):
+        return ">".join(self.segments.get(seg, seg) for seg in str(path or "window").split(">"))
+
+
+def _runtime_item(node, run, screen, names=None):
+    names = names if names else NameFilter(None)
+    role, raw = node.get("role") or "generic", str(node.get("name") or "")
+    names.register(role, raw, node.get("pin"))
+    name, dynamic = names.name(raw, node.get("pin"))
+    slug = _slug_for(name, role)  # 与源提取同一条规矩：无名地标 / 列表 = 角色名，无名交互项 = unnamed
     return {"id": tc.make_id(_id_kind(role), screen, role, slug),
             "key": {"screen": tc.screen_family(screen), "role": role, "slug": slug}, "kind": _kind_for(role),
             "name": {"raw": name, "zh": None, "en": None, "alt": []}, "name_source": node.get("name_source"),
-            "visible_text": node.get("text"), "pin": node.get("pin"), "owner": "web", "gated": False,
-            "shortcut": None, "count": 1,
-            "topology": {"parent": node.get("parent") or "window", "order": node.get("order", 0),
+            "visible_text": None if dynamic else node.get("text"), "pin": node.get("pin"), "owner": "web", "gated": False,
+            "shortcut": None, "count": 1, "dynamic": dynamic,
+            "topology": {"parent": names.parent(node.get("parent")), "order": node.get("order", 0),
                          "side": node.get("side")},
             "states": {_dim_key(run): {"visible": bool(node.get("visible")), "hidden_by": node.get("hidden_by"),
                                        "focusable": bool(node.get("focusable")), "tab_index": node.get("tab_index"),
@@ -980,21 +1042,41 @@ def _merge_runtime_item(items_by_id, item, flags):
         existing["gated"] = False
 
 
-def _runtime_landmarks(run, screen):
-    return [{"id": tc.make_id("landmark", screen, m.get("role"), tc.slugify(m.get("name") or m.get("role"))),
-             "role": m.get("role"), "topology": {"parent": m.get("parent") or "window", "order": m.get("order", 0),
-                                                 "side": m.get("side")},
-             "bbox": m.get("bbox"), "children_order": m.get("children") or []} for m in run.get("landmarks") or []]
+def _runtime_landmarks(run, screen, names=None):
+    names = names if names else NameFilter(None)
+    out = []
+    for m in run.get("landmarks") or []:
+        name, _dynamic = names.name(m.get("name"))
+        out.append({"id": tc.make_id("landmark", screen, m.get("role"), tc.slugify(str(name or m.get("role")))),
+                    "role": m.get("role"), "topology": {"parent": names.parent(m.get("parent")), "order": m.get("order", 0),
+                                                        "side": m.get("side")},
+                    "bbox": m.get("bbox"), "children_order": m.get("children") or []})
+    return out
 
 
-def _run_nodes(run, screen, items_by_id):
-    """一次 run 的 nodes → 合并进 items_by_id；返回 idx → item id（focus walk 用）。"""
-    by_idx = {}
+def _run_nodes(run, screen, items_by_id, names=None):
+    """一次 run 的 nodes → 合并进 items_by_id；返回 idx → item id（focus walk 用）。同一 run 里同 id 的第 n 个元素带
+    `#n`（四张卡各一颗「批准」是四个条目，不是一个）；跨 run（另一主题 / 视口）同 `#n` 的才是同一元素，合并 states。"""
+    by_idx, seen = {}, {}
     for node in _rows(run, "nodes"):
-        item = _runtime_item(node, run, screen)
+        item = _runtime_item(node, run, screen, names)
+        seen[item["id"]] = seen.get(item["id"], 0) + 1
+        if seen[item["id"]] > 1:
+            item["id"] = "%s#%d" % (item["id"], seen[item["id"]])
         by_idx[node.get("idx")] = item["id"]
         _merge_runtime_item(items_by_id, item, run.get("flags", "default"))
     return by_idx
+
+
+def _fill_counts(items):
+    """count = 同基 id（去掉 #n）的条目数——序号在 _run_nodes 里按文档序定死，这里只补 count，不重编（focus walk 与
+    landmarks 引用的 id 不能在事后变）。"""
+    groups = {}
+    for item in items:
+        groups.setdefault(re.sub(r"#\d+$", "", item["id"]), []).append(item)
+    for group in groups.values():
+        for item in group:
+            item["count"] = len(group)
 
 
 def _run_walks(run, screen, inv, by_idx):
@@ -1006,18 +1088,23 @@ def _run_walks(run, screen, inv, by_idx):
     inv["lang"] = run.get("lang", inv.get("lang"))
 
 
-def parse_runtime(output, subject_side):
-    """driver.cjs 的 JSON → {inventory, tokens_observed, geometry, shots, axe, observed_theme}。"""
+def parse_runtime(output, subject_side, known_names=None):
+    """driver.cjs 的 JSON → {inventory, tokens_observed, geometry, shots, axe, observed_theme}。
+    known_names = subject 源字符串 ∪ 参照名字（sensors._known_names）：不在里面的 runtime 名字在构造时就成 {dynamic}
+    （名字 / id / 可见文本 / 地标路径段一起脱敏，focus walk 与 landmarks 引用的 id 因此从头一致）；None = 不过滤（CLI）。
+    inventory.names_filtered = 被脱敏的条目数。"""
     inv = tc.empty_inventory("web-playwright", "runtime", output.get("tool", "playwright"), subject_side)
     items_by_id, bundle = {}, {"tokens_observed": {}, "geometry": {}, "axe": [], "observed_theme": {}}
+    names = NameFilter(known_names)
     for run in _rows(output, "runs"):
         screen = run.get("screen")
-        _run_walks(run, screen, inv, _run_nodes(run, screen, items_by_id))
-        inv["landmarks"] += _runtime_landmarks(run, screen)
+        _run_walks(run, screen, inv, _run_nodes(run, screen, items_by_id, names))
+        inv["landmarks"] += _runtime_landmarks(run, screen, names)
         _collect_run_extras(run, screen, inv, bundle)
     inv["items"] = sorted(items_by_id.values(), key=lambda i: (i["screen"], i["topology"]["parent"],
                                                                i["topology"]["order"], i["id"]))
-    _assign_ordinals(inv["items"])
+    _fill_counts(inv["items"])
+    inv["names_filtered"] = sum(1 for item in inv["items"] if item.get("dynamic"))
     inv["dims"].update(output.get("dims") if output.get("dims") else {})
     return dict(bundle, inventory=inv)
 

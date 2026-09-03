@@ -782,11 +782,11 @@ def _waive_hit(hit, waivers):
 # --------------------------------------------------------------------------- #
 
 def apply_opinion(result, opinion):
-    """opinion = {"text": …, 任意其它键}；只有 text/sections 进 result["opinion"]，其余键被丢弃并列在
-    result["opinion"]["dropped_keys"]——设计质量意见永不改状态、条目或 fix-first。"""
-    forbidden = sorted(k for k in (opinion or {}) if k in ("checks", "items", "fix_first", "status", "verdict", "rows"))
+    """opinion = {"text": …, 任意其它键}；只有 text 进 result["opinion"]，**其余每个键**都被丢弃并列在
+    result["opinion"]["dropped_keys"]（references/catalog.md：any key other than `text` is dropped and listed）——
+    设计质量意见永不改状态、条目或 fix-first，也不能夹带任何别的字段进报告。"""
     text = (opinion or {}).get("text") or ""
-    result["opinion"] = {"text": text, "dropped_keys": forbidden,
+    result["opinion"] = {"text": text, "dropped_keys": sorted(k for k in (opinion or {}) if k != "text"),
                          "banner": "Nothing below changes a status or a rank."}
     return result
 

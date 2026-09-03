@@ -122,7 +122,7 @@ class FixturePairRealRunTestCase(BudgetedTestCase):
             finally:
                 launcher.stop()
                 shutil.rmtree(recipe["home"], ignore_errors=True)
-            time.sleep(0.3)
+            proc.wait(timeout=5)  # SIGKILL to the process group has landed — no fixed sleep, no race with a slow runner
             with self.assertRaises(OSError):
                 _fetch(recipe["url"] + "/api/health")  # the process group is gone
             res = sensors.check_structure_runtime(ctx)

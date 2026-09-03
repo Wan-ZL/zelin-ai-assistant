@@ -21,6 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sensors  # noqa: E402
+import testui_common as tc  # noqa: E402
 
 TIER_TIMEOUTS = {1: 300, 2: 1800, 3: 3600, 4: 7200, 5: None}
 SKILL_SCRIPTS = os.path.dirname(os.path.abspath(__file__))
@@ -192,7 +193,7 @@ def _b_opinion(ctx):
 
 def _b_table_only(what):
     def build(ctx):
-        return _unavailable("%s — table-only in test-ui 0.1.0 (references/catalog.md); run by hand, paste into Notes" % what)
+        return _unavailable("%s — table-only in test-ui %s (references/catalog.md); run by hand, paste into Notes" % (what, tc.SKILL_VERSION))
     return build
 
 

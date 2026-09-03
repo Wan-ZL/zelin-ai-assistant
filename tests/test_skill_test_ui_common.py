@@ -24,6 +24,15 @@ class ColorTestCase(unittest.TestCase):
         self.assertIsNone(tc.canonical_color("var(--bg)"))
         self.assertIsNone(tc.canonical_color("#12"))
 
+    def test_unparseable_channels_are_none_not_a_crash(self):
+        """Tailwind / shadcn 的 token 表写 `rgb(var(--r) var(--g) var(--b) / <alpha-value>)`、`hsl(var(--h) …)`；
+        `hsl(1turn …)`、`rgb(a, b, c)` 也一样——认不出就是 None，tokens_source 不许因此整层崩成 FAIL。"""
+        for text in ("rgb(var(--r) var(--g) var(--b) / <alpha-value>)", "hsl(var(--primary))", "hsl(1turn 50% 50%)",
+                     "rgb(a, b, c)", "rgba(0, 0, 0, 50%%)"):
+            self.assertIsNone(tc.parse_color(text), text)
+        self.assertEqual(tc.canonical_color("rgb(255 0 0 / 50%)"), "#ff000080")
+        self.assertEqual(tc.canonical_color("hsl(120deg 100% 50%)"), "#00ff00ff")
+
     def test_composite_over_white(self):
         """rgba(0,0,0,.5) over white → #808080ff（对比度必须在合成色上算）。"""
         fg, bg = tc.parse_color("rgba(0,0,0,.5)"), tc.parse_color("white")
@@ -79,6 +88,22 @@ class PngTestCase(unittest.TestCase):
             tc.decode_png(self._png_with_filter(7, [bytes((1, 1, 1))]))
         with self.assertRaises(ValueError):
             tc.encode_png(1, 1, [b"\x00"], channels=1)
+
+    def test_corrupt_stream_and_bad_crc_are_value_errors(self):
+        """坏块要以 ValueError 出来，visual._shot_row 才能把这张图记成 CHANGED/unreadable 而不是让整层崩：
+        IDAT 内容被改（deflate 解不开 → zlib.error 不许漏出）；块 CRC 与内容不符（docstring 承诺的「CRC 坏」）。"""
+        data = kit.make_png(2, 2)
+        idat = data.find(b"IDAT")
+        corrupt = data[:idat + 4] + b"\xff\xff\xff\xff" + data[idat + 8:]
+        with self.assertRaises(ValueError) as caught:
+            tc.decode_png(corrupt)
+        self.assertIn("png:", str(caught.exception))
+        iend = data.rfind(b"IEND")
+        bad_crc = data[:iend + 4] + b"\x00\x00\x00\x00"
+        with self.assertRaises(ValueError) as caught:
+            tc.decode_png(bad_crc)
+        self.assertIn("bad CRC", str(caught.exception))
+        self.assertEqual(tc.decode_png(data)[:3], (2, 2, 3))  # the intact file still decodes
 
 
 class IdGrammarTestCase(unittest.TestCase):
