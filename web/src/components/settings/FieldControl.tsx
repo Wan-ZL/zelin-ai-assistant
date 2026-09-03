@@ -87,17 +87,24 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
       </select>
     );
   } else if (field.kind === "number" || field.kind === "int") {
+    const invalid = typeof value !== "number" || !Number.isFinite(value) || value < 0;
+    const example = typeof field.default === "number" ? String(field.default) : "5";
     control = (
-      <input
-        id={id}
-        type="number"
-        className="settings-input is-number"
-        step={field.kind === "int" ? 1 : "any"}
-        min={0}
-        value={typeof value === "number" ? value : ""}
-        disabled={isBusy}
-        onChange={(event) => onChange(field.key, event.target.value === "" ? null : Number(event.target.value))}
-      />
+      <>
+        <input
+          id={id}
+          type="number"
+          className="settings-input is-number"
+          step={field.kind === "int" ? 1 : "any"}
+          min={0}
+          value={typeof value === "number" ? value : ""}
+          disabled={isBusy}
+          aria-invalid={invalid || undefined}
+          onChange={(event) => onChange(field.key, event.target.value === "" ? null : Number(event.target.value))}
+        />
+        {/* 原生数字框的校验提示（Settings.swift:1703 / 1715）：请输入不小于 0 的数字，如 5 */}
+        {invalid && <span className="settings-warning">{text(`请输入不小于 0 的数字，如 ${example}`, `Enter a number ≥ 0, e.g. ${example}`)}</span>}
+      </>
     );
   } else {
     // string 与 list 同一个文本框：list 的草稿是逗号分隔字串（CatalogSection.draftOf 拼、server 拆）
@@ -110,7 +117,7 @@ export function FieldControl({ sectionId, field, value, onChange, isBusy = false
         value={typeof value === "string" ? value : ""}
         disabled={isBusy}
         spellCheck={false}
-        placeholder={field.placeholder || fallback}
+        placeholder={pickText(field.placeholder, language) || fallback}
         onChange={(event) => onChange(field.key, event.target.value)}
       />
     );

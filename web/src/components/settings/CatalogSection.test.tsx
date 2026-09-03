@@ -145,9 +145,9 @@ describe("SecretRow", () => {
     await refreshSecrets();
     const verify = await screen.findByRole("button", { name: "Verify" });
     fireEvent.click(verify);
-    await screen.findByText(/Network error \(not the credential\)/);
+    await screen.findByText(/Network error \(not the credential\): network error: dns/);
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
-    await screen.findByText(/Verification failed: HTTP 401/);
+    await screen.findByText((_, el) => el?.tagName === "P" && /Verification failed: HTTP 401/.test(el.textContent ?? ""));
     expect(screen.getByText("verification failed")).toBeTruthy();
   });
 });

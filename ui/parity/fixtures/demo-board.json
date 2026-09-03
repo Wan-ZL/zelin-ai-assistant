@@ -441,8 +441,8 @@
         "你审阅"
       ],
       "processing": false,
-      "reraise_note": "又有两个人在群里问同一件事",
       "reraised": true,
+      "reraised_note": "又有两个人在群里问同一件事",
       "show_cost": true,
       "silent_merged": 2,
       "sources": [

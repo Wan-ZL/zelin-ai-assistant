@@ -69,7 +69,10 @@ export function DiagnosticsPage() {
 
   useEffect(() => {
     void refreshDiagnostics();
-  }, []);
+    // ?log=<name>：横幅「查看日志」深链——直接把该日志尾巴翻开（名字只认 server 同一白名单形）
+    const wanted = new URLSearchParams(window.location.search).get("log") ?? "";
+    if (/^[A-Za-z0-9._-]+\.log$/.test(wanted)) void openLog(wanted);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 原生 DepsView「重新检查」：按钮与状态行都显示「检查中…」直到快照回来
   async function recheck() {

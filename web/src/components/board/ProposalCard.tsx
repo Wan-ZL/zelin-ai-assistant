@@ -7,10 +7,10 @@
 //   怎样算办完。id 在右上角（原生 idTag）。
 import { useState } from "react";
 import { displayId } from "../../cardId";
-import { useI18n } from "../../i18n";
+import { domainLabel, TYPE_LABELS, useI18n } from "../../i18n";
 import type { ApprovalCard } from "../../types";
 import { cardAction, costLine, costText, deadlinePhrase, effectiveTier, hardnessLabel, tierHint, useSubmit, pendingNote } from "./boardActions";
-import { CardDetails, CardHead, CardSurface, DetailsToggle } from "./cardChrome";
+import { CardDetails, CardHead, CardSurface, DetailsToggle, useCardExpanded } from "./cardChrome";
 import { DodList, PlanList, SourceList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { T2ConfirmDialog } from "./T2ConfirmDialog";
@@ -75,9 +75,10 @@ export function EgressLines({ card }: { card: ApprovalCard }) {
 }
 
 export function ProposalCard({ card }: ProposalCardProps) {
-  const { text } = useI18n();
+  const { text, language } = useI18n();
   const { pending, pendingAction, error, submit } = useSubmit();
   const [dialog, setDialog] = useState<DialogKind>("none");
+  const expanded = useCardExpanded(card.id);
 
   const summary = typeof card.summary === "string" && card.summary ? card.summary : card.title;
   const displayTitle = typeof card.display_title === "string" && card.display_title ? card.display_title : summary;
@@ -144,6 +145,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
         {hardnessLabel(card.hardness, text) && (
           <span className={card.hardness === "hard" ? "chip chip-danger" : "chip"}>{hardnessLabel(card.hardness, text)}</span>
         )}
+        {typeof card.type === "string" && card.type && <span className="chip">{domainLabel(TYPE_LABELS, language, card.type)}</span>}
         {/* 被提×N 是 lineage 计数——quiet 档，比状态 chip 安静 */}
         {typeof card.repeated === "number" && card.repeated > 1 && (
           <span
@@ -189,15 +191,20 @@ export function ProposalCard({ card }: ProposalCardProps) {
       ) : (
         <div className="card-actions">
           {/* 四动词色相 = Mac tint 一比一（Cards.swift normalBody）：绿批准 · 红拒绝 · 蓝修改 · 灰暂缓 */}
-          <button
-            type="button"
-            className="btn btn-success"
-            // W17（§50）：typed-confirm 闸门读 effective_tier——外部升档卡
-            // （声明 T1、生效 T2）也必须过确认词，绝不单击直批
-            onClick={() => (effectiveTier(card) === "T2" ? setDialog("t2") : decide("approve"))}
-          >
-            {text("批准", "Approve")}
-          </button>
+          {/* 原生 T2 gate：详情没展开前不给「批准」，只给一句提示——先看明细再确认（§50 读 effectiveTier） */}
+          {effectiveTier(card) === "T2" && !expanded ? (
+            <span className="card-line is-warning card-t2-hint">{text("T2 需先展开看明细", "T2: expand details first")}</span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-success"
+              // W17（§50）：typed-confirm 闸门读 effective_tier——外部升档卡
+              // （声明 T1、生效 T2）也必须过确认词，绝不单击直批
+              onClick={() => (effectiveTier(card) === "T2" ? setDialog("t2") : decide("approve"))}
+            >
+              {text("批准", "Approve")}
+            </button>
+          )}
           <button type="button" className="btn btn-danger" onClick={() => setDialog("reject")}>
             {text("拒绝", "Reject")}
           </button>
@@ -234,9 +241,9 @@ export function ProposalCard({ card }: ProposalCardProps) {
       )}
       {dialog === "comment" && (
         <TextDialog
-          title={text("修改方向", "Change of direction")}
+          title={text("💬 修改方向", "💬 Comment / Change Direction")}
           body={text("你的意见会并入计划，卡片重新等待审批。", "Your input folds into the plan; the card waits for re-approval.")}
-          placeholder={text("想怎么改？", "What should change?")}
+          placeholder={text("改哪里…", "What to change…")}
           submitLabel={text("提交", "Submit")}
           onSubmit={(t) => decide("comment", t)}
           onCancel={() => setDialog("none")}

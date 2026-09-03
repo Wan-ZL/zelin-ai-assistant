@@ -15,7 +15,8 @@ from unittest import mock
 from tests import TMP_HOME  # noqa: F401 - sandbox env first
 from tests.test_server_common import assert_envelope, get_json, post_json, start_server
 
-from server import ask, slack_setup, subproc, uninstall_launch
+from server import ask, maintainer_launch, slack_setup, subproc, uninstall_launch
+from tests.test_server_common import write_text
 
 
 class _ServerCase(unittest.TestCase):
@@ -136,6 +137,38 @@ class UninstallLaunchTestCase(_ServerCase):
             status, obj = post_json(self.port, "/api/uninstall/terminal", {})
         self.assertEqual(status, 500)
         self.assertIn("could not open Terminal", obj["error"]["message"])
+
+
+class MaintainerLaunchTestCase(_ServerCase):
+    """POST /api/maintainer/terminal：命令 = cd <effective repo_path> && claude [--resume <id>]（server 读设置，
+    客户端零参数）；路径不存在 400；坏 session id 400；非 darwin 501；多余字段 400。"""
+
+    def test_default_repo_is_the_checkout_and_resume_follows_the_override(self):
+        opened = []
+        receipt = maintainer_launch.launch(self.home, {}, opener=opened.append, out_dir=Path(self.tmp.name), platform="darwin")
+        self.assertEqual(receipt["command"], "cd %s && claude" % maintainer_launch.shlex.quote(str(maintainer_launch.paths.repo_root())))
+        self.assertIn("exec cd", opened[0].read_text(encoding="utf-8"))
+        write_text(self.home / "state" / "settings_overrides.json",
+                   json.dumps({"maintainer_repo_path": str(self.home), "maintainer_session_id": "6f9619ff-8b86"}))
+        receipt = maintainer_launch.launch(self.home, {}, opener=opened.append, out_dir=Path(self.tmp.name), platform="darwin")
+        self.assertEqual(receipt["command"], "cd %s && claude --resume 6f9619ff-8b86" % maintainer_launch.shlex.quote(str(self.home)))
+        self.assertEqual(receipt["cwd"], str(self.home))
+
+    def test_gates(self):
+        write_text(self.home / "state" / "settings_overrides.json", json.dumps({"maintainer_repo_path": str(self.home / "nope")}))
+        with self.assertRaises(maintainer_launch.InvalidFieldError):
+            maintainer_launch.launch(self.home, {}, opener=lambda p: None, platform="darwin")
+        write_text(self.home / "state" / "settings_overrides.json", json.dumps({"maintainer_session_id": "bad id; rm -rf"}))
+        with self.assertRaises(maintainer_launch.InvalidFieldError):
+            maintainer_launch.launch(self.home, {}, opener=lambda p: None, platform="darwin")
+        with self.assertRaises(maintainer_launch.UnknownFieldError):
+            maintainer_launch.launch(self.home, {"x": 1}, opener=lambda p: None, platform="darwin")
+        with self.assertRaises(maintainer_launch.NotImplementedError501):
+            maintainer_launch.launch(self.home, {}, opener=lambda p: None, platform="linux")
+        with mock.patch.object(maintainer_launch.sys, "platform", "linux"):
+            status, obj = post_json(self.port, "/api/maintainer/terminal", {})
+        self.assertEqual(status, 501)
+        assert_envelope(self, obj, "NOT_IMPLEMENTED")
 
 
 if __name__ == "__main__":

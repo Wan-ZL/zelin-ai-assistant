@@ -552,8 +552,8 @@ export interface SettingsField {
   choices: string[] | null;
   effective: unknown;
   source: "override" | "config" | "default" | string;
-  /** add-only（§68.1）：输入框示例文案（原生 TextField prompt，如「例：you@gmail.com」）；老 server 缺席 */
-  placeholder?: string;
+  /** add-only（§68.1）：输入框示例文案（原生 TextField prompt，如「例：you@gmail.com」，zh/en 两键）；老 server 缺席 */
+  placeholder?: BilingualText;
   [key: string]: unknown;
 }
 

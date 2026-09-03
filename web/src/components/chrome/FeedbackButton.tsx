@@ -25,7 +25,7 @@ export function FeedbackButton() {
   return (
     <>
       <button type="button" className="chrome-select-toggle" onClick={() => setOpen(true)} title={text("给维护者提建议", "Send feedback to the maintainer")}>
-        {text("提建议", "Feedback")}
+        {text("提建议", "Send feedback")}
       </button>
       {note && <span className="chrome-feedback-note" role="status">{note}</span>}
       {open && <FeedbackDialog ids={[]} onSubmit={(body) => void send(body)} onCancel={() => setOpen(false)} />}

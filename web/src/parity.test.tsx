@@ -92,6 +92,7 @@ vi.mock("./api", async (importOriginal) => {
     postAsk: vi.fn().mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 }),
     postTerminal: vi.fn().mockResolvedValue({ ok: true }),
     postUninstallTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && bash uninstall.sh", command_file: "/tmp/u.command" }),
+    postMaintainerTerminal: vi.fn().mockResolvedValue({ ok: true, command: "cd /r && claude", command_file: "/tmp/m.command", cwd: "/r" }),
     postRepairActd: vi.fn().mockResolvedValue({ ok: true }),
     postSelfImproveResume: vi.fn().mockResolvedValue({ ok: true, paused: false, was_paused: true }),
     postClaudeCodeDefault: vi.fn().mockResolvedValue({ model: "x", previous: null, backup: null, path: "p" }),
@@ -303,9 +304,13 @@ const PAGES: Record<Surface, () => JSX.Element> = {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-/** 渲染 + 让页内的 useEffect 数据拉取（mock 即时 resolve）落地：几拍 microtask 足够 */
-async function settle() {
-  for (let i = 0; i < 4; i += 1) await tick();
+/** 渲染 + 让页内的 useEffect 数据拉取（mock 即时 resolve）落地：几拍 microtask 足够。
+ *  每拍都收一遍标签：保存 → 验证 → 通过 这类多段异步的中间态文案（已保存，验证中… / 验证中…）只在某一拍存在。 */
+async function settle(pool?: Set<string>) {
+  for (let i = 0; i < 4; i += 1) {
+    await tick();
+    if (pool) collectLabels(document.body, pool);
+  }
 }
 
 async function renderSurface(language: Language, page: Surface) {
@@ -320,18 +325,18 @@ async function renderSurface(language: Language, page: Surface) {
     </LanguageContext.Provider>,
   );
   if (page === "settings") await refreshSettings();
-  await settle();
+  await settle(pool);
   collectLabels(document.body, pool);
   clickEverything(view.container, pool);
-  await settle();
+  await settle(pool);
   if (page === "board") {
     // 详情抽屉：选中 hero 卡、再选一张待验收卡（抽屉里的字段标题 / 动作 / 所属列章）
     for (const id of [demoBoard.needs_approval[0].id, demoBoard.review[0].id]) {
       selectCard(id);
-      await settle();
+      await settle(pool);
       collectLabels(document.body, pool);
       clickEverything(document.body, pool);
-      await settle();
+      await settle(pool);
     }
   }
   collectLabels(document.body, pool);
@@ -352,10 +357,10 @@ async function renderEmptyStalledBoard(language: Language) {
       <AppShell searchSlot={<FilterBar />}><BoardPage /><DetailDrawer /></AppShell>
     </LanguageContext.Provider>,
   );
-  await settle();
+  await settle(pool);
   collectLabels(document.body, pool);
   clickEverything(view.container, pool);
-  await settle();
+  await settle(pool);
   collectLabels(document.body, pool);
   cleanup();
   setFilters({ search: "" });

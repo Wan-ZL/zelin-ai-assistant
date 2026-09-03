@@ -19,7 +19,10 @@
             "en": "Interface language",
             "zh": "界面语言"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -39,7 +42,10 @@
             "en": "Deliverable format",
             "zh": "交付物默认格式"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -56,7 +62,10 @@
             "en": "Check for updates automatically (at most once a day)",
             "zh": "自动检查新版本（每天最多一次）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -90,7 +99,10 @@
             "en": "Task-done alert",
             "zh": "任务完成提醒"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -120,7 +132,10 @@
             "en": "Enable the Obsidian radar",
             "zh": "启用 Obsidian 雷达"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -137,7 +152,10 @@
             "en": "Obsidian Vault location",
             "zh": "Obsidian Vault 位置"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -167,7 +185,10 @@
             "en": "Enable the Slack radar",
             "zh": "启用 Slack 雷达"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -184,7 +205,10 @@
             "en": "Your Slack user id",
             "zh": "你的 Slack user id"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -201,7 +225,10 @@
             "en": "Watched channels (channel ids, comma-separated)",
             "zh": "监控频道（channel id，逗号分隔）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -218,7 +245,10 @@
             "en": "People to watch (handles, comma-separated)",
             "zh": "关注的人（handle，逗号分隔）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -248,7 +278,10 @@
             "en": "Enable the Gmail radar",
             "zh": "启用 Gmail 雷达"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -265,7 +298,10 @@
             "en": "Gmail address",
             "zh": "Gmail 地址"
           },
-          "placeholder": "例：you@gmail.com / e.g. you@gmail.com",
+          "placeholder": {
+            "en": "e.g. you@gmail.com",
+            "zh": "例：you@gmail.com"
+          },
           "source": "default"
         },
         {
@@ -282,7 +318,10 @@
             "en": "Custom fetch command (path B)",
             "zh": "自定义抓取命令（B 路径）"
           },
-          "placeholder": "例：/Users/you/bin/gmail-fetch.sh",
+          "placeholder": {
+            "en": "e.g. /Users/you/bin/gmail-fetch.sh",
+            "zh": "例：/Users/you/bin/gmail-fetch.sh"
+          },
           "source": "default"
         }
       ],
@@ -312,7 +351,10 @@
             "en": "Product improvement (on by default; event metadata only — typed text needs the separate opt-in below)",
             "zh": "参与产品改进（默认开，仅事件元数据——输入文本需在下方单独勾选）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -332,7 +374,10 @@
             "en": "Behavior-event level",
             "zh": "行为事件级别"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -349,7 +394,10 @@
             "en": "Upload the text I type, to know me better (off by default — checking is opting in: captures, questions, rework feedback, search terms; ≤500 chars each)",
             "zh": "上传我输入的文本以更懂我（默认关，勾选即同意：快速捕获、提问、打回反馈、搜索词；每条 ≤500 字符）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -379,7 +427,10 @@
             "en": "Auto-generate a weekly \"what you were up to\" recap (default off)",
             "zh": "每周自动生成「本周你都在忙什么」回顾卡（默认关）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -401,7 +452,10 @@
             "en": "Status digest cadence",
             "zh": "状态摘要频率"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -431,7 +485,10 @@
             "en": "Task working folder",
             "zh": "任务工作目录"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -448,7 +505,10 @@
             "en": "Run background tasks without per-action confirmations (faster, default on)",
             "zh": "后台任务免确认执行（更快，默认开）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -465,7 +525,10 @@
             "en": "Allow auto-creating private GitHub repos (default off)",
             "zh": "允许自动创建 GitHub 私有仓库（默认关）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -482,7 +545,10 @@
             "en": "Show cost above (USD ≥)",
             "zh": "显示成本阈值（USD ≥）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -499,7 +565,10 @@
             "en": "Typed confirm above (USD ≥)",
             "zh": "文字确认阈值（USD ≥）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -516,7 +585,10 @@
             "en": "Trash retention days",
             "zh": "回收站保留天数"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -546,7 +618,10 @@
             "en": "slack_radar — Slack demand radar",
             "zh": "slack_radar — Slack 需求雷达"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -563,7 +638,10 @@
             "en": "gmail_radar — Gmail capture",
             "zh": "gmail_radar — Gmail 捕获"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -580,7 +658,10 @@
             "en": "obsidian_radar — Obsidian radar",
             "zh": "obsidian_radar — Obsidian 雷达"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -597,7 +678,10 @@
             "en": "digest — status digest",
             "zh": "digest — 状态摘要"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -614,7 +698,10 @@
             "en": "auto_resume — auto-resume background tasks",
             "zh": "auto_resume — 后台任务自动拉起"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -631,7 +718,10 @@
             "en": "analytics — usage stats",
             "zh": "analytics — 用量统计"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -648,7 +738,10 @@
             "en": "feedback_sync — feedback sync to GitHub",
             "zh": "feedback_sync — 建议同步到 GitHub"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -665,7 +758,10 @@
             "en": "auto_deploy — auto-deploy",
             "zh": "auto_deploy — 自动部署"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -695,7 +791,10 @@
             "en": "Voice injection (default on)",
             "zh": "启用语气注入（默认开）"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -725,7 +824,10 @@
             "en": "Enable term-list redaction — replace term-list matches with [REDACTED] before sending prompts",
             "zh": "启用词表脱敏 — 发出 prompt 前把词表词条替换成 [脱敏]"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -742,7 +844,10 @@
             "en": "Terms file",
             "zh": "词表文件"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -759,7 +864,10 @@
             "en": "Secrets masking — built-in regexes (sk-ant-/xox*/AKIA/gh*_/PEM), always on regardless of the toggle above",
             "zh": "密钥掩码 — 内置正则 (sk-ant-/xox*/AKIA/gh*_/PEM)，始终生效，不依赖词表开关"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         }
       ],
@@ -789,7 +897,10 @@
             "en": "This software's repo path",
             "zh": "本软件的仓库路径"
           },
-          "placeholder": "",
+          "placeholder": {
+            "en": "",
+            "zh": ""
+          },
           "source": "default"
         },
         {
@@ -806,7 +917,10 @@
             "en": "Session id to resume",
             "zh": "续接的会话 id"
           },
-          "placeholder": "例：6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+          "placeholder": {
+            "en": "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+            "zh": "例：6f9619ff-8b86-d011-b42d-00cf4fc964ff"
+          },
           "source": "default"
         }
       ],

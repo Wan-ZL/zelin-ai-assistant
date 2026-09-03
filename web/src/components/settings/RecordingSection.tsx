@@ -5,9 +5,10 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { callShell, hasShellBridge, useShellState } from "../../shellBridge";
-import { recordingDeadReason, recordingModeLabel, recordingStateWord } from "../shell/RecordingControl";
+import { recordingDeadReason, recordingStateWord } from "../shell/RecordingControl";
 
-const MODES = ["off", "screen", "screen_audio"] as const;
+// 原生 Settings.swift:701–703 的三档写法（与顶栏按钮 DashboardView 的「屏幕+音频」差一个空格——两处各自逐字）
+const MODES: Array<[string, string, string]> = [["off", "关", "Off"], ["screen", "仅屏幕", "Screen Only"], ["screen_audio", "屏幕 + 音频", "Screen + Audio"]];
 
 export function RecordingSection() {
   const { text } = useI18n();
@@ -46,10 +47,10 @@ export function RecordingSection() {
       ) : (
         <>
           <div className="settings-radio-row" role="radiogroup" aria-label={text("默认录制模式", "Default recording mode")}>
-            {MODES.map((mode) => (
+            {MODES.map(([mode, zh, en]) => (
               <label key={mode} className="settings-radio">
                 <input type="radio" name="recording-mode" value={mode} checked={rec.mode === mode} disabled={busy} onChange={() => void choose(mode)} />
-                {recordingModeLabel(mode, text)}
+                {text(zh, en)}
               </label>
             ))}
           </div>

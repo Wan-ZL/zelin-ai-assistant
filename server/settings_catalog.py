@@ -48,13 +48,14 @@ _FALSE_WORDS = frozenset({"false", "no", "off", "0"})
 def _f(key: str, kind: str, zh: str, en: str, *, default: Any = None,
        config: "tuple | None" = None, choices: "tuple | None" = None,
        help_zh: str = "", help_en: str = "", override: Optional[str] = None,
-       write: str = "diff", placeholder: str = "") -> dict:
+       write: str = "diff", placeholder: "tuple | None" = None) -> dict:
     """一条 field 描述（目录内部形；对外投影去掉 config/override/write 三个内部键）。
-    ``placeholder``（add-only）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。"""
+    ``placeholder``（add-only，zh/en 两键）= 输入框的示例文案（原生 TextField 的 prompt，如「例：you@gmail.com」）。"""
+    zh_ph, en_ph = placeholder or ("", "")
     return {"key": key, "kind": kind, "label": {"zh": zh, "en": en},
             "help": {"zh": help_zh, "en": help_en}, "default": default,
             "choices": list(choices) if choices else None, "config": config,
-            "override": override or key, "write": write, "placeholder": placeholder}
+            "override": override or key, "write": write, "placeholder": {"zh": zh_ph, "en": en_ph}}
 
 
 def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
@@ -150,11 +151,11 @@ SECTIONS: tuple = (
                help_zh="读取收件箱未读邮件提炼需求卡（只读，不发信）。凭证在下方 Gmail 应用密码。",
                help_en="Reads unread inbox mail into proposal cards (read-only, never sends). Credential: the Gmail app password below."),
             _f("gmail_address", "string", "Gmail 地址", "Gmail address", default="",
-               config=("sources", "gmail", "address"), placeholder="例：you@gmail.com / e.g. you@gmail.com",
+               config=("sources", "gmail", "address"), placeholder=("例：you@gmail.com", "e.g. you@gmail.com"),
                help_zh="IMAP 登录用的邮箱地址；留空 = 用 config.yaml 里的值。",
                help_en="Address used for the IMAP login; blank = whatever config.yaml says."),
             _f("gmail_fetch_command", "string", "自定义抓取命令（B 路径）", "Custom fetch command (path B)", default="",
-               config=("sources", "gmail", "fetch_command"), placeholder="例：/Users/you/bin/gmail-fetch.sh",
+               config=("sources", "gmail", "fetch_command"), placeholder=("例：/Users/you/bin/gmail-fetch.sh", "e.g. /Users/you/bin/gmail-fetch.sh"),
                help_zh="填了就走 B · 自定义抓取命令（stdout 一行一封）；留空走 A · 应用专用密码（推荐）。",
                help_en="Set = path B, a custom fetch command (one mail per stdout line); blank = path A, the app password (recommended)."),
         ],
@@ -265,7 +266,7 @@ SECTIONS: tuple = (
                help_zh="「让 AI 修」与开发会话打开的仓库；留空 = 当前 checkout。",
                help_en="Repo opened by Fix with AI and developer sessions; blank = this checkout."),
             _f("maintainer_session_id", "string", "续接的会话 id", "Session id to resume", default="",
-               config=("maintainer", "session_id"), placeholder="例：6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+               config=("maintainer", "session_id"), placeholder=("例：6f9619ff-8b86-d011-b42d-00cf4fc964ff", "e.g. 6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
                help_zh="填了就 claude --resume 这个会话，留空开新会话。",
                help_en="When set the session is resumed with claude --resume; blank starts fresh."),
         ],

@@ -98,7 +98,7 @@ export function FilterBar() {
         ref={searchRef}
         className="chrome-search"
         type="search"
-        placeholder={text("搜索（⌘F）", "Search (⌘F)")}
+        placeholder={text("搜索卡片（⌘F）", "Search cards (⌘F)")}
         aria-label={text("搜索卡片", "Search cards")}
         value={filters.search}
         onChange={(event) => setFilters({ search: event.target.value })}

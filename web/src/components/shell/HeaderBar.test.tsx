@@ -62,21 +62,21 @@ describe("HeaderBar", () => {
   it("新鲜数据（≤90s）：显示相对时间，无 actd 警告", async () => {
     await seedBoard(30);
     renderHeader();
-    expect(screen.getByText("Data generated just now")).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && el.textContent === "Data generated just now")).toBeTruthy();
     expect(screen.queryByText(/actd may be down/)).toBeNull();
   });
 
   it("过期数据（>90s）：显示分钟数 + actd 可能未运行警告", async () => {
     await seedBoard(5 * 60);
     renderHeader();
-    expect(screen.getByText("Data generated 5 min ago — actd may be down")).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && el.textContent === "Data generated 5 min ago — actd may be down")).toBeTruthy();
   });
 
   it("15s tick 自驱变陈旧：80s 时新鲜，跨过 90s 阈值后变警告", async () => {
     vi.useFakeTimers();
     await seedBoard(80);
     renderHeader();
-    expect(screen.getByText(/Data generated 1m ago/)).toBeTruthy();
+    expect(screen.getByText((_, el) => el?.classList.contains("shell-freshness") === true && /Data generated 1m ago/.test(el.textContent ?? ""))).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(15_000); // 80s + 15s = 95s > 90s
     });

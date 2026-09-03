@@ -126,12 +126,12 @@ export function ReviewCard({ card }: ReviewCardProps) {
 
       {showRework && (
         <TextDialog
-          title={text(`打回 ${displayId(card)}`, `Send back ${displayId(card)}`)}
+          title={text("↩︎ 打回 · 追加要求", "↩︎ Send Back · Add Requirements")}
           body={text(
             "反馈会送回原会话继续改。留空 = 让 AI 按验收标准自查改进。",
             "Feedback goes back to the session. Leave empty = AI self-reviews against the DoD.",
           )}
-          placeholder={text("哪里不对？想怎么改？", "What's wrong? What should change?")}
+          placeholder={text("改哪里…", "What to change…")}
           submitLabel={text("打回", "Send Back")}
           allowEmpty
           onSubmit={(t) => {

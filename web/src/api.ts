@@ -406,3 +406,8 @@ export function fetchSlackManifest(signal?: AbortSignal): Promise<{ manifest: st
 export function postUninstallTerminal(): Promise<TerminalReceipt> {
   return request<TerminalReceipt>("/api/uninstall/terminal", { method: "POST", body: JSON.stringify({}) });
 }
+
+/** POST /api/maintainer/terminal — 开发者区「在终端打开开发会话」：cd <repo> && claude [--resume]，参数由 server 读设置（§68.1） */
+export function postMaintainerTerminal(): Promise<TerminalReceipt> {
+  return request<TerminalReceipt>("/api/maintainer/terminal", { method: "POST", body: JSON.stringify({}) });
+}

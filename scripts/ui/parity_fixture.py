@@ -76,7 +76,7 @@ def _vocab_proposals(now):
          "summary": "以你的口吻起草迁移说明，发前你过一眼。", "tier": "T2", "tier_hint": "需文字确认",
          "hardness": "soft", "type": "comms", "cost_usd": 80, "show_cost": True, "deadline": "2026-09-02",
          "days_left": 0, "delivery_mode": "doc", "target_kind": "new", "target_name": "migration-notes",
-         "silent_merged": 2, "reraised": True, "reraise_note": "又有两个人在群里问同一件事",
+         "silent_merged": 2, "reraised": True, "reraised_note": "又有两个人在群里问同一件事",
          "plan": ["起草", "你审阅"], "dod": ["邮件草稿在 outbox"], "sources": src, "processing": False},
         {"id": "P-133", "display_id": "P-133", "id_kind": "proposal", "title": "整理 onboarding 文书清单",
          "summary": "把入职文书按部门整理成一页。", "tier": None, "tier_hint": "未分级", "hardness": "soft",

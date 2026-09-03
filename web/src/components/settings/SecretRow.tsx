@@ -29,7 +29,7 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
   const status: SecretStatus | undefined = secrets?.secrets.find((s) => s.name === name);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState<"save" | "verify" | null>(null);
-  const [note, setNote] = useState<{ ok: boolean; message: string } | null>(null);
+  const [note, setNote] = useState<{ ok: boolean; message: string; detail?: string } | null>(null);
   const [verified, setVerified] = useState<boolean | null>(null); // 本会话内最近一次验证结果（原生 state 3 / 4）
 
   const label = labelOverride ?? (status ? pickText(status.label, language) : name);
@@ -41,11 +41,11 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
     const result = await verifySecret(name);
     setVerified(result.ok);
     if (result.ok) {
-      setNote({ ok: true, message: (afterSave ? text("已保存 ✓ 验证通过", "Saved ✓ verified") : text("验证通过 ✓", "Verified ✓")) + " · " + result.detail });
+      setNote({ ok: true, message: afterSave ? text("已保存 ✓ 验证通过", "Saved ✓ verified") : text("验证通过 ✓", "Verified ✓"), detail: result.detail });
       return;
     }
     const why = (result.network ? text("网络不通（不是凭证的问题）：", "Network error (not the credential): ") : "") + result.detail;
-    setNote({ ok: false, message: (afterSave ? text("已保存，但验证失败：", "Saved, but verification FAILED: ") : text("验证失败：", "Verification failed: ")) + why });
+    setNote({ ok: false, message: afterSave ? text("已保存，但验证失败：", "Saved, but verification FAILED: ") : text("验证失败：", "Verification failed: "), detail: why });
   }
 
   async function save(next: string) {
@@ -66,7 +66,7 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
         setNote({ ok: true, message: text("已保存 ✓", "Saved ✓") });
       }
     } catch (err) {
-      setNote({ ok: false, message: text("保存失败: ", "Save failed: ") + errorMessage(err) });
+      setNote({ ok: false, message: text("保存失败: ", "Save failed: "), detail: errorMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -79,7 +79,7 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
       await probe(false);
     } catch (err) {
       setVerified(false);
-      setNote({ ok: false, message: text("验证失败：", "Verification failed: ") + errorMessage(err) });
+      setNote({ ok: false, message: text("验证失败：", "Verification failed: "), detail: errorMessage(err) });
     } finally {
       setBusy(null);
     }
@@ -130,7 +130,11 @@ export function SecretRow({ name, labelOverride, links = [], helper, placeholder
         )}
       </div>
       {helper && <p className="settings-helper">{helper}</p>}
-      {note && <p className={note.ok ? "settings-helper is-ok" : "settings-warning"} role={note.ok ? "status" : "alert"}>{note.message}</p>}
+      {note && (
+        <p className={note.ok ? "settings-helper is-ok" : "settings-warning"} role={note.ok ? "status" : "alert"}>
+          <span>{note.message}</span>{note.detail ? <span>{note.ok ? " · " : ""}{note.detail}</span> : null}
+        </p>
+      )}
     </div>
   );
 }

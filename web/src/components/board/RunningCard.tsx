@@ -15,7 +15,7 @@ import { parseSteers, queuedReasonLabel, summarizeSteers } from "../../steer";
 import type { TaskRow } from "../../types";
 import { cardAction, useSubmit, pendingNote } from "./boardActions";
 import { AiFixButton, CardDetails, CardHead, CardSurface, CopyCommandLine, DetailsToggle, ErrorLine, RelativeTime, RepoChip, TerminalButton } from "./cardChrome";
-import { BodyText, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
+import { BodyText, CopyButton, CopyPathLine, DodList, MetaLine, PlanList } from "./detailBlocks";
 import { ForkDialog } from "./ForkDialog";
 import { TextDialog } from "./TextDialog";
 
@@ -169,7 +169,10 @@ export function RunningCard({ row, isBlocked = false }: RunningCardProps) {
       <CardDetails cardId={row.id}>
         {(hasError || (isBlocked && row.last_error)) && (
           <>
-            <div className="card-detail-subheading">{text("错误全文", "Full error")}</div>
+            <div className="card-detail-subheading">
+              {text("错误全文", "Full error")}
+              <CopyButton value={String(errorText ?? row.last_error)} />
+            </div>
             <pre className="card-error-block">{errorText ?? row.last_error}</pre>
           </>
         )}

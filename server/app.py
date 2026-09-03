@@ -32,7 +32,8 @@
 - 问问助手（§27 / §54.4 左侧导航栏页）：GET /api/ask/history（只读 state/ask_history.json）、
   POST /api/ask {question}（子进程 ``python -m act.ask``，server/ask.py）；
   Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_setup.py）；
-  关于页 POST /api/uninstall/terminal（在 Terminal 跑 uninstall.sh 的 .command，server/uninstall_launch.py）。
+  关于页 POST /api/uninstall/terminal（在 Terminal 跑 uninstall.sh 的 .command，server/uninstall_launch.py）；
+  开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
   `/api/secrets/`）：精确命中先于前缀（`/api/settings/models` / `recap` 走自己的模块）。
 
@@ -56,7 +57,8 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
                     diagnostics, doctor_run, files, health, inbox_writer, lanes,
-                    materials, mcp_servers, paths, permissions, recaps, repair,
+                    maintainer_launch, materials, mcp_servers, paths, permissions,
+                    recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
                     settings_catalog, setup, slack_setup, terminal_launch,
                     uninstall_launch)
@@ -558,6 +560,8 @@ _POST_JSON_ROUTES = {
     "/api/ask": lambda ctx, payload: ask.ask(ctx.home, payload),
     # §68.6 关于页「在 Terminal 中卸载…」：.command + open，server 自己不删任何东西
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload),
+    # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读
+    "/api/maintainer/terminal": lambda ctx, payload: maintainer_launch.launch(ctx.home, payload),
 }
 
 _POST_PREFIX_ROUTES = {

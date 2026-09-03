@@ -5,7 +5,7 @@
 // web 自有区（模型 §59、通知 §28、素材库 §62、会议纪要 §63）插在语义最近的位置。已退役：菜单栏（D3）；
 // 同步 / 配对随 §31 syncd 面另议（§68.14），不在本页；「关于」是 sidebar 页（?page=about），不再重复。
 // 通用区由 server 目录驱动（CatalogSection，文案 server-owned）；页面级只做骨架：返回链接 + 标题 + 目录 + section 列表。
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import "../components/chrome/chrome.css";
 import "../components/settings/settings.css";
 import { CaptionsSection } from "../components/settings/CaptionsSection";
@@ -18,12 +18,14 @@ import { ModelsSection } from "../components/settings/ModelsSection";
 import { RecapSection } from "../components/settings/RecapSection";
 import { SkillsSection } from "../components/settings/SkillsSection";
 import { RecordingSection } from "../components/settings/RecordingSection";
+import { MaintainerExtras } from "../components/settings/MaintainerExtras";
 import { MaterialsSection } from "../components/settings/MaterialsSection";
 import { McpSection } from "../components/settings/McpSection";
 import { ObsidianSection } from "../components/settings/ObsidianSection";
 import { SlackSection } from "../components/settings/SlackSection";
 import { useI18n } from "../i18n";
 import { buildAppUrl, readAnchor } from "../route";
+import { useAppState } from "../store";
 
 /** 目录条目（id = section DOM id 的后缀；顺序 = 页面顺序 = 原生注册表顺序，web 自有区就近插入）。
  *  标题 zh / en 逐字镜像原生 SettingsSectionDescriptor（screen:settings.* 探针读这里）。 */
@@ -51,8 +53,46 @@ export const SETTINGS_TOC: Array<{ id: string; zh: string; en: string }> = [
   { id: "recap", zh: "会议纪要", en: "Recaps" },
 ];
 
+/** 原生 SettingsWeeklyDigest 的状态字：开关旁一句「已开启 / 已关闭」（读目录 effective） */
+function DigestStatus() {
+  const { text } = useI18n();
+  const { settingsCatalog } = useAppState();
+  const field = settingsCatalog?.sections.find((s) => s.id === "digest")?.fields.find((f) => f.key === "weekly_digest_enabled");
+  if (!field) return null;
+  return <p className="settings-helper">{field.effective === true ? text("已开启", "Enabled") : text("已关闭", "Disabled")}</p>;
+}
+
+/** 原生 Settings.swift 顶部的搜索框（⌘F 聚焦）：按区块正文过滤，全不匹配时说「无匹配设置」 */
+function filterSections(query: string): number {
+  const q = query.trim().toLowerCase();
+  let shown = 0;
+  document.querySelectorAll<HTMLElement>(".settings-page > .settings-section, .settings-page > div[id^='settings-']").forEach((el) => {
+    const hit = !q || (el.textContent ?? "").toLowerCase().includes(q);
+    el.hidden = !hit;
+    if (hit) shown += 1;
+  });
+  return shown;
+}
+
 export function SettingsPage() {
   const { text, language } = useI18n();
+  const [query, setQuery] = useState("");
+  const [shown, setShown] = useState<number | null>(null);
+
+  useEffect(() => {
+    setShown(filterSections(query));
+  }, [query, language]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        document.getElementById("settings-search")?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // ?anchor= 深链（字幕悬浮窗齿轮 → live_captions）：section 挂载后滚过去并高亮一下
   useEffect(() => {
@@ -75,6 +115,19 @@ export function SettingsPage() {
         <h2 className="settings-page-title">{text("设置", "Settings")}</h2>
         <span className="settings-helper">{text("写的是 state/settings_overrides.json，config.yaml 原样不动；等于 config 的值不落键。", "Writes state/settings_overrides.json and never edits config.yaml; a value equal to config leaves no key behind.")}</span>
       </div>
+      <div className="settings-search-row">
+        <input
+          id="settings-search"
+          type="search"
+          className="chrome-search settings-search"
+          placeholder={text("搜索设置（⌘F）", "Search settings (⌘F)")}
+          aria-label={text("搜索设置", "Search settings")}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        {query && <button type="button" className="btn btn-quiet" onClick={() => setQuery("")}>{text("清除", "Clear")}</button>}
+        {query && shown === 0 && <span className="settings-helper">{text("无匹配设置", "No matching settings")}</span>}
+      </div>
       <nav className="settings-toc" aria-label={text("设置目录", "Settings sections")}>
         {SETTINGS_TOC.map((entry) => (
           <a key={entry.id} href={`#settings-${entry.id}`}>{language === "zh" ? entry.zh : entry.en}</a>
@@ -94,11 +147,11 @@ export function SettingsPage() {
       <McpSection />
       <CatalogSection sectionId="approval" />
       <CatalogSection sectionId="flags" />
-      <CatalogSection sectionId="digest" />
+      <CatalogSection sectionId="digest" between={{ weekly_digest_enabled: <DigestStatus /> }} />
       <CatalogSection sectionId="voice" />
       <CatalogSection sectionId="redaction" />
       <CatalogSection sectionId="telemetry" />
-      <CatalogSection sectionId="maintainer" />
+      <CatalogSection sectionId="maintainer"><MaintainerExtras /></CatalogSection>
       <div id="settings-materials"><MaterialsSection /></div>
       {/* §63 会议纪要：会后自动出稿 / 默认语言 / Slack 草稿开关（默认关） */}
       <div id="settings-recap"><RecapSection /></div>
