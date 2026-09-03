@@ -1,4 +1,4 @@
-"""§62 每日维护——过时卡进回收站的确定性规则与保护罩（D10；Q4：45 天 + guards）。
+"""§65 每日维护——过时卡进回收站的确定性规则与保护罩（D10；Q4：45 天 + guards）。
 
 规则：deadline_passed / diagnostic_expired / superseded / idle；guards：不在两列、
 preset、user_titled、未来 deadline、同簇有 approved/executing/review 兄弟、提及

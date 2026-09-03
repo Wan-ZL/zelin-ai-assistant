@@ -130,7 +130,7 @@ registry:                              # 数据层真源（CONTRACT §53，owner
 archive:
   after_days: 30                       # 交付(delivered)卡最后活动超过 N 天自动封存进 archive。vnext 决议把 v0.20.0 的默认 0(off) 改为 30；设 0 = 恢复永不自动归档。只封存冷 delivered：带未来 deadline / cluster 内还有 open 兄弟卡 / 时间戳不可解析的卡一律不动
 
-daily_loop:                            # 每日自我改进循环（CONTRACT §62，owner 决策 D10/D12/D18）：actd 每天在 time 之后的第一个 pass 跑一次「先维护再提案」
+daily_loop:                            # 每日自我改进循环（CONTRACT §65，owner 决策 D10/D12/D18）：actd 每天在 time 之后的第一个 pass 跑一次「先维护再提案」
   enabled: true                        # false = 不整理、不提案（回滚开关）
   time: "03:30"                        # 本地时刻 HH:MM；到点后的第一个 pass 解锁，一天只跑一次（标记 state/daily_loop.json）
   max_proposals_per_day: 5             # 每天新开 🤖 提案卡上限（web 设置页可改；0 = 只维护不提案）

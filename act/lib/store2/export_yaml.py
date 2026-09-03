@@ -61,7 +61,7 @@ FIELD_DEFAULTS = {
     "former_titles": None, "preset": None,
     "work_id": None,          # §60（D21）工作编号；None = 未批准/legacy
     "assessment": None,       # §64 AI 摘要 + 评语（dict）；None = 未评
-    "merged_from": None,      # §62 每日整理合成卡的来源主键列表；None = 非合成卡
+    "merged_from": None,      # §65 每日整理合成卡的来源主键列表；None = 非合成卡
 }
 
 # import 期 fail-fast：registry 加了字段而这里漏补默认值 = 迁移静默丢字段。

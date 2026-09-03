@@ -61,7 +61,7 @@ export interface AppState {
   filters: CardFilters;           // 过滤 chips + ⌘F 搜索（G4：URL query 是唯一持久化，taskFilters.ts）
   models: ModelsSettings | null;  // GET /api/settings/models 最近快照（§59 设置页「模型」）
   claudeCodeDefault: ClaudeCodeDefault | null; // GET /api/claude-code/default-model（follow 继承的全局默认）
-  dailyLoop: DailyLoopSettings | null; // GET /api/settings/daily-loop 最近快照（§62 设置页「每日整理」）
+  dailyLoop: DailyLoopSettings | null; // GET /api/settings/daily-loop 最近快照（§65 设置页「每日整理」）
   dailyLoopError: string | null;       // 该 section 读失败的用户可读文案（成功后清空）
   settingsError: string | null;   // 设置页读失败的用户可读文案（成功后清空；保存失败由页面 toast）
   materials: MaterialsList | null; // GET /api/materials/list?status=open 最近快照（§62 设置页「素材库」）
@@ -276,7 +276,7 @@ export async function setClaudeCodeDefaultModel(model: string): Promise<string |
   return receipt.backup;
 }
 
-// ----- settings（§62 每日整理） -------------------------------------------- #
+// ----- settings（§65 每日整理） -------------------------------------------- #
 
 /** 拉设置页「每日整理」的快照；读失败落 dailyLoopError（与「模型」section 互不连坐） */
 export async function refreshDailyLoop(): Promise<void> {

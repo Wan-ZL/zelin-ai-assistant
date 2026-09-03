@@ -1,4 +1,4 @@
-// 设置页（CONTRACT §59；?page=settings 深链，顶栏齿轮入口）。section：「模型」（D22，§59）、「素材库」（D11，§62）、「会议纪要」（§63）、「每日整理」（D10，§65）。
+// 设置页（CONTRACT §59；?page=settings 深链，顶栏齿轮入口）。section：「模型」（D22，§59）、「素材库」（D11，§65）、「会议纪要」（§63）、「每日整理」（D10，§65）。
 // 页面级只做骨架：返回链接 + 标题 + section 列表；每个 section 自己拉自己的数据（经 store action）。
 // 后续 P4 补齐的设置区（Gmail/Slack/录制/telemetry…）逐个加 section，别在这里堆 useState。
 import "../components/chrome/chrome.css";

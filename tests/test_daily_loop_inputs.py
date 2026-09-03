@@ -1,4 +1,4 @@
-"""§62 每日提案器的输入读取器：读台账不读 traceback，外来文本过围栏，D18 分流。
+"""§65 每日提案器的输入读取器：读台账不读 traceback，外来文本过围栏，D18 分流。
 
 每个读取器一段：registry execution 块 / analytics 风暴 / radar_failed 放弃 /
 写风暴 / actd.log 刷屏 / install_report fail / launchd 日志故障形状 / doctor
@@ -250,22 +250,58 @@ class PrSignalsTestCase(unittest.TestCase):
 
 
 class MaterialsSignalsTestCase(unittest.TestCase):
-    def test_event_log_and_snapshot_shapes_derive_status_from_the_last_row(self):
+    """§62 台账消费：new / picked_up 成信号，proposal_created / done / dismissed 不再；
+    抓取经注入缝（零出网）；回写 picked_up / proposal_created + links.proposal_id。"""
+
+    def _ledger(self, d):
+        from act.lib import materials
+        path = Path(d) / "materials.jsonl"
+        a = materials.add(path, url="https://youtu.be/abc", note="dedup idea")
+        b = materials.add(path, note="snapshot row only")
+        c = materials.add(path, url="https://x.y/z")
+        materials.transition(path, c["id"], "picked_up")
+        done = materials.add(path, url="https://done")
+        materials.transition(path, done["id"], "picked_up")
+        materials.transition(path, done["id"], "proposal_created", links={"proposal_id": "P-9"})
+        gone = materials.add(path, note="never mind")
+        materials.transition(path, gone["id"], "dismissed")
+        return path, a, b, c
+
+    def test_new_and_picked_up_items_become_signals_with_fetched_titles(self):
+        fetched = []
+
+        def fake_fetch(url):
+            fetched.append(url)
+            return {"url": url, "title": "How to dedup cards", "text": "body", "error": None}
+
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "materials.jsonl"
-            p.write_text("\n".join([
-                json.dumps({"id": "m-1", "ts": "2026-09-01T00:00:00Z", "event": "new",
-                            "url": "https://youtu.be/abc", "note": "dedup idea"}),
-                json.dumps({"id": "m-1", "ts": "2026-09-02T00:00:00Z", "event": "proposal_created", "card": "P-9"}),
-                json.dumps({"id": "m-2", "ts": "2026-09-01T00:00:00Z", "event": "new", "url": "https://x.y/z"}),
-                json.dumps({"id": "m-3", "url": "https://q", "note": "snapshot row", "status": "new"}),
-                json.dumps({"id": "m-4", "url": "https://done", "status": "done"}),
-                "garbage",
-            ]), encoding="utf-8")
-            sigs = loop_inputs.materials_signals(p)
-        self.assertEqual(sorted(s.fingerprint for s in sigs), ["material:m-2", "material:m-3"])
-        self.assertTrue(all(sanitize.UNTRUSTED_OPEN in s.evidence for s in sigs))
-        self.assertEqual(loop_inputs.materials_signals(Path("/nonexistent.jsonl")), [])
+            path, a, b, c = self._ledger(d)
+            sigs = loop_inputs.materials_signals(path, fetch=fake_fetch)
+        by = {s.fingerprint: s for s in sigs}
+        self.assertEqual(set(by), {f"material:{a['id']}", f"material:{b['id']}", f"material:{c['id']}"})
+        self.assertEqual(sorted(fetched), ["https://x.y/z", "https://youtu.be/abc"])   # no URL → no fetch
+        self.assertEqual(by[f"material:{a['id']}"].title, "消化素材：How to dedup cards")
+        self.assertEqual(by[f"material:{b['id']}"].title, "消化素材：snapshot row only")
+        self.assertTrue(all(sanitize.UNTRUSTED_OPEN in s.evidence for s in sigs))   # prompt_block fences
+        self.assertIn("body", by[f"material:{a['id']}"].evidence)
+
+    def test_mark_materials_writes_back_and_isolates_failures(self):
+        from act.lib import materials
+        with tempfile.TemporaryDirectory() as d:
+            path, a, b, c = self._ledger(d)
+            out = loop_inputs.mark_materials([a["id"], b["id"], c["id"], "m-000000000000"],
+                                             {a["id"]: "P-77"}, path)
+            self.assertEqual(out, {"picked_up": 2, "proposal_created": 1, "errors": 1})
+            self.assertEqual(materials.get(path, a["id"])["status"], "proposal_created")
+            self.assertEqual(materials.get(path, a["id"])["links"], {"proposal_id": "P-77"})
+            self.assertEqual(materials.get(path, b["id"])["status"], "picked_up")
+            self.assertEqual(materials.get(path, c["id"])["status"], "picked_up")   # idempotent
+            # a is no longer pending; b and c come back next round until proposed
+            again = loop_inputs.materials_signals(path, fetch=lambda u: {})
+            self.assertEqual({s.fingerprint for s in again}, {f"material:{b['id']}", f"material:{c['id']}"})
+
+    def test_missing_ledger_is_quiet(self):
+        self.assertEqual(loop_inputs.materials_signals(Path("/nonexistent/materials.jsonl"), fetch=lambda u: {}), [])
 
 
 if __name__ == "__main__":

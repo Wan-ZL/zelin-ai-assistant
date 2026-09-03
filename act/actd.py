@@ -2291,7 +2291,7 @@ def _parse_iso(ts: Optional[str]) -> Optional[_dt.datetime]:
 
 def purge_trash(cfg: config.Config) -> int:
     """Hard-delete trashed items past their retention window (§9; skips
-    ``permanent``; ``retention_days <= 0`` disables). §62: loop-trashed rows
+    ``permanent``; ``retention_days <= 0`` disables). §65: loop-trashed rows
     get a longer window — maintenance.purge_due is the one judge shared with
     the §40.5 countdown. A single bad item never aborts the pass."""
     if not maintenance.purge_enabled(cfg):
@@ -3493,7 +3493,7 @@ def _refresh_model_knobs(cfg: config.Config) -> None:
     """§59（D22）：把两把模型旋钮从磁盘现读到启动时冻结的 cfg 上——每 pass 一次，
     web 设置页保存后下一 pass 生效、无需重启（雷达/ask/判官/digest 是独立进程，
     本来就每次现读）。做法同 ``auto_resume`` 的现读判定（§16 追记）：只刷这几个
-    字段，其余 startup-frozen 语义不动；§62 的五把每日循环旋钮同一刷新点。"""
+    字段，其余 startup-frozen 语义不动；§65 的五把每日循环旋钮同一刷新点。"""
     try:
         fresh = config.load_config()
     except Exception:  # noqa: BLE001 - 坏 config 不影响本 pass 的其它工作
@@ -3538,7 +3538,7 @@ def run_once(
     purge_trash(cfg)
     _sweep_triage_snapshots()   # §34bis: 收不到割的快照侧文件按 pass 清扫
     archive_stale(cfg)       # §4/W1.c: 冷 delivered 卡自动封存（默认 30 天，0=off）
-    daily_loop.tick(cfg, interval=interval)   # §62: 到点跑一次「先维护再提案」，自吞异常
+    daily_loop.tick(cfg, interval=interval)   # §65: 到点跑一次「先维护再提案」，自吞异常
     cleanup_merge_jobs()     # §21: TTL sweep + fail stuck 'analyzing' jobs
     try:
         # §44: execute same-thing verdicts in THIS thread (the daemon is the single merge

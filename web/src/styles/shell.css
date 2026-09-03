@@ -385,7 +385,7 @@
   color: var(--warning);
 }
 
-/* 每日整理横幅（MaintenanceBanner，§62）的 info 变体：不是报警，是「服务在干活」
+/* 每日整理横幅（MaintenanceBanner，§65）的 info 变体：不是报警，是「服务在干活」
    的一行回执——accent 软底、accent 标题，与两条红/橙横幅一眼分得开 */
 .shell-banner.is-info {
   background: var(--accent-soft);

@@ -1,4 +1,4 @@
-// 每日整理横幅（CONTRACT §62，owner 决策 D10 的设计判断：不弹系统通知，看板顶部留一行）。
+// 每日整理横幅（CONTRACT §65，owner 决策 D10 的设计判断：不弹系统通知，看板顶部留一行）。
 // 数据源 = board.maintenance（dashboard add-only 顶层键，actd 在循环起止各写一次 → board.updated → 重拉）。
 // 两种话：
 //   running — phase ≠ idle 且 started_at 在 2 小时内（更久 = 上次崩在半路，投影不诚实就不说）：「正在整理看板…」；

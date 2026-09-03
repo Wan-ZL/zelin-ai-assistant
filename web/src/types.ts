@@ -276,7 +276,7 @@ export interface DeployState {
 }
 
 /**
- * §62 每日自我改进循环的投影（dashboard add-only 顶层键 maintenance；act/lib/daily_loop.projection）。
+ * §65 每日自我改进循环的投影（dashboard add-only 顶层键 maintenance；act/lib/daily_loop.projection）。
  * phase 已知值：idle | dedup | stale_sweep | proposals（未知值按「在跑」显示）；时间全是 epoch 秒或 null。
  * last_result 是最近一次运行的计数：合并 N 张、清理 M 张（回收站可撤销）、提案 K 张、非 owner issue 摘要、阶段错误数。
  */
@@ -435,7 +435,7 @@ export interface ClaudeCodeDefault {
   [key: string]: unknown;
 }
 
-/** GET/PUT /api/settings/daily-loop（CONTRACT §62，D10）：server/settings.py daily_loop_snapshot 的 wire 形逐字镜像。
+/** GET/PUT /api/settings/daily-loop（CONTRACT §65，D10）：server/settings.py daily_loop_snapshot 的 wire 形逐字镜像。
  *  time = 本地 HH:MM；三个天数/张数都是非负整数（0 = 关掉那一项）；source = 每个字段的生效来源 override|config|default */
 export interface DailyLoopSettings {
   enabled: boolean;

@@ -1,4 +1,4 @@
-// 设置页 section「每日整理」（CONTRACT §62，owner 决策 D10）。
+// 设置页 section「每日整理」（CONTRACT §65，owner 决策 D10）。
 // 五把旋钮：开关 / 解锁时刻（本地 HH:MM）/ 每天最多几张 🤖 提案（默认 5）/ 过时天数 / 循环卡回收站保留天数。
 // 数据经 store（refreshDailyLoop / saveDailyLoop）；这里只存草稿 + toast。保存 = 一次 PUT 改动过的键；
 // server 校验失败（400 INVALID_FIELD 等）的整句原文以 toast 显示。下一个 actd pass 生效，无需重启。

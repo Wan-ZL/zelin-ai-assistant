@@ -1,4 +1,4 @@
-"""§62 循环运行：一天一次、先维护再提案、阶段失败隔离、审计行 + 投影键 maintenance。
+"""§65 循环运行：一天一次、先维护再提案、阶段失败隔离、审计行 + 投影键 maintenance。
 
 假时钟 + 假 gh + 假 doctor + fixture registry；actd.run_once 的挂点用 mock 钉住。
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py)。
@@ -43,6 +43,8 @@ class _Sandbox(unittest.TestCase):
             p.unlink()
         daily_loop.state_path().unlink(missing_ok=True)
         daily_loop.log_path().unlink(missing_ok=True)
+        from act.lib import loop_inputs
+        loop_inputs.materials_path().unlink(missing_ok=True)
         self.cfg = config.Config()
 
 
@@ -112,6 +114,24 @@ class RunTestCase(_Sandbox):
         self.assertEqual(entry["inputs"]["doctor"], 1)
         self.assertEqual(entry["inputs"]["issues"], 0)          # gh unavailable → 0 signals, no crash
         self.assertIn("gh_title", entry["skipped"])
+
+    def test_material_gets_proposed_and_the_ledger_is_written_back(self):
+        from act.lib import loop_inputs, materials
+        path = loop_inputs.materials_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+        item = materials.add(path, url="https://example.com/talk", note="borrow the dedup idea")
+        with mock.patch.object(materials, "fetch", return_value={"url": item["url"], "title": "Talk", "text": "t", "error": None}):
+            result = daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=lambda: "[]")
+        self.assertEqual(result["proposals"], 1)
+        card = registry.load(result["filed"][0]["id"])
+        self.assertEqual(card.sources[0]["ref"], f"self_improve:material:{item['id']}")
+        rec = materials.get(path, item["id"])
+        self.assertEqual(rec["status"], "proposal_created")
+        self.assertEqual(rec["links"]["proposal_id"], card.id)
+        entry = json.loads(daily_loop.log_path().read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(entry["inputs"]["materials"], 1)
+        path.unlink(missing_ok=True)
 
     def test_second_run_same_day_does_not_repropose(self):
         daily_loop.run(self.cfg, now=NOW, gh=_gh_none, doctor=_doctor_fail)

@@ -1,4 +1,4 @@
-"""daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §62；R2.4；owner D10/D12/D18）。
+"""daily_loop — 每日自我改进循环：先维护，再提案（CONTRACT §65；R2.4；owner D10/D12/D18）。
 
 一句话：每天固定时段（`daily_loop.time`，默认 03:30 本地）在 actd 的 pass 里
 跑一次——**先**整理看板（act/lib/maintenance：提案列 + 潜在任务列去重合成、
@@ -344,9 +344,23 @@ def _propose(cfg, now: _dt.datetime, gh, doctor, state: dict, interval) -> dict:
     filed = file_proposals(chosen, today, str(config.HOME))
     ledger.update({row["fingerprint"]: today for row in filed if "id" in row})
     state["fingerprints"] = ledger
-    return {"filed": filed, "skipped": skipped, "budget": budget,
+    materials_marked = _mark_materials(collected["signals"], filed)
+    return {"filed": filed, "skipped": skipped, "budget": budget, "materials": materials_marked,
             "summaries": [{"kind": s.kind, "text": s.text, "ref": s.ref} for s in collected["summaries"]],
             "inputs": collected["inputs"], "signals": len(collected["signals"])}
+
+
+def _material_id(fingerprint: str) -> Optional[str]:
+    prefix = "material:"
+    return fingerprint[len(prefix):] if fingerprint.startswith(prefix) else None
+
+
+def _mark_materials(signals: list, filed: list) -> dict:
+    """§62 台账回写：本轮读过的素材 → picked_up，铸了卡的 → proposal_created。"""
+    picked = [mid for mid in (_material_id(s.fingerprint) for s in signals) if mid]
+    cards = {mid: row["id"] for row in filed if "id" in row
+             for mid in [_material_id(row["fingerprint"])] if mid}
+    return loop_inputs.mark_materials(picked, cards) if picked else {}
 
 
 def run(cfg, *, now: Optional[_dt.datetime] = None, gh: Optional[Callable] = None,

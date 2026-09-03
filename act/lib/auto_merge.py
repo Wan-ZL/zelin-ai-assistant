@@ -96,7 +96,7 @@ def _contacts(req) -> set:
 
 
 def _merge_lineage(a, b) -> bool:
-    """§62 daily-merge lineage: a card the owner RESTORED out of a daily merge
+    """§65 daily-merge lineage: a card the owner RESTORED out of a daily merge
     is deliberately separate from the synthesized card it came from — never
     suggest folding it back (same doctrine as split_from)."""
     return (b.id in (getattr(a, "merged_from", None) or [])
@@ -120,7 +120,7 @@ def linked(a, b) -> bool:
     """Deliberately-related cards (lineage/thread/split/daily-merge) are never
     duplicate noise. Split lineage is CRITICAL: a just-split card's text ≈ its
     origin note by construction — suggesting the merge back would undo the
-    undo (review blocker 7). Public since §62 (防腐 #2: silent_merge and
+    undo (review blocker 7). Public since §65 (防腐 #2: silent_merge and
     maintenance call it)."""
     return (_lineage_linked(a, b)
             or _both_equal(getattr(a, "thread_id", None), getattr(b, "thread_id", None))

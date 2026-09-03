@@ -1,4 +1,4 @@
-"""§62 每日提案器：≤ max_proposals_per_day 张 🤖 卡、指纹去重、每 class 一条、
+"""§65 每日提案器：≤ max_proposals_per_day 张 🤖 卡、指纹去重、每 class 一条、
 GitHub 同题不重提、卡片形状（channel self_improve 写死 → proposed，plan/DoD/成本齐）。
 
 Runs entirely inside the sandbox AIASSISTANT_HOME (tests/__init__.py)。

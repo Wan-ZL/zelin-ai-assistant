@@ -357,7 +357,7 @@ def _purge_at(req: Requirement, cfg: config.Config) -> Optional[str]:
     None (key emitted as null) when the row is pinned, retention is disabled
     (``trash_retention_days <= 0``), or ``trashed_at`` doesn't parse — EXACTLY
     the conditions under which actd.purge_trash skips the row, so the countdown
-    never promises a purge that isn't coming. §62: one judge for both sides
+    never promises a purge that isn't coming. §65: one judge for both sides
     (maintenance.purge_at / purge_due) — loop-trashed rows (stale:* /
     daily-merge:*) carry their own, longer retention."""
     return maintenance.purge_at(req, cfg)
@@ -1229,7 +1229,7 @@ def build_dashboard(
     if label:
         dash["device_label"] = label
     # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的加法
-    # 约定：文件缺失或读不了 = 整键不存在）；§62 同款 maintenance（每日整理投影）。
+    # 约定：文件缺失或读不了 = 整键不存在）；§65 同款 maintenance（每日整理投影）。
     deploy_state.attach(dash)
     daily_loop.attach(dash, cfg)   # §65 add-only 顶层键 maintenance（每日整理投影）
     return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）

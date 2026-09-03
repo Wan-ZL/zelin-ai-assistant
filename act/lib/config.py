@@ -100,7 +100,7 @@ OUTPUT_FORMATS: tuple = ("markdown", "html")
 # from the state/digest.json marker, not pinned to a weekday.
 DIGEST_FREQUENCIES: tuple = ("off", "daily", "every2days", "weekly")
 DEFAULT_DIGEST_FREQUENCY: str = "off"
-# §62 每日自我改进循环解锁时刻（本地 HH:MM；owner 机器夜里 03:30 无人用板）。
+# §65 每日自我改进循环解锁时刻（本地 HH:MM；owner 机器夜里 03:30 无人用板）。
 # 形状由 coerce_clock_time 归一；坏值回落默认，绝不让循环因 typo 永不解锁。
 DEFAULT_DAILY_LOOP_TIME: str = "03:30"
 CLOCK_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -291,7 +291,7 @@ class Config:
     # docs/design/vnext-amendments.md §W1.c。
     archive_after_days: int = 30
 
-    # §62 每日自我改进循环（owner 决策 D10）：actd pass 内每天一次「先维护再
+    # §65 每日自我改进循环（owner 决策 D10）：actd pass 内每天一次「先维护再
     # 提案」。time = 本地 HH:MM 解锁时刻；max_proposals_per_day 默认 5（设置里
     # 可改）；stale_days = 提案/潜在任务列无活动多少天判过时（Q4：45 + 保护罩）；
     # trash_retention_days = 循环自动扔进回收站的卡（`stale:*` / `daily-merge:*`）
@@ -522,7 +522,7 @@ def _apply_recap_block(cfg: "Config", data: dict) -> None:
     cfg.recap_slack_draft_enabled = _bool_or(
         draft.get("enabled", cfg.recap_slack_draft_enabled), cfg.recap_slack_draft_enabled)
 def coerce_clock_time(value) -> str:
-    """§62 `daily_loop.time`：本地 HH:MM（"3:30" 归一为 "03:30"）；其余形状
+    """§65 `daily_loop.time`：本地 HH:MM（"3:30" 归一为 "03:30"）；其余形状
     ValueError——yaml 路径经 _clock_or 回落默认，overrides 路径 per-entry 跳过。
     server/settings.py 镜像同一正则（tests/test_server_paths_mirror.py 钉）。"""
     if not isinstance(value, str):
@@ -551,7 +551,7 @@ def _nonneg_int(value) -> int:
 
 
 def _apply_daily_loop_block(cfg: "Config", data: dict) -> None:
-    """§62 config.yaml `daily_loop:` 块 → cfg（坏值保留默认；负数按 0 = 关）。
+    """§65 config.yaml `daily_loop:` 块 → cfg（坏值保留默认；负数按 0 = 关）。
     独立函数：load_config 的圈复杂度账本已在上限之外，这里一条调用零分支。"""
     blk = _dict_or(data.get("daily_loop"))
     cfg.daily_loop_enabled = _bool_or(blk.get("enabled"), cfg.daily_loop_enabled)
@@ -759,7 +759,7 @@ def load_config() -> Config:
         archive.get("after_days", cfg.archive_after_days),
         cfg.archive_after_days,
     )
-    _apply_daily_loop_block(cfg, data)   # §62（无分支：load_config 账本在上限之外）
+    _apply_daily_loop_block(cfg, data)   # §65（无分支：load_config 账本在上限之外）
 
     # §17 (D19) digest cadence. The legacy `digest.weekly: monday` key that
     # config.example.yaml carried for years was never read by any code —
@@ -1102,7 +1102,7 @@ _OVERRIDE_FIELDS: dict = {
     "recap_slack_draft_enabled": _coerce_bool,
     # §64 (#128): 待验收卡 AI 摘要 + 完成度评语开关（diff-write 同款；默认 true）。
     "card_summary_enabled": _coerce_bool,
-    # §62 (D10): the daily self-improvement loop's knobs — web Settings「每日
+    # §65 (D10): the daily self-improvement loop's knobs — web Settings「每日
     # 整理」writes these flat keys via server/settings.py (diff-write, same
     # semantics as the model knobs). Bad shapes raise → per-entry skip.
     "daily_loop_enabled": _coerce_bool,

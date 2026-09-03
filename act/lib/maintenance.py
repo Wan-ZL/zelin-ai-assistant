@@ -1,4 +1,4 @@
-"""maintenance — 每日维护：提案列 / 潜在任务列的去重合并 + 过时卡进回收站（CONTRACT §62）。
+"""maintenance — 每日维护：提案列 / 潜在任务列的去重合并 + 过时卡进回收站（CONTRACT §65）。
 
 Owner 决策 D10（docs/design/vnext2-plan.md）：
 

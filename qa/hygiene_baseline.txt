@@ -19,7 +19,7 @@ docstring:act/radar.py 1
 docstring:act/report.py 1
 docstring:server/__main__.py 1
 docstring:server/sse.py 1
-file-lines:act/actd.py 3658
+file-lines:act/actd.py 3653
 func-lines:act/actd.py::_apply_decision 457
-func-lines:act/lib/dashboard.py::build_dashboard 485
-func-lines:act/lib/dashboard.py::build_dashboard._project 365
+func-lines:act/lib/dashboard.py::build_dashboard 479
+func-lines:act/lib/dashboard.py::build_dashboard._project 359

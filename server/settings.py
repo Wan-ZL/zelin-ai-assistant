@@ -14,7 +14,7 @@ Two things, both stdlib (+ optional PyYAML for reading config.yaml):
    other key in the file is preserved byte-for-byte as JSON. The pipeline
    (act/lib/config.py ``_OVERRIDE_FIELDS``) reads the same two keys.
 
-3. **The daily self-improvement loop's knobs** (CONTRACT §62, D10) —
+3. **The daily self-improvement loop's knobs** (CONTRACT §65, D10) —
    ``GET/PUT /api/settings/daily-loop``: ``enabled`` / ``time`` (local HH:MM)
    / ``max_proposals_per_day`` / ``stale_days`` / ``trash_retention_days``,
    same layered read (override ``daily_loop_<field>`` → config.yaml
@@ -67,7 +67,7 @@ MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
 # settings_overrides.json flat keys the pipeline reads (config._OVERRIDE_FIELDS)
 OVERRIDE_KEY = "models_%s"
 
-# ---- §62 daily loop knobs — mirrors of act/lib/config.py (drift-pinned) ---- #
+# ---- §65 daily loop knobs — mirrors of act/lib/config.py (drift-pinned) ---- #
 DAILY_LOOP_FIELDS = ("enabled", "time", "max_proposals_per_day", "stale_days",
                      "trash_retention_days")
 DAILY_LOOP_DEFAULTS = {"enabled": True, "time": "03:30", "max_proposals_per_day": 5,
@@ -128,7 +128,7 @@ def noncanonical_warning(mode: str, value: str) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------- #
-# §62 daily loop knob validation (mirror of config._coerce_bool / coerce_clock_time
+# §65 daily loop knob validation (mirror of config._coerce_bool / coerce_clock_time
 # / _nonneg_int — the strict, overrides-path shapes)
 # --------------------------------------------------------------------------- #
 def coerce_bool(value) -> bool:

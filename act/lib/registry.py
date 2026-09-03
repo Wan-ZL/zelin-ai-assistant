@@ -310,7 +310,7 @@ OPTIONAL_ORDER = [
     # {summary, verdict, verdict_reason, at, source_hash | error}，只由
     # act/lib/card_summary.py 在 actd 写者线程里落；**只是建议**，永不改 status。
     "assessment",
-    # §62 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
+    # §65 每日整理的合并血缘（merged_into 的反向）：合成新卡时记下被并入的
     # 旧卡主键列表；旧卡进回收站（reason `daily-merge: 并入 <new>`）、可恢复。
     # 只在合成卡上出现；空列表整键省略。
     "merged_from",
@@ -393,7 +393,7 @@ class Requirement:
 
     # §64 AI 摘要 + 评语（见 OPTIONAL_ORDER 注）。None = 还没评 / 不是 review 卡。
     assessment: Optional[dict] = None
-    # §62 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
+    # §65 每日整理合成卡的来源卡主键列表（merged_into 的反向指针；lineage 只指
     # 主键）。None/[] = 不是合成卡。
     merged_from: Optional[list] = None
 
@@ -1520,7 +1520,7 @@ def capture_source(who: str, channel: str, quote: str,
 def dedupe_sources(existing: list, incoming: list) -> tuple[list, int]:
     """Append incoming sources not already present. Returns (merged, added_count).
 
-    Public since §62 (防腐 #2：跨模块引用 `_私名` = 当场升 public)——the
+    Public since §65 (防腐 #2：跨模块引用 `_私名` = 当场升 public)——the
     fold/merge sites in actd, quick_capture, silent_merge and maintenance all
     union sources through this one key."""
     def key(s: dict) -> tuple:

@@ -21,9 +21,12 @@
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+- 每日整理面（§65）：GET/PUT /api/settings/daily-loop（五把旋钮，同一
+  diff-write 语义），server/settings.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
-localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）。
+localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）、
+§65（每日整理设置面）。
 """
 from __future__ import annotations
 
@@ -398,12 +401,6 @@ _GET_JSON_ROUTES = {
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
 }
 
-# PUT 设置面（§59 / §62）：表驱动，同 GET/POST
-_PUT_JSON_ROUTES = {
-    "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
-    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
-}
-
 _POST_JSON_ROUTES = {
     "/api/actions": _post_actions,
     "/api/reveal": _post_reveal,
@@ -422,6 +419,8 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+    # §65 每日自我改进循环的五把旋钮（同一 diff-write 语义）
+    "/api/settings/daily-loop": lambda ctx, payload: settings.update_daily_loop(ctx.home, payload),
 }
 
 

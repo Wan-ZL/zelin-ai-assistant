@@ -190,7 +190,7 @@ export function putModelsSettings(body: { dispatch?: string; pipeline?: string }
   return request<ModelsSettings>("/api/settings/models", { method: "PUT", body: JSON.stringify(body) });
 }
 
-/** GET /api/settings/daily-loop — 每日自我改进循环的五把旋钮 effective 值（CONTRACT §62） */
+/** GET /api/settings/daily-loop — 每日自我改进循环的五把旋钮 effective 值（CONTRACT §65） */
 export function fetchDailyLoopSettings(signal?: AbortSignal): Promise<DailyLoopSettings> {
   return request<DailyLoopSettings>("/api/settings/daily-loop", { signal });
 }
