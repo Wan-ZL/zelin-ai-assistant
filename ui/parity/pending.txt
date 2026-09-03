@@ -1,4 +1,4 @@
-# ui/parity/pending.txt —— 尚未搬到 web 的原生 UI 条目（shrink-only，CONTRACT §62.2）。
+# ui/parity/pending.txt —— 尚未搬到 web 的原生 UI 条目（shrink-only，CONTRACT §63.2）。
 # 只许缩：新缺项 FAIL（补实现，不许记账）；已补齐仍挂账 FAIL（划掉这行）。
 # 每行：<inventory-id>。重铸：python3 scripts/ui/parity_check.py --write-pending（清账轮以外别用）。
 control:about:alert-button:ok

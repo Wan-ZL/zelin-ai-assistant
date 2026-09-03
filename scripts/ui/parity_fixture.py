@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""web/src/parity.test.tsx 用的 demo fixture（docs/CONTRACT.md §62.2）。
+"""web/src/parity.test.tsx 用的 demo fixture（docs/CONTRACT.md §63.2）。
 
 vitest 跑在 jsdom 里，拿不到 python 与 server，所以把 scripts/demo_seed.py 的
 `initial` 场景（固定 now，确定性）连同 server/lanes.py 的列目录落成两份 JSON：

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UI 对齐契约的共用件：Swift 源扫描原语 + 账本/JSON 落盘（docs/CONTRACT.md §62）。
+"""UI 对齐契约的共用件：Swift 源扫描原语 + 账本/JSON 落盘（docs/CONTRACT.md §63）。
 
 三支脚本共用：scripts/ui/extract_native_inventory.py（原生 UI 清单）、
 scripts/ui/extract_native_tokens.py（设计 token）、scripts/ui/parity_check.py

@@ -1,9 +1,10 @@
-// 视觉基线（CONTRACT §62.4）：每个 web 页面 × light / dark 各一张 1440×900 截图，与
+// 视觉基线（CONTRACT §63.4）：每个 web 页面 × light / dark 各一张 1440×900 截图，与
 // web/e2e/__screenshots__/visual.spec.ts/*.png 的 golden 比对（2% 像素差以内算同一张）。
 // 数据 = scripts/demo_seed.py 的 initial 场景（全虚构），server 起在随机端口（demoServer.ts）。
 // 改 UI 的 PR 必须显式更新 golden（npm run visual:update）并在 PR 里说明——CI job
 // "Web visual (playwright)" 出生时 informational，不挡合并。
-// 遮罩：新鲜度 / 部署标签是时间文案（每秒漂移），不参与比对。
+// 遮罩：新鲜度 / 部署标签是时间文案（每秒漂移）；设置页里 ~/.claude/settings.json 的路径随
+// 临时 HOME 每次不同——三者不参与比对。
 import { expect, test, type Page } from "@playwright/test";
 import { startDemoServer, type DemoServer } from "./demoServer";
 
@@ -42,7 +43,11 @@ for (const { name, query } of PAGES) {
     test(`${name} · ${theme}`, async ({ page }) => {
       await openPage(page, query, theme);
       await expect(page).toHaveScreenshot(`${name}-${theme}.png`, {
-        mask: [page.locator(".shell-freshness"), page.locator(".shell-deploy")],
+        mask: [
+          page.locator(".shell-freshness"),
+          page.locator(".shell-deploy"),
+          page.locator(".settings-global-path"),
+        ],
       });
     });
   }

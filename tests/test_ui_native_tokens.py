@@ -1,4 +1,4 @@
-"""§62.3 设计 token 单源：scripts/ui/extract_native_tokens.py 的判例。
+"""§63.3 设计 token 单源：scripts/ui/extract_native_tokens.py 的判例。
 
 迷你 mac/Sources 钉住：语义色用量 → macOS light/dark 解析值、叠层比例键名、字号梯、
 间距/圆角取值集、layout 定点（找不到即 fail-loud）、CSS 块的生成 / 替换 / 幂等、CLI 三态。

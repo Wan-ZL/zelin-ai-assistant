@@ -1,4 +1,4 @@
-"""§62 UI 对齐契约：Swift 源扫描原语（scripts/ui/ui_common.py）的判例。
+"""§63 UI 对齐契约：Swift 源扫描原语（scripts/ui/ui_common.py）的判例。
 
 三视图等长、注释与字符串互不干扰、插值整体留在字符串里、括号树的调用链能认出
 `Button { } label: { Text(L()) }` 这种 trailing-closure 结构——清单提取器的一切

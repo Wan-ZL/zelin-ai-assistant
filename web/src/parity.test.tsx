@@ -1,4 +1,4 @@
-// UI 对齐判例（CONTRACT §62.2）—— 由 ui/parity/native-inventory.json 驱动，不手写列表。
+// UI 对齐判例（CONTRACT §63.2）—— 由 ui/parity/native-inventory.json 驱动，不手写列表。
 // 原生 mac/Sources（D3 冻结）的每个 gated `control:*` 条目在这里变成一条 it()：
 //   · 不在 pending/waivers 上 → 断言标签「在」：用 demo fixture 渲染看板 / 回收站 / 设置页
 //     （zh 与 en 各一遍）+ 把每颗按钮点一遍收集弹窗文案，按 accessible name / 自身文本精确匹配；

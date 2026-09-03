@@ -53,9 +53,11 @@ export async function startDemoServer(scene = "initial"): Promise<DemoServer> {
   });
   if (seed.status !== 0) throw new Error(`demo_seed.py failed: ${seed.stderr || seed.stdout}`);
   const port = await freePort();
+  // HOME 也指向临时目录：设置页读 ~/.claude/settings.json（§59 全局默认）——golden 不许带上
+  // 开发者机器的真实路径 / 模型名，CI runner 上也没有这个文件，两边一致 = 「文件不存在」态。
   const child = spawn(PYTHON, ["-m", "server"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: REPO_ROOT },
+    env: { ...process.env, HOME: home, AIASSISTANT_HOME: home, ZAI_PORT: String(port), PYTHONPATH: REPO_ROOT },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
