@@ -39,6 +39,7 @@ from server import paths, settings
 from server.errors import InvalidFieldError, NotFoundError, UnknownFieldError
 
 STRING_MAX = 1024
+LIST_MAX = 200          # list 字段：项数与每项长度的帽
 
 # 与 act/lib/config.py _BOOL_TRUE_WORDS / _BOOL_FALSE_WORDS 同一词表（config.yaml 层容忍字符串拼法）
 _TRUE_WORDS = frozenset({"true", "yes", "on", "1"})
@@ -507,14 +508,19 @@ def _split_list_input(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
+def _check_list_bounds(items: list, key: str) -> None:
+    """帽：≤200 项、每项 ≤200 字（频道 id / handle 都远小于此；防无界 payload）。"""
+    if len(items) > LIST_MAX or any(len(item) > LIST_MAX for item in items):
+        raise InvalidFieldError("%s has too many / too long entries" % key, {"field": key})
+
+
 def _validate_list(value, key: str) -> Optional[list]:
     """list 入站形：JSON 字串表，或一个逗号 / 换行分隔的字串（web 输入框）；空表 = 清掉 override。"""
     parts = _split_list_input(value)
     if any(not isinstance(item, str) for item in parts):
         raise InvalidFieldError("%s must be a list of strings" % key, {"field": key})
     items = [item.strip() for item in parts if item.strip()]
-    if len(items) > 200 or any(len(item) > 200 for item in items):
-        raise InvalidFieldError("%s has too many / too long entries" % key, {"field": key})
+    _check_list_bounds(items, key)
     return items or None
 
 

@@ -172,6 +172,10 @@ class CatalogPutTestCase(_ServerCase):
         status, obj = put_json(self.port, "/api/settings/slack", {"slack_channels": [1, 2]})
         self.assertEqual(status, 400)
         assert_envelope(self, obj, "INVALID_FIELD")
+        for too_big in (["x" * (catalog.LIST_MAX + 1)], ["C"] * (catalog.LIST_MAX + 1), 7):
+            status, obj = put_json(self.port, "/api/settings/slack", {"watch_people": too_big})
+            self.assertEqual(status, 400, too_big if not isinstance(too_big, list) else len(too_big))
+            assert_envelope(self, obj, "INVALID_FIELD")
         write_text(self.home / "config.yaml", "sources:\n  slack_channels:\n    - {id: C9, name: general}\n    - C8\n")
         _s, slack = get_json(self.port, "/api/settings/slack")
         self.assertEqual(self._field(slack, "slack_channels")["effective"], ["C9", "C8"])
