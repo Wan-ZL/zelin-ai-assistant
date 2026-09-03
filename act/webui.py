@@ -316,19 +316,24 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._json(400, {"error": "bad body length"})
             return
-        if not self._host_ok():
-            self._json(403, {"error": "bad host"})
-            return
-        if not self._origin_ok():
-            self._json(403, {"error": "bad origin"})
-            return
-        if not self._token_ok():
-            self._json(401, {"error": "missing or bad token"})
-            return
-        if path != "/api/inbox":
-            self._json(404, {"error": "not found"})
+        rejection = self._post_rejection(path)
+        if rejection is not None:
+            self._json(rejection[0], {"error": rejection[1]})
             return
         self._handle_inbox(raw)
+
+    def _post_rejection(self, path: str) -> Optional[tuple]:
+        """(status, error) for a POST that must not reach the inbox: bad Host
+        (DNS rebinding), cross-origin, missing/bad token, unknown path."""
+        if not self._host_ok():
+            return 403, "bad host"
+        if not self._origin_ok():
+            return 403, "bad origin"
+        if not self._token_ok():
+            return 401, "missing or bad token"
+        if path != "/api/inbox":
+            return 404, "not found"
+        return None
 
     def _read_body(self) -> Optional[bytes]:
         """Read exactly Content-Length bytes (capped). None = bad/oversized."""
@@ -341,81 +346,13 @@ class _Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     def _handle_inbox(self, raw: bytes) -> None:
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            self._json(400, {"error": "invalid json"})
+        payload, error = _parse_inbox_payload(raw)
+        if error is None:
+            error = _inbox_problem(payload)
+        if error is not None:
+            self._json(400, {"error": error})
             return
-        if not isinstance(payload, dict):
-            self._json(400, {"error": "body must be a json object"})
-            return
-        action = payload.get("action")
-        if not isinstance(action, str) or action not in ALLOWED_ACTIONS:
-            self._json(400, {"error": f"unknown action: {action!r}"})
-            return
-        # Defense-in-depth: a present scalar ``id`` must match a real id shape
-        # so it can never traverse out of state/merge/ downstream. A missing /
-        # null id is fine (capture/feedback/digest); a present unsafe one is 400.
-        rid = payload.get("id")
-        if rid is not None and not (isinstance(rid, str) and _SAFE_ID_RE.match(rid)):
-            self._json(400, {"error": "invalid id"})
-            return
-        # Fail closed on field TYPES too: free-text fields must be str (or
-        # null/absent — the Mac app writes ``comment: null``). A non-string
-        # forwarded verbatim would poison the inbox file and wedge actd's
-        # ``(comment or "").strip()``-style handling every pass.
-        for key in ("comment", "text", "note_ts"):
-            if payload.get(key) is not None and not isinstance(payload[key], str):
-                self._json(400, {"error": f"{key} must be a string"})
-                return
-        # §37 set_title: title must be a short string — fail closed here so a
-        # poison/oversize value never reaches the inbox file (actd re-checks).
-        title = payload.get("title")
-        if title is not None and not (isinstance(title, str)
-                                      and 0 < len(title) <= 64):
-            self._json(400, {"error": "title must be a string of 1-64 chars"})
-            return
-        ids = payload.get("ids")
-        if ids is not None and not (isinstance(ids, list)
-                                    and all(isinstance(x, str) for x in ids)):
-            self._json(400, {"error": "ids must be a list of strings"})
-            return
-        # §41 merge_force (§21bis): fail closed on shape here, same as the iOS
-        # client-side guard — ≥2 distinct safe ids with primary ∈ ids. actd
-        # re-validates existence; ``primary`` gets the same traversal-proof
-        # allow-list as ``id`` (defense-in-depth, it names a card).
-        primary = payload.get("primary")
-        if primary is not None and not (isinstance(primary, str)
-                                        and _SAFE_ID_RE.match(primary)):
-            self._json(400, {"error": "invalid primary"})
-            return
-        if action == "merge_force":
-            uniq = list(dict.fromkeys(ids or []))
-            if (len(uniq) < 2 or primary not in uniq
-                    or not all(_SAFE_ID_RE.match(x) for x in uniq)):
-                self._json(400, {"error": "merge_force needs >=2 distinct ids "
-                                          "and primary among them"})
-                return
-        # §41 capture mode (§34): only the defined value passes — an undefined
-        # mode must 400 here, never ride into the inbox file.
-        mode = payload.get("mode")
-        if mode is not None and (action != "capture" or mode != "run"):
-            self._json(400, {"error": "mode is only capture mode:\"run\""})
-            return
-        # W18 远程直跑闸门（vnext-amendments §W18）：webui 是网络 ingress——
-        # direct-run 跳过人审预览（§34），默认不许从这里进来。闸门关着时
-        # **降级不报错**：去掉 ``mode`` 字段按普通 propose capture 落 inbox
-        # （提案照常进 triage），响应带 add-only ``notice`` 告知提交方。
-        # fail-closed：config 读不了/字段缺失 = 闸门关。
-        notice: Optional[str] = None
-        if action == "capture" and mode == "run":
-            if not risk.remote_direct_run_allowed():
-                payload = {k: v for k, v in payload.items() if k != "mode"}
-                notice = _RUN_DOWNGRADE_NOTICE
-            else:
-                # opt-in=true 放行 mode 进 inbox（§34 预留），但本面恒盖
-                # via:"remote"，actd 现行仍会降级——如实告知（见常量注释）。
-                notice = _RUN_RESERVED_NOTICE
+        payload, notice = _apply_run_gate(payload)
         try:
             name = write_inbox(payload)
         except OSError as e:
@@ -433,6 +370,132 @@ class _Handler(BaseHTTPRequestHandler):
     # noisy); keep it so a curl proof still shows requests.
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         sys.stderr.write("webui %s - %s\n" % (self.address_string(), fmt % args))
+
+
+# --------------------------------------------------------------------------- #
+# POST /api/inbox payload validation — fail closed on shape, one rule per check
+# (the error string is the 400 body's ``error``). actd re-validates existence.
+# --------------------------------------------------------------------------- #
+def _parse_inbox_payload(raw: bytes):
+    """(payload, None) or (None, error)."""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None, "invalid json"
+    if not isinstance(payload, dict):
+        return None, "body must be a json object"
+    return payload, None
+
+
+def _safe_id(value) -> bool:
+    return isinstance(value, str) and bool(_SAFE_ID_RE.match(value))
+
+
+def _check_action(payload: dict) -> Optional[str]:
+    action = payload.get("action")
+    if not isinstance(action, str) or action not in ALLOWED_ACTIONS:
+        return f"unknown action: {action!r}"
+    return None
+
+
+def _check_id(payload: dict) -> Optional[str]:
+    """Defense-in-depth: a present scalar ``id`` must match a real id shape
+    so it can never traverse out of state/merge/ downstream. A missing /
+    null id is fine (capture/feedback/digest); a present unsafe one is 400."""
+    rid = payload.get("id")
+    if rid is not None and not _safe_id(rid):
+        return "invalid id"
+    return None
+
+
+def _check_text_fields(payload: dict) -> Optional[str]:
+    """Fail closed on field TYPES too: free-text fields must be str (or
+    null/absent — the Mac app writes ``comment: null``). A non-string
+    forwarded verbatim would poison the inbox file and wedge actd's
+    ``(comment or "").strip()``-style handling every pass."""
+    for key in ("comment", "text", "note_ts"):
+        if payload.get(key) is not None and not isinstance(payload[key], str):
+            return f"{key} must be a string"
+    return None
+
+
+def _check_title(payload: dict) -> Optional[str]:
+    """§37 set_title: title must be a short string — fail closed here so a
+    poison/oversize value never reaches the inbox file (actd re-checks)."""
+    title = payload.get("title")
+    if title is not None and not (isinstance(title, str) and 0 < len(title) <= 64):
+        return "title must be a string of 1-64 chars"
+    return None
+
+
+def _check_ids(payload: dict) -> Optional[str]:
+    ids = payload.get("ids")
+    if ids is not None and not (isinstance(ids, list)
+                                and all(isinstance(x, str) for x in ids)):
+        return "ids must be a list of strings"
+    return None
+
+
+def _check_primary(payload: dict) -> Optional[str]:
+    """``primary`` gets the same traversal-proof allow-list as ``id``
+    (defense-in-depth, it names a card)."""
+    primary = payload.get("primary")
+    if primary is not None and not _safe_id(primary):
+        return "invalid primary"
+    return None
+
+
+def _check_merge_force(payload: dict) -> Optional[str]:
+    """§41 merge_force (§21bis): fail closed on shape here, same as the iOS
+    client-side guard — ≥2 distinct safe ids with primary ∈ ids."""
+    if payload.get("action") != "merge_force":
+        return None
+    uniq = list(dict.fromkeys(payload.get("ids") or []))
+    if not _merge_force_shape_ok(uniq, payload.get("primary")):
+        return "merge_force needs >=2 distinct ids and primary among them"
+    return None
+
+
+def _merge_force_shape_ok(uniq: list, primary) -> bool:
+    return (len(uniq) >= 2 and primary in uniq
+            and all(_SAFE_ID_RE.match(x) for x in uniq))
+
+
+def _check_mode(payload: dict) -> Optional[str]:
+    """§41 capture mode (§34): only the defined value passes — an undefined
+    mode must 400 here, never ride into the inbox file."""
+    mode = payload.get("mode")
+    if mode is not None and (payload.get("action") != "capture" or mode != "run"):
+        return "mode is only capture mode:\"run\""
+    return None
+
+
+_INBOX_CHECKS = (_check_action, _check_id, _check_text_fields, _check_title,
+                 _check_ids, _check_primary, _check_merge_force, _check_mode)
+
+
+def _inbox_problem(payload: dict) -> Optional[str]:
+    """The first failing rule's error string, or None when the payload is clean."""
+    for check in _INBOX_CHECKS:
+        error = check(payload)
+        if error is not None:
+            return error
+    return None
+
+
+def _apply_run_gate(payload: dict):
+    """W18 远程直跑闸门（vnext-amendments §W18）：webui 是网络 ingress——
+    direct-run 跳过人审预览（§34），默认不许从这里进来。闸门关着时
+    **降级不报错**：去掉 ``mode`` 字段按普通 propose capture 落 inbox
+    （提案照常进 triage），响应带 add-only ``notice`` 告知提交方。
+    fail-closed：config 读不了/字段缺失 = 闸门关。→ (payload, notice)."""
+    if payload.get("action") != "capture" or payload.get("mode") != "run":
+        return payload, None
+    if not risk.remote_direct_run_allowed():
+        return {k: v for k, v in payload.items() if k != "mode"}, _RUN_DOWNGRADE_NOTICE
+    # opt-in=true 放行 mode 进 inbox（§34 预留），但本面恒盖 via:"remote"，
+    # actd 现行仍会降级——如实告知（见常量注释）。
+    return payload, _RUN_RESERVED_NOTICE
 
 
 # --------------------------------------------------------------------------- #

@@ -54,6 +54,20 @@ Fetch = Callable[[Optional[str]], Tuple[int, Optional[str], Optional[dict]]]
 _CORE_RE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?$")
 
 
+def _core_numbers(core: str) -> Optional[tuple]:
+    """``1.2`` / ``1.2.3`` → (1, 2, 3); anything else → None."""
+    m = _CORE_RE.match(core.strip())
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def _prerelease_ids(pre: str) -> tuple:
+    """semver prerelease identifiers: numeric ones sort first, numerically."""
+    return tuple((0, int(part), "") if part.isdigit() else (1, 0, part)
+                 for part in pre.split("."))
+
+
 def parse_version(text) -> Optional[tuple]:
     """Parse ``v0.14.0`` / ``0.14.0-rc.1`` into a comparable tuple.
 
@@ -69,19 +83,12 @@ def parse_version(text) -> Optional[tuple]:
         s = s[1:]
     s = s.split("+", 1)[0]  # build metadata never affects precedence
     core, sep, pre = s.partition("-")
-    m = _CORE_RE.match(core.strip())
-    if not m:
+    nums = _core_numbers(core)
+    if nums is None:
         return None
-    nums = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
     if not sep:
         return nums + (1, ())
-    ids = []
-    for part in pre.split("."):
-        if part.isdigit():
-            ids.append((0, int(part), ""))
-        else:
-            ids.append((1, 0, part))
-    return nums + (0, tuple(ids))
+    return nums + (0, _prerelease_ids(pre))
 
 
 def is_newer(latest, current) -> bool:
@@ -157,22 +164,30 @@ def _default_fetch(etag: Optional[str]):
         raise
 
 
+def _is_pkg_asset(asset) -> bool:
+    return bool(isinstance(asset, dict)
+                and str(asset.get("name") or "").endswith(".pkg")
+                and asset.get("browser_download_url"))
+
+
+def _pkg_asset_url(assets) -> Optional[str]:
+    """The first ``.pkg`` asset's download url, or None."""
+    return next((str(a["browser_download_url"]) for a in (assets or [])
+                 if _is_pkg_asset(a)), None)
+
+
+def _release_url(release: dict, tag: str) -> str:
+    return str(release.get("html_url") or "") or (RELEASES_PAGE_URL + "/tag/" + tag)
+
+
 def _release_view(release: dict) -> Optional[dict]:
     """Project a GitHub release object into the cached fields (§26)."""
     tag = str(release.get("tag_name") or "").strip()
     if parse_version(tag) is None:
         return None
     latest = tag[1:] if tag[:1] in ("v", "V") else tag
-    url = str(release.get("html_url") or "") or (
-        RELEASES_PAGE_URL + "/tag/" + tag)
-    pkg = None
-    for asset in release.get("assets") or []:
-        if (isinstance(asset, dict)
-                and str(asset.get("name") or "").endswith(".pkg")
-                and asset.get("browser_download_url")):
-            pkg = str(asset["browser_download_url"])
-            break
-    return {"latest": latest, "url": url, "pkg_asset_url": pkg}
+    return {"latest": latest, "url": _release_url(release, tag),
+            "pkg_asset_url": _pkg_asset_url(release.get("assets"))}
 
 
 # --------------------------------------------------------------------------- #
@@ -203,26 +218,43 @@ def check(cfg: Optional[config.Config] = None, *,
 
     state = _load_state()
     now_dt = now or _dt.datetime.now(_dt.timezone.utc)
+    if not _is_fresh(state, now_dt, force):
+        _refresh(state, fetch, now_dt)
+    return _answer(state)
+
+
+def _refresh(state: dict, fetch: Optional[Fetch], now_dt: _dt.datetime) -> None:
+    """Stamp the attempt (it consumes the 24h budget, success or not), fetch,
+    persist."""
+    state["checked_at"] = _iso(now_dt)
+    _attempt_fetch(state, fetch or _default_fetch)
+    _save_state(state)
+
+
+def _is_fresh(state: dict, now_dt: _dt.datetime, force: bool) -> bool:
+    """Inside the 24h budget (and not forced) — no network this call."""
     last = _parse_iso(state.get("checked_at"))
-    fresh = (not force
-             and last is not None
-             and (now_dt - last).total_seconds() < CHECK_INTERVAL_SECONDS)
+    return (not force
+            and last is not None
+            and (now_dt - last).total_seconds() < CHECK_INTERVAL_SECONDS)
 
-    if not fresh:
-        # the attempt itself consumes the 24h budget, success or not
-        state["checked_at"] = _iso(now_dt)
-        try:
-            status, etag, release = (fetch or _default_fetch)(state.get("etag"))
-            if status == 200 and isinstance(release, dict):
-                view = _release_view(release)
-                if view is not None:
-                    state.update(view)
-                    state["etag"] = etag
-            # 304: cached latest is still current — nothing else to update
-        except Exception:  # noqa: BLE001 — offline/rate-limit: keep the cache
-            pass
-        _save_state(state)
 
+def _attempt_fetch(state: dict, fetch: Fetch) -> None:
+    """One network attempt; a 200 with a parsable release refreshes the cache,
+    a 304 leaves it, any failure keeps whatever was cached (§26)."""
+    try:
+        status, etag, release = fetch(state.get("etag"))
+        if status == 200 and isinstance(release, dict):
+            view = _release_view(release)
+            if view is not None:
+                state.update(view)
+                state["etag"] = etag
+        # 304: cached latest is still current — nothing else to update
+    except Exception:  # noqa: BLE001 — offline/rate-limit: keep the cache
+        pass
+
+
+def _answer(state: dict) -> Optional[dict]:
     latest = state.get("latest")
     if not latest:
         return None
@@ -300,10 +332,17 @@ def cli_status(force: bool = False, *,
             raise
 
     check(cfg, fetch=tracking_fetch, now=now, force=force)
-    state = _load_state()
+    out = _cli_payload(_load_state(), enabled)
+    if errors:
+        out["ok"] = False
+        out["error"] = _error_kind(errors)
+    return out
+
+
+def _cli_payload(state: dict, enabled: bool) -> dict:
     latest = state.get("latest")
-    out = {
-        "ok": not errors,
+    return {
+        "ok": True,
         "enabled": enabled,
         "current": __version__,
         "latest": str(latest) if latest else None,
@@ -313,11 +352,13 @@ def cli_status(force: bool = False, *,
         "pkg_asset_url": state.get("pkg_asset_url"),
         "checked_at": state.get("checked_at"),
     }
-    if errors:
-        out["error"] = ("rate_limited" if any(
-            isinstance(e, urllib.error.HTTPError) and e.code in (403, 429)
-            for e in errors) else "network")
-    return out
+
+
+def _error_kind(errors: list) -> str:
+    """``rate_limited`` when any failure was an HTTP 403/429, else ``network``."""
+    return ("rate_limited" if any(
+        isinstance(e, urllib.error.HTTPError) and e.code in (403, 429)
+        for e in errors) else "network")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
-"""server/slack_setup.py — Slack 接入区的「复制 App Manifest」（§15.3 v0.14 / §54.4）：``GET /api/slack/manifest``。
+"""server/slack_manifest.py — Slack 接入区的「复制 App Manifest」（§15.3 v0.14 / §54.4）：``GET /api/slack/manifest``。
+
+模块名按对象「App Manifest」取 ``slack_manifest``——与真源 ``act/lib/slack_setup.py`` 同名会撞
+防腐 #9「同一 basename 禁止出现在两个目录层级」；路由不变。
 
 原生 SettingsSlack.swift 的 copyManifest 读 repo 的 ``config/slack-app-manifest.json``
 （真源 = act/lib/slack_setup.manifest_json，drift-guard 钉住两者一致）写进剪贴板；web 没有

@@ -49,6 +49,86 @@ def _work_id_column(norm: dict, warnings: list) -> Optional[str]:
     return wid or None
 
 
+# prev_status 缺失时的热列回填（live registry.restore / unarchive 的 fallback）
+_PREV_FALLBACK = {"trashed": "detected", "archived": "delivered"}
+
+
+def _legacy_merged(raw_status: str, warnings: list, errors: list) -> "tuple[str, Optional[str]]":
+    """legacy verbatim ``merged_into:<id>`` → 热列 merged + 父指针（payload 保留原串）。"""
+    merged_into_id = raw_status[len(MERGED_PREFIX):].strip()
+    warnings.append(f"legacy status {raw_status!r} 热列归一为 merged"
+                    "（payload 保留原串）")
+    if not merged_into_id:
+        errors.append("legacy merged_into: 串无父卡 id，schema 无法表达")
+    return "merged", merged_into_id
+
+
+def _vocab_status(raw_status: str, norm: dict, errors: list) -> "tuple[str, Optional[str]]":
+    merged_into_id = None
+    if raw_status == "merged":
+        merged_into_id = _text(norm.get("merged_into"))
+        if not merged_into_id:
+            errors.append("status=merged 但无 merged_into 父指针（CHECK 拒收）")
+    return raw_status, merged_into_id
+
+
+def _status_columns(norm: dict, warnings: list, errors: list) -> "tuple[Optional[str], Optional[str]]":
+    """(hot_status, merged_into_id)；词表外 status = error（hot_status None）。"""
+    raw_status = norm.get("status")
+    if isinstance(raw_status, str) and raw_status.startswith(MERGED_PREFIX):
+        return _legacy_merged(raw_status, warnings, errors)
+    if raw_status in STATUS_VOCAB:
+        return _vocab_status(raw_status, norm, errors)
+    errors.append(f"status {raw_status!r} 不在 schema 词表内")
+    return None, None
+
+
+def _prev_status(norm: dict, hot_status: Optional[str], warnings: list) -> Optional[str]:
+    prev = norm.get("prev_status")
+    if prev is not None and prev not in STATUS_VOCAB:
+        warnings.append(f"prev_status {prev!r} 不在词表，热列置 NULL/回填"
+                        "（payload 保留原值）")
+        prev = None
+    if prev is None and hot_status in _PREV_FALLBACK:
+        prev = _PREV_FALLBACK[hot_status]
+        warnings.append(f"{hot_status} 缺 prev_status，热列回填 {prev}")
+    return prev
+
+
+def _tier(norm: dict, warnings: list) -> str:
+    tier = norm.get("tier")
+    if tier not in TIER_VOCAB:
+        warnings.append(f"tier {tier!r} 越界，热列回落 T1（payload 保留原值）")
+        return "T1"
+    return tier
+
+
+def _str_column(norm: dict, key: str, warnings: list) -> str:
+    """title / type：非 str 兜底 str()（None → ""）。"""
+    value = norm.get(key)
+    if isinstance(value, str):
+        return value
+    warnings.append(f"{key} {value!r} 非 str，热列存 str 兜底")
+    return "" if value is None else str(value)
+
+
+def _deadline(norm: dict, warnings: list) -> Optional[str]:
+    dl = norm.get("deadline")
+    hot_deadline = dl if isinstance(dl, str) and DEADLINE_RE.match(dl) else None
+    if dl is not None and hot_deadline is None:
+        warnings.append(f"deadline {dl!r} 不符 YYYY-MM-DD，热列置 NULL"
+                        "（payload 保留原值）")
+    return hot_deadline
+
+
+def _target_repo(norm: dict, warnings: list) -> Optional[str]:
+    tr = norm.get("target_repo")
+    if tr is not None and not isinstance(tr, str):
+        warnings.append(f"target_repo {tr!r} 非 str，热列存 str 兜底")
+        return str(tr)
+    return tr
+
+
 def derive(norm: dict) -> "tuple[dict, list, list]":
     """canonical dict → ``(hot, warnings, errors)``。
 
@@ -58,63 +138,13 @@ def derive(norm: dict) -> "tuple[dict, list, list]":
     """
     warnings: list = []
     errors: list = []
-
-    raw_status = norm.get("status")
-    merged_into_id = None
-    if isinstance(raw_status, str) and raw_status.startswith(MERGED_PREFIX):
-        hot_status = "merged"
-        merged_into_id = raw_status[len(MERGED_PREFIX):].strip()
-        warnings.append(f"legacy status {raw_status!r} 热列归一为 merged"
-                        "（payload 保留原串）")
-        if not merged_into_id:
-            errors.append("legacy merged_into: 串无父卡 id，schema 无法表达")
-    elif raw_status in STATUS_VOCAB:
-        hot_status = raw_status
-        if raw_status == "merged":
-            merged_into_id = _text(norm.get("merged_into"))
-            if not merged_into_id:
-                errors.append("status=merged 但无 merged_into 父指针（CHECK 拒收）")
-    else:
-        hot_status = None
-        errors.append(f"status {raw_status!r} 不在 schema 词表内")
-
-    prev = norm.get("prev_status")
-    if prev is not None and prev not in STATUS_VOCAB:
-        warnings.append(f"prev_status {prev!r} 不在词表，热列置 NULL/回填"
-                        "（payload 保留原值）")
-        prev = None
-    if prev is None and hot_status == "trashed":
-        prev = "detected"       # live registry.restore 的 fallback
-        warnings.append("trashed 缺 prev_status，热列回填 detected")
-    if prev is None and hot_status == "archived":
-        prev = "delivered"      # live registry.unarchive 的 fallback
-        warnings.append("archived 缺 prev_status，热列回填 delivered")
-
-    tier = norm.get("tier")
-    if tier not in TIER_VOCAB:
-        warnings.append(f"tier {tier!r} 越界，热列回落 T1（payload 保留原值）")
-        tier = "T1"
-
-    title = norm.get("title")
-    if not isinstance(title, str):
-        warnings.append(f"title {title!r} 非 str，热列存 str 兜底")
-        title = "" if title is None else str(title)
-    typ = norm.get("type")
-    if not isinstance(typ, str):
-        warnings.append(f"type {typ!r} 非 str，热列存 str 兜底")
-        typ = "" if typ is None else str(typ)
-
-    dl = norm.get("deadline")
-    hot_deadline = dl if isinstance(dl, str) and DEADLINE_RE.match(dl) else None
-    if dl is not None and hot_deadline is None:
-        warnings.append(f"deadline {dl!r} 不符 YYYY-MM-DD，热列置 NULL"
-                        "（payload 保留原值）")
-
-    tr = norm.get("target_repo")
-    if tr is not None and not isinstance(tr, str):
-        warnings.append(f"target_repo {tr!r} 非 str，热列存 str 兜底")
-        tr = str(tr)
-
+    hot_status, merged_into_id = _status_columns(norm, warnings, errors)
+    prev = _prev_status(norm, hot_status, warnings)
+    tier = _tier(norm, warnings)
+    title = _str_column(norm, "title", warnings)
+    typ = _str_column(norm, "type", warnings)
+    hot_deadline = _deadline(norm, warnings)
+    tr = _target_repo(norm, warnings)
     hot = {
         "status": hot_status, "prev_status": prev, "tier": tier, "type": typ,
         "title": title, "origin_trust": classify_origin(norm.get("sources")),

@@ -19,7 +19,7 @@
   §28 kind 词表，server/notify_catalog.py）、POST /api/ai-fix（「让 AI 修」=
   起 act.ai_fix 的 Terminal 修复会话，server/ai_fix_launch.py）。
 - 素材库（§62）：GET /api/materials/list?status=、POST /api/materials/add、
-  POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
+  POST /api/materials/dismiss（server/material_box.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
 - 设置全套 / 权限体检 / 诊断 / 首次运行向导（§68，P4 legacy-app parity）：
@@ -31,8 +31,8 @@
   POST /api/update/check、GET /api/mcp、GET /api/claude-sessions、
   POST /api/terminal（在终端接管会话）、POST /api/repair/actd（横幅一键修复）。
 - 问问助手（§27 / §54.4 左侧导航栏页）：GET /api/ask/history（只读 state/ask_history.json）、
-  POST /api/ask {question}（子进程 ``python -m act.ask``，server/ask.py）；
-  Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_setup.py）；
+  POST /api/ask {question}（子进程 ``python -m act.ask``，server/ask_assistant.py）；
+  Slack 接入区 GET /api/slack/manifest（repo config/slack-app-manifest.json 原文，server/slack_manifest.py）；
   关于页 POST /api/uninstall/terminal（在 Terminal 跑 uninstall.sh 的 .command，server/uninstall_launch.py）；
   开发者区 POST /api/maintainer/terminal（cd <repo> && claude [--resume]，server/maintainer_launch.py）。
   精确表之外多一张**前缀表**（`/api/cards/`、`/api/settings/`、`/api/logs/`、
@@ -65,12 +65,12 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (about, ai_fix_launch, ask, board_source, claude_sessions,
+from server import (about, ai_fix_launch, ask_assistant, board_source, claude_sessions,
                     diagnostics, display, doctor_run, files, folders, health,
-                    inbox_writer, lanes, maintainer_launch, materials, mcp_servers,
+                    inbox_writer, lanes, maintainer_launch, material_box, mcp_servers,
                     notify_catalog, paths, permissions, radars, recaps, repair,
                     secrets_store, security, self_improve_lane, settings,
-                    settings_catalog, setup, slack_setup, terminal_launch,
+                    settings_catalog, setup, slack_manifest, terminal_launch,
                     uninstall_launch)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
@@ -512,7 +512,7 @@ _GET_JSON_ROUTES = {
     # §28 / §66.2 系统通知目录：壳直发的通知句（双语）+ 队列 kind 词表（server-owned）
     "/api/notifications": lambda ctx, query: notify_catalog.catalog(),
     # §62 素材库：?status=open（默认，弹窗）| all | 单个状态；只读折叠台账
-    "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
+    "/api/materials/list": lambda ctx, query: material_box.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
     # §67 skill 商店：manifest + 本机每个 skill 的状态（enabled / disabled / copy /
@@ -537,9 +537,9 @@ _GET_JSON_ROUTES = {
     # §68.10 导入 Claude Code 工作：扫描预览
     "/api/claude-sessions": lambda ctx, query: claude_sessions.scan(ctx.home, query.get("window")),
     # §27 问问助手：最近的问答（只读；写者是 act.ask）
-    "/api/ask/history": lambda ctx, query: ask.history(ctx.home),
+    "/api/ask/history": lambda ctx, query: ask_assistant.history(ctx.home),
     # Slack 接入区「复制 App Manifest」：repo 的 config/slack-app-manifest.json 原文
-    "/api/slack/manifest": lambda ctx, query: slack_setup.manifest(ctx.home),
+    "/api/slack/manifest": lambda ctx, query: slack_manifest.manifest(ctx.home),
     # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
     "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
     # §48.7 后台雷达 agent 状态（问 launchd 本人；间隔读模板）
@@ -562,9 +562,9 @@ _POST_JSON_ROUTES = {
     "/api/claude-code/default-model": _post_claude_code_default,
     # §54 让 AI 修：字段白名单 + 上下文推导 + 子进程都在 ai_fix_launch
     "/api/ai-fix": lambda ctx, payload: ai_fix_launch.launch(ctx.home, payload),
-    # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/materials.py
-    "/api/materials/add": lambda ctx, payload: materials.add(ctx.home, payload),
-    "/api/materials/dismiss": lambda ctx, payload: materials.dismiss(ctx.home, payload),
+    # §62 素材库：加入（url?/note?）与放弃（id）——字段白名单与状态机在 server/material_box.py
+    "/api/materials/add": lambda ctx, payload: material_box.add(ctx.home, payload),
+    "/api/materials/dismiss": lambda ctx, payload: material_box.dismiss(ctx.home, payload),
     # §63 「复制」/「标记已发送」本地标记 → state/recap/marks.json（server 独写）
     "/api/recaps/mark": lambda ctx, payload: recaps.mark(ctx.home, payload),
     # §65.4 恢复自动草稿 PR 通道（敏感路径护栏挂起后 owner 的看板出口）
@@ -584,7 +584,7 @@ _POST_JSON_ROUTES = {
     # §26 手动「立即检查」
     "/api/update/check": lambda ctx, payload: about.check_now(ctx.home, payload),
     # §27 问问助手：一问一答（子进程 act.ask，≤75 s）
-    "/api/ask": lambda ctx, payload: ask.ask(ctx.home, payload),
+    "/api/ask": lambda ctx, payload: ask_assistant.ask(ctx.home, payload),
     # §68.6 关于页「在 Terminal 中卸载…」：.command + open，server 自己不删任何东西
     "/api/uninstall/terminal": lambda ctx, payload: uninstall_launch.launch(payload, home=ctx.home),
     # §68.1 开发者 · 开发会话「在终端打开开发会话」：cd <repo_path> && claude [--resume <id>]，参数全由 server 读

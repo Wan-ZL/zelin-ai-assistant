@@ -85,40 +85,44 @@ def _parse_date(s) -> Optional[_dt.date]:
         return None
 
 
-def first_seen(req: Requirement) -> Optional[_dt.date]:
-    """Earliest date we can attribute to this requirement (source date, card
-    sent_at, dispatch time — whichever is oldest)."""
+def _source_dates(req: Requirement) -> list:
+    """Parsable ``date`` of every dict-shaped source row."""
     dates = []
     for s in req.sources or []:
         if isinstance(s, dict):
             d = _parse_date(s.get("date"))
             if d:
                 dates.append(d)
-    d = _parse_date((req.card or {}).get("sent_at"))
-    if d:
-        dates.append(d)
-    d = _parse_date((req.execution or {}).get("dispatched_at"))
-    if d:
-        dates.append(d)
+    return dates
+
+
+def _field_dates(mapping, keys) -> list:
+    """Parsable dates of ``keys`` in a possibly-None mapping (card / execution)."""
+    mapping = mapping or {}
+    dates = []
+    for key in keys:
+        d = _parse_date(mapping.get(key))
+        if d:
+            dates.append(d)
+    return dates
+
+
+def _all_dates(req: Requirement, execution_keys) -> list:
+    return (_source_dates(req)
+            + _field_dates(req.card, ("sent_at",))
+            + _field_dates(req.execution, execution_keys))
+
+
+def first_seen(req: Requirement) -> Optional[_dt.date]:
+    """Earliest date we can attribute to this requirement (source date, card
+    sent_at, dispatch time — whichever is oldest)."""
+    dates = _all_dates(req, ("dispatched_at",))
     return min(dates) if dates else None
 
 
 def last_activity(req: Requirement) -> Optional[_dt.date]:
     """Latest date we can attribute to this requirement."""
-    dates = []
-    ex = req.execution or {}
-    for key in ("dispatched_at", "last_resume_at", "last_rework_at"):
-        d = _parse_date(ex.get(key))
-        if d:
-            dates.append(d)
-    d = _parse_date((req.card or {}).get("sent_at"))
-    if d:
-        dates.append(d)
-    for s in req.sources or []:
-        if isinstance(s, dict):
-            d = _parse_date(s.get("date"))
-            if d:
-                dates.append(d)
+    dates = _all_dates(req, ("dispatched_at", "last_resume_at", "last_rework_at"))
     return max(dates) if dates else None
 
 
@@ -178,22 +182,7 @@ def build_prep(today: Optional[_dt.date] = None) -> str:
         if not r.is_merged
         and r.status not in (State.TRASHED.value, State.REJECTED.value)
     ]
-
-    ready: list[Requirement] = []
-    in_flight: list[Requirement] = []
-    not_ready: list[Requirement] = []
-    for r in reqs:
-        if r.status == State.REVIEW.value:
-            ready.append(r)
-        elif r.status == State.DELIVERED.value:
-            la = last_activity(r)
-            if la is None or (today - la).days <= 7:
-                ready.append(r)  # delivered this week (best-effort dating)
-        elif r.status in (State.CARD_SENT.value, State.APPROVED.value,
-                          State.EXECUTING.value):
-            in_flight.append(r)
-        elif r.status == State.DETECTED.value:
-            not_ready.append(r)
+    ready, in_flight, not_ready = _bucket(reqs, today)
 
     def section(header: str, lines: list[str], empty: str = "- （无）") -> list[str]:
         return [header] + (lines if lines else [empty]) + [""]
@@ -207,6 +196,36 @@ def build_prep(today: Optional[_dt.date] = None) -> str:
                    [_line(r, today) for r in not_ready])
     out += section(ledger_header(), promises_owed(reqs), empty=ledger_empty())
     return "\n".join(out)
+
+
+_IN_FLIGHT_STATES = (State.CARD_SENT.value, State.APPROVED.value, State.EXECUTING.value)
+
+
+def _delivered_this_week(r: Requirement, today: _dt.date) -> bool:
+    """delivered this week (best-effort dating; undated = assume recent)"""
+    la = last_activity(r)
+    return la is None or (today - la).days <= 7
+
+
+def _is_ready(r: Requirement, today: _dt.date) -> bool:
+    if r.status == State.REVIEW.value:
+        return True
+    return r.status == State.DELIVERED.value and _delivered_this_week(r, today)
+
+
+def _bucket(reqs: list, today: _dt.date) -> tuple:
+    """(ready, in_flight, not_ready) — every other status is left out."""
+    ready: list[Requirement] = []
+    in_flight: list[Requirement] = []
+    not_ready: list[Requirement] = []
+    for r in reqs:
+        if _is_ready(r, today):
+            ready.append(r)
+        elif r.status in _IN_FLIGHT_STATES:
+            in_flight.append(r)
+        elif r.status == State.DETECTED.value:
+            not_ready.append(r)
+    return ready, in_flight, not_ready
 
 
 def write_prep(today: Optional[_dt.date] = None) -> Path:

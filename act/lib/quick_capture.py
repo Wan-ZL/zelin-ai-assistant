@@ -144,20 +144,28 @@ def registry_inventory_text(reqs: Optional[list] = None,
     selected = _inventory_reqs() if reqs is None else reqs
     token_sets = [match_corpus.corpus_tokens(r, cfg) for r in selected]
     freq = match_corpus.doc_frequencies(token_sets)
-
-    lines = []
-    for r in selected:
-        line = f"{r.id} | {r.status} | {r.title}"
-        if r.improvement_of:
-            line += f"（{r.improvement_of} 的后续）"
-        disp = _display_name(r)
-        if disp and disp != str(r.title or "").strip():
-            line += f" | 显示名: {disp}"
-        aliases = match_corpus.derive_aliases(r, freq, cfg=cfg)
-        if aliases:
-            line += f" | 关键词: {' '.join(aliases)}"
-        lines.append(line)
+    lines = [_inventory_line(r, freq, cfg) for r in selected]
     return "\n".join(lines) or "(registry is empty)"
+
+
+def _inventory_line(r, freq: dict, cfg) -> str:
+    """``<id> | status | title`` + lineage / 显示名 / 关键词 tails when present."""
+    line = f"{r.id} | {r.status} | {r.title}"
+    if r.improvement_of:
+        line += f"（{r.improvement_of} 的后续）"
+    line += _display_tail(r)
+    aliases = match_corpus.derive_aliases(r, freq, cfg=cfg)
+    if aliases:
+        line += f" | 关键词: {' '.join(aliases)}"
+    return line
+
+
+def _display_tail(r) -> str:
+    """`` | 显示名: …`` only when the display name differs from the frozen title."""
+    disp = _display_name(r)
+    if disp and disp != str(r.title or "").strip():
+        return f" | 显示名: {disp}"
+    return ""
 
 
 # candidate_desc() scaffolding — its labels/metadata must NEVER rank (review
@@ -297,32 +305,45 @@ def capture(
         cfg = config.load_config()
     if extractor is None:
         extractor = _default_extractor
-    prompt = build_capture_prompt(text_or_media_desc, cfg)
-    data: Optional[dict] = None
-    try:
-        proc = extractor(prompt)
-        stdout = getattr(proc, "stdout", "") or ""
-        if getattr(proc, "returncode", 0) == 0:
-            data = analyze._extract_json(stdout)
-    except Exception:  # noqa: BLE001 - quick capture must never crash the radar
-        data = None
-    if not isinstance(data, dict) or data.get("action") not in _VALID_ACTIONS:
-        typed = str(typed_text).strip() if typed_text is not None else ""
-        if typed and typed != str(text_or_media_desc).strip():
-            # Media-capture fallback: the card the user sees must quote his
-            # TYPED words, never the synthetic "Read these images…" tool
-            # prompt + local file paths (小白友好; the docstring's promise).
-            # The media description still rides in plan so the image
-            # pointers are not lost for the executing agent.
-            data = _fallback_result(typed)
-            data["plan"] = [typed[:200], str(text_or_media_desc)[:400]]
-            data["_text"] = typed
-        else:
-            data = _fallback_result(text_or_media_desc)
+    data = _ask_llm(extractor, build_capture_prompt(text_or_media_desc, cfg))
+    if not _valid_decision(data):
+        data = _capture_fallback(text_or_media_desc, typed_text)
     data.setdefault("_text", str(text_or_media_desc))
     data.setdefault("_typed", str(typed_text) if typed_text is not None
                     else str(text_or_media_desc))
     return data
+
+
+def _ask_llm(extractor, prompt: str) -> Optional[dict]:
+    """One extractor call → parsed JSON dict, or None on any failure (an LLM
+    hiccup must never crash the radar / capture)."""
+    try:
+        proc = extractor(prompt)
+        stdout = getattr(proc, "stdout", "") or ""
+        if getattr(proc, "returncode", 0) == 0:
+            return analyze._extract_json(stdout)
+    except Exception:  # noqa: BLE001 - quick capture must never crash the radar
+        pass
+    return None
+
+
+def _valid_decision(data) -> bool:
+    return isinstance(data, dict) and data.get("action") in _VALID_ACTIONS
+
+
+def _capture_fallback(text_or_media_desc: str, typed_text: Optional[str]) -> dict:
+    """Minimal new_proposal when the LLM failed. Media-capture fallback: the
+    card the user sees must quote his TYPED words, never the synthetic "Read
+    these images…" tool prompt + local file paths (小白友好; capture()'s
+    promise). The media description still rides in plan so the image
+    pointers are not lost for the executing agent."""
+    typed = str(typed_text).strip() if typed_text is not None else ""
+    if typed and typed != str(text_or_media_desc).strip():
+        data = _fallback_result(typed)
+        data["plan"] = [typed[:200], str(text_or_media_desc)[:400]]
+        data["_text"] = typed
+        return data
+    return _fallback_result(text_or_media_desc)
 
 
 # --------------------------------------------------------------------------- #
@@ -408,16 +429,8 @@ def triage(
         cfg = config.load_config()
     if extractor is None:
         extractor = _default_extractor
-    prompt = build_triage_prompt(desc, cfg)
-    data: Optional[dict] = None
-    try:
-        proc = extractor(prompt)
-        stdout = getattr(proc, "stdout", "") or ""
-        if getattr(proc, "returncode", 0) == 0:
-            data = analyze._extract_json(stdout)
-    except Exception:  # noqa: BLE001 - triage must never crash a radar pass
-        data = None
-    if not isinstance(data, dict) or data.get("action") not in _VALID_ACTIONS:
+    data = _ask_llm(extractor, build_triage_prompt(desc, cfg))
+    if not _valid_decision(data):
         data = {"action": "new_proposal", "_fallback": True}
     return data
 
@@ -516,147 +529,187 @@ def apply_triage(
     """
     if cfg is None:
         cfg = config.load_config()
-    action = (decision or {}).get("action")
+    decision = decision or {}
     # §45：非 FULL 来源无提升权——fold 本身合法（佐证是正职），但既有备选卡
     # 不得借这次 fold 被推进提案列，完结卡的 re-raise/follow-up 也封顶备选。
     promote_ok = gate in (None, provenance.FULL)
+    outcome = _triage_early_exit(decision, req, gate, promote_ok)
+    if outcome is not None:
+        return outcome
+    # unknown/rejected id (or a re-raise dead-end) -> new_proposal: never lose a candidate
+    return _triage_new_proposal(decision, req, cfg, high_confidence, gate, promote_ok)
 
+
+# sealed cards never absorb a restatement (决策6 / 归档语义)
+_SEALED_STATES = (registry.State.REJECTED.value, registry.State.TRASHED.value,
+                  registry.State.ARCHIVED.value)
+
+
+def _triage_early_exit(decision: dict, req, gate, promote_ok: bool):
+    """ignore → ("ignored", None); relates_to → its outcome or None (fall through
+    to new_proposal); anything else → None."""
+    action = decision.get("action")
     if action == "ignore":
         analytics.log_event("radar_triage", action="ignore")
         return "ignored", None
-
     if action == "relates_to":
-        rid = str(decision.get("req") or "").strip()
-        target = registry.load(rid) if rid else None
-        if target is not None:
-            # merge-cluster canonicalization: a merged duplicate and its
-            # primary are both in the LLM inventory — hits on either must
-            # converge on ONE lineage node, or the same event grows parallel
-            # follow-ups (the R-028/R-029 near-duplicate failure again).
-            target = registry.canonical(target)
-        rejected_hit = target is not None and target.status in (
-            registry.State.REJECTED.value, registry.State.TRASHED.value,
-            registry.State.ARCHIVED.value)
-        if rejected_hit:
-            # 决策6 / 归档语义: rejected/trashed/archived ≠ 可 re-raise — a
-            # restated ask must RE-CARD, never be buried inside a sealed card.
-            # Treat exactly like an unknown id (merge_or_new skips them too).
-            analytics.log_event("radar_triage", action="relates_to_rejected",
-                                req=target.id)
-            target = None
-        if target is not None:
-            note = (str(decision.get("note") or "").strip()
-                    or str(req.summary or req.title).strip())
-            if registry.is_resolved(target):
-                if gate == provenance.CORROBORATE:
-                    # §45：屏幕来源只许 fold 进开着的卡。完结卡命中的三条出路
-                    # （re-raise / follow-up / fold 进关卡）全是回声的标准形态
-                    # ——radar 预判后目标卡状态可能已变（TOCTOU），落库侧同法
-                    # 拦截留痕（gate/req 元数据，绝不带内容）。
-                    analytics.log_event("radar_echo_blocked", stage="filing",
-                                        gate=gate, req=target.id)
-                    return "ignored", None
-                # missing needs_action on a resolved parent defaults to True:
-                # losing an actionable follow-up inside a closed card is the
-                # 例1/2/3 failure mode; a needless follow-up card is cheap.
-                if _needs_action(decision, default=True):
-                    # v0.20.0 unified re-raise/follow-up (§3.5): a title match
-                    # (真 restatement, same_task) flips the ORIGINAL card back
-                    # to 提案; a thread-only hit (different task) opens a distinct
-                    # thread-lineage follow-up. needs_action=True == actionable.
-                    same_task = registry._same_source_and_title(target, req)
-                    kind, saved = registry.reraise_or_followup(
-                        target, req, same_task=same_task, actionable=True,
-                        sources=req.sources, note=note,
-                        cap_detected=not promote_ok)
-                    if saved is not None:
-                        analytics.log_event("radar_triage", action=kind,
-                                            req=saved.id, parent=target.id)
-                        return kind, saved
-                    # dead-end -> fall through to new_proposal (fresh card)
-                else:
-                    # needs_action=false -> fold as a note, never flip (Q3).
-                    _fold_into(target, req, note)
-                    analytics.log_event("radar_triage", action="relates_to",
-                                        req=target.id)
-                    return "folded", target
-            else:
-                _fold_into(target, req, note)
-                if target.status == registry.State.DETECTED.value and (
-                        _needs_action(decision, default=False)
-                        or req.status == registry.State.CARD_SENT.value):
-                    if promote_ok:
-                        # 统一口径：现在需要行动 -> 提案列。An act-now candidate
-                        # must not stay invisible in the 备选/backlog lane just
-                        # because it folded into a detected card — promote the
-                        # card it fed.
-                        target.set_status(registry.State.CARD_SENT)
-                        registry.save(target)
-                    else:
-                        # §45：非 FULL 来源的 act-now 提升一并压平——triage LLM
-                        # 的 needs_action 不在闸门豁免之列（P1-1）。fold 已经
-                        # 落卡（佐证合法），提升被拦下要留痕，绝不静默。
-                        analytics.log_event("radar_echo_blocked",
-                                            stage="fold_promotion",
-                                            gate=gate, req=target.id)
-                analytics.log_event("radar_triage", action="relates_to", req=target.id)
-                return "folded", target
-        if not rejected_hit:
-            analytics.log_event("radar_triage", action="relates_to_miss",
-                                req=rid or None)
-        # unknown/rejected id -> fall through to new_proposal: never lose a candidate
+        return _triage_relates_to(decision, req, gate, promote_ok)
+    return None
 
+
+def _canonical_hit(rid: str):
+    """(target, rejected_hit): the relates_to target canonicalized to its merge
+    cluster's primary (a merged duplicate and its primary are both in the LLM
+    inventory — hits on either must converge on ONE lineage node, or the same
+    event grows parallel follow-ups); a sealed primary counts as an unknown id
+    (决策6 / 归档语义: a restated ask must RE-CARD, never be buried)."""
+    target = registry.load(rid) if rid else None
+    if target is not None:
+        target = registry.canonical(target)
+    rejected_hit = target is not None and target.status in _SEALED_STATES
+    if rejected_hit:
+        analytics.log_event("radar_triage", action="relates_to_rejected", req=target.id)
+        target = None
+    return target, rejected_hit
+
+
+def _log_relates_to_miss(rid: str) -> None:
+    analytics.log_event("radar_triage", action="relates_to_miss", req=rid or None)
+
+
+def _triage_relates_to(decision: dict, req, gate, promote_ok: bool):
+    rid = str(decision.get("req") or "").strip()
+    target, rejected_hit = _canonical_hit(rid)
+    if target is not None:
+        outcome = _relate_to_target(decision, req, target, gate, promote_ok)
+        if outcome is not None:
+            return outcome
+        # re-raise dead-end -> fall through to new_proposal (fresh card)
+    if not rejected_hit:
+        _log_relates_to_miss(rid)
+    return None
+
+
+def _triage_note(decision: dict, req) -> str:
+    return (str(decision.get("note") or "").strip()
+            or str(req.summary or req.title).strip())
+
+
+def _relate_to_target(decision: dict, req, target, gate, promote_ok: bool):
+    note = _triage_note(decision, req)
+    if registry.is_resolved(target):
+        return _relate_to_resolved(decision, req, target, note, gate, promote_ok)
+    return _fold_into_open(decision, req, target, note, gate, promote_ok)
+
+
+def _relate_to_resolved(decision: dict, req, target, note: str, gate, promote_ok: bool):
+    """A hit on a delivered/merged card: §45 CORROBORATE is blocked outright;
+    needs_action (default True — never-lose) re-raises / opens a follow-up;
+    needs_action=false folds as a note, never flips (Q3)."""
     if gate == provenance.CORROBORATE:
-        # §45 落库侧执法：屏幕来源无出生权，new_proposal（含 relates_to 目标
-        # 消失/被拒后的 fall-through）一律拦截留痕。radar 在闸门口已拦下常规
-        # 形态，能走到这里 = 预判后世界变了（TOCTOU）——同一刀补在出口。
-        analytics.log_event("radar_echo_blocked", stage="filing", gate=gate)
+        # §45：屏幕来源只许 fold 进开着的卡。完结卡命中的三条出路
+        # （re-raise / follow-up / fold 进关卡）全是回声的标准形态
+        # ——radar 预判后目标卡状态可能已变（TOCTOU），落库侧同法
+        # 拦截留痕（gate/req 元数据，绝不带内容）。
+        analytics.log_event("radar_echo_blocked", stage="filing", gate=gate, req=target.id)
         return "ignored", None
+    if _needs_action(decision, default=True):
+        # v0.20.0 unified re-raise/follow-up (§3.5): a title match (真
+        # restatement, same_task) flips the ORIGINAL card back to 提案; a
+        # thread-only hit (different task) opens a distinct thread-lineage
+        # follow-up. needs_action=True == actionable.
+        same_task = registry.same_source_and_title(target, req)
+        kind, saved = registry.reraise_or_followup(
+            target, req, same_task=same_task, actionable=True,
+            sources=req.sources, note=note, cap_detected=not promote_ok)
+        if saved is not None:
+            analytics.log_event("radar_triage", action=kind, req=saved.id, parent=target.id)
+            return kind, saved
+        return None                       # dead-end -> caller re-cards
+    _fold_into(target, req, note)
+    analytics.log_event("radar_triage", action="relates_to", req=target.id)
+    return "folded", target
 
-    if str((decision or {}).get("confidence") or "").strip().lower() == "low":
-        # 统一口径第四出口：真实但不紧急 -> 备选/Backlog（宁可 debt 不可 ignore）。
-        # Clear any caller-preset card_sent so the card lands detected.
-        high_confidence = False
-        if req.status == registry.State.CARD_SENT.value:
-            req.set_status(registry.State.DETECTED)
-    # §37 display_title: optional triage key — absent/malformed is a silent
-    # no-op (projection falls back to sanitize(title)).
-    registry.set_display_title(req, (decision or {}).get("display_title"))
-    # §44.2: before filing, one focused check against the near-dupe rule's
-    # best hit — same thing → fold into it silently, no new card. Skipped
-    # when triage itself already failed over (_fallback: the LLM is down,
-    # a second call would just burn the retry budget).
-    separate_from = None
-    if not (decision or {}).get("_fallback"):
-        target = _silent_fold_target(req, cfg)
-        separate_from = getattr(req, "_silent_separate_from", None)
-        if target is not None:
-            # TOCTOU guard (review finding): the judge ran a real LLM for up
-            # to minutes — re-load the target and re-check it is still open
-            # before folding; a whole-object save of the stale copy would
-            # clobber concurrent actd writes (or resurrect a trashed card).
-            from act.lib import auto_merge as _am
-            target = registry.load(target.id)
-            if target is not None and target.status in _am.OPEN_STATES:
-                brief = str(getattr(req, "_silent_brief", "") or "")
-                note = req.title if not brief or brief == "无新增信息" \
-                    else f"{req.title}（{brief}）"
-                _fold_into(target, req, note)
-                if target.status == registry.State.DETECTED.value \
-                        and req.status == registry.State.CARD_SENT.value:
-                    # act-now signal (rides req.status, radar.py:698) — same
-                    # promotion the relates_to fold path guarantees: an
-                    # urgent item must not vanish into the backlog lane.
-                    target.set_status(registry.State.CARD_SENT)
-                    registry.save(target)
-                if target.status == registry.State.EXECUTING.value:
-                    from act.lib import silent_merge
-                    silent_merge.queue_briefing(
-                        target, f"新信息并入：{note}（无需行动）")
-                    registry.save(target)
-                analytics.log_event("silent_merge", primary=target.id,
-                                    secondary=None, outcome="pre_filing_fold")
-                return "folded", target
+
+def _fold_into_open(decision: dict, req, target, note: str, gate, promote_ok: bool):
+    """Fold into an open card; an act-now fold into a DETECTED card promotes it
+    to card_sent (统一口径) unless the §45 gate withholds promotion."""
+    _fold_into(target, req, note)
+    if target.status == registry.State.DETECTED.value and (
+            _needs_action(decision, default=False)
+            or req.status == registry.State.CARD_SENT.value):
+        if promote_ok:
+            # 统一口径：现在需要行动 -> 提案列。An act-now candidate must not
+            # stay invisible in the 备选/backlog lane just because it folded
+            # into a detected card — promote the card it fed.
+            target.set_status(registry.State.CARD_SENT)
+            registry.save(target)
+        else:
+            # §45：非 FULL 来源的 act-now 提升一并压平——triage LLM 的
+            # needs_action 不在闸门豁免之列（P1-1）。fold 已经落卡（佐证
+            # 合法），提升被拦下要留痕，绝不静默。
+            analytics.log_event("radar_echo_blocked", stage="fold_promotion",
+                                gate=gate, req=target.id)
+    analytics.log_event("radar_triage", action="relates_to", req=target.id)
+    return "folded", target
+
+
+def _apply_low_confidence(decision: dict, req, high_confidence: bool) -> bool:
+    """统一口径第四出口：真实但不紧急 -> 备选/Backlog（宁可 debt 不可 ignore）。
+    Clears any caller-preset card_sent so the card lands detected."""
+    if not _is_low_conf(decision):
+        return high_confidence
+    if req.status == registry.State.CARD_SENT.value:
+        req.set_status(registry.State.DETECTED)
+    return False
+
+
+def _silent_note(req) -> str:
+    brief = str(getattr(req, "_silent_brief", "") or "")
+    return req.title if not brief or brief == "无新增信息" else f"{req.title}（{brief}）"
+
+
+def _promote_if_urgent(target, req) -> None:
+    """act-now signal (rides req.status, radar.py:698) — same promotion the
+    relates_to fold path guarantees: an urgent item must not vanish into the
+    backlog lane."""
+    if target.status == registry.State.DETECTED.value \
+            and req.status == registry.State.CARD_SENT.value:
+        target.set_status(registry.State.CARD_SENT)
+        registry.save(target)
+
+
+def _brief_if_executing(target, note: str) -> None:
+    if target.status == registry.State.EXECUTING.value:
+        from act.lib import silent_merge
+        silent_merge.queue_briefing(target, f"新信息并入：{note}（无需行动）")
+        registry.save(target)
+
+
+def _pre_filing_fold(req, cfg):
+    """§44.2: before filing, one focused check against the near-dupe rule's
+    best hit — same thing → fold into it silently, no new card. TOCTOU guard
+    (review finding): the judge ran a real LLM for up to minutes — re-load the
+    target and re-check it is still open before folding; a whole-object save
+    of the stale copy would clobber concurrent actd writes (or resurrect a
+    trashed card). Returns ("folded", target) or None."""
+    target = _silent_fold_target(req, cfg)
+    if target is None:
+        return None
+    from act.lib import auto_merge as _am
+    target = registry.load(target.id)
+    if target is None or target.status not in _am.OPEN_STATES:
+        return None
+    note = _silent_note(req)
+    _fold_into(target, req, note)
+    _promote_if_urgent(target, req)
+    _brief_if_executing(target, note)
+    analytics.log_event("silent_merge", primary=target.id, secondary=None,
+                        outcome="pre_filing_fold")
+    return "folded", target
+
+
+def _file_candidate(req, high_confidence: bool, promote_ok: bool, separate_from):
     # cap_detected（§45）：LIMITED 的 new_proposal 命中完结卡标题时，merge_or_new
     # 内部走 reraise_or_followup——天花板必须一路跟到那里（P1-2b）。
     kind_mn, saved = registry.merge_or_new_with_kind(
@@ -677,6 +730,29 @@ def apply_triage(
             pass
     analytics.log_event("radar_triage", action="new_proposal", req=saved.id)
     return "proposed", saved
+
+
+def _triage_new_proposal(decision: dict, req, cfg, high_confidence: bool, gate,
+                         promote_ok: bool):
+    if gate == provenance.CORROBORATE:
+        # §45 落库侧执法：屏幕来源无出生权，new_proposal（含 relates_to 目标
+        # 消失/被拒后的 fall-through）一律拦截留痕。radar 在闸门口已拦下常规
+        # 形态，能走到这里 = 预判后世界变了（TOCTOU）——同一刀补在出口。
+        analytics.log_event("radar_echo_blocked", stage="filing", gate=gate)
+        return "ignored", None
+    high_confidence = _apply_low_confidence(decision, req, high_confidence)
+    # §37 display_title: optional triage key — absent/malformed is a silent
+    # no-op (projection falls back to sanitize(title)).
+    registry.set_display_title(req, decision.get("display_title"))
+    separate_from = None
+    # skipped when triage itself already failed over (_fallback: the LLM is
+    # down, a second call would just burn the retry budget).
+    if not decision.get("_fallback"):
+        folded = _pre_filing_fold(req, cfg)
+        separate_from = getattr(req, "_silent_separate_from", None)
+        if folded is not None:
+            return folded
+    return _file_candidate(req, high_confidence, promote_ok, separate_from)
 
 
 def apply_result(res: dict, cfg: Optional[config.Config] = None) -> str:
@@ -715,71 +791,37 @@ def apply_result_with_kind(
     """
     if cfg is None:
         cfg = config.load_config()
-    action = (res or {}).get("action")
-    # the user's typed capture text is content — capture_input-gated
-    # (docs/TELEMETRY.md), attached to whichever quick_capture event fires.
-    tele_text = (analytics.clip_content((res or {}).get("_typed", (res or {}).get("_text")))
-                 if analytics.content_gate(cfg) else None)
-
+    res = res or {}
+    action = res.get("action")
+    tele_text = _tele_text(res, cfg)
     if action == "new_proposal":
         return _apply_new_proposal(res, tele_text)
     if action == "relates_to":
         return _apply_relates_to(res, cfg, tele_text)
     # ignore (or anything unrecognized — capture() already normalized)
-    reason = str((res or {}).get("reason") or "").strip() or "看起来不需要行动"
     analytics.log_event("quick_capture", action="ignore", text=tele_text)
-    return "ignored", None, f"先不建卡：{reason}（要建的话再发一条明确点的）"
+    return "ignored", None, f"先不建卡：{_ignore_reason(res)}（要建的话再发一条明确点的）"
+
+
+def _tele_text(res: dict, cfg) -> Optional[str]:
+    """the user's typed capture text is content — capture_input-gated
+    (docs/TELEMETRY.md), attached to whichever quick_capture event fires."""
+    if not analytics.content_gate(cfg):
+        return None
+    return analytics.clip_content(res.get("_typed", res.get("_text")))
+
+
+def _ignore_reason(res: dict) -> str:
+    return str(res.get("reason") or "").strip() or "看起来不需要行动"
 
 
 def _apply_new_proposal(
     res: dict, tele_text: Optional[str] = None,
 ) -> tuple[str, Optional[registry.Requirement], str]:
-    quote = str(res.get("_text") or res.get("summary") or "").strip()
-    title = str(res.get("title") or res.get("summary") or quote or "quick capture").strip()
-    # confidence="low" = 不紧急的备忘（含未来条件性）——落备选/Backlog 而不是
-    # 待审批，绝不 ignore（无损原则）。缺失/其他值 = 原行为（card_sent）。
-    low_conf = str(res.get("confidence") or "").strip().lower() == "low"
-    tier = str(res.get("tier") or "").strip().upper()
-    tk = str(res.get("target_kind") or "").strip().lower()
-    dod = res.get("definition_of_done")
-    if isinstance(dod, list):
-        dod = [str(x).strip() for x in dod if str(x).strip()][:3] or None
-    else:
-        dod = None
-    notes = "from Slack self-DM quick capture"
-    if res.get("_fallback"):
-        notes += " (quick-capture LLM failed, needs manual)"
-    if res.get("_relates_to_miss"):
-        notes += f" (relates_to miss: {res['_relates_to_miss']})"
-
-    req = registry.Requirement(
-        id=registry.next_id(),
-        title=title[:80],
-        summary=str(res.get("summary") or "").strip() or title[:120],
-        type=str(res.get("type") or "other").strip() or "other",
-        tier=tier if tier in _VALID_TIERS else "T1",
-        status=(registry.State.DETECTED.value if low_conf
-                else registry.State.CARD_SENT.value),
-        hardness="soft",
-        plan=analyze._coerce_plan(res.get("plan")) or [title],
-        cost_estimate_usd=analyze._coerce_cost(res.get("cost_estimate_usd")),
-        definition_of_done=dod,
-        target_repo=(str(res.get("target_repo")).strip()
-                     if isinstance(res.get("target_repo"), str) and res.get("target_repo").strip()
-                     else None),
-        target_kind=tk if tk in ("new", "existing") else None,
-        # Slack self-DM has no inbox file → no capture_id (§10, issue #7)
-        sources=[registry.capture_source("zelin", "quick", quote or title)],
-        notes=notes,
-    )
-    # delivery_mode: "chat" | "repo" — anything illegal (or the LLM-failure
-    # fallback, which omits the key) falls back to "repo" (v0.10 contract;
-    # attribute-set so this works even before the registry field lands).
-    dm = str(res.get("delivery_mode") or "").strip().lower()
-    req.delivery_mode = dm if dm in ("chat", "repo") else "repo"
-    # §37 display_title: optional LLM key — absent/malformed degrades to the
-    # projection-time sanitize(title) fallback, never fails the capture.
-    registry.set_display_title(req, res.get("display_title"))
+    quote = _capture_quote(res)
+    title = _capture_title(res, quote)
+    low_conf = _is_low_conf(res)
+    req = _new_proposal_req(res, quote, title, low_conf)
     # §40.2: the receipt kind is merge_or_new's ACTUAL outcome — a
     # new_proposal decision can internally RE-RAISE a resolved parent
     # (reraise_or_followup), and that must read ↩️, not 📥. The reply
@@ -795,92 +837,227 @@ def _apply_new_proposal(
         fold_receipts.record(saved.id, "quick", quote or title)
     analytics.log_event("quick_capture", action="new_proposal", req=saved.id,
                         confidence="low" if low_conf else None, text=tele_text)
+    return kind, saved, _proposal_reply(saved, req, low_conf)
+
+
+def _capture_quote(res: dict) -> str:
+    return str(res.get("_text") or res.get("summary") or "").strip()
+
+
+def _capture_title(res: dict, quote: str) -> str:
+    return str(res.get("title") or res.get("summary") or quote or "quick capture").strip()
+
+
+def _is_low_conf(decision: dict) -> bool:
+    """confidence="low" = 不紧急的备忘（含未来条件性）——落备选/Backlog 而不是
+    待审批，绝不 ignore（无损原则）。缺失/其他值 = 原行为（card_sent）。"""
+    return str(decision.get("confidence") or "").strip().lower() == "low"
+
+
+def _proposal_tier(res: dict) -> str:
+    tier = str(res.get("tier") or "").strip().upper()
+    return tier if tier in _VALID_TIERS else "T1"
+
+
+def _proposal_target_kind(res: dict) -> Optional[str]:
+    tk = str(res.get("target_kind") or "").strip().lower()
+    return tk if tk in ("new", "existing") else None
+
+
+def _proposal_target_repo(res: dict) -> Optional[str]:
+    tr = res.get("target_repo")
+    return str(tr).strip() if isinstance(tr, str) and tr.strip() else None
+
+
+def _proposal_dod(res: dict) -> Optional[list]:
+    dod = res.get("definition_of_done")
+    if isinstance(dod, list):
+        return [str(x).strip() for x in dod if str(x).strip()][:3] or None
+    return None
+
+
+def _proposal_notes(res: dict) -> str:
+    notes = "from Slack self-DM quick capture"
+    if res.get("_fallback"):
+        notes += " (quick-capture LLM failed, needs manual)"
+    if res.get("_relates_to_miss"):
+        notes += f" (relates_to miss: {res['_relates_to_miss']})"
+    return notes
+
+
+def _proposal_summary(res: dict, title: str) -> str:
+    return str(res.get("summary") or "").strip() or title[:120]
+
+
+def _proposal_type(res: dict) -> str:
+    return str(res.get("type") or "other").strip() or "other"
+
+
+def _delivery_mode(res: dict) -> str:
+    """"chat" | "repo" — anything illegal (or the LLM-failure fallback, which
+    omits the key) falls back to "repo" (v0.10 contract)."""
+    dm = str(res.get("delivery_mode") or "").strip().lower()
+    return dm if dm in ("chat", "repo") else "repo"
+
+
+def _new_proposal_req(res: dict, quote: str, title: str, low_conf: bool) -> registry.Requirement:
+    req = registry.Requirement(
+        id=registry.next_id(),
+        title=title[:80],
+        summary=_proposal_summary(res, title),
+        type=_proposal_type(res),
+        tier=_proposal_tier(res),
+        status=(registry.State.DETECTED.value if low_conf
+                else registry.State.CARD_SENT.value),
+        hardness="soft",
+        plan=analyze._coerce_plan(res.get("plan")) or [title],
+        cost_estimate_usd=analyze._coerce_cost(res.get("cost_estimate_usd")),
+        definition_of_done=_proposal_dod(res),
+        target_repo=_proposal_target_repo(res),
+        target_kind=_proposal_target_kind(res),
+        # Slack self-DM has no inbox file → no capture_id (§10, issue #7)
+        sources=[registry.capture_source("zelin", "quick", quote or title)],
+        notes=_proposal_notes(res),
+    )
+    # attribute-set so this works even before the registry field lands
+    req.delivery_mode = _delivery_mode(res)
+    # §37 display_title: optional LLM key — absent/malformed degrades to the
+    # projection-time sanitize(title) fallback, never fails the capture.
+    registry.set_display_title(req, res.get("display_title"))
+    return req
+
+
+def _saved_label(saved) -> str:
+    return saved.summary or saved.title
+
+
+def _proposal_reply(saved, req, low_conf: bool) -> str:
     if saved.id != req.id and not saved.improvement_of:
         # merged into an existing entry as a restatement
-        return (kind, saved,
-                f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1")
+        return f"已并入已有条目 {saved.id}（{saved.title}），提及次数 +1"
     if low_conf and saved.status == registry.State.DETECTED.value:
-        return (kind, saved,
-                f"已记入潜在任务 {saved.id}：{saved.summary or saved.title}"
+        return (f"已记入潜在任务 {saved.id}：{_saved_label(saved)}"
                 f"（不紧急，先存着不打扰）/ parked in backlog {saved.id}")
-    return (kind, saved,
-            f"已建卡 {saved.id}：{saved.summary or saved.title}（进待审批）")
+    return f"已建卡 {saved.id}：{_saved_label(saved)}（进待审批）"
 
 
 def _apply_relates_to(
     res: dict, cfg: config.Config, tele_text: Optional[str] = None,
 ) -> tuple[str, Optional[registry.Requirement], str]:
     rid = str(res.get("req") or "").strip()
-    req = registry.load(rid) if rid else None
-    sealed_hit = False
-    if req is not None:
-        # merge-cluster canonicalization（同 apply_triage）：命中已并入主卡的副卡时
-        # 挂到主卡名下，同一事件的 follow-up 全簇收敛到一个血缘节点。
-        req = registry.canonical(req)
-        if req.status in (registry.State.REJECTED.value,
-                          registry.State.TRASHED.value,
-                          registry.State.ARCHIVED.value):
-            # 决策6 / sealed-archive semantics (same guard as apply_triage):
-            # rejected/trashed/archived cards are sealed — a restated ask must
-            # RE-CARD, never be buried as a note inside a card no kanban lane
-            # shows. Treat exactly like an unknown id (fall through below).
-            analytics.log_event("quick_capture", action="relates_to_rejected",
-                                req=req.id, text=tele_text)
-            sealed_hit = True
-            req = None
+    req, sealed_hit = _canonical_capture_target(rid, tele_text)
     if req is None:
-        # never-lose (§13): an unknown/hallucinated id (or a sealed-card hit)
-        # must not drop the capture — since v0.21 the self-DM reply surface is
-        # gone, so replying "没找到" without a registry write silently loses
-        # the thought. Mirror apply_triage's unknown-id fall-through: file a
-        # minimal new_proposal instead.
-        if not sealed_hit:
-            analytics.log_event("quick_capture", action="relates_to_miss",
-                                req=rid or None, text=tele_text)
-        typed = str(res.get("_typed") or "").strip()
-        raw = (typed or str(res.get("note") or "").strip()
-               or str(res.get("_text") or "").strip())
-        fb = _fallback_result(raw)
-        fb.pop("_fallback", None)
-        fb["_relates_to_miss"] = rid or "?"
-        fb["_text"] = raw
-        kind, saved, reply = _apply_new_proposal(fb, tele_text)
-        if sealed_hit:
-            return (kind, saved,
-                    f"{rid} 已封存（拒绝/回收站/归档），重述按新卡处理——{reply}")
-        return kind, saved, f"没找到条目 {rid or '?'}；为了不丢先按新卡记下——{reply}"
-    note = str(res.get("note") or "").strip() or str(res.get("_text") or "").strip()
+        return _relates_to_miss(res, rid, sealed_hit, tele_text)
+    note = _relates_note(res)
     if registry.is_resolved(req):
-        # 统一口径：已交付/已合并的既往卡不追加备注了事——走 reraise_or_followup
-        # 同一机制（v0.20.0 §3.5）：真 restatement（title 对齐）翻原卡回提案，
-        # 同 thread 不同任务则开继承 thread_id 的 follow-up 子卡（或并入未决 follow-up）。
-        child = registry.Requirement(
-            id="",
-            title=(note or req.title)[:80],
-            type=req.type,
-            tier=req.tier,
-            summary=note,
-            sources=[registry.capture_source("zelin", "quick", note or req.title)],
-        )
-        # explicit self-capture is inherently actionable (无损原则).
-        same_task = registry._same_source_and_title(req, child)
-        kind, saved = registry.reraise_or_followup(
-            req, child, same_task=same_task, actionable=True,
-            sources=child.sources, note=note)
-        analytics.log_event("quick_capture", action=kind or "relates_to",
-                            req=(saved.id if saved is not None else None),
-                            text=tele_text)
-        if kind == "reraised":
-            return ("reraised", saved,
-                    f"{req.id} 之前已验收；来了新信息，已回锅重新提案，进待审批 / "
-                    f"{req.id} was accepted; re-raised as a proposal (pending approval)")
-        if kind == "follow_up":
-            return ("follow_up", saved,
-                    f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
-                    f"{req.id} is closed; filed follow-up {saved.id} (pending approval)")
-        return ("folded", saved,
-                f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
-                f"folded into {req.id}'s open follow-up {saved.id}")
+        return _relates_to_resolved(req, note, tele_text)
+    return _fold_note_into(req, note, cfg, tele_text)
+
+
+def _canonical_capture_target(rid: str, tele_text: Optional[str]):
+    """(req, sealed_hit) — merge-cluster canonicalization（同 apply_triage）：命中
+    已并入主卡的副卡时挂到主卡名下；决策6 / sealed-archive semantics: a
+    rejected/trashed/archived card is sealed — a restated ask must RE-CARD,
+    never be buried as a note inside a card no kanban lane shows (treated
+    exactly like an unknown id)."""
+    req = registry.load(rid) if rid else None
+    if req is None:
+        return None, False
+    req = registry.canonical(req)
+    if req.status in _SEALED_STATES:
+        analytics.log_event("quick_capture", action="relates_to_rejected",
+                            req=req.id, text=tele_text)
+        return None, True
+    return req, False
+
+
+def _relates_note(res: dict) -> str:
+    return str(res.get("note") or "").strip() or str(res.get("_text") or "").strip()
+
+
+def _field_text(res: dict, key: str) -> str:
+    return str(res.get(key) or "").strip()
+
+
+def _miss_text(res: dict) -> str:
+    return _field_text(res, "_typed") or _field_text(res, "note") or _field_text(res, "_text")
+
+
+def _relates_to_miss(res: dict, rid: str, sealed_hit: bool, tele_text: Optional[str]):
+    """never-lose (§13): an unknown/hallucinated id (or a sealed-card hit) must
+    not drop the capture — since v0.21 the self-DM reply surface is gone, so
+    replying "没找到" without a registry write silently loses the thought.
+    Mirror apply_triage's unknown-id fall-through: file a minimal
+    new_proposal instead."""
+    if not sealed_hit:
+        _log_capture_miss(rid, tele_text)
+    fb = _fallback_result(_miss_text(res))
+    fb.pop("_fallback", None)
+    fb["_relates_to_miss"] = rid or "?"
+    fb["_text"] = _miss_text(res)
+    kind, saved, reply = _apply_new_proposal(fb, tele_text)
+    if sealed_hit:
+        return (kind, saved,
+                f"{rid} 已封存（拒绝/回收站/归档），重述按新卡处理——{reply}")
+    return kind, saved, f"没找到条目 {rid or '?'}；为了不丢先按新卡记下——{reply}"
+
+
+def _log_capture_miss(rid: str, tele_text: Optional[str]) -> None:
+    analytics.log_event("quick_capture", action="relates_to_miss",
+                        req=rid or None, text=tele_text)
+
+
+def _capture_child(req, note: str) -> registry.Requirement:
+    return registry.Requirement(
+        id="",
+        title=(note or req.title)[:80],
+        type=req.type,
+        tier=req.tier,
+        summary=note,
+        sources=[registry.capture_source("zelin", "quick", note or req.title)],
+    )
+
+
+def _resolved_reply(kind: str, req, saved) -> tuple:
+    if kind == "reraised":
+        return ("reraised", saved,
+                f"{req.id} 之前已验收；来了新信息，已回锅重新提案，进待审批 / "
+                f"{req.id} was accepted; re-raised as a proposal (pending approval)")
+    if kind == "follow_up":
+        return ("follow_up", saved,
+                f"{req.id} 已交付/已合并；已建后续卡 {saved.id} 挂其名下，进待审批 / "
+                f"{req.id} is closed; filed follow-up {saved.id} (pending approval)")
+    return ("folded", saved,
+            f"{req.id} 已有未决后续卡 {saved.id}，这条已并入 / "
+            f"folded into {req.id}'s open follow-up {saved.id}")
+
+
+def _relates_to_resolved(req, note: str, tele_text: Optional[str]):
+    """统一口径：已交付/已合并的既往卡不追加备注了事——走 reraise_or_followup
+    同一机制（v0.20.0 §3.5）：真 restatement（title 对齐）翻原卡回提案，
+    同 thread 不同任务则开继承 thread_id 的 follow-up 子卡（或并入未决 follow-up）。"""
+    child = _capture_child(req, note)
+    # explicit self-capture is inherently actionable (无损原则).
+    same_task = registry.same_source_and_title(req, child)
+    kind, saved = registry.reraise_or_followup(
+        req, child, same_task=same_task, actionable=True,
+        sources=child.sources, note=note)
+    analytics.log_event("quick_capture", action=kind or "relates_to",
+                        req=(saved.id if saved is not None else None),
+                        text=tele_text)
+    return _resolved_reply(kind, req, saved)
+
+
+_FOLD_PHRASES = {
+    registry.State.CARD_SENT.value: "已在待审批，备注已追加",
+    registry.State.APPROVED.value: "已批准待派发，备注已追加",
+    registry.State.EXECUTING.value: "正在弄，备注已追加",
+    registry.State.REVIEW.value: "已交付待你验收，备注已追加",
+    registry.State.DELIVERED.value: "之前已交付，备注已追加",
+}
+
+
+def _fold_note_into(req, note: str, cfg, tele_text: Optional[str]):
     registry.append_fold_note(req, note, "quick")   # §38: timestamped + deduped
     # §44.6 看板回执：self-DM 的 relates_to 备注折叠与其他 fold 点同口径——
     # Slack 有文字答复不豁免看板留痕（用户可能只看板不看 DM）。best-effort。
@@ -895,11 +1072,5 @@ def _apply_relates_to(
     registry.save(req)
     analytics.log_event("quick_capture", action="relates_to", req=req.id,
                         text=tele_text)
-    phrase = {
-        registry.State.CARD_SENT.value: "已在待审批，备注已追加",
-        registry.State.APPROVED.value: "已批准待派发，备注已追加",
-        registry.State.EXECUTING.value: "正在弄，备注已追加",
-        registry.State.REVIEW.value: "已交付待你验收，备注已追加",
-        registry.State.DELIVERED.value: "之前已交付，备注已追加",
-    }.get(str(req.status), f"状态 {req.status}，备注已追加")
+    phrase = _FOLD_PHRASES.get(str(req.status), f"状态 {req.status}，备注已追加")
     return "folded", req, f"已关联 {req.id}：{phrase}"

@@ -27,15 +27,10 @@ private:act/executor.py->act.lib.dashboard._run_claude_agents 1
 private:act/lib/analytics.py->act.lib.config._coerce_bool 1
 private:act/lib/dashboard.py->act.lib.agent_states._DONE_STATES 1
 private:act/lib/dashboard.py->act.lib.agent_states._RUNNING_STATES 1
-private:act/lib/feedback_sync.py->act.lib.feedback._write_record 1
-private:act/lib/feedback_sync.py->act.lib.secrets._read_path 1
 private:act/lib/quick_capture.py->act.analyze._coerce_cost 1
 private:act/lib/quick_capture.py->act.analyze._coerce_plan 1
 private:act/lib/quick_capture.py->act.analyze._extract_json 1
-private:act/lib/quick_capture.py->act.lib.registry._same_source_and_title 1
 private:act/lib/silent_merge.py->act.merge_review._default_runner 1
-private:act/lib/store2/activate.py->act.lib.store2.migrate_yaml._apply_schema 1
-private:act/lib/store2/activate.py->act.lib.store2.migrate_yaml._topo_order 1
 private:act/merge_review.py->act.analyze._extract_json 1
 private:act/radar_gmail.py->act.radar._load_failed_queue 1
 private:act/radar_gmail.py->act.radar._record_failure 1

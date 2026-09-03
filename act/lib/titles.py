@@ -55,25 +55,38 @@ def clip_title(text, limit: int = MAX_DISPLAY_TITLE):
     return t
 
 
+def _url_domain(netloc: str) -> str:
+    """Bare host: userinfo + port dropped, leading ``www.`` stripped."""
+    domain = (netloc or "").split("@")[-1].split(":")[0]
+    return domain[4:] if domain.startswith("www.") else domain
+
+
+def _video_id(query: str):
+    """``v=<id>`` query param (youtube watch?v=…) or None. urlparse strips the
+    leading "?" so ``v=`` may open the query string."""
+    m = re.search(r"(?:^|&)v=([^&]+)", query)
+    return m.group(1) if m else None
+
+
+def _last_meaningful_segment(path: str):
+    """Last path segment that is not a noise word (index.html / view / …)."""
+    segments = list(filter(None, path.split("/")))
+    while segments and segments[-1].lower() in _NOISE_SEGMENTS:
+        segments.pop()
+    return segments[-1] if segments else None
+
+
 def _url_title(url: str) -> str:
     try:
         parsed = urlparse(url)
     except ValueError:
         return url
-    domain = (parsed.netloc or "").split("@")[-1].split(":")[0]
-    if domain.startswith("www."):
-        domain = domain[4:]
-    # video-id style query params beat the path (youtube watch?v=…);
-    # urlparse strips the leading "?" so v= may open the query string.
-    m = re.search(r"(?:^|&)v=([^&]+)", parsed.query or "")
-    if m:
-        return f"{domain} ▸ {m.group(1)}"
-    segments = [s for s in (parsed.path or "").split("/") if s]
-    while segments and segments[-1].lower() in _NOISE_SEGMENTS:
-        segments.pop()
-    if not segments:
+    domain = _url_domain(parsed.netloc)
+    # video-id style query params beat the path
+    tail = _video_id(parsed.query) or _last_meaningful_segment(parsed.path)
+    if tail is None:
         return domain or url
-    return f"{domain} ▸ {segments[-1]}"
+    return f"{domain} ▸ {tail}"
 
 
 # Sentence/clause boundary for _clip_clause (review fix). The old
@@ -123,9 +136,30 @@ def is_unreadable_title(title) -> bool:
     t = " ".join(title.split()).strip()
     if not t:
         return False
-    if t[0] in "/~" and "/" in t.split()[0][1:] and t.count("/") >= 2:
-        return True
+    return _is_spaced_path(t) or _is_unreadable_shape(t)
+
+
+def _is_spaced_path(t: str) -> bool:
+    """Filesystem path that carries spaces (one-way relaxation of _PATH_RE):
+    first char / or ~, the first token itself structured by a slash, and at
+    least two slashes overall."""
+    return t[0] in "/~" and "/" in t.split()[0][1:] and t.count("/") >= 2
+
+
+def _is_unreadable_shape(t: str) -> bool:
+    """URL / plain path / overlong text — the three §37 shapes."""
     return bool(_URL_RE.match(t) or _PATH_RE.match(t)) or len(t) > _LONG_TEXT
+
+
+def _readable_form(t: str) -> str:
+    """The readable rung for a collapsed, non-empty title (§37 chain)."""
+    if _URL_RE.match(t):
+        return _url_title(t)
+    if _PATH_RE.match(t):
+        return t.rstrip("/").rsplit("/", 1)[-1] or t
+    if len(t) > _LONG_TEXT:
+        return _clip_clause(t)
+    return t
 
 
 def sanitize_title(title) -> str:
@@ -138,12 +172,4 @@ def sanitize_title(title) -> str:
     t = " ".join(str(title).split()).strip()
     if not t:
         return ""
-    if _URL_RE.match(t):
-        out = _url_title(t)
-    elif _PATH_RE.match(t):
-        out = t.rstrip("/").rsplit("/", 1)[-1] or t
-    elif len(t) > _LONG_TEXT:
-        out = _clip_clause(t)
-    else:
-        out = t
-    return clip_title(out) or t[:MAX_DISPLAY_TITLE]
+    return clip_title(_readable_form(t)) or t[:MAX_DISPLAY_TITLE]

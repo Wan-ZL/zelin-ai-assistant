@@ -1,5 +1,10 @@
 """Configuration + canonical runtime paths for Zelin's AI Assistant.
 
+契约：CONTRACT §15（`state/settings_overrides.json` 最后合并、只碰点名的键）+
+§16（feature flags）+ §17（digest.frequency）+ §19（凭证路径）+ §48（三源开关）+
+§53（registry.backend 回滚开关）+ §54（server.port）+ §59（两把模型旋钮）+
+§63（recap 旋钮）+ §64（card_summary）+ §70（daily_loop 块）。
+
 Runtime state lives under ``AIASSISTANT_HOME/state`` (gitignored). The registry
 (source of truth) lives under ``AIASSISTANT_HOME/act/registry``; runtime entries
 (``R-*.yaml``) are gitignored — they contain real extracted work data.
@@ -458,11 +463,17 @@ def _coerce_bool(value) -> bool:
     if isinstance(value, int) and value in (0, 1):
         return bool(value)
     if isinstance(value, str):
-        v = value.strip().lower()
-        if v in _BOOL_TRUE_WORDS:
-            return True
-        if v in _BOOL_FALSE_WORDS:
-            return False
+        return _bool_word(value)
+    raise ValueError(f"not a bool: {value!r}")
+
+
+def _bool_word(value: str) -> bool:
+    """"true"/"yes"/"on"/"1" → True；"false"/"no"/"off"/"0" → False；其余 ValueError。"""
+    v = value.strip().lower()
+    if v in _BOOL_TRUE_WORDS:
+        return True
+    if v in _BOOL_FALSE_WORDS:
+        return False
     raise ValueError(f"not a bool: {value!r}")
 
 
@@ -620,28 +631,29 @@ def model_is_canonical(value) -> bool:
     return (not s) or s.lower() == MODEL_FOLLOW or s in CANONICAL_MODELS
 
 
-def load_config() -> Config:
-    """Load ``config.yaml`` (falling back to ``config.example.yaml``).
+def _config_path() -> Path:
+    return CONFIG_PATH if CONFIG_PATH.exists() else CONFIG_EXAMPLE_PATH
 
-    Never raises on a missing file — returns a Config with defaults so the
-    daemon keeps running in a fresh checkout.
-    """
-    path = CONFIG_PATH if CONFIG_PATH.exists() else CONFIG_EXAMPLE_PATH
-    data: dict = {}
-    if yaml is not None and path.exists():
-        try:
-            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001 — 坏 yaml/编码 = 全默认，绝不崩 daemon
-            loaded = None
-        if isinstance(loaded, dict):
-            data = loaded
 
-    cfg = Config(raw=data)
+def _load_yaml_dict(path: Path) -> dict:
+    """config.yaml → dict；缺文件 / 坏 yaml / 坏编码 / 非 mapping = {}（全默认，
+    绝不崩 daemon）。"""
+    if yaml is None or not path.exists():
+        return {}
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — 坏 yaml/编码 = 全默认，绝不崩 daemon
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
+
+def _apply_owner(cfg: Config, data: dict) -> None:
     owner = _dict_or(data.get("owner"))
     cfg.owner_name = owner.get("name", cfg.owner_name)
     cfg.owner_slack_user_id = owner.get("slack_user_id", cfg.owner_slack_user_id)
 
+
+def _apply_sources(cfg: Config, data: dict) -> None:
     sources = _dict_or(data.get("sources"))
     cfg.obsidian_raw = sources.get("obsidian_raw", cfg.obsidian_raw)
     cfg.obsidian_unprocessed = sources.get(
@@ -670,7 +682,12 @@ def load_config() -> Config:
         cfg.slack_capture_receipts,
     )
     cfg.watch_people = sources.get("watch_people", []) or []
+    _apply_gmail(cfg, sources)
+    _apply_source_switches(cfg, sources)
+    _apply_weekly_digest(cfg, sources)
 
+
+def _apply_gmail(cfg: Config, sources: dict) -> None:
     gmail = _dict_or(sources.get("gmail"))
     cfg.gmail_address = gmail.get("address", cfg.gmail_address)
     cfg.gmail_app_password_path = gmail.get(
@@ -683,33 +700,43 @@ def load_config() -> Config:
         "fetch_command", cfg.gmail_fetch_command
     )
 
-    # §48: slack/obsidian 的 sources.<src>.enabled — gmail 上面同款的嵌套
-    # 写法，此前静默无效（半个开关）；三源对齐后 sources.enabled() 的合取
-    # 对每个源都成立。
+
+def _apply_source_switches(cfg: Config, sources: dict) -> None:
+    """§48: slack/obsidian 的 sources.<src>.enabled — gmail 上面同款的嵌套
+    写法，此前静默无效（半个开关）；三源对齐后 sources.enabled() 的合取
+    对每个源都成立。"""
     for _src in ("slack", "obsidian"):
         _blk = _dict_or(sources.get(_src))
         _cur = getattr(cfg, f"{_src}_enabled")
         setattr(cfg, f"{_src}_enabled",
                 _bool_or(_blk.get("enabled", _cur), _cur))
 
-    wd = sources.get("weekly_digest", {}) or {}
-    if isinstance(wd, dict):
-        cfg.weekly_digest_enabled = _bool_or(
-            wd.get("enabled", cfg.weekly_digest_enabled), cfg.weekly_digest_enabled
-        )
-        try:
-            day = int(wd.get("day", cfg.weekly_digest_day))
-            if 0 <= day <= 6:
-                cfg.weekly_digest_day = day
-        except (TypeError, ValueError):
-            pass
-        try:
-            hour = int(wd.get("hour", cfg.weekly_digest_hour))
-            if 0 <= hour <= 23:
-                cfg.weekly_digest_hour = hour
-        except (TypeError, ValueError):
-            pass
 
+def _int_in_range(value, lo: int, hi: int) -> Optional[int]:
+    """int(value) when it parses and lies in [lo, hi]; else None."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if lo <= n <= hi else None
+
+
+def _apply_weekly_digest(cfg: Config, sources: dict) -> None:
+    wd = sources.get("weekly_digest", {}) or {}
+    if not isinstance(wd, dict):
+        return
+    cfg.weekly_digest_enabled = _bool_or(
+        wd.get("enabled", cfg.weekly_digest_enabled), cfg.weekly_digest_enabled
+    )
+    day = _int_in_range(wd.get("day", cfg.weekly_digest_day), 0, 6)
+    if day is not None:
+        cfg.weekly_digest_day = day
+    hour = _int_in_range(wd.get("hour", cfg.weekly_digest_hour), 0, 23)
+    if hour is not None:
+        cfg.weekly_digest_hour = hour
+
+
+def _apply_approval(cfg: Config, data: dict) -> None:
     approval = _dict_or(data.get("approval"))
     # poll_interval: config.example uses minutes for the approval surface; the
     # daemon loop also accepts an explicit seconds override.
@@ -732,10 +759,29 @@ def load_config() -> Config:
         cfg.require_text_confirm_above_usd,
     )
 
+
+def _apply_execution(cfg: Config, data: dict) -> None:
     execution = _dict_or(data.get("execution"))
     if "default_target_repo" in execution and execution["default_target_repo"]:
         cfg.default_target_repo_configured = True
     cfg.default_target_repo = execution.get("default_target_repo", cfg.default_target_repo)
+    _apply_execution_flags(cfg, execution)
+    _cb = execution.get("claude_bin")
+    if _cb and str(_cb).strip():
+        cfg.claude_bin = str(_cb).strip()
+    cfg.dispatch_max_failures = max(0, _int_or(
+        execution.get("dispatch_max_failures", cfg.dispatch_max_failures),
+        cfg.dispatch_max_failures,
+    ))
+    qg = _dict_or(execution.get("quality_gate"))
+    cfg.self_check = _bool_or(qg.get("self_check", cfg.self_check), cfg.self_check)
+    cfg.fresh_context_review = _bool_or(
+        qg.get("fresh_context_review", cfg.fresh_context_review),
+        cfg.fresh_context_review,
+    )
+
+
+def _apply_execution_flags(cfg: Config, execution: dict) -> None:
     cfg.memory_inject = _bool_or(
         execution.get("memory_inject", cfg.memory_inject), cfg.memory_inject
     )
@@ -750,49 +796,40 @@ def load_config() -> Config:
         execution.get("skip_permissions", cfg.skip_permissions),
         cfg.skip_permissions,
     )
-    _cb = execution.get("claude_bin")
-    if _cb and str(_cb).strip():
-        cfg.claude_bin = str(_cb).strip()
-    cfg.dispatch_max_failures = max(0, _int_or(
-        execution.get("dispatch_max_failures", cfg.dispatch_max_failures),
-        cfg.dispatch_max_failures,
-    ))
-    qg = _dict_or(execution.get("quality_gate"))
-    cfg.self_check = _bool_or(qg.get("self_check", cfg.self_check), cfg.self_check)
-    cfg.fresh_context_review = _bool_or(
-        qg.get("fresh_context_review", cfg.fresh_context_review),
-        cfg.fresh_context_review,
-    )
+
+
+def _apply_retention(cfg: Config, data: dict) -> None:
     trash = _dict_or(data.get("trash"))
     cfg.trash_retention_days = _int_or(
         trash.get("retention_days", cfg.trash_retention_days),
         cfg.trash_retention_days,
     )
-
     archive = _dict_or(data.get("archive"))
     cfg.archive_after_days = _int_or(
         archive.get("after_days", cfg.archive_after_days),
         cfg.archive_after_days,
     )
-    _apply_daily_loop_block(cfg, data)   # §70（无分支：load_config 账本在上限之外）
+    _apply_daily_loop_block(cfg, data)   # §70
 
+
+def _apply_digest_registry_server(cfg: Config, data: dict) -> None:
     # §17 (D19) digest cadence. The legacy `digest.weekly: monday` key that
     # config.example.yaml carried for years was never read by any code —
     # it stays an ignored unknown key; only `frequency` is law.
     digest_blk = _dict_or(data.get("digest"))
     if "frequency" in digest_blk:
         cfg.digest_frequency = _coerce_digest_frequency(digest_blk.get("frequency"))
-
     # §53（D2）数据层后端开关——registry.backend() 的配置输入
     registry_blk = _dict_or(data.get("registry"))
     if "backend" in registry_blk:
         cfg.registry_backend = _coerce_registry_backend(registry_blk.get("backend"))
-
-    # §54 看板 server 端口（无分支：load_config 的圈复杂度账本已在上限之外）
+    # §54 看板 server 端口
     cfg.server_port = _server_port_from(data)
-    # §64 待验收卡 AI 摘要 + 评语开关（同上，helper 内判定）
+    # §64 待验收卡 AI 摘要 + 评语开关
     cfg.card_summary_enabled = _card_summary_enabled_from(data, cfg.card_summary_enabled)
 
+
+def _apply_models_voice(cfg: Config, data: dict) -> None:
     # §59（D22）模型旋钮：config.yaml `models: {dispatch, pipeline}`；坏形状
     # 保留 follow（不是保留"上一个值"——yaml 里没有上一个值）。
     models_blk = _dict_or(data.get("models"))
@@ -800,12 +837,13 @@ def load_config() -> Config:
         if _mode in models_blk:
             setattr(cfg, f"models_{_mode}",
                     _model_or(models_blk.get(_mode), MODEL_FOLLOW))
-
     voice = _dict_or(data.get("voice"))
     cfg.voice_enabled = _bool_or(
         voice.get("enabled", cfg.voice_enabled), cfg.voice_enabled
     )
 
+
+def _apply_recording(cfg: Config, data: dict) -> None:
     recording = _dict_or(data.get("recording"))
     apps = recording.get("ignored_apps")
     if isinstance(apps, list):
@@ -813,6 +851,8 @@ def load_config() -> Config:
             str(a).strip() for a in apps if a is not None and str(a).strip()
         ]
 
+
+def _apply_telemetry(cfg: Config, data: dict) -> None:
     tele = _dict_or(data.get("telemetry"))
     cfg.telemetry_enabled = _bool_or(
         tele.get("enabled", cfg.telemetry_enabled), cfg.telemetry_enabled
@@ -820,12 +860,7 @@ def load_config() -> Config:
     _lvl = str(tele.get("level", cfg.telemetry_level) or "").strip().lower()
     cfg.telemetry_level = _lvl if _lvl in TELEMETRY_LEVELS else "basic"
     if "capture_input" in tele:
-        try:
-            cfg.telemetry_capture_input = _coerce_bool(tele.get("capture_input"))
-            # 只有值有效才算「知情选择」——坏值绝不能反过来打开 v2 consent 门
-            cfg.telemetry_capture_input_explicit = True
-        except (TypeError, ValueError):
-            pass
+        _apply_capture_input(cfg, tele.get("capture_input"))
     # An explicit empty/null supabase_url disables uploads entirely (forks:
     # this is the hard off switch); an ABSENT key keeps the default project.
     cfg.telemetry_supabase_url = str(
@@ -833,6 +868,17 @@ def load_config() -> Config:
     )
     cfg.telemetry_key_path = tele.get("key_path", cfg.telemetry_key_path)
 
+
+def _apply_capture_input(cfg: Config, value) -> None:
+    """只有值有效才算「知情选择」——坏值绝不能反过来打开 v2 consent 门。"""
+    try:
+        cfg.telemetry_capture_input = _coerce_bool(value)
+        cfg.telemetry_capture_input_explicit = True
+    except (TypeError, ValueError):
+        pass
+
+
+def _apply_redaction(cfg: Config, data: dict) -> None:
     red = _dict_or(data.get("redaction"))
     cfg.redaction_enabled = _bool_or(
         red.get("enabled", cfg.redaction_enabled), cfg.redaction_enabled
@@ -846,78 +892,111 @@ def load_config() -> Config:
     if _tf and not str(_tf).startswith(("/", "~")):
         cfg.redaction_terms_file = str(HOME / _tf)
 
+
+def _apply_switch_blocks(cfg: Config, data: dict) -> None:
+    """remote (W18) / doctor / updates / ask — one bool each. A non-mapping
+    block reads as {} → the default survives (same outcome as skipping it)."""
     # W18：config.yaml 是这个闸门的唯一写入面（fail-closed；见 dataclass 注释）
     remote = _dict_or(data.get("remote"))
     cfg.remote_allow_direct_run = _bool_or(
         remote.get("allow_direct_run", cfg.remote_allow_direct_run),
         cfg.remote_allow_direct_run,
     )
+    doctor_block = _dict_or(data.get("doctor"))
+    cfg.doctor_ai_fix_enabled = _bool_or(
+        doctor_block.get("ai_fix_enabled", cfg.doctor_ai_fix_enabled),
+        cfg.doctor_ai_fix_enabled,
+    )
+    updates_block = _dict_or(data.get("updates"))
+    cfg.updates_check_enabled = _bool_or(
+        updates_block.get("check_enabled", cfg.updates_check_enabled),
+        cfg.updates_check_enabled,
+    )
+    ask_block = _dict_or(data.get("ask"))
+    cfg.ask_enabled = _bool_or(
+        ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
+    )
+    _apply_recap_block(cfg, data)   # §63 会议 recap 的三把旋钮
 
-    doctor_block = data.get("doctor", {}) or {}
-    if isinstance(doctor_block, dict):
-        cfg.doctor_ai_fix_enabled = _bool_or(
-            doctor_block.get("ai_fix_enabled", cfg.doctor_ai_fix_enabled),
-            cfg.doctor_ai_fix_enabled,
-        )
 
-    updates_block = data.get("updates", {}) or {}
-    if isinstance(updates_block, dict):
-        cfg.updates_check_enabled = _bool_or(
-            updates_block.get("check_enabled", cfg.updates_check_enabled),
-            cfg.updates_check_enabled,
-        )
+def _nonblank(value) -> Optional[str]:
+    """str(value).strip() when non-empty and not None; else None."""
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    return None
 
-    ask_block = data.get("ask", {}) or {}
-    if isinstance(ask_block, dict):
-        cfg.ask_enabled = _bool_or(
-            ask_block.get("enabled", cfg.ask_enabled), cfg.ask_enabled
-        )
 
-    # §63 会议 recap 的三把旋钮（无分支：load_config 的复杂度账本已超线）
-    _apply_recap_block(cfg, data)
-
+def _apply_maintainer_feedback(cfg: Config, data: dict) -> None:
     # 设置「开发者 · 维护会话」— optional config.yaml block; blank/absent
     # values keep the defaults (app repo root / fresh session).
-    maint_block = data.get("maintainer", {}) or {}
-    if isinstance(maint_block, dict):
-        _mrp = maint_block.get("repo_path")
-        if _mrp is not None and str(_mrp).strip():
-            cfg.maintainer_repo_path = str(_mrp).strip()
-        _msid = maint_block.get("session_id")
-        if _msid is not None and str(_msid).strip():
-            cfg.maintainer_session_id = str(_msid).strip()
+    maint_block = _dict_or(data.get("maintainer"))
+    _mrp = _nonblank(maint_block.get("repo_path"))
+    if _mrp:
+        cfg.maintainer_repo_path = _mrp
+    _msid = _nonblank(maint_block.get("session_id"))
+    if _msid:
+        cfg.maintainer_session_id = _msid
     # NB: feedback_publish_default is deliberately NOT read from yaml — it is
     # the App-managed checkbox memory (override-only; see the dataclass field).
     fsync = _dict_or(data.get("feedback_sync"))
-    _fs_repo = str(fsync.get("repo", cfg.feedback_sync_repo) or "").strip()
+    _fs_repo = _nonblank_str(fsync.get("repo", cfg.feedback_sync_repo))
     if _fs_repo:
         cfg.feedback_sync_repo = _fs_repo
-    _fs_token = str(
-        fsync.get("token_path", cfg.feedback_sync_token_path) or ""
-    ).strip()
+    _fs_token = _nonblank_str(fsync.get("token_path", cfg.feedback_sync_token_path))
     if _fs_token:
         cfg.feedback_sync_token_path = _fs_token
 
+
+def _apply_language_format_features(cfg: Config, data: dict) -> None:
     if isinstance(data.get("language"), str) and data["language"].strip():
         cfg.language = data["language"].strip()
-
     # §15 default output format — invalid/typo values degrade to markdown
     # (the safe status-quo default), mirroring telemetry_level's fail-safe.
     _of = str(data.get("default_output_format", cfg.default_output_format)
               or "").strip().lower()
     cfg.default_output_format = _of if _of in OUTPUT_FORMATS else "markdown"
+    _apply_features(cfg, data)
 
-    feats = data.get("features", {}) or {}
-    if isinstance(feats, dict):
-        for k, v in feats.items():
-            # 坏值保留原生效值（默认 on）——"false"/"no" 等字符串拼写照常关闭
-            cfg.features[str(k)] = _bool_or(v, cfg.features.get(str(k), True))
 
+def _apply_features(cfg: Config, data: dict) -> None:
+    for k, v in _dict_or(data.get("features")).items():
+        # 坏值保留原生效值（默认 on）——"false"/"no" 等字符串拼写照常关闭
+        cfg.features[str(k)] = _bool_or(v, cfg.features.get(str(k), True))
+
+
+# config.yaml 的块应用器——顺序即 load_config 历史上的赋值顺序（各块只写自己的
+# 字段，顺序只在 overrides / 派生目录两步上有意义，见 load_config）。
+_BLOCK_APPLIERS = (
+    _apply_owner,
+    _apply_sources,
+    _apply_approval,
+    _apply_execution,
+    _apply_retention,
+    _apply_digest_registry_server,
+    _apply_models_voice,
+    _apply_recording,
+    _apply_telemetry,
+    _apply_redaction,
+    _apply_switch_blocks,
+    _apply_maintainer_feedback,
+    _apply_language_format_features,
+)
+
+
+def load_config() -> Config:
+    """Load ``config.yaml`` (falling back to ``config.example.yaml``).
+
+    Never raises on a missing file — returns a Config with defaults so the
+    daemon keeps running in a fresh checkout.
+    """
+    data = _load_yaml_dict(_config_path())
+    cfg = Config(raw=data)
+    for apply_block in _BLOCK_APPLIERS:
+        apply_block(cfg, data)
     _apply_settings_overrides(cfg)
     # AFTER the overrides merge, so an overridden obsidian_raw re-points the
     # derived pipeline dirs too (explicitly-set dirs are left untouched).
     _derive_obsidian_dirs(cfg)
-
     return cfg
 
 
@@ -1137,22 +1216,42 @@ _OVERRIDE_FIELDS: dict = {
 _OVERRIDE_LIST_FIELDS: tuple = ("slack_channels", "watch_people")
 
 
+def _channel_entry(it: dict) -> dict:
+    entry: dict = {"id": str(it["id"])}
+    if it.get("name"):
+        entry["name"] = str(it["name"])
+    return entry
+
+
+def _clean_slack_channel(it):
+    """One picker entry → {id[, name]} / bare id string / None (junk)."""
+    if isinstance(it, dict) and it.get("id"):
+        return _channel_entry(it)
+    if isinstance(it, str) and it.strip():
+        return it.strip()
+    return None
+
+
 def _clean_slack_channels(value: list) -> list:
-    out: list = []
-    for it in value:
-        if isinstance(it, dict) and it.get("id"):
-            entry: dict = {"id": str(it["id"])}
-            if it.get("name"):
-                entry["name"] = str(it["name"])
-            out.append(entry)
-        elif isinstance(it, str) and it.strip():
-            out.append(it.strip())
-    return out
+    return [c for c in map(_clean_slack_channel, value) if c is not None]
 
 
 def _clean_watch_people(value: list) -> list:
     return [str(v).strip() for v in value
             if isinstance(v, (str, int)) and str(v).strip()]
+
+
+def _read_overrides() -> Optional[dict]:
+    """``STATE_DIR/settings_overrides.json`` as a dict; None when absent,
+    malformed or not an object (a broken overrides file must never take the
+    daemon down)."""
+    try:
+        if not SETTINGS_OVERRIDES_PATH.exists():
+            return None
+        data = json.loads(SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — never raise on a malformed overrides file
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _apply_settings_overrides(cfg: Config) -> None:
@@ -1162,123 +1261,218 @@ def _apply_settings_overrides(cfg: Config) -> None:
     unknown keys are silently ignored — a broken overrides file must never take
     the daemon down.
     """
-    try:
-        if not SETTINGS_OVERRIDES_PATH.exists():
-            return
-        data = json.loads(SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 — never raise on a malformed overrides file
+    data = _read_overrides()
+    if data is None:
         return
-    if not isinstance(data, dict):
-        return
-
     # features 的嵌套形 vs 平铺形同文件冲突（App 只写嵌套形、且不清理手写/
     # 历史遗留的平铺 features.* 键）：嵌套形优先，且与 JSON 键序无关——镜像
     # Swift Analytics.featureEnabled 的读取顺序（嵌套 → 平铺）。否则同一份
     # overrides 两侧读出相反的 analytics gate（§16 隐私 gate 两个读者必须
     # 给出同一个答案）。
-    _nested_feats = data.get("features")
-    _nested_feats = _nested_feats if isinstance(_nested_feats, dict) else {}
-
+    nested_feats = data.get("features")
+    nested_feats = nested_feats if isinstance(nested_feats, dict) else {}
     for key, value in data.items():
         try:
-            if key == "features" and isinstance(value, dict):
-                for fk, fv in value.items():
-                    try:
-                        cfg.features[str(fk)] = _coerce_bool(fv)
-                    except (TypeError, ValueError):
-                        continue  # 单个坏 flag 跳过，别拖累同 dict 的其它 flag
-            elif key.startswith("features."):
-                # flat form: {"features.digest": false}——嵌套 features 块里
-                # 已有同名 flag 时让位（嵌套形优先，见循环前的注释）
-                flag = key.split(".", 1)[1]
-                if flag not in _nested_feats:
-                    cfg.features[flag] = _coerce_bool(value)
-            elif key == "gmail" and isinstance(value, dict):
-                # nested form mirroring config.yaml sources.gmail
-                if value.get("address") is not None:
-                    cfg.gmail_address = str(value["address"])
-                if value.get("app_password_path") is not None:
-                    cfg.gmail_app_password_path = str(value["app_password_path"])
-                if value.get("enabled") is not None:
-                    try:
-                        cfg.gmail_enabled = _coerce_bool(value["enabled"])
-                    except (TypeError, ValueError):
-                        pass  # 坏 enabled 不能连累同 dict 的 address/path
-                if value.get("fetch_command") is not None:
-                    cfg.gmail_fetch_command = str(value["fetch_command"])
-            elif key == "feedback_sync" and isinstance(value, dict):
-                # nested form mirroring config.yaml feedback_sync (repo +
-                # token_path only — the checkbox memory is the FLAT
-                # feedback_publish_default key the App writes; a nested
-                # spelling has no writer and stays a non-key, like in yaml)
-                if str(value.get("repo") or "").strip():
-                    cfg.feedback_sync_repo = str(value["repo"]).strip()
-                if str(value.get("token_path") or "").strip():
-                    cfg.feedback_sync_token_path = str(value["token_path"]).strip()
-            elif key == "cost_thresholds" and isinstance(value, dict):
-                # nested form mirroring config.yaml approval.cost_thresholds
-                if value.get("show_cost_above_usd") is not None:
-                    cfg.show_cost_above_usd = float(value["show_cost_above_usd"])
-                if value.get("require_text_confirm_above_usd") is not None:
-                    cfg.require_text_confirm_above_usd = float(
-                        value["require_text_confirm_above_usd"]
-                    )
-            elif key == "telemetry" and isinstance(value, dict):
-                # v0.13 (§15 note): the app's first-run page opts OUT of
-                # anonymous usage stats by writing {"telemetry": {"enabled":
-                # false}}. App-overridable: enabled + level + capture_input
-                # ONLY — supabase_url / key_path stay config.yaml-only.
-                if value.get("enabled") is not None:
-                    try:
-                        cfg.telemetry_enabled = _coerce_bool(value["enabled"])
-                    except (TypeError, ValueError):
-                        pass  # 坏值跳过——尤其不能把 "false" 转成 True
-                if value.get("level") is not None:
-                    # invalid explicit values degrade to "basic", mirroring
-                    # the config.yaml path (fail-private on typos)
-                    lvl = str(value["level"]).strip().lower()
-                    cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
-                if value.get("capture_input") is not None:
-                    try:
-                        cfg.telemetry_capture_input = _coerce_bool(value["capture_input"])
-                        # 只有值有效才算「知情选择」过 v2 consent 门
-                        cfg.telemetry_capture_input_explicit = True
-                    except (TypeError, ValueError):
-                        pass
-            elif key == "telemetry.enabled" and value is not None:
-                # flat form, same allowlist (§15 telemetry overrides)
-                cfg.telemetry_enabled = _coerce_bool(value)
-            elif key == "telemetry.level" and value is not None:
-                lvl = str(value).strip().lower()
-                cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
-            elif key == "telemetry.capture_input" and value is not None:
-                cfg.telemetry_capture_input = _coerce_bool(value)
-                cfg.telemetry_capture_input_explicit = True
-            elif key == "slack_channels" and isinstance(value, list):
-                # §15.3 add-only (Slack in-app setup): the app's channel
-                # picker writes the whole list (entries {id,name} or bare id
-                # strings); an empty list is a deliberate "watch none".
-                cfg.slack_channels = _clean_slack_channels(value)
-            elif key == "watch_people" and isinstance(value, list):
-                cfg.watch_people = _clean_watch_people(value)
-            elif key.startswith("sources."):
-                # dotted form mirroring config.yaml, e.g.
-                # {"sources.obsidian_wiki": "/path/to/4 - wiki"}
-                sub = key.split(".", 1)[1]
-                if sub in _OVERRIDE_LIST_FIELDS and isinstance(value, list):
-                    setattr(cfg, sub,
-                            _clean_slack_channels(value) if sub == "slack_channels"
-                            else _clean_watch_people(value))
-                elif sub in _OVERRIDE_FIELDS and value is not None:
-                    setattr(cfg, sub, _OVERRIDE_FIELDS[sub](value))
-                    if sub == "default_target_repo":
-                        cfg.default_target_repo_configured = True
-            elif key in _OVERRIDE_FIELDS and value is not None:
-                setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
-                if key == "default_target_repo":
-                    cfg.default_target_repo_configured = True
+            _apply_override(cfg, key, value, nested_feats)
         except Exception:  # noqa: BLE001 — skip just the bad entry
             continue
+
+
+def _apply_override(cfg: Config, key: str, value, nested_feats: dict) -> None:
+    """One overrides entry. Exact keys dispatch through _OVERRIDE_HANDLERS (a
+    type mismatch there is a silent no-op, as before); ``features.*`` and
+    ``sources.*`` are prefix families; anything else is a scalar field."""
+    handler = _OVERRIDE_HANDLERS.get(key)
+    if handler is not None:
+        handler(cfg, value, nested_feats)
+    elif key.startswith("features."):
+        _override_flat_feature(cfg, key, value, nested_feats)
+    elif key.startswith("sources."):
+        _override_sources_key(cfg, key, value)
+    else:
+        _override_scalar(cfg, key, value)
+
+
+def _override_scalar(cfg: Config, key: str, value) -> None:
+    """A flat key from the _OVERRIDE_FIELDS table (None never overrides)."""
+    if key in _OVERRIDE_FIELDS and value is not None:
+        _override_field(cfg, key, value)
+
+
+def _override_field(cfg: Config, key: str, value) -> None:
+    """A scalar cfg field through its coercion (raises → entry skipped)."""
+    setattr(cfg, key, _OVERRIDE_FIELDS[key](value))
+    if key == "default_target_repo":
+        cfg.default_target_repo_configured = True
+
+
+def _override_list_field(cfg: Config, sub: str, value: list) -> None:
+    setattr(cfg, sub,
+            _clean_slack_channels(value) if sub == "slack_channels"
+            else _clean_watch_people(value))
+
+
+def _override_sources_key(cfg: Config, key: str, value) -> None:
+    """dotted form mirroring config.yaml, e.g.
+    {"sources.obsidian_wiki": "/path/to/4 - wiki"}"""
+    sub = key.split(".", 1)[1]
+    if sub in _OVERRIDE_LIST_FIELDS and isinstance(value, list):
+        _override_list_field(cfg, sub, value)
+    else:
+        _override_scalar(cfg, sub, value)
+
+
+def _override_features(cfg: Config, value, _nested: dict) -> None:
+    if not isinstance(value, dict):
+        return
+    for fk, fv in value.items():
+        try:
+            cfg.features[str(fk)] = _coerce_bool(fv)
+        except (TypeError, ValueError):
+            continue  # 单个坏 flag 跳过，别拖累同 dict 的其它 flag
+
+
+def _override_flat_feature(cfg: Config, key: str, value, nested_feats: dict) -> None:
+    """flat form: {"features.digest": false}——嵌套 features 块里已有同名
+    flag 时让位（嵌套形优先，见 _apply_settings_overrides 的注释）"""
+    flag = key.split(".", 1)[1]
+    if flag not in nested_feats:
+        cfg.features[flag] = _coerce_bool(value)
+
+
+def _override_gmail(cfg: Config, value, _nested: dict) -> None:
+    """nested form mirroring config.yaml sources.gmail"""
+    if not isinstance(value, dict):
+        return
+    _set_str_if_present(cfg, "gmail_address", value, "address")
+    _set_str_if_present(cfg, "gmail_app_password_path", value, "app_password_path")
+    if value.get("enabled") is not None:
+        try:
+            cfg.gmail_enabled = _coerce_bool(value["enabled"])
+        except (TypeError, ValueError):
+            pass  # 坏 enabled 不能连累同 dict 的 address/path
+    _set_str_if_present(cfg, "gmail_fetch_command", value, "fetch_command")
+
+
+def _set_str_if_present(cfg: Config, attr: str, value: dict, key: str) -> None:
+    if value.get(key) is not None:
+        setattr(cfg, attr, str(value[key]))
+
+
+def _nonblank_str(value) -> str:
+    return str(value or "").strip()
+
+
+def _override_feedback_sync(cfg: Config, value, _nested: dict) -> None:
+    """nested form mirroring config.yaml feedback_sync (repo + token_path
+    only — the checkbox memory is the FLAT feedback_publish_default key the
+    App writes; a nested spelling has no writer and stays a non-key, like in
+    yaml)"""
+    if not isinstance(value, dict):
+        return
+    repo = _nonblank_str(value.get("repo"))
+    if repo:
+        cfg.feedback_sync_repo = repo
+    token_path = _nonblank_str(value.get("token_path"))
+    if token_path:
+        cfg.feedback_sync_token_path = token_path
+
+
+def _override_cost_thresholds(cfg: Config, value, _nested: dict) -> None:
+    """nested form mirroring config.yaml approval.cost_thresholds"""
+    if not isinstance(value, dict):
+        return
+    if value.get("show_cost_above_usd") is not None:
+        cfg.show_cost_above_usd = float(value["show_cost_above_usd"])
+    if value.get("require_text_confirm_above_usd") is not None:
+        cfg.require_text_confirm_above_usd = float(value["require_text_confirm_above_usd"])
+
+
+def _set_telemetry_level(cfg: Config, value) -> None:
+    """invalid explicit values degrade to "basic", mirroring the config.yaml
+    path (fail-private on typos)"""
+    lvl = str(value).strip().lower()
+    cfg.telemetry_level = lvl if lvl in TELEMETRY_LEVELS else "basic"
+
+
+def _set_capture_input(cfg: Config, value) -> None:
+    cfg.telemetry_capture_input = _coerce_bool(value)
+    # 只有值有效才算「知情选择」过 v2 consent 门
+    cfg.telemetry_capture_input_explicit = True
+
+
+def _override_telemetry(cfg: Config, value, _nested: dict) -> None:
+    """v0.13 (§15 note): the app's first-run page opts OUT of anonymous usage
+    stats by writing {"telemetry": {"enabled": false}}. App-overridable:
+    enabled + level + capture_input ONLY — supabase_url / key_path stay
+    config.yaml-only."""
+    if not isinstance(value, dict):
+        return
+    if value.get("enabled") is not None:
+        _set_telemetry_enabled_soft(cfg, value["enabled"])
+    if value.get("level") is not None:
+        _set_telemetry_level(cfg, value["level"])
+    if value.get("capture_input") is not None:
+        _set_capture_input_soft(cfg, value["capture_input"])
+
+
+def _set_telemetry_enabled_soft(cfg: Config, value) -> None:
+    try:
+        cfg.telemetry_enabled = _coerce_bool(value)
+    except (TypeError, ValueError):
+        pass  # 坏值跳过——尤其不能把 "false" 转成 True
+
+
+def _set_capture_input_soft(cfg: Config, value) -> None:
+    try:
+        _set_capture_input(cfg, value)
+    except (TypeError, ValueError):
+        pass
+
+
+def _override_telemetry_enabled(cfg: Config, value, _nested: dict) -> None:
+    """flat form, same allowlist (§15 telemetry overrides)"""
+    if value is not None:
+        cfg.telemetry_enabled = _coerce_bool(value)
+
+
+def _override_telemetry_level(cfg: Config, value, _nested: dict) -> None:
+    if value is not None:
+        _set_telemetry_level(cfg, value)
+
+
+def _override_telemetry_capture_input(cfg: Config, value, _nested: dict) -> None:
+    if value is not None:
+        _set_capture_input(cfg, value)
+
+
+def _override_slack_channels(cfg: Config, value, _nested: dict) -> None:
+    """§15.3 add-only (Slack in-app setup): the app's channel picker writes the
+    whole list (entries {id,name} or bare id strings); an empty list is a
+    deliberate "watch none"."""
+    if isinstance(value, list):
+        cfg.slack_channels = _clean_slack_channels(value)
+
+
+def _override_watch_people(cfg: Config, value, _nested: dict) -> None:
+    if isinstance(value, list):
+        cfg.watch_people = _clean_watch_people(value)
+
+
+# exact-key overrides → handler(cfg, value, nested_feats); prefix families and
+# scalar fields are resolved in _apply_override.
+_OVERRIDE_HANDLERS = {
+    "features": _override_features,
+    "gmail": _override_gmail,
+    "feedback_sync": _override_feedback_sync,
+    "cost_thresholds": _override_cost_thresholds,
+    "telemetry": _override_telemetry,
+    "telemetry.enabled": _override_telemetry_enabled,
+    "telemetry.level": _override_telemetry_level,
+    "telemetry.capture_input": _override_telemetry_capture_input,
+    "slack_channels": _override_slack_channels,
+    "watch_people": _override_watch_people,
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -1318,17 +1512,22 @@ def recording_exclusion_sql(cfg: Optional[Config] = None) -> str:
             " '%" + part.lower().replace("'", "''") + "%'"
         )
 
+    def split_clause(term: str) -> str:
+        """``App::Title`` / ``App::`` / ``::Title`` → conjunction of the non-empty parts."""
+        app_part, title_part = term.split("::", 1)
+        conds = []
+        if app_part.strip():
+            conds.append(like("app_name", app_part.strip()))
+        if title_part.strip():
+            conds.append(like("window_name", title_part.strip()))
+        return "AND NOT (" + " AND ".join(conds) + ")" if conds else ""
+
     clauses = []
     for term in cfg.recording_ignored_apps:
         if "::" in term:
-            app_part, title_part = term.split("::", 1)
-            conds = []
-            if app_part.strip():
-                conds.append(like("app_name", app_part.strip()))
-            if title_part.strip():
-                conds.append(like("window_name", title_part.strip()))
-            if conds:
-                clauses.append("AND NOT (" + " AND ".join(conds) + ")")
+            clause = split_clause(term)
+            if clause:
+                clauses.append(clause)
         else:
             clauses.append(
                 f"AND NOT ({like('app_name', term)} OR {like('window_name', term)})"

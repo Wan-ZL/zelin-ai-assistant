@@ -63,17 +63,30 @@ def effective_tier(card: Any) -> EffectiveTier:
     新增任何铸卡 channel 都要同步 CHANNEL_CLASS(v0.48.1 补收 digest/
     weekly-digest 正是此雷,见 policy.py 表内注)。
     """
-    declared = str(_field(card, "tier") or "T1").strip() or "T1"
-    # 注意:这里**故意不走** policy.normalize_origin —— 那个函数把一切不认识
-    # 的值收敛成 external(读侧 fail-closed),用在这里会把缺章/脏章的存量卡
-    # 一夜之间抬成 T2 并强制扩写,正是上面那段注释禁止的事。抬档只认显式
-    # external;fail-closed 的位置在铸卡侧与 auto-dispatch 侧(§50)。
+    reason = _external_reason(card)
+    if reason:
+        return EffectiveTier(FORCED_TIER, True, reason)
+    return EffectiveTier(_declared_tier(card), False, None)
+
+
+def _declared_tier(card: Any) -> str:
+    """声明档位(缺失/空白 → T1)。"""
+    return str(_field(card, "tier") or "T1").strip() or "T1"
+
+
+def _external_reason(card: Any) -> Optional[str]:
+    """外部出身的判定理由(显式章优先,再按 sources 现算);非外部 → None。
+
+    注意:这里**故意不走** policy.normalize_origin —— 那个函数把一切不认识
+    的值收敛成 external(读侧 fail-closed),用在这里会把缺章/脏章的存量卡
+    一夜之间抬成 T2 并强制扩写,正是 effective_tier 注释禁止的事。抬档只认
+    显式 external;fail-closed 的位置在铸卡侧与 auto-dispatch 侧(§50)。"""
     trust = str(_field(card, "origin_trust") or "").strip().lower()
     if trust == TRUST_EXTERNAL:
-        return EffectiveTier(FORCED_TIER, True, "origin_trust=external")
+        return "origin_trust=external"
     if policy.classify_origin(_field(card, "sources") or []) == policy.EXTERNAL:
-        return EffectiveTier(FORCED_TIER, True, "sources=external")
-    return EffectiveTier(declared, False, None)
+        return "sources=external"
+    return None
 
 
 def remote_direct_run_allowed(cfg: Optional[config.Config] = None) -> bool:
