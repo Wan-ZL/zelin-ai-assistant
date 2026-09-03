@@ -66,6 +66,8 @@ class ParseWhenTestCase(unittest.TestCase):
         self.assertIsNone(executor._parse_when(0))
         self.assertIsNone(executor._parse_when(-5))
         self.assertIsNone(executor._parse_when(1e300))   # OverflowError / ValueError path
+        # the boundary: one second past the epoch is a real (ancient) time
+        self.assertEqual(executor._parse_when(1), _dt.datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC))
 
     def test_junk_text_is_none(self):
         self.assertIsNone(executor._parse_when("yesterday"))
@@ -201,13 +203,22 @@ class AgentInfoStrictTestCase(unittest.TestCase):
         seen = []
 
         def run(argv, **kw):
-            seen.append(argv)
+            seen.append((argv, kw))
             return _proc(0, "[]")
         with mock.patch.object(executor.subprocess, "run", run), \
                 mock.patch.object(executor.llm, "claude_bin", return_value="/opt/claude"):
             executor._agent_info_strict(self.SID)
             executor._newest_session_for_cwd("/tmp/x")
-        self.assertEqual(seen, [["/opt/claude", "agents", "--json", "--all"]] * 2)
+        self.assertEqual([a for a, _k in seen], [["/opt/claude", "agents", "--json", "--all"]] * 2)
+        for _a, kw in seen:
+            self.assertEqual(kw, {"capture_output": True, "text": True, "timeout": 30})
+
+    def test_field_readers_on_odd_entries(self):
+        self.assertEqual(executor._agent_cwd("junk"), "")
+        self.assertEqual(executor._agent_cwd({"cwd": None, "workingDirectory": "/w"}), "/w")
+        self.assertEqual(executor._agent_started({}), 0)
+        self.assertEqual(executor._agent_started({"createdAt": "x", "created_at": "c"}), "c")
+        self.assertIsNone(executor._agent_sid({}))
 
 
 if __name__ == "__main__":
