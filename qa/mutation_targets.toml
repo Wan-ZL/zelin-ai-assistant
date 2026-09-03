@@ -25,6 +25,8 @@ per_mutant_timeout_seconds = 60
 "act/lib/heartbeat.py" = ["tests/test_actd_heartbeat.py"]
 "act/lib/provenance.py" = ["tests/test_provenance.py"]
 "act/lib/registry.py" = ["tests/test_registry_merge.py", "tests/test_registry_backend_parity.py", "tests/test_registry_example_skip.py", "tests/test_audit_registry_fail_closed.py", "tests/test_audit_registry_listfile.py", "tests/test_card_lifecycle.py"]
+# §63 待验收卡 AI 摘要 + 评语：输出消毒 / 指纹闸门 / 「永不改 status」——一个存活体 = 建议变成了判决。
+"act/lib/card_summary.py" = ["tests/test_card_summary_verdict.py"]
 "act/lib/store2/store.py" = ["tests/test_store2_schema.py", "tests/test_store2_cas.py", "tests/test_store2_agent_wall_live.py", "tests/test_store2_field_parity.py", "tests/test_store2_migration.py", "tests/test_store2_parity.py", "tests/test_store2_rollback.py", "tests/test_store2_activation.py"]
 
 # test-code skill（skills/test-code；vnext2-plan R2.8）——skill 自己也接受每晚第 4 档考验。
