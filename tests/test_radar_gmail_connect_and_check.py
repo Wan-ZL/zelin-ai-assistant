@@ -15,6 +15,7 @@ Pinned (P3 mutation net — none of these paths had a killing test):
 import imaplib
 import io
 import json
+import shlex
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -112,7 +113,7 @@ class CheckTestCase(unittest.TestCase):
         return rc, buf.getvalue()
 
     def test_command_mode_ok_when_executable_resolves(self):
-        self.cfg.gmail_fetch_command = f"{sys.executable} -c pass"
+        self.cfg.gmail_fetch_command = f"{shlex.quote(sys.executable)} -c pass"
         rc, out = self._check(self.cfg)
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out), {"ok": True, "mode": "command",

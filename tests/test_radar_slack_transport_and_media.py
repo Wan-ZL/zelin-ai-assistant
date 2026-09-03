@@ -217,9 +217,10 @@ class CollectMediaTestCase(unittest.TestCase):
 class SelfMessageTestCase(unittest.TestCase):
     def test_capture_desc_and_nothing_capturable(self):
         self.assertEqual(radar_slack._capture_desc("hi", []), "hi")
-        desc = radar_slack._capture_desc("hi", [Path("/a.png"), Path("/b.png")])
+        a, b = Path("/a.png"), Path("/b.png")
+        desc = radar_slack._capture_desc("hi", [a, b])
         self.assertTrue(desc.startswith("hi\n\nRead these images first"))
-        self.assertTrue(desc.endswith("/a.png\n/b.png"))
+        self.assertTrue(desc.endswith(f"{a}\n{b}"))   # str(Path) — portable
         desc2 = radar_slack._capture_desc("", [Path("/a.png")])
         self.assertTrue(desc2.startswith("Read these images first"))
         self.assertTrue(radar_slack._nothing_capturable(["视频暂不支持"], [], ""))

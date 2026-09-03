@@ -17,6 +17,7 @@ Pinned (P3 mutation net):
   a crashing / non-zero fetcher -> None.
 """
 import imaplib
+import shlex
 import sys
 import unittest
 
@@ -121,10 +122,11 @@ class FetcherCommandTestCase(unittest.TestCase):
         self.assertEqual(radar_gmail._command_argv("~/bin/f --x")[1], "--x")
         self.assertIsNone(radar_gmail._fetcher_stdout("unterminated 'q", 0))
         self.assertIsNone(radar_gmail._fetcher_stdout("/definitely/missing/exe", 0))
+        py = shlex.quote(sys.executable)   # Windows paths carry backslashes
         self.assertIsNone(radar_gmail._fetcher_stdout(
-            f"{sys.executable} -c 'import sys; sys.exit(3)'", 0))
+            f"{py} -c 'import sys; sys.exit(3)'", 0))
         out = radar_gmail._fetcher_stdout(
-            f"{sys.executable} -c 'import os; print(os.environ[\"GMAIL_RADAR_LAST_UID\"])'", 41)
+            f"{py} -c 'import os; print(os.environ[\"GMAIL_RADAR_LAST_UID\"])'", 41)
         self.assertEqual(out.strip(), "41")
         self.assertIsNone(radar_gmail._command_array("no brackets"))
         self.assertIsNone(radar_gmail._command_array("[not json"))
