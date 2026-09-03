@@ -141,14 +141,14 @@ class InferCwdTestCase(unittest.TestCase):
         return Requirement.from_dict({"id": "R-1", "title": "t", "status": "review", **kw})
 
     def test_transcript_cwd_wins(self):
-        with mock.patch.object(merge_review, "_transcript_cwd", return_value="/wt"):
+        with mock.patch.object(merge_review.transcripts, "transcript_cwd", return_value="/wt"):
             self.assertEqual(merge_review._infer_cwd(self._req(target_repo="~/x"), "sid"), "/wt")
 
     def test_falls_back_to_target_repo_then_none(self):
-        with mock.patch.object(merge_review, "_transcript_cwd", return_value=None):
+        with mock.patch.object(merge_review.transcripts, "transcript_cwd", return_value=None):
             self.assertEqual(merge_review._infer_cwd(self._req(target_repo="~/x"), "sid"),
                              Path("~/x").expanduser())
-        with mock.patch.object(merge_review, "_transcript_cwd", side_effect=RuntimeError()):
+        with mock.patch.object(merge_review.transcripts, "transcript_cwd", side_effect=RuntimeError()):
             self.assertIsNone(merge_review._infer_cwd(self._req(), "sid"))
         self.assertIsNone(merge_review._infer_cwd(self._req(), None))
 

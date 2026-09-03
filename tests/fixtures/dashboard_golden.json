@@ -640,6 +640,15 @@
       "stale": false
     }
   },
+  "self_improve": {
+    "enabled": true,
+    "paused": false,
+    "paused_reason": null,
+    "paused_pr": null,
+    "paused_pr_url": null,
+    "paused_paths": [],
+    "paused_at": null
+  },
   "device_label": "Zelin 的 Mac",
   "deploy_state": {
     "version": "0.48.99",
