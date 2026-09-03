@@ -305,6 +305,11 @@ class SensorsBoundariesTestCase(unittest.TestCase):
             with open(os.path.join(tmp, "g", "board.png"), "wb") as fh:
                 fh.write(kit.make_png(4, 4))
             self.assertEqual(sensors._shot_row(ctx, {"id": "x", "path": shot, "screen": "board"}, os.path.join(tmp, "g"))["item_status"], "PRESENT")
+            # odiff reports no mask area: the driver's masked_ratio on the shot record feeds the cap — over 0.2 red, exactly 0.2 not
+            over = sensors._shot_row(ctx, {"id": "x", "path": shot, "screen": "board", "masked_ratio": 0.6}, os.path.join(tmp, "g"))
+            self.assertEqual((over["masked_ratio"], over["over_mask_cap"]), (0.6, True))
+            at_cap = sensors._shot_row(ctx, {"id": "x", "path": shot, "screen": "board", "masked_ratio": 0.2}, os.path.join(tmp, "g"))
+            self.assertFalse(at_cap["over_mask_cap"])
 
     def test_wait_ready_deadline_strict(self):
         """sensors::wait_ready `clock() < deadline` — 到点即停。"""

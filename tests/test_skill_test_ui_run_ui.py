@@ -70,7 +70,8 @@ class SelectionTestCase(unittest.TestCase):
         entry_t1, entry_t3 = checks.BY_ID["surface_detect"], checks.BY_ID["visual_diff"]
         self.assertEqual(run_ui.timeout_for(entry_t1, 1, {}), 300)
         self.assertEqual(run_ui.timeout_for(entry_t3, 1, {}), 3600)   # a check keeps its own tier's budget
-        self.assertIsNone(run_ui.timeout_for(entry_t1, 5, {}))         # tier 5 lifts everything
+        self.assertEqual(run_ui.timeout_for(entry_t1, 4, {}), 300)     # tier 4 still keeps every budget
+        self.assertIsNone(run_ui.timeout_for(entry_t1, 5, {}))         # only tier 5 lifts everything
         self.assertEqual(run_ui.timeout_for(entry_t1, 1, {"timeout_seconds": 42}), 42.0)
 
 

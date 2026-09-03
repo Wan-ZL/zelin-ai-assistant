@@ -127,6 +127,13 @@ class CompareShotTestCase(unittest.TestCase):
             self.assertEqual(visual.compare_shot(shot, golden, {"max_changed_pct": 0.01})["item_status"], "PRESENT")
             capped = visual.compare_shot(shot, golden, {"max_changed_pct": 0.5, "max_mask_ratio": 0.1}, masks=[[0, 0, 100, 100]])
             self.assertTrue(capped["over_mask_cap"])
+            # exactly at the cap is not over it (masked 40×100 of 200×100 = 0.2 vs max_mask_ratio 0.2)
+            at_cap = visual.compare_shot(shot, golden, {"max_changed_pct": 0.5, "max_mask_ratio": 0.2}, masks=[[0, 0, 40, 100]])
+            self.assertEqual((at_cap["masked_ratio"], at_cap["over_mask_cap"]), (0.2, False))
+            # a mask covers [x, x+w): the changed pixel column right at the mask's right edge still counts
+            edge = visual.compare_shot(shot, golden, {"max_changed_pct": 0.0}, masks=[[0, 0, 19, 10]])
+            self.assertEqual(edge["changed_pixels"], 10)
+            self.assertEqual(visual.compare_shot(shot, golden, {"max_changed_pct": 0.0}, masks=[[0, 0, 20, 10]])["changed_pixels"], 0)
 
     def test_odiff_parsing(self):
         same = kit.FakeRunner(default=(0, "", ""))

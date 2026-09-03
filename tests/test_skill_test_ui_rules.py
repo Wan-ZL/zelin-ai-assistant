@@ -24,6 +24,16 @@ def _with_state(item, **state):
 
 
 class RuleTableTestCase(unittest.TestCase):
+    def test_skill_default_thresholds_are_the_documented_strict_values(self):
+        """SKILL.md / tiers.md / pairing.md / visual.py 写明的 skill 默认值（strict = WCAG 2.2 AA，视觉 0 %）——项目没给
+        阈值时用的就是这一份，改一位就是改了尺子。"""
+        self.assertEqual({k: v for k, v in parity.DEFAULT_THRESHOLDS.items() if k not in ("source", "note")},
+                         {"max_changed_pct": 0.0, "pixel_tolerance": 0, "max_mask_ratio": 0.2, "contrast_text": 4.5,
+                          "contrast_large": 3.0, "target_min_px": 24, "geometry_tolerance_px": 1.0,
+                          "token_required_families": ["layout"], "similarity_floor": 0.8, "reruns": 3})
+        self.assertEqual(parity.DEFAULT_THRESHOLDS["source"], "skill-defaults")
+        self.assertIn("WCAG 2.2 AA", parity.DEFAULT_THRESHOLDS["note"])
+
     def test_rules_loaded_and_overridable(self):
         self.assertIn("wcag.contrast.text", RULES)
         self.assertEqual(RULES["tokens.off_literal"]["severity"], "minor")

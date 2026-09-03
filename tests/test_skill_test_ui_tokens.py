@@ -146,6 +146,15 @@ class CompareTokensTestCase(unittest.TestCase):
         rows2 = {r["id"]: r for r in parity.compare_tokens(sub2, ref, dict(parity.DEFAULT_THRESHOLDS))}
         self.assertEqual(rows2["token:light:layout.lane.width"]["status"], "MISSING")
 
+    def test_dimension_on_either_side_compares_in_px(self):
+        """一侧标 dimension、另一侧只是字符串（`400.0px` / `25rem`）→ 按 px 比，不按文本比。"""
+        ref = {"light": {"layout.lane.width": {"$type": "dimension", "$value": "400px"}}}
+        sub = {"light": {"layout.lane.width": {"$type": "string", "$value": "25rem"}}}
+        rows = parity.compare_tokens({"themes": sub}, {"themes": ref}, dict(parity.DEFAULT_THRESHOLDS))
+        self.assertEqual(rows[0]["status"], "PRESENT")
+        sub["light"]["layout.lane.width"]["$value"] = "398px"
+        self.assertEqual(parity.compare_tokens({"themes": sub}, {"themes": ref}, dict(parity.DEFAULT_THRESHOLDS))[0]["status"], "CHANGED")
+
     def test_root_declarations_inherit_into_other_themes(self):
         """CSS 级联：dark 没重声明的 --native-layout-lane-width 在 dark 下生效的是 :root 值 → PRESENT(inherited)，不是
         MISSING；dark 重声明了不同的颜色照旧 CHANGED；:root 也没有才 MISSING。"""
