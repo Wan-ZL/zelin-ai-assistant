@@ -306,6 +306,11 @@ OPTIONAL_ORDER = [
     # None = 从未批准过（提案/备选/回收站卡）或存量 legacy 卡——整键省略，
     # 旧 YAML 逐字节 round-trip 不受影响。
     "work_id",
+    # §64 自动草稿 PR 通道：卡显式声明需要 MCP（Slack/Gmail 等外部工具）。
+    # 只会让卡**更不自主**——self_improve lane 见到即拒（self_improve:needs_mcp，
+    # 只能走 owner 亲批），executor 对 self_improve 卡的 MCP 封锁据此放开。
+    # 默认 False 整键省略。
+    "needs_mcp",
 ]
 
 
@@ -382,6 +387,9 @@ class Requirement:
     # 改写；``id`` 仍是唯一主键/lineage 锚点（merged_into/thread_id/
     # improvement_of/split_from 全部指 id，绝不指 work_id）。
     work_id: Optional[str] = None
+
+    # §64：self_improve 卡显式声明需要 MCP（见 OPTIONAL_ORDER 注）。
+    needs_mcp: bool = False
 
     # internal bookkeeping (never serialized)
     _file: Optional[str] = field(default=None, repr=False, compare=False)

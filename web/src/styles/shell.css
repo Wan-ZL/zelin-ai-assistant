@@ -385,6 +385,22 @@
   color: var(--warning);
 }
 
+/* §64.4 自我改进通道横幅：详情里的 PR 链接 + 右侧「恢复通道」按钮（紧凑版 shell-button） */
+.shell-banner .shell-button {
+  margin-left: auto;
+  align-self: center;
+  padding: 3px 10px;
+}
+
+.shell-banner .shell-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.shell-banner-detail a {
+  color: var(--accent);
+}
+
 /* —— 空态 —— */
 .shell-empty {
   display: flex;

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from act.lib import (config, deploy_state, failures, health, policy, recap_store, risk,
-                     sources, steer, titles)
+                     self_improve, sources, steer, titles)
 from act.lib import registry as registry_ids   # §60 display_id / id_kind 单点
 from act.lib.agent_states import _DONE_STATES, _RUNNING_STATES
 from act.lib.registry import Requirement, State, load_all, load_archived
@@ -200,6 +200,22 @@ def _s(v: Any) -> str:
     Decodable），一个 int（如手写 YAML 的 ``id: 300``）就能让整列解码成 []
     而 counts 徽章还显示真实数（§2）。None -> ""（字段本身非可选）。"""
     return "" if v is None else str(v)
+
+
+def _delivery_view(ex: dict) -> Optional[dict]:
+    """§64.3 review 行 `delivery`：execution.delivery 的 wire 形（缺失 = None →
+    整键省略）。字段逐字镜像 self_improve.verify_delivery 的结果，不翻译。"""
+    delivery = self_improve.delivery_of({"execution": ex})
+    return dict(delivery) if delivery else None
+
+
+def _self_improve_view(cfg: config.Config) -> dict:
+    """§64 顶层 `self_improve`：读不到状态文件也给一个完整形状（宪法第 11 条）。"""
+    try:
+        return self_improve.board_view(cfg)
+    except Exception as e:  # noqa: BLE001 - 投影绝不因通道状态文件崩
+        print(f"dashboard: self_improve view failed: {e}", file=sys.stderr)
+        return {"enabled": False, "paused": False, "error": str(e)[:200]}
 
 
 def _opt(key: str, value: Any) -> dict:
@@ -1114,8 +1130,9 @@ def build_dashboard(
                         # #119 add-only：这行是「中断收割」而非正常交付（受阻/
                         # 放弃救活被收进待验收）——detect_transitions 据此不发
                         # 「AI 已交付草稿」，客户端 decodeIfPresent 可标注。
-                        **_opt("interrupted",
-                               bool(ex.get("interrupted_reason"))),
+                        **_opt("interrupted", bool(ex.get("interrupted_reason"))),
+                        # §64.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
+                        **_opt("delivery", _delivery_view(ex)),
                     }
                 )
             # #119（v0.48.8）：受阻/放弃救活的会话不再投影「需输入」——
@@ -1217,6 +1234,7 @@ def build_dashboard(
         # §48 add-only：源开关 intent + 健康摘要投影（Swift decodeIfPresent，
         # 旧 app 忽略；App 侧诊断卡的告警资格自此由 Python 一处裁定）。
         "radar_sources": _radar_sources(cfg),
+        "self_improve": _self_improve_view(cfg),   # §64 add-only 顶层键：通道开关 + 暂停状态
     }
     # v0.35 device_label — §2 sibling field (add-only, CONTRACT §35): lets a
     # paired phone adopt a Mac rename from the board payload without re-scanning

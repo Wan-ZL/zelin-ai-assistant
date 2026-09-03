@@ -391,6 +391,24 @@
   prompt 级缓解,不是系统 enforcement,恶意构造的内容仍有可能诱导 agent 执行非预期操作。
   因此: **审批是这个系统的安全边界**——批准前请看清卡片的来源与计划（卡片 sources
   会显示发件人/频道）,拿不准就 ❌ 或 💬 打回。
+- **两条免批 lane 的边界（CONTRACT §51 / §64；§0 第 12 条修宪，2026-09-02）**：上面那句
+  对**人工审批的卡**成立；免批的卡把边界换成了确定性后盾，诚实列出：
+  - *hand lane*（你亲手打的快速捕获 / Slack self-DM）：文本是你自己写的，边界 = 你的
+    键盘；天花板（T2 / 对外沟通 / 新 repo / 无估价）仍回人批。
+  - *self_improve lane*（AI 对**本仓库**的自我改进，D7）：审批从起点移到终点——你审的
+    是**草稿 PR**，不是派发。后盾：① 准入只认写死的 sources channel + `target_repo`
+    的 realpath（LLM 可写字段开不了门）；② 会话跑在 `--strict-mcp-config
+    --mcp-config {"mcpServers":{}}` 下，Slack/Gmail MCP 对它不存在；③ 交付做完后
+    actd 用 `gh` 物理核验草稿 PR（不是 draft / base 不是 main / diff 为空 / 分支不对
+    都停在待验收带原因）；④ PR 触碰 `act/lib/policy.py`、`act/lib/self_improve.py`、
+    `act/llm.py`、`.github/workflows/`、`install.sh`、`scripts/auto-deploy.sh` 任一即打
+    `needs-owner-eyes` 标签并暂停整条通道；⑤ main 受 ruleset 保护，守护进程跑的是
+    main——分支上改走自己的墙没有运行时效果。**残余风险**：会话仍以你的用户权限、
+    `--dangerously-skip-permissions` 跑在你的机器上，能读 `config/secrets/` 与
+    `~/.ssh`、能 `curl`；④⑤ 保证的是 *main 与通道自身* 的完整性，*本机 secrets 的保密
+    性* 仍依赖你信任模型不被注入（跟进卡里 owner 评论进 prompt 前过围栏，但围栏是
+    缓解不是墙）。不想要这条 lane：`self_improve.enabled: false`（核验与 MCP 封锁仍
+    生效，卡回人工审批）。
 
 ## Secrets：为什么是文件而不是 Keychain
 

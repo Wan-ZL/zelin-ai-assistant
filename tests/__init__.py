@@ -36,6 +36,10 @@ os.environ.setdefault("AIASSISTANT_HTTP_PROBE", "0")
 # （activate.py 只在 auto 下激活）。store2 侧的行为测试自己显式切 sqlite
 # （改 env + registry.reset_store_cache()，用完复原）。
 os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
+# §64 自动草稿 PR 通道：默认 gh runner 见到这个开关直接报「不可用」（核验 →
+# gh_unavailable、巡检 → 跳过），套件里凡要 gh 的判例都注入假 runner。gh 同时
+# 在下方出网黑名单里——忘了注入的那一处会响亮地炸，而不是静默打 GitHub API。
+os.environ.setdefault("AIASSISTANT_GH", "0")
 
 
 # --------------------------------------------------------------------------- #
@@ -59,6 +63,7 @@ os.environ.setdefault("ZAI_REGISTRY_BACKEND", "yaml")
 _PROMPT_FLAGS = frozenset({"-p", "--print", "--resume"})
 _NETWORK_PROGRAMS = frozenset({
     "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp",
+    "gh",   # GitHub CLI = GitHub API（§64 通道的 gh 调用一律走注入缝）
 })
 # 这些只是外壳，真正要看的是它们后面那条命令（`bash -c "curl …"`）
 _SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "env", "xargs"})
@@ -102,8 +107,22 @@ def _model_call(tokens: list) -> bool:
     return "--bg" in rest and any(not t.startswith("-") for t in rest)
 
 
+# gh 的本地能力探针（doctor「gh CLI」行：`gh auth status` / `gh --version`）故意
+# 放行——若干 doctor 集成判例有意探真装的 CLI；其余一切 gh 子命令 = GitHub API。
+_GH_PROBES = (("auth", "status"), ("--version",))
+
+
+def _is_gh_probe(tokens: list) -> bool:
+    if not tokens or os.path.basename(tokens[0]) != "gh":
+        return False
+    rest = tuple(tokens[1:])
+    return any(rest[:len(p)] == p for p in _GH_PROBES)
+
+
 def _network_hits(tokens: list) -> list:
     """出网工具名（外壳命令连脚本体一起查）。"""
+    if _is_gh_probe(tokens):
+        return []
     if tokens and os.path.basename(tokens[0]) in _SHELL_WRAPPERS:
         tokens = tokens[:1] + [t for arg in tokens[1:] for t in _split(arg)]
     return sorted({os.path.basename(t) for t in tokens if t
