@@ -18,8 +18,8 @@ const THEMES = ["light", "dark"] as const;
 let server: DemoServer;
 
 test.beforeAll(async () => {
-  // 起 server 的等待（demoServer.ts 最多 25 s）要能在 hook 超时之前把诊断信息抛出来
-  test.setTimeout(60_000);
+  // 起 server 的等待（demoServer.ts 最多 90 s）要能在 hook 超时之前把诊断信息抛出来
+  test.setTimeout(150_000);
   server = await startDemoServer("initial");
 });
 

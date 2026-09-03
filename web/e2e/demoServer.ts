@@ -30,7 +30,10 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 25_000): Promise<void> {
+// 90 s：macOS CI runner 上 http.server 的 server_bind 会对 127.0.0.1 做 socket.getfqdn()
+// 反查，runner 的 DNS 反查可以卡到 resolver 超时（数十秒）才放行——本机瞬时，CI 首跑实测
+// 25 s 内零输出。等它，不改 server（那是 live 机器共享的代码路径，另案）。
+async function waitForBoard(baseURL: string, child: ChildProcess, timeoutMs = 90_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last = "no response yet";
   while (Date.now() < deadline) {
