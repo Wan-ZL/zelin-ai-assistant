@@ -1,0 +1,9 @@
+pr: `feat/display-prefs`（无版本 bump，版本由 tag 派生）
+phase: P4 前置（D3：web 看板承接原生外观；owner 2026-09-02 4K 屏反馈）
+law: §54.1 第 12 项（新）/ §54.1 第 10 项 token 形修订 / §49 路由表追加
+
+owner 在 4K 屏上对照退役中的原生 app：「按钮 / chip 的框细得像发丝、字的笔画比原生细（是粗细不是字号）」，要「像 Apple 的 Dynamic Type / Bold Text 那样在设置里调字号、字重、线条粗细」。两处根因先修：`-webkit-font-smoothing: antialiased` 强制 grayscale 抗锯齿削薄 SF 笔画 → 改回平台默认 `auto`（AppKit 同款）+ 字体栈 `-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", …`；描边 `--border-hairline: 0.5px`（2x 屏 = 1 设备像素）→ 退役，全站描边只许 `var(--stroke-w)`（默认 1.5px）。
+
+**三把旋钮 = tokens.css 里仅有的三个变量**：`--text-scale`（s .9 / m 1 / l 1.1 / xl 1.25）、`--weight-shift`（regular 0 / medium +100 / bold +200，四档 SF 字重 `--w-*` = 原生数值 + 平移）、`--stroke-w`（thin 1 / normal 1.5 / thick 2px；`prefers-contrast: more` 各升一档）。#143 的 26 个 `--type-*` token 改写为 `var(--w-<weight>) calc(<px> * var(--text-scale))/<lh> var(--font-…)` 固定形——原生 px 与字重名逐字可读，两份判例（vitest ↔ 表、表 ↔ Swift 源行）改钉这两个字面量；shell / chrome / settings / detail / styleguide / recaps 六份组件 CSS 的 70 处字面 font-size 与 13 处字面 font-weight 全部换成 `calc(… * var(--text-scale))` / `var(--w-…)`，`displayPrefs.test.ts` 用 `import.meta.glob` lint 全部 web/src CSS+TSX：零字面 hairline 描边、零字面字号字重。值 → 变量映射只住 tokens.css，JS（`displayPrefs.ts`）只写 `<html>` 的三个 data-* 属性，index.html 首帧从 `localStorage zai.display` 预写（与主题同一机制），server 快照到达即覆盖。
+
+server `GET/PUT /api/settings/display`（`server/display.py`，overrides 扁平键 `ui_display_*` → config.yaml `ui.display` → 默认，diff-write 同 §59.4，词表随 GET 下发；daemon 不读这三个键，判例钉 `_OVERRIDE_FIELDS` 不含 + overlay 不改 Config）。设置页首个 section「显示」：三个 Apple 式 segmented control（`<fieldset>`+`<legend>`+radio，可访问名 = 组名 + 档名）+ 看板真实类名渲染的预览行；无保存键——点一档先落 `<html>` 再 PUT，拒绝回滚 + alert。WebKit（Playwright）实测：默认档 btn/chip 描边 1.5px、smoothing auto；xl/bold/thick 描边 2px、chip 字重 800、字号 ×1.25、首帧 dataset 已带缓存值。视觉 golden（`feat/ui-parity-contract` 的 UI parity 节）在默认档采集。

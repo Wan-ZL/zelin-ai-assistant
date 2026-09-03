@@ -136,6 +136,18 @@ def read_overrides(home: Path) -> dict:
     return doc
 
 
+def config_yaml_doc(home: Path) -> dict:
+    """config.yaml as a dict; {} when PyYAML / the file / the shape is absent
+    (shared by the per-section settings modules: recaps, display)."""
+    if yaml is None:
+        return {}
+    try:
+        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def _config_models(home: Path) -> "tuple[dict, dict]":
     """(values, present): config.yaml ``models:`` block coerced per mode (bad
     shape → follow) + which modes the file actually spells (``source`` label).

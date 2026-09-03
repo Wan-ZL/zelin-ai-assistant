@@ -19,8 +19,8 @@
 }
 
 .settings-page-title {
-  font-size: 17px;
-  font-weight: 700;
+  font-size: calc(17px * var(--text-scale));
+  font-weight: var(--w-bold);
   margin: 0;
 }
 
@@ -29,7 +29,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   background: var(--surface);
   border-radius: 10px;
   box-shadow: var(--card-shadow);
@@ -38,14 +38,14 @@
 
 .settings-section-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: calc(14px * var(--text-scale));
+  font-weight: var(--w-bold);
 }
 
 .settings-helper {
   margin: 0;
   color: var(--text-tertiary);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
   line-height: 1.55;
 }
 
@@ -55,13 +55,13 @@
   background: var(--danger-soft);
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
 }
 
 .settings-warning {
   margin: 0;
   color: var(--warning);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--text-scale));
   line-height: 1.55;
 }
 
@@ -82,12 +82,12 @@
   flex-direction: column;
   gap: 6px;
   padding-top: 6px;
-  border-top: var(--border-hairline) solid var(--border);
+  border-top: var(--stroke-w) solid var(--border);
 }
 
 .settings-knob-label {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: calc(12.5px * var(--text-scale));
+  font-weight: var(--w-semibold);
 }
 
 .settings-knob-controls {
@@ -101,11 +101,11 @@
 .settings-input {
   min-width: 0;
   padding: 5px 8px;
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   font-family: inherit;
 }
 
@@ -138,7 +138,7 @@
   flex-direction: column;
   gap: 6px;
   padding-top: 10px;
-  border-top: var(--border-hairline) solid var(--border);
+  border-top: var(--stroke-w) solid var(--border);
 }
 
 .settings-global-line {
@@ -146,16 +146,16 @@
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
 }
 
 .settings-global-label {
-  font-weight: 600;
+  font-weight: var(--w-semibold);
 }
 
 .settings-global-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale));
   background: var(--surface-muted);
   border-radius: 5px;
   padding: 1px 6px;
@@ -163,7 +163,7 @@
 
 .settings-global-path {
   color: var(--text-quaternary);
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   overflow-wrap: anywhere;
 }
 
@@ -182,10 +182,10 @@
   max-width: 420px;
   padding: 10px 14px;
   border-radius: 10px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--text-scale));
   line-height: 1.5;
   box-shadow: var(--dialog-shadow);
-  border: var(--border-hairline) solid var(--border-strong);
+  border: var(--stroke-w) solid var(--border-strong);
   background: var(--surface-raised);
   color: var(--text-primary);
   overflow-wrap: anywhere;
@@ -231,7 +231,7 @@
   align-items: flex-start;
   gap: 10px;
   padding: 8px 10px;
-  border: var(--border-hairline) solid var(--border);
+  border: var(--stroke-w) solid var(--border);
   border-radius: 8px;
   background: var(--surface);
 }
@@ -245,13 +245,13 @@
 }
 
 .materials-item-note {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: calc(12.5px * var(--text-scale));
+  font-weight: var(--w-semibold);
   overflow-wrap: anywhere;
 }
 
 .materials-item-url {
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale));
   color: var(--accent);
   overflow-wrap: anywhere;
   text-decoration: none;
@@ -267,11 +267,11 @@
   gap: 8px;
   flex-wrap: wrap;
   color: var(--text-tertiary);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--text-scale));
 }
 
 .materials-item-status {
-  font-weight: 600;
+  font-weight: var(--w-semibold);
   color: var(--text-secondary);
 }
 
@@ -295,4 +295,76 @@
 
 .settings-check input {
   accent-color: var(--accent);
+}
+
+/* ----- 显示偏好（§54.1 第 12 项）：Apple 式 segmented control + 实物预览 ----------- */
+.settings-segmented {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 0 0;
+  border: 0;
+  border-top: var(--stroke-w) solid var(--border);
+  min-width: 0;
+}
+
+.settings-segmented legend {
+  padding: 0;
+  float: left; /* legend 脱出 fieldset 的原生排版，与其它旋钮标签同一节拍 */
+  width: 100%;
+}
+
+.settings-segments {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  gap: 2px;
+  border: var(--stroke-w) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.settings-segment {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.settings-segment-face {
+  display: inline-block;
+  min-width: 56px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font: var(--type-header-control);
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.settings-segment:hover .settings-segment-face {
+  color: var(--text-primary);
+}
+
+.settings-segment input:checked + .settings-segment-face {
+  background: var(--surface);
+  color: var(--text-primary);
+  font-weight: var(--w-medium);
+  box-shadow: var(--card-shadow);
+}
+
+.settings-segment input:focus-visible + .settings-segment-face {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-display-preview {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--column-header);
+}
+
+.settings-display-preview .task-card {
+  max-width: 340px;
 }

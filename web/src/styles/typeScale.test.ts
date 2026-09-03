@@ -6,12 +6,18 @@
 // 回收站页标题、壳内菜单）没有原生对应，不在此钉。
 // 第三方（表 ↔ mac/Sources 被引用的那一行真的写着这个 size/weight/design）由
 // tests/test_web_type_scale_mirror.py 钉——web 侧不许 import node:*（@types/node 不在白名单）。
+// token 值的固定写法（§54.1 第 12 项显示偏好）：
+//   var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh> var(--font-<sans|mono>)
+// 字重经 --w-* 吃 --weight-shift、字号乘 --text-scale；原生 px 与 SF 字重名逐字可读，钉的就是它们。
 import { describe, expect, it } from "vitest";
 import boardCss from "./board.css?raw";
 import chromeCss from "../components/chrome/chrome.css?raw";
 import shellCss from "./shell.css?raw";
 import tokensCss from "./tokens.css?raw";
 import { TYPE_SCALE, WEIGHT_OF } from "./typeScale";
+
+const FONT_SHORTHAND =
+  /^var\(--w-(regular|medium|semibold|bold)\) calc\((\d+)px \* var\(--text-scale\)\)\/(?:[\d.]+|calc\(\d+px \* var\(--text-scale\)\)) var\(--font-(sans|mono)\)$/;
 
 /** tokens.css 里所有 `--type-*: value;` 声明（去注释） */
 function typeTokens(css: string): Map<string, string> {
@@ -43,10 +49,10 @@ describe("type scale（tokens.css ↔ typeScale.ts）", () => {
       });
 
       it("font 简写的字重/字号/字族与表里声明的 Swift size/weight/design 一致", () => {
-        const m = /^(\d{3}) (\d+)px\/[\d.]+(?:px)? var\(--font-(sans|mono)\)$/.exec(role.font);
+        const m = FONT_SHORTHAND.exec(role.font);
         expect(m, `font 简写格式不对：${role.font}`).not.toBeNull();
         const [, weight, size, family] = m!;
-        expect(Number(weight)).toBe(WEIGHT_OF[role.swift.weight]);
+        expect(weight).toBe(role.swift.weight);
         expect(Number(size)).toBe(role.swift.size);
         expect(family).toBe(role.swift.mono ? "mono" : "sans");
       });
@@ -66,5 +72,12 @@ describe("type scale（tokens.css ↔ typeScale.ts）", () => {
   it("字体栈单源：:root 的 font-family 走 --font-sans", () => {
     expect(tokensCss).toContain("font-family: var(--font-sans)");
     expect(cssTokens.size).toBeGreaterThan(0);
+  });
+
+  it("四档 SF 字重 token 各自 = 原生数值 + --weight-shift（组件字重只许 var(--w-…)）", () => {
+    const clean = tokensCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const [name, value] of Object.entries(WEIGHT_OF)) {
+      expect(clean).toContain(`--w-${name}: calc(${value} + var(--weight-shift));`);
+    }
   });
 });

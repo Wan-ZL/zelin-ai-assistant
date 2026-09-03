@@ -1,6 +1,7 @@
 """server/recaps.py — the web 会议纪要 page's server side (CONTRACT §63).
 
-Two small things, both stdlib (+ optional PyYAML to read config.yaml):
+Two small things, both stdlib (config.yaml is read through
+server.settings.config_yaml_doc, which degrades to {} without PyYAML):
 
 1. **Recap settings** ``GET/PUT /api/settings/recap`` — the three knobs the
    pipeline reads (act/lib/config.py): ``enabled`` (default true),
@@ -28,12 +29,7 @@ import json
 import re
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover - PyYAML absent: config.yaml layer is skipped
-    yaml = None  # type: ignore[assignment]
-
-from server import paths, settings
+from server import settings
 from server.errors import InvalidFieldError, UnknownFieldError
 
 # ---- mirrors (drift-pinned) ------------------------------------------------ #
@@ -98,21 +94,10 @@ def _coerce_or(field: str, value, default):
 # --------------------------------------------------------------------------- #
 # layered read: overrides → config.yaml → default
 # --------------------------------------------------------------------------- #
-def _yaml_doc(home: Path) -> dict:
-    """config.yaml as a dict; {} when PyYAML / the file / the shape is absent."""
-    if yaml is None:
-        return {}
-    try:
-        doc = yaml.safe_load(paths.config_path(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        return {}
-    return doc if isinstance(doc, dict) else {}
-
-
 def _config_block(home: Path) -> dict:
     """config.yaml ``recap:`` block as {wire key: raw value} for the keys it
     spells (slack_draft.enabled flattened); {} when absent / unreadable."""
-    blk = _yaml_doc(home).get("recap")
+    blk = settings.config_yaml_doc(home).get("recap")
     blk = blk if isinstance(blk, dict) else {}
     out = {k: blk[k] for k in ("enabled", "default_language") if k in blk}
     draft = blk.get("slack_draft")

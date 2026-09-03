@@ -3396,6 +3396,13 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   **没有任何控制流读它**，只进投影；key 形状 / 词表外 400）。`PUT` 路由自此表驱动
   （`_PUT_JSON_ROUTES`，与 GET/POST 同款）。inbox 特形动作 `recap_generate` /
   `recap_slack_draft` 见 §63.5。判例：tests/test_server_recaps.py。
+- **追加（§54.1 第 12 项 显示偏好，add-only）**：`GET /api/settings/display`（三把旋钮
+  `text_size` / `text_weight` / `stroke` 的 effective 值 + 词表 `text_sizes` / `text_weights` /
+  `strokes` + `source`；token-light）、`PUT /api/settings/display {text_size?, text_weight?,
+  stroke?}`（四闸；扁平 override 键 `ui_display_text_size` / `ui_display_text_weight` /
+  `ui_display_stroke` 的 diff-write，语义与 `/api/settings/models` 逐字同款；词表外 400
+  `INVALID_FIELD`；不可解析 409 `CONFLICT`）。这三个键只有 server 读写（daemon 按 §15 忽略）。
+  判例：tests/test_server_display_settings.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -3994,6 +4001,38 @@ rm 被拒 / 老壳 `Zelin AI Board.app` 在场 / 产品路径上已是壳 / mv �
     状态词 + 复制播报，并用 **axe-core** 对每种卡做 WCAG 2.x A/AA 扫描零 violation
     （`color-contrast` 规则因 jsdom 无布局关闭；对比度由 tokens.css 三档阶梯人工守）。
     `axe-core` 因此进 §49 dev 白名单（纯测试侧，零运行时字节）。
+12. **显示偏好 = token（owner 2026-09-02，4K 屏）**：owner 对照退役中的原生 app：「按钮 /
+    chip 的框细得像发丝、字的笔画比原生细」，要「像 Apple 的 Dynamic Type / Bold Text 那样在
+    设置里调字号、字重、线条粗细」。两处根因先修：(a) `-webkit-font-smoothing: antialiased`
+    强制 grayscale 抗锯齿把 SF 笔画削薄——改回平台默认 `auto`（AppKit 同款），字体栈
+    `-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", …`；(b) 描边此前
+    `--border-hairline: 0.5px`（2x 屏 = 1 设备像素）——**退役**，全站描边只许
+    `var(--stroke-w)`，默认 **1.5px**。三把旋钮 = **`web/src/styles/tokens.css` 里仅有的三个
+    变量**：`--text-scale`（字号倍率 s .9 / m 1 / l 1.1 / xl 1.25）、`--weight-shift`（字重
+    平移 regular 0 / medium +100 / bold +200，四档 SF 字重 `--w-regular/medium/semibold/bold`
+    = 原生数值 + 平移）、`--stroke-w`（thin 1px / normal 1.5px / thick 2px）。第 10 项的
+    `--type-*` token 因此改写为固定形 `var(--w-<weight>) calc(<size>px * var(--text-scale))/<lh>
+    var(--font-…)`——原生 px 与 SF 字重名仍逐字可读，第 10 项的两份判例改钉这两个字面量；
+    组件 CSS 的字号 / 字重 / 描边只许 `calc(… * var(--text-scale))` / `var(--w-…)` /
+    `var(--stroke-w)`，字面 px / 数值字重 / 0.5–1.5px 描边一律判例红（`displayPrefs.test.ts`
+    lint 全部 web/src CSS+TSX）。系统「增强对比度」（`prefers-contrast: more`）描边各升一档
+    （2.5px 上限），字号字重不动。**值 → 变量的映射只住 tokens.css**：JS
+    （`web/src/displayPrefs.ts`）只往 `<html>` 写 `data-text-size` / `data-text-weight` /
+    `data-stroke`，index.html 首帧从 `localStorage zai.display` 预写同一组属性（与主题同一
+    机制），server 快照到达即覆盖。**server 面** `GET/PUT /api/settings/display`（§49；
+    `server/display.py`）：`{text_size: s|m|l|xl, text_weight: regular|medium|bold, stroke:
+    thin|normal|thick}` 默认 m / regular / normal，词表 `text_sizes` / `text_weights` /
+    `strokes` 随 GET 下发（segmented control 从 server 词表渲染，防腐 #10）；优先级 overrides
+    扁平键 `ui_display_text_size` / `ui_display_text_weight` / `ui_display_stroke` → config.yaml
+    `ui.display` 块 → 默认，PUT diff-write 同 §59.4；这三个键**没有 daemon 读者**（§15 未知键
+    静默忽略，判例钉 `config._OVERRIDE_FIELDS` 不含它们、overlay 不改任何 Config 字段）。
+    **web 设置页 section「显示」**（首个 section）：三个 segmented control（`<fieldset>` +
+    `<legend>` + radio，可访问名 = 组名「文字大小 / 文字粗细 / 线条粗细」+ 档名「小 / 默认 /
+    大 / 特大」「常规 / 中等 / 粗体」「细 / 默认 / 粗」）+ 预览行（看板真实类名 task-card /
+    chip / btn 渲染，不另设作用域）；**无保存键**——点一档 = 先落 `<html>`（即时）再 PUT 那
+    一键，server 拒绝回滚到最近快照 + `role=alert` toast。**视觉 golden（`feat/ui-parity-contract` 正在立法的 UI parity 节）在默认档采集**
+    （scale 1 / shift 0 / 1.5px）。判例 `web/src/displayPrefs.test.ts`、
+    `web/src/components/settings/DisplaySection.test.tsx`、`tests/test_server_display_settings.py`。
 
 不在本清单里的既有 web 行为（顶栏部署标签、过滤 chips、EN/主题切换、设置齿轮、
 回收站页、详情抽屉）保持不变。

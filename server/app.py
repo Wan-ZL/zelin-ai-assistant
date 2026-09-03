@@ -21,6 +21,8 @@
   POST /api/materials/dismiss（server/materials.py，存储在 act/lib/materials.py）。
 - 会议 recap 面（§63）：GET/PUT /api/settings/recap（三把旋钮）、POST
   /api/recaps/mark（「复制」/「标记已发送」本地标记），server/recaps.py。
+- 显示偏好（§54.1 第 12 项）：GET/PUT /api/settings/display（字号 / 字重 / 描边
+  三把旋钮，看板落成 :root 上的 CSS 变量），server/display.py。
 
 契约：docs/CONTRACT.md §49（路由/SSE/CSP/auth model/error envelope/
 localhost 例外的法源）、§59（设置面）、§62（素材库）、§63（会议 recap）。
@@ -39,8 +41,9 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from server import (ai_fix_launch, board_source, files, health, inbox_writer,
-                    lanes, materials, paths, recaps, security, settings)
+from server import (ai_fix_launch, board_source, display, files, health,
+                    inbox_writer, lanes, materials, paths, recaps, security,
+                    settings)
 from server.errors import (ApiError, ForbiddenError, InvalidFieldError,
                            NotFoundError, NotImplementedError501,
                            UnauthorizedError, UnknownFieldError)
@@ -394,6 +397,8 @@ _GET_JSON_ROUTES = {
     "/api/materials/list": lambda ctx, query: materials.list_items(ctx.home, query),
     # §63 会议 recap 三把旋钮（enabled / default_language / slack_draft_enabled）
     "/api/settings/recap": lambda ctx, query: recaps.snapshot(ctx.home),
+    # §54.1 第 12 项 显示偏好三把旋钮（text_size / text_weight / stroke）+ server-owned 词表
+    "/api/settings/display": lambda ctx, query: display.snapshot(ctx.home),
 }
 
 _POST_JSON_ROUTES = {
@@ -414,6 +419,8 @@ _PUT_JSON_ROUTES = {
     "/api/settings/models": lambda ctx, payload: settings.update_models(ctx.home, payload),
     # §63 会议 recap 旋钮（同一 diff-write 语义）
     "/api/settings/recap": lambda ctx, payload: recaps.update(ctx.home, payload),
+    # §54.1 第 12 项 显示偏好旋钮（同一 diff-write 语义；server 是这三个键的唯一读写者）
+    "/api/settings/display": lambda ctx, payload: display.update(ctx.home, payload),
 }
 
 

@@ -18,6 +18,22 @@
           }
         } catch (_) { /* localStorage 不可用时静默走系统偏好 */ }
       })();
+      // 首帧前应用显示偏好缓存（字号 / 字重 / 描边，CONTRACT §54.1 第 12 项），避免 server 快照到达前字号跳变。
+      // key: zai.display = {"text_size","text_weight","stroke"}（displayPrefs.ts 写）；值 → CSS 变量的映射在 tokens.css。
+      // 这里只搬三个白名单键到 data-*，不认别的键、不认非字符串；server 快照到达即覆盖。
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem("zai.display") || "null");
+          if (!prefs || typeof prefs !== "object") return;
+          var map = { text_size: "textSize", text_weight: "textWeight", stroke: "stroke" };
+          for (var key in map) {
+            var value = prefs[key];
+            if (typeof value === "string" && /^[a-z]{1,8}$/.test(value)) {
+              document.documentElement.dataset[map[key]] = value;
+            }
+          }
+        } catch (_) { /* 坏缓存 / 无 localStorage：走 tokens.css 默认档 */ }
+      })();
     </script>
   </head>
   <body>
