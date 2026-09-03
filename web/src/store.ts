@@ -15,6 +15,7 @@ import {
   fetchClaudeSessions,
   fetchDiagnostics,
   fetchDailyLoopSettings,
+  fetchFailures,
   fetchHealth,
   fetchLanes,
   fetchMaterials,
@@ -57,6 +58,7 @@ import type {
   DiagnosticsSnapshot,
   DailyLoopPatch,
   DailyLoopSettings,
+  FailureCatalog,
   HealthSnapshot,
   LaneCatalog,
   MaterialItem,
@@ -108,6 +110,7 @@ export interface AppState {
   diagnostics: DiagnosticsSnapshot | null; // GET /api/diagnostics
   setup: SetupSnapshot | null;             // GET /api/setup（首次运行向导判定）
   about: AboutInfo | null;                 // GET /api/about
+  failures: FailureCatalog | null;         // GET /api/failures（§25 失败目录双语句；引擎诊断行 / 依赖行按 id 取）
   mcp: McpList | null;                     // GET /api/mcp
   claudeSessions: ClaudeSessionsScan | null; // GET /api/claude-sessions
   pageErrors: Record<string, string | null>; // 上述各面最近一次读失败的文案（成功后清空）
@@ -170,6 +173,7 @@ const initialState: AppState = {
   diagnostics: null,
   setup: null,
   about: null,
+  failures: null,
   mcp: null,
   claudeSessions: null,
   pageErrors: {},
@@ -460,7 +464,7 @@ export async function toggleSkill(name: string, action: "enable" | "disable"): P
 // ----- §68 parity 页快照（一个通用 loader：成功落字段、失败落 pageErrors[key]） -------- #
 
 type PageKey = "settingsCatalog" | "secrets" | "permissions" | "diagnostics" | "setup" | "about"
-  | "mcp" | "claudeSessions";
+  | "failures" | "mcp" | "claudeSessions";
 
 const pageRequests = new Map<PageKey, Promise<void>>(); // 同一面并发 refresh 合并成一个在途请求（十个通用区同时挂载）
 
@@ -488,6 +492,7 @@ export const refreshPermissions = (refresh = false) => loadPage("permissions", (
 export const refreshDiagnostics = (refresh = false) => loadPage("diagnostics", () => fetchDiagnostics(refresh));
 export const refreshSetup = () => loadPage("setup", fetchSetup);
 export const refreshAbout = () => loadPage("about", fetchAbout);
+export const refreshFailures = () => loadPage("failures", fetchFailures);
 export const refreshMcp = () => loadPage("mcp", fetchMcp);
 export const refreshClaudeSessions = (window = 7) => loadPage("claudeSessions", () => fetchClaudeSessions(window));
 

@@ -18,6 +18,9 @@ import type {
   ClaudeSessionsScan,
   DiagnosticsSnapshot,
   DoctorReport,
+  FailureCatalog,
+  IngestJob,
+  IngestJobStart,
   DailyLoopPatch,
   DailyLoopSettings,
   FolderReceipt,
@@ -410,6 +413,31 @@ export function fetchAbout(signal?: AbortSignal): Promise<AboutInfo> {
 /** POST /api/update/check — §26 手动「立即检查」 */
 export function postUpdateCheck(): Promise<UpdateCheckResult> {
   return request<UpdateCheckResult>("/api/update/check", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/update/install — 关于页「新版本 v… 可用 — 一键更新」：提前 kickstart §56 自动部署 agent（未加载 → 409） */
+export function postUpdateInstall(): Promise<RepairReceipt> {
+  return request<RepairReceipt>("/api/update/install", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/ingest/export — 录制页「立即导出」= bash ingest/screenpipe-export.sh（后台跑，回 job id） */
+export function postIngestExport(): Promise<IngestJobStart> {
+  return request<IngestJobStart>("/api/ingest/export", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** POST /api/ingest/run — 录制页「立即 ingest」= SCREENPIPE_NO_WAIT=1 bash ingest/process-screenpipe.sh（exit 3 = 持锁跳过） */
+export function postIngestRun(): Promise<IngestJobStart> {
+  return request<IngestJobStart>("/api/ingest/run", { method: "POST", body: JSON.stringify({}) });
+}
+
+/** GET /api/ingest/jobs/{id} — 手动触发的进度：running → done（回执五键） */
+export function fetchIngestJob(id: string, signal?: AbortSignal): Promise<IngestJob> {
+  return request<IngestJob>(`/api/ingest/jobs/${encodeURIComponent(id)}`, { signal });
+}
+
+/** GET /api/failures — §25 失败目录（原生 FailureCatalog.message 的 server-owned 双语句） */
+export function fetchFailures(signal?: AbortSignal): Promise<FailureCatalog> {
+  return request<FailureCatalog>("/api/failures", { signal });
 }
 
 /** GET /api/mcp — MCP servers 两作用域（只读、已掩码） */

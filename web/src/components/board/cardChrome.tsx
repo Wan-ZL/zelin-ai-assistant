@@ -146,16 +146,18 @@ export function CardDetails({ cardId, children }: { cardId: string; children: Re
 type Stamp = { epoch?: unknown; iso?: unknown };
 
 /** 相对时间小字（原生 RelativeTime.sinceEpoch / since）+ hover 绝对时间；解析不了不渲染 */
-export function RelativeTime({ epoch, iso, prefix = "", className = "" }: Stamp & { prefix?: string; className?: string }) {
+export function RelativeTime({ epoch, iso, prefix = "", suffix = "", className = "" }: Stamp & { prefix?: string; suffix?: string; className?: string }) {
   const { text, locale } = useI18n();
   const now = useNow();
   const label = epoch !== undefined ? sinceEpoch(epoch, now, text) : sinceIso(iso, now, text);
   if (!label) return null;
-  // 前缀与时间值各自一个文本节点（原生是两个 Text 拼接；探针按节点文本逐字判「耗时 」/「验收于 」等前缀）
+  // 前缀与时间值各自一个文本节点（原生是两个 Text 拼接；探针按节点文本逐字判「耗时 」/「验收于 」等前缀）；
+  // suffix 收尾括号之类（原生「（上次检查：\(rel)）」整句一个 Text——外层 span 的 textContent 才是那一句）
   return (
     <span className={`card-meta-text${className ? ` ${className}` : ""}`} title={absoluteLabel(epoch ?? iso, locale)}>
       {prefix ? <span className="card-meta-prefix">{prefix}</span> : null}
       <span>{label}</span>
+      {suffix ? <span className="card-meta-prefix">{suffix}</span> : null}
     </span>
   );
 }
