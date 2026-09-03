@@ -134,19 +134,64 @@ class RunnerDisciplineTestCase(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(repo, "ui", "parity", "goldens")))
 
 
+def _node(idx, role, name, parent="window>main:main", **extra):
+    node = {"idx": idx, "role": role, "name": name, "name_source": "text", "text": name, "parent": parent, "order": idx,
+            "visible": True, "hidden_by": None, "focusable": role == "button"}
+    node.update(extra)
+    return node
+
+
+def _runtime_output(nodes, landmarks=()):
+    return {"tool": "playwright 1.0", "dims": {"themes": ["light"]},
+            "runs": [{"screen": "board", "scene": "initial", "theme": "light", "viewport": "desktop", "language": "zh", "flags": "default",
+                      "emulation": "light", "lang": "zh", "nodes": nodes, "landmarks": list(landmarks), "focus_walk": [n["idx"] for n in nodes],
+                      "overflow": {"scrollWidth": 1, "clientWidth": 1}}]}
+
+
 class StaticNameFilterTestCase(unittest.TestCase):
     def test_runtime_names_outside_source_become_dynamic(self):
+        """SKILL.md：源字符串集合之外的 runtime 名字 → {dynamic}——名字、id 的 slug、可见文本一起脱敏（用户内容不进
+        subject-runtime.json、不进报告）；pin 过的名字保留（要与参照比像不像）；参照的名字算已知。"""
         ctx = checks_ui.make_ctx("/r", kit.fake_det(["b.html"]))
         ctx["state"]["subject_source"] = kit.make_inventory([kit.make_item("board", "button", "Approve")])
-        runtime = kit.make_inventory([kit.make_item("board", "button", "Approve"), kit.make_item("board", "static", "Alice's private note"),
-                                      kit.make_item("board", "button", "Pinned", pin="control:board:button:x")])
-        self.assertEqual(sensors._static_name_filter(ctx, runtime), 1)
-        names = {i["id"]: i["name"]["raw"] for i in runtime["items"]}
-        self.assertEqual(names["control:board:static:alice-s-private-note"], "{dynamic}")
-        self.assertEqual(names["control:board:button:approve"], "Approve")
-        self.assertEqual(names["control:board:button:pinned"], "Pinned")
-        ctx["state"]["subject_source"] = None
-        self.assertEqual(sensors._static_name_filter(ctx, runtime), 0)
+        ctx["state"]["reference_inventory"] = kit.make_inventory([kit.make_item("board", "button", "Reject")], role="reference")
+        known = sensors._known_names(ctx)
+        self.assertEqual(known, {"Approve", "Reject"})
+        nodes = [_node(0, "button", "Approve"), _node(1, "static", "Alice's private note"), _node(2, "button", "Reject"),
+                 _node(3, "button", "Pinned", pin="control:board:button:x")]
+        inventory = inv.parse_runtime(_runtime_output(nodes), {"role": "subject"}, known_names=known)["inventory"]
+        by = {i["id"]: i for i in inventory["items"]}
+        self.assertEqual(sorted(by), ["control:board:button:approve", "control:board:button:pinned", "control:board:button:reject",
+                                      "control:board:static:dynamic"])
+        self.assertEqual((by["control:board:static:dynamic"]["name"]["raw"], by["control:board:static:dynamic"]["dynamic"],
+                          by["control:board:static:dynamic"]["visible_text"]), ("{dynamic}", True, None))
+        self.assertEqual(by["control:board:button:pinned"]["name"]["raw"], "Pinned")
+        self.assertEqual(inventory["names_filtered"], 1)
+        self.assertNotIn("Alice", kit.tc.dump_json(inventory))
+        self.assertEqual(inventory["focus_walk"]["board::light::desktop::zh::rest"][1], "control:board:static:dynamic")
+
+    def test_empty_known_set_filters_everything_and_none_disables(self):
+        """没有源集合 ≠ 不过滤：空集合 = 什么都不认识 = 全部 {dynamic}（fail closed）；known=None 才是显式关掉（CLI 调试）。"""
+        nodes = [_node(0, "button", "Approve"), _node(1, "static", "Alice's private note")]
+        strict = inv.parse_runtime(_runtime_output(nodes), {"role": "subject"}, known_names=set())["inventory"]
+        self.assertEqual(sorted(i["id"] for i in strict["items"]), ["control:board:button:dynamic", "control:board:static:dynamic"])
+        self.assertEqual(strict["names_filtered"], 2)
+        loose = inv.parse_runtime(_runtime_output(nodes), {"role": "subject"})["inventory"]
+        self.assertIn("control:board:static:alice-s-private-note", {i["id"] for i in loose["items"]})
+        self.assertEqual(loose["names_filtered"], 0)
+
+    def test_dynamic_landmark_names_leave_parent_paths_too(self):
+        """<section aria-labelledby=cardTitle>：区块名是用户内容 → 它自己的 id、地标记录、以及后代 parent 路径里的那一段
+        全部成 dynamic（driver.cjs 的 landmarkPath 用同一 slug 规则拼段）。"""
+        nodes = [_node(0, "region", "Bob's card title", parent="window>main:main"),
+                 _node(1, "button", "Approve", parent="window>main:main>region:bob-s-card-title")]
+        landmarks = [{"role": "region", "name": "Bob's card title", "parent": "window>main:main", "order": 0, "side": "inside", "bbox": [0, 0, 1, 1]}]
+        inventory = inv.parse_runtime(_runtime_output(nodes, landmarks), {"role": "subject"}, known_names={"Approve"})["inventory"]
+        by = {i["id"]: i for i in inventory["items"]}
+        self.assertEqual(by["control:board:button:approve"]["topology"]["parent"], "window>main:main>region:dynamic")
+        self.assertIn("landmark:board:region:dynamic", by)
+        self.assertEqual(inventory["landmarks"][0]["id"], "landmark:board:region:dynamic")
+        self.assertNotIn("bob", kit.tc.dump_json(inventory).lower())
 
 
 if __name__ == "__main__":

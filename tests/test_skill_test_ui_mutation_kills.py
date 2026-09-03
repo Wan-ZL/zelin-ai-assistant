@@ -281,11 +281,17 @@ class SensorsBoundariesTestCase(unittest.TestCase):
         self.assertEqual(sensors._mode_note(checks_ui.make_ctx("/r", det), "structure")[0], "substituted")
 
     def test_visual_verdict_and_shot_rows(self):
-        """sensors::_visual_verdict `over or not manifest.ok`；_shot_row 没 golden = no_golden，坏 PNG = CHANGED。"""
+        """sensors::_visual_verdict `over or capped or not manifest.ok`；一张都没比（全 no_golden）= unavailable 不是 pass；
+        _shot_row 没 golden = no_golden，坏 PNG = CHANGED。"""
         rows = [{"id": "s", "status": "no_golden", "item_status": None}]
-        self.assertEqual(sensors._visual_verdict(rows, {"ok": True})["status"], "pass")
+        self.assertEqual(sensors._visual_verdict(rows, {"ok": True})["status"], "unavailable")  # nothing was compared
         self.assertEqual(sensors._visual_verdict(rows, {"ok": False})["status"], "fail")
+        compared = rows + [{"id": "t", "status": "same", "item_status": "PRESENT"}]
+        self.assertEqual(sensors._visual_verdict(compared, {"ok": True})["status"], "pass")
+        self.assertIn("1 shot(s) within threshold (1 without golden)", sensors._visual_verdict(compared, {"ok": True})["summary"])
         self.assertEqual(sensors._visual_verdict([{"id": "s", "item_status": "CHANGED"}], {"ok": True})["status"], "fail")
+        capped = sensors._visual_verdict([{"id": "s", "status": "same", "item_status": "PRESENT", "over_mask_cap": True}], {"ok": True})
+        self.assertEqual((capped["status"], capped["details"]["over_mask_cap"]), ("fail", ["s"]))
         with tempfile.TemporaryDirectory() as tmp:
             ctx = checks_ui.make_ctx("/r", kit.fake_det(["b.html"]), out=tmp)
             shot = os.path.join(tmp, "board.png")
@@ -342,12 +348,18 @@ class CommonBoundariesTestCase(unittest.TestCase):
                 tc._parse_ihdr(struct.pack(">IIBBBBB", 1, 1, depth, ctype, 0, 0, inter))
 
     def test_token_value_text_and_validate_item(self):
-        """testui_common::token_value_text color 归一只对字符串；_validate_item key 缺字段报 key。"""
+        """testui_common::token_value_text color 归一只对字符串；_validate_item key 缺字段报 key（没有 key 就没有 role 可判，
+        不重复报）；key 不是 dict（字符串 / 列表）也是错误路径而不是 AttributeError——坏参照必须落成 reference_unreadable。"""
         self.assertEqual(tc.token_value_text({"$type": "color", "$value": {"light": "#fff"}}), '{"light": "#fff"}')
         self.assertEqual(tc.token_value_text({"$type": "color", "$value": "#FFF"}), "#ffffffff")
         item = kit.make_item("b", "button", "Go")
         item["key"] = {"screen": "b"}
-        self.assertEqual(tc._validate_item(0, item), ["items[0].key", "items[0].role"])
+        self.assertEqual(tc._validate_item(0, item), ["items[0].key"])
+        item["key"] = {"screen": "b", "role": "widget", "slug": "go"}
+        self.assertEqual(tc._validate_item(0, item), ["items[0].role"])
+        for bad_key in ("oops", ["screen", "role", "slug"], None):
+            self.assertEqual(tc._validate_item(0, dict(item, key=bad_key)), ["items[0].key"])
+        self.assertEqual(tc.validate_inventory({"schemaVersion": 1, "producer": [], "side": {}, "items": {"a": 1}}), ["producer.mode", "items"])
 
 
 class TokensBoundariesTestCase(unittest.TestCase):

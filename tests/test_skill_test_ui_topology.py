@@ -36,6 +36,9 @@ class TopologyExtractionTestCase(unittest.TestCase):
         self.assertEqual(ref["control:board:button:批准"]["topology"]["parent"], "window>main:main>list:proposals>listitem:listitem")
         marks = {m["id"]: m for m in _inv(REF_HTML)["landmarks"]}
         self.assertEqual(marks["landmark:board:navigation:rail"]["children_order"], ["control:board:link:workbench", "control:board:link:settings"])
+        # every landmark and every topology role (list, heading) gets a landmark record — main, banner, list, h1 included
+        self.assertEqual(sorted(marks), ["control:board:list:proposals", "heading:board:heading:title", "landmark:board:banner:banner",
+                                         "landmark:board:main:main", "landmark:board:navigation:rail"])
 
     def test_rail_moved_into_header_is_changed_topology(self):
         """负控制（今日漏项 #1）：名字全同，只搬了位置 → navigation CHANGED side + parent + order；链接本身 PRESENT。"""

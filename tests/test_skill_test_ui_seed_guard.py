@@ -104,7 +104,7 @@ class GuardTestCase(unittest.TestCase):
             self.assertEqual(sensors.check_structure_runtime(ctx)["status"], "pass")
             names = {i["id"]: i["name"]["raw"] for i in ctx["state"]["runtime"]["inventory"]["items"]}
             self.assertEqual(names["control:board:button:拒绝"], "拒绝")
-            self.assertEqual(names["control:board:static:alice-s-secret"], "{dynamic}")
+            self.assertEqual(names["control:board:static:dynamic"], "{dynamic}")  # the id carries no user text either
 
     def test_seed_echo_marker_through_capture(self):
         """回声标记走完整链路：seed 写进 skill 的临时 HOME（runner 假装 demo_seed 写文件）→ /api/board 回同一批 id → seen；
@@ -167,9 +167,13 @@ class GuardTestCase(unittest.TestCase):
             self.assertTrue(ctx["state"]["launch"]["marker_seen"])
             names = {i["id"]: i["name"]["raw"] for i in bundle["inventory"]["items"]}
             self.assertEqual(names["control:board:button:批准"], "批准")
-            self.assertEqual(names["control:board:static:alice-s-secret"], "{dynamic}")  # static-name filter
+            self.assertEqual(names["control:board:static:dynamic"], "{dynamic}")  # static-name filter: name AND id scrubbed
+            self.assertEqual(bundle["inventory"]["names_filtered"], 1)
             self.assertEqual(bundle["inventory"]["focus_walk"]["board::light::desktop::zh::rest"], ["control:board:button:批准"])
-            self.assertTrue(os.path.exists(os.path.join(tmp, "out", "inventory", "subject-runtime.json")))
+            dumped = os.path.join(tmp, "out", "inventory", "subject-runtime.json")
+            self.assertTrue(os.path.exists(dumped))
+            with open(dumped, encoding="utf-8") as fh:
+                self.assertNotIn("Alice", fh.read())  # no user content in the artifact
             self.assertEqual(sensors.check_seed_guard(ctx)["status"], "pass")
             self.assertEqual(sensors.check_app_launch(ctx)["status"], "pass")
             self.assertEqual(sensors.check_pair_runtime(ctx)["status"], "pass")
@@ -236,11 +240,36 @@ class ParseRuntimeTestCase(unittest.TestCase):
         item = {i["id"]: i for i in inventory["items"]}["control:board:button:批准"]
         self.assertEqual(item["states"]["light::desktop::zh::rest"]["bbox"], [1, 2, 64, 28])
         self.assertEqual(inventory["landmarks"][0]["id"], "landmark:board:main:main")
-        self.assertEqual(inventory["shots"][0]["id"], "shot:board:initial:light:desktop:zh")
+        self.assertEqual(inventory["names_filtered"], 0)  # known_names=None → nothing filtered (CLI mode)
         self.assertEqual(bundle["tokens_observed"], {"light": {"--bg": "rgb(250, 251, 252)"}})
         self.assertEqual(bundle["geometry"], {"layout.lane.width": [320]})
         self.assertEqual(bundle["observed_theme"], {"light": "light"})
         self.assertEqual(inventory["dims"]["themes"], ["light"])
+
+    def test_unnamed_landmark_slug_matches_source_and_landmark_record(self):
+        """runtime 的无名 <main> / <nav> / <ul> 条目 id 与源提取、原生归一、以及同一 run 的 landmarks 记录同一条 slug 规则
+        （无名地标 = 角色名，不是 `unnamed`）——否则 runtime 永远配不上无名地标。"""
+        run = dict(DRIVER_OUTPUT["runs"][0], nodes=[
+            {"idx": 0, "role": "main", "name": "", "name_source": "none", "text": "", "parent": "window", "order": 0, "visible": True, "focusable": False},
+            {"idx": 1, "role": "navigation", "name": "", "name_source": "none", "text": "", "parent": "window", "order": 1, "visible": True, "focusable": False},
+            {"idx": 2, "role": "button", "name": "", "name_source": "none", "text": "", "parent": "window>main:main", "order": 0, "visible": True, "focusable": True}])
+        ids = {i["id"] for i in inv.parse_runtime({"runs": [run]}, {"role": "subject"})["inventory"]["items"]}
+        self.assertEqual(ids, {"landmark:board:main:main", "landmark:board:navigation:navigation", "control:board:button:unnamed"})
+        source_ids = {i["id"] for i in inv.SourceExtractor("<main><nav></nav><button></button></main>", "board", "b.html").run()[0]}
+        self.assertEqual(source_ids, ids)
+
+    def test_same_run_duplicates_get_ordinals_and_count(self):
+        """四张卡各一颗「批准」是四个条目（#2 #3 #4，count 4）——不是合成一个 count 1 的条目；另一主题的同位元素合并 states。"""
+        approve = {"role": "button", "name": "批准", "name_source": "text", "text": "批准", "parent": "window>main:main", "visible": True, "focusable": True}
+        light = dict(DRIVER_OUTPUT["runs"][0], nodes=[dict(approve, idx=i, order=i) for i in range(4)], focus_walk=[0, 1, 2, 3])
+        dark = dict(light, theme="dark", emulation="dark")
+        inventory = inv.parse_runtime({"runs": [light, dark]}, {"role": "subject"})["inventory"]
+        by = {i["id"]: i for i in inventory["items"]}
+        self.assertEqual(sorted(by), ["control:board:button:批准", "control:board:button:批准#2", "control:board:button:批准#3", "control:board:button:批准#4"])
+        self.assertEqual({i["count"] for i in by.values()}, {4})
+        self.assertEqual(sorted(by["control:board:button:批准#3"]["states"]), ["dark::desktop::zh::rest", "light::desktop::zh::rest"])
+        self.assertEqual(inventory["focus_walk"]["board::light::desktop::zh::rest"][2], "control:board:button:批准#3")
+        self.assertEqual(inventory["shots"][0]["id"], "shot:board:initial:light:desktop:zh")
 
     def test_gated_merge(self):
         runs = [dict(DRIVER_OUTPUT["runs"][0], flags="all_on", nodes=DRIVER_OUTPUT["runs"][0]["nodes"] + [

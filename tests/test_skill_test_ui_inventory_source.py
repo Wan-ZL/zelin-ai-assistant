@@ -49,6 +49,11 @@ class TsxTestCase(unittest.TestCase):
     def test_roles_names_and_bilingual(self):
         by = {i["id"]: i for i in _items(TSX)}
         self.assertIn("landmark:shell:banner:banner", by)
+        # kind follows the role table: landmark / interactive / heading / static
+        self.assertEqual((by["landmark:shell:banner:banner"]["kind"], by["control:shell:link:trash"]["kind"],
+                          by["heading:shell:heading:zelin-s-ai-assistant"]["kind"]), ("landmark", "interactive", "heading"))
+        self.assertEqual([inv._kind_for(r) for r in ("static", "list", "img", "switch", "main", "heading")],
+                         ["static", "static", "static", "interactive", "landmark", "heading"])
         heading = by["heading:shell:heading:zelin-s-ai-assistant"]
         self.assertEqual((heading["name"]["zh"], heading["name"]["en"], heading["level"]), ("Zelin 的 AI 助理", "Zelin's AI Assistant", 1))
         self.assertEqual(by["control:shell:link:trash"]["name_source"], "text")
@@ -77,6 +82,18 @@ class TsxTestCase(unittest.TestCase):
         self.assertFalse(by["D"]["focusable"])
         self.assertFalse(by["E"]["focusable"])
         self.assertTrue(by["F"]["focusable"] and by["F"]["visible"])
+
+    def test_jsx_scalar_literals_for_tabindex_hidden_disabled(self):
+        """TSX 写 `tabIndex={-1}` / `hidden={false}` / `disabled={true}`：标量字面量是写死的状态——{-1} 不在 Tab 序，
+        hidden={false} 可见，disabled={true} 禁用；`disabled={busy}` 仍是运行时值（可聚焦）。"""
+        tsx = '<main><button tabIndex={-1}>A</button><button hidden={false}>B</button><button disabled={true}>C</button>' \
+              '<button hidden={open}>D</button><button disabled={busy}>E</button></main>'
+        by = {i["name"]["raw"]: i["states"]["source"] for i in _items(tsx, "x", "x.tsx")}
+        self.assertFalse(by["A"]["focusable"])
+        self.assertTrue(by["B"]["visible"] and by["B"]["focusable"])
+        self.assertFalse(by["C"]["focusable"])
+        self.assertEqual(by["D"]["hidden_by"], "hidden")  # a conditional `hidden` is a hidden state the source cannot rule out
+        self.assertTrue(by["E"]["focusable"])
 
     def test_pin_ordinals_and_containers(self):
         html = '<ul aria-label="L"><li>one <button>Go</button></li><li>two <button>Go</button></li></ul>' \

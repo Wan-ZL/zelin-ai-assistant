@@ -142,19 +142,25 @@ def _alias_side(repo, locator, config):
                  hint=None if inv else _regen_hint(entry))
 
 
-def _inventory_side(locator):
-    path, sha = _file_resolved(None, locator)
+def _under_repo(repo, locator):
+    """`inventory:` / `dir:` 的相对路径以 repo 为基（run_ui 的 cwd 可以是任何地方），绝对路径原样。"""
+    return locator if os.path.isabs(locator) else os.path.join(repo or os.getcwd(), locator)
+
+
+def _inventory_side(repo, locator):
+    """`inventory:<file>`：不存在 → ReferenceError（exit 2 + 候选），相对路径不再是一条 TypeError traceback。"""
+    path, sha = _file_resolved(None, _under_repo(repo, locator))
     if path is None:
         raise ReferenceError("inventory file not found: %s" % locator)
     return _side("inventory", locator, resolved=sha, inventory=path, mode=_modes("frozen", "na", "na"))
 
 
-def _dir_side(locator):
-    path = os.path.abspath(locator)
+def _dir_side(repo, locator):
+    path = os.path.abspath(_under_repo(repo, locator))
     if not os.path.isdir(path):
         raise ReferenceError("dir not found: %s" % locator)
     return _side("dir", locator, resolved="path:%s" % path, stack="unknown", mode=_modes("source", "source", "na"),
-                 inventory=None, launch=None)
+                 inventory=None, launch=None, directory=path)
 
 
 def _design_system_side(repo, config):
@@ -183,8 +189,8 @@ def resolve_side(repo, against, config, runner=lc.run_command, cache_dir=None):
     """`--against` → side 记录（reference 角色）。git: 需要 runner（建 detached worktree）。"""
     parsed = parse_against(against, config)
     kind, locator = parsed["kind"], parsed["locator"]
-    builders = {"alias": lambda: _alias_side(repo, locator, config), "inventory": lambda: _inventory_side(locator),
-                "dir": lambda: _dir_side(locator), "design-system": lambda: _design_system_side(repo, config),
+    builders = {"alias": lambda: _alias_side(repo, locator, config), "inventory": lambda: _inventory_side(repo, locator),
+                "dir": lambda: _dir_side(repo, locator), "design-system": lambda: _design_system_side(repo, config),
                 "url": lambda: _url_side(locator), "app": lambda: _app_side(locator),
                 "git": lambda: git_side(repo, locator, runner, cache_dir)}
     return builders[kind]()
@@ -242,7 +248,8 @@ def subject_side(repo, stack, runtime_ok, launch, commit=None, dirty=False):
 
 
 def _loopback(url):
-    host = re.sub(r"^https?://", "", url).split("/", 1)[0].split(":", 1)[0]
+    authority = re.sub(r"^https?://", "", url).split("/", 1)[0]
+    host = authority.split("]", 1)[0] + "]" if authority.startswith("[") else authority.split(":", 1)[0]
     return host in ("127.0.0.1", "localhost", "[::1]")
 
 

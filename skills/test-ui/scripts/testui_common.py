@@ -20,7 +20,7 @@ import struct
 import zlib
 
 SKILL_NAME = "test-ui"
-SKILL_VERSION = "0.1.0"
+SKILL_VERSION = "0.1.1"
 SCHEMA_VERSION = 1
 
 # WAI-ARIA 角色词表（清单里 role 的合法值；原生词表经适配器的数据表映射过来）
@@ -92,6 +92,15 @@ def _func_color(name, args):
     return rgb[0], rgb[1], rgb[2], max(0.0, min(1.0, alpha))
 
 
+def _func_color_or_none(name, args):
+    """`rgb(var(--r) var(--g) var(--b) / <alpha-value>)`（Tailwind / shadcn 的 token 表写法）、`hsl(1turn …)` 之类
+    通道不是数字 → None，绝不抛：tokens_source 扫一张这样的表不该整层崩成 FAIL。"""
+    try:
+        return _func_color(name, args)
+    except ValueError:
+        return None
+
+
 def parse_color(text):
     """CSS 颜色 → (r, g, b, alpha)；认不出 → None（调用方决定是否 fail closed）。"""
     if not isinstance(text, str):
@@ -104,7 +113,7 @@ def parse_color(text):
         return _hex_parts(hex_match.group(1))
     func = _FUNC_RE.match(value)
     if func:
-        return _func_color(func.group(1), func.group(2))
+        return _func_color_or_none(func.group(1), func.group(2))
     return None
 
 
@@ -172,10 +181,24 @@ def _iter_chunks(data):
     while pos + 8 <= len(data):
         length, kind = struct.unpack(">I4s", data[pos:pos + 8])
         body = data[pos + 8:pos + 8 + length]
-        if len(body) != length:
+        if len(body) != length or len(data) < pos + 12 + length:
             raise ValueError("png: truncated chunk %r" % kind)
+        _check_crc(kind, body, data[pos + 8 + length:pos + 12 + length])
         yield kind, body
         pos += 12 + length
+
+
+def _check_crc(kind, body, stored):
+    """块 CRC 不对 = 文件坏了（截图落盘中途被杀、拷贝坏块）——fail closed，不拿坏图去比。"""
+    if struct.unpack(">I", stored)[0] != (zlib.crc32(kind + body) & 0xFFFFFFFF):
+        raise ValueError("png: bad CRC in chunk %r" % kind)
+
+
+def _inflate(idat):
+    try:
+        return zlib.decompress(b"".join(idat))
+    except zlib.error as exc:
+        raise ValueError("png: corrupt IDAT stream: %s" % exc)
 
 
 def _paeth(a, b, c):
@@ -259,7 +282,7 @@ def decode_png(data):
     if header is None or not idat:
         raise ValueError("png: missing IHDR/IDAT")
     width, height, channels = header
-    return width, height, channels, _unfilter_rows(zlib.decompress(b"".join(idat)), width, height, channels)
+    return width, height, channels, _unfilter_rows(_inflate(idat), width, height, channels)
 
 
 # --------------------------------------------------------------------------- #
@@ -387,16 +410,23 @@ _REQUIRED_TOP = ("schemaVersion", "producer", "side", "items")
 _REQUIRED_ITEM = ("id", "key", "kind", "name", "topology", "states")
 
 
+def _validate_key(index, key):
+    """items[i].key 必须是含 screen / role / slug 的 dict 且 role 在词表里——不是 dict（字符串、列表）也是错误路径，不抛。"""
+    if not isinstance(key, dict) or not {"screen", "role", "slug"} <= set(key):
+        return ["items[%d].key" % index]
+    return [] if key.get("role") in ALL_ROLES else ["items[%d].role" % index]
+
+
 def _validate_item(index, item):
     errors = ["items[%d].%s" % (index, key) for key in _REQUIRED_ITEM if key not in item]
-    if "key" in item and not {"screen", "role", "slug"} <= set(item["key"]):
-        errors.append("items[%d].key" % index)
-    if item.get("key", {}).get("role") not in ALL_ROLES:
-        errors.append("items[%d].role" % index)
+    if "key" in item:
+        errors += _validate_key(index, item["key"])
     return errors
 
 
 def _validate_items(items):
+    if not isinstance(items, list):
+        return ["items"]
     errors = []
     for index, item in enumerate(items):
         errors += _validate_item(index, item) if isinstance(item, dict) else ["items[%d]" % index]
@@ -404,13 +434,15 @@ def _validate_items(items):
 
 
 def validate_inventory(obj):
-    """→ 错误路径列表（空 = 合法）。只查形状，不查语义。"""
+    """→ 错误路径列表（空 = 合法）。只查形状，不查语义；任何形状（字段是字符串 / 列表 / null）都只回错误路径，绝不抛——
+    坏参照要被记成 reference_unreadable，不是一条 AttributeError traceback。"""
     if not isinstance(obj, dict):
         return ["<root>"]
     errors = [key for key in _REQUIRED_TOP if key not in obj]
-    if obj.get("producer", {}).get("mode") not in ("runtime", "source", "frozen"):
+    producer = obj.get("producer")
+    if not isinstance(producer, dict) or producer.get("mode") not in ("runtime", "source", "frozen"):
         errors.append("producer.mode")
-    return errors + _validate_items(obj.get("items") or [])
+    return errors + _validate_items(obj.get("items") if obj.get("items") is not None else [])
 
 
 def producer(adapter, mode, tool, argv=None):
