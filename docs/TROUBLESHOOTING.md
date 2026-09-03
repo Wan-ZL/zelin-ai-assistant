@@ -78,10 +78,24 @@ tccutil reset ScreenCapture com.zelin.ai-engineer
 
 **修复**(两条路,选一):
 
-1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → 打开 claude 当前版本那一项(不在列表里就 `+` → `Command`-`Shift`-`G` 粘贴 `~/.local/share/claude/versions/<版本>`)。**claude 每次自动更新后要重做**——授权跟路径走。
+1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴 **`~/Library/Application Support/ZelinAIAssistant/bin/claude`**——这是 install.sh 维护的 claude **稳定副本**(CONTRACT §55 第五幕),后台任务起的就是它;路径永远不变,所以**授一次就够**,claude 更新后不用重做(见下一节)。文件还不存在就先 `bash install.sh` 一次(doctor `stable claude` 行会 WARN 提醒)。doctor `launchd claude` 行的 fix 文案会点名它刚刚探过的那条精确路径——照它写的加。
 2. 把任务 repo 放回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),改 `config.yaml` 的 `execution.default_target_repo`。
 
-然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上把停住的卡「停止 → 退回提案」再批准一次(批准会清掉整条失败台账;hand 卡免批通道也会自动接手)。一张卡真的到「执行中」才算修好。结构性根治(一次授权、子进程全继承)是由有授权的 GUI app 托管后台服务,记在 `docs/design/vnext2-plan.md` 等 owner 拍板。
+然后 `python3 -m act.doctor` 确认 `launchd claude` 行变 OK,再在看板上把停住的卡「停止 → 退回提案」再批准一次(批准会清掉整条失败台账;hand 卡免批通道也会自动接手)。一张卡真的到「执行中」才算修好。另一条结构性路线(有授权的 GUI app 托管后台服务、子进程全继承)记在 `docs/design/vnext2-plan.md` D20 / Q7,不再是 P6 的前提。
+
+## Claude Code 更新后派工被拒:`launchd claude` 行昨天还是绿的,今天又红了
+
+**症状**:前一天按上一节给 claude 开了完全磁盘访问、doctor 全绿、卡也派出去了;Claude Code 自动更新之后(终端里 `claude --version` 变了号)同一行又 FAIL `claude_blind`,派发又全数被拒。系统设置的「完全磁盘访问」列表里那一项还开着,但它指的是 `~/.local/share/claude/versions/<旧版本>`。
+
+**原因**(CONTRACT §55 第五幕,live 2026-09-02):macOS 对命令行可执行文件的完全磁盘访问**按路径**记账。`~/.local/bin/claude` 只是个符号链接,Claude Code 每次更新都把它指向新的 `~/.local/share/claude/versions/<新版本>`——授权留在旧路径上。签名本身是稳定的(Developer ID,identifier `com.anthropic.claude-code`),但 TCC 不按签名找人。
+
+**修法(自 §55 第五幕起是安装器的活,不是你的)**:install.sh 在第 2 步维护一份稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`——从登录 shell 的 claude 复制(只接受带有效 Apple 签名的二进制;npm 装的 node 脚本会被拒绝并保留旧副本),版本变了就**原地替换**(临时文件 + `mv`,同一路径),后台任务一律起这份副本(`config.resolve_claude_bin`:显式 pin → 稳定副本 → PATH),并带 `DISABLE_AUTOUPDATER=1` 不让它自更新。所以:
+
+1. 只需**一次**:系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → 粘贴上面那条路径。之后 Claude Code 随便更新,路径不变、授权不变。
+2. 每次 `bash install.sh`(含每次自动部署跑的 `install.sh --non-interactive`)会把副本刷到当前版本;安装报告里是 `stable_claude=ok:refreshed: …`。两次部署之间副本可能落后一版——doctor `stable claude` 行会 WARN 说明,**这不是故障**:旧一版的 claude 照样派工。
+3. 想立刻刷新就手跑一次 `bash install.sh`;确认用 `python3 -m act.doctor`——`stable claude` 行 OK(或 WARN 落后一版)、`daemon claude` 行写着副本的路径、`launchd claude` 行 OK。
+
+**如果 `launchd claude` 行在刷新副本之后又红了**:那说明 TCC 把这次替换当成了新东西(理论上不会——副本仍满足授权时记下的 code requirement——但 macOS 版本行为可能变)。看列表里稳定路径那一项是否还开着;关掉再开一次;还不行就在本 repo 开 issue,附 doctor 输出。**不要**再回去给 `versions/<v>` 授权——那条路每次更新都断。
 
 **附带的资源上限**:launchd 给后台任务的默认是 soft `ulimit -n` 256 / hard unlimited。模板自 v0.48.4 起只抬 soft 到 8192(余量);**不要**再手加 `HardResourceLimits`——它把 unlimited 压成 8192,doctor `launchd fd limit` 行会 WARN,重跑 `bash install.sh` 即去掉。
 
@@ -97,7 +111,7 @@ v0.48.20 起脚本自己会把这件事说出来:每轮**先探针再碰 git**(�
 
 **修复**(两条授权都要加):
 
-1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴路径,加**两条**:① 后台任务的解释器 = doctor 行给出的 `~/Library/LaunchAgents/com.zelin.aiassistant.autodeploy.plist` 的 `ProgramArguments[0]`(这台机器上出过事的是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`;**按路径授权,换了解释器要重授**);② `/Users/<你>/.local/bin/claude`(实体在 `~/.local/share/claude/versions/<版本>`,claude 每次更新后重做,见上一节)。
+1. 系统设置 → 隐私与安全性 → 完全磁盘访问 → `+` → `Command`-`Shift`-`G` 粘贴路径,加**两条**:① 后台任务的解释器 = doctor 行给出的 `~/Library/LaunchAgents/com.zelin.aiassistant.autodeploy.plist` 的 `ProgramArguments[0]`(这台机器上出过事的是 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`;**按路径授权,换了解释器要重授**);② claude 的稳定副本 `~/Library/Application Support/ZelinAIAssistant/bin/claude`(install.sh 维护、路径固定,授一次即跨 claude 更新有效——见上两节;文件还不存在就先跑一次 `bash install.sh`)。
 2. **等 timer 自己触发一轮(≤ 10 分钟)**,再 `python3 -m act.doctor` 看 `launchd volume access` 行变 OK、`auto-deploy` 行变 `deployed` / `up_to_date`(`tail -f ~/Library/Logs/zelin-ai-assistant/auto-deploy.log` 能看到那一轮)。**不要拿自己起的运行当证据**:2026-09-02 的观察是,从终端起的每一次——`bash scripts/auto-deploy.sh`、`python3 -m act.auto_deploy`、乃至在终端里敲的 `launchctl kickstart`——都绿,只有 timer 触发的那一次被拒:终端把自己的授权借给了它起的一切,绿了对 timer 触发的运行什么都不证明。从进程内部看 kickstart 与 timer 分不出来,所以一次终端 kickstart 可能让 doctor 行在下一次 timer 触发前短暂显示 OK——那不是修好。
 3. 替代路线:把 repo 搬回启动盘的家目录下(不在 Documents / Desktop / Downloads 里),重跑 `bash install.sh` 重渲 plist。
 

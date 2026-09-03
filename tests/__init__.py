@@ -22,6 +22,12 @@ os.environ["AIASSISTANT_HOME"] = TMP_HOME
 # on. The suite injects fakes everywhere; this is the belt-and-braces so a
 # forgotten seam can never touch the developer's launchd from a test.
 os.environ.setdefault("AIASSISTANT_LAUNCHD_PROBE", "0")
+# §55 第五幕 stable daemon copy of claude: config.resolve_claude_bin prefers it
+# whenever the file exists, so a developer machine that has one would flip
+# every argv[0] pin in the suite. Point it into the sandbox (absent by
+# default; tests that want one create it there). Unconditional: a stray value
+# in the developer's shell must not aim the suite at a real binary either.
+os.environ["AIASSISTANT_STABLE_CLAUDE"] = os.path.join(TMP_HOME, "stable-claude", "claude")
 # §54 doctor `board server` row: the default probe GETs 127.0.0.1:<port>/api/health.
 # A developer machine usually has a real board server on 47820 — the suite must
 # never read it. Off = the row is omitted unless a test injects Probes.board_health.

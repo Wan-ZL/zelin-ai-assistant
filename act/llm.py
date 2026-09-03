@@ -10,9 +10,11 @@ Every ``claude`` invocation that carries a prompt is built here and only here:
 - the doctor's model-liveness probe takes its argv from :func:`probe_argv`.
 
 What is centralised (and nothing else): argv construction, the claude binary
-resolution (``config.resolve_claude_bin``: execution.claude_bin pin → PATH →
-~/.local/bin), the outbound ``sanitize.scrub`` of the prompt, the credential
-env (:func:`runner_env`), and **the one place ``--model`` is appended** —
+resolution (``config.resolve_claude_bin``: execution.claude_bin pin → the
+stable daemon copy (§55 第五幕) → PATH → ~/.local/bin), the outbound
+``sanitize.scrub`` of the prompt, the subprocess env (:func:`runner_env`:
+credentials + ``DISABLE_AUTOUPDATER=1``), and **the one place ``--model`` is
+appended** —
 from ``cfg.models_dispatch`` / ``cfg.models_pipeline`` (D22: two knobs, "手"
 vs "脑"). ``follow`` (the default) appends nothing, so every site's argv is
 byte-identical to the pre-§59 shape (tests/test_llm_boundary.py pins each
@@ -66,12 +68,13 @@ PROBE_PROMPT = "ok"
 # resolution helpers
 # --------------------------------------------------------------------------- #
 def claude_bin(cfg: Optional[config.Config] = None) -> str:
-    """The claude CLI for every subprocess site — pin → PATH → ~/.local/bin."""
+    """The claude CLI for every subprocess site — pin → stable daemon copy →
+    PATH → ~/.local/bin (``config.resolve_claude_bin``)."""
     return config.resolve_claude_bin(cfg)
 
 
 def runner_env() -> dict:
-    """Ensure ANTHROPIC_API_KEY is set for the claude subprocess.
+    """The env every claude subprocess gets: credentials + no self-update.
 
     actd runs under a launchd agent; when spawned outside the Aqua login session
     it cannot read the Keychain OAuth token, so fall back to the API key file
@@ -79,6 +82,14 @@ def runner_env() -> dict:
     config/secrets/anthropic-api-key.txt (App 设置窗口保存) -> legacy
     ~/.config/anthropic-key.txt. If the key is already in the environment or no
     file exists, leave things untouched and let claude use its own auth.
+
+    ``DISABLE_AUTOUPDATER=1`` (§55 第五幕): headless workers run the stable
+    daemon copy, whose whole point is that install.sh — not Claude Code's own
+    updater — decides when it changes. A worker that self-updated would either
+    rewrite that file underneath the Full Disk Access grant's code requirement
+    or, more likely, download into ~/.local/share/claude/versions/ for nothing.
+    Always set, never merely defaulted: no site of ours wants a self-updating
+    background claude.
     """
     env = dict(os.environ)
     if not env.get("ANTHROPIC_API_KEY"):
@@ -90,6 +101,7 @@ def runner_env() -> dict:
         )
         if key:
             env["ANTHROPIC_API_KEY"] = key
+    env["DISABLE_AUTOUPDATER"] = "1"
     return env
 
 

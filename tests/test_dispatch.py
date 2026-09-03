@@ -20,6 +20,7 @@ Contract covered:
   the argv of all three launch sites (shared _bg_base_cmd).
 """
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -363,11 +364,64 @@ class SkipPermissionsTestCase(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# claude binary resolution — execution.claude_bin pin -> PATH -> ~/.local/bin
+# claude binary resolution — execution.claude_bin pin -> stable daemon copy
+# (§55 第五幕) -> PATH -> ~/.local/bin
 # (2026-07-08: launchd PATH ranked an outdated second install first and every
-# dispatch died on "unknown option '--bg'"; a bare "claude" argv trusts PATH)
+# dispatch died on "unknown option '--bg'"; a bare "claude" argv trusts PATH.
+# 2026-09-02: the Full Disk Access grant on ~/.local/share/claude/versions/<v>
+# died with the 2.1.258 -> 2.1.259 update; the stable copy is the fixed path
+# the grant lives on, so it outranks PATH whenever install.sh has created it.)
 # --------------------------------------------------------------------------- #
 class ClaudeBinResolutionTestCase(unittest.TestCase):
+    def _stable(self, present=True):
+        # tests/__init__.py aims AIASSISTANT_STABLE_CLAUDE into the sandbox
+        p = config.stable_claude_bin()
+        if present:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            p.chmod(0o755)
+            self.addCleanup(lambda: p.unlink() if p.exists() else None)
+        elif p.exists():
+            p.unlink()
+        return p
+
+    def test_stable_copy_outranks_path(self):
+        stable = self._stable()
+        cfg = config.Config()
+        with mock.patch("act.lib.config.shutil.which", return_value="/resolved/claude"):
+            self.assertEqual(executor._bg_base_cmd(cfg)[0], str(stable))
+            self.assertEqual(config.resolve_claude_bin(cfg), str(stable))
+
+    def test_pin_outranks_stable_copy(self):
+        self._stable()
+        cfg = config.Config()
+        cfg.claude_bin = "/opt/pinned/claude"
+        self.assertEqual(config.resolve_claude_bin(cfg), "/opt/pinned/claude")
+
+    def test_non_executable_stable_copy_is_ignored(self):
+        stable = self._stable()
+        stable.chmod(0o644)
+        cfg = config.Config()
+        with mock.patch("act.lib.config.shutil.which", return_value="/resolved/claude"):
+            self.assertEqual(config.resolve_claude_bin(cfg), "/resolved/claude")
+
+    def test_stable_path_override_is_honoured(self):
+        alt = Path(config.HOME) / "alt-stable" / "claude"
+        alt.parent.mkdir(parents=True, exist_ok=True)
+        alt.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        alt.chmod(0o755)
+        self.addCleanup(alt.unlink)
+        with mock.patch.dict(os.environ, {"AIASSISTANT_STABLE_CLAUDE": str(alt)}):
+            self.assertEqual(config.stable_claude_bin(), alt)
+            self.assertEqual(config.resolve_claude_bin(config.Config()), str(alt))
+
+    def test_default_stable_path_is_the_home_pointer_dir(self):
+        # beside the §19 home pointer / §56.4 deploy mirror: $HOME is never TCC-gated
+        with mock.patch.dict(os.environ, {"AIASSISTANT_STABLE_CLAUDE": ""}):
+            self.assertEqual(
+                config.stable_claude_bin(),
+                Path.home() / "Library" / "Application Support" / "ZelinAIAssistant" / "bin" / "claude")
+
     def test_pinned_claude_bin_wins(self):
         cfg = config.Config()
         cfg.claude_bin = "/opt/pinned/claude"

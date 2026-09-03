@@ -46,6 +46,7 @@ from typing import Callable, List, Optional, Tuple
 from act import llm
 from act.lib import (
     board_server,
+    claude_bin as claude_bin_lib,
     config,
     deploy_state,
     failures,
@@ -489,73 +490,27 @@ def _check_claude(probes: Probes):
     return CheckResult("claude CLI", OK, "%s (%s)" % (path, version))
 
 
-def _version_of(probes: Probes, claude_path: str) -> str:
-    rc, out = probes.run([claude_path, "--version"], timeout=15)
-    return out.strip().splitlines()[0][:60] if rc == 0 and out.strip() else ""
+def _check_stable_claude(probes: Probes):
+    """§55 第五幕 — row `stable claude` (act/lib/claude_bin.py stable_claude_row):
+    the daemon copy install.sh maintains at a fixed $HOME path, the one path
+    the owner's Full Disk Access grant is attached to. macOS only (elsewhere
+    no TCC, install.sh does not maintain it) and only when a claude exists to
+    copy (`claude CLI` row already FAILs otherwise)."""
+    if not platform.is_darwin() or not probes.which("claude"):
+        return []
+    return _row_from(claude_bin_lib.stable_claude_row(
+        probes.run, probes.login_shell_claude, probes.which, _installer()), claude_bin_lib.STABLE_ROW)
 
 
 def _check_daemon_claude(probes: Probes):
-    """launchd/cron can resolve a DIFFERENT claude than the login shell — a
-    second, outdated install ranked first on the daemon PATH once broke every
-    dispatch with "unknown option '--bg'", retrying forever behind a generic
-    notification (2026-07-08). Compare the binary the installed actd plist's
-    PATH resolves against the login shell's, and probe --bg support."""
-    path_env = probes.daemon_path_env()
-    if not path_env:
-        if platform.is_darwin():
-            where = "launchd plist"
-        elif platform.is_windows():
-            where = "scheduled task"
-        else:
-            where = "systemd unit"
-        return CheckResult(
-            "daemon claude", WARN,
-            _pick("actd 的 %s 未安装（或没带 PATH）——无法确认后台服务用的是哪个 claude",
-                  "actd %s not installed (or carries no PATH) - cannot verify "
-                  "which claude the daemon runs") % where,
-            _pick("bash %s（重渲染服务配置，把你 shell 的 claude 目录排在 PATH 最前）",
-                  "bash %s (renders the agent with your shell's claude dir first on PATH)")
-            % _installer())
-    daemon_claude = shutil.which("claude", path=path_env)
-    if not daemon_claude:
-        return CheckResult(
-            "daemon claude", FAIL,
-            "no claude anywhere on the daemon PATH - dispatch and radar extraction cannot run",
-            "install Claude Code, then: bash %s (re-renders the daemon PATH)" % _installer(),
-        ).with_failure("claude_cli_missing")
-    daemon_ver = _version_of(probes, daemon_claude)
-    shell_claude = probes.login_shell_claude()
-    if (shell_claude and os.path.realpath(shell_claude) != os.path.realpath(daemon_claude)):
-        shell_ver = _version_of(probes, shell_claude)
-        if daemon_ver != shell_ver:
-            return CheckResult(
-                "daemon claude", FAIL,
-                "the daemon runs %s (%s) but your shell runs %s (%s) - two installs; "
-                "background dispatch uses the old one" % (
-                    daemon_claude, daemon_ver or "version unknown",
-                    shell_claude, shell_ver or "version unknown"),
-                "update or remove the outdated copy, then: bash %s "
-                "(re-renders the daemon PATH with your shell's claude first)" % _installer(),
-            ).with_failure("claude_cli_outdated")
-    # --bg is what dispatch hangs off. Two-step probe: `--help` (side-effect
-    # free; 2.1.206 lists "--bg, --background") and, ONLY when help lacks it,
-    # a bare `claude --bg` whose error must carry the exact §25 outdated
-    # signature — so a reformatted future help page alone can never false-FAIL.
-    rc, help_out = probes.run([daemon_claude, "--help"], timeout=15)
-    if rc == 0 and help_out.strip() and "--bg" not in help_out:
-        rc2, bg_out = probes.run([daemon_claude, "--bg"], timeout=15)
-        if rc2 != 0 and failures.classify(bg_out) == "claude_cli_outdated":
-            return CheckResult(
-                "daemon claude", FAIL,
-                "%s (%s) does not support --bg - every dispatch fails with "
-                "\"unknown option '--bg'\"" % (daemon_claude, daemon_ver or "version unknown"),
-                "update Claude Code (or remove this outdated copy), then: bash %s" % _installer(),
-            ).with_failure("claude_cli_outdated")
-    same = shell_claude and os.path.realpath(shell_claude) == os.path.realpath(daemon_claude)
-    return CheckResult(
-        "daemon claude", OK,
-        "%s (%s)%s" % (daemon_claude, daemon_ver or "version unknown",
-                       " - same as your login shell" if same else ""))
+    """Row `daemon claude` (act/lib/claude_bin.py daemon_claude_row): the
+    2026-07-08 two-installs incident — launchd's PATH resolved an outdated
+    claude (no --bg) while the login shell used the new one. §55 第五幕: with
+    the stable daemon copy present that file is what every site launches, so
+    the row names it and only the --bg probe applies."""
+    return _row_from(claude_bin_lib.daemon_claude_row(
+        probes.run, probes.daemon_path_env, probes.login_shell_claude, _installer()),
+        claude_bin_lib.DAEMON_ROW)
 
 
 def _check_runtime_python(probes: Probes):
@@ -1053,10 +1008,9 @@ def _check_launchd_claude(probes: Probes):
     state = res.get("state")
     text = str(res.get("text") or "").strip()
     first = (text.splitlines() or [""])[0][:200] if text else ""
-    fda_fix = ("System Settings > Privacy & Security > Full Disk Access: enable %s "
-               "(again after every claude update), or move the repo under $HOME on the "
-               "boot volume; then Stop > Discard & re-propose > approve the halted cards"
-               % real_bin)
+    fda_fix = ("System Settings > Privacy & Security > Full Disk Access: %s, or move the "
+               "repo under $HOME on the boot volume; then Stop > Discard & re-propose > "
+               "approve the halted cards" % claude_bin_lib.grant_text(claude_bin, real_bin, _installer()))
     if state == "ok":
         return CheckResult("launchd claude", OK,
                            "launchd-spawned %s reads %s" % (claude_bin, cwd))
@@ -1882,6 +1836,7 @@ _CHECKS_COMMON_HEAD = [
     _check_home,
     _check_version,
     _check_claude,
+    _check_stable_claude,   # §55 第五幕（darwin only; [] elsewhere）
     _check_daemon_claude,
     _check_runtime_python,
     _check_config,

@@ -235,27 +235,30 @@ def unattended_verdict(mirror, repo: str, log_tail: str, log_mtime, now: float) 
 
 def volume_access_fix(interp: str) -> str:
     """The doctor's remediation for a TCC-blind deploy job — both grants named
-    (the plist's ProgramArguments[0] and the absolute claude link), and the
-    2026-09-02 observation spelled out: runs started from a terminal (even a
-    `launchctl kickstart` typed there) inherit the terminal's grant, so a green
-    one proves nothing about timer-fired runs; wait for the timer."""
-    claude_link = str(Path.home() / ".local" / "bin" / "claude")
+    (the plist's ProgramArguments[0] and the stable daemon copy of claude, §55
+    第五幕: a fixed path, so unlike ~/.local/share/claude/versions/<v> the
+    grant survives claude updates), and the 2026-09-02 observation spelled
+    out: runs started from a terminal (even a `launchctl kickstart` typed
+    there) inherit the terminal's grant, so a green one proves nothing about
+    timer-fired runs; wait for the timer."""
+    stable_claude = str(config.stable_claude_bin())
     return failures.pick(
         "系统设置 → 隐私与安全性 → 完全磁盘访问 → +（Command-Shift-G 粘贴路径），加两条："
-        "① 后台任务的解释器 %s（plist 的 ProgramArguments[0]）；② %s（claude，实体在 "
-        "~/.local/share/claude/versions/<v>，claude 每次更新后重做）。然后**等 timer 自己"
-        "触发一轮（≤ 10 min）**再重跑 doctor 看本行。从终端起的运行——bash scripts/"
-        "auto-deploy.sh、python3 -m act.auto_deploy、乃至在终端里敲的 launchctl kickstart"
-        "——都继承终端的授权，绿了对 timer 触发的运行什么都不证明"
-        % (interp, claude_link),
+        "① 后台任务的解释器 %s（plist 的 ProgramArguments[0]）；② %s（install.sh 维护的 "
+        "claude 稳定副本——路径固定，授一次即跨 claude 更新有效；还没有这个文件就先跑一次 "
+        "bash install.sh）。然后**等 timer 自己触发一轮（≤ 10 min）**再重跑 doctor 看本行。"
+        "从终端起的运行——bash scripts/auto-deploy.sh、python3 -m act.auto_deploy、乃至在终端里"
+        "敲的 launchctl kickstart——都继承终端的授权，绿了对 timer 触发的运行什么都不证明"
+        % (interp, stable_claude),
         "System Settings > Privacy & Security > Full Disk Access > + (Command-Shift-G, paste "
         "the path), two entries: (1) the job's interpreter %s (the plist's "
-        "ProgramArguments[0]); (2) %s (claude; the binary lives in "
-        "~/.local/share/claude/versions/<v>, redo after every claude update). Then WAIT for "
-        "the timer to fire one run (<= 10 min) and re-run doctor. Runs started from a "
-        "terminal - bash scripts/auto-deploy.sh, python3 -m act.auto_deploy, even a "
-        "launchctl kickstart typed in that terminal - inherit the terminal's grant: a green "
-        "one proves nothing about timer-fired runs" % (interp, claude_link))
+        "ProgramArguments[0]); (2) %s (the stable daemon copy of claude that install.sh "
+        "maintains - a fixed path, so the grant survives claude updates; run bash install.sh "
+        "once if the file is not there yet). Then WAIT for the timer to fire one run "
+        "(<= 10 min) and re-run doctor. Runs started from a terminal - bash "
+        "scripts/auto-deploy.sh, python3 -m act.auto_deploy, even a launchctl kickstart typed "
+        "in that terminal - inherit the terminal's grant: a green one proves nothing about "
+        "timer-fired runs" % (interp, stable_claude))
 
 
 # --------------------------------------------------------------------------- #
