@@ -186,71 +186,118 @@ def fetch_new_messages(token: str, my_id: str, cfg: config.Config,
     """
     out: list[dict] = []
 
-    def history(channel_id: str, channel_type: str, is_self: bool = False) -> None:
-        oldest = markers.get(channel_id, "0")
-        params = {"channel": channel_id, "oldest": oldest, "limit": 50}
-        resp = slack_api("conversations.history", token, params)
-        if not resp.get("ok"):
-            return
-        newest_ts = oldest
-        for m in resp.get("messages", []):
-            ts = m.get("ts", "0")
-            if float(ts) <= float(oldest or 0):
-                continue
-            sub = m.get("subtype")
-            if sub and not (is_self and sub == "file_share"):
-                continue                     # joins/leaves/bot noise
-            if m.get("user") == my_id:      # my own messages
-                if is_self:
-                    out.append({
-                        "channel": channel_id,
-                        "channel_type": "self",
-                        "ts": ts,
-                        "user": my_id,
-                        "text": (m.get("text") or ""),
-                        "files": m.get("files") or [],
-                        "permalink": None,
-                    })
-                newest_ts = max(newest_ts, ts, key=lambda x: float(x))
-                continue
-            text = m.get("text", "")
-            # in a plain channel, only care if I'm @mentioned; DMs = always
-            if channel_type == "channel" and f"<@{my_id}>" not in text:
-                newest_ts = max(newest_ts, ts, key=lambda x: float(x))
-                continue
-            out.append({
-                "channel": channel_id,
-                "channel_type": channel_type,
-                "ts": ts,
-                "user": m.get("user"),
-                "text": text,
-                # Slack thread anchor: present only when the message is part of
-                # a thread (external thread ref for thread-level matching);
-                # absent on standalone messages -> honest None fallback.
-                "thread_ts": m.get("thread_ts"),
-                "permalink": _permalink(token, channel_id, ts),
-            })
-            newest_ts = max(newest_ts, ts, key=lambda x: float(x))
-        markers[channel_id] = newest_ts
-
     # 1) DMs + group DMs (user token required)
     convs = slack_api("conversations.list", token,
                       {"types": "im,mpim", "limit": 200})
-    if convs.get("ok"):
-        for c in convs.get("channels", []):
-            ctype = "mpim" if c.get("is_mpim") else "im"
-            # the im with yourself (counterpart user == my_id) is the self-DM
-            # capture inbox — detected here, no separate lookup needed.
-            is_self = ctype == "im" and c.get("user") == my_id
-            history(c["id"], ctype, is_self=is_self)
+    for channel_id, ctype, is_self in _dm_channels(convs, my_id):
+        _channel_history(token, my_id, markers, out, channel_id, ctype, is_self)
 
     # 2) explicitly watched channels (from config), mentions only
+    for cid in _watched_channel_ids(cfg):
+        _channel_history(token, my_id, markers, out, cid, "channel", False)
+
+    return out
+
+
+def _dm_channels(convs: dict, my_id: str):
+    """Yields (id, im|mpim, is_self) per DM in a conversations.list reply. The
+    im with yourself (counterpart user == my_id) is the self-DM capture inbox
+    — detected here, no separate lookup needed."""
+    if not convs.get("ok"):
+        return
+    for c in convs.get("channels", []):
+        ctype = "mpim" if c.get("is_mpim") else "im"
+        is_self = ctype == "im" and c.get("user") == my_id
+        yield c["id"], ctype, is_self
+
+
+def _watched_channel_ids(cfg: config.Config) -> list[str]:
+    """Channel ids from ``sources.slack_channels`` (dict or bare id entries)."""
+    ids = []
     for ch in (cfg.slack_channels or []):
         cid = ch.get("id") if isinstance(ch, dict) else ch
         if cid:
-            history(cid, "channel")
+            ids.append(cid)
+    return ids
 
-    return out
+
+def _newer(newest_ts: str, ts: str) -> str:
+    return max(newest_ts, ts, key=lambda x: float(x))
+
+
+def _not_after(ts: str, oldest: str) -> bool:
+    """Already covered by the channel marker (Slack ts strings compare as floats)."""
+    return float(ts) <= float(oldest or 0)
+
+
+def _is_noise(m: dict, is_self: bool) -> bool:
+    """Subtyped messages are joins/leaves/bot noise — except a self-DM
+    ``file_share`` (a photo/video capture)."""
+    sub = m.get("subtype")
+    return bool(sub and not (is_self and sub == "file_share"))
+
+
+def _self_record(channel_id: str, my_id: str, ts: str, m: dict) -> dict:
+    return {
+        "channel": channel_id,
+        "channel_type": "self",
+        "ts": ts,
+        "user": my_id,
+        "text": (m.get("text") or ""),
+        "files": m.get("files") or [],
+        "permalink": None,
+    }
+
+
+def _message_record(token: str, channel_id: str, channel_type: str,
+                    ts: str, m: dict, text: str) -> dict:
+    return {
+        "channel": channel_id,
+        "channel_type": channel_type,
+        "ts": ts,
+        "user": m.get("user"),
+        "text": text,
+        # Slack thread anchor: present only when the message is part of
+        # a thread (external thread ref for thread-level matching);
+        # absent on standalone messages -> honest None fallback.
+        "thread_ts": m.get("thread_ts"),
+        "permalink": _permalink(token, channel_id, ts),
+    }
+
+
+def _mine_or_mention(token: str, my_id: str, out: list, channel_id: str,
+                     channel_type: str, is_self: bool, ts: str, m: dict) -> None:
+    """Route one non-noise message: my own message → a self-DM capture record
+    (self-DM only); someone else's → a record, but in a plain channel only
+    when I'm @mentioned (DMs = always)."""
+    if m.get("user") == my_id:      # my own messages
+        if is_self:
+            out.append(_self_record(channel_id, my_id, ts, m))
+        return
+    text = m.get("text", "")
+    if channel_type == "channel" and f"<@{my_id}>" not in text:
+        return
+    out.append(_message_record(token, channel_id, channel_type, ts, m, text))
+
+
+def _channel_history(token: str, my_id: str, markers: dict, out: list,
+                     channel_id: str, channel_type: str, is_self: bool) -> None:
+    """conversations.history since the channel's marker → records appended to
+    ``out``; the marker advances over every message newer than it (noise
+    excluded, my own and un-mentioning messages included)."""
+    oldest = markers.get(channel_id, "0")
+    params = {"channel": channel_id, "oldest": oldest, "limit": 50}
+    resp = slack_api("conversations.history", token, params)
+    if not resp.get("ok"):
+        return
+    newest_ts = oldest
+    for m in resp.get("messages", []):
+        ts = m.get("ts", "0")
+        if _not_after(ts, oldest) or _is_noise(m, is_self):
+            continue
+        _mine_or_mention(token, my_id, out, channel_id, channel_type, is_self, ts, m)
+        newest_ts = _newer(newest_ts, ts)
+    markers[channel_id] = newest_ts
 
 
 def _permalink(token: str, channel: str, ts: str) -> Optional[str]:
@@ -294,17 +341,27 @@ def _default_extractor(prompt: str) -> subprocess.CompletedProcess:
     )
 
 
+def _loads_list(text: str) -> list:
+    """``json.loads`` that only accepts a list — [] on anything else."""
+    try:
+        val = json.loads(text)
+        return val if isinstance(val, list) else []
+    except json.JSONDecodeError:
+        return []
+
+
 def _parse_json_array(text: str) -> list:
     """Tolerant: find the first [...] block."""
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1 or end < start:
         return []
-    try:
-        val = json.loads(text[start:end + 1])
-        return val if isinstance(val, list) else []
-    except json.JSONDecodeError:
-        return []
+    return _loads_list(text[start:end + 1])
+
+
+def _message_line(m: dict) -> str:
+    return (f"- [{m.get('channel_type')} {m.get('ts')}] "
+            f"{m.get('text')}  (permalink: {m.get('permalink')})")
 
 
 def extract_requirements(messages: list[dict],
@@ -314,12 +371,7 @@ def extract_requirements(messages: list[dict],
         return []
     if extractor is None:
         extractor = _default_extractor
-    lines = []
-    for m in messages:
-        lines.append(
-            f"- [{m.get('channel_type')} {m.get('ts')}] "
-            f"{m.get('text')}  (permalink: {m.get('permalink')})"
-        )
+    lines = [_message_line(m) for m in messages]
     prompt = _EXTRACT_PROMPT + sanitize.fence_untrusted("\n".join(lines))
     try:
         proc = extractor(prompt)
@@ -414,22 +466,34 @@ def _parse_mcp_output(raw: str) -> Optional[list]:
     text = (raw or "").strip()
     if not text:
         return None
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text).strip()
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        m = _MCP_JSON_ARRAY_RE.search(text)
-        if not m:
-            return None
-        try:
-            data = json.loads(m.group(0))
-        except json.JSONDecodeError:
-            return None
+    data = _loads_or_search(_strip_fence(text))
     if not isinstance(data, list):
         return None
     return [d for d in data if isinstance(d, dict)]
+
+
+def _strip_fence(text: str) -> str:
+    """Drop a ```json ... ``` fence if the model added one."""
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    return text
+
+
+def _loads_or_search(text: str):
+    """``json.loads``, falling back to the first ``[...]`` block in prose;
+    None when neither parses (the caller type-checks the result)."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    m = _MCP_JSON_ARRAY_RE.search(text)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -503,113 +567,188 @@ def mcp_scan(cfg: config.Config,
     ``runner`` IS the MCP surface (tests), so presence is assumed there;
     ``mcp_present`` overrides the probe for deterministic tests.
     """
-    interval = int(getattr(cfg, "slack_mcp_interval_minutes", 30) or 30)
     now = _dt.datetime.now(_dt.timezone.utc)
 
     # B4 preflight (before the throttle: a missing MCP short-circuits every
     # pass, and the present-marker's own 30-min cache rate-limits the beacon).
-    if mcp_present is None:
-        present, fresh = _slack_mcp_present() if runner is None else (True, False)
-    else:
-        present, fresh = mcp_present(), True
-    if not present:
-        if fresh:                       # beacon once per probe interval, not per tick
-            _note_skip("mcp_not_configured")
+    if not _mcp_preflight(runner, mcp_present):
         return 0
 
     marker = _read_mcp_marker()
-    if marker is not None and (now - marker) < _dt.timedelta(minutes=interval):
+    if _mcp_not_due(marker, now, cfg):
         return 0   # not due yet — silent by design (see docstring)
 
-    since = marker or (now - _dt.timedelta(hours=_MCP_LOOKBACK_DEFAULT_H))
-    floor = now - _dt.timedelta(hours=_MCP_LOOKBACK_CAP_H)
-    if since < floor:
-        since = floor
-    channels = ", ".join(
-        str((ch.get("name") or ch.get("id")) if isinstance(ch, dict) else ch)
-        for ch in (cfg.slack_channels or [])
-    ) or "（无——只看 DM 和 @提及）"
-    owner = (getattr(cfg, "owner_name", "") or "").strip() or "用户"
-    handle = (getattr(cfg, "owner_slack_user_id", "") or "").strip()
-    prompt = _MCP_SCAN_PROMPT.format(
-        since=since.strftime("%Y-%m-%dT%H:%M:%SZ"), channels=channels,
-        owner=owner,
-        owner_handle=f"（Slack user id {handle}）" if handle else "")
-
+    prompt = _mcp_prompt(cfg, _mcp_since(marker, now))
     if runner is None:
         runner = _default_mcp_runner
-    try:
-        proc = runner(prompt)
-    except (OSError, subprocess.SubprocessError) as e:   # incl. TimeoutExpired
-        _note_skip("mcp_failed: " + f"{type(e).__name__}: {e}"[:120])
-        return 0
-    if getattr(proc, "returncode", 1) != 0:
-        err = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "").strip()
-        _note_skip("mcp_failed: " + f"exit {getattr(proc, 'returncode', '?')}: {err}"[:120])
-        return 0
-    items = _parse_mcp_output(getattr(proc, "stdout", "") or "")
+    items = _mcp_items(runner, prompt)
     if items is None:
-        out = (getattr(proc, "stdout", "") or "").strip()
-        _note_skip("mcp_failed: " + f"unparseable output: {out}"[:120])
         return 0
 
-    # Same card pipeline as the native path in scan() below — every candidate
-    # passes the shared three-way triage gate (quick_capture.triage) before
-    # touching the registry (v0.17 统一口径). The triage LLM call reuses this
-    # pass's ``runner`` (tests inject one fake for both calls; production gets
-    # the same read-only headless claude).
-    from act.lib import quick_capture  # lazy: keeps the notify import chain acyclic
-    created = 0
-    for r in items:
-        if not isinstance(r, dict) or not (r.get("title") or r.get("summary")):
-            continue
-        new = registry.Requirement(
-            id=registry.next_id(),
-            title=(r.get("title") or r.get("summary") or "")[:80],
-            summary=r.get("summary") or r.get("title"),
-            type="comms",
-            tier="T1",
-            # 统一口径：非紧急真实请求落 detected/备选（triage 的 confidence=low
-            # 也会强制降级——这里按提取层的 urgent 预设，兜住 triage 兜底路径）。
-            status="card_sent" if r.get("urgent") is not False else "detected",
-            hardness="soft",
-            plan=[],
-            sources=[{
-                "who": r.get("who") or "slack",
-                # provenance red line (docs/TELEMETRY.md): "channel" feeds
-                # executor._USER_ORIGIN_CHANNELS — it must NEVER be
-                # LLM-controlled. r["channel"] is the extraction LLM's free
-                # text over third-party messages (a channel literally named
-                # "quick", or injected content, would otherwise pass the
-                # allowlist). Hardcode like the native path; the reported
-                # channel NAME rides in "ref" for display only.
-                # v-next（amendments §M1.d）：同一字段还喂 policy.channel_class
-                # 的 origin-trust 裁决——伪造 hand 信任在 auto-dispatch 世界里
-                # 是执行面漏洞，这条红线只会更硬。
-                "channel": "slack",
-                "date": r.get("date"),
-                "quote": r.get("quote") or r.get("summary"),
-                "ref": (str(r.get("channel")) if r.get("channel") else None),
-            }],
-            notes="from Slack (MCP fallback)",
-        )
-        desc = quick_capture.candidate_desc(
-            str(r.get("summary") or r.get("title") or ""),
-            quote=r.get("quote"), who=r.get("who"),
-            channel=r.get("channel"), date=r.get("date"))
-        decision = quick_capture.triage(desc, cfg, extractor=runner)
-        kind, _saved = quick_capture.apply_triage(decision, new, cfg)
-        if kind in ("proposed", "follow_up", "reraised"):
-            created += 1
+    created = _file_mcp_items(items, cfg, runner)
 
     _write_mcp_marker(now)   # = this pass's start; messages during it survive
     analytics.log_event("radar_scan", source="slack", mode="mcp",
                         new_cards=created)
+    _mark_healthy()
+    return created
+
+
+def _mcp_preflight(runner, mcp_present) -> bool:
+    """B4: is a Slack MCP reachable? An injected ``runner`` IS the MCP surface
+    (tests), so presence is assumed; ``mcp_present`` overrides the probe.
+    A fresh negative probe files the ``mcp_not_configured`` skip — once per
+    probe interval, not per tick."""
+    if mcp_present is None:
+        present, fresh = _slack_mcp_present() if runner is None else (True, False)
+    else:
+        present, fresh = mcp_present(), True
+    if not present and fresh:
+        _note_skip("mcp_not_configured")
+    return present
+
+
+def _mcp_not_due(marker: Optional[_dt.datetime], now: _dt.datetime,
+                 cfg: config.Config) -> bool:
+    """A SUCCESSFUL pass ran less than ``sources.slack_mcp_interval_minutes``
+    (default 30) ago."""
+    interval = int(getattr(cfg, "slack_mcp_interval_minutes", 30) or 30)
+    return marker is not None and (now - marker) < _dt.timedelta(minutes=interval)
+
+
+def _mcp_since(marker: Optional[_dt.datetime], now: _dt.datetime) -> _dt.datetime:
+    """Window start: the marker (default lookback when absent), never older
+    than the cap — a stale marker after a long lid-closed gap is clamped."""
+    since = marker or (now - _dt.timedelta(hours=_MCP_LOOKBACK_DEFAULT_H))
+    floor = now - _dt.timedelta(hours=_MCP_LOOKBACK_CAP_H)
+    if since < floor:
+        since = floor
+    return since
+
+
+def _channel_label(ch) -> str:
+    return str((ch.get("name") or ch.get("id")) if isinstance(ch, dict) else ch)
+
+
+def _mcp_channels_text(cfg: config.Config) -> str:
+    return ", ".join(
+        _channel_label(ch) for ch in (cfg.slack_channels or [])
+    ) or "（无——只看 DM 和 @提及）"
+
+
+def _mcp_owner_handle(cfg: config.Config) -> str:
+    handle = (getattr(cfg, "owner_slack_user_id", "") or "").strip()
+    return f"（Slack user id {handle}）" if handle else ""
+
+
+def _mcp_prompt(cfg: config.Config, since: _dt.datetime) -> str:
+    owner = (getattr(cfg, "owner_name", "") or "").strip() or "用户"
+    return _MCP_SCAN_PROMPT.format(
+        since=since.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        channels=_mcp_channels_text(cfg),
+        owner=owner,
+        owner_handle=_mcp_owner_handle(cfg))
+
+
+def _proc_stdout(proc) -> str:
+    return getattr(proc, "stdout", "") or ""
+
+
+def _mcp_items(runner, prompt: str) -> Optional[list]:
+    """Run the fallback agent and parse its output; None = the pass failed
+    (``mcp_failed:`` skip noted; the marker must stay put)."""
+    try:
+        proc = runner(prompt)
+    except (OSError, subprocess.SubprocessError) as e:   # incl. TimeoutExpired
+        _note_skip("mcp_failed: " + f"{type(e).__name__}: {e}"[:120])
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        err = (getattr(proc, "stderr", "") or _proc_stdout(proc)).strip()
+        _note_skip("mcp_failed: " + f"exit {getattr(proc, 'returncode', '?')}: {err}"[:120])
+        return None
+    items = _parse_mcp_output(_proc_stdout(proc))
+    if items is None:
+        _note_skip("mcp_failed: " + f"unparseable output: {_proc_stdout(proc).strip()}"[:120])
+    return items
+
+
+def _preset_status(r: dict) -> str:
+    """统一口径：非紧急真实请求落 detected/备选（triage 的 confidence=low
+    也会强制降级——这里按提取层的 urgent 预设，兜住 triage 兜底路径）。"""
+    return "card_sent" if r.get("urgent") is not False else "detected"
+
+
+def _mcp_source(r: dict) -> dict:
+    return {
+        "who": r.get("who") or "slack",
+        # provenance red line (docs/TELEMETRY.md): "channel" feeds
+        # executor._USER_ORIGIN_CHANNELS — it must NEVER be
+        # LLM-controlled. r["channel"] is the extraction LLM's free
+        # text over third-party messages (a channel literally named
+        # "quick", or injected content, would otherwise pass the
+        # allowlist). Hardcode like the native path; the reported
+        # channel NAME rides in "ref" for display only.
+        # v-next（amendments §M1.d）：同一字段还喂 policy.channel_class
+        # 的 origin-trust 裁决——伪造 hand 信任在 auto-dispatch 世界里
+        # 是执行面漏洞，这条红线只会更硬。
+        "channel": "slack",
+        "date": r.get("date"),
+        "quote": r.get("quote") or r.get("summary"),
+        "ref": (str(r.get("channel")) if r.get("channel") else None),
+    }
+
+
+def _mcp_requirement(r: dict) -> registry.Requirement:
+    return registry.Requirement(
+        id=registry.next_id(),
+        title=(r.get("title") or r.get("summary") or "")[:80],
+        summary=r.get("summary") or r.get("title"),
+        type="comms",
+        tier="T1",
+        status=_preset_status(r),
+        hardness="soft",
+        plan=[],
+        sources=[_mcp_source(r)],
+        notes="from Slack (MCP fallback)",
+    )
+
+
+def _file_mcp_item(quick_capture, r: dict, cfg: config.Config, runner) -> bool:
+    """One fallback item through the shared triage gate; True when a card resulted."""
+    new = _mcp_requirement(r)
+    desc = quick_capture.candidate_desc(
+        str(r.get("summary") or r.get("title") or ""),
+        quote=r.get("quote"), who=r.get("who"),
+        channel=r.get("channel"), date=r.get("date"))
+    decision = quick_capture.triage(desc, cfg, extractor=runner)
+    kind, _saved = quick_capture.apply_triage(decision, new, cfg)
+    return kind in ("proposed", "follow_up", "reraised")
+
+
+def _file_mcp_items(items: list, cfg: config.Config, runner) -> int:
+    """Same card pipeline as the native path in scan() below — every candidate
+    passes the shared three-way triage gate (quick_capture.triage) before
+    touching the registry (v0.17 统一口径). The triage LLM call reuses this
+    pass's ``runner`` (tests inject one fake for both calls; production gets
+    the same read-only headless claude)."""
+    from act.lib import quick_capture  # lazy: keeps the notify import chain acyclic
+    created = 0
+    for r in items:
+        if _mcp_item_ok(r) and _file_mcp_item(quick_capture, r, cfg, runner):
+            created += 1
+    return created
+
+
+def _mcp_item_ok(r) -> bool:
+    """A dict with a title or a summary (anything else the model emitted is dropped)."""
+    return isinstance(r, dict) and bool(r.get("title") or r.get("summary"))
+
+
+def _mark_healthy() -> None:
     try:
         health.update_radar_health("slack", ok=True)
     except Exception:  # noqa: BLE001 - health must never break the pass
         pass
-    return created
 
 
 # --------------------------------------------------------------------------- #
@@ -630,24 +769,71 @@ def _extract_frames(video: Path, outdir: Path,
         return None
     try:
         outdir.mkdir(parents=True, exist_ok=True)
-        if ffmpeg:
-            subprocess.run(
-                [ffmpeg, "-y", "-i", str(video), "-vf", "fps=1",
-                 "-frames:v", str(max_frames), str(outdir / "frame_%02d.jpg")],
-                capture_output=True, timeout=300,
-            )
-        else:
-            subprocess.run(
-                [grab, str(video), str(outdir), str(max_frames)],
-                capture_output=True, timeout=300,
-            )
+        subprocess.run(_frame_argv(ffmpeg, grab, video, outdir, max_frames),
+                       capture_output=True, timeout=300)
     except (OSError, subprocess.SubprocessError):
         return []
-    frames = sorted(
+    return _frame_files(outdir)[:max_frames]
+
+
+def _frame_argv(ffmpeg: Optional[str], grab: Optional[str], video: Path,
+                outdir: Path, max_frames: int) -> list[str]:
+    """ffmpeg when installed, else the AVFoundation helper."""
+    if ffmpeg:
+        return [ffmpeg, "-y", "-i", str(video), "-vf", "fps=1",
+                "-frames:v", str(max_frames), str(outdir / "frame_%02d.jpg")]
+    return [grab, str(video), str(outdir), str(max_frames)]
+
+
+def _frame_files(outdir: Path) -> list[Path]:
+    return sorted(
         p for p in outdir.iterdir()
         if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png")
     )
-    return frames[:max_frames]
+
+
+def _attachment(f) -> Optional[tuple[str, str]]:
+    """(url, basename) of a downloadable attachment dict, else None."""
+    if not isinstance(f, dict):
+        return None
+    url = f.get("url_private") or f.get("url_private_download")
+    if not url:
+        return None
+    return url, _attachment_name(f)
+
+
+def _attachment_name(f: dict) -> str:
+    return os.path.basename(str(f.get("name") or f.get("id") or "file"))
+
+
+def _collect_video(token: str, url: str, dest: Path, dest_dir: Path,
+                   images: list, problems: list) -> None:
+    """Download a video and split it into frame images (or complain when no
+    frame tool exists)."""
+    if not download_file(token, url, dest):
+        return
+    frames = _extract_frames(dest, dest_dir / f"frames_{dest.stem}")
+    if frames is None:
+        problems.append("视频暂不支持，请发图片")
+    else:
+        images.extend(frames)
+
+
+def _collect_one(token: str, f, dest_dir: Path, images: list,
+                 problems: list) -> None:
+    """One attachment → images (photo as-is, video as frames). Other file
+    types are ignored (quick capture is photos/videos + text)."""
+    att = _attachment(f)
+    if att is None:
+        return
+    url, name = att
+    ext = Path(name).suffix.lower()
+    dest = dest_dir / name
+    if ext in IMAGE_EXTS:
+        if download_file(token, url, dest):
+            images.append(dest)
+    elif ext in VIDEO_EXTS:
+        _collect_video(token, url, dest, dest_dir, images, problems)
 
 
 def _collect_media(token: str, files: list, ts: str) -> tuple[list[Path], list[str]]:
@@ -660,26 +846,7 @@ def _collect_media(token: str, files: list, ts: str) -> tuple[list[Path], list[s
     images: list[Path] = []
     problems: list[str] = []
     for f in files or []:
-        if not isinstance(f, dict):
-            continue
-        url = f.get("url_private") or f.get("url_private_download")
-        if not url:
-            continue
-        name = os.path.basename(str(f.get("name") or f.get("id") or "file"))
-        ext = Path(name).suffix.lower()
-        dest = dest_dir / name
-        if ext in IMAGE_EXTS:
-            if download_file(token, url, dest):
-                images.append(dest)
-        elif ext in VIDEO_EXTS:
-            if not download_file(token, url, dest):
-                continue
-            frames = _extract_frames(dest, dest_dir / f"frames_{dest.stem}")
-            if frames is None:
-                problems.append("视频暂不支持，请发图片")
-            else:
-                images.extend(frames)
-        # other file types: ignored (quick capture is photos/videos + text)
+        _collect_one(token, f, dest_dir, images, problems)
     return images, problems
 
 
@@ -727,6 +894,11 @@ def _ack_capture(token: str, m: dict, kind: str, cfg: config.Config) -> None:
         return
     resp = slack_api("reactions.add", token,
                      {"channel": channel, "timestamp": ts, "name": emoji})
+    _log_receipt_failure(resp)
+
+
+def _log_receipt_failure(resp: dict) -> None:
+    """``already_reacted`` is the retry-pass echo of success, not a failure."""
     if not resp.get("ok") and resp.get("error") != "already_reacted":
         # Slack API `error` is an enum code (missing_scope / channel_not_found…);
         # only that identifier shape is uploaded — anything else is dropped (#37)
@@ -746,24 +918,41 @@ def _handle_self_message(m: dict, token: str, cfg: config.Config,
     text = (m.get("text") or "").strip()
 
     # media attachments -> images (photos as-is, videos -> frames)
-    images: list[Path] = []
-    problems: list[str] = []
-    if m.get("files"):
-        images, problems = _collect_media(token, m["files"], m.get("ts") or "0")
-    if problems and not images and not text:
+    images, problems = _self_media(m, token)
+    if _nothing_capturable(problems, images, text):
         return   # nothing capturable (e.g. unsupported video, no text)
 
     # quick capture (text and/or images) — three-way decision
-    desc = text
-    if images:
-        desc = (
-            (text + "\n\n" if text else "")
-            + "Read these images first (use the Read tool on each absolute path "
-              "below), then decide based on what they show:\n"
-            + "\n".join(str(p) for p in images)
-        )
+    desc = _capture_desc(text, images)
     if not desc.strip():
         return
+    _capture_and_ack(desc, text, m, token, cfg, extractor)
+
+
+def _self_media(m: dict, token: str) -> tuple[list[Path], list[str]]:
+    if m.get("files"):
+        return _collect_media(token, m["files"], m.get("ts") or "0")
+    return [], []
+
+
+def _nothing_capturable(problems: list, images: list, text: str) -> bool:
+    """Only complaints (e.g. an unsupported video) and no text, no images."""
+    return bool(problems and not images and not text)
+
+
+def _capture_desc(text: str, images: list) -> str:
+    if not images:
+        return text
+    return (
+        (text + "\n\n" if text else "")
+        + "Read these images first (use the Read tool on each absolute path "
+          "below), then decide based on what they show:\n"
+        + "\n".join(str(p) for p in images)
+    )
+
+
+def _capture_and_ack(desc: str, text: str, m: dict, token: str,
+                     cfg: config.Config, extractor) -> None:
     from act.lib import quick_capture
     try:
         # typed_text: only the words the user typed — the synthetic media
@@ -814,35 +1003,122 @@ def scan(cfg: Optional[config.Config] = None,
         return 0
     token = get_token(cfg)
     if not token:
-        if getattr(cfg, "slack_mcp_fallback", True):
-            return mcp_scan(cfg, runner=mcp_runner)
-        _note_skip("no_credentials")
-        return 0
+        return _without_token(cfg, mcp_runner)
     auth = verify_token(token)
     if not auth.get("ok"):
         _note_skip("connect_failed")
         return 0
-    my_id = auth.get("user_id") or cfg.owner_slack_user_id
-    markers = _load_markers()
+    return _scan_native(token, auth, cfg, fetcher, extractor)
 
+
+def _without_token(cfg: config.Config, mcp_runner) -> int:
+    """No xoxp token: the v0.11 MCP fallback when enabled, else an honest skip."""
+    if getattr(cfg, "slack_mcp_fallback", True):
+        return mcp_scan(cfg, runner=mcp_runner)
+    _note_skip("no_credentials")
+    return 0
+
+
+def _fetch(token: str, my_id: str, cfg: config.Config, markers: dict, fetcher) -> list:
     if fetcher is None:
-        messages = fetch_new_messages(token, my_id, cfg, markers)
-    else:
-        messages = fetcher(token, my_id, cfg, markers)
+        return fetch_new_messages(token, my_id, cfg, markers)
+    return fetcher(token, my_id, cfg, markers)
 
-    # split my own self-DM messages (quick capture) from the rest
+
+def _split_self(messages: list) -> tuple[list, list]:
+    """(self_msgs sorted by ts, others): my own self-DM messages (quick
+    capture) apart from the rest."""
     self_msgs = sorted(
         (m for m in messages if m.get("channel_type") == "self"),
         key=lambda m: float(m.get("ts") or 0),
     )
     others = [m for m in messages if m.get("channel_type") != "self"]
+    return self_msgs, others
 
-    # v0.17 统一口径: every candidate passes the shared three-way triage gate
-    # (act/lib/quick_capture.triage — same one the self-DM capture and the
-    # obsidian radar use) BEFORE touching the registry: new_proposal /
-    # relates_to (open card -> fold as note; delivered/merged card ->
-    # improvement_of follow-up, deduped against an already-open follow-up) /
-    # ignore (informational, no card). The triage LLM reuses ``extractor``.
+
+def _capture_self_messages(self_msgs: list, token: str, cfg: config.Config,
+                           extractor) -> None:
+    """self-DM quick capture: fold my own DM-to-self notes/photos into the registry."""
+    for m in self_msgs:
+        try:
+            _handle_self_message(m, token, cfg, extractor=extractor)
+        except Exception:  # noqa: BLE001 - one bad message must not kill the pass
+            pass
+
+
+def _scan_native(token: str, auth: dict, cfg: config.Config, fetcher,
+                 extractor) -> int:
+    """The native API pass (token verified): fetch → file others through the
+    triage gate → capture self-DMs → markers + health + analytics."""
+    my_id = auth.get("user_id") or cfg.owner_slack_user_id
+    markers = _load_markers()
+    messages = _fetch(token, my_id, cfg, markers, fetcher)
+    self_msgs, others = _split_self(messages)
+
+    created = _file_native_items(others, cfg, extractor)
+    _capture_self_messages(self_msgs, token, cfg, extractor)
+
+    _save_markers(markers)
+    _mark_healthy()
+    analytics.log_event("radar_scan", source="slack", messages=len(messages),
+                        new_cards=created, self_dm_msgs=len(self_msgs) or None)
+    return created
+
+
+def _native_source(r: dict, src_msg: dict) -> dict:
+    source = {
+        "who": "slack",
+        "channel": "slack",
+        "date": None,
+        "quote": r.get("summary"),
+        "ref": r.get("permalink"),
+    }
+    # External thread ref for thread-level matching (A↔B interface):
+    # registry.derive_thread_key reads source["slack_thread_ts"]. Only set
+    # it when the origin message was actually threaded — else omit so
+    # derive_thread_key returns None (honest title/LLM fallback).
+    thread_ts = src_msg.get("thread_ts")
+    if thread_ts:
+        source["slack_thread_ts"] = thread_ts
+    return source
+
+
+def _native_requirement(r: dict, source: dict) -> registry.Requirement:
+    return registry.Requirement(
+        id=registry.next_id(),
+        title=(r.get("summary") or "")[:80],
+        summary=r.get("summary"),
+        type=r.get("type") or "comms",
+        tier=r.get("tier") or "T1",
+        status=_preset_status(r),   # 统一口径：见 _preset_status
+        hardness="soft",
+        plan=r.get("plan") or [],
+        sources=[source],
+        notes=f"needs_reply={r.get('needs_reply')} · from Slack",
+    )
+
+
+def _file_native_item(quick_capture, r: dict, by_permalink: dict,
+                      cfg: config.Config, extractor) -> bool:
+    """One native-path item through the shared triage gate; True when a card resulted."""
+    src_msg = by_permalink.get(r.get("permalink")) or {}
+    new = _native_requirement(r, _native_source(r, src_msg))
+    radar._set_thread_key(new)
+    desc = quick_capture.candidate_desc(
+        str(r.get("summary") or ""), who="slack", channel="slack",
+        ref=r.get("permalink"))
+    decision = quick_capture.triage(desc, cfg, extractor=extractor)
+    kind, _saved = quick_capture.apply_triage(decision, new, cfg)
+    return kind in ("proposed", "follow_up", "reraised")
+
+
+def _file_native_items(others: list[dict], cfg: config.Config, extractor) -> int:
+    """v0.17 统一口径: every candidate passes the shared three-way triage gate
+    (act/lib/quick_capture.triage — same one the self-DM capture and the
+    obsidian radar use) BEFORE touching the registry: new_proposal /
+    relates_to (open card -> fold as note; delivered/merged card ->
+    improvement_of follow-up, deduped against an already-open follow-up) /
+    ignore (informational, no card). The triage LLM reuses ``extractor``."""
     from act.lib import quick_capture  # lazy: keeps the notify import chain acyclic
     reqs = extract_requirements(others, extractor=extractor)
     # permalink -> source message, so an extracted item can recover its origin
@@ -851,60 +1127,15 @@ def scan(cfg: Optional[config.Config] = None,
     by_permalink = {m.get("permalink"): m for m in others if m.get("permalink")}
     created = 0
     for r in reqs:
-        if not isinstance(r, dict) or not r.get("summary"):
-            continue
-        src_msg = by_permalink.get(r.get("permalink")) or {}
-        source = {
-            "who": "slack",
-            "channel": "slack",
-            "date": None,
-            "quote": r.get("summary"),
-            "ref": r.get("permalink"),
-        }
-        # External thread ref for thread-level matching (A↔B interface):
-        # registry.derive_thread_key reads source["slack_thread_ts"]. Only set
-        # it when the origin message was actually threaded — else omit so
-        # derive_thread_key returns None (honest title/LLM fallback).
-        thread_ts = src_msg.get("thread_ts")
-        if thread_ts:
-            source["slack_thread_ts"] = thread_ts
-        new = registry.Requirement(
-            id=registry.next_id(),
-            title=(r.get("summary") or "")[:80],
-            summary=r.get("summary"),
-            type=r.get("type") or "comms",
-            tier=r.get("tier") or "T1",
-            # 统一口径：非紧急真实请求落 detected/备选（见 mcp_scan 同款注释）。
-            status="card_sent" if r.get("urgent") is not False else "detected",
-            hardness="soft",
-            plan=r.get("plan") or [],
-            sources=[source],
-            notes=f"needs_reply={r.get('needs_reply')} · from Slack",
-        )
-        radar._set_thread_key(new)
-        desc = quick_capture.candidate_desc(
-            str(r.get("summary") or ""), who="slack", channel="slack",
-            ref=r.get("permalink"))
-        decision = quick_capture.triage(desc, cfg, extractor=extractor)
-        kind, _saved = quick_capture.apply_triage(decision, new, cfg)
-        if kind in ("proposed", "follow_up", "reraised"):
+        if _native_item_ok(r) and _file_native_item(quick_capture, r, by_permalink,
+                                                    cfg, extractor):
             created += 1
-
-    # self-DM quick capture: fold my own DM-to-self notes/photos into the registry
-    for m in self_msgs:
-        try:
-            _handle_self_message(m, token, cfg, extractor=extractor)
-        except Exception:  # noqa: BLE001 - one bad message must not kill the pass
-            pass
-
-    _save_markers(markers)
-    try:
-        health.update_radar_health("slack", ok=True)
-    except Exception:  # noqa: BLE001 - health must never break the pass
-        pass
-    analytics.log_event("radar_scan", source="slack", messages=len(messages),
-                        new_cards=created, self_dm_msgs=len(self_msgs) or None)
     return created
+
+
+def _native_item_ok(r) -> bool:
+    """A dict with a summary (anything else the model emitted is dropped)."""
+    return isinstance(r, dict) and bool(r.get("summary"))
 
 
 def _main(argv: Optional[list[str]] = None) -> int:
@@ -914,18 +1145,23 @@ def _main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     cfg = config.load_config()
     if args.check:
-        tok = get_token(cfg)
-        if not tok:
-            print("no token at", secrets.SECRETS_DIR / secrets.SLACK_TOKEN_FILE,
-                  "or", getattr(cfg, "slack_token_path", None) or DEFAULT_TOKEN_PATH)
-            return 1
-        auth = verify_token(tok)
-        print(json.dumps({k: auth.get(k) for k in ("ok", "user", "user_id", "team", "error")},
-                         ensure_ascii=False))
-        return 0 if auth.get("ok") else 1
+        return _check(cfg)
     n = scan(cfg)
     print(f"slack radar: {n} new card(s)")
     return 0
+
+
+def _check(cfg: config.Config) -> int:
+    """--check: token resolves and auth.test says ok. Prints a one-line verdict."""
+    tok = get_token(cfg)
+    if not tok:
+        print("no token at", secrets.SECRETS_DIR / secrets.SLACK_TOKEN_FILE,
+              "or", getattr(cfg, "slack_token_path", None) or DEFAULT_TOKEN_PATH)
+        return 1
+    auth = verify_token(tok)
+    print(json.dumps({k: auth.get(k) for k in ("ok", "user", "user_id", "team", "error")},
+                     ensure_ascii=False))
+    return 0 if auth.get("ok") else 1
 
 
 if __name__ == "__main__":

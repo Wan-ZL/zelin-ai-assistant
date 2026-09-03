@@ -15,7 +15,6 @@ docstring:act/lib/repos.py 1
 docstring:act/lib/sanitize.py 1
 docstring:act/lib/taskscheduler.py 1
 docstring:act/merge_review.py 1
-docstring:act/radar.py 1
 docstring:act/report.py 1
 docstring:server/__main__.py 1
 docstring:server/sse.py 1

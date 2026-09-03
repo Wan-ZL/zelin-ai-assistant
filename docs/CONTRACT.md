@@ -4578,6 +4578,7 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。**对账只能是缩**（划掉 stale、把登记分拧低）——想给新债记账没有合法路径，见下一条。
 - **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。
 - **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
+- **P3 每批的固定顺序（2026-09-02 P3a 追记，add-only；R2.3.2 的执行口径）**：① 先把该批模块映射进 `qa/mutation_targets.toml`（§57）并跑一轮变异，幸存体逐个判定——等价变异（常数 ±1、日志文案）放过，逻辑幸存体（未测的分类分支 / CLI / 网络与 IMAP 包装 / 解析状态机…）**先补判例杀死**；② 再做纯抽取式重构（每函数 CC ≤ 6，新 helper 出生即干净），**零行为变化**——判据是既有全套件 + 补上的判例 + 同一轮变异重跑，不许借重构改语义；③ 该批模块的 complexity / crap / hygiene 账本行在**同一 PR** 划掉（`stale` 三态本身会逼着做）；④ 模块留在夜间靶区，测试网持续咬人。模块 docstring 必须写明管它的 §§（防腐 #5，hygiene 门执法）。首批 P3a = 雷达三源 + claude_sessions + digest / weekly_digest / analyze（分支 `refactor/p3a-radars`；账本现状 truth = `qa/complexity_baseline.txt` / `qa/crap_baseline.txt`）。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
 
