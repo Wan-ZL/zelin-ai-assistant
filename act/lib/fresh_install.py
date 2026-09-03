@@ -14,7 +14,12 @@ a key exists) and, instead of one flat ok/warn/FAIL list, buckets every row:
   broken   every other FAIL — the machine-readable "something is actually wrong"
   notes    the remaining WARNs (optional sources, cosmetic drift)
 
-and lists the standing manual steps with THIS machine's paths (the daemon
+In the text rendering the badge follows the bucket, not the raw status: an
+unwired row prints ``[ n/a]``, a human row ``[ you]`` — only the broken and
+notes buckets show ``[FAIL]`` / ``[warn]`` (``row_badge``). The JSON keeps the
+raw ``status`` on every row; the bucket key is the class there.
+
+It also lists the standing manual steps with THIS machine's paths (the daemon
 interpreter from config/runtime.json, the claude binary the daemons run, the
 Board app bundle). Exit code = ``len(broken)``: a fresh machine with nothing
 but TCC grants and credentials left exits 0 — the owner's acceptance criterion
@@ -295,14 +300,26 @@ _BUCKET_TITLES = {
     NOTES: "notes",
 }
 _BADGE = {OK: "[ ok ]", WARN: "[warn]", FAIL: "[FAIL]"}
+# The bucket IS the verdict: a row that is red because nobody wired launchd
+# yet, or because only a person can grant / install / paste something, is not
+# a failure of this machine — its badge says the class, never `[FAIL]` (the
+# first CI acceptance run, 2026-09-03, read as "3 FAILs" while exiting 0).
+_BUCKET_BADGE = {UNWIRED: "[ n/a]", HUMAN: "[ you]"}
 
 
-def _row_lines(rows: List[dict], with_fix: bool) -> List[str]:
+def row_badge(row: dict, bucket: str) -> str:
+    """The six-character badge a row prints with: its bucket's class for the
+    unwired / human buckets, else its own ok / warn / FAIL status."""
+    if bucket in _BUCKET_BADGE:
+        return _BUCKET_BADGE[bucket]
+    return _BADGE.get(str(row.get("status") or "").lower(), "[ ?  ]")
+
+
+def _row_lines(rows: List[dict], bucket: str) -> List[str]:
     lines = []
     for r in rows:
-        badge = _BADGE.get(str(r.get("status") or "").lower(), "[ ?  ]")
-        lines.append("  %s %s: %s" % (badge, r.get("name"), r.get("detail")))
-        if with_fix and r.get("fix"):
+        lines.append("  %s %s: %s" % (row_badge(r, bucket), r.get("name"), r.get("detail")))
+        if bucket != UNWIRED and r.get("fix"):
             lines.append("         fix: %s" % r["fix"])
     return lines
 
@@ -318,7 +335,7 @@ def render(summary: dict) -> str:
         if not buckets[key]:
             continue
         lines += ["", "%s (%d):" % (_BUCKET_TITLES[key], len(buckets[key]))]
-        lines += _row_lines(buckets[key], with_fix=(key != UNWIRED))
+        lines += _row_lines(buckets[key], key)
     lines += ["", "what is left for you, in order:"]
     for i, step in enumerate(summary["manual_steps"], 1):
         lines.append("  %d. %s" % (i, step["title"]))

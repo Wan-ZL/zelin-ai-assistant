@@ -21,15 +21,25 @@
 #   2. the §23 install report says what a fresh machine must say: config ok
 #      (bootstrap created it from the example first; install.sh kept it),
 #      runtime_python ok, version ok, ui ok (web + shell both built on this
-#      runner), launchd skipped (--no-launchd), actd_once ok;
+#      runner — the web half builds from a mirror of web/ OUTSIDE the repo,
+#      which is what the first real run, 2026-09-03, broke on), launchd skipped
+#      (--no-launchd), actd_once ok, stable_claude skipped + claude_bin missing
+#      (no claude on a fresh machine — cleanly, never a fail), no step `fail`;
 #   3. the board server answers /api/board (200, JSON), /api/health,
 #      /api/setup (§68.5 wizard: needed=true — no credentials yet — and
 #      config_exists=true) and /api/permissions (the Full Disk Access list
 #      names the daemon interpreter and a claude path);
-#   4. a second bootstrap run is an UPDATE: exit 0, config.yaml byte-identical,
-#      the checkout still on main;
-#   5. `python3 -m act.doctor --fresh-install --json` exit 0 once more, after
-#      the server ran.
+#   4. `python3 -m act.doctor --fresh-install --json` with the server up: exit
+#      0, broken bucket EMPTY, and the --no-launchd classes explicit — actd +
+#      cron ingest chain are `unwired`, claude CLI is `human`, board server is
+#      `wired`, the manual steps list the board / claude / key / three FDA
+#      grants / wire-the-daemons items;
+#   5. a second bootstrap run is an UPDATE: exit 0, config.yaml byte-identical,
+#      the checkout still on main.
+#
+# The job summary carries the doctor's human-readable list — what a real Mac
+# still needs from its owner (claude install, API key, FDA grants) — so the
+# verdict stays about the install path and the to-do list stays readable.
 #
 # WHEN IT RUNS (CONTRACT §56.8 matrix): push to main, nightly, and on demand
 # — NOT per pull request. The owner is on the free plan, where macOS runner
@@ -118,18 +128,26 @@ jobs:
           doc = json.load(open(sys.argv[1]))
           steps = {s["name"]: s for s in doc["steps"]}
           print(json.dumps(steps, indent=1, ensure_ascii=False))
+          # ui is strictly ok: this runner has node AND swiftc, so `skipped` here would
+          # mean the installer failed to see a toolchain that exists. stable_claude /
+          # claude_bin: no claude on a fresh machine — the copy step must skip cleanly
+          # (never warn/fail), that is the human's install to do (§55 第五幕, §69.3).
           want = {"config": "ok", "runtime_python": "ok", "version": "ok", "state_dirs": "ok",
-                  "ui": "ok", "launchd": "skipped", "actd_once": "ok", "cron": "skipped"}
+                  "ui": "ok", "launchd": "skipped", "actd_once": "ok", "cron": "skipped",
+                  "stable_claude": "skipped", "claude_bin": "missing"}
           bad = {k: steps.get(k, {}).get("status") for k, v in want.items()
                  if steps.get(k, {}).get("status") != v}
           assert not bad, "unexpected step statuses: %r" % bad
           assert "--no-launchd" in (steps["launchd"].get("detail") or "")
+          assert "no claude" in (steps["stable_claude"].get("detail") or ""), steps["stable_claude"]
           # bootstrap step 4 created config.yaml from the example BEFORE install.sh ran,
           # so install.sh's own config step must report the file as kept, never rewritten
           assert "kept" in (steps["config"].get("detail") or ""), steps["config"]
           assert doc["mode"] == "non-interactive"
           ui = steps["ui"].get("detail") or ""
           assert "web ok" in ui and "shell ok" in ui, ui
+          failed = [k for k, s in steps.items() if s.get("status") == "fail"]
+          assert not failed, "failed install steps: %r" % failed
           PY
           grep -q "config.yaml created from config.example.yaml" "$RUNNER_TEMP/bootstrap-1.log"
           test -f "$CHECKOUT/config.yaml"
@@ -163,10 +181,62 @@ jobs:
           python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); roles={e["role"]: e for e in d["fda"]["executables"]}; print({r: e["path"] for r, e in roles.items()}); assert roles["daemon_python"]["exists"], roles["daemon_python"]; assert "claude" in roles' "$RUNNER_TEMP/permissions.json"
           curl -fsS -o /dev/null -w 'index: %{http_code}\n' http://127.0.0.1:47820/
           # doctor once more, with the server up (board server row ok, everything else as before)
-          (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -m act.doctor --fresh-install --json > "$RUNNER_TEMP/doctor-fresh.json"); rc=$?
-          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("broken:", [r["name"] for r in d["buckets"]["broken"]]); print("human:", [r["name"] for r in d["buckets"]["human"]]); print("unwired:", [r["name"] for r in d["buckets"]["unwired"]])' "$RUNNER_TEMP/doctor-fresh.json"
+          rc=0
+          (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -m act.doctor --fresh-install --json > "$RUNNER_TEMP/doctor-fresh.json") || rc=$?
+          echo "doctor --fresh-install exit: $rc"
+          python3 - "$RUNNER_TEMP/doctor-fresh.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          names = {k: [r["name"] for r in rows] for k, rows in d["buckets"].items()}
+          for k in ("broken", "human", "unwired", "notes", "wired"):
+              print("%s: %s" % (k, names[k]))
+          # --no-launchd acceptance classes (§69.3): nothing broken; the scheduler rows are
+          # "not wired in this run", the claude CLI is the human's — none of them is a FAIL
+          # of the install path. The board server itself is up right now → wired.
+          assert d["no_launchd"] is True
+          assert names["broken"] == [], "broken rows on a fresh machine: %r" % names["broken"]
+          assert d["exit_code"] == 0
+          for name in ("actd", "cron ingest chain"):
+              assert name in names["unwired"], "%s should be unwired under --no-launchd: %r" % (name, names)
+          assert "claude CLI" in names["human"], names
+          assert "board server" in names["wired"], names
+          ids = [s["id"] for s in d["manual_steps"]]
+          for step in ("open_board", "install_claude", "api_key", "fda_python", "fda_claude", "fda_cron", "wire_scheduler"):
+              assert step in ids, (step, ids)
+          PY
           test "$rc" -eq 0
           pkill -f "python3 -m server" || pkill -f "\-m server" || true
+
+      - name: Job summary — what a real Mac still needs from its owner
+        # The same text bootstrap.sh prints (act.doctor --fresh-install), rendered from
+        # the JSON the previous step saved: the FDA grants, the claude install, the key.
+        # The verdict above is about the install path; this is the human's to-do list.
+        if: always()
+        env:
+          HOME: ${{ env.FRESH_HOME }}
+        run: |
+          if [ -f "$RUNNER_TEMP/doctor-fresh.json" ]; then
+            PY="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "$CHECKOUT/config/runtime.json" 2>/dev/null || echo python3)"
+            {
+              echo "## Fresh install — what a real Mac still needs from its owner"
+              echo
+              echo '```'
+              (cd "$CHECKOUT" && AIASSISTANT_HOME="$CHECKOUT" "$PY" -c 'import json,sys; from act.lib import fresh_install as fi; print(fi.render(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/doctor-fresh.json") \
+                || echo "(could not render $RUNNER_TEMP/doctor-fresh.json — it is in the evidence artifact)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$RUNNER_TEMP/bootstrap-1.log" ]; then
+            # the acceptance failed before the server step: show what bootstrap itself said
+            {
+              echo "## Fresh install — FAILED before the board server step; bootstrap's own verdict:"
+              echo
+              echo '```'
+              grep -E '^\s*\[(warn|ERR |FAIL)\]|failed step|^exit [0-9]+ —|^==> ' "$RUNNER_TEMP/bootstrap-1.log" | head -n 80
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Fresh install — bootstrap never ran (see the job log)" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Second bootstrap run is an update (idempotent, config untouched)
         env:

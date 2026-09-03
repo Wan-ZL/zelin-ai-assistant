@@ -1,0 +1,10 @@
+{
+  // `npm run build` 的类型检查范围 = 产物真正打包的源码。测试文件排除在外：install.sh
+  // 的 ui 步把 web/ 镜像到 $HOME 下的构建目录里编（CONTRACT §56.5），仓库根不在那里，
+  // 而 vitest 判例可以（经 import.meta.glob）读仓库根的 fixture——那是 vitest 的事，
+  // 不是 build 的事。全量类型检查（含测试）= `npm run typecheck`（tsconfig.json），
+  // CI「Web tests」job 两个都跑。tests/test_web_build_self_contained.py 钉这份形状。
+  "extends": "./tsconfig.json",
+  "include": ["src", "vite.config.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "e2e", "node_modules", "dist"]
+}
