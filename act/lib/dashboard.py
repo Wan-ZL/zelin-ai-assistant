@@ -1131,13 +1131,11 @@ def build_dashboard(
                         "review_at": _epoch(ex.get("review_at")),
                         "delivery_mode": _delivery_mode(req),
                         "session_active": state in _RUNNING_STATES,
-                        # #119 add-only：这行是「中断收割」而非正常交付（受阻/
-                        # 放弃救活被收进待验收）——detect_transitions 据此不发
-                        # 「AI 已交付草稿」，客户端 decodeIfPresent 可标注。
+                        # #119 add-only：「中断收割」（受阻/放弃救活收进待验收）而非正常交付——
+                        # detect_transitions 据此不发「AI 已交付草稿」，客户端 decodeIfPresent 可标注。
                         **_opt("interrupted", bool(ex.get("interrupted_reason"))),
                         **_assessment_view(req),   # §64 AI 摘要 + 评语（只是建议）
-                        # §65.3 add-only：self_improve 卡的 gh 核验结果（execution.delivery 原样）
-                        **_opt("delivery", _delivery_view(ex)),
+                        **_opt("delivery", _delivery_view(ex)),   # §65.3 add-only：gh 核验结果原样
                     }
                 )
             # #119（v0.48.8）：受阻/放弃救活的会话不再投影「需输入」——
@@ -1247,10 +1245,9 @@ def build_dashboard(
     label = _device_label()
     if label:
         dash["device_label"] = label
-    # §56 add-only 顶层键 deploy_state（同 update_available / device_label 的加法
-    # 约定：文件缺失或读不了 = 整键不存在）；§70 同款 maintenance（每日整理投影）。
+    # §56 / §70 add-only 顶层键 deploy_state / maintenance（同 device_label 的加法约定：文件缺失或读不了 = 整键不存在）
     deploy_state.attach(dash)
-    daily_loop.attach(dash, cfg)   # §70 add-only 顶层键 maintenance（每日整理投影）
+    daily_loop.attach(dash, cfg)
     return recap_store.attach(dash)  # §63 add-only 顶层键 recaps[]（会议 recap，不是卡）
 
 

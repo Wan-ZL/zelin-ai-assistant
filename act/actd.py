@@ -59,18 +59,8 @@ from act.lib import (
     sources,
     steer,
 )
-from act.lib.agent_states import (
-    _BLOCKED_STATES,
-    _DONE_STATES,
-    _LIVE_STATES,
-    _RUNNING_STATES,
-)
-from act.lib.dashboard import (
-    build_dashboard,
-    write_dashboard,
-    _run_claude_agents,
-    _index_agents,
-)
+from act.lib.agent_states import _BLOCKED_STATES, _DONE_STATES, _LIVE_STATES, _RUNNING_STATES
+from act.lib.dashboard import build_dashboard, write_dashboard, _run_claude_agents, _index_agents
 from act.lib.registry import Requirement, State, load, load_all, save
 
 try:
