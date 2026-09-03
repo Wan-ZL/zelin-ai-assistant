@@ -425,10 +425,20 @@ def classify_engine_log(tail: Optional[str], npx_present: bool = True,
     if fid == "node_missing":
         return fid
     if engine_alive:
-        # while the npx process is alive, the download banner means exactly
-        # that: first-run download in progress. (A DEAD process whose last
-        # line is the banner is a failed download -> crashed, below.)
-        return "engine_npm_download" if fid == "engine_npm_download" else None
+        return _alive_engine_cause(fid)
+    return _dead_engine_cause(text)
+
+
+def _alive_engine_cause(fid: Optional[str]) -> Optional[str]:
+    """While the npx process is alive, the download banner means exactly
+    that: first-run download in progress; anything else is healthy. (A DEAD
+    process whose last line is the banner is a failed download -> crashed,
+    see _dead_engine_cause.)"""
+    return "engine_npm_download" if fid == "engine_npm_download" else None
+
+
+def _dead_engine_cause(text: str) -> str:
+    """Why a DEAD engine died, from its (marker-stripped) log tail."""
     # dead on screenpipe's ffmpeg install failure -> the specific fix beats
     # the generic "crashed" (an ALIVE engine with stale ffmpeg lines in its
     # tail already returned healthy/downloading above — it found ffmpeg this
@@ -450,27 +460,40 @@ def _persisted_language() -> Optional[str]:
     dataclass default "zh" is a placeholder, not a user choice, and going
     through load_config() cannot tell the two apart. Values normalize with
     the historical rule: "en" → en, any other non-empty value → zh."""
+    return _override_language() or _config_yaml_language()
+
+
+def _normalize_language(value) -> Optional[str]:
+    """The historical rule: "en" → en, any other non-empty value → zh, empty → None."""
+    v = str(value or "").strip().lower()
+    if not v:
+        return None
+    return "en" if v == "en" else "zh"
+
+
+def _override_language() -> Optional[str]:
+    """``language`` from settings_overrides.json (the Mac app's writes)."""
     from act.lib import config
     try:
         data = json.loads(
             config.SETTINGS_OVERRIDES_PATH.read_text(encoding="utf-8"))
-        v = str(data.get("language") or "").strip().lower()
-        if v:
-            return "en" if v == "en" else "zh"
+        return _normalize_language(data.get("language"))
     except (OSError, ValueError, AttributeError):
-        pass
+        return None
+
+
+def _config_yaml_language() -> Optional[str]:
+    """``language`` from config.yaml (a top-level mapping key); None without
+    PyYAML, without the file, or when the document is not a mapping."""
+    from act.lib import config
+    if config.yaml is None:
+        return None
     try:
-        if config.yaml is not None:
-            data = config.yaml.safe_load(
-                config.CONFIG_PATH.read_text(encoding="utf-8"))
-            v = ""
-            if isinstance(data, dict):
-                v = str(data.get("language") or "").strip().lower()
-            if v:
-                return "en" if v == "en" else "zh"
+        data = config.yaml.safe_load(
+            config.CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        pass
-    return None
+        return None
+    return _normalize_language(data.get("language")) if isinstance(data, dict) else None
 
 
 def ui_lang() -> str:
@@ -491,13 +514,15 @@ def ui_lang() -> str:
         env = os.environ.get("AIASSISTANT_UI_LANG", "").strip().lower()
         if env in ("zh", "en"):
             return env
-        persisted = _persisted_language()
-        if persisted:
-            return persisted
-        loc = (os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
-        return "zh" if loc.startswith("zh") else "en"
+        return _persisted_language() or _locale_language()
     except Exception:  # noqa: BLE001 - copy helpers must never raise
         return "zh"
+
+
+def _locale_language() -> str:
+    """System locale fallback: LC_ALL, else LANG; zh* → zh, anything else → en."""
+    loc = (os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
+    return "zh" if loc.startswith("zh") else "en"
 
 
 def pick(zh: str, en: str, lang: Optional[str] = None) -> str:

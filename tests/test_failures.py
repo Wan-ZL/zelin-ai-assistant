@@ -197,6 +197,16 @@ class EngineLogClassifyTestCase(unittest.TestCase):
                 "thread 'main' panicked at src/core.rs:42", engine_alive=False),
             "engine_crashed")
 
+    def test_engine_is_presumed_dead_unless_told_otherwise(self):
+        # the defaults are the fail-closed shape: npx present, engine NOT
+        # alive — a caller that forgets engine_alive gets a diagnosis, never
+        # a silent "healthy".
+        self.assertEqual(
+            failures.classify_engine_log("thread 'main' panicked at src/core.rs:42"),
+            "engine_crashed")
+        self.assertEqual(failures.classify_engine_log(self.DOWNLOAD), "engine_crashed")
+        self.assertEqual(failures.classify_engine_log(""), "engine_dead")
+
     def test_dead_on_ffmpeg_is_the_specific_fix_not_generic_crash(self):
         # 2026-07-13: screen_audio dying on the missing ffmpeg must name the
         # dependency, not read as a generic crash (let alone "permissions").

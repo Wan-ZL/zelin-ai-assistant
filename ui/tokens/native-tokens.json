@@ -1,0 +1,947 @@
+{
+  "$description": "Native Mac app design tokens, machine-extracted from mac/Sources (frozen under D3). Truth for web/src/styles/tokens.css's generated block. Regenerate: python3 scripts/ui/extract_native_tokens.py --write",
+  "color": {
+    "overlay": {
+      "accentColor-06": {
+        "$extensions": {
+          "zai": {
+            "base": "accentColor",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.06
+      },
+      "accentColor-07": {
+        "$extensions": {
+          "zai": {
+            "base": "accentColor",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.07
+      },
+      "accentColor-1": {
+        "$extensions": {
+          "zai": {
+            "base": "accentColor",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.1
+      },
+      "accentColor-18": {
+        "$extensions": {
+          "zai": {
+            "base": "accentColor",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.18
+      },
+      "primary-018": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 2
+          }
+        },
+        "$type": "number",
+        "$value": 0.018
+      },
+      "primary-03": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 18
+          }
+        },
+        "$type": "number",
+        "$value": 0.03
+      },
+      "primary-04": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 13
+          }
+        },
+        "$type": "number",
+        "$value": 0.04
+      },
+      "primary-05": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 2
+          }
+        },
+        "$type": "number",
+        "$value": 0.05
+      },
+      "primary-06": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.06
+      },
+      "primary-12": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 3
+          }
+        },
+        "$type": "number",
+        "$value": 0.12
+      },
+      "primary-15": {
+        "$extensions": {
+          "zai": {
+            "base": "primary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.15
+      },
+      "secondary-06": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.06
+      },
+      "secondary-14": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.14
+      },
+      "secondary-18": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 2
+          }
+        },
+        "$type": "number",
+        "$value": 0.18
+      },
+      "secondary-25": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.25
+      },
+      "secondary-4": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 5
+          }
+        },
+        "$type": "number",
+        "$value": 0.4
+      },
+      "secondary-5": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 3
+          }
+        },
+        "$type": "number",
+        "$value": 0.5
+      },
+      "secondary-6": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.6
+      },
+      "secondary-7": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 1
+          }
+        },
+        "$type": "number",
+        "$value": 0.7
+      },
+      "secondary-85": {
+        "$extensions": {
+          "zai": {
+            "base": "secondary",
+            "usages": 4
+          }
+        },
+        "$type": "number",
+        "$value": 0.85
+      }
+    },
+    "semantic": {
+      "accentColor": {
+        "$extensions": {
+          "zai": {
+            "swift": ".accentColor",
+            "usages": 12
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#0a84ff",
+          "light": "#007aff"
+        }
+      },
+      "blue": {
+        "$extensions": {
+          "zai": {
+            "swift": ".blue",
+            "usages": 10
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#0a84ff",
+          "light": "#007aff"
+        }
+      },
+      "gray": {
+        "$extensions": {
+          "zai": {
+            "swift": ".gray",
+            "usages": 14
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#98989d",
+          "light": "#8e8e93"
+        }
+      },
+      "green": {
+        "$extensions": {
+          "zai": {
+            "swift": ".green",
+            "usages": 54
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#32d74b",
+          "light": "#28cd41"
+        }
+      },
+      "orange": {
+        "$extensions": {
+          "zai": {
+            "swift": ".orange",
+            "usages": 93
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#ff9f0a",
+          "light": "#ff9500"
+        }
+      },
+      "primary": {
+        "$extensions": {
+          "zai": {
+            "swift": ".primary",
+            "usages": 66
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "rgba(255, 255, 255, 0.85)",
+          "light": "rgba(0, 0, 0, 0.85)"
+        }
+      },
+      "purple": {
+        "$extensions": {
+          "zai": {
+            "swift": ".purple",
+            "usages": 20
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#bf5af2",
+          "light": "#af52de"
+        }
+      },
+      "red": {
+        "$extensions": {
+          "zai": {
+            "swift": ".red",
+            "usages": 42
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#ff453a",
+          "light": "#ff3b30"
+        }
+      },
+      "secondary": {
+        "$extensions": {
+          "zai": {
+            "swift": ".secondary",
+            "usages": 302
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "rgba(255, 255, 255, 0.55)",
+          "light": "rgba(0, 0, 0, 0.5)"
+        }
+      },
+      "teal": {
+        "$extensions": {
+          "zai": {
+            "swift": ".teal",
+            "usages": 13
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#6ac4dc",
+          "light": "#59adc4"
+        }
+      },
+      "windowBackground": {
+        "$extensions": {
+          "zai": {
+            "swift": ".windowBackground",
+            "usages": 0
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#323232",
+          "light": "#ececec"
+        }
+      },
+      "yellow": {
+        "$extensions": {
+          "zai": {
+            "swift": ".yellow",
+            "usages": 4
+          }
+        },
+        "$type": "color",
+        "$value": {
+          "dark": "#ffd60a",
+          "light": "#ffcc00"
+        }
+      }
+    }
+  },
+  "layout": {
+    "board": {
+      "padding": {
+        "$extensions": {
+          "zai": {
+            "source": "Kanban.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "16px"
+      }
+    },
+    "card": {
+      "radius": {
+        "$extensions": {
+          "zai": {
+            "source": "Cards.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "8px"
+      }
+    },
+    "lane": {
+      "gap": {
+        "$extensions": {
+          "zai": {
+            "source": "Kanban.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "12px"
+      },
+      "radius": {
+        "$extensions": {
+          "zai": {
+            "source": "Kanban.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "10px"
+      },
+      "width": {
+        "$extensions": {
+          "zai": {
+            "source": "Kanban.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "400px"
+      }
+    },
+    "rail": {
+      "collapsed_width": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "48px"
+      },
+      "default_width": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "200px"
+      },
+      "max_width": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "320px"
+      },
+      "min_width": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "160px"
+      }
+    },
+    "strip": {
+      "width": {
+        "$extensions": {
+          "zai": {
+            "source": "Kanban.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "44px"
+      }
+    },
+    "window": {
+      "default_height": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "640px"
+      },
+      "default_width": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "900px"
+      },
+      "min_height": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "480px"
+      },
+      "min_width": {
+        "$extensions": {
+          "zai": {
+            "source": "MainWindow.swift"
+          }
+        },
+        "$type": "dimension",
+        "$value": "720px"
+      }
+    }
+  },
+  "radius": {
+    "10": {
+      "$extensions": {
+        "zai": {
+          "usages": 5
+        }
+      },
+      "$type": "dimension",
+      "$value": "10px"
+    },
+    "12": {
+      "$extensions": {
+        "zai": {
+          "usages": 1
+        }
+      },
+      "$type": "dimension",
+      "$value": "12px"
+    },
+    "6": {
+      "$extensions": {
+        "zai": {
+          "usages": 26
+        }
+      },
+      "$type": "dimension",
+      "$value": "6px"
+    },
+    "8": {
+      "$extensions": {
+        "zai": {
+          "usages": 35
+        }
+      },
+      "$type": "dimension",
+      "$value": "8px"
+    }
+  },
+  "spacing": {
+    "padding": {
+      "1": {
+        "$extensions": {
+          "zai": {
+            "usages": 12
+          }
+        },
+        "$type": "dimension",
+        "$value": "1px"
+      },
+      "10": {
+        "$extensions": {
+          "zai": {
+            "usages": 23
+          }
+        },
+        "$type": "dimension",
+        "$value": "10px"
+      },
+      "12": {
+        "$extensions": {
+          "zai": {
+            "usages": 13
+          }
+        },
+        "$type": "dimension",
+        "$value": "12px"
+      },
+      "14": {
+        "$extensions": {
+          "zai": {
+            "usages": 3
+          }
+        },
+        "$type": "dimension",
+        "$value": "14px"
+      },
+      "16": {
+        "$extensions": {
+          "zai": {
+            "usages": 4
+          }
+        },
+        "$type": "dimension",
+        "$value": "16px"
+      },
+      "18": {
+        "$extensions": {
+          "zai": {
+            "usages": 2
+          }
+        },
+        "$type": "dimension",
+        "$value": "18px"
+      },
+      "2": {
+        "$extensions": {
+          "zai": {
+            "usages": 12
+          }
+        },
+        "$type": "dimension",
+        "$value": "2px"
+      },
+      "20": {
+        "$extensions": {
+          "zai": {
+            "usages": 3
+          }
+        },
+        "$type": "dimension",
+        "$value": "20px"
+      },
+      "24": {
+        "$extensions": {
+          "zai": {
+            "usages": 2
+          }
+        },
+        "$type": "dimension",
+        "$value": "24px"
+      },
+      "28": {
+        "$extensions": {
+          "zai": {
+            "usages": 1
+          }
+        },
+        "$type": "dimension",
+        "$value": "28px"
+      },
+      "4": {
+        "$extensions": {
+          "zai": {
+            "usages": 9
+          }
+        },
+        "$type": "dimension",
+        "$value": "4px"
+      },
+      "40": {
+        "$extensions": {
+          "zai": {
+            "usages": 1
+          }
+        },
+        "$type": "dimension",
+        "$value": "40px"
+      },
+      "5": {
+        "$extensions": {
+          "zai": {
+            "usages": 8
+          }
+        },
+        "$type": "dimension",
+        "$value": "5px"
+      },
+      "6": {
+        "$extensions": {
+          "zai": {
+            "usages": 24
+          }
+        },
+        "$type": "dimension",
+        "$value": "6px"
+      },
+      "7": {
+        "$extensions": {
+          "zai": {
+            "usages": 3
+          }
+        },
+        "$type": "dimension",
+        "$value": "7px"
+      },
+      "8": {
+        "$extensions": {
+          "zai": {
+            "usages": 17
+          }
+        },
+        "$type": "dimension",
+        "$value": "8px"
+      }
+    },
+    "stack": {
+      "0": {
+        "$extensions": {
+          "zai": {
+            "usages": 4
+          }
+        },
+        "$type": "dimension",
+        "$value": "0px"
+      },
+      "1": {
+        "$extensions": {
+          "zai": {
+            "usages": 16
+          }
+        },
+        "$type": "dimension",
+        "$value": "1px"
+      },
+      "10": {
+        "$extensions": {
+          "zai": {
+            "usages": 20
+          }
+        },
+        "$type": "dimension",
+        "$value": "10px"
+      },
+      "12": {
+        "$extensions": {
+          "zai": {
+            "usages": 4
+          }
+        },
+        "$type": "dimension",
+        "$value": "12px"
+      },
+      "14": {
+        "$extensions": {
+          "zai": {
+            "usages": 12
+          }
+        },
+        "$type": "dimension",
+        "$value": "14px"
+      },
+      "2": {
+        "$extensions": {
+          "zai": {
+            "usages": 23
+          }
+        },
+        "$type": "dimension",
+        "$value": "2px"
+      },
+      "3": {
+        "$extensions": {
+          "zai": {
+            "usages": 9
+          }
+        },
+        "$type": "dimension",
+        "$value": "3px"
+      },
+      "4": {
+        "$extensions": {
+          "zai": {
+            "usages": 34
+          }
+        },
+        "$type": "dimension",
+        "$value": "4px"
+      },
+      "5": {
+        "$extensions": {
+          "zai": {
+            "usages": 1
+          }
+        },
+        "$type": "dimension",
+        "$value": "5px"
+      },
+      "6": {
+        "$extensions": {
+          "zai": {
+            "usages": 66
+          }
+        },
+        "$type": "dimension",
+        "$value": "6px"
+      },
+      "8": {
+        "$extensions": {
+          "zai": {
+            "usages": 104
+          }
+        },
+        "$type": "dimension",
+        "$value": "8px"
+      }
+    }
+  },
+  "theme": {
+    "default": {
+      "$extensions": {
+        "zai": {
+          "source": "owner decision 2026-09-02; native follows macOS appearance"
+        }
+      },
+      "$type": "string",
+      "$value": "light"
+    },
+    "follows_system": {
+      "$type": "boolean",
+      "$value": true
+    }
+  },
+  "typography": {
+    "roles": "web/src/styles/typeScale.ts (CONTRACT §54.1 item 10)",
+    "scale": [
+      {
+        "size": 9,
+        "usages": 22,
+        "weight": "regular"
+      },
+      {
+        "size": 9,
+        "usages": 2,
+        "weight": "medium"
+      },
+      {
+        "size": 9,
+        "usages": 7,
+        "weight": "semibold"
+      },
+      {
+        "size": 10,
+        "usages": 152,
+        "weight": "regular"
+      },
+      {
+        "size": 10,
+        "usages": 5,
+        "weight": "medium"
+      },
+      {
+        "size": 10,
+        "usages": 10,
+        "weight": "semibold"
+      },
+      {
+        "size": 10,
+        "usages": 1,
+        "weight": "bold"
+      },
+      {
+        "size": 11,
+        "usages": 112,
+        "weight": "regular"
+      },
+      {
+        "size": 11,
+        "usages": 13,
+        "weight": "medium"
+      },
+      {
+        "size": 11,
+        "usages": 8,
+        "weight": "semibold"
+      },
+      {
+        "size": 11,
+        "usages": 4,
+        "weight": "bold"
+      },
+      {
+        "size": 12,
+        "usages": 84,
+        "weight": "regular"
+      },
+      {
+        "size": 12,
+        "usages": 37,
+        "weight": "medium"
+      },
+      {
+        "size": 12,
+        "usages": 3,
+        "weight": "semibold"
+      },
+      {
+        "size": 13,
+        "usages": 11,
+        "weight": "regular"
+      },
+      {
+        "size": 13,
+        "usages": 7,
+        "weight": "medium"
+      },
+      {
+        "size": 13,
+        "usages": 11,
+        "weight": "semibold"
+      },
+      {
+        "size": 14,
+        "usages": 4,
+        "weight": "regular"
+      },
+      {
+        "size": 14,
+        "usages": 5,
+        "weight": "semibold"
+      },
+      {
+        "size": 15,
+        "usages": 1,
+        "weight": "regular"
+      },
+      {
+        "size": 15,
+        "usages": 4,
+        "weight": "semibold"
+      },
+      {
+        "size": 16,
+        "usages": 1,
+        "weight": "regular"
+      },
+      {
+        "size": 18,
+        "usages": 1,
+        "weight": "regular"
+      },
+      {
+        "size": 18,
+        "usages": 6,
+        "weight": "semibold"
+      },
+      {
+        "size": 20,
+        "usages": 1,
+        "weight": "regular"
+      },
+      {
+        "size": 22,
+        "usages": 2,
+        "weight": "regular"
+      },
+      {
+        "size": 22,
+        "usages": 1,
+        "weight": "semibold"
+      }
+    ]
+  }
+}

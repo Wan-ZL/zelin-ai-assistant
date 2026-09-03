@@ -3,3 +3,6 @@
 # 行尾（Windows runner 的 autocrlf 曾把 LF 转成 CRLF，33 个字节对照全数误红；
 # PR #106 CI 2026-08-31）。-text = 按二进制对待，任何平台零转换。
 tests/fixtures/inbox/*.golden.json -text
+
+# Golden prompt fixtures（tests/test_executor_prompt_golden.py 逐字节对照）同理。
+tests/fixtures/prompt/*.golden.txt -text

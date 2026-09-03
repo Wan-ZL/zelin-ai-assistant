@@ -15,10 +15,12 @@ import {
   fetchMaterials,
   fetchModelsSettings,
   fetchRecapSettings,
+  fetchSkills,
   postClaudeCodeDefault,
   postMaterialAdd,
   postMaterialDismiss,
   postRecapMark,
+  postSkill,
   putModelsSettings,
   putRecapSettings,
 } from "./api";
@@ -40,6 +42,7 @@ import type {
   MaterialsList,
   ModelsSettings,
   RecapSettings,
+  SkillsSnapshot,
 } from "./types";
 
 export type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -65,6 +68,8 @@ export interface AppState {
   lanes: LaneCatalog | null;      // GET /api/lanes 列说明目录（server-owned 文案，Lane 头「?」气泡读）
   recapSettings: RecapSettings | null; // GET /api/settings/recap（§63：enabled / 语言 / Slack 草稿开关）
   recapMarks: Record<string, RecapMark>; // 「复制」/「标记已发送」的乐观本地回执（等下一次 board 回流覆盖）
+  skills: SkillsSnapshot | null;  // GET /api/skills 最近快照（§67 设置页「Skills」）
+  skillsError: string | null;     // 设置页 Skills 读失败的用户可读文案（成功后清空；切换失败由页面 toast）
 }
 
 /** §63 本地标记（server marks.json 的镜像片段） */
@@ -110,6 +115,8 @@ const initialState: AppState = {
   lanes: null,
   recapSettings: null,
   recapMarks: {},
+  skills: null,
+  skillsError: null,
 };
 
 let state: AppState = initialState;
@@ -321,6 +328,26 @@ export async function saveRecapSettings(
 export async function markRecap(key: string, mark: "copied" | "sent", on = true): Promise<void> {
   const receipt = await postRecapMark(key, mark, on);
   setState({ recapMarks: { ...state.recapMarks, [key]: { copied_at: receipt.copied_at, sent_at: receipt.sent_at } } });
+}
+
+// ----- skills（§67 设置页「Skills」） ------------------------------------------ #
+
+/** 拉 skill 商店快照（manifest + 本机状态）；读失败落 skillsError */
+export async function refreshSkills(): Promise<void> {
+  try {
+    const skills = await fetchSkills();
+    setState({ skills, skillsError: null });
+  } catch (error) {
+    const message = error instanceof ApiError ? error.message : String(error);
+    setState({ skillsError: message });
+  }
+}
+
+/** 启用/停用一个 skill（POST，server 建/删 ~/.claude/skills 软链接）；成功以 server 回执替换快照，失败原样抛给页面 toast */
+export async function toggleSkill(name: string, action: "enable" | "disable"): Promise<SkillsSnapshot> {
+  const skills = await postSkill(name, action);
+  setState({ skills, skillsError: null });
+  return skills;
 }
 
 /** 仅测试用：重置 store（vitest 各 case 之间隔离） */

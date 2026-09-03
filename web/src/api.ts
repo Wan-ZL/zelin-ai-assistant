@@ -17,6 +17,7 @@ import type {
   ModelsSettings,
   RecapMarkReceipt,
   RecapSettings,
+  SkillsSnapshot,
 } from "./types";
 
 interface ApiErrorBody {
@@ -239,4 +240,17 @@ export function postRecapMark(key: string, mark: "copied" | "sent", on = true): 
     method: "POST",
     body: JSON.stringify({ key, mark, on }),
   });
+}
+
+/** GET /api/skills — skill 商店 manifest + 本机每个 skill 的状态（CONTRACT §67） */
+export function fetchSkills(signal?: AbortSignal): Promise<SkillsSnapshot> {
+  return request<SkillsSnapshot>("/api/skills", { signal });
+}
+
+/**
+ * POST /api/skills — 启用/停用一个 skill（写请求：四闸同 POST，api.ts 自动带 token）。
+ * body 只许 name / action 两键；自定义副本（state=custom）server 拒改 409 CONFLICT，整句原文由页面 toast。
+ */
+export function postSkill(name: string, action: "enable" | "disable"): Promise<SkillsSnapshot> {
+  return request<SkillsSnapshot>("/api/skills", { method: "POST", body: JSON.stringify({ name, action }) });
 }

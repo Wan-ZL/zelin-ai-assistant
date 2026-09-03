@@ -90,19 +90,28 @@ def connect_ex(cfg: config.Config, password: str
         conn = imaplib.IMAP4_SSL(IMAP_HOST)
     except OSError:
         return None, "connect_failed"
-    try:
-        conn.login(cfg.gmail_address, password)
-    except imaplib.IMAP4.error:
-        # LOGIN rejected — bad app password / address (or the Workspace admin
-        # disabled IMAP/app passwords; the Settings row spells that out)
-        return None, "auth_failed"
-    except OSError:
-        return None, "connect_failed"
+    reason = _login_reason(conn, cfg.gmail_address, password)
+    if reason is not None:
+        return None, reason
     try:
         conn.select("INBOX", readonly=True)   # belt: even flags stay untouched
         return conn, None
     except (imaplib.IMAP4.error, OSError):
         return None, "connect_failed"
+
+
+def _login_reason(conn: imaplib.IMAP4_SSL, address: str,
+                  password: str) -> Optional[str]:
+    """None when LOGIN succeeded, else the health skip_reason."""
+    try:
+        conn.login(address, password)
+    except imaplib.IMAP4.error:
+        # LOGIN rejected — bad app password / address (or the Workspace admin
+        # disabled IMAP/app passwords; the Settings row spells that out)
+        return "auth_failed"
+    except OSError:
+        return "connect_failed"
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -149,12 +158,18 @@ def _parse_gm_thrid(fetched) -> Optional[str]:
     host, or a server that did not honor the X-GM-THRID data item) — an honest
     fallback to title/LLM matching."""
     for item in fetched or []:
-        blob = item[0] if isinstance(item, tuple) else item
-        if isinstance(blob, (bytes, bytearray)):
-            m = _GM_THRID_RE.search(blob)
-            if m:
-                return m.group(1).decode("ascii")
+        thrid = _thrid_in(item[0] if isinstance(item, tuple) else item)
+        if thrid is not None:
+            return thrid
     return None
+
+
+def _thrid_in(blob) -> Optional[str]:
+    """X-GM-THRID digits inside one envelope blob (bytes only), else None."""
+    if not isinstance(blob, (bytes, bytearray)):
+        return None
+    m = _GM_THRID_RE.search(blob)
+    return m.group(1).decode("ascii") if m else None
 
 
 def _strip_html(text: str) -> str:
@@ -164,18 +179,37 @@ def _strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _part_text(msg: email.message.EmailMessage, kind: str) -> Optional[str]:
+    """Content of the preferred ``kind`` (plain|html) body part; None when
+    the message has no such part."""
+    part = msg.get_body(preferencelist=(kind,))
+    if part is None:
+        return None
+    return part.get_content() or ""
+
+
 def _body_text(msg: email.message.EmailMessage) -> str:
     """text/plain preferred; fallback = crude tag-strip of text/html."""
     try:
-        part = msg.get_body(preferencelist=("plain",))
-        if part is not None:
-            return (part.get_content() or "").strip()[:BODY_TRUNCATE]
-        part = msg.get_body(preferencelist=("html",))
-        if part is not None:
-            return _strip_html(part.get_content() or "")[:BODY_TRUNCATE]
+        plain = _part_text(msg, "plain")
+        if plain is not None:
+            return plain.strip()[:BODY_TRUNCATE]
+        html = _part_text(msg, "html")
+        if html is not None:
+            return _strip_html(html)[:BODY_TRUNCATE]
     except Exception:  # noqa: BLE001 - malformed MIME must not kill the pass
         pass
     return ""
+
+
+def _calendar_reply_part(part) -> bool:
+    """A text/calendar MIME part carrying METHOD:REPLY (an invite response)."""
+    if part.get_content_type() != "text/calendar":
+        return False
+    cal = part.get_content() or ""
+    if isinstance(cal, bytes):
+        cal = cal.decode("utf-8", "replace")
+    return "METHOD:REPLY" in cal.upper()
 
 
 def _is_accepted_invite(msg: email.message.EmailMessage, subject: str) -> bool:
@@ -184,16 +218,9 @@ def _is_accepted_invite(msg: email.message.EmailMessage, subject: str) -> bool:
     if subj.startswith(("accepted:", "已接受:", "已接受：")):
         return True
     try:
-        for part in msg.walk():
-            if part.get_content_type() == "text/calendar":
-                cal = part.get_content() or ""
-                if isinstance(cal, bytes):
-                    cal = cal.decode("utf-8", "replace")
-                if "METHOD:REPLY" in cal.upper():
-                    return True
+        return any(_calendar_reply_part(part) for part in msg.walk())
     except Exception:  # noqa: BLE001
-        pass
-    return False
+        return False
 
 
 def _should_skip(msg: email.message.EmailMessage, sender: str, subject: str) -> bool:
@@ -222,76 +249,125 @@ def fetch_new_messages(conn: imaplib.IMAP4_SSL, last_uid: int,
     """
     out: list[dict] = []
     newest = last_uid
-    try:
-        # IMAP quirk: "UID n:*" always matches at least the last message, so
-        # the uid > last_uid check below is mandatory, not paranoia.
-        status, data = conn.uid(
-            "search", None, "UNSEEN", f"UID {last_uid + 1}:*"
-        )
-    except (imaplib.IMAP4.error, OSError):
-        return out, newest
-    if status != "OK" or not data or not data[0]:
-        return out, newest
+    for uid in _search_unseen(conn, last_uid):
+        fetched = _fetch_message(conn, uid)
+        if fetched is None:
+            continue    # the FETCH itself failed: the marker must not pass it
+        newest = max(newest, uid)
+        raw_bytes = _fetched_literal(fetched)
+        if not raw_bytes:
+            continue
+        parsed = _fenced_message(uid, raw_bytes, fetched[1], stats)
+        if parsed is not None:
+            out.append(parsed)
+    return out, newest
 
-    for raw_uid in data[0].split():
+
+def _parse_uids(blob: bytes, last_uid: int) -> list[int]:
+    """SEARCH response literal → the integer uids above the marker."""
+    out: list[int] = []
+    for raw_uid in blob.split():
         try:
             uid = int(raw_uid)
         except ValueError:
             continue
-        if uid <= last_uid:
-            continue
-        try:
-            # BODY.PEEK[] — fetch WITHOUT setting \Seen (do not mark read).
-            # X-GM-THRID — Gmail's conversation id, the external thread ref for
-            # thread-level matching (parsed from the response envelope below).
-            status, fetched = conn.uid(
-                "fetch", str(uid), "(BODY.PEEK[] X-GM-THRID)")
-        except (imaplib.IMAP4.error, OSError):
-            continue
-        newest = max(newest, uid)
-        if status != "OK" or not fetched:
-            continue
-        raw_bytes = None
-        for item in fetched:
-            if isinstance(item, tuple) and len(item) >= 2:
-                raw_bytes = item[1]
-                break
-        if not raw_bytes:
-            continue
-        # 毒邮件围栏（宪法 11）：policy=default 下 header 是**惰性解析**的——
-        # 畸形 Date 头直到 msg.get("Date") 才炸（Python 3.9 真实事故：
-        # parsedate_to_datetime 抛 TypeError），所以 message_from_bytes 单独
-        # try 不够，header 访问 / 预过滤 / 字段组装整段都要围起来。一封解析
-        # 不了的邮件只废自己：记入重试台账留痕（_record_poison_message），
-        # pass 照常继续。marker 已在上方推进（newest = max(...)），它不会被
-        # 无限重拉。
-        try:
-            msg = email.message_from_bytes(raw_bytes, policy=email.policy.default)
-            sender = str(msg.get("From", "") or "")
-            subject = str(msg.get("Subject", "") or "")
-            if _should_skip(msg, sender, subject):
-                # 预过滤跳过 ≠ 围栏失败：解析是成功的，通道健康
-                if stats is not None:
-                    stats["parsed"] = stats.get("parsed", 0) + 1
-                continue
-            out.append({
-                "uid": uid,
-                "from": sender,
-                "subject": subject,
-                "date": str(msg.get("Date", "") or ""),
-                "message_id": str(msg.get("Message-ID", "") or "").strip(),
-                # Gmail thread id (external thread ref); None on a non-Gmail host.
-                "gm_thrid": _parse_gm_thrid(fetched),
-                "body": _body_text(msg),
-            })
-            if stats is not None:
-                stats["parsed"] = stats.get("parsed", 0) + 1
-        except Exception as e:  # noqa: BLE001 - one poison message must not kill the pass
-            _record_poison_message(uid, e)
-            if stats is not None:
-                stats["poisoned"] = stats.get("poisoned", 0) + 1
-            continue
-    return out, newest
+        if uid > last_uid:
+            out.append(uid)
+    return out
+
+
+def _search_unseen(conn: imaplib.IMAP4_SSL, last_uid: int) -> list[int]:
+    """UIDs of UNSEEN mail above the marker; [] on any IMAP trouble.
+
+    IMAP quirk: "UID n:*" always matches at least the last message, so the
+    ``uid > last_uid`` filter is mandatory, not paranoia."""
+    try:
+        status, data = conn.uid(
+            "search", None, "UNSEEN", f"UID {last_uid + 1}:*"
+        )
+    except (imaplib.IMAP4.error, OSError):
+        return []
+    if status != "OK" or not data or not data[0]:
+        return []
+    return _parse_uids(data[0], last_uid)
+
+
+def _fetch_message(conn: imaplib.IMAP4_SSL, uid: int):
+    """``(status, data)`` of one UID FETCH; None when the call itself raised.
+
+    BODY.PEEK[] — fetch WITHOUT setting \\Seen (do not mark read).
+    X-GM-THRID — Gmail's conversation id, the external thread ref for
+    thread-level matching (parsed from the response envelope)."""
+    try:
+        return conn.uid("fetch", str(uid), "(BODY.PEEK[] X-GM-THRID)")
+    except (imaplib.IMAP4.error, OSError):
+        return None
+
+
+def _first_literal(data) -> Optional[bytes]:
+    """The RFC822 literal (item[1] of the first tuple) in a FETCH response."""
+    for item in data:
+        if isinstance(item, tuple) and len(item) >= 2:
+            return item[1] or None
+    return None
+
+
+def _fetched_literal(fetched) -> Optional[bytes]:
+    """RFC822 literal out of a ``(status, data)`` FETCH response; None when
+    the server said anything but OK or sent no usable tuple."""
+    status, data = fetched
+    if status != "OK" or not data:
+        return None
+    return _first_literal(data)
+
+
+def _header(msg: email.message.EmailMessage, name: str) -> str:
+    return str(msg.get(name, "") or "")
+
+
+def _message_dict(uid: int, raw_bytes: bytes, fetched) -> Optional[dict]:
+    """One RFC822 literal → the radar's message dict; None when the
+    pre-filters drop it. Raises on a poison message (the caller fences)."""
+    msg = email.message_from_bytes(raw_bytes, policy=email.policy.default)
+    sender = _header(msg, "From")
+    subject = _header(msg, "Subject")
+    if _should_skip(msg, sender, subject):
+        return None
+    return {
+        "uid": uid,
+        "from": sender,
+        "subject": subject,
+        "date": _header(msg, "Date"),
+        "message_id": _header(msg, "Message-ID").strip(),
+        # Gmail thread id (external thread ref); None on a non-Gmail host.
+        "gm_thrid": _parse_gm_thrid(fetched),
+        "body": _body_text(msg),
+    }
+
+
+def _bump(stats: Optional[dict], key: str) -> None:
+    if stats is not None:
+        stats[key] = stats.get(key, 0) + 1
+
+
+def _fenced_message(uid: int, raw_bytes: bytes, fetched,
+                    stats: Optional[dict]) -> Optional[dict]:
+    """毒邮件围栏（宪法 11）：policy=default 下 header 是**惰性解析**的——
+    畸形 Date 头直到 msg.get("Date") 才炸（Python 3.9 真实事故：
+    parsedate_to_datetime 抛 TypeError），所以 message_from_bytes 单独
+    try 不够，header 访问 / 预过滤 / 字段组装整段都要围起来。一封解析
+    不了的邮件只废自己：记入重试台账留痕（_record_poison_message），
+    pass 照常继续。marker 已由调用方推进，它不会被无限重拉。
+
+    预过滤跳过 ≠ 围栏失败：解析是成功的，通道健康——``parsed`` 照计。"""
+    try:
+        parsed = _message_dict(uid, raw_bytes, fetched)
+    except Exception as e:  # noqa: BLE001 - one poison message must not kill the pass
+        _record_poison_message(uid, e)
+        _bump(stats, "poisoned")
+        return None
+    _bump(stats, "parsed")
+    return parsed
 
 
 # 台账里毒邮件条目的键前缀（radar.py 的 note 对账按它豁免，radar_gmail 自理清理）
@@ -334,38 +410,53 @@ def _record_poison_message(uid: int, err: Exception) -> None:
     error = f"poison message (unparseable headers): {type(err).__name__}: {err}"
     lock = None
     try:
-        try:
-            lock = _acquire_ledger_lock()
-        except Exception:  # noqa: BLE001 - 锁本身出问题也不许挡住留痕
-            lock = None
-        if lock is None:
-            # 拿不到锁照写不误（绝不静默丢案底），但要出声——写入没有被
-            # 串行化，另一个 pass 的台账条目可能被本次覆盖。
-            print(f"gmail radar: WARN radar.lock busy — recording poison "
-                  f"uid {uid} to {radar.FAILED_QUEUE_NAME} without the lock")
+        lock = _ledger_lock_or_warn(uid)
         queue = radar._load_failed_queue()
         entry = radar._record_failure(
             queue, Path(f"{POISON_KEY_PREFIX}{uid}"), float(uid), error)
         entry["gave_up"] = True     # marker 已推进——没有重试语义，只是案底
-        poison = sorted((k for k in queue if k.startswith(POISON_KEY_PREFIX)),
-                        key=lambda k: float(queue[k].get("mtime") or 0))
-        for k in poison[:-_POISON_LEDGER_CAP]:
-            queue.pop(k, None)
+        _prune_poison(queue)
         radar._save_failed_queue(queue)
     except Exception:  # noqa: BLE001 - 留痕绝不反噬 pass
         pass
     finally:
-        if lock is not None:
-            try:
-                lock.close()   # 关 fd 即释放 flock
-            except OSError:
-                pass
+        _release_lock(lock)
     try:
         # exception CLASS only (identifier) — never str(err) (TELEMETRY 红线 #37)
         analytics.log_event("radar_message_failed", source="gmail", uid=uid,
                             error_type=type(err).__name__)
     except Exception:  # noqa: BLE001
         pass
+
+
+def _ledger_lock_or_warn(uid: int):
+    """The ledger lock handle, or None (loudly) when it cannot be had."""
+    try:
+        lock = _acquire_ledger_lock()
+    except Exception:  # noqa: BLE001 - 锁本身出问题也不许挡住留痕
+        lock = None
+    if lock is None:
+        # 拿不到锁照写不误（绝不静默丢案底），但要出声——写入没有被
+        # 串行化，另一个 pass 的台账条目可能被本次覆盖。
+        print(f"gmail radar: WARN radar.lock busy — recording poison "
+              f"uid {uid} to {radar.FAILED_QUEUE_NAME} without the lock")
+    return lock
+
+
+def _prune_poison(queue: dict) -> None:
+    """Keep only the newest _POISON_LEDGER_CAP poison entries (uid order)."""
+    poison = sorted((k for k in queue if k.startswith(POISON_KEY_PREFIX)),
+                    key=lambda k: float(queue[k].get("mtime") or 0))
+    for k in poison[:-_POISON_LEDGER_CAP]:
+        queue.pop(k, None)
+
+
+def _release_lock(lock) -> None:
+    if lock is not None:
+        try:
+            lock.close()   # 关 fd 即释放 flock
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -402,56 +493,103 @@ def fetch_via_command(cmd: str, last_uid: int
     the caller can health-mark the pass without conflating "broken fetcher"
     with "no new mail".
     """
+    stdout = _fetcher_stdout(cmd, last_uid)
+    if stdout is None:
+        return None, last_uid, "command_failed"
+    arr = _command_array(stdout)
+    if arr is None:
+        return None, last_uid, "command_bad_output"
+    out, newest = _command_messages(arr, last_uid)
+    return out, newest, None
+
+
+def _command_argv(cmd: str) -> Optional[list]:
+    """shlex argv of the fetcher (no shell), ``~`` expanded on argv[0];
+    None when the string is unparseable or empty."""
     try:
         argv = shlex.split(cmd)
     except ValueError:
-        return None, last_uid, "command_failed"
+        return None
     if not argv:
-        return None, last_uid, "command_failed"
+        return None
     argv[0] = str(Path(argv[0]).expanduser())
+    return argv
+
+
+def _fetcher_stdout(cmd: str, last_uid: int) -> Optional[str]:
+    """Run the fetcher with the marker in ``$GMAIL_RADAR_LAST_UID``; its
+    stdout, or None when it could not run / timed out / exited non-zero."""
+    argv = _command_argv(cmd)
+    if argv is None:
+        return None
     env = dict(os.environ, GMAIL_RADAR_LAST_UID=str(last_uid))
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
                               timeout=COMMAND_TIMEOUT, env=env)
     except (OSError, subprocess.SubprocessError):
-        return None, last_uid, "command_failed"
+        return None
     if proc.returncode != 0:
-        return None, last_uid, "command_failed"
-    text = (proc.stdout or "").strip()
+        return None
+    return proc.stdout or ""
+
+
+def _command_array(stdout: str) -> Optional[list]:
+    """The JSON array in the fetcher's stdout (first ``[`` to last ``]``);
+    None when there is none or it is not a list."""
+    text = stdout.strip()
     start, end = text.find("["), text.rfind("]")
     if start == -1 or end < start:
-        return None, last_uid, "command_bad_output"
+        return None
     try:
         arr = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
-        return None, last_uid, "command_bad_output"
-    if not isinstance(arr, list):
-        return None, last_uid, "command_bad_output"
+        return None
+    return arr if isinstance(arr, list) else None
 
+
+def _text(value) -> str:
+    return str(value or "")
+
+
+def _command_dict(uid: int, item: dict) -> dict:
+    thrid = item.get("gmail_thread_id")
+    return {
+        "uid": uid,
+        "from": _text(item.get("from")),
+        "subject": _text(item.get("subject")),
+        "date": _text(item.get("date")),
+        "message_id": _text(item.get("message_id")).strip(),
+        "gm_thrid": str(thrid).strip() if thrid else None,
+        "body": _text(item.get("body"))[:BODY_TRUNCATE],
+    }
+
+
+def _command_message(item, last_uid: int) -> tuple[Optional[int], Optional[dict]]:
+    """(uid, message) for one fetcher item. uid None = malformed item (skipped
+    entirely); message None = at/below the marker or pre-filtered noise
+    (the uid still advances the marker — same rule as IMAP)."""
+    if not isinstance(item, dict):
+        return None, None
+    try:
+        uid = int(item.get("uid"))
+    except (TypeError, ValueError):
+        return None, None
+    if uid <= last_uid or _should_skip_dict(item):
+        return uid, None
+    return uid, _command_dict(uid, item)
+
+
+def _command_messages(arr: list, last_uid: int) -> tuple[list[dict], int]:
     out: list[dict] = []
     newest = last_uid
     for item in arr:
-        if not isinstance(item, dict):
-            continue
-        try:
-            uid = int(item.get("uid"))
-        except (TypeError, ValueError):
+        uid, message = _command_message(item, last_uid)
+        if uid is None:
             continue
         newest = max(newest, uid)
-        # pre-filtered noise still advances the marker — same rule as IMAP
-        if uid <= last_uid or _should_skip_dict(item):
-            continue
-        thrid = item.get("gmail_thread_id")
-        out.append({
-            "uid": uid,
-            "from": str(item.get("from") or ""),
-            "subject": str(item.get("subject") or ""),
-            "date": str(item.get("date") or ""),
-            "message_id": str(item.get("message_id") or "").strip(),
-            "gm_thrid": str(thrid).strip() if thrid else None,
-            "body": str(item.get("body") or "")[:BODY_TRUNCATE],
-        })
-    return out, newest, None
+        if message is not None:
+            out.append(message)
+    return out, newest
 
 
 # --------------------------------------------------------------------------- #
@@ -487,17 +625,32 @@ def _default_extractor(prompt: str) -> subprocess.CompletedProcess:
     )
 
 
+def _loads_list(text: str) -> list:
+    """``json.loads`` that only accepts a list — [] on anything else."""
+    try:
+        val = json.loads(text)
+        return val if isinstance(val, list) else []
+    except json.JSONDecodeError:
+        return []
+
+
 def _parse_json_array(text: str) -> list:
     """Tolerant: find the first [...] block."""
     start = text.find("[")
     end = text.rfind("]")
     if start == -1 or end == -1 or end < start:
         return []
-    try:
-        val = json.loads(text[start:end + 1])
-        return val if isinstance(val, list) else []
-    except json.JSONDecodeError:
-        return []
+    return _loads_list(text[start:end + 1])
+
+
+def _mail_block(m: dict) -> str:
+    return (
+        f"--- 邮件 (Message-ID: {m.get('message_id')}) ---\n"
+        f"From: {m.get('from')}\n"
+        f"Subject: {m.get('subject')}\n"
+        f"Date: {m.get('date')}\n"
+        f"{m.get('body')}"
+    )
 
 
 def extract_requirements(messages: list[dict],
@@ -507,15 +660,7 @@ def extract_requirements(messages: list[dict],
         return []
     if extractor is None:
         extractor = _default_extractor
-    blocks = []
-    for m in messages:
-        blocks.append(
-            f"--- 邮件 (Message-ID: {m.get('message_id')}) ---\n"
-            f"From: {m.get('from')}\n"
-            f"Subject: {m.get('subject')}\n"
-            f"Date: {m.get('date')}\n"
-            f"{m.get('body')}"
-        )
+    blocks = [_mail_block(m) for m in messages]
     prompt = _EXTRACT_PROMPT + sanitize.fence_untrusted("\n\n".join(blocks))
     try:
         proc = extractor(prompt)
@@ -524,19 +669,29 @@ def extract_requirements(messages: list[dict],
         return []
 
 
+def _by_message_id(messages: list[dict], mid: str) -> Optional[dict]:
+    if not mid:
+        return None
+    for m in messages:
+        if m.get("message_id") == mid:
+            return m
+    return None
+
+
+def _by_subject(messages: list[dict], subj: str) -> Optional[dict]:
+    if not subj:
+        return None
+    for m in messages:
+        if (m.get("subject") or "").strip() == subj:
+            return m
+    return None
+
+
 def _match_message(r: dict, messages: list[dict]) -> Optional[dict]:
     """Map an LLM item back to its source mail: message_id first, subject fallback."""
     mid = (r.get("message_id") or "").strip()
-    if mid:
-        for m in messages:
-            if m.get("message_id") == mid:
-                return m
     subj = (r.get("subject") or "").strip()
-    if subj:
-        for m in messages:
-            if (m.get("subject") or "").strip() == subj:
-                return m
-    return None
+    return _by_message_id(messages, mid) or _by_subject(messages, subj)
 
 
 # --------------------------------------------------------------------------- #
@@ -565,145 +720,227 @@ def scan(cfg: Optional[config.Config] = None,
         # 第 3 条）；顺手清掉历史条目，僵尸 last_attempt 不再冒充存活。
         health.remove_radar_health("gmail")
         return 0
-    fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
-    password = get_app_password(cfg)
+    fetch_cmd, password = _credentials(cfg)
     if not password and not fetch_cmd:    # neither auth branch -> silent no-op
         _note_skip("no_credentials")
         return 0
+    return _scan_authed(cfg, fetcher, extractor, fetch_cmd, password)
 
+
+def _credentials(cfg: config.Config) -> tuple[str, Optional[str]]:
+    """(fetch_command, app_password) — the two auth branches (§14 / §14bis)."""
+    fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
+    return fetch_cmd, get_app_password(cfg)
+
+
+def _scan_authed(cfg: config.Config, fetcher, extractor, fetch_cmd: str,
+                 password: Optional[str]) -> int:
+    """The pass once a fetch backend is available: fetch → void-pass guard →
+    triage gate per candidate → marker + health + analytics."""
     last_uid = _load_last_uid()
     # 毒邮件围栏统计（只有 IMAP 分支有解析围栏；注入 fetcher / command 模式
     # 不产生 fence 失败，fence 保持零值、守卫永不触发）。
     fence = {"parsed": 0, "poisoned": 0}
+    batch = _fetch_batch(cfg, fetcher, fetch_cmd, password, last_uid, fence)
+    if batch is None:
+        return 0
+    messages, newest_uid = batch
+
+    voided = _void_pass(fence, last_uid)
+    if voided:
+        newest_uid = last_uid
+
+    created = _file_candidates(messages, cfg, extractor)
+
+    if newest_uid > last_uid:
+        _save_last_uid(newest_uid)
+    if not voided:   # void pass 的 health 已由 _note_skip 记 not-ok，不许覆盖
+        _mark_healthy()
+    analytics.log_event("radar_scan", source="gmail", messages=len(messages),
+                        new_cards=created)
+    return created
+
+
+def _logout(conn) -> None:
+    try:
+        conn.logout()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _fetch_imap(cfg: config.Config, password: Optional[str], last_uid: int,
+                fence: dict) -> Optional[tuple[list[dict], int]]:
+    conn, reason = connect_ex(cfg, password)
+    if conn is None:
+        _note_skip(reason or "connect_failed")
+        return None
+    try:
+        return fetch_new_messages(conn, last_uid, stats=fence)
+    finally:
+        _logout(conn)
+
+
+def _fetch_batch(cfg: config.Config, fetcher, fetch_cmd: str,
+                 password: Optional[str], last_uid: int,
+                 fence: dict) -> Optional[tuple[list[dict], int]]:
+    """(messages, newest_uid) from whichever backend applies: an injected
+    fetcher (tests), the §14bis command, else IMAP. None = the pass ends
+    here (the skip is already noted)."""
     if fetcher is not None:
-        messages, newest_uid = fetcher(cfg, last_uid)
-    elif fetch_cmd:
+        return fetcher(cfg, last_uid)
+    if fetch_cmd:
         # §14bis: Workspace 禁 app password/IMAP 时的主动抓取通道。配置了
         # fetch_command 就是明确的选择，优先于 IMAP（两者都配时命令赢）。
         messages, newest_uid, err = fetch_via_command(fetch_cmd, last_uid)
         if messages is None:
             _note_skip(err or "command_failed")
-            return 0
-    else:
-        conn, reason = connect_ex(cfg, password)
-        if conn is None:
-            _note_skip(reason or "connect_failed")
-            return 0
-        try:
-            messages, newest_uid = fetch_new_messages(conn, last_uid,
-                                                      stats=fence)
-        finally:
-            try:
-                conn.logout()
-            except Exception:  # noqa: BLE001
-                pass
+            return None
+        return messages, newest_uid
+    return _fetch_imap(cfg, password, last_uid, fence)
 
-    # 全军覆没 void pass（镜像 obsidian systemic 语义，§47）：批里 ≥3 封且
-    # **没有任何一封**通过毒邮件围栏——这不是几封各自的毒，而是通道级症状
-    # （编码风暴 / IMAP 响应形变）。marker 不越过这批（下轮重扫，故障修好后
-    # 积压自然归队），通道级告警走既有 skip/health 词表。毒案底已入台账
-    # （台账自带 cap，下轮重试要么恢复要么再次留痕——不作废，与 obsidian
-    # 「账全作废」的差异是刻意的：gmail 的围栏失败在 fetch 期即已记账）。
+
+def _void_pass(fence: dict, last_uid: int) -> bool:
+    """全军覆没 void pass（镜像 obsidian systemic 语义，§47）：批里 ≥3 封且
+    **没有任何一封**通过毒邮件围栏——这不是几封各自的毒，而是通道级症状
+    （编码风暴 / IMAP 响应形变）。marker 不越过这批（下轮重扫，故障修好后
+    积压自然归队），通道级告警走既有 skip/health 词表。毒案底已入台账
+    （台账自带 cap，下轮重试要么恢复要么再次留痕——不作废，与 obsidian
+    「账全作废」的差异是刻意的：gmail 的围栏失败在 fetch 期即已记账）。"""
     voided = fence["poisoned"] >= 3 and fence["parsed"] == 0
     if voided:
         _note_skip("all_poisoned")
         print(f"gmail radar: void pass — all {fence['poisoned']} message(s) "
               f"failed the poison fence; marker pinned at {last_uid}")
-        newest_uid = last_uid
+    return voided
 
-    # v0.17 统一口径: route every Gmail candidate through the SAME three-way
-    # triage gate (act/lib/quick_capture.triage — the one radar_slack and the
-    # obsidian radar use) BEFORE touching the registry: new_proposal (提案，或
-    # confidence=="low" 落 备选) / relates_to (fold into an open card, or file
-    # an improvement_of follow-up on a resolved one) / ignore (pure FYI mail,
-    # no card). Replaces the old unconditional merge_or_new(status="card_sent")
-    # that bypassed the gate — a pure-FYI mail can now be ignored/folded, which
-    # is the intended fix, not a regression.
+
+def _mark_healthy() -> None:
+    try:
+        health.update_radar_health("gmail", ok=True)
+    except Exception:  # noqa: BLE001 - health must never break the pass
+        pass
+
+
+def _quote(r: dict, src_msg: dict) -> str:
+    return (f"{r.get('from') or src_msg.get('from') or '?'}: "
+            f"{r.get('subject') or src_msg.get('subject') or '?'}")
+
+
+def _gmail_source(r: dict, src_msg: dict, quote: str) -> dict:
+    source = {
+        "who": r.get("from") or src_msg.get("from"),
+        "channel": "gmail",
+        "date": src_msg.get("date"),
+        "quote": quote,
+        "ref": src_msg.get("message_id") or r.get("message_id"),
+    }
+    # External thread ref for thread-level matching (A↔B interface):
+    # registry.derive_thread_key reads source["gmail_thread_id"]. Only set
+    # it when the Gmail thread id is actually available — otherwise omit so
+    # derive_thread_key returns None (honest title/LLM fallback).
+    thrid = src_msg.get("gm_thrid")
+    if thrid:
+        source["gmail_thread_id"] = thrid
+    return source
+
+
+def _gmail_requirement(r: dict, source: dict) -> registry.Requirement:
+    return registry.Requirement(
+        id=registry.next_id(),
+        title=(r.get("summary") or "")[:80],
+        summary=r.get("summary"),
+        type=r.get("type") or "comms",
+        tier=r.get("tier") or "T1",
+        # 预设 lane；triage confidence=="low" 会把它降到 detected/备选。
+        status="card_sent",
+        hardness="soft",
+        plan=r.get("plan") or [],
+        sources=[source],
+        notes=f"needs_reply={r.get('needs_reply')} · from Gmail",
+    )
+
+
+def _candidate_desc(quick_capture, r: dict, src_msg: dict, quote: str) -> str:
+    return quick_capture.candidate_desc(
+        str(r.get("summary") or ""), quote=quote,
+        who=(r.get("from") or src_msg.get("from")),
+        channel="gmail", date=src_msg.get("date"),
+        ref=src_msg.get("message_id") or r.get("message_id"))
+
+
+def _file_candidate(quick_capture, r: dict, messages: list[dict],
+                    cfg: config.Config, extractor) -> bool:
+    """One LLM item through the shared triage gate; True when a card resulted."""
+    src_msg = _match_message(r, messages) or {}
+    quote = _quote(r, src_msg)
+    new = _gmail_requirement(r, _gmail_source(r, src_msg, quote))
+    radar._set_thread_key(new)
+    desc = _candidate_desc(quick_capture, r, src_msg, quote)
+    decision = quick_capture.triage(desc, cfg, extractor=extractor)
+    kind, _saved = quick_capture.apply_triage(decision, new, cfg)
+    return kind in ("proposed", "follow_up", "reraised")
+
+
+def _file_candidates(messages: list[dict], cfg: config.Config, extractor) -> int:
+    """v0.17 统一口径: route every Gmail candidate through the SAME three-way
+    triage gate (act/lib/quick_capture.triage — the one radar_slack and the
+    obsidian radar use) BEFORE touching the registry: new_proposal (提案，或
+    confidence=="low" 落 备选) / relates_to (fold into an open card, or file
+    an improvement_of follow-up on a resolved one) / ignore (pure FYI mail,
+    no card). Replaces the old unconditional merge_or_new(status="card_sent")
+    that bypassed the gate — a pure-FYI mail can now be ignored/folded, which
+    is the intended fix, not a regression."""
     from act.lib import quick_capture  # lazy: mirror radar_slack, avoid import cycle
     reqs = extract_requirements(messages, extractor=extractor)
     created = 0
     for r in reqs:
         if not isinstance(r, dict) or not r.get("summary"):
             continue
-        src_msg = _match_message(r, messages) or {}
-        quote = f"{r.get('from') or src_msg.get('from') or '?'}: " \
-                f"{r.get('subject') or src_msg.get('subject') or '?'}"
-        source = {
-            "who": r.get("from") or src_msg.get("from"),
-            "channel": "gmail",
-            "date": src_msg.get("date"),
-            "quote": quote,
-            "ref": src_msg.get("message_id") or r.get("message_id"),
-        }
-        # External thread ref for thread-level matching (A↔B interface):
-        # registry.derive_thread_key reads source["gmail_thread_id"]. Only set
-        # it when the Gmail thread id is actually available — otherwise omit so
-        # derive_thread_key returns None (honest title/LLM fallback).
-        thrid = src_msg.get("gm_thrid")
-        if thrid:
-            source["gmail_thread_id"] = thrid
-        new = registry.Requirement(
-            id=registry.next_id(),
-            title=(r.get("summary") or "")[:80],
-            summary=r.get("summary"),
-            type=r.get("type") or "comms",
-            tier=r.get("tier") or "T1",
-            # 预设 lane；triage confidence=="low" 会把它降到 detected/备选。
-            status="card_sent",
-            hardness="soft",
-            plan=r.get("plan") or [],
-            sources=[source],
-            notes=f"needs_reply={r.get('needs_reply')} · from Gmail",
-        )
-        radar._set_thread_key(new)
-        desc = quick_capture.candidate_desc(
-            str(r.get("summary") or ""), quote=quote,
-            who=(r.get("from") or src_msg.get("from")),
-            channel="gmail", date=src_msg.get("date"),
-            ref=src_msg.get("message_id") or r.get("message_id"))
-        decision = quick_capture.triage(desc, cfg, extractor=extractor)
-        kind, _saved = quick_capture.apply_triage(decision, new, cfg)
-        if kind in ("proposed", "follow_up", "reraised"):
+        if _file_candidate(quick_capture, r, messages, cfg, extractor):
             created += 1
-
-    if newest_uid > last_uid:
-        _save_last_uid(newest_uid)
-    if not voided:   # void pass 的 health 已由 _note_skip 记 not-ok，不许覆盖
-        try:
-            health.update_radar_health("gmail", ok=True)
-        except Exception:  # noqa: BLE001 - health must never break the pass
-            pass
-    analytics.log_event("radar_scan", source="gmail", messages=len(messages),
-                        new_cards=created)
     return created
 
 
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
-def _check(cfg: config.Config) -> int:
-    """Login test — like radar_slack --check. Prints a one-line JSON verdict."""
-    fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
-    if fetch_cmd:
-        # §14bis command mode: no login to test — verify the executable resolves.
-        try:
-            argv = shlex.split(fetch_cmd)
-        except ValueError:
-            argv = []
-        exe = str(Path(argv[0]).expanduser()) if argv else ""
-        ok = bool(exe) and (Path(exe).exists() or shutil.which(exe) is not None)
-        print(json.dumps({"ok": ok, "mode": "command", "command": fetch_cmd},
-                         ensure_ascii=False))
-        return 0 if ok else 1
-    password = get_app_password(cfg)
+def _command_exe(fetch_cmd: str) -> str:
+    """argv[0] of the fetcher (``~`` expanded), "" when unparseable/empty."""
+    try:
+        argv = shlex.split(fetch_cmd)
+    except ValueError:
+        argv = []
+    return str(Path(argv[0]).expanduser()) if argv else ""
+
+
+def _exe_resolves(exe: str) -> bool:
+    return bool(exe) and (Path(exe).exists() or shutil.which(exe) is not None)
+
+
+def _check_command(fetch_cmd: str) -> int:
+    """§14bis command mode: no login to test — verify the executable resolves."""
+    ok = _exe_resolves(_command_exe(fetch_cmd))
+    print(json.dumps({"ok": ok, "mode": "command", "command": fetch_cmd},
+                     ensure_ascii=False))
+    return 0 if ok else 1
+
+
+def _imap_precheck(cfg: config.Config, password: Optional[str]) -> Optional[str]:
+    """The one-line reason --check cannot even attempt a login, or None."""
     if not password:
-        print("no app password at",
-              secrets.SECRETS_DIR / secrets.GMAIL_APP_PASSWORD_FILE, "or",
-              getattr(cfg, "gmail_app_password_path", None)
-              or DEFAULT_APP_PASSWORD_PATH)
-        return 1
+        alt = (getattr(cfg, "gmail_app_password_path", None)
+               or DEFAULT_APP_PASSWORD_PATH)
+        return (f"no app password at "
+                f"{secrets.SECRETS_DIR / secrets.GMAIL_APP_PASSWORD_FILE} or {alt}")
     if not cfg.gmail_address:
-        print("no gmail address in config (sources.gmail.address)")
+        return "no gmail address in config (sources.gmail.address)"
+    return None
+
+
+def _check_imap(cfg: config.Config, password: Optional[str]) -> int:
+    problem = _imap_precheck(cfg, password)
+    if problem:
+        print(problem)
         return 1
     conn, reason = connect_ex(cfg, password)
     if conn is None:
@@ -711,13 +948,18 @@ def _check(cfg: config.Config) -> int:
                           "error": reason or "login/select failed"},
                          ensure_ascii=False))
         return 1
-    try:
-        conn.logout()
-    except Exception:  # noqa: BLE001
-        pass
+    _logout(conn)
     print(json.dumps({"ok": True, "address": cfg.gmail_address},
                      ensure_ascii=False))
     return 0
+
+
+def _check(cfg: config.Config) -> int:
+    """Login test — like radar_slack --check. Prints a one-line JSON verdict."""
+    fetch_cmd = (getattr(cfg, "gmail_fetch_command", None) or "").strip()
+    if fetch_cmd:
+        return _check_command(fetch_cmd)
+    return _check_imap(cfg, get_app_password(cfg))
 
 
 def _main(argv: Optional[list[str]] = None) -> int:

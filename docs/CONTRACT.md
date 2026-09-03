@@ -818,6 +818,7 @@ install.sh 每次完整跑完（交互模式与 `--pkg-postinstall` 模式皆是
 - **v0.48.18 追记（add-only，§56.5 `ui` 步）**：新 step `ui` = 看板 UI 的构建与安装（web/dist + shell app），`ok | skipped | skipped_tcc | fail`——`skipped` = 工具链缺席（node+npm / swiftc）或 `.pkg` 模式，`skipped_tcc` = node 在 launchd 会话里被 TCC 拒（EPERM）、web 半没重建（doctor `board ui build` 行负责可见性），`fail` = 构建/安装真的坏了；`detail` 形如 `web ok (npm ci 12s, build 31s); shell ok (9s → /Applications/Zelin AI Board.app); 52s total`（两半独立、各带耗时）。**`ui=fail` 进 `failed_deploy_steps` 的退出码（回滚判据），`ui=skipped` / `ui=skipped_tcc` 不进**——与 `app` 例外不同：UI 是产品本体，构建坏了就是坏版本；TCC 拒绝则是环境，回滚治不了。另一新 step `board_server_port`（只在 warn 时出现）= 加载 `com.zelin.aiassistant.server` 之前端口上已有非 launchd 的 server 在答话（§54.2 端口互斥）。判例 `tests/test_install_ui_step.py`。
 - **2026-09-02 追记（§54 名字互换）**：`ui` 步 detail 里壳的路径改为 `/Applications/Zelin's AI Assistant.app`；本轮把旧 app 搬去 `(old)` 时 shell 半 detail 追加 `; legacy app moved to "Zelin's AI Assistant (old).app"`（add-only，只在真搬了时出现）。
 - **2026-09-02 追记（add-only，§55 第五幕）**：新 step `stable_claude` = claude 稳定副本（`~/Library/Application Support/ZelinAIAssistant/bin/claude`，完全磁盘访问的授权对象）的维护结果：`ok:created|refreshed|unchanged: <path> (<version>)`；`warn:<原因>`（来源无有效 Apple 签名 / 复制失败 / 副本跑不了 `--version`——一律保留原有副本）；`skipped:<原因>`（非 macOS、没有 claude 可复制）。**永不 `fail`**：与 `cron=skipped_tcc` 同理，环境问题不进 `failed_deploy_steps`。判例 `tests/test_install_stable_claude.py`。
+- **v0.48.x 追记（add-only，§67 `skills` 步）**：新 step `skills` = install.sh 步 3b `install_skills`（跑 `scripts/skills_sync.sh`，把 `default_enabled` 的商店 skill 链进 `~/.claude/skills`、重指陈旧链接、尊重 `state/skills.json` 的决策），`ok | skipped | warn | fail`——`ok` 的 detail 是商店的一行摘要（`enabled 2 (board-agent, test-code) · actions: …`）；`skipped` = 无守护解释器 / 脚本缺席；**`fail` 只对 exit 3（`skills/index.yaml` 坏——仓库坏了，进 `failed_deploy_steps`）**；其余非零 = `warn:exit N — <stderr 尾行>`，不进退出码（环境问题回滚治不了，§56.5）。判例 `tests/test_install_skills_step.py`。
 - `agents_loaded` = 本次成功 load 的 launchd label 列表。
 - 消费方（只读）：App 首启界面据此逐条列出失败项（audit 1.4 的修复方向）、`act.doctor` 区分"装完即死"与"健康"。字段 add-only，不改不删。
 
@@ -3462,6 +3463,13 @@ act，机制移植、差异逐条注明），鉴权在**一切路由/parse 之�
   **没有任何控制流读它**，只进投影；key 形状 / 词表外 400）。`PUT` 路由自此表驱动
   （`_PUT_JSON_ROUTES`，与 GET/POST 同款）。inbox 特形动作 `recap_generate` /
   `recap_slack_draft` 见 §63.5。判例：tests/test_server_recaps.py。
+- **v0.48.x 追加（§67 skill 商店，add-only）**：`GET /api/skills`（清单 + 本机每个
+  skill 的状态：enabled / disabled / copy / custom / foreign，token-light）、`POST
+  /api/skills {name, action: enable|disable}`（四闸；= `~/.claude/skills/<name>` 软链接
+  的建/删，写者是 `act/lib/skills.py`；字段白名单 400 `UNKNOWN_FIELD`、形状 400
+  `INVALID_FIELD`、未知 skill 404、自定义/非商店副本 409 `CONFLICT`（`details.code` =
+  `SKILL_CUSTOM_KEEP` / `SKILL_FOREIGN_LINK`）、清单坏 409）。形状见 §67.5。判例：
+  tests/test_server_skills.py。
 
 **error envelope**：统一 `{"error":{"code","message","details"?}}`；codes
 词表 = `UNKNOWN_FIELD` / `INVALID_FIELD` / `NOT_FOUND` / `INTERNAL_ERROR` /
@@ -3739,7 +3747,7 @@ flush/drop）→ raising → purge_trash → `archive_stale`（24h 门，默认 
    的动词面/信任裁决——`actor:"agent"` 落款与决策动词禁区照旧。
 5. **skill 落位**：`skills/board-agent/SKILL.md` + `references/cli.md`
    （structure adapted from dashi-taskboard `manage-taskboard`，Apache-2.0，
-   NOTICE 第 7 条登记）。
+   NOTICE 第 7 条登记）。**§67 追记**：该 skill 是商店清单 `skills/index.yaml` 的一项（`default_enabled: true`），经 `.claude/skills/board-agent` 追踪软链接对本 repo 的每个 checkout / worktree 项目可见，经 install.sh 步 `skills` 链进 `~/.claude/skills`——agent 自此**运行时**可发现它，不再只是文档级。
 
 **判例**：tests/test_boardctl.py（动词面收窄 / actor 恒发 / 输出契约 / exit
 codes / token 墙：无 token 写 → 401 透传零落盘，读 token-light）。
@@ -4586,7 +4594,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 
 **矩阵**（truth = `.github/workflows/ci.yml` 与 `ci-nightly.yml`；本表只说形状）：
 
-| lane | pull_request | merge_group / push to main | schedule（夜间）+ workflow_dispatch | 按需 |
+| lane | pull_request | merge_group / push to main 或 dev | schedule（夜间）+ workflow_dispatch | 按需 |
 |---|---|---|---|---|
 | `Lint` / `Tests on ubuntu ×2` / `QA gates` / `Version pins untouched` | 全跑 | 全跑（pins 门只在 PR / 队列） | — | — |
 | `Changed paths (per-PR filter)`（新，非 required） | 列 PR 文件 → `swift` / `web` 两个布尔输出 | 恒 `true` | — | — |
@@ -4605,6 +4613,7 @@ launchd agent `com.zelin.aiassistant.autodeploy`（`StartInterval 600`、`RunAtL
 - **夜间 = 原样搬家**：`ci-nightly.yml` 承载 Windows 两腿与 qlty，`continue-on-error` 语义不变（红不挡任何东西）、timeout 不变（30 / 15）、`concurrency: ci-nightly`（不取消在跑的），排在 mutation-nightly（09:03）与 insights（09:23）之后。**永不进 required 集合**。
 - **bot review 按需**：默认审查 = lead session 里的对抗式 agent review；两个 bot 是 owner 显式索取的付费第二意见。触发 = repo fixture 标签 **`review:ai`**（2026-09-02 建）贴上（`pull_request: types: [labeled]`，job `if` 同时校验标签名与 same-repo）或 `workflow_dispatch` 带 `pr` 号（dispatch 路径自己查 `isCrossRepository`，fork 一律跳过；checkout 用查出来的 head sha）。**标签被消费**：任一 bot 一接单就摘掉 `review:ai`——`labeled` 只在真的加上时触发，所以「再贴一次 = 再审一次当前 head」，不需要先摘；两个 bot 从同一事件出发、都摘一次，第二次是容忍的 no-op。secret 缺席仍是绿 no-op；两 job 加 `timeout-minutes`（45 / 30，56.6 纪律）；权限降到 job 级。**56.6 的 auto-update push 不再触发 bot**（它只是普通 push，不贴标签）——那一条「每次更新都重跑 review 是协议成本」自本条起作废。
 - **不动的**：`concurrency` 语义（PR 取消在跑的、main / 队列不取消）、每 job `timeout-minutes`、merge_group 接线、`Version pins untouched` 与 `QA gates` 的每 PR 全跑。**判例 = PR 自身**：引入本条的 PR 只改 `.github/workflows/**` 与文档，`.github/workflows/ci.yml` 在 filter 里，所以它自己跑的是 macOS 全套——七个 required check 在它身上全部报到即验收；后续任何纯 Python / 文档 PR 上 `ci` 应显示 ubuntu 的一行 summary 且为绿。
+- **追记（2026-09-02）：`dev` 整合分支进 `push` 触发**——PR 先合进 `dev`、再由 `dev` 提升到 `main` 的那段时间里，`dev` 头是否为绿只有 PR 各自的 CI 在说话，而 PR 之间的交互（两个各自为绿的 PR 合在一起红）没人测。`ci.yml` 的 `on.push.branches` = `[main, dev]`：`dev` 每前进一次跑**全量**（push 事件 → filter 恒 `true`，与 main 同法，fail-closed 三条原样适用）；`concurrency` 语义不变（`ci-refs/heads/dev` 组、`cancel-in-progress` 仍只对 pull_request 为真——每个 dev 头都留下自己的判决，不被后一次 push 取消）。`release-on-merge.yml` / `update-pr-branches.yml` **不**跟随：它们的 push 触发是「main 动了」的语义（发版、给 PR 更新基底），与 dev 无关。
 
 ## 57. 变异测试（夜间，**永不作为 PR 门** —— owner 决策 D5 / R2.3.4）
 
@@ -4698,8 +4707,9 @@ owner 的规矩（D4/D5）：**「全套快测试 + 复杂度 + 依赖方向 + �
 - **账本**：`qa/complexity_baseline.txt`、`qa/crap_baseline.txt`、`qa/deps_baseline.txt`、`qa/hygiene_baseline.txt`（行形 `<key> <登记分>`；注释 = 行首的 `#` 或空白后的 `#`——键内的 `#` 属于键，因为同名重定义键形如 `qualname#2`，判例 `tests/test_qa_ledger_shrink.py::DuplicateDefinitionKeyTestCase`）。键 = `路径::qualname`（尺一/二）或 `规则:路径->目标`（尺四），**不含行号**（无关编辑不移账）。登记分与 `qa/coverage_floor.txt` 的地板**必须是有限数**：`nan`/`inf` 在解析层 fail-loud 拒收（`qa_common._parse_score`，与 gates.toml 解析同哲学）——nan 与任何数比较都是 False，一个 token 就能让 worse/stale 判决、地板检查与下面的 base 差分同时 fail-open（判例 `tests/test_qa_ledger_shrink.py::NonFiniteScoreRejectedTestCase`）。
 - **判决三态（任一即门红）**：`new`——超阈值且不在账上（新代码必须干净）；`worse`——账上条目劣于登记分（存量只许持平或变好；coverage 派生的尺二有 `[crap].tolerance` 缓冲）；`stale`——已达标/已消失仍挂账（**修好了必须同 PR 划账**——这就是棘轮，账本永不回涨）。另有两个不判死的提示：`limbo`（尺二专用：落在阈值下方 tolerance 带内，建议观察后删账）与 `better`（仍超标但比登记分好，建议把登记分拧低）。
 - **收账/对账**：CI 的 `qa-gates` 把判决与**建议账本**（当前全量超标项）整目录上传为 artifact `qa-report`——门红时从 artifact 拷回 `qa/` 即完成对账；全量重铸走各脚本的 `--write-baseline`（只该在 P3 清账轮使用）。**对账只能是缩**（划掉 stale、把登记分拧低）——想给新债记账没有合法路径，见下一条。
-- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。
+- **账本对 base 只许缩（执法 scripts/qa/ledger_diff.py；判例 tests/test_qa_ledger_diff.py）**：上面的三态判决只看「测量 vs 账本」，看不见「账本自己长了」——一个 PR 新增债务并同 PR 自记账，三态下照样全绿（f2a54c1 审查 blocker 1 的活演示，正是 P6 车道 agent 会找到的旁路）。所以 CI 的 `qa-gates` 在 PR 上多判一道 base 差分：与 merge-base 相比，任何 `qa/*_baseline.txt` **加键或抬分**、`qa/coverage_floor.txt` **下调**、`qa/gates.toml` **阈值放宽或删键**、以及任何这些文件**整个消失**都 FAIL。gates.toml 的判定走方向表 `ledger_diff._LOOSEN_UP`（「涨 = 放宽」的键逐个声明；表外的键改动一律 fail-closed——新旋钮必须同 PR 在方向表声明）。base 上不存在的文件不比（账本出生的 PR 免比——门从上线第一天就是绿的，D15）。放宽阈值 / 下调地板 = owner 决定，同 PR 修本节。**追记（2026-09-02，§65.2）**：同一差分门顺带看管 `ui/parity/pending.txt` 与 `ui/parity/waivers.txt`（按 id 集合比，备注列不是分数）——加 id 即 FAIL。
 - **P3 清空账本**（vnext2-plan 阶段表）：账本存在的唯一目的就是被清空；每削一批，账本缩一截，缩到零本节的门就是无条件的。
+- **P3 每批的固定顺序（2026-09-02 P3a 追记，add-only；R2.3.2 的执行口径）**：① 先把该批模块映射进 `qa/mutation_targets.toml`（§57）并跑一轮变异，幸存体逐个判定——等价变异（常数 ±1、日志文案）放过，逻辑幸存体（未测的分类分支 / CLI / 网络与 IMAP 包装 / 解析状态机…）**先补判例杀死**；② 再做纯抽取式重构（每函数 CC ≤ 6，新 helper 出生即干净），**零行为变化**——判据是既有全套件 + 补上的判例 + 同一轮变异重跑，不许借重构改语义；③ 该批模块的 complexity / crap / hygiene 账本行在**同一 PR** 划掉（`stale` 三态本身会逼着做）；④ 模块留在夜间靶区，测试网持续咬人。模块 docstring 必须写明管它的 §§（防腐 #5，hygiene 门执法）。首批 P3a = 雷达三源 + claude_sessions + digest / weekly_digest / analyze（分支 `refactor/p3a-radars`；账本现状 truth = `qa/complexity_baseline.txt` / `qa/crap_baseline.txt`）。
 
 ### 58.5 CI 接线（.github/workflows/ci.yml）
 
@@ -5101,3 +5111,74 @@ owner 原话（2026-09-01）：「当前这个项目肯定是走车道的……�
 - 通道配置（`self_improve:` 块）随 actd 启动冻结（同 `autodispatch:`）；设置页开关随 P4 设置页另案。每日循环的提案 producer、`is_rejected` 的消费、proposal 的 fingerprint 去重范围随 P5 主体立法。
 - `docs/PRIVACY.md`「审批是安全边界」一句改写为两条 lane 各自的边界声明（本 PR 同车）；`SECURITY.md` 指针随动。
 
+## 66. UI 对齐契约：原生清单 = 终版规格，机器判卷（2026-09-02；owner 决策 D3 的执法面，P4 前置）
+
+> §62 / §63 / §64 由同日并行的 `feat/material-box`（#157）、`feat/meeting-recap`（#159）、`feat/card-summary-verdict`（#160）立法，本节取下一个空号 §66（§66 = 同日并行的 `feat/self-improve-lane`，#167）——§ 号永不复用。
+
+owner 原话（2026-09-02）：「你不能依靠一个个去看，而是要通过一些硬指标、硬代码、硬文档来进行保证」。当天点名的四条差距：(a) 原生主窗口**左侧竖排图标栏**（任务台 / 问问助手 / 依赖检查 / 录制与数据接入 / 回收站 / 永久性完成 / 设置 / 关于）被 web 挪到了顶栏，要回到左侧；(b) 原生默认**浅色**，web 默认成了深色；(c) 原生四列各 400pt 铺满一屏，web 列更窄；(d) 原生设置页的 section / 字段 web 大量缺席。本节把「web 看板必须补齐原生 app 的全部用户功能」（R2.2.2）从验收表变成硬门：**审阅者不再看截图判对齐，机器判**。执法：`scripts/ui/`（ui_common / extract_native_inventory / extract_native_tokens / parity_fixture / parity_check）、`web/src/parity.test.tsx`、`web/e2e/visual.spec.ts`、`scripts/qa/run_gates.sh [ui-parity]`、`scripts/qa/ledger_diff.py`（两本 UI 账本）；判例 `tests/test_ui_swift_scan.py`、`tests/test_ui_inventory_extractor.py`、`tests/test_ui_native_inventory_fresh.py`、`tests/test_ui_native_tokens.py`、`tests/test_ui_parity_check.py`、`tests/test_qa_ledger_diff.py::ParityLedgerTestCase`。
+
+### 66.1 清单（ui/parity/native-inventory.json）= 退役中 app 的终版规格
+
+- **来源与冻结**：`scripts/ui/extract_native_inventory.py` 只读 `mac/Sources/*.swift`（D3 冻结、永不再改），机器提取全部用户可见面：左侧栏（`MainSection` 顺序 / 双语标题 / SF 图标 / ⌘1..8）、页面与面板（rail 页、`SettingsSectionDescriptor` 注册表的每个 section、权限体检 / 初始设置向导 / 诊断条 / 强制合并 sheet 等窗口）、每个 `L("zh","en")` 双语字面量按**调用链**归类（toggle / button / menu / link / textfield / picker / option / menu-item / alert-button / dialog / label；长句 = copy、tooltip = help）并附 screen 与 `File.swift:line`、settings 键（`settings_overrides.json` 扁平键与 `features.*` / `telemetry.*` 嵌套键；UserDefaults 纯界面偏好键）、看板列（顺序 / 双语列名 / 左右两根可折叠书立条 / 每列卡面动词）、快捷键（`.keyboardShortcut` + `NSMenuItem keyEquivalent`）、通知 kind、以及主题 / 布局常量的指针（数值住 §66.3）。mac/ 冻结 ⇒ 清单是**终版**；重跑零 diff 由判例钉死，P8 删 mac/ 时 JSON 留在仓里作规格、提取器与判例改 tombstone（防腐 #6）。
+- **id 稳定**：`control:<screen>:<role>:<slug-en>[#n]`（同 id 按源码顺序 #2/#3 稠密编号）、`rail:<slug>`、`lane:<slug>`、`screen:<screen>`、`setting:<overrides|prefs>:<key>`、`shortcut:<screen>:<key-slug>`、`notification:<kind>`、`theme:default`、`layout:<token>`。账本、报告、vitest 的 it 标题全部用这些 id 说话。
+- **唯一手写部分 = 归属表**（`FILE_SCREEN` / `TYPE_SCREEN` / `MEMBER_SCREEN`：文件 / 类型 / 成员 → screen；`SCREEN_OWNER`：screen → **谁负责补齐**：`web`（进门）/ `shell`（R2.2.3 原生残留：实时字幕悬浮窗、系统通知、macOS 应用菜单）/ `os`（⌘Q/⌘W/⌘H/⌘M/编辑菜单等系统惯例）/ `retired`（计划明文退役：D3 菜单栏状态项菜单、「显示菜单栏图标」、首启气泡「我在这里 👆」））。表本身进 JSON 的 `attribution` 节——改表 = 改规格，PR 可见、判例可钉。非 web 的条目**只列不判**；说明性文案（copy / help）同样只列不判——web 有自己的句子，但短标签、按钮、选项、字段名必须**逐字**（zh 与 en 都要）。
+
+### 66.2 门 `[ui-parity]`（scripts/ui/parity_check.py；shrink-only 两本账）
+
+- **探针**（每条 gated id 一个，真/假二值）：`control:*` → `web/src/parity.test.tsx`：由清单驱动生成 it()（不手写列表），用 demo fixture（`ui/parity/fixtures/`，`scripts/ui/parity_fixture.py` 从 `scripts/demo_seed.py` + `server/lanes.py` 落成，判例钉新鲜）渲染看板 / 回收站 / 设置三面 × zh / en，把每颗按钮点一遍收弹窗文案，按 accessible name / 自身文本**精确**匹配（插值 `{expr}` 放宽为正则）；原生 screen 按前缀映射到渲染面（`settings.*` → 设置页、`trash` → 回收站、其余看板相关 → 看板；web 尚无的页面在全部面的并集里找，新开页面时在该文件登记）。`screen:*` → zh + en 标题字面量都在 web/src 源码（剥注释、排除 `*.test.*`）；`rail:<slug>` → 双语标题 + `data-rail-item="<slug>"`，`rail:order` → 属性出现顺序 = 原生顺序且容器带 `data-rail="left"`；`lane:*` → 双语列名在 web/src 或 `server/lanes.py`，`lanes:order` → `LANES` 的 slug 顺序 = 原生顺序，`lanes:rail-left/right` → `BoardLanes.tsx` 的 BacklogStrip 在所有 Lane 之前、ArchiveStrip 之后；`setting:overrides:<k>` → `server/settings*.py` 出现 `"<k>"`（server 是 overrides 的 web 侧写者，§59.5）；`setting:prefs:<k>` → web/src 出现 `"<k>"`；`shortcut:*` → 字形（`⌘F`…）出现在 web/src；`theme:default` → `web/index.html` 首帧脚本写着 `dataset.theme = "light"` 兜底（无存储偏好时不跟随系统深色——owner (b)）；`layout:*` → 某个 web/src CSS `var(--native-layout-…)` 消费该 token（owner (c) 的列宽 400 / 书立条 44 / 列距 12 / 内边距 16 / 侧栏 48）。
+- **判决 = §58.4 同一三态**（`qa_common.compare_with_ledger`，阈值 0）：缺席且不在 `ui/parity/pending.txt`、也不在 `ui/parity/waivers.txt` → **NEW → FAIL**（补实现，不许记账）；在 pending 上但已在场 → **STALE → FAIL**（同 PR 划掉那行）。vitest 侧同一语义：普通 it 断言「在」，`[pending]` it 断言「不在」，`[waived]` skip——Web tests job 与 qa-gates job 读同两本账本，判决一致。vitest 跑不起来（没 node / 没 `npm ci`）= 门红，**不软化**。
+- **两本账本只许缩**（`ledger_diff.py` 对 base 差分，按 id 集合，备注列不是分数）：`pending.txt` = 尚未搬到 web 的原生条目（出生 = 本节立法当天的全量缺项，truth = 该文件行数，本节不复述；**每个加 UI 的 PR 必须让它缩**）；`waivers.txt` = 有意不搬（种子 = #119 需输入退役的回答对话框四条；行形 `<id>  <理由>  <issue/决策引用>`）。新的「不搬」判断**不走 waivers**——走归属表把 screen 标成 `retired` / `shell` 并带决策引用（代码可审、判例可钉）。
+- **报告**：`ui/parity/report.json` + `report.md`（PRESENT / PENDING / MISSING / STALE / WAIVED 按类计数 + NEW / STALE 清单 + 不判条目按 owner 计数），门每次运行重写；CI 的 `qa-report` artifact 带一份判决文本。`[ui-parity]` 是 `run_gates.sh` 的第六道门、住在 `qa-gates` job（job 名不变，required check 按名字挂），该 job 因此装 node 并在 web/ 做 `npm ci`。
+
+### 66.3 设计 token 单源（ui/tokens/native-tokens.json → tokens.css 生成块）
+
+- `scripts/ui/extract_native_tokens.py` 从 mac/Sources 提取：语义色用量 → macOS 解析值（Apple HIG system colors，light / dark 两套；web tokens.css 头注早已采用的暗色家族与之逐值一致）、`Color.primary/secondary/accentColor.opacity(x)` 叠层比例、`.font(.system(size:weight:))` 字号梯（角色级映射仍由 §54.1 第 10 项的 `typeScale.ts` 承担）、`.padding` / `spacing:` / `cornerRadius:` 取值集、**layout 定点**（列宽 400 / 书立条 44 / 列距 12 / 看板内边距 16 / 列圆角 10 / 卡圆角 8 / 侧栏 48·200·160–320 / 窗口 900×640·min 720×480；任一定点找不到即 fail-loud）、`theme.default = light`（owner 拍板；原生 app 本身跟随 macOS 外观，无强制）。JSON 形照 W3C Design Tokens 草案（`$type` / `$value` / `$extensions.zai`）。
+- `web/src/styles/tokens.css` 末尾的 `@generated-begin native-tokens … @generated-end` 块由同一脚本生成：只放 `--native-*` 数据变量（`--native-default-theme`、`--native-layout-*`、`--native-color-<x>-light/dark`、`--native-overlay-*`），**不做主题切换逻辑**；手改无效（判例钉「重跑零 diff」）。把它们接进语义 token（`--danger` / `--status-*` / 列宽）并翻默认主题是 **PR-B** 的活；本节只钉数值。组件消费方式 = `var(--native-layout-…)`（`layout:*` 探针即以此判「已消费」）。
+
+### 66.4 视觉基线（web/e2e/visual.spec.ts；CI job「Web visual (playwright)」）
+
+- `@playwright/test` 为 web dev 依赖；`web/e2e/demoServer.ts` 把 `scripts/demo_seed.py` 的 initial 场景种进临时 `AIASSISTANT_HOME`（绝不碰生产 state/），随机空闲端口起 `python3 -m server`；spec 对 看板 / 回收站 / 设置 × light / dark 各截 1440×900 一张，与 `web/e2e/__screenshots__/visual.spec.ts/*.png` 的 golden 比对（`maxDiffPixelRatio` 2%；新鲜度 / 部署标签遮罩）。golden 路径不带平台后缀，在 macOS 生成，CI 也跑 macos-latest（ubuntu 字体会让每张都「回归」）。
+- **改 UI 的 PR 必须显式更新 golden**（`cd web && npm run visual:update`，提交 png，PR 描述写明哪几张为何变）——golden 漂移不是噪音是决策。job 出生 informational（`continue-on-error`，红了上传 diff artifact `web-visual`），稳定后再议升门。
+
+### 66.5 与其它法条的关系
+
+§54.1 是 web 看板 parity 的判断清单（人写），本节是它的机器化上层：§54.1 的每一项都应对应清单里若干 id 的 PRESENT。§58 的账本哲学（出生即绿、只许缩、对 base 差分）在此复用不重造；§58.4 的 `ledger_diff` 顺带看管 `ui/parity/*.txt`。§61.2 header 两开关的「逐字镜像」正是本节探针对 control 的要求。P8 删 mac/ 后：清单 JSON 与 token JSON 继续作规格，提取器、`tests/test_ui_native_inventory_fresh.py` 与 §66.3 判例一起改 tombstone。
+
+## 67. skill 商店：仓库内 `skills/` + 清单 + 软链接启用 + 漂移检测 + 跨机同步（owner 决策 D13；R2.7）
+
+> §62 素材库（#157）、§63 会议 recap（#159）、§64 卡片摘要与评语（#160）、§65 自动草稿 PR 通道（#167）、§66 UI 对齐契约（#162）各自立法在前，本节（原稿写作 §62）取下一个空号 §67——§ 号永不复用。
+
+owner 原话（2026-09-01）：「skill 商店 塞进本仓库」。此前四个地点四个 owner 零清单（repo `skills/board-agent` 不可被运行时发现、`ingest/skills/unprocessed-ingest`、vault `.claude/skills`、`~/.claude/skills/*` 真目录），`write-better` 已在 owner 机器上漂离 PR #102 的版本 122 行——「默认 vs 自定义」在第二台机器上无从判定（审计 I4）。本节把 **仓库 = 商店** 立法：skill 的真源是 `skills/<name>/`，清单是 `skills/index.yaml`，Claude Code 与派工 agent 真正读取的位置（`~/.claude/skills/<name>`）只放一个指回仓库的软链接。执法：`act/lib/skills.py`（唯一写者）、`server/settings.py`（`GET/POST /api/skills`）、`web/src/components/settings/SkillsSection.tsx`、`scripts/skills_sync.sh`、`install.sh install_skills`；判例 `tests/test_skills_store.py`、`tests/test_skills_manifest_repo.py`、`tests/test_server_skills.py`、`tests/test_install_skills_step.py`、`tests/integration/test_skills_agent_visibility.py`、`tests/integration/test_skill_write_better_style_check.py`、`web/src/components/settings/SkillsSection.test.tsx`。
+
+### 67.1 商店格式（R2.7.1）
+
+- 一个 skill = `skills/<name>/SKILL.md`（frontmatter：`name` = 目录名、`description`、**`version`**（点分整数，可放顶层或 `metadata.version`——Agent Skills 规范位）、`upstream` + `upstream_version`（改编来源；NOTICE 同记））+ 可选 `references/*.md` + 可选 `scripts/*.py`（stdlib、py3.9 floor）。skill **永不** import `act/`（要能从裸 checkout 和软链接两侧工作）、永不外发任何东西。
+- **清单 `skills/index.yaml`**（`schema: 1`；`skills[]` 每项 `name` / `version` / `upstream` / `upstream_version` / `default_enabled`（bool）/ `description`）。**三条一致性**由 `skills.validate_repo` 判例钉死：每个 `skills/*/SKILL.md` 在清单里且反之；frontmatter `version` == 清单 `version`；`.claude/skills/` 的集合 == `default_enabled: true` 的集合（67.4）。清单坏 = `ManifestError`（CLI exit 3、API 409 `CONFLICT`、install.sh `skills=fail`——仓库坏了与构建坏了同类）。
+- 出生名单：`board-agent`（1.0.0，默认开；§52）、`test-code`（0.2.1，默认开；R2.8）、`write-better`（1.0.0，**默认关**；PR #102 内容原样吸收，加 `version` 与 upstream 字段，唯一文本改动是把硬编码的 `/Users/zelin/...` voice-profile 路径改为「本 skill 所在 checkout 的 `state/voice-profile.md`」）。
+- **默认策略**：改变助手声音/行为的 skill `default_enabled: false`——没有人该因为 `git pull` 换一副嗓音（PR #102 的原则）；产品自身依赖的基建 skill（agent 通道礼仪、测试梯子）`default_enabled: true`。
+
+### 67.2 启用 / 停用 = `~/.claude/skills/<name>` 软链接（R2.7.2）
+
+- **enable**：`~/.claude/skills/<name>` → `<repo>/skills/<name>`（绝对路径软链接，目标 = 本 checkout）；文件系统拒绝 symlink（OSError）→ **copy 回退** `copytree`，并把 `{version, hash}` 记进 `state/skills.json.copies`，使之日后仍能被认出是「商店的副本」而非自定义。**disable**：解链 / 删商店拷贝。两者都写 `state/skills.json.decisions[name] = enabled|disabled`。
+- **状态词表（wire `state`，add-only）**：`disabled`（不存在）· `enabled`（软链接解析到本 checkout 的 `skills/<name>`；指向**别的** checkout 的 `…/skills/<name>` 或断链但形状是我们的 → 仍 `enabled` 且 `stale_target: true`）· `copy`（真目录，内容 hash == 仓库当前版 或 == 记录的拷贝 hash；后者 `stale_target: true`）· `custom`（真目录，内容与商店知道的任何版本都不同 = owner 自己的改动，R2.7.3）· `foreign`（指向非 `skills/<name>` 形状的软链接，或普通文件）。`toggle` 派生：enabled/copy → `disable`，disabled → `enable`，custom/foreign → **`locked`**。
+- **自定义永不被碰**：对 `custom` / `foreign` 的 enable/disable 一律拒绝（`SkillError` `SKILL_CUSTOM_KEEP` / `SKILL_FOREIGN_LINK`；API 409 `CONFLICT`，`details.code` 带该 token），sync 对它们零动作；要回到仓库版只能 owner 手动移走。`custom` 行显示 `installed_version`（本地 frontmatter）与 `relation` / `distance`：`behind` / `ahead` / `same` / `unknown`，**N 版 = 第一个不同的 semver 分量之差**（`0.2.1` → `0.4.0` = 落后 2 版；无版本号 = unknown）。
+- **单写者**：`~/.claude/skills` 的链接与 `state/skills.json` 只有 `act/lib/skills.py` 写（server 与 CLI 都调它，不镜像——镜像一个写者就是第二个写者；§58.3 规则 3 允许 server → act.lib）。`skills/` 目录本身只有 git 写（防腐 #8）。
+- **决策文件** `state/skills.json`：`{"schema":1, "decisions":{name: enabled|disabled}, "copies":{name:{version,hash}}, "updated_at"}`；读坏 = 当空（不崩）。它让 `default_enabled` 只在**没有记录**时生效——owner 关掉的 skill 在每次部署后**仍然关着**。
+
+### 67.3 跨机同步 `sync`（R2.7.2「另一台机器 git pull + 刷新即同步」）
+
+`python3 -m act.lib.skills sync`（`scripts/skills_sync.sh` 包它；`--pull` 先 `git pull --ff-only`）对清单每项：`enabled`/`copy` 且 `stale_target` → 重指本 checkout / 刷新拷贝（`repointed` / `copy_refreshed`）；`disabled` 且决策 `enabled` → 重建链接（`relinked`：决策文件是真相，手删链接不是决策）；`disabled` 且**无决策**且 `default_enabled` → 启用（`enabled_default`；`--no-defaults` 关掉这一条）；其余零动作。幂等。**install.sh 步 3b `install_skills`** 在每次安装/自动部署时跑它（把 §55 验证过的守护解释器经 `AIASSISTANT_PYTHON` 交给脚本——TCC 按 binary 记账，不能用 PATH 的 python3）：§23 step `skills` = `ok:<一行摘要>` / `skipped`（无守护解释器 / 脚本缺席）/ **`fail`（exit 3，清单坏——进 `failed_deploy_steps`）** / `warn:exit N — <stderr 尾行>`（其余非零：环境问题永不回滚部署，§56.5）。一台空白机器跑完一次 `install.sh`，`board-agent` 与 `test-code` 已在 `~/.claude/skills`——这是 owner「另一台电脑起一个空白环境就能直接使用」的 skill 半边。
+
+### 67.4 派工 agent 看得见仓库 skills（R2.7.4）——机制与边界
+
+- Claude Code 读 skill 的两个位置（其文档）：个人 `~/.claude/skills/`，项目 **工作目录及其每一级父目录到仓库根的 `.claude/skills/`**，都跟随软链接；同名冲突个人覆盖项目、同一目标只加载一次。本 repo 因此**在 git 里追踪** `.claude/skills/<name>` → `../../skills/<name>`（**相对**软链接，只为 `default_enabled` 集合），`.gitignore` 加 `.claude/*` + `!.claude/skills/`（Claude Code 自己的 worktrees / 锁 / local settings 不进 repo）。效果：每个 checkout、每个 `git worktree`——包括 `claude --bg` 隔离进去的 `<repo>/.claude/worktrees/<name>`——都自带这两个 skill，agent 读到的是**该 worktree 自己那份**（改 skill 的 agent 看见自己的改动），零 per-machine 步骤、零 executor 改动。
+- **executor argv 不变**（§59.1「follow 时逐字节相同」的判例继续成立）：不加 `--add-dir`。理由：目标仓库是别的 repo 时，agent 该看到的是这台机器**启用了**的 skill（= 个人 `~/.claude/skills`，67.2 的产物），`--add-dir <本 repo>` 会把默认关的 skill 也推给每个 agent，与 67.1 默认策略相悖；目标是本 repo（P6 自动 PR 通道，D7 唯一通道）时 67.4 第一条已经覆盖。日后若确需，另修本节。
+- **判例的诚实边界**：`tests/integration/test_skills_agent_visibility.py` 用真 git worktree + 经 `executor._default_runner` 启动的 **假 claude**（按文档规则实现发现：项目链 + 个人覆盖）钉住的是**我们这侧的文件系统契约**（链接形状、解析到 worktree 自己的副本、个人优先），不是 Claude Code 本身——测试永不真起 claude（`tests/__init__.py` 守卫）。
+
+### 67.5 server / web 面
+
+`GET /api/skills` → `{"skills":[row…], "skills_dir", "repo_skills_dir", "state_path"}`；row = `Store.inspect` 输出（`name / version / upstream / upstream_version / default_enabled / description / path / target / link / state / stale_target / installed_version / relation / distance / decision / project_visible / toggle`，add-only；web `SkillRow` 逐字镜像）。`POST /api/skills {name, action: enable|disable}`（四闸；字段白名单 400 `UNKNOWN_FIELD`、形状 400 `INVALID_FIELD`、未知名 404、custom/foreign 409 `CONFLICT`）→ 新快照。设置页 section「Skills」：一行一个 skill（名 / 版本 / 描述 / 状态徽章 / 「仓库内可见」「默认开」章 / 启用·停用按钮，locked 行禁用并解释），server 拒绝的整句原文 toast（`role=alert`）。**不做**：远程拉取 / 市场（skill 随 repo 走，作为代码审查）、per-skill 配置 UI、编辑器。
+
+### 67.6 R2.8.2 留待后续
+
+「agent 收工前自动跑 test-code + 报告附 PR」不在本节——它改 executor prompt（`_quality_gate_block`），另 PR 与 §33 同修。本节只保证 agent **看得见** `test-code`（67.4）。

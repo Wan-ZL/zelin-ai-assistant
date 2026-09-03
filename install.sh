@@ -12,6 +12,9 @@
 #      updates, so the grant survives — the versioned path under
 #      ~/.local/share/claude/versions/ changed under every update)
 #   3. create state/ and state/inbox/
+#   3b. `skills` step (CONTRACT §67): scripts/skills_sync.sh — link the
+#      default_enabled store skills into ~/.claude/skills (never overriding a
+#      recorded decision or a custom copy) so a fresh machine has them
 #   4. build + install the legacy Mac app (mac/build.sh --install; frozen, D3)
 #   4b. `ui` step (CONTRACT §56.5): build the web board (web/ -> web/dist via
 #      npm ci + npm run build) and the board shell app (shell/build.sh) and
@@ -293,6 +296,50 @@ report_step() { # $1=name $2=status [$3=detail]
 # is their count.
 failed_deploy_steps() {
     printf '%s' "$REPORT_STEPS" | grep -E '^[^=]+=fail' | grep -v '^app=' || true
+}
+
+# Step 3b — the skill store (CONTRACT §67; §23 step `skills`). Runs
+# scripts/skills_sync.sh with the daemon interpreter: re-points ~/.claude/skills
+# links at THIS checkout, applies `default_enabled` where this machine has no
+# recorded decision (state/skills.json), never touches a custom copy. A fresh
+# machine therefore has board-agent + test-code linked after one install.sh.
+# Verdict (§56.5 spirit — environment problems never roll a deploy back):
+#   ok       sync ran; detail = the store's one-line summary
+#   skipped  no daemon interpreter (runtime_python already failed) or the
+#            script is missing (partial checkout)
+#   fail     exit 3 = skills/index.yaml broken — the repo is broken, same class
+#            as a build failure (tests/test_skills_manifest_repo.py pins it)
+#   warn     any other non-zero (store refused / ~/.claude unwritable …); detail
+#            carries the last stderr line so the log says WHY
+# A function so tests run it against a stub skills_sync.sh (tests/test_install_skills_step.py).
+install_skills() {
+    _sync="$REPO_ROOT/scripts/skills_sync.sh"
+    if [ -z "${RUNTIME_PY:-}" ]; then
+        warn "skill store not synced — no daemon python (see runtime_python above)"
+        report_step "skills" "skipped" "no daemon python"
+        return 0
+    fi
+    if [ ! -f "$_sync" ]; then
+        warn "skill store not synced — $_sync missing"
+        report_step "skills" "skipped" "scripts/skills_sync.sh missing"
+        return 0
+    fi
+    _err="$(mktemp 2>/dev/null || printf '/tmp/zai-skills-sync.%s' "$$")"
+    _summary="$(AIASSISTANT_PYTHON="$RUNTIME_PY" bash "$_sync" 2>"$_err")"
+    _rc=$?
+    _why="$(tail -n 1 "$_err" 2>/dev/null)"
+    rm -f "$_err"
+    if [ "$_rc" -eq 0 ]; then
+        ok "skills: ${_summary:-synced}"
+        report_step "skills" "ok" "${_summary:-synced}"
+    elif [ "$_rc" -eq 3 ]; then
+        warn "skills/index.yaml is broken — ${_why:-manifest error}"
+        report_step "skills" "fail" "manifest broken — ${_why:-see log}"
+    else
+        warn "skill store sync did not complete (exit $_rc) — ${_why:-no detail}"
+        report_step "skills" "warn" "exit $_rc — ${_why:-no detail}"
+    fi
+    return 0
 }
 
 # Step 4 — build + install the Mac app (CONTRACT §23 step `app`; §56.5).
@@ -1356,6 +1403,11 @@ if [ ! -f "$REPO_ROOT/state/dashboard.json" ]; then
         warn "could not generate dashboard.json (run: python -m act.lib.dashboard)"
     fi
 fi
+
+# --------------------------------------------------------------------------
+echo ""
+echo "==> 3b. skill store — ~/.claude/skills links for skills/ (CONTRACT §67)"
+install_skills
 
 # --------------------------------------------------------------------------
 echo ""
