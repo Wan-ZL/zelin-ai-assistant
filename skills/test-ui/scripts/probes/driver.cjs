@@ -8,7 +8,7 @@
 // prefers-color-scheme emulations, optional axe-core violations, and a masked screenshot.
 // Output: one JSON file (config.out) = {tool, dims, runs:[…]} parsed by inventory_a11y.parse_runtime.
 // CommonJS on purpose: `require(config.playwright)` works from any cwd (ESM ignores NODE_PATH).
-// Law pointers: CONTRACT §62 (parity contract; demo seed only — the Python side refuses to run this without
+// Law pointers: CONTRACT §UI-parity (parity contract; demo seed only — the Python side refuses to run this without
 // the demo marker), §58 (thresholds read-only). Design: vnext2-plan R2.8 / D14.
 "use strict";
 const fs = require("fs");

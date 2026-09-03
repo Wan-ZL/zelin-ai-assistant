@@ -2,7 +2,7 @@
 过滤器 + fail closed（截断 / 16-bit / 坏签名）、slugify 与 parity 契约同口径、配对键、tokens 扁平化、
 清单 schema 校验（坏清单报出路径）。零子进程。
 
-法典：docs/CONTRACT.md §62（id 语法）；设计 vnext2-plan R2.8。负控制：#8a8f99 on white < 4.5；截断 PNG 抛。
+法典：docs/CONTRACT.md §UI-parity（id 语法）；设计 vnext2-plan R2.8。负控制：#8a8f99 on white < 4.5；截断 PNG 抛。
 """
 import struct
 import unittest

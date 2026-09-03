@@ -12,7 +12,7 @@ golden 绑机器：<goldens>/<platform>-<engine>-dpr<n>/manifest.json 里每张 
 `unreviewed_golden`；别的机器的 golden = UNAVAILABLE（不是 fail）。skill **永不**写 golden：
 提案落到 <report>/proposed/goldens/，人来拷。
 
-法典指针：docs/CONTRACT.md §62.4（视觉基线：web/e2e/visual.spec.ts + __screenshots__ 是项目仪器，
+法典指针：docs/CONTRACT.md §UI-parity.4（视觉基线：web/e2e/visual.spec.ts + __screenshots__ 是项目仪器，
 在场时逐字调用为 `project_visual`；本文件是无项目仪器时的 fallback）、§58（阈值只读）。
 设计 = vnext2-plan R2.8 / D14。真实数据永不入图（seed_guard 在 run_ui）。
 判例：tests/test_skill_test_ui_visual.py（1% 植入色块 → 0.01 ± 1e-6；60% 遮罩 → 超帽；截断 PNG → 抛）。

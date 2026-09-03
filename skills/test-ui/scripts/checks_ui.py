@@ -10,7 +10,7 @@
 项目仪器优先：scripts/ui/parity_check.py → `project_parity`、web/e2e/visual.spec.ts → `project_visual`，
 在场逐字调用；skill 自己的 pair/visual 也跑，共有 id 判决不一致 = run_ui 记 `parity_disagreement`。
 
-法典指针：docs/CONTRACT.md §62（parity 契约仪器）、§58（阈值只读）。设计 = vnext2-plan R2.8 / D14；
+法典指针：docs/CONTRACT.md §UI-parity（parity 契约仪器）、§58（阈值只读）。设计 = vnext2-plan R2.8 / D14；
 层菜单 = references/tiers.md，触发器 = references/triggers.md，扩展圈 = references/catalog.md。
 判例：tests/test_skill_test_ui_checks.py。
 """

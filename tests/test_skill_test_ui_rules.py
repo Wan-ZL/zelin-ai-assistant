@@ -3,7 +3,7 @@ wcag.name.interactive（无名图标按钮）、wcag.target.size（20×20 目标
 wcag.keyboard（不在 Tab 走位里）、wcag.lang（html 无 lang）、wcag.heading.order（h1 → h3）、tokens.off_literal；
 waiver 让 hit 变 WAIVED；只有 critical/serious 判红；opinion 只能写 report.opinion，试图写 checks/items/fix_first 的键被丢弃并记录。
 
-法典：docs/CONTRACT.md §62；设计 vnext2-plan R2.8。零子进程。
+法典：docs/CONTRACT.md §UI-parity；设计 vnext2-plan R2.8。零子进程。
 """
 import unittest
 

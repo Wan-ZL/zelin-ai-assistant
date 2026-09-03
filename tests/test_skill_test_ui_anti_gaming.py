@@ -3,7 +3,7 @@
 threshold_raised；未审 golden = FAIL；pending 长了 = FAIL；替代物永不 pass；超时永不被 post hook 翻案；
 --propose-* 只落报告目录，项目树零字节。零子进程。
 
-法典：docs/CONTRACT.md §58（阈值只读、账本只缩）/ §62；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §58（阈值只读、账本只缩）/ §UI-parity；设计 vnext2-plan R2.8。
 """
 import os
 import tempfile

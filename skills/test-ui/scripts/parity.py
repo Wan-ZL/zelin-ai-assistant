@@ -10,12 +10,12 @@ hidden（display:none / hidden / aria-hidden / 0×0 / 不可聚焦且离屏）= 
 TOPOLOGY：landmark / navigation / region / list / heading / tablist 比 parent（地标路径）、order、
 side（相对 main）；GEOMETRY：`layout.*` 声明值 vs 运行时 bbox（config.geometry 映射）。
 
-账本语义（docs/CONTRACT.md §58.4 三态 + §62.2 pending/waivers）：MISSING 且在 pending → 记账
+账本语义（docs/CONTRACT.md §58.4 三态 + §UI-parity.2 pending/waivers）：MISSING 且在 pending → 记账
 不判红；PRESENT 却在 pending → STALE（划掉）；waivers 行必须带理由，`<rule>::<id>[::theme]`
 或 `<id>` 或 `*`；pending 对 merge-base 只许缩（grew = FAIL）；aliases 悬空 = FAIL。
 skill 不写任何账本；`--propose-pending` 落到 <report>/proposed/。
 
-法典指针：§62（parity 契约 id 语法；本模块与 scripts/ui/parity_check.py 读同一本账；两者对
+法典指针：§UI-parity（parity 契约 id 语法；本模块与 scripts/ui/parity_check.py 读同一本账；两者对
 共有 id 的判决不一致 = run_ui 记 FAIL `parity_disagreement`，永不取平均）、§58（阈值只读）。
 设计 = vnext2-plan R2.8 / D14。判例：tests/test_skill_test_ui_pair.py / _topology / _geometry /
 _ledgers / _opinion_isolation（负控制齐全）。

@@ -2,7 +2,7 @@
 `native`；解析不出 → ReferenceError（列候选）；git: 只解析 sha、worktree 懒建、清理；marker 探针只打回环地址、
 fetch 可注入；坏 config.json fail closed。零真子进程。
 
-法典：docs/CONTRACT.md §62（native 别名 = 冻结源）；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §UI-parity（native 别名 = 冻结源）；设计 vnext2-plan R2.8。
 """
 import os
 import tempfile

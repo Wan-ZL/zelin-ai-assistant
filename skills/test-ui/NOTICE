@@ -10,5 +10,5 @@ scripts/ladder_common_vendored.py is a byte-identical vendored copy of skills/te
 through a ~/.claude/skills symlink in any repository and must not import a sibling skill or the product packages.
 
 The id grammar `<kind>:<screen>:<role>:<slug>`, the slugify rule and the pending/waivers ledger line shape are the
-project's UI parity contract (scripts/ui/ui_common.py, CONTRACT §62 when landed); the skill speaks it, it does
+project's UI parity contract (scripts/ui/ui_common.py, CONTRACT §UI-parity when landed); the skill speaks it, it does
 not redefine it. WCAG 2.2 success-criterion names in references/rules/wcag.json are W3C's (W3C Document License).

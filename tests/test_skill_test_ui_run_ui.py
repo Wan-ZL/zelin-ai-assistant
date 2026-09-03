@@ -4,7 +4,7 @@ fixture 对（subject vs dir:ref）真跑一遍 → RED 且 fix-first 顺序正�
 UNAVAILABLE（runtime 缺席，INCOMPLETE 而非 GREEN——诚实）；report.md 的固定小节；parity_disagreement。
 零真子进程（runner 全 fake；fixture 提取是纯 Python）。
 
-法典：docs/CONTRACT.md §58 / §62；设计 vnext2-plan R2.8 / D14（R2.8.2 两种调用）。
+法典：docs/CONTRACT.md §58 / §UI-parity；设计 vnext2-plan R2.8 / D14（R2.8.2 两种调用）。
 """
 import contextlib
 import io

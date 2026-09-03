@@ -3,7 +3,7 @@
 internal / cmd 走向（runtime 缺席 → unavailable 带安装提示；项目仪器在场 → cmd 逐字；seed_probe 两步）；菜单每行有
 kind / sensor / mode / est_seconds。零子进程。
 
-法典：docs/CONTRACT.md §58 / §62；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §58 / §UI-parity；设计 vnext2-plan R2.8。
 """
 import unittest
 

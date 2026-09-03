@@ -3,7 +3,7 @@
 （gates.toml [ui] → config.thresholds → 默认）、diff → 触发器（docs-only 不点火、.md 里的 aria-label 不点火）、
 tier 推荐、两侧仪器模式、菜单形状。零真子进程（git / node 全 FakeRunner）。
 
-法典：docs/CONTRACT.md §58 / §62；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §58 / §UI-parity；设计 vnext2-plan R2.8。
 """
 import os
 import tempfile

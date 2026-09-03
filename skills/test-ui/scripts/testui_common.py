@@ -3,8 +3,8 @@
 W3C design-tokens 扁平化、清单 schema 校验。detect_ui / inventory_a11y / tokens /
 visual / parity / run_ui 都从这里取。
 
-法典指针：docs/CONTRACT.md §58（阈值只读；账本 new/worse/stale 语义借用）、§62（UI 对齐
-契约——parity PR 落地后的法条槽位；id 语法 `<kind>:<screen>:<role>:<slug>` 与
+法典指针：docs/CONTRACT.md §58（阈值只读；账本 new/worse/stale 语义借用）、§UI-parity（UI 对齐
+契约——feat/ui-parity-contract 落地时分配法条号，truth = docs/CONTRACT.md；本 skill 各文件的「§UI-parity」都指它；id 语法 `<kind>:<screen>:<role>:<slug>` 与
 scripts/ui/ui_common.slugify 逐字兼容，判例钉死）。设计 = docs/design/vnext2-plan.md
 R2.8 / D14（test-code 的姐妹 skill）。stdlib only、py3.9 floor、零网络、不 import act。
 

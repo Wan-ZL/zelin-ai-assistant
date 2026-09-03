@@ -4,7 +4,7 @@ dir:ref → RED 且每个植入缺陷在报告里；ref vs ref → 无 MISSING�
 Launcher / wait_ready / demo marker 探针走真回环 HTTP → stop 后端口释放；playwright 在场才真跑 driver，缺席则断言
 structure_runtime 是 UNAVAILABLE 且提示写明安装命令（永不假绿）。零网络（只打 127.0.0.1）、零 claude。
 
-法典：docs/CONTRACT.md §58 / §62；设计 vnext2-plan R2.8。时间预算 BUDGET_SECONDS 兜底。
+法典：docs/CONTRACT.md §58 / §UI-parity；设计 vnext2-plan R2.8。时间预算 BUDGET_SECONDS 兜底。
 """
 import json
 import os

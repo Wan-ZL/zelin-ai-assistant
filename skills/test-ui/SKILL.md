@@ -8,7 +8,7 @@ upstream_version: test-code 0.2.1
 
 # test ui 测 UI — the measurement ruler for interfaces
 
-<!-- `$SKILL` = this directory. Deterministic scripts decide; this file only decides what to run. Sides: SUBJECT (the UI under test) and REFERENCE (`--against`). Sensors: STRUCTURE · TOKENS · VISUAL. Every artifact carries `producer.mode` (runtime | source | frozen). -->
+<!-- `$SKILL` = this directory. Deterministic scripts decide; this file only decides what to run. Sides: SUBJECT (the UI under test) and REFERENCE (`--against`). Sensors: STRUCTURE · TOKENS · VISUAL. Every artifact carries `producer.mode` (runtime | source | frozen). Law pointers: CONTRACT §58 (thresholds read-only) now; "§UI-parity" below = the UI 对齐契约 section that `feat/ui-parity-contract` adds (number assigned when it lands; truth = docs/CONTRACT.md) — the skill changes no law. -->
 
 ## The loop — ask ONCE per run, never per check
 

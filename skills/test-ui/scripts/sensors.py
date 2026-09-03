@@ -8,7 +8,7 @@ driver 采集（一次采完，后续检查只读 bundle）；phase 3 = 配对�
 fail closed：读不到 = fail，抛异常 = run_ui 记 fail。`producer.mode` 决定 substituted：
 源清单对着 runtime 参照只能是 substituted；对着冻结源参照（`native`）就是真仪器。
 
-法典指针：docs/CONTRACT.md §62（parity 契约 = 项目仪器优先，在场逐字调用）、§58（阈值只读）、
+法典指针：docs/CONTRACT.md §UI-parity（parity 契约 = 项目仪器优先，在场逐字调用）、§58（阈值只读）、
 §45 无关（清单不铸卡）。设计 = vnext2-plan R2.8 / D14。判例：tests/test_skill_test_ui_checks.py、
 tests/test_skill_test_ui_seed_guard.py、tests/test_skill_test_ui_run_ui.py。
 """

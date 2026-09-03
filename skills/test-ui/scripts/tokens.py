@@ -11,7 +11,7 @@ W3C design-tokens 形状，按主题扁平成点路径（`layout.lane.width`）�
   literal-census  组件 CSS 里绕过 token 的字面量（color / radius / font-size）——`off_token_literals`
   theme-declared  index.html 首帧脚本 + tokens.css `color-scheme` → 声明的默认主题
 
-法典指针：docs/CONTRACT.md §62.3（token 单源 = ui/tokens/native-tokens.json → tokens.css 生成块；
+法典指针：docs/CONTRACT.md §UI-parity.3（token 单源 = ui/tokens/native-tokens.json → tokens.css 生成块；
 skill 只读两端、比较、不生成）、§58（阈值只读）。设计 = vnext2-plan R2.8 / D14；SKILL.md「TOKENS」。
 颜色一律 `#rrggbbaa`，长度 px（1pt = 1px），字重 regular/medium/semibold/bold → 400/500/600/700。
 判例：tests/test_skill_test_ui_tokens.py（负控制：dark 少一个 token；组件 CSS 里 `color: #fff`）。

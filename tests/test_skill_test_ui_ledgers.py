@@ -2,7 +2,7 @@
 匹配优先序；pending 对 merge-base 只许缩（grew = 问题）；waivers 新增要 acknowledged；aliases 悬空；
 parse_ledger 与 parity 契约同口径（`# 注释` / `<id>  <rest>`）。零子进程。
 
-法典：docs/CONTRACT.md §58.4（三态）/ §62.2（pending / waivers）；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §58.4（三态）/ §UI-parity.2（pending / waivers）；设计 vnext2-plan R2.8。
 负控制：pending 长了 → pending_grew；无理由 waiver → reasonless_waiver（不 WAIVED）。
 """
 import os

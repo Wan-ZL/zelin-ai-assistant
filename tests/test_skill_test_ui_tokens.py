@@ -2,7 +2,7 @@
 layout.group.name）、font 简写拆解、W3C JSON 双值拆主题、typeScale.ts 表、默认主题声明三态、字面量普查、
 token 比较（MISSING 只对 required 家族、dimension 容差、颜色归一）、theme parity。零子进程。
 
-法典：docs/CONTRACT.md §62.3；设计 vnext2-plan R2.8。负控制：dark 少一个 token；组件 CSS 里 `color: #fff`。
+法典：docs/CONTRACT.md §UI-parity.3；设计 vnext2-plan R2.8。负控制：dark 少一个 token；组件 CSS 里 `color: #fff`。
 """
 import os
 import tempfile

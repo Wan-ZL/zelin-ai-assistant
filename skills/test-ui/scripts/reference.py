@@ -2,7 +2,7 @@
 """test-ui skill · `--against` 解析：把参照（REFERENCE）的七种写法变成一条 side 记录，
 每个传感器（STRUCTURE / TOKENS / VISUAL）各带一个仪器模式（runtime | source | frozen | na）。
 
-法典指针：docs/CONTRACT.md §58（只读项目配置）、§62（parity 契约：`native` 别名 =
+法典指针：docs/CONTRACT.md §58（只读项目配置）、§UI-parity（parity 契约：`native` 别名 =
 ui/parity/native-inventory.json + ui/tokens/native-tokens.json，冻结源；skill 只读）。
 设计 = docs/design/vnext2-plan.md R2.8 / D14；SKILL.md「Reference — --against」。
 

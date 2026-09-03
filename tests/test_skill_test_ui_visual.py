@@ -3,7 +3,7 @@ bbox 对；容差；遮罩排除 + masked_ratio 超帽；尺寸不同 = dimensio
 （sha 不符 = unreviewed、无 reason = reasonless、悬空、坏 manifest、无 manifest）；machine_key；compare_shot
 阈值边界；odiff 三种退出码解析。零子进程（odiff 走 FakeRunner）。
 
-法典：docs/CONTRACT.md §62.4；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §UI-parity.4；设计 vnext2-plan R2.8。
 """
 import contextlib
 import io

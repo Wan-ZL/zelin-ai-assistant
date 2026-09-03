@@ -2,7 +2,7 @@
 → CHANGED geometry 并注明「declared matches, rendered does not」；源模式替代物只看 token 是否被 CSS 消费
 且永远 substituted；默认主题 light → dark（漏项「暗色默认」）→ CHANGED declared；首帧观察值不等 → observed。
 
-法典：docs/CONTRACT.md §62.3；设计 vnext2-plan R2.8。零子进程。
+法典：docs/CONTRACT.md §UI-parity.3；设计 vnext2-plan R2.8。零子进程。
 """
 import unittest
 

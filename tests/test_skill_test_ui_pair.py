@@ -2,7 +2,7 @@
 近似只给建议不自动配对；hidden 永不 PRESENT；count 与 #n 序号；owner ∉ web = N-A；dynamic 名 = N-A；
 extras 只是信息。零子进程。
 
-法典：docs/CONTRACT.md §62（配对 = parity 契约 id 语法）；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §UI-parity（配对 = parity 契约 id 语法）；设计 vnext2-plan R2.8。
 负控制：参照有 control:board:button:approve、被测没有 → MISSING 且 fix-first 级别材料齐全。
 """
 import unittest

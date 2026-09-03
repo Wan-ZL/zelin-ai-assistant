@@ -3,7 +3,7 @@ alt / title；hidden 三态；双语 `text("zh","en")`；`{flags.x && …}` gate
 容器只认显式标签；TSX 的 `=>`、泛型、行首注释不当标签；同 id #n 序号跨文件全局；project:native 归一。
 负控制：无名图标按钮 → unnamed；display:none → hidden。零子进程（native 走内存 dict）。
 
-法典：docs/CONTRACT.md §62（id 语法、role 映射表）；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §UI-parity（id 语法、role 映射表）；设计 vnext2-plan R2.8。
 """
 import unittest
 

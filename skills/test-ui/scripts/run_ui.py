@@ -2,7 +2,7 @@
 """test-ui skill · 梯子 runner：选择 → 执行（phase 1 并行静态 / 2 串行起 app 采集 / 3 依赖 bundle 的
 配对与 diff）→ report.md + report.json；退出码 fail-closed。ASK 由 AI 在 SKILL.md 里完成，这里只记录。
 
-法典指针：docs/CONTRACT.md §58（阈值只读、账本只缩）、§62（parity 契约：skill 写不进项目树——
+法典指针：docs/CONTRACT.md §58（阈值只读、账本只缩）、§UI-parity（parity 契约：skill 写不进项目树——
 `--propose-pending` / `--propose-goldens` 只落 <report>/proposed/ 并打印拷贝命令；项目门与 skill
 判官对共有 id 不一致 = FAIL `parity_disagreement`，永不取平均）。设计 = vnext2-plan R2.8 / D14。
 

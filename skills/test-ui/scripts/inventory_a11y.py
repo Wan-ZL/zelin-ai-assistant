@@ -13,7 +13,7 @@
   web-playwright probes/driver.cjs 在项目自己的 playwright 里跑（绝不安装）：ariaSnapshot 式
                  节点、bbox、computed tokens、tab 走位、overflow、截图——mode=runtime
 
-法典指针：docs/CONTRACT.md §62（id 语法 `<kind>:<screen>:<role>:<slug>`，与 parity 契约
+法典指针：docs/CONTRACT.md §UI-parity（id 语法 `<kind>:<screen>:<role>:<slug>`，与 parity 契约
 同一套；§45「屏幕不发起卡片」在此无关——清单只描述 UI 面）、§58（只读）。设计 =
 docs/design/vnext2-plan.md R2.8 / D14。stdlib only；子进程只经 runner 注入缝。
 判例：tests/test_skill_test_ui_inventory_source.py（含负控制：无名图标按钮、display:none）。

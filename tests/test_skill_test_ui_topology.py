@@ -2,7 +2,7 @@
 order 变了——必须被抓住（今日四漏之一）。源提取器从 data-side 取 side、从地标嵌套取 parent；判官只对
 landmark / list / region / heading / tablist 比拓扑；缺一侧的值（源模式无 bbox）不裁。零子进程。
 
-法典：docs/CONTRACT.md §62；设计 vnext2-plan R2.8。负控制：rail side left → top、parent window → banner。
+法典：docs/CONTRACT.md §UI-parity；设计 vnext2-plan R2.8。负控制：rail side left → top、parent window → banner。
 """
 import unittest
 

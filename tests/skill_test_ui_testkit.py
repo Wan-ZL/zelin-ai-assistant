@@ -1,7 +1,7 @@
 """test-ui skill 判例共用件：把 skills/test-ui/scripts 挂进 sys.path、造 fixture mini-repo、造最小
 detection dict、可脚本化的 FakeRunner（绝不真起子进程）、最小清单 / tokens 文档 / 合成 PNG。
 
-法典指针：docs/CONTRACT.md §58（skill 只读项目阈值）、§62（parity 契约 id 语法）；设计 vnext2-plan R2.8 / D14。
+法典指针：docs/CONTRACT.md §58（skill 只读项目阈值）、§UI-parity（parity 契约 id 语法）；设计 vnext2-plan R2.8 / D14。
 """
 import os
 import shutil

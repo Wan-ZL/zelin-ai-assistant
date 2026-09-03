@@ -4,7 +4,7 @@ runtime 不可用 → UNAVAILABLE 带提示；seed 拒绝 → FAIL 且不起 app
 driver rc≠0 → FAIL；parse_runtime 的 schema 形状与 focus walk idx→id；seed_guard 检查在有/无 runtime 产物时的判决；
 Launcher 停止杀进程组；wait_ready 超时。
 
-法典：docs/CONTRACT.md §62（demo seed 强制）、§45 精神（真实数据永不进图）；设计 vnext2-plan R2.8。
+法典：docs/CONTRACT.md §UI-parity（demo seed 强制）、§45 精神（真实数据永不进图）；设计 vnext2-plan R2.8。
 """
 import json
 import os

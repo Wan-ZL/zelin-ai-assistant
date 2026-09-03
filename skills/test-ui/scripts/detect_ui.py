@@ -3,7 +3,7 @@
 （SUBJECT / REFERENCE，每个传感器一个仪器模式）+ 阈值来源 + diff → 触发器 + tier 推荐 + 菜单 → JSON。
 
 法典指针：docs/CONTRACT.md §58（阈值单源：qa/gates.toml `[ui]` → ui/parity/config.json .thresholds →
-skill 默认值并注明 strict；skill 只读）、§62（parity 契约适配器：scripts/ui/*.py、ui/parity/*、
+skill 默认值并注明 strict；skill 只读）、§UI-parity（parity 契约适配器：scripts/ui/*.py、ui/parity/*、
 web/e2e/visual.spec.ts 在场即被点名）。设计 = vnext2-plan R2.8 / D14；SKILL.md「1 Detect」。
 
 用法：detect_ui.py [--repo PATH] [--base REF] [--against REF] [--out FILE]
