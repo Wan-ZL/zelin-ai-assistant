@@ -1,0 +1,2 @@
+type: fixed
+- **验收 job 的 `board server` 断言按 §54.2 改正（§69.4）**：`--no-launchd` 下验收步手起的 `python3 -m server` 答话但不是 launchd job，doctor 行按 §54.2 判 warn（`reachable … but not launchd-hosted`）→ `unwired` 桶；#183 把它断成 `wired`（本机复演时 owner 的 launchd server agent 在跑，掩盖了差别），run 33721667881 在 bootstrap、install report、/api/board、/api/setup、/api/permissions、doctor exit 0 全绿之后红在这一行。现断言 `board server` ∈ `unwired` 且 detail 带 `reachable`。

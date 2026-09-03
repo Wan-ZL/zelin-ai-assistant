@@ -5534,7 +5534,7 @@ JSON 里每行保留原始 `status`，桶名即类别。
 `/api/permissions` 的 FDA 清单含存在的 `daemon_python` 与一条 `claude`、`/` 200 →
 `doctor --fresh-install --json` **exit 0**，且 `--no-launchd` 的分类**显式断言**（2026-09-03
 追记）：`broken` 桶为空、`actd` 与 `cron ingest chain` 在 `unwired`、`claude CLI` 在
-`human`、`board server` 在 `wired`（server 此刻在跑）、`manual_steps` 含 open_board /
+`human`、`board server` 在 `unwired` 且 detail 带 `reachable`（server 此刻在答话，但它是验收步手起的进程、不是 launchd job——§54.2 判 warn；首次绿跑前的第二次红跑 33721667881 就红在把它断成 `wired`）、`manual_steps` 含 open_board /
 install_claude / api_key / fda_python / fda_claude / fda_cron / wire_scheduler 七项 →
 第二次 bootstrap = `updated`、config.yaml 字节不变、仍在 main → 证据（两份
 bootstrap 日志 / server 日志 / setup.json / permissions.json / doctor 五桶 / install_report /
