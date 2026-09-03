@@ -57,16 +57,15 @@ export function costText(card: Record<string, unknown>, text: (zh: string, en: s
   return money ? text(`💰 预计费用: ${money}`, `💰 Estimated cost: ${money}`) : text("💰 成本未知", "💰 Cost unknown");
 }
 
-/** tier 章的大白话（原生 tierLine 的词表；T0/T1/T2 用本地双语表——管线的 tier_hint 只有中文，
- *  与本表 zh 逐字相同；未知 tier 才看管线 hint，再退到 未分级） */
+/** tier 章的大白话（原生 tierLine 的词表；管线的 tier_hint 只有中文且与本表 zh 逐字相同，
+ *  所以按 tier 取本地双语表；未知 / 缺席 tier 读 未分级——原生同样「never T?」） */
 export function tierHint(card: Record<string, unknown>, text: (zh: string, en: string) => string): string {
   switch (card["tier"]) {
     case "T0": return text("自动执行", "runs automatically");
     case "T1": return text("一键可批", "one-click approve");
     case "T2": return text("需文字确认", "needs written confirmation");
   }
-  const hint = card["tier_hint"];
-  return typeof hint === "string" && hint ? hint : text("未分级", "Untiered");
+  return text("未分级", "Untiered");
 }
 
 /** 截止倒数短语（原生 deadline phrase）：已逾期 N 天 / 今天截止 / 还剩 N 天；days_left 缺席 → null */

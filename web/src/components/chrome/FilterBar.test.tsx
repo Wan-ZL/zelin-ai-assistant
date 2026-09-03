@@ -1,7 +1,7 @@
-// FilterBar 行为：chip 多选写进 store + URL（?tier=）、⌘F 聚焦搜索、清除按钮复位。
+// FilterBar 行为：chip 多选写进 store + URL（?tier=）、⌘F 聚焦搜索、清除按钮复位、⎋ 两段（清词 → 退出多选，原生 契约七）。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { getState, resetStoreForTests } from "../../store";
+import { getState, resetStoreForTests, setFilters, setSelectionMode } from "../../store";
 import { FilterBar } from "./FilterBar";
 
 beforeEach(() => {
@@ -33,6 +33,16 @@ describe("FilterBar", () => {
     expect(filters.tiers).toEqual(["T1"]);
     expect(filters.search).toBe("readme");
     expect(filters.reraisedOnly).toBe(true);
+  });
+
+  it("⎋ 两段：有搜索词先清词、再按退出多选（原生 Kanban.swift:98 契约七）", () => {
+    render(<FilterBar />);
+    act(() => { setFilters({ search: "readme" }); setSelectionMode(true); });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(getState().filters.search).toBe("");
+    expect(getState().selectionMode).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(getState().selectionMode).toBe(false);
   });
 
   it("⌘F 聚焦搜索框；输入写 store + URL q=", () => {

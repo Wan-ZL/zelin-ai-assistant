@@ -192,16 +192,20 @@ describe("ArchivePage", () => {
 describe("RepairButton", () => {
   it("posts the repair and shows the server's 409 sentence on failure", async () => {
     vi.mocked(postRepairActd).mockRejectedValue(new Error("com.zelin.aiassistant.actd is not loaded in launchd - run `bash install.sh`"));
-    renderEn(<RepairButton />);
-    fireEvent.click(screen.getByRole("button", { name: "Repair" }));
+    renderEn(<RepairButton verdict="stalled" />);
+    fireEvent.click(screen.getByRole("button", { name: "Fix now" }));
     await screen.findByText(/not loaded in launchd/);
     expect(postRepairActd).toHaveBeenCalledTimes(1);
+    // 原生 Freshness.swift：失败后换成「自动修复没成功：」+「再试一次」+ 手动命令
+    expect(screen.getByText("Auto-repair didn't work:")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.getByText("Manual command:")).toBeTruthy();
   });
 });
 
 describe("route + app helpers", () => {
   it("knows the new pages and the anchor param", () => {
-    for (const page of ["archive", "permissions", "diagnostics", "setup"]) expect(readPage(`?page=${page}`)).toBe(page);
+    for (const page of ["archive", "permissions", "diagnostics", "setup", "ask", "deps", "ingest", "about"]) expect(readPage(`?page=${page}`)).toBe(page);
     expect(readAnchor("?page=settings&anchor=live_captions")).toBe("live_captions");
     expect(readAnchor("?anchor=<script>")).toBeNull();
     expect(readAnchor("")).toBeNull();

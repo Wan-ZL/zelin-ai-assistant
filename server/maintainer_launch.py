@@ -17,7 +17,7 @@ from typing import Optional
 
 from server import paths, settings_catalog
 from server.errors import InvalidFieldError, NotImplementedError501, UnknownFieldError
-from server.terminal_launch import Opener, _open, write_command_file
+from server.terminal_launch import Opener, open_command_file, write_command_file
 
 _SESSION_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
@@ -59,5 +59,5 @@ def launch(home: Path, payload: dict, opener: Optional[Opener] = None, out_dir: 
     text = ("#!/bin/bash\n# Zelin's AI Assistant — development session\n"
             "export AIASSISTANT_HOME=%s\nexec %s\n" % (shlex.quote(str(home)), cmd))
     path = write_command_file(text, out_dir)
-    _open(path, opener)
+    open_command_file(path, opener)
     return {"ok": True, "command": cmd, "command_file": str(path), "cwd": str(repo)}

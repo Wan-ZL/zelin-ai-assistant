@@ -31,7 +31,8 @@ class FixtureShapeTestCase(unittest.TestCase):
         # 词表行：每个 tier 提示 / 每种 running 状态词 / 合并建议三态都至少出现一次
         self.assertEqual({c.get("tier_hint") for c in a["needs_approval"]} >= {"自动执行", "一键可批", "需文字确认", "未分级"}, True)
         self.assertTrue({r["state"] for r in a["running"]} >= {"working", "queued", "dispatched", "idle", "unknown"})
-        self.assertEqual([m["status"] for m in a["merge_suggestions"]], ["analyzing", "done", "failed"])
+        self.assertEqual([m["status"] for m in a["merge_suggestions"]][:3], ["analyzing", "done", "failed"])
+        self.assertTrue({m.get("verdict") for m in a["merge_suggestions"]} >= {"partition", "merge", "keep_separate", None})
         self.assertTrue(any(r["kind"] == "debt" and r["permanent"] for r in a["trash"]))
         self.assertEqual(a["device_label"], "demo-mac")
         self.assertEqual(a["generated_at"], "2026-09-02T12:00:00Z")
@@ -44,7 +45,8 @@ class FixtureShapeTestCase(unittest.TestCase):
                 self.assertEqual(field["source"], "default", field["key"])
         secrets = pf.build_secrets()
         self.assertEqual(len(secrets["secrets"]), 5)
-        self.assertFalse(any(s["present"] for s in secrets["secrets"]))
+        self.assertEqual([s["name"] for s in secrets["secrets"] if s["present"]], ["anthropic-api-key.txt"])
+        self.assertEqual(pf.build_secrets(), secrets)
 
     def test_lanes_catalog_mirrors_server_order(self):
         lanes = pf.build_lanes()

@@ -10,7 +10,7 @@ vitest 跑在 jsdom 里，拿不到 python 与 server，所以把 scripts/demo_s
                                           三态——都渲染出来，探针才判得到；探针只认渲染出的字）
   ui/parity/fixtures/lanes.json        —— GET /api/lanes 响应体（server.lanes.catalog()）
   ui/parity/fixtures/settings.json     —— GET /api/settings（空 home = 全默认；文案 server-owned）
-  ui/parity/fixtures/secrets.json      —— GET /api/secrets（空 home = 全未设置）
+  ui/parity/fixtures/secrets.json      —— GET /api/secrets（Anthropic 已保存、其余未设置）
 全部虚构数据（demo_seed 的人名/仓库均为虚构）。tests/test_ui_parity_fixture.py 钉
 「重跑零 diff」。
 
@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(_HERE, "..", ".."))
 import demo_seed  # noqa: E402
 import ui_common as uc  # noqa: E402
 from server import lanes as server_lanes  # noqa: E402
-from server import secrets_store, settings_catalog  # noqa: E402
+from server import paths, secrets_store, settings_catalog  # noqa: E402
 
 FIXTURES_DIR = os.path.join(uc.PARITY_DIR, "fixtures")
 BOARD_PATH = os.path.join(FIXTURES_DIR, "demo-board.json")
@@ -118,7 +118,8 @@ def _vocab_trash(now):
          "trashed_at": demo_seed._iso(now - dt.timedelta(days=2)), "type": "research", "hardness": "hard"},
         {"id": "P-152", "display_id": "P-152", "id_kind": "proposal", "kind": "suggestion", "permanent": False,
          "title": "训练一个分类小模型", "summary": "拒绝的建议。", "trash_reason": "rejected",
-         "trashed_at": demo_seed._iso(now - dt.timedelta(hours=1)), "type": "training", "hardness": "soft"},
+         "trashed_at": demo_seed._iso(now - dt.timedelta(hours=1)), "type": "training", "hardness": "soft",
+         "purge_at": demo_seed._iso(now + dt.timedelta(days=59))},
     ]
 
 
@@ -141,6 +142,12 @@ def _merge_suggestions(now):
          "action_plan": ["P-132 并入 P-101", "P-133 保持独立"]},
         {"id": "MS-3", "ids": ["P-102", "P-103"], "status": "failed", "error": "model timeout after 60s",
          "requested_at": _epoch(now, hours=1)},
+        {"id": "MS-4", "ids": ["P-101", "P-132"], "status": "done", "verdict": "merge", "primary": "P-101", "confidence": "high",
+         "rationale": "同一份报告的两次表述。", "requested_at": _epoch(now, minutes=30), "action_plan": ["P-132 并入 P-101"]},
+        {"id": "MS-5", "ids": ["P-103", "P-133"], "status": "done", "verdict": "keep_separate", "confidence": "low",
+         "rationale": "一个是 planning 文书、一个是 onboarding 清单。", "requested_at": _epoch(now, minutes=45)},
+        {"id": "MS-6", "ids": ["P-131", "P-134"], "status": "done", "verdict": None, "confidence": "deterministic",
+         "rationale": "§38 规则：同标题前缀。", "requested_at": _epoch(now, minutes=50)},
     ]
 
 
@@ -187,9 +194,17 @@ def build_settings():
 
 
 def build_secrets():
-    """GET /api/secrets 在空 home 下的快照（五把 key 全「未设置」）。"""
+    """GET /api/secrets 的快照：Anthropic key 已保存（「已保存（未验证）」+ 可验证），其余四把「未设置」。
+    值是占位符，只决定 present；mtime 抹成固定值保证零 diff。"""
     with tempfile.TemporaryDirectory() as tmp:
-        return secrets_store.snapshot(Path(tmp))
+        secrets_dir = paths.secrets_dir(Path(tmp))
+        secrets_dir.mkdir(parents=True)
+        (secrets_dir / "anthropic-api-key.txt").write_text("sk-ant-demo-placeholder\n", encoding="utf-8")
+        snap = secrets_store.snapshot(Path(tmp))
+    for row in snap["secrets"]:
+        if row.get("mtime"):
+            row["mtime"] = int(FIXED_NOW.timestamp())
+    return snap
 
 
 def main(argv=None):

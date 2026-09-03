@@ -39,16 +39,29 @@ export function FilterBar() {
 
   useEffect(() => {
     // ⌘F（mac）/ Ctrl+F 聚焦搜索框——接管浏览器查找（看板数据全在客户端）
+    // ⎋（原生 Kanban.swift:98 契约七 + escClearSearch 分两段）：有搜索词先清词；已空 → 退出多选；弹窗开着时不插手
     function onKeyDown(event: globalThis.KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
+        return;
+      }
+      if (event.key === "Escape" && !document.querySelector("dialog[open]")) {
+        if (filters.search.trim()) {
+          setFilters({ search: "" });
+          return;
+        }
+        if (searchRef.current && document.activeElement === searchRef.current) {
+          searchRef.current.blur();
+          return;
+        }
+        if (selectionMode) setSelectionMode(false);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [filters.search, selectionMode]);
 
   const activeCount = cardFilterCount(filters);
   const openFor = (key: ChipKey) => (open: boolean) => setOpenChip(open ? key : null);

@@ -56,7 +56,7 @@ export function SkillsSection() {
 
   return (
     <section className="settings-section" aria-labelledby="settings-skills-title">
-      <h3 id="settings-skills-title" className="settings-section-title">{text("Skills", "Skills")}</h3>
+      <h3 id="settings-skills-title" className="settings-section-title">{text("Skills（Claude Code 技能）", "Skills (Claude Code)")}</h3>
       <p className="settings-helper">
         {text(
           "仓库自带的 skill 商店（skills/）。启用 = 在 ~/.claude/skills 放一个指向仓库副本的软链接——Claude Code 与派工 agent 真正读取的位置；另一台机器 git pull 后跑 scripts/skills_sync.sh 即同步。本地改过的副本标为「自定义」，商店永不覆盖。",
@@ -67,6 +67,15 @@ export function SkillsSection() {
       {skillsError && !skills && <p className="settings-error" role="alert">{skillsError}</p>}
       {!skills && !skillsError && <p className="settings-helper">{text("读取中…", "Loading…")}</p>}
 
+      {skills && (
+        // 原生 SettingsSkills 的计数行：共 N 个（用户级 = 已链进 ~/.claude/skills · 项目级 = 仓库内可见）
+        <p className="settings-helper">
+          {text(
+            `共 ${skills.skills.length} 个（用户级 ${skills.skills.filter((r) => r.toggle === "disable").length} · 项目级 ${skills.skills.filter((r) => r.project_visible).length}）`,
+            `${skills.skills.length} total (user ${skills.skills.filter((r) => r.toggle === "disable").length} · project ${skills.skills.filter((r) => r.project_visible).length})`,
+          )}
+        </p>
+      )}
       {skills && (
         <ul className="skills-list">
           {skills.skills.map((row) => (
@@ -112,19 +121,21 @@ function SkillRowView({ row, isBusy, onToggle }: SkillRowViewProps) {
           <span className="skill-row-name">{row.name}</span>
           <span className="skill-row-version" title={row.upstream_version ?? undefined}>v{row.version}</span>
           <span className={`skill-row-badge is-${row.state}`}>{stateLabel(row, text)}</span>
+          {/* 原生 scope chip：用户（~/.claude/skills）/ 项目（仓库内 .claude/skills 软链接） */}
+          {isOn && <span className="skill-row-badge is-user">{text("用户", "user")}</span>}
           {row.project_visible && (
             <span
               className="skill-row-badge is-project"
               title={text("通过仓库里的 .claude/skills 软链接，任何在本仓库工作的会话与 agent 都能看到", "Visible to every session and agent working in this repo via the tracked .claude/skills symlink")}
             >
-              {text("仓库内可见", "project-visible")}
+              {text("项目", "project")}
             </span>
           )}
           {row.default_enabled && (
             <span className="skill-row-badge is-default">{text("默认开", "default on")}</span>
           )}
         </div>
-        <p className="skill-row-desc">{row.description}</p>
+        <p className="skill-row-desc">{row.description || text("无描述", "No description")}</p>
         {isLocked && (
           <p className="settings-warning">{lockedHint(row, text)}</p>
         )}

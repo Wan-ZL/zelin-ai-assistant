@@ -9,8 +9,8 @@ type Text = (zh: string, en: string) => string;
 
 export function scopeLabel(scope: string, text: Text): string {
   switch (scope) {
-    case "user": return text("用户级", "User");
-    case "project": return text("项目级", "Project");
+    case "user": return text("用户级", "User scope");
+    case "project": return text("项目级", "Project scope");
     case "repo": return text("仓库商店", "Repo store");
     default: return scope;
   }
@@ -35,7 +35,11 @@ export function McpSection() {
       </div>
       {mcp?.scopes.map((scope) => (
         <div key={scope.scope} className="settings-subblock">
-          <div className="settings-subhead">{scopeLabel(scope.scope, text)} · <span className="settings-list-dim">{scope.path}</span></div>
+          <div className="settings-subhead">
+            <span>{scopeLabel(scope.scope, text)}</span>
+            <span className="settings-list-dim"> · {scope.path}</span>
+            <span className="chip chip-quiet">{text(`${scope.servers.length} 个 server`, `${scope.servers.length} servers`)}</span>
+          </div>
           {!scope.exists && <p className="settings-helper">{text("文件不存在——这个作用域还没配置过 MCP server。", "File not found — no MCP servers configured in this scope yet.")}</p>}
           {scope.exists && !scope.parseable && <p className="settings-warning">{text("JSON 解析失败——用编辑器检查语法。", "Couldn't parse the JSON — check the syntax in an editor.")}</p>}
           {scope.parseable && scope.exists && scope.servers.length === 0 && <p className="settings-helper">{text("文件里还没有 mcpServers 条目。", "No mcpServers entry in the file yet.")}</p>}
@@ -43,8 +47,9 @@ export function McpSection() {
             <ul className="settings-list">
               {scope.servers.map((server) => (
                 <li key={server.name} className="settings-list-row">
-                  <span className="settings-list-title"><code>{server.name}</code></span>
+                  <span className="settings-list-title"><code>{server.name}</code>{server.incomplete === true && <span className="settings-warning"> {text("（配置不完整）", "(incomplete config)")}</span>}</span>
                   <span className="settings-list-meta">
+                    <span className="chip chip-quiet">{scope.scope === "project" ? text("项目", "project") : text("用户", "user")}</span>
                     <span className="chip">{server.transport}</span>
                     {server.env_count > 0 && <span className="chip chip-quiet">{text(`env ×${server.env_count}`, `env ×${server.env_count}`)}</span>}
                   </span>

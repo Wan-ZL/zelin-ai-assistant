@@ -67,16 +67,17 @@ def _section(sid: str, zh: str, en: str, fields: list, *, help_zh: str = "",
 # --------------------------------------------------------------------------- #
 # 目录（顺序 = 设置页通用区的显示顺序）
 # --------------------------------------------------------------------------- #
-# 原生 Settings.swift featureFlagsGroup 的六条双语标签 + web 才有的两把（feedback_sync / auto_deploy）
+# 原生 Settings.swift featureFlagsGroup 的六条双语标签 + web 才有的两把（feedback_sync / auto_deploy）。
+# 键写全拼（"features.<flag>"，与 overrides 嵌套块的点号拼法一致）——设置键探针按字面量找（§66.2 setting:overrides:*）。
 _FLAGS = (
-    ("slack_radar", "Slack 需求雷达", "Slack demand radar"),
-    ("gmail_radar", "Gmail 捕获", "Gmail capture"),
-    ("obsidian_radar", "Obsidian 雷达", "Obsidian radar"),
-    ("digest", "状态摘要", "status digest"),
-    ("auto_resume", "后台任务自动拉起", "auto-resume background tasks"),
-    ("analytics", "用量统计", "usage stats"),
-    ("feedback_sync", "建议同步到 GitHub", "feedback sync to GitHub"),
-    ("auto_deploy", "自动部署", "auto-deploy"),
+    ("features.slack_radar", "Slack 需求雷达", "Slack demand radar"),
+    ("features.gmail_radar", "Gmail 捕获", "Gmail capture"),
+    ("features.obsidian_radar", "Obsidian 雷达", "Obsidian radar"),
+    ("features.digest", "状态摘要", "status digest"),
+    ("features.auto_resume", "后台任务自动拉起", "auto-resume background tasks"),
+    ("features.analytics", "用量统计", "usage stats"),
+    ("features.feedback_sync", "建议同步到 GitHub", "feedback sync to GitHub"),
+    ("features.auto_deploy", "自动部署", "auto-deploy"),
 )
 
 SECTIONS: tuple = (
@@ -228,8 +229,9 @@ SECTIONS: tuple = (
     ),
     _section(
         "flags", "Feature flags（§16，默认全开）", "Feature flags (§16, all on by default)",
-        [_f("features." + flag, "bool", flag + " — " + zh, flag + " — " + en, default=True, config=("features", flag))
-         for flag, zh, en in _FLAGS],
+        [_f(key, "bool", key.split(".", 1)[1] + " — " + zh, key.split(".", 1)[1] + " — " + en, default=True,
+            config=("features", key.split(".", 1)[1]))
+         for key, zh, en in _FLAGS],
         help_zh="总开关层：关掉 analytics = 本机不再写任何行为事件；关掉 auto_deploy = install.sh 不再装自动部署 agent。",
         help_en="Master switches: analytics off = no behavior events are written locally; auto_deploy off = install.sh stops installing the deploy agent.",
     ),
@@ -376,16 +378,20 @@ def _coerce_string(value) -> Optional[str]:
     return text if text.strip() else None
 
 
+def _list_item(item) -> Optional[str]:
+    """一个 list 元素的投影：{id, name} 字典取 id；字串 / 整数取 strip 后的字串；其余丢。"""
+    if isinstance(item, dict):
+        return str(item["id"]) if item.get("id") else None
+    if isinstance(item, (str, int)) and str(item).strip():
+        return str(item).strip()
+    return None
+
+
 def _coerce_list(value) -> Optional[list]:
     """list 字段：文件里是字串表（slack_channels 允许 {id, name} 字典——投影取 id）；空表 = 缺席。"""
     if not isinstance(value, list):
         return None
-    out = []
-    for item in value:
-        if isinstance(item, dict) and item.get("id"):
-            out.append(str(item["id"]))
-        elif isinstance(item, (str, int)) and str(item).strip():
-            out.append(str(item).strip())
+    out = [text for text in (_list_item(item) for item in value) if text]
     return out or None
 
 
@@ -494,13 +500,19 @@ def _validate_string(value, key: str) -> Optional[str]:
     return value.strip() or None   # 空串 = 清掉 override
 
 
+def _split_list_input(value) -> list:
+    """web 输入框给逗号 / 换行分隔的一个字串，JSON 客户端给字串表——两种入站形归一成字串表。"""
+    if isinstance(value, str):
+        return value.replace("\n", ",").split(",")
+    return value if isinstance(value, list) else [value]
+
+
 def _validate_list(value, key: str) -> Optional[list]:
     """list 入站形：JSON 字串表，或一个逗号 / 换行分隔的字串（web 输入框）；空表 = 清掉 override。"""
-    if isinstance(value, str):
-        value = [part for part in value.replace("\n", ",").split(",")]
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+    parts = _split_list_input(value)
+    if any(not isinstance(item, str) for item in parts):
         raise InvalidFieldError("%s must be a list of strings" % key, {"field": key})
-    items = [item.strip() for item in value if item.strip()]
+    items = [item.strip() for item in parts if item.strip()]
     if len(items) > 200 or any(len(item) > 200 for item in items):
         raise InvalidFieldError("%s has too many / too long entries" % key, {"field": key})
     return items or None

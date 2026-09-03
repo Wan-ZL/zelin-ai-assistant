@@ -86,7 +86,8 @@ vi.mock("./api", async (importOriginal) => {
     putModelsSettings: vi.fn().mockResolvedValue({}),
     putSettingsSection: vi.fn().mockResolvedValue({}),
     putSecret: vi.fn().mockResolvedValue({}),
-    verifySecret: vi.fn().mockResolvedValue({ ok: true, network: false, detail: "ok", extra: {} }),
+    // 隔一个 macrotask 再回：保存 → 「已保存，验证中…」/「验证中…」这一拍才收得到（下一拍收「验证通过」）
+    verifySecret: vi.fn(() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, network: false, detail: "ok", extra: {} }), 0))),
     postSetupStep: vi.fn().mockResolvedValue({ ok: true, setup: { needed: false, done: true } }),
     postUpdateCheck: vi.fn().mockResolvedValue({ ok: true, checked_at: "2026-09-02T11:00:00Z", update_available: false, latest: "0.48.30" }),
     postAsk: vi.fn().mockResolvedValue({ ok: true, answer: "42", citation: "README", lang: "en", elapsed_s: 1 }),
@@ -278,18 +279,31 @@ const OPENS_DIALOG = /拒绝|Reject|修改|Comment|打回|Send Back|停止|Stop|
  *  三轮：① 「展开详情 ▸」② 开弹窗的按钮 ③ 其余。动作按钮（批准 / 暂缓…）会把卡切到 pending 态并
  *  卸掉整个动作行——之后再点同卡的按钮就点在脱离 DOM 的旧节点上，所以提交类放最后；
  *  ③ 跳过 toggle，别把刚展开的又收起。 */
-function clickEverything(root: ParentNode, pool: Set<string>) {
-  const all = () => Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
-  // 先给每个空文本框填点字：提交类按钮（提问 / 保存 / 发送）在空输入时是 disabled 的，点了没反应
+/** 给每个空输入框填点字：提交类按钮（提问 / 保存 / 发送）在空输入时是 disabled 的；数字框填 -1 让校验句出现；
+ *  搜索框填一个不可能命中的词让「无匹配」空态出现。 */
+function fillInputs(root: ParentNode, searches: boolean) {
   root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[type="text"], input[type="password"], input:not([type]), textarea').forEach((el) => {
     if (!el.value) fireEvent.change(el, { target: { value: "demo" } });
   });
+  root.querySelectorAll<HTMLInputElement>('input[type="number"]').forEach((el) => fireEvent.change(el, { target: { value: "-1" } }));
+  // 搜索框会把整块列表过滤空——只在「空态」那几遍填（看板主遍要让卡都在场）
+  if (!searches) return;
+  root.querySelectorAll<HTMLInputElement>('input[type="search"]').forEach((el) => {
+    if (!el.value) fireEvent.change(el, { target: { value: "zzz-no-such-card" } });
+  });
+}
+
+function clickEverything(root: ParentNode, pool: Set<string>, searches = false) {
+  const all = () => Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
+  fillInputs(root, searches);
   clickAll(all().filter((b) => b.classList.contains("card-details-toggle")));
   collectLabels(document.body, pool);
   clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && OPENS_DIALOG.test(b.textContent ?? "")));
   collectLabels(document.body, pool); // 弹窗开着时收：弹窗标题 / 选项 / 提交键
   clickAll(all().filter((b) => !b.classList.contains("card-details-toggle") && !OPENS_DIALOG.test(b.textContent ?? "")));
   collectLabels(document.body, pool); // 点击后立刻收：in-flight 的忙态文案（保存中… / 正在准备诊断包…）
+  fillInputs(root, searches); // 点开后才出现的输入框（书立条里的搜索框）
+  collectLabels(document.body, pool);
 }
 
 const PAGES: Record<Surface, () => JSX.Element> = {
@@ -327,7 +341,7 @@ async function renderSurface(language: Language, page: Surface) {
   if (page === "settings") await refreshSettings();
   await settle(pool);
   collectLabels(document.body, pool);
-  clickEverything(view.container, pool);
+  clickEverything(view.container, pool, page !== "board");
   await settle(pool);
   if (page === "board") {
     // 详情抽屉：选中 hero 卡、再选一张待验收卡（抽屉里的字段标题 / 动作 / 所属列章）
@@ -343,27 +357,34 @@ async function renderSurface(language: Language, page: Surface) {
   cleanup();
 }
 
-/** 第二遍看板：空板 + 搜索中 + 后台服务卡住 → 空态文案 / 横幅动词 */
-async function renderEmptyStalledBoard(language: Language) {
-  const pool = found[language].board;
-  vi.mocked(fetchBoard).mockResolvedValueOnce(emptyBoard);
-  vi.mocked(fetchHealth).mockResolvedValueOnce(stalledHealth);
-  await refreshBoard();
-  await refreshHealth();
-  setFilters({ search: "zzz" });
-  window.history.replaceState(null, "", "/");
-  const view = render(
-    <LanguageContext.Provider value={language}>
-      <AppShell searchSlot={<FilterBar />}><BoardPage /><DetailDrawer /></AppShell>
-    </LanguageContext.Provider>,
-  );
-  await settle(pool);
-  collectLabels(document.body, pool);
-  clickEverything(view.container, pool);
-  await settle(pool);
-  collectLabels(document.body, pool);
-  cleanup();
-  setFilters({ search: "" });
+/** 第二 / 三遍看板与回收站：空板 + 搜索中 + 后台服务「卡住」/「没在跑」且一键修复失败 →
+ *  空态文案（无匹配卡片 / 回收站为空）与横幅动词（一键修复 / 启动后台服务 / 再试一次 / 手动命令） */
+async function renderEmptyBoardVariants(language: Language) {
+  const { postRepairActd } = await import("./api");
+  for (const health2 of [stalledHealth, { ...stalledHealth, verdict: "stale", heartbeat: null }]) {
+    vi.mocked(fetchBoard).mockResolvedValueOnce(emptyBoard);
+    vi.mocked(fetchHealth).mockResolvedValueOnce(health2);
+    vi.mocked(postRepairActd).mockRejectedValueOnce(new Error("launchctl kickstart failed (exit 113)"));
+    await refreshBoard();
+    await refreshHealth();
+    setFilters({ search: "zzz" });
+    for (const page of ["board", "trash"] as const) {
+      const pool = found[language][page];
+      window.history.replaceState(null, "", page === "board" ? "/" : "/?page=trash");
+      const view = render(
+        <LanguageContext.Provider value={language}>
+          <AppShell searchSlot={<FilterBar />}>{PAGES[page]()}<DetailDrawer /></AppShell>
+        </LanguageContext.Provider>,
+      );
+      await settle(pool);
+      collectLabels(document.body, pool);
+      clickEverything(view.container, pool, true);
+      await settle(pool);
+      collectLabels(document.body, pool);
+      cleanup();
+    }
+    setFilters({ search: "" });
+  }
 }
 
 beforeAll(async () => {
@@ -403,7 +424,7 @@ beforeAll(async () => {
     for (const page of SURFACES) {
       await renderSurface(language, page);
     }
-    await renderEmptyStalledBoard(language);
+    await renderEmptyBoardVariants(language);
   }
 });
 

@@ -85,7 +85,7 @@ export function SelectionBar() {
         {text(`提建议 (${ids.length})`, `Send feedback (${ids.length})`)}
       </button>
       <button type="button" className="btn" disabled={busy || ids.length === 0} onClick={() => clearSelection()}>{text("清空", "Clear")}</button>
-      <button type="button" className="btn" disabled={busy} onClick={() => setSelectionMode(false)}>{text("退出选择", "Done")}</button>
+      <button type="button" className="btn" disabled={busy} onClick={() => setSelectionMode(false)} title="⎋">{text("退出选择", "Done")}</button>
       {note && <span className="selection-note">{note}</span>}
 
       {confirm === "feedback" && (

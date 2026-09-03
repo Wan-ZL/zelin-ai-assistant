@@ -16,7 +16,7 @@ from typing import Optional
 
 from server import paths
 from server.errors import NotFoundError, NotImplementedError501, UnknownFieldError
-from server.terminal_launch import Opener, _open, write_command_file
+from server.terminal_launch import Opener, open_command_file, write_command_file
 
 SCRIPT_NAME = "uninstall.sh"
 
@@ -48,5 +48,5 @@ def launch(payload: dict, opener: Optional[Opener] = None, out_dir: Optional[Pat
     if not script_path().is_file():
         raise NotFoundError("uninstall script not found", {"path": str(script_path())})
     path = write_command_file(_script_text(), out_dir)
-    _open(path, opener)
+    open_command_file(path, opener)
     return {"ok": True, "command": shell_command(), "command_file": str(path)}

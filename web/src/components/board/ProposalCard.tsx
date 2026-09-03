@@ -114,7 +114,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
         {/* tier 章 = Mac systemPurple 粉紫（owner 验收单：粉紫T1章）；交付 tag 同紫（§10 提取表拍板）。
             原生 tierLine：「T1 · 一键可批」——tier 与大白话各一个节点；未知 tier 只剩「未分级」 */}
         <span className="chip chip-purple">
-          {typeof card.tier === "string" && /^T[0-2]$/.test(card.tier) && <><span>{card.tier}</span>{" · "}</>}
+          {typeof card.tier === "string" && /^T[0-2]$/.test(card.tier) && <><span>{card.tier}</span>{"\u00a0·\u00a0"}</>}
           <span>{tierHint(card, text)}</span>
         </span>
         {/* 原生 ↳ 改进 #R-xx（improvement_of，§7 提案改进已交付的卡） */}
@@ -136,7 +136,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
         {card.deadline && (
           <span className={typeof card.days_left === "number" && card.days_left <= 3 ? "chip chip-danger chip-outline" : "chip"}>
             <span>{text(`截止 ${card.deadline}`, `Due ${card.deadline}`)}</span>
-            {deadlinePhrase(card.days_left, text) && <>{" · "}<span>{deadlinePhrase(card.days_left, text)}</span></>}
+            {deadlinePhrase(card.days_left, text) && <>{"\u00a0·\u00a0"}<span>{deadlinePhrase(card.days_left, text)}</span></>}
           </span>
         )}
         {card.show_cost && typeof card.cost_usd === "number" && (
@@ -230,7 +230,7 @@ export function ProposalCard({ card }: ProposalCardProps) {
       )}
       {dialog === "reject" && (
         <ForkDialog
-          title={text(`拒绝 ${shownId}？`, `Reject ${shownId}?`)}
+          title={text("这张卡不需要执行？", "No need to run this card?")}
           body={summary}
           choices={[
             { label: text("不想做（进回收站）", "Won't do (to trash)"), isDanger: true, onPick: () => decide("reject") },

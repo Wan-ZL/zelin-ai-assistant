@@ -60,23 +60,34 @@ def _valid_id(value) -> bool:
     return isinstance(value, str) and bool(SAFE_ID_RE.match(value))
 
 
+def _validate_target(payload: dict) -> Optional[str]:
+    """``card_id``（SAFE_ID）或 ``source: "doctor"`` 二选一；返回 card_id（doctor 时 None）。"""
+    source = payload.get("source")
+    card_id = payload.get("card_id")
+    if source is None:
+        if not _valid_id(card_id):
+            raise InvalidFieldError("card_id must be a card id", {"id": card_id})
+        return card_id
+    if source not in _SOURCES:
+        raise InvalidFieldError("source must be doctor", {"source": source})
+    if card_id is not None:
+        raise InvalidFieldError("give either card_id or source, not both", {"id": card_id})
+    return None
+
+
+def _validate_lang(payload: dict) -> Optional[str]:
+    lang = payload.get("lang")
+    if lang is not None and lang not in _LANGS:
+        raise InvalidFieldError("lang must be zh or en", {"lang": lang})
+    return lang
+
+
 def _validate(payload: dict) -> "tuple[Optional[str], Optional[str]]":
     """返回 (card_id, lang)；``source: "doctor"`` 时 card_id 为 None（上下文来自 doctor 报告）。"""
     unknown = set(payload) - _ALLOWED_FIELDS
     if unknown:
         raise UnknownFieldError("unknown field", {"fields": sorted(unknown)})
-    source = payload.get("source")
-    if source is not None and source not in _SOURCES:
-        raise InvalidFieldError("source must be doctor", {"source": source})
-    card_id = payload.get("card_id")
-    if source is None and not _valid_id(card_id):
-        raise InvalidFieldError("card_id must be a card id", {"id": card_id})
-    if source is not None and card_id is not None:
-        raise InvalidFieldError("give either card_id or source, not both", {"id": card_id})
-    lang = payload.get("lang")
-    if lang is not None and lang not in _LANGS:
-        raise InvalidFieldError("lang must be zh or en", {"lang": lang})
-    return (None if source else card_id), lang
+    return _validate_target(payload), _validate_lang(payload)
 
 
 def _first_text(row: dict, keys: tuple) -> Optional[str]:

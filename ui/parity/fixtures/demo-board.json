@@ -224,6 +224,46 @@
       ],
       "requested_at": 1788346800,
       "status": "failed"
+    },
+    {
+      "action_plan": [
+        "P-132 并入 P-101"
+      ],
+      "confidence": "high",
+      "id": "MS-4",
+      "ids": [
+        "P-101",
+        "P-132"
+      ],
+      "primary": "P-101",
+      "rationale": "同一份报告的两次表述。",
+      "requested_at": 1788348600,
+      "status": "done",
+      "verdict": "merge"
+    },
+    {
+      "confidence": "low",
+      "id": "MS-5",
+      "ids": [
+        "P-103",
+        "P-133"
+      ],
+      "rationale": "一个是 planning 文书、一个是 onboarding 清单。",
+      "requested_at": 1788347700,
+      "status": "done",
+      "verdict": "keep_separate"
+    },
+    {
+      "confidence": "deterministic",
+      "id": "MS-6",
+      "ids": [
+        "P-131",
+        "P-134"
+      ],
+      "rationale": "§38 规则：同标题前缀。",
+      "requested_at": 1788347400,
+      "status": "done",
+      "verdict": null
     }
   ],
   "needs_approval": [
@@ -847,6 +887,7 @@
       "id_kind": "proposal",
       "kind": "suggestion",
       "permanent": false,
+      "purge_at": "2026-10-31T12:00:00Z",
       "summary": "拒绝的建议。",
       "title": "训练一个分类小模型",
       "trash_reason": "rejected",
