@@ -36,6 +36,12 @@ _SAMPLES = {
     "msg_auto_resume_exhausted": (("整理推荐信",), "整理推荐信"),
     "msg_resume_storm": (("整理推荐信", 3), "3"),
     "msg_stop_failed": (("整理推荐信",), "整理推荐信"),
+    # §65 self_improve lane
+    "msg_self_improve_dispatched": (("整理推荐信",), "整理推荐信"),
+    "msg_auto_dispatched": (("ok:self_improve", "整理推荐信"), "整理推荐信"),
+    "msg_self_improve_unverified": (("整理推荐信", "pr_not_draft"), "pr_not_draft"),
+    "msg_self_improve_paused": (("整理推荐信", "https://x/pr/9", ["a", "b", "c", "d"]), "https://x/pr/9"),
+    "msg_self_improve_followup": ((42, 3, 1), "42"),
 }
 
 
@@ -63,6 +69,22 @@ class BuilderTableTestCase(unittest.TestCase):
 
     def test_builders_answer_in_en(self):
         self._check_lang("en")
+
+    def test_hand_lane_observation_sentence_is_the_frozen_v048_original(self):
+        # §51: the hand-lane observation-mode copy is the v0.48 sentence
+        # verbatim (zh only, by law) — not routed through the language switch
+        with mock.patch.object(failures, "ui_lang", return_value="en"):
+            self.assertEqual(notify.msg_auto_dispatched("ok:hand", "卡"),
+                             ("观察模式：手打卡已自动派发（免批）", "卡"))
+            self.assertEqual(notify.msg_auto_dispatched("ok:self_improve", "卡"),
+                             notify.msg_self_improve_dispatched("卡"))
+
+    def test_paused_body_truncates_the_path_list_to_three(self):
+        with mock.patch.object(failures, "ui_lang", return_value="zh"):
+            _t, body = notify.msg_self_improve_paused("卡", "u", ["a", "b", "c", "d"])
+            self.assertIn("a, b, c…", body)
+            _t, body = notify.msg_self_improve_paused("卡", "u", ["a"])
+            self.assertIn("a。", body)
 
     def test_optional_reason_variants(self):
         with mock.patch.object(failures, "ui_lang", return_value="zh"):
